@@ -19,7 +19,7 @@ import markedKatex from 'marked-katex-extension';
 import hljs from 'highlight.js';
 import path from 'path';
 import fs from 'fs';
-import { fileLinkExtension, renderFilePillFromText } from './marked-file-link.js';
+import { fileLinkExtension, renderFilePillFromText } from '../utils/marked-file-link.js';
 import { cjkAutolinkFix } from '../../common/markdown/cjk-autolink-fix.js';
 import type {
     BaseAssistantMessage,

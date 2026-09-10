@@ -64,8 +64,8 @@ function makeSession(opts: SessionOpts = {}) {
                     }
                 };
             }
-            // Post-type read-back of the active element value.
-            if (expr.includes('document.activeElement')) {
+            // Post-type read-back of the exact target element value.
+            if (expr.includes('return el.value')) {
                 return { result: { value: opts.value === null ? undefined : (opts.value ?? '') } };
             }
             if (expr.trim() === 'location.href') {
@@ -109,8 +109,11 @@ const NEW_TABS = [
     { id: 5, title: '旧页面', url: 'https://example.com/page', active: false }
 ];
 
-function makeCtrl(session: any, windowBehavior: (script: string) => any) {
-    const win = makeWindow(windowBehavior);
+function makeCtrl(session: any, windowBehavior: (script: string) => any, webviewFocused = true) {
+    const win = makeWindow((script) => {
+        if (script.includes('browserHasActiveWebviewFocus')) return { result: webviewFocused };
+        return windowBehavior(script);
+    });
     const ctrl = new BrowserController('t-feedback', win as any, mockScriptGen);
     // Speed up the new-tab polling window for tests.
     (ctrl as any)._newTabPollIntervalMs = 1;
@@ -231,6 +234,83 @@ describe('click hit-element verification (P1-6)', () => {
 
         expect(result.hitElement).toEqual({ tag: 'button', text: '播放' });
         expect(result.warning).toBeUndefined();
+    });
+});
+
+describe('input focus isolation', () => {
+    test('type does not dispatch native mouse or keyboard input when the webview is not already focused', async () => {
+        const session = makeSession({ value: '后台输入' });
+        const { ctrl, win } = makeCtrl(
+            session,
+            (script) => {
+                if (script.includes('browserGetWebContentsId')) return { result: 5 };
+                return { result: null };
+            },
+            false
+        );
+
+        const result = await ctrl.type('e1', '后台输入', { slowly: true });
+
+        expect(result.warning).toBeUndefined();
+        expect(win.focus).not.toHaveBeenCalled();
+        expect(session.webContents.focus).not.toHaveBeenCalled();
+        expect(session.send).not.toHaveBeenCalledWith('Input.dispatchMouseEvent', expect.anything());
+        expect(session.send).not.toHaveBeenCalledWith('Input.dispatchKeyEvent', expect.anything());
+        expect(session.send).not.toHaveBeenCalledWith('Input.insertText', expect.anything());
+        expect(session.send).toHaveBeenCalledWith(
+            'Runtime.evaluate',
+            expect.objectContaining({ expression: expect.stringContaining('data-od-ref="e1"') })
+        );
+    });
+
+    test('nested cross-origin iframe click and type execute in the owning frame without native input', async () => {
+        let value = '';
+        let clicks = 0;
+        const innerFrame: any = {
+            url: 'https://nested.example/form',
+            frames: [],
+            executeJavaScript: jest.fn(async (script: string) => {
+                if (script.includes("setter.call(el, '')")) value = '';
+                if (script.includes('setter.call(el, text)')) value = 'iframe-value-verified';
+                if (script.includes('return el.value')) return value;
+                if (script.includes('el.click()')) {
+                    clicks++;
+                    return JSON.stringify({ tag: 'button', text: 'Nested submit' });
+                }
+                return undefined;
+            })
+        };
+        const outerFrame: any = {
+            url: 'https://inner.example/frame',
+            frames: [innerFrame],
+            executeJavaScript: jest.fn(async () => ({ index: 0, src: innerFrame.url }))
+        };
+        const mainFrame: any = {
+            url: 'https://host.example/',
+            frames: [outerFrame],
+            executeJavaScript: jest.fn(async () => ({ index: 0, src: outerFrame.url }))
+        };
+        const session = makeSession({});
+        session.webContents.mainFrame = mainFrame;
+        const { ctrl } = makeCtrl(
+            session,
+            (script) => {
+                if (script.includes('browserGetWebContentsId')) return { result: 5 };
+                return { result: null };
+            },
+            false
+        );
+
+        const typeResult = await ctrl.type('e1-e2-e3', 'iframe-value-verified');
+        const clickResult = await ctrl.click('e1-e2-e4');
+
+        expect(typeResult.warning).toBeUndefined();
+        expect(value).toBe('iframe-value-verified');
+        expect(clickResult).toMatchObject({ tag: 'button', text: 'Nested submit' });
+        expect(clicks).toBe(1);
+        expect(session.send).not.toHaveBeenCalledWith('Input.dispatchMouseEvent', expect.anything());
+        expect(session.send).not.toHaveBeenCalledWith('Input.dispatchKeyEvent', expect.anything());
+        expect(session.send).not.toHaveBeenCalledWith('Input.insertText', expect.anything());
     });
 });
 

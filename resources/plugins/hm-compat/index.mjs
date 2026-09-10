@@ -17,12 +17,9 @@ const HARMONY_PIP_TRUSTED_HOST = 'pypi.repo.openharmony.cn';
 const HARMONY_PIP_ONLY_BINARY = ':all:';
 const HARMONY_NPM_REGISTRY = 'https://npm.cnb.cool/OpenHarmonyPCDeveloper/npm/-/packages/';
 
+// 展示名称等静态元数据统一声明在 opendesk.plugin.json，入口只保留运行时字段。
 export default definePlugin({
     id: 'hm-compat',
-    displayName: 'HarmonyOS Compat',
-    apiVersion: 1,
-    capabilities: ['hook'],
-    platforms: ['openharmony'],
     setup(ctx) {
         ctx.hooks.on('shell.env', (_input, output) => {
             output.env.PIP_INDEX_URL = HARMONY_PIP_INDEX_URL;

@@ -2,10 +2,15 @@ import { describe, expect, jest, test, beforeEach } from '@jest/globals';
 import { enUs } from '../../../locale/en-us.js';
 
 const showConfirmModal = jest.fn();
+const showInfoModal = jest.fn();
 const showCommandResultDialog = jest.fn();
 
 jest.unstable_mockModule('../../../renderer/components/confirmModal.js', () => ({
-    showConfirmModal
+    showConfirmModal,
+    showInfoModal,
+    // 与真实实现同构的轻量转换：转义 HTML 并保留换行
+    escapeModalText: (text: string) =>
+        text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/\n/g, '<br>')
 }));
 
 jest.unstable_mockModule('../../../renderer/components/commandResultDialog.js', () => ({
@@ -33,6 +38,8 @@ describe('renderer slash commands', () => {
     beforeEach(async () => {
         showConfirmModal.mockReset();
         showConfirmModal.mockResolvedValue(true);
+        showInfoModal.mockReset();
+        showInfoModal.mockResolvedValue(undefined);
         showCommandResultDialog.mockReset();
         const storage = new Map<string, string>();
         Object.assign(globalThis, {
@@ -196,7 +203,55 @@ describe('renderer slash commands', () => {
         });
 
         expect(createGoal).not.toHaveBeenCalled();
-        expect(window.alert).toHaveBeenCalledWith(expect.stringContaining('/goal <objective>'));
+        // goal 提示必须走页内模态弹窗（issue #265：原生 window.alert 关闭后使输入框失焦）
+        expect(showInfoModal).toHaveBeenCalledWith(
+            expect.objectContaining({
+                title: 'Goal',
+                message: expect.stringContaining('/goal &lt;objective&gt;'),
+                confirmText: 'Confirm'
+            })
+        );
+        expect(window.alert).not.toHaveBeenCalled();
+    });
+
+    test('/goal help resolves only after the in-page modal closes so the input can refocus', async () => {
+        const { executeSlashCommand } = await import('../../../renderer/components/slash-command');
+        let resolveModal: (() => void) | undefined;
+        showInfoModal.mockImplementationOnce(
+            () =>
+                new Promise<void>((resolve) => {
+                    resolveModal = resolve;
+                })
+        );
+
+        let commandFinished = false;
+        const execution = executeSlashCommand(
+            'goal',
+            {
+                globalControlAPI: {},
+                taskManagerAPI: {},
+                currentTaskId: 'task-1',
+                stopCallback: null,
+                clearMessageQueue: null
+            },
+            'help'
+        ).then((result) => {
+            commandFinished = true;
+            return result;
+        });
+        await new Promise((resolve) => setTimeout(resolve, 0));
+
+        // 弹窗打开期间命令保持挂起：agentinput 在命令结束后才调用 textarea.focus()，
+        // 因此弹窗关闭前不能结束，焦点才能在关闭后回到输入框（issue #265）
+        expect(showInfoModal).toHaveBeenCalledTimes(1);
+        expect(commandFinished).toBe(false);
+
+        resolveModal?.();
+        const result = await execution;
+
+        expect(commandFinished).toBe(true);
+        expect(result).toEqual({ inputDisposition: 'clear' });
+        expect(window.alert).not.toHaveBeenCalled();
     });
 
     test('executing goal creates a goal on the current task', async () => {
@@ -428,9 +483,12 @@ describe('renderer slash commands', () => {
         );
 
         expect(result).toEqual({ inputDisposition: 'preserve' });
-        expect(window.alert).toHaveBeenCalledWith(
-            'The goal changed while confirmation was open. Review the latest goal and try again.'
+        expect(showInfoModal).toHaveBeenCalledWith(
+            expect.objectContaining({
+                message: 'The goal changed while confirmation was open. Review the latest goal and try again.'
+            })
         );
+        expect(window.alert).not.toHaveBeenCalled();
         expect(document.dispatchEvent).not.toHaveBeenCalled();
     });
 
@@ -520,7 +578,10 @@ describe('renderer slash commands', () => {
         );
 
         expect(clearGoal).not.toHaveBeenCalled();
-        expect(window.alert).toHaveBeenCalledWith(expect.stringContaining('clear'));
+        expect(showInfoModal).toHaveBeenCalledWith(
+            expect.objectContaining({ message: expect.stringContaining('clear') })
+        );
+        expect(window.alert).not.toHaveBeenCalled();
     });
 
     test.each([

@@ -7,6 +7,7 @@ import { pathToFileURL } from 'node:url';
 
 import {
     registerSdkPackageMapping,
+    resolveHostPackageUrl,
     resolveWorkspacePackageUrl
 } from '../../../../main/applications/pluginmgr/runtime/package-mapping.js';
 
@@ -194,6 +195,59 @@ test('未声明 workspace 位置的宿主包不参与兜底解析', async () => 
         const start = path.join(root, 'dist', 'main', 'chunks');
 
         assert.equal(resolveWorkspacePackageUrl('zod', start), undefined);
+    } finally {
+        await rm(root, { recursive: true, force: true });
+    }
+});
+
+/**
+ * 打包版 Windows 产物中，`node_modules/@bitclub.ai/opendesk-plugin-sdk` 会被 asar
+ * 记录为指向构建机绝对路径的损坏链接：`require.resolve` 仍会"成功"返回该坏路径
+ * （不抛 MODULE_NOT_FOUND），但文件实际不可读。resolveHostPackageUrl 必须校验
+ * 解析结果真实可读，否则回退到 workspace 目录（见 #plugin-sdk asar ENOENT 缺陷）。
+ */
+test('宿主解析结果不可读时回退到 workspace 目录', async () => {
+    const root = await createAppRootWithWorkspaceSdk();
+    try {
+        const start = path.join(root, 'dist', 'main', 'chunks');
+        const brokenLinkTarget = path.join(
+            root,
+            'node_modules',
+            '@bitclub.ai',
+            'opendesk-plugin-sdk',
+            'dist',
+            'index.js'
+        );
+        const resolved = resolveHostPackageUrl('@bitclub.ai/opendesk-plugin-sdk', start, () => brokenLinkTarget);
+
+        assert.equal(resolved, pathToFileURL(path.join(root, 'packages/plugin-sdk/dist/index.js')).href);
+    } finally {
+        await rm(root, { recursive: true, force: true });
+    }
+});
+
+test('宿主解析结果可读时采用宿主解析结果', async () => {
+    const root = await createAppRootWithWorkspaceSdk();
+    try {
+        const start = path.join(root, 'dist', 'main', 'chunks');
+        const readableFile = path.join(root, 'packages', 'plugin-sdk', 'dist', 'index.js');
+        const resolved = resolveHostPackageUrl('@bitclub.ai/opendesk-plugin-sdk', start, () => readableFile);
+
+        assert.equal(resolved, pathToFileURL(readableFile).href);
+    } finally {
+        await rm(root, { recursive: true, force: true });
+    }
+});
+
+test('宿主解析抛错时回退到 workspace 目录', async () => {
+    const root = await createAppRootWithWorkspaceSdk();
+    try {
+        const start = path.join(root, 'dist', 'main', 'chunks');
+        const resolved = resolveHostPackageUrl('@bitclub.ai/opendesk-plugin-sdk', start, () => {
+            throw new Error('Cannot find module');
+        });
+
+        assert.equal(resolved, pathToFileURL(path.join(root, 'packages/plugin-sdk/dist/index.js')).href);
     } finally {
         await rm(root, { recursive: true, force: true });
     }

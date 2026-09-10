@@ -31,6 +31,15 @@ export function makeEnsureSidebarScript(taskId: string): string {
         if (el) {
             var tv = el.closest('task-view');
             var taskViewIsHidden = tv && (tv.hasAttribute('data-background') || tv.style.display === 'none');
+            var initialBrowserUse = typeof el.consumeInitialBrowserAutoReveal === 'function'
+                ? el.consumeInitialBrowserAutoReveal()
+                : false;
+            var shouldAutoReveal = !taskViewIsHidden && initialBrowserUse;
+            if (tv && initialBrowserUse && taskViewIsHidden && typeof el.markPendingBrowserAutoReveal === 'function') {
+                // 后台首次 Browser Use：仅按任务记录大屏预览期望，待用户切回任务时生效，
+                // 不打断当前前台布局（与 consume 的一次性机会一一对应，不重复记录）。
+                el.markPendingBrowserAutoReveal();
+            }
             var renderRoot = tv && tv.closest('#nonAppSlot');
             function resetOversizedArtifact() {
                 if (el.style.minWidth === '1280px') el.style.minWidth = '';
@@ -68,13 +77,16 @@ export function makeEnsureSidebarScript(taskId: string): string {
                     webview.style.minHeight = '800px';
                 });
             }
-            function forceBrowserActive(autoSwitch) {
-                el._suppressBrowserAutoSwitch = false;
+            function prepareBrowser(autoSwitch) {
+                el._suppressBrowserAutoSwitch = !autoSwitch;
+                if (!autoSwitch && typeof el.ensureBrowserReady === 'function') {
+                    el.ensureBrowserReady(false);
+                    return;
+                }
                 if (typeof el.forceBrowserActive === 'function') {
                     el.forceBrowserActive();
                 } else if (typeof el.ensureBrowserReady === 'function') {
-                    if (typeof autoSwitch === 'undefined') el.ensureBrowserReady();
-                    else el.ensureBrowserReady(autoSwitch);
+                    el.ensureBrowserReady(true);
                 }
             }
             if (tv && taskViewIsHidden) {
@@ -107,16 +119,18 @@ export function makeEnsureSidebarScript(taskId: string): string {
                 // 恢复为侧边栏正常宽度。
                 resetOversizedArtifact();
             }
-            // 无论前台还是后台任务：确保侧边栏已展开（尊重画中画状态，不强制展开），
-            // 确保 webview 以正确尺寸渲染，避免页面插件检测到 height=0 弹窗报错。
-            if (tv && typeof tv._ensureRightSidebarOpen === 'function') {
+            // 每个任务在本次会话内仅第一次 Browser Use 可以自动展示浏览器聚焦布局。
+            // 前台首次使用立即生效；后台首次使用标记为待应用，待用户切回任务时展示。
+            if (tv && shouldAutoReveal && typeof tv._ensureRightSidebarOpen === 'function') {
                 tv._ensureRightSidebarOpen();
             }
-            forceBrowserActive(true);
+            prepareBrowser(shouldAutoReveal);
+            if (!shouldAutoReveal && typeof el.keepBrowserPanelRenderable === 'function') {
+                el.keepBrowserPanelRenderable();
+            }
             if (tv && taskViewIsHidden) {
-                // forceBrowserActive 首次调用会在这里才创建 .bw 和 webview，必须在挂载后
+                // prepareBrowser 首次调用会在这里才创建 .bw 和 webview，必须在挂载后
                 // 再应用一次尺寸，并保持 browser panel 可渲染。
-                if (typeof el.keepBrowserPanelRenderable === 'function') el.keepBrowserPanelRenderable();
                 setBrowserBox(el.shadowRoot && el.shadowRoot.querySelector('.tab-content[data-tab="browser"]'));
             }
         }

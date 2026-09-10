@@ -9,8 +9,9 @@ import {
     setRenderWorkspace,
     resolveFilePath,
     parseFileReference,
+    parseLineAnchor,
     renderFilePillFromText
-} from '../../../main/aikernel/marked-file-link.js';
+} from '../../../main/utils/marked-file-link.js';
 import { marked as messagesMarked } from '../../../main/aikernel/messages.js';
 
 test('resolveFilePath: returns absolute path when file exists (absolute input)', () => {
@@ -26,16 +27,31 @@ test('resolveFilePath: returns absolute path when file exists (absolute input)',
     }
 });
 
-test('resolveFilePath: returns null when file does not exist', () => {
+test('resolveFilePath: resolves relative path against workspace', () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'mfl-'));
+    try {
+        fs.writeFileSync(path.join(tmp, 'main.ts'), 'export {};');
+        setRenderWorkspace(tmp);
+        assert.equal(resolveFilePath('main.ts'), path.join(tmp, 'main.ts'));
+    } finally {
+        setRenderWorkspace(null);
+        fs.rmSync(tmp, { recursive: true, force: true });
+    }
+});
+
+// 渲染阶段零 IO：resolveFilePath 只做纯字符串解析，不校验存在性。
+// "看似路径实则不存在"允许误报，由前端点击时校验并提示。
+
+test('resolveFilePath: returns resolved path even when file does not exist', () => {
     setRenderWorkspace('/tmp');
-    assert.equal(resolveFilePath('/nonexistent/path/file.ts'), null);
+    assert.equal(resolveFilePath('/nonexistent/path/file.ts'), '/nonexistent/path/file.ts');
     setRenderWorkspace(null);
 });
 
-test('resolveFilePath: returns null when path points to a directory', () => {
+test('resolveFilePath: returns resolved path for directories', () => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'mfl-'));
     try {
-        assert.equal(resolveFilePath(tmp), null);
+        assert.equal(resolveFilePath(tmp), tmp);
     } finally {
         fs.rmSync(tmp, { recursive: true, force: true });
     }
@@ -61,8 +77,30 @@ test('resolveFilePath: returns null for hash links', () => {
     assert.equal(resolveFilePath('#section'), null);
 });
 
+test('resolveFilePath: returns null for paths containing ellipsis', () => {
+    setRenderWorkspace('/tmp');
+    assert.equal(resolveFilePath('…\\agent.ts'), null);
+    assert.equal(resolveFilePath('src/…/utils.ts'), null);
+    assert.equal(resolveFilePath('D:\\proj\\…\\main.ts'), null);
+    setRenderWorkspace(null);
+});
+
 test('resolveFilePath: returns null for empty string', () => {
     assert.equal(resolveFilePath(''), null);
+});
+
+// ── tokenizer hardening ─────────────────────────────────────────────
+
+test('auto-detection: skips domain-like tokens', () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'mfl-'));
+    try {
+        const marked = setupMarked(tmp);
+        const html = marked.parse('Visit docs.example.com/guide/setup.md for info.') as string;
+        assert.ok(!html.includes('od-file-pill'), 'domain-like token must not become a pill');
+    } finally {
+        setRenderWorkspace(null);
+        fs.rmSync(tmp, { recursive: true, force: true });
+    }
 });
 
 // ── Integration tests with Marked ──────────────────────────────────
@@ -90,27 +128,33 @@ test('auto-detection: detects existing relative file path and renders as pill', 
     }
 });
 
-test('auto-detection: detects existing absolute file path', () => {
+// FILE_PATH_RE 的排除字符集含 ':' 与 '\'，Windows 盘符路径（C:/、C:\）暂不被
+// tokenizer 支持，属于已知功能限制；绝对路径检测用例仅在 POSIX 平台验证。
+const testAbsPathPosix = process.platform === 'win32' ? test.skip : test;
+
+testAbsPathPosix('auto-detection: detects existing absolute file path', () => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'mfl-'));
     try {
         const absPath = path.join(tmp, 'main.ts');
         fs.writeFileSync(absPath, 'export {};');
         const marked = setupMarked(tmp);
-        const html = marked.parse(`Check ${absPath} now.`) as string;
+        // FILE_PATH_RE 不支持反斜杠分隔符，文本中使用正斜杠形式
+        const textPath = absPath.replaceAll('\\', '/');
+        const html = marked.parse(`Check ${textPath} now.`) as string;
         assert.ok(html.includes('od-file-pill'));
-        assert.ok(html.includes(`data-open-preview="${absPath}"`));
+        assert.ok(html.includes(`data-open-preview="${textPath}"`));
     } finally {
         setRenderWorkspace(null);
         fs.rmSync(tmp, { recursive: true, force: true });
     }
 });
 
-test('auto-detection: does not convert non-existent file path', () => {
+test('auto-detection: renders pill for path-like text even if file does not exist', () => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'mfl-'));
     try {
         const marked = setupMarked(tmp);
         const html = marked.parse('See src/nonexistent.ts for details.') as string;
-        assert.ok(!html.includes('od-file-pill'));
+        assert.ok(html.includes('od-file-pill'), 'path-like text should render as pill (click-time validation)');
     } finally {
         setRenderWorkspace(null);
         fs.rmSync(tmp, { recursive: true, force: true });
@@ -219,12 +263,12 @@ test('markdown link: renders OpenDesk skill links as skill pills', () => {
     }
 });
 
-test('markdown link: does not render a directory link as a file pill', () => {
+test('markdown link: renders directory link as pill (existence validated at click time)', () => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'mfl-'));
     try {
         const marked = setupMarked(tmp);
         const html = marked.parse(`[root](${tmp})`) as string;
-        assert.ok(!html.includes('od-file-pill'));
+        assert.ok(html.includes('od-file-pill'), 'path-like href renders as pill; existence is validated on click');
     } finally {
         setRenderWorkspace(null);
         fs.rmSync(tmp, { recursive: true, force: true });
@@ -260,13 +304,15 @@ test('markdown link: does not render URL links as pills', () => {
     }
 });
 
-test('markdown link: does not render links to non-existent files as pills', () => {
+test('markdown link: renders path-like hrefs as pills even if file does not exist', () => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'mfl-'));
     try {
         const marked = setupMarked(tmp);
         const html = marked.parse('[missing](src/nonexistent.ts)') as string;
-        assert.ok(!html.includes('od-file-pill'));
-        assert.ok(html.includes('<a'));
+        assert.ok(
+            html.includes('od-file-pill'),
+            'link with path-like href should render as pill (click-time validation)'
+        );
     } finally {
         setRenderWorkspace(null);
         fs.rmSync(tmp, { recursive: true, force: true });
@@ -359,7 +405,7 @@ test('auto-detection: path with spaces in plain text', () => {
     }
 });
 
-test('auto-detection: absolute path with spaces in plain text', () => {
+testAbsPathPosix('auto-detection: absolute path with spaces in plain text', () => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'mfl-'));
     try {
         const dir = path.join(tmp, 'Documents', 'Opendesk AI');
@@ -367,9 +413,11 @@ test('auto-detection: absolute path with spaces in plain text', () => {
         const filePath = path.join(dir, 'dev.pptx');
         fs.writeFileSync(filePath, 'dummy');
         const marked = setupMarked(tmp);
-        const html = marked.parse(`Check ${filePath} now.`) as string;
+        // FILE_PATH_RE 不支持反斜杠分隔符，文本中使用正斜杠形式
+        const textPath = filePath.replaceAll('\\', '/');
+        const html = marked.parse(`Check ${textPath} now.`) as string;
         assert.ok(html.includes('od-file-pill'), 'should detect absolute path with spaces');
-        assert.ok(html.includes(`data-open-preview="${filePath}"`));
+        assert.ok(html.includes(`data-open-preview="${textPath}"`));
     } finally {
         setRenderWorkspace(null);
         fs.rmSync(tmp, { recursive: true, force: true });
@@ -385,6 +433,40 @@ test('markdown link: URL-encoded href with spaces is decoded', () => {
         const html = marked.parse('[report](My%20Documents/report.pptx)') as string;
         assert.ok(html.includes('od-file-pill'), 'should decode %20 and match file');
         assert.ok(html.includes('data-open-preview'));
+    } finally {
+        setRenderWorkspace(null);
+        fs.rmSync(tmp, { recursive: true, force: true });
+    }
+});
+
+test('markdown link: #L anchor works with %20-encoded spaces', () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'mfl-'));
+    try {
+        fs.mkdirSync(path.join(tmp, 'My Documents'));
+        const filePath = path.join(tmp, 'My Documents', 'report.pptx');
+        fs.writeFileSync(filePath, 'dummy');
+        const marked = setupMarked(tmp);
+        const html = marked.parse('[report:3](My%20Documents/report.pptx#L3)') as string;
+        assert.ok(html.includes('od-file-pill'), 'anchor must be parsed after %20 decoding');
+        assert.ok(html.includes(`data-open-preview="${filePath}"`));
+        assert.ok(html.includes('data-preview-line="3"'));
+    } finally {
+        setRenderWorkspace(null);
+        fs.rmSync(tmp, { recursive: true, force: true });
+    }
+});
+
+test('markdown link: angle-bracket destination with spaces and #L anchor', () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'mfl-'));
+    try {
+        fs.mkdirSync(path.join(tmp, 'My Docs'));
+        const filePath = path.join(tmp, 'My Docs', 'report.pptx');
+        fs.writeFileSync(filePath, 'dummy');
+        const marked = setupMarked(tmp);
+        const html = marked.parse('[report:3](<My Docs/report.pptx#L3>)') as string;
+        assert.ok(html.includes('od-file-pill'), 'angle-bracket destination must support spaces');
+        assert.ok(html.includes(`data-open-preview="${filePath}"`));
+        assert.ok(html.includes('data-preview-line="3"'));
     } finally {
         setRenderWorkspace(null);
         fs.rmSync(tmp, { recursive: true, force: true });
@@ -514,6 +596,255 @@ test('codespan: absolute path with line number renders pill with data-preview-li
     }
 });
 
+// ── #L line anchor hrefs (markdown links) ────────────────────────────
+
+test('parseLineAnchor: parses single line anchor', () => {
+    assert.deepEqual(parseLineAnchor('src/utils.ts#L134'), {
+        filePath: 'src/utils.ts',
+        line: 134,
+        lineEnd: null
+    });
+});
+
+test('parseLineAnchor: parses line range anchor', () => {
+    assert.deepEqual(parseLineAnchor('src/utils.ts#L12-20'), {
+        filePath: 'src/utils.ts',
+        line: 12,
+        lineEnd: 20
+    });
+});
+
+test('parseLineAnchor: parses GitHub-style range anchor with second L', () => {
+    assert.deepEqual(parseLineAnchor('src/utils.ts#L12-L20'), {
+        filePath: 'src/utils.ts',
+        line: 12,
+        lineEnd: 20
+    });
+});
+
+test('parseLineAnchor: returns null without anchor', () => {
+    assert.equal(parseLineAnchor('src/utils.ts'), null);
+});
+
+test('parseLineAnchor: returns null for non-line anchor', () => {
+    assert.equal(parseLineAnchor('src/utils.ts#section'), null);
+});
+
+test('parseLineAnchor: returns null for zero line anchor', () => {
+    assert.equal(parseLineAnchor('src/utils.ts#L0'), null);
+});
+
+test('parseLineAnchor: drops reversed range', () => {
+    assert.deepEqual(parseLineAnchor('src/utils.ts#L20-L5'), {
+        filePath: 'src/utils.ts',
+        line: 20,
+        lineEnd: null
+    });
+});
+
+test('parseLineAnchor: collapses single-line range', () => {
+    assert.deepEqual(parseLineAnchor('src/utils.ts#L5-L5'), {
+        filePath: 'src/utils.ts',
+        line: 5,
+        lineEnd: null
+    });
+});
+
+test('markdown link: #L anchor renders pill with line badge and clean path', () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'mfl-'));
+    try {
+        fs.mkdirSync(path.join(tmp, 'src'));
+        const filePath = path.join(tmp, 'src', 'utils.ts');
+        fs.writeFileSync(filePath, 'export {};');
+        const marked = setupMarked(tmp);
+        const html = marked.parse('[utils.ts](src/utils.ts#L134)') as string;
+        assert.ok(html.includes('od-file-pill'));
+        assert.ok(html.includes(`data-open-preview="${filePath}"`), 'anchor must be stripped from the opened path');
+        assert.ok(html.includes('data-preview-line="134"'));
+        assert.ok(html.includes('od-file-pill-line">:134'));
+    } finally {
+        setRenderWorkspace(null);
+        fs.rmSync(tmp, { recursive: true, force: true });
+    }
+});
+
+test('markdown link: #L range anchor renders range badge', () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'mfl-'));
+    try {
+        fs.mkdirSync(path.join(tmp, 'src'));
+        fs.writeFileSync(path.join(tmp, 'src', 'utils.ts'), 'export {};');
+        const marked = setupMarked(tmp);
+        const html = marked.parse('[utils.ts](src/utils.ts#L12-20)') as string;
+        assert.ok(html.includes('od-file-pill'));
+        assert.ok(html.includes('data-preview-line="12"'));
+        assert.ok(html.includes('od-file-pill-line">:12-20'));
+    } finally {
+        setRenderWorkspace(null);
+        fs.rmSync(tmp, { recursive: true, force: true });
+    }
+});
+
+test('markdown link: ranged label with start-only anchor keeps full range', () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'mfl-'));
+    try {
+        fs.mkdirSync(path.join(tmp, 'src'));
+        fs.writeFileSync(path.join(tmp, 'src', 'utils.ts'), 'export {};');
+        const marked = setupMarked(tmp);
+        // ZCode 风格：文字带起止区间，锚点只带起始行；区间信息不能丢失，也不能重复展示
+        const html = marked.parse('[utils.ts:12-20](src/utils.ts#L12)') as string;
+        assert.ok(html.includes('data-preview-line="12"'));
+        assert.ok(html.includes('od-file-pill-line">:12-20'));
+        assert.ok(!html.includes(':12-20:12'), 'label range must not duplicate with href badge');
+    } finally {
+        setRenderWorkspace(null);
+        fs.rmSync(tmp, { recursive: true, force: true });
+    }
+});
+
+test('markdown link: reversed range in label falls back to single line badge', () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'mfl-'));
+    try {
+        fs.mkdirSync(path.join(tmp, 'src'));
+        fs.writeFileSync(path.join(tmp, 'src', 'utils.ts'), 'export {};');
+        const marked = setupMarked(tmp);
+        const html = marked.parse('[utils.ts:12-5](src/utils.ts#L12)') as string;
+        assert.ok(html.includes('data-preview-line="12"'));
+        assert.ok(html.includes('od-file-pill-line">:12</span>'), 'invalid range must collapse to single line');
+        assert.ok(!html.includes(':12-5'));
+    } finally {
+        setRenderWorkspace(null);
+        fs.rmSync(tmp, { recursive: true, force: true });
+    }
+});
+
+test('markdown link: legacy href line suffix is not duplicated in label', () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'mfl-'));
+    try {
+        fs.mkdirSync(path.join(tmp, 'src'));
+        fs.writeFileSync(path.join(tmp, 'src', 'utils.ts'), 'export {};');
+        const marked = setupMarked(tmp);
+        const html = marked.parse('[utils.ts:134](src/utils.ts:134)') as string;
+        assert.ok(html.includes('od-file-pill'));
+        assert.ok(html.includes('data-preview-line="134"'));
+        assert.ok(!html.includes(':134:134'));
+    } finally {
+        setRenderWorkspace(null);
+        fs.rmSync(tmp, { recursive: true, force: true });
+    }
+});
+
+test('markdown link: backslash absolute href with #L anchor renders pill', () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'mfl-'));
+    try {
+        const absPath = path.join(tmp, 'main.ts');
+        fs.writeFileSync(absPath, 'export {};');
+        const marked = setupMarked(tmp);
+        const html = marked.parse(`[main.ts](${absPath}#L3)`) as string;
+        assert.ok(html.includes('od-file-pill'));
+        assert.ok(html.includes(`data-open-preview="${absPath}"`));
+        assert.ok(html.includes('data-preview-line="3"'));
+    } finally {
+        setRenderWorkspace(null);
+        fs.rmSync(tmp, { recursive: true, force: true });
+    }
+});
+
+test('markdown link: URL href with #L anchor stays a normal link', () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'mfl-'));
+    try {
+        const marked = setupMarked(tmp);
+        const html = marked.parse('[example](https://example.com/file.ts#L2)') as string;
+        assert.ok(!html.includes('od-file-pill'));
+        assert.ok(html.includes('href="https://example.com/file.ts#L2"'));
+    } finally {
+        setRenderWorkspace(null);
+        fs.rmSync(tmp, { recursive: true, force: true });
+    }
+});
+
+test('auto-detection: ellipsis-abbreviated path stays plain text', () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'mfl-'));
+    try {
+        const marked = setupMarked(tmp);
+        const html = marked.parse('See src/…/utils.ts for details.') as string;
+        assert.ok(!html.includes('od-file-pill'), 'ellipsis-abbreviated path must not become a pill');
+    } finally {
+        setRenderWorkspace(null);
+        fs.rmSync(tmp, { recursive: true, force: true });
+    }
+});
+
+test('codespan: ellipsis-abbreviated path stays as code', () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'mfl-'));
+    try {
+        const marked = setupMarked(tmp);
+        const html = marked.parse('打开 `…\\agent.ts` 查看。') as string;
+        assert.ok(!html.includes('od-file-pill'), 'ellipsis-abbreviated path must not become a pill');
+        assert.ok(html.includes('<code>'));
+    } finally {
+        setRenderWorkspace(null);
+        fs.rmSync(tmp, { recursive: true, force: true });
+    }
+});
+
+test('markdown link: ellipsis href renders as normal link, not pill', () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'mfl-'));
+    try {
+        const marked = setupMarked(tmp);
+        const html = marked.parse('[agent.ts](src/…/agent.ts)') as string;
+        assert.ok(!html.includes('od-file-pill'), 'ellipsis href must not become a pill');
+        // marked 默认渲染器会对 href 做 percent-encode（… → %E2%80%A6）
+        assert.ok(html.includes('<a href="src/%E2%80%A6/agent.ts"'));
+    } finally {
+        setRenderWorkspace(null);
+        fs.rmSync(tmp, { recursive: true, force: true });
+    }
+});
+
+// ── POSIX-style drive-root paths (/C:/...) ───────────────────────────
+
+test('resolveFilePath: normalizes POSIX-style drive-root path (/C:/...)', () => {
+    setRenderWorkspace(null);
+    assert.equal(
+        resolveFilePath('/C:/Projects/OpenDesk-ohos/ohos_hap/build_hap.py'),
+        'C:/Projects/OpenDesk-ohos/ohos_hap/build_hap.py'
+    );
+});
+
+test('resolveFilePath: normalizes lowercase drive-root path and backslash form', () => {
+    setRenderWorkspace(null);
+    assert.equal(resolveFilePath('/c:/Users/me/file.ts'), 'c:/Users/me/file.ts');
+    assert.equal(resolveFilePath('/C:\\Users\\me\\file.ts'), 'C:\\Users\\me\\file.ts');
+});
+
+test('resolveFilePath: POSIX absolute paths are not affected', () => {
+    setRenderWorkspace(null);
+    assert.equal(resolveFilePath('/home/user/file.ts'), '/home/user/file.ts');
+    // 盘符必须为单字母，多段名（如 /cc:/）不是盘符根路径
+    assert.equal(resolveFilePath('/cc:/file.ts'), '/cc:/file.ts');
+});
+
+test('markdown link: POSIX-style drive-root href with #L anchor renders normalized pill', () => {
+    const marked = setupMarked('C:/Projects/OpenDesk-ohos/ohos_hap');
+    const html = marked.parse(
+        '[build_hap.py:1938-1954](/C:/Projects/OpenDesk-ohos/ohos_hap/build_hap.py#L1938-L1954)'
+    ) as string;
+    assert.ok(html.includes('od-file-pill'), 'drive-root href should render as pill');
+    assert.ok(
+        html.includes('data-open-preview="C:/Projects/OpenDesk-ohos/ohos_hap/build_hap.py"'),
+        'leading slash before the drive letter must be stripped'
+    );
+    assert.ok(html.includes('data-preview-line="1938"'));
+    assert.ok(html.includes('od-file-pill-line">:1938-1954'));
+});
+
+test('renderFilePillFromText: POSIX-style drive-root path renders normalized pill', () => {
+    setRenderWorkspace(null);
+    const html = renderFilePillFromText('/C:/Projects/OpenDesk-ohos/ohos_hap/build_hap.py');
+    assert.ok(html);
+    assert.ok(html.includes('data-open-preview="C:/Projects/OpenDesk-ohos/ohos_hap/build_hap.py"'));
+});
+
 // ── renderFilePillFromText ───────────────────────────────────────────
 
 test('renderFilePillFromText: single file path with line renders pill with line badge', () => {
@@ -542,6 +873,19 @@ test('renderFilePillFromText: single file path without line renders pill without
         assert.ok(html);
         assert.ok(html.includes('od-file-pill'));
         assert.ok(!html.includes('od-file-pill-line'));
+    } finally {
+        setRenderWorkspace(null);
+        fs.rmSync(tmp, { recursive: true, force: true });
+    }
+});
+
+test('renderFilePillFromText: ellipsis-abbreviated path returns null', () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'mfl-'));
+    try {
+        fs.writeFileSync(path.join(tmp, 'main.ts'), 'export {};');
+        setRenderWorkspace(tmp);
+        assert.equal(renderFilePillFromText('…\\agent.ts'), null);
+        assert.equal(renderFilePillFromText('src/…/utils.ts'), null);
     } finally {
         setRenderWorkspace(null);
         fs.rmSync(tmp, { recursive: true, force: true });

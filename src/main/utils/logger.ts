@@ -22,6 +22,11 @@ let debugMode: boolean = false;
 
 export function setDebugMode(_debugMode: boolean) {
     debugMode = _debugMode;
+    // winston 级别跟随 debugMode：logger.debug 的日志仅在调试模式开启时落盘，
+    // 默认 info 级别下被过滤，避免诊断类 debug 日志刷屏
+    if (loggerInstance) {
+        loggerInstance.level = _debugMode ? 'debug' : 'info';
+    }
 }
 
 export function getDebugMode() {

@@ -6,15 +6,9 @@
 import { definePlugin } from '@bitclub.ai/opendesk-plugin-sdk';
 import { WechatChannel } from './wechat.mjs';
 
+// 展示名称等静态元数据统一声明在 opendesk.plugin.json，入口只保留运行时字段。
 export default definePlugin({
     id: 'weixin',
-    displayName: { en: 'WeChat', zh: '微信' },
-    description: {
-        en: 'WeChat channel (getUpdates long-poll + sendMessage)',
-        zh: '微信消息渠道（getUpdates 长轮询 + sendMessage）'
-    },
-    apiVersion: 1,
-    capabilities: ['channel'],
     setup(ctx) {
         const channel = new WechatChannel();
         ctx.channels.register(channel);

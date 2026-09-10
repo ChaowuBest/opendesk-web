@@ -14,10 +14,9 @@
  * 每个命令有 name、description、icon，与技能一起出现在 AgentInput 的 / 触发菜单中。
  */
 
-import { showConfirmModal } from './confirmModal.js';
+import { showConfirmModal, showInfoModal, escapeModalText } from './confirmModal.js';
 import { showCommandResultDialog } from './commandResultDialog.js';
 import { createRendererTranslator } from '../locale.ts';
-import { escapeHtml } from '../../common/utils/escape.js';
 import {
     decideGoalObjectiveAction,
     goalResultToMessageKey,
@@ -85,24 +84,29 @@ if (typeof window !== 'undefined') {
     settingAPI?.onSettingChanged?.(updateTranslator);
 }
 
-function showGoalInfo(message: string): void {
-    if (typeof window !== 'undefined' && typeof window.alert === 'function') {
-        window.alert(message);
-    }
+// goal 提示统一走页内模态弹窗并 await：原生 window.alert 关闭后会使窗口失去
+// 焦点（issue #265），且只有 await 到弹窗关闭后命令才结束，agentinput 才能在
+// 正确的时机把焦点还给输入框。
+async function showGoalInfo(message: string): Promise<void> {
+    await showInfoModal({
+        title: t('goal.renderer.title'),
+        message: escapeModalText(message),
+        confirmText: t('common.confirm')
+    });
 }
 
-function showGoalHelp(): void {
-    showGoalInfo(t('goal.help'));
+async function showGoalHelp(): Promise<void> {
+    await showGoalInfo(t('goal.help'));
 }
 
-function showGoalResult(result: GoalCommandResultLike | undefined): void {
+async function showGoalResult(result: GoalCommandResultLike | undefined): Promise<void> {
     const message = goalResultToMessageKey(result);
     if (!message) return;
     if (message.messageKey === 'goal.help') {
-        showGoalHelp();
+        await showGoalHelp();
         return;
     }
-    showGoalInfo(t(message.messageKey, message.messageArgs as Record<string, string | number> | undefined));
+    await showGoalInfo(t(message.messageKey, message.messageArgs as Record<string, string | number> | undefined));
 }
 
 function dispatchPendingGoalEvent(
@@ -197,21 +201,21 @@ async function executeGoalSubcommand(
 ): Promise<void> {
     const validation = validateGoalSubcommandArgs(subcommand, rest);
     if (!validation.ok) {
-        showGoalResult({ ok: false, messageKey: validation.messageKey });
+        await showGoalResult({ ok: false, messageKey: validation.messageKey });
         return;
     }
 
     if (subcommand === 'pause') {
-        showGoalResult(await ctx.taskManagerAPI?.pauseGoal?.(taskId));
+        await showGoalResult(await ctx.taskManagerAPI?.pauseGoal?.(taskId));
         return;
     }
     if (subcommand === 'resume') {
-        showGoalResult(await ctx.taskManagerAPI?.resumeGoal?.(taskId));
+        await showGoalResult(await ctx.taskManagerAPI?.resumeGoal?.(taskId));
         return;
     }
     if (subcommand === 'clear') {
         const result = await ctx.taskManagerAPI?.clearGoal?.(taskId);
-        showGoalResult(result);
+        await showGoalResult(result);
         if (result?.ok !== false && result?.clearedActiveGoal === true) {
             ctx.clearMessageQueue?.();
         }
@@ -219,12 +223,12 @@ async function executeGoalSubcommand(
 }
 
 async function confirmGoalEdit(currentObjective: string, nextObjective: string): Promise<boolean> {
-    const message = escapeHtml(
+    const message = escapeModalText(
         t('goal.edit.message', {
             objective: currentObjective,
             nextObjective
         })
-    ).replace(/\n/g, '<br>');
+    );
     return showConfirmModal({
         icon: 'fa-bullseye',
         iconBg: '#FFF7ED',
@@ -240,13 +244,13 @@ async function executeGoalCommand(ctx: SlashCommandContext, args: string): Promi
     const command = parseGoalCommandArgs(args);
 
     if (command.kind === 'help') {
-        showGoalHelp();
+        await showGoalHelp();
         return SLASH_CLEAR_INPUT;
     }
 
     if (command.kind === 'subcommand') {
         if (!ctx.currentTaskId) {
-            showGoalInfo(t('goal.error.no_task'));
+            await showGoalInfo(t('goal.error.no_task'));
             return SLASH_CLEAR_INPUT;
         }
         await executeGoalSubcommand(command.subcommand, command.rest, ctx, ctx.currentTaskId);
@@ -256,7 +260,7 @@ async function executeGoalCommand(ctx: SlashCommandContext, args: string): Promi
     try {
         const { taskId, createdTask } = await ensureGoalTask(ctx);
         if (!taskId) {
-            showGoalInfo(t('goal.error.no_task'));
+            await showGoalInfo(t('goal.error.no_task'));
             return SLASH_PRESERVE_INPUT;
         }
 
@@ -274,7 +278,7 @@ async function executeGoalCommand(ctx: SlashCommandContext, args: string): Promi
             const result = await ctx.taskManagerAPI?.editGoal?.(taskId, command.objective, {
                 ifMatch: action.ifMatch
             });
-            showGoalResult(result);
+            await showGoalResult(result);
             if (!result || result.ok === false) {
                 return SLASH_PRESERVE_INPUT;
             }
@@ -302,7 +306,7 @@ async function executeGoalCommand(ctx: SlashCommandContext, args: string): Promi
 
         const runningAtInvocation = await isTaskRunningAtInvocation(ctx, taskId);
         const result = await ctx.taskManagerAPI?.createGoal?.(taskId, command.objective, undefined);
-        showGoalResult(result);
+        await showGoalResult(result);
         if (!result || result.ok === false) {
             return SLASH_PRESERVE_INPUT;
         }
@@ -331,7 +335,7 @@ async function executeGoalCommand(ctx: SlashCommandContext, args: string): Promi
         }
         return SLASH_CLEAR_INPUT;
     } catch (error: any) {
-        showGoalInfo(t('goal.renderer.action_failed', { message: error?.message || String(error) }));
+        await showGoalInfo(t('goal.renderer.action_failed', { message: error?.message || String(error) }));
         return SLASH_PRESERVE_INPUT;
     }
 }

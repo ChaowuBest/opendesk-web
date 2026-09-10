@@ -14,9 +14,14 @@ import {
 } from '../../../../../packages/plugin-sdk/src/package.js';
 import { getOpendeskDirectory } from '../../../utils/setting.js';
 import { logger } from '../../../utils/logger.js';
+import { getPlatform } from '../../../../platforms/base.js';
+import type { PluginPlatform } from '../../../../../packages/plugin-sdk/src/index.js';
 import { discoverPlugins, verifyPluginRecord, type PluginVerification } from '../discovery/discovery.js';
+import { resolvePluginEntry } from '../discovery/loader.js';
+import { readPluginManifest } from '../discovery/manifest.js';
 import { computePluginIntegrity } from '../discovery/integrity.js';
 import { defaultNpmRunner, installPluginDependencies } from './dependencies.js';
+import { getPluginManagerConfig, getRuntimePluginDirectories } from './config.js';
 import {
     ensurePluginDirectories,
     getBuiltinPluginsDirectory,
@@ -122,7 +127,7 @@ async function downloadPluginArchive(
     spec: string,
     destination: string,
     format: PluginArchiveFormat,
-    fetchArchive: typeof globalThis.fetch
+    fetchArchive: (input: string) => Promise<Response>
 ): Promise<string> {
     const response = await fetchArchive(spec);
     if (!response.ok) throw new Error(`plugin.install_archive_download_failed:${response.status}`);
@@ -230,7 +235,7 @@ export async function installPlugin(spec: string, options: PluginInstallOptions 
                           spec,
                           temporarySourceDirectory,
                           archiveFormat,
-                          options.fetch ?? globalThis.fetch
+                          options.fetch ?? ((input) => getPlatform().fetch(input))
                       );
                 extractedDirectory = await extractPluginArchive(archivePath, extractionDirectory, archiveFormat);
                 stage = 'validate';
@@ -355,6 +360,76 @@ export async function uninstallPlugin(
 
 export function listInstalledPlugins(configDirectory?: string): PluginRegistryRecord[] {
     return listPluginRecords(configDirectory);
+}
+
+/**
+ * 对外展示口径的插件列表：registry 记录与 discovery 候选合并，与 GUI 插件
+ * 管理页（PluginMgrApplication.list）保持一致，内置、本地散装与外部路径
+ * 插件均可见。平台不匹配的插件（如鸿蒙专属插件）不出现在列表中。
+ */
+export function listVisiblePlugins(
+    options: {
+        configDirectory?: string;
+        externalPaths?: readonly string[];
+        pluginDirectories?: readonly string[];
+    } = {}
+): PluginRegistryRecord[] {
+    const resolvedConfigDirectory = options.configDirectory ?? getOpendeskDirectory();
+    const records = listPluginRecords(resolvedConfigDirectory);
+    const discovery = discoverPlugins({
+        configDirectory: resolvedConfigDirectory,
+        // 未显式传入时与 GUI 口径对齐：读取 settings.json 的 externalPaths 与
+        // 运行时注册的插件目录（CLI --plugins-directory 等）。
+        externalPaths: options.externalPaths ?? getPluginManagerConfig().externalPaths,
+        pluginDirectories: options.pluginDirectories ?? getRuntimePluginDirectories()
+    });
+    const candidatesById = new Map(discovery.candidates.map((candidate) => [candidate.id, candidate]));
+    const merged = new Map(records.map((record) => [record.id, record]));
+    for (const candidate of discovery.candidates) {
+        if (merged.has(candidate.id)) continue;
+        merged.set(candidate.id, {
+            id: candidate.id,
+            source: candidate.source,
+            path: candidate.spec,
+            enabled: true,
+            options: candidate.options ?? {},
+            grantedCapabilities: candidate.grantedCapabilities
+        });
+    }
+    // 展示路径与 GUI 列表对齐（candidate?.spec ?? record?.path）：registry 记录
+    // （启停/安装策略会写相对路径）优先采用 discovery 的绝对 spec，未被
+    // discovery 覆盖的记录（如被禁用插件）按来源解析为绝对路径。
+    const platformFiltered: PluginRegistryRecord[] = [];
+    for (const [id, record] of merged) {
+        const candidate = candidatesById.get(id);
+        const displayRecord = candidate
+            ? { ...record, path: candidate.spec }
+            : {
+                  ...record,
+                  path: path.isAbsolute(record.path)
+                      ? record.path
+                      : path.resolve(
+                            record.source === 'builtin'
+                                ? getBuiltinPluginsDirectory()
+                                : getPluginsDirectory(resolvedConfigDirectory),
+                            record.path
+                        )
+              };
+        // 平台过滤与 GUI 列表对齐：对所有条目生效（含 registry 记录），
+        // 清单缺失或损坏时保持展示。
+        try {
+            const spec = candidate?.spec ?? displayRecord.path;
+            const resolved = resolvePluginEntry(spec, resolvedConfigDirectory);
+            const manifest = readPluginManifest(resolved.entry, resolved.rootDir);
+            if (manifest?.platforms?.length && !manifest.platforms.includes(process.platform as PluginPlatform)) {
+                continue;
+            }
+        } catch {
+            // keep displaying
+        }
+        platformFiltered.push(displayRecord);
+    }
+    return platformFiltered.sort((a, b) => a.id.localeCompare(b.id));
 }
 
 export function setPluginEnabled(

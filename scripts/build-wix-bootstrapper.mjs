@@ -28,11 +28,42 @@ const outputDir = path.resolve(
     process.env.OPENDESK_SETUP_OUT_DIR || path.join(projectRoot, 'out', 'make', 'wix', 'x64')
 );
 const bundleVersion = packageJson.version.split('.').concat(['0', '0', '0']).slice(0, 4).join('.');
+const stagedAppDirectory = path.resolve(
+    process.env.OPENDESK_STAGED_APP_DIR || path.join(projectRoot, 'out', 'opendesk-win32-x64')
+);
+// MSI 解压后的安装内容总字节数 = staged 应用目录体积。MSI 的 costing 只在 InstallValidate
+// 阶段校验用户所选目标盘，此值注入 bundle 后由 BA 在开始安装前对目标盘做空间预检查
+// （issue #288：C 盘不足时即使换 D 盘也会中途失败）。
+// 在文件体积之上预留安全余量：MSI 事务回滚区、注册表/快捷图标、以及旧版本目录尚未
+// 清理的升级场景（app-<old> 与 app-<new> 短暂共存）都需要额外空间。
+const REQUIRED_SPACE_SAFETY_MARGIN = 1.5;
+if (!fs.existsSync(stagedAppDirectory)) {
+    throw new Error(
+        `Staged app directory not found: ${stagedAppDirectory}\n` +
+            'Run "electron-forge make --platform=win32" first (or set OPENDESK_STAGED_APP_DIR).'
+    );
+}
+function measureStagedAppSize(directory) {
+    let total = 0;
+    const entries = fs.readdirSync(directory, { withFileTypes: true });
+    for (const entry of entries) {
+        const entryPath = path.join(directory, entry.name);
+        if (entry.isDirectory()) {
+            total += measureStagedAppSize(entryPath);
+        } else if (entry.isFile()) {
+            total += fs.statSync(entryPath).size;
+        }
+    }
+    return total;
+}
+const requiredInstallSize = Math.ceil(measureStagedAppSize(stagedAppDirectory) * REQUIRED_SPACE_SAFETY_MARGIN);
 const sourcePath = path.join(resourcesDir, 'bundle.wxs');
 const objectPath = path.join(outputDir, 'opendesk-bootstrapper.wixobj');
 const setupPath = path.join(outputDir, `OpenDesk-${packageJson.version}-Setup.exe`);
 const bootstrapperSourcePath = path.join(resourcesDir, 'OpenDeskBootstrapper.cs');
 const bootstrapperAssemblyPath = path.join(outputDir, 'OpenDesk.Bootstrapper.dll');
+const cleanupSourcePath = path.join(resourcesDir, 'CleanupRelatedBundles.cs');
+const cleanupExePath = path.join(outputDir, 'CleanupRelatedBundles.exe');
 
 function run(executable, args) {
     const result = spawnSync(executable, args, {
@@ -78,6 +109,16 @@ run(csharpCompiler, [
     bootstrapperSourcePath
 ]);
 
+run(csharpCompiler, [
+    '/nologo',
+    '/target:winexe',
+    '/optimize+',
+    '/platform:x64',
+    `/out:${cleanupExePath}`,
+    '/reference:System.dll',
+    cleanupSourcePath
+]);
+
 run(path.join(wixBinDir, 'candle.exe'), [
     '-nologo',
     '-arch',
@@ -87,10 +128,12 @@ run(path.join(wixBinDir, 'candle.exe'), [
     '-ext',
     'WixUtilExtension',
     `-dBundleVersion=${bundleVersion}`,
+    `-dRequiredInstallSize=${requiredInstallSize}`,
     `-dMsiPath=${msiPath}`,
     `-dIconPath=${path.join(projectRoot, 'resources', 'package', 'icons', 'icon_round.ico')}`,
     `-dBootstrapperApplicationPath=${bootstrapperAssemblyPath}`,
     `-dBootstrapperConfigPath=${path.join(resourcesDir, 'BootstrapperCore.config')}`,
+    `-dCleanupExePath=${cleanupExePath}`,
     `-dLocalizationPath=${path.join(resourcesDir, 'zh-cn.wxl')}`,
     `-dBackgroundPath=${path.join(resourcesDir, 'background.png')}`,
     '-out',

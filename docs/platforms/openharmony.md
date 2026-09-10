@@ -1,4 +1,4 @@
-# FillipDesk 鸿蒙化适配说明
+# OpenDesk 鸿蒙化适配说明
 
 ### 环境要求
 
@@ -9,17 +9,17 @@
 
 ## 1. 工程包下载
 
-#### 下载FillipDesk鸿蒙化工程包 (_ohos_fillipdesk.tar.gz_)
+#### 下载OpenDesk鸿蒙化工程包 (_ohos_opendesk.tar.gz_)
 
-- Windows环境下载[ohos_fillipdesk.tar.gz](http://113.44.212.85:5005/downloads/ohos_fillipdesk.tar.gz)
+- Windows环境下载[ohos_opendesk.tar.gz](http://113.44.212.85:5005/downloads/ohos_opendesk.tar.gz)
 
-## 2. 解压缩、替换FillipDesk代码
+## 2. 解压缩、替换OpenDesk代码
 
-ohos_fillipdesk.tar.gz解压后，将FillipDesk最新代码覆盖到`ohos_hap/web_engine/src/main/resources/resfile/resources/app`目录。
+ohos_opendesk.tar.gz解压后，将OpenDesk最新代码覆盖到`ohos_hap/web_engine/src/main/resources/resfile/resources/app`目录。
 
 ## 3. Electron依赖安装
 
-参考[devguide.md](../devguide.md)开发说明，在app/开发目录安装Electron等依赖。也可以直接拷贝FillipDesk应用代码和编译后的产物（node_modules）放入app/目录。
+参考[devguide.md](../devguide.md)开发说明，在app/开发目录安装Electron等依赖。也可以直接拷贝OpenDesk应用代码和编译后的产物（node_modules）放入app/目录。
 
 <span style="color: red; font-weight: bold;">当前版本node-screenshots库的鸿蒙兼容性存在问题，需要临时hack recall模块：</span>
 
@@ -50,7 +50,7 @@ hap路径参考`ohos_hap/electron/build/default/outputs/default/electron-default
 
 - demo hap包下载[electron-default-signed.hap](http://113.44.212.85:5005/downloads/electron-default-signed.hap)
 
-- 鸿蒙系统FillipDesk应用
+- 鸿蒙系统OpenDesk应用
   ![alt text](../images/oh-homepage.jpg)
 
 ## 6. 后续规划

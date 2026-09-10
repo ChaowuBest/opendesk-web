@@ -661,9 +661,9 @@ export class SkillRegistry {
         const { name, description, body, frontmatter } = parsed;
 
         const paramsSchema: any = { type: 'object', properties: {}, required: [] };
-        const handler = (frontmatter as any).fillipdesk?.handler ?? (frontmatter as any).handler;
-        if (handler && ((frontmatter as any).fillipdesk?.input_schema || (frontmatter as any).input_schema)) {
-            const schema = (frontmatter as any).fillipdesk?.input_schema ?? (frontmatter as any).input_schema;
+        const handler = (frontmatter as any).opendesk?.handler ?? (frontmatter as any).handler;
+        if (handler && ((frontmatter as any).opendesk?.input_schema || (frontmatter as any).input_schema)) {
+            const schema = (frontmatter as any).opendesk?.input_schema ?? (frontmatter as any).input_schema;
             if (schema && typeof schema === 'object' && schema.properties) {
                 paramsSchema.properties = { ...schema.properties };
                 paramsSchema.required = Array.isArray(schema.required) ? schema.required : [];

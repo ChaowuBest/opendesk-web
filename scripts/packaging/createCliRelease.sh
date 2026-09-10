@@ -176,6 +176,29 @@ mkdir -p "$RELEASE_DIR"
 echo "Copying built CLI files..."
 cp dist/cli/opendesk "$RELEASE_DIR/opendesk"
 
+# Builtin plugins are required at runtime: the CLI locates them by walking up
+# from the bundle to the package root and reading dist/plugins (see
+# getBuiltinPluginsDirectory). Without them, a freshly installed CLI package
+# ships no default plugins even though the GUI build bundles them.
+echo "Copying builtin plugins..."
+mkdir -p "$RELEASE_DIR/dist"
+cp -R dist/plugins "$RELEASE_DIR/dist/plugins"
+
+# Bundle-mode builtin plugins (feishu/weixin) keep `@bitclub.ai/opendesk-plugin-sdk`
+# as an external import, so a resolvable SDK copy must ship inside the package.
+# Mirroring the Electron build (forge materializes the workspace link into
+# node_modules), we place the built SDK under dist/node_modules/... : npm pack
+# only strips the package-root node_modules, and this location sits on the
+# node resolution path of both the plugin entries and the host bundle, so no
+# registry dependency on the SDK is needed (installing must not require the
+# SDK to be published first).
+echo "Inlining plugin SDK..."
+SDK_TARGET="$RELEASE_DIR/dist/node_modules/@bitclub.ai/opendesk-plugin-sdk"
+mkdir -p "$SDK_TARGET"
+cp -R packages/plugin-sdk/dist "$SDK_TARGET/dist"
+cp packages/plugin-sdk/package.json "$SDK_TARGET/package.json"
+cp packages/plugin-sdk/README.md "$SDK_TARGET/README.md"
+
 echo "Creating preinstall script for Windows shebang patching..."
 # 构建产物使用 #!/bin/sh polyglot 以兼容鸿蒙 HiShell（env 在 /bin/env 而非 /usr/bin/env），
 # npm 在 Windows 上创建 bin link 前会先运行 preinstall，此时将 shebang 改为 #!/usr/bin/env node，
@@ -224,7 +247,8 @@ cat > "$RELEASE_DIR/package.json" << EOF
     "number-to-alphabet": "^1.0.0",
     "vectra": "^0.11.1",
     "esbuild": "^0.27.3",
-    "unpdf": "^1.4.0"
+    "unpdf": "^1.4.0",
+    "zod": "^4.2.1"
   }
 }
 EOF
@@ -321,7 +345,8 @@ echo "    npm install -g ./$RELEASE_DIR        # Install globally from local dir
 echo "  cd $PLUGIN_RELEASE_DIR && npm install"
 echo "    npm install -g ./$PLUGIN_RELEASE_DIR # Install plugin SDK globally"
 echo ""
-echo "To publish manually, publish the CLI first and then the plugin SDK:"
+echo "To publish manually (the two packages are independent; the CLI bundles"
+echo "the plugin SDK itself and does not depend on the registry copy):"
 echo "  (cd $RELEASE_DIR && npm publish --access public --tag $NPM_TAG)"
 echo "  (cd $PLUGIN_RELEASE_DIR && npm publish --access public --tag $NPM_TAG)"
 echo ""

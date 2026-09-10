@@ -9,7 +9,7 @@
  * See the Mulan PSL v2 for more details.
  */
 
-import { ipcMain } from 'electron';
+import { ipcMain, session } from 'electron';
 import type { BrowserWindow, WebPreferences, WebContents } from 'electron';
 import path from 'node:path';
 import { randomUUID } from 'node:crypto';
@@ -19,6 +19,7 @@ import { createTrustedRendererUrlMatcher } from '@bitclub.ai/opendesk-office/hos
 import { OfficeTaskSessionRegistry, type OfficeTaskSessionKind } from './officeTaskSessions.js';
 import { t } from '../../locale/index.js';
 import { safeSendToWebContents } from '../utils/electron-ipc.js';
+import { isOpenDeskOfficePartition, OPENDESK_OFFICE_PARTITION } from '../../common/officeWebview.js';
 
 export type OpenDeskOfficeEditorKind = OfficeTaskSessionKind;
 
@@ -183,6 +184,23 @@ export function getOpenDeskOfficeEditorKind(url: string): OpenDeskOfficeEditorKi
     return editorRuntimes.find(({ isTrustedUrl }) => isTrustedUrl(url))?.kind;
 }
 
+export function getEmbeddedOpenDeskOfficeEditorKind(
+    url: string,
+    partition: string | undefined
+): OpenDeskOfficeEditorKind | undefined {
+    if (!isOpenDeskOfficePartition(partition)) return undefined;
+    return getOpenDeskOfficeEditorKind(url);
+}
+
+export function isEmbeddedOpenDeskOfficeContents(contents: WebContents): boolean {
+    return contents.session === session.fromPartition(OPENDESK_OFFICE_PARTITION);
+}
+
+export function getEmbeddedOpenDeskOfficeContentsKind(contents: WebContents): OpenDeskOfficeEditorKind | undefined {
+    if (!isEmbeddedOpenDeskOfficeContents(contents)) return undefined;
+    return getOpenDeskOfficeEditorKind(contents.getURL());
+}
+
 export function configureOpenDeskOfficeWebPreferences(
     kind: OpenDeskOfficeEditorKind,
     webPreferences: WebPreferences
@@ -193,6 +211,7 @@ export function configureOpenDeskOfficeWebPreferences(
     webPreferences.nodeIntegration = false;
     webPreferences.sandbox = true;
     webPreferences.backgroundThrottling = false;
+    webPreferences.session = session.fromPartition(OPENDESK_OFFICE_PARTITION);
 }
 
 export function registerEmbeddedOpenDeskOffice(): void {
@@ -204,18 +223,13 @@ export function registerEmbeddedOpenDeskOffice(): void {
     });
     ipcMain.handle(
         'office-host:bind-task',
-        async (
-            event,
-            kind: OpenDeskOfficeEditorKind,
-            taskId: string,
-            filePath: string,
-            webContentsId: number
-        ) => {
+        async (event, kind: OpenDeskOfficeEditorKind, taskId: string, filePath: string, webContentsId: number) => {
             if (!taskId || !filePath || !Number.isInteger(webContentsId)) return false;
             const target = (await import('electron')).webContents.fromId(webContentsId);
             if (!target || target.isDestroyed() || target.getType() !== 'webview') return false;
             if (target.hostWebContents?.id !== event.sender.id) return false;
             const runtime = getEditorRuntime(kind);
+            if (!isEmbeddedOpenDeskOfficeContents(target)) return false;
             if (!runtime.isTrustedUrl(target.getURL())) return false;
             const host = await loadEditorHost(runtime);
             host.activateContents(target);
@@ -268,10 +282,7 @@ export async function openOpenDeskOfficeTaskFile(
     }
     const requestId = randomUUID();
     const waitController = new AbortController();
-    const waitSignal = AbortSignal.any([
-        waitController.signal,
-        AbortSignal.timeout(OPEN_OFFICE_TASK_TIMEOUT_MS)
-    ]);
+    const waitSignal = AbortSignal.any([waitController.signal, AbortSignal.timeout(OPEN_OFFICE_TASK_TIMEOUT_MS)]);
     const rendererResult = new Promise<OfficeTaskFileRendererResult>((resolve) => {
         pendingOfficeTaskFileResults.set(requestId, resolve);
     });

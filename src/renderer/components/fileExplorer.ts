@@ -22,7 +22,7 @@
  *   - 点击文件弹出文本预览（>50 KB / 二进制 → 拒绝提示）
  */
 
-import { showConfirmModal } from './confirmModal';
+import { showConfirmModal, showInfoModal, escapeModalText } from './confirmModal';
 import { showImageLightbox } from './imageLightbox.js';
 import { createRendererTranslator } from '../locale';
 import { marked } from 'marked';
@@ -38,6 +38,7 @@ import {
 import type { WorkspaceFocusLayoutState } from './workspaceFocusLayout.js';
 import type { AgentInputRequest } from '../input/agentInputRequest.js';
 import { createSlidesSelectionInputRequest } from '../applications/office/slidesSelectionInput.js';
+import { OPENDESK_OFFICE_PARTITION } from '../../common/officeWebview.js';
 
 const t = createRendererTranslator();
 
@@ -1359,12 +1360,7 @@ export class FileExplorer {
      */
     selectFile(filePath: string, line?: number, onSwitchBlocked?: () => void): void {
         if (this._selectedFile === filePath && isOfficeDocument(filePath)) return;
-        if (
-            this._deferUntilOfficeCanClose(
-                () => this.selectFile(filePath, line, onSwitchBlocked),
-                onSwitchBlocked
-            )
-        ) {
+        if (this._deferUntilOfficeCanClose(() => this.selectFile(filePath, line, onSwitchBlocked), onSwitchBlocked)) {
             return;
         }
 
@@ -1688,7 +1684,11 @@ export class FileExplorer {
             this.softRefresh();
         } catch (err) {
             const msg = err instanceof Error ? err.message : String(err);
-            window.alert(t('renderer.fileExplorer.delete.failed', { msg }));
+            await showInfoModal({
+                title: t('renderer.fileExplorer.delete.title', { type: typeLabel }),
+                message: escapeModalText(t('renderer.fileExplorer.delete.failed', { msg })),
+                confirmText: t('common.confirm')
+            });
         }
     }
 
@@ -2655,6 +2655,7 @@ export class FileExplorer {
         const editorUrl = `./${editorConfig.rendererPage}?${editorParams.toString()}`;
         const webview = document.createElement('webview');
         webview.className = 'ws-office-editor-frame ws-office-editor-frame--loading';
+        webview.setAttribute('partition', OPENDESK_OFFICE_PARTITION);
         webview.setAttribute('src', editorUrl);
         webview.setAttribute('title', t(editorConfig.titleKey));
         let editorReadyHandled = false;
@@ -2683,12 +2684,7 @@ export class FileExplorer {
                     webview as HTMLElement & { getWebContentsId?: () => number }
                 ).getWebContentsId?.();
                 if (webContentsId) {
-                    void window.officeHostAPI.bindOfficeTask(
-                        editorConfig.kind,
-                        this._taskId,
-                        filePath,
-                        webContentsId
-                    );
+                    void window.officeHostAPI.bindOfficeTask(editorConfig.kind, this._taskId, filePath, webContentsId);
                 }
             }
         };
@@ -3092,8 +3088,7 @@ export class FileExplorer {
             const d = this._previewState.data;
             const editorConfig = getOfficeEditorConfig(this._selectedFile);
             if (editorConfig) {
-                const editorUrl = `./${editorConfig.rendererPage}?mode=tab&file=${encodeURIComponent(this._selectedFile)}`;
-                bodyHtml = `<div class="ws-office-editor-host"><webview class="ws-office-editor-frame" src="${escapeHtml(editorUrl)}" title="${escapeHtml(t(editorConfig.titleKey))}"></webview></div>`;
+                bodyHtml = '<div class="ws-office-editor-host"></div>';
             } else if (d.tooLarge) {
                 bodyHtml = `
                 <div class="ws-preview-body ws-preview-info">

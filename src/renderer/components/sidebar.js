@@ -25,6 +25,7 @@ import {
     normalizeWorkspace
 } from '../sidebarTaskGroups.js';
 import { captureSidebarScrollState, restoreSidebarScrollState } from '../sidebarScrollState.js';
+import { TaskListRefreshScheduler } from './taskListRefreshScheduler.js';
 
 const TASK_PAGE_SIZE = 30;
 const TASK_VIEW_STORAGE_KEY = 'opendesk-sidebar-task-view';
@@ -331,21 +332,16 @@ class SideBar extends HTMLElement {
     }
 
     setUpEventListeners() {
-        let pendingRafId;
+        // 刷新调度（RAF 防抖 + setTimeout 兜底 + 隐藏期待刷新标记）抽到独立模块，便于单测
+        this._refreshScheduler = new TaskListRefreshScheduler({
+            refresh: () => this.reloadTaskList(),
+            isWindowVisible: () => Boolean(window.__isWindowVisible),
+            log: (level, message) => window.taskManagerAPI?.log?.(level, message)
+        });
         window.taskManagerAPI
             .subscribeTaskListUpdate((taskList) => {
                 this.taskList = taskList;
-                // 窗口隐藏时跳过渲染以省电，等窗口恢复时由 visibility 事件触发刷新
-                if (!window.__isWindowVisible) {
-                    this._needsTaskListRefresh = true;
-                    return;
-                }
-                if (pendingRafId === undefined) {
-                    pendingRafId = requestAnimationFrame(() => {
-                        pendingRafId = undefined;
-                        this.reloadTaskList();
-                    });
-                }
+                this._refreshScheduler.schedule();
                 document.dispatchEvent(new CustomEvent('task-list-updated', { detail: taskList }));
             })
             .then((unsubscribe) => {
@@ -357,8 +353,7 @@ class SideBar extends HTMLElement {
 
         // 窗口恢复可见时，如有待刷新的任务列表则刷新
         window.addEventListener('openDesk:visibilityChanged', (e) => {
-            if (e.detail && this._needsTaskListRefresh) {
-                this._needsTaskListRefresh = false;
+            if (e.detail && this._refreshScheduler?.consumePendingRefreshWhileHidden()) {
                 this.reloadTaskList();
             }
         });
@@ -882,7 +877,7 @@ class SideBar extends HTMLElement {
                 this._chatBadgeTimer = null;
                 // 窗口隐藏时遵循省电设计：只标记待刷新，由窗口恢复可见事件触发更新
                 if (!window.__isWindowVisible) {
-                    this._needsTaskListRefresh = true;
+                    this._refreshScheduler?.markPendingRefreshWhileHidden();
                     return;
                 }
                 this._updateChatBadge();

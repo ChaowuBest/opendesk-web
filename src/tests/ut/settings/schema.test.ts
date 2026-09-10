@@ -112,7 +112,8 @@ describe('设置 schema', () => {
         expect(setting.debug).toEqual({
             developer_mode: true,
             experimental_feature: false,
-            log_raw_llm_request: false
+            log_raw_llm_request: false,
+            debug_log: false
         });
     });
 
@@ -123,10 +124,20 @@ describe('设置 schema', () => {
         expect(setting.cli_config.inherit_venv).toBe(true);
     });
 
-    test('网络配置缺省时不使用代理', () => {
+    test('网络配置缺省时默认使用系统代理', () => {
         const setting = Setting.getSettingSchema().parse({});
 
-        expect(setting.network_config.use_proxy).toBe('none');
+        expect(setting.network_config.use_proxy).toBe('system');
+    });
+
+    test('悬浮窗模式缺省时为完整卡片，且支持显式关闭', () => {
+        const setting = Setting.getSettingSchema().parse({});
+        expect(setting.gui_config.floating_window_mode).toBe('card');
+
+        const off = Setting.getSettingSchema().parse({
+            gui_config: { floating_window_mode: 'off' }
+        });
+        expect(off.gui_config.floating_window_mode).toBe('off');
     });
 
     test('终端 CLI 可以关闭隔离 Python 环境', () => {

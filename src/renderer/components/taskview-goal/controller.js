@@ -10,6 +10,7 @@
  */
 
 import { getGoalSummaryFromStatusResult, isGoalRunningInput, isTextOnlyGoalSupplementDetail } from './input.js';
+import { showInfoModal, escapeModalText } from '../confirmModal.js';
 
 export function isGoalEditReminderMessage(message) {
     const reason = message?.metadata?.origin?.reason;
@@ -91,6 +92,18 @@ export class GoalController {
     t(key, args) {
         const translate = this.getTranslator?.();
         return typeof translate === 'function' ? translate(key, args) : key;
+    }
+
+    /**
+     * goal 提示统一走页内模态弹窗：window.alert 是原生阻塞式对话框，
+     * Windows 下关闭后会使窗口失去焦点（issue #265）。
+     */
+    async showGoalInfoDialog(message) {
+        await showInfoModal({
+            title: this.t('goal.renderer.title'),
+            message: escapeModalText(message),
+            confirmText: this.t('common.confirm')
+        });
     }
 
     connect() {
@@ -428,7 +441,7 @@ export class GoalController {
         const goal = this.currentGoal?.status === 'active' ? this.currentGoal : await this.refreshGoalSummary();
         if (goal?.status !== 'active') return 'not-goal';
         if (!isTextOnlyGoalSupplementDetail(detail)) {
-            if (options.alertUnsupported) window.alert(this.t('goal.supplement.images_unsupported'));
+            if (options.alertUnsupported) await this.showGoalInfoDialog(this.t('goal.supplement.images_unsupported'));
             return 'unsupported';
         }
         return (await this.submitGoalSupplement(detail)) ? 'submitted' : 'failed';
@@ -445,7 +458,9 @@ export class GoalController {
         try {
             const result = await window.taskManagerAPI.addGoalSupplement(requestContext.taskId, detail.message);
             if (result?.ok === false) {
-                window.alert(this.t(result.messageKey || 'goal.error.unknown', result.messageArgs || {}));
+                await this.showGoalInfoDialog(
+                    this.t(result.messageKey || 'goal.error.unknown', result.messageArgs || {})
+                );
                 return false;
             }
             if (!this.isRequestContextCurrent(requestContext)) return false;
@@ -515,7 +530,7 @@ export class GoalController {
         const requestContext = this.captureRequestContext();
         const result = await window.taskManagerAPI.pauseGoal(requestContext.taskId);
         if (result?.ok === false) {
-            window.alert(this.t(result.messageKey || 'goal.error.unknown', result.messageArgs || {}));
+            await this.showGoalInfoDialog(this.t(result.messageKey || 'goal.error.unknown', result.messageArgs || {}));
             return false;
         }
         if (!this.isRequestContextCurrent(requestContext)) return true;
@@ -534,7 +549,7 @@ export class GoalController {
         const requestContext = this.captureRequestContext();
         const result = await window.taskManagerAPI.stopTask(requestContext.taskId);
         if (result?.ok === false) {
-            window.alert(this.t(result.messageKey || 'goal.error.unknown', result.messageArgs || {}));
+            await this.showGoalInfoDialog(this.t(result.messageKey || 'goal.error.unknown', result.messageArgs || {}));
             return false;
         }
         if (!this.isRequestContextCurrent(requestContext)) return true;

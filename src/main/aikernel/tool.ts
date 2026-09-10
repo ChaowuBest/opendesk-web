@@ -116,6 +116,11 @@ export type ToolArgsValidationResult<T extends z.ZodType> =
     | {
           success: true;
           data: z.output<T>;
+          /**
+           * true 表示参数在通过校验前经过了自动修复（如 CallSkillTool 的平铺参数还原）。
+           * 调用方（processToolCall）据此把规范化参数回写 args_string，修复即回写。
+           */
+          repaired?: boolean;
       }
     | {
           success: false;
@@ -187,6 +192,9 @@ export class BaseTool<T extends z.ZodType> {
      * 为 true 时，同一批次中的多个此类工具调用将按顺序执行，避免并发写入同一文件导致竞态条件。
      */
     serialExecution: boolean = false;
+    /** getJsonSchema 的实例级缓存及对应生成时的 params 引用（引用变更即失效） */
+    private jsonSchemaCache?: Record<string, any>;
+    private jsonSchemaCacheSource?: z.ZodType;
 
     constructor(name: string, description: string, params: T) {
         this.name = name;
@@ -195,11 +203,26 @@ export class BaseTool<T extends z.ZodType> {
         this.executor = undefined;
     }
 
+    /**
+     * 获取 params 的 JSON Schema（工具实例级缓存）。
+     * toJSONSchema 是全量递归计算，校验/权限声明/上下文统计等高频路径反复调用开销大；
+     * 按 params 引用失效，params 被替换（如 setParams）后自动重新生成。
+     * 返回的是所有调用方共享的同一缓存对象，调用方不得原地修改（如增删字段、改写 required），
+     * 否则会污染缓存并泄漏到其它消费方（模型适配器、权限推断、上下文统计、UI 展示等）。
+     */
+    getJsonSchema(): Record<string, any> {
+        if (this.jsonSchemaCache === undefined || this.jsonSchemaCacheSource !== this.params) {
+            this.jsonSchemaCache = this.params.toJSONSchema() as Record<string, any>;
+            this.jsonSchemaCacheSource = this.params;
+        }
+        return this.jsonSchemaCache;
+    }
+
     toJSON() {
         return {
             name: this.name,
             description: this.description,
-            params: this.params.toJSONSchema(),
+            params: this.getJsonSchema(),
             agentIds: this.agentIds
         };
     }

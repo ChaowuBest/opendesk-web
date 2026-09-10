@@ -140,7 +140,7 @@ describe('embedBrowserUse/main', () => {
             expect(script).not.toContain('before upload events could be dispatched');
         });
 
-        it('pressKey should focus active webview and move plain Tab focus inside the page', async () => {
+        it('pressKey should use the existing webview focus without changing host focus', async () => {
             const executedScripts: string[] = [];
             const mockWindow = {
                 isDestroyed: () => false,
@@ -164,9 +164,9 @@ describe('embedBrowserUse/main', () => {
 
             await ctrl.pressKey('Tab');
 
-            expect(mockWindow.focus).toHaveBeenCalled();
-            expect(session.webContents.focus).toHaveBeenCalled();
-            expect(executedScripts.some((script) => script.includes('browserFocusActiveWebview'))).toBe(true);
+            expect(mockWindow.focus).not.toHaveBeenCalled();
+            expect(session.webContents.focus).not.toHaveBeenCalled();
+            expect(executedScripts.some((script) => script.includes('browserHasActiveWebviewFocus'))).toBe(true);
             expect(session.send).toHaveBeenCalledTimes(1);
             expect(session.send).toHaveBeenCalledWith(
                 'Runtime.evaluate',
@@ -174,6 +174,37 @@ describe('embedBrowserUse/main', () => {
                     returnByValue: true,
                     expression: expect.stringContaining('orderedFocusableElements')
                 })
+            );
+            expect(session.send).not.toHaveBeenCalledWith('Input.dispatchKeyEvent', expect.anything());
+        });
+
+        it('pressKey should preserve host focus and avoid native input when the webview is not already focused', async () => {
+            const mockWindow = {
+                isDestroyed: () => false,
+                focus: jest.fn(),
+                webContents: {
+                    executeJavaScript: jest.fn(async (script: string) => ({
+                        result: script.includes('browserHasActiveWebviewFocus') ? false : true
+                    }))
+                }
+            };
+            const session = {
+                webContents: {
+                    focus: jest.fn()
+                },
+                send: jest.fn(async () => ({})),
+                isHealthy: jest.fn(async () => true)
+            };
+            const ctrl = new BrowserController('background-task', mockWindow as any, mockScriptGen);
+            (ctrl as any).requireCDP = jest.fn(async () => session);
+
+            await ctrl.pressKey('Enter');
+
+            expect(mockWindow.focus).not.toHaveBeenCalled();
+            expect(session.webContents.focus).not.toHaveBeenCalled();
+            expect(session.send).toHaveBeenCalledWith(
+                'Runtime.evaluate',
+                expect.objectContaining({ expression: expect.stringContaining('key: "Enter"') })
             );
             expect(session.send).not.toHaveBeenCalledWith('Input.dispatchKeyEvent', expect.anything());
         });

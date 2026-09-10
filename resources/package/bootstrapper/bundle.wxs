@@ -12,6 +12,10 @@ See the Mulan PSL v2 for more details.
 <Wix xmlns="http://schemas.microsoft.com/wix/2006/wi"
      xmlns:bal="http://schemas.microsoft.com/wix/BalExtension"
      xmlns:util="http://schemas.microsoft.com/wix/UtilExtension">
+    <!-- 注意：WiX v3 的 <Bundle> 不支持 Id 属性（candle CNDL0004），bundle 的 PackageId 每次编译随机。
+         因此"同版本重复安装"会各留一个 ARP 条目（引擎默认只对版本更低的 related bundle 计划卸载）。
+         该场景由 BA 的 OnPlanRelatedBundle 把所有 related bundle 统一改写为 Absent 来处理，
+         使引擎在本次安装/修复/卸载中先卸载全部历史 bundle，再完成当前操作。 -->
     <Bundle Name="OpenDesk"
             Version="$(var.BundleVersion)"
             Manufacturer="OpenDesk Team, Openharmony"
@@ -32,9 +36,24 @@ See the Mulan PSL v2 for more details.
                   Type="string"
                   Value="[ProgramFiles64Folder]opendesk"
                   bal:Overridable="yes" />
+        <!-- 安装所需空间的预估值（staged 应用目录体积 × 安全系数），由 scripts/build-wix-bootstrapper.mjs 在构建期以
+             -dRequiredInstallSize=... 注入。BA 用它在用户选择的盘上做空间预检查，避免
+             "切到 D 盘仍按 C 盘报空间不足"（issue #288）：MSI 的 InstallValidate 阶段
+             只校验目标盘，而此处需提前拦截目标盘不足的情况。 -->
+        <Variable Name="RequiredInstallSize"
+                  Type="numeric"
+                  Value="$(var.RequiredInstallSize)"
+                  bal:Overridable="no" />
         <Variable Name="CreateDesktopShortcut" Type="numeric" Value="1" bal:Overridable="yes" />
         <Variable Name="CreateStartMenuShortcut" Type="numeric" Value="1" bal:Overridable="yes" />
         <Variable Name="InstallPathCustomized" Type="numeric" Value="0" bal:Overridable="yes" />
+        <!-- 卸载时由 BA 置为 "ALL"：burn 的 MSI 依赖检查（w327 "Will not uninstall package ...
+             found dependents"）读取的是经下方 MsiProperty 映射后的包属性 IGNOREDEPENDENCIES，
+             仅设置 bundle 字符串变量不会生效，两处必须配套。 -->
+        <Variable Name="IGNOREDEPENDENCIES" Type="string" Value="" Hidden="yes" />
+        <!-- 恒为假的检测变量：让 CleanupRelatedBundles 在 detect 阶段始终视为 Absent，
+             从而在每次安装/修复时都会执行其 InstallCommand，卸载本 bundle 时不产生动作。 -->
+        <Variable Name="CleanupDetect" Type="numeric" Value="0" Hidden="yes" />
         <util:RegistrySearch Id="FindPreviousInstallFolder"
                              Variable="PreviousInstallFolder"
                              Root="HKLM"
@@ -55,8 +74,11 @@ See the Mulan PSL v2 for more details.
                              Win64="yes" />
 
         <Chain>
+            <!-- WiX v3 无 Bundle/@PerMachine（v4+ 语法）；per-machine 通过 MsiPackage/@ForcePerMachine 声明，
+                 burn engine 检测到 per-machine 包后会把整个 bundle 按 per-machine 处理并自动触发提升 -->
             <MsiPackage Id="OpenDeskMsi"
                         SourceFile="$(var.MsiPath)"
+                        ForcePerMachine="yes"
                         DisplayInternalUI="no"
                         Visible="no"
                         Vital="yes">
@@ -65,7 +87,24 @@ See the Mulan PSL v2 for more details.
                 <MsiProperty Name="CREATE_START_MENU_SHORTCUT" Value="[CreateStartMenuShortcut]" />
                 <MsiProperty Name="INSTALL_PATH_CUSTOMIZED" Value="[InstallPathCustomized]" />
                 <MsiProperty Name="OPENDESK_BUNDLE_INSTALL" Value="1" />
+                <MsiProperty Name="IGNOREDEPENDENCIES" Value="[IGNOREDEPENDENCIES]" />
             </MsiPackage>
+            <!-- 覆盖安装防卡死清理程序（PerMachine 使其在提权引擎内执行）。
+                 burn 引擎对旧版本 related bundle 的卸载固定以 "<旧缓存 exe> -uninstall -quiet" 启动
+                 旧版安装器并无限等待其退出，而 0.3.5 及更早版本的 BA 静默模式下会在 apply 完成后
+                 挂死不退出，导致覆盖安装卡住（或在旧版非静默时弹出用户看不见的卸载窗口）。
+                 本包在 OpenDeskMsi 之后（元素顺序即执行顺序）、引擎启动 related child 之前运行，
+                 主动静默卸载旧版本 bundle 并兜底强杀；随后引擎的 related child 因旧缓存 exe 已删除
+                 而启动失败，related bundle 是非 vital 包（Vital="no" 仅对本包生效，related child
+                 本身即为非 vital 伪包），引擎记录 "Continuing (non-vital package)" 后继续完成安装。
+                 参数为当前 bundle 版本，清理程序据此只处理更低版本的 OpenDesk bundle。 -->
+            <ExePackage Id="CleanupRelatedBundles"
+                        SourceFile="$(var.CleanupExePath)"
+                        DetectCondition="CleanupDetect"
+                        InstallCommand="[WixBundleVersion]"
+                        UninstallCommand="/noop"
+                        PerMachine="yes"
+                        Vital="no" />
         </Chain>
     </Bundle>
 </Wix>

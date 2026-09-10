@@ -218,6 +218,145 @@ describe('task-view message queue', () => {
         expect(taskView.task_status).toBe('running');
     });
 
+    test('cancels an idle browser recycle timer when reload observes a running task', async () => {
+        const cancelBrowserIdleTimer = jest.fn();
+        window.taskManagerAPI = {
+            ...window.taskManagerAPI,
+            getFullTask: jest.fn(async () => ({
+                task_status: 'running',
+                chat_context: { messages: [] }
+            })),
+            getModelContextSize: jest.fn(async () => 0),
+            getTaskTodos: jest.fn(async () => [])
+        };
+        const taskView = document.createElement('task-view') as HTMLElement & {
+            task_id: string;
+            task_status: string;
+            reload: () => Promise<void>;
+            _cancelBrowserIdleTimer: jest.Mock;
+        };
+        taskView.task_id = 'task-running-after-reload';
+        taskView.task_status = 'stopped';
+        taskView._cancelBrowserIdleTimer = cancelBrowserIdleTimer;
+        taskView.innerHTML = '<div id="taskview-chat-history"></div>';
+
+        await taskView.reload();
+
+        expect(taskView.task_status).toBe('running');
+        expect(cancelBrowserIdleTimer).toHaveBeenCalledTimes(1);
+    });
+
+    test('signals first-screen readiness when reload completes', async () => {
+        window.taskManagerAPI = {
+            ...window.taskManagerAPI,
+            getFullTask: jest.fn(async () => ({
+                task_status: 'running',
+                chat_context: { messages: [] }
+            })),
+            getModelContextSize: jest.fn(async () => 0),
+            getTaskTodos: jest.fn(async () => [])
+        };
+        const taskView = document.createElement('task-view') as HTMLElement & {
+            task_id: string;
+            reload: () => Promise<void>;
+        };
+        taskView.task_id = 'task-ready-success';
+        taskView.innerHTML = '<div id="taskview-chat-history"></div>';
+        const readyListener = jest.fn();
+        taskView.addEventListener('task-view-content-ready', readyListener);
+
+        await taskView.reload();
+
+        // openTask 的加载占位依赖该信号淡出，正常加载完成必须派发
+        expect(readyListener).toHaveBeenCalledTimes(1);
+    });
+
+    test('signals first-screen readiness even when reload fails', async () => {
+        window.taskManagerAPI = {
+            ...window.taskManagerAPI,
+            getFullTask: jest.fn(async () => {
+                throw new Error('task load failed');
+            })
+        };
+        const taskView = document.createElement('task-view') as HTMLElement & {
+            task_id: string;
+            reload: () => Promise<void>;
+        };
+        taskView.task_id = 'task-ready-failure';
+        const readyListener = jest.fn();
+        taskView.addEventListener('task-view-content-ready', readyListener);
+
+        // 加载异常时也必须派发，否则 openTask 的加载占位要等到超时兜底才消失
+        await expect(taskView.reload()).rejects.toThrow('task load failed');
+        expect(readyListener).toHaveBeenCalledTimes(1);
+    });
+
+    test('a stale idle timer rechecks task status before recycling the browser', () => {
+        jest.useFakeTimers();
+        try {
+            const recycleBrowser = jest.fn();
+            const destroyBrowser = jest.fn();
+            const taskView = document.createElement('task-view') as HTMLElement & {
+                task_id: string;
+                task_status: string;
+                _getRightSidebarEl: () => {
+                    isBrowserVisible: () => boolean;
+                    recycleBrowser: jest.Mock;
+                    destroyBrowser: jest.Mock;
+                };
+                _startBrowserIdleTimer: () => void;
+            };
+            taskView.task_id = 'task-stale-idle-timer';
+            taskView.task_status = 'stopped';
+            taskView._getRightSidebarEl = () => ({
+                isBrowserVisible: () => true,
+                recycleBrowser,
+                destroyBrowser
+            });
+
+            taskView._startBrowserIdleTimer();
+            taskView.task_status = 'running';
+            jest.advanceTimersByTime(5 * 60 * 1000);
+
+            expect(recycleBrowser).not.toHaveBeenCalled();
+            expect(destroyBrowser).not.toHaveBeenCalled();
+        } finally {
+            restoreRealTimerGlobals();
+        }
+    });
+
+    test('idle recycling waits while the user is currently viewing the Browser tab', () => {
+        jest.useFakeTimers();
+        try {
+            const recycleBrowser = jest.fn();
+            const taskView = document.createElement('task-view') as HTMLElement & {
+                task_id: string;
+                task_status: string;
+                _getRightSidebarEl: () => {
+                    isBrowserVisible: () => boolean;
+                    isBrowserPresentedToUser: () => boolean;
+                    recycleBrowser: jest.Mock;
+                };
+                _startBrowserIdleTimer: () => void;
+            };
+            taskView.task_id = 'task-visible-browser';
+            taskView.task_status = 'stopped';
+            taskView._getRightSidebarEl = () => ({
+                isBrowserVisible: () => true,
+                isBrowserPresentedToUser: () => true,
+                recycleBrowser
+            });
+
+            taskView._startBrowserIdleTimer();
+            jest.advanceTimersByTime(5 * 60 * 1000);
+
+            expect(recycleBrowser).not.toHaveBeenCalled();
+            expect(jest.getTimerCount()).toBe(1);
+        } finally {
+            restoreRealTimerGlobals();
+        }
+    });
+
     test('uses the shared task view with an input in embedded mode', () => {
         const taskView = document.createElement('task-view') as HTMLElement & {
             task_id: string;
@@ -267,7 +406,7 @@ describe('task-view message queue', () => {
         document.removeEventListener('sidebar-collapse-request', onCollapseRequest);
     });
 
-    test('exits preview but keeps focus width when the right sidebar is collapsed and reopened', () => {
+    test('suspends preview layout without changing the selected tab when the right sidebar is collapsed', () => {
         const taskView = document.createElement('task-view') as HTMLElement & {
             task_id: string;
             _rightSidebarExpanded: boolean;
@@ -280,17 +419,17 @@ describe('task-view message queue', () => {
         taskView._rightSidebarExpanded = true;
         taskView.render();
         const artifacts = taskView.querySelector<HTMLElement>('#task-task-1-artifacts')! as HTMLElement & {
-            exitPreview: jest.Mock;
+            suspendPreviewLayout: jest.Mock;
         };
         const resizer = taskView.querySelector<HTMLElement>('#task-task-1-resizer');
-        artifacts.exitPreview = jest.fn();
+        artifacts.suspendPreviewLayout = jest.fn();
 
         taskView.dispatchEvent(
             new CustomEvent('workspace-focus-layout-change', { detail: { active: true, fullscreen: true } })
         );
         taskView._collapseRightSidebar(artifacts, resizer);
 
-        expect(artifacts.exitPreview).toHaveBeenCalled();
+        expect(artifacts.suspendPreviewLayout).toHaveBeenCalled();
         expect(taskView._rightSidebarWidth).toBe(380);
 
         taskView._expandRightSidebar(artifacts, resizer);
@@ -469,6 +608,129 @@ describe('task-view message queue', () => {
         await Promise.resolve();
 
         expect(unsubscribeTaskUpdate).toHaveBeenCalledWith('embedded-task', 'subscription-late');
+    });
+
+    async function createStreamingSubscription() {
+        let receive!: (progress: Record<string, unknown>) => void;
+        window.taskManagerAPI = {
+            getFullTask: jest.fn(async () => ({ task_status: 'running', chat_context: { messages: [] } })),
+            getModelContextSize: jest.fn(async () => 0),
+            getTaskTodos: jest.fn(async () => []),
+            subscribeTaskUpdate: jest.fn(async (_id, callback) => {
+                receive = callback;
+                return 'stream-sub';
+            }),
+            unsubscribeTaskUpdate: jest.fn(async () => undefined)
+        };
+        const view = document.createElement('task-view') as any;
+        view.setAttribute('task_id', 'stream-task');
+        view.setAttribute('embedded', '');
+        document.body.appendChild(view);
+        for (let i = 0; i < 10 && !receive; i++) await Promise.resolve();
+        expect(receive).toBeDefined();
+        return { view, receive };
+    }
+
+    function streamedText(text: string, status = 'running') {
+        return {
+            type: 'assistant',
+            task_id: 'stream-task',
+            task_status: status,
+            message_id: 'stream-message',
+            last_part_index: 0,
+            last_part: { type: 'text', text, rendered: `<p>${text}</p>` }
+        };
+    }
+
+    test('coalesces subscribed text bursts and flushes final content before completion cleanup', async () => {
+        const { view, receive } = await createStreamingSubscription();
+        const render = jest.spyOn(view, '_renderAssistantProgress');
+        jest.useFakeTimers();
+        try {
+            for (let i = 0; i < 100; i++) receive(streamedText(`answer ${i}`));
+            expect(render).not.toHaveBeenCalled();
+            jest.advanceTimersByTime(50);
+            expect(render).toHaveBeenCalledTimes(1);
+            expect(view.querySelector('.markdown-body').textContent).toBe('answer 99');
+            receive(streamedText('pending tail'));
+            receive(streamedText('complete answer', 'stopped'));
+            expect(view.querySelector('.markdown-body').textContent).toBe('complete answer');
+            expect(view.task_status).toBe('stopped');
+            expect(view.querySelectorAll('.stream-cursor')).toHaveLength(0);
+            jest.advanceTimersByTime(100);
+            expect(view.querySelector('.markdown-body').textContent).toBe('complete answer');
+        } finally {
+            view.remove();
+            restoreRealTimerGlobals();
+        }
+    });
+
+    test('manual stop flushes pending text without resurrecting running status or the cursor', async () => {
+        const { view, receive } = await createStreamingSubscription();
+        jest.useFakeTimers();
+        try {
+            receive(streamedText('last received text'));
+            view.task_status = 'stopped';
+            view._cleanupStreamingState();
+            expect(view.querySelector('.markdown-body').textContent).toBe('last received text');
+            expect(view.task_status).toBe('stopped');
+            expect(view.querySelectorAll('.stream-cursor')).toHaveLength(0);
+            jest.advanceTimersByTime(100);
+            expect(view.querySelectorAll('.stream-cursor')).toHaveLength(0);
+        } finally {
+            view.remove();
+            restoreRealTimerGlobals();
+        }
+    });
+
+    test('replacement and tool boundaries cannot be overwritten by buffered text', async () => {
+        const { view, receive } = await createStreamingSubscription();
+        jest.useFakeTimers();
+        try {
+            receive(streamedText('pending text'));
+            receive({
+                ...streamedText(''),
+                last_part_index: 1,
+                last_part: { type: 'tool_call', rendered: '<div>tool result</div>' }
+            });
+            expect(view.textContent).toContain('pending text');
+            expect(view.textContent).toContain('tool result');
+            receive(streamedText('queued correction'));
+            receive({
+                type: 'assistant_replace',
+                task_status: 'running',
+                message_id: 'stream-message',
+                parts: [{ type: 'text', rendered: '<p>authoritative replacement</p>' }]
+            });
+            jest.advanceTimersByTime(100);
+            expect(view.querySelector('.markdown-body').textContent).toBe('authoritative replacement');
+            expect(view.textContent).not.toContain('queued correction');
+        } finally {
+            view.remove();
+            restoreRealTimerGlobals();
+        }
+    });
+
+    test.each(['reload', 'remove', 'background'] as const)('discards buffered text on %s', async (action) => {
+        const { view, receive } = await createStreamingSubscription();
+        const render = jest.spyOn(view, '_renderAssistantProgress');
+        jest.useFakeTimers();
+        try {
+            receive(streamedText('stale text'));
+            if (action === 'reload') await view.reload();
+            if (action === 'remove') view.remove();
+            if (action === 'background') {
+                view.style.display = 'none';
+                receive(streamedText('hidden text'));
+                view.style.display = '';
+            }
+            jest.advanceTimersByTime(100);
+            expect(render).not.toHaveBeenCalled();
+            expect(view.textContent).not.toContain('stale text');
+        } finally {
+            view.remove();
+            restoreRealTimerGlobals();
+        }
     });
 
     test('shows a thinking placeholder while waiting for the first assistant part', async () => {
@@ -1533,6 +1795,43 @@ describe('task-view message queue', () => {
         expect(taskView.textContent).not.toContain('old provisional text');
         expect(taskView.querySelector('.reasoning-content')?.textContent?.trim()).toBe('hidden reasoning');
         expect(taskView.textContent).toContain('visible answer');
+    });
+
+    test('streaming text keeps completed blocks and their controls while updating the tail', () => {
+        const taskView = document.createElement('task-view') as HTMLElement & {
+            task_id: string;
+            _renderAssistantProgress: (progress: Record<string, unknown>, historyContainer: HTMLElement) => boolean;
+        };
+        taskView.task_id = 'task-streaming-text';
+        taskView.innerHTML = '<div id="taskview-chat-history"></div>';
+        const history = taskView.querySelector('#taskview-chat-history') as HTMLElement;
+        const update = (rendered: string) =>
+            taskView._renderAssistantProgress(
+                {
+                    task_status: 'running',
+                    message_id: 'streaming-text',
+                    last_part_index: 0,
+                    last_part: { type: 'text', rendered }
+                },
+                history
+            );
+        const prefix = '<h2>Completed section</h2><div class="code-block-wrapper"><pre>const n = 1;</pre></div>';
+        update(prefix + '<p>Partial</p>');
+        const heading = taskView.querySelector('h2');
+        const block = taskView.querySelector('.code-block-wrapper')!;
+        const button = document.createElement('button');
+        const copy = jest.fn();
+        button.addEventListener('click', copy);
+        block.appendChild(button);
+
+        update(prefix + '<p>Partial answer</p>');
+        expect(taskView.querySelector('h2')).toBe(heading);
+        expect(taskView.querySelector('.code-block-wrapper')).toBe(block);
+        expect(taskView.contains(button)).toBe(true);
+        button.click();
+        expect(copy).toHaveBeenCalledTimes(1);
+        expect(taskView.querySelector('.markdown-body')?.textContent).toContain('Partial answer');
+        expect(taskView.querySelectorAll('.stream-cursor')).toHaveLength(1);
     });
 
     test('assistant progress without an explicit part index renders safely', () => {
@@ -2676,12 +2975,13 @@ describe('task-view message queue', () => {
         }
     });
 
-    test('browser app events force the right sidebar to the browser tab', () => {
+    test('the first visible browser app event may activate the browser layout', () => {
         const TaskViewClass = customElements.get('task-view') as any;
         TaskViewClass.rightSidebarExpanded = true;
 
         const sidebar = {
             _suppressBrowserAutoSwitch: true,
+            consumeInitialBrowserAutoReveal: jest.fn(() => true),
             forceBrowserActive: jest.fn(),
             browserNavigate: jest.fn()
         };
@@ -2702,6 +3002,7 @@ describe('task-view message queue', () => {
 
         taskView._handleBrowserEvent('browserNavigate', 'task-1', 'https://example.com');
 
+        expect(sidebar.consumeInitialBrowserAutoReveal).toHaveBeenCalledTimes(1);
         expect(taskView._ensureRightSidebarOpen).toHaveBeenCalledTimes(1);
         expect(sidebar._suppressBrowserAutoSwitch).toBe(false);
         expect(sidebar.forceBrowserActive).toHaveBeenCalledTimes(1);
@@ -2710,21 +3011,76 @@ describe('task-view message queue', () => {
         TaskViewClass.rightSidebarExpanded = false;
     });
 
-    test('opens a workspace file through the existing right sidebar', () => {
+    test('repeated browser app events preserve the current task layout', () => {
+        const sidebar = {
+            _suppressBrowserAutoSwitch: false,
+            consumeInitialBrowserAutoReveal: jest.fn(() => false),
+            ensureBrowserReady: jest.fn(),
+            forceBrowserActive: jest.fn(),
+            keepBrowserPanelRenderable: jest.fn(),
+            browserNavigate: jest.fn()
+        };
+        const taskView = document.createElement('task-view') as HTMLElement & {
+            task_id: string;
+            _browserPip: null;
+            _ensureRightSidebarOpen: jest.Mock;
+            _getRightSidebarEl: jest.Mock;
+            _showBrowserPipIfNeeded: jest.Mock;
+            _handleBrowserEvent: (method: string, taskId: string, ...args: unknown[]) => void;
+        };
+
+        taskView.task_id = 'task-1';
+        taskView._browserPip = null;
+        taskView._ensureRightSidebarOpen = jest.fn();
+        taskView._getRightSidebarEl = jest.fn(() => sidebar);
+        taskView._showBrowserPipIfNeeded = jest.fn();
+
+        taskView._handleBrowserEvent('browserNavigate', 'task-1', 'https://example.com');
+
+        expect(taskView._ensureRightSidebarOpen).not.toHaveBeenCalled();
+        expect(sidebar.forceBrowserActive).not.toHaveBeenCalled();
+        expect(sidebar.ensureBrowserReady).toHaveBeenCalledWith(false);
+        expect(sidebar.keepBrowserPanelRenderable).toHaveBeenCalledTimes(1);
+        expect(sidebar._suppressBrowserAutoSwitch).toBe(true);
+        expect(sidebar.browserNavigate).toHaveBeenCalledWith('https://example.com');
+    });
+
+    test('opens a workspace file through the existing right sidebar', async () => {
         const sidebar = {
             openFilePreview: jest.fn()
         };
         const taskView = document.createElement('task-view') as HTMLElement & {
             _forceExpandRightSidebar: jest.Mock;
             _getRightSidebarEl: jest.Mock;
-            openFileInSidebar: (filePath: string, line?: number, onSwitchBlocked?: () => void) => void;
+            openFileInSidebar: (filePath: string, line?: number, onSwitchBlocked?: () => void) => Promise<void>;
         };
         taskView._forceExpandRightSidebar = jest.fn();
         taskView._getRightSidebarEl = jest.fn(() => sidebar);
         const onSwitchBlocked = jest.fn();
 
-        taskView.openFileInSidebar('/workspace/deck.pptx', undefined, onSwitchBlocked);
+        // openFileInSidebar 现在会先经 fsAPI 校验存在性（测试环境无 fsAPI，跳过校验）
+        await taskView.openFileInSidebar('/workspace/deck.pptx', undefined, onSwitchBlocked);
         expect(taskView._forceExpandRightSidebar).toHaveBeenCalledTimes(1);
         expect(sidebar.openFilePreview).toHaveBeenCalledWith('/workspace/deck.pptx', undefined, onSwitchBlocked);
+    });
+
+    test('opens a user-selected link through an explicit browser activation', () => {
+        const sidebar = {
+            forceBrowserActive: jest.fn(),
+            browserAddTab: jest.fn()
+        };
+        const taskView = document.createElement('task-view') as HTMLElement & {
+            _forceExpandRightSidebar: jest.Mock;
+            _getRightSidebarEl: jest.Mock;
+            openUrlInSidebar: (url: string) => void;
+        };
+        taskView._forceExpandRightSidebar = jest.fn();
+        taskView._getRightSidebarEl = jest.fn(() => sidebar);
+
+        taskView.openUrlInSidebar('https://example.com');
+
+        expect(taskView._forceExpandRightSidebar).toHaveBeenCalledTimes(1);
+        expect(sidebar.forceBrowserActive).toHaveBeenCalledTimes(1);
+        expect(sidebar.browserAddTab).toHaveBeenCalledWith('https://example.com');
     });
 });

@@ -212,6 +212,13 @@ function getEffortIconSVG(effortValue) {
 /** 主页 AgentInput 草稿文本，在组件销毁/重建之间持久化 */
 let _homeDraftText = '';
 
+/** 输入框最小高度（px），对应 class 的 min-h-14。 */
+const INPUT_MIN_HEIGHT = 56;
+/** 输入框绝对上限高度（px），对应 class 的 max-h-60，防止对话框很大时输入框无限增长。 */
+const INPUT_ABSOLUTE_MAX_HEIGHT = 240;
+/** 整个输入组件相对宿主可用高度的上限比例。 */
+const INPUT_AREA_HEIGHT_RATIO = 0.5;
+
 class AgentInput extends HTMLElement {
     constructor() {
         super();
@@ -701,8 +708,74 @@ class AgentInput extends HTMLElement {
         const textarea = this.querySelector('#agent-input-textarea');
         if (textarea) {
             textarea.value = text || '';
+            this.autoResizeTextarea(textarea);
             this.updateSendButtonState();
         }
+    }
+
+    /** @returns {HTMLElement | null} */
+    getInputHeightReference() {
+        return this.closest('[data-agent-input-height-reference]');
+    }
+
+    /**
+     * 获取宿主可用区域的可见高度预算（px）。该区域不受输入组件自身伸缩影响。
+     * @returns {number}
+     */
+    getInputHeightBudget() {
+        const heightReference = this.getInputHeightReference();
+        return heightReference ? heightReference.clientHeight : 0;
+    }
+
+    /**
+     * 计算 textarea 当前允许的最大高度（px）。
+     * 从整个输入组件的比例额度中扣除工具栏、附件区和内边距等非 textarea 高度。
+     * @param {HTMLTextAreaElement} textarea
+     * @returns {number}
+     */
+    computeInputMaxHeight(textarea) {
+        const heightBudget = this.getInputHeightBudget();
+        if (heightBudget <= 0) {
+            return INPUT_ABSOLUTE_MAX_HEIGHT;
+        }
+        const renderedTextareaHeight = textarea.offsetHeight || INPUT_MIN_HEIGHT;
+        const nonTextareaHeight = Math.max(0, this.offsetHeight - renderedTextareaHeight);
+        const byRatio = Math.floor(heightBudget * INPUT_AREA_HEIGHT_RATIO - nonTextareaHeight);
+        const capped = Math.min(byRatio, INPUT_ABSOLUTE_MAX_HEIGHT);
+        return Math.max(INPUT_MIN_HEIGHT, capped);
+    }
+
+    /**
+     * 根据内容自动调整输入框高度（最小高度由 min-h-14 保证，上限随对话框高度动态变化）。
+     * @param {HTMLTextAreaElement} textarea
+     */
+    autoResizeTextarea(textarea) {
+        if (!textarea) return;
+        const maxHeight = this.computeInputMaxHeight(textarea);
+        const container = this.querySelector('#agent-input-container');
+        // 读取 scrollHeight 会触发强制同步布局，此时 textarea 因 height='auto' 瞬时塌缩，
+        // flex 布局会让上方消息历史区瞬时变高、最大滚动位置回退，浏览器随即把已钉在
+        // 底部的 scrollTop 钳制回退（历史区被裁掉底部内容）。冻结容器高度让瞬时布局
+        // 不改变历史区几何，避免该回滚；测量完成后立即恢复。
+        const frozenMinHeight = container?.style.minHeight || '';
+        if (container) {
+            container.style.minHeight = container.offsetHeight + 'px';
+        }
+        // 先归零再按内容高度赋值，避免删除内容时高度残留
+        textarea.style.height = 'auto';
+        textarea.style.height = Math.min(textarea.scrollHeight, maxHeight) + 'px';
+        if (container) {
+            container.style.minHeight = frozenMinHeight;
+        }
+    }
+
+    _scheduleAutoResizeTextarea() {
+        if (!this.getInputHeightReference()) return;
+        requestAnimationFrame(() => {
+            const textarea = this.querySelector('#agent-input-textarea');
+            if (!textarea) return;
+            this.autoResizeTextarea(textarea);
+        });
     }
 
     /**
@@ -725,9 +798,14 @@ class AgentInput extends HTMLElement {
         this.stopSpeechPreviewPolling();
         this.speechSession?.release().catch(() => {});
         this.speechSession = null;
-        if (this._toolbarResizeObserver) {
-            this._toolbarResizeObserver.disconnect();
-            this._toolbarResizeObserver = null;
+        const toolbar = this.querySelector('.agent-input-toolbar-left');
+        if (toolbar && this._toolbarWheelHandler) {
+            toolbar.removeEventListener('wheel', this._toolbarWheelHandler);
+            this._toolbarWheelHandler = null;
+        }
+        if (this._inputHeightResizeObserver) {
+            this._inputHeightResizeObserver.disconnect();
+            this._inputHeightResizeObserver = null;
         }
     }
 
@@ -811,6 +889,7 @@ class AgentInput extends HTMLElement {
         if (this.attachedImages.length === 0) {
             container.innerHTML = '';
             container.style.display = 'none';
+            this._scheduleAutoResizeTextarea();
             return;
         }
 
@@ -841,6 +920,7 @@ class AgentInput extends HTMLElement {
                 this.removeImage(parseInt(btn.dataset.imgIdx, 10));
             });
         });
+        this._scheduleAutoResizeTextarea();
     }
 
     _showImageLightbox(src) {
@@ -1264,7 +1344,7 @@ class AgentInput extends HTMLElement {
                             id="agent-input-textarea"
                             placeholder="${inputPlaceholder}"
                             aria-label="${inputPlaceholder}"
-                            class="w-full h-14 resize-none border-none outline-none text-gray-700 text-[13px] leading-relaxed"
+                            class="w-full min-h-14 max-h-60 overflow-y-auto resize-none border-none outline-none text-gray-700 text-[13px] leading-relaxed"
                         ></textarea>
                         <div id="agent-input-placeholder" class="agent-input-placeholder" aria-hidden="true">${inputPlaceholderHTML}</div>
                     </div>
@@ -1417,65 +1497,43 @@ class AgentInput extends HTMLElement {
         this.updateModeIndicator();
         this._renderImagePreviews();
         this._initToolbarOverflow();
+        this._initInputHeightObserver();
     }
 
     /**
-     * 监听工具栏容器宽度变化，从右向左隐藏优先级低的工具项。
-     * priority 数值越大越先隐藏。
+     * 监听宿主可用区域高度变化，并按当前内容双向调整输入框高度。
+     * 观察区域不受输入框自身高度影响，因此不会形成 ResizeObserver 反馈循环。
+     */
+    _initInputHeightObserver() {
+        if (this._inputHeightResizeObserver) {
+            this._inputHeightResizeObserver.disconnect();
+        }
+        const heightReference = this.getInputHeightReference();
+        if (!heightReference) return;
+        this._inputHeightResizeObserver = new ResizeObserver(() => {
+            this._scheduleAutoResizeTextarea();
+        });
+        this._inputHeightResizeObserver.observe(heightReference);
+    }
+
+    /**
+     * 工具栏宽度不足时不再隐藏按钮，而是允许左侧区域横向滚动，
+     * 并支持鼠标滚轮纵向滚动转换为横向滚动。
      */
     _initToolbarOverflow() {
-        if (this._toolbarResizeObserver) {
-            this._toolbarResizeObserver.disconnect();
-        }
-
         const toolbar = this.querySelector('.agent-input-toolbar-left');
         if (!toolbar) return;
 
-        const items = Array.from(toolbar.querySelectorAll('.agent-input-toolbar-item'));
-        if (items.length === 0) return;
-
-        // 按 priority 降序排列（高优先级数值 = 最先隐藏）
-        const sortedByHidePriority = [...items].sort(
-            (a, b) => parseInt(b.dataset.toolbarPriority || '0', 10) - parseInt(a.dataset.toolbarPriority || '0', 10)
-        );
-
-        const rightButtons = this.querySelector('.agent-input-toolbar-right');
-        const rightWidth = rightButtons ? rightButtons.offsetWidth : 120;
-
-        const recalc = () => {
-            const containerEl = toolbar.closest('.agent-input-toolbar');
-            if (!containerEl) return;
-            const availableWidth = containerEl.clientWidth - rightWidth - 24;
-
-            // 先全部显示以测量真实宽度
-            for (const item of items) {
-                item.style.display = '';
-            }
-
-            let totalWidth = 0;
-            for (const item of items) {
-                totalWidth += item.offsetWidth + 6;
-            }
-
-            if (totalWidth <= availableWidth) return;
-
-            // 从高 priority 开始隐藏
-            for (const item of sortedByHidePriority) {
-                if (totalWidth <= availableWidth) break;
-                totalWidth -= item.offsetWidth + 6;
-                item.style.display = 'none';
+        // 鼠标滚轮（纵向）在溢出时转换为横向滚动，触控板水平手势由浏览器原生支持
+        const onWheel = (event) => {
+            if (toolbar.scrollWidth <= toolbar.clientWidth + 1) return;
+            if (Math.abs(event.deltaY) > Math.abs(event.deltaX)) {
+                toolbar.scrollLeft += event.deltaY;
+                event.preventDefault();
             }
         };
-
-        recalc();
-
-        this._toolbarResizeObserver = new ResizeObserver(() => {
-            requestAnimationFrame(recalc);
-        });
-        const containerEl = toolbar.closest('.agent-input-toolbar');
-        if (containerEl) {
-            this._toolbarResizeObserver.observe(containerEl);
-        }
+        toolbar.addEventListener('wheel', onWheel, { passive: false });
+        this._toolbarWheelHandler = onWheel;
     }
 
     /**
@@ -3078,6 +3136,8 @@ class AgentInput extends HTMLElement {
             );
             // 检测 / 和 @ 触发补全
             this.handleAutocompleteInput(textarea);
+            // 根据内容自动调整高度
+            this.autoResizeTextarea(textarea);
             // 更新发送按钮状态
             this.updateSendButtonState();
         });
@@ -3540,6 +3600,7 @@ class ApplicationAgentInput extends HTMLElement {
                 });
                 this.dispatchEvent(submitEvent);
                 textarea.value = '';
+                this.autoResizeTextarea(textarea);
             }
         });
 

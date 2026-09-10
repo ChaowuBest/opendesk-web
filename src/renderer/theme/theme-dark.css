@@ -2400,6 +2400,21 @@ html[data-theme='dark'] #agent-input-textarea::-webkit-scrollbar-thumb:hover {
     background: rgba(255, 255, 255, 0.28);
 }
 
+/* Agent 输入框工具栏（功能栏）横向滚动条 */
+html[data-theme='dark'] .agent-input-toolbar-left {
+    scrollbar-color: rgba(255, 255, 255, 0.18) transparent;
+}
+html[data-theme='dark'] .agent-input-toolbar-left::-webkit-scrollbar-track {
+    background: transparent;
+}
+html[data-theme='dark'] .agent-input-toolbar-left::-webkit-scrollbar-thumb {
+    background: rgba(255, 255, 255, 0.18);
+    border-radius: 2px;
+}
+html[data-theme='dark'] .agent-input-toolbar-left::-webkit-scrollbar-thumb:hover {
+    background: rgba(255, 255, 255, 0.28);
+}
+
 /* 工具调用详情卡片滚动条（子任务/等待子任务等） */
 html[data-theme='dark'] .od-inline-toolcall-container details [class*='overflow-y-auto']::-webkit-scrollbar,
 html[data-theme='dark'] #taskview-chat-history details [class*='overflow-y-auto']::-webkit-scrollbar {

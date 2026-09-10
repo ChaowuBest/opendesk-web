@@ -29,18 +29,22 @@ namespace OpenDesk.Installer
     public sealed class OpenDeskBootstrapperApplication : BootstrapperApplication
     {
         private const string PackageId = "OpenDeskMsi";
+        private const string CleanupRelatedBundlesPackageId = "CleanupRelatedBundles";
         private const int ErrorFailNoActionReboot = unchecked((int)0x8007015E);
         private InstallerForm form;
         private PackageState packageState = PackageState.Unknown;
         private LaunchAction activeAction = LaunchAction.Unknown;
         private bool relatedMsiUpgradeDetected;
         private bool cancelRequested;
+        private volatile bool elevationRequested;
         private int exitCode;
         private string lastError;
         private string activeInstallFolder;
 
         public OpenDeskBootstrapperApplication()
         {
+            DetectRelatedBundle += OnDetectRelatedBundle;
+            PlanRelatedBundle += OnPlanRelatedBundle;
             DetectRelatedMsiPackage += OnDetectRelatedMsiPackage;
             DetectPackageComplete += OnDetectPackageComplete;
             DetectComplete += OnDetectComplete;
@@ -52,17 +56,38 @@ namespace OpenDesk.Installer
                     form.SetProgressStatus("ProgressCaching", "ProgressRepairCaching", "ProgressUninstallPreparing");
                 });
             };
-            ExecutePackageBegin += delegate
-            {
-                Post(delegate
-                {
-                    form.SetProgressStatus("ProgressInstalling", "ProgressRepairing", "ProgressUninstalling");
-                });
-            };
+            ExecutePackageBegin += OnExecutePackageBegin;
+            ExecutePackageComplete += OnExecutePackageComplete;
             Progress += OnProgress;
             ExecuteProgress += OnExecuteProgress;
             Error += OnError;
             ApplyComplete += OnApplyComplete;
+            Elevate += delegate
+            {
+                // 提权已发起。UAC 安全桌面期间抢前台注定失败，所以这里只置标志，
+                // 由窗口侧的轮询在提权结束后把窗口抢回来。
+                elevationRequested = true;
+            };
+            ApplyBegin += delegate
+            {
+                // Apply 阶段引擎会启动提权的 companion 进程，UAC 结束后本窗口会被压到后台。
+                // 从这里开始看护窗口的前台状态：需要的是"失去前台后再抢回来"的持续观察，
+                // 单个事件里做一次恢复赶不上系统压后台的时机。
+                Post(delegate
+                {
+                    form.KeepVisibleThroughElevation();
+                });
+            };
+        }
+
+        /// <summary>
+        /// 是否已经发起过提权。由引擎线程置位、UI 线程读取，故标记为 volatile。
+        /// 窗口侧据此判断"现在失去前台"是否可能由 UAC 造成，避免在提权发生之前
+        /// 就把用户主动切走的焦点抢回来。
+        /// </summary>
+        public bool ElevationRequested
+        {
+            get { return elevationRequested; }
         }
 
         protected override void Run()
@@ -73,7 +98,7 @@ namespace OpenDesk.Installer
             form = new InstallerForm(this, new Localizer(GetPayloadPath("zh-cn.wxl")));
             form.Shown += delegate
             {
-                if (Command.Display == Display.None)
+                if (RunsWithoutUserInteraction)
                 {
                     form.Opacity = 0;
                     form.ShowInTaskbar = false;
@@ -83,6 +108,27 @@ namespace OpenDesk.Installer
             };
             Application.Run(form);
             Engine.Quit(exitCode);
+        }
+
+        /// <summary>
+        /// 本次运行是否不应展示交互界面。
+        ///
+        /// 除了显式的静默/嵌入式命令行，关键场景是 <c>Command.Relation != None</c>：
+        /// 升级时 Burn 会启动旧版本自带的 Setup.exe 来卸载它，并把当前显示级别一并传下去。
+        /// 旧版 BA 若仍按 Display.Full 弹出维护页等用户点"卸载"，这个窗口会落在主安装程序
+        /// 后面，用户只看到进度条一直不动。作为 related bundle 被调起时必须全程静默自动执行。
+        /// </summary>
+        /// <summary>
+        /// 是否应全程静默（供 InstallerForm 关闭逻辑复用）。
+        /// </summary>
+        public bool RunsWithoutUserInteraction
+        {
+            get
+            {
+                return Command.Display == Display.None ||
+                    Command.Display == Display.Embedded ||
+                    Command.Relation != RelationType.None;
+            }
         }
 
         public string GetInstallFolder()
@@ -140,6 +186,60 @@ namespace OpenDesk.Installer
             StartAction(LaunchAction.Install);
         }
 
+        /// <summary>
+        /// 安装开始前对用户选择的目标盘做空间预检查（issue #288）。
+        ///
+        /// 背景：Windows Installer 的磁盘空间检查（OutOfDiskSpace）只针对本次安装的目标卷，
+        /// 而安装过程还会在系统盘消耗额外空间（%TEMP% 提权工作目录、C:\ProgramData\Package Cache
+        /// 中的 bundle/MSI 缓存）。旧版安装器没有任何预检查：C 盘剩余空间不足时，用户即使把安装
+        /// 位置切到 D 盘，也会在复制文件阶段以"空间不足"失败，报错还可能指错盘符。
+        ///
+        /// 这里在用户点击"开始安装"时立即校验所选目录所在卷的剩余空间是否装得下安装内容
+        /// （RequiredInstallSize，构建期由 staged 应用目录体积乘以安全系数注入），不足则弹窗提示并中止，
+        /// 用户可以换盘重试，而不是等到复制一半才失败。
+        /// </summary>
+        public bool HasEnoughSpaceForInstall(string folder)
+        {
+            try
+            {
+                long required = GetRequiredInstallSize();
+                long available = InstallerPath.GetAvailableFreeSpace(folder);
+                // required 为 0 表示构建脚本未注入（异常场景），不做拦截交由 Windows Installer 兜底。
+                if (required > 0 && available >= 0 && available < required)
+                {
+                    Engine.Log(
+                        LogLevel.Error,
+                        string.Format(
+                            "OpenDesk: not enough disk space on target drive: required {0} bytes, available {1} bytes, folder: {2}",
+                            required,
+                            available,
+                            folder
+                        )
+                    );
+                    form.ShowInsufficientDiskSpace(required, available);
+                    return false;
+                }
+            }
+            catch (Exception exception)
+            {
+                // 预检查失败不阻断安装：读不到可用空间时交由 Windows Installer 的正式检查兜底。
+                Engine.Log(LogLevel.Error, "OpenDesk: disk space pre-check failed: " + exception.Message);
+            }
+            return true;
+        }
+
+        private long GetRequiredInstallSize()
+        {
+            try
+            {
+                return Convert.ToInt64(Engine.NumericVariables["RequiredInstallSize"]);
+            }
+            catch
+            {
+                return 0;
+            }
+        }
+
         public void Repair()
         {
             StartAction(LaunchAction.Repair);
@@ -179,7 +279,43 @@ namespace OpenDesk.Installer
             cancelRequested = false;
             lastError = null;
             form.ShowProgress(action);
+            // 清掉引擎无法接管的历史孤儿注册键（缓存丢失的 bundle、0.3.3 遗留的 *.msq、
+            // 直接双击旧版 MSI 留下的可见展示键）。修复与升级一样要把应用列表清到只剩
+            // 当前实例，能正常卸载的历史 bundle 由 OnPlanRelatedBundle 计划 Absent 交给引擎。
+            if (action == LaunchAction.Install || action == LaunchAction.Repair)
+            {
+                CleanupStaleInstallations();
+            }
+            // 仅用户直接发起的卸载才忽略 MSI 依赖登记。作为 related bundle 被调起卸载时
+            // （升级/修复中清理旧实例），共享的 MSI 往往仍被新安装依赖，必须让引擎正常
+            // 做依赖检查、跳过 MSI 卸载、只注销自己的登记，否则会把新装的应用一并删掉。
+            if (action == LaunchAction.Uninstall && Command.Relation == RelationType.None)
+            {
+                IgnorePackageDependencies();
+            }
             Engine.Plan(action);
+        }
+
+        /// <summary>
+        /// 卸载时忽略 MSI 包的 dependency provider 登记。
+        ///
+        /// MSI 包注册了 dependency provider，每个安装过的 bundle 都会在它下面登记为 dependent。
+        /// 历史上重复安装留下的 bundle 条目仍挂在那里时，引擎卸载当前 bundle 会认为"包还被别人
+        /// 依赖"，于是跳过 MSI 卸载、只注销自己的登记，并报告成功——用户看到"卸载瞬间完成，
+        /// 但应用还在"。对应日志：w327 "Will not uninstall package ... found dependents"，
+        /// 以及该包的 "execute: None"。
+        ///
+        /// 注意：引擎的 MSI 依赖检查读取的是经 bundle.wxs 中 MsiProperty 映射后的包属性
+        /// IGNOREDEPENDENCIES（burn 的 GetIgnoredDependents 从包属性取值），仅设置 bundle
+        /// 字符串变量不会生效，两处必须配套（见 bundle.wxs 的 MsiProperty 定义）。
+        ///
+        /// dependency provider 的用途是防止被多个产品共享的包被误删。OpenDesk 的 MSI 只被
+        /// OpenDesk 自己的 bundle 引用，不存在共享，因此忽略登记是安全的：卸载 OpenDesk 就该
+        /// 真正卸掉它的包。残留的历史 bundle 条目由 OnPlanRelatedBundle 一并计划 Absent 清理。
+        /// </summary>
+        private void IgnorePackageDependencies()
+        {
+            Engine.StringVariables["IGNOREDEPENDENCIES"] = "ALL";
         }
 
         private bool EnsureOpenDeskIsNotRunning()
@@ -187,7 +323,7 @@ namespace OpenDesk.Installer
             string installFolder = GetInstallFolder();
             while (HasRunningOpenDeskProcess(installFolder))
             {
-                if (Command.Display != Display.Full)
+                if (RunsWithoutUserInteraction || Command.Display != Display.Full)
                 {
                     exitCode = unchecked((int)0x80070643);
                     form.Close();
@@ -262,16 +398,252 @@ namespace OpenDesk.Installer
             }
         }
 
+        private void OnDetectRelatedBundle(object sender, DetectRelatedBundleEventArgs e)
+        {
+            // 检测到任何历史 bundle（同 UpgradeCode 的其他安装）都视为"更新"，欢迎页展示更新文案。
+            // 引擎不会为当前安装自身触发该事件，无需排除自己。实际卸载在 OnPlanRelatedBundle 里计划。
+            relatedMsiUpgradeDetected = true;
+        }
+
+        /// <summary>
+        /// 让 Burn 引擎在本次安装/修复/卸载中卸载所有检测到的历史 bundle。
+        ///
+        /// 引擎默认只对 RelationType=Upgrade（版本更低）的 related bundle 计划 Absent；
+        /// 同版本重装（Operation=None，WiX v3 的 &lt;Bundle&gt; 不支持固定 Id，每次编译 PackageId 随机）
+        /// 默认 State=None，旧条目会一直留在应用列表里，装几次就有几个 OpenDesk。
+        /// 这里统一改写为 Absent，交由引擎在 Apply 阶段按正确顺序（先完成当前包操作、
+        /// 再卸载历史 bundle）执行，比 BA 自己起卸载子进程更可靠：不会与引擎计划冲突，
+        /// 也能正确处理提升与回滚。修复场景同样处理：用户点"修复"时应用列表往往已积累
+        /// 多个历史条目，修复完成后必须只剩当前一个实例。
+        ///
+        /// 历史 bundle 卸载时若与当前安装共享同一个 MSI 产品（同版本不同构建各自内嵌
+        /// 的 MSI ProductCode 可能相同），依赖检查会让它跳过 MSI 卸载、只注销自己的
+        /// dependent 登记与 ARP 条目——正是期望的行为：MSI 留给当前安装继续使用。
+        ///
+        /// 卸载时同样把残留 bundle 计划 Absent：它们的历史 ARP 条目连同 dependency 登记
+        /// 一并清掉。若只删 ARP 键而不卸载，MSI 包的 dependency provider 上会一直挂着
+        /// 残留的 dependent，引擎卸载当前包时误判"还有别的产品在用"，跳过 MSI 卸载
+        /// （日志 w327 "Will not uninstall package ... found dependents"）。
+        ///
+        /// 缓存安装器已丢失的 bundle 无法执行卸载，强行计划 Absent 会让整个安装失败，
+        /// 因此显式退回 None，由 DeleteStaleRegistryEntries 直接清掉其孤儿注册键。
+        /// </summary>
+        private void OnPlanRelatedBundle(object sender, PlanRelatedBundleEventArgs e)
+        {
+            if (
+                activeAction != LaunchAction.Install &&
+                activeAction != LaunchAction.Repair &&
+                activeAction != LaunchAction.Uninstall
+            )
+            {
+                return;
+            }
+
+            string cachePath = FindBundleCachePath(e.BundleId);
+            e.State = string.IsNullOrWhiteSpace(cachePath) || !File.Exists(cachePath)
+                ? RequestState.None
+                : RequestState.Absent;
+        }
+
         private void OnDetectRelatedMsiPackage(object sender, DetectRelatedMsiPackageEventArgs e)
         {
             if (
                 e.PackageId == PackageId &&
-                (e.Operation == RelatedOperation.MajorUpgrade || e.Operation == RelatedOperation.MinorUpdate)
+                (e.Operation == RelatedOperation.MajorUpgrade ||
+                    e.Operation == RelatedOperation.MinorUpdate ||
+                    e.Operation == RelatedOperation.Downgrade)
             )
             {
                 relatedMsiUpgradeDetected = true;
                 RestoreRelatedMsiInstallFolder(e.ProductCode);
             }
+        }
+
+        /// <summary>
+        /// 清理引擎无法接管的历史安装残留，确保"应用列表"中只剩本次安装的唯一条目：
+        /// 1. 缓存安装器已丢失的 bundle 条目：引擎无法卸载（没有可执行的缓存包），直接删注册键。
+        /// 2. 0.3.3 时代遗留的 *.msq 展示键：对应的老 MSI 产品文件早已被新版覆盖，
+        ///    只删展示键，不调用 msiexec 以免误删新版共享文件。
+        /// 3. 直接双击旧版 MSI 安装留下的可见展示键：正常升级时产品由 MajorUpgrade 卸载、
+        ///    条目随之消失，残留只在降级安装等病态场景出现，删展示键恢复列表干净。
+        /// bundle 安装的 MSI 产品自身的注册键（UninstallString 指向 msiexec）不删：产品记录
+        /// 仍被 Windows Installer 数据库引用，这些键已被 ARPSYSTEMCOMPONENT 隐藏，卸载由
+        /// MajorUpgrade 负责。
+        ///
+        /// 权限说明：BA 进程始终以调用者权限运行（Burn 只提升 Apply 阶段的独立进程），
+        /// 因此 DeleteStaleRegistryEntries 采用"先只读枚举、有目标才申请写权限"的策略——
+        /// 没有残留时完全不碰 HKLM 写句柄，首次安装不会撞上 SecurityException；
+        /// 未提权而确有残留时，写句柄申请失败也只是跳过清理。
+        ///
+        /// 整体是尽力而为的收尾：真正的卸载由 OnPlanRelatedBundle（历史 bundle）
+        /// 与 MajorUpgrade（旧 MSI）负责，这里任何失败都只记日志，不影响安装。
+        /// </summary>
+        private void CleanupStaleInstallations()
+        {
+            try
+            {
+                DeleteStaleRegistryEntries(GetCurrentBundleId());
+            }
+            catch (Exception exception)
+            {
+                Engine.Log(LogLevel.Error, "OpenDesk: stale registry cleanup failed: " + exception.Message);
+            }
+        }
+
+        /// <summary>
+        /// 当前安装的 bundle Id。WiX v3 的 &lt;Bundle&gt; 不支持固定 Id，PackageId 每次编译随机，
+        /// 只能运行时从引擎变量读。取不到时返回空串：清理逻辑只删缓存缺失的孤儿键，
+        /// 而本次安装的注册键要到 Apply 阶段才写入，此刻尚不存在，因此不影响正确性。
+        /// </summary>
+        private string GetCurrentBundleId()
+        {
+            try
+            {
+                return Engine.FormatString("[WixBundleProviderKey]");
+            }
+            catch
+            {
+                return string.Empty;
+            }
+        }
+
+        private static string FindBundleCachePath(string bundleId)
+        {
+            // Burn 传入的 related bundle id 与其注册表键名一致（带花括号的 GUID，即
+            // Uninstall 键下 "Session begin, registration key" 里的键名）。绝不能先 Trim
+            // 花括号：注册表键名带花括号，Trim 后必然查不到，所有历史 bundle 都会被误判
+            // 为"缓存丢失"而退回 RequestState.None，永远不被卸载（日志表现为
+            // "Planned related bundle ... ba requested: None"，哪怕缓存文件实际存在）。
+            // 同时查询不带花括号的形态，防御未来 burn 行为变化。
+            string[] keyNames =
+            {
+                bundleId,
+                bundleId.Trim('{', '}')
+            };
+            string uninstallKeyPath = @"SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\";
+            RegistryView[] views = { RegistryView.Registry32, RegistryView.Registry64 };
+            foreach (RegistryView view in views)
+            {
+                using (RegistryKey baseKey = RegistryKey.OpenBaseKey(RegistryHive.LocalMachine, view))
+                {
+                    if (baseKey == null) continue;
+                    foreach (string keyName in keyNames)
+                    {
+                        if (string.IsNullOrWhiteSpace(keyName)) continue;
+                        using (RegistryKey key = baseKey.OpenSubKey(uninstallKeyPath + keyName))
+                        {
+                            if (key == null) continue;
+                            string cachePath = key.GetValue("BundleCachePath") as string;
+                            if (!string.IsNullOrWhiteSpace(cachePath)) return cachePath;
+                        }
+                    }
+                }
+            }
+            return null;
+        }
+
+        private static void DeleteStaleRegistryEntries(string currentBundleId)
+        {
+            string[] uninstallKeyPaths =
+            {
+                @"SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall",
+                @"SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall"
+            };
+            RegistryView[] views = { RegistryView.Registry64, RegistryView.Registry32 };
+            foreach (RegistryView view in views)
+            {
+                using (RegistryKey baseKey = RegistryKey.OpenBaseKey(RegistryHive.LocalMachine, view))
+                {
+                    if (baseKey == null) continue;
+                    foreach (string uninstallKeyPath in uninstallKeyPaths)
+                    {
+                        // 先只读枚举：BA 进程未提权时以写权限打开 HKLM 会抛 SecurityException。
+                        // 只有确实有孤儿键要删时才申请写权限，让"无残留可清"的首次安装完全不碰写句柄。
+                        List<string> staleKeyNames = new List<string>();
+                        using (RegistryKey uninstallKey = baseKey.OpenSubKey(uninstallKeyPath))
+                        {
+                            if (uninstallKey == null) continue;
+                            foreach (string subKeyName in uninstallKey.GetSubKeyNames())
+                            {
+                                if (IsCurrentBundleKey(subKeyName, currentBundleId)) continue;
+                                using (RegistryKey subKey = uninstallKey.OpenSubKey(subKeyName))
+                                {
+                                    if (subKey == null) continue;
+                                    if (!IsOpenDeskEntry(subKey)) continue;
+                                    if (!IsDeletableStaleEntry(subKey, subKeyName)) continue;
+                                }
+                                staleKeyNames.Add(subKeyName);
+                            }
+                        }
+
+                        if (staleKeyNames.Count == 0) continue;
+
+                        using (RegistryKey writableKey = baseKey.OpenSubKey(uninstallKeyPath, true))
+                        {
+                            if (writableKey == null) continue;
+                            foreach (string staleKeyName in staleKeyNames)
+                            {
+                                try { writableKey.DeleteSubKeyTree(staleKeyName, false); } catch { }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        private static bool IsCurrentBundleKey(string keyName, string currentBundleId)
+        {
+            return !string.IsNullOrEmpty(currentBundleId) &&
+                string.Equals(
+                    keyName.Trim('{', '}'),
+                    currentBundleId.Trim('{', '}'),
+                    StringComparison.OrdinalIgnoreCase
+                );
+        }
+
+        private static bool IsOpenDeskEntry(RegistryKey subKey)
+        {
+            string displayName = subKey.GetValue("DisplayName") as string;
+            return !string.IsNullOrWhiteSpace(displayName) &&
+                displayName.StartsWith("OpenDesk", StringComparison.OrdinalIgnoreCase);
+        }
+
+        private static bool IsDeletableStaleEntry(RegistryKey subKey, string keyName)
+        {
+            // 0.3.3 时代遗留的 *.msq 展示键（老 MSI 的 Burn 标记，产品文件早被新版覆盖）。
+            if (keyName.EndsWith(".msq", StringComparison.OrdinalIgnoreCase)) return true;
+
+            // Burn bundle 条目：缓存安装器已丢失时无法再走正规卸载，按孤儿处理直接删键。
+            // 缓存仍在的 bundle 不在这里删——它们已由 OnPlanRelatedBundle 计划为 Absent，
+            // 由引擎在 Apply 阶段正常卸载（先当前包操作、后卸历史 bundle）。
+            string bundleCachePath = subKey.GetValue("BundleCachePath") as string;
+            if (bundleCachePath != null) return !File.Exists(bundleCachePath);
+
+            // 直接双击 MSI 安装留下的可见展示键（UninstallString 指向 msiexec、未被
+            // ARPSYSTEMCOMPONENT 隐藏）：正常升级时该产品由 MajorUpgrade 卸载、条目随之
+            // 消失，残留只出现在"已装新版后又双击装了旧版 MSI"这类降级场景。产品记录仍被
+            // Windows Installer 引用、文件与当前安装共享，不能执行卸载，删展示键即可。
+            if (IsVisibleMsiProductEntry(subKey)) return true;
+
+            // 其余（bundle 安装的 MSI 产品注册键，已被 ARPSYSTEMCOMPONENT 隐藏）不删：
+            // 不会出现在应用列表，卸载由 MajorUpgrade 或 bundle 卸载负责。
+            return false;
+        }
+
+        private static bool IsVisibleMsiProductEntry(RegistryKey subKey)
+        {
+            // REG_DWORD 在 RegistryKey 中读出即 boxed int；其他类型一律按可见处理
+            // （只删展示键，无破坏性）。不使用 try/catch：本文件由 .NET Framework 4.0 的
+            // csc.exe 编译，仅支持 C# 5 语法（catch when 过滤器不可用）。
+            object systemComponent = subKey.GetValue("SystemComponent");
+            if (systemComponent is int && (int)systemComponent != 0)
+            {
+                return false;
+            }
+
+            string uninstallString = subKey.GetValue("UninstallString") as string;
+            return !string.IsNullOrWhiteSpace(uninstallString) &&
+                uninstallString.TrimStart().StartsWith("MsiExec.exe", StringComparison.OrdinalIgnoreCase);
         }
 
         private void RestoreRelatedMsiInstallFolder(string productCode)
@@ -341,7 +713,7 @@ namespace OpenDesk.Installer
                 exitCode = e.Status;
                 Post(delegate
                 {
-                    if (Command.Display == Display.None)
+                    if (RunsWithoutUserInteraction)
                     {
                         form.Close();
                     }
@@ -368,9 +740,9 @@ namespace OpenDesk.Installer
                 form.ShowDetected(
                     packageState == PackageState.Present || maintenanceRequested,
                     relatedMsiUpgradeDetected,
-                    Command.Display != Display.None
+                    !RunsWithoutUserInteraction
                 );
-                if (Command.Display != Display.Full)
+                if (RunsWithoutUserInteraction || Command.Display != Display.Full)
                 {
                     LaunchAction action = Command.Action == LaunchAction.Unknown ? LaunchAction.Install : Command.Action;
                     StartAction(action);
@@ -385,7 +757,7 @@ namespace OpenDesk.Installer
                 exitCode = e.Status;
                 Post(delegate
                 {
-                    if (Command.Display == Display.None)
+                    if (RunsWithoutUserInteraction)
                     {
                         form.Close();
                     }
@@ -420,6 +792,46 @@ namespace OpenDesk.Installer
             Post(delegate { form.UpdateProgress(e.OverallPercentage); });
         }
 
+        private void OnExecutePackageBegin(object sender, ExecutePackageBeginEventArgs e)
+        {
+            // CleanupRelatedBundles 是普通 ExePackage，引擎无法跟踪其内部进度；升级/修复场景下
+            // 它可能静默运行一两分钟（等旧版安装器退出、兜底强杀、删缓存目录）。此时把进度页
+            // 文案切到"正在清理旧版本"，避免用户误以为安装卡死。仅在 detect 阶段发现过历史
+            // bundle 时才切换：全新安装中该包也会执行但秒退，不该展示清理文案。
+            if (e.PackageId == CleanupRelatedBundlesPackageId && relatedMsiUpgradeDetected)
+            {
+                Post(delegate
+                {
+                    form.SetProgressStatus(
+                        "ProgressCleaningOldBundles",
+                        "ProgressCleaningOldBundles",
+                        "ProgressCleaningOldBundles"
+                    );
+                });
+                return;
+            }
+
+            Post(delegate
+            {
+                form.SetProgressStatus("ProgressInstalling", "ProgressRepairing", "ProgressUninstalling");
+            });
+        }
+
+        private void OnExecutePackageComplete(object sender, ExecutePackageCompleteEventArgs e)
+        {
+            if (e.PackageId != CleanupRelatedBundlesPackageId)
+            {
+                return;
+            }
+
+            // 清理包结束后恢复常规文案：若之后没有其他包的 ExecutePackageBegin（例如没有
+            // related bundle 需要引擎处理），不让"正在清理旧版本"一直停留到完成页。
+            Post(delegate
+            {
+                form.SetProgressStatus("ProgressInstalling", "ProgressRepairing", "ProgressUninstalling");
+            });
+        }
+
         private void OnError(
             object sender,
             Microsoft.Tools.WindowsInstallerXml.Bootstrapper.ErrorEventArgs e
@@ -434,7 +846,7 @@ namespace OpenDesk.Installer
             exitCode = e.Status;
             Post(delegate
             {
-                if (Command.Display == Display.None)
+                if (RunsWithoutUserInteraction)
                 {
                     form.Close();
                 }
@@ -520,6 +932,11 @@ namespace OpenDesk.Installer
         private bool upgradeDetected;
         private LaunchAction progressAction = LaunchAction.Unknown;
         private bool busy;
+        // UAC 提权前后把窗口拉回可见状态的看护定时器（见 KeepVisibleThroughElevation）。
+        private Timer elevationVisibilityTimer;
+        private const int ElevationVisibilityPollInterval = 200;
+        // UAC 授权框可能停留很久，看护窗口给足 3 分钟；成功恢复一次即提前停表。
+        private const int ElevationVisibilityWatchDuration = 180000;
 
         public InstallerForm(OpenDeskBootstrapperApplication application, Localizer localizer)
         {
@@ -597,6 +1014,87 @@ namespace OpenDesk.Installer
             Opacity = 1D;
         }
 
+        /// <summary>
+        /// 抵消 UAC 提权对窗口 z-order 的副作用。
+        ///
+        /// 引擎在 Apply 阶段用 ShellExecute 启动提权的 companion 进程，UAC 结束后
+        /// Windows 会把发起提权的窗口压到别的窗口后面（有时还会最小化），用户授权完
+        /// 看不到安装界面。
+        ///
+        /// 恢复必须靠持续观察，而不是在某个事件里做一次：UAC 安全桌面期间夺取前台注定
+        /// 失败，而"何时被压后台"由系统决定，用户还可能在授权框上停留很久。这里从 Apply
+        /// 开始轮询，只在本窗口既非前台、且前台窗口不属于本进程时才尝试抢回；成功一次
+        /// 即停表，因此最多只打扰用户一次。看护窗口到期也会自行停止。
+        /// </summary>
+        public void KeepVisibleThroughElevation()
+        {
+            if (elevationVisibilityTimer != null)
+            {
+                return;
+            }
+
+            int elapsedMilliseconds = 0;
+            elevationVisibilityTimer = new Timer();
+            elevationVisibilityTimer.Interval = ElevationVisibilityPollInterval;
+            elevationVisibilityTimer.Tick += delegate
+            {
+                elapsedMilliseconds += ElevationVisibilityPollInterval;
+                bool restored = BringBackToForegroundIfDisplaced();
+                if (restored || elapsedMilliseconds >= ElevationVisibilityWatchDuration)
+                {
+                    StopElevationVisibilityWatch();
+                }
+            };
+            elevationVisibilityTimer.Start();
+        }
+
+        /// <summary>
+        /// 若本窗口已被其他进程的窗口挤到后台，则恢复并抢回前台；返回是否成功抢回。
+        ///
+        /// 几个判断上的注意点：
+        /// - 不能用"是否最小化"提前退出：UAC 之后窗口通常没被最小化，只是被压在后面。
+        /// - 前台窗口属于本进程时不动作：那可能是我们自己的 MessageBox（如"OpenDesk 正在
+        ///   运行"提示），抢前台会把它盖掉。
+        /// - 提权尚未发起时不动作：此时失去前台只可能是用户主动切走的，不该打扰他。
+        /// </summary>
+        private bool BringBackToForegroundIfDisplaced()
+        {
+            if (IsDisposed || !IsHandleCreated)
+            {
+                return false;
+            }
+
+            if (!application.ElevationRequested)
+            {
+                return false;
+            }
+
+            if (NativeMethods.IsForegroundWindowInCurrentProcess())
+            {
+                return false;
+            }
+
+            if (WindowState == FormWindowState.Minimized)
+            {
+                WindowState = FormWindowState.Normal;
+            }
+            // UAC 结束后前台归属别的进程，SetForegroundWindow 会被系统忽略，
+            // 必须借 AttachThreadInput 拿到前台权限（见 NativeMethods.ForceForeground）。
+            return NativeMethods.ForceForeground(this);
+        }
+
+        private void StopElevationVisibilityWatch()
+        {
+            if (elevationVisibilityTimer == null)
+            {
+                return;
+            }
+
+            elevationVisibilityTimer.Stop();
+            elevationVisibilityTimer.Dispose();
+            elevationVisibilityTimer = null;
+        }
+
         public void ShowProgress(LaunchAction action)
         {
             busy = true;
@@ -670,6 +1168,47 @@ namespace OpenDesk.Installer
                 MessageBoxButtons.RetryCancel,
                 MessageBoxIcon.Warning
             );
+        }
+
+        /// <summary>
+        /// 磁盘空间不足提示页。展示目标盘所需空间与当前可用空间，用户点击"返回"后
+        /// 回到"安装选项"页更换目录重试（选项页里的输入在空间检查前已记录）。
+        /// </summary>
+        public void ShowInsufficientDiskSpace(long requiredBytes, long availableBytes)
+        {
+            busy = false;
+            RenderPage(delegate
+            {
+                SetActiveStep(-1);
+                AddLabel(
+                    rightBody,
+                    "InsufficientSpaceHeader",
+                    T("InsufficientSpaceHeader"),
+                    46,
+                    110,
+                    540,
+                    58,
+                    HeadingFont,
+                    Color.FromArgb(178, 59, 49)
+                );
+                string message = string.Format(
+                    T("InsufficientSpaceMessage"),
+                    FormatSize(requiredBytes),
+                    FormatSize(availableBytes)
+                );
+                AddLabel(rightBody, "InsufficientSpaceMessage", message, 46, 190, 540, 60, BodyFont, MutedColor);
+                AddLabel(rightBody, "InsufficientSpaceHint", T("InsufficientSpaceHint"), 46, 265, 540, 60, SmallFont, MutedColor);
+                AddFooterButton("InsufficientSpaceBackButton", T("InsufficientSpaceBackButton"), 470, ShowOptions);
+            });
+        }
+
+        private static string FormatSize(long bytes)
+        {
+            const long MB = 1024 * 1024;
+            const long GB = 1024 * MB;
+            return bytes >= GB
+                ? string.Format("{0:F1} GB", (double)bytes / GB)
+                : string.Format("{0:F0} MB", (double)bytes / MB);
         }
 
         public void ShowRestartRequired(bool operationCompleted)
@@ -939,6 +1478,12 @@ namespace OpenDesk.Installer
 
         private void StartInstallFromWelcome()
         {
+            // 空间预检查失败时保持当前页面，用户可换目录重试（issue #288）。
+            if (!application.HasEnoughSpaceForInstall(selectedFolder))
+            {
+                return;
+            }
+
             application.Install(
                 selectedFolder,
                 selectedDesktopShortcut,
@@ -962,10 +1507,18 @@ namespace OpenDesk.Installer
                 return;
             }
 
+            // 先记录用户输入再校验空间：空间不足会切换到提示页并销毁选项页，
+            // 返回选项页时由这些字段重建输入框，避免用户刚填的目录与勾选项丢失。
             selectedFolder = folder;
             selectedDesktopShortcut = desktopShortcutCheckBox.Checked;
             selectedStartMenuShortcut = startMenuShortcutCheckBox.Checked;
             selectedInstallPathCustomized = editingInstallPathCustomized;
+
+            if (!application.HasEnoughSpaceForInstall(folder))
+            {
+                return;
+            }
+
             ShowWelcome(true);
         }
 
@@ -1140,6 +1693,16 @@ namespace OpenDesk.Installer
 
         private void OnFormClosing(object sender, FormClosingEventArgs e)
         {
+            StopElevationVisibilityWatch();
+
+            if (application.RunsWithoutUserInteraction)
+            {
+                // 静默模式/被父 bundle 调起：apply 完成后这里直接放行关闭。
+                // 若还走 busy 守卫，会 e.Cancel + 弹确认框——在 /quiet 下窗体是隐藏的，
+                // 这个 MessageBox 永远没人点，进程不退出，卸载就"卡住"。
+                return;
+            }
+
             if (!busy)
             {
                 return;
@@ -1181,6 +1744,29 @@ namespace OpenDesk.Installer
 
     internal static class InstallerPath
     {
+        /// <summary>
+        /// 目标目录所在卷的可用剩余空间（字节）。目录不存在时按其根盘符查询
+        /// （DriveInfo 挂载即可读取）；读不到返回 -1，由调用方决定是否放行。
+        /// </summary>
+        public static long GetAvailableFreeSpace(string folder)
+        {
+            if (string.IsNullOrWhiteSpace(folder))
+            {
+                return -1;
+            }
+
+            try
+            {
+                string root = Path.GetPathRoot(Path.GetFullPath(folder.Trim()));
+                DriveInfo drive = new DriveInfo(root);
+                return drive.IsReady ? drive.AvailableFreeSpace : -1;
+            }
+            catch
+            {
+                return -1;
+            }
+        }
+
         public static string Normalize(string folder)
         {
             if (string.IsNullOrWhiteSpace(folder))
@@ -1241,9 +1827,54 @@ namespace OpenDesk.Installer
     {
         private const int WM_SETREDRAW = 0x000B;
         private const uint PROCESS_QUERY_LIMITED_INFORMATION = 0x1000;
+        private const int SW_RESTORE = 9;
 
         [DllImport("user32.dll")]
         private static extern IntPtr SendMessage(IntPtr window, int message, IntPtr wordParameter, IntPtr longParameter);
+
+        [DllImport("user32.dll")]
+        private static extern bool ShowWindow(IntPtr window, int command);
+
+        [DllImport("user32.dll")]
+        private static extern IntPtr GetForegroundWindow();
+
+        [DllImport("user32.dll")]
+        private static extern bool SetForegroundWindow(IntPtr window);
+
+        [DllImport("user32.dll")]
+        private static extern bool BringWindowToTop(IntPtr window);
+
+        [DllImport("user32.dll")]
+        private static extern uint GetWindowThreadProcessId(IntPtr window, IntPtr processId);
+
+        [DllImport("user32.dll")]
+        private static extern uint GetWindowThreadProcessId(IntPtr window, out uint processId);
+
+        [DllImport("user32.dll")]
+        private static extern bool AttachThreadInput(uint attachTo, uint attachFrom, bool attach);
+
+        [DllImport("kernel32.dll")]
+        private static extern uint GetCurrentThreadId();
+
+        [DllImport("kernel32.dll")]
+        private static extern uint GetCurrentProcessId();
+
+        /// <summary>
+        /// 当前前台窗口是否属于本进程（例如我们自己弹的 MessageBox）。
+        /// 这种情况下不应该抢前台，否则会把自己的对话框盖掉。
+        /// </summary>
+        public static bool IsForegroundWindowInCurrentProcess()
+        {
+            IntPtr foreground = GetForegroundWindow();
+            if (foreground == IntPtr.Zero)
+            {
+                return false;
+            }
+
+            uint processId;
+            GetWindowThreadProcessId(foreground, out processId);
+            return processId == GetCurrentProcessId();
+        }
 
         [DllImport("kernel32.dll", SetLastError = true)]
         private static extern IntPtr OpenProcess(uint desiredAccess, bool inheritHandle, int processId);
@@ -1287,6 +1918,57 @@ namespace OpenDesk.Installer
             {
                 SendMessage(control.Handle, WM_SETREDRAW, enabled ? new IntPtr(1) : IntPtr.Zero, IntPtr.Zero);
             }
+        }
+
+        /// <summary>
+        /// 把窗口强行带回前台，返回结束时本窗口是否已成为前台窗口。
+        ///
+        /// SetForegroundWindow 只在调用线程拥有前台窗口时才生效；UAC 结束后前台归属别的进程
+        /// （consent.exe 退出后通常是 explorer 或提权的 companion 进程），直接调用会被系统忽略。
+        /// 标准绕法是先用 AttachThreadInput 把本线程的输入队列附加到当前前台窗口所属线程，
+        /// 借到前台权限后再 SetForegroundWindow，最后解除附加。
+        ///
+        /// 不能只看 SetForegroundWindow 的返回值：它在部分场景会返回成功但前台并未真正切换
+        /// （例如 UAC 安全桌面仍在，或前台锁定超时未过）。这里以 GetForegroundWindow 的实际
+        /// 结果为准，让调用方据此决定是否继续重试。
+        /// </summary>
+        public static bool ForceForeground(Control control)
+        {
+            if (!control.IsHandleCreated)
+            {
+                return false;
+            }
+
+            IntPtr handle = control.Handle;
+            ShowWindow(handle, SW_RESTORE);
+
+            if (GetForegroundWindow() == handle)
+            {
+                return true;
+            }
+
+            IntPtr foreground = GetForegroundWindow();
+            uint currentThreadId = GetCurrentThreadId();
+            uint foregroundThreadId = foreground == IntPtr.Zero
+                ? 0
+                : GetWindowThreadProcessId(foreground, IntPtr.Zero);
+            bool attached = foregroundThreadId != 0 &&
+                foregroundThreadId != currentThreadId &&
+                AttachThreadInput(currentThreadId, foregroundThreadId, true);
+            try
+            {
+                BringWindowToTop(handle);
+                SetForegroundWindow(handle);
+            }
+            finally
+            {
+                if (attached)
+                {
+                    AttachThreadInput(currentThreadId, foregroundThreadId, false);
+                }
+            }
+
+            return GetForegroundWindow() == handle;
         }
     }
 

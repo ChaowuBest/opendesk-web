@@ -20,11 +20,25 @@ import {
     NAV_INTERCEPT_CONSOLE_PREFIX
 } from './webviewScripts';
 import { createRendererTranslator } from './locale.js';
+import {
+    createBrowserHintPanel,
+    fetchBrowserHintsForPage,
+    type BrowserHintPanelHandle
+} from './components/browserHintPanel.js';
+// 注册 <content-loading-view> 加载中组件，用于页面加载反馈
+import './components/loading.js';
 
 export type { BrowserState, TabInfo };
 
+export interface BrowserRestoreState {
+    tabs: Array<{ url: string; title: string }>;
+    activeIndex: number;
+}
+
 const HOME_PAGE = 'about:blank';
 const fallbackT = createRendererTranslator();
+// 页面加载指示器的延迟显示时间：快速加载的页面不闪烁 loading 遮罩
+const LOADING_OVERLAY_DELAY_MS = 300;
 
 function browserT(key: string): string {
     const runtimeTranslator = (window as any).__odT;
@@ -44,6 +58,8 @@ interface BrowserTab {
     errorInfo?: ErrorInfo;
     /** 若此 tab 由弹窗产生，记录打开它的父 tab ID */
     openerTabId?: number;
+    /** 加载指示器延迟显示的定时器句柄 */
+    loadingTimer?: ReturnType<typeof setTimeout> | null;
 }
 
 /**
@@ -66,8 +82,15 @@ export class EmbeddedBrowser extends BrowserInstance {
     private _currentZoomFactor: number = 1;
     private _removeZoomListener: (() => void) | null = null;
     private _resizeObserver: ResizeObserver | null = null;
+    private readonly _restoreState?: BrowserRestoreState;
     private static readonly VIRTUAL_WIDTH = 1280;
     private static readonly VIRTUAL_HEIGHT = 800;
+
+    // 页面提示（Browser Hints）面板状态
+    private hintPanel: BrowserHintPanelHandle | null = null;
+    private _hintRefreshTimer: ReturnType<typeof setTimeout> | null = null;
+    private _hintSeq: number = 0;
+    private _lastHintKey: string = '';
 
     /**
      * Resize burst detection — during active window resize we skip ALL
@@ -78,9 +101,10 @@ export class EmbeddedBrowser extends BrowserInstance {
     private _resizeDebounceTimer: ReturnType<typeof setTimeout> | null = null;
     private readonly _focusTrapKeydown = (event: KeyboardEvent) => this.handleFocusTrapKeydown(event);
 
-    constructor(container: HTMLElement, id: string = '') {
+    constructor(container: HTMLElement, id: string = '', restoreState?: BrowserRestoreState) {
         super(id);
         this.container = container;
+        this._restoreState = restoreState;
         this.container.setAttribute('data-od-browser-focus-scope', '');
         this._initZoomSync();
         this._initVisibilityHandler();
@@ -448,6 +472,19 @@ export class EmbeddedBrowser extends BrowserInstance {
             .bw-webview {
                 width: 100%; height: 100%; border: none;
             }
+            .bw-loading-overlay {
+                position: absolute; top: 0; left: 0;
+                width: 100%; height: 100%;
+                display: flex; align-items: center; justify-content: center;
+                background: #ffffff;
+                z-index: 10;
+                pointer-events: none;
+                animation: bw-loading-fade-in 0.2s ease;
+            }
+            @keyframes bw-loading-fade-in {
+                from { opacity: 0; }
+                to { opacity: 1; }
+            }
             .bw-sep {
                 width: 1px; height: 14px;
                 background: #e5e7eb; margin: 0 1px; flex-shrink: 0;
@@ -563,6 +600,9 @@ export class EmbeddedBrowser extends BrowserInstance {
                 background: #1e1e1e !important;
                 box-shadow: inset 0 2px 6px rgba(0,0,0,0.3) !important;
             }
+            :host([data-theme="dark"]) .bw-loading-overlay {
+                background: #1e1e1e !important;
+            }
             :host([data-theme="dark"]) .bw-sep {
                 background: rgba(255, 255, 255, 0.12) !important;
             }
@@ -581,6 +621,7 @@ export class EmbeddedBrowser extends BrowserInstance {
                     <i class="fas fa-lock bw-lock"></i>
                     <input type="text" class="bw-url-input" placeholder="输入网址或搜索…" value="">
                 </div>
+                <div class="bw-hint-slot"></div>
                 <div class="bw-sep"></div>
                 <div class="bw-toolbar-right">
                     <button class="bw-btn bw-menu-btn" title="工具菜单"><i class="fas fa-ellipsis"></i></button>
@@ -595,11 +636,39 @@ export class EmbeddedBrowser extends BrowserInstance {
         this.tabBarInner = this.container.querySelector('.bw-tabbar-inner') as HTMLElement;
         this.webviewContainer = this.container.querySelector('.bw-webview-container') as HTMLElement;
 
+        // 地址栏右侧的页面提示（Browser Hints）入口
+        const hintSlot = this.container.querySelector('.bw-hint-slot') as HTMLElement;
+        this.hintPanel = createBrowserHintPanel({
+            labels: {
+                title: browserT('renderer.browser.pageHints'),
+                emptyText: browserT('renderer.browser.pageHintsEmpty'),
+                textSection: browserT('renderer.browser.pageHintsTextSection'),
+                actionSection: browserT('renderer.browser.pageHintsActionSection'),
+                argsSection: browserT('renderer.browser.pageHintsArgs')
+            },
+            buttonClass: 'bw-btn'
+        });
+        hintSlot.appendChild(this.hintPanel.root);
+
         this.bindToolbarEvents();
         this.bindTabBarEvents();
         this._initViewportScaling();
 
-        this.addTab(HOME_PAGE);
+        const restorableTabs = this._restoreState?.tabs.filter((tab) => typeof tab.url === 'string' && tab.url) ?? [];
+        if (restorableTabs.length === 0) {
+            this.addTab(HOME_PAGE);
+            return;
+        }
+
+        const restoredIds = restorableTabs.map((restoredTab) => {
+            const tabId = this.addTab(restoredTab.url);
+            const tab = this.tabs.find((candidate) => candidate.id === tabId);
+            if (tab && restoredTab.title) tab.title = restoredTab.title;
+            return tabId;
+        });
+        const activeIndex = Math.min(Math.max(this._restoreState?.activeIndex ?? 0, 0), restoredIds.length - 1);
+        this.switchToTab(restoredIds[activeIndex]);
+        this.renderTabBar();
     }
 
     /**
@@ -954,6 +1023,7 @@ export class EmbeddedBrowser extends BrowserInstance {
             return;
         }
 
+        this.hideTabLoading(tab);
         try {
             (tab.webview as any)?.closeDevTools?.();
         } catch {
@@ -1111,6 +1181,19 @@ export class EmbeddedBrowser extends BrowserInstance {
             this.closeTab(tab.id);
         });
 
+        // 慢加载页面在导航 commit 前会一直停留在旧页面上，这里在主框架导航
+        // 开始时显示加载中遮罩给出反馈。不用 did-start-loading：它对 iframe
+        // 等子框架加载也会触发，广告轮换等周期性子框架刷新会让已加载完的
+        // 页面反复闪现加载遮罩；同文档导航（pushState/hash）也不需要遮罩。
+        wv.addEventListener('did-start-navigation', (event: any) => {
+            if (event.isMainFrame && !event.isInPlace) {
+                this.showTabLoading(tab);
+            }
+        });
+        wv.addEventListener('did-stop-loading', () => {
+            this.hideTabLoading(tab);
+        });
+
         // 拦截 window.open / target="_blank" 等打开新窗口的行为，
         // 改为在当前浏览器面板中开新标签页，
         // 避免 PiP 模式下弹出独立窗口导致用户体验割裂。
@@ -1154,6 +1237,9 @@ export class EmbeddedBrowser extends BrowserInstance {
         window.addEventListener('browser-webview-close-requested', onWebviewCloseRequested);
 
         wv.addEventListener('did-navigate', (event: any) => {
+            // 导航 commit 后页面内容已开始渲染，立即撤掉加载遮罩，
+            // 避免把已经显示出来的部分内容盖住（did-stop-loading 要等全部资源完成）
+            this.hideTabLoading(tab);
             // 成功导航时清除错误状态
             if (tab.errorInfo) {
                 tab.errorInfo = undefined;
@@ -1169,6 +1255,8 @@ export class EmbeddedBrowser extends BrowserInstance {
         });
 
         wv.addEventListener('did-navigate-in-page', (event: any) => {
+            // 页内导航发生在已渲染的文档内，同样立即撤掉加载遮罩
+            this.hideTabLoading(tab);
             tab.url = event.url;
             if (tab.id === this.activeTabId) this.syncUrlBar();
             if (tab.ready) this.syncNavButtons();
@@ -1257,6 +1345,8 @@ export class EmbeddedBrowser extends BrowserInstance {
             const { errorCode, errorDescription, validatedURL, isMainFrame } = event;
             // 忽略子资源加载失败和非真正的错误
             if (!isMainFrame) return;
+            // 无论何种失败（含 ERR_ABORTED 主动中断），加载都不会再 commit，撤掉遮罩
+            this.hideTabLoading(tab);
             if (errorCode === -3) return; // ERR_ABORTED：用户主动导航中断
 
             const userMessage = getErrorMessage(errorDescription);
@@ -1288,6 +1378,34 @@ export class EmbeddedBrowser extends BrowserInstance {
         wv.executeJavaScript(WINDOW_OPEN_PROXY_SCRIPT).catch(() => {
             /* ignore */
         });
+    }
+
+    /**
+     * 延迟显示加载中遮罩：加载开始后 LOADING_OVERLAY_DELAY_MS 内完成的
+     * 页面不会闪烁遮罩，慢页面则会在旧内容上叠加明确的加载反馈。
+     */
+    private showTabLoading(tab: BrowserTab): void {
+        if (tab.loadingTimer != null) return;
+        tab.loadingTimer = setTimeout(() => {
+            tab.loadingTimer = null;
+            const wrap = tab.wrapEl;
+            if (!wrap || wrap.querySelector('.bw-loading-overlay')) return;
+            const overlay = document.createElement('div');
+            overlay.className = 'bw-loading-overlay';
+            const loadingView = document.createElement('content-loading-view');
+            loadingView.setAttribute('data-message', browserT('renderer.browser.loadingPage'));
+            overlay.appendChild(loadingView);
+            wrap.appendChild(overlay);
+        }, LOADING_OVERLAY_DELAY_MS);
+    }
+
+    /** 取消未触发的加载遮罩定时器并移除已显示的遮罩 */
+    private hideTabLoading(tab: BrowserTab): void {
+        if (tab.loadingTimer != null) {
+            clearTimeout(tab.loadingTimer);
+            tab.loadingTimer = null;
+        }
+        tab.wrapEl?.querySelector('.bw-loading-overlay')?.remove();
     }
 
     /**
@@ -1369,6 +1487,55 @@ export class EmbeddedBrowser extends BrowserInstance {
         const tab = this.getActiveTab();
         if (this.urlInput && tab) {
             this.urlInput.value = tab.url || '';
+        }
+        this.scheduleHintsRefresh();
+    }
+
+    // ==== 页面提示（Browser Hints）====
+
+    /**
+     * 延迟刷新地址栏的页面提示：导航过程 URL 可能连续变化，
+     * 防抖后只对最终页面发起一次 hint 匹配。
+     */
+    private scheduleHintsRefresh(): void {
+        if (this._hintRefreshTimer !== null) {
+            clearTimeout(this._hintRefreshTimer);
+        }
+        this._hintRefreshTimer = setTimeout(() => {
+            this._hintRefreshTimer = null;
+            void this.refreshHints();
+        }, 250);
+    }
+
+    private async refreshHints(): Promise<void> {
+        const seq = ++this._hintSeq;
+        const tab = this.getActiveTab();
+        const url = tab?.url || '';
+        // hint 的 pattern 只对 http(s) 页面有意义，内部页与空白页直接清空
+        if (!/^https?:/i.test(url)) {
+            this._lastHintKey = '';
+            this.hintPanel?.setHints([]);
+            return;
+        }
+        const key = `${tab?.id ?? ''}|${url}`;
+        if (key === this._lastHintKey) return;
+
+        let webContentsId: number | undefined;
+        try {
+            webContentsId = (tab?.webview as any)?.getWebContentsId();
+        } catch {
+            webContentsId = undefined;
+        }
+
+        try {
+            const hints = await fetchBrowserHintsForPage({ url, title: tab?.title, webContentsId });
+            if (seq !== this._hintSeq) return;
+            this._lastHintKey = key;
+            this.hintPanel?.setHints(hints);
+        } catch {
+            // hint 属于附加信息：拉取失败按无提示处理，等待下次导航再重试
+            if (seq !== this._hintSeq) return;
+            this.hintPanel?.setHints([]);
         }
     }
 
@@ -1561,6 +1728,17 @@ export class EmbeddedBrowser extends BrowserInstance {
         }
     }
 
+    /** Return focus ownership without changing it. */
+    public hasActiveWebviewFocus(): boolean {
+        const tab = this.getActiveTab();
+        if (!tab?.webview || !tab.ready) return false;
+        let active: Element | null = document.activeElement;
+        while (active?.shadowRoot?.activeElement) {
+            active = active.shadowRoot.activeElement;
+        }
+        return active === tab.webview || (tab.webview as unknown as HTMLElement).matches(':focus');
+    }
+
     /**
      * Capture a screenshot of the active tab as a data URL (PNG).
      * Uses main-process IPC to capture via webContents.capturePage(),
@@ -1598,6 +1776,15 @@ export class EmbeddedBrowser extends BrowserInstance {
         return tab?.url || '';
     }
 
+    /** Serializable tab state retained while an idle physical WebView is recycled. */
+    public getSessionState(): BrowserRestoreState {
+        const activeIndex = this.tabs.findIndex((tab) => tab.id === this.activeTabId);
+        return {
+            tabs: this.tabs.map((tab) => ({ url: tab.url, title: tab.title })),
+            activeIndex: activeIndex >= 0 ? activeIndex : 0
+        };
+    }
+
     public destroy(): void {
         this.container?.removeAttribute('data-od-browser-focus-scope');
         this.container?.removeEventListener('keydown', this._focusTrapKeydown);
@@ -1606,7 +1793,15 @@ export class EmbeddedBrowser extends BrowserInstance {
             this._removeZoomListener();
             this._removeZoomListener = null;
         }
+        // 清理页面提示面板与防抖定时器
+        if (this._hintRefreshTimer !== null) {
+            clearTimeout(this._hintRefreshTimer);
+            this._hintRefreshTimer = null;
+        }
+        this.hintPanel?.destroy();
+        this.hintPanel = null;
         for (const tab of this.tabs) {
+            this.hideTabLoading(tab);
             try {
                 (tab.webview as any)?.closeDevTools?.();
             } catch {

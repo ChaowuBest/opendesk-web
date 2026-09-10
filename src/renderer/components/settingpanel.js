@@ -2109,7 +2109,7 @@ class SettingPanel extends HTMLElement {
             : 'bottom-right';
         const networkConfig = this.currentData?.network_config || {};
         const noSsl = networkConfig.no_ssl !== false;
-        const useProxy = networkConfig.use_proxy || 'none';
+        const useProxy = networkConfig.use_proxy || 'system';
         const customProxyAddr = networkConfig.custom_proxy_addr || '';
         const noProxy = networkConfig.no_proxy || '';
 
@@ -2310,6 +2310,7 @@ class SettingPanel extends HTMLElement {
         const debugDevMode = !!debugConfig.developer_mode;
         const debugExpFeature = !!debugConfig.experimental_feature;
         const debugLogRawLlm = !!debugConfig.log_raw_llm_request;
+        const debugLogEnabled = !!debugConfig.debug_log;
 
         return `
         <section class="sp-section">
@@ -2322,6 +2323,15 @@ class SettingPanel extends HTMLElement {
                 <label class="sp-toggle-switch">
                     <input type="checkbox" ${debugDevMode ? 'checked' : ''} id="debug-mode-toggle-hidden">
                     <span id="debug-mode-toggle" class="sp-toggle-track" style="cursor:pointer" data-key="developer_mode"></span>
+                </label>
+            </div>
+            <div class="sp-toggle-row">
+                <div class="sp-toggle-info">
+                    <div class="sp-toggle-label">${this._t('renderer.settings.debugLog')}</div>
+                </div>
+                <label class="sp-toggle-switch">
+                    <input type="checkbox" ${debugLogEnabled ? 'checked' : ''} id="debug-log-toggle-hidden">
+                    <span id="debug-log-toggle" class="sp-toggle-track" style="cursor:pointer" data-key="debug_log"></span>
                 </label>
             </div>
             <div class="sp-toggle-row">
@@ -3103,12 +3113,7 @@ class SettingPanel extends HTMLElement {
 
         this.querySelector('#floating-window-mode-select')?.addEventListener('change', (e) => {
             if (!this.currentData.gui_config) this.currentData.gui_config = {};
-            const value = e.target.value;
-            if (value === 'off') {
-                delete this.currentData.gui_config.floating_window_mode;
-            } else {
-                this.currentData.gui_config.floating_window_mode = value;
-            }
+            this.currentData.gui_config.floating_window_mode = e.target.value;
             this.saveImmediately();
         });
 
@@ -3121,6 +3126,12 @@ class SettingPanel extends HTMLElement {
         this.querySelector('#debug-mode-toggle-hidden')?.addEventListener('change', (e) => {
             if (!this.currentData.debug) this.currentData.debug = {};
             this.currentData.debug.developer_mode = e.target.checked;
+            this.saveImmediately();
+        });
+
+        this.querySelector('#debug-log-toggle-hidden')?.addEventListener('change', (e) => {
+            if (!this.currentData.debug) this.currentData.debug = {};
+            this.currentData.debug.debug_log = e.target.checked;
             this.saveImmediately();
         });
 
@@ -4506,12 +4517,7 @@ class SettingPanel extends HTMLElement {
             });
             this.querySelector('#floating-window-mode-select')?.addEventListener('change', (e) => {
                 if (!this.currentData.gui_config) this.currentData.gui_config = {};
-                const value = e.target.value;
-                if (value === 'off') {
-                    delete this.currentData.gui_config.floating_window_mode;
-                } else {
-                    this.currentData.gui_config.floating_window_mode = value;
-                }
+                this.currentData.gui_config.floating_window_mode = e.target.value;
                 this.saveImmediately();
             });
             this.querySelector('#floating-window-position-select')?.addEventListener('change', (e) => {
@@ -4522,6 +4528,12 @@ class SettingPanel extends HTMLElement {
             this.querySelector('#debug-mode-toggle-hidden')?.addEventListener('change', (e) => {
                 if (!this.currentData.debug) this.currentData.debug = {};
                 this.currentData.debug.developer_mode = e.target.checked;
+                this.saveImmediately();
+            });
+
+            this.querySelector('#debug-log-toggle-hidden')?.addEventListener('change', (e) => {
+                if (!this.currentData.debug) this.currentData.debug = {};
+                this.currentData.debug.debug_log = e.target.checked;
                 this.saveImmediately();
             });
 

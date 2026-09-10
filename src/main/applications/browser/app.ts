@@ -42,6 +42,8 @@ import {
     BrowserDropHistoryTool
 } from './tools';
 import { BROWSER_SKILL, MANAGE_BROWSER_SKILL } from './skills';
+import { collectBrowserHintSummaries } from './hints.js';
+import type { BrowserHintSummary } from './hints.js';
 import {
     BrowserManager,
     CDPSessionManager,
@@ -51,7 +53,7 @@ import {
     makeExecuteScriptOnBrowser,
     renderSnapshotText
 } from '../../../common/embedBrowserUse/main';
-import type { CDPSession } from '../../../common/embedBrowserUse/main';
+import type { CDPSession, BrowserPageEvaluator } from '../../../common/embedBrowserUse/main';
 import type { PageSnapshot } from '../../../common/embedBrowserUse/protocol';
 import { Channels as EmbedBrowserChannels } from '../../../common/embedBrowserUse/protocol';
 import { makeEnsureSidebarScript, openDeskScriptGenerators } from './utils.js';
@@ -662,7 +664,8 @@ class BrowserApplication extends BaseApplication {
     }
 
     /**
-     * JS snippet injected into the renderer to expand the sidebar and activate the browser tab.
+     * JS snippet injected into the renderer to prepare the embedded browser.
+     * The host presentation policy may reveal the browser on the task's first use only.
      * Finds the parent task-view by walking up from the task-artifacts element.
      * 如果 task-view 尚不存在（后台定时任务等场景），先创建一个隐藏的 task-view，
      * 并直接初始化浏览器（跳过侧边栏动画和全局状态修改）。
@@ -672,8 +675,8 @@ class BrowserApplication extends BaseApplication {
     }
 
     /**
-     * Ensure browser sidebar is open and browser tab is active for the given task,
-     * then execute a script in the active webview and return the result.
+     * Prepare the browser for the given task, then execute a script in the active
+     * webview and return the result.
      *
      * @param timeoutMs 超时时间（毫秒），默认 12 秒。防止 webview.executeJavaScript 在页面加载期间无限挂起。
      */
@@ -688,8 +691,8 @@ class BrowserApplication extends BaseApplication {
     }
 
     /**
-     * Call a synchronous method on the task's <task-artifacts> element.
-     * Also ensures browser sidebar is open.
+     * Call a synchronous method on the task's <task-artifacts> element after the
+     * embedded browser runtime is prepared.
      */
     async callRendererBrowser(taskId: string, method: string, ...args: any[]): Promise<any> {
         const ctrl = BrowserManager.getOrCreateController(taskId);
@@ -697,8 +700,8 @@ class BrowserApplication extends BaseApplication {
     }
 
     /**
-     * Ensure sidebar is expanded and browser tab is active, then emit an event.
-     * Used for fire-and-forget operations (navigate, goBack, etc.)
+     * Prepare the embedded browser, then emit an event.
+     * Used for fire-and-forget operations (navigate, goBack, etc.).
      */
     async emitBrowserEvent(eventName: string, taskId: string, ...args: any[]): Promise<void> {
         const mainWin = await this._getMainWindow();
@@ -763,6 +766,40 @@ class BrowserApplication extends BaseApplication {
 
         await fs.writeFile(saveResult.filePath, content, 'utf8');
         return { canceled: false, filePath: saveResult.filePath };
+    }
+
+    /**
+     * 地址栏「页面提示」入口：列出当前页面命中的插件 Browser Hints 摘要。
+     *
+     * 任务浏览器标签与浏览器应用共用；提供 webContentsId 时 hint 生成器
+     * 可通过 ctx.dom() 读取真实页面 DOM。失败一律降级为空列表，不影响浏览。
+     */
+    async listBrowserHintsForPage(payload: {
+        url: string;
+        title?: string;
+        webContentsId?: number;
+    }): Promise<BrowserHintSummary[]> {
+        if (!payload?.url) return [];
+        const evaluate: BrowserPageEvaluator = (expression) =>
+            this._evaluateOnWebContents(payload.webContentsId, expression);
+        try {
+            return await collectBrowserHintSummaries(evaluate, { url: payload.url, title: payload.title });
+        } catch (error) {
+            logger.warn(`listBrowserHintsForPage failed: ${error instanceof Error ? error.message : String(error)}`);
+            return [];
+        }
+    }
+
+    /** 在指定 webContents 上求值；id 无效或页面已销毁时返回空字符串 */
+    private async _evaluateOnWebContents(webContentsId: number | undefined, expression: string): Promise<unknown> {
+        if (!Number.isInteger(webContentsId) || (webContentsId as number) <= 0) return '';
+        try {
+            const wc = getElectronWebContents().fromId(webContentsId as number);
+            if (!wc || wc.isDestroyed?.()) return '';
+            return await wc.executeJavaScript(expression, false);
+        } catch {
+            return '';
+        }
     }
 
     // =====================================================================

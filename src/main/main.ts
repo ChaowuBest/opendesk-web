@@ -26,6 +26,7 @@ import {
     powerMonitor,
     powerSaveBlocker
 } from 'electron';
+import type { WebContents } from 'electron';
 import {
     Setting,
     ModelInstance,
@@ -33,7 +34,8 @@ import {
     getTaskDirectory,
     getTaskArtifactDirectory,
     getLogDirectory,
-    isDeveloperModeEnabled
+    isDeveloperModeEnabled,
+    isDebugLogEnabled
 } from './utils/setting.js';
 import { QuickPassHelper } from './utils/quickpass.js';
 import { getWindowsDrives } from './utils/drives.js';
@@ -44,7 +46,14 @@ import { BaseToolset } from './aikernel/tool';
 import { is } from '@electron-toolkit/utils';
 import { z } from 'zod';
 import { NotificationManager } from './utils/notificationmgr.js';
-import { LogStream, logger, useConsoleTransport, dropDeprecatedLogs, getLogFilename } from './utils/logger.js';
+import {
+    LogStream,
+    logger,
+    setDebugMode,
+    useConsoleTransport,
+    dropDeprecatedLogs,
+    getLogFilename
+} from './utils/logger.js';
 import { safeSendToWebContents, safeSendToWebFrame } from './utils/electron-ipc.js';
 import { createMainWindowCloseHandler } from './utils/window-close.js';
 import { NAV_INTERCEPT_SCRIPT } from '../renderer/webviewScripts.js';
@@ -68,7 +77,8 @@ import {
     ElectronPlatform,
     ElectronTaskManagerUpdateSubscriber
 } from '../platforms/electron.js';
-import { exportTaskToHtml, generateTaskHtml } from './utils/export.js';
+import { exportTaskJsonToFile, exportTaskToHtml, generateTaskHtml } from './utils/export.js';
+import { saveTaskExportHtml } from './utils/export-html-writer.js';
 import { getMainThemeService, registerThemeHandlers } from '../renderer/theme/main-theme-service.js';
 import { AgentRegistry } from './aikernel/agents/registry.js';
 import { HarnessContext } from './aikernel/security/harness.js';
@@ -78,10 +88,13 @@ import {
     activateOpenDeskOfficeContents,
     attachOpenDeskOfficeWindow,
     configureOpenDeskOfficeWebPreferences,
-    getOpenDeskOfficeEditorKind,
+    getEmbeddedOpenDeskOfficeContentsKind,
+    getEmbeddedOpenDeskOfficeEditorKind,
+    isEmbeddedOpenDeskOfficeContents,
     registerEmbeddedOpenDeskOffice,
     requestCloseOpenDeskOfficeContents
 } from './office/openDeskOfficeHost.js';
+import { isOpenDeskOfficePartition } from '../common/officeWebview.js';
 import { ChannelMgrApplication } from './applications/channelmgr/app.js';
 import { ChannelMessageRouter } from './applications/channelmgr/router.js';
 import {
@@ -473,34 +486,115 @@ function registerRendererFramePreload(): void {
     }
 }
 
-function installWebviewHostHandlers(hostWindow: BrowserWindow): void {
-    hostWindow.webContents.on('will-attach-webview', (_event, webPreferences, params) => {
-        const src = params.src ?? '';
-        const isApplicationGuest = src.includes('application.html');
-        if (isApplicationGuest) {
-            webPreferences.preload = getRendererPreloadPath();
-            webPreferences.contextIsolation = true;
-            webPreferences.nodeIntegration = false;
+const OPENDESK_BROWSER_PARTITION = 'persist:opendesk-browser';
+
+function isEmbeddedBrowserContents(contents: WebContents): boolean {
+    return contents.session === session.fromPartition(OPENDESK_BROWSER_PARTITION);
+}
+
+function installWebviewKeyboardForwarding(
+    hostWindow: BrowserWindow,
+    contents: WebContents,
+    preservePlainBrowserTab: boolean
+): void {
+    contents.on('before-input-event', (event, input) => {
+        if (hostWindow.isDestroyed()) return;
+        if (input.key === 'Escape' && input.type === 'keyDown' && hostWindow.isFullScreen()) {
+            hostWindow.setFullScreen(false);
+            event.preventDefault();
             return;
         }
+        const modifiers = input.modifiers ?? [];
+        const isPlainTab =
+            input.key === 'Tab' &&
+            !modifiers.some((modifier) => modifier === 'control' || modifier === 'meta' || modifier === 'alt');
+        if (preservePlainBrowserTab && isPlainTab) return;
+
+        safeSendToWebContents(hostWindow.webContents, 'webview:keyboard-event', {
+            type: input.type,
+            key: input.key,
+            code: input.code,
+            modifiers: input.modifiers
+        });
+    });
+}
+
+function installEmbeddedBrowserLifecycleHandlers(hostWindow: BrowserWindow, contents: WebContents): void {
+    contents.setWindowOpenHandler(({ url }) => {
+        if (url && url !== 'about:blank' && !hostWindow.isDestroyed()) {
+            safeSendToWebContents(hostWindow.webContents, EmbedBrowserChannels.popupBlocked, url, contents.id);
+        }
+        return { action: 'deny' };
+    });
+
+    contents.on('close', () => {
+        if (hostWindow.isDestroyed()) return;
+        safeSendToWebContents(hostWindow.webContents, EmbedBrowserChannels.webviewCloseRequested, contents.id);
+    });
+}
+
+function installNonBrowserWindowOpenPolicy(contents: WebContents): void {
+    contents.setWindowOpenHandler(() => ({ action: 'deny' }));
+}
+
+function installWebviewHostHandlers(hostWindow: BrowserWindow): void {
+    hostWindow.webContents.on('will-attach-webview', (event, webPreferences, params) => {
+        // 非活跃 webview 默认开启后台节流；Browser 和 Office 会在各自分支显式关闭。
+        webPreferences.backgroundThrottling = true;
+        const src = params.src ?? '';
+        if (isOpenDeskOfficePartition(webPreferences.partition)) {
+            const officeEditorKind = getEmbeddedOpenDeskOfficeEditorKind(src, webPreferences.partition);
+            if (!officeEditorKind) {
+                logger.warn(`Blocked untrusted OpenDesk Office webview URL: ${src || '<empty>'}`);
+                event.preventDefault();
+                return;
+            }
+            configureOpenDeskOfficeWebPreferences(officeEditorKind, webPreferences);
+            return;
+        }
+
         // 仅 browser application 的 webview 注入 window.open proxy preload
         // 并关闭 contextIsolation（使 preload 能同步 patch window.open）
-        const isBrowserWebview = webPreferences.partition === 'persist:opendesk-browser';
+        const isBrowserWebview = webPreferences.partition === OPENDESK_BROWSER_PARTITION;
         if (isBrowserWebview) {
             webPreferences.preload = path.join(__dirname, '..', 'preload', 'webviewPreload.js');
             webPreferences.contextIsolation = false;
             // 浏览器面板 webview 关闭后台节流：后台任务 offscreen 渲染时，
             // 麒麟系统定制 Chromium 仍会节流定时器/动画，导致页面 JS 误判触发弹窗告警。
             webPreferences.backgroundThrottling = false;
+            if (BrowserManager.browserSession) webPreferences.session = BrowserManager.browserSession;
+            return;
         }
-        if (BrowserManager.browserSession) {
-            webPreferences.session = BrowserManager.browserSession;
+
+        const isApplicationGuest = src.includes('application.html');
+        if (isApplicationGuest) {
+            webPreferences.preload = getRendererPreloadPath();
+            webPreferences.contextIsolation = true;
+            webPreferences.nodeIntegration = false;
         }
     });
 
-    // 拦截嵌入式浏览器 webview 中的弹窗请求（window.open / target="_blank"），
-    // 通知 renderer 以新标签页形式打开，避免弹出独立窗口。
     hostWindow.webContents.on('did-attach-webview', (_event, webContents) => {
+        if (isEmbeddedOpenDeskOfficeContents(webContents)) {
+            // Office webview 永远不接入 Browser 标签页协议，即使首个 URL 尚未提交。
+            installNonBrowserWindowOpenPolicy(webContents);
+            installWebviewKeyboardForwarding(hostWindow, webContents, false);
+            const officeEditorKind = getEmbeddedOpenDeskOfficeContentsKind(webContents);
+            if (!officeEditorKind) {
+                logger.warn(`Ignored untrusted OpenDesk Office webview URL: ${webContents.getURL() || '<empty>'}`);
+                return;
+            }
+            activateOpenDeskOfficeContents(officeEditorKind, webContents);
+            return;
+        }
+
+        if (!isEmbeddedBrowserContents(webContents)) {
+            // 其他 legacy webview 保留既有的弹窗/关闭转发行为；只有 Office 与 Browser 协议隔离。
+            installEmbeddedBrowserLifecycleHandlers(hostWindow, webContents);
+            installWebviewKeyboardForwarding(hostWindow, webContents, false);
+            return;
+        }
+
         // 导航拦截 workaround：guest 的 renderer 自发起跨文档导航会被框架层静默取消，
         // preload 仅注入主 frame；搜索框位于 OOPIF iframe 的站点（如 Bing 搜索框）
         // 需要把 NAV_INTERCEPT_SCRIPT 注入每个 frame。注入脚本自带幂等标记，重复执行无害。
@@ -508,50 +602,8 @@ function installWebviewHostHandlers(hostWindow: BrowserWindow): void {
         webContents.on('did-frame-navigate', () => {
             injectScriptIntoFrames(webContents, NAV_INTERCEPT_SCRIPT);
         });
-
-        webContents.setWindowOpenHandler(({ url }) => {
-            if (url && url !== 'about:blank' && !hostWindow.isDestroyed()) {
-                safeSendToWebContents(hostWindow.webContents, EmbedBrowserChannels.popupBlocked, url, webContents.id);
-            }
-            return { action: 'deny' };
-        });
-
-        // 当 webview guest 页面调用 window.close()（如 OAuth 完成后），
-        // 通知 renderer 关闭对应 tab。
-        webContents.on('close', () => {
-            if (hostWindow.isDestroyed()) return;
-            safeSendToWebContents(hostWindow.webContents, EmbedBrowserChannels.webviewCloseRequested, webContents.id);
-        });
-
-        // 将 webview 中的键盘事件转发给所属 renderer，使快捷键和 magic pointer
-        // 在 webview 获得焦点时仍能正常工作。
-        webContents.on('before-input-event', (_evt, input) => {
-            if (hostWindow.isDestroyed()) return;
-            // 全屏状态下 ESC 退出全屏
-            if (input.key === 'Escape' && input.type === 'keyDown' && hostWindow.isFullScreen()) {
-                hostWindow.setFullScreen(false);
-                _evt.preventDefault();
-                return;
-            }
-            const modifiers = input.modifiers ?? [];
-            const isBrowserWebview = webContents.session === BrowserManager.browserSession;
-            const isPlainTab =
-                input.key === 'Tab' &&
-                !modifiers.some((modifier) => modifier === 'control' || modifier === 'meta' || modifier === 'alt');
-
-            if (isBrowserWebview && isPlainTab) {
-                // Keep native Chromium Tab traversal inside the guest page, but
-                // do not mirror plain Tab into the OpenDesk host UI.
-                return;
-            }
-
-            safeSendToWebContents(hostWindow.webContents, 'webview:keyboard-event', {
-                type: input.type, // 'keyDown' | 'keyUp'
-                key: input.key,
-                code: input.code,
-                modifiers: input.modifiers // e.g. ['meta'], ['control','shift']
-            });
-        });
+        installEmbeddedBrowserLifecycleHandlers(hostWindow, webContents);
+        installWebviewKeyboardForwarding(hostWindow, webContents, true);
     });
 }
 
@@ -766,69 +818,6 @@ const createWindow = () => {
         ]).popup();
     });
 
-    mainWindow.webContents.on('will-attach-webview', (_event, webPreferences, params) => {
-        // 非活跃 webview 开启后台节流，降低 CPU 和电量消耗
-        webPreferences.backgroundThrottling = true;
-        const src = params.src ?? '';
-        const officeEditorKind = getOpenDeskOfficeEditorKind(src);
-        if (officeEditorKind) {
-            configureOpenDeskOfficeWebPreferences(officeEditorKind, webPreferences);
-            return;
-        }
-        const isApplicationGuest = src.includes('application.html');
-        if (isApplicationGuest) {
-            webPreferences.preload = getRendererPreloadPath();
-            webPreferences.contextIsolation = true;
-            webPreferences.nodeIntegration = false;
-            return;
-        }
-        // 仅 browser application 的 webview 注入 window.open proxy preload
-        // 并关闭 contextIsolation（使 preload 能同步 patch window.open）
-        const isBrowserWebview = webPreferences.partition === 'persist:opendesk-browser';
-        if (isBrowserWebview) {
-            webPreferences.preload = path.join(__dirname, '..', 'preload', 'webviewPreload.js');
-            webPreferences.contextIsolation = false;
-            // 浏览器面板 webview 关闭后台节流：后台任务 offscreen 渲染时，
-            // 麒麟系统定制 Chromium 仍会节流定时器/动画，导致页面 JS 误判触发弹窗告警。
-            webPreferences.backgroundThrottling = false;
-        }
-        if (BrowserManager.browserSession) {
-            webPreferences.session = BrowserManager.browserSession;
-        }
-    });
-
-    // 拦截嵌入式浏览器 webview 中的弹窗请求（window.open / target="_blank"），
-    // 通知 renderer 以新标签页形式打开，避免弹出独立窗口。
-    mainWindow.webContents.on('did-attach-webview', (_event, webContents) => {
-        const officeEditorKind = getOpenDeskOfficeEditorKind(webContents.getURL());
-        if (officeEditorKind) activateOpenDeskOfficeContents(officeEditorKind, webContents);
-        webContents.setWindowOpenHandler(({ url }) => {
-            if (url && url !== 'about:blank') {
-                safeSendToWebContents(mainWindow.webContents, EmbedBrowserChannels.popupBlocked, url, webContents.id);
-            }
-            return { action: 'deny' };
-        });
-
-        // 当 webview guest 页面调用 window.close()（如 OAuth 完成后），
-        // 通知 renderer 关闭对应 tab。
-        webContents.on('close', () => {
-            if (mainWindow.isDestroyed()) return;
-            safeSendToWebContents(mainWindow.webContents, EmbedBrowserChannels.webviewCloseRequested, webContents.id);
-        });
-
-        // 将 webview 中的键盘事件转发给主 renderer，使快捷键和 magic pointer
-        // 在 webview 获得焦点时仍能正常工作。
-        webContents.on('before-input-event', (_evt, input) => {
-            if (mainWindow.isDestroyed()) return;
-            safeSendToWebContents(mainWindow.webContents, 'webview:keyboard-event', {
-                type: input.type, // 'keyDown' | 'keyUp'
-                key: input.key,
-                code: input.code,
-                modifiers: input.modifiers // e.g. ['meta'], ['control','shift']
-            });
-        });
-    });
-
     // 全屏状态下按 ESC 退出全屏（主窗口直接获焦时）
     mainWindow.webContents.on('before-input-event', (event, input) => {
         if (input.key === 'Escape' && input.type === 'keyDown' && mainWindow.isFullScreen()) {
@@ -942,6 +931,33 @@ const createWindow = () => {
     globalMainWindow = mainWindow;
     attachOpenDeskOfficeWindow(mainWindow);
     BrowserManager.setMainWindow(mainWindow);
+};
+
+// renderer 侧诊断日志转发到主进程日志文件（如侧边栏任务列表刷新被跳过等）。
+// 与 taskManager 无关的通用通道，故独立注册；来自 renderer 的内容不可信，
+// 折叠换行避免伪造多行日志条目。
+const registerRendererLogHandler = () => {
+    ipcMain.on('renderer:log', (_event, level, message) => {
+        const msg = String(message ?? '')
+            .replace(/[\r\n]+/g, ' ')
+            .trim();
+        if (!msg) return;
+        const tagged = `[renderer] ${msg}`;
+        switch (level) {
+            // debug 级别仅在调试模式开启时落盘（winston 级别随 setDebugMode 切换）
+            case 'debug':
+                logger.debug(tagged);
+                break;
+            case 'warn':
+                logger.warn(tagged);
+                break;
+            case 'error':
+                logger.error(tagged);
+                break;
+            default:
+                logger.info(tagged);
+        }
+    });
 };
 
 const registerModeAPIHandlers = () => {
@@ -1164,6 +1180,10 @@ const registerUsageAPIHandlers = () => {
 const registerTaskManagerAPIHandlers = () => {
     const globalState = GlobalState.getInstance();
 
+    // session memory 渲染缓存：内容未变化时直接复用上次 rendered，
+    // 省去周期性轮询的重复 parse 开销。任务删除时一并清理，避免条目长期驻留。
+    const sessionMemoryRenderCache = new Map<string, { content: string; rendered: string }>();
+
     ipcMain.handle('taskManager:listFrontendTailCardSections', (_event, taskId: unknown) => {
         if (typeof taskId !== 'string') {
             return { status: 'error', message: 'taskId must be a string' };
@@ -1338,6 +1358,9 @@ const registerTaskManagerAPIHandlers = () => {
             return { status: 'error', message: `task ${taskId} not found` };
         }
 
+        for (const removedId of removedTaskIds) {
+            sessionMemoryRenderCache.delete(removedId);
+        }
         publishTaskTodosCleared(removedTaskIds);
         return { status: 'ok', data: taskId };
     });
@@ -1411,6 +1434,7 @@ const registerTaskManagerAPIHandlers = () => {
     });
     ipcMain.handle('taskManager:clearAllTasks', () => {
         const removedTaskIds = globalState.taskManagerState.clearAllTasks();
+        sessionMemoryRenderCache.clear();
         publishTaskTodosCleared(removedTaskIds);
         return { status: 'ok' };
     });
@@ -1428,7 +1452,13 @@ const registerTaskManagerAPIHandlers = () => {
                 task_status: task.task_status,
                 task_json_path: taskJsonPath,
                 model: task.model,
-                parent_id: task.parent_id
+                parent_id: task.parent_id,
+                // 导出 header 需要的元数据：任务起止时间与累计 token 消耗
+                started_at: task.started_at,
+                created_at: task.created_at,
+                finished_at: task.finished_at,
+                total_elapsed_ms: task.total_elapsed_ms,
+                usage_summary: task.usage_summary
             }
         };
     });
@@ -1835,13 +1865,19 @@ const registerTaskManagerAPIHandlers = () => {
         task.skipRetryDelay();
         return { status: 'ok' };
     });
+    // session memory 渲染缓存
     ipcMain.handle('taskManager:getSessionMemory', async (event, taskId) => {
         try {
             const content = await readTaskSessionMemory(taskId);
             if (!content || isSessionMemoryTemplateOnly(content)) {
                 return { status: 'ok', data: null };
             }
+            const cached = sessionMemoryRenderCache.get(taskId);
+            if (cached && cached.content === content) {
+                return { status: 'ok', data: { raw: content, rendered: cached.rendered } };
+            }
             const rendered = await marked.parse(content);
+            sessionMemoryRenderCache.set(taskId, { content, rendered });
             return { status: 'ok', data: { raw: content, rendered } };
         } catch {
             return { status: 'ok', data: null };
@@ -1945,6 +1981,30 @@ const registerTaskManagerAPIHandlers = () => {
             return { status: 'ok', data: htmlContent };
         } catch (error: any) {
             logger.error('exporting task failed', error);
+            return { status: 'error', message: error.message };
+        }
+    });
+    // 保存 renderer 侧生成的任务导出 HTML（内联字体后写盘）
+    ipcMain.handle('taskManager:saveExportHtml', async (event, filePath, html, fontUrls) => {
+        try {
+            await saveTaskExportHtml(filePath, html, fontUrls);
+            return { status: 'ok', data: filePath };
+        } catch (error: any) {
+            logger.error('saving export html failed', error);
+            return { status: 'error', message: error.message };
+        }
+    });
+    // 将任务的 .task.json 导出到用户选择的路径
+    ipcMain.handle('taskManager:exportTaskJson', async (event, taskId, filePath) => {
+        const task = globalState.taskManagerState.getTask(taskId);
+        if (task === undefined) {
+            return { status: 'error', message: `task ${taskId} not found` };
+        }
+        try {
+            await exportTaskJsonToFile(task, filePath);
+            return { status: 'ok', data: filePath };
+        } catch (error: any) {
+            logger.error('exporting task json failed', error);
             return { status: 'error', message: error.message };
         }
     });
@@ -2173,6 +2233,9 @@ const registerFSAPIHandlers = () => {
 };
 
 const registerSettingAPIHandlers = () => {
+    // 启动时按持久化配置同步调试日志级别（GUI 无 CLI 的 /debug 入口，靠设置项驱动）
+    setDebugMode(isDebugLogEnabled());
+
     const withResolvedLocale = (data: any) => ({
         ...data,
         resolved_locale: getLocale()
@@ -2262,6 +2325,12 @@ const registerSettingAPIHandlers = () => {
             // 通知 Worker 线程更新设置，使新的模型配置立即生效
             await notifyWorkerCurrentSettingUpdate();
             await notifyFileMgrEmbeddingConfigChanged(oldSettings, Setting.getInstance().getData());
+            // 调试日志开关变更后立即生效（winston 级别随 setDebugMode 切换）
+            const debugLogChanged =
+                !!oldSettings?.debug?.debug_log !== !!Setting.getInstance().getData().debug?.debug_log;
+            if (debugLogChanged) {
+                setDebugMode(!!Setting.getInstance().getData().debug?.debug_log);
+            }
             // 网络配置变更后立即刷新代理 env 缓存，使命令行子进程即时生效
             void onNetworkConfigChanged();
             try {
@@ -3309,6 +3378,7 @@ async function startApplication(): Promise<void> {
         registerElectronAccountIntegration();
         registerApplicationRegistryHandlers(ipcMain, ensureElectronFullyLoaded);
         registerNotificationAPIHandlers();
+        registerRendererLogHandler();
         registerThemeHandlers();
         registerEmbeddedOpenDeskOffice();
         AgentRegistry.initBuiltinAgents();
@@ -3553,7 +3623,8 @@ async function startApplication(): Promise<void> {
                 // 确保应用已完成延迟加载
                 await ApplicationRegistry.getApplication(bundleName)?.ensureLoaded();
                 const appConfig = ApplicationRegistry.getApplicationGUIConfig(bundleName) as
-                    Record<string, unknown> | undefined;
+                    | Record<string, unknown>
+                    | undefined;
                 const appName = (appConfig?.name as string) || bundleName;
 
                 const appWindow = new BrowserWindow({

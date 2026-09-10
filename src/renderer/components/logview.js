@@ -10,6 +10,7 @@
  */
 
 import { createRendererTranslator } from '../locale.ts';
+import { showInfoModal, escapeModalText } from './confirmModal.js';
 
 const MIN_ROW_HEIGHT = 24;
 const ROW_VERTICAL_PADDING = 8;
@@ -457,7 +458,11 @@ class LogView extends HTMLElement {
             await window.settingAPI.exportLogEntries({ scope: normalizedScope, filter });
         } catch (e) {
             const message = e?.message || String(e);
-            window.alert(this._t('renderer.log.exportFailed', { message }));
+            await showInfoModal({
+                title: this._t('renderer.log.title'),
+                message: escapeModalText(this._t('renderer.log.exportFailed', { message })),
+                confirmText: this._t('common.confirm')
+            });
         } finally {
             exportBtn?.removeAttribute('disabled');
             exportBtn?.classList.remove('opacity-60');

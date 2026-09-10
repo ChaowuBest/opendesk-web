@@ -7,6 +7,34 @@ import {
 } from 'node:timers';
 import { parseHTML } from 'linkedom';
 
+const showInfoModal = jest.fn(async () => undefined);
+
+jest.unstable_mockModule('../../../renderer/components/confirmModal.js', () => ({
+    showConfirmModal: jest.fn(async () => true),
+    showInfoModal,
+    showCloseDialog: jest.fn(),
+    bindOverlayDismiss: jest.fn(),
+    detectDarkMode: jest.fn(() => false),
+    MODAL_CSS: '',
+    renderIcon: jest.fn(() => ''),
+    shouldConfirmOnEnter: jest.fn(() => false),
+    MODAL_ANIM_DURATION_IN: 250,
+    MODAL_ANIM_DURATION_OUT: 180,
+    // 与真实实现同构的轻量转换：转义 HTML 并保留换行
+    escapeModalText: (text: string) =>
+        text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/\n/g, '<br>')
+}));
+
+let lastBrowserConstructorArgs: unknown[] = [];
+let mockBrowserHasActiveContent = false;
+const restoredBrowserState = {
+    tabs: [
+        { url: 'https://example.com/one', title: 'One' },
+        { url: 'https://example.com/two', title: 'Two' }
+    ],
+    activeIndex: 1
+};
+
 describe('task artifacts goal disclosure state', () => {
     beforeAll(async () => {
         const { window } = parseHTML('<!doctype html><html><body></body></html>');
@@ -64,11 +92,20 @@ describe('task artifacts goal disclosure state', () => {
         }));
         await jest.unstable_mockModule('../../../renderer/browser.ts', () => ({
             EmbeddedBrowser: class {
-                constructor() {}
+                onTabsChanged: (() => void) | null = null;
+                constructor(...args: unknown[]) {
+                    lastBrowserConstructorArgs = args;
+                }
                 register() {}
                 unregister() {}
                 destroy() {}
                 setPreviewMode() {}
+                getSessionState() {
+                    return restoredBrowserState;
+                }
+                hasActiveContent() {
+                    return mockBrowserHasActiveContent;
+                }
             }
         }));
         await jest.unstable_mockModule('../../../renderer/theme/theme-shadow-overrides.ts', () => ({
@@ -89,6 +126,7 @@ describe('task artifacts goal disclosure state', () => {
             artifacts.remove();
         }
         document.body.replaceChildren();
+        mockBrowserHasActiveContent = false;
         jest.useRealTimers();
         (window as any).setTimeout = nativeSetTimeout;
         (window as any).clearTimeout = nativeClearTimeout;
@@ -188,10 +226,57 @@ describe('task artifacts goal disclosure state', () => {
         expect(focusStates).toContainEqual({ active: false, fullscreen: false });
     });
 
-    test('exits browser and file previews through the unified exitPreview method', () => {
+    test('does not let the initial about:blank navigation undo an explicit Browser reveal', () => {
         const artifacts = createArtifacts() as ReturnType<typeof createArtifacts> & {
             forceBrowserActive: () => void;
+            _activeTab: string;
+            _browserVisible: boolean;
+            _browser: { onTabsChanged: (() => void) | null };
+        };
+
+        artifacts.forceBrowserActive();
+        artifacts._browser.onTabsChanged?.();
+
+        expect(artifacts._activeTab).toBe('browser');
+        expect(artifacts._browserVisible).toBe(true);
+
+        mockBrowserHasActiveContent = true;
+        artifacts._browser.onTabsChanged?.();
+        mockBrowserHasActiveContent = false;
+        artifacts._browser.onTabsChanged?.();
+
+        expect(artifacts._activeTab).toBe('workspace');
+        expect(artifacts._browserVisible).toBe(false);
+    });
+
+    test('recycles the physical browser while preserving its logical tabs and selected Browser tab', () => {
+        const artifacts = createArtifacts() as ReturnType<typeof createArtifacts> & {
+            forceBrowserActive: () => void;
+            recycleBrowser: () => void;
+            restoreSelectedBrowser: () => void;
+            _activeTab: string;
+            _browser: unknown;
+        };
+
+        artifacts.forceBrowserActive();
+        artifacts.recycleBrowser();
+
+        expect(artifacts._browser).toBeNull();
+        expect(artifacts._activeTab).toBe('browser');
+
+        artifacts.restoreSelectedBrowser();
+
+        expect(lastBrowserConstructorArgs[2]).toEqual(restoredBrowserState);
+        expect(artifacts._activeTab).toBe('browser');
+    });
+
+    test('keeps the browser tab selected when only editor overlays and preview layout are suspended', () => {
+        const artifacts = createArtifacts() as ReturnType<typeof createArtifacts> & {
+            forceBrowserActive: () => void;
+            closeEditor: () => void;
+            suspendPreviewLayout: () => void;
             exitPreview: () => void;
+            _activeTab: string;
         };
         const focusStates: Array<{ active: boolean; fullscreen: boolean }> = [];
         artifacts.addEventListener('workspace-focus-layout-change', (event) => {
@@ -199,10 +284,34 @@ describe('task artifacts goal disclosure state', () => {
         });
 
         artifacts.forceBrowserActive();
-        artifacts.exitPreview();
+        artifacts.closeEditor();
 
+        expect(artifacts._activeTab).toBe('browser');
+
+        artifacts.suspendPreviewLayout();
+
+        expect(artifacts._activeTab).toBe('browser');
         expect(artifacts.hasAttribute('data-workspace-focus-fullscreen')).toBe(false);
         expect(focusStates.at(-1)).toEqual({ active: false, fullscreen: false });
+
+        artifacts.exitPreview();
+
+        expect(artifacts._activeTab).toBe('workspace');
+    });
+
+    test('keeps user-requested HTML previews as an explicit browser activation', () => {
+        const artifacts = createArtifacts() as ReturnType<typeof createArtifacts> & {
+            forceBrowserActive: jest.Mock;
+            browserAddTab: jest.Mock;
+            openFilePreview: (filePath: string) => void;
+        };
+        artifacts.forceBrowserActive = jest.fn();
+        artifacts.browserAddTab = jest.fn();
+
+        artifacts.openFilePreview('/workspace/index.html');
+
+        expect(artifacts.forceBrowserActive).toHaveBeenCalledTimes(1);
+        expect(artifacts.browserAddTab).toHaveBeenCalledWith('file:///workspace/index.html');
     });
 
     function terminalGoal(id: string) {
@@ -556,9 +665,7 @@ describe('task artifacts goal disclosure state', () => {
         }
     });
 
-    test('pending goal edit disables the objective edit entrypoint', () => {
-        const alertSpy = jest.fn();
-        (window as any).alert = alertSpy;
+    test('pending goal edit disables the objective edit entrypoint', async () => {
         const artifacts = createRunningTaskArtifacts() as HTMLElement & {
             setGoalState: (goal: any) => void;
             setGoalEditPending: (pending: boolean) => void;
@@ -576,21 +683,28 @@ describe('task artifacts goal disclosure state', () => {
         artifacts.shadowRoot
             ?.querySelector<HTMLElement>('[data-goal-action="edit-start"]')
             ?.dispatchEvent(new window.Event('click', { bubbles: true }));
+        await new Promise((resolve) => nativeSetTimeout(resolve, 0));
 
         expect(artifacts.shadowRoot?.querySelector('[data-goal-edit-input="1"]')).toBeNull();
-        expect(alertSpy).toHaveBeenCalledWith('Goal 编辑正在处理中，请等待当前变更进入上下文后再编辑。');
+        // goal 提示统一走页内模态弹窗（issue #265：原生 window.alert 关闭后使窗口失焦）
+        expect(showInfoModal).toHaveBeenCalledWith(
+            expect.objectContaining({
+                message: 'Goal 编辑正在处理中，请等待当前变更进入上下文后再编辑。'
+            })
+        );
 
+        showInfoModal.mockClear();
         artifacts.setGoalEditPending(false);
         artifacts.shadowRoot
             ?.querySelector<HTMLElement>('[data-goal-action="edit-start"]')
             ?.dispatchEvent(new window.Event('click', { bubbles: true }));
+        await new Promise((resolve) => nativeSetTimeout(resolve, 0));
 
         expect(artifacts.shadowRoot?.querySelector('[data-goal-edit-input="1"]')).not.toBeNull();
+        expect(showInfoModal).not.toHaveBeenCalled();
     });
 
-    test('terminal goal edit entrypoint shows an unavailable status message', () => {
-        const alertSpy = jest.fn();
-        (window as any).alert = alertSpy;
+    test('terminal goal edit entrypoint shows an unavailable status message', async () => {
         const artifacts = createRunningTaskArtifacts() as HTMLElement & {
             setGoalState: (goal: any) => void;
         };
@@ -606,8 +720,13 @@ describe('task artifacts goal disclosure state', () => {
         artifacts.shadowRoot
             ?.querySelector<HTMLElement>('[data-goal-action="edit-start"]')
             ?.dispatchEvent(new window.Event('click', { bubbles: true }));
+        await new Promise((resolve) => nativeSetTimeout(resolve, 0));
 
         expect(artifacts.shadowRoot?.querySelector('[data-goal-edit-input="1"]')).toBeNull();
-        expect(alertSpy).toHaveBeenCalledWith('当前 Goal 状态不支持编辑。');
+        expect(showInfoModal).toHaveBeenCalledWith(
+            expect.objectContaining({
+                message: '当前 Goal 状态不支持编辑。'
+            })
+        );
     });
 });

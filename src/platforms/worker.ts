@@ -80,7 +80,7 @@ export class WorkerPlatform extends AbstractPlatform {
         const nc = setting?.network_config;
         this.networkConfig = {
             no_ssl: nc?.no_ssl ?? false,
-            use_proxy: nc?.use_proxy ?? 'none',
+            use_proxy: nc?.use_proxy ?? 'system',
             custom_proxy_addr: nc?.custom_proxy_addr ?? '',
             no_proxy: nc?.no_proxy ?? ''
         };

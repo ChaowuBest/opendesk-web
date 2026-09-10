@@ -20,7 +20,7 @@ import { resolveChannelDisplayName } from './app.js';
 import {
     installPlugin,
     uninstallPlugin,
-    listInstalledPlugins,
+    listVisiblePlugins,
     setPluginEnabled,
     reloadPluginHost
 } from '../pluginmgr/index.js';
@@ -254,7 +254,8 @@ export class ListChannelPluginsTool extends BaseTool<typeof ListChannelPluginsSc
     }
 
     private async run(): Promise<string> {
-        const records = listInstalledPlugins();
+        // 与 GUI 插件管理页同口径：包含内置插件（不经 installPlugin 写入 registry）
+        const records = listVisiblePlugins();
         if (records.length === 0) {
             return '当前没有已安装的插件。';
         }

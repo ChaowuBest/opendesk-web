@@ -27,23 +27,8 @@ import { AgentRegistry } from '../agents/registry.js';
 import type { AgentDecl, ModeDecl } from '../agents/common.js';
 import type { Participant } from '../../plugins/types.js';
 import { TaskState } from '../states/tasks.js';
+import { atomicWriteFile, atomicWriteFileSync } from '../../utils/temp.js';
 import { deserializeTaskFromIndex, indexEntryHasMetadata, normalizeTaskIndexEntry } from './serializer.js';
-
-/**
- * 原子写入文件：先写入临时文件，再 rename 覆盖目标文件。
- * 防止进程崩溃时产生残缺/损坏的 JSON 文件。
- */
-async function _atomicWriteFile(filePath: string, content: string): Promise<void> {
-    const tmpPath = filePath + '.tmp';
-    await fs.promises.writeFile(tmpPath, content, 'utf8');
-    await fs.promises.rename(tmpPath, filePath);
-}
-
-function _atomicWriteFileSync(filePath: string, content: string): void {
-    const tmpPath = filePath + '.tmp';
-    fs.writeFileSync(tmpPath, content, { encoding: 'utf8' });
-    fs.renameSync(tmpPath, filePath);
-}
 
 export class BaseTaskManagerUpdateSubscriber {
     subscription_id: string = crypto.randomUUID();
@@ -362,7 +347,7 @@ export class TaskManagerState {
         }
 
         if (taskManagerState.tasks.length === 0) {
-            _atomicWriteFileSync(taskListFile, JSON.stringify([], null, 4));
+            atomicWriteFileSync(taskListFile, JSON.stringify([], null, 4));
             return null;
         }
 
@@ -400,11 +385,22 @@ export class TaskManagerState {
             this._savePendingAfterTimer = true;
             return;
         }
+        // 调度时快照任务目录：2s 等待窗口内目录可能被切换（如测试环境的
+        // setCustomOpendeskDirectory 重置），触发时再解析会把脏任务写进
+        // 切换后的目录。生产环境目录恒定，该快照不改变行为。
+        // 目录解析失败时保持旧有语义：不在调度路径上向 persistLater()
+        // 调用方抛错，推迟到触发时由 _writeAll 解析并经 .catch 记录。
+        let targetDirectory: string | undefined;
+        try {
+            targetDirectory = getTaskDirectory();
+        } catch (err) {
+            logger.warn(`failed to resolve task directory while scheduling save: ${err}`);
+        }
         this._saveTimer = setTimeout(() => {
             this._saveTimer = undefined;
             const hadPending = this._savePendingAfterTimer;
             this._savePendingAfterTimer = false;
-            this._lastWritePromise = this._writeAll()
+            this._lastWritePromise = this._writeAll(targetDirectory)
                 .catch((err) => {
                     logger.error(`async save failed: ${err}`);
                 })
@@ -417,8 +413,9 @@ export class TaskManagerState {
         }, TaskManagerState.SAVE_THROTTLE_MS);
     }
 
-    private async _writeAll(): Promise<void> {
-        const taskDirectory = getTaskDirectory();
+    private async _writeAll(scheduledTaskDirectory?: string): Promise<void> {
+        // 未传入调度时快照的目录（如 flushAllPendingSaves 直接落盘）时按当前目录解析
+        const taskDirectory = scheduledTaskDirectory ?? getTaskDirectory();
         const taskListFile = path.join(taskDirectory, 'task_list.json');
 
         // 只写入在本进程中被修改过的任务文件，防止多进程互相覆盖。
@@ -443,7 +440,7 @@ export class TaskManagerState {
         const results = await Promise.allSettled(
             dirtyTasks.map((task) => {
                 const taskFile = path.join(taskDirectory, `${task.task_id}.json`);
-                return _atomicWriteFile(taskFile, JSON.stringify(task.toJSON(), null, 4));
+                return atomicWriteFile(taskFile, JSON.stringify(task.toJSON(), null, 4));
             })
         );
         for (let i = 0; i < results.length; i++) {
@@ -458,7 +455,7 @@ export class TaskManagerState {
 
         // 构建合并后的 task_list.json：保留其他进程写入的任务条目
         const mergedList = this._buildMergedTaskList(taskDirectory, taskListFile);
-        await _atomicWriteFile(taskListFile, JSON.stringify(mergedList, null, 4));
+        await atomicWriteFile(taskListFile, JSON.stringify(mergedList, null, 4));
     }
 
     /**
@@ -503,7 +500,7 @@ export class TaskManagerState {
             options.mergeDiskEntries === false
                 ? this.tasks.map((task) => task.toIndexJSON())
                 : this._buildMergedTaskList(taskDirectory, taskListFile, options.excludedTaskIds);
-        _atomicWriteFileSync(taskListFile, JSON.stringify(mergedList, null, 4));
+        atomicWriteFileSync(taskListFile, JSON.stringify(mergedList, null, 4));
     }
 
     /**
@@ -519,7 +516,7 @@ export class TaskManagerState {
         for (const task of dirtyTasks) {
             const taskFile = path.join(taskDirectory, `${task.task_id}.json`);
             try {
-                _atomicWriteFileSync(taskFile, JSON.stringify(task.toJSON(), null, 4));
+                atomicWriteFileSync(taskFile, JSON.stringify(task.toJSON(), null, 4));
                 task._dirty = false;
             } catch (err) {
                 // 写入失败保持 _dirty = true 以便后续重试
@@ -542,7 +539,7 @@ export class TaskManagerState {
             options.mergeDiskEntries === false
                 ? this.tasks.map((task) => task.toIndexJSON())
                 : this._buildMergedTaskList(taskDirectory, taskListFile, options.excludedTaskIds);
-        _atomicWriteFileSync(taskListFile, JSON.stringify(mergedList, null, 4));
+        atomicWriteFileSync(taskListFile, JSON.stringify(mergedList, null, 4));
     }
 
     /**

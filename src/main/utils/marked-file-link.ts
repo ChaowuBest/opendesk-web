@@ -9,9 +9,9 @@
  * See the Mulan PSL v2 for more details.
  */
 
-import fs from 'fs';
 import path from 'path';
 import { escapeHtml } from '../../common/utils/escape.js';
+import { normalizeDriveRootPath } from '../../common/utils/path.js';
 import type { MarkedExtension, Tokens } from 'marked';
 
 // ── Workspace context ──────────────────────────────────────────────
@@ -28,32 +28,36 @@ export function getRenderWorkspace(): string | null {
 
 // ── File path resolution ───────────────────────────────────────────
 
-const URL_SCHEME_RE = /^[a-z][a-z0-9+.-]*:/i;
+// URL scheme 至少 2 个字符（ws:、https:），单字母盘符（C:）不属于 scheme。
+const URL_SCHEME_RE = /^[a-z][a-z0-9+.-]+:/i;
 
 /**
- * Resolve a potentially relative path against the current render workspace.
- * Returns the absolute path if it points to an existing file, otherwise null.
+ * 将候选路径解析为绝对路径（相对路径基于当前渲染 workspace）。
+ * 仅做纯字符串处理，不做文件存在性检查 —— 渲染路径必须零 IO，
+ * "看似路径实则不存在"的误报由前端点击时验证并提示。
  */
 export function resolveFilePath(rawPath: string): string | null {
     if (!rawPath || URL_SCHEME_RE.test(rawPath) || rawPath.startsWith('#')) {
         return null;
     }
 
-    let absPath: string;
-    if (path.isAbsolute(rawPath)) {
-        absPath = rawPath;
-    } else if (_renderWorkspace) {
-        absPath = path.resolve(_renderWorkspace, rawPath);
-    } else {
-        absPath = path.resolve(rawPath);
-    }
-
-    try {
-        const stat = fs.statSync(absPath);
-        return stat.isFile() ? absPath : null;
-    } catch {
+    // 含省略号（…）的是缩写展示路径（如 `…\agent.ts`、`src/…/utils.ts`）：
+    // 模型在正文中常用它指代过长路径，永远无法真实打开，不能渲染为 pill。
+    if (rawPath.includes('…')) {
         return null;
     }
+
+    // POSIX 语境下误写的 "/C:/foo"（前导斜杠 + 盘符）先规范化为 "C:/foo"，
+    // 否则 Windows 存在性检查会把它解析为"当前盘根目录下的 C: 目录"而误报。
+    // 规范化命中的路径本身就是绝对路径形式，直接返回（POSIX 平台的 isAbsolute 不识别盘符）。
+    const candidate = normalizeDriveRootPath(rawPath);
+    if (candidate !== rawPath || path.isAbsolute(candidate)) {
+        return candidate;
+    }
+    if (_renderWorkspace) {
+        return path.resolve(_renderWorkspace, candidate);
+    }
+    return path.resolve(candidate);
 }
 
 // ── Regex for file path detection ──────────────────────────────────
@@ -65,26 +69,27 @@ const EXCLUDED = '\\s`|"\'<>()\\[\\]{};:,!?\\\\';
 // - Must contain at least one '/'
 // - Must end with a file extension (.ext)
 // - Negative lookahead to skip URL schemes (https://, ftp://, etc.)
-// - Allows spaces between path segments (e.g. "/Users/My Documents/file.ts")
-//   The tokenizer uses progressive shortening to handle false positives from
-//   greedy space matching (e.g. "src/a.ts and src/b.ts" -> tries full match
-//   first, then shortens by removing space-separated tail segments)
-const FILE_PATH_RE = new RegExp(
-    `^(?![a-z][a-z0-9+.-]*://)[^${EXCLUDED}]+(?: [^${EXCLUDED}]+)*/[^${EXCLUDED}]*(?: [^${EXCLUDED}]+)*\\.[A-Za-z0-9]+`,
-    'i'
-);
+const FILE_PATH_RE = new RegExp(`^(?![a-z][a-z0-9+.-]*://)[^${EXCLUDED}]+/[^${EXCLUDED}]*\\.[A-Za-z0-9]+`, 'i');
 
 // Search pattern for start() – finds the first potential file path anywhere in src
-const FILE_PATH_SEARCH_RE = new RegExp(
-    `[^${EXCLUDED}]+(?: [^${EXCLUDED}]+)*/[^${EXCLUDED}]*(?: [^${EXCLUDED}]+)*\\.[A-Za-z0-9]`
-);
+const FILE_PATH_SEARCH_RE = new RegExp(`[^${EXCLUDED}]+/[^${EXCLUDED}]*\\.[A-Za-z0-9]`);
+
+// 首词呈"多段点分"样式（如 example.com）的 token 视为域名残留
+// （浏览器自动化结果中大量 URL 去协议后形似路径），不渲染为 pill。
+const DOMAIN_LIKE_RE = /^[a-z0-9][a-z0-9-]*(?:\.[a-z0-9-]+)+$/i;
+
+function isDomainLikePath(candidate: string): boolean {
+    if (path.isAbsolute(candidate)) return false;
+    const wordBeforeFirstSlash = candidate.split('/')[0].split(' ').pop() ?? '';
+    return DOMAIN_LIKE_RE.test(wordBeforeFirstSlash);
+}
 
 // ── Pill HTML ──────────────────────────────────────────────────────
 
 const SKILL_SCHEME = 'opendesk-skill:';
 
 const SKILL_ICON_SVG =
-    '<svg class="od-skill-pill-icon" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l1.9 5.8a2 2 0 0 0 1.3 1.3L21 12l-5.8 1.9a2 2 0 0 0-1.3 1.3L12 21l-1.9-5.8a2 2 0 0 0-1.3-1.3L3 12l5.8-1.9a2 2 0 0 0 1.3-1.3L12 3Z"/><path d="M5 3v4M19 17v4M3 5h4M17 19h4"/></svg>';
+    '<svg class="od-skill-pill-icon" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l1.9 5.8a2 2 0 0 0 1.3 1.3L21 12l-5.8 1.9a2 2 0 0 0-1.3 1.3L12 21l-1.9-5.8a2 2 0 0 0-1.3-1.3L3 12l5.8-1.9a2 2 0 0 0-1.3-1.3L12 3Z"/><path d="M5 3v4M19 17v4M3 5h4M17 19h4"/></svg>';
 
 function buildSkillPillHTML(bundleName: string, skillName: string, label: string): string {
     return `<button type="button" class="od-skill-pill" data-skill-bundle="${escapeHtml(bundleName)}" data-skill-name="${escapeHtml(skillName)}">${SKILL_ICON_SVG}<span class="od-skill-pill-name">${escapeHtml(label)}</span></button>`;
@@ -158,9 +163,19 @@ function getFileType(filePath: string): string {
     return TYPE_MAP[ext] ?? 'default';
 }
 
-function buildPillHTML(filePath: string, label: string, line: number | null = null): string {
+function buildPillHTML(
+    filePath: string,
+    label: string,
+    line: number | null = null,
+    lineEnd: number | null = null
+): string {
     const lineAttr = line != null && line > 0 ? ` data-preview-line="${line}"` : '';
-    const lineSpan = line != null && line > 0 ? `<span class="od-file-pill-line">:${line}</span>` : '';
+    let lineSpan = '';
+    if (line != null && line > 0) {
+        // 区间必须递增：锚点解析已校验，但 label 补全出的结束行（如 [f.ts:12-5](p#L12)）可能不合法，回退为单行
+        const rangeText = lineEnd != null && lineEnd > line ? `-${lineEnd}` : '';
+        lineSpan = `<span class="od-file-pill-line">:${line}${rangeText}</span>`;
+    }
     return (
         `<a class="od-file-pill" data-type="${getFileType(filePath)}" data-open-preview="${escapeHtml(filePath)}"${lineAttr} title="${escapeHtml(filePath)}">` +
         `${FILE_ICON_SVG}<span class="od-file-pill-name">${escapeHtml(label)}</span>${lineSpan}</a>`
@@ -188,14 +203,54 @@ export function parseFileReference(rawPath: string): { filePath: string; line: n
     return { filePath: rawPath, line: null };
 }
 
+// 匹配 href 末尾的 "#L<line>" 或 "#L<start>-<end>" 行锚点（结束行可带第二个 L，
+// 兼容 GitHub 风格 #L12-L20）。仅用于 Markdown 链接 href；纯文本与 codespan
+// 路径仍沿用 ":行号" 后缀约定。
+const LINE_ANCHOR_RE = /#L(\d+)(?:-L?(\d+))?$/;
+
+/**
+ * 解析 Markdown 链接 href 末尾的 "#L" 行锚点。
+ * 无锚点、锚点非行号或行号非法时返回 null，由调用方回退到 parseFileReference。
+ */
+export function parseLineAnchor(rawHref: string): { filePath: string; line: number; lineEnd: number | null } | null {
+    const match = LINE_ANCHOR_RE.exec(rawHref);
+    if (!match) {
+        return null;
+    }
+    const line = parseInt(match[1], 10);
+    if (line <= 0) {
+        return null;
+    }
+    let lineEnd = match[2] ? parseInt(match[2], 10) : null;
+    if (lineEnd != null && lineEnd <= line) {
+        lineEnd = null;
+    }
+    return { filePath: rawHref.slice(0, match.index), line, lineEnd };
+}
+
+/**
+ * 纯文本判定：文本是否"形似单个文件路径"。
+ * 用于整段文本场景（codespan、围栏代码块）的初筛：剥离行号后必须以
+ * 扩展名结尾、不含换行；含空格但无分隔符的词组（如 `npm install`）不算。
+ */
+function looksLikeFilePath(text: string): boolean {
+    if (/[\r\n]/.test(text)) return false;
+    const { filePath } = parseFileReference(text.trim());
+    if (!/\.[A-Za-z0-9]+$/.test(filePath)) return false;
+    if (filePath.includes(' ') && !filePath.includes('/') && !filePath.includes('\\')) {
+        return false;
+    }
+    return true;
+}
+
 /**
  * 将整段文本尝试解析为单个文件引用并渲染成文件 pill。
- * 仅当 trim 后是合法的文件路径（可带行号）时返回 pill HTML，否则返回 null。
+ * 仅当 trim 后形似文件路径（可带行号）时返回 pill HTML，否则返回 null。
  * 供围栏代码块等 block 场景复用：整块内容就是一个文件地址时转成可点击的 pill。
  */
 export function renderFilePillFromText(text: string): string | null {
     const trimmed = text.trim();
-    if (!trimmed) return null;
+    if (!trimmed || !looksLikeFilePath(trimmed)) return null;
     const { filePath, line } = parseFileReference(trimmed);
     const absPath = resolveFilePath(filePath);
     if (!absPath) return null;
@@ -206,10 +261,12 @@ export function renderFilePillFromText(text: string): string | null {
 
 /**
  * Marked extension that:
- * 1. Auto-detects file paths in plain text and converts them to clickable pills
- * 2. Renders markdown links pointing to real files as pills
- * 3. Renders inline code spans (backticks) whose content is a real file path as pills
+ * 1. Auto-detects file-path-like text and converts it to clickable pills
+ * 2. Renders markdown links pointing to path-like hrefs as pills
+ * 3. Renders inline code spans (backticks) whose content is path-like as pills
  *
+ * 渲染阶段只做纯文本初筛，不校验文件存在性（渲染必须零 IO）。
+ * 误报（文本形似路径但文件不存在）由前端点击时校验并以模态提示。
  * Requires `setRenderWorkspace()` to be called before parsing for relative path resolution.
  */
 export const fileLinkExtension: MarkedExtension = {
@@ -219,51 +276,44 @@ export const fileLinkExtension: MarkedExtension = {
             level: 'inline',
             start(src: string): number | undefined {
                 const match = src.match(FILE_PATH_SEARCH_RE);
-                return match?.index;
+                if (!match) return undefined;
+                // 域名样式 token（如 example.com/a/b.html）不作为 pill 起点
+                if (isDomainLikePath(match[0])) {
+                    return match.index! + match[0].length;
+                }
+                return match.index;
             },
             tokenizer(src: string) {
                 const match = FILE_PATH_RE.exec(src);
                 if (!match) return undefined;
 
-                const rawPath = match[0];
+                const raw = match[0];
+                if (isDomainLikePath(raw)) return undefined;
 
-                // Try the full match first, then progressively shorten by
-                // removing space-separated tail segments. This handles cases
-                // where greedy space matching captures too much, e.g.
-                // "src/a.ts and src/b.ts" -> tries full, then "src/a.ts and",
-                // then "src/a.ts" (which exists).
-                const segments = rawPath.split(' ');
-                while (segments.length > 0) {
-                    const candidate = segments.join(' ');
-                    const absPath = resolveFilePath(candidate);
-                    if (absPath) {
-                        let raw = candidate;
-                        let line: number | null = null;
-                        // 文件路径后紧跟行号引用（如 file.ts:134）时一并纳入 token，
-                        // 避免行号作为普通文本残留导致跳转信息丢失。
-                        const rest = src.slice(candidate.length);
-                        const lineMatch = /^:(\d+)/.exec(rest);
-                        if (lineMatch) {
-                            const parsed = parseInt(lineMatch[1], 10);
-                            if (parsed > 0) {
-                                raw = candidate + lineMatch[0];
-                                line = parsed;
-                            }
-                        }
-                        return {
-                            type: 'fileLink',
-                            raw,
-                            text: raw,
-                            filePath: absPath,
-                            line,
-                            tokens: []
-                        };
+                // 文件路径后紧跟行号引用（如 file.ts:134）时一并纳入 token，
+                // 避免行号作为普通文本残留导致跳转信息丢失。
+                let text = raw;
+                let line: number | null = null;
+                const rest = src.slice(raw.length);
+                const lineMatch = /^:(\d+)/.exec(rest);
+                if (lineMatch) {
+                    const parsed = parseInt(lineMatch[1], 10);
+                    if (parsed > 0) {
+                        text = raw + lineMatch[0];
+                        line = parsed;
                     }
-                    if (segments.length === 1) break;
-                    segments.pop();
                 }
 
-                return undefined;
+                const absPath = resolveFilePath(raw);
+                if (!absPath) return undefined;
+                return {
+                    type: 'fileLink',
+                    raw: text,
+                    text,
+                    filePath: absPath,
+                    line,
+                    tokens: []
+                };
             },
             renderer(token) {
                 const { filePath, line } = token as { filePath: string; line: number | null };
@@ -293,15 +343,31 @@ export const fileLinkExtension: MarkedExtension = {
             } catch {
                 // ignore malformed URI – use raw href
             }
-            const { filePath, line } = parseFileReference(decodedHref);
+            // "#L行号" 行锚点优先；无锚点时回退到旧版 ":行号" 后缀
+            const anchor = parseLineAnchor(decodedHref);
+            const { filePath, line } = anchor ?? parseFileReference(decodedHref);
+            let lineEnd = anchor ? anchor.lineEnd : null;
             const absPath = resolveFilePath(filePath);
             if (absPath) {
-                const label = this.parser.parseInline(tokens);
-                return buildPillHTML(absPath, label || path.basename(absPath), line);
+                let label = this.parser.parseInline(tokens);
+                if (line != null) {
+                    // 链接文字常写成 "file.ts:12-20" 形式：锚点未带结束行时用文字
+                    // 中的区间补全（如 [file.ts:1-11](path#L1)），再剥掉与行号 badge
+                    // 重复的后缀
+                    if (anchor && lineEnd == null) {
+                        const labelRange = new RegExp(`:${line}-(\\d+)$`).exec(label);
+                        if (labelRange) {
+                            lineEnd = parseInt(labelRange[1], 10);
+                        }
+                    }
+                    label = label.replace(new RegExp(`:${line}(?:-\\d+)?$`), '');
+                }
+                return buildPillHTML(absPath, label || path.basename(absPath), line, lineEnd);
             }
             return false;
         },
         codespan({ text }: Tokens.Codespan): string | false {
+            if (!looksLikeFilePath(text)) return false;
             const { filePath, line } = parseFileReference(text);
             const absPath = resolveFilePath(filePath);
             if (absPath) {
