@@ -60,11 +60,13 @@
     opacity: 0.4;
     transform: scaleX(var(--tick-scale, 0.230769));
     transform-origin: left center;
+    transition: transform 140ms ease-out;
     pointer-events: none;
 }
 
 .od-chat-nav-stop[aria-current='location'] span {
-    opacity: 0.8;
+    background: var(--od-text);
+    opacity: 0.9;
 }
 
 .od-chat-nav-stop.is-previewed span,
@@ -77,6 +79,12 @@
     outline: 1px solid var(--od-text-muted);
     outline-offset: -1px;
     border-radius: 3px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .od-chat-nav-stop span {
+        transition: none;
+    }
 }
 
 .od-chat-nav-preview {
