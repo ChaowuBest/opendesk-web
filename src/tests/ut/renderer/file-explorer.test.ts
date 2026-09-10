@@ -20,10 +20,14 @@ jest.unstable_mockModule('../../../renderer/locale.js', () => {
 });
 
 type FileExplorerModule = typeof import('../../../renderer/components/fileExplorer.js');
+const renderMermaidBlocks = jest.fn<(container: HTMLElement) => void>();
+
+jest.unstable_mockModule('../../../renderer/components/previewer.js', () => ({ renderMermaidBlocks }));
 
 describe('file explorer', () => {
     let FileExplorer: FileExplorerModule['FileExplorer'];
     let getFileExplorerCSS: FileExplorerModule['getFileExplorerCSS'];
+    let renderFilePreviewMarkdown: FileExplorerModule['renderFilePreviewMarkdown'];
 
     beforeAll(async () => {
         jest.unstable_mockModule('ace-builds/css/ace.css', () => ({ default: '' }));
@@ -37,13 +41,53 @@ describe('file explorer', () => {
             customElements: window.customElements
         });
 
-        ({ FileExplorer, getFileExplorerCSS } = await import('../../../renderer/components/fileExplorer.js'));
+        ({ FileExplorer, getFileExplorerCSS, renderFilePreviewMarkdown } =
+            await import('../../../renderer/components/fileExplorer.js'));
     });
 
     beforeEach(() => {
         document.body.innerHTML = '';
+        renderMermaidBlocks.mockClear();
         delete (window as any).officeHostAPI;
         delete (window as any).fsAPI;
+    });
+
+    test('turns Mermaid fences in Markdown previews into UTF-8-safe placeholders', () => {
+        const html = renderFilePreviewMarkdown('```mermaid\nflowchart LR\nA[中文] --> B[完成]\n```');
+        const encoded = html.match(/data-mermaid-code="([^"]+)"/)?.[1];
+
+        expect(html).toContain('class="mermaid-block"');
+        expect(encoded).toBeDefined();
+        expect(Buffer.from(encoded!, 'base64').toString('utf8')).toBe('flowchart LR\nA[中文] --> B[完成]');
+    });
+
+    test('starts Mermaid rendering after mounting the Markdown preview', () => {
+        const root = document.createElement('div');
+        root.innerHTML = '<div class="ws-preview-md-host"></div>';
+        const explorer = new FileExplorer() as any;
+        explorer._selectedFile = '/workspace/diagram.md';
+        explorer._previewState = {
+            status: 'idle',
+            data: {
+                tooLarge: false,
+                size: 32,
+                limit: 0,
+                content: '```mermaid\nflowchart LR\nA --> B\n```',
+                binary: false
+            }
+        };
+
+        explorer._attachMarkdownShadow(root);
+
+        const markdownBody = root
+            .querySelector<HTMLElement>('.ws-preview-md-host')
+            ?.shadowRoot?.querySelector('.markdown-body');
+        const previewStyles = root
+            .querySelector<HTMLElement>('.ws-preview-md-host')
+            ?.shadowRoot?.querySelector('style');
+        expect(markdownBody).not.toBeNull();
+        expect(previewStyles?.textContent).toContain('.markdown-body .code-copy-btn');
+        expect(renderMermaidBlocks).toHaveBeenCalledWith(markdownBody);
     });
 
     test('restores the file list after closing a fullscreen preview', () => {

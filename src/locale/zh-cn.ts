@@ -2123,6 +2123,7 @@ export const zhCn: Record<string, string> = {
     'renderer.taskview.navigation.attachment': '附件消息',
     'renderer.taskview.navigation.noReply': '暂无回复',
     'renderer.taskview.nextUserMessage': '下一条消息',
+    'renderer.previewer.preview': '预览',
     'renderer.applicationAgent.title': 'OpenDesk',
     'renderer.applicationAgent.open': '打开智能体对话',
     'renderer.applicationAgent.close': '收起智能体对话',

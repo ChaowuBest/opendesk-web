@@ -201,9 +201,28 @@ const LANG_DISPLAY_NAMES: Record<string, string> = {
 /** Languages whose code blocks support live preview in the renderer */
 const PREVIEWABLE_LANGS = new Set(['html', 'htm', 'svg']);
 
+function isFencedCodeComplete(raw: string): boolean {
+    const opening = /^(?: {0,3})(`{3,}|~{3,})[^\r\n]*(?:\r?\n|$)/.exec(raw);
+    if (!opening) return true;
+
+    const fence = opening[1];
+    const bodyLines = raw.slice(opening[0].length).split(/\r?\n/);
+    if (bodyLines.at(-1) === '') bodyLines.pop();
+    const lastLine = bodyLines.at(-1) ?? '';
+    const closing = new RegExp(`^ {0,3}${fence[0]}{${fence.length},}[\\t ]*$`);
+    return closing.test(lastLine);
+}
+
 marked.use({
     renderer: {
-        code({ text, lang }: { text: string; lang?: string; escaped?: boolean }): string {
+        code({ text, lang, raw }: { text: string; lang?: string; raw: string; escaped?: boolean }): string {
+            // mermaid 代码块不在此处做语法高亮，而是输出占位容器，
+            // 交由 renderer 进程（previewer.ts 的 renderMermaidBlocks）异步渲染为 SVG。
+            if (lang !== undefined && lang.toLowerCase() === 'mermaid') {
+                const encoded = Buffer.from(text).toString('base64');
+                const complete = isFencedCodeComplete(raw);
+                return `<div class="mermaid-block" data-mermaid-code="${encoded}" data-mermaid-complete="${complete}"></div>`;
+            }
             // 围栏代码块（lang 为 '' 或语言名）中仅包含单个文件地址时渲染为文件 pill；
             // indented 代码块（lang 为 undefined）保持原有代码块渲染。
             if (lang !== undefined) {

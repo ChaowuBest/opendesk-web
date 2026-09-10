@@ -27,6 +27,11 @@
  * Supported preview types: html, htm, svg.
  */
 
+import { createRendererTranslator } from '../locale.js';
+import { OPENDESK_THEME_CHANGED } from '../theme/theme-iframe-bridge.js';
+
+let previewerT = createRendererTranslator();
+
 /** Decode a base64 string that was encoded from UTF-8 bytes back to a JS string. */
 function decodeBase64Utf8(b64: string): string {
     const binary = atob(b64);
@@ -137,10 +142,23 @@ function extractRawCodeFromTable(codeBody: Element): string | null {
     return parts.join('\n');
 }
 
+function localizePreviewToggle(toggle: HTMLLabelElement): void {
+    const text = toggle.querySelector<HTMLElement>('.code-preview-toggle-label');
+    if (text) text.textContent = previewerT('renderer.previewer.preview');
+}
+
+function localizePreviewControls(container: ParentNode): void {
+    for (const toggle of container.querySelectorAll<HTMLLabelElement>('.code-preview-toggle')) {
+        localizePreviewToggle(toggle);
+    }
+    for (const button of container.querySelectorAll<HTMLButtonElement>('.code-copy-btn')) {
+        button.setAttribute('aria-label', previewerT('contextmenu.copy'));
+    }
+}
+
 function createToggleButton(checked: boolean): HTMLLabelElement {
     const label = document.createElement('label');
     label.className = 'code-preview-toggle';
-    label.title = checked ? '切换到源码' : '切换到预览';
 
     const input = document.createElement('input');
     input.type = 'checkbox';
@@ -152,11 +170,11 @@ function createToggleButton(checked: boolean): HTMLLabelElement {
 
     const text = document.createElement('span');
     text.className = 'code-preview-toggle-label';
-    text.textContent = '预览';
 
     label.appendChild(input);
     label.appendChild(slider);
     label.appendChild(text);
+    localizePreviewToggle(label);
     return label;
 }
 
@@ -165,19 +183,18 @@ const COPY_ICON_SVG =
 const CHECK_ICON_SVG =
     '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg>';
 
-function addCopyButton(header: Element, codeBody: Element): void {
+function addCopyButton(header: Element, getCode: () => string): void {
     if (header.querySelector('.code-copy-btn')) return;
 
     const btn = document.createElement('button');
     btn.className = 'code-copy-btn';
     btn.type = 'button';
-    btn.title = '复制代码';
+    btn.setAttribute('aria-label', previewerT('contextmenu.copy'));
     btn.innerHTML = COPY_ICON_SVG;
 
     btn.addEventListener('click', () => {
-        const code = extractRawCodeFromTable(codeBody) || '';
         navigator.clipboard
-            .writeText(code)
+            .writeText(getCode())
             .then(() => {
                 btn.innerHTML = CHECK_ICON_SVG;
                 btn.classList.add('code-copy-btn--copied');
@@ -198,7 +215,7 @@ function enhanceBlock(block: HTMLElement): void {
     if (!header || !codeBody) return;
 
     // 为所有代码块添加复制按钮
-    addCopyButton(header, codeBody);
+    addCopyButton(header, () => extractRawCodeFromTable(codeBody) || '');
 
     // --- determine language and raw source ---
     let lang: string | null = null;
@@ -258,7 +275,6 @@ function enhanceBlock(block: HTMLElement): void {
         const showPreview = checkbox.checked;
         codeBody.style.display = showPreview ? 'none' : '';
         previewContainer.style.display = showPreview ? '' : 'none';
-        toggle.title = showPreview ? '切换到源码' : '切换到预览';
     });
 }
 
@@ -268,6 +284,7 @@ function enhanceBlock(block: HTMLElement): void {
  * skipped so the function is safe to call repeatedly (e.g. during streaming).
  */
 export function enhanceCodeBlocks(container: HTMLElement): void {
+    trackPreviewerContainer(container);
     const blocks = container.querySelectorAll<HTMLElement>('.code-block-wrapper:not([data-preview-enhanced])');
     for (const block of blocks) {
         enhanceBlock(block);
@@ -309,4 +326,331 @@ export function enhanceToolPreviewCards(container: HTMLElement): void {
         renderer(shadowRoot, rawCode, baseDir);
         card.appendChild(shadowHost);
     }
+}
+
+type MermaidTheme = 'light' | 'dark';
+
+interface MermaidPipeline {
+    render(id: string, code: string, theme: MermaidTheme): Promise<{ svg: string }>;
+    sanitize(svg: string): string;
+}
+
+let mermaidPipelinePromise: Promise<MermaidPipeline> | null = null;
+let mermaidSeq = 0;
+const MERMAID_CACHE_LIMIT = 100;
+const mermaidSvgCache = new Map<string, string>();
+const mermaidRenderInFlight = new Map<string, Promise<string>>();
+const previewerContainersByDocument = new WeakMap<Document, Set<HTMLElement>>();
+const mermaidThemeListenerDocuments = new WeakSet<Document>();
+
+function updatePreviewerTranslator(setting: unknown): void {
+    previewerT = createRendererTranslator(setting as { locale?: string; resolved_locale?: string });
+    if (typeof document === 'undefined') return;
+    const containers = previewerContainersByDocument.get(document);
+    if (!containers) return;
+    for (const container of containers) {
+        if (!container.isConnected || container.ownerDocument !== document) {
+            containers.delete(container);
+            continue;
+        }
+        localizePreviewControls(container);
+    }
+}
+
+if (typeof window !== 'undefined') {
+    void window.settingAPI
+        ?.loadSettingObject?.()
+        .then(updatePreviewerTranslator)
+        .catch(() => {});
+    window.settingAPI?.onSettingChanged?.(updatePreviewerTranslator);
+}
+
+export function createMermaidConfig(darkTheme: boolean) {
+    return {
+        startOnLoad: false,
+        securityLevel: 'strict' as const,
+        htmlLabels: false,
+        flowchart: {
+            htmlLabels: false
+        },
+        theme: darkTheme ? ('dark' as const) : ('default' as const)
+    };
+}
+
+/**
+ * DOMPurify sanitizes the SVG nodes and attributes, but CSS inside an allowed
+ * SVG <style> element still needs a URL policy of its own.
+ */
+export function sanitizeMermaidStyleContent(svg: string): string {
+    return svg.replace(/(<style\b[^>]*>)([\s\S]*?)(<\/style>)/gi, (_match, open, css, close) => {
+        const withoutImports = String(css).replace(/@import\s+[^;]*(?:;|$)/gi, '');
+        const safeCss = withoutImports.replace(
+            /url\(\s*(['"]?)(.*?)\1\s*\)/gi,
+            (urlMatch: string, _quote: string, value: string) => (value.trim().startsWith('#') ? urlMatch : 'none')
+        );
+        return `${open}${safeCss}${close}`;
+    });
+}
+
+export function normalizeMermaidSvgSize(svg: SVGSVGElement): void {
+    const viewBox = svg
+        .getAttribute('viewBox')
+        ?.trim()
+        .split(/[\s,]+/)
+        .map(Number);
+    const naturalWidth = viewBox?.length === 4 && Number.isFinite(viewBox[2]) && viewBox[2] > 0 ? viewBox[2] : null;
+
+    svg.removeAttribute('width');
+    svg.removeAttribute('height');
+    svg.style.display = 'block';
+    svg.style.width = naturalWidth === null ? '100%' : `${naturalWidth}px`;
+    svg.style.maxWidth = '100%';
+    svg.style.height = 'auto';
+    svg.style.margin = '0 auto';
+}
+
+/** Mount each diagram in its own style boundary so TaskView sanitization cannot
+ * remove Mermaid's generated theme rules or let them leak into the page. */
+export function mountMermaidSvg(host: HTMLElement, sanitizedSvg: string): SVGSVGElement | null {
+    const shadowRoot = host.shadowRoot ?? host.attachShadow({ mode: 'open' });
+    shadowRoot.innerHTML = sanitizedSvg;
+    const svg = shadowRoot.querySelector<SVGSVGElement>('svg');
+    if (svg) normalizeMermaidSvgSize(svg);
+    return svg;
+}
+
+function getMermaidTheme(doc: Document): MermaidTheme {
+    return doc.documentElement.dataset.theme === 'dark' ? 'dark' : 'light';
+}
+
+function getMermaidCacheKey(theme: MermaidTheme, encoded: string): string {
+    return `${theme}:${encoded}`;
+}
+
+function cacheMermaidSvg(cacheKey: string, svg: string): void {
+    if (mermaidSvgCache.size >= MERMAID_CACHE_LIMIT) {
+        const oldestKey = mermaidSvgCache.keys().next().value;
+        if (oldestKey !== undefined) mermaidSvgCache.delete(oldestKey);
+    }
+    mermaidSvgCache.set(cacheKey, svg);
+}
+
+/**
+ * Lazily load and initialize mermaid + DOMPurify.
+ * Mermaid is large, so it is only fetched via dynamic import when the first
+ * mermaid block needs rendering, keeping the initial bundle size unaffected.
+ */
+function loadMermaidPipeline(): Promise<MermaidPipeline> {
+    if (!mermaidPipelinePromise) {
+        mermaidPipelinePromise = (async () => {
+            const [mermaidMod, dompurifyMod] = await Promise.all([import('mermaid'), import('dompurify')]);
+            const mermaid = mermaidMod.default;
+            let initializedTheme: MermaidTheme | null = null;
+            return {
+                render: (id: string, code: string, theme: MermaidTheme) => {
+                    if (initializedTheme !== theme) {
+                        mermaid.initialize(createMermaidConfig(theme === 'dark'));
+                        initializedTheme = theme;
+                    }
+                    const renderHost = document.createElement('div');
+                    renderHost.setAttribute('aria-hidden', 'true');
+                    renderHost.style.cssText =
+                        'position:fixed;inset:0;visibility:hidden;pointer-events:none;z-index:-1;';
+                    document.body.appendChild(renderHost);
+                    return mermaid.render(id, code, renderHost).finally(() => renderHost.remove());
+                },
+                sanitize: (svg: string) =>
+                    dompurifyMod.default.sanitize(svg, {
+                        USE_PROFILES: { svg: true, svgFilters: true }
+                    })
+            };
+        })();
+    }
+    return mermaidPipelinePromise;
+}
+
+function trackPreviewerContainer(container: HTMLElement): void {
+    if (!container.isConnected) return;
+    const doc = container.ownerDocument;
+    let containers = previewerContainersByDocument.get(doc);
+    if (!containers) {
+        containers = new Set();
+        previewerContainersByDocument.set(doc, containers);
+    }
+    containers.add(container);
+}
+
+function installMermaidThemeListener(doc: Document): void {
+    if (mermaidThemeListenerDocuments.has(doc)) return;
+    mermaidThemeListenerDocuments.add(doc);
+    doc.addEventListener(OPENDESK_THEME_CHANGED, () => {
+        const containers = previewerContainersByDocument.get(doc);
+        if (!containers) return;
+        const theme = getMermaidTheme(doc);
+        const blocks = new Set<HTMLElement>();
+        for (const container of containers) {
+            if (!container.isConnected || container.ownerDocument !== doc) {
+                containers.delete(container);
+                continue;
+            }
+            for (const block of container.querySelectorAll<HTMLElement>('.mermaid-block[data-mermaid-code]')) {
+                blocks.add(block);
+            }
+        }
+        for (const block of blocks) {
+            if (block.dataset.mermaidDeferred === 'true') continue;
+            if (block.dataset.mermaidTheme === theme || block.dataset.mermaidRendering === theme) continue;
+            void renderMermaidBlock(block, theme);
+        }
+    });
+}
+
+/**
+ * Scan `container` for mermaid placeholders (`.mermaid-block`) produced by the
+ * main-process markdown renderer and render them as SVG. Placeholders already
+ * rendered are marked with `data-mermaid-rendered` and skipped, making this
+ * function safe to call repeatedly (e.g. during streaming).
+ */
+export function renderMermaidBlocks(container: HTMLElement, options: { defer?: boolean } = {}): void {
+    installMermaidThemeListener(container.ownerDocument);
+    trackPreviewerContainer(container);
+    const selector = options.defer
+        ? '.mermaid-block[data-mermaid-code]'
+        : '.mermaid-block:not([data-mermaid-rendered]):not([data-mermaid-rendering])';
+    const blocks = container.querySelectorAll<HTMLElement>(selector);
+    for (const block of blocks) {
+        void renderMermaidBlock(block, getMermaidTheme(block.ownerDocument), options.defer === true);
+    }
+}
+
+function applyMermaidRender(block: HTMLElement, source: string, sanitized: string, theme: MermaidTheme): void {
+    delete block.dataset.mermaidRendering;
+    const showPreview = block.querySelector<HTMLInputElement>('.code-preview-toggle-input')?.checked ?? true;
+    const wrapper = document.createElement('div');
+    wrapper.className = 'mermaid-rendered';
+    mountMermaidSvg(wrapper, sanitized);
+    wrapper.style.display = showPreview ? '' : 'none';
+
+    // 源码视图（默认隐藏，切换开关后显示）
+    const sourcePre = document.createElement('pre');
+    sourcePre.className = 'mermaid-source';
+    sourcePre.textContent = source;
+    sourcePre.style.display = showPreview ? 'none' : '';
+
+    // header + 预览开关（默认显示渲染结果，可切到源码）
+    const header = document.createElement('div');
+    header.className = 'mermaid-block-header';
+    const langLabel = document.createElement('span');
+    langLabel.className = 'mermaid-block-lang';
+    langLabel.textContent = 'Mermaid';
+    header.appendChild(langLabel);
+    const toggle = createToggleButton(showPreview);
+    header.appendChild(toggle);
+    addCopyButton(header, () => source);
+    const checkbox = toggle.querySelector<HTMLInputElement>('.code-preview-toggle-input')!;
+    checkbox.addEventListener('change', () => {
+        const showPreview = checkbox.checked;
+        sourcePre.style.display = showPreview ? 'none' : '';
+        wrapper.style.display = showPreview ? '' : 'none';
+    });
+
+    block.replaceChildren(header, sourcePre, wrapper);
+    block.dataset.mermaidRendered = 'true';
+    block.dataset.mermaidTheme = theme;
+}
+
+function getOrCreateMermaidSvg(encoded: string, source: string, theme: MermaidTheme): Promise<string> {
+    const cacheKey = getMermaidCacheKey(theme, encoded);
+    const existing = mermaidRenderInFlight.get(cacheKey);
+    if (existing) return existing;
+
+    const pending = (async () => {
+        const pipeline = await loadMermaidPipeline();
+        mermaidSeq += 1;
+        const id = `od-mermaid-${mermaidSeq}`;
+        const { svg } = await pipeline.render(id, source, theme);
+        const sanitized = sanitizeMermaidStyleContent(pipeline.sanitize(svg));
+        cacheMermaidSvg(cacheKey, sanitized);
+        return sanitized;
+    })();
+    mermaidRenderInFlight.set(cacheKey, pending);
+    const clearPending = () => {
+        if (mermaidRenderInFlight.get(cacheKey) === pending) {
+            mermaidRenderInFlight.delete(cacheKey);
+        }
+    };
+    void pending.then(clearPending, clearPending);
+    return pending;
+}
+
+async function renderMermaidBlock(block: HTMLElement, theme: MermaidTheme, defer = false): Promise<void> {
+    const encoded = block.dataset.mermaidCode;
+    if (!encoded) {
+        block.dataset.mermaidRendered = 'error';
+        return;
+    }
+    let source: string;
+    try {
+        source = decodeBase64Utf8(encoded);
+    } catch {
+        block.dataset.mermaidRendered = 'error';
+        return;
+    }
+    if (defer) {
+        delete block.dataset.mermaidRendering;
+        delete block.dataset.mermaidRendered;
+        delete block.dataset.mermaidTheme;
+        block.dataset.mermaidDeferred = 'true';
+        showMermaidSourceFallback(block, source);
+        return;
+    }
+    delete block.dataset.mermaidDeferred;
+    if (block.dataset.mermaidComplete === 'false') {
+        showMermaidSourceFallback(block, source);
+        return;
+    }
+    if (!source.trim()) {
+        block.dataset.mermaidRendered = 'error';
+        return;
+    }
+    const cacheKey = getMermaidCacheKey(theme, encoded);
+    const cached = mermaidSvgCache.get(cacheKey);
+    if (cached !== undefined) {
+        applyMermaidRender(block, source, cached, theme);
+        return;
+    }
+
+    if (!block.querySelector('.mermaid-rendered')) {
+        showMermaidSourceFallback(block, source);
+    }
+    block.dataset.mermaidRendering = theme;
+    try {
+        const sanitized = await getOrCreateMermaidSvg(encoded, source, theme);
+        const currentTheme = getMermaidTheme(block.ownerDocument);
+        if (currentTheme !== theme) {
+            if (block.dataset.mermaidRendering === theme) {
+                delete block.dataset.mermaidRendering;
+                void renderMermaidBlock(block, currentTheme);
+            }
+            return;
+        }
+        if (block.dataset.mermaidRendering !== theme) return;
+        applyMermaidRender(block, source, sanitized, theme);
+    } catch (err) {
+        if (block.dataset.mermaidRendering !== theme) return;
+        // 渲染失败：暴露真实错误便于诊断；回退显示源码避免出现空白占位。
+        // 不标记 data-mermaid-rendered，流式阶段下一帧会重新尝试渲染。
+        delete block.dataset.mermaidRendering;
+        delete block.dataset.mermaidRendered;
+        delete block.dataset.mermaidTheme;
+        console.error('[mermaid] render failed:', err);
+        showMermaidSourceFallback(block, source);
+    }
+}
+
+function showMermaidSourceFallback(block: HTMLElement, source: string): void {
+    const pre = document.createElement('pre');
+    pre.className = 'mermaid-fallback';
+    pre.textContent = source;
+    block.replaceChildren(pre);
 }

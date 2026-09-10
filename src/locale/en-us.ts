@@ -2182,6 +2182,7 @@ export const enUs: Record<string, string> = {
     'renderer.taskview.navigation.attachment': 'Attachment message',
     'renderer.taskview.navigation.noReply': 'No reply yet',
     'renderer.taskview.nextUserMessage': 'Next message',
+    'renderer.previewer.preview': 'Preview',
     'renderer.applicationAgent.title': 'OpenDesk',
     'renderer.applicationAgent.open': 'Open agent chat',
     'renderer.applicationAgent.close': 'Collapse agent chat',
