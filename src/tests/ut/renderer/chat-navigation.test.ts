@@ -23,6 +23,35 @@ const message = (role: string, id: string, text: string) => ({
 });
 
 describe('conversation quick navigation', () => {
+    test('many turns share bounded listeners and nested events still follow a reordered turn', () => {
+        const host = document.createElement('div');
+        host.innerHTML = '<div></div>';
+        const navigate = jest.fn();
+        const listen = jest.spyOn(window.HTMLElement.prototype, 'addEventListener');
+        const nav = new ChatNavigation(host.firstElementChild as HTMLElement, { navigate, translate: (key) => key });
+        try {
+            const stops = Array.from({ length: 1000 }, (_, i) => ({
+                id: `u${i}`,
+                title: `Question ${i}`,
+                preview: ''
+            }));
+            nav.setStops(stops);
+            expect(listen.mock.calls.length).toBeLessThan(20);
+            const button = host.querySelectorAll<HTMLButtonElement>('.od-chat-nav-stop')[999];
+            const tick = button.firstElementChild!;
+            tick.dispatchEvent(new window.Event('pointerover', { bubbles: true }));
+            expect(host.querySelector('.od-chat-nav-title')?.textContent).toBe('Question 999');
+            nav.setStops([stops[999], ...stops.slice(0, 999)]);
+            expect(host.querySelector('.od-chat-nav-stop')).toBe(button);
+            tick.dispatchEvent(new window.Event('click', { bubbles: true }));
+            expect(navigate).toHaveBeenCalledWith('u999');
+            expect(host.querySelector('.od-chat-nav-title')?.textContent).toBe('Question 999');
+        } finally {
+            nav.destroy();
+            listen.mockRestore();
+        }
+    });
+
     test('streaming without a visible preview does not rebuild the index or summaries', async () => {
         jest.useFakeTimers();
         const originalObserver = globalThis.MutationObserver;
@@ -56,7 +85,7 @@ describe('conversation quick navigation', () => {
             jest.advanceTimersByTime(100);
             expect(refresh).not.toHaveBeenCalled();
             const button = host.querySelector('.od-chat-nav-stop')!;
-            button.dispatchEvent(new window.Event('pointerenter'));
+            button.dispatchEvent(new window.Event('pointerover', { bubbles: true }));
             expect(host.querySelector('.od-chat-nav-answer')?.textContent).toBe('Complete');
             const readHistoryRect = jest.fn(() => ({ top: 0 }) as DOMRect);
             history.getBoundingClientRect = readHistoryRect;
@@ -117,7 +146,7 @@ describe('conversation quick navigation', () => {
         ];
         nav.setStops(stops);
         const button = host.querySelector('.od-chat-nav-stop') as HTMLElement;
-        button.dispatchEvent(new window.Event('pointerenter'));
+        button.dispatchEvent(new window.Event('pointerover', { bubbles: true }));
         nav.setStops([...stops, { id: 'u3', title: 'Three', preview: '' }]);
         expect(host.querySelector('.od-chat-nav-stop')).toBe(button);
         expect(button.classList.contains('is-previewed')).toBe(true);
@@ -182,7 +211,7 @@ describe('conversation quick navigation', () => {
             const rail = host.querySelector('.od-chat-nav-rail') as HTMLElement;
             const preview = host.querySelector('.od-chat-nav-preview') as HTMLElement;
             rail.scrollTop = 100;
-            buttons[0].dispatchEvent(new window.Event('pointerenter'));
+            buttons[0].dispatchEvent(new window.Event('pointerover', { bubbles: true }));
             const tickWidths = Array.from(buttons, (button) => button.style.getPropertyValue('--tick-scale'));
             const previewTop = preview.style.top;
             buttons[0].click();
@@ -239,7 +268,7 @@ describe('conversation quick navigation', () => {
         nav.setStops(stops);
         const button = host.querySelectorAll('.od-chat-nav-stop')[1];
         expect(button.getAttribute('aria-current')).toBe('location');
-        button.dispatchEvent(new window.Event('pointerenter'));
+        button.dispatchEvent(new window.Event('pointerover', { bubbles: true }));
         nav.setStops([stops[0], { ...stops[1], preview: 'Complete reply' }]);
         expect(host.querySelectorAll('.od-chat-nav-stop')[1]).toBe(button);
         expect(host.querySelector('.od-chat-nav-answer')?.textContent).toBe('Complete reply');
@@ -299,13 +328,13 @@ describe('conversation quick navigation', () => {
         ]);
         const buttons = host.querySelectorAll<HTMLButtonElement>('.od-chat-nav-stop');
         expect(buttons).toHaveLength(2);
-        buttons[0].dispatchEvent(new window.Event('pointerenter'));
+        buttons[0].dispatchEvent(new window.Event('pointerover', { bubbles: true }));
         expect(host.querySelector('.od-chat-nav-preview')?.textContent).toContain('<img src=x onerror=bad()>');
         expect(host.querySelector('.od-chat-nav-preview img')).toBeNull();
         buttons[0].click();
         expect(navigate).toHaveBeenCalledWith('old');
-        buttons[1].dispatchEvent(new window.Event('focus'));
-        const escape = new window.Event('keydown');
+        buttons[1].dispatchEvent(new window.Event('focusin', { bubbles: true }));
+        const escape = new window.Event('keydown', { bubbles: true });
         Object.assign(escape, { key: 'Escape' });
         buttons[1].dispatchEvent(escape);
         expect((host.querySelector('.od-chat-nav-preview') as HTMLElement).hidden).toBe(true);

@@ -135,9 +135,7 @@ export class ChatNavigation {
     private hovered = -1;
     private active = -1;
     private timer: ReturnType<typeof setTimeout> | undefined;
-    private contentDirty = false;
-    private positionDirty = false;
-    private anchorsDirty = true;
+    private pending?: 'preview' | 'position' | 'content';
     private anchors: { index: number; element: HTMLElement }[] = [];
     private destroyed = false;
     private observer: MutationObserver;
@@ -158,6 +156,10 @@ export class ChatNavigation {
         this.preview.append(this.title, this.answer);
         this.root.append(this.rail, this.preview);
         history.parentElement?.append(this.root);
+        for (const type of ['pointerover', 'focusin', 'click', 'keydown']) {
+            this.rail.addEventListener(type, this.onInput);
+        }
+        this.rail.addEventListener('focusout', this.hidePreview);
         this.rail.addEventListener('pointerleave', this.hidePreview);
         this.rail.addEventListener('scroll', this.onRailScroll, { passive: true });
         history.addEventListener('scroll', this.onScroll, { passive: true });
@@ -171,89 +173,79 @@ export class ChatNavigation {
     }
 
     setStops(stops: ConversationStop[]): void {
-        const structureChanged =
-            stops.length !== this.stops.length || stops.some((stop, i) => stop.id !== this.stops[i].id);
+        const hovered = this.buttons[this.hovered];
+        const focused = document.activeElement;
+        const existing = new Map(this.buttons.map((button) => [button.dataset.messageId, button]));
         this.stops = stops;
-        this.anchorsDirty = true;
         this.root.hidden = stops.length < 2;
         this.history.classList.toggle('od-chat-has-nav', stops.length >= 2);
-        if (structureChanged) {
-            const hoveredId = this.buttons[this.hovered]?.dataset.messageId;
-            const focusedButton = this.rail.contains(document.activeElement) ? document.activeElement : null;
-            const existing = new Map(this.buttons.map((button) => [button.dataset.messageId, button]));
-            this.buttons = stops.map((stop) => existing.get(stop.id) || this.createButton(stop.id));
-            const retained = new Set(this.buttons);
-            existing.forEach((button) => {
-                if (!retained.has(button)) button.remove();
-            });
-            // Append-only updates must not detach the focused or hovered button.
-            this.buttons.forEach((button, index) => {
-                if (this.rail.children[index] !== button) {
-                    this.rail.insertBefore(button, this.rail.children[index] || null);
-                }
-            });
-            if (
-                focusedButton instanceof HTMLElement &&
-                retained.has(focusedButton as HTMLButtonElement) &&
-                document.activeElement !== focusedButton
-            ) {
-                focusedButton.focus({ preventScroll: true });
+        this.buttons = stops.map((stop, index) => {
+            const button = existing.get(stop.id) || document.createElement('button');
+            if (!existing.has(stop.id)) {
+                button.type = 'button';
+                button.className = 'od-chat-nav-stop';
+                button.dataset.messageId = stop.id;
+                button.append(document.createElement('span'));
             }
-            this.hovered = hoveredId ? stops.findIndex((stop) => stop.id === hoveredId) : -1;
-            if (this.hovered < 0) this.hidePreview();
-        }
-        this.buttons.forEach((button, i) =>
+            existing.delete(stop.id);
+            button.dataset.index = String(index);
             button.setAttribute(
                 'aria-label',
-                this.options.translate('renderer.taskview.navigation.jump', { number: i + 1, text: stops[i].title })
-            )
-        );
+                this.options.translate('renderer.taskview.navigation.jump', { number: index + 1, text: stop.title })
+            );
+            // Append-only updates must not detach the focused or hovered button.
+            if (this.rail.children[index] !== button) {
+                this.rail.insertBefore(button, this.rail.children[index] || null);
+            }
+            return button;
+        });
+        existing.forEach((button) => button.remove());
+        if (focused instanceof HTMLElement && this.rail.contains(focused) && document.activeElement !== focused) {
+            focused.focus({ preventScroll: true });
+        }
+        this.hovered = this.buttons.indexOf(hovered);
+        if (this.hovered < 0) this.hidePreview();
+        const indices = new Map(stops.map((stop, index) => [stop.id, index]));
+        this.anchors = Array.from(this.history.children).flatMap((child) => {
+            if (!child.matches('.od-user-msg-container[data-message-id]')) return [];
+            const index = indices.get((child as HTMLElement).dataset.messageId!);
+            return index === undefined ? [] : [{ index, element: child as HTMLElement }];
+        });
         this.updateActive();
         if (this.hovered >= 0) this.showPreview(this.hovered);
     }
 
-    private createButton(id: string): HTMLButtonElement {
-        const button = document.createElement('button');
-        button.type = 'button';
-        button.className = 'od-chat-nav-stop';
-        button.dataset.messageId = id;
-        button.append(document.createElement('span'));
-        const index = () => this.stops.findIndex((stop) => stop.id === id);
-        button.addEventListener('pointerenter', () => this.showPreview(index()));
-        button.addEventListener('focus', () => this.showPreview(index()));
-        button.addEventListener('blur', this.hidePreview);
-        button.addEventListener('click', () => this.options.navigate(id));
-        button.addEventListener('keydown', (event) => {
-            if (event.key === 'Escape') {
-                this.hidePreview();
-                return;
-            }
-            const current = index();
-            const target =
-                event.key === 'Home'
-                    ? 0
-                    : event.key === 'End'
-                      ? this.buttons.length - 1
-                      : event.key === 'ArrowUp'
-                        ? Math.max(0, current - 1)
-                        : event.key === 'ArrowDown'
-                          ? Math.min(this.buttons.length - 1, current + 1)
-                          : -1;
-            if (target < 0) return;
+    private onInput = (event: Event): void => {
+        const button = (event.target as Element).closest<HTMLButtonElement>('.od-chat-nav-stop');
+        if (!button || button.parentElement !== this.rail) return;
+        const index = Number(button.dataset.index);
+        if (event.type === 'click') {
+            this.options.navigate(this.stops[index].id);
+        } else if (event.type !== 'keydown') {
+            this.showPreview(index);
+        } else {
+            const key = (event as KeyboardEvent).key;
+            if (key === 'Escape') return this.hidePreview();
+            const target = {
+                Home: 0,
+                End: this.buttons.length - 1,
+                ArrowUp: Math.max(0, index - 1),
+                ArrowDown: Math.min(this.buttons.length - 1, index + 1)
+            }[key];
+            if (target === undefined) return;
             event.preventDefault();
             this.buttons.forEach((item, i) => {
                 item.tabIndex = i === target ? 0 : -1;
             });
-            this.buttons[target].focus({ preventScroll: true });
             const next = this.buttons[target];
+            next.focus({ preventScroll: true });
             if (next.offsetTop < this.rail.scrollTop) this.rail.scrollTop = next.offsetTop;
             else if (next.offsetTop + next.offsetHeight > this.rail.scrollTop + this.rail.clientHeight) {
                 this.rail.scrollTop = next.offsetTop + next.offsetHeight - this.rail.clientHeight;
             }
             this.showPreview(target);
-        });
-        return button;
-    }
+        }
+    };
 
     private onHistoryMutation = (mutations: MutationRecord[]): void => {
         const indexChanged = mutations.some((mutation) => {
@@ -263,7 +255,6 @@ export class ChatNavigation {
             return Boolean(target?.closest('.od-user-msg-container'));
         });
         if (indexChanged) {
-            this.anchorsDirty = true;
             this.refresh();
         } else if (this.hovered >= 0) {
             // Replies only affect the visible preview; idle navigation has no token work.
@@ -271,33 +262,29 @@ export class ChatNavigation {
         }
     };
 
-    refresh = (): void => {
-        this.contentDirty = true;
-        this.scheduleUpdate();
-    };
+    refresh = (): void => this.scheduleUpdate('content');
 
-    private scheduleUpdate = (): void => {
-        if (this.destroyed || this.timer !== undefined) return;
-        // Coalesce streamed tokens without extracting summaries on ordinary scrolling.
+    private scheduleUpdate(kind: 'preview' | 'position' | 'content' = 'preview'): void {
+        if (this.destroyed) return;
+        // Content includes position work; a later token must not downgrade either.
+        if (kind === 'content' || !this.pending || this.pending === 'preview') this.pending = kind;
+        if (this.timer !== undefined) return;
         this.timer = setTimeout(() => {
             this.timer = undefined;
-            const contentDirty = this.contentDirty;
-            const positionDirty = this.positionDirty;
-            this.contentDirty = false;
-            this.positionDirty = false;
-            if (contentDirty && this.options.refresh) this.setStops(this.options.refresh());
+            const pending = this.pending;
+            this.pending = undefined;
+            if (pending === 'content') this.setStops(this.options.refresh?.() ?? this.stops);
             else {
-                if (positionDirty) this.updateActive();
-                if (this.hovered >= 0) this.showPreview(this.hovered, positionDirty);
+                if (pending !== 'preview') this.updateActive();
+                if (this.hovered >= 0) this.showPreview(this.hovered, pending !== 'preview');
             }
         }, 80);
-    };
+    }
 
     private onScroll = (): void => {
         // A navigation jump changes the reading position, not the hovered stop.
         // Keeping the hover also prevents updateActive from recentering the rail.
-        this.positionDirty = true;
-        this.scheduleUpdate();
+        this.scheduleUpdate('position');
     };
 
     private onRailScroll = (): void => {
@@ -310,15 +297,6 @@ export class ChatNavigation {
     };
 
     private updateActive(): void {
-        if (this.anchorsDirty) {
-            const indices = new Map(this.stops.map((stop, index) => [stop.id, index]));
-            this.anchors = Array.from(this.history.children).flatMap((child) => {
-                if (!child.matches('.od-user-msg-container[data-message-id]')) return [];
-                const index = indices.get((child as HTMLElement).dataset.messageId!);
-                return index === undefined ? [] : [{ index, element: child as HTMLElement }];
-            });
-            this.anchorsDirty = false;
-        }
         const top = this.history.getBoundingClientRect().top + 40;
         // Message anchors remain in document order. Search current layout rather than
         // reading every message rectangle on each scroll or streamed token.
