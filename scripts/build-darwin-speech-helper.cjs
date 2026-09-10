@@ -67,7 +67,9 @@ fs.mkdirSync(helperDir, { recursive: true });
 
 // Minimum macOS version supported by the helper
 const MACOS_DEPLOYMENT_TARGET = '10.15';
-const targetTriple = `${process.arch}-apple-macosx${MACOS_DEPLOYMENT_TARGET}`;
+// Node.js calls Intel's 64-bit architecture x64; Clang and Swift target triples use x86_64.
+const targetArch = process.arch === 'x64' ? 'x86_64' : process.arch;
+const targetTriple = `${targetArch}-apple-macosx${MACOS_DEPLOYMENT_TARGET}`;
 
 // 1. Compile the C launcher
 execFileSync('/usr/bin/clang', ['-O', '-target', targetTriple, launcherSourcePath, '-o', launcherBinary], {
