@@ -1137,6 +1137,7 @@ export const zhCn: Record<string, string> = {
     'toolcall.status.interrupted': '中断',
     'toolcall.status.error': '失败',
     'tool.validation.invalidArgs': '工具参数无效: ${details}',
+    'tool.validation.receivedArgs': '收到字段: ${fields}',
     'tool.validation.reason.invalid_type': '类型不正确或缺少必要字段',
     'tool.validation.reason.too_small': '内容过短',
     'tool.validation.reason.invalid_value': '取值不合法',
