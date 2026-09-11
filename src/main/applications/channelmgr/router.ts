@@ -59,12 +59,6 @@ export class ChannelMessageRouter {
      */
     private getAccountRuntime?: (channelId: string, accountId: string) => AccountRuntime | undefined;
 
-    /**
-     * 当消息被路由到任务时的回调。
-     * 在 AI 处理之前触发，以便前端可以切换到对应的任务并显示实时处理过程。
-     */
-    onTaskResolved?: (task: TaskState, message: InboundChannelMessage) => void;
-
     constructor(
         taskManagerState: TaskManagerState,
         workspace: string,
@@ -149,13 +143,6 @@ export class ChannelMessageRouter {
 
         if (task.task_status === 'running') {
             await task.waitUntilFinished();
-        }
-
-        // 通知前端切换到该任务（在 AI 处理之前，以便实时显示处理过程）
-        try {
-            this.onTaskResolved?.(task, message);
-        } catch (err: any) {
-            logger.warn(`onTaskResolved callback error: ${err?.message || err}`);
         }
 
         const userText = this.formatInboundMessage(message);

@@ -3698,38 +3698,6 @@ async function startApplication(): Promise<void> {
             if (channelMgrApp) {
                 const router = new ChannelMessageRouter(GlobalState.getInstance().taskManagerState, startupWorkspace);
 
-                const CHANNEL_NAMES: Record<string, string> = {
-                    feishu: '飞书',
-                    weixin: '微信',
-                    whatsapp: 'WhatsApp',
-                    zalouser: 'Zalo',
-                    telegram: 'Telegram',
-                    discord: 'Discord',
-                    slack: 'Slack',
-                    signal: 'Signal'
-                };
-
-                router.onTaskResolved = (task, message) => {
-                    const channelName = CHANNEL_NAMES[message.channelId] || message.channelId;
-                    const senderLabel = message.senderName || '新联系人';
-                    const preview =
-                        (message.text || '').length > 60
-                            ? (message.text || '').slice(0, 57) + '...'
-                            : message.text || '';
-
-                    NotificationManager.getInstance().info(
-                        channelName,
-                        `${senderLabel} 的${channelName}消息`,
-                        preview || '(无文本内容)'
-                    );
-
-                    // 自动切换到渠道消息对应的任务会话
-                    if (globalMainWindow) {
-                        globalMainWindow.show();
-                        safeSendToWebContents(globalMainWindow.webContents, 'command:openTask', task.task_id);
-                    }
-                };
-
                 channelMgrApp.configureRouter(router, startupWorkspace);
                 // 延迟启动渠道插件，避免与启动关键路径竞争资源
                 setTimeout(() => {

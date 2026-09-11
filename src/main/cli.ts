@@ -39,7 +39,6 @@ import { ChannelMessageRouter } from './applications/channelmgr/router.js';
 import { initTelemetry, shutdownTelemetry } from './telemetry/index.js';
 import { startReporter } from './utils/reporter.js';
 import { AgentRegistry } from './aikernel/agents/registry.js';
-import { NotificationManager } from './utils/notificationmgr.js';
 import { registerToolsCommand } from './tui/subcommands/tools.js';
 import { registerQuickpassCommand } from './tui/subcommands/quickpass.js';
 import { registerServeCommand } from './tui/subcommands/serve.js';
@@ -466,34 +465,6 @@ async function main(args: CommandLineArgs) {
             const channelMgrApp = ApplicationRegistry.getApplication('channelmgr') as ChannelMgrApplication | undefined;
             if (channelMgrApp) {
                 const router = new ChannelMessageRouter(tui.taskManagerState, args.workspace, args.model);
-
-                const CHANNEL_NAMES: Record<string, string> = {
-                    feishu: '飞书',
-                    weixin: '微信',
-                    whatsapp: 'WhatsApp',
-                    zalouser: 'Zalo',
-                    telegram: 'Telegram',
-                    discord: 'Discord',
-                    slack: 'Slack',
-                    signal: 'Signal'
-                };
-
-                router.onTaskResolved = (task, message) => {
-                    const channelName = CHANNEL_NAMES[message.channelId] || message.channelId;
-                    const senderLabel = message.senderName || '新联系人';
-                    const preview =
-                        (message.text || '').length > 60
-                            ? (message.text || '').slice(0, 57) + '...'
-                            : message.text || '';
-
-                    tui.switchToTask(task);
-
-                    NotificationManager.getInstance().info(
-                        channelName,
-                        `${senderLabel} 的${channelName}消息`,
-                        preview || '(无文本内容)'
-                    );
-                };
 
                 await channelMgrApp.initializeChannels(router, args.workspace);
 
