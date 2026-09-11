@@ -11,10 +11,13 @@
 
 import { getKeybindings, type Component } from '@earendil-works/pi-tui';
 import chalk from 'chalk';
+import type { PluginAccountLoginMethod, PluginDisplayName } from '../../../../packages/plugin-sdk/src/index.js';
+import { resolvePluginDisplayName } from '../../../../packages/plugin-sdk/src/index.js';
 import type { OpenDeskTUI } from '../entry.js';
-import { InfoOverlay } from '../components/notice.js';
-import { t } from '../../../locale/index.js';
+import { InfoOverlay, ProgressOverlay } from '../components/notice.js';
+import { t, getLocale } from '../../../locale/index.js';
 import { getAccountRuntime } from '../../applications/account/factory.js';
+import { describeLoginError, runLoginFlow, type LoginFlowIo } from '../../applications/account/login-flow.js';
 import type { AccountKind } from '../../applications/account/types.js';
 
 const DEFAULT_ENTERPRISE_URL = 'http://127.0.0.1:8000/api/v1';
@@ -125,8 +128,64 @@ function askField(tui: OpenDeskTUI, label: string, secret: boolean, next: (value
     showWidget(tui, widget);
 }
 
-/** 询问账号类型（个人/企业），再走登录流程。 */
+/** 登录流字段输入：Esc 取消时以空值结束，由驱动器按 required 规则报错。 */
+function askFlowField(tui: OpenDeskTUI, label: string, secret: boolean): Promise<string> {
+    return new Promise((resolve) => {
+        const widget = new TextFieldWidget(tui, label, secret);
+        widget.setRenderCallback(() => tui.tui.requestRender());
+        widget.onDone = (value) => {
+            closeWidget(tui, widget);
+            resolve(value);
+        };
+        widget.onCancel = () => {
+            closeWidget(tui, widget);
+            resolve('');
+        };
+        showWidget(tui, widget);
+    });
+}
+
+/** 交互式 TUI 侧登录流 IO：字段输入走输入区 prompt，等待态用 ProgressOverlay 呈现。 */
+function createTuiLoginIo(tui: OpenDeskTUI): LoginFlowIo {
+    let progress: ProgressOverlay | null = null;
+    let lastStatus: string | null = null;
+    return {
+        resolveText: (displayName: PluginDisplayName | undefined) =>
+            resolvePluginDisplayName(displayName, getLocale()) ?? '',
+        promptText: (label) => askFlowField(tui, label, false),
+        promptSecret: (label) => askFlowField(tui, label, true),
+        showStatus: (message) => {
+            if (message === lastStatus) return;
+            lastStatus = message;
+            progress?.hide();
+            progress = new ProgressOverlay(tui, { title: t('cli.account.tui.login_title'), message });
+            progress.show();
+        },
+        delay: (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
+        now: () => Date.now()
+    };
+}
+
+/** 询问账号类型（个人/企业），再按插件声明的登录方式驱动登录流。 */
 function runTuiLogin(tui: OpenDeskTUI): void {
+    const startFlow = async (kind: AccountKind): Promise<void> => {
+        try {
+            const service = getAccountRuntime().getService();
+            const io = createTuiLoginIo(tui);
+            const methods = await service.getLoginMethods(kind);
+            if (methods.length === 0) {
+                finish(tui, t('cli.account.no_login_methods'), 'error');
+                return;
+            }
+            const method: PluginAccountLoginMethod =
+                methods.length === 1 ? methods[0] : await chooseLoginMethod(methods, io);
+            const session = await runLoginFlow(service, kind, method, io);
+            finish(tui, t('cli.account.login.success', { username: session.user.username }), 'info');
+        } catch (err) {
+            finish(tui, t('cli.account.login.failed', { detail: describeLoginError(err) }), 'error');
+        }
+    };
+
     const askKind = (): void => {
         askField(
             tui,
@@ -137,7 +196,7 @@ function runTuiLogin(tui: OpenDeskTUI): void {
                 if (kind === 'enterprise') {
                     askEnterpriseBaseUrl();
                 } else {
-                    askUsername(kind);
+                    void startFlow('personal');
                 }
             }
         );
@@ -149,42 +208,23 @@ function runTuiLogin(tui: OpenDeskTUI): void {
         askField(tui, `${t('cli.account.enterprise_url')} [${current}]`, false, (value) => {
             const baseUrl = (value || current).trim();
             getAccountRuntime().config.configure({ enterprise_base_url: baseUrl });
-            askUsername('enterprise');
+            void startFlow('enterprise');
         });
-    };
-
-    const askUsername = (kind: AccountKind): void => {
-        askField(tui, t('cli.account.username'), false, (username) => {
-            if (!username) {
-                finish(tui, t('error.account.username_required'), 'error');
-                return;
-            }
-            askPassword(kind, username);
-        });
-    };
-
-    const askPassword = (kind: AccountKind, username: string): void => {
-        askField(tui, t('cli.account.password'), true, (password) => {
-            if (!password) {
-                finish(tui, t('error.account.password_required'), 'error');
-                return;
-            }
-            void doLogin(kind, username, password);
-        });
-    };
-
-    const doLogin = async (kind: AccountKind, username: string, password: string): Promise<void> => {
-        try {
-            const service = getAccountRuntime().getService();
-            const session = await service.login(kind, username, password);
-            finish(tui, t('cli.account.login.success', { username: session.user.username }), 'info');
-        } catch (err) {
-            const detail = err instanceof Error ? err.message : String(err);
-            finish(tui, t('cli.account.login.failed', { detail }), 'error');
-        }
     };
 
     askKind();
+}
+
+async function chooseLoginMethod(
+    methods: readonly PluginAccountLoginMethod[],
+    io: LoginFlowIo
+): Promise<PluginAccountLoginMethod> {
+    const options = methods
+        .map((method, index) => `${index + 1}. ${io.resolveText(method.displayName) || method.id}`)
+        .join(' / ');
+    const answer = await io.promptText(`${t('cli.account.select_method')} (${options}) [1]`);
+    const index = Number.parseInt(answer, 10);
+    return Number.isInteger(index) && index >= 1 && index <= methods.length ? methods[index - 1] : methods[0];
 }
 
 function finish(tui: OpenDeskTUI, message: string, type: 'info' | 'error'): void {

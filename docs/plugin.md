@@ -37,7 +37,7 @@ plugins/
 插件必须已经包含自身所需依赖，并能从自己的 `node_modules` 中解析它们。
 
 > 例外：`@bitclub.ai/opendesk-plugin-sdk`（含 `./package` 子路径）和其运行时
-> 依赖 `zod` 由宿主进程内置。pluginmgr 启动时注册 ESM 解析映射：插件入口
+> 依赖 `zod` 以及账号插件使用的 `@bitclub.ai/opendesk-server-sdk` 由宿主进程内置。pluginmgr 启动时注册 ESM 解析映射：插件入口
 > `import` 这些包时，先按插件自己的 `node_modules` 解析（尊重插件声明的版本）；
 > 解析失败时回退到宿主内置的同名包。宿主内置包优先从主进程模块链的
 > `node_modules` 解析；SDK 在 `node_modules` 下只是一个指向 workspace 目录的符号
@@ -408,6 +408,79 @@ Actions are only available in this page and should be invoked by the 'trigger' t
 Browser 插件的最小实现参考见 `src/tests/ut/applications/browser-hint-tools.test.ts`
 中的内联 fixture（注册、快照渲染、trigger 执行的完整链路）。
 
+### Account Backend
+
+`account` capability 用于注册账号后端。账号页面、`personal` / `enterprise` 产品类型以及企业私有服务地址的配置仍由
+OpenDesk 主程序管理；主程序在登录时把解析后的 `kind` 和 `baseUrl` 传给插件。插件负责客户端创建、登录、会话恢复、
+刷新、登出和用户信息转换，并通过宿主提供的 opaque secret store 持久化私有凭据。返回给主程序的公开 session 不应包含 token。
+浏览器登录可在 flow 的 `start()` 中调用 `context.accounts.auth.openExternal()`，并通过 `poll()` 返回后续状态。
+
+当前宿主只允许注册一个账号后端，该后端同时作为启动时恢复会话和登录操作的默认实现。第二个后端注册会失败；
+需要支持多个账号后端时，再扩展后端选择和会话路由协议。
+
+```js
+import { definePlugin } from '@bitclub.ai/opendesk-plugin-sdk';
+
+export default definePlugin({
+    id: 'example-account',
+    capabilities: ['account'],
+    setup(context) {
+        context.accounts.registerBackend({
+            id: 'example',
+            kinds: ['personal', 'enterprise'],
+            initialize() {},
+            getSession() {
+                return null;
+            },
+            async getLoginMethods() {
+                return [
+                    {
+                        id: 'password',
+                        type: 'form',
+                        displayName: { en: 'Password', zh: '密码登录' },
+                        fields: [
+                            { id: 'username', type: 'text', label: { en: 'Username', zh: '用户名' }, required: true },
+                            { id: 'password', type: 'password', label: { en: 'Password', zh: '密码' }, required: true }
+                        ]
+                    }
+                ];
+            },
+            async createLoginFlow({ kind, baseUrl, methodId }) {
+                let state = { status: 'ready' };
+                return {
+                    getState: () => state,
+                    async submit(values) {
+                        // Use context.accounts.network.fetch and persist private credentials through context.accounts.secrets.
+                        state = { status: 'failed', errorCode: 'not_implemented' };
+                        return state;
+                    },
+                    async cancel() {}
+                };
+            },
+            async getUserInfo() {
+                return null;
+            },
+            async updateDisplayName() {
+                throw new Error('not_implemented');
+            },
+            async refreshToken() {
+                throw new Error('not_implemented');
+            },
+            async logout() {
+                context.accounts.secrets.clear();
+            }
+        });
+    }
+});
+```
+
+凭据存储按插件 id 隔离：`context.accounts.secrets` 的读写只作用于 `<opendesk-dir>/identity/secrets/<插件 id>.json`，
+插件之间互不可见。`network`、`auth`、`secrets` 和 `registerBackend` 的每次调用都会校验插件已声明并获授 `account`
+capability。
+
+随产品包发布的 `opendesk-account` 是当前内置实现，约定始终启用且不可卸载；现阶段这只是产品约定，插件管理层没有增加
+`required` / `system` 等额外机制。
+
 ## 使用 opendesk.plugin.json
 
 推荐的本地插件结构：
@@ -458,7 +531,7 @@ export default {
 ```
 
 manifest 中的 `id` 必须与入口导出的插件 `id` 一致。`capabilities` 可使用：
-`hook`、`tool`、`skill`、`mcp`、`command`、`event`、`agent`、`browser`。声明静态 Skill、MCP
+`hook`、`tool`、`skill`、`mcp`、`command`、`event`、`agent`、`browser`、`account`。声明静态 Skill、MCP
 或 Agent 时，必须同时声明对应的 `skill`、`mcp` 或 `agent` capability。
 
 ### displayName 与 description 本地化

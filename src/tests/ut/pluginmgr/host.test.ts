@@ -1,9 +1,143 @@
 import { z } from 'zod';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
 import { jest } from '@jest/globals';
 import { PluginHookError, PluginHost } from '../../../main/applications/pluginmgr/runtime/host.js';
 import { definePlugin } from '../../../../packages/plugin-sdk/src/index.js';
+import { accountBackendRegistry } from '../../../main/applications/account/backend-registry.js';
+import { setCustomOpendeskDirectory } from '../../../main/utils/setting.js';
 
 describe('PluginHost', () => {
+    test('account backend registration follows the plugin lifecycle', async () => {
+        const host = new PluginHost();
+        const entry = await host.activate(
+            definePlugin({
+                id: 'account-backend-plugin',
+                capabilities: ['account'],
+                setup(ctx) {
+                    ctx.accounts.registerBackend({
+                        id: 'account-backend-test',
+                        kinds: ['personal', 'enterprise'],
+                        initialize() {},
+                        getSession() {
+                            return null;
+                        },
+                        async getUserInfo() {
+                            return null;
+                        },
+                        async getLoginMethods() {
+                            return [];
+                        },
+                        async createLoginFlow() {
+                            return {
+                                getState: () => ({ status: 'ready' as const }),
+                                cancel: async () => undefined
+                            };
+                        },
+                        async updateDisplayName() {
+                            throw new Error('not used');
+                        },
+                        async refreshToken() {
+                            throw new Error('not used');
+                        },
+                        async logout() {}
+                    });
+                }
+            }),
+            { origin: 'test:account-backend' }
+        );
+
+        expect(entry.status).toBe('active');
+        expect(accountBackendRegistry.get('account-backend-test')).toBeDefined();
+
+        await host.deactivate('account-backend-plugin');
+
+        expect(accountBackendRegistry.get('account-backend-test')).toBeUndefined();
+    });
+
+    test('账号凭据按插件 id 隔离存储', async () => {
+        const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'opendesk-host-secrets-'));
+        const original = process.env.OPENDESK_CONFIG_DIRECTORY;
+        setCustomOpendeskDirectory(tempDir);
+        const host = new PluginHost();
+        try {
+            const secretsUsage: string[] = [];
+            const entry = await host.activate(
+                definePlugin({
+                    id: 'scoped-account',
+                    capabilities: ['account'],
+                    setup(ctx) {
+                        ctx.accounts.secrets.save({
+                            version: 1,
+                            kind: 'personal',
+                            baseUrl: 'https://x.example.com',
+                            accessToken: 'scoped-token',
+                            user: {}
+                        });
+                        secretsUsage.push(ctx.accounts.secrets.load() === null ? 'empty' : 'persisted');
+                    }
+                }),
+                { origin: 'test:scoped-account' }
+            );
+
+            expect(entry.status).toBe('active');
+            expect(secretsUsage).toEqual(['persisted']);
+
+            const scopedPath = path.join(tempDir, 'identity', 'secrets', 'scoped-account.json');
+            expect(fs.existsSync(scopedPath)).toBe(true);
+            expect(JSON.parse(fs.readFileSync(scopedPath, 'utf8'))).toMatchObject({ accessToken: 'scoped-token' });
+
+            // 另一个账号插件读取不到前者的会话
+            const secondEntry = await host.activate(
+                definePlugin({
+                    id: 'other-account',
+                    capabilities: ['account'],
+                    setup(ctx) {
+                        secretsUsage.push(ctx.accounts.secrets.load() === null ? 'empty' : 'persisted');
+                    }
+                }),
+                { origin: 'test:other-account' }
+            );
+            expect(secondEntry.status).toBe('active');
+            expect(secretsUsage).toEqual(['persisted', 'empty']);
+            expect(fs.existsSync(path.join(tempDir, 'identity', 'secrets', 'other-account.json'))).toBe(false);
+        } finally {
+            await host.dispose();
+            setCustomOpendeskDirectory(undefined);
+            if (original === undefined) {
+                delete process.env.OPENDESK_CONFIG_DIRECTORY;
+            } else {
+                process.env.OPENDESK_CONFIG_DIRECTORY = original;
+            }
+            fs.rmSync(tempDir, { recursive: true, force: true });
+        }
+    });
+
+    test.each([
+        ['network.fetch', (ctx: any) => ctx.accounts.network.fetch('https://example.com')],
+        ['auth.openExternal', (ctx: any) => ctx.accounts.auth.openExternal('https://example.com')],
+        ['secrets.load', (ctx: any) => ctx.accounts.secrets.load()],
+        ['secrets.save', (ctx: any) => ctx.accounts.secrets.save({ version: 1 })],
+        ['secrets.clear', (ctx: any) => ctx.accounts.secrets.clear()]
+    ])('未声明 account capability 时拒绝使用 %s', async (_name, useAccountCapability) => {
+        const host = new PluginHost();
+        const entry = await host.activate(
+            definePlugin({
+                id: 'undeclared-account-capability',
+                capabilities: [],
+                async setup(ctx) {
+                    await useAccountCapability(ctx);
+                }
+            }),
+            { origin: 'test:undeclared-account-capability' }
+        );
+
+        expect(entry.status).toBe('error');
+        expect(entry.diagnostics[0]?.detail).toBe('plugin.capability_not_declared:account');
+        await host.dispose();
+    });
+
     test('JavaScript 插件注册未知 hook 名时激活失败', async () => {
         const host = new PluginHost();
         const entry = await host.activate(

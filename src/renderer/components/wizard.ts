@@ -13,6 +13,14 @@ import './wizard.css';
 import { createRendererTranslator } from '../locale.ts';
 import { isAccountFeatureEnabled } from '../utils/account-feature-visibility.ts';
 import { resolveWizardStep2View } from '../utils/wizard-flow.ts';
+import {
+    formatAccountLoginError,
+    getAccountApi,
+    resolveLocalizedText,
+    runAccountLoginFlow,
+    type AccountApi,
+    type AccountLoginMethod
+} from '../utils/account-login.ts';
 
 type LoginChoice = 'opendesk' | 'enterprise' | 'nologin';
 
@@ -83,25 +91,7 @@ declare global {
             removeTaskViewCache(taskId: string): void;
             clearAllTaskViewCache(): void;
         };
-        accountAPI: {
-            getConfig(): Promise<{
-                mode: 'personal' | 'enterprise' | 'nologin';
-                default_base_url: string;
-                enterprise_base_url: string;
-            }>;
-            configure(patch: {
-                mode?: 'personal' | 'enterprise' | 'nologin';
-                enterprise_base_url?: string;
-            }): Promise<unknown>;
-            isSetupComplete(): Promise<boolean>;
-            login(kind: 'personal' | 'enterprise', username: string, password: string): Promise<unknown>;
-            getSession(): Promise<unknown>;
-            getUserInfo(): Promise<unknown>;
-            updateDisplayName(displayName: string): Promise<unknown>;
-            refreshToken(): Promise<unknown>;
-            logout(): Promise<unknown>;
-            onSessionChanged(callback: (session: unknown) => void): () => void;
-        };
+        accountAPI: AccountApi;
     }
 }
 
@@ -119,6 +109,10 @@ class SetupWizard extends HTMLElement {
     // 账号登录表单状态
     private loginUsername = '';
     private loginPassword = '';
+    private loginMethods: AccountLoginMethod[] = [];
+    private selectedLoginMethodId: string | null = null;
+    private loginMethodLoading = false;
+    private activeLoginFlowId: string | null = null;
     private loginBusy = false;
     private loginError: string | null = null;
     private enterpriseBaseUrlDraft = '';
@@ -197,6 +191,7 @@ class SetupWizard extends HTMLElement {
     // =================== Step 1 ===================
     private _renderStep1(): string {
         const accountFeatureDisabled = !isAccountFeatureEnabled(this.currentData);
+
         return `
         <span class="step-tag">Step 1 · 账号选择</span>
         <h2>您希望如何登录 OpenDesk？</h2>
@@ -280,28 +275,43 @@ class SetupWizard extends HTMLElement {
             `;
         }
 
+        const method = this.loginMethods.find((candidate) => candidate.id === this.selectedLoginMethodId);
+        const methodOptions =
+            this.loginMethods.length > 1
+                ? `<div class="f-row"><div class="f-actions">${this.loginMethods
+                      .map(
+                          (candidate) =>
+                              `<button class="wiz-btn ${candidate.id === method?.id ? 'wiz-btn-primary' : 'wiz-btn-secondary'}" type="button" data-login-method="${this._escapeHtml(candidate.id)}">${this._escapeHtml(resolveLocalizedText(candidate.displayName))}</button>`
+                      )
+                      .join('')}</div></div>`
+                : '';
+        const fields =
+            method?.type === 'form'
+                ? method.fields
+                      .map((field) => {
+                          const value =
+                              field.id === 'username'
+                                  ? this.loginUsername
+                                  : field.id === 'password'
+                                    ? this.loginPassword
+                                    : '';
+                          const input = `<input data-login-field="${this._escapeHtml(field.id)}" type="${field.type}" class="${field.type === 'password' ? 'f-ctl-input' : 'f-ctl'}" autocomplete="${this._escapeHtml(field.autocomplete || 'off')}" ${field.placeholder ? `placeholder="${this._escapeHtml(resolveLocalizedText(field.placeholder))}"` : ''} value="${this._escapeHtml(value)}">`;
+                          return `<div class="f-row"><label class="f-label">${this._escapeHtml(resolveLocalizedText(field.label))}</label>${field.type === 'password' ? `<div class="f-ctl f-ctl-with-btn">${input}<button class="f-ctl-btn" type="button" data-toggle-login-field="${this._escapeHtml(field.id)}"><i class="fas fa-eye"></i></button></div>` : input}</div>`;
+                      })
+                      .join('')
+                : '';
+
         return `
         <span class="step-tag">Step 2 · ${this._escapeHtml(this.t('renderer.wizard.accountLoginStep'))}</span>
         <h2>${this._escapeHtml(kind === 'enterprise' ? this.t('renderer.wizard.enterpriseLoginTitle') : this.t('renderer.wizard.personalLoginTitle'))}</h2>
         <p class="ob-desc">${this._escapeHtml(this.t('renderer.wizard.accountLoginDesc'))}</p>
         <div class="form-card">
-            <div class="f-row">
-                <label class="f-label">${this._escapeHtml(this.t('renderer.account.username'))}</label>
-                <input id="wizard-login-username" type="text" class="f-ctl" autocomplete="username" value="${this._escapeHtml(this.loginUsername)}">
-            </div>
-            <div class="f-row">
-                <label class="f-label">${this._escapeHtml(this.t('renderer.account.password'))}</label>
-                <div class="f-ctl f-ctl-with-btn">
-                    <input id="wizard-login-password" type="password" class="f-ctl-input" autocomplete="current-password">
-                    <button id="wizard-toggle-login-key" class="f-ctl-btn" type="button">
-                        <i class="fas fa-eye"></i>
-                    </button>
-                </div>
-            </div>
+            ${methodOptions}
+            ${fields}
             ${this.loginError ? `<div id="wizard-account-result" class="verify-result verify-error">${this._escapeHtml(this.loginError)}</div>` : `<div id="wizard-account-result" class="verify-result hidden"></div>`}
             <div class="f-actions">
-                <button id="wizard-account-finish" class="wiz-btn wiz-btn-primary" type="button" ${this.loginBusy ? 'disabled' : ''}>
-                    ${this.loginBusy ? '<i class="fas fa-spinner fa-spin"></i>' : '<i class="fas fa-check-double"></i>'}${this._escapeHtml(this.t('renderer.wizard.loginAndFinish'))}
+                <button id="wizard-account-finish" class="wiz-btn wiz-btn-primary" type="button" ${this.loginBusy || this.loginMethodLoading || !method ? 'disabled' : ''}>
+                    ${this.loginBusy || this.loginMethodLoading ? '<i class="fas fa-spinner fa-spin"></i>' : '<i class="fas fa-check-double"></i>'}${this._escapeHtml(this.t('renderer.wizard.loginAndFinish'))}
                 </button>
             </div>
         </div>
@@ -460,6 +470,7 @@ class SetupWizard extends HTMLElement {
                 this.currentStep = 2;
                 this._render();
                 this._bindEvents();
+                if (this.loginChoice === 'opendesk') void this._loadLoginMethods('personal');
             }
         });
 
@@ -484,26 +495,38 @@ class SetupWizard extends HTMLElement {
     }
 
     private _bindAccountEvents(): void {
-        const toggleBtn = this.querySelector<HTMLButtonElement>('#wizard-toggle-login-key');
-        toggleBtn?.addEventListener('click', () => {
-            const input = this.querySelector<HTMLInputElement>('#wizard-login-password');
-            const icon = toggleBtn.querySelector('i');
-            if (!input || !icon) return;
-            if (input.type === 'password') {
-                input.type = 'text';
-                icon.classList.replace('fa-eye', 'fa-eye-slash');
-            } else {
-                input.type = 'password';
-                icon.classList.replace('fa-eye-slash', 'fa-eye');
-            }
-        });
+        this.querySelectorAll<HTMLButtonElement>('[data-toggle-login-field]').forEach((toggleBtn) =>
+            toggleBtn.addEventListener('click', () => {
+                const input = this.querySelector<HTMLInputElement>(
+                    `[data-login-field="${toggleBtn.dataset.toggleLoginField}"]`
+                );
+                const icon = toggleBtn.querySelector('i');
+                if (!input || !icon) return;
+                if (input.type === 'password') {
+                    input.type = 'text';
+                    icon.classList.replace('fa-eye', 'fa-eye-slash');
+                } else {
+                    input.type = 'password';
+                    icon.classList.replace('fa-eye-slash', 'fa-eye');
+                }
+            })
+        );
 
-        this.querySelector<HTMLInputElement>('#wizard-login-username')?.addEventListener('input', (event) => {
-            this.loginUsername = (event.target as HTMLInputElement).value;
-        });
-        this.querySelector<HTMLInputElement>('#wizard-login-password')?.addEventListener('input', (event) => {
-            this.loginPassword = (event.target as HTMLInputElement).value;
-        });
+        this.querySelectorAll<HTMLInputElement>('[data-login-field]').forEach((input) =>
+            input.addEventListener('input', (event) => {
+                const fieldId = input.dataset.loginField;
+                if (fieldId === 'username') this.loginUsername = (event.target as HTMLInputElement).value;
+                if (fieldId === 'password') this.loginPassword = (event.target as HTMLInputElement).value;
+            })
+        );
+        this.querySelectorAll<HTMLButtonElement>('[data-login-method]').forEach((button) =>
+            button.addEventListener('click', () => {
+                this.selectedLoginMethodId = button.dataset.loginMethod || null;
+                this.loginError = null;
+                this._render();
+                this._bindEvents();
+            })
+        );
         this.querySelector<HTMLInputElement>('#wizard-enterprise-base-url')?.addEventListener('input', (event) => {
             this.enterpriseBaseUrlDraft = (event.target as HTMLInputElement).value;
         });
@@ -519,6 +542,13 @@ class SetupWizard extends HTMLElement {
         });
     }
 
+    /** accountAPI 缺失（preload 未注入或账号能力被裁剪）时的统一失败路径。 */
+    private requireAccountApi(): AccountApi {
+        const api = getAccountApi();
+        if (!api) throw new Error('account:backend_unavailable');
+        return api;
+    }
+
     private async _handleEnterpriseBaseUrlNext(): Promise<void> {
         const baseUrl = this.enterpriseBaseUrlDraft.trim();
         const resultDiv = this.querySelector<HTMLElement>('#wizard-account-result');
@@ -527,10 +557,11 @@ class SetupWizard extends HTMLElement {
             return;
         }
         try {
-            await window.accountAPI.configure({ enterprise_base_url: baseUrl });
+            await this.requireAccountApi().configure?.({ enterprise_base_url: baseUrl });
             this.enterpriseBaseUrlStep = false;
             this._render();
             this._bindEvents();
+            await this._loadLoginMethods('enterprise');
         } catch (error: unknown) {
             const msg = error instanceof Error ? error.message : String(error);
             this._showResult(resultDiv, 'error', msg);
@@ -539,39 +570,81 @@ class SetupWizard extends HTMLElement {
 
     private async _handleAccountLogin(): Promise<void> {
         if (this.loginBusy) return;
-        const username = this.loginUsername.trim();
-        const password = this.loginPassword;
+        const method = this.loginMethods.find((candidate) => candidate.id === this.selectedLoginMethodId);
         const resultDiv = this.querySelector<HTMLElement>('#wizard-account-result');
-        if (!username || !password) {
-            this._showResult(resultDiv, 'error', this.t('renderer.wizard.loginRequired'));
-            return;
+        if (!method) return;
+        const values: Record<string, string> = {};
+        if (method.type === 'form') {
+            for (const field of method.fields) {
+                const value = this.querySelector<HTMLInputElement>(`[data-login-field="${field.id}"]`)?.value ?? '';
+                values[field.id] = value;
+                if (field.required && !value.trim()) {
+                    this._showResult(resultDiv, 'error', this.t('renderer.wizard.loginRequired'));
+                    return;
+                }
+            }
         }
         this.loginBusy = true;
         this.loginError = null;
         this._render();
         this._bindEvents();
         try {
-            const api = (window as any).accountAPI;
-            if (!api?.login) {
-                throw new Error(this.t('renderer.wizard.accountServiceUnavailable'));
-            }
+            const api = this.requireAccountApi();
             const kind = this.loginChoice === 'enterprise' ? 'enterprise' : 'personal';
-            await api.login(kind, username, password);
+            await runAccountLoginFlow({
+                api,
+                kind,
+                method,
+                values,
+                onStatus: (message) => {
+                    if (message !== undefined) {
+                        const target = this.querySelector<HTMLElement>('#wizard-account-result');
+                        this._showResult(target, 'info', message);
+                    }
+                },
+                onFlowStarted: (flowId) => {
+                    this.activeLoginFlowId = flowId;
+                }
+            });
+            this.activeLoginFlowId = null;
             await this._saveAccountMode();
             this.loginBusy = false;
             this.accountLoginComplete = true;
             this._render();
             this._bindEvents();
         } catch (error: unknown) {
-            const msg = error instanceof Error ? error.message : String(error);
-            this.loginError = `${this.t('renderer.wizard.loginFailed')}：${msg}`;
+            this.activeLoginFlowId = null;
+            this.loginError = formatAccountLoginError(error, this.t, this.t('renderer.wizard.loginFailed'));
             this.loginBusy = false;
             this._render();
             this._bindEvents();
         }
     }
 
+    private async _loadLoginMethods(kind: 'personal' | 'enterprise'): Promise<void> {
+        this.loginMethodLoading = true;
+        this.loginError = null;
+        this._render();
+        this._bindEvents();
+        try {
+            const api = this.requireAccountApi();
+            if (!api.getLoginMethods) throw new Error('account:backend_unavailable');
+            this.loginMethods = await api.getLoginMethods(kind);
+            this.selectedLoginMethodId = this.loginMethods[0]?.id ?? null;
+        } catch (error: unknown) {
+            this.loginError = error instanceof Error ? error.message : String(error);
+        } finally {
+            this.loginMethodLoading = false;
+            this._render();
+            this._bindEvents();
+        }
+    }
+
     private _handleBackToNoLogin(): void {
+        if (this.activeLoginFlowId) {
+            void getAccountApi()?.cancelLogin?.(this.activeLoginFlowId);
+            this.activeLoginFlowId = null;
+        }
         this.loginChoice = 'nologin';
         this.loginError = null;
         this.loginBusy = false;
@@ -584,7 +657,7 @@ class SetupWizard extends HTMLElement {
     private async _saveAccountMode(): Promise<void> {
         const mode =
             this.loginChoice === 'opendesk' ? 'personal' : this.loginChoice === 'enterprise' ? 'enterprise' : 'nologin';
-        await window.accountAPI.configure({ mode });
+        await this.requireAccountApi().configure?.({ mode });
     }
 
     private _bindModelConfigEvents(): void {
@@ -708,7 +781,7 @@ class SetupWizard extends HTMLElement {
 
         await window.settingAPI.saveSettingObject(data);
         if (this.loginChoice === 'nologin') {
-            await window.accountAPI.configure({ mode: 'nologin' });
+            await this.requireAccountApi().configure?.({ mode: 'nologin' });
         }
         this.currentData = data;
     }
