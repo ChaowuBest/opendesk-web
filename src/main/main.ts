@@ -3725,7 +3725,6 @@ async function startApplication(): Promise<void> {
 
                     // 自动切换到渠道消息对应的任务会话
                     if (globalMainWindow) {
-                        globalMainWindow.show();
                         safeSendToWebContents(globalMainWindow.webContents, 'command:openTask', task.task_id);
                     }
                 };
