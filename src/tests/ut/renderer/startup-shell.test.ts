@@ -1,5 +1,6 @@
-import { describe, expect, test } from '@jest/globals';
+import { describe, expect, jest, test } from '@jest/globals';
 import { readFileSync } from 'node:fs';
+import vm from 'node:vm';
 
 const rendererHtml = readFileSync(new URL('../../../renderer/index.html', import.meta.url), 'utf8');
 const rendererEntry = readFileSync(new URL('../../../renderer/scripts/index.js', import.meta.url), 'utf8');
@@ -13,11 +14,30 @@ function sourceBetween(source: string, start: string, end: string): string {
 }
 
 describe('renderer startup shell', () => {
+    test('expanding navigation does not invoke preview cleanup', () => {
+        const suspendPreviewLayout = jest.fn();
+        const document = Object.assign(new EventTarget(), {
+            querySelectorAll: () => [{ suspendPreviewLayout }]
+        });
+        const shell = vm.createContext({ document });
+        vm.runInContext(
+            sourceBetween(rendererHtml, 'function closeAllEditorOverlays()', 'async function openTask('),
+            shell
+        );
+
+        document.dispatchEvent(new CustomEvent('sidebar-visibility-changed', { detail: { collapsed: false } }));
+
+        expect(suspendPreviewLayout).not.toHaveBeenCalled();
+        // Explicit cleanup remains available when switching tasks or applications.
+        vm.runInContext('closeAllEditorOverlays()', shell);
+        expect(suspendPreviewLayout).toHaveBeenCalledTimes(1);
+    });
+
     test('global editor cleanup suspends preview layout without exiting the selected Browser tab', () => {
         const cleanupSource = sourceBetween(
             rendererHtml,
             'function closeAllEditorOverlays()',
-            "document.addEventListener('sidebar-visibility-changed'"
+            'async function openTask('
         );
 
         expect(cleanupSource).toContain('suspendPreviewLayout');

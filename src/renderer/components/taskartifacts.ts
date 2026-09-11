@@ -384,7 +384,12 @@ class TaskArtifacts extends HTMLElement {
     }
 
     private _refreshLocalizedText(): void {
-        this._rebuildTabBar();
+        // Settings updates must not reselect the active tab and reactivate its preview layout.
+        for (const tab of this._getTabs()) {
+            const label = this.shadowRoot?.querySelector<HTMLElement>(`.tab-btn[data-tab="${tab.id}"] span`);
+            if (label) label.textContent = this._getTabLabel(tab);
+        }
+        this._updateSlider();
         if (this._activeTab === 'changes') {
             this._renderChangesPanel();
         }

@@ -590,12 +590,7 @@
                 });
             }
 
-            // 左侧边栏展开时，自动退出右侧 taskview 的预览模式
-            document.addEventListener('sidebar-visibility-changed', function (e) {
-                if (e.detail && !e.detail.collapsed) {
-                    closeAllEditorOverlays();
-                }
-            });
+            // 左侧边栏展开只改变导航可见性，保留各任务的预览内容和布局。
 
             async function openTask(taskId) {
                 ensureSlots();
