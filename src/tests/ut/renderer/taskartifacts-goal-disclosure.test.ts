@@ -249,6 +249,50 @@ describe('task artifacts goal disclosure state', () => {
         expect(artifacts._browserVisible).toBe(false);
     });
 
+    test('first browser navigation activates focus layout', () => {
+        const artifacts = createArtifacts() as ReturnType<typeof createArtifacts> & {
+            switchToTab: (tab: string) => void;
+            _browser: { onTabsChanged: () => void };
+        };
+        artifacts.switchToTab('browser');
+        expect(artifacts.hasAttribute('data-workspace-focus-fullscreen')).toBe(false);
+
+        mockBrowserHasActiveContent = true;
+        artifacts._browser.onTabsChanged();
+
+        expect(artifacts.hasAttribute('data-workspace-focus-fullscreen')).toBe(true);
+    });
+
+    test.each([true, false])('settings changes preserve browser focus (focused=%s)', async (focused) => {
+        const onSettingChanged = jest.spyOn((window as any).settingAPI, 'onSettingChanged');
+        try {
+            const artifacts = createArtifacts() as ReturnType<typeof createArtifacts> & {
+                forceBrowserActive: () => void;
+                suspendPreviewLayout: () => void;
+            };
+            await Promise.resolve();
+            artifacts.forceBrowserActive();
+            if (!focused) artifacts.suspendPreviewLayout();
+            const settingsChanged = onSettingChanged.mock.calls[0][0] as (setting: unknown) => void;
+            const browserPanel = artifacts.shadowRoot!.querySelector('.tab-content[data-tab="browser"]');
+
+            for (const [locale, theme, label] of [
+                ['en-US', 'dark', 'Browser'],
+                ['zh-CN', 'light', '浏览器']
+            ]) {
+                settingsChanged({ locale, gui_config: { theme_preference: theme } });
+
+                expect(artifacts.hasAttribute('data-workspace-focus-fullscreen')).toBe(focused);
+                expect(artifacts.shadowRoot!.querySelector('.tab-content[data-tab="browser"]')).toBe(browserPanel);
+                expect(artifacts.shadowRoot!.querySelector('.tab-btn[data-tab="browser"] span')?.textContent).toBe(
+                    label
+                );
+            }
+        } finally {
+            onSettingChanged.mockRestore();
+        }
+    });
+
     test('recycles the physical browser while preserving its logical tabs and selected Browser tab', () => {
         const artifacts = createArtifacts() as ReturnType<typeof createArtifacts> & {
             forceBrowserActive: () => void;
