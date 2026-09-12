@@ -38,29 +38,30 @@ describe('sanitizeMermaidStyleContent', () => {
 
 describe('createMermaidConfig design palette', () => {
     // 与 docs/designs/modal.html 设计 Token 同源的 12 色分类色带：
-    // 前 6 个为当前模式语义色，后 6 个为同色相的跨模式变体，用于 pie/timeline/journey/mindmap。
+    // 全部取自 modal.html 调色盘的深浅两版语义色与跨模式变体，并按明度从高到低
+    // 排序、避免相邻色块同色，用于 pie/timeline/journey/mindmap。
     const LIGHT_RAMP = [
-        '#DF4436',
-        '#4267B2',
-        '#1F9D66',
-        '#B87503',
-        '#7B4BAA',
-        '#DC2626',
         '#ED6B56',
-        '#7AA2E8',
-        '#3DBF82',
-        '#E2A23B',
-        '#B98AE0',
-        '#E85A5A'
-    ];
-    const DARK_RAMP = [
-        '#E8563F',
-        '#7AA2E8',
+        '#4267B2',
         '#3DBF82',
         '#E2A23B',
         '#B98AE0',
         '#E85A5A',
         '#DF4436',
+        '#7AA2E8',
+        '#1F9D66',
+        '#B87503',
+        '#7B4BAA',
+        '#DC2626'
+    ];
+    const DARK_RAMP = [
+        '#ED6B56',
+        '#7AA2E8',
+        '#3DBF82',
+        '#E2A23B',
+        '#B98AE0',
+        '#E85A5A',
+        '#E8563F',
         '#4267B2',
         '#1F9D66',
         '#B87503',
@@ -167,9 +168,11 @@ describe('createMermaidConfig design palette', () => {
             expect(dark[`cScaleLabel${i}`]).toBe('#FFFFFF');
             expect(dark[`cScaleInv${i}`]).toBe('#33302D');
         }
+        // journey 的 fillType 不走色带：section 色块与标题文字共用 CSS fill，
+        // 用蓝/绿浅底交替保证文字可读，标题文字色由 themeCSS 覆盖
         for (let i = 0; i < 8; i++) {
-            expect(light[`fillType${i}`]).toBe(LIGHT_RAMP[i]);
-            expect(dark[`fillType${i}`]).toBe(DARK_RAMP[i]);
+            expect(light[`fillType${i}`]).toBe(i % 2 === 0 ? '#EBF1FB' : '#E7F5EE');
+            expect(dark[`fillType${i}`]).toBe(i % 2 === 0 ? '#373B45' : '#2D3F34');
         }
     });
 });
