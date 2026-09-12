@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import test from 'node:test';
+import test, { type TestContext } from 'node:test';
 import fs from 'fs';
 import os from 'os';
 import path from 'path';
@@ -9,7 +9,7 @@ import * as XLSX from 'xlsx';
 import { setRuntimeLocale } from '../../../../locale/index.js';
 import { LLM } from '../../../../main/aikernel/llm.js';
 import { ToolCall } from '../../../../main/aikernel/messages.js';
-import { Setting } from '../../../../main/utils/setting.js';
+import { Setting, ModelInstance } from '../../../../main/utils/setting.js';
 import { loadImageSource } from '../../../../main/applications/filemgr/image.js';
 import { setPlatform } from '../../../../platforms/base.js';
 import {
@@ -845,4 +845,19 @@ test('image sources reject unsupported image formats', async () => {
     } finally {
         cleanup(dir);
     }
+});
+
+test('semanticSearch is unavailable when no default embedding model is configured', async (context: TestContext) => {
+    const model = Object.assign(Object.create(ModelInstance.prototype), { model_name: 'embed-model' });
+    context.mock.method(Setting, 'getInstance', () => ({
+        getDefaultEmbeddingModelInstance: () => model
+    }));
+    const withModel = new SemanticSearchTool(async () => ({ query: 'q', results: [], totalHits: 0 }));
+    assert.equal(withModel.isAvailable(), true);
+
+    context.mock.method(Setting, 'getInstance', () => ({
+        getDefaultEmbeddingModelInstance: () => null
+    }));
+    const withoutModel = new SemanticSearchTool(async () => ({ query: 'q', results: [], totalHits: 0 }));
+    assert.equal(withoutModel.isAvailable(), false);
 });
