@@ -122,14 +122,6 @@ export class WorkerPlatform extends AbstractPlatform {
         return 'worker';
     }
 
-    getInjectedEnviron(): Map<string, string> {
-        const env = super.getInjectedEnviron();
-        if ((process.platform as string) === 'openharmony') {
-            env.set('NODE_OPTIONS', '--jitless');
-        }
-        return env;
-    }
-
     getEffectiveWorkspace(): string {
         return Setting.getInstance().getEffectiveWorkspace();
     }

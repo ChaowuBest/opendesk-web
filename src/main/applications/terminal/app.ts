@@ -12,19 +12,38 @@
 import { BaseToolset } from '../../aikernel/tool';
 import { BaseApplication } from '../base';
 import { t } from './locale/index.js';
-import { ExecutePowerShellTool, ExecuteBashTool, ExecuteZshTool, CheckShellStatusTool } from './tools.js';
-import { findExecutableInPath, hasZsh } from '../../utils/shellExec.js';
+import {
+    ExecutePowerShellTool,
+    ExecuteBashTool,
+    ExecuteZshTool,
+    CheckShellStatusTool,
+    setBashPath,
+    setZshPath
+} from './tools.js';
+import { findExecutableInPath, findOpenHarmonyZsh } from '../../utils/shellExec.js';
 import {
     getHarmonyLocalRuntimeFeatureAvailability,
     getHarmonyLocalRuntimeState,
     type HarmonyLocalRuntimeState
 } from '../../../platforms/bridges/harmonyos/local-runtime.js';
 
-export function getOpenHarmonyTerminalBashPath(
+export type OpenHarmonyTerminalShell = { kind: 'zsh'; path: string } | { kind: 'bash'; path: string };
+
+export function getOpenHarmonyTerminalShell(
     state: HarmonyLocalRuntimeState | null = getHarmonyLocalRuntimeState()
-): string | null {
-    const availability = getHarmonyLocalRuntimeFeatureAvailability('terminal', state);
-    return availability.available ? (state?.commands.bash ?? null) : null;
+): OpenHarmonyTerminalShell | null {
+    // tablet，或 PC 上 zsh/bash 都不存在
+    if (!getHarmonyLocalRuntimeFeatureAvailability('terminal', state).available) return null;
+    // PC
+    if (state) {
+        // state 为已验证的探测快照：zsh 优先（交互模式加载 ~/.zshrc 环境），bash 兜底
+        if (state.commands.zsh) return { kind: 'zsh', path: state.commands.zsh };
+        return state.commands.bash ? { kind: 'bash', path: state.commands.bash } : null;
+    }
+    // CLI
+    const zshPath = findOpenHarmonyZsh();
+    if (zshPath) return { kind: 'zsh', path: zshPath };
+    return null;
 }
 
 export class TerminalApplication extends BaseApplication {
@@ -45,25 +64,29 @@ export class TerminalApplication extends BaseApplication {
                 // 检测 Windows 下是否有 bash.exe（如 Git Bash、WSL 等）
                 const bashPath = findExecutableInPath('bash');
                 if (bashPath) {
-                    toolset.addTool(new ExecuteBashTool(bashPath));
+                    setBashPath(bashPath);
+                    toolset.addTool(new ExecuteBashTool());
                 }
                 break;
             }
             case 'openharmony': {
-                const state = getHarmonyLocalRuntimeState();
-                const ohBash = getOpenHarmonyTerminalBashPath(state);
-                if (ohBash) {
-                    toolset.addTool(new ExecuteBashTool(ohBash));
-                    toolset.addTool(new CheckShellStatusTool());
-                } else if (state === null && hasZsh()) {
-                    toolset.addTool(new ExecuteZshTool());
-                    toolset.addTool(new CheckShellStatusTool());
+                const shell = getOpenHarmonyTerminalShell();
+                if (shell?.kind === 'zsh') {
+                    setZshPath(shell.path);
+                    toolset.addTool(new ExecuteZshTool(true));
+                } else if (shell?.kind === 'bash') {
+                    setBashPath(shell.path);
+                    toolset.addTool(new ExecuteBashTool());
+                } else {
+                    break;
                 }
+                toolset.addTool(new CheckShellStatusTool());
                 break;
             }
             default:
                 // macOS/Linux 默认使用 /bin/bash
-                toolset.addTool(new ExecuteBashTool('/bin/bash'));
+                setBashPath('/bin/bash');
+                toolset.addTool(new ExecuteBashTool());
                 break;
         }
 

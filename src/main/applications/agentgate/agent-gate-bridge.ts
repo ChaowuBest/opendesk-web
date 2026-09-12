@@ -676,10 +676,6 @@ class AgentGateBridge {
                 : {})
         });
 
-        // 鸿蒙平台：HNP node 的 V8 JIT 存在 native crash 问题，
-        // --jitless 禁用 JIT 是所有 HNP node 子进程（包括 npm、agent-gate、agent-moss）的必要保护。
-        // agent-moss 在 --jitless 下性能受限，但这是 OHOS 上唯一稳定的运行方式。
-
         try {
             // 直接 spawn node 进程，避免 shell 字符串解析问题（尤其是 PowerShell）
             state.process = spawn(node.nodePath, spawnArgs, {

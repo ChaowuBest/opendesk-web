@@ -12,8 +12,7 @@
 import path from 'path';
 import fs from 'fs';
 import { fileURLToPath } from 'url';
-import { GlobalHooks } from '../../../../hooks.js';
-import type { ToolCall } from '../../../../messages.js';
+import { GlobalHooks, type AfterToolCallExecContext } from '../../../../hooks.js';
 import type { TaskState } from '../../../../states/tasks.js';
 import { BASH_FRICTION_WINDOW_SIZE, BASH_FRICTION_FAILURE_THRESHOLD } from '../constants.js';
 import { ReadableDirectoryRegistry } from '../../../../security/enforcer.js';
@@ -33,13 +32,13 @@ function resolveKbDir(): string {
 
 const KB_DIR = resolveKbDir();
 
-const HARMONYOS_BASH_FRICTION_PROMPT = `当前任务在 OpenHarmony 上执行，并已在最近 ${BASH_FRICTION_WINDOW_SIZE} 次 Bash 执行中累计出现 ${BASH_FRICTION_FAILURE_THRESHOLD} 次失败。
+const HARMONYOS_BASH_FRICTION_PROMPT = `当前任务在 OpenHarmony 上执行，并已在最近 ${BASH_FRICTION_WINDOW_SIZE} 次 Bash/Zsh 执行中累计出现 ${BASH_FRICTION_FAILURE_THRESHOLD} 次失败。
 
 HarmonyOS 下常见错误的症状可能与 Linux 相同，但安装、依赖、工具链和系统能力等解决方式可能不同。
 
 继续尝试前，请查看 ${KB_DIR} 下的知识库文档：从 README.md 总索引开始，沿分类链接逐层定位最匹配的条目，不要一次读取全部文档。如果知识库未覆盖该问题，明确说明未命中。
 
-- 这只是基于 Bash 失败密度的提示，不是对错误原因的平台归因。如果当前问题明显属于项目代码、测试或业务逻辑，或者你已经查询过该知识库，可以忽略此提示并继续当前路线。
+- 这只是基于 Bash/Zsh 失败密度的提示，不是对错误原因的平台归因。如果当前问题明显属于项目代码、测试或业务逻辑，或者你已经查询过该知识库，可以忽略此提示并继续当前路线。
 
 - 若问题来自 HarmonyOS PC 环境差异且多次尝试解决仍然失败，可切换到 Headless Node 的 Linux 环境执行。`;
 
@@ -56,8 +55,8 @@ type BashOutcomesByTask = WeakMap<TaskState, BashOutcome[]>;
  */
 export function createHarmonyosBashFrictionAfterToolCall(
     outcomesByTask: BashOutcomesByTask = new WeakMap()
-): (task: TaskState, toolCall: ToolCall) => Promise<void> {
-    return async (task, toolCall) => {
+): (ctx: AfterToolCallExecContext) => Promise<void> {
+    return async ({ task, toolCall }) => {
         const exitCode = (toolCall.result_object as { exitCode?: unknown } | undefined)?.exitCode;
         if (!Number.isInteger(exitCode)) {
             return;
@@ -100,9 +99,14 @@ export function registerHarmonyosBashFrictionHook(): void {
     }
 
     const outcomesByTask: BashOutcomesByTask = new WeakMap();
-    GlobalHooks.registerToolHook('executeBash', {
-        afterToolCall: createHarmonyosBashFrictionAfterToolCall(outcomesByTask)
-    });
+    // OpenHarmony 上 terminal 应用优先注册 executeZsh（zsh 交互模式），bash 仅为回退；
+    // registerToolCall 按工具名精确匹配，两个工具名都必须监听，否则 zsh 路径下
+    // 失败统计完全失效
+    for (const toolName of ['executeBash', 'executeZsh'] as const) {
+        GlobalHooks.registerToolHook(toolName, {
+            afterToolCall: createHarmonyosBashFrictionAfterToolCall(outcomesByTask)
+        });
+    }
     GlobalHooks.afterFinishTurn(({ task }) => {
         if (task.lastTerminationState === 'finished' || task.lastTerminationState === 'interrupted') {
             outcomesByTask.delete(task);

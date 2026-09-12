@@ -10,23 +10,26 @@
  */
 
 import { definePlugin } from '@bitclub.ai/opendesk-plugin-sdk';
+import { configureZshEnvironment } from './environment.mjs';
+import { setupBash } from './bootstrap/bash.mjs';
+import { isZshRunnable, runBootstrapOnce } from './bootstrap/zsh.mjs';
 
-// 制品仓地址来源：resources/knowledges/harmonyos-recovery/01-download-and-network.md
-const HARMONY_PIP_INDEX_URL = 'https://pypi.repo.openharmony.cn/artifactory/openharmony-pypi/simple';
-const HARMONY_PIP_TRUSTED_HOST = 'pypi.repo.openharmony.cn';
-const HARMONY_PIP_ONLY_BINARY = ':all:';
-const HARMONY_NPM_REGISTRY = 'https://npm.cnb.cool/OpenHarmonyPCDeveloper/npm/-/packages/';
-
-// 展示名称等静态元数据统一声明在 opendesk.plugin.json，入口只保留运行时字段。
 export default definePlugin({
     id: 'hm-compat',
-    setup(ctx) {
-        ctx.hooks.on('shell.env', (_input, output) => {
-            output.env.PIP_INDEX_URL = HARMONY_PIP_INDEX_URL;
-            output.env.PIP_TRUSTED_HOST = HARMONY_PIP_TRUSTED_HOST;
-            // 鸿蒙上无编译工具链，tgz 源码包装不上，仅允许 wheel 二进制分发
-            output.env.PIP_ONLY_BINARY = HARMONY_PIP_ONLY_BINARY;
-            output.env.npm_config_registry = HARMONY_NPM_REGISTRY;
-        });
+    setup(context) {
+        // openharmony平板不添加命令行执行工具，不执行运行环境配置
+        if (process.env.OPENDESK_HARMONY_BUILD_VARIANT === 'tablet') {
+            return;
+        }
+        if (isZshRunnable()) {
+            configureZshEnvironment(context.configDir);
+            // fire-and-forget：安装后台执行，不阻塞插件加载链路
+            void runBootstrapOnce({ opendeskDir: context.configDir }).catch((err) => {
+                console.error('[dev-env:openharmony] bootstrap failed:', err);
+            });
+            return;
+        } else {
+            setupBash(context.configDir);
+        }
     }
 });

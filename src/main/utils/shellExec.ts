@@ -104,6 +104,59 @@ export function findOpenHarmonyBash(): string | null {
     return findExecutableInPath('bash');
 }
 
+/**
+ * 解析 OpenHarmony 上可用的 zsh 路径。
+ *
+ * 真机验证 zsh 固定安装于 /usr/bin/zsh，优先写死路径并用 spawnSync 做一次
+ * 轻量执行验证；固定路径不存在或运行验证失败时，回退到 PATH 中查找 zsh
+ * （与 findOpenHarmonyBash 的结构保持一致）。
+ */
+export function findOpenHarmonyZsh(): string | null {
+    const zshPath = '/usr/bin/zsh';
+    try {
+        fs.accessSync(zshPath, fs.constants.X_OK);
+        // 实际执行验证，确保 spawn 可用
+        const verify = spawnSync(zshPath, ['-c', 'true'], { timeout: 5000 });
+        if (verify.status === 0 && !verify.error) {
+            return zshPath;
+        }
+    } catch {
+        // 固定路径不可用，回退到 PATH 查找
+    }
+    return findExecutableInPath('zsh');
+}
+
+// 探测结果按 zsh 路径缓存：/etc/zshrc 在运行期不会变化
+const zshExitNoiseCache = new Map<string, boolean>();
+
+/**
+ * 探测 zsh -i 退出阶段是否产生历史保存噪音输出。
+ *
+ * 部分 OpenHarmony 版本的 /etc/zshrc 无条件注册 EXIT trap（preexit：打印
+ * "saving history..." / "completed." 并 fc -AI 写历史）；另一些版本 source
+ * /etc/smartshell.zsh，其 EXIT trap（若有）可能承担实际功能，不能无差别
+ * trap - EXIT 清除。因此按实际执行行为探测：仅当 -i 退出的输出确含该噪音
+ * 时，调用方才在命令前加 trap - EXIT 前缀；探测干净的环境原样执行。
+ */
+export function zshInteractiveHasExitTrapNoise(zshPath: string): boolean {
+    const cached = zshExitNoiseCache.get(zshPath);
+    if (cached !== undefined) return cached;
+    let noisy = false;
+    try {
+        const probe = spawnSync(zshPath, ['-i', '-c', 'true'], { timeout: 5000, encoding: 'utf8' });
+        noisy = (probe.stdout ?? '').includes('saving history') || (probe.stderr ?? '').includes('saving history');
+    } catch {
+        noisy = false;
+    }
+    zshExitNoiseCache.set(zshPath, noisy);
+    return noisy;
+}
+
+/** 清除退出噪音探测缓存（测试用） */
+export function clearZshExitNoiseCache(): void {
+    zshExitNoiseCache.clear();
+}
+
 // ── 默认 shell 检测 ────────────────────────────────────────────────────────
 
 export interface ShellInfo {
@@ -149,15 +202,15 @@ export function getDefaultShell(): ShellInfo {
         }
         _cachedDefaultShell = { shellPath: 'powershell.exe', shellArgs: ['-NoProfile', '-Command'] };
     } else if ((process.platform as string) === 'openharmony') {
-        // 优先 HNP bash，避免 OpenHarmony 上 zsh 运行时报 "Error relocating"；
-        // 无可用 bash 时回退到 zsh，最后兜底 /bin/sh
-        const bashPath = findOpenHarmonyBash();
-        if (bashPath) {
-            _cachedDefaultShell = { shellPath: bashPath, shellArgs: ['-c'] };
+        // 优先 zsh 交互模式（-i 加载 ~/.zshrc 环境变量设置），验证可运行后使用；
+        // 不可用时回退到 HNP bash，最后兜底 /bin/sh
+        const zshPath = findOpenHarmonyZsh();
+        if (zshPath) {
+            _cachedDefaultShell = { shellPath: zshPath, shellArgs: ['-i', '-c'] };
         } else {
-            const zshPath = findExecutableInPath('zsh');
-            _cachedDefaultShell = zshPath
-                ? { shellPath: zshPath, shellArgs: ['-c'] }
+            const bashPath = findOpenHarmonyBash();
+            _cachedDefaultShell = bashPath
+                ? { shellPath: bashPath, shellArgs: ['-c'] }
                 : { shellPath: '/bin/sh', shellArgs: ['-c'] };
         }
     } else {
@@ -221,6 +274,52 @@ export function decodeShellOutput(buffer: Buffer): string {
     } catch {
         return utf8;
     }
+}
+
+// ── shell 输出噪音过滤 ──────────────────────────────────────────────────────
+
+// 过滤 shell 在某些受限环境下启动时的噪音警告
+// 警告可能出现在输出中的任意位置（行首、行尾、甚至拼接在其他文本后），因此不使用 ^ 锚点
+// 消息模板来自 bash 5.3 builtins/common.c get_working_directory()：
+//   <标签>: error retrieving current directory: getcwd: cannot access parent directories: <strerror(errno)>
+// 标签集收录经 OpenDesk 调用链验证（OpenHarmony 平台）会触发的 5 个：
+//   - shell-init：bash 启动 set_pwd 主路径（PWD 缺失/失效时触发）
+//   - shell_init：bash 启动按 POSIX 规则导入 PWD 后 canonpath 失败分支
+//     （OpenDesk 全链路只透传不注入 PWD，该分支依赖主进程继承的失效 PWD）
+//   - chdir/cd/pwd：TUI 链路固定包装 `cd '<dir>' && <cmd> && pwd`（tui/components/shell.ts），
+//     agent 自由生成命令亦可达
+// 末段为 strerror(errno)，取值不可枚举：真机实测已有 Permission denied/Not supported/Not a tty/
+// No error information/Invalid argument 等变体，故用行内通配 [^\r\n]*。
+const SHELL_CWD_WARNING_RE =
+    /(?:shell-init|shell_init|chdir|cd|pwd): error retrieving current directory: getcwd: cannot access parent directories: [^\r\n]*\r?\n?/g;
+
+// OSC（Operating System Command）序列：ESC ] + payload + 终止符（BEL 或 ST）。
+// 来源：OpenDesk 以 `zsh -i -c` 启动 zsh 时会加载 .zshrc，其中若注册了 Warp 系终端
+// （warpdotdev/Warp 及其分支）的 shell integration，其 hook 会在 shell 启动阶段向
+// stdout/stderr 写入面向终端模拟器的事件通知。实测样例（OpenHarmony 真机）：
+// \e]9278;f;{"event": "SetupComplete"}\a，OSC 9278 为 Warp 私有编号，定义见 Warp 源码
+// app/assets/bundled/bootstrap/zsh_body.sh；此外还涵盖 \e]0;title\a（窗口标题）等标准
+// OSC。此类序列属于终端协议层控制信息而非命令输出内容，剔除不影响结果语义。
+//
+// payload 不允许包含 BEL/ESC/换行（CR/LF）：
+// - 排除 BEL/ESC：异常截断的序列不匹配；
+// - 排除换行：OSC payload 规范上单行；而 Warp 系 integration 会将 marker 的起始
+//   ESC] 与终止 BEL 分离写入（真机实测两者之间夹着命令的输出）。若 payload 允许
+//   跨行，一个悬空的起始符会把整段命令输出当作 payload 吞掉（真机 "ls 输出消失，
+//   仅剩 saving history..." 事故）。悬空起始符因无终止符而整体保留，信息保全优先。
+const SHELL_OSC_SEQUENCE_RE = /\x1b\][^\x07\x1b\n\r]*(?:\x07|\x1b\\)/g;
+
+// 孤立 BEL（0x07）：响铃控制符在命令输出文本中无语义。悬空 OSC 起始符的迟到终止符
+// 会以孤立 BEL 形式残留在输出中间，一并剔除
+const SHELL_ORPHAN_BEL_RE = /\x07/g;
+
+/**
+ * 过滤 shell 输出中的环境噪音：
+ * - 受限环境下的 getcwd/chdir 启动警告
+ * - 交互模式（zsh -i）下 shell integration 向终端输出的 OSC 序列
+ */
+export function filterShellEnvironmentWarnings(text: string): string {
+    return text.replace(SHELL_CWD_WARNING_RE, '').replace(SHELL_OSC_SEQUENCE_RE, '').replace(SHELL_ORPHAN_BEL_RE, '');
 }
 
 // ── detached 进程退出清理 ──────────────────────────────────────────────────
@@ -346,6 +445,7 @@ export function injectNonInteractiveEnv(env: NodeJS.ProcessEnv): void {
 }
 
 const PATH_SEGMENT = process.platform === 'win32' ? ';' : ':';
+
 const USER_PYTHON_ENV_KEYS = ['VIRTUAL_ENV', 'CONDA_PREFIX', 'CONDA_PREFIX_1'] as const;
 const USER_PYTHON_CONTEXT_ENV_KEYS = [
     'VIRTUAL_ENV',
@@ -474,7 +574,7 @@ export function buildInterpretersEnv(
  * 自动注入非交互式防御变量（用户显式设置优先）。
  */
 export function mergeGlobalEnviron(explicitEnv?: NodeJS.ProcessEnv): NodeJS.ProcessEnv | undefined {
-    // 合并平台注入的环境变量（如 OpenHarmony 上的 NODE_OPTIONS=--jitless）
+    // 合并平台注入的环境变量
     let baseEnv: NodeJS.ProcessEnv = { ...process.env };
     try {
         const platformEnviron = getPlatform().getInjectedEnviron();
@@ -510,14 +610,6 @@ export function mergeGlobalEnviron(explicitEnv?: NodeJS.ProcessEnv): NodeJS.Proc
     if (pathKey && pathKey !== 'PATH') {
         result.PATH = result[pathKey];
         delete result[pathKey];
-    }
-
-    // 鸿蒙平台上 hnp 安装的 node/python/uv/bash 等可执行文件位于 /data/service/hnp/bin，
-    // process.env.PATH 可能不包含该路径，导致 spawn('npx'/'uvx'/'node'/'python') 时 ENOENT。
-    // 显式 prepend 确保子进程能找到这些命令。与 findExecutableInPath 中的 hnp 搜索目录保持一致。
-    if ((process.platform as string) === 'openharmony') {
-        const hnpBin = '/data/service/hnp/bin';
-        result.PATH = result.PATH ? `${hnpBin}:${result.PATH}` : hnpBin;
     }
 
     injectNonInteractiveEnv(result);
@@ -652,8 +744,9 @@ export function asyncShellExec(command: string, options: ShellExecOptions = {}):
         proc.on('close', (code) => {
             if (timer) clearTimeout(timer);
             if (forceKillTimer) clearTimeout(forceKillTimer);
-            const stderr = decodeShellOutput(Buffer.concat(stderrChunks));
-            const stdout = decodeShellOutput(Buffer.concat(stdoutChunks));
+            // 与 executeShellCommand 一致过滤交互模式噪音；此处为整段拼接后过滤，不受 chunk 边界影响
+            const stderr = filterShellEnvironmentWarnings(decodeShellOutput(Buffer.concat(stderrChunks)));
+            const stdout = filterShellEnvironmentWarnings(decodeShellOutput(Buffer.concat(stdoutChunks)));
             if (timedOut) {
                 reject(new Error(`Command timed out after ${options.timeout}ms`));
             } else if (code !== 0) {
@@ -699,8 +792,8 @@ export function shellExec(command: string, options: ShellExecOptions = {}): Shel
         throw result.error;
     }
 
-    const stdout = result.stdout ? decodeShellOutput(result.stdout) : '';
-    const stderr = result.stderr ? decodeShellOutput(result.stderr) : '';
+    const stdout = result.stdout ? filterShellEnvironmentWarnings(decodeShellOutput(result.stdout)) : '';
+    const stderr = result.stderr ? filterShellEnvironmentWarnings(decodeShellOutput(result.stderr)) : '';
 
     if (result.status !== 0) {
         const err: any = new Error(`Command failed with exit code ${result.status}: ${stderr}`);

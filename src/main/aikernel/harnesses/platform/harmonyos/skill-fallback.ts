@@ -16,7 +16,7 @@ import { parseJsonWithRepair } from '../../../../../utils/json.js';
 import { logger } from '../../../../utils/logger.js';
 import { FileLock } from '../../../../utils/file-lock.js';
 import { GlobalHooks } from '../../../hooks.js';
-import type { BeforeToolCallExecAction, BeforeToolCallExecContext } from '../../../hooks.js';
+import type { AfterToolCallExecContext, BeforeToolCallExecAction, BeforeToolCallExecContext } from '../../../hooks.js';
 import type { TaskState } from '../../../states/tasks.js';
 import type { ToolCall } from '../../../messages.js';
 import { SkillRegistry } from '../../../skill.js';
@@ -260,7 +260,12 @@ export function hasFailedBashBefore(task: TaskState, currentNodeCall: ToolCall):
                 }
 
                 const exitCode = (call.result_object as { exitCode?: unknown } | undefined)?.exitCode;
-                if (isToolName(call, 'executeBash') && Number.isInteger(exitCode) && exitCode !== 0) return true;
+                if (
+                    (isToolName(call, 'executeBash') || isToolName(call, 'executeZsh')) &&
+                    Number.isInteger(exitCode) &&
+                    exitCode !== 0
+                )
+                    return true;
                 checkedCalls++;
                 if (checkedCalls === FAILED_BASH_WINDOW_SIZE) return false;
             }
@@ -275,8 +280,8 @@ function buildFallbackPrompt(skills: Array<{ bundleName: string; skillName: stri
         .join('\n');
     return [
         '## HarmonyOS fallback 候选（内部提示）',
-        '当前成功的 localhost Linux Node 调用之前，任务历史中存在失败的 HarmonyOS executeBash 调用。',
-        '请根据当前任务的完整对话和工具调用记录自行判断：当前 Node 成功是否确实是在替代某个失败 Bash、具体依赖是什么，以及它归属哪个已加载 Skill；不要按最近调用、固定窗口或命令相似性做硬性判定。',
+        '当前成功的 localhost Linux Node 调用之前，任务历史中存在失败的 HarmonyOS Bash/Zsh 调用。',
+        '请根据当前任务的完整对话和工具调用记录自行判断：当前 Node 成功是否确实是在替代某个失败 Bash/Zsh、具体依赖是什么，以及它归属哪个已加载 Skill；不要按最近调用、固定窗口或命令相似性做硬性判定。',
         '若无法确认关联、依赖或 Skill 归属，请不要记录。确认 fallback 后必须通过 CallSkillTool 调用专用工具：',
         '调用参数固定使用 bundleName="skillmgr"、skillName="manage-skills"、toolName="recordHarmonyosFallback"。',
         '注意区分两层 bundleName：CallSkillTool 的 bundleName 固定为 "skillmgr"；toolArgs.bundleName 必须从下方“已加载 Skill 全历史”中复制目标 Skill 的真实 bundleName，禁止猜测。toolArgs.skillName 同样必须复制对应的真实 skillName。',
@@ -292,7 +297,7 @@ function buildFallbackPrompt(skills: Array<{ bundleName: string; skillName: stri
     ].join('\n');
 }
 
-export async function onAfterExecuteNodeShell(task: TaskState, toolCall: ToolCall): Promise<void> {
+export async function onAfterExecuteNodeShell({ task, toolCall }: AfterToolCallExecContext): Promise<void> {
     const details = toolCall.result_object as { exitCode?: unknown; nodeId?: unknown } | undefined;
     if (details?.exitCode !== 0 || details.nodeId !== 'opendesk-headless-localhost') return;
 
@@ -309,6 +314,8 @@ let registered = false;
 export function registerHarmonyosFallbackHooks(): void {
     if (registered) return;
     registered = true;
-    GlobalHooks.registerToolHook('executeBash', { beforeToolCall: onBeforeExecuteBash });
+    for (const toolName of ['executeBash', 'executeZsh'] as const) {
+        GlobalHooks.registerToolHook(toolName, { beforeToolCall: onBeforeExecuteBash });
+    }
     GlobalHooks.registerToolHook('executeNodeShell', { afterToolCall: onAfterExecuteNodeShell });
 }

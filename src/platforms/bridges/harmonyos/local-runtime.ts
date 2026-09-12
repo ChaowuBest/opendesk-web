@@ -14,14 +14,15 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { isMainThread } from 'node:worker_threads';
 import { logger } from '../../../main/utils/logger.js';
-import { findExecutableInPath, findOpenHarmonyBash } from '../../../main/utils/shellExec.js';
+import { findExecutableInPath, findOpenHarmonyBash, findOpenHarmonyZsh } from '../../../main/utils/shellExec.js';
 import { getHarmonyRuntimeEnvironment, type HarmonyBuildVariant, type HarmonyRuntimeEnvironment } from './runtime.js';
 
-export type LocalRuntimeCapability = 'bash' | 'node' | 'python' | 'uv';
+export type LocalRuntimeCapability = 'zsh' | 'bash' | 'node' | 'python' | 'uv';
 export type HarmonyLocalRuntimeFeature = 'terminal' | 'agentgate' | 'stdio-mcp' | 'python' | 'uv';
 export type HarmonyLocalRuntimeUnavailableReason = 'tablet-local-runtime-disabled' | 'pc-local-runtime-missing';
 
 export interface LocalRuntimeCapabilities {
+    zsh: boolean;
     bash: boolean;
     node: boolean;
     python: boolean;
@@ -44,16 +45,19 @@ export interface HarmonyLocalRuntimeFeatureAvailability {
 
 type CommandProbe = (command: LocalRuntimeCapability) => string | null;
 
-const CAPABILITIES: readonly LocalRuntimeCapability[] = ['bash', 'node', 'python', 'uv'];
+const CAPABILITIES: readonly LocalRuntimeCapability[] = ['zsh', 'bash', 'node', 'python', 'uv'];
+// 每个 feature 依赖的本地运行时；数组内为“任一满足即可”的替代关系（terminal 的 zsh/bash 互为替代）
 const FEATURE_REQUIREMENTS: Record<Exclude<HarmonyLocalRuntimeFeature, 'stdio-mcp'>, LocalRuntimeCapability[]> = {
-    terminal: ['bash'],
+    terminal: ['zsh', 'bash'],
     agentgate: ['node'],
     python: ['python'],
     uv: ['uv']
 };
 const LOCAL_RUNTIME_STATE_ENV = 'OPENDESK_HARMONY_LOCAL_RUNTIME_STATE';
+const LOCAL_RUNTIME_REVISION_ENV = 'OPENDESK_HARMONY_DEV_ENV_REVISION';
 
 let currentHarmonyLocalRuntime: HarmonyLocalRuntimeState | null | undefined;
+let currentRevision: string | undefined;
 let didLogHarmonyLocalRuntime = false;
 
 function isExecutable(filePath: string | undefined): filePath is string {
@@ -81,6 +85,9 @@ function verifyCommand(commandPath: string): string | null {
 function probeHarmonyCommand(command: LocalRuntimeCapability): string | null {
     let commandPath: string | null = null;
     switch (command) {
+        case 'zsh':
+            commandPath = findOpenHarmonyZsh();
+            break;
         case 'bash':
             commandPath = findOpenHarmonyBash();
             break;
@@ -143,12 +150,18 @@ export function createHarmonyLocalRuntimeState(
     }
 
     const capabilities: LocalRuntimeCapabilities = {
+        zsh: Boolean(commands.zsh),
         bash: Boolean(commands.bash),
         node: Boolean(commands.node),
         python: Boolean(commands.python),
         uv: Boolean(commands.uv)
     };
-    const missing = CAPABILITIES.filter((capability) => !capabilities[capability]);
+    // zsh 与 bash 互为替代，命令行能力以任一存在为准：仅当两者同时缺失才计入 missing
+    const shellAvailable = capabilities.zsh || capabilities.bash;
+    const missing = CAPABILITIES.filter((capability) => {
+        if (capability === 'zsh' || capability === 'bash') return !shellAvailable;
+        return !capabilities[capability];
+    });
     return {
         variant: runtime.variant,
         capabilities,
@@ -165,13 +178,17 @@ export function serializeHarmonyLocalRuntimeState(state: HarmonyLocalRuntimeStat
 }
 
 export function initializeHarmonyLocalRuntimeState(): HarmonyLocalRuntimeState | null {
-    if (currentHarmonyLocalRuntime !== undefined) return currentHarmonyLocalRuntime;
+    const revision = process.env[LOCAL_RUNTIME_REVISION_ENV] ?? '';
+    if (currentHarmonyLocalRuntime !== undefined && currentRevision === revision) {
+        return currentHarmonyLocalRuntime;
+    }
 
     currentHarmonyLocalRuntime = createHarmonyLocalRuntimeState(
         getHarmonyRuntimeEnvironment(),
         probeHarmonyCommand,
         isMainThread ? {} : process.env
     );
+    currentRevision = revision;
     if (currentHarmonyLocalRuntime) {
         Object.assign(process.env, serializeHarmonyLocalRuntimeState(currentHarmonyLocalRuntime));
         if (!didLogHarmonyLocalRuntime) {
@@ -209,10 +226,10 @@ export function getHarmonyLocalRuntimeFeatureAvailability(
     }
     if (feature === 'stdio-mcp') return { available: true, reason: null, missing: [] };
 
-    const missing = FEATURE_REQUIREMENTS[feature].filter((capability) => !state.capabilities[capability]);
-    return missing.length > 0
-        ? { available: false, reason: 'pc-local-runtime-missing', missing }
-        : { available: true, reason: null, missing: [] };
+    const required = FEATURE_REQUIREMENTS[feature];
+    return required.some((capability) => state.capabilities[capability])
+        ? { available: true, reason: null, missing: [] }
+        : { available: false, reason: 'pc-local-runtime-missing', missing: [...required] };
 }
 
 export function getHarmonyStdioCommandRequirement(command: string | undefined): LocalRuntimeCapability | null {

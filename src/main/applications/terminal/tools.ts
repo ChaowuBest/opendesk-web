@@ -40,23 +40,17 @@ import {
     buildChildProcessEnv,
     buildInterpretersEnv,
     decodeShellOutput,
+    filterShellEnvironmentWarnings,
     hasUserPythonEnvironment,
     shouldUseIsolatedPython,
     stripUserPythonEnvironment,
-    trackDetachedProcess
+    trackDetachedProcess,
+    zshInteractiveHasExitTrapNoise
 } from '../../utils/shellExec.js';
 
 const MAX_CLI_OUTPUT_LINES = 10;
 const LIVE_UPDATE_INTERVAL_MS = 200;
 
-// 过滤 shell 在某些受限环境下启动时的 getcwd/chdir 噪音警告
-// 警告可能出现在输出中的任意位置（行首、行尾、甚至拼接在其他文本后），因此不使用 ^ 锚点
-const SHELL_CWD_WARNING_RE =
-    /(?:shell-init|chdir): error retrieving current directory: getcwd: cannot access parent directories: (?:Permission denied|Not supported|Not a tty|No error information)\r?\n?/g;
-
-function filterShellEnvironmentWarnings(text: string): string {
-    return text.replace(SHELL_CWD_WARNING_RE, '');
-}
 function getTaskWorkspace(taskState?: TaskState): string {
     return taskState?.getWorkspace() || Setting.getInstance().getEffectiveWorkspace();
 }
@@ -66,8 +60,17 @@ export { buildInterpretersEnv, hasUserPythonEnvironment, shouldUseIsolatedPython
 // re-export for backward compatibility
 export { findExecutableInPath, hasZsh } from '../../utils/shellExec.js';
 
-function getZshPath(): string | null {
-    return findExecutableInPath('zsh');
+// 一个 OpenDesk 实例只会使用一个 bash / zsh 路径，作为模块级全局变量共享，
+// 由 terminal 应用按平台探测后经 setBashPath / setZshPath 写入；未配置时为 null。
+let bashPath: string | null = null;
+let zshPath: string | null = null;
+
+export function setBashPath(path: string): void {
+    bashPath = path;
+}
+
+export function setZshPath(path: string): void {
+    zshPath = path;
 }
 
 function renderTerminalToolCallCli(shellLabel: string, toolcall: ToolCall, width: number): string[] {
@@ -236,14 +239,12 @@ async function executeShellCommand(opts: {
 
     let output = '';
     let lastSentOutput = '';
-    const stdoutListener = (data: Buffer) => {
-        output += decodeShellOutput(data);
-    };
-    const stderrListener = (data: Buffer) => {
+    // zsh -i 等交互模式下，shell integration 会向 stdout/stderr 输出终端控制序列噪音，统一过滤
+    const appendFiltered = (data: Buffer) => {
         output += filterShellEnvironmentWarnings(decodeShellOutput(data));
     };
-    proc.stdout.on('data', stdoutListener);
-    proc.stderr.on('data', stderrListener);
+    proc.stdout.on('data', appendFiltered);
+    proc.stderr.on('data', appendFiltered);
 
     const updateTimer = setInterval(() => {
         if (output !== lastSentOutput) {
@@ -264,8 +265,8 @@ async function executeShellCommand(opts: {
         handle: {
             proc,
             detachListeners: () => {
-                proc.stdout.removeListener('data', stdoutListener);
-                proc.stderr.removeListener('data', stderrListener);
+                proc.stdout.removeListener('data', appendFiltered);
+                proc.stderr.removeListener('data', appendFiltered);
             }
         },
         command,
@@ -401,24 +402,17 @@ const ExecuteBashArgsSchema = z.object({
 });
 
 export class ExecuteBashTool extends BaseTool<typeof ExecuteBashArgsSchema> {
-    private bashPath: string;
     private runningProcesses: Set<ChildProcess> = new Set();
     private _killedByStop = false;
     private _stopPromises: Map<ChildProcess, Promise<void>> = new Map();
 
-    /**
-     * @param bashPath bash 可执行文件路径，默认为 '/bin/bash'
-     *   - Windows: 可传入 'bash' 自动从 PATH 中查找，或传入完整路径如 'C:\\Program Files\\Git\\bin\\bash.exe'
-     *   - macOS/Linux: 默认 '/bin/bash'
-     */
-    constructor(bashPath: string = '/bin/bash') {
+    constructor() {
         super(
             'executeBash',
-            '该工具可以执行Bash终端命令, 并且默认已经将标准错误流和标准输出流合并, 无需额外配置 2>&1',
+            '该工具可以执行Bash终端命令, 并且默认已经将标准错误流和标准输出流合并, 无需额外配置 2>&1。不要用 || true、; true、| head 等兜底后缀或管道吞掉退出码；让命令以真实退出码结束，系统依赖退出码判定命令成败',
             ExecuteBashArgsSchema
         );
 
-        this.bashPath = bashPath;
         this.setUniversalExecutor(this.executeCommand.bind(this));
     }
 
@@ -458,8 +452,13 @@ export class ExecuteBashTool extends BaseTool<typeof ExecuteBashArgsSchema> {
             cwd = Setting.getInstance().getEffectiveWorkspace();
         }
 
+        if (!bashPath) {
+            result.updateResult('错误：未找到 bash 可执行文件。请确保 bash 已安装并位于 PATH 环境变量中。');
+            return;
+        }
+
         await executeShellCommand({
-            shellPath: this.bashPath,
+            shellPath: bashPath,
             shellArgs: ['-c', command],
             command,
             cwd,
@@ -494,17 +493,22 @@ const ExecuteZshArgsSchema = z.object({
 });
 
 export class ExecuteZshTool extends BaseTool<typeof ExecuteZshArgsSchema> {
+    private interactive: boolean;
     private runningProcesses: Set<ChildProcess> = new Set();
     private _killedByStop = false;
     private _stopPromises: Map<ChildProcess, Promise<void>> = new Map();
 
-    constructor() {
+    /**
+     * @param interactive 为 true 时以 `-i -c` 启动（交互模式，加载 ~/.zshrc 环境变量设置）
+     */
+    constructor(interactive = false) {
         super(
             'executeZsh',
-            '该工具可以执行Zsh终端命令, 并且默认已经将标准错误流和标准输出流合并, 无需额外配置 2>&1',
+            '该工具可以执行Zsh终端命令, 并且默认已经将标准错误流和标准输出流合并, 无需额外配置 2>&1。不要用 || true、; true、| head 等兜底后缀或管道吞掉退出码；让命令以真实退出码结束，系统依赖退出码判定命令成败',
             ExecuteZshArgsSchema
         );
 
+        this.interactive = interactive;
         this.setUniversalExecutor(this.executeCommand.bind(this));
     }
 
@@ -535,7 +539,6 @@ export class ExecuteZshTool extends BaseTool<typeof ExecuteZshArgsSchema> {
         const workingDirectory: string | undefined = args.workingDirectory;
         const timeout: number = args.timeout ?? 30000;
 
-        const zshPath = getZshPath();
         if (!zshPath) {
             result.updateResult('错误：未找到 zsh 可执行文件。请确保 zsh 已安装并位于 PATH 环境变量中。');
             return;
@@ -550,9 +553,18 @@ export class ExecuteZshTool extends BaseTool<typeof ExecuteZshArgsSchema> {
             cwd = Setting.getInstance().getEffectiveWorkspace();
         }
 
+        // 部分 OpenHarmony 版本的 /etc/zshrc 无条件注册 EXIT trap（preexit：打印
+        // "saving history..." / "completed." 并 fc -AI 写历史），zsh -i -c 退出时必然
+        // 触发；另一些版本（source /etc/smartshell.zsh）的 EXIT trap 可能承担实际
+        // 功能，不能无差别清除。因此先探测：仅确认存在噪音 trap 的环境才加
+        // trap - EXIT 前缀，保证输出确定性的同时不影响其他环境的 trap 语义；
+        // 前缀不影响命令自身的退出码与用户命令内自行设置的 trap
+        const needsTrapPrefix = this.interactive && zshInteractiveHasExitTrapNoise(zshPath);
+        const wrappedCommand = needsTrapPrefix ? `trap - EXIT; ${command}` : command;
+        const shellArgs = this.interactive ? ['-i', '-c', wrappedCommand] : ['-c', command];
         await executeShellCommand({
             shellPath: zshPath,
-            shellArgs: ['-c', command],
+            shellArgs,
             command,
             cwd,
             timeout,

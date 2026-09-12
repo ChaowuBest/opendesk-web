@@ -24,8 +24,10 @@ xxx: command not found
 ### 安装命令
 
 ```bash
-wget -qO- https://gitcode.com/OpenHarmonyPCDeveloper/cmd-pkgs/releases/download/pkgs/install.sh | sh -s -- <包名> <版本>
+wget -qO- https://gitcode.com/OpenHarmonyPCDeveloper/cmd-pkgs/releases/download/pkgs/install.sh | sh -s -- <包名> <版本> "$CMD_PKGS_DIR"
 ```
+
+参数 `$CMD_PKGS_DIR`：不传时默认装到 `$HOME/usr/local`，对 OpenDesk 子进程环境不可见（PATH 只前置 `$CMD_PKGS_DIR/bin`）。
 
 完整包列表：https://gitcode.com/OpenHarmonyPCDeveloper/cmd-pkgs
 
@@ -61,28 +63,35 @@ readelf -d "$(command -v <command>)" \
 出现 `Permission denied`、`Operation not permitted`、`Error loading shared library` 或 `Error relocating` 时，不属于“命令缺失”，请按[执行权限受限](../03-permission-denied/exec-permission.md)诊断。
 不要只执行 `chmod +x` 或反复设置 `LD_LIBRARY_PATH`。
 
-在 OpenDesk 中，原生包优先部署到应用数据目录（`$CMD_PKGS_DIR`）：
+在 OpenDesk 中，原生包统一部署到应用数据目录 `$CMD_PKGS_DIR`。不要直接从 `$HOME` 对应的 `/storage/Users/currentUser` HMDFS 路径运行原生 ELF。
 
-```bash
-PREFIX=$CMD_PKGS_DIR/<工具名>
-mkdir -p "$PREFIX/bin" "$PREFIX/lib" "$PREFIX/lib/external"
-```
-
-不要直接从 `$HOME` 对应的 `/storage/Users/currentUser` HMDFS 路径运行原生 ELF。
-
-### 实践：安装和运行带私有动态库的 curl
+### 实践1：修复带私有动态库的 curl（executeBash 通道）
 
 cmd-pkgs 的 curl 包含 `libcurl.so.4`、`libssl.so.3` 和 `libcrypto.so.3` 等私有依赖，已按以下方式验证成功：
 
 ```
-1. 安装到 `$CMD_PKGS_DIR/curl-cmdpkg`；
-2. 将可执行文件和各级 `.so` 的 RUNPATH 改为该目录下的绝对路径；
+1. curl 装到 `$CMD_PKGS_DIR/bin`，私有 `.so` 装到 `$CMD_PKGS_DIR/lib/external/curl-cmdpkg`；
+2. 将可执行文件和各级 `.so` 的 RUNPATH 改为该目录的绝对路径；
 3. 对修改后的每个 ELF 使用 `SHA256withECDSA` 自签名；
 4. 使用系统 CA `/etc/ssl/certs/cacert.pem`；
 5. 验证 `curl --version`、HTTPS 下载、Bash 子进程和 Python `subprocess` 调用。
 ```
 
 具体操作在[curl安装实践](./curl-install-practice.md)。
+
+### 实践2：统一布局安装 Python（executeZsh 通道）
+
+cmd-pkgs 渠道的 python 从安装到可用的完整流程：
+
+```
+1. install.sh 统一 prefix 安装到 `$CMD_PKGS_DIR`（与 node 等包共用顶层 bin/lib）；
+2. 验证 `python3 --version`；
+3. pip 不可用时 `python3 -m ensurepip --upgrade` 自愈（bundled wheel 随包分发）；
+4. 鸿蒙 pypi 源 + 仅 wheel 二进制分发（不采用编译工具链）；
+5. pip 全局包默认经 env 注入落 interpreters/pip-global。
+```
+
+具体操作在[python安装实践](./python-install-practice.md)。
 
 ---
 
