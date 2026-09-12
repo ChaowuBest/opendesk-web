@@ -19,7 +19,7 @@ import markedKatex from 'marked-katex-extension';
 import hljs from 'highlight.js';
 import path from 'path';
 import fs from 'fs';
-import { fileLinkExtension, renderFilePillFromText } from '../utils/marked-file-link.js';
+import { fileLinkExtension } from '../utils/marked-file-link.js';
 import { cjkAutolinkFix } from '../../common/markdown/cjk-autolink-fix.js';
 import type {
     BaseAssistantMessage,
@@ -223,14 +223,8 @@ marked.use({
                 const complete = isFencedCodeComplete(raw);
                 return `<div class="mermaid-block" data-mermaid-code="${encoded}" data-mermaid-complete="${complete}"></div>`;
             }
-            // 围栏代码块（lang 为 '' 或语言名）中仅包含单个文件地址时渲染为文件 pill；
-            // indented 代码块（lang 为 undefined）保持原有代码块渲染。
-            if (lang !== undefined) {
-                const pill = renderFilePillFromText(text);
-                if (pill) {
-                    return `<p>${pill}</p>`;
-                }
-            }
+            // 围栏/缩进代码块一律保持代码块渲染，不做文件路径解析
+            // （胶囊只来自显式的 [...]() 链接，见 marked-file-link.ts）。
             const langClass = lang ? `hljs language-${lang}` : 'hljs';
             const language = lang && hljs.getLanguage(lang) ? lang : 'plaintext';
             const highlighted = hljs.highlight(text, { language }).value;
