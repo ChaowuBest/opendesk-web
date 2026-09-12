@@ -487,7 +487,11 @@ export default class McpMgrWorker extends BaseWorker {
             throw new Error(`Server ${serverId} is not connected`);
         }
 
-        const result = await conn.client.callTool({ name: toolName, arguments: args });
+        const result = await conn.client.callTool({ name: toolName, arguments: args }, undefined, {
+            timeout: 180_000,
+            resetTimeoutOnProgress: true,
+            maxTotalTimeout: 300_000
+        });
 
         if (result.content && Array.isArray(result.content)) {
             return result.content.map((c: any) => (c.type === 'text' ? c.text : JSON.stringify(c))).join('\n');

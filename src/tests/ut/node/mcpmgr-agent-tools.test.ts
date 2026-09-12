@@ -155,3 +155,27 @@ test('MCPMgr worker lists both configured and agent-provided MCP servers', async
         ]
     );
 });
+
+test('MCPMgr tool calls use bounded long waits and preserve the result', async () => {
+    const worker = new McpMgrWorker('mcpmgr', '/tmp/mcpmgr-tool-timeout-test');
+    const calls: unknown[][] = [];
+    (worker as any).connections.set('ordinary-server', {
+        status: 'connected',
+        client: {
+            async callTool(...args: unknown[]) {
+                calls.push(args);
+                return { content: [{ type: 'text', text: 'completed' }] };
+            }
+        }
+    });
+    assert.equal(await worker.callMcpTool('ordinary-server', 'echo', { text: 'hello' }), 'completed');
+    assert.deepEqual(calls, [
+        [
+            { name: 'echo', arguments: { text: 'hello' } },
+            undefined,
+            { timeout: 180_000, resetTimeoutOnProgress: true, maxTotalTimeout: 300_000 }
+        ]
+    ]);
+    await assert.rejects(worker.callMcpTool('missing', 'echo', {}), /not connected/);
+    assert.equal(calls.length, 1);
+});

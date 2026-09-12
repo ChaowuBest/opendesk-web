@@ -89,10 +89,14 @@ class PluginMcpRuntime {
                     }
                     const active = this.connections.get(contribution.id);
                     if (!active) throw new Error('plugin.mcp_not_connected');
-                    const result = await active.client.callTool({
-                        name: discovered.name,
-                        arguments: args as Record<string, unknown>
-                    });
+                    const result = await active.client.callTool(
+                        {
+                            name: discovered.name,
+                            arguments: args as Record<string, unknown>
+                        },
+                        undefined,
+                        { timeout: 180_000, resetTimeoutOnProgress: true, maxTotalTimeout: 300_000 }
+                    );
                     return formatMcpResult(result);
                 });
                 toolset.addTool(tool);

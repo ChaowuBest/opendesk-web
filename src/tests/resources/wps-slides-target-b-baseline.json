@@ -1,0 +1,19 @@
+{
+    "upstreamCanonicalSha256": "0c794c2443a0dd249aad79a22499122a6bf2735c9dca2400e73dab205b1a839d",
+    "releaseSnapshotSha256": "2663d7823fadb772c2117e748fd99683f9d93e443bf6b9aaea95ade0cc6b296e",
+    "sceneSchemaVersions": ["scene-v2", "presentation-scene-v1"],
+    "operationDefinitionVersion": "scene-operation-definitions-v2",
+    "approvedSemanticDifferences": [
+        "canonical-operation-target-rules",
+        "do-not-block-unambiguous-earlier-write",
+        "account-for-every-user-clause",
+        "concise-user-facing-final-response",
+        "bounded-unavailable-presentation-handling",
+        "whole-deck-template-layout-reuse",
+        "authority-bound-same-slide-physical-deletion",
+        "mcp-owned-current-template-lifecycle",
+        "model-authored-business-request-ref",
+        "ordinary-plugin-without-host-lifecycle-authorization",
+        "lifecycle-single-request-union-wrapper"
+    ]
+}

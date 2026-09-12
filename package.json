@@ -34,7 +34,7 @@
         "make:darwin": "npm run build && node scripts/build-darwin-speech-helper.cjs && electron-forge make --platform=darwin",
         "make:linux": "npm run build && electron-forge make --platform=linux",
         "build-cli": "npm run build:plugins && tsx esbuild.config.ts",
-        "build-cli-bun": "bun build --compile --minify-whitespace --sourcemap src/main/cli.ts --outfile dist/cli/opendesk-bun --external node-screenshots --external esbuild",
+        "build-cli-bun": "npm run build:plugins && bun build --compile --minify-whitespace --sourcemap src/main/cli.ts --outfile dist/cli/opendesk-bun --external node-screenshots --external esbuild",
         "cli": "npm run build-cli && node --no-warnings --enable-source-maps dist/cli/opendesk-debug",
         "postinstall": "node scripts/setup-native-modules.cjs",
         "test": "node --experimental-vm-modules node_modules/jest/bin/jest.js",

@@ -237,7 +237,10 @@ Extract decisions and actions.
             mcpServers: [expect.objectContaining({ name: 'local-echo', transport: 'stdio' })]
         });
         const activeSkills = await SkillRegistry.getInstance().getAllSkillsRaw();
-        expect(activeSkills.get(PLUGIN_SKILL_BUNDLE)).toEqual([
+        const localSkills = (activeSkills.get(PLUGIN_SKILL_BUNDLE) ?? []).filter(
+            (skill) => skill.attribution?.sourceId === 'local-details'
+        );
+        expect(localSkills).toEqual([
             expect.objectContaining({
                 frontmatter: expect.objectContaining({ name: 'review-notes' })
             })
@@ -259,7 +262,10 @@ Extract decisions and actions.
                 skills: [expect.objectContaining({ name: 'review-notes' })],
                 mcpServers: [expect.objectContaining({ name: 'local-echo', transport: 'stdio' })]
             });
-            expect((await SkillRegistry.getInstance().getAllSkillsRaw()).get(PLUGIN_SKILL_BUNDLE)).toEqual([]);
+            const disabledSkills = (
+                (await SkillRegistry.getInstance().getAllSkillsRaw()).get(PLUGIN_SKILL_BUNDLE) ?? []
+            ).filter((skill) => skill.attribution?.sourceId === 'local-details');
+            expect(disabledSkills).toHaveLength(0);
             expect(skillEvents).toContain('skillsChanged');
         } finally {
             if (previousSkillApplication) {
@@ -541,11 +547,19 @@ Review the current changes.`
 
         await initializePluginHost();
 
-        expect(getPluginHost().listSkills()[0]?.definition).toMatchObject({
+        const skills = getPluginHost()
+            .listSkills()
+            .filter((entry) => entry.pluginId === 'manifest-contributor');
+        expect(skills).toHaveLength(1);
+        expect(skills[0]?.definition).toMatchObject({
             name: 'review-code',
             directory: fs.realpathSync(skillDirectory)
         });
-        expect(getPluginHost().listMcpServers()[0]?.definition).toMatchObject({
+        const mcpServers = getPluginHost()
+            .listMcpServers()
+            .filter((entry) => entry.pluginId === 'manifest-contributor');
+        expect(mcpServers).toHaveLength(1);
+        expect(mcpServers[0]?.definition).toMatchObject({
             name: 'remote-search',
             transport: 'streamableHttp'
         });

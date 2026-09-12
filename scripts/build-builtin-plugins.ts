@@ -10,6 +10,7 @@
  * See the Mulan PSL v2 for more details.
  */
 
+import crypto from 'node:crypto';
 import { execFile } from 'child_process';
 import fs from 'fs';
 import path from 'path';
@@ -17,6 +18,7 @@ import { promisify } from 'util';
 import { pathToFileURL } from 'url';
 import * as esbuild from 'esbuild';
 import { parsePluginManifest } from '../src/main/applications/pluginmgr/discovery/manifest.js';
+import { materializeBuiltinPluginZip } from './lib/builtin-plugin-zip.js';
 import {
     installPluginDependencies,
     resolveNpmInvocation
@@ -83,11 +85,10 @@ function copyPluginSources(
     });
 }
 
-function validateBuiltinPlugin(
+function validateBuiltinPluginSource(
     sourceDirectory: string,
-    outputRoot: string,
     knownIds: Set<string>
-): BuiltinPluginBuildResult {
+) {
     const sourceName = path.basename(sourceDirectory);
     const manifestPath = path.join(sourceDirectory, MANIFEST_FILENAME);
     if (!fs.existsSync(manifestPath)) {
@@ -111,13 +112,77 @@ function validateBuiltinPlugin(
         throw new Error(`plugin.builtin_entry_typescript_unsupported:${manifest.id}`);
     }
 
+    return { manifest, sourceEntry };
+}
+
+async function buildExpandedBuiltinPlugin(
+    sourceDirectory: string,
+    outputRoot: string,
+    knownIds: Set<string>,
+    runNpm: (args: string[], cwd: string) => Promise<void>
+): Promise<BuiltinPluginBuildResult> {
+    const { manifest, sourceEntry } = validateBuiltinPluginSource(sourceDirectory, knownIds);
+
     const pluginOutputDirectory = path.join(outputRoot, manifest.id);
+    const outputEntry = path.resolve(pluginOutputDirectory, manifest.entry);
+    await ensurePluginDependencies(sourceDirectory, runNpm);
+    if (shouldBundlePlugin(sourceDirectory)) {
+        copyPluginSources(sourceDirectory, pluginOutputDirectory, false, true);
+        await bundlePluginEntry(sourceEntry, outputEntry);
+    } else {
+        copyPluginSources(sourceDirectory, pluginOutputDirectory, true);
+    }
     return {
         id: manifest.id,
         sourceDirectory,
         outputDirectory: pluginOutputDirectory,
-        entry: path.resolve(pluginOutputDirectory, manifest.entry)
+        entry: outputEntry
     };
+}
+
+function buildZipBuiltinPlugin(
+    sourceDirectory: string,
+    outputRoot: string,
+    knownIds: Set<string>
+): BuiltinPluginBuildResult {
+    const stagingRoot = path.join(path.dirname(outputRoot), `.plugin-build-${process.pid}-${crypto.randomUUID()}`);
+    const stagingPlugin = path.join(stagingRoot, path.basename(sourceDirectory));
+    fs.mkdirSync(stagingRoot, { recursive: true });
+    try {
+        const artifact = materializeBuiltinPluginZip(sourceDirectory, stagingPlugin);
+        const { manifest } = validateBuiltinPluginSource(stagingPlugin, knownIds);
+        if (manifest.id !== artifact.pluginId || manifest.version !== artifact.pluginVersion) {
+            throw new Error(`plugin.builtin_artifact_identity_mismatch:${artifact.pluginId}`);
+        }
+        const pluginOutputDirectory = path.join(outputRoot, manifest.id);
+        fs.renameSync(stagingPlugin, pluginOutputDirectory);
+        return {
+            id: manifest.id,
+            sourceDirectory,
+            outputDirectory: pluginOutputDirectory,
+            entry: path.resolve(pluginOutputDirectory, manifest.entry)
+        };
+    } finally {
+        fs.rmSync(stagingRoot, { recursive: true, force: true });
+    }
+}
+
+async function buildBuiltinPlugin(
+    sourceDirectory: string,
+    outputRoot: string,
+    knownIds: Set<string>,
+    runNpm: (args: string[], cwd: string) => Promise<void>
+): Promise<BuiltinPluginBuildResult> {
+    const hasExpandedManifest = fs.existsSync(path.join(sourceDirectory, MANIFEST_FILENAME));
+    const hasZipManifest = fs.existsSync(path.join(sourceDirectory, 'artifact-manifest.json'));
+    if (hasExpandedManifest && hasZipManifest) {
+        throw new Error(`plugin.builtin_source_ambiguous:${path.basename(sourceDirectory)}`);
+    }
+    if (hasZipManifest) return buildZipBuiltinPlugin(sourceDirectory, outputRoot, knownIds);
+    if (fs.readdirSync(sourceDirectory).some((name) => name.toLowerCase().endsWith('.zip'))) {
+        throw new Error(`plugin.builtin_artifact_missing:${path.basename(sourceDirectory)}`);
+    }
+    return buildExpandedBuiltinPlugin(sourceDirectory, outputRoot, knownIds, runNpm);
 }
 
 async function defaultRunNpm(args: string[], cwd: string): Promise<void> {
@@ -151,14 +216,6 @@ function shouldBundlePlugin(pluginDirectory: string): boolean {
     if (!fs.existsSync(manifestPath)) return false;
     const rawManifest = JSON.parse(fs.readFileSync(manifestPath, 'utf-8')) as { bundle?: unknown };
     return rawManifest.bundle === true;
-}
-
-function readPluginEntry(pluginDirectory: string): string {
-    const manifestPath = path.join(pluginDirectory, MANIFEST_FILENAME);
-    const rawManifest = JSON.parse(fs.readFileSync(manifestPath, 'utf-8')) as { entry?: string };
-    const entry = rawManifest.entry;
-    if (!entry) throw new Error(`plugin.builtin_manifest_entry_required:${path.basename(pluginDirectory)}`);
-    return entry;
 }
 
 /** 宿主映射包由运行时 package-mapping 兜底解析，bundle 时必须保留为外部引用。 */
@@ -220,15 +277,7 @@ export async function buildBuiltinPlugins(
     const knownIds = new Set<string>();
     const results: BuiltinPluginBuildResult[] = [];
     for (const pluginDirectory of pluginDirectories) {
-        const validated = validateBuiltinPlugin(pluginDirectory, outputDirectory, knownIds);
-        await ensurePluginDependencies(pluginDirectory, runNpm);
-        if (shouldBundlePlugin(pluginDirectory)) {
-            copyPluginSources(pluginDirectory, validated.outputDirectory, false, true);
-            await bundlePluginEntry(path.resolve(pluginDirectory, readPluginEntry(pluginDirectory)), validated.entry);
-        } else {
-            copyPluginSources(pluginDirectory, validated.outputDirectory, true);
-        }
-        results.push(validated);
+        results.push(await buildBuiltinPlugin(pluginDirectory, outputDirectory, knownIds, runNpm));
     }
     return results;
 }
