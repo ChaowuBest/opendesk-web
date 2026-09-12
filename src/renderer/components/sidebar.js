@@ -662,7 +662,7 @@ class SideBar extends HTMLElement {
                 window.globalControlAPI.openPersonalCenter();
             }
         });
-        // 反馈按钮：文字常显 + 品牌红强调，点击弹出反馈入口选择弹窗
+        // 反馈按钮：文字常显 + 墨灰中性样式（与相邻导航图标一致），点击弹出反馈入口选择弹窗
         buttons.push({
             id: 'open-feedback-btn',
             icon: '',
