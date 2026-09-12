@@ -4854,7 +4854,7 @@ class TaskView extends HTMLElement {
                     <exit-plan-mode-prompt id="task-${this.task_id}-exit-plan" class="block px-4"></exit-plan-mode-prompt>
 
                     <!-- 输入区域 -->
-                    <div class="px-3 pb-3 pt-1">
+                    <div class="pb-3 pt-1" style="padding-left: 30px; padding-right: 30px;">
                         <!-- 消息队列面板 -->
                         <message-queue-panel id="message-queue-panel"></message-queue-panel>
                         <agent-input id="task-${this.task_id}-input" hide-search />
