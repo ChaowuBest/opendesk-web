@@ -111,10 +111,53 @@ describe('设置 schema', () => {
 
         expect(setting.debug).toEqual({
             developer_mode: true,
-            experimental_feature: false,
             log_raw_llm_request: false,
             debug_log: false
         });
+    });
+
+    test('实验性功能支持独立开关并补齐默认值', () => {
+        const setting = Setting.getSettingSchema().parse({
+            debug: {
+                experimental_features: {
+                    account: true
+                }
+            }
+        });
+
+        expect(setting.debug.experimental_features).toEqual({
+            applications: {
+                appmgr: false,
+                agentoffice: false
+            },
+            account: true,
+            magic_pointer: false
+        });
+    });
+
+    test('旧版实验性应用布尔值会被重置为关闭对象但不会导致载入失败', () => {
+        const setting = Setting.getSettingSchema().parse({
+            debug: {
+                experimental_features: {
+                    applications: true
+                }
+            }
+        });
+
+        expect(setting.debug.experimental_features?.applications).toEqual({ appmgr: false, agentoffice: false });
+    });
+
+    test('旧版试验性功能总开关会被丢弃且不影响新开关', () => {
+        Setting.clearCache();
+        Setting.updateInstanceData({
+            debug: {
+                developer_mode: false,
+                experimental_feature: true
+            }
+        });
+
+        expect(Setting.getInstance().getData().debug.experimental_features).toBeUndefined();
+        expect((Setting.getInstance().getData().debug as any).experimental_feature).toBeUndefined();
     });
 
     test('终端 CLI 默认使用隔离 Python 环境', () => {

@@ -586,7 +586,15 @@ describe('isLogRawLlmRequestEnabled', () => {
     test('returns true when setting is enabled', () => {
         Setting.updateInstanceData({
             default_model: '',
-            debug: { developer_mode: false, experimental_feature: false, log_raw_llm_request: true }
+            debug: {
+                developer_mode: false,
+                experimental_features: {
+                    applications: { appmgr: false, agentoffice: false },
+                    account: false,
+                    magic_pointer: false
+                },
+                log_raw_llm_request: true
+            }
         });
         expect(isLogRawLlmRequestEnabled()).toBe(true);
     });

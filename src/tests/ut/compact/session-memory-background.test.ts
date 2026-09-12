@@ -12,6 +12,14 @@ import { AssistantMessage, ChatContext, Usage, UserMessage } from '../../../main
 import { TaskManagerState, TaskState } from '../../../main/aikernel/states/tasks';
 import { setCustomOpendeskDirectory } from '../../../main/utils/setting';
 
+const managers: TaskManagerState[] = [];
+
+function createManager(): TaskManagerState {
+    const manager = new TaskManagerState();
+    managers.push(manager);
+    return manager;
+}
+
 let tempRootDir: string | undefined;
 
 function createTempAppDirectory(): string {
@@ -26,6 +34,7 @@ function cleanupTempAppDirectory(): void {
         fs.rmSync(tempRootDir, { recursive: true, force: true });
     }
     tempRootDir = undefined;
+    setCustomOpendeskDirectory(undefined);
 }
 
 function resetHookRegistry(): void {
@@ -76,7 +85,7 @@ function createTaskWithConversation(promptTokens: number): {
     task: TaskState;
     assistant: AssistantMessage;
 } {
-    const manager = new TaskManagerState();
+    const manager = createManager();
     const task = new TaskState(manager, null);
     task.task_id = 'task-session-memory-background';
     task.task_name = 'session-memory-background';
@@ -98,7 +107,11 @@ describe('session memory background update', () => {
         resetHookRegistry();
     });
 
-    afterEach(() => {
+    afterEach(async () => {
+        for (const manager of managers) {
+            await manager.flushAllPendingSaves();
+        }
+        managers.length = 0;
         jest.restoreAllMocks();
         resetHookRegistry();
         cleanupTempAppDirectory();
@@ -158,7 +171,7 @@ describe('session memory background update', () => {
 
     test('中文任务输入会把 preferredLanguage 持久化成 zh-CN', async () => {
         createTempAppDirectory();
-        const manager = new TaskManagerState();
+        const manager = createManager();
         const task = new TaskState(manager, null);
         task.task_id = 'task-session-memory-background-zh';
         task.task_name = 'session-memory-background-zh';
@@ -226,7 +239,7 @@ describe('session memory background update', () => {
 
     test('processTaskTurn 自然结束后会调度更新，但不等待后台 promise', async () => {
         createTempAppDirectory();
-        const manager = new TaskManagerState();
+        const manager = createManager();
         const task = new TaskState(manager, null);
         task.task_id = 'task-turn-scheduler';
         task.task_status = 'running';

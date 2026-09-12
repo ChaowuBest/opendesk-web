@@ -17,8 +17,7 @@ describe('DebugConfigPage', () => {
         Setting.clearCache();
         Setting.updateInstanceData({
             debug: {
-                developer_mode: false,
-                experimental_feature: true
+                developer_mode: false
             }
         });
     });
@@ -36,6 +35,6 @@ describe('DebugConfigPage', () => {
         expect(text).toContain('Debug Mode');
         expect(text).toContain('Developer Mode');
         expect(text).not.toContain('Experimental');
-        expect(Setting.getInstance().getData().debug.experimental_feature).toBe(true);
+        expect(Setting.getInstance().getData().debug.experimental_features).toBeUndefined();
     });
 });

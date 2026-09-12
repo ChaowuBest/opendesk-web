@@ -947,7 +947,7 @@
                             if (
                                 !isExperimentalApplicationEnabled(
                                     appGuiConfig,
-                                    setting && setting.debug && setting.debug.experimental_feature === true
+                                    setting && setting.debug && setting.debug.experimental_features
                                 )
                             ) {
                                 return;
@@ -1127,7 +1127,7 @@
                                 openAppConfig &&
                                 !isExperimentalApplicationEnabled(
                                     openAppConfig,
-                                    data && data.debug && data.debug.experimental_feature === true
+                                    data && data.debug && data.debug.experimental_features
                                 )
                             ) {
                                 var hiddenBundleName = currentOpenAppBundleName;

@@ -19,6 +19,20 @@ import {
 import { BenchmarkUsageLedger } from '../../../main/aikernel/evaluation/index';
 import { TaskManagerState, TaskState } from '../../../main/aikernel/states/tasks';
 
+const managers: TaskManagerState[] = [];
+
+function createManager(): TaskManagerState {
+    const manager = new TaskManagerState();
+    managers.push(manager);
+    return manager;
+}
+
+function loadManager(): TaskManagerState | null {
+    const manager = TaskManagerState.load();
+    if (manager) managers.push(manager);
+    return manager;
+}
+
 let tempRootDir: string | undefined;
 
 function createTempTaskDirectory(): string {
@@ -34,6 +48,7 @@ function cleanupTempTaskDirectory(): void {
         fs.rmSync(tempRootDir, { recursive: true, force: true });
     }
     tempRootDir = undefined;
+    setCustomOpendeskDirectory(undefined);
 }
 
 function createTask(manager: TaskManagerState): TaskState {
@@ -63,13 +78,17 @@ function createTask(manager: TaskManagerState): TaskState {
 }
 
 describe('任务持久化中的自动压缩状态', () => {
-    afterEach(() => {
+    afterEach(async () => {
+        for (const manager of managers) {
+            await manager.flushAllPendingSaves();
+        }
+        managers.length = 0;
         cleanupTempTaskDirectory();
     });
 
     test('task-local file read state stays in memory and is not persisted', () => {
         const taskDir = createTempTaskDirectory();
-        const manager = new TaskManagerState();
+        const manager = createManager();
         const task = createTask(manager);
         manager.tasks.push(task);
 
@@ -94,7 +113,7 @@ describe('任务持久化中的自动压缩状态', () => {
         const savedTaskJson = JSON.parse(fs.readFileSync(path.join(taskDir, 'task-root.json'), 'utf8'));
         expect(savedTaskJson).not.toHaveProperty('file_read_state');
 
-        const reloadedManager = TaskManagerState.load();
+        const reloadedManager = loadManager();
         expect(reloadedManager).not.toBeNull();
         const loadedTask = reloadedManager!.getTask('task-root');
         expect(loadedTask).toBeDefined();
@@ -103,7 +122,7 @@ describe('任务持久化中的自动压缩状态', () => {
 
     test('task created_at is persisted and restored independently of started_at', () => {
         const taskDir = createTempTaskDirectory();
-        const manager = new TaskManagerState();
+        const manager = createManager();
         const task = createTask(manager);
         task.created_at = new Date('2026-04-16T23:59:00.000Z');
         task.started_at = new Date('2026-04-17T02:00:00.000Z');
@@ -115,7 +134,7 @@ describe('任务持久化中的自动压缩状态', () => {
         expect(savedTaskJson.created_at).toBe('2026-04-16T23:59:00.000Z');
         expect(savedTaskJson.started_at).toBe('2026-04-17T02:00:00.000Z');
 
-        const loadedTask = TaskState.load(path.join(taskDir, 'task-root.json'), new TaskManagerState());
+        const loadedTask = TaskState.load(path.join(taskDir, 'task-root.json'), createManager());
         expect(loadedTask.created_at.toISOString()).toBe('2026-04-16T23:59:00.000Z');
         expect(loadedTask.started_at?.toISOString()).toBe('2026-04-17T02:00:00.000Z');
     });
@@ -147,7 +166,7 @@ describe('任务持久化中的自动压缩状态', () => {
             'utf8'
         );
 
-        const loadedTask = TaskState.load(taskJsonPath, new TaskManagerState());
+        const loadedTask = TaskState.load(taskJsonPath, createManager());
         expect(loadedTask.created_at.toISOString()).toBe('2026-04-15T08:00:00.000Z');
         expect(loadedTask.toJSON()).toMatchObject({
             created_at: '2026-04-15T08:00:00.000Z'
@@ -155,7 +174,7 @@ describe('任务持久化中的自动压缩状态', () => {
     });
 
     test('file read state is isolated between tasks and resettable', () => {
-        const manager = new TaskManagerState();
+        const manager = createManager();
         const firstTask = createTask(manager);
         const secondTask = new TaskState(manager, null);
         secondTask.task_id = 'task-second';
@@ -189,7 +208,7 @@ describe('任务持久化中的自动压缩状态', () => {
 
     test('save 和 load 会保留 auto_compact_state', () => {
         const taskDir = createTempTaskDirectory();
-        const manager = new TaskManagerState();
+        const manager = createManager();
         const task = createTask(manager);
         manager.tasks.push(task);
 
@@ -207,7 +226,7 @@ describe('任务持久化中的自动压缩状态', () => {
         });
         expect(savedTaskJson.auto_compact_state).not.toHaveProperty('last_success_at');
 
-        const reloadedManager = TaskManagerState.load();
+        const reloadedManager = loadManager();
         expect(reloadedManager).not.toBeNull();
         expect(reloadedManager!.tasks).toHaveLength(1);
 
@@ -223,7 +242,7 @@ describe('任务持久化中的自动压缩状态', () => {
 
     test('load 会把中断任务里的活动工具调用标记为停止错误', () => {
         const taskDir = createTempTaskDirectory();
-        const manager = new TaskManagerState();
+        const manager = createManager();
         const task = createTask(manager);
         task.task_status = 'running';
 
@@ -247,7 +266,7 @@ describe('任务持久化中的自动压缩状态', () => {
 
         manager.saveSync();
 
-        const loadedTask = TaskState.load(path.join(taskDir, 'task-root.json'), new TaskManagerState());
+        const loadedTask = TaskState.load(path.join(taskDir, 'task-root.json'), createManager());
         expect(loadedTask.task_status).toBe('failed');
 
         const loadedAssistant = loadedTask.chat_context.messages[1] as AssistantMessage;
@@ -268,7 +287,7 @@ describe('任务持久化中的自动压缩状态', () => {
 
     test('fork 会复制自动压缩状态，且父子任务彼此独立', () => {
         createTempTaskDirectory();
-        const manager = new TaskManagerState();
+        const manager = createManager();
         const task = createTask(manager);
         manager.tasks.push(task);
 
@@ -289,7 +308,7 @@ describe('任务持久化中的自动压缩状态', () => {
 
         manager.saveSync();
 
-        const reloadedManager = TaskManagerState.load();
+        const reloadedManager = loadManager();
         expect(reloadedManager).not.toBeNull();
         expect(reloadedManager!.tasks).toHaveLength(2);
 
@@ -345,7 +364,7 @@ describe('任务持久化中的自动压缩状态', () => {
             'utf8'
         );
 
-        const reloadedManager = TaskManagerState.load();
+        const reloadedManager = loadManager();
         expect(reloadedManager).not.toBeNull();
         const loadedTask = reloadedManager!.getTask('task-legacy');
         expect(loadedTask).toBeDefined();
@@ -358,7 +377,7 @@ describe('任务持久化中的自动压缩状态', () => {
 
     test('save 和 load 会保留 session_memory_state，fork 会重置 session memory 状态', () => {
         const taskDir = createTempTaskDirectory();
-        const manager = new TaskManagerState();
+        const manager = createManager();
         const task = createTask(manager);
         const sessionMemoryState = SessionMemoryStates.deserialize({
             version: 2,
@@ -391,7 +410,7 @@ describe('任务持久化中的自动压缩状态', () => {
             extraction_in_progress: false
         });
 
-        const reloadedManager = TaskManagerState.load();
+        const reloadedManager = loadManager();
         expect(reloadedManager).not.toBeNull();
         const loadedTask = reloadedManager!.getTask('task-root');
         expect(loadedTask).toBeDefined();
@@ -403,7 +422,7 @@ describe('任务持久化中的自动压缩状态', () => {
 
     test('save 和 load 会保留 microcompact_state，fork / subtask 会重置 microcompact 状态', () => {
         const taskDir = createTempTaskDirectory();
-        const manager = new TaskManagerState();
+        const manager = createManager();
         const task = createTask(manager);
         const microcompactState = MicrocompactStates.deserialize({
             version: 1,
@@ -428,7 +447,7 @@ describe('任务持久化中的自动压缩状态', () => {
             last_local_clear_result_ids: ['result-a', 'result-b']
         });
 
-        const reloadedManager = TaskManagerState.load();
+        const reloadedManager = loadManager();
         expect(reloadedManager).not.toBeNull();
         const loadedTask = reloadedManager!.getTask('task-root');
         expect(loadedTask).toBeDefined();
@@ -443,7 +462,7 @@ describe('任务持久化中的自动压缩状态', () => {
 
     test('save 和 load 会保留 assistant usage 的扩展字段，并归一化为 Usage 实例', () => {
         const taskDir = createTempTaskDirectory();
-        const manager = new TaskManagerState();
+        const manager = createManager();
         const task = createTask(manager);
         const assistant = new AssistantMessage();
         assistant.appendText('assistant with normalized usage');
@@ -474,7 +493,7 @@ describe('任务持久化中的自动压缩状态', () => {
             cache_read_input_tokens: 5
         });
 
-        const reloadedManager = TaskManagerState.load();
+        const reloadedManager = loadManager();
         expect(reloadedManager).not.toBeNull();
         const loadedTask = reloadedManager!.getTask('task-root');
         const loadedAssistant = loadedTask!.chat_context.messages[1] as AssistantMessage;
@@ -520,7 +539,7 @@ describe('任务持久化中的自动压缩状态', () => {
             'utf8'
         );
 
-        const reloadedManager = TaskManagerState.load();
+        const reloadedManager = loadManager();
         expect(reloadedManager).not.toBeNull();
         const loadedTask = reloadedManager!.getTask('task-legacy-usage');
         expect(loadedTask).toBeDefined();
@@ -538,7 +557,7 @@ describe('任务持久化中的自动压缩状态', () => {
 
     test('save compact benchmark_usage metadata, and fork clears it', () => {
         const taskDir = createTempTaskDirectory();
-        const manager = new TaskManagerState();
+        const manager = createManager();
         const task = createTask(manager);
         const ledger = new BenchmarkUsageLedger(task.task_id);
         const requestIndex = ledger.beginRequest({
@@ -590,7 +609,7 @@ describe('任务持久化中的自动压缩状态', () => {
         expect(savedTaskJson.benchmark_usage).not.toHaveProperty('requests');
         expect(savedTaskJson.benchmark_usage).not.toHaveProperty('summary');
 
-        const reloadedManager = TaskManagerState.load();
+        const reloadedManager = loadManager();
         expect(reloadedManager).not.toBeNull();
         const loadedTask = reloadedManager!.getTask('task-root');
         expect(loadedTask!.benchmark_usage).toBeUndefined();
@@ -605,7 +624,7 @@ describe('任务持久化中的自动压缩状态', () => {
 
     test('save 和 load 会保留 full compact boundary metadata', () => {
         const taskDir = createTempTaskDirectory();
-        const manager = new TaskManagerState();
+        const manager = createManager();
         const task = createTask(manager);
         const boundary = new CompactSeparatorMessage('saved full compact summary', {
             boundary_id: 'boundary-full-compact',
@@ -678,7 +697,7 @@ describe('任务持久化中的自动压缩状态', () => {
             }
         });
 
-        const reloadedManager = TaskManagerState.load();
+        const reloadedManager = loadManager();
         expect(reloadedManager).not.toBeNull();
         const loadedTask = reloadedManager!.getTask('task-root');
         expect(loadedTask).toBeDefined();

@@ -71,6 +71,77 @@ describe('setting-panel config management', () => {
         expect(panel.querySelector('#export-quickpass-btn')).toBeNull();
     });
 
+    test('renders development and debugging as a gated panel with independent experimental features', () => {
+        const panel = createPanel();
+        panel.currentData.debug = {
+            developer_mode: true,
+            debug_log: true,
+            experimental_features: {
+                applications: { appmgr: true, agentoffice: false },
+                account: false,
+                magic_pointer: true
+            }
+        };
+        panel.innerHTML = panel.renderDebugModeSection();
+
+        expect(panel.querySelector('h2')?.textContent).toContain('开发与调试');
+        expect(panel.querySelector('#debug-mode-settings')?.getAttribute('style')).toBe('');
+        expect(panel.querySelector('#debug-mode-settings #debug-mode-toggle-hidden')).toBeNull();
+        expect(panel.querySelector('#experimental-features-section')?.textContent).toContain('实验性功能');
+        expect(panel.querySelector('#experimental-features-section')?.querySelector('h4')).toBeNull();
+        expect(panel.querySelector('#experimental-appmgr-toggle-hidden')?.hasAttribute('checked')).toBe(true);
+        expect(panel.querySelector('#experimental-agentoffice-toggle-hidden')?.hasAttribute('checked')).toBe(false);
+        expect(panel.querySelector('#experimental-account-toggle-hidden')?.hasAttribute('checked')).toBe(false);
+        expect(panel.querySelector('#experimental-magic-pointer-toggle-hidden')?.hasAttribute('checked')).toBe(true);
+        expect(panel.querySelector('#experimental-agentgate-toggle-hidden')).toBeNull();
+        expect(panel.querySelector('#experimental-feature-toggle-hidden')).toBeNull();
+
+        panel.currentData.debug.developer_mode = false;
+        panel.innerHTML = panel.renderDebugModeSection();
+        expect((panel.querySelector('#debug-mode-settings') as HTMLElement).style.display).toBe('none');
+    });
+
+    test('stores experimental application switches by bundle name', () => {
+        const panel = createPanel();
+        panel.currentData.debug = {
+            experimental_features: {
+                applications: { appmgr: true, agentoffice: true },
+                account: false,
+                magic_pointer: false
+            }
+        };
+        panel.innerHTML = panel.renderDebugModeSection();
+        panel.saveImmediately = jest.fn(async () => undefined);
+        panel._bindDebugModeEvents();
+
+        const toggle = panel.querySelector('#experimental-appmgr-toggle-hidden') as HTMLInputElement;
+        toggle.checked = false;
+        toggle.dispatchEvent(new Event('change'));
+
+        expect(panel.currentData.debug.experimental_features).toEqual({
+            applications: { appmgr: false, agentoffice: true },
+            account: false,
+            magic_pointer: false
+        });
+        expect(panel.saveImmediately).toHaveBeenCalled();
+    });
+
+    test('development and debugging master switch toggles the child panel', () => {
+        const panel = createPanel();
+        panel.currentData.debug = { developer_mode: false };
+        panel.innerHTML = panel.renderDebugModeSection();
+        panel.saveImmediately = jest.fn(async () => undefined);
+        panel._bindDebugModeEvents();
+
+        const toggle = panel.querySelector('#debug-mode-toggle-hidden') as HTMLInputElement;
+        toggle.checked = true;
+        toggle.dispatchEvent(new Event('change'));
+
+        expect(panel.currentData.debug.developer_mode).toBe(true);
+        expect((panel.querySelector('#debug-mode-settings') as HTMLElement).style.display).toBe('');
+        expect(panel.saveImmediately).toHaveBeenCalled();
+    });
+
     test('renders unified telemetry endpoints and saves a Langfuse endpoint', async () => {
         const panel = createPanel();
         panel.currentData.telemetry = {

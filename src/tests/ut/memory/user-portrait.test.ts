@@ -6,6 +6,7 @@ import fs from 'fs';
 import os from 'os';
 import path from 'path';
 import { jest } from '@jest/globals';
+import { setCustomOpendeskDirectory } from '../../../main/utils/setting.js';
 import { GlobalHooks } from '../../../main/aikernel/hooks';
 import { AssistantMessage, UserMessage } from '../../../main/aikernel/messages';
 import { TaskManagerState, TaskState } from '../../../main/aikernel/states/tasks';
@@ -20,14 +21,28 @@ import {
     writeUserPortrait
 } from '../../../main/aikernel/memory/user_portrait';
 
+const managers: TaskManagerState[] = [];
+
+function createManager(): TaskManagerState {
+    const manager = new TaskManagerState();
+    managers.push(manager);
+    return manager;
+}
+
 let testDir = '';
 
 beforeEach(() => {
     testDir = fs.mkdtempSync(path.join(os.tmpdir(), 'opendesk-user-portrait-test-'));
+    setCustomOpendeskDirectory(testDir);
 });
 
-afterEach(() => {
+afterEach(async () => {
     jest.useRealTimers();
+    for (const manager of managers) {
+        await manager.flushAllPendingSaves();
+    }
+    managers.length = 0;
+    setCustomOpendeskDirectory(undefined);
     GlobalHooks.onTaskReviewHooks = [];
     if (testDir && fs.existsSync(testDir)) {
         fs.rmSync(testDir, { recursive: true, force: true });
@@ -50,7 +65,7 @@ describe('用户画像记忆', () => {
     });
 
     test('review 对话只截取 startMessageIndex 之后的用户和助手文本', () => {
-        const task = new TaskState(new TaskManagerState());
+        const task = new TaskState(createManager());
         task.chat_context.appendMessage(new UserMessage('旧消息'));
 
         const assistant = new AssistantMessage();
@@ -103,7 +118,7 @@ describe('用户画像记忆', () => {
     });
 
     test('任务 internal 标记默认为空且仅在为 true 时序列化', () => {
-        const task = new TaskState(new TaskManagerState());
+        const task = new TaskState(createManager());
 
         expect(task.toSimplifiedJSON()).not.toHaveProperty('internal');
 
@@ -123,7 +138,7 @@ describe('用户画像记忆', () => {
             const callback = jest.fn();
             GlobalHooks.onTaskReview(callback);
 
-            const task = new TaskState(new TaskManagerState());
+            const task = new TaskState(createManager());
             task.recordTaskInteraction();
             task.chat_context.appendMessage(new UserMessage('以后请保持简洁。'));
             task.cancelPendingTaskReview();

@@ -7,7 +7,11 @@ function createSwitcher(developerMode: boolean): TaskSwitcher {
     Setting.updateInstanceData({
         debug: {
             developer_mode: developerMode,
-            experimental_feature: false
+            experimental_features: {
+                applications: { appmgr: false, agentoffice: false },
+                account: false,
+                magic_pointer: false
+            }
         }
     });
 

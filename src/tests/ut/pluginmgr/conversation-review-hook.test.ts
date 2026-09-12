@@ -9,6 +9,14 @@ import { setRuntimePluginDirectories } from '../../../main/applications/pluginmg
 import { getPluginHost } from '../../../main/applications/pluginmgr/runtime/host.js';
 import { Setting, setCustomOpendeskDirectory } from '../../../main/utils/setting.js';
 
+const managers: TaskManagerState[] = [];
+
+function createManager(): TaskManagerState {
+    const manager = new TaskManagerState();
+    managers.push(manager);
+    return manager;
+}
+
 describe('task.review plugin hook', () => {
     let configDirectory: string;
 
@@ -21,6 +29,10 @@ describe('task.review plugin hook', () => {
     });
 
     afterEach(async () => {
+        for (const manager of managers) {
+            await manager.flushAllPendingSaves();
+        }
+        managers.length = 0;
         await disposePluginHost();
         setRuntimePluginDirectories([]);
         Setting.clearCache();
@@ -43,7 +55,7 @@ describe('task.review plugin hook', () => {
             { origin: 'test:conversation-review-observer' }
         );
 
-        const task = new TaskState(new TaskManagerState());
+        const task = new TaskState(createManager());
         task.chat_context.appendMessage(new UserMessage('before review range'));
         const internal = new UserMessage('internal instruction');
         internal.internal = true;
@@ -80,7 +92,7 @@ describe('task.review plugin hook', () => {
             { origin: 'test:internal-review-observer' }
         );
 
-        const task = new TaskState(new TaskManagerState());
+        const task = new TaskState(createManager());
         task.markAsInternal();
         task.chat_context.appendMessage(new UserMessage('internal task'));
         await task.hooks.noticeOnTaskReview({ task, startMessageIndex: 0 });

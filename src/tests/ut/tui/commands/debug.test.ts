@@ -13,7 +13,11 @@ function useTempSettings(): string {
     Setting.updateInstanceData({
         debug: {
             developer_mode: false,
-            experimental_feature: false
+            experimental_features: {
+                applications: { appmgr: false, agentoffice: false },
+                account: false,
+                magic_pointer: false
+            }
         }
     });
     return tempRoot;

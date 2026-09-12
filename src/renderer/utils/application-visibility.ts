@@ -10,21 +10,28 @@
  */
 
 export interface ApplicationMenuItem {
+    bundleName?: string;
     showIcon?: boolean;
     isExperimental?: boolean;
 }
 
+export interface ExperimentalFeatureSettings {
+    applications?: Record<string, boolean>;
+}
+
 export function isExperimentalApplicationEnabled(
-    application: Pick<ApplicationMenuItem, 'isExperimental'>,
-    experimentalFeatureEnabled: boolean
+    application: Pick<ApplicationMenuItem, 'bundleName' | 'isExperimental'>,
+    experimentalFeatures: ExperimentalFeatureSettings | null | undefined
 ): boolean {
-    return !application.isExperimental || experimentalFeatureEnabled;
+    if (!application.isExperimental) return true;
+    const bundleName = application.bundleName;
+    return bundleName ? experimentalFeatures?.applications?.[bundleName] === true : false;
 }
 
 export function isApplicationVisibleInMenu(
     application: ApplicationMenuItem,
-    experimentalFeatureEnabled: boolean
+    experimentalFeatures: ExperimentalFeatureSettings | null | undefined
 ): boolean {
     if (application.showIcon === false) return false;
-    return isExperimentalApplicationEnabled(application, experimentalFeatureEnabled);
+    return isExperimentalApplicationEnabled(application, experimentalFeatures);
 }

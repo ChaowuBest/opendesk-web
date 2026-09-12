@@ -1,4 +1,4 @@
-import { beforeAll, describe, expect, jest, test } from '@jest/globals';
+import { afterEach, beforeAll, beforeEach, describe, expect, jest, test } from '@jest/globals';
 import { parseHTML } from 'linkedom';
 import { updateStreamingText } from '../../../renderer/utils/streaming-text.js';
 import { enhanceCodeBlocks } from '../../../renderer/components/previewer.js';
@@ -13,6 +13,15 @@ describe('streaming Markdown snapshots', () => {
             value: { clipboard: { writeText: clipboard } },
             configurable: true
         });
+    });
+
+    beforeEach(() => {
+        jest.useFakeTimers();
+    });
+
+    afterEach(async () => {
+        await jest.runOnlyPendingTimersAsync();
+        jest.useRealTimers();
     });
 
     function code(text: string, preview = false): string {
@@ -41,6 +50,9 @@ describe('streaming Markdown snapshots', () => {
         copy.click();
         await Promise.resolve();
         expect(clipboard).toHaveBeenLastCalledWith('<svg><text>Hello</text></svg>');
+        expect(copy.classList.contains('code-copy-btn--copied')).toBe(true);
+        await jest.advanceTimersByTimeAsync(1500);
+        expect(copy.classList.contains('code-copy-btn--copied')).toBe(false);
     });
 
     test('rebuilds a changed code block so its copy handler reads the new body', () => {
