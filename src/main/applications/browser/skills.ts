@@ -262,6 +262,23 @@ CallSkillTool({
 - \`action: "switch"\` — 切换到指定标签页（需提供 tabId）
 - \`action: "close"\` — 关闭标签页（需提供 tabId）
 
+## 截图
+
+使用 **screenshot** 将标签页当前视口的内容截图为 PNG，保存到当前任务的 artifacts 目录：
+- \`tabId\`：要截图的标签页（默认当前活动标签页；指定时会先切换到该标签页）
+- 返回 JSON 中的 \`path\` 为图片文件路径，可直接交付给用户，或用 readImage 等工具读取查看
+- 截图只包含当前视口，长页面需要完整截图时可配合 scrollTo 分段截取
+
+示例：
+\`\`\`
+CallSkillTool({
+  "bundleName": "browser",
+  "skillName": "use-browser",
+  "toolName": "screenshot",
+  "toolArgs": { "tabId": 2 }
+})
+\`\`\`
+
 ## 执行脚本
 
 使用 **evaluate** 在当前页面执行任意 JavaScript 表达式并返回结果。

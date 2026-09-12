@@ -38,6 +38,7 @@ import {
     BrowserEvaluateTool,
     BrowserTriggerTool,
     BrowserTabsTool,
+    BrowserScreenshotTool,
     BrowserWaitForTool,
     BrowserDropHistoryTool
 } from './tools';
@@ -621,6 +622,7 @@ class BrowserApplication extends BaseApplication {
             new BrowserEvaluateTool(this),
             new BrowserTriggerTool(this),
             new BrowserTabsTool(this),
+            new BrowserScreenshotTool(this),
             new BrowserWaitForTool(this)
         ]) {
             toolset.addTool(this._withAutomatedDownloads(tool));
