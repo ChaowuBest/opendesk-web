@@ -136,10 +136,15 @@ node {
                                         set -euo pipefail
 
                                         {
- 	                                        echo "=== docs freshness check ==="
- 	                                        npm run check:docs
- 	                                        echo ""
- 	                                        echo "=== unit tests ==="
+	                                        echo "=== docs freshness check ==="
+	                                        npm run check:docs
+	                                        echo ""
+	                                        echo "=== builtin plugin ZIP tests ==="
+	                                        npx tsx --test \
+	                                          src/tests/ut/node/packaging/builtin-plugin-zip.test.ts \
+	                                          src/tests/ut/node/packaging/wps-builtin-plugin-packaging.test.js
+	                                        echo ""
+	                                        echo "=== unit tests ==="
  	                                        npm run test:unit -- \
  	                                          --json \
  	                                          --outputFile "${CI_LOG_DIR}/jest-unit-results.json"

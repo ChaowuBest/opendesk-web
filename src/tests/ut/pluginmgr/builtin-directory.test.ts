@@ -35,6 +35,22 @@ describe('内置插件目录的应用根定位', () => {
         expect(findBuiltinPluginsDirectoryFrom(start)).toBe(plugins);
     });
 
+    test('npm CLI release 布局：从包根入口定位 dist/plugins', () => {
+        const release = markAppRoot();
+        fs.writeFileSync(path.join(release, 'opendesk'), 'cli fixture');
+        const plugins = makeDirectory('dist', 'plugins');
+
+        expect(findBuiltinPluginsDirectoryFrom(release)).toBe(plugins);
+    });
+
+    test('npm CLI release 不把顶层 plugins 误认为 builtin 目录', () => {
+        const release = markAppRoot();
+        fs.writeFileSync(path.join(release, 'opendesk'), 'cli fixture');
+        makeDirectory('plugins');
+
+        expect(findBuiltinPluginsDirectoryFrom(release)).toBeUndefined();
+    });
+
     test('鸿蒙 HAP 布局：resources/app 下只有源目录 resources/plugins 时也能定位', () => {
         markAppRoot('resources', 'app');
         const plugins = makeDirectory('resources', 'app', 'resources', 'plugins');

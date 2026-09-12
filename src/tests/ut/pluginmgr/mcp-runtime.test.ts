@@ -1,4 +1,6 @@
 import { fileURLToPath } from 'url';
+import { jest } from '@jest/globals';
+import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { getPluginHost } from '../../../main/applications/pluginmgr/runtime/host.js';
 import {
     disposePluginMcpRuntime,
@@ -11,6 +13,7 @@ describe('PluginMcpRuntime', () => {
     const server = fileURLToPath(new URL('./fixtures/plugin-mcp-server.mjs', import.meta.url));
 
     afterEach(async () => {
+        jest.restoreAllMocks();
         await getPluginHost().dispose();
         await disposePluginMcpRuntime();
     });
@@ -45,7 +48,13 @@ describe('PluginMcpRuntime', () => {
         const toolsets = await getPluginMcpToolsets(process.cwd());
         expect(getPluginHost().get('mcp-contributor')?.diagnostics).toEqual([]);
         const tool = toolsets[0]?.getTool('echo_server__echo');
+        const callTool = jest.spyOn(Client.prototype, 'callTool');
         const result = await tool?.execute({ text: 'OpenDesk' });
+        expect(callTool).toHaveBeenCalledWith({ name: 'echo', arguments: { text: 'OpenDesk' } }, undefined, {
+            timeout: 180_000,
+            resetTimeoutOnProgress: true,
+            maxTotalTimeout: 300_000
+        });
 
         expect(toolsets[0]?.name).toBe('plugin-mcp-mcp-contributor');
         expect(`${toolsets[0]?.name}-${tool?.name}`).toMatch(/^[a-zA-Z0-9_-]+$/);

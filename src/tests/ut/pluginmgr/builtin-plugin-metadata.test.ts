@@ -1,5 +1,8 @@
 import fs from 'fs';
+import os from 'os';
 import path from 'path';
+import { pathToFileURL } from 'url';
+import { materializeBuiltinPluginZip } from '../../../../scripts/lib/builtin-plugin-zip.js';
 import { parsePluginManifest } from '../../../main/applications/pluginmgr/discovery/manifest.js';
 
 // 内置插件的静态元数据（displayName、description、version 等）只允许声明在
@@ -32,12 +35,43 @@ function listBuiltinPluginDirectories(): string[] {
 
 describe('内置插件元数据声明', () => {
     const pluginDirectories = listBuiltinPluginDirectories();
+    const artifactDirectories = pluginDirectories.filter((directory) =>
+        fs.existsSync(path.join(directory, 'artifact-manifest.json'))
+    );
+    const sourceDirectories = pluginDirectories.filter((directory) => !artifactDirectories.includes(directory));
 
     test('内置插件目录存在且非空', () => {
         expect(pluginDirectories.length).toBeGreaterThan(0);
     });
 
-    test.each(pluginDirectories.map((directory) => [path.basename(directory), directory] as const))(
+    // ZIP 是已发布产物；验证哈希及导出值一致性，不对其入口套用源码正则规则。
+    test.each(artifactDirectories.map((directory) => [path.basename(directory), directory] as const))(
+        '%s 的 ZIP manifest 与入口元数据保持一致',
+        async (id, directory) => {
+            const temporary = fs.mkdtempSync(path.join(os.tmpdir(), 'builtin-plugin-metadata-'));
+            try {
+                const artifact = materializeBuiltinPluginZip(directory, temporary);
+                const manifest = parsePluginManifest(
+                    JSON.parse(fs.readFileSync(path.join(temporary, 'opendesk.plugin.json'), 'utf-8'))
+                );
+                expect(manifest.id).toBe(id);
+                expect(manifest.id).toBe(artifact.pluginId);
+                expect(manifest.version).toBe(artifact.pluginVersion);
+                expect(manifest.entry).toBeTruthy();
+                const entryFile = path.resolve(temporary, manifest.entry as string);
+                expect(fs.existsSync(entryFile)).toBe(true);
+                const entry = (await import(pathToFileURL(entryFile).href)).default;
+                expect(entry.id).toBe(manifest.id);
+                for (const key of MANIFEST_METADATA_KEYS) {
+                    if (Object.hasOwn(entry, key)) expect(entry[key]).toEqual(manifest[key]);
+                }
+            } finally {
+                fs.rmSync(temporary, { recursive: true, force: true });
+            }
+        }
+    );
+
+    test.each(sourceDirectories.map((directory) => [path.basename(directory), directory] as const))(
         '%s 的元数据只声明在 manifest，入口不重复声明',
         (_name, directory) => {
             const manifestFile = path.join(directory, 'opendesk.plugin.json');
