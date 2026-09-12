@@ -178,7 +178,6 @@ export class ChatNavigation {
         const existing = new Map(this.buttons.map((button) => [button.dataset.messageId, button]));
         this.stops = stops;
         this.root.hidden = stops.length < 2;
-        this.history.classList.toggle('od-chat-has-nav', stops.length >= 2);
         this.buttons = stops.map((stop, index) => {
             const button = existing.get(stop.id) || document.createElement('button');
             if (!existing.has(stop.id)) {
@@ -373,7 +372,6 @@ export class ChatNavigation {
         this.observer.disconnect();
         this.resizeObserver?.disconnect();
         this.history.removeEventListener('scroll', this.onScroll);
-        this.history.classList.remove('od-chat-has-nav');
         this.root.remove();
     }
 }
