@@ -170,8 +170,8 @@ function exposeTaskManagerAPI() {
             }
             return result.data;
         },
-        setTaskModel: async (taskId, modelAlias) => {
-            const result = await ipcRenderer.invoke('taskManager:setTaskModel', taskId, modelAlias);
+        setTaskModel: async (taskId, modelAlias, reasoningEffort) => {
+            const result = await ipcRenderer.invoke('taskManager:setTaskModel', taskId, modelAlias, reasoningEffort);
             if (result.status !== 'ok') {
                 console.error('setting task model failed', result.message);
                 throw new Error(result.message);

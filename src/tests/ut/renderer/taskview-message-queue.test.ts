@@ -114,6 +114,47 @@ describe('task-view message queue', () => {
         };
     });
 
+    test.each(['high', 'none', ''])('切换模型档位 %s 时立即传给任务 API，重新加载恢复所选档位', async (effort) => {
+        const taskState = {
+            model: 'model-a',
+            reasoningEffort: 'low',
+            task_status: 'stopped',
+            chat_context: { messages: [] }
+        };
+        const setTaskModel = jest.fn(async (_taskId: string, model: string, reasoningEffort?: string) => {
+            taskState.model = model;
+            if (reasoningEffort !== undefined) taskState.reasoningEffort = reasoningEffort;
+        });
+        window.taskManagerAPI = {
+            submitMessage,
+            setTaskModel,
+            getFullTask: jest.fn(async () => ({ ...taskState })),
+            getModelContextSize: jest.fn(async () => 0),
+            getTaskTodos: jest.fn(async () => [])
+        };
+        const taskView = document.createElement('task-view') as any;
+        taskView.task_id = 'task-effort';
+        taskView.render();
+        taskView.setUpEventListeners();
+        const input = taskView.querySelector('#task-task-effort-input');
+        input.setReasoningEffort = jest.fn();
+        try {
+            input.dispatchEvent(
+                new CustomEvent('model-changed', {
+                    detail: { model: 'model-a', reasoningEffort: effort }
+                })
+            );
+            await new Promise((resolve) => setTimeout(resolve, 0));
+            expect(setTaskModel).toHaveBeenCalledWith('task-effort', 'model-a', effort);
+
+            await taskView.reload();
+            expect(input.setReasoningEffort).toHaveBeenLastCalledWith(effort);
+            expect(submitMessage).not.toHaveBeenCalled();
+        } finally {
+            taskView.disconnectedCallback();
+        }
+    });
+
     test('interrupts the current turn without stopping child tasks before sending a queued message immediately', async () => {
         const interruptForNewMessage = jest.fn(async () => undefined);
         window.taskManagerAPI = {
