@@ -2010,6 +2010,7 @@ class TaskView extends HTMLElement {
             const input_widget = this.querySelector(`#task-${this.task_id}-input`);
             if (input_widget) {
                 input_widget.taskId = this.task_id;
+                this._syncInputTaskWorkspace();
                 if (task_state.model) {
                     input_widget.setModel(task_state.model);
                 }
@@ -3825,6 +3826,7 @@ class TaskView extends HTMLElement {
                     await window.taskManagerAPI.updateTaskWorkspace(this.task_id, selected);
                     this._taskWorkspace = selected;
                     this._toolbar.setToolbarSubtitle(selected, wsClickHandler, taskViewT('workspace.taskLabel'));
+                    this._syncInputTaskWorkspace();
                     document.dispatchEvent(new CustomEvent('workspace-changed'));
                 }
             };
@@ -3863,7 +3865,16 @@ class TaskView extends HTMLElement {
                 },
                 taskViewT('workspace.taskLabel')
             );
+            this._syncInputTaskWorkspace();
             document.dispatchEvent(new CustomEvent('workspace-changed'));
+        }
+    }
+
+    /** 将任务工作空间同步给任务内输入框，使 @ 文件补全跟随任务工作空间 */
+    _syncInputTaskWorkspace() {
+        const input_widget = this.querySelector(`#task-${this.task_id}-input`);
+        if (input_widget && typeof input_widget.setTaskWorkspace === 'function') {
+            input_widget.setTaskWorkspace(this._taskWorkspace);
         }
     }
 
@@ -4843,7 +4854,7 @@ class TaskView extends HTMLElement {
                     <exit-plan-mode-prompt id="task-${this.task_id}-exit-plan" class="block px-4"></exit-plan-mode-prompt>
 
                     <!-- 输入区域 -->
-                    <div class="px-3 pb-3 pt-1">
+                    <div class="pb-3 pt-1" style="padding-left: 30px; padding-right: 30px;">
                         <!-- 消息队列面板 -->
                         <message-queue-panel id="message-queue-panel"></message-queue-panel>
                         <agent-input id="task-${this.task_id}-input" hide-search />
@@ -4938,6 +4949,7 @@ class TaskView extends HTMLElement {
         // 为输入框添加事件监听器
         const input_widget = this.querySelector(`#task-${this.task_id}-input`);
         input_widget.taskId = this.task_id;
+        this._syncInputTaskWorkspace();
         input_widget.addEventListener('model-changed', async (event) => {
             const modelAlias = event.detail?.model;
             if (modelAlias) {

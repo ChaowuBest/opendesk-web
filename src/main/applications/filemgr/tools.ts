@@ -3370,6 +3370,11 @@ export class SemanticSearchTool extends BaseTool<typeof semanticSearchSchema> {
         this.setExecutor(this.executeCommand);
     }
 
+    // 未配置向量嵌入模型时语义搜索必然失败（EMBED_UNAVAILABLE），直接从工具集中屏蔽
+    isAvailable(_taskState?: TaskState): boolean {
+        return Setting.getInstance().getDefaultEmbeddingModelInstance() != null;
+    }
+
     async renderToolCall(toolcall: ToolCall): Promise<string | undefined> {
         const query = toolcall.args_object?.['query'] as string | undefined;
         const maxResults = toolcall.args_object?.['maxResults'] as number | undefined;

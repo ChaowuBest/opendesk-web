@@ -365,7 +365,290 @@ if (typeof window !== 'undefined') {
     window.settingAPI?.onSettingChanged?.(updatePreviewerTranslator);
 }
 
-export function createMermaidConfig(darkTheme: boolean) {
+/**
+ * OpenDesk 设计系统调色板，与 docs/designs/modal.html 的设计 Token 同源
+ * （暖灰表面 + 品牌红强调，深浅色仅做明度翻转、不加蓝）。
+ * 深色模式的 rgba 浅底已按卡片底色 (#2A2826) 预合成为不透明 hex，
+ * 因为 Mermaid 生成的 SVG 填充不继承页面上下文的半透明混色。
+ */
+interface MermaidPalette {
+    page: string;
+    bg: string;
+    card: string;
+    line: string;
+    lineSoft: string;
+    ink: string;
+    ink2: string;
+    ink3: string;
+    accent: string;
+    accentSoft: string;
+    blue: string;
+    blueSoft: string;
+    green: string;
+    greenSoft: string;
+    amber: string;
+    amberSoft: string;
+    red: string;
+    redSoft: string;
+}
+
+const MERMAID_PALETTES: Record<'light' | 'dark', MermaidPalette> = {
+    light: {
+        page: '#FBFAF8',
+        bg: '#F5F4F2',
+        card: '#FFFFFF',
+        line: '#E7E5E2',
+        lineSoft: '#EFEEEA',
+        ink: '#1C1917',
+        ink2: '#4A4642',
+        ink3: '#8A8580',
+        accent: '#DF4436',
+        accentSoft: '#FDEEEC',
+        blue: '#4267B2',
+        blueSoft: '#EBF1FB',
+        green: '#1F9D66',
+        greenSoft: '#E7F5EE',
+        amber: '#B87503',
+        amberSoft: '#FDF3E3',
+        red: '#DC2626',
+        redSoft: '#FEF2F2'
+    },
+    dark: {
+        page: '#1B1A18',
+        bg: '#232120',
+        card: '#2A2826',
+        line: '#3B3835',
+        lineSoft: '#33302D',
+        ink: '#EFEDEA',
+        ink2: '#D5D1CB',
+        ink3: '#9B968F',
+        accent: '#E8563F',
+        accentSoft: '#482F2A',
+        blue: '#7AA2E8',
+        blueSoft: '#373B45',
+        green: '#3DBF82',
+        greenSoft: '#2D3F34',
+        amber: '#E2A23B',
+        amberSoft: '#463A29',
+        red: '#E85A5A',
+        redSoft: '#473030'
+    }
+};
+
+/**
+ * pie / timeline / journey / mindmap 使用的 12 色分类色带。
+ * 全部取自 modal.html 调色盘的深浅两版语义色与跨模式变体，
+ * 并按明度从高到低排序、避免相邻色块同色（mermaid 按节点层级循环取色，
+ * 相邻同色会无法区分）。
+ */
+const MERMAID_RAMPS: Record<'light' | 'dark', string[]> = {
+    light: [
+        '#ED6B56',
+        '#4267B2',
+        '#3DBF82',
+        '#E2A23B',
+        '#B98AE0',
+        '#E85A5A',
+        '#DF4436',
+        '#7AA2E8',
+        '#1F9D66',
+        '#B87503',
+        '#7B4BAA',
+        '#DC2626'
+    ],
+    dark: [
+        '#ED6B56',
+        '#7AA2E8',
+        '#3DBF82',
+        '#E2A23B',
+        '#B98AE0',
+        '#E85A5A',
+        '#E8563F',
+        '#4267B2',
+        '#1F9D66',
+        '#B87503',
+        '#7B4BAA',
+        '#DC2626'
+    ]
+};
+
+function buildMermaidThemeVariables(darkTheme: boolean): Record<string, string | boolean> {
+    const p = MERMAID_PALETTES[darkTheme ? 'dark' : 'light'];
+    const ramp = MERMAID_RAMPS[darkTheme ? 'dark' : 'light'];
+    const variables: Record<string, string | boolean> = {
+        darkMode: darkTheme,
+        background: p.page,
+
+        /* 文字层级（ink→ink3）与连接线 */
+        textColor: p.ink2,
+        titleColor: p.ink,
+        nodeTextColor: p.ink,
+        lineColor: p.ink3,
+        defaultLinkColor: p.ink3,
+        edgeLabelBackground: p.page,
+        clusterBkg: p.bg,
+        clusterBorder: p.line,
+
+        /* 节点三级填充：蓝(主) / 绿(次) / 琥珀(三) */
+        primaryColor: p.blueSoft,
+        primaryTextColor: p.ink,
+        primaryBorderColor: p.blue,
+        secondaryColor: p.greenSoft,
+        secondaryTextColor: p.ink2,
+        secondaryBorderColor: p.green,
+        tertiaryColor: p.amberSoft,
+        tertiaryTextColor: p.ink2,
+        tertiaryBorderColor: p.amber,
+        mainBkg: p.blueSoft,
+        nodeBorder: p.blue,
+
+        /* sequence 图 */
+        actorBkg: p.card,
+        actorBorder: p.blue,
+        actorTextColor: p.ink,
+        actorLineColor: p.line,
+        signalColor: p.ink2,
+        signalTextColor: p.ink2,
+        // alt/opt 分支框是信息性分支而非警告，改用信息蓝的浅底，
+        // 避免与 note（琥珀=标注/警示）的语义混淆
+        labelBoxBkgColor: p.blueSoft,
+        labelBoxBorderColor: p.blue,
+        labelTextColor: p.blue,
+        loopTextColor: p.blue,
+        activationBkgColor: p.blueSoft,
+        activationBorderColor: p.blue,
+        // autonumber 圆点填充为 lineColor（中灰），深色文字对比度最高
+        sequenceNumberColor: darkTheme ? p.page : p.ink,
+
+        /* note / state */
+        noteBkgColor: p.amberSoft,
+        noteTextColor: p.ink2,
+        noteBorderColor: p.amber,
+        stateBkg: p.blueSoft,
+        stateLabelColor: p.ink,
+        labelColor: p.ink,
+        altBackground: p.bg,
+        compositeBackground: p.bg,
+        compositeBorder: p.line,
+        compositeTitleBackground: p.lineSoft,
+        innerEndBackground: p.blue,
+        specialStateColor: p.blue,
+        transitionColor: p.ink3,
+        transitionLabelColor: p.ink2,
+        labelBackgroundColor: p.page,
+        errorBkgColor: p.redSoft,
+        errorTextColor: p.red,
+
+        /* class / er */
+        classText: p.ink,
+        attributeBackgroundColorOdd: p.card,
+        attributeBackgroundColorEven: p.bg,
+
+        /* gantt：默认蓝、进行中品牌红、已完成绿、关键红 */
+        sectionBkgColor: p.bg,
+        sectionBkgColor2: p.lineSoft,
+        altSectionBkgColor: p.page,
+        gridColor: p.line,
+        todayLineColor: p.accent,
+        taskBkgColor: p.blueSoft,
+        taskBorderColor: p.blue,
+        activeTaskBkgColor: p.accentSoft,
+        activeTaskBorderColor: p.accent,
+        doneTaskBkgColor: p.greenSoft,
+        doneTaskBorderColor: p.green,
+        critBkgColor: p.redSoft,
+        critBorderColor: p.red,
+        taskTextColor: p.ink2,
+        taskTextDarkColor: p.ink,
+        taskTextOutsideColor: p.ink2,
+        taskTextLightColor: p.card,
+        taskTextClickableColor: p.blue,
+        // mermaid 默认 vertLine 为 navy/#00BFFF、exclude 为 #eeeeee，
+        // 均与暖灰色系冲突，深色模式下尤甚，这里归一到主题 token
+        vertLineColor: p.ink3,
+        excludeBkgColor: p.lineSoft,
+
+        /* pie */
+        pieStrokeColor: darkTheme ? p.page : p.card,
+        pieOuterStrokeColor: p.line,
+        pieOpacity: '0.85',
+        pieTitleTextColor: p.ink,
+        pieSectionTextColor: '#FFFFFF',
+        pieLegendTextColor: p.ink2,
+
+        /* journey：face 默认 #FFF8DC 硬编码，提供 faceColor 盖掉 */
+        faceColor: p.amberSoft,
+
+        /* mindmap / timeline 根节点与时间轴主线 */
+        // 根节点默认取 git0（跟随 primaryColor），文字 gitBranchLabel0；
+        // 时间轴主线 stroke 用 nodeBorder
+        git0: p.accent,
+        gitBranchLabel0: '#FFFFFF',
+        arrowheadColor: p.ink3
+    };
+
+    /* 分类色带：pie1-12、cScale0-11（timeline/mindmap）、fillType0-7（journey）。
+     * journey 的 section 色块与标题文字共用 .section-type-N 的 CSS fill，
+     * 所以 fillType 用蓝/绿浅底交替，标题文字由 themeCSS 的
+     * text.section-type-N 规则覆盖为正文色。 */
+    ramp.forEach((color, i) => {
+        variables[`pie${i + 1}`] = color;
+        variables[`cScale${i}`] = color;
+        variables[`cScaleLabel${i}`] = '#FFFFFF';
+        variables[`cScalePeer${i}`] = ramp[i % 6];
+        if (i < 8) variables[`fillType${i}`] = i % 2 === 0 ? p.blueSoft : p.greenSoft;
+        // cScaleInv 是节点内装饰性波浪线的描边，默认由色带取补色，
+        // 会跳出暖灰主题（深色模式下变成蓝青杂色），统一改为主题的柔和边线
+        variables[`cScaleInv${i}`] = p.lineSoft;
+    });
+    return variables;
+}
+
+function buildMermaidThemeCSS(darkTheme: boolean): string {
+    const p = MERMAID_PALETTES[darkTheme ? 'dark' : 'light'];
+    const softFills = [
+        p.blueSoft,
+        p.greenSoft,
+        p.amberSoft,
+        p.accentSoft,
+        p.redSoft,
+        p.lineSoft,
+        p.blueSoft,
+        p.greenSoft
+    ];
+    // journey：色块用浅底、标题文字用正文色。
+    // section 标题文字继承 .section-type-N 的 CSS fill（与色块同规则），
+    // 不加 text 前缀覆盖的话会"浅底浅字"不可读。实测 themeCSS 会展开成
+    // #id .section-type-N 规则追加在 mermaid 自身模板之后，优先级稳定胜出。
+    const journeySection = softFills.map((fill, i) => `text.section-type-${i} { fill: ${p.ink2}; }`).join('\n');
+    return [
+        /* journey 笑脸与表情线默认硬编码黄脸/灰线，统一到琥珀语义色 */
+        `.face { fill: ${p.amberSoft}; stroke: ${p.amber}; }`,
+        `.mouth { stroke: ${p.ink3}; }`,
+        /* journey 任务竖直虚线默认 #666 硬编码 */
+        `line.task-line { stroke: ${p.line}; }`,
+        journeySection,
+        /* timeline 主轴线 stroke 取 nodeBorder（信息蓝），页面浅底上偏轻
+         * 且与年份胶囊撞色，改为中性线色 */
+        `.lineWrapper line { stroke: ${p.ink3}; }`,
+        /* mindmap 根节点文字默认 text-anchor:start，在圆内偏右
+         * （mermaid 原生缺陷），居中修正 */
+        `.section-root .label text { text-anchor: middle; }`,
+        ''
+    ]
+        .filter(Boolean)
+        .join('\n');
+}
+
+export function createMermaidConfig(darkTheme: boolean): {
+    startOnLoad: boolean;
+    securityLevel: 'strict';
+    htmlLabels: boolean;
+    flowchart: { htmlLabels: boolean };
+    theme: 'dark' | 'default';
+    themeVariables: Record<string, string | boolean>;
+    themeCSS: string;
+} {
     return {
         startOnLoad: false,
         securityLevel: 'strict' as const,
@@ -373,7 +656,9 @@ export function createMermaidConfig(darkTheme: boolean) {
         flowchart: {
             htmlLabels: false
         },
-        theme: darkTheme ? ('dark' as const) : ('default' as const)
+        theme: darkTheme ? ('dark' as const) : ('default' as const),
+        themeVariables: buildMermaidThemeVariables(darkTheme),
+        themeCSS: buildMermaidThemeCSS(darkTheme)
     };
 }
 

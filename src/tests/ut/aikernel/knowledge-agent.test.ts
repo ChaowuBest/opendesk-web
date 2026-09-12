@@ -22,17 +22,22 @@ function makeContext(): TaskContext {
     };
 }
 
-function mockRawFileMgrConfig(config: unknown): void {
-    jest.spyOn(Setting, 'getInstance').mockReturnValue({
-        getApplicationConfig: (applicationName: string) => (applicationName === 'filemgr' ? config : undefined)
-    } as unknown as Setting);
+function mockRawFileMgrConfig(config: unknown, embeddingModel: unknown = {}): void {
+    const realSetting = Setting.getInstance();
+    jest.spyOn(realSetting, 'getApplicationConfig').mockImplementation(
+        (applicationName: string) => (applicationName === 'filemgr' ? config : undefined) as never
+    );
+    jest.spyOn(realSetting, 'getDefaultEmbeddingModelInstance').mockImplementation(() => embeddingModel as never);
 }
 
-function mockFileMgrConfig(enabled: boolean, roots: string[]): void {
-    mockRawFileMgrConfig({
-        enabled,
-        entries: roots.map((root) => ({ root }))
-    });
+function mockFileMgrConfig(enabled: boolean, roots: string[], embeddingModel: unknown = {}): void {
+    mockRawFileMgrConfig(
+        {
+            enabled,
+            entries: roots.map((root) => ({ root }))
+        },
+        embeddingModel
+    );
 }
 
 const KNOWLEDGE_REPORT = `## 检索结论
@@ -143,6 +148,16 @@ describe('KnowledgeAgent declaration and prompt', () => {
         expect(prompt).toContain("type='fail'");
     });
 
+    test('instructs fail-fast when semanticSearch is not mounted without an embedding model', async () => {
+        mockFileMgrConfig(true, [SOURCE_ROOT], null);
+        const prompt = await new KnowledgeAgentDecl().createSystemPrompt(KNOWLEDGE_AGENT_DEFAULT_MODE, makeContext());
+
+        expect(prompt).toContain('没有配置向量嵌入模型');
+        expect(prompt).toContain('semanticSearch 工具当前没有挂载');
+        expect(prompt).toContain('你只有一个工具');
+        expect(prompt).not.toContain('filemgr-semanticSearch');
+    });
+
     test.each([
         ['non-array entries', { enabled: true, entries: 'invalid' }],
         ['invalid entry roots', { enabled: true, entries: [null, { root: '   ' }, { root: 123 }] }]
@@ -213,6 +228,7 @@ describe('KnowledgeAgent declaration and prompt', () => {
 
 describe('KnowledgeAgent task plumbing', () => {
     test('filters a child TaskState to semanticSearch and attemptCompletion', async () => {
+        mockFileMgrConfig(true, [SOURCE_ROOT]);
         const manager = new TaskManagerState();
         manager.toolsetProvider = {
             listAvailableToolsets: async () => [createFileMgrToolsetWithSemanticSearch()]
@@ -230,6 +246,26 @@ describe('KnowledgeAgent task plumbing', () => {
             .sort();
 
         expect(toolNames).toEqual(['filemgr-semanticSearch', 'planning-attemptCompletion']);
+    });
+
+    test('buildToolsets gates semanticSearch on the configured embedding model', async () => {
+        const manager = new TaskManagerState();
+        manager.toolsetProvider = {
+            listAvailableToolsets: async () => [createFileMgrToolsetWithSemanticSearch()]
+        };
+        jest.spyOn(manager, 'save').mockImplementation(() => {});
+        const task = new TaskState(manager);
+        manager.tasks.push(task);
+
+        mockFileMgrConfig(true, [SOURCE_ROOT], null);
+        expect((await task.buildToolsets()).flatMap((toolset) => [...toolset.tools.keys()])).not.toContain(
+            'semanticSearch'
+        );
+
+        mockFileMgrConfig(true, [SOURCE_ROOT]);
+        expect((await task.buildToolsets()).flatMap((toolset) => [...toolset.tools.keys()])).toContain(
+            'semanticSearch'
+        );
     });
 
     test('wires a looked-up Knowledge declaration into a child TaskState and propagates a synthetic completion report', async () => {

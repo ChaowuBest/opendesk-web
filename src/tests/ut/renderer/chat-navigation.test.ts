@@ -162,7 +162,20 @@ describe('conversation quick navigation', () => {
         expect((host.querySelector('.od-chat-nav-preview') as HTMLElement).hidden).toBe(true);
         nav.setStops([]);
         expect((host.querySelector('.od-chat-nav') as HTMLElement).hidden).toBe(true);
-        expect(history.classList.contains('od-chat-has-nav')).toBe(false);
+    });
+
+    test('chat padding is independent of the turn count so the layout never jumps', () => {
+        const { history, nav } = createNavigation();
+        nav.setStops([{ id: 'u1', title: 'One', preview: '' }]);
+        nav.setStops([
+            { id: 'u1', title: 'One', preview: '' },
+            { id: 'u2', title: 'Two', preview: '' }
+        ]);
+        // 第二轮消息出现时（指示器从隐藏变为显示）边距类不应被切换，否则整体布局会跳动
+        expect(history.className).toBe('');
+        nav.setStops([]);
+        nav.destroy();
+        expect(history.className).toBe('');
     });
 
     test('ordinary scrolling only updates position, while content changes refresh summaries and teardown cancels pending work', () => {

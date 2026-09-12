@@ -33,9 +33,10 @@ import type { TaskState } from '../../aikernel/states/tasks';
 import type { PermissionRequest } from '../../aikernel/security/permission.js';
 import type { BrowserApplication } from './app';
 import { logger } from '../../utils/logger.js';
-import { Setting } from '../../utils/setting.js';
+import { Setting, getTaskArtifactDirectory } from '../../utils/setting.js';
 import { makeActionInvokeExpression, renderBrowserHintsFor, resolveActionHint } from './hints.js';
 import { cleanPathInput, fromMsysPath, getHomePath, normalizePath } from '../../../utils/path.js';
+import { randomUUID } from 'node:crypto';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 
@@ -1029,6 +1030,70 @@ export class BrowserTabsTool extends BaseTool<typeof BrowserTabsArgsSchema> {
             const ctrl = getController(this.browserApp, taskId);
             const result = await ctrl.tabs(args.action, args.tabId, args.url);
             return withSnapshot(ctrl, args.snapshot, result);
+        } catch (err: any) {
+            return fail(err.message || String(err));
+        }
+    }
+}
+
+// ========== screenshot ==========
+
+const BrowserScreenshotArgsSchema = z.object({
+    tabId: z.number().int().optional().describe('要截图的标签页 ID（默认当前活动标签页）。指定时会先切换到该标签页')
+});
+
+export class BrowserScreenshotTool extends BaseTool<typeof BrowserScreenshotArgsSchema> {
+    private browserApp: BrowserApplication;
+
+    constructor(browserApp: BrowserApplication) {
+        super(
+            'screenshot',
+            '将浏览器标签页当前视口的内容截图为 PNG，保存到当前任务的 artifacts 目录并返回文件路径。可通过 tabId 指定标签页（会先切换到该标签页），默认截取当前活动标签页。',
+            BrowserScreenshotArgsSchema
+        );
+        this.browserApp = browserApp;
+        this.setExecutor(this.handleExecute.bind(this));
+    }
+
+    renderToolCallCli(toolcall: ToolCall, width: number): string[] | undefined {
+        const args = toolcall.args_object as any;
+        const body: string[] = [];
+        if (args?.tabId !== undefined) body.push(chalk.dim('  标签页: ') + chalk.yellow(String(args.tabId)));
+        if (toolcall.status === 'running') body.push(chalk.dim('  ⏳ 正在截图…'));
+        else if (toolcall.status === 'success' && toolcall.result) {
+            try {
+                const r = JSON.parse(toolcall.result);
+                if (r.path) body.push(chalk.dim('  ✓ 已保存: ') + chalk.cyan(truncText(String(r.path), width - 16)));
+            } catch {
+                /* ok */
+            }
+        } else if (toolcall.status === 'error' && toolcall.result)
+            body.push(chalk.redBright('  ' + truncText(String(toolcall.result), width - 10)));
+        return new Card({ icon: '📸', title: '页面截图', status: statusDisplay(toolcall.status), body }).render(width);
+    }
+
+    private async handleExecute(
+        args: z.output<typeof BrowserScreenshotArgsSchema>,
+        taskState?: TaskState
+    ): Promise<string> {
+        const taskId = taskState?.task_id;
+        if (!taskId) return fail('No task context');
+
+        try {
+            const ctrl = getController(this.browserApp, taskId);
+            // 截图作用于当前活动 webview，与 trigger 相同：先切换到目标标签页
+            if (args.tabId !== undefined) await ctrl.tabs('switch', args.tabId);
+            const dataUri = await ctrl.captureScreenshot();
+
+            const match = dataUri.match(/^data:(image\/[a-z0-9.+-]+);base64,(.+)$/);
+            if (!match) return fail(`截图返回了非图片的 data URI: ${dataUri.slice(0, 64)}`);
+            const ext = match[1].split('/')[1] || 'png';
+            const fileName = `screenshot-${Date.now()}-${randomUUID()}.${ext}`;
+            const filePath = path.join(getTaskArtifactDirectory(taskId), fileName);
+            await fs.writeFile(filePath, Buffer.from(match[2], 'base64'));
+
+            const page = await ctrl.getPageInfo();
+            return ok({ path: filePath, tabId: args.tabId, url: page.url, title: page.title });
         } catch (err: any) {
             return fail(err.message || String(err));
         }

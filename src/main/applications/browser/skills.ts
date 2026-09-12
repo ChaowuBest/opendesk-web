@@ -63,6 +63,8 @@ description: 提供嵌入式网页浏览器控制功能：访问网页、页面�
 
 底层通过 Chrome DevTools Protocol (CDP) 定位和控制目标页面。键鼠操作遵循焦点隔离：后台任务或用户正在操作 OpenDesk 时，在目标 frame 内定向执行，不主动切换窗口、任务或输入焦点；仅当目标 webview 本来就拥有焦点时，才使用原生 CDP 输入事件。
 
+下方所有示例均按 skill-manager-CallSkillTool 的真实调用参数结构书写（bundleName / skillName / toolName / toolArgs），其中 toolName 不可省略。
+
 ## 核心工作流
 
 每次与页面交互前，**必须先调用 snapshot** 获取页面快照和元素 ref：
@@ -93,11 +95,19 @@ description: 提供嵌入式网页浏览器控制功能：访问网页、页面�
 
 示例：
 \`\`\`
-// 点击按钮后自动获取快照
-click({ target: "e8", snapshot: true })
+CallSkillTool({
+  "bundleName": "browser",
+  "skillName": "use-browser",
+  "toolName": "click",
+  "toolArgs": { "target": "e8", "snapshot": true }
+})
 
-// 输入并提交搜索后自动获取快照
-type({ target: "e3", text: "关键词", submit: true, snapshot: true })
+CallSkillTool({
+  "bundleName": "browser",
+  "skillName": "use-browser",
+  "toolName": "type",
+  "toolArgs": { "target": "e3", "text": "关键词", "submit": true, "snapshot": true }
+})
 \`\`\`
 
 ## 页面提示（Browser Hints）
@@ -119,7 +129,12 @@ Action 只在匹配的页面上可用，且**必须**通过 \`trigger\` 工具�
 
 示例：
 \`\`\`
-trigger({ action: "Search", args: { keyword: "OpenHarmony" }, snapshot: true })
+CallSkillTool({
+  "bundleName": "browser",
+  "skillName": "use-browser",
+  "toolName": "trigger",
+  "toolArgs": { "action": "Search", "args": { "keyword": "OpenHarmony" }, "snapshot": true }
+})
 \`\`\`
 
 一个 Action 通常等价于"填表单 + 点按钮"等一串操作，优先使用它而不是自己逐步 type / click。
@@ -206,8 +221,19 @@ YAML 中每个节点的格式为：
 
 示例：
 \`\`\`
-uploadFile({ target: "e8", filePath: "/home/user/image.png", snapshot: true })
-uploadFile({ target: "e12", filePaths: ["./a.png", "./b.png"], snapshot: true })
+CallSkillTool({
+  "bundleName": "browser",
+  "skillName": "use-browser",
+  "toolName": "uploadFile",
+  "toolArgs": { "target": "e8", "filePath": "/home/user/image.png", "snapshot": true }
+})
+
+CallSkillTool({
+  "bundleName": "browser",
+  "skillName": "use-browser",
+  "toolName": "uploadFile",
+  "toolArgs": { "target": "e12", "filePaths": ["./a.png", "./b.png"], "snapshot": true }
+})
 \`\`\`
 
 ### 悬停
@@ -235,6 +261,23 @@ uploadFile({ target: "e12", filePaths: ["./a.png", "./b.png"], snapshot: true })
 - \`action: "new"\` — 新建标签页（可指定 url）
 - \`action: "switch"\` — 切换到指定标签页（需提供 tabId）
 - \`action: "close"\` — 关闭标签页（需提供 tabId）
+
+## 截图
+
+使用 **screenshot** 将标签页当前视口的内容截图为 PNG，保存到当前任务的 artifacts 目录：
+- \`tabId\`：要截图的标签页（默认当前活动标签页；指定时会先切换到该标签页）
+- 返回 JSON 中的 \`path\` 为图片文件路径，可直接交付给用户，或用 readImage 等工具读取查看
+- 截图只包含当前视口，长页面需要完整截图时可配合 scrollTo 分段截取
+
+示例：
+\`\`\`
+CallSkillTool({
+  "bundleName": "browser",
+  "skillName": "use-browser",
+  "toolName": "screenshot",
+  "toolArgs": { "tabId": 2 }
+})
+\`\`\`
 
 ## 执行脚本
 

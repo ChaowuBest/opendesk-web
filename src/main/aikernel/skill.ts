@@ -590,9 +590,20 @@ class CallSkillTool extends BaseTool<typeof CallSkillToolSchema> {
             flatArgs[key] = value;
             hasFlatArgs = true;
         }
-        const explicitToolArgs = record['toolArgs'];
-        if (explicitToolArgs && typeof explicitToolArgs === 'object' && !Array.isArray(explicitToolArgs)) {
-            Object.assign(flatArgs, explicitToolArgs);
+        // toolName 缺失：合并顶层平铺字段与显式 toolArgs（同名字段以显式 toolArgs 为准）后推断。
+        // toolArgs 可能是 JSON 字符串（部分模型按字符串嵌套传递，见 task_mtvpprvf_91ts 故障），先解析成对象
+        let parsedExplicitToolArgs: unknown;
+        try {
+            parsedExplicitToolArgs = parseCallSkillToolArgs(record['toolArgs']);
+        } catch {
+            parsedExplicitToolArgs = undefined;
+        }
+        if (
+            parsedExplicitToolArgs &&
+            typeof parsedExplicitToolArgs === 'object' &&
+            !Array.isArray(parsedExplicitToolArgs)
+        ) {
+            Object.assign(flatArgs, parsedExplicitToolArgs);
             hasFlatArgs = true;
         }
         if (!hasFlatArgs) {

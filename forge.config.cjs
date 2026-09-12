@@ -14,6 +14,11 @@ const { FuseV1Options, FuseVersion } = require('@electron/fuses');
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
+const {
+    PACKAGING_IGNORE_PATTERNS,
+    prunePackagedNativeArtifacts,
+    prunePackagedShellArtifacts
+} = require('./scripts/packaging/prune-packaged-artifacts.cjs');
 
 const DARWIN_PRUNED_NATIVE_PATHS = [
     'native/openharmony',
@@ -67,6 +72,40 @@ function pruneDarwinExtraResources(buildPath, electronVersion, platform, arch, c
     try {
         if (platform === 'darwin') {
             removePathIfExists(path.join(buildPath, 'Contents', 'Resources', 'native', 'openharmony'));
+            removePathIfExists(path.join(buildPath, 'Contents', 'Resources', 'LICENSES.chromium.html'));
+        }
+        callback();
+    } catch (error) {
+        callback(error);
+    }
+}
+
+// afterPrune 钩子：清原生包编译产物/跨平台 prebuilds（需按 platform+arch 参数化），
+// 以及 win32/linux 平铺布局下的多语言 .pak 与 Chromium 许可证清单。
+// darwin 的 .pak 位于签名过的 Electron Framework 内，不在剪裁范围。
+function prunePackagedNativeArtifactsHook(buildPath, electronVersion, platform, arch, callback) {
+    try {
+        prunePackagedNativeArtifacts(buildPath, platform, arch);
+        callback();
+    } catch (error) {
+        callback(error);
+    }
+}
+
+// afterPrune 的 buildPath 是暂存的应用目录（<electron暂存根>/resources/app），
+// 而 locales 与 LICENSES.chromium.html 属于 Electron 本体，在上两级的平铺根目录。
+// darwin 布局不同且 .pak 在签名过的 Framework 内，直接跳过。
+function prunePackagedShellArtifactsHook(buildPath, electronVersion, platform, arch, callback) {
+    try {
+        if (platform !== 'darwin') {
+            const removed = prunePackagedShellArtifacts(path.resolve(buildPath, '..', '..'));
+            if (removed === 0) {
+                // 正常的 Electron 暂存产物必带 locales 与 LICENSES.chromium.html，
+                // 两者都未命中说明暂存布局已变化，剪裁静默失效会悄悄放大产物体积。
+                console.warn(
+                    '[opendesk:packaging] shell 剪裁未命中任何文件，@electron/packager 暂存布局可能已变化，请复核 prunePackagedShellArtifactsHook 的路径推导'
+                );
+            }
         }
         callback();
     } catch (error) {
@@ -295,7 +334,9 @@ function preserveWixInstallDirectory(creator) {
             '    <MajorUpgrade AllowDowngrades="yes" />'
         )
         .replace(installPerUserProperty, '    <Property Id="MSIINSTALLPERUSER" Secure="yes" Value="0" />')
-        .replace(mediaTemplate, '    <Media Id="1" Cabinet="product.cab" EmbedCab="yes" CompressionLevel="low"/>');
+        // high（LZX）压缩显著减小安装包分发体积，代价是 light 打包耗时明显增加；
+        // 若 CI 时长吃紧可回退为 mszip（默认压缩率/耗时折中）。
+        .replace(mediaTemplate, '    <Media Id="1" Cabinet="product.cab" EmbedCab="yes" CompressionLevel="high"/>');
 
     const getRegistryKeys = creator.getRegistryKeys.bind(creator);
     creator.getRegistryKeys = () => {
@@ -390,6 +431,10 @@ function preserveWixInstallDirectory(creator) {
 module.exports = {
     ...(forgeOutDir ? { outDir: path.resolve(forgeOutDir) } : {}),
     materializeWorkspacePackageLinks,
+    // 导出仅为测试复用（forge 只读取其认识的键，多余键不影响打包）
+    preserveWixInstallDirectory,
+    prunePackagedNativeArtifactsHook,
+    prunePackagedShellArtifactsHook,
     packagerConfig: {
         platforms: ['win32', 'darwin'],
         arch: ['x64', 'arm64'],
@@ -428,7 +473,10 @@ module.exports = {
         },
         // 排除打包时不需带入的目录/文件。asar 里若混入开发期垃圾（vite 缓存、
         // 文档、日志等），会膨胀体积并显著拖慢 WiX light 的压缩耗时。
+        // PACKAGING_IGNORE_PATTERNS：CLI 构建产物、TS 源码、workspace SDK 嵌套
+        // node_modules（见 scripts/packaging/prune-packaged-artifacts.cjs）。
         ignore: [
+            ...PACKAGING_IGNORE_PATTERNS,
             /^[/\\]out(?:[/\\]|-)/,
             /^[/\\]dist[/\\]plugins(?:[/\\]|$)/,
             /^[/\\]resources[/\\]plugins(?:[/\\]|$)/,
@@ -439,7 +487,12 @@ module.exports = {
         ],
         ...(electronZipDir ? { electronZipDir: path.resolve(electronZipDir) } : {}),
         extraResource: extraResources,
-        afterPrune: [pruneDarwinAppNativePrebuilds, materializeWorkspacePackageLinks],
+        afterPrune: [
+            prunePackagedNativeArtifactsHook,
+            prunePackagedShellArtifactsHook,
+            pruneDarwinAppNativePrebuilds,
+            materializeWorkspacePackageLinks
+        ],
         afterCopyExtraResources: [pruneDarwinExtraResources]
     },
     rebuildConfig: {},

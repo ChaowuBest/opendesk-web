@@ -2150,6 +2150,33 @@ export class BrowserController {
         });
     }
 
+    /**
+     * Capture the active tab's current viewport as a PNG data URI.
+     * Uses Electron's native capturePage rather than a CDP debugger so that
+     * pages with anti-debugging checks (e.g. SSO login flows) stay unaffected.
+     */
+    async captureScreenshot(): Promise<string> {
+        return this._withExclusiveLock(async () => {
+            const wcId = await this.callRendererBrowser('browserGetWebContentsId');
+            if (wcId == null) throw new Error('No active browser tab to capture');
+            const { webContents } = await import('electron');
+            const wc = webContents.fromId(wcId);
+            if (!wc || wc.isDestroyed()) throw new Error('WebContents not found or destroyed');
+            // 刚导航完或标签页尚在后台时 compositor 可能还没渲染出首帧，
+            // capturePage 会返回空图；做有限次退避重试而不是直接失败
+            const image = await withRetry(
+                async () => {
+                    const captured = await wc.capturePage();
+                    if (captured.isEmpty()) throw new Error('Empty capture');
+                    return captured;
+                },
+                { delays: [300, 600] }
+            );
+            const png = image.toPNG();
+            return `data:image/png;base64,${png.toString('base64')}`;
+        });
+    }
+
     async waitFor(options: {
         text?: string;
         textGone?: string;
@@ -2450,10 +2477,15 @@ export class BrowserManager {
                 }
                 // 使用 Electron 原生 capturePage 而非 CDP debugger，
                 // 避免触发页面的反调试/安全检测机制（如 SSO 登录页）
-                const image = await wc.capturePage();
-                if (image.isEmpty()) {
-                    return { status: 'error', message: 'Empty capture' };
-                }
+                // 空图通常出现在首帧尚未渲染时，做有限次退避重试
+                const image = await withRetry(
+                    async () => {
+                        const captured = await wc.capturePage();
+                        if (captured.isEmpty()) throw new Error('Empty capture');
+                        return captured;
+                    },
+                    { delays: [300, 600] }
+                );
                 const jpeg = image.toJPEG(70);
                 return { status: 'ok', data: `data:image/jpeg;base64,${jpeg.toString('base64')}` };
             } catch (err) {

@@ -190,6 +190,42 @@ describe('CallSkillTool', () => {
             expect(receivedArgs).toEqual({ expression: 'location.href' });
         });
 
+        test('repairs string toolArgs without toolName (real-world case task_mtvpprvf_91ts)', async () => {
+            let receivedArgs: unknown;
+            const { evaluateTool, snapshotTool } = createBrowserLikeTools();
+            evaluateTool.setExecutor(async (args) => {
+                receivedArgs = args;
+                return 'evaluated';
+            });
+
+            // 真实故障案例：模型漏传 toolName 且把 toolArgs 按 JSON 字符串嵌套传递，
+            // 字符串形式的 toolArgs 同样应参与内部工具推断，而不是直接放弃修复
+            const callTool = registerSkillWithTools([evaluateTool, snapshotTool]);
+            const result = await callTool.execute({
+                bundleName: TEST_BUNDLE,
+                skillName: TEST_SKILL,
+                toolArgs: '{"expression": "document.title", "snapshot": false}'
+            } as any);
+
+            expect(result.status).toBe('success');
+            expect(receivedArgs).toEqual({ expression: 'document.title', snapshot: false });
+        });
+
+        test('validation error echoes received top-level fields for self-correction', async () => {
+            const { evaluateTool, snapshotTool } = createBrowserLikeTools();
+            const callTool = registerSkillWithTools([evaluateTool, snapshotTool]);
+            // 修复失败（无内部工具能解释参数）时，错误信息应回显实际收到的顶层字段，
+            // 让模型能对照发现缺漏（如漏传 toolName）并自我纠正
+            const result = await callTool.execute({
+                bundleName: TEST_BUNDLE,
+                skillName: TEST_SKILL,
+                toolArgs: '{"unmatched": true}'
+            } as any);
+
+            expect(result.status).toBe('error');
+            expect(result.result).toContain('bundleName, skillName, toolArgs');
+        });
+
         test('keeps validation error when no inner tool matches flattened keys', async () => {
             const { evaluateTool, snapshotTool } = createBrowserLikeTools();
             const callTool = registerSkillWithTools([evaluateTool, snapshotTool]);

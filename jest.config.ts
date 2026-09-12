@@ -37,7 +37,8 @@ const shared: Config = {
     testEnvironment: 'node',
     extensionsToTreatAsEsm: ['.ts'],
     moduleNameMapper: {
-        '^.+\\.css(?:\\?raw)?$': '<rootDir>/src/tests/ut/__mocks__/raw-style.ts',
+        // ?inline / ?raw 后缀（如 ace.css?inline）与裸 .css 一样映射为占位样式文本
+        '^.+\\.css(?:\\?raw|\\?inline)?$': '<rootDir>/src/tests/ut/__mocks__/raw-style.ts',
         // 内置插件源码按裸包名引入 SDK；测试环境直接解析到 SDK 源码，避免依赖构建产物
         '^@bitclub\\.ai/opendesk-plugin-sdk$': '<rootDir>/packages/plugin-sdk/src/index.ts',
         '^(\\.{1,2}/.*)\\.js$': '$1',

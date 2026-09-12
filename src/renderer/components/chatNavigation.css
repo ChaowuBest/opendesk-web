@@ -5,7 +5,9 @@
  * THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND.
  */
 
-#taskview-chat-history.od-chat-has-nav {
+/* 聊天区始终为左侧导航指示器预留边距（与指示器显示状态无关），
+   避免第二轮对话指示器出现时整体布局跳动。 */
+#taskview-chat-history {
     padding-left: 40px;
 }
 

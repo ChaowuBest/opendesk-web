@@ -26,4 +26,19 @@ describe('browser use interaction contract', () => {
         expect(BROWSER_SKILL).toContain('不主动切换窗口、任务或输入焦点');
         expect(BROWSER_SKILL).toContain('仅当目标 webview 本来就拥有焦点时');
     });
+
+    test('documents the canonical CallSkillTool invocation with explicit toolName', () => {
+        // 弱模型容易漏掉 CallSkillTool 的 toolName 字段（真实故障 task_mtvpprvf_91ts），
+        // 文档中的调用示例必须以 CallSkillTool 完整参数结构书写，而非内部工具的函数式伪调用
+        expect(BROWSER_SKILL).toContain('CallSkillTool 的真实调用参数结构书写');
+        expect(BROWSER_SKILL).toContain('"bundleName": "browser"');
+        expect(BROWSER_SKILL).toContain('"skillName": "use-browser"');
+        // 所有内部工具示例都必须带显式 toolName
+        for (const toolName of ['click', 'type', 'trigger', 'uploadFile']) {
+            expect(BROWSER_SKILL).toContain(`"toolName": "${toolName}"`);
+        }
+        // 不得再出现内部工具的函数式调用示例（会诱导模型漏掉 toolName）
+        expect(BROWSER_SKILL).not.toMatch(/^\s*click\(\{|\n\s*click\(\{/);
+        expect(BROWSER_SKILL).not.toMatch(/\n\s*uploadFile\(\{/);
+    });
 });

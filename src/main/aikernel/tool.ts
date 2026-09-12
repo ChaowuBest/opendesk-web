@@ -43,7 +43,7 @@ function translateToolValidation(key: string, params?: Record<string, string | n
     return text;
 }
 
-function formatToolValidationError(error: z.ZodError): string {
+function formatToolValidationError(error: z.ZodError, args?: unknown): string {
     const details = error.issues
         .map((issue) => {
             const path = issue.path.length > 0 ? issue.path.map((part) => String(part)).join('.') : '<root>';
@@ -52,7 +52,12 @@ function formatToolValidationError(error: z.ZodError): string {
             return `${path}: ${reason === reasonKey ? issue.code : reason}`;
         })
         .join('; ');
-    return translateToolValidation('tool.validation.invalidArgs', { details });
+    // 回显实际收到的顶层字段，让模型能对照发现漏传的字段（如 CallSkillTool 漏掉 toolName）并自我纠正
+    const receivedFields = args && typeof args === 'object' && !Array.isArray(args) ? Object.keys(args).join(', ') : '';
+    const fullDetails = receivedFields
+        ? `${details}; ${translateToolValidation('tool.validation.receivedArgs', { fields: receivedFields })}`
+        : details;
+    return translateToolValidation('tool.validation.invalidArgs', { details: fullDetails });
 }
 
 /**
@@ -311,7 +316,7 @@ export class BaseTool<T extends z.ZodType> {
         if (!parsedArgs.success) {
             return {
                 success: false,
-                error: formatToolValidationError(parsedArgs.error)
+                error: formatToolValidationError(parsedArgs.error, coercedArgs)
             };
         }
         return {

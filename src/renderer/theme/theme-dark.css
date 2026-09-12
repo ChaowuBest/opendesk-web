@@ -2438,9 +2438,10 @@ html[data-theme='dark'] .pool-task-list::-webkit-scrollbar-thumb:hover {
     background: rgba(255, 255, 255, 0.28) !important;
 }
 
-/* TaskView 聊天历史滚动条 */
+/* TaskView 聊天历史滚动条（width 约束纵向、height 约束横向，保持两向同粗） */
 html[data-theme='dark'] #taskview-chat-history::-webkit-scrollbar {
     width: 6px;
+    height: 6px;
 }
 html[data-theme='dark'] #taskview-chat-history::-webkit-scrollbar-track {
     background: transparent;
