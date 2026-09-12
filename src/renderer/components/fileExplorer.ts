@@ -254,6 +254,29 @@ function renderOfficeEditorLoadingIndicator(): string {
 // CSS (returned as string, injected by host)
 // ============================================================================
 
+// 右侧文件预览/编辑器的等宽渲染必须与左侧聊天/终端一致：
+// 字体栈的唯一事实来源是 fonts.css 的 --font-mono（内嵌 Maple Mono 优先），
+// 行高与 custom.css 中聊天代码块 .code-block-body 的 1.55 对齐；左侧调整时需同步此处。
+export const PREVIEW_FONT_FAMILY =
+    "'Maple Mono', 'Cascadia Code', 'Fira Code', 'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, Consolas, monospace";
+export const PREVIEW_LINE_HEIGHT = '1.55';
+
+/**
+ * 组装注入 Shadow DOM 的 ace 样式（结构 CSS + 主题 CSS + 等宽约束）。
+ * 字体栈锁定在 ace 全部元素上，防止主题自带的 font-family 抢占；
+ * 行高只声明在 .ace_editor 容器上——ace 的行高测量节点通过 font: inherit
+ * 继承容器 line-height，行距才能与左侧聊天代码块保持一致。
+ */
+export function buildAceShadowStyles(themeCssText: string): string {
+    return (
+        aceCss +
+        '\n' +
+        themeCssText +
+        `\n.ace_editor, .ace_editor * { font-family: ${PREVIEW_FONT_FAMILY} !important; }` +
+        `\n.ace_editor { line-height: ${PREVIEW_LINE_HEIGHT}; }`
+    );
+}
+
 export function getFileExplorerCSS(): string {
     return `
         .tab-content[data-tab="workspace"] {
@@ -508,8 +531,8 @@ export function getFileExplorerCSS(): string {
         .ws-preview-body::-webkit-scrollbar-corner { background: transparent; }
         .ws-preview-pre {
             margin: 0; padding: 10px 12px;
-            font-family: 'SFMono-Regular', Menlo, Consolas, 'Liberation Mono', monospace;
-            font-size: var(--fs-sm); line-height: 1.55; color: #1f2937; white-space: pre; min-width: max-content;
+            font-family: ${PREVIEW_FONT_FAMILY};
+            font-size: var(--fs-sm); line-height: ${PREVIEW_LINE_HEIGHT}; color: #1f2937; white-space: pre; min-width: max-content;
         }
         .ws-preview-info {
             display: flex; align-items: flex-start; gap: 8px;
@@ -598,8 +621,9 @@ export function getFileExplorerCSS(): string {
             flex: 1;
             min-height: 60px;
             min-width: 0;
-            font-family: 'Maple Mono', 'Cascadia Code', 'Fira Code', 'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
-            font-size: var(--fs-base);
+            font-family: ${PREVIEW_FONT_FAMILY};
+            font-size: var(--fs-sm);
+            line-height: ${PREVIEW_LINE_HEIGHT};
         }
         .ws-preview-code-host { flex: 1; overflow: auto; overflow-x: auto; min-height: 60px; background: #fafafa; }
         .ws-preview-code-host::-webkit-scrollbar { width: 8px; height: 8px; }
@@ -611,8 +635,8 @@ export function getFileExplorerCSS(): string {
         .ws-preview-code-host::-webkit-scrollbar-corner { background: transparent; }
         .ws-preview-code-container {
             margin: 0; padding: 10px 12px;
-            font-family: 'SFMono-Regular', Menlo, Consolas, 'Liberation Mono', monospace;
-            font-size: var(--fs-sm); line-height: 1.55; white-space: pre; min-width: max-content;
+            font-family: ${PREVIEW_FONT_FAMILY};
+            font-size: var(--fs-sm); line-height: ${PREVIEW_LINE_HEIGHT}; white-space: pre; min-width: max-content;
         }
         .ws-preview-code-container > span { white-space: pre; }
 
@@ -979,9 +1003,6 @@ const ACE_THEME_LOADERS: Record<'clouds' | 'dracula', () => Promise<unknown>> = 
 // 编辑器自动保存延迟（毫秒）
 const EDITOR_AUTO_SAVE_DELAY = 1500;
 
-// 与 ws-preview-pre 保持一致的字体栈
-const PREVIEW_FONT_FAMILY = "'SFMono-Regular', Menlo, Consolas, 'Liberation Mono', monospace";
-
 type AceEditorStatus = 'idle' | 'unsaved' | 'saving' | 'saved' | 'error';
 
 function getCodeLanguage(filePath: string): string | null {
@@ -1065,7 +1086,7 @@ const MARKDOWN_PREVIEW_CSS = `
         background: var(--od-md-blockquote-bg, #f9fafb);
     }
     .markdown-body code {
-        font-family: 'Cascadia Code', 'Fira Code', Consolas, monospace;
+        font-family: ${PREVIEW_FONT_FAMILY};
         font-size: 0.9em; padding: 0.15em 0.35em;
         background: var(--od-md-code-bg, #f1f5f9);
         border-radius: 3px;
@@ -1076,7 +1097,8 @@ const MARKDOWN_PREVIEW_CSS = `
         background: var(--od-md-pre-bg, #f8fafc);
         border: 1px solid var(--od-md-pre-border, #e2e8f0);
         border-radius: 6px;
-        overflow-x: auto; font-size: var(--fs-sm); line-height: 1.5;
+        font-family: ${PREVIEW_FONT_FAMILY};
+        overflow-x: auto; font-size: var(--fs-sm); line-height: ${PREVIEW_LINE_HEIGHT};
     }
     .markdown-body pre code { padding: 0; background: none; border-radius: 0; font-size: inherit; }
     .markdown-body table {
@@ -2439,11 +2461,7 @@ export class FileExplorer {
 
         const style = document.createElement('style');
         style.id = 'ace-shadow-styles';
-        style.textContent =
-            aceCss +
-            '\n' +
-            themeCssText +
-            `\n.ace_editor, .ace_editor * { font-family: ${PREVIEW_FONT_FAMILY} !important; }`;
+        style.textContent = buildAceShadowStyles(themeCssText);
         (rn as unknown as Node).appendChild(style);
     }
 
@@ -2461,6 +2479,11 @@ export class FileExplorer {
         const rn = this._rootNode;
         const editorContainer = rn?.querySelector<HTMLElement>('.ws-editor-container');
         if (!rn || !editorContainer) return;
+
+        // ace 的行高由测量节点（font: inherit 连带继承 line-height）推导，
+        // 必须在 ace.edit 之前声明容器行高，否则按字体原生行距排版，
+        // 与左侧聊天代码块（.code-block-body）的行距不一致
+        editorContainer.style.lineHeight = PREVIEW_LINE_HEIGHT;
 
         this._destroyEditorInstance();
         const ace = await this._ensureAce();

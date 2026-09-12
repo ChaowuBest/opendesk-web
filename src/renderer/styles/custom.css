@@ -3323,9 +3323,11 @@ agent-input[hide-disclaimer] .agent-input-footer {
     gap: 20px;
 }
 /* 历史区域浅色主题滚动条：深色主题在 theme-dark.css 中定义了 6px 细滚动条，
-   浅色主题此前没有对应规则，一旦历史内容溢出就会回退到系统默认宽度的粗滚动条。 */
+   浅色主题此前没有对应规则，一旦历史内容溢出就会回退到系统默认宽度的粗滚动条。
+   width 约束纵向、height 约束横向，缺一都会回退到系统默认粗细。 */
 #taskview-chat-history::-webkit-scrollbar {
     width: 6px;
+    height: 6px;
 }
 #taskview-chat-history::-webkit-scrollbar-track {
     background: transparent;

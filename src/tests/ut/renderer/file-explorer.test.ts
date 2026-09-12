@@ -515,7 +515,7 @@ describe('file explorer', () => {
                 })
         );
         explorer._rootNode = {
-            querySelector: jest.fn(() => ({}))
+            querySelector: jest.fn(() => ({ style: {} }))
         };
         explorer._destroyEditorInstance = jest.fn();
         explorer._ensureAceTheme = jest.fn();
