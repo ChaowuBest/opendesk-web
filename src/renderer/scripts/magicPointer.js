@@ -964,13 +964,13 @@ function init() {
         window.settingAPI
             .loadSettingObject()
             .then((setting) => {
-                experimentalFeatureEnabled = !!setting?.debug?.experimental_feature;
+                experimentalFeatureEnabled = !!setting?.debug?.experimental_features?.magic_pointer;
             })
             .catch(() => {});
     }
     if (window.settingAPI?.onSettingChanged) {
         window.settingAPI.onSettingChanged((setting) => {
-            experimentalFeatureEnabled = !!setting?.debug?.experimental_feature;
+            experimentalFeatureEnabled = !!setting?.debug?.experimental_features?.magic_pointer;
         });
     }
     document.addEventListener('keydown', onKeydown);

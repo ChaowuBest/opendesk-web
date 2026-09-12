@@ -426,6 +426,12 @@ const KNOWN_MODELS: Record<string, ModelInfo> = {
     // ═══════════════════════════════════════════════
     // DeepSeek
     // ═══════════════════════════════════════════════
+    'deepseek-flash': {
+        contextSize: 1000000,
+        maxOutputTokens: 384000,
+        vision: true,
+        reasoningEfforts: ['none', 'low', 'high', 'max']
+    },
     'deepseek-v4-pro': { contextSize: 1000000, maxOutputTokens: 384000, vision: false },
     'deepseek-v4-flash': { contextSize: 1000000, maxOutputTokens: 384000, vision: false },
     'deepseek-v4': { contextSize: 1000000, maxOutputTokens: 384000, vision: false },

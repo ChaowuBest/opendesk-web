@@ -76,7 +76,7 @@ class SideBar extends HTMLElement {
         this._settingUnsubscribe = null;
         this._taskListUnsubscribe = null;
         this._developerMode = false;
-        this._experimentalFeature = false;
+        this._experimentalFeatures = {};
         /** 安全网关总开关状态（决定 dock 图标是否显示） */
         this._agentgateEnabled = false;
         /** 安全网关运行状态：'ok' | 'warn'(AgentMoss 不可达) | 'err'(AgentGate 不可达) | null */
@@ -201,7 +201,7 @@ class SideBar extends HTMLElement {
                 .loadSettingObject()
                 .then((setting) => {
                     this._developerMode = !!setting?.debug?.developer_mode;
-                    this._experimentalFeature = !!setting?.debug?.experimental_feature;
+                    this._experimentalFeatures = setting?.debug?.experimental_features || {};
                     this._agentgateEnabled = setting?.applications?.agentgate?.enabled === true;
                     this._t = createRendererTranslator(setting);
                     this._updateLocalizedChrome();
@@ -217,7 +217,7 @@ class SideBar extends HTMLElement {
             this._settingUnsubscribe = window.settingAPI.onSettingChanged((setting) => {
                 const agentgateEnabled = setting?.applications?.agentgate?.enabled === true;
                 this._developerMode = !!setting?.debug?.developer_mode;
-                this._experimentalFeature = !!setting?.debug?.experimental_feature;
+                this._experimentalFeatures = setting?.debug?.experimental_features || {};
                 this._agentgateEnabled = agentgateEnabled;
                 this._t = createRendererTranslator(setting);
                 this._updateLocalizedChrome();
@@ -1073,7 +1073,7 @@ class SideBar extends HTMLElement {
         const appList = await window.applicationRegistryAPI.getApplicationList();
         // 技能中心已由侧边栏「技能」按钮直达，无需在应用菜单中重复展示
         const visibleApps = appList.filter(
-            (app) => app.bundleName !== 'skillmgr' && isApplicationVisibleInMenu(app, this._experimentalFeature)
+            (app) => app.bundleName !== 'skillmgr' && isApplicationVisibleInMenu(app, this._experimentalFeatures)
         );
 
         let gridHtml = '<div class="sb-app-popover-grid">';

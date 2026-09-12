@@ -1783,7 +1783,7 @@ const registerTaskManagerAPIHandlers = () => {
             task.ensureValidModelOrFallback();
         }
         if (details.reasoningEffort !== undefined) {
-            task.reasoningEffort = details.reasoningEffort || undefined;
+            task.reasoningEffort = details.reasoningEffort;
         }
         if (Object.prototype.hasOwnProperty.call(details, 'selectedExecutionNodeId')) {
             const result = await setTaskExecutionNode(taskId, details.selectedExecutionNodeId ?? null);
@@ -1814,7 +1814,7 @@ const registerTaskManagerAPIHandlers = () => {
             return { status: 'error', message: err?.message || String(err) };
         }
     });
-    ipcMain.handle('taskManager:setTaskModel', async (_event, taskId, modelAlias) => {
+    ipcMain.handle('taskManager:setTaskModel', async (_event, taskId, modelAlias, reasoningEffort) => {
         const task = globalState.taskManagerState.getTask(taskId);
         if (task === undefined) {
             return { status: 'error', message: `task ${taskId} not found` };
@@ -1824,6 +1824,10 @@ const registerTaskManagerAPIHandlers = () => {
         }
         const previous = task.model;
         task.model = modelAlias || undefined;
+        if (reasoningEffort !== undefined) {
+            // 空字符串是显式选择模型默认档位，不能丢弃或保留旧的任务覆盖值。
+            task.reasoningEffort = reasoningEffort;
+        }
         task.persistLater();
         // 模型切换后立即重新过滤工具集：非视觉模型不应继续看到 readImage/askImage 等视觉工具，
         // 否则运行中的 turn 会在后续请求中继续调用已不匹配的工具并报"模型不支持视觉"错误。
@@ -3623,7 +3627,8 @@ async function startApplication(): Promise<void> {
                 // 确保应用已完成延迟加载
                 await ApplicationRegistry.getApplication(bundleName)?.ensureLoaded();
                 const appConfig = ApplicationRegistry.getApplicationGUIConfig(bundleName) as
-                    Record<string, unknown> | undefined;
+                    | Record<string, unknown>
+                    | undefined;
                 const appName = (appConfig?.name as string) || bundleName;
 
                 const appWindow = new BrowserWindow({

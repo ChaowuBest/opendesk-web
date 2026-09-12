@@ -1332,11 +1332,16 @@ export const enUs: Record<string, string> = {
 
     // Renderer - Settings
     'renderer.settings.memorySystem': 'Memory',
-    'renderer.settings.developerMode': 'Developer Mode',
+    'renderer.settings.developerMode': 'Development & Debugging',
     'renderer.settings.debugLog': 'Enable Debug Logging',
-    'renderer.settings.experimentalFeature': 'Enable experimental features',
+    'renderer.settings.experimentalFeature': 'Experimental Features',
+    'renderer.settings.experimentalFeatures': 'Experimental Features',
+    'renderer.settings.experimentalApplicationAppMgr': 'App Studio',
+    'renderer.settings.experimentalApplicationAgentOffice': 'Agent Office',
+    'renderer.settings.experimentalAccount': 'Account Features',
+    'renderer.settings.experimentalMagicPointer': 'Magic Pointer',
     'renderer.settings.logRawLlmRequest': 'Log Raw LLM Response',
-    'renderer.settings.debugMode': 'OpenDesk Development & Debugging',
+    'renderer.settings.debugMode': 'Development & Debugging',
     'renderer.settings.telemetry': 'Telemetry',
     'renderer.settings.telemetryEndpoints': 'Telemetry Endpoints',
     'renderer.settings.telemetryEndpointsHint':

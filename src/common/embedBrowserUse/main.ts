@@ -608,15 +608,23 @@ export class BrowserController {
 
         const jsPromise = this._mainWindow.webContents.executeJavaScript(makeExecuteScriptOnBrowser(this.id, script));
 
-        const result = await Promise.race([
-            jsPromise,
-            new Promise<{ error: string }>((_, reject) =>
-                setTimeout(() => reject(new Error(`webview script timed out after ${timeoutMs}ms`)), timeoutMs)
-            )
-        ]);
+        let timeout: ReturnType<typeof setTimeout> | undefined;
+        try {
+            const result = await Promise.race([
+                jsPromise,
+                new Promise<never>((_, reject) => {
+                    timeout = setTimeout(
+                        () => reject(new Error(`webview script timed out after ${timeoutMs}ms`)),
+                        timeoutMs
+                    );
+                })
+            ]);
 
-        if (result?.error) throw new Error(result.error);
-        return result?.result;
+            if (result?.error) throw new Error(result.error);
+            return result?.result;
+        } finally {
+            if (timeout !== undefined) clearTimeout(timeout);
+        }
     }
 
     /**
@@ -1183,20 +1191,25 @@ export class BrowserController {
                 return { url, title: '(页面加载中)' };
             };
 
-            return Promise.race([
-                navigateAndWait(),
-                new Promise<never>((_, reject) =>
-                    setTimeout(
-                        () =>
-                            reject(
-                                new Error(
-                                    `导航超时（${NAVIGATE_TIMEOUT / 1000}秒）：无法加载 ${url}，网址可能不可用或网络连接异常`
-                                )
-                            ),
-                        NAVIGATE_TIMEOUT
-                    )
-                )
-            ]);
+            let timeout: ReturnType<typeof setTimeout> | undefined;
+            try {
+                return await Promise.race([
+                    navigateAndWait(),
+                    new Promise<never>((_, reject) => {
+                        timeout = setTimeout(
+                            () =>
+                                reject(
+                                    new Error(
+                                        `导航超时（${NAVIGATE_TIMEOUT / 1000}秒）：无法加载 ${url}，网址可能不可用或网络连接异常`
+                                    )
+                                ),
+                            NAVIGATE_TIMEOUT
+                        );
+                    })
+                ]);
+            } finally {
+                if (timeout !== undefined) clearTimeout(timeout);
+            }
         });
     }
 

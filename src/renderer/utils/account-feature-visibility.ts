@@ -11,10 +11,12 @@
 
 interface AccountFeatureSetting {
     debug?: {
-        experimental_feature?: boolean;
+        experimental_features?: {
+            account?: boolean;
+        };
     };
 }
 
 export function isAccountFeatureEnabled(setting: AccountFeatureSetting | null | undefined): boolean {
-    return setting?.debug?.experimental_feature === true;
+    return setting?.debug?.experimental_features?.account === true;
 }

@@ -5,24 +5,35 @@ import {
 
 describe('application menu visibility', () => {
     test('updates experimental application visibility with the runtime setting', () => {
-        const office = { showIcon: true, isExperimental: true };
+        const office = { bundleName: 'agentoffice', showIcon: true, isExperimental: true };
 
-        expect(isApplicationVisibleInMenu(office, false)).toBe(false);
-        expect(isApplicationVisibleInMenu(office, true)).toBe(true);
-        expect(isApplicationVisibleInMenu(office, false)).toBe(false);
+        expect(isApplicationVisibleInMenu(office, { applications: { agentoffice: false } })).toBe(false);
+        expect(isApplicationVisibleInMenu(office, { applications: { agentoffice: true } })).toBe(true);
+        expect(isApplicationVisibleInMenu(office, { applications: { appmgr: true } })).toBe(false);
     });
 
     test('blocks direct access to experimental applications when the setting is disabled', () => {
-        const office = { isExperimental: true };
+        const office = { bundleName: 'agentoffice', isExperimental: true };
 
-        expect(isExperimentalApplicationEnabled(office, false)).toBe(false);
-        expect(isExperimentalApplicationEnabled(office, true)).toBe(true);
-        expect(isExperimentalApplicationEnabled({ isExperimental: false }, false)).toBe(true);
+        expect(isExperimentalApplicationEnabled(office, { applications: { agentoffice: false } })).toBe(false);
+        expect(isExperimentalApplicationEnabled(office, { applications: { agentoffice: true } })).toBe(true);
+        expect(isExperimentalApplicationEnabled({ bundleName: 'agentgate', isExperimental: false }, undefined)).toBe(
+            true
+        );
     });
 
     test('keeps regular applications visible and explicit hidden applications hidden', () => {
-        expect(isApplicationVisibleInMenu({ showIcon: true, isExperimental: false }, false)).toBe(true);
-        expect(isApplicationVisibleInMenu({ showIcon: false, isExperimental: false }, true)).toBe(false);
-        expect(isApplicationVisibleInMenu({ showIcon: false, isExperimental: true }, true)).toBe(false);
+        expect(
+            isApplicationVisibleInMenu({ bundleName: 'mailbox', showIcon: true, isExperimental: false }, undefined)
+        ).toBe(true);
+        expect(
+            isApplicationVisibleInMenu({ bundleName: 'mailbox', showIcon: false, isExperimental: false }, undefined)
+        ).toBe(false);
+        expect(
+            isApplicationVisibleInMenu(
+                { bundleName: 'agentoffice', showIcon: false, isExperimental: true },
+                { applications: { agentoffice: true } }
+            )
+        ).toBe(false);
     });
 });

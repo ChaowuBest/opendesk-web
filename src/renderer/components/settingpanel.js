@@ -2308,53 +2308,158 @@ class SettingPanel extends HTMLElement {
     renderDebugModeSection() {
         const debugConfig = this.currentData?.debug || {};
         const debugDevMode = !!debugConfig.developer_mode;
-        const debugExpFeature = !!debugConfig.experimental_feature;
+        const experimentalFeatures = debugConfig.experimental_features || {};
+        const experimentalApplications = experimentalFeatures.applications || {};
+        const experimentalAppMgr = !!experimentalApplications.appmgr;
+        const experimentalAgentOffice = !!experimentalApplications.agentoffice;
+        const experimentalAccount = !!experimentalFeatures.account;
+        const experimentalMagicPointer = !!experimentalFeatures.magic_pointer;
         const debugLogRawLlm = !!debugConfig.log_raw_llm_request;
         const debugLogEnabled = !!debugConfig.debug_log;
 
         return `
-        <section class="sp-section">
-            <h2 class="sp-section-title">${this._t('renderer.settings.debugMode')}</h2>
-            <div class="sp-section-card">
-            <div class="sp-toggle-row">
-                <div class="sp-toggle-info">
-                    <div class="sp-toggle-label">${this._t('renderer.settings.developerMode')}</div>
-                </div>
+        <section id="debug-mode-section" class="sp-section">
+            <div style="display:flex;align-items:center;justify-content:space-between;gap:16px;margin-bottom:12px">
+                <h2 class="sp-section-title" style="margin-bottom:0">${this._t('renderer.settings.debugMode')}</h2>
                 <label class="sp-toggle-switch">
-                    <input type="checkbox" ${debugDevMode ? 'checked' : ''} id="debug-mode-toggle-hidden">
+                    <input type="checkbox" ${debugDevMode ? 'checked' : ''} id="debug-mode-toggle-hidden" aria-label="${this._t('renderer.settings.developerMode')}">
                     <span id="debug-mode-toggle" class="sp-toggle-track" style="cursor:pointer" data-key="developer_mode"></span>
                 </label>
             </div>
-            <div class="sp-toggle-row">
-                <div class="sp-toggle-info">
-                    <div class="sp-toggle-label">${this._t('renderer.settings.debugLog')}</div>
+            <div id="debug-mode-settings" class="sp-section-card" style="${debugDevMode ? '' : 'display:none;'}">
+                <div class="sp-toggle-row">
+                    <div class="sp-toggle-info">
+                        <div class="sp-toggle-label">${this._t('renderer.settings.debugLog')}</div>
+                    </div>
+                    <label class="sp-toggle-switch">
+                        <input type="checkbox" ${debugLogEnabled ? 'checked' : ''} id="debug-log-toggle-hidden">
+                        <span id="debug-log-toggle" class="sp-toggle-track" style="cursor:pointer" data-key="debug_log"></span>
+                    </label>
                 </div>
-                <label class="sp-toggle-switch">
-                    <input type="checkbox" ${debugLogEnabled ? 'checked' : ''} id="debug-log-toggle-hidden">
-                    <span id="debug-log-toggle" class="sp-toggle-track" style="cursor:pointer" data-key="debug_log"></span>
-                </label>
-            </div>
-            <div class="sp-toggle-row">
-                <div class="sp-toggle-info">
-                    <div class="sp-toggle-label">${this._t('renderer.settings.experimentalFeature')}</div>
+                <div class="sp-toggle-row">
+                    <div class="sp-toggle-info">
+                        <div class="sp-toggle-label">${this._t('renderer.settings.logRawLlmRequest')}</div>
+                    </div>
+                    <label class="sp-toggle-switch">
+                        <input type="checkbox" ${debugLogRawLlm ? 'checked' : ''} id="log-raw-llm-toggle-hidden">
+                        <span id="log-raw-llm-toggle" class="sp-toggle-track" style="cursor:pointer" data-key="log_raw_llm_request"></span>
+                    </label>
                 </div>
-                <label class="sp-toggle-switch">
-                    <input type="checkbox" ${debugExpFeature ? 'checked' : ''} id="experimental-feature-toggle-hidden">
-                    <span id="experimental-feature-toggle" class="sp-toggle-track" style="cursor:pointer" data-key="experimental_feature"></span>
-                </label>
-            </div>
-            <div class="sp-toggle-row">
-                <div class="sp-toggle-info">
-                    <div class="sp-toggle-label">${this._t('renderer.settings.logRawLlmRequest')}</div>
+                <div id="experimental-features-section" style="border-top:1px solid var(--sp-color-border-light);margin-top:8px;padding-top:12px">
+                    <h3 class="sp-section-subtitle" style="display:block;margin:0 0 4px">${this._t('renderer.settings.experimentalFeatures')}</h3>
+                    <div class="sp-toggle-row">
+                        <div class="sp-toggle-info">
+                            <div class="sp-toggle-label">${this._t('renderer.settings.experimentalApplicationAppMgr')}</div>
+                        </div>
+                        <label class="sp-toggle-switch">
+                            <input type="checkbox" ${experimentalAppMgr ? 'checked' : ''} id="experimental-appmgr-toggle-hidden">
+                            <span id="experimental-appmgr-toggle" class="sp-toggle-track" style="cursor:pointer" data-key="appmgr"></span>
+                        </label>
+                    </div>
+                    <div class="sp-toggle-row">
+                        <div class="sp-toggle-info">
+                            <div class="sp-toggle-label">${this._t('renderer.settings.experimentalApplicationAgentOffice')}</div>
+                        </div>
+                        <label class="sp-toggle-switch">
+                            <input type="checkbox" ${experimentalAgentOffice ? 'checked' : ''} id="experimental-agentoffice-toggle-hidden">
+                            <span id="experimental-agentoffice-toggle" class="sp-toggle-track" style="cursor:pointer" data-key="agentoffice"></span>
+                        </label>
+                    </div>
+                    <div class="sp-toggle-row">
+                        <div class="sp-toggle-info">
+                            <div class="sp-toggle-label">${this._t('renderer.settings.experimentalAccount')}</div>
+                        </div>
+                        <label class="sp-toggle-switch">
+                            <input type="checkbox" ${experimentalAccount ? 'checked' : ''} id="experimental-account-toggle-hidden">
+                            <span id="experimental-account-toggle" class="sp-toggle-track" style="cursor:pointer" data-key="account"></span>
+                        </label>
+                    </div>
+                    <div class="sp-toggle-row">
+                        <div class="sp-toggle-info">
+                            <div class="sp-toggle-label">${this._t('renderer.settings.experimentalMagicPointer')}</div>
+                        </div>
+                        <label class="sp-toggle-switch">
+                            <input type="checkbox" ${experimentalMagicPointer ? 'checked' : ''} id="experimental-magic-pointer-toggle-hidden">
+                            <span id="experimental-magic-pointer-toggle" class="sp-toggle-track" style="cursor:pointer" data-key="magic_pointer"></span>
+                        </label>
+                    </div>
                 </div>
-                <label class="sp-toggle-switch">
-                    <input type="checkbox" ${debugLogRawLlm ? 'checked' : ''} id="log-raw-llm-toggle-hidden">
-                    <span id="log-raw-llm-toggle" class="sp-toggle-track" style="cursor:pointer" data-key="log_raw_llm_request"></span>
-                </label>
-            </div>
             </div>
         </section>
         `;
+    }
+
+    _bindDebugModeEvents() {
+        this.querySelector('#debug-mode-toggle-hidden')?.addEventListener('change', (e) => {
+            if (!this.currentData.debug) this.currentData.debug = {};
+            this.currentData.debug.developer_mode = e.target.checked;
+            const panel = this.querySelector('#debug-mode-settings');
+            if (!e.target.checked) {
+                this.currentData.debug.debug_log = false;
+                this.currentData.debug.log_raw_llm_request = false;
+                this.currentData.debug.experimental_features = {
+                    applications: { appmgr: false, agentoffice: false },
+                    account: false,
+                    magic_pointer: false
+                };
+                panel?.querySelectorAll('input[type="checkbox"]').forEach((toggle) => {
+                    toggle.checked = false;
+                });
+            }
+            if (panel) panel.style.display = e.target.checked ? '' : 'none';
+            this.saveImmediately();
+        });
+
+        const bindDebugBoolean = (selector, key) => {
+            this.querySelector(selector)?.addEventListener('change', (e) => {
+                if (!this.currentData.debug) this.currentData.debug = {};
+                this.currentData.debug[key] = e.target.checked;
+                this.saveImmediately();
+            });
+        };
+
+        bindDebugBoolean('#debug-log-toggle-hidden', 'debug_log');
+        bindDebugBoolean('#log-raw-llm-toggle-hidden', 'log_raw_llm_request');
+
+        const bindExperimentalToggle = (selector, key, applicationKey = null) => {
+            this.querySelector(selector)?.addEventListener('change', async (e) => {
+                if (this._suppressExperimentalToggle) return;
+                if (e.target.checked) {
+                    const confirmed = await showConfirmModal({
+                        icon: 'fa-triangle-exclamation',
+                        iconBg: '#FFFBEB',
+                        iconColor: '#D97706',
+                        title: this._t('sp.experimental.title'),
+                        message: this._t('sp.experimental.message'),
+                        confirmText: this._t('sp.experimental.confirm'),
+                        cancelText: this._t('sp.experimental.cancel')
+                    });
+                    if (!confirmed) {
+                        this._suppressExperimentalToggle = true;
+                        e.target.checked = false;
+                        this._suppressExperimentalToggle = false;
+                        return;
+                    }
+                }
+                if (!this.currentData.debug) this.currentData.debug = {};
+                const currentExperimentalFeatures = this.currentData.debug.experimental_features || {};
+                this.currentData.debug.experimental_features = applicationKey
+                    ? {
+                          ...currentExperimentalFeatures,
+                          applications: {
+                              ...(currentExperimentalFeatures.applications || {}),
+                              [applicationKey]: e.target.checked
+                          }
+                      }
+                    : { ...currentExperimentalFeatures, [key]: e.target.checked };
+                this.saveImmediately();
+            });
+        };
+
+        bindExperimentalToggle('#experimental-appmgr-toggle-hidden', 'applications', 'appmgr');
+        bindExperimentalToggle('#experimental-agentoffice-toggle-hidden', 'applications', 'agentoffice');
+        bindExperimentalToggle('#experimental-account-toggle-hidden', 'account');
+        bindExperimentalToggle('#experimental-magic-pointer-toggle-hidden', 'magic_pointer');
     }
 
     renderTelemetrySection() {
@@ -3123,47 +3228,7 @@ class SettingPanel extends HTMLElement {
             this.saveImmediately();
         });
 
-        this.querySelector('#debug-mode-toggle-hidden')?.addEventListener('change', (e) => {
-            if (!this.currentData.debug) this.currentData.debug = {};
-            this.currentData.debug.developer_mode = e.target.checked;
-            this.saveImmediately();
-        });
-
-        this.querySelector('#debug-log-toggle-hidden')?.addEventListener('change', (e) => {
-            if (!this.currentData.debug) this.currentData.debug = {};
-            this.currentData.debug.debug_log = e.target.checked;
-            this.saveImmediately();
-        });
-
-        this.querySelector('#experimental-feature-toggle-hidden')?.addEventListener('change', async (e) => {
-            if (this._suppressExperimentalToggle) return;
-            if (e.target.checked) {
-                const confirmed = await showConfirmModal({
-                    icon: 'fa-triangle-exclamation',
-                    iconBg: '#FFFBEB',
-                    iconColor: '#D97706',
-                    title: this._t('sp.experimental.title'),
-                    message: this._t('sp.experimental.message'),
-                    confirmText: this._t('sp.experimental.confirm'),
-                    cancelText: this._t('sp.experimental.cancel')
-                });
-                if (!confirmed) {
-                    this._suppressExperimentalToggle = true;
-                    e.target.checked = false;
-                    this._suppressExperimentalToggle = false;
-                    return;
-                }
-            }
-            if (!this.currentData.debug) this.currentData.debug = {};
-            this.currentData.debug.experimental_feature = e.target.checked;
-            this.saveImmediately();
-        });
-
-        this.querySelector('#log-raw-llm-toggle-hidden')?.addEventListener('change', (e) => {
-            if (!this.currentData.debug) this.currentData.debug = {};
-            this.currentData.debug.log_raw_llm_request = e.target.checked;
-            this.saveImmediately();
-        });
+        this._bindDebugModeEvents();
 
         this._bindTelemetryEvents();
 
@@ -4525,47 +4590,7 @@ class SettingPanel extends HTMLElement {
                 this.currentData.gui_config.floating_window_position = e.target.value;
                 this.saveImmediately();
             });
-            this.querySelector('#debug-mode-toggle-hidden')?.addEventListener('change', (e) => {
-                if (!this.currentData.debug) this.currentData.debug = {};
-                this.currentData.debug.developer_mode = e.target.checked;
-                this.saveImmediately();
-            });
-
-            this.querySelector('#debug-log-toggle-hidden')?.addEventListener('change', (e) => {
-                if (!this.currentData.debug) this.currentData.debug = {};
-                this.currentData.debug.debug_log = e.target.checked;
-                this.saveImmediately();
-            });
-
-            this.querySelector('#experimental-feature-toggle-hidden')?.addEventListener('change', async (e) => {
-                if (this._suppressExperimentalToggle) return;
-                if (e.target.checked) {
-                    const confirmed = await showConfirmModal({
-                        icon: 'fa-triangle-exclamation',
-                        iconBg: '#FFFBEB',
-                        iconColor: '#D97706',
-                        title: this._t('sp.experimental.title'),
-                        message: this._t('sp.experimental.message'),
-                        confirmText: this._t('sp.experimental.confirm'),
-                        cancelText: this._t('sp.experimental.cancel')
-                    });
-                    if (!confirmed) {
-                        this._suppressExperimentalToggle = true;
-                        e.target.checked = false;
-                        this._suppressExperimentalToggle = false;
-                        return;
-                    }
-                }
-                if (!this.currentData.debug) this.currentData.debug = {};
-                this.currentData.debug.experimental_feature = e.target.checked;
-                this.saveImmediately();
-            });
-
-            this.querySelector('#log-raw-llm-toggle-hidden')?.addEventListener('change', (e) => {
-                if (!this.currentData.debug) this.currentData.debug = {};
-                this.currentData.debug.log_raw_llm_request = e.target.checked;
-                this.saveImmediately();
-            });
+            this._bindDebugModeEvents();
 
             this._bindTelemetryEvents();
 

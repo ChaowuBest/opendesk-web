@@ -2020,7 +2020,7 @@ class TaskView extends HTMLElement {
                     // 任务没有显式设置推理模式时，重置为模型默认值，防止跨任务泄漏
                     const modelAlias = task_state.model || input_widget.selectedModel;
                     const model = input_widget.availableModels.find((m) => m.alias === modelAlias);
-                    input_widget.setReasoningEffort(model?.reasoning_effort || '');
+                    input_widget.setReasoningEffort(model?.reasoning_effort);
                     input_widget._updateEffortIcon?.();
                 }
                 input_widget.selectedExecutionNodeId = task_state.executionNodeId || '';
@@ -4954,7 +4954,7 @@ class TaskView extends HTMLElement {
             const modelAlias = event.detail?.model;
             if (modelAlias) {
                 try {
-                    await window.taskManagerAPI.setTaskModel(this.task_id, modelAlias);
+                    await window.taskManagerAPI.setTaskModel(this.task_id, modelAlias, event.detail.reasoningEffort);
                 } catch (err) {
                     console.error('setTaskModel failed:', err);
                 }

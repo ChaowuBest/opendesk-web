@@ -191,8 +191,8 @@ export abstract class BaseApplication {
     }
 
     /**
-     * 返回 true 表示该应用是试验性功能。
-     * 当系统设置中未启用试验性功能时，该应用的图标将被隐藏。
+     * 返回 true 表示该应用是试验性应用。
+     * 当系统设置中未启用该应用的独立开关时，该应用的图标将被隐藏。
      */
     isExperimental(): boolean {
         return false;

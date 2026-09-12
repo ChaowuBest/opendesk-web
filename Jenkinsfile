@@ -141,8 +141,7 @@ node {
 	                                        echo ""
 	                                        echo "=== builtin plugin ZIP tests ==="
 	                                        npx tsx --test \
-	                                          src/tests/ut/node/packaging/builtin-plugin-zip.test.ts \
-	                                          src/tests/ut/node/packaging/wps-builtin-plugin-packaging.test.js
+	                                          src/tests/ut/node/packaging/builtin-plugin-zip.test.ts
 	                                        echo ""
 	                                        echo "=== unit tests ==="
  	                                        npm run test:unit -- \

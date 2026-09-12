@@ -813,7 +813,7 @@ class AgentGateFloatingWindow extends HTMLElement {
         this._enabled = false;
         this._opacity = 0.76;
         this._globalEnabled = true;
-        this._globalEnabledBase = false; // experimental 模式基线（不含总开关）
+        this._globalEnabledBase = true; // 安全网关配置基线（不含安全网关总开关）
         this._gateEnabled = true; // 安全网关总开关
         this._gateToggling = false;
         this._gateActionUntil = 0; // 总开关操作后的抑制期截止时间戳（避免服务启停触发的自动展开/折叠）
@@ -935,18 +935,12 @@ class AgentGateFloatingWindow extends HTMLElement {
         const callAG = (methodName, ...args) => registry?.callMainWorld('agentgate', methodName, ...args);
         callAG('getFloatingWindowConfig')
             .then(async (config) => {
-                // Also check experimental mode from setting
-                let experimentalEnabled = false;
-                try {
-                    const settingData = await window.settingAPI?.loadSettingObject();
-                    experimentalEnabled = settingData?.debug?.experimental_feature === true;
-                } catch {}
                 // 读取安全网关总开关真实状态（区别于浮窗显示开关）
                 let gateEnabled = false;
                 try {
                     gateEnabled = await registry?.callMainWorld('agentgate', 'getEnabled');
                 } catch {}
-                this._globalEnabledBase = experimentalEnabled;
+                this._globalEnabledBase = true;
                 this._gateEnabled = gateEnabled === true;
                 this._globalEnabled = this._globalEnabledBase && this._gateEnabled;
 
@@ -957,7 +951,7 @@ class AgentGateFloatingWindow extends HTMLElement {
                 } catch {}
                 this._malEnabled = malEnabled !== false;
 
-                this._enabled = experimentalEnabled && config.enabled;
+                this._enabled = config.enabled;
                 this._opacity = config.opacity;
                 // 根据 enabled 状态控制 host 元素可见性
                 this.style.display = this._enabled ? '' : 'none';
@@ -1000,20 +994,19 @@ class AgentGateFloatingWindow extends HTMLElement {
         if (window.settingAPI) {
             this._settingCallback = (data) => {
                 const agConfig = data?.applications?.agentgate || {};
-                const experimentalEnabled = data?.debug?.experimental_feature === true;
                 const agentgateEnabled = agConfig.enabled === true;
 
-                // AgentGate is only truly active when experimental mode AND its own enabled switch are both on
-                this._globalEnabledBase = experimentalEnabled;
+                // AgentGate is only truly active when its own total switch is on
+                this._globalEnabledBase = true;
                 this._gateEnabled = agentgateEnabled;
                 this._globalEnabled = this._globalEnabledBase && this._gateEnabled;
 
                 // 同步恶意技能检测开关（默认 false，显式开启才生效）
                 this._malEnabled = agConfig.maliciousSkillDetection === true;
 
-                // Floating window should only show when experimental mode is on
+                // Floating window visibility is controlled by the AgentGate application config
                 const floatingWindowEnabled = agConfig.floatingWindowEnabled === true;
-                const newEnabled = experimentalEnabled && floatingWindowEnabled;
+                const newEnabled = floatingWindowEnabled;
                 if (newEnabled !== this._enabled) {
                     this._enabled = newEnabled;
                     this.style.display = this._enabled ? '' : 'none';

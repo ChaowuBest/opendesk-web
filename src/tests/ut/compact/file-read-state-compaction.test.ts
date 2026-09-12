@@ -8,6 +8,14 @@ import { TaskManagerState, TaskState } from '../../../main/aikernel/states/tasks
 import { writeTaskSessionMemory } from '../../../main/aikernel/compaction/session-memory-compact';
 import { ModelInstance, Setting, setCustomOpendeskDirectory } from '../../../main/utils/setting';
 
+const managers: TaskManagerState[] = [];
+
+function createManager(): TaskManagerState {
+    const manager = new TaskManagerState();
+    managers.push(manager);
+    return manager;
+}
+
 let tempRootDir: string | undefined;
 
 function createTempAppDirectory(): string {
@@ -22,10 +30,11 @@ function cleanupTempAppDirectory(): void {
         fs.rmSync(tempRootDir, { recursive: true, force: true });
     }
     tempRootDir = undefined;
+    setCustomOpendeskDirectory(undefined);
 }
 
 function createTask(): TaskState {
-    const task = new TaskState(new TaskManagerState(), null);
+    const task = new TaskState(createManager(), null);
     task.model = 'compact-test-model';
     return task;
 }
@@ -122,7 +131,11 @@ function mockSmallContextWindow(): void {
 }
 
 describe('file read state invalidation after context compaction', () => {
-    afterEach(() => {
+    afterEach(async () => {
+        for (const manager of managers) {
+            await manager.flushAllPendingSaves();
+        }
+        managers.length = 0;
         jest.restoreAllMocks();
         cleanupTempAppDirectory();
     });
@@ -142,7 +155,7 @@ describe('file read state invalidation after context compaction', () => {
 
     test('task compact uses a one-shot model override and persists the compact boundary', async () => {
         createTempAppDirectory();
-        const taskManager = new TaskManagerState();
+        const taskManager = createManager();
         const saveSpy = jest.spyOn(taskManager, 'save').mockImplementation(() => undefined);
         const task = new TaskState(taskManager, null);
         task.model = 'conversation-model';

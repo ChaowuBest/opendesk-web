@@ -118,7 +118,7 @@ describe('个人中心账号面板重新登录', () => {
         // preload 中的 accountAPI 没有 login 方法（账号后端已迁移到插件 flow API）
         (win as any).accountAPI = accountAPI;
         (win as any).settingAPI = {
-            loadSettingObject: async () => ({ locale: 'zh-CN', debug: { experimental_feature: true } })
+            loadSettingObject: async () => ({ locale: 'zh-CN', debug: { experimental_features: { account: true } } })
         };
         document.body.replaceChildren();
     });

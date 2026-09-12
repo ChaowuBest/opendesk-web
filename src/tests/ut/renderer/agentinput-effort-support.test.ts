@@ -146,4 +146,110 @@ describe('AgentInput reasoning effort support loading', () => {
         expect(maxIcon).not.toBeNull();
         expect((maxIcon.innerHTML.match(/fill="#1F9D66"/g) || []).length).toBe(4);
     });
+
+    test.each(['high', 'none', ''])('已有任务切换到 %s 档位时通知宿主持久化，发送与入队保留该值', async (effort) => {
+        const saveSettingObject = jest.fn(async () => undefined);
+        window.settingAPI.saveSettingObject = saveSettingObject;
+        const input = new AgentInput();
+        await input.loadSettings();
+        input.taskId = 'existing-task';
+        input.setReasoningEffort('low');
+        input.render();
+        input.showEffortSubmenu('gpt5', null);
+        const changed = jest.fn();
+        input.addEventListener('model-changed', changed);
+
+        input.querySelector(`[data-effort-value="${effort}"]`).click();
+        await new Promise((resolve) => setTimeout(resolve, 0));
+
+        expect(changed).toHaveBeenCalledWith(
+            expect.objectContaining({
+                detail: { model: 'gpt5', reasoningEffort: effort }
+            })
+        );
+        expect(saveSettingObject).not.toHaveBeenCalled();
+
+        for (const eventName of ['submit', 'queue']) {
+            input.isRunning = eventName === 'queue';
+            const sent = jest.fn();
+            input.addEventListener(eventName, sent);
+            input.querySelector('#agent-input-textarea').value = 'hello';
+            input.querySelector('#agent-input-submit-btn').click();
+            await new Promise((resolve) => setTimeout(resolve, 0));
+            expect(sent).toHaveBeenCalledWith(
+                expect.objectContaining({
+                    detail: expect.objectContaining({ selectedModel: 'gpt5', reasoningEffort: effort })
+                })
+            );
+        }
+    });
+
+    test('新任务界面仍将所选模型和推理档位保存为全局默认值', async () => {
+        const saveSettingObject = jest.fn(async () => undefined);
+        window.settingAPI.saveSettingObject = saveSettingObject;
+        const input = new AgentInput();
+        await input.loadSettings();
+        input.render();
+        input.showEffortSubmenu('deepseek', null);
+
+        input.querySelector('[data-effort-value="high"]').click();
+        await new Promise((resolve) => setTimeout(resolve, 0));
+
+        expect(saveSettingObject).toHaveBeenCalledWith(
+            expect.objectContaining({
+                default_model: 'deepseek',
+                models: expect.arrayContaining([
+                    expect.objectContaining({ alias: 'deepseek', reasoning_effort: 'high' })
+                ])
+            })
+        );
+    });
+
+    test('加载任务的推理档位时立即同步按钮图标', async () => {
+        const input = new AgentInput();
+        await input.loadSettings();
+        input.render();
+
+        input.setReasoningEffort('high');
+        const icon = input.querySelector('#agent-input-model-btn .agent-effort-icon');
+        expect(icon).not.toBeNull();
+        expect((icon.innerHTML.match(/fill="#1F9D66"/g) || []).length).toBe(3);
+
+        input.setReasoningEffort('');
+        expect(input.querySelector('#agent-input-model-btn .agent-effort-icon')).toBeNull();
+    });
+
+    test('异步加载模型设置不会覆盖任务显式选择的默认档位', async () => {
+        const loadSettingObject = window.settingAPI.loadSettingObject;
+        window.settingAPI.loadSettingObject = jest.fn(async () => ({
+            models: [{ alias: 'gpt5', model_type: 'chat', reasoning_effort: 'high' }],
+            default_model: 'gpt5'
+        }));
+        try {
+            const input = new AgentInput();
+            const loading = input.loadSettings();
+            input.setReasoningEffort('');
+            await loading;
+            expect(input.selectedReasoningEffort).toBe('');
+        } finally {
+            window.settingAPI.loadSettingObject = loadSettingObject;
+        }
+    });
+
+    test('任务尚无推理档位且模型设置未加载时，仍能继承模型配置', async () => {
+        const loadSettingObject = window.settingAPI.loadSettingObject;
+        window.settingAPI.loadSettingObject = jest.fn(async () => ({
+            models: [{ alias: 'gpt5', model_type: 'chat', reasoning_effort: 'high' }],
+            default_model: 'gpt5'
+        }));
+        try {
+            const input = new AgentInput();
+            const loading = input.loadSettings();
+            input.setReasoningEffort(undefined);
+            await loading;
+            expect(input.selectedReasoningEffort).toBe('high');
+        } finally {
+            window.settingAPI.loadSettingObject = loadSettingObject;
+        }
+    });
 });

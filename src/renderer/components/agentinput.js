@@ -242,6 +242,7 @@ class AgentInput extends HTMLElement {
         this.modelEffortsMap = {};
         this.selectedModel = '';
         this.selectedReasoningEffort = '';
+        this._hasExplicitReasoningEffort = false;
         this.defaultModelAlias = '';
         /** @type {{ id: string, name: string, description: string, icon: string, color: string }[]} */
         this.availableModes = [];
@@ -379,7 +380,12 @@ class AgentInput extends HTMLElement {
                 this.selectedModel = this.defaultModelAlias;
             }
             const currentModel = this.availableModels.find((m) => m.alias === this.selectedModel);
-            if (currentModel && currentModel.reasoning_effort !== undefined && !this.selectedReasoningEffort) {
+            if (
+                currentModel &&
+                currentModel.reasoning_effort !== undefined &&
+                !this._hasExplicitReasoningEffort &&
+                !this.selectedReasoningEffort
+            ) {
                 this.selectedReasoningEffort = currentModel.reasoning_effort;
             }
             this.isModelNotSelected = this.availableModels.length > 0 && !this.selectedModel;
@@ -694,6 +700,8 @@ class AgentInput extends HTMLElement {
      */
     setReasoningEffort(effort) {
         this.selectedReasoningEffort = effort || '';
+        this._hasExplicitReasoningEffort = effort !== undefined;
+        this._updateEffortIcon();
     }
 
     /**
@@ -1902,11 +1910,10 @@ class AgentInput extends HTMLElement {
                 const effortValue = item.dataset.effortValue;
                 if (!alias || effortValue === undefined) return;
                 this.selectedModel = alias;
-                this.selectedReasoningEffort = effortValue;
-                await updateSettingForModelChange(this.selectedModel, this.selectedReasoningEffort, {
-                    updateDefaultModel: !this.taskId,
-                    updateReasoningEffort: !this.taskId
-                });
+                this.setReasoningEffort(effortValue);
+                if (!this.taskId) {
+                    await updateSettingForModelChange(alias, effortValue);
+                }
                 this.closeModelPanel();
                 this.hideEffortSubmenu();
                 // 更新按钮文字和推理图标
@@ -1920,7 +1927,7 @@ class AgentInput extends HTMLElement {
                 }
                 this.dispatchEvent(
                     new CustomEvent('model-changed', {
-                        detail: { model: this.selectedModel },
+                        detail: { model: alias, reasoningEffort: effortValue },
                         bubbles: true
                     })
                 );
@@ -2926,7 +2933,7 @@ class AgentInput extends HTMLElement {
                         attachedFilePaths: [...this.attachedFilePaths],
                         attachedImages: this.attachedImages.map((img) => img.dataUrl),
                         selectedModel: this.selectedModel || undefined,
-                        reasoningEffort: this.selectedReasoningEffort || undefined,
+                        reasoningEffort: this.selectedReasoningEffort,
                         selectedExecutionNodeId: this.selectedExecutionNodeId || null
                     },
                     bubbles: true
@@ -2948,7 +2955,7 @@ class AgentInput extends HTMLElement {
                     attachedFilePaths: this.attachedFilePaths,
                     attachedImages: this.attachedImages.map((img) => img.dataUrl),
                     selectedModel: this.selectedModel || undefined,
-                    reasoningEffort: this.selectedReasoningEffort || undefined,
+                    reasoningEffort: this.selectedReasoningEffort,
                     selectedExecutionNodeId: this.selectedExecutionNodeId || null
                 },
                 bubbles: true

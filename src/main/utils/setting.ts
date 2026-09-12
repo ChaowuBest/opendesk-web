@@ -286,12 +286,36 @@ const NetworkConfigSchema = z.object({
 type Provider = z.infer<typeof ProviderSchema>;
 type Model = z.infer<typeof ModelSchema>;
 
+const ExperimentalApplicationsSchema = z.preprocess(
+    (value) => (value && typeof value === 'object' && !Array.isArray(value) ? value : {}),
+    z
+        .object({
+            appmgr: z.boolean().default(false).describe('是否启用应用工坊'),
+            agentoffice: z.boolean().default(false).describe('是否启用办公室')
+        })
+        .describe('实验性应用开关')
+);
+
+const ExperimentalFeaturesSchema = z
+    .object({
+        applications: ExperimentalApplicationsSchema,
+        account: z.boolean().default(false).describe('是否启用账号功能'),
+        magic_pointer: z.boolean().default(false).describe('是否启用 Magic Pointer')
+    })
+    .describe('实验性功能开关');
+
 const DebugModeSchema = z.object({
-    developer_mode: z.boolean().default(false).describe('是否启用开发者模式'),
-    experimental_feature: z.boolean().default(false).describe('是否启用试验性功能'),
+    developer_mode: z.boolean().default(false).describe('是否启用开发与调试'),
+    experimental_features: ExperimentalFeaturesSchema.optional(),
     log_raw_llm_request: z.boolean().default(false).describe('将原始LLM响应计入日志'),
     debug_log: z.boolean().default(false).describe('是否开启调试日志（logger.debug 级别写入日志文件）')
 });
+
+function removeLegacyExperimentalFeature(settingRawObject: any): void {
+    const debug = settingRawObject?.debug;
+    if (!debug || typeof debug !== 'object') return;
+    delete debug.experimental_feature;
+}
 
 const TelemetryEndpointSchema = z.object({
     name: z.string().default('').describe('端点名称，用于标识'),
@@ -406,9 +430,8 @@ function getSettingSchema(): z.ZodObject<z.ZodRawShape> {
         default_reranker_model: z.string().describe('在检索结果重排序中使用的模型').default(''),
         default_vision_model: z.string().describe('在图片记忆提取中使用的多模态模型').default(''),
         default_workspace: z.string().describe('默认工作空间目录路径(为空时使用临时工作空间)').default(''),
-        debug: DebugModeSchema.describe('调试模式设置').default({
+        debug: DebugModeSchema.describe('开发与调试设置').default({
             developer_mode: false,
-            experimental_feature: false,
             log_raw_llm_request: false
         }),
         telemetry: TelemetrySchema,
@@ -615,6 +638,7 @@ export class Setting {
     }
 
     setData(data: unknown): void {
+        removeLegacyExperimentalFeature(data);
         const newSettingData = getSettingSchema().parse(data) as SettingData;
         const settingChangedApplications: string[] = [];
 
@@ -694,6 +718,7 @@ export class Setting {
         if (Setting.instance === null) {
             Setting.instance = new Setting();
         }
+        removeLegacyExperimentalFeature(data);
         Setting.instance.data = getSettingSchema().parse(data) as SettingData;
         Setting.instance.validateDefaultModels(false);
     }
@@ -749,9 +774,11 @@ export class Setting {
         // Migration: move legacy top-level 'developer_mode' to 'debug.developer_mode'
         if (typeof (settingRawObject as any)?.developer_mode === 'boolean' && !(settingRawObject as any)?.debug) {
             const legacyDevMode = (settingRawObject as any).developer_mode;
-            (settingRawObject as any).debug = { developer_mode: legacyDevMode, experimental_feature: false };
+            (settingRawObject as any).debug = { developer_mode: legacyDevMode };
             delete (settingRawObject as any).developer_mode;
         }
+
+        removeLegacyExperimentalFeature(settingRawObject);
 
         const setting = new Setting();
         try {
@@ -1213,6 +1240,7 @@ export {
     normalizeModelType,
     isChatModel,
     isEmbeddingModel,
+    ExperimentalFeaturesSchema,
     DebugModeSchema,
     type ReasoningEffort,
     type ModelType,

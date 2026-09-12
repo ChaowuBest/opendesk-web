@@ -55,7 +55,9 @@ interface SettingData {
     models: SettingModel[];
     default_model: string;
     debug?: {
-        experimental_feature?: boolean;
+        experimental_features?: {
+            account?: boolean;
+        };
     };
     [key: string]: unknown;
 }
