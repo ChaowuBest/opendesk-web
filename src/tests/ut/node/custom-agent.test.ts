@@ -240,6 +240,39 @@ test('loadFromPath: 加载 skills/ 目录中的技能', async () => {
     await agent.dispose();
 });
 
+test('reassertSkillProviderRegistration restores the provider after a concurrent overwrite', async () => {
+    const dir = path.join(tmpDir, 'reassert-skills');
+    writeAgentConfig(dir, {
+        agentJson: { name: 'reassert-agent', when_to_use: 'Agent for reassert testing.' },
+        agentsMd: '# Reassert Agent',
+        skills: { 'my-skill': VALID_SKILL_MD }
+    });
+
+    const agent = await CustomAgent.loadFromPath(dir);
+    const bundle = `custom:${path.resolve(dir)}`;
+    const registry = SkillRegistry.getInstance();
+    const original = registry.getSkillProvider(bundle);
+    assert.ok(original, 'provider should be registered after load');
+
+    // 模拟并发创建的实例：后构造者的同名注册覆盖了胜者的注册
+    const intruder = { getSkills: async () => [] };
+    registry.registerSkillProvider(bundle, intruder as never);
+    assert.equal(registry.getSkillProvider(bundle), intruder);
+
+    // 落败实例按实例身份注销（此时当前注册者正是它，会被删除）
+    registry.unregisterSkillProvider(bundle, intruder as never);
+    assert.equal(registry.getSkillProvider(bundle), undefined, 'provider should be gone after loser dispose');
+
+    // 胜者重新断言注册，恢复一致性
+    agent.reassertSkillProviderRegistration();
+    assert.equal(registry.getSkillProvider(bundle), original);
+    assert.notEqual(registry.getSkillProvider(bundle), intruder);
+
+    // 收尾：agent 自身 dispose 应能正常注销
+    await agent.dispose();
+    assert.equal(registry.getSkillProvider(bundle), undefined);
+});
+
 test('loadFromPath: 无 skills 目录时不报错', async () => {
     const dir = path.join(tmpDir, 'no-skills');
     writeAgentConfig(dir, { agentJson: VALID_AGENT_JSON, agentsMd: '# No Skills' });

@@ -1303,6 +1303,12 @@ const registerTaskManagerAPIHandlers = () => {
         if (initialNodeId && !getExecutionNode(initialNodeId)) {
             return { status: 'error', message: `node ${initialNodeId} not connected` };
         }
+        // system prompt 中的可派发 agent 列表是创建时刻的快照（此后不会重建）。
+        // 应用的 agent 延迟加载在主窗口显示后才后台触发，若在此处不等待加载屏障，
+        // 加载窗口内创建的任务将终身缺失自定义 agent，任务无法分发到这些 agent
+        // （与 CLI/TUI 建任务前 await ensureFullyLoaded 的行为保持一致）。
+        // 屏障通常启动后即已就绪，此处等待无感；agent 加载失败时屏障内部已兜底不会 reject。
+        await ApplicationRegistry.ensureFullyLoaded();
         const task = globalState.taskManagerState.createTask();
         const workspace = Setting.getInstance().getEffectiveWorkspace();
         const agentDecl = AgentRegistry.getMainAgent();
@@ -3624,8 +3630,6 @@ async function startApplication(): Promise<void> {
         // 在新窗口中打开应用
         ipcMain.handle('application:openInNewWindow', async (_event, bundleName: string) => {
             try {
-                // 确保应用已完成延迟加载
-                await ApplicationRegistry.getApplication(bundleName)?.ensureLoaded();
                 const appConfig = ApplicationRegistry.getApplicationGUIConfig(bundleName) as
                     | Record<string, unknown>
                     | undefined;
@@ -3657,6 +3661,12 @@ async function startApplication(): Promise<void> {
                 appWindow.setMenu(null);
                 appWindow.once('ready-to-show', () => {
                     appWindow.show();
+                    // 应用的延迟加载（如 AgentOffice 自定义 agent 磁盘扫描 + MCP 同步）
+                    // 不阻塞窗口显示，窗口展示后在后台补齐 AgentRegistry 注册；
+                    // 子应用 UI 依赖的 worker 数据本身不依赖该注册。
+                    ApplicationRegistry.getApplication(bundleName)
+                        ?.ensureLoaded()
+                        .catch((error) => logger.warn(`Background ensureLoaded failed for ${bundleName}: ${error}`));
                 });
 
                 // 统一加载壳页面，由壳页面根据 app 类型决定 iframe 内容
