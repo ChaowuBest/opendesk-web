@@ -28,12 +28,15 @@ describe('file explorer', () => {
     let FileExplorer: FileExplorerModule['FileExplorer'];
     let getFileExplorerCSS: FileExplorerModule['getFileExplorerCSS'];
     let renderFilePreviewMarkdown: FileExplorerModule['renderFilePreviewMarkdown'];
+    /** linkedom 窗口引用：其 dispatchEvent 只接受与 document 同源的 Event 实例 */
+    let lw: Window;
 
     beforeAll(async () => {
         jest.unstable_mockModule('ace-builds/css/ace.css', () => ({ default: '' }));
         jest.unstable_mockModule('ace-builds/css/ace.css?inline', () => ({ default: '' }), { virtual: true });
 
         const { window } = parseHTML('<!doctype html><html><body></body></html>');
+        lw = window;
         Object.assign(globalThis, {
             window,
             document: window.document,
@@ -568,5 +571,51 @@ describe('file explorer', () => {
         await new Promise((resolve) => setTimeout(resolve, 0));
         expect(explorer._selectedFile).toBe('/workspace/readme.txt');
         expect(onSwitchBlocked).toHaveBeenCalledTimes(1);
+    });
+
+    test('编辑器打开期间切换主题会实时更新 ace 主题并重新注入 shadow CSS', async () => {
+        const container = document.createElement('div');
+        const explorer = new FileExplorer() as any;
+        explorer._rootNode = container;
+        explorer._editorInstance = { setTheme: jest.fn() };
+        // 主题数据加载与 shadow CSS 注入均可直接观测
+        explorer._ensureAceTheme = jest.fn().mockResolvedValue({ cssText: 'CUSTOM', cssClass: 'ace-dracula' });
+        explorer._injectAceShadowStyles = jest.fn();
+
+        document.documentElement.dataset.theme = 'dark';
+        explorer._ensureThemeListening();
+        document.dispatchEvent(new lw.CustomEvent('opendesk-theme-changed', { detail: { effective: 'dark' } }));
+        await new Promise((resolve) => setTimeout(resolve, 0));
+
+        expect(explorer._editorInstance.setTheme).toHaveBeenCalledWith('ace/theme/dracula');
+        expect(explorer._injectAceShadowStyles).toHaveBeenCalledWith('CUSTOM');
+
+        // 浅色切换后应切到 clouds 主题
+        document.documentElement.dataset.theme = 'light';
+        document.dispatchEvent(new lw.CustomEvent('opendesk-theme-changed', { detail: { effective: 'light' } }));
+        await new Promise((resolve) => setTimeout(resolve, 0));
+        expect(explorer._editorInstance.setTheme).toHaveBeenCalledWith('ace/theme/clouds');
+
+        // 注销监听后不再响应切换
+        explorer._editorInstance.setTheme.mockClear();
+        explorer._disposeThemeListening();
+        document.dispatchEvent(new lw.CustomEvent('opendesk-theme-changed', { detail: { effective: 'dark' } }));
+        await new Promise((resolve) => setTimeout(resolve, 0));
+        expect(explorer._editorInstance.setTheme).not.toHaveBeenCalled();
+    });
+
+    test('无编辑器实例时主题切换事件不会报错或产生副作用', async () => {
+        const container = document.createElement('div');
+        const explorer = new FileExplorer() as any;
+        explorer._rootNode = container;
+        explorer._editorInstance = null;
+        explorer._ensureAceTheme = jest.fn();
+        explorer._injectAceShadowStyles = jest.fn();
+
+        explorer._ensureThemeListening();
+        document.dispatchEvent(new lw.CustomEvent('opendesk-theme-changed', { detail: { effective: 'dark' } }));
+        await new Promise((resolve) => setTimeout(resolve, 0));
+        expect(explorer._ensureAceTheme).not.toHaveBeenCalled();
+        expect(explorer._injectAceShadowStyles).not.toHaveBeenCalled();
     });
 });

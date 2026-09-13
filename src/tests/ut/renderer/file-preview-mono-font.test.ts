@@ -69,4 +69,24 @@ describe('右侧文件预览/编辑器与左侧等宽渲染对齐', () => {
         expect(css).toContain(`.ace_editor, .ace_editor * { font-family: ${PREVIEW_FONT_FAMILY} !important; }`);
         expect(css).toContain(`.ace_editor { line-height: ${PREVIEW_LINE_HEIGHT}; }`);
     });
+
+    it('深色模式下 ace 样式必须把 dracula 默认底色覆盖为右侧边栏面板背景 #1e1e1e', () => {
+        const light = buildAceShadowStyles('.ace-dracula { background-color: #282a36; }');
+        expect(light).not.toContain('background-color: #1e1e1e');
+        const dark = buildAceShadowStyles('.ace-dracula { background-color: #282a36; }', true);
+        expect(dark).toContain('.ace_editor, .ace_editor .ace_gutter { background-color: #1e1e1e !important; }');
+    });
+
+    it('预览/编辑器头部与代码区浅色背景必须与右侧边栏面板背景 #fff 一致', () => {
+        const css = getFileExplorerCSS();
+        for (const selector of [
+            '.ws-preview-header',
+            '.ws-editor-toolbar',
+            '.ws-preview-body',
+            '.ws-preview-code-host'
+        ]) {
+            const rule = extractRule(css, selector);
+            expect(rule).toContain('background: #fff');
+        }
+    });
 });
