@@ -82,6 +82,8 @@ export class AgentOfficeEntryWidget extends AgentOperableHTMLElement {
     private sendMenuOpen = false;
     private query = '';
     private busy = false;
+    /** 首次 staff 数据尚未返回时为 true，office/management 空列表先渲染加载态而不是"无员工" */
+    private loading = true;
     private modal:
         | 'new'
         | 'delete'
@@ -207,8 +209,11 @@ export class AgentOfficeEntryWidget extends AgentOperableHTMLElement {
                 this.call('getLocale'),
                 this.call('listChatModels')
             ]);
+            // 本地化文案就绪后立即渲染壳（加载态），staff 数据继续异步加载
+            this.render();
             await this.reloadStaffs();
         } catch (error) {
+            this.loading = false;
             this.status = `${this.tr('agentoffice.loadFailed')}: ${this.errorText(error)}`;
             this.render();
         }
@@ -244,10 +249,27 @@ export class AgentOfficeEntryWidget extends AgentOperableHTMLElement {
             this.messages = [];
         }
         if (!this.selectedStaffId && this.staffs.length > 0) this.selectedStaffId = this.staffs[0].id;
-        await this.preloadPortraits();
-        if (this.activeTab === 'office' && this.selectedStaffId) await this.loadMessages();
-        if (this.activeTab === 'management' && this.detail) await this.openDetail(this.detail.id);
+        this.loading = false;
+        // 员工列表就绪即渲染；头像与聊天记录在后台补齐后再次渲染
         this.render();
+        const portraitsDone = this.preloadPortraits().then(() => {
+            if (this.canRenderInBackground()) this.render();
+        });
+        const detailsDone = (async () => {
+            if (this.activeTab === 'office' && this.selectedStaffId) await this.loadMessages();
+            if (this.activeTab === 'management' && this.detail) await this.openDetail(this.detail.id);
+        })();
+        await Promise.all([portraitsDone, detailsDone]);
+    }
+
+    /**
+     * 后台数据补齐（头像/历史消息）完成时是否允许整体重渲染：
+     * 详情表单与弹窗（如头像裁剪画布）持有 DOM 中的草稿状态，
+     * 被后台渲染重建会导致未保存内容丢失，此时跳过重渲染，
+     * 等用户下一次显式操作时自然会带上新数据渲染。
+     */
+    private canRenderInBackground(): boolean {
+        return !this.detail && !this.modal;
     }
 
     private async refreshStaffSummaries(): Promise<void> {
@@ -260,15 +282,20 @@ export class AgentOfficeEntryWidget extends AgentOperableHTMLElement {
                 this.messages = [];
             }
             if (!this.selectedStaffId && this.staffs.length > 0) this.selectedStaffId = this.staffs[0].id;
-            await this.preloadPortraits();
-            if (this.activeTab === 'office' && this.selectedStaffId && this.selectedStaffId !== previousStaffId) {
-                await this.loadMessages();
-            } else if (!this.detail) {
-                this.render();
-            }
+            // 详情表单或弹窗打开时不整体重渲染，避免覆盖未保存的草稿
+            if (this.canRenderInBackground()) this.render();
+            const portraitsDone = this.preloadPortraits().then(() => {
+                if (this.canRenderInBackground()) this.render();
+            });
+            const detailsDone = (async () => {
+                if (this.activeTab === 'office' && this.selectedStaffId && this.selectedStaffId !== previousStaffId) {
+                    await this.loadMessages();
+                }
+            })();
+            await Promise.all([portraitsDone, detailsDone]);
         } catch (error) {
             this.status = `${this.tr('agentoffice.loadFailed')}: ${this.errorText(error)}`;
-            if (!this.detail) this.render();
+            if (this.canRenderInBackground()) this.render();
         }
     }
 
@@ -281,7 +308,9 @@ export class AgentOfficeEntryWidget extends AgentOperableHTMLElement {
         );
         this.messages = cursor ? [...result.messages, ...this.messages] : result.messages;
         this.historyCursor = result.next_cursor;
-        this.render();
+        // 渐进加载期间用户可能已打开详情表单/弹窗，此时跳过重渲染，状态已更新，
+        // 关闭弹窗（closeModal）或下一次用户操作时会带上新消息渲染
+        if (this.canRenderInBackground()) this.render();
         if (!cursor) requestAnimationFrame(() => this.scrollMessages());
     }
 
@@ -307,6 +336,9 @@ export class AgentOfficeEntryWidget extends AgentOperableHTMLElement {
 
     private renderOffice(): string {
         if (this.staffs.length === 0) {
+            if (this.loading) {
+                return `<div class="empty"><div>${escapeHtml(this.tr('agentoffice.loading'))}</div></div>`;
+            }
             return `<div class="empty"><div><h3>${escapeHtml(this.tr('agentoffice.noStaff'))}</h3><p>${escapeHtml(this.tr('agentoffice.noStaffHint'))}</p><button class="primary" data-tab="management">${escapeHtml(this.tr('agentoffice.tab.management'))}</button></div></div>`;
         }
         const staff = this.staffs.find((item) => item.id === this.selectedStaffId) ?? this.staffs[0];
@@ -430,7 +462,11 @@ export class AgentOfficeEntryWidget extends AgentOperableHTMLElement {
 
     private renderManagement(): string {
         if (this.detail) return `<div class="management">${this.renderDetail()}</div>`;
-        return `<div class="management"><section class="management-panel"><div class="toolbar"><div><span class="toolbar-title">${escapeHtml(this.tr('agentoffice.tab.management'))}</span>${this.status ? `<span class="notice">${escapeHtml(this.status)}</span>` : ''}</div><div class="toolbar-actions"><button class="secondary" data-action="import">${escapeHtml(this.tr('agentoffice.importZip'))}</button><button class="primary" data-action="new">${escapeHtml(this.tr('agentoffice.newStaff'))}</button></div></div>${this.staffs.length === 0 ? `<div class="empty">${escapeHtml(this.tr('agentoffice.noStaffHint'))}</div>` : `<div class="grid">${this.staffs.map((staff) => `<button class="card" data-detail="${staff.id}">${this.staffCardContent(staff)}</button>`).join('')}</div>`}</section></div>`;
+        return `<div class="management"><section class="management-panel"><div class="toolbar"><div><span class="toolbar-title">${escapeHtml(this.tr('agentoffice.tab.management'))}</span>${this.status ? `<span class="notice">${escapeHtml(this.status)}</span>` : ''}</div><div class="toolbar-actions"><button class="secondary" data-action="import">${escapeHtml(this.tr('agentoffice.importZip'))}</button><button class="primary" data-action="new">${escapeHtml(this.tr('agentoffice.newStaff'))}</button></div></div>${
+            this.staffs.length === 0
+                ? `<div class="empty">${escapeHtml(this.loading ? this.tr('agentoffice.loading') : this.tr('agentoffice.noStaffHint'))}</div>`
+                : `<div class="grid">${this.staffs.map((staff) => `<button class="card" data-detail="${staff.id}">${this.staffCardContent(staff)}</button>`).join('')}</div>`
+        }</section></div>`;
     }
 
     private staffCardContent(staff: StaffListItem): string {

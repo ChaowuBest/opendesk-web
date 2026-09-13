@@ -122,6 +122,9 @@ export class CustomAgent extends AgentDecl {
      * - agent.json  - 元数据：name, when_to_use（可选，缺失时从目录名和 agents.md 推断）
      * - mcp.json    - MCP 服务器配置（可选）
      * - skills/     - 私有技能目录（可选）
+     *
+     * 文件读取使用异步 fs：AgentOffice 启动时会并行加载多个 agent 目录，
+     * 同步 IO 会在 libuv 线程池上重叠执行，避免串行拖慢 AgentRegistry 注册。
      */
     static async loadFromPath(dir: string, options: CustomAgentLoadOptions = {}): Promise<CustomAgent> {
         const resolvedDir = path.resolve(dir);
@@ -131,7 +134,7 @@ export class CustomAgent extends AgentDecl {
         if (!fs.existsSync(agentsMdPath)) {
             throw new Error(`CustomAgent: agents.md not found in ${resolvedDir}`);
         }
-        const agentsMd = fs.readFileSync(agentsMdPath, 'utf-8').trim();
+        const agentsMd = (await fs.promises.readFile(agentsMdPath, 'utf-8')).trim();
         if (agentsMd.length === 0) {
             throw new Error(`CustomAgent: agents.md is empty in ${resolvedDir}`);
         }
@@ -141,8 +144,8 @@ export class CustomAgent extends AgentDecl {
         const agentJsonPath = path.join(resolvedDir, 'agent.json');
         if (fs.existsSync(agentJsonPath)) {
             try {
-                const raw = JSON.parse(fs.readFileSync(agentJsonPath, 'utf-8'));
-                meta = CustomAgentMetaSchema.parse(raw);
+                const raw = await fs.promises.readFile(agentJsonPath, 'utf-8');
+                meta = CustomAgentMetaSchema.parse(JSON.parse(raw));
             } catch (err) {
                 throw new Error(`CustomAgent: failed to parse agent.json: ${err}`);
             }
@@ -168,41 +171,45 @@ export class CustomAgent extends AgentDecl {
         const mcpJsonPath = path.join(resolvedDir, 'mcp.json');
         if (fs.existsSync(mcpJsonPath)) {
             try {
-                mcpConfig = JSON.parse(fs.readFileSync(mcpJsonPath, 'utf-8'));
+                mcpConfig = JSON.parse(await fs.promises.readFile(mcpJsonPath, 'utf-8'));
             } catch (err) {
                 logger.warn(`CustomAgent: failed to parse mcp.json, skipping MCP: ${err}`);
             }
         }
 
         // 扫描 skills/ 目录（可选）
-        const skills = CustomAgent.loadSkills(path.join(resolvedDir, 'skills'));
+        const skills = await CustomAgent.loadSkills(path.join(resolvedDir, 'skills'));
 
         logger.info(`CustomAgent loaded: name="${meta.name}" from ${resolvedDir} (skills=${skills.length})`);
         return new CustomAgent(meta, resolvedDir, agentsMd, mcpConfig, skills, options);
     }
 
-    private static loadSkills(skillsDir: string): Skill[] {
+    private static async loadSkills(skillsDir: string): Promise<Skill[]> {
         if (!fs.existsSync(skillsDir)) return [];
 
-        const skills: Skill[] = [];
-        const entries = fs.readdirSync(skillsDir, { withFileTypes: true });
-        for (const entry of entries) {
-            if (!entry.isDirectory()) continue;
-            const skillDir = path.join(skillsDir, entry.name);
-            const skillMdPath = path.join(skillDir, 'SKILL.md');
-            if (!fs.existsSync(skillMdPath)) continue;
+        const entries = await fs.promises.readdir(skillsDir, { withFileTypes: true });
+        // 各技能的 SKILL.md 互不依赖，并行读取以缩短多技能 agent 的加载时间
+        const loaded = await Promise.all(
+            entries
+                .filter((entry) => entry.isDirectory())
+                .map(async (entry) => {
+                    const skillDir = path.join(skillsDir, entry.name);
+                    const skillMdPath = path.join(skillDir, 'SKILL.md');
+                    if (!fs.existsSync(skillMdPath)) return undefined;
 
-            try {
-                const raw = fs.readFileSync(skillMdPath, 'utf-8');
-                const skill = Skill.parseMd(raw);
-                skill.directory = skillDir;
-                skills.push(skill);
-                logger.info(`CustomAgent: loaded skill "${skill.frontmatter.name}" from ${skillDir}`);
-            } catch (err) {
-                logger.warn(`CustomAgent: failed to parse SKILL.md in ${skillDir}: ${err}`);
-            }
-        }
-        return skills;
+                    try {
+                        const raw = await fs.promises.readFile(skillMdPath, 'utf-8');
+                        const skill = Skill.parseMd(raw);
+                        skill.directory = skillDir;
+                        logger.info(`CustomAgent: loaded skill "${skill.frontmatter.name}" from ${skillDir}`);
+                        return skill;
+                    } catch (err) {
+                        logger.warn(`CustomAgent: failed to parse SKILL.md in ${skillDir}: ${err}`);
+                        return undefined;
+                    }
+                })
+        );
+        return loaded.filter((skill): skill is Skill => Boolean(skill));
     }
 
     supportedModes(): ModeDecl[] {
@@ -260,6 +267,19 @@ export class CustomAgent extends AgentDecl {
         if (this.skillsRegistered) {
             SkillRegistry.getInstance().unregisterSkillProvider(this.skillBundleName, this.skillProvider);
             this.skillsRegistered = false;
+        }
+    }
+
+    /**
+     * 重新断言本 agent 的 SkillProvider 注册。
+     *
+     * 注册发生在构造函数中：同一 staff 的两个实例并发创建时，后构造者的同名注册
+     * 会覆盖前者，而实例胜负由 staffAgents map 的写入次序决定，两者可能不一致。
+     * 落败实例 dispose（registry 侧带身份校验）后，由胜者调用本方法恢复注册一致性。
+     */
+    reassertSkillProviderRegistration(): void {
+        if (this.skillsRegistered) {
+            SkillRegistry.getInstance().registerSkillProvider(this.skillBundleName, this.skillProvider);
         }
     }
 }

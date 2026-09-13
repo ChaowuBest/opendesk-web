@@ -242,15 +242,21 @@ export class AgentOfficeApplication extends BaseApplication {
 
         if (fs.existsSync(agentsDirectory)) {
             const entries = fs.readdirSync(agentsDirectory, { withFileTypes: true });
-            for (const entry of entries) {
-                if (!entry.isDirectory()) continue;
-                const agentDirectory = path.join(agentsDirectory, entry.name);
-                try {
-                    agents.push(await CustomAgent.loadFromPath(agentDirectory));
-                } catch (error) {
-                    logger.warn(`AgentOffice: failed to load custom agent from ${agentDirectory}: ${error}`);
-                }
-            }
+            // 自定义 agent 目录彼此独立，并行加载避免数量多时串行磁盘 IO 拖慢启动
+            const loaded = await Promise.all(
+                entries
+                    .filter((entry) => entry.isDirectory())
+                    .map(async (entry) => {
+                        const agentDirectory = path.join(agentsDirectory, entry.name);
+                        try {
+                            return await CustomAgent.loadFromPath(agentDirectory);
+                        } catch (error) {
+                            logger.warn(`AgentOffice: failed to load custom agent from ${agentDirectory}: ${error}`);
+                            return undefined;
+                        }
+                    })
+            );
+            agents.push(...loaded.filter((agent): agent is CustomAgent => Boolean(agent)));
         } else {
             logger.info(`AgentOffice: custom agents directory not found: ${agentsDirectory}`);
         }
@@ -295,19 +301,36 @@ export class AgentOfficeApplication extends BaseApplication {
             return;
         }
 
+        // staff agent 互不依赖，并行构建，避免 staff 多时逐个读取磁盘
+        const tasks: Promise<void>[] = [];
         for (const staff of staffs) {
             if (!staff.enabled) continue;
-            try {
-                const agent = await this.createStaffAgent(staff.id, staff);
-                this.staffAgents.set(staff.id, agent);
-                this.staffMcpRegistrations.set(staff.id, {
-                    agentId: agent.agentId,
-                    config: agent.mcpConfig
-                });
-            } catch (error) {
-                logger.warn(`AgentOffice: failed to load agent for staff ${staff.id}: ${error}`);
-            }
+            tasks.push(
+                (async () => {
+                    try {
+                        const agent = await this.createStaffAgent(staff.id, staff);
+                        // 初始加载期间该 staff 可能已被 reloadStaffAgent 刷新：丢弃本次结果。
+                        // SkillProvider 注册发生在构造函数中，落败实例的后构造可能已覆盖胜者的
+                        // 同名注册，故先 dispose 落败实例（registry 按实例身份注销，非当前注册者
+                        // 时为 no-op），再由胜者重新断言注册，保证两种构造次序都收敛到胜者。
+                        const current = this.staffAgents.get(staff.id);
+                        if (current) {
+                            await agent.dispose();
+                            current.reassertSkillProviderRegistration();
+                            return;
+                        }
+                        this.staffAgents.set(staff.id, agent);
+                        this.staffMcpRegistrations.set(staff.id, {
+                            agentId: agent.agentId,
+                            config: agent.mcpConfig
+                        });
+                    } catch (error) {
+                        logger.warn(`AgentOffice: failed to load agent for staff ${staff.id}: ${error}`);
+                    }
+                })()
+            );
         }
+        await Promise.all(tasks);
     }
 
     private createStaffAgent(staffId: string, staff: Pick<StaffListItem, 'name' | 'title'>): Promise<CustomAgent> {

@@ -11,7 +11,13 @@ import { getPluginHost } from '../../../main/applications/pluginmgr/runtime/host
 import { actionHint, definePlugin, textHint } from '../../../../packages/plugin-sdk/src/index.js';
 
 /** 最小 BrowserController 替身：只实现 hint / trigger 链路真正用到的方法 */
-function fakeController(options: { url: string; ariaSnapshot?: string; evaluate?: (expression: string) => unknown }) {
+function fakeController(options: {
+    url: string;
+    ariaSnapshot?: string;
+    evaluate?: (expression: string) => unknown;
+    /** 与 getPageInfo 返回的当前 URL 不同的"操作前"URL，用于模拟导航后 URL 变化 */
+    urlBefore?: string;
+}) {
     const evaluated: string[] = [];
     const switched: number[] = [];
     return {
@@ -25,7 +31,7 @@ function fakeController(options: { url: string; ariaSnapshot?: string; evaluate?
                 scroll: { x: 0, y: 0 },
                 ariaSnapshot: options.ariaSnapshot ?? '- button "Go" [ref=e1]'
             }),
-            getLastUrl: () => options.url,
+            getLastUrl: () => options.urlBefore ?? options.url,
             getPageInfo: async () => ({ url: options.url, title: 'Fake Page' }),
             tabs: async (_action: string, tabId?: number) => {
                 if (tabId !== undefined) switched.push(tabId);
@@ -153,6 +159,43 @@ describe('browser hints 接入 snapshot 与 trigger', () => {
         expect(output).toContain('- action: Search');
         expect(output).toContain('## Browser Hints');
         expect(output).toContain('[Accessibility Snapshot]');
+    });
+
+    test('snapshot=false 但 URL 发生变化时返回 Page Changed 提示', async () => {
+        await activateSiteHints();
+        // urlBefore 是操作前的 URL，url 是操作后跳转到的新 URL
+        const { ctrl } = fakeController({
+            url: 'https://www.bing.com/search?q=hi',
+            urlBefore: 'https://www.bing.com/',
+            evaluate: () => 'ok'
+        });
+        useController(ctrl);
+
+        const output = await runTool(new BrowserTriggerTool(browserApp), {
+            action: 'Search',
+            args: { keyword: 'hi' },
+            snapshot: false
+        });
+
+        expect(output).toContain('- action: Search');
+        expect(output).toContain('Page Changed: yes (https://www.bing.com/ → https://www.bing.com/search?q=hi)');
+        // 未请求 snapshot，不应包含 Accessibility Snapshot 段落
+        expect(output).not.toContain('[Accessibility Snapshot]');
+    });
+
+    test('URL 未变化时不输出 Page Changed', async () => {
+        await activateSiteHints();
+        const { ctrl } = fakeController({ url: 'https://www.bing.com/', evaluate: () => 'ok' });
+        useController(ctrl);
+
+        const output = await runTool(new BrowserTriggerTool(browserApp), {
+            action: 'Search',
+            args: { keyword: 'x' },
+            snapshot: false
+        });
+
+        expect(output).toBe(['- action: Search', '- result: ok'].join('\n'));
+        expect(output).not.toContain('Page Changed');
     });
 
     test('trigger 指定 tabId 时先切换标签页再解析动作', async () => {

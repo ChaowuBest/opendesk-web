@@ -87,7 +87,9 @@ description: 提供嵌入式网页浏览器控制功能：访问网页、页面�
 所有控制类工具（navigate、click、type、uploadFile、hover、pressKey、selectOption、scrollTo、goBack、goForward、reload、evaluate、trigger、tabs、waitFor）都支持可选的 \`snapshot\` 参数：
 
 - \`snapshot: true\` — 操作成功后自动等待 0.5 秒获取页面快照，结果以 \`snapshot\` 字段返回
-- \`snapshot: false\`（默认）— 不自动快照，与原有行为一致
+- \`snapshot: false\`（默认）— 不自动快照，仅返回操作结果
+
+**URL 变化检测与 snapshot 参数无关**：只要操作导致页面发生了跨页导航（URL 变化），无论是否设置 \`snapshot: true\`，返回结果中都会附带一行 \`Page Changed: yes (旧URL → 新URL)\`，用于提示你页面已经跳转、旧的元素 ref 可能失效。这对 trigger / click / type+submit 等可能触发导航的操作尤为重要。
 
 使用 \`snapshot: true\` 可以省略操作后显式调用 \`snapshot\` 的步骤，减少单次交互的往返次数。快照结果格式与 \`snapshot\` 工具一致。
 

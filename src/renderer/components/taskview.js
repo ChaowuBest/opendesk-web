@@ -2906,6 +2906,13 @@ class TaskView extends HTMLElement {
                 const sidebar = this._getRightSidebarEl();
                 if (!sidebar || typeof sidebar.browserGetActiveTabUrl !== 'function') return '';
                 return sidebar.browserGetActiveTabUrl();
+            },
+            // 浮窗可见时固定 webview 视口为 16:9（避免窄高容器把截图拉长），隐藏时恢复自适应
+            onVisibilityChanged: (visible) => {
+                const sidebar = this._getRightSidebarEl();
+                if (sidebar && typeof sidebar.browserSetViewportFixed === 'function') {
+                    sidebar.browserSetViewportFixed(visible);
+                }
             }
         });
     }

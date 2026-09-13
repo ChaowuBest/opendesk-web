@@ -20,6 +20,7 @@ import {
     computeTriggerActive,
     isWidgetTriggerEffective,
     mergeTaskLiveUsage,
+    pruneStaleWaitingTaskIds,
     updateTaskSnapshot,
     type FloatingWindowMode,
     type TaskStatusListEntry,
@@ -553,6 +554,17 @@ function setWidgetCollapsed(collapsed: boolean): void {
 
 function handleTaskListChanged(list: TaskStatusListEntry[]): void {
     taskList = list ?? [];
+    // 兜底清理：任务结束/移除后，renderer 侧 prompt 组件可能已销毁而无法发送
+    // waiting=false 事件，导致 waitingTaskIds 残留、浮窗一直显示「需要操作」。
+    // 每次任务列表更新时按活跃任务集合对齐一次，并刷新已显示浮窗中的提示。
+    const staleWaiting = pruneStaleWaitingTaskIds(waitingTaskIds, taskList);
+    if (staleWaiting.length !== waitingTaskIds.size) {
+        waitingTaskIds.clear();
+        for (const taskId of staleWaiting) {
+            waitingTaskIds.add(taskId);
+        }
+        pushSummary();
+    }
     reevaluate();
 }
 

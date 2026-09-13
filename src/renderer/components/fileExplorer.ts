@@ -266,12 +266,14 @@ export const PREVIEW_LINE_HEIGHT = '1.55';
  * 字体栈锁定在 ace 全部元素上，防止主题自带的 font-family 抢占；
  * 行高只声明在 .ace_editor 容器上——ace 的行高测量节点通过 font: inherit
  * 继承容器 line-height，行距才能与左侧聊天代码块保持一致。
+ * dark 时追加背景覆盖，把 dracula 默认底色 #282a36 对齐到右侧边栏面板 #1e1e1e。
  */
-export function buildAceShadowStyles(themeCssText: string): string {
+export function buildAceShadowStyles(themeCssText: string, dark = false): string {
     return (
         aceCss +
         '\n' +
         themeCssText +
+        (dark ? '\n.ace_editor, .ace_editor .ace_gutter { background-color: #1e1e1e !important; }' : '') +
         `\n.ace_editor, .ace_editor * { font-family: ${PREVIEW_FONT_FAMILY} !important; }` +
         `\n.ace_editor { line-height: ${PREVIEW_LINE_HEIGHT}; }`
     );
@@ -483,7 +485,7 @@ export function getFileExplorerCSS(): string {
         }
         .ws-preview-header {
             display: flex; align-items: center; gap: 6px;
-            padding: 6px 12px; background: #f9fafb; border-bottom: 1px solid #e5e7eb;
+            padding: 6px 12px; background: #fff; border-bottom: 1px solid #e5e7eb;
             font-size: var(--fs-md); color: #334155; flex-shrink: 0;
         }
         .ws-preview-header > i { color: #64748b; font-size: var(--fs-sm); }
@@ -521,7 +523,7 @@ export function getFileExplorerCSS(): string {
             border: 1px solid #fde68a;
         }
         .ws-preview-size { font-size: var(--fs-xs); color: #9ca3af; font-variant-numeric: tabular-nums; flex-shrink: 0; }
-        .ws-preview-body { flex: 1; overflow: auto; overflow-x: auto; background: #fafafa; min-height: 60px; }
+        .ws-preview-body { flex: 1; overflow: auto; overflow-x: auto; background: #fff; min-height: 60px; }
         .ws-preview-body::-webkit-scrollbar { width: 8px; height: 8px; }
         .ws-preview-body::-webkit-scrollbar-thumb {
             background: rgba(0, 0, 0, 0.2);
@@ -579,7 +581,7 @@ export function getFileExplorerCSS(): string {
             align-items: center;
             gap: 6px;
             padding: 6px 10px;
-            background: #f9fafb;
+            background: #fff;
             border-bottom: 1px solid #e5e7eb;
             flex-shrink: 0;
         }
@@ -625,7 +627,7 @@ export function getFileExplorerCSS(): string {
             font-size: var(--fs-sm);
             line-height: ${PREVIEW_LINE_HEIGHT};
         }
-        .ws-preview-code-host { flex: 1; overflow: auto; overflow-x: auto; min-height: 60px; background: #fafafa; }
+        .ws-preview-code-host { flex: 1; overflow: auto; overflow-x: auto; min-height: 60px; background: #fff; }
         .ws-preview-code-host::-webkit-scrollbar { width: 8px; height: 8px; }
         .ws-preview-code-host::-webkit-scrollbar-thumb {
             background: rgba(0, 0, 0, 0.2);
@@ -754,7 +756,7 @@ export function getFileExplorerCSS(): string {
         }
         :host([data-theme="dark"]) .ws-preview-empty { color: #787878 !important; }
         :host([data-theme="dark"]) .ws-preview-header {
-            background: #252526 !important;
+            background: #1e1e1e !important;
             border-bottom-color: rgba(255, 255, 255, 0.12) !important;
             color: #cccccc !important;
         }
@@ -770,7 +772,7 @@ export function getFileExplorerCSS(): string {
         :host([data-theme="dark"]) .ws-preview-info { color: #ababab !important; }
         :host([data-theme="dark"]) .ws-editor-host { background: #1e1e1e !important; }
         :host([data-theme="dark"]) .ws-editor-toolbar {
-            background: #252526 !important;
+            background: #1e1e1e !important;
             border-bottom-color: rgba(255, 255, 255, 0.12) !important;
         }
         :host([data-theme="dark"]) .ws-editor-filename { color: #cccccc !important; }
@@ -1252,6 +1254,8 @@ export class FileExplorer {
     private _editorSaveError: string | null = null;
     private _editorSaveTimer: number | null = null;
     private _editorResizeObserver: ResizeObserver | null = null;
+    /** 编辑器打开期间的主题切换监听（用于实时更新 ace 主题与背景色） */
+    private _themeUnsub: (() => void) | null = null;
     private _editorOpenLine: number | null = null;
     private _currentLoadSeq = 0;
     private _aceLib: AceEditorMode | null = null;
@@ -1587,7 +1591,8 @@ export class FileExplorer {
         if (this._officeClosePending) return true;
 
         const webview = this._rootNode?.querySelector<HTMLElement>('.ws-office-editor-frame') as
-            (HTMLElement & { getWebContentsId?: () => number }) | null;
+            | (HTMLElement & { getWebContentsId?: () => number })
+            | null;
         const webContentsId = webview?.getWebContentsId?.();
         if (!webContentsId || !window.officeHostAPI?.requestClose) return false;
 
@@ -2461,8 +2466,44 @@ export class FileExplorer {
 
         const style = document.createElement('style');
         style.id = 'ace-shadow-styles';
-        style.textContent = buildAceShadowStyles(themeCssText);
+        style.textContent = buildAceShadowStyles(themeCssText, resolveThemeName() === 'dracula');
         (rn as unknown as Node).appendChild(style);
+    }
+
+    /**
+     * 编辑器打开期间监听全局主题切换，实时更新 ace 主题（含背景色），
+     * 避免深/浅色切换后编辑器仍停留在旧主题配色、需重新打开才生效。
+     */
+    private _ensureThemeListening(): void {
+        if (this._themeUnsub) return;
+        const handler = (): void => {
+            void this._refreshEditorTheme();
+        };
+        document.addEventListener('opendesk-theme-changed', handler);
+        this._themeUnsub = () => document.removeEventListener('opendesk-theme-changed', handler);
+    }
+
+    private _disposeThemeListening(): void {
+        this._themeUnsub?.();
+        this._themeUnsub = null;
+    }
+
+    /** 按当前主题切换 ace 主题类并重新注入 shadow 内主题 CSS。 */
+    private async _refreshEditorTheme(): Promise<void> {
+        const editor = this._editorInstance;
+        if (!editor || !this._rootNode) return;
+        // 事件在 applyThemeToDocument 之后派发，html[data-theme] 已更新
+        const theme = resolveThemeName();
+        const themeData = await this._ensureAceTheme(theme).catch(() => null);
+        // 异步加载主题期间编辑器可能已被关闭或替换
+        if (!this._editorInstance || this._editorInstance !== editor) return;
+        try {
+            editor.setTheme(`ace/theme/${theme}`);
+        } catch {
+            /* 主题模块缺失时保持可用，仅丢失高亮配色 */
+        }
+        if (!this._editorInstance || this._editorInstance !== editor) return;
+        this._injectAceShadowStyles(themeData?.cssText ?? '');
     }
 
     private _resolvePreviewFontSize(): number {
@@ -2512,6 +2553,7 @@ export class FileExplorer {
         editor.getSession().setUseWrapMode(false);
         editor.focus();
         this._editorInstance = editor;
+        this._ensureThemeListening();
         this._editorDirty = false;
         this._editorStatus = 'idle';
         this._editorSaveError = null;
@@ -2731,6 +2773,7 @@ export class FileExplorer {
     }
 
     private _destroyEditorInstance(): void {
+        this._disposeThemeListening();
         this._clearEditorAutoSaveTimer();
         if (this._editorResizeObserver) {
             this._editorResizeObserver.disconnect();

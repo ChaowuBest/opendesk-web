@@ -8,6 +8,7 @@ import type { TaskState } from '../../../../main/aikernel/states/tasks.js';
 import type { StaffTaskRecord } from '../../../../main/applications/agentoffice/common.js';
 import { GlobalState } from '../../../../main/aikernel/states/global.js';
 import { setPlatform, type AbstractPlatform } from '../../../../platforms/base.js';
+import { CustomAgent, type CustomAgentLoadOptions } from '../../../../main/applications/agentoffice/custom-agent.js';
 import {
     acquireStaffTaskForMessage,
     AgentOfficeApplication,
@@ -349,6 +350,168 @@ test('reusing a staff task appends the new message while preserving task identit
     assert.equal(merged.updated_at, '2026-07-19T10:02:00.000Z');
     assert.deepEqual(merged.usage_summary, task.usage_summary);
 });
+
+test('custom agents are loaded from every directory even when some fail to parse', async (context) => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'agentoffice-agents-'));
+    context.after(() => fs.rmSync(root, { recursive: true, force: true }));
+    for (const name of ['alpha', 'beta', 'gamma']) {
+        fs.mkdirSync(path.join(root, 'agents', name), { recursive: true });
+        fs.writeFileSync(path.join(root, 'agents', name, 'agents.md'), `# ${name}\nHelper for ${name}.`);
+    }
+    fs.mkdirSync(path.join(root, 'agents', 'broken'), { recursive: true });
+    fs.writeFileSync(path.join(root, 'agents', 'broken', 'agents.md'), '');
+    await withCustomAgentsRoot(root, async () => {
+        const application = new AgentOfficeApplication();
+        application.callWorker = async () => ({ status: 'ok', data: [] });
+
+        const agents = (await application.getAgents()) as CustomAgent[];
+
+        assert.deepEqual(agents.map((agent) => agent.agentName).sort(), ['alpha', 'beta', 'gamma']);
+        assert.equal(
+            agents.every((agent) => agent.dispatchable),
+            true
+        );
+    });
+});
+
+test('custom agent directories load concurrently while preserving the result order', async (context) => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'agentoffice-agents-'));
+    context.after(() => fs.rmSync(root, { recursive: true, force: true }));
+    const names = ['alpha', 'beta', 'gamma'];
+    for (const name of names) {
+        fs.mkdirSync(path.join(root, 'agents', name), { recursive: true });
+        fs.writeFileSync(path.join(root, 'agents', name, 'agents.md'), `# ${name}\nHelper for ${name}.`);
+    }
+    await withCustomAgentsRoot(root, async () => {
+        const originalLoadFromPath = CustomAgent.loadFromPath;
+        let inFlight = 0;
+        let maxInFlight = 0;
+        context.after(() => {
+            (CustomAgent as any).loadFromPath = originalLoadFromPath;
+        });
+        (CustomAgent as any).loadFromPath = async (dir: string, options?: CustomAgentLoadOptions) => {
+            inFlight += 1;
+            maxInFlight = Math.max(maxInFlight, inFlight);
+            await new Promise((resolve) => setTimeout(resolve, 10));
+            try {
+                return await originalLoadFromPath.call(CustomAgent, dir, options);
+            } finally {
+                inFlight -= 1;
+            }
+        };
+
+        const application = new AgentOfficeApplication();
+        application.callWorker = async () => ({ status: 'ok', data: [] });
+
+        const agents = (await application.getAgents()) as CustomAgent[];
+
+        assert.deepEqual(
+            agents.map((agent) => agent.agentName),
+            names
+        );
+        assert.ok(maxInFlight >= 2, `expected concurrent loading, max in-flight was ${maxInFlight}`);
+    });
+});
+
+test('staff agents are created concurrently for every enabled staff', async (context) => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'agentoffice-agents-empty-'));
+    context.after(() => fs.rmSync(root, { recursive: true, force: true }));
+    await withCustomAgentsRoot(root, async () => {
+        const application = new AgentOfficeApplication();
+        application.callWorker = async (methodName: string) => {
+            if (methodName !== 'listStaffs') return { status: 'ok', data: [] };
+            return {
+                status: 'ok',
+                data: ['one', 'two', 'three'].map((id) => ({
+                    id: `00000000-0000-0000-0000-${id.padStart(12, '0')}`,
+                    name: `Staff ${id}`,
+                    title: 'Analyst',
+                    enabled: true
+                }))
+            };
+        };
+        let inFlight = 0;
+        let maxInFlight = 0;
+        (application as any).createStaffAgent = async (staffId: string) => {
+            inFlight += 1;
+            maxInFlight = Math.max(maxInFlight, inFlight);
+            await new Promise((resolve) => setTimeout(resolve, 10));
+            inFlight -= 1;
+            return { agentId: `staff:${staffId}`, mcpConfig: { servers: [] }, dispose: async () => {} };
+        };
+
+        const agents = await application.getAgents();
+
+        assert.equal(agents.length, 3);
+        assert.equal((application as any).staffAgents.size, 3);
+        assert.ok(maxInFlight >= 2, `expected concurrent staff agent creation, max in-flight was ${maxInFlight}`);
+    });
+});
+
+test('a staff agent refreshed during the initial load wins over the stale loader result', async (context) => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'agentoffice-agents-empty-'));
+    context.after(() => fs.rmSync(root, { recursive: true, force: true }));
+    await withCustomAgentsRoot(root, async () => {
+        const application = new AgentOfficeApplication();
+        application.callWorker = async (methodName: string) => {
+            if (methodName !== 'listStaffs') return { status: 'ok', data: [] };
+            return {
+                status: 'ok',
+                data: [{ id: '00000000-0000-0000-0000-000000000001', name: 'Staff A', title: 'T', enabled: true }]
+            };
+        };
+        let releaseLoader!: (agent: unknown) => void;
+        let loaderCalled = false;
+        const disposed: string[] = [];
+        const reapplied: string[] = [];
+        (application as any).createStaffAgent = () =>
+            new Promise((resolve) => {
+                loaderCalled = true;
+                releaseLoader = resolve;
+            });
+
+        const loading = application.getAgents();
+        let waits = 0;
+        while (!loaderCalled && waits < 200) {
+            await new Promise((resolve) => setTimeout(resolve, 0));
+            waits += 1;
+        }
+        assert.ok(loaderCalled, 'createStaffAgent should have been invoked');
+
+        // 模拟初始加载进行期间用户修改了该 staff：reloadStaffAgent 已把新 agent 写入 map
+        const refreshed = {
+            agentId: 'agentoffice:staff:refreshed',
+            mcpConfig: { servers: [] },
+            dispose: async () => disposed.push('refreshed'),
+            reassertSkillProviderRegistration: () => reapplied.push('refreshed')
+        };
+        (application as any).staffAgents.set('00000000-0000-0000-0000-000000000001', refreshed);
+
+        releaseLoader({
+            agentId: 'agentoffice:staff:stale',
+            mcpConfig: { servers: [] },
+            dispose: async () => disposed.push('stale')
+        });
+        const agents = await loading;
+
+        assert.equal((application as any).staffAgents.get('00000000-0000-0000-0000-000000000001'), refreshed);
+        assert.deepEqual(agents, [refreshed]);
+        assert.deepEqual(disposed, ['stale'], 'only the stale loader result should be disposed');
+        assert.deepEqual(reapplied, ['refreshed'], 'the refreshed agent should reassert its provider registration');
+    });
+});
+
+/** 将 getOpendeskDirectory() 重定向到临时目录，避免测试读写真实的 ~/.opendesk */
+async function withCustomAgentsRoot(root: string, run: () => Promise<void>): Promise<void> {
+    const previous = process.env.OPENDESK_CONFIG_DIRECTORY;
+    process.env.OPENDESK_CONFIG_DIRECTORY = root;
+    try {
+        await run();
+    } finally {
+        if (previous === undefined) delete process.env.OPENDESK_CONFIG_DIRECTORY;
+        else process.env.OPENDESK_CONFIG_DIRECTORY = previous;
+    }
+}
 
 test('staff model overrides the task model and an empty selection restores global fallback', () => {
     let validationCount = 0;

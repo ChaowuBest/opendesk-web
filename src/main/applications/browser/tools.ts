@@ -122,14 +122,28 @@ async function withSnapshot(
         const rendered = typeof value === 'string' ? value : JSON.stringify(value);
         lines.push(`- ${key}: ${rendered}`);
     }
+    // URL 变化检测与自动快照解耦：操作（trigger / click 等）导致页面跳转时，
+    // 即便未请求自动快照也告知 agent 新 URL，避免对旧 ref 产生误解
+    // （SPA 路由 / 表单提交等场景下页面已导航但 agent 看不到任何变化）。
+    let urlChanged = false;
+    try {
+        const urlBefore = ctrl.getLastUrl();
+        const info = await ctrl.getPageInfo();
+        if (urlBefore !== undefined && urlBefore !== info.url) {
+            lines.push(`- Page Changed: yes (${urlBefore} → ${info.url})`);
+            urlChanged = true;
+        }
+    } catch {
+        // 页面可能处于导航过渡中，忽略
+    }
     if (doSnapshot) {
         await new Promise((resolve) => setTimeout(resolve, 500));
         try {
-            // 对比操作前后的 URL：变化说明发生了跨页导航，让 agent 一眼识别
-            // （SPA 路由 / 表单提交等），避免对旧 ref 产生误解。
+            // 自动快照场景下对比 snapshot 的 URL：若上面未检测到变化
+            // （如延迟跳转），在此补充；已检测到则避免重复输出。
             const urlBefore = ctrl.getLastUrl();
             const snapshot = await ctrl.snapshot({ mode: 'diff' });
-            if (urlBefore !== undefined && urlBefore !== snapshot.url) {
+            if (!urlChanged && urlBefore !== undefined && urlBefore !== snapshot.url) {
                 lines.push(`- Page Changed: yes (${urlBefore} → ${snapshot.url})`);
             }
             // 插件贡献的页面提示放在快照正文之前，让 agent 先看到可用动作与约束

@@ -27,7 +27,7 @@ import { createRendererTranslator } from '../locale';
 const t = createRendererTranslator();
 
 const DEFAULT_WIDTH = 308;
-const IMG_ASPECT_RATIO = 1280 / 800; // webview capture aspect ratio
+const IMG_ASPECT_RATIO = 1280 / 720; // 画中画固定视口（16:9）下 webview capture 的宽高比
 const STATUS_BAR_HEIGHT = 24;
 const MIN_WIDTH = 200;
 const MAX_WIDTH = 560;
@@ -39,6 +39,8 @@ const RESIZE_HANDLE_SIZE = 12;
 export interface BrowserPipCallbacks {
     /** 恢复按钮：重新打开 artifacts 面板的浏览器 tab */
     onRestore: () => void;
+    /** 浮窗显示状态变化（显示时宿主应将 webview 视口固定为 16:9，隐藏时恢复） */
+    onVisibilityChanged?: (visible: boolean) => void;
     /** 获取截图 data URL */
     capturePage: () => Promise<string | null>;
     /** 获取标签页总数 */
@@ -514,6 +516,7 @@ export class BrowserPip {
         this._el.style.display = 'flex';
         this._positionDefault();
         this._startCapture();
+        this._callbacks.onVisibilityChanged?.(true);
     }
 
     public hide(): void {
@@ -521,6 +524,7 @@ export class BrowserPip {
         this._visible = false;
         this._el.style.display = 'none';
         this._stopCapture();
+        this._callbacks.onVisibilityChanged?.(false);
     }
 
     /** 用户手动关闭浮窗；当前会话内同一"折叠周期"不再自动弹出 */

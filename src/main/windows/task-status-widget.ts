@@ -278,7 +278,9 @@ export function buildTaskStatusSummary(
     const enriched = tasks.map((task) => {
         const next: TaskStatusWidgetTask = {
             ...task,
-            ...(waitingTaskIds ? { waiting_for_input: waitingTaskIds.has(task.task_id) } : {})
+            ...(waitingTaskIds
+                ? { waiting_for_input: waitingTaskIds.has(task.task_id) && task.task_status !== 'completed' }
+                : {})
         };
         if (getTodosForTask && task.task_id) {
             next.todo_progress = computeTodoProgress(getTodosForTask(task.task_id));
@@ -286,6 +288,29 @@ export function buildTaskStatusSummary(
         return next;
     });
     return { count: enriched.length, total: total ?? enriched.length, tasks: enriched, mode };
+}
+
+/**
+ * 从 waitingTaskIds 中剔除已不再「活跃可展示」的任务 ID。
+ *
+ * 交互面板（askUser / 权限请求等）超时或取消后，renderer 侧组件可能已被销毁而无法
+ * 发送 waiting=false 事件（如任务视图切换导致组件 disconnected），此时 waitingTaskIds
+ * 会残留已结束任务的标记，浮窗持续显示「需要操作」。任务列表每次更新时调用本函数
+ * 对齐活跃任务集合，兜底清理残留。
+ *
+ * @returns 仍应保留在 waiting 集合中的任务 ID 列表（仍在活跃任务列表中的）。
+ */
+export function pruneStaleWaitingTaskIds(
+    waitingTaskIds: ReadonlySet<string>,
+    taskList: readonly TaskStatusListEntry[] | null | undefined
+): string[] {
+    const list = taskList ?? [];
+    const activeIds = new Set(
+        list
+            .filter((task) => typeof task.task_id === 'string' && isActiveTask(task))
+            .map((task) => task.task_id as string)
+    );
+    return Array.from(waitingTaskIds).filter((taskId) => activeIds.has(taskId));
 }
 
 function readTokenCount(value: unknown): number | undefined {
