@@ -85,6 +85,10 @@ export class EmbeddedBrowser extends BrowserInstance {
     private readonly _restoreState?: BrowserRestoreState;
     private static readonly VIRTUAL_WIDTH = 1280;
     private static readonly VIRTUAL_HEIGHT = 800;
+    /** 画中画模式下固定视口高度（16:9，即 1280x720），避免窄高容器把截图拉长 */
+    private static readonly VIEWPORT_FIXED_HEIGHT = 720;
+    /** 画中画显示时固定视口为 16:9；侧边栏展开恢复正常自适应 */
+    private _fixedViewport = false;
 
     // 页面提示（Browser Hints）面板状态
     private hintPanel: BrowserHintPanelHandle | null = null;
@@ -721,11 +725,29 @@ export class EmbeddedBrowser extends BrowserInstance {
     private _applyViewportScaling(containerW: number, containerH: number): void {
         if (!this.webviewContainer || containerW <= 0 || containerH <= 0) return;
         const scale = containerW / EmbeddedBrowser.VIRTUAL_WIDTH;
-        const virtualHeight = containerH / scale;
+        // 画中画模式固定视口高度（16:9），保证截图宽高比不随容器变化；
+        // 正常模式高度自适应容器（宽度固定缩放，高度自适应）
+        const virtualHeight = this._fixedViewport ? EmbeddedBrowser.VIEWPORT_FIXED_HEIGHT : containerH / scale;
         const wraps = this.webviewContainer.querySelectorAll<HTMLElement>('.bw-webview-wrap');
         for (const wrap of wraps) {
             wrap.style.transform = `scale(${scale})`;
             wrap.style.height = `${virtualHeight}px`;
+        }
+    }
+
+    /**
+     * 切换 webview 视口模式。
+     * 画中画模式固定视口为 16:9，避免侧边栏窄高容器导致截图被拉长；
+     * 恢复正常模式时视口高度重新自适应容器。
+     */
+    public setViewportFixed(fixed: boolean): void {
+        if (this._fixedViewport === fixed) return;
+        this._fixedViewport = fixed;
+        if (!this.webviewContainer) return;
+        const cw = this.webviewContainer.clientWidth;
+        const ch = this.webviewContainer.clientHeight;
+        if (cw > 0 && ch > 0) {
+            this._applyViewportScaling(cw, ch);
         }
     }
 
@@ -955,13 +977,13 @@ export class EmbeddedBrowser extends BrowserInstance {
             /* ignore */
         }
 
-        // 对新 tab 应用当前容器的缩放比例（宽度固定缩放，高度自适应）
+        // 对新 tab 应用当前容器的缩放比例（宽度固定缩放，画中画模式下高度固定 16:9）
         if (this.webviewContainer) {
             const cw = this.webviewContainer.clientWidth;
             const ch = this.webviewContainer.clientHeight;
             if (cw > 0 && ch > 0) {
                 const s = cw / EmbeddedBrowser.VIRTUAL_WIDTH;
-                const virtualHeight = ch / s;
+                const virtualHeight = this._fixedViewport ? EmbeddedBrowser.VIEWPORT_FIXED_HEIGHT : ch / s;
                 wrapEl.style.transform = `scale(${s})`;
                 wrapEl.style.height = `${virtualHeight}px`;
             }

@@ -1193,6 +1193,14 @@ class TaskArtifacts extends HTMLElement {
     }
 
     /**
+     * 外部调用：切换 webview 视口模式。
+     * 画中画浮窗显示时固定为 16:9，隐藏时恢复正常自适应容器。
+     */
+    browserSetViewportFixed(fixed: boolean): void {
+        this._browser?.setViewportFixed(fixed);
+    }
+
+    /**
      * 外部调用：获取浏览器标签页总数。
      */
     browserGetTabCount(): number {
