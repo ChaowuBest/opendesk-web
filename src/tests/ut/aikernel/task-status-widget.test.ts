@@ -8,6 +8,7 @@ import {
     isWidgetTriggerEffective,
     mergeTaskLiveUsage,
     normalizeTaskUsageWidget,
+    pruneStaleWaitingTaskIds,
     updateTaskSnapshot,
     type TaskLiveUsageSnapshot,
     type TaskStatusListEntry,
@@ -237,6 +238,18 @@ describe('task-status-widget 纯逻辑', () => {
             expect(summary.tasks[1].waiting_for_input).toBe(false);
         });
 
+        test('已完成任务即使残留 waiting 标记也不显示 waiting_for_input', () => {
+            const tasks: TaskStatusWidgetTask[] = [
+                widgetTask({ task_id: 'a', task_name: 'Alpha', task_status: 'completed' }),
+                widgetTask({ task_id: 'b', task_name: 'Beta', task_status: 'waiting' })
+            ];
+            const summary = buildTaskStatusSummary(tasks, new Set(['a', 'b']));
+
+            // 任务已结束：不再展示「需要操作」，即使 waitingTaskIds 中仍有残留。
+            expect(summary.tasks[0].waiting_for_input).toBe(false);
+            expect(summary.tasks[1].waiting_for_input).toBe(true);
+        });
+
         test('携带 total，并根据 getTodosForTask 注入待办进度', () => {
             const tasks: TaskStatusWidgetTask[] = [
                 widgetTask({ task_id: 'a', task_name: 'Alpha', task_status: 'running' })
@@ -256,6 +269,37 @@ describe('task-status-widget 纯逻辑', () => {
             const summary = buildTaskStatusSummary(tasks, undefined, 1);
 
             expect(summary.tasks[0].todo_progress).toBeUndefined();
+        });
+    });
+
+    describe('pruneStaleWaitingTaskIds', () => {
+        test('已结束或已移除的任务从 waiting 集合中剔除', () => {
+            const list = [
+                task({ task_id: 'a', task_name: 'Alpha', task_status: 'running' }),
+                task({ task_id: 'b', task_name: 'Beta', task_status: 'waiting' }),
+                task({ task_id: 'c', task_name: 'Gamma', task_status: 'stopped' })
+            ];
+            // d 已从任务列表移除；c 已停止；a/b 仍活跃
+            const kept = pruneStaleWaitingTaskIds(new Set(['a', 'b', 'c', 'd']), list);
+
+            expect(kept.sort()).toEqual(['a', 'b']);
+        });
+
+        test('空任务列表全部剔除', () => {
+            expect(pruneStaleWaitingTaskIds(new Set(['a', 'b']), [])).toEqual([]);
+            expect(pruneStaleWaitingTaskIds(new Set(['a', 'b']), null)).toEqual([]);
+            expect(pruneStaleWaitingTaskIds(new Set(), [])).toEqual([]);
+        });
+
+        test('只有活跃任务（有名称且非 internal）才保留', () => {
+            const list = [
+                task({ task_id: 'a', task_name: 'Alpha', task_status: 'running' }),
+                task({ task_id: 'noName', task_name: '', task_status: 'running' }),
+                task({ task_id: 'internal', task_name: 'Hidden', task_status: 'running', internal: true })
+            ];
+            const kept = pruneStaleWaitingTaskIds(new Set(['a', 'noName', 'internal']), list);
+
+            expect(kept).toEqual(['a']);
         });
     });
 

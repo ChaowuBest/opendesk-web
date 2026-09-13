@@ -80,6 +80,11 @@ class AskUserPrompt extends HTMLElement {
     }
 
     disconnectedCallback(): void {
+        // 组件被销毁（任务视图切换/重建）时兜底清除「等待用户输入」标记，
+        // 避免 renderer 侧标记残留导致浮窗一直显示「需要操作」。
+        if (this._visible) {
+            this._notifyWaitingState(false);
+        }
         window.askUserAPI?.offAskUserRequest(this._onRequest);
         window.askUserAPI?.offAskUserDismiss(this._onDismiss);
     }

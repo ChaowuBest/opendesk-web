@@ -198,4 +198,38 @@ describe('permission-prompt component', () => {
 
         expect(respondPermission).toHaveBeenCalledTimes(1);
     });
+
+    test('dispatches waiting=false event when destroyed while visible', () => {
+        const dispatched: { taskId: string; waiting: boolean }[] = [];
+        const originalDispatch = document.dispatchEvent.bind(document);
+        jest.spyOn(document, 'dispatchEvent').mockImplementation((event: Event) => {
+            if (event.type === 'task-waiting-state') {
+                const detail = (event as CustomEvent).detail;
+                dispatched.push({ taskId: detail.taskId, waiting: detail.waiting });
+            }
+            return originalDispatch(event);
+        });
+
+        const prompt = document.createElement('permission-prompt') as HTMLElement & {
+            connectedCallback?: () => void;
+            disconnectedCallback?: () => void;
+            _visible?: boolean;
+        };
+        prompt.setAttribute('data-task-id', 'task-parent');
+        document.body.appendChild(prompt);
+        if (requestCallbacks.size === 0) {
+            prompt.connectedCallback?.();
+        }
+
+        for (const callback of requestCallbacks) {
+            callback('perm-1', buildRequest('task-parent', '/tmp/first.txt'));
+        }
+        // 显示中销毁：应 dispatch waiting=false 兜底清理浮窗标记
+        expect(dispatched).toEqual([{ taskId: 'task-parent', waiting: true }]);
+
+        prompt.remove();
+
+        const lastEvent = dispatched[dispatched.length - 1];
+        expect(lastEvent).toEqual({ taskId: 'task-parent', waiting: false });
+    });
 });
