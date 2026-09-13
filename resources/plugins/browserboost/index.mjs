@@ -26,7 +26,9 @@ export default {
             { registerBaiduHints },
             { registerBilibiliHints },
             { registerZhihuHints },
-            { registerXiaohongshuHints }
+            { registerXiaohongshuHints },
+            { registerEastmoneyHints },
+            { registerThsHints }
         ] = await Promise.all([
             import(`./shopping/jd.mjs?opendesk=${ts}`),
             import(`./shopping/taobao.mjs?opendesk=${ts}`),
@@ -36,7 +38,9 @@ export default {
             import(`./search/baidu.mjs?opendesk=${ts}`),
             import(`./media/bilibili.mjs?opendesk=${ts}`),
             import(`./media/zhihu.mjs?opendesk=${ts}`),
-            import(`./media/xiaohongshu.mjs?opendesk=${ts}`)
+            import(`./media/xiaohongshu.mjs?opendesk=${ts}`),
+            import(`./finance/eastmoney.mjs?opendesk=${ts}`),
+            import(`./finance/ths.mjs?opendesk=${ts}`)
         ]);
         registerJdHints(ctx);
         registerTaobaoHints(ctx);
@@ -47,5 +51,7 @@ export default {
         registerBilibiliHints(ctx);
         registerZhihuHints(ctx);
         registerXiaohongshuHints(ctx);
+        registerEastmoneyHints(ctx);
+        registerThsHints(ctx);
     }
 };
