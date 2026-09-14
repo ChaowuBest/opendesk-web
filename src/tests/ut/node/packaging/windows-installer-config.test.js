@@ -338,6 +338,18 @@ test('builds a custom bootstrapper that passes location and shortcut choices to 
         bootstrapper,
         /OnPlanRelatedBundle\(object sender, PlanRelatedBundleEventArgs e\)[\s\S]*?activeAction != LaunchAction\.Install[\s\S]*?FindBundleCachePath\(e\.BundleId\)[\s\S]*?RequestState\.None\s*:\s*RequestState\.Absent/
     );
+    assert.match(
+        bootstrapper,
+        /OnDetectRelatedBundle\(object sender, DetectRelatedBundleEventArgs e\)[\s\S]*?NormalizeBundleId\(e\.ProductCode\)[\s\S]*?relatedBundleVersions\[bundleId\] = e\.Version/
+    );
+    assert.match(
+        bootstrapper,
+        /OnPlanRelatedBundle\(object sender, PlanRelatedBundleEventArgs e\)[\s\S]*?IsProtectedRelatedBundle\(e\.BundleId\)[\s\S]*?e\.State = RequestState\.None/
+    );
+    assert.match(
+        bootstrapper,
+        /IsProtectedRelatedBundle\(string bundleId\)[\s\S]*?GetCurrentBundleId\(\)[\s\S]*?relatedBundleVersions\.TryGetValue[\s\S]*?relatedVersion > currentVersion/
+    );
     // 缓存丢失的 bundle 无法卸载，只清孤儿注册键；不能计划 Absent（会让安装整体失败）
     assert.match(bootstrapper, /private static string FindBundleCachePath\(string bundleId\)/);
     // 作为 related bundle 被调起（升级时旧版被自动卸载）必须全程静默：
