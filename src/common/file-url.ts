@@ -25,3 +25,17 @@ export function filePathToFileUrl(filePath: string): string {
     url.pathname = normalized.startsWith('/') ? normalized : `/${normalized}`;
     return url.href;
 }
+
+/** Decode file links for native file actions without turning them into page navigation. */
+export function fileUrlToFilePath(value: string): string | undefined {
+    try {
+        const url = new URL(value);
+        if (url.protocol !== 'file:' || /%2f|%5c/i.test(url.pathname)) return undefined;
+        const pathname = decodeURIComponent(url.pathname);
+        if (pathname.includes('\0')) return undefined;
+        if (url.hostname) return `//${url.hostname}${pathname}`;
+        return /^\/[a-z]:\//i.test(pathname) ? pathname.slice(1) : pathname;
+    } catch {
+        return undefined;
+    }
+}

@@ -13,6 +13,15 @@ import {
 } from '../../../main/utils/marked-file-link.js';
 import { marked as messagesMarked } from '../../../main/aikernel/messages.js';
 
+test('file links are non-navigation buttons, including encoded file URLs and line ranges', async () => {
+    const html = await messagesMarked.parse('[report.ts:12-20](file:///tmp/report%20%231.ts#L12-L20)');
+    assert.match(html, /<button type="button" class="od-file-pill"/);
+    assert.ok(html.includes('data-open-preview="/tmp/report #1.ts"'));
+    assert.ok(html.includes('data-preview-line="12"'));
+    assert.ok(html.includes('od-file-pill-line">:12-20</span>'));
+    assert.ok(!html.includes('href='));
+});
+
 test('resolveFilePath: returns absolute path when file exists (absolute input)', () => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'mfl-'));
     try {
@@ -241,8 +250,9 @@ test('markdown link: renders link to existing file as pill', () => {
         fs.writeFileSync(path.join(tmp, 'src', 'utils.ts'), 'export {};');
         const marked = setupMarked(tmp);
         const html = marked.parse('[utils.ts](src/utils.ts)') as string;
-        assert.ok(html.includes('od-file-pill'));
+        assert.match(html, /<button type="button" class="od-file-pill"/);
         assert.ok(html.includes('data-open-preview'));
+        assert.ok(!html.includes('href='));
     } finally {
         setRenderWorkspace(null);
         fs.rmSync(tmp, { recursive: true, force: true });

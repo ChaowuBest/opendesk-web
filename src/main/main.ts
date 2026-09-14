@@ -56,6 +56,7 @@ import {
 } from './utils/logger.js';
 import { safeSendToWebContents, safeSendToWebFrame } from './utils/electron-ipc.js';
 import { createMainWindowCloseHandler } from './utils/window-close.js';
+import { installMainWindowNavigationGuard } from './utils/main-window-navigation.js';
 import { NAV_INTERCEPT_SCRIPT } from '../renderer/webviewScripts.js';
 import { injectScriptIntoFrames } from './utils/webview-frame-inject.js';
 import { skillRegistry } from './applications/skillmgr/utils/skill-registry.js';
@@ -787,22 +788,18 @@ const createWindow = () => {
     const inAppSchemePrefixes = Array.from(
         new Set([...protocolConfigs.map((c) => c.scheme + '://'), 'opendesk-app://'])
     );
-    const openLink = (url: string) => {
-        if (
-            url.startsWith('file://') ||
-            url.startsWith('http://localhost') ||
-            url.startsWith('http://127.0.0.1') ||
-            inAppSchemePrefixes.some((p) => url.startsWith(p))
-        ) {
-            return false;
-        }
+    const isInternalUrl = (url: string) =>
+        url.startsWith('file://') ||
+        url.startsWith('http://localhost') ||
+        url.startsWith('http://127.0.0.1') ||
+        inAppSchemePrefixes.some((p) => url.startsWith(p));
+    const openExternalLink = (url: string) => {
         logger.info(`openLink: ${url}`);
         void getPlatform()
             .openExternal(url)
             .catch((error) => {
                 logger.warn(`openExternal failed for ${url}: ${error}`);
             });
-        return true;
     };
 
     // 可编辑区域恢复 Electron 默认右键菜单（剪切/复制/粘贴/全选），非编辑区域保持禁用。
@@ -826,25 +823,9 @@ const createWindow = () => {
         }
     });
 
-    mainWindow.webContents.on('will-navigate', (event) => {
-        if (openLink(event.url)) {
-            event.preventDefault();
-            return;
-        }
-    });
-
-    mainWindow.webContents.on('will-frame-navigate', (event) => {
-        if (openLink(event.url)) {
-            event.preventDefault();
-            return;
-        }
-    });
-
-    mainWindow.webContents.setWindowOpenHandler(({ url }) => {
-        if (openLink(url)) {
-            return { action: 'deny' };
-        }
-        return { action: 'allow' };
+    installMainWindowNavigationGuard(mainWindow.webContents, {
+        isInternalUrl,
+        openExternal: openExternalLink
     });
 
     // 防御性兜底：如果主框架导航到外部 URL 后加载失败（will-navigate 拦截未生效或被绕过），

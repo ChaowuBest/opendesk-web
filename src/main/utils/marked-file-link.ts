@@ -12,6 +12,7 @@
 import path from 'path';
 import { escapeHtml } from '../../common/utils/escape.js';
 import { normalizeDriveRootPath } from '../../common/utils/path.js';
+import { fileUrlToFilePath } from '../../common/file-url.js';
 import type { MarkedExtension, Tokens } from 'marked';
 
 // ── Workspace context ──────────────────────────────────────────────
@@ -153,8 +154,8 @@ function buildPillHTML(
         lineSpan = `<span class="od-file-pill-line">:${line}${rangeText}</span>`;
     }
     return (
-        `<a class="od-file-pill" data-type="${getFileType(filePath)}" data-open-preview="${escapeHtml(filePath)}"${lineAttr} title="${escapeHtml(filePath)}">` +
-        `${FILE_ICON_SVG}<span class="od-file-pill-name">${escapeHtml(label)}</span>${lineSpan}</a>`
+        `<button type="button" class="od-file-pill" data-type="${getFileType(filePath)}" data-open-preview="${escapeHtml(filePath)}"${lineAttr} title="${escapeHtml(filePath)}">` +
+        `${FILE_ICON_SVG}<span class="od-file-pill-name">${escapeHtml(label)}</span>${lineSpan}</button>`
     );
 }
 
@@ -233,6 +234,10 @@ export const fileLinkExtension: MarkedExtension = {
                     );
                 }
             }
+            const fileUrlPath = fileUrlToFilePath(href);
+            if (/^file:/i.test(href) && fileUrlPath === undefined) {
+                return this.parser.parseInline(tokens);
+            }
             // Markdown link hrefs may be URL-encoded (e.g. %20 for space)
             let decodedHref = href;
             try {
@@ -241,10 +246,12 @@ export const fileLinkExtension: MarkedExtension = {
                 // ignore malformed URI – use raw href
             }
             // "#L行号" 行锚点优先；无锚点时回退到旧版 ":行号" 后缀
-            const anchor = parseLineAnchor(decodedHref);
-            const { filePath, line } = anchor ?? parseFileReference(decodedHref);
+            // Decode file URL paths once, and read line anchors only from the URL fragment.
+            const anchor = parseLineAnchor(fileUrlPath ? new URL(href).hash : decodedHref);
+            const { filePath, line } =
+                anchor ?? (fileUrlPath ? { filePath: fileUrlPath, line: null } : parseFileReference(decodedHref));
             let lineEnd = anchor ? anchor.lineEnd : null;
-            const absPath = resolveFilePath(filePath);
+            const absPath = fileUrlPath ?? resolveFilePath(filePath);
             if (absPath) {
                 let label = this.parser.parseInline(tokens);
                 if (line != null) {

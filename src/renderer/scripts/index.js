@@ -41,6 +41,7 @@ import { initializeSidebarLayout } from '../sidebarLayout.ts';
 import { showBlacklistPrompt } from '../components/blacklistPrompt.ts';
 import { createRendererTranslator } from '../locale.ts';
 import { routeTaskFileOpenRequest } from './taskFileRouting.ts';
+import { handleTaskViewLinkClick } from '../utils/task-view-links.js';
 
 // 本地化字符串映射
 const LOCALE_STRINGS = {
@@ -94,25 +95,8 @@ window.officeHostAPI?.onOpenOfficeTaskFile?.((request) => {
  * 逻辑：找到链接所属的 <task-view>，调用其 openUrlInSidebar() 方法
  * 展开侧边栏 → 切换到浏览器 tab → 导航到目标 URL。
  */
-document.addEventListener(
-    'click',
-    (e) => {
-        const anchor = e.target.closest('a[href]');
-        if (!anchor) return;
-        const href = anchor.getAttribute('href') || '';
-        // 只拦截 http/https 协议的外部链接
-        if (!href.startsWith('http://') && !href.startsWith('https://')) return;
-        // 允许内部地址（开发服务器等）
-        if (href.startsWith('http://localhost') || href.startsWith('http://127.0.0.1')) return;
-
-        const taskView = anchor.closest('task-view');
-        if (taskView && typeof taskView.openUrlInSidebar === 'function') {
-            e.preventDefault();
-            taskView.openUrlInSidebar(href);
-        }
-    },
-    true
-);
+document.addEventListener('click', handleTaskViewLinkClick, true);
+document.addEventListener('auxclick', handleTaskViewLinkClick, true);
 
 window.Alpine = Alpine;
 Alpine.start();
