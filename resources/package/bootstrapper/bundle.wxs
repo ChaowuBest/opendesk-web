@@ -101,7 +101,7 @@ See the Mulan PSL v2 for more details.
             <ExePackage Id="CleanupRelatedBundles"
                         SourceFile="$(var.CleanupExePath)"
                         DetectCondition="CleanupDetect"
-                        InstallCommand="[WixBundleVersion]"
+                        InstallCommand="[WixBundleVersion] [WixBundleProviderKey]"
                         UninstallCommand="/noop"
                         PerMachine="yes"
                         Vital="no" />

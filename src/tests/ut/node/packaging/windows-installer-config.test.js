@@ -368,6 +368,14 @@ test('builds a custom bootstrapper that passes location and shortcut choices to 
     // BA 必须在它开始执行时把进度页文案切到"正在清理旧版本"，结束后恢复常规文案，
     // 避免用户误以为安装卡死；仅在 detect 阶段发现过历史 bundle 时才展示。
     assert.match(bundle, /<ExePackage Id="CleanupRelatedBundles"/);
+    assert.match(bundle, /InstallCommand="\[WixBundleVersion\] \[WixBundleProviderKey\]"/);
+    const cleanup = fs.readFileSync(path.join(bootstrapperResources, 'CleanupRelatedBundles.cs'), 'utf8');
+    assert.match(cleanup, /args\.Length < 2/);
+    assert.match(cleanup, /CleanupOldBundles\(currentVersion, currentBundleId\)/);
+    assert.match(
+        cleanup,
+        /LaunchCachedUninstall\(string cachePath, string currentBundleId\)[\s\S]*?\/uninstall \/quiet -burn\.related\.upgrade -burn\.ancestors=" \+ currentBundleId/
+    );
     assert.match(bootstrapper, /CleanupRelatedBundlesPackageId = "CleanupRelatedBundles"/);
     assert.match(
         bootstrapper,
