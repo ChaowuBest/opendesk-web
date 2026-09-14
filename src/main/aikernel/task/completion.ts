@@ -135,6 +135,7 @@ export async function waitForLLMRetryDelayForTask(
         let settled = false;
         let interval: ReturnType<typeof setInterval> = undefined as any;
         let timeout: ReturnType<typeof setTimeout> = undefined as any;
+        let lastScheduledEmitAt = Date.now();
         const retryNowResolver = () => settle(true);
         const cleanup = () => {
             clearInterval(interval);
@@ -167,7 +168,12 @@ export async function waitForLLMRetryDelayForTask(
                 );
                 return;
             }
-            void emitScheduled();
+            // Keep polling every second so a stopped or superseded turn can cancel
+            // promptly, but refresh the countdown no more than once every 10 seconds.
+            if (Date.now() - lastScheduledEmitAt >= 10_000) {
+                lastScheduledEmitAt = Date.now();
+                void emitScheduled();
+            }
         };
         interval = setInterval(tick, 1000);
         timeout = setTimeout(
