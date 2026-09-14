@@ -10,5 +10,7 @@
  */
 
 export const zhCn: Record<string, string> = {
-    'app.name': '终端'
+    'app.name': '终端',
+    'output.truncated': '输出过大，已截断显示',
+    'output.artifactSaved': '完整输出已保存至'
 };

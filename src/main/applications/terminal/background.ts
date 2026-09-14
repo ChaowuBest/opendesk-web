@@ -18,6 +18,7 @@
 import { execSync, type ChildProcess } from 'child_process';
 import { ToolResult } from '../../aikernel/tool';
 import { decodeShellOutput, filterShellEnvironmentWarnings } from '../../utils/shellExec.js';
+import { BoundedOutputBuffer } from './output-buffer.js';
 
 // ── 公共类型 ─────────────────────────────────────────────────────────────────
 
@@ -28,7 +29,7 @@ export interface BackgroundProcessStatus {
     finished: boolean;
     /** 进程退出码（未完成或被信号杀死时为 null） */
     exitCode: number | null;
-    /** 进程的完整输出（stdout + stderr） */
+    /** 进程的有界输出预览（stdout + stderr） */
     output: string;
     /** 从进程启动到现在经过的毫秒数 */
     elapsedMs: number;
@@ -52,7 +53,7 @@ interface BackgroundProcessEntry {
     command: string;
     startTime: number;
     proc: ChildProcess;
-    output: string;
+    output: BoundedOutputBuffer;
     exitCode: number | null;
     finished: boolean;
     finishedAt?: number;
@@ -81,7 +82,12 @@ export class BackgroundProcessManager {
      * 调用前应当先将工具自身的 stdout/stderr listener 移除，
      * 然后由本方法重新挂载新的 listener 继续采集输出。
      */
-    register(proc: ChildProcess, command: string, currentOutput: string, startTime: number): void {
+    register(
+        proc: ChildProcess,
+        command: string,
+        currentOutput: BoundedOutputBuffer | string,
+        startTime: number
+    ): void {
         const pid = proc.pid;
         if (!pid) return;
 
@@ -90,14 +96,14 @@ export class BackgroundProcessManager {
             command,
             startTime,
             proc,
-            output: currentOutput,
+            output: typeof currentOutput === 'string' ? new BoundedOutputBuffer(currentOutput) : currentOutput,
             exitCode: null,
             finished: false
         };
 
         // 与 executeShellCommand 的采集逻辑保持一致：解码 + 过滤交互模式终端序列噪音
         const appendFiltered = (data: Buffer) => {
-            entry.output += filterShellEnvironmentWarnings(decodeShellOutput(data));
+            entry.output.append(filterShellEnvironmentWarnings(decodeShellOutput(data)));
         };
         proc.stdout?.on('data', appendFiltered);
         proc.stderr?.on('data', appendFiltered);
@@ -107,6 +113,7 @@ export class BackgroundProcessManager {
             entry.exitCode = code;
             entry.finished = true;
             entry.finishedAt = Date.now();
+            entry.output.closeArtifact();
         };
 
         // Windows 上 taskkill 后 close 事件可能不触发但 exit 事件会触发
@@ -125,7 +132,7 @@ export class BackgroundProcessManager {
             found: true,
             finished: entry.finished,
             exitCode: entry.exitCode,
-            output: entry.output,
+            output: entry.output.getText(),
             elapsedMs: Date.now() - entry.startTime,
             command: entry.command
         };
@@ -234,11 +241,12 @@ export function installTimeoutBackgrounding(opts: {
     startTime: number;
     timeout: number;
     getOutput: () => string;
+    getOutputBuffer?: () => BoundedOutputBuffer;
     result: ToolResult;
     isKilledByStop: () => boolean;
     onFinish: () => void;
 }): Promise<boolean> {
-    const { handle, command, startTime, timeout, getOutput, result, isKilledByStop, onFinish } = opts;
+    const { handle, command, startTime, timeout, getOutput, getOutputBuffer, result, isKilledByStop, onFinish } = opts;
     const { proc, detachListeners } = handle;
 
     let timedOut = false;
@@ -286,7 +294,7 @@ export function installTimeoutBackgrounding(opts: {
                 proc.removeListener('error', onError);
 
                 const mgr = BackgroundProcessManager.getInstance();
-                mgr.register(proc, command, getOutput(), startTime);
+                mgr.register(proc, command, getOutputBuffer?.() ?? getOutput(), startTime);
 
                 const elapsedSec = ((Date.now() - startTime) / 1000).toFixed(1);
                 const pid = proc.pid ?? 'unknown';

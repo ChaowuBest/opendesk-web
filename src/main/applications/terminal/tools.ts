@@ -23,11 +23,12 @@ import { Card } from '../../tui/components/card';
 import { statusDisplay, truncText } from '../../tui/components/toolcall';
 import { z } from 'zod';
 import fs from 'fs';
+import path from 'path';
 import chalk from 'chalk';
 import type { PermissionRequest } from '../../aikernel/security/permission';
 import type { TaskState } from '../../aikernel/states/tasks';
 import { runPluginShellEnv } from '../pluginmgr/runtime/hooks.js';
-import { Setting } from '../../utils/setting.js';
+import { Setting, getTaskToolResultDirectory } from '../../utils/setting.js';
 import {
     BackgroundProcessManager,
     killProcessTree,
@@ -47,12 +48,21 @@ import {
     trackDetachedProcess,
     zshInteractiveHasExitTrapNoise
 } from '../../utils/shellExec.js';
+import { BoundedOutputBuffer } from './output-buffer.js';
+import { t as terminalT } from './locale/index.js';
 
 const MAX_CLI_OUTPUT_LINES = 10;
 const LIVE_UPDATE_INTERVAL_MS = 200;
 
 function getTaskWorkspace(taskState?: TaskState): string {
     return taskState?.getWorkspace() || Setting.getInstance().getEffectiveWorkspace();
+}
+
+function getTerminalOutputArtifactPath(taskState: TaskState | undefined, pid: number | undefined): string | undefined {
+    const taskId = taskState?.task_id;
+    if (!taskId) return undefined;
+    const filename = `terminal-output-${Date.now()}-${pid ?? 'unknown'}.log`;
+    return path.join(getTaskToolResultDirectory(taskId, false), filename);
 }
 
 export { buildInterpretersEnv, hasUserPythonEnvironment, shouldUseIsolatedPython, stripUserPythonEnvironment };
@@ -237,19 +247,25 @@ async function executeShellCommand(opts: {
     trackDetachedProcess(proc);
     runningProcesses.add(proc);
 
-    let output = '';
+    const output = new BoundedOutputBuffer(
+        '',
+        terminalT('output.truncated'),
+        getTerminalOutputArtifactPath(taskState, proc.pid),
+        terminalT('output.artifactSaved')
+    );
     let lastSentOutput = '';
     // zsh -i 等交互模式下，shell integration 会向 stdout/stderr 输出终端控制序列噪音，统一过滤
     const appendFiltered = (data: Buffer) => {
-        output += filterShellEnvironmentWarnings(decodeShellOutput(data));
+        output.append(filterShellEnvironmentWarnings(decodeShellOutput(data)));
     };
     proc.stdout.on('data', appendFiltered);
     proc.stderr.on('data', appendFiltered);
 
     const updateTimer = setInterval(() => {
-        if (output !== lastSentOutput) {
-            lastSentOutput = output;
-            result.updateResult(output);
+        const currentOutput = output.getText();
+        if (currentOutput !== lastSentOutput) {
+            lastSentOutput = currentOutput;
+            result.updateResult(currentOutput);
         }
     }, LIVE_UPDATE_INTERVAL_MS);
 
@@ -272,10 +288,12 @@ async function executeShellCommand(opts: {
         command,
         startTime,
         timeout,
-        getOutput: () => output,
+        getOutput: () => output.getText(),
+        getOutputBuffer: () => output,
         result,
         isKilledByStop,
         onFinish: () => {
+            output.closeArtifact();
             clearInterval(updateTimer);
             runningProcesses.delete(proc);
             stopPromises.delete(proc);
