@@ -1036,6 +1036,7 @@ if (shouldExposeMainWindowAPIs()) {
             }
             return result.data;
         },
+        listShells: () => ipcRenderer.invoke('setting:listShells'),
         loadSettingObject: async () => {
             const result = await ipcRenderer.invoke('setting:loadSettingObject');
             if (result.status !== 'ok') {

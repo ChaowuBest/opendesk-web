@@ -1257,7 +1257,11 @@ function mapOpenDeskToolForOpenCode(
         };
     }
 
-    if (lowerName === 'terminal-executepowershell' || lowerName === 'terminal-executecommand') {
+    if (
+        lowerName === 'terminal-executepwsh' ||
+        lowerName === 'terminal-executepowershell' ||
+        lowerName === 'terminal-executecommand'
+    ) {
         const command = stringInput(input, ['command']);
         return {
             toolName: 'bash',
@@ -1265,7 +1269,7 @@ function mapOpenDeskToolForOpenCode(
                 ...(command ? { command } : {}),
                 ...pickInputs(input, ['description', 'timeout', 'workdir'])
             },
-            metadata: openCodeToolMetadata(toolName, input, { shell: 'powershell' })
+            metadata: openCodeToolMetadata(toolName, input, { shell: 'pwsh' })
         };
     }
 

@@ -61,6 +61,13 @@ interface QueuedElectronPermissionPrompt {
     resendTimer?: ReturnType<typeof setInterval>;
 }
 
+interface GrantedElectronPermission {
+    resourceType: string;
+    action: string;
+    scope: 'prefix' | 'type';
+    prefixPath?: string;
+}
+
 const PROMPT_TIMEOUT_SEC = 300;
 const PROMPT_TIMEOUT_MS = PROMPT_TIMEOUT_SEC * 1000;
 
@@ -99,9 +106,7 @@ function safeClearInterval(timer: ReturnType<typeof setInterval>): void {
 export class ElectronPermissionPromptProvider implements PermissionPromptProvider {
     private queue: QueuedElectronPermissionPrompt[] = [];
     private current: QueuedElectronPermissionPrompt | null = null;
-    private waitingForRuleChange = false;
-    private ruleChangeWaitGeneration = 0;
-    private ruleChangeDeadlineTimer?: ReturnType<typeof setTimeout>;
+    private grantedPermissions: GrantedElectronPermission[] = [];
 
     async prompt(
         requests: PermissionRequest[],
@@ -131,9 +136,6 @@ export class ElectronPermissionPromptProvider implements PermissionPromptProvide
                     resolve,
                     settled: false
                 });
-                if (this.waitingForRuleChange) {
-                    this.scheduleRuleChangeDeadline();
-                }
                 this.processQueue();
             });
         } catch (err) {
@@ -143,7 +145,6 @@ export class ElectronPermissionPromptProvider implements PermissionPromptProvide
     }
 
     async notifyPermissionRulesChanged(enforcer: PermissionEnforcer, taskIds?: string[]): Promise<void> {
-        const waitGeneration = this.ruleChangeWaitGeneration;
         const ids = taskIds ? new Set(taskIds) : null;
         const current = this.current;
         if (current && !current.settled && (!ids || this.matchesTask(current, ids))) {
@@ -174,15 +175,14 @@ export class ElectronPermissionPromptProvider implements PermissionPromptProvide
                         this.queue.splice(index, 1);
                         this.settleItem(item, { decision: 'allow', rememberScope: 'none' });
                     }
+                } else {
+                    this.invalidateGrants(item.requests);
                 }
             } catch (err) {
                 logger.warn(`Permission queue re-check failed: ${err}`);
             }
         }
-        if (this.ruleChangeWaitGeneration === waitGeneration) {
-            this.clearRuleChangeWait();
-            this.processQueue();
-        }
+        this.processQueue();
     }
 
     cancelTaskPrompts(taskIds: string[]): void {
@@ -194,28 +194,17 @@ export class ElectronPermissionPromptProvider implements PermissionPromptProvide
             this.settleItem(item, { decision: 'deny', rememberScope: 'none', denyReason: 'task_stopped' });
             return false;
         });
-        if (this.waitingForRuleChange) {
-            if (this.queue.length === 0) {
-                this.clearRuleChangeWait();
-            } else {
-                this.scheduleRuleChangeDeadline();
-            }
-        }
-
         if (this.current && this.matchesTask(this.current, ids)) {
             const current = this.current;
             this.cleanupCurrent();
             this.dismiss(current);
             this.settleItem(current, { decision: 'deny', rememberScope: 'none', denyReason: 'task_stopped' });
             this.current = null;
-            this.clearRuleChangeWait();
             this.processQueue();
         }
     }
 
     dispose(): void {
-        this.clearRuleChangeWait();
-
         if (this.current) {
             this.cleanupCurrent();
             this.settleItem(this.current, { decision: 'deny', rememberScope: 'none', denyReason: 'task_stopped' });
@@ -227,14 +216,21 @@ export class ElectronPermissionPromptProvider implements PermissionPromptProvide
         for (const item of queued) {
             this.settleItem(item, { decision: 'deny', rememberScope: 'none', denyReason: 'task_stopped' });
         }
+        this.grantedPermissions = [];
     }
 
     private processQueue(): void {
-        if (this.current || this.waitingForRuleChange) return;
+        if (this.current) return;
 
         while (this.queue.length > 0) {
             const item = this.queue.shift()!;
             if (item.settled) continue;
+
+            const cachedResponse = this.tryAutoResolve(item);
+            if (cachedResponse) {
+                this.settleItem(item, cachedResponse);
+                continue;
+            }
 
             const remainingMs = item.deadlineMs - Date.now();
             if (remainingMs <= 0) {
@@ -304,13 +300,14 @@ export class ElectronPermissionPromptProvider implements PermissionPromptProvide
             this.settleItem(item, userResponse);
             this.current = null;
 
-            const shouldWaitForRuleChange =
+            const persistent =
                 userResponse.decision === 'allow' &&
                 (userResponse.rememberScope === 'type' ||
                     (userResponse.rememberScope === 'prefix' && !!userResponse.selectedPrefixPattern));
-
-            if (shouldWaitForRuleChange) {
-                this.startRuleChangeWait();
+            this.recordGrant(item, userResponse);
+            if (persistent) {
+                // 让调用方先把持久化规则写回，再处理队列，避免短暂绕过更具体的 ask/deny 规则。
+                safeSetTimeout(() => this.processQueue(), 0);
             } else {
                 this.processQueue();
             }
@@ -382,45 +379,6 @@ export class ElectronPermissionPromptProvider implements PermissionPromptProvide
         item.resolve(response);
     }
 
-    private startRuleChangeWait(): void {
-        this.ruleChangeWaitGeneration++;
-        this.waitingForRuleChange = true;
-        this.scheduleRuleChangeDeadline();
-    }
-
-    private clearRuleChangeWait(): void {
-        this.waitingForRuleChange = false;
-        if (this.ruleChangeDeadlineTimer) {
-            safeClearTimeout(this.ruleChangeDeadlineTimer);
-            this.ruleChangeDeadlineTimer = undefined;
-        }
-    }
-
-    private scheduleRuleChangeDeadline(): void {
-        if (this.ruleChangeDeadlineTimer) {
-            safeClearTimeout(this.ruleChangeDeadlineTimer);
-            this.ruleChangeDeadlineTimer = undefined;
-        }
-        if (!this.waitingForRuleChange || this.queue.length === 0) {
-            return;
-        }
-
-        const nextDeadlineMs = Math.min(...this.queue.filter((item) => !item.settled).map((item) => item.deadlineMs));
-        if (!Number.isFinite(nextDeadlineMs)) {
-            return;
-        }
-
-        this.ruleChangeDeadlineTimer = safeSetTimeout(
-            () => {
-                if (!this.waitingForRuleChange) return;
-                logger.warn('Permission queue rule-change wait reached queued item deadline, resuming queue');
-                this.clearRuleChangeWait();
-                this.processQueue();
-            },
-            Math.max(0, nextDeadlineMs - Date.now())
-        );
-    }
-
     private matchesTask(item: QueuedElectronPermissionPrompt, taskIds: Set<string>): boolean {
         const taskInfo = item.taskInfo;
         if (!taskInfo) return false;
@@ -428,6 +386,50 @@ export class ElectronPermissionPromptProvider implements PermissionPromptProvide
             taskIds.has(taskInfo.taskId) ||
             (taskInfo.sourceTaskId ? taskIds.has(taskInfo.sourceTaskId) : false) ||
             (taskInfo.parentTaskId ? taskIds.has(taskInfo.parentTaskId) : false)
+        );
+    }
+
+    private tryAutoResolve(item: QueuedElectronPermissionPrompt): PermissionUserResponse | null {
+        const first = item.requests[0];
+        if (!first) return null;
+        for (const grant of this.grantedPermissions) {
+            if (grant.resourceType !== first.resourceType || grant.action !== first.action) continue;
+            if (grant.scope === 'type') return { decision: 'allow', rememberScope: 'none' };
+            if (!grant.prefixPath) continue;
+            const prefix = grant.prefixPath.toLowerCase().replace(/\/$/, '');
+            if (
+                item.requests.every((request) => {
+                    const path = request.resourcePath.toLowerCase();
+                    return path === prefix || path.startsWith(`${prefix}/`);
+                })
+            ) {
+                return { decision: 'allow', rememberScope: 'none' };
+            }
+        }
+        return null;
+    }
+
+    private recordGrant(item: QueuedElectronPermissionPrompt, response: PermissionUserResponse): void {
+        const first = item.requests[0];
+        if (!first || response.decision !== 'allow') return;
+        if (response.rememberScope === 'type') {
+            this.grantedPermissions.push({ resourceType: first.resourceType, action: first.action, scope: 'type' });
+        } else if (response.rememberScope === 'prefix' && response.selectedPrefixPattern) {
+            this.grantedPermissions.push({
+                resourceType: first.resourceType,
+                action: first.action,
+                scope: 'prefix',
+                prefixPath: response.selectedPrefixPattern.replace(/\/\*\*$/, '')
+            });
+        }
+    }
+
+    private invalidateGrants(requests: PermissionRequest[]): void {
+        this.grantedPermissions = this.grantedPermissions.filter(
+            (grant) =>
+                !requests.some(
+                    (request) => `${grant.resourceType}:${grant.action}` === `${request.resourceType}:${request.action}`
+                )
         );
     }
 }

@@ -13,12 +13,14 @@ import { type Component, type TUI } from '@earendil-works/pi-tui';
 import { Setting } from '../../../utils/setting.js';
 import { ConfigForm, type ActionDef, type FieldDef } from './form.js';
 import { t } from '../../../../locale/index.js';
+import { scanSupportedShells, selectSupportedShell } from '../../../applications/terminal/scan.js';
 
 export class TaskConfigPage implements Component {
     private tui: TUI;
     private onBack: () => void;
     private onConfigChange?: () => void;
     private form?: ConfigForm;
+    private readonly shells = scanSupportedShells();
 
     constructor(tui: TUI, onBack: () => void, onConfigChange?: () => void) {
         this.tui = tui;
@@ -36,6 +38,8 @@ export class TaskConfigPage implements Component {
             evidence_card: false
         };
         const cliConfig = data.cli_config ?? { use_isolated_python: true, inherit_venv: true };
+        const selectedShell = selectSupportedShell(this.shells, taskConfig);
+        const shellPaths = [...new Set(this.shells.map((shell) => shell.path))];
 
         const fields: FieldDef[] = [
             {
@@ -61,6 +65,24 @@ export class TaskConfigPage implements Component {
                 key: 'evidence_card',
                 label: t('config.task.field.evidence_card'),
                 value: taskConfig.evidence_card === true
+            },
+            {
+                type: 'select',
+                key: 'shell_path',
+                label: t('sp.task.terminal.shell'),
+                value: selectedShell?.path ?? '',
+                options: shellPaths.length ? shellPaths : [''],
+                optionLabels: {
+                    '': t('sp.task.terminal.noShells'),
+                    ...Object.fromEntries(this.shells.map((shell) => [shell.path, `${shell.kind} — ${shell.path}`]))
+                }
+            },
+            {
+                type: 'boolean',
+                key: 'shell_sandboxed',
+                label: t('sp.task.terminal.sandbox'),
+                value: selectedShell?.sandboxed === true,
+                visible: this.shells.some((shell) => shell.path === selectedShell?.path && shell.sandboxed)
             },
             {
                 type: 'boolean',
@@ -90,7 +112,13 @@ export class TaskConfigPage implements Component {
                 if (actionKey === 'save') this.save(values);
                 else this.close();
             },
-            () => this.close()
+            () => this.close(),
+            (values) => {
+                this.form?.setItemVisible(
+                    'shell_sandboxed',
+                    this.shells.some((shell) => shell.path === values.shell_path && shell.sandboxed)
+                );
+            }
         );
         this.form.activate();
         this.tui.requestRender();
@@ -99,6 +127,7 @@ export class TaskConfigPage implements Component {
     private save(values: Record<string, any>) {
         const setting = Setting.getInstance();
         const data = setting.getData();
+        const shell = selectSupportedShell(this.shells, values);
         data.task_config = {
             ...(data.task_config ?? {
                 auto_retry: true,
@@ -109,7 +138,9 @@ export class TaskConfigPage implements Component {
             auto_retry: values.auto_retry !== false,
             generate_taskname: values.generate_taskname !== false,
             termination_check: values.termination_check !== false,
-            evidence_card: values.evidence_card === true
+            evidence_card: values.evidence_card === true,
+            shell_path: shell?.path ?? '',
+            shell_sandboxed: shell?.sandboxed ?? false
         };
         data.cli_config = {
             ...(data.cli_config ?? {}),

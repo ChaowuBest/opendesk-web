@@ -378,7 +378,7 @@ function extractCommand(toolCall: ToolCall): string {
     const toolName = toolCall.tool_name;
 
     // Shell 工具: 直接用 command 字段（不截断 —— 命令可能含 cd ... && sed ... credentials.yml）
-    if (matchesAny(toolName, ['executeBash', 'executeZsh', 'executePowerShell'])) {
+    if (matchesAny(toolName, ['executeBash', 'executeZsh', 'executePwsh', 'executePowerShell'])) {
         return String(args['command'] || '');
     }
     // 邮件发送/回复: to/cc/subject + attachments(路径数组，不截断) + content 预览。

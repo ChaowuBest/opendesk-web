@@ -183,9 +183,14 @@ export class AllowEverythingPermissionEnforcer implements PermissionEnforcer {
     async addRule(_rule: PermissionRule): Promise<void> {}
 
     async removeRule(_rule: PermissionRule): Promise<void> {}
+
+    getRules(): PermissionRule[] {
+        return [{ resourceType: '*', action: '*', pathPattern: '**', effect: 'allow' }];
+    }
 }
 
 export class GlobPermissionEnforcer implements PermissionEnforcer {
+    private rawRules: PermissionRule[] = [];
     private allowRules: CompiledRule[] = [];
     private denyRules: CompiledRule[] = [];
     private askRules: CompiledRule[] = [];
@@ -224,6 +229,7 @@ export class GlobPermissionEnforcer implements PermissionEnforcer {
     }
 
     private initialize(initialRules: PermissionRule[]): void {
+        this.rawRules.push(...initialRules);
         for (const rule of initialRules) {
             const compiled = compileRule(rule);
             if (rule.effect === 'allow') {
@@ -253,6 +259,12 @@ export class GlobPermissionEnforcer implements PermissionEnforcer {
 
         // 空路径不是合法资源路径，直接 allow（避免 picomatch ** 不匹配空字符串导致隐式 ask）
         if (!objNorm) {
+            return { effect: 'allow', request };
+        }
+
+        // 文件执行权限对所有 OpenDesk 模式开放。读写仍继续经过各模式
+        // 的 deny/ask/allow 规则；执行请求不应触发额外授权弹窗。
+        if (request.resourceType === 'file' && request.action === 'execute') {
             return { effect: 'allow', request };
         }
 
@@ -316,6 +328,7 @@ export class GlobPermissionEnforcer implements PermissionEnforcer {
     }
 
     async addRule(rule: PermissionRule): Promise<void> {
+        this.rawRules.push(rule);
         const compiled = compileRule(rule);
 
         if (rule.effect === 'allow') {
@@ -348,7 +361,21 @@ export class GlobPermissionEnforcer implements PermissionEnforcer {
             this.askRules = removeFrom(this.askRules);
         }
 
+        this.rawRules = this.rawRules.filter(
+            (candidate) =>
+                !(
+                    candidate.resourceType === rule.resourceType &&
+                    candidate.action === rule.action &&
+                    candidate.pathPattern === rule.pathPattern &&
+                    candidate.effect === rule.effect
+                )
+        );
+
         logger.info(`permission rule removed: ${rule.effect} ${rule.resourceType}:${rule.action} ${patternNorm}`);
+    }
+
+    getRules(): PermissionRule[] {
+        return [...(this.inherited?.getRules() ?? []), ...this.rawRules];
     }
 }
 

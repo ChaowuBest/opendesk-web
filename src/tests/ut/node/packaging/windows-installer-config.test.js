@@ -301,6 +301,17 @@ test('builds a custom bootstrapper that passes location and shortcut choices to 
     const buildScript = fs.readFileSync(path.join(projectRoot, 'scripts', 'build-wix-bootstrapper.mjs'), 'utf8');
     const packageJson = JSON.parse(fs.readFileSync(path.join(projectRoot, 'package.json'), 'utf8'));
 
+    assert.match(
+        bundle,
+        /<util:FileSearch Id="FindDokanVersion"[\s\S]*?Variable="DokanVersion"[\s\S]*?Result="version"/
+    );
+    assert.match(
+        bundle,
+        /<MsiPackage Id="DokanMsi"[\s\S]*?SourceFile="\$\(var\.DokanMsiPath\)"[\s\S]*?InstallCondition="NOT DokanVersion/
+    );
+    assert.match(bundle, /<MsiPackage Id="DokanMsi"[\s\S]*?Permanent="yes"/);
+    assert.match(buildScript, /DokanMsiPath/);
+
     assert.match(bundle, /BootstrapperApplicationRef Id="ManagedBootstrapperApplicationHost"/);
     // WiX v3 无 Bundle/@PerMachine（v4+ 语法）；per-machine 通过 MsiPackage/@ForcePerMachine 声明
     assert.match(bundle, /ForcePerMachine="yes"/);

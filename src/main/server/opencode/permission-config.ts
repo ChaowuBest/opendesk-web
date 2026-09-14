@@ -84,7 +84,12 @@ function isPathOutsideWorkspace(resourcePath: string, workspace: string): boolea
 
 function isShellTool(toolName: string): boolean {
     const normalized = toolName.toLowerCase();
-    return normalized === 'executebash' || normalized === 'executezsh' || normalized === 'executepowershell';
+    return (
+        normalized === 'executebash' ||
+        normalized === 'executezsh' ||
+        normalized === 'executepwsh' ||
+        normalized === 'executepowershell'
+    );
 }
 
 export class ConfigPermissionPolicy {

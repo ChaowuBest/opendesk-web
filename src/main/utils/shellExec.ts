@@ -32,6 +32,14 @@ import { getCachedProxyEnvVars } from './proxy-env.js';
  * 支持跨平台：Windows、macOS、Linux、OpenHarmony。
  */
 export function findExecutableInPath(executable: string): string | null {
+    return executablePaths(executable).next().value ?? null;
+}
+
+export function findExecutablesInPath(executable: string): string[] {
+    return [...executablePaths(executable)];
+}
+
+function* executablePaths(executable: string): Generator<string> {
     const isWindows = process.platform === 'win32';
     const pathSeparator = isWindows ? ';' : ':';
     const pathEnv = process.env.PATH || '';
@@ -47,8 +55,21 @@ export function findExecutableInPath(executable: string): string | null {
             `${sysRoot}\\SysWOW64\\WindowsPowerShell\\v1.0`,
             `${sysRoot}\\Sysnative\\WindowsPowerShell\\v1.0`
         );
+        if (['bash', 'zsh', 'pwsh'].includes(executable)) {
+            const programDirs = [process.env.ProgramFiles || 'C:\\Program Files', process.env['ProgramFiles(x86)']];
+            for (const dir of programDirs) {
+                if (dir)
+                    searchDirs.push(
+                        path.win32.join(dir, 'Git/bin'),
+                        path.win32.join(dir, 'Git/usr/bin'),
+                        path.win32.join(dir, 'PowerShell/7')
+                    );
+            }
+            if (process.env.LOCALAPPDATA)
+                searchDirs.push(path.win32.join(process.env.LOCALAPPDATA, 'Programs/Git/bin'));
+        }
     } else {
-        searchDirs.push('/bin', '/usr/bin', '/usr/local/bin');
+        searchDirs.push('/bin', '/usr/bin', '/usr/local/bin', '/opt/homebrew/bin');
         // OpenHarmony DevBox 的 hnp 专有路径
         if ((process.platform as string) === 'openharmony' || process.env.OHOS_SDK_HOME != null) {
             searchDirs.push('/data/service/hnp/bin');
@@ -58,21 +79,24 @@ export function findExecutableInPath(executable: string): string | null {
     const executableNames = isWindows
         ? [executable, `${executable}.exe`, `${executable}.cmd`, `${executable}.bat`]
         : [executable];
+    const joinPath = isWindows ? path.win32.join : path.posix.join;
+    const seen = new Set<string>();
 
     for (const dir of searchDirs) {
         for (const name of executableNames) {
-            const fullPath = path.join(dir, name);
+            const fullPath = joinPath(dir.replace(/^"|"$/g, ''), name);
+            const key = isWindows ? fullPath.toLowerCase() : fullPath;
+            if (seen.has(key)) continue;
+            seen.add(key);
             try {
                 if (!fs.existsSync(fullPath)) continue;
-                if (isWindows) return fullPath;
-                fs.accessSync(fullPath, fs.constants.X_OK);
-                return fullPath;
+                if (!isWindows) fs.accessSync(fullPath, fs.constants.X_OK);
+                yield fullPath;
             } catch {
                 continue;
             }
         }
     }
-    return null;
 }
 
 export function hasZsh(): boolean {

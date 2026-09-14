@@ -46,16 +46,14 @@ declare global {
                     filePath: string;
                 }) => void
             ) => () => void;
-            reportOpenOfficeTaskFileResult: (
-                requestId: string,
-                status: 'not_opened' | 'failed'
-            ) => void;
+            reportOpenOfficeTaskFileResult: (requestId: string, status: 'not_opened' | 'failed') => void;
         };
         settingErrorAPI: {
             onSettingLoadError: (callback: (message: string) => void) => void;
             offSettingLoadError: (callback: (message: string) => void) => void;
         };
         settingAPI: {
+            listShells: () => Promise<import('../common/shells.js').SupportedShell[]>;
             loadSettingObject: () => Promise<Record<string, unknown> & { locale?: string; resolved_locale?: string }>;
             saveSettingObject: (
                 settingObject: unknown

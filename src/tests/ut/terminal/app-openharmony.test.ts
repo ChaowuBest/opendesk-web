@@ -7,9 +7,8 @@ jest.unstable_mockModule('../../../main/utils/setting.js', () => ({
         static getInstance() {
             return {
                 data: { locale: 'zh-CN' },
-                getData: () => {
-                    throw new Error('Setting not initialized in test');
-                },
+                // TerminalApplication 构造时通过 shell 选择读取 task_config
+                getData: () => ({ task_config: {} }),
                 getEffectiveWorkspace: () => '/'
             };
         }
@@ -123,9 +122,8 @@ describe('TerminalApplication toolset on OpenHarmony', () => {
         expect(toolset.hasTool('checkShellStatus')).toBe(true);
     });
 
-    test('registers no shell tool when zsh is not runnable and state is absent', async () => {
-        // CLI 直跑等场景无宿主元数据（state null）：只认 zsh 作为终端工具入口，
-        // 即使 bash 存在且可运行也不注册 executeBash
+    test('registers bash when zsh is not runnable and state is absent', async () => {
+        // CLI 无宿主快照时也探测本机 bash，作为 zsh 的回退。
         existsSyncMock.mockImplementation((p: unknown) => typeof p === 'string' && String(p).endsWith('/bash'));
         spawnSyncMock.mockImplementation((cmd: string) =>
             cmd === '/usr/bin/zsh'
@@ -136,7 +134,8 @@ describe('TerminalApplication toolset on OpenHarmony', () => {
         const app = new TerminalApplication();
         const toolsets = await app.getToolsets();
 
-        expect(toolsets).toHaveLength(0);
+        expect(toolsets).toHaveLength(1);
+        expect(toolsets[0].hasTool('executeBash')).toBe(true);
     });
 
     test('registers no shell tool when neither zsh nor bash is available', async () => {

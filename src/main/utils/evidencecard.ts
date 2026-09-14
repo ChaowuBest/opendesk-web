@@ -56,7 +56,7 @@ interface EvidenceToolSemantics {
 }
 
 const FILE_EVIDENCE_TOOL_NAMES = new Set(['readfile', 'extracttext', 'globfiles', 'grepfiles', 'semanticsearch']);
-const SHELL_EVIDENCE_TOOL_NAMES = new Set(['executebash', 'executezsh', 'executepowershell']);
+const SHELL_EVIDENCE_TOOL_NAMES = new Set(['executebash', 'executezsh', 'executepwsh', 'executepowershell']);
 const CONFIG_FILE_PATTERN = /(?:^|\/)(?:package\.json|pyproject\.toml|dockerfile|[^/]+\.(?:ya?ml|toml|ini|cfg|conf))$/i;
 const SHELL_SEARCH_COMMAND_PATTERN =
     /^(?:rg|ripgrep|grep|find|findstr|fd|ls|dir|get-childitem|select-string|git\s+(?:ls-files|grep))\b/i;

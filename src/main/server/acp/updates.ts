@@ -81,7 +81,13 @@ export function mapToolKind(toolName: string): AcpToolKind {
     if (name.includes('grep') || name.includes('glob') || name.includes('search')) return 'search';
     if (name.includes('delete') || name.includes('remove')) return 'delete';
     if (name.includes('move') || name.includes('rename')) return 'move';
-    if (name.includes('bash') || name.includes('zsh') || name.includes('powershell') || name.includes('shell')) {
+    if (
+        name.includes('bash') ||
+        name.includes('zsh') ||
+        name.includes('pwsh') ||
+        name.includes('powershell') ||
+        name.includes('shell')
+    ) {
         return 'execute';
     }
     if (name.includes('fetch') || name.includes('web')) return 'fetch';

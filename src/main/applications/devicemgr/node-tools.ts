@@ -34,6 +34,7 @@ import {
 } from './execution.js';
 import * as diff from 'diff';
 import chalk from 'chalk';
+import { t } from '../../../locale/index.js';
 
 type SelectedNodeHost = Extract<ExecutionHost, { type: 'node' }>;
 
@@ -826,13 +827,7 @@ const NodeShellSchema = z.object({
 
 export class ExecuteNodeShellTool extends NodeCommandTool<typeof NodeShellSchema> {
     constructor(app: DeviceMgrApplication) {
-        super(
-            app,
-            'executeNodeShell',
-            '在指定或默认 node 上执行 shell 命令。通过 nodeId 参数选择目标节点，未指定时使用默认节点。该工具只访问 node 端环境；OpenDesk 本机 shell 请使用 executeBash/executePowerShell/executeZsh。',
-            NodeShellSchema,
-            NODE_SHELL_COMMAND
-        );
+        super(app, 'executeNodeShell', t('tool.nodeShell.description'), NodeShellSchema, NODE_SHELL_COMMAND);
         this.setUniversalExecutor(this.run.bind(this));
     }
 

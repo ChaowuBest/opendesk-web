@@ -316,7 +316,7 @@ Body 容器固定样式：`border-t border-gray-200 bg-gray-50/40`，内容区�
 
 #### 参考实现：终端类工具
 
-终端类工具（`executeBash`/`executePowerShell`/`executeZsh`）是深色模式适配的参考标准：
+终端类工具（`executeBash`/`executePwsh`/`executeZsh`）是深色模式适配的参考标准：
 
 ```css
 /* theme-dark.css */
@@ -446,16 +446,16 @@ html[data-theme='dark'] #app-root task-view[embedded] .subtask-tool .text-gray-6
 
 ### 详细卡片风格
 
-| 工具              | 文件                   | 图标                      | i18n key                      | CSS 类            |
-| ----------------- | ---------------------- | ------------------------- | ----------------------------- | ----------------- |
-| executeBash       | `terminal/tools.ts`    | 终端 SVG                  | —                             | `.terminal-tool`  |
-| executePowerShell | `terminal/tools.ts`    | 终端 SVG                  | —                             | `.terminal-tool`  |
-| executeZsh        | `terminal/tools.ts`    | 终端 SVG                  | —                             | `.terminal-tool`  |
-| semanticSearch    | `filemgr/tools.ts`     | `fas fa-magnifying-glass` | `filemgr.semanticSearch.name` | `.file-tool-card` |
-| editFile (diff)   | `filemgr/tools.ts`     | 扩展名徽章                | `filemgr.editFile.name`       | `.diff-card`      |
-| askFromTask       | `states/tools.ts`      | `fa-comment-dots`         | `tools.askFromTask.name`      | —                 |
-| createSubTask     | `planning/tools.ts`    | `fa-diagram-project`      | `tools.createSubTask.name`    | `.subtask-tool`   |
-| waitSubTask       | `planning/tools.ts`    | `fa-hourglass-half`       | `tools.waitSubTask.name`      | `.subtask-tool`   |
-| attachToSubTask   | `planning/tools.ts`    | `fa-paper-plane`          | `tools.attachToSubTask.name`  | `.subtask-tool`   |
-| askUser           | `interaction/tools.ts` | `fa-circle-question`      | `tools.askUser.name`          | —                 |
-| attemptCompletion | `planning/tools.ts`    | `fa-check`                | —                             | `.subtask-result` |
+| 工具              | 文件                        | 图标                      | i18n key                      | CSS 类            |
+| ----------------- | --------------------------- | ------------------------- | ----------------------------- | ----------------- |
+| executeBash       | `terminal/shells/common.ts` | 终端 SVG                  | —                             | `.terminal-tool`  |
+| executePwsh       | `terminal/shells/common.ts` | 终端 SVG                  | —                             | `.terminal-tool`  |
+| executeZsh        | `terminal/shells/common.ts` | 终端 SVG                  | —                             | `.terminal-tool`  |
+| semanticSearch    | `filemgr/tools.ts`          | `fas fa-magnifying-glass` | `filemgr.semanticSearch.name` | `.file-tool-card` |
+| editFile (diff)   | `filemgr/tools.ts`          | 扩展名徽章                | `filemgr.editFile.name`       | `.diff-card`      |
+| askFromTask       | `states/tools.ts`           | `fa-comment-dots`         | `tools.askFromTask.name`      | —                 |
+| createSubTask     | `planning/tools.ts`         | `fa-diagram-project`      | `tools.createSubTask.name`    | `.subtask-tool`   |
+| waitSubTask       | `planning/tools.ts`         | `fa-hourglass-half`       | `tools.waitSubTask.name`      | `.subtask-tool`   |
+| attachToSubTask   | `planning/tools.ts`         | `fa-paper-plane`          | `tools.attachToSubTask.name`  | `.subtask-tool`   |
+| askUser           | `interaction/tools.ts`      | `fa-circle-question`      | `tools.askUser.name`          | —                 |
+| attemptCompletion | `planning/tools.ts`         | `fa-check`                | —                             | `.subtask-result` |

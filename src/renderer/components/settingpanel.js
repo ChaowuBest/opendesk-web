@@ -10,6 +10,7 @@
  */
 
 import { createRendererTranslator } from '../locale.ts';
+import { selectSupportedShell } from '../../common/shells.js';
 import { REASONING_EFFORT_LEVELS } from '../../common/reasoning-effort.ts';
 import { ACP_AGENT_PRESETS, createAcpAgentPresetDraft } from '../../common/acp/agentPresets.ts';
 import { AcpAgentFormError, buildAcpAgentProfile } from './acpAgentSettings.ts';
@@ -135,6 +136,7 @@ class SettingPanel extends HTMLElement {
         this._activeTab = 'models';
         this._environEntries = [];
         this.gatewayHostOptions = [];
+        this.supportedShells = [];
         this.visionSupportMap = {};
         this._hasRendered = false;
         this._t = createRendererTranslator();
@@ -151,6 +153,12 @@ class SettingPanel extends HTMLElement {
     async loadData() {
         this.currentData = await window.settingAPI.loadSettingObject();
         this._t = createRendererTranslator(this.currentData);
+        try {
+            this.supportedShells = await window.settingAPI.listShells();
+        } catch (error) {
+            console.warn('Failed to load supported shells:', error);
+            this.supportedShells = [];
+        }
         await this.refreshVisionSupport();
         this.providerTemplates = await window.settingAPI.getProviderTemplates();
         try {
@@ -1792,7 +1800,7 @@ class SettingPanel extends HTMLElement {
 
         return `
         <section class="sp-section">
-            <h2 class="sp-section-title">${this._t('sp.task.title')}</h2>
+            <h2 class="sp-section-title">${this._t('sp.task.harness.title')}</h2>
             <div class="sp-section-card">
             <div class="sp-toggle-row">
                 <div class="sp-toggle-info">
@@ -1836,7 +1844,64 @@ class SettingPanel extends HTMLElement {
             </div>
             </div>
         </section>
+        <section class="sp-section">
+            <h2 class="sp-section-title">${this._t('sp.task.terminal.title')}</h2>
+            <div class="sp-section-card">
+                <div id="task-shell-settings">${this._renderShellSettings()}</div>
+            </div>
+        </section>
         `;
+    }
+
+    _renderShellSettings() {
+        const selected = selectSupportedShell(this.supportedShells, this.currentData?.task_config);
+        const paths = [...new Map(this.supportedShells.map((shell) => [shell.path, shell])).values()];
+        const displayKind = (kind) => (kind === 'pwsh' || kind === 'powershell' ? 'powershell' : kind);
+        const supportsSandbox = this.supportedShells.some((shell) => shell.path === selected?.path && shell.sandboxed);
+        return `
+            <label class="sp-form-label" for="task-shell-path">${this._t('sp.task.terminal.shell')}</label>
+            <select id="task-shell-path" class="sp-form-input" ${selected ? '' : 'disabled'}>
+                ${paths.length ? paths.map((shell) => `<option value="${this.escapeHtml(shell.path)}" ${shell.path === selected?.path ? 'selected' : ''}>${this.escapeHtml(`${displayKind(shell.kind)} — ${shell.path}`)}</option>`).join('') : `<option value="">${this._t('sp.task.terminal.noShells')}</option>`}
+            </select>
+            <div class="sp-toggle-desc">${this._t('sp.task.terminal.shell.desc')}</div>
+            ${
+                supportsSandbox
+                    ? `
+            <div class="sp-toggle-row">
+                <div class="sp-toggle-info">
+                    <label class="sp-toggle-label" for="task-shell-sandboxed">${this._t('sp.task.terminal.sandbox')}</label>
+                    <div class="sp-toggle-desc">${this._t('sp.task.terminal.sandbox.desc')}</div>
+                </div>
+                <label class="sp-toggle-switch">
+                    <input id="task-shell-sandboxed" type="checkbox" ${selected.sandboxed ? 'checked' : ''}>
+                    <span class="sp-toggle-track"></span>
+                </label>
+            </div>`
+                    : ''
+            }
+        `;
+    }
+
+    _bindShellSettingsEvents() {
+        const save = (selection) => {
+            const shell = selectSupportedShell(this.supportedShells, selection);
+            if (!shell) return;
+            this.currentData.task_config = {
+                ...this.currentData.task_config,
+                shell_path: shell.path,
+                shell_sandboxed: shell.sandboxed
+            };
+            this.saveImmediately();
+        };
+        this.querySelector('#task-shell-path')?.addEventListener('change', (event) => {
+            save({ shell_path: event.target.value, shell_sandboxed: false });
+            this.querySelector('#task-shell-settings').innerHTML = this._renderShellSettings();
+            this._bindShellSettingsEvents();
+            this.querySelector('#task-shell-path')?.focus();
+        });
+        this.querySelector('#task-shell-sandboxed')?.addEventListener('change', (event) => {
+            save({ shell_path: this.querySelector('#task-shell-path').value, shell_sandboxed: event.target.checked });
+        });
     }
 
     renderSearchSection() {
@@ -3090,6 +3155,8 @@ class SettingPanel extends HTMLElement {
             this.currentData.task_config.evidence_card = e.target.checked;
             this.saveImmediately();
         });
+
+        this._bindShellSettingsEvents();
 
         this._bindAcpAgentEvents();
 

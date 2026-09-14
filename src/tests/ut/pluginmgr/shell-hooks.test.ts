@@ -65,8 +65,9 @@ describe('OpenDesk plugin shell hooks', () => {
         await runPluginBeforeToolCallValidate(task, makeCall('terminal-executeBash', { command: 'a' }));
         await runPluginBeforeToolCallValidate(task, makeCall('terminal-executeZsh', { command: 'b' }));
         await runPluginBeforeToolCallValidate(task, makeCall('terminal-executePowerShell', { command: 'c' }));
+        await runPluginBeforeToolCallValidate(task, makeCall('terminal-executePwsh', { command: 'd' }));
 
-        expect(seen).toEqual(['bash', 'zsh', 'powershell']);
+        expect(seen).toEqual(['bash', 'zsh', 'powershell', 'powershell']);
     });
 
     test('shell.execute.before 不触发非 shell 工具', async () => {

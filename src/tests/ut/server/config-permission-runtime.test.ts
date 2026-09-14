@@ -69,7 +69,7 @@ describe('OpenCode config permission runtime', () => {
         ).resolves.toEqual([]);
         await expect(
             enforcer.checkToolCall?.({
-                toolName: 'executePowerShell',
+                toolName: 'executePwsh',
                 args: { command: 'cmd /c del old.txt' },
                 workspace: '/workspace'
             })

@@ -15,6 +15,10 @@ class FakeConnection {
     }
 }
 
+test('pwsh uses the ACP execution tool kind', () => {
+    assert.equal(mapToolKind('terminal-executePwsh'), 'execute');
+});
+
 test('ACP update translator emits text deltas', async () => {
     const connection = new FakeConnection();
     const translator = new AcpUpdateTranslator();
