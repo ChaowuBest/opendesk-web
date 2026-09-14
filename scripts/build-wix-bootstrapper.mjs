@@ -24,6 +24,10 @@ const csharpCompiler = process.env.CSC_PATH || 'C:\\Windows\\Microsoft.NET\\Fram
 const msiPath = path.resolve(
     process.env.OPENDESK_MSI_PATH || path.join(projectRoot, 'out', 'make', 'wix', 'x64', 'opendesk.msi')
 );
+const dokanMsiPath = path.resolve(
+    process.env.OPENDESK_DOKAN_MSI_PATH ||
+        path.join(projectRoot, 'native', 'windows', 'sandbox', 'dist', 'win-x64', 'bin', 'DokanSetup.msi')
+);
 const outputDir = path.resolve(
     process.env.OPENDESK_SETUP_OUT_DIR || path.join(projectRoot, 'out', 'make', 'wix', 'x64')
 );
@@ -91,6 +95,9 @@ function run(executable, args) {
 if (!fs.existsSync(msiPath)) {
     throw new Error(`MSI not found: ${msiPath}`);
 }
+if (!fs.existsSync(dokanMsiPath)) {
+    throw new Error(`Dokan MSI not found: ${dokanMsiPath}. Run npm run build:sandbox first.`);
+}
 
 fs.mkdirSync(outputDir, { recursive: true });
 
@@ -130,6 +137,7 @@ run(path.join(wixBinDir, 'candle.exe'), [
     `-dBundleVersion=${bundleVersion}`,
     `-dRequiredInstallSize=${requiredInstallSize}`,
     `-dMsiPath=${msiPath}`,
+    `-dDokanMsiPath=${dokanMsiPath}`,
     `-dIconPath=${path.join(projectRoot, 'resources', 'package', 'icons', 'icon_round.ico')}`,
     `-dBootstrapperApplicationPath=${bootstrapperAssemblyPath}`,
     `-dBootstrapperConfigPath=${path.join(resourcesDir, 'BootstrapperCore.config')}`,

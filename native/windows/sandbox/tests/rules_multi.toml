@@ -1,0 +1,45 @@
+# ============================================================
+# 多根（多盘 + 网络位置）示例策略
+# ============================================================
+# [[roots]] 把宿主文件系统的多个位置映射进同一个沙箱卷：
+#   virtual = 沙箱内前缀（/C、/D、/NET/server/share ...）
+#   real    = 真实根（盘符、目录或 UNC）
+# 例：virtual="/C" real="C:\" 时，沙箱内 Z:\C\Windows ↔ 宿主 C:\Windows
+#
+# 网络位置：real 直接写 UNC（如 "\\filesrv\share"）。
+# 需先建立连接与认证（net use 或资源管理器访问一次），再由沙箱透传。
+
+version = 1
+default = "deny"
+
+[ask]
+endpoint          = "pipe://dynobox-decide"
+timeout_ms        = 2000
+cache_ttl_seconds = 60
+grant_ttl_seconds = 300
+
+[[roots]]
+virtual = "/C"
+real    = "C:\\"
+
+[[roots]]
+virtual = "/M2"
+real    = "examples/src2"      # 相对路径以管理进程 cwd 解析（推荐绝对路径）
+
+# ------------------------------------------------------------
+# 规则：按沙箱内虚拟路径书写
+# ------------------------------------------------------------
+[[rules]]
+path  = "/"
+access = "read"
+perm  = "allow"
+
+[[rules]]
+path  = "/C/**"
+access = "read"
+perm  = "allow"
+
+[[rules]]
+path  = "/M2/**"
+access = "all"
+perm  = "allow"

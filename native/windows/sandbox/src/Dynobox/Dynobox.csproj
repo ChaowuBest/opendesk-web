@@ -1,0 +1,26 @@
+<!--
+  Copyright (c) 2026 The OpenDesk Team
+  OpenDesk is licensed under Mulan PSL v2.
+  You may obtain a copy of the Mulan PSL v2 at: http://license.coscl.org.cn/MulanPSL2
+-->
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net8.0-windows</TargetFramework>
+    <RootNamespace>Dynobox</RootNamespace>
+    <AssemblyName>dynobox</AssemblyName>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <LangVersion>12</LangVersion>
+    <!-- 交叉发布（win-x86 / win-x64 / win-arm64）由 build.ps1 传入 RuntimeIdentifier -->
+    <RuntimeIdentifiers>win-x86;win-x64;win-arm64</RuntimeIdentifiers>
+    <InvariantGlobalization>true</InvariantGlobalization>
+    <AllowUnsafeBlocks>false</AllowUnsafeBlocks>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="DokanNet" Version="2.*" />
+  </ItemGroup>
+
+</Project>

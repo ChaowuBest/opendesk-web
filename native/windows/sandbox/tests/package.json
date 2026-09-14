@@ -1,0 +1,7 @@
+{
+    "name": "opendesk-sandbox-test-fixtures",
+    "private": true,
+    "devDependencies": {
+        "pptxgenjs": "4.0.1"
+    }
+}
