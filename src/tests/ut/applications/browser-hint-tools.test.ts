@@ -9,6 +9,7 @@ import { browserHintsSnapshotPrefixProvider } from '../../../main/applications/b
 import { BrowserSnapshotTool, BrowserTriggerTool } from '../../../main/applications/browser/tools.js';
 import { getPluginHost } from '../../../main/applications/pluginmgr/runtime/host.js';
 import { actionHint, definePlugin, textHint } from '../../../../packages/plugin-sdk/src/index.js';
+import { setRuntimeLocale } from '../../../locale/index.js';
 
 /** 最小 BrowserController 替身：只实现 hint / trigger 链路真正用到的方法 */
 function fakeController(options: {
@@ -59,6 +60,14 @@ async function runTool(
 
 describe('browser hints 接入 snapshot 与 trigger', () => {
     let restoreController: () => void;
+
+    beforeAll(() => {
+        setRuntimeLocale('zh-CN');
+    });
+
+    afterAll(() => {
+        setRuntimeLocale(null);
+    });
 
     beforeEach(async () => {
         await getPluginHost().dispose();
