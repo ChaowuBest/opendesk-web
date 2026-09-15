@@ -54,14 +54,18 @@ function normalizePath(rawPath: string, cwd: string): string {
     // 将 MSYS2/Git Bash 风格路径转换为 Windows 原生路径，避免 path.resolve 产生双重前缀
     p = fromMsysPath(p);
     const normalizedCwd = fromMsysPath(cwd);
+    const preserveTrailingSeparator = path.isAbsolute(p) && p.length > 1 && /[\\/]$/.test(p);
 
-    // 解析为绝对路径（基于 cwd）
-    if (!path.isAbsolute(p)) {
-        p = path.resolve(normalizedCwd, p);
-    }
+    // 始终通过 path.resolve 解析路径。绝对路径也可能包含 . 或 ..；仅用
+    // path.isAbsolute 判断会保留这些片段，导致权限规则匹配到错误的路径。
+    p = path.resolve(normalizedCwd, p);
 
     // 统一使用正斜杠
     p = p.replace(/\\/g, '/');
+
+    if (preserveTrailingSeparator && p !== '/') {
+        p += '/';
+    }
 
     // 清理连续多个斜杠（保留 UNC 路径 // 和协议前缀 ://）
     p = p.replace(/(?<!:)\/{2,}/g, '/');
@@ -415,6 +419,36 @@ const BASH_DIR_READ_COMMANDS = new Set(['ls', 'du', 'tree']);
 const BASH_CD_COMMANDS = new Set(['cd', 'pushd']);
 
 /**
+ * 解析命令链中的目录切换，供后续命令使用更新后的 cwd。
+ * 返回 undefined 表示命令没有可静态确定的目录变化。
+ */
+function resolveBashDirectoryChange(tokens: string[], cwd: string, directoryStack: string[]): string | undefined {
+    const { rest } = extractBashRedirects(tokens);
+    if (rest.length === 0) return undefined;
+
+    let cmdStartIdx = 0;
+    while (cmdStartIdx < rest.length && /^[A-Za-z_][A-Za-z0-9_]*=/.test(rest[cmdStartIdx])) {
+        cmdStartIdx++;
+    }
+    if (cmdStartIdx >= rest.length) return undefined;
+
+    const cmdName = path.basename(unquote(rest[cmdStartIdx]));
+    if (cmdName === 'popd') {
+        return directoryStack.pop();
+    }
+    if (!BASH_CD_COMMANDS.has(cmdName)) return undefined;
+
+    const target = rest.slice(cmdStartIdx + 1).find((arg) => looksLikePath(unquote(arg)));
+    if (!target) return undefined;
+
+    const nextCwd = normalizePath(target, cwd);
+    if (cmdName === 'pushd') {
+        directoryStack.push(cwd);
+    }
+    return nextCwd;
+}
+
+/**
  * 已知写入类命令：命令的路径参数全部视为写入
  * 注意：cp/mv 的最后一个参数是写入目标，其他是读取源，需要特殊处理
  */
@@ -685,11 +719,15 @@ function analyzeSingleBashCommand(tokens: string[], cwd: string): PermissionRequ
  */
 function analyzeSingleBashCommandChain(command: string, cwd: string): PermissionRequest[] {
     const results: PermissionRequest[] = [];
+    let currentCwd = cwd;
+    const directoryStack: string[] = [];
     const simpleCommands = splitBashCommands(command);
     for (const cmd of simpleCommands) {
         const tokens = tokenizeBashCommand(cmd);
         if (tokens.length === 0) continue;
-        results.push(...analyzeSingleBashCommand(tokens, cwd));
+        results.push(...analyzeSingleBashCommand(tokens, currentCwd));
+        const nextCwd = resolveBashDirectoryChange(tokens, currentCwd, directoryStack);
+        if (nextCwd) currentCwd = nextCwd;
     }
     return results;
 }
@@ -703,13 +741,7 @@ function analyzeSingleBashCommandChain(command: string, cwd: string): Permission
  */
 export function analyzeBashPermissions(command: string, cwd: string): PermissionRequest[] {
     const results: PermissionRequest[] = [];
-    const simpleCommands = splitBashCommands(command);
-
-    for (const cmd of simpleCommands) {
-        const tokens = tokenizeBashCommand(cmd);
-        if (tokens.length === 0) continue;
-        results.push(...analyzeSingleBashCommand(tokens, cwd));
-    }
+    results.push(...analyzeSingleBashCommandChain(command, cwd));
 
     if (bashCommandContainsDynamicElements(command)) {
         results.push({ resourceType: 'file', action: 'execute', resourcePath: '/' });

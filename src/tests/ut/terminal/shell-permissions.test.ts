@@ -446,10 +446,15 @@ describe('Bash/Zsh permissions analysis', () => {
             assertHasExact(perms, 'read', expected);
         });
 
-        test('cd .. && ls -la → 声明读取上级目录和 cwd', () => {
+        test('cd .. && ls -la → 后续命令读取上级目录', () => {
             const perms = analyzeBashPermissions('cd .. && ls -la', CWD);
             const parent = path.resolve(CWD, '..').replace(/\\/g, '/');
             assertHasExact(perms, 'read', parent);
+        });
+
+        test('cd /tmp && ls -la → 后续命令使用切换后的 cwd', () => {
+            const perms = analyzeBashPermissions('cd /tmp && ls -la', CWD);
+            assertHasExact(perms, 'read', '/tmp');
         });
 
         test('pushd .. && ls -la && popd → 声明读取上级目录', () => {
@@ -461,6 +466,30 @@ describe('Bash/Zsh permissions analysis', () => {
         test('cd 无参数 → 无权限', () => {
             const perms = analyzeBashPermissions('cd', CWD);
             expect(perms.length).toBe(0);
+        });
+    });
+
+    describe('路径规范化', () => {
+        test('绝对路径中的 .. → 规范化后再匹配权限', () => {
+            const rawPath = `${CWD}/nested/../output.txt`;
+            const perms = analyzeBashPermissions(`cat ${rawPath}`, CWD);
+            assertHasExact(perms, 'read', `${CWD}/output.txt`);
+        });
+
+        test('报告复制命令中的绝对路径 .. → 不生成工作区外的错误路径', () => {
+            const workspace = '/storage/Users/currentUser/work/python9.14';
+            const command =
+                'cd /storage/Users/currentUser/work/python9.14/python-abandontech-siren && ' +
+                'cp /storage/Users/currentUser/work/python9.14/python-abandontech-siren/test_report.xlsx ' +
+                '/storage/Users/currentUser/work/python9.14/python-abandontech-siren/../resultsbackup/ && ' +
+                'ls -la /storage/Users/currentUser/work/python9.14/python-abandontech-siren/../resultsbackup/test_report.xlsx';
+            const perms = analyzeBashPermissions(command, workspace);
+            const paths = perms.map((permission) => permission.resourcePath);
+
+            expect(paths).toContain(`${workspace}/resultsbackup/`);
+            expect(paths).toContain(`${workspace}/resultsbackup/test_report.xlsx`);
+            expect(paths).not.toContain('/storage/Users/currentUser/work/resultsbackup');
+            expect(paths).not.toContain('/storage/Users/currentUser/work/resultsbackup/test_report.xlsx');
         });
     });
 
