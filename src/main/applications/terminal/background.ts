@@ -244,7 +244,7 @@ export function installTimeoutBackgrounding(opts: {
     getOutputBuffer?: () => BoundedOutputBuffer;
     result: ToolResult;
     isKilledByStop: () => boolean;
-    onFinish: () => void;
+    onFinish: (backgrounded: boolean) => void;
 }): Promise<boolean> {
     const { handle, command, startTime, timeout, getOutput, getOutputBuffer, result, isKilledByStop, onFinish } = opts;
     const { proc, detachListeners } = handle;
@@ -258,7 +258,7 @@ export function installTimeoutBackgrounding(opts: {
             if (settled) return;
             settled = true;
             if (timeoutTimer) clearTimeout(timeoutTimer);
-            onFinish();
+            onFinish(backgrounded);
             resolve(backgrounded);
         };
 

@@ -292,8 +292,8 @@ async function executeShellCommand(opts: {
         getOutputBuffer: () => output,
         result,
         isKilledByStop,
-        onFinish: () => {
-            output.closeArtifact();
+        onFinish: (backgrounded) => {
+            if (!backgrounded) output.closeArtifact();
             clearInterval(updateTimer);
             runningProcesses.delete(proc);
             stopPromises.delete(proc);
