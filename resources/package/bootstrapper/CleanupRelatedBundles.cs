@@ -28,7 +28,8 @@ namespace OpenDesk.Bootstrapper
     /// 旧缓存 exe 已不存在：child 启动失败但 related bundle 是非 vital 包，引擎会记录
     /// "Continuing (non-vital package)" 并继续完成安装。
     ///
-    /// 用法：CleanupRelatedBundles.exe [当前 bundle 版本]，例如 "0.3.6.0"。
+    /// 用法：CleanupRelatedBundles.exe [当前 bundle 版本] [当前 bundle ID]，例如
+    /// "0.3.6.0 {7092ef85-a098-4405-a520-1a1e04babddb}"。
     /// 只处理 DisplayVersion 低于当前版本的 OpenDesk bundle；同版本/更高版本条目
     /// （包括本安装自身的会话条目）与共享 MSI ProductCode 相关，一律不碰。
     /// 任何异常都以 0 退出：本程序失败绝不能阻断安装。
@@ -51,13 +52,20 @@ namespace OpenDesk.Bootstrapper
                 Log("cleanup started, args: " + string.Join(" ", args));
 
                 uint[] currentVersion;
-                if (args.Length < 1 || !TryParseVersion(args[0], out currentVersion))
+                if (args.Length < 2 || !TryParseVersion(args[0], out currentVersion))
                 {
                     Log("no usable version argument, nothing to do");
                     return 0;
                 }
 
-                CleanupOldBundles(currentVersion);
+                string currentBundleId = args[1];
+                if (string.IsNullOrWhiteSpace(currentBundleId))
+                {
+                    Log("no current bundle id, nothing to do");
+                    return 0;
+                }
+
+                CleanupOldBundles(currentVersion, currentBundleId);
             }
             catch (Exception ex)
             {
@@ -68,17 +76,22 @@ namespace OpenDesk.Bootstrapper
             return 0;
         }
 
-        private static void CleanupOldBundles(uint[] currentVersion)
+        private static void CleanupOldBundles(uint[] currentVersion, string currentBundleId)
         {
             using (RegistryKey base64 = RegistryKey.OpenBaseKey(RegistryHive.LocalMachine, RegistryView.Registry64))
             using (RegistryKey base32 = RegistryKey.OpenBaseKey(RegistryHive.LocalMachine, RegistryView.Registry32))
             {
-                CleanupOldBundlesInView(base64, "64", currentVersion);
-                CleanupOldBundlesInView(base32, "32", currentVersion);
+                CleanupOldBundlesInView(base64, "64", currentVersion, currentBundleId);
+                CleanupOldBundlesInView(base32, "32", currentVersion, currentBundleId);
             }
         }
 
-        private static void CleanupOldBundlesInView(RegistryKey baseKey, string viewLabel, uint[] currentVersion)
+        private static void CleanupOldBundlesInView(
+            RegistryKey baseKey,
+            string viewLabel,
+            uint[] currentVersion,
+            string currentBundleId
+        )
         {
             using (RegistryKey uninstallKey = baseKey.OpenSubKey(UninstallKeyPath, false))
             {
@@ -92,7 +105,7 @@ namespace OpenDesk.Bootstrapper
                 {
                     try
                     {
-                        CleanupBundleEntry(baseKey, viewLabel, entryNames[i], currentVersion);
+                        CleanupBundleEntry(baseKey, viewLabel, entryNames[i], currentVersion, currentBundleId);
                     }
                     catch (Exception ex)
                     {
@@ -102,7 +115,13 @@ namespace OpenDesk.Bootstrapper
             }
         }
 
-        private static void CleanupBundleEntry(RegistryKey baseKey, string viewLabel, string entryName, uint[] currentVersion)
+        private static void CleanupBundleEntry(
+            RegistryKey baseKey,
+            string viewLabel,
+            string entryName,
+            uint[] currentVersion,
+            string currentBundleId
+        )
         {
             string cachePath = null;
             using (RegistryKey entryKey = baseKey.OpenSubKey(UninstallKeyPath + "\\" + entryName, false))
@@ -143,7 +162,7 @@ namespace OpenDesk.Bootstrapper
                     " cache: " + cachePath + " (view " + viewLabel + ")");
             }
 
-            CleanupBundle(entryName, cachePath);
+            CleanupBundle(entryName, cachePath, currentBundleId);
         }
 
         private static bool IsOpenDeskBundle(RegistryKey entryKey)
@@ -164,7 +183,7 @@ namespace OpenDesk.Bootstrapper
             return displayName != null && displayName.Trim().StartsWith("OpenDesk", StringComparison.OrdinalIgnoreCase);
         }
 
-        private static void CleanupBundle(string entryName, string cachePath)
+        private static void CleanupBundle(string entryName, string cachePath, string currentBundleId)
         {
             // 上一次卡死的安装可能留下仍在运行的旧安装进程并锁住缓存 exe，
             // 必须先清掉，否则旧缓存删不掉、引擎的 related child 仍会被拉起挂死。
@@ -177,7 +196,7 @@ namespace OpenDesk.Bootstrapper
                 return;
             }
 
-            Process stub = LaunchCachedUninstall(cachePath);
+            Process stub = LaunchCachedUninstall(cachePath, currentBundleId);
             if (!WaitForEntryRemoval(entryName, EntryRemovalTimeoutMs))
             {
                 if (stub != null && !stub.HasExited)
@@ -223,13 +242,16 @@ namespace OpenDesk.Bootstrapper
             Log("cleanup for bundle " + entryName + " done");
         }
 
-        private static Process LaunchCachedUninstall(string cachePath)
+        private static Process LaunchCachedUninstall(string cachePath, string currentBundleId)
         {
             try
             {
                 ProcessStartInfo startInfo = new ProcessStartInfo();
                 startInfo.FileName = cachePath;
-                startInfo.Arguments = "/uninstall /quiet";
+                // 保留升级关系并声明当前 bundle 为祖先。旧 BA 在规划 related bundle 时会跳过祖先，
+                // 避免旧版本安装器反向卸载刚安装的当前版本。
+                startInfo.Arguments =
+                    "/uninstall /quiet -burn.related.upgrade -burn.ancestors=" + currentBundleId;
                 startInfo.UseShellExecute = false;
                 startInfo.CreateNoWindow = true;
                 return Process.Start(startInfo);

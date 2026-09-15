@@ -338,6 +338,18 @@ test('builds a custom bootstrapper that passes location and shortcut choices to 
         bootstrapper,
         /OnPlanRelatedBundle\(object sender, PlanRelatedBundleEventArgs e\)[\s\S]*?activeAction != LaunchAction\.Install[\s\S]*?FindBundleCachePath\(e\.BundleId\)[\s\S]*?RequestState\.None\s*:\s*RequestState\.Absent/
     );
+    assert.match(
+        bootstrapper,
+        /OnDetectRelatedBundle\(object sender, DetectRelatedBundleEventArgs e\)[\s\S]*?NormalizeBundleId\(e\.ProductCode\)[\s\S]*?relatedBundleVersions\[bundleId\] = e\.Version/
+    );
+    assert.match(
+        bootstrapper,
+        /OnPlanRelatedBundle\(object sender, PlanRelatedBundleEventArgs e\)[\s\S]*?IsProtectedRelatedBundle\(e\.BundleId\)[\s\S]*?e\.State = RequestState\.None/
+    );
+    assert.match(
+        bootstrapper,
+        /IsProtectedRelatedBundle\(string bundleId\)[\s\S]*?GetCurrentBundleId\(\)[\s\S]*?relatedBundleVersions\.TryGetValue[\s\S]*?relatedVersion > currentVersion/
+    );
     // 缓存丢失的 bundle 无法卸载，只清孤儿注册键；不能计划 Absent（会让安装整体失败）
     assert.match(bootstrapper, /private static string FindBundleCachePath\(string bundleId\)/);
     // 作为 related bundle 被调起（升级时旧版被自动卸载）必须全程静默：
@@ -368,6 +380,14 @@ test('builds a custom bootstrapper that passes location and shortcut choices to 
     // BA 必须在它开始执行时把进度页文案切到"正在清理旧版本"，结束后恢复常规文案，
     // 避免用户误以为安装卡死；仅在 detect 阶段发现过历史 bundle 时才展示。
     assert.match(bundle, /<ExePackage Id="CleanupRelatedBundles"/);
+    assert.match(bundle, /InstallCommand="\[WixBundleVersion\] \[WixBundleProviderKey\]"/);
+    const cleanup = fs.readFileSync(path.join(bootstrapperResources, 'CleanupRelatedBundles.cs'), 'utf8');
+    assert.match(cleanup, /args\.Length < 2/);
+    assert.match(cleanup, /CleanupOldBundles\(currentVersion, currentBundleId\)/);
+    assert.match(
+        cleanup,
+        /LaunchCachedUninstall\(string cachePath, string currentBundleId\)[\s\S]*?\/uninstall \/quiet -burn\.related\.upgrade -burn\.ancestors=" \+ currentBundleId/
+    );
     assert.match(bootstrapper, /CleanupRelatedBundlesPackageId = "CleanupRelatedBundles"/);
     assert.match(
         bootstrapper,

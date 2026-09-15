@@ -35,6 +35,8 @@ namespace OpenDesk.Installer
         private PackageState packageState = PackageState.Unknown;
         private LaunchAction activeAction = LaunchAction.Unknown;
         private bool relatedMsiUpgradeDetected;
+        private readonly Dictionary<string, Version> relatedBundleVersions =
+            new Dictionary<string, Version>(StringComparer.OrdinalIgnoreCase);
         private bool cancelRequested;
         private volatile bool elevationRequested;
         private int exitCode;
@@ -403,6 +405,14 @@ namespace OpenDesk.Installer
             // 检测到任何历史 bundle（同 UpgradeCode 的其他安装）都视为"更新"，欢迎页展示更新文案。
             // 引擎不会为当前安装自身触发该事件，无需排除自己。实际卸载在 OnPlanRelatedBundle 里计划。
             relatedMsiUpgradeDetected = true;
+
+            // WiX v3 的 DetectRelatedBundleEventArgs 用 ProductCode 承载 related bundle ID。
+            // 记录版本，供 Plan 阶段阻止旧 BA/异常调用路径误卸载更高版本。
+            string bundleId = NormalizeBundleId(e.ProductCode);
+            if (!string.IsNullOrEmpty(bundleId) && e.Version != null)
+            {
+                relatedBundleVersions[bundleId] = e.Version;
+            }
         }
 
         /// <summary>
@@ -439,10 +449,53 @@ namespace OpenDesk.Installer
                 return;
             }
 
+            if (IsProtectedRelatedBundle(e.BundleId))
+            {
+                e.State = RequestState.None;
+                return;
+            }
+
             string cachePath = FindBundleCachePath(e.BundleId);
             e.State = string.IsNullOrWhiteSpace(cachePath) || !File.Exists(cachePath)
                 ? RequestState.None
                 : RequestState.Absent;
+        }
+
+        /// <summary>
+        /// 防止 Plan 阶段把当前 bundle 或更高版本的 related bundle 计划为 Absent。
+        /// 同版本的其他 bundle 仍允许清理，以保留去重历史安装条目的行为。
+        /// </summary>
+        private bool IsProtectedRelatedBundle(string bundleId)
+        {
+            string normalizedBundleId = NormalizeBundleId(bundleId);
+            if (string.IsNullOrEmpty(normalizedBundleId))
+            {
+                return false;
+            }
+
+            if (string.Equals(normalizedBundleId, NormalizeBundleId(GetCurrentBundleId()), StringComparison.OrdinalIgnoreCase))
+            {
+                return true;
+            }
+
+            Version relatedVersion;
+            if (!relatedBundleVersions.TryGetValue(normalizedBundleId, out relatedVersion))
+            {
+                return false;
+            }
+
+            Version currentVersion;
+            if (!Version.TryParse(Engine.FormatString("[WixBundleVersion]"), out currentVersion))
+            {
+                return false;
+            }
+
+            return relatedVersion > currentVersion;
+        }
+
+        private static string NormalizeBundleId(string bundleId)
+        {
+            return string.IsNullOrWhiteSpace(bundleId) ? string.Empty : bundleId.Trim().Trim('{', '}');
         }
 
         private void OnDetectRelatedMsiPackage(object sender, DetectRelatedMsiPackageEventArgs e)
