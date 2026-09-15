@@ -20,7 +20,9 @@ import { ToolListChangedNotificationSchema } from '@modelcontextprotocol/sdk/typ
 import type { McpServerConfig, McpToolInfo } from './common.js';
 import { getPlatform } from '../../../platforms/base.js';
 import { buildChildProcessEnv } from '../../utils/shellExec.js';
-import { t } from '../../../locale/index.js';
+import { t } from './locale/index.js';
+// platformT：读取主 locale 中跨应用共享的平台词条（harmony.localRuntime.*）
+import { t as platformT } from '../../../locale/index.js';
 import {
     getHarmonyLocalRuntimeState,
     getHarmonyStdioCommandAvailability,
@@ -39,8 +41,8 @@ export function getMcpServerLocalRuntimeAvailability(
 
 function getLocalRuntimeUnavailableMessage(availability: HarmonyLocalRuntimeFeatureAvailability): string {
     return availability.reason === 'tablet-local-runtime-disabled'
-        ? t('harmony.localRuntime.tabletUnavailable')
-        : t('harmony.localRuntime.pcMissing', { capabilities: availability.missing.join(', ') });
+        ? platformT('harmony.localRuntime.tabletUnavailable')
+        : platformT('harmony.localRuntime.pcMissing', { capabilities: availability.missing.join(', ') });
 }
 
 interface McpConnection {
@@ -315,10 +317,10 @@ export default class McpMgrWorker extends BaseWorker {
 
         // 检测命令未找到 (ENOENT)
         if (err.code === 'ENOENT' || err.message?.includes('ENOENT') || err.message?.includes('spawn')) {
-            parts.push(`命令未找到: ${server.command || '(未知)'}`);
-            parts.push('请确认命令路径正确且已安装对应的运行时（如 Node.js、Python、uvx 等）');
+            parts.push(t('error.commandNotFound', { command: server.command || '?' }));
+            parts.push(t('error.checkRuntimeInstalled'));
         } else {
-            parts.push(err.message || '未知错误');
+            parts.push(err.message || t('error.unknownError'));
         }
 
         // 附加 stderr 中的关键信息（过滤掉空行和纯空白行）

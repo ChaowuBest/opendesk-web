@@ -34,9 +34,11 @@ jest.unstable_mockModule('child_process', () => ({
 // existsSync 仅服务于 bash 的 PATH 回退查找。
 const ZSH_PATH = '/usr/bin/zsh';
 
-const existsSyncMock = jest.fn(
-    (p: unknown) => typeof p === 'string' && ['zsh', 'bash'].some((name) => p.endsWith(`/${name}`))
-);
+// findExecutableInPath 内部用 path.join 拼路径，Windows 下产生反斜杠分隔符；
+// mock 与断言统一归一化为 POSIX 风格，保证测试在任意平台行为一致
+const toPosix = (p: unknown): string => (typeof p === 'string' ? p.replace(/\\/g, '/') : '');
+
+const existsSyncMock = jest.fn((p: unknown) => ['zsh', 'bash'].some((name) => toPosix(p).endsWith(`/${name}`)));
 const accessSyncMock = jest.fn(() => undefined);
 
 jest.unstable_mockModule('fs', () => {
@@ -67,8 +69,8 @@ describe('findOpenHarmonyZsh', () => {
         process.env.PATH = '/usr/bin';
         spawnSyncMock.mockReset();
         existsSyncMock.mockReset();
-        existsSyncMock.mockImplementation(
-            (p: unknown) => typeof p === 'string' && ['zsh', 'bash'].some((name) => p.endsWith(`/${name}`))
+        existsSyncMock.mockImplementation((p: unknown) =>
+            ['zsh', 'bash'].some((name) => toPosix(p).endsWith(`/${name}`))
         );
         accessSyncMock.mockReset();
         accessSyncMock.mockImplementation(() => undefined);
@@ -81,17 +83,17 @@ describe('findOpenHarmonyZsh', () => {
 
     test('falls back to PATH lookup when /usr/bin/zsh does not exist', () => {
         accessSyncMock.mockImplementation((p: unknown) => {
-            if (p === ZSH_PATH) throw new Error('ENOENT');
+            if (toPosix(p) === ZSH_PATH) throw new Error('ENOENT');
         });
         // PATH 查找不做 spawnSync 验证，命中 accessSync 可用的 /bin/zsh
-        expect(findOpenHarmonyZsh()).toBe('/bin/zsh');
+        expect(toPosix(findOpenHarmonyZsh())).toBe('/bin/zsh');
         expect(spawnSyncMock).not.toHaveBeenCalled();
     });
 
     test('falls back to PATH lookup when zsh exists but fails runtime verification', () => {
         spawnSyncMock.mockReturnValueOnce({ status: 127, error: undefined } as SpawnSyncReturns<Buffer>);
         // 验证失败后回退到 PATH 查找（仅 accessSync 级别），仍命中 /usr/bin/zsh
-        expect(findOpenHarmonyZsh()).toBe(ZSH_PATH);
+        expect(toPosix(findOpenHarmonyZsh())).toBe(ZSH_PATH);
     });
 
     test('returns fixed /usr/bin/zsh when runtime verification passes', () => {
@@ -111,8 +113,8 @@ describe('getDefaultShell on OpenHarmony', () => {
         clearDefaultShellCache();
         spawnSyncMock.mockReset();
         existsSyncMock.mockReset();
-        existsSyncMock.mockImplementation(
-            (p: unknown) => typeof p === 'string' && ['zsh', 'bash'].some((name) => p.endsWith(`/${name}`))
+        existsSyncMock.mockImplementation((p: unknown) =>
+            ['zsh', 'bash'].some((name) => toPosix(p).endsWith(`/${name}`))
         );
         accessSyncMock.mockReset();
         accessSyncMock.mockImplementation(() => undefined);
@@ -136,13 +138,14 @@ describe('getDefaultShell on OpenHarmony', () => {
     });
 
     test('falls back to bash when zsh is not runnable', () => {
-        // /usr/bin/zsh 运行验证失败，且 PATH 中亦无 zsh，最终回退到 HNP bash
+        // /usr/bin/zsh 运行验证失败，且 PATH 中亦无 zsh（existsSync 仅放行 bash），
+        // findOpenHarmonyZsh 的 PATH 回退不应命中，最终回退到 HNP bash
         spawnSyncMock.mockImplementation((cmd: string) =>
             cmd.endsWith('zsh')
                 ? ({ status: 127, error: undefined } as SpawnSyncReturns<Buffer>)
                 : ({ status: 0, error: undefined } as SpawnSyncReturns<Buffer>)
         );
-        existsSyncMock.mockImplementation((p: unknown) => typeof p === 'string' && p.endsWith('/bash'));
+        existsSyncMock.mockImplementation((p: unknown) => toPosix(p).endsWith('/bash'));
 
         const shell = getDefaultShell();
         expect(shell).toEqual({ shellPath: '/data/service/hnp/bin/bash', shellArgs: ['-c'] });
@@ -169,8 +172,8 @@ describe('OpenHarmony interactive shell output filtering', () => {
         spawnMock.mockReset();
         spawnSyncMock.mockReset();
         existsSyncMock.mockReset();
-        existsSyncMock.mockImplementation(
-            (p: unknown) => typeof p === 'string' && ['zsh', 'bash'].some((name) => p.endsWith(`/${name}`))
+        existsSyncMock.mockImplementation((p: unknown) =>
+            ['zsh', 'bash'].some((name) => toPosix(p).endsWith(`/${name}`))
         );
         accessSyncMock.mockReset();
         accessSyncMock.mockImplementation(() => undefined);

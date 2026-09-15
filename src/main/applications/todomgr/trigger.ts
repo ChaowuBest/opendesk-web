@@ -14,45 +14,35 @@
  * TUI 和 Electron GUI 共享此模块来创建和分发由待办事项触发器产生的任务。
  */
 
-import format from 'string-template';
-import { describeCron } from '../../utils/cron.js';
+import { t } from './locale/index.js';
+import { describeCron, type CronDescribeLabels } from '../../utils/cron.js';
 
-const TODO_HANDLER_TEMPLATE = `
-请执行以下全局待办事项：
-
-- 待办事项ID: {todoId}
-- 待办事项标题：{todoTitle}
-- 待办事项触发方式：{todoTrigger}
-
-待办事项内容
----
-
-{todoContent}
-
-注意事项
----
-1. 这条消息是由待办事项管理器自动创建的，你的回复应当专注于完成用户在待办事项中指定的任务;
-2. 待办事项的所有信息已经告诉你了，不需要尝试获取待办事项的更多信息，你也**不需要**将待办事项标记为已完成；
-3. 如果周期型待办事项无法成功完成，你应当检查过往的执行历史，如果失败次数过多，应当提醒用户取消待办事项；
-`;
+/** describeCron 的多语言文案，词条随当前 locale 动态解析 */
+function cronLabels(): CronDescribeLabels {
+    return {
+        dowNames: Array.from({ length: 7 }, (_, i) => t(`cron.desc.dowNames.${i}`)),
+        everyDowTemplate: t('cron.desc.everyDow'),
+        dowTemplate: t('cron.desc.dow'),
+        monthlyDomTemplate: t('cron.desc.monthlyDom'),
+        monthTemplate: t('cron.desc.month'),
+        hourTemplate: t('cron.desc.hourOnly'),
+        minuteTemplate: t('cron.desc.minuteOnly'),
+        everyMinute: t('cron.desc.everyMinute')
+    };
+}
 
 export function buildTriggerInfo(trigger: any): string {
     if (trigger?.type === 'event') {
-        return `[event] 事件驱动任务，由事件 ${trigger.bundleName}:${trigger.eventName} 自动触发 `;
+        return t('trigger.info.event', { bundle: trigger.bundleName, event: trigger.eventName });
     } else if (trigger?.type === 'scheduled') {
-        return `[scheduled] 定时任务，仅执行一次 `;
+        return t('trigger.info.scheduled');
     } else if (trigger?.type === 'cron') {
-        return `[cron] 定时任务, 触发时机为 ${describeCron(trigger.cronExpression)} `;
+        return t('trigger.info.cron', { cron: describeCron(trigger.cronExpression, cronLabels()) });
     }
     return '';
 }
 
 export function buildTriggerMessage(todoId: string, todoTitle: string, todoContent: string, trigger: any): string {
     const triggerInfo = buildTriggerInfo(trigger);
-    return format(TODO_HANDLER_TEMPLATE, {
-        todoId,
-        todoTitle,
-        todoContent,
-        todoTrigger: triggerInfo
-    });
+    return t('trigger.message.template', { todoId, todoTitle, todoContent, todoTrigger: triggerInfo });
 }

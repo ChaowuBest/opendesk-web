@@ -1,0 +1,2816 @@
+<!doctype html>
+<!--
+    Copyright (c) 2026 The OpenDesk Team
+    OpenDesk is licensed under Mulan PSL v2.
+    You can use this software according to the terms and conditions of the Mulan PSL v2.
+    You may obtain a copy of Mulan PSL v2 at: http://license.coscl.org.cn/MulanPSL2
+    THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND,
+    EITHER EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT,
+    MERCHANTABILITY OR FIT FOR A PARTICULAR PURPOSE.
+    See the Mulan PSL v2 for more details.
+-->
+<html lang="zh-CN" data-theme="light">
+    <head>
+        <meta charset="UTF-8" />
+        <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+        <title>OpenDesk · IM 设计探索</title>
+        <style>
+            @font-face {
+                font-family: 'HarmonyOS Sans';
+                src: url('../../resources/renderer/fonts/harmonyos/HarmonyOS_Sans_SC_Regular.woff2') format('woff2');
+                font-display: swap;
+            }
+            :root {
+                color-scheme: light;
+                --page: #eeedeb;
+                --surface: #ffffff;
+                --sidebar: #f5f5f5;
+                --muted-surface: #fafafa;
+                --ink: #1c1917;
+                --ink2: #4a4642;
+                --ink3: #79736d;
+                --line: #e7e5e2;
+                --line-soft: #f0efec;
+                --accent: #df4436;
+                --accent-ink: #bb352a;
+                --accent-soft: #fdeeec;
+                --green: #238257;
+                --green-soft: #e7f5ee;
+                --blue: #4267b2;
+                --blue-soft: #ebf1fb;
+                --amber: #996718;
+                --amber-soft: #fdf3e3;
+                --bubble: #f4f3f1;
+                --shadow: 0 12px 40px #24201b0a, 0 2px 6px #24201b04;
+                --font: 'HarmonyOS Sans', 'PingFang SC', 'Microsoft YaHei', system-ui, sans-serif;
+            }
+            html[data-theme='dark'] {
+                color-scheme: dark;
+                --page: #191817;
+                --surface: #252526;
+                --sidebar: #1e1e1e;
+                --muted-surface: #22201e;
+                --ink: #efedea;
+                --ink2: #d5d1cb;
+                --ink3: #aaa49e;
+                --line: #3b3835;
+                --line-soft: #33302d;
+                --accent: #e8563f;
+                --accent-ink: #ff9a89;
+                --accent-soft: #422c29;
+                --green: #67c99b;
+                --green-soft: #233b30;
+                --blue: #96b5ec;
+                --blue-soft: #2b3545;
+                --amber: #dbb068;
+                --amber-soft: #403526;
+                --bubble: #33302d;
+                --shadow: 0 12px 40px #00000024;
+            }
+            * {
+                box-sizing: border-box;
+            }
+            body {
+                margin: 0;
+                background: var(--page);
+                color: var(--ink);
+                font: 13px/1.5 var(--font);
+                -webkit-font-smoothing: antialiased;
+            }
+            button,
+            input,
+            textarea {
+                font: inherit;
+                color: inherit;
+            }
+            button {
+                border: 0;
+                cursor: pointer;
+                background: transparent;
+            }
+            button:disabled {
+                opacity: 0.4;
+                cursor: default;
+            }
+            button,
+            input,
+            textarea {
+                -webkit-tap-highlight-color: transparent;
+            }
+            button:focus-visible,
+            input:focus-visible,
+            textarea:focus-visible,
+            summary:focus-visible {
+                outline: 2px solid var(--accent);
+                outline-offset: 3px;
+            }
+            input,
+            textarea {
+                min-width: 0;
+            }
+            input::placeholder,
+            textarea::placeholder {
+                color: var(--ink3);
+            }
+            h1,
+            h2,
+            h3,
+            p {
+                margin: 0;
+            }
+            svg {
+                display: block;
+                flex: none;
+            }
+            .icon {
+                width: 18px;
+                height: 18px;
+                fill: none;
+                stroke: currentColor;
+                stroke-width: 1.6;
+                stroke-linecap: round;
+                stroke-linejoin: round;
+            }
+            .row {
+                display: flex;
+                align-items: center;
+                gap: 10px;
+            }
+            .between {
+                justify-content: space-between;
+            }
+            .muted {
+                color: var(--ink3);
+            }
+            .small {
+                font-size: 11px;
+            }
+            .grow {
+                flex: 1;
+                min-width: 0;
+            }
+            .truncate {
+                overflow: hidden;
+                text-overflow: ellipsis;
+                white-space: nowrap;
+            }
+            .icon-btn {
+                display: inline-flex;
+                align-items: center;
+                justify-content: center;
+                width: 30px;
+                height: 30px;
+                border-radius: 7px;
+                color: var(--ink3);
+                flex: none;
+            }
+            .icon-btn:hover {
+                background: var(--bubble);
+                color: var(--ink);
+            }
+            .pill {
+                display: inline-flex;
+                align-items: center;
+                gap: 5px;
+                font-size: 11px;
+                padding: 3px 8px;
+                border-radius: 5px;
+                color: var(--ink3);
+                background: var(--bubble);
+                white-space: nowrap;
+            }
+            .pill.accent {
+                color: var(--accent-ink);
+                background: var(--accent-soft);
+            }
+            .primary {
+                display: inline-flex;
+                align-items: center;
+                justify-content: center;
+                gap: 7px;
+                background: var(--accent);
+                color: #fff;
+                border-radius: 8px;
+                padding: 8px 14px;
+            }
+            .primary:hover {
+                filter: brightness(0.94);
+            }
+            .secondary {
+                display: inline-flex;
+                align-items: center;
+                gap: 7px;
+                padding: 7px 12px;
+                border: 1px solid var(--line);
+                border-radius: 7px;
+                background: var(--surface);
+            }
+            .secondary:hover {
+                background: var(--bubble);
+            }
+            .logo {
+                width: 29px;
+                height: 29px;
+                border-radius: 9px;
+                background: var(--accent);
+                display: inline-flex;
+                align-items: center;
+                justify-content: center;
+                gap: 4px;
+                flex: none;
+            }
+            .logo::before,
+            .logo::after {
+                content: '';
+                width: 5px;
+                height: 14px;
+                background: #fff;
+                border-radius: 3px;
+                transform: skewY(-14deg);
+            }
+            .studio {
+                max-width: 1800px;
+                margin: auto;
+                padding: 0 30px 18px;
+            }
+            .studio-header {
+                height: 72px;
+                display: flex;
+                align-items: center;
+                justify-content: space-between;
+                gap: 16px;
+            }
+            .studio-header h1 {
+                font-size: 15px;
+                font-weight: 600;
+            }
+            .studio-header .eyebrow {
+                color: var(--ink3);
+                font-size: 10px;
+                letter-spacing: 1.4px;
+                margin-bottom: 3px;
+            }
+            .studio-controls {
+                display: flex;
+                align-items: center;
+                gap: 8px;
+            }
+            .prototype-status {
+                margin-right: 10px;
+                color: var(--ink3);
+                font-size: 11px;
+            }
+            .prototype-status::before {
+                content: '';
+                display: inline-block;
+                width: 5px;
+                height: 5px;
+                border-radius: 50%;
+                background: var(--accent);
+                vertical-align: middle;
+                margin-right: 6px;
+            }
+            .variant-picker {
+                display: grid;
+                grid-template-columns: repeat(5, minmax(0, 1fr));
+                gap: 9px;
+                margin: 1px 0 17px;
+            }
+            .variant {
+                display: flex;
+                align-items: center;
+                gap: 13px;
+                padding: 12px 16px;
+                min-height: 67px;
+                border: 1px solid var(--line);
+                border-radius: 10px;
+                background: var(--muted-surface);
+                text-align: left;
+            }
+            .variant:hover {
+                background: var(--surface);
+            }
+            .variant[aria-pressed='true'] {
+                border-color: var(--accent);
+                background: var(--surface);
+                box-shadow: 0 0 0 1px var(--accent);
+            }
+            .variant-index {
+                font-size: 18px;
+                font-weight: 500;
+                color: var(--ink3);
+                font-variant-numeric: tabular-nums;
+            }
+            .variant[aria-pressed='true'] .variant-index {
+                color: var(--accent);
+            }
+            .variant-name {
+                display: block;
+                font-size: 13px;
+                font-weight: 600;
+            }
+            .variant-caption {
+                display: block;
+                font-size: 10px;
+                color: var(--ink3);
+                margin-top: 3px;
+            }
+            .app-window {
+                position: relative;
+                height: max(650px, calc(100dvh - 246px));
+                max-height: 1000px;
+                display: grid;
+                grid-template: 35px minmax(0, 1fr) / 166px 252px minmax(0, 1fr);
+                background: var(--surface);
+                border: 1px solid var(--line);
+                border-radius: 12px;
+                box-shadow: var(--shadow);
+                overflow: hidden;
+            }
+            .titlebar {
+                grid-column: 1 / -1;
+                display: flex;
+                align-items: center;
+                justify-content: space-between;
+                padding: 0 15px;
+                border-bottom: 1px solid var(--line-soft);
+                background: var(--surface);
+                color: var(--ink3);
+                font-size: 10px;
+                user-select: none;
+            }
+            .window-controls {
+                display: flex;
+                gap: 21px;
+                align-items: center;
+            }
+            .window-controls .icon {
+                width: 11px;
+                height: 11px;
+            }
+            .app-nav {
+                display: flex;
+                flex-direction: column;
+                min-height: 0;
+                padding: 22px 13px 14px;
+                background: var(--sidebar);
+                border-right: 1px solid var(--line);
+            }
+            .app-brand {
+                display: flex;
+                align-items: center;
+                gap: 8px;
+                margin: 0 5px 27px;
+                font-size: 17px;
+                font-weight: 600;
+                letter-spacing: -0.5px;
+            }
+            .app-brand .logo {
+                width: 25px;
+                height: 25px;
+                border-radius: 7px;
+            }
+            .app-brand .logo::before,
+            .app-brand .logo::after {
+                height: 12px;
+                width: 4px;
+            }
+            .nav-item {
+                display: flex;
+                align-items: center;
+                gap: 10px;
+                min-height: 36px;
+                padding: 0 10px;
+                margin-bottom: 5px;
+                border-radius: 7px;
+                color: var(--ink2);
+                white-space: nowrap;
+            }
+            .nav-item.current {
+                color: var(--accent-ink);
+                background: var(--accent-soft);
+                font-weight: 600;
+            }
+            .nav-item .count {
+                font-size: 10px;
+                margin-left: auto;
+            }
+            .nav-label {
+                font-size: 10px;
+                color: var(--ink3);
+                margin: 26px 10px 12px;
+                letter-spacing: 0.4px;
+            }
+            .workspace-item {
+                display: flex;
+                align-items: center;
+                gap: 8px;
+                padding: 9px 10px;
+                color: var(--ink2);
+                font-size: 11px;
+            }
+            .workspace-dot {
+                width: 6px;
+                height: 6px;
+                border: 1px solid var(--ink3);
+                border-radius: 2px;
+            }
+            .app-nav footer {
+                margin-top: auto;
+            }
+            .account {
+                border-top: 1px solid var(--line);
+                padding: 15px 4px 0;
+                margin-top: 14px;
+            }
+            .account .avatar {
+                width: 29px;
+                height: 29px;
+                font-size: 10px;
+                border-radius: 9px;
+            }
+            .account-name {
+                font-size: 11px;
+            }
+            .account-role {
+                font-size: 9px;
+                color: var(--ink3);
+            }
+            .conversation-panel {
+                background: var(--muted-surface);
+                border-right: 1px solid var(--line);
+                padding: 24px 12px 12px;
+                min-height: 0;
+                display: flex;
+                flex-direction: column;
+            }
+            .conversation-heading {
+                padding: 0 7px;
+                margin-bottom: 17px;
+            }
+            .conversation-heading h2 {
+                font-size: 19px;
+                letter-spacing: -0.5px;
+                font-weight: 600;
+            }
+            .search-field {
+                display: flex;
+                align-items: center;
+                gap: 7px;
+                background: var(--bubble);
+                border: 1px solid transparent;
+                border-radius: 7px;
+                padding: 7px 9px;
+                color: var(--ink3);
+            }
+            .search-field:focus-within {
+                border-color: var(--accent);
+            }
+            .search-field .icon {
+                width: 14px;
+                height: 14px;
+            }
+            .search-field input {
+                outline: none;
+                border: 0;
+                background: transparent;
+                width: 100%;
+                font-size: 11px;
+            }
+            .search-field kbd {
+                font-size: 9px;
+                border: 1px solid var(--line);
+                border-radius: 3px;
+                padding: 0 3px;
+            }
+            .filter-tabs {
+                display: flex;
+                gap: 4px;
+                margin: 15px 0 16px;
+            }
+            .filter-tab {
+                flex: 1;
+                padding: 5px;
+                border-radius: 5px;
+                font-size: 11px;
+                color: var(--ink3);
+                white-space: nowrap;
+            }
+            .filter-tab[aria-pressed='true'] {
+                background: var(--surface);
+                color: var(--ink);
+                box-shadow: 0 1px 4px #00000008;
+            }
+            .list-label {
+                color: var(--ink3);
+                font-size: 10px;
+                display: flex;
+                align-items: center;
+                gap: 5px;
+                padding: 0 8px;
+                margin: 5px 0 9px;
+            }
+            .list-label .icon {
+                width: 11px;
+                height: 11px;
+            }
+            .conversation-list {
+                flex: 1;
+                overflow: auto;
+                scrollbar-width: thin;
+                min-height: 0;
+            }
+            .conversation {
+                display: flex;
+                width: 100%;
+                align-items: center;
+                gap: 10px;
+                padding: 12px 9px;
+                border-radius: 8px;
+                text-align: left;
+                margin-bottom: 3px;
+                min-width: 0;
+            }
+            .conversation:hover {
+                background: var(--bubble);
+            }
+            .conversation[aria-current='true'] {
+                background: var(--accent-soft);
+            }
+            .conversation-name {
+                font-size: 12px;
+                font-weight: 500;
+            }
+            .conversation-time {
+                font-size: 9px;
+                color: var(--ink3);
+                white-space: nowrap;
+            }
+            .conversation-preview {
+                margin-top: 5px;
+                font-size: 10px;
+                color: var(--ink3);
+            }
+            .unread {
+                display: inline-grid;
+                place-items: center;
+                background: var(--accent);
+                color: #fff;
+                font-size: 9px;
+                min-width: 16px;
+                height: 16px;
+                border-radius: 5px;
+            }
+            .avatar {
+                width: 35px;
+                height: 35px;
+                border-radius: 11px;
+                background: var(--blue-soft);
+                color: var(--blue);
+                display: inline-flex;
+                align-items: center;
+                justify-content: center;
+                position: relative;
+                flex: none;
+                font-size: 12px;
+                font-weight: 500;
+            }
+            .avatar.sage {
+                background: var(--green-soft);
+                color: var(--green);
+            }
+            .avatar.sand {
+                background: var(--amber-soft);
+                color: var(--amber);
+            }
+            .avatar.rose {
+                background: var(--accent-soft);
+                color: var(--accent-ink);
+            }
+            .avatar.neutral {
+                background: var(--bubble);
+                color: var(--ink2);
+            }
+            .avatar.online::after {
+                content: '';
+                position: absolute;
+                width: 7px;
+                height: 7px;
+                border-radius: 50%;
+                background: var(--green);
+                border: 2px solid var(--surface);
+                right: -1px;
+                bottom: -1px;
+                box-sizing: content-box;
+            }
+            .avatar.group {
+                background: var(--bubble);
+                display: inline-grid;
+                grid-template-columns: 1fr 1fr;
+                gap: 2px;
+                padding: 4px;
+                border: 1px solid var(--line);
+            }
+            .avatar.group b {
+                height: 12px;
+                font-size: 7px;
+                border-radius: 3px;
+                text-align: center;
+                line-height: 12px;
+                font-weight: 400;
+            }
+            .avatar.group b:nth-child(1) {
+                background: var(--blue-soft);
+                color: var(--blue);
+            }
+            .avatar.group b:nth-child(2) {
+                background: var(--green-soft);
+                color: var(--green);
+            }
+            .avatar.group b:nth-child(3) {
+                background: var(--amber-soft);
+                color: var(--amber);
+            }
+            .avatar.group b:nth-child(4) {
+                background: var(--accent-soft);
+                color: var(--accent-ink);
+            }
+            .conversation-footer {
+                border-top: 1px solid var(--line-soft);
+                padding: 12px 7px 0;
+                color: var(--ink3);
+                font-size: 10px;
+                display: flex;
+                align-items: center;
+                gap: 6px;
+            }
+            .conversation-footer .icon {
+                width: 12px;
+                height: 12px;
+            }
+            .chat-panel {
+                min-width: 0;
+                min-height: 0;
+                display: flex;
+                flex-direction: column;
+                background: var(--surface);
+                position: relative;
+            }
+            .chat-header {
+                min-height: 79px;
+                padding: 16px 25px 13px;
+                display: flex;
+                align-items: center;
+                justify-content: space-between;
+                gap: 12px;
+            }
+            .chat-header h2 {
+                font-size: 15px;
+                font-weight: 600;
+            }
+            .chat-subtitle {
+                font-size: 10px;
+                color: var(--ink3);
+                margin-top: 4px;
+                display: flex;
+                align-items: center;
+                gap: 5px;
+            }
+            .status-dot {
+                width: 5px;
+                height: 5px;
+                background: var(--green);
+                border-radius: 50%;
+                display: inline-block;
+            }
+            .chat-header-actions {
+                display: flex;
+                align-items: center;
+                gap: 6px;
+            }
+            .avatar-stack {
+                display: flex;
+                padding-right: 7px;
+            }
+            .avatar-stack .avatar {
+                width: 24px;
+                height: 24px;
+                border: 2px solid var(--surface);
+                border-radius: 8px;
+                margin-left: -5px;
+                font-size: 8px;
+            }
+            .chat-tabs {
+                display: flex;
+                gap: 25px;
+                border-bottom: 1px solid var(--line);
+                padding: 0 25px;
+                min-height: 34px;
+            }
+            .chat-tab {
+                padding: 0 0 10px;
+                font-size: 11px;
+                color: var(--ink3);
+                position: relative;
+            }
+            .chat-tab.active {
+                color: var(--ink);
+            }
+            .chat-tab.active::after {
+                content: '';
+                height: 2px;
+                background: var(--accent);
+                position: absolute;
+                bottom: -1px;
+                left: 0;
+                right: 0;
+            }
+            .chat-tab span {
+                font-size: 9px;
+                margin-left: 3px;
+                color: var(--ink3);
+            }
+            .pinned-note {
+                display: flex;
+                align-items: center;
+                gap: 8px;
+                margin: 12px 25px 0;
+                padding: 9px 11px;
+                border-radius: 6px;
+                background: var(--muted-surface);
+                border: 1px solid var(--line-soft);
+                color: var(--ink2);
+                font-size: 10px;
+            }
+            .pinned-note .icon {
+                width: 13px;
+                height: 13px;
+                color: var(--accent);
+            }
+            .pinned-note .note-label {
+                color: var(--ink3);
+                flex: none;
+            }
+            .message-list {
+                flex: 1;
+                min-height: 0;
+                overflow-y: auto;
+                padding: 16px 26px 7px;
+                scrollbar-width: thin;
+            }
+            .date-divider {
+                display: flex;
+                justify-content: center;
+                align-items: center;
+                gap: 13px;
+                color: var(--ink3);
+                font-size: 9px;
+                margin: 1px 0 23px;
+            }
+            .date-divider::before,
+            .date-divider::after {
+                content: '';
+                width: 37px;
+                height: 1px;
+                background: var(--line);
+            }
+            .message {
+                display: flex;
+                gap: 10px;
+                margin-bottom: 19px;
+                align-items: flex-start;
+            }
+            .message > .avatar {
+                width: 30px;
+                height: 30px;
+                border-radius: 9px;
+                font-size: 10px;
+            }
+            .message-content {
+                max-width: 82%;
+                min-width: 0;
+            }
+            .message-meta {
+                font-size: 10px;
+                color: var(--ink2);
+                margin: -1px 0 6px;
+                display: flex;
+                gap: 9px;
+                align-items: center;
+            }
+            .message-meta time {
+                font-size: 9px;
+                color: var(--ink3);
+            }
+            .message-bubble {
+                padding: 10px 13px;
+                background: var(--bubble);
+                border-radius: 0 10px 10px;
+                color: var(--ink2);
+                line-height: 1.8;
+                font-size: 12px;
+                white-space: pre-wrap;
+                overflow-wrap: anywhere;
+            }
+            .message.self {
+                flex-direction: row-reverse;
+            }
+            .message.self .message-meta {
+                justify-content: flex-end;
+            }
+            .message.self .message-bubble {
+                background: var(--accent-soft);
+                border-radius: 10px 0 10px 10px;
+            }
+            .read-status {
+                text-align: right;
+                color: var(--ink3);
+                margin-top: 5px;
+                font-size: 9px;
+            }
+            .file-card {
+                display: flex;
+                align-items: center;
+                gap: 12px;
+                padding: 12px;
+                border: 1px solid var(--line);
+                border-radius: 8px;
+                background: var(--surface);
+                margin-top: 9px;
+                min-width: 240px;
+                max-width: 100%;
+                text-align: left;
+            }
+            .file-symbol {
+                width: 35px;
+                height: 41px;
+                border-radius: 5px;
+                background: var(--accent-soft);
+                color: var(--accent-ink);
+                font-size: 9px;
+                display: grid;
+                place-items: center;
+                letter-spacing: 0.3px;
+                flex: none;
+            }
+            .file-name {
+                font-size: 11px;
+            }
+            .file-meta {
+                font-size: 9px;
+                color: var(--ink3);
+                margin-top: 4px;
+            }
+            .reactions {
+                display: flex;
+                gap: 5px;
+                margin-top: 7px;
+            }
+            .reaction {
+                display: inline-flex;
+                align-items: center;
+                gap: 4px;
+                border: 1px solid var(--line);
+                border-radius: 5px;
+                padding: 2px 6px;
+                font-size: 10px;
+                color: var(--ink3);
+            }
+            .reaction[aria-pressed='true'] {
+                background: var(--accent-soft);
+                border-color: var(--accent);
+                color: var(--accent-ink);
+            }
+            .thread-link {
+                display: flex;
+                align-items: center;
+                gap: 5px;
+                color: var(--blue);
+                font-size: 10px;
+                margin-top: 7px;
+                padding: 0;
+            }
+            .thread-link .icon {
+                width: 12px;
+                height: 12px;
+            }
+            .composer-wrap {
+                padding: 10px 25px 17px;
+            }
+            .composer {
+                border: 1px solid var(--line);
+                border-radius: 11px;
+                background: var(--surface);
+                box-shadow: 0 2px 6px #00000003;
+                padding: 12px 13px 9px;
+            }
+            .composer:focus-within {
+                border-color: var(--ink3);
+            }
+            .composer textarea {
+                display: block;
+                width: 100%;
+                height: 49px;
+                max-height: 140px;
+                resize: vertical;
+                border: 0;
+                outline: 0;
+                padding: 0;
+                background: transparent;
+                font-size: 12px;
+                line-height: 1.7;
+            }
+            .compose-tools {
+                display: flex;
+                align-items: center;
+                justify-content: space-between;
+                margin-top: 6px;
+                gap: 8px;
+            }
+            .compose-tools .icon-btn {
+                width: 26px;
+                height: 26px;
+            }
+            .compose-tools .icon {
+                width: 16px;
+                height: 16px;
+            }
+            .compose-tools .primary {
+                font-size: 11px;
+                padding: 6px 10px;
+                border-radius: 6px;
+            }
+            .compose-hint {
+                margin-top: 7px;
+                text-align: right;
+                color: var(--ink3);
+                font-size: 9px;
+            }
+            .context-panel {
+                display: none;
+                width: 240px;
+                background: var(--muted-surface);
+                border-left: 1px solid var(--line);
+                padding: 23px 19px;
+                overflow: auto;
+                scrollbar-width: thin;
+            }
+            .context-title {
+                font-size: 12px;
+                font-weight: 600;
+                margin-bottom: 24px;
+            }
+            .context-hero {
+                text-align: center;
+                padding-bottom: 23px;
+                border-bottom: 1px solid var(--line);
+            }
+            .context-hero .avatar {
+                width: 45px;
+                height: 45px;
+                margin-bottom: 12px;
+            }
+            .context-hero .avatar.group b {
+                height: 16px;
+                line-height: 16px;
+                font-size: 9px;
+            }
+            .context-hero h3 {
+                font-size: 13px;
+                font-weight: 600;
+                margin-bottom: 5px;
+            }
+            .context-section {
+                padding-top: 21px;
+            }
+            .context-section h3 {
+                font-size: 10px;
+                color: var(--ink3);
+                font-weight: 400;
+                margin-bottom: 12px;
+            }
+            .context-section p {
+                font-size: 11px;
+                line-height: 1.8;
+                color: var(--ink2);
+            }
+            .member-row {
+                display: flex;
+                align-items: center;
+                gap: 8px;
+                font-size: 11px;
+                margin-bottom: 11px;
+            }
+            .member-row .avatar {
+                width: 25px;
+                height: 25px;
+                border-radius: 8px;
+                font-size: 9px;
+            }
+            .member-row .pill {
+                margin-left: auto;
+                font-size: 8px;
+                padding: 1px 5px;
+            }
+            .context-file {
+                display: flex;
+                gap: 9px;
+                align-items: center;
+                font-size: 10px;
+                padding: 8px 0;
+            }
+            .context-file .file-symbol {
+                width: 27px;
+                height: 33px;
+                font-size: 8px;
+            }
+            .context-panel .secondary {
+                width: 100%;
+                justify-content: center;
+                margin-top: 8px;
+                font-size: 10px;
+            }
+            .context-open .context-panel {
+                display: block;
+                position: absolute;
+                right: 0;
+                top: 35px;
+                bottom: 0;
+                z-index: 4;
+                box-shadow: -10px 0 25px #00000008;
+            }
+            .empty {
+                text-align: center;
+                color: var(--ink3);
+                padding: 35px 14px;
+                font-size: 12px;
+            }
+            .workspace-banner,
+            .focus-caption {
+                display: none;
+            }
+            .channel-hash {
+                display: none;
+            }
+            #mobile-back {
+                display: none;
+            }
+            .design-notes {
+                display: grid;
+                grid-template-columns: 1.2fr 1fr auto;
+                gap: 35px;
+                padding: 18px 2px 0;
+                align-items: start;
+            }
+            .note-item {
+                display: flex;
+                gap: 10px;
+                font-size: 11px;
+                color: var(--ink2);
+            }
+            .note-item > span {
+                color: var(--ink3);
+                flex: none;
+                font-size: 10px;
+                padding-top: 1px;
+            }
+            .recommendation {
+                color: var(--accent-ink);
+                font-size: 10px;
+                display: flex;
+                align-items: center;
+                gap: 6px;
+                padding-top: 2px;
+            }
+            .recommendation .icon {
+                width: 13px;
+                height: 13px;
+            }
+            /* Each variant changes the information architecture, not just its palette. */
+            [data-layout='2'] {
+                grid-template-columns: 62px 268px minmax(0, 1fr);
+            }
+            [data-layout='2'] .app-nav,
+            [data-layout='4'] .app-nav {
+                padding: 24px 9px 13px;
+                align-items: center;
+            }
+            [data-layout='2'] .app-brand,
+            [data-layout='4'] .app-brand {
+                margin: 0 0 25px;
+            }
+            [data-layout='2'] .app-brand > span:last-child,
+            [data-layout='4'] .app-brand > span:last-child,
+            [data-layout='2'] .nav-item > span,
+            [data-layout='4'] .nav-item > span,
+            [data-layout='2'] .nav-label,
+            [data-layout='4'] .nav-label,
+            [data-layout='2'] .workspace-item,
+            [data-layout='4'] .workspace-item,
+            [data-layout='2'] .account-info,
+            [data-layout='4'] .account-info {
+                display: none;
+            }
+            [data-layout='2'] .nav-item,
+            [data-layout='4'] .nav-item {
+                width: 39px;
+                height: 39px;
+                padding: 10px;
+                margin-bottom: 12px;
+            }
+            [data-layout='2'] .account,
+            [data-layout='4'] .account {
+                padding-top: 16px;
+                justify-content: center;
+            }
+            [data-layout='2'] .conversation-panel {
+                background: var(--surface);
+            }
+            [data-layout='2'] .chat-panel {
+                background: var(--muted-surface);
+            }
+            [data-layout='2'] .chat-header {
+                padding: 27px 42px 17px;
+                min-height: 110px;
+                align-items: flex-start;
+            }
+            [data-layout='2'] .chat-header h2 {
+                font-size: 25px;
+                font-weight: 500;
+                letter-spacing: -0.6px;
+            }
+            [data-layout='2'] .chat-header > .row > .avatar {
+                display: none;
+            }
+            [data-layout='2'] .chat-tabs {
+                padding: 0 42px;
+            }
+            [data-layout='2'] .pinned-note {
+                margin: 15px 42px 0;
+                background: transparent;
+                border: 0;
+                padding: 0;
+            }
+            [data-layout='2'] .message-list {
+                padding: 28px 42px 0;
+            }
+            [data-layout='2'] .message,
+            [data-layout='3'] .message {
+                flex-direction: row;
+            }
+            [data-layout='2'] .message-bubble,
+            [data-layout='3'] .message-bubble {
+                background: transparent !important;
+                padding: 0;
+                border-radius: 0;
+            }
+            [data-layout='2'] .message-meta,
+            [data-layout='3'] .message-meta {
+                justify-content: flex-start;
+            }
+            [data-layout='2'] .message.self .message-meta,
+            [data-layout='3'] .message.self .message-meta {
+                color: var(--accent-ink);
+                justify-content: flex-start;
+            }
+            [data-layout='2'] .read-status,
+            [data-layout='3'] .read-status {
+                text-align: left;
+            }
+            [data-layout='2'] .composer-wrap {
+                padding: 14px 42px 23px;
+            }
+            [data-layout='2'] .composer {
+                border-radius: 15px;
+                padding: 15px;
+                box-shadow: var(--shadow);
+            }
+            [data-layout='3'] {
+                grid-template-columns: 160px 216px minmax(0, 1fr) 235px;
+            }
+            [data-layout='3'] .context-panel,
+            [data-layout='4'] .context-panel {
+                display: block;
+                position: static;
+                width: auto;
+                box-shadow: none;
+            }
+            [data-layout='3'] .conversation-panel {
+                background: var(--sidebar);
+                padding-top: 24px;
+            }
+            [data-layout='3'] .conversation {
+                padding: 10px 9px;
+                gap: 9px;
+            }
+            [data-layout='3'] .conversation[data-type='group'] > .avatar {
+                display: none;
+            }
+            [data-layout='3'] .conversation[data-type='group'] .channel-hash {
+                display: block;
+                color: var(--ink3);
+                font-size: 20px;
+                font-weight: 300;
+                width: 25px;
+                text-align: center;
+            }
+            [data-layout='3'] .conversation[data-type='group'] .conversation-preview,
+            [data-layout='3'] .conversation-time {
+                display: none;
+            }
+            [data-layout='3'] .conversation[data-type='group'][aria-current='true'] {
+                background: var(--accent-soft);
+                color: var(--accent-ink);
+            }
+            [data-layout='3'] .conversation-heading h2 {
+                font-size: 16px;
+            }
+            [data-layout='3'] .message {
+                margin-bottom: 24px;
+            }
+            [data-layout='3'] .message-content {
+                max-width: calc(100% - 40px);
+            }
+            [data-layout='3'] .chat-header {
+                padding: 17px 21px;
+            }
+            [data-layout='3'] .chat-header-actions .avatar-stack {
+                display: none;
+            }
+            [data-layout='3'] .chat-header > .row > .avatar {
+                display: none;
+            }
+            [data-layout='3'] .chat-header h2::before {
+                content: '# ';
+                font-weight: 400;
+                color: var(--ink3);
+            }
+            [data-layout='3'] .chat-header[data-type='direct'] h2::before {
+                content: '';
+            }
+            [data-layout='3'] .pinned-note {
+                margin-left: 21px;
+                margin-right: 21px;
+            }
+            [data-layout='3'] .message-list {
+                padding: 22px 21px 0;
+            }
+            [data-layout='3'] .composer-wrap {
+                padding: 10px 21px 15px;
+            }
+            [data-layout='4'] {
+                grid-template: 35px 69px minmax(0, 1fr) / 62px 258px minmax(0, 1fr) 229px;
+                background: var(--sidebar);
+            }
+            [data-layout='4'] .app-nav {
+                grid-row: 2 / 4;
+            }
+            [data-layout='4'] .workspace-banner {
+                grid-column: 2 / -1;
+                display: flex;
+                align-items: center;
+                justify-content: space-between;
+                padding: 0 21px;
+            }
+            [data-layout='4'] .workspace-banner h2 {
+                font-size: 17px;
+                font-weight: 500;
+            }
+            [data-layout='4'] .workspace-banner p {
+                font-size: 10px;
+                color: var(--ink3);
+                margin-top: 3px;
+            }
+            [data-layout='4'] .conversation-panel {
+                margin: 0 10px 15px 15px;
+                padding: 17px 10px;
+                border: 1px solid var(--line);
+                border-radius: 11px;
+                background: var(--surface);
+            }
+            [data-layout='4'] .conversation-heading h2 {
+                font-size: 15px;
+            }
+            [data-layout='4'] .conversation-heading {
+                margin-bottom: 13px;
+            }
+            [data-layout='4'] .conversation {
+                border: 1px solid var(--line);
+                border-radius: 9px;
+                margin-bottom: 9px;
+                padding: 12px 9px;
+                flex-wrap: wrap;
+            }
+            [data-layout='4'] .conversation[aria-current='true'] {
+                border-color: var(--accent);
+                background: var(--accent-soft);
+            }
+            [data-layout='4'] .conversation > .avatar {
+                width: 30px;
+                height: 30px;
+            }
+            [data-layout='4'] .conversation-preview {
+                margin-top: 7px;
+            }
+            [data-layout='4'] .chat-panel {
+                border: 1px solid var(--line);
+                border-radius: 11px;
+                margin: 0 0 15px;
+                overflow: hidden;
+            }
+            [data-layout='4'] .chat-header {
+                padding: 17px 20px 14px;
+            }
+            [data-layout='4'] .avatar-stack {
+                display: none;
+            }
+            [data-layout='4'] .context-panel {
+                margin: 0 14px 15px 12px;
+                border: 1px solid var(--line);
+                border-radius: 11px;
+                background: var(--surface);
+                padding: 21px 16px;
+            }
+            [data-layout='4'] .message-list {
+                padding: 18px 20px 0;
+            }
+            [data-layout='4'] .message-content {
+                max-width: calc(100% - 40px);
+            }
+            [data-layout='4'] .composer-wrap {
+                padding: 10px 15px 13px;
+            }
+            [data-layout='4'] .pinned-note {
+                margin-left: 20px;
+                margin-right: 20px;
+            }
+            [data-layout='5'] {
+                grid-template: 35px 106px minmax(0, 1fr) / 166px minmax(0, 1fr);
+            }
+            [data-layout='5'] .app-nav {
+                grid-row: 2 / 4;
+            }
+            [data-layout='5'] .conversation-panel {
+                grid-column: 2;
+                flex-direction: row;
+                align-items: center;
+                padding: 15px 30px;
+                gap: 22px;
+                border-right: 0;
+                border-bottom: 1px solid var(--line);
+            }
+            [data-layout='5'] .conversation-heading {
+                margin: 0;
+                padding: 0;
+                gap: 10px;
+            }
+            [data-layout='5'] .conversation-heading h2 {
+                font-size: 14px;
+            }
+            [data-layout='5'] .conversation-panel > .search-field,
+            [data-layout='5'] .filter-tabs,
+            [data-layout='5'] .conversation-footer,
+            [data-layout='5'] .list-label {
+                display: none;
+            }
+            [data-layout='5'] .conversation-list {
+                display: flex;
+                gap: 9px;
+                overflow-x: auto;
+                padding: 3px;
+            }
+            [data-layout='5'] .conversation {
+                flex-direction: column;
+                width: 90px;
+                min-width: 90px;
+                gap: 5px;
+                padding: 5px 4px;
+                margin: 0;
+            }
+            [data-layout='5'] .conversation > .avatar {
+                width: 31px;
+                height: 31px;
+            }
+            [data-layout='5'] .conversation-preview,
+            [data-layout='5'] .conversation-time {
+                display: none;
+            }
+            [data-layout='5'] .conversation-name {
+                font-size: 9px;
+            }
+            [data-layout='5'] .conversation .grow {
+                flex: none;
+                width: 100%;
+            }
+            [data-layout='5'] .conversation .between {
+                justify-content: center;
+            }
+            [data-layout='5'] .chat-panel {
+                grid-column: 2;
+            }
+            [data-layout='5'] .chat-header {
+                max-width: 820px;
+                width: 100%;
+                margin: auto;
+                padding: 20px 30px 16px;
+            }
+            [data-layout='5'] .chat-tabs {
+                justify-content: center;
+                border-bottom-color: var(--line-soft);
+            }
+            [data-layout='5'] .pinned-note {
+                max-width: 700px;
+                width: calc(100% - 60px);
+                margin: 13px auto 0;
+            }
+            [data-layout='5'] .message-list {
+                padding-left: max(30px, calc((100% - 740px) / 2));
+                padding-right: max(30px, calc((100% - 740px) / 2));
+            }
+            [data-layout='5'] .composer-wrap {
+                width: 100%;
+                max-width: 800px;
+                margin: auto;
+                padding: 12px 30px 20px;
+            }
+            [data-layout='5'] .composer {
+                border-radius: 17px;
+                padding: 15px;
+            }
+            dialog {
+                background: var(--surface);
+                color: var(--ink);
+                border: 1px solid var(--line);
+                border-radius: 14px;
+                padding: 26px;
+                width: min(460px, calc(100% - 32px));
+                box-shadow: 0 24px 80px #00000025;
+            }
+            dialog::backdrop {
+                background: #17141155;
+                backdrop-filter: blur(3px);
+            }
+            dialog h2 {
+                font-size: 18px;
+                font-weight: 600;
+            }
+            .dialog-subtitle {
+                font-size: 11px;
+                color: var(--ink3);
+                margin: 8px 0 23px;
+            }
+            .field-label {
+                display: block;
+                font-size: 11px;
+                color: var(--ink2);
+                margin: 17px 0 8px;
+            }
+            .text-field {
+                width: 100%;
+                background: var(--muted-surface);
+                border: 1px solid var(--line);
+                border-radius: 7px;
+                padding: 10px 12px;
+            }
+            .member-option {
+                display: flex;
+                align-items: center;
+                gap: 10px;
+                padding: 10px 0;
+                cursor: pointer;
+            }
+            .member-option input {
+                margin-left: auto;
+                accent-color: var(--accent);
+                width: 15px;
+                height: 15px;
+            }
+            .dialog-actions {
+                display: flex;
+                justify-content: flex-end;
+                gap: 9px;
+                margin-top: 23px;
+            }
+            .form-error {
+                color: var(--accent-ink);
+                margin-top: 10px;
+                font-size: 11px;
+            }
+            #comparison-dialog {
+                width: min(1150px, calc(100% - 32px));
+            }
+            .comparison-cards {
+                display: grid;
+                grid-template-columns: repeat(5, 1fr);
+                gap: 13px;
+                margin: 25px 0 15px;
+            }
+            .comparison-card {
+                border: 1px solid var(--line);
+                border-radius: 9px;
+                overflow: hidden;
+            }
+            .mini-layout {
+                height: 106px;
+                display: flex;
+                gap: 4px;
+                background: var(--sidebar);
+                padding: 9px;
+                border-bottom: 1px solid var(--line);
+            }
+            .mini-layout > i {
+                display: block;
+                width: 14%;
+                background: var(--line);
+                border-radius: 3px;
+            }
+            .mini-layout > b {
+                width: 26%;
+                background: var(--bubble);
+                border: 1px solid var(--line);
+                border-radius: 3px;
+            }
+            .mini-chat {
+                flex: 1;
+                background: var(--surface);
+                border-radius: 3px;
+                padding: 10px 6px;
+            }
+            .mini-chat span {
+                display: block;
+                height: 8px;
+                width: 75%;
+                background: var(--bubble);
+                margin-bottom: 8px;
+                border-radius: 3px;
+            }
+            .mini-chat span:nth-child(2) {
+                margin-left: auto;
+                background: var(--accent-soft);
+            }
+            .mini-chat span:last-child {
+                width: 100%;
+                margin-top: 16px;
+                border: 1px solid var(--line);
+                background: transparent;
+                height: 15px;
+            }
+            .mini-layout.v2 > i {
+                width: 7%;
+            }
+            .mini-layout.v2 .mini-chat span:nth-child(2),
+            .mini-layout.v3 .mini-chat span:nth-child(2) {
+                margin-left: 0;
+            }
+            .mini-layout.v3::after,
+            .mini-layout.v4::after {
+                content: '';
+                display: block;
+                width: 22%;
+                background: var(--surface);
+                border-radius: 4px;
+            }
+            .mini-layout.v4 {
+                gap: 7px;
+                padding: 16px 8px 8px;
+            }
+            .mini-layout.v4 > i {
+                width: 6%;
+            }
+            .mini-layout.v4 > b {
+                background: var(--surface);
+            }
+            .mini-layout.v5 > b {
+                display: none;
+            }
+            .mini-layout.v5 .mini-chat {
+                border-top: 13px solid var(--accent-soft);
+            }
+            .comparison-content {
+                padding: 14px;
+            }
+            .comparison-content h3 {
+                font-size: 12px;
+                margin-bottom: 12px;
+            }
+            .comparison-content p {
+                font-size: 11px;
+                color: var(--ink2);
+                min-height: 55px;
+                margin-bottom: 12px;
+                line-height: 1.8;
+            }
+            .comparison-content label {
+                display: block;
+                font-size: 9px;
+                color: var(--ink3);
+                margin-bottom: 4px;
+            }
+            .comparison-content button {
+                width: 100%;
+                justify-content: center;
+                margin-top: 5px;
+                font-size: 11px;
+            }
+            .comparison-recommendation {
+                background: var(--accent-soft);
+                color: var(--accent-ink);
+                padding: 13px 16px;
+                border-radius: 8px;
+                font-size: 12px;
+                line-height: 1.8;
+            }
+            .file-preview-sheet {
+                background: var(--muted-surface);
+                padding: 25px;
+                border: 1px solid var(--line);
+                border-radius: 8px;
+                margin-top: 20px;
+            }
+            .file-preview-sheet h3 {
+                font-size: 20px;
+                font-weight: 500;
+                margin-bottom: 20px;
+            }
+            .file-preview-sheet p {
+                font-size: 12px;
+                margin: 12px 0;
+                line-height: 1.9;
+            }
+            .toast {
+                position: fixed;
+                bottom: 24px;
+                left: 50%;
+                transform: translateX(-50%);
+                background: var(--ink);
+                color: var(--surface);
+                padding: 11px 18px;
+                border-radius: 9px;
+                box-shadow: var(--shadow);
+                z-index: 20;
+                font-size: 12px;
+                max-width: calc(100% - 30px);
+            }
+            [hidden] {
+                display: none !important;
+            }
+            .context-hidden .context-panel {
+                display: none !important;
+            }
+            @media (min-width: 1221px) {
+                [data-layout='3'].context-hidden {
+                    grid-template-columns: 160px 216px minmax(0, 1fr);
+                }
+                [data-layout='4'].context-hidden {
+                    grid-template-columns: 62px 258px minmax(0, 1fr);
+                }
+            }
+            @media (max-width: 1220px) {
+                .studio {
+                    padding: 0 20px 18px;
+                }
+                .app-window,
+                [data-layout='3'] {
+                    grid-template-columns: 62px 235px minmax(0, 1fr);
+                }
+                [data-layout='4'] {
+                    grid-template-columns: 62px 235px minmax(0, 1fr);
+                }
+                [data-layout='5'] {
+                    grid-template-columns: 62px minmax(0, 1fr);
+                }
+                .app-nav {
+                    padding: 24px 9px 13px;
+                    align-items: center;
+                }
+                .app-brand {
+                    margin: 0 0 25px;
+                }
+                .app-brand > span:last-child,
+                .nav-item > span,
+                .nav-label,
+                .workspace-item,
+                .account-info {
+                    display: none;
+                }
+                .nav-item {
+                    width: 39px;
+                    height: 39px;
+                    padding: 10px;
+                    margin-bottom: 12px;
+                }
+                .account {
+                    padding-top: 16px;
+                    justify-content: center;
+                }
+                [data-layout='3'] .context-panel,
+                [data-layout='4'] .context-panel {
+                    display: none;
+                }
+                .context-open .context-panel {
+                    display: block;
+                    position: absolute;
+                    right: 0;
+                    top: 35px;
+                    bottom: 0;
+                    width: 240px;
+                    margin: 0;
+                    border-radius: 0;
+                    box-shadow: -10px 0 25px #00000008;
+                    z-index: 4;
+                }
+                .variant {
+                    padding: 11px 12px;
+                    gap: 9px;
+                }
+                .variant-caption {
+                    font-size: 9px;
+                }
+                .design-notes {
+                    gap: 20px;
+                    grid-template-columns: 1.1fr 1fr;
+                }
+                .recommendation {
+                    display: none;
+                }
+            }
+            @media (max-width: 760px) {
+                .studio {
+                    padding: 0 12px 18px;
+                }
+                .studio-header {
+                    height: 65px;
+                }
+                .studio-header h1 {
+                    font-size: 13px;
+                }
+                .studio-header .eyebrow {
+                    font-size: 8px;
+                }
+                .studio-header .logo {
+                    width: 25px;
+                    height: 25px;
+                }
+                .studio-controls {
+                    gap: 4px;
+                }
+                .prototype-status,
+                .compare-label {
+                    display: none;
+                }
+                .studio-controls .secondary {
+                    padding: 6px 8px;
+                }
+                .variant-picker {
+                    gap: 5px;
+                    margin-bottom: 13px;
+                }
+                .variant {
+                    display: block;
+                    padding: 7px 3px;
+                    min-height: 59px;
+                    text-align: center;
+                    border-radius: 7px;
+                }
+                .variant-index {
+                    font-size: 12px;
+                }
+                .variant-name {
+                    font-size: 9px;
+                    margin-top: 3px;
+                }
+                .variant-caption {
+                    display: none;
+                }
+                .app-window,
+                .app-window[data-layout] {
+                    height: max(630px, calc(100dvh - 230px));
+                    grid-template: 29px minmax(0, 1fr) / minmax(0, 1fr);
+                    border-radius: 9px;
+                }
+                .titlebar {
+                    padding: 0 12px;
+                }
+                .window-controls {
+                    gap: 13px;
+                }
+                .app-nav,
+                [data-layout] .app-nav,
+                .conversation-panel,
+                [data-layout] .conversation-panel,
+                [data-layout] .workspace-banner {
+                    display: none;
+                }
+                .chat-panel,
+                [data-layout] .chat-panel {
+                    grid-column: 1;
+                    grid-row: 2;
+                    margin: 0;
+                    border: 0;
+                    border-radius: 0;
+                }
+                .chat-header,
+                [data-layout] .chat-header {
+                    min-height: 79px;
+                    padding: 17px 13px 13px;
+                    align-items: center;
+                }
+                .chat-header > .row {
+                    gap: 8px;
+                }
+                .chat-header > .row > .avatar,
+                .avatar-stack {
+                    display: none;
+                }
+                .chat-header h2,
+                [data-layout] .chat-header h2 {
+                    font-size: 14px;
+                }
+                .chat-subtitle {
+                    font-size: 9px;
+                }
+                .chat-header-actions {
+                    gap: 0;
+                }
+                #mobile-back {
+                    display: flex;
+                    width: 20px;
+                }
+                .chat-tabs,
+                [data-layout] .chat-tabs {
+                    padding: 0 16px;
+                    gap: 20px;
+                    justify-content: flex-start;
+                }
+                .pinned-note,
+                [data-layout] .pinned-note {
+                    width: auto;
+                    margin: 11px 14px 0;
+                    padding: 8px;
+                    font-size: 9px;
+                }
+                .pinned-note .note-label {
+                    display: none;
+                }
+                .message-list,
+                [data-layout] .message-list {
+                    padding: 19px 15px 0;
+                }
+                .message {
+                    gap: 8px;
+                }
+                .message-content,
+                [data-layout] .message-content {
+                    max-width: calc(100% - 40px);
+                }
+                .message-bubble {
+                    font-size: 11px;
+                }
+                .file-card {
+                    min-width: 0;
+                    gap: 8px;
+                    padding: 9px;
+                }
+                .file-name {
+                    font-size: 10px;
+                }
+                .composer-wrap,
+                [data-layout] .composer-wrap {
+                    padding: 10px 12px 12px;
+                }
+                .composer textarea {
+                    font-size: 11px;
+                }
+                .compose-hint {
+                    font-size: 8px;
+                }
+                .context-open .context-panel {
+                    top: 29px;
+                }
+                .show-conversations .conversation-panel {
+                    display: flex;
+                    grid-column: 1;
+                    grid-row: 2;
+                    flex-direction: column;
+                    align-items: stretch;
+                    padding: 20px 14px;
+                    margin: 0;
+                    border: 0;
+                    gap: 0;
+                }
+                .show-conversations .chat-panel {
+                    display: none;
+                }
+                .show-conversations .conversation-heading {
+                    margin-bottom: 17px;
+                }
+                .show-conversations .conversation-list {
+                    display: block;
+                }
+                .show-conversations .conversation {
+                    flex-direction: row;
+                    width: 100%;
+                    min-width: 0;
+                    padding: 12px 9px;
+                    margin-bottom: 4px;
+                    text-align: left;
+                }
+                .show-conversations .conversation .grow {
+                    flex: 1;
+                    width: auto;
+                }
+                .show-conversations .conversation .between {
+                    justify-content: space-between;
+                }
+                .show-conversations .conversation-name {
+                    font-size: 12px;
+                }
+                .show-conversations .conversation-preview {
+                    display: block;
+                }
+                .show-conversations .conversation-panel > .search-field,
+                .show-conversations .filter-tabs {
+                    display: flex;
+                }
+                .design-notes {
+                    grid-template-columns: 1fr;
+                    gap: 9px;
+                    padding-top: 14px;
+                }
+                .note-item {
+                    font-size: 10px;
+                }
+                .comparison-cards {
+                    grid-template-columns: 1fr;
+                }
+                .comparison-card {
+                    display: grid;
+                    grid-template-columns: 95px 1fr;
+                }
+                .mini-layout {
+                    height: 100%;
+                    min-height: 120px;
+                    border: 0;
+                }
+                .comparison-content p {
+                    min-height: 0;
+                    margin-bottom: 9px;
+                }
+                .comparison-content h3 {
+                    margin-bottom: 9px;
+                }
+                dialog {
+                    padding: 20px;
+                }
+            }
+            @media (prefers-reduced-motion: reduce) {
+                *,
+                *::before,
+                *::after {
+                    scroll-behavior: auto !important;
+                }
+            }
+        </style>
+    </head>
+    <body>
+        <main id="studio" class="studio"></main>
+        <div id="toast" class="toast" role="status" hidden></div>
+        <script>
+            // Standalone design study. Demo data never leaves the page and resets on reload.
+            // UI and seeded conversation copy use the local bilingual catalog below;
+            // production integration should migrate these keys to createRendererTranslator.
+            const catalog = {
+                title: ['IM 设计探索', 'IM design study'],
+                exploration: ['界面探索 / 2026.09', 'INTERFACE STUDY / 2026.09'],
+                prototype: ['交互原型 · 示例数据', 'Interactive prototype · Sample data'],
+                compare: ['对比方案', 'Compare'],
+                theme: ['切换深浅色', 'Toggle color theme'],
+                locale: ['English', '中文'],
+                messages: ['消息', 'Messages'],
+                home: ['主页', 'Home'],
+                apps: ['应用', 'Apps'],
+                tasks: ['任务', 'Tasks'],
+                skills: ['技能', 'Skills'],
+                workspace: ['工作空间', 'Workspaces'],
+                productTeam: ['产品设计', 'Product design'],
+                personal: ['个人空间', 'Personal'],
+                settings: ['设置', 'Settings'],
+                account: ['林一', 'Alex Lin'],
+                accountRole: ['个人账户', 'Personal account'],
+                search: ['搜索联系人或群聊', 'Search people or groups'],
+                all: ['全部', 'All'],
+                direct: ['单聊', 'Direct'],
+                group: ['群聊', 'Groups'],
+                pinned: ['置顶会话', 'Pinned'],
+                recent: ['最近消息', 'Recent'],
+                synced: ['所有消息已同步', 'All messages up to date'],
+                connected: ['团队空间', 'Team space'],
+                newChat: ['发起会话', 'New conversation'],
+                close: ['关闭', 'Close'],
+                details: ['会话详情', 'Conversation details'],
+                searchMessages: ['搜索聊天记录', 'Search messages'],
+                chat: ['聊天', 'Chat'],
+                files: ['文件', 'Files'],
+                members: ['成员', 'Members'],
+                profile: ['资料', 'Profile'],
+                announcement: ['群公告', 'Announcement'],
+                announcementText: [
+                    '本周五 15:00 设计评审，请提前同步最新方案。',
+                    'Design review on Friday at 15:00. Share your latest proposal beforehand.'
+                ],
+                today: ['今天 · 9 月 12 日', 'Today · September 12'],
+                online: ['在线', 'Online'],
+                away: ['暂时离开', 'Away'],
+                groupStatus: ['8 位成员 · 4 人在线', '8 members · 4 online'],
+                newGroupStatus: ['{n} 位成员', '{n} members'],
+                directStatus: ['在线 · 产品设计师', 'Online · Product designer'],
+                self: ['我', 'You'],
+                lin: ['林知夏', 'Zoe Lin'],
+                chen: ['陈默', 'Evan Chen'],
+                xu: ['许言', 'Ryan Xu'],
+                lu: ['陆遥', 'Luna Lu'],
+                design: ['设计协作组', 'Design crew'],
+                launch: ['OpenDesk 发布组', 'OpenDesk launch'],
+                inspiration: ['灵感收集站', 'Inspiration club'],
+                designPreview: ['林知夏：这个方向很舒服，赞同！', 'Zoe: Love this direction!'],
+                linPreview: ['好的，那我们下午一起过一下。', 'Great, let’s review this afternoon.'],
+                launchPreview: ['许言：新版本已经准备好啦', 'Ryan: The new release is ready'],
+                chenPreview: ['发来一个文件', 'Shared a file'],
+                inspirationPreview: ['陆遥：分享一个有趣的交互', 'Luna: An interaction worth sharing'],
+                xuPreview: ['收到，谢谢！', 'Got it, thanks!'],
+                groupMessage1: [
+                    '大家早上好，IM 的第一版交互稿整理好了。\n想先对齐一下单聊和群聊的体验。',
+                    'Morning everyone! The first IM interaction draft is ready.\nLet’s align on the direct and group chat experience.'
+                ],
+                groupMessage2: [
+                    '建议延续主界面的留白，让消息本身成为重点。',
+                    'I suggest keeping the main interface’s generous spacing, so messages stay in focus.'
+                ],
+                groupMessage3: [
+                    '赞同。群聊里再保留公告、共享文件和成员入口，协作就更顺手了。',
+                    'Agreed. Announcements, shared files and member access will make group collaboration easier.'
+                ],
+                groupMessage4: [
+                    '这个方向很舒服，赞同！我们下午一起看细节。',
+                    'Love this direction! Let’s look at the details together this afternoon.'
+                ],
+                directMessage1: ['嗨，消息界面的几个方向我都看过了。', 'Hi, I’ve reviewed the messaging concepts.'],
+                directMessage2: [
+                    '我比较喜欢暖灰底色这一版，和 OpenDesk 的主界面很一致。',
+                    'I like the warm gray version. It feels consistent with the OpenDesk home screen.'
+                ],
+                directMessage3: [
+                    '我也是。单聊可以轻一点，群聊再加上协作信息。',
+                    'Same here. Direct chats can stay light, with collaboration details added to groups.'
+                ],
+                directMessage4: ['好的，那我们下午一起过一下。', 'Great, let’s review this afternoon.'],
+                releaseMessage: [
+                    '新版本的功能清单已经更新，欢迎大家补充发布说明。',
+                    'The release checklist is updated. Please add your release notes.'
+                ],
+                inspirationMessage: [
+                    '分享一个有趣的交互：把最近联系人放在顶部，给对话更多空间。',
+                    'An interesting interaction: put recent contacts at the top to give conversations more room.'
+                ],
+                received: ['收到，谢谢！', 'Got it, thanks!'],
+                fileName: ['消息体验设计稿.fig', 'Messaging experience.fig'],
+                fileDate: ['2.4 MB · 今天 10:24', '2.4 MB · Today 10:24'],
+                docName: ['IM 交互说明.md', 'IM interaction notes.md'],
+                docDate: ['18 KB · 昨天', '18 KB · Yesterday'],
+                filePreview: ['设计稿预览', 'Design preview'],
+                previewLabel: ['示例附件', 'Sample attachment'],
+                fileIntro: ['让沟通留在工作发生的地方。', 'Keep conversations where the work happens.'],
+                filePoint1: [
+                    '01  单人聊天：清晰、轻量、随时开始。',
+                    '01  Direct chat: clear, lightweight and always accessible.'
+                ],
+                filePoint2: [
+                    '02  群组协作：让讨论、文件和成员自然连接。',
+                    '02  Groups: keep discussions, files and people together.'
+                ],
+                filePoint3: [
+                    '03  视觉延续：暖灰、珊瑚红、细分隔线。',
+                    '03  Visual continuity: warm gray, coral and subtle dividers.'
+                ],
+                read: ['已读', 'Read'],
+                readGroup: ['6 人已读', 'Read by 6'],
+                localSent: ['已添加到本地演示', 'Added to local demo'],
+                replyCount: ['2 条回复', '2 replies'],
+                thread: ['话题回复', 'Thread'],
+                threadIntro: ['关于「让消息本身成为重点」', 'On keeping messages in focus'],
+                threadReply1: ['可以把次要工具收进详情面板。', 'Secondary tools can live in the details panel.'],
+                threadReply2: ['同意，这样窄窗口也更从容。', 'Agreed. It also works better in narrower windows.'],
+                addReply: ['继续讨论', 'Continue discussion'],
+                replyPrefix: ['关于「让消息本身成为重点」：', 'On keeping messages in focus: '],
+                composeGroup: ['发送消息到 {name}，输入 @ 提及成员', 'Message {name}, type @ to mention someone'],
+                composeDirect: ['发送消息给 {name}', 'Message {name}'],
+                composeHint: ['Enter 发送 · Shift + Enter 换行', 'Enter to send · Shift + Enter for a new line'],
+                send: ['发送', 'Send'],
+                emoji: ['插入表情', 'Insert emoji'],
+                attach: ['添加示例附件', 'Add sample attachment'],
+                mention: ['提及成员', 'Mention a member'],
+                ai: ['帮我润色', 'Polish draft'],
+                aiHint: ['写一条消息后，可以试试示例润色。', 'Write a message to try the sample polish.'],
+                polished: ['示例润色已填入，可编辑后发送', 'Sample polish inserted. Edit it before sending.'],
+                polishedCopy: [
+                    '我建议保留主界面的简洁风格，同时让群聊中的公告、文件和成员更容易找到。大家觉得如何？',
+                    'I suggest preserving the main interface’s simplicity while making group announcements, files and members easier to find. What do you think?'
+                ],
+                attached: ['已附加示例文件，发送后显示在聊天中', 'Sample file attached. Send to add it to the chat.'],
+                removeAttachment: ['移除附件', 'Remove attachment'],
+                mentionTitle: ['选择要提及的成员', 'Choose a member to mention'],
+                about: ['关于这个群', 'About this group'],
+                aboutText: [
+                    '一起打磨 OpenDesk 的产品体验。想法、设计、反馈，都在这里发生。',
+                    'Shaping the OpenDesk experience together. A place for ideas, design and feedback.'
+                ],
+                role: ['产品设计师', 'Product designer'],
+                department: ['产品与体验设计', 'Product & experience design'],
+                sharedFiles: ['共享文件', 'Shared files'],
+                owner: ['群主', 'Owner'],
+                invite: ['添加成员', 'Add members'],
+                memberAdded: ['已将 {name} 添加到演示群聊', '{name} added to the demo group'],
+                memberExists: ['该成员已经在群聊中', 'This person is already in the group'],
+                newGroup: ['新建群聊', 'Create group'],
+                groupHelp: [
+                    '把一起工作的人，聚在同一个会话里。',
+                    'Bring the people you work with into one conversation.'
+                ],
+                groupName: ['群聊名称', 'Group name'],
+                groupPlaceholder: ['例如：新版本设计评审', 'e.g. Release design review'],
+                selectMembers: ['选择成员 · 至少 2 人', 'Choose at least 2 people'],
+                cancel: ['取消', 'Cancel'],
+                create: ['创建群聊', 'Create group'],
+                groupValidation: [
+                    '请输入群名，并选择至少 2 位成员。',
+                    'Enter a group name and select at least 2 members.'
+                ],
+                groupCreated: ['群聊已创建，开始第一条讨论吧。', 'Your group is ready. Start the conversation.'],
+                noResults: ['没有找到相关会话', 'No conversations found'],
+                noMessages: ['没有匹配的消息', 'No matching messages'],
+                messageSearch: ['输入关键词搜索当前会话', 'Search this conversation'],
+                returnChat: ['返回聊天', 'Back to chat'],
+                returnList: ['返回会话列表', 'Back to conversations'],
+                overview: ['每个想法，都有回应。', 'A place for every conversation.'],
+                overviewSub: ['产品设计空间 / 消息与协作', 'Product design space / Messaging & collaboration'],
+                allMembers: ['8 位团队成员', '8 teammates'],
+                why: ['设计重点', 'Design focus'],
+                tradeoff: ['讨论取舍', 'Trade-off'],
+                recommend: ['建议先讨论 01 与 03', 'Start with 01 and 03'],
+                compareTitle: ['五种布局，同一种 OpenDesk。', 'Five layouts. One OpenDesk.'],
+                compareSubtitle: [
+                    '共用配色与聊天内容，比较信息组织方式。',
+                    'Shared colors and content. Different ways to organize communication.'
+                ],
+                fit: ['适合场景', 'Best for'],
+                cost: ['需要取舍', 'Trade-off'],
+                viewConcept: ['体验这一版', 'Explore concept'],
+                recommendation: [
+                    '优先建议 01「经典三栏」：与现有主界面衔接自然，单聊和群聊都容易上手。若多人项目协作是核心，可以借用 03 的话题与详情面板。',
+                    'Start with 01, Classic: a natural extension of the current interface for both direct and group chats. If project collaboration is central, bring in the threads and details panel from 03.'
+                ],
+                v1: ['经典三栏', 'Classic'],
+                v1caption: ['熟悉、有序、轻松上手', 'Familiar & balanced'],
+                v2: ['极简会话', 'Minimal'],
+                v2caption: ['降低噪声，突出内容', 'Content comes first'],
+                v3: ['频道协作', 'Channels'],
+                v3caption: ['围绕项目，沉淀讨论', 'Built around projects'],
+                v4: ['卡片工作台', 'Workspace'],
+                v4caption: ['会话与资料，一眼掌握', 'Context at a glance'],
+                v5: ['专注聊天', 'Focus'],
+                v5caption: ['更宽的对话，更少干扰', 'Room to converse'],
+                v1focus: [
+                    '保留主侧栏，联系人与对话分栏；群信息按需展开。',
+                    'Keep the main sidebar; separate the inbox and conversation. Open details on demand.'
+                ],
+                v1cost: [
+                    '信息路径清楚，但左侧两级导航会占用宽度。',
+                    'Clear navigation, with two left columns using more horizontal space.'
+                ],
+                v1fit: ['日常沟通、单聊与小型群聊。', 'Everyday messaging, direct chats and small groups.'],
+                v2focus: [
+                    '收起全局导航，用无气泡消息流与留白突出正文。',
+                    'Collapse global navigation and use an open message stream with more breathing room.'
+                ],
+                v2cost: [
+                    '阅读更轻松，但自己与他人的消息区分更弱。',
+                    'Comfortable reading, with less visual separation between senders.'
+                ],
+                v2fit: ['内容讨论、长消息、轻量交流。', 'Content discussions, longer messages and lightweight chats.'],
+                v3focus: [
+                    '群聊按频道组织，话题回复与成员资料常驻右侧。',
+                    'Organize groups as channels, with threads and member details alongside the chat.'
+                ],
+                v3cost: [
+                    '多人协作更高效，但界面密度与学习成本更高。',
+                    'Efficient for teams, but denser and less immediately familiar.'
+                ],
+                v3fit: ['项目团队、持续讨论、多主题协作。', 'Project teams, ongoing discussions and multiple topics.'],
+                v4focus: [
+                    '独立会话卡片与资料面板，形成完整的协作工作台。',
+                    'Separate conversation cards and a resource panel form a shared work area.'
+                ],
+                v4cost: [
+                    '信息分组鲜明，但卡片边界多、有效聊天面积较小。',
+                    'Distinct information groups, with more framing and less room for messages.'
+                ],
+                v4fit: [
+                    '多群切换、文件密集的设计与产品团队。',
+                    'Design and product teams sharing files across multiple groups.'
+                ],
+                v5focus: [
+                    '最近会话横向排列，把主要空间留给当前对话。',
+                    'Place recent conversations horizontally to give the current chat more space.'
+                ],
+                v5cost: [
+                    '交流更沉浸，但联系人较多时查找与切换不够高效。',
+                    'Immersive conversations, with slower navigation across a large contact list.'
+                ],
+                v5fit: [
+                    '少量高频联系人、深度一对一沟通。',
+                    'A few frequent contacts and focused one-to-one conversations.'
+                ]
+            };
+            const paths = {
+                home: '<path d="m3 10 9-7 9 7v10a1 1 0 0 1-1 1h-5v-7H9v7H4a1 1 0 0 1-1-1Z"/>',
+                grid: '<rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="3" width="7" height="7" rx="1.5"/><rect x="3" y="14" width="7" height="7" rx="1.5"/><rect x="14" y="14" width="7" height="7" rx="1.5"/>',
+                chat: '<path d="M21 11.5a8.5 8.5 0 0 1-8.5 8.5H5l-3 2v-9.5A8.5 8.5 0 0 1 10.5 4H13a8 8 0 0 1 8 7.5Z"/><path d="M7 10h9M7 14h6"/>',
+                check: '<path d="m5 12 4 4L19 6"/>',
+                tasks: '<rect x="4" y="3" width="16" height="18" rx="3"/><path d="m8 9 2 2 5-5M8 16h8"/>',
+                spark: '<path d="m12 3 2.3 6.7L21 12l-6.7 2.3L12 21l-2.3-6.7L3 12l6.7-2.3ZM20 2v4m-2-2h4"/>',
+                settings:
+                    '<path d="m9 3-.6 2.3L6 6l-2.2-.6L2 8.5l1.6 1.8v3.4L2 15.5l1.8 3.1L6 18l2.4.7L9 21h6l.6-2.3L18 18l2.2.6 1.8-3.1-1.6-1.8v-3.4L22 8.5l-1.8-3.1L18 6l-2.4-.7L15 3Z"/><circle cx="12" cy="12" r="3"/>',
+                search: '<circle cx="10.5" cy="10.5" r="6.5"/><path d="m16 16 5 5"/>',
+                plus: '<path d="M12 5v14M5 12h14"/>',
+                down: '<path d="m7 10 5 5 5-5"/>',
+                arrow: '<path d="M12 20V4m-6 6 6-6 6 6"/>',
+                back: '<path d="m14 5-7 7 7 7"/>',
+                close: '<path d="m6 6 12 12M6 18 18 6"/>',
+                minus: '<path d="M5 12h14"/>',
+                square: '<rect x="5" y="5" width="14" height="14" rx="1"/>',
+                panel: '<rect x="3" y="4" width="18" height="16" rx="2"/><path d="M15 4v16"/>',
+                pin: '<path d="m9 3 12 12-4 1-3 4-5-5-4 4m3-13 3-4M9 3 8 8l-4 3 9 9"/>',
+                people: '<circle cx="9" cy="8" r="3"/><path d="M3 21v-3a6 6 0 0 1 12 0v3M16 5a3 3 0 0 1 0 6m2 4a5 5 0 0 1 3 5"/>',
+                smile: '<circle cx="12" cy="12" r="9"/><path d="M8 14a4 4 0 0 0 8 0M8 9h.01M16 9h.01"/>',
+                clip: '<path d="m9 17 8-8a3 3 0 0 0-4-4L5 13a5 5 0 0 0 7 7l8-8M9 17a2 2 0 0 1-3-3l8-8"/>',
+                at: '<circle cx="11" cy="12" r="4"/><path d="M15 8v7c0 3 6 2 6-3a9 9 0 1 0-4 7"/>',
+                sun: '<circle cx="12" cy="12" r="4"/><path d="M12 2v2m0 16v2M2 12h2m16 0h2M5 5l1 1m12 12 1 1M5 19l1-1M18 6l1-1"/>',
+                moon: '<path d="M20 15A9 9 0 0 1 9 3a9 9 0 1 0 11 12Z"/>',
+                globe: '<circle cx="12" cy="12" r="9"/><ellipse cx="12" cy="12" rx="4" ry="9"/><path d="M3 12h18"/>',
+                file: '<path d="M13 3H5v18h14V9Zm0 0v6h6M8 13h8m-8 4h5"/>',
+                reply: '<path d="m9 5-6 6 6 6m-6-6h10a7 7 0 0 1 7 7"/>',
+                lock: '<rect x="5" y="10" width="14" height="11" rx="2"/><path d="M8 10V6a4 4 0 0 1 8 0v4"/>'
+            };
+            const state = {
+                locale: 'zh-CN',
+                variant: 1,
+                current: 'design',
+                filter: 'all',
+                query: '',
+                detail: 'info',
+                detailOpen: false,
+                detailHidden: false,
+                mobileList: false,
+                tab: 'chat',
+                messageQuery: '',
+                drafts: {},
+                attachments: {},
+                reactions: new Set(),
+                newGroupId: 0
+            };
+            const people = {
+                lin: { key: 'lin', initials: ['知', 'ZL'], tone: '', online: true },
+                chen: { key: 'chen', initials: ['默', 'EC'], tone: 'sage', online: true },
+                xu: { key: 'xu', initials: ['言', 'RX'], tone: 'sand', online: false },
+                lu: { key: 'lu', initials: ['遥', 'LL'], tone: 'rose', online: true },
+                self: { key: 'self', initials: ['一', 'AL'], tone: 'neutral', online: true }
+            };
+            const groupMessages = () => [
+                { id: 'm1', person: 'lin', key: 'groupMessage1', time: '10:24', file: true },
+                { id: 'm2', person: 'chen', key: 'groupMessage2', time: '10:26', thread: true },
+                { id: 'm3', person: 'self', key: 'groupMessage3', time: '10:28' },
+                { id: 'm4', person: 'lin', key: 'groupMessage4', time: '10:30', reaction: true }
+            ];
+            const directMessages = (person) => [
+                { id: 'd1', person, key: 'directMessage1', time: '10:12' },
+                { id: 'd2', person, key: 'directMessage2', time: '10:13', file: true },
+                { id: 'd3', person: 'self', key: 'directMessage3', time: '10:15' },
+                { id: 'd4', person, key: 'directMessage4', time: '10:18' }
+            ];
+            const conversations = [
+                {
+                    id: 'design',
+                    key: 'design',
+                    type: 'group',
+                    preview: 'designPreview',
+                    time: '10:30',
+                    unread: 0,
+                    pinned: true,
+                    members: ['lin', 'chen', 'xu', 'lu'],
+                    count: 8,
+                    messages: groupMessages()
+                },
+                {
+                    id: 'lin',
+                    key: 'lin',
+                    type: 'direct',
+                    preview: 'linPreview',
+                    time: '10:18',
+                    unread: 2,
+                    pinned: true,
+                    messages: directMessages('lin')
+                },
+                {
+                    id: 'launch',
+                    key: 'launch',
+                    type: 'group',
+                    preview: 'launchPreview',
+                    time: '09:56',
+                    unread: 5,
+                    members: ['xu', 'lin', 'chen', 'lu'],
+                    count: 8,
+                    messages: [{ id: 'l1', person: 'xu', key: 'releaseMessage', time: '09:56' }]
+                },
+                {
+                    id: 'chen',
+                    key: 'chen',
+                    type: 'direct',
+                    preview: 'chenPreview',
+                    time: '09:41',
+                    unread: 0,
+                    messages: directMessages('chen')
+                },
+                {
+                    id: 'inspiration',
+                    key: 'inspiration',
+                    type: 'group',
+                    preview: 'inspirationPreview',
+                    time: '09:25',
+                    unread: 0,
+                    members: ['lu', 'lin', 'chen', 'xu'],
+                    count: 8,
+                    messages: [{ id: 'i1', person: 'lu', key: 'inspirationMessage', time: '09:25', reaction: true }]
+                },
+                {
+                    id: 'xu',
+                    key: 'xu',
+                    type: 'direct',
+                    preview: 'xuPreview',
+                    time: '09:10',
+                    unread: 0,
+                    messages: [{ id: 'x1', person: 'xu', key: 'received', time: '09:10' }]
+                }
+            ];
+            const root = document.getElementById('studio');
+            const t = (key, values = {}) => {
+                let result = catalog[key]?.[state.locale === 'zh-CN' ? 0 : 1] ?? key;
+                for (const [name, value] of Object.entries(values)) result = result.replaceAll(`{${name}}`, value);
+                return result;
+            };
+            const escape = (value) =>
+                String(value).replace(
+                    /[&<>"']/g,
+                    (char) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[char]
+                );
+            const icon = (name) =>
+                `<svg class="icon" viewBox="0 0 24 24" aria-hidden="true">${paths[name] ?? paths.chat}</svg>`;
+            const iconButton = (id, glyph, label, extra = '') =>
+                `<button type="button" id="${id}" class="icon-btn" title="${escape(t(label))}" aria-label="${escape(t(label))}" ${extra}>${icon(glyph)}</button>`;
+            const activeConversation = () => conversations.find((item) => item.id === state.current);
+            const nameOf = (item) => item.name ?? t(item.key);
+            const isGroup = () => activeConversation().type === 'group';
+            const avatar = (person, online = false) => {
+                const data = people[person] ?? people.lin;
+                return `<span class="avatar ${data.tone} ${online && data.online ? 'online' : ''}" aria-hidden="true">${data.initials[state.locale === 'zh-CN' ? 0 : 1]}</span>`;
+            };
+            const groupAvatar = () =>
+                `<span class="avatar group" aria-hidden="true"><b>${state.locale === 'zh-CN' ? '知' : 'Z'}</b><b>${state.locale === 'zh-CN' ? '默' : 'E'}</b><b>${state.locale === 'zh-CN' ? '言' : 'R'}</b><b>${state.locale === 'zh-CN' ? '一' : 'A'}</b></span>`;
+            const conversationAvatar = (item) => (item.type === 'group' ? groupAvatar() : avatar(item.id, true));
+            const fileCard = () =>
+                `<button type="button" class="file-card" data-action="file-preview"><span class="file-symbol">FIG</span><span class="grow"><span class="file-name">${t('fileName')}</span><span class="file-meta" style="display:block">${t('fileDate')}</span></span>${icon('file')}</button>`;
+            function navMarkup() {
+                return `<aside class="app-nav"><div class="app-brand"><span class="logo"></span><span>OpenDesk</span></div>
+                    ${[
+                        ['home', 'home'],
+                        ['apps', 'grid'],
+                        ['messages', 'chat'],
+                        ['tasks', 'tasks'],
+                        ['skills', 'spark']
+                    ]
+                        .map(
+                            ([key, glyph]) =>
+                                `<div class="nav-item ${key === 'messages' ? 'current' : ''}" title="${t(key)}">${icon(glyph)}<span>${t(key)}</span>${key === 'messages' ? '<span class="count">7</span>' : ''}</div>`
+                        )
+                        .join('')}
+                    <div class="nav-label">${t('workspace')}</div><div class="workspace-item"><span class="workspace-dot"></span>${t('productTeam')}</div><div class="workspace-item"><span class="workspace-dot"></span>${t('personal')}</div>
+                    <footer><div class="nav-item" title="${t('settings')}">${icon('settings')}<span>${t('settings')}</span></div><div class="account row">${avatar('self')}<div class="account-info"><div class="account-name">${t('account')}</div><div class="account-role">${t('accountRole')}</div></div></div></footer></aside>`;
+            }
+            function conversationsMarkup() {
+                return `<aside class="conversation-panel"><div class="conversation-heading row between"><h2>${t('messages')}</h2>${iconButton('new-conversation', 'plus', 'newChat')}</div>
+                    <label class="search-field">${icon('search')}<input id="conversation-search" type="search" value="${escape(state.query)}" placeholder="${t('search')}" aria-label="${t('search')}" /><kbd>/</kbd></label>
+                    <div class="filter-tabs" role="group" aria-label="${t('messages')}">${['all', 'direct', 'group'].map((key) => `<button class="filter-tab" data-filter="${key}" aria-pressed="${state.filter === key}">${t(key)}</button>`).join('')}</div>
+                    <div id="conversation-list" class="conversation-list"></div><div class="conversation-footer">${icon('check')}${t('synced')}</div></aside>`;
+            }
+            function renderConversations() {
+                const visible = conversations.filter(
+                    (item) =>
+                        (state.filter === 'all' || state.filter === item.type) &&
+                        nameOf(item).toLocaleLowerCase().includes(state.query.toLocaleLowerCase())
+                );
+                let lastGroup;
+                document.getElementById('conversation-list').innerHTML = visible.length
+                    ? visible
+                          .map((item) => {
+                              const group = item.pinned ? 'pinned' : 'recent';
+                              const label =
+                                  lastGroup !== group
+                                      ? `<div class="list-label">${icon(group === 'pinned' ? 'pin' : 'chat')}${t(group)}</div>`
+                                      : '';
+                              lastGroup = group;
+                              const latest = item.messages.at(-1);
+                              const preview = latest?.local
+                                  ? latest.text || t('fileName')
+                                  : item.preview
+                                    ? t(item.preview)
+                                    : t('groupCreated');
+                              return `${label}<button class="conversation" data-conversation="${item.id}" data-type="${item.type}" aria-current="${item.id === state.current}" title="${escape(nameOf(item))}">${conversationAvatar(item)}<span class="channel-hash" aria-hidden="true">#</span><span class="grow"><span class="row between"><span class="conversation-name truncate">${escape(nameOf(item))}</span><time class="conversation-time">${item.time}</time></span><span class="row between conversation-preview"><span class="truncate">${escape(preview)}</span>${item.unread ? `<span class="unread">${item.unread}</span>` : ''}</span></span></button>`;
+                          })
+                          .join('')
+                    : `<div class="empty">${t('noResults')}</div>`;
+            }
+            function chatMarkup() {
+                const item = activeConversation();
+                const group = item.type === 'group';
+                const status = group
+                    ? item.created
+                        ? t('newGroupStatus', { n: item.count })
+                        : t('groupStatus')
+                    : people[item.id]?.online
+                      ? t('directStatus')
+                      : t('away');
+                return `<section class="chat-panel" aria-label="${escape(nameOf(item))}"><header class="chat-header" data-type="${item.type}"><div class="row">${iconButton('mobile-back', 'back', 'returnList')}${conversationAvatar(item)}<div><h2 id="chat-title">${escape(nameOf(item))}</h2><div class="chat-subtitle"><span class="status-dot"></span>${status}</div></div></div><div class="chat-header-actions">${group ? `<div class="avatar-stack" aria-hidden="true">${avatar('lin')}${avatar('chen')}${avatar('xu')}</div>` : ''}${iconButton('search-messages', 'search', 'searchMessages')}${iconButton('toggle-details', 'panel', 'details', `aria-expanded="${state.detailOpen || [3, 4].includes(state.variant)}"`)}</div></header>
+                    <nav class="chat-tabs" aria-label="${t('chat')}">${['chat', 'files', group ? 'members' : 'profile'].map((tab) => `<button class="chat-tab ${state.tab === tab ? 'active' : ''}" data-chat-tab="${tab}" aria-pressed="${state.tab === tab}">${t(tab)}${tab === 'members' ? `<span>${item.count}</span>` : ''}</button>`).join('')}</nav>
+                    ${group && !item.created ? `<div class="pinned-note">${icon('pin')}<span class="note-label">${t('announcement')}</span><span class="truncate">${t('announcementText')}</span></div>` : ''}
+                    <div id="message-list" class="message-list" role="log" aria-label="${t('chat')}"></div>
+                    <div class="composer-wrap"><form id="composer-form" class="composer"><textarea id="message-input" rows="2" aria-label="${t('chat')}" placeholder="${escape(t(group ? 'composeGroup' : 'composeDirect', { name: nameOf(item) }))}">${escape(state.drafts[state.current] ?? '')}</textarea><div id="attachment-preview"></div>
+                    <div class="compose-tools"><div class="row" style="gap:3px">${iconButton('insert-emoji', 'smile', 'emoji')}${iconButton('attach-file', 'clip', 'attach')}${group ? iconButton('mention-member', 'at', 'mention') : ''}${iconButton('polish-message', 'spark', 'ai')}</div><button class="primary" id="send-message" type="submit">${t('send')}${icon('arrow')}</button></div></form><div class="compose-hint">${t('composeHint')}</div></div></section>`;
+            }
+            function renderMessages(scroll = false) {
+                const item = activeConversation();
+                const list = document.getElementById('message-list');
+                if (state.tab === 'files') {
+                    const files = item.messages.filter((message) => message.file);
+                    list.innerHTML = `<div class="list-label">${t('sharedFiles')}</div>${files.length ? files.map(fileCard).join('') : `<div class="empty">${t('noResults')}</div>`}`;
+                    return;
+                }
+                if (state.tab === 'members' || state.tab === 'profile') {
+                    list.innerHTML = `<div class="context-section"><h3>${t(state.tab)}</h3>${item.type === 'group' ? membersMarkup(item) : `<div class="row">${avatar(item.id, true)}<div><h3>${escape(nameOf(item))}</h3><p>${t('department')}</p></div></div>`}</div>`;
+                    return;
+                }
+                const messages = item.messages.filter((message) =>
+                    (message.text ?? t(message.key))
+                        .toLocaleLowerCase()
+                        .includes(state.messageQuery.toLocaleLowerCase())
+                );
+                list.innerHTML = `<div class="date-divider">${t('today')}</div>${state.messageQuery ? `<div class="pinned-note" style="margin:0 0 18px"><span class="grow">${escape(state.messageQuery)}</span><button data-action="clear-search">${t('returnChat')}</button></div>` : ''}${messages.length ? messages.map((message) => `<article class="message ${message.person === 'self' ? 'self' : ''}">${avatar(message.person)}<div class="message-content"><div class="message-meta"><span>${t(people[message.person].key)}</span><time>${message.time}</time></div>${message.text || message.key ? `<div class="message-bubble">${escape(message.text ?? t(message.key))}</div>` : ''}${message.file ? fileCard() : ''}${message.thread && item.type === 'group' ? `<button class="thread-link" data-action="thread">${icon('reply')}${t('replyCount')}</button>` : ''}${message.reaction ? `<div class="reactions"><button class="reaction" data-reaction="${message.id}" aria-label="${t('emoji')}" aria-pressed="${state.reactions.has(`${item.id}:${message.id}`)}">👍 <span>${state.reactions.has(`${item.id}:${message.id}`) ? 4 : 3}</span></button></div>` : ''}${message.person === 'self' ? `<div class="read-status">${message.local ? t('localSent') : t(item.type === 'group' ? 'readGroup' : 'read')}</div>` : ''}</div></article>`).join('') : `<div class="empty">${t(state.messageQuery ? 'noMessages' : 'groupCreated')}</div>`}`;
+                if (scroll) list.scrollTop = list.scrollHeight;
+            }
+            function membersMarkup(item) {
+                return [...(item.members ?? []), 'self']
+                    .map(
+                        (id, index) =>
+                            `<div class="member-row">${avatar(id, true)}<span>${t(people[id].key)}</span>${index === 0 ? `<span class="pill">${t('owner')}</span>` : ''}</div>`
+                    )
+                    .join('');
+            }
+            function contextMarkup() {
+                const item = activeConversation();
+                const title = state.detail === 'thread' && isGroup() ? 'thread' : 'details';
+                return `<aside class="context-panel" aria-label="${t(title)}"><div class="row between context-title"><span>${t(title)}</span>${iconButton('close-details', 'close', 'close')}</div>${title === 'thread' ? `<div class="pill accent">${t('threadIntro')}</div><div class="context-section">${['chen', 'lin'].map((id, i) => `<div class="member-row">${avatar(id)}${t(id)}</div><p style="margin:0 0 20px 33px">${t(`threadReply${i + 1}`)}</p>`).join('')}<button class="secondary" data-action="reply">${icon('reply')}${t('addReply')}</button></div>` : `<div class="context-hero">${conversationAvatar(item)}<h3>${escape(nameOf(item))}</h3><span class="muted small">${isGroup() ? t('newGroupStatus', { n: item.count }) : t('role')}</span></div><div class="context-section"><h3>${t(isGroup() ? 'about' : 'profile')}</h3><p>${t(isGroup() ? 'aboutText' : 'department')}</p></div>${isGroup() ? `<div class="context-section"><h3>${t('members')}</h3>${membersMarkup(item)}<button class="secondary" data-action="invite">${icon('plus')}${t('invite')}</button></div>` : ''}<div class="context-section"><h3>${t('sharedFiles')}</h3><button class="context-file" data-action="file-preview"><span class="file-symbol">FIG</span><span class="grow"><span>${t('fileName')}</span><span class="file-meta" style="display:block">${t('fileDate')}</span></span></button></div>`}</aside>`;
+            }
+            function modalMarkup() {
+                return `<dialog id="group-dialog"><form id="group-form"><div class="row between"><h2>${t('newGroup')}</h2>${iconButton('close-group', 'close', 'close')}</div><p class="dialog-subtitle">${t('groupHelp')}</p><label class="field-label" for="group-name">${t('groupName')}</label><input class="text-field" id="group-name" placeholder="${t('groupPlaceholder')}" maxlength="40" /><span class="field-label">${t('selectMembers')}</span>${['lin', 'chen', 'xu', 'lu'].map((id) => `<label class="member-option">${avatar(id, true)}<span>${t(id)}</span><input type="checkbox" name="member" value="${id}" /></label>`).join('')}<p id="group-error" class="form-error" role="alert" hidden>${t('groupValidation')}</p><div class="dialog-actions"><button type="button" class="secondary" data-close="group-dialog">${t('cancel')}</button><button class="primary" id="confirm-group" type="submit">${t('create')}</button></div></form></dialog>
+                    <dialog id="comparison-dialog"><div class="row between"><h2>${t('compareTitle')}</h2>${iconButton('close-comparison', 'close', 'close')}</div><p class="dialog-subtitle">${t('compareSubtitle')}</p><div class="comparison-cards">${[1, 2, 3, 4, 5].map((v) => `<article class="comparison-card"><div class="mini-layout v${v}" aria-hidden="true"><i></i><b></b><div class="mini-chat"><span></span><span></span><span></span></div></div><div class="comparison-content"><h3>0${v} ${t(`v${v}`)}</h3><label>${t('fit')}</label><p>${t(`v${v}fit`)}</p><label>${t('cost')}</label><p>${t(`v${v}cost`)}</p><button class="secondary" data-select-variant="${v}">${t('viewConcept')}</button></div></article>`).join('')}</div><p class="comparison-recommendation">${t('recommendation')}</p></dialog>
+                    <dialog id="file-dialog"><div class="row between"><h2>${t('filePreview')}</h2>${iconButton('close-file', 'close', 'close')}</div><p class="dialog-subtitle">${t('fileName')} · ${t('previewLabel')}</p><div class="file-preview-sheet"><span class="pill accent">OpenDesk / IM</span><h3 style="margin-top:20px">${t('fileIntro')}</h3><p>${t('filePoint1')}</p><p>${t('filePoint2')}</p><p>${t('filePoint3')}</p></div></dialog>
+                    <dialog id="mention-dialog"><div class="row between"><h2 id="member-dialog-title">${t('mentionTitle')}</h2>${iconButton('close-mention', 'close', 'close')}</div><div id="mention-options" style="margin-top:20px"></div></dialog>
+                    <dialog id="search-dialog"><form id="message-search-form"><div class="row between"><h2>${t('searchMessages')}</h2>${iconButton('close-search', 'close', 'close')}</div><label class="field-label" for="message-search-input">${t('messageSearch')}</label><input class="text-field" type="search" id="message-search-input" /><div class="dialog-actions"><button class="primary" type="submit">${t('searchMessages')}</button></div></form></dialog>`;
+            }
+            function render() {
+                document.documentElement.lang = state.locale;
+                document.title = `OpenDesk · ${t('title')}`;
+                root.innerHTML = `<header class="studio-header"><div class="row"><span class="logo"></span><div><div class="eyebrow">OPENDESK / ${t('exploration')}</div><h1>${t('title')}</h1></div></div><div class="studio-controls"><span class="prototype-status">${t('prototype')}</span>${iconButton('theme-toggle', document.documentElement.dataset.theme === 'dark' ? 'sun' : 'moon', 'theme')}<button id="locale-toggle" class="secondary small">${t('locale')}</button><button id="compare-button" class="secondary" aria-label="${t('compare')}">${icon('panel')}<span class="compare-label">${t('compare')}</span></button></div></header>
+                    <div class="variant-picker" role="group" aria-label="${t('compare')}">${[1, 2, 3, 4, 5].map((v) => `<button class="variant" data-variant="${v}" aria-pressed="${state.variant === v}"><span class="variant-index">0${v}</span><span><span class="variant-name">${t(`v${v}`)}</span><span class="variant-caption">${t(`v${v}caption`)}</span></span></button>`).join('')}</div>
+                    <div id="app-window" class="app-window ${state.detailOpen ? 'context-open' : ''} ${state.detailHidden ? 'context-hidden' : ''} ${state.mobileList ? 'show-conversations' : ''}" data-layout="${state.variant}"><div class="titlebar"><span>OpenDesk <span style="padding:0 7px">/</span> ${t('messages')}</span><div class="window-controls" aria-hidden="true">${icon('minus')}${icon('square')}${icon('close')}</div></div>${navMarkup()}<div class="workspace-banner"><div><h2>${t('overview')}</h2><p>${t('overviewSub')}</p></div><span class="pill">${icon('people')}${t('allMembers')}</span></div>${conversationsMarkup()}${chatMarkup()}${contextMarkup()}</div>
+                    <footer class="design-notes"><div class="note-item"><span>${t('why')}</span><p>${t(`v${state.variant}focus`)}</p></div><div class="note-item"><span>${t('tradeoff')}</span><p>${t(`v${state.variant}cost`)}</p></div><div class="recommendation">${icon('spark')}${t('recommend')}</div></footer>${modalMarkup()}`;
+                renderConversations();
+                renderMessages(true);
+                renderAttachment();
+                document
+                    .getElementById('toggle-details')
+                    .setAttribute(
+                        'aria-expanded',
+                        String(Boolean(root.querySelector('.context-panel').getClientRects().length))
+                    );
+            }
+            function renderAttachment() {
+                const attached = state.attachments[state.current];
+                document.getElementById('attachment-preview').innerHTML = attached
+                    ? `<div class="pill" style="margin-top:8px">${icon('file')}${t('fileName')}<button type="button" data-action="remove-attachment" aria-label="${t('removeAttachment')}">×</button></div>`
+                    : '';
+                const send = document.getElementById('send-message');
+                if (send) send.disabled = !((state.drafts[state.current] ?? '').trim() || attached);
+            }
+            function toast(key, values) {
+                const node = document.getElementById('toast');
+                node.textContent = t(key, values);
+                node.hidden = false;
+                clearTimeout(toast.timer);
+                toast.timer = setTimeout(() => {
+                    node.hidden = true;
+                }, 3300);
+            }
+            function openDialog(id) {
+                document.getElementById(id).showModal();
+            }
+            function closeDialog(id) {
+                document.getElementById(id).close();
+            }
+            function showDetails(kind = 'info') {
+                state.detail = kind;
+                state.detailOpen = true;
+                state.detailHidden = false;
+                const app = document.getElementById('app-window');
+                app.classList.add('context-open');
+                app.classList.remove('context-hidden');
+                app.querySelector('.context-panel').outerHTML = contextMarkup();
+                document.getElementById('toggle-details').setAttribute('aria-expanded', 'true');
+            }
+            function hideDetails() {
+                state.detailOpen = false;
+                state.detailHidden = true;
+                const app = document.getElementById('app-window');
+                app.classList.remove('context-open');
+                app.classList.add('context-hidden');
+                document.getElementById('toggle-details').setAttribute('aria-expanded', 'false');
+                document.getElementById('toggle-details').focus();
+            }
+            function selectConversation(id) {
+                state.current = id;
+                state.mobileList = false;
+                state.messageQuery = '';
+                state.tab = 'chat';
+                state.detail = 'info';
+                activeConversation().unread = 0;
+                render();
+            }
+            function insertText(value) {
+                const input = document.getElementById('message-input');
+                const start = input.selectionStart;
+                input.setRangeText(value, start, input.selectionEnd, 'end');
+                state.drafts[state.current] = input.value;
+                input.focus();
+                renderAttachment();
+            }
+            function sendMessage() {
+                const input = document.getElementById('message-input');
+                const text = input.value.trim();
+                const file = state.attachments[state.current];
+                if (!text && !file) return;
+                const item = activeConversation();
+                const now = new Date().toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' });
+                item.messages.push({
+                    id: `local-${item.messages.length}`,
+                    person: 'self',
+                    text,
+                    file,
+                    time: now,
+                    local: true
+                });
+                item.time = now;
+                state.drafts[state.current] = '';
+                state.attachments[state.current] = false;
+                state.messageQuery = '';
+                state.tab = 'chat';
+                render();
+                renderMessages(true);
+                document.getElementById('message-input').focus();
+            }
+            function memberPicker(mode) {
+                const item = activeConversation();
+                state.memberMode = mode;
+                document.getElementById('member-dialog-title').textContent = t(
+                    mode === 'invite' ? 'invite' : 'mentionTitle'
+                );
+                const ids =
+                    mode === 'invite' ? Object.keys(people).filter((id) => id !== 'self') : (item.members ?? []);
+                document.getElementById('mention-options').innerHTML = ids
+                    .map(
+                        (id) =>
+                            `<button class="member-option" style="width:100%" data-member="${id}">${avatar(id)}${t(id)}${mode === 'invite' && item.members.includes(id) ? `<span class="pill" style="margin-left:auto">${t('members')}</span>` : ''}</button>`
+                    )
+                    .join('');
+                openDialog('mention-dialog');
+            }
+            root.addEventListener('click', (event) => {
+                const button = event.target.closest('button');
+                if (!button) return;
+                if (button.dataset.variant || button.dataset.selectVariant) {
+                    state.variant = Number(button.dataset.variant ?? button.dataset.selectVariant);
+                    state.mobileList = false;
+                    state.detailOpen = false;
+                    state.detailHidden = false;
+                    state.filter = 'all';
+                    state.query = '';
+                    render();
+                    return;
+                }
+                if (button.dataset.conversation) {
+                    selectConversation(button.dataset.conversation);
+                    return;
+                }
+                if (button.dataset.filter) {
+                    state.filter = button.dataset.filter;
+                    root.querySelectorAll('[data-filter]').forEach((node) =>
+                        node.setAttribute('aria-pressed', String(node.dataset.filter === state.filter))
+                    );
+                    renderConversations();
+                    return;
+                }
+                if (button.dataset.chatTab) {
+                    state.tab = button.dataset.chatTab;
+                    render();
+                    return;
+                }
+                if (button.dataset.close) {
+                    closeDialog(button.dataset.close);
+                    return;
+                }
+                if (button.dataset.reaction) {
+                    const key = `${state.current}:${button.dataset.reaction}`;
+                    if (state.reactions.has(key)) state.reactions.delete(key);
+                    else state.reactions.add(key);
+                    button.setAttribute('aria-pressed', String(state.reactions.has(key)));
+                    button.querySelector('span').textContent = state.reactions.has(key) ? '4' : '3';
+                    return;
+                }
+                if (button.dataset.member) {
+                    const id = button.dataset.member;
+                    closeDialog('mention-dialog');
+                    if (state.memberMode === 'invite') {
+                        const item = activeConversation();
+                        if (item.members.includes(id)) {
+                            toast('memberExists');
+                            return;
+                        }
+                        item.members.push(id);
+                        item.count += 1;
+                        item.created = true;
+                        render();
+                        toast('memberAdded', { name: t(id) });
+                    } else insertText(`@${t(id)} `);
+                    return;
+                }
+                const action = button.dataset.action;
+                if (action === 'file-preview') {
+                    openDialog('file-dialog');
+                    return;
+                }
+                if (action === 'thread') {
+                    showDetails('thread');
+                    return;
+                }
+                if (action === 'reply') {
+                    insertText(t('replyPrefix'));
+                    return;
+                }
+                if (action === 'invite') {
+                    memberPicker('invite');
+                    return;
+                }
+                if (action === 'clear-search') {
+                    state.messageQuery = '';
+                    renderMessages();
+                    return;
+                }
+                if (action === 'remove-attachment') {
+                    state.attachments[state.current] = false;
+                    renderAttachment();
+                    return;
+                }
+                const id = button.id;
+                if (id === 'theme-toggle') {
+                    document.documentElement.dataset.theme =
+                        document.documentElement.dataset.theme === 'light' ? 'dark' : 'light';
+                    button.innerHTML = icon(document.documentElement.dataset.theme === 'light' ? 'moon' : 'sun');
+                } else if (id === 'locale-toggle') {
+                    state.locale = state.locale === 'zh-CN' ? 'en' : 'zh-CN';
+                    render();
+                } else if (id === 'compare-button') openDialog('comparison-dialog');
+                else if (id === 'new-conversation') openDialog('group-dialog');
+                else if (id === 'mobile-back') {
+                    state.mobileList = true;
+                    state.detailOpen = false;
+                    render();
+                } else if (id === 'search-messages') openDialog('search-dialog');
+                else if (id === 'toggle-details') {
+                    if (root.querySelector('.context-panel').getClientRects().length) hideDetails();
+                    else showDetails();
+                } else if (id === 'close-details') {
+                    hideDetails();
+                } else if (id.startsWith('close-')) {
+                    const dialog = button.closest('dialog');
+                    if (dialog) dialog.close();
+                } else if (id === 'insert-emoji') insertText('👍 ');
+                else if (id === 'attach-file') {
+                    state.attachments[state.current] = true;
+                    renderAttachment();
+                    toast('attached');
+                } else if (id === 'mention-member') memberPicker('mention');
+                else if (id === 'polish-message') {
+                    if (!(state.drafts[state.current] ?? '').trim()) {
+                        toast('aiHint');
+                        return;
+                    }
+                    state.drafts[state.current] = t('polishedCopy');
+                    document.getElementById('message-input').value = state.drafts[state.current];
+                    renderAttachment();
+                    toast('polished');
+                }
+            });
+            root.addEventListener('input', (event) => {
+                if (event.target.id === 'conversation-search') {
+                    state.query = event.target.value;
+                    renderConversations();
+                }
+                if (event.target.id === 'message-input') {
+                    state.drafts[state.current] = event.target.value;
+                    renderAttachment();
+                }
+            });
+            root.addEventListener('keydown', (event) => {
+                if (
+                    event.target.id === 'message-input' &&
+                    event.key === 'Enter' &&
+                    !event.shiftKey &&
+                    !event.isComposing &&
+                    event.keyCode !== 229
+                ) {
+                    event.preventDefault();
+                    sendMessage();
+                }
+            });
+            document.addEventListener('keydown', (event) => {
+                if (
+                    event.key === '/' &&
+                    !['INPUT', 'TEXTAREA'].includes(event.target.tagName) &&
+                    !document.querySelector('dialog[open]')
+                ) {
+                    const input = document.getElementById('conversation-search');
+                    if (input.getClientRects().length) {
+                        event.preventDefault();
+                        input.focus();
+                    }
+                }
+            });
+            root.addEventListener('submit', (event) => {
+                event.preventDefault();
+                if (event.target.id === 'composer-form') sendMessage();
+                if (event.target.id === 'message-search-form') {
+                    state.messageQuery = document.getElementById('message-search-input').value.trim();
+                    state.tab = 'chat';
+                    render();
+                }
+                if (event.target.id === 'group-form') {
+                    const name = document.getElementById('group-name').value.trim();
+                    const members = [...document.querySelectorAll('input[name="member"]:checked')].map(
+                        (node) => node.value
+                    );
+                    if (!name || members.length < 2) {
+                        document.getElementById('group-error').hidden = false;
+                        return;
+                    }
+                    const id = `group-${++state.newGroupId}`;
+                    conversations.push({
+                        id,
+                        name,
+                        type: 'group',
+                        members,
+                        count: members.length + 1,
+                        time: '—',
+                        messages: [],
+                        created: true
+                    });
+                    state.query = '';
+                    state.filter = 'all';
+                    selectConversation(id);
+                    document.getElementById('message-input').focus();
+                }
+            });
+            const initialVariant = Number(new URLSearchParams(location.search).get('variant'));
+            if ([1, 2, 3, 4, 5].includes(initialVariant)) state.variant = initialVariant;
+            if (new URLSearchParams(location.search).get('theme') === 'dark')
+                document.documentElement.dataset.theme = 'dark';
+            render();
+        </script>
+    </body>
+</html>

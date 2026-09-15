@@ -13,7 +13,10 @@ describe('MCP management application label', () => {
     });
 
     test('keeps the global translator from shadowing the MCP translator', () => {
-        expect(appSource).toContain("import { t as globalT } from '../../../locale/index.js'");
-        expect(appSource).not.toContain("import { t } from '../../../locale/index.js'");
+        // 主 locale 仅用于读取跨应用共享的平台词条（harmony.localRuntime.*），必须别名导入；
+        // 裸名 t 必须来自 mcpmgr 应用自己的 locale。
+        expect(appSource).toContain("import { t as platformT } from '../../../locale/index.js'");
+        expect(appSource).not.toMatch(/import \{ t \} from '\.\.\/\.\.\/\.\.\/locale\/index\.js'/);
+        expect(appSource).toContain("import { t } from './locale/index.js'");
     });
 });

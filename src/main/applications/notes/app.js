@@ -33,14 +33,18 @@ class NotesApplication extends BaseApplication {
 
     async getSupportedEvents() {
         return [
-            { eventName: 'notesChanged', eventDescription: '笔记列表发生变化' },
-            { eventName: 'tagsChanged', eventDescription: '标签列表发生变化' },
-            { eventName: 'deletedNotesChanged', eventDescription: '回收站笔记列表发生变化' }
+            { eventName: 'notesChanged', eventDescription: t('appEvent.notesChanged') },
+            { eventName: 'tagsChanged', eventDescription: t('appEvent.tagsChanged') },
+            { eventName: 'deletedNotesChanged', eventDescription: t('appEvent.deletedNotesChanged') }
         ];
     }
 
     async polishText(text, noteTitle, noteContext) {
-        const prompt = `请润色以下文本，保持原意的同时使表达更加流畅、专业。注意这是笔记"${noteTitle || '无标题'}"中的内容，上下文为：\n${noteContext || ''}\n\n需要润色的文本：\n${text}\n\n请直接返回润色后的文本，不要添加任何解释或标记。`;
+        const prompt = t('polish.prompt', {
+            noteTitle: noteTitle || t('polish.untitledNote'),
+            noteContext: noteContext || '',
+            text
+        });
         return await LLM.ask(prompt);
     }
 

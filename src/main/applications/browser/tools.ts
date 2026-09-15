@@ -23,6 +23,7 @@ import { Card } from '../../tui/components/card';
 import { statusDisplay, truncText } from '../../tui/components/toolcall';
 import chalk from 'chalk';
 import { z } from 'zod';
+import { t } from './locale/index.js';
 import {
     ACCESSIBILITY_SNAPSHOT_HEADING,
     BrowserManager,
@@ -184,13 +185,18 @@ export class BrowserNavigateTool extends BaseTool<typeof BrowserNavigateArgsSche
         const args = toolcall.args_object as any;
         const url = args?.['url'];
         const body: string[] = [];
-        if (url) body.push(chalk.dim('网址: ') + chalk.cyan(truncText(String(url), width - 14)));
-        if (args?.newTab) body.push(chalk.dim('  新标签页打开'));
-        if (toolcall.status === 'running') body.push(chalk.dim('  ⏳ 正在加载页面…'));
-        else if (toolcall.status === 'success') body.push(chalk.dim('  ✓ 页面已打开'));
+        if (url) body.push(chalk.dim(t('cli.label.url')) + chalk.cyan(truncText(String(url), width - 14)));
+        if (args?.newTab) body.push(chalk.dim(t('cli.newTab.inNewTab')));
+        if (toolcall.status === 'running') body.push(chalk.dim(t('cli.newTab.running')));
+        else if (toolcall.status === 'success') body.push(chalk.dim(t('cli.newTab.success')));
         else if (toolcall.status === 'error' && toolcall.result)
             body.push(chalk.redBright('  ' + truncText(String(toolcall.result), width - 10)));
-        return new Card({ icon: '🌐', title: '打开网页', status: statusDisplay(toolcall.status), body }).render(width);
+        return new Card({
+            icon: '🌐',
+            title: t('cli.newTab.cardTitle'),
+            status: statusDisplay(toolcall.status),
+            body
+        }).render(width);
     }
 
     private async handleExecute(
@@ -254,14 +260,22 @@ export class BrowserSnapshotTool extends BaseTool<typeof BrowserSnapshotArgsSche
             const urlMatch = toolcall.result.match(/- Page URL: (.+)/);
             const titleMatch = toolcall.result.match(/- Page Title: (.+)/);
             if (urlMatch) body.push(chalk.dim('  URL: ') + chalk.cyan(truncText(urlMatch[1], width - 16)));
-            if (titleMatch) body.push(chalk.dim('  标题: ') + chalk.white(truncText(titleMatch[1], width - 16)));
+            if (titleMatch)
+                body.push(chalk.dim(t('cli.label.title')) + chalk.white(truncText(titleMatch[1], width - 16)));
             // Count refs in YAML to report element count
             const refCount = (toolcall.result.match(/\[ref=e\d+.*?\]/g) || []).length;
-            body.push(chalk.dim('  可交互元素: ') + chalk.green(String(refCount) + ' 个'));
+            body.push(
+                chalk.dim(t('cli.label.interactive')) + chalk.green(t('cli.snapshot.refCount', { count: refCount }))
+            );
         } else if (toolcall.status === 'error' && toolcall.result) {
             body.push(chalk.redBright('  ' + truncText(String(toolcall.result), width - 10)));
         }
-        return new Card({ icon: '📊', title: '页面快照', status: statusDisplay(toolcall.status), body }).render(width);
+        return new Card({
+            icon: '📊',
+            title: t('cli.snapshot.cardTitle'),
+            status: statusDisplay(toolcall.status),
+            body
+        }).render(width);
     }
 
     private async handleExecute(
@@ -278,7 +292,7 @@ export class BrowserSnapshotTool extends BaseTool<typeof BrowserSnapshotArgsSche
             // 插件贡献的页面提示置于快照最前面，作为本页可用动作与约束的说明
             return renderSnapshotText(snapshot, {
                 prefixLines: await renderBrowserHintsFor(ctrl, snapshot),
-                infoLines: args.mode === 'diff' ? ['- Mode: diff (仅展示变化部分)'] : []
+                infoLines: args.mode === 'diff' ? [t('cli.snapshot.diffMode')] : []
             });
         } catch (err: any) {
             return fail(err.message || String(err));
@@ -314,10 +328,15 @@ export class BrowserExploreTool extends BaseTool<typeof BrowserExploreArgsSchema
         const args = toolcall.args_object as any;
         const body: string[] = [];
         if (args?.ref) body.push(chalk.dim('  ref: ') + chalk.yellow(args.ref));
-        if (toolcall.status === 'success') body.push(chalk.dim('  ✓ 已展开'));
+        if (toolcall.status === 'success') body.push(chalk.dim(t('cli.explore.success')));
         else if (toolcall.status === 'error' && toolcall.result)
             body.push(chalk.redBright('  ' + truncText(String(toolcall.result), width - 10)));
-        return new Card({ icon: '🔬', title: '展开节点', status: statusDisplay(toolcall.status), body }).render(width);
+        return new Card({
+            icon: '🔬',
+            title: t('cli.explore.cardTitle'),
+            status: statusDisplay(toolcall.status),
+            body
+        }).render(width);
     }
 
     private async handleExecute(
@@ -369,12 +388,18 @@ export class BrowserClickTool extends BaseTool<typeof BrowserClickArgsSchema> {
     renderToolCallCli(toolcall: ToolCall, width: number): string[] | undefined {
         const args = toolcall.args_object as any;
         const body: string[] = [];
-        if (args?.target) body.push(chalk.dim('  目标: ') + chalk.yellow(truncText(String(args.target), width - 14)));
-        if (toolcall.status === 'running') body.push(chalk.dim('  ⏳ 正在点击…'));
-        else if (toolcall.status === 'success') body.push(chalk.dim('  ✓ 已点击'));
+        if (args?.target)
+            body.push(chalk.dim(t('cli.label.target')) + chalk.yellow(truncText(String(args.target), width - 14)));
+        if (toolcall.status === 'running') body.push(chalk.dim(t('cli.click.running')));
+        else if (toolcall.status === 'success') body.push(chalk.dim(t('cli.click.success')));
         else if (toolcall.status === 'error' && toolcall.result)
             body.push(chalk.redBright('  ' + truncText(String(toolcall.result), width - 10)));
-        return new Card({ icon: '👆', title: '点击元素', status: statusDisplay(toolcall.status), body }).render(width);
+        return new Card({
+            icon: '👆',
+            title: t('cli.click.cardTitle'),
+            status: statusDisplay(toolcall.status),
+            body
+        }).render(width);
     }
 
     private async handleExecute(args: z.output<typeof BrowserClickArgsSchema>, taskState?: TaskState): Promise<string> {
@@ -425,14 +450,21 @@ export class BrowserTypeTool extends BaseTool<typeof BrowserTypeArgsSchema> {
     renderToolCallCli(toolcall: ToolCall, width: number): string[] | undefined {
         const args = toolcall.args_object as any;
         const body: string[] = [];
-        if (args?.target) body.push(chalk.dim('  目标: ') + chalk.yellow(truncText(String(args.target), width - 14)));
-        if (args?.text) body.push(chalk.dim('  文本: ') + chalk.cyan(truncText(String(args.text), width - 14)));
+        if (args?.target)
+            body.push(chalk.dim(t('cli.label.target')) + chalk.yellow(truncText(String(args.target), width - 14)));
+        if (args?.text)
+            body.push(chalk.dim(t('cli.label.text')) + chalk.cyan(truncText(String(args.text), width - 14)));
         if (args?.submit) body.push(chalk.dim('  + Enter'));
-        if (toolcall.status === 'running') body.push(chalk.dim('  ⏳ 正在输入…'));
-        else if (toolcall.status === 'success') body.push(chalk.dim('  ✓ 已输入'));
+        if (toolcall.status === 'running') body.push(chalk.dim(t('cli.type.running')));
+        else if (toolcall.status === 'success') body.push(chalk.dim(t('cli.type.success')));
         else if (toolcall.status === 'error' && toolcall.result)
             body.push(chalk.redBright('  ' + truncText(String(toolcall.result), width - 10)));
-        return new Card({ icon: '⌨️', title: '输入文本', status: statusDisplay(toolcall.status), body }).render(width);
+        return new Card({
+            icon: '⌨️',
+            title: t('cli.type.cardTitle'),
+            status: statusDisplay(toolcall.status),
+            body
+        }).render(width);
     }
 
     private async handleExecute(args: z.output<typeof BrowserTypeArgsSchema>, taskState?: TaskState): Promise<string> {
@@ -502,17 +534,25 @@ export class BrowserUploadFileTool extends BaseTool<typeof BrowserUploadFileArgs
         const args = toolcall.args_object as any;
         const body: string[] = [];
         const paths = getUploadInputPaths(args || {});
-        if (args?.target) body.push(chalk.dim('  目标: ') + chalk.yellow(truncText(String(args.target), width - 14)));
+        if (args?.target)
+            body.push(chalk.dim(t('cli.label.target')) + chalk.yellow(truncText(String(args.target), width - 14)));
         if (paths.length > 0) {
             const fileLabel =
-                paths.length === 1 ? path.basename(paths[0]) : `${paths.length} 个文件：${path.basename(paths[0])}…`;
-            body.push(chalk.dim('  文件: ') + chalk.cyan(truncText(fileLabel, width - 14)));
+                paths.length === 1
+                    ? path.basename(paths[0])
+                    : t('cli.upload.files', { count: paths.length, name: path.basename(paths[0]) });
+            body.push(chalk.dim(t('cli.label.file')) + chalk.cyan(truncText(fileLabel, width - 14)));
         }
-        if (toolcall.status === 'running') body.push(chalk.dim('  ⏳ 正在上传…'));
-        else if (toolcall.status === 'success') body.push(chalk.dim('  ✓ 已设置文件'));
+        if (toolcall.status === 'running') body.push(chalk.dim(t('cli.upload.running')));
+        else if (toolcall.status === 'success') body.push(chalk.dim(t('cli.upload.success')));
         else if (toolcall.status === 'error' && toolcall.result)
             body.push(chalk.redBright('  ' + truncText(String(toolcall.result), width - 10)));
-        return new Card({ icon: '📎', title: '上传文件', status: statusDisplay(toolcall.status), body }).render(width);
+        return new Card({
+            icon: '📎',
+            title: t('cli.upload.cardTitle'),
+            status: statusDisplay(toolcall.status),
+            body
+        }).render(width);
     }
 
     private async handleExecute(
@@ -524,7 +564,7 @@ export class BrowserUploadFileTool extends BaseTool<typeof BrowserUploadFileArgs
 
         const rawPaths = getUploadInputPaths(args);
         if (rawPaths.length === 0) {
-            return fail('必须提供 filePath 或 filePaths');
+            return fail(t('error.filePathRequired'));
         }
 
         try {
@@ -564,11 +604,17 @@ export class BrowserHoverTool extends BaseTool<typeof BrowserHoverArgsSchema> {
     renderToolCallCli(toolcall: ToolCall, width: number): string[] | undefined {
         const args = toolcall.args_object as any;
         const body: string[] = [];
-        if (args?.target) body.push(chalk.dim('  目标: ') + chalk.yellow(truncText(String(args.target), width - 14)));
-        if (toolcall.status === 'success') body.push(chalk.dim('  ✓ 已悬停'));
+        if (args?.target)
+            body.push(chalk.dim(t('cli.label.target')) + chalk.yellow(truncText(String(args.target), width - 14)));
+        if (toolcall.status === 'success') body.push(chalk.dim(t('cli.hover.success')));
         else if (toolcall.status === 'error' && toolcall.result)
             body.push(chalk.redBright('  ' + truncText(String(toolcall.result), width - 10)));
-        return new Card({ icon: '🖱️', title: '悬停', status: statusDisplay(toolcall.status), body }).render(width);
+        return new Card({
+            icon: '🖱️',
+            title: t('cli.hover.cardTitle'),
+            status: statusDisplay(toolcall.status),
+            body
+        }).render(width);
     }
 
     private async handleExecute(args: z.output<typeof BrowserHoverArgsSchema>, taskState?: TaskState): Promise<string> {
@@ -616,11 +662,16 @@ export class BrowserPressKeyTool extends BaseTool<typeof BrowserPressKeyArgsSche
     renderToolCallCli(toolcall: ToolCall, width: number): string[] | undefined {
         const args = toolcall.args_object as any;
         const body: string[] = [];
-        if (args?.key) body.push(chalk.dim('  按键: ') + chalk.yellow(String(args.key)));
-        if (toolcall.status === 'success') body.push(chalk.dim('  ✓ 已按键'));
+        if (args?.key) body.push(chalk.dim(t('cli.label.key')) + chalk.yellow(String(args.key)));
+        if (toolcall.status === 'success') body.push(chalk.dim(t('cli.press.success')));
         else if (toolcall.status === 'error' && toolcall.result)
             body.push(chalk.redBright('  ' + truncText(String(toolcall.result), width - 10)));
-        return new Card({ icon: '⌨️', title: '按键', status: statusDisplay(toolcall.status), body }).render(width);
+        return new Card({
+            icon: '⌨️',
+            title: t('cli.press.cardTitle'),
+            status: statusDisplay(toolcall.status),
+            body
+        }).render(width);
     }
 
     private async handleExecute(
@@ -663,13 +714,19 @@ export class BrowserSelectOptionTool extends BaseTool<typeof BrowserSelectOption
     renderToolCallCli(toolcall: ToolCall, width: number): string[] | undefined {
         const args = toolcall.args_object as any;
         const body: string[] = [];
-        if (args?.target) body.push(chalk.dim('  目标: ') + chalk.yellow(truncText(String(args.target), width - 14)));
+        if (args?.target)
+            body.push(chalk.dim(t('cli.label.target')) + chalk.yellow(truncText(String(args.target), width - 14)));
         if (args?.values)
-            body.push(chalk.dim('  值: ') + chalk.cyan(truncText(JSON.stringify(args.values), width - 14)));
-        if (toolcall.status === 'success') body.push(chalk.dim('  ✓ 已选择'));
+            body.push(chalk.dim(t('cli.label.value')) + chalk.cyan(truncText(JSON.stringify(args.values), width - 14)));
+        if (toolcall.status === 'success') body.push(chalk.dim(t('cli.select.success')));
         else if (toolcall.status === 'error' && toolcall.result)
             body.push(chalk.redBright('  ' + truncText(String(toolcall.result), width - 10)));
-        return new Card({ icon: '📋', title: '选择选项', status: statusDisplay(toolcall.status), body }).render(width);
+        return new Card({
+            icon: '📋',
+            title: t('cli.select.cardTitle'),
+            status: statusDisplay(toolcall.status),
+            body
+        }).render(width);
     }
 
     private async handleExecute(
@@ -713,16 +770,19 @@ export class BrowserScrollToTool extends BaseTool<typeof BrowserScrollToArgsSche
     renderToolCallCli(toolcall: ToolCall, width: number): string[] | undefined {
         const args = toolcall.args_object as any;
         const body: string[] = [];
-        if (args?.ref) body.push(chalk.dim('  目标: ') + chalk.yellow('#' + args.ref));
+        if (args?.ref) body.push(chalk.dim(t('cli.label.target')) + chalk.yellow('#' + args.ref));
         if (toolcall.status === 'success') {
             const r = toolcall.result as any;
-            body.push(chalk.dim('  ✓ ') + chalk.green(r?.tag || '已滚动'));
+            body.push(chalk.dim('  ✓ ') + chalk.green(r?.tag || t('cli.scrollTo.done')));
         } else if (toolcall.status === 'error' && toolcall.result) {
             body.push(chalk.redBright('  ' + truncText(String(toolcall.result), width - 10)));
         }
-        return new Card({ icon: '🔍', title: '滚动到元素', status: statusDisplay(toolcall.status), body }).render(
-            width
-        );
+        return new Card({
+            icon: '🔍',
+            title: t('cli.scrollTo.cardTitle'),
+            status: statusDisplay(toolcall.status),
+            body
+        }).render(width);
     }
 
     private async handleExecute(
@@ -760,10 +820,15 @@ export class BrowserGoBackTool extends BaseTool<typeof BrowserGoBackArgsSchema> 
 
     renderToolCallCli(toolcall: ToolCall, width: number): string[] | undefined {
         const body: string[] = [];
-        if (toolcall.status === 'success') body.push(chalk.dim('  ✓ 已后退'));
+        if (toolcall.status === 'success') body.push(chalk.dim(t('cli.goBack.success')));
         else if (toolcall.status === 'error' && toolcall.result)
             body.push(chalk.redBright('  ' + truncText(String(toolcall.result), width - 10)));
-        return new Card({ icon: '⬅', title: '后退', status: statusDisplay(toolcall.status), body }).render(width);
+        return new Card({
+            icon: '⬅',
+            title: t('cli.goBack.cardTitle'),
+            status: statusDisplay(toolcall.status),
+            body
+        }).render(width);
     }
 
     private async handleExecute(
@@ -776,7 +841,7 @@ export class BrowserGoBackTool extends BaseTool<typeof BrowserGoBackArgsSchema> 
         try {
             const ctrl = getController(this.browserApp, taskId);
             const info = await ctrl.goBack();
-            if (info.error) return fail(`后退失败: ${info.error}`);
+            if (info.error) return fail(t('cli.goBack.fail', { error: info.error }));
             return withSnapshot(ctrl, _args.snapshot, { url: info.url, title: info.title });
         } catch (err: any) {
             return fail(err.message || String(err));
@@ -801,10 +866,15 @@ export class BrowserGoForwardTool extends BaseTool<typeof BrowserGoForwardArgsSc
 
     renderToolCallCli(toolcall: ToolCall, width: number): string[] | undefined {
         const body: string[] = [];
-        if (toolcall.status === 'success') body.push(chalk.dim('  ✓ 已前进'));
+        if (toolcall.status === 'success') body.push(chalk.dim(t('cli.goForward.success')));
         else if (toolcall.status === 'error' && toolcall.result)
             body.push(chalk.redBright('  ' + truncText(String(toolcall.result), width - 10)));
-        return new Card({ icon: '➡', title: '前进', status: statusDisplay(toolcall.status), body }).render(width);
+        return new Card({
+            icon: '➡',
+            title: t('cli.goForward.cardTitle'),
+            status: statusDisplay(toolcall.status),
+            body
+        }).render(width);
     }
 
     private async handleExecute(
@@ -817,7 +887,7 @@ export class BrowserGoForwardTool extends BaseTool<typeof BrowserGoForwardArgsSc
         try {
             const ctrl = getController(this.browserApp, taskId);
             const info = await ctrl.goForward();
-            if (info.error) return fail(`前进失败: ${info.error}`);
+            if (info.error) return fail(t('cli.goForward.fail', { error: info.error }));
             return ok(info);
         } catch (err: any) {
             return fail(err.message || String(err));
@@ -842,10 +912,15 @@ export class BrowserReloadTool extends BaseTool<typeof BrowserReloadArgsSchema> 
 
     renderToolCallCli(toolcall: ToolCall, width: number): string[] | undefined {
         const body: string[] = [];
-        if (toolcall.status === 'success') body.push(chalk.dim('  ✓ 已刷新'));
+        if (toolcall.status === 'success') body.push(chalk.dim(t('cli.reload.success')));
         else if (toolcall.status === 'error' && toolcall.result)
             body.push(chalk.redBright('  ' + truncText(String(toolcall.result), width - 10)));
-        return new Card({ icon: '🔄', title: '刷新', status: statusDisplay(toolcall.status), body }).render(width);
+        return new Card({
+            icon: '🔄',
+            title: t('cli.reload.cardTitle'),
+            status: statusDisplay(toolcall.status),
+            body
+        }).render(width);
     }
 
     private async handleExecute(
@@ -858,7 +933,7 @@ export class BrowserReloadTool extends BaseTool<typeof BrowserReloadArgsSchema> 
         try {
             const ctrl = getController(this.browserApp, taskId);
             const info = await ctrl.reload();
-            if (info.error) return fail(`刷新后页面加载失败: ${info.error}`);
+            if (info.error) return fail(t('cli.reload.fail', { error: info.error }));
             return ok(info);
         } catch (err: any) {
             return fail(err.message || String(err));
@@ -894,12 +969,17 @@ export class BrowserEvaluateTool extends BaseTool<typeof BrowserEvaluateArgsSche
         const args = toolcall.args_object as any;
         const body: string[] = [];
         if (args?.expression)
-            body.push(chalk.dim('脚本: ') + chalk.yellow(truncText(String(args.expression), width - 14)));
-        if (toolcall.status === 'running') body.push(chalk.dim('  ⏳ 正在执行…'));
-        else if (toolcall.status === 'success') body.push(chalk.dim('  ✓ 执行完成'));
+            body.push(chalk.dim(t('cli.label.script')) + chalk.yellow(truncText(String(args.expression), width - 14)));
+        if (toolcall.status === 'running') body.push(chalk.dim(t('cli.execute.running')));
+        else if (toolcall.status === 'success') body.push(chalk.dim(t('cli.execute.success')));
         else if (toolcall.status === 'error' && toolcall.result)
             body.push(chalk.redBright('  ' + truncText(String(toolcall.result), width - 10)));
-        return new Card({ icon: '⚡', title: '执行脚本', status: statusDisplay(toolcall.status), body }).render(width);
+        return new Card({
+            icon: '⚡',
+            title: t('cli.execute.cardTitle'),
+            status: statusDisplay(toolcall.status),
+            body
+        }).render(width);
     }
 
     private async handleExecute(
@@ -947,14 +1027,20 @@ export class BrowserTriggerTool extends BaseTool<typeof BrowserTriggerArgsSchema
     renderToolCallCli(toolcall: ToolCall, width: number): string[] | undefined {
         const args = toolcall.args_object as any;
         const body: string[] = [];
-        if (args?.action) body.push(chalk.dim('  动作: ') + chalk.yellow(truncText(String(args.action), width - 16)));
+        if (args?.action)
+            body.push(chalk.dim(t('cli.label.action')) + chalk.yellow(truncText(String(args.action), width - 16)));
         if (args?.args && Object.keys(args.args).length > 0)
-            body.push(chalk.dim('  参数: ') + chalk.cyan(truncText(JSON.stringify(args.args), width - 16)));
-        if (toolcall.status === 'running') body.push(chalk.dim('  ⏳ 正在触发…'));
-        else if (toolcall.status === 'success') body.push(chalk.dim('  ✓ 已触发'));
+            body.push(chalk.dim(t('cli.label.args')) + chalk.cyan(truncText(JSON.stringify(args.args), width - 16)));
+        if (toolcall.status === 'running') body.push(chalk.dim(t('cli.trigger.running')));
+        else if (toolcall.status === 'success') body.push(chalk.dim(t('cli.trigger.success')));
         else if (toolcall.status === 'error' && toolcall.result)
             body.push(chalk.redBright('  ' + truncText(String(toolcall.result), width - 10)));
-        return new Card({ icon: '🎯', title: '触发动作', status: statusDisplay(toolcall.status), body }).render(width);
+        return new Card({
+            icon: '🎯',
+            title: t('cli.trigger.cardTitle'),
+            status: statusDisplay(toolcall.status),
+            body
+        }).render(width);
     }
 
     private async handleExecute(
@@ -973,8 +1059,8 @@ export class BrowserTriggerTool extends BaseTool<typeof BrowserTriggerArgsSchema
             if (!hint) {
                 return fail(
                     available.length > 0
-                        ? `动作 ${args.action} 在当前页面不可用。可用动作：${available.join(', ')}`
-                        : `动作 ${args.action} 在当前页面不可用：该页面没有任何 Action Hint`
+                        ? t('cli.trigger.unavailableOnPage', { action: args.action, available: available.join(', ') })
+                        : t('cli.trigger.noHints', { action: args.action })
                 );
             }
             const result = await ctrl.evaluate(makeActionInvokeExpression(hint, args.args));
@@ -1013,13 +1099,13 @@ export class BrowserTabsTool extends BaseTool<typeof BrowserTabsArgsSchema> {
         const args = toolcall.args_object as any;
         const body: string[] = [];
         const action = args?.action ?? 'list';
-        body.push(chalk.dim('  操作: ') + chalk.yellow(action));
+        body.push(chalk.dim(t('cli.label.operation')) + chalk.yellow(action));
         if (toolcall.status === 'success' && toolcall.result) {
             try {
                 const r = JSON.parse(toolcall.result);
                 const tabs = r.tabs || [];
                 if (tabs.length > 0) {
-                    body.push(chalk.dim('  标签页数: ') + chalk.green(String(tabs.length)));
+                    body.push(chalk.dim(t('cli.label.tabCount')) + chalk.green(String(tabs.length)));
                     for (const t of tabs.slice(0, 5)) {
                         const mark = t.active ? chalk.green('▸ ') : '  ';
                         body.push(mark + chalk.dim(`[${t.id}] `) + chalk.cyan(truncText(t.title || t.url, width - 20)));
@@ -1031,9 +1117,12 @@ export class BrowserTabsTool extends BaseTool<typeof BrowserTabsArgsSchema> {
         } else if (toolcall.status === 'error' && toolcall.result) {
             body.push(chalk.redBright('  ' + truncText(String(toolcall.result), width - 10)));
         }
-        return new Card({ icon: '📑', title: '标签页管理', status: statusDisplay(toolcall.status), body }).render(
-            width
-        );
+        return new Card({
+            icon: '📑',
+            title: t('cli.tabs.cardTitle'),
+            status: statusDisplay(toolcall.status),
+            body
+        }).render(width);
     }
 
     private async handleExecute(args: z.output<typeof BrowserTabsArgsSchema>, taskState?: TaskState): Promise<string> {
@@ -1072,18 +1161,24 @@ export class BrowserScreenshotTool extends BaseTool<typeof BrowserScreenshotArgs
     renderToolCallCli(toolcall: ToolCall, width: number): string[] | undefined {
         const args = toolcall.args_object as any;
         const body: string[] = [];
-        if (args?.tabId !== undefined) body.push(chalk.dim('  标签页: ') + chalk.yellow(String(args.tabId)));
-        if (toolcall.status === 'running') body.push(chalk.dim('  ⏳ 正在截图…'));
+        if (args?.tabId !== undefined) body.push(chalk.dim(t('cli.label.tab')) + chalk.yellow(String(args.tabId)));
+        if (toolcall.status === 'running') body.push(chalk.dim(t('cli.screenshot.running')));
         else if (toolcall.status === 'success' && toolcall.result) {
             try {
                 const r = JSON.parse(toolcall.result);
-                if (r.path) body.push(chalk.dim('  ✓ 已保存: ') + chalk.cyan(truncText(String(r.path), width - 16)));
+                if (r.path)
+                    body.push(chalk.dim(t('cli.screenshot.saved')) + chalk.cyan(truncText(String(r.path), width - 16)));
             } catch {
                 /* ok */
             }
         } else if (toolcall.status === 'error' && toolcall.result)
             body.push(chalk.redBright('  ' + truncText(String(toolcall.result), width - 10)));
-        return new Card({ icon: '📸', title: '页面截图', status: statusDisplay(toolcall.status), body }).render(width);
+        return new Card({
+            icon: '📸',
+            title: t('cli.screenshot.cardTitle'),
+            status: statusDisplay(toolcall.status),
+            body
+        }).render(width);
     }
 
     private async handleExecute(
@@ -1100,7 +1195,7 @@ export class BrowserScreenshotTool extends BaseTool<typeof BrowserScreenshotArgs
             const dataUri = await ctrl.captureScreenshot();
 
             const match = dataUri.match(/^data:(image\/[a-z0-9.+-]+);base64,(.+)$/);
-            if (!match) return fail(`截图返回了非图片的 data URI: ${dataUri.slice(0, 64)}`);
+            if (!match) return fail(t('cli.screenshot.badDataUri', { uri: dataUri.slice(0, 64) }));
             const ext = match[1].split('/')[1] || 'png';
             const fileName = `screenshot-${Date.now()}-${randomUUID()}.${ext}`;
             const filePath = path.join(getTaskArtifactDirectory(taskId), fileName);
@@ -1140,14 +1235,20 @@ export class BrowserWaitForTool extends BaseTool<typeof BrowserWaitForArgsSchema
     renderToolCallCli(toolcall: ToolCall, width: number): string[] | undefined {
         const args = toolcall.args_object as any;
         const body: string[] = [];
-        if (args?.text) body.push(chalk.dim('  等待文本: ') + chalk.cyan(truncText(String(args.text), width - 16)));
+        if (args?.text)
+            body.push(chalk.dim(t('cli.label.waitText')) + chalk.cyan(truncText(String(args.text), width - 16)));
         if (args?.textGone)
-            body.push(chalk.dim('  等待消失: ') + chalk.cyan(truncText(String(args.textGone), width - 16)));
-        if (toolcall.status === 'running') body.push(chalk.dim('  ⏳ 等待中…'));
-        else if (toolcall.status === 'success') body.push(chalk.dim('  ✓ 条件满足'));
+            body.push(chalk.dim(t('cli.label.waitGone')) + chalk.cyan(truncText(String(args.textGone), width - 16)));
+        if (toolcall.status === 'running') body.push(chalk.dim(t('cli.wait.running')));
+        else if (toolcall.status === 'success') body.push(chalk.dim(t('cli.wait.success')));
         else if (toolcall.status === 'error' && toolcall.result)
             body.push(chalk.redBright('  ' + truncText(String(toolcall.result), width - 10)));
-        return new Card({ icon: '⏳', title: '等待条件', status: statusDisplay(toolcall.status), body }).render(width);
+        return new Card({
+            icon: '⏳',
+            title: t('cli.wait.cardTitle'),
+            status: statusDisplay(toolcall.status),
+            body
+        }).render(width);
     }
 
     private async handleExecute(
@@ -1197,27 +1298,33 @@ export class BrowserDropHistoryTool extends BaseTool<typeof BrowserDropHistoryAr
         const args = toolcall.args_object as any;
         const body: string[] = [];
         if (args?.startTime || args?.endTime) {
-            const start = args.startTime ? new Date(args.startTime).toLocaleString('zh-CN') : '不限';
-            const end = args.endTime ? new Date(args.endTime).toLocaleString('zh-CN') : '不限';
-            body.push(chalk.dim('  时间: ') + chalk.cyan(`${start} ~ ${end}`));
+            const start = args.startTime ? new Date(args.startTime).toLocaleString() : t('cli.deleteHistory.unlimited');
+            const end = args.endTime ? new Date(args.endTime).toLocaleString() : t('cli.deleteHistory.unlimited');
+            body.push(chalk.dim(t('cli.label.time')) + chalk.cyan(`${start} ~ ${end}`));
         }
         if (args?.domains?.length) {
-            body.push(chalk.dim('  域名: ') + chalk.cyan(args.domains.join(', ')));
+            body.push(chalk.dim(t('cli.label.domain')) + chalk.cyan(args.domains.join(', ')));
         }
-        if (toolcall.status === 'running') body.push(chalk.dim('  ⏳ 正在删除…'));
+        if (toolcall.status === 'running') body.push(chalk.dim(t('cli.deleteHistory.running')));
         else if (toolcall.status === 'success') {
             try {
                 const r = JSON.parse(toolcall.result || '{}');
-                body.push(chalk.dim('  ✓ 已删除 ') + chalk.green(`${r.deleted ?? 0} 条记录`));
+                body.push(
+                    chalk.dim('  ✓ ' + t('cli.deleteHistory.success') + ' ') +
+                        chalk.green(t('cli.deleteHistory.deletedCount', { count: r.deleted ?? 0 }))
+                );
             } catch {
-                body.push(chalk.dim('  ✓ 已删除'));
+                body.push(chalk.dim(`  ${t('cli.deleteHistory.success')}`));
             }
         } else if (toolcall.status === 'error' && toolcall.result) {
             body.push(chalk.redBright('  ' + truncText(String(toolcall.result), width - 10)));
         }
-        return new Card({ icon: '🗑️', title: '删除历史记录', status: statusDisplay(toolcall.status), body }).render(
-            width
-        );
+        return new Card({
+            icon: '🗑️',
+            title: t('cli.deleteHistory.cardTitle'),
+            status: statusDisplay(toolcall.status),
+            body
+        }).render(width);
     }
 
     private async handleExecute(
@@ -1225,12 +1332,12 @@ export class BrowserDropHistoryTool extends BaseTool<typeof BrowserDropHistoryAr
         _taskState?: TaskState
     ): Promise<string> {
         if (!args.startTime && !args.endTime && (!args.domains || args.domains.length === 0)) {
-            return fail('至少需要指定一个筛选条件（startTime/endTime 或 domains）');
+            return fail(t('error.deleteHistoryNoFilter'));
         }
 
         const mainWin = BrowserManager.mainWindow;
         if (!mainWin || mainWin.isDestroyed()) {
-            return fail('主窗口不可用，无法操作浏览器历史记录');
+            return fail(t('error.mainWindowUnavailable'));
         }
 
         try {

@@ -135,9 +135,45 @@ function convertCronFieldsToLocal(
 }
 
 /**
- * 格式化 cron 表达式为人类可读描述（自动将 UTC 时间转换为本地时间显示）
+ * describeCron 的可注入文案。dowNames 为裸星期名（index 0=周日），
+ * 前缀（如中文的"周"）由对应模板词条携带；各模板使用 ${param} 占位。
  */
-export function describeCron(cronExpression: string): string {
+export interface CronDescribeLabels {
+    dowNames: string[];
+    everyDowTemplate: string; // '每周${day}' / 'Every ${day}'
+    dowTemplate: string; // '周${day}' / '${day}'
+    monthlyDomTemplate: string; // '每月${day}日' / 'day ${day} of month'
+    monthTemplate: string; // '${month}月' / '${month}'
+    hourTemplate: string; // '${hour}时' / 'hour ${hour}'
+    minuteTemplate: string; // '每小时第${minute}分' / 'minute ${minute} of every hour'
+    everyMinute: string; // '每分钟' / 'every minute'
+}
+
+const DEFAULT_CRON_LABELS: CronDescribeLabels = {
+    dowNames: ['日', '一', '二', '三', '四', '五', '六'],
+    everyDowTemplate: '每周${day}',
+    dowTemplate: '周${day}',
+    monthlyDomTemplate: '每月${day}日',
+    monthTemplate: '${month}月',
+    hourTemplate: '${hour}时',
+    minuteTemplate: '每小时第${minute}分',
+    everyMinute: '每分钟'
+};
+
+function fillTemplate(template: string, params: Record<string, string | number>): string {
+    let text = template;
+    for (const [key, value] of Object.entries(params)) {
+        text = text.replace(new RegExp(`\\$\\{${key}\\}`, 'g'), String(value));
+    }
+    return text;
+}
+
+/**
+ * 格式化 cron 表达式为人类可读描述（自动将 UTC 时间转换为本地时间显示）
+ * @param labels 可选的多语言文案；不传时使用中文默认文案（TUI dashboard 等沿用）
+ */
+export function describeCron(cronExpression: string, labels?: CronDescribeLabels): string {
+    const l = labels ?? DEFAULT_CRON_LABELS;
     const fields = cronExpression.trim().split(/\s+/);
     if (fields.length !== 5) return cronExpression;
 
@@ -146,32 +182,35 @@ export function describeCron(cronExpression: string): string {
     const parts: string[] = [];
 
     if (localDow !== '*') {
-        const dayNames = ['日', '一', '二', '三', '四', '五', '六'];
         if (localDow.includes('-')) {
             const [s, e] = localDow.split('-').map(Number);
-            parts.push(`周${dayNames[s] || s}-${dayNames[e] || e}`);
+            const from = fillTemplate(l.dowTemplate, { day: l.dowNames[s] || s });
+            const to = fillTemplate(l.dowTemplate, { day: l.dowNames[e] || e });
+            parts.push(`${from}-${to}`);
         } else if (localDow.includes(',')) {
-            const days = localDow.split(',').map((d) => `周${dayNames[parseInt(d)] || d}`);
+            const days = localDow
+                .split(',')
+                .map((d) => fillTemplate(l.dowTemplate, { day: l.dowNames[parseInt(d)] || d }));
             parts.push(days.join('/'));
         } else {
-            parts.push(`每周${dayNames[parseInt(localDow)] || localDow}`);
+            parts.push(fillTemplate(l.everyDowTemplate, { day: l.dowNames[parseInt(localDow)] || localDow }));
         }
     }
 
-    if (dom !== '*') parts.push(`每月${dom}日`);
-    if (month !== '*') parts.push(`${month}月`);
+    if (dom !== '*') parts.push(fillTemplate(l.monthlyDomTemplate, { day: dom }));
+    if (month !== '*') parts.push(fillTemplate(l.monthTemplate, { month }));
 
     if (localHour !== '*' && localMinute !== '*') {
         parts.push(`${localHour}:${localMinute.padStart(2, '0')}`);
     } else if (localHour !== '*') {
-        parts.push(`${localHour}时`);
+        parts.push(fillTemplate(l.hourTemplate, { hour: localHour }));
     } else if (localMinute !== '*') {
-        parts.push(`每小时第${localMinute}分`);
+        parts.push(fillTemplate(l.minuteTemplate, { minute: localMinute }));
     }
 
     if (!converted && (hour !== '*' || minute !== '*')) {
         parts.push('(UTC)');
     }
 
-    return parts.length > 0 ? parts.join(' ') : '每分钟';
+    return parts.length > 0 ? parts.join(' ') : l.everyMinute;
 }

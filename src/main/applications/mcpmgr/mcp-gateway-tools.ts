@@ -10,7 +10,7 @@
  */
 
 import { z } from 'zod';
-import { t } from '../../../locale/index.js';
+import { t } from './locale/index.js';
 import { BaseTool } from '../../aikernel/tool.js';
 import type { McpToolInfo } from './common.js';
 
@@ -104,15 +104,15 @@ const MCP_SEARCH_LIMIT_HARD_MAX = 50;
 const MCP_SEARCH_LIMIT_SOFT_MAX = 10;
 
 const McpSearchToolsSchema = z.object({
-    query: z.string().default('').describe(t('mcpmgr.gateway.search.query')),
-    server: z.string().optional().describe(t('mcpmgr.gateway.search.server')),
-    offset: z.number().int().min(0).default(0).describe(t('mcpmgr.gateway.search.offset')),
-    limit: z.number().int().min(1).max(MCP_SEARCH_LIMIT_HARD_MAX).default(5).describe(t('mcpmgr.gateway.search.limit'))
+    query: z.string().default('').describe(t('gateway.search.query')),
+    server: z.string().optional().describe(t('gateway.search.server')),
+    offset: z.number().int().min(0).default(0).describe(t('gateway.search.offset')),
+    limit: z.number().int().min(1).max(MCP_SEARCH_LIMIT_HARD_MAX).default(5).describe(t('gateway.search.limit'))
 });
 
 export class McpSearchToolsTool extends BaseTool<typeof McpSearchToolsSchema> {
     constructor(private readonly tools: readonly McpToolInfo[]) {
-        super('mcpSearchTools', t('mcpmgr.gateway.search.description'), McpSearchToolsSchema);
+        super('mcpSearchTools', t('gateway.search.description'), McpSearchToolsSchema);
         this.setExecutor(this.handleExecute.bind(this));
     }
 
@@ -148,20 +148,20 @@ export class McpSearchToolsTool extends BaseTool<typeof McpSearchToolsSchema> {
             clamped,
             effectiveLimit,
             hint: clamped
-                ? `${t('mcpmgr.gateway.search.hint')} ${t('mcpmgr.gateway.search.clampedHint', { n: String(effectiveLimit) })}`
-                : t('mcpmgr.gateway.search.hint')
+                ? `${t('gateway.search.hint')} ${t('gateway.search.clampedHint', { n: String(effectiveLimit) })}`
+                : t('gateway.search.hint')
         });
     }
 }
 
 const McpGetToolSchema = z.object({
-    serverId: z.string().min(1).describe(t('mcpmgr.gateway.get.serverId')),
-    toolName: z.string().min(1).describe(t('mcpmgr.gateway.get.toolName'))
+    serverId: z.string().min(1).describe(t('gateway.get.serverId')),
+    toolName: z.string().min(1).describe(t('gateway.get.toolName'))
 });
 
 export class McpGetToolTool extends BaseTool<typeof McpGetToolSchema> {
     constructor(private readonly tools: readonly McpToolInfo[]) {
-        super('mcpGetTool', t('mcpmgr.gateway.get.description'), McpGetToolSchema);
+        super('mcpGetTool', t('gateway.get.description'), McpGetToolSchema);
         this.setExecutor(this.handleExecute.bind(this));
     }
 
@@ -171,7 +171,7 @@ export class McpGetToolTool extends BaseTool<typeof McpGetToolSchema> {
         );
         if (!tool) {
             throw new Error(
-                t('mcpmgr.gateway.toolNotFound', {
+                t('gateway.toolNotFound', {
                     serverId: args.serverId,
                     toolName: args.toolName
                 })
@@ -189,9 +189,9 @@ export class McpGetToolTool extends BaseTool<typeof McpGetToolSchema> {
 }
 
 const McpCallToolSchema = z.object({
-    serverId: z.string().min(1).describe(t('mcpmgr.gateway.call.serverId')),
-    toolName: z.string().min(1).describe(t('mcpmgr.gateway.call.toolName')),
-    arguments: z.record(z.string(), z.unknown()).default({}).describe(t('mcpmgr.gateway.call.arguments'))
+    serverId: z.string().min(1).describe(t('gateway.call.serverId')),
+    toolName: z.string().min(1).describe(t('gateway.call.toolName')),
+    arguments: z.record(z.string(), z.unknown()).default({}).describe(t('gateway.call.arguments'))
 });
 
 function unwrapNestedArguments(args: Record<string, unknown>, tool: McpToolInfo): Record<string, unknown> {
@@ -215,14 +215,14 @@ export class McpCallToolTool extends BaseTool<typeof McpCallToolSchema> {
         private readonly tools: readonly McpToolInfo[],
         callTool: (tool: McpToolInfo, args: Record<string, unknown>) => Promise<string>
     ) {
-        super('mcpCallTool', t('mcpmgr.gateway.call.description'), McpCallToolSchema);
+        super('mcpCallTool', t('gateway.call.description'), McpCallToolSchema);
         this.setExecutor(async (args) => {
             const tool = this.tools.find(
                 (candidate) => candidate.serverId === args.serverId && candidate.name === args.toolName
             );
             if (!tool) {
                 throw new Error(
-                    t('mcpmgr.gateway.toolNotFound', {
+                    t('gateway.toolNotFound', {
                         serverId: args.serverId,
                         toolName: args.toolName
                     })

@@ -16,6 +16,7 @@ export { ModelScopeMCPRegistry } from './modelscope.js';
 
 import { type MCPRegistryBase, type SearchOptions, type SearchResult } from './base.js';
 import { MatrixMCPRegistry } from './matrix.js';
+import { t } from '../locale/index.js';
 import { ModelScopeMCPRegistry } from './modelscope.js';
 
 const matrix = new MatrixMCPRegistry();
@@ -29,7 +30,7 @@ export function getRegistry(id: string): MCPRegistryBase | undefined {
 
 export async function searchRegistry(registryId: string, opts: SearchOptions = {}): Promise<SearchResult> {
     const registry = getRegistry(registryId);
-    if (!registry) throw new Error(`未知 MCP Registry: ${registryId}`);
+    if (!registry) throw new Error(t('error.unknownRegistry', { id: registryId }));
     return registry.search(opts);
 }
 

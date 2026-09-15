@@ -15,6 +15,7 @@ import { Card } from '../../tui/components/card';
 import { statusDisplay, truncText } from '../../tui/components/toolcall';
 import chalk from 'chalk';
 import { z } from 'zod';
+import { t } from './locale/index.js';
 import type { McpServerConfig } from './common.js';
 
 const McpTransportSchema = z.enum(['stdio', 'sse', 'streamableHttp']);
@@ -99,26 +100,26 @@ export class InstallMcpServerTool extends BaseTool<typeof InstallMcpServerArgsSc
         const body: string[] = [];
 
         if (name) {
-            body.push(chalk.dim('服务器: ') + chalk.cyan(String(name)));
+            body.push(chalk.dim(t('cli.install.server')) + chalk.cyan(String(name)));
         }
         if (transport) {
-            body.push(chalk.dim('传输: ') + chalk.yellow(String(transport)));
+            body.push(chalk.dim(t('cli.install.transport')) + chalk.yellow(String(transport)));
         }
 
         if (toolcall.status === 'running') {
-            body.push(chalk.dim('  ⏳ 安装中…'));
+            body.push(chalk.dim(`  ⏳ ${t('cli.install.running')}`));
         } else if (toolcall.status === 'success' && toolcall.result) {
             try {
                 const result = JSON.parse(toolcall.result);
                 if (result.alreadyExists) {
-                    body.push(chalk.dim('  ✨ 服务器已存在: ') + chalk.yellow(result.name));
+                    body.push(chalk.dim('  ✨ ' + t('cli.install.exists')) + chalk.yellow(result.name));
                 } else if (result.warning) {
-                    body.push(chalk.dim('  ✓ 安装成功，连接失败: ') + chalk.red(result.warning));
+                    body.push(chalk.dim('  ✓ ' + t('cli.install.successConnectFailed')) + chalk.red(result.warning));
                 } else {
-                    body.push(chalk.dim('  ✓ 安装成功!'));
+                    body.push(chalk.dim(`  ✓ ${t('cli.install.success')}`));
                 }
             } catch {
-                body.push(chalk.dim('  ✓ 安装成功!'));
+                body.push(chalk.dim(`  ✓ ${t('cli.install.success')}`));
             }
         } else if (toolcall.status === 'error' && toolcall.result) {
             body.push(chalk.redBright('  ' + truncText(toolcall.result, width - 10)));
@@ -126,7 +127,7 @@ export class InstallMcpServerTool extends BaseTool<typeof InstallMcpServerArgsSc
 
         return new Card({
             icon: '📦',
-            title: '安装 MCP',
+            title: t('cli.install.cardTitle'),
             status: statusDisplay(toolcall.status),
             body
         }).render(width);
@@ -204,15 +205,15 @@ export class ListMcpServersTool extends BaseTool<typeof ListMcpServersArgsSchema
         const body: string[] = [];
 
         if (toolcall.status === 'running') {
-            body.push(chalk.dim('  ⏳ 加载中…'));
+            body.push(chalk.dim(`  ⏳ ${t('cli.list.loading')}`));
         } else if (toolcall.status === 'success' && toolcall.result) {
             try {
                 const result = JSON.parse(toolcall.result);
                 const servers = Array.isArray(result.servers) ? result.servers : [];
                 if (servers.length === 0) {
-                    body.push(chalk.dim('  暂无已安装的 MCP'));
+                    body.push(chalk.dim(`  ${t('cli.list.empty')}`));
                 } else {
-                    body.push(chalk.dim(`  找到 ${chalk.white(String(servers.length))} 个 MCP:`));
+                    body.push(chalk.dim(`  ${t('cli.list.found', { count: chalk.white(String(servers.length)) })}`));
                     for (const server of servers.slice(0, 5)) {
                         const statusIcon = server.status === 'connected' ? '✓' : server.status === 'error' ? '✗' : '○';
                         const statusColor =
@@ -226,11 +227,11 @@ export class ListMcpServersTool extends BaseTool<typeof ListMcpServersArgsSchema
                         );
                     }
                     if (servers.length > 5) {
-                        body.push(chalk.dim(`    ... 还有 ${servers.length - 5} 个`));
+                        body.push(chalk.dim(`    ${t('cli.list.more', { count: servers.length - 5 })}`));
                     }
                 }
             } catch {
-                body.push(chalk.dim('  ✓ 已获取 MCP 列表'));
+                body.push(chalk.dim(`  ✓ ${t('cli.list.success')}`));
             }
         } else if (toolcall.status === 'error' && toolcall.result) {
             body.push(chalk.redBright('  ' + truncText(toolcall.result, width - 10)));
@@ -238,7 +239,7 @@ export class ListMcpServersTool extends BaseTool<typeof ListMcpServersArgsSchema
 
         return new Card({
             icon: '📋',
-            title: 'MCP 列表',
+            title: t('cli.list.cardTitle'),
             status: statusDisplay(toolcall.status),
             body
         }).render(width);
@@ -551,17 +552,17 @@ export class DeleteMcpServerTool extends BaseTool<typeof DeleteMcpServerArgsSche
         const body: string[] = [];
 
         if (nameOrId) {
-            body.push(chalk.dim('目标: ') + chalk.magenta(String(nameOrId)));
+            body.push(chalk.dim(t('cli.delete.target')) + chalk.magenta(String(nameOrId)));
         }
 
         if (toolcall.status === 'running') {
-            body.push(chalk.dim('  ⏳ 删除中…'));
+            body.push(chalk.dim(`  ⏳ ${t('cli.delete.running')}`));
         } else if (toolcall.status === 'success' && toolcall.result) {
             try {
                 const result = JSON.parse(toolcall.result);
-                body.push(chalk.dim('  ✓ 删除成功: ') + chalk.green(result.name));
+                body.push(chalk.dim('  ✓ ' + t('cli.delete.successWithName')) + chalk.green(result.name));
             } catch {
-                body.push(chalk.dim('  ✓ 删除成功!'));
+                body.push(chalk.dim(`  ✓ ${t('cli.delete.success')}`));
             }
         } else if (toolcall.status === 'error' && toolcall.result) {
             body.push(chalk.redBright('  ' + truncText(toolcall.result, width - 10)));
@@ -569,7 +570,7 @@ export class DeleteMcpServerTool extends BaseTool<typeof DeleteMcpServerArgsSche
 
         return new Card({
             icon: '🗑️',
-            title: '删除 MCP',
+            title: t('cli.delete.cardTitle'),
             status: statusDisplay(toolcall.status),
             body
         }).render(width);
@@ -618,30 +619,37 @@ export class ToggleMcpServerTool extends BaseTool<typeof ToggleMcpServerArgsSche
         const body: string[] = [];
 
         if (nameOrId) {
-            body.push(chalk.dim('目标: ') + chalk.magenta(String(nameOrId)));
+            body.push(chalk.dim(t('cli.delete.target')) + chalk.magenta(String(nameOrId)));
         }
         if (enabled !== undefined) {
-            const statusText = enabled ? chalk.green('启用') : chalk.yellow('禁用');
-            body.push(chalk.dim('操作: ') + statusText);
+            const statusText = enabled ? chalk.green(t('cli.toggle.enable')) : chalk.yellow(t('cli.toggle.disable'));
+            body.push(chalk.dim(t('cli.toggle.operation')) + statusText);
         }
 
         if (toolcall.status === 'running') {
-            body.push(chalk.dim('  ⏳ 执行中…'));
+            body.push(chalk.dim(`  ⏳ ${t('cli.toggle.running')}`));
         } else if (toolcall.status === 'success' && toolcall.result) {
             try {
                 const result = JSON.parse(toolcall.result);
                 const icon = result.enabled ? '✓' : '⏸';
                 const color = result.enabled ? chalk.green : chalk.yellow;
-                body.push(chalk.dim(`  ${icon} `) + color(`${result.name} 已${result.enabled ? '启用' : '禁用'}`));
+                body.push(
+                    chalk.dim(`  ${icon} `) +
+                        color(
+                            t(result.enabled ? 'cli.toggle.result.enabled' : 'cli.toggle.result.disabled', {
+                                name: result.name
+                            })
+                        )
+                );
             } catch {
-                body.push(chalk.dim('  ✓ 操作成功!'));
+                body.push(chalk.dim(`  ✓ ${t('cli.toggle.success')}`));
             }
         } else if (toolcall.status === 'error' && toolcall.result) {
             body.push(chalk.redBright('  ' + truncText(toolcall.result, width - 10)));
         }
 
         const icon = enabled ? '▶️' : '⏸️';
-        const title = enabled ? '启用 MCP' : '禁用 MCP';
+        const title = enabled ? t('cli.toggle.cardTitle.enabled') : t('cli.toggle.cardTitle.disabled');
         return new Card({ icon, title, status: statusDisplay(toolcall.status), body }).render(width);
     }
 

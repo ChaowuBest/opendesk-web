@@ -15,6 +15,7 @@ import { Card } from '../../tui/components/card';
 import { statusDisplay, truncText } from '../../tui/components/toolcall';
 import chalk from 'chalk';
 import { z } from 'zod';
+import { t } from './locale/index.js';
 
 /**
  * MCP 工具类，继承自 BaseTool，提供专门的渲染逻辑
@@ -69,9 +70,9 @@ export class MCPTool<T extends z.ZodType> extends BaseTool<T> {
         const body: string[] = [];
 
         if (toolcall.status === 'running') {
-            body.push(chalk.dim('  ⏳ 执行中…'));
+            body.push(chalk.dim(`  ⏳ ${t('cli.tool.running')}`));
         } else if (toolcall.status === 'success') {
-            body.push(chalk.dim('  ✓ 执行成功'));
+            body.push(chalk.dim(`  ✓ ${t('cli.tool.success')}`));
             if (toolcall.result) {
                 const truncated = truncText(toolcall.result, width - 20);
                 body.push(chalk.dim('  ') + chalk.gray(truncated));

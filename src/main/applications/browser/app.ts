@@ -223,7 +223,7 @@ class BrowserApplication extends BaseApplication {
 
     async getTUIStatusBlock() {
         try {
-            return `🌐 ${chalk.cyan('浏览器就绪')}`;
+            return `🌐 ${chalk.cyan(t('tui.status.ready'))}`;
         } catch {
             return null;
         }
@@ -406,12 +406,12 @@ class BrowserApplication extends BaseApplication {
         const mainWindow = BrowserManager.mainWindow;
         const saveResult = mainWindow
             ? getElectronDialog().showSaveDialogSync(mainWindow, {
-                  title: '保存文件',
+                  title: t('dialog.saveFile'),
                   defaultPath: suggestedFilename,
                   properties: ['createDirectory']
               })
             : getElectronDialog().showSaveDialogSync({
-                  title: '保存文件',
+                  title: t('dialog.saveFile'),
                   defaultPath: suggestedFilename,
                   properties: ['createDirectory']
               });
@@ -575,14 +575,14 @@ class BrowserApplication extends BaseApplication {
         return [
             {
                 name: 'browser',
-                description: '显示浏览器信息',
+                description: t('cli.command.browser.description'),
                 execute: async () => {
                     try {
                         tui.log('');
-                        tui.log(chalk.cyan.bold('🌐 嵌入式浏览器'));
+                        tui.log(chalk.cyan.bold(t('tui.info.title')));
                         tui.log(chalk.dim('──────────────────────────────'));
-                        tui.log('• 浏览器标签位于右侧栏 "浏览器" 选项');
-                        tui.log('• 使用 browser 系列工具进行自动化控制');
+                        tui.log(t('tui.info.tabHint'));
+                        tui.log(t('tui.info.toolsHint'));
                         tui.log('');
                     } catch (err) {
                         logger.error(`浏览器命令执行失败: ${err}`);
@@ -594,11 +594,11 @@ class BrowserApplication extends BaseApplication {
 
     async getSupportedEvents() {
         return [
-            { eventName: 'navigate', eventDescription: '浏览器导航到指定URL' },
-            { eventName: 'goBack', eventDescription: '浏览器后退' },
-            { eventName: 'goForward', eventDescription: '浏览器前进' },
-            { eventName: 'refresh', eventDescription: '浏览器刷新' },
-            { eventName: 'executeScript', eventDescription: '在浏览器中执行JavaScript' }
+            { eventName: 'navigate', eventDescription: t('appEvent.navigate') },
+            { eventName: 'goBack', eventDescription: t('appEvent.goBack') },
+            { eventName: 'goForward', eventDescription: t('appEvent.goForward') },
+            { eventName: 'refresh', eventDescription: t('appEvent.refresh') },
+            { eventName: 'executeScript', eventDescription: t('appEvent.executeScript') }
         ];
     }
 
@@ -751,7 +751,7 @@ class BrowserApplication extends BaseApplication {
             BrowserWindow.getFocusedWindow() ?? BrowserWindow.getAllWindows().find((w) => !w.isDestroyed()) ?? null;
         const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
         const dialogOptions = {
-            title: '保存 Snapshot',
+            title: t('dialog.saveSnapshot'),
             defaultPath: `snapshot-${timestamp}.txt`,
             filters: [
                 { name: 'Text Files', extensions: ['txt'] },
@@ -811,7 +811,7 @@ class BrowserApplication extends BaseApplication {
     async clearBrowserCookies(): Promise<{ success: boolean; message: string }> {
         try {
             const ses = BrowserManager.browserSession;
-            if (!ses) return { success: false, message: '浏览器会话未初始化' };
+            if (!ses) return { success: false, message: t('error.sessionNotInitialized') };
             await ses.cookies.flushStore();
             const cookies = await ses.cookies.get({});
             for (const cookie of cookies) {
@@ -819,7 +819,7 @@ class BrowserApplication extends BaseApplication {
                 await ses.cookies.remove(url, cookie.name);
             }
             await ses.cookies.flushStore();
-            return { success: true, message: `已清除 ${cookies.length} 个 Cookie` };
+            return { success: true, message: t('message.cookiesCleared', { count: cookies.length }) };
         } catch (err: any) {
             logger.error(`清除 Cookies 失败: ${err.message}`);
             return { success: false, message: err.message };
@@ -829,11 +829,11 @@ class BrowserApplication extends BaseApplication {
     async clearBrowserStorage(): Promise<{ success: boolean; message: string }> {
         try {
             const ses = BrowserManager.browserSession;
-            if (!ses) return { success: false, message: '浏览器会话未初始化' };
+            if (!ses) return { success: false, message: t('error.sessionNotInitialized') };
             await ses.clearStorageData({
                 storages: ['localstorage', 'indexdb', 'websql', 'cachestorage', 'serviceworkers']
             });
-            return { success: true, message: '已清除 localStorage / IndexedDB / 缓存存储 / Service Workers' };
+            return { success: true, message: t('message.storageCleared') };
         } catch (err: any) {
             logger.error(`清除存储失败: ${err.message}`);
             return { success: false, message: err.message };
@@ -843,9 +843,9 @@ class BrowserApplication extends BaseApplication {
     async clearBrowserCache(): Promise<{ success: boolean; message: string }> {
         try {
             const ses = BrowserManager.browserSession;
-            if (!ses) return { success: false, message: '浏览器会话未初始化' };
+            if (!ses) return { success: false, message: t('error.sessionNotInitialized') };
             await ses.clearCache();
-            return { success: true, message: '已清除 HTTP 缓存' };
+            return { success: true, message: t('message.cacheCleared') };
         } catch (err: any) {
             logger.error(`清除缓存失败: ${err.message}`);
             return { success: false, message: err.message };
@@ -855,13 +855,13 @@ class BrowserApplication extends BaseApplication {
     async clearAllBrowserData(): Promise<{ success: boolean; message: string }> {
         try {
             const ses = BrowserManager.browserSession;
-            if (!ses) return { success: false, message: '浏览器会话未初始化' };
+            if (!ses) return { success: false, message: t('error.sessionNotInitialized') };
             await ses.clearStorageData({
                 storages: ['cookies', 'localstorage', 'indexdb', 'websql', 'cachestorage', 'serviceworkers', 'autofill']
             });
             await ses.clearCache();
             await ses.clearAuthCache();
-            return { success: true, message: '已清除所有浏览数据' };
+            return { success: true, message: t('message.allDataCleared') };
         } catch (err: any) {
             logger.error(`清除所有数据失败: ${err.message}`);
             return { success: false, message: err.message };
@@ -901,7 +901,7 @@ class BrowserApplication extends BaseApplication {
             const certs = await this.getBrowserCertificates();
 
             if (certs.some((c) => c.fingerprint === certInfo.fingerprint)) {
-                return { success: false, message: '该证书已导入' };
+                return { success: false, message: t('error.certAlreadyImported') };
             }
 
             const certsDir = await this._getCertsDir();
@@ -919,7 +919,7 @@ class BrowserApplication extends BaseApplication {
 
             return {
                 success: true,
-                message: `证书 "${certInfo.commonName}" 已导入。请重启 OpenDesk 以使证书生效。`,
+                message: t('message.certImported', { name: certInfo.commonName }),
                 cert: certInfo
             };
         } catch (err: any) {
@@ -932,7 +932,7 @@ class BrowserApplication extends BaseApplication {
         try {
             let certs = await this.getBrowserCertificates();
             const removed = certs.find((c) => c.fingerprint === fingerprint);
-            if (!removed) return { success: false, message: '证书未找到' };
+            if (!removed) return { success: false, message: t('error.certNotFound') };
 
             certs = certs.filter((c) => c.fingerprint !== fingerprint);
             const storePath = await this._getCertStorePath();
@@ -942,7 +942,7 @@ class BrowserApplication extends BaseApplication {
                 await fs.unlink(removed.filePath).catch(() => {});
             }
 
-            return { success: true, message: `证书 "${removed.commonName}" 已删除。请重启 OpenDesk 以使更改生效。` };
+            return { success: true, message: t('message.certDeleted', { name: removed.commonName }) };
         } catch (err: any) {
             logger.error(`删除证书失败: ${err.message}`);
             return { success: false, message: err.message };
@@ -952,9 +952,9 @@ class BrowserApplication extends BaseApplication {
     async clearAutofillData(): Promise<{ success: boolean; message: string }> {
         try {
             const ses = BrowserManager.browserSession;
-            if (!ses) return { success: false, message: '浏览器会话未初始化' };
+            if (!ses) return { success: false, message: t('error.sessionNotInitialized') };
             await ses.clearStorageData({ storages: ['autofill'] });
-            return { success: true, message: '已清除密码与自动填充数据' };
+            return { success: true, message: t('message.autofillCleared') };
         } catch (err: any) {
             logger.error(`清除自动填充数据失败: ${err.message}`);
             return { success: false, message: err.message };
@@ -1027,10 +1027,10 @@ class BrowserApplication extends BaseApplication {
         const issuer = cert.issuer;
 
         const cnMatch = subject.match(/CN\s*=\s*([^,\n]+)/);
-        const commonName = cnMatch ? cnMatch[1].trim() : '未知';
+        const commonName = cnMatch ? cnMatch[1].trim() : t('common.unknown');
 
         const issuerCnMatch = issuer.match(/CN\s*=\s*([^,\n]+)/);
-        const issuerCN = issuerCnMatch ? issuerCnMatch[1].trim() : '未知';
+        const issuerCN = issuerCnMatch ? issuerCnMatch[1].trim() : t('common.unknown');
 
         return {
             fingerprint,

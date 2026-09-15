@@ -15,6 +15,14 @@ import { escapeHtml } from '../../../../common/utils/escape.js';
 import { OPENDESK_THEME_CHANGED } from '../../../../renderer/theme/theme-iframe-bridge.ts';
 import { syncShadowHostTheme } from '../../../../renderer/theme/theme-shadow-overrides.ts';
 import { showConfirmModal, bindOverlayDismiss } from '../../../../renderer/components/confirmModal';
+import { resolveRendererLocale } from '../../../../renderer/locale.js';
+import { createTranslatorForMcpMgr } from '../locale/renderer.js';
+
+type Translator = ReturnType<typeof createTranslatorForMcpMgr>;
+
+/* 模块级翻译器：供 getAPI/unwrapResult 等脱离实例上下文的工具函数取词，
+   随 widget 应用语言设置而更新 */
+let sharedT: Translator = createTranslatorForMcpMgr();
 
 interface McpServerState {
     id: string;
@@ -80,12 +88,19 @@ const TRANSPORT_LABELS: Record<string, string> = {
     streamableHttp: 'Streamable HTTP'
 };
 
-const STATUS_CONFIG: Record<string, { label: string; colorClass: string; dotClass: string }> = {
-    connected: { label: '已连接', colorClass: 'status-ok', dotClass: 'dot-ok' },
-    connecting: { label: '连接中', colorClass: 'status-warn', dotClass: 'dot-warn' },
-    disconnected: { label: '未连接', colorClass: 'status-muted', dotClass: 'dot-muted' },
-    error: { label: '连接失败', colorClass: 'status-error', dotClass: 'dot-error' }
+const STATUS_STYLES: Record<string, { colorClass: string; dotClass: string }> = {
+    connected: { colorClass: 'status-ok', dotClass: 'dot-ok' },
+    connecting: { colorClass: 'status-warn', dotClass: 'dot-warn' },
+    disconnected: { colorClass: 'status-muted', dotClass: 'dot-muted' },
+    error: { colorClass: 'status-error', dotClass: 'dot-error' }
 };
+
+function getStatusInfo(status: string, t: Translator) {
+    const key =
+        { connected: 'status.connected', connecting: 'status.connecting', error: 'status.error' }[status] ||
+        'status.disconnected';
+    return { ...(STATUS_STYLES[status] || STATUS_STYLES.disconnected), label: t(key) };
+}
 
 const PASTEL_COLORS = [
     { bg: '#EBF3FE', text: '#5B8DEF' },
@@ -543,7 +558,7 @@ button, input, textarea { font: inherit; }
 function unwrapResult<T>(result: unknown): T {
     if (result && typeof result === 'object' && 'status' in result) {
         const wrapped = result as { status?: string; data?: T; message?: string };
-        if (wrapped.status === 'error') throw new Error(wrapped.message || '操作失败');
+        if (wrapped.status === 'error') throw new Error(wrapped.message || sharedT('error.operationFailed'));
         if (wrapped.status === 'ok') return wrapped.data as T;
     }
     return result as T;
@@ -561,6 +576,9 @@ function getAPI() {
 }
 
 class McpMgrEntryWidget extends AgentOperableHTMLElement {
+    private _t: Translator = createTranslatorForMcpMgr();
+    private _locale: string | undefined = undefined;
+    private _settingUnsubscribe: (() => void) | null = null;
     private registries: { id: string; label: string; icon: string; slogan: string }[] = [];
     private activeTab: string = 'installed';
     private servers: McpServerState[] = [];
@@ -593,7 +611,18 @@ class McpMgrEntryWidget extends AgentOperableHTMLElement {
         this._onThemeChange = (e: any) => syncShadowHostTheme(this, e.detail?.effective);
     }
 
-    connectedCallback() {
+    async connectedCallback() {
+        // 先加载语言设置再渲染，避免首帧出现错误语言
+        let setting;
+        try {
+            setting = await (window as any).settingAPI?.loadSettingObject?.();
+        } catch {
+            setting = undefined;
+        }
+        this._applyLocaleSetting(setting);
+        // 等待设置加载期间元素可能已被移除，避免对脱离 DOM 的元素继续渲染
+        if (!this.isConnected) return;
+        this._subscribeLocaleChanges();
         this.render();
         document.addEventListener(OPENDESK_THEME_CHANGED, this._onThemeChange as EventListener);
         this._onServersUpdated = () => this.loadServers();
@@ -608,21 +637,45 @@ class McpMgrEntryWidget extends AgentOperableHTMLElement {
             getAPI().unsubscribe('serversUpdated', this._onServersUpdated);
             this._onServersUpdated = null;
         }
+        if (this._settingUnsubscribe) {
+            this._settingUnsubscribe();
+            this._settingUnsubscribe = null;
+        }
         document.removeEventListener(OPENDESK_THEME_CHANGED, this._onThemeChange as EventListener);
     }
 
+    private _applyLocaleSetting(setting?: { locale?: string; resolved_locale?: string }) {
+        this._locale = resolveRendererLocale(setting);
+        this._t = createTranslatorForMcpMgr(setting);
+        sharedT = this._t;
+    }
+
+    /* 语言设置变化时重建翻译器并按新语言重建界面。
+       打开中的详情/表单弹窗属于用户输入态，原样保留不重建（与日历策略一致） */
+    private _subscribeLocaleChanges() {
+        if (this._settingUnsubscribe) return;
+        const unsubscribe = (window as any).settingAPI?.onSettingChanged?.((setting: any) => {
+            if (!this.isConnected) return;
+            if (resolveRendererLocale(setting) === this._locale) return;
+            const openOverlay = this.shadowRoot?.getElementById('detail-overlay') ?? null;
+            this._applyLocaleSetting(setting);
+            this.render();
+            if (openOverlay) this.shadowRoot?.appendChild(openOverlay);
+        });
+        if (typeof unsubscribe === 'function') {
+            this._settingUnsubscribe = unsubscribe;
+        }
+    }
+
     getAgentInstruct(): string {
-        return (
-            '你是 MCP 管理助手。用户可以通过你添加、管理和使用 MCP（Model Context Protocol）服务。' +
-            '当前页面展示 MCP 广场和用户已安装 MCP 的连接状态、配置与可用工具。'
-        );
+        return this._t('agent.instruct');
     }
 
     getToolset(): RendererToolset {
         const toolset = new RendererToolset('mcpmgr');
         const listTool = new RendererTool(
             'listMcpServers',
-            '获取当前已注册的所有 MCP 的名称、类型、连接状态和可用工具数量',
+            this._t('renderer.tool.listMcpServers.description'),
             z.object({})
         );
         listTool.setExecutor(async () => {
@@ -683,7 +736,7 @@ class McpMgrEntryWidget extends AgentOperableHTMLElement {
             this.servers = await getAPI().callMainWorld<McpServerState[]>('getServersForUI');
         } catch (err: any) {
             this.servers = [];
-            this.serverError = err.message || '加载 MCP 失败';
+            this.serverError = err.message || this._t('error.loadMcpFailed');
         } finally {
             this.loadingServers = false;
             this.render();
@@ -755,7 +808,7 @@ class McpMgrEntryWidget extends AgentOperableHTMLElement {
             state.total = 0;
             state.hasMore = false;
             state.hasSearched = true;
-            state.message = { text: err.message || '搜索失败', isError: true };
+            state.message = { text: err.message || this._t('error.searchFailed'), isError: true };
         } finally {
             state.searching = false;
             // 新搜索才全量重建
@@ -800,9 +853,9 @@ class McpMgrEntryWidget extends AgentOperableHTMLElement {
         const loadingEl = root.getElementById('loading-more');
         if (loadingEl) {
             loadingEl.innerHTML = loading
-                ? '<div class="loading-spinner" style="margin:0 auto 8px;width:20px;height:20px;"></div>加载更多…'
+                ? `<div class="loading-spinner" style="margin:0 auto 8px;width:20px;height:20px;"></div>${escapeHtml(this._t('renderer.mcp.loadingMore'))}`
                 : this.registryState.hasMore
-                  ? '向下滚动加载更多'
+                  ? escapeHtml(this._t('renderer.mcp.scrollForMore'))
                   : '';
         }
         const sentinel = root.querySelector('[data-load-more="registry"]') as HTMLElement | null;
@@ -859,10 +912,13 @@ class McpMgrEntryWidget extends AgentOperableHTMLElement {
         let content = '';
 
         if (state.searching && state.results.length === 0) {
-            content = `<div class="loading-state"><div class="loading-spinner"></div><span>加载中…</span></div>`;
+            content = `<div class="loading-state"><div class="loading-spinner"></div><span>${escapeHtml(this._t('renderer.mcp.loading'))}</span></div>`;
         } else if (state.results.length === 0) {
             const icon = registry?.icon || '◇';
-            content = `<div class="empty-state"><div class="empty-icon">${escapeHtml(icon)}</div><div class="empty-title">${state.hasSearched ? '未找到 MCP' : '暂无 MCP'}</div><div class="empty-hint">可以搜索 ${escapeHtml(label)} 中的 MCP server</div></div>`;
+            const emptyTitle = this._t(
+                state.hasSearched ? 'renderer.mcp.registry.empty.searched' : 'renderer.mcp.registry.empty.default'
+            );
+            content = `<div class="empty-state"><div class="empty-icon">${escapeHtml(icon)}</div><div class="empty-title">${escapeHtml(emptyTitle)}</div><div class="empty-hint">${escapeHtml(this._t('renderer.mcp.registry.empty.hint', { label }))}</div></div>`;
         } else {
             const hero = !state.query ? `<div class="hero-title">${escapeHtml(label)}</div>` : '';
             content = `
@@ -870,7 +926,7 @@ class McpMgrEntryWidget extends AgentOperableHTMLElement {
                 <div class="mcp-grid">
                     ${state.results.map((mcp) => this.renderRegistryCard(mcp)).join('')}
                 </div>
-                ${state.hasMore ? `<div class="loading-more" id="loading-more">${state.loadingMore ? '<div class="loading-spinner" style="margin:0 auto 8px;width:20px;height:20px;"></div>加载更多…' : '向下滚动加载更多'}</div><div class="scroll-sentinel" data-load-more="registry"></div>` : ''}
+                ${state.hasMore ? `<div class="loading-more" id="loading-more">${state.loadingMore ? `<div class="loading-spinner" style="margin:0 auto 8px;width:20px;height:20px;"></div>${escapeHtml(this._t('renderer.mcp.loadingMore'))}` : escapeHtml(this._t('renderer.mcp.scrollForMore'))}</div><div class="scroll-sentinel" data-load-more="registry"></div>` : ''}
             `;
         }
 
@@ -878,10 +934,10 @@ class McpMgrEntryWidget extends AgentOperableHTMLElement {
         <div class="registry-panel">
             <div class="search-bar">
                 <div class="search-input-wrap">
-                    <input type="text" class="search-input" data-search-tab="${escapeHtml(registryId)}" placeholder="搜索 ${escapeHtml(label)}…" value="${escapeHtml(state.query)}" />
-                    <button type="button" class="search-clear" data-clear-tab="${escapeHtml(registryId)}" title="清除搜索">×</button>
+                    <input type="text" class="search-input" data-search-tab="${escapeHtml(registryId)}" placeholder="${escapeHtml(this._t('renderer.mcp.search.placeholder.registry', { label }))}" value="${escapeHtml(state.query)}" />
+                    <button type="button" class="search-clear" data-clear-tab="${escapeHtml(registryId)}" title="${escapeHtml(this._t('renderer.mcp.search.clear'))}">×</button>
                 </div>
-                <button type="button" class="search-btn" data-search-btn="${escapeHtml(registryId)}" ${state.searching ? 'disabled' : ''}>搜索</button>
+                <button type="button" class="search-btn" data-search-btn="${escapeHtml(registryId)}" ${state.searching ? 'disabled' : ''}>${escapeHtml(this._t('renderer.mcp.search.button'))}</button>
             </div>
             ${message}
             ${content}
@@ -912,7 +968,7 @@ class McpMgrEntryWidget extends AgentOperableHTMLElement {
             ${mcp.description ? `<div class="card-desc">${escapeHtml(mcp.description)}</div>` : ''}
             <div class="card-footer">
                 <div class="card-meta">${tagHtml || `<span class="tag-pill tag-gray">${escapeHtml(mcp.source)}</span>`}</div>
-                <button type="button" class="btn btn-primary btn-sm" data-install-registry="${escapeHtml(mcp.id)}" ${!mcp.canInstall || installing ? 'disabled' : ''}>${installing ? '安装中…' : '安装'}</button>
+                <button type="button" class="btn btn-primary btn-sm" data-install-registry="${escapeHtml(mcp.id)}" ${!mcp.canInstall || installing ? 'disabled' : ''}>${installing ? escapeHtml(this._t('renderer.mcp.registry.installing')) : escapeHtml(this._t('renderer.mcp.registry.install'))}</button>
             </div>
         </div>`;
     }
@@ -940,7 +996,7 @@ class McpMgrEntryWidget extends AgentOperableHTMLElement {
 
     private renderInstalledPanel(): string {
         if (this.loadingServers) {
-            return `<div class="registry-panel"><div class="loading-state"><div class="loading-spinner"></div><span>加载中…</span></div></div>`;
+            return `<div class="registry-panel"><div class="loading-state"><div class="loading-spinner"></div><span>${escapeHtml(this._t('renderer.mcp.loading'))}</span></div></div>`;
         }
         if (this.serverError) {
             return `<div class="registry-panel"><div class="empty-state"><div class="empty-icon">!</div><div class="empty-title">${escapeHtml(this.serverError)}</div></div></div>`;
@@ -948,26 +1004,26 @@ class McpMgrEntryWidget extends AgentOperableHTMLElement {
         const filtered = this.getFilteredServers();
         const content =
             this.servers.length === 0
-                ? `<div class="empty-state"><div class="empty-icon">◇</div><div class="empty-title">暂无已安装 MCP</div><div class="empty-hint">可从 Matrix MCPs 安装，或点击右上角添加</div></div>`
+                ? `<div class="empty-state"><div class="empty-icon">◇</div><div class="empty-title">${escapeHtml(this._t('renderer.mcp.installed.empty.title'))}</div><div class="empty-hint">${escapeHtml(this._t('renderer.mcp.installed.empty.hint'))}</div></div>`
                 : filtered.length === 0
-                  ? `<div class="empty-state"><div class="empty-icon">⌕</div><div class="empty-title">未找到匹配的 MCP</div><div class="empty-hint">换个关键词试试</div></div>`
-                  : `<div class="hero-title">已安装 ${this.servers.length} 个 MCP</div><div class="mcp-grid">${filtered.map((server) => this.renderInstalledCard(server)).join('')}</div>`;
+                  ? `<div class="empty-state"><div class="empty-icon">⌕</div><div class="empty-title">${escapeHtml(this._t('renderer.mcp.installed.filter.empty.title'))}</div><div class="empty-hint">${escapeHtml(this._t('renderer.mcp.installed.filter.empty.hint'))}</div></div>`
+                  : `<div class="hero-title">${escapeHtml(this._t('renderer.mcp.installed.count', { count: this.servers.length }))}</div><div class="mcp-grid">${filtered.map((server) => this.renderInstalledCard(server)).join('')}</div>`;
 
         return `
         <div class="registry-panel">
             <div class="search-bar">
                 <div class="search-input-wrap">
-                    <input type="text" class="search-input" data-search-tab="installed" placeholder="搜索已安装 MCP…" value="${escapeHtml(this.installedQuery)}" />
-                    <button type="button" class="search-clear" data-clear-tab="installed" title="清除搜索">×</button>
+                    <input type="text" class="search-input" data-search-tab="installed" placeholder="${escapeHtml(this._t('renderer.mcp.search.placeholder.installed'))}" value="${escapeHtml(this.installedQuery)}" />
+                    <button type="button" class="search-clear" data-clear-tab="installed" title="${escapeHtml(this._t('renderer.mcp.search.clear'))}">×</button>
                 </div>
-                <button type="button" class="search-btn" data-search-btn="installed">搜索</button>
+                <button type="button" class="search-btn" data-search-btn="installed">${escapeHtml(this._t('renderer.mcp.search.button'))}</button>
             </div>
             ${content}
         </div>`;
     }
 
     private renderInstalledCard(server: McpServerState): string {
-        const status = STATUS_CONFIG[server.status] || STATUS_CONFIG.disconnected;
+        const status = getStatusInfo(server.status, this._t);
         const desc =
             server.transport === 'stdio'
                 ? `${server.command || ''} ${(server.args || []).join(' ')}`.trim()
@@ -977,10 +1033,10 @@ class McpMgrEntryWidget extends AgentOperableHTMLElement {
         const toggleError = server.enabled && server.status === 'error';
         const toggleClass = toggleError ? ' mcp-toggle-warn' : '';
         const toggleTitle = toggleError
-            ? '已启用但连接失败，点击禁用'
+            ? this._t('renderer.mcp.card.toggle.errorHint')
             : server.enabled
-              ? '已启用，点击禁用'
-              : '已禁用，点击启用';
+              ? this._t('renderer.mcp.card.toggle.disableHint')
+              : this._t('renderer.mcp.card.toggle.enableHint');
         const scopeControl = server.readOnly
             ? `<span class="tag-pill tag-gray">${escapeHtml(server.source || server.providerId || '')}</span>`
             : server.agentIds !== undefined
@@ -999,7 +1055,7 @@ class McpMgrEntryWidget extends AgentOperableHTMLElement {
                     <div class="card-subtitle">${escapeHtml(desc || TRANSPORT_LABELS[server.transport] || server.transport)}</div>
                 </div>
             </div>
-            ${server.error ? `<div class="card-desc status-error">${escapeHtml(server.error)}</div>` : `<div class="card-desc">${server.tools?.length || 0} 个工具${server.lastToolsChangedAt ? '，已响应工具列表变更通知' : ''}</div>`}
+            ${server.error ? `<div class="card-desc status-error">${escapeHtml(server.error)}</div>` : `<div class="card-desc">${escapeHtml(this._t('renderer.mcp.card.toolsCount', { count: server.tools?.length || 0 }))}${server.lastToolsChangedAt ? escapeHtml(this._t('renderer.mcp.card.toolsChangedSuffix')) : ''}</div>`}
             <div class="card-footer">
                 <div class="card-meta">
                     <span class="tag-pill tag-blue">${escapeHtml(TRANSPORT_LABELS[server.transport] || server.transport)}</span>
@@ -1026,20 +1082,20 @@ class McpMgrEntryWidget extends AgentOperableHTMLElement {
             .join('');
         const tabsHtml =
             registryTabs +
-            `<button type="button" class="seg-item ${this.activeTab === 'installed' ? 'active' : ''}" data-tab="installed"><span class="seg-icon">▣</span> 已安装MCP${this.servers.length > 0 ? ` <span class="seg-badge">${this.servers.length}</span>` : ''}</button>`;
+            `<button type="button" class="seg-item ${this.activeTab === 'installed' ? 'active' : ''}" data-tab="installed"><span class="seg-icon">▣</span> ${escapeHtml(this._t('renderer.mcp.tab.installed'))}${this.servers.length > 0 ? ` <span class="seg-badge">${this.servers.length}</span>` : ''}</button>`;
 
         this.shadowRoot!.innerHTML = `
         <style>${STYLE}</style>
         <div class="header-area">
-            <div class="header-title">MCP管理</div>
+            <div class="header-title">${escapeHtml(this._t('renderer.mcp.title'))}</div>
             <div class="seg-row">
                 <div class="seg-control-container">
                     <div class="seg-control">${tabsHtml}</div>
                 </div>
                 <div class="header-actions">
-                    <button type="button" class="action-btn" id="refresh-btn" title="刷新">↻</button>
-                    <button type="button" class="action-btn" id="import-btn" title="导入 JSON">⇪</button>
-                    <button type="button" class="action-btn" id="add-btn" title="添加 MCP">+</button>
+                    <button type="button" class="action-btn" id="refresh-btn" title="${escapeHtml(this._t('renderer.mcp.action.refresh'))}">↻</button>
+                    <button type="button" class="action-btn" id="import-btn" title="${escapeHtml(this._t('renderer.mcp.action.import'))}">⇪</button>
+                    <button type="button" class="action-btn" id="add-btn" title="${escapeHtml(this._t('renderer.mcp.action.add'))}">+</button>
                 </div>
             </div>
         </div>
@@ -1160,7 +1216,7 @@ class McpMgrEntryWidget extends AgentOperableHTMLElement {
     private buildMetaGrid(items: { label: string; value?: string | number | boolean }[]): string {
         const filtered = items.filter((item) => item.value !== undefined && item.value !== '');
         if (filtered.length === 0) return '';
-        return `<div class="detail-section"><div class="detail-section-label">元信息</div><div class="detail-meta-grid">${filtered
+        return `<div class="detail-section"><div class="detail-section-label">${escapeHtml(this._t('renderer.mcp.detail.section.meta'))}</div><div class="detail-meta-grid">${filtered
             .map(
                 (item) =>
                     `<div class="detail-meta-item"><div class="meta-label">${escapeHtml(item.label)}</div><div class="meta-value">${escapeHtml(String(item.value))}</div></div>`
@@ -1172,25 +1228,25 @@ class McpMgrEntryWidget extends AgentOperableHTMLElement {
         const mcp = this.registryState.results.find((item) => item.id === id);
         if (!mcp) return;
         const meta = this.buildMetaGrid([
-            { label: '来源', value: mcp.source },
-            { label: '作者', value: mcp.author },
-            { label: '部署类型', value: mcp.deployType },
-            { label: '仓库', value: mcp.repository },
-            { label: '下载', value: mcp.downloads },
-            { label: '收藏', value: mcp.stars },
-            { label: '浏览', value: mcp.views },
-            { label: '更新时间', value: mcp.updateTime }
+            { label: this._t('renderer.mcp.detail.meta.source'), value: mcp.source },
+            { label: this._t('renderer.mcp.detail.meta.author'), value: mcp.author },
+            { label: this._t('renderer.mcp.detail.meta.deployType'), value: mcp.deployType },
+            { label: this._t('renderer.mcp.detail.meta.repository'), value: mcp.repository },
+            { label: this._t('renderer.mcp.detail.meta.downloads'), value: mcp.downloads },
+            { label: this._t('renderer.mcp.detail.meta.stars'), value: mcp.stars },
+            { label: this._t('renderer.mcp.detail.meta.views'), value: mcp.views },
+            { label: this._t('renderer.mcp.detail.meta.updated'), value: mcp.updateTime }
         ]);
         const configHtml = mcp.configuration
-            ? `<div class="detail-section"><div class="detail-section-label">MCP 配置</div><pre class="detail-code">${escapeHtml(mcp.configuration)}</pre></div>`
+            ? `<div class="detail-section"><div class="detail-section-label">${escapeHtml(this._t('renderer.mcp.detail.section.config'))}</div><pre class="detail-code">${escapeHtml(mcp.configuration)}</pre></div>`
             : '';
-        const footer = `<button type="button" class="btn btn-sm" id="detail-close-secondary">关闭</button><button type="button" class="btn btn-primary btn-sm" id="detail-install-registry" ${!mcp.canInstall ? 'disabled' : ''}>安装 MCP</button>`;
+        const footer = `<button type="button" class="btn btn-sm" id="detail-close-secondary">${escapeHtml(this._t('renderer.mcp.detail.close'))}</button><button type="button" class="btn btn-primary btn-sm" id="detail-install-registry" ${!mcp.canInstall ? 'disabled' : ''}>${escapeHtml(this._t('renderer.mcp.detail.installMcp'))}</button>`;
         this.showDetailDialog({
             title: mcp.displayName || mcp.name || mcp.id,
             subtitle: mcp.name || mcp.id,
             iconName: mcp.name || mcp.id,
             logo: mcp.logo,
-            body: `${mcp.description ? `<div class="detail-section"><div class="detail-section-label">简介</div><div class="detail-desc">${escapeHtml(mcp.description)}</div></div>` : ''}${meta}${configHtml}`,
+            body: `${mcp.description ? `<div class="detail-section"><div class="detail-section-label">${escapeHtml(this._t('renderer.mcp.detail.section.intro'))}</div><div class="detail-desc">${escapeHtml(mcp.description)}</div></div>` : ''}${meta}${configHtml}`,
             footer,
             onBind: (overlay) => {
                 overlay.querySelector('#detail-install-registry')?.addEventListener('click', () => {
@@ -1205,45 +1261,51 @@ class McpMgrEntryWidget extends AgentOperableHTMLElement {
         const server = this.servers.find((item) => item.id === id);
         if (!server) return;
         this.selectedServerId = id;
-        const status = STATUS_CONFIG[server.status] || STATUS_CONFIG.disconnected;
+        const status = getStatusInfo(server.status, this._t);
         const envEntries = Object.entries(server.env || {});
         const headerEntries = Object.entries(server.headers || {});
         const meta = this.buildMetaGrid([
-            { label: '传输', value: TRANSPORT_LABELS[server.transport] || server.transport },
-            { label: '状态', value: status.label },
-            { label: '启用', value: server.enabled ? '是' : '否' },
-            { label: '来源', value: server.source },
+            {
+                label: this._t('renderer.mcp.detail.meta.transport'),
+                value: TRANSPORT_LABELS[server.transport] || server.transport
+            },
+            { label: this._t('renderer.mcp.detail.meta.status'), value: status.label },
+            {
+                label: this._t('renderer.mcp.detail.meta.enabled'),
+                value: server.enabled ? this._t('renderer.mcp.detail.meta.yes') : this._t('renderer.mcp.detail.meta.no')
+            },
+            { label: this._t('renderer.mcp.detail.meta.source'), value: server.source },
             { label: 'Agent ID', value: server.agentIds?.join(', ') },
-            { label: '工具数量', value: server.tools?.length || 0 },
-            { label: '通知刷新次数', value: server.toolsChangedCount },
-            { label: '最近工具变更', value: server.lastToolsChangedAt }
+            { label: this._t('renderer.mcp.detail.meta.toolCount'), value: server.tools?.length || 0 },
+            { label: this._t('renderer.mcp.detail.meta.refreshCount'), value: server.toolsChangedCount },
+            { label: this._t('renderer.mcp.detail.meta.lastToolChange'), value: server.lastToolsChangedAt }
         ]);
         const commandHtml =
             server.transport === 'stdio'
-                ? `<div class="detail-section"><div class="detail-section-label">命令</div><pre class="detail-code">${escapeHtml(`${server.command || ''} ${(server.args || []).join(' ')}`.trim())}</pre></div>${server.cwd ? `<div class="detail-section"><div class="detail-section-label">工作目录</div><pre class="detail-code">${escapeHtml(server.cwd)}</pre></div>` : ''}`
+                ? `<div class="detail-section"><div class="detail-section-label">${escapeHtml(this._t('renderer.mcp.detail.section.command'))}</div><pre class="detail-code">${escapeHtml(`${server.command || ''} ${(server.args || []).join(' ')}`.trim())}</pre></div>${server.cwd ? `<div class="detail-section"><div class="detail-section-label">${escapeHtml(this._t('renderer.mcp.detail.section.cwd'))}</div><pre class="detail-code">${escapeHtml(server.cwd)}</pre></div>` : ''}`
                 : `<div class="detail-section"><div class="detail-section-label">URL</div><pre class="detail-code">${escapeHtml(server.url || '-')}</pre></div>`;
         const envHtml =
             envEntries.length > 0
-                ? `<div class="detail-section"><div class="detail-section-label">环境变量</div><pre class="detail-code">${escapeHtml(envEntries.map(([key, value]) => `${key}=${value}`).join('\n'))}</pre></div>`
+                ? `<div class="detail-section"><div class="detail-section-label">${escapeHtml(this._t('renderer.mcp.detail.section.env'))}</div><pre class="detail-code">${escapeHtml(envEntries.map(([key, value]) => `${key}=${value}`).join('\n'))}</pre></div>`
                 : '';
         const headerHtml =
             headerEntries.length > 0
-                ? `<div class="detail-section"><div class="detail-section-label">请求头</div><pre class="detail-code">${escapeHtml(headerEntries.map(([key, value]) => `${key}: ${value}`).join('\n'))}</pre></div>`
+                ? `<div class="detail-section"><div class="detail-section-label">${escapeHtml(this._t('renderer.mcp.detail.section.headers'))}</div><pre class="detail-code">${escapeHtml(headerEntries.map(([key, value]) => `${key}: ${value}`).join('\n'))}</pre></div>`
                 : '';
         const errorHtml = server.error
-            ? `<div class="detail-section"><div class="detail-section-label">错误</div><div class="detail-desc status-error">${escapeHtml(server.error)}</div></div>`
+            ? `<div class="detail-section"><div class="detail-section-label">${escapeHtml(this._t('renderer.mcp.detail.section.error'))}</div><div class="detail-desc status-error">${escapeHtml(server.error)}</div></div>`
             : '';
         const toolsHtml = this.renderTools(server.tools || []);
         const mutableActions =
             server.agentIds === undefined
-                ? '<button type="button" class="btn btn-sm" id="detail-edit">编辑</button><button type="button" class="btn btn-danger btn-sm" id="detail-delete">删除</button>'
+                ? `<button type="button" class="btn btn-sm" id="detail-edit">${escapeHtml(this._t('renderer.mcp.detail.edit'))}</button><button type="button" class="btn btn-danger btn-sm" id="detail-delete">${escapeHtml(this._t('renderer.mcp.detail.delete'))}</button>`
                 : '';
         const footer = server.readOnly
-            ? '<button type="button" class="btn btn-sm" id="detail-close-secondary">完成</button>'
+            ? `<button type="button" class="btn btn-sm" id="detail-close-secondary">${escapeHtml(this._t('renderer.mcp.detail.done'))}</button>`
             : `
-                ${server.status === 'connected' || server.status === 'error' ? '<button type="button" class="btn btn-sm" id="detail-reconnect">重新连接</button>' : ''}
+                ${server.status === 'connected' || server.status === 'error' ? `<button type="button" class="btn btn-sm" id="detail-reconnect">${escapeHtml(this._t('renderer.mcp.detail.reconnect'))}</button>` : ''}
                 ${mutableActions}
-                <button type="button" class="btn btn-sm" id="detail-close-secondary">完成</button>`;
+                <button type="button" class="btn btn-sm" id="detail-close-secondary">${escapeHtml(this._t('renderer.mcp.detail.done'))}</button>`;
 
         this.showDetailDialog({
             title: server.name,
@@ -1269,9 +1331,9 @@ class McpMgrEntryWidget extends AgentOperableHTMLElement {
 
     private renderTools(tools: { name: string; description: string; inputSchema?: object }[]): string {
         if (tools.length === 0) {
-            return `<div class="detail-section"><div class="detail-section-label">可用工具</div><div class="empty-state" style="padding:24px 20px"><div class="empty-title">暂无工具</div></div></div>`;
+            return `<div class="detail-section"><div class="detail-section-label">${escapeHtml(this._t('renderer.mcp.detail.section.tools'))}</div><div class="empty-state" style="padding:24px 20px"><div class="empty-title">${escapeHtml(this._t('renderer.mcp.detail.tools.empty'))}</div></div></div>`;
         }
-        return `<div class="detail-section"><div class="detail-section-label">可用工具 (${tools.length})</div><div class="detail-tools-list">${tools
+        return `<div class="detail-section"><div class="detail-section-label">${escapeHtml(this._t('renderer.mcp.detail.section.toolsWithCount', { count: tools.length }))}</div><div class="detail-tools-list">${tools
             .map((tool) => {
                 const schema = tool.inputSchema as any;
                 const properties = schema?.properties || {};
@@ -1335,16 +1397,16 @@ class McpMgrEntryWidget extends AgentOperableHTMLElement {
             .join('\n');
         const renderEnvItems = () => {
             if (envEntries.length === 0) {
-                return '<div class="env-empty-hint">暂无环境变量</div>';
+                return `<div class="env-empty-hint">${escapeHtml(this._t('renderer.mcp.env.empty'))}</div>`;
             }
             return envEntries
                 .map(
                     ([key, value]) => `
                 <div class="env-item">
-                    <input type="text" class="env-key-input" value="${escapeHtml(key)}" placeholder="变量名" />
+                    <input type="text" class="env-key-input" value="${escapeHtml(key)}" placeholder="${escapeHtml(this._t('renderer.mcp.env.keyPlaceholder'))}" />
                     <span class="env-sep">=</span>
-                    <input type="text" class="env-value-input" value="${escapeHtml(value)}" placeholder="变量值" />
-                    <button type="button" class="env-remove-btn" title="移除">×</button>
+                    <input type="text" class="env-value-input" value="${escapeHtml(value)}" placeholder="${escapeHtml(this._t('renderer.mcp.env.valuePlaceholder'))}" />
+                    <button type="button" class="env-remove-btn" title="${escapeHtml(this._t('renderer.mcp.env.remove'))}">×</button>
                 </div>`
                 )
                 .join('');
@@ -1353,11 +1415,11 @@ class McpMgrEntryWidget extends AgentOperableHTMLElement {
         const body = `
         <form id="server-form" class="form-body">
             <div class="form-row">
-                <label>名称</label>
-                <input id="f-name" value="${escapeHtml(server?.name || '')}" placeholder="例如 filesystem" />
+                <label>${escapeHtml(this._t('renderer.mcp.form.name'))}</label>
+                <input id="f-name" value="${escapeHtml(server?.name || '')}" placeholder="${escapeHtml(this._t('renderer.mcp.form.name.placeholder'))}" />
             </div>
             <div class="form-row">
-                <label>传输方式</label>
+                <label>${escapeHtml(this._t('renderer.mcp.form.transport'))}</label>
                 <div class="transport-options">
                     ${(['stdio', 'sse', 'streamableHttp'] as const)
                         .map(
@@ -1368,25 +1430,25 @@ class McpMgrEntryWidget extends AgentOperableHTMLElement {
                 </div>
             </div>
             <div id="fields-stdio" class="form-body" style="${transport === 'stdio' ? '' : 'display:none'}">
-                <div class="form-row"><label>命令</label><input id="f-command" value="${escapeHtml(server?.command || '')}" placeholder="npx / node / python / uvx" /></div>
-                <div class="form-row"><label>参数（每行一个）</label><textarea id="f-args" rows="3">${escapeHtml((server?.args || []).join('\n'))}</textarea></div>
-                <div class="form-row"><label>工作目录（可选）</label><input id="f-cwd" value="${escapeHtml(server?.cwd || '')}" /></div>
+                <div class="form-row"><label>${escapeHtml(this._t('renderer.mcp.form.command'))}</label><input id="f-command" value="${escapeHtml(server?.command || '')}" placeholder="npx / node / python / uvx" /></div>
+                <div class="form-row"><label>${escapeHtml(this._t('renderer.mcp.form.args'))}</label><textarea id="f-args" rows="3">${escapeHtml((server?.args || []).join('\n'))}</textarea></div>
+                <div class="form-row"><label>${escapeHtml(this._t('renderer.mcp.form.cwd'))}</label><input id="f-cwd" value="${escapeHtml(server?.cwd || '')}" /></div>
                 <div class="form-row">
-                    <label>环境变量</label>
+                    <label>${escapeHtml(this._t('renderer.mcp.form.env'))}</label>
                     <div id="env-list" class="env-list">${renderEnvItems()}</div>
-                    <button type="button" id="add-env-btn" class="env-add-btn">+ 添加环境变量</button>
+                    <button type="button" id="add-env-btn" class="env-add-btn">${escapeHtml(this._t('renderer.mcp.form.addEnv'))}</button>
                 </div>
             </div>
             <div id="fields-http" class="form-body" style="${transport === 'stdio' ? 'display:none' : ''}">
                 <div class="form-row"><label>URL</label><input id="f-url" value="${escapeHtml(server?.url || '')}" placeholder="https://example.com/mcp" /></div>
-                <div class="form-row"><label>请求头（Key: Value）</label><textarea id="f-headers" rows="2">${escapeHtml(headerText)}</textarea></div>
+                <div class="form-row"><label>${escapeHtml(this._t('renderer.mcp.form.headers'))}</label><textarea id="f-headers" rows="2">${escapeHtml(headerText)}</textarea></div>
             </div>
             <div id="form-error" class="form-error"></div>
         </form>`;
-        const footer = `<button type="button" class="btn btn-sm" id="detail-close-secondary">取消</button><button type="submit" form="server-form" class="btn btn-primary btn-sm" ${this.saving ? 'disabled' : ''}>${mode === 'add' ? '添加' : '保存'}</button>`;
+        const footer = `<button type="button" class="btn btn-sm" id="detail-close-secondary">${escapeHtml(this._t('renderer.mcp.form.cancel'))}</button><button type="submit" form="server-form" class="btn btn-primary btn-sm" ${this.saving ? 'disabled' : ''}>${mode === 'add' ? escapeHtml(this._t('renderer.mcp.form.add')) : escapeHtml(this._t('renderer.mcp.form.save'))}</button>`;
         this.showDetailDialog({
-            title: mode === 'add' ? '添加 MCP' : '编辑 MCP',
-            subtitle: mode === 'add' ? '手动配置 MCP server' : server?.id,
+            title: mode === 'add' ? this._t('renderer.mcp.form.addTitle') : this._t('renderer.mcp.form.editTitle'),
+            subtitle: mode === 'add' ? this._t('renderer.mcp.form.addSubtitle') : server?.id,
             iconName: server?.name || 'MCP',
             body,
             footer,
@@ -1428,10 +1490,10 @@ class McpMgrEntryWidget extends AgentOperableHTMLElement {
         const item = document.createElement('div');
         item.className = 'env-item';
         item.innerHTML = `
-            <input type="text" class="env-key-input" placeholder="变量名" />
+            <input type="text" class="env-key-input" placeholder="${escapeHtml(this._t('renderer.mcp.env.keyPlaceholder'))}" />
             <span class="env-sep">=</span>
-            <input type="text" class="env-value-input" placeholder="变量值" />
-            <button type="button" class="env-remove-btn" title="移除">×</button>`;
+            <input type="text" class="env-value-input" placeholder="${escapeHtml(this._t('renderer.mcp.env.valuePlaceholder'))}" />
+            <button type="button" class="env-remove-btn" title="${escapeHtml(this._t('renderer.mcp.env.remove'))}">×</button>`;
         envList.appendChild(item);
         this.refreshEnvEmptyHint(envList);
     }
@@ -1444,7 +1506,7 @@ class McpMgrEntryWidget extends AgentOperableHTMLElement {
         } else if (!hasItems && !existing) {
             const hint = document.createElement('div');
             hint.className = 'env-empty-hint';
-            hint.textContent = '暂无环境变量';
+            hint.textContent = this._t('renderer.mcp.env.empty');
             envList.appendChild(hint);
         }
     }
@@ -1453,17 +1515,17 @@ class McpMgrEntryWidget extends AgentOperableHTMLElement {
         const body = `
         <form id="import-form" class="form-body">
             <div class="detail-section" style="margin:0">
-                <div class="detail-desc">粘贴 Claude Desktop、Cursor 等工具的 MCP 配置 JSON。</div>
+                <div class="detail-desc">${escapeHtml(this._t('renderer.mcp.import.desc'))}</div>
             </div>
             <div class="form-row">
-                <label>JSON 配置</label>
+                <label>${escapeHtml(this._t('renderer.mcp.import.label'))}</label>
                 <textarea id="f-import-json" rows="9" placeholder='{ "mcpServers": { "server-name": { "command": "npx", "args": [] } } }'></textarea>
             </div>
             <div id="import-error" class="form-error"></div>
         </form>`;
-        const footer = `<button type="button" class="btn btn-sm" id="detail-close-secondary">取消</button><button type="submit" form="import-form" class="btn btn-primary btn-sm">导入</button>`;
+        const footer = `<button type="button" class="btn btn-sm" id="detail-close-secondary">${escapeHtml(this._t('renderer.mcp.form.cancel'))}</button><button type="submit" form="import-form" class="btn btn-primary btn-sm">${escapeHtml(this._t('renderer.mcp.import.button'))}</button>`;
         this.showDetailDialog({
-            title: '导入 MCP 配置',
+            title: this._t('renderer.mcp.import.title'),
             subtitle: 'JSON',
             iconName: 'MCP',
             body,
@@ -1476,7 +1538,7 @@ class McpMgrEntryWidget extends AgentOperableHTMLElement {
                     const value = (overlay.querySelector('#f-import-json') as HTMLTextAreaElement).value.trim();
                     const error = overlay.querySelector('#import-error') as HTMLElement;
                     if (!value) {
-                        error.textContent = '请粘贴 JSON 配置';
+                        error.textContent = this._t('renderer.mcp.import.emptyError');
                         error.classList.add('visible');
                         return;
                     }
@@ -1485,7 +1547,7 @@ class McpMgrEntryWidget extends AgentOperableHTMLElement {
                         this.removeDetailDialog();
                         await this.loadServers();
                     } catch (err: any) {
-                        error.textContent = err.message || '导入失败';
+                        error.textContent = err.message || this._t('renderer.mcp.import.failed');
                         error.classList.add('visible');
                     }
                 });
@@ -1510,7 +1572,7 @@ class McpMgrEntryWidget extends AgentOperableHTMLElement {
         const transport = (overlay.querySelector('input[name="transport"]:checked') as HTMLInputElement)
             ?.value as McpServerState['transport'];
         if (!name) {
-            error.textContent = '请输入名称';
+            error.textContent = this._t('renderer.mcp.form.error.nameRequired');
             error.classList.add('visible');
             return;
         }
@@ -1518,7 +1580,7 @@ class McpMgrEntryWidget extends AgentOperableHTMLElement {
         if (transport === 'stdio') {
             const command = (overlay.querySelector('#f-command') as HTMLInputElement).value.trim();
             if (!command) {
-                error.textContent = '请输入命令';
+                error.textContent = this._t('renderer.mcp.form.error.commandRequired');
                 error.classList.add('visible');
                 return;
             }
@@ -1532,7 +1594,7 @@ class McpMgrEntryWidget extends AgentOperableHTMLElement {
         } else {
             const url = (overlay.querySelector('#f-url') as HTMLInputElement).value.trim();
             if (!url) {
-                error.textContent = '请输入 URL';
+                error.textContent = this._t('renderer.mcp.form.error.urlRequired');
                 error.classList.add('visible');
                 return;
             }
@@ -1558,7 +1620,7 @@ class McpMgrEntryWidget extends AgentOperableHTMLElement {
             this.removeDetailDialog();
             await this.loadServers();
         } catch (err: any) {
-            error.textContent = err.message || '保存失败';
+            error.textContent = err.message || this._t('renderer.mcp.form.error.saveFailed');
             error.classList.add('visible');
         } finally {
             this.saving = false;
@@ -1579,9 +1641,9 @@ class McpMgrEntryWidget extends AgentOperableHTMLElement {
                 icon: 'fa-circle-xmark',
                 iconBg: '#FEF2F2',
                 iconColor: '#DC2626',
-                title: '安装失败',
+                title: this._t('renderer.mcp.confirm.installFailed.title'),
                 message: escapeHtml(err.message || err),
-                confirmText: '我知道了',
+                confirmText: this._t('renderer.mcp.confirm.acknowledge'),
                 cancelText: null,
                 mountTarget: this.shadowRoot!
             });
@@ -1598,10 +1660,10 @@ class McpMgrEntryWidget extends AgentOperableHTMLElement {
             icon: 'fa-trash-can',
             iconBg: '#FEF2F2',
             iconColor: '#DC2626',
-            title: '删除 MCP',
-            message: `确定要删除 MCP「<b>${escapeHtml(server.name)}</b>」吗？`,
-            confirmText: '删除',
-            cancelText: '取消',
+            title: this._t('renderer.mcp.confirm.delete.title'),
+            message: this._t('renderer.mcp.confirm.delete.message', { name: escapeHtml(server.name) }),
+            confirmText: this._t('renderer.mcp.detail.delete'),
+            cancelText: this._t('renderer.mcp.form.cancel'),
             danger: true,
             mountTarget: this.shadowRoot!
         });
@@ -1615,9 +1677,9 @@ class McpMgrEntryWidget extends AgentOperableHTMLElement {
                 icon: 'fa-circle-xmark',
                 iconBg: '#FEF2F2',
                 iconColor: '#DC2626',
-                title: '删除失败',
+                title: this._t('renderer.mcp.confirm.deleteFailed.title'),
                 message: escapeHtml(err.message || err),
-                confirmText: '我知道了',
+                confirmText: this._t('renderer.mcp.confirm.acknowledge'),
                 cancelText: null,
                 mountTarget: this.shadowRoot!
             });
@@ -1639,9 +1701,9 @@ class McpMgrEntryWidget extends AgentOperableHTMLElement {
                 icon: 'fa-circle-xmark',
                 iconBg: '#FEF2F2',
                 iconColor: '#DC2626',
-                title: '操作失败',
+                title: this._t('renderer.mcp.confirm.actionFailed.title'),
                 message: escapeHtml(err.message || err),
-                confirmText: '我知道了',
+                confirmText: this._t('renderer.mcp.confirm.acknowledge'),
                 cancelText: null,
                 mountTarget: this.shadowRoot!
             });
@@ -1657,9 +1719,9 @@ class McpMgrEntryWidget extends AgentOperableHTMLElement {
                 icon: 'fa-circle-xmark',
                 iconBg: '#FEF2F2',
                 iconColor: '#DC2626',
-                title: '重连失败',
+                title: this._t('renderer.mcp.confirm.reconnectFailed.title'),
                 message: escapeHtml(err.message || err),
-                confirmText: '我知道了',
+                confirmText: this._t('renderer.mcp.confirm.acknowledge'),
                 cancelText: null,
                 mountTarget: this.shadowRoot!
             });

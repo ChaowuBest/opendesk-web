@@ -236,13 +236,11 @@ export class TodoMgrApplication extends BaseApplication {
         return [
             {
                 eventName: 'globalTodosUpdated',
-                eventDescription: '全局待办列表更新事件，当添加、删除、更新待办事项时触发'
+                eventDescription: t('appEvent.globalTodosUpdated')
             },
             {
                 eventName: 'taskTodosUpdated',
-                eventDescription:
-                    '任务级待办更新事件，当 Agent 调用 TodoWrite 创建 / 更新 / 清空任务计划时触发。' +
-                    '事件参数形如 { taskId, todos }，todos 为最新的任务级待办列表'
+                eventDescription: t('appEvent.taskTodosUpdated')
             }
         ];
     }

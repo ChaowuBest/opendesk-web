@@ -10,6 +10,7 @@
  */
 
 import { BaseWorker } from '../../base';
+import { t } from '../locale/index.js';
 import { logger } from '../../../utils/logger.js';
 import path from 'path';
 import fs from 'fs';
@@ -206,7 +207,7 @@ class NotesWorker extends BaseWorker {
 
     async updateNote(noteId, updates) {
         const idx = this.notesData.notes.findIndex((n) => n.id === noteId);
-        if (idx === -1) throw new Error(`笔记 ${noteId} 不存在`);
+        if (idx === -1) throw new Error(t('error.noteNotFound', { id: noteId }));
 
         const note = this.notesData.notes[idx];
         if (updates.title !== undefined) note.title = updates.title;
@@ -238,7 +239,7 @@ class NotesWorker extends BaseWorker {
 
     async deleteNote(noteId) {
         const idx = this.notesData.notes.findIndex((n) => n.id === noteId);
-        if (idx === -1) throw new Error(`笔记 ${noteId} 不存在`);
+        if (idx === -1) throw new Error(t('error.noteNotFound', { id: noteId }));
 
         const note = this.notesData.notes[idx];
 
@@ -304,7 +305,7 @@ class NotesWorker extends BaseWorker {
 
     async deleteTag(name) {
         const idx = this.notesData.tags.findIndex((t) => t.name === name);
-        if (idx === -1) throw new Error(`标签 ${name} 不存在`);
+        if (idx === -1) throw new Error(t('error.tagNotFound', { name }));
 
         this.notesData.tags.splice(idx, 1);
 
@@ -327,7 +328,7 @@ class NotesWorker extends BaseWorker {
 
     async restoreNote(noteId) {
         const idx = this.notesData.deletedNotes.findIndex((n) => n.id === noteId);
-        if (idx === -1) throw new Error(`回收站中不存在笔记 ${noteId}`);
+        if (idx === -1) throw new Error(t('error.deletedNoteNotFound', { id: noteId }));
 
         const deletedNote = this.notesData.deletedNotes[idx];
 
@@ -362,7 +363,7 @@ class NotesWorker extends BaseWorker {
 
     async permanentlyDeleteNote(noteId) {
         const idx = this.notesData.deletedNotes.findIndex((n) => n.id === noteId);
-        if (idx === -1) throw new Error(`回收站中不存在笔记 ${noteId}`);
+        if (idx === -1) throw new Error(t('error.deletedNoteNotFound', { id: noteId }));
 
         this.notesData.deletedNotes.splice(idx, 1);
 

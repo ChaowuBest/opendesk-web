@@ -39,7 +39,8 @@ import type { McpServerConfig, McpServerState, McpToolInfo } from './common.js';
 import McpMgrWorker from './worker';
 import { MANAGE_MCP_SKILL } from './skills.js';
 import { parseJsonWithRepair } from '../../../utils/json.js';
-import { t as globalT } from '../../../locale/index.js';
+// platformT：读取主 locale 中跨应用共享的平台词条（harmony.localRuntime.*）
+import { t as platformT } from '../../../locale/index.js';
 import {
     getRegistriesInfo,
     getRegistry,
@@ -58,8 +59,8 @@ import {
 
 function getLocalRuntimeUnavailableMessage(availability: HarmonyLocalRuntimeFeatureAvailability): string {
     return availability.reason === 'tablet-local-runtime-disabled'
-        ? globalT('harmony.localRuntime.tabletUnavailable')
-        : globalT('harmony.localRuntime.pcMissing', { capabilities: availability.missing.join(', ') });
+        ? platformT('harmony.localRuntime.tabletUnavailable')
+        : platformT('harmony.localRuntime.pcMissing', { capabilities: availability.missing.join(', ') });
 }
 
 const McpServerConfigSchema = z.object({
@@ -247,7 +248,7 @@ export class McpMgrApplication extends BaseApplication {
         // 检查是否已存在相同配置的服务器
         const duplicate = servers.find((s) => this.isServerDuplicate(s, config));
         if (duplicate) {
-            throw new Error(`MCP server "${config.name}" already exists with similar configuration`);
+            throw new Error(t('error.serverDuplicate', { name: config.name }));
         }
 
         config.id = `mcp_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
@@ -260,7 +261,7 @@ export class McpMgrApplication extends BaseApplication {
     async updateServer(id: string, updates: Partial<McpServerConfig>): Promise<void> {
         const servers = this.getServersFromConfig();
         const idx = servers.findIndex((s) => s.id === id);
-        if (idx === -1) throw new Error('Server not found');
+        if (idx === -1) throw new Error(t('error.serverNotFound'));
         const updatedServer = { ...servers[idx], ...updates, id };
         this.assertServerLocalRuntimeAvailable(updatedServer);
         servers[idx] = updatedServer;
@@ -277,7 +278,7 @@ export class McpMgrApplication extends BaseApplication {
     async toggleServer(id: string, enabled: boolean): Promise<void> {
         const servers = this.getServersFromConfig();
         const server = servers.find((s) => s.id === id);
-        if (!server) throw new Error('Server not found');
+        if (!server) throw new Error(t('error.serverNotFound'));
         if (enabled) this.assertServerLocalRuntimeAvailable(server);
         server.enabled = enabled;
         this.saveServersToConfig(servers);
@@ -346,7 +347,7 @@ export class McpMgrApplication extends BaseApplication {
 
     async getRegistryMcpDetail(registryId: string, id: string) {
         const registry = getRegistry(registryId);
-        if (!registry) throw new Error(`未知 MCP Registry: ${registryId}`);
+        if (!registry) throw new Error(t('error.unknownRegistry', { id: registryId }));
         return registry.getDetail(id);
     }
 
@@ -396,10 +397,10 @@ export class McpMgrApplication extends BaseApplication {
             config.command = entry.command;
             config.args = Array.isArray(entry.args) ? entry.args.map(String) : [];
             if (entry.cwd) config.cwd = String(entry.cwd);
-            if (!config.command) throw new Error(`MCP "${config.name}" 缺少 command`);
+            if (!config.command) throw new Error(t('error.mcpMissingCommand', { name: config.name }));
         } else {
             config.url = entry.url;
-            if (!config.url) throw new Error(`MCP "${config.name}" 缺少 url`);
+            if (!config.url) throw new Error(t('error.mcpMissingUrl', { name: config.name }));
         }
 
         return config;
@@ -413,7 +414,7 @@ export class McpMgrApplication extends BaseApplication {
         const parsed = this.parseMcpServerConfiguration(raw);
         const servers = parsed.mcpServers || parsed.servers || parsed;
         if (!servers || typeof servers !== 'object' || Array.isArray(servers)) {
-            throw new Error('MCP 配置中未找到 mcpServers 对象');
+            throw new Error(t('error.mcpServersNotFound'));
         }
 
         return Object.entries(servers).map(([name, entry]) =>
@@ -423,21 +424,23 @@ export class McpMgrApplication extends BaseApplication {
 
     async installFromRegistry(installUrl: string, force: boolean = false) {
         const parsed = parseInstallUrl(installUrl);
-        if (!parsed) throw new Error(`无法识别 MCP Registry 安装地址: ${installUrl}`);
+        if (!parsed) throw new Error(t('error.unrecognizedInstallUrl', { url: installUrl }));
 
         const registry = getRegistry(parsed.registryId);
-        if (!registry) throw new Error(`未知 MCP Registry: ${parsed.registryId}`);
+        if (!registry) throw new Error(t('error.unknownRegistry', { id: parsed.registryId }));
 
         const detail = await registry.getDetail(parsed.id);
-        if (!detail) throw new Error('未找到该 MCP');
-        if (!detail.configuration) throw new Error(`${detail.source} MCP "${detail.name}" 未提供可安装配置`);
+        if (!detail) throw new Error(t('error.mcpNotFound'));
+        if (!detail.configuration)
+            throw new Error(t('error.noInstallableConfig', { source: detail.source, name: detail.name }));
 
         const configs = this.parseServerConfigsFromRegistryConfig(detail.configuration, {
             source: detail.source,
             registryId: parsed.registryId,
             registryMcpId: detail.id
         });
-        if (configs.length === 0) throw new Error(`${detail.source} MCP "${detail.name}" 未提供可安装 MCP server`);
+        if (configs.length === 0)
+            throw new Error(t('error.noInstallableServer', { source: detail.source, name: detail.name }));
 
         const installed: McpServerConfig[] = [];
         const updated: McpServerConfig[] = [];
@@ -466,8 +469,12 @@ export class McpMgrApplication extends BaseApplication {
             skipped,
             message:
                 installed.length > 0 || updated.length > 0
-                    ? `已安装 ${installed.length} 个，更新 ${updated.length} 个，跳过 ${skipped.length} 个`
-                    : `未安装新 MCP，已存在 ${skipped.length} 个相同配置`
+                    ? t('install.result.summary', {
+                          installed: installed.length,
+                          updated: updated.length,
+                          skipped: skipped.length
+                      })
+                    : t('install.result.noneNew', { skipped: skipped.length })
         };
     }
 
@@ -511,7 +518,7 @@ export class McpMgrApplication extends BaseApplication {
                 const toolName = tool.name;
                 mcpTool.setExecutor(async (args) => {
                     const result = await this.callWorker('callMcpTool', serverId, toolName, args);
-                    if (result.status !== 'ok') throw new Error(result.message || globalT('mcpmgr.toolCallFailed'));
+                    if (result.status !== 'ok') throw new Error(result.message || t('error.toolCallFailed'));
                     return result.data as string;
                 });
 
@@ -524,7 +531,7 @@ export class McpMgrApplication extends BaseApplication {
                 toolset.addTool(
                     new McpCallToolTool(deferred, async (tool, args) => {
                         const result = await this.callWorker('callMcpTool', tool.serverId, tool.name, args);
-                        if (result.status !== 'ok') throw new Error(result.message || globalT('mcpmgr.toolCallFailed'));
+                        if (result.status !== 'ok') throw new Error(result.message || t('error.toolCallFailed'));
                         return result.data as string;
                     })
                 );
@@ -561,7 +568,7 @@ export class McpMgrApplication extends BaseApplication {
         return [
             {
                 eventName: 'serversUpdated',
-                eventDescription: 'MCP 列表更新事件，当添加、删除、修改配置或连接状态变化时触发'
+                eventDescription: t('appEvent.serversUpdated')
             }
         ];
     }
