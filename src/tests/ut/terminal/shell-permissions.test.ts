@@ -476,6 +476,15 @@ describe('Bash/Zsh permissions analysis', () => {
             assertHasExact(perms, 'read', `${CWD}/output.txt`);
         });
 
+        test('POSIX 风格绝对路径不被锚定到 Windows 当前盘符', () => {
+            // Windows 的 path.resolve 会把 /etc/../var/log 解析为当前盘符上的
+            // C:\var\log，凭空改写权限声明的路径；必须保持 POSIX 形式且消除 ..
+            const perms = analyzeBashPermissions('cat /etc/../var/log', CWD);
+            assertHasExact(perms, 'read', '/var/log');
+            const injected = perms.find((p) => p.action === 'read' && /^[A-Za-z]:\//.test(p.resourcePath));
+            expect(injected).toBeUndefined();
+        });
+
         test('报告复制命令中的绝对路径 .. → 不生成工作区外的错误路径', () => {
             const workspace = '/storage/Users/currentUser/work/python9.14';
             const command =
