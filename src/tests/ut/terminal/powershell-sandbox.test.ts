@@ -29,16 +29,13 @@ const { ExecuteBashTool } = await import('../../../main/applications/terminal/sh
 const { ExecuteZshTool } = await import('../../../main/applications/terminal/shells/zsh.js');
 const { CheckShellStatusTool } = await import('../../../main/applications/terminal/shells/status.js');
 
-test('all shell tools opt into the BaseTool serial execution queue', () => {
-    for (const tool of [
-        new ExecutePwshTool('C:/shells/powershell.exe'),
-        new ExecutePwshTool('C:/shells/pwsh.exe', true),
-        new ExecuteBashTool('/bin/bash'),
-        new ExecuteZshTool('/bin/zsh'),
-        new CheckShellStatusTool()
-    ]) {
-        expect(tool.serialExecution).toBe(true);
-    }
+test('only sandboxed shell tools opt into the BaseTool serial execution queue', () => {
+    expect(new ExecutePwshTool('C:/shells/powershell.exe').serialExecution).toBe(false);
+    expect(new ExecutePwshTool('C:/shells/pwsh.exe', true).serialExecution).toBe(true);
+    expect(new ExecuteBashTool('/bin/bash').serialExecution).toBe(false);
+    expect(new ExecuteZshTool('/bin/zsh').serialExecution).toBe(false);
+    expect(new CheckShellStatusTool('powershell', false).serialExecution).toBe(false);
+    expect(new CheckShellStatusTool('powershell', true).serialExecution).toBe(true);
 });
 
 test('sandbox defers virtual and dynamic paths to runtime host authorization', () => {

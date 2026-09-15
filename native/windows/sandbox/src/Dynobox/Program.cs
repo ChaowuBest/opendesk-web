@@ -15,6 +15,8 @@ public static class Program
           dynobox run  --policy <rules.toml> [--src DIR] [--automount] [--upstream URL] [--token TOKEN] [--mount X] [--log-file FILE] -- <子进程命令行>
           dynobox mount --policy <rules.toml> [--src DIR] [--automount] [--upstream URL] [--token TOKEN] [--mount X]
           dynobox endpoint [--port 8080] [--pipe 管道名] [--default deny]
+          dynobox network-status
+          dynobox network-ensure
 
         示例:
           dynobox run --automount --policy examples\rules_drive.toml ^
@@ -57,6 +59,7 @@ public static class Program
             }
             return sub switch
             {
+                "network-status" or "network-ensure" or "network-setup" => LoopbackAccess.Run(sub, args),
                 "endpoint" => RunEndpoint(args),
                 "debug-rules" => RunDebugRules(args),
                 "mount" => RunMount(args),

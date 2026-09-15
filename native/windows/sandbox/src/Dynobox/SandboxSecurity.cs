@@ -27,13 +27,24 @@ public sealed class SandboxSecurity : IDisposable
     /// started with this token; an AppContainer has no access to ordinary user
     /// files unless the target volume explicitly grants its package SID.
     /// </summary>
-    public void PrepareAppContainer()
+    public void PrepareAppContainer(string? profileName = null)
     {
         if (_packageSid is not null) return;
 
-        _profileName = "dynobox-" + Guid.NewGuid().ToString("N");
-        var hr = CreateAppContainerProfile(_profileName, _profileName,
-            "dynobox per-run file-system sandbox", IntPtr.Zero, 0, out var sid);
+        _profileName = profileName ?? "dynobox-" + Guid.NewGuid().ToString("N");
+        // A stable identity is exclusively leased by the runner. Remove private
+        // data left by an interrupted run before using the same identity again.
+        if (profileName is not null)
+        {
+            var deleted = DeleteAppContainerProfile(profileName);
+            if (deleted != 0 && deleted != unchecked((int)0x80070002)) Marshal.ThrowExceptionForHR(deleted);
+        }
+        var (hr, sid) = WithNetworkCapabilities((capabilities, count) =>
+        {
+            var result = CreateAppContainerProfile(_profileName, _profileName,
+                "dynobox per-run file-system sandbox", capabilities, count, out var packageSid);
+            return (result, packageSid);
+        });
         if (hr != 0 && hr != HResultAlreadyExists)
             Marshal.ThrowExceptionForHR(hr);
         if (sid == IntPtr.Zero)
@@ -152,6 +163,36 @@ public sealed class SandboxSecurity : IDisposable
         finally { FreeSid(sid); }
     }
 
+    internal static T WithNetworkCapabilities<T>(Func<IntPtr, uint, T> action)
+    {
+        // SDK well-known SIDs: internetClient (S-1-15-3-1) and
+        // internetClientServer (S-1-15-3-3).
+        // Both the profile and the actual child token need these capabilities.
+        return WithSidArray(new[] { "S-1-15-3-1", "S-1-15-3-3" }, 4 /* SE_GROUP_ENABLED */, action);
+    }
+
+    internal static T WithSidArray<T>(IEnumerable<string> values, uint attributes, Func<IntPtr, uint, T> action)
+    {
+        var sids = values.Select(value => new SecurityIdentifier(value)).ToArray();
+        var entrySize = Marshal.SizeOf<SidAndAttributes>();
+        var buffer = Marshal.AllocHGlobal(entrySize * sids.Length + sids.Sum(sid => sid.BinaryLength));
+        try
+        {
+            var sidPointer = buffer + entrySize * sids.Length;
+            for (var i = 0; i < sids.Length; i++)
+            {
+                var bytes = new byte[sids[i].BinaryLength];
+                sids[i].GetBinaryForm(bytes, 0);
+                Marshal.Copy(bytes, 0, sidPointer, bytes.Length);
+                Marshal.StructureToPtr(new SidAndAttributes { Sid = sidPointer, Attributes = attributes },
+                    buffer + i * entrySize, false);
+                sidPointer += bytes.Length;
+            }
+            return action(buffer, (uint)sids.Length);
+        }
+        finally { Marshal.FreeHGlobal(buffer); }
+    }
+
     public void HideDriveLetter(char letter)
     {
         try
@@ -197,6 +238,12 @@ public sealed class SandboxSecurity : IDisposable
     }
 
     private const int HResultAlreadyExists = unchecked((int)0x800700B7);
+    [StructLayout(LayoutKind.Sequential)]
+    private struct SidAndAttributes
+    {
+        public IntPtr Sid;
+        public uint Attributes;
+    }
     private const uint TokenQuery = 0x0008;
     private const uint TokenDuplicate = 0x0002;
     private const uint TokenAssignPrimary = 0x0001;

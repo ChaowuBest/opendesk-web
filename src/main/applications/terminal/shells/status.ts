@@ -18,7 +18,6 @@ import { Card } from '../../../tui/components/card.js';
 import { statusDisplay } from '../../../tui/components/toolcall.js';
 import { z } from 'zod';
 import { BackgroundProcessManager, type BackgroundProcessStatus } from '../background.js';
-import { t } from '../../../../locale/index.js';
 import { t as terminalT } from '../locale/index.js';
 import type { SupportedShellKind } from '../../../../common/shells.js';
 
@@ -28,12 +27,12 @@ const CheckShellStatusArgsSchema = z.object({
 });
 
 export class CheckShellStatusTool extends BaseTool<typeof CheckShellStatusArgsSchema> {
-    override serialExecution = true;
     constructor(
         private readonly shellKind: SupportedShellKind = 'powershell',
         private readonly sandboxed = false
     ) {
         super('checkShellStatus', terminalT('status.description'), CheckShellStatusArgsSchema);
+        this.serialExecution = sandboxed;
 
         this.setUniversalExecutor(this.executeCheck.bind(this));
     }
@@ -121,11 +120,11 @@ export class CheckShellStatusTool extends BaseTool<typeof CheckShellStatusArgsSc
             detail += ' · 查询中…';
         }
 
-        const shellTag = `<span class="terminal-shell-tag terminal-shell-tag-${this.shellKind}">${this.shellKind}</span>${this.sandboxed ? `<span class="terminal-shell-tag terminal-shell-tag-sandbox">${escapeHtml(t('terminal.shell.sandboxTag'))}</span>` : ''}`;
+        const shellTag = `<span class="terminal-shell-tag terminal-shell-tag-${this.shellKind}">${this.shellKind}</span>${this.sandboxed ? `<span class="terminal-shell-tag terminal-shell-tag-sandbox">${escapeHtml(terminalT('shell.sandboxTag'))}</span>` : ''}`;
         return `<div class="od-inline-toolcall-container">
             <div class="flex items-center gap-1.5 min-w-0">
                 <i class="fas fa-circle-check shrink-0 text-slate-400 text-xs"></i>
-                <span class="shrink-0 text-slate-500 text-xs">${escapeHtml(t('tools.checkShellStatus.name'))}</span>
+                <span class="shrink-0 text-slate-500 text-xs">${escapeHtml(terminalT('checkShellStatus.name'))}</span>
                 ${shellTag}
                 ${statusIcon}
                 <span class="truncate text-xs text-slate-600">${detail}</span>

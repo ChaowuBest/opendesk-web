@@ -1101,7 +1101,6 @@ export const enUs: Record<string, string> = {
     // Task & Planning Tools
     'tools.listRecentTasks.name': 'List Tasks',
     'tools.getTaskHistory.name': 'Task History',
-    'tools.checkShellStatus.name': 'Check Shell Status',
     'tools.askFromTask.name': 'Ask Task',
     'tools.deleteTasks.name': 'Delete Tasks',
     'tools.createSubTask.name': 'Sub-task',
@@ -1417,10 +1416,6 @@ export const enUs: Record<string, string> = {
     'sp.task.terminal.noShells': 'No supported shells found',
     'sp.task.terminal.sandbox': 'Enable sandbox',
     'sp.task.terminal.sandbox.desc': 'Run this powershell in a Windows sandbox and request file access when needed.',
-    'terminal.shell.sandboxTag': 'Sandbox',
-    'terminal.sandbox.executableMissing':
-        'Dynamic sandbox is enabled, but sandbox.exe was not found. Rebuild the Windows version.',
-    'terminal.sandbox.endpointFailed': 'Could not obtain a port for the dynamic sandbox authorization endpoint.',
     'sp.agents.title': 'ACP Agents',
     'sp.agents.desc':
         'Connect local stdio or remote Streamable HTTP agents. Task context and event records remain stored locally.',

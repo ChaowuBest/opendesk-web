@@ -23,7 +23,9 @@ internal sealed class MountLease : IDisposable
         _mutex = mutex;
     }
 
-    private static string Name(char letter) => @"Local\OpenDesk.Dynobox.Mount." + char.ToUpperInvariant(letter);
+    // A user's stable AppContainer identities must not overlap across logon sessions.
+    private static string Name(char letter) => @"Global\OpenDesk.Dynobox.Mount."
+        + LoopbackAccess.CurrentUserSid + "." + char.ToUpperInvariant(letter);
 
     public static bool IsReserved(char letter)
     {

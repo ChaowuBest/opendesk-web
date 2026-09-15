@@ -30,7 +30,11 @@ import picomatch from 'picomatch';
 import path from 'path';
 import type { PermissionEnforcer, PermissionRequest, PermissionCheckResult, PermissionRule } from './permission.js';
 import { logger } from '../../utils/logger.js';
-import { createSensitivePathRules, createDeviceNodeRules } from '../../utils/permissionRules.js';
+import {
+    createSensitivePathRules,
+    createDeviceNodeRules,
+    createInterpretersPermissionRules
+} from '../../utils/permissionRules.js';
 import { fromMsysPath, normalizePath } from '../../../utils/path.js';
 import { getAllTempDirs } from '../../utils/temp.js';
 
@@ -386,6 +390,7 @@ export class GlobPermissionEnforcer implements PermissionEnforcer {
  * - 工作空间内的文件读写执行 → allow（包括 dotfiles，如 .gitignore、.eslintrc 等）
  * - 工作空间内的敏感路径（.ssh、.gnupg 等） → ask（显式保护，覆盖 allow）
  * - 工作空间外的文件读写执行 → ask（隐式回退）
+ * - OpenDesk 自带 interpreters 目录（pip-global、npm-global 等包安装位置） → allow
  * - 网络访问 → ask（隐式回退）
  * - 技能和插件读取 → allow
  * - 技能和插件的修改或执行 → ask（隐式回退，需用户确认）
@@ -416,6 +421,9 @@ export function createDefaultPermissionRules(workspace: string): PermissionRule[
         { resourceType: 'file', action: 'execute', pathPattern: wsPattern, effect: 'allow' },
         // 临时目录读写执行允许
         ...tempRules,
+        // OpenDesk 自带 interpreters 目录（pip-global、npm-global 等）读写允许，
+        // 沙箱内安装包不应反复触发授权
+        ...createInterpretersPermissionRules(),
         // 所有技能读取允许（加载、查看等），写入/执行需用户确认（隐式 ask）
         { resourceType: 'skill', action: 'read', pathPattern: '**', effect: 'allow' },
         // 插件列表和详情读取允许，安装、卸载、启停和重载需用户确认（隐式 ask）

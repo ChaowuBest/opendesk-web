@@ -1,11 +1,15 @@
 # Sandbox functional tests
 
 This directory contains the native sandbox policy fixtures and command
-fixtures used by the Windows integration tests. The Node test entry point is
-`runtime.test.ts`; run it from the repository root with:
+fixtures used by the Windows integration tests. The Node test entry points are
+`runtime.test.ts` and the env-gated `windows-sandbox-runtime.test.ts`; run
+them from the repository root with:
 
 ```powershell
 npx tsx --test native/windows/sandbox/tests/runtime.test.ts
+
+$env:OPENDESK_SANDBOX_INTEGRATION = '1'   # required by windows-sandbox-runtime.test.ts
+npx tsx --test native/windows/sandbox/tests/windows-sandbox-runtime.test.ts
 ```
 
 The optional JavaScript fixture dependency is installed with:
@@ -22,5 +26,6 @@ The tests require Windows and an installed Dokany driver. They cover child
 stdout/stderr forwarding, stdin, exit codes, authorization, Python scripts,
 Node.js scripts, and Windows console commands such as `chcp`.
 
-`runtime.test.ts` and `NativeRegression/` validate the standalone Dynobox
-implementation. OpenDesk integration tests remain under `src/tests/ut/terminal/`.
+`runtime.test.ts`, `windows-sandbox-runtime.test.ts` and `NativeRegression/`
+validate the standalone Dynobox implementation. OpenDesk integration tests
+remain under `src/tests/ut/terminal/`.

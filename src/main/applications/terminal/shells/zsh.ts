@@ -33,7 +33,6 @@ const ExecuteZshArgsSchema = z.object({
 });
 
 export class ExecuteZshTool extends BaseTool<typeof ExecuteZshArgsSchema> {
-    override serialExecution = true;
     private interactive: boolean;
     private runningProcesses: Set<ChildProcess> = new Set();
     private _killedByStop = false;

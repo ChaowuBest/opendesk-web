@@ -34,6 +34,7 @@ jest.unstable_mockModule('fs', () => {
 const spawnSyncMock = jest.fn(() => ({ status: 0, error: undefined }) as SpawnSyncReturns<Buffer>);
 
 jest.unstable_mockModule('child_process', () => ({
+    execFile: jest.fn(),
     spawn: jest.fn(),
     spawnSync: (...args: unknown[]) => spawnSyncMock(...args),
     execSync: jest.fn()

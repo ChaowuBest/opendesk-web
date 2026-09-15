@@ -32,8 +32,7 @@ import {
     trackDetachedProcess
 } from '../../../utils/shellExec.js';
 import { prepareDynamicSandbox } from '../sandboxes/dynabox.js';
-import { t } from '../../../../locale/index.js';
-import { t as terminalT } from '../locale/index.js';
+import { t } from '../locale/index.js';
 
 const ansiConverter = new Convert({ escapeXML: true });
 
@@ -69,7 +68,7 @@ export function renderTerminalToolCallCli(
     const cwd = toolcall.args_object?.['workingDirectory'];
     const description = toolcall.args_object?.['description'];
     const descriptionText = description ? String(description).trim() : '';
-    const shellTitle = sandboxed ? `${shellLabel} [${t('terminal.shell.sandboxTag')}]` : shellLabel;
+    const shellTitle = sandboxed ? `${shellLabel} [${t('shell.sandboxTag')}]` : shellLabel;
     const title = descriptionText
         ? `${shellTitle} (${truncText(descriptionText, Math.max(12, width - 28))})`
         : shellTitle;
@@ -161,7 +160,7 @@ export function renderTerminalToolCall(cmdName: string, toolcall: ToolCall, sand
             </svg>
             <span class="text-[12px] ${headerTextColor} font-medium truncate min-w-0 flex-1">${headerText}</span>
             <span class="terminal-shell-tag terminal-shell-tag-${escapeHtml(cmdName)} shrink-0">${escapeHtml(cmdName)}</span>
-            ${sandboxed ? `<span class="terminal-shell-tag terminal-shell-tag-sandbox shrink-0">${escapeHtml(t('terminal.shell.sandboxTag'))}</span>` : ''}
+            ${sandboxed ? `<span class="terminal-shell-tag terminal-shell-tag-sandbox shrink-0">${escapeHtml(t('shell.sandboxTag'))}</span>` : ''}
             <svg class="terminal-tool-chevron w-3 h-3 text-gray-400 shrink-0 transition-transform duration-200" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
                 <path d="M6 9l6 6 6-6"/>
             </svg>
@@ -247,9 +246,9 @@ export async function executeShellCommand(opts: {
 
     const output = new BoundedOutputBuffer(
         '',
-        terminalT('output.truncated'),
+        t('output.truncated'),
         getTerminalOutputArtifactPath(taskState, proc.pid),
-        terminalT('output.artifactSaved')
+        t('output.artifactSaved')
     );
     let lastSentOutput = '';
     // zsh -i 等交互模式下，shell integration 会向 stdout/stderr 输出终端控制序列噪音，统一过滤

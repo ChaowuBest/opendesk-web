@@ -8,8 +8,8 @@
 using System.Diagnostics;
 using System.ComponentModel;
 using System.Linq;
-using System.Text;
 using System.Runtime.InteropServices;
+using System.Text;
 using System.IO.Pipes;
 using DokanNet;
 
@@ -29,54 +29,65 @@ public sealed class Sandbox : IDisposable
     {
         Policy = policy;
         Security = new SandboxSecurity();
-        // Fail closed if the host cannot create the AppContainer identity. The
-        // child must never fall back to the manager's unrestricted token.
-        Security.PrepareAppContainer();
+        try
+        {
+            _mountLease = MountLease.Acquire(letter);
+            Letter = _mountLease.Letter;
+            MountPoint = Letter + ":";
+            // Fail closed if the host cannot create the AppContainer identity. The
+            // child must never fall back to the manager's unrestricted token.
+            Security.PrepareAppContainer(LoopbackAccess.ProfileName(LoopbackAccess.CurrentUserSid, Letter[0]));
 
-        var roots = new List<(string Virtual, string Real)>();
-        foreach (var r in policy.Roots)
-        {
-            if (automount && r.Virtual == "/")
-                throw new ArgumentException(
-                    "--automount 与映射到卷根 / 的 [[roots]] 冲突（/ 会吞掉所有盘符）");
-            roots.Add((r.Virtual, r.Real));
-        }
-        if (automount)
-        {
-            // 枚举全部本机盘符（本地盘、可移动盘、映射的网络驱动器），
-            // 以盘符名为虚拟目录挂进卷根：C:\ -> /C、E:\ -> /E ...
-            var declared = new HashSet<string>(
-                roots.Select(r => r.Virtual.TrimStart('/')), StringComparer.OrdinalIgnoreCase);
-            foreach (var d in DriveInfo.GetDrives())
+            var roots = new List<(string Virtual, string Real)>();
+            foreach (var r in policy.Roots)
             {
-                if (d.Name.Length < 3 || d.Name[1] != ':') continue;
-                var driveLetter = char.ToUpperInvariant(d.Name[0]);
-                // 其他运行实例的虚拟卷不能再次镜像，否则会串接其权限端点和生命周期。
-                if (MountLease.IsReserved(driveLetter)) continue;
-                if (!d.IsReady)
-                {
-                    Log.Info("[AUTOMOUNT] 跳过未就绪的驱动器 {0}:", driveLetter);
-                    continue;
-                }
-                if (!declared.Add(driveLetter.ToString()))
-                    continue;   // 用户已在 [[roots]] 里手动声明，不覆盖
-                roots.Add(("/" + driveLetter, driveLetter + ":\\"));
-                Log.Info("[AUTOMOUNT] {0}: -> /{1} ({2})", driveLetter, driveLetter, d.DriveType);
+                if (automount && r.Virtual == "/")
+                    throw new ArgumentException(
+                        "--automount 与映射到卷根 / 的 [[roots]] 冲突（/ 会吞掉所有盘符）");
+                roots.Add((r.Virtual, r.Real));
             }
+            if (automount)
+            {
+                // 枚举全部本机盘符（本地盘、可移动盘、映射的网络驱动器），
+                // 以盘符名为虚拟目录挂进卷根：C:\ -> /C、E:\ -> /E ...
+                var declared = new HashSet<string>(
+                    roots.Select(r => r.Virtual.TrimStart('/')), StringComparer.OrdinalIgnoreCase);
+                foreach (var d in DriveInfo.GetDrives())
+                {
+                    if (d.Name.Length < 3 || d.Name[1] != ':') continue;
+                    var driveLetter = char.ToUpperInvariant(d.Name[0]);
+                    // 其他运行实例的虚拟卷不能再次镜像，否则会串接其权限端点和生命周期。
+                    if (MountLease.IsReserved(driveLetter)) continue;
+                    if (!d.IsReady)
+                    {
+                        Log.Info("[AUTOMOUNT] 跳过未就绪的驱动器 {0}:", driveLetter);
+                        continue;
+                    }
+                    if (!declared.Add(driveLetter.ToString()))
+                        continue;   // 用户已在 [[roots]] 里手动声明，不覆盖
+                    roots.Add(("/" + driveLetter, driveLetter + ":\\"));
+                    Log.Info("[AUTOMOUNT] {0}: -> /{1} ({2})", driveLetter, driveLetter, d.DriveType);
+                }
+            }
+
+            // 子进程引导区：存放 AppContainer 无法从宿主原生目录读取的 exe 副本
+            _bootstrapDir = Path.Combine(Path.GetTempPath(), "dynobox-" + Guid.NewGuid().ToString("N")[..8]);
+            Directory.CreateDirectory(_bootstrapDir);
+            roots.Add(("/dynobox", _bootstrapDir));
+
+            Fs = new MirrorFs(roots, policy);
+            // 排除挂载盘符自身，避免 Y:\ -> /Y -> Y:\ 的自引用循环
+            roots.RemoveAll(r => r.Virtual.Equals("/" + Letter, StringComparison.OrdinalIgnoreCase));
+            Fs.RebuildRoots(roots);
         }
-
-        // 子进程引导区：存放 AppContainer 无法从宿主原生目录读取的 exe 副本
-        _bootstrapDir = Path.Combine(Path.GetTempPath(), "dynobox-" + Guid.NewGuid().ToString("N")[..8]);
-        Directory.CreateDirectory(_bootstrapDir);
-        roots.Add(("/dynobox", _bootstrapDir));
-
-        Fs = new MirrorFs(roots, policy);
-        _mountLease = MountLease.Acquire(letter);
-        Letter = _mountLease.Letter;
-        MountPoint = Letter + ":";
-        // 排除挂载盘符自身，避免 Y:\ -> /Y -> Y:\ 的自引用循环
-        roots.RemoveAll(r => r.Virtual.Equals("/" + Letter, StringComparison.OrdinalIgnoreCase));
-        Fs.RebuildRoots(roots);
+        catch
+        {
+            Security.Dispose();
+            _dokan.Dispose();
+            _mountLease?.Dispose();
+            _mountLease = null;
+            throw;
+        }
     }
 
     public string Src => Fs.Src;
@@ -168,11 +179,6 @@ public sealed class Sandbox : IDisposable
             foreach (var (k, v) in envExtra)
                 envVars[k] = v;
 
-        // 某些运行时会使用宿主命名对象命名空间创建子进程通信管道。
-        // 先由统一兼容层准备私有可执行文件，再做盘符映射；这样子进程
-        // 及其后代继承同一套 AppContainer 可见的命名对象语义。
-        cmdline = BootstrapExecutable(cmdline);
-
         // 多根模式：按声明的映射根自动翻译（C:\ -> Z:\C\ 等），
         // 使子进程命令行/环境变量中的绝对路径指向沙箱视图
         var maps = new List<(string From, string To)>(PathMaps);
@@ -185,6 +191,13 @@ public sealed class Sandbox : IDisposable
             maps.Add((real + "/", target + "\\"));
             maps.Add((real, target));
         }
+
+        // 某些运行时会使用宿主命名对象命名空间或宿主绝对路径。
+        // 统一兼容层按可执行文件内容准备私有 overlay，供启动命令和
+        // 通过 PATH 找到的后代程序共同使用。
+        Fs.ConfigureRuntimeCompatibility(_bootstrapDir!, maps);
+        cmdline = BootstrapExecutable(cmdline, maps);
+
         if (maps.Count > 0)
         {
             // 长前缀优先，避免 C: 抢先命中 C:\ 的前缀
@@ -212,8 +225,6 @@ public sealed class Sandbox : IDisposable
             }
         }
 
-
-
         // 使用 per-run AppContainer primary token 启动。这个 token 没有普通
         // 用户文件系统权限；只有 Dokan 卷的安全描述符显式授予它访问权。
         var envBytes = Encoding.Unicode.GetBytes(
@@ -230,7 +241,7 @@ public sealed class Sandbox : IDisposable
         var baseToken = Security.OpenBaseToken();
         try
         {
-            return Security.WithPackageSid(packageSid =>
+            return Security.WithPackageSid(packageSid => SandboxSecurity.WithNetworkCapabilities((capabilities, capabilityCount) =>
             {
                 var attrBytes = IntPtr.Zero;
                 var handleList = IntPtr.Zero;
@@ -272,8 +283,8 @@ public sealed class Sandbox : IDisposable
                     var caps = new SECURITY_CAPABILITIES
                     {
                         AppContainerSid = packageSid,
-                        Capabilities = IntPtr.Zero,
-                        CapabilityCount = 0,
+                        Capabilities = capabilities,
+                        CapabilityCount = capabilityCount,
                         Reserved = 0,
                     };
                     if (!UpdateProcThreadAttribute(attrBytes, 0,
@@ -311,8 +322,8 @@ public sealed class Sandbox : IDisposable
                         AssignToJob(pi.hProcess);
                         if (ResumeThread(pi.hThread) == uint.MaxValue)
                             throw new Win32Exception(Marshal.GetLastWin32Error(), "Resume child failed");
-                        stdoutRelay = RelayOutputAsync(stdoutPipe, Console.OpenStandardOutput(), filterPythonWarning: false);
-                        stderrRelay = RelayOutputAsync(stderrPipe, Console.OpenStandardError(), filterPythonWarning: true);
+                        stdoutRelay = RelayOutputAsync(stdoutPipe, Console.OpenStandardOutput());
+                        stderrRelay = RelayOutputAsync(stderrPipe, Console.OpenStandardError(), actual);
                         _ = WaitForSingleObject(pi.hProcess, 0xFFFFFFFF);
                         stdoutRelay.GetAwaiter().GetResult();
                         stderrRelay.GetAwaiter().GetResult();
@@ -345,7 +356,7 @@ public sealed class Sandbox : IDisposable
                     stdoutPipe?.Dispose();
                     stderrPipe?.Dispose();
                 }
-            });
+            }));
         }
         finally
         {
@@ -354,12 +365,14 @@ public sealed class Sandbox : IDisposable
         }
     }
 
-    private static async Task RelayOutputAsync(Stream source, Stream target, bool filterPythonWarning)
+    private static async Task RelayOutputAsync(Stream source, Stream target, string? virtualRoot = null)
     {
         try
         {
             var buffer = new byte[16 * 1024];
-            if (!filterPythonWarning)
+            // 诊断行抑制只作用于 stderr（virtualRoot 非空）。子进程自身的标准
+            // 输出必须原样透传：任何基于内容的过滤都会造成静默丢行。
+            if (virtualRoot is null)
             {
                 int count;
                 while ((count = await source.ReadAsync(buffer)) > 0)
@@ -372,6 +385,14 @@ public sealed class Sandbox : IDisposable
             while ((read = await source.ReadAsync(buffer)) > 0)
             {
                 pending.Write(buffer, 0, read);
+                // 子进程可能长时间不输出换行；缓冲超过上限时按原始字节放行，
+                // 防止内存无限增长（诊断行都是短行，不会触及该上限）。
+                if (pending.Length > 1024 * 1024)
+                {
+                    await target.WriteAsync(pending.ToArray());
+                    pending.SetLength(0);
+                    continue;
+                }
                 var bytes = pending.GetBuffer();
                 var length = checked((int)pending.Length);
                 var start = 0;
@@ -379,7 +400,10 @@ public sealed class Sandbox : IDisposable
                 {
                     if (bytes[i] != (byte)'\n') continue;
                     var lineLength = i - start + 1;
-                    if (!IsPythonVirtualPathWarning(bytes.AsSpan(start, lineLength)))
+                    var text = Encoding.UTF8.GetString(bytes, start, lineLength);
+                    // getpath 警告（"Failed to find real location of Z:\..."）在
+                    // raw 与 PowerShell 包装两种形态下都按行丢弃
+                    if (!RuntimeCompatibility.IsRealpathDiagnosticLine(text))
                         await target.WriteAsync(bytes.AsMemory(start, lineLength));
                     start = i + 1;
                 }
@@ -391,7 +415,10 @@ public sealed class Sandbox : IDisposable
                     pending.Position = remaining;
                 }
             }
-            if (pending.Length > 0 && !IsPythonVirtualPathWarning(pending.GetBuffer().AsSpan(0, checked((int)pending.Length))))
+
+            if (pending.Length > 0 &&
+                !RuntimeCompatibility.IsVirtualPathDiagnostic(
+                    pending.GetBuffer().AsSpan(0, checked((int)pending.Length)), virtualRoot))
                 await target.WriteAsync(pending.GetBuffer().AsMemory(0, checked((int)pending.Length)));
         }
         catch (IOException)
@@ -405,26 +432,15 @@ public sealed class Sandbox : IDisposable
         }
     }
 
-    private static bool IsPythonVirtualPathWarning(ReadOnlySpan<byte> line)
-    {
-        const string prefix = "Failed to find real location of ";
-        if (line.Length < prefix.Length + 4) return false;
-        for (var i = 0; i < prefix.Length; i++)
-            if (line[i] != prefix[i]) return false;
-        var drive = prefix.Length;
-        return ((line[drive] >= (byte)'A' && line[drive] <= (byte)'Z') ||
-                (line[drive] >= (byte)'a' && line[drive] <= (byte)'z')) &&
-            line[drive + 1] == (byte)':' &&
-            (line[drive + 2] == (byte)'\\' || line[drive + 2] == (byte)'/');
-    }
-
     /// <summary>
     /// 受限子进程的 exe 引导：命令行第一个 token 是要执行的程序。
     ///   - 程序已在沙箱卷内 → 卷安全描述符已授予沙箱 SID，直接可用；
     ///   - Windows 系统目录中的程序 → 使用系统为 AppContainer 提供的基础 ACL；
     ///   - 其他宿主路径 → 需要兼容补丁时复制进引导区，否则保留安装目录的映射。
     /// </summary>
-    private string BootstrapExecutable(string cmdline)
+    private string BootstrapExecutable(
+        string cmdline,
+        IEnumerable<(string From, string To)> pathMaps)
     {
         var (exe, rest) = SplitFirstToken(cmdline);
         if (exe.Length == 0) return cmdline;
@@ -447,20 +463,20 @@ public sealed class Sandbox : IDisposable
                 return cmdline;
         }
 
-        // 情形 3：裸名（如 python）→ PATH 搜索后授予
+        // 情形 3：裸名命令 → PATH 搜索后授予
         var found = Path.IsPathRooted(direct) && File.Exists(direct)
             ? direct
             : FindOnPath(direct);
         if (found is null) return cmdline;   // 找不到就保持原样（子进程自己报错）
         // 其他宿主程序复制进卷内引导区，避免给 AppContainer 开放原生目录。
         if (_bootstrapExecutables.TryGetValue(found, out var cached))
-            return cmdline.Replace(exe, cached, StringComparison.OrdinalIgnoreCase);
+            return ReplaceFirstToken(cmdline, cached);
         var bootstrapName = Path.GetFileName(found);
         var volumeCopy = MountPoint + Path.DirectorySeparatorChar + "dynobox"
             + Path.DirectorySeparatorChar + "bin" + Path.DirectorySeparatorChar + bootstrapName;
         Directory.CreateDirectory(MountPoint + Path.DirectorySeparatorChar + "dynobox"
             + Path.DirectorySeparatorChar + "bin");
-        if (!RuntimeCompatibility.PrepareExecutable(found, volumeCopy))
+        if (!RuntimeCompatibility.PrepareExecutable(found, volumeCopy, pathMaps))
         {
             // 无需修改的程序保留相邻 DLL/运行时文件；例如 pwsh.exe 必须与 pwsh.dll 同目录。
             File.Delete(volumeCopy);
@@ -468,7 +484,23 @@ public sealed class Sandbox : IDisposable
         }
         _bootstrapExecutables[found] = volumeCopy;
         Log.Info("[BOOT] {0} 已复制进卷内引导区", bootstrapName);
-        return cmdline.Replace(exe, volumeCopy, StringComparison.OrdinalIgnoreCase);
+        return ReplaceFirstToken(cmdline, volumeCopy);
+    }
+
+    /// <summary>把命令行的第一个 token（原始引号形式）替换为目标路径，避免
+    /// string.Replace 全量替换误伤参数里出现的相同子串。</summary>
+    private static string ReplaceFirstToken(string cmdline, string replacement)
+    {
+        var trimmed = cmdline.TrimStart();
+        if (trimmed.StartsWith('"'))
+        {
+            var end = trimmed.IndexOf('"', 1);
+            return end < 0
+                ? '"' + replacement + '"'
+                : '"' + replacement + '"' + trimmed[(end + 1)..];
+        }
+        var sp = trimmed.IndexOf(' ');
+        return sp < 0 ? replacement : replacement + trimmed[sp..];
     }
 
 

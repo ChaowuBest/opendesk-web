@@ -40,6 +40,7 @@ import {
 import { QuickPassHelper } from './utils/quickpass.js';
 import { getWindowsDrives } from './utils/drives.js';
 import { cleanPathInput } from '../utils/path.js';
+import { sandboxPathToHostPath } from '../common/utils/path.js';
 import { PROVIDER_TEMPLATES } from './tui/components/config/providers.js';
 import { GlobalState } from './aikernel/states/global.js';
 import { BaseToolset } from './aikernel/tool';
@@ -2205,6 +2206,8 @@ const registerFSAPIHandlers = () => {
             let p = filePath;
             // 清理不可见的 Unicode 字符和首尾空白，避免 path.isAbsolute 误判
             p = cleanPathInput(p);
+            // 沙箱虚拟路径（Z:\C\...）还原为宿主路径，卷卸载后仍可打开
+            p = sandboxPathToHostPath(p);
             // 展开 ~
             if (p.startsWith('~')) {
                 p = path.join(os.homedir(), p.slice(1));
@@ -3614,8 +3617,7 @@ async function startApplication(): Promise<void> {
         ipcMain.handle('application:openInNewWindow', async (_event, bundleName: string) => {
             try {
                 const appConfig = ApplicationRegistry.getApplicationGUIConfig(bundleName) as
-                    | Record<string, unknown>
-                    | undefined;
+                    Record<string, unknown> | undefined;
                 const appName = (appConfig?.name as string) || bundleName;
 
                 const appWindow = new BrowserWindow({

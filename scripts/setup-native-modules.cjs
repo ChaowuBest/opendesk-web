@@ -193,31 +193,6 @@ try {
     }
 })();
 
-/**
- * Workaround for OpenDesk's shellExec injecting PYTHONINSPECT=0 (non-empty)
- * into every child process. On Python 3.13 a non-empty PYTHONINSPECT puts the
- * interpreter into inspect mode, so `sys.exit(0)` prints a traceback and exits
- * with code 1 instead of 0. node-gyp's gyp script finishes via sys.exit(0),
- * so a successful configure is misreported as failed during `npm run package`
- * (electron-rebuild / electron-forge native module rebuilds).
- *
- * Strip the variable right before node-gyp spawns Python. Idempotent.
- */
-(function patchNodeGypPythonInspect() {
-    const configurePath = path.join(projectRoot, 'node_modules', '@electron', 'node-gyp', 'lib', 'configure.js');
-    if (!fs.existsSync(configurePath)) return;
-    let src = fs.readFileSync(configurePath, 'utf8');
-    if (src.includes('delete process.env.PYTHONINSPECT')) return; // already patched
-    src = src.replace(
-        '      const cp = gyp.spawn(python, argv)',
-        '      delete process.env.PYTHONINSPECT\n      const cp = gyp.spawn(python, argv)'
-    );
-    if (src.includes('delete process.env.PYTHONINSPECT')) {
-        fs.writeFileSync(configurePath, src, 'utf8');
-        console.log('[setup] Patched @electron/node-gyp to strip PYTHONINSPECT before spawning Python');
-    }
-})();
-
 function getElectronVersion() {
     const electronPkgPath = require.resolve('electron/package.json');
     return require(electronPkgPath).version;

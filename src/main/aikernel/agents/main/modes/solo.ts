@@ -10,7 +10,11 @@
  */
 
 import type { PermissionRule, PermissionAction } from '../../../security/permission.js';
-import { createDeviceNodeRules, SENSITIVE_PATH_PATTERNS } from '../../../../utils/permissionRules.js';
+import {
+    createDeviceNodeRules,
+    createInterpretersPermissionRules,
+    SENSITIVE_PATH_PATTERNS
+} from '../../../../utils/permissionRules.js';
 import os from 'os';
 import type { ModeDecl } from '../../common.js';
 
@@ -50,6 +54,7 @@ function createSensitivePathDenyRules(): PermissionRule[] {
  * - 所有文件可读可写可执行
  * - 敏感路径（.ssh、.gnupg 等）直接 deny（Solo 是无人值守模式，不能弹 ask）
  * - 技能可读
+ * - interpreters 目录（pip-global 等包安装位置）显式放行
  *
  * 返回完整规则列表，使用 GlobPermissionEnforcer 处理。
  */
@@ -57,6 +62,8 @@ export function createSoloModePermissionRules(): PermissionRule[] {
     return [
         // 设备节点始终允许（/dev/stdin, /dev/null 等，优先级高于敏感路径 deny）
         ...createDeviceNodeRules(),
+        // interpreters 目录显式放行（pip-global、npm-global 等包安装位置）
+        ...createInterpretersPermissionRules(),
         // 敏感路径直接 deny（必须在 allow ** 之前，deny 优先级最高）
         ...createSensitivePathDenyRules(),
         // 所有文件可读可写可执行

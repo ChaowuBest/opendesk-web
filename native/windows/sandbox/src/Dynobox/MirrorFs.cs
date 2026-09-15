@@ -5,8 +5,11 @@
  * You may obtain a copy of the Mulan PSL v2 at: http://license.coscl.org.cn/MulanPSL2
  */
 
+using System.Collections.Concurrent;
 using System.Diagnostics;
+using System.Security.Cryptography;
 using System.Security.AccessControl;
+using System.Text;
 using DokanNet;
 using static DokanNet.DokanResult;
 using FileAccess = DokanNet.FileAccess;
@@ -31,11 +34,20 @@ public sealed class MirrorFs : IDokanOperations
     private readonly List<RootMap> _roots = new();
     private readonly object _life = new();
     private readonly Dictionary<Ctx, Ctx> _ctx = new();
+    // 运行时兼容 overlay 配置在子进程产生任何 I/O 之前写入，之后只读；
+    // volatile 保证 Dokan 线程池上的可见性。
+    private volatile string? _runtimeOverlayDirectory;
+    private volatile (string From, string To)[] _runtimePathMaps = Array.Empty<(string From, string To)>();
+    // Lazy 保证同一个可执行文件的内容分析（整文件读取 + 扫描）至多执行一次，
+    // 且不持任何共享锁：互不相关的 exe 首次打开不会互相阻塞。
+    private readonly ConcurrentDictionary<string, Lazy<string?>> _runtimeOverlays =
+        new(StringComparer.OrdinalIgnoreCase);
 
     private sealed class Ctx
     {
         public FileStream? Stream;
         public readonly object Gate = new();
+        public string RealPath = "";
     }
 
     /// <summary>单源模式：一个真实目录映射到虚拟根 /。</summary>
@@ -97,6 +109,53 @@ public sealed class MirrorFs : IDokanOperations
     public IReadOnlyList<(string Prefix, string RealTrim)> RootMaps =>
         _roots.Select(r => (r.Prefix, r.RealTrim)).ToList();
 
+    /// <summary>配置当前运行的可执行文件内容兼容 overlay。
+    /// 仅在挂载后、子进程启动前调用一次；此后配置只读。</summary>
+    public void ConfigureRuntimeCompatibility(
+        string overlayDirectory,
+        IEnumerable<(string From, string To)> pathMaps)
+    {
+        _runtimePathMaps = pathMaps.ToArray();
+        _runtimeOverlays.Clear();
+        _runtimeOverlayDirectory = Path.GetFullPath(overlayDirectory);
+    }
+
+    private string? GetRuntimeOverlay(string real)
+    {
+        if (!real.EndsWith(".exe", StringComparison.OrdinalIgnoreCase)) return null;
+        var overlayDirectory = _runtimeOverlayDirectory;
+        if (overlayDirectory is null ||
+            real.StartsWith(overlayDirectory + Path.DirectorySeparatorChar,
+                StringComparison.OrdinalIgnoreCase))
+            return null;
+        return _runtimeOverlays.GetOrAdd(
+            real,
+            key => new Lazy<string?>(() => AnalyzeRuntimeOverlay(key, overlayDirectory))).Value;
+    }
+
+    /// <summary>在 Lazy 工厂内执行（每个路径至多一次，无共享锁）：读取整个文件
+    /// 做内容级兼容分析并按需生成 overlay 副本。null（无需改写或分析失败）同样
+    /// 缓存，避免每次打开都重复整文件扫描。</summary>
+    private string? AnalyzeRuntimeOverlay(string real, string overlayDirectory)
+    {
+        try
+        {
+            var hash = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(real)))[..16];
+            var name = hash + "-" + Path.GetFileName(real);
+            var destination = Path.Combine(overlayDirectory, name);
+            if (RuntimeCompatibility.PrepareExecutable(real, destination, _runtimePathMaps))
+            {
+                Log.Info("[COMPAT] 为可执行文件创建沙箱 overlay: {0}", real);
+                return destination;
+            }
+        }
+        catch (Exception ex)
+        {
+            Log.Debug("[COMPAT] 可执行文件 overlay 跳过 {0}: {1}", real, ex.Message);
+        }
+        return null;
+    }
+
     private RootMap? FindMapping(string vpath)
     {
         foreach (var r in _roots)
@@ -120,7 +179,11 @@ public sealed class MirrorFs : IDokanOperations
     private Resolved Resolve(string name)
     {
         var vpath = Normalize(name);
-        var best = FindMapping(vpath) ?? throw new UnauthorizedAccessException($"未映射的路径: {name}");
+        // 未映射的路径在沙箱里"不存在"。必须按 FileNotFound 语义返回而非
+        // AccessDenied：宿主机上对不存在的路径探测得到的是 not-found，工具
+        // （PATH 搜索、mime.types 探测等）把它当作正常未命中；虚拟卷同样
+        // 未命中时返回拒绝会让大量合法探测报错并拖慢启动。
+        var best = FindMapping(vpath) ?? throw new FileNotFoundException($"未映射的路径: {name}");
         if (best.Prefix == "/")
         {
             var rel = vpath[1..].Replace('/', Sep);
@@ -287,11 +350,20 @@ public sealed class MirrorFs : IDokanOperations
 
                 try
                 {
-                    var stream = new FileStream(real, mode,
+                    var streamPath = real;
+                    // Launchers commonly reopen their own image read-only to
+                    // parse an embedded shebang after the loader has opened it
+                    // for execution. Keep every read-only handle on the same
+                    // compatibility view; otherwise it sees the host path
+                    // again and falls back to an unrelated PATH executable.
+                    if (!kinds.Contains(AccessKind.Write) &&
+                        GetRuntimeOverlay(real) is { } overlay)
+                        streamPath = overlay;
+                    var stream = new FileStream(streamPath, mode,
                         kinds.Contains(AccessKind.Write) ? System.IO.FileAccess.ReadWrite : System.IO.FileAccess.Read,
                         FileShare.ReadWrite | FileShare.Delete,
                         64 * 1024, FileOptions.None);
-                    info.Context = NewCtx(stream);
+                    info.Context = NewCtx(stream, real);
                 }
                 catch (FileNotFoundException) { return FileNotFound; }
                 catch (DirectoryNotFoundException) { return PathNotFound; }
@@ -301,6 +373,11 @@ public sealed class MirrorFs : IDokanOperations
                 return Success;
             }
         }
+        catch (Exception ex) when (ex is FileNotFoundException or DirectoryNotFoundException)
+        {
+            Log.Debug("[FS] 路径未映射: {0}", fileName);
+            return FileNotFound;
+        }
         catch (Exception ex)
         {
             Log.Error("ZwCreateFile 内部异常: {0}", ex);
@@ -308,9 +385,9 @@ public sealed class MirrorFs : IDokanOperations
         }
     }
 
-    private Ctx NewCtx(FileStream? stream)
+    private Ctx NewCtx(FileStream? stream, string realPath = "")
     {
-        var cx = new Ctx { Stream = stream };
+        var cx = new Ctx { Stream = stream, RealPath = realPath };
         lock (_life) _ctx[cx] = cx;
         return cx;
     }
@@ -341,6 +418,11 @@ public sealed class MirrorFs : IDokanOperations
                 catch (DirectoryNotFoundException) { }
                 catch (IOException ex) { Log.Warn("[FS] 删除失败 {0}: {1}", fileName, ex.Message); }
             }
+        }
+        catch (FileNotFoundException ex)
+        {
+            // 未映射路径的删除请求按"目标不存在"静默处理
+            Log.Debug("[FS] Cleanup 忽略未映射路径 {0}: {1}", fileName, ex.Message);
         }
         catch (Exception ex)
         {
@@ -402,6 +484,11 @@ public sealed class MirrorFs : IDokanOperations
         }
     }
 
+    /// <summary>追加写（WriteToEndOfFile）的全局串行化。并发追加必须以真实
+    /// 文件的当前长度为准——.NET FileStream 的 Seek(End) 用的是自己缓存的
+    /// 位置（打开时的旧 EOF），两个句柄并发追加会互相覆盖丢数据。</summary>
+    private readonly object _appendGate = new();
+
     public NtStatus WriteFile(string fileName, byte[] buffer, out int bytesWritten, long offset,
         IDokanFileInfo info)
     {
@@ -413,10 +500,25 @@ public sealed class MirrorFs : IDokanOperations
             lock (cx.Gate)
             {
                 if (cx.Stream is null) { bytesWritten = 0; return AccessDenied; }
-                cx.Stream.Seek(info.WriteToEndOfFile ? 0 : offset,
-                    info.WriteToEndOfFile ? SeekOrigin.End : SeekOrigin.Begin);
-                cx.Stream.Write(buffer, 0, buffer.Length);
-                cx.Stream.Flush(flushToDisk: false);
+                if (info.WriteToEndOfFile)
+                {
+                    lock (_appendGate)
+                    {
+                        // 以真实文件的当前长度定位：其他句柄可能已经追加过
+                        var realEnd = 0L;
+                        try { realEnd = new FileInfo(cx.RealPath).Length; }
+                        catch { realEnd = cx.Stream.Length; }
+                        cx.Stream.Seek(realEnd, SeekOrigin.Begin);
+                        cx.Stream.Write(buffer, 0, buffer.Length);
+                        cx.Stream.Flush(flushToDisk: false);
+                    }
+                }
+                else
+                {
+                    cx.Stream.Seek(offset, SeekOrigin.Begin);
+                    cx.Stream.Write(buffer, 0, buffer.Length);
+                    cx.Stream.Flush(flushToDisk: false);
+                }
             }
             bytesWritten = buffer.Length;
             return Success;
@@ -499,7 +601,9 @@ public sealed class MirrorFs : IDokanOperations
                 CreationTime = fi.CreationTime,
                 LastAccessTime = fi.LastAccessTime,
                 LastWriteTime = fi.LastWriteTime,
-                Length = fi.Length,
+                Length = GetRuntimeOverlay(real) is { } overlay
+                    ? new FileInfo(overlay).Length
+                    : fi.Length,
             };
             return Success;
         }
@@ -567,6 +671,10 @@ public sealed class MirrorFs : IDokanOperations
             }
             return Success;
         }
+        catch (FileNotFoundException)
+        {
+            return FileNotFound;
+        }
         catch (Exception ex)
         {
             Log.Error("FindFiles 内部异常: {0}", ex);
@@ -625,6 +733,10 @@ public sealed class MirrorFs : IDokanOperations
             if (lastWriteTime.HasValue) File.SetLastWriteTime(real, lastWriteTime.Value);
             return Success;
         }
+        catch (FileNotFoundException)
+        {
+            return FileNotFound;
+        }
         catch (Exception ex)
         {
             Log.Error("SetFileTime 内部异常: {0}", ex);
@@ -644,6 +756,10 @@ public sealed class MirrorFs : IDokanOperations
             if (!info.DeletePending) return Success;
             var (allowed, _) = _policy.Check(Normalize(fileName), AccessKind.Write);
             return allowed ? Success : AccessDenied;
+        }
+        catch (FileNotFoundException)
+        {
+            return FileNotFound;
         }
         catch (Exception ex)
         {
@@ -666,6 +782,10 @@ public sealed class MirrorFs : IDokanOperations
             if (!allowed) return AccessDenied;
             if (Directory.EnumerateFileSystemEntries(real).Any()) return DirectoryNotEmpty;
             return Success;
+        }
+        catch (FileNotFoundException)
+        {
+            return PathNotFound;
         }
         catch (Exception ex)
         {
@@ -706,6 +826,12 @@ public sealed class MirrorFs : IDokanOperations
                     else if (Directory.Exists(oldReal)) Directory.Move(oldReal, newReal);
                     else File.Move(oldReal, newReal, replace);
                 }
+                catch (IOException ex) when (unchecked((uint)ex.HResult) == 0x800700B7u)
+                {
+                    // 目标已存在必须如实返回 FileExists：调用方（PowerShell -Force 等）
+                    // 依赖该条件先删除目标再重试；映射成 AccessDenied 会破坏覆盖语义。
+                    return FileExists;
+                }
                 catch (IOException ex)
                 {
                     Log.Warn("[FS] move 失败 {0}: {1}", oldVp, ex.Message);
@@ -723,6 +849,10 @@ public sealed class MirrorFs : IDokanOperations
                 Log.Info("[FS] move {0} -> {1}", oldVp, newVp);
                 return Success;
             }
+        }
+        catch (FileNotFoundException)
+        {
+            return FileNotFound;
         }
         catch (Exception ex)
         {
@@ -750,6 +880,10 @@ public sealed class MirrorFs : IDokanOperations
                 fs.SetLength(length);
             }
             return Success;
+        }
+        catch (FileNotFoundException)
+        {
+            return FileNotFound;
         }
         catch (Exception ex)
         {
@@ -815,6 +949,11 @@ public sealed class MirrorFs : IDokanOperations
     }
 
     public string? MountedPoint { get; private set; }
+
+    // 注意：GetFileSecurity/SetFileSecurity 刻意保持 NotImplemented。曾尝试转发
+    // 真实安全描述符，但 DokanNet 的 SD 编解码在 robocopy 的多线程安全查询下会
+    // 造成 IRP 挂起；NotImplemented 会让 robocopy/Get-Acl 收到明确错误
+    // （已知限制，见 README 第七节），Copy-Item 等 .NET 语义不受影响。
 
     public NtStatus GetFileSecurity(string fileName, out FileSystemSecurity? security,
         AccessControlSections sections, IDokanFileInfo info)

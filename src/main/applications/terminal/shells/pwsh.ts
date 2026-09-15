@@ -38,7 +38,6 @@ const createPwshArgsSchema = () =>
 type PwshArgsSchema = ReturnType<typeof createPwshArgsSchema>;
 
 export class ExecutePwshTool extends BaseTool<PwshArgsSchema> {
-    override serialExecution = true;
     private runningProcesses: Set<ChildProcess> = new Set();
     private _killedByStop = false;
     private _stopPromises: Map<ChildProcess, Promise<void>> = new Map();
@@ -48,6 +47,7 @@ export class ExecutePwshTool extends BaseTool<PwshArgsSchema> {
         private readonly sandboxed = false
     ) {
         super('executePwsh', t(sandboxed ? 'sandbox.description' : 'pwsh.description'), createPwshArgsSchema());
+        this.serialExecution = sandboxed;
         this.setUniversalExecutor(this.executeCommand.bind(this));
     }
 

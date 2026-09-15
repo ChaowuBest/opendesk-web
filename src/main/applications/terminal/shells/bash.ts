@@ -32,7 +32,6 @@ const ExecuteBashArgsSchema = z.object({
 });
 
 export class ExecuteBashTool extends BaseTool<typeof ExecuteBashArgsSchema> {
-    override serialExecution = true;
     private runningProcesses: Set<ChildProcess> = new Set();
     private _killedByStop = false;
     private _stopPromises: Map<ChildProcess, Promise<void>> = new Map();

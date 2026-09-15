@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { spawn } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
 import { once } from 'node:events';
 import { createServer } from 'node:http';
 import { createRequire } from 'node:module';
@@ -32,6 +32,19 @@ async function run(file: string, args: string[], stdin = '', env = process.env) 
     } finally {
         clearTimeout(timer);
     }
+}
+
+/** 在 PATH 中解析可用的 CPython（OPENDESK_SANDBOX_PYTHON 显式指定优先），
+ * 跳过 WindowsApps 的商店重定向桩；找不到时返回 null，调用方跳过用例。 */
+function resolvePython(): string | null {
+    const fromEnv = process.env.OPENDESK_SANDBOX_PYTHON;
+    if (fromEnv && fs.existsSync(fromEnv)) return fromEnv;
+    const found = spawnSync('where.exe', ['python'], { encoding: 'utf8', windowsHide: true });
+    const candidates = (found.stdout ?? '')
+        .split(/\r?\n/)
+        .map((line) => line.trim())
+        .filter((entry) => /\.exe$/i.test(entry) && fs.existsSync(entry));
+    return candidates.find((entry) => !/windowsapps/i.test(entry)) ?? candidates[0] ?? null;
 }
 
 test('synthetic traversal does not authorize a host root', { skip: !windows }, async () => {
@@ -228,12 +241,7 @@ test(
 
 test('sandbox runs Python, Node.js and Windows console fixtures', { skip: !windows }, async () => {
     const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'opendesk-native-sandbox-runtime-'));
-    const pythonCandidates = [
-        process.env.OPENDESK_SANDBOX_PYTHON,
-        'C:\\Python314\\python.exe',
-        'C:\\Users\\liyif\\AppData\\Local\\Programs\\Python\\Python313\\python.exe'
-    ].filter((value): value is string => Boolean(value));
-    const python = pythonCandidates.find((value) => fs.existsSync(value));
+    const python = resolvePython();
     if (!python) {
         fs.rmSync(directory, { recursive: true, force: true });
         return;
@@ -301,6 +309,189 @@ test('sandbox runs Python, Node.js and Windows console fixtures', { skip: !windo
     }
 });
 
+test('unmapped volume paths fail as not-found, not access-denied', { skip: !windows }, async () => {
+    const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'opendesk-sandbox-unmapped-'));
+    try {
+        const policy = path.join(directory, 'policy.toml');
+        const log = path.join(directory, 'manager.log');
+        fs.writeFileSync(policy, 'version = 1\ndefault = "allow"\n');
+        const shell = path.join(process.env.SystemRoot!, 'System32/WindowsPowerShell/v1.0/powershell.exe');
+        // 卷根（automount 下未映射到任何根的路径）必须返回 not-found 语义。
+        // AccessDenied 会让工具的 PATH/资源探测表现为错误而非正常未命中。
+        const inner =
+            "$ErrorActionPreference = 'Stop'; " +
+            "try { Get-Item -LiteralPath 'Z:\\missing-probe' -ErrorAction Stop; 'UNEXPECTED' } " +
+            "catch { 'KIND=' + $_.FullyQualifiedErrorId }; " +
+            "try { Get-Item -LiteralPath 'Z:\\missing-probe\\deeper' -ErrorAction Stop; 'UNEXPECTED' } " +
+            "catch { 'KIND=' + $_.FullyQualifiedErrorId }";
+        const command = `"${shell}" -NoProfile -NonInteractive -Command "${inner}"`;
+        const result = await run(executable, [
+            'run',
+            '--automount',
+            '--policy',
+            policy,
+            '--log-file',
+            log,
+            '--',
+            command
+        ]);
+        assert.equal(result.code, 0, JSON.stringify(result));
+        assert.equal(result.stderr, '');
+        assert.equal(result.stdout.match(/KIND=PathNotFound/g)?.length, 2, result.stdout);
+        assert.doesNotMatch(
+            fs.readFileSync(log, 'utf8'),
+            /ZwCreateFile 内部异常.*未映射的路径/,
+            'unmapped probes must not surface as manager errors'
+        );
+    } finally {
+        fs.rmSync(directory, { recursive: true, force: true });
+    }
+});
+
+test('recursive copy via PowerShell Copy-Item works against the volume', { skip: !windows }, async () => {
+    const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'opendesk-sandbox-copy-'));
+    try {
+        const policy = path.join(directory, 'policy.toml');
+        const log = path.join(directory, 'manager.log');
+        fs.writeFileSync(policy, 'version = 1\ndefault = "allow"\n');
+        fs.mkdirSync(path.join(directory, 'src'));
+        fs.writeFileSync(path.join(directory, 'src', 'one.txt'), '1');
+        const shell = path.join(process.env.SystemRoot!, 'System32/WindowsPowerShell/v1.0/powershell.exe');
+        // robocopy 依赖 GetFileSecurity（卷返回 NotImplemented，见 README 已知限制），
+        // OpenDesk 场景下等价的复制工具是 PowerShell Copy-Item，必须完整可用。
+        const inner =
+            `Copy-Item -LiteralPath '${directory}\\src' -Destination '${directory}\\dst' -Recurse; ` +
+            `if (-not (Test-Path '${directory}\\dst\\one.txt')) { throw 'copy lost file' }; 'copy-ok'`;
+        const result = await run(
+            executable,
+            [
+                'run',
+                '--automount',
+                '--policy',
+                policy,
+                '--log-file',
+                log,
+                '--',
+                `"${shell}" -NoProfile -NonInteractive -Command "${inner.replace(/"/g, '\\"')}"`
+            ],
+            '',
+            { ...process.env }
+        );
+        assert.equal(result.code, 0, JSON.stringify({ ...result, log: undefined }));
+        assert.match(result.stdout, /copy-ok/, result.stdout);
+    } finally {
+        fs.rmSync(directory, { recursive: true, force: true });
+    }
+});
+
+test('multi-handle concurrent appends keep every writer bytes', { skip: !windows }, async (context) => {
+    const python = resolvePython();
+    if (!python) return context.skip('Python is not installed');
+
+    const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'opendesk-sandbox-append-'));
+    try {
+        const policy = path.join(directory, 'policy.toml');
+        fs.writeFileSync(policy, 'version = 1\ndefault = "allow"\n');
+        const target = path.join(directory, 'shared.txt');
+        fs.writeFileSync(target, '');
+        // 多句柄顺序追加：第二个句柄打开时必须看到第一个句柄已落盘的数据
+        // （并发同写存在 Dokan FCB 尺寸缓存竞态，见 README 已知限制，不用作断言）。
+        // 挂载盘符由 MountLease 动态分配，脚本必须从 SBX_ROOT 派生路径。
+        const script = path.join(directory, 'append_handles.py');
+        fs.writeFileSync(
+            script,
+            [
+                'import os',
+                `P = os.path.join(os.environ['SBX_ROOT'], 'C', ${JSON.stringify(target.slice(3))})`,
+                'handle = open(P, "a", encoding="utf-8")',
+                'for n in range(50):',
+                "    handle.write('a-' + str(n) + chr(10))",
+                'handle.close()',
+                'handle = open(P, "a", encoding="utf-8")',
+                'for n in range(50):',
+                "    handle.write('b-' + str(n) + chr(10))",
+                'handle.close()',
+                "print('lines', sum(1 for _ in open(P, encoding='utf-8')))"
+            ].join('\n')
+        );
+        const result = await run(executable, [
+            'run',
+            '--automount',
+            '--policy',
+            policy,
+            '--',
+            `"${python}" "${script}"`
+        ]);
+        assert.equal(result.code, 0, result.stdout + result.stderr);
+        const count = parseInt((result.stdout.match(/lines (\d+)/) || [])[1], 10);
+        assert.equal(count, 100, `expected 100 appended lines, got ${count}: ${result.stdout}`);
+        assert.equal(result.stdout.includes('ERRORS'), false, result.stdout);
+    } finally {
+        fs.rmSync(directory, { recursive: true, force: true });
+    }
+});
+
+test('Move-Item -Force replaces an existing destination file', { skip: !windows }, async () => {
+    const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'opendesk-sandbox-moveforce-'));
+    try {
+        const policy = path.join(directory, 'policy.toml');
+        fs.writeFileSync(policy, 'version = 1\ndefault = "allow"\n');
+        fs.writeFileSync(path.join(directory, 'src.txt'), 'new-content');
+        fs.writeFileSync(path.join(directory, 'dst.txt'), 'old-content-old-content');
+        const shell = path.join(process.env.SystemRoot!, 'System32/WindowsPowerShell/v1.0/powershell.exe');
+        const inner =
+            `Move-Item -LiteralPath '${directory}\\src.txt' -Destination '${directory}\\dst.txt' -Force -ErrorAction Stop; ` +
+            `'content=' + (Get-Content -LiteralPath '${directory}\\dst.txt')`;
+        const result = await run(
+            executable,
+            [
+                'run',
+                '--automount',
+                '--policy',
+                policy,
+                '--',
+                `"${shell}" -NoProfile -NonInteractive -Command "${inner.replace(/"/g, '\\"')}"`
+            ],
+            '',
+            { ...process.env }
+        );
+        assert.equal(result.code, 0, result.stdout + result.stderr);
+        assert.match(result.stdout, /content=new-content/, result.stdout);
+    } finally {
+        fs.rmSync(directory, { recursive: true, force: true });
+    }
+});
+
+test('content-based launcher compatibility does not depend on the executable name', { skip: !windows }, async () => {
+    const python = resolvePython();
+    if (!python) return;
+    const pip = path.join(path.dirname(python), 'Scripts', 'pip.exe');
+    if (!fs.existsSync(pip)) return;
+
+    const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'opendesk-sandbox-generic-launcher-'));
+    const alias = path.join(directory, 'renamed-runtime.exe');
+    const policy = path.join(directory, 'policy.toml');
+    fs.writeFileSync(policy, 'version = 1\ndefault = "allow"\n');
+    fs.copyFileSync(pip, alias);
+    try {
+        const result = await run(executable, [
+            'run',
+            '--automount',
+            '--policy',
+            policy,
+            '--log-file',
+            path.join(directory, 'manager.log'),
+            '--',
+            `"${path.join(process.env.SystemRoot!, 'System32/WindowsPowerShell/v1.0/powershell.exe')}" -NoProfile -NonInteractive -Command "& '${alias.replace(/'/g, "''")}' --version"`
+        ]);
+        assert.equal(result.code, 0, result.stdout + result.stderr);
+        assert.match(result.stdout, /pip \d+\.\d+/);
+        assert.equal(result.stderr, '');
+    } finally {
+        fs.rmSync(directory, { recursive: true, force: true });
+    }
+});
+
 test('sandbox creates a presentation with PptxGenJS', { skip: !windows }, async () => {
     const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'opendesk-native-sandbox-pptxgenjs-'));
     const policy = path.join(directory, 'policy.toml');
@@ -326,6 +517,76 @@ test('sandbox creates a presentation with PptxGenJS', { skip: !windows }, async 
         assert.equal(result.code, 0, result.stdout + result.stderr);
         assert.match(result.stdout, /pptxgenjs-created/);
         assert.equal(fs.readFileSync(output).subarray(0, 2).toString(), 'PK');
+    } finally {
+        fs.rmSync(directory, { recursive: true, force: true });
+    }
+});
+
+test('ask deny decisions are cached within the TTL (single endpoint hit)', { skip: !windows }, async () => {
+    const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'opendesk-sandbox-denycache-'));
+    let calls = 0;
+    const server = createServer((req, res) => {
+        let body = '';
+        req.on('data', (c) => (body += c));
+        req.on('end', () => {
+            calls++;
+            res.setHeader('Content-Type', 'application/json');
+            res.end(JSON.stringify({ decision: 'deny' }));
+        });
+    });
+    server.listen(0, '127.0.0.1');
+    await once(server, 'listening');
+    try {
+        const port = (server.address() as { port: number }).port;
+        const policy = path.join(directory, 'policy.toml');
+        fs.writeFileSync(
+            policy,
+            `version = 1\ndefault = "deny"\n[ask]\nendpoint = "http://127.0.0.1:${port}/decide"\ntimeout_ms = 3000\ncache_ttl_seconds = 30\n` +
+                `[[rules]]\npath = "/**"\naccess = "read"\nperm = "allow"\n` +
+                `[[rules]]\npath = "/**"\naccess = "execute"\nperm = "allow"\n` +
+                `[[rules]]\npath = "/**"\naccess = "write"\nperm = "ask"\n`
+        );
+        const shell = path.join(process.env.SystemRoot!, 'System32/WindowsPowerShell/v1.0/powershell.exe');
+        const command =
+            `"${shell}" -NoProfile -NonInteractive -Command "try { Set-Content -LiteralPath '${directory}\\w.txt' '1' -ErrorAction Stop } catch {}; ` +
+            `try { Set-Content -LiteralPath '${directory}\\w.txt' '2' -ErrorAction Stop } catch {}"`;
+        const result = await run(executable, [
+            'run',
+            '--automount',
+            '--policy',
+            policy,
+            '--',
+            command
+        ]);
+        // 关键断言：deny 决策在 TTL 内被缓存（同路径两次写只问询一次），
+        // 且两次写都未落盘。包装器退出码因 PS 对被捕获错误的处理而不同，不作断言。
+        assert.equal(calls, 1, `deny decision must be cached within TTL (calls=${calls})`);
+        assert(!fs.existsSync(path.join(directory, 'w.txt')), 'denied write must not land');
+    } finally {
+        server.close();
+    }
+});
+
+test('pip launcher runs successfully in the sandbox', { skip: !windows }, async () => {
+    const python = resolvePython();
+    if (!python) return;
+    const pip = path.join(path.dirname(python), 'Scripts', 'pip.exe');
+    if (!fs.existsSync(pip)) return;
+
+    const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'opendesk-sandbox-pipnoise-'));
+    try {
+        const policy = path.join(directory, 'policy.toml');
+        fs.writeFileSync(policy, 'version = 1\ndefault = "allow"\n');
+        const shell = path.join(process.env.SystemRoot!, 'System32/WindowsPowerShell/v1.0/powershell.exe');
+        const result = await run(executable, [
+            'run',
+            '--automount',
+            '--policy',
+            policy,
+            '--',
+            `"${shell}" -NoProfile -NonInteractive -Command "pip show pip"`
+        ]);
+        assert.match(result.stdout, /Name: pip/, 'pip must still work');
     } finally {
         fs.rmSync(directory, { recursive: true, force: true });
     }

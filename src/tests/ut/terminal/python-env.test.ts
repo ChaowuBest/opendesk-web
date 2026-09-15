@@ -5,6 +5,7 @@ import {
     buildChildProcessEnv,
     buildInterpretersEnv,
     hasUserPythonEnvironment,
+    injectNonInteractiveEnv,
     shouldUseIsolatedPython,
     stripUserPythonEnvironment
 } from '../../../main/utils/shellExec';
@@ -145,6 +146,15 @@ describe('terminal Python environment isolation', () => {
         expect(env.PYTHONIOENCODING).toBe('custom-encoding');
         expect(env.PYTHONUTF8).toBe('1');
         expect(env.CI).toBe('true');
+    });
+
+    test('does not enable Python inspect mode in non-interactive child processes', () => {
+        const env: NodeJS.ProcessEnv = {};
+
+        injectNonInteractiveEnv(env);
+
+        expect(env.CI).toBe('true');
+        expect(env.PYTHONINSPECT).toBeUndefined();
     });
 
     test('strips active virtual environment metadata for forced isolated Python', () => {

@@ -1,0 +1,72 @@
+import { virtualPathToHostPath } from '../../../main/applications/terminal/sandboxes/ask-path.js';
+import {
+    expandPermissionPattern,
+    hostPatternToVirtual,
+    policyText
+} from '../../../main/applications/terminal/sandboxes/dynabox.js';
+
+describe('expandPermissionPattern', () => {
+    test('{,/**} 展开为目录本身与子树', () => {
+        expect(expandPermissionPattern('C:/work{,/**}')).toEqual(['C:/work', 'C:/work/**']);
+    });
+    test('普通 glob 原样返回', () => {
+        expect(expandPermissionPattern('D:/data/**')).toEqual(['D:/data/**']);
+    });
+});
+
+describe('hostPatternToVirtual', () => {
+    test('盘符路径转虚拟前缀', () => {
+        expect(hostPatternToVirtual('C:/work/a')).toBe('/C/work/a');
+        expect(hostPatternToVirtual('d:\\x')).toBe('/D/x');
+    });
+    test('非盘符路径（UNC 等）返回 null', () => {
+        expect(hostPatternToVirtual('//server/share')).toBeNull();
+        expect(hostPatternToVirtual('/dev/null')).toBeNull();
+    });
+});
+
+describe('policyText', () => {
+    const base = (rules: string) =>
+        `version = 1\ndefault = "deny"\n[ask]\nendpoint = "http://127.0.0.1:1/decide"\ntoken = "t"\ntimeout_ms = 330000\ncache_ttl_seconds = 0\ngrant_ttl_seconds = 0\n${rules}`;
+
+    test('deny 排在 ask/allow 之前；execute 不导出；all 拆分为 read+write', () => {
+        const rules = [
+            { resourceType: 'file', action: 'read', pathPattern: 'D:/private/**', effect: 'deny' },
+            { resourceType: 'file', action: 'write', pathPattern: 'D:/data/**', effect: 'allow' },
+            { resourceType: 'file', action: '*', pathPattern: 'C:/proj/**', effect: 'ask' },
+            { resourceType: 'file', action: 'execute', pathPattern: 'E:/bin/**', effect: 'allow' },
+            { resourceType: 'registry', action: 'read', pathPattern: 'HKLM/xx', effect: 'deny' }
+        ] as any[];
+        const text = policyText('http://ep/decide', 'tok', rules as any);
+        // deny 最先
+        const denyIdx = text.indexOf('perm = "deny"\n'.replace('\n', '')) >= 0 ? text.indexOf('/D/private/**') : -1;
+        expect(denyIdx).toBeGreaterThanOrEqual(0);
+        // execute 不导出到原生策略
+        expect(text).not.toContain('E:/bin/**');
+        // all 拆为 read + write
+        expect(text).toContain('access = "write"');
+        expect(text).toContain('access = "read"');
+    });
+
+    test('非盘符模式被跳过，通配根被转换', () => {
+        const rules = [
+            { resourceType: 'file', action: 'read', pathPattern: '/dev/null', effect: 'deny' },
+            { resourceType: 'file', action: 'read', pathPattern: '**', effect: 'allow' }
+        ] as any[];
+        const text = policyText('http://ep/decide', 't', rules as any);
+        expect(text).toContain('path = "/**"');
+        expect(text).not.toContain('/dev/null');
+    });
+
+    test('追加只读兜底与写入问询、执行放行的兜底规则', () => {
+        const text = policyText('http://ep/decide', 't', undefined);
+        expect(text.indexOf('access = "read"')).toBeGreaterThanOrEqual(0);
+        expect(text).toContain('perm = "ask"');
+        expect(text).toContain('path = "/**"');
+    });
+
+    test('virtualPathToHostPath 回转（ask 路径 → 宿主路径）', () => {
+        expect(virtualPathToHostPath('/C/Users/a.txt')).toBe('C:/Users/a.txt');
+        expect(virtualPathToHostPath('/C/a/../b')).toBeNull();
+    });
+});

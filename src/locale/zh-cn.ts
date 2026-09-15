@@ -1074,7 +1074,6 @@ export const zhCn: Record<string, string> = {
     // Task & Planning Tools
     'tools.listRecentTasks.name': '列出任务',
     'tools.getTaskHistory.name': '获取历史',
-    'tools.checkShellStatus.name': '检查Shell状态',
     'tools.askFromTask.name': '任务追问',
     'tools.deleteTasks.name': '删除任务',
     'tools.createSubTask.name': '子任务',
@@ -1383,9 +1382,6 @@ export const zhCn: Record<string, string> = {
     'sp.task.terminal.noShells': '未找到支持的 shell',
     'sp.task.terminal.sandbox': '启用沙箱',
     'sp.task.terminal.sandbox.desc': '在 Windows 沙箱中执行此 powershell，文件访问需要时请求授权。',
-    'terminal.shell.sandboxTag': '沙箱',
-    'terminal.sandbox.executableMissing': '动态沙箱已启用，但未找到 sandbox.exe。请重新构建 Windows 版本。',
-    'terminal.sandbox.endpointFailed': '动态沙箱授权端点未能获取端口。',
     'sp.agents.title': 'ACP Agent',
     'sp.agents.desc': '连接本地 stdio 或远程 Streamable HTTP Agent。任务上下文和事件记录仍保存在本地。',
     'sp.agents.add': '添加 Agent',

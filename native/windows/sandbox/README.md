@@ -9,12 +9,28 @@
 - 授权端点随进程存活；终端工具超时转入后台不会关闭端点。用户确认最多等待五分钟，HTTP 预留 30 秒余量，Dokan 在等待期间续期当前 I/O 请求。
 - 每次访问均查询 OpenDesk 当前权限规则，不下发原生 TTL 授权。同一命令的相同路径和操作复用单次确认结果；切换任务模式会清除此缓存。选择记住目录或操作类型时，写回任务权限引擎。
 - Windows 的 `SystemDrive`、`SystemRoot`、`windir` 保留原值供系统运行时使用；子进程仍在 AppContainer 内运行，系统原生 ACL 继续生效。
-- 所有 shell 工具通过 `BaseTool.serialExecution` 在同一任务、同一批调用内串行调度。不同任务和转入后台的进程仍可能重叠：原生管理器从选盘到卸载持有跨进程盘符占用，自动挂载时排除其他实例的虚拟卷。
+- 沙箱子进程及后代带有 `internetClient`、`privateNetworkClientServer` 网络能力。Windows 对 AppContainer 的回环隔离独立于外网权限；使用 `127.0.0.1` / `localhost` 本机代理还需要回环豁免。
+- OpenDesk 在启动沙箱前调用 `network-ensure`。首次使用会弹出 Windows UAC，只提升一次性的回环初始化子命令；初始化完成后，OpenDesk、沙箱管理器和 shell 均以普通权限运行。拒绝或初始化失败会返回本地化错误，重试可再次初始化。后续启动重新检查 Windows 配置，配置仍有效时不会弹出 UAC。
+- 回环初始化为当前 Windows 用户预留 A–Z 共 26 个稳定的 AppContainer 包 SID，并保留其他应用已有的豁免。身份按“用户 SID + 挂载盘符”确定，同一用户跨登录会话持有独占盘符租约，并发实例不会共享身份；每次运行前重新创建私有 profile，避免残留任务数据。豁免允许这些身份访问本机服务，不限于某个代理端口；文件访问仍受 AppContainer 和 Dokan 策略约束。
+- 启用动态沙箱的 shell 通过 `BaseTool.serialExecution` 在同一任务、同一批调用内串行调度；普通 PowerShell、Bash、Zsh 保持并行。不同任务和转入后台的沙箱进程仍可能重叠：原生管理器从选盘到卸载持有跨进程盘符占用，自动挂载时排除其他实例的虚拟卷。
 - 强制沙箱工具不再静态分析虚拟路径的文件权限，实际 I/O 经授权端点转换成 `C:/...`、`D:/...` 后审批。命令和工作目录使用宿主路径；脚本文件内的绝对路径不会改写，使用相对路径或 `SBX_ROOT`，不要硬编码 `Z:`。
 - Windows PowerShell 自带模块在 `PSModulePath` 中保留系统原生路径，避免虚拟路径触发 AppContainer 无权执行的注册表授权检查。其他模块目录继续映射。无需可执行文件兼容补丁的程序保留安装目录的映射，以便读取相邻 DLL。
+- 部分 Windows launcher 会把宿主绝对路径或命名对象格式嵌入 PE 文件。镜像文件系统按可执行文件内容识别这些兼容性特征，在私有 `/dynobox` overlay 中生成一次性副本，并把已声明的宿主路径映射到沙箱视图；不会按 `python`、`pip` 等工具名生成专用 shim。通过 PATH 启动的 launcher 与命令行直接启动的程序共享同一套处理。relay 只移除严格匹配当前虚拟盘符的运行时自定位诊断，其他 stderr 和退出码原样保留。
 - `ConstrainedLanguage` 是 PowerShell 的语言限制，限制任意 .NET 调用、非核心类型属性赋值及 COM 等能力，并不等同于沙箱文件权限。挂载丢失会使 PowerShell 启动检查失败；本集成不强制切换语言模式，也不覆盖宿主的 AppLocker/WDAC 策略。
 
-回归验证：`npm test -- --runInBand --runTestsByPath src/tests/ut/terminal/dynamicSandbox.test.ts src/tests/ut/terminal/background.test.ts`，以及 `npx tsx --test native/windows/sandbox/tests/runtime.test.ts`。原生集成用例需要 Windows、.NET SDK、已安装的 Dokany 驱动和 `npm run build:sandbox` 产物，覆盖子进程流、虚拟根和 35 秒授权等待。
+回归验证：`npm test -- --runInBand --runTestsByPath src/tests/ut/terminal/powershell-sandbox.test.ts src/tests/ut/terminal/background.test.ts src/tests/ut/aikernel/tool-serial-execution.test.ts`，以及 `npx tsx --test native/windows/sandbox/tests/runtime.test.ts`。原生集成用例需要 Windows、.NET SDK、已安装的 Dokany 驱动和 `npm run build:sandbox` 产物，覆盖子进程流、虚拟根和 35 秒授权等待。
+
+网络初始化单元测试：`npm test -- --runInBand --runTestsByPath src/tests/ut/terminal/sandbox-loopback.test.ts`。真实运行测试已随沙箱实现放在 `native/windows/sandbox/tests/windows-sandbox-runtime.test.ts`，默认跳过，可在 PowerShell 中显式开启：
+
+```powershell
+npm run build:sandbox
+native/windows/sandbox/runtime/sandbox.exe network-ensure
+$env:OPENDESK_SANDBOX_INTEGRATION = '1'
+$env:OPENDESK_SANDBOX_LOOPBACK_TEST = '1'
+npx tsx --test native/windows/sandbox/tests/windows-sandbox-runtime.test.ts
+```
+
+这些用例验证发布产物重复启动、后代进程的网络能力和文件拒绝、并发身份隔离、私有数据清理，以及两次全新运行经宿主回环 HTTP 代理收发请求。并发用例直接启动原生管理器，验证跨任务或后台进程重叠时的身份防护；OpenDesk 仅串行调度带沙箱的 PowerShell 工具，普通 PowerShell、Bash 和 Zsh 可以并发执行。测试本身不请求提权；回环测试需先完成 `network-ensure`。
 
 把宿主任意目录（乃至整个磁盘、网络共享）镜像成一个虚拟盘，**被拉起的子进程及其
 全部后代**对这个卷的每一次文件操作——读、写、执行、删除、改名、枚举——都先经过
@@ -34,7 +50,7 @@
                           ask   ──> HTTP/命名管道 ──> 上游决策端点
 ```
 
-管控对后代进程自动传递：子进程使用每次运行独立创建的 Windows AppContainer
+管控对后代进程自动传递：子进程使用当前运行独占的 Windows AppContainer
 安全上下文，并继承 Job 容器，禁止 breakaway；管理进程退出或被杀，整棵进程树
 随之终止。AppContainer 默认没有普通用户文件权限，Dokan 卷的安全描述符只授予
 当前运行实例的包 SID，因此子进程不能把 `C:\`、用户目录或其他原生路径当作普通
@@ -170,7 +186,7 @@ LLM 会在工具调用与生成的脚本里写路径，两套命名空间会让�
 ### 2.6 进程治理与原生路径隔离
 
 - 子进程以 `CreateProcessAsUserW` 启动，并通过
-  `PROC_THREAD_ATTRIBUTE_SECURITY_CAPABILITIES` 进入每次运行独立的 AppContainer；
+  `PROC_THREAD_ATTRIBUTE_SECURITY_CAPABILITIES` 进入当前运行独占的 AppContainer；
 - 挂载卷使用包含 `SYSTEM`、卷所有者和当前 AppContainer 包 SID 的安全描述符，
   其他卷访问者没有权限；
 - 随后立即放入 Job 对象：`JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE`（管理进程退出
@@ -207,6 +223,12 @@ endpoint [--port 8080] [--pipe 管道名] [--default allow|deny]
          内置参考决策端点（HTTP / 命名管道二选一）。
 debug-rules --policy <rules.toml> [--path P] [--access K]
          诊断工具：打印规则编译结果与指定路径的求值过程。
+network-status
+         只读检查当前用户的回环豁免，输出 JSON configured/userSid。
+network-ensure
+         检查并按需请求 UAC 初始化；成功输出 configured=true，失败输出 errorCode。
+network-setup --user-sid SID
+         内部管理员初始化入口，仅添加指定用户的沙箱回环豁免。
 通用选项： -v 输出每个文件操作的调试日志。
 --src DIR：兼容模式，把单个真实目录映射到虚拟根 /；也可在策略文件中使用
          [[roots]] 声明映射。两者不能同时使用。
@@ -412,6 +434,9 @@ Dokan MSI（缓存于 `_setup\`）。
 - 拉起 exe / 加载卷上 DLL 受 execute 规则约束；
 - 全链路 fail-closed（ask 端点死、超时、坏策略 → 拒绝）；
 - 路径越界守卫：`..` 归一化 + 前缀校验双重拦截（测试固化）。
+- 未映射的路径（卷根下的游离路径、未声明的虚拟目录）按 not-found 语义返回，
+  不产生 AccessDenied——与宿主机上"路径不存在"的行为一致，避免工具的
+  PATH/资源探测（如 python 启动时的 mime.types 探测）表现为错误。
 
 **明确不做 / 已知限制：**
 
@@ -425,7 +450,25 @@ Dokan MSI（缓存于 `_setup\`）。
 - `SetFileAttributesW` 的属性修改被 Dokan 驱动 FCB 缓存吸收、不转发用户态——
   沙箱内"解除只读"不可靠（测试已固化该怪癖，残留由编排器清扫）；
 - 已打开句柄不受后续策略变化影响；ask 决策有 TTL 缓存；失败决策不缓存；
-- LockFile 仅返回成功；安全描述符查询返回 NOT_IMPLEMENTED（Dokan 用默认 SD）；
+- LockFile 仅返回成功；安全描述符查询返回 NOT_IMPLEMENTED（Dokan 用默认 SD）——
+  因此 robocopy（依赖安全描述符查询）对卷内路径会报错并失败，Get-Acl/icacls
+  同样不可用；Copy-Item 等不依赖安全描述符的 .NET 语义不受影响。曾实现真实
+  SD 转发，但 DokanNet 的编解码在多线程安全查询下会造成 IRP 挂起，故回退；
+- 多句柄"同时"追加同一文件存在 Dokan FCB 尺寸缓存竞态，可能丢失后写句柄的
+  数据（NTFS 依赖写入时机同样存在理论竞态）；先关后开的顺序追加完全可靠；
+- 对**目录**执行 Rename-Item/Move-Item 改名在 Dokan 2.3.1 驱动下会被驱动静默
+  吞掉（不转发到用户态 MoveFile），表现为改名成功但目录内容在新路径不可见；
+  文件改名/移动正常。需要目录改名时使用 Copy-Item + Remove-Item 组合；
+- 系统自带 tar.exe（bsdtar）在 AppContainer 子进程中以 0xC0000142
+  （STATUS_DLL_INIT_FAILED）终止，属系统工具与 AppContainer 的兼容性限制；
+  归档场景使用 Compress-Archive/Expand-Archive（已验证可用）；
+- NTFS 备用数据流（ADS，如 `file.txt:Zone.Identifier`）与 WSH 脚本
+  （cscript/wscript 执行 .vbs/.js）同样受驱动/AppContainer 限制：前者的
+  冒号名在到达用户态前即被驱动拒绝，后者被 URLMON zone 检查判定为
+  拒绝执行；两者均为已知限制而非策略缺陷；
+- 硬链接（os.link/CreateHardLink）与符号链接（os.symlink）创建不受支持
+  （驱动无对应转发/权限拒绝）；读取常规文件与目录、loopback 监听
+  （python http.server 绑定 127.0.0.1）均正常可用；
 - 跨映射根的改名/移动按拒绝处理（跨卷语义）；
 - 整盘镜像（`[[roots]]` 声明 `/C` → `C:\`）下所有经由 `Z:` 的 IO 走用户态，系统目录批量访问变慢；
   且 `Z:` 上会看到整盘（读全放行的策略下）——敏感目录请用规则收窄。
@@ -438,6 +481,7 @@ Dokan MSI（缓存于 `_setup\`）。
 src\Dynobox\            C# 沙箱实现（见"代码结构"）
 build.ps1                  交叉构建：发布 + 组装（MSI + install.cmd）+ 打 zip + 验证
 tests\runtime.test.ts      原生 Dynobox 回归测试入口
+tests\windows-sandbox-runtime.test.ts  真实运行测试（AppContainer 身份、网络能力、launcher 兼容；OPENDESK_SANDBOX_INTEGRATION=1 开启）
 tests\NativeRegression\   MirrorFs 与并发挂载回归辅助项目
 tests\\rules.toml        单目录示例策略（配套基础测试套件）
 tests\\rules_drive.toml  整盘镜像示例策略（读全开、写默认拒）

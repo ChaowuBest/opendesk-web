@@ -449,7 +449,6 @@ const NON_INTERACTIVE_ENV: Record<string, string> = {
     DOCKER_CLI_HINTS: 'false',
     DOCKER_SCAN_SUGGEST: 'false',
     HGPLAIN: '1',
-    PYTHONINSPECT: '0',
     GPG_TTY: '',
     // OpenSSH 8.4+：禁止 askpass 弹窗，覆盖直接调用 ssh 的场景（GIT_SSH_COMMAND 仅覆盖 git 调用的 ssh）
     SSH_ASKPASS_REQUIRE: 'never',

@@ -22,7 +22,9 @@ import {
 } from '../../../aikernel/security/permission.js';
 import { applyPersistentPermissionAllowForTask } from '../../../aikernel/task/permission.js';
 import type { TaskState } from '../../../aikernel/states/tasks.js';
-import { t } from '../../../../locale/index.js';
+import { t } from '../locale/index.js';
+import { ensureSandboxLoopback } from './loopback.js';
+import { virtualPathToHostPath } from './ask-path.js';
 
 export interface DynamicSandboxLaunch {
     file: string;
@@ -45,19 +47,6 @@ function resolveSandboxExecutable(): string | null {
     return fs.existsSync(executable) ? executable : null;
 }
 
-function virtualPathToHostPath(value: string): string | null {
-    const normalized = value.replace(/\\/g, '/');
-    const drive = /^\/([A-Za-z])(?:\/(.*))?$/.exec(normalized);
-    if (
-        !drive ||
-        /[:*?"<>|]/.test(drive[2] || '') ||
-        [...value].some((char) => char.charCodeAt(0) < 32) ||
-        (drive[2] || '').split('/').some((part) => part === '.' || part === '..')
-    )
-        return null;
-    return `${drive[1].toUpperCase()}:/${drive[2] || ''}`;
-}
-
 function quotePowerShell(value: string): string {
     return `'${value.replace(/'/g, "''")}'`;
 }
@@ -75,7 +64,7 @@ function quoteWindowsArgument(value: string): string {
     return `"${value.replace(/(\\*)"/g, '$1$1\\"').replace(/(\\+)$/, '$1$1')}"`;
 }
 
-function expandPermissionPattern(pattern: string): string[] {
+export function expandPermissionPattern(pattern: string): string[] {
     const normalized = pattern.replace(/\\/g, '/').replace(/\/+/g, '/');
     if (normalized.endsWith('{,/**}')) {
         const base = normalized.slice(0, -'{,/**}'.length).replace(/\/$/, '');
@@ -84,7 +73,7 @@ function expandPermissionPattern(pattern: string): string[] {
     return [normalized];
 }
 
-function hostPatternToVirtual(pattern: string): string | null {
+export function hostPatternToVirtual(pattern: string): string | null {
     const normalized = pattern.replace(/\\/g, '/');
     const drive = /^([A-Za-z]):(?:\/(.*))?$/.exec(normalized);
     if (drive) return `/${drive[1].toUpperCase()}${drive[2] ? `/${drive[2]}` : ''}`;
@@ -92,7 +81,7 @@ function hostPatternToVirtual(pattern: string): string | null {
     return null;
 }
 
-function permissionRulesForSandbox(rules: PermissionRule[] | undefined): string[] {
+export function permissionRulesForSandbox(rules: PermissionRule[] | undefined): string[] {
     const lines: string[] = [];
     // GlobPermissionEnforcer evaluates deny > ask > allow regardless of the
     // insertion order. Keep the same precedence in Policy's first-match table.
@@ -122,7 +111,7 @@ function permissionRulesForSandbox(rules: PermissionRule[] | undefined): string[
     return lines;
 }
 
-function policyText(endpoint: string, token: string, rules?: PermissionRule[]): string {
+export function policyText(endpoint: string, token: string, rules?: PermissionRule[]): string {
     const quote = (value: string) => JSON.stringify(value);
     return [
         'version = 1',
@@ -164,7 +153,7 @@ async function listen(server: Server): Promise<number> {
         server.listen(0, '127.0.0.1', () => resolve());
     });
     const address = server.address();
-    if (!address || typeof address === 'string') throw new Error(t('terminal.sandbox.endpointFailed'));
+    if (!address || typeof address === 'string') throw new Error(t('sandbox.endpointFailed'));
     return address.port;
 }
 
@@ -180,7 +169,8 @@ export async function prepareDynamicSandbox(options: {
     if (!isPowerShell(options.shellPath)) return null;
 
     const executable = resolveSandboxExecutable();
-    if (!executable) throw new Error(t('terminal.sandbox.executableMissing'));
+    if (!executable) throw new Error(t('sandbox.executableMissing'));
+    await ensureSandboxLoopback(executable);
     const token = crypto.randomBytes(32).toString('hex');
     let closed = false;
     type Decision = { decision: 'allow' | 'deny' };
