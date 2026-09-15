@@ -33,7 +33,7 @@ import { getRuntimePluginDirectories } from './management/config.js';
 import { getBuiltinPluginsDirectory, getPluginsDirectory } from './management/paths.js';
 import { formatPluginInstallError } from './management/errors.js';
 import { t } from './locale/index.js';
-import { t as translate } from '../../../locale/index.js';
+import { t as translate, getLocale } from '../../../locale/index.js';
 import { MANAGE_PLUGINS_SKILL } from './skills.js';
 import {
     GetPluginDetailsTool,
@@ -51,8 +51,15 @@ const PluginMgrConfigSchema = z.object({
 export class PluginMgrApplication extends BaseApplication {
     static bundleName = 'pluginmgr';
 
+    private unsubscribeAppearanceChanged: (() => void) | undefined;
+
     constructor() {
         super('pluginmgr');
+        // 插件激活/停用会修改外观覆盖，转发为 appearanceChanged 事件供渲染进程热更新；
+        // 本地化名称按当前界面语言解析后下发
+        this.unsubscribeAppearanceChanged = getPluginHost().onAppearanceChanged(() => {
+            this.emitEvent('appearanceChanged', getPluginHost().listAppearance(getLocale())).catch(() => {});
+        });
     }
 
     getName(): string {
@@ -81,6 +88,10 @@ export class PluginMgrApplication extends BaseApplication {
             {
                 eventName: 'pluginsChanged',
                 eventDescription: t('app.event.pluginsChanged')
+            },
+            {
+                eventName: 'appearanceChanged',
+                eventDescription: t('app.event.appearanceChanged')
             }
         ];
     }
@@ -304,6 +315,12 @@ export class PluginMgrApplication extends BaseApplication {
         return entry;
     }
 
+    /** 当前插件生效的应用外观覆盖，供渲染进程（侧边栏品牌区等）读取；名称按当前界面语言解析 */
+    async getAppearance() {
+        await initializePluginHost();
+        return getPluginHost().listAppearance(getLocale());
+    }
+
     async doctor() {
         await initializePluginHost();
         return {
@@ -346,6 +363,8 @@ export class PluginMgrApplication extends BaseApplication {
     }
 
     async beforeExit(): Promise<void> {
+        this.unsubscribeAppearanceChanged?.();
+        this.unsubscribeAppearanceChanged = undefined;
         await disposePluginHost();
     }
 }

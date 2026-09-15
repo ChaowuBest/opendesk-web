@@ -34,17 +34,23 @@ import type {
     PluginSkillDefinition,
     PluginMcpServerDefinition,
     PluginStaticResources,
+    PluginAppearanceState,
+    PluginLocalizedText,
+    PluginLocalizedTextMap,
     Channel,
     ChannelAccount
 } from '../../../../../packages/plugin-sdk/src/index.js';
 import {
+    localePrimaryTag,
     OPENDESK_PLUGIN_API_VERSION,
     OPENDESK_PLUGIN_CAPABILITIES,
-    OPENDESK_PLUGIN_HOOK_NAMES
+    OPENDESK_PLUGIN_HOOK_NAMES,
+    resolvePluginDisplayName
 } from '../../../../../packages/plugin-sdk/src/index.js';
 import { comparePluginVersions } from '../discovery/manifest.js';
 import { AGENT_RUNTIME_ERROR_CODES, loadAgentsFromDirectory } from '../discovery/agent-resource.js';
 import { compileHintPattern, validateBrowserHint } from './browser-hints.js';
+import { resolveAppearanceLogoValues } from './appearance.js';
 import type { CompiledHintPattern } from './browser-hints.js';
 import { qualifyPluginToolName } from './tool-names.js';
 import { createAccountsContext } from './account-context.js';
@@ -135,6 +141,24 @@ interface ChannelRecord {
     channel: Channel;
 }
 
+type AppearanceField = 'appTitle' | 'appDescription' | 'appLogo';
+
+/** 单个外观字段的贡献值：文案存原始输入（读取时按语言解析），Logo 存注册期解析出的 data URL */
+interface AppearanceValues {
+    appTitle?: string | PluginLocalizedTextMap;
+    appDescription?: string | PluginLocalizedTextMap;
+    appLogoUrl?: string;
+    appLogoDarkUrl?: string;
+    appLogoLightUrl?: string;
+}
+
+interface AppearanceRecord {
+    pluginKey: string;
+    pluginId: string;
+    field: AppearanceField;
+    values: AppearanceValues;
+}
+
 export interface VisiblePluginContribution<T> {
     id: string;
     pluginId: string;
@@ -163,6 +187,35 @@ function validatePluginId(id: string): boolean {
 
 function validatePluginCommandLocalName(name: string): void {
     if (!/^[a-z][a-z0-9-]*$/.test(name)) throw new Error(`plugin.command_name_invalid:${name}`);
+}
+
+/** 应用标题/描述的最大显示长度（去除首尾空白后） */
+const APPEARANCE_TEXT_MAX_LENGTH = 64;
+
+/**
+ * 归一化 setAppTitle / setAppDescription 的输入。
+ *
+ * 字符串形式去除首尾空白；本地化映射形式按主语言标签归一化键名，
+ * 每个值去除首尾空白。任一形式为空或超长即抛错。
+ */
+function normalizeAppearanceTextInput(text: string | PluginLocalizedTextMap): string | PluginLocalizedTextMap {
+    if (typeof text === 'string') {
+        const trimmed = text.trim();
+        if (!trimmed) throw new Error('plugin.appearance_title_invalid');
+        if (trimmed.length > APPEARANCE_TEXT_MAX_LENGTH) throw new Error('plugin.appearance_title_too_long');
+        return trimmed;
+    }
+    if (!isRecord(text)) throw new Error('plugin.appearance_title_invalid');
+    const localized: Record<string, string> = {};
+    for (const [key, entry] of Object.entries(text)) {
+        if (typeof entry !== 'string' || !entry.trim()) throw new Error('plugin.appearance_title_invalid');
+        const tag = localePrimaryTag(key);
+        if (!tag) throw new Error('plugin.appearance_title_invalid');
+        if (entry.trim().length > APPEARANCE_TEXT_MAX_LENGTH) throw new Error('plugin.appearance_title_too_long');
+        localized[tag] = entry.trim();
+    }
+    if (Object.keys(localized).length === 0) throw new Error('plugin.appearance_title_invalid');
+    return localized;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -375,6 +428,8 @@ export class PluginHost {
     private readonly browserHints: BrowserHintRecord[] = [];
     private readonly channels = new Map<string, ChannelRecord>();
     private readonly applicationEvents: ApplicationEventRecord[] = [];
+    private readonly appearance = new Map<AppearanceField, AppearanceRecord>();
+    private readonly appearanceChangeListeners = new Set<() => void>();
     private readonly mcpRemovalListeners = new Set<(id: string) => void | Promise<void>>();
 
     list(): PluginHostEntry[] {
@@ -524,6 +579,32 @@ export class PluginHost {
     onMcpServerRemoved(listener: (id: string) => void | Promise<void>): () => void {
         this.mcpRemovalListeners.add(listener);
         return () => this.mcpRemovalListeners.delete(listener);
+    }
+
+    /**
+     * 当前生效的应用外观覆盖；未设置的字段为 undefined，表示沿用默认外观。
+     *
+     * @param locale 解析本地化文案（标题/描述）使用的 BCP 47 语言标签（如 zh-CN）；
+     *   无匹配语言时回退到注册输入的第一项。
+     */
+    listAppearance(locale?: string): PluginAppearanceState {
+        const logo = this.appearance.get('appLogo')?.values;
+        return {
+            appTitle: resolvePluginDisplayName(this.appearance.get('appTitle')?.values.appTitle, locale ?? ''),
+            appDescription: resolvePluginDisplayName(
+                this.appearance.get('appDescription')?.values.appDescription,
+                locale ?? ''
+            ),
+            appLogoUrl: logo?.appLogoUrl,
+            appLogoDarkUrl: logo?.appLogoDarkUrl,
+            appLogoLightUrl: logo?.appLogoLightUrl
+        };
+    }
+
+    /** 订阅外观覆盖变化（设置或回退时触发）；返回取消订阅函数 */
+    onAppearanceChanged(listener: () => void): () => void {
+        this.appearanceChangeListeners.add(listener);
+        return () => this.appearanceChangeListeners.delete(listener);
     }
 
     recordError(options: RecordPluginErrorOptions): PluginHostEntry {
@@ -995,12 +1076,64 @@ export class PluginHost {
                     );
                 }
             },
+            appearance: {
+                setAppTitle: (title: string | PluginLocalizedTextMap) => {
+                    addCapability('appearance');
+                    const values: AppearanceValues = { appTitle: normalizeAppearanceTextInput(title) };
+                    return this.registerAppearanceOverride(entry, 'appTitle', values, track);
+                },
+                setAppDescription: (description: string | PluginLocalizedTextMap) => {
+                    addCapability('appearance');
+                    const values: AppearanceValues = { appDescription: normalizeAppearanceTextInput(description) };
+                    return this.registerAppearanceOverride(entry, 'appDescription', values, track);
+                },
+                setAppLogo: (logoPath: string | { dark?: unknown; light?: unknown }) => {
+                    addCapability('appearance');
+                    // 注册时一次性完成路径解析与文件校验（存在性/格式/大小），
+                    // 渲染进程拿到的直接是可用的 data URL，无需再访问插件目录
+                    const values = resolveAppearanceLogoValues(
+                        path.resolve(options.pluginDir ?? options.configDir ?? getOpendeskDirectory()),
+                        logoPath
+                    );
+                    return this.registerAppearanceOverride(entry, 'appLogo', values, track);
+                }
+            },
             accounts: createAccountsContext({
                 pluginId: entry.id,
                 addCapability,
                 track
             })
         };
+    }
+
+    private registerAppearanceOverride(
+        entry: ActivePlugin,
+        field: AppearanceField,
+        values: AppearanceValues,
+        track: (registration: PluginRegistration) => PluginRegistration
+    ): PluginRegistration {
+        const record: AppearanceRecord = { pluginKey: entry.key, pluginId: entry.id, field, values };
+        this.appearance.set(field, record);
+        this.notifyAppearanceChanged();
+        return track(
+            new HostRegistration(() => {
+                // 仅当仍是本注册的值时才回退，避免先激活插件释放时清掉后激活插件的覆盖
+                if (this.appearance.get(field) === record) {
+                    this.appearance.delete(field);
+                    this.notifyAppearanceChanged();
+                }
+            })
+        );
+    }
+
+    private notifyAppearanceChanged(): void {
+        for (const listener of [...this.appearanceChangeListeners]) {
+            try {
+                listener();
+            } catch (error) {
+                logger.error('Plugin appearance change listener failed', error);
+            }
+        }
     }
 
     private listContributions<T>(records: Map<string, ContributionRecord<T>>): VisiblePluginContribution<T>[] {

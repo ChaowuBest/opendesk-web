@@ -14,6 +14,7 @@ import { ElasticToolbarWidget } from './toolbar.ts';
 import { showConfirmModal, bindOverlayDismiss } from './confirmModal.ts';
 import { showFeedbackModal } from './feedbackModal.ts';
 import { createRendererTranslator } from '../locale.ts';
+import { escapeHtml } from '../../common/utils/escape.js';
 import { isApplicationVisibleInMenu } from '../utils/application-visibility.ts';
 import {
     buildSidebarFavoritesResults,
@@ -29,6 +30,8 @@ import { TaskListRefreshScheduler } from './taskListRefreshScheduler.js';
 
 const TASK_PAGE_SIZE = 30;
 const TASK_VIEW_STORAGE_KEY = 'opendesk-sidebar-task-view';
+/** 默认品牌名；插件声明 appearance capability 后可通过 setAppTitle 覆盖 */
+const DEFAULT_APP_TITLE = 'OpenDesk';
 
 function generateChallengeCode() {
     const chars = 'ABCDEFGHJKMNPQRSTUVWXYZabcdefghjkmnpqrstuvwxyz23456789';
@@ -94,6 +97,9 @@ class SideBar extends HTMLElement {
         this._runningZoneClearTimer = null;
         this._themePreference = 'system';
         this._themeUnsubscribe = null;
+        /** 插件外观覆盖（{ appTitle?, appDescription?, appLogoUrl? 等 }），来自 pluginmgr 的 appearance capability */
+        this._appearance = {};
+        this._appearanceUnsubscribe = null;
     }
 
     attributeChangedCallback(name, oldValue, newValue) {
@@ -227,6 +233,32 @@ class SideBar extends HTMLElement {
             });
         }
 
+        // 加载插件外观覆盖（自定义应用名/Logo），并订阅后续变化。
+        // 先建立订阅再拉取当前值，避免拉取返回与订阅建立之间的变更被漏掉；
+        // 整体 try/catch 防止 API 局部缺失时的同步异常中断后续初始化
+        if (window.applicationRegistryAPI?.callMainWorld) {
+            try {
+                Promise.resolve(window.applicationRegistryAPI.ensureFullyLoaded?.())
+                    .then(() =>
+                        window.applicationRegistryAPI.subscribeEvent?.(
+                            'pluginmgr',
+                            'appearanceChanged',
+                            (appearance) => {
+                                this._applyAppearance(appearance);
+                            }
+                        )
+                    )
+                    .then((unsubscribe) => {
+                        if (this.isConnected) this._appearanceUnsubscribe = unsubscribe;
+                        else unsubscribe?.();
+                        this._loadAppearance();
+                    })
+                    .catch((err) => console.warn('[sidebar] loading plugin appearance failed', err));
+            } catch (err) {
+                console.warn('[sidebar] subscribing plugin appearance failed', err);
+            }
+        }
+
         // 监听深色模式切换，更新 banner 图片
         this._themeObserver = new MutationObserver(() => {
             this._updateBannerForTheme();
@@ -272,6 +304,10 @@ class SideBar extends HTMLElement {
             this._themeUnsubscribe();
             this._themeUnsubscribe = null;
         }
+        if (this._appearanceUnsubscribe) {
+            this._appearanceUnsubscribe();
+            this._appearanceUnsubscribe = null;
+        }
         if (this._viewChangedHandler) {
             window.removeEventListener('od-view-changed', this._viewChangedHandler);
             this._viewChangedHandler = null;
@@ -297,17 +333,66 @@ class SideBar extends HTMLElement {
     }
 
     /**
-     * 根据当前主题更新左上角 icon 和 banner
+     * 当前生效的应用标题：插件外观覆盖优先，未覆盖时回退默认品牌名
+     */
+    _appTitle() {
+        return this._appearance?.appTitle || DEFAULT_APP_TITLE;
+    }
+
+    /**
+     * 当前生效的应用描述：插件外观覆盖优先，未覆盖时回退默认标语
+     */
+    _appDescription() {
+        return this._appearance?.appDescription || this._t('renderer.sidebar.tagline');
+    }
+
+    /**
+     * 拉取当前插件外观覆盖并应用。
+     *
+     * 标题/描述按当前界面语言在主进程解析，设置/语言切换后重新拉取即可切换译名。
+     */
+    _loadAppearance() {
+        const api = window.applicationRegistryAPI;
+        if (!api?.callMainWorld) return;
+        Promise.resolve(api.callMainWorld('pluginmgr', 'getAppearance'))
+            .then((appearance) => this._applyAppearance(appearance))
+            .catch((err) => console.warn('[sidebar] loading plugin appearance failed', err));
+    }
+
+    /**
+     * 应用插件外观覆盖（标题/描述/Logo），更新品牌区 DOM
+     */
+    _applyAppearance(appearance) {
+        this._appearance = appearance && typeof appearance === 'object' ? appearance : {};
+        const bannerEl = this.querySelector('#sidebar-banner');
+        if (bannerEl) {
+            bannerEl.textContent = this._appTitle();
+        }
+        const subtitleEl = this.querySelector('[data-sidebar-subtitle]');
+        if (subtitleEl) {
+            subtitleEl.textContent = this._appDescription();
+        }
+        this._updateBannerForTheme();
+    }
+
+    /**
+     * 根据当前主题更新左上角 icon 和 banner；插件自定义 Logo 存在时不随主题切换，
+     * 主题变体形式（appLogoDarkUrl/appLogoLightUrl）按主题选用，单图形式（appLogoUrl）兜底
      */
     _updateBannerForTheme() {
         const isDark = document.documentElement.dataset.theme === 'dark';
+        const themedVariant = isDark ? this._appearance?.appLogoDarkUrl : this._appearance?.appLogoLightUrl;
+        const logoSrc =
+            themedVariant ||
+            this._appearance?.appLogoUrl ||
+            (isDark ? './images/icon_round_dark.png' : './images/icon_round.png');
         const iconEl = this.querySelector('#sidebar-icon');
         if (iconEl) {
-            iconEl.src = isDark ? './images/icon_round_dark.png' : './images/icon_round.png';
+            iconEl.src = logoSrc;
         }
         const collapsedIconEl = this.querySelector('#sidebar-icon-collapsed');
         if (collapsedIconEl) {
-            collapsedIconEl.src = isDark ? './images/icon_round_dark.png' : './images/icon_round.png';
+            collapsedIconEl.src = logoSrc;
         }
     }
 
@@ -480,10 +565,10 @@ class SideBar extends HTMLElement {
         <!-- 完整侧边栏 -->
         <div class="sb-full-wrapper h-full flex flex-col">
             <header class="sb-header flex flex-row items-center flex-shrink-0">
-                <img id="sidebar-icon" src="./images/icon_round.png" alt="OpenDesk Icon" class="sb-header-logo"/>
+                <img id="sidebar-icon" src="./images/icon_round.png" alt="${escapeHtml(this._appTitle())}" class="sb-header-logo"/>
                 <div class="sb-header-title flex flex-col items-start justify-center flex-1 min-w-0">
-                    <span id="sidebar-banner" class="font-bold" style="color: var(--od-text);">OpenDesk</span>
-                    <p data-sidebar-subtitle class="whitespace-nowrap">${this._t('renderer.sidebar.tagline')}</p>
+                    <span id="sidebar-banner" class="font-bold" style="color: var(--od-text);">${escapeHtml(this._appTitle())}</span>
+                    <p data-sidebar-subtitle class="whitespace-nowrap">${escapeHtml(this._appDescription())}</p>
                 </div>
                 <div class="sb-header-actions flex flex-row flex-shrink-0">
                 <button
@@ -561,7 +646,7 @@ class SideBar extends HTMLElement {
         <div class="sb-collapsed-wrapper h-full flex flex-col items-center">
             <div class="sb-collapsed-top flex flex-col items-center gap-3 flex-1 pt-4">
                 <button id="sb-collapsed-logo" class="sb-collapsed-logo-btn" title="${this._t('renderer.sidebar.expand')}">
-                    <img id="sidebar-icon-collapsed" src="./images/icon_round.png" alt="OpenDesk" />
+                    <img id="sidebar-icon-collapsed" src="./images/icon_round.png" alt="${escapeHtml(this._appTitle())}" />
                 </button>
                 <button id="sb-collapsed-new-task" class="sb-collapsed-btn" title="${this._t('renderer.sidebar.newTask')}">
                     <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 10.5 12 3.5l8 7V20a1 1 0 0 1-1 1h-4v-6a1 1 0 0 0-1-1h-4a1 1 0 0 0-1 1v6H5a1 1 0 0 1-1-1z"/></svg>
@@ -1043,7 +1128,7 @@ class SideBar extends HTMLElement {
         this._updateThemeToggleIcon();
         const subtitle = this.querySelector('[data-sidebar-subtitle]');
         if (subtitle) {
-            subtitle.textContent = this._t('renderer.sidebar.tagline');
+            subtitle.textContent = this._appDescription();
         }
         const searchInput = this.querySelector('#task-search-input');
         if (searchInput) {
@@ -1064,6 +1149,8 @@ class SideBar extends HTMLElement {
                 toolbar.setButtonBadge('open-agentgate-btn', this._agentgateStatus, this._t(titleKey));
             }
         }
+        // 界面语言可能已切换：本地化的插件应用名需按新语言重新解析
+        this._loadAppearance();
     }
 
     async reloadApplicationList() {

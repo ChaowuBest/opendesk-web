@@ -102,7 +102,8 @@ export const OPENDESK_PLUGIN_CAPABILITIES = [
     'agent',
     'browser',
     'channel',
-    'account'
+    'account',
+    'appearance'
 ] as const;
 
 export type PluginCapability = (typeof OPENDESK_PLUGIN_CAPABILITIES)[number];
@@ -247,7 +248,9 @@ export interface PluginAccountDeviceCodeLoginMethod {
 }
 
 export type PluginAccountLoginMethod =
-    PluginAccountFormLoginMethod | PluginAccountBrowserLoginMethod | PluginAccountDeviceCodeLoginMethod;
+    | PluginAccountFormLoginMethod
+    | PluginAccountBrowserLoginMethod
+    | PluginAccountDeviceCodeLoginMethod;
 
 export interface PluginAccountLoginFlowRequest extends PluginAccountLoginContext {
     methodId: string;
@@ -635,6 +638,73 @@ export type PluginHookCallback<Name extends PluginHookName> = (
     output: PluginHookMap[Name]['output']
 ) => Promise<void> | void;
 
+/**
+ * 当前插件已生效的应用外观覆盖。未设置的字段为 undefined，表示沿用默认外观。
+ */
+export interface PluginAppearanceState {
+    /** 自定义应用标题，已按当前界面语言解析（当前作用于 GUI 左上角侧边栏品牌区） */
+    readonly appTitle?: string;
+    /** 自定义应用描述，已按当前界面语言解析（当前作用于 GUI 左上角标题下方文案） */
+    readonly appDescription?: string;
+    /** 自定义应用 Logo 的 data URL（单图形式，不区分主题） */
+    readonly appLogoUrl?: string;
+    /** 暗色主题下的自定义 Logo data URL（主题变体形式） */
+    readonly appLogoDarkUrl?: string;
+    /** 亮色主题下的自定义 Logo data URL（主题变体形式） */
+    readonly appLogoLightUrl?: string;
+}
+
+/**
+ * 主题变体 Logo 输入：dark/light 至少提供其一，均相对插件根目录；
+ * 缺省一侧复用另一侧的图，避免某个主题下回退到默认 Logo 造成跳变。
+ */
+export interface PluginAppLogoThemeVariants {
+    /** 暗色主题（data-theme="dark"）使用的 Logo 路径 */
+    dark?: string;
+    /** 亮色主题使用的 Logo 路径 */
+    light?: string;
+}
+
+/**
+ * 外观能力：插件自定义应用外观。
+ *
+ * 当前逐步开放中，暂提供 setAppTitle / setAppDescription / setAppLogo；
+ * 后续会开放更多自定义项。每个字段按「后设置者生效」，
+ * 释放返回的 PluginRegistration 后回退到默认外观。
+ */
+export interface AppearanceCapability {
+    /**
+     * 修改应用标题（当前作用于 GUI 左上角侧边栏品牌区，替换 "OpenDesk" 文案）。
+     *
+     * 支持两种形式：
+     * - 字符串：所有语言显示同一文案；
+     * - 本地化映射（如 `{ zh: "我的桌面", en: "MyDesk" }`）：键为 BCP 47 语言标签
+     *   （解析时取主语言标签匹配），界面语言切换后按新语言即时生效。
+     *
+     * @param title 非空文案；字符串形式去除首尾空白后长度不超过 64，映射形式每个值同样受限。
+     */
+    setAppTitle(title: string | PluginLocalizedText): PluginRegistration;
+    /**
+     * 修改应用描述（当前作用于 GUI 左上角标题下方的描述文案，替换默认标语）。
+     *
+     * 形式与语言解析规则与 setAppTitle 一致。
+     *
+     * @param description 非空文案；字符串形式去除首尾空白后长度不超过 64，映射形式每个值同样受限。
+     */
+    setAppDescription(description: string | PluginLocalizedText): PluginRegistration;
+    /**
+     * 修改应用 Logo（当前作用于 GUI 左上角侧边栏品牌区）。
+     *
+     * 支持两种形式：
+     * - 相对路径字符串：所有主题使用同一 Logo；
+     * - 主题变体对象 `{ dark, light }`：按当前主题选用，缺省一侧复用另一侧。
+     *
+     * @param logoPath 相对插件根目录（manifest 所在目录）的图片路径，
+     *   支持 png/jpg/jpeg/svg/webp/gif/ico，文件不超过 2MB。
+     */
+    setAppLogo(logoPath: string | PluginAppLogoThemeVariants): PluginRegistration;
+}
+
 export interface PluginContext {
     readonly pluginId: string;
     readonly pluginDir: string;
@@ -711,6 +781,8 @@ export interface PluginContext {
      * 注册的 channel 由 host 收集，供 channelmgr 启动/登录/收发消息。
      */
     readonly channels: ChannelsCapability;
+    /** 外观能力：插件自定义应用外观（逐步开放中） */
+    readonly appearance: AppearanceCapability;
 }
 
 export interface OpenDeskPlugin {

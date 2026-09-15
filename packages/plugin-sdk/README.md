@@ -28,3 +28,36 @@ Validate a plugin package before publishing it:
 ```bash
 opendesk-plugin-sdk validate ./my-plugin
 ```
+
+## Appearance capability
+
+Declare `appearance` in the manifest `capabilities` to customize the application look and feel. The surface is
+opening up gradually; currently available:
+
+```ts
+export default definePlugin({
+    id: 'my-brand',
+    capabilities: ['appearance'],
+    setup(ctx) {
+        // A plain string, or a localized map keyed by BCP 47 language tags
+        ctx.appearance.setAppTitle({ zh: '我的桌面', en: 'MyDesk' });
+        ctx.appearance.setAppDescription({ zh: '一站式工作台', en: 'All-in-one workbench' });
+
+        // A single path for all themes...
+        ctx.appearance.setAppLogo('./assets/logo.png');
+        // ...or theme variants; a missing side reuses the other one
+        ctx.appearance.setAppLogo({ dark: './assets/logo-dark.png', light: './assets/logo-light.png' });
+    }
+});
+```
+
+- `setAppTitle(title)` overrides the application title shown in the GUI top-left brand area (replaces "OpenDesk").
+- `setAppDescription(description)` overrides the description shown below the title (replaces the default tagline).
+  Both accept localized maps that resolve against the current UI language and re-resolve when the user switches
+  languages.
+- `setAppLogo(logoPath)` overrides the logo shown next to the title. Paths must be relative to the plugin root
+  directory (where the manifest lives), be one of png/jpg/jpeg/svg/webp/gif/ico, and not exceed 2MB.
+
+All calls return a `PluginRegistration`; disposing it (or deactivating the plugin) reverts to the default
+appearance. When several plugins set the same field, the most recent activation wins until that registration is
+disposed.
