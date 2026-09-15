@@ -13,10 +13,18 @@ import { definePlugin } from '@bitclub.ai/opendesk-plugin-sdk';
 import { configureZshEnvironment } from './environment.mjs';
 import { setupBash } from './bootstrap/bash.mjs';
 import { isZshRunnable, runBootstrapOnce } from './bootstrap/zsh.mjs';
+import { setupRecovery } from './recovery.mjs';
+import { setupSkillFallback } from './skill-fallback.mjs';
 
 export default definePlugin({
     id: 'hm-compat',
     setup(context) {
+        // harmonyos-recovery 知识库hook注册
+        setupRecovery(context);
+
+        // HarmonyOS skill fallback 经验记录 hook 与工具注册
+        setupSkillFallback(context);
+
         // openharmony平板不添加命令行执行工具，不执行运行环境配置
         if (process.env.OPENDESK_HARMONY_BUILD_VARIANT === 'tablet') {
             return;

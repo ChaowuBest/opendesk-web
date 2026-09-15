@@ -13,16 +13,11 @@ import { Skill } from '../../aikernel/skill.js';
 import { BaseApplication } from '../base.js';
 import { t } from './locale/index.js';
 import { loadPoolSkill } from './pool.js';
-import { registerHarmonyosBashFrictionHook } from '../../aikernel/harnesses/platform/harmonyos/harmonyos-recovery/hook.js';
 import { loadUseHarmonySkill } from './skills/use-harmony/skill.js';
 import { skillRegistry } from '../skillmgr/utils/skill-registry.js';
 import { getBuiltinSkillsDirectory, listBuiltinSkillDirectories } from '../skillmgr/builtin-skills.js';
 import { ReadableDirectoryRegistry } from '../../aikernel/security/enforcer.js';
 import { logger } from '../../utils/logger.js';
-
-if ((process.platform as string) === 'openharmony') {
-    registerHarmonyosBashFrictionHook();
-}
 
 export class BuiltinApplication extends BaseApplication {
     constructor() {

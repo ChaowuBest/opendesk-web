@@ -35,7 +35,12 @@ test('hm-compat setup returns synchronously without awaiting bootstrap', () => {
     const restore = preserveEnvironment();
     try {
         delete process.env.OPENDESK_HARMONY_BUILD_VARIANT;
-        const result = hmCompatPlugin.setup({ configDir: '/data/opendesk' } as never);
+        const result = hmCompatPlugin.setup({
+            configDir: '/data/opendesk',
+            pluginDir: '/app/resources/plugins/hm-compat',
+            hooks: { on: () => ({ dispose() {} }) },
+            tools: { register: () => ({ dispose() {} }) }
+        } as never);
 
         // setup 不得返回安装 promise（否则宿主 await plugin.setup 会把环境安装
         // 拉进 initializePluginHost 的 await 链，阻塞 CLI 启动）

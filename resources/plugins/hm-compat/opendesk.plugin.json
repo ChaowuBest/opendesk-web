@@ -4,6 +4,6 @@
     "displayName": "HarmonyOS Compat",
     "entry": "./index.mjs",
     "apiVersion": 1,
-    "capabilities": [],
+    "capabilities": ["hook", "tool"],
     "platforms": ["openharmony"]
 }
