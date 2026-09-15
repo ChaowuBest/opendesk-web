@@ -1,6 +1,16 @@
-import { expect, test } from '@jest/globals';
+import { afterAll, beforeAll, expect, test } from '@jest/globals';
 import { ToolCall } from '../../../main/aikernel/messages.js';
 import { renderTerminalToolCall } from '../../../main/applications/terminal/shells/common.js';
+import { setRuntimeLocale } from '../../../locale/index.js';
+
+// 系统语言随环境变化（CI 为英文），固定 zh-CN 使文案断言确定
+beforeAll(() => {
+    setRuntimeLocale('zh-CN');
+});
+
+afterAll(() => {
+    setRuntimeLocale(null);
+});
 
 function call(description = 'Run command') {
     const value = new ToolCall(0, 'id', 'execute', '{}');

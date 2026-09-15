@@ -39,7 +39,9 @@ test('only sandboxed shell tools opt into the BaseTool serial execution queue', 
 });
 
 test('sandbox defers virtual and dynamic paths to runtime host authorization', () => {
-    const originalPlatform = process.platform;
+    // process.platform 可 mock，但 path 模块按真实 OS 选定：盘符路径（D:/...）
+    // 只有在真实 Windows 上才是绝对路径。对照组断言仅在真实 win32 下有意义。
+    const realPlatform = process.platform;
     Object.defineProperty(process, 'platform', { value: 'win32', configurable: true });
     const sandbox = new ExecutePwshTool('C:/shells/powershell.exe', true);
     try {
@@ -51,6 +53,7 @@ test('sandbox defers virtual and dynamic paths to runtime host authorization', (
         ]) {
             expect(sandbox.getDeclaredPermissions({ command, timeout: 30000 })).toEqual([]);
         }
+        if (realPlatform !== 'win32') return;
         expect(
             new ExecutePwshTool('C:/shells/powershell.exe').getDeclaredPermissions({
                 command: 'Get-Content D:/private/a.txt',
@@ -60,7 +63,7 @@ test('sandbox defers virtual and dynamic paths to runtime host authorization', (
             expect.arrayContaining([expect.objectContaining({ resourcePath: 'D:/private/a.txt', action: 'read' })])
         );
     } finally {
-        Object.defineProperty(process, 'platform', { value: originalPlatform, configurable: true });
+        Object.defineProperty(process, 'platform', { value: realPlatform, configurable: true });
     }
 });
 
