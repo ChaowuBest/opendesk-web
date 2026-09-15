@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { getOpenHarmonyTerminalShell } from '../../../main/applications/terminal/app.js';
+import { scanSupportedShells } from '../../../main/applications/terminal/scan.js';
 import { getMcpServerLocalRuntimeAvailability } from '../../../main/applications/mcpmgr/worker.js';
 import type { HarmonyLocalRuntimeState } from '../../../platforms/bridges/harmonyos/local-runtime.js';
 
@@ -42,17 +42,24 @@ const ZSH_PC_STATE: HarmonyLocalRuntimeState = {
     status: 'incomplete'
 };
 
-test('terminal shell resolver prefers zsh and falls back to bash on Harmony PC', () => {
-    assert.equal(getOpenHarmonyTerminalShell(TABLET_STATE), null);
-    assert.equal(getOpenHarmonyTerminalShell(SHELL_MISSING_PC_STATE), null);
-    assert.deepEqual(getOpenHarmonyTerminalShell(INCOMPLETE_PC_STATE), {
-        kind: 'bash',
-        path: '/data/service/hnp/bin/bash'
-    });
-    assert.deepEqual(getOpenHarmonyTerminalShell(ZSH_PC_STATE), {
-        kind: 'zsh',
-        path: '/usr/bin/zsh'
-    });
+test('terminal inventory includes verified Harmony PC shells and keeps the tablet gate', () => {
+    assert.deepEqual(scanSupportedShells('openharmony', TABLET_STATE), []);
+    assert.deepEqual(scanSupportedShells('openharmony', SHELL_MISSING_PC_STATE), []);
+    assert.deepEqual(scanSupportedShells('openharmony', INCOMPLETE_PC_STATE), [
+        {
+            kind: 'bash',
+            path: '/data/service/hnp/bin/bash',
+            sandboxed: false
+        }
+    ]);
+    assert.deepEqual(scanSupportedShells('openharmony', ZSH_PC_STATE), [
+        {
+            kind: 'zsh',
+            path: '/usr/bin/zsh',
+            sandboxed: false
+        },
+        { kind: 'bash', path: '/data/service/hnp/bin/bash', sandboxed: false }
+    ]);
 });
 
 test('tablet rejects stdio MCP before transport creation while remote MCP remains available', () => {

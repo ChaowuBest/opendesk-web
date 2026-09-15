@@ -1,0 +1,62 @@
+# ============================================================
+# 整盘镜像示例（多根模式）
+# ============================================================
+# 用 [[roots]] 声明要镜像的盘，沙箱内通过 Z:\C\、Z:\D\ ... 访问：
+#   Z:\C\Windows\win.ini  ↔  C:\Windows\win.ini
+#   Z:\D\data\a.txt       ↔  D:\data\a.txt
+# 有几块盘/几个位置就声明几个 roots；网络位置用 UNC（如 "\\\\filesrv\\share"），
+# 需预先建立连接与认证（net use / 资源管理器访问一次）。
+#
+# 读全放行；写默认拒绝（可按需对工作目录放行/ask）。
+# 多根模式下运行时不需要 --src。
+
+version = 1
+default = "deny"
+
+[ask]
+endpoint          = "pipe://dynobox-decide"   # 或 http://127.0.0.1:8080/decide
+timeout_ms        = 2000
+cache_ttl_seconds = 60
+grant_ttl_seconds = 300
+
+[[roots]]
+virtual = "/C"
+real    = "C:\\"
+
+[[roots]]
+virtual = "/D"
+real    = "D:\\"
+
+# ------------------------------------------------------------
+# 规则（按沙箱内虚拟路径书写）
+# ------------------------------------------------------------
+[[rules]]
+path  = "/"
+access = "read"
+perm  = "allow"
+
+[[rules]]
+path  = "/C"
+access = "read"
+perm  = "allow"
+
+[[rules]]
+path  = "/C/**"
+access = "read"
+perm  = "allow"
+
+[[rules]]
+path  = "/D"
+access = "read"
+perm  = "allow"
+
+[[rules]]
+path  = "/D/**"
+access = "read"
+perm  = "allow"
+
+# 示例：允许在 D:\data 下写（其余写操作默认拒绝）
+[[rules]]
+path  = "/D/data/**"
+access = "write"
+perm  = "allow"

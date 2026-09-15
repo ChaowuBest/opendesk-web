@@ -11,7 +11,7 @@
 
 /**
  * 后台进程管理器。
- * 当 shell 工具（executeBash / executePowerShell / executeZsh）因超时而将进程
+ * 当 shell 工具（executeBash / executePwsh / executeZsh）因超时而将进程
  * 放到后台继续执行时，由此模块负责跟踪进程的输出、退出状态，并对外提供查询/终止接口。
  */
 

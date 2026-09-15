@@ -86,6 +86,10 @@ function readRequest(path: string): PermissionRequest {
     return { resourceType: 'file', action: 'read', resourcePath: path };
 }
 
+function writeRequest(path: string): PermissionRequest {
+    return { resourceType: 'file', action: 'write', resourcePath: path };
+}
+
 function permissionRequests(): Array<{ requestId: string; data: any }> {
     return sentMessages
         .filter((msg) => msg.channel === 'permission:request')
@@ -166,7 +170,7 @@ describe('ElectronPermissionPromptProvider queue', () => {
         expect(permissionRequests()).toHaveLength(2);
     });
 
-    test('persistent allow waits for rule write, then filters queued allowed requests', async () => {
+    test('persistent allow immediately auto-resolves matching queued requests', async () => {
         const provider = createProvider();
         const first = provider.prompt(
             [readRequest('/tmp/a.txt')],
@@ -204,6 +208,7 @@ describe('ElectronPermissionPromptProvider queue', () => {
             rememberScope: 'prefix',
             selectedPrefixPattern: '/tmp/**'
         });
+        await expect(second).resolves.toEqual({ decision: 'allow', rememberScope: 'none' });
         expect(permissionRequests()).toHaveLength(1);
 
         const enforcer = await GlobPermissionEnforcer.create([
@@ -211,8 +216,35 @@ describe('ElectronPermissionPromptProvider queue', () => {
         ]);
         await provider.notifyPermissionRulesChanged(enforcer);
 
-        await expect(second).resolves.toEqual({ decision: 'allow', rememberScope: 'none' });
         expect(permissionRequests()).toHaveLength(1);
+    });
+
+    test('persistent allow does not block an unrelated write permission prompt', async () => {
+        const provider = createProvider();
+        const first = provider.prompt(
+            [readRequest('/tmp/a.txt')],
+            'terminal-executeBash',
+            [{ label: '/tmp/', pattern: '/tmp/**' }],
+            { taskId: 'task-1', taskName: 'Task 1' }
+        );
+        expect(permissionRequests()).toHaveLength(1);
+
+        respond(permissionRequests()[0].requestId, {
+            decision: 'allow',
+            rememberScope: 'prefix',
+            selectedPrefixPattern: '/tmp/**'
+        });
+        await expect(first).resolves.toMatchObject({ decision: 'allow', rememberScope: 'prefix' });
+
+        const write = provider.prompt([writeRequest('/tmp/output.txt')], 'filemgr-writeFile', [], {
+            taskId: 'task-1',
+            taskName: 'Task 1'
+        });
+
+        expect(permissionRequests()).toHaveLength(2);
+        const writeRequestId = permissionRequests()[1].requestId;
+        respond(writeRequestId, { decision: 'deny', rememberScope: 'none' });
+        await expect(write).resolves.toMatchObject({ decision: 'deny', rememberScope: 'none' });
     });
 
     test('persistent allow rule changes can resolve the current prompt', async () => {
@@ -347,7 +379,7 @@ describe('ElectronPermissionPromptProvider queue', () => {
         });
     });
 
-    test('an older async re-check cannot clear a newly started persistent-rule wait', async () => {
+    test('an older async re-check cannot approve a newly displayed prompt', async () => {
         const provider = createProvider();
         const first = provider.prompt(
             [readRequest('/tmp/a.txt')],
@@ -411,14 +443,14 @@ describe('ElectronPermissionPromptProvider queue', () => {
             decision: 'allow',
             rememberScope: 'prefix'
         });
-        expect(permissionRequests()).toHaveLength(1);
+        expect(permissionRequests()).toHaveLength(2);
 
         const allowingEnforcer = await GlobPermissionEnforcer.create([
             { resourceType: 'file', action: 'read', pathPattern: '/tmp/**', effect: 'allow' }
         ]);
         await provider.notifyPermissionRulesChanged(allowingEnforcer, ['task-1']);
         await expect(second).resolves.toEqual({ decision: 'allow', rememberScope: 'none' });
-        expect(permissionRequests()).toHaveLength(1);
+        expect(permissionRequests()).toHaveLength(2);
     });
 
     test('auto-resolving a prompt dismisses it from every Electron window', async () => {
@@ -489,52 +521,5 @@ describe('ElectronPermissionPromptProvider queue', () => {
 
         respond(permissionRequests()[1].requestId, { decision: 'deny', rememberScope: 'none' });
         await expect(second).resolves.toMatchObject({ decision: 'deny', rememberScope: 'none' });
-    });
-
-    test('queued prompts can timeout while waiting for persistent allow rule notification', async () => {
-        jest.useFakeTimers();
-        const provider = createProvider();
-        const first = provider.prompt(
-            [readRequest('/tmp/a.txt')],
-            'readFile',
-            [{ label: '/tmp/', pattern: '/tmp/**' }],
-            {
-                taskId: 'parent',
-                taskName: 'Parent',
-                sourceTaskId: 'child-1',
-                parentTaskId: 'parent'
-            }
-        );
-        const second = provider.prompt(
-            [readRequest('/tmp/b.txt')],
-            'readFile',
-            [{ label: '/tmp/', pattern: '/tmp/**' }],
-            {
-                taskId: 'parent',
-                taskName: 'Parent',
-                sourceTaskId: 'child-2',
-                parentTaskId: 'parent'
-            }
-        );
-
-        respond(permissionRequests()[0].requestId, {
-            decision: 'allow',
-            rememberScope: 'prefix',
-            selectedPrefixPattern: '/tmp/**'
-        });
-        await expect(first).resolves.toMatchObject({ decision: 'allow', rememberScope: 'prefix' });
-
-        const secondSettled = jest.fn();
-        second.then(secondSettled);
-
-        jest.advanceTimersByTime(300_001);
-        await Promise.resolve();
-        await Promise.resolve();
-
-        expect(secondSettled).toHaveBeenCalledWith({
-            decision: 'deny',
-            rememberScope: 'none',
-            denyReason: 'timeout'
-        });
     });
 });

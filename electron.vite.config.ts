@@ -60,7 +60,10 @@ export default defineConfig(({ mode }) => {
                         }
                     },
                     input: {
-                        main: path.join(__dirname, 'src', 'main', 'main.ts'),
+                        main: path.join(__dirname, 'src', 'main', 'startup', 'bootstrap.ts'),
+                        // main.ts 必须是显式 entry：否则它只能经 bootstrap 的动态 import 打进
+                        // chunks 子目录，main.ts 内 __dirname 相对路径（preload、worker 等）全部失效
+                        app: path.join(__dirname, 'src', 'main', 'main.ts'),
                         worker: path.join(__dirname, 'src', 'main', 'worker.ts'),
                         'workflow-runtime-worker': path.join(
                             __dirname,

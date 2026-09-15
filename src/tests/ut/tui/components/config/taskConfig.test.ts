@@ -1,10 +1,22 @@
 import { jest } from '@jest/globals';
+import { Key } from '@earendil-works/pi-tui';
 import fs from 'fs';
 import os from 'os';
 import path from 'path';
 import { Setting, setCustomOpendeskDirectory } from '../../../../../main/utils/setting';
-import { TaskConfigPage } from '../../../../../main/tui/components/config/taskConfig';
+import { selectSupportedShell } from '../../../../../common/shells.js';
 import { setRuntimeLocale } from '../../../../../locale/index';
+
+const shells = [
+    { kind: 'powershell', path: 'C:/Windows/powershell.exe', sandboxed: false },
+    { kind: 'powershell', path: 'C:/Windows/powershell.exe', sandboxed: true },
+    { kind: 'bash', path: 'C:/Git/bash.exe', sandboxed: false }
+];
+jest.unstable_mockModule('../../../../../main/applications/terminal/scan.js', () => ({
+    scanSupportedShells: () => shells,
+    selectSupportedShell
+}));
+const { TaskConfigPage } = await import('../../../../../main/tui/components/config/taskConfig.js');
 
 function createTuiMock() {
     return {
@@ -56,6 +68,37 @@ describe('TaskConfigPage', () => {
 
         expect(text).toContain('Use EvidenceCard to save tokens');
         expect(text).toContain('Use EvidenceCard to save tokens: No');
+    });
+
+    test('task schema defaults shell selection and persists only the new shell fields', () => {
+        const schema = Setting.getSettingSchema().shape.task_config;
+        expect(schema.parse({})).toMatchObject({ shell_path: '', shell_sandboxed: false });
+        const config = schema.parse({ shell_path: 'C:/tools/pwsh.exe', shell_sandboxed: true, dynamic_sandbox: true });
+        expect(config).toMatchObject({ shell_path: 'C:/tools/pwsh.exe', shell_sandboxed: true });
+        expect(config).not.toHaveProperty('dynamic_sandbox');
+    });
+
+    test('shows sandbox for pwsh, hides it for bash and normalizes the saved selection', () => {
+        const page = new TaskConfigPage(createTuiMock(), jest.fn());
+        const form = (page as any).form;
+        expect(stripAnsi(page.render(120).join('\n'))).toContain('Enable sandbox');
+        for (let i = 0; i < 4; i++) form.handleKeyInput(Key.down);
+        form.handleKeyInput(Key.right);
+        expect(stripAnsi(page.render(120).join('\n'))).not.toContain('Enable sandbox');
+        (page as any).save({ ...form.getValues(), shell_sandboxed: true });
+        expect(Setting.getInstance().getData().task_config).toMatchObject({
+            shell_path: 'C:/Git/bash.exe',
+            shell_sandboxed: false
+        });
+    });
+
+    test('saves the selected pwsh path and sandbox flag', () => {
+        const page = new TaskConfigPage(createTuiMock(), jest.fn());
+        (page as any).save({ shell_path: shells[0].path, shell_sandboxed: true });
+        expect(Setting.getInstance().getData().task_config).toMatchObject({
+            shell_path: shells[0].path,
+            shell_sandboxed: true
+        });
     });
 
     test('saves EvidenceCard together with existing task and CLI settings', () => {

@@ -107,7 +107,7 @@ test('only explicit Shell read and search commands are recognized', () => {
             }),
             'inspect'
         ],
-        [makeToolCall('terminal-executePowerShell', { command: 'Select-String EvidenceCard src/*.ts' }), 'localize'],
+        [makeToolCall('terminal-executePwsh', { command: 'Select-String EvidenceCard src/*.ts' }), 'localize'],
         [makeToolCall('terminal-executeZsh', { command: 'git ls-files' }), 'localize'],
         [makeToolCall('terminal-executeZsh', { command: 'git show HEAD:package.json' }), 'inspect'],
         [makeToolCall('terminal-executeBash', { command: 'rg rm src' }), 'localize']

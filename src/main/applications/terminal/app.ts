@@ -9,44 +9,18 @@
  * See the Mulan PSL v2 for more details.
  */
 
-import { BaseToolset } from '../../aikernel/tool';
-import { BaseApplication } from '../base';
+import { BaseToolset } from '../../aikernel/tool.js';
+import { BaseApplication } from '../base.js';
 import { t } from './locale/index.js';
-import {
-    ExecutePowerShellTool,
-    ExecuteBashTool,
-    ExecuteZshTool,
-    CheckShellStatusTool,
-    setBashPath,
-    setZshPath
-} from './tools.js';
-import { findExecutableInPath, findOpenHarmonyZsh } from '../../utils/shellExec.js';
-import {
-    getHarmonyLocalRuntimeFeatureAvailability,
-    getHarmonyLocalRuntimeState,
-    type HarmonyLocalRuntimeState
-} from '../../../platforms/bridges/harmonyos/local-runtime.js';
-
-export type OpenHarmonyTerminalShell = { kind: 'zsh'; path: string } | { kind: 'bash'; path: string };
-
-export function getOpenHarmonyTerminalShell(
-    state: HarmonyLocalRuntimeState | null = getHarmonyLocalRuntimeState()
-): OpenHarmonyTerminalShell | null {
-    // tablet，或 PC 上 zsh/bash 都不存在
-    if (!getHarmonyLocalRuntimeFeatureAvailability('terminal', state).available) return null;
-    // PC
-    if (state) {
-        // state 为已验证的探测快照：zsh 优先（交互模式加载 ~/.zshrc 环境），bash 兜底
-        if (state.commands.zsh) return { kind: 'zsh', path: state.commands.zsh };
-        return state.commands.bash ? { kind: 'bash', path: state.commands.bash } : null;
-    }
-    // CLI
-    const zshPath = findOpenHarmonyZsh();
-    if (zshPath) return { kind: 'zsh', path: zshPath };
-    return null;
-}
+import { ExecutePwshTool } from './shells/pwsh.js';
+import { ExecuteBashTool } from './shells/bash.js';
+import { ExecuteZshTool } from './shells/zsh.js';
+import { CheckShellStatusTool } from './shells/status.js';
+import { scanSupportedShells, selectSupportedShell } from './scan.js';
+import { Setting } from '../../utils/setting.js';
 
 export class TerminalApplication extends BaseApplication {
+    readonly shells = scanSupportedShells();
     constructor() {
         super('terminal', false);
     }
@@ -57,43 +31,20 @@ export class TerminalApplication extends BaseApplication {
 
     async getToolsets(): Promise<BaseToolset[]> {
         const toolset = new BaseToolset('terminal');
-
-        switch (process.platform as string) {
-            case 'win32': {
-                toolset.addTool(new ExecutePowerShellTool());
-                // 检测 Windows 下是否有 bash.exe（如 Git Bash、WSL 等）
-                const bashPath = findExecutableInPath('bash');
-                if (bashPath) {
-                    setBashPath(bashPath);
-                    toolset.addTool(new ExecuteBashTool());
-                }
+        const shell = selectSupportedShell(this.shells, Setting.getInstance().getData().task_config, process.platform);
+        if (!shell) return [];
+        switch (shell.kind) {
+            case 'powershell':
+                toolset.addTool(new ExecutePwshTool(shell.path, shell.sandboxed));
                 break;
-            }
-            case 'openharmony': {
-                const shell = getOpenHarmonyTerminalShell();
-                if (shell?.kind === 'zsh') {
-                    setZshPath(shell.path);
-                    toolset.addTool(new ExecuteZshTool(true));
-                } else if (shell?.kind === 'bash') {
-                    setBashPath(shell.path);
-                    toolset.addTool(new ExecuteBashTool());
-                } else {
-                    break;
-                }
-                toolset.addTool(new CheckShellStatusTool());
+            case 'bash':
+                toolset.addTool(new ExecuteBashTool(shell.path));
                 break;
-            }
-            default:
-                // macOS/Linux 默认使用 /bin/bash
-                setBashPath('/bin/bash');
-                toolset.addTool(new ExecuteBashTool());
+            case 'zsh':
+                toolset.addTool(new ExecuteZshTool(shell.path, (process.platform as string) === 'openharmony'));
                 break;
         }
-
-        if ((process.platform as string) !== 'openharmony') {
-            toolset.addTool(new CheckShellStatusTool());
-        }
-
-        return toolset.tools.size > 0 ? [toolset] : [];
+        toolset.addTool(new CheckShellStatusTool(shell.kind, shell.sandboxed));
+        return [toolset];
     }
 }

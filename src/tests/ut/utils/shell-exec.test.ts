@@ -55,10 +55,42 @@ const {
     asyncShellExec,
     filterShellEnvironmentWarnings,
     findOpenHarmonyZsh,
+    findExecutablesInPath,
     getDefaultShell,
     shellExec,
     clearDefaultShellCache
 } = await import('../../../main/utils/shellExec.js');
+
+describe('shell inventory paths', () => {
+    const originalPlatform = process.platform;
+    const originalPath = process.env.PATH;
+    afterEach(() => {
+        Object.defineProperty(process, 'platform', { value: originalPlatform, configurable: true });
+        process.env.PATH = originalPath;
+    });
+
+    test('finds multiple Windows installations, deduplicates PATH and includes Git outside PATH', () => {
+        Object.defineProperty(process, 'platform', { value: 'win32', configurable: true });
+        process.env.PATH = 'C:/tools;C:/TOOLS;D:/tools';
+        const gitBash = `${process.env.ProgramFiles || 'C:\\Program Files'}\\Git\\bin\\bash.exe`;
+        existsSyncMock.mockImplementation((p) =>
+            ['C:\\tools\\bash.exe', 'D:\\tools\\bash.exe', gitBash].includes(String(p))
+        );
+        expect(findExecutablesInPath('bash')).toEqual(['C:\\tools\\bash.exe', 'D:\\tools\\bash.exe', gitBash]);
+    });
+
+    test('finds all executable Unix paths and skips paths without execute permission', () => {
+        Object.defineProperty(process, 'platform', { value: 'darwin', configurable: true });
+        process.env.PATH = '/custom/bin:/custom/bin';
+        existsSyncMock.mockImplementation((p) =>
+            ['/custom/bin/zsh', '/bin/zsh', '/opt/homebrew/bin/zsh'].includes(String(p))
+        );
+        accessSyncMock.mockImplementation((p) => {
+            if (p === '/custom/bin/zsh') throw new Error('EACCES');
+        });
+        expect(findExecutablesInPath('zsh')).toEqual(['/bin/zsh', '/opt/homebrew/bin/zsh']);
+    });
+});
 
 describe('findOpenHarmonyZsh', () => {
     const originalPlatform = process.platform;

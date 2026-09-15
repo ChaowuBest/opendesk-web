@@ -67,6 +67,7 @@ export const MAIN_AGENT_READONLY_MODE: ModeDecl = {
     getSubPrompt: (taskCtx) => getReadonlyModeSubPrompt(taskCtx),
     disabledTools: [
         'executePowerShell',
+        'executePwsh',
         'executeBash',
         'executeZsh',
         'checkShellStatus',

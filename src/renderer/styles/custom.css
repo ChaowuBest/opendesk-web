@@ -892,6 +892,24 @@ details.terminal-tool .terminal-tool-scroll::-webkit-scrollbar-thumb {
 details.terminal-tool .terminal-tool-scroll::-webkit-scrollbar-track {
     background: transparent;
 }
+.terminal-shell-tag {
+    display: inline-flex;
+    align-items: center;
+    border: 1px solid #d1d5db;
+    border-radius: 9999px;
+    padding: 1px 6px;
+    color: #64748b;
+    background: #f8fafc;
+    font-size: 10px;
+    line-height: 1.4;
+    font-weight: 600;
+    white-space: nowrap;
+}
+.terminal-shell-tag-sandbox {
+    color: #7c3aed;
+    border-color: #c4b5fd;
+    background: #f5f3ff;
+}
 /* Dark mode terminal scrollbar */
 html[data-theme='dark'] details.terminal-tool .terminal-tool-scroll::-webkit-scrollbar-thumb {
     background: rgba(255, 255, 255, 0.18);

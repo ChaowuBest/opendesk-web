@@ -306,6 +306,9 @@ export interface PermissionEnforcer {
      * 动态移除匹配的权限规则
      */
     removeRule(rule: PermissionRule): Promise<void>;
+
+    /** 当前模式的规则快照，供需要把权限传递给隔离执行宿主的适配层使用。 */
+    getRules?(): PermissionRule[];
 }
 
 /** 权限拒绝原因 */

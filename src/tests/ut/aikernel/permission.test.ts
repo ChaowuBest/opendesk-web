@@ -4,7 +4,7 @@
  * 覆盖范围：
  * - GlobPermissionEnforcer: 三态规则优先级、glob 匹配、动态规则增删
  * - createDefaultPermissionRules: Standard 模式默认策略
- * - createReadonlyModePermissionRules: Readonly 模式只读 + 禁止执行
+ * - createReadonlyModePermissionRules: Readonly 模式只读 + 执行放开
  * - createSoloModePermissionRules: Solo 模式全放通 + 敏感路径 deny
  * - createPlanModePermissionRules: Plan 模式只读 + .plan 可写
  * - createUnlimitedModePermissionRules: Unlimited 模式全放通（无限制）
@@ -826,13 +826,13 @@ describe('Readonly Mode 权限规则', () => {
         expect(r.effect).toBe('deny');
     });
 
-    test('任意文件执行 → deny', async () => {
+    test('任意文件执行 → allow', async () => {
         const r = await enforcer.check({
             resourceType: 'file',
             action: 'execute',
             resourcePath: `${WORKSPACE_NORM}/scripts/build.sh`
         });
-        expect(r.effect).toBe('deny');
+        expect(r.effect).toBe('allow');
     });
 
     test('工作空间外文件读取 → 隐式 ask', async () => {

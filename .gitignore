@@ -102,6 +102,12 @@ out
 out-*
 dist
 
+# Windows dynamic sandbox build outputs and downloaded Dokany installers
+native/windows/sandbox/_setup/
+native/windows/sandbox/runtime/
+native/windows/sandbox/**/bin/
+native/windows/sandbox/**/obj/
+
 # Nuxt.js build / generate output
 .nuxt
 dist

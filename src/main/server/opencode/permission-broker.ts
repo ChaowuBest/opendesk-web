@@ -89,7 +89,8 @@ function inferPermissionName(toolName: string, requests: PermissionRequest[]): s
     if (name === 'writefile' || name === 'editfile' || name === 'searchreplace' || name === 'applypatch') return 'edit';
     if (name === 'globfiles') return 'glob';
     if (name === 'grepfiles') return 'grep';
-    if (name === 'executepowershell' || name === 'executebash' || name === 'executezsh') return 'bash';
+    if (name === 'executepwsh' || name === 'executepowershell' || name === 'executebash' || name === 'executezsh')
+        return 'bash';
     if (name === 'webfetch') return 'webfetch';
     if (name.includes('websearch') || name.endsWith('search')) return 'websearch';
     if (name === 'loadskill' || name === 'callskill') return 'skill';

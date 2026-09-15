@@ -11,7 +11,7 @@
 
 import path from 'path';
 import { escapeHtml } from '../../common/utils/escape.js';
-import { normalizeDriveRootPath } from '../../common/utils/path.js';
+import { normalizeDriveRootPath, sandboxPathToHostPath } from '../../common/utils/path.js';
 import { fileUrlToFilePath } from '../../common/file-url.js';
 import type { MarkedExtension, Tokens } from 'marked';
 
@@ -41,6 +41,10 @@ export function resolveFilePath(rawPath: string): string | null {
     if (!rawPath || URL_SCHEME_RE.test(rawPath) || rawPath.startsWith('#')) {
         return null;
     }
+
+    // 沙箱产物路径形如 "Z:\C\Users\..."（虚拟卷根 + 盘符目录），卷卸载后无法
+    // 点击跳转，先还原为宿主路径再走后续解析。
+    rawPath = sandboxPathToHostPath(rawPath);
 
     // 含省略号（…）的是缩写展示路径（如 `…\agent.ts`、`src/…/utils.ts`）：
     // 模型在正文中常用它指代过长路径，永远无法真实打开，不能渲染为 pill。

@@ -270,7 +270,9 @@ const TaskSettingSchema = z.object({
     auto_retry: z.boolean().default(true).describe('LLM 请求失败时是否自动重试'),
     generate_taskname: z.boolean().default(true).describe('创建任务时是否自动生成任务名称'),
     termination_check: z.boolean().default(true).describe('是否自动检测并恢复异常中断的任务'),
-    evidence_card: z.boolean().default(false).describe('是否启用 EvidenceCard 节省 Token 功能')
+    evidence_card: z.boolean().default(false).describe('是否启用 EvidenceCard 节省 Token 功能'),
+    shell_path: z.string().default(''),
+    shell_sandboxed: z.boolean().default(false)
 });
 
 const NetworkConfigSchema = z.object({
@@ -465,7 +467,9 @@ function getSettingSchema(): z.ZodObject<z.ZodRawShape> {
             auto_retry: true,
             generate_taskname: true,
             termination_check: true,
-            evidence_card: false
+            evidence_card: false,
+            shell_path: '',
+            shell_sandboxed: false
         }),
         network_config: NetworkConfigSchema.describe('网络设置').default({
             no_ssl: false,

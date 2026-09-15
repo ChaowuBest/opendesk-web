@@ -22,8 +22,10 @@
  */
 
 import os from 'os';
+import path from 'path';
 import type { PermissionRule, PermissionAction, PermissionResourceType } from '../aikernel/security/permission.js';
 import { normalizePath } from '../../utils/path.js';
+import { getOpendeskDirectory } from './setting.js';
 
 export interface SensitivePathPattern {
     /** glob 风格的路径模式（使用正斜杠，不含平台特定前缀） */
@@ -152,6 +154,22 @@ export function createCriticalPathRules(): PermissionRule[] {
     }
 
     return rules;
+}
+
+/**
+ * interpreters 目录（应用数据目录下）的读写放行规则。
+ *
+ * pip-global、npm-global、uv、cmd-pkgs 等 OpenDesk 自带运行时的包安装位置
+ * 都位于该目录，由 OpenDesk 自身管理。Standard / Solo 模式下直接放行其中的
+ * 读写操作，避免沙箱内安装包时反复触发授权弹窗。
+ */
+export function createInterpretersPermissionRules(): PermissionRule[] {
+    const dirNorm = normalizePath(path.resolve(getOpendeskDirectory(), 'interpreters'));
+    const pattern = `${dirNorm}{,/**}`;
+    return [
+        { resourceType: 'file', action: 'read', pathPattern: pattern, effect: 'allow' },
+        { resourceType: 'file', action: 'write', pathPattern: pattern, effect: 'allow' }
+    ];
 }
 
 /**

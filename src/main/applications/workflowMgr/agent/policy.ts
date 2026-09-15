@@ -20,6 +20,7 @@ const WORKFLOW_AGENT_DISABLED_TOOLS = [
     'waitSubTask',
     'evaluate',
     'executePowerShell',
+    'executePwsh',
     'executeBash',
     'executeZsh',
     'executeNodeShell'

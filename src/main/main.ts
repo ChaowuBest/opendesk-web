@@ -40,6 +40,7 @@ import {
 import { QuickPassHelper } from './utils/quickpass.js';
 import { getWindowsDrives } from './utils/drives.js';
 import { cleanPathInput } from '../utils/path.js';
+import { sandboxPathToHostPath } from '../common/utils/path.js';
 import { PROVIDER_TEMPLATES } from './tui/components/config/providers.js';
 import { GlobalState } from './aikernel/states/global.js';
 import { BaseToolset } from './aikernel/tool';
@@ -61,6 +62,7 @@ import { NAV_INTERCEPT_SCRIPT } from '../renderer/webviewScripts.js';
 import { injectScriptIntoFrames } from './utils/webview-frame-inject.js';
 import { skillRegistry } from './applications/skillmgr/utils/skill-registry.js';
 import { SkillMgrApplication } from './applications/skillmgr/app.js';
+import { scanSupportedShells } from './applications/terminal/scan.js';
 import {
     initializeRegistry,
     initializeRegistryWorker,
@@ -2204,6 +2206,8 @@ const registerFSAPIHandlers = () => {
             let p = filePath;
             // 清理不可见的 Unicode 字符和首尾空白，避免 path.isAbsolute 误判
             p = cleanPathInput(p);
+            // 沙箱虚拟路径（Z:\C\...）还原为宿主路径，卷卸载后仍可打开
+            p = sandboxPathToHostPath(p);
             // 展开 ~
             if (p.startsWith('~')) {
                 p = path.join(os.homedir(), p.slice(1));
@@ -2242,6 +2246,7 @@ const registerSettingAPIHandlers = () => {
             return { status: 'error', message: error.message };
         }
     });
+    ipcMain.handle('setting:listShells', () => scanSupportedShells());
     ipcMain.handle('setting:loadSettingObject', () => {
         return { status: 'ok', data: withResolvedLocale(Setting.getInstance().getData()) };
     });
@@ -3612,8 +3617,7 @@ async function startApplication(): Promise<void> {
         ipcMain.handle('application:openInNewWindow', async (_event, bundleName: string) => {
             try {
                 const appConfig = ApplicationRegistry.getApplicationGUIConfig(bundleName) as
-                    | Record<string, unknown>
-                    | undefined;
+                    Record<string, unknown> | undefined;
                 const appName = (appConfig?.name as string) || bundleName;
 
                 const appWindow = new BrowserWindow({

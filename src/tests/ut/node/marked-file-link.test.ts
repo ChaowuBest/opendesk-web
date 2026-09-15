@@ -12,6 +12,7 @@ import {
     parseLineAnchor
 } from '../../../main/utils/marked-file-link.js';
 import { marked as messagesMarked } from '../../../main/aikernel/messages.js';
+import { sandboxPathToHostPath } from '../../../common/utils/path.js';
 
 test('file links are non-navigation buttons, including encoded file URLs and line ranges', async () => {
     const html = await messagesMarked.parse('[report.ts:12-20](file:///tmp/report%20%231.ts#L12-L20)');
@@ -1018,6 +1019,47 @@ test('plain text: CJK enumeration between paths produces no pill', () => {
     } finally {
         setRenderWorkspace(null);
         fs.rmSync(tmp, { recursive: true, force: true });
+    }
+});
+
+// ── 沙箱虚拟路径还原（Dynobox: Z:\C\foo ↔ 宿主 C:\foo）──────────────────
+
+test('sandboxPathToHostPath: rewrites virtual drive paths to host paths', () => {
+    assert.equal(sandboxPathToHostPath('Z:\\C\\Users\\a\\out.pptx'), 'C:\\Users\\a\\out.pptx');
+    assert.equal(sandboxPathToHostPath('Z:/C/Projects/OpenDesk'), 'C:\\Projects/OpenDesk');
+    assert.equal(sandboxPathToHostPath('z:\\d\\data'), 'D:\\data');
+    assert.equal(sandboxPathToHostPath('Z:\\D'), 'D:\\');
+});
+
+test('sandboxPathToHostPath: leaves non-sandbox paths untouched', () => {
+    // 第二段不是单个盘符字母（真实目录名），不能改写
+    assert.equal(sandboxPathToHostPath('Z:\\CORS\\rules'), 'Z:\\CORS\\rules');
+    assert.equal(sandboxPathToHostPath('Z:\\Users\\a'), 'Z:\\Users\\a');
+    // 沙箱卷固定挂载在 Z:，其他盘符上的同形路径是宿主真实路径
+    assert.equal(sandboxPathToHostPath('Y:\\C\\data'), 'Y:\\C\\data');
+    assert.equal(sandboxPathToHostPath('C:\\Users\\a'), 'C:\\Users\\a');
+    assert.equal(sandboxPathToHostPath('/C/foo'), '/C/foo');
+    assert.equal(sandboxPathToHostPath(''), '');
+});
+
+test('resolveFilePath: resolves sandbox artifact path to the host path', () => {
+    setRenderWorkspace(null);
+    const result = resolveFilePath('Z:\\C\\Users\\liyif\\AppData\\Local\\Temp\\out.pptx');
+    assert.ok(result, 'sandbox path must resolve to a pill target');
+    assert.ok(!result.includes('Z:'), 'virtual drive must be stripped');
+    assert.ok(/[A-Z]:/.test(result), 'host drive must remain');
+});
+
+test('markdown link: sandbox artifact href renders a pill with host path', () => {
+    const marked = new Marked(fileLinkExtension);
+    setRenderWorkspace(null);
+    try {
+        const href = 'Z:\\C\\Users\\liyif\\AppData\\Local\\Temp\\out.pptx';
+        const html = marked.parse(`[产物](${href})`) as string;
+        assert.ok(html.includes('od-file-pill'), 'sandbox path must still render a pill');
+        assert.ok(html.includes('data-open-preview="C:'), 'pill must carry the host path');
+    } finally {
+        setRenderWorkspace(null);
     }
 });
 

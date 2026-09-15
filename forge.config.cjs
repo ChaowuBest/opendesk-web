@@ -80,6 +80,28 @@ function pruneDarwinExtraResources(buildPath, electronVersion, platform, arch, c
     }
 }
 
+// 发布态沙箱固定解包到 resources/sandbox/sandbox.exe。这样运行时不依赖
+// native 源码目录或构建机的临时布局。
+function stageWindowsSandboxResource(buildPath, electronVersion, platform, arch, callback) {
+    try {
+        if (platform === 'win32') {
+            const rid = arch === 'arm64' ? 'win-arm64' : arch === 'ia32' ? 'win-x86' : 'win-x64';
+            const source = path.join(__dirname, 'native', 'windows', 'sandbox', 'dist', rid, 'bin', 'sandbox.exe');
+            const resourcesRoot = path.join(buildPath, 'resources');
+            const targetDirectory = path.join(resourcesRoot, 'sandbox');
+            if (!fs.existsSync(source)) {
+                throw new Error(`Windows sandbox binary is missing for ${rid}: ${source}`);
+            }
+            fs.mkdirSync(targetDirectory, { recursive: true });
+            fs.copyFileSync(source, path.join(targetDirectory, 'sandbox.exe'));
+            removePathIfExists(path.join(resourcesRoot, 'native', 'windows', 'sandbox'));
+        }
+        callback();
+    } catch (error) {
+        callback(error);
+    }
+}
+
 // afterPrune 钩子：清原生包编译产物/跨平台 prebuilds（需按 platform+arch 参数化），
 // 以及 win32/linux 平铺布局下的多语言 .pak 与 Chromium 许可证清单。
 // darwin 的 .pak 位于签名过的 Electron Framework 内，不在剪裁范围。
@@ -435,6 +457,7 @@ module.exports = {
     preserveWixInstallDirectory,
     prunePackagedNativeArtifactsHook,
     prunePackagedShellArtifactsHook,
+    stageWindowsSandboxResource,
     packagerConfig: {
         platforms: ['win32', 'darwin'],
         arch: ['x64', 'arm64'],
@@ -493,7 +516,7 @@ module.exports = {
             pruneDarwinAppNativePrebuilds,
             materializeWorkspacePackageLinks
         ],
-        afterCopyExtraResources: [pruneDarwinExtraResources]
+        afterCopyExtraResources: [pruneDarwinExtraResources, stageWindowsSandboxResource]
     },
     rebuildConfig: {},
     makers: [

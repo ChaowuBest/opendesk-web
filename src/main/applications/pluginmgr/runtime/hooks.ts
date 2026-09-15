@@ -28,6 +28,8 @@ import type { BeforeToolCallExecAction, BeforeToolCallValidateAction } from '../
 const SHELL_TOOL_TYPE_MAP: Record<string, PluginShellType> = {
     'terminal-executeBash': 'bash',
     'terminal-executeZsh': 'zsh',
+    // The published plugin SDK uses "powershell" as its protocol value for all pwsh versions.
+    'terminal-executePwsh': 'powershell',
     'terminal-executePowerShell': 'powershell'
 };
 

@@ -1101,7 +1101,6 @@ export const enUs: Record<string, string> = {
     // Task & Planning Tools
     'tools.listRecentTasks.name': 'List Tasks',
     'tools.getTaskHistory.name': 'Task History',
-    'tools.checkShellStatus.name': 'Check Shell Status',
     'tools.askFromTask.name': 'Ask Task',
     'tools.deleteTasks.name': 'Delete Tasks',
     'tools.createSubTask.name': 'Sub-task',
@@ -1395,6 +1394,7 @@ export const enUs: Record<string, string> = {
         'Reconfigure workspace, model providers, and search channels. Useful for initial migration or config reset.',
     'sp.wizard.run': 'Run Wizard',
     'sp.task.title': 'Task Settings',
+    'sp.task.harness.title': 'Harness Settings',
     'sp.task.autoRetry': 'Auto-retry on LLM request failure',
     'sp.task.autoRetry.desc':
         'Automatically retry failed model requests in tasks. Retries start at 10s intervals with exponential backoff, up to 10 minutes.',
@@ -1407,6 +1407,15 @@ export const enUs: Record<string, string> = {
     'sp.task.evidenceCard': 'Use EvidenceCard to save tokens',
     'sp.task.evidenceCard.desc':
         'Saves ~80% input tokens and significantly reduces tool calls, while task completion rate remains essentially unchanged.',
+    'sp.task.terminal.title': 'Terminal Settings',
+    'tool.nodeShell.description':
+        'Execute a shell command on the specified or default node. Choose the node with nodeId. This tool accesses the node environment; use the selected executeBash, executePwsh or executeZsh tool for the local OpenDesk environment.',
+    'sp.task.terminal.shell': 'Shell',
+    'sp.task.terminal.shell.desc':
+        'Tasks use only the selected shell. If its path is unavailable, the first available shell is used.',
+    'sp.task.terminal.noShells': 'No supported shells found',
+    'sp.task.terminal.sandbox': 'Enable sandbox',
+    'sp.task.terminal.sandbox.desc': 'Run this powershell in a Windows sandbox and request file access when needed.',
     'sp.agents.title': 'ACP Agents',
     'sp.agents.desc':
         'Connect local stdio or remote Streamable HTTP agents. Task context and event records remain stored locally.',

@@ -1125,6 +1125,16 @@ html[data-theme='dark'] .terminal-tool .text-gray-400 {
 html[data-theme='dark'] .terminal-tool .terminal-tool-summary:hover {
     background: var(--od-bg-muted) !important;
 }
+html[data-theme='dark'] .terminal-shell-tag {
+    color: var(--od-text-muted);
+    border-color: var(--od-border-strong);
+    background: var(--od-bg-muted);
+}
+html[data-theme='dark'] .terminal-shell-tag-sandbox {
+    color: #c4b5fd;
+    border-color: #6d28d9;
+    background: rgba(109, 40, 217, 0.2);
+}
 
 /* askUser 工具 GUI 渲染卡片 */
 html[data-theme='dark'] .ask-user-tool {

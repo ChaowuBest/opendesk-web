@@ -56,9 +56,17 @@ function normalizePath(rawPath: string, cwd: string): string {
     const normalizedCwd = fromMsysPath(cwd);
     const preserveTrailingSeparator = path.isAbsolute(p) && p.length > 1 && /[\\/]$/.test(p);
 
-    // 始终通过 path.resolve 解析路径。绝对路径也可能包含 . 或 ..；仅用
-    // path.isAbsolute 判断会保留这些片段，导致权限规则匹配到错误的路径。
-    p = path.resolve(normalizedCwd, p);
+    // 始终通过 resolve 解析以消除 . / .. 片段。绝对路径也可能包含这些片段，
+    // 仅用 path.isAbsolute 判断会保留它们，导致权限规则匹配到错误的路径。
+    // 注意 Windows 的 path.resolve 会把 POSIX 风格绝对路径锚定到当前盘符
+    // （/etc/passwd → C:\etc\passwd），凭空改写权限声明的路径；因此无盘符
+    // 前缀的 POSIX 形式绝对路径改在 POSIX 语义下解析（绝对路径不依赖 cwd，
+    // . / .. 同样被消除），盘符路径与相对路径仍基于 cwd 按 Windows 语义解析。
+    if (path.isAbsolute(p) && !/^[A-Za-z]:/.test(p)) {
+        p = path.posix.resolve(p);
+    } else {
+        p = path.resolve(normalizedCwd, p);
+    }
 
     // 统一使用正斜杠
     p = p.replace(/\\/g, '/');

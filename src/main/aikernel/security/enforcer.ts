@@ -30,7 +30,11 @@ import picomatch from 'picomatch';
 import path from 'path';
 import type { PermissionEnforcer, PermissionRequest, PermissionCheckResult, PermissionRule } from './permission.js';
 import { logger } from '../../utils/logger.js';
-import { createSensitivePathRules, createDeviceNodeRules } from '../../utils/permissionRules.js';
+import {
+    createSensitivePathRules,
+    createDeviceNodeRules,
+    createInterpretersPermissionRules
+} from '../../utils/permissionRules.js';
 import { fromMsysPath, normalizePath } from '../../../utils/path.js';
 import { getAllTempDirs } from '../../utils/temp.js';
 
@@ -183,9 +187,14 @@ export class AllowEverythingPermissionEnforcer implements PermissionEnforcer {
     async addRule(_rule: PermissionRule): Promise<void> {}
 
     async removeRule(_rule: PermissionRule): Promise<void> {}
+
+    getRules(): PermissionRule[] {
+        return [{ resourceType: '*', action: '*', pathPattern: '**', effect: 'allow' }];
+    }
 }
 
 export class GlobPermissionEnforcer implements PermissionEnforcer {
+    private rawRules: PermissionRule[] = [];
     private allowRules: CompiledRule[] = [];
     private denyRules: CompiledRule[] = [];
     private askRules: CompiledRule[] = [];
@@ -224,6 +233,7 @@ export class GlobPermissionEnforcer implements PermissionEnforcer {
     }
 
     private initialize(initialRules: PermissionRule[]): void {
+        this.rawRules.push(...initialRules);
         for (const rule of initialRules) {
             const compiled = compileRule(rule);
             if (rule.effect === 'allow') {
@@ -253,6 +263,12 @@ export class GlobPermissionEnforcer implements PermissionEnforcer {
 
         // 空路径不是合法资源路径，直接 allow（避免 picomatch ** 不匹配空字符串导致隐式 ask）
         if (!objNorm) {
+            return { effect: 'allow', request };
+        }
+
+        // 文件执行权限对所有 OpenDesk 模式开放。读写仍继续经过各模式
+        // 的 deny/ask/allow 规则；执行请求不应触发额外授权弹窗。
+        if (request.resourceType === 'file' && request.action === 'execute') {
             return { effect: 'allow', request };
         }
 
@@ -316,6 +332,7 @@ export class GlobPermissionEnforcer implements PermissionEnforcer {
     }
 
     async addRule(rule: PermissionRule): Promise<void> {
+        this.rawRules.push(rule);
         const compiled = compileRule(rule);
 
         if (rule.effect === 'allow') {
@@ -348,7 +365,21 @@ export class GlobPermissionEnforcer implements PermissionEnforcer {
             this.askRules = removeFrom(this.askRules);
         }
 
+        this.rawRules = this.rawRules.filter(
+            (candidate) =>
+                !(
+                    candidate.resourceType === rule.resourceType &&
+                    candidate.action === rule.action &&
+                    candidate.pathPattern === rule.pathPattern &&
+                    candidate.effect === rule.effect
+                )
+        );
+
         logger.info(`permission rule removed: ${rule.effect} ${rule.resourceType}:${rule.action} ${patternNorm}`);
+    }
+
+    getRules(): PermissionRule[] {
+        return [...(this.inherited?.getRules() ?? []), ...this.rawRules];
     }
 }
 
@@ -359,6 +390,7 @@ export class GlobPermissionEnforcer implements PermissionEnforcer {
  * - 工作空间内的文件读写执行 → allow（包括 dotfiles，如 .gitignore、.eslintrc 等）
  * - 工作空间内的敏感路径（.ssh、.gnupg 等） → ask（显式保护，覆盖 allow）
  * - 工作空间外的文件读写执行 → ask（隐式回退）
+ * - OpenDesk 自带 interpreters 目录（pip-global、npm-global 等包安装位置） → allow
  * - 网络访问 → ask（隐式回退）
  * - 技能和插件读取 → allow
  * - 技能和插件的修改或执行 → ask（隐式回退，需用户确认）
@@ -389,6 +421,9 @@ export function createDefaultPermissionRules(workspace: string): PermissionRule[
         { resourceType: 'file', action: 'execute', pathPattern: wsPattern, effect: 'allow' },
         // 临时目录读写执行允许
         ...tempRules,
+        // OpenDesk 自带 interpreters 目录（pip-global、npm-global 等）读写允许，
+        // 沙箱内安装包不应反复触发授权
+        ...createInterpretersPermissionRules(),
         // 所有技能读取允许（加载、查看等），写入/执行需用户确认（隐式 ask）
         { resourceType: 'skill', action: 'read', pathPattern: '**', effect: 'allow' },
         // 插件列表和详情读取允许，安装、卸载、启停和重载需用户确认（隐式 ask）
