@@ -10,6 +10,7 @@
  */
 
 import { BaseTool } from '../../aikernel/tool';
+import { t } from './locale/index.js';
 import { z } from 'zod';
 
 // ========== createNote 工具 ==========
@@ -99,7 +100,7 @@ export class ReadNoteTool extends BaseTool<typeof ReadNoteArgsSchema> {
         // 获取笔记元数据
         const note = await this.notesApp.callWorker('getNote', args.noteId);
         if (!note) {
-            throw new Error(`笔记 ${args.noteId} 不存在`);
+            throw new Error(t('error.noteNotFound', { id: args.noteId }));
         }
 
         // 获取笔记内容

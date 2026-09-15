@@ -13,8 +13,11 @@ import { AgentOperableHTMLElement } from '../../widget_utils.js';
 import { escapeHtml } from '../../../../common/utils/escape.js';
 import { showWorkspacePicker } from '../../../../renderer/components/workspacePicker.js';
 import { showConfirmModal } from '../../../../renderer/components/confirmModal.js';
-import { createRendererTranslator } from '../../../../renderer/locale.js';
+import { createRendererTranslator, resolveRendererLocale } from '../../../../renderer/locale.js';
+import { createTranslatorForTodoMgr } from '../locale/renderer.js';
 import type { TodoTemplate } from '../templates.js';
+
+type Translator = ReturnType<typeof createTranslatorForTodoMgr>;
 
 /* ═══════════════════════════════════════════════════
  *  TYPES
@@ -871,45 +874,22 @@ html[data-theme='dark'] .tm-root {
  *  CONSTANTS
  * ═══════════════════════════════════════════════════ */
 
-const CARD_CONFIG: Record<
-    TriggerType,
-    { label: string; icon: string; iconBg: string; iconColor: string; emptyIcon: string; emptyText: string }
-> = {
-    scheduled: {
-        label: '定时任务',
-        icon: 'fa-clock',
-        iconBg: '#EFF6FF',
-        iconColor: '#2563EB',
-        emptyIcon: 'fa-clock',
-        emptyText: '暂无定时任务'
-    },
-    cron: {
-        label: '周期任务',
-        icon: 'fa-arrows-rotate',
-        iconBg: '#F0FDF4',
-        iconColor: '#16A34A',
-        emptyIcon: 'fa-arrows-rotate',
-        emptyText: '暂无周期任务'
-    },
-    event: {
-        label: '按需触发任务',
-        icon: 'fa-bolt',
-        iconBg: '#FFF7ED',
-        iconColor: '#EA580C',
-        emptyIcon: 'fa-bolt',
-        emptyText: '暂无触发任务'
-    }
+const CARD_TYPE_STYLES: Record<TriggerType, { icon: string; iconBg: string; iconColor: string }> = {
+    scheduled: { icon: 'fa-clock', iconBg: '#EFF6FF', iconColor: '#2563EB' },
+    cron: { icon: 'fa-arrows-rotate', iconBg: '#F0FDF4', iconColor: '#16A34A' },
+    event: { icon: 'fa-bolt', iconBg: '#FFF7ED', iconColor: '#EA580C' }
 };
 
-const STATUS_CONFIG: Record<string, { label: string; dot: string }> = {
-    enabled: { label: '启用中', dot: 'tm-status-in_progress' },
-    disabled: { label: '未启用', dot: 'tm-status-pending' }
-};
+function getCardConfig(type: TriggerType | 'manual', t: Translator) {
+    if (type === 'manual') {
+        return { icon: 'fa-hand-pointer', iconBg: '#F5F5F7', iconColor: '#8E8E93', label: t('card.type.manual.label') };
+    }
+    return { ...CARD_TYPE_STYLES[type], label: t(`card.type.${type}.label`) };
+}
 
 const DEFAULT_RIGHT_WIDTH = 420;
 const MIN_RIGHT_WIDTH = 280;
 
-const DOW_LABELS = ['日', '一', '二', '三', '四', '五', '六'];
 const WORKSPACE_SELECT_DEFAULT = 'default';
 const WORKSPACE_SELECT_ISOLATED = 'isolated';
 const WORKSPACE_SELECT_OTHER = 'other';
@@ -937,14 +917,17 @@ function getDisplayStatus(todo: GlobalTodo): 'enabled' | 'disabled' {
     return todo.enabled !== false ? 'enabled' : 'disabled';
 }
 
-function formatDate(iso: string): string {
+function formatDate(iso: string, t: Translator): string {
     try {
         const d = new Date(iso);
-        const month = d.getMonth() + 1;
-        const day = d.getDate();
         const h = String(d.getHours()).padStart(2, '0');
         const m = String(d.getMinutes()).padStart(2, '0');
-        return `${month}月${day}日 ${h}:${m}`;
+        return t('date.format.monthDayTime', {
+            month: String(d.getMonth() + 1),
+            monthName: t(`date.month.${d.getMonth() + 1}`),
+            day: String(d.getDate()),
+            time: `${h}:${m}`
+        });
     } catch {
         return iso;
     }
@@ -961,16 +944,16 @@ function getTodoWorkspaceSelectValue(workspace?: TodoWorkspaceConfig): string {
     return WORKSPACE_SELECT_DEFAULT;
 }
 
-function getWorkspaceDisplayName(workspace?: TodoWorkspaceConfig): string {
-    if (workspace?.type === 'isolated') return '任务独立工作空间';
+function getWorkspaceDisplayName(workspace: TodoWorkspaceConfig | undefined, t: Translator): string {
+    if (workspace?.type === 'isolated') return t('renderer.todo.workspace.isolatedName');
     if (workspace?.type === 'path' && workspace.path) return workspace.path;
-    return '默认工作空间';
+    return t('renderer.todo.workspace.default');
 }
 
-function getTodoWorkspaceSummary(workspace?: TodoWorkspaceConfig): string {
-    if (workspace?.type === 'isolated') return '使用任务独立的工作空间';
+function getTodoWorkspaceSummary(workspace: TodoWorkspaceConfig | undefined, t: Translator): string {
+    if (workspace?.type === 'isolated') return t('renderer.todo.workspace.isolated');
     if (workspace?.type === 'path' && workspace.path) return workspace.path;
-    return '默认工作空间';
+    return t('renderer.todo.workspace.default');
 }
 
 function parseTodoWorkspaceSelectValue(value: string): TodoWorkspaceConfig | undefined {
@@ -986,7 +969,7 @@ function parseTodoWorkspaceSelectValue(value: string): TodoWorkspaceConfig | und
  * 将 UTC cron 表达式转换为本地时间描述。
  * 所有 cron 表达式存储时使用 UTC，此函数负责转成本地时间来展示。
  */
-function describeCronLocal(expr: string): string {
+function describeCronLocal(expr: string, t: Translator): string {
     const fields = expr.trim().split(/\s+/);
     if (fields.length !== 5) return expr;
     const [minute, hour, dom, month, dow] = fields;
@@ -1048,19 +1031,19 @@ function describeCronLocal(expr: string): string {
             const days = dow.split(',').map((d) => {
                 let v = parseInt(d.trim(), 10);
                 if (dayShift) v = (((v + dayShift) % 7) + 7) % 7;
-                return `周${DOW_LABELS[v] || v}`;
+                return t(`date.dow.${v}`) || v;
             });
-            parts.push(days.length === 1 ? `每${days[0]}` : days.join('/'));
+            parts.push(days.length === 1 ? t('renderer.todo.cron.desc.everyDow', { days: days[0] }) : days.join('/'));
         } else {
-            parts.push(`周(${dow})`);
+            parts.push(t('renderer.todo.cron.desc.dowRaw', { dow }));
         }
     }
-    if (dom !== '*') parts.push(`每月${dom}日`);
-    if (month !== '*') parts.push(`${month}月`);
+    if (dom !== '*') parts.push(t('renderer.todo.cron.desc.monthlyDom', { day: dom }));
+    if (month !== '*') parts.push(t('renderer.todo.cron.desc.month', { month }));
     if (displayH !== '*' && displayM !== '*') parts.push(`${displayH}:${displayM}`);
-    else if (displayH !== '*') parts.push(`${displayH}时`);
-    else if (displayM !== '*') parts.push(`每小时第${displayM}分`);
-    else parts.push('每分钟');
+    else if (displayH !== '*') parts.push(t('renderer.todo.cron.desc.hourOnly', { hour: displayH }));
+    else if (displayM !== '*') parts.push(t('renderer.todo.cron.desc.minuteOnly', { minute: displayM }));
+    else parts.push(t('renderer.todo.cron.desc.everyMinute'));
     return parts.join(' ');
 }
 
@@ -1178,17 +1161,19 @@ function convertCronUTCToLocal(expr: string): string {
     return `${newMin} ${newHour} ${dom} ${month} ${newDow}`;
 }
 
-function getTriggerSummary(todo: GlobalTodo): string {
-    if (!todo.trigger) return '手动触发';
+function getTriggerSummary(todo: GlobalTodo, t: Translator): string {
+    if (!todo.trigger) return t('trigger.summary.manual');
     switch (todo.trigger.type) {
         case 'scheduled':
-            return todo.trigger.triggerAt ? formatDate(todo.trigger.triggerAt) : '定时';
+            return todo.trigger.triggerAt ? formatDate(todo.trigger.triggerAt, t) : t('trigger.summary.scheduled');
         case 'cron':
-            return todo.trigger.cronExpression ? describeCronLocal(todo.trigger.cronExpression) : '周期';
+            return todo.trigger.cronExpression
+                ? describeCronLocal(todo.trigger.cronExpression, t)
+                : t('trigger.summary.cron');
         case 'event':
             return `${todo.trigger.bundleName || ''}:${todo.trigger.eventName || ''}`;
         default:
-            return '未知';
+            return t('trigger.summary.unknown');
     }
 }
 
@@ -1262,6 +1247,9 @@ function normalizeGlobalTodosPayload(payload: unknown): GlobalTodo[] {
  * ═══════════════════════════════════════════════════ */
 
 class TodoMgrEntryWidget extends AgentOperableHTMLElement {
+    private _t: Translator = createTranslatorForTodoMgr();
+    private _locale: string | undefined = undefined;
+    private _settingUnsubscribe: (() => void) | null = null;
     private _onGlobalTodosUpdated: ((payload: unknown) => void) | null = null;
     private _channelEventUnsubscribers: Array<() => void> = [];
     private globalTodos: GlobalTodo[] = [];
@@ -1289,15 +1277,26 @@ class TodoMgrEntryWidget extends AgentOperableHTMLElement {
     private _dtViewMonth = 0;
     private _dtPanelOpen = false;
 
-    connectedCallback() {
+    async connectedCallback() {
         this._injectCSS();
+        // 先加载语言设置再渲染，避免首帧出现错误语言
+        let setting;
+        try {
+            setting = await (window as any).settingAPI?.loadSettingObject?.();
+        } catch {
+            setting = undefined;
+        }
+        this._applyLocaleSetting(setting);
+        // 等待设置加载期间元素可能已被移除，避免对脱离 DOM 的元素继续渲染
+        if (!this.isConnected) return;
+        this._subscribeLocaleChanges();
+        this.render();
+        this.loadData();
+        this._prefetchEvents();
         this._loadTemplates().then(() => {
             const tplGrid = this.querySelector('#tm-templates-grid') as HTMLElement;
             if (tplGrid) tplGrid.innerHTML = this._renderTemplates();
         });
-        this.render();
-        this.loadData();
-        this._prefetchEvents();
 
         this._onGlobalTodosUpdated = (todos: unknown) => {
             this.globalTodos = normalizeGlobalTodosPayload(todos);
@@ -1320,12 +1319,46 @@ class TodoMgrEntryWidget extends AgentOperableHTMLElement {
             window.applicationAPI.unsubscribe('globalTodosUpdated', this._onGlobalTodosUpdated);
             this._onGlobalTodosUpdated = null;
         }
+        if (this._settingUnsubscribe) {
+            this._settingUnsubscribe();
+            this._settingUnsubscribe = null;
+        }
         this._unsubscribeChannelContactChanges();
         this._stopResize();
     }
 
+    private _applyLocaleSetting(setting?: { locale?: string; resolved_locale?: string }) {
+        this._locale = resolveRendererLocale(setting);
+        this._t = createTranslatorForTodoMgr(setting);
+    }
+
+    /* 语言设置变化时重建翻译器并按新语言重建界面。
+       右面板（详情/编辑表单）属于用户输入态：整体移植回新界面而不是重建，
+       保留未保存的表单输入与已绑定的事件（与日历"打开中的弹窗不重建"策略一致） */
+    private _subscribeLocaleChanges() {
+        if (this._settingUnsubscribe) return;
+        const unsubscribe = (window as any).settingAPI?.onSettingChanged?.((setting: any) => {
+            if (!this.isConnected) return;
+            if (resolveRendererLocale(setting) === this._locale) return;
+            const openPanel = this.querySelector('#tm-right') as HTMLElement | null;
+            const openResizer = this.querySelector('#tm-resizer') as HTMLElement | null;
+            const panelOpen = this.selectedTodoId !== null;
+            this._applyLocaleSetting(setting);
+            this.render();
+            if (panelOpen && openPanel) {
+                const newRight = this.querySelector('#tm-right') as HTMLElement | null;
+                const newResizer = this.querySelector('#tm-resizer') as HTMLElement | null;
+                if (newRight) newRight.replaceWith(openPanel);
+                if (newResizer && openResizer) newResizer.replaceWith(openResizer);
+            }
+        });
+        if (typeof unsubscribe === 'function') {
+            this._settingUnsubscribe = unsubscribe;
+        }
+    }
+
     getAgentInstruct(): string {
-        return '你是待办事项管理助手，可以帮助用户查看和管理自动化任务。当前页面展示了所有自动化任务（定时任务、周期任务和按需触发任务）。你可以使用 addGlobalTodo / updateGlobalTodo / deleteGlobalTodo / listGlobalTodos 等工具管理全局待办。';
+        return this._t('agent.instruct');
     }
 
     private _subscribeChannelContactChanges() {
@@ -1407,34 +1440,35 @@ class TodoMgrEntryWidget extends AgentOperableHTMLElement {
     }
 
     render() {
+        const t = this._t;
         this.innerHTML = `
         <div class="tm-root">
             <div class="tm-toolbar">
                 <div>
-                    <div class="tm-toolbar-title">自动化任务</div>
-                    <div class="tm-toolbar-subtitle" id="tm-summary">让 Agent 按计划自动执行任务，持续为你处理重复工作</div>
+                    <div class="tm-toolbar-title">${escapeHtml(t('app.name'))}</div>
+                    <div class="tm-toolbar-subtitle" id="tm-summary">${escapeHtml(t('renderer.todo.subtitle'))}</div>
                 </div>
                 <div style="display:flex;gap:8px;">
                     <button class="tm-btn" id="tm-quick-add-btn" style="padding:8px 16px;">
                         <i class="fas fa-wand-magic-sparkles" style="font-size: var(--fs-md);"></i>
-                        一句话创建
+                        ${escapeHtml(t('renderer.todo.quickAdd'))}
                     </button>
                     <button class="tm-btn tm-btn-primary" id="tm-create-btn" style="padding:8px 16px;">
                         <i class="fas fa-plus" style="font-size: var(--fs-md);"></i>
-                        创建
+                        ${escapeHtml(t('renderer.todo.common.create'))}
                     </button>
                 </div>
             </div>
             <div class="tm-content-row">
                 <div class="tm-left" id="tm-left">
                     <div class="tm-section" id="tm-templates">
-                        <div class="tm-section-title">可以试试从这些常见任务入手</div>
+                        <div class="tm-section-title">${escapeHtml(t('renderer.todo.templatesTitle'))}</div>
                     </div>
                     <div class="tm-templates-grid" id="tm-templates-grid">
                         ${this._renderTemplates()}
                     </div>
                     <div class="tm-section">
-                        <div class="tm-section-title">已创建的自动化任务</div>
+                        <div class="tm-section-title">${escapeHtml(t('renderer.todo.createdTitle'))}</div>
                     </div>
                     <div class="tm-todo-list" id="tm-todo-list">
                         ${this._renderTodoCards()}
@@ -1458,38 +1492,33 @@ class TodoMgrEntryWidget extends AgentOperableHTMLElement {
      * ═══════════════════════════ */
 
     private _renderTodoCards(): string {
+        const t = this._t;
         if (this.globalTodos.length === 0) {
             return `<div class="tm-empty">
                 <i class="fas fa-inbox"></i>
-                <span>暂无自动化任务</span>
-                <span style="font-size: var(--fs-sm);">点击上方模板快速创建</span>
+                <span>${escapeHtml(t('renderer.todo.empty'))}</span>
+                <span style="font-size: var(--fs-sm);">${escapeHtml(t('renderer.todo.emptyHint'))}</span>
             </div>`;
         }
         return this.globalTodos
             .map((t) => {
                 const triggerType = (t.trigger?.type || 'manual') as TriggerType | 'manual';
-                const cfg =
-                    triggerType === 'manual'
-                        ? {
-                              label: '手动任务',
-                              icon: 'fa-hand-pointer',
-                              iconBg: '#F5F5F7',
-                              iconColor: '#8E8E93',
-                              emptyIcon: 'fa-hand-pointer',
-                              emptyText: '暂无手动任务'
-                          }
-                        : CARD_CONFIG[triggerType as TriggerType];
-                const summary = getTriggerSummary(t);
+                const cfg = getCardConfig(triggerType, this._t);
+                const summary = getTriggerSummary(t, this._t);
                 const isEnabled = t.enabled !== false;
                 const isSelected = t.id === this.selectedTodoId;
                 return `<div class="tm-todo-card${isSelected ? ' tm-todo-selected' : ''}" data-id="${escapeHtml(t.id)}">
                 <div class="tm-todo-card-top">
-                    <label class="tm-todo-toggle" title="${isEnabled ? '已启用，点击禁用' : '已禁用，点击启用'}">
+                    <label class="tm-todo-toggle" title="${
+                        isEnabled
+                            ? escapeHtml(this._t('renderer.todo.card.toggle.disableHint'))
+                            : escapeHtml(this._t('renderer.todo.card.toggle.enableHint'))
+                    }">
                         <input type="checkbox" data-toggle-id="${escapeHtml(t.id)}" ${isEnabled ? 'checked' : ''}>
                         <span class="tm-todo-toggle-slider"></span>
                     </label>
                     <div class="tm-todo-card-actions">
-                        <button class="tm-todo-card-action-btn" data-action="more" data-id="${escapeHtml(t.id)}" title="更多">
+                        <button class="tm-todo-card-action-btn" data-action="more" data-id="${escapeHtml(t.id)}" title="${escapeHtml(this._t('renderer.todo.common.more'))}">
                             <i class="fas fa-ellipsis"></i>
                         </button>
                     </div>
@@ -1499,7 +1528,7 @@ class TodoMgrEntryWidget extends AgentOperableHTMLElement {
                 <div class="tm-todo-card-footer">
                     <div><span class="tm-todo-type-badge" style="background:${cfg.iconBg};color:${cfg.iconColor};">
                         <i class="fas ${cfg.icon}" style="font-size: var(--fs-2xs);"></i>
-                        ${cfg.label}
+                        ${escapeHtml(cfg.label)}
                     </span></div>
                     <span class="tm-todo-card-trigger">
                         <i class="fas fa-clock"></i>
@@ -1520,7 +1549,7 @@ class TodoMgrEntryWidget extends AgentOperableHTMLElement {
     private _updateSummary() {
         const el = this.querySelector('#tm-summary') as HTMLElement;
         if (!el) return;
-        el.textContent = '让 Agent 按计划自动执行任务，持续为你处理重复工作';
+        el.textContent = this._t('renderer.todo.subtitle');
     }
 
     /* ═══════════════════════════
@@ -1544,9 +1573,9 @@ class TodoMgrEntryWidget extends AgentOperableHTMLElement {
                     <div class="tm-tpl-icon" style="background:${colors.bg};color:${colors.color};">
                         <i class="fas ${tpl.icon}"></i>
                     </div>
-                    <div class="tm-tpl-title">${escapeHtml(tpl.title)}</div>
+                    <div class="tm-tpl-title">${escapeHtml(this._t(`template.${tpl.id}.title`))}</div>
                 </div>
-                <div class="tm-tpl-desc">${escapeHtml(tpl.description)}</div>
+                <div class="tm-tpl-desc">${escapeHtml(this._t(`template.${tpl.id}.description`))}</div>
             </div>`;
             })
             .join('');
@@ -1604,8 +1633,8 @@ class TodoMgrEntryWidget extends AgentOperableHTMLElement {
         // 构造一个预填充的伪 todo 用于初始化表单，但 _saveEdit 传入 null 表示创建
         const prefilledTodo: GlobalTodo = {
             id: '__tpl__',
-            title: tpl.title,
-            content: tpl.defaultContent,
+            title: this._t(`template.${tpl.id}.title`),
+            content: this._t(`template.${tpl.id}.content`),
             priority: 'medium',
             created_at: new Date().toISOString(),
             updated_at: new Date().toISOString()
@@ -1653,7 +1682,7 @@ class TodoMgrEntryWidget extends AgentOperableHTMLElement {
             if (btn) {
                 const icon = btn.querySelector('i');
                 if (icon) icon.className = 'fas fa-expand';
-                btn.title = '全屏';
+                btn.title = this._t('renderer.todo.common.expand');
             }
         } else {
             for (const t of ['scheduled', 'cron', 'event'] as TriggerType[]) {
@@ -1666,7 +1695,7 @@ class TodoMgrEntryWidget extends AgentOperableHTMLElement {
                     if (otherBtn) {
                         const icon = otherBtn.querySelector('i');
                         if (icon) icon.className = 'fas fa-compress';
-                        otherBtn.title = '恢复';
+                        otherBtn.title = this._t('renderer.todo.common.restore');
                     }
                 } else {
                     card.classList.add('tm-card-collapsed');
@@ -1674,7 +1703,7 @@ class TodoMgrEntryWidget extends AgentOperableHTMLElement {
                     if (otherBtn) {
                         const icon = otherBtn.querySelector('i');
                         if (icon) icon.className = 'fas fa-expand';
-                        otherBtn.title = '全屏';
+                        otherBtn.title = this._t('renderer.todo.common.expand');
                     }
                 }
             }
@@ -1751,13 +1780,15 @@ class TodoMgrEntryWidget extends AgentOperableHTMLElement {
      * ═══════════════════════════ */
 
     private _renderDetail(todo: GlobalTodo) {
+        const t = this._t;
         const scroll = this.querySelector('#tm-detail-scroll') as HTMLElement;
         const footer = this.querySelector('#tm-detail-footer') as HTMLElement;
         if (!scroll || !footer) return;
 
-        const st = STATUS_CONFIG[getDisplayStatus(todo)];
+        const statusKey = getDisplayStatus(todo) === 'enabled' ? 'status.enabled' : 'status.disabled';
+        const statusDot = getDisplayStatus(todo) === 'enabled' ? 'tm-status-in_progress' : 'tm-status-pending';
         const triggerType = todo.trigger?.type || 'manual';
-        const cardCfg = CARD_CONFIG[triggerType as TriggerType] || CARD_CONFIG.event;
+        const cardCfg = getCardConfig(triggerType as TriggerType, t);
 
         scroll.innerHTML = `
         <div class="tm-detail-header">
@@ -1766,37 +1797,37 @@ class TodoMgrEntryWidget extends AgentOperableHTMLElement {
                     <div class="tm-card-icon" style="background:${cardCfg.iconBg};color:${cardCfg.iconColor};width:32px;height:32px;border-radius:9px;">
                         <i class="fas ${cardCfg.icon}" style="font-size: var(--fs-lg);"></i>
                     </div>
-                    <span style="font-size: var(--fs-md);color:#8E8E93;font-weight:500;">${cardCfg.label}</span>
+                    <span style="font-size: var(--fs-md);color:#8E8E93;font-weight:500;">${escapeHtml(cardCfg.label)}</span>
                 </div>
                 <div class="tm-detail-title">${escapeHtml(todo.title)}</div>
             </div>
-            <button class="tm-detail-close" id="tm-close-detail" title="关闭">
+            <button class="tm-detail-close" id="tm-close-detail" title="${escapeHtml(t('renderer.todo.common.close'))}">
                 <i class="fas fa-xmark"></i>
             </button>
         </div>
 
         <div class="tm-detail-body">
             <div class="tm-detail-section">
-                <div class="tm-detail-section-title">任务内容</div>
+                <div class="tm-detail-section-title">${escapeHtml(t('renderer.todo.detail.contentTitle'))}</div>
                 <div class="tm-detail-content">${escapeHtml(todo.content)}</div>
             </div>
 
             <div class="tm-detail-section">
-                <div class="tm-detail-section-title">任务属性</div>
+                <div class="tm-detail-section-title">${escapeHtml(t('renderer.todo.detail.attrsTitle'))}</div>
                 <div class="tm-detail-attrs">
-                    <span class="tm-detail-attr-label">状态</span>
+                    <span class="tm-detail-attr-label">${escapeHtml(t('renderer.todo.detail.attr.status'))}</span>
                     <span class="tm-detail-attr-value" style="display:flex;align-items:center;gap:6px;">
-                        <span class="tm-status-dot ${st.dot}"></span>
-                        ${st.label}
+                        <span class="tm-status-dot ${statusDot}"></span>
+                        ${escapeHtml(t(statusKey))}
                     </span>
 
-                    <span class="tm-detail-attr-label">触发方式</span>
-                    <span class="tm-detail-attr-value">${escapeHtml(getTriggerSummary(todo))}</span>
+                    <span class="tm-detail-attr-label">${escapeHtml(t('renderer.todo.detail.attr.triggerType'))}</span>
+                    <span class="tm-detail-attr-value">${escapeHtml(getTriggerSummary(todo, t))}</span>
 
                     ${
                         todo.trigger?.type === 'cron' && todo.trigger.cronExpression
                             ? `
-                    <span class="tm-detail-attr-label">Cron 表达式</span>
+                    <span class="tm-detail-attr-label">${escapeHtml(t('renderer.todo.detail.attr.cronExpression'))}</span>
                     <span class="tm-detail-attr-value" style="font-family:'Maple Mono','Cascadia Code','SF Mono',monospace;font-size: var(--fs-md);">${escapeHtml(todo.trigger.cronExpression)}</span>
                     `
                             : ''
@@ -1805,9 +1836,9 @@ class TodoMgrEntryWidget extends AgentOperableHTMLElement {
                     ${
                         todo.trigger?.type === 'event'
                             ? `
-                    <span class="tm-detail-attr-label">事件源</span>
+                    <span class="tm-detail-attr-label">${escapeHtml(t('renderer.todo.detail.attr.eventSource'))}</span>
                     <span class="tm-detail-attr-value">${escapeHtml(todo.trigger.bundleName || '-')}</span>
-                    <span class="tm-detail-attr-label">事件名</span>
+                    <span class="tm-detail-attr-label">${escapeHtml(t('renderer.todo.detail.attr.eventName'))}</span>
                     <span class="tm-detail-attr-value">${escapeHtml(todo.trigger.eventName || '-')}</span>
                     `
                             : ''
@@ -1816,26 +1847,26 @@ class TodoMgrEntryWidget extends AgentOperableHTMLElement {
                     ${
                         todo.deliver
                             ? `
-                    <span class="tm-detail-attr-label">投递目标</span>
+                    <span class="tm-detail-attr-label">${escapeHtml(t('renderer.todo.detail.attr.deliverTarget'))}</span>
                     <span class="tm-detail-attr-value">${escapeHtml(todo.deliver.channel)}:${escapeHtml(todo.deliver.accountId)} → ${escapeHtml(todo.deliver.recipientId)}</span>
                     `
                             : ''
                     }
 
-                    <span class="tm-detail-attr-label">工作空间</span>
-                    <span class="tm-detail-attr-value">${escapeHtml(getTodoWorkspaceSummary(todo.workspace))}</span>
+                    <span class="tm-detail-attr-label">${escapeHtml(t('renderer.todo.detail.attr.workspace'))}</span>
+                    <span class="tm-detail-attr-value">${escapeHtml(getTodoWorkspaceSummary(todo.workspace, t))}</span>
 
-                    <span class="tm-detail-attr-label">创建时间</span>
-                    <span class="tm-detail-attr-value">${formatDate(todo.created_at)}</span>
+                    <span class="tm-detail-attr-label">${escapeHtml(t('renderer.todo.detail.attr.createdAt'))}</span>
+                    <span class="tm-detail-attr-value">${formatDate(todo.created_at, t)}</span>
 
-                    <span class="tm-detail-attr-label">更新时间</span>
-                    <span class="tm-detail-attr-value">${formatDate(todo.updated_at)}</span>
+                    <span class="tm-detail-attr-label">${escapeHtml(t('renderer.todo.detail.attr.updatedAt'))}</span>
+                    <span class="tm-detail-attr-value">${formatDate(todo.updated_at, t)}</span>
 
                     ${
                         todo.last_triggered_at
                             ? `
-                    <span class="tm-detail-attr-label">上次触发</span>
-                    <span class="tm-detail-attr-value">${formatDate(todo.last_triggered_at)}</span>
+                    <span class="tm-detail-attr-label">${escapeHtml(t('renderer.todo.detail.attr.lastTriggered'))}</span>
+                    <span class="tm-detail-attr-value">${formatDate(todo.last_triggered_at, t)}</span>
                     `
                             : ''
                     }
@@ -1843,8 +1874,8 @@ class TodoMgrEntryWidget extends AgentOperableHTMLElement {
                     ${
                         todo.completed_at
                             ? `
-                    <span class="tm-detail-attr-label">停用时间</span>
-                    <span class="tm-detail-attr-value">${formatDate(todo.completed_at)}</span>
+                    <span class="tm-detail-attr-label">${escapeHtml(t('renderer.todo.detail.attr.disabledAt'))}</span>
+                    <span class="tm-detail-attr-value">${formatDate(todo.completed_at, t)}</span>
                     `
                             : ''
                     }
@@ -1854,10 +1885,10 @@ class TodoMgrEntryWidget extends AgentOperableHTMLElement {
 
         footer.style.display = 'flex';
         footer.innerHTML = `
-        <button class="tm-btn" id="tm-btn-edit"><i class="fas fa-pen" style="font-size: var(--fs-md);"></i> 编辑</button>
-        <button class="tm-btn tm-btn-danger" id="tm-btn-delete"><i class="fas fa-trash-can" style="font-size: var(--fs-md);"></i> 删除</button>
+        <button class="tm-btn" id="tm-btn-edit"><i class="fas fa-pen" style="font-size: var(--fs-md);"></i> ${escapeHtml(t('renderer.todo.common.edit'))}</button>
+        <button class="tm-btn tm-btn-danger" id="tm-btn-delete"><i class="fas fa-trash-can" style="font-size: var(--fs-md);"></i> ${escapeHtml(t('renderer.todo.common.delete'))}</button>
         <div style="flex:1;"></div>
-        <button class="tm-btn tm-btn-primary" id="tm-btn-execute"><i class="fas fa-play" style="font-size: var(--fs-md);"></i> 立即执行</button>`;
+        <button class="tm-btn tm-btn-primary" id="tm-btn-execute"><i class="fas fa-play" style="font-size: var(--fs-md);"></i> ${escapeHtml(t('renderer.todo.detail.executeNow'))}</button>`;
 
         this.querySelector('#tm-close-detail')?.addEventListener('click', () => this._closeDetail());
         this.querySelector('#tm-btn-edit')?.addEventListener('click', () => this._enterEditMode(todo));
@@ -1889,6 +1920,7 @@ class TodoMgrEntryWidget extends AgentOperableHTMLElement {
         const footer = this.querySelector('#tm-detail-footer') as HTMLElement;
         if (!scroll || !footer) return;
 
+        const t = this._t;
         const isNew = !todo || isTemplatePreFill;
         const title = !todo ? '' : todo.title;
         const content = !todo ? '' : todo.content;
@@ -1896,53 +1928,53 @@ class TodoMgrEntryWidget extends AgentOperableHTMLElement {
         const triggerType = !todo ? addType || 'scheduled' : todo.trigger?.type || addType || 'scheduled';
         const recentWorkspaces = await this._loadRecentWorkspaces();
         const workspaceOptionsHtml = this._renderWorkspaceOptions(todo?.workspace, recentWorkspaces);
-        const workspaceHint = getWorkspaceDisplayName(todo?.workspace);
+        const workspaceHint = getWorkspaceDisplayName(todo?.workspace, t);
 
         scroll.innerHTML = `
         <div class="tm-detail-header">
-            <div class="tm-detail-title">${isNew ? '新建任务' : '编辑任务'}</div>
-            <button class="tm-detail-close" id="tm-edit-cancel-top" title="取消">
+            <div class="tm-detail-title">${isNew ? escapeHtml(t('renderer.todo.edit.newTitle')) : escapeHtml(t('renderer.todo.edit.editTitle'))}</div>
+            <button class="tm-detail-close" id="tm-edit-cancel-top" title="${escapeHtml(t('renderer.todo.common.cancel'))}">
                 <i class="fas fa-xmark"></i>
             </button>
         </div>
         <div class="tm-detail-body">
             <div class="tm-edit-field">
-                <label class="tm-edit-label">标题</label>
-                <input class="tm-edit-input" id="tm-edit-title" value="${escapeHtml(title)}" placeholder="任务标题" />
+                <label class="tm-edit-label">${escapeHtml(t('renderer.todo.edit.labelTitle'))}</label>
+                <input class="tm-edit-input" id="tm-edit-title" value="${escapeHtml(title)}" placeholder="${escapeHtml(t('renderer.todo.edit.placeholderTitle'))}" />
             </div>
             <div class="tm-edit-field">
-                <label class="tm-edit-label">内容</label>
-                <textarea class="tm-edit-textarea" id="tm-edit-content" rows="4" placeholder="详细的任务描述，将发送给 Agent 执行...">${escapeHtml(content)}</textarea>
+                <label class="tm-edit-label">${escapeHtml(t('renderer.todo.edit.labelContent'))}</label>
+                <textarea class="tm-edit-textarea" id="tm-edit-content" rows="4" placeholder="${escapeHtml(t('renderer.todo.edit.placeholderContent'))}">${escapeHtml(content)}</textarea>
             </div>
             <div class="tm-edit-field">
-                <label class="tm-edit-label">状态</label>
+                <label class="tm-edit-label">${escapeHtml(t('renderer.todo.edit.labelStatus'))}</label>
                 <label style="display:flex;align-items:center;gap:8px;cursor:pointer;">
                     <input type="checkbox" id="tm-edit-enabled" ${isEnabled ? 'checked' : ''} style="width:16px;height:16px;accent-color:#3B82F6;" />
-                    <span style="font-size: var(--fs-base);color:var(--tm-text,#1d1d1f);">${isEnabled ? '启用中' : '未启用'}</span>
+                    <span style="font-size: var(--fs-base);color:var(--tm-text,#1d1d1f);">${isEnabled ? escapeHtml(t('status.enabled')) : escapeHtml(t('status.disabled'))}</span>
                 </label>
             </div>
             <div class="tm-edit-field">
-                <label class="tm-edit-label">触发类型</label>
+                <label class="tm-edit-label">${escapeHtml(t('renderer.todo.edit.labelTriggerType'))}</label>
                 <select class="tm-edit-select" id="tm-edit-trigger-type">
-                    <option value="scheduled"${triggerType === 'scheduled' ? ' selected' : ''}>定时（一次性）</option>
-                    <option value="cron"${triggerType === 'cron' ? ' selected' : ''}>周期（Cron）</option>
-                    <option value="event"${triggerType === 'event' ? ' selected' : ''}>事件触发</option>
+                    <option value="scheduled"${triggerType === 'scheduled' ? ' selected' : ''}>${escapeHtml(t('renderer.todo.edit.triggerType.scheduled'))}</option>
+                    <option value="cron"${triggerType === 'cron' ? ' selected' : ''}>${escapeHtml(t('renderer.todo.edit.triggerType.cron'))}</option>
+                    <option value="event"${triggerType === 'event' ? ' selected' : ''}>${escapeHtml(t('renderer.todo.edit.triggerType.event'))}</option>
                 </select>
             </div>
             <div id="tm-trigger-fields"></div>
             <div class="tm-edit-field">
-                <label class="tm-edit-label">指定工作空间</label>
+                <label class="tm-edit-label">${escapeHtml(t('renderer.todo.edit.labelWorkspace'))}</label>
                 <select class="tm-edit-select" id="tm-edit-workspace">
                     ${workspaceOptionsHtml}
                 </select>
                 <div id="tm-edit-workspace-hint" style="font-size: var(--fs-sm);color:var(--text-tertiary,#888);margin-top:4px;">${escapeHtml(workspaceHint)}</div>
             </div>
             <div class="tm-edit-field">
-                <label class="tm-edit-label">发送到</label>
+                <label class="tm-edit-label">${escapeHtml(t('renderer.todo.edit.labelDeliver'))}</label>
                 <select class="tm-edit-select" id="tm-edit-deliver-target">
-                    <option value="">默认</option>
+                    <option value="">${escapeHtml(t('renderer.todo.edit.deliverDefault'))}</option>
                 </select>
-                <div style="font-size: var(--fs-sm);color:var(--text-tertiary,#888);margin-top:4px;">指定后，任务产生的回复将自动发送到该渠道</div>
+                <div style="font-size: var(--fs-sm);color:var(--text-tertiary,#888);margin-top:4px;">${escapeHtml(t('renderer.todo.edit.deliverHint'))}</div>
             </div>
         </div>`;
 
@@ -1953,9 +1985,9 @@ class TodoMgrEntryWidget extends AgentOperableHTMLElement {
 
         footer.style.display = 'flex';
         footer.innerHTML = `
-        <button class="tm-btn" id="tm-edit-cancel">取消</button>
+        <button class="tm-btn" id="tm-edit-cancel">${escapeHtml(t('renderer.todo.common.cancel'))}</button>
         <div style="flex:1;"></div>
-        <button class="tm-btn tm-btn-primary" id="tm-edit-save"><i class="fas fa-check" style="font-size: var(--fs-md);"></i> ${isNew ? '创建' : '保存'}</button>`;
+        <button class="tm-btn tm-btn-primary" id="tm-edit-save"><i class="fas fa-check" style="font-size: var(--fs-md);"></i> ${isNew ? escapeHtml(t('renderer.todo.common.create')) : escapeHtml(t('renderer.todo.common.save'))}</button>`;
 
         const cancelHandler = () => {
             if (isNew) this._closeDetail();
@@ -2027,11 +2059,11 @@ class TodoMgrEntryWidget extends AgentOperableHTMLElement {
                 : '';
 
         return `
-                    <option value="${WORKSPACE_SELECT_DEFAULT}"${selectedValue === WORKSPACE_SELECT_DEFAULT ? ' selected' : ''}>默认工作空间</option>
-                    <option value="${WORKSPACE_SELECT_ISOLATED}"${selectedValue === WORKSPACE_SELECT_ISOLATED ? ' selected' : ''}>使用任务独立的工作空间</option>
-                    ${recentOptions ? `<optgroup label="常用工作空间">${recentOptions}</optgroup>` : ''}
+                    <option value="${WORKSPACE_SELECT_DEFAULT}"${selectedValue === WORKSPACE_SELECT_DEFAULT ? ' selected' : ''}>${escapeHtml(this._t('renderer.todo.workspace.default'))}</option>
+                    <option value="${WORKSPACE_SELECT_ISOLATED}"${selectedValue === WORKSPACE_SELECT_ISOLATED ? ' selected' : ''}>${escapeHtml(this._t('renderer.todo.workspace.isolated'))}</option>
+                    ${recentOptions ? `<optgroup label="${escapeHtml(this._t('renderer.todo.workspace.recent'))}">${recentOptions}</optgroup>` : ''}
                     ${customPathOption}
-                    <option value="${WORKSPACE_SELECT_OTHER}">其他位置...</option>`;
+                    <option value="${WORKSPACE_SELECT_OTHER}">${escapeHtml(this._t('renderer.todo.workspace.other'))}</option>`;
     }
 
     private _ensureWorkspacePathOption(select: HTMLSelectElement, workspacePath: string): void {
@@ -2053,9 +2085,9 @@ class TodoMgrEntryWidget extends AgentOperableHTMLElement {
 
         const workspace = parseTodoWorkspaceSelectValue(select.value);
         if (select.value === WORKSPACE_SELECT_DEFAULT) {
-            hint.textContent = '启动任务时使用当前全局工作空间';
+            hint.textContent = this._t('renderer.todo.workspace.hintDefault');
         } else if (workspace?.type === 'isolated') {
-            hint.textContent = '每个任务使用 OpenDesk 数据目录下的独立 job 工作空间';
+            hint.textContent = this._t('renderer.todo.workspace.hintIsolated');
         } else if (workspace?.type === 'path') {
             hint.textContent = workspace.path;
         } else {
@@ -2068,7 +2100,7 @@ class TodoMgrEntryWidget extends AgentOperableHTMLElement {
         if (!checkbox) return;
         checkbox.addEventListener('change', () => {
             const label = checkbox.closest('label')?.querySelector('span');
-            if (label) label.textContent = checkbox.checked ? '启用中' : '未启用';
+            if (label) label.textContent = checkbox.checked ? this._t('status.enabled') : this._t('status.disabled');
         });
     }
 
@@ -2114,7 +2146,7 @@ class TodoMgrEntryWidget extends AgentOperableHTMLElement {
             (todo?.deliver && (!todo.deliver.type || todo.deliver.type === 'channel')
                 ? `${todo.deliver.channel}:${todo.deliver.accountId}:${todo.deliver.recipientId}`
                 : '');
-        select.innerHTML = '<option value="">默认</option>';
+        select.innerHTML = `<option value="">${escapeHtml(this._t('renderer.todo.edit.deliverDefault'))}</option>`;
 
         try {
             const channels: {
@@ -2131,14 +2163,14 @@ class TodoMgrEntryWidget extends AgentOperableHTMLElement {
                 if (ch.recipients.length === 0) {
                     const opt = document.createElement('option');
                     opt.value = '';
-                    opt.textContent = `${ch.label}（暂无联系人，请先通过该渠道发一条消息）`;
+                    opt.textContent = `${ch.label}${this._t('renderer.todo.deliver.noContacts')}`;
                     opt.disabled = true;
                     select.appendChild(opt);
                 } else {
                     for (const r of ch.recipients) {
                         const opt = document.createElement('option');
                         opt.value = `${ch.channelId}:${ch.accountId}:${r.recipientId}`;
-                        const typeHint = r.chatType === 'group' ? '群' : '';
+                        const typeHint = r.chatType === 'group' ? this._t('renderer.todo.deliver.groupHint') : '';
                         opt.textContent = `${ch.label} - ${r.displayName}${typeHint ? ` [${typeHint}]` : ''}`;
                         select.appendChild(opt);
                     }
@@ -2198,7 +2230,7 @@ class TodoMgrEntryWidget extends AgentOperableHTMLElement {
         this._dtPanelOpen = true;
 
         container.innerHTML = `<div class="tm-edit-field">
-            <label class="tm-edit-label">触发时间</label>
+            <label class="tm-edit-label">${escapeHtml(this._t('renderer.todo.datetime.triggerTime'))}</label>
             <div class="tm-dt-wrapper" id="tm-dt-wrapper">
                 <div class="tm-dt-display" id="tm-dt-display">
                     <span class="tm-dt-display-text" id="tm-dt-display-text"></span>
@@ -2213,24 +2245,23 @@ class TodoMgrEntryWidget extends AgentOperableHTMLElement {
                         </div>
                     </div>
                     <div class="tm-dt-cal-weekdays">
-                        <span class="tm-dt-cal-wd">一</span>
-                        <span class="tm-dt-cal-wd">二</span>
-                        <span class="tm-dt-cal-wd">三</span>
-                        <span class="tm-dt-cal-wd">四</span>
-                        <span class="tm-dt-cal-wd">五</span>
-                        <span class="tm-dt-cal-wd">六</span>
-                        <span class="tm-dt-cal-wd">日</span>
+                        ${[1, 2, 3, 4, 5, 6, 7]
+                            .map(
+                                (i) =>
+                                    `<span class="tm-dt-cal-wd">${escapeHtml(this._t(`renderer.todo.datetime.weekday.${i}`))}</span>`
+                            )
+                            .join('')}
                     </div>
                     <div class="tm-dt-cal-days" id="tm-dt-cal-days"></div>
                     <div class="tm-dt-time-row">
-                        <span class="tm-dt-time-label">时间</span>
+                        <span class="tm-dt-time-label">${escapeHtml(this._t('renderer.todo.datetime.time'))}</span>
                         <select class="tm-dt-time-select" id="tm-dt-hour"></select>
                         <span class="tm-dt-time-colon">:</span>
                         <select class="tm-dt-time-select" id="tm-dt-minute"></select>
                     </div>
                     <div class="tm-dt-footer">
-                        <button class="tm-dt-today-btn" id="tm-dt-today" type="button">今天</button>
-                        <button class="tm-dt-confirm-btn" id="tm-dt-confirm" type="button">确认</button>
+                        <button class="tm-dt-today-btn" id="tm-dt-today" type="button">${escapeHtml(this._t('renderer.todo.datetime.today'))}</button>
+                        <button class="tm-dt-confirm-btn" id="tm-dt-confirm" type="button">${escapeHtml(this._t('renderer.todo.datetime.confirm'))}</button>
                     </div>
                 </div>
             </div>
@@ -2271,7 +2302,10 @@ class TodoMgrEntryWidget extends AgentOperableHTMLElement {
         const title = this.querySelector('#tm-dt-cal-title') as HTMLElement;
         if (!grid || !title) return;
 
-        title.textContent = `${this._dtViewYear}年${this._dtViewMonth}月`;
+        title.textContent = this._t('date.format.monthYear', {
+            year: this._dtViewYear,
+            monthName: this._t(`date.month.${this._dtViewMonth}`)
+        });
 
         const firstDay = new Date(this._dtViewYear, this._dtViewMonth - 1, 1);
         const lastDay = new Date(this._dtViewYear, this._dtViewMonth, 0);
@@ -2312,10 +2346,16 @@ class TodoMgrEntryWidget extends AgentOperableHTMLElement {
         if (!text) return;
         if (this._dtYear && this._dtMonth && this._dtDay) {
             const pad = (n: number) => String(n).padStart(2, '0');
-            text.textContent = `${this._dtYear}年${this._dtMonth}月${this._dtDay}日 ${pad(this._dtHour)}:${pad(this._dtMinute)}`;
+            text.textContent = this._t('date.format.fullTime', {
+                year: this._dtYear,
+                month: this._dtMonth,
+                monthName: this._t(`date.month.${this._dtMonth}`),
+                day: this._dtDay,
+                time: `${pad(this._dtHour)}:${pad(this._dtMinute)}`
+            });
             text.classList.remove('tm-dt-placeholder');
         } else {
-            text.textContent = '点击选择日期和时间';
+            text.textContent = this._t('renderer.todo.datetime.placeholder');
             text.classList.add('tm-dt-placeholder');
         }
     }
@@ -2437,6 +2477,7 @@ class TodoMgrEntryWidget extends AgentOperableHTMLElement {
             }
         }
 
+        const t = this._t;
         const hourOptions = Array.from(
             { length: 24 },
             (_, i) => `<option value="${i}"${i === hour ? ' selected' : ''}>${String(i).padStart(2, '0')}</option>`
@@ -2446,39 +2487,40 @@ class TodoMgrEntryWidget extends AgentOperableHTMLElement {
             .join('');
         const domOptions = Array.from(
             { length: 31 },
-            (_, i) => `<option value="${i + 1}"${String(i + 1) === dom ? ' selected' : ''}>${i + 1}日</option>`
+            (_, i) =>
+                `<option value="${i + 1}"${String(i + 1) === dom ? ' selected' : ''}>${escapeHtml(t('renderer.todo.cron.domOption', { day: i + 1 }))}</option>`
         ).join('');
 
         const isCustom = mode === 'custom';
 
         container.innerHTML = `
         <div class="tm-edit-field">
-            <label class="tm-edit-label">重复频率</label>
+            <label class="tm-edit-label">${escapeHtml(t('renderer.todo.cron.repeatFrequency'))}</label>
             <div class="tm-cron-row">
                 <select class="tm-cron-select" id="tm-cron-mode" style="flex:1;">
-                    <option value="daily"${mode === 'daily' ? ' selected' : ''}>每天</option>
-                    <option value="weekly"${mode === 'weekly' ? ' selected' : ''}>每周指定日</option>
-                    <option value="monthly"${mode === 'monthly' ? ' selected' : ''}>每月指定日</option>
-                    <option value="custom"${isCustom ? ' selected' : ''}>自定义 Cron 表达式</option>
+                    <option value="daily"${mode === 'daily' ? ' selected' : ''}>${escapeHtml(t('renderer.todo.cron.mode.daily'))}</option>
+                    <option value="weekly"${mode === 'weekly' ? ' selected' : ''}>${escapeHtml(t('renderer.todo.cron.mode.weekly'))}</option>
+                    <option value="monthly"${mode === 'monthly' ? ' selected' : ''}>${escapeHtml(t('renderer.todo.cron.mode.monthly'))}</option>
+                    <option value="custom"${isCustom ? ' selected' : ''}>${escapeHtml(t('renderer.todo.cron.mode.custom'))}</option>
                 </select>
             </div>
 
             <div id="tm-cron-dow-area" style="${mode === 'weekly' ? '' : 'display:none;'}">
-                <label class="tm-edit-label" style="margin-top:8px;">选择日期</label>
+                <label class="tm-edit-label" style="margin-top:8px;">${escapeHtml(t('renderer.todo.cron.selectDays'))}</label>
                 <div class="tm-cron-dow-grid" id="tm-cron-dow-grid">
-                    ${DOW_LABELS.map((label, i) => `<button type="button" class="tm-cron-dow-btn${selectedDows.includes(i) ? ' active' : ''}" data-dow="${i}">${label}</button>`).join('')}
+                    ${Array.from({ length: 7 }, (_, i) => `<button type="button" class="tm-cron-dow-btn${selectedDows.includes(i) ? ' active' : ''}" data-dow="${i}">${escapeHtml(this._t(`renderer.todo.datetime.weekday.${i === 0 ? 7 : i}`))}</button>`).join('')}
                 </div>
             </div>
 
             <div id="tm-cron-dom-area" style="${mode === 'monthly' ? '' : 'display:none;'}">
-                <label class="tm-edit-label" style="margin-top:8px;">选择日期</label>
+                <label class="tm-edit-label" style="margin-top:8px;">${escapeHtml(t('renderer.todo.cron.selectDays'))}</label>
                 <div class="tm-cron-row">
                     <select class="tm-cron-select" id="tm-cron-dom">${domOptions}</select>
                 </div>
             </div>
 
             <div id="tm-cron-time-area" style="${isCustom ? 'display:none;' : ''}">
-                <label class="tm-edit-label" style="margin-top:10px;">执行时间</label>
+                <label class="tm-edit-label" style="margin-top:10px;">${escapeHtml(t('renderer.todo.cron.executeTime'))}</label>
                 <div class="tm-cron-row">
                     <select class="tm-cron-select" id="tm-cron-hour">${hourOptions}</select>
                     <span style="color:#8E8E93;">:</span>
@@ -2487,13 +2529,13 @@ class TodoMgrEntryWidget extends AgentOperableHTMLElement {
             </div>
 
             <div id="tm-cron-custom-area" class="tm-cron-custom-area" style="${isCustom ? '' : 'display:none;'}">
-                <label class="tm-edit-label" style="margin-top:8px;">Cron 表达式</label>
+                <label class="tm-edit-label" style="margin-top:8px;">${escapeHtml(t('renderer.todo.cron.expressionLabel'))}</label>
                 <input type="text" class="tm-cron-custom-input" id="tm-cron-custom-input"
                     value="${escapeHtml(customCron)}"
-                    placeholder="例如: 0 9 * * 1-5（工作日每天9点，使用本地时间）">
+                    placeholder="${escapeHtml(t('renderer.todo.cron.customPlaceholder'))}">
                 <a class="tm-cron-help-link" href="https://support.huaweicloud.com/usermanual-coc/coc_um_05_03_03.html" target="_blank" rel="noopener">
                     <i class="fas fa-circle-question" style="font-size: var(--fs-sm);"></i>
-                    什么是 Cron 表达式？
+                    ${escapeHtml(t('renderer.todo.cron.helpText'))}
                 </a>
             </div>
 
@@ -2621,14 +2663,14 @@ class TodoMgrEntryWidget extends AgentOperableHTMLElement {
 
         if (mode === 'custom') {
             if (!cron) {
-                previewEl.textContent = '请输入 Cron 表达式';
+                previewEl.textContent = this._t('renderer.todo.cron.previewEmpty');
                 previewEl.style.color = '#8E8E93';
                 if (customInput) customInput.classList.remove('tm-input-error');
                 return;
             }
             const fields = cron.split(/\s+/);
             if (fields.length !== 5) {
-                previewEl.textContent = '格式错误：Cron 表达式需要5个字段（分 时 日 月 周）';
+                previewEl.textContent = this._t('renderer.todo.cron.previewInvalid');
                 previewEl.style.color = '#FF3B30';
                 if (customInput) customInput.classList.add('tm-input-error');
                 return;
@@ -2636,7 +2678,7 @@ class TodoMgrEntryWidget extends AgentOperableHTMLElement {
             if (customInput) customInput.classList.remove('tm-input-error');
             previewEl.style.color = '';
         }
-        const localDesc = describeCronLocal(cron);
+        const localDesc = describeCronLocal(cron, this._t);
         if (mode === 'custom') {
             const rawInput = (this.querySelector('#tm-cron-custom-input') as HTMLInputElement)?.value?.trim() || '';
             previewEl.textContent = `${localDesc}（${rawInput}）`;
@@ -2673,18 +2715,19 @@ class TodoMgrEntryWidget extends AgentOperableHTMLElement {
             )
             .join('');
 
+        const t = this._t;
         container.innerHTML = `
         <div class="tm-edit-field">
-            <label class="tm-edit-label">事件源应用</label>
+            <label class="tm-edit-label">${escapeHtml(t('renderer.todo.event.bundleLabel'))}</label>
             <select class="tm-edit-select" id="tm-edit-event-bundle">
-                <option value="">请选择应用...</option>
+                <option value="">${escapeHtml(t('renderer.todo.event.selectBundle'))}</option>
                 ${bundleOptions}
             </select>
         </div>
         <div class="tm-edit-field">
-            <label class="tm-edit-label">事件名称</label>
+            <label class="tm-edit-label">${escapeHtml(t('renderer.todo.event.nameLabel'))}</label>
             <select class="tm-edit-select" id="tm-edit-event-name">
-                <option value="">请先选择应用...</option>
+                <option value="">${escapeHtml(t('renderer.todo.event.selectBundleFirst'))}</option>
             </select>
         </div>`;
 
@@ -2705,12 +2748,12 @@ class TodoMgrEntryWidget extends AgentOperableHTMLElement {
         const bundleEvents = events.filter((e) => e.bundleName === bundleName);
 
         if (bundleEvents.length === 0) {
-            eventSelect.innerHTML = '<option value="">该应用暂无已注册事件</option>';
+            eventSelect.innerHTML = `<option value="">${escapeHtml(this._t('renderer.todo.event.noEvents'))}</option>`;
             return;
         }
 
         eventSelect.innerHTML =
-            '<option value="">请选择事件...</option>' +
+            `<option value="">${escapeHtml(this._t('renderer.todo.event.selectEvent'))}</option>` +
             bundleEvents
                 .map(
                     (e) =>
@@ -2777,7 +2820,7 @@ class TodoMgrEntryWidget extends AgentOperableHTMLElement {
             const saveBtn = this.querySelector('#tm-edit-save') as HTMLButtonElement;
             if (saveBtn) {
                 saveBtn.disabled = true;
-                saveBtn.textContent = '保存中...';
+                saveBtn.textContent = this._t('renderer.todo.edit.saving');
             }
 
             // 构建更新对象，确保 trigger 始终作为显式属性发送（避免 undefined 在 IPC 序列化时被丢弃）
@@ -2822,7 +2865,7 @@ class TodoMgrEntryWidget extends AgentOperableHTMLElement {
             const saveBtn = this.querySelector('#tm-edit-save') as HTMLButtonElement;
             if (saveBtn) {
                 saveBtn.disabled = false;
-                saveBtn.innerHTML = '<i class="fas fa-check" style="font-size: var(--fs-md);"></i> 重试';
+                saveBtn.innerHTML = `<i class="fas fa-check" style="font-size: var(--fs-md);"></i> ${escapeHtml(this._t('renderer.todo.edit.retry'))}`;
             }
             console.error('Save failed:', err);
         }
@@ -2887,10 +2930,10 @@ class TodoMgrEntryWidget extends AgentOperableHTMLElement {
         const confirmed = await showConfirmModal({
             variant: 'danger',
             icon: 'fa-trash-can',
-            title: '删除任务',
-            message: `确定要删除任务「<b>${escapeHtml(todo.title)}</b>」吗？此操作不可撤销。`,
-            confirmText: '删除',
-            cancelText: '取消',
+            title: this._t('renderer.todo.delete.title'),
+            message: this._t('renderer.todo.delete.message', { title: escapeHtml(todo.title) }),
+            confirmText: this._t('renderer.todo.common.delete'),
+            cancelText: this._t('renderer.todo.common.cancel'),
             mountTarget: this.shadowRoot ?? document.body
         });
         if (confirmed) {
@@ -2942,21 +2985,21 @@ class TodoMgrEntryWidget extends AgentOperableHTMLElement {
             const btn = this.querySelector('#tm-btn-execute') as HTMLButtonElement;
             if (btn) {
                 btn.disabled = true;
-                btn.innerHTML = '<i class="fas fa-spinner fa-spin" style="font-size: var(--fs-md);"></i> 触发中...';
+                btn.innerHTML = `<i class="fas fa-spinner fa-spin" style="font-size: var(--fs-md);"></i> ${escapeHtml(this._t('renderer.todo.execute.triggering'))}`;
             }
             await window.applicationAPI.callMainWorld('triggerGlobalTodoNowFromUI', todo.id);
             if (btn) {
-                btn.innerHTML = '<i class="fas fa-check" style="font-size: var(--fs-md);color:#34C759;"></i> 已触发';
+                btn.innerHTML = `<i class="fas fa-check" style="font-size: var(--fs-md);color:#34C759;"></i> ${escapeHtml(this._t('renderer.todo.execute.triggered'))}`;
                 setTimeout(() => {
                     btn.disabled = false;
-                    btn.innerHTML = '<i class="fas fa-play" style="font-size: var(--fs-md);"></i> 立即执行';
+                    btn.innerHTML = `<i class="fas fa-play" style="font-size: var(--fs-md);"></i> ${escapeHtml(this._t('renderer.todo.detail.executeNow'))}`;
                 }, 2000);
             }
         } catch (err: any) {
             const btn = this.querySelector('#tm-btn-execute') as HTMLButtonElement;
             if (btn) {
                 btn.disabled = false;
-                btn.innerHTML = '<i class="fas fa-play" style="font-size: var(--fs-md);"></i> 立即执行';
+                btn.innerHTML = `<i class="fas fa-play" style="font-size: var(--fs-md);"></i> ${escapeHtml(this._t('renderer.todo.detail.executeNow'))}`;
             }
             console.error('Execute failed:', err);
         }
@@ -3042,7 +3085,7 @@ class TodoMgrEntryWidget extends AgentOperableHTMLElement {
     private _bindEvents() {
         this.querySelector('#tm-create-btn')?.addEventListener('click', () => this._addNew('cron'));
         this.querySelector('#tm-quick-add-btn')?.addEventListener('click', () => {
-            this._navigateToHomeWithPrompt('/manage-global-todos 请在这里描述你需要的自动化任务内容');
+            this._navigateToHomeWithPrompt(`/manage-global-todos ${this._t('renderer.todo.quickAddPromptText')}`);
         });
 
         this.querySelector('#tm-templates-grid')?.addEventListener('click', (e) => {

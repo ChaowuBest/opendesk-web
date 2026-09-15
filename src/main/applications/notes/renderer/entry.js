@@ -11,6 +11,8 @@
 
 import { RendererToolset, RendererTool, AgentOperableHTMLElement } from '../../widget_utils.js';
 import { showConfirmModal } from '../../../../renderer/components/confirmModal.ts';
+import { resolveRendererLocale } from '../../../../renderer/locale.js';
+import { createTranslatorForNotes } from '../locale/renderer.js';
 import { z } from 'zod';
 import TurndownService from 'turndown';
 
@@ -35,18 +37,32 @@ import 'tinymce-i18n/langs7/zh_CN.js';
 
 const NOTE_PAGE_SIZE = 30;
 
-/** 笔记正文文字颜色预设（value 为空表示恢复默认） */
+/** 笔记正文文字颜色预设（value 为空表示恢复默认；label 为 locale 键） */
 const NOTES_TEXT_COLORS = [
-    { label: '默认', value: '' },
-    { label: '红色', value: '#FF3B30' },
-    { label: '橙色', value: '#FF9500' },
-    { label: '黄色', value: '#FFCC00' },
-    { label: '绿色', value: '#34C759' },
-    { label: '蓝色', value: '#007AFF' },
-    { label: '紫色', value: '#5856D6' },
-    { label: '粉色', value: '#AF52DE' },
-    { label: '灰色', value: '#8E8E93' }
+    { labelKey: 'renderer.note.color.default', value: '' },
+    { labelKey: 'renderer.note.color.red', value: '#FF3B30' },
+    { labelKey: 'renderer.note.color.orange', value: '#FF9500' },
+    { labelKey: 'renderer.note.color.yellow', value: '#FFCC00' },
+    { labelKey: 'renderer.note.color.green', value: '#34C759' },
+    { labelKey: 'renderer.note.color.blue', value: '#007AFF' },
+    { labelKey: 'renderer.note.color.purple', value: '#5856D6' },
+    { labelKey: 'renderer.note.color.pink', value: '#AF52DE' },
+    { labelKey: 'renderer.note.color.gray', value: '#8E8E93' }
 ];
+
+/** 列表分组头：内部键 -> locale 键（日期字符串原样显示） */
+const GROUP_LABEL_KEYS = {
+    pinned: 'renderer.note.group.pinned',
+    today: 'renderer.note.group.today',
+    yesterday: 'renderer.note.group.yesterday'
+};
+
+/** 排序方式 -> locale 键 */
+const SORT_LABELS = {
+    updatedAt: 'renderer.note.sort.updatedAt',
+    createdAt: 'renderer.note.sort.createdAt',
+    title: 'renderer.note.sort.title'
+};
 
 // ========== CSS ==========
 const NOTES_CSS = `
@@ -582,6 +598,9 @@ const NOTES_CSS = `
 class NotesEntryWidget extends AgentOperableHTMLElement {
     constructor() {
         super();
+        this._t = createTranslatorForNotes();
+        this._locale = undefined;
+        this._settingUnsubscribe = null;
         this.notes = [];
         this.allNotes = [];
         this.tags = [];
@@ -613,14 +632,29 @@ class NotesEntryWidget extends AgentOperableHTMLElement {
         this._themeObserver = null;
     }
 
-    connectedCallback() {
+    async connectedCallback() {
         this._injectStyles();
+        // 先加载语言设置再渲染，避免首帧出现错误语言
+        let setting;
+        try {
+            setting = await window.settingAPI?.loadSettingObject?.();
+        } catch {
+            setting = undefined;
+        }
+        this._applyLocaleSetting(setting);
+        // 等待设置加载期间元素可能已被移除，避免对脱离 DOM 的元素继续渲染
+        if (!this.isConnected) return;
+        this._subscribeLocaleChanges();
         this._render();
         this._bindCore();
         this._loadInitialData();
     }
 
     disconnectedCallback() {
+        if (this._settingUnsubscribe) {
+            this._settingUnsubscribe();
+            this._settingUnsubscribe = null;
+        }
         if (this._autoSaveTimer) clearTimeout(this._autoSaveTimer);
         if (this._scrollObserver) this._scrollObserver.disconnect();
         if (this._toolbarResizeObserver) {
@@ -651,15 +685,52 @@ class NotesEntryWidget extends AgentOperableHTMLElement {
         document.head.appendChild(s);
     }
 
+    _applyLocaleSetting(setting) {
+        this._locale = resolveRendererLocale(setting);
+        this._t = createTranslatorForNotes(setting);
+    }
+
+    /* 语言设置变化时重建翻译器并按新语言重建界面。
+       编辑态（TinyMCE 编辑器）属于用户输入态，不重建编辑器，仅刷新左侧列表 */
+    _subscribeLocaleChanges() {
+        if (this._settingUnsubscribe) return;
+        const unsubscribe = window.settingAPI?.onSettingChanged?.((setting) => {
+            if (!this.isConnected) return;
+            if (resolveRendererLocale(setting) === this._locale) return;
+            this._applyLocaleSetting(setting);
+            if (this.currentNoteId) {
+                this._reloadNoteList();
+                this._updateDeletedBadge();
+                return;
+            }
+            this._render();
+            this._bindCoreDom();
+            this._reloadNoteList();
+            if (this.showDeletedView) {
+                this._renderDeletedView();
+            } else {
+                this._renderCardGrid();
+            }
+            this._updateDeletedBadge();
+        });
+        if (typeof unsubscribe === 'function') {
+            this._settingUnsubscribe = unsubscribe;
+        }
+    }
+
     // ─── Agent 支持 ───
 
     getAgentInstruct() {
-        return '你是笔记助手，帮助用户管理、搜索和整理笔记。当前页面展示了用户的笔记列表和编辑器。';
+        return this._t('agent.instruct');
     }
 
     getToolset() {
         const toolset = new RendererToolset('notes');
-        const listTool = new RendererTool('listCurrentNotes', '获取当前界面中显示的所有笔记的标题和摘要', z.object({}));
+        const listTool = new RendererTool(
+            'listCurrentNotes',
+            this._t('renderer.tool.listCurrentNotes.description'),
+            z.object({})
+        );
         listTool.setExecutor(async () => {
             return JSON.stringify(
                 this.notes.map((n) => ({
@@ -684,24 +755,24 @@ class NotesEntryWidget extends AgentOperableHTMLElement {
                     <div class="flex flex-col h-full">
                         <div style="padding:36px 20px 0;">
                             <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px;">
-                                <h2 style="font-size:20px;font-weight:700;color:#1d1d1f;">笔记</h2>
+                                <h2 style="font-size:20px;font-weight:700;color:#1d1d1f;">${this._t('app.name')}</h2>
                                 <button id="notes-new-btn" class="notes-new-btn">
                                     <i class="fa-solid fa-plus" style="font-size:11px;"></i>
-                                    <span>新建</span>
+                                    <span>${this._t('renderer.note.new')}</span>
                                 </button>
                             </div>
                             <div class="notes-search">
                                 <i class="fa-solid fa-magnifying-glass notes-search-icon"></i>
-                                <input id="notes-search-input" type="text" placeholder="搜索笔记..." class="notes-search-input" />
+                                <input id="notes-search-input" type="text" placeholder="${this._t('renderer.note.search.placeholder')}" class="notes-search-input" />
                             </div>
                             <div id="notes-filter-bar" class="notes-filter-bar">
                                 <button id="notes-sort-btn" class="notes-filter-btn">
                                     <i class="fa-solid fa-arrow-down-short-wide"></i>
-                                    <span id="notes-sort-label">最近修改</span>
+                                    <span id="notes-sort-label">${this._t(SORT_LABELS[this.sortBy] || 'renderer.note.sort.updatedAt')}</span>
                                 </button>
                                 <button id="notes-tag-filter-btn" class="notes-filter-btn">
                                     <i class="fa-solid fa-tag"></i>
-                                    <span id="notes-tag-filter-label">全部标签</span>
+                                    <span id="notes-tag-filter-label">${this._t(this.tagFilter || 'renderer.note.tag.all')}</span>
                                 </button>
                             </div>
                         </div>
@@ -711,8 +782,8 @@ class NotesEntryWidget extends AgentOperableHTMLElement {
                                 <i class="fa-regular fa-trash-can"></i>
                             </div>
                             <div class="notes-deleted-entry-text">
-                                <div class="notes-deleted-entry-title">已删除</div>
-                                <div class="notes-deleted-entry-count" id="notes-deleted-count">0 条笔记</div>
+                                <div class="notes-deleted-entry-title">${this._t('renderer.note.deleted.entry')}</div>
+                                <div class="notes-deleted-entry-count" id="notes-deleted-count">${this._t('renderer.note.count.notes', { count: 0 })}</div>
                             </div>
                             <span class="notes-deleted-entry-badge" id="notes-deleted-badge" style="display:none;">0</span>
                         </div>
@@ -729,6 +800,11 @@ class NotesEntryWidget extends AgentOperableHTMLElement {
     }
 
     _bindCore() {
+        this._bindCoreDom();
+        this._subscribeEvents();
+    }
+
+    _bindCoreDom() {
         // 新建笔记
         this.querySelector('#notes-new-btn').addEventListener('click', () => this._createNote());
 
@@ -752,6 +828,10 @@ class NotesEntryWidget extends AgentOperableHTMLElement {
         this.querySelector('#notes-deleted-entry').addEventListener('click', () => this._toggleDeletedView());
 
         // 订阅事件
+        this._subscribeEvents();
+    }
+
+    _subscribeEvents() {
         this._onNotesChanged = () => this._refreshNotes();
         this._onTagsChanged = () => this._refreshTags();
         this._onDeletedNotesChanged = () => this._refreshDeletedNotes();
@@ -814,33 +894,33 @@ class NotesEntryWidget extends AgentOperableHTMLElement {
         const date = new Date(timestamp);
         const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
         const yesterday = new Date(today.getTime() - 86400000);
-        if (date >= today) return '今天';
-        if (date >= yesterday) return '昨天';
+        if (date >= today) return 'today';
+        if (date >= yesterday) return 'yesterday';
         return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
     }
 
     _buildRenderList() {
         const groups = new Map();
         for (const note of this.notes) {
-            const group = note.isPinned ? '置顶' : this._getTimeGroup(note.updatedAt);
+            const group = note.isPinned ? 'pinned' : this._getTimeGroup(note.updatedAt);
             if (!groups.has(group)) groups.set(group, []);
             groups.get(group).push(note);
         }
         // 分组头排序：置顶 > 今天 > 昨天 > 日期降序
         const sortedHeaders = [...groups.keys()].sort((a, b) => {
-            if (a === '置顶') return -1;
-            if (b === '置顶') return 1;
-            if (a === '今天') return -1;
-            if (b === '今天') return 1;
-            if (a === '昨天') return -1;
-            if (b === '昨天') return 1;
+            if (a === 'pinned') return -1;
+            if (b === 'pinned') return 1;
+            if (a === 'today') return -1;
+            if (b === 'today') return 1;
+            if (a === 'yesterday') return -1;
+            if (b === 'yesterday') return 1;
             // 都是 YYYY-MM-DD 格式，字符串降序 = 日期降序
             return b.localeCompare(a);
         });
         const list = [];
         for (const header of sortedHeaders) {
             const items = groups.get(header);
-            list.push({ type: 'header', text: header });
+            list.push({ type: 'header', text: this._t(GROUP_LABEL_KEYS[header] || header) });
             for (const item of items) {
                 list.push({ type: 'note', data: item });
             }
@@ -858,7 +938,7 @@ class NotesEntryWidget extends AgentOperableHTMLElement {
         container.innerHTML = '';
 
         if (this._fullRenderList.length === 0) {
-            container.innerHTML = `<div class="notes-empty"><i class="fa-regular fa-note-sticky"></i><p>暂无笔记</p></div>`;
+            container.innerHTML = `<div class="notes-empty"><i class="fa-regular fa-note-sticky"></i><p>${this._t('renderer.note.empty.noNotes')}</p></div>`;
             return;
         }
 
@@ -897,7 +977,7 @@ class NotesEntryWidget extends AgentOperableHTMLElement {
                     })
                     .join('');
                 div.innerHTML = `
-                    <div class="notes-item-title">${this._escapeHtml(note.title || '无标题')}</div>
+                    <div class="notes-item-title">${this._escapeHtml(note.title || this._t('renderer.note.untitled'))}</div>
                     <div class="notes-item-preview">${this._escapeHtml(preview)}</div>
                     <div class="notes-item-meta">
                         <div class="notes-item-tags">${tagHtml}</div>
@@ -966,15 +1046,15 @@ class NotesEntryWidget extends AgentOperableHTMLElement {
             main.innerHTML = `
             <div class="notes-empty" style="padding-top:80px;">
                 <i class="fa-regular fa-note-sticky"></i>
-                <p>点击"新建"创建第一条笔记</p>
+                <p>${this._t('renderer.note.empty.createFirst')}</p>
             </div>`;
             return;
         }
 
         let html = `
         <div style="padding:36px 24px 16px;display:flex;align-items:center;justify-content:space-between;">
-            <h2 style="font-size:18px;font-weight:700;color:#1d1d1f;">全部笔记</h2>
-            <span style="font-size:13px;color:#8E8E93;">${this.notes.length} 条</span>
+            <h2 style="font-size:18px;font-weight:700;color:#1d1d1f;">${this._t('renderer.note.allNotes')}</h2>
+            <span style="font-size:13px;color:#8E8E93;">${this._t('renderer.note.count.notesShort', { count: this.notes.length })}</span>
         </div>
         <div class="notes-card-grid" style="padding:0 24px 24px;overflow-y:auto;" id="notes-card-container">`;
 
@@ -989,7 +1069,7 @@ class NotesEntryWidget extends AgentOperableHTMLElement {
                 .join('');
             html += `
             <div class="notes-card" data-note-id="${note.id}">
-                <div class="notes-card-title">${this._escapeHtml(note.title || '无标题')}</div>
+                <div class="notes-card-title">${this._escapeHtml(note.title || this._t('renderer.note.untitled'))}</div>
                 <div class="notes-card-preview">${this._escapeHtml(preview)}</div>
                 <div class="notes-card-meta">
                     <div class="notes-card-tags">${tagHtml}</div>
@@ -1072,23 +1152,23 @@ class NotesEntryWidget extends AgentOperableHTMLElement {
                 <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px;">
                     <div style="display:flex;gap:8px;">
                         <button id="notes-close-editor-btn" class="notes-close-btn">
-                            <i class="fa-solid fa-chevron-left" style="font-size:10px;"></i> 返回
+                            <i class="fa-solid fa-chevron-left" style="font-size:10px;"></i> ${this._t('renderer.note.editor.back')}
                         </button>
                         <button id="notes-pin-note-btn" class="notes-filter-btn" style="font-size:12px;${note.isPinned ? 'background:#FFF3E0;border-color:#FFA726;color:#E65100;' : ''}">
                             <i class="fa-solid fa-thumbtack" style="font-size:10px;"></i>
-                            <span>${note.isPinned ? '已置顶' : '置顶'}</span>
+                            <span>${note.isPinned ? this._t('renderer.note.pin.pinned') : this._t('renderer.note.pin.unpinned')}</span>
                         </button>
                         <button id="notes-delete-note-btn" class="notes-delete-btn">
-                            <i class="fa-regular fa-trash-can" style="font-size:11px;"></i> 删除
+                            <i class="fa-regular fa-trash-can" style="font-size:11px;"></i> ${this._t('renderer.note.delete')}
                         </button>
                     </div>
                 </div>
                 <input id="notes-title-input" type="text" class="notes-title-input"
-                       value="${this._escapeAttr(note.title)}" placeholder="笔记标题" />
+                       value="${this._escapeAttr(note.title)}" placeholder="${this._t('renderer.note.title.placeholder')}" />
                 <div id="notes-editor-tags" class="notes-editor-tags">
                     ${tagHtml}
                     <button id="notes-add-tag-btn" class="notes-add-tag-btn">
-                        <i class="fa-solid fa-plus" style="font-size:10px;"></i> 标签
+                        <i class="fa-solid fa-plus" style="font-size:10px;"></i> ${this._t('renderer.note.tag.add')}
                     </button>
                 </div>
             </div>
@@ -1129,7 +1209,8 @@ class NotesEntryWidget extends AgentOperableHTMLElement {
             branding: false,
             statusbar: false,
             resize: false,
-            language: 'zh_CN',
+            // 英文使用内置文案；仅中文环境加载语言包
+            ...(this._locale === 'zh-CN' ? { language: 'zh_CN' } : {}),
             skin: false,
             content_css: false,
             content_style:
@@ -1180,20 +1261,20 @@ class NotesEntryWidget extends AgentOperableHTMLElement {
         const hideAttr = options.hidePriority != null ? ` data-hide-priority="${options.hidePriority}"` : '';
         const swatches = NOTES_TEXT_COLORS.map((item) => {
             if (!item.value) {
-                return `<button type="button" class="notes-ftb-color-swatch notes-ftb-color-reset" data-color="" title="${item.label}">A</button>`;
+                return `<button type="button" class="notes-ftb-color-swatch notes-ftb-color-reset" data-color="" title="${this._t(item.labelKey)}">A</button>`;
             }
-            return `<button type="button" class="notes-ftb-color-swatch" data-color="${item.value}" title="${item.label}" style="background:${item.value}"></button>`;
+            return `<button type="button" class="notes-ftb-color-swatch" data-color="${item.value}" title="${this._t(item.labelKey)}" style="background:${item.value}"></button>`;
         }).join('');
         return `
         <div class="notes-ftb-color-group"${hideAttr}>
-            <button type="button" class="${btnClass} notes-ftb-color-btn" data-action="color-menu" title="文字颜色">
+            <button type="button" class="${btnClass} notes-ftb-color-btn" data-action="color-menu" title="${this._t('renderer.note.color.title')}">
                 <i class="fa-solid fa-font"></i>
                 <span class="notes-ftb-color-indicator"></span>
             </button>
             <div class="notes-ftb-color-submenu hidden" id="${submenuId}">
                 <div class="notes-ftb-color-grid">${swatches}</div>
                 <label class="notes-ftb-color-custom">
-                    <span>自定义颜色</span>
+                    <span>${this._t('renderer.note.color.custom')}</span>
                     <input type="color" class="notes-ftb-color-input" value="#1d1d1f" />
                 </label>
             </div>
@@ -1281,65 +1362,65 @@ class NotesEntryWidget extends AgentOperableHTMLElement {
 
         // 检查当前是否有选中文本，决定润色按钮文案
         const hasSelection = editor.selection.getContent({ format: 'text' }).trim().length > 0;
-        const polishLabel = hasSelection ? '润色选中' : '润色全文';
+        const polishLabel = hasSelection ? this._t('renderer.note.ai.selection') : this._t('renderer.note.ai.all');
 
         toolbar.innerHTML = `
-        <button class="notes-ftb-fixed-btn" data-action="undo" data-hide-priority="6" title="撤销">
+        <button class="notes-ftb-fixed-btn" data-action="undo" data-hide-priority="6" title="${this._t('renderer.note.undo')}">
             <i class="fa-solid fa-rotate-left"></i>
         </button>
-        <button class="notes-ftb-fixed-btn" data-action="redo" data-hide-priority="6" title="重做">
+        <button class="notes-ftb-fixed-btn" data-action="redo" data-hide-priority="6" title="${this._t('renderer.note.redo')}">
             <i class="fa-solid fa-rotate-right"></i>
         </button>
         <div class="notes-ftb-fixed-sep" data-hide-priority="5"></div>
-        <button class="notes-ftb-fixed-btn" data-action="bold" data-hide-priority="5" title="粗体">
+        <button class="notes-ftb-fixed-btn" data-action="bold" data-hide-priority="5" title="${this._t('renderer.note.bold')}">
             <i class="fa-solid fa-bold"></i>
         </button>
-        <button class="notes-ftb-fixed-btn" data-action="italic" data-hide-priority="5" title="斜体">
+        <button class="notes-ftb-fixed-btn" data-action="italic" data-hide-priority="5" title="${this._t('renderer.note.italic')}">
             <i class="fa-solid fa-italic"></i>
         </button>
-        <button class="notes-ftb-fixed-btn" data-action="underline" data-hide-priority="5" title="下划线">
+        <button class="notes-ftb-fixed-btn" data-action="underline" data-hide-priority="5" title="${this._t('renderer.note.underline')}">
             <i class="fa-solid fa-underline"></i>
         </button>
-        <button class="notes-ftb-fixed-btn" data-action="strikethrough" data-hide-priority="5" title="删除线">
+        <button class="notes-ftb-fixed-btn" data-action="strikethrough" data-hide-priority="5" title="${this._t('renderer.note.strikethrough')}">
             <i class="fa-solid fa-strikethrough"></i>
         </button>
         ${this._notesColorPickerMarkup('notes-fixed-color-submenu', { hidePriority: 5 })}
         <div class="notes-ftb-fixed-sep" data-hide-priority="4"></div>
-        <button class="notes-ftb-fixed-btn" data-action="h1" data-hide-priority="4" title="标题1" style="font-weight:700;">H1</button>
-        <button class="notes-ftb-fixed-btn" data-action="h2" data-hide-priority="4" title="标题2" style="font-weight:700;">H2</button>
-        <button class="notes-ftb-fixed-btn" data-action="h3" data-hide-priority="4" title="标题3" style="font-weight:600;">H3</button>
-        <button class="notes-ftb-fixed-btn" data-action="p" data-hide-priority="4" title="正文" style="font-size:11px;">正文</button>
+        <button class="notes-ftb-fixed-btn" data-action="h1" data-hide-priority="4" title="${this._t('renderer.note.heading1')}" style="font-weight:700;">H1</button>
+        <button class="notes-ftb-fixed-btn" data-action="h2" data-hide-priority="4" title="${this._t('renderer.note.heading2')}" style="font-weight:700;">H2</button>
+        <button class="notes-ftb-fixed-btn" data-action="h3" data-hide-priority="4" title="${this._t('renderer.note.heading3')}" style="font-weight:600;">H3</button>
+        <button class="notes-ftb-fixed-btn" data-action="p" data-hide-priority="4" title="${this._t('renderer.note.body')}" style="font-size:11px;">${this._t('renderer.note.body')}</button>
         <div class="notes-ftb-fixed-sep" data-hide-priority="3"></div>
-        <button class="notes-ftb-fixed-btn" data-action="bullist" data-hide-priority="3" title="无序列表">
+        <button class="notes-ftb-fixed-btn" data-action="bullist" data-hide-priority="3" title="${this._t('renderer.note.list.bullet')}">
             <i class="fa-solid fa-list-ul"></i>
         </button>
-        <button class="notes-ftb-fixed-btn" data-action="numlist" data-hide-priority="3" title="有序列表">
+        <button class="notes-ftb-fixed-btn" data-action="numlist" data-hide-priority="3" title="${this._t('renderer.note.list.numbered')}">
             <i class="fa-solid fa-list-ol"></i>
         </button>
         <div class="notes-ftb-fixed-sep" data-hide-priority="2"></div>
-        <button class="notes-ftb-fixed-btn" data-action="alignleft" data-hide-priority="2" title="左对齐">
+        <button class="notes-ftb-fixed-btn" data-action="alignleft" data-hide-priority="2" title="${this._t('renderer.note.align.left')}">
             <i class="fa-solid fa-align-left"></i>
         </button>
-        <button class="notes-ftb-fixed-btn" data-action="aligncenter" data-hide-priority="2" title="居中">
+        <button class="notes-ftb-fixed-btn" data-action="aligncenter" data-hide-priority="2" title="${this._t('renderer.note.align.center')}">
             <i class="fa-solid fa-align-center"></i>
         </button>
-        <button class="notes-ftb-fixed-btn" data-action="alignright" data-hide-priority="2" title="右对齐">
+        <button class="notes-ftb-fixed-btn" data-action="alignright" data-hide-priority="2" title="${this._t('renderer.note.align.right')}">
             <i class="fa-solid fa-align-right"></i>
         </button>
         <div class="notes-ftb-fixed-sep" data-hide-priority="1"></div>
-        <button class="notes-ftb-fixed-btn" data-action="blockquote" data-hide-priority="1" title="引用">
+        <button class="notes-ftb-fixed-btn" data-action="blockquote" data-hide-priority="1" title="${this._t('renderer.note.blockquote')}">
             <i class="fa-solid fa-quote-left"></i>
         </button>
-        <button class="notes-ftb-fixed-btn" data-action="link" data-hide-priority="1" title="链接">
+        <button class="notes-ftb-fixed-btn" data-action="link" data-hide-priority="1" title="${this._t('renderer.note.link')}">
             <i class="fa-solid fa-link"></i>
         </button>
-        <button class="notes-ftb-fixed-btn" data-action="image" data-hide-priority="1" title="图片">
+        <button class="notes-ftb-fixed-btn" data-action="image" data-hide-priority="1" title="${this._t('renderer.note.image')}">
             <i class="fa-solid fa-image"></i>
         </button>
-        <button class="notes-ftb-fixed-btn" data-action="code" data-hide-priority="1" title="源代码">
+        <button class="notes-ftb-fixed-btn" data-action="code" data-hide-priority="1" title="${this._t('renderer.note.code')}">
             <i class="fa-solid fa-code"></i>
         </button>
-        <button class="notes-ftb-fixed-btn notes-ftb-fixed-ai" data-action="ai-polish" data-hide-priority="0" title="AI 润色">
+        <button class="notes-ftb-fixed-btn notes-ftb-fixed-ai" data-action="ai-polish" data-hide-priority="0" title="${this._t('renderer.note.ai.polishTitle')}">
             <i class="fa-solid fa-wand-magic-sparkles"></i>
             <span>${polishLabel}</span>
         </button>`;
@@ -1424,7 +1505,8 @@ class NotesEntryWidget extends AgentOperableHTMLElement {
         editor.on('selectionchange', () => {
             const hasSel = editor.selection.getContent({ format: 'text' }).trim().length > 0;
             const aiBtn = toolbar.querySelector('.notes-ftb-fixed-ai span');
-            if (aiBtn) aiBtn.textContent = hasSel ? '润色选中' : '润色全文';
+            if (aiBtn)
+                aiBtn.textContent = hasSel ? this._t('renderer.note.ai.selection') : this._t('renderer.note.ai.all');
             this._updateNotesColorIndicator(toolbar, editor);
         });
 
@@ -1529,8 +1611,7 @@ class NotesEntryWidget extends AgentOperableHTMLElement {
         if (!container) return;
         const overlay = document.createElement('div');
         overlay.className = 'notes-polishing-overlay';
-        overlay.innerHTML =
-            '<div class="notes-polishing-indicator"><i class="fa-solid fa-spinner"></i> 正在润色...</div>';
+        overlay.innerHTML = `<div class="notes-polishing-indicator"><i class="fa-solid fa-spinner"></i> ${this._t('renderer.note.ai.running')}</div>`;
         container.appendChild(overlay);
 
         // Disable editor
@@ -1577,7 +1658,9 @@ class NotesEntryWidget extends AgentOperableHTMLElement {
             // 更新按钮状态
             const pinBtn = this.querySelector('#notes-pin-note-btn');
             if (pinBtn) {
-                pinBtn.querySelector('span').textContent = newPinned ? '已置顶' : '置顶';
+                pinBtn.querySelector('span').textContent = newPinned
+                    ? this._t('renderer.note.pin.pinned')
+                    : this._t('renderer.note.pin.unpinned');
                 if (newPinned) {
                     pinBtn.style.background = '#FFF3E0';
                     pinBtn.style.borderColor = '#FFA726';
@@ -1718,55 +1801,55 @@ class NotesEntryWidget extends AgentOperableHTMLElement {
 
         toolbar.innerHTML = `
         <div class="notes-ftb">
-            <button class="notes-ftb-btn" data-action="undo" title="撤销">
+            <button class="notes-ftb-btn" data-action="undo" title="${this._t('renderer.note.undo')}">
                 <i class="fa-solid fa-rotate-left"></i>
             </button>
-            <button class="notes-ftb-btn" data-action="redo" title="重做">
+            <button class="notes-ftb-btn" data-action="redo" title="${this._t('renderer.note.redo')}">
                 <i class="fa-solid fa-rotate-right"></i>
             </button>
             <div class="notes-ftb-sep"></div>
             <div class="notes-ftb-style-group">
-                <button class="notes-ftb-btn" data-action="style-menu" title="样式">
+                <button class="notes-ftb-btn" data-action="style-menu" title="${this._t('renderer.note.style.menu')}">
                     <i class="fa-solid fa-text-height"></i>
                     <i class="fa-solid fa-chevron-down" style="font-size:8px;"></i>
                 </button>
                 <div class="notes-ftb-style-submenu hidden" id="notes-style-submenu">
-                    <button class="notes-ftb-style-item" data-action="h1" style="font-size:18px;font-weight:700;">标题 1</button>
-                    <button class="notes-ftb-style-item" data-action="h2" style="font-size:16px;font-weight:700;">标题 2</button>
-                    <button class="notes-ftb-style-item" data-action="h3" style="font-size:14px;font-weight:600;">标题 3</button>
-                    <button class="notes-ftb-style-item" data-action="h4" style="font-size:13px;font-weight:600;">标题 4</button>
-                    <button class="notes-ftb-style-item" data-action="h5" style="font-size:12px;font-weight:600;">标题 5</button>
-                    <button class="notes-ftb-style-item" data-action="h6" style="font-size:11px;font-weight:600;">标题 6</button>
-                    <button class="notes-ftb-style-item" data-action="p" style="font-size:13px;">正文</button>
+                    <button class="notes-ftb-style-item" data-action="h1" style="font-size:18px;font-weight:700;">${this._t('renderer.note.heading1')}</button>
+                    <button class="notes-ftb-style-item" data-action="h2" style="font-size:16px;font-weight:700;">${this._t('renderer.note.heading2')}</button>
+                    <button class="notes-ftb-style-item" data-action="h3" style="font-size:14px;font-weight:600;">${this._t('renderer.note.heading3')}</button>
+                    <button class="notes-ftb-style-item" data-action="h4" style="font-size:13px;font-weight:600;">${this._t('renderer.note.heading4')}</button>
+                    <button class="notes-ftb-style-item" data-action="h5" style="font-size:12px;font-weight:600;">${this._t('renderer.note.heading5')}</button>
+                    <button class="notes-ftb-style-item" data-action="h6" style="font-size:11px;font-weight:600;">${this._t('renderer.note.heading6')}</button>
+                    <button class="notes-ftb-style-item" data-action="p" style="font-size:13px;">${this._t('renderer.note.body')}</button>
                 </div>
             </div>
             ${this._notesColorPickerMarkup('notes-float-color-submenu', { btnClass: 'notes-ftb-btn' })}
             <div class="notes-ftb-sep"></div>
-            <button class="notes-ftb-btn" data-action="alignleft" title="左对齐">
+            <button class="notes-ftb-btn" data-action="alignleft" title="${this._t('renderer.note.align.left')}">
                 <i class="fa-solid fa-align-left"></i>
             </button>
-            <button class="notes-ftb-btn" data-action="aligncenter" title="居中">
+            <button class="notes-ftb-btn" data-action="aligncenter" title="${this._t('renderer.note.align.center')}">
                 <i class="fa-solid fa-align-center"></i>
             </button>
-            <button class="notes-ftb-btn" data-action="alignright" title="右对齐">
+            <button class="notes-ftb-btn" data-action="alignright" title="${this._t('renderer.note.align.right')}">
                 <i class="fa-solid fa-align-right"></i>
             </button>
             <div class="notes-ftb-sep"></div>
             <div class="notes-ftb-ai-group">
-                <button class="notes-ftb-btn notes-ftb-ai-btn" data-action="ai-menu" title="AI 助手">
+                <button class="notes-ftb-btn notes-ftb-ai-btn" data-action="ai-menu" title="${this._t('renderer.note.ai.assistant')}">
                     <i class="fa-solid fa-wand-magic-sparkles"></i>
-                    <span>帮我</span>
+                    <span>${this._t('renderer.note.ai.trigger')}</span>
                     <i class="fa-solid fa-chevron-down" style="font-size:8px;"></i>
                 </button>
                 <div class="notes-ftb-ai-submenu hidden" id="notes-ai-submenu">
                     <button class="notes-ftb-ai-item" data-action="polish">
-                        <i class="fa-solid fa-sparkles"></i> 润色
+                        <i class="fa-solid fa-sparkles"></i> ${this._t('renderer.note.ai.polish')}
                     </button>
                     <button class="notes-ftb-ai-item" data-action="translate" disabled>
-                        <i class="fa-solid fa-language"></i> 翻译（即将推出）
+                        <i class="fa-solid fa-language"></i> ${this._t('renderer.note.ai.translate')}
                     </button>
                     <button class="notes-ftb-ai-item" data-action="execute">
-                        <i class="fa-solid fa-play"></i> 执行
+                        <i class="fa-solid fa-play"></i> ${this._t('renderer.note.ai.execute')}
                     </button>
                 </div>
             </div>
@@ -2003,7 +2086,7 @@ class NotesEntryWidget extends AgentOperableHTMLElement {
         menu.style.left = `${rect.left}px`;
         menu.style.top = `${rect.bottom + 6}px`;
 
-        let html = `<div class="notes-tag-menu-title">选择标签</div>`;
+        let html = `<div class="notes-tag-menu-title">${this._t('renderer.note.tag.menu.title')}</div>`;
         for (const tag of this.tags) {
             const checked = note.tags.includes(tag.name);
             html += `
@@ -2014,15 +2097,15 @@ class NotesEntryWidget extends AgentOperableHTMLElement {
                     </div>
                     <span class="notes-tag" style="background:${tag.color}18;color:${tag.color}">${tag.name}</span>
                 </div>
-                <button class="notes-tag-menu-item-del" data-del-tag="${this._escapeAttr(tag.name)}" title="删除标签">
+                <button class="notes-tag-menu-item-del" data-del-tag="${this._escapeAttr(tag.name)}" title="${this._t('renderer.note.tag.delete')}">
                     <i class="fa-solid fa-trash-can"></i>
                 </button>
             </div>`;
         }
         html += `
         <div class="notes-tag-menu-new">
-            <input id="notes-new-tag-input" type="text" placeholder="新建标签..." />
-            <button id="notes-new-tag-btn" class="notes-tag-menu-new-btn">添加</button>
+            <input id="notes-new-tag-input" type="text" placeholder="${this._t('renderer.note.tag.new.placeholder')}" />
+            <button id="notes-new-tag-btn" class="notes-tag-menu-new-btn">${this._t('renderer.note.tag.add.button')}</button>
         </div>`;
 
         menu.innerHTML = html;
@@ -2047,9 +2130,9 @@ class NotesEntryWidget extends AgentOperableHTMLElement {
                     icon: 'fa-tag',
                     iconBg: '#FFF3E0',
                     iconColor: '#FFA726',
-                    title: '删除标签',
-                    message: `确定要删除标签"${tagName}"吗？该标签将从所有笔记中移除。`,
-                    confirmText: '删除',
+                    title: this._t('renderer.note.tag.delete.confirm.title'),
+                    message: this._t('renderer.note.tag.delete.confirm.message', { name: tagName }),
+                    confirmText: this._t('renderer.note.common.delete'),
                     danger: true
                 });
                 if (confirmed) {
@@ -2147,7 +2230,7 @@ class NotesEntryWidget extends AgentOperableHTMLElement {
         const btn = document.createElement('button');
         btn.id = 'notes-add-tag-btn';
         btn.className = 'notes-add-tag-btn';
-        btn.innerHTML = '<i class="fa-solid fa-plus" style="font-size:10px;"></i> 标签';
+        btn.innerHTML = `<i class="fa-solid fa-plus" style="font-size:10px;"></i> ${this._t('renderer.note.tag.add')}`;
         btn.addEventListener('click', (e) => this._showTagMenu(e.currentTarget));
         return btn;
     }
@@ -2163,9 +2246,9 @@ class NotesEntryWidget extends AgentOperableHTMLElement {
         dropdown.style.top = `${rect.bottom + 6}px`;
 
         const options = [
-            { value: 'updatedAt', label: '最近修改', icon: 'fa-clock-rotate-left' },
-            { value: 'createdAt', label: '最近创建', icon: 'fa-calendar-plus' },
-            { value: 'title', label: '按标题', icon: 'fa-arrow-down-a-z' }
+            { value: 'updatedAt', label: this._t(SORT_LABELS.updatedAt), icon: 'fa-clock-rotate-left' },
+            { value: 'createdAt', label: this._t(SORT_LABELS.createdAt), icon: 'fa-calendar-plus' },
+            { value: 'title', label: this._t(SORT_LABELS.title), icon: 'fa-arrow-down-a-z' }
         ];
 
         dropdown.innerHTML = options
@@ -2208,7 +2291,7 @@ class NotesEntryWidget extends AgentOperableHTMLElement {
 
         let html = `
             <button class="notes-dropdown-item ${!this.tagFilter ? 'active' : ''}" data-tag="">
-                <i class="fa-solid fa-tags"></i> 全部标签
+                <i class="fa-solid fa-tags"></i> ${this._t('renderer.note.tag.all')}
                 ${!this.tagFilter ? '<i class="fa-solid fa-check"></i>' : ''}
             </button>`;
 
@@ -2226,7 +2309,8 @@ class NotesEntryWidget extends AgentOperableHTMLElement {
         dropdown.querySelectorAll('.notes-dropdown-item').forEach((item) => {
             item.addEventListener('click', async () => {
                 this.tagFilter = item.dataset.tag || null;
-                this.querySelector('#notes-tag-filter-label').textContent = this.tagFilter || '全部标签';
+                this.querySelector('#notes-tag-filter-label').textContent =
+                    this.tagFilter || this._t('renderer.note.tag.all');
                 this.querySelector('#notes-tag-filter-btn').classList.toggle('active', !!this.tagFilter);
                 dropdown.classList.add('hidden');
                 this._applyFilters();
@@ -2256,9 +2340,9 @@ class NotesEntryWidget extends AgentOperableHTMLElement {
             icon: 'fa-trash-can',
             iconBg: '#FEF2F2',
             iconColor: '#FF3B30',
-            title: '删除笔记',
-            message: '确定要删除这条笔记吗？删除后可在回收站中恢复，10天后将永久删除。',
-            confirmText: '删除',
+            title: this._t('renderer.note.note.delete.confirm.title'),
+            message: this._t('renderer.note.note.delete.confirm.message'),
+            confirmText: this._t('renderer.note.common.delete'),
             danger: true
         });
         if (confirmed) {
@@ -2295,7 +2379,7 @@ class NotesEntryWidget extends AgentOperableHTMLElement {
             }
         }
         if (count) {
-            count.textContent = `${this.deletedNotes.length} 条笔记`;
+            count.textContent = this._t('renderer.note.count.notes', { count: this.deletedNotes.length });
         }
     }
 
@@ -2327,12 +2411,12 @@ class NotesEntryWidget extends AgentOperableHTMLElement {
             main.innerHTML = `
             <div style="padding:36px 24px 0;">
                 <button id="notes-deleted-back-btn" class="notes-close-btn" style="margin-bottom:16px;">
-                    <i class="fa-solid fa-chevron-left" style="font-size:10px;"></i> 返回
+                    <i class="fa-solid fa-chevron-left" style="font-size:10px;"></i> ${this._t('renderer.note.editor.back')}
                 </button>
             </div>
             <div class="notes-empty" style="padding-top:40px;">
                 <i class="fa-regular fa-trash-can"></i>
-                <p>回收站为空</p>
+                <p>${this._t('renderer.note.deleted.empty')}</p>
             </div>`;
             main.querySelector('#notes-deleted-back-btn')?.addEventListener('click', () => this._toggleDeletedView());
             return;
@@ -2342,15 +2426,15 @@ class NotesEntryWidget extends AgentOperableHTMLElement {
         <div style="padding:36px 24px 16px;">
             <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px;">
                 <button id="notes-deleted-back-btn" class="notes-close-btn">
-                    <i class="fa-solid fa-chevron-left" style="font-size:10px;"></i> 返回
+                    <i class="fa-solid fa-chevron-left" style="font-size:10px;"></i> ${this._t('renderer.note.editor.back')}
                 </button>
                 <button id="notes-empty-recycle-btn" class="notes-empty-recycle-btn">
-                    <i class="fa-regular fa-trash-can" style="font-size:11px;"></i> 清空回收站
+                    <i class="fa-regular fa-trash-can" style="font-size:11px;"></i> ${this._t('renderer.note.deleted.clear')}
                 </button>
             </div>
             <div>
-                <h2 style="font-size:18px;font-weight:700;color:#1d1d1f;">已删除</h2>
-                <p style="font-size:12px;color:#8E8E93;margin-top:2px;">笔记删除后10天内可恢复</p>
+                <h2 style="font-size:18px;font-weight:700;color:#1d1d1f;">${this._t('renderer.note.deleted.entry')}</h2>
+                <p style="font-size:12px;color:#8E8E93;margin-top:2px;">${this._t('renderer.note.deleted.hint')}</p>
             </div>
         </div>
         <div style="padding:0 24px 24px;overflow-y:auto;" id="notes-deleted-container">`;
@@ -2359,17 +2443,17 @@ class NotesEntryWidget extends AgentOperableHTMLElement {
             const remainingDays = this._getRemainingDays(note.expiresAt);
             html += `
         <div class="notes-deleted-item" data-note-id="${note.id}" style="margin-bottom:8px;">
-            <div class="notes-deleted-item-title">${this._escapeHtml(note.title || '无标题')}</div>
+            <div class="notes-deleted-item-title">${this._escapeHtml(note.title || this._t('renderer.note.untitled'))}</div>
             <div class="notes-deleted-item-meta">
-                <span class="notes-deleted-item-time">删除于 ${this._formatRelativeTime(note.deletedAt)}</span>
-                <span class="notes-deleted-item-remaining">${remainingDays}天后永久删除</span>
+                <span class="notes-deleted-item-time">${this._t('renderer.note.deleted.deletedAt', { time: this._formatRelativeTime(note.deletedAt) })}</span>
+                <span class="notes-deleted-item-remaining">${this._t('renderer.note.deleted.remaining', { days: remainingDays })}</span>
             </div>
             <div class="notes-deleted-item-actions">
                 <button class="notes-restore-btn" data-restore-id="${note.id}">
-                    <i class="fa-solid fa-rotate-left" style="font-size:11px;"></i> 恢复
+                    <i class="fa-solid fa-rotate-left" style="font-size:11px;"></i> ${this._t('renderer.note.restore')}
                 </button>
                 <button class="notes-permanent-delete-btn" data-perm-delete-id="${note.id}">
-                    <i class="fa-regular fa-trash-can" style="font-size:11px;"></i> 永久删除
+                    <i class="fa-regular fa-trash-can" style="font-size:11px;"></i> ${this._t('renderer.note.delete.permanent')}
                 </button>
             </div>
         </div>`;
@@ -2399,9 +2483,9 @@ class NotesEntryWidget extends AgentOperableHTMLElement {
                     icon: 'fa-trash-can',
                     iconBg: '#FEF2F2',
                     iconColor: '#FF3B30',
-                    title: '永久删除',
-                    message: '确定要永久删除这条笔记吗？此操作无法撤销。',
-                    confirmText: '永久删除',
+                    title: this._t('renderer.note.delete.permanent'),
+                    message: this._t('renderer.note.permanent.confirm.message'),
+                    confirmText: this._t('renderer.note.delete.permanent'),
                     danger: true
                 });
                 if (confirmed) {
@@ -2417,9 +2501,9 @@ class NotesEntryWidget extends AgentOperableHTMLElement {
                 icon: 'fa-trash-can',
                 iconBg: '#FEF2F2',
                 iconColor: '#FF3B30',
-                title: '清空回收站',
-                message: `确定要永久删除回收站中的所有 ${this.deletedNotes.length} 条笔记吗？此操作无法撤销。`,
-                confirmText: '清空',
+                title: this._t('renderer.note.deleted.clear'),
+                message: this._t('renderer.note.clear.confirm.message', { count: this.deletedNotes.length }),
+                confirmText: this._t('renderer.note.clear.confirm.button'),
                 danger: true
             });
             if (confirmed) {
@@ -2495,10 +2579,10 @@ class NotesEntryWidget extends AgentOperableHTMLElement {
         const hours = Math.floor(diff / 3600000);
         const days = Math.floor(diff / 86400000);
 
-        if (minutes < 1) return '刚刚';
-        if (minutes < 60) return `${minutes}分钟前`;
-        if (hours < 24) return `${hours}小时前`;
-        if (days < 7) return `${days}天前`;
+        if (minutes < 1) return this._t('renderer.note.time.justNow');
+        if (minutes < 60) return this._t('renderer.note.time.minutesAgo', { n: minutes });
+        if (hours < 24) return this._t('renderer.note.time.hoursAgo', { n: hours });
+        if (days < 7) return this._t('renderer.note.time.daysAgo', { n: days });
         const date = new Date(timestamp);
         return `${date.getMonth() + 1}/${date.getDate()}`;
     }

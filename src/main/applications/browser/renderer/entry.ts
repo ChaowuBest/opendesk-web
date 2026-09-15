@@ -17,7 +17,8 @@ import {
     fetchBrowserHintsForPage,
     type BrowserHintPanelHandle
 } from '../../../../renderer/components/browserHintPanel.js';
-import { createRendererTranslator } from '../../../../renderer/locale.js';
+import { createRendererTranslator, resolveRendererLocale } from '../../../../renderer/locale.js';
+import { createTranslatorForBrowser } from '../locale/renderer.js';
 // 注册 <content-loading-view> 加载中组件，用于页面加载反馈
 import '../../../../renderer/components/loading.js';
 import {
@@ -129,6 +130,9 @@ function generateId(): string {
 }
 
 class BrowserEntryWidget extends HTMLElement {
+    private _t = createTranslatorForBrowser();
+    private _locale: string | undefined = undefined;
+    private _settingUnsubscribe: (() => void) | null = null;
     private urlInput: HTMLInputElement | null = null;
     private tabBarInner: HTMLElement | null = null;
     private webviewContainer: HTMLElement | null = null;
@@ -161,7 +165,18 @@ class BrowserEntryWidget extends HTMLElement {
     private _dismissTimer: ReturnType<typeof setTimeout> | null = null;
     private readonly _focusTrapKeydown = (event: KeyboardEvent) => this.handleFocusTrapKeydown(event);
 
-    connectedCallback() {
+    async connectedCallback() {
+        // 先加载语言设置再渲染，避免首帧出现错误语言
+        let setting;
+        try {
+            setting = await window.settingAPI?.loadSettingObject?.();
+        } catch {
+            setting = undefined;
+        }
+        this._applyLocaleSetting(setting);
+        // 等待设置加载期间元素可能已被移除，避免对脱离 DOM 的元素继续渲染
+        if (!this.isConnected) return;
+        this._subscribeLocaleChanges();
         this.history = loadHistory();
         this.bookmarks = loadBookmarks();
         this.setAttribute('data-od-browser-focus-scope', '');
@@ -207,6 +222,10 @@ class BrowserEntryWidget extends HTMLElement {
     }
 
     disconnectedCallback() {
+        if (this._settingUnsubscribe) {
+            this._settingUnsubscribe();
+            this._settingUnsubscribe = null;
+        }
         this.removeAttribute('data-od-browser-focus-scope');
         this.removeEventListener('keydown', this._focusTrapKeydown);
 
@@ -1044,24 +1063,24 @@ class BrowserEntryWidget extends HTMLElement {
             <div class="wb-drag-pad"></div>
             <div class="wb-tabbar">
                 <div class="wb-tabbar-inner"></div>
-                <button class="wb-tab-add-btn" title="新建标签页"><i class="fas fa-plus"></i></button>
+                <button class="wb-tab-add-btn" title="${this._t('renderer.browser.tab.new')}"><i class="fas fa-plus"></i></button>
             </div>
             <div class="wb-toolbar">
-                <button class="wb-btn wb-back-btn" title="后退"><i class="fas fa-chevron-left"></i></button>
-                <button class="wb-btn wb-forward-btn" title="前进"><i class="fas fa-chevron-right"></i></button>
-                <button class="wb-btn wb-refresh-btn" title="刷新"><i class="fas fa-rotate-right"></i></button>
+                <button class="wb-btn wb-back-btn" title="${this._t('renderer.browser.toolbar.back')}"><i class="fas fa-chevron-left"></i></button>
+                <button class="wb-btn wb-forward-btn" title="${this._t('renderer.browser.toolbar.forward')}"><i class="fas fa-chevron-right"></i></button>
+                <button class="wb-btn wb-refresh-btn" title="${this._t('renderer.browser.toolbar.refresh')}"><i class="fas fa-rotate-right"></i></button>
                 <div class="wb-sep"></div>
                 <div class="wb-url-wrap">
                     <i class="fas fa-lock wb-lock" style="display:none"></i>
-                    <input type="text" class="wb-url-input" placeholder="搜索或输入网址…" value="" autocomplete="off">
+                    <input type="text" class="wb-url-input" placeholder="${this._t('renderer.browser.toolbar.urlPlaceholder')}" value="" autocomplete="off">
                     <div class="wb-suggestions"></div>
                 </div>
                 <div class="wb-hint-slot"></div>
-                <button class="wb-btn wb-star-btn" title="收藏此页"><i class="fas fa-star"></i></button>
+                <button class="wb-btn wb-star-btn" title="${this._t('renderer.browser.toolbar.star')}"><i class="fas fa-star"></i></button>
                 <div class="wb-sep"></div>
-                <button class="wb-btn wb-home-btn" title="主页"><i class="fas fa-house"></i></button>
+                <button class="wb-btn wb-home-btn" title="${this._t('renderer.browser.toolbar.home')}"><i class="fas fa-house"></i></button>
                 <div class="wb-toolbar-right">
-                    <button class="wb-btn wb-menu-btn" title="工具菜单"><i class="fas fa-ellipsis"></i></button>
+                    <button class="wb-btn wb-menu-btn" title="${this._t('renderer.browser.toolbar.menu')}"><i class="fas fa-ellipsis"></i></button>
                     <div class="wb-tool-menu"></div>
                 </div>
             </div>
@@ -1106,6 +1125,57 @@ class BrowserEntryWidget extends HTMLElement {
         this.bindUrlSuggestions();
         this.bindToolMenu();
         this.renderBookmarkBar();
+    }
+
+    private _applyLocaleSetting(setting?: { locale?: string; resolved_locale?: string }) {
+        this._locale = resolveRendererLocale(setting);
+        this._t = createTranslatorForBrowser(setting);
+    }
+
+    /* 语言设置变化时就地刷新可见文案。
+       render() 会重建整个 shell（含已打开标签页的 webview），因此这里绝不整体重渲染：
+       仅更新工具栏提示与书签栏；面板/工具菜单在下次打开时自然使用新语言，若当前
+       打开中则立即按新语言重绘 */
+    private _subscribeLocaleChanges() {
+        if (this._settingUnsubscribe) return;
+        const unsubscribe = window.settingAPI?.onSettingChanged?.((setting: any) => {
+            if (!this.isConnected) return;
+            if (resolveRendererLocale(setting) === this._locale) return;
+            this._applyLocaleSetting(setting);
+            this._refreshToolbarLocaleTexts();
+            this.renderBookmarkBar();
+            if (this.historyPanelEl?.classList.contains('wb-visible')) {
+                const filter = (this.historyPanelEl.querySelector('.wb-panel-search') as HTMLInputElement)?.value ?? '';
+                this.renderHistoryPanel(filter);
+            }
+            if (this.bookmarkMgrEl?.classList.contains('wb-visible')) {
+                const filter = (this.bookmarkMgrEl.querySelector('.wb-panel-search') as HTMLInputElement)?.value ?? '';
+                this.renderBookmarkManager(filter);
+            }
+            if (this.downloadPanelEl?.classList.contains('wb-visible')) {
+                this.renderDownloadPanel();
+            }
+            if (this.toolMenuEl && this.toolMenuEl.childElementCount > 0) {
+                this.openToolMenu();
+            }
+        });
+        if (typeof unsubscribe === 'function') {
+            this._settingUnsubscribe = unsubscribe;
+        }
+    }
+
+    private _refreshToolbarLocaleTexts() {
+        const set = (selector: string, title: string) => {
+            this.querySelector(selector)?.setAttribute('title', title);
+        };
+        set('.wb-tab-add-btn', this._t('renderer.browser.tab.new'));
+        set('.wb-back-btn', this._t('renderer.browser.toolbar.back'));
+        set('.wb-forward-btn', this._t('renderer.browser.toolbar.forward'));
+        set('.wb-refresh-btn', this._t('renderer.browser.toolbar.refresh'));
+        set('.wb-star-btn', this._t('renderer.browser.toolbar.star'));
+        set('.wb-home-btn', this._t('renderer.browser.toolbar.home'));
+        set('.wb-menu-btn', this._t('renderer.browser.toolbar.menu'));
+        this.urlInput?.setAttribute('placeholder', this._t('renderer.browser.toolbar.urlPlaceholder'));
     }
 
     private handleFocusTrapKeydown(event: KeyboardEvent): void {
@@ -1410,13 +1480,13 @@ class BrowserEntryWidget extends HTMLElement {
         this.toolMenuEl.innerHTML = `
             <div class="wb-tm-item" data-action="newTab">
                 <i class="fas fa-plus"></i>
-                <span class="wb-tm-label">新建标签页</span>
+                <span class="wb-tm-label">${this._t('renderer.browser.tab.new')}</span>
                 <span class="wb-tm-shortcut">⌘T</span>
             </div>
             <div class="wb-tm-divider"></div>
             <div class="wb-tm-zoom-row">
                 <i class="fas fa-magnifying-glass-plus"></i>
-                <span class="wb-tm-zoom-label">缩放</span>
+                <span class="wb-tm-zoom-label">${this._t('renderer.browser.menu.zoom')}</span>
                 <div class="wb-tm-zoom-controls">
                     <button class="wb-tm-zoom-btn" data-action="zoomOut"><i class="fas fa-minus"></i></button>
                     <span class="wb-tm-zoom-val">${zoomPct}%</span>
@@ -1426,59 +1496,59 @@ class BrowserEntryWidget extends HTMLElement {
             <div class="wb-tm-divider"></div>
             <div class="wb-tm-item" data-action="bookmarks">
                 <i class="fas fa-star"></i>
-                <span class="wb-tm-label">收藏夹</span>
+                <span class="wb-tm-label">${this._t('renderer.browser.menu.favorites')}</span>
                 <span class="wb-tm-shortcut">⌥⌘B</span>
             </div>
             <div class="wb-tm-item" data-action="history">
                 <i class="fas fa-clock-rotate-left"></i>
-                <span class="wb-tm-label">历史记录</span>
+                <span class="wb-tm-label">${this._t('renderer.browser.menu.history')}</span>
                 <span class="wb-tm-shortcut">⌘Y</span>
             </div>
             <div class="wb-tm-item" data-action="downloads">
                 <i class="fas fa-download"></i>
-                <span class="wb-tm-label">下载</span>
+                <span class="wb-tm-label">${this._t('renderer.browser.menu.downloads')}</span>
                 <span class="wb-tm-shortcut">⌥⌘L</span>
             </div>
             <div class="wb-tm-divider"></div>
             <div class="wb-tm-item" data-action="print">
                 <i class="fas fa-print"></i>
-                <span class="wb-tm-label">打印…</span>
+                <span class="wb-tm-label">${this._t('renderer.browser.menu.print')}</span>
                 <span class="wb-tm-shortcut">⌘P</span>
             </div>
             <div class="wb-tm-item" data-action="screenshot">
                 <i class="fas fa-camera"></i>
-                <span class="wb-tm-label">截图</span>
+                <span class="wb-tm-label">${this._t('renderer.browser.menu.screenshot')}</span>
             </div>
             <div class="wb-tm-item" data-action="findInPage">
                 <i class="fas fa-magnifying-glass"></i>
-                <span class="wb-tm-label">在页面上查找…</span>
+                <span class="wb-tm-label">${this._t('renderer.browser.menu.find')}</span>
                 <span class="wb-tm-shortcut">⌘F</span>
             </div>
             <div class="wb-tm-item" data-action="toggleDebugMenu" data-flyout-trigger="debug">
                 <i class="fas fa-terminal"></i>
-                <span class="wb-tm-label">调试</span>
+                <span class="wb-tm-label">${this._t('renderer.browser.menu.debug')}</span>
                 <span class="wb-tm-shortcut"><i class="fas fa-chevron-right" style="font-size: var(--fs-2xs)"></i></span>
             </div>
             <div class="wb-tm-flyout" data-flyout="debug">
                 <div class="wb-tm-item" data-action="consoleDebug">
                     <i class="fas fa-terminal"></i>
-                    <span class="wb-tm-label">开发者工具</span>
+                    <span class="wb-tm-label">${this._t('renderer.browser.menu.devtools')}</span>
                 </div>
                 <div class="wb-tm-item" data-action="snapshotDebug">
                     <i class="fas fa-sitemap"></i>
-                    <span class="wb-tm-label">导出快照</span>
+                    <span class="wb-tm-label">${this._t('renderer.browser.menu.exportSnapshot')}</span>
                 </div>
             </div>
             <div class="wb-tm-divider"></div>
             <div class="wb-tm-item" data-action="toggleClearDataFlyout" data-flyout-trigger="clearData">
                 <i class="fas fa-trash-can"></i>
-                <span class="wb-tm-label">删除浏览数据</span>
+                <span class="wb-tm-label">${this._t('renderer.browser.menu.clearData')}</span>
                 <span class="wb-tm-shortcut"><i class="fas fa-chevron-right" style="font-size: var(--fs-2xs)"></i></span>
             </div>
             <div class="wb-tm-flyout" data-flyout="clearData">
                 <div class="wb-tm-item" data-action="clearHistoryData">
                     <i class="fas fa-clock-rotate-left"></i>
-                    <span class="wb-tm-label">历史记录</span>
+                    <span class="wb-tm-label">${this._t('renderer.browser.menu.history')}</span>
                 </div>
                 <div class="wb-tm-item" data-action="clearCookies">
                     <i class="fas fa-cookie-bite"></i>
@@ -1490,22 +1560,22 @@ class BrowserEntryWidget extends HTMLElement {
                 </div>
                 <div class="wb-tm-item" data-action="clearCache">
                     <i class="fas fa-box-archive"></i>
-                    <span class="wb-tm-label">HTTP 缓存</span>
+                    <span class="wb-tm-label">${this._t('renderer.browser.menu.sub.httpCache')}</span>
                 </div>
                 <div class="wb-tm-item" data-action="clearAutofill">
                     <i class="fas fa-key"></i>
-                    <span class="wb-tm-label">密码与自动填充</span>
+                    <span class="wb-tm-label">${this._t('renderer.browser.menu.sub.passwords')}</span>
                 </div>
                 <div class="wb-tm-divider"></div>
                 <div class="wb-tm-item" data-action="clearAllData">
                     <i class="fas fa-triangle-exclamation" style="color:#ef4444"></i>
-                    <span class="wb-tm-label" style="color:#ef4444">全部浏览数据</span>
+                    <span class="wb-tm-label" style="color:#ef4444">${this._t('renderer.browser.menu.sub.allData')}</span>
                 </div>
             </div>
             <div class="wb-tm-divider"></div>
             <div class="wb-tm-item" data-action="openBrowserSettings">
                 <i class="fas fa-gear"></i>
-                <span class="wb-tm-label">浏览器设置…</span>
+                <span class="wb-tm-label">${this._t('renderer.browser.menu.settings')}</span>
             </div>
         `;
 
@@ -1665,19 +1735,19 @@ class BrowserEntryWidget extends HTMLElement {
                 break;
             case 'clearCookies':
                 this.closeToolMenu();
-                await this._callBrowserMain('clearBrowserCookies', 'Cookies 已清除');
+                await this._callBrowserMain('clearBrowserCookies', this._t('renderer.browser.msg.cookiesCleared'));
                 break;
             case 'clearStorage':
                 this.closeToolMenu();
-                await this._callBrowserMain('clearBrowserStorage', '网站存储数据已清除');
+                await this._callBrowserMain('clearBrowserStorage', this._t('renderer.browser.msg.storageCleared'));
                 break;
             case 'clearCache':
                 this.closeToolMenu();
-                await this._callBrowserMain('clearBrowserCache', 'HTTP 缓存已清除');
+                await this._callBrowserMain('clearBrowserCache', this._t('renderer.browser.msg.httpCacheCleared'));
                 break;
             case 'clearAutofill':
                 this.closeToolMenu();
-                await this._callBrowserMain('clearAutofillData', '密码与自动填充数据已清除');
+                await this._callBrowserMain('clearAutofillData', this._t('renderer.browser.msg.autofillCleared'));
                 break;
             case 'clearAllData':
                 this.closeToolMenu();
@@ -1838,9 +1908,9 @@ class BrowserEntryWidget extends HTMLElement {
                 icon: 'fa-circle-exclamation',
                 iconBg: '#FEF2F2',
                 iconColor: '#DC2626',
-                title: '操作失败',
-                message: '当前环境不支持此操作。',
-                confirmText: '知道了',
+                title: this._t('renderer.browser.modal.actionFailed'),
+                message: this._t('renderer.browser.modal.unsupported'),
+                confirmText: this._t('renderer.browser.modal.acknowledge'),
                 cancelText: null
             });
             return;
@@ -1852,9 +1922,9 @@ class BrowserEntryWidget extends HTMLElement {
                     icon: 'fa-circle-check',
                     iconBg: '#ECFDF5',
                     iconColor: '#059669',
-                    title: '操作成功',
+                    title: this._t('renderer.browser.modal.actionSuccess'),
                     message: result.message || successMsg,
-                    confirmText: '知道了',
+                    confirmText: this._t('renderer.browser.modal.acknowledge'),
                     cancelText: null
                 });
             } else {
@@ -1862,9 +1932,9 @@ class BrowserEntryWidget extends HTMLElement {
                     icon: 'fa-circle-exclamation',
                     iconBg: '#FEF2F2',
                     iconColor: '#DC2626',
-                    title: '操作失败',
-                    message: result?.message || '未知错误',
-                    confirmText: '知道了',
+                    title: this._t('renderer.browser.modal.actionFailed'),
+                    message: result?.message || this._t('renderer.browser.modal.unknownError'),
+                    confirmText: this._t('renderer.browser.modal.acknowledge'),
                     cancelText: null
                 });
             }
@@ -1873,9 +1943,9 @@ class BrowserEntryWidget extends HTMLElement {
                 icon: 'fa-circle-exclamation',
                 iconBg: '#FEF2F2',
                 iconColor: '#DC2626',
-                title: '操作失败',
+                title: this._t('renderer.browser.modal.actionFailed'),
                 message: err?.message || String(err),
-                confirmText: '知道了',
+                confirmText: this._t('renderer.browser.modal.acknowledge'),
                 cancelText: null
             });
         }
@@ -1886,10 +1956,10 @@ class BrowserEntryWidget extends HTMLElement {
             icon: 'fa-triangle-exclamation',
             iconBg: '#FEF2F2',
             iconColor: '#DC2626',
-            title: '清除所有浏览数据',
-            message: '将清除所有 Cookies、网站存储、缓存、密码与自动填充数据。此操作不可撤销。',
-            confirmText: '全部清除',
-            cancelText: '取消',
+            title: this._t('renderer.browser.clearAll.title'),
+            message: this._t('renderer.browser.clearAll.message'),
+            confirmText: this._t('renderer.browser.clearAll.confirm'),
+            cancelText: this._t('renderer.browser.modal.cancel'),
             danger: true
         });
         if (confirmed) {
@@ -1897,7 +1967,7 @@ class BrowserEntryWidget extends HTMLElement {
             this.history = [];
             saveHistory(this.history);
             // 清除浏览器数据
-            await this._callBrowserMain('clearAllBrowserData', '所有浏览数据已清除');
+            await this._callBrowserMain('clearAllBrowserData', this._t('renderer.browser.msg.allDataCleared'));
         }
     }
 
@@ -1918,7 +1988,7 @@ class BrowserEntryWidget extends HTMLElement {
     }
 
     private clearBrowsingData(): void {
-        if (confirm('确定要清除所有浏览数据（历史记录）吗？')) {
+        if (confirm(this._t('renderer.browser.histClear.confirmData'))) {
             this.history = [];
             saveHistory(this.history);
         }
@@ -1931,9 +2001,9 @@ class BrowserEntryWidget extends HTMLElement {
                 icon: 'fa-circle-exclamation',
                 iconBg: '#FEF2F2',
                 iconColor: '#DC2626',
-                title: '无法生成快照',
-                message: '当前标签页尚未就绪，无法生成快照。',
-                confirmText: '知道了',
+                title: this._t('renderer.browser.snapshot.notReady.title'),
+                message: this._t('renderer.browser.snapshot.notReady.tab'),
+                confirmText: this._t('renderer.browser.modal.acknowledge'),
                 cancelText: null
             });
             return;
@@ -1947,9 +2017,9 @@ class BrowserEntryWidget extends HTMLElement {
                 icon: 'fa-circle-exclamation',
                 iconBg: '#FEF2F2',
                 iconColor: '#DC2626',
-                title: '无法生成快照',
-                message: '无法获取当前标签页句柄。',
-                confirmText: '知道了',
+                title: this._t('renderer.browser.snapshot.notReady.title'),
+                message: this._t('renderer.browser.snapshot.notReady.handle'),
+                confirmText: this._t('renderer.browser.modal.acknowledge'),
                 cancelText: null
             });
             return;
@@ -1961,9 +2031,9 @@ class BrowserEntryWidget extends HTMLElement {
                 icon: 'fa-circle-exclamation',
                 iconBg: '#FEF2F2',
                 iconColor: '#DC2626',
-                title: '无法生成快照',
-                message: '当前环境不支持快照导出。',
-                confirmText: '知道了',
+                title: this._t('renderer.browser.snapshot.notReady.title'),
+                message: this._t('renderer.browser.snapshot.unsupported'),
+                confirmText: this._t('renderer.browser.modal.acknowledge'),
                 cancelText: null
             });
             return;
@@ -1975,9 +2045,9 @@ class BrowserEntryWidget extends HTMLElement {
                 icon: 'fa-circle-check',
                 iconBg: '#ECFDF5',
                 iconColor: '#059669',
-                title: '快照已保存',
-                message: '页面快照已成功保存到文件。',
-                confirmText: '知道了',
+                title: this._t('renderer.browser.snapshot.saved.title'),
+                message: this._t('renderer.browser.snapshot.saved.message'),
+                confirmText: this._t('renderer.browser.modal.acknowledge'),
                 cancelText: null
             });
         } catch (err: any) {
@@ -1985,9 +2055,9 @@ class BrowserEntryWidget extends HTMLElement {
                 icon: 'fa-circle-exclamation',
                 iconBg: '#FEF2F2',
                 iconColor: '#DC2626',
-                title: '快照导出失败',
-                message: `快照导出失败：${err?.message || String(err)}`,
-                confirmText: '知道了',
+                title: this._t('renderer.browser.snapshot.failed.title'),
+                message: this._t('renderer.browser.snapshot.failed.message', { message: err?.message || String(err) }),
+                confirmText: this._t('renderer.browser.modal.acknowledge'),
                 cancelText: null
             });
         }
@@ -1996,13 +2066,13 @@ class BrowserEntryWidget extends HTMLElement {
     private openWebviewDevTools(): void {
         const tab = this.getActiveTab();
         if (!tab?.ready || !tab.webview) {
-            alert('当前标签页尚未就绪。');
+            alert(this._t('renderer.browser.alert.tabNotReady'));
             return;
         }
         try {
             (tab.webview as any).openDevTools();
         } catch {
-            alert('无法打开开发者工具。');
+            alert(this._t('renderer.browser.alert.devtoolsFailed'));
         }
     }
 
@@ -2063,15 +2133,15 @@ class BrowserEntryWidget extends HTMLElement {
 
         this.historyPanelEl.innerHTML = `
             <div class="wb-panel-header">
-                <span class="wb-panel-header-title">历史记录</span>
-                <button class="wb-panel-manage-btn wb-hist-open-manage">管理</button>
+                <span class="wb-panel-header-title">${this._t('renderer.browser.history.title')}</span>
+                <button class="wb-panel-manage-btn wb-hist-open-manage">${this._t('renderer.browser.history.manage')}</button>
                 <button class="wb-panel-close"><i class="fas fa-xmark"></i></button>
             </div>
-            <input class="wb-panel-search" placeholder="搜索历史记录…" value="${this.escapeHtml(filter)}">
+            <input class="wb-panel-search" placeholder="${this._t('renderer.browser.history.search')}" value="${this.escapeHtml(filter)}">
             <div class="wb-panel-body">
                 ${
                     deduped.length === 0
-                        ? '<div class="wb-panel-empty">暂无历史记录</div>'
+                        ? '<div class="wb-panel-empty">' + this._t('renderer.browser.history.empty') + '</div>'
                         : deduped
                               .map(
                                   (
@@ -2084,14 +2154,14 @@ class BrowserEntryWidget extends HTMLElement {
                                 <div class="wb-hi-url">${this.escapeHtml(h.url)}</div>
                             </div>
                             <span class="wb-hi-time">${this.formatTime(h.timestamp)}</span>
-                            <button class="wb-hi-delete" data-url="${this.escapeAttr(h.url)}" title="删除"><i class="fas fa-xmark"></i></button>
+                            <button class="wb-hi-delete" data-url="${this.escapeAttr(h.url)}" title="${this._t('renderer.browser.modal.delete')}"><i class="fas fa-xmark"></i></button>
                         </div>`
                               )
                               .join('')
                 }
             </div>
             <div class="wb-panel-footer">
-                <button class="wb-clear-btn">清除所有历史记录</button>
+                <button class="wb-clear-btn">${this._t('renderer.browser.history.clearAll')}</button>
             </div>
         `;
 
@@ -2134,7 +2204,7 @@ class BrowserEntryWidget extends HTMLElement {
         });
 
         this.historyPanelEl.querySelector('.wb-clear-btn')?.addEventListener('click', () => {
-            if (confirm('确定要清除所有历史记录吗？')) {
+            if (confirm(this._t('renderer.browser.histClear.confirm1'))) {
                 this.history = [];
                 saveHistory(this.history);
                 this.renderHistoryPanel('');
@@ -2190,7 +2260,8 @@ class BrowserEntryWidget extends HTMLElement {
         const rootItems = this.bookmarks.filter((b) => !b.parentId);
 
         if (rootItems.length === 0) {
-            this.bookmarkBarEl.innerHTML = '<span class="wb-bm-empty">收藏夹为空，点击 ★ 收藏网页</span>';
+            this.bookmarkBarEl.innerHTML =
+                '<span class="wb-bm-empty">' + this._t('renderer.browser.bar.emptyHint') + '</span>';
             return;
         }
         this.bookmarkBarEl.innerHTML = '';
@@ -2261,12 +2332,12 @@ class BrowserEntryWidget extends HTMLElement {
         menu.innerHTML = `
             <div class="wb-tm-item" data-ctx="addFolder">
                 <i class="fas fa-folder-plus"></i>
-                <span class="wb-tm-label">添加文件夹</span>
+                <span class="wb-tm-label">${this._t('renderer.browser.fav.addFolder')}</span>
             </div>
             <div class="wb-tm-divider"></div>
             <div class="wb-tm-item" data-ctx="manage">
                 <i class="fas fa-gear"></i>
-                <span class="wb-tm-label">管理收藏夹</span>
+                <span class="wb-tm-label">${this._t('renderer.browser.fav.manage')}</span>
             </div>
         `;
 
@@ -2302,32 +2373,32 @@ class BrowserEntryWidget extends HTMLElement {
             items.push(`
                 <div class="wb-tm-item" data-ctx="open">
                     <i class="fas fa-arrow-up-right-from-square"></i>
-                    <span class="wb-tm-label">打开</span>
+                    <span class="wb-tm-label">${this._t('renderer.browser.fav.open')}</span>
                 </div>
                 <div class="wb-tm-item" data-ctx="openNewTab">
                     <i class="fas fa-plus"></i>
-                    <span class="wb-tm-label">在新标签页中打开</span>
+                    <span class="wb-tm-label">${this._t('renderer.browser.fav.openInNewTab')}</span>
                 </div>
                 <div class="wb-tm-divider"></div>`);
         }
         items.push(`
             <div class="wb-tm-item" data-ctx="rename">
                 <i class="fas fa-pen"></i>
-                <span class="wb-tm-label">编辑</span>
+                <span class="wb-tm-label">${this._t('renderer.browser.modal.edit')}</span>
             </div>
             <div class="wb-tm-item" data-ctx="delete">
                 <i class="fas fa-trash-can"></i>
-                <span class="wb-tm-label">删除</span>
+                <span class="wb-tm-label">${this._t('renderer.browser.modal.delete')}</span>
             </div>
             <div class="wb-tm-divider"></div>
             <div class="wb-tm-item" data-ctx="addFolder">
                 <i class="fas fa-folder-plus"></i>
-                <span class="wb-tm-label">添加文件夹</span>
+                <span class="wb-tm-label">${this._t('renderer.browser.fav.addFolder')}</span>
             </div>
             <div class="wb-tm-divider"></div>
             <div class="wb-tm-item" data-ctx="manage">
                 <i class="fas fa-gear"></i>
-                <span class="wb-tm-label">管理收藏夹</span>
+                <span class="wb-tm-label">${this._t('renderer.browser.fav.manage')}</span>
             </div>`);
         menu.innerHTML = items.join('');
 
@@ -2399,7 +2470,7 @@ class BrowserEntryWidget extends HTMLElement {
     }
 
     private addBookmarkFolder(parentId?: string): void {
-        const name = prompt('请输入文件夹名称：');
+        const name = prompt(this._t('renderer.browser.fav.newFolderPrompt'));
         if (!name?.trim()) return;
         this.bookmarks.push({
             id: generateId(),
@@ -2431,15 +2502,15 @@ class BrowserEntryWidget extends HTMLElement {
 
         this.bookmarkMgrEl.innerHTML = `
             <div class="wb-panel-header">
-                <span class="wb-panel-header-title">收藏夹</span>
-                <button class="wb-panel-manage-btn wb-bm-open-manage">管理</button>
+                <span class="wb-panel-header-title">${this._t('renderer.browser.fav.panel.title')}</span>
+                <button class="wb-panel-manage-btn wb-bm-open-manage">${this._t('renderer.browser.history.manage')}</button>
                 <button class="wb-panel-close"><i class="fas fa-xmark"></i></button>
             </div>
-            <input class="wb-panel-search" placeholder="搜索收藏…" value="${this.escapeHtml(filter)}">
+            <input class="wb-panel-search" placeholder="${this._t('renderer.browser.fav.panel.search')}" value="${this.escapeHtml(filter)}">
             <div class="wb-panel-body">
                 ${
                     filtered.length === 0
-                        ? '<div class="wb-panel-empty">暂无收藏</div>'
+                        ? '<div class="wb-panel-empty">' + this._t('renderer.browser.fav.panel.empty') + '</div>'
                         : filtered
                               .map(
                                   (
@@ -2451,8 +2522,8 @@ class BrowserEntryWidget extends HTMLElement {
                                 <div class="wb-bm-mgr-url">${this.escapeHtml(b.url)}</div>
                             </div>
                             <div class="wb-bm-mgr-actions">
-                                <button class="wb-bm-mgr-btn wb-bm-rename" data-id="${b.id}" title="重命名"><i class="fas fa-pen"></i></button>
-                                <button class="wb-bm-mgr-btn wb-bm-delete" data-id="${b.id}" title="删除"><i class="fas fa-trash-can"></i></button>
+                                <button class="wb-bm-mgr-btn wb-bm-rename" data-id="${b.id}" title="${this._t('renderer.browser.fav.rename')}"><i class="fas fa-pen"></i></button>
+                                <button class="wb-bm-mgr-btn wb-bm-delete" data-id="${b.id}" title="${this._t('renderer.browser.modal.delete')}"><i class="fas fa-trash-can"></i></button>
                             </div>
                         </div>`
                               )
@@ -2582,13 +2653,13 @@ class BrowserEntryWidget extends HTMLElement {
 
         this.downloadPanelEl.innerHTML = `
             <div class="wb-panel-header">
-                <span class="wb-panel-header-title">下载</span>
+                <span class="wb-panel-header-title">${this._t('renderer.browser.dl.title')}</span>
                 <button class="wb-panel-close"><i class="fas fa-xmark"></i></button>
             </div>
             <div class="wb-panel-body">
                 ${
                     this.downloads.length === 0
-                        ? '<div class="wb-panel-empty">暂无下载</div>'
+                        ? '<div class="wb-panel-empty">' + this._t('renderer.browser.dl.empty') + '</div>'
                         : this.downloads
                               .map((dl) => {
                                   const pct =
@@ -2608,9 +2679,9 @@ class BrowserEntryWidget extends HTMLElement {
                                   const speed =
                                       dl.state === 'progressing' ? formatSpeed(dl.receivedBytes, dl.startTime) : '';
                                   if (speed) meta += ' — ' + speed;
-                                  if (isDone) meta += ' — 完成';
-                                  if (isCancelled) meta += ' — 已取消';
-                                  if (dl.state === 'interrupted') meta += ' — 中断';
+                                  if (isDone) meta += this._t('renderer.browser.dl.done');
+                                  if (isCancelled) meta += this._t('renderer.browser.dl.cancelled');
+                                  if (dl.state === 'interrupted') meta += this._t('renderer.browser.dl.interrupted');
 
                                   return `
                                         <div class="wb-dl-item" data-dl-id="${this.escapeAttr(dl.id)}">
@@ -2621,9 +2692,9 @@ class BrowserEntryWidget extends HTMLElement {
                                                 ${dl.state === 'progressing' ? `<div class="wb-dl-progress-wrap"><div class="wb-dl-progress-bar" style="width:${pct}%"></div></div>` : isDone ? `<div class="wb-dl-progress-wrap"><div class="wb-dl-progress-bar wb-dl-done" style="width:100%"></div></div>` : ''}
                                             </div>
                                             <div class="wb-dl-actions">
-                                                ${dl.state === 'progressing' ? `<button class="wb-dl-btn wb-dl-cancel" title="取消下载"><i class="fas fa-xmark"></i></button>` : ''}
-                                                ${isDone ? `<button class="wb-dl-btn wb-dl-open-file" title="在文件夹中显示"><i class="fas fa-folder-open"></i></button>` : ''}
-                                                ${!dl.state || dl.state === 'completed' || isCancelled || dl.state === 'interrupted' ? `<button class="wb-dl-btn wb-dl-clear" title="从列表中移除"><i class="fas fa-trash-can"></i></button>` : ''}
+                                                ${dl.state === 'progressing' ? `<button class="wb-dl-btn wb-dl-cancel" title="${this._t('renderer.browser.dl.cancel')}"><i class="fas fa-xmark"></i></button>` : ''}
+                                                ${isDone ? `<button class="wb-dl-btn wb-dl-open-file" title="${this._t('renderer.browser.dl.showInFolder')}"><i class="fas fa-folder-open"></i></button>` : ''}
+                                                ${!dl.state || dl.state === 'completed' || isCancelled || dl.state === 'interrupted' ? `<button class="wb-dl-btn wb-dl-clear" title="${this._t('renderer.browser.dl.remove')}"><i class="fas fa-trash-can"></i></button>` : ''}
                                             </div>
                                         </div>`;
                               })
@@ -2698,7 +2769,7 @@ class BrowserEntryWidget extends HTMLElement {
 
         const tab: BrowserTab = {
             id: tabId,
-            title: isInternal ? this.getInternalPageTitle(url!) : '新标签页',
+            title: isInternal ? this.getInternalPageTitle(url!) : this._t('renderer.browser.tab.new'),
             url: url || '',
             webview: null,
             wrapEl: null,
@@ -2797,7 +2868,7 @@ class BrowserEntryWidget extends HTMLElement {
                 onlyTab.wrapEl = null;
             }
             onlyTab.url = 'opendesk://homepage/';
-            onlyTab.title = '新标签页';
+            onlyTab.title = this._t('renderer.browser.tab.new');
             onlyTab.isHomePage = false;
             onlyTab.internalUrl = 'opendesk://homepage/';
             onlyTab.ready = false;
@@ -2933,8 +3004,8 @@ class BrowserEntryWidget extends HTMLElement {
 
             const titleSpan = document.createElement('span');
             titleSpan.className = 'wb-tab-title';
-            titleSpan.textContent = tab.title || '新标签页';
-            titleSpan.title = tab.url || '新标签页';
+            titleSpan.textContent = tab.title || this._t('renderer.browser.tab.new');
+            titleSpan.title = tab.url || this._t('renderer.browser.tab.new');
             el.appendChild(titleSpan);
 
             const closeBtn = document.createElement('button');
@@ -3189,7 +3260,7 @@ class BrowserEntryWidget extends HTMLElement {
             };
 
             // 更新 tab 标题显示错误
-            tab.title = this.extractTitle(validatedURL || tab.url) + ' - 加载失败';
+            tab.title = this.extractTitle(validatedURL || tab.url) + this._t('renderer.browser.tab.loadFailedSuffix');
             this.renderTabBar();
 
             // 显示错误覆盖层
@@ -3227,7 +3298,7 @@ class BrowserEntryWidget extends HTMLElement {
             const overlay = document.createElement('div');
             overlay.className = 'wb-loading-overlay';
             const loadingView = document.createElement('content-loading-view');
-            loadingView.setAttribute('data-message', '正在加载页面...');
+            loadingView.setAttribute('data-message', this._t('renderer.browser.loading'));
             overlay.appendChild(loadingView);
             wrap.appendChild(overlay);
         }, LOADING_OVERLAY_DELAY_MS);
@@ -3304,7 +3375,7 @@ class BrowserEntryWidget extends HTMLElement {
     }
 
     private extractTitle(url: string): string {
-        if (!url || url === 'about:blank') return '新标签页';
+        if (!url || url === 'about:blank') return this._t('renderer.browser.tab.new');
         try {
             const u = new URL(url);
             return u.hostname || url;
@@ -3546,7 +3617,7 @@ class BrowserEntryWidget extends HTMLElement {
         tab.isHomePage = false;
         tab.internalUrl = 'opendesk://homepage/';
         tab.url = 'opendesk://homepage/';
-        tab.title = '新标签页';
+        tab.title = this._t('renderer.browser.tab.new');
         tab.errorInfo = undefined;
         tab.pendingUrl = null;
         tab.ready = false;
@@ -3581,9 +3652,9 @@ class BrowserEntryWidget extends HTMLElement {
     // =====================================================================
 
     private getInternalPageTitle(url: string): string {
-        if (url.startsWith('opendesk://favorites')) return '收藏夹管理';
-        if (url.startsWith('opendesk://history')) return '历史记录';
-        if (url.startsWith('opendesk://homepage')) return '新标签页';
+        if (url.startsWith('opendesk://favorites')) return this._t('renderer.browser.fav.manageTitle');
+        if (url.startsWith('opendesk://history')) return this._t('renderer.browser.history.title');
+        if (url.startsWith('opendesk://homepage')) return this._t('renderer.browser.tab.new');
         return 'OpenDesk';
     }
 
@@ -3624,7 +3695,9 @@ class BrowserEntryWidget extends HTMLElement {
             this.renderBrowserSettingsPage(tab.wrapEl, tab);
         } else {
             tab.wrapEl.innerHTML =
-                '<div class="wb-internal-page"><div class="wb-internal-header"><span class="wb-internal-title">页面不存在</span></div></div>';
+                '<div class="wb-internal-page"><div class="wb-internal-header"><span class="wb-internal-title">' +
+                this._t('renderer.browser.internal.pageNotFound') +
+                '</span></div></div>';
         }
     }
 
@@ -3684,13 +3757,13 @@ class BrowserEntryWidget extends HTMLElement {
                 <div class="wb-hp-greeting">${this.escapeHtml(greeting)}</div>
                 <div class="wb-hp-search-wrap">
                     <i class="fas fa-magnifying-glass wb-hp-search-icon"></i>
-                    <input type="text" class="wb-hp-search-input" placeholder="搜索或输入网址…" autofocus>
+                    <input type="text" class="wb-hp-search-input" placeholder="${this._t('renderer.browser.newtab.searchPlaceholder')}" autofocus>
                 </div>
             </div>
             ${
                 topSitesHtml
                     ? `<div class="wb-hp-section">
-                <div class="wb-hp-section-title">常访问</div>
+                <div class="wb-hp-section-title">${this._t('renderer.browser.newtab.topSites')}</div>
                 <div class="wb-hp-grid">${topSitesHtml}</div>
             </div>`
                     : ''
@@ -3722,11 +3795,11 @@ class BrowserEntryWidget extends HTMLElement {
 
     private getGreeting(): string {
         const hour = new Date().getHours();
-        if (hour < 6) return '夜深了';
-        if (hour < 12) return '早上好';
-        if (hour < 14) return '中午好';
-        if (hour < 18) return '下午好';
-        return '晚上好';
+        if (hour < 6) return this._t('renderer.browser.newtab.greeting.night');
+        if (hour < 12) return this._t('renderer.browser.newtab.greeting.morning');
+        if (hour < 14) return this._t('renderer.browser.newtab.greeting.noon');
+        if (hour < 18) return this._t('renderer.browser.newtab.greeting.afternoon');
+        return this._t('renderer.browser.newtab.greeting.evening');
     }
 
     // ---- Favorites management page ----
@@ -3734,7 +3807,7 @@ class BrowserEntryWidget extends HTMLElement {
     private renderFavoritesPage(container: HTMLElement, selectedFolderId?: string, searchFilter?: string): void {
         const lf = (searchFilter || '').toLowerCase();
         const folders = this.bookmarks.filter((b) => b.isFolder);
-        const allBookmarksLabel = '全部收藏';
+        const allBookmarksLabel = this._t('renderer.browser.fav.allBookmarks');
 
         // Filter folders for tree
         const filteredFolders = lf ? folders.filter((f) => f.title.toLowerCase().includes(lf)) : folders;
@@ -3774,11 +3847,11 @@ class BrowserEntryWidget extends HTMLElement {
             <div class="wb-internal-page">
                 <div class="wb-internal-header">
                     <i class="fas fa-star wb-internal-header-icon" style="color:#f59e0b"></i>
-                    <span class="wb-internal-title">收藏夹管理</span>
+                    <span class="wb-internal-title">${this._t('renderer.browser.fav.manageTitle')}</span>
                 </div>
                 <div class="wb-fav-layout">
                     <div class="wb-fav-tree">
-                        <input class="wb-fav-tree-search" placeholder="搜索收藏夹…" value="${this.escapeHtml(searchFilter || '')}">
+                        <input class="wb-fav-tree-search" placeholder="${this._t('renderer.browser.fav.search')}" value="${this.escapeHtml(searchFilter || '')}">
                         <div class="wb-fav-tree-body">
                             <div class="wb-fav-tree-item${selId === '__all__' ? ' wb-selected' : ''}" data-folder-id="__all__">
                                 <i class="fas fa-bookmark"></i>
@@ -3787,7 +3860,7 @@ class BrowserEntryWidget extends HTMLElement {
                             </div>
                             <div class="wb-fav-tree-item${selId === '__root__' ? ' wb-selected' : ''}" data-folder-id="__root__">
                                 <i class="fas fa-bars"></i>
-                                <span class="wb-fav-tree-item-label">收藏夹栏</span>
+                                <span class="wb-fav-tree-item-label">${this._t('renderer.browser.fav.bar')}</span>
                                 <span class="wb-fav-tree-item-count">${rootCount}</span>
                             </div>
                             ${filteredFolders
@@ -3810,7 +3883,9 @@ class BrowserEntryWidget extends HTMLElement {
                         <div class="wb-fav-detail-body">
                             ${
                                 detailItems.length === 0
-                                    ? '<div class="wb-fav-detail-empty">此文件夹暂无收藏</div>'
+                                    ? '<div class="wb-fav-detail-empty">' +
+                                      this._t('renderer.browser.fav.folderEmpty') +
+                                      '</div>'
                                     : detailItems
                                           .map(
                                               (
@@ -3822,8 +3897,8 @@ class BrowserEntryWidget extends HTMLElement {
                                         <div class="wb-fav-detail-url">${this.escapeHtml(b.url)}</div>
                                     </div>
                                     <div class="wb-fav-detail-actions">
-                                        <button class="wb-fav-detail-btn wb-fav-edit" data-id="${b.id}" title="编辑"><i class="fas fa-pen"></i></button>
-                                        <button class="wb-fav-detail-btn wb-del wb-fav-del" data-id="${b.id}" title="删除"><i class="fas fa-trash-can"></i></button>
+                                        <button class="wb-fav-detail-btn wb-fav-edit" data-id="${b.id}" title="${this._t('renderer.browser.modal.edit')}"><i class="fas fa-pen"></i></button>
+                                        <button class="wb-fav-detail-btn wb-del wb-fav-del" data-id="${b.id}" title="${this._t('renderer.browser.modal.delete')}"><i class="fas fa-trash-can"></i></button>
                                     </div>
                                 </div>`
                                           )
@@ -3857,9 +3932,10 @@ class BrowserEntryWidget extends HTMLElement {
                         (b) => b.title.toLowerCase().includes(lf) || b.url.toLowerCase().includes(lf)
                     );
                 }
-                detailHeader.textContent = `收藏夹栏（${rootItems.length}）`;
+                detailHeader.textContent = this._t('renderer.browser.fav.barWithCount', { count: rootItems.length });
                 if (rootItems.length === 0) {
-                    detailBody.innerHTML = '<div class="wb-fav-detail-empty">收藏夹栏暂无收藏</div>';
+                    detailBody.innerHTML =
+                        '<div class="wb-fav-detail-empty">' + this._t('renderer.browser.fav.barEmpty') + '</div>';
                 } else {
                     detailBody.innerHTML = rootItems
                         .map(
@@ -3872,8 +3948,8 @@ class BrowserEntryWidget extends HTMLElement {
                                 <div class="wb-fav-detail-url">${this.escapeHtml(b.url)}</div>
                             </div>
                             <div class="wb-fav-detail-actions">
-                                <button class="wb-fav-detail-btn wb-fav-edit" data-id="${b.id}" title="编辑"><i class="fas fa-pen"></i></button>
-                                <button class="wb-fav-detail-btn wb-del wb-fav-del" data-id="${b.id}" title="删除"><i class="fas fa-trash-can"></i></button>
+                                <button class="wb-fav-detail-btn wb-fav-edit" data-id="${b.id}" title="${this._t('renderer.browser.modal.edit')}"><i class="fas fa-pen"></i></button>
+                                <button class="wb-fav-detail-btn wb-del wb-fav-del" data-id="${b.id}" title="${this._t('renderer.browser.modal.delete')}"><i class="fas fa-trash-can"></i></button>
                             </div>
                         </div>`
                         )
@@ -3905,7 +3981,7 @@ class BrowserEntryWidget extends HTMLElement {
                 const id = (btn as HTMLElement).dataset.id;
                 const bm = this.bookmarks.find((b) => b.id === id);
                 if (!bm) return;
-                const newTitle = prompt('编辑名称：', bm.title);
+                const newTitle = prompt(this._t('renderer.browser.fav.renamePrompt'), bm.title);
                 if (newTitle !== null && newTitle.trim()) {
                     bm.title = newTitle.trim();
                     saveBookmarks(this.bookmarks);
@@ -3957,7 +4033,7 @@ class BrowserEntryWidget extends HTMLElement {
 
         let groupsHtml = '';
         if (groups.size === 0) {
-            groupsHtml = '<div class="wb-hist-empty">暂无历史记录</div>';
+            groupsHtml = `<div class="wb-hist-empty">${this._t('renderer.browser.history.empty')}</div>`;
         } else {
             for (const [dateLabel, items] of groups) {
                 groupsHtml += `<div class="wb-hist-date-group">
@@ -3971,7 +4047,7 @@ class BrowserEntryWidget extends HTMLElement {
                             <div class="wb-hist-item-url">${this.escapeHtml(h.url)}</div>
                         </div>
                         <span class="wb-hist-item-time">${this.formatTime(h.timestamp)}</span>
-                        <button class="wb-hist-item-del" data-url="${this.escapeAttr(h.url)}" title="删除"><i class="fas fa-xmark"></i></button>
+                        <button class="wb-hist-item-del" data-url="${this.escapeAttr(h.url)}" title="${this._t('renderer.browser.modal.delete')}"><i class="fas fa-xmark"></i></button>
                     </div>`
                         )
                         .join('')}
@@ -3983,12 +4059,12 @@ class BrowserEntryWidget extends HTMLElement {
             <div class="wb-internal-page">
                 <div class="wb-internal-header">
                     <i class="fas fa-clock-rotate-left wb-internal-header-icon"></i>
-                    <span class="wb-internal-title">历史记录</span>
+                    <span class="wb-internal-title">${this._t('renderer.browser.history.title')}</span>
                 </div>
                 <div class="wb-hist-layout">
                     <div class="wb-hist-toolbar">
-                        <input class="wb-hist-search" placeholder="搜索历史记录…" value="${this.escapeHtml(searchFilter || '')}">
-                        <button class="wb-hist-clear-btn">清除所有历史记录</button>
+                        <input class="wb-hist-search" placeholder="${this._t('renderer.browser.history.search')}" value="${this.escapeHtml(searchFilter || '')}">
+                        <button class="wb-hist-clear-btn">${this._t('renderer.browser.history.clearAll')}</button>
                     </div>
                     <div class="wb-hist-body">${groupsHtml}</div>
                 </div>
@@ -4003,7 +4079,7 @@ class BrowserEntryWidget extends HTMLElement {
 
         // Bind clear all
         container.querySelector('.wb-hist-clear-btn')?.addEventListener('click', () => {
-            if (confirm('确定要清除所有历史记录吗？此操作不可撤销。')) {
+            if (confirm(this._t('renderer.browser.histClear.confirm2'))) {
                 this.history = [];
                 saveHistory(this.history);
                 this.renderHistoryInternalPage(container, searchFilter);
@@ -4069,27 +4145,27 @@ class BrowserEntryWidget extends HTMLElement {
         <div class="wb-internal-page" style="overflow-y:auto">
             <div class="wb-internal-header">
                 <i class="fas fa-gear wb-internal-header-icon"></i>
-                <span class="wb-internal-title">浏览器设置</span>
+                <span class="wb-internal-title">${this._t('renderer.browser.settings.title')}</span>
             </div>
 
             <!-- 密码与自动填充 -->
             <div style="padding:20px 24px;max-width:600px">
                 <div style="font-size: var(--fs-xl);font-weight:600;color:#1f2937;margin-bottom:4px">
-                    <i class="fas fa-key" style="margin-right:8px;color:#6b7280"></i>密码与自动填充
+                    <i class="fas fa-key" style="margin-right:8px;color:#6b7280"></i>${this._t('renderer.browser.settings.passwords')}
                 </div>
                 <p style="font-size: var(--fs-base);color:#9ca3af;margin:0 0 16px 0">
-                    管理浏览器保存的密码和表单自动填充数据
+                    ${this._t('renderer.browser.settings.passwords.desc')}
                 </p>
                 <div style="background:white;border:1px solid #e5e7eb;border-radius:10px;padding:16px 20px">
                     <div style="display:flex;align-items:center;justify-content:space-between">
                         <div>
-                            <div style="font-size: var(--fs-lg);font-weight:500;color:#374151">自动填充</div>
-                            <div style="font-size: var(--fs-md);color:#9ca3af;margin-top:2px">登录时保存密码，下次自动填充表单</div>
+                            <div style="font-size: var(--fs-lg);font-weight:500;color:#374151">${this._t('renderer.browser.settings.autofill')}</div>
+                            <div style="font-size: var(--fs-md);color:#9ca3af;margin-top:2px">${this._t('renderer.browser.settings.autofill.desc')}</div>
                         </div>
-                        <span style="font-size: var(--fs-md);color:#059669;background:#ecfdf5;padding:2px 10px;border-radius:12px;font-weight:500">已启用</span>
+                        <span style="font-size: var(--fs-md);color:#059669;background:#ecfdf5;padding:2px 10px;border-radius:12px;font-weight:500">${this._t('renderer.browser.settings.enabled')}</span>
                     </div>
                     <button class="wb-bs-btn wb-bs-btn-danger" data-action="bs-clear-autofill" style="margin-top:12px">
-                        <i class="fas fa-trash-can"></i> 清除密码与自动填充数据
+                        <i class="fas fa-trash-can"></i> ${this._t('renderer.browser.settings.clearAutofill')}
                     </button>
                 </div>
             </div>
@@ -4097,25 +4173,25 @@ class BrowserEntryWidget extends HTMLElement {
             <!-- 证书管理 -->
             <div style="padding:0 24px 20px;max-width:600px">
                 <div style="font-size: var(--fs-xl);font-weight:600;color:#1f2937;margin-bottom:4px">
-                    <i class="fas fa-certificate" style="margin-right:8px;color:#6b7280"></i>证书管理
+                    <i class="fas fa-certificate" style="margin-right:8px;color:#6b7280"></i>${this._t('renderer.browser.settings.cert.title')}
                 </div>
                 <p style="font-size: var(--fs-base);color:#9ca3af;margin:0 0 16px 0">
-                    管理自定义根证书。导入的证书将在浏览器标签页和内置浏览器中生效。
+                    ${this._t('renderer.browser.settings.cert.desc')}
                 </p>
                 <div style="background:white;border:1px solid #e5e7eb;border-radius:10px;padding:16px 20px">
                     <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px">
-                        <span style="font-size: var(--fs-lg);font-weight:500;color:#374151">已导入的根证书</span>
+                        <span style="font-size: var(--fs-lg);font-weight:500;color:#374151">${this._t('renderer.browser.settings.cert.imported')}</span>
                         <button class="wb-bs-btn wb-bs-btn-primary" data-action="bs-import-cert">
-                            <i class="fas fa-plus"></i> 导入证书
+                            <i class="fas fa-plus"></i> ${this._t('renderer.browser.settings.cert.import')}
                         </button>
                     </div>
                     <div id="wb-cert-list">
                         <div style="text-align:center;color:#9ca3af;padding:20px 0;font-size: var(--fs-base)">
-                            <i class="fas fa-spinner fa-pulse"></i> 加载中…
+                            <i class="fas fa-spinner fa-pulse"></i> ${this._t('renderer.browser.settings.cert.loading')}
                         </div>
                     </div>
                     <div style="margin-top:12px;padding:8px 12px;background:#f0f9ff;border:1px solid #bae6fd;border-radius:6px;font-size: var(--fs-md);color:#0369a1">
-                        <i class="fas fa-info-circle"></i> 系统根证书已默认受信任。此处导入的自定义根证书将额外添加到浏览器信任链中。
+                        <i class="fas fa-info-circle"></i> ${this._t('renderer.browser.settings.cert.systemHint')}
                     </div>
                 </div>
             </div>
@@ -4126,22 +4202,22 @@ class BrowserEntryWidget extends HTMLElement {
                     <i class="fas fa-globe" style="margin-right:8px;color:#6b7280"></i>User Agent
                 </div>
                 <p style="font-size: var(--fs-base);color:#9ca3af;margin:0 0 16px 0">
-                    自定义浏览器 User Agent 标识。留空则使用系统默认值。
+                    ${this._t('renderer.browser.settings.ua.desc')}
                 </p>
                 <div style="background:white;border:1px solid #e5e7eb;border-radius:10px;padding:16px 20px">
                     <input
                         id="wb-useragent-input"
                         type="text"
-                        placeholder="留空使用系统默认 UA"
+                        placeholder="${this._t('renderer.browser.settings.ua.placeholder')}"
                         value="${this._escapeHtml(this._cachedUserAgent)}"
                         style="width:100%;box-sizing:border-box;padding:8px 12px;border:1px solid #d1d5db;border-radius:6px;font-size: var(--fs-base);font-family:monospace;color:#374151;outline:none"
                     />
                     <div style="display:flex;align-items:center;justify-content:space-between;margin-top:12px">
                         <span style="font-size: var(--fs-sm);color:#9ca3af">
-                            <i class="fas fa-info-circle"></i> 修改后新建的标签页生效，已有标签页不受影响
+                            <i class="fas fa-info-circle"></i> ${this._t('renderer.browser.settings.ua.hint')}
                         </span>
                         <button class="wb-bs-btn wb-bs-btn-primary" data-action="bs-save-useragent">
-                            <i class="fas fa-floppy-disk"></i> 保存
+                            <i class="fas fa-floppy-disk"></i> ${this._t('renderer.browser.modal.save')}
                         </button>
                     </div>
                 </div>
@@ -4170,10 +4246,10 @@ class BrowserEntryWidget extends HTMLElement {
                     icon: 'fa-key',
                     iconBg: '#FEF2F2',
                     iconColor: '#DC2626',
-                    title: '清除密码与自动填充数据',
-                    message: '将清除浏览器保存的所有密码和表单自动填充数据。此操作不可撤销。',
-                    confirmText: '清除',
-                    cancelText: '取消',
+                    title: this._t('renderer.browser.settings.clearAutofill.confirmTitle'),
+                    message: this._t('renderer.browser.settings.clearAutofill.confirmMessage'),
+                    confirmText: this._t('renderer.browser.modal.clear'),
+                    cancelText: this._t('renderer.browser.modal.cancel'),
                     danger: true
                 });
                 if (!confirmed) return;
@@ -4182,9 +4258,11 @@ class BrowserEntryWidget extends HTMLElement {
                     icon: result?.success ? 'fa-circle-check' : 'fa-circle-exclamation',
                     iconBg: result?.success ? '#ECFDF5' : '#FEF2F2',
                     iconColor: result?.success ? '#059669' : '#DC2626',
-                    title: result?.success ? '操作成功' : '操作失败',
-                    message: result?.message || '未知结果',
-                    confirmText: '知道了',
+                    title: result?.success
+                        ? this._t('renderer.browser.modal.actionSuccess')
+                        : this._t('renderer.browser.modal.actionFailed'),
+                    message: result?.message || this._t('renderer.browser.modal.unknownResult'),
+                    confirmText: this._t('renderer.browser.modal.acknowledge'),
                     cancelText: null
                 });
                 break;
@@ -4202,9 +4280,9 @@ class BrowserEntryWidget extends HTMLElement {
                     icon: 'fa-circle-check',
                     iconBg: '#ECFDF5',
                     iconColor: '#059669',
-                    title: '已保存',
-                    message: 'User Agent 设置已更新。新建的标签页将使用新设置。',
-                    confirmText: '知道了',
+                    title: this._t('renderer.browser.settings.ua.saved.title'),
+                    message: this._t('renderer.browser.settings.ua.saved.message'),
+                    confirmText: this._t('renderer.browser.modal.acknowledge'),
                     cancelText: null
                 });
                 break;
@@ -4219,7 +4297,9 @@ class BrowserEntryWidget extends HTMLElement {
         const registryAPI = (window as any).applicationRegistryAPI;
         if (!registryAPI?.callMainWorld) {
             certListEl.innerHTML =
-                '<div style="text-align:center;color:#9ca3af;padding:20px 0;font-size: var(--fs-base)">当前环境不支持证书管理</div>';
+                '<div style="text-align:center;color:#9ca3af;padding:20px 0;font-size: var(--fs-base)">' +
+                this._t('renderer.browser.settings.cert.unsupported') +
+                '</div>';
             return;
         }
 
@@ -4229,7 +4309,9 @@ class BrowserEntryWidget extends HTMLElement {
 
             if (certs.length === 0) {
                 certListEl.innerHTML =
-                    '<div style="text-align:center;color:#9ca3af;padding:20px 0;font-size: var(--fs-base)">暂无已导入的证书</div>';
+                    '<div style="text-align:center;color:#9ca3af;padding:20px 0;font-size: var(--fs-base)">' +
+                    this._t('renderer.browser.settings.cert.none') +
+                    '</div>';
                 return;
             }
 
@@ -4240,8 +4322,8 @@ class BrowserEntryWidget extends HTMLElement {
                     <i class="fas fa-certificate" style="color:#3b82f6;font-size: var(--fs-xl);flex-shrink:0"></i>
                     <div style="flex:1;min-width:0">
                         <div style="font-size: var(--fs-base);font-weight:500;color:#374151;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${this.escapeHtml(cert.commonName)}</div>
-                        <div style="font-size: var(--fs-sm);color:#9ca3af">颁发者: ${this.escapeHtml(cert.issuer)}</div>
-                        <div style="font-size: var(--fs-sm);color:#b0b3b8">有效期: ${cert.validFrom?.split('T')[0] || ''} ~ ${cert.validTo?.split('T')[0] || ''}</div>
+                        <div style="font-size: var(--fs-sm);color:#9ca3af">${this._t('renderer.browser.settings.cert.issuer')}${this.escapeHtml(cert.issuer)}</div>
+                        <div style="font-size: var(--fs-sm);color:#b0b3b8">${this._t('renderer.browser.settings.cert.validity')}${cert.validFrom?.split('T')[0] || ''} ~ ${cert.validTo?.split('T')[0] || ''}</div>
                     </div>
                     <button class="wb-bs-btn wb-bs-btn-danger" data-action="bs-delete-cert" data-fingerprint="${cert.fingerprint}" style="font-size: var(--fs-sm);padding:4px 10px">
                         <i class="fas fa-xmark"></i>
@@ -4259,10 +4341,10 @@ class BrowserEntryWidget extends HTMLElement {
                         icon: 'fa-certificate',
                         iconBg: '#FEF2F2',
                         iconColor: '#DC2626',
-                        title: '删除证书',
-                        message: '确定要删除此证书吗？',
-                        confirmText: '删除',
-                        cancelText: '取消',
+                        title: this._t('renderer.browser.settings.cert.deleteTitle'),
+                        message: this._t('renderer.browser.settings.cert.deleteMessage'),
+                        confirmText: this._t('renderer.browser.modal.delete'),
+                        cancelText: this._t('renderer.browser.modal.cancel'),
                         danger: true
                     });
                     if (!confirmed) return;
@@ -4275,16 +4357,18 @@ class BrowserEntryWidget extends HTMLElement {
                         icon: result?.success ? 'fa-circle-check' : 'fa-circle-exclamation',
                         iconBg: result?.success ? '#ECFDF5' : '#FEF2F2',
                         iconColor: result?.success ? '#059669' : '#DC2626',
-                        title: '操作完成',
-                        message: result?.message || '未知结果',
-                        confirmText: '知道了',
+                        title: this._t('renderer.browser.modal.opDone'),
+                        message: result?.message || this._t('renderer.browser.modal.unknownResult'),
+                        confirmText: this._t('renderer.browser.modal.acknowledge'),
                         cancelText: null
                     });
                 });
             });
         } catch {
             certListEl.innerHTML =
-                '<div style="text-align:center;color:#ef4444;padding:20px 0;font-size: var(--fs-base)">加载证书失败</div>';
+                '<div style="text-align:center;color:#ef4444;padding:20px 0;font-size: var(--fs-base)">' +
+                this._t('renderer.browser.settings.cert.loadFailed') +
+                '</div>';
         }
     }
 
@@ -4311,9 +4395,9 @@ class BrowserEntryWidget extends HTMLElement {
                         icon: 'fa-circle-exclamation',
                         iconBg: '#FEF2F2',
                         iconColor: '#DC2626',
-                        title: '导入失败',
-                        message: '当前环境不支持证书导入。',
-                        confirmText: '知道了',
+                        title: this._t('renderer.browser.settings.cert.importFailed'),
+                        message: this._t('renderer.browser.settings.cert.importUnsupported'),
+                        confirmText: this._t('renderer.browser.modal.acknowledge'),
                         cancelText: null
                     });
                     return;
@@ -4324,9 +4408,11 @@ class BrowserEntryWidget extends HTMLElement {
                     icon: result?.success ? 'fa-circle-check' : 'fa-circle-exclamation',
                     iconBg: result?.success ? '#ECFDF5' : '#FEF2F2',
                     iconColor: result?.success ? '#059669' : '#DC2626',
-                    title: result?.success ? '导入成功' : '导入失败',
-                    message: result?.message || '未知结果',
-                    confirmText: '知道了',
+                    title: result?.success
+                        ? this._t('renderer.browser.settings.cert.importSuccess')
+                        : this._t('renderer.browser.settings.cert.importFailed'),
+                    message: result?.message || this._t('renderer.browser.modal.unknownResult'),
+                    confirmText: this._t('renderer.browser.modal.acknowledge'),
                     cancelText: null
                 });
 
@@ -4338,9 +4424,9 @@ class BrowserEntryWidget extends HTMLElement {
                     icon: 'fa-circle-exclamation',
                     iconBg: '#FEF2F2',
                     iconColor: '#DC2626',
-                    title: '导入失败',
-                    message: err?.message || '无法读取证书文件',
-                    confirmText: '知道了',
+                    title: this._t('renderer.browser.settings.cert.importFailed'),
+                    message: err?.message || this._t('renderer.browser.settings.cert.readFailed'),
+                    confirmText: this._t('renderer.browser.modal.acknowledge'),
                     cancelText: null
                 });
             }
