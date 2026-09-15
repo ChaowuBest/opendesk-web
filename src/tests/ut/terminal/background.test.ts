@@ -1,6 +1,10 @@
 import { jest } from '@jest/globals';
 import { EventEmitter } from 'events';
 import type { ChildProcess } from 'child_process';
+import fs from 'fs';
+import os from 'os';
+import path from 'path';
+import { BoundedOutputBuffer, TERMINAL_OUTPUT_MAX_CHARS } from '../../../main/applications/terminal/output-buffer.js';
 
 // setting.ts 含 create(import.meta.url) 写法，ts-jest 编译为 CJS 后与 require 标识符冲突，mock 掉
 // （background.ts 经 shellExec.ts 间接依赖 setting.ts）
@@ -94,5 +98,51 @@ describe('installTimeoutBackgrounding', () => {
 
         await expect(completion).resolves.toBe(false);
         expect(updateResultObject).not.toHaveBeenCalled();
+    });
+
+    test('keeps the complete artifact when a truncated command moves to the background', async () => {
+        jest.useFakeTimers();
+        const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'opendesk-background-output-'));
+        const artifactPath = path.join(directory, 'terminal.log');
+        const stdout = new EventEmitter();
+        const stderr = new EventEmitter();
+        const proc = Object.assign(new EventEmitter(), {
+            pid: 987654,
+            stdout,
+            stderr
+        }) as unknown as ChildProcess;
+        const buffer = new BoundedOutputBuffer('', 'truncated', artifactPath, 'saved');
+        const foregroundOutput = 'a'.repeat(TERMINAL_OUTPUT_MAX_CHARS + 1);
+        const backgroundOutput = 'background tail';
+        buffer.append(foregroundOutput);
+        const onFinish = jest.fn((backgrounded?: boolean) => {
+            if (!backgrounded) buffer.closeArtifact();
+        });
+
+        try {
+            const completion = installTimeoutBackgrounding({
+                handle: { proc, detachListeners: jest.fn() },
+                command: 'long-running-command',
+                startTime: Date.now(),
+                timeout: 1000,
+                getOutput: () => buffer.getText(),
+                getOutputBuffer: () => buffer,
+                result: { updateResult: jest.fn(), updateResultObject: jest.fn() } as any,
+                isKilledByStop: () => false,
+                onFinish
+            });
+
+            jest.advanceTimersByTime(1000);
+            await expect(completion).resolves.toBe(true);
+            expect(onFinish).toHaveBeenCalledWith(true);
+
+            stdout.emit('data', Buffer.from(backgroundOutput));
+            proc.emit('close', 0);
+
+            expect(fs.readFileSync(artifactPath, 'utf8')).toBe(foregroundOutput + backgroundOutput);
+        } finally {
+            buffer.closeArtifact();
+            fs.rmSync(directory, { recursive: true, force: true });
+        }
     });
 });

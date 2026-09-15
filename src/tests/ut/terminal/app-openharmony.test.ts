@@ -6,6 +6,7 @@ jest.unstable_mockModule('../../../main/utils/setting.js', () => ({
     Setting: class {
         static getInstance() {
             return {
+                data: { locale: 'zh-CN' },
                 getData: () => {
                     throw new Error('Setting not initialized in test');
                 },
@@ -14,7 +15,8 @@ jest.unstable_mockModule('../../../main/utils/setting.js', () => ({
         }
     },
     getOpendeskDirectory: () => '/tmp/opendesk-test',
-    getLogDirectory: () => '/tmp/opendesk-test/logs'
+    getLogDirectory: () => '/tmp/opendesk-test/logs',
+    getTaskToolResultDirectory: () => '/tmp/opendesk-test/tool-results'
 }));
 
 // 通过 fs/child_process mock 控制 findOpenHarmonyZsh 的探测结果

@@ -10,5 +10,7 @@
  */
 
 export const enUs: Record<string, string> = {
-    'app.name': 'Terminal'
+    'app.name': 'Terminal',
+    'output.truncated': 'Output too large; display truncated',
+    'output.artifactSaved': 'Complete output saved to'
 };
