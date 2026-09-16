@@ -4,6 +4,8 @@
  */
 
 import { showConfirmModal, renderIcon, bindOverlayDismiss } from '../../../../renderer/components/confirmModal';
+import { resolveRendererLocale } from '../../../../renderer/locale.js';
+import { createTranslatorForSkillMgr } from '../locale/renderer.js';
 import { showDuplicateInstallModal } from './duplicateInstallModal.js';
 import { getSkillInitial, getSkillPastel } from '../../../../renderer/components/skills/skill-detail-card.ts';
 import { OPENDESK_THEME_CHANGED } from '../../../../renderer/theme/theme-iframe-bridge.ts';
@@ -96,21 +98,21 @@ function formatDownloads(n) {
     return String(n);
 }
 
-const DEFAULT_SLOGAN = '技能，让智能体无所不能';
+const DEFAULT_SLOGAN_KEY = 'renderer.skill.defaultSlogan';
 
-const TEST_FAILURE_REASON_CATEGORY_LABELS = {
-    misconfigured: '未正确配置',
-    dependency_runtime: '依赖与运行时问题',
-    input_data: '输入数据问题',
-    external_service: '外部服务问题',
-    skill_implementation: 'skill实现问题'
+const TEST_FAILURE_REASON_CATEGORY_KEYS = {
+    misconfigured: 'renderer.skill.failure.misconfigured',
+    dependency_runtime: 'renderer.skill.failure.dependencyRuntime',
+    input_data: 'renderer.skill.failure.inputData',
+    external_service: 'renderer.skill.failure.externalService',
+    skill_implementation: 'renderer.skill.failure.skillImplementation'
 };
 
 const REGISTRY_TABS = [
-    { id: 'matrix', label: 'OpenHarmony Matrix', icon: '🔷', slogan: DEFAULT_SLOGAN },
-    { id: 'clawhub', label: 'ClawHub', icon: '🐾', slogan: DEFAULT_SLOGAN },
-    { id: 'skillhub', label: 'SkillHub', icon: '💎', slogan: DEFAULT_SLOGAN },
-    { id: 'modelscope', label: 'ModelScope', icon: '🔮', slogan: DEFAULT_SLOGAN }
+    { id: 'matrix', label: 'OpenHarmony Matrix', icon: '🔷', sloganKey: 'renderer.skill.slogan.matrix' },
+    { id: 'clawhub', label: 'ClawHub', icon: '🐾', sloganKey: 'renderer.skill.slogan.clawhub' },
+    { id: 'skillhub', label: 'SkillHub', icon: '💎', sloganKey: 'renderer.skill.slogan.skillhub' },
+    { id: 'modelscope', label: 'ModelScope', icon: '🔮', sloganKey: 'renderer.skill.slogan.modelscope' }
 ];
 
 const STYLE = `
@@ -1447,6 +1449,9 @@ ${markdownCSS}`;
 class SkillMgrEntryWidget extends HTMLElement {
     constructor() {
         super();
+        this._t = createTranslatorForSkillMgr();
+        this._locale = undefined;
+        this._settingUnsubscribe = null;
         this.skills = [];
         this.externalSkills = [];
         this.skillsDir = '';
@@ -1607,6 +1612,17 @@ class SkillMgrEntryWidget extends HTMLElement {
     }
 
     async connectedCallback() {
+        // 先加载语言设置再渲染，避免首帧出现错误语言
+        let setting;
+        try {
+            setting = await window.settingAPI?.loadSettingObject?.();
+        } catch {
+            setting = undefined;
+        }
+        this._applyLocaleSetting(setting);
+        // 等待设置加载期间元素可能已被移除，避免对脱离 DOM 的元素继续渲染
+        if (!this.isConnected) return;
+        this._subscribeLocaleChanges();
         this.render();
         document.addEventListener(OPENDESK_THEME_CHANGED, this._onThemeChange);
         await Promise.all([this.loadSkills(), this._loadRegistryInfo(), this.loadBuiltinSkills()]);
@@ -1626,7 +1642,32 @@ class SkillMgrEntryWidget extends HTMLElement {
         }
     }
 
+    _applyLocaleSetting(setting) {
+        this._locale = resolveRendererLocale(setting);
+        this._t = createTranslatorForSkillMgr(setting);
+    }
+
+    /* 语言设置变化时重建翻译器并整体重渲染；打开中的弹窗原样保留（用户输入态） */
+    _subscribeLocaleChanges() {
+        if (this._settingUnsubscribe) return;
+        const unsubscribe = window.settingAPI?.onSettingChanged?.((setting) => {
+            if (!this.isConnected) return;
+            if (resolveRendererLocale(setting) === this._locale) return;
+            const openOverlay = this.shadowRoot?.querySelector('.detail-overlay, .bi-overlay, .analyze-modal-overlay');
+            this._applyLocaleSetting(setting);
+            this.render();
+            if (openOverlay) this.shadowRoot?.appendChild(openOverlay);
+        });
+        if (typeof unsubscribe === 'function') {
+            this._settingUnsubscribe = unsubscribe;
+        }
+    }
+
     disconnectedCallback() {
+        if (this._settingUnsubscribe) {
+            this._settingUnsubscribe();
+            this._settingUnsubscribe = null;
+        }
         document.removeEventListener('click', this._onDocClick, true);
         document.removeEventListener('keydown', this._onKeyDown);
         document.removeEventListener(OPENDESK_THEME_CHANGED, this._onThemeChange);
@@ -1725,9 +1766,9 @@ class SkillMgrEntryWidget extends HTMLElement {
         if (isAnalyzing) {
             const pct = ws.total > 0 ? Math.round((ws.completed / ws.total) * 100) : 0;
             let taskLabel;
-            if (ws.taskType === 'testrun') taskLabel = '正在运行测试用例';
-            else if (ws.taskType === 'testgen') taskLabel = '正在生成测试用例';
-            else taskLabel = '正在分析技能依赖项';
+            if (ws.taskType === 'testrun') taskLabel = this._t('renderer.skill.analyze.task.testrun');
+            else if (ws.taskType === 'testgen') taskLabel = this._t('renderer.skill.analyze.task.testgen');
+            else taskLabel = this._t('renderer.skill.analyze.task.analyze');
             progressHtml = `
             <div class="analyze-progress-bar-wrap">
                 <div class="analyze-progress-label">
@@ -1737,14 +1778,14 @@ class SkillMgrEntryWidget extends HTMLElement {
                 <div class="analyze-progress-bar">
                     <div class="analyze-progress-fill" style="width:${pct}%"></div>
                 </div>
-                <button type="button" class="analyze-stop-btn" data-analyze-stop>⏹ 停止${ws.taskType === 'testrun' ? '测试' : '分析'}</button>
+                <button type="button" class="analyze-stop-btn" data-analyze-stop>${ws.taskType === 'testrun' ? this._t('renderer.skill.analyze.stopTest') : this._t('renderer.skill.analyze.stopAnalyze')}</button>
             </div>`;
         }
 
         // 技能列表
         const listHtml =
             visible.length === 0
-                ? `<div class="analyze-empty"><div class="empty-icon">🔍</div><div class="empty-title">未找到匹配的技能</div><div class="empty-hint">换个关键词试试</div></div>`
+                ? `<div class="analyze-empty"><div class="empty-icon">🔍</div><div class="empty-title">${this._t('renderer.skill.analyze.noMatch')}</div><div class="empty-hint">${this._t('renderer.skill.empty.noMatchTry')}</div></div>`
                 : `<div class="analyze-list">${visible
                       .map((s) => {
                           const color = this._getSkillPastel(s.name || s.id);
@@ -1763,13 +1804,13 @@ class SkillMgrEntryWidget extends HTMLElement {
                           let actionBtns = '';
                           if (skillResult) {
                               if (skillResult.error) {
-                                  actionBtns = `<button type="button" class="analyze-row-btn analyze-row-error-btn" data-view-error="${escapeHtml(s.id)}">查看错误</button>`;
+                                  actionBtns = `<button type="button" class="analyze-row-btn analyze-row-error-btn" data-view-error="${escapeHtml(s.id)}">${this._t('renderer.skill.analyze.viewError')}</button>`;
                               } else {
                                   if (hasDeps) {
-                                      actionBtns += `<button type="button" class="analyze-row-btn" data-view-deps="${escapeHtml(s.id)}">依赖项</button>`;
+                                      actionBtns += `<button type="button" class="analyze-row-btn" data-view-deps="${escapeHtml(s.id)}">${this._t('renderer.skill.analyze.deps')}</button>`;
                                   }
                                   if (hasTestCases) {
-                                      actionBtns += `<button type="button" class="analyze-row-btn" data-view-tests="${escapeHtml(s.id)}">测试用例${escapeHtml(this._getTestCaseStats(skillResult))}</button>`;
+                                      actionBtns += `<button type="button" class="analyze-row-btn" data-view-tests="${escapeHtml(s.id)}">${this._t('renderer.skill.analyze.testCases')}${escapeHtml(this._getTestCaseStats(skillResult))}</button>`;
                                   }
                                   if (!hasDeps && !hasTestCases) {
                                       actionBtns = `<span class="analyze-row-action analyze-row-none">—</span>`;
@@ -1800,20 +1841,20 @@ class SkillMgrEntryWidget extends HTMLElement {
         const pageSizeOptions = [10, 20, 30, 50];
         const paginationHtml = `
             <div class="analyze-pagination">
-                <div class="analyze-pagination-info">共 ${filtered.length} 个技能${selectedCount > 0 ? `，已选 ${selectedCount} 个` : ''}</div>
+                <div class="analyze-pagination-info">${this._t('renderer.skill.analyze.totalSkills', { count: filtered.length })}${selectedCount > 0 ? this._t('renderer.skill.analyze.selectedSuffix', { count: selectedCount }) : ''}</div>
                 <div class="analyze-pagination-controls">
-                    <span style="font-size:12px;color:#999;">每页</span>
+                    <span style="font-size:12px;color:#999;">${this._t('renderer.skill.analyze.perPage')}</span>
                     <select data-analyze-page-size>
                         ${pageSizeOptions
                             .map((n) => `<option value="${n}" ${state.pageSize === n ? 'selected' : ''}>${n}</option>`)
                             .join('')}
                     </select>
-                    <button type="button" class="page-btn" data-analyze-page="first" ${state.page <= 1 ? 'disabled' : ''}>首页</button>
-                    <button type="button" class="page-btn" data-analyze-page="prev" ${state.page <= 1 ? 'disabled' : ''}>上一页</button>
+                    <button type="button" class="page-btn" data-analyze-page="first" ${state.page <= 1 ? 'disabled' : ''}>${this._t('renderer.skill.analyze.page.first')}</button>
+                    <button type="button" class="page-btn" data-analyze-page="prev" ${state.page <= 1 ? 'disabled' : ''}>${this._t('renderer.skill.analyze.page.prev')}</button>
                     <input type="number" class="page-jump-input" data-analyze-page-jump value="${state.page}" min="1" max="${totalPages}" />
                     <span class="page-num">/ ${totalPages}</span>
-                    <button type="button" class="page-btn" data-analyze-page="next" ${state.page >= totalPages ? 'disabled' : ''}>下一页</button>
-                    <button type="button" class="page-btn" data-analyze-page="last" ${state.page >= totalPages ? 'disabled' : ''}>末页</button>
+                    <button type="button" class="page-btn" data-analyze-page="next" ${state.page >= totalPages ? 'disabled' : ''}>${this._t('renderer.skill.analyze.page.next')}</button>
+                    <button type="button" class="page-btn" data-analyze-page="last" ${state.page >= totalPages ? 'disabled' : ''}>${this._t('renderer.skill.analyze.page.last')}</button>
                 </div>
             </div>`;
 
@@ -1848,7 +1889,10 @@ class SkillMgrEntryWidget extends HTMLElement {
         const deselectBtn = panel.querySelector('[data-analyze-deselect-all]');
         if (deselectBtn) {
             deselectBtn.disabled = selectedCount === 0;
-            deselectBtn.textContent = selectedCount > 0 ? `取消选择 (${selectedCount})` : '取消选择';
+            deselectBtn.textContent =
+                selectedCount > 0
+                    ? this._t('renderer.skill.analyze.deselectWithCount', { count: selectedCount })
+                    : this._t('renderer.skill.analyze.deselect');
         }
 
         this._syncAnalyzeToolbarState(filtered, selectedCount);
@@ -1866,7 +1910,6 @@ class SkillMgrEntryWidget extends HTMLElement {
                 if (tab) {
                     if (info.label) tab.label = info.label;
                     if (info.icon) tab.icon = info.icon;
-                    if (info.slogan) tab.slogan = info.slogan;
                     if (info.filters) tab.filters = info.filters;
                 }
             }
@@ -1888,7 +1931,7 @@ class SkillMgrEntryWidget extends HTMLElement {
     async loadSkills() {
         const api = getSkillsAPI();
         if (!api) {
-            this.error = '无法连接技能服务';
+            this.error = this._t('renderer.skill.error.connect');
             this.render();
             return;
         }
@@ -1907,7 +1950,7 @@ class SkillMgrEntryWidget extends HTMLElement {
             this.externalState.query = '';
             this.externalState.page = 1;
         } catch (e) {
-            this.error = e?.message || '加载失败';
+            this.error = e?.message || this._t('renderer.skill.error.load');
             this.skills = [];
             this.externalSkills = [];
         } finally {
@@ -1920,7 +1963,7 @@ class SkillMgrEntryWidget extends HTMLElement {
     async loadBuiltinSkills() {
         const api = getSkillsAPI();
         if (!api) {
-            this.builtinError = '无法连接技能服务';
+            this.builtinError = this._t('renderer.skill.error.connect');
             return;
         }
         this.builtinLoading = true;
@@ -1929,7 +1972,7 @@ class SkillMgrEntryWidget extends HTMLElement {
             this.builtinSkills = await api.getBuiltinSkills();
             if (!Array.isArray(this.builtinSkills)) this.builtinSkills = [];
         } catch (e) {
-            this.builtinError = e?.message || '加载失败';
+            this.builtinError = e?.message || this._t('renderer.skill.error.load');
             this.builtinSkills = [];
         } finally {
             this.builtinLoading = false;
@@ -1951,7 +1994,7 @@ class SkillMgrEntryWidget extends HTMLElement {
             await api.refresh();
             await this.loadSkills();
         } catch (e) {
-            this.error = e?.message || '刷新失败';
+            this.error = e?.message || this._t('renderer.skill.error.refresh');
             this.render();
         }
     }
@@ -2048,7 +2091,9 @@ class SkillMgrEntryWidget extends HTMLElement {
             if (!api) return;
             const res = await Promise.race([
                 api.searchRegistry(tabId, state.query, nextPage, 30, state.nextCursor, state.activeFilter || undefined),
-                new Promise((_, rej) => setTimeout(() => rej(new Error('加载超时')), 30000))
+                new Promise((_, rej) =>
+                    setTimeout(() => rej(new Error(this._t('renderer.skill.error.loadTimeout'))), 30000)
+                )
             ]);
             state.page = nextPage;
             const newSkills = res?.skills ?? [];
@@ -2059,7 +2104,7 @@ class SkillMgrEntryWidget extends HTMLElement {
 
             this._appendCards(tabId, newSkills);
         } catch (e) {
-            state.message = { text: e?.message || '加载更多失败', isError: true };
+            state.message = { text: e?.message || this._t('renderer.skill.error.loadMore'), isError: true };
             this.render();
         } finally {
             state.loadingMore = false;
@@ -2115,7 +2160,7 @@ class SkillMgrEntryWidget extends HTMLElement {
         const state = this.registryStates[tabId];
         const api = getSkillsAPI();
         if (!api?.searchRegistry) {
-            state.message = { text: '无法连接技能服务', isError: true };
+            state.message = { text: this._t('renderer.skill.error.connect'), isError: true };
             this.render();
             return;
         }
@@ -2126,7 +2171,9 @@ class SkillMgrEntryWidget extends HTMLElement {
         try {
             const res = await Promise.race([
                 api.searchRegistry(tabId, query, page, 30, state.nextCursor, state.activeFilter || undefined),
-                new Promise((_, rej) => setTimeout(() => rej(new Error('搜索超时，请检查网络或稍后重试')), 30000))
+                new Promise((_, rej) =>
+                    setTimeout(() => rej(new Error(this._t('renderer.skill.error.searchTimeout'))), 30000)
+                )
             ]);
             state.results = page === 1 ? (res?.skills ?? []) : [...state.results, ...(res?.skills ?? [])];
             state.total = res?.total ?? state.results.length;
@@ -2135,7 +2182,7 @@ class SkillMgrEntryWidget extends HTMLElement {
             if (res?.error) state.message = { text: res.error, isError: true };
             else if (res?.message) state.message = { text: res.message, isError: false };
         } catch (e) {
-            state.message = { text: e?.message || '搜索失败', isError: true };
+            state.message = { text: e?.message || this._t('renderer.skill.error.searchFailed'), isError: true };
             if (page === 1) state.results = [];
         } finally {
             state.searching = false;
@@ -2189,12 +2236,19 @@ class SkillMgrEntryWidget extends HTMLElement {
                 ({ force, customName } = conflict);
                 addRes = await api.installFromRegistry(installUrl, force, customName);
             }
-            const actionLabel = force ? '覆盖' : customName ? `以名称「${customName}」` : '';
-            const message = customName ? `${actionLabel}安装` : `技能「${addRes?.name ?? ''}」已${actionLabel}安装`;
-            this._notify('info', '安装成功', message);
+            const message = customName
+                ? this._t('renderer.skill.install.installedAs', { name: customName })
+                : force
+                  ? this._t('renderer.skill.install.overwritten', { name: addRes?.name ?? '' })
+                  : this._t('renderer.skill.install.doneWithName', { name: addRes?.name ?? '' });
+            this._notify('info', this._t('renderer.skill.install.success'), message);
             await this.loadSkills();
         } catch (e) {
-            this._notify('error', '安装失败', e?.message || '未知错误');
+            this._notify(
+                'error',
+                this._t('renderer.skill.install.failed'),
+                e?.message || this._t('renderer.skill.common.unknownError')
+            );
         } finally {
             this.installingRegistryIds.delete(skillId);
             this._updateInstallBtn(skillId, false);
@@ -2208,7 +2262,7 @@ class SkillMgrEntryWidget extends HTMLElement {
         const pw = card?.querySelector('.progress-bar-wrap');
         if (installing) {
             btn.disabled = true;
-            btn.innerHTML = '<span class="installing-dots"><span>.</span><span>.</span><span>.</span></span> 安装中';
+            btn.innerHTML = `<span class="installing-dots"><span>.</span><span>.</span><span>.</span></span> ${this._t('renderer.skill.common.installing')}`;
             btn.classList.add('installing');
             if (!pw && card) {
                 const b = document.createElement('div');
@@ -2218,7 +2272,7 @@ class SkillMgrEntryWidget extends HTMLElement {
             }
         } else {
             btn.disabled = false;
-            btn.textContent = '安装';
+            btn.textContent = this._t('renderer.skill.common.install');
             btn.classList.remove('installing');
             pw?.remove();
         }
@@ -2241,10 +2295,18 @@ class SkillMgrEntryWidget extends HTMLElement {
         this._updateDropdown();
         try {
             const r = await api.addFromDirectory(dp);
-            this._notify('info', '安装成功', `技能「${r?.name ?? ''}」已添加`);
+            this._notify(
+                'info',
+                this._t('renderer.skill.install.success'),
+                this._t('renderer.skill.install.added', { name: r?.name ?? '' })
+            );
             await this.loadSkills();
         } catch (e) {
-            this._notify('error', '添加失败', e?.message || '未知错误');
+            this._notify(
+                'error',
+                this._t('renderer.skill.add.failed'),
+                e?.message || this._t('renderer.skill.common.unknownError')
+            );
         } finally {
             this.addingFromPath = false;
         }
@@ -2260,10 +2322,18 @@ class SkillMgrEntryWidget extends HTMLElement {
         this._updateDropdown();
         try {
             const r = await api.addFromZip(p);
-            this._notify('info', '安装成功', `技能「${r?.name ?? ''}」已添加`);
+            this._notify(
+                'info',
+                this._t('renderer.skill.install.success'),
+                this._t('renderer.skill.install.added', { name: r?.name ?? '' })
+            );
             await this.loadSkills();
         } catch (e) {
-            this._notify('error', '添加失败', e?.message || '未知错误');
+            this._notify(
+                'error',
+                this._t('renderer.skill.add.failed'),
+                e?.message || this._t('renderer.skill.common.unknownError')
+            );
         } finally {
             this.addingFromZip = false;
         }
@@ -2277,11 +2347,19 @@ class SkillMgrEntryWidget extends HTMLElement {
         this.render();
         try {
             const r = await api.addFromUrl(url);
-            this._notify('info', '安装成功', `技能「${r?.name ?? ''}」已添加`);
+            this._notify(
+                'info',
+                this._t('renderer.skill.install.success'),
+                this._t('renderer.skill.install.added', { name: r?.name ?? '' })
+            );
             this.addUrl = '';
             await this.loadSkills();
         } catch (e) {
-            this._notify('error', '添加失败', e?.message || '未知错误');
+            this._notify(
+                'error',
+                this._t('renderer.skill.add.failed'),
+                e?.message || this._t('renderer.skill.common.unknownError')
+            );
         } finally {
             this.addingFromUrl = false;
             this.render();
@@ -2296,10 +2374,10 @@ class SkillMgrEntryWidget extends HTMLElement {
             icon: 'fa-trash-can',
             iconBg: '#FEF2F2',
             iconColor: '#DC2626',
-            title: '删除技能',
-            message: `确定要删除技能「<b>${skillId}</b>」吗？删除后需要重新安装才能恢复。`,
-            confirmText: '删除',
-            cancelText: '取消',
+            title: this._t('renderer.skill.delete.title'),
+            message: this._t('renderer.skill.delete.confirm', { id: skillId }),
+            confirmText: this._t('renderer.skill.common.delete'),
+            cancelText: this._t('renderer.skill.common.cancel'),
             danger: true
         });
         if (!confirmed) return;
@@ -2308,10 +2386,18 @@ class SkillMgrEntryWidget extends HTMLElement {
         this.render();
         try {
             await api.delete(skillId);
-            this._notify('info', '已删除', `技能「${skillId}」已移除`);
+            this._notify(
+                'info',
+                this._t('renderer.skill.delete.deleted.title'),
+                this._t('renderer.skill.delete.deleted.message', { id: skillId })
+            );
             await this.loadSkills();
         } catch (e) {
-            this._notify('error', '删除失败', e?.message || '未知错误');
+            this._notify(
+                'error',
+                this._t('renderer.skill.delete.failed'),
+                e?.message || this._t('renderer.skill.common.unknownError')
+            );
         } finally {
             this.deletingId = null;
             this.render();
@@ -2332,14 +2418,27 @@ class SkillMgrEntryWidget extends HTMLElement {
             // 更新 toggle 的 title
             const toggle = this.shadowRoot.querySelector(`[data-toggle-id="${skillId}"]`);
             if (toggle) {
-                toggle.title = enabled ? '已启用，点击禁用' : '已禁用，点击启用';
+                toggle.title = enabled
+                    ? this._t('renderer.skill.toggle.enableHint')
+                    : this._t('renderer.skill.toggle.disableHint');
             }
-            this._notify('info', enabled ? '已启用' : '已禁用', `技能「${skillId}」已${enabled ? '启用' : '禁用'}`);
+            this._notify(
+                'info',
+                enabled ? this._t('renderer.skill.toggle.done.enable') : this._t('renderer.skill.toggle.done.disable'),
+                this._t('renderer.skill.toggle.done.message', {
+                    id: skillId,
+                    action: enabled ? this._t('renderer.skill.common.enable') : this._t('renderer.skill.common.disable')
+                })
+            );
         } catch (e) {
             // 失败时恢复 toggle 状态
             const toggle = this.shadowRoot.querySelector(`[data-toggle-id="${skillId}"]`);
             if (toggle) toggle.checked = !enabled;
-            this._notify('error', '操作失败', e?.message || '未知错误');
+            this._notify(
+                'error',
+                this._t('renderer.skill.toggle.failed'),
+                e?.message || this._t('renderer.skill.common.unknownError')
+            );
         }
     }
 
@@ -2405,7 +2504,7 @@ class SkillMgrEntryWidget extends HTMLElement {
     _renderToolsList(tools) {
         if (!tools || tools.length === 0) return '';
         return `<div class="detail-section">
-            <div class="detail-section-label">自带工具 (${tools.length})</div>
+            <div class="detail-section-label">${this._t('renderer.skill.detail.builtinTools', { count: tools.length })}</div>
             <div class="detail-tools-list">${tools
                 .map(
                     (t, i) => `
@@ -2417,11 +2516,11 @@ class SkillMgrEntryWidget extends HTMLElement {
                     ${
                         t.params && t.params.length > 0
                             ? `<button type="button" class="detail-tool-params-toggle" data-tool-toggle="${i}">
-                            <span class="toggle-icon">▶</span> 参数 (${t.params.length})
+                            <span class="toggle-icon">▶</span> ${this._t('renderer.skill.detail.params', { count: t.params.length })}
                            </button>
                            <div class="detail-tool-params" data-tool-params="${i}" style="display:none">
                              <div class="detail-tool-params-header">
-                               <span>参数名</span><span>类型</span><span>必填</span><span>描述</span>
+                               <span>${this._t('renderer.skill.detail.paramName')}</span><span>${this._t('renderer.skill.detail.paramType')}</span><span>${this._t('renderer.skill.detail.paramRequired')}</span><span>${this._t('renderer.skill.deps.col.desc')}</span>
                              </div>
                              ${t.params
                                  .map(
@@ -2429,13 +2528,13 @@ class SkillMgrEntryWidget extends HTMLElement {
                                <div class="detail-tool-param">
                                  <span class="param-name">${escapeHtml(p.name)}</span>
                                  <span class="param-type">${escapeHtml(p.type)}</span>
-                                 <span class="param-required ${p.required ? 'is-required' : 'is-optional'}">${p.required ? '必填' : '可选'}</span>
+                                 <span class="param-required ${p.required ? 'is-required' : 'is-optional'}">${p.required ? this._t('renderer.skill.detail.required') : this._t('renderer.skill.detail.optional')}</span>
                                  <span class="param-desc">${escapeHtml(p.description || '-')}</span>
                                </div>`
                                  )
                                  .join('')}
                            </div>`
-                            : `<div class="detail-tool-no-params">无参数</div>`
+                            : `<div class="detail-tool-no-params">${this._t('renderer.skill.detail.noParams')}</div>`
                     }
                 </div>`
                 )
@@ -2473,24 +2572,39 @@ class SkillMgrEntryWidget extends HTMLElement {
     _renderDetailModal(detail, opts = {}) {
         this._removeDetailModal();
         const metaItems = [];
-        if (detail.author) metaItems.push({ label: '作者', value: detail.author });
+        if (detail.author) metaItems.push({ label: this._t('renderer.skill.detail.author'), value: detail.author });
         if (detail.source)
             metaItems.push({
-                label: '来源',
-                value: opts.isExternal && detail.source === 'config' ? '外部目录' : detail.source
+                label: this._t('renderer.skill.detail.source'),
+                value:
+                    opts.isExternal && detail.source === 'config'
+                        ? this._t('renderer.skill.detail.sourceExternal')
+                        : detail.source
             });
-        if (detail.bundleName) metaItems.push({ label: '应用', value: detail.bundleName });
-        if (detail.license) metaItems.push({ label: '许可证', value: detail.license });
-        if (detail.compatibility) metaItems.push({ label: '兼容性', value: detail.compatibility });
-        if (detail.allowedTools?.length) metaItems.push({ label: '允许工具', value: detail.allowedTools.join(', ') });
+        if (detail.bundleName)
+            metaItems.push({ label: this._t('renderer.skill.detail.app'), value: detail.bundleName });
+        if (detail.license) metaItems.push({ label: this._t('renderer.skill.detail.license'), value: detail.license });
+        if (detail.compatibility)
+            metaItems.push({ label: this._t('renderer.skill.detail.compatibility'), value: detail.compatibility });
+        if (detail.allowedTools?.length)
+            metaItems.push({
+                label: this._t('renderer.skill.detail.allowedTools'),
+                value: detail.allowedTools.join(', ')
+            });
         if (detail.skillDir)
-            metaItems.push({ label: opts.isExternal ? '外部路径' : '安装路径', value: detail.skillDir });
-        if (opts.isBuiltin && detail.directory) metaItems.push({ label: '技能目录', value: detail.directory });
+            metaItems.push({
+                label: opts.isExternal
+                    ? this._t('renderer.skill.detail.externalPath')
+                    : this._t('renderer.skill.detail.installPath'),
+                value: detail.skillDir
+            });
+        if (opts.isBuiltin && detail.directory)
+            metaItems.push({ label: this._t('renderer.skill.detail.skillDir'), value: detail.directory });
 
         const res = detail.resources || {};
         const hasRes = (res.references?.length || 0) + (res.scripts?.length || 0) + (res.assets?.length || 0) > 0;
         const resourceHtml = hasRes
-            ? `<div class="detail-section"><div class="detail-section-label">资源</div><div class="detail-resources">${(res.references || []).map((r) => `<span class="detail-resource-tag">📄 ${escapeHtml(r.name || r)}</span>`).join('')}${(res.scripts || []).map((s) => `<span class="detail-resource-tag">📜 ${escapeHtml(s)}</span>`).join('')}${(res.assets || []).map((a) => `<span class="detail-resource-tag">🖼️ ${escapeHtml(a)}</span>`).join('')}</div></div>`
+            ? `<div class="detail-section"><div class="detail-section-label">${this._t('renderer.skill.detail.resources')}</div><div class="detail-resources">${(res.references || []).map((r) => `<span class="detail-resource-tag">📄 ${escapeHtml(r.name || r)}</span>`).join('')}${(res.scripts || []).map((s) => `<span class="detail-resource-tag">📜 ${escapeHtml(s)}</span>`).join('')}${(res.assets || []).map((a) => `<span class="detail-resource-tag">🖼️ ${escapeHtml(a)}</span>`).join('')}</div></div>`
             : '';
 
         // 内置技能的工具列表
@@ -2511,16 +2625,21 @@ class SkillMgrEntryWidget extends HTMLElement {
 
         let actions;
         if (opts.isBuiltin || opts.isExternal) {
-            actions = [{ id: 'close', label: '完成' }];
+            actions = [{ id: 'close', label: this._t('renderer.skill.detail.done') }];
         } else if (opts.isInstalled) {
             actions = [
-                { id: 'delete', label: '删除技能', variant: 'danger' },
-                { id: 'close', label: '完成' }
+                { id: 'delete', label: this._t('renderer.skill.detail.deleteSkill'), variant: 'danger' },
+                { id: 'close', label: this._t('renderer.skill.detail.done') }
             ];
         } else {
-            actions = [{ id: 'close', label: '关闭' }];
+            actions = [{ id: 'close', label: this._t('renderer.skill.detail.close') }];
             if (opts.canInstall !== false) {
-                actions.push({ id: 'install', label: '安装技能', variant: 'primary', data: opts.installUrl || '' });
+                actions.push({
+                    id: 'install',
+                    label: this._t('renderer.skill.detail.installSkill'),
+                    variant: 'primary',
+                    data: opts.installUrl || ''
+                });
             }
         }
 
@@ -2531,13 +2650,13 @@ class SkillMgrEntryWidget extends HTMLElement {
             id: detail.id,
             name: detail.name || detail.id,
             subtitle: pluginSkillAttribution || undefined,
-            closeLabel: '关闭',
+            closeLabel: this._t('renderer.skill.detail.close'),
             description: detail.description,
-            descriptionLabel: '简介',
+            descriptionLabel: this._t('renderer.skill.detail.descLabel'),
             bodyHtml: detail.body ? marked.parse(detail.body) : undefined,
-            bodyLabel: '技能内容',
+            bodyLabel: this._t('renderer.skill.detail.contentLabel'),
             metadata: metaItems,
-            metadataLabel: '元信息',
+            metadataLabel: this._t('renderer.skill.detail.metadataLabel'),
             headerExtraHtml: `${opts.isBuiltin ? headerAttribution : ''}${statsPills}`,
             extraSectionsHtml: `${resourceHtml}${toolsHtml}`,
             actions
@@ -2648,14 +2767,14 @@ class SkillMgrEntryWidget extends HTMLElement {
                         <i class="fa-solid fa-trash-can" style="color:#fff;font-size:16px;"></i>
                     </div>
                     <div style="flex:1;">
-                        <div style="font-size:15px;font-weight:700;color:#1d1d1f;">删除技能中…</div>
+                        <div style="font-size:15px;font-weight:700;color:#1d1d1f;">${this._t('renderer.skill.delete.deleting')}</div>
                     </div>
                 </div>
                 <div style="padding:16px 24px;">
                     <div style="width:100%;height:6px;background:#F0F0F0;border-radius:3px;overflow:hidden;margin-bottom:10px;">
                         <div style="height:100%;background:linear-gradient(90deg,#DF4436,#F09090);border-radius:3px;transition:width 0.3s ease;width:${pct}%;"></div>
                     </div>
-                    <div style="font-size:13px;color:#555;text-align:center;">${ds.deleted} / ${ds.total}${ds.failed > 0 ? `（${ds.failed} 个失败）` : ''}</div>
+                    <div style="font-size:13px;color:#555;text-align:center;">${this._t('renderer.skill.delete.progress', { done: ds.deleted, total: ds.total })}${ds.failed > 0 ? this._t('renderer.skill.delete.progressFailed', { count: ds.failed }) : ''}</div>
                 </div>
             </div>`;
     }
@@ -2693,10 +2812,10 @@ class SkillMgrEntryWidget extends HTMLElement {
             icon: 'fa-trash-can',
             iconBg: '#FEF2F2',
             iconColor: '#DC2626',
-            title: '删除所有技能',
-            message: `确定要删除全部 <b>${count}</b> 个已安装技能吗？<br>删除后需要重新安装才能恢复。`,
-            confirmText: '全部删除',
-            cancelText: '取消',
+            title: this._t('renderer.skill.deleteAll.title'),
+            message: this._t('renderer.skill.deleteAll.message', { count }),
+            confirmText: this._t('renderer.skill.deleteAll.confirm'),
+            cancelText: this._t('renderer.skill.common.cancel'),
             danger: true
         });
         if (!confirmed) return;
@@ -2725,7 +2844,12 @@ class SkillMgrEntryWidget extends HTMLElement {
 
         const deleted = this.deleteState.deleted;
         const failed = this.deleteState.failed;
-        this._notify('info', '批量删除完成', `成功删除 ${deleted} 个${failed > 0 ? `，失败 ${failed} 个` : ''}`);
+        this._notify(
+            'info',
+            this._t('renderer.skill.deleteAll.done'),
+            this._t('renderer.skill.deleteAll.summary', { deleted: deleted }) +
+                (failed > 0 ? this._t('renderer.skill.deleteAll.failedSuffix', { count: failed }) : '')
+        );
         await this.loadSkills();
     }
 
@@ -2740,7 +2864,7 @@ class SkillMgrEntryWidget extends HTMLElement {
                 <div class="batch-import-header">
                     <div class="bi-icon" style="background:#EFF6FF;color:#2563EB;">📥</div>
                     <div>
-                        <div class="bi-title">批量导入技能</div>
+                        <div class="bi-title">${this._t('renderer.skill.batch.title')}</div>
                         <div class="bi-subtitle">${escapeHtml(bi.directory || '')}</div>
                     </div>
                 </div>
@@ -2760,8 +2884,8 @@ class SkillMgrEntryWidget extends HTMLElement {
                         <div class="bi-progress-fill${bi.scanTotal === 0 ? ' indeterminate' : ''}" style="${bi.scanTotal > 0 ? `width:${progressPct}%` : ''}"></div>
                     </div>
                     <div class="bi-progress-text">
-                        <span>正在扫描目录…</span>
-                        <span class="bi-progress-count">已发现 <b>${bi.scanFound}</b> 个技能</span>
+                        <span>${this._t('renderer.skill.batch.scanning')}</span>
+                        <span class="bi-progress-count">${this._t('renderer.skill.batch.scanFound', { count: bi.scanFound })}</span>
                     </div>
                     ${bi.scanTotal > 0 ? `<div class="bi-progress-text"><span></span><span class="bi-progress-pct">${progressPct}%</span></div>` : ''}
                 </div>`;
@@ -2769,7 +2893,7 @@ class SkillMgrEntryWidget extends HTMLElement {
         if (bi.phase === 'results') {
             let listHtml;
             if (bi.skills.length === 0) {
-                listHtml = `<div class="bi-empty-hint">未在所选目录中发现任何技能</div>`;
+                listHtml = `<div class="bi-empty-hint">${this._t('renderer.skill.batch.empty')}</div>`;
             } else {
                 listHtml = `
                     <div class="bi-skill-list">${bi.skills
@@ -2787,8 +2911,8 @@ class SkillMgrEntryWidget extends HTMLElement {
             return `
                 <div class="bi-progress-section">
                     <div class="bi-progress-text">
-                        <span>扫描完成</span>
-                        <span class="bi-progress-count">共发现 <b>${bi.scanFound}</b> 个技能</span>
+                        <span>${this._t('renderer.skill.batch.scanDone')}</span>
+                        <span class="bi-progress-count">${this._t('renderer.skill.batch.scanTotal', { count: bi.scanFound })}</span>
                     </div>
                 </div>
                 ${listHtml}`;
@@ -2807,8 +2931,8 @@ class SkillMgrEntryWidget extends HTMLElement {
                         <div class="bi-progress-fill" style="width:${importPct}%"></div>
                     </div>
                     <div class="bi-progress-text">
-                        <span>正在导入…</span>
-                        <span class="bi-progress-count">${bi.importIndex} / ${bi.importTotal}${bi.importFailed > 0 ? `（${bi.importFailed} 个失败）` : ''}</span>
+                        <span>${this._t('renderer.skill.batch.importing')}</span>
+                        <span class="bi-progress-count">${this._t('renderer.skill.batch.importProgress', { index: bi.importIndex, total: bi.importTotal })}${bi.importFailed > 0 ? this._t('renderer.skill.batch.importProgressFailed', { count: bi.importFailed }) : ''}</span>
                     </div>
                 </div>
                 ${pendingItems.length > 0 ? `<div class="bi-import-pending">${pendingItems.join('')}</div>` : ''}`;
@@ -2821,20 +2945,20 @@ class SkillMgrEntryWidget extends HTMLElement {
                     return `<div class="bi-import-item">
                         <span class="bi-import-status fail">✕</span>
                         <span>${escapeHtml(skill?.name || '?')}</span>
-                        <span style="color:#E06060;font-size:11px;flex:1;text-align:right;">${escapeHtml(e.message || '未知错误')}</span>
+                        <span style="color:#E06060;font-size:11px;flex:1;text-align:right;">${escapeHtml(e.message || this._t('renderer.skill.common.unknownError'))}</span>
                     </div>`;
                 });
                 // 如果有 skill 失败了但没记录到 importErrors（通过 catch 的），也要显示
                 failedHtml = `
-                    <div class="bi-progress-text" style="margin-top:12px;color:#E06060;">失败详情：</div>
+                    <div class="bi-progress-text" style="margin-top:12px;color:#E06060;">${this._t('renderer.skill.batch.failures')}</div>
                     <div class="bi-import-pending" style="max-height:180px;">${failedItems.join('')}</div>`;
             }
             return `
                 <div class="bi-progress-section">
                     <div class="bi-progress-text">
-                        <span>导入完成</span>
+                        <span>${this._t('renderer.skill.batch.importDone')}</span>
                         <span class="bi-progress-count" style="color:${bi.importFailed > 0 ? '#E06060' : '#4CAF6E'}">
-                            成功 ${bi.importSuccess} 个${bi.importFailed > 0 ? `，失败 ${bi.importFailed} 个` : ''}
+                            ${this._t('renderer.skill.batch.importDoneSummary', { success: bi.importSuccess })}${bi.importFailed > 0 ? this._t('renderer.skill.batch.failedSuffix', { count: bi.importFailed }) : ''}
                         </span>
                     </div>
                 </div>
@@ -2847,23 +2971,23 @@ class SkillMgrEntryWidget extends HTMLElement {
         const bi = this.batchImport;
         if (bi.phase === 'scanning') {
             return `<div class="batch-import-footer">
-                <button type="button" class="btn btn-cancel" id="bi-cancel-btn">取消</button>
+                <button type="button" class="btn btn-cancel" id="bi-cancel-btn">${this._t('renderer.skill.common.cancel')}</button>
             </div>`;
         }
         if (bi.phase === 'results') {
             return `<div class="batch-import-footer">
-                <button type="button" class="btn btn-cancel" id="bi-cancel-btn">取消</button>
-                ${bi.skills.length > 0 ? `<button type="button" class="btn btn-primary" id="bi-confirm-btn">确认导入 (${bi.skills.length})</button>` : ''}
+                <button type="button" class="btn btn-cancel" id="bi-cancel-btn">${this._t('renderer.skill.common.cancel')}</button>
+                ${bi.skills.length > 0 ? `<button type="button" class="btn btn-primary" id="bi-confirm-btn">${this._t('renderer.skill.batch.confirmImport', { count: bi.skills.length })}</button>` : ''}
             </div>`;
         }
         if (bi.phase === 'importing') {
             return `<div class="batch-import-footer">
-                <button type="button" class="btn btn-cancel" id="bi-stop-btn">停止导入</button>
+                <button type="button" class="btn btn-cancel" id="bi-stop-btn">${this._t('renderer.skill.batch.stop')}</button>
             </div>`;
         }
         if (bi.phase === 'complete') {
             return `<div class="batch-import-footer">
-                <button type="button" class="btn btn-primary" id="bi-done-btn">完成</button>
+                <button type="button" class="btn btn-primary" id="bi-done-btn">${this._t('renderer.skill.common.done')}</button>
             </div>`;
         }
         return '';
@@ -2918,7 +3042,7 @@ class SkillMgrEntryWidget extends HTMLElement {
                 <div class="batch-import-header">
                     <div class="bi-icon" style="background:#EFF6FF;color:#2563EB;">📥</div>
                     <div>
-                        <div class="bi-title">导入技能元数据</div>
+                        <div class="bi-title">${this._t('renderer.skill.metaImport.title')}</div>
                         <div class="bi-subtitle">${escapeHtml(mi.zipPath || '')}</div>
                     </div>
                 </div>
@@ -2928,7 +3052,7 @@ class SkillMgrEntryWidget extends HTMLElement {
                             <div class="bi-progress-fill indeterminate"></div>
                         </div>
                         <div class="bi-progress-text">
-                            <span>正在导入元数据…</span>
+                            <span>${this._t('renderer.skill.metaImport.importing')}</span>
                         </div>
                     </div>
                 </div>
@@ -2962,7 +3086,7 @@ class SkillMgrEntryWidget extends HTMLElement {
                 <div class="batch-import-header">
                     <div class="bi-icon" style="background:${hasError ? '#FDEBEB' : '#EBF9EE'};color:${hasError ? '#E06060' : '#4CAF6E'};">${hasError ? '❌' : '✅'}</div>
                     <div>
-                        <div class="bi-title">${hasError ? '导入失败' : '导入完成'}</div>
+                        <div class="bi-title">${this._t(hasError ? 'renderer.skill.metaImport.failed.title' : 'renderer.skill.metaImport.done.title')}</div>
                         <div class="bi-subtitle">${escapeHtml(mi.zipPath || '')}</div>
                     </div>
                 </div>
@@ -2971,14 +3095,14 @@ class SkillMgrEntryWidget extends HTMLElement {
                         <div class="bi-progress-text">
                             <span>${hasError ? escapeHtml(r.error) : ''}</span>
                             <span class="bi-progress-count" style="color:${hasError ? '#E06060' : '#4CAF6E'}">
-                                成功 ${r.successCount || 0} 个${r.failedCount > 0 ? `，失败 ${r.failedCount} 个` : ''}${r.skippedCount > 0 ? `，跳过 ${r.skippedCount} 个` : ''}
+                                ${this._t('renderer.skill.metaImport.doneSummary', { success: r.successCount || 0 })}${r.failedCount > 0 ? this._t('renderer.skill.metaImport.failedSuffix', { count: r.failedCount }) : ''}${r.skippedCount > 0 ? this._t('renderer.skill.metaImport.skippedSuffix', { count: r.skippedCount }) : ''}
                             </span>
                         </div>
                     </div>
                     ${detailsHtml}
                 </div>
                 <div class="batch-import-footer">
-                    <button type="button" class="btn btn-primary" id="mi-done-btn">完成</button>
+                    <button type="button" class="btn btn-primary" id="mi-done-btn">${this._t('renderer.skill.common.done')}</button>
                 </div>
             </div>`;
         }
@@ -3133,7 +3257,11 @@ class SkillMgrEntryWidget extends HTMLElement {
                 if (chunk.type === 'error') {
                     this.batchImport.phase = 'results';
                     this._updateBatchImportModal();
-                    this._notify('error', '扫描失败', chunk.message || '未知错误');
+                    this._notify(
+                        'error',
+                        this._t('renderer.skill.error.searchFailed'),
+                        chunk.message || this._t('renderer.skill.common.unknownError')
+                    );
                     return;
                 }
                 if (chunk.type === 'scanStart') {
@@ -3156,7 +3284,11 @@ class SkillMgrEntryWidget extends HTMLElement {
             if (!this.batchImport.active) return;
             this.batchImport.phase = 'results';
             this._updateBatchImportModal();
-            this._notify('error', '扫描失败', e?.message || '未知错误');
+            this._notify(
+                'error',
+                this._t('renderer.skill.error.searchFailed'),
+                e?.message || this._t('renderer.skill.common.unknownError')
+            );
         }
     }
 
@@ -3249,12 +3381,12 @@ class SkillMgrEntryWidget extends HTMLElement {
                 <div class="card-meta">
                   ${s.stars ? `<span class="tag-pill tag-star">★ ${s.stars}</span>` : ''}
                   ${downloadsStr ? `<span class="tag-pill tag-download">↓ ${downloadsStr}</span>` : ''}
-                  ${s.score ? `<span class="tag-pill tag-score">匹配 ${typeof s.score === 'number' ? s.score.toFixed(2) : s.score}</span>` : ''}
+                  ${s.score ? `<span class="tag-pill tag-score">${this._t('renderer.skill.analyze.matchScore', { score: typeof s.score === 'number' ? s.score.toFixed(2) : s.score })}</span>` : ''}
                 </div>
                 <button type="button" class="install-btn ${isInstalling ? 'installing' : ''}"
                   data-install-url="${escapeHtml(s.installUrl || '')}"
                   ${!s.canInstall || isInstalling ? 'disabled' : ''}>
-                  ${isInstalling ? '<span class="installing-dots"><span>.</span><span>.</span><span>.</span></span> 安装中' : s.canInstall ? '安装' : '不可用'}
+                  ${isInstalling ? '<span class="installing-dots"><span>.</span><span>.</span><span>.</span></span> ' + this._t('renderer.skill.common.installing') : s.canInstall ? this._t('renderer.skill.common.install') : this._t('renderer.skill.tag.unavailable')}
                 </button>
               </div>
             </div>`;
@@ -3291,21 +3423,21 @@ class SkillMgrEntryWidget extends HTMLElement {
 
         let contentHtml = '';
         if (state.searching && state.results.length === 0) {
-            contentHtml = `<div class="loading-state"><div class="loading-spinner"></div><span>搜索中…</span></div>`;
+            contentHtml = `<div class="loading-state"><div class="loading-spinner"></div><span>${this._t('renderer.skill.search.searching')}</span></div>`;
         } else if (state.hasSearched && state.results.length > 0) {
             if (isDefaultView) {
-                const slogan = tabInfo?.slogan || DEFAULT_SLOGAN;
+                const slogan = this._t(tabInfo?.sloganKey || DEFAULT_SLOGAN_KEY);
                 contentHtml = `<div class="hero-title">${escapeHtml(slogan)}</div>`;
             }
             contentHtml += `<div class="skills-grid">${this._renderRegistryCards(state.results, tabId)}</div>`;
             if (state.hasMore) {
-                contentHtml += `<div class="loading-more" id="loading-more-${tabId}" style="${state.loadingMore ? '' : 'display:none'}"><div class="loading-spinner" style="margin:0 auto 8px;width:20px;height:20px;"></div>加载更多…</div>`;
+                contentHtml += `<div class="loading-more" id="loading-more-${tabId}" style="${state.loadingMore ? '' : 'display:none'}"><div class="loading-spinner" style="margin:0 auto 8px;width:20px;height:20px;"></div>${this._t('renderer.skill.common.loadingMore')}</div>`;
             }
             contentHtml += `<div class="scroll-sentinel" data-tab="${tabId}"></div>`;
         } else if (state.hasSearched) {
-            contentHtml = `<div class="empty-state"><div class="empty-icon">🔍</div><div class="empty-title">未找到结果</div><div class="empty-hint">换个关键词试试</div></div>`;
+            contentHtml = `<div class="empty-state"><div class="empty-icon">🔍</div><div class="empty-title">${this._t('renderer.skill.empty.noMatch')}</div><div class="empty-hint">${this._t('renderer.skill.empty.noMatchTry')}</div></div>`;
         } else {
-            contentHtml = `<div class="loading-state"><div class="loading-spinner"></div><span>加载中…</span></div>`;
+            contentHtml = `<div class="loading-state"><div class="loading-spinner"></div><span>${this._t('renderer.skill.common.loading')}</span></div>`;
         }
 
         return `
@@ -3313,12 +3445,12 @@ class SkillMgrEntryWidget extends HTMLElement {
           <div class="search-bar">
             <div class="search-input-wrap">
               <input type="text" class="search-input" data-search-tab="${tabId}"
-                placeholder="搜索 ${tabInfo?.label || ''} 中的技能…"
+                placeholder="${this._t('renderer.skill.search.placeholder', { label: tabInfo?.label || '' })}"
                 value="${escapeHtml(state.query)}" ${state.searching ? 'disabled' : ''} />
-              <button type="button" class="search-clear" data-clear-tab="${tabId}" title="清除搜索">×</button>
+              <button type="button" class="search-clear" data-clear-tab="${tabId}" title="${this._t('renderer.skill.common.clearSearch')}">×</button>
             </div>
             <button type="button" class="search-btn" data-search-btn="${tabId}" ${state.searching ? 'disabled' : ''}>
-              ${state.searching ? '搜索中…' : '搜索'}
+              ${state.searching ? this._t('renderer.skill.search.searching') : this._t('renderer.skill.common.search')}
             </button>
           </div>
           ${infoBarHtml}${contentHtml}
@@ -3328,11 +3460,11 @@ class SkillMgrEntryWidget extends HTMLElement {
     _renderInstalledPanel() {
         const state = this.installedState;
         if (this.loading)
-            return `<div class="registry-panel"><div class="loading-state"><div class="loading-spinner"></div><span>加载中…</span></div></div>`;
+            return `<div class="registry-panel"><div class="loading-state"><div class="loading-spinner"></div><span>${this._t('renderer.skill.common.loading')}</span></div></div>`;
         if (this.error)
             return `<div class="registry-panel"><div class="empty-state"><div class="empty-icon">⚠️</div><div class="empty-title">${escapeHtml(this.error)}</div></div></div>`;
         if (this.skills.length === 0)
-            return `<div class="registry-panel"><div class="empty-state"><div class="empty-icon">📦</div><div class="empty-title">暂无已安装技能</div><div class="empty-hint">通过右上角「+」或切换到其他标签页安装</div>${this.skillsDir ? `<code class="empty-dir">${escapeHtml(this.skillsDir)}</code>` : ''}</div></div>`;
+            return `<div class="registry-panel"><div class="empty-state"><div class="empty-icon">📦</div><div class="empty-title">${this._t('renderer.skill.empty.installed')}</div><div class="empty-hint">${this._t('renderer.skill.empty.installedHint')}</div>${this.skillsDir ? `<code class="empty-dir">${escapeHtml(this.skillsDir)}</code>` : ''}</div></div>`;
 
         // 过滤
         const q = state.query.trim().toLowerCase();
@@ -3351,10 +3483,13 @@ class SkillMgrEntryWidget extends HTMLElement {
 
         let contentHtml;
         if (filtered.length === 0) {
-            contentHtml = `<div class="empty-state"><div class="empty-icon">🔍</div><div class="empty-title">未找到匹配的技能</div><div class="empty-hint">换个关键词试试</div></div>`;
+            contentHtml = `<div class="empty-state"><div class="empty-icon">🔍</div><div class="empty-title">${this._t('renderer.skill.analyze.noMatch')}</div><div class="empty-hint">${this._t('renderer.skill.empty.noMatchTry')}</div></div>`;
         } else {
             const skillCount = this.skills.length;
-            const heroHtml = !q && state.page === 1 ? `<div class="hero-title">已安装 ${skillCount} 个技能</div>` : '';
+            const heroHtml =
+                !q && state.page === 1
+                    ? `<div class="hero-title">${this._t('renderer.skill.count.installed', { count: skillCount })}</div>`
+                    : '';
             contentHtml = `
                 ${heroHtml}
                 <div class="skills-grid">${visible
@@ -3374,24 +3509,24 @@ class SkillMgrEntryWidget extends HTMLElement {
                     <div class="card-info">
                       <div class="card-title">
                         ${escapeHtml(s.name || s.id || '')}
-                        ${isBlacklisted ? '<span style="display:inline-block;font-size:10px;font-weight:600;color:#DC2626;background:#FEF2F2;border:1px solid #FECACA;border-radius:4px;padding:0 5px;margin-left:6px;vertical-align:middle;">⚠ 恶意skill</span>' : ''}
+                        ${isBlacklisted ? `<span style="display:inline-block;font-size:10px;font-weight:600;color:#DC2626;background:#FEF2F2;border:1px solid #FECACA;border-radius:4px;padding:0 5px;margin-left:6px;vertical-align:middle;">${this._t('renderer.skill.badge.blacklist')}</span>` : ''}
                       </div>
                     </div>
                   </div>
                   ${s.description ? `<div class="card-desc">${escapeHtml(s.description)}</div>` : ''}
                   ${isBlacklisted && s.blacklistEvidence ? `<div style="font-size:11px;color:#DC2626;background:#FEF2F2;border-radius:6px;padding:6px 8px;margin-top:2px;line-height:1.4;border:1px solid #FECACA;">${escapeHtml(s.blacklistEvidence).slice(0, 200)}</div>` : ''}
                   <div class="card-footer">
-                    <label class="skill-toggle" title="${isBlacklisted ? '已被加入黑名单，点击启用需确认风险' : isEnabled ? '已启用，点击禁用' : '已禁用，点击启用'}">
+                    <label class="skill-toggle" title="${isBlacklisted ? this._t('renderer.skill.toggle.blacklistHint') : isEnabled ? this._t('renderer.skill.toggle.enableHint') : this._t('renderer.skill.toggle.disableHint')}">
                       <input type="checkbox" data-toggle-id="${escapeHtml(s.id)}" ${isEnabled ? 'checked' : ''}>
                       <span class="skill-toggle-slider" style="${isBlacklisted ? 'opacity:0.4;' : ''}"></span>
                     </label>
-                    <button type="button" class="btn btn-sm btn-danger" data-delete="${escapeHtml(s.id)}" ${this.deletingId === s.id ? 'disabled' : ''}>${this.deletingId === s.id ? '…' : '删除'}</button>
+                    <button type="button" class="btn btn-sm btn-danger" data-delete="${escapeHtml(s.id)}" ${this.deletingId === s.id ? 'disabled' : ''}>${this.deletingId === s.id ? '…' : this._t('renderer.skill.common.delete')}</button>
                   </div>
                 </div>`;
                     })
                     .join('')}</div>`;
             if (hasMore) {
-                contentHtml += `<div class="loading-more" id="loading-more-installed" style="display:none"><div class="loading-spinner" style="margin:0 auto 8px;width:20px;height:20px;"></div>加载更多…</div>`;
+                contentHtml += `<div class="loading-more" id="loading-more-installed" style="display:none"><div class="loading-spinner" style="margin:0 auto 8px;width:20px;height:20px;"></div>${this._t('renderer.skill.common.loadingMore')}</div>`;
             }
             if (hasMore) {
                 contentHtml += `<div class="scroll-sentinel" data-tab="installed"></div>`;
@@ -3403,12 +3538,12 @@ class SkillMgrEntryWidget extends HTMLElement {
           <div class="search-bar">
             <div class="search-input-wrap">
               <input type="text" class="search-input" data-search-tab="installed"
-                placeholder="搜索已安装技能…"
+                placeholder="${this._t('renderer.skill.search.placeholder.installed')}"
                 value="${escapeHtml(state.query)}" />
-              <button type="button" class="search-clear" data-clear-tab="installed" title="清除搜索">×</button>
+              <button type="button" class="search-clear" data-clear-tab="installed" title="${this._t('renderer.skill.common.clearSearch')}">×</button>
             </div>
-            <button type="button" class="search-btn" data-search-btn="installed">搜索</button>
-            <button type="button" class="btn btn-danger btn-sm" id="delete-all-btn" title="删除所有技能" style="flex-shrink:0;white-space:nowrap;padding:10px 22px;border-radius:10px;border:none;background:#E06060;color:#fff;font-size:13px;font-weight:500;font-family:inherit;cursor:pointer;transition:all 0.15s;">删除全部</button>
+            <button type="button" class="search-btn" data-search-btn="installed">${this._t('renderer.skill.common.search')}</button>
+            <button type="button" class="btn btn-danger btn-sm" id="delete-all-btn" title="${this._t('renderer.skill.deleteAll.title')}" style="flex-shrink:0;white-space:nowrap;padding:10px 22px;border-radius:10px;border:none;background:#E06060;color:#fff;font-size:13px;font-weight:500;font-family:inherit;cursor:pointer;transition:all 0.15s;">${this._t('renderer.skill.deleteAll.confirm')}</button>
           </div>
           ${contentHtml}
         </div>`;
@@ -3417,11 +3552,11 @@ class SkillMgrEntryWidget extends HTMLElement {
     _renderExternalPanel() {
         const state = this.externalState;
         if (this.loading)
-            return `<div class="registry-panel"><div class="loading-state"><div class="loading-spinner"></div><span>加载中…</span></div></div>`;
+            return `<div class="registry-panel"><div class="loading-state"><div class="loading-spinner"></div><span>${this._t('renderer.skill.common.loading')}</span></div></div>`;
         if (this.error)
             return `<div class="registry-panel"><div class="empty-state"><div class="empty-icon">⚠️</div><div class="empty-title">${escapeHtml(this.error)}</div></div></div>`;
         if (this.externalSkills.length === 0)
-            return `<div class="registry-panel"><div class="empty-state"><div class="empty-icon">🗂️</div><div class="empty-title">暂无外部技能</div><div class="empty-hint">在 skillmgr.external_paths 中配置目录后，外部技能会在这里展示</div></div></div>`;
+            return `<div class="registry-panel"><div class="empty-state"><div class="empty-icon">🗂️</div><div class="empty-title">${this._t('renderer.skill.empty.external')}</div><div class="empty-hint">${this._t('renderer.skill.empty.externalHint')}</div></div></div>`;
 
         const q = state.query.trim().toLowerCase();
         const filtered = q
@@ -3440,11 +3575,13 @@ class SkillMgrEntryWidget extends HTMLElement {
 
         let contentHtml;
         if (filtered.length === 0) {
-            contentHtml = `<div class="empty-state"><div class="empty-icon">🔍</div><div class="empty-title">未找到匹配的外部技能</div><div class="empty-hint">换个关键词试试</div></div>`;
+            contentHtml = `<div class="empty-state"><div class="empty-icon">🔍</div><div class="empty-title">${this._t('renderer.skill.empty.noMatch')}</div><div class="empty-hint">${this._t('renderer.skill.empty.noMatchTry')}</div></div>`;
         } else {
             const externalCount = this.externalSkills.length;
             const heroHtml =
-                !q && state.page === 1 ? `<div class="hero-title">外部目录 ${externalCount} 个技能</div>` : '';
+                !q && state.page === 1
+                    ? `<div class="hero-title">${this._t('renderer.skill.count.external', { count: externalCount })}</div>`
+                    : '';
             contentHtml = `
                 ${heroHtml}
                 <div class="skills-grid">${visible
@@ -3461,14 +3598,14 @@ class SkillMgrEntryWidget extends HTMLElement {
                   ${s.description ? `<div class="card-desc">${escapeHtml(s.description)}</div>` : ''}
                   <div class="card-footer">
                     <div class="card-meta">
-                      <span class="tag-pill tag-score">外部</span>
+                      <span class="tag-pill tag-score">${this._t('renderer.skill.analyze.tag.external')}</span>
                     </div>
                   </div>
                 </div>`;
                     })
                     .join('')}</div>`;
             if (hasMore) {
-                contentHtml += `<div class="loading-more" id="loading-more-external" style="display:none"><div class="loading-spinner" style="margin:0 auto 8px;width:20px;height:20px;"></div>加载更多…</div>`;
+                contentHtml += `<div class="loading-more" id="loading-more-external" style="display:none"><div class="loading-spinner" style="margin:0 auto 8px;width:20px;height:20px;"></div>${this._t('renderer.skill.common.loadingMore')}</div>`;
                 contentHtml += `<div class="scroll-sentinel" data-tab="external"></div>`;
             }
         }
@@ -3478,11 +3615,11 @@ class SkillMgrEntryWidget extends HTMLElement {
           <div class="search-bar">
             <div class="search-input-wrap">
               <input type="text" class="search-input" data-search-tab="external"
-                placeholder="搜索外部技能…"
+                placeholder="${this._t('renderer.skill.search.placeholder.external')}"
                 value="${escapeHtml(state.query)}" />
-              <button type="button" class="search-clear" data-clear-tab="external" title="清除搜索">×</button>
+              <button type="button" class="search-clear" data-clear-tab="external" title="${this._t('renderer.skill.common.clearSearch')}">×</button>
             </div>
-            <button type="button" class="search-btn" data-search-btn="external">搜索</button>
+            <button type="button" class="search-btn" data-search-btn="external">${this._t('renderer.skill.common.search')}</button>
           </div>
           ${contentHtml}
         </div>`;
@@ -3490,11 +3627,11 @@ class SkillMgrEntryWidget extends HTMLElement {
 
     _renderBuiltinPanel() {
         if (this.builtinLoading)
-            return `<div class="registry-panel"><div class="loading-state"><div class="loading-spinner"></div><span>加载中…</span></div></div>`;
+            return `<div class="registry-panel"><div class="loading-state"><div class="loading-spinner"></div><span>${this._t('renderer.skill.common.loading')}</span></div></div>`;
         if (this.builtinError)
             return `<div class="registry-panel"><div class="empty-state"><div class="empty-icon">⚠️</div><div class="empty-title">${escapeHtml(this.builtinError)}</div></div></div>`;
         if (this.builtinSkills.length === 0)
-            return `<div class="registry-panel"><div class="empty-state"><div class="empty-icon">🔌</div><div class="empty-title">暂无内置技能</div><div class="empty-hint">系统内置技能会在启用对应应用后自动显示</div></div></div>`;
+            return `<div class="registry-panel"><div class="empty-state"><div class="empty-icon">🔌</div><div class="empty-title">${this._t('renderer.skill.empty.builtin')}</div><div class="empty-hint">${this._t('renderer.skill.empty.builtinHint')}</div></div></div>`;
 
         const state = this.builtinState;
         const q = state.query.trim().toLowerCase();
@@ -3512,10 +3649,12 @@ class SkillMgrEntryWidget extends HTMLElement {
 
         let contentHtml;
         if (filtered.length === 0) {
-            contentHtml = `<div class="empty-state"><div class="empty-icon">🔍</div><div class="empty-title">未找到匹配的内置技能</div><div class="empty-hint">换个关键词试试</div></div>`;
+            contentHtml = `<div class="empty-state"><div class="empty-icon">🔍</div><div class="empty-title">${this._t('renderer.skill.empty.noMatch')}</div><div class="empty-hint">${this._t('renderer.skill.empty.noMatchTry')}</div></div>`;
         } else {
             const builtinCount = this.builtinSkills.length;
-            const heroHtml = !q ? `<div class="hero-title">系统内置 ${builtinCount} 个技能</div>` : '';
+            const heroHtml = !q
+                ? `<div class="hero-title">${this._t('renderer.skill.count.builtin', { count: builtinCount })}</div>`
+                : '';
             contentHtml = `
                 ${heroHtml}
                 <div class="skills-grid">${filtered
@@ -3526,7 +3665,7 @@ class SkillMgrEntryWidget extends HTMLElement {
                         const skillOwner = s.pluginName || s.pluginId || s.bundleName || '';
                         const scopeControl = s.readOnly
                             ? `<span class="tag-pill tag-score">${escapeHtml(s.bundleName || '')}</span>`
-                            : `<label class="skill-toggle" title="${isEnabled ? '已启用，点击禁用' : '已禁用，点击启用'}">
+                            : `<label class="skill-toggle" title="${isEnabled ? this._t('renderer.skill.toggle.enableHint') : this._t('renderer.skill.toggle.disableHint')}">
                   <input type="checkbox" data-toggle-id="${escapeHtml(s.id)}" ${isEnabled ? 'checked' : ''}>
                   <span class="skill-toggle-slider"></span>
                 </label>`;
@@ -3536,13 +3675,13 @@ class SkillMgrEntryWidget extends HTMLElement {
                 <div class="card-icon" style="background:${color.bg};color:${color.text}">${this._getSkillInitial(s.name || s.id)}</div>
                 <div class="card-info">
                   <div class="card-title">${escapeHtml(s.name || s.id)}</div>
-                  ${skillOwner ? `<div class="card-author">${escapeHtml(skillOwner)}${toolCount > 0 ? ` · ${toolCount} 个工具` : ''}</div>` : ''}
+                  ${skillOwner ? `<div class="card-author">${escapeHtml(skillOwner)}${toolCount > 0 ? ' · ' + this._t('renderer.skill.analyze.toolCount', { count: toolCount }) : ''}</div>` : ''}
                 </div>
               </div>
               ${s.description ? `<div class="card-desc">${escapeHtml(s.description)}</div>` : ''}
               <div class="card-footer">
                 ${scopeControl}
-                <span class="tag-pill tag-score">内置</span>
+                <span class="tag-pill tag-score">${this._t('renderer.skill.analyze.tag.builtin')}</span>
               </div>
             </div>`;
                     })
@@ -3554,11 +3693,11 @@ class SkillMgrEntryWidget extends HTMLElement {
           <div class="search-bar">
             <div class="search-input-wrap">
               <input type="text" class="search-input" data-search-tab="builtin"
-                placeholder="搜索内置技能…"
+                placeholder="${this._t('renderer.skill.search.placeholder.builtin')}"
                 value="${escapeHtml(state.query)}" />
-              <button type="button" class="search-clear" data-clear-tab="builtin" title="清除搜索">×</button>
+              <button type="button" class="search-clear" data-clear-tab="builtin" title="${this._t('renderer.skill.common.clearSearch')}">×</button>
             </div>
-            <button type="button" class="search-btn" data-search-btn="builtin">搜索</button>
+            <button type="button" class="search-btn" data-search-btn="builtin">${this._t('renderer.skill.common.search')}</button>
           </div>
           ${contentHtml}
         </div>`;
@@ -3575,7 +3714,7 @@ class SkillMgrEntryWidget extends HTMLElement {
         const isAnalyzing = ws && ws.running;
 
         if (allSkills.length === 0) {
-            return `<div class="analyze-panel"><div class="analyze-empty"><div class="empty-icon">📋</div><div class="empty-title">暂无可分析的技能</div><div class="empty-hint">请先安装技能</div></div></div>`;
+            return `<div class="analyze-panel"><div class="analyze-empty"><div class="empty-icon">📋</div><div class="empty-title">${this._t('renderer.skill.analyze.empty')}</div><div class="empty-hint">${this._t('renderer.skill.analyze.emptyHint')}</div></div></div>`;
         }
 
         const q = state.query.trim().toLowerCase();
@@ -3599,9 +3738,9 @@ class SkillMgrEntryWidget extends HTMLElement {
         if (isAnalyzing) {
             const pct = ws.total > 0 ? Math.round((ws.completed / ws.total) * 100) : 0;
             let taskLabel;
-            if (ws.taskType === 'testrun') taskLabel = '正在运行测试用例';
-            else if (ws.taskType === 'testgen') taskLabel = '正在生成测试用例';
-            else taskLabel = '正在分析技能依赖项';
+            if (ws.taskType === 'testrun') taskLabel = this._t('renderer.skill.analyze.task.testrun');
+            else if (ws.taskType === 'testgen') taskLabel = this._t('renderer.skill.analyze.task.testgen');
+            else taskLabel = this._t('renderer.skill.analyze.task.analyze');
             progressHtml = `
             <div class="analyze-progress-bar-wrap">
                 <div class="analyze-progress-label">
@@ -3611,7 +3750,7 @@ class SkillMgrEntryWidget extends HTMLElement {
                 <div class="analyze-progress-bar">
                     <div class="analyze-progress-fill" style="width:${pct}%"></div>
                 </div>
-                <button type="button" class="analyze-stop-btn" data-analyze-stop>⏹ 停止${ws.taskType === 'testrun' ? '测试' : '分析'}</button>
+                <button type="button" class="analyze-stop-btn" data-analyze-stop>${ws.taskType === 'testrun' ? this._t('renderer.skill.analyze.stopTest') : this._t('renderer.skill.analyze.stopAnalyze')}</button>
             </div>`;
         }
 
@@ -3619,36 +3758,39 @@ class SkillMgrEntryWidget extends HTMLElement {
         const tools = [
             {
                 id: 'analyze-deps',
-                label: '分析依赖项',
+                label: this._t('renderer.skill.analyze.menu.analyze'),
                 icon: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="5" r="2"/><circle cx="5" cy="19" r="2"/><circle cx="19" cy="19" r="2"/><path d="M6.5 17.5L10.3 7M13.7 7l3.8 10.5M12 7v3"/></svg>',
                 items: [
-                    { id: 'analyze-deps-selected', label: '分析选中技能' },
-                    { id: 'analyze-deps-all', label: '分析全部技能' }
+                    { id: 'analyze-deps-selected', label: this._t('renderer.skill.analyze.menu.analyzeSelected') },
+                    { id: 'analyze-deps-all', label: this._t('renderer.skill.analyze.menu.analyzeAll') }
                 ]
             },
             {
                 id: 'gen-test',
-                label: '生成测试用例',
+                label: this._t('renderer.skill.analyze.menu.genTest'),
                 icon: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="3"/><path d="M9 12l2 2 4-4"/></svg>',
                 items: [
-                    { id: 'gen-test-selected', label: '生成选中技能的测试用例' },
-                    { id: 'gen-test-all', label: '生成全部技能的测试用例' }
+                    { id: 'gen-test-selected', label: this._t('renderer.skill.analyze.menu.genTestSelected') },
+                    { id: 'gen-test-all', label: this._t('renderer.skill.analyze.menu.genTestAll') }
                 ]
             },
             {
                 id: 'run-test',
-                label: '运行测试',
+                label: this._t('renderer.skill.analyze.menu.runTest'),
                 icon: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="5 3 19 12 5 21 5 3"/></svg>',
                 items: [
-                    { id: 'run-test-selected', label: '测试选中技能' },
-                    { id: 'run-test-all', label: '测试全部技能' },
-                    { id: 'run-test-unpassed-selected', label: '运行选中技能的未通过用例' },
-                    { id: 'run-test-unpassed-all', label: '运行所有技能的未通过用例' }
+                    { id: 'run-test-selected', label: this._t('renderer.skill.analyze.menu.runTestSelected') },
+                    { id: 'run-test-all', label: this._t('renderer.skill.analyze.menu.runTestAll') },
+                    {
+                        id: 'run-test-unpassed-selected',
+                        label: this._t('renderer.skill.analyze.menu.runTestUnpassedSelected')
+                    },
+                    { id: 'run-test-unpassed-all', label: this._t('renderer.skill.analyze.menu.runTestUnpassedAll') }
                 ]
             },
             {
                 id: 'test-report',
-                label: '统计信息',
+                label: this._t('renderer.skill.analyze.menu.stats'),
                 icon: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 3v18h18"/><rect x="7" y="11" width="3" height="6" rx="1"/><rect x="12" y="7" width="3" height="10" rx="1"/><rect x="17" y="4" width="3" height="13" rx="1"/></svg>',
                 noDropdown: true,
                 actionId: 'show-test-report'
@@ -3662,35 +3804,35 @@ class SkillMgrEntryWidget extends HTMLElement {
             },
             {
                 id: 'export',
-                label: '导出',
+                label: this._t('renderer.skill.analyze.menu.export'),
                 icon: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>',
                 items: [
-                    { id: 'export-meta-selected', label: '选中技能的元数据' },
-                    { id: 'export-meta-all', label: '所有元数据' },
-                    { id: 'export-analyze-html', label: '导出为独立 HTML 页面' }
+                    { id: 'export-meta-selected', label: this._t('renderer.skill.analyze.menu.exportMetaSelected') },
+                    { id: 'export-meta-all', label: this._t('renderer.skill.analyze.menu.exportMetaAll') },
+                    { id: 'export-analyze-html', label: this._t('renderer.skill.analyze.menu.exportHtml') }
                 ]
             },
             {
                 id: 'import',
-                label: '导入',
+                label: this._t('renderer.skill.analyze.menu.import'),
                 icon: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>',
                 noDropdown: true,
                 actionId: 'import-meta'
             },
             {
                 id: 'prompts',
-                label: '提示词',
+                label: this._t('renderer.skill.analyze.menu.prompts'),
                 icon: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15a4 4 0 0 1-4 4H7l-4 4V7a4 4 0 0 1 4-4h10a4 4 0 0 1 4 4z"/><path d="M8 9h8"/><path d="M8 13h6"/></svg>',
                 noDropdown: true,
                 actionId: 'manage-prompts'
             },
             {
                 id: 'delete-meta',
-                label: '删除',
+                label: this._t('renderer.skill.analyze.menu.delete'),
                 icon: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/><line x1="10" y1="11" x2="10" y2="17"/><line x1="14" y1="11" x2="14" y2="17"/></svg>',
                 items: [
-                    { id: 'delete-meta-selected', label: '删除选中技能的元数据' },
-                    { id: 'delete-meta-all', label: '删除所有元数据' }
+                    { id: 'delete-meta-selected', label: this._t('renderer.skill.analyze.menu.deleteMetaSelected') },
+                    { id: 'delete-meta-all', label: this._t('renderer.skill.analyze.menu.deleteMetaAll') }
                 ]
             }
         ];
@@ -3742,7 +3884,7 @@ class SkillMgrEntryWidget extends HTMLElement {
 
         const listHtml =
             visible.length === 0
-                ? `<div class="analyze-empty"><div class="empty-icon">🔍</div><div class="empty-title">未找到匹配的技能</div><div class="empty-hint">换个关键词试试</div></div>`
+                ? `<div class="analyze-empty"><div class="empty-icon">🔍</div><div class="empty-title">${this._t('renderer.skill.analyze.noMatch')}</div><div class="empty-hint">${this._t('renderer.skill.empty.noMatchTry')}</div></div>`
                 : `<div class="analyze-list">${visible
                       .map((s) => {
                           const color = this._getSkillPastel(s.name || s.id);
@@ -3763,13 +3905,13 @@ class SkillMgrEntryWidget extends HTMLElement {
                           let actionBtns = '';
                           if (skillResult) {
                               if (skillResult.error) {
-                                  actionBtns = `<button type="button" class="analyze-row-btn analyze-row-error-btn" data-view-error="${escapeHtml(s.id)}">查看错误</button>`;
+                                  actionBtns = `<button type="button" class="analyze-row-btn analyze-row-error-btn" data-view-error="${escapeHtml(s.id)}">${this._t('renderer.skill.analyze.viewError')}</button>`;
                               } else {
                                   if (hasDeps) {
-                                      actionBtns += `<button type="button" class="analyze-row-btn" data-view-deps="${escapeHtml(s.id)}">依赖项</button>`;
+                                      actionBtns += `<button type="button" class="analyze-row-btn" data-view-deps="${escapeHtml(s.id)}">${this._t('renderer.skill.analyze.deps')}</button>`;
                                   }
                                   if (hasTestCases) {
-                                      actionBtns += `<button type="button" class="analyze-row-btn" data-view-tests="${escapeHtml(s.id)}">测试用例${escapeHtml(this._getTestCaseStats(skillResult))}</button>`;
+                                      actionBtns += `<button type="button" class="analyze-row-btn" data-view-tests="${escapeHtml(s.id)}">${this._t('renderer.skill.analyze.testCases')}${escapeHtml(this._getTestCaseStats(skillResult))}</button>`;
                                   }
                                   if (!hasDeps && !hasTestCases) {
                                       actionBtns = `<span class="analyze-row-action analyze-row-none">—</span>`;
@@ -3799,20 +3941,20 @@ class SkillMgrEntryWidget extends HTMLElement {
         const pageSizeOptions = [10, 20, 30, 50];
         const paginationHtml = `
             <div class="analyze-pagination">
-                <div class="analyze-pagination-info">共 ${filtered.length} 个技能${selectedCount > 0 ? `，已选 ${selectedCount} 个` : ''}</div>
+                <div class="analyze-pagination-info">${this._t('renderer.skill.analyze.totalSkills', { count: filtered.length })}${selectedCount > 0 ? this._t('renderer.skill.analyze.selectedSuffix', { count: selectedCount }) : ''}</div>
                 <div class="analyze-pagination-controls">
-                    <span style="font-size:12px;color:#999;">每页</span>
+                    <span style="font-size:12px;color:#999;">${this._t('renderer.skill.analyze.perPage')}</span>
                     <select data-analyze-page-size>
                         ${pageSizeOptions
                             .map((n) => `<option value="${n}" ${state.pageSize === n ? 'selected' : ''}>${n}</option>`)
                             .join('')}
                     </select>
-                    <button type="button" class="page-btn" data-analyze-page="first" ${state.page <= 1 ? 'disabled' : ''}>首页</button>
-                    <button type="button" class="page-btn" data-analyze-page="prev" ${state.page <= 1 ? 'disabled' : ''}>上一页</button>
+                    <button type="button" class="page-btn" data-analyze-page="first" ${state.page <= 1 ? 'disabled' : ''}>${this._t('renderer.skill.analyze.page.first')}</button>
+                    <button type="button" class="page-btn" data-analyze-page="prev" ${state.page <= 1 ? 'disabled' : ''}>${this._t('renderer.skill.analyze.page.prev')}</button>
                     <input type="number" class="page-jump-input" data-analyze-page-jump value="${state.page}" min="1" max="${totalPages}" />
                     <span class="page-num">/ ${totalPages}</span>
-                    <button type="button" class="page-btn" data-analyze-page="next" ${state.page >= totalPages ? 'disabled' : ''}>下一页</button>
-                    <button type="button" class="page-btn" data-analyze-page="last" ${state.page >= totalPages ? 'disabled' : ''}>末页</button>
+                    <button type="button" class="page-btn" data-analyze-page="next" ${state.page >= totalPages ? 'disabled' : ''}>${this._t('renderer.skill.analyze.page.next')}</button>
+                    <button type="button" class="page-btn" data-analyze-page="last" ${state.page >= totalPages ? 'disabled' : ''}>${this._t('renderer.skill.analyze.page.last')}</button>
                 </div>
             </div>`;
 
@@ -3831,13 +3973,13 @@ class SkillMgrEntryWidget extends HTMLElement {
                 <div class="analyze-toolbar">
                     ${toolbarHtml}
                     <div class="analyze-concurrency-wrap">
-                        <label class="analyze-concurrency-label">并发</label>
+                        <label class="analyze-concurrency-label">${this._t('renderer.skill.analyze.concurrency')}</label>
                         <input type="number" class="analyze-concurrency-input" data-analyze-concurrency
                             value="${state.concurrency}" min="1" max="10"
                             ${isAnalyzing ? 'disabled' : ''} />
-                        <label class="analyze-concurrency-label">超时（分钟）</label>
+                        <label class="analyze-concurrency-label">${this._t('renderer.skill.analyze.timeout')}</label>
                         <input type="number" class="analyze-concurrency-input" data-analyze-timeout-minutes
-                            value="${state.timeoutMinutes ?? ''}" min="1" step="1" placeholder="无限制"
+                            value="${state.timeoutMinutes ?? ''}" min="1" step="1" placeholder="${this._t('renderer.skill.analyze.timeoutPlaceholder')}"
                             ${isAnalyzing ? 'disabled' : ''} />
                     </div>
                 </div>
@@ -3858,21 +4000,21 @@ class SkillMgrEntryWidget extends HTMLElement {
             <div class="analyze-filter-bar">
                 <div class="search-input-wrap">
                     <input type="text" class="search-input" data-analyze-search
-                        placeholder="搜索技能名称、ID 或描述…"
+                        placeholder="${this._t('renderer.skill.search.placeholder.analyze')}"
                         value="${escapeHtml(state.query)}" />
-                    <button type="button" class="search-clear" data-analyze-clear title="清除搜索">×</button>
+                    <button type="button" class="search-clear" data-analyze-clear title="${this._t('renderer.skill.common.clearSearch')}">×</button>
                 </div>
                 <div class="analyze-sort-wrap">
-                    <span class="analyze-sort-label">排序</span>
+                    <span class="analyze-sort-label">${this._t('renderer.skill.analyze.sort')}</span>
                     <select data-analyze-sort>
-                        <option value="addedAt" ${state.sortBy === 'addedAt' ? 'selected' : ''}>添加时间</option>
-                        <option value="name" ${state.sortBy === 'name' ? 'selected' : ''}>名称</option>
+                        <option value="addedAt" ${state.sortBy === 'addedAt' ? 'selected' : ''}>${this._t('renderer.skill.analyze.sort.addedAt')}</option>
+                        <option value="name" ${state.sortBy === 'name' ? 'selected' : ''}>${this._t('renderer.skill.analyze.sort.name')}</option>
                     </select>
                 </div>
                 <div class="analyze-select-actions">
-                    <button type="button" class="analyze-select-btn" data-analyze-select-all ${filtered.length === 0 ? 'disabled' : ''}>全选</button>
-                    <button type="button" class="analyze-select-btn" data-analyze-select-page ${filtered.length === 0 ? 'disabled' : ''}>全选本页</button>
-                    <button type="button" class="analyze-select-btn" data-analyze-deselect-all ${selectedCount === 0 ? 'disabled' : ''}>取消选择${selectedCount > 0 ? ` (${selectedCount})` : ''}</button>
+                    <button type="button" class="analyze-select-btn" data-analyze-select-all ${filtered.length === 0 ? 'disabled' : ''}>${this._t('renderer.skill.analyze.selectAll')}</button>
+                    <button type="button" class="analyze-select-btn" data-analyze-select-page ${filtered.length === 0 ? 'disabled' : ''}>${this._t('renderer.skill.analyze.selectAllPage')}</button>
+                    <button type="button" class="analyze-select-btn" data-analyze-deselect-all ${selectedCount === 0 ? 'disabled' : ''}>${selectedCount > 0 ? this._t('renderer.skill.analyze.deselectWithCount', { count: selectedCount }) : this._t('renderer.skill.analyze.deselect')}</button>
                 </div>
             </div>
             <div class="analyze-scroll-area">
@@ -3920,12 +4062,12 @@ class SkillMgrEntryWidget extends HTMLElement {
                 (t) =>
                     `<button type="button" class="seg-item ${this.activeTab === t.id ? 'active' : ''}" data-tab="${t.id}"><span class="seg-icon">${t.icon}</span> ${t.label}</button>`
             ).join('') +
-            `<button type="button" class="seg-item ${this.activeTab === 'installed' ? 'active' : ''}" data-tab="installed"><span class="seg-icon">📦</span> 已安装${skillCount > 0 ? ` <span class="seg-badge">${skillCount}</span>` : ''}</button>` +
+            `<button type="button" class="seg-item ${this.activeTab === 'installed' ? 'active' : ''}" data-tab="installed"><span class="seg-icon">📦</span> ${this._t('renderer.skill.tab.installed')}${skillCount > 0 ? ` <span class="seg-badge">${skillCount}</span>` : ''}</button>` +
             (externalCount > 0
-                ? `<button type="button" class="seg-item ${this.activeTab === 'external' ? 'active' : ''}" data-tab="external"><span class="seg-icon">🗂️</span> 外部技能 <span class="seg-badge">${externalCount}</span></button>`
+                ? `<button type="button" class="seg-item ${this.activeTab === 'external' ? 'active' : ''}" data-tab="external"><span class="seg-icon">🗂️</span> ${this._t('renderer.skill.tab.external')} <span class="seg-badge">${externalCount}</span></button>`
                 : '') +
-            `<button type="button" class="seg-item ${this.activeTab === 'builtin' ? 'active' : ''}" data-tab="builtin"><span class="seg-icon">⚙️</span> 内置技能${builtinCount > 0 ? ` <span class="seg-badge">${builtinCount}</span>` : ''}</button>` +
-            `<button type="button" class="seg-item ${this.activeTab === 'analyze' ? 'active' : ''}" data-tab="analyze"><span class="seg-icon">🔬</span> 分析与优化</button>`;
+            `<button type="button" class="seg-item ${this.activeTab === 'builtin' ? 'active' : ''}" data-tab="builtin"><span class="seg-icon">⚙️</span> ${this._t('renderer.skill.tab.builtin')}${builtinCount > 0 ? ` <span class="seg-badge">${builtinCount}</span>` : ''}</button>` +
+            `<button type="button" class="seg-item ${this.activeTab === 'analyze' ? 'active' : ''}" data-tab="analyze"><span class="seg-icon">🔬</span> ${this._t('renderer.skill.tab.analyze')}</button>`;
 
         const panelsHtml =
             REGISTRY_TABS.map(
@@ -3942,9 +4084,9 @@ class SkillMgrEntryWidget extends HTMLElement {
         this.shadowRoot.innerHTML = `
         <style>${STYLE}</style>
         <div class="header-area">
-            <div class="header-title">技能中心</div>
+            <div class="header-title">${this._t('app.name')}</div>
             <div class="seg-row">
-                <button type="button" class="seg-scroll-btn seg-scroll-btn-left" aria-label="向左滚动">
+                <button type="button" class="seg-scroll-btn seg-scroll-btn-left" aria-label="${this._t('renderer.skill.scrollLeft')}">
                     <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                         <polyline points="15 18 9 12 15 6"></polyline>
                     </svg>
@@ -3952,36 +4094,36 @@ class SkillMgrEntryWidget extends HTMLElement {
                 <div class="seg-control-container">
                     <div class="seg-control">${tabsHtml}</div>
                 </div>
-                <button type="button" class="seg-scroll-btn seg-scroll-btn-right" aria-label="向右滚动">
+                <button type="button" class="seg-scroll-btn seg-scroll-btn-right" aria-label="${this._t('renderer.skill.scrollRight')}">
                     <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                         <polyline points="9 18 15 12 9 6"></polyline>
                     </svg>
                 </button>
                 <div class="header-actions">
-                    <button type="button" class="action-btn" id="refresh-btn" title="刷新" ${this.loading ? 'disabled' : ''}>↻</button>
+                    <button type="button" class="action-btn" id="refresh-btn" title="${this._t('renderer.skill.common.refresh')}" ${this.loading ? 'disabled' : ''}>↻</button>
                     <div class="add-dropdown-anchor">
-                        <button type="button" class="action-btn" id="add-btn" title="添加技能">+</button>
+                        <button type="button" class="action-btn" id="add-btn" title="${this._t('renderer.skill.action.add')}">+</button>
                         <div class="add-dropdown" id="add-dropdown">
                             <div class="add-dropdown-section">
                                 <label class="add-dropdown-item ${this.addingFromPath ? 'disabled' : ''}">
                                     <input type="file" id="add-from-path-input" webkitdirectory directory style="display:none" ${this.addingFromPath ? 'disabled' : ''} />
                                     <span class="icon folder">📁</span>
-                                    <span class="item-info"><span class="item-name">从目录安装</span><span class="item-hint">选择含 SKILL.md 的目录</span></span>
+                                    <span class="item-info"><span class="item-name">${this._t('renderer.skill.add.fromDir')}</span><span class="item-hint">${this._t('renderer.skill.add.fromDirHint')}</span></span>
                                 </label>
                                 <label class="add-dropdown-item ${this.addingFromZip ? 'disabled' : ''}">
                                     <input type="file" id="add-from-zip-input" accept=".zip" style="display:none" ${this.addingFromZip ? 'disabled' : ''} />
                                     <span class="icon zip">📦</span>
-                                    <span class="item-info"><span class="item-name">从 ZIP 安装</span><span class="item-hint">选择 .zip 技能压缩包</span></span>
+                                    <span class="item-info"><span class="item-name">${this._t('renderer.skill.add.fromZip')}</span><span class="item-hint">${this._t('renderer.skill.add.fromZipHint')}</span></span>
                                 </label>
                                 <button type="button" class="add-dropdown-item" id="batch-import-item">
                                     <span class="icon import">📥</span>
-                                    <span class="item-info"><span class="item-name">批量导入</span><span class="item-hint">从目录批量扫描并导入技能</span></span>
+                                    <span class="item-info"><span class="item-name">${this._t('renderer.skill.add.batchImport')}</span><span class="item-hint">${this._t('renderer.skill.add.batchImportHint')}</span></span>
                                 </button>
                             </div>
                             <div class="add-dropdown-section">
                                 <button type="button" class="add-dropdown-item" id="add-url-item">
                                     <span class="icon url">🔗</span>
-                                    <span class="item-info"><span class="item-name">从 URL 安装</span><span class="item-hint">ZIP 下载链接</span></span>
+                                    <span class="item-info"><span class="item-name">${this._t('renderer.skill.add.fromUrl')}</span><span class="item-hint">${this._t('renderer.skill.add.fromUrlHint')}</span></span>
                                 </button>
                             </div>
                         </div>
@@ -3992,12 +4134,12 @@ class SkillMgrEntryWidget extends HTMLElement {
         <div class="content">${panelsHtml}</div>
         <div class="url-dialog-overlay" id="url-dialog-overlay">
             <div class="modal-dialog">
-                <h3>从 URL 安装技能</h3>
-                <div class="hint">支持 .zip URL</div>
+                <h3>${this._t('renderer.skill.url.title')}</h3>
+                <div class="hint">${this._t('renderer.skill.url.hint')}</div>
                 <input type="url" id="url-dialog-input" placeholder="https://..." value="${escapeHtml(this.addUrl)}" />
                 <div class="dialog-actions">
-                    <button type="button" class="btn" id="url-dialog-cancel">取消</button>
-                    <button type="button" class="btn btn-primary" id="url-dialog-ok" ${this.addingFromUrl ? 'disabled' : ''}>${this.addingFromUrl ? '安装中…' : '安装'}</button>
+                    <button type="button" class="btn" id="url-dialog-cancel">${this._t('renderer.skill.common.cancel')}</button>
+                    <button type="button" class="btn btn-primary" id="url-dialog-ok" ${this.addingFromUrl ? 'disabled' : ''}>${this.addingFromUrl ? this._t('renderer.skill.common.installingDots') : this._t('renderer.skill.common.install')}</button>
                 </div>
             </div>
         </div>
@@ -4306,18 +4448,18 @@ class SkillMgrEntryWidget extends HTMLElement {
                     const skill =
                         this.skills.find((s) => s.id === skillId) || this.builtinSkills.find((s) => s.id === skillId);
                     if (skill?.blacklisted) {
-                        const evidence = skill.blacklistEvidence || '该技能因恶意行为被安全网关拦截并加入了黑名单';
+                        const evidence = skill.blacklistEvidence || this._t('renderer.skill.blacklist.defaultEvidence');
                         const confirmed = await showConfirmModal({
                             icon: 'fa-shield-halved',
                             iconBg: '#FEF2F2',
                             iconColor: '#DC2626',
                             danger: true,
-                            title: '确认启用恶意技能？',
-                            message: `<div style="font-size:14px;color:#3C3C43;line-height:1.6;">技能 <strong>${escapeHtml(skill.name || skillId)}</strong> 已被标记为恶意技能，原因如下：</div>
+                            title: this._t('renderer.skill.blacklist.confirmTitle'),
+                            message: `<div style="font-size:14px;color:#3C3C43;line-height:1.6;">${this._t('renderer.skill.blacklist.confirmPrefix', { name: escapeHtml(skill.name || skillId) })}</div>
 <div style="font-size:13px;color:#DC2626;background:#FEF2F2;border-radius:8px;padding:10px;margin:10px 0;border:1px solid #FECACA;line-height:1.5;">${escapeHtml(evidence)}</div>
-<div style="font-size:14px;color:#3C3C43;line-height:1.6;">启用该技能可能带来安全风险。确定要继续吗？</div>`,
-                            confirmText: '确认启用',
-                            cancelText: '取消'
+<div style="font-size:14px;color:#3C3C43;line-height:1.6;">${this._t('renderer.skill.blacklist.confirmSuffix')}</div>`,
+                            confirmText: this._t('renderer.skill.blacklist.confirmEnable'),
+                            cancelText: this._t('renderer.skill.common.cancel')
                         });
                         if (!confirmed) {
                             el.checked = false;
@@ -4737,13 +4879,13 @@ class SkillMgrEntryWidget extends HTMLElement {
 
                 const api = getSkillsAPI();
                 if (!api?.runSingleSkillTest) {
-                    this._showNotification('API 不可用');
+                    this._showNotification(this._t('renderer.skill.common.apiUnavailable'));
                     return;
                 }
 
                 try {
                     btn.disabled = true;
-                    btn.textContent = '⏳ 执行中...';
+                    btn.textContent = this._t('renderer.skill.analyze.rerunRunning');
                     const timeoutMs =
                         this.analyzeState.timeoutMinutes === null
                             ? undefined
@@ -4759,10 +4901,14 @@ class SkillMgrEntryWidget extends HTMLElement {
                     }
                 } catch (err) {
                     console.error('[SkillMgr] runSingleSkillTest failed:', err);
-                    this._showNotification(`重新执行失败: ${err?.message || '未知错误'}`);
+                    this._showNotification(
+                        this._t('renderer.skill.analyze.rerunFailed', {
+                            message: err?.message || this._t('renderer.skill.common.unknownError')
+                        })
+                    );
                 } finally {
                     btn.disabled = false;
-                    btn.textContent = '🔄 重新执行';
+                    btn.textContent = this._t('renderer.skill.analyze.rerun');
                 }
                 this.render();
             });
@@ -4868,7 +5014,7 @@ class SkillMgrEntryWidget extends HTMLElement {
                 skillIds = [...this.analyzeState.selected];
                 if (skillIds.length === 0) {
                     console.warn('[SkillMgr] analyze-deps-selected: no skills selected');
-                    this._showNotification('请先选择要分析的技能');
+                    this._showNotification(this._t('renderer.skill.analyze.selectFirst'));
                     return;
                 }
                 break;
@@ -4879,7 +5025,7 @@ class SkillMgrEntryWidget extends HTMLElement {
             case 'gen-test-selected':
                 skillIds = [...this.analyzeState.selected];
                 if (skillIds.length === 0) {
-                    this._showNotification('请先选择要生成测试用例的技能');
+                    this._showNotification(this._t('renderer.skill.analyze.selectFirstTestgen'));
                     return;
                 }
                 break;
@@ -4942,7 +5088,7 @@ class SkillMgrEntryWidget extends HTMLElement {
                   ? api?.generateSkillTests
                   : api?.analyzeSkillDependencies;
             if (!fn) {
-                this._showNotification('API 不可用');
+                this._showNotification(this._t('renderer.skill.common.apiUnavailable'));
                 this.render();
                 return;
             }
@@ -4955,7 +5101,11 @@ class SkillMgrEntryWidget extends HTMLElement {
             this.analyzeState.workerStatus = { ...status, results: { ...existing, ...status.results } };
         } catch (err) {
             console.error('[SkillMgr] analyzeSkillDependencies failed:', err);
-            this._showNotification(`分析启动失败: ${err?.message || '未知错误'}`);
+            this._showNotification(
+                this._t('renderer.skill.analyze.startFailed', {
+                    message: err?.message || this._t('renderer.skill.common.unknownError')
+                })
+            );
         }
         this.render();
     }
@@ -4966,15 +5116,15 @@ class SkillMgrEntryWidget extends HTMLElement {
     async _handleExportAnalyzePage() {
         try {
             const result = await window.fsAPI.saveFile({
-                title: '导出独立 HTML 页面',
+                title: this._t('renderer.skill.export.htmlDialogTitle'),
                 defaultPath: `skills-analysis-${new Date().toISOString().slice(0, 10)}.html`,
-                filters: [{ name: 'HTML 文件', extensions: ['html'] }]
+                filters: [{ name: 'HTML', extensions: ['html'] }]
             });
             if (result.canceled || !result.filePath) return;
 
             const api = getSkillsAPI();
             if (!api?.exportAnalyzePage) {
-                this._showNotification('API 不可用');
+                this._showNotification(this._t('renderer.skill.common.apiUnavailable'));
                 return;
             }
 
@@ -4997,7 +5147,7 @@ class SkillMgrEntryWidget extends HTMLElement {
                 success: false,
                 successCount: 0,
                 errorCount: 1,
-                errors: [err?.message || '未知错误']
+                errors: [err?.message || this._t('renderer.skill.common.unknownError')]
             });
         }
     }
@@ -5014,7 +5164,7 @@ class SkillMgrEntryWidget extends HTMLElement {
         if (selectedOnly) {
             skillIds = [...this.analyzeState.selected];
             if (skillIds.length === 0) {
-                this._showNotification('请先选择要运行测试的技能');
+                this._showNotification(this._t('renderer.skill.analyze.selectFirstRunTest'));
                 return;
             }
         } else {
@@ -5030,7 +5180,7 @@ class SkillMgrEntryWidget extends HTMLElement {
             const api = getSkillsAPI();
             const fn = unpassedOnly ? api?.runUnpassedSkillTests : api?.runSkillTests;
             if (!fn) {
-                this._showNotification('API 不可用');
+                this._showNotification(this._t('renderer.skill.common.apiUnavailable'));
                 this.render();
                 return;
             }
@@ -5045,7 +5195,11 @@ class SkillMgrEntryWidget extends HTMLElement {
             this.analyzeState.workerStatus = { ...status, results: { ...existing, ...status.results } };
         } catch (err) {
             console.error(`[SkillMgr] ${unpassedOnly ? 'runUnpassedSkillTests' : 'runSkillTests'} failed:`, err);
-            this._showNotification(`测试启动失败: ${err?.message || '未知错误'}`);
+            this._showNotification(
+                this._t('renderer.skill.analyze.testStartFailed', {
+                    message: err?.message || this._t('renderer.skill.common.unknownError')
+                })
+            );
         }
         this.render();
     }
@@ -5060,7 +5214,7 @@ class SkillMgrEntryWidget extends HTMLElement {
         if (actionId === 'export-meta-selected') {
             skillIds = [...this.analyzeState.selected];
             if (skillIds.length === 0) {
-                this._showNotification('请先选择要导出元数据的技能');
+                this._showNotification(this._t('renderer.skill.analyze.selectFirstExport'));
                 return;
             }
         } else {
@@ -5089,36 +5243,36 @@ class SkillMgrEntryWidget extends HTMLElement {
         const opts = this.analyzeState.exportOptions;
         const testNone = opts.includeTestCases === 'none';
 
-        this.analyzeState.modalTitle = '导出元数据';
+        this.analyzeState.modalTitle = this._t('renderer.skill.export.modalTitle');
         this.analyzeState.modalContent = `
             <div class="export-options-form">
                 <div class="export-option-row">
                     <label class="export-option-checkbox">
                         <input type="checkbox" data-export-opt="includeDependencies"
                             ${opts.includeDependencies ? 'checked' : ''}>
-                        <span>包含依赖信息</span>
+                        <span>${this._t('renderer.skill.export.includeDeps')}</span>
                     </label>
                 </div>
                 <div class="export-option-row">
-                    <div class="export-option-label">测试用例</div>
+                    <div class="export-option-label">${this._t('renderer.skill.export.testCases')}</div>
                     <div class="export-option-radio-group">
                         <label class="export-option-radio">
                             <input type="radio" name="exportTestCases" value="all"
                                 data-export-opt="includeTestCases"
                                 ${opts.includeTestCases === 'all' ? 'checked' : ''}>
-                            <span>包含所有测试用例</span>
+                            <span>${this._t('renderer.skill.export.testAll')}</span>
                         </label>
                         <label class="export-option-radio">
                             <input type="radio" name="exportTestCases" value="passed"
                                 data-export-opt="includeTestCases"
                                 ${opts.includeTestCases === 'passed' ? 'checked' : ''}>
-                            <span>仅包含通过的测试用例</span>
+                            <span>${this._t('renderer.skill.export.testPassed')}</span>
                         </label>
                         <label class="export-option-radio">
                             <input type="radio" name="exportTestCases" value="none"
                                 data-export-opt="includeTestCases"
                                 ${testNone ? 'checked' : ''}>
-                            <span>不包含测试用例</span>
+                            <span>${this._t('renderer.skill.export.testNone')}</span>
                         </label>
                     </div>
                 </div>
@@ -5127,13 +5281,13 @@ class SkillMgrEntryWidget extends HTMLElement {
                         <input type="checkbox" data-export-opt="includeTestResults"
                             ${opts.includeTestResults ? 'checked' : ''}
                             ${testNone ? 'disabled' : ''}>
-                        <span>包含测试用例的运行结果</span>
+                        <span>${this._t('renderer.skill.export.includeResults')}</span>
                     </label>
                 </div>
             </div>`;
         this.analyzeState.modalFooter = `
-            <button type="button" class="analyze-modal-btn analyze-modal-btn-cancel" data-modal-cancel>取消</button>
-            <button type="button" class="analyze-modal-btn analyze-modal-btn-primary" data-modal-confirm-export>导出</button>`;
+            <button type="button" class="analyze-modal-btn analyze-modal-btn-cancel" data-modal-cancel>${this._t('renderer.skill.common.cancel')}</button>
+            <button type="button" class="analyze-modal-btn analyze-modal-btn-primary" data-modal-confirm-export>${this._t('renderer.skill.export.button')}</button>`;
 
         this.analyzeState.modalVisible = true;
         this.analyzeState._modalType = 'export';
@@ -5155,15 +5309,15 @@ class SkillMgrEntryWidget extends HTMLElement {
         try {
             // 打开保存对话框
             const result = await window.fsAPI.saveFile({
-                title: '导出技能元数据',
+                title: this._t('renderer.skill.export.dialogTitle'),
                 defaultPath: `skill-metadata-${new Date().toISOString().slice(0, 10)}.zip`,
-                filters: [{ name: 'ZIP 文件', extensions: ['zip'] }]
+                filters: [{ name: 'ZIP', extensions: ['zip'] }]
             });
             if (result.canceled || !result.filePath) return;
 
             const api = getSkillsAPI();
             if (!api?.exportSkillMetadatas) {
-                this._showNotification('API 不可用');
+                this._showNotification(this._t('renderer.skill.common.apiUnavailable'));
                 return;
             }
 
@@ -5179,7 +5333,7 @@ class SkillMgrEntryWidget extends HTMLElement {
                 success: false,
                 successCount: 0,
                 errorCount: 1,
-                errors: [err?.message || '未知错误']
+                errors: [err?.message || this._t('renderer.skill.common.unknownError')]
             });
         } finally {
             this._pendingExportSkillIds = null;
@@ -5192,25 +5346,25 @@ class SkillMgrEntryWidget extends HTMLElement {
     _showExportResultModal(result) {
         if (result.success) {
             this.analyzeState.modalVisible = true;
-            this.analyzeState.modalTitle = '导出成功';
+            this.analyzeState.modalTitle = this._t('renderer.skill.export.success.title');
             this.analyzeState.modalContent = `
                 <div style="padding:16px 0;">
-                    <div style="font-size:15px;color:#1d1d1f;font-weight:600;">成功导出 ${result.successCount} 个技能的元数据</div>
-                    ${result.errorCount > 0 ? `<div style="font-size:12px;color:#E06060;margin-top:8px;">${result.errorCount} 个技能导出失败</div>` : ''}
+                    <div style="font-size:15px;color:#1d1d1f;font-weight:600;">${this._t('renderer.skill.export.success.message', { count: result.successCount })}</div>
+                    ${result.errorCount > 0 ? `<div style="font-size:12px;color:#E06060;margin-top:8px;">${this._t('renderer.skill.export.success.failedSuffix', { count: result.errorCount })}</div>` : ''}
                 </div>`;
         } else {
             this.analyzeState.modalVisible = true;
-            this.analyzeState.modalTitle = '导出失败';
+            this.analyzeState.modalTitle = this._t('renderer.skill.export.failed.title');
             this.analyzeState.modalContent = `
                 <div style="padding:16px 0;">
-                    <div style="font-size:15px;color:#E06060;font-weight:600;">导出失败</div>
+                    <div style="font-size:15px;color:#E06060;font-weight:600;">${this._t('renderer.skill.export.failed.title')}</div>
                     <div style="font-size:12px;color:#999;margin-top:8px;max-height:120px;overflow-y:auto;">
                         ${(result.errors || []).map((e) => `<div>• ${escapeHtml(e)}</div>`).join('')}
                     </div>
                 </div>`;
         }
         this.analyzeState.modalFooter = `
-            <button type="button" class="analyze-modal-btn analyze-modal-btn-primary" data-modal-cancel>确认</button>`;
+            <button type="button" class="analyze-modal-btn analyze-modal-btn-primary" data-modal-cancel>${this._t('renderer.skill.common.confirm')}</button>`;
         this.analyzeState._modalType = null;
         this.render();
     }
@@ -5226,7 +5380,7 @@ class SkillMgrEntryWidget extends HTMLElement {
 
             const zipPath = filePaths[0];
             if (!zipPath.toLowerCase().endsWith('.zip')) {
-                this._showNotification('请选择 .zip 文件');
+                this._showNotification(this._t('renderer.skill.export.selectZip'));
                 return;
             }
 
@@ -5239,7 +5393,7 @@ class SkillMgrEntryWidget extends HTMLElement {
             const api = getSkillsAPI();
             if (!api?.importSkillMetadatas) {
                 this._closeMetaImportModal();
-                this._showNotification('API 不可用');
+                this._showNotification(this._t('renderer.skill.common.apiUnavailable'));
                 return;
             }
 
@@ -5262,7 +5416,7 @@ class SkillMgrEntryWidget extends HTMLElement {
                 failedCount: 1,
                 skippedCount: 0,
                 details: [],
-                error: err?.message || '未知错误'
+                error: err?.message || this._t('renderer.skill.common.unknownError')
             };
             this._updateMetaImportModal();
         }
@@ -5272,39 +5426,39 @@ class SkillMgrEntryWidget extends HTMLElement {
         return [
             {
                 id: 'dependencyAnalysis',
-                label: '依赖分析',
-                title: '依赖分析追加提示词',
-                hint: '保存后会追加到依赖分析任务的基础提示词之后，留空则不追加。',
-                placeholder: '例如：请额外关注 README、package.json 和 scripts 目录中的隐式依赖。'
+                label: this._t('renderer.skill.prompts.deps.label'),
+                title: this._t('renderer.skill.prompts.deps.title'),
+                hint: this._t('renderer.skill.prompts.deps.hint'),
+                placeholder: this._t('renderer.skill.prompts.deps.placeholder')
             },
             {
                 id: 'testGeneration',
-                label: '测试生成',
-                title: '测试用例生成追加提示词',
-                hint: '保存后会追加到测试用例生成任务的基础提示词之后，留空则不追加。',
-                placeholder: '例如：优先生成可自动验证且副作用可控的测试用例。'
+                label: this._t('renderer.skill.prompts.testgen.label'),
+                title: this._t('renderer.skill.prompts.testgen.title'),
+                hint: this._t('renderer.skill.prompts.testgen.hint'),
+                placeholder: this._t('renderer.skill.prompts.testgen.placeholder')
             },
             {
                 id: 'testRun',
-                label: '测试运行',
-                title: '测试用例运行追加提示词',
-                hint: '保存后会追加到测试用例运行任务的基础提示词之后，留空则不追加。',
-                placeholder: '例如：运行测试前先检查当前工作目录和必要环境变量。'
+                label: this._t('renderer.skill.prompts.testrun.label'),
+                title: this._t('renderer.skill.prompts.testrun.title'),
+                hint: this._t('renderer.skill.prompts.testrun.hint'),
+                placeholder: this._t('renderer.skill.prompts.testrun.placeholder')
             },
             {
                 id: 'runtimeDependencyAnalysis',
-                label: '运行时元数据',
-                title: '运行时依赖元数据生成追加提示词',
-                hint: '保存后会追加到依赖元数据生成任务的基础提示词之后，留空则不追加。',
-                placeholder: '例如：额外关注 Dockerfile、Makefile 和 CI/CD 配置中的隐式依赖。'
+                label: this._t('renderer.skill.prompts.runtime.label'),
+                title: this._t('renderer.skill.prompts.runtime.title'),
+                hint: this._t('renderer.skill.prompts.runtime.hint'),
+                placeholder: this._t('renderer.skill.prompts.runtime.placeholder')
             }
         ];
     }
 
     _renderPromptManagerFooter() {
         return `
-            <button type="button" class="analyze-modal-btn analyze-modal-btn-cancel" data-modal-cancel ${this.analyzeState.promptSaving ? 'disabled' : ''}>取消</button>
-            <button type="button" class="analyze-modal-btn analyze-modal-btn-primary" data-modal-save-prompts ${this.analyzeState.promptSaving ? 'disabled' : ''}>${this.analyzeState.promptSaving ? '保存中…' : '保存'}</button>`;
+            <button type="button" class="analyze-modal-btn analyze-modal-btn-cancel" data-modal-cancel ${this.analyzeState.promptSaving ? 'disabled' : ''}>${this._t('renderer.skill.common.cancel')}</button>
+            <button type="button" class="analyze-modal-btn analyze-modal-btn-primary" data-modal-save-prompts ${this.analyzeState.promptSaving ? 'disabled' : ''}>${this.analyzeState.promptSaving ? this._t('renderer.skill.common.saving') : this._t('renderer.skill.common.save')}</button>`;
     }
 
     _renderPromptManagerContent() {
@@ -5335,8 +5489,9 @@ class SkillMgrEntryWidget extends HTMLElement {
         const requestId = ++this._promptLoadRequestId;
         this.analyzeState.promptSaving = false;
         this.analyzeState.promptActiveTab = 'dependencyAnalysis';
-        this.analyzeState.modalTitle = '提示词管理';
-        this.analyzeState.modalContent = '<div class="prompt-loading">正在加载…</div>';
+        this.analyzeState.modalTitle = this._t('renderer.skill.prompts.title');
+        this.analyzeState.modalContent =
+            '<div class="prompt-loading">' + this._t('renderer.skill.common.loading') + '</div>';
         this.analyzeState.modalFooter = this._renderPromptManagerFooter();
         this.analyzeState.modalVisible = true;
         this.analyzeState._modalType = 'prompts';
@@ -5345,7 +5500,7 @@ class SkillMgrEntryWidget extends HTMLElement {
         try {
             const api = getSkillsAPI();
             if (!api?.getAnalysisPrompts) {
-                throw new Error('API 不可用');
+                throw new Error(this._t('renderer.skill.common.apiUnavailable'));
             }
             const prompts = await api.getAnalysisPrompts();
             if (
@@ -5372,7 +5527,7 @@ class SkillMgrEntryWidget extends HTMLElement {
             }
             this.analyzeState.modalContent = `
                 <div style="padding:16px 0;color:#E06060;font-size:13px;">
-                    加载失败：${escapeHtml(err?.message || '未知错误')}
+                    ${this._t('renderer.skill.prompts.loadFailed', { message: escapeHtml(err?.message || this._t('renderer.skill.common.unknownError')) })}
                 </div>`;
         }
         this.analyzeState.modalFooter = this._renderPromptManagerFooter();
@@ -5385,7 +5540,7 @@ class SkillMgrEntryWidget extends HTMLElement {
         try {
             const api = getSkillsAPI();
             if (!api?.saveAnalysisPrompts) {
-                throw new Error('API 不可用');
+                throw new Error(this._t('renderer.skill.common.apiUnavailable'));
             }
 
             this.analyzeState.promptSaving = true;
@@ -5403,12 +5558,12 @@ class SkillMgrEntryWidget extends HTMLElement {
             this.analyzeState.modalFooter = '';
             this.analyzeState._modalType = null;
             this.analyzeState.promptSaving = false;
-            this._showNotification('提示词已保存');
+            this._showNotification(this._t('renderer.skill.prompts.saved'));
         } catch (err) {
             this.analyzeState.promptSaving = false;
             this.analyzeState.modalContent = `
                 ${this._renderPromptManagerContent()}
-                <div style="margin-top:12px;color:#E06060;font-size:12px;">保存失败：${escapeHtml(err?.message || '未知错误')}</div>`;
+                <div style="margin-top:12px;color:#E06060;font-size:12px;">${this._t('renderer.skill.prompts.saveFailed', { message: escapeHtml(err?.message || this._t('renderer.skill.common.unknownError')) })}</div>`;
             this.analyzeState.modalFooter = this._renderPromptManagerFooter();
         }
         this.render();
@@ -5425,22 +5580,22 @@ class SkillMgrEntryWidget extends HTMLElement {
         if (actionId === 'delete-meta-selected') {
             skillIds = [...this.analyzeState.selected];
             if (skillIds.length === 0) {
-                this._showNotification('请先选择要删除元数据的技能');
+                this._showNotification(this._t('renderer.skill.analyze.selectFirstDeleteMeta'));
                 return;
             }
-            confirmMsg = `确定要删除选中的 <strong>${skillIds.length}</strong> 个技能的元数据吗？<br><span style="color:#999;font-size:12px;">此操作不可撤销。</span>`;
+            confirmMsg = this._t('renderer.skill.metaDelete.confirmSelected', { count: skillIds.length });
         } else {
             skillIds = allSkills.map((s) => s.id);
-            confirmMsg = `确定要删除 <strong>所有 ${skillIds.length} 个技能</strong> 的元数据吗？<br><span style="color:#999;font-size:12px;">此操作不可撤销。</span>`;
+            confirmMsg = this._t('renderer.skill.metaDelete.confirmAll', { count: skillIds.length });
         }
 
         // 显示确认弹窗
         this.analyzeState.modalVisible = true;
-        this.analyzeState.modalTitle = '确认删除';
+        this.analyzeState.modalTitle = this._t('renderer.skill.metaDelete.title');
         this.analyzeState.modalContent = `<div style="padding:8px 0;font-size:14px;line-height:1.8;">${confirmMsg}</div>`;
         this.analyzeState.modalFooter = `
-            <button type="button" class="analyze-modal-footer-btn btn-cancel" data-modal-cancel>取消</button>
-            <button type="button" class="analyze-modal-footer-btn btn-danger" data-modal-confirm-delete>确认删除</button>`;
+            <button type="button" class="analyze-modal-footer-btn btn-cancel" data-modal-cancel>${this._t('renderer.skill.common.cancel')}</button>
+            <button type="button" class="analyze-modal-footer-btn btn-danger" data-modal-confirm-delete>${this._t('renderer.skill.metaDelete.confirmButton')}</button>`;
         this.analyzeState._modalType = 'delete';
         this._pendingDeleteSkillIds = skillIds;
         this.render();
@@ -5460,22 +5615,30 @@ class SkillMgrEntryWidget extends HTMLElement {
         try {
             const api = getSkillsAPI();
             if (!api?.deleteSkillMetadatas) {
-                this._showNotification('API 不可用');
+                this._showNotification(this._t('renderer.skill.common.apiUnavailable'));
                 return;
             }
 
             const result = await api.deleteSkillMetadatas(skillIds);
             const msg =
-                `删除完成：成功 ${result.deleted} 个` +
-                (result.notFound > 0 ? `，未找到元数据 ${result.notFound} 个` : '') +
-                (result.errors.length > 0 ? `，失败 ${result.errors.length} 个` : '');
+                this._t('renderer.skill.metaDelete.done', { deleted: result.deleted }) +
+                (result.notFound > 0
+                    ? this._t('renderer.skill.metaDelete.notFoundSuffix', { count: result.notFound })
+                    : '') +
+                (result.errors.length > 0
+                    ? this._t('renderer.skill.metaDelete.failedSuffix', { count: result.errors.length })
+                    : '');
             this._showNotification(msg);
 
             // 刷新分析面板中的元数据展示
             this._loadExistingMetadatas();
         } catch (err) {
             console.error('[SkillMgr] deleteSkillMetadatas failed:', err);
-            this._showNotification(`删除失败: ${err?.message || '未知错误'}`);
+            this._showNotification(
+                this._t('renderer.skill.metaDelete.failed', {
+                    message: err?.message || this._t('renderer.skill.common.unknownError')
+                })
+            );
         }
     }
 
@@ -5491,12 +5654,12 @@ class SkillMgrEntryWidget extends HTMLElement {
         const skill = [...this.skills, ...this.builtinSkills].find((s) => s.id === skillId);
         const skillName = skill?.name || skillId;
 
-        let html = `<div class="analyze-modal-section"><div class="analyze-modal-section-title">${escapeHtml(skillName)} 的依赖项</div>`;
+        let html = `<div class="analyze-modal-section"><div class="analyze-modal-section-title">${this._t('renderer.skill.deps.of', { name: escapeHtml(skillName) })}</div>`;
 
         // 环境变量
         if (deps.envVars && deps.envVars.length > 0) {
-            html += `<div class="analyze-modal-subsection"><div class="analyze-modal-subsection-title">环境变量</div>`;
-            html += `<table class="analyze-modal-table"><thead><tr><th>名称</th><th>必需</th><th>说明</th></tr></thead><tbody>`;
+            html += `<div class="analyze-modal-subsection"><div class="analyze-modal-subsection-title">${this._t('renderer.skill.deps.env')}</div>`;
+            html += `<table class="analyze-modal-table"><thead><tr><th>${this._t('renderer.skill.deps.col.name')}</th><th>${this._t('renderer.skill.deps.col.required')}</th><th>${this._t('renderer.skill.deps.col.desc')}</th></tr></thead><tbody>`;
             for (const ev of deps.envVars) {
                 html += `<tr><td><code>${escapeHtml(ev.name)}</code></td><td>${ev.required ? '✅' : '❌'}</td><td>${escapeHtml(ev.description || '—')}</td></tr>`;
             }
@@ -5505,8 +5668,8 @@ class SkillMgrEntryWidget extends HTMLElement {
 
         // Python 包
         if (deps.pythonPackages && deps.pythonPackages.length > 0) {
-            html += `<div class="analyze-modal-subsection"><div class="analyze-modal-subsection-title">Python 包</div>`;
-            html += `<table class="analyze-modal-table"><thead><tr><th>包名</th><th>版本</th><th>说明</th></tr></thead><tbody>`;
+            html += `<div class="analyze-modal-subsection"><div class="analyze-modal-subsection-title">${this._t('renderer.skill.deps.python')}</div>`;
+            html += `<table class="analyze-modal-table"><thead><tr><th>${this._t('renderer.skill.deps.col.package')}</th><th>${this._t('renderer.skill.deps.col.version')}</th><th>${this._t('renderer.skill.deps.col.desc')}</th></tr></thead><tbody>`;
             for (const pkg of deps.pythonPackages) {
                 html += `<tr><td><code>${escapeHtml(pkg.name)}</code></td><td>${escapeHtml(pkg.version || '—')}</td><td>${escapeHtml(pkg.description || '—')}</td></tr>`;
             }
@@ -5515,8 +5678,8 @@ class SkillMgrEntryWidget extends HTMLElement {
 
         // npm 包
         if (deps.npmPackages && deps.npmPackages.length > 0) {
-            html += `<div class="analyze-modal-subsection"><div class="analyze-modal-subsection-title">npm 包</div>`;
-            html += `<table class="analyze-modal-table"><thead><tr><th>包名</th><th>版本</th><th>说明</th></tr></thead><tbody>`;
+            html += `<div class="analyze-modal-subsection"><div class="analyze-modal-subsection-title">${this._t('renderer.skill.deps.npm')}</div>`;
+            html += `<table class="analyze-modal-table"><thead><tr><th>${this._t('renderer.skill.deps.col.package')}</th><th>${this._t('renderer.skill.deps.col.version')}</th><th>${this._t('renderer.skill.deps.col.desc')}</th></tr></thead><tbody>`;
             for (const pkg of deps.npmPackages) {
                 html += `<tr><td><code>${escapeHtml(pkg.name)}</code></td><td>${escapeHtml(pkg.version || '—')}</td><td>${escapeHtml(pkg.description || '—')}</td></tr>`;
             }
@@ -5525,8 +5688,8 @@ class SkillMgrEntryWidget extends HTMLElement {
 
         // 二进制命令
         if (deps.binaries && deps.binaries.length > 0) {
-            html += `<div class="analyze-modal-subsection"><div class="analyze-modal-subsection-title">系统命令</div>`;
-            html += `<table class="analyze-modal-table"><thead><tr><th>命令</th><th>说明</th></tr></thead><tbody>`;
+            html += `<div class="analyze-modal-subsection"><div class="analyze-modal-subsection-title">${this._t('renderer.skill.deps.commands')}</div>`;
+            html += `<table class="analyze-modal-table"><thead><tr><th>${this._t('renderer.skill.deps.col.command')}</th><th>${this._t('renderer.skill.deps.col.desc')}</th></tr></thead><tbody>`;
             for (const bin of deps.binaries) {
                 html += `<tr><td><code>${escapeHtml(bin.name)}</code></td><td>${escapeHtml(bin.description || '—')}</td></tr>`;
             }
@@ -5539,12 +5702,12 @@ class SkillMgrEntryWidget extends HTMLElement {
             !deps.npmPackages?.length &&
             !deps.binaries?.length
         ) {
-            html += `<div class="analyze-modal-empty">未检测到依赖项</div>`;
+            html += `<div class="analyze-modal-empty">${this._t('renderer.skill.deps.none')}</div>`;
         }
 
         html += `</div>`;
 
-        this.analyzeState.modalTitle = '依赖项';
+        this.analyzeState.modalTitle = this._t('renderer.skill.deps.title');
         this.analyzeState.modalContent = html;
         this.analyzeState.modalFooter = '';
         this.analyzeState.modalVisible = true;
@@ -5567,14 +5730,14 @@ class SkillMgrEntryWidget extends HTMLElement {
         const skillName = skill?.name || skillId;
 
         const html = `<div class="analyze-modal-section">
-            <div class="analyze-modal-section-title">${escapeHtml(skillName)} - 分析错误</div>
+            <div class="analyze-modal-section-title">${this._t('renderer.skill.errorDetail.of', { name: escapeHtml(skillName) })}</div>
             <div class="analyze-modal-error-box">
                 <div class="analyze-modal-error-icon">⚠️</div>
                 <div class="analyze-modal-error-msg">${escapeHtml(result.error)}</div>
             </div>
         </div>`;
 
-        this.analyzeState.modalTitle = '错误详情';
+        this.analyzeState.modalTitle = this._t('renderer.skill.errorDetail.title');
         this.analyzeState.modalContent = html;
         this.analyzeState.modalFooter = '';
         this.analyzeState.modalVisible = true;
@@ -5595,18 +5758,19 @@ class SkillMgrEntryWidget extends HTMLElement {
         const total = tcs.length;
         const passed = tcs.filter((tc) => tc.status === 'passed').length;
         const failed = tcs.filter((tc) => tc.status === 'failed').length;
-        return ` (共${total}条，${passed}通过，${failed}失败)`;
+        return this._t('renderer.skill.testStats.summary', { total, passed, failed });
     }
 
     _formatTestFailureReasonCategory(category) {
         if (!category) return '';
-        return TEST_FAILURE_REASON_CATEGORY_LABELS[category] || String(category);
+        const key = TEST_FAILURE_REASON_CATEGORY_KEYS[category];
+        return key ? this._t(key) : String(category);
     }
 
     async _showSelectedTestReportModal() {
         const skillIds = [...this.analyzeState.selected];
         if (skillIds.length === 0) {
-            this._showNotification('请先选择要查看统计信息的技能');
+            this._showNotification(this._t('renderer.skill.analyze.selectFirstStats'));
             return;
         }
 
@@ -5617,11 +5781,11 @@ class SkillMgrEntryWidget extends HTMLElement {
             results: this.analyzeState.workerStatus?.results || {}
         });
         if (!report.hasTestInfo) {
-            this._showNotification('选中的技能暂无测试信息，请先生成测试用例');
+            this._showNotification(this._t('renderer.skill.analyze.noTestInfo'));
             return;
         }
 
-        this.analyzeState.modalTitle = '单元测试运行结果';
+        this.analyzeState.modalTitle = this._t('renderer.skill.testStats.title');
         this.analyzeState.modalContent = report.html;
         this.analyzeState.modalFooter = '';
         this.analyzeState.modalVisible = true;
@@ -5644,9 +5808,14 @@ class SkillMgrEntryWidget extends HTMLElement {
         const skill = [...this.skills, ...this.builtinSkills].find((s) => s.id === skillId);
         const skillName = skill?.name || skillId;
 
-        const statusLabels = { pending: '⏳ 待测试', passed: '✅ 通过', failed: '❌ 失败', skipped: '⏭️ 跳过' };
+        const statusLabels = {
+            pending: this._t('renderer.skill.testStats.pending'),
+            passed: this._t('renderer.skill.testStats.passed'),
+            failed: this._t('renderer.skill.testStats.failed'),
+            skipped: this._t('renderer.skill.testStats.skipped')
+        };
 
-        let html = `<div class="analyze-modal-section"><div class="analyze-modal-section-title">${escapeHtml(skillName)} 的测试用例（共 ${testCases.length} 条）</div>`;
+        let html = `<div class="analyze-modal-section"><div class="analyze-modal-section-title">${this._t('renderer.skill.testStats.of', { name: escapeHtml(skillName), count: testCases.length })}</div>`;
 
         for (const tc of testCases) {
             const promptHtml = renderTestCaseMarkdown(tc.prompt);
@@ -5655,11 +5824,11 @@ class SkillMgrEntryWidget extends HTMLElement {
             const errorHtml = tc.error ? renderTestCaseMarkdown(tc.error) : '';
             const failureReasonLabel = this._formatTestFailureReasonCategory(tc.failureReasonCategory);
             const failureReasonHtml = failureReasonLabel
-                ? `<div class="testcase-failure-category"><span class="testcase-failure-category-label">失败分类</span><span class="testcase-failure-category-chip">${escapeHtml(failureReasonLabel)}</span></div>`
+                ? `<div class="testcase-failure-category"><span class="testcase-failure-category-label">${this._t('renderer.skill.testStats.failureCategory')}</span><span class="testcase-failure-category-chip">${escapeHtml(failureReasonLabel)}</span></div>`
                 : '';
             const failureDetailHtml =
                 errorHtml || failureReasonHtml
-                    ? `<div class="accordion-field accordion-field-error"><span class="label">错误</span>${failureReasonHtml}${errorHtml ? `<div class="accordion-markdown">${errorHtml}</div>` : ''}</div>`
+                    ? `<div class="accordion-field accordion-field-error"><span class="label">${this._t('renderer.skill.testStats.error')}</span>${failureReasonHtml}${errorHtml ? `<div class="accordion-markdown">${errorHtml}</div>` : ''}</div>`
                     : '';
             const isExpanded = expandedTestCaseIndex != null && String(tc.index) === String(expandedTestCaseIndex);
             const taskId = tc.taskId || '';
@@ -5673,13 +5842,13 @@ class SkillMgrEntryWidget extends HTMLElement {
                     <span class="analyze-modal-testcase-status status-${tc.status}">${statusLabels[tc.status] || tc.status}</span>
                 </div>
                 <div class="accordion-body" data-accordion-body="${escapeHtml(String(tc.index))}" style="display:${isExpanded ? 'block' : 'none'}">
-                    <div class="accordion-field"><span class="label">测试 Prompt</span><div class="accordion-markdown">${promptHtml}</div></div>
-                    <div class="accordion-field"><span class="label">预期结果</span><div class="accordion-markdown">${expectedHtml}</div></div>
-                    ${actualHtml ? `<div class="accordion-field"><span class="label">实际结果</span><div class="accordion-markdown">${actualHtml}</div></div>` : ''}
+                    <div class="accordion-field"><span class="label">${this._t('renderer.skill.testStats.prompt')}</span><div class="accordion-markdown">${promptHtml}</div></div>
+                    <div class="accordion-field"><span class="label">${this._t('renderer.skill.testStats.expected')}</span><div class="accordion-markdown">${expectedHtml}</div></div>
+                    ${actualHtml ? `<div class="accordion-field"><span class="label">${this._t('renderer.skill.testStats.actual')}</span><div class="accordion-markdown">${actualHtml}</div></div>` : ''}
                     ${failureDetailHtml}
                     <div class="accordion-field" style="margin-top:12px;padding-top:10px;border-top:1px solid rgba(0,0,0,0.06);display:flex;gap:8px;flex-wrap:wrap;">
-                        ${taskId ? `<button type="button" class="analyze-goto-task-btn" data-goto-task="${escapeHtml(taskId)}" title="在 GUI 中打开该测试任务">📋 查看测试任务</button>` : ''}
-                        <button type="button" class="analyze-rerun-btn" data-rerun-skill="${escapeHtml(skillId)}" data-rerun-index="${tc.index}" title="重新执行该测试用例">${this.analyzeState.workerStatus?.running ? '⏳' : '🔄'} 重新执行</button>
+                        ${taskId ? `<button type="button" class="analyze-goto-task-btn" data-goto-task="${escapeHtml(taskId)}" title="${this._t('renderer.skill.testcase.gotoTask')}">${this._t('renderer.skill.testcase.viewTask')}</button>` : ''}
+                        <button type="button" class="analyze-rerun-btn" data-rerun-skill="${escapeHtml(skillId)}" data-rerun-index="${tc.index}" title="${this._t('renderer.skill.testcase.rerunHint')}">${this.analyzeState.workerStatus?.running ? '⏳' : '🔄'}${this._t('renderer.skill.testcase.rerunLabel')}</button>
                     </div>
                 </div>
             </div>`;
@@ -5687,7 +5856,7 @@ class SkillMgrEntryWidget extends HTMLElement {
 
         html += `</div>`;
 
-        this.analyzeState.modalTitle = '测试用例';
+        this.analyzeState.modalTitle = this._t('renderer.skill.testcase.title');
         this.analyzeState.modalContent = html;
         this.analyzeState.modalFooter = '';
         this.analyzeState.modalVisible = true;
@@ -5707,7 +5876,7 @@ class SkillMgrEntryWidget extends HTMLElement {
         // 尝试发送系统通知
         try {
             const api = getSkillsAPI();
-            api?.sendNotification?.('info', '技能中心', message);
+            api?.sendNotification?.('info', this._t('renderer.skill.notify.title'), message);
         } catch {
             // 静默忽略
         }

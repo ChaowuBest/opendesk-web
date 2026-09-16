@@ -1,5 +1,6 @@
 import fs from 'fs';
 import { describe, expect, test } from '@jest/globals';
+import { zhCn } from '../../../main/applications/skillmgr/locale/zh-cn.js';
 
 const source = fs.readFileSync(
     new URL('../../../main/applications/skillmgr/renderer/entry.js', import.meta.url),
@@ -21,7 +22,9 @@ describe('Skill Center dark theme regressions', () => {
 
     test('the analyzer defaults to unlimited timeout', () => {
         expect(source).toContain('timeoutMinutes: null');
-        expect(source).toContain('placeholder="无限制"');
+        // 占位符已接入 i18n：源码断言取词调用，词典断言中文语义仍为“无限制”
+        expect(source).toContain('placeholder="${this._t(\'renderer.skill.analyze.timeoutPlaceholder\')}"');
+        expect(zhCn['renderer.skill.analyze.timeoutPlaceholder']).toBe('无限制');
         expect(source).toContain('this.analyzeState.timeoutMinutes === null ? undefined');
     });
 
