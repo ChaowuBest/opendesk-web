@@ -44,7 +44,9 @@ export class ExecutePwshTool extends BaseTool<PwshArgsSchema> {
 
     constructor(
         private readonly shellPath: string,
-        private readonly sandboxed = false
+        private readonly sandboxed = false,
+        // 仅在沙箱激活时生效：沙箱内直接删除的文件送 Windows 回收站
+        private readonly deleteToTrash = false
     ) {
         super('executePwsh', t(sandboxed ? 'sandbox.description' : 'pwsh.description'), createPwshArgsSchema());
         this.serialExecution = sandboxed;
@@ -102,6 +104,7 @@ export class ExecutePwshTool extends BaseTool<PwshArgsSchema> {
         const encodingCommand =
             '[Console]::OutputEncoding = [System.Text.Encoding]::UTF8; [Console]::InputEncoding = [System.Text.Encoding]::UTF8; ';
         const utf8Command = `${process.platform === 'win32' ? 'chcp 65001 | Out-Null; ' : ''}${encodingCommand}${command}`;
+        const dynamicSandbox = this.sandboxed && process.platform === 'win32';
         await executeShellCommand({
             shellPath: this.shellPath,
             shellArgs: ['-NoProfile', '-Command', utf8Command],
@@ -113,7 +116,8 @@ export class ExecutePwshTool extends BaseTool<PwshArgsSchema> {
             runningProcesses: this.runningProcesses,
             stopPromises: this._stopPromises,
             isKilledByStop: () => this._killedByStop,
-            useDynamicSandbox: this.sandboxed && process.platform === 'win32'
+            useDynamicSandbox: dynamicSandbox,
+            sandboxDeleteToTrash: dynamicSandbox && this.deleteToTrash
         });
     }
 }

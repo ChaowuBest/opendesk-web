@@ -78,3 +78,60 @@ test('escapes executable paths in option values and labels', () => {
     expect(panel.querySelector('option').textContent).toBe(`powershell — ${path}`);
     expect(panel.querySelector('pwsh')).toBeNull();
 });
+
+test('recycle bin option appears only under an enabled sandbox and saves its flag', () => {
+    // 未启用沙箱：不渲染回收站选项
+    const off = createPanel({ shell_path: shells[0].path, shell_sandboxed: false });
+    expect(off.querySelector('#task-shell-del-to-trash')).toBeNull();
+
+    // 启用沙箱：渲染回收站选项，默认未勾选
+    const on = createPanel({ shell_path: shells[0].path, shell_sandboxed: true });
+    const trash = on.querySelector('#task-shell-del-to-trash');
+    expect(trash).not.toBeNull();
+    expect(trash.hasAttribute('checked')).toBe(false);
+
+    // 勾选后保存偏好，且沙箱保持启用
+    trash.checked = true;
+    trash.dispatchEvent(new Event('change'));
+    expect(on.currentData.task_config).toEqual({
+        shell_path: shells[0].path,
+        shell_sandboxed: true,
+        shell_sandbox_del_to_trash: true
+    });
+    expect(on.saveImmediately).toHaveBeenCalledTimes(1);
+
+    // 已有偏好时渲染为勾选状态
+    const remembered = createPanel({
+        shell_path: shells[0].path,
+        shell_sandboxed: true,
+        shell_sandbox_del_to_trash: true
+    });
+    expect(remembered.querySelector('#task-shell-del-to-trash').hasAttribute('checked')).toBe(true);
+});
+
+test('turning the sandbox off hides the recycle bin option but keeps the preference', () => {
+    const panel = createPanel({ shell_path: shells[0].path, shell_sandboxed: true, shell_sandbox_del_to_trash: true });
+    const sandbox = panel.querySelector('#task-shell-sandboxed');
+    sandbox.checked = false;
+    sandbox.dispatchEvent(new Event('change'));
+    expect(panel.currentData.task_config).toEqual({
+        shell_path: shells[0].path,
+        shell_sandboxed: false,
+        shell_sandbox_del_to_trash: true
+    });
+    expect(panel.querySelector('#task-shell-del-to-trash')).toBeNull();
+});
+
+test('switching to bash hides the recycle bin option together with the sandbox', () => {
+    const panel = createPanel({ shell_path: shells[0].path, shell_sandboxed: true, shell_sandbox_del_to_trash: true });
+    const select = panel.querySelector('#task-shell-path');
+    Object.defineProperty(select, 'value', { value: shells[2].path, configurable: true });
+    select.dispatchEvent(new Event('change'));
+    expect(panel.currentData.task_config).toEqual({
+        shell_path: shells[2].path,
+        shell_sandboxed: false,
+        shell_sandbox_del_to_trash: true
+    });
+    expect(panel.querySelector('#task-shell-del-to-trash')).toBeNull();
+    expect(panel.querySelector('#task-shell-sandboxed')).toBeNull();
+});

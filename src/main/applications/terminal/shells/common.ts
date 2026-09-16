@@ -209,6 +209,7 @@ export async function executeShellCommand(opts: {
     stopPromises: Map<ChildProcess, Promise<void>>;
     isKilledByStop: () => boolean;
     useDynamicSandbox?: boolean;
+    sandboxDeleteToTrash?: boolean;
 }): Promise<void> {
     const {
         shellPath,
@@ -221,14 +222,22 @@ export async function executeShellCommand(opts: {
         runningProcesses,
         stopPromises,
         isKilledByStop,
-        useDynamicSandbox = false
+        useDynamicSandbox = false,
+        sandboxDeleteToTrash = false
     } = opts;
 
     const baseEnv = buildChildProcessEnv(taskState?.harnessContext.environ);
     const env = await runPluginShellEnv(taskState, { shell: shellPath, command }, baseEnv);
     const startTime = Date.now();
     const sandbox = useDynamicSandbox
-        ? await prepareDynamicSandbox({ shellPath, shellArgs, command, cwd, taskState })
+        ? await prepareDynamicSandbox({
+              shellPath,
+              shellArgs,
+              command,
+              cwd,
+              taskState,
+              deleteToTrash: sandboxDeleteToTrash
+          })
         : null;
     let proc: ChildProcessWithoutNullStreams;
     try {

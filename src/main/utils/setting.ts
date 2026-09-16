@@ -272,7 +272,9 @@ const TaskSettingSchema = z.object({
     termination_check: z.boolean().default(true).describe('是否自动检测并恢复异常中断的任务'),
     evidence_card: z.boolean().default(false).describe('是否启用 EvidenceCard 节省 Token 功能'),
     shell_path: z.string().default(''),
-    shell_sandboxed: z.boolean().default(false)
+    shell_sandboxed: z.boolean().default(false),
+    // 仅在 shell_sandboxed 且为 Windows PowerShell 时生效：沙箱内直接删除的文件送回收站
+    shell_sandbox_del_to_trash: z.boolean().default(false)
 });
 
 const NetworkConfigSchema = z.object({

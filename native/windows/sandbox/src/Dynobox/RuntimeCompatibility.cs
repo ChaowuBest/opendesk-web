@@ -36,7 +36,7 @@ internal static class RuntimeCompatibility
         var parent = Path.GetDirectoryName(destination);
         if (!string.IsNullOrEmpty(parent)) Directory.CreateDirectory(parent);
         File.WriteAllBytes(destination, bytes.ToArray());
-        return changed;
+        return true;
     }
 
     private static int ReplaceLegacyNamedPipeTemplates(List<byte> bytes)

@@ -653,3 +653,238 @@ test('PowerShell can wait beyond the Dokan timeout for a real file authorization
         fs.rmSync(directory, { recursive: true, force: true });
     }
 });
+
+
+test('deny rules cannot be evaded through .. aliases, short names or trailing dots', { skip: !windows }, async () => {
+    const python = resolvePython();
+    if (!python) return;
+    const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'opendesk-sandbox-alias-'));
+    try {
+        const secretDir = path.join(directory, 'secret');
+        fs.mkdirSync(secretDir);
+        fs.writeFileSync(path.join(secretDir, 'key.txt'), 'TOPSECRET-7f3a');
+        // 提供一个带 .. 的可达父目录，供穿越探测使用
+        fs.mkdirSync(path.join(directory, 'pub'));
+        fs.writeFileSync(path.join(directory, 'pub', 'note.txt'), 'pubcontent');
+
+        const virtualRoot = '/' + directory.replace(/\\/g, '/').replace(':', '');
+        const policy = path.join(directory, 'policy.toml');
+        fs.writeFileSync(
+            policy,
+            `version = 1\ndefault = "deny"\n` +
+                `[[rules]]\npath = "${virtualRoot}/secret/**"\naccess = "all"\nperm = "deny"\n` +
+                `[[rules]]\npath = "/**"\naccess = "read"\nperm = "allow"\n` +
+                `[[rules]]\npath = "/**"\naccess = "execute"\nperm = "allow"\n`
+        );
+
+        // 8.3 短名仅当卷上真实生成时才参与断言（可按注册表/卷配置关闭）
+        const probe = spawnSync('cmd.exe', [
+            '/d', '/s', '/c', `for %I in ("${secretDir}") do @echo %~sI`
+        ], { encoding: 'utf8', windowsHide: true });
+        const shortDir = (probe.stdout ?? '').trim().split(/\r?\n/)[0] ?? '';
+        const hasShort = /^[A-Z]:\\[^ ]*~\d/i.test(shortDir);
+
+        const probeScript = path.join(directory, 'alias_probe.py');
+        const virtualKey = 'Z:' + (virtualRoot + '/secret/key.txt').replace(/\//g, '\\');
+        const virtualDotDot =
+            'Z:' + (virtualRoot + '/pub/../secret/key.txt').replace(/\//g, '\\');
+        const virtualShort = hasShort
+            ? 'Z:' + shortDir.replace(/^[A-Z]:/, '/' + shortDir[0]).replace(/\\/g, '\\') + '\\key.txt'
+            : null;
+        const virtualTrailingDot = virtualKey + '.';
+        fs.writeFileSync(
+            probeScript,
+            String.raw`import ctypes, sys
+
+ntdll = ctypes.WinDLL("ntdll")
+FILE_READ_DATA = 0x0001
+FILE_READ_ATTRIBUTES = 0x0080
+SYNCHRONIZE = 0x00100000
+FILE_OPEN = 1
+FILE_SYNCHRONOUS_IO_NONALERT = 0x20
+FILE_NON_DIRECTORY_FILE = 0x40
+OBJ_CASE_INSENSITIVE = 0x40
+
+class US(ctypes.Structure):
+    _fields_ = [("Length", ctypes.c_ushort), ("MaximumLength", ctypes.c_ushort), ("Buffer", ctypes.c_void_p)]
+
+class OA(ctypes.Structure):
+    _fields_ = [("Length", ctypes.c_ulong), ("RootDirectory", ctypes.c_void_p),
+                ("ObjectName", ctypes.c_void_p), ("Attributes", ctypes.c_ulong),
+                ("SecurityDescriptor", ctypes.c_void_p), ("SecurityQualityOfService", ctypes.c_void_p)]
+
+class IOSB(ctypes.Structure):
+    class U(ctypes.Union):
+        _fields_ = [("Status", ctypes.c_long), ("Pointer", ctypes.c_void_p)]
+    _fields_ = [("u", U), ("Information", ctypes.c_size_t)]
+
+def nt_open(raw):
+    buf = ctypes.create_unicode_buffer(raw)
+    us = US(len(raw) * 2, (len(raw) + 1) * 2, ctypes.cast(buf, ctypes.c_void_p))
+    oa = OA(ctypes.sizeof(OA), None, ctypes.cast(ctypes.byref(us), ctypes.c_void_p), OBJ_CASE_INSENSITIVE, None, None)
+    iosb = IOSB()
+    handle = ctypes.c_void_p()
+    status = ntdll.NtCreateFile(ctypes.byref(handle),
+        FILE_READ_DATA | FILE_READ_ATTRIBUTES | SYNCHRONIZE, ctypes.byref(oa), ctypes.byref(iosb),
+        None, 0, 7, FILE_OPEN, FILE_SYNCHRONOUS_IO_NONALERT | FILE_NON_DIRECTORY_FILE, None, 0)
+    if status == 0:
+        ntdll.NtClose(handle)
+    return status & 0xFFFFFFFF
+
+for label, path in [("dotdot", sys.argv[1]), ("short", sys.argv[2]), ("trailingdot", sys.argv[3])]:
+    if not path:
+        continue
+    status = nt_open("\\??\\" + path)
+    leaked = "LEAKED" if status == 0 else f"blocked({status:08X})"
+    print(f"NTPROBE {label}: {leaked}")
+try:
+    with open(sys.argv[1], "rb") as f:
+        print("WIN32 dotdot: LEAKED " + f.read(64).decode())
+except OSError:
+    print("WIN32 dotdot: blocked")
+print("PROBE-DONE")
+`);
+        const t0 = Date.now();
+        const result = await run(executable, [
+            'run',
+            '--automount',
+            '--policy',
+            policy,
+            '--',
+            `"${python}" "${probeScript}" "${virtualDotDot}" "${virtualShort ?? ''}" "${virtualTrailingDot}"`
+        ]);
+        assert.equal(result.code, 0, result.stdout + result.stderr);
+        assert.ok(Date.now() - t0 < 45000, 'probe should finish quickly');
+        assert.match(result.stdout, /NTPROBE dotdot: blocked/);
+        assert.match(result.stdout, /NTPROBE trailingdot: blocked/);
+        if (hasShort) assert.match(result.stdout, /NTPROBE short: blocked/);
+        assert.doesNotMatch(result.stdout, /LEAKED/);
+        assert.doesNotMatch(result.stdout, /TOPSECRET-7f3a/);
+    } finally {
+        fs.rmSync(directory, { recursive: true, force: true });
+    }
+});
+
+test('junctions inside the root work, junctions out of the root cannot move IO across', { skip: !windows }, async () => {
+    const python = resolvePython();
+    if (!python) return;
+    const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'opendesk-sandbox-junc-'));
+    const outsideDir = directory + '-outside';
+    try {
+        fs.mkdirSync(outsideDir, { recursive: true });
+        fs.writeFileSync(path.join(outsideDir, 'out.txt'), 'OUTSIDE-CONTENT-4e8b');
+        fs.writeFileSync(path.join(directory, 'inside.txt'), 'inside-content');
+        // 目录 junction 无需管理员；ext 指向映射根之外，int 指向根内
+        fs.symlinkSync(outsideDir, path.join(directory, 'ext-junc'), 'junction');
+        const internalDir = path.join(directory, 'internal');
+        fs.mkdirSync(internalDir);
+        fs.writeFileSync(path.join(internalDir, 'i.txt'), 'internal-content');
+        fs.symlinkSync(internalDir, path.join(directory, 'int-junc'), 'junction');
+
+        // 单根模式：根 = directory，junction 指向根外的同级目录才是越界
+        const policy = path.join(directory, 'policy.toml');
+        fs.writeFileSync(
+            policy,
+            `version = 1\ndefault = "deny"\n` +
+                `[[roots]]\nvirtual = "/probe"\nreal = "${directory.replace(/\\/g, '/')}"\n` +
+                `[[roots]]\nvirtual = "/py"\nreal = "${path.dirname(python).replace(/\\/g, '/')}"\n` +
+                `[[rules]]\npath = "/probe/**"\naccess = "all"\nperm = "allow"\n` +
+                `[[rules]]\npath = "/py/**"\naccess = "all"\nperm = "allow"\n`
+        );
+
+        const probeScript = path.join(directory, 'junc_probe.py');
+        fs.writeFileSync(
+            probeScript,
+            [
+                'import os, sys',
+                'def try_read(label, path):',
+                '    try:',
+                '        with open(path, "rb") as f:',
+                '            print(f"{label}: LEAKED " + repr(f.read(64)))',
+                '    except OSError:',
+                '        print(f"{label}: blocked")',
+                'def try_write(label, path):',
+                '    try:',
+                '        with open(path, "wb") as f:',
+                '            f.write(b"x")',
+                '        print(f"{label}: escaped")',
+                '    except OSError:',
+                '        print(f"{label}: blocked")',
+                'def try_move(src, dst, label):',
+                '    try:',
+                '        os.rename(src, dst)',
+                '        print(f"{label}: escaped")',
+                '    except OSError:',
+                '        print(f"{label}: blocked")',
+                'try_read("ext-read", sys.argv[1] + r"\\out.txt")',
+                'try_write("ext-write", sys.argv[1] + r"\\escape.txt")',
+                'try_move(sys.argv[2] + r"\\inside.txt", sys.argv[1] + r"\\stolen.txt", "ext-move")',
+                'try_read("int-read", sys.argv[3] + r"\\i.txt")',
+                'try_write("int-write", sys.argv[3] + r"\\new.txt")',
+                'try_move(sys.argv[2] + r"\\inside.txt", sys.argv[3] + r"\\moved.txt", "int-move")',
+                'print("PROBE-DONE")'
+            ].join('\n')
+        );
+        const result = await run(executable, [
+            'run',
+            '--policy',
+            policy,
+            '--',
+            `"${python}" "${probeScript}" "Z:\\probe\\ext-junc" "Z:\\probe" "Z:\\probe\\int-junc"`
+        ]);
+        assert.equal(result.code, 0, result.stdout + result.stderr);
+        assert.match(result.stdout, /ext-read: blocked/);
+        assert.match(result.stdout, /ext-write: blocked/);
+        assert.match(result.stdout, /ext-move: blocked/);
+        assert.match(result.stdout, /int-read: LEAKED/);
+        assert.match(result.stdout, /int-write: escaped/);
+        assert.match(result.stdout, /int-move: escaped/);
+        assert.doesNotMatch(result.stdout, /OUTSIDE-CONTENT-4e8b/);
+        // 越界写不会在外部目录留下任何新文件
+        assert.deepEqual(fs.readdirSync(outsideDir).sort(), ['out.txt']);
+    } finally {
+        fs.rmSync(directory, { recursive: true, force: true });
+        fs.rmSync(outsideDir, { recursive: true, force: true });
+    }
+});
+
+test('hung ask endpoints fail closed within the configured timeout (pipe and http)', { skip: !windows }, async () => {
+    const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'opendesk-sandbox-asktimeout-'));
+    const secret = path.join(directory, 'ask.txt');
+    fs.writeFileSync(secret, 'askable');
+    const virtualSecret = '/' + secret.replace(/\\/g, '/').replace(':', '');
+    // 永不应答的 HTTP 端点：连接被接受，请求被吞掉
+    const hang = createServer(() => { /* never respond */ });
+    hang.listen(0, '127.0.0.1');
+    await once(hang, 'listening');
+    const port = (hang.address() as { port: number }).port;
+    const shell = path.join(process.env.SystemRoot!, 'System32/WindowsPowerShell/v1.0/powershell.exe');
+    const command =
+        `"${shell}" -NoProfile -NonInteractive -Command "try { Get-Content -LiteralPath '${secret}' -ErrorAction Stop } catch { exit 3 }"`;
+    try {
+        const policy = path.join(directory, 'policy.toml');
+        fs.writeFileSync(
+            policy,
+            `version = 1\ndefault = "deny"\n[ask]\nendpoint = "http://127.0.0.1:${port}/decide"\ntimeout_ms = 1500\ncache_ttl_seconds = 0\n` +
+                `[[rules]]\npath = "${virtualSecret}"\naccess = "read"\nperm = "ask"\n` +
+                `[[rules]]\npath = "/**"\naccess = "read"\nperm = "allow"\n` +
+                `[[rules]]\npath = "/**"\naccess = "execute"\nperm = "allow"\n`
+        );
+        const t0 = Date.now();
+        const result = await run(executable, [
+            'run',
+            '--automount',
+            '--policy',
+            policy,
+            '--',
+            command
+        ]);
+        const elapsed = Date.now() - t0;
+        assert.equal(result.code, 3, `ask must fail closed, not hang (code=${result.code}, ${elapsed}ms)`);
+        assert.ok(elapsed < 30000, `hang endpoint must not stall the pipeline (${elapsed}ms)`);
+    } finally {
+        hang.closeAllConnections();
+        await new Promise<void>((resolve) => hang.close(() => resolve()));
+        fs.rmSync(directory, { recursive: true, force: true });
+    }
+});

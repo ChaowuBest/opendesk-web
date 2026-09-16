@@ -31,11 +31,18 @@ export class TerminalApplication extends BaseApplication {
 
     async getToolsets(): Promise<BaseToolset[]> {
         const toolset = new BaseToolset('terminal');
-        const shell = selectSupportedShell(this.shells, Setting.getInstance().getData().task_config, process.platform);
+        const taskConfig = Setting.getInstance().getData().task_config;
+        const shell = selectSupportedShell(this.shells, taskConfig, process.platform);
         if (!shell) return [];
         switch (shell.kind) {
             case 'powershell':
-                toolset.addTool(new ExecutePwshTool(shell.path, shell.sandboxed));
+                toolset.addTool(
+                    new ExecutePwshTool(
+                        shell.path,
+                        shell.sandboxed,
+                        shell.sandboxed && taskConfig?.shell_sandbox_del_to_trash === true
+                    )
+                );
                 break;
             case 'bash':
                 toolset.addTool(new ExecuteBashTool(shell.path));

@@ -55,7 +55,7 @@ test('only the selected execution tool and status tool are registered, using the
         expect([...toolset.tools.keys()]).toEqual([name, 'checkShellStatus']);
         const args =
             shell.kind === 'powershell'
-                ? [shell.path, shell.sandboxed]
+                ? [shell.path, shell.sandboxed, false]
                 : shell.kind === 'zsh'
                   ? [shell.path, false]
                   : [shell.path];
@@ -72,9 +72,22 @@ test.each([{}, { shell_path: 'C:/missing.exe', shell_sandboxed: true }])(
         launches.length = 0;
         const [toolset] = await app.getToolsets();
         expect([...toolset.tools.keys()]).toEqual(['executePwsh', 'checkShellStatus']);
-        expect(launches[0]).toEqual({ name: 'executePwsh', args: [shells[0].path, false] });
+        expect(launches[0]).toEqual({ name: 'executePwsh', args: [shells[0].path, false, false] });
     }
 );
+
+test('passes the recycle-bin preference only to an enabled sandboxed powershell', async () => {
+    const app = new TerminalApplication();
+    taskConfig = { shell_path: shells[1].path, shell_sandboxed: true, shell_sandbox_del_to_trash: true };
+    launches.length = 0;
+    await app.getToolsets();
+    expect(launches[0]).toEqual({ name: 'executePwsh', args: [shells[1].path, true, true] });
+
+    taskConfig = { shell_path: shells[0].path, shell_sandboxed: false, shell_sandbox_del_to_trash: true };
+    launches.length = 0;
+    await app.getToolsets();
+    expect(launches[0]).toEqual({ name: 'executePwsh', args: [shells[0].path, false, false] });
+});
 
 test('empty discovery registers no terminal tools', async () => {
     scan.mockReturnValueOnce([]);

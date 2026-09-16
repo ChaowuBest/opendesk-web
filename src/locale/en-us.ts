@@ -1416,6 +1416,9 @@ export const enUs: Record<string, string> = {
     'sp.task.terminal.noShells': 'No supported shells found',
     'sp.task.terminal.sandbox': 'Enable sandbox',
     'sp.task.terminal.sandbox.desc': 'Run this powershell in a Windows sandbox and request file access when needed.',
+    'sp.task.terminal.sandbox.delToTrash': 'Move deleted files to the Recycle Bin',
+    'sp.task.terminal.sandbox.delToTrash.desc':
+        'Files deleted inside the sandbox go to the Windows Recycle Bin instead of being permanently removed. Overwrites and moves are unaffected.',
     'sp.agents.title': 'ACP Agents',
     'sp.agents.desc':
         'Connect local stdio or remote Streamable HTTP agents. Task context and event records remain stored locally.',

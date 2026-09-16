@@ -157,12 +157,36 @@ async function listen(server: Server): Promise<number> {
     return address.port;
 }
 
+export function sandboxRunArgs(options: {
+    policyPath: string;
+    endpoint: string;
+    logPath: string;
+    deleteToTrash?: boolean;
+    childCommand: string;
+}): string[] {
+    return [
+        'run',
+        '--automount',
+        // 开启后沙箱内的直接删除送 Windows 回收站；必须位于 -- 分隔符之前
+        ...(options.deleteToTrash ? ['--del-to-trash'] : []),
+        '--policy',
+        options.policyPath,
+        '--upstream',
+        options.endpoint,
+        '--log-file',
+        options.logPath,
+        '--',
+        options.childCommand
+    ];
+}
+
 export async function prepareDynamicSandbox(options: {
     shellPath: string;
     shellArgs: string[];
     command: string;
     cwd?: string;
     taskState?: TaskState;
+    deleteToTrash?: boolean;
 }): Promise<DynamicSandboxLaunch | null> {
     if (process.platform !== 'win32') return null;
     // Only the selected Windows pwsh tool requests a native sandbox launch.
@@ -353,18 +377,13 @@ export async function prepareDynamicSandbox(options: {
     const childCommand = [options.shellPath, ...childArgs].map(quoteWindowsArgument).join(' ');
     return {
         file: executable,
-        args: [
-            'run',
-            '--automount',
-            '--policy',
+        args: sandboxRunArgs({
             policyPath,
-            '--upstream',
             endpoint,
-            '--log-file',
             logPath,
-            '--',
+            deleteToTrash: options.deleteToTrash,
             childCommand
-        ],
+        }),
         cwd: undefined,
         attach: (proc) => {
             const finish = () => {

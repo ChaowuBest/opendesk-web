@@ -1876,31 +1876,58 @@ class SettingPanel extends HTMLElement {
                     <input id="task-shell-sandboxed" type="checkbox" ${selected.sandboxed ? 'checked' : ''}>
                     <span class="sp-toggle-track"></span>
                 </label>
+            </div>
+            ${
+                selected.sandboxed
+                    ? `
+            <div class="sp-toggle-row">
+                <div class="sp-toggle-info">
+                    <label class="sp-toggle-label" for="task-shell-del-to-trash">${this._t('sp.task.terminal.sandbox.delToTrash')}</label>
+                    <div class="sp-toggle-desc">${this._t('sp.task.terminal.sandbox.delToTrash.desc')}</div>
+                </div>
+                <label class="sp-toggle-switch">
+                    <input id="task-shell-del-to-trash" type="checkbox" ${this.currentData?.task_config?.shell_sandbox_del_to_trash === true ? 'checked' : ''}>
+                    <span class="sp-toggle-track"></span>
+                </label>
             </div>`
+                    : ''
+            }`
                     : ''
             }
         `;
     }
 
     _bindShellSettingsEvents() {
-        const save = (selection) => {
+        const save = (selection, extras = {}) => {
             const shell = selectSupportedShell(this.supportedShells, selection);
             if (!shell) return;
             this.currentData.task_config = {
                 ...this.currentData.task_config,
                 shell_path: shell.path,
-                shell_sandboxed: shell.sandboxed
+                shell_sandboxed: shell.sandboxed,
+                ...extras
             };
             this.saveImmediately();
         };
-        this.querySelector('#task-shell-path')?.addEventListener('change', (event) => {
-            save({ shell_path: event.target.value, shell_sandboxed: false });
+        const rerender = () => {
             this.querySelector('#task-shell-settings').innerHTML = this._renderShellSettings();
             this._bindShellSettingsEvents();
+        };
+        this.querySelector('#task-shell-path')?.addEventListener('change', (event) => {
+            save({ shell_path: event.target.value, shell_sandboxed: false });
+            rerender();
             this.querySelector('#task-shell-path')?.focus();
         });
         this.querySelector('#task-shell-sandboxed')?.addEventListener('change', (event) => {
             save({ shell_path: this.querySelector('#task-shell-path').value, shell_sandboxed: event.target.checked });
+            rerender();
+            this.querySelector('#task-shell-sandboxed')?.focus();
+        });
+        this.querySelector('#task-shell-del-to-trash')?.addEventListener('change', (event) => {
+            save(
+                { shell_path: this.querySelector('#task-shell-path').value, shell_sandboxed: true },
+                { shell_sandbox_del_to_trash: event.target.checked }
+            );
         });
     }
 

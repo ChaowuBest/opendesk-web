@@ -72,9 +72,22 @@ describe('TaskConfigPage', () => {
 
     test('task schema defaults shell selection and persists only the new shell fields', () => {
         const schema = Setting.getSettingSchema().shape.task_config;
-        expect(schema.parse({})).toMatchObject({ shell_path: '', shell_sandboxed: false });
-        const config = schema.parse({ shell_path: 'C:/tools/pwsh.exe', shell_sandboxed: true, dynamic_sandbox: true });
-        expect(config).toMatchObject({ shell_path: 'C:/tools/pwsh.exe', shell_sandboxed: true });
+        expect(schema.parse({})).toMatchObject({
+            shell_path: '',
+            shell_sandboxed: false,
+            shell_sandbox_del_to_trash: false
+        });
+        const config = schema.parse({
+            shell_path: 'C:/tools/pwsh.exe',
+            shell_sandboxed: true,
+            shell_sandbox_del_to_trash: true,
+            dynamic_sandbox: true
+        });
+        expect(config).toMatchObject({
+            shell_path: 'C:/tools/pwsh.exe',
+            shell_sandboxed: true,
+            shell_sandbox_del_to_trash: true
+        });
         expect(config).not.toHaveProperty('dynamic_sandbox');
     });
 
@@ -98,6 +111,43 @@ describe('TaskConfigPage', () => {
         expect(Setting.getInstance().getData().task_config).toMatchObject({
             shell_path: shells[0].path,
             shell_sandboxed: true
+        });
+    });
+
+    test('shows the recycle bin switch only while a sandboxed shell is selected', () => {
+        Setting.updateInstanceData({
+            task_config: { shell_path: shells[0].path, shell_sandboxed: true }
+        });
+        const page = new TaskConfigPage(createTuiMock(), jest.fn());
+        const form = (page as any).form;
+        expect(stripAnsi(page.render(120).join('\n'))).toContain('Recycle Bin');
+
+        // 取消沙箱后回收站开关一并隐藏
+        (form as any).onFieldChange?.({ shell_path: shells[0].path, shell_sandboxed: false });
+        expect(stripAnsi(page.render(120).join('\n'))).not.toContain('Recycle Bin');
+
+        // 默认未选沙箱 shell 时不渲染
+        (form as any).onFieldChange?.({ shell_path: shells[0].path, shell_sandboxed: true });
+        expect(stripAnsi(page.render(120).join('\n'))).toContain('Recycle Bin');
+    });
+
+    test('saves the recycle bin flag together with the sandbox selection', () => {
+        const page = new TaskConfigPage(createTuiMock(), jest.fn());
+        (page as any).save({
+            shell_path: shells[0].path,
+            shell_sandboxed: true,
+            shell_sandbox_del_to_trash: true
+        });
+        expect(Setting.getInstance().getData().task_config).toMatchObject({
+            shell_path: shells[0].path,
+            shell_sandboxed: true,
+            shell_sandbox_del_to_trash: true
+        });
+        (page as any).save({ shell_path: shells[2].path, shell_sandboxed: false });
+        expect(Setting.getInstance().getData().task_config).toMatchObject({
+            shell_path: shells[2].path,
+            shell_sandboxed: false,
+            shell_sandbox_del_to_trash: false
         });
     });
 

@@ -3,6 +3,7 @@
 ## OpenDesk 集成
 
 - 任务设置保存 `task_config.shell_path` 和 `task_config.shell_sandboxed`。终端初始化探测 shell 清单，路径不可用时选择第一个；仅 Windows pwsh 提供沙箱选项，每个任务只注册选中的执行工具及 `checkShellStatus`。
+- 任务设置保存 `task_config.shell_sandbox_del_to_trash`；开启后 OpenDesk 在启动参数中追加 `--del-to-trash`，GUI/TUI 中该开关仅在选中沙箱化 PowerShell 时显示。该选项只改写 Cleanup 阶段的最终删除：目标经 SHFileOperation 送入 Windows 回收站而不是永久抹除，覆盖写、截断与 `mv`/`File.Replace` 等改写语义不受影响。回收站不可用的位置（网络路径、无回收站介质）或移动失败时保留原文件并写诊断日志，绝不静默永久删除；回收站操作由管理进程（普通用户令牌）执行，不受 AppContainer 限制。
 - 开发运行固定使用 `native/windows/sandbox/runtime/sandbox.exe`；安装包固定使用 `resources/sandbox/sandbox.exe`。
 - OpenDesk 传入 `--log-file`，管理进程诊断信息写入 OpenDesk 日志目录的 `sandbox/dynamic-sandbox-<id>.log`。该文件是内部诊断日志，不进入终端结果；终端的 stdout、stderr、stdin 和退出码直接来自子进程。
 - `/` 等多根装配目录只有虚拟目录元数据，允许遍历、禁止修改，不发起用户授权。真实路径 `/D/work/a.txt` 在授权界面显示为 `D:/work/a.txt`。
@@ -215,7 +216,7 @@ Windows 对 AppContainer 保留的系统运行时目录（例如 `C:\Windows`）
 ### 3.2 命令行参考
 
 ```text
-run      --policy <rules.toml> [--src DIR] [--automount] [--upstream URL|pipe://名]
+run      --policy <rules.toml> [--src DIR] [--automount] [--del-to-trash] [--upstream URL|pipe://名]
          [--mount 盘符] [--map 旧前缀=新前缀 ...] -- <子进程命令行>
          挂载沙箱卷 → 以卷根为 cwd 拉起子进程 → 等待退出 → 自动卸载。
 mount    同上（无 -- 子命令部分），只挂载不拉起，Ctrl+C 退出。
@@ -234,6 +235,12 @@ network-setup --user-sid SID
          [[roots]] 声明映射。两者不能同时使用。
 --automount：把宿主全部盘符（含映射的网络驱动器）自动挂进卷根（C:\ → /C）；
          与 [[roots]] 手动映射可共存，手动声明优先；与映射到 / 的 [[roots]] 冲突。
+--del-to-trash：Cleanup 阶段的最终删除改送 Windows 回收站；覆盖/截断/move 不受
+         影响。网络路径与无回收站介质上不执行删除（保留原文件并记日志），
+         移动失败同样保留原文件——启用后绝不静默永久删除。/dynobox 引导区
+         是每次运行重建的沙箱内部副本，不受此选项影响，保持直接清除；
+         卷的回收站被禁用（NukeOnDelete=1 / MaxCapacity=0）时同样拒绝删除
+         并保留原文件，避免 FOF_ALLOWUNDO 退化为永久删除。
 ```
 
 示例：

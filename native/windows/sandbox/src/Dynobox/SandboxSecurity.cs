@@ -216,8 +216,17 @@ public sealed class SandboxSecurity : IDisposable
         try
         {
             using var key = Registry.CurrentUser.OpenSubKey(NoDrivesKey, writable: true);
-            if (key is not null && key.GetValue("NoDrives") is uint v && (v & _hideMask) == _hideMask)
-                key.DeleteValue("NoDrives", throwOnMissingValue: false);
+            // REG_DWORD 经 GetValue 装箱为 int，`is uint` 永远不匹配——旧实现
+            // 因此从不清理隐藏位。这里只清除本进程置位的位，其余（用户或
+            // 其他工具设置的策略位）原样保留；归零才删除整个值。
+            if (key is not null && key.GetValue("NoDrives") is int v)
+            {
+                var cleared = v & ~(int)_hideMask;
+                if (cleared == 0)
+                    key.DeleteValue("NoDrives", throwOnMissingValue: false);
+                else if (cleared != v)
+                    key.SetValue("NoDrives", cleared, RegistryValueKind.DWord);
+            }
         }
         catch { }
         finally

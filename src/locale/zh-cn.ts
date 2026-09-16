@@ -1382,6 +1382,9 @@ export const zhCn: Record<string, string> = {
     'sp.task.terminal.noShells': '未找到支持的 shell',
     'sp.task.terminal.sandbox': '启用沙箱',
     'sp.task.terminal.sandbox.desc': '在 Windows 沙箱中执行此 powershell，文件访问需要时请求授权。',
+    'sp.task.terminal.sandbox.delToTrash': '将删除的文件放到回收站',
+    'sp.task.terminal.sandbox.delToTrash.desc':
+        '沙箱里直接删除的文件会移入 Windows 回收站而非永久删除；覆盖与移动操作不受影响。',
     'sp.agents.title': 'ACP Agent',
     'sp.agents.desc': '连接本地 stdio 或远程 Streamable HTTP Agent。任务上下文和事件记录仍保存在本地。',
     'sp.agents.add': '添加 Agent',

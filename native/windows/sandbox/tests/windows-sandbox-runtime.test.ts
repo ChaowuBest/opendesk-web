@@ -12,16 +12,20 @@ const enabled = process.platform === 'win32' && process.env.OPENDESK_SANDBOX_INT
 // 相对测试文件自身定位运行时产物，从仓库任意工作目录运行都成立
 const executable = path.resolve(import.meta.dirname, '..', 'runtime', 'sandbox.exe');
 
-async function runSandbox(directory: string, command: string, rules = '') {
+async function runSandbox(directory: string, command: string, rules = '', extraArgs: string[] = []) {
     const policy = path.join(directory, 'policy.toml');
     const log = path.join(directory, 'sandbox.log');
     fs.writeFileSync(policy, 'version = 1\ndefault = "allow"\n' + rules);
     const shell = path.join(process.env.SystemRoot!, 'System32/WindowsPowerShell/v1.0/powershell.exe');
     const quote = (value: string) => `"${value.replace(/(\\*)"/g, '$1$1\\"').replace(/(\\+)$/, '$1$1')}"`;
     const child = [shell, '-NoProfile', '-NonInteractive', '-Command', command].map(quote).join(' ');
-    const proc = spawn(executable, ['run', '--automount', '--policy', policy, '--log-file', log, '--', child], {
-        windowsHide: true
-    });
+    const proc = spawn(
+        executable,
+        ['run', '--automount', ...extraArgs, '--policy', policy, '--log-file', log, '--', child],
+        {
+            windowsHide: true
+        }
+    );
     const completion = once(proc, 'close');
     let stdout = '';
     let stderr = '';
@@ -53,6 +57,74 @@ test('the shipped sandbox starts PowerShell repeatedly and forwards its output',
         }
     } finally {
         fs.rmSync(directory, { recursive: true, force: true });
+    }
+});
+
+test('--del-to-trash sends removed files to the recycle bin and plain runs delete them', { skip: !enabled }, async () => {
+    const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'opendesk-sandbox-trash-'));
+    const stem = `del-to-trash-${process.pid}-${Date.now()}`;
+    const victim = path.join(directory, `${stem}.txt`);
+    fs.writeFileSync(victim, 'recoverable');
+    const virtualVictim = '/' + victim.replace(/\\/g, '/').replace(':', '');
+    const listRecycleBin = async (name: string) => {
+        const shell = path.join(process.env.SystemRoot!, 'System32/WindowsPowerShell/v1.0/powershell.exe');
+        const { stdout } = await promisify(execFile)(
+            shell,
+            [
+                '-NoProfile',
+                '-NonInteractive',
+                '-Command',
+                // 回收站条目的显示名不含扩展名
+                `$items = (New-Object -ComObject Shell.Application).Namespace(0xA).Items(); ` +
+                    `$found = @($items | Where-Object { $_.Name -eq '${name}' }); ` +
+                    `if ($found.Count -gt 0) { 'in-recycle-bin' } else { 'missing-from-recycle-bin' }`
+            ],
+            { windowsHide: true }
+        );
+        return stdout.trim();
+    };
+    try {
+        const recycled = await runSandbox(
+            directory,
+            `$ErrorActionPreference = 'Stop'; Remove-Item -LiteralPath '${virtualVictim}'; Write-Output 'removed'`,
+            '',
+            ['--del-to-trash']
+        );
+        assert.match(recycled.stdout, /removed/);
+        assert.equal(fs.existsSync(victim), false);
+        assert.match(recycled.log, /已送回收站/);
+        assert.equal(await listRecycleBin(stem), 'in-recycle-bin');
+
+        // 对照组：不带 --del-to-trash 的删除保持永久删除语义
+        const control = path.join(directory, `${stem}-plain.txt`);
+        fs.writeFileSync(control, 'permanent');
+        const virtualControl = '/' + control.replace(/\\/g, '/').replace(':', '');
+        const permanent = await runSandbox(
+            directory,
+            `$ErrorActionPreference = 'Stop'; Remove-Item -LiteralPath '${virtualControl}'; Write-Output 'removed'`
+        );
+        assert.match(permanent.stdout, /removed/);
+        assert.equal(fs.existsSync(control), false);
+        assert.equal(await listRecycleBin(`${stem}-plain`), 'missing-from-recycle-bin');
+
+        // 回归（BUG-2）：原始请求名携带 /dynobox/../ 段时，删除必须仍走回收站，
+        // 不得因内部区域前缀误判而永久删除用户文件。\\?\ 前缀阻止 Win32
+        // 归一化 ..，原始段才能原样到达 MirrorFs。
+        const tricky = path.join(directory, `${stem}-tricky.txt`);
+        fs.writeFileSync(tricky, 'recoverable-too');
+        const virtualTricky = '/' + tricky.replace(/\\/g, '/').replace(':', '');
+        const trickyRest = `${tricky[0]}${virtualTricky.slice(virtualTricky.indexOf('/', 1))}`;
+        const trickCommand =
+            `$ErrorActionPreference = 'Stop'; ` +
+            `$trick = '\\\\?\\' + $env:SBX_ROOT.TrimEnd('\\\\') + '\\dynobox\\..\\${trickyRest.replace(/\//g, '\\')}'; ` +
+            `Remove-Item -LiteralPath $trick; Write-Output 'removed'`;
+        const trickyRun = await runSandbox(directory, trickCommand, '', ['--del-to-trash']);
+        assert.match(trickyRun.stdout, /removed/);
+        assert.equal(fs.existsSync(tricky), false);
+        assert.equal(await listRecycleBin(`${stem}-tricky`), 'in-recycle-bin');
+    } finally {
+        fs.rmSync(directory, { recursive: true, force: true });
+        // 送入回收站的副本保留不动：由用户自行清空，测试绝不永久删除数据
     }
 });
 

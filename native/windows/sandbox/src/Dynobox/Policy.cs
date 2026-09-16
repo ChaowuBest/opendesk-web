@@ -221,7 +221,9 @@ public sealed class Policy
         return (Default == "allow", $"default:{Default}");
     }
 
-    private static bool IsInternalAppContainerPath(string vpath)
+    /// <summary>沙箱为每次运行创建的 AppContainer 私有 AC 数据不是用户数据；
+    /// MirrorFs 的回收站分支同样用它排除内部文件（直接删除，不进回收站）。</summary>
+    public static bool IsInternalAppContainerPath(string vpath)
     {
         var normalized = NormalizeVirtualPath(vpath);
         return Regex.IsMatch(
@@ -316,9 +318,16 @@ public sealed class Policy
                 resp.Content.ReadAsStringAsync(cts.Token).GetAwaiter().GetResult());
             var decision = doc.RootElement.TryGetProperty("decision", out var d)
                 ? d.GetString()?.ToLowerInvariant() : null;
+            // decision 缺失或不可识别属于不合法响应：按 deny 处理且不进缓存，
+            // 否则端点一次瞬时故障（坏 JSON、代理错误页）会把 deny 固化整个 TTL。
+            if (decision is not ("allow" or "deny"))
+            {
+                Log.Warn("[ASK] 响应不含合法 decision，按 deny（不缓存）: {0} {1}", kind, vpath);
+                return null;
+            }
             var grants = ParseGrants(doc.RootElement);
             Log.Info("[ASK] {0} {1} -> {2} ({3}ms, +{4} grants)", kind, vpath,
-                decision ?? "<empty>", (long)(DateTime.UtcNow - t0).TotalMilliseconds, grants.Count);
+                decision, (long)(DateTime.UtcNow - t0).TotalMilliseconds, grants.Count);
             return new AskResult(decision == "allow", grants);
         }
         catch (Exception ex)
@@ -373,15 +382,21 @@ public sealed class Policy
             using var doc = System.Text.Json.JsonDocument.Parse(resp);
             var decision = doc.RootElement.TryGetProperty("decision", out var d)
                 ? d.GetString()?.ToLowerInvariant() : null;
+            if (decision is not ("allow" or "deny"))
+            {
+                Log.Warn("[ASK] 响应不含合法 decision，按 deny（不缓存）: {0} {1}", kind, vpath);
+                return null;
+            }
             var grants = ParseGrants(doc.RootElement);
             Log.Info("[ASK] {0} {1} -> {2} ({3:F1}ms, +{4} grants) [pipe]", kind, vpath,
-                decision ?? "<empty>", (DateTime.UtcNow - t0).TotalMilliseconds, grants.Count);
+                decision, (DateTime.UtcNow - t0).TotalMilliseconds, grants.Count);
             return new AskResult(decision == "allow", grants);
         }
         catch (Exception ex)
         {
-            Log.Warn("[ASK] 管道调用失败({0:F1}ms)，按 deny（不缓存）: {1} {2} err={3}",
-                (DateTime.UtcNow - t0).TotalMilliseconds, kind, vpath, ex.Message);
+            Log.Warn("[ASK] 管道调用失败({0:F1}ms)，按 deny（不缓存）: {1} {2} err={3}: {4} @ {5}",
+                (DateTime.UtcNow - t0).TotalMilliseconds, kind, vpath,
+                ex.GetType().Name, ex.Message, ex.StackTrace?.Split('\n')[0]?.Trim());
             _pipe?.Dispose();
             _pipe = null;
             return null;
@@ -408,7 +423,11 @@ public sealed class NamedPipeAskTransport : IDisposable
                 stream?.Dispose();
                 stream = new NamedPipeClientStream(".", _pipeName, PipeDirection.InOut,
                     PipeOptions.Asynchronous);
-                stream.Connect(2000);   // 连接失败 => 异常 => 上层 fail-closed
+                // 连接与读写都必须消费取消令牌：阻塞式 API 忽略 ct 会让挂起的
+                // 端点把 ask 永久卡死（fail-closed 超时失效，且锁内独占整条管线）。
+                Log.Debug("[PIPE] connect {0}", _pipeName);
+                stream.ConnectAsync(ct).GetAwaiter().GetResult();
+                Log.Debug("[PIPE] connected");
                 stream.ReadMode = PipeTransmissionMode.Byte;
                 _stream = stream;
             }
@@ -417,14 +436,14 @@ public sealed class NamedPipeAskTransport : IDisposable
             stream.Write(lenBytes);
             stream.Write(request);
             stream.Flush();
+            Log.Debug("[PIPE] request sent ({0} bytes)", request.Length);
 
-            using var lenCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
-            var lenBuf = ReadExact(stream, 4, lenCts.Token);
+            var lenBuf = ReadExact(stream, 4, ct);
+            Log.Debug("[PIPE] reply header received");
             var n = BitConverter.ToInt32(lenBuf);
             if (n is < 0 or > 4 * 1024 * 1024)
                 throw new IOException($"非法帧长度 {n}");
-            using var bodyCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
-            var body = ReadExact(stream, n, bodyCts.Token);
+            var body = ReadExact(stream, n, ct);
             return body;
         }
     }
@@ -435,7 +454,12 @@ public sealed class NamedPipeAskTransport : IDisposable
         var read = 0;
         while (read < n)
         {
-            var k = s.Read(buf, read, n - read);
+            // 异步读在超时触发时取消挂起的 IRP（管道以 Asynchronous 创建）；
+            // 超时后连接的帧状态不可信，由上层弃连重连。必须经 AsTask 消费：
+            // .NET 8 PipeStream 的定制 ValueTaskSource 被直接 GetResult 同步
+            // 消费时，即使读成功完成也会误抛 InvalidOperationException。
+            var k = s.ReadAsync(buf.AsMemory(read, n - read), ct).AsTask()
+                     .GetAwaiter().GetResult();
             if (k == 0) throw new IOException("管道已关闭");
             read += k;
         }
