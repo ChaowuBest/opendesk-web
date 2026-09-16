@@ -617,10 +617,11 @@ export class TaskManagerState {
     }
 
     /**
-     * Commit a validated import family. File or index failures roll back the family.
+     * Stage validated families, then commit one index update for the batch.
+     * File failures roll back their family; index failure rolls back all staged files.
      */
-    async commitImportedTasks(imported: TaskState[]): Promise<void> {
-        // Drain earlier index writes before publishing the new group. The following
+    async commitImportedTasks(groups: TaskState[][]): Promise<TaskState[]> {
+        // Drain earlier index writes before publishing the new batch. The following
         // synchronous commit cannot interleave with a scheduled save in this process.
         let pendingWrite: Promise<void>;
         do {
@@ -628,37 +629,53 @@ export class TaskManagerState {
             await this.flushAllPendingSaves();
         } while (pendingWrite !== this._lastWritePromise);
         const directory = getTaskDirectory();
+        const imported: TaskState[] = [];
         const created: string[] = [];
-        try {
-            const ids = new Set(this.tasks.map((task) => task.task_id));
-            for (const task of imported) {
-                if (!/^[a-zA-Z0-9_-]{1,128}$/.test(task.task_id) || ids.has(task.task_id))
-                    throw new Error('duplicate import ID');
-                ids.add(task.task_id);
-                const file = path.join(directory, `${task.task_id}.json`);
-                const fd = fs.openSync(file, 'wx');
-                created.push(file);
-                try {
-                    fs.writeFileSync(fd, JSON.stringify(task.toJSON(), null, 4), 'utf8');
-                } finally {
-                    fs.closeSync(fd);
-                }
-            }
-            this.tasks.push(...imported);
-            this.saveTaskListSync();
-        } catch (error) {
-            this.tasks = this.tasks.filter((task) => !imported.includes(task));
-            for (const file of created) {
+        const removeFiles = (files: string[]) => {
+            for (const file of files) {
                 try {
                     fs.unlinkSync(file);
                 } catch (cleanupError) {
                     logger.error('Failed to clean up imported task', cleanupError);
                 }
             }
+        };
+        try {
+            const ids = new Set(this.tasks.map((task) => task.task_id));
+            for (const group of groups) {
+                const groupFiles: string[] = [];
+                try {
+                    for (const task of group) {
+                        if (!/^[a-zA-Z0-9_-]{1,128}$/.test(task.task_id) || ids.has(task.task_id))
+                            throw new Error('duplicate import ID');
+                        ids.add(task.task_id);
+                        const file = path.join(directory, `${task.task_id}.json`);
+                        const fd = fs.openSync(file, 'wx');
+                        groupFiles.push(file);
+                        try {
+                            fs.writeFileSync(fd, JSON.stringify(task.toJSON(), null, 4), 'utf8');
+                        } finally {
+                            fs.closeSync(fd);
+                        }
+                    }
+                    imported.push(...group);
+                    created.push(...groupFiles);
+                } catch (error) {
+                    removeFiles(groupFiles);
+                    logger.warn('Task import family write failed', error);
+                }
+            }
+            if (!imported.length) return imported;
+            this.tasks.push(...imported);
+            this.saveTaskListSync();
+        } catch (error) {
+            this.tasks = this.tasks.filter((task) => !imported.includes(task));
+            removeFiles(created);
             throw error;
         }
         for (const task of imported) task._dirty = false;
         this.publishTaskListUpdate();
+        return imported;
     }
 
     /** Create a task from user request. */

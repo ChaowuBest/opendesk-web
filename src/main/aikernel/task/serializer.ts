@@ -283,9 +283,7 @@ function normalizeImportMetadata(raw: any): TaskState['import_metadata'] {
     return {
         source_id: raw.source_id,
         fingerprint: raw.fingerprint,
-        imported_at: raw.imported_at,
-        source_workspace: typeof raw.source_workspace === 'string' ? raw.source_workspace : undefined,
-        source_execution_node: typeof raw.source_execution_node === 'string' ? raw.source_execution_node : undefined
+        imported_at: raw.imported_at
     };
 }
 

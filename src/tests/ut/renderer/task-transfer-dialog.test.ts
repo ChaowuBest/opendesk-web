@@ -71,13 +71,7 @@ describe('task transfer dialog', () => {
         dialog.close();
     });
 
-    test('canceling file selection removes the dialog without an error', async () => {
-        window.taskManagerAPI.previewTaskImport.mockResolvedValue(null);
-        await open();
-        expect(document.querySelector('[data-task-transfer]')).toBeNull();
-    });
-
-    test('opens the file picker before mounting a modal and prevents repeated picker requests', async () => {
+    test('opens one file picker before the modal and leaves no modal when canceled', async () => {
         let finish: (value: null) => void;
         window.taskManagerAPI.previewTaskImport.mockImplementation(
             () =>

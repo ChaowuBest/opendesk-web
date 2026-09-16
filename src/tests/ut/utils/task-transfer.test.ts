@@ -22,9 +22,9 @@ describe('task transfer persistence', () => {
         fs.rmSync(directory, { recursive: true, force: true });
     });
 
-    function source() {
+    function source(independent = 0) {
         const manager = new TaskManagerState();
-        for (const id of ['parent', 'child']) {
+        for (const id of ['parent', 'child', ...Array.from({ length: independent }, (_, i) => `standalone-${i}`)]) {
             const task = new TaskState(manager, id === 'child' ? 'parent' : null);
             task.task_id = id;
             task.task_name = id;
@@ -34,6 +34,49 @@ describe('task transfer persistence', () => {
         }
         return manager;
     }
+
+    async function prepare(original = source()) {
+        const file = path.join(directory, 'backup.zip');
+        await exportTaskBundle(
+            original,
+            original.tasks.filter((task) => !task.parent_id).map((task) => task.task_id),
+            file
+        );
+        const destination = new TaskManagerState();
+        return { file, destination, entries: await prepareTaskImport(file, destination) };
+    }
+
+    test.each([false, true])('commits the batch once with a failed family: %s', async (failFamily) => {
+        const { destination, entries } = await prepare(source(20));
+        const writeIndex = jest.spyOn(destination as any, 'saveTaskListSync');
+        const notify = jest.spyOn(destination, 'publishTaskListUpdate');
+        if (failFamily) {
+            const write = fs.writeFileSync;
+            jest.spyOn(fs, 'writeFileSync').mockImplementation((...args: Parameters<typeof fs.writeFileSync>) => {
+                if (typeof args[0] === 'number' && JSON.parse(String(args[1])).task_name === 'child')
+                    throw new Error('simulated task file failure');
+                return write(...args);
+            });
+        }
+        const result = await importTaskEntries(
+            entries,
+            entries.map((entry) => entry.id),
+            destination,
+            '/new/work'
+        );
+        expect(result.imported).toHaveLength(failFamily ? 20 : 22);
+        expect(result.failed.map((entry) => entry.sourceId).sort()).toEqual(failFamily ? ['child', 'parent'] : []);
+        expect(writeIndex).toHaveBeenCalledTimes(1);
+        expect(notify).toHaveBeenCalledTimes(1);
+        expect(
+            TaskManagerState.load()!
+                .tasks.map((task) => task.task_id)
+                .sort()
+        ).toEqual(result.imported.map((entry) => entry.taskId).sort());
+        expect(fs.readdirSync(path.join(directory, 'tasks')).sort()).toEqual(
+            ['task_list.json', ...result.imported.map((entry) => `${entry.taskId}.json`)].sort()
+        );
+    });
 
     test('exports live memory with children, imports copies and survives immediate reload', async () => {
         const original = source();
@@ -70,19 +113,28 @@ describe('task transfer persistence', () => {
         expect((parent.chat_context.messages[0] as UserMessage).timestamp).toBeGreaterThanOrEqual(importedAt - 100);
         expect(child.created_at.getTime()).toBeGreaterThanOrEqual(importedAt - 100);
         expect(child.parent_id).toBe(parent.task_id);
+        expect(parent.import_metadata).toEqual({
+            source_id: 'parent',
+            fingerprint: entries.find((entry) => entry.id === 'parent')!.fingerprint,
+            imported_at: parent.updated_at!.toISOString()
+        });
         expect((await prepareTaskImport(file, loaded)).every((entry) => entry.duplicate)).toBe(true);
     });
 
-    test('index failure rolls back the family and never reports it as imported', async () => {
-        const file = path.join(directory, 'backup.zip');
-        await exportTaskBundle(source(), ['parent'], file);
-        const destination = new TaskManagerState();
-        const entries = await prepareTaskImport(file, destination);
+    test('index failure rolls back every staged family and never reports success', async () => {
+        const { destination, entries } = await prepare(source(2));
+        const notify = jest.spyOn(destination, 'publishTaskListUpdate');
         // An existing directory at the index path forces the atomic rename to fail.
         fs.mkdirSync(path.join(directory, 'tasks', 'task_list.json'));
-        const result = await importTaskEntries(entries, ['parent', 'child'], destination, '/new/work');
+        const result = await importTaskEntries(
+            entries,
+            entries.map((entry) => entry.id),
+            destination,
+            '/new/work'
+        );
         expect(result.imported).toEqual([]);
-        expect(result.failed).toHaveLength(2);
+        expect(result.failed).toHaveLength(4);
+        expect(notify).not.toHaveBeenCalled();
         expect(destination.tasks).toEqual([]);
         expect(fs.readdirSync(path.join(directory, 'tasks'))).toEqual(['task_list.json']);
     });
@@ -101,10 +153,7 @@ describe('task transfer persistence', () => {
     });
 
     test('a selected child without its parent becomes an independent task', async () => {
-        const file = path.join(directory, 'backup.zip');
-        await exportTaskBundle(source(), ['parent'], file);
-        const destination = new TaskManagerState();
-        const entries = await prepareTaskImport(file, destination);
+        const { destination, entries } = await prepare();
         const result = await importTaskEntries(entries, ['child'], destination, '/new/work');
         expect(result.skipped).toBe(1);
         expect(destination.getTask(result.imported[0].taskId)!.parent_id).toBeNull();
@@ -113,10 +162,7 @@ describe('task transfer persistence', () => {
     test('an active goal is paused with the new task ID and stays paused after reload', async () => {
         const manager = source();
         getGoalExtension(manager.tasks[0]).state = GoalStates.create('parent', { objective: 'finish the feature' });
-        const file = path.join(directory, 'goal.zip');
-        await exportTaskBundle(manager, ['parent'], file);
-        const destination = new TaskManagerState();
-        const entries = await prepareTaskImport(file, destination);
+        const { destination, entries } = await prepare(manager);
         const result = await importTaskEntries(entries, ['parent', 'child'], destination, '/new/work');
         const id = result.imported.find((entry) => entry.sourceId === 'parent')!.taskId;
         const loaded = TaskManagerState.load()!.getTask(id)!;

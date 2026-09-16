@@ -12,6 +12,7 @@
 import { randomUUID } from 'node:crypto';
 import { setImmediate } from 'node:timers/promises';
 import type { TaskManagerState } from './manager.js';
+import type { TaskState } from '../states/tasks.js';
 import { deserializeTaskData } from './serializer.js';
 import { Setting } from '../../utils/setting.js';
 import { AgentRegistry } from '../agents/registry.js';
@@ -71,6 +72,7 @@ export async function importTaskEntries(
     const pending = entries.filter((entry) => selected.has(entry.id));
     const ids = new Map(pending.map((entry) => [entry.id, randomUUID()]));
     const result: TaskImportResult = { imported: [], failed: [], skipped: entries.length - pending.length };
+    const groups: { entries: PreparedTaskEntry[]; tasks: TaskState[] }[] = [];
     // Connected selected parent/child tasks commit together, so a failed child
     // cannot leave a partially imported family or references to another local task.
     while (pending.length) {
@@ -84,28 +86,45 @@ export async function importTaskEntries(
                 }
             }
         }
-        let phase: 'invalidTask' | 'writeFailed' = 'invalidTask';
         try {
             const tasks = group.map((entry) => {
                 if (!entry.json || entry.error) throw new TaskTransferError('invalidTask');
                 const json = normalizeImportedTask(entry.json, ids, workspace);
+                json.import_metadata = {
+                    source_id: entry.id,
+                    fingerprint: entry.fingerprint,
+                    imported_at: json.updated_at
+                };
                 if (json.model && !Setting.getInstance().getModelInstance(json.model, 'chat')) delete json.model;
                 if (json.agentId && !AgentRegistry.resolveAgentReference(json.agentId)) json.agentId = null;
                 const task = deserializeTaskData(json, manager);
                 task._dirty = true;
                 return task;
             });
-            phase = 'writeFailed';
-            await manager.commitImportedTasks(tasks);
-            result.imported.push(
-                ...group.map((entry) => ({ sourceId: entry.id, taskId: ids.get(entry.id)!, name: entry.name }))
-            );
+            groups.push({ entries: group, tasks });
         } catch (error) {
             logger.warn('Task import group failed', error);
-            result.failed.push(...group.map((entry) => ({ sourceId: entry.id, name: entry.name, error: phase })));
+            result.failed.push(
+                ...group.map((entry) => ({ sourceId: entry.id, name: entry.name, error: 'invalidTask' }))
+            );
         }
-        progress(result.imported.length + result.failed.length, selected.size);
+        progress(selected.size - pending.length, selected.size);
         await setImmediate();
+    }
+    if (groups.length) {
+        let committed = new Set<string>();
+        try {
+            committed = new Set(
+                (await manager.commitImportedTasks(groups.map((group) => group.tasks))).map((task) => task.task_id)
+            );
+        } catch (error) {
+            logger.warn('Task import batch commit failed', error);
+        }
+        for (const entry of groups.flatMap((group) => group.entries)) {
+            const taskId = ids.get(entry.id)!;
+            if (committed.has(taskId)) result.imported.push({ sourceId: entry.id, taskId, name: entry.name });
+            else result.failed.push({ sourceId: entry.id, name: entry.name, error: 'writeFailed' });
+        }
     }
     return result;
 }
@@ -133,24 +152,16 @@ export async function exportTaskBundle(
             }
         }
     }
-    const snapshots: TaskJson[] = [];
     if (selected.size > TASK_BUNDLE_LIMITS.tasks) throw new TaskTransferError('tooLarge');
-    let totalBytes = 0;
-    for (const id of selected) {
-        const task = manager.tasks.find((item) => item.task_id === id);
-        if (!task) throw new TaskTransferError('invalidTask');
-        task.ensureLoaded();
-        if (task._corrupted) throw new TaskTransferError('invalidTask');
-        // Freeze immediately: running tasks may change while later tasks load.
-        const serialized = JSON.stringify(task.toJSON(), null, 4);
-        const byteLength = Buffer.byteLength(serialized);
-        totalBytes += byteLength;
-        if (byteLength > TASK_BUNDLE_LIMITS.taskBytes || totalBytes > TASK_BUNDLE_LIMITS.totalBytes)
-            throw new TaskTransferError('tooLarge');
-        snapshots.push(JSON.parse(serialized));
-        progress(snapshots.length, selected.size);
-        await setImmediate();
+    function* snapshots(): Generator<TaskJson> {
+        for (const id of selected) {
+            const task = manager.tasks.find((item) => item.task_id === id);
+            if (!task) throw new TaskTransferError('invalidTask');
+            task.ensureLoaded();
+            if (task._corrupted) throw new TaskTransferError('invalidTask');
+            yield task.toJSON();
+        }
     }
-    await writeTaskBundle(filePath, snapshots);
+    await writeTaskBundle(filePath, snapshots(), (done) => progress(done, selected.size));
     return selected.size;
 }

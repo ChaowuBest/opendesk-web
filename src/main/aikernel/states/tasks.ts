@@ -451,8 +451,6 @@ export class TaskState {
         source_id: string;
         fingerprint: string;
         imported_at: string;
-        source_workspace?: string;
-        source_execution_node?: string;
     };
     /** 累计 task 级 LLM token 消耗，随 task JSON 持久化。 */
     usage_summary?: TaskUsageSummary;

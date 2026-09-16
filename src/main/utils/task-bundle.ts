@@ -14,6 +14,7 @@ import path from 'node:path';
 import { createHash } from 'node:crypto';
 import { inflateRaw, crc32 } from 'node:zlib';
 import { promisify } from 'node:util';
+import { setImmediate } from 'node:timers/promises';
 import AdmZip from 'adm-zip';
 import { buildAtomicWriteTmpPath } from './temp.js';
 
@@ -257,8 +258,11 @@ export async function readTaskImportFile(filePath: string): Promise<TaskImportEn
     }
 }
 
-export async function writeTaskBundle(filePath: string, tasks: TaskJson[]): Promise<void> {
-    if (!tasks.length || tasks.length > TASK_BUNDLE_LIMITS.tasks) throw new TaskTransferError('tooLarge');
+export async function writeTaskBundle(
+    filePath: string,
+    tasks: Iterable<TaskJson>,
+    progress: (done: number) => void = () => {}
+): Promise<void> {
     const zip = new AdmZip();
     const manifest = {
         format: 'opendesk-task-bundle',
@@ -269,8 +273,10 @@ export async function writeTaskBundle(filePath: string, tasks: TaskJson[]): Prom
     let total = 0;
     const ids = new Set<string>();
     for (const task of tasks) {
+        if (ids.size >= TASK_BUNDLE_LIMITS.tasks) throw new TaskTransferError('tooLarge');
         if (!safeId(task.task_id) || ids.has(task.task_id)) throw new TaskTransferError('invalidTask');
         ids.add(task.task_id);
+        // Freeze each task before yielding control; running tasks may change afterwards.
         const bytes = Buffer.from(JSON.stringify(task, null, 4));
         total += bytes.length;
         if (bytes.length > TASK_BUNDLE_LIMITS.taskBytes || total > TASK_BUNDLE_LIMITS.totalBytes)
@@ -283,7 +289,10 @@ export async function writeTaskBundle(filePath: string, tasks: TaskJson[]): Prom
             parentId: task.parent_id ?? null,
             name: task.task_name ?? ''
         });
+        progress(ids.size);
+        await setImmediate();
     }
+    if (!ids.size) throw new TaskTransferError('tooLarge');
     zip.addFile('manifest.json', Buffer.from(JSON.stringify(manifest, null, 4)));
     const bytes = await new Promise<Buffer>((resolve, reject) => zip.toBuffer(resolve, reject));
     if (bytes.length > TASK_BUNDLE_LIMITS.fileBytes) throw new TaskTransferError('tooLarge');
@@ -367,12 +376,6 @@ export function normalizeImportedTask(source: TaskJson, ids: Map<string, string>
             copy.goal_state.updatedAt = copy.goal_state.pausedAt;
         }
     }
-    copy.import_metadata = {
-        source_id: source.task_id,
-        fingerprint: taskFingerprint(source),
-        imported_at: new Date(now).toISOString(),
-        source_workspace: source.workspace,
-        source_execution_node: source.executionNodeLabel ?? source.executionNodeId
-    };
+    delete copy.import_metadata;
     return copy;
 }

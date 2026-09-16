@@ -19,9 +19,12 @@ describe('task bundle format', () => {
     });
     afterEach(() => fs.rmSync(dir, { recursive: true, force: true }));
 
-    test('one ZIP round-trips multiple tasks and preserves their relationship', async () => {
+    test('one ZIP preserves relationships and freezes each snapshot before yielding', async () => {
         const target = path.join(dir, 'tasks.zip');
-        await writeTaskBundle(target, [task('parent'), task('child', 'parent')]);
+        const tasks = [task('parent'), task('child', 'parent')];
+        await writeTaskBundle(target, tasks, (done) => {
+            if (done === 1) tasks[0].chat_context.messages[0].content[0].text = 'changed after snapshot';
+        });
         const entries = await readTaskImportFile(target);
         expect(entries.map((entry) => entry.json)).toEqual([task('parent'), task('child', 'parent')]);
         const zip = new AdmZip(target);
@@ -189,6 +192,5 @@ describe('task bundle format', () => {
         expect(copy.benchmark_usage.generated_at).not.toBe(later);
         expect(source.created_at).toBe(old);
         expect(source.chat_context.messages[0].timestamp).toBe(Date.parse(old));
-        expect(copy.import_metadata.source_id).toBe('parent');
     });
 });
