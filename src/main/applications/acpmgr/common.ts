@@ -171,9 +171,11 @@ const AcpSessionSchema = z
 const AcpTimeoutsSchema = z
     .object({
         connectMs: z.number().int().min(100).max(300_000).default(30_000),
-        promptMs: z.number().int().min(100).max(86_400_000).default(1_800_000)
+        promptMs: z.number().int().min(100).max(86_400_000).default(1_800_000),
+        // 空闲超过该时长后主动释放连接（DELETE /acp 关闭 SSE 流）；0 表示禁用
+        idleReleaseMs: z.number().int().min(0).max(86_400_000).default(120_000)
     })
-    .default({ connectMs: 30_000, promptMs: 1_800_000 });
+    .default({ connectMs: 30_000, promptMs: 1_800_000, idleReleaseMs: 120_000 });
 
 export const AcpAgentProfileSchema = z
     .object({

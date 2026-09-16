@@ -56,6 +56,7 @@ export interface AcpAgentPresetDraft {
     timeouts: {
         connectMs: number;
         promptMs: number;
+        idleReleaseMs: number;
     };
 }
 

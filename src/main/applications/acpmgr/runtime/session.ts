@@ -183,6 +183,14 @@ export class AcpTaskRuntime implements AcpClientHandlers {
         this.resolveMcpServers = dependencies.resolveMcpServers ?? (async () => []);
         this.sleep =
             dependencies.sleep ?? ((milliseconds) => new Promise((resolve) => setTimeout(resolve, milliseconds)));
+        this.scheduleIdleTimer =
+            dependencies.scheduleIdleTimer ??
+            ((milliseconds, callback) => {
+                const timer = setTimeout(callback, milliseconds);
+                // 空闲释放定时器不应阻止进程退出
+                if (typeof (timer as NodeJS.Timeout).unref === 'function') (timer as NodeJS.Timeout).unref();
+                return () => clearTimeout(timer);
+            });
         this.log = dependencies.log ?? logger;
     }
 
@@ -254,6 +262,7 @@ export class AcpTaskRuntime implements AcpClientHandlers {
                     activePrompt: undefined,
                     lastStopReason: response.stopReason
                 });
+                this.scheduleIdleRelease();
                 const stopReason = mapStopReason(response.stopReason);
                 this.log.info(
                     `[ACP] dispatch completed: task=${request.taskId} profile=${this.profile.id} stopReason=${stopReason}`
@@ -370,11 +379,43 @@ export class AcpTaskRuntime implements AcpClientHandlers {
     }
 
     async dispose(): Promise<void> {
+        this.cancelIdleTimer?.();
+        this.cancelIdleTimer = undefined;
         await this.resetConnection();
         await this.clientHostedMcp?.close();
         this.clientHostedMcp = undefined;
         await this.clientWorkspaceRuntime?.close();
         this.clientWorkspaceRuntime = undefined;
+    }
+
+    /**
+     * turn 结束后调度空闲释放：超时后关闭连接（DELETE /acp + abort SSE 流），
+     * 会话上下文保留在 checkpoint 中，下一 turn 通过 loadSession/resumeSession 恢复。
+     */
+    private scheduleIdleRelease(): void {
+        this.cancelIdleTimer?.();
+        this.cancelIdleTimer = undefined;
+        const milliseconds = this.profile.timeouts.idleReleaseMs;
+        if (milliseconds <= 0) return;
+        this.cancelIdleTimer = this.scheduleIdleTimer(milliseconds, () => {
+            this.cancelIdleTimer = undefined;
+            void this.releaseIdleConnection();
+        });
+    }
+
+    private async releaseIdleConnection(): Promise<void> {
+        if (this.activeRequest || !this.handle || !this.sessionId) return;
+        const canResume = !!(this.capabilities?.loadSession || this.capabilities?.sessionCapabilities?.resume);
+        if (!canResume) {
+            // 无法恢复会话时释放连接会丢失上下文，保持连接复用
+            this.log.warn(
+                `[ACP] idle release skipped: profile=${this.profile.id} session=${this.sessionId} resume unsupported`
+            );
+            return;
+        }
+        this.record('lifecycle', 'session/idle_release', { sessionId: this.sessionId });
+        this.log.info(`[ACP] idle release: profile=${this.profile.id} session=${this.sessionId}`);
+        await this.resetConnection();
     }
 
     private async ensureConnected(request: AcpTaskRuntimeTurnRequest, recoveryPhase: AcpPhase): Promise<void> {
