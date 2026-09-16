@@ -46,6 +46,7 @@ import {
     type TaskUpdateRetryChunk,
     type TaskModelRequestOptions
 } from './types.js';
+import type { ReasoningEffort } from '../types/reasoning.js';
 import { AgentExecutionInstrumentationRegistry } from '../../telemetry/agent-execution.js';
 
 function getAssistantResponseError(response: AssistantResponse): Error | undefined {
@@ -556,10 +557,24 @@ export async function processTaskCompletion(
     // 追踪本次 LLM 请求已 merge 的工具调用数量，用于检测新工具调用到达
     let prevMergedToolCallCount = 0;
     let abortedByToolcallHook = false;
+    // 解析本次 turn 的有效推理档位（在 turn 起点固定一次，同一 turn 内所有轮次保持一致）：
+    // 1. 调用方（modelRequestOptions）显式指定档位 → 优先级最高；
+    // 2. 任务级覆盖值 task.reasoningEffort（''/undefined 均视为「使用模型默认档位」）；
+    // 3. 兜底回退到实时读取的 modelInstance.reasoning_effort——modelInstance 在此处新建获取
+    //    （含最新模型配置），可避免 LLM.__getAdapter 缓存中旧 ModelInstance 引用导致
+    //    「修改模型档位后重新发送仍用旧档位」的问题（重新发送会开启新 turn、重新走到这里），
+    //    同时不会影响同一 turn 内已固定的档位。
+    const turnModelInstance = model
+        ? Setting.getInstance().getModelInstance(model, 'chat')
+        : Setting.getInstance().getDefaultModelInstance();
     const requestOptions: LLMRequestOptions = {
-        reasoningEffort: task.reasoningEffort,
         maxCompletionTokens: dynamicMaxCompletionTokens,
         ...modelRequestOptions,
+        reasoningEffort: resolveTurnReasoningEffort(
+            modelRequestOptions?.reasoningEffort,
+            task.reasoningEffort,
+            turnModelInstance?.reasoning_effort
+        ),
         onRetry: (_attempt: number, _delayMs: number, err: unknown) => {
             task.ensureBenchmarkUsageLedger().recordRetry(benchmarkRequest, err);
         },
@@ -897,4 +912,30 @@ export async function processTaskCompletion(
 
     task.persistLater();
     return abortedByToolcallHook;
+}
+
+/**
+ * 解析一次 turn 使用的有效推理档位（在 turn 起点固定，同一 turn 内所有轮次保持一致）。
+ *
+ * 优先级：
+ * 1. 调用方（modelRequestOptions）显式指定的档位 → 最高；
+ * 2. 任务级覆盖值 taskReasoningEffort（''/undefined 均视为「使用模型默认档位」）；
+ * 3. 兜底模型配置的默认档位 modelDefaultEffort（应为实时读取的最新值）。
+ *
+ * @param explicitEffort 调用方显式指定（modelRequestOptions.reasoningEffort）
+ * @param taskReasoningEffort 任务级覆盖值（task.reasoningEffort）
+ * @param modelDefaultEffort 模型配置默认档位（modelInstance.reasoning_effort，实时）
+ */
+export function resolveTurnReasoningEffort(
+    explicitEffort: ReasoningEffort | undefined,
+    taskReasoningEffort: ReasoningEffort | undefined,
+    modelDefaultEffort: ReasoningEffort | undefined
+): ReasoningEffort | undefined {
+    if (explicitEffort !== undefined) {
+        return explicitEffort;
+    }
+    if (taskReasoningEffort) {
+        return taskReasoningEffort;
+    }
+    return modelDefaultEffort;
 }

@@ -434,6 +434,13 @@ const KNOWN_MODELS: Record<string, ModelInfo> = {
     },
     'deepseek-v4-pro': { contextSize: 1000000, maxOutputTokens: 384000, vision: false },
     'deepseek-v4-flash': { contextSize: 1000000, maxOutputTokens: 384000, vision: false },
+    // DeepSeek flash 系列（含 V4.1 flash）不支持 medium 档位，与 deepseek-flash 对齐
+    'deepseek-v4-1-flash': {
+        contextSize: 1000000,
+        maxOutputTokens: 384000,
+        vision: false,
+        reasoningEfforts: ['none', 'low', 'high', 'max']
+    },
     'deepseek-v4': { contextSize: 1000000, maxOutputTokens: 384000, vision: false },
     // DeepSeek Chat / Reasoner 为官方 API 模型名（底层权重 DeepSeek-V3.2），opencode.ai 数据为 1M/384K
     'deepseek-chat': { contextSize: 1000000, maxOutputTokens: 384000, vision: false },

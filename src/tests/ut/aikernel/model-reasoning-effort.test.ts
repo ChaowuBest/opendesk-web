@@ -20,6 +20,17 @@ describe('model-context reasoning efforts', () => {
         expect(resolveModelReasoningEfforts({ model_name: 'gpt-5' })).toEqual(['', 'none', 'low', 'medium', 'high']);
     });
 
+    test('deepseek-v4.1-flash（flash 系列）不支持 medium', () => {
+        expect(lookupKnownReasoningEfforts('deepseek-v4.1-flash')).toEqual(['none', 'low', 'high', 'max']);
+        expect(resolveModelReasoningEfforts({ model_name: 'deepseek-v4.1-flash' })).toEqual([
+            '',
+            'none',
+            'low',
+            'high',
+            'max'
+        ]);
+    });
+
     test('内置表未匹配到的模型沿用系统全部档位', () => {
         expect(lookupKnownReasoningEfforts('deepseek-chat')).toBeUndefined();
         expect(resolveModelReasoningEfforts({ model_name: 'deepseek-chat' })).toEqual([
