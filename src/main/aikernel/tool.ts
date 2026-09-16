@@ -10,7 +10,7 @@
  */
 
 import { z } from 'zod';
-import { ToolCall } from './messages';
+import type { ToolCall } from './messages.js';
 import type { TaskState } from './states/tasks';
 import type { PermissionRequest } from './security/permission';
 import { zhCn } from '../../locale/zh-cn.js';
@@ -131,6 +131,13 @@ export type ToolArgsValidationResult<T extends z.ZodType> =
           success: false;
           error: string;
       };
+
+/** Host-only instructions contributed by a tool that is available to the model. */
+export interface ToolSystemPromptContribution {
+    /** Stable identifier used to replace equivalent instructions from another tool instance. */
+    id: string;
+    content: string;
+}
 
 export class ToolResult implements ToolResultWriter {
     status: 'running' | 'success' | 'error' = 'running';
@@ -269,6 +276,15 @@ export class BaseTool<T extends z.ZodType> {
      */
     isAvailable(_taskState?: TaskState): boolean | Promise<boolean> {
         return true;
+    }
+
+    /**
+     * Return model instructions that are only relevant while this tool is exposed.
+     * Contributions are not serialized with renderer-provided tools to prevent UI code
+     * from injecting system instructions.
+     */
+    getSystemPromptContribution(_taskState?: TaskState): ToolSystemPromptContribution | undefined {
+        return undefined;
     }
 
     /**

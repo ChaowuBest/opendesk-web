@@ -242,11 +242,23 @@ export function installTimeoutBackgrounding(opts: {
     timeout: number;
     getOutput: () => string;
     getOutputBuffer?: () => BoundedOutputBuffer;
+    formatOutput?: (output: string) => string;
     result: ToolResult;
     isKilledByStop: () => boolean;
     onFinish: (backgrounded: boolean) => void;
 }): Promise<boolean> {
-    const { handle, command, startTime, timeout, getOutput, getOutputBuffer, result, isKilledByStop, onFinish } = opts;
+    const {
+        handle,
+        command,
+        startTime,
+        timeout,
+        getOutput,
+        getOutputBuffer,
+        formatOutput,
+        result,
+        isKilledByStop,
+        onFinish
+    } = opts;
     const { proc, detachListeners } = handle;
 
     let timedOut = false;
@@ -267,7 +279,8 @@ export function installTimeoutBackgrounding(opts: {
             if (timedOut) return;
             let output = getOutput();
             if (isKilledByStop()) output = `[中断] 命令被用户终止。\n` + output;
-            result.updateResult(output.trim() || `进程退出，代码 ${code ?? 'killed'}`);
+            const message = output.trim() || `进程退出，代码 ${code ?? 'killed'}`;
+            result.updateResult(formatOutput?.(message) ?? message);
             if (Number.isInteger(code)) {
                 result.updateResultObject({ exitCode: code });
             }
@@ -276,7 +289,8 @@ export function installTimeoutBackgrounding(opts: {
 
         const onError = (err: Error) => {
             if (timedOut) return;
-            result.updateResult(`执行命令时出错: ${err.message}`);
+            const message = `执行命令时出错: ${err.message}`;
+            result.updateResult(formatOutput?.(message) ?? message);
             settle(false);
         };
 
@@ -304,7 +318,8 @@ export function installTimeoutBackgrounding(opts: {
                     `提示: 使用 checkShellStatus 工具并传入 pid=${pid} 来检查命令的执行状态。如果这是一个合理的长时间任务，请等待一段时间后再检查输出；如果判断进程已卡住，可以通过 checkShellStatus 的 kill 参数终止它。`
                 ].join('\n');
                 const output = getOutput().trim() || '(暂无输出)';
-                result.updateResult(header + '\n---\n' + output);
+                const message = header + '\n---\n' + output;
+                result.updateResult(formatOutput?.(message) ?? message);
                 settle(true);
             }, timeout);
         }

@@ -51,12 +51,38 @@ function quotePowerShell(value: string): string {
     return `'${value.replace(/'/g, "''")}'`;
 }
 
-function quotePosix(value: string): string {
-    return `'${value.replace(/'/g, `'\\''`)}'`;
-}
-
 function isPowerShell(shellPath: string): boolean {
     return /(?:^|[\\/])(?:powershell|pwsh)(?:\.exe)?$/i.test(shellPath);
+}
+
+/** Map a host drive path to the stable root-relative path exposed by --automount. */
+export function mapHostPathToSandboxRoot(value: string): string | null {
+    const normalized = path.win32.normalize(value.replace(/\//g, '\\'));
+    const drivePath = /^([A-Za-z]):\\(.*)$/.exec(normalized);
+    if (!drivePath) return null;
+    const suffix = drivePath[2].replace(/\\/g, '/');
+    return `/${drivePath[1].toUpperCase()}/${suffix}`;
+}
+
+/**
+ * Enter the mapped workspace before the user command so descendants inherit the task cwd.
+ * 仅支持 PowerShell：动态沙箱（prepareDynamicSandbox）只会启动 powershell/pwsh，
+ * 其他 shell 仅做 cwd 可映射性校验，不会注入切换目录前缀。
+ */
+export function withSandboxWorkingDirectory(shellPath: string, shellArgs: string[], cwd?: string): string[] {
+    const childArgs = shellArgs.slice();
+    if (!cwd) return childArgs;
+    const mappedCwd = mapHostPathToSandboxRoot(cwd);
+    if (!mappedCwd) {
+        throw new Error(t('sandbox.cwdUnsupported', { path: cwd }));
+    }
+    if (!isPowerShell(shellPath)) return childArgs;
+    const commandIndex = childArgs.findIndex((arg) => arg === '-Command' || arg === '-c');
+    if (commandIndex >= 0 && commandIndex + 1 < childArgs.length) {
+        childArgs[commandIndex + 1] =
+            `Set-Location -LiteralPath ${quotePowerShell(mappedCwd)}; ${childArgs[commandIndex + 1]}`;
+    }
+    return childArgs;
 }
 
 function quoteWindowsArgument(value: string): string {
@@ -194,6 +220,9 @@ export async function prepareDynamicSandbox(options: {
 
     const executable = resolveSandboxExecutable();
     if (!executable) throw new Error(t('sandbox.executableMissing'));
+    // 校验并映射工作目录必须先于任何宿主侧资源（授权端点、策略文件）的分配，
+    // 否则不可映射的 cwd（UNC/相对路径）抛错时会泄漏已监听的服务器与临时文件。
+    const childArgs = withSandboxWorkingDirectory(options.shellPath, options.shellArgs, options.cwd);
     await ensureSandboxLoopback(executable);
     const token = crypto.randomBytes(32).toString('hex');
     let closed = false;
@@ -364,16 +393,6 @@ export async function prepareDynamicSandbox(options: {
         throw error;
     }
 
-    const cwdPrefix = options.cwd
-        ? isPowerShell(options.shellPath)
-            ? `Set-Location -LiteralPath ${quotePowerShell(options.cwd)}; `
-            : `cd -- ${quotePosix(options.cwd)} && `
-        : '';
-    const childArgs = options.shellArgs.slice();
-    const commandIndex = childArgs.findIndex((arg) => arg === '-Command' || arg === '-c');
-    if (commandIndex >= 0 && commandIndex + 1 < childArgs.length) {
-        childArgs[commandIndex + 1] = `${cwdPrefix}${childArgs[commandIndex + 1]}`;
-    }
     const childCommand = [options.shellPath, ...childArgs].map(quoteWindowsArgument).join(' ');
     return {
         file: executable,

@@ -2,6 +2,7 @@ import { jest } from '@jest/globals';
 import { selectSupportedShell } from '../../../common/shells.js';
 
 let taskConfig: Record<string, unknown> = {};
+const afterSetDataCallbacks: Array<(previous: any, next: any) => void | Promise<void>> = [];
 const shells = [
     { kind: 'powershell', path: 'C:/Windows/powershell.exe', sandboxed: false },
     { kind: 'powershell', path: 'C:/Windows/powershell.exe', sandboxed: true },
@@ -11,6 +12,7 @@ const shells = [
 jest.unstable_mockModule('../../../main/utils/setting.js', () => ({
     getLogDirectory: () => '/tmp/opendesk-test',
     Setting: class {
+        static afterSetDataCallbacks = afterSetDataCallbacks;
         static getInstance() {
             return { data: { locale: 'zh-CN' }, getData: () => ({ task_config: taskConfig }) };
         }
@@ -92,4 +94,15 @@ test('passes the recycle-bin preference only to an enabled sandboxed powershell'
 test('empty discovery registers no terminal tools', async () => {
     scan.mockReturnValueOnce([]);
     expect(await new TerminalApplication().getToolsets()).toEqual([]);
+});
+
+test('reads the latest shell selection without registering an eager task refresh', async () => {
+    const callbackCount = afterSetDataCallbacks.length;
+    const app = new TerminalApplication();
+    taskConfig = { shell_path: shells[0].path, shell_sandboxed: false };
+    expect([...(await app.getToolsets())[0].tools.keys()]).toEqual(['executePwsh', 'checkShellStatus']);
+
+    taskConfig = { shell_path: shells[2].path, shell_sandboxed: false };
+    expect([...(await app.getToolsets())[0].tools.keys()]).toEqual(['executeBash', 'checkShellStatus']);
+    expect(afterSetDataCallbacks).toHaveLength(callbackCount);
 });

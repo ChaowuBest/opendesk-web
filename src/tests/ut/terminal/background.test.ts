@@ -100,6 +100,49 @@ describe('installTimeoutBackgrounding', () => {
         expect(updateResultObject).not.toHaveBeenCalled();
     });
 
+    test('formats completed and timed-out output without changing the original buffer', async () => {
+        jest.useFakeTimers();
+        const formatOutput = jest.fn((output: string) => `${output}\n\nSandbox path hint`);
+        const completed = new EventEmitter() as ChildProcess;
+        const updateCompleted = jest.fn();
+        const completedResult = installTimeoutBackgrounding({
+            handle: { proc: completed, detachListeners: jest.fn() },
+            command: 'read-file',
+            startTime: Date.now(),
+            timeout: 1000,
+            getOutput: () => 'Access is denied: C:\\file.txt',
+            formatOutput,
+            result: { updateResult: updateCompleted, updateResultObject: jest.fn() } as any,
+            isKilledByStop: () => false,
+            onFinish: jest.fn()
+        });
+        completed.emit('close', 1);
+        await expect(completedResult).resolves.toBe(false);
+        expect(updateCompleted).toHaveBeenCalledWith('Access is denied: C:\\file.txt\n\nSandbox path hint');
+
+        const timedOut = Object.assign(new EventEmitter(), {
+            pid: 987655,
+            stdout: new EventEmitter(),
+            stderr: new EventEmitter()
+        }) as unknown as ChildProcess;
+        const updateTimedOut = jest.fn();
+        const timedOutResult = installTimeoutBackgrounding({
+            handle: { proc: timedOut, detachListeners: jest.fn() },
+            command: 'read-file',
+            startTime: Date.now(),
+            timeout: 1000,
+            getOutput: () => 'Access is denied: C:\\file.txt',
+            formatOutput,
+            result: { updateResult: updateTimedOut, updateResultObject: jest.fn() } as any,
+            isKilledByStop: () => false,
+            onFinish: jest.fn()
+        });
+        jest.advanceTimersByTime(1000);
+        await expect(timedOutResult).resolves.toBe(true);
+        expect(updateTimedOut.mock.lastCall![0]).toContain('Access is denied: C:\\file.txt\n\nSandbox path hint');
+        expect(formatOutput).toHaveBeenCalledWith('Access is denied: C:\\file.txt');
+    });
+
     test('keeps the complete artifact when a truncated command moves to the background', async () => {
         jest.useFakeTimers();
         const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'opendesk-background-output-'));

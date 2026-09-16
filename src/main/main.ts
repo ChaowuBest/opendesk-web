@@ -1707,11 +1707,7 @@ const registerTaskManagerAPIHandlers = () => {
         }
         const result = await applyTaskExecutionNode(task, nodeId);
         if (result.status !== 'ok') return result;
-        await refreshTaskSystemPrompt(task);
         return result;
-    }
-    async function refreshTaskSystemPrompt(task: TaskState): Promise<void> {
-        await task.rebuildSystemPrompt();
     }
     ipcMain.handle('node:listExecutionNodes', async () => {
         return { status: 'ok', data: listExecutionNodes() };

@@ -39,6 +39,17 @@ function makeMessage(text: string): InboundChannelMessage {
 }
 
 describe('ChannelMessageRouter 账号运行模式同步', () => {
+    test('渠道上下文不将生成的基础 prompt 持久化为自定义内容', async () => {
+        const { router, manager } = createRouter();
+
+        await router.routeInboundMessage(makeMessage('第一条消息'));
+
+        const task = manager.tasks[0];
+        expect(task.agentId).toBeDefined();
+        expect(task.custom_system_prompt).toContain('--- Channel Context ---');
+        expect(task.custom_system_prompt).not.toContain('system prompt');
+    });
+
     test('同一会话第二条消息复用任务时，模式跟随账号最新设定切换', async () => {
         const { runtime, router, manager } = createRouter();
 

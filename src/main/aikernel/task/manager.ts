@@ -721,8 +721,9 @@ export class TaskManagerState {
         // 导致工具栏短暂显示全局工作区后才刷新为任务指定的工作区
         this.publishTaskListUpdate();
 
-        // 构建 system prompt 并设置
-        await task.rebuildSystemPrompt();
+        // 使用最终可用工具集构建 system prompt，使工具携带的动态指令在首个 turn 前生效。
+        const initialToolsets = await task.buildToolsets();
+        await task.rebuildSystemPrompt(initialToolsets);
 
         // 触发 beforeTaskStart 钩子（在 system prompt 已设置但用户消息尚未提交时）
         await task.hooks.noticeBeforeTaskStart({ task });

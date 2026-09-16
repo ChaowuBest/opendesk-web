@@ -4,6 +4,7 @@ import type { SpawnSyncReturns } from 'child_process';
 // setting.ts 含 create(import.meta.url) 写法，ts-jest 编译为 CJS 后与 require 标识符冲突，mock 掉
 jest.unstable_mockModule('../../../main/utils/setting.js', () => ({
     Setting: class {
+        static afterSetDataCallbacks: unknown[] = [];
         static getInstance() {
             return {
                 data: { locale: 'zh-CN' },
@@ -16,6 +17,14 @@ jest.unstable_mockModule('../../../main/utils/setting.js', () => ({
     getOpendeskDirectory: () => '/tmp/opendesk-test',
     getLogDirectory: () => '/tmp/opendesk-test/logs',
     getTaskToolResultDirectory: () => '/tmp/opendesk-test/tool-results'
+}));
+
+jest.unstable_mockModule('../../../main/aikernel/states/global.js', () => ({
+    GlobalState: class {
+        static getCurrentInstance() {
+            return undefined;
+        }
+    }
 }));
 
 // 通过 fs/child_process mock 控制 findOpenHarmonyZsh 的探测结果

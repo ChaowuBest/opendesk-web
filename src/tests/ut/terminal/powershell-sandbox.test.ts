@@ -18,13 +18,15 @@ jest.unstable_mockModule('../../../main/applications/terminal/background.js', ()
     BackgroundProcessManager: class {}
 }));
 jest.unstable_mockModule('../../../main/utils/setting.js', () => ({
+    getLogDirectory: () => '/tmp/opendesk-test/logs',
     Setting: class {
         static getInstance() {
             return { data: { locale: 'zh-CN' }, getEffectiveWorkspace: () => 'D:/workspace' };
         }
     }
 }));
-const { ExecutePwshTool } = await import('../../../main/applications/terminal/shells/pwsh.js');
+const { ExecutePwshTool, normalizeSandboxPwshArgs } =
+    await import('../../../main/applications/terminal/shells/pwsh.js');
 const { ExecuteBashTool } = await import('../../../main/applications/terminal/shells/bash.js');
 const { ExecuteZshTool } = await import('../../../main/applications/terminal/shells/zsh.js');
 const { CheckShellStatusTool } = await import('../../../main/applications/terminal/shells/status.js');
@@ -36,6 +38,16 @@ test('only sandboxed shell tools opt into the BaseTool serial execution queue', 
     expect(new ExecuteZshTool('/bin/zsh').serialExecution).toBe(false);
     expect(new CheckShellStatusTool('powershell', false).serialExecution).toBe(false);
     expect(new CheckShellStatusTool('powershell', true).serialExecution).toBe(true);
+});
+
+test('sandbox powershell accepts stable root-relative working directories', () => {
+    expect(
+        normalizeSandboxPwshArgs({
+            command: 'Get-ChildItem .',
+            workingDirectory: '/D/workspace',
+            timeout: 30000
+        })
+    ).toMatchObject({ command: 'Get-ChildItem .', workingDirectory: 'D:/workspace' });
 });
 
 test('sandbox defers virtual and dynamic paths to runtime host authorization', () => {

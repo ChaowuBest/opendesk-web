@@ -21,6 +21,7 @@ import { Setting } from '../../utils/setting.js';
 
 export class TerminalApplication extends BaseApplication {
     readonly shells = scanSupportedShells();
+
     constructor() {
         super('terminal', false);
     }

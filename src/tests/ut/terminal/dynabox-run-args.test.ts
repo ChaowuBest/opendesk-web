@@ -1,4 +1,8 @@
-import { sandboxRunArgs } from '../../../main/applications/terminal/sandboxes/dynabox.js';
+import {
+    mapHostPathToSandboxRoot,
+    sandboxRunArgs,
+    withSandboxWorkingDirectory
+} from '../../../main/applications/terminal/sandboxes/dynabox.js';
 
 describe('sandboxRunArgs', () => {
     const base = {
@@ -28,5 +32,40 @@ describe('sandboxRunArgs', () => {
 
     test('deleteToTrash 为 false 与缺省一致', () => {
         expect(sandboxRunArgs({ ...base, deleteToTrash: false })).toEqual(sandboxRunArgs(base));
+    });
+});
+
+describe('sandbox working directory', () => {
+    test.each([
+        ['C:\\foo\\bar', '/C/foo/bar'],
+        ['d:/workspace', '/D/workspace'],
+        ['E:\\', '/E/']
+    ])('maps host path %s to stable sandbox path %s', (hostPath, sandboxPath) => {
+        expect(mapHostPathToSandboxRoot(hostPath)).toBe(sandboxPath);
+    });
+
+    test('rejects paths that cannot be represented by automount', () => {
+        expect(mapHostPathToSandboxRoot('relative/path')).toBeNull();
+        expect(mapHostPathToSandboxRoot('\\\\server\\share')).toBeNull();
+    });
+
+    test('enters the mapped task workspace before running a PowerShell command', () => {
+        expect(
+            withSandboxWorkingDirectory(
+                'C:/Windows/System32/WindowsPowerShell/v1.0/powershell.exe',
+                ['-NoProfile', '-Command', 'Get-ChildItem .'],
+                'C:\\foo bar'
+            )
+        ).toEqual(['-NoProfile', '-Command', "Set-Location -LiteralPath '/C/foo bar'; Get-ChildItem ."]);
+    });
+
+    test('escapes apostrophes in the mapped PowerShell working directory', () => {
+        expect(
+            withSandboxWorkingDirectory(
+                'C:/Program Files/PowerShell/7/pwsh.exe',
+                ['-NoProfile', '-Command', 'Get-Location'],
+                "D:/team's/work"
+            )[2]
+        ).toBe("Set-Location -LiteralPath '/D/team''s/work'; Get-Location");
     });
 });

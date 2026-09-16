@@ -14,7 +14,7 @@
 - OpenDesk 在启动沙箱前调用 `network-ensure`。首次使用会弹出 Windows UAC，只提升一次性的回环初始化子命令；初始化完成后，OpenDesk、沙箱管理器和 shell 均以普通权限运行。拒绝或初始化失败会返回本地化错误，重试可再次初始化。后续启动重新检查 Windows 配置，配置仍有效时不会弹出 UAC。
 - 回环初始化为当前 Windows 用户预留 A–Z 共 26 个稳定的 AppContainer 包 SID，并保留其他应用已有的豁免。身份按“用户 SID + 挂载盘符”确定，同一用户跨登录会话持有独占盘符租约，并发实例不会共享身份；每次运行前重新创建私有 profile，避免残留任务数据。豁免允许这些身份访问本机服务，不限于某个代理端口；文件访问仍受 AppContainer 和 Dokan 策略约束。
 - 启用动态沙箱的 shell 通过 `BaseTool.serialExecution` 在同一任务、同一批调用内串行调度；普通 PowerShell、Bash、Zsh 保持并行。不同任务和转入后台的沙箱进程仍可能重叠：原生管理器从选盘到卸载持有跨进程盘符占用，自动挂载时排除其他实例的虚拟卷。
-- 强制沙箱工具不再静态分析虚拟路径的文件权限，实际 I/O 经授权端点转换成 `C:/...`、`D:/...` 后审批。命令和工作目录使用宿主路径；脚本文件内的绝对路径不会改写，使用相对路径或 `SBX_ROOT`，不要硬编码 `Z:`。
+- 强制沙箱工具不再静态分析虚拟路径的文件权限，实际 I/O 经授权端点转换成 `C:/...`、`D:/...` 后审批。模型和脚本统一使用稳定的根相对路径：`/C/...` 对应宿主 `C:/...`，`/D/...` 对应宿主 `D:/...`；工作目录会映射到相同位置，相对路径从任务工作空间解析。
 - Windows PowerShell 自带模块在 `PSModulePath` 中保留系统原生路径，避免虚拟路径触发 AppContainer 无权执行的注册表授权检查。其他模块目录继续映射。无需可执行文件兼容补丁的程序保留安装目录的映射，以便读取相邻 DLL。
 - 部分 Windows launcher 会把宿主绝对路径或命名对象格式嵌入 PE 文件。镜像文件系统按可执行文件内容识别这些兼容性特征，在私有 `/dynobox` overlay 中生成一次性副本，并把已声明的宿主路径映射到沙箱视图；不会按 `python`、`pip` 等工具名生成专用 shim。通过 PATH 启动的 launcher 与命令行直接启动的程序共享同一套处理。relay 只移除严格匹配当前虚拟盘符的运行时自定位诊断，其他 stderr 和退出码原样保留。
 - `ConstrainedLanguage` 是 PowerShell 的语言限制，限制任意 .NET 调用、非核心类型属性赋值及 COM 等能力，并不等同于沙箱文件权限。挂载丢失会使 PowerShell 启动检查失败；本集成不强制切换语言模式，也不覆盖宿主的 AppLocker/WDAC 策略。
@@ -83,12 +83,12 @@ dynobox.exe run --automount --policy rules.toml ^
     --upstream http://127.0.0.1:8080/decide -- build.cmd
 ```
 
-`--automount` 把宿主全部盘符自动挂进沙箱（`Z:\C\...` ↔ `C:\...`，含映射的
-网络驱动器），agent 与脚本全程使用沙箱内路径即可。
+`--automount` 把宿主全部盘符自动挂进动态分配的沙箱卷。agent 与脚本使用不含
+动态盘符的稳定路径：`/C/...` ↔ `C:\...`、`/D/...` ↔ `D:\...`，其他盘符以此类推。
 
-`--` 之后是真正要跑的命令：它以沙箱卷根为当前目录启动（自动获得环境变量
-`SBX_ROOT=盘符:\`、`SBX_REAL_SRC=真实源`、`DYNOBOX_SANDBOX=1`），命令一结束卷就
-自动卸载。
+`--` 之后是真正要跑的命令：原生管理器默认以沙箱卷根启动。OpenDesk 会先进入
+映射后的任务工作空间（例如宿主 `C:\foo` 对应 `/C/foo`），因此后代脚本的相对路径
+也从该目录解析。兼容环境变量仍由原生管理器提供，但不作为 agent 的路径接口。
 
 ### 2. 端点与策略怎么配
 
@@ -165,24 +165,24 @@ dynobox.exe run --automount --policy rules.toml ^
 
 | 沙箱内路径 | 宿主真实路径 |
 |---|---|
-| `Z:\C\Windows\win.ini` | `C:\Windows\win.ini` |
-| `Z:\D\data\a.txt` | `D:\data\a.txt` |
-| `Z:\NET\filesrv\share\x` | `\\filesrv\share\x` |
+| `/C/Windows/win.ini` | `C:\Windows\win.ini` |
+| `/D/data/a.txt` | `D:\data\a.txt` |
+| `/NET/filesrv/share/x` | `\\filesrv\share\x` |
 
-卷根 `Z:\` 只列出已声明的映射（未声明的位置在沙箱内"不存在"）；子进程启动期
+动态沙箱卷根只列出已声明的映射（未声明的位置在沙箱内"不存在"）；子进程启动期
 自动把命令行/环境变量里的已声明前缀翻译成沙箱路径（`C:\work\build.cmd` →
-`Z:\C\work\build.cmd`）。网络位置（UNC）需预先建立连接与认证（`net use` 或
+`<动态盘符>:\C\work\build.cmd`）。脚本应直接使用稳定形式 `/C/work/build.cmd`。
+网络位置（UNC）需预先建立连接与认证（`net use` 或
 资源管理器访问一次），沙箱只透传 IO。
 
 ### 2.5 路径一致性（agent / LLM 场景）
 
 LLM 会在工具调用与生成的脚本里写路径，两套命名空间会让模型混乱。推荐
-**整盘镜像 + 单字符映射**：在策略里用 `[[roots]]` 声明各盘（`/C` → `C:\`），
-沙箱内 `Z:\C\` 与宿主 `C:\` 的目录树完全一致（读全放行、写按策略），
-给 agent 的系统提示词只需一条规则：
-**`Z:\C\X` 即宿主的 `C:\X`**。需要精细控制时用 `--map "旧前缀=新前缀"` 在启动期
-翻译 argv/环境变量（仅覆盖这两处，程序内部硬编码路径不经过此处）。沙箱内脚本
-可用 `SBX_REAL_SRC` + `SBX_ROOT` 编程换算。
+**整盘镜像 + 根相对映射**：在策略里用 `[[roots]]` 声明各盘（`/C` → `C:\`），
+沙箱内 `/C/...` 与宿主 `C:\...` 的目录树完全一致（读全放行、写按策略），且不依赖
+本次运行实际获得的盘符。给 agent 的系统提示词使用统一规则：
+**`/C/X` 即宿主的 `C:\X`**。需要精细控制时用 `--map "旧前缀=新前缀"` 在启动期
+翻译 argv/环境变量（仅覆盖这两处，程序内部硬编码路径不经过此处）。
 
 ### 2.6 进程治理与原生路径隔离
 
@@ -246,11 +246,11 @@ network-setup --user-sid SID
 示例：
 
 ```bat
-:: 整盘镜像（agent 场景，路径一致性最好）：Z:\C\X 即宿主 C:\X
+:: 整盘镜像（agent 场景，路径一致性最好）：/C/X 即宿主 C:\X
 dynobox.exe run --policy rules_drive.toml ^
     --upstream http://127.0.0.1:8080/decide -- python agent_task.py
 
-:: 多盘 + 网络位置：Z:\C、Z:\D、Z:\NET\... 统一视图
+:: 多盘 + 网络位置：/C、/D、/NET/... 统一视图
 dynobox.exe run --policy rules_multi.toml --mount Y: ^
     --upstream pipe://dynobox-decide -- cmd /c build.cmd
 

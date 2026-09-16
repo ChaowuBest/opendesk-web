@@ -346,8 +346,7 @@ export class ChannelMessageRouter {
 
         const task = this.taskManagerState.createTask(model);
 
-        // 指定 agent 时设置 agentId；'main'（主 agent）等价于未指定，避免保存过
-        // 账号设置后与默认路径的 prompt 行为不一致；无效 agentId 由 TaskState 回退主 agent
+        // 未指定或选择 main 时保留 TaskState 默认的主 Agent；无效 agentId 由 TaskState 回退主 Agent。
         const effectiveAgentId = runtime?.agentId && runtime.agentId !== 'main' ? runtime.agentId : undefined;
         if (effectiveAgentId) {
             task.agentId = effectiveAgentId;
@@ -371,14 +370,10 @@ export class ChannelMessageRouter {
             task.harnessContext.workspace = workspace;
         }
 
-        const systemPrompt = await task.buildSystemPrompt();
-
         // Determine reply target: group ID for group chats, sender ID for direct messages
         const replyTarget = message.chatType === 'group' && message.groupId ? message.groupId : message.senderId;
 
         const channelContext = [
-            systemPrompt,
-            '',
             '--- Channel Context ---',
             `Channel: ${message.channelId}`,
             `Sender: ${message.senderName || message.senderId}`,
@@ -388,9 +383,6 @@ export class ChannelMessageRouter {
             .filter(Boolean)
             .join('\n');
 
-        if (!effectiveAgentId) {
-            task.agentId = undefined;
-        }
         task.setSystemPrompt(channelContext);
 
         task.origin = {
@@ -480,6 +472,7 @@ export class ChannelMessageRouter {
                 (task as any).setTurnInteractive?.(true);
             }
             const toolsets = await task.buildToolsets();
+            await task.rebuildSystemPrompt(toolsets);
             task.chat_context.attachToolsets(...toolsets);
             for (const ts of this.extraToolsets) {
                 task.chat_context.attachToolsets(ts);
