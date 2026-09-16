@@ -22,10 +22,11 @@ public sealed class Sandbox : IDisposable
     private readonly Dokan _dokan = new(new DokanNet.Logging.NullLogger());
     private IntPtr _job = IntPtr.Zero;
     private string? _bootstrapDir;
+    private FileStream? _bootstrapLock;
     private MountLease? _mountLease;
     private readonly Dictionary<string, string> _bootstrapExecutables = new(StringComparer.OrdinalIgnoreCase);
 
-    public Sandbox(Policy policy, bool automount, string? letter = null)
+    public Sandbox(Policy policy, bool automount, string? letter = null, bool delToTrash = false)
     {
         Policy = policy;
         Security = new SandboxSecurity();
@@ -73,9 +74,15 @@ public sealed class Sandbox : IDisposable
             // 子进程引导区：存放 AppContainer 无法从宿主原生目录读取的 exe 副本
             _bootstrapDir = Path.Combine(Path.GetTempPath(), "dynobox-" + Guid.NewGuid().ToString("N")[..8]);
             Directory.CreateDirectory(_bootstrapDir);
+            // 独占持有锁文件直到运行结束：启动清扫据此区分"存活运行"与
+            // "被硬杀运行遗留的目录"（后者无持锁者，可安全删除）
+            _bootstrapLock = new FileStream(Path.Combine(_bootstrapDir, "bootstrap.lock"),
+                FileMode.CreateNew, System.IO.FileAccess.ReadWrite, FileShare.None);
             roots.Add(("/dynobox", _bootstrapDir));
+            // 后台清扫被硬杀运行遗留的引导目录（自身目录因持锁 + 新建被跳过）
+            Task.Run(() => SweepStaleBootstrapDirs(_bootstrapDir));
 
-            Fs = new MirrorFs(roots, policy);
+            Fs = new MirrorFs(roots, policy) { DeleteToTrash = delToTrash };
             // 排除挂载盘符自身，避免 Y:\ -> /Y -> Y:\ 的自引用循环
             roots.RemoveAll(r => r.Virtual.Equals("/" + Letter, StringComparison.OrdinalIgnoreCase));
             Fs.RebuildRoots(roots);
@@ -471,20 +478,49 @@ public sealed class Sandbox : IDisposable
         // 其他宿主程序复制进卷内引导区，避免给 AppContainer 开放原生目录。
         if (_bootstrapExecutables.TryGetValue(found, out var cached))
             return ReplaceFirstToken(cmdline, cached);
+        // 按源路径哈希划分子目录：不同工具的同名依赖互不冲突
         var bootstrapName = Path.GetFileName(found);
-        var volumeCopy = MountPoint + Path.DirectorySeparatorChar + "dynobox"
-            + Path.DirectorySeparatorChar + "bin" + Path.DirectorySeparatorChar + bootstrapName;
-        Directory.CreateDirectory(MountPoint + Path.DirectorySeparatorChar + "dynobox"
-            + Path.DirectorySeparatorChar + "bin");
-        if (!RuntimeCompatibility.PrepareExecutable(found, volumeCopy, pathMaps))
+        var hash = Convert.ToHexString(
+            System.Security.Cryptography.SHA256.HashData(Encoding.UTF8.GetBytes(found)))[..16];
+        var volumeDir = MountPoint + Path.DirectorySeparatorChar + "dynobox"
+            + Path.DirectorySeparatorChar + "bin" + Path.DirectorySeparatorChar + hash;
+        var volumeCopy = volumeDir + Path.DirectorySeparatorChar + bootstrapName;
+        Directory.CreateDirectory(volumeDir);
+        var contentChanged = RuntimeCompatibility.PrepareExecutable(found, volumeCopy, pathMaps);
+        if (!contentChanged)
         {
             // 无需修改的程序保留相邻 DLL/运行时文件；例如 pwsh.exe 必须与 pwsh.dll 同目录。
             File.Delete(volumeCopy);
             return '"' + found + '"' + (rest.Length > 0 && !char.IsWhiteSpace(rest[0]) ? " " : "") + rest;
         }
+        CopyAdjacentRuntimeFiles(found, volumeCopy);
         _bootstrapExecutables[found] = volumeCopy;
         Log.Info("[BOOT] {0} 已复制进卷内引导区", bootstrapName);
         return ReplaceFirstToken(cmdline, volumeCopy);
+    }
+
+    /// <summary>搬迁副本与其相邻运行时分离会以 DLL_NOT_FOUND 崩溃；把源目录中
+    /// 的同目录 DLL 一并带入引导区，使副本自包含。已存在的跳过（同名 DLL 不同
+    /// 版本冲突时以先到者为准），失败仅记录——最坏情况与旧行为一致。</summary>
+    private static void CopyAdjacentRuntimeFiles(string sourceExe, string copiedExe)
+    {
+        try
+        {
+            var srcDir = Path.GetDirectoryName(sourceExe);
+            var dstDir = Path.GetDirectoryName(copiedExe);
+            if (string.IsNullOrEmpty(srcDir) || string.IsNullOrEmpty(dstDir)) return;
+            foreach (var dll in Directory.EnumerateFiles(srcDir, "*.dll"))
+            {
+                var target = Path.Combine(dstDir, Path.GetFileName(dll));
+                if (File.Exists(target)) continue;
+                try { File.Copy(dll, target, overwrite: false); }
+                catch (Exception ex) { Log.Debug("[BOOT] 相邻 DLL 跳过 {0}: {1}", dll, ex.Message); }
+            }
+        }
+        catch (Exception ex)
+        {
+            Log.Debug("[BOOT] 相邻运行时枚举失败: {0}", ex.Message);
+        }
     }
 
     /// <summary>把命令行的第一个 token（原始引号形式）替换为目标路径，避免
@@ -618,6 +654,65 @@ public sealed class Sandbox : IDisposable
         {
             _mountLease?.Dispose();
             _mountLease = null;
+        }
+        // 卸载完成后清理本次运行的引导目录：不清理会随每次运行在 %TEMP%
+        // 无限累积（overlay 副本与搬迁的可执行文件可达数十 MB）。被硬杀的
+        // 运行走不到这里，由下次启动时的 SweepStaleBootstrapDirs 兜底。
+        try
+        {
+            _bootstrapLock?.Dispose();
+            if (_bootstrapDir is not null && Directory.Exists(_bootstrapDir))
+                Directory.Delete(_bootstrapDir, recursive: true);
+        }
+        catch (Exception ex)
+        {
+            Log.Debug("[RUN] 引导目录清理失败: {0}", ex.Message);
+        }
+        finally
+        {
+            _bootstrapLock = null;
+            _bootstrapDir = null;
+        }
+    }
+
+    /// <summary>清扫被硬杀运行遗留的引导目录。仅删除"超过 1 小时且锁文件
+    /// 无持锁者"的目录：存活运行持有锁（FileShare.None 独占），打开失败即
+    /// 跳过；成功打开后先关闭句柄再递归删除，避免目录被自身句柄占用。
+    /// 后台执行，不阻塞启动。</summary>
+    private static void SweepStaleBootstrapDirs(string ownDir)
+    {
+        try
+        {
+            var cutoff = DateTime.UtcNow - TimeSpan.FromHours(1);
+            foreach (var dir in Directory.EnumerateDirectories(Path.GetTempPath(), "dynobox-*"))
+            {
+                try
+                {
+                    if (string.Equals(dir, ownDir, StringComparison.OrdinalIgnoreCase)) continue;
+                    if (Directory.GetLastWriteTimeUtc(dir) > cutoff) continue;
+                    var lockFile = Path.Combine(dir, "bootstrap.lock");
+                    FileStream? acquired = null;
+                    try
+                    {
+                        acquired = File.Open(lockFile, FileMode.OpenOrCreate,
+                            System.IO.FileAccess.ReadWrite, FileShare.None);
+                    }
+                    catch (IOException)
+                    {
+                        continue;   // 锁被持有：目录属于存活运行
+                    }
+                    acquired.Dispose();
+                    Directory.Delete(dir, recursive: true);
+                }
+                catch
+                {
+                    // 单个目录失败不影响其余清扫
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            Log.Debug("[RUN] 引导目录清扫失败: {0}", ex.Message);
         }
     }
 

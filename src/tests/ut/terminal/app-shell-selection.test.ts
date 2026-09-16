@@ -2,6 +2,7 @@ import { jest } from '@jest/globals';
 import { selectSupportedShell } from '../../../common/shells.js';
 
 let taskConfig: Record<string, unknown> = {};
+const afterSetDataCallbacks: Array<(previous: any, next: any) => void | Promise<void>> = [];
 const shells = [
     { kind: 'powershell', path: 'C:/Windows/powershell.exe', sandboxed: false },
     { kind: 'powershell', path: 'C:/Windows/powershell.exe', sandboxed: true },
@@ -11,6 +12,7 @@ const shells = [
 jest.unstable_mockModule('../../../main/utils/setting.js', () => ({
     getLogDirectory: () => '/tmp/opendesk-test',
     Setting: class {
+        static afterSetDataCallbacks = afterSetDataCallbacks;
         static getInstance() {
             return { data: { locale: 'zh-CN' }, getData: () => ({ task_config: taskConfig }) };
         }
@@ -55,7 +57,7 @@ test('only the selected execution tool and status tool are registered, using the
         expect([...toolset.tools.keys()]).toEqual([name, 'checkShellStatus']);
         const args =
             shell.kind === 'powershell'
-                ? [shell.path, shell.sandboxed]
+                ? [shell.path, shell.sandboxed, false]
                 : shell.kind === 'zsh'
                   ? [shell.path, false]
                   : [shell.path];
@@ -72,11 +74,35 @@ test.each([{}, { shell_path: 'C:/missing.exe', shell_sandboxed: true }])(
         launches.length = 0;
         const [toolset] = await app.getToolsets();
         expect([...toolset.tools.keys()]).toEqual(['executePwsh', 'checkShellStatus']);
-        expect(launches[0]).toEqual({ name: 'executePwsh', args: [shells[0].path, false] });
+        expect(launches[0]).toEqual({ name: 'executePwsh', args: [shells[0].path, false, false] });
     }
 );
+
+test('passes the recycle-bin preference only to an enabled sandboxed powershell', async () => {
+    const app = new TerminalApplication();
+    taskConfig = { shell_path: shells[1].path, shell_sandboxed: true, shell_sandbox_del_to_trash: true };
+    launches.length = 0;
+    await app.getToolsets();
+    expect(launches[0]).toEqual({ name: 'executePwsh', args: [shells[1].path, true, true] });
+
+    taskConfig = { shell_path: shells[0].path, shell_sandboxed: false, shell_sandbox_del_to_trash: true };
+    launches.length = 0;
+    await app.getToolsets();
+    expect(launches[0]).toEqual({ name: 'executePwsh', args: [shells[0].path, false, false] });
+});
 
 test('empty discovery registers no terminal tools', async () => {
     scan.mockReturnValueOnce([]);
     expect(await new TerminalApplication().getToolsets()).toEqual([]);
+});
+
+test('reads the latest shell selection without registering an eager task refresh', async () => {
+    const callbackCount = afterSetDataCallbacks.length;
+    const app = new TerminalApplication();
+    taskConfig = { shell_path: shells[0].path, shell_sandboxed: false };
+    expect([...(await app.getToolsets())[0].tools.keys()]).toEqual(['executePwsh', 'checkShellStatus']);
+
+    taskConfig = { shell_path: shells[2].path, shell_sandboxed: false };
+    expect([...(await app.getToolsets())[0].tools.keys()]).toEqual(['executeBash', 'checkShellStatus']);
+    expect(afterSetDataCallbacks).toHaveLength(callbackCount);
 });

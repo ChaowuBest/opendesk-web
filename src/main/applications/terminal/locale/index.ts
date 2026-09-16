@@ -18,7 +18,11 @@ const translations: Record<string, Record<string, string>> = {
     'en-US': enUs
 };
 
-export function t(key: string): string {
+export function t(key: string, params?: Record<string, string>): string {
     const locale = getLocale();
-    return translations[locale]?.[key] ?? translations['zh-CN']?.[key] ?? key;
+    let text = translations[locale]?.[key] ?? translations['zh-CN']?.[key] ?? key;
+    for (const [name, value] of Object.entries(params ?? {})) {
+        text = text.split(`\${${name}}`).join(value);
+    }
+    return text;
 }

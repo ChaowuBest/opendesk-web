@@ -12,8 +12,8 @@ public static class Program
 {
     private const string Usage = """
         用法:
-          dynobox run  --policy <rules.toml> [--src DIR] [--automount] [--upstream URL] [--token TOKEN] [--mount X] [--log-file FILE] -- <子进程命令行>
-          dynobox mount --policy <rules.toml> [--src DIR] [--automount] [--upstream URL] [--token TOKEN] [--mount X]
+          dynobox run  --policy <rules.toml> [--src DIR] [--automount] [--del-to-trash] [--upstream URL] [--token TOKEN] [--mount X] [--log-file FILE] -- <子进程命令行>
+          dynobox mount --policy <rules.toml> [--src DIR] [--automount] [--del-to-trash] [--upstream URL] [--token TOKEN] [--mount X]
           dynobox endpoint [--port 8080] [--pipe 管道名] [--default deny]
           dynobox network-status
           dynobox network-ensure
@@ -83,16 +83,18 @@ public static class Program
     }
 
     private static (string Policy, string? Src, string? Upstream, string? Token, string? Mount, bool Automount,
-        List<(string From, string To)> PathMaps) Parse(string[] args, bool requireCmd)
+        List<(string From, string To)> PathMaps, bool DelToTrash) Parse(string[] args, bool requireCmd)
     {
         string? policy = null, src = null, upstream = null, token = null, mount = null;
         var automount = false;
+        var delToTrash = false;
         var pathMaps = new List<(string From, string To)>();
         for (var i = 0; i < args.Length; i++)
         {
             switch (args[i])
             {
                 case "--automount": automount = true; break;
+                case "--del-to-trash": delToTrash = true; break;
                 case "--policy" when i + 1 < args.Length: policy = args[++i]; break;
                 case "--src" when i + 1 < args.Length: src = args[++i]; break;
                 case "--upstream" when i + 1 < args.Length: upstream = args[++i]; break;
@@ -124,16 +126,20 @@ public static class Program
             Console.WriteLine(Usage);
             Environment.Exit(2);
         }
-        return (policy, src, upstream, token, mount, automount, pathMaps);
+        return (policy, src, upstream, token, mount, automount, pathMaps, delToTrash);
     }
 
     private static Sandbox Build(string[] args)
     {
-        var (policyFile, src, upstream, token, mount, automount, pathMaps) = Parse(args, requireCmd: false);
+        var (policyFile, src, upstream, token, mount, automount, pathMaps, delToTrash) = Parse(args, requireCmd: false);
         var policy = Policy.Load(policyFile);
         if (src is not null)
         {
             var srcFull = Path.GetFullPath(src);
+            // --src 的语义是"镜像这个已存在的目录"；目录不存在时挂载虽能成功，
+            // 但之后所有 IO 都按 not-found 静默失败。启动期给出明确错误。
+            if (!Directory.Exists(srcFull))
+                throw new ArgumentException($"--src 目录不存在: {srcFull}");
             var root = policy.Roots.FirstOrDefault(r => r.Virtual == "/");
             if (policy.Roots.Count == 0)
                 policy.Roots.Add(("/", srcFull));
@@ -147,7 +153,7 @@ public static class Program
             policy.Rules.Count, policy.Default,
             policy.Ask.Endpoint.Length == 0 ? "<未配置>" : policy.Ask.Endpoint,
             policy.Ask.TimeoutMs, policy.Ask.CacheTtlSeconds);
-        var sandbox = new Sandbox(policy, automount, mount);
+        var sandbox = new Sandbox(policy, automount, mount, delToTrash);
         sandbox.PathMaps.AddRange(pathMaps);
         return sandbox;
     }

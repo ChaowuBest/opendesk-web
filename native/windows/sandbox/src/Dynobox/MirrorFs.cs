@@ -7,10 +7,12 @@
 
 using System.Collections.Concurrent;
 using System.Diagnostics;
+using System.Runtime.InteropServices;
 using System.Security.Cryptography;
 using System.Security.AccessControl;
 using System.Text;
 using DokanNet;
+using Microsoft.Win32.SafeHandles;
 using static DokanNet.DokanResult;
 using FileAccess = DokanNet.FileAccess;
 
@@ -97,6 +99,12 @@ public sealed class MirrorFs : IDokanOperations
     private sealed class Resolved
     {
         public string RealPath = "";
+        /// <summary>与 RealPath 一一对应的规范虚拟路径（折叠 .. 段、展开 8.3 短名
+        /// 与尾点别名）。策略判定必须使用它：原始请求串的 .. 段或短名会让 glob
+        /// 规则失配，形成 deny 规则逃逸。</summary>
+        public string VirtualPath = "";
+        /// <summary>RealPath 所属的根映射，供落点校验使用。</summary>
+        public RootMap Map = null!;
     }
 
     private static readonly char Sep = Path.DirectorySeparatorChar;
@@ -108,6 +116,13 @@ public sealed class MirrorFs : IDokanOperations
     /// <summary>暴露根映射供启动期路径翻译（prefix / realTrim）。</summary>
     public IReadOnlyList<(string Prefix, string RealTrim)> RootMaps =>
         _roots.Select(r => (r.Prefix, r.RealTrim)).ToList();
+
+    /// <summary>
+    /// 启用后，Cleanup 阶段的最终删除不再直接抹除，而是把目标送入 Windows 回收站；
+    /// 回收站不可用或移动失败时保留原文件。覆盖写、截断与 move 语义不受影响。
+    /// 挂载后不再变更，Dokan 线程池仅做读取。
+    /// </summary>
+    public bool DeleteToTrash { get; set; }
 
     /// <summary>配置当前运行的可执行文件内容兼容 overlay。
     /// 仅在挂载后、子进程启动前调用一次；此后配置只读。</summary>
@@ -176,27 +191,131 @@ public sealed class MirrorFs : IDokanOperations
         return _roots.Any(r => r.Prefix.StartsWith(vpath.TrimEnd('/') + "/", StringComparison.OrdinalIgnoreCase));
     }
 
+    /// <summary>/dynobox 是沙箱内部引导区（每次运行重建的管理副本与 overlay），
+    /// 不是用户数据；即使启用回收站也按原语义直接清除，避免内部副本灌满回收站。
+    /// AppContainer 私有 AC 数据（PowerShell 每条命令都会删除自己的
+    /// __PSScriptPolicyTest 临时脚本）同理。</summary>
+    private static bool IsSandboxInternalPath(string vpath) =>
+        vpath.Equals("/dynobox", StringComparison.OrdinalIgnoreCase) ||
+        vpath.StartsWith("/dynobox/", StringComparison.OrdinalIgnoreCase) ||
+        Policy.IsInternalAppContainerPath(vpath);
+
     private Resolved Resolve(string name)
     {
-        var vpath = Normalize(name);
+        var vpath = CanonicalVirtual(name);
         // 未映射的路径在沙箱里"不存在"。必须按 FileNotFound 语义返回而非
         // AccessDenied：宿主机上对不存在的路径探测得到的是 not-found，工具
         // （PATH 搜索、mime.types 探测等）把它当作正常未命中；虚拟卷同样
         // 未命中时返回拒绝会让大量合法探测报错并拖慢启动。
         var best = FindMapping(vpath) ?? throw new FileNotFoundException($"未映射的路径: {name}");
+        string real;
         if (best.Prefix == "/")
         {
             var rel = vpath[1..].Replace('/', Sep);
-            var real = rel.Length == 0 ? best.RealRoot : Path.GetFullPath(Path.Combine(best.RealRoot, rel));
-            GuardWithin(real, best);
-            return new Resolved { RealPath = real };
+            real = rel.Length == 0 ? best.RealRoot : Path.GetFullPath(Path.Combine(best.RealRoot, rel));
         }
-        if (vpath.Equals(best.Prefix, StringComparison.OrdinalIgnoreCase))
-            return new Resolved { RealPath = best.RealRoot };
-        var rest = vpath[(best.Prefix.Length + 1)..].Replace('/', Sep);
-        var rp = Path.GetFullPath(Path.Combine(best.RealRoot, rest));
-        GuardWithin(rp, best);
-        return new Resolved { RealPath = rp };
+        else if (vpath.Equals(best.Prefix, StringComparison.OrdinalIgnoreCase))
+        {
+            real = best.RealRoot;
+        }
+        else
+        {
+            var rest = vpath[(best.Prefix.Length + 1)..].Replace('/', Sep);
+            real = Path.GetFullPath(Path.Combine(best.RealRoot, rest));
+        }
+        real = ExpandRealAliases(real);
+        GuardWithin(real, best);
+        return new Resolved { RealPath = real, VirtualPath = VirtualOfReal(real, best), Map = best };
+    }
+
+    /// <summary>把真实路径映射回所在根的规范虚拟路径（正斜杠相对形式）。</summary>
+    private static string VirtualOfReal(string real, RootMap map)
+    {
+        var rel = real.Length > map.RealTrim.Length
+            ? real[(map.RealTrim.Length + 1)..].Replace(Sep, '/')
+            : "";
+        return map.Prefix == "/" ? "/" + rel : rel.Length == 0 ? map.Prefix : map.Prefix + "/" + rel;
+    }
+
+    /// <summary>折叠虚拟路径中的 `.` / `..` 段（根之上的越界段丢弃）。
+    /// 纯字符串操作：不要求任何段真实存在，因此对 create 语义同样成立。</summary>
+    private static string CanonicalizeVirtual(string vpath)
+    {
+        if (!vpath.Contains("/.", StringComparison.Ordinal)) return vpath;
+        var stack = new List<string>();
+        foreach (var part in vpath.Split('/'))
+        {
+            if (part.Length == 0 || part == ".") continue;
+            if (part == "..")
+            {
+                if (stack.Count > 0) stack.RemoveAt(stack.Count - 1);
+                continue;
+            }
+            stack.Add(part);
+        }
+        return "/" + string.Join("/", stack);
+    }
+
+    private static string Normalize(string name) => "/" + name.Replace('\\', '/').TrimStart('/');
+
+    /// <summary>规范化入口：Dokan 请求名 -> 规范虚拟路径。</summary>
+    private static string CanonicalVirtual(string name) => CanonicalizeVirtual(Normalize(name));
+
+    /// <summary>把真实路径中调用方可用于改写身份的别名（8.3 短名、结尾的
+    /// 点/空格）展开为磁盘上的规范形态。NTFS 会把 `dir~/x` 与 `LongDir\x`、
+    /// `name.` 与 `name` 当作同一文件打开；策略若按请求串匹配就会被这类
+    /// 别名绕过。目标不存在时展开已存在的最长祖先，其余段保持原样。</summary>
+    private static string ExpandRealAliases(string real)
+    {
+        // 快路径：无 ~ 且没有以点/空格结尾的段时不存在别名，避免每个请求
+        // 都多付一次元数据查询。
+        var needsExpansion = false;
+        foreach (var segment in real.Split(Sep))
+        {
+            if (segment.Length == 0) continue;
+            if (segment.Contains('~') || segment.EndsWith('.') || segment.EndsWith(' '))
+            {
+                needsExpansion = true;
+                break;
+            }
+        }
+        return needsExpansion ? ExpandLongPath(real) : real;
+    }
+
+    private static string ExpandLongPath(string path)
+    {
+        // 无 \\?\ 前缀的 GetLongPathNameW 在超过 MAX_PATH 的路径上依赖进程的
+        // 长路径感知配置；带前缀查询始终可用，使规范化行为不随机器配置漂移。
+        var query = path;
+        var prefixed = false;
+        if (query.Length >= 248 && !query.StartsWith(@"\\?\"))
+        {
+            query = query.StartsWith(@"\\")
+                ? @"\\?\UNC\" + query[2..]
+                : @"\\?\" + query;
+            prefixed = true;
+        }
+        var sb = new StringBuilder(1024);
+        var n = GetLongPathNameW(query, sb, (uint)sb.Capacity);
+        if (n == 0)
+        {
+            var err = Marshal.GetLastWin32Error();
+            if (err is not (0x00000002 or 0x00000003)) return path;   // 仅处理"不存在"
+            var sep = path.LastIndexOf(Sep);
+            if (sep < 0 || sep == path.Length - 1) return path;
+            var parent = ExpandLongPath(path[..sep]);
+            return parent.Length > 0 && parent[^1] == Sep
+                ? parent + path[(sep + 1)..]
+                : parent + Sep + path[(sep + 1)..];
+        }
+        if (n > (uint)sb.Capacity)
+        {
+            sb = new StringBuilder((int)n);
+            n = GetLongPathNameW(query, sb, n);
+            if (n == 0) return path;
+        }
+        var expanded = sb.ToString(0, (int)n);
+        return prefixed ? StripFinalPathPrefix(expanded) : expanded;
     }
 
     private static void GuardWithin(string real, RootMap map)
@@ -206,7 +325,98 @@ public sealed class MirrorFs : IDokanOperations
             throw new UnauthorizedAccessException($"路径越界: {real}");
     }
 
-    private static string Normalize(string name) => "/" + name.Replace('\\', '/').TrimStart('/');
+    private static bool WithinRoot(string real, RootMap map) =>
+        real.Equals(map.RealTrim, StringComparison.OrdinalIgnoreCase) ||
+        real.StartsWith(map.RealTrim + Sep, StringComparison.OrdinalIgnoreCase);
+
+    // -- 重解析点落点校验 ------------------------------------------------------
+    // 策略边界定义在映射根上。镜像树内的 junction / 符号链接 / 卷挂载点会把
+    // "根内路径"的 IO 重定向到根外：路径串与策略完全合法，落点却越界。
+    // 因此对成功打开的句柄查询最终路径（GetFinalPathNameByHandle 自动穿透
+    // 全部祖先重解析点），落点越界即拒绝。根内的重解析点不受影响。
+
+    private const uint FileReadAttributesAccess = 0x00000080;
+    private const uint FileShareEverything = 0x00000007;
+    private const uint OpenExistingDisposition = 3;
+    private const uint FileBackupSemanticsFlag = 0x02000000;
+    private static readonly IntPtr InvalidFileHandle = new(-1);
+
+    /// <summary>校验已打开句柄的最终落点是否在根内。查询失败（刚打开的句柄
+    /// 上几乎不会发生）时不阻塞原判定，交由真实文件系统语义兜底。</summary>
+    private bool HandleLandsWithinRoot(SafeHandle handle, RootMap map)
+    {
+        var sb = new StringBuilder(1024);
+        var n = GetFinalPathNameByHandleW(handle.DangerousGetHandle(), sb, (uint)sb.Capacity, 0);
+        if (n == 0)
+        {
+            Log.Debug("[RESOLVE] 最终路径查询失败，跳过落点校验: {0}", Marshal.GetLastWin32Error());
+            return true;
+        }
+        if (n > (uint)sb.Capacity)
+        {
+            sb = new StringBuilder((int)n);
+            n = GetFinalPathNameByHandleW(handle.DangerousGetHandle(), sb, n, 0);
+            if (n == 0) return true;
+        }
+        var final = StripFinalPathPrefix(sb.ToString(0, (int)n));
+        return WithinRoot(final, map);
+    }
+
+    /// <summary>对尚未打开的路径做落点校验（move 目标、目录创建）：目标不存在
+    /// 时沿祖先向上打开第一个可打开的锚点查询——该句柄已解析其全部祖先的
+    /// 重解析点，锚点落点在根内则整条路径都在根内。</summary>
+    private bool PathLandsWithinRoot(string real, RootMap map)
+    {
+        var anchor = real;
+        while (anchor.Length > map.RealTrim.Length)
+        {
+            var handle = CreateFileW(anchor, FileReadAttributesAccess, FileShareEverything,
+                IntPtr.Zero, OpenExistingDisposition, FileBackupSemanticsFlag, IntPtr.Zero);
+            if (handle != InvalidFileHandle)
+            {
+                try { return HandleLandsWithinRoot(new FileOnlyHandle(handle), map); }
+                finally { CloseHandle(handle); }
+            }
+            var sep = anchor.LastIndexOf(Sep);
+            if (sep < 0) break;
+            anchor = anchor[..sep];
+        }
+        return true;
+    }
+
+    /// <summary>剥离 GetFinalPathNameByHandle 返回的设备路径前缀。</summary>
+    private static string StripFinalPathPrefix(string path)
+    {
+        if (path.StartsWith(@"\\?\UNC\", StringComparison.OrdinalIgnoreCase)) return @"\\" + path[8..];
+        if (path.StartsWith(@"\\?\", StringComparison.OrdinalIgnoreCase)) return path[4..];
+        if (path.StartsWith(@"\??\", StringComparison.OrdinalIgnoreCase)) return path[4..];
+        return path;
+    }
+
+    /// <summary>仅为满足 HandleLandsWithinRoot 的 SafeHandle 形参包装原生句柄，
+    /// 不拥有资源（CloseHandle 由调用方负责）。</summary>
+    private sealed class FileOnlyHandle : SafeHandle
+    {
+        public FileOnlyHandle(IntPtr handle) : base(IntPtr.Zero, true) => SetHandle(handle);
+        public override bool IsInvalid =>
+            handle == IntPtr.Zero || handle == new IntPtr(-1);
+        protected override bool ReleaseHandle() => true;
+    }
+
+    [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+    private static extern IntPtr CreateFileW(string name, uint desiredAccess, uint shareMode,
+        IntPtr securityAttributes, uint creationDisposition, uint flagsAndAttributes, IntPtr templateFile);
+
+    [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+    private static extern uint GetFinalPathNameByHandleW(IntPtr handle, [Out] StringBuilder buffer,
+        uint bufferLength, uint flags);
+
+    [DllImport("kernel32.dll", SetLastError = true)]
+    private static extern bool CloseHandle(IntPtr handle);
+
+    [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+    private static extern uint GetLongPathNameW(string shortPath,
+        [Out] System.Text.StringBuilder longPath, uint bufferLength);
 
     private bool Check(string vpath, IEnumerable<string> kinds, IDokanFileInfo info)
     {
@@ -277,7 +487,7 @@ public sealed class MirrorFs : IDokanOperations
         {
             lock (info)
             {
-                var vpath = Normalize(fileName);
+                var vpath = CanonicalVirtual(fileName);
                 var pid = info.ProcessId;
                 var isDirReq = info.IsDirectory;
                 var kinds = AccessToKinds(access);
@@ -317,10 +527,12 @@ public sealed class MirrorFs : IDokanOperations
                     access = WithoutExecute(access);
                 }
 
-                if (!Check(vpath, kinds, info)) return AccessDenied;
+                if (!Check(res.VirtualPath, kinds, info)) return AccessDenied;
 
                 if (isDirReq)
                 {
+                    // junction / 符号链接目录会把打开与创建重定向到根外
+                    if (!PathLandsWithinRoot(real, res.Map)) return AccessDenied;
                     if (mode is FileMode.Create or FileMode.CreateNew or FileMode.OpenOrCreate && !exists)
                     {
                         Directory.CreateDirectory(real);
@@ -340,6 +552,7 @@ public sealed class MirrorFs : IDokanOperations
                     var directoryRead = (access & ~(ReadBits | FileAccess.GenericRead
                         | FileAccess.Synchronize | FileAccess.MaximumAllowed)) == 0;
                     if (!directoryRead || mode is not (FileMode.Open or FileMode.OpenOrCreate)) return AccessDenied;
+                    if (!PathLandsWithinRoot(real, res.Map)) return AccessDenied;
                     info.IsDirectory = true;
                     info.Context = NewCtx(null);
                     return Success;
@@ -363,6 +576,19 @@ public sealed class MirrorFs : IDokanOperations
                         kinds.Contains(AccessKind.Write) ? System.IO.FileAccess.ReadWrite : System.IO.FileAccess.Read,
                         FileShare.ReadWrite | FileShare.Delete,
                         64 * 1024, FileOptions.None);
+                    // overlay 副本在引导区内，不属于该根映射，跳过落点校验；
+                    // 其源文件的内容扫描由管理进程完成，子进程永远只见到副本。
+                    if (streamPath == real && !HandleLandsWithinRoot(stream.SafeFileHandle, res.Map))
+                    {
+                        stream.Dispose();
+                        if (creating)
+                        {
+                            // 越界创建的文件不属于沙箱世界，清理掉
+                            try { File.Delete(real); } catch { }
+                        }
+                        Log.Info("[FS] 落点越界拒绝 {0}", vpath);
+                        return AccessDenied;
+                    }
                     info.Context = NewCtx(stream, real);
                 }
                 catch (FileNotFoundException) { return FileNotFound; }
@@ -408,15 +634,40 @@ public sealed class MirrorFs : IDokanOperations
             {
                 var res = Resolve(fileName);
                 var real = res.RealPath;
-                try
+                // 必须用规范虚拟路径判断：原始请求名可能携带 .. 段
+                // （如 /dynobox/../C/...，按原始名前缀匹配会误判为内部区域，
+                // 导致开启回收站时用户文件被永久删除）。
+                if (DeleteToTrash && !IsSandboxInternalPath(res.VirtualPath))
                 {
-                    if (info.IsDirectory) Directory.Delete(real);
-                    else File.Delete(real);
-                    Log.Info("[FS] 删除 {0}", Normalize(fileName));
+                    // 回收站模式：先释放本进程持有的句柄（回收站移动要求句柄关闭），
+                    // 然后送回收站；任何失败都保留原文件——宁可让删除结果失真，
+                    // 也不能让用户数据被永久清除。
+                    var cxTrash = GetCtx(info);
+                    if (cxTrash is not null)
+                    {
+                        lock (cxTrash.Gate)
+                        {
+                            try { cxTrash.Stream?.Dispose(); }
+                            finally { cxTrash.Stream = null; }
+                        }
+                    }
+                    if (RecycleBin.TrySend(real, out var trashError))
+                        Log.Info("[FS] 删除 {0} (已送回收站)", Normalize(fileName));
+                    else
+                        Log.Warn("[FS] 回收站删除未执行，文件保留 {0}: {1}", fileName, trashError);
                 }
-                catch (FileNotFoundException) { }
-                catch (DirectoryNotFoundException) { }
-                catch (IOException ex) { Log.Warn("[FS] 删除失败 {0}: {1}", fileName, ex.Message); }
+                else
+                {
+                    try
+                    {
+                        if (info.IsDirectory) Directory.Delete(real);
+                        else File.Delete(real);
+                        Log.Info("[FS] 删除 {0}", Normalize(fileName));
+                    }
+                    catch (FileNotFoundException) { }
+                    catch (DirectoryNotFoundException) { }
+                    catch (IOException ex) { Log.Warn("[FS] 删除失败 {0}: {1}", fileName, ex.Message); }
+                }
             }
         }
         catch (FileNotFoundException ex)
@@ -558,7 +809,7 @@ public sealed class MirrorFs : IDokanOperations
         Log.Debug("[ENTRY] GetFileInfo {0}", fileName);
         try
         {
-            if (IsSyntheticContainer(Normalize(fileName)))
+            if (IsSyntheticContainer(CanonicalVirtual(fileName)))
             {
                 fileInfo = new FileInformation
                 {
@@ -627,7 +878,7 @@ public sealed class MirrorFs : IDokanOperations
         files = new List<FileInformation>();
         try
         {
-            var vpath = Normalize(fileName);
+            var vpath = CanonicalVirtual(fileName);
 
             // 虚拟容器：合成映射装配节点的子目录（/ 下的 C、D；/NET 下的 server ...）
             if (IsSyntheticContainer(vpath))
@@ -699,6 +950,7 @@ public sealed class MirrorFs : IDokanOperations
             {
                 var res = Resolve(fileName);
                 var real = res.RealPath;
+                if (!PathLandsWithinRoot(real, res.Map)) return AccessDenied;
                 var cur = File.GetAttributes(real);
                 if (attributes.HasFlag(FileAttributes.ReadOnly))
                     File.SetAttributes(real, cur | FileAttributes.ReadOnly);
@@ -728,6 +980,7 @@ public sealed class MirrorFs : IDokanOperations
         {
             var res = Resolve(fileName);
                 var real = res.RealPath;
+            if (!PathLandsWithinRoot(real, res.Map)) return AccessDenied;
             if (creationTime.HasValue) File.SetCreationTime(real, creationTime.Value);
             if (lastAccessTime.HasValue) File.SetLastAccessTime(real, lastAccessTime.Value);
             if (lastWriteTime.HasValue) File.SetLastWriteTime(real, lastWriteTime.Value);
@@ -754,7 +1007,7 @@ public sealed class MirrorFs : IDokanOperations
                 var real = res.RealPath;
             if (!File.Exists(real)) return FileNotFound;
             if (!info.DeletePending) return Success;
-            var (allowed, _) = _policy.Check(Normalize(fileName), AccessKind.Write);
+            var (allowed, _) = _policy.Check(res.VirtualPath, AccessKind.Write);
             return allowed ? Success : AccessDenied;
         }
         catch (FileNotFoundException)
@@ -778,7 +1031,7 @@ public sealed class MirrorFs : IDokanOperations
                 var real = res.RealPath;
             if (!Directory.Exists(real)) return PathNotFound;
             if (!info.DeletePending) return Success;
-            var (allowed, _) = _policy.Check(Normalize(fileName), AccessKind.Write);
+            var (allowed, _) = _policy.Check(res.VirtualPath, AccessKind.Write);
             if (!allowed) return AccessDenied;
             if (Directory.EnumerateFileSystemEntries(real).Any()) return DirectoryNotEmpty;
             return Success;
@@ -802,13 +1055,21 @@ public sealed class MirrorFs : IDokanOperations
         {
             lock (_life)
             {
-                var oldVp = Normalize(oldName);
-                var newVp = Normalize(newName);
-                var oldReal = Resolve(oldName).RealPath;
-                var newReal = Resolve(newName).RealPath;
+                var oldRes = Resolve(oldName);
+                var newRes = Resolve(newName);
+                var oldVp = oldRes.VirtualPath;
+                var newVp = newRes.VirtualPath;
+                var oldReal = oldRes.RealPath;
+                var newReal = newRes.RealPath;
                 if (!Check(oldVp, new[] { AccessKind.Write }, info) ||
                     !Check(newVp, new[] { AccessKind.Write }, info))
                     return AccessDenied;
+                // 目标经 junction 目录会落到根外（写入逃逸），先校验落点
+                if (!PathLandsWithinRoot(newReal, newRes.Map))
+                {
+                    Log.Info("[FS] move 目标落点越界拒绝 {0} -> {1}", oldVp, newVp);
+                    return AccessDenied;
+                }
 
                 var cx = info.Context as Ctx;
                 if (cx?.Stream is not null)
@@ -876,7 +1137,13 @@ public sealed class MirrorFs : IDokanOperations
             }
             else
             {
-                using var fs = new FileStream(Resolve(fileName).RealPath, FileMode.Open, System.IO.FileAccess.Write);
+                // 无句柄流的兜底路径必须与常规写入同一策略闸门（fail-closed），
+                // 不能因为缺少上下文就绕过 write 判定直接落盘。
+                var res = Resolve(fileName);
+                var (allowed, _) = _policy.Check(res.VirtualPath, AccessKind.Write);
+                if (!allowed) return AccessDenied;
+                if (!PathLandsWithinRoot(res.RealPath, res.Map)) return AccessDenied;
+                using var fs = new FileStream(res.RealPath, FileMode.Open, System.IO.FileAccess.Write);
                 fs.SetLength(length);
             }
             return Success;
@@ -909,11 +1176,22 @@ public sealed class MirrorFs : IDokanOperations
         Log.Debug("[ENTRY] DiskFree");
         try
         {
-            var di = new DriveInfo(_roots[0].RealRoot != "" ? _roots[0].RealRoot : _roots[0].RealTrim);
-            freeBytesAvailable = di.AvailableFreeSpace;
-            totalNumberOfBytes = di.TotalSize;
-            totalNumberOfFreeBytes = di.AvailableFreeSpace;
-            return Success;
+            // GetDiskFreeSpaceExW 对盘符与 UNC 根都有效；DriveInfo 只接受
+            // 本地盘符，UNC 根（\server\share）会抛异常导致整卷查询失败。
+            foreach (var root in _roots)
+            {
+                var probe = root.RealRoot.Length > 0 ? root.RealRoot : root.RealTrim;
+                if (!probe.EndsWith(Sep)) probe += Sep;
+                if (GetDiskFreeSpaceExW(probe, out var available, out var total, out var free))
+                {
+                    freeBytesAvailable = available;
+                    totalNumberOfBytes = total;
+                    totalNumberOfFreeBytes = free;
+                    return Success;
+                }
+            }
+            freeBytesAvailable = totalNumberOfBytes = totalNumberOfFreeBytes = 0;
+            return AccessDenied;
         }
         catch (Exception ex)
         {
@@ -922,6 +1200,10 @@ public sealed class MirrorFs : IDokanOperations
             return AccessDenied;
         }
     }
+
+    [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+    private static extern bool GetDiskFreeSpaceExW(string directory, out long freeBytesAvailable,
+        out long totalNumberOfBytes, out long totalNumberOfFreeBytes);
 
     public NtStatus GetVolumeInformation(out string volumeLabel,
         out FileSystemFeatures features, out string fileSystemName,

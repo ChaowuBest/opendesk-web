@@ -6,6 +6,7 @@ import test from 'node:test';
 import fs from 'fs';
 import os from 'os';
 import path from 'path';
+import { PassThrough } from 'node:stream';
 import { diffLines } from 'diff';
 import { setRuntimeLocale } from '../../../../locale/index.js';
 import { ToolCall } from '../../../../main/aikernel/messages.js';
@@ -360,6 +361,170 @@ test('grepFiles - 无匹配时返回提示', async () => {
 
         assert.match(result, /未找到匹配/);
     } finally {
+        cleanup(dir);
+    }
+});
+
+test('grepFiles - 跳过超过 20 MiB 的文件', async () => {
+    const dir = makeTempDir();
+    try {
+        const filePath = path.join(dir, 'large-text.txt');
+        const marker = 'LARGE_FILE_MARKER';
+        const content = Buffer.alloc(20 * 1024 * 1024 + 1, 'x');
+        content.write(marker, 0, 'utf8');
+        fs.writeFileSync(filePath, content);
+
+        const tool = new GrepFilesTool();
+        const result = await tool.executeCommand({
+            pattern: marker,
+            path: dir,
+            maxResults: 20
+        });
+
+        assert.match(result, /未找到匹配/);
+    } finally {
+        cleanup(dir);
+    }
+});
+
+test('grepFiles - 允许恰好 20 MiB 的文件', async () => {
+    const dir = makeTempDir();
+    try {
+        const filePath = path.join(dir, 'boundary-size.txt');
+        const marker = 'BOUNDARY_SIZE_MARKER';
+        const content = Buffer.alloc(20 * 1024 * 1024, 'x');
+        content.write(`${marker}\n`, 0, 'utf8');
+        fs.writeFileSync(filePath, content);
+
+        const tool = new GrepFilesTool();
+        const result = await tool.executeCommand({
+            pattern: marker,
+            path: dir,
+            contextLines: 0,
+            maxResults: 20
+        });
+
+        assert.match(result, new RegExp(marker));
+    } finally {
+        cleanup(dir);
+    }
+});
+
+test('grepFiles - 使用流式读取而非整文件 readFile', async () => {
+    const dir = makeTempDir();
+    const originalReadFile = fs.promises.readFile;
+    try {
+        const filePath = path.join(dir, 'streamed.txt');
+        fs.writeFileSync(filePath, '第一行\nSTREAMED_MARKER\n最后一行', 'utf8');
+        fs.promises.readFile = async () => {
+            throw new Error('grepFiles 不应使用 readFile 读取搜索文件');
+        };
+
+        const tool = new GrepFilesTool();
+        const result = await tool.executeCommand({
+            pattern: 'STREAMED_MARKER',
+            path: dir,
+            maxResults: 20,
+            contextLines: 1
+        });
+
+        assert.match(result, /STREAMED_MARKER/);
+        assert.match(result, /第一行/);
+        assert.match(result, /最后一行/);
+    } finally {
+        fs.promises.readFile = originalReadFile;
+        cleanup(dir);
+    }
+});
+
+test('grepFiles - 保留最后一个结果的后文上下文', async () => {
+    const dir = makeTempDir();
+    try {
+        const filePath = path.join(dir, 'match-context.txt');
+        fs.writeFileSync(filePath, '前文\nMATCH_ONE\n后文\nMATCH_TWO\n末行', 'utf8');
+
+        const tool = new GrepFilesTool();
+        const result = await tool.executeCommand({
+            pattern: 'MATCH_',
+            path: dir,
+            contextLines: 1,
+            maxResults: 1
+        });
+
+        assert.match(result, /在 1 个文件中找到 1 处匹配/);
+        assert.match(result, /前文/);
+        assert.match(result, /MATCH_ONE/);
+        assert.match(result, /后文/);
+        assert.doesNotMatch(result, /MATCH_TWO/);
+    } finally {
+        cleanup(dir);
+    }
+});
+
+test('grepFiles - 规范化 CRLF 行和上下文', async () => {
+    const dir = makeTempDir();
+    try {
+        const filePath = path.join(dir, 'crlf.txt');
+        fs.writeFileSync(filePath, '前文\r\nCRLF_MARKER\r\n后文\r\n', 'utf8');
+
+        const tool = new GrepFilesTool();
+        const result = await tool.executeCommand({
+            pattern: 'CRLF_MARKER',
+            path: dir,
+            contextLines: 1,
+            maxResults: 20
+        });
+
+        assert.match(result, /前文/);
+        assert.match(result, /CRLF_MARKER/);
+        assert.match(result, /后文/);
+        assert.doesNotMatch(result, /\r/);
+    } finally {
+        cleanup(dir);
+    }
+});
+
+test('grepFiles - 目录扫描最多同时读取四个文件', async () => {
+    const dir = makeTempDir();
+    const originalCreateReadStream = fs.createReadStream;
+    let releaseStreams: () => void = () => undefined;
+    const streamsReleased = new Promise<void>((resolve) => {
+        releaseStreams = resolve;
+    });
+    let startedStreams = 0;
+    let resultPromise: Promise<string> | undefined;
+    try {
+        for (let i = 0; i < 5; i++) {
+            fs.writeFileSync(path.join(dir, `file-${i}.txt`), 'source text', 'utf8');
+        }
+
+        fs.createReadStream = (() => {
+            startedStreams++;
+            const stream = new PassThrough();
+            void streamsReleased.then(() => stream.end('no matching content\n'));
+            return stream;
+        }) as typeof fs.createReadStream;
+
+        const tool = new GrepFilesTool();
+        resultPromise = tool.executeCommand({
+            pattern: 'NO_MATCH',
+            path: dir,
+            maxResults: 20
+        });
+
+        for (let attempt = 0; attempt < 100 && startedStreams < 4; attempt++) {
+            await new Promise<void>((resolve) => setTimeout(resolve, 1));
+        }
+        assert.equal(startedStreams, 4);
+
+        releaseStreams();
+        const result = await resultPromise;
+        assert.equal(startedStreams, 5);
+        assert.match(result, /未找到匹配/);
+    } finally {
+        releaseStreams();
+        fs.createReadStream = originalCreateReadStream;
+        await resultPromise;
         cleanup(dir);
     }
 });

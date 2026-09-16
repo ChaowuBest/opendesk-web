@@ -18,13 +18,15 @@ jest.unstable_mockModule('../../../main/applications/terminal/background.js', ()
     BackgroundProcessManager: class {}
 }));
 jest.unstable_mockModule('../../../main/utils/setting.js', () => ({
+    getLogDirectory: () => '/tmp/opendesk-test/logs',
     Setting: class {
         static getInstance() {
             return { data: { locale: 'zh-CN' }, getEffectiveWorkspace: () => 'D:/workspace' };
         }
     }
 }));
-const { ExecutePwshTool } = await import('../../../main/applications/terminal/shells/pwsh.js');
+const { ExecutePwshTool, normalizeSandboxPwshArgs } =
+    await import('../../../main/applications/terminal/shells/pwsh.js');
 const { ExecuteBashTool } = await import('../../../main/applications/terminal/shells/bash.js');
 const { ExecuteZshTool } = await import('../../../main/applications/terminal/shells/zsh.js');
 const { CheckShellStatusTool } = await import('../../../main/applications/terminal/shells/status.js');
@@ -36,6 +38,16 @@ test('only sandboxed shell tools opt into the BaseTool serial execution queue', 
     expect(new ExecuteZshTool('/bin/zsh').serialExecution).toBe(false);
     expect(new CheckShellStatusTool('powershell', false).serialExecution).toBe(false);
     expect(new CheckShellStatusTool('powershell', true).serialExecution).toBe(true);
+});
+
+test('sandbox powershell accepts stable root-relative working directories', () => {
+    expect(
+        normalizeSandboxPwshArgs({
+            command: 'Get-ChildItem .',
+            workingDirectory: '/D/workspace',
+            timeout: 30000
+        })
+    ).toMatchObject({ command: 'Get-ChildItem .', workingDirectory: 'D:/workspace' });
 });
 
 test('sandbox defers virtual and dynamic paths to runtime host authorization', () => {
@@ -91,3 +103,34 @@ test.each(['win32', 'linux', 'darwin'])(
         }
     }
 );
+
+test('forwards the recycle-bin preference only while the dynamic sandbox is active', async () => {
+    const originalPlatform = process.platform;
+    try {
+        Object.defineProperty(process, 'platform', { value: 'win32', configurable: true });
+        const run = (tool: InstanceType<typeof ExecutePwshTool>) =>
+            tool.executeCommand({ command: 'Get-Date', timeout: 30000 }, {} as any);
+
+        await run(new ExecutePwshTool('C:/shells/powershell.exe', true, true));
+        expect(execute).toHaveBeenLastCalledWith(
+            expect.objectContaining({ useDynamicSandbox: true, sandboxDeleteToTrash: true })
+        );
+
+        // 未开启偏好时保持默认关闭
+        await run(new ExecutePwshTool('C:/shells/powershell.exe', true));
+        expect(execute.mock.lastCall![0].sandboxDeleteToTrash).toBe(false);
+
+        // 非沙箱工具不透传该偏好
+        await run(new ExecutePwshTool('C:/shells/powershell.exe', false, true));
+        expect(execute).toHaveBeenLastCalledWith(
+            expect.objectContaining({ useDynamicSandbox: false, sandboxDeleteToTrash: false })
+        );
+
+        // 沙箱只在 Windows 激活；非 Windows 上偏好随沙箱一并关闭
+        Object.defineProperty(process, 'platform', { value: 'linux', configurable: true });
+        await run(new ExecutePwshTool('C:/shells/powershell.exe', true, true));
+        expect(execute.mock.lastCall![0]).toMatchObject({ useDynamicSandbox: false, sandboxDeleteToTrash: false });
+    } finally {
+        Object.defineProperty(process, 'platform', { value: originalPlatform, configurable: true });
+    }
+});

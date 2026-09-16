@@ -44,6 +44,7 @@ import { logCompactInfo } from '../compaction/compact-trace.js';
 import type { MicrocompactTaskRole } from '../compaction/types.js';
 import { compactContext } from '../compact.js';
 import { BaseTool, BaseToolset, InteractiveToolset } from '../tool.js';
+import { collectToolSystemPromptContributions } from '../tool-system-prompt.js';
 import { LLM } from '../llm.js';
 import {
     createEvidenceCardState,
@@ -277,7 +278,7 @@ export class TaskState {
     private _agentId: string | undefined = AgentRegistry.getMainAgent().agentId;
 
     /**
-     * 由当前 AgentDecl 和 Mode 生成的 prompt。运行时派生，不单独触发持久化。
+     * 由当前 Agent、Mode 和可用工具生成的 prompt。运行时派生，不单独触发持久化。
      */
     agent_system_prompt?: string;
 
@@ -338,21 +339,24 @@ export class TaskState {
         return modes.find((candidate) => candidate.id === this.activeModeId) ?? agent.getDefaultMode();
     }
 
-    /**
-     * 由当前任务绑定的 Agent 和运行模式重建 system prompt。
-     */
-    async buildSystemPrompt(): Promise<string> {
+    /** 由当前 Agent、运行模式和最终可用工具集构建 system prompt。 */
+    async buildSystemPrompt(toolsets?: readonly BaseToolset[]): Promise<string> {
         const agentSystemPrompt = this.agentId
             ? await this.getAgent().createSystemPrompt(this.getAgentMode(), this)
             : undefined;
-        return this.composeSystemPrompt(agentSystemPrompt);
+        const effectiveToolsets = toolsets ?? (await this.buildToolsets());
+        const toolSystemPrompt = collectToolSystemPromptContributions(effectiveToolsets, this)
+            .map((contribution) => contribution.content)
+            .join('\n\n');
+        const baseSystemPrompt = [agentSystemPrompt, toolSystemPrompt].filter(Boolean).join('\n\n') || undefined;
+        return this.composeSystemPrompt(baseSystemPrompt);
     }
 
     /**
      * 重建并安装当前任务的 system prompt。
      */
-    async rebuildSystemPrompt(): Promise<void> {
-        const systemPrompt = await this.buildSystemPrompt();
+    async rebuildSystemPrompt(toolsets?: readonly BaseToolset[]): Promise<void> {
+        const systemPrompt = await this.buildSystemPrompt(toolsets);
         this.installBuiltSystemPrompt(systemPrompt);
     }
 
@@ -651,6 +655,10 @@ export class TaskState {
 
     getTurnGeneration(): number {
         return this._turnGeneration;
+    }
+
+    isTurnRunning(): boolean {
+        return this._turnRunning;
     }
 
     getActiveModelRequestOptions(): TaskModelRequestOptions | undefined {
@@ -1107,6 +1115,8 @@ export class TaskState {
         const metadata = this.withTurnGenerationMetadata(options.metadata, generation);
         this._activeTurnMetadata = metadata;
         this._currentTurnInteractive = false;
+        const allToolsets = await this.buildToolsets();
+        await this.rebuildSystemPrompt(allToolsets);
         this.task_status = 'running';
         this.resetPluginAbortSignal();
         this.started_at = new Date();
@@ -1127,7 +1137,6 @@ export class TaskState {
         assistantMessage.metadata = metadata;
         this.chat_context.appendMessage(assistantMessage);
 
-        const allToolsets = await this.buildToolsets();
         this.chat_context.attachToolsets(...allToolsets);
 
         logger.info(`internal turn started for task ${this.task_id} (${options.source})`);
@@ -1460,6 +1469,7 @@ export class TaskState {
      */
     async refreshBaseToolsets(): Promise<void> {
         const allToolsets = await this.buildToolsets();
+        await this.rebuildSystemPrompt(allToolsets);
         const returnedNames = new Set(allToolsets.map((ts) => ts.name));
         for (const managedName of ['interaction', this.entryToolset?.name]) {
             if (managedName && !returnedNames.has(managedName)) {
@@ -1474,6 +1484,7 @@ export class TaskState {
 
     async refreshToolsets(): Promise<void> {
         const allToolsets = await this.buildToolsets();
+        await this.rebuildSystemPrompt(allToolsets);
         this.chat_context.toolsets.clear();
         this.chat_context.attachToolsets(...allToolsets);
         this.resolveAllToolCalls();
@@ -1636,6 +1647,8 @@ export class TaskState {
         const model = this.ensureValidModelOrFallback();
         const telemetryRequestOptions = this.withUsageTelemetry(options.modelRequestOptions);
         this._currentTurnInteractive = options.interactive === true;
+        const allToolsets = await this.buildToolsets();
+        await this.rebuildSystemPrompt(allToolsets);
         this.task_status = 'running';
         this.resetPluginAbortSignal();
         // 立即递增 _turnGeneration，让旧的 processTaskTurn 在下一个 await 点检测到
@@ -1781,7 +1794,6 @@ export class TaskState {
         };
         this.chat_context.appendMessage(assistant_message);
 
-        const allToolsets = await this.buildToolsets();
         this.chat_context.attachToolsets(...allToolsets);
 
         // 检测用户消息中的 /skillname 引用并预加载到 assistant message

@@ -86,6 +86,15 @@ export class TaskConfigPage implements Component {
             },
             {
                 type: 'boolean',
+                key: 'shell_sandbox_del_to_trash',
+                label: t('sp.task.terminal.sandbox.delToTrash'),
+                value: taskConfig.shell_sandbox_del_to_trash === true,
+                visible:
+                    selectedShell?.sandboxed === true &&
+                    this.shells.some((shell) => shell.path === selectedShell?.path && shell.sandboxed)
+            },
+            {
+                type: 'boolean',
                 key: 'use_isolated_python',
                 label: t('config.task.field.use_isolated_python'),
                 value: cliConfig.use_isolated_python !== false
@@ -114,9 +123,13 @@ export class TaskConfigPage implements Component {
             },
             () => this.close(),
             (values) => {
+                const supportsSandbox = this.shells.some(
+                    (shell) => shell.path === values.shell_path && shell.sandboxed
+                );
+                this.form?.setItemVisible('shell_sandboxed', supportsSandbox);
                 this.form?.setItemVisible(
-                    'shell_sandboxed',
-                    this.shells.some((shell) => shell.path === values.shell_path && shell.sandboxed)
+                    'shell_sandbox_del_to_trash',
+                    supportsSandbox && values.shell_sandboxed === true
                 );
             }
         );
@@ -140,7 +153,8 @@ export class TaskConfigPage implements Component {
             termination_check: values.termination_check !== false,
             evidence_card: values.evidence_card === true,
             shell_path: shell?.path ?? '',
-            shell_sandboxed: shell?.sandboxed ?? false
+            shell_sandboxed: shell?.sandboxed ?? false,
+            shell_sandbox_del_to_trash: values.shell_sandbox_del_to_trash === true
         };
         data.cli_config = {
             ...(data.cli_config ?? {}),

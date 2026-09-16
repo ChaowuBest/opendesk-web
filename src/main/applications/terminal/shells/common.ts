@@ -32,6 +32,7 @@ import {
     trackDetachedProcess
 } from '../../../utils/shellExec.js';
 import { prepareDynamicSandbox } from '../sandboxes/dynabox.js';
+import { appendSandboxPathDiagnostic } from '../sandboxes/path-diagnostic.js';
 import { t } from '../locale/index.js';
 
 const ansiConverter = new Convert({ escapeXML: true });
@@ -209,6 +210,7 @@ export async function executeShellCommand(opts: {
     stopPromises: Map<ChildProcess, Promise<void>>;
     isKilledByStop: () => boolean;
     useDynamicSandbox?: boolean;
+    sandboxDeleteToTrash?: boolean;
 }): Promise<void> {
     const {
         shellPath,
@@ -221,14 +223,22 @@ export async function executeShellCommand(opts: {
         runningProcesses,
         stopPromises,
         isKilledByStop,
-        useDynamicSandbox = false
+        useDynamicSandbox = false,
+        sandboxDeleteToTrash = false
     } = opts;
 
     const baseEnv = buildChildProcessEnv(taskState?.harnessContext.environ);
     const env = await runPluginShellEnv(taskState, { shell: shellPath, command }, baseEnv);
     const startTime = Date.now();
     const sandbox = useDynamicSandbox
-        ? await prepareDynamicSandbox({ shellPath, shellArgs, command, cwd, taskState })
+        ? await prepareDynamicSandbox({
+              shellPath,
+              shellArgs,
+              command,
+              cwd,
+              taskState,
+              deleteToTrash: sandboxDeleteToTrash
+          })
         : null;
     let proc: ChildProcessWithoutNullStreams;
     try {
@@ -287,6 +297,7 @@ export async function executeShellCommand(opts: {
         timeout,
         getOutput: () => output.getText(),
         getOutputBuffer: () => output,
+        formatOutput: (message) => appendSandboxPathDiagnostic(message, useDynamicSandbox),
         result,
         isKilledByStop,
         onFinish: (backgrounded) => {

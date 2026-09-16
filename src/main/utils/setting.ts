@@ -272,7 +272,9 @@ const TaskSettingSchema = z.object({
     termination_check: z.boolean().default(true).describe('是否自动检测并恢复异常中断的任务'),
     evidence_card: z.boolean().default(false).describe('是否启用 EvidenceCard 节省 Token 功能'),
     shell_path: z.string().default(''),
-    shell_sandboxed: z.boolean().default(false)
+    shell_sandboxed: z.boolean().default(false),
+    // 仅在 shell_sandboxed 且为 Windows PowerShell 时生效：沙箱内直接删除的文件送回收站
+    shell_sandbox_del_to_trash: z.boolean().default(false)
 });
 
 const NetworkConfigSchema = z.object({
@@ -619,8 +621,9 @@ export function getEnvDefaultModelInstance(): ModelInstance | null {
 export class Setting {
     static instance: Setting | null = null;
     static applicationConfigChangedCallbacks = new Map<string, () => void>();
-    /** 全局回调：每次 setData 成功后调用，用于广播 setting:changed 到 renderer */
-    static afterSetDataCallbacks: (() => void)[] = [];
+    /** 全局回调：每次 setData 成功后调用，用于响应跨应用设置变更。 */
+    static afterSetDataCallbacks: Array<(previousData: SettingData, nextData: SettingData) => void | Promise<void>> =
+        [];
     /**
      * 记录设置加载时的错误消息。如果设置文件损坏或解析失败，会记录错误信息。
      * 应用启动后应检查此变量并通过模态弹窗提醒用户。
@@ -644,6 +647,7 @@ export class Setting {
     setData(data: unknown): void {
         removeLegacyExperimentalFeature(data);
         const newSettingData = getSettingSchema().parse(data) as SettingData;
+        const previousSettingData = this.data;
         const settingChangedApplications: string[] = [];
 
         if (ApplicationConfigSchema && 'shape' in ApplicationConfigSchema && ApplicationConfigSchema.shape) {
@@ -665,7 +669,10 @@ export class Setting {
         // 全局回调：广播 setting:changed 到 renderer 等
         for (const cb of Setting.afterSetDataCallbacks) {
             try {
-                cb();
+                const result = cb(previousSettingData, this.data);
+                if (result && typeof result.catch === 'function') {
+                    void result.catch(() => undefined);
+                }
             } catch {
                 /* best-effort */
             }

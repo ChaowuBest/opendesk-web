@@ -20,6 +20,7 @@ import { z } from 'zod';
 import { BackgroundProcessManager, type BackgroundProcessStatus } from '../background.js';
 import { t as terminalT } from '../locale/index.js';
 import type { SupportedShellKind } from '../../../../common/shells.js';
+import { appendSandboxPathDiagnostic } from '../sandboxes/path-diagnostic.js';
 
 const CheckShellStatusArgsSchema = z.object({
     pid: z.number().describe('要检查的后台 shell 进程的 PID'),
@@ -60,6 +61,7 @@ export class CheckShellStatusTool extends BaseTool<typeof CheckShellStatusArgsSc
         }
 
         const elapsedSec = (status.elapsedMs / 1000).toFixed(1);
+        const output = appendSandboxPathDiagnostic(status.output.trim(), this.sandboxed);
 
         if (status.finished) {
             const lines = [
@@ -69,7 +71,7 @@ export class CheckShellStatusTool extends BaseTool<typeof CheckShellStatusArgsSc
                 `返回码: ${status.exitCode ?? 'unknown'}`,
                 `总耗时: ${elapsedSec}s`,
                 '---',
-                status.output.trim() || '(无输出)'
+                output || '(无输出)'
             ];
             result.updateResult(lines.join('\n'));
         } else {
@@ -80,7 +82,7 @@ export class CheckShellStatusTool extends BaseTool<typeof CheckShellStatusArgsSc
                 `已运行: ${elapsedSec}s`,
                 '提示: 进程仍在运行，可以稍后再次检查，或使用 kill=true 来终止它。',
                 '---',
-                status.output.trim() || '(暂无输出)'
+                output || '(暂无输出)'
             ];
             result.updateResult(lines.join('\n'));
         }

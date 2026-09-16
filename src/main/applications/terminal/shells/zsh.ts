@@ -10,7 +10,7 @@
  */
 
 import { type ChildProcess } from 'node:child_process';
-import { BaseTool, ToolResult } from '../../../aikernel/tool.js';
+import { BaseTool, ToolResult, type ToolSystemPromptContribution } from '../../../aikernel/tool.js';
 import { ToolCall } from '../../../aikernel/messages.js';
 import { z } from 'zod';
 import fs from 'node:fs';
@@ -21,6 +21,7 @@ import { analyzeBashPermissions } from '../shellPermissions.js';
 import { killProcessTree } from '../background.js';
 import { zshInteractiveHasExitTrapNoise } from '../../../utils/shellExec.js';
 import { executeShellCommand, getTaskWorkspace, renderTerminalToolCall, renderTerminalToolCallCli } from './common.js';
+import { createTerminalSystemPromptContribution } from '../prompt.js';
 
 const ExecuteZshArgsSchema = z.object({
     command: z.string().min(1, '命令不能为空').describe('要执行的ZSH命令'),
@@ -53,6 +54,14 @@ export class ExecuteZshTool extends BaseTool<typeof ExecuteZshArgsSchema> {
 
         this.interactive = interactive;
         this.setUniversalExecutor(this.executeCommand.bind(this));
+    }
+
+    getSystemPromptContribution(): ToolSystemPromptContribution {
+        return createTerminalSystemPromptContribution({
+            kind: 'zsh',
+            shellPath: this.shellPath,
+            sandboxed: false
+        });
     }
 
     getDeclaredPermissions(args: z.output<typeof ExecuteZshArgsSchema>, taskState?: TaskState): PermissionRequest[] {

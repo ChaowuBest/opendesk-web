@@ -10,7 +10,7 @@
  */
 
 import { type ChildProcess } from 'node:child_process';
-import { BaseTool, ToolResult } from '../../../aikernel/tool.js';
+import { BaseTool, ToolResult, type ToolSystemPromptContribution } from '../../../aikernel/tool.js';
 import { ToolCall } from '../../../aikernel/messages.js';
 import { z } from 'zod';
 import fs from 'node:fs';
@@ -20,6 +20,8 @@ import { Setting } from '../../../utils/setting.js';
 import { analyzePowerShellPermissions } from '../shellPermissions.js';
 import { killProcessTree } from '../background.js';
 import { t } from '../locale/index.js';
+import { createTerminalSystemPromptContribution } from '../prompt.js';
+import { virtualPathToHostPath } from '../sandboxes/ask-path.js';
 import {
     executeShellCommand,
     getTaskWorkspace,
@@ -28,14 +30,27 @@ import {
     renderTerminalToolCallCli
 } from './common.js';
 
-const createPwshArgsSchema = () =>
+const createPwshArgsSchema = (sandboxed = false) =>
     z.object({
         command: z.string().min(1, t('pwsh.command.empty')).describe(t('pwsh.command')),
         description: z.string().optional().describe(t('pwsh.intent')),
-        workingDirectory: z.string().optional().describe(t('pwsh.cwd')),
+        workingDirectory: z
+            .string()
+            .optional()
+            .describe(t(sandboxed ? 'pwsh.cwd.sandbox' : 'pwsh.cwd')),
         timeout: z.number().optional().describe(t('pwsh.timeout')).default(30000)
     });
 type PwshArgsSchema = ReturnType<typeof createPwshArgsSchema>;
+
+export function normalizeSandboxPwshArgs(args: z.output<PwshArgsSchema>): z.output<PwshArgsSchema> {
+    const parsed = parseCdAndCommand(args.command);
+    const workingDirectory = parsed.cwd ?? args.workingDirectory;
+    return {
+        ...args,
+        command: parsed.command,
+        workingDirectory: workingDirectory ? (virtualPathToHostPath(workingDirectory) ?? workingDirectory) : undefined
+    };
+}
 
 export class ExecutePwshTool extends BaseTool<PwshArgsSchema> {
     private runningProcesses: Set<ChildProcess> = new Set();
@@ -44,11 +59,26 @@ export class ExecutePwshTool extends BaseTool<PwshArgsSchema> {
 
     constructor(
         private readonly shellPath: string,
-        private readonly sandboxed = false
+        private readonly sandboxed = false,
+        // 仅在沙箱激活时生效：沙箱内直接删除的文件送 Windows 回收站
+        private readonly deleteToTrash = false
     ) {
-        super('executePwsh', t(sandboxed ? 'sandbox.description' : 'pwsh.description'), createPwshArgsSchema());
+        super(
+            'executePwsh',
+            t(sandboxed ? 'sandbox.description' : 'pwsh.description'),
+            createPwshArgsSchema(sandboxed)
+        );
         this.serialExecution = sandboxed;
         this.setUniversalExecutor(this.executeCommand.bind(this));
+    }
+
+    getSystemPromptContribution(): ToolSystemPromptContribution {
+        return createTerminalSystemPromptContribution({
+            kind: 'powershell',
+            shellPath: this.shellPath,
+            sandboxed: this.sandboxed,
+            deleteToTrash: this.deleteToTrash
+        });
     }
 
     getDeclaredPermissions(args: z.output<PwshArgsSchema>, taskState?: TaskState): PermissionRequest[] {
@@ -79,10 +109,11 @@ export class ExecutePwshTool extends BaseTool<PwshArgsSchema> {
     }
 
     async executeCommand(args: z.output<PwshArgsSchema>, result: ToolResult, taskState?: TaskState): Promise<void> {
-        let command: string = args.command ?? '';
+        const normalizedArgs = this.sandboxed ? normalizeSandboxPwshArgs(args) : args;
+        let command: string = normalizedArgs.command ?? '';
         if (!command) throw new Error(t('pwsh.command.empty'));
-        let workingDirectory: string | undefined = args.workingDirectory;
-        const timeout: number = args.timeout ?? 30000;
+        let workingDirectory: string | undefined = normalizedArgs.workingDirectory;
+        const timeout: number = normalizedArgs.timeout ?? 30000;
 
         const parsed = parseCdAndCommand(command);
         if (parsed.cwd) {
@@ -102,6 +133,7 @@ export class ExecutePwshTool extends BaseTool<PwshArgsSchema> {
         const encodingCommand =
             '[Console]::OutputEncoding = [System.Text.Encoding]::UTF8; [Console]::InputEncoding = [System.Text.Encoding]::UTF8; ';
         const utf8Command = `${process.platform === 'win32' ? 'chcp 65001 | Out-Null; ' : ''}${encodingCommand}${command}`;
+        const dynamicSandbox = this.sandboxed && process.platform === 'win32';
         await executeShellCommand({
             shellPath: this.shellPath,
             shellArgs: ['-NoProfile', '-Command', utf8Command],
@@ -113,7 +145,8 @@ export class ExecutePwshTool extends BaseTool<PwshArgsSchema> {
             runningProcesses: this.runningProcesses,
             stopPromises: this._stopPromises,
             isKilledByStop: () => this._killedByStop,
-            useDynamicSandbox: this.sandboxed && process.platform === 'win32'
+            useDynamicSandbox: dynamicSandbox,
+            sandboxDeleteToTrash: dynamicSandbox && this.deleteToTrash
         });
     }
 }
