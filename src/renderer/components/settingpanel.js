@@ -23,6 +23,7 @@ import {
 } from './confirmModal.ts';
 import { applyResolvedTheme } from '../theme/theme-renderer.ts';
 import './channelSettings.js';
+import { showTaskTransfer } from './taskTransferDialog.js';
 import {
     parseTokenCount,
     isInvalidTokenCount,
@@ -1843,6 +1844,19 @@ class SettingPanel extends HTMLElement {
                 </label>
             </div>
             </div>
+            <h3 class="sp-section-title" style="margin-top:24px">${this._t('taskTransfer.title')}</h3>
+            <div class="sp-section-card">
+                <div class="sp-toggle-row">
+                    <div class="sp-toggle-info"><div class="sp-toggle-label">${this._t('taskTransfer.import')}</div>
+                    <div class="sp-toggle-desc">${this._t('taskTransfer.importDescription')}</div></div>
+                    <button id="task-import-button" class="sp-btn sp-btn-secondary">${this._t('taskTransfer.import')}</button>
+                </div>
+                <div class="sp-toggle-row">
+                    <div class="sp-toggle-info"><div class="sp-toggle-label">${this._t('taskTransfer.export')}</div>
+                    <div class="sp-toggle-desc">${this._t('taskTransfer.exportDescription')}</div></div>
+                    <button id="task-export-button" class="sp-btn sp-btn-secondary">${this._t('taskTransfer.choose')}</button>
+                </div>
+            </div>
         </section>
         <section class="sp-section">
             <h2 class="sp-section-title">${this._t('sp.task.terminal.title')}</h2>
@@ -3159,6 +3173,12 @@ class SettingPanel extends HTMLElement {
             setTimeout(doNavigate, 300);
         });
 
+        this.querySelector('#task-import-button')?.addEventListener('click', () => {
+            void showTaskTransfer(this, this._t, 'import');
+        });
+        this.querySelector('#task-export-button')?.addEventListener('click', () => {
+            void showTaskTransfer(this, this._t, 'export');
+        });
         this.querySelector('#task-auto-retry-toggle')?.addEventListener('change', (e) => {
             if (!this.currentData.task_config) this.currentData.task_config = {};
             this.currentData.task_config.auto_retry = e.target.checked;

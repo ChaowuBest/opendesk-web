@@ -108,6 +108,7 @@ export function serializeTask(task: TaskState): object {
         workspaceID: task.workspaceID,
         executionNodeId: task.executionNodeId,
         executionNodeLabel: task.executionNodeLabel,
+        import_metadata: task.import_metadata,
         stop_requested_by_user: task.stop_requested_by_user
     };
 }
@@ -119,6 +120,7 @@ export function serializeTask(task: TaskState): object {
 export function serializeTaskSimplified(task: TaskState): object {
     return {
         task_id: task.task_id,
+        import_metadata: task.import_metadata,
         parent_id: task.parent_id,
         task_name: task.task_name,
         task_status: task.task_status,
@@ -196,6 +198,7 @@ export function serializeTaskForRender(task: TaskState): object {
  */
 function applyTaskJson(task: TaskState, task_json: any): void {
     task.task_id = task_json.task_id;
+    task.import_metadata = normalizeImportMetadata(task_json.import_metadata);
     task.parent_id = typeof task_json.parent_id === 'string' ? task_json.parent_id : null;
     task.task_name = typeof task_json.task_name === 'string' ? task_json.task_name : null;
     const wasRunningAtShutdown = task_json.task_status === 'running';
@@ -259,9 +262,31 @@ function applyTaskJson(task: TaskState, task_json: any): void {
  */
 export function deserializeTask(taskJsonPath: string, taskManagerState: TaskManagerState): TaskState {
     const task_json = JSON.parse(fs.readFileSync(taskJsonPath, 'utf8'));
-    const task = new TaskState(taskManagerState, task_json.parent_id || null);
+    return deserializeTaskData(task_json, taskManagerState);
+}
+
+/** Deserialize already validated transfer data without creating an intermediate file. */
+export function deserializeTaskData(task_json: Record<string, unknown>, taskManagerState: TaskManagerState): TaskState {
+    const task = new TaskState(taskManagerState, typeof task_json.parent_id === 'string' ? task_json.parent_id : null);
     applyTaskJson(task, task_json);
     return task;
+}
+
+function normalizeImportMetadata(raw: any): TaskState['import_metadata'] {
+    if (
+        !raw ||
+        typeof raw.source_id !== 'string' ||
+        typeof raw.fingerprint !== 'string' ||
+        typeof raw.imported_at !== 'string'
+    )
+        return undefined;
+    return {
+        source_id: raw.source_id,
+        fingerprint: raw.fingerprint,
+        imported_at: raw.imported_at,
+        source_workspace: typeof raw.source_workspace === 'string' ? raw.source_workspace : undefined,
+        source_execution_node: typeof raw.source_execution_node === 'string' ? raw.source_execution_node : undefined
+    };
 }
 
 /**
@@ -299,6 +324,7 @@ export function deserializeTaskFromIndex(
     // 因此在 ensureLoaded() 之前通过 extensions getter 访问扩展状态会触发防御性加载。
     const task = new TaskState(taskManagerState, (indexEntry.parent_id as string) || null);
     task.task_id = indexEntry.task_id as string;
+    task.import_metadata = normalizeImportMetadata(indexEntry.import_metadata);
     task.task_name = (indexEntry.task_name as string) ?? null;
     // 与 deserializeTask 一致：running -> failed
     const rawStatus = indexEntry.task_status as string;

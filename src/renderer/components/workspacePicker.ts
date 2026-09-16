@@ -46,6 +46,7 @@ const ANIM_DURATION_OUT = 180;
 
 interface WorkspacePickerOptions {
     title?: string;
+    initialWorkspace?: string;
     /** 可选的翻译器（已携带 locale 设置）。缺省时按浏览器语言自动检测。 */
     t?: (key: string, params?: Record<string, string | number>) => string;
 }
@@ -85,7 +86,7 @@ export function showWorkspacePicker(options: WorkspacePickerOptions = {}): Promi
             if (e.key !== 'Escape') return;
 
             // 确认弹窗打开时，让它自己处理 Esc
-            if (document.querySelector('.od-confirm-modal-overlay')) return;
+            if (document.querySelector('.od-confirm-modal-overlay:not([hidden])')) return;
 
             // 右键菜单打开时，仅关闭菜单
             if (dirSelector?.hasOpenMenu) {
@@ -470,7 +471,7 @@ export function showWorkspacePicker(options: WorkspacePickerOptions = {}): Promi
         async function init() {
             try {
                 [currentWorkspace, recentWorkspaces] = await Promise.all([
-                    window.workspaceAPI.getEffectiveWorkspace(),
+                    options.initialWorkspace ?? window.workspaceAPI.getEffectiveWorkspace(),
                     window.workspaceAPI.getRecentWorkspaces()
                 ]);
             } catch {

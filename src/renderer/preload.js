@@ -294,6 +294,35 @@ function exposeTaskManagerAPI() {
             }
             return result.data;
         },
+        previewTaskImport: async () => {
+            const result = await ipcRenderer.invoke('taskManager:previewTaskImport');
+            if (result.status !== 'ok') throw new Error(result.message);
+            return result.data;
+        },
+        discardTaskImport: async (token) => {
+            await ipcRenderer.invoke('taskManager:discardTaskImport', token);
+        },
+        importTaskBundle: async (token, selectedIds, operationId, workspace) => {
+            const result = await ipcRenderer.invoke(
+                'taskManager:importTaskBundle',
+                token,
+                selectedIds,
+                operationId,
+                workspace
+            );
+            if (result.status !== 'ok') throw new Error(result.message);
+            return result.data;
+        },
+        exportTaskBundle: async (selectedIds, operationId) => {
+            const result = await ipcRenderer.invoke('taskManager:exportTaskBundle', selectedIds, operationId);
+            if (result.status !== 'ok') throw new Error(result.message);
+            return result.data;
+        },
+        onTaskTransferProgress: (callback) => {
+            const listener = (_event, progress) => callback(progress);
+            ipcRenderer.on('taskManager:transferProgress', listener);
+            return () => ipcRenderer.removeListener('taskManager:transferProgress', listener);
+        },
         subscribeTaskListUpdate: async (callback) => {
             const result = await ipcRenderer.invoke('taskManager:subscribeTaskListUpdate');
             if (result.status !== 'ok') {

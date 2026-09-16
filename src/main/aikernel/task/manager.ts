@@ -617,9 +617,51 @@ export class TaskManagerState {
     }
 
     /**
-     * Create a task from user request
-     * @returns the created task
+     * Commit a validated import family. File or index failures roll back the family.
      */
+    async commitImportedTasks(imported: TaskState[]): Promise<void> {
+        // Drain earlier index writes before publishing the new group. The following
+        // synchronous commit cannot interleave with a scheduled save in this process.
+        let pendingWrite: Promise<void>;
+        do {
+            pendingWrite = this._lastWritePromise;
+            await this.flushAllPendingSaves();
+        } while (pendingWrite !== this._lastWritePromise);
+        const directory = getTaskDirectory();
+        const created: string[] = [];
+        try {
+            const ids = new Set(this.tasks.map((task) => task.task_id));
+            for (const task of imported) {
+                if (!/^[a-zA-Z0-9_-]{1,128}$/.test(task.task_id) || ids.has(task.task_id))
+                    throw new Error('duplicate import ID');
+                ids.add(task.task_id);
+                const file = path.join(directory, `${task.task_id}.json`);
+                const fd = fs.openSync(file, 'wx');
+                created.push(file);
+                try {
+                    fs.writeFileSync(fd, JSON.stringify(task.toJSON(), null, 4), 'utf8');
+                } finally {
+                    fs.closeSync(fd);
+                }
+            }
+            this.tasks.push(...imported);
+            this.saveTaskListSync();
+        } catch (error) {
+            this.tasks = this.tasks.filter((task) => !imported.includes(task));
+            for (const file of created) {
+                try {
+                    fs.unlinkSync(file);
+                } catch (cleanupError) {
+                    logger.error('Failed to clean up imported task', cleanupError);
+                }
+            }
+            throw error;
+        }
+        for (const task of imported) task._dirty = false;
+        this.publishTaskListUpdate();
+    }
+
+    /** Create a task from user request. */
     createTask(model?: string, options: { internal?: boolean; taskName?: string } = {}): TaskState {
         const task = new TaskState(this);
         task.name_pending = true;
