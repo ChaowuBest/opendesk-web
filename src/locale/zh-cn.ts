@@ -463,6 +463,8 @@ export const zhCn: Record<string, string> = {
     'export.usage': '用法：/export html <文件名> 或 /export json <文件名.json> 或 /export skill <技能名> <路径.zip>',
     'export.success.json': '导出成功',
     'export.success.json.detail': '任务已导出为 JSON：\n',
+    'export.fail': '导出失败',
+    'export.fail.detail': '导出任务失败：',
     'export.file.exists': '文件已存在',
     'export.file.exists.detail': '文件 ',
     'export.file.exists.suffix': ' 已存在。是否覆盖？',

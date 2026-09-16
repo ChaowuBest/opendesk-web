@@ -474,6 +474,8 @@ export const enUs: Record<string, string> = {
         'Usage: /export html <filename> or /export json <filename>.json or /export skill <skill_name> <path.zip>',
     'export.success.json': 'Export Success',
     'export.success.json.detail': 'Task exported to JSON:\n',
+    'export.fail': 'Export Failed',
+    'export.fail.detail': 'Task export failed: ',
     'export.file.exists': 'File Exists',
     'export.file.exists.detail': 'File ',
     'export.file.exists.suffix': ' already exists. Overwrite?',
