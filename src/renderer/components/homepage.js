@@ -120,12 +120,17 @@ class HomePage extends HTMLElement {
         }
         this.subscribeToUnreadCounts();
         this._setupRecFitObserver();
+        this._setupImmersiveDesktopEntry();
     }
 
     disconnectedCallback() {
         // 清理订阅
         if (this.unreadCountsUnsubscribe) {
             this.unreadCountsUnsubscribe();
+        }
+        if (this.__immersiveSettingUnsubscribe) {
+            this.__immersiveSettingUnsubscribe();
+            this.__immersiveSettingUnsubscribe = null;
         }
         if (this.__search_timeout) {
             clearTimeout(this.__search_timeout);
@@ -134,6 +139,35 @@ class HomePage extends HTMLElement {
         if (this.__recFitObserver) {
             this.__recFitObserver.disconnect();
             this.__recFitObserver = null;
+        }
+    }
+
+    // 沉浸桌面入口：仅在实验性功能 immersive_desktop 开启时显示右上角胶囊
+    async _setupImmersiveDesktopEntry() {
+        const capsule = this.querySelector('#hp-immersive-entry');
+        if (capsule) {
+            capsule.addEventListener('click', () => {
+                window.globalControlAPI?.openImmersiveDesktop?.();
+            });
+        }
+        const applyFeature = (setting) => {
+            const enabled = !!setting?.debug?.experimental_features?.immersive_desktop;
+            if (capsule) {
+                capsule.hidden = !enabled;
+            }
+        };
+        try {
+            const setting = await window.settingAPI?.loadSettingObject?.();
+            applyFeature(setting);
+        } catch {
+            // 读取设置失败时保持隐藏
+        }
+        try {
+            this.__immersiveSettingUnsubscribe = await window.settingAPI?.onSettingChanged?.((setting) => {
+                applyFeature(setting);
+            });
+        } catch {
+            // 设置变更订阅失败时忽略，静态状态已足够
         }
     }
 
@@ -443,7 +477,7 @@ class HomePage extends HTMLElement {
         const greeting = this._getGreeting();
         this.innerHTML = `
         <style>
-            home-page { display: block; }
+            home-page { display: block; position: relative; }
             .hp-rec-wrapper {
                 overflow: hidden;
                 max-height: 280px;
@@ -454,9 +488,59 @@ class HomePage extends HTMLElement {
                 max-height: 0;
                 opacity: 0;
             }
+            .hp-immersive-entry {
+                position: absolute;
+                top: 40px;
+                right: 20px;
+                z-index: 20;
+                display: inline-flex;
+                align-items: center;
+                gap: 8px;
+                padding: 7px 16px;
+                border-radius: 999px;
+                border: 1px solid rgba(255, 255, 255, 0.9);
+                background: rgba(255, 255, 255, 0.66);
+                backdrop-filter: blur(16px);
+                -webkit-backdrop-filter: blur(16px);
+                box-shadow: 0 6px 22px rgba(31, 41, 66, 0.1);
+                color: #475069;
+                font-size: 12px;
+                cursor: pointer;
+                transition: all .25s ease;
+                font-family: inherit;
+            }
+            .hp-immersive-entry:hover {
+                color: #191b1f;
+                border-color: rgba(61, 111, 255, 0.45);
+                box-shadow: 0 8px 26px rgba(61, 111, 255, 0.18);
+                transform: translateY(-1px);
+            }
+            .hp-immersive-entry .hp-icon {
+                width: 15px;
+                height: 15px;
+                color: #64748b;
+                flex: none;
+            }
+            .hp-immersive-entry[hidden] { display: none; }
+            html[data-theme='dark'] .hp-immersive-entry {
+                border-color: rgba(255, 255, 255, 0.14);
+                background: rgba(48, 53, 68, 0.66);
+                color: #b9c0d4;
+                box-shadow: 0 6px 22px rgba(0, 0, 0, 0.35);
+            }
+            html[data-theme='dark'] .hp-immersive-entry:hover {
+                color: #e8eaf0;
+                border-color: rgba(61, 111, 255, 0.5);
+                box-shadow: 0 8px 26px rgba(61, 111, 255, 0.25);
+            }
         </style>
         <!-- 主内容居中 -->
         <div id="hp-container" class="w-full h-full px-8 flex flex-col items-center justify-center" data-agent-input-height-reference>
+            <!-- 沉浸桌面入口（实验性功能开启时显示） -->
+            <button id="hp-immersive-entry" class="hp-immersive-entry" hidden>
+                <svg class="hp-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="2.5" y="4" width="19" height="13" rx="2"></rect><path d="M8 21h8M12 17v4"></path></svg>
+                <span>${this.t('renderer.desktop.enterDesktop')}</span>
+            </button>
             <!-- 问候语 -->
             <div class="mb-4 text-center">
                 <h1 class="text-3xl font-medium text-gray-800 mb-1">

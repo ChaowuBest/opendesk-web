@@ -2406,6 +2406,7 @@ class SettingPanel extends HTMLElement {
         const experimentalAgentOffice = !!experimentalApplications.agentoffice;
         const experimentalAccount = !!experimentalFeatures.account;
         const experimentalMagicPointer = !!experimentalFeatures.magic_pointer;
+        const experimentalImmersiveDesktop = !!experimentalFeatures.immersive_desktop;
         const debugLogRawLlm = !!debugConfig.log_raw_llm_request;
         const debugLogEnabled = !!debugConfig.debug_log;
 
@@ -2475,6 +2476,15 @@ class SettingPanel extends HTMLElement {
                             <span id="experimental-magic-pointer-toggle" class="sp-toggle-track" style="cursor:pointer" data-key="magic_pointer"></span>
                         </label>
                     </div>
+                    <div class="sp-toggle-row">
+                        <div class="sp-toggle-info">
+                            <div class="sp-toggle-label">${this._t('renderer.settings.experimentalImmersiveDesktop')}</div>
+                        </div>
+                        <label class="sp-toggle-switch">
+                            <input type="checkbox" ${experimentalImmersiveDesktop ? 'checked' : ''} id="experimental-immersive-desktop-toggle-hidden">
+                            <span id="experimental-immersive-desktop-toggle" class="sp-toggle-track" style="cursor:pointer" data-key="immersive_desktop"></span>
+                        </label>
+                    </div>
                 </div>
             </div>
         </section>
@@ -2492,7 +2502,8 @@ class SettingPanel extends HTMLElement {
                 this.currentData.debug.experimental_features = {
                     applications: { appmgr: false, agentoffice: false },
                     account: false,
-                    magic_pointer: false
+                    magic_pointer: false,
+                    immersive_desktop: false
                 };
                 panel?.querySelectorAll('input[type="checkbox"]').forEach((toggle) => {
                     toggle.checked = false;
@@ -2552,6 +2563,7 @@ class SettingPanel extends HTMLElement {
         bindExperimentalToggle('#experimental-agentoffice-toggle-hidden', 'applications', 'agentoffice');
         bindExperimentalToggle('#experimental-account-toggle-hidden', 'account');
         bindExperimentalToggle('#experimental-magic-pointer-toggle-hidden', 'magic_pointer');
+        bindExperimentalToggle('#experimental-immersive-desktop-toggle-hidden', 'immersive_desktop');
     }
 
     renderTelemetrySection() {
