@@ -116,6 +116,7 @@ import { submitFeedback } from './utils/feedback.js';
 import { getUsageDashboardSummary, getUsageRankings, type RankPeriod } from './telemetry/local-telemetry.js';
 import { TelemetryOperation, TelemetryOperationRegistry } from './telemetry/operation.js';
 import { registerGoalHooks } from './aikernel/goal/hooks.js';
+import { registerDesktopAPIHandlers } from './desktop/handlers.js';
 import { initializeHarnesses } from './aikernel/harnesses/index.js';
 import { initAgentGateHook } from './applications/agentgate/hook.js';
 import {
@@ -1223,6 +1224,8 @@ const registerTaskManagerAPIHandlers = () => {
     type CreateTaskOptions = {
         modeId?: string;
         selectedExecutionNodeId?: string | null;
+        internal?: boolean;
+        taskName?: string;
     };
 
     function normalizeCreateTaskOptions(raw: unknown): CreateTaskOptions {
@@ -1233,7 +1236,9 @@ const registerTaskManagerAPIHandlers = () => {
                 selectedExecutionNodeId:
                     typeof obj.selectedExecutionNodeId === 'string' || obj.selectedExecutionNodeId === null
                         ? obj.selectedExecutionNodeId
-                        : undefined
+                        : undefined,
+                internal: obj.internal === true,
+                taskName: typeof obj.taskName === 'string' ? obj.taskName : undefined
             };
         }
         return {
@@ -1292,7 +1297,10 @@ const registerTaskManagerAPIHandlers = () => {
         // （与 CLI/TUI 建任务前 await ensureFullyLoaded 的行为保持一致）。
         // 屏障通常启动后即已就绪，此处等待无感；agent 加载失败时屏障内部已兜底不会 reject。
         await ApplicationRegistry.ensureFullyLoaded();
-        const task = globalState.taskManagerState.createTask();
+        const task = globalState.taskManagerState.createTask(undefined, {
+            internal: options.internal,
+            taskName: options.taskName
+        });
         const workspace = Setting.getInstance().getEffectiveWorkspace();
         const agentDecl = AgentRegistry.getMainAgent();
         const modes = agentDecl.supportedModes();
@@ -2688,6 +2696,19 @@ const registerSettingAPIHandlers = () => {
         globalMainWindow.webContents.openDevTools();
         return { status: 'ok' };
     }),
+        ipcMain.handle('setting:isFullscreen', () => {
+            if (globalMainWindow === null) {
+                return { status: 'error', message: 'main window not found' };
+            }
+            return { status: 'ok', data: globalMainWindow.isFullScreen() };
+        }),
+        ipcMain.handle('setting:setFullscreen', (_event, fullscreen: boolean) => {
+            if (globalMainWindow === null) {
+                return { status: 'error', message: 'main window not found' };
+            }
+            globalMainWindow.setFullScreen(!!fullscreen);
+            return { status: 'ok', data: globalMainWindow.isFullScreen() };
+        }),
         ipcMain.handle('setting:openConfigDirectory', async () => {
             try {
                 const configDir = getOpendeskDirectory();
@@ -3576,6 +3597,7 @@ async function startApplication(): Promise<void> {
         registerBrowserAPIHandlers();
         registerMemoryAPIHandlers();
         registerUsageAPIHandlers();
+        registerDesktopAPIHandlers();
         // registerTaskManagerAPIHandlers() 已在同步恢复 GlobalState 后注册；首次让出主进程
         // 事件循环前 handler 已就绪，可响应 renderer sidebar 的 taskManager:getTaskList。
         registerFSAPIHandlers();

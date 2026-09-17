@@ -151,6 +151,8 @@ class BrowserEntryWidget extends HTMLElement {
     private _cleanupTimers: Map<number, ReturnType<typeof setTimeout>> = new Map();
     private static readonly CLEANUP_DELAY_MS = 900_000; // 15 minutes
     private _cachedUserAgent: string = '';
+    private _initialized = false;
+    private _pendingOpenUrls: string[] = [];
 
     // 页面提示（Browser Hints）面板状态
     private hintPanel: BrowserHintPanelHandle | null = null;
@@ -166,6 +168,7 @@ class BrowserEntryWidget extends HTMLElement {
     private readonly _focusTrapKeydown = (event: KeyboardEvent) => this.handleFocusTrapKeydown(event);
 
     async connectedCallback() {
+        this._initialized = false;
         // 先加载语言设置再渲染，避免首帧出现错误语言
         let setting;
         try {
@@ -183,6 +186,10 @@ class BrowserEntryWidget extends HTMLElement {
         this.addEventListener('keydown', this._focusTrapKeydown);
         this.render();
         this.addTab('opendesk://homepage/');
+        this._initialized = true;
+        for (const url of this._pendingOpenUrls.splice(0)) {
+            this.addTab(url);
+        }
 
         // 加载浏览器配置（User Agent 等）
         this._loadBrowserConfig();
@@ -222,6 +229,7 @@ class BrowserEntryWidget extends HTMLElement {
     }
 
     disconnectedCallback() {
+        this._initialized = false;
         if (this._settingUnsubscribe) {
             this._settingUnsubscribe();
             this._settingUnsubscribe = null;
@@ -2761,6 +2769,17 @@ class BrowserEntryWidget extends HTMLElement {
     // =====================================================================
     //  TAB MANAGEMENT
     // =====================================================================
+
+    /** 外部宿主可在组件初始化前调用；URL 会在内部容器就绪后按顺序打开。 */
+    public openUrl(url: string): void {
+        const target = url.trim();
+        if (!target) return;
+        if (!this._initialized) {
+            this._pendingOpenUrls.push(target);
+            return;
+        }
+        this.addTab(target);
+    }
 
     public addTab(url?: string, openerTabId?: number): number {
         const isInternal = url?.startsWith('opendesk://');

@@ -859,6 +859,12 @@
 
             window.globalControlAPI = {
                 ensureTaskViewExists: ensureTaskViewExists,
+                openImmersiveDesktop: function () {
+                    return window.openDeskDesktop?.open?.();
+                },
+                closeImmersiveDesktop: function () {
+                    window.openDeskDesktop?.close?.();
+                },
                 openWizard: function () {
                     ensureSlots();
                     closeAllEditorOverlays();

@@ -78,7 +78,7 @@ test('turning off development and debugging disables its previously enabled chil
     const childToggles = Array.from(
         panel.querySelectorAll('#debug-mode-settings input[type="checkbox"]')
     ) as HTMLInputElement[];
-    expect(childToggles).toHaveLength(6);
+    expect(childToggles).toHaveLength(7);
     expect(childToggles.every((input) => !input.checked)).toBe(true);
     expect(Setting.getInstance().getData().debug).toEqual({ ...saved.debug, developer_mode: true });
 });

@@ -1,8 +1,9 @@
-import { beforeAll, beforeEach, describe, expect, jest, test } from '@jest/globals';
+import { afterEach, beforeAll, beforeEach, describe, expect, jest, test } from '@jest/globals';
 import { parseHTML } from 'linkedom';
 
 interface TestTab {
     id: number;
+    url: string;
     webview: any;
     wrapEl: HTMLElement | null;
     ready: boolean;
@@ -11,6 +12,8 @@ interface TestTab {
 
 type TestWidget = HTMLElement & {
     tabs: TestTab[];
+    activeTabId: number;
+    openUrl: (url: string) => void;
     navigateTo: (input: string) => void;
     goHome: () => void;
 };
@@ -92,9 +95,36 @@ describe('browser entry widget navigation', () => {
         document.body.appendChild(widget);
     });
 
+    afterEach(() => {
+        delete (window as any).settingAPI;
+    });
+
     function activeTab(): TestTab {
         return widget.tabs[0];
     }
+
+    test('queues a URL received before asynchronous initialization and opens it when ready', async () => {
+        let releaseSetting!: (value: unknown) => void;
+        (window as any).settingAPI = {
+            loadSettingObject: () =>
+                new Promise((resolve) => {
+                    releaseSetting = resolve;
+                })
+        };
+        document.body.innerHTML = '';
+        widget = document.createElement('browser-entry-widget') as TestWidget;
+        document.body.appendChild(widget);
+
+        widget.openUrl('https://example.com/from-card');
+        expect(widget.tabs).toHaveLength(0);
+
+        releaseSetting({});
+        await Promise.resolve();
+
+        const opened = widget.tabs.find((tab) => tab.url === 'https://example.com/from-card');
+        expect(opened?.wrapEl?.querySelector('webview')?.getAttribute('src')).toBe('https://example.com/from-card');
+        expect(widget.activeTabId).toBe(opened?.id);
+    });
 
     test('navigating after going home creates a fresh webview instead of reusing the detached one', () => {
         const tab = activeTab();

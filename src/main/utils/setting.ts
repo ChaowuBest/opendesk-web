@@ -304,7 +304,8 @@ const ExperimentalFeaturesSchema = z
     .object({
         applications: ExperimentalApplicationsSchema,
         account: z.boolean().default(false).describe('是否启用账号功能'),
-        magic_pointer: z.boolean().default(false).describe('是否启用 Magic Pointer')
+        magic_pointer: z.boolean().default(false).describe('是否启用 Magic Pointer'),
+        immersive_desktop: z.boolean().default(false).describe('是否启用沉浸桌面')
     })
     .describe('实验性功能开关');
 

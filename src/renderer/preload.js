@@ -1022,6 +1022,29 @@ if (shouldExposeMainWindowAPIs()) {
         }
     });
 
+    safeExposeInMainWorld('desktopAPI', {
+        loadCards: async () => {
+            const result = await ipcRenderer.invoke('desktop:loadCards');
+            if (result.status !== 'ok') {
+                console.error('loading desktop cards failed', result.message);
+                throw new Error(result.message);
+            }
+            return result.data;
+        },
+        saveCards: async (cards) => {
+            const result = await ipcRenderer.invoke('desktop:saveCards', cards);
+            if (result.status !== 'ok') {
+                console.error('saving desktop cards failed', result.message);
+                throw new Error(result.message);
+            }
+        },
+        // 返回完整结果对象（含 status/taskId），不抛异常——
+        // contextBridge 会对抛出的 Error 做序列化，自定义属性（taskId）会丢失
+        generateCardContent: async (input) => {
+            return ipcRenderer.invoke('desktop:generateCardContent', input);
+        }
+    });
+
     safeExposeInMainWorld('settingAPI', {
         registerCommandCallback: (command, callback) => {
             ipcRenderer.on(`command:${command}`, (event, ...args) => {
@@ -1057,6 +1080,20 @@ if (shouldExposeMainWindowAPIs()) {
             const handler = (_event, data) => callback(data);
             ipcRenderer.on('setting:changed', handler);
             return () => ipcRenderer.removeListener('setting:changed', handler);
+        },
+        isFullscreen: async () => {
+            const result = await ipcRenderer.invoke('setting:isFullscreen');
+            if (result.status !== 'ok') {
+                throw new Error(result.message);
+            }
+            return result.data;
+        },
+        setFullscreen: async (fullscreen) => {
+            const result = await ipcRenderer.invoke('setting:setFullscreen', fullscreen);
+            if (result.status !== 'ok') {
+                throw new Error(result.message);
+            }
+            return result.data;
         },
         openDevTools: () => ipcRenderer.invoke('setting:openDevTools'),
         openConfigDirectory: () => ipcRenderer.invoke('setting:openConfigDirectory'),

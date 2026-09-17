@@ -131,7 +131,8 @@ describe('设置 schema', () => {
                 agentoffice: false
             },
             account: true,
-            magic_pointer: false
+            magic_pointer: false,
+            immersive_desktop: false
         });
     });
 
