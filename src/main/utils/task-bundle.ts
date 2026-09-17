@@ -11,7 +11,6 @@
 
 import fs from 'node:fs';
 import path from 'node:path';
-import { createHash } from 'node:crypto';
 import { inflateRaw, crc32 } from 'node:zlib';
 import { promisify } from 'node:util';
 import { setImmediate } from 'node:timers/promises';
@@ -38,9 +37,7 @@ export interface TaskImportEntry {
     name: string;
     parentId: string | null;
     messageCount: number;
-    fingerprint?: string;
-    json?: TaskJson;
-    error?: TaskTransferErrorCode;
+    json: TaskJson;
 }
 
 export const TASK_BUNDLE_LIMITS = {
@@ -68,24 +65,6 @@ function validMessage(message: unknown): boolean {
     });
 }
 
-export function taskFingerprint(json: TaskJson): string {
-    const canonical = (value: any, depth = 0): any => {
-        if (depth > 100) throw new TaskTransferError('invalidTask');
-        if (Array.isArray(value)) return value.map((item) => canonical(item, depth + 1));
-        if (!isObject(value)) return value;
-        return Object.fromEntries(
-            Object.keys(value)
-                .sort()
-                .map((key) => [key, canonical(value[key], depth + 1)])
-        );
-    };
-    const data = JSON.parse(JSON.stringify(json));
-    delete data.import_metadata;
-    return createHash('sha256')
-        .update(JSON.stringify(canonical(data)))
-        .digest('hex');
-}
-
 function parseEntry(raw: string, id?: string): TaskImportEntry {
     try {
         const json = JSON.parse(raw);
@@ -105,11 +84,10 @@ function parseEntry(raw: string, id?: string): TaskImportEntry {
             name: typeof json.task_name === 'string' ? json.task_name : '',
             parentId: typeof json.parent_id === 'string' ? json.parent_id : null,
             messageCount: json.chat_context.messages.length,
-            fingerprint: taskFingerprint(json),
             json
         };
     } catch {
-        return { id: id ?? '', name: id ?? '', parentId: null, messageCount: 0, error: 'invalidTask' };
+        throw new TaskTransferError('invalidTask');
     }
 }
 
@@ -210,45 +188,17 @@ export async function readTaskImportFile(filePath: string): Promise<TaskImportEn
         )
             throw new TaskTransferError('invalidBundle');
         const result: TaskImportEntry[] = [];
-        for (const item of manifest.tasks) {
-            try {
-                const entry = parseEntry(await readEntry(item.path), item.id);
-                if (entry.error && typeof item.parentId === 'string') entry.parentId = item.parentId;
-                if (entry.error && typeof item.name === 'string') entry.name = item.name;
-                result.push(entry);
-            } catch (error) {
-                if (error instanceof TaskTransferError && error.code === 'tooLarge') throw error;
-                result.push({
-                    id: item.id,
-                    name: typeof item.name === 'string' ? item.name : item.id,
-                    parentId: typeof item.parentId === 'string' ? item.parentId : null,
-                    messageCount: 0,
-                    error: 'invalidTask'
-                });
-            }
-        }
+        for (const item of manifest.tasks) result.push(parseEntry(await readEntry(item.path), item.id));
         const byId = new Map(result.map((entry) => [entry.id, entry]));
         for (const entry of result) {
             const visited = new Set<string>();
             let current: TaskImportEntry | undefined = entry;
             while (current) {
                 if (visited.has(current.id)) {
-                    entry.error = 'invalidTask';
-                    break;
+                    throw new TaskTransferError('invalidTask');
                 }
                 visited.add(current.id);
                 current = current.parentId ? byId.get(current.parentId) : undefined;
-            }
-        }
-        // A damaged family is one import unit. Healthy unrelated tasks remain selectable.
-        for (let changed = true; changed;) {
-            changed = false;
-            for (const entry of result) {
-                const parent = entry.parentId ? byId.get(entry.parentId) : undefined;
-                if (parent && Boolean(entry.error) !== Boolean(parent.error)) {
-                    entry.error = parent.error = 'invalidTask';
-                    changed = true;
-                }
             }
         }
         return result;
@@ -258,17 +208,13 @@ export async function readTaskImportFile(filePath: string): Promise<TaskImportEn
     }
 }
 
-export async function writeTaskBundle(
-    filePath: string,
-    tasks: Iterable<TaskJson>,
-    progress: (done: number) => void = () => {}
-): Promise<void> {
+export async function writeTaskBundle(filePath: string, tasks: Iterable<TaskJson>): Promise<void> {
     const zip = new AdmZip();
     const manifest = {
         format: 'opendesk-task-bundle',
         version: 1,
         exportedAt: new Date().toISOString(),
-        tasks: [] as { id: string; path: string; parentId: string | null; name: string }[]
+        tasks: [] as { id: string; path: string }[]
     };
     let total = 0;
     const ids = new Set<string>();
@@ -285,11 +231,8 @@ export async function writeTaskBundle(
         zip.addFile(entryPath, bytes);
         manifest.tasks.push({
             id: task.task_id,
-            path: entryPath,
-            parentId: task.parent_id ?? null,
-            name: task.task_name ?? ''
+            path: entryPath
         });
-        progress(ids.size);
         await setImmediate();
     }
     if (!ids.size) throw new TaskTransferError('tooLarge');
@@ -330,7 +273,8 @@ export function normalizeImportedTask(source: TaskJson, ids: Map<string, string>
         message.timestamp = Number.isFinite(time) ? time : previousMessageTime + 1;
         previousMessageTime = message.timestamp;
     }
-    const remap = (value: any): void => {
+    const remap = (value: any, depth = 0): void => {
+        if (depth > 100) throw new TaskTransferError('invalidTask');
         if (!value || typeof value !== 'object') return;
         for (const [key, child] of Object.entries(value)) {
             if (opaque.has(key)) continue;
@@ -347,7 +291,8 @@ export function normalizeImportedTask(source: TaskJson, ids: Map<string, string>
                     time: Number.isFinite(time) ? time : 0,
                     numeric: typeof child === 'number'
                 });
-            } else if (child && typeof child === 'object' && (value !== copy || scopes.has(key))) remap(child);
+            } else if (child && typeof child === 'object' && (value !== copy || scopes.has(key)))
+                remap(child, depth + 1);
         }
     };
     remap(copy);
@@ -376,6 +321,5 @@ export function normalizeImportedTask(source: TaskJson, ids: Map<string, string>
             copy.goal_state.updatedAt = copy.goal_state.pausedAt;
         }
     }
-    delete copy.import_metadata;
     return copy;
 }

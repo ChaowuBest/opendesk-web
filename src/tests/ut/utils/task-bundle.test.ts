@@ -22,9 +22,12 @@ describe('task bundle format', () => {
     test('one ZIP preserves relationships and freezes each snapshot before yielding', async () => {
         const target = path.join(dir, 'tasks.zip');
         const tasks = [task('parent'), task('child', 'parent')];
-        await writeTaskBundle(target, tasks, (done) => {
-            if (done === 1) tasks[0].chat_context.messages[0].content[0].text = 'changed after snapshot';
-        });
+        function* snapshots() {
+            yield tasks[0];
+            tasks[0].chat_context.messages[0].content[0].text = 'changed after snapshot';
+            yield tasks[1];
+        }
+        await writeTaskBundle(target, snapshots());
         const entries = await readTaskImportFile(target);
         expect(entries.map((entry) => entry.json)).toEqual([task('parent'), task('child', 'parent')]);
         const zip = new AdmZip(target);
@@ -34,7 +37,7 @@ describe('task bundle format', () => {
         });
     });
 
-    test('accepts old single-task JSON and isolates malformed task entries in a ZIP', async () => {
+    test('accepts old single-task JSON and rejects ZIPs containing malformed tasks', async () => {
         const legacy = path.join(dir, 'legacy.json');
         fs.writeFileSync(legacy, JSON.stringify(task('old')));
         expect((await readTaskImportFile(legacy))[0].json.task_id).toBe('old');
@@ -43,9 +46,7 @@ describe('task bundle format', () => {
         const zip = new AdmZip(target);
         zip.updateFile('tasks/bad.json', Buffer.from('{broken'));
         zip.writeZip(target);
-        const entries = await readTaskImportFile(target);
-        expect(entries[0].json.task_id).toBe('good');
-        expect(entries[1].error).toBe('invalidTask');
+        await expect(readTaskImportFile(target)).rejects.toThrow('invalidTask');
     });
 
     test('rejects unknown versions, duplicate task IDs, and unsafe manifest paths', async () => {
@@ -107,17 +108,10 @@ describe('task bundle format', () => {
         await expect(readTaskImportFile(target)).rejects.toThrow('tooLarge');
     });
 
-    test('invalidates damaged families and cyclic parents but keeps unrelated tasks usable', async () => {
-        const target = path.join(dir, 'family.zip');
-        await writeTaskBundle(target, [task('parent'), task('child', 'parent'), task('healthy')]);
-        const zip = new AdmZip(target);
-        zip.updateFile('tasks/child.json', Buffer.from('{broken'));
-        zip.writeZip(target);
-        const entries = await readTaskImportFile(target);
-        expect(entries.filter((entry) => entry.error).map((entry) => entry.id)).toEqual(['parent', 'child']);
-        expect(entries[2].json.task_id).toBe('healthy');
+    test('rejects cyclic parent relationships', async () => {
+        const target = path.join(dir, 'cycle.zip');
         await writeTaskBundle(target, [task('one', 'two'), task('two', 'one')]);
-        expect((await readTaskImportFile(target)).every((entry) => entry.error)).toBe(true);
+        await expect(readTaskImportFile(target)).rejects.toThrow('invalidTask');
     });
 
     test('normalizes IDs and runtime state without rewriting message text', () => {

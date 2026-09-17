@@ -24,10 +24,8 @@ const TRANSFER_CSS = `
 .od-transfer-row input { margin-top: 4px; accent-color: var(--mc-accent); }
 .od-transfer-row span { min-width: 0; overflow-wrap: anywhere; }
 .od-transfer-row small { display: block; color: var(--mc-ink3); margin-top: 4px; }
-.od-transfer-row:has(input:disabled) { opacity: .65; cursor: default; }
 .od-transfer-description, .od-transfer-status { color: var(--mc-ink2); font-size: 13px; line-height: 1.6; overflow-wrap: anywhere; }
 .od-transfer-status { margin-top: 12px; }
-.od-transfer-result { display: block; width: 100%; text-align: left; padding: 10px; color: var(--mc-ink); background: var(--mc-card-bg); border: 0; border-bottom: 1px solid var(--mc-line); cursor: pointer; font: inherit; }
 .od-transfer-info { display: flex; gap: 10px; padding: 12px 14px; border: 1px solid var(--mc-line); border-radius: 8px; background: color-mix(in srgb, #568de5 10%, var(--mc-card-bg)); }
 .od-transfer-info-icon { color: #568de5; font-size: 18px; }
 .od-transfer-workspace { display: flex; align-items: center; gap: 10px; width: 100%; margin-top: 8px; padding: 12px; border: 1px solid var(--mc-line); border-radius: 8px; background: var(--mc-card-bg); color: var(--mc-ink); font: inherit; text-align: left; cursor: pointer; }
@@ -67,7 +65,6 @@ class TaskTransferDialog {
         this.selected = new Set();
         this.busy = false;
         this.query = '';
-        this.operationId = crypto.randomUUID();
         this.previousFocus = document.activeElement;
     }
 
@@ -103,7 +100,6 @@ class TaskTransferDialog {
                         <div class="od-transfer-list" data-transfer-list></div>
                     </div>
                     <div class="od-transfer-status" data-transfer-status role="status" aria-live="polite"></div>
-                    <div data-transfer-results></div>
                 </div>
                 <div class="od-confirm-modal-footer">
                     <button class="od-confirm-btn od-confirm-btn-cancel" data-transfer-close>${this.t('common.cancel')}</button>
@@ -119,7 +115,7 @@ class TaskTransferDialog {
             this.renderRows();
         });
         this.find('[data-transfer-all]').addEventListener('click', () => {
-            const rows = this.filtered().filter((entry) => !entry.error);
+            const rows = this.filtered();
             const clear = rows.every((entry) => this.selected.has(entry.id));
             for (const row of rows) {
                 if (clear) this.selected.delete(row.id);
@@ -160,10 +156,6 @@ class TaskTransferDialog {
             }
         };
         document.addEventListener('keydown', this.onKey, true);
-        this.unsubscribe = window.taskManagerAPI.onTaskTransferProgress((event) => {
-            if (this.busy && event.operationId === this.operationId)
-                this.status(this.t('taskTransfer.progress', { done: event.done, total: event.total }));
-        });
         this.setBusy(true);
         this.status(this.t('taskTransfer.reading'));
         try {
@@ -173,9 +165,7 @@ class TaskTransferDialog {
                 this.entries = preview.entries;
                 this.workspace = preview.workspace;
                 this.renderWorkspace();
-                this.selected = new Set(
-                    this.entries.filter((entry) => !entry.error && !entry.duplicate).map((entry) => entry.id)
-                );
+                this.selected = new Set(this.entries.map((entry) => entry.id));
             } else {
                 const tasks = await window.taskManagerAPI.getTaskList();
                 this.entries = tasks
@@ -187,7 +177,7 @@ class TaskTransferDialog {
                     }));
             }
             this.find('[data-transfer-selection]').hidden = false;
-            this.status(this.mode === 'import' ? this.t('taskTransfer.duplicatesHint') : '');
+            this.status(this.mode === 'import' ? this.t('taskTransfer.importHint') : '');
         } catch (error) {
             if (this.mode === 'import') this.find('[data-transfer-destination]').hidden = true;
             this.status(error.message || this.t('taskTransfer.error.invalidBundle'));
@@ -241,17 +231,16 @@ class TaskTransferDialog {
         list.innerHTML = rows.length
             ? rows
                   .map((entry, index) => {
-                      const detail = entry.error
-                          ? this.t(`taskTransfer.error.${entry.error}`)
-                          : this.mode === 'import'
-                            ? this.t('taskTransfer.messages', { count: entry.messageCount })
-                            : entry.running
-                              ? this.t('taskTransfer.running')
-                              : '';
-                      return `<label class="od-transfer-row"><input type="checkbox" data-row="${index}" ${this.selected.has(entry.id) ? 'checked' : ''} ${entry.error || this.busy ? 'disabled' : ''}>
+                      const detail =
+                          this.mode === 'import'
+                              ? this.t('taskTransfer.messages', { count: entry.messageCount })
+                              : entry.running
+                                ? this.t('taskTransfer.running')
+                                : '';
+                      return `<label class="od-transfer-row"><input type="checkbox" data-row="${index}" ${this.selected.has(entry.id) ? 'checked' : ''} ${this.busy ? 'disabled' : ''}>
                 <span>${escapeHtml(entry.name || this.t('taskTransfer.unnamed'))}<small>${escapeHtml(detail)}</small>
                 ${entry.parentId ? `<small>${escapeHtml(this.t('taskTransfer.child'))}</small>` : ''}
-                ${entry.duplicate ? `<small>${escapeHtml(this.t('taskTransfer.duplicate'))}</small>` : ''}</span></label>`;
+                </span></label>`;
                   })
                   .join('')
             : `<div class="od-transfer-row">${this.t('taskTransfer.empty')}</div>`;
@@ -284,42 +273,15 @@ class TaskTransferDialog {
         this.status(this.t('taskTransfer.processing'));
         try {
             if (this.mode === 'import') {
-                const token = this.token;
-                const result = await window.taskManagerAPI.importTaskBundle(
-                    token,
+                const count = await window.taskManagerAPI.importTaskBundle(
+                    this.token,
                     [...this.selected],
-                    this.operationId,
                     this.workspace
                 );
                 this.token = undefined;
-                this.status(
-                    this.t('taskTransfer.importResult', {
-                        imported: result.imported.length,
-                        failed: result.failed.length,
-                        skipped: result.skipped
-                    })
-                );
-                const results = this.find('[data-transfer-results]');
-                for (const item of result.imported) {
-                    const button = document.createElement('button');
-                    button.className = 'od-transfer-result';
-                    button.textContent = this.t('taskTransfer.openTask', {
-                        name: item.name || this.t('taskTransfer.unnamed')
-                    });
-                    button.addEventListener('click', () => {
-                        this.close();
-                        void window.globalControlAPI?.openTask(item.taskId);
-                    });
-                    results.appendChild(button);
-                }
-                for (const item of result.failed) {
-                    const row = document.createElement('div');
-                    row.className = 'od-transfer-status';
-                    row.textContent = `${item.name || item.sourceId}: ${this.t(`taskTransfer.error.${item.error}`)}`;
-                    results.appendChild(row);
-                }
+                this.status(this.t('taskTransfer.importResult', { count }));
             } else {
-                const result = await window.taskManagerAPI.exportTaskBundle([...this.selected], this.operationId);
+                const result = await window.taskManagerAPI.exportTaskBundle([...this.selected]);
                 if (!result) {
                     this.status('');
                     return;
@@ -353,7 +315,6 @@ class TaskTransferDialog {
         if (this.busy || this.choosingWorkspace) return;
         if (this.token) void window.taskManagerAPI.discardTaskImport(this.token).catch(() => {});
         this.token = undefined;
-        this.unsubscribe?.();
         document.removeEventListener('keydown', this.onKey, true);
         this.overlay.remove();
         this.previousFocus?.focus();

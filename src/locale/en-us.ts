@@ -26,9 +26,8 @@ export const enUs: Record<string, string> = {
     'taskTransfer.selectAll': 'Select all / Clear',
     'taskTransfer.empty': 'No matching tasks',
     'taskTransfer.unnamed': 'Untitled task',
-    'taskTransfer.duplicatesHint':
-        'Duplicates are skipped by default; select them to import copies. A subtask imported without its parent becomes an independent task.',
-    'taskTransfer.duplicate': 'Duplicate · select to import a copy',
+    'taskTransfer.importHint':
+        'Each import creates new tasks. A subtask imported without its parent becomes an independent task.',
     'taskTransfer.child': 'Subtask',
     'taskTransfer.messages': '${count} messages',
     'taskTransfer.running': 'Running · export current snapshot',
@@ -38,10 +37,8 @@ export const enUs: Record<string, string> = {
     'taskTransfer.exportCount': 'Export ${count} tasks',
     'taskTransfer.reading': 'Reading tasks…',
     'taskTransfer.processing': 'Processing, please wait…',
-    'taskTransfer.progress': 'Processed ${done} / ${total}; finishing save…',
-    'taskTransfer.importResult': 'Imported ${imported} tasks; skipped ${skipped}; failed ${failed}.',
+    'taskTransfer.importResult': 'Imported ${count} tasks.',
     'taskTransfer.exportResult': 'Exported ${count} tasks to one ZIP bundle.',
-    'taskTransfer.openTask': 'Open task: ${name}',
     'taskTransfer.openFolder': 'Show in folder',
     'taskTransfer.error.invalidBundle': 'Cannot read the task bundle: invalid format, missing files, or corrupt data.',
     'taskTransfer.error.invalidTask': 'Task data is incomplete or uses an unsupported format.',

@@ -302,26 +302,15 @@ function exposeTaskManagerAPI() {
         discardTaskImport: async (token) => {
             await ipcRenderer.invoke('taskManager:discardTaskImport', token);
         },
-        importTaskBundle: async (token, selectedIds, operationId, workspace) => {
-            const result = await ipcRenderer.invoke(
-                'taskManager:importTaskBundle',
-                token,
-                selectedIds,
-                operationId,
-                workspace
-            );
+        importTaskBundle: async (token, selectedIds, workspace) => {
+            const result = await ipcRenderer.invoke('taskManager:importTaskBundle', token, selectedIds, workspace);
             if (result.status !== 'ok') throw new Error(result.message);
             return result.data;
         },
-        exportTaskBundle: async (selectedIds, operationId) => {
-            const result = await ipcRenderer.invoke('taskManager:exportTaskBundle', selectedIds, operationId);
+        exportTaskBundle: async (selectedIds) => {
+            const result = await ipcRenderer.invoke('taskManager:exportTaskBundle', selectedIds);
             if (result.status !== 'ok') throw new Error(result.message);
             return result.data;
-        },
-        onTaskTransferProgress: (callback) => {
-            const listener = (_event, progress) => callback(progress);
-            ipcRenderer.on('taskManager:transferProgress', listener);
-            return () => ipcRenderer.removeListener('taskManager:transferProgress', listener);
         },
         subscribeTaskListUpdate: async (callback) => {
             const result = await ipcRenderer.invoke('taskManager:subscribeTaskListUpdate');

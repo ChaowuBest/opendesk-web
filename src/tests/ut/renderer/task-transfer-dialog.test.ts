@@ -30,44 +30,29 @@ describe('task transfer dialog', () => {
                 token: 'preview',
                 workspace: '/current',
                 entries: [
-                    { id: 'one', name: '<img src=x>', messageCount: 3, duplicate: false },
-                    { id: 'two', name: 'duplicate', messageCount: 2, duplicate: true },
-                    { id: 'bad', name: 'broken', messageCount: 0, error: 'invalidTask' }
+                    { id: 'one', name: '<img src=x>', messageCount: 3 },
+                    { id: 'two', name: 'Second', messageCount: 2 }
                 ]
             })),
-            importTaskBundle: jest.fn(async () => ({
-                imported: [{ taskId: 'new', name: 'one' }],
-                failed: [],
-                skipped: 2
-            })),
+            importTaskBundle: jest.fn(async () => 2),
             discardTaskImport: jest.fn(async () => {}),
             getTaskList: jest.fn(async () => [
                 { task_id: 'one', task_name: 'First' },
                 { task_id: 'two', task_name: 'Second' }
             ]),
-            exportTaskBundle: jest.fn(async () => null),
-            onTaskTransferProgress: jest.fn(() => () => {})
+            exportTaskBundle: jest.fn(async () => null)
         };
     });
     const open = (mode = 'import') => showTaskTransfer(document.body, translate, mode);
 
-    test('preselects valid new tasks, skips duplicates, and renders imported names as text', async () => {
+    test('preselects all tasks, renders names as text, and shows the imported count', async () => {
         const dialog = await open();
         expect(dialog.selected.has('one')).toBe(true);
-        expect(dialog.selected.has('two')).toBe(false);
-        expect(dialog.selected.has('bad')).toBe(false);
+        expect(dialog.selected.has('two')).toBe(true);
         expect(document.querySelector('img')).toBeNull();
         await dialog.submit();
-        expect(window.taskManagerAPI.importTaskBundle).toHaveBeenCalledWith(
-            'preview',
-            ['one'],
-            expect.any(String),
-            '/current'
-        );
-        expect(document.querySelector('[data-transfer-status]')!.textContent).toContain('导入 1');
-        const onProgress = window.taskManagerAPI.onTaskTransferProgress.mock.calls[0][0];
-        onProgress({ operationId: dialog.operationId, done: 1, total: 1 });
-        expect(document.querySelector('[data-transfer-status]')!.textContent).toContain('已导入 1');
+        expect(window.taskManagerAPI.importTaskBundle).toHaveBeenCalledWith('preview', ['one', 'two'], '/current');
+        expect(document.querySelector('[data-transfer-status]')!.textContent).toContain('已导入 2');
         dialog.close();
     });
 
@@ -100,12 +85,7 @@ describe('task transfer dialog', () => {
         expect(document.querySelector('[data-transfer-workspace]')!.textContent).toContain('/chosen');
         expect(document.querySelector('[data-task-transfer]')!.hasAttribute('hidden')).toBe(false);
         await dialog.submit();
-        expect(window.taskManagerAPI.importTaskBundle).toHaveBeenCalledWith(
-            'preview',
-            ['one'],
-            expect.any(String),
-            '/chosen'
-        );
+        expect(window.taskManagerAPI.importTaskBundle).toHaveBeenCalledWith('preview', ['one', 'two'], '/chosen');
         dialog.close();
     });
 
@@ -133,7 +113,7 @@ describe('task transfer dialog', () => {
         (document.querySelector('[data-transfer-all]') as HTMLInputElement).click();
         expect([...dialog.selected]).toEqual(['two']);
         await dialog.submit();
-        expect(window.taskManagerAPI.exportTaskBundle).toHaveBeenCalledWith(['two'], expect.any(String));
+        expect(window.taskManagerAPI.exportTaskBundle).toHaveBeenCalledWith(['two']);
         expect(dialog.busy).toBe(false);
         expect([...dialog.selected]).toEqual(['two']);
         dialog.close();
