@@ -10,6 +10,45 @@
  */
 
 export const enUs: Record<string, string> = {
+    // Task transfer
+    'taskTransfer.title': 'Task data',
+    'taskTransfer.import': 'Import tasks',
+    'taskTransfer.export': 'Export tasks',
+    'taskTransfer.choose': 'Choose tasks',
+    'taskTransfer.importDescription': 'Choose a ZIP task bundle or a legacy task JSON file.',
+    'taskTransfer.exportDescription': 'Save selected tasks and their subtasks in one ZIP file.',
+    'taskTransfer.includes': 'Includes: conversations, tool records, associated subtasks',
+    'taskTransfer.excludes': 'Excludes: external attachments, workspace files',
+    'taskTransfer.snapshot': 'Running tasks: export the current snapshot',
+    'taskTransfer.workspaceLabel': 'Workspace',
+    'taskTransfer.error.invalidWorkspace': 'Workspace unavailable. Choose an existing folder.',
+    'taskTransfer.search': 'Search task names',
+    'taskTransfer.selectAll': 'Select all / Clear',
+    'taskTransfer.empty': 'No matching tasks',
+    'taskTransfer.unnamed': 'Untitled task',
+    'taskTransfer.importHint':
+        'Each import creates new tasks. A subtask imported without its parent becomes an independent task.',
+    'taskTransfer.child': 'Subtask',
+    'taskTransfer.messages': '${count} messages',
+    'taskTransfer.running': 'Running · export current snapshot',
+    'taskTransfer.files': 'OpenDesk task files',
+    'taskTransfer.bundle': 'OpenDesk task bundle',
+    'taskTransfer.importCount': 'Import ${count} tasks',
+    'taskTransfer.exportCount': 'Export ${count} tasks',
+    'taskTransfer.reading': 'Reading tasks…',
+    'taskTransfer.processing': 'Processing, please wait…',
+    'taskTransfer.importResult': 'Imported ${count} tasks.',
+    'taskTransfer.exportResult': 'Exported ${count} tasks to one ZIP bundle.',
+    'taskTransfer.openFolder': 'Show in folder',
+    'taskTransfer.error.invalidBundle': 'Cannot read the task bundle: invalid format, missing files, or corrupt data.',
+    'taskTransfer.error.invalidTask': 'Task data is incomplete or uses an unsupported format.',
+    'taskTransfer.error.unsupportedVersion': 'This task bundle uses a newer format. Update OpenDesk and try again.',
+    'taskTransfer.error.tooLarge':
+        'Bundle limit exceeded: 1,000 tasks, 16 MB per task, 128 MB uncompressed, 64 MB file size.',
+    'taskTransfer.error.writeFailed': 'Could not read or write task files. Check permissions and available disk space.',
+    'taskTransfer.error.expired':
+        'The import preview expired or another operation is running. Close this dialog and choose the file again.',
+
     // App
     'app.name': 'OpenDesk',
     'app.description': 'AI Workstation',

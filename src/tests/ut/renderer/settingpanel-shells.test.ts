@@ -40,8 +40,8 @@ test('deduplicates paths and displays the fallback shell with an unchecked sandb
     expect(panel.querySelector('#task-shell-sandboxed').hasAttribute('checked')).toBe(false);
     expect(panel.textContent).not.toContain('sp.task.terminal.');
     expect(panel.querySelectorAll('.sp-section')).toHaveLength(2);
-    expect(panel.querySelectorAll('.sp-section-title')[0].textContent).toContain('Harness');
-    expect(panel.querySelectorAll('.sp-section-title')[1].textContent).toContain('Terminal');
+    expect(panel.querySelectorAll('.sp-section > h2.sp-section-title')[0].textContent).toContain('Harness');
+    expect(panel.querySelectorAll('.sp-section > h2.sp-section-title')[1].textContent).toContain('Terminal');
 });
 
 test('saves both path and sandbox flag, then hides sandbox when switching to bash', () => {

@@ -81,6 +81,8 @@ import {
     ElectronTaskManagerUpdateSubscriber
 } from '../platforms/electron.js';
 import { exportTaskJsonToFile, exportTaskToHtml, generateTaskHtml } from './utils/export.js';
+import { registerTaskTransferHandlers } from './utils/task-transfer-ipc.js';
+import * as taskTransfer from './aikernel/task/transfer.js';
 import { saveTaskExportHtml } from './utils/export-html-writer.js';
 import { getMainThemeService, registerThemeHandlers } from '../renderer/theme/main-theme-service.js';
 import { AgentRegistry } from './aikernel/agents/registry.js';
@@ -1163,6 +1165,7 @@ const registerUsageAPIHandlers = () => {
 
 const registerTaskManagerAPIHandlers = () => {
     const globalState = GlobalState.getInstance();
+    registerTaskTransferHandlers(globalState.taskManagerState, () => globalMainWindow, taskTransfer);
 
     // session memory 渲染缓存：内容未变化时直接复用上次 rendered，
     // 省去周期性轮询的重复 parse 开销。任务删除时一并清理，避免条目长期驻留。

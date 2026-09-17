@@ -294,6 +294,24 @@ function exposeTaskManagerAPI() {
             }
             return result.data;
         },
+        previewTaskImport: async () => {
+            const result = await ipcRenderer.invoke('taskManager:previewTaskImport');
+            if (result.status !== 'ok') throw new Error(result.message);
+            return result.data;
+        },
+        discardTaskImport: async (token) => {
+            await ipcRenderer.invoke('taskManager:discardTaskImport', token);
+        },
+        importTaskBundle: async (token, selectedIds, workspace) => {
+            const result = await ipcRenderer.invoke('taskManager:importTaskBundle', token, selectedIds, workspace);
+            if (result.status !== 'ok') throw new Error(result.message);
+            return result.data;
+        },
+        exportTaskBundle: async (selectedIds) => {
+            const result = await ipcRenderer.invoke('taskManager:exportTaskBundle', selectedIds);
+            if (result.status !== 'ok') throw new Error(result.message);
+            return result.data;
+        },
         subscribeTaskListUpdate: async (callback) => {
             const result = await ipcRenderer.invoke('taskManager:subscribeTaskListUpdate');
             if (result.status !== 'ok') {

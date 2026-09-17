@@ -259,7 +259,12 @@ function applyTaskJson(task: TaskState, task_json: any): void {
  */
 export function deserializeTask(taskJsonPath: string, taskManagerState: TaskManagerState): TaskState {
     const task_json = JSON.parse(fs.readFileSync(taskJsonPath, 'utf8'));
-    const task = new TaskState(taskManagerState, task_json.parent_id || null);
+    return deserializeTaskData(task_json, taskManagerState);
+}
+
+/** Deserialize already validated transfer data without creating an intermediate file. */
+export function deserializeTaskData(task_json: Record<string, unknown>, taskManagerState: TaskManagerState): TaskState {
+    const task = new TaskState(taskManagerState, typeof task_json.parent_id === 'string' ? task_json.parent_id : null);
     applyTaskJson(task, task_json);
     return task;
 }
