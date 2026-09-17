@@ -31,6 +31,7 @@ import { ApplicationRegistry } from '../applications/registry.js';
 import { logger } from '../utils/logger.js';
 import { getTaskArtifactDirectory } from '../utils/setting.js';
 import { exportTaskToHtml } from '../utils/export.js';
+import { expandTilde } from '../../utils/path.js';
 import { ToolCallMessagePartView } from './components/taskview.js';
 import type { CommandLineArgs } from './entry.js';
 import {
@@ -303,7 +304,7 @@ export class HeadlessRunner {
 
         // ── before-exit hooks (export 等) ──
         if (this.args.exportHtml) {
-            const htmlPath = path.resolve(this.args.workspace, this.args.exportHtml);
+            const htmlPath = path.resolve(this.args.workspace, expandTilde(this.args.exportHtml));
             try {
                 await exportTaskToHtml(task, htmlPath);
                 logger.info(`Session exported to HTML: ${htmlPath}`);
@@ -312,7 +313,7 @@ export class HeadlessRunner {
             }
         }
         if (this.args.exportJson) {
-            const jsonPath = path.resolve(this.args.workspace, this.args.exportJson);
+            const jsonPath = path.resolve(this.args.workspace, expandTilde(this.args.exportJson));
             try {
                 const dir = path.dirname(jsonPath);
                 if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });

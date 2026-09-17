@@ -56,6 +56,18 @@ export function getHomePath(): string {
 }
 
 /**
+ * 展开 POSIX 风格的家目录前缀（~、~/、~\）为实际家目录路径。
+ * 仅处理位于路径开头的 ~；~user 形式无法跨平台解析，保持原样。
+ * 家目录无法确定时返回原路径，交由调用方按既有逻辑处理。
+ */
+export function expandTilde(p: string): string {
+    if (!p || (p !== '~' && !p.startsWith('~/') && !p.startsWith('~\\'))) return p;
+    const home = getHomePath();
+    if (!home) return p;
+    return home + p.slice(1);
+}
+
+/**
  * 清理路径中的不可见 Unicode 字符和前导/尾随空白。
  *
  * 这些不可见字符会导致 path.isAbsolute() 误判绝对路径为相对路径，

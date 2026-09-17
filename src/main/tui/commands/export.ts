@@ -14,11 +14,12 @@ import { ConfirmOverlay, InfoOverlay } from '../components/notice.js';
 import { getFileCompletions } from '../components/file-completions.js';
 import { skillRegistry } from '../../applications/skillmgr/utils/skill-registry.js';
 import AdmZip from 'adm-zip';
-import { cleanPathInput } from '../../../utils/path.js';
+import { cleanPathInput, expandTilde } from '../../../utils/path.js';
 import path from 'path';
 import fs from 'fs';
 import { logger } from '../../utils/logger.js';
 import { t } from '../../../locale/index.js';
+import { exportTaskJsonToFile } from '../../utils/export.js';
 
 export function registerExportCommand(tui: OpenDeskTUI): void {
     tui.commandRegistry.register({
@@ -115,21 +116,41 @@ export function registerExportCommand(tui: OpenDeskTUI): void {
                 return;
             }
 
+            // 导出失败属于可恢复的用户输入/文件系统错误，
+            // 必须就地提示而不是抛出，否则会变成 unhandledRejection 触发 FATAL 退出
+            const showExportError = (err: unknown) => {
+                const message = err instanceof Error ? err.message : String(err);
+                logger.error(`Export failed: ${message}`);
+                const info = new InfoOverlay(tui, {
+                    title: t('export.fail'),
+                    message: `${t('export.fail.detail')}${message}`,
+                    closeLabel: t('common.close'),
+                    type: 'error'
+                });
+                info.show();
+            };
+
             const doExportHtml = async (absolutePath: string) => {
-                await tui.doExport(task, absolutePath);
+                try {
+                    await tui.doExport(task, absolutePath);
+                } catch (err) {
+                    showExportError(err);
+                }
             };
 
             const doExportJson = async (absolutePath: string) => {
-                fs.writeFileSync(absolutePath, JSON.stringify(task.toJSON(), null, 4), {
-                    encoding: 'utf8'
-                });
-                logger.info(`Task exported to JSON: ${absolutePath}`);
-                const info = new InfoOverlay(tui, {
-                    title: t('export.success.json'),
-                    message: `${t('export.success.json.detail')}${absolutePath}`,
-                    closeLabel: t('common.close')
-                });
-                info.show();
+                try {
+                    await exportTaskJsonToFile(task, absolutePath);
+                    logger.info(`Task exported to JSON: ${absolutePath}`);
+                    const info = new InfoOverlay(tui, {
+                        title: t('export.success.json'),
+                        message: `${t('export.success.json.detail')}${absolutePath}`,
+                        closeLabel: t('common.close')
+                    });
+                    info.show();
+                } catch (err) {
+                    showExportError(err);
+                }
             };
 
             if (format === 'json') {
@@ -141,7 +162,8 @@ export function registerExportCommand(tui: OpenDeskTUI): void {
                 if (!filePath.endsWith('.json')) {
                     filePath += '.json';
                 }
-                const absolutePath = path.resolve(tui.workspace, filePath);
+                // 展开 ~ 前缀并清理不可见字符，避免 ~ 被当作相对目录名拼进 workspace 路径
+                const absolutePath = path.resolve(tui.workspace, expandTilde(cleanPathInput(filePath)));
                 if (fs.existsSync(absolutePath)) {
                     const confirm = new ConfirmOverlay(tui, {
                         title: t('export.file.exists'),
@@ -150,7 +172,7 @@ export function registerExportCommand(tui: OpenDeskTUI): void {
                         cancelLabel: t('common.cancel')
                     });
                     confirm.show(() => {
-                        doExportJson(absolutePath);
+                        void doExportJson(absolutePath);
                     });
                 } else {
                     await doExportJson(absolutePath);
@@ -167,7 +189,7 @@ export function registerExportCommand(tui: OpenDeskTUI): void {
             if (!filePath.endsWith('.html')) {
                 filePath += '.html';
             }
-            const absolutePath = path.resolve(tui.workspace, filePath);
+            const absolutePath = path.resolve(tui.workspace, expandTilde(cleanPathInput(filePath)));
             if (fs.existsSync(absolutePath)) {
                 const confirm = new ConfirmOverlay(tui, {
                     title: t('export.file.exists'),
@@ -234,8 +256,8 @@ async function handleExportSkill(tui: OpenDeskTUI, restArgs: string): Promise<vo
         zipPath += '.zip';
     }
 
-    // 清理不可见的 Unicode 字符和首尾空白，避免 path.isAbsolute 误判
-    const cleanedPath = cleanPathInput(zipPath);
+    // 清理不可见的 Unicode 字符和首尾空白，避免 path.isAbsolute 误判；~ 前缀展开为家目录
+    const cleanedPath = expandTilde(cleanPathInput(zipPath));
     const absolutePath = path.isAbsolute(cleanedPath) ? cleanedPath : path.resolve(tui.workspace, cleanedPath);
 
     const doExport = () => {

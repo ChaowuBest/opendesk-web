@@ -55,6 +55,7 @@ import { TaskSwitcher } from './components/taskswitcher';
 import { ConfigMainPage } from './components/config/configMain';
 import { getTaskTodosForDisplay } from '../aikernel/todos/task-todos';
 import { exportTaskToHtml } from '../utils/export';
+import { expandTilde } from '../../utils/path';
 import { QuickPassHelper } from '../utils/quickpass';
 import { UserMessage, AssistantMessage, type ChatMessage } from '../aikernel/messages';
 import { NotificationStore, NotificationCenterOverlay, ToastManager } from './components/notification';
@@ -231,7 +232,7 @@ export class OpenDeskTUI {
         this.cliTaskName = args.taskName;
         if (args.command) {
             if (args.exportHtml) {
-                const htmlPath = path.resolve(args.workspace, args.exportHtml);
+                const htmlPath = path.resolve(args.workspace, expandTilde(args.exportHtml));
                 this.onBeforeExit(async (taskId) => {
                     const task = this.taskManagerState.getTask(taskId);
                     if (!task) return;
@@ -244,7 +245,7 @@ export class OpenDeskTUI {
                 });
             }
             if (args.exportJson) {
-                const jsonPath = path.resolve(args.workspace, args.exportJson);
+                const jsonPath = path.resolve(args.workspace, expandTilde(args.exportJson));
                 this.onBeforeExit(async (taskId) => {
                     const task = this.taskManagerState.getTask(taskId);
                     if (!task) return;
