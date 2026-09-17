@@ -21,7 +21,6 @@ export interface TaskSearchResponse {
     items: TaskSearchHit[];
     hasMore: boolean;
     indexing: boolean;
-    revision: number;
     failedTasks: number;
 }
 export const TASK_SEARCH_MAX_QUERY = 200;

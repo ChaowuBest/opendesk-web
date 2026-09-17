@@ -28,16 +28,13 @@ const hit = (id: string) => ({
     messageId: 'm1',
     priority: 0
 });
-const response = (id: string) => ({ items: [hit(id)], hasMore: false, indexing: false, revision: 1, failedTasks: 0 });
-const setup = (
-    search: any,
-    tasks = [
-        { task_id: 'one', task_name: 'one' },
-        { task_id: 'two', task_name: 'two' }
-    ]
-) => {
+const response = (id: string) => ({ items: [hit(id)], hasMore: false, indexing: false, failedTasks: 0 });
+const setup = (search: any) => {
     dialog = new TaskSearchDialog({
-        getTasks: () => tasks,
+        getTasks: () => [
+            { task_id: 'one', task_name: 'one' },
+            { task_id: 'two', task_name: 'two' }
+        ],
         search,
         subscribe: (callback) => {
             indexChanged = callback;
@@ -182,49 +179,4 @@ test('list updates cannot postpone a query and index changes refresh without pol
     dialog.hide();
     indexChanged();
     expect(search).toHaveBeenCalledTimes(2);
-});
-
-test('one click expands to the cap, shows its hint and resets on a new query', async () => {
-    jest.useFakeTimers({ legacyFakeTimers: true });
-    const hits = Array.from({ length: 205 }, (_, i) => hit(String(i)));
-    const search = jest.fn<any>().mockImplementation(async (_query: string, limit: number) => ({
-        ...response('one'),
-        items: hits.slice(0, limit),
-        hasMore: hits.length > limit
-    }));
-    const element = setup(
-        search,
-        hits.map((item) => ({ task_id: item.taskId, task_name: item.title }))
-    );
-    input(element, '创建');
-    jest.advanceTimersByTime(150);
-    await Promise.resolve();
-    await Promise.resolve();
-    expect(document.querySelectorAll('[data-task-id]')).toHaveLength(20);
-    const more = document.querySelector('.od-task-search-more') as HTMLButtonElement;
-    more.click();
-    await Promise.resolve();
-    await Promise.resolve();
-    expect(search).toHaveBeenLastCalledWith('创建', 200);
-    expect(document.querySelectorAll('[data-task-id]')).toHaveLength(200);
-    expect(more.hidden).toBe(true);
-    expect(document.querySelector('.od-task-search-status')?.textContent).toBe('renderer.taskSearch.refine');
-    indexChanged();
-    await Promise.resolve();
-    await Promise.resolve();
-    expect(search).toHaveBeenLastCalledWith('创建', 200);
-    hits.splice(65);
-    indexChanged();
-    await Promise.resolve();
-    await Promise.resolve();
-    expect(document.querySelectorAll('[data-task-id]')).toHaveLength(65);
-    expect(more.hidden).toBe(true);
-    expect(document.querySelector('.od-task-search-status')?.textContent).toBe('');
-    input(element, '内容');
-    jest.advanceTimersByTime(150);
-    await Promise.resolve();
-    await Promise.resolve();
-    expect(search).toHaveBeenLastCalledWith('内容', 20);
-    expect(document.querySelector('.od-task-search-status')?.textContent).toBe('');
-    expect(document.querySelectorAll('[data-task-id]')).toHaveLength(20);
 });

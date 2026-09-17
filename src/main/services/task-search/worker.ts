@@ -19,7 +19,6 @@ const port = parentPort!;
 const configuration = workerData as { directory: string; dbPath: string };
 const index = await TaskSearchIndex.open(configuration.dbPath);
 const sync = new TaskSearchSync(configuration.directory, index, notifyChanged);
-const cache = new Map<string, { revision: number; result: ReturnType<TaskSearchIndex['search']> }>();
 let notificationScheduled = false;
 let lastState = '';
 let refreshScheduled = false;
@@ -117,21 +116,12 @@ port.on('message', (request: TaskSearchRequest) => {
 });
 function search(request: Extract<TaskSearchRequest, { type: 'search' }>): void {
     try {
-        const key = JSON.stringify([request.query, request.limit]);
-        let cached = cache.get(key);
-        if (!cached || cached.revision !== sync.revision) {
-            cached = { revision: sync.revision, result: index.search(request.query, request.limit) };
-            cache.delete(key);
-            cache.set(key, cached);
-            if (cache.size > 30) cache.delete(cache.keys().next().value!);
-        }
         port.postMessage({
             type: 'result',
             id: request.id,
             data: {
-                ...cached.result,
+                ...index.search(request.query, request.limit),
                 indexing: sync.indexing || refreshScheduled,
-                revision: sync.revision,
                 failedTasks: sync.failures.size
             }
         });

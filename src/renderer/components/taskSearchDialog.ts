@@ -29,12 +29,12 @@ interface Options {
 }
 export class TaskSearchDialog {
     private readonly dialog = document.createElement('dialog');
-    private readonly input = document.createElement('input');
-    private readonly list = document.createElement('div');
-    private readonly status = document.createElement('div');
-    private readonly spinner = document.createElement('span');
-    private readonly more = document.createElement('button');
-    private readonly cache = new Map<string, TaskSearchResponse>();
+    private readonly input: HTMLInputElement;
+    private readonly list: HTMLElement;
+    private readonly status: HTMLElement;
+    private readonly spinner: HTMLElement;
+    private readonly more: HTMLButtonElement;
+    private readonly cache = new Map<string, TaskSearchHit[]>();
     private items: TaskSearchHit[] = [];
     private query = '';
     private limit = TASK_SEARCH_PAGE_SIZE;
@@ -52,44 +52,36 @@ export class TaskSearchDialog {
         const t = (key: string) => options.translate('renderer.taskSearch.' + key);
         this.dialog.className = 'od-task-search';
         this.dialog.setAttribute('aria-label', t('title'));
-        this.dialog.innerHTML = '<div class="od-task-search-top"></div><div class="od-task-search-heading"></div>';
-        const top = this.dialog.firstElementChild!;
-        this.input.type = 'text';
+        this.dialog.innerHTML = `
+            <div class="od-task-search-top">
+                <input type="text" autocomplete="off" spellcheck="false">
+                <button type="button" class="od-task-search-close">×</button>
+            </div>
+            <div class="od-task-search-heading"><span></span><span class="od-task-search-spinner" hidden></span></div>
+            <div class="od-task-search-scroll">
+                <div class="od-task-search-results"></div>
+                <button type="button" class="od-task-search-more" hidden></button>
+                <div class="od-task-search-status" role="status"></div>
+            </div>`;
+        this.input = this.dialog.querySelector('input')!;
+        this.list = this.dialog.querySelector('.od-task-search-results')!;
+        this.status = this.dialog.querySelector('.od-task-search-status')!;
+        this.spinner = this.dialog.querySelector('.od-task-search-spinner')!;
+        this.more = this.dialog.querySelector('.od-task-search-more')!;
         this.input.maxLength = TASK_SEARCH_MAX_QUERY;
         this.input.placeholder = t('placeholder');
         this.input.setAttribute('aria-label', t('placeholder'));
-        this.input.autocomplete = 'off';
-        this.input.spellcheck = false;
-        const close = document.createElement('button');
-        close.type = 'button';
-        close.className = 'od-task-search-close';
-        close.textContent = '×';
+        this.dialog.querySelector('.od-task-search-heading > span')!.textContent = t('chats');
+        this.spinner.setAttribute('aria-label', t('searching'));
+        const close = this.dialog.querySelector<HTMLButtonElement>('.od-task-search-close')!;
         close.setAttribute('aria-label', t('close'));
         close.title = t('close');
         close.addEventListener('click', () => this.hide());
-        top.append(this.input, close);
-        const heading = this.dialog.children[1];
-        const label = document.createElement('span');
-        label.textContent = t('chats');
-        this.spinner.className = 'od-task-search-spinner';
-        this.spinner.setAttribute('aria-label', t('searching'));
-        this.spinner.hidden = true;
-        heading.append(label, this.spinner);
-        this.list.className = 'od-task-search-results';
-        this.status.className = 'od-task-search-status';
-        this.status.setAttribute('role', 'status');
-        this.more.type = 'button';
-        this.more.className = 'od-task-search-more';
         this.more.textContent = t('more');
-        this.more.hidden = true;
         this.more.addEventListener('click', () => {
             this.limit = TASK_SEARCH_MAX_RESULTS;
             void this.run(++this.generation);
         });
-        const scroll = document.createElement('div');
-        scroll.className = 'od-task-search-scroll';
-        scroll.append(this.list, this.more, this.status);
-        this.dialog.append(scroll);
         this.input.addEventListener('compositionstart', () => {
             this.composing = true;
             this.generation++;
@@ -156,14 +148,7 @@ export class TaskSearchDialog {
     private invalidate = () => {
         this.cache.clear();
         if (!this.visible || this.composing || this.opening) return;
-        const quick = this.quickResults();
-        const merged = new Map(quick.map((hit) => [hit.taskId, hit]));
-        if (this.query) {
-            for (const hit of this.currentItems(this.items)) {
-                if (hit.messageId) merged.set(hit.taskId, hit);
-            }
-        }
-        this.items = [...merged.values()].slice(0, this.limit);
+        this.items = this.results(this.items);
         this.render();
         // Metadata updates do not cancel an input query or invalidate its response.
         // Persisted body changes arrive through the index notification below.
@@ -183,48 +168,41 @@ export class TaskSearchDialog {
         if (this.composing || this.opening || this.timer !== undefined || this.running === this.generation) return;
         void this.run(this.generation, true);
     };
-    private currentItems(items: TaskSearchHit[]): TaskSearchHit[] {
-        const tasks = new Map(
-            this.options
-                .getTasks()
-                .filter((task) => task.internal !== true)
-                .map((task) => [task.task_id, task])
-        );
-        return items
-            .filter((item) => tasks.has(item.taskId))
-            .map((item) => ({
-                ...item,
-                title: tasks.get(item.taskId)!.task_name ?? item.title,
-                workspace: tasks.get(item.taskId)!.workspace ?? item.workspace
-            }));
-    }
-    private quickResults(): TaskSearchHit[] {
-        const query = this.query;
-        return this.options
-            .getTasks()
-            .filter((task) => task.internal !== true && Boolean(task.task_name?.trim() || task.name_pending))
-            .map((task) => {
-                const title = normalizeSearchText(task.task_name || '');
-                const priority = query && title === query ? 3 : query && title.includes(query) ? 2 : 1;
-                return { task, priority };
-            })
-            .filter(
-                ({ task }) =>
-                    !query ||
-                    normalizeSearchText(task.task_name || '').includes(query) ||
-                    normalizeSearchText(task.workspace || '').includes(query)
-            )
-            .sort(
-                (a, b) => b.priority - a.priority || getTaskActivityTimestamp(b.task) - getTaskActivityTimestamp(a.task)
-            )
+    private results(indexed: TaskSearchHit[] = []): TaskSearchHit[] {
+        const bodyHits = new Map(indexed.filter((hit) => hit.messageId).map((hit) => [hit.taskId, hit]));
+        const matches: { hit: TaskSearchHit; activity: number }[] = [];
+        for (const task of this.options.getTasks()) {
+            if (task.internal || !(task.task_name?.trim() || task.name_pending)) continue;
+            const title = normalizeSearchText(task.task_name || '');
+            const workspace = normalizeSearchText(task.workspace || '');
+            const priority = !this.query
+                ? 0
+                : title === this.query
+                  ? 3
+                  : title.includes(this.query)
+                    ? 2
+                    : workspace.includes(this.query)
+                      ? 1
+                      : 0;
+            const body = bodyHits.get(task.task_id);
+            if (this.query && !priority && !body) continue;
+            // Read metadata once from the live list; only body matches come from the index/cache.
+            matches.push({
+                hit: {
+                    taskId: task.task_id,
+                    title: task.task_name || '',
+                    workspace: task.workspace || '',
+                    messageId: body?.messageId,
+                    snippet: body?.snippet || '',
+                    priority
+                },
+                activity: getTaskActivityTimestamp(task)
+            });
+        }
+        return matches
+            .sort((a, b) => b.hit.priority - a.hit.priority || b.activity - a.activity)
             .slice(0, this.limit)
-            .map(({ task, priority }) => ({
-                taskId: task.task_id,
-                title: task.task_name || '',
-                workspace: task.workspace || '',
-                snippet: '',
-                priority
-            }));
+            .map(({ hit }) => hit);
     }
     private changed(): void {
         clearTimeout(this.timer);
@@ -234,7 +212,7 @@ export class TaskSearchDialog {
         this.query = normalizeSearchText(this.input.value).slice(0, TASK_SEARCH_MAX_QUERY);
         this.limit = TASK_SEARCH_PAGE_SIZE;
         const cached = this.cache.get(this.query);
-        this.items = cached ? this.currentItems(cached.items).slice(0, this.limit) : this.quickResults();
+        this.items = this.results(cached);
         this.more.hidden = true;
         this.status.textContent = '';
         this.setLoading(Boolean(this.query));
@@ -258,34 +236,20 @@ export class TaskSearchDialog {
         try {
             const result = await this.options.search(this.query, this.limit);
             if (!this.visible || generation !== this.generation) return;
-            const quick = this.quickResults();
-            const mergedHits = new Map(quick.map((item) => [item.taskId, item]));
-            for (const item of this.currentItems(result.items)) {
-                const metadataHit = mergedHits.get(item.taskId);
-                if (!item.messageId && !metadataHit) continue;
-                mergedHits.set(item.taskId, { ...item, priority: Math.max(item.priority, metadataHit?.priority ?? 0) });
-            }
-            const activity = new Map(
-                this.options.getTasks().map((task) => [task.task_id, getTaskActivityTimestamp(task)])
-            );
-            // Live titles remain available before the task's first disk save. A stale
-            // title-only index hit must still match current metadata to stay visible.
-            const incoming = [...mergedHits.values()]
-                .sort(
-                    (a, b) => b.priority - a.priority || (activity.get(b.taskId) || 0) - (activity.get(a.taskId) || 0)
-                )
-                .slice(0, this.limit);
-            // Keep existing rows in place while indexing. Newly discovered tasks are
-            // appended; apply final ranking once coverage is complete.
-            if (result.indexing) {
-                const merged = new Map(this.items.map((item) => [item.taskId, item]));
-                for (const item of incoming) merged.set(item.taskId, item);
-                this.items = [...merged.values()].slice(0, this.limit);
-            } else {
-                this.items = incoming;
-            }
+            const incoming = this.results(result.items);
+            // Keep row order stable until indexing completes, while dropping obsolete hits.
+            const remaining = new Map(incoming.map((hit) => [hit.taskId, hit]));
+            this.items = result.indexing
+                ? this.items
+                      .flatMap((hit) => {
+                          const current = remaining.get(hit.taskId);
+                          remaining.delete(hit.taskId);
+                          return current ? [current] : [];
+                      })
+                      .concat([...remaining.values()])
+                : incoming;
             this.cache.delete(this.query);
-            this.cache.set(this.query, { ...result, items: this.items });
+            this.cache.set(this.query, this.items);
             if (this.cache.size > 20) this.cache.delete(this.cache.keys().next().value!);
             this.render();
             this.more.hidden = !result.hasMore || this.limit >= TASK_SEARCH_MAX_RESULTS;

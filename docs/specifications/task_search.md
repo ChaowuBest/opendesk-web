@@ -30,19 +30,19 @@
 - 指纹未变不读取正文；任务文件变化后只替换发生变化的消息分块。删除、隐藏、回退通过差异同步移除旧索引。
 - 文件 ID 必须与任务清单一致，读取前后检查文件状态，拒绝不一致快照。坏文件不保留过时正文；错误状态与空结果分开显示。
 - 150 ms 输入防抖，输入法组词期间暂停查询。同一窗口排队请求合并，旧结果不能覆盖新输入。
-- 浮层先显示同关键词缓存或标题结果，后台查询/索引未完成时展示分组 loading。Worker 缓存按索引版本失效，浮层缓存按索引通知和任务列表更新失效。
+- 浮层先显示同关键词缓存或标题结果，后台查询/索引未完成时展示分组 loading。仅在浮层缓存结果，按索引通知和任务列表更新失效；Worker 直接查询索引，不再维护第二份结果缓存。
 - 索引进度、内容或失败状态变化时由 Worker 经 IPC 主动通知浮层。浮层仅在打开期间订阅；关闭即退订。没有变化时不查询，不使用进度或结果轮询。正在查询时合并刷新请求，任务列表更新不能取消或推迟正文查询。首次展示 20 个任务，“显示更多”位于滚动列表末尾；点击一次后直接展开至 200 条上限。仍有更多匹配时，在列表底部提示“当前最多显示 200 条任务，建议输入更精确的内容”。按钮和提示随结果一起滚动。同一查询的索引更新保留展开状态，更换关键词恢复首批展示。
-- 长历史消息定位逐批渲染并在批次间让出界面线程，关闭的任务视图不再继续定位。
+- 搜索结果直接调用 TaskView 既有 `scrollToMessage` 定位和高亮，不增加搜索专用定位入口；长历史补加载沿用原实现。
 
 - Worker 原始异常保留在内部诊断和请求错误中；无待处理请求的启动失败也记录日志，并通知浮层结束 loading，用户可显式重试。
 - 搜索相关计时器只保留 150ms 一次性输入防抖及 15s 请求超时；事件合并、分批让出线程使用 setImmediate，不形成定时监听。
 
 ## 验证与限制
 
-- Jest：`npm test -- --runInBand --runTestsByPath src/tests/ut/search/task-search.test.ts src/tests/ut/renderer/task-search-dialog.test.ts src/tests/ut/renderer/chat-navigation.test.ts`
+- Jest：`npm test -- --runInBand --runTestsByPath src/tests/ut/search/task-search.test.ts src/tests/ut/renderer/task-search-dialog.test.ts src/tests/ut/renderer/sidebar-task-groups.test.ts`
 - Worker 集成回归：`node --test src/tests/ut/node/search/task-search-worker.test.js`，真实 Worker、文件变化和 SQLite，验证主动通知及异常原因传递。
 - Renderer 回归：`npm test -- --runInBand --selectProjects unit --testPathPatterns src/tests/ut/renderer`
-- 片段浏览器回归（需安装 Chrome）：`OPENDESK_BROWSER_TESTS=1 PLAYWRIGHT_CHANNEL=chrome node --test src/tests/ut/node/renderer/task-search-snippet.test.js`；不指定 channel 时使用 Playwright 自带 Chromium。验证中文长前文、代码和字面 HTML、多次命中、超长搜索词及窗口缩放下的高亮可见性。
+- 片段浏览器回归（需安装 Chrome）：`OPENDESK_BROWSER_TESTS=1 PLAYWRIGHT_CHANNEL=chrome node --test src/tests/ut/node/renderer/task-search-snippet.test.js`；不指定 channel 时使用 Playwright 自带 Chromium。用一个夹具验证中文长前文的高亮可见性、字面 HTML、真实滚轮、200 条上限及底部提示，不重复单元测试的状态用例。
 - 必须通过 `npm run build-cli`、`npm run build`、`npm run check:architecture`。
 - 性能应分别记录首次索引耗时、磁盘占用、不同命中密度下的查询耗时和 UI 响应，不能用缓存命中替代首次查询测量。
 - 首次索引期间结果可能不全，会明确显示进度；搜索速度不承诺所有数据量和硬件均在固定时间内完成。

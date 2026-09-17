@@ -2943,23 +2943,6 @@ class TaskView extends HTMLElement {
         return this._scrollToGoalMessage(messageId, options);
     }
 
-    async scrollToSearchMessage(messageId) {
-        const messageIndex = this._getHistoryMessageIndexById(messageId);
-        if (messageIndex < 0) return false;
-        this.setAutoScrollingToBottom(false);
-        // Unlike the synchronous navigation path, yield between history batches so
-        // searching an early message does not freeze input while filling the DOM.
-        while (messageIndex < this._historyRenderStartIndex && this._hasOlderHistory()) {
-            if (!this.isConnected || this.hasAttribute('data-background')) return false;
-            const previous = this._historyRenderStartIndex;
-            if (!this._loadOlderHistoryBatch({ preserveScrollPosition: false })) return false;
-            if (previous === this._historyRenderStartIndex) return false;
-            await new Promise((resolve) => requestAnimationFrame(resolve));
-        }
-        if (!this.isConnected || this.hasAttribute('data-background')) return false;
-        return this._scrollToGoalMessage(messageId, { behavior: 'instant' });
-    }
-
     _handleGoalMessageAnchor = (event) => {
         this._goalController.handleMessageAnchor(event);
     };
