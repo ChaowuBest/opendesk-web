@@ -125,7 +125,30 @@ export class AgentOfficeEntryWidget extends AgentOperableHTMLElement {
         if (target instanceof Element && target.closest('.ctx-menu')) return;
         this.shadowRoot?.querySelector('.ctx-menu')?.remove();
         window.removeEventListener('mousedown', this.dismissMessageContextMenu);
+        window.removeEventListener('keydown', this.dismissContextMenuOnKeydown);
     };
+    private readonly dismissContextMenuOnKeydown = (event: KeyboardEvent): void => {
+        if (event.key === 'Escape') this.dismissMessageContextMenu();
+    };
+    /** Skill 添加菜单：点击菜单锚点以外或按 Escape 时关闭（对齐设计稿模板行为） */
+    private readonly closeSkillAddMenuOnOutside = (event: Event): void => {
+        if (event instanceof KeyboardEvent && event.key !== 'Escape') return;
+        if (event instanceof MouseEvent) {
+            const target = event.composedPath()[0];
+            if (target instanceof Element && target.closest('.skills-add-anchor')) return;
+        }
+        this.closeSkillAddMenu();
+    };
+    private removeSkillAddMenuListeners(): void {
+        document.removeEventListener('mousedown', this.closeSkillAddMenuOnOutside);
+        document.removeEventListener('keydown', this.closeSkillAddMenuOnOutside);
+    }
+    private closeSkillAddMenu(): void {
+        this.removeSkillAddMenuListeners();
+        if (!this.skillAddMenuOpen) return;
+        this.skillAddMenuOpen = false;
+        this.render();
+    }
     private readonly closeSendMenuHandler = (event?: Event) => {
         const target = event?.composedPath()[0];
         if (
@@ -134,6 +157,9 @@ export class AgentOfficeEntryWidget extends AgentOperableHTMLElement {
         )
             return;
         this.closeSendMenu();
+    };
+    private readonly closeSendMenuOnKeydown = (event: KeyboardEvent): void => {
+        if (event.key === 'Escape') this.closeSendMenu();
     };
 
     connectedCallback(): void {
@@ -151,6 +177,7 @@ export class AgentOfficeEntryWidget extends AgentOperableHTMLElement {
         if (this.autoSaveTimer) clearTimeout(this.autoSaveTimer);
         if (this.autoSaveIndicatorTimer) clearTimeout(this.autoSaveIndicatorTimer);
         window.removeEventListener('mousedown', this.dismissMessageContextMenu);
+        this.removeSkillAddMenuListeners();
         this.closeSendMenu();
         void this.flushAutoSave();
         document.removeEventListener(OPENDESK_THEME_CHANGED, this.onThemeChanged);
@@ -317,6 +344,18 @@ export class AgentOfficeEntryWidget extends AgentOperableHTMLElement {
     private render(): void {
         if (!this.shadowRoot) return;
         this.closeSendMenu();
+        // 后台事件（staffsChanged 等）会触发整树重渲染，正在输入的消息草稿
+        // 需要跨渲染保留：重建前暂存值/光标/焦点，重建后恢复。
+        const draftInput = this.shadowRoot.querySelector<HTMLTextAreaElement>('#message-input');
+        const draft =
+            draftInput && draftInput.value
+                ? {
+                      value: draftInput.value,
+                      start: draftInput.selectionStart ?? draftInput.value.length,
+                      end: draftInput.selectionEnd ?? draftInput.value.length,
+                      focused: this.shadowRoot.activeElement === draftInput
+                  }
+                : null;
         this.shadowRoot.innerHTML = `<style>${contextMenuCss}${css}</style><div class="root ${this.busy ? 'busy' : ''}">
             <div class="tabs">
                 <div class="tab-group">
@@ -327,11 +366,24 @@ export class AgentOfficeEntryWidget extends AgentOperableHTMLElement {
             <div class="body">${this.activeTab === 'office' ? this.renderOffice() : this.renderManagement()}</div>
             ${this.renderModal()}
         </div>`;
+        if (draft) {
+            const input = this.shadowRoot.querySelector<HTMLTextAreaElement>('#message-input');
+            if (input) {
+                input.value = draft.value;
+                try {
+                    input.setSelectionRange(draft.start, draft.end);
+                } catch {
+                    // linkedom 等测试环境不支持 setSelectionRange 时忽略
+                }
+                if (draft.focused) input.focus();
+            }
+            this.updateSendButtonState();
+        }
         this.bindEvents();
     }
 
     private tabButton(id: 'office' | 'management', label: string): string {
-        return `<button class="tab ${this.activeTab === id ? 'active' : ''}" data-tab="${id}">${escapeHtml(label)}</button>`;
+        return `<button class="tab ${this.activeTab === id ? 'active' : ''}" data-tab="${id}" aria-pressed="${this.activeTab === id}">${escapeHtml(label)}</button>`;
     }
 
     private renderOffice(): string {
@@ -350,7 +402,7 @@ export class AgentOfficeEntryWidget extends AgentOperableHTMLElement {
               ? this.tr('agentoffice.enabled')
               : this.tr('agentoffice.disabled');
         const specialtyChip = staff.specialties[0]
-            ? `<span class="chip chip-role">${escapeHtml(staff.specialties[0])}</span>`
+            ? `<span class="pill accent">${escapeHtml(staff.specialties[0])}</span>`
             : '';
         const meta = [
             staff.title,
@@ -362,9 +414,9 @@ export class AgentOfficeEntryWidget extends AgentOperableHTMLElement {
             .join(' \u00b7 ');
         return `<div class="office">
             <section class="chat">
-                <div class="chat-head">${this.avatar(staff, 'lg')}<div class="chat-who"><div class="chat-title">${escapeHtml(staff.name)}${specialtyChip}<span class="chip chip-status ${statusClass}">● ${escapeHtml(statusText)}</span></div><div class="chat-meta">${meta}</div></div><div class="chat-head-spacer"></div>${this.renderChatModelSelect(staff)}</div>
+                <header class="chat-head"><div class="chat-head-main">${this.avatar(staff, 'lg')}<div class="chat-who"><h2 class="chat-title">${escapeHtml(staff.name)}${specialtyChip}</h2><div class="detail-subtitle"><span class="status-dot ${statusClass}"></span><span class="truncate">${escapeHtml(statusText)} · ${meta}</span></div></div></div><div class="chat-head-actions">${this.renderChatModelSelect(staff)}</div></header>
                 <div class="messages" id="messages">${this.renderMessages(staff.id)}</div>
-                <div class="composer">
+                <div class="composer-wrap">
                     ${this.status ? `<div class="notice">${escapeHtml(this.status)}</div>` : ''}
                     <div class="composer-outer" id="composer-outer">
                         <div class="composer-card">
@@ -376,19 +428,21 @@ export class AgentOfficeEntryWidget extends AgentOperableHTMLElement {
                                     ${this.attachments.map((item, index) => `<div class="composer-file-tag"><i class="fa-solid fa-paperclip"></i><span>${escapeHtml(item.name)}</span><button data-remove-attachment="${index}"><i class="fa-solid fa-xmark"></i></button></div>`).join('')}
                                 </div>
                                 <div class="composer-toolbar-right">
-                                    <div class="composer-send-group"><button class="composer-send-btn ${staff.enabled ? 'composer-send-active' : 'composer-send-inactive'}" data-action="send" ${staff.enabled ? '' : 'disabled'}><i class="fa-solid fa-arrow-up"></i><span>${escapeHtml(this.tr('agentoffice.send'))}</span></button><div class="composer-send-divider"></div><button class="composer-send-menu-btn ${staff.enabled ? 'composer-send-active' : 'composer-send-inactive'}" data-action="send-menu" title="${escapeHtml(this.tr('agentoffice.sendOptions'))}" ${staff.enabled ? '' : 'disabled'}><i class="fa-solid fa-ellipsis"></i></button></div>
+                                    <div class="composer-send-group"><button class="composer-send-btn composer-send-inactive" data-action="send" ${staff.enabled ? '' : 'disabled'}><i class="fa-solid fa-arrow-up"></i><span>${escapeHtml(this.tr('agentoffice.send'))}</span></button><div class="composer-send-divider"></div><button class="composer-send-menu-btn composer-send-inactive" data-action="send-menu" title="${escapeHtml(this.tr('agentoffice.sendOptions'))}" ${staff.enabled ? '' : 'disabled'}><i class="fa-solid fa-ellipsis"></i></button></div>
                                 </div>
                             </div>
                         </div>
                     </div>
                 </div>
             </section>
-            <aside class="staff-panel"><div class="panel-head"><input class="search" id="staff-search" value="${escapeHtml(this.query)}" placeholder="${escapeHtml(this.tr('agentoffice.searchStaff'))}"><button class="staff-add" data-action="new" title="${escapeHtml(this.tr('agentoffice.newStaff'))}" aria-label="${escapeHtml(this.tr('agentoffice.newStaff'))}"><i class="fa-solid fa-plus"></i></button></div><div class="staff-list">${this.staffs
+            <aside class="staff-panel"><div class="panel-head"><h2 class="panel-title">${escapeHtml(this.tr('agentoffice.staffPanelTitle'))}</h2><button class="icon-btn" data-action="new" title="${escapeHtml(this.tr('agentoffice.newStaff'))}" aria-label="${escapeHtml(this.tr('agentoffice.newStaff'))}"><i class="fa-solid fa-plus"></i></button></div><label class="search-field"><i class="fa-solid fa-magnifying-glass"></i><input class="search" id="staff-search" value="${escapeHtml(this.query)}" placeholder="${escapeHtml(this.tr('agentoffice.searchStaff'))}"></label><div class="list-label"><i class="fa-solid fa-user-group"></i>${escapeHtml(this.tr('agentoffice.allStaff'))} · ${this.staffs.length}</div><div class="staff-list">${this.staffs
                 .map((item) => {
                     const searchText = `${item.name} ${item.title}`.toLowerCase();
-                    return `<button class="staff-row ${item.id === staff.id ? 'active' : ''}" data-staff="${item.id}" data-search-text="${escapeHtml(searchText)}" ${normalizedQuery && !searchText.includes(normalizedQuery) ? 'hidden' : ''}><span class="staff-avatar-trigger" data-staff-preview="${item.id}">${this.avatar(item)}</span><span class="staff-copy"><b class="ellipsis">${escapeHtml(item.name)}</b><span class="sub ellipsis"><span class="status-dot ${item.active_task_id ? 'run' : item.enabled ? 'on' : ''}"></span>${escapeHtml(item.title)}</span></span></button>`;
+                    return `<button class="staff-row ${item.id === staff.id ? 'active' : ''}" data-staff="${item.id}" data-search-text="${escapeHtml(searchText)}" aria-current="${item.id === staff.id}" ${normalizedQuery && !searchText.includes(normalizedQuery) ? 'hidden' : ''}><span class="staff-avatar-trigger" data-staff-preview="${item.id}">${this.avatar(item)}</span><span class="staff-copy"><b class="ellipsis">${escapeHtml(item.name)}</b><span class="sub"><span class="status-dot ${item.active_task_id ? 'run' : item.enabled ? 'on' : ''}"></span><span class="ellipsis">${escapeHtml(item.title)}</span></span></span></button>`;
                 })
-                .join('')}</div></aside><div class="card staff-preview" id="staff-preview" hidden></div>
+                .join(
+                    ''
+                )}<div class="search-empty" data-search-empty ${normalizedQuery ? '' : 'hidden'}>${escapeHtml(this.tr('agentoffice.noStaffFound'))}</div></div><div class="panel-footer"><i class="fa-solid fa-shield"></i><span class="truncate">${escapeHtml(this.tr('agentoffice.staffPanelFooter'))}</span></div></aside><div class="card staff-preview" id="staff-preview" hidden></div>
         </div>`;
     }
 
@@ -402,8 +456,12 @@ export class AgentOfficeEntryWidget extends AgentOperableHTMLElement {
     }
 
     private avatarGradientIndex(name: string): number {
+        // 旧实现 (hash*31+cp)%997 再取模会让常见中文姓名扎堆同一色调，
+        // 这里加 murmur 风格的雪崩混合让色调分布更均匀。
         let hash = 0;
-        for (const char of name) hash = (hash * 31 + (char.codePointAt(0) ?? 0)) % 997;
+        for (const char of name) hash = (hash * 131 + (char.codePointAt(0) ?? 0)) >>> 0;
+        hash = (hash ^ (hash >>> 13)) * 0x5bd1e995;
+        hash = (hash ^ (hash >>> 15)) >>> 0;
         return hash % AVATAR_GRADIENTS.length;
     }
 
@@ -439,12 +497,14 @@ export class AgentOfficeEntryWidget extends AgentOperableHTMLElement {
     private renderMessages(staffId: string): string {
         if (this.messages.length === 0)
             return `<div class="empty">${escapeHtml(this.tr('agentoffice.noMessages'))}</div>`;
+        const staff = this.staffs.find((item) => item.id === staffId) ?? null;
+        const youLabel = this.tr('agentoffice.you');
         return `${this.historyCursor ? `<button class="load-older" data-action="older">${escapeHtml(this.tr('agentoffice.loadOlder'))}</button>` : ''}${this.messages
             .map((message) => {
                 const parts = message.content
                     .map((part) => {
                         if (part.type === 'text')
-                            return `<div class="message-markdown markdown-body">${renderSafeMarkdown(part.text)}</div>`;
+                            return `<div class="message-bubble"><div class="message-markdown markdown-body">${renderSafeMarkdown(part.text)}</div></div>`;
                         const url = `agentoffice://resource/${staffId}/${part.path}`;
                         if (part.media_type === 'image')
                             return `<div class="resource"><img src="${escapeHtml(url)}" alt="${escapeHtml(part.name)}"></div>`;
@@ -452,17 +512,25 @@ export class AgentOfficeEntryWidget extends AgentOperableHTMLElement {
                             return `<div class="resource"><video controls src="${escapeHtml(url)}"></video></div>`;
                         if (part.media_type === 'audio')
                             return `<div class="resource"><audio controls src="${escapeHtml(url)}"></audio></div>`;
-                        return `<div class="resource"><a href="${escapeHtml(url)}" target="_blank">📎 ${escapeHtml(part.name)}</a></div>`;
+                        return `<div class="resource"><a href="${escapeHtml(url)}" target="_blank"><i class="fa-solid fa-paperclip"></i>${escapeHtml(part.name)}</a></div>`;
                     })
                     .join('');
-                return `<div class="message ${message.role} ${message.kind === 'error' ? 'error' : ''}" data-message-id="${escapeHtml(message.id)}" data-message-task="${escapeHtml(message.task_id)}">${parts}<div class="message-meta"><span>${escapeHtml(new Date(message.created_at).toLocaleString(this.locale))}</span></div></div>`;
+                // 极简会话：消息不分左右，用作者名颜色与头像区分自己（珊瑚红元信息）
+                const self = message.role === 'user';
+                const author = self ? youLabel : (staff?.name ?? '');
+                const avatar = self
+                    ? `<span class="avatar avatar-neutral message-avatar" aria-hidden="true">${escapeHtml(youLabel.slice(0, 1).toUpperCase())}</span>`
+                    : staff
+                      ? this.avatar(staff)
+                      : `<span class="avatar av-g1 message-avatar" aria-hidden="true">AI</span>`;
+                return `<article class="message ${message.role} ${message.kind === 'error' ? 'error' : ''}" data-message-id="${escapeHtml(message.id)}" data-message-task="${escapeHtml(message.task_id)}">${avatar}<div class="message-content"><div class="message-meta"><span>${escapeHtml(author)}</span><time>${escapeHtml(new Date(message.created_at).toLocaleString(this.locale))}</time></div>${parts}</div></article>`;
             })
             .join('')}`;
     }
 
     private renderManagement(): string {
-        if (this.detail) return `<div class="management">${this.renderDetail()}</div>`;
-        return `<div class="management"><section class="management-panel"><div class="toolbar"><div><span class="toolbar-title">${escapeHtml(this.tr('agentoffice.tab.management'))}</span>${this.status ? `<span class="notice">${escapeHtml(this.status)}</span>` : ''}</div><div class="toolbar-actions"><button class="secondary" data-action="import">${escapeHtml(this.tr('agentoffice.importZip'))}</button><button class="primary" data-action="new">${escapeHtml(this.tr('agentoffice.newStaff'))}</button></div></div>${
+        if (this.detail) return `<div class="management management-detail">${this.renderDetail()}</div>`;
+        return `<div class="management"><section class="management-panel"><div class="toolbar"><div class="toolbar-heading"><span class="toolbar-title">${escapeHtml(this.tr('agentoffice.tab.management'))}</span>${this.status ? `<span class="notice">${escapeHtml(this.status)}</span>` : ''}</div><div class="toolbar-actions"><button class="secondary" data-action="import">${escapeHtml(this.tr('agentoffice.importZip'))}</button><button class="primary" data-action="new">${escapeHtml(this.tr('agentoffice.newStaff'))}</button></div></div>${
             this.staffs.length === 0
                 ? `<div class="empty">${escapeHtml(this.loading ? this.tr('agentoffice.loading') : this.tr('agentoffice.noStaffHint'))}</div>`
                 : `<div class="grid">${this.staffs.map((staff) => `<button class="card" data-detail="${staff.id}">${this.staffCardContent(staff)}</button>`).join('')}</div>`
@@ -470,13 +538,19 @@ export class AgentOfficeEntryWidget extends AgentOperableHTMLElement {
     }
 
     private staffCardContent(staff: StaffListItem): string {
-        return `<div class="card-profile">${this.avatar(staff)}<div class="card-identity"><h3 class="ellipsis">${escapeHtml(staff.name)}</h3><div class="sub ellipsis">${escapeHtml(staff.title)} · ${escapeHtml(staff.vendor_name)}</div></div><span class="card-status ${staff.active_task_id ? 'run' : staff.enabled ? 'on' : ''}">${escapeHtml(staff.active_task_id ? this.tr('agentoffice.running') : staff.enabled ? this.tr('agentoffice.enabled') : this.tr('agentoffice.disabled'))}</span></div><div class="tags">${staff.specialties.map((tag) => `<span class="tag">${escapeHtml(tag)}</span>`).join('')}</div><div class="card-divider"></div><div class="card-metrics"><div class="card-metric"><b>${staff.message_count.toLocaleString(this.locale)}</b><span>${escapeHtml(this.tr('agentoffice.messagesStat'))}</span></div><div class="card-metric"><b>${staff.task_count.toLocaleString(this.locale)}</b><span>${escapeHtml(this.tr('agentoffice.tasksStat'))}</span></div><div class="card-metric"><b>${(staff.usage_summary?.total_tokens ?? 0).toLocaleString(this.locale)}</b><span>${escapeHtml(this.tr('agentoffice.tokensStat'))}</span></div></div>`;
+        return `<div class="card-profile">${this.avatar(staff)}<div class="card-identity"><h3 class="ellipsis">${escapeHtml(staff.name)}</h3><div class="sub ellipsis">${escapeHtml(staff.title)} · ${escapeHtml(staff.vendor_name)}</div></div><span class="card-status ${staff.active_task_id ? 'run' : staff.enabled ? 'on' : ''}">${escapeHtml(staff.active_task_id ? this.tr('agentoffice.running') : staff.enabled ? this.tr('agentoffice.enabled') : this.tr('agentoffice.disabled'))}</span></div><div class="tags">${staff.specialties.map((tag) => `<span class="tag">${escapeHtml(tag)}</span>`).join('')}</div><div class="card-divider"></div><div class="card-metrics"><div class="card-metric"><b>${staff.message_count.toLocaleString(this.locale)}</b><span>${escapeHtml(this.tr('agentoffice.messagesStat'))}</span></div><div class="card-metric"><b>${staff.task_count.toLocaleString(this.locale)}</b><span>${escapeHtml(this.tr('agentoffice.tasksStat'))}</span></div><div class="card-metric"><b>${this.formatTokens(staff.usage_summary?.total_tokens ?? 0)}</b><span>${escapeHtml(this.tr('agentoffice.tokensStat'))}</span></div></div>`;
     }
 
     private renderDetail(): string {
         const detail = this.detail!;
         const portraitLabel = escapeHtml(this.tr('agentoffice.changePortrait'));
-        return `<section class="detail"><div class="detail-head"><div style="display:flex;align-items:center;gap:12px"><button class="secondary" data-action="back" title="${escapeHtml(this.tr('agentoffice.back'))}" aria-label="${escapeHtml(this.tr('agentoffice.back'))}"><i class="fa-solid fa-arrow-left"></i></button><button class="detail-avatar-button" data-action="portrait" title="${portraitLabel}" aria-label="${portraitLabel}">${this.avatar(detail)}</button><div><b data-detail-name>${escapeHtml(detail.name)}</b><div class="sub" data-detail-title>${escapeHtml(detail.title)}</div></div><span class="auto-save-indicator" data-state="${this.autoSaveState}" aria-live="polite">${escapeHtml(this.autoSaveDetail)}</span></div><div class="toolbar-actions"><button class="secondary" data-action="portrait">${portraitLabel}</button><button class="secondary" data-action="open-directory">${escapeHtml(this.tr('agentoffice.openStaffDirectory'))}</button><button class="secondary" data-action="export">${escapeHtml(this.tr('agentoffice.exportZip'))}</button><button class="danger" data-action="delete">${escapeHtml(this.tr('agentoffice.delete'))}</button></div></div><p class="detail-notice" role="alert" ${this.status ? '' : 'hidden'}>${escapeHtml(this.status)}</p><div class="detail-main"><nav class="detail-nav">${(['basic', 'skills', 'mcp', 'security', 'tasks'] as DetailSection[]).map((section) => `<button class="nav-btn ${this.detailSection === section ? 'active' : ''}" data-section="${section}">${escapeHtml(this.tr(`agentoffice.${section}`))}</button>`).join('')}</nav><div class="detail-content">${this.renderDetailSection(detail)}</div></div></section>`;
+        const statusClass = detail.active_task_id ? 'run' : detail.enabled ? 'on' : '';
+        const statusText = detail.active_task_id
+            ? this.tr('agentoffice.running')
+            : detail.enabled
+              ? this.tr('agentoffice.enabled')
+              : this.tr('agentoffice.disabled');
+        return `<section class="detail"><header class="detail-head"><div class="detail-head-main"><button class="icon-btn" data-action="back" title="${escapeHtml(this.tr('agentoffice.back'))}" aria-label="${escapeHtml(this.tr('agentoffice.back'))}"><i class="fa-solid fa-arrow-left"></i></button><button class="detail-avatar-button" data-action="portrait" title="${portraitLabel}" aria-label="${portraitLabel}">${this.avatar(detail)}</button><div class="detail-who"><h2 data-detail-name>${escapeHtml(detail.name)}</h2><div class="detail-subtitle"><span class="status-dot ${statusClass}"></span><span class="truncate"><span data-detail-title>${escapeHtml(detail.title)}</span> · ${escapeHtml(detail.vendor_name)} · ${escapeHtml(statusText)}</span></div></div><span class="auto-save-indicator" data-state="${this.autoSaveState}" aria-live="polite">${escapeHtml(this.autoSaveDetail)}</span></div><div class="toolbar-actions"><button class="ghost-btn" data-action="open-directory" title="${escapeHtml(this.tr('agentoffice.openStaffDirectory'))}"><i class="fa-solid fa-folder"></i>${escapeHtml(this.tr('agentoffice.openStaffDirectory'))}</button><button class="ghost-btn" data-action="export" title="${escapeHtml(this.tr('agentoffice.exportZip'))}"><i class="fa-solid fa-download"></i>${escapeHtml(this.tr('agentoffice.exportZip'))}</button><button class="ghost-btn danger" data-action="delete" title="${escapeHtml(this.tr('agentoffice.delete'))}"><i class="fa-solid fa-trash"></i>${escapeHtml(this.tr('agentoffice.delete'))}</button></div></header><p class="detail-notice" role="alert" ${this.status ? '' : 'hidden'}>${escapeHtml(this.status)}</p><nav class="detail-nav">${(['basic', 'skills', 'mcp', 'security', 'tasks'] as DetailSection[]).map((section) => `<button class="nav-btn ${this.detailSection === section ? 'active' : ''}" data-section="${section}" aria-pressed="${this.detailSection === section}">${escapeHtml(this.tr(`agentoffice.${section}`))}</button>`).join('')}</nav><div class="detail-content">${this.renderDetailSection(detail)}</div></section>`;
     }
 
     private renderDetailSection(detail: StaffDetail): string {
@@ -499,13 +573,13 @@ export class AgentOfficeEntryWidget extends AgentOperableHTMLElement {
                 )
                 .join('');
             return `<div class="settings-page">
-                <section class="settings-section"><div class="settings-section-head"><h3 class="settings-section-title">${escapeHtml(this.tr('agentoffice.basic'))}</h3></div><div class="stats"><div class="stat"><b>${detail.message_count}</b>${escapeHtml(this.tr('agentoffice.messagesStat'))}</div><div class="stat"><b>${detail.task_count}</b>${escapeHtml(this.tr('agentoffice.tasksStat'))}</div><div class="stat"><b>${usage.toLocaleString(this.locale)}</b>${escapeHtml(this.tr('agentoffice.tokensStat'))}</div><div class="stat"><b>${escapeHtml(new Date(detail.hired_at).toLocaleDateString(this.locale))}</b>${escapeHtml(this.tr('agentoffice.hiredAt'))}</div></div></section>
-                <section class="settings-section"><div class="form-grid settings-form"><div class="field" data-basic-field="name"><label for="f-name">${escapeHtml(this.tr('agentoffice.nameLabel'))}${required}</label><input id="f-name" value="${escapeHtml(detail.name)}" required aria-required="true"><div class="field-error">${requiredError}</div></div><div class="field" data-basic-field="vendor"><label for="f-vendor">${escapeHtml(this.tr('agentoffice.vendorLabel'))}${required}</label><input id="f-vendor" value="${escapeHtml(detail.vendor_name)}" required aria-required="true"><div class="field-error">${requiredError}</div></div><div class="field" data-basic-field="title"><label for="f-title">${escapeHtml(this.tr('agentoffice.titleLabel'))}${required}</label><input id="f-title" value="${escapeHtml(detail.title)}" required aria-required="true"><div class="field-error">${requiredError}</div></div><div class="field"><label for="f-specialties">${escapeHtml(this.tr('agentoffice.specialtiesLabel'))}</label><input id="f-specialties" value="${escapeHtml(detail.specialties.join(', '))}"></div><div class="field"><label for="f-trigger-interval">${escapeHtml(this.tr('agentoffice.triggerIntervalLabel'))}</label><select id="f-trigger-interval">${triggerOptions}</select><div class="sub">${escapeHtml(this.tr('agentoffice.triggerIntervalHint'))}</div></div><div class="field"><label for="f-model">${escapeHtml(this.tr('agentoffice.modelLabel'))}</label><select id="f-model"><option value="">${escapeHtml(defaultModelLabel)}</option>${missingSelectedModel}${this.modelCatalog.models.map((model) => `<option value="${escapeHtml(model.alias)}" ${detail.model === model.alias ? 'selected' : ''}>${escapeHtml(model.alias)} · ${escapeHtml(model.provider_name)} / ${escapeHtml(model.model_name)}</option>`).join('')}</select><div class="sub">${escapeHtml(this.tr('agentoffice.modelHint'))}</div></div><div class="field full"><div class="setting-check-row"><span class="setting-check-copy">${escapeHtml(this.tr('agentoffice.enableStaff'))}</span><label class="setting-toggle"><input type="checkbox" id="f-enabled" ${detail.enabled ? 'checked' : ''}><span class="setting-toggle-track"></span></label></div></div></div></section>
-                <section class="settings-section"><div class="settings-section-head"><h3 class="settings-section-title">${escapeHtml(this.tr('agentoffice.instructionsLabel'))}</h3></div><div class="field"><textarea id="f-agents">${escapeHtml(detail.agents_md)}</textarea></div></section>
+                <section class="settings-section"><h3 class="section-label">${escapeHtml(this.tr('agentoffice.statsSection'))}</h3><div class="stats"><div class="stat"><b>${detail.message_count.toLocaleString(this.locale)}</b><span>${escapeHtml(this.tr('agentoffice.messagesStat'))}</span></div><div class="stat"><b>${detail.task_count.toLocaleString(this.locale)}</b><span>${escapeHtml(this.tr('agentoffice.tasksStat'))}</span></div><div class="stat"><b>${this.formatTokens(usage)}</b><span>${escapeHtml(this.tr('agentoffice.tokensStat'))}</span></div><div class="stat"><b>${escapeHtml(new Date(detail.hired_at).toLocaleDateString(this.locale))}</b><span>${escapeHtml(this.tr('agentoffice.hiredAt'))}</span></div></div></section>
+                <section class="settings-section"><h3 class="section-label">${escapeHtml(this.tr('agentoffice.profileSection'))}</h3><div class="form-grid settings-form"><div class="field" data-basic-field="name"><label for="f-name">${escapeHtml(this.tr('agentoffice.nameLabel'))}${required}</label><input id="f-name" value="${escapeHtml(detail.name)}" required aria-required="true"><div class="field-error">${requiredError}</div></div><div class="field" data-basic-field="vendor"><label for="f-vendor">${escapeHtml(this.tr('agentoffice.vendorLabel'))}${required}</label><input id="f-vendor" value="${escapeHtml(detail.vendor_name)}" required aria-required="true"><div class="field-error">${requiredError}</div></div><div class="field" data-basic-field="title"><label for="f-title">${escapeHtml(this.tr('agentoffice.titleLabel'))}${required}</label><input id="f-title" value="${escapeHtml(detail.title)}" required aria-required="true"><div class="field-error">${requiredError}</div></div><div class="field"><label for="f-specialties">${escapeHtml(this.tr('agentoffice.specialtiesLabel'))}</label><input id="f-specialties" value="${escapeHtml(detail.specialties.join(', '))}"></div><div class="field"><label for="f-trigger-interval">${escapeHtml(this.tr('agentoffice.triggerIntervalLabel'))}</label><select id="f-trigger-interval">${triggerOptions}</select><div class="sub">${escapeHtml(this.tr('agentoffice.triggerIntervalHint'))}</div></div><div class="field"><label for="f-model">${escapeHtml(this.tr('agentoffice.modelLabel'))}</label><select id="f-model"><option value="">${escapeHtml(defaultModelLabel)}</option>${missingSelectedModel}${this.modelCatalog.models.map((model) => `<option value="${escapeHtml(model.alias)}" ${detail.model === model.alias ? 'selected' : ''}>${escapeHtml(model.alias)} · ${escapeHtml(model.provider_name)} / ${escapeHtml(model.model_name)}</option>`).join('')}</select><div class="sub">${escapeHtml(this.tr('agentoffice.modelHint'))}</div></div><div class="field full"><div class="setting-check-row"><span class="setting-check-copy"><b>${escapeHtml(this.tr('agentoffice.enableStaff'))}</b><small>${escapeHtml(this.tr('agentoffice.enableStaffHint'))}</small></span><label class="setting-toggle"><input type="checkbox" id="f-enabled" ${detail.enabled ? 'checked' : ''}><span class="setting-toggle-track"></span></label></div></div></div></section>
+                <section class="settings-section"><h3 class="section-label">${escapeHtml(this.tr('agentoffice.instructionsLabel'))}</h3><div class="field"><textarea id="f-agents">${escapeHtml(detail.agents_md)}</textarea></div></section>
             </div>`;
         }
         if (this.detailSection === 'skills') {
-            return `<div class="skills-page"><div class="skills-toolbar"><h3>${escapeHtml(this.tr('agentoffice.skills'))}</h3><div class="skills-add-anchor"><button class="skills-add-button" data-action="toggle-skill-menu" title="${escapeHtml(this.tr('agentoffice.addSkill'))}" aria-label="${escapeHtml(this.tr('agentoffice.addSkill'))}"><i class="fa-solid fa-plus"></i></button>${this.skillAddMenuOpen ? this.renderSkillAddMenu() : ''}</div></div>${
+            return `<div class="skills-page"><div class="skills-toolbar"><h3 class="section-label inline">${escapeHtml(this.tr('agentoffice.skills'))} · ${this.skills.length}</h3><div class="skills-add-anchor"><button class="secondary small-btn" data-action="toggle-skill-menu" title="${escapeHtml(this.tr('agentoffice.addSkill'))}"><i class="fa-solid fa-plus"></i>${escapeHtml(this.tr('agentoffice.addSkill'))}</button>${this.skillAddMenuOpen ? this.renderSkillAddMenu() : ''}</div></div>${
                 this.skills.length === 0
                     ? `<div class="empty">${escapeHtml(this.tr('agentoffice.noSkills'))}</div>`
                     : `<div class="skill-grid">${this.skills
@@ -517,7 +591,7 @@ export class AgentOfficeEntryWidget extends AgentOperableHTMLElement {
             }</div>`;
         }
         if (this.detailSection === 'mcp') {
-            return `<div class="settings-page"><section class="settings-section"><div class="settings-section-head"><div><h3 class="settings-section-title">${escapeHtml(this.tr('agentoffice.mcp'))}</h3><p class="settings-section-desc">${escapeHtml(this.tr('agentoffice.mcpExportWarning'))}</p></div></div><div class="field" data-mcp-field><label for="f-mcp">${escapeHtml(this.tr('agentoffice.mcpJsonHint'))}</label><textarea id="f-mcp" style="min-height:360px;font-family:monospace">${escapeHtml(JSON.stringify(detail.mcp, null, 4))}</textarea><div class="field-error" id="mcp-field-error"></div></div></section></div>`;
+            return `<div class="settings-page"><section class="settings-section"><h3 class="section-label">${escapeHtml(this.tr('agentoffice.mcp'))}</h3><div class="callout amber"><i class="fa-solid fa-lock"></i><span>${escapeHtml(this.tr('agentoffice.mcpExportWarning'))}</span></div><div class="field" data-mcp-field><label for="f-mcp">${escapeHtml(this.tr('agentoffice.mcpJsonHint'))}</label><textarea id="f-mcp" class="code-textarea">${escapeHtml(JSON.stringify(detail.mcp, null, 4))}</textarea><div class="field-error" id="mcp-field-error"></div></div></section></div>`;
         }
         if (this.detailSection === 'security') {
             const directories = detail.permission.directories.length
@@ -528,7 +602,7 @@ export class AgentOfficeEntryWidget extends AgentOperableHTMLElement {
                       )
                       .join('')
                 : `<div class="directory-empty">${escapeHtml(this.tr('agentoffice.noDirectories'))}</div>`;
-            return `<div class="settings-page"><section class="settings-section"><div class="settings-section-head"><h3 class="settings-section-title">${escapeHtml(this.tr('agentoffice.security'))}</h3></div><div class="setting-check-row network-setting-row"><span class="setting-check-copy">${escapeHtml(this.tr('agentoffice.networkAccess'))}</span><label class="setting-toggle"><input id="f-network" type="checkbox" ${detail.permission.network_access ? 'checked' : ''}><span class="setting-toggle-track"></span></label></div></section><section class="settings-section"><div class="settings-section-head"><h3 class="settings-section-title">${escapeHtml(this.tr('agentoffice.directories'))}</h3><button class="secondary" data-action="add-directory">${escapeHtml(this.tr('agentoffice.addDirectory'))}</button></div><div class="directory-table"><div class="directory-grid directory-header"><span>${escapeHtml(this.tr('agentoffice.directoryPath'))}</span><span>${escapeHtml(this.tr('agentoffice.directoryAccess'))}</span><span></span></div><div id="directory-list">${directories}</div></div></section></div>`;
+            return `<div class="settings-page"><section class="settings-section"><h3 class="section-label">${escapeHtml(this.tr('agentoffice.security'))}</h3><div class="setting-check-row network-setting-row"><span class="setting-check-copy"><b>${escapeHtml(this.tr('agentoffice.networkAccess'))}</b><small>${escapeHtml(this.tr('agentoffice.networkAccessHint'))}</small></span><label class="setting-toggle"><input id="f-network" type="checkbox" ${detail.permission.network_access ? 'checked' : ''}><span class="setting-toggle-track"></span></label></div></section><section class="settings-section"><div class="row between"><h3 class="section-label inline">${escapeHtml(this.tr('agentoffice.directories'))}</h3><button class="secondary small-btn" data-action="add-directory"><i class="fa-solid fa-plus"></i>${escapeHtml(this.tr('agentoffice.addDirectory'))}</button></div><div class="directory-table"><div class="directory-grid directory-header"><span>${escapeHtml(this.tr('agentoffice.directoryPath'))}</span><span>${escapeHtml(this.tr('agentoffice.directoryAccess'))}</span><span></span></div><div id="directory-list">${directories}</div></div></section></div>`;
         }
         const tasks =
             detail.tasks.length === 0
@@ -536,12 +610,14 @@ export class AgentOfficeEntryWidget extends AgentOperableHTMLElement {
                 : detail.tasks
                       .slice()
                       .reverse()
-                      .map(
-                          (task) =>
-                              `<div class="list-row"><div><b>${escapeHtml(task.task_id)}</b><div class="sub">${escapeHtml(this.tr(`agentoffice.taskSource.${task.source ?? 'user'}`))} · ${escapeHtml(this.taskStatus(task.status))} · ${escapeHtml(new Date(task.updated_at).toLocaleString(this.locale))} · ${(task.usage_summary?.total_tokens ?? 0).toLocaleString(this.locale)} ${escapeHtml(this.tr('agentoffice.tokensStat'))}</div></div><button class="secondary" data-task="${escapeHtml(task.task_id)}">${escapeHtml(this.tr('agentoffice.openTask'))}</button></div>`
-                      )
+                      .map((task) => {
+                          const statusClass = ['waiting', 'running', 'stopped', 'failed'].includes(task.status)
+                              ? task.status
+                              : '';
+                          return `<div class="task-row"><div class="task-copy"><div class="task-title" title="${escapeHtml(task.task_id)}">${escapeHtml(task.task_id)}</div><div class="task-meta"><span>${escapeHtml(this.tr(`agentoffice.taskSource.${task.source ?? 'user'}`))}</span><span>·</span><span class="task-status ${statusClass}">${escapeHtml(this.taskStatus(task.status))}</span><span>·</span><time>${escapeHtml(new Date(task.updated_at).toLocaleString(this.locale))}</time><span>·</span><span>${this.formatTokens(task.usage_summary?.total_tokens ?? 0)} ${escapeHtml(this.tr('agentoffice.tokensStat'))}</span></div></div><button class="secondary small-btn" data-task="${escapeHtml(task.task_id)}">${escapeHtml(this.tr('agentoffice.openTask'))}</button></div>`;
+                      })
                       .join('');
-        return `<div class="settings-page"><section class="settings-section"><div class="settings-section-head"><h3 class="settings-section-title">${escapeHtml(this.tr('agentoffice.tasks'))}</h3></div>${tasks}</section></div>`;
+        return `<div class="settings-page"><section class="settings-section"><h3 class="section-label">${escapeHtml(this.tr('agentoffice.tasks'))}</h3>${tasks}</section></div>`;
     }
 
     private renderSkillAddMenu(): string {
@@ -680,6 +756,8 @@ export class AgentOfficeEntryWidget extends AgentOperableHTMLElement {
                 this.activeTab = element.dataset.tab as 'office' | 'management';
                 this.detail = null;
                 this.status = '';
+                this.skillAddMenuOpen = false;
+                this.removeSkillAddMenuListeners();
                 this.render();
             })
         );
@@ -806,6 +884,8 @@ export class AgentOfficeEntryWidget extends AgentOperableHTMLElement {
             void this.flushAutoSave();
             this.detail = null;
             this.status = '';
+            this.skillAddMenuOpen = false;
+            this.removeSkillAddMenuListeners();
             this.render();
         });
         this.shadowRoot?.querySelectorAll<HTMLElement>('[data-section]').forEach((element) =>
@@ -813,6 +893,8 @@ export class AgentOfficeEntryWidget extends AgentOperableHTMLElement {
                 void this.flushAutoSave();
                 this.detailSection = element.dataset.section as DetailSection;
                 this.status = '';
+                this.skillAddMenuOpen = false;
+                this.removeSkillAddMenuListeners();
                 this.render();
             })
         );
@@ -842,6 +924,12 @@ export class AgentOfficeEntryWidget extends AgentOperableHTMLElement {
         });
         this.shadowRoot?.querySelector('[data-action="toggle-skill-menu"]')?.addEventListener('click', () => {
             this.skillAddMenuOpen = !this.skillAddMenuOpen;
+            if (this.skillAddMenuOpen) {
+                document.addEventListener('mousedown', this.closeSkillAddMenuOnOutside);
+                document.addEventListener('keydown', this.closeSkillAddMenuOnOutside);
+            } else {
+                this.removeSkillAddMenuListeners();
+            }
             this.render();
         });
         this.shadowRoot
@@ -1022,9 +1110,33 @@ export class AgentOfficeEntryWidget extends AgentOperableHTMLElement {
         this.dismissMessageContextMenu();
         const message = this.messages.find((item) => item.id === element.dataset.messageId);
         if (!message || !this.shadowRoot) return;
+        // 分块删除：多分块消息的每个部分（文本/图片/视频/音频/文件）都可单独删除
+        const partLabels: Record<string, string> = {
+            text: this.tr('agentoffice.deleteMessagePart.text'),
+            image: this.tr('agentoffice.deleteMessagePart.image'),
+            video: this.tr('agentoffice.deleteMessagePart.video'),
+            audio: this.tr('agentoffice.deleteMessagePart.audio'),
+            file: this.tr('agentoffice.deleteMessagePart.file')
+        };
+        const partIcons: Record<string, string> = {
+            text: 'fa-file-lines',
+            image: 'fa-image',
+            video: 'fa-film',
+            audio: 'fa-music',
+            file: 'fa-file-lines'
+        };
         const menu = document.createElement('div');
         menu.className = 'ctx-menu' + (this.dataset.theme === 'dark' ? ' ctx-menu-dark' : '');
-        menu.innerHTML = `<button class="ctx-item" data-message-menu="copy"><span class="ctx-icon-sm"><i class="fa-solid fa-copy"></i></span><span class="ctx-label">${escapeHtml(this.tr('agentoffice.copy'))}</span></button><button class="ctx-item" data-message-menu="copy-plain"><span class="ctx-icon-sm"><i class="fa-solid fa-font"></i></span><span class="ctx-label">${escapeHtml(this.tr('agentoffice.copyPlain'))}</span></button><div class="ctx-divider"></div><button class="ctx-item" data-message-menu="open-task"><span class="ctx-icon-sm"><i class="fa-solid fa-arrow-up-right-from-square"></i></span><span class="ctx-label">${escapeHtml(this.tr('agentoffice.openTask'))}</span></button>`;
+        const partItems = message.content
+            .map((part, index) => ({ part, index }))
+            .filter(({ part }) => part.type === 'resource' || message.content.length > 1)
+            .map(({ part, index }) => {
+                const mediaType = part.type === 'resource' ? part.media_type : 'text';
+                const name = part.type === 'resource' ? `: ${part.name}` : '';
+                return `<button class="ctx-item" data-message-menu="delete-part" data-part-index="${index}" title="${escapeHtml(`${partLabels[mediaType]}${name}`)}"><span class="ctx-icon-sm"><i class="fa-solid ${partIcons[mediaType]}"></i></span><span class="ctx-label">${escapeHtml(partLabels[mediaType])}${escapeHtml(name)}</span></button>`;
+            })
+            .join('');
+        menu.innerHTML = `<button class="ctx-item" data-message-menu="copy"><span class="ctx-icon-sm"><i class="fa-solid fa-copy"></i></span><span class="ctx-label">${escapeHtml(this.tr('agentoffice.copy'))}</span></button><button class="ctx-item" data-message-menu="copy-plain"><span class="ctx-icon-sm"><i class="fa-solid fa-font"></i></span><span class="ctx-label">${escapeHtml(this.tr('agentoffice.copyPlain'))}</span></button><div class="ctx-divider"></div>${partItems}${partItems ? '<div class="ctx-divider"></div>' : ''}<button class="ctx-item danger" data-message-menu="delete-message"><span class="ctx-icon-sm"><i class="fa-solid fa-trash"></i></span><span class="ctx-label">${escapeHtml(this.tr('agentoffice.deleteMessage'))}</span></button><div class="ctx-divider"></div><button class="ctx-item" data-message-menu="open-task"><span class="ctx-icon-sm"><i class="fa-solid fa-arrow-up-right-from-square"></i></span><span class="ctx-label">${escapeHtml(this.tr('agentoffice.openTask'))}</span></button>`;
         menu.style.left = `${x}px`;
         menu.style.top = `${y}px`;
         this.shadowRoot.querySelector('.root')?.appendChild(menu);
@@ -1046,7 +1158,43 @@ export class AgentOfficeEntryWidget extends AgentOperableHTMLElement {
             window.parent.postMessage({ type: 'openTask', taskId: message.task_id }, '*');
             this.dismissMessageContextMenu();
         });
-        setTimeout(() => window.addEventListener('mousedown', this.dismissMessageContextMenu), 0);
+        // 删除分块（文本/图片/视频/音频/文件单独删除）与删除整条消息
+        menu.querySelectorAll<HTMLElement>('[data-message-menu="delete-part"]').forEach((item) =>
+            item.addEventListener('click', () => {
+                this.dismissMessageContextMenu();
+                this.deleteMessageContent('deleteStaffMessagePart', message.id, Number(item.dataset.partIndex));
+            })
+        );
+        menu.querySelector('[data-message-menu="delete-message"]')?.addEventListener('click', () => {
+            this.dismissMessageContextMenu();
+            this.deleteMessageContent('deleteStaffMessage', message.id);
+        });
+        setTimeout(() => {
+            window.addEventListener('mousedown', this.dismissMessageContextMenu);
+            window.addEventListener('keydown', this.dismissContextMenuOnKeydown);
+        }, 0);
+    }
+
+    /** 删除历史消息或其中的内容分块；删除后刷新会话（worker 会广播 messagesChanged，这里冗余刷新保证即时反馈）。 */
+    private deleteMessageContent(
+        method: 'deleteStaffMessage' | 'deleteStaffMessagePart',
+        messageId: string,
+        partIndex?: number
+    ): void {
+        if (!this.selectedStaffId) return;
+        const call =
+            partIndex === undefined
+                ? this.call('deleteStaffMessage', this.selectedStaffId, messageId)
+                : this.call('deleteStaffMessagePart', this.selectedStaffId, messageId, partIndex);
+        void call
+            .then(async () => {
+                this.status = '';
+                await this.loadMessages();
+            })
+            .catch((error) => {
+                this.status = `${this.tr('agentoffice.operationFailed')}: ${this.errorText(error)}`;
+                this.render();
+            });
     }
 
     private async copyMessage(message: StaffMessage, element: HTMLElement, rich: boolean): Promise<void> {
@@ -1079,10 +1227,14 @@ export class AgentOfficeEntryWidget extends AgentOperableHTMLElement {
     private async sendMessage(): Promise<void> {
         if (!this.selectedStaffId || this.busy) return;
         const input = this.shadowRoot?.querySelector<HTMLTextAreaElement>('#message-input');
-        const text = input?.value.trim();
+        const rawValue = input?.value ?? '';
+        const text = rawValue.trim();
         if (!text && this.attachments.length === 0 && this.imageDataUris.length === 0) return;
         this.busy = true;
+        // 先清空输入框再渲染：成功路径保持输入区为空，失败路径由下方草稿恢复
+        if (input) input.value = '';
         this.render();
+        let failed = false;
         try {
             await this.call('sendMessage', this.selectedStaffId, {
                 text,
@@ -1091,12 +1243,22 @@ export class AgentOfficeEntryWidget extends AgentOperableHTMLElement {
             });
             this.attachments = [];
             this.imageDataUris = [];
+            this.status = '';
             await this.reloadStaffs();
         } catch (error) {
+            failed = true;
             this.status = this.errorText(error);
         } finally {
             this.busy = false;
             this.render();
+            // 发送失败时恢复草稿，让用户直接重试
+            if (failed && rawValue) {
+                const draft = this.shadowRoot?.querySelector<HTMLTextAreaElement>('#message-input');
+                if (draft) {
+                    draft.value = rawValue;
+                    this.updateSendButtonState();
+                }
+            }
         }
     }
 
@@ -1220,19 +1382,28 @@ export class AgentOfficeEntryWidget extends AgentOperableHTMLElement {
         menu.style.right = `${window.innerWidth - rect.right}px`;
         this.shadowRoot.appendChild(menu);
         this.sendMenuOpen = true;
+        // 输入区贴近窗口底部时改为向上展开，避免菜单被视口截断
+        const menuHeight = menu.getBoundingClientRect().height;
+        if (rect.bottom + menuHeight + 8 > window.innerHeight) {
+            menu.style.top = `${Math.max(8, rect.top - menuHeight - 4)}px`;
+        }
         menu.querySelector('[data-action="toggle-ctrl-enter"]')?.addEventListener('click', () => {
             this.ctrlEnterSend = !this.ctrlEnterSend;
             const input = menu.querySelector<HTMLInputElement>('input[type="checkbox"]');
             if (input) input.checked = this.ctrlEnterSend;
             this.updateComposerPlaceholder();
         });
-        setTimeout(() => window.addEventListener('mousedown', this.closeSendMenuHandler), 0);
+        setTimeout(() => {
+            window.addEventListener('mousedown', this.closeSendMenuHandler);
+            window.addEventListener('keydown', this.closeSendMenuOnKeydown);
+        }, 0);
     }
 
     private closeSendMenu(): void {
         this.shadowRoot?.querySelector('#composer-send-menu')?.remove();
         this.sendMenuOpen = false;
         window.removeEventListener('mousedown', this.closeSendMenuHandler);
+        window.removeEventListener('keydown', this.closeSendMenuOnKeydown);
     }
 
     private async createStaff(): Promise<void> {
@@ -1685,7 +1856,7 @@ export class AgentOfficeEntryWidget extends AgentOperableHTMLElement {
     private async addSkillFromDirectory(): Promise<void> {
         if (!this.detail) return;
         this.skillAddMenuOpen = false;
-        this.shadowRoot?.querySelector('.skills-add-menu')?.remove();
+        this.removeSkillAddMenuListeners();
         const source = (await (window as any).fsAPI.selectDirectory()) as string | null;
         if (!source) return;
         await this.call('addSkill', this.detail.id, source);
@@ -1695,7 +1866,7 @@ export class AgentOfficeEntryWidget extends AgentOperableHTMLElement {
     private async addSkillFromZip(): Promise<void> {
         if (!this.detail) return;
         this.skillAddMenuOpen = false;
-        this.shadowRoot?.querySelector('.skills-add-menu')?.remove();
+        this.removeSkillAddMenuListeners();
         const files = (await (window as any).fsAPI.selectFile()) as string[];
         const source = files.find((item) => item.toLowerCase().endsWith('.zip'));
         if (!source) return;
@@ -1706,6 +1877,7 @@ export class AgentOfficeEntryWidget extends AgentOperableHTMLElement {
     private async openBatchSkillPicker(): Promise<void> {
         if (!this.detail) return;
         this.skillAddMenuOpen = false;
+        this.removeSkillAddMenuListeners();
         this.shadowRoot?.querySelector('.skills-add-menu')?.remove();
         const directory = (await (window as any).fsAPI.selectDirectory()) as string | null;
         if (!directory) return;
@@ -1752,6 +1924,7 @@ export class AgentOfficeEntryWidget extends AgentOperableHTMLElement {
     private async openInstalledSkillPicker(): Promise<void> {
         if (!this.detail) return;
         this.skillAddMenuOpen = false;
+        this.removeSkillAddMenuListeners();
         this.selectedInstalledSkillIds.clear();
         this.installedSkills = await this.call('listInstalledSkills', this.detail.id);
         this.modal = 'installed-skills';
@@ -1814,9 +1987,13 @@ export class AgentOfficeEntryWidget extends AgentOperableHTMLElement {
 
     private filterStaffRows(): void {
         const query = this.query.trim().toLowerCase();
+        let visible = 0;
         this.shadowRoot?.querySelectorAll<HTMLElement>('.staff-row[data-search-text]').forEach((row) => {
             row.hidden = Boolean(query) && !(row.dataset.searchText ?? '').includes(query);
+            if (!row.hidden) visible++;
         });
+        const empty = this.shadowRoot?.querySelector<HTMLElement>('[data-search-empty]');
+        if (empty) empty.hidden = visible > 0;
     }
 
     private bindStaffPreviews(): void {

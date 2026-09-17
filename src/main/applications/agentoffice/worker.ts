@@ -133,6 +133,16 @@ export default class AgentOfficeWorker extends BaseWorker {
         return message;
     }
 
+    deleteMessage(staffId: string, messageId: string) {
+        this.repository.deleteMessage(staffId, messageId);
+        void this.emitEvent('messagesChanged', staffId);
+    }
+
+    deleteMessagePart(staffId: string, messageId: string, partIndex: number) {
+        this.repository.deleteMessagePart(staffId, messageId, partIndex);
+        void this.emitEvent('messagesChanged', staffId);
+    }
+
     getHistory(staffId: string, query: HistoryQuery) {
         return this.repository.getHistory(staffId, query);
     }

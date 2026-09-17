@@ -10,5 +10,7 @@
  */
 
 export const zhCn: Record<string, string> = {
-    'app.name': '办公室'
+    'app.name': '办公室',
+    'agentoffice.error.messageNotFound': '消息不存在或已被删除',
+    'agentoffice.error.invalidPartIndex': '内容分块序号无效'
 };
