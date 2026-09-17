@@ -53,19 +53,22 @@ const RESOURCE_TYPE_LABELS: Record<string, string> = {
     skill: '技能'
 };
 
-function getShortName(resourcePath: string): string {
+function getShortName(resourcePath: string, resourceType: string): string {
     if (!resourcePath) return resourcePath;
     const p = resourcePath.replace(/\\/g, '/');
     if (p.endsWith('/')) {
         const parts = p.slice(0, -1).split('/').filter(Boolean);
         return parts.length > 0 ? parts[parts.length - 1] + '/' : p;
     }
-    try {
-        const url = new URL(p);
-        const pathParts = url.pathname.split('/').filter(Boolean);
-        return pathParts.length > 0 ? pathParts[pathParts.length - 1] : url.hostname;
-    } catch {
-        // not a URL
+    // 文件路径不能按 URL 解析：Windows 盘符会被识别为协议，导致中文编码或 # 后的文件名丢失。
+    if (resourceType !== 'file') {
+        try {
+            const url = new URL(p);
+            const pathParts = url.pathname.split('/').filter(Boolean);
+            return pathParts.length > 0 ? pathParts[pathParts.length - 1] : url.hostname;
+        } catch {
+            // not a URL
+        }
     }
     const parts = p.split('/').filter(Boolean);
     return parts.length > 0 ? parts[parts.length - 1] : p;
@@ -240,7 +243,7 @@ class PermissionPrompt extends HTMLElement {
                 ? this._data.sourceTaskName || this._data.sourceTaskId
                 : '';
 
-        const shortName = getShortName(first.resourcePath);
+        const shortName = getShortName(first.resourcePath, first.resourceType);
         const fullPath = requests.map((r) => r.resourcePath).join(', ');
 
         const firstPrefix = prefixOptions.length > 0 ? prefixOptions[0] : null;
