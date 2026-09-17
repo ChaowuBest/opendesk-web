@@ -2,13 +2,14 @@ import { describe, expect, jest, test } from '@jest/globals';
 import type { WebContents } from 'electron';
 import { installMainWindowNavigationGuard } from '../../../main/utils/main-window-navigation.js';
 
-function setup() {
+function setup(currentUrl = 'http://localhost:5173/') {
     const handlers = new Map<string, (event: any) => void>();
     let popup: (details: { url: string }) => { action: string };
     const openExternal = jest.fn();
     installMainWindowNavigationGuard(
         {
             on: (name: string, handler: (event: any) => void) => handlers.set(name, handler),
+            getURL: () => currentUrl,
             setWindowOpenHandler: (handler: typeof popup) => {
                 popup = handler;
             }
@@ -22,6 +23,18 @@ function setup() {
 }
 
 describe('main window navigation boundary', () => {
+    test.each(['http://localhost:5173/', 'file:///app/renderer/index.html'])(
+        'allows the current application page to reload without opening a browser: %s',
+        (url) => {
+            const { handlers, openExternal } = setup(url);
+            const event = { url, isMainFrame: true, preventDefault: jest.fn() };
+            handlers.get('will-frame-navigate')!(event);
+            handlers.get('will-navigate')!(event);
+            expect(event.preventDefault).not.toHaveBeenCalled();
+            expect(openExternal).not.toHaveBeenCalled();
+        }
+    );
+
     test.each([
         'file:///tmp/report.html',
         'http://localhost:5173/other.html',

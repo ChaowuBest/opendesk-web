@@ -12,16 +12,17 @@
 // 副作用导入：模块加载时完成 customElements.define('immersive-desktop')
 import './immersiveDesktop.js';
 import type { ImmersiveDesktop } from './immersiveDesktop.js';
-import { playParticleBurst } from './desktopEffects.js';
+import { playDesktopEnterTransition } from './desktopEffects.js';
 
 let activeDesktop: ImmersiveDesktop | null = null;
 
-/** 打开沉浸桌面（幂等）：先播放粒子动效，再挂载并展开桌面。 */
+/** 打开沉浸桌面（幂等）：从主界面入口位置平滑展开桌面。 */
 export async function openImmersiveDesktop(): Promise<void> {
     if (activeDesktop?.isConnected) return;
-    playParticleBurst();
+    playDesktopEnterTransition();
     const desktop = document.createElement('immersive-desktop') as ImmersiveDesktop;
-    document.body.appendChild(desktop);
+    const desktopHost = document.getElementById('app-root') ?? document.body;
+    desktopHost.appendChild(desktop);
     activeDesktop = desktop;
     try {
         await desktop.open();

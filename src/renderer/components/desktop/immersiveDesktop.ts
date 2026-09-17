@@ -13,7 +13,7 @@ import { escapeHtml } from '../../../common/utils/escape.js';
 import { createRendererTranslator, resolveRendererLocale } from '../../locale.js';
 import { isApplicationVisibleInMenu, type ExperimentalFeatureSettings } from '../../utils/application-visibility.js';
 import { composeCardSrcDoc, hasCardContent } from './cardContent.js';
-import { playParticleConverge } from './desktopEffects.js';
+import { playDesktopExitTransition } from './desktopEffects.js';
 import { buildDesktopStyles } from './desktopStyles.js';
 import { isThemePreference, nextThemePreference } from './desktopTheme.js';
 import type { ThemePreference } from '../../theme/theme-manager.js';
@@ -127,7 +127,7 @@ type PointerState =
           startRect: { x: number; y: number; width: number; height: number };
       };
 
-const DESKTOP_TRANSITION_MS = 420;
+const DESKTOP_TRANSITION_MS = 440;
 const CARD_SNAP_TRANSITION_MS = 140;
 const AUTO_REFRESH_TICK_MS = 60_000;
 const CHAT_TASK_STORAGE_KEY = 'opendesk.immersiveDesktop.chatTaskId';
@@ -136,13 +136,6 @@ const INTERVAL_OPTIONS: Array<{ value: CardInterval; ms: number; key: string }> 
     { value: '15m', ms: 15 * 60_000, key: 'renderer.desktop.card.interval.15m' },
     { value: '1h', ms: 60 * 60_000, key: 'renderer.desktop.card.interval.1h' },
     { value: '1d', ms: 24 * 60 * 60_000, key: 'renderer.desktop.card.interval.1d' }
-];
-
-const SUGGESTION_KEYS = [
-    'renderer.desktop.suggest.weeklyReport',
-    'renderer.desktop.suggest.tripPlan',
-    'renderer.desktop.suggest.summarizeLink',
-    'renderer.desktop.suggest.fixCi'
 ];
 
 const THEME_ICON_MAP: Record<ThemePreference, string> = {
@@ -214,6 +207,7 @@ export class ImmersiveDesktop extends HTMLElement {
     private _editingNewCardId: string | null = null;
 
     connectedCallback(): void {
+        document.body.classList.add('immersive-desktop-open');
         // host 需可聚焦，保证打开后焦点进入桌面、键盘事件（Escape）能被处理
         this.tabIndex = -1;
         this.renderShell();
@@ -235,6 +229,7 @@ export class ImmersiveDesktop extends HTMLElement {
     }
 
     disconnectedCallback(): void {
+        document.body.classList.remove('immersive-desktop-open');
         if (this._clockTimer !== null) window.clearInterval(this._clockTimer);
         if (this._refreshTimer !== null) window.clearInterval(this._refreshTimer);
         this._themeObserver?.disconnect();
@@ -279,8 +274,7 @@ export class ImmersiveDesktop extends HTMLElement {
         this.hideContextMenu();
         this.hideAppList();
         this.closeCardEditor();
-        // 退出动效：粒子从四周向中心收拢，与进入时的喷射对称
-        playParticleConverge();
+        playDesktopExitTransition();
         this.classList.add('od-leaving');
         this.classList.remove('od-active');
         this.setAttribute('aria-hidden', 'true');
@@ -407,13 +401,7 @@ export class ImmersiveDesktop extends HTMLElement {
     private renderShell(): void {
         this.innerHTML = `
         ${buildDesktopStyles()}
-        <div class="od-bg">
-            <div class="od-blob od-blob-1"></div>
-            <div class="od-blob od-blob-2"></div>
-            <div class="od-blob od-blob-3"></div>
-            <div class="od-blob od-blob-4"></div>
-        </div>
-        <div class="od-bloom"></div>
+        <div class="od-bg"></div>
         <div class="od-app">
             <header class="od-topbar">
                 <div class="od-brand"><svg class="od-brand-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="2.5" y="4" width="19" height="13" rx="2"></rect><path d="M8 21h8M12 17v4"></path></svg>OpenDesk <em>${safeText(this.t('renderer.desktop.subtitle'))}</em></div>
@@ -429,28 +417,17 @@ export class ImmersiveDesktop extends HTMLElement {
         </div>
         <div class="od-dock-wrap">
             <div class="od-minimized" data-minimized-dock></div>
-            <div class="od-suggests" data-suggests></div>
             <div class="od-dock">
-                <button class="od-icon-btn" data-apps-btn title="${safeText(this.t('renderer.desktop.appList.title'))}" aria-label="${safeText(this.t('renderer.desktop.appList.title'))}"><i class="fa-solid fa-grip"></i></button>
-                <input class="od-task-input" data-task-input placeholder="${safeText(this.t('renderer.desktop.dock.placeholder'))}">
-                <button class="od-send" data-send-btn disabled title="${safeText(this.t('renderer.desktop.dock.send'))}" aria-label="${safeText(this.t('renderer.desktop.dock.send'))}"><i class="fa-solid fa-arrow-up"></i></button>
+                <div class="od-applist" data-applist role="menu" hidden></div>
+                <button type="button" class="od-icon-btn" data-apps-btn title="${safeText(this.t('renderer.desktop.appList.title'))}" aria-label="${safeText(this.t('renderer.desktop.appList.title'))}" aria-haspopup="menu" aria-expanded="false"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="3" width="7" height="7" rx="3.5"/><rect x="14" y="3" width="7" height="7" rx="3.5"/><rect x="14" y="14" width="7" height="7" rx="3.5"/><rect x="3" y="14" width="7" height="7" rx="3.5"/></svg></button>
+                <input type="text" class="od-task-input" data-task-input placeholder="${safeText(this.t('renderer.desktop.dock.placeholder'))}">
+                <button type="button" class="od-send" data-send-btn disabled title="${safeText(this.t('renderer.desktop.dock.send'))}" aria-label="${safeText(this.t('renderer.desktop.dock.send'))}"><i class="fa-solid fa-arrow-up"></i></button>
             </div>
         </div>
-        <div class="od-applist" data-applist hidden></div>
         <div class="od-context-menu" data-context-menu hidden></div>
         <div data-modal-host></div>
         `;
         this.updateThemeToggle();
-        this.renderSuggestions();
-    }
-
-    private renderSuggestions(): void {
-        const host = this.querySelector('[data-suggests]');
-        if (!host) return;
-        host.innerHTML = SUGGESTION_KEYS.map(
-            (key) =>
-                `<button class="od-sug" data-suggest="${safeText(this.t(key))}">✦ ${safeText(this.t(key))}</button>`
-        ).join('');
     }
 
     private updateLocalizedText(): void {
@@ -459,7 +436,6 @@ export class ImmersiveDesktop extends HTMLElement {
         const addLabel = this.querySelector('[data-add-card-label]');
         if (addLabel) addLabel.textContent = this.t('renderer.desktop.addCard');
         this.updateThemeToggle();
-        this.renderSuggestions();
         this.renderCards();
     }
 
@@ -524,17 +500,6 @@ export class ImmersiveDesktop extends HTMLElement {
         // 空输入时置灰发送按钮，给出明确的可提交信号
         input?.addEventListener('input', () => this.syncSendState());
         this.syncSendState();
-        this.querySelector('[data-suggests]')?.addEventListener('click', (event) => {
-            const sug = (event.target as HTMLElement).closest?.('[data-suggest]') as HTMLElement | null;
-            if (!sug) return;
-            const inputEl = this.querySelector('[data-task-input]') as HTMLInputElement | null;
-            if (inputEl) {
-                inputEl.value = sug.dataset.suggest ?? '';
-                inputEl.focus();
-            }
-            this.syncSendState();
-        });
-
         this.querySelector('[data-apps-btn]')?.addEventListener('click', (event) => {
             event.stopPropagation();
             this.toggleAppList();
@@ -1254,7 +1219,8 @@ export class ImmersiveDesktop extends HTMLElement {
         const desktopWindow = await this.openApplicationWindow('browser');
         if (!desktopWindow) return;
         const browser = desktopWindow.contentElement.querySelector('browser-entry-widget') as
-            (HTMLElement & { openUrl?: (url: string) => void }) | null;
+            | (HTMLElement & { openUrl?: (url: string) => void })
+            | null;
         browser?.openUrl?.(url);
     }
 
@@ -1465,7 +1431,9 @@ export class ImmersiveDesktop extends HTMLElement {
         if (panel.hidden) {
             this.renderAppList();
             panel.hidden = false;
-            this.querySelector('[data-apps-btn]')?.classList.add('active');
+            const button = this.querySelector('[data-apps-btn]');
+            button?.classList.add('active');
+            button?.setAttribute('aria-expanded', 'true');
         } else {
             this.hideAppList();
         }
@@ -1474,7 +1442,9 @@ export class ImmersiveDesktop extends HTMLElement {
     private hideAppList(): void {
         const panel = this.querySelector('[data-applist]') as HTMLElement | null;
         if (panel) panel.hidden = true;
-        this.querySelector('[data-apps-btn]')?.classList.remove('active');
+        const button = this.querySelector('[data-apps-btn]');
+        button?.classList.remove('active');
+        button?.setAttribute('aria-expanded', 'false');
     }
 
     private renderAppList(): void {
@@ -1484,26 +1454,32 @@ export class ImmersiveDesktop extends HTMLElement {
         const signature = this._apps.map((app) => app.bundleName).join(',');
         if (signature === this._renderedAppsSignature && panel.childElementCount) return;
         this._renderedAppsSignature = signature;
+        const defaultIconUrl = './applications/default_icon.png';
         const items = this._apps
-            .map(
-                (app) => `
-                <button class="od-applist-item" data-app-bundle="${safeText(app.bundleName)}" title="${safeText(app.name)}">
-                    ${
-                        app.iconUrl
-                            ? `<img src="${safeText(app.iconUrl)}" alt="" onerror="this.outerHTML='<span class=\\'fallback\\'><i class=\\'fa-solid fa-cube\\'></i></span>'">`
-                            : '<span class="fallback"><i class="fa-solid fa-cube"></i></span>'
-                    }
-                    <span>${safeText(app.name)}</span>
-                </button>`
-            )
+            .map((app) => {
+                const iconUrl = app.iconUrl || `./applications/${app.bundleName}/icon.svg`;
+                const pngFallbackUrl = `./applications/${app.bundleName}/icon.png`;
+                const iconClass = /\.svg$/i.test(iconUrl) ? 'od-app-icon-svg' : '';
+                return `
+                <button type="button" role="menuitem" class="od-applist-item" data-app-bundle="${safeText(app.bundleName)}" title="${safeText(app.name)}">
+                    <span class="od-applist-icon"><img data-app-icon src="${safeText(iconUrl)}" data-png-fallback="${safeText(pngFallbackUrl)}" alt="" class="${iconClass}"></span>
+                    <span class="od-applist-label">${safeText(app.name)}</span>
+                </button>`;
+            })
             .join('');
-        panel.innerHTML = `
-            <div class="od-applist-head">
-                <span>${safeText(this.t('renderer.desktop.appList.title'))}</span>
-                <button class="od-icon-btn" data-applist-close style="width:26px;height:26px;font-size:12px"><i class="fa-solid fa-xmark"></i></button>
-            </div>
-            <div class="od-applist-grid">${items || `<div class="od-applist-empty">${safeText(this.t('renderer.desktop.appList.empty'))}</div>`}</div>`;
-        panel.querySelector('[data-applist-close]')?.addEventListener('click', () => this.hideAppList());
+        panel.innerHTML = `<div class="od-applist-grid">${items || `<div class="od-applist-empty">${safeText(this.t('renderer.desktop.appList.empty'))}</div>`}</div>`;
+        panel.querySelectorAll<HTMLImageElement>('[data-app-icon]').forEach((image) => {
+            image.addEventListener('error', () => {
+                const step = Number(image.dataset.fallbackStep ?? '0');
+                if (step === 0) {
+                    image.dataset.fallbackStep = '1';
+                    image.src = image.dataset.pngFallback ?? defaultIconUrl;
+                } else if (step === 1) {
+                    image.dataset.fallbackStep = '2';
+                    image.src = defaultIconUrl;
+                }
+            });
+        });
         panel.querySelector('.od-applist-grid')?.addEventListener('click', (event) => {
             const item = (event.target as HTMLElement).closest?.('[data-app-bundle]') as HTMLElement | null;
             if (!item) return;
@@ -1848,7 +1824,9 @@ export class ImmersiveDesktop extends HTMLElement {
     private async resolveApplicationFrameSrc(bundleName: string): Promise<string> {
         try {
             const config = (await globalWindow.applicationRegistryAPI?.getApplicationGUIConfig?.(bundleName)) as
-                ApplicationGuiConfig | null | undefined;
+                | ApplicationGuiConfig
+                | null
+                | undefined;
             if (config?.source === 'user' && config.entryUrl) {
                 return config.entryUrl;
             }
@@ -1896,7 +1874,7 @@ export class ImmersiveDesktop extends HTMLElement {
             width: 560,
             height: Math.min(680, Math.max(420, window.innerHeight * 0.6))
         });
-        desktopWindow.contentElement.innerHTML = `<task-view task_id="${safeText(taskId)}"></task-view>`;
+        desktopWindow.contentElement.innerHTML = `<task-view embedded task_id="${safeText(taskId)}"></task-view>`;
         this.attachWindow(desktopWindow);
     }
 
@@ -1917,7 +1895,7 @@ export class ImmersiveDesktop extends HTMLElement {
             width: 720,
             height: Math.min(660, Math.max(420, window.innerHeight * 0.58))
         });
-        desktopWindow.contentElement.innerHTML = `<task-view task_id="${safeText(taskId)}"></task-view>`;
+        desktopWindow.contentElement.innerHTML = `<task-view embedded task_id="${safeText(taskId)}"></task-view>`;
         this.attachWindow(desktopWindow);
     }
 

@@ -2244,6 +2244,7 @@ class SettingPanel extends HTMLElement {
             return items || `<p class="od-sp-empty-hint">${this._t('sp.environ.empty')}</p>`;
         };
 
+        // “开发与调试”必须保持为通用设置的最后一个分区；以后新增的通用设置项应放在它前面。
         return `
         <section class="sp-section">
             <h2 class="sp-section-title">${this._t('sp.general.display')}</h2>
@@ -2383,9 +2384,9 @@ class SettingPanel extends HTMLElement {
 
         ${this.renderConfigManagementSection()}
 
-        ${this.renderDebugModeSection()}
-
         ${this.renderTelemetrySection()}
+
+        ${this.renderDebugModeSection()}
         `;
     }
 
@@ -2452,7 +2453,7 @@ class SettingPanel extends HTMLElement {
                         <span id="log-raw-llm-toggle" class="sp-toggle-track" style="cursor:pointer" data-key="log_raw_llm_request"></span>
                     </label>
                 </div>
-                <div id="experimental-features-section" style="border-top:1px solid var(--sp-color-border-light);margin-top:8px;padding-top:12px">
+                <div id="experimental-features-section" style="margin-top:8px;padding-top:12px">
                     <h3 class="sp-section-subtitle" style="display:block;margin:0 0 4px">${this._t('renderer.settings.experimentalFeatures')}</h3>
                     <div class="sp-toggle-row">
                         <div class="sp-toggle-info">
