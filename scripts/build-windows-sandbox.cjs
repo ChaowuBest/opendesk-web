@@ -9,7 +9,9 @@ const fs = require('node:fs');
 const path = require('node:path');
 const { spawnSync } = require('node:child_process');
 
-if (process.platform !== 'win32') {
+// 仅在 Windows 构建机 + Windows 目标平台时构建沙箱；OHOS 交叉构建通过
+// OPENDESK_TARGET_PLATFORM 环境变量声明目标平台，由构建工程按进程注入。
+if (process.platform !== 'win32' || process.env.OPENDESK_TARGET_PLATFORM === 'ohos') {
     process.stdout.write('[sandbox] Windows-only native build skipped on this platform.\n');
     process.exit(0);
 }
