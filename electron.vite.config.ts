@@ -65,6 +65,14 @@ export default defineConfig(({ mode }) => {
                         // chunks 子目录，main.ts 内 __dirname 相对路径（preload、worker 等）全部失效
                         app: path.join(__dirname, 'src', 'main', 'main.ts'),
                         worker: path.join(__dirname, 'src', 'main', 'worker.ts'),
+                        'task-search-worker': path.join(
+                            __dirname,
+                            'src',
+                            'main',
+                            'services',
+                            'task-search',
+                            'worker.ts'
+                        ),
                         'workflow-runtime-worker': path.join(
                             __dirname,
                             'src',

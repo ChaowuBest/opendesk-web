@@ -313,6 +313,23 @@ function exposeTaskManagerAPI() {
             if (result.status !== 'ok') throw new Error(result.message);
             return result.data;
         },
+        searchTasks: async (query, limit) => {
+            const result = await ipcRenderer.invoke('taskManager:searchTasks', query, limit);
+            if (result.status !== 'ok') throw new Error('Task search unavailable');
+            return result.data;
+        },
+        subscribeSearchUpdates: (callback) => {
+            const listener = (_event, unavailable) => callback(unavailable);
+            ipcRenderer.on('taskManager:searchChanged', listener);
+            // Listen first, then request a reconciliation when the search UI opens.
+            ipcRenderer.send('taskManager:refreshSearchIndex');
+            const unsubscribe = () => {
+                ipcRenderer.removeListener('taskManager:searchChanged', listener);
+                window.removeEventListener('beforeunload', unsubscribe);
+            };
+            window.addEventListener('beforeunload', unsubscribe);
+            return unsubscribe;
+        },
         subscribeTaskListUpdate: async (callback) => {
             try {
                 const { subscriptionId, listener } = await createTaskListUpdateSubscription(ipcRenderer, callback);

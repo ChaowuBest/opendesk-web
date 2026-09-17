@@ -1,0 +1,249 @@
+/**
+ * Copyright (c) 2026 The OpenDesk Team
+ * OpenDesk is licensed under Mulan PSL v2.
+ * You can use this software according to the terms and conditions of the Mulan PSL v2.
+ * You may obtain a copy of Mulan PSL v2 at: http://license.coscl.org.cn/MulanPSL2
+ * THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND,
+ * EITHER EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT,
+ * MERCHANTABILITY OR FIT FOR A PARTICULAR PURPOSE.
+ * See the Mulan PSL v2 for more details.
+ */
+
+.od-task-search {
+    position: fixed;
+    --search-top: 80px;
+    inset: var(--search-top) 0 auto;
+    margin: 0 auto;
+    height: fit-content;
+    --search-bg: #fff;
+    --search-fg: #262626;
+    --search-muted: #777;
+    --search-hover: #f3f3f3;
+    --search-border: #dedede;
+    width: min(560px, calc(100vw - 24px));
+    max-width: none;
+    max-height: min(560px, calc(100dvh - var(--search-top) - 24px));
+    padding: 8px;
+    border: 1px solid var(--search-border);
+    border-radius: var(--radius-xl, 12px);
+    background: var(--search-bg);
+    color: var(--search-fg);
+    box-shadow: 0 24px 80px #0003;
+    overflow: hidden;
+    font: inherit;
+    line-height: 1.5;
+}
+.od-task-search[open] {
+    display: flex;
+    flex-direction: column;
+}
+.od-task-search::backdrop {
+    background: #0004;
+}
+html[data-theme='dark'] .od-task-search {
+    --search-bg: #2b2b2b;
+    --search-fg: #e8e8e8;
+    --search-muted: #999;
+    --search-hover: #393939;
+    --search-border: #424242;
+}
+.od-task-search-top {
+    display: flex;
+    align-items: center;
+    flex-shrink: 0;
+    gap: 8px;
+    padding: 4px 10px 8px;
+}
+.od-task-search-top input {
+    flex: 1;
+    min-width: 0;
+    padding: 4px 0;
+    border: 0;
+    outline: none;
+    background: transparent;
+    color: inherit;
+    font: inherit;
+    font-size: var(--fs-base, 13px);
+}
+.od-task-search-top input::placeholder {
+    color: var(--search-muted);
+}
+.od-task-search-close {
+    width: 26px;
+    height: 26px;
+    flex-shrink: 0;
+    border: 0;
+    border-radius: var(--radius-md, 6px);
+    font-size: var(--fs-xl, 16px);
+    background: transparent;
+    color: var(--search-muted);
+    cursor: pointer;
+}
+.od-task-search-close:hover {
+    background: var(--search-hover);
+    color: var(--search-fg);
+}
+.od-task-search-heading {
+    display: flex;
+    align-items: center;
+    flex-shrink: 0;
+    gap: 8px;
+    padding: 0 10px 6px;
+    font-size: var(--fs-sm, 11px);
+    color: var(--search-muted);
+}
+.od-task-search-spinner {
+    display: inline-block;
+    width: var(--icon-sm, 10px);
+    height: var(--icon-sm, 10px);
+    border: 1.5px solid var(--search-border);
+    border-top-color: var(--search-muted);
+    border-radius: 50%;
+    animation: od-search-spin 0.8s linear infinite;
+}
+.od-task-search [hidden] {
+    display: none !important;
+}
+.od-task-search-scroll {
+    overflow-y: auto;
+    min-height: 0;
+    overscroll-behavior: contain;
+    scrollbar-width: thin;
+}
+.od-task-search-result {
+    display: block;
+    width: 100%;
+    padding: 8px 10px;
+    border: none;
+    border-radius: var(--radius-lg, 8px);
+    text-align: left;
+    background: transparent;
+    color: inherit;
+    font: inherit;
+    cursor: pointer;
+}
+.od-task-search-result:hover,
+.od-task-search-result:focus-visible {
+    background: var(--search-hover);
+    outline: none;
+}
+.od-task-search-result:disabled {
+    cursor: wait;
+}
+.od-task-search-result-line {
+    display: flex;
+    align-items: baseline;
+    gap: 12px;
+}
+.od-task-search-result-title {
+    flex: 1;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    font-size: var(--fs-md, 12px);
+}
+.od-task-search-workspace {
+    max-width: 30%;
+    flex-shrink: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    color: var(--search-muted);
+    font-size: var(--fs-sm, 11px);
+}
+.od-task-search-snippet {
+    display: block;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    color: var(--search-muted);
+    margin-top: 2px;
+    font-size: var(--fs-sm, 11px);
+}
+.od-task-search mark {
+    background: transparent;
+    color: var(--search-fg);
+    font-weight: 650;
+}
+.od-task-search-snippet-matched {
+    display: flex;
+}
+.od-task-search-snippet-before,
+.od-task-search-snippet-after {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: pre;
+}
+.od-task-search-snippet-before {
+    flex: 0 1 auto;
+    max-width: 30%;
+    /* Ellipsize the far end of the prefix; bdi preserves the text's own direction. */
+    direction: rtl;
+    text-align: right;
+}
+.od-task-search-snippet-after {
+    flex: 1 1 auto;
+}
+.od-task-search-snippet-before bdi {
+    display: inline-block;
+}
+.od-task-search-snippet-matched > mark {
+    flex: 0 0 auto;
+    max-width: 100%;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: pre;
+}
+.od-task-search-status {
+    flex-shrink: 0;
+    padding: 8px 10px 4px;
+    color: var(--search-muted);
+    font-size: var(--fs-sm, 11px);
+}
+.od-task-search-status:empty {
+    display: none;
+}
+.od-task-search-more,
+.od-task-search-status button {
+    flex-shrink: 0;
+    border: 0;
+    background: transparent;
+    color: var(--search-fg);
+    padding: 8px;
+    cursor: pointer;
+    font: inherit;
+    font-size: var(--fs-md, 12px);
+}
+.od-task-search-more {
+    display: block;
+    width: 100%;
+}
+.od-task-search-more:hover {
+    background: var(--search-hover);
+    border-radius: var(--radius-lg, 8px);
+}
+@keyframes od-search-spin {
+    to {
+        transform: rotate(360deg);
+    }
+}
+@media (prefers-reduced-motion: reduce) {
+    .od-task-search-spinner {
+        animation-duration: 2s;
+    }
+}
+@media (max-width: 480px) {
+    .od-task-search {
+        width: calc(100vw - 20px);
+    }
+    .od-task-search-result-line {
+        gap: 10px;
+    }
+}
+@media (max-height: 500px) {
+    .od-task-search {
+        --search-top: 48px;
+    }
+}

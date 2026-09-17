@@ -28,6 +28,7 @@ import {
 } from '../sidebarTaskGroups.js';
 import { captureSidebarScrollState, restoreSidebarScrollState } from '../sidebarScrollState.js';
 import { TaskListRefreshScheduler } from './taskListRefreshScheduler.js';
+import { TaskSearchDialog } from './taskSearchDialog.js';
 
 const TASK_PAGE_SIZE = 30;
 const TASK_VIEW_STORAGE_KEY = 'opendesk-sidebar-task-view';
@@ -277,6 +278,8 @@ class SideBar extends HTMLElement {
     }
 
     disconnectedCallback() {
+        this._taskSearchDialog?.destroy();
+        this._taskSearchDialog = null;
         this._dismissRecentTasksMenu();
         if (this._chatBadgeTimer) {
             clearTimeout(this._chatBadgeTimer);
@@ -454,17 +457,29 @@ class SideBar extends HTMLElement {
 
         const searchInput = this.querySelector('#task-search-input');
         const searchClear = this.querySelector('#task-search-clear');
-        searchInput.addEventListener('input', () => {
-            this._searchQuery = searchInput.value.trim();
-            searchClear.style.display = this._searchQuery ? 'flex' : 'none';
-            this.reloadTaskList();
-        });
-        searchClear.addEventListener('click', () => {
-            searchInput.value = '';
-            this._searchQuery = '';
-            searchClear.style.display = 'none';
-            this.reloadTaskList();
-            searchInput.focus();
+        searchInput.readOnly = true;
+        searchInput.setAttribute('aria-haspopup', 'dialog');
+        searchClear.style.display = 'none';
+        searchInput.addEventListener('click', () => {
+            if (!this._taskSearchDialog) {
+                this._taskSearchDialog = new TaskSearchDialog({
+                    getTasks: () => this.taskList,
+                    search: (query, limit) => window.taskManagerAPI.searchTasks(query, limit),
+                    subscribe: (callback) => window.taskManagerAPI.subscribeSearchUpdates(callback),
+                    translate: (key) => this._t(key),
+                    open: async (hit) => {
+                        await window.globalControlAPI.openTask(hit.taskId);
+                        if (!hit.messageId) return;
+                        const taskView = [...document.querySelectorAll('task-view')].find(
+                            (view) => view.getAttribute('task_id') === hit.taskId
+                        );
+                        if (!taskView || !(await taskView.scrollToSearchMessage(hit.messageId))) {
+                            throw new Error('Search message is no longer available');
+                        }
+                    }
+                });
+            }
+            this._taskSearchDialog.show();
         });
 
         const appsBtn = this.querySelector('#open-apps-btn');
