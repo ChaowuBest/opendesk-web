@@ -18,7 +18,7 @@ import { setImmediate } from 'node:timers/promises';
 import AdmZip from 'adm-zip';
 import { buildAtomicWriteTmpPath } from './temp.js';
 
-// These codes are protocol values; GUI/TUI translate them at the presentation boundary.
+// These codes are protocol values; the GUI translates them at the presentation boundary.
 export type TaskTransferErrorCode =
     | 'invalidBundle'
     | 'invalidTask'

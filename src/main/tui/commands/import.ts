@@ -11,8 +11,7 @@
 
 import type { OpenDeskTUI } from '../entry.js';
 import { InfoOverlay } from '../components/notice.js';
-import { importTaskEntries, prepareTaskImport } from '../../aikernel/task/transfer.js';
-import { TaskTransferError } from '../../utils/task-bundle.js';
+import { TaskState } from '../../aikernel/states/tasks.js';
 import { getFileCompletions, expandPath } from '../components/file-completions.js';
 import path from 'path';
 import fs from 'fs';
@@ -68,39 +67,19 @@ export function registerImportCommand(tui: OpenDeskTUI): void {
                 return;
             }
             try {
-                const entries = await prepareTaskImport(jsonPath, tui.taskManagerState);
-                const result = await importTaskEntries(
-                    entries,
-                    entries.map((entry) => entry.id),
-                    tui.taskManagerState,
-                    typeof entries[0]?.json?.workspace === 'string' ? entries[0].json.workspace : tui.workspace
-                );
-                if (!result.imported.length)
-                    throw new TaskTransferError(
-                        result.failed[0]?.error === 'writeFailed' ? 'writeFailed' : 'invalidTask'
-                    );
-                const initializedTask = tui.taskManagerState.getTask(result.imported[0].taskId);
+                const task = TaskState.load(jsonPath, tui.taskManagerState);
+                task.task_id = crypto.randomUUID();
+                task._dirty = true;
+                tui.taskManagerState.tasks.push(task);
+                tui.taskManagerState.save();
+                tui.taskManagerState.publishTaskListUpdate();
+                const initializedTask = tui.taskManagerState.getTask(task.task_id);
                 if (!initializedTask) {
                     throw new Error(t('context.task.not.found'));
                 }
                 await tui.switchToTask(initializedTask);
-                if (result.failed.length) {
-                    new InfoOverlay(tui, {
-                        title: t('taskTransfer.import'),
-                        message: t('taskTransfer.importResult', {
-                            imported: result.imported.length,
-                            failed: result.failed.length,
-                            skipped: result.skipped
-                        })
-                    }).show();
-                }
             } catch (err) {
-                const message =
-                    err instanceof TaskTransferError
-                        ? t(`taskTransfer.error.${err.code}`)
-                        : err instanceof Error
-                          ? err.message
-                          : String(err);
+                const message = err instanceof Error ? err.message : String(err);
                 const info = new InfoOverlay(tui, {
                     title: t('import.fail'),
                     message: `${t('import.parse.fail')}${message}`
