@@ -197,8 +197,13 @@ export class BaseTool<T extends z.ZodType> {
      * undefined 表示不限定；空数组表示不向任何 Agent 暴露。
      */
     agentIds?: readonly string[];
-    executor?: (args: z.output<T>, taskState?: TaskState) => Promise<string>;
-    universalExecutor?: (args: z.output<T>, result: ToolResult, taskState?: TaskState) => Promise<void>;
+    executor?: (args: z.output<T>, taskState?: TaskState, toolCall?: ToolCall) => Promise<string>;
+    universalExecutor?: (
+        args: z.output<T>,
+        result: ToolResult,
+        taskState?: TaskState,
+        toolCall?: ToolCall
+    ) => Promise<void>;
     /**
      * 标记此工具是否需要串行执行。
      * 为 true 时，同一批次中的多个此类工具调用将按顺序执行，避免并发写入同一文件导致竞态条件。
@@ -316,7 +321,12 @@ export class BaseTool<T extends z.ZodType> {
      * 设置工具的通用执行函数，如果设置，则优先使用通用执行函数，否则使用普通执行函数
      */
     setUniversalExecutor(
-        universalExecutor: (args: z.output<T>, result: ToolResult, taskState?: TaskState) => Promise<void>
+        universalExecutor: (
+            args: z.output<T>,
+            result: ToolResult,
+            taskState?: TaskState,
+            toolCall?: ToolCall
+        ) => Promise<void>
     ): ThisType<T> {
         this.universalExecutor = universalExecutor;
         return this;
@@ -351,7 +361,8 @@ export class BaseTool<T extends z.ZodType> {
     async execute(
         args: z.output<T>,
         updatedCallback?: (result: ToolResult) => void,
-        taskState?: TaskState
+        taskState?: TaskState,
+        toolCall?: ToolCall
     ): Promise<ToolResult> {
         const parsedArgs = this.validateArgs(args);
         if (!parsedArgs.success) {
@@ -365,7 +376,7 @@ export class BaseTool<T extends z.ZodType> {
         if (this.universalExecutor) {
             const result = new ToolResult();
             result.updatedCallback = updatedCallback;
-            return await this.universalExecutor(executionArgs, result, taskState)
+            return await this.universalExecutor(executionArgs, result, taskState, toolCall)
                 .then(() => {
                     result.status = 'success';
                     return result;
@@ -377,7 +388,7 @@ export class BaseTool<T extends z.ZodType> {
                 });
         } else if (this.executor) {
             const result = new ToolResult();
-            return await this.executor(executionArgs, taskState)
+            return await this.executor(executionArgs, taskState, toolCall)
                 .then((stringResult) => {
                     result.status = 'success';
                     result.result = stringResult;

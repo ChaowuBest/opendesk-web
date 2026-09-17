@@ -10,7 +10,12 @@
  */
 
 import crypto from 'crypto';
-import type { AskUserProvider, AskUserRequest, AskUserResponse } from '../../aikernel/interaction/tools.js';
+import type {
+    AskUserProvider,
+    AskUserPromptContext,
+    AskUserRequest,
+    AskUserResponse
+} from '../../aikernel/interaction/tools.js';
 import { EventBus } from './event-bus.js';
 
 export type OpenCodeQuestionAnswer = string[];
@@ -69,6 +74,7 @@ function toAskUserAnswers(answers: OpenCodeQuestionAnswer[]): Record<number, str
 export class ServerQuestionBroker implements AskUserProvider {
     private static instance: ServerQuestionBroker | null = null;
     private pending = new Map<string, PendingQuestion>();
+    private activeAssistantMessages = new Map<string, string>();
 
     static getInstance(): ServerQuestionBroker {
         if (!ServerQuestionBroker.instance) {
@@ -81,7 +87,11 @@ export class ServerQuestionBroker implements AskUserProvider {
         return Array.from(this.pending.values()).map((entry) => entry.info);
     }
 
-    async prompt(request: AskUserRequest): Promise<AskUserResponse> {
+    setActiveAssistantMessage(taskId: string, messageID: string): void {
+        this.activeAssistantMessages.set(taskId, messageID);
+    }
+
+    async prompt(request: AskUserRequest, context?: AskUserPromptContext): Promise<AskUserResponse> {
         const id = ascendingQuestionId();
         const directory = request.workspace;
         const info: OpenCodeQuestionRequest = {
@@ -98,6 +108,14 @@ export class ServerQuestionBroker implements AskUserProvider {
                 custom: true
             }))
         };
+
+        const messageID = this.activeAssistantMessages.get(request.taskId);
+        if ((messageID || context?.messageId) && context?.toolCallId) {
+            info.tool = {
+                messageID: messageID || context.messageId!,
+                callID: context.toolCallId
+            };
+        }
 
         return await new Promise<AskUserResponse>((resolve) => {
             this.pending.set(id, { info, directory, resolve });

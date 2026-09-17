@@ -163,7 +163,9 @@ describe('opencode session routes', () => {
         jest.spyOn(ServerPermissionBroker, 'getInstance').mockReturnValue({
             setActiveAssistantMessage: jest.fn()
         } as any);
-        jest.spyOn(ServerQuestionBroker, 'getInstance').mockReturnValue({} as any);
+        jest.spyOn(ServerQuestionBroker, 'getInstance').mockReturnValue({
+            setActiveAssistantMessage: jest.fn()
+        } as any);
     }
 
     test('POST /session sets task model from opencode model string', async () => {

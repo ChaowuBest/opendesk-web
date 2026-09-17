@@ -1545,6 +1545,7 @@ export function publishChunkEvents(
             publishStreamingMessagePart(sessionID, workspace, part);
         }
         ServerPermissionBroker.getInstance().setActiveAssistantMessage(chunk.task_id, assistantMsgId);
+        ServerQuestionBroker.getInstance().setActiveAssistantMessage(chunk.task_id, assistantMsgId);
         return undefined;
     }
 
@@ -1566,6 +1567,7 @@ export function publishChunkEvents(
             }
         }
         ServerPermissionBroker.getInstance().setActiveAssistantMessage(chunk.task_id, assistantMsgId);
+        ServerQuestionBroker.getInstance().setActiveAssistantMessage(chunk.task_id, assistantMsgId);
     }
     return undefined;
 }

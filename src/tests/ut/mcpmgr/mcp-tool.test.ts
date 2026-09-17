@@ -51,7 +51,7 @@ test('injects a required description only for tools without that business parame
 
     const result = await tool.execute(args);
     expect(result.status).toBe('success');
-    expect(execute).toHaveBeenCalledWith({ query: 'text' }, undefined);
+    expect(execute).toHaveBeenCalledWith({ query: 'text' }, undefined, undefined);
 
     const html = await tool.renderToolCall(call(validation.success ? validation.data : {}));
     expect(html).toContain('title="server · search"');
@@ -72,7 +72,7 @@ test('forwards the display description when the server schema permits extra para
 
     const args = { query: 'text', description: 'Find documentation' };
     expect((await tool.execute(args)).status).toBe('success');
-    expect(execute).toHaveBeenCalledWith(args, undefined);
+    expect(execute).toHaveBeenCalledWith(args, undefined, undefined);
 });
 
 test('reuses and preserves a server-defined description parameter', async () => {
@@ -90,7 +90,7 @@ test('reuses and preserves a server-defined description parameter', async () => 
     expect(Object.keys(tool.getJsonSchema().properties)).toEqual(['description', 'name']);
     const result = await tool.execute({ description: 'Business data', name: 'item' });
     expect(result.status).toBe('success');
-    expect(execute).toHaveBeenCalledWith({ description: 'Business data', name: 'item' }, undefined);
+    expect(execute).toHaveBeenCalledWith({ description: 'Business data', name: 'item' }, undefined, undefined);
 
     const html = await tool.renderToolCall(call({ description: 'Business data', name: 'item' }));
     expect(html).toContain('Business data');
@@ -120,7 +120,7 @@ test('preserves composed schemas and detects a business description inside allOf
     expect(tool.validateArgs({ anything: true }).success).toBe(false);
     const result = await tool.execute({ description: 'Business data', count: 2 });
     expect(result.status).toBe('success');
-    expect(execute).toHaveBeenCalledWith({ description: 'Business data', count: 2 }, undefined);
+    expect(execute).toHaveBeenCalledWith({ description: 'Business data', count: 2 }, undefined, undefined);
 });
 
 test('keeps composed validation when injecting a display description', async () => {
@@ -145,7 +145,7 @@ test('keeps composed validation when injecting a display description', async () 
     expect(tool.validateArgs({ description: 'Find docs' }).success).toBe(false);
     const result = await tool.execute({ query: 'button', description: 'Find docs' });
     expect(result.status).toBe('success');
-    expect(execute).toHaveBeenCalledWith({ query: 'button' }, undefined);
+    expect(execute).toHaveBeenCalledWith({ query: 'button' }, undefined, undefined);
 });
 
 test('truncates string descriptions and falls back to the full tool name for other types', async () => {
@@ -222,7 +222,7 @@ test('keeps the purpose after TaskState validates and completes the tool call', 
 
     expect(toolCall.status).toBe('success');
     expect(toolCall.args_object).toEqual(args);
-    expect(execute).toHaveBeenCalledWith({ query: 'button' }, task);
+    expect(execute).toHaveBeenCalledWith({ query: 'button' }, task, toolCall);
     expect(pendingHtml).toContain('Find button documentation');
     expect(runningHtml).toContain('Find button documentation');
     expect(toolCall.rendered).toContain('MCP工具');
@@ -288,7 +288,7 @@ test('keeps every purpose while multiple MCP calls execute in parallel', async (
         expect(completedHtml).toContain(purpose);
     }
     for (let index = 0; index < executors.length; index++) {
-        expect(executors[index]).toHaveBeenCalledWith({ query: `query-${index}` }, task);
+        expect(executors[index]).toHaveBeenCalledWith({ query: `query-${index}` }, task, part.toolcalls[index]);
         expect(part.toolcalls[index].args_object).toEqual({
             query: `query-${index}`,
             description: purposes[index]
