@@ -66,7 +66,7 @@ tasks/<task_id>.json
 - `src/main/utils/task-bundle.ts`：文件格式、大小限制、JSON 校验和导入状态归一化。
 - `src/main/aikernel/task/transfer.ts`：整批导入和批量导出。
 - `TaskManagerState.commitImportedTasks()`：任务文件及索引的整批提交与失败回滚。
-- `src/main/task-transfer-ipc.ts`：文件对话框、预览生命周期、主窗口来源校验及操作互斥。
+- `src/main/utils/task-transfer-ipc.ts`：文件对话框、预览生命周期、主窗口来源校验及操作互斥。
 - `src/renderer/components/taskTransferDialog.js`：选择、搜索、预览、处理状态、结果和键盘焦点。
 
 自动测试覆盖格式往返、旧 JSON、损坏/超限文件、虚假 ZIP 大小、整批回滚、活动目标暂停、立即重启恢复、重复导入生成不同 ID 和 renderer 交互。

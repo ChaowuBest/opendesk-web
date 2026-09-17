@@ -13,14 +13,18 @@ import { dialog, ipcMain, type BrowserWindow } from 'electron';
 import { randomUUID } from 'node:crypto';
 import { stat } from 'node:fs/promises';
 import path from 'node:path';
-import type { TaskManagerState } from './aikernel/task/manager.js';
-import { exportTaskBundle, importTaskEntries } from './aikernel/task/transfer.js';
-import { readTaskImportFile, TaskTransferError, type TaskImportEntry } from './utils/task-bundle.js';
-import { Setting } from './utils/setting.js';
-import { logger } from './utils/logger.js';
-import { t } from '../locale/index.js';
+import type { TaskManagerState } from '../aikernel/task/manager.js';
+import type * as TaskTransfer from '../aikernel/task/transfer.js';
+import { readTaskImportFile, TaskTransferError, type TaskImportEntry } from './task-bundle.js';
+import { Setting } from './setting.js';
+import { logger } from './logger.js';
+import { t } from '../../locale/index.js';
 
-export function registerTaskTransferHandlers(manager: TaskManagerState, getWindow: () => BrowserWindow | null): void {
+export function registerTaskTransferHandlers(
+    manager: TaskManagerState,
+    getWindow: () => BrowserWindow | null,
+    { exportTaskBundle, importTaskEntries }: typeof TaskTransfer
+): void {
     let preview: { token: string; entries: TaskImportEntry[] } | undefined;
     let expiry: ReturnType<typeof setTimeout> | undefined;
     let busy = false;

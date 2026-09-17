@@ -11,10 +11,6 @@ jest.unstable_mockModule('electron', () => ({
     dialog: { showOpenDialog: chooseFile },
     ipcMain: { handle: (name: string, handler: any) => handlers.set(name, handler) }
 }));
-jest.unstable_mockModule('../../../main/aikernel/task/transfer.js', () => ({
-    importTaskEntries: importTasks,
-    exportTaskBundle: jest.fn()
-}));
 jest.unstable_mockModule('../../../main/utils/setting.js', () => ({
     Setting: { getInstance: () => ({ getEffectiveWorkspace: currentWorkspace }) }
 }));
@@ -29,7 +25,7 @@ describe('task transfer workspace IPC', () => {
     const manager = {};
     const invoke = (name: string, ...args: any[]) => handlers.get(`taskManager:${name}`)!({ sender }, ...args);
     beforeAll(async () => {
-        ({ registerTaskTransferHandlers: register } = await import('../../../main/task-transfer-ipc.js'));
+        ({ registerTaskTransferHandlers: register } = await import('../../../main/utils/task-transfer-ipc.js'));
     });
     beforeEach(async () => {
         handlers.clear();
@@ -41,7 +37,10 @@ describe('task transfer workspace IPC', () => {
         );
         chooseFile.mockResolvedValue({ canceled: false, filePaths: [source] });
         importTasks.mockReset().mockResolvedValue(1);
-        register(manager, () => ({ webContents: sender }));
+        register(manager, () => ({ webContents: sender }), {
+            importTaskEntries: importTasks,
+            exportTaskBundle: jest.fn()
+        });
         token = (await invoke('previewTaskImport')).data.token;
     });
     afterEach(async () => {
