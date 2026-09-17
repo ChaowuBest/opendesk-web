@@ -12,7 +12,7 @@
 import { Hono } from 'hono';
 import { serve as honoServe } from '@hono/node-server';
 import { GlobalRoutes } from './routes/global.js';
-import { SessionRoutes } from './routes/session.js';
+import { SessionRoutes, getServerDefaultModel, setServerDefaultModel } from './routes/session.js';
 import { ConfigRoutes } from './routes/config.js';
 import { ProviderRoutes } from './routes/provider.js';
 import { EventRoutes } from './routes/event.js';
@@ -75,9 +75,11 @@ function create(opts: {
 }
 
 export async function listen(opts: ServerOptions): Promise<ServerListener> {
+    const setting = Setting.getInstance();
+    setServerDefaultModel(setting.getData().default_model || undefined);
     const permissionRuntime = new ConfigPermissionRuntime(
         opts.useConfigPermissions === true,
-        Setting.getInstance().getData().permission
+        setting.getData().permission
     );
     const app = create({
         cors: opts.cors,
@@ -101,6 +103,10 @@ export async function listen(opts: ServerOptions): Promise<ServerListener> {
                         port: info.port,
                         url,
                         async stop() {
+                            const model = getServerDefaultModel();
+                            if (model && setting.getModelInstance(model, 'chat')) {
+                                setting.setData({ ...setting.getData(), default_model: model });
+                            }
                             ServerPermissionBroker.getInstance().dispose();
                             ServerQuestionBroker.getInstance().dispose();
                             EventBus.dispose();

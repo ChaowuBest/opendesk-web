@@ -207,6 +207,12 @@ async function startOpenCodeServer(opts: ServeOptions) {
             console.log(`[serve] 认证已启用 (HTTP Basic Auth)`);
         }
 
+        const shutdown = () => {
+            void server.stop().finally(() => process.exit(0));
+        };
+        process.on('SIGINT', shutdown);
+        process.on('SIGTERM', shutdown);
+
         // 保持进程运行
         await new Promise(() => {});
         await server.stop();

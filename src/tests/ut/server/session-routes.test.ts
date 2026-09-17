@@ -2,7 +2,9 @@ import { jest } from '@jest/globals';
 import {
     registerServerSubTaskLifecycle,
     SessionRoutes,
-    publishChunkEvents
+    publishChunkEvents,
+    getServerDefaultModel,
+    setServerDefaultModel
 } from '../../../main/server/opencode/routes/session.js';
 import { ApplicationRegistry } from '../../../main/applications/registry.js';
 import { GlobalState } from '../../../main/aikernel/states/global.js';
@@ -78,6 +80,7 @@ function baseSettingData(): SettingData {
 function mockSetting(data = baseSettingData()) {
     jest.spyOn(Setting, 'getInstance').mockReturnValue({
         getData: jest.fn(() => data),
+        getModelInstance: jest.fn((alias: string) => data.models.find((model) => model.alias === alias) ?? null),
         data
     } as unknown as Setting);
 }
@@ -148,6 +151,7 @@ describe('opencode session routes', () => {
 
     afterEach(() => {
         jest.restoreAllMocks();
+        setServerDefaultModel(undefined);
     });
 
     function mockSessionDependencies() {
@@ -188,6 +192,33 @@ describe('opencode session routes', () => {
                 })
             })
         );
+    });
+
+    test('POST /session reuses the latest explicit model as the runtime default', async () => {
+        mockSessionDependencies();
+        mockSetting();
+        jest.spyOn(ApplicationRegistry, 'getApplication').mockReturnValue(undefined);
+        jest.spyOn(EventBus, 'publish').mockImplementation(() => undefined);
+        const task = makeTask(workspace);
+        mockGlobalTaskManager(task);
+        const routes = SessionRoutes();
+
+        const firstResponse = await routes.request(`/?directory=${encodeURIComponent(workspace)}`, {
+            method: 'POST',
+            body: JSON.stringify({ model: 'openai/gpt-4o' }),
+            headers: { 'content-type': 'application/json' }
+        });
+        task.model = undefined;
+        const secondResponse = await routes.request(`/?directory=${encodeURIComponent(workspace)}`, {
+            method: 'POST',
+            body: JSON.stringify({}),
+            headers: { 'content-type': 'application/json' }
+        });
+
+        expect(firstResponse.status).toBe(200);
+        expect(secondResponse.status).toBe(200);
+        expect(getServerDefaultModel()).toBe('gpt4o');
+        expect(task.model).toBe('gpt4o');
     });
 
     test('wraps newly initialized server tasks with the config permission runtime', async () => {
