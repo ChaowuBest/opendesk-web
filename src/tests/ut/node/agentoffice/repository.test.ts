@@ -384,3 +384,48 @@ test('staff permission enforcer denies protected and unconfigured paths', async 
         'deny'
     );
 });
+
+test('deletes history messages and individual content parts with resource cleanup', (context) => {
+    const { root, repository } = createRepository();
+    context.after(() => fs.rmSync(root, { recursive: true, force: true }));
+    const staff = repository.createStaff({
+        name: 'Ada',
+        vendor_name: 'OpenDesk',
+        title: 'Researcher',
+        specialties: []
+    });
+
+    const attachment = path.join(root, 'incoming', 'shot.png');
+    fs.mkdirSync(path.dirname(attachment), { recursive: true });
+    fs.writeFileSync(attachment, 'png-bytes');
+    const prepared = repository.prepareUserMessage(staff.id, 'task-1', '看图', [
+        { path: attachment, name: 'shot.png' }
+    ]);
+    repository.appendMessage(staff.id, prepared.message);
+    const resourcePart = prepared.message.content.find((part) => part.type === 'resource');
+    assert.ok(resourcePart && resourcePart.type === 'resource');
+    const resourceFile = path.join(repository.staffDirectory(staff.id), resourcePart.path);
+    assert.equal(fs.existsSync(resourceFile), true);
+
+    assert.throws(() => repository.deleteMessagePart(staff.id, prepared.message.id, 9), /分块序号无效|part index/);
+
+    // 单独删除图片分块：文本保留、资源文件同步清理
+    repository.deleteMessagePart(staff.id, prepared.message.id, 1);
+    const stored = repository.readMessages(staff.id);
+    assert.equal(stored.length, 1);
+    assert.deepEqual(
+        stored[0].content.map((part) => part.type),
+        ['text']
+    );
+    assert.equal(fs.existsSync(resourceFile), false);
+
+    // 删除唯一的文本分块 → 整条消息一并移除
+    repository.deleteMessagePart(staff.id, prepared.message.id, 0);
+    assert.equal(repository.readMessages(staff.id).length, 0);
+
+    // 整条删除与不存在的消息
+    repository.appendMessage(staff.id, prepared.message);
+    repository.deleteMessage(staff.id, prepared.message.id);
+    assert.equal(repository.readMessages(staff.id).length, 0);
+    assert.throws(() => repository.deleteMessage(staff.id, prepared.message.id), /消息不存在|Message not found/);
+});

@@ -55,7 +55,13 @@ describe('agentoffice management form behavior', () => {
             'agentoffice.autoSaveSaving': 'Saving',
             'agentoffice.autoSaveSaved': 'Saved',
             'agentoffice.autoSaveInvalid': 'Fix the highlighted field',
-            'agentoffice.autoSaveFailed': 'Auto-save failed'
+            'agentoffice.autoSaveFailed': 'Auto-save failed',
+            'agentoffice.deleteMessage': 'Delete message',
+            'agentoffice.deleteMessagePart.text': 'Delete text',
+            'agentoffice.deleteMessagePart.image': 'Delete image',
+            'agentoffice.deleteMessagePart.video': 'Delete video',
+            'agentoffice.deleteMessagePart.audio': 'Delete audio',
+            'agentoffice.deleteMessagePart.file': 'Delete file'
         };
         return widget;
     }
@@ -207,6 +213,65 @@ describe('agentoffice management form behavior', () => {
         expect(widget.shadowRoot.querySelector('[data-message-menu="copy-plain"]')).not.toBeNull();
         widget.shadowRoot.querySelector('[data-message-menu="open-task"]').click();
         expect(postMessage).toHaveBeenCalledWith({ type: 'openTask', taskId: 'task-id' }, '*');
+    });
+
+    test('message context menu offers per-part and whole-message deletion', async () => {
+        const widget = createWidget();
+        widget.selectedStaffId = 'staff-id';
+        const imageMessage = {
+            id: 'm-img',
+            role: 'assistant',
+            task_id: 'task-1',
+            created_at: '2026-01-01T00:00:00.000Z',
+            content: [
+                { type: 'text', text: '看图' },
+                {
+                    type: 'resource',
+                    resource_id: 'r1',
+                    media_type: 'image',
+                    mime_type: 'image/png',
+                    name: 'shot.png',
+                    path: 'resources/shot.png'
+                }
+            ]
+        };
+        widget.messages = [imageMessage];
+        widget.call = jest.fn((method: string) => {
+            if (method === 'getHistoryMessagesForUI') {
+                return Promise.resolve({ messages: [], has_more: false });
+            }
+            return Promise.resolve(null);
+        });
+        widget.shadowRoot.innerHTML =
+            '<div class="root"><div class="message assistant" data-message-id="m-img"></div></div>';
+        const postMessage = jest.fn();
+        (window as any).parent = { postMessage };
+
+        widget.showMessageContextMenu(20, 20, widget.shadowRoot.querySelector('[data-message-id="m-img"]'));
+
+        const deleteMessage = widget.shadowRoot.querySelector('[data-message-menu="delete-message"]');
+        const partItems = widget.shadowRoot.querySelectorAll('[data-message-menu="delete-part"]');
+        expect(deleteMessage).not.toBeNull();
+        expect(partItems).toHaveLength(2);
+        const deleteImage = widget.shadowRoot.querySelector(
+            '[data-message-menu="delete-part"][data-part-index="1"]'
+        ) as HTMLElement;
+        expect(deleteImage.textContent).toContain('Delete image');
+
+        deleteImage.click();
+        await Promise.resolve();
+        await Promise.resolve();
+        expect(widget.call).toHaveBeenCalledWith('deleteStaffMessagePart', 'staff-id', 'm-img', 1);
+
+        // 分块删除会关闭菜单，且 mock 的刷新会清空消息；整条删除前先恢复再重新打开
+        widget.messages = [imageMessage];
+        widget.shadowRoot.innerHTML =
+            '<div class="root"><div class="message assistant" data-message-id="m-img"></div></div>';
+        widget.showMessageContextMenu(20, 20, widget.shadowRoot.querySelector('[data-message-id="m-img"]'));
+        widget.shadowRoot.querySelector('[data-message-menu="delete-message"]').click();
+        await Promise.resolve();
+        await Promise.resolve();
+        expect(widget.call).toHaveBeenCalledWith('deleteStaffMessage', 'staff-id', 'm-img');
     });
 
     test('detail controls use toggle and Font Awesome treatments', () => {

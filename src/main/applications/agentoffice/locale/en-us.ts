@@ -10,5 +10,7 @@
  */
 
 export const enUs: Record<string, string> = {
-    'app.name': 'Office'
+    'app.name': 'Office',
+    'agentoffice.error.messageNotFound': 'Message not found or already deleted',
+    'agentoffice.error.invalidPartIndex': 'Invalid message part index'
 };

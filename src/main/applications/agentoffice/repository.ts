@@ -516,6 +516,52 @@ export class AgentOfficeRepository {
         return result;
     }
 
+    deleteMessage(staffId: string, messageId: string): void {
+        this.modifyMessages(staffId, messageId, () => null);
+    }
+
+    /** 删除消息中的一个内容分块；分块是资源时同步删除资源文件，删空后整条消息一并移除。 */
+    deleteMessagePart(staffId: string, messageId: string, partIndex: number): void {
+        this.modifyMessages(staffId, messageId, (content) => {
+            if (!Number.isInteger(partIndex) || partIndex < 0 || partIndex >= content.length) {
+                throw new Error(t('agentoffice.error.invalidPartIndex'));
+            }
+            const next = content.filter((_, index) => index !== partIndex);
+            return next.length > 0 ? next : null;
+        });
+    }
+
+    private modifyMessages(
+        staffId: string,
+        messageId: string,
+        mutate: (content: StaffMessage['content']) => StaffMessage['content'] | null
+    ): void {
+        const messages = this.readMessages(staffId);
+        const index = messages.findIndex((message) => message.id === messageId);
+        if (index === -1) throw new Error(t('agentoffice.error.messageNotFound'));
+        const target = messages[index];
+        const nextContent = mutate(target.content);
+        const keptResourceIds = new Set(
+            (nextContent ?? [])
+                .filter((part): part is StaffResourceContent => part.type === 'resource')
+                .map((part) => part.resource_id)
+        );
+        for (const part of target.content) {
+            if (part.type !== 'resource' || keptResourceIds.has(part.resource_id)) continue;
+            fs.rmSync(path.join(this.staffDirectory(staffId), part.path), { force: true, recursive: true });
+        }
+        if (nextContent === null) messages.splice(index, 1);
+        else messages[index] = { ...target, content: nextContent };
+        const filePath = path.join(this.protectedDirectory(staffId), 'messages.jsonl');
+        const temporaryPath = `${filePath}.${process.pid}.${crypto.randomUUID()}.tmp`;
+        fs.writeFileSync(
+            temporaryPath,
+            messages.map((message) => JSON.stringify(message)).join('\n') + (messages.length > 0 ? '\n' : ''),
+            'utf8'
+        );
+        fs.renameSync(temporaryPath, filePath);
+    }
+
     getHistory(staffId: string, query: HistoryQuery): HistoryResult {
         if (!query || (query.mode !== 'recent' && query.mode !== 'time_range')) {
             throw new Error(t('agentoffice.error.invalidHistoryQuery'));

@@ -476,6 +476,7 @@ export class AgentOfficeApplication extends BaseApplication {
             'agentoffice.selectStaff',
             'agentoffice.noMessages',
             'agentoffice.messagePlaceholder',
+            'agentoffice.messagePlaceholder.ctrlEnter',
             'agentoffice.send',
             'agentoffice.attach',
             'agentoffice.running',
@@ -526,6 +527,12 @@ export class AgentOfficeApplication extends BaseApplication {
             'agentoffice.close',
             'agentoffice.copy',
             'agentoffice.copyPlain',
+            'agentoffice.deleteMessage',
+            'agentoffice.deleteMessagePart.text',
+            'agentoffice.deleteMessagePart.image',
+            'agentoffice.deleteMessagePart.video',
+            'agentoffice.deleteMessagePart.audio',
+            'agentoffice.deleteMessagePart.file',
             'agentoffice.addSkill',
             'agentoffice.addSkillFromDirectory',
             'agentoffice.addSkillFromDirectoryHint',
@@ -576,6 +583,15 @@ export class AgentOfficeApplication extends BaseApplication {
             'agentoffice.modelShort',
             'agentoffice.metaSkills',
             'agentoffice.onboardDays',
+            'agentoffice.staffPanelTitle',
+            'agentoffice.allStaff',
+            'agentoffice.staffPanelFooter',
+            'agentoffice.statsSection',
+            'agentoffice.profileSection',
+            'agentoffice.you',
+            'agentoffice.noStaffFound',
+            'agentoffice.enableStaffHint',
+            'agentoffice.networkAccessHint',
             'agentoffice.triggerIntervalLabel',
             'agentoffice.triggerIntervalHint',
             'agentoffice.triggerInterval.5m',
@@ -616,6 +632,14 @@ export class AgentOfficeApplication extends BaseApplication {
 
     getHistoryMessagesForUI(staffId: string, query: HistoryQuery) {
         return this.callAgentOfficeWorker('getHistory', staffId, query);
+    }
+
+    deleteStaffMessage(staffId: string, messageId: string) {
+        return this.callAgentOfficeWorker('deleteMessage', staffId, messageId);
+    }
+
+    deleteStaffMessagePart(staffId: string, messageId: string, partIndex: number) {
+        return this.callAgentOfficeWorker('deleteMessagePart', staffId, messageId, partIndex);
     }
 
     listChatModels() {
