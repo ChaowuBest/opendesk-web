@@ -1,0 +1,109 @@
+# dynobox-linux functional test policy (identity namespace:
+# virtual paths == real paths). @SRC@, @ROOT@ and @UP@ are substituted
+# by tests/run_all.sh.
+version = 1
+default = "deny"
+
+[ask]
+endpoint = "@UP@"
+timeout_ms = 2000
+cache_ttl_seconds = 60
+grant_ttl_seconds = 300
+
+# test helpers (t_probe & friends)
+[[rules]]
+path = "@ROOT@/build/**"
+access = "all"
+perm = "allow"
+
+# fixture tree root: browse
+[[rules]]
+path = "@SRC@"
+access = "read"
+perm = "allow"
+
+# public: fully open
+[[rules]]
+path = "@SRC@/public/**"
+access = "all"
+perm = "allow"
+
+# docs readable, secret denied (specific rule first)
+[[rules]]
+path = "@SRC@/docs/secret.txt"
+access = "all"
+perm = "deny"
+
+[[rules]]
+path = "@SRC@/docs/**"
+access = "read"
+perm = "allow"
+
+# notes: reads go through the endpoint
+[[rules]]
+path = "@SRC@/notes/**"
+access = "read"
+perm = "ask"
+
+# staging: read free, writes approved
+[[rules]]
+path = "@SRC@/staging/**"
+access = "read"
+perm = "allow"
+
+[[rules]]
+path = "@SRC@/staging/**"
+access = "write"
+perm = "ask"
+
+# slow: endpoint sleeps 8s -> sandbox timeout -> fail-closed deny
+[[rules]]
+path = "@SRC@/slow/**"
+access = "all"
+perm = "ask"
+
+# scratch: endpoint allow carries a subtree grant (protocol v2)
+[[rules]]
+path = "@SRC@/scratch/**"
+access = "all"
+perm = "ask"
+
+# reject: endpoint always denies
+[[rules]]
+path = "@SRC@/reject/**"
+access = "all"
+perm = "ask"
+
+# guarded: endpoint allows but issues no grants (every new path asks)
+[[rules]]
+path = "@SRC@/guarded/**"
+access = "all"
+perm = "ask"
+
+# vault: hard deny
+[[rules]]
+path = "@SRC@/vault/**"
+access = "all"
+perm = "deny"
+
+# deep tree fixture (read-only)
+[[rules]]
+path = "@SRC@/deep/**"
+access = "read"
+perm = "allow"
+
+# tools: execute control (specific first)
+[[rules]]
+path = "@SRC@/tools/blocked/**"
+access = "execute"
+perm = "deny"
+
+[[rules]]
+path = "@SRC@/tools/ask/**"
+access = "execute"
+perm = "ask"
+
+[[rules]]
+path = "@SRC@/tools/**"
+access = "all"
+perm = "allow"
