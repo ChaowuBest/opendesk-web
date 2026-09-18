@@ -8,6 +8,7 @@ import {
     getPluginMcpToolsets
 } from '../../../main/applications/pluginmgr/runtime/mcp.js';
 import { definePlugin } from '../../../../packages/plugin-sdk/src/index.js';
+import { ToolCall } from '../../../main/aikernel/messages.js';
 
 describe('PluginMcpRuntime', () => {
     const server = fileURLToPath(new URL('./fixtures/plugin-mcp-server.mjs', import.meta.url));
@@ -49,16 +50,27 @@ describe('PluginMcpRuntime', () => {
         expect(getPluginHost().get('mcp-contributor')?.diagnostics).toEqual([]);
         const tool = toolsets[0]?.getTool('echo_server__echo');
         const callTool = jest.spyOn(Client.prototype, 'callTool');
-        const result = await tool?.execute({ text: 'OpenDesk' });
-        expect(callTool).toHaveBeenCalledWith({ name: 'echo', arguments: { text: 'OpenDesk' } }, undefined, {
-            timeout: 180_000,
-            resetTimeoutOnProgress: true,
-            maxTotalTimeout: 300_000
-        });
+        expect(tool?.getJsonSchema().properties.description).toEqual(expect.objectContaining({ type: 'string' }));
+        expect(tool?.getJsonSchema().required).toContain('description');
+        const result = await tool?.execute({ text: 'OpenDesk', description: 'Echo text' });
+        expect(callTool).toHaveBeenCalledWith(
+            { name: 'echo', arguments: { text: 'OpenDesk', description: 'Echo text' } },
+            undefined,
+            {
+                timeout: 180_000,
+                resetTimeoutOnProgress: true,
+                maxTotalTimeout: 300_000
+            }
+        );
 
         expect(toolsets[0]?.name).toBe('plugin-mcp-mcp-contributor');
         expect(`${toolsets[0]?.name}-${tool?.name}`).toMatch(/^[a-zA-Z0-9_-]+$/);
         expect(result?.result).toBe('echo:OpenDesk');
+
+        const toolCall = new ToolCall(0, 'call-id', 'echo_server__echo', '{}');
+        toolCall.args_object = { text: 'OpenDesk', description: 'Echo text' };
+        toolCall.status = 'running';
+        expect(await tool?.renderToolCall(toolCall)).toContain('Echo text');
 
         await getPluginHost().deactivate('mcp-contributor');
         await expect(tool?.execute({ text: 'after-dispose' })).resolves.toMatchObject({

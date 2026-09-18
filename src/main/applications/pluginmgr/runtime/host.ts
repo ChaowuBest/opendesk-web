@@ -30,8 +30,10 @@ import type {
     PluginHookMap,
     PluginHookName,
     PluginHookRegistrationOptions,
+    PluginMcpRegistryDefinition,
     PluginRegistration,
     PluginSkillDefinition,
+    PluginSkillRegistryDefinition,
     PluginMcpServerDefinition,
     PluginStaticResources,
     PluginAppearanceState,
@@ -51,6 +53,7 @@ import { comparePluginVersions } from '../discovery/manifest.js';
 import { AGENT_RUNTIME_ERROR_CODES, loadAgentsFromDirectory } from '../discovery/agent-resource.js';
 import { compileHintPattern, validateBrowserHint } from './browser-hints.js';
 import { resolveAppearanceLogoValues } from './appearance.js';
+import { getPlatform } from '../../../../platforms/base.js';
 import type { CompiledHintPattern } from './browser-hints.js';
 import { qualifyPluginToolName } from './tool-names.js';
 import { createAccountsContext } from './account-context.js';
@@ -286,6 +289,61 @@ function validatePluginToolDefinition(definition: unknown): asserts definition i
     }
 }
 
+/**
+ * 校验插件注册表（技能 / MCP 市场）定义的公共元数据与行为字段。
+ * registry id 同时是 installUrl 前缀（`<id>:`），格式约束与插件 id 一致。
+ */
+function validateRegistryDefinition(
+    kind: 'skill' | 'mcp',
+    definition: PluginSkillRegistryDefinition | PluginMcpRegistryDefinition
+): void {
+    if (!isRecord(definition)) throw new Error(`plugin.registry_${kind}_invalid`);
+    const id = typeof definition.id === 'string' ? definition.id.trim() : '';
+    if (!id || !/^[a-zA-Z][a-zA-Z0-9._-]*$/.test(id)) throw new Error(`plugin.registry_id_invalid:${id}`);
+    if (typeof definition.label !== 'string' || !definition.label.trim()) {
+        throw new Error(`plugin.registry_label_invalid:${id}`);
+    }
+    if (definition.icon !== undefined && typeof definition.icon !== 'string') {
+        throw new Error(`plugin.registry_icon_invalid:${id}`);
+    }
+    if (definition.iconClass !== undefined && typeof definition.iconClass !== 'string') {
+        throw new Error(`plugin.registry_icon_class_invalid:${id}`);
+    }
+    if (definition.slogan !== undefined && (typeof definition.slogan !== 'string' || !definition.slogan.trim())) {
+        throw new Error(`plugin.registry_slogan_invalid:${id}`);
+    }
+    if (definition.guiHidden !== undefined && typeof definition.guiHidden !== 'boolean') {
+        throw new Error(`plugin.registry_gui_hidden_invalid:${id}`);
+    }
+    if (typeof definition.search !== 'function') throw new Error(`plugin.registry_search_invalid:${id}`);
+    if (kind === 'skill') {
+        const skillDefinition = definition as PluginSkillRegistryDefinition;
+        if (skillDefinition.resolveInstall !== undefined && typeof skillDefinition.resolveInstall !== 'function') {
+            throw new Error(`plugin.registry_resolve_install_invalid:${id}`);
+        }
+        if (skillDefinition.filters !== undefined) {
+            if (!Array.isArray(skillDefinition.filters)) throw new Error(`plugin.registry_filters_invalid:${id}`);
+            for (const filter of skillDefinition.filters) {
+                if (
+                    !isRecord(filter) ||
+                    typeof filter.id !== 'string' ||
+                    !filter.id.trim() ||
+                    typeof filter.labelOn !== 'string' ||
+                    !filter.labelOn.trim() ||
+                    typeof filter.labelOff !== 'string' ||
+                    !filter.labelOff.trim() ||
+                    typeof filter.categoryValue !== 'string' ||
+                    !filter.categoryValue.trim()
+                ) {
+                    throw new Error(`plugin.registry_filters_invalid:${id}`);
+                }
+            }
+        }
+    } else if (typeof (definition as PluginMcpRegistryDefinition).getDetail !== 'function') {
+        throw new Error(`plugin.registry_detail_invalid:${id}`);
+    }
+}
+
 function cloneValue<T>(value: T): T {
     try {
         return structuredClone(value);
@@ -425,6 +483,8 @@ export class PluginHost {
     private readonly mcpServers = new Map<string, ContributionRecord<PluginMcpServerDefinition>>();
     private readonly commands = new Map<string, ContributionRecord<PluginCommandDefinition>>();
     private readonly agents = new Map<string, ContributionRecord<AgentDefinition>>();
+    private readonly skillRegistries = new Map<string, ContributionRecord<PluginSkillRegistryDefinition>>();
+    private readonly mcpRegistries = new Map<string, ContributionRecord<PluginMcpRegistryDefinition>>();
     private readonly browserHints: BrowserHintRecord[] = [];
     private readonly channels = new Map<string, ChannelRecord>();
     private readonly applicationEvents: ApplicationEventRecord[] = [];
@@ -472,6 +532,16 @@ export class PluginHost {
 
     listAgents(): VisiblePluginContribution<AgentDefinition>[] {
         return this.listContributions(this.agents);
+    }
+
+    /** 列出插件贡献的技能注册表；skillmgr 据此合并出市场 tab 与搜索来源 */
+    listSkillRegistries(): VisiblePluginContribution<PluginSkillRegistryDefinition>[] {
+        return this.listContributions(this.skillRegistries);
+    }
+
+    /** 列出插件贡献的 MCP 注册表；mcpmgr 据此合并出市场 tab 与搜索来源 */
+    listMcpRegistries(): VisiblePluginContribution<PluginMcpRegistryDefinition>[] {
+        return this.listContributions(this.mcpRegistries);
     }
 
     listBrowserHintPrefixes(): Array<{ pluginId: string; urlPrefix: string }> {
@@ -1096,6 +1166,34 @@ export class PluginHost {
                         logoPath
                     );
                     return this.registerAppearanceOverride(entry, 'appLogo', values, track);
+                }
+            },
+            registry: {
+                fetch: (input: string | URL, init?: RequestInit) => {
+                    addCapability('registry');
+                    return getPlatform().fetch(input, init);
+                },
+                registerSkillRegistry: (definition: PluginSkillRegistryDefinition) => {
+                    validateRegistryDefinition('skill', definition);
+                    addCapability('registry');
+                    const normalized = { ...definition, id: definition.id.trim() };
+                    // registry id 即 installUrl 前缀，跨插件全局唯一
+                    // （registerContribution 的碰撞检查基于 definition.name，注册表以 id 为唯一键）
+                    const collides = Array.from(this.skillRegistries.values()).some(
+                        (record) => record.definition.id === normalized.id
+                    );
+                    if (collides) throw new Error(`Plugin registry already registered: ${normalized.id}`);
+                    return this.registerContribution(this.skillRegistries, entry, normalized, normalized.id, track);
+                },
+                registerMcpRegistry: (definition: PluginMcpRegistryDefinition) => {
+                    validateRegistryDefinition('mcp', definition);
+                    addCapability('registry');
+                    const normalized = { ...definition, id: definition.id.trim() };
+                    const collides = Array.from(this.mcpRegistries.values()).some(
+                        (record) => record.definition.id === normalized.id
+                    );
+                    if (collides) throw new Error(`Plugin registry already registered: ${normalized.id}`);
+                    return this.registerContribution(this.mcpRegistries, entry, normalized, normalized.id, track);
                 }
             },
             accounts: createAccountsContext({

@@ -56,6 +56,9 @@ import {
     runPluginBeforeSkillInstall
 } from '../pluginmgr/runtime/hooks.js';
 import type { PluginSkillInstallContext, PluginSkillListItem } from '../../../../packages/plugin-sdk/src/index.js';
+import { getProvidedSkillRegistryDefinitions } from './registry/provider.js';
+import { serializeSkillRegistryInfo, type PluginSkillRegistryInfo } from './registry/contributed.js';
+import type { SearchOptions, SearchResult } from './registry/base.js';
 import { getHarmonyLocalRuntimeState } from '../../../platforms/bridges/harmonyos/local-runtime.js';
 
 const isHarmonyosRuntime = (process.platform as string) === 'openharmony';
@@ -798,6 +801,36 @@ export class SkillMgrApplication extends BaseApplication {
             force,
             customName
         );
+    }
+
+    // ── 插件贡献注册表的 worker 回代入口 ─────────────────────────────────
+    // 插件注册表定义（含闭包）只在主进程存活；worker 线程的技能市场通过
+    // registry/worker-bridge.ts 经 callAppWithResponse 调用以下三个方法。
+
+    /** 列出插件贡献注册表的可序列化元数据（worker 侧据此渲染 tab 与路由安装） */
+    async getPluginSkillRegistries(): Promise<PluginSkillRegistryInfo[]> {
+        const definitions = await getProvidedSkillRegistryDefinitions();
+        return definitions.map(serializeSkillRegistryInfo);
+    }
+
+    /** 代理执行插件注册表搜索（在主进程调用定义的 search） */
+    async searchPluginSkillRegistry(registryId: string, opts: SearchOptions = {}): Promise<SearchResult> {
+        const definitions = await getProvidedSkillRegistryDefinitions();
+        const definition = definitions.find((candidate) => candidate.id === registryId);
+        if (!definition) throw new Error(`未知 Registry: ${registryId}`);
+        return definition.search(opts);
+    }
+
+    /** 解析插件注册表 installUrl 的下载地址；未声明 resolveInstall 时返回 null */
+    async resolvePluginSkillInstall(
+        registryId: string,
+        installUrl: string,
+        parsed: { slug: string; version?: string }
+    ): Promise<{ downloadUrl: string } | null> {
+        const definitions = await getProvidedSkillRegistryDefinitions();
+        const definition = definitions.find((candidate) => candidate.id === registryId);
+        if (!definition?.resolveInstall) return null;
+        return definition.resolveInstall(installUrl, parsed);
     }
 
     deleteSkill(skillId: string) {

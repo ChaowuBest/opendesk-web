@@ -103,7 +103,8 @@ export const OPENDESK_PLUGIN_CAPABILITIES = [
     'browser',
     'channel',
     'account',
-    'appearance'
+    'appearance',
+    'registry'
 ] as const;
 
 export type PluginCapability = (typeof OPENDESK_PLUGIN_CAPABILITIES)[number];
@@ -783,6 +784,8 @@ export interface PluginContext {
     readonly channels: ChannelsCapability;
     /** 外观能力：插件自定义应用外观（逐步开放中） */
     readonly appearance: AppearanceCapability;
+    /** 注册表能力：插件向技能市场 / MCP 管理器贡献注册表（marketplace） */
+    readonly registry: RegistryCapability;
 }
 
 export interface OpenDeskPlugin {
@@ -1149,4 +1152,144 @@ export interface Channel<TAccount extends ChannelAccount = ChannelAccount> {
 /** ctx.channels 能力：register 注册一个 channel，返回可 dispose 的 PluginRegistration */
 export interface ChannelsCapability {
     register<TAccount extends ChannelAccount>(channel: Channel<TAccount>): PluginRegistration;
+}
+
+// ── Registry Capability（技能 / MCP 注册表市场）──────────────────────────────
+// 插件通过 ctx.registry.registerSkillRegistry / registerMcpRegistry 向
+// 技能市场与 MCP 管理器贡献一个「注册表」（marketplace）。
+// 注册的 registry 由 host 收集，skillmgr / mcpmgr 按与内置注册表完全相同的
+// 路径消费：市场 tab 展示、search 搜索、（MCP）getDetail 安装详情、
+// installUrl（`<registryId>:<entry>`）路由安装。
+
+/** 注册源声明的筛选器定义，前端据此渲染开关式过滤 UI */
+export interface PluginRegistryFilterDef {
+    /** 筛选器唯一标识 */
+    id: string;
+    /** 开关打开时的标签文本 */
+    labelOn: string;
+    /** 开关关闭时的标签文本 */
+    labelOff: string;
+    /** 传回 search(options.categoryFilter) 的值 */
+    categoryValue: string;
+    /** 传给服务端过滤的 tagIds（可选） */
+    apiTagIds?: string[];
+}
+
+export interface PluginRegistrySearchOptions {
+    query?: string;
+    page?: number;
+    limit?: number;
+    /** 部分注册源需要的访问凭证（如 SkillsMP 的 API Key），由宿主按配置注入 */
+    apiKey?: string;
+    /** 游标分页：上一页结果返回的 nextCursor */
+    cursor?: string;
+    /** 分类过滤：非空时仅返回匹配该分类的条目 */
+    categoryFilter?: string;
+}
+
+/** 技能市场条目（与 skillmgr 的 RegistrySkill 结构一致） */
+export interface PluginRegistrySkill {
+    id: string;
+    name: string;
+    description: string;
+    author?: string;
+    source: string;
+    installUrl: string;
+    stars?: number;
+    score?: number;
+    downloads?: number;
+    canInstall: boolean;
+    /** 技能所属分类列表，用于前端分类过滤 */
+    categories?: string[];
+}
+
+export interface PluginSkillRegistrySearchResult {
+    skills: PluginRegistrySkill[];
+    total?: number;
+    hasMore?: boolean;
+    message?: string;
+    nextCursor?: string;
+}
+
+/** MCP 市场条目（与 mcpmgr 的 RegistryMcp 结构一致） */
+export interface PluginRegistryMcp {
+    id: string;
+    name: string;
+    displayName?: string;
+    description: string;
+    author?: string;
+    source: string;
+    installUrl: string;
+    /** 安装用 JSON 配置（mcpServers 形式），install 时由宿主解析 */
+    configuration?: string;
+    repository?: string;
+    logo?: string;
+    deployType?: string;
+    serverType?: string;
+    downloads?: number;
+    stars?: number;
+    views?: number;
+    updateTime?: string;
+    tags?: string[];
+    categories?: string[];
+    canInstall: boolean;
+}
+
+export interface PluginMcpRegistrySearchResult {
+    mcps: PluginRegistryMcp[];
+    total?: number;
+    hasMore?: boolean;
+    message?: string;
+    nextCursor?: string;
+}
+
+/** 注册源展示元数据：市场 tab 与 TUI 共用 */
+export interface PluginRegistryMeta {
+    /** 注册表唯一标识；同时是 installUrl 前缀（`<id>:`），全局唯一 */
+    readonly id: string;
+    /** 展示名称（如 "Matrix Skill"、"ModelScope"） */
+    readonly label: string;
+    /** GUI 中使用的 emoji 图标 */
+    readonly icon?: string;
+    /** GUI 中 r-icon 的 CSS 类名 */
+    readonly iconClass?: string;
+    /** 热门条目页面的标语；缺省时宿主使用默认标语 */
+    readonly slogan?: string;
+    /**
+     * 在 GUI 市场中隐藏 tab（仍对 agent 工具与 TUI 可见）。
+     * 用于仅面向自动化场景、需要 API Key 或实验性的注册源。
+     */
+    readonly guiHidden?: boolean;
+}
+
+/**
+ * 技能注册表定义。search 的结果必须是可结构化克隆的纯数据。
+ * 网络请求请使用 ctx.registry.fetch（继承宿主代理配置）。
+ */
+export interface PluginSkillRegistryDefinition extends PluginRegistryMeta {
+    /** 声明筛选器后，GUI 会在该注册表的搜索区渲染开关式过滤 UI */
+    readonly filters?: PluginRegistryFilterDef[];
+    search(options?: PluginRegistrySearchOptions): Promise<PluginSkillRegistrySearchResult>;
+    /**
+     * 解析本注册表 installUrl（`<id>:<slug>[@<version>]`）的安装计划。
+     * 未声明时宿主按内置规则处理（内置注册表 / GitHub / zip 启发式）。
+     */
+    resolveInstall?(installUrl: string, parsed: { slug: string; version?: string }): Promise<{ downloadUrl: string }>;
+}
+
+/**
+ * MCP 注册表定义。search/getDetail 的结果必须是可结构化克隆的纯数据。
+ */
+export interface PluginMcpRegistryDefinition extends PluginRegistryMeta {
+    search(options?: PluginRegistrySearchOptions): Promise<PluginMcpRegistrySearchResult>;
+    /** 按 id 获取条目详情；安装流程（installFromRegistry）依赖此方法取 configuration */
+    getDetail(id: string): Promise<PluginRegistryMcp | null>;
+}
+
+/** ctx.registry 能力：注册技能 / MCP 注册表市场 */
+export interface RegistryCapability {
+    /** 继承 OpenDesk 代理配置的 fetch；registry 实现内的网络请求应使用它 */
+    readonly fetch: (input: string | URL, init?: RequestInit) => Promise<Response>;
+    registerSkillRegistry(definition: PluginSkillRegistryDefinition): PluginRegistration;
+    registerMcpRegistry(definition: PluginMcpRegistryDefinition): PluginRegistration;
 }

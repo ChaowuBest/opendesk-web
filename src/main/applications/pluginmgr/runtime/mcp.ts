@@ -8,8 +8,7 @@ import { SSEClientTransport } from '@modelcontextprotocol/sdk/client/sse.js';
 import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
 import { ToolListChangedNotificationSchema } from '@modelcontextprotocol/sdk/types.js';
-import { z } from 'zod';
-import { BaseTool, BaseToolset } from '../../../aikernel/tool.js';
+import { BaseToolset } from '../../../aikernel/tool.js';
 import { getPlatform } from '../../../../platforms/base.js';
 import { mergeGlobalEnviron } from '../../../utils/shellExec.js';
 import { logger } from '../../../utils/logger.js';
@@ -22,6 +21,7 @@ import {
     type PluginMcpServerDefinition
 } from '../../../../../packages/plugin-sdk/src/index.js';
 import { sanitizeModelToolName } from './tool-names.js';
+import { MCPTool } from '../../mcpmgr/mcp-tool.js';
 
 interface DiscoveredTool {
     name: string;
@@ -72,16 +72,14 @@ class PluginMcpRuntime {
                 new BaseToolset(`plugin-mcp-${sanitizeModelToolName(contribution.pluginId)}`);
             grouped.set(contribution.pluginId, toolset);
             for (const discovered of connection.tools) {
-                let parameters: z.ZodType;
-                try {
-                    parameters = z.fromJSONSchema(discovered.inputSchema as any);
-                } catch {
-                    parameters = z.object({}).passthrough();
-                }
-                const tool = new BaseTool(
-                    `${safeName(contribution.definition.name)}__${safeName(discovered.name)}`,
-                    `[MCP: ${contribution.definition.name}] ${discovered.description}`,
-                    parameters
+                const tool = new MCPTool(
+                    contribution.definition.name,
+                    discovered.name,
+                    discovered.description,
+                    discovered.inputSchema,
+                    undefined,
+                    safeName(contribution.definition.name),
+                    safeName(discovered.name)
                 );
                 tool.setExecutor(async (args) => {
                     if (!getPluginHost().hasMcpServer(contribution.id)) {

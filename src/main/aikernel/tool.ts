@@ -204,6 +204,8 @@ export class BaseTool<T extends z.ZodType> {
      * 为 true 时，同一批次中的多个此类工具调用将按顺序执行，避免并发写入同一文件导致竞态条件。
      */
     serialExecution: boolean = false;
+    /** 允许工具在错误状态下保留自定义渲染；默认继续使用统一错误卡片。 */
+    renderToolCallOnError: boolean = false;
     /** getJsonSchema 的实例级缓存及对应生成时的 params 引用（引用变更即失效） */
     private jsonSchemaCache?: Record<string, any>;
     private jsonSchemaCacheSource?: z.ZodType;
@@ -341,6 +343,11 @@ export class BaseTool<T extends z.ZodType> {
         };
     }
 
+    /** 在校验完成后、调用执行器前转换参数；默认保持校验结果不变。 */
+    protected prepareArgsForExecution(args: z.output<T>): z.output<T> {
+        return args;
+    }
+
     async execute(
         args: z.output<T>,
         updatedCallback?: (result: ToolResult) => void,
@@ -353,11 +360,12 @@ export class BaseTool<T extends z.ZodType> {
             result.result = parsedArgs.error;
             return result;
         }
+        const executionArgs = this.prepareArgsForExecution(parsedArgs.data);
 
         if (this.universalExecutor) {
             const result = new ToolResult();
             result.updatedCallback = updatedCallback;
-            return await this.universalExecutor(parsedArgs.data, result, taskState)
+            return await this.universalExecutor(executionArgs, result, taskState)
                 .then(() => {
                     result.status = 'success';
                     return result;
@@ -369,7 +377,7 @@ export class BaseTool<T extends z.ZodType> {
                 });
         } else if (this.executor) {
             const result = new ToolResult();
-            return await this.executor(parsedArgs.data, taskState)
+            return await this.executor(executionArgs, taskState)
                 .then((stringResult) => {
                     result.status = 'success';
                     result.result = stringResult;

@@ -42,6 +42,7 @@ import { parseJsonWithRepair } from '../../../utils/json.js';
 // platformT：读取主 locale 中跨应用共享的平台词条（harmony.localRuntime.*）
 import { t as platformT } from '../../../locale/index.js';
 import {
+    ensureMcpRegistriesSynced,
     getRegistriesInfo,
     getRegistry,
     parseInstallUrl,
@@ -331,7 +332,7 @@ export class McpMgrApplication extends BaseApplication {
         };
     }
 
-    getMcpRegistries() {
+    async getMcpRegistries() {
         return getRegistriesInfo();
     }
 
@@ -346,6 +347,7 @@ export class McpMgrApplication extends BaseApplication {
     }
 
     async getRegistryMcpDetail(registryId: string, id: string) {
+        await ensureMcpRegistriesSynced();
         const registry = getRegistry(registryId);
         if (!registry) throw new Error(t('error.unknownRegistry', { id: registryId }));
         return registry.getDetail(id);
@@ -423,6 +425,7 @@ export class McpMgrApplication extends BaseApplication {
     }
 
     async installFromRegistry(installUrl: string, force: boolean = false) {
+        await ensureMcpRegistriesSynced();
         const parsed = parseInstallUrl(installUrl);
         if (!parsed) throw new Error(t('error.unrecognizedInstallUrl', { url: installUrl }));
 
@@ -495,13 +498,6 @@ export class McpMgrApplication extends BaseApplication {
             const { eager, deferred } = partitionMcpToolsForContext(tools);
             const toolset = new BaseToolset('mcpmgr');
             for (const tool of eager) {
-                let schema: z.ZodType;
-                try {
-                    schema = z.fromJSONSchema(tool.inputSchema as any);
-                } catch {
-                    schema = z.object({}).passthrough();
-                }
-
                 // 使用 MCPTool 替代 BaseTool，提供专门的渲染逻辑
                 const toolNamespace =
                     tool.agentIds === undefined ? tool.serverName : `${tool.serverName}_${tool.serverId.slice(-8)}`;
@@ -509,7 +505,7 @@ export class McpMgrApplication extends BaseApplication {
                     tool.serverName,
                     tool.name,
                     tool.description,
-                    schema,
+                    tool.inputSchema,
                     tool.agentIds,
                     toolNamespace
                 );
@@ -569,6 +565,10 @@ export class McpMgrApplication extends BaseApplication {
             {
                 eventName: 'serversUpdated',
                 eventDescription: t('appEvent.serversUpdated')
+            },
+            {
+                eventName: 'registriesChanged',
+                eventDescription: t('appEvent.registriesChanged')
             }
         ];
     }

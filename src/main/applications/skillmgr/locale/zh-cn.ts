@@ -13,6 +13,8 @@ export const zhCn: Record<string, string> = {
     'skill.install.denied': '插件已阻止本次 Skill 安装。',
     'skill.install.failed': 'Skill 安装失败。',
     'app.name': '技能中心',
+    'tui.registry.choose': '选择技能来源',
+    'tui.registry.none': '暂无可用技能来源，按 Enter 返回',
 
     // ========== 通用 ==========
     'renderer.skill.common.install': '安装',

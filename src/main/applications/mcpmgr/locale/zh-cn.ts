@@ -11,6 +11,8 @@
 
 export const zhCn: Record<string, string> = {
     'app.name': 'MCP',
+    'tool.label': 'MCP工具',
+    'tool.purpose.description': '对本次 MCP 工具调用目的的简短描述，用于在界面中展示，例如“查找按钮组件文档”',
 
     // ========== 状态 ==========
     'status.connected': '已连接',
@@ -64,6 +66,7 @@ export const zhCn: Record<string, string> = {
 
     // ========== 应用事件描述 ==========
     'appEvent.serversUpdated': 'MCP 列表更新事件，当添加、删除、修改配置或连接状态变化时触发',
+    'appEvent.registriesChanged': 'MCP 注册表列表变更事件，当插件启停、安装、卸载或重载后触发',
 
     // ========== 页面助手 ==========
     'agent.instruct':

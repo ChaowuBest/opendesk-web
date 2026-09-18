@@ -1,0 +1,13 @@
+{
+    "schemaVersion": 1,
+    "id": "matrix",
+    "displayName": "Matrix",
+    "description": {
+        "en": "Matrix (OpenHarmony) MCP and skill content sources, integrated via the registry capability",
+        "zh": "OpenHarmony Matrix 的 MCP 与技能内容来源，经 registry capability 集成"
+    },
+    "version": "1.0.0",
+    "entry": "./index.mjs",
+    "apiVersion": 1,
+    "capabilities": ["registry"]
+}

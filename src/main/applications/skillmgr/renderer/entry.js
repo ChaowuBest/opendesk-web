@@ -71,6 +71,7 @@ function getSkillsAPI() {
 }
 
 import { escapeHtml } from '../../../../common/utils/escape.js';
+import { mergeRegistryTabState } from './registry-tabs.js';
 import { Marked, Renderer } from 'marked';
 import markdownCSS from '../../../../renderer/styles/print-markdown.css?inline';
 import {
@@ -1561,6 +1562,7 @@ class SkillMgrEntryWidget extends HTMLElement {
         };
 
         this.registryStates = {};
+        this._registryInfoRequestId = 0;
         for (const tab of REGISTRY_TABS) {
             this.registryStates[tab.id] = {
                 query: '',
@@ -1630,12 +1632,15 @@ class SkillMgrEntryWidget extends HTMLElement {
         document.addEventListener('keydown', this._onKeyDown);
         this._autoLoadIfNeeded(this.activeTab);
         this._startAnalysisPolling();
-        // 通过 applicationAPI.subscribe 监听技能列表变更（黑名单增删等），
-        // 收到通知后刷新已安装技能和内置技能列表
+        // 通过 applicationAPI.subscribe 监听技能/插件 registry 变更，
+        // 收到通知后刷新已安装、内置技能和市场 registry 列表。
         try {
             this._skillsChangedSubscriptionId = await window.applicationAPI.subscribe('skillsChanged', () => {
                 this.loadSkills();
                 this.loadBuiltinSkills();
+                // 插件启停也会发出 skillsChanged。技能窗口可能被桌面复用，
+                // 因此不能只刷新技能列表，否则已停用的 registry tab 会继续保留。
+                this._loadRegistryInfo();
             });
         } catch {
             // subscribe 失败不影响正常功能
@@ -1900,17 +1905,34 @@ class SkillMgrEntryWidget extends HTMLElement {
     }
 
     async _loadRegistryInfo() {
+        const requestId = ++this._registryInfoRequestId;
         try {
             const api = getSkillsAPI();
             if (!api?.getRegistries) return;
             const infos = await api.getRegistries();
+            // 插件重载期间可能同时发起多次刷新；只应用最后一次快照，
+            // 防止停用后的旧响应把已移除的 tab 恢复出来。
+            if (requestId !== this._registryInfoRequestId) return;
             if (!Array.isArray(infos)) return;
+            // 合并当前启用插件贡献的注册表 tab：新增追加，已消失的 tab 清除。
+            const stateMerge = mergeRegistryTabState(REGISTRY_TABS, this.registryStates, this.activeTab, infos);
+            this.activeTab = stateMerge.activeTab;
             for (const info of infos) {
-                const tab = REGISTRY_TABS.find((t) => t.id === info.id);
-                if (tab) {
-                    if (info.label) tab.label = info.label;
-                    if (info.icon) tab.icon = info.icon;
-                    if (info.filters) tab.filters = info.filters;
+                if (!this.registryStates[info.id]) {
+                    this.registryStates[info.id] = {
+                        query: '',
+                        results: [],
+                        total: 0,
+                        searching: false,
+                        hasSearched: false,
+                        message: null,
+                        page: 1,
+                        hasMore: false,
+                        loadingMore: false,
+                        nextCursor: null,
+                        autoLoaded: false,
+                        activeFilter: ''
+                    };
                 }
             }
             this.render();

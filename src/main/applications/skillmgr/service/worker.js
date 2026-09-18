@@ -197,7 +197,8 @@ class SkillsWorker extends BaseWorker {
         yield { type: 'complete', total: skills.length, success, failed, errors };
     }
 
-    getRegistries() {
+    async getRegistries() {
+        // 插件贡献的注册表定义在主进程，ensure 同步会经 worker-bridge RPC 拉取元数据
         return skillInstallManager.getRegistriesInfo();
     }
 

@@ -13,6 +13,8 @@ export const enUs: Record<string, string> = {
     'skill.install.denied': 'A plugin blocked this Skill installation.',
     'skill.install.failed': 'Skill installation failed.',
     'app.name': 'Skills',
+    'tui.registry.choose': 'Choose a skill source',
+    'tui.registry.none': 'No skill sources available; press Enter to go back',
 
     // ========== 通用 ==========
     'renderer.skill.common.install': 'Install',

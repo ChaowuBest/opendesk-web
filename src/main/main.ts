@@ -3385,7 +3385,12 @@ async function startApplication(): Promise<void> {
         };
         const ensureElectronFullyLoaded = async (): Promise<void> => {
             await registryWorkerReady;
-            await Promise.all([ensureTelemetryReady(), ApplicationRegistry.ensureFullyLoaded(), ensureBrowserReady()]);
+            await Promise.all([
+                ensureTelemetryReady(),
+                initializePluginHost(),
+                ApplicationRegistry.ensureFullyLoaded(),
+                ensureBrowserReady()
+            ]);
         };
 
         // 先注册 renderer 首屏会调用的无状态 IPC，再立即启动 renderer 加载。
@@ -3638,7 +3643,8 @@ async function startApplication(): Promise<void> {
         ipcMain.handle('application:openInNewWindow', async (_event, bundleName: string) => {
             try {
                 const appConfig = ApplicationRegistry.getApplicationGUIConfig(bundleName) as
-                    Record<string, unknown> | undefined;
+                    | Record<string, unknown>
+                    | undefined;
                 const appName = (appConfig?.name as string) || bundleName;
 
                 const appWindow = new BrowserWindow({
