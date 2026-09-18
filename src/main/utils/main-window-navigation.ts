@@ -28,9 +28,11 @@ export function installMainWindowNavigationGuard(contents: WebContents, options:
         }
     };
 
-    // Renderer-initiated navigation must never replace the shell. Main-process
-    // loadURL/loadFile/reload calls do not emit will-navigate and still work.
+    // Renderer-initiated navigation must never replace the shell. Reloading the
+    // current page is safe and is required for Vite's full-page refresh.
+    // Main-process loadURL/loadFile/reload calls do not emit will-navigate.
     contents.on('will-navigate', (event) => {
+        if (event.url === contents.getURL()) return;
         event.preventDefault();
         openExternalLink(event.url);
     });

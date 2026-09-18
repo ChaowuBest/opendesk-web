@@ -13,6 +13,8 @@ import { z } from 'zod';
 import { t } from './locale/index.js';
 import { BaseTool } from '../../aikernel/tool.js';
 import type { McpToolInfo } from './common.js';
+import type { ToolCall } from '../../aikernel/messages.js';
+import { MCPTool, renderMcpToolCall } from './mcp-tool.js';
 
 export const MCP_EAGER_DEFINITION_CHAR_BUDGET = 16_000;
 
@@ -24,11 +26,35 @@ export interface McpToolPartition {
 }
 
 function estimateToolDefinitionChars(tool: McpToolInfo): number {
-    return JSON.stringify({
-        name: `${tool.serverName}__${tool.name}`,
-        description: tool.description,
-        inputSchema: tool.inputSchema
-    }).length;
+    const toolNamespace =
+        tool.agentIds === undefined ? tool.serverName : `${tool.serverName}_${tool.serverId.slice(-8)}`;
+    return JSON.stringify(
+        new MCPTool(
+            tool.serverName,
+            tool.name,
+            tool.description,
+            tool.inputSchema,
+            tool.agentIds,
+            toolNamespace
+        ).toJSON()
+    ).length;
+}
+
+abstract class McpGatewayTool<T extends z.ZodType> extends BaseTool<T> {
+    private exposedSchema?: Record<string, any>;
+    private exposedSchemaSource?: Record<string, any>;
+
+    getJsonSchema(): Record<string, any> {
+        const source = super.getJsonSchema();
+        if (this.exposedSchema === undefined || this.exposedSchemaSource !== source) {
+            const schema = structuredClone(source);
+            const required = Array.isArray(schema.required) ? schema.required : [];
+            schema.required = required.includes('description') ? required : [...required, 'description'];
+            this.exposedSchema = schema;
+            this.exposedSchemaSource = source;
+        }
+        return this.exposedSchema;
+    }
 }
 
 /**
@@ -104,16 +130,22 @@ const MCP_SEARCH_LIMIT_HARD_MAX = 50;
 const MCP_SEARCH_LIMIT_SOFT_MAX = 10;
 
 const McpSearchToolsSchema = z.object({
+    description: z.string().optional().describe(t('tool.purpose.description')),
     query: z.string().default('').describe(t('gateway.search.query')),
     server: z.string().optional().describe(t('gateway.search.server')),
     offset: z.number().int().min(0).default(0).describe(t('gateway.search.offset')),
     limit: z.number().int().min(1).max(MCP_SEARCH_LIMIT_HARD_MAX).default(5).describe(t('gateway.search.limit'))
 });
 
-export class McpSearchToolsTool extends BaseTool<typeof McpSearchToolsSchema> {
+export class McpSearchToolsTool extends McpGatewayTool<typeof McpSearchToolsSchema> {
     constructor(private readonly tools: readonly McpToolInfo[]) {
         super('mcpSearchTools', t('gateway.search.description'), McpSearchToolsSchema);
+        this.renderToolCallOnError = true;
         this.setExecutor(this.handleExecute.bind(this));
+    }
+
+    async renderToolCall(toolcall: ToolCall): Promise<string> {
+        return renderMcpToolCall(toolcall, this.name);
     }
 
     private async handleExecute(args: z.output<typeof McpSearchToolsSchema>): Promise<string> {
@@ -155,14 +187,20 @@ export class McpSearchToolsTool extends BaseTool<typeof McpSearchToolsSchema> {
 }
 
 const McpGetToolSchema = z.object({
+    description: z.string().optional().describe(t('tool.purpose.description')),
     serverId: z.string().min(1).describe(t('gateway.get.serverId')),
     toolName: z.string().min(1).describe(t('gateway.get.toolName'))
 });
 
-export class McpGetToolTool extends BaseTool<typeof McpGetToolSchema> {
+export class McpGetToolTool extends McpGatewayTool<typeof McpGetToolSchema> {
     constructor(private readonly tools: readonly McpToolInfo[]) {
         super('mcpGetTool', t('gateway.get.description'), McpGetToolSchema);
+        this.renderToolCallOnError = true;
         this.setExecutor(this.handleExecute.bind(this));
+    }
+
+    async renderToolCall(toolcall: ToolCall): Promise<string> {
+        return renderMcpToolCall(toolcall, this.name);
     }
 
     private async handleExecute(args: z.output<typeof McpGetToolSchema>): Promise<string> {
@@ -189,6 +227,7 @@ export class McpGetToolTool extends BaseTool<typeof McpGetToolSchema> {
 }
 
 const McpCallToolSchema = z.object({
+    description: z.string().optional().describe(t('tool.purpose.description')),
     serverId: z.string().min(1).describe(t('gateway.call.serverId')),
     toolName: z.string().min(1).describe(t('gateway.call.toolName')),
     arguments: z.record(z.string(), z.unknown()).default({}).describe(t('gateway.call.arguments'))
@@ -210,12 +249,13 @@ function unwrapNestedArguments(args: Record<string, unknown>, tool: McpToolInfo)
     return args;
 }
 
-export class McpCallToolTool extends BaseTool<typeof McpCallToolSchema> {
+export class McpCallToolTool extends McpGatewayTool<typeof McpCallToolSchema> {
     constructor(
         private readonly tools: readonly McpToolInfo[],
         callTool: (tool: McpToolInfo, args: Record<string, unknown>) => Promise<string>
     ) {
         super('mcpCallTool', t('gateway.call.description'), McpCallToolSchema);
+        this.renderToolCallOnError = true;
         this.setExecutor(async (args) => {
             const tool = this.tools.find(
                 (candidate) => candidate.serverId === args.serverId && candidate.name === args.toolName
@@ -231,5 +271,15 @@ export class McpCallToolTool extends BaseTool<typeof McpCallToolSchema> {
             const toolArgs = unwrapNestedArguments(args.arguments, tool);
             return callTool(tool, toolArgs);
         });
+    }
+
+    async renderToolCall(toolcall: ToolCall): Promise<string> {
+        const serverId = toolcall.args_object?.['serverId'];
+        const toolName = toolcall.args_object?.['toolName'];
+        const tool = this.tools.find((candidate) => candidate.serverId === serverId && candidate.name === toolName);
+        return renderMcpToolCall(
+            toolcall,
+            tool ? `${tool.serverName} · ${tool.name}` : `${serverId ?? ''} · ${toolName ?? this.name}`
+        );
     }
 }

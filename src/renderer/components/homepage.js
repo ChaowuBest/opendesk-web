@@ -16,6 +16,8 @@ const HOME_SEARCH_DEBOUNCE_MS = 800;
 const HOME_SEARCH_TOP_K = 50;
 const HOME_SEARCH_FAST_ROUTES = ['keyword'];
 const HOME_SEARCH_SLOW_ROUTES = ['name_semantic', 'content_semantic'];
+const HOME_RECOMMENDATION_MAX_HEIGHT_PX = 280;
+const HOME_RECOMMENDATION_FIT_BUFFER_PX = 100;
 const SEARCH_CODES = {
     INDEX_NOT_READY: 'INDEX_NOT_READY',
     EMBED_UNAVAILABLE: 'EMBED_UNAVAILABLE',
@@ -480,7 +482,7 @@ class HomePage extends HTMLElement {
             home-page { display: block; position: relative; }
             .hp-rec-wrapper {
                 overflow: hidden;
-                max-height: 280px;
+                max-height: ${HOME_RECOMMENDATION_MAX_HEIGHT_PX}px;
                 opacity: 1;
                 transition: max-height .3s ease, opacity .25s ease;
             }
@@ -496,43 +498,30 @@ class HomePage extends HTMLElement {
                 display: inline-flex;
                 align-items: center;
                 gap: 8px;
-                padding: 7px 16px;
-                border-radius: 999px;
-                border: 1px solid rgba(255, 255, 255, 0.9);
-                background: rgba(255, 255, 255, 0.66);
-                backdrop-filter: blur(16px);
-                -webkit-backdrop-filter: blur(16px);
-                box-shadow: 0 6px 22px rgba(31, 41, 66, 0.1);
-                color: #475069;
+                padding: 7px 12px;
+                border-radius: 10px;
+                border: 1px solid var(--od-border);
+                background: var(--od-bg-elevated);
+                box-shadow: 0 1px 2px rgba(28, 25, 23, 0.04), 0 6px 18px rgba(28, 25, 23, 0.06);
+                color: var(--od-text-muted);
                 font-size: 12px;
                 cursor: pointer;
-                transition: all .25s ease;
+                transition: background .15s ease, border-color .15s ease, color .15s ease, box-shadow .15s ease;
                 font-family: inherit;
             }
             .hp-immersive-entry:hover {
-                color: #191b1f;
-                border-color: rgba(61, 111, 255, 0.45);
-                box-shadow: 0 8px 26px rgba(61, 111, 255, 0.18);
-                transform: translateY(-1px);
+                color: var(--od-accent);
+                border-color: color-mix(in srgb, var(--od-accent) 34%, var(--od-border));
+                background: color-mix(in srgb, var(--od-accent) 8%, var(--od-bg-elevated));
+                box-shadow: 0 2px 8px color-mix(in srgb, var(--od-accent) 12%, transparent);
             }
             .hp-immersive-entry .hp-icon {
                 width: 15px;
                 height: 15px;
-                color: #64748b;
+                color: currentColor;
                 flex: none;
             }
             .hp-immersive-entry[hidden] { display: none; }
-            html[data-theme='dark'] .hp-immersive-entry {
-                border-color: rgba(255, 255, 255, 0.14);
-                background: rgba(48, 53, 68, 0.66);
-                color: #b9c0d4;
-                box-shadow: 0 6px 22px rgba(0, 0, 0, 0.35);
-            }
-            html[data-theme='dark'] .hp-immersive-entry:hover {
-                color: #e8eaf0;
-                border-color: rgba(61, 111, 255, 0.5);
-                box-shadow: 0 8px 26px rgba(61, 111, 255, 0.25);
-            }
         </style>
         <!-- 主内容居中 -->
         <div id="hp-container" class="w-full h-full px-8 flex flex-col items-center justify-center" data-agent-input-height-reference>
@@ -582,6 +571,8 @@ class HomePage extends HTMLElement {
         this.__recFitObserver = new ResizeObserver(() => this._checkRecFit());
         this.__recFitObserver.observe(this.parentElement);
         this.__recFitObserver.observe(container);
+        const recommendation = recWrapper.firstElementChild;
+        if (recommendation) this.__recFitObserver.observe(recommendation);
         // 初始检查
         requestAnimationFrame(() => this._checkRecFit());
     }
@@ -594,34 +585,19 @@ class HomePage extends HTMLElement {
         const parentEl = this.parentElement;
         if (!parentEl) return;
 
-        const firstChild = container.firstElementChild;
-        const lastChild = container.lastElementChild;
-        if (!firstChild || !lastChild) return;
-
-        const isHidden = recWrapper.classList.contains('hp-rec-hidden');
         const availableHeight = parentEl.clientHeight;
-
-        // 实际渲染内容高度：从第一个元素顶部到最后一个元素底部
-        const contentHeight = lastChild.getBoundingClientRect().bottom - firstChild.getBoundingClientRect().top;
-
-        if (isHidden) {
-            // 隐藏时估算加上推荐面板后的总高度
-            if (!this.__recActualHeight) {
-                // 首次：临时显示推荐面板测量实际高度
-                recWrapper.classList.remove('hp-rec-hidden');
-                this.__recActualHeight = recWrapper.offsetHeight;
-                recWrapper.classList.add('hp-rec-hidden');
-            }
-            const totalHeight = contentHeight + this.__recActualHeight;
-            if (totalHeight + 100 <= availableHeight) {
-                recWrapper.classList.remove('hp-rec-hidden');
-            }
-        } else {
-            this.__recActualHeight = recWrapper.offsetHeight;
-            if (contentHeight + 100 > availableHeight) {
-                recWrapper.classList.add('hp-rec-hidden');
-            }
-        }
+        const fixedContentHeight = Array.from(container.children)
+            .filter((element) => element !== recWrapper && element.id !== 'hp-immersive-entry')
+            .reduce((height, element) => {
+                const style = getComputedStyle(element);
+                const marginTop = Number.parseFloat(style.marginTop) || 0;
+                const marginBottom = Number.parseFloat(style.marginBottom) || 0;
+                return height + element.getBoundingClientRect().height + marginTop + marginBottom;
+            }, 0);
+        // scrollHeight 不受 max-height 折叠动画影响，因此隐藏后仍可可靠判断何时恢复显示。
+        const recommendationHeight = Math.min(recWrapper.scrollHeight, HOME_RECOMMENDATION_MAX_HEIGHT_PX);
+        const requiredHeight = fixedContentHeight + recommendationHeight + HOME_RECOMMENDATION_FIT_BUFFER_PX;
+        recWrapper.classList.toggle('hp-rec-hidden', requiredHeight > availableHeight);
     }
 
     _getGreeting() {

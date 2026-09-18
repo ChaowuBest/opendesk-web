@@ -1,12 +1,16 @@
 import { jest } from '@jest/globals';
 import { McpMgrApplication } from '../../../main/applications/mcpmgr/app.js';
 import {
+    MCP_EAGER_DEFINITION_CHAR_BUDGET,
     McpCallToolTool,
     McpGetToolTool,
     McpSearchToolsTool,
     partitionMcpToolsForContext
 } from '../../../main/applications/mcpmgr/mcp-gateway-tools.js';
 import type { McpToolInfo } from '../../../main/applications/mcpmgr/common.js';
+import { ToolCall } from '../../../main/aikernel/messages.js';
+import { MCPTool } from '../../../main/applications/mcpmgr/mcp-tool.js';
+import { t } from '../../../main/applications/mcpmgr/locale/index.js';
 
 function tool(overrides: Partial<McpToolInfo> = {}): McpToolInfo {
     return {
@@ -44,6 +48,35 @@ describe('MCP layered tool loading', () => {
         expect(partition.deferred).toEqual(large);
     });
 
+    test('budgets the final eager definitions including the injected description', () => {
+        const tools = Array.from({ length: 80 }, (_, index) =>
+            tool({
+                serverId: `server-${index}`,
+                serverName: `server-${index}`,
+                name: 'ping',
+                description: 'Ping a service'
+            })
+        );
+
+        const partition = partitionMcpToolsForContext(tools);
+        const actualSize = partition.eager.reduce(
+            (size, candidate) =>
+                size +
+                JSON.stringify(
+                    new MCPTool(
+                        candidate.serverName,
+                        candidate.name,
+                        candidate.description,
+                        candidate.inputSchema
+                    ).toJSON()
+                ).length,
+            0
+        );
+
+        expect(actualSize).toBeLessThanOrEqual(MCP_EAGER_DEFINITION_CHAR_BUDGET);
+        expect(partition.deferred.length).toBeGreaterThan(0);
+    });
+
     test('searches compact metadata, loads one definition, and calls through the gateway', async () => {
         const tools = [
             tool(),
@@ -60,6 +93,12 @@ describe('MCP layered tool loading', () => {
 
         expect(initialDefinitions).not.toContain('verbose verbose');
         expect(initialDefinitions.length).toBeLessThan(5_000);
+        expect(callGateway.getJsonSchema().properties.description).toEqual(expect.objectContaining({ type: 'string' }));
+        expect(searchTool.getJsonSchema().properties.description).toEqual(expect.objectContaining({ type: 'string' }));
+        expect(getTool.getJsonSchema().properties.description).toEqual(expect.objectContaining({ type: 'string' }));
+        expect(callGateway.getJsonSchema().required).toContain('description');
+        expect(searchTool.getJsonSchema().required).toContain('description');
+        expect(getTool.getJsonSchema().required).toContain('description');
 
         const searchResult = await searchTool.execute({ query: 'component', offset: 0, limit: 5 });
         const searchPayload = JSON.parse(searchResult.result);
@@ -86,10 +125,32 @@ describe('MCP layered tool loading', () => {
         const callResult = await callGateway.execute({
             serverId: 'arkts-id',
             toolName: 'search_components',
-            arguments: { query: 'Button' }
+            arguments: { query: 'Button' },
+            description: 'Find button components'
         });
         expect(callResult.result).toBe('documentation result');
         expect(callTool).toHaveBeenCalledWith(tools[0], { query: 'Button' });
+
+        const call = new ToolCall(0, 'id', 'mcpCallTool', '{}');
+        call.args_object = {
+            serverId: 'arkts-id',
+            toolName: 'search_components',
+            description: 'Find button components'
+        };
+        const html = await callGateway.renderToolCall(call);
+        expect(html).toContain('title="arkts · search_components"');
+        expect(html).toContain(t('tool.label'));
+        expect(html).toContain('Find button components');
+        expect(await searchTool.renderToolCall(call)).toContain(t('tool.label'));
+        expect(await getTool.renderToolCall(call)).toContain(t('tool.label'));
+
+        call.status = 'error';
+        call.result = 'Gateway failed';
+        call.setTool(callGateway);
+        const errorHtml = await call.render();
+        expect(errorHtml).toContain(t('tool.label'));
+        expect(errorHtml).toContain('Find button components');
+        expect(errorHtml).toContain('Gateway failed');
     });
 
     test('automatically unwraps incorrectly nested arguments (common AI mistake with query-wrapping)', async () => {
@@ -116,6 +177,36 @@ describe('MCP layered tool loading', () => {
         });
 
         expect(callTool).toHaveBeenCalledWith(tools[0], { query: '获取所有屏幕显示信息', top_k: 10 });
+    });
+
+    test('reuses and preserves a server-defined description', async () => {
+        const discoveredTools = [
+            tool({
+                inputSchema: {
+                    type: 'object',
+                    properties: { description: { type: 'string' }, name: { type: 'string' } },
+                    required: ['description', 'name'],
+                    additionalProperties: false
+                }
+            })
+        ];
+        const callWorker = jest.fn(async (methodName: string) =>
+            methodName === 'getDiscoveredTools'
+                ? { status: 'ok', data: discoveredTools }
+                : { status: 'ok', data: 'called' }
+        );
+        const app = Object.create(McpMgrApplication.prototype) as McpMgrApplication;
+        (app as any).callWorker = callWorker;
+        const [toolset] = await app.getToolsets();
+        const eager = toolset.getTool('arkts__search_components')!;
+
+        expect(Object.keys(eager.getJsonSchema().properties)).toEqual(['description', 'name']);
+        const result = await eager.execute({ description: 'Original data', name: 'item' });
+        expect(result.status).toBe('success');
+        expect(callWorker).toHaveBeenLastCalledWith('callMcpTool', 'arkts-id', 'search_components', {
+            description: 'Original data',
+            name: 'item'
+        });
     });
 
     test('does not unwrap when wrapper key does not match nested schema keys', async () => {
@@ -180,6 +271,15 @@ describe('MCP layered tool loading', () => {
 
         expect(names).toEqual(expect.arrayContaining(['small__ping', 'mcpSearchTools', 'mcpGetTool', 'mcpCallTool']));
         expect(names).not.toContain('arkts__search_components');
+
+        const eager = toolset.getTool('small__ping')!;
+        expect(eager.getJsonSchema().properties.description).toEqual(expect.objectContaining({ type: 'string' }));
+        const eagerResult = await eager.execute({ query: 'test', description: 'Check availability' });
+        expect(eagerResult.status).toBe('success');
+        expect(callWorker).toHaveBeenLastCalledWith('callMcpTool', 'small-id', 'ping', {
+            query: 'test',
+            description: 'Check availability'
+        });
 
         const result = await toolset.callTool('mcpCallTool', {
             serverId: 'arkts-id',

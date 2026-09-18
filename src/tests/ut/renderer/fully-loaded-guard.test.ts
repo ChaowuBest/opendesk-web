@@ -50,6 +50,7 @@ describe('renderer fully-loaded guards', () => {
             '// 先注册 renderer 首屏会调用的无状态 IPC'
         );
         expect(fullLoadingBarrier).toContain('ApplicationRegistry.ensureFullyLoaded()');
+        expect(fullLoadingBarrier).toContain('initializePluginHost()');
         expect(fullLoadingBarrier).toContain('ensureBrowserReady()');
         expect(fullLoadingBarrier).toContain('registryWorkerReady');
         expect(startupSource).not.toContain('await Promise.all([agentsReady, browserReady])');

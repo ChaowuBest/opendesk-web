@@ -1,4 +1,6 @@
 import { jest } from '@jest/globals';
+import path from 'path';
+import { fileURLToPath, pathToFileURL } from 'url';
 import type { McpServerConfig } from '../../../main/applications/mcpmgr/common';
 
 const fetchMock = jest.fn();
@@ -8,6 +10,20 @@ jest.unstable_mockModule('../../../platforms/base', () => ({
         fetch: fetchMock
     })
 }));
+
+// ModelScope MCP 注册表实现已迁移到内置插件 modelscope（按品牌划分）；
+// 这里直接针对插件的注册表定义（与主进程消费的是同一份实现）做回归。
+const MODELSCOPE_MODULE_PATH = path.resolve(
+    path.dirname(fileURLToPath(import.meta.url)),
+    '../../../../resources/plugins/modelscope/mcp-registry.mjs'
+);
+
+async function loadModelScopeDefinition() {
+    const module = (await import(`${pathToFileURL(MODELSCOPE_MODULE_PATH).href}?t=${Date.now()}`)) as {
+        createModelScopeMcpRegistryDefinition: (registryApi: { fetch: typeof fetchMock }) => any;
+    };
+    return module.createModelScopeMcpRegistryDefinition({ fetch: fetchMock as unknown as typeof fetch });
+}
 
 function jsonResponse(data: unknown): Response {
     return {
@@ -81,8 +97,7 @@ describe('ModelScope MCP registry', () => {
             )
         );
 
-        const { ModelScopeMCPRegistry } = await import('../../../main/applications/mcpmgr/registry/modelscope');
-        const registry = new ModelScopeMCPRegistry();
+        const registry = await loadModelScopeDefinition();
         const result = await registry.search({ query: 'fetch', page: 1, limit: 30 });
 
         expect(result.total).toBe(9631);
@@ -142,8 +157,7 @@ describe('ModelScope MCP registry', () => {
             )
         );
 
-        const { ModelScopeMCPRegistry } = await import('../../../main/applications/mcpmgr/registry/modelscope');
-        const registry = new ModelScopeMCPRegistry();
+        const registry = await loadModelScopeDefinition();
         const result = await registry.search({ page: 1, limit: 30 });
 
         expect(result.mcps.map((mcp) => mcp.id)).toEqual(['demo/top-stars', 'demo/middle-stars', 'demo/low-stars']);
@@ -197,8 +211,7 @@ describe('ModelScope MCP registry', () => {
             )
         );
 
-        const { ModelScopeMCPRegistry } = await import('../../../main/applications/mcpmgr/registry/modelscope');
-        const registry = new ModelScopeMCPRegistry();
+        const registry = await loadModelScopeDefinition();
         const detail = await registry.getDetail('@modelcontextprotocol/fetch');
 
         expect(detail).toEqual(
@@ -239,40 +252,54 @@ describe('ModelScope MCP registry', () => {
             )
         );
 
-        const { McpMgrApplication } = await import('../../../main/applications/mcpmgr/app');
-        const app = Object.create(McpMgrApplication.prototype) as McpMgrApplication;
-        let servers: McpServerConfig[] = [];
+        // 与主进程一致：插件贡献的注册表经 ContributedMCPRegistry 适配后进 allRegistries
+        const [{ ContributedMCPRegistry }, { allRegistries }, { McpMgrApplication }] = await Promise.all([
+            import('../../../main/applications/mcpmgr/registry/contributed'),
+            import('../../../main/applications/mcpmgr/registry/index'),
+            import('../../../main/applications/mcpmgr/app')
+        ]);
+        const definition = await loadModelScopeDefinition();
+        const adapter = new ContributedMCPRegistry(definition);
+        const originalRegistries = [...allRegistries];
+        allRegistries.splice(0, allRegistries.length, adapter);
 
-        jest.spyOn(app, 'getServersFromConfig').mockImplementation(() => JSON.parse(JSON.stringify(servers)));
-        const saveServersToConfig = jest.fn((nextServers: McpServerConfig[]) => {
-            servers = JSON.parse(JSON.stringify(nextServers));
-        });
-        (app as any).saveServersToConfig = saveServersToConfig;
-        (app as any).sendEventToSubscribers = jest.fn();
+        try {
+            const app = Object.create(McpMgrApplication.prototype) as McpMgrApplication;
+            let servers: McpServerConfig[] = [];
 
-        const result = await app.installFromRegistry('modelscope-mcp:%40modelcontextprotocol%2Ffetch');
+            jest.spyOn(app, 'getServersFromConfig').mockImplementation(() => JSON.parse(JSON.stringify(servers)));
+            const saveServersToConfig = jest.fn((nextServers: McpServerConfig[]) => {
+                servers = JSON.parse(JSON.stringify(nextServers));
+            });
+            (app as any).saveServersToConfig = saveServersToConfig;
+            (app as any).sendEventToSubscribers = jest.fn();
 
-        expect(result.installed).toHaveLength(1);
-        expect(servers).toHaveLength(1);
-        expect(servers[0]).toEqual(
-            expect.objectContaining({
-                name: 'fetch',
-                transport: 'stdio',
-                command: 'uvx',
-                args: ['mcp-server-fetch'],
-                env: {
-                    FETCH_TIMEOUT: '10'
-                },
-                source: 'modelscope',
-                registryId: 'modelscope-mcp',
-                registryMcpId: '@modelcontextprotocol/fetch'
-            })
-        );
-        expect(servers[0].id).toMatch(/^mcp_/);
+            const result = await app.installFromRegistry('modelscope-mcp:%40modelcontextprotocol%2Ffetch');
 
-        await app.deleteServer(servers[0].id);
+            expect(result.installed).toHaveLength(1);
+            expect(servers).toHaveLength(1);
+            expect(servers[0]).toEqual(
+                expect.objectContaining({
+                    name: 'fetch',
+                    transport: 'stdio',
+                    command: 'uvx',
+                    args: ['mcp-server-fetch'],
+                    env: {
+                        FETCH_TIMEOUT: '10'
+                    },
+                    source: 'modelscope',
+                    registryId: 'modelscope-mcp',
+                    registryMcpId: '@modelcontextprotocol/fetch'
+                })
+            );
+            expect(servers[0].id).toMatch(/^mcp_/);
 
-        expect(servers).toEqual([]);
-        expect(saveServersToConfig).toHaveBeenCalledTimes(2);
+            await app.deleteServer(servers[0].id);
+
+            expect(servers).toEqual([]);
+            expect(saveServersToConfig).toHaveBeenCalledTimes(2);
+        } finally {
+            allRegistries.splice(0, allRegistries.length, ...originalRegistries);
+        }
     });
 });

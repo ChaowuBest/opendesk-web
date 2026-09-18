@@ -614,8 +614,8 @@ export class ToolCall implements BaseChatToolCall {
             return this.rendered;
         }
 
-        /* 错误状态统一渲染，不委托给自定义渲染函数，确保所有工具报错效果一致 */
-        if (this.status === 'error') {
+        /* 默认统一渲染错误；少数工具可选择保留自身身份信息并负责展示错误内容。 */
+        if (this.status === 'error' && this.tool?.renderToolCallOnError !== true) {
             return this.renderError();
         }
 
@@ -625,6 +625,10 @@ export class ToolCall implements BaseChatToolCall {
             if (rendered !== undefined) {
                 return rendered;
             }
+        }
+
+        if (this.status === 'error') {
+            return this.renderError();
         }
 
         const statusIcon =

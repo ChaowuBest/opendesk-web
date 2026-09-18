@@ -24,6 +24,8 @@ import { logger } from '../../../utils/logger.js';
 import { getPlatform } from '../../../../platforms/base.js';
 import {
     allRegistries,
+    ensureSkillRegistriesSynced,
+    getRegistry,
     getRegistriesInfo as getRegistryInfoList,
     searchRegistry as searchSingleRegistry,
     getInstallMethod,
@@ -31,10 +33,13 @@ import {
     type RegistrySkill,
     type SearchOptions
 } from '../registry/index.js';
+import type { ContributedSkillRegistry } from '../registry/contributed.js';
 import { findSkillEntryFile, CANONICAL_SKILL_FILENAME } from '../skill-entry.js';
 import { SkillRegistry } from './skill-registry.js';
 
-const CLAWHUB_DOWNLOAD_URL = 'https://wry-manatee-359.convex.site/api/v1/download';
+const CLAWHUB_API_BASE = 'https://wry-manatee-359.convex.site/api/v1';
+const CLAWHUB_DOWNLOAD_URL = `${CLAWHUB_API_BASE}/download`;
+const CLAWHUB_SEARCH_URL = `${CLAWHUB_API_BASE}/search`;
 const SKILLHUB_DOWNLOAD_URL = 'https://api.skillhub.tencent.com/api/v1/download';
 const ZIP_MAX_UNCOMPRESSED_BYTES = 500 * 1024 * 1024;
 const GITHUB_ZIP_TIMEOUT_MS = 60000;
@@ -381,14 +386,19 @@ export abstract class SkillSourceInstaller {
 
     /** 模块私有：下载 zip 到临时目录并解压出技能根目录 */
     protected async _downloadAndExtractZip(url: string, label: string, cleanup: Array<() => void>): Promise<string> {
-        const tmpDir = path.join(getTempDir(), `${label}-${Date.now()}`);
-        fs.mkdirSync(tmpDir, { recursive: true });
-        cleanup.push(() => rmRecursive(tmpDir));
         const res = await getPlatform().fetch(url, { redirect: 'follow' });
         if (!res.ok) {
             throw new Error(`下载失败: ${res.status} ${res.statusText}`);
         }
         const zipBuffer = Buffer.from(await res.arrayBuffer());
+        return this._writeAndExtractZip(zipBuffer, label, cleanup);
+    }
+
+    /** 将 zip 字节流写入临时目录并解压出技能根目录 */
+    protected async _writeAndExtractZip(zipBuffer: Buffer, label: string, cleanup: Array<() => void>): Promise<string> {
+        const tmpDir = path.join(getTempDir(), `${label}-${Date.now()}`);
+        fs.mkdirSync(tmpDir, { recursive: true });
+        cleanup.push(() => rmRecursive(tmpDir));
         const zipPath = path.join(tmpDir, 'download.zip');
         fs.writeFileSync(zipPath, zipBuffer);
         const extracted = extractZipToSkillDir(zipPath, undefined);
@@ -522,7 +532,7 @@ export class GitHubUrlInstaller extends SkillSourceInstaller {
 }
 
 const REGISTRY_SLUG_ERRORS: Record<string, string> = {
-    clawhub: '请提供 ClawHub 技能 slug（如 my-skill）',
+    clawhub: '请提供 ClawHub 技能 slug（如 my-skill 或 owner/my-skill）',
     matrix: '请提供 Matrix Skill 的英文名称（如 test-master）',
     skillhub: '请提供 SkillHub 技能 slug',
     modelscope: '请提供 ModelScope 技能名称'
@@ -556,16 +566,89 @@ export class RegistrySlugInstaller extends SkillSourceInstaller {
     }
 
     protected async resolveToLocalDir(cleanup: Array<() => void>): Promise<string> {
+        if (this.registryId === 'clawhub') {
+            return this._downloadClawHubZip(cleanup);
+        }
         return this._downloadAndExtractZip(this._buildDownloadUrl(), `skill-${this.registryId}-download`, cleanup);
+    }
+
+    /** 拆分 clawhub 的 owner/slug 复合 slug（裸 slug 时 ownerHandle 为空） */
+    private _splitClawHubSlug(): { ownerHandle?: string; slug: string } {
+        const separatorIndex = this.slug.indexOf('/');
+        if (separatorIndex <= 0) return { slug: this.slug };
+        return { ownerHandle: this.slug.slice(0, separatorIndex), slug: this.slug.slice(separatorIndex + 1) };
+    }
+
+    private _buildClawHubDownloadUrl(ownerHandle: string | undefined, slug: string): string {
+        const params = new URLSearchParams({ slug });
+        if (ownerHandle) {
+            params.set('ownerHandle', ownerHandle);
+        }
+        if (this.version && String(this.version).trim()) {
+            params.set('version', String(this.version).trim());
+        }
+        return `${CLAWHUB_DOWNLOAD_URL}?${params}`;
+    }
+
+    /**
+     * ClawHub 下载：slug 允许被多个发布者占用，裸 slug 撞名时服务端返回 409，
+     * 此时经搜索接口解析唯一 ownerHandle 后重试；无法唯一解析则报错并保留服务端原因。
+     */
+    private async _downloadClawHubZip(cleanup: Array<() => void>): Promise<string> {
+        const label = 'skill-clawhub-download';
+        const { ownerHandle, slug } = this._splitClawHubSlug();
+        const res = await getPlatform().fetch(this._buildClawHubDownloadUrl(ownerHandle, slug), {
+            redirect: 'follow'
+        });
+        if (res.status !== 409 || ownerHandle) {
+            if (!res.ok) {
+                throw new Error(`下载失败: ${res.status} ${res.statusText}`);
+            }
+            return this._writeAndExtractZip(Buffer.from(await res.arrayBuffer()), label, cleanup);
+        }
+        const ambiguousMessage = await res.text().catch(() => '');
+        const resolvedOwner = await this._resolveClawHubOwnerBySearch(slug);
+        if (!resolvedOwner) {
+            throw new Error(
+                `下载失败: 409 Conflict，ClawHub slug「${slug}」被多个发布者占用且无法唯一解析发布者` +
+                    (ambiguousMessage.trim() ? `: ${ambiguousMessage.trim()}` : '')
+            );
+        }
+        const retryRes = await getPlatform().fetch(this._buildClawHubDownloadUrl(resolvedOwner, slug), {
+            redirect: 'follow'
+        });
+        if (!retryRes.ok) {
+            throw new Error(`下载失败: ${retryRes.status} ${retryRes.statusText}`);
+        }
+        return this._writeAndExtractZip(Buffer.from(await retryRes.arrayBuffer()), label, cleanup);
+    }
+
+    /** 裸 slug 撞名时经搜索接口解析唯一 ownerHandle；0 个或多个候选均视为无法唯一解析 */
+    private async _resolveClawHubOwnerBySearch(slug: string): Promise<string | undefined> {
+        try {
+            const params = new URLSearchParams({ q: slug, limit: '100' });
+            const res = await getPlatform().fetch(`${CLAWHUB_SEARCH_URL}?${params}`, {
+                headers: { Accept: 'application/json', 'User-Agent': 'OpenDesk/1.0' },
+                redirect: 'follow'
+            });
+            if (!res.ok) return undefined;
+            const data = await res.json();
+            const results = Array.isArray(data?.results) ? data.results : [];
+            const ownerHandles = new Set<string>();
+            for (const item of results) {
+                if (item?.slug !== slug) continue;
+                if (typeof item?.ownerHandle === 'string' && item.ownerHandle) ownerHandles.add(item.ownerHandle);
+            }
+            return ownerHandles.size === 1 ? ownerHandles.values().next().value : undefined;
+        } catch {
+            return undefined;
+        }
     }
 
     private _buildDownloadUrl(): string {
         if (this.registryId === 'clawhub') {
-            const params = new URLSearchParams({ slug: this.slug });
-            if (this.version && String(this.version).trim()) {
-                params.set('version', String(this.version).trim());
-            }
-            return `${CLAWHUB_DOWNLOAD_URL}?${params}`;
+            const { ownerHandle, slug } = this._splitClawHubSlug();
+            return this._buildClawHubDownloadUrl(ownerHandle, slug);
         }
         if (this.registryId === 'matrix') {
             return `https://matrix.openharmony.cn/api/registry/skill/${encodeURIComponent(this.slug)}/install?format=zip`;
@@ -851,14 +934,15 @@ export class SkillInstallManager {
     }
 
     /** 按 installUrl 类型分发到对应安装器（GUI 卡片 / 渲染进程统一入口） */
-    installFromRegistryInstallUrl(
+    async installFromRegistryInstallUrl(
         installUrl: string,
         options: { force?: boolean; customName?: string; refresh?: boolean } = {}
     ): Promise<InstallSkillResult> {
+        await ensureSkillRegistriesSynced();
         const method = getInstallMethod(installUrl);
         if (['clawhub', 'matrix', 'modelscope', 'skillhub'].includes(method)) {
             const parsed = parseInstallUrl(installUrl);
-            if (!parsed) return Promise.resolve({ success: false, error: `无效的 ${method} installUrl` });
+            if (!parsed) return { success: false, error: `无效的 ${method} installUrl` };
             if (method === 'clawhub') return this.installFromClawHubSlug(parsed.slug, parsed.version, options);
             if (method === 'matrix') return this.installFromMatrixSlug(parsed.slug, options);
             if (method === 'modelscope') return this.installFromModelScopeSlug(parsed.slug, options);
@@ -866,6 +950,16 @@ export class SkillInstallManager {
         }
         if (method === 'github') {
             return this.installFromGitHubUrl(installUrl, options);
+        }
+        // 插件贡献的注册表：优先使用定义声明的 resolveInstall 解析下载地址，
+        // 未声明时保持原行为（按普通 zip URL 尝试下载）
+        const parsed = parseInstallUrl(installUrl);
+        if (parsed) {
+            const registry = getRegistry(method);
+            if (registry && typeof (registry as ContributedSkillRegistry).resolveInstall === 'function') {
+                const plan = await (registry as ContributedSkillRegistry).resolveInstall(installUrl, parsed);
+                if (plan?.downloadUrl) return this.installFromUrl(plan.downloadUrl, options);
+            }
         }
         return this.installFromUrl(installUrl, options);
     }
@@ -934,6 +1028,7 @@ export class SkillInstallManager {
         keyword: string,
         options: { limit?: number; skillsmpApiKey?: string } = {}
     ): Promise<RegistrySearchResult> {
+        await ensureSkillRegistriesSynced();
         const query = String(keyword || '').trim();
         if (!query) {
             return { results: [], errors: [{ registryName: 'all', error: '请提供技能名称关键字' }] };
@@ -988,6 +1083,7 @@ export class SkillInstallManager {
     ): Promise<
         InstallSkillResult & { registryName?: string; matchedSkill?: string; candidates?: RegistrySearchSkill[] }
     > {
+        await ensureSkillRegistriesSynced();
         const registry = normalizeRegistryName(registryName);
         if (!registry) {
             return { success: false, error: `未知 Registry: ${registryName}` };

@@ -11,6 +11,9 @@
 
 export const enUs: Record<string, string> = {
     'app.name': 'MCP',
+    'tool.label': 'MCP Tool',
+    'tool.purpose.description':
+        'Briefly describe the purpose of this MCP tool call for display, e.g. "Find button component docs"',
 
     // ========== 状态 ==========
     'status.connected': 'Connected',
@@ -67,6 +70,8 @@ export const enUs: Record<string, string> = {
     // ========== 应用事件描述 ==========
     'appEvent.serversUpdated':
         'MCP server list updated; fired when servers are added, removed, reconfigured or change connection state',
+    'appEvent.registriesChanged':
+        'MCP registry list change event, triggered after plugins are installed, uninstalled, enabled, disabled, or reloaded',
 
     // ========== 页面助手 ==========
     'agent.instruct':

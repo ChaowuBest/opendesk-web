@@ -17,6 +17,7 @@ import { syncShadowHostTheme } from '../../../../renderer/theme/theme-shadow-ove
 import { showConfirmModal, bindOverlayDismiss } from '../../../../renderer/components/confirmModal';
 import { resolveRendererLocale } from '../../../../renderer/locale.js';
 import { createTranslatorForMcpMgr } from '../locale/renderer.js';
+import { mergeMcpRegistryTabState } from './registry-tabs.js';
 
 type Translator = ReturnType<typeof createTranslatorForMcpMgr>;
 
@@ -603,7 +604,11 @@ class McpMgrEntryWidget extends AgentOperableHTMLElement {
     private installedQuery = '';
     private installedScrollTop = 0;
     private _onServersUpdated: (() => void) | null = null;
+    private _onRegistriesChanged: (() => void) | null = null;
     private _onThemeChange: ((e: any) => void) | null = null;
+    private _registriesLoaded = false;
+    private _registryInfoRequestId = 0;
+    private _registrySearchRequestId = 0;
 
     constructor() {
         super();
@@ -627,6 +632,10 @@ class McpMgrEntryWidget extends AgentOperableHTMLElement {
         document.addEventListener(OPENDESK_THEME_CHANGED, this._onThemeChange as EventListener);
         this._onServersUpdated = () => this.loadServers();
         getAPI().subscribe('serversUpdated', this._onServersUpdated);
+        this._onRegistriesChanged = () => {
+            void this.loadRegistries();
+        };
+        getAPI().subscribe('registriesChanged', this._onRegistriesChanged);
         this.loadServers();
         this.loadRegistries();
         this.loadLocalRuntimeStatus();
@@ -636,6 +645,10 @@ class McpMgrEntryWidget extends AgentOperableHTMLElement {
         if (this._onServersUpdated) {
             getAPI().unsubscribe('serversUpdated', this._onServersUpdated);
             this._onServersUpdated = null;
+        }
+        if (this._onRegistriesChanged) {
+            getAPI().unsubscribe('registriesChanged', this._onRegistriesChanged);
+            this._onRegistriesChanged = null;
         }
         if (this._settingUnsubscribe) {
             this._settingUnsubscribe();
@@ -744,18 +757,43 @@ class McpMgrEntryWidget extends AgentOperableHTMLElement {
     }
 
     async loadRegistries() {
+        const requestId = ++this._registryInfoRequestId;
         try {
-            this.registries =
-                await getAPI().callMainWorld<{ id: string; label: string; icon: string; slogan: string }[]>(
-                    'getMcpRegistries'
-                );
-            // 默认选中第一个 registry
-            if (this.registries.length > 0 && this.activeTab === 'installed') {
+            const infos =
+                await getAPI().callMainWorld<
+                    { id: string; label: string; icon: string; slogan: string; iconClass?: string }[]
+                >('getMcpRegistries');
+            if (requestId !== this._registryInfoRequestId || !Array.isArray(infos)) return;
+
+            const wasLoaded = this._registriesLoaded;
+            const previousActiveTab = this.activeTab;
+            // Registry 快照变化时，当前搜索请求可能仍在返回；先作废旧响应，
+            // 避免停用后旧请求把结果重新写回页面。
+            this._registrySearchRequestId++;
+            this.registryState.searching = false;
+            this.registryState.loadingMore = false;
+            const stateMerge = mergeMcpRegistryTabState(this.registries, this.registryState, this.activeTab, infos);
+            this.activeTab = stateMerge.activeTab;
+            this._registriesLoaded = true;
+
+            this.render();
+
+            // 仅首次成功加载时自动进入第一个 registry。插件启停后的刷新不应
+            // 把用户从“已安装”页强行切换到市场页。
+            if (!wasLoaded && this.activeTab === 'installed' && this.registries.length > 0) {
                 this.activeTab = this.registries[0].id;
-                this.searchRegistry('', 1);
+                this.render();
+                void this.searchRegistry('', 1);
+            } else if (
+                this.activeTab !== 'installed' &&
+                this.activeTab === previousActiveTab &&
+                !stateMerge.removedIds.includes(this.activeTab)
+            ) {
+                // 当前 registry 仍然存在时刷新其内容，确保重新启用/重载后的定义生效。
+                void this.searchRegistry(this.registryState.query, 1);
             }
         } catch {
-            this.registries = [];
+            // 查询失败时保留上一次可用快照，避免瞬态错误制造幽灵状态或清空导航。
         }
         this.render();
     }
@@ -778,11 +816,13 @@ class McpMgrEntryWidget extends AgentOperableHTMLElement {
     async searchRegistry(query = this.registryState.query, page = 1) {
         const registryId = this.activeTab !== 'installed' ? this.activeTab : '';
         if (!registryId) return;
+        const requestId = ++this._registrySearchRequestId;
         const state = this.registryState;
         const isNewSearch = page === 1;
         state.query = query;
         state.page = page;
         state.searching = true;
+        state.loadingMore = false;
         // 新搜索时清空旧结果，确保 loading 状态能正确显示
         if (isNewSearch) {
             state.results = [];
@@ -798,21 +838,31 @@ class McpMgrEntryWidget extends AgentOperableHTMLElement {
                 hasMore?: boolean;
                 message?: string;
             }>('searchMcpRegistry', registryId, query, page, 30);
+            if (
+                requestId !== this._registrySearchRequestId ||
+                this.activeTab !== registryId ||
+                !this.registries.some((registry) => registry.id === registryId)
+            ) {
+                return;
+            }
             state.results = result.mcps || [];
             state.total = result.total || state.results.length;
             state.hasMore = Boolean(result.hasMore);
             state.hasSearched = true;
             state.message = result.message ? { text: result.message, isError: false } : null;
         } catch (err: any) {
+            if (requestId !== this._registrySearchRequestId || this.activeTab !== registryId) return;
             state.results = [];
             state.total = 0;
             state.hasMore = false;
             state.hasSearched = true;
             state.message = { text: err.message || this._t('error.searchFailed'), isError: true };
         } finally {
-            state.searching = false;
-            // 新搜索才全量重建
-            if (isNewSearch) this.render();
+            if (requestId === this._registrySearchRequestId) {
+                state.searching = false;
+                // 新搜索才全量重建
+                if (isNewSearch) this.render();
+            }
         }
     }
 
@@ -820,6 +870,7 @@ class McpMgrEntryWidget extends AgentOperableHTMLElement {
         const state = this.registryState;
         const registryId = this.activeTab !== 'installed' ? this.activeTab : '';
         if (!registryId || state.loadingMore || state.searching || !state.hasMore) return;
+        const requestId = ++this._registrySearchRequestId;
         state.loadingMore = true;
         // 增量更新 loading 状态，不重建整个 DOM
         this.updateLoadingMore(true);
@@ -831,6 +882,13 @@ class McpMgrEntryWidget extends AgentOperableHTMLElement {
                 hasMore?: boolean;
                 message?: string;
             }>('searchMcpRegistry', registryId, state.query, nextPage, 30);
+            if (
+                requestId !== this._registrySearchRequestId ||
+                this.activeTab !== registryId ||
+                !this.registries.some((registry) => registry.id === registryId)
+            ) {
+                return;
+            }
             const newMcps = result.mcps || [];
             state.results = [...state.results, ...newMcps];
             state.total = result.total || state.results.length;
@@ -841,8 +899,10 @@ class McpMgrEntryWidget extends AgentOperableHTMLElement {
         } catch {
             // 加载失败保持现有数据不变
         } finally {
-            state.loadingMore = false;
-            this.updateLoadingMore(false);
+            if (requestId === this._registrySearchRequestId) {
+                state.loadingMore = false;
+                this.updateLoadingMore(false);
+            }
         }
     }
 

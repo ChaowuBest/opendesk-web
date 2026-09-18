@@ -15,6 +15,11 @@
     background-color: transparent;
 }
 
+/* 沉浸桌面使用自己的顶栏作为拖动区，避免全局拖动层吞掉工具栏点击。 */
+body.immersive-desktop-open .drag-overlay {
+    display: none;
+}
+
 /* 窗口控制按钮样式 */
 .window-control-btn {
     -webkit-app-region: no-drag; /* 按钮区域不可拖拽 */

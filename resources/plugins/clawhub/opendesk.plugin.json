@@ -1,0 +1,13 @@
+{
+    "schemaVersion": 1,
+    "id": "clawhub",
+    "displayName": "ClawHub",
+    "description": {
+        "en": "ClawHub community skill content source, integrated via the registry capability",
+        "zh": "ClawHub 社区技能内容来源，经 registry capability 集成"
+    },
+    "version": "1.0.0",
+    "entry": "./index.mjs",
+    "apiVersion": 1,
+    "capabilities": ["registry"]
+}

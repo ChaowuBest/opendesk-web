@@ -38,6 +38,7 @@ import {
     initializePluginMcpProvider,
     notifyPluginMcpServersChanged
 } from './mcp.js';
+import { disposePluginRegistryProvider, initializePluginRegistryProvider } from './registry-providers.js';
 import { ApplicationRegistry } from '../../registry.js';
 
 let initialization: Promise<void> | undefined;
@@ -46,12 +47,20 @@ let disposeAikernelHooks: (() => void)[] = [];
 
 function notifyPluginSkillsChanged(): void {
     const application = ApplicationRegistry.getApplication('skillmgr') as
-        { notifyExternalSkillsChanged?: (bundleName: string) => void } | undefined;
+        | { notifyExternalSkillsChanged?: (bundleName: string) => void }
+        | undefined;
     if (application?.notifyExternalSkillsChanged) {
         application.notifyExternalSkillsChanged(PLUGIN_SKILL_BUNDLE);
     } else {
         ApplicationRegistry.dispatchEvent('skillmgr', 'skillsChanged');
     }
+}
+
+function notifyPluginMcpRegistriesChanged(): void {
+    // MCP registry tabs are rendered in a long-lived widget. Notify that widget
+    // only after the plugin host has finished reloading and its provider snapshot
+    // is ready to be queried.
+    ApplicationRegistry.dispatchEvent('mcpmgr', 'registriesChanged');
 }
 
 interface ResolvedCandidate extends PluginCandidate {
@@ -136,6 +145,7 @@ async function initialize(): Promise<void> {
     registerSdkPackageMapping();
     initializePluginContributions();
     initializePluginMcpProvider();
+    initializePluginRegistryProvider();
     disposeAikernelHooks.forEach((dispose) => dispose());
     disposeAikernelHooks = [];
     disposeAikernelHooks.push(
@@ -290,6 +300,7 @@ export async function disposePluginHost(): Promise<void> {
     disposeAikernelHooks.forEach((dispose) => dispose());
     disposeAikernelHooks = [];
     disposePluginMcpProvider();
+    disposePluginRegistryProvider();
     await getPluginHost().dispose();
     await disposePluginMcpRuntime();
     await AgentRegistry.unloadPluginAgents();
@@ -303,6 +314,7 @@ export async function reloadPluginHost(): Promise<void> {
     await disposePluginHost();
     await initializePluginHost();
     notifyPluginSkillsChanged();
+    notifyPluginMcpRegistriesChanged();
     const globalState = GlobalState.getCurrentInstance();
     if (!globalState) return;
     // 仅刷新已完全加载（正在使用/运行）任务的工具集。懒加载任务未在内存中运行，

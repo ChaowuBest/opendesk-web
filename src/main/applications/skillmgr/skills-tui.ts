@@ -31,6 +31,8 @@ import { installSkillInMain, SkillMgrApplication } from './app.js';
 import { getSkillStatus, setSkillStatus } from './status.js';
 import { skillRegistry } from './utils/skill-registry.js';
 import { skillInstallManager } from './utils/skill-installer.js';
+import { getTuiRegistriesInfo } from './registry/index.js';
+import { t } from './locale/index.js';
 
 interface RegistrySkill {
     id: string;
@@ -90,6 +92,8 @@ export class SkillsOverlay implements Component {
     private searchResults: RegistrySkill[] = [];
     private selectedInputValue = '';
     private selectedRegistry = 'skill0';
+    private registryLabels = new Map<string, string>();
+    private registryLoadVersion = 0;
     private message: { text: string; isError: boolean; state: ViewState } | null = null;
     private loading = false;
     private removeInputListener?: () => void;
@@ -151,6 +155,7 @@ export class SkillsOverlay implements Component {
     }
 
     private showMain() {
+        this.registryLoadVersion++;
         this.cleanup();
         this.state = 'main';
         this.input = undefined;
@@ -174,24 +179,37 @@ export class SkillsOverlay implements Component {
         this.showSelectRegistry();
     }
 
-    private showSelectRegistry() {
+    private async showSelectRegistry() {
+        const version = ++this.registryLoadVersion;
         this.cleanup();
         this.state = 'select-registry';
         this.input = undefined;
-
-        const registries = [
-            { value: 'matrix', label: 'Matrix Skill - OpenHarmony 社区' },
-            { value: 'clawhub', label: 'ClawHub - 技能仓库' },
-            { value: 'modelscope', label: 'ModelScope - 魔搭技能' },
-            { value: 'skillhub', label: 'SkillHub - 腾讯技能中心' },
-            { value: 'skill0', label: 'skill0.io - 公开技能库' },
-            { value: 'skillsmp', label: 'SkillsMP - 技能市场 (需 API Key)' }
-        ];
-
-        this.list = new SelectList(registries, registries.length, defaultSelectListTheme);
+        this.header = new Text(chalk.bold(` ${t('tui.registry.choose')}`));
+        this.list = new SelectList(
+            [{ value: 'loading', label: t('renderer.skill.common.loading') }],
+            1,
+            defaultSelectListTheme
+        );
         this.setupListHandlers();
-        this.renderBox();
+        this.setLoading(true);
         this.openDeskTUI.tui.setFocus(this.list);
+        try {
+            const registries = await getTuiRegistriesInfo();
+            if (!this.visible || this.state !== 'select-registry' || version !== this.registryLoadVersion) return;
+            this.registryLabels = new Map(registries.map(({ id, label }) => [id, label]));
+            if (!this.registryLabels.has(this.selectedRegistry)) this.selectedRegistry = registries[0]?.id ?? '';
+            const items = registries.length
+                ? registries.map(({ id, label }) => ({ value: id, label }))
+                : [{ value: 'back', label: t('tui.registry.none') }];
+            this.list = new SelectList(items, items.length, defaultSelectListTheme);
+            this.setupListHandlers();
+            this.setLoading(false);
+            this.openDeskTUI.tui.setFocus(this.list);
+        } catch {
+            if (!this.visible || this.state !== 'select-registry' || version !== this.registryLoadVersion) return;
+            this.showMain();
+            this.showMessage(t('renderer.skill.error.load'), true);
+        }
     }
 
     private showSearchInput() {
@@ -289,22 +307,7 @@ export class SkillsOverlay implements Component {
     }
 
     private getRegistryLabel(registry: string): string {
-        switch (registry) {
-            case 'skill0':
-                return 'skill0.io';
-            case 'skillsmp':
-                return 'SkillsMP';
-            case 'clawhub':
-                return 'ClawHub';
-            case 'matrix':
-                return 'Matrix Skill';
-            case 'modelscope':
-                return 'ModelScope';
-            case 'skillhub':
-                return 'SkillHub';
-            default:
-                return registry;
-        }
+        return this.registryLabels.get(registry) ?? registry;
     }
 
     private showInstallLocal() {
@@ -968,6 +971,11 @@ export class SkillsOverlay implements Component {
     }
 
     private handleRegistrySelection(value: string) {
+        if (value === 'back') {
+            this.showMain();
+            return;
+        }
+        if (!this.registryLabels.has(value)) return;
         this.selectedRegistry = value;
         this.showSearchInput();
     }
@@ -1086,6 +1094,7 @@ export class SkillsOverlay implements Component {
     }
 
     private close() {
+        this.registryLoadVersion++;
         this.visible = false;
         const restored = this.openDeskTUI.closeInputPrompt(this);
         this.cleanup();

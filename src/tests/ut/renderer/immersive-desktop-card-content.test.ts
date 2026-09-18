@@ -7,6 +7,15 @@ const immersiveDesktopSource = readFileSync(
     new URL('../../../renderer/components/desktop/immersiveDesktop.ts', import.meta.url),
     'utf8'
 );
+const desktopEffectsSource = readFileSync(
+    new URL('../../../renderer/components/desktop/desktopEffects.ts', import.meta.url),
+    'utf8'
+);
+const desktopEntrySource = readFileSync(
+    new URL('../../../renderer/components/desktop/entry.ts', import.meta.url),
+    'utf8'
+);
+const titlebarStylesSource = readFileSync(new URL('../../../renderer/styles/titlebar.css', import.meta.url), 'utf8');
 
 describe('immersive desktop card srcdoc composition', () => {
     test('cycles theme preferences in the same order as the main sidebar', () => {
@@ -31,6 +40,100 @@ describe('immersive desktop card srcdoc composition', () => {
         expect(styles).toContain('.od-card.od-card-done:hover .od-card-header');
         expect(styles).toContain('.od-card.od-card-done .od-card-body { margin: 0; }');
         expect(styles).not.toContain('.od-card.od-card-done { border-color: rgba(16, 185, 129');
+    });
+
+    test('uses the main interface semantic palette and restrained desktop surfaces', () => {
+        const styles = buildDesktopStyles();
+        expect(styles).toContain('--od-ink: var(--od-text, #1f2937);');
+        expect(styles).toContain('--od-blue: var(--od-accent, #3b82f6);');
+        expect(styles).toContain('--od-panel: var(--od-bg-elevated, #ffffff);');
+        expect(styles).not.toContain('.od-blob');
+        expect(styles).not.toContain('var(--od-violet)');
+    });
+
+    test('uses one coherent spatial transition without confetti-style particles', () => {
+        const styles = buildDesktopStyles();
+        expect(styles).toContain('clip-path: inset(');
+        expect(styles).toContain('immersive-desktop.od-leaving');
+        expect(styles).toContain('@media (prefers-reduced-motion: reduce)');
+        expect(desktopEffectsSource).not.toContain('spawnParticles');
+        expect(desktopEffectsSource).toContain('data-desktop-transition');
+    });
+
+    test('uses the compact embedded task layout inside floating conversation windows', () => {
+        const styles = buildDesktopStyles();
+        const embeddedTaskMounts = immersiveDesktopSource.match(/<task-view embedded task_id=/g) ?? [];
+
+        expect(embeddedTaskMounts).toHaveLength(2);
+        expect(styles).toContain('.od-floating-window-content > task-view');
+        expect(styles).toContain('width: 100%; height: 100%;');
+        expect(styles).toContain('min-width: 0; min-height: 0; overflow: hidden;');
+    });
+
+    test('mounts the desktop under the main app root so embedded conversations inherit the main theme', () => {
+        expect(desktopEntrySource).toContain("document.getElementById('app-root') ?? document.body");
+        expect(desktopEntrySource).toContain('desktopHost.appendChild(desktop);');
+    });
+
+    test('keeps desktop toolbar controls outside the native window drag region', () => {
+        const styles = buildDesktopStyles();
+
+        expect(immersiveDesktopSource).toContain("document.body.classList.add('immersive-desktop-open');");
+        expect(immersiveDesktopSource).toContain("document.body.classList.remove('immersive-desktop-open');");
+        expect(titlebarStylesSource).toMatch(/body\.immersive-desktop-open\s+\.drag-overlay\s*\{[^}]*display:\s*none;/);
+        expect(styles).toMatch(/\.od-topbar\s*\{[^}]*-webkit-app-region:\s*drag;/);
+        expect(styles).toMatch(/\.od-status,\s*\.od-status\s+\*\s*\{[^}]*-webkit-app-region:\s*no-drag;/);
+    });
+
+    test('keeps the card grid equally inset from the header, sides, and dock', () => {
+        const styles = buildDesktopStyles();
+
+        expect(styles).toContain('--od-grid-edge: 28px;');
+        expect(styles).toContain('--od-grid-card-inset: 8px;');
+        expect(styles).toContain('padding-inline: calc(var(--od-grid-edge) - var(--od-grid-card-inset));');
+        expect(styles).toContain('gap: calc(var(--od-grid-edge) - var(--od-grid-card-inset));');
+        expect(styles).toContain(
+            'padding-bottom: calc(var(--od-dock-bottom) + var(--od-dock-height) + var(--od-grid-edge) - var(--od-grid-card-inset));'
+        );
+        expect(styles).toMatch(/\.od-topbar\s*\{[^}]*border-bottom:\s*1px solid var\(--od-card-line\);/);
+    });
+
+    test('uses one compact pill dock without prompt suggestions', () => {
+        const styles = buildDesktopStyles();
+
+        expect(immersiveDesktopSource).not.toContain('SUGGESTION_KEYS');
+        expect(immersiveDesktopSource).not.toContain('data-suggests');
+        expect(immersiveDesktopSource).not.toContain('data-suggest=');
+        expect(styles).not.toContain('.od-suggests');
+        expect(styles).not.toContain('.od-sug');
+        expect(styles).toMatch(/\.od-dock\s*\{[^}]*border-radius:\s*999px;/);
+        expect(styles).toMatch(/\.od-icon-btn\s*\{[^}]*border-radius:\s*50%;/);
+    });
+
+    test('opens a main-interface-style application menu above the launcher button', () => {
+        const styles = buildDesktopStyles();
+
+        expect(immersiveDesktopSource).toMatch(
+            /<div class="od-dock">[\s\S]*<div class="od-applist"[^>]*data-applist[^>]*><\/div>[\s\S]*data-apps-btn/
+        );
+        expect(immersiveDesktopSource).toContain('<rect x="3" y="3" width="7" height="7" rx="3.5"/>');
+        expect(immersiveDesktopSource).toContain('`./applications/${app.bundleName}/icon.svg`');
+        expect(immersiveDesktopSource).toContain("'./applications/default_icon.png'");
+        expect(styles).toMatch(/\.od-applist\s*\{[^}]*bottom:\s*calc\(100% \+ 8px\);[^}]*width:\s*220px;/);
+        expect(styles).toMatch(/\.od-applist-item\s*\{[^}]*flex-direction:\s*row;/);
+    });
+
+    test('matches the main application menu scrollbar in light and dark themes', () => {
+        const styles = buildDesktopStyles();
+
+        expect(styles).toMatch(/\.od-applist::-webkit-scrollbar\s*\{[^}]*width:\s*4px;/);
+        expect(styles).toMatch(/\.od-applist::-webkit-scrollbar-track\s*\{[^}]*background:\s*transparent;/);
+        expect(styles).toMatch(
+            /immersive-desktop\.theme-dark \.od-applist::-webkit-scrollbar-thumb\s*\{[^}]*rgba\(255, 255, 255, 0\.18\)/
+        );
+        expect(styles).toMatch(
+            /immersive-desktop\.theme-dark \.od-applist::-webkit-scrollbar-thumb:hover\s*\{[^}]*rgba\(255, 255, 255, 0\.28\)/
+        );
     });
 
     test('only plays card entrance animations for the first card load, not a theme redraw', () => {

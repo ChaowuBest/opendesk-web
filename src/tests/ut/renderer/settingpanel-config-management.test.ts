@@ -71,6 +71,19 @@ describe('setting-panel config management', () => {
         expect(panel.querySelector('#export-quickpass-btn')).toBeNull();
     });
 
+    test('renders development and debugging after telemetry as the final general section', () => {
+        const panel = createPanel();
+        panel.innerHTML = panel.renderGeneralSection();
+
+        const sections = Array.from(panel.children).filter((element: Element) => element.tagName === 'SECTION');
+        const telemetryIndex = sections.findIndex((section: Element) => section.id === 'telemetry-section');
+        const debugIndex = sections.findIndex((section: Element) => section.id === 'debug-mode-section');
+
+        expect(telemetryIndex).toBeGreaterThanOrEqual(0);
+        expect(debugIndex).toBe(telemetryIndex + 1);
+        expect(debugIndex).toBe(sections.length - 1);
+    });
+
     test('renders development and debugging as a gated panel with independent experimental features', () => {
         const panel = createPanel();
         panel.currentData.debug = {
@@ -87,8 +100,10 @@ describe('setting-panel config management', () => {
         expect(panel.querySelector('h2')?.textContent).toContain('开发与调试');
         expect(panel.querySelector('#debug-mode-settings')?.getAttribute('style')).toBe('');
         expect(panel.querySelector('#debug-mode-settings #debug-mode-toggle-hidden')).toBeNull();
-        expect(panel.querySelector('#experimental-features-section')?.textContent).toContain('实验性功能');
-        expect(panel.querySelector('#experimental-features-section')?.querySelector('h4')).toBeNull();
+        const experimentalSection = panel.querySelector('#experimental-features-section');
+        expect(experimentalSection?.textContent).toContain('实验性功能');
+        expect(experimentalSection?.querySelector('h4')).toBeNull();
+        expect(experimentalSection?.getAttribute('style')).not.toContain('border-top');
         expect(panel.querySelector('#experimental-appmgr-toggle-hidden')?.hasAttribute('checked')).toBe(true);
         expect(panel.querySelector('#experimental-agentoffice-toggle-hidden')?.hasAttribute('checked')).toBe(false);
         expect(panel.querySelector('#experimental-account-toggle-hidden')?.hasAttribute('checked')).toBe(false);

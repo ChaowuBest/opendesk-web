@@ -12,6 +12,7 @@
 import { contextBridge, ipcRenderer, webUtils, clipboard } from 'electron';
 import { defineBrowserBridge } from '../common/embedBrowserUse/preload';
 import { PermissionPendingStore } from './permissionPendingStore';
+import { createTaskListUpdateSubscription } from './taskListSubscription.js';
 import {
     createHarmonyRuntimeEnvironment,
     getHarmonyBrowseRoots,
@@ -313,18 +314,14 @@ function exposeTaskManagerAPI() {
             return result.data;
         },
         subscribeTaskListUpdate: async (callback) => {
-            const result = await ipcRenderer.invoke('taskManager:subscribeTaskListUpdate');
-            if (result.status !== 'ok') {
-                console.error('subscribing task list update failed', result.message);
-                throw new Error(result.message);
+            try {
+                const { subscriptionId, listener } = await createTaskListUpdateSubscription(ipcRenderer, callback);
+                taskListUpdateSubscriptions.set(subscriptionId, listener);
+                return () => unsubscribeTaskListUpdate(subscriptionId);
+            } catch (error) {
+                console.error('subscribing task list update failed', error);
+                throw error;
             }
-            const subscriptionId = result.data;
-            const listener = (event, ...args) => {
-                callback(...args);
-            };
-            taskListUpdateSubscriptions.set(subscriptionId, listener);
-            ipcRenderer.on('taskManager:taskListUpdate', listener);
-            return () => unsubscribeTaskListUpdate(subscriptionId);
         },
         attachToolset: async (taskId, toolset, toolsetCallback) => {
             const result = await ipcRenderer.invoke('taskManager:attachToolset', taskId, toolset);
