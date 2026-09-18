@@ -457,6 +457,29 @@ public sealed class MirrorFs : IDokanOperations
 
     private Ctx? GetCtx(IDokanFileInfo info) => info.Context as Ctx;
 
+    /// <summary>宿主端瞬时共享冲突退避。索引服务/杀软会以不含 FILE_SHARE_DELETE
+    /// 的共享模式短暂握住刚写完的文件，紧接着的宿主端改名/删除虽合法却收到
+    /// ERROR_SHARING_VIOLATION（沙箱侧表现为 EPERM）。只对 sharing/lock
+    /// violation 重试少量几次，持锁者不释放时按原语义尽快失败。</summary>
+    private static T WithTransientShareRetry<T>(Func<T> action)
+    {
+        const int MaxAttempts = 4;
+        for (var attempt = 1; ; attempt++)
+        {
+            try { return action(); }
+            catch (IOException ex) when (IsTransientShareConflict(ex) && attempt < MaxAttempts)
+            {
+                Thread.Sleep(attempt * 150);
+            }
+        }
+    }
+
+    private static void WithTransientShareRetry(Action action) =>
+        WithTransientShareRetry<object?>(() => { action(); return null; });
+
+    private static bool IsTransientShareConflict(IOException ex) =>
+        unchecked((uint)ex.HResult) is 0x80070020u or 0x80070021u;
+
     // A user can spend five minutes answering. Renew this specific driver request
     // while it is waiting, without raising Dokan's timeout for ordinary IO.
     private static Timer KeepRequestAlive(IDokanFileInfo info) => new(_ =>
@@ -549,9 +572,19 @@ public sealed class MirrorFs : IDokanOperations
                 if (targetIsDir)
                 {
                     // .NET 的目录枚举可能未预先设置 IsDirectory；ReadData 在目录上即 ListDirectory。
-                    var directoryRead = (access & ~(ReadBits | FileAccess.GenericRead
-                        | FileAccess.Synchronize | FileAccess.MaximumAllowed)) == 0;
-                    if (!directoryRead || mode is not (FileMode.Open or FileMode.OpenOrCreate)) return AccessDenied;
+                    var nonRead = access & ~(ReadBits | FileAccess.GenericRead
+                        | FileAccess.Synchronize | FileAccess.MaximumAllowed);
+                    // rmdir / Remove-Item / fs.rmdirSync（RemoveDirectoryW）以文件句柄方式
+                    // （FILE_FLAG_BACKUP_SEMANTICS，无 FILE_DIRECTORY_FILE）打开目录，实测
+                    // 掩码为 DELETE | FILE_WRITE_ATTRIBUTES | 读属性位（后者用于删除后
+                    // 的父目录时间戳）。若在此拒绝，删除请求永远到不了 DeleteDirectory
+                    // 与 Cleanup 回调，策略放行了删除也无法删除目录（表现为 EPERM）。
+                    // 放行 DELETE/WRITE_ATTRIBUTES 组合不产生额外授权：删除仍受
+                    // DeleteDirectory 的策略复查与空目录检查、Cleanup 的最终删除兜底；
+                    // 经由文件句柄写目录数据、改属主等无意义/特权语义继续拒绝。
+                    var directoryDataWrite = nonRead & ~(FileAccess.Delete | FileAccess.WriteAttributes);
+                    if ((directoryDataWrite != 0) || mode is not (FileMode.Open or FileMode.OpenOrCreate))
+                        return AccessDenied;
                     if (!PathLandsWithinRoot(real, res.Map)) return AccessDenied;
                     info.IsDirectory = true;
                     info.Context = NewCtx(null);
@@ -651,7 +684,9 @@ public sealed class MirrorFs : IDokanOperations
                             finally { cxTrash.Stream = null; }
                         }
                     }
-                    if (RecycleBin.TrySend(real, out var trashError))
+                    var trashError = "";
+                    var trashed = WithTransientShareRetry(() => RecycleBin.TrySend(real, out trashError));
+                    if (trashed)
                         Log.Info("[FS] 删除 {0} (已送回收站)", Normalize(fileName));
                     else
                         Log.Warn("[FS] 回收站删除未执行，文件保留 {0}: {1}", fileName, trashError);
@@ -660,8 +695,11 @@ public sealed class MirrorFs : IDokanOperations
                 {
                     try
                     {
-                        if (info.IsDirectory) Directory.Delete(real);
-                        else File.Delete(real);
+                        WithTransientShareRetry(() =>
+                        {
+                            if (info.IsDirectory) Directory.Delete(real);
+                            else File.Delete(real);
+                        });
                         Log.Info("[FS] 删除 {0}", Normalize(fileName));
                     }
                     catch (FileNotFoundException) { }
@@ -1083,9 +1121,12 @@ public sealed class MirrorFs : IDokanOperations
                 }
                 try
                 {
-                    if (replace && File.Exists(newReal)) File.Replace(oldReal, newReal, null);
-                    else if (Directory.Exists(oldReal)) Directory.Move(oldReal, newReal);
-                    else File.Move(oldReal, newReal, replace);
+                    if (replace && File.Exists(newReal))
+                        WithTransientShareRetry(() => File.Replace(oldReal, newReal, null));
+                    else if (Directory.Exists(oldReal))
+                        WithTransientShareRetry(() => Directory.Move(oldReal, newReal));
+                    else
+                        WithTransientShareRetry(() => File.Move(oldReal, newReal, replace));
                 }
                 catch (IOException ex) when (unchecked((uint)ex.HResult) == 0x800700B7u)
                 {
@@ -1143,7 +1184,10 @@ public sealed class MirrorFs : IDokanOperations
                 var (allowed, _) = _policy.Check(res.VirtualPath, AccessKind.Write);
                 if (!allowed) return AccessDenied;
                 if (!PathLandsWithinRoot(res.RealPath, res.Map)) return AccessDenied;
-                using var fs = new FileStream(res.RealPath, FileMode.Open, System.IO.FileAccess.Write);
+                // 与常规写入同一共享语义：该构造重载缺省 FileShare.Read，会在句柄
+                // 存续期间挡住其他句柄的写/删除，制造不必要的瞬时共享冲突。
+                using var fs = new FileStream(res.RealPath, FileMode.Open, System.IO.FileAccess.Write,
+                    FileShare.ReadWrite | FileShare.Delete);
                 fs.SetLength(length);
             }
             return Success;

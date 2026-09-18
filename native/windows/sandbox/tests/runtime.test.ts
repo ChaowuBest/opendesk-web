@@ -13,7 +13,7 @@ const executable = path.join(sandboxRoot, 'runtime', 'sandbox.exe');
 const windows = process.platform === 'win32';
 const fixtureRoot = path.join(sandboxRoot, 'tests');
 const fixtureRequire = createRequire(path.join(fixtureRoot, 'package.json'));
-async function run(file: string, args: string[], stdin = '', env = process.env) {
+async function run(file: string, args: string[], stdin = '', env = process.env, timeoutMs = 60000) {
     const proc = spawn(file, args, { windowsHide: true, env });
     let stdout = '',
         stderr = '';
@@ -25,7 +25,7 @@ async function run(file: string, args: string[], stdin = '', env = process.env) 
     });
     proc.stdin.on('error', () => {});
     proc.stdin.end(stdin);
-    const timer = setTimeout(() => proc.kill(), 60000);
+    const timer = setTimeout(() => proc.kill(), timeoutMs);
     try {
         const [code] = await once(proc, 'close');
         return { code, stdout, stderr };
@@ -33,6 +33,33 @@ async function run(file: string, args: string[], stdin = '', env = process.env) 
         clearTimeout(timer);
     }
 }
+
+test('manager exits after a child leaves an inherited output handle open', { skip: !windows }, async () => {
+    const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'opendesk-sandbox-pipe-lifecycle-'));
+    try {
+        const policy = path.join(directory, 'policy.toml');
+        fs.writeFileSync(policy, 'version = 1\ndefault = "allow"\n');
+        const shell = path.join(process.env.SystemRoot!, 'System32/WindowsPowerShell/v1.0/powershell.exe');
+        const command =
+            `"${shell}" -NoProfile -NonInteractive -Command "` +
+            `$si = [Diagnostics.ProcessStartInfo]::new(); ` +
+            `$si.FileName = $env:ComSpec; $si.Arguments = '/c ping 127.0.0.1 -n 6'; ` +
+            `$si.UseShellExecute = $false; $si.CreateNoWindow = $true; ` +
+            `[Diagnostics.Process]::Start($si) | Out-Null; exit 0"`;
+        const started = Date.now();
+        const result = await run(
+            executable,
+            ['run', '--src', directory, '--policy', policy, '--', command],
+            '',
+            process.env,
+            12000
+        );
+        assert.equal(result.code, 0, result.stdout + result.stderr);
+        assert.ok(Date.now() - started < 10000, 'manager must not wait for descendant pipe handles');
+    } finally {
+        fs.rmSync(directory, { recursive: true, force: true });
+    }
+});
 
 /** 在 PATH 中解析可用的 CPython（OPENDESK_SANDBOX_PYTHON 显式指定优先），
  * 跳过 WindowsApps 的商店重定向桩；找不到时返回 null，调用方跳过用例。 */
@@ -458,6 +485,272 @@ test('Move-Item -Force replaces an existing destination file', { skip: !windows 
         assert.equal(result.code, 0, result.stdout + result.stderr);
         assert.match(result.stdout, /content=new-content/, result.stdout);
     } finally {
+        fs.rmSync(directory, { recursive: true, force: true });
+    }
+});
+
+/** 生成沙箱内用的 Node 探针公共头：把宿主绝对路径换算成卷内路径
+ * （SBX_ROOT + /C/...），启动期已翻译成卷路径的参数保持原样。 */
+function volumePathJsHelper(): string {
+    return [
+        'function volumePath(p) {',
+        '    const full = require("node:path").resolve(p);',
+        '    const root = process.env.SBX_ROOT.toUpperCase();',
+        '    if (full.toUpperCase().startsWith(root)) return full;',
+        '    const drive = full.slice(0, 1);',
+        '    const rest = full.slice(3);',
+        '    return require("node:path").join(process.env.SBX_ROOT, drive, rest);',
+        '}',
+    ].join('\n');
+}
+
+test('directory deletion via Node rmdir/rmSync and PowerShell Remove-Item works against the volume', { skip: !windows }, async () => {
+    const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'opendesk-sandbox-rmdir-'));
+    try {
+        const policy = path.join(directory, 'policy.toml');
+        fs.writeFileSync(policy, 'version = 1\ndefault = "allow"\n');
+        // Node/PowerShell/.NET 的目录删除（RemoveDirectoryW）以文件句柄方式
+        // （BACKUP_SEMANTICS，无 FILE_DIRECTORY_FILE）打开目录并请求 DELETE；
+        // 打开阶段拒绝会让删除永远到不了策略与 DeleteDirectory 回调。
+        const probe = path.join(directory, 'rmdir_probe.cjs');
+        fs.writeFileSync(
+            probe,
+            [
+                'const fs = require("node:fs");',
+                'const path = require("node:path");',
+                ...volumePathJsHelper().split('\n'),
+                'const root = volumePath(process.argv[2]);',
+                'const results = [];',
+                'const empty = path.join(root, "empty-dir");',
+                'fs.mkdirSync(empty);',
+                'try {',
+                '    fs.rmdirSync(empty);',
+                '    results.push(fs.existsSync(empty) ? "RMDIR-GHOST" : "RMDIR-OK");',
+                '} catch (e) {',
+                '    results.push("RMDIR-FAIL " + e.code);',
+                '}',
+                'const nested = path.join(root, "nested-dir");',
+                'fs.mkdirSync(path.join(nested, "a", "b"), { recursive: true });',
+                'fs.writeFileSync(path.join(nested, "a", "b", "leaf.txt"), "x");',
+                'fs.writeFileSync(path.join(nested, "top.txt"), "x");',
+                'try {',
+                '    fs.rmSync(nested, { recursive: true, force: true });',
+                '    results.push(fs.existsSync(nested) ? "RMSYNC-GHOST" : "RMSYNC-OK");',
+                '} catch (e) {',
+                '    results.push("RMSYNC-FAIL " + e.code);',
+                '}',
+                'console.log(results.join(";"));',
+                "console.log('PROBE-DONE');",
+                'process.exit(results.some((r) => r.includes("FAIL") || r.includes("GHOST")) ? 1 : 0);',
+                '',
+            ].join('\n')
+        );
+        const result = await run(executable, [
+            'run',
+            '--automount',
+            '--policy',
+            policy,
+            '--log-file',
+            path.join(directory, 'manager.log'),
+            '--',
+            `"${process.execPath}" "${probe}" "${path.join(directory, 'probe-work')}"`
+        ]);
+        assert.equal(result.code, 0, result.stdout + result.stderr);
+        assert.match(result.stdout, /RMDIR-OK/, result.stdout);
+        assert.match(result.stdout, /RMSYNC-OK/, result.stdout);
+        assert.doesNotMatch(result.stdout, /FAIL|GHOST/);
+        assert.equal(fs.existsSync(path.join(directory, 'probe-work', 'empty-dir')), false);
+        assert.equal(fs.existsSync(path.join(directory, 'probe-work', 'nested-dir')), false);
+
+        const shell = path.join(process.env.SystemRoot!, 'System32/WindowsPowerShell/v1.0/powershell.exe');
+        const psTarget = path.join(directory, 'ps-dir');
+        fs.mkdirSync(path.join(psTarget, 'child'), { recursive: true });
+        fs.writeFileSync(path.join(psTarget, 'child', 'file.txt'), 'x');
+        const psResult = await run(executable, [
+            'run',
+            '--automount',
+            '--policy',
+            policy,
+            '--',
+            `"${shell}" -NoProfile -NonInteractive -Command "Remove-Item -LiteralPath '${psTarget}' -Recurse -Force -ErrorAction Stop; 'remove-ok'"`
+        ]);
+        assert.equal(psResult.code, 0, psResult.stdout + psResult.stderr);
+        assert.match(psResult.stdout, /remove-ok/);
+        assert.equal(fs.existsSync(psTarget), false);
+    } finally {
+        fs.rmSync(directory, { recursive: true, force: true });
+    }
+});
+
+test('directory removal honors --del-to-trash and clears the tree from the source', { skip: !windows }, async () => {
+    const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'opendesk-sandbox-rmdir-trash-'));
+    try {
+        const policy = path.join(directory, 'policy.toml');
+        fs.writeFileSync(policy, 'version = 1\ndefault = "allow"\n');
+        const probe = path.join(directory, 'rmdir_probe.cjs');
+        fs.writeFileSync(
+            probe,
+            [
+                'const fs = require("node:fs");',
+                'const path = require("node:path");',
+                ...volumePathJsHelper().split('\n'),
+                'const nested = path.join(volumePath(process.argv[2]), "trash-dir");',
+                'fs.mkdirSync(path.join(nested, "inner"), { recursive: true });',
+                'fs.writeFileSync(path.join(nested, "inner", "f.txt"), "x");',
+                'fs.rmSync(nested, { recursive: true, force: true });',
+                "console.log(fs.existsSync(nested) ? 'TRASH-RMTREE-GHOST' : 'TRASH-RMTREE-OK');",
+                "console.log('PROBE-DONE');",
+                'process.exit(fs.existsSync(nested) ? 1 : 0);',
+                '',
+            ].join('\n')
+        );
+        const result = await run(executable, [
+            'run',
+            '--automount',
+            '--del-to-trash',
+            '--policy',
+            policy,
+            '--',
+            `"${process.execPath}" "${probe}" "${path.join(directory, 'probe-work')}"`
+        ]);
+        assert.equal(result.code, 0, result.stdout + result.stderr);
+        assert.match(result.stdout, /TRASH-RMTREE-OK/, result.stdout);
+        assert.equal(fs.existsSync(path.join(directory, 'probe-work', 'trash-dir')), false);
+    } finally {
+        fs.rmSync(directory, { recursive: true, force: true });
+    }
+});
+
+test('policy-denied directory deletion stays denied and keeps the content', { skip: !windows }, async () => {
+    const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'opendesk-sandbox-rmddeny-'));
+    try {
+        // 放行 DELETE 打开不得绕过写策略：default deny（只读+执行可用）下，
+        // 删除必须被拒且宿主内容原样保留。
+        const target = path.join(directory, 'protected');
+        fs.mkdirSync(target);
+        fs.writeFileSync(path.join(target, 'keep.txt'), 'must-stay');
+        const policy = path.join(directory, 'policy.toml');
+        fs.writeFileSync(
+            policy,
+            'version = 1\ndefault = "deny"\n' +
+                '[[rules]]\npath = "/**"\naccess = "read"\nperm = "allow"\n' +
+                '[[rules]]\npath = "/**"\naccess = "execute"\nperm = "allow"\n'
+        );
+        const probe = path.join(directory, 'rmdir_probe.cjs');
+        fs.writeFileSync(
+            probe,
+            [
+                'const fs = require("node:fs");',
+                'const path = require("node:path");',
+                ...volumePathJsHelper().split('\n'),
+                'const target = volumePath(process.argv[2]);',
+                'try {',
+                '    fs.rmSync(target, { recursive: true, force: true });',
+                "    console.log('DENY-DELETE-ESCAPED');",
+                '} catch (e) {',
+                "    console.log('DENY-DELETE-BLOCKED ' + e.code);",
+                '}',
+                "console.log('PROBE-DONE');",
+                '',
+            ].join('\n')
+        );
+        const result = await run(executable, [
+            'run',
+            '--automount',
+            '--policy',
+            policy,
+            '--',
+            `"${process.execPath}" "${probe}" "${target}"`
+        ]);
+        assert.equal(result.code, 0, result.stdout + result.stderr);
+        assert.match(result.stdout, /DENY-DELETE-BLOCKED/, result.stdout);
+        assert.doesNotMatch(result.stdout, /ESCAPED/);
+        assert.equal(fs.readFileSync(path.join(target, 'keep.txt'), 'utf8'), 'must-stay');
+    } finally {
+        fs.rmSync(directory, { recursive: true, force: true });
+    }
+});
+
+test('rename survives a transient holder without FILE_SHARE_DELETE', { skip: !windows }, async () => {
+    const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'opendesk-sandbox-rename-share-'));
+    const shell = path.join(process.env.SystemRoot!, 'System32/WindowsPowerShell/v1.0/powershell.exe');
+    const target = path.join(directory, 'rename-me.txt');
+    const ready = path.join(directory, 'holder-ready');
+    const trigger = path.join(directory, 'release-holder');
+    // 复刻任务里观察到的签名：宿主侧索引/杀软以 share=R|W（不含 DELETE）短暂握住
+    // 刚写完的文件，卷内改名的 DELETE 打开不受影响，但镜像转发到宿主的
+    // File.Move 收到 sharing violation。镜像必须短暂退避重试，而不是把 EPERM
+    // 直接抛回给调用方。holder 写 ready 文件表示句柄已建立；探针写 trigger
+    // 文件让 holder 在重试窗口内释放。
+    const holder = spawn(
+        shell,
+        [
+            '-NoProfile',
+            '-NonInteractive',
+            '-Command',
+            `$ErrorActionPreference='Stop'; ` +
+                `$f=[System.IO.File]::Open('${target}','Open','Read',[System.IO.FileShare]'ReadWrite'); ` +
+                `Set-Content -LiteralPath '${ready}' -Value '1'; ` +
+                `$deadline=(Get-Date).AddSeconds(60); ` +
+                `while (-not (Test-Path -LiteralPath '${trigger}') -and (Get-Date) -lt $deadline) { Start-Sleep -Milliseconds 40 }; ` +
+                `$f.Dispose()`
+        ],
+        { windowsHide: true, stdio: 'ignore' }
+    );
+    try {
+        fs.writeFileSync(path.join(directory, 'policy.toml'), 'version = 1\ndefault = "allow"\n');
+        fs.writeFileSync(target, 'rename-retry-content');
+        const deadline = Date.now() + 15000;
+        while (!fs.existsSync(ready)) {
+            if (Date.now() > deadline) throw new Error('holder never became ready');
+            await new Promise((resolve) => setTimeout(resolve, 40));
+        }
+        const probe = path.join(directory, 'rename_probe.cjs');
+        fs.writeFileSync(
+            probe,
+            [
+                'const fs = require("node:fs");',
+                'const path = require("node:path");',
+                ...volumePathJsHelper().split('\n'),
+                'const src = volumePath(process.argv[2]);',
+                'const dst = src + ".moved";',
+                'fs.writeFileSync(volumePath(process.argv[3]), "1");',
+                'try {',
+                '    fs.renameSync(src, dst);',
+                "    console.log(fs.existsSync(dst) ? 'RENAME-OK' : 'RENAME-GHOST');",
+                '} catch (e) {',
+                "    console.log('RENAME-FAIL ' + e.code);",
+                '}',
+                "console.log('PROBE-DONE');",
+                'process.exit(fs.existsSync(dst) ? 0 : 1);',
+                '',
+            ].join('\n')
+        );
+        const result = await run(executable, [
+            'run',
+            '--automount',
+            '--policy',
+            path.join(directory, 'policy.toml'),
+            '--',
+            `"${process.execPath}" "${probe}" "${target}" "${trigger}"`
+        ]);
+        assert.equal(result.code, 0, result.stdout + result.stderr);
+        assert.match(result.stdout, /RENAME-OK/, result.stdout);
+        assert.doesNotMatch(result.stdout, /RENAME-FAIL|RENAME-GHOST/);
+        assert.equal(fs.existsSync(target + '.moved'), true);
+        assert.equal(fs.readFileSync(target + '.moved', 'utf8'), 'rename-retry-content');
+    } finally {
+        // 释放 holder（探针已写 trigger；异常路径下直接杀掉避免悬挂进程）。
+        // holder 可能在 once() 挂上之前就已退出，不能裸等 close 事件。
+        try { fs.writeFileSync(trigger, '1'); } catch { }
+        holder.kill();
+        await Promise.race([
+            once(holder, 'close').then(
+                () => undefined,
+                () => undefined
+            ),
+            new Promise((resolve) => setTimeout(resolve, 5000)),
+        ]);
         fs.rmSync(directory, { recursive: true, force: true });
     }
 });

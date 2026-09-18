@@ -444,6 +444,11 @@ Dokan MSI（缓存于 `_setup\`）。
 - 未映射的路径（卷根下的游离路径、未声明的虚拟目录）按 not-found 语义返回，
   不产生 AccessDenied——与宿主机上"路径不存在"的行为一致，避免工具的
   PATH/资源探测（如 python 启动时的 mime.types 探测）表现为错误。
+- 目录删除（`rmdir`/`rmSync`/`Remove-Item`）以文件句柄方式（BACKUP_SEMANTICS
+  + DELETE）打开目录，镜像放行该打开形态并交由 `DeleteDirectory`/`Cleanup`
+  按策略与空目录检查执行；改名与删除在宿主端遇到瞬时共享冲突（索引服务/杀软
+  以不含 FILE_SHARE_DELETE 的共享模式短暂握住刚写完的文件）时自动退避重试
+  （约 1 秒窗口），持锁者不释放时按原语义尽快失败。
 
 **明确不做 / 已知限制：**
 
