@@ -365,6 +365,49 @@ test('grepFiles - 无匹配时返回提示', async () => {
     }
 });
 
+test('grepFiles - 不默认忽略 out 目录', async () => {
+    const dir = makeTempDir();
+    try {
+        fs.mkdirSync(path.join(dir, 'out'), { recursive: true });
+        fs.writeFileSync(path.join(dir, 'out', 'bundle.txt'), 'BUILD_OUTPUT_MARKER\n', 'utf8');
+
+        const result = await new GrepFilesTool().executeCommand({
+            pattern: 'BUILD_OUTPUT_MARKER',
+            path: dir,
+            maxResults: 20,
+            contextLines: 0
+        });
+
+        assert.match(result, /out[\\/]bundle\.txt/);
+        assert.match(result, /在 1 个文件中找到 1 处匹配/);
+    } finally {
+        cleanup(dir);
+    }
+});
+
+test('grepFiles - 遵守根 .gitignore 跳过构建产物目录', async () => {
+    const dir = makeTempDir();
+    try {
+        fs.writeFileSync(path.join(dir, '.gitignore'), 'out/\n', 'utf8');
+        fs.mkdirSync(path.join(dir, 'out', 'opendesk-win32-x64'), { recursive: true });
+        fs.writeFileSync(path.join(dir, 'visible.txt'), 'BUILD_OUTPUT_MARKER\n', 'utf8');
+        fs.writeFileSync(path.join(dir, 'out', 'opendesk-win32-x64', 'bundle.txt'), 'BUILD_OUTPUT_MARKER\n', 'utf8');
+
+        const result = await new GrepFilesTool().executeCommand({
+            pattern: 'BUILD_OUTPUT_MARKER',
+            path: dir,
+            maxResults: 20,
+            contextLines: 0
+        });
+
+        assert.match(result, /visible\.txt/);
+        assert.doesNotMatch(result, /opendesk-win32-x64/);
+        assert.match(result, /在 1 个文件中找到 1 处匹配/);
+    } finally {
+        cleanup(dir);
+    }
+});
+
 test('grepFiles - 跳过超过 20 MiB 的文件', async () => {
     const dir = makeTempDir();
     try {
