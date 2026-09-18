@@ -495,6 +495,56 @@ describe('opencode session routes', () => {
         );
     });
 
+    describe.each(['message', 'prompt_async'])('%s model telemetry', (route) => {
+        test.each([
+            ['openai', 'gpt-4o', 'https://api.example.org/v1', true],
+            ['openai', 'gpt-4o', 'http://192.168.1.20/v1', false],
+            ['myagent', '模型（外部）', 'https://api.huawei.com/v1', true],
+            ['myagent', '内部模型', 'https://api.huawei.com/v1', false],
+            ['prefix-replacemodelmyagent', 'model', 'http://localhost/v1', true]
+        ])('classifies the selected provider %s / %s', async (providerID, modelID, baseUrl, isExternal) => {
+            mockSessionDependencies();
+            const data = baseSettingData();
+            data.providers.push({ ...data.providers[0], name: providerID, base_url: baseUrl });
+            data.providers = data.providers.filter((provider, index) => index > 0 || provider.name !== providerID);
+            data.models.push({
+                ...data.models[0],
+                alias: 'selected-model',
+                provider_name: providerID,
+                model_name: modelID
+            });
+            mockSetting(data);
+            jest.spyOn(ApplicationRegistry, 'getApplication').mockReturnValue(undefined);
+            const task = makeTask(workspace);
+            mockGlobalTaskManager(task);
+
+            const response = await SessionRoutes().request(
+                `/ses_model/${route}?directory=${encodeURIComponent(workspace)}`,
+                {
+                    method: 'POST',
+                    body: JSON.stringify({
+                        model: { providerID, modelID: 'selected-model' },
+                        message: 'classify model'
+                    }),
+                    headers: { 'content-type': 'application/json' }
+                }
+            );
+
+            expect(response.status).toBe(route === 'message' ? 200 : 204);
+            expect(task.submitUserMessage).toHaveBeenCalledWith(
+                'classify model',
+                expect.objectContaining({
+                    instrumentationContext: expect.objectContaining({
+                        observationName: 'opencode.request',
+                        input: expect.objectContaining({
+                            modelLake: expect.objectContaining({ modelName: modelID, isExternal })
+                        })
+                    })
+                })
+            );
+        });
+    });
+
     test('POST /session/:id/message rebuilds the main prompt after a missing agent fallback', async () => {
         mockSessionDependencies();
         mockSetting();
@@ -555,6 +605,7 @@ describe('opencode session routes', () => {
             },
             instrumentationContext: {
                 traceId: 'trace-123',
+                observationName: 'opencode.request',
                 input: expect.objectContaining({ message: 'hello headers' }),
                 metadata: expect.objectContaining({
                     sessionID: 'ses_model',
@@ -563,6 +614,7 @@ describe('opencode session routes', () => {
                 }),
                 output: {
                     sessionID: 'ses_model',
+                    event: 'done',
                     mode: 'standard',
                     agent: 'main',
                     cost: 0

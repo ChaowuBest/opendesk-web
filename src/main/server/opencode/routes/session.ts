@@ -13,6 +13,7 @@ import { Hono } from 'hono';
 import type { Context } from 'hono';
 import crypto from 'crypto';
 import path from 'path';
+import { BlockList, isIP } from 'node:net';
 import { GlobalState } from '../../../aikernel/states/global.js';
 import { BaseTaskUpdateSubscriber, type TaskUpdateChunk } from '../../../aikernel/states/tasks.js';
 import { createAskUserToolset } from '../../../aikernel/interaction/tools.js';
@@ -32,6 +33,7 @@ import {
 } from '../workspace.js';
 import { getOpenCodeSessionTime } from '../session-info.js';
 import type { ConfigPermissionRuntime } from '../config-permission-runtime.js';
+import type { TaskTurnInstrumentationExternalContext } from '../../../telemetry/agent-execution.js';
 
 /**
  * OpenCode Session ID ↔ OpenDesk Task ID 的映射。
@@ -145,6 +147,42 @@ const EMPTY_OPEN_CODE_MODEL_INFO: OpenCodeModelInfo = {
     id: ''
 };
 
+const internalModelAddresses = new BlockList();
+internalModelAddresses.addSubnet('10.0.0.0', 8);
+internalModelAddresses.addSubnet('172.16.0.0', 12);
+internalModelAddresses.addSubnet('192.168.0.0', 16);
+internalModelAddresses.addSubnet('127.0.0.0', 8);
+internalModelAddresses.addSubnet('169.254.0.0', 16);
+internalModelAddresses.addSubnet('100.64.0.0', 10);
+internalModelAddresses.addAddress('::1', 'ipv6');
+internalModelAddresses.addSubnet('fe80::', 10, 'ipv6');
+internalModelAddresses.addSubnet('fc00::', 7, 'ipv6');
+
+export function isExternalModel(providerID: string, modelID: string, baseUrl?: string): boolean {
+    if ((providerID === 'myagent' && modelID.includes('外部')) || providerID.includes('replacemodelmyagent')) {
+        return true;
+    }
+
+    let hostname: string;
+    try {
+        const url = new URL(baseUrl ?? '');
+        if (url.protocol !== 'http:' && url.protocol !== 'https:') return false;
+        hostname = url.hostname.toLowerCase().replace(/\.$/, '');
+    } catch {
+        return false;
+    }
+
+    if (hostname.startsWith('[') && hostname.endsWith(']')) {
+        hostname = hostname.slice(1, -1);
+    }
+    const ipVersion = isIP(hostname);
+    if (ipVersion !== 0) {
+        return !internalModelAddresses.check(hostname, ipVersion === 4 ? 'ipv4' : 'ipv6');
+    }
+
+    return !(hostname === 'localhost' || hostname.endsWith('.localhost') || hostname.includes('.huawei.com'));
+}
+
 function getOpenCodeModelInfo(task: any, requestModelRef?: unknown): OpenCodeModelInfo {
     const setting = Setting.getInstance() as any;
     const modelAlias = typeof task?.model === 'string' && task.model.length > 0 ? task.model : undefined;
@@ -195,10 +233,31 @@ function buildOpenCodeTelemetryMetadata(
     };
 }
 
-function buildOpenCodeTelemetryOutput(task: any, sessionID: string): Record<string, unknown> {
+function buildOpenCodeTelemetryInput(
+    body: Record<string, unknown>,
+    modelInfo: OpenCodeModelInfo
+): Record<string, unknown> {
+    const provider = Setting.getInstance()
+        .getData()
+        .providers.find((candidate) => candidate.name === modelInfo.providerID);
+    return {
+        ...body,
+        modelLake: {
+            modelName: modelInfo.modelID,
+            providerSource: modelInfo.providerID === 'myagent' ? '体验模型' : '用户模型',
+            isExternal: isExternalModel(modelInfo.providerID, modelInfo.modelID, provider?.base_url)
+        }
+    };
+}
+
+function buildOpenCodeTelemetryOutput(
+    task: any,
+    sessionID: string
+): NonNullable<TaskTurnInstrumentationExternalContext['output']> {
     const agentId = typeof task.agentId === 'string' && task.agentId.length > 0 ? task.agentId : undefined;
     return {
         sessionID,
+        event: 'done',
         ...(agentId
             ? {
                   mode: task.getAgentMode().id,
@@ -263,11 +322,7 @@ async function submitServerUserMessage(
     task: any,
     text: string,
     c: Context,
-    telemetryContext?: {
-        input?: unknown;
-        metadata?: Record<string, unknown>;
-        output?: Record<string, unknown>;
-    }
+    telemetryContext?: TaskTurnInstrumentationExternalContext
 ): Promise<void> {
     const modelRequestOptions = buildModelRequestOptions(c);
     await task.submitUserMessage(text, {
@@ -569,11 +624,7 @@ async function submitServerUserMessageAndWait(
     task: any,
     text: string,
     c: Context,
-    telemetryContext?: {
-        input?: unknown;
-        metadata?: Record<string, unknown>;
-        output?: Record<string, unknown>;
-    },
+    telemetryContext?: TaskTurnInstrumentationExternalContext,
     callback?: (chunk: TaskUpdateChunk) => void
 ): Promise<void> {
     const activeStatuses = ['running', 'waiting'];
@@ -1849,8 +1900,9 @@ export function SessionRoutes(permissionRuntime?: ConfigPermissionRuntime) {
         }
         applyOpenCodeRequestModel(task, body);
         const modelInfo = getOpenCodeModelInfo(task, getOpenCodeRequestModelRef(body));
-        const telemetryContext = {
-            input: body,
+        const telemetryContext: TaskTurnInstrumentationExternalContext = {
+            observationName: 'opencode.request',
+            input: buildOpenCodeTelemetryInput(body, modelInfo),
             metadata: buildOpenCodeTelemetryMetadata(
                 sessionID,
                 'POST /session/:sessionID/message',
@@ -1943,8 +1995,9 @@ export function SessionRoutes(permissionRuntime?: ConfigPermissionRuntime) {
         }
         applyOpenCodeRequestModel(task, body);
         const modelInfo = getOpenCodeModelInfo(task, getOpenCodeRequestModelRef(body));
-        const telemetryContext = {
-            input: body,
+        const telemetryContext: TaskTurnInstrumentationExternalContext = {
+            observationName: 'opencode.request',
+            input: buildOpenCodeTelemetryInput(body, modelInfo),
             metadata: buildOpenCodeTelemetryMetadata(
                 sessionID,
                 'POST /session/:sessionID/prompt_async',

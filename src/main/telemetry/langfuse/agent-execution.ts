@@ -47,6 +47,7 @@ export class LangfuseAgentExecutionInstrumentation implements AgentExecutionInst
             turnId: context.turnId,
             workspace: context.workspace,
             traceId: context.externalContext?.traceId,
+            observationName: context.externalContext?.observationName,
             input: context.externalContext?.input ?? buildTurnInput(chatContext),
             model: context.model,
             recordGenerations: context.recordGenerations,
@@ -77,8 +78,11 @@ export class LangfuseAgentExecutionInstrumentation implements AgentExecutionInst
             });
             const failure = didThrow ? thrownError : outcome.failure;
             const failureMessage = failure !== undefined ? errorToMessage(failure) : result.error;
+            const output = context.externalContext?.output?.event
+                ? { event: context.externalContext.output.event, ...result.output }
+                : result.output;
             finishTaskTurn(observation, {
-                output: failureMessage ? { ...result.output, error: failureMessage } : result.output,
+                output: failureMessage ? { ...output, error: failureMessage } : output,
                 level: failureMessage ? 'ERROR' : 'DEFAULT',
                 statusMessage: failureMessage,
                 metadata: {
