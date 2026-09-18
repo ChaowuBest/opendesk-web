@@ -1773,6 +1773,7 @@ export const zhCn: Record<string, string> = {
     'renderer.agentInput.stop': '停止',
     'renderer.messageQueue.title': '消息队列 (${count})',
     'renderer.messageQueue.empty': '(空消息)',
+    'renderer.messageQueue.reorder': '拖动调整顺序，也可用方向键移动',
     'renderer.messageQueue.sendNow': '立即发送',
     'renderer.messageQueue.sendNow.title': '立即发送这条消息',
     'renderer.messageQueue.sendNow.goalTitle': '当前 Goal 正在执行，将作为 Goal 补充信息发送',

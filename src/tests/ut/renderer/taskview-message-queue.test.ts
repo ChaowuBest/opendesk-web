@@ -114,6 +114,27 @@ describe('task-view message queue', () => {
         };
     });
 
+    test('reordered queued messages are auto-sent in the new order', () => {
+        const taskView = document.createElement('task-view') as any;
+        taskView.task_id = 'task-reorder';
+        taskView.task_status = 'running';
+        taskView.messageQueue = ['a', 'b', 'c'].map((id) => ({
+            id,
+            message: id,
+            attachedFilePaths: [],
+            attachedImages: []
+        }));
+        taskView._updateMessageQueuePanel = jest.fn();
+
+        taskView.reorderMessageQueue('c', 0);
+        expect(taskView.messageQueue.map((item: { id: string }) => item.id)).toEqual(['c', 'a', 'b']);
+        expect(taskView._updateMessageQueuePanel).toHaveBeenCalledTimes(1);
+
+        taskView.task_status = 'stopped';
+        taskView._autoSendQueueMessages();
+        expect(submitMessage).toHaveBeenCalledWith('task-reorder', expect.objectContaining({ message: 'c' }));
+    });
+
     test.each(['high', 'none', ''])('切换模型档位 %s 时立即传给任务 API，重新加载恢复所选档位', async (effort) => {
         const taskState = {
             model: 'model-a',

@@ -1827,6 +1827,7 @@ export const enUs: Record<string, string> = {
     'renderer.agentInput.stop': 'Stop',
     'renderer.messageQueue.title': 'Message Queue (${count})',
     'renderer.messageQueue.empty': '(empty message)',
+    'renderer.messageQueue.reorder': 'Drag to reorder; use arrow keys to move',
     'renderer.messageQueue.sendNow': 'Send now',
     'renderer.messageQueue.sendNow.title': 'Send this message now',
     'renderer.messageQueue.sendNow.goalTitle':

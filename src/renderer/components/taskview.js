@@ -2496,6 +2496,22 @@ class TaskView extends HTMLElement {
         this._updateMessageQueuePanel();
     }
 
+    /** 将队列消息移动到指定位置，后续自动发送沿用此顺序。 */
+    reorderMessageQueue(id, targetIndex) {
+        const index = this.messageQueue.findIndex((item) => item.id === id);
+        if (
+            index < 0 ||
+            !Number.isInteger(targetIndex) ||
+            targetIndex < 0 ||
+            targetIndex >= this.messageQueue.length ||
+            index === targetIndex
+        )
+            return;
+        const [item] = this.messageQueue.splice(index, 1);
+        this.messageQueue.splice(targetIndex, 0, item);
+        this._updateMessageQueuePanel();
+    }
+
     /**
      * 结束所有活跃 reasoning 块的计时并清理流式残留状态
      * （等待占位、usage spinner、流式光标、最后一条 assistant 消息的元信息行）。
@@ -5040,7 +5056,8 @@ class TaskView extends HTMLElement {
             queuePanel.setCallbacks(
                 (id) => this.sendQueueMessageImmediately(id),
                 (item) => this.editQueueMessage(item),
-                (id) => this.removeFromMessageQueue(id)
+                (id) => this.removeFromMessageQueue(id),
+                (id, targetIndex) => this.reorderMessageQueue(id, targetIndex)
             );
         }
 

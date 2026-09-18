@@ -3763,6 +3763,15 @@ class MessageQueuePanel extends HTMLElement {
         this.onEdit = null;
         /** @type {Function | null} 删除回调 */
         this.onDelete = null;
+        /** @type {Function | null} 排序回调 (id, targetIndex) */
+        this.onReorder = null;
+        this._drag = null;
+        this._dragFrame = null;
+        this._onQueuePointerMove = (event) => this._moveDrag(event);
+        this._onQueuePointerUp = (event) => this._finishDrag(event);
+        this._onQueuePointerCancel = (event) => {
+            if (this._drag?.pointerId === event.pointerId) this._resetDrag(true);
+        };
         this._t = createRendererTranslator();
         this._unsubSettingChanged = null;
     }
@@ -3777,6 +3786,7 @@ class MessageQueuePanel extends HTMLElement {
     }
 
     disconnectedCallback() {
+        this._resetDrag();
         this._unsubSettingChanged?.();
     }
 
@@ -3819,14 +3829,17 @@ class MessageQueuePanel extends HTMLElement {
      * @param {Function} onSendNow 立即发送回调 (id)
      * @param {Function} onEdit 编辑回调 (item)
      * @param {Function} onDelete 删除回调 (id)
+     * @param {Function} onReorder 排序回调 (id, targetIndex)
      */
-    setCallbacks(onSendNow, onEdit, onDelete) {
+    setCallbacks(onSendNow, onEdit, onDelete, onReorder) {
         this.onSendNow = onSendNow;
         this.onEdit = onEdit;
         this.onDelete = onDelete;
+        this.onReorder = onReorder;
     }
 
     render() {
+        this._resetDrag();
         if (this.queue.length === 0) {
             this.style.display = 'none';
             this.innerHTML = '';
@@ -3851,7 +3864,9 @@ class MessageQueuePanel extends HTMLElement {
                         (item, idx) => `
                     <div class="message-queue-item" data-queue-id="${item.id}" data-queue-index="${idx}">
                         <div class="message-queue-item-content">
-                            <span class="message-queue-item-index">${idx + 1}</span>
+                            <button type="button" class="message-queue-drag-handle" title="${escapeHtml(this.t('renderer.messageQueue.reorder'))}" aria-label="${escapeHtml(this.t('renderer.messageQueue.reorder'))}">
+                                <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true" focusable="false"><circle cx="9" cy="5" r="1.5"/><circle cx="15" cy="5" r="1.5"/><circle cx="9" cy="12" r="1.5"/><circle cx="15" cy="12" r="1.5"/><circle cx="9" cy="19" r="1.5"/><circle cx="15" cy="19" r="1.5"/></svg>
+                            </button>
                             <span class="message-queue-item-text">${this._truncateText(item.message, 60)}</span>
                         </div>
                         <div class="message-queue-item-actions">
@@ -3893,6 +3908,39 @@ class MessageQueuePanel extends HTMLElement {
             const idx = parseInt(item.dataset.queueIndex, 10);
             const queueItem = this.queue[idx];
 
+            const handle = item.querySelector('.message-queue-drag-handle');
+            handle?.addEventListener('pointerdown', (event) => {
+                if (event.button !== 0 || event.isPrimary === false || this._drag) return;
+                event.preventDefault();
+                this._drag = {
+                    id,
+                    pointerId: event.pointerId,
+                    startY: event.clientY,
+                    startTop: item.getBoundingClientRect().top,
+                    index: idx,
+                    targetIndex: idx,
+                    item,
+                    handle,
+                    list: item.parentElement,
+                    originalItems: [...this.querySelectorAll('.message-queue-item')],
+                    offset: 0,
+                    nudges: new Map(),
+                    dragging: false
+                };
+                handle.setPointerCapture?.(event.pointerId);
+                window.addEventListener('pointermove', this._onQueuePointerMove);
+                window.addEventListener('pointerup', this._onQueuePointerUp);
+                window.addEventListener('pointercancel', this._onQueuePointerCancel);
+            });
+            handle?.addEventListener('keydown', (event) => {
+                const delta = event.key === 'ArrowUp' ? -1 : event.key === 'ArrowDown' ? 1 : 0;
+                const targetIndex = idx + delta;
+                if (!delta || targetIndex < 0 || targetIndex >= this.queue.length) return;
+                event.preventDefault();
+                this.onReorder?.(id, targetIndex);
+                this.querySelectorAll('.message-queue-drag-handle')[targetIndex]?.focus();
+            });
+
             item.querySelector('[data-action="send"]')?.addEventListener('click', (e) => {
                 e.stopPropagation();
                 if (this.onSendNow) this.onSendNow(id);
@@ -3908,6 +3956,159 @@ class MessageQueuePanel extends HTMLElement {
                 if (this.onDelete) this.onDelete(id);
             });
         });
+    }
+
+    _moveDrag(event) {
+        const drag = this._drag;
+        if (!drag || event.pointerId !== drag.pointerId) return;
+        if (!drag.dragging && Math.abs(event.clientY - drag.startY) < 4) return;
+        drag.dragging = true;
+        drag.clientY = event.clientY;
+        event.preventDefault();
+        drag.item.classList.add('message-queue-item-dragging');
+
+        this._updateDropTarget(event.clientY);
+        this._scheduleDragScroll();
+    }
+
+    _updateDropTarget(clientY) {
+        const drag = this._drag;
+        if (!drag) return;
+        const otherItems = [...this.querySelectorAll('.message-queue-item')].filter((item) => item !== drag.item);
+        drag.targetIndex = otherItems.findIndex((item) => {
+            const bounds = item.getBoundingClientRect();
+            return clientY < bounds.top + bounds.height / 2 - (drag.nudges.get(item) || 0);
+        });
+        if (drag.targetIndex === -1) drag.targetIndex = otherItems.length;
+
+        const list = drag.list;
+        const currentIndex = [...list.querySelectorAll('.message-queue-item')].indexOf(drag.item);
+        const targetItem = otherItems[drag.targetIndex] || null;
+        if (currentIndex !== drag.targetIndex) {
+            const previousPositions = new Map(otherItems.map((item) => [item, item.getBoundingClientRect()]));
+            if (targetItem) {
+                list.insertBefore(drag.item, targetItem);
+            } else {
+                list.appendChild(drag.item);
+            }
+            drag.targetIndex = [...list.querySelectorAll('.message-queue-item')].indexOf(drag.item);
+            this._animateReorderedItems(previousPositions);
+        }
+        this._updateDragFeedback(clientY);
+    }
+
+    _updateDragFeedback(clientY) {
+        const drag = this._drag;
+        const itemBounds = drag.item.getBoundingClientRect();
+        const baseTop = itemBounds.top - drag.offset;
+        const desiredOffset = clientY - drag.startY + drag.startTop - baseTop;
+        const listBounds = drag.list.getBoundingClientRect();
+        if (listBounds.bottom > listBounds.top && itemBounds.height > 0) {
+            const minOffset = listBounds.top - baseTop;
+            const maxOffset = listBounds.bottom - itemBounds.height - baseTop;
+            drag.offset = Math.min(Math.max(desiredOffset, minOffset), maxOffset);
+        } else {
+            drag.offset = desiredOffset;
+        }
+        drag.item.style.setProperty('--queue-offset', `${drag.offset}px`);
+
+        const items = [...drag.list.querySelectorAll('.message-queue-item')];
+        const neighbor = items[drag.targetIndex + Math.sign(drag.offset)];
+        for (const item of drag.nudges.keys()) {
+            if (item === neighbor) continue;
+            item.style.removeProperty('--queue-offset');
+            item.style.removeProperty('--queue-scale');
+            drag.nudges.delete(item);
+        }
+        if (neighbor && neighbor !== drag.item) {
+            const nudge = Math.sign(drag.offset) * Math.min(8, Math.abs(drag.offset) * 0.2);
+            neighbor.style.setProperty('--queue-offset', `${nudge}px`);
+            neighbor.style.setProperty('--queue-scale', `${1 - Math.min(0.045, Math.abs(drag.offset) * 0.0015)}`);
+            drag.nudges.set(neighbor, nudge);
+        }
+    }
+
+    _animateReorderedItems(previousPositions) {
+        const drag = this._drag;
+        if (!drag) return;
+        [...drag.list.querySelectorAll('.message-queue-item')].forEach((item) => {
+            if (item === drag.item) return;
+            const previous = previousPositions.get(item);
+            if (!previous) return;
+            const current = item.getBoundingClientRect();
+            const offset = previous.top - current.top;
+            if (!offset) return;
+            item.style.transition = 'none';
+            item.style.transform = `translateY(${offset}px)`;
+            item.getBoundingClientRect();
+            const animate = () => {
+                item.style.transition = '';
+                item.style.transform = '';
+            };
+            if (window.requestAnimationFrame) {
+                window.requestAnimationFrame(animate);
+            } else {
+                animate();
+            }
+        });
+    }
+
+    _scheduleDragScroll() {
+        const list = this.querySelector('.message-queue-list');
+        if (!list?.getBoundingClientRect || this._dragFrame !== null || !window.requestAnimationFrame) return;
+        const rect = list.getBoundingClientRect();
+        if (this._drag.clientY >= rect.top + 24 && this._drag.clientY <= rect.bottom - 24) return;
+        this._dragFrame = window.requestAnimationFrame(() => {
+            this._dragFrame = null;
+            if (!this._drag) return;
+            const bounds = list.getBoundingClientRect();
+            const direction =
+                this._drag.clientY < bounds.top + 24 ? -1 : this._drag.clientY > bounds.bottom - 24 ? 1 : 0;
+            if (!direction) return;
+            const items = [...list.querySelectorAll('.message-queue-item')];
+            const currentIndex = items.indexOf(this._drag.item);
+            if ((direction < 0 && currentIndex === 0) || (direction > 0 && currentIndex === items.length - 1)) {
+                return;
+            }
+            const previous = list.scrollTop;
+            const maxScroll =
+                Number.isFinite(list.scrollHeight) && Number.isFinite(list.clientHeight)
+                    ? Math.max(0, list.scrollHeight - list.clientHeight)
+                    : Number.POSITIVE_INFINITY;
+            list.scrollTop = Math.min(maxScroll, Math.max(0, list.scrollTop + direction * 8));
+            if (list.scrollTop === previous) return;
+            this._updateDropTarget(this._drag.clientY);
+            this._scheduleDragScroll();
+        });
+    }
+
+    _finishDrag(event) {
+        const drag = this._drag;
+        if (!drag || event.pointerId !== drag.pointerId) return;
+        const shouldCommit = drag.dragging && drag.targetIndex !== drag.index && this.onReorder;
+        this._resetDrag(!shouldCommit);
+        if (shouldCommit) this.onReorder(drag.id, drag.targetIndex);
+    }
+
+    _resetDrag(restoreOrder = false) {
+        if (this._dragFrame !== null) window.cancelAnimationFrame?.(this._dragFrame);
+        this._dragFrame = null;
+        window.removeEventListener('pointermove', this._onQueuePointerMove);
+        window.removeEventListener('pointerup', this._onQueuePointerUp);
+        window.removeEventListener('pointercancel', this._onQueuePointerCancel);
+        this.querySelectorAll('.message-queue-item').forEach((item) => {
+            item.classList.remove('message-queue-item-dragging');
+            item.style.transition = '';
+            item.style.transform = '';
+            item.style.removeProperty('--queue-offset');
+            item.style.removeProperty('--queue-scale');
+        });
+        const drag = this._drag;
+        if (restoreOrder && drag?.list && drag.originalItems) {
+            drag.originalItems.forEach((item) => drag.list.appendChild(item));
+        }
+        if (drag?.handle.hasPointerCapture?.(drag.pointerId)) drag.handle.releasePointerCapture(drag.pointerId);
+        this._drag = null;
     }
 }
 
