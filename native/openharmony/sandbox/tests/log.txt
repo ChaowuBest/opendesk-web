@@ -1,0 +1,217 @@
+# dynobox-linux 测试方向记录
+# 每次开始测试前先读本文件：避免重复探索，并跟踪已知问题/边界。
+# 状态图例: [x] 已验证通过  [F] 曾发现缺陷已修复（附回归测试）  [!] 已知边界（行为符合设计，
+#          不修）  [ ] 待探索
+
+================ 重大设计变更（2026-09-18）：身份命名空间 ================
+[F→设计] 应需求变更：**虚拟路径与真实路径相同，不再做任何映射**，沙箱只做
+    权限控制。已移除：[[roots]] 映射（策略文件出现即拒绝启动）、vpath↔rpath
+    翻译、readlink/realpath/symlink-target 的路径翻译、getcwd 虚拟化、
+    launcher 命令翻译、--map（接受为 no-op）、--automount（no-op，恒等视图
+    即默认）、--src 的映射语义（现在仅等价 --cwd 切换工作目录）、
+    跨根 rename EXDEV 策略。全部测试改为真实路径断言。
+    保留：全部权限门控、符号链接解析归因、系统允许清单、ask/grants/缓存、
+    进程治理、网络管控、防篡改注入。
+    语义变化：身份命名空间下不存在"翻译泄露"问题（readlink/realpath 返回
+    真实路径即正确行为）；安全推理更简单（策略=真实路径 ACL）。
+
+================ 代码瘦身（2026-09-18，身份命名空间收尾） ================
+[x] 移除恒为 NULL 的 pass 双路径机制：gate_t.pass 字段、plan 的 out_pass
+    参数、gate1x/gate1 的 passp 出参、全部 hook 调用点的 pass 变量与
+    `pass ? pass : x` 模式（约 60 处）——身份命名空间下该机制本就恒空
+[x] 删除无调用者的 dbox_is_system_path（其职责已由 system_allow 的
+    前缀表覆盖）
+[x] 删除 dbox_policy_load_toml 的 base_dir 参数（roots 移除后无意义）
+    及 main.c 的 dirname/libgen 依赖
+[x] gate_rename 签名简化（不再输出 pass 指针）；rename/renameat/renameat2
+    直接使用原始路径
+[x] 验证：净删除后 90/90 全绿 ×2，零警告
+
+================ 代码瘦身（2026-09-18，身份命名空间收尾） ================
+[x] 移除恒为 NULL 的 pass 双路径机制：gate_t.pass 字段、plan 的 out_pass
+    参数、gate1x/gate1 的 passp 出参、全部 hook 调用点的 pass 变量与
+    `pass ? pass : x` 模式（约 60 处）——身份命名空间下该机制本就恒空
+[x] gate_exec/gate_exec_d 简化为 int 返回（0=allow/-1=deny），
+    GATE_EXEC_DENY 哨兵与 find_in_path 的 pass 透传一并移除
+[x] gate_rename 签名简化（不再输出 pass 指针）；rename/renameat/renameat2
+    直接使用原始路径
+[x] 删除无调用者的 dbox_is_system_path（其职责已由 system_allow 的
+    前缀表覆盖）
+[x] 删除 dbox_policy_load_toml 的 base_dir 参数（roots 移除后无意义）
+    及 main.c 的 dirname/libgen 依赖
+[x] 验证：105/105 全绿（连续两轮），零警告
+[!] 编排脚本反向断言陷阱：`[ "$?" != "0" ] && rc=0 || rc=1` 形式容易写反
+    （fexecve 测试曾因此误报），新断言尽量用 check 的 rc==0 语义 + 探针
+    _fail 后缀约定
+
+================ 已探索方向（功能） ================
+[x] TOML 子集解析：注释/表/数组表/字符串转义/整数/布尔；非法 perm、缺字段、default=ask 拒绝
+[x] glob 语义：** 跨层级、* 单层、? 单字符、/dir/** 匹配 dir 本身、/** 整卷、边界不误匹配、大小写敏感
+[x] 求值顺序：具体 deny 先于宽泛 allow；grants 只细化 ask；静态 deny 不可被 grants 覆盖
+[x] ask 决策缓存：树内跨进程共享（POSIX shm）；仅缓存 allow；失败不缓存；TTL 过期重问
+[x] grants 子树授权：端点批复下发后同树零问询（5 文件 1 问询）；TTL 上限 3600
+[x] 配置序列化：base64 环境变量回环（含中文/空格路径、多根、map）
+[x] 路径映射：--src 单根、多根 [[roots]]、恒等区（真实路径直接判定）、最长前缀优先
+[x] read/write/delete/rename/mkdir/rmdir/chmod/enum allow-deny 与 EACCES 语义
+[x] 一次打开多类别（O_CREAT|O_RDWR = read+write）逐类别独立求值，全部通过才放行
+[x] O_EXCL 冲突、追加、截断、2MB 大文件、深嵌套、Unicode/空格文件名
+[x] 符号链接：创建按 write 判定；打开按解析后真实路径判定（逃逸链接被拒）；
+    相对目标保持相对；NOFOLLOW_LAST 语义（lstat/unlink/rename 作用于链接本身）
+[x] `..` 穿越：虚拟命名空间内归一化（/public/../../etc/shadow 落在镜像内）
+[x] 执行管控：白/黑/ask；PATH 搜索逐候选判定；popen/system 网关 /bin/sh；
+    setuid/setgid 拒绝（防 exec 后 loader 丢 LD_PRELOAD）
+[x] 网络三档：allow / deny / loopback；AF_UNIX 不受限
+[x] 进程治理：杀 launcher → 整树（孙进程）终止；launcher 正常退出组清理
+[x] 双沙箱并行、4 线程并发追加（注意：drvfs 上须在 ext4 跑，见下）
+[x] CLI 对齐：--automount/--del-to-trash/--mount/--log-file/--pipe/pipe://、
+    endpoint 默认 8080、network-status/ensure/setup、debug-rules、mount 报错
+[x] WSL drvfs 已知环境问题：O_APPEND 原子性与 flock 不可靠 → 套件经 wsl_run.sh
+    同步到 ext4 运行（[!]环境边界，非沙箱缺陷）
+
+================ 已探索方向（安全边界） ================
+[F] 符号链接逃逸：/public/link -> /vault/x，open 按解析结果拒绝
+    （曾因 NOFOLLOW_LAST 分支缺 flags 判断导致放行，已修复+回归）
+[F] execve/execvp 带斜杠路径未走翻译，虚拟路径直达内核返回 ENOENT（已修复）
+[F] 解释器重开脚本：execve 翻译成真实路径后，dash 再按真实路径 open 脚本；
+    真实路径此前被误虚拟化（已修复：根 real 前缀下的绝对路径按真实解释优先）
+[F] exec 家族 PATH 搜索：候选不存在时须继续搜索下一个（保持 execvp 语义）
+[F] glibc>=2.34 隐藏 *64 符号，dlsym 为 NULL：libselinux 构造期调用 statfs64
+    段错误 → 回退到非 64 符号 + pthread_once 惰性初始化
+[F] 端点 HTTP body 读取循环条件写反导致 RST（fail-closed 生效但端点不可用）
+[F] 端点 grants 响应缺 decision 字段；unix 帧长度前缀含 \0 截断 C 字符串
+    （服务端跳过前缀解析、客户端剥前缀）
+[x] setuid/setgid 二进制 exec 拒绝（loader 会为特权程序丢弃 LD_PRELOAD）
+[x] /proc 默认不在允许清单（防 /proc/self/fd/N 重开、/proc/self/mem）
+[x] mmap(PROT_EXEC) 只允许 execute 已授权的 fd（fopen 跟踪的 fd 无 exec 授权
+    时 EPERM；loader 内部映射的 fd 不可归属，放行——见 [!]）
+[x] fexecve/AT_EMPTY_PATH：fd 不可归属真实路径时直接拒绝
+[x] rename/link 跨映射根：EXDEV 拒绝（与 Windows 一致）
+[x] 策略防篡改：launcher 解析后以 DYNOBOX_CFG 注入；exec hook 重注入原值，
+    子进程改写自身 DYNOBOX_CFG/LD_PRELOAD 后 exec 不生效
+[F] 硬链接外带：link("/etc/passwd", "/public/x")——旧路径读权限由系统允许清单
+    授予时，硬链接可把系统文件带进可写区。已修复：硬链接源路径禁用系统允许
+    清单（gate1x allow_system=0），需显式规则才可 link；工作区内 link 正常。
+    回归：ln_fail /etc/passwd、ln_fail /usr/bin/env、ln /docs/... 允许
+[F] shebang 解释器绕过：内核加载 #! 解释器不经本层，allowed 脚本可指向
+    execute 被拒的解释器。已修复：exec 时 raw-read 首行解析 #!（含相对
+    解释器按脚本目录解析），对解释器递归做 EXEC+setuid 判定（深度上限 5）。
+    回归：tools/bin/evil.sh（解释器在 blocked 区）拒绝执行；ok.sh 不受影响
+[F] 测试基建缺陷（记录以免重犯）：
+    - 探针用 syscall(SYS_renameat2) 裸系统调用 → 绕过被测层（这本身就是
+      README 声明的边界）→ 测试必须走 glibc renameat2()
+    - glibc tmpfile() 无视 TMPDIR 恒定在 /tmp 创建 → hook 门控改为固定 /tmp
+    - 探针 tmpfile_ok/fail 分支用 op[8]=='_' 判断写反 → 用 strcmp
+    - 编排脚本裸 `wait` 会等所有后台任务（含永不退出的 endpoint）→ 必须按
+      PID 等待；/dev/tcp 就绪探测加 `timeout -k 1 2`（SIGTERM 对陷入
+      connect 的 bash 无效，SA_RESTART 重启系统调用，需 -k 强杀）
+    - 陈旧二进制假象：wsl_run 同步构建后测试；手工调试时若 /mnt 与 ext4
+      两侧二进制不同步会出现"退出码/行为异常"的假象（本轮 rc=0 vs 126）
+[F] 策略文件兼容性：Windows 作者常见 UTF-8 BOM 会被解析器拒绝 →
+    mini_toml 跳过 BOM；CRLF 行尾原本已兼容。回归：BOM+CRLF 单测
+[F] endpoint 抽象 unix socket：客户端 unix://@name 早已支持但服务端
+    不能创建 → endpoint --unix @name 支持抽象命名空间（不落盘、
+    shutdown 时不 unlink）。回归：抽象 socket ask 端到端
+[x] ENOENT vs EACCES 语义：映射区内不存在的文件 → ENOENT（内核产生）；
+    deny 区 → EACCES；空策略下非系统文件拒绝（fail-closed）
+[x] chown/utimes 按 write 类别判定；statx（coreutils 依赖）按 read 判定
+[x] 退出码传递：子进程 exit 42 → launcher 返回 42；exec 失败 → 126
+[x] launcher 收 SIGTERM：杀组 + 自身退出，无孤儿
+[x] setsid 子进程：脱离原会话/进程组后 watchdog 仍以新 pgid 级联终止
+[x] PATH 含死项：逐候选判定并跳过不存在者（execvp 语义保持）
+[x] 并发 ask 风暴：4 个独立沙箱树同时问询，端点线程模型与共享内存互斥正常
+[x] grants 类别子集：read 授权不覆盖 write；TTL 边界（expires_ms==now 即过期）
+[x] glob 字面量：文件名含 * ? 时被对应通配符匹配（文档化行为）
+[x] b64 非法输入（长度非 4 倍、坏字符）拒绝
+[F] 内存安全（高危，长路径测试发现）：路径解析硬错误（ENAMETOOLONG 等）时，
+    dbox_plan_path 使用了**未初始化的 resolved 缓冲区**作为真实路径/
+    翻译结果 —— 可能打开堆上残留数据恰好构成的任意路径。已修复：resolver
+    失败时一律回退词汇路径（lex_real/lex_vpath）。回归：longpath_fail
+    （5900 字符路径必须干净失败，且探针断言 errno ∈ {ENAMETOOLONG,ENOENT,EACCES}）
+[x] O_PATH dirfd：open(O_PATH) 后 openat(dirfd, rel) 正常工作；
+    经 dirfd 的 ../ 逃逸拒绝
+[x] execveat(dirfd, "prog")：二进制允许/拒绝均正确。注意限制[!]：dirfd+
+    相对路径执行**脚本**时，dash 会按 /dev/fd/<dirfd>/name 重开脚本，
+    /proc 默认拒绝导致失败 —— 已知限制，二进制不受影响
+[x] 符号链接环（a→a）：解析器干净返回失败，无挂起无崩溃
+[x] default=allow 变体：显式 deny 规则仍生效，其余放行
+[x] --no-system-read：/usr 等系统目录读/执行均被拒（可整体关闭内建允许清单）
+[x] 创建文件权限位经 open 可变参正确传递（0644）
+[x] endpoint 多监听器（HTTP+unix+pipe 并存）、GET /log 审计非空
+[x] debug-rules 子命令输出求值过程
+[x] 超长路径（>PATH_MAX）不崩溃、干净返回 ENAMETOOLONG
+[F] 编排脚本缺陷（本轮）：裸 `wait` 会等所有后台任务（含永不退出的 endpoint）
+    → 必须按 PID 等待；/dev/tcp 就绪探测加 `timeout -k 1 2`；多行 perl 替换
+    会插值 $VAR 破坏文件（改用 Edit 工具）；测试断言值要用单引号保护避免
+    perl 插值成空；专用端点的审计要 grep 专用 --log 文件而非主审计
+[F] watchdog 缺陷：关闭看护 fd 不会唤醒阻塞中的 poll()（Linux 经典陷阱），
+    watchdog 线程永久挂起、fail-closed 失效。已修复：poll 改 250ms tick +
+    F_GETFD 存活检查（fd 被进程自己关闭 → 立即杀树，fail-closed）。
+    回归：close_watch 探针（daemon 式关闭 fd → 树终止）
+[F] endpoint 演示响应 grants 硬编码 ttl=300：策略 grant_ttl_seconds 只在
+    端点不带 ttl 时生效。已修复：endpoint 新增 --grant-ttl N（演示端点
+    可指定 TTL）；回归：grant TTL 过期端到端（1s TTL → 1.4s 后重问）
+[x] fd 表陈旧性：dup 后 mmap-exec 仍按原路径授权拒绝；64 次 open/close
+    churn 后 fd 复用不继承旧授权
+[x] /dev/fd（→/proc/self/fd）默认拒绝
+[x] ask 超时真实生效：端点挂 8s、超时 500ms → 实测 ~0.5s 返回（计时断言）
+[x] grant TTL 过期端到端：1s 授权 + 1.4s 后第二次写 → 重新问询（审计=2）
+[x] 相对 [[roots]].real 按策略文件目录解析（与 cwd 无关）
+[x] 策略文件修改对后续运行生效（每棵树快照不变）
+[x] 重复键后者覆盖（documented）；多 grants 并存且类别互不越界；TTL<=0
+    回退策略默认值（上限 1h）
+[x] readlink/realpath 返回真实路径 = 正确行为（身份命名空间下无映射，
+    不存在"泄露宿主布局"问题——那只是旧虚拟命名空间设计的伪命题）
+    注意实现细节：内核 readlink 不写 NUL，任何对结果的加工都需 len<sz 防越界
+[x] 相对路径执行脚本：execvp("./ok.sh") 经 execve 钩子归因后正确执行
+[x] ENOTDIR 语义：允许目录下的普通文件子路径 → 内核 ENOTDIR（非策略拒绝）
+[x] X_OK 经符号链接解析目标可执行性（/public/slink → /usr/bin/env）
+[x] mkdir 权限位经可变参正确传递（0755）
+[F] 端点 JSON 解析缺陷（本轮发现）：ask 请求中的文件名含引号/转义时，
+    端点旧的 strstr 提取会在转义引号处截断，导致路径失配（fail-closed
+    拒绝，行为安全但误拒合法请求）。已修复：抽出共享的转义感知解析器
+    dbox_json_get_string（ask.c 与 endpoint.c 共用），demo 表同时改为
+    后缀式模式（/**/notes/** 等）以适配身份命名空间下任意宿主前缀。
+    回归：ask 区含引号文件名、UTF-8 文件名端到端
+[x] 精确目录规则语义：规则 path="/dir"（无 glob）允许列目录本身，
+    但不覆盖子文件 /dir/f（glob 非递归语义端到端验证）
+[x] SIGTERM 退出码传递：子进程 `kill -TERM $$` → launcher 返回 143
+[x] stdin 透传：管道输入经沙箱写入被允许的文件
+[x] deny 区属性读拒绝：statx / statfs / access(F_OK) 均 EACCES
+[x] dlopen 系统库（/lib/.../libm.so.6）按 execute 允许清单放行
+[x] verbose 日志行为：非 -v 不记录放行，-v 逐条记录
+[x] 日志目录缺失时优雅降级（不影响命令执行）
+[!] 已知边界（设计使然，不修，见 README"安全边界"）：
+    - 静态链接/内联 syscall/openat2 裸系统调用完全绕过（LD_PRELOAD 机制边界）；
+      套件含"边界验证"测试实测该绕过真实存在，若未来失效需更新文档
+    - 已打开 fd 的读写不受后续策略影响（与 Windows"已打开句柄"语义一致）
+    - SCM_RIGHTS 传入的外部 fd 可绕过（需要沙箱外协作者）
+    - 共享内存 ask 状态对树内进程可写：恶意进程可直接伪造 allow 条目
+      （与"非对抗性"定位一致；如需对抗性，未来改为 launcher 内 broker 进程）
+    - 信号/ptrace/netlink/coredump 不管控；mprotect 匿名页转可执行不拦截（JIT）
+    - 判定与真实调用之间的 TOCTOU；多线程 chdir 与相对路径竞态（POSIX 固有）
+    - glibc 内部少量不经 PLT 的打开（NSS 模块、locale）不在管控内
+    - 关闭看护 fd 的子树失去 watchdog 级联（launcher 组清理仍覆盖直接组）
+    - shebang 解析读脚本首行发生在 EXEC 规则放行之后，若脚本内容在放行后被
+      并发替换存在 TOCTOU 窗口（与内核读取解释器的窗口一致）
+    - execveat(dirfd, 相对路径) 执行脚本时，解释器需按 /dev/fd/<dirfd>/name
+      重开脚本，/proc 默认拒绝导致失败；二进制执行不受影响
+
+================ 测试基建 ================
+[x] tests/unit_policy.c     128 断言（引擎/glob/求值/grants/缓存/序列化/BOM/
+                            默认allow/缓存覆盖/b64/重复键/多grants/身份归因）
+[x] tests/t_probe.c         沙箱内多用途探针（含 ln/openat/fexecve/renameat2/
+                            配置防篡改/LD_PRELOAD 净化/statx/setsid/裸syscall
+                            探针/O_PATH/execveat/符号链接环/长路径/权限位/
+                            env_open/mmap_dup/fdchurn/close_watch/statx_fail/
+                            f_ok_fail/statfs_fail/stdin_cp）
+[x] tests/t_threads.c       并发（ext4 上稳定）
+[x] tests/t_exec_chain.c    进程树治理探针
+[x] tests/t_net.c           网络策略探针
+[x] tests/t_mmap.c          mmap PROT_EXEC 门
+[x] tests/t_dlopen.c        dlopen 门
+[x] tests/run_all.sh        功能+可靠性+安全编排（103 项，含 round7 协议
+                            健壮性/信号码/stdin/日志行为）
+[x] tests/wsl_run.sh        WSL 下同步 ext4 运行入口（全局 timeout 防挂）
+[x] 2026-09-18 全量回归：103/103 通过（连续两轮），干净构建 0 警告
+[ ] 待探索：seccomp/Landlock 可选加固层；openat2 裸调用拦截评估；
+    共享内存 ask 状态改为 launcher 内 broker（对抗性场景）
