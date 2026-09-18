@@ -509,9 +509,9 @@ export class SkillAnalyzer {
             };
         }
 
-        const tempDir = path.join(os.tmpdir(), `opendesk-skill-import-${Date.now()}`);
+        // mkdtempSync 保证跨进程原子唯一，避免同一毫秒内的并发导入共享同一目录
+        const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'opendesk-skill-import-'));
         try {
-            fs.mkdirSync(tempDir, { recursive: true });
             zip.extractAllTo(tempDir, true);
 
             const entries = zip.getEntries();

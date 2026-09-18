@@ -52,10 +52,7 @@ export const SKILLHUB_INSTALL_PREFIX = 'skillhub:';
 // ── 冲突策略 ─────────────────────────────────────────────────────────────
 
 export type SkillInstallConflictPolicy =
-    | { action: 'auto-rename' }
-    | { action: 'reject' }
-    | { action: 'overwrite' }
-    | { action: 'rename'; name: string };
+    { action: 'auto-rename' } | { action: 'reject' } | { action: 'overwrite' } | { action: 'rename'; name: string };
 
 const AUTO_RENAME_CONFLICT: SkillInstallConflictPolicy = { action: 'auto-rename' };
 const REJECT_CONFLICT: SkillInstallConflictPolicy = { action: 'reject' };
@@ -198,8 +195,9 @@ function findSkillRootInDir(rootDir: string, relPath?: string | null): string | 
  * 解压发生在临时目录，返回的 cleanup 用于安装完成后清理。
  */
 function extractZipToSkillDir(zipPath: string, skillRelPath?: string): { skillRoot: string; cleanup: () => void } {
-    const tmpDir = path.join(getTempDir(), `skill-zip-${Date.now()}`);
-    fs.mkdirSync(tmpDir, { recursive: true });
+    // mkdtempSync 保证跨进程原子唯一：多个 Jest worker / 并发安装共享同一临时根目录，
+    // Date.now() 命名会在同一毫秒撞名，导致两个压缩包解进同一目录、技能根目录解析错乱
+    const tmpDir = fs.mkdtempSync(path.join(getTempDir(), 'skill-zip-'));
     const safeRelPath = skillRelPath && typeof skillRelPath === 'string' ? skillRelPath.trim() : '';
 
     try {
@@ -396,8 +394,9 @@ export abstract class SkillSourceInstaller {
 
     /** 将 zip 字节流写入临时目录并解压出技能根目录 */
     protected async _writeAndExtractZip(zipBuffer: Buffer, label: string, cleanup: Array<() => void>): Promise<string> {
-        const tmpDir = path.join(getTempDir(), `${label}-${Date.now()}`);
-        fs.mkdirSync(tmpDir, { recursive: true });
+        // mkdtempSync 保证跨进程原子唯一：多个 Jest worker / 并发安装共享同一临时根目录，
+        // Date.now() 命名会在同一毫秒撞名，导致两个压缩包解进同一目录、技能根目录解析错乱
+        const tmpDir = fs.mkdtempSync(path.join(getTempDir(), `${label}-`));
         cleanup.push(() => rmRecursive(tmpDir));
         const zipPath = path.join(tmpDir, 'download.zip');
         fs.writeFileSync(zipPath, zipBuffer);
@@ -514,8 +513,7 @@ export class GitHubUrlInstaller extends SkillSourceInstaller {
         const { owner, repo, branch, path: relPath } = parsed;
 
         const zipUrl = `https://github.com/${owner}/${repo}/archive/refs/heads/${branch}.zip`;
-        const tmpDir = path.join(getTempDir(), `skill-registry-github-${Date.now()}`);
-        fs.mkdirSync(tmpDir, { recursive: true });
+        const tmpDir = fs.mkdtempSync(path.join(getTempDir(), 'skill-registry-github-'));
         cleanup.push(() => rmRecursive(tmpDir));
 
         const res = await fetchGitHubZipWithFallback(zipUrl);

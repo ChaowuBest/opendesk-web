@@ -35,12 +35,13 @@ const SKILLMGR_BUNDLE_NAME = 'skillmgr';
 /**
  * 技能来源分类：
  * - installed：用户安装的技能（apps/skills/resources），唯一会落盘的分类
- * - bundled：内置技能（只作为安装源/渐进式加载回退，不参与加载，预留）
  * - config：external_paths 配置目录（只加载，不覆盖已安装的技能）
  * - mounted：--skillmgr-mount-skill 挂载目录（只加载，不覆盖已安装的技能）
  * - plugin：插件中的技能（预留，未来使用）
+ * 注：随安装包分发的内置技能（resources/skills）由 builtin 应用独立加载，
+ * 不进入本注册表，避免在技能中心「已安装」与输入自动补全中出现重复条目。
  */
-export type SkillSource = 'installed' | 'bundled' | 'config' | 'mounted' | 'plugin';
+export type SkillSource = 'installed' | 'config' | 'mounted' | 'plugin';
 
 interface SkillCacheEntry {
     frontmatter: Record<string, unknown>;

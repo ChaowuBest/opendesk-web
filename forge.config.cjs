@@ -202,6 +202,8 @@ function materializeWorkspacePackageLinks(buildPath, electronVersion, platform, 
 
 const extraResources = [
     path.join(__dirname, 'dist', 'plugins'),
+    // 随安装包分发的内置技能（BuiltinApplication 加载，skillmgr 中可禁用不可删除）
+    path.join(__dirname, 'resources', 'skills'),
     ...(process.platform === 'darwin' ? [] : [path.join(__dirname, 'native')])
 ];
 
