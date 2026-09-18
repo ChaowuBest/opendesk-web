@@ -108,7 +108,19 @@ if (!fs.existsSync(runtimeSource)) {
 }
 const runtimeDirectory = path.join(sandboxRoot, 'runtime');
 fs.mkdirSync(runtimeDirectory, { recursive: true });
-fs.copyFileSync(runtimeSource, path.join(runtimeDirectory, 'sandbox.exe'));
+const runtimeTarget = path.join(runtimeDirectory, 'sandbox.exe');
+
+try {
+    fs.copyFileSync(runtimeSource, runtimeTarget);
+} catch (error) {
+    if (['EBUSY', 'EPERM', 'EACCES'].includes(error?.code)) {
+        throw new Error(
+            `Cannot update the development sandbox because ${runtimeTarget} is in use. ` +
+                'Stop the running Dynobox sandbox process and retry the build.'
+        );
+    }
+    throw error;
+}
 const runtimeShim = path.join(path.dirname(runtimeSource), 'NodeChildProcessCompat.cjs');
 if (fs.existsSync(runtimeShim)) fs.copyFileSync(runtimeShim, path.join(runtimeDirectory, 'NodeChildProcessCompat.cjs'));
-process.stdout.write(`[sandbox] development runtime: ${path.join(runtimeDirectory, 'sandbox.exe')}\n`);
+process.stdout.write(`[sandbox] development runtime: ${runtimeTarget}\n`);

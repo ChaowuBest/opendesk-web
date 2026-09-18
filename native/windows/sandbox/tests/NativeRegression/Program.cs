@@ -68,6 +68,87 @@ try
 finally { File.Delete(pagingPath); }
 Console.WriteLine("paging lifetime passed");
 
+// -- 目录删除打开形态与瞬时共享冲突重试 -------------------------------------
+// RemoveDirectoryW（Node fs.rmdirSync / PowerShell Remove-Item / .NET）以文件句柄
+// 方式（BACKUP_SEMANTICS，无 FILE_DIRECTORY_FILE）打开目录，掩码携带
+// DELETE | WRITE_ATTRIBUTES。打开必须放行到 DeleteDirectory/Cleanup，否则策略
+// 放行了删除也永远删不掉目录；写目录数据语义仍须拒绝。
+
+var allowPolicy = new Policy();
+allowPolicy.Rules.Add(new Rule("/**", "all", "allow"));
+var deleteFs = new MirrorFs(source, allowPolicy);
+
+var rmdirTarget = Path.Combine(source, "rmdir-target");
+Directory.CreateDirectory(rmdirTarget);
+var deleteOpenInfo = new Info();
+Equal(deleteFs.CreateFile("\\rmdir-target", DokanNet.FileAccess.Delete | DokanNet.FileAccess.WriteAttributes,
+    FileShare.ReadWrite, FileMode.Open, FileOptions.None, FileAttributes.Normal, deleteOpenInfo),
+    DokanResult.Success, "directory delete-open accepted");
+if (!deleteOpenInfo.IsDirectory) throw new Exception("delete-open did not mark the directory");
+var dataWriteInfo = new Info();
+Equal(deleteFs.CreateFile("\\rmdir-target", DokanNet.FileAccess.WriteData,
+    FileShare.ReadWrite, FileMode.Open, FileOptions.None, FileAttributes.Normal, dataWriteInfo),
+    DokanResult.AccessDenied, "directory data write via file handle still denied");
+
+var deleteInfo = new Info { DeletePending = true, IsDirectory = true };
+Equal(deleteFs.DeleteDirectory("\\rmdir-target", deleteInfo), DokanResult.Success, "empty directory deletion allowed");
+deleteFs.Cleanup("\\rmdir-target", deleteInfo);
+if (Directory.Exists(rmdirTarget)) throw new Exception("Cleanup did not remove the deleted directory");
+
+Directory.CreateDirectory(Path.Combine(source, "rmdir-nonempty"));
+File.WriteAllText(Path.Combine(source, "rmdir-nonempty", "keep.txt"), "x");
+var nonEmptyInfo = new Info { DeletePending = true, IsDirectory = true };
+Equal(deleteFs.DeleteDirectory("\\rmdir-nonempty", nonEmptyInfo), DokanResult.DirectoryNotEmpty, "non-empty directory reports DirectoryNotEmpty");
+Equal(deleteFs.DeleteDirectory("\\rmdir-missing", new Info { DeletePending = true, IsDirectory = true }), DokanResult.PathNotFound, "missing directory reports PathNotFound");
+
+var denyPolicy = new Policy();
+denyPolicy.Rules.Add(new Rule("/**", "all", "deny"));
+var denyFs = new MirrorFs(source, denyPolicy);
+Equal(denyFs.DeleteDirectory("\\rmdir-nonempty", new Info { DeletePending = true, IsDirectory = true }),
+    DokanResult.AccessDenied, "policy deny keeps directory deletion denied");
+if (!Directory.Exists(Path.Combine(source, "rmdir-nonempty"))) throw new Exception("denied directory was removed");
+Console.WriteLine("directory delete-open gate passed");
+
+// 瞬时共享冲突：索引/杀软以 share=R|W（无 DELETE）短暂握住刚写完的文件，
+// 镜像转发到宿主的改名/删除会收到 ERROR_SHARING_VIOLATION；必须退避重试，
+// 不能把 EPERM 直接抛回调用方。
+File.WriteAllText(Path.Combine(source, "rename-retry.txt"), "retry-content");
+{
+    // holder 先建句柄、短暂持有（覆盖改名首拍），随后在重试窗口内释放
+    var holderOpened = new ManualResetEventSlim(false);
+    var holderTask = Task.Run(() =>
+    {
+        using var held = File.Open(Path.Combine(source, "rename-retry.txt"), FileMode.Open,
+            System.IO.FileAccess.Read, FileShare.Read | FileShare.Write);
+        holderOpened.Set();
+        Thread.Sleep(200);
+    });
+    if (!holderOpened.Wait(5000)) throw new Exception("holder never grabbed the file");
+    Equal(deleteFs.MoveFile("\\rename-retry.txt", "\\rename-retry.moved", false, new Info()),
+        DokanResult.Success, "rename survives transient sharing conflict");
+    if (!File.Exists(Path.Combine(source, "rename-retry.moved"))) throw new Exception("renamed file missing on host");
+    holderTask.Wait(5000);
+}
+File.Delete(Path.Combine(source, "rename-retry.moved"));
+
+File.WriteAllText(Path.Combine(source, "cleanup-retry.txt"), "cleanup-content");
+{
+    var holderOpened = new ManualResetEventSlim(false);
+    var holderTask = Task.Run(() =>
+    {
+        using var held = File.Open(Path.Combine(source, "cleanup-retry.txt"), FileMode.Open,
+            System.IO.FileAccess.Read, FileShare.Read | FileShare.Write);
+        holderOpened.Set();
+        Thread.Sleep(150);
+    });
+    if (!holderOpened.Wait(5000)) throw new Exception("holder never grabbed the cleanup file");
+    var cleanupInfo = new Info { DeletePending = true };
+    deleteFs.Cleanup("\\cleanup-retry.txt", cleanupInfo);
+    holderTask.Wait(5000);
+    if (File.Exists(Path.Combine(source, "cleanup-retry.txt"))) throw new Exception("Cleanup gave up on transient sharing conflict");
+}
+Console.WriteLine("transient sharing conflict retry passed");
+
 sealed class Info : IDokanFileInfo
 {
     public object? Context { get; set; }

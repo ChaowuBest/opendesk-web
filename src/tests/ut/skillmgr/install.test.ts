@@ -50,6 +50,40 @@ describe('skillmgr skill package installation', () => {
         );
     });
 
+    test('installs concurrent zips without temp directory collisions', async () => {
+        // 回归测试：解压临时目录曾以 `skill-zip-${Date.now()}` 命名，
+        // 并发安装在同一毫秒内会共享同一目录，导致技能根目录解析错乱
+        const zipPaths: string[] = [];
+        const expectedNames: string[] = [];
+        for (let i = 0; i < 10; i++) {
+            const name = `concurrent-skill-${i}`;
+            expectedNames.push(name);
+            const zipPath = path.join(tempDir, `${name}.zip`);
+            const zip = new AdmZip();
+            zip.addFile(
+                `${name}/SKILL.md`,
+                Buffer.from(
+                    [
+                        '---',
+                        `name: ${name}`,
+                        `description: Concurrent install test skill ${i}`,
+                        '---',
+                        '',
+                        `# ${name}`
+                    ].join('\n'),
+                    'utf8'
+                )
+            );
+            zip.writeZip(zipPath);
+            zipPaths.push(zipPath);
+        }
+
+        const results = await Promise.all(zipPaths.map((zipPath) => skillInstallManager.installFromLocalZip(zipPath)));
+
+        expect(results.every((r) => r.success)).toBe(true);
+        expect(results.map((r) => r.name).sort()).toEqual(expectedNames.sort());
+    });
+
     test('uses the zip package name when frontmatter omits name', async () => {
         const zipPath = path.join(tempDir, 'desktop-control-1.0.0.zip');
         const zip = new AdmZip();

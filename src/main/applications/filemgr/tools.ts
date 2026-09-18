@@ -2776,6 +2776,7 @@ const DEFAULT_GREP_IGNORE = [
 
 const GREP_MAX_FILE_SIZE_BYTES = 20 * 1024 * 1024;
 const GREP_FILE_SEARCH_CONCURRENCY = 4;
+const GREP_MAX_GITIGNORE_PATTERNS = 50_000;
 
 /**
  * 将单条 .gitignore 规则转换为相对于 basePath 的 fastGlob ignore 模式。
@@ -2841,35 +2842,62 @@ function convertGitignoreRule(rule: string, prefix: string): string[] | null {
  * 收集 basePath 下所有 .gitignore 中的规则，转换为 fastGlob 兼容的 ignore 模式。
  * 行为对齐 ripgrep：递归收集各层级 .gitignore 并按所在目录正确作用域化。
  */
-async function collectGitignorePatterns(basePath: string): Promise<string[]> {
+async function readGitignorePatterns(filePath: string, prefix: string): Promise<string[]> {
     const patterns: string[] = [];
     try {
-        const gitignoreFiles = await fastGlob('**/.gitignore', {
+        const stat = await fs.promises.stat(filePath);
+        if (!stat.isFile()) return patterns;
+
+        const input = fs.createReadStream(filePath, { encoding: 'utf-8' });
+        const lineReader = readline.createInterface({ input, crlfDelay: Infinity });
+        for await (const rawLine of lineReader) {
+            const converted = convertGitignoreRule(rawLine, prefix);
+            if (converted) {
+                const remaining = GREP_MAX_GITIGNORE_PATTERNS - patterns.length;
+                patterns.push(...converted.slice(0, remaining));
+                if (patterns.length >= GREP_MAX_GITIGNORE_PATTERNS) break;
+            }
+        }
+    } catch {
+        // 读取失败则跳过该 .gitignore
+    }
+    return patterns;
+}
+
+async function collectGitignorePatterns(basePath: string): Promise<string[]> {
+    const patterns: string[] = [];
+    const appendPatterns = (newPatterns: string[]): boolean => {
+        const remaining = GREP_MAX_GITIGNORE_PATTERNS - patterns.length;
+        if (remaining <= 0) return false;
+        patterns.push(...newPatterns.slice(0, remaining));
+        return patterns.length < GREP_MAX_GITIGNORE_PATTERNS;
+    };
+
+    try {
+        // 先读取根规则。这样 fast-glob 在发现嵌套 .gitignore 时可以直接剪枝，
+        // 避免在大型工作区中先遍历 node_modules、构建产物和缓存目录。
+        const rootGitignore = path.join(basePath, '.gitignore');
+        const rootPatterns = (await readGitignorePatterns(rootGitignore, '')).slice(0, GREP_MAX_GITIGNORE_PATTERNS);
+        appendPatterns(rootPatterns);
+
+        const gitignoreStream = fastGlob.stream('**/.gitignore', {
             cwd: basePath,
-            ignore: DEFAULT_GREP_IGNORE,
+            ignore: [...DEFAULT_GREP_IGNORE, ...rootPatterns],
             absolute: false,
             onlyFiles: true,
             suppressErrors: true,
             dot: true
         });
 
-        for (const relPath of gitignoreFiles) {
+        for await (const entry of gitignoreStream) {
+            const relPath = String(entry);
+            if (relPath === '.gitignore') continue;
             const dir = path.dirname(relPath);
             const prefix = dir === '.' ? '' : dir + '/';
-            try {
-                const content = await fs.promises.readFile(path.join(basePath, relPath), 'utf-8');
-                for (const rawLine of content.split('\n')) {
-                    const converted = convertGitignoreRule(rawLine, prefix);
-                    if (converted) {
-                        patterns.push(...converted);
-                    }
-                }
-            } catch {
-                // 读取失败则跳过该 .gitignore
-            }
+            if (!appendPatterns(await readGitignorePatterns(path.join(basePath, relPath), prefix))) break;
         }
     } catch {
-        // fastGlob 失败（如目录不存在）则返回空
+        // fastGlob 失败（如目录不存在）则返回已读取的根规则
     }
     return patterns;
 }

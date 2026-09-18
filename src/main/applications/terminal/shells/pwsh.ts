@@ -131,7 +131,11 @@ export class ExecutePwshTool extends BaseTool<PwshArgsSchema> {
         }
 
         const encodingCommand =
-            '[Console]::OutputEncoding = [System.Text.Encoding]::UTF8; [Console]::InputEncoding = [System.Text.Encoding]::UTF8; ';
+            '[Console]::OutputEncoding = [System.Text.Encoding]::UTF8; [Console]::InputEncoding = [System.Text.Encoding]::UTF8; ' +
+            // PS 5.1 的 Get-Content 对无 BOM 文件默认按系统 ANSI（中文系统为 GBK）解码，
+            // 不受 chcp/[Console]::OutputEncoding 影响，读取 UTF-8 源码会输出乱码。
+            // 为其设置 UTF-8 默认值；仅作用于读文件 cmdlet，不触碰写文件与重定向行为。
+            "$PSDefaultParameterValues['Get-Content:Encoding'] = 'utf8'; ";
         const utf8Command = `${process.platform === 'win32' ? 'chcp 65001 | Out-Null; ' : ''}${encodingCommand}${command}`;
         const dynamicSandbox = this.sandboxed && process.platform === 'win32';
         await executeShellCommand({

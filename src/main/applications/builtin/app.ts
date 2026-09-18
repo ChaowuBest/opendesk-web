@@ -13,9 +13,12 @@ import { Skill } from '../../aikernel/skill.js';
 import { BaseApplication } from '../base.js';
 import { t } from './locale/index.js';
 import { loadPoolSkill } from './pool.js';
-import { loadAnalysisResultVisualizerSkill } from './analysis-result-visualizer.js';
 import { registerHarmonyosBashFrictionHook } from '../../aikernel/harnesses/platform/harmonyos/harmonyos-recovery/hook.js';
 import { loadUseHarmonySkill } from './skills/use-harmony/skill.js';
+import { skillRegistry } from '../skillmgr/utils/skill-registry.js';
+import { getBuiltinSkillsDirectory, listBuiltinSkillDirectories } from '../skillmgr/builtin-skills.js';
+import { ReadableDirectoryRegistry } from '../../aikernel/security/enforcer.js';
+import { logger } from '../../utils/logger.js';
 
 if ((process.platform as string) === 'openharmony') {
     registerHarmonyosBashFrictionHook();
@@ -33,9 +36,38 @@ export class BuiltinApplication extends BaseApplication {
     async getSkills(): Promise<Skill[]> {
         const skills: Skill[] = [];
         skills.push(loadPoolSkill());
-        skills.push(loadAnalysisResultVisualizerSkill());
         skills.push(loadUseHarmonySkill());
+        skills.push(...this.loadBuiltinResourcesSkills());
 
+        return skills;
+    }
+
+    /**
+     * 加载随安装包分发的内置技能（resources/skills 下的 SKILL.md 目录）。
+     * 解析与校验复用 skillmgr 的 SkillRegistry；技能文件为只读分发内容，
+     * 仅由 builtin 应用提供，不进入 skillmgr 注册表（避免技能中心与自动补全重复）。
+     */
+    private loadBuiltinResourcesSkills(): Skill[] {
+        const skillDirs = listBuiltinSkillDirectories();
+        if (skillDirs.length === 0) return [];
+
+        // 注册为全局可读，确保各模式下 agent 都能读取技能目录中的资源文件
+        const builtinDir = getBuiltinSkillsDirectory();
+        if (builtinDir) {
+            ReadableDirectoryRegistry.getInstance().register(builtinDir);
+        }
+
+        const skills: Skill[] = [];
+        for (const skillDir of skillDirs) {
+            const result = skillRegistry._loadSkillFromDir(skillDir);
+            if (!result.success) {
+                logger.warn(`[builtin] 跳过内置技能 ${skillDir} - ${result.error}`);
+                continue;
+            }
+            const skill = new Skill({ ...result.frontmatter }, result.body || '', result.skillDir);
+            skill.readOnly = true;
+            skills.push(skill);
+        }
         return skills;
     }
 }

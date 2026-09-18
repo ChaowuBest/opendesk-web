@@ -332,6 +332,11 @@ public sealed class Sandbox : IDisposable
                         stdoutRelay = RelayOutputAsync(stdoutPipe, Console.OpenStandardOutput());
                         stderrRelay = RelayOutputAsync(stderrPipe, Console.OpenStandardError(), actual);
                         _ = WaitForSingleObject(pi.hProcess, 0xFFFFFFFF);
+                        // The root process can exit while a descendant still holds an
+                        // inherited stdout/stderr handle. Close the job before draining
+                        // the relays so KILL_ON_JOB_CLOSE closes those descendants and
+                        // the manager cannot remain stuck waiting for EOF.
+                        CloseJob();
                         stdoutRelay.GetAwaiter().GetResult();
                         stderrRelay.GetAwaiter().GetResult();
                         if (!GetExitCodeProcess(pi.hProcess, out var code))
@@ -341,6 +346,7 @@ public sealed class Sandbox : IDisposable
                     catch
                     {
                         TerminateProcess(pi.hProcess, 1);
+                        CloseJob();
                         throw;
                     }
                     finally
@@ -637,13 +643,16 @@ public sealed class Sandbox : IDisposable
         _job = job; // Job 随管理进程存活；进程退出或 Dispose 时杀掉整棵子进程树
     }
 
+    private void CloseJob()
+    {
+        if (_job == IntPtr.Zero) return;
+        CloseHandle(_job);
+        _job = IntPtr.Zero;
+    }
+
     public void Dispose()
     {
-        if (_job != IntPtr.Zero)
-        {
-            CloseHandle(_job);
-            _job = IntPtr.Zero;
-        }
+        CloseJob();
         try
         {
             Unmount();
