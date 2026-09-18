@@ -290,6 +290,11 @@ int dbox_system_allow(const char *path, int acc)
      * read access; see README "known boundaries"). */
     static const char *const sys_read[] = {
         "/usr", "/bin", "/sbin", "/lib", "/lib32", "/lib64", "/opt",
+        /* OpenHarmony/HarmonyOS keeps the system runtime under /system and
+         * only exposes it through the /bin, /lib, /lib64 and /etc symlinks.
+         * Policy is evaluated on resolved (real) paths, so the real prefix
+         * has to be listed here as well. */
+        "/system",
         "/etc/ld.so.cache", "/etc/ld.so.preload", "/etc/nsswitch.conf",
         "/etc/localtime", "/etc/timezone", "/etc/hosts", "/etc/hostname",
         "/etc/resolv.conf", "/etc/gai.conf", "/etc/passwd", "/etc/group",
@@ -299,7 +304,8 @@ int dbox_system_allow(const char *path, int acc)
         NULL
     };
     static const char *const sys_exec_prefix[] = {
-        "/usr", "/bin", "/sbin", "/lib", "/lib32", "/lib64", "/opt", NULL
+        "/usr", "/bin", "/sbin", "/lib", "/lib32", "/lib64", "/opt",
+        "/system", NULL
     };
     static const char *const tty_dev[] = {
         "/dev/tty", "/dev/console", "/dev/ptmx", "/dev/pts", NULL

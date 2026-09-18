@@ -24,6 +24,7 @@
 #include <netinet/in.h>
 #include <sys/socket.h>
 #include <sys/syscall.h>
+#include <sys/time.h>
 #include <sys/un.h>
 #include <arpa/inet.h>
 #include <poll.h>
@@ -46,7 +47,7 @@ static int raw_connect(int fd, const struct sockaddr *sa, socklen_t sl,
     if (rc != 0 && errno == EINPROGRESS) {
         struct pollfd p = { .fd = fd, .events = POLLOUT };
         for (;;) {
-            rc = (int)syscall(SYS_poll, &p, 1, timeout_ms);
+            rc = dbox_raw_poll(&p, 1, timeout_ms);
             if (rc >= 0 || errno != EINTR) break;
         }
         if (rc == 0) { errno = ETIMEDOUT; return -1; }

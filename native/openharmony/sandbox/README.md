@@ -58,6 +58,13 @@ OpenDesk 中 Windows 版 [dynobox](../OpenDesk/native/windows/sandbox)（基于 
 - 网络管控（可选）：`[network]` 支持 `allow` / `deny` / `loopback` 三档，
   默认 `allow`（对齐 Windows 版 internetClient 能力）。
 
+以上承诺由 `tests/t_adversarial.{c,py,js}` **持续验证**：21 项基于受控 API 的规避
+手段全部被拦下 —— `open`/`openat`/`fopen`/`access`/`statx`、符号链接逃逸、硬链接外带、
+改名进可写区、`chmod` 提权、`..` 穿越、chdir 后相对路径上跳、`/proc/self/{root,cwd}`、
+`exec`/`popen`/`system` 起子进程、fork 后不 exec、经 `dlopen` 载入的第三方库，
+以及 `unsetenv(LD_PRELOAD)` / 改写 `DYNOBOX_CFG` 后重新 exec（策略会被重新注入），
+再加上 Python 与 Node 侧的常规 API。
+
 ### 它不能做到的（明确的能力边界）
 
 以下任一手段都可以**完全绕过本沙箱**，这不是 bug 而是机制边界：
@@ -67,8 +74,14 @@ OpenDesk 中 Windows 版 [dynobox](../OpenDesk/native/windows/sandbox)（基于 
 2. **内联系统调用**：任何 C 程序都可以 `syscall(SYS_open, ...)` 绕过 libc 封装；
 3. **setuid/setgid**：内核对特权程序不施加 LD_PRELOAD（本沙箱已把 exec setuid
    默认拒绝，见上，但这是我们的策略而非机制保证）；
-4. **主动卸载**：程序可以 `dlclose` 不了自身，但可以 `unsetenv(LD_PRELOAD)` 后用
-   原生 syscall exec，或修改自身 GOT；
+4. **取得未经拦截的 libc 入口**：三条路径，门槛依次升高 ——
+   (a) `dlopen("libc.so")` + `dlsym(h, "open")`：**纯标准 libc API**，不需要裸 syscall
+       或任何恶意手法，某些运行时、FFI 绑定与插件加载器会自然地这么写。这是本机制
+       **门槛最低**的绕过方式，应按"随时可能发生"来评估（实测确认）；
+   (b) `unsetenv(LD_PRELOAD)` 后用原生 syscall `execve`：子进程脱离沙箱（实测确认）；
+   (c) 修改自身 GOT 表指向原始符号。
+   注意 `dlsym(RTLD_NEXT, "open")` **不属于**此类：它从调用者之后搜索，命中的仍是本
+   拦截层，实测**无法**绕过；
 5. **继承前的窗口**：动态链接器在运行我们的构造函数之前加载的库、以及 libc 内部
    少量不经 PLT 的路径打开（如 NSS 模块加载、locale 装载）不在管控内；
 6. **基于 fd 的操作**：已打开的 fd 可任意读写在策略之外（与 Windows“已打开句柄不受
@@ -81,23 +94,49 @@ OpenDesk 中 Windows 版 [dynobox](../OpenDesk/native/windows/sandbox)（基于 
 9. **TOCTOU**：策略判定与真实系统调用之间存在时间窗，并发修改路径对象存在理论
    竞态（任何用户态文件沙箱共有的限制）。
 
+**两个现实例子**（不是构造出来的对抗代码，而是常见程序的日常行为）：
+
+- **Node / libuv**：`fs.statSync` 内部直接 `syscall(SYS_statx)`，因此 node 程序对
+  任意路径的**属性查询**天然不受管控 —— 但读内容、写、删除、执行子进程仍受控；
+- **Python / ctypes**：`ctypes.CDLL(None).syscall(SYS_openat, ...)` 同理。
+
+两者都由测试固化（`adv(node): statSync still bypasses`、
+`adv(python3): ctypes syscall still bypasses`），机制一旦变化会立刻报出。
+
+**入口语义**：`dynobox run -- <命令>` 中的 `<命令>` 由调用者选定，launcher 本身在沙箱
+之外，因此**该可执行文件不受策略约束**（受管控的是它之后的所有文件访问与子进程）。
+与 Windows 版一致：交给 dynobox 启动什么，是使用者的决定。
+
 **结论**：适用于让 *工具链、构建脚本、LLM agent 的 shell 工具* 这类“按常规方式使用
 libc 的程序”遵守文件策略，并提供审计与人工审批点。**不适用于对抗性恶意代码的
  containment**。需要硬保证时，请叠加 Landlock / seccomp / bubblewrap / 容器等内核
 机制（Landlock 与本沙箱的路径策略天然互补，后续可作可选加固层）。
 
+按使用面定位：
+
+| 场景 | 是否适用 |
+|---|---|
+| 约束自己/团队的构建脚本、CI 步骤 | 适用 |
+| 约束 LLM agent 产生的 shell / python / node 命令 | 适用（常规 API 全部受控）|
+| 约束第三方工具（假定其不主动规避） | 适用，但须知 `dlopen(libc)` 与裸 syscall 的口子 |
+| 隔离不可信代码 | **不适用**，请用 Landlock / seccomp / VM |
+
 ---
 
 ## 一、快速开始
 
-环境要求：Linux x86_64，glibc ≥ 2.33（Ubuntu 22.04+ / Debian 12+ 均满足），gcc + make。
-开发与测试在 WSL2 Ubuntu 24.04 中验证。
+环境要求：
+
+- Linux x86_64/arm64，glibc ≥ 2.33（Ubuntu 22.04+ / Debian 12+ 均满足），gcc + make。
+  开发与测试在 WSL2 Ubuntu 24.04 中验证；
+- HarmonyOS PC / OpenHarmony aarch64（musl libc + clang/gcc 兼容驱动）。
+  见下文「OpenHarmony 平台备注」。
 
 构建与自检：
 
 ```bash
 make tests              # 构建 build/dynobox、build/libdynobox.so 与测试探针
-bash tests/run_all.sh   # 90 项功能/安全测试
+bash tests/run_all.sh   # 功能/安全测试
 ```
 
 最小示例（身份命名空间：规则直接作用于真实路径）：
@@ -142,6 +181,25 @@ build/dynobox run --policy rules.toml --upstream http://127.0.0.1:8080/decide --
 # **/slow/**     -> 端点挂起 8 秒（演示超时 fail-closed）
 # 其余           -> --default
 ```
+
+### OpenHarmony 平台备注（musl / aarch64）
+
+本实现同时支持 glibc 与 musl：`src/preload.c` 按 libc 能力条件编译。musl 把
+`open64`/`stat64`/`mmap64` 等 LFS64 名字定义成基础函数的宏，且不导出
+`faccessat2`/`scandirat`/`execveat`/`dlmopen`/`close_range` —— 这些入口在 musl 下
+不单独拦截，由其基础函数覆盖；`SYS_poll` 在 aarch64 上不存在，改用 `ppoll`。
+
+HarmonyOS（OpenHarmony PC）原生环境下的已知差异，均已在本仓库内处理：
+
+| 差异 | 处理方式 |
+|---|---|
+| 系统运行时位于 `/system`，`/bin`、`/lib`、`/lib64`、`/etc` 都是它的符号链接 | 策略在**解析后的真实路径**上判定，因此系统目录允许清单显式包含 `/system`（`policy.c`） |
+| 内核拒绝对文件做 `mmap(PROT_EXEC)`（EACCES，与文件类型和权限位无关） | `mmap` 门只在"拒绝"方向有意义；测试先做内核能力探测，不成立时跳过放行方向的断言 |
+| HMDFS（`$HOME`）拒绝 `bind()` Unix socket（EPERM）、`/dev/shm` 被 SELinux 拒绝（EACCES）、`/tmp` 是只读挂载 | `pipe://` 的 socket 目录改为探测式选择（`DYNOBOX_PIPE_DIR` 可显式覆盖）；测试用 `SOCKDIR` 选择可用目录 |
+| HMDFS 不保留 `mkdir` 请求的权限位（目录固定为继承值） | 测试先探测工作区文件系统能力，不成立时跳过该断言 |
+| 默认测试工作区位于 `$HOME`（HMDFS） | 可用 `DYNOBOX_TEST_WORK=<dir>` 重定向到其它文件系统 |
+
+这套环境下的实测结果见「五、测试」。
 
 ## 二、命令行参考（子命令与选项与 Windows 版 dynobox 对齐）
 
@@ -287,9 +345,16 @@ bash tests/run_all.sh          # 直接跑（/mnt 下 drvfs 并发断言可能�
 tests/wsl_run.sh               # WSL 推荐：同步到 ext4 后构建+运行
 ```
 
-三套共 **90 项**（另有 128 项单元断言）：
+两个可重定向的工作区变量（默认值适用于常规 Linux）：
 
-- **单元**（`tests/unit_policy`，128 断言）：TOML 子集解析（BOM/CRLF/重复键）、
+| 变量 | 作用 |
+|---|---|
+| `DYNOBOX_TEST_WORK` | 测试工作区（fixture/日志/临时策略），默认 `tests/work`。放在不保留权限位的文件系统上（如 HarmonyOS 的 HMDFS）时，mkdir 权限断言会自动跳过 |
+| `SOCKDIR` | Unix socket 目录，默认从 `$TMPDIR`、`/data/storage/el2/base/temp`、`/dev/shm`、`$WORK` 中挑一个可用者（HMDFS 与 /dev/shm 在 HarmonyOS 上会拒绝 `bind()`） |
+
+四组共 **144 项**（另有 129 项单元断言）：
+
+- **单元**（`tests/unit_policy`，129 断言）：TOML 子集解析（BOM/CRLF/重复键）、
   glob 语义（`/dir/**` 匹配目录本身、大小写敏感）、求值顺序、grants TTL 与类别
   子集、失败不缓存、路径归一化与符号链接解析、配置序列化回环、默认 allow +
   显式 deny、缓存覆盖；
@@ -302,8 +367,80 @@ tests/wsl_run.sh               # WSL 推荐：同步到 ext4 后构建+运行
   决策树内跨进程缓存、grants 推权与 TTL 过期重问询、guarded（每路径重新问询）、
   超时 fail-closed 且失败不缓存（计时断言）、**端点中途死亡 → 已缓存决策仍有效、
   新问询拒绝**、**杀 launcher → 整棵进程树（含孙进程）终止**、关闭看护 fd 的
-  fail-closed 终止、双沙箱并行、坏策略（含 `[[roots]]`）拒绝启动、
-  裸 syscall 绕过的边界存在性验证。
+  fail-closed 终止、双沙箱并行、坏策略（含 `[[roots]]`）拒绝启动；
+- **解释器**（`tests/interp_probe.{sh,py,js}`）：sh / python3 / node 各自的
+  allow/deny 矩阵 —— 允许区读、写、执行放行，拒绝区读、写、删除、枚举、
+  执行全部拦下（Python 侧还含 `subprocess` 拉起的子进程）；
+- **对抗性边界**（`tests/t_adversarial.{c,py,js}`，三侧共 30 项手段）：每种
+  手段尝试读取"禁读哨兵文件"，探针自带预期判定 ——
+  `must-block` 手段（symbolic/hard link 逃逸、改名外带、`..` 穿越、
+  `/proc/self/{root,cwd}`、`exec`/`popen`/`system` 起子进程、经 `dlopen` 载入的
+  第三方库、fork 后不 exec、`unsetenv(LD_PRELOAD)` 与改写 `DYNOBOX_CFG` 后 exec、
+  Python/Node 的常规 API）**必须被拦住**；
+  `boundary` 手段（内联 `syscall`、裸 `execve`、显式 `dlopen(libc)+dlsym`、
+  Python `ctypes`、Node `statSync`）**必须仍可绕过** —— 边界若被意外扩大
+  （must-block 泄露）或被意外收窄（boundary 失效）都会在测试里报出来；
+- **回归**：拦截层自身的健壮性 —— NULL/空路径调用不得让沙箱崩溃、
+  `posix_spawn`（含 close-on-exec file actions，等价 node `execFileSync`）不得
+  误杀进程树、exec 后子进程环境变量必须完整且 `LD_PRELOAD` 已重注入。
+
+---
+
+### 入库的运行时产物（`runtime/`）
+
+**HarmonyOS 的原生构建环境不易获得**，所以把开箱可用的运行时产物一并纳入版本管理：
+
+```
+runtime/aarch64-linux-ohos/
+  dynobox            命令行入口（launcher）
+  libdynobox.so      LD_PRELOAD 拦截层
+  BUILD-INFO.txt     来源与构建信息
+```
+
+**开箱可用**：`dynobox` 会在**自身所在目录**查找 `libdynobox.so`（见 `main.c` 的
+`find_preload_lib()`），因此整个目录拷贝到任何位置都能直接运行 —— 不需要 `build/`，
+也不需要在目标机器上具备编译环境。
+
+```bash
+runtime/aarch64-linux-ohos/dynobox version
+runtime/aarch64-linux-ohos/dynobox run --policy rules.toml -- /bin/sh
+```
+
+**改了源码之后必须重新生成**，否则产物与源码脱节：
+
+```bash
+make runtime                                    # -> runtime/aarch64-linux-ohos/
+make runtime RUNTIME_TARGET=x86_64-linux-gnu    # 其它目标
+```
+
+`run_all.sh` 的 `== runtime artifacts ==` 一节会在**独立工作区**里验证入库产物开箱
+可用（能启动、放行允许区、拦住拒绝区）—— 产物一旦与源码脱节就会报出来。
+
+**产物已瘦身并重新签名** —— 约为带调试信息版本的 35%：
+
+| 文件 | `build/`（带 `-g`） | `runtime/`（瘦身后） |
+|---|---|---|
+| `dynobox` | 191 KB | 63 KB |
+| `libdynobox.so` | 269 KB | 79 KB |
+
+`make runtime` 内部顺序是**先改后签**，不可颠倒：
+
+```
+strip  →  binary-sign-tool sign -selfSign 1 -inFile ... -outFile ... -signAlg SHA256withECDSA
+```
+
+原因：ohos 工具链在链接时**会自动自签名**（ELF 带 `.codesign` 段），而 `strip` /
+`patchelf` / `objcopy` 等任何二进制改写都会让签名失效 —— 所以必须先把旧签名去掉、
+再重新签名，**签名之后不要再改动文件**。`BUILD-INFO.txt` 记录了所用流程与工具链版本。
+
+在缺少 `binary-sign-tool` 的环境（普通 Linux / WSL）上，`make runtime` 会自动退化为
+"只瘦身、不签名"并打印提示，方便在其它平台产出产物。
+
+**两点注意**
+
+- **不要跨目标混放**：本目录产物是 `ELF64 / AArch64` 且依赖 musl 的 `libc.so`，与
+  x86_64 / glibc 构建出来的产物**互不通用**，务必各自放在 `runtime/<target>/` 下；
+- `BUILD-INFO.txt` 记录了生成时的 git 版本与编译器版本，可据此判断产物是否已过期。
 
 ---
 
@@ -325,13 +462,80 @@ src/
   endpoint.c   参考决策端点（HTTP + Unix socket、演示规则、/log 审计）
   main.c       CLI：run / endpoint / debug-rules / version，
                launcher 侧进程治理（进程组 + 看护管道 + 共享内存）
+runtime/
+  <target>/                入库的运行时候产物：dynobox + libdynobox.so + BUILD-INFO.txt
+                            （make runtime 生成；同目录布局让两者可独立部署）
 tests/
-  unit_policy.c  单元测试（119 断言）
-  t_*.c          沙箱内探针（IO/线程/进程链/网络/mmap/dlopen）
-  run_all.sh     86 项功能/可靠性编排
-  wsl_run.sh     WSL 下同步到 ext4 运行（规避 drvfs 锁缺陷）
-  policies/      测试策略模板
+  unit_policy.c            单元测试（129 断言）
+  t_probe.c                通用探针（IO/权限位/线程/进程链/网络/mmap/dlopen/回归）
+  t_threads.c t_exec_chain.c t_net.c t_mmap.c t_dlopen.c   专项探针
+  t_adversarial.c          对抗性边界探针（必须拦 / README 已声明边界）
+  t_adversarial.py         Python 侧对抗探针（含 ctypes 直发 syscall）
+  t_adversarial.js         Node 侧对抗探针（含 libuv 裸 statx）
+  interp_probe.{sh,py,js}  解释器侧 allow/deny 矩阵
+  adv_helper.c             dlopen 用的第三方库（验证库内部访问同样受控）
+  run_all.sh               144 项功能/可靠性/对抗/回归编排
+  wsl_run.sh               WSL 下同步到 ext4 运行（规避 drvfs 锁缺陷）
+  policies/                测试策略模板
 ```
+
+## 附录：踩坑记录（HarmonyOS / musl / LD_PRELOAD）
+
+移植与加固过程中实际踩到并修掉的问题。按类别记录现象、根因与处置，供后续维护参考。
+
+### A.1 libc 平台差异（glibc → musl）
+
+| 现象 | 根因 | 处置 |
+|---|---|---|
+| `use of undeclared identifier 'SYS_poll'` | aarch64 内核没有 `poll`/`select` 系统调用，musl 不定义 `SYS_poll` | `util.h` 的 `dbox_raw_poll()` 在无 `SYS_poll` 时改用 `ppoll` |
+| `redefinition of 'open64'`、`struct stat64` 不完整 | musl 把 LFS64 名字定义成**宏别名**（`open64`→`open`、`stat64`→`stat`、`mmap64`→`mmap`…），不存在独立符号 | `preload.c` 探测宏，用 `REAL64`/`RESOLVE64`/`FALLBACK64` 条件编译；glibc 路径保持不变 |
+| `struct statx` 不完整、`statx` 未声明 | musl 只从 `<linux/stat.h>` 提供 | 显式 include；探针用**弱声明**（SDK 的 stub `libc.so` 不含 `statx`，运行时 musl 才导出） |
+| `faccessat2` / `scandirat` / `execveat` / `dlmopen` / `close_range` 链接失败 | musl 不导出这些符号 | 仅在 glibc（`DBOX_EXTRA_HOOKS`）下挂钩 |
+
+**要点**：musl 的库内调用**不走 PLT**（`fopen` 内部直接 `__syscall`），所以不能指望
+"拦住底层调用"就够，必须逐个挂钩公共 API 入口。实测 musl 下
+`execl`/`execv`/`execvp`/`system`/`popen`/`posix_spawn` 都会命中对应钩子。
+
+### A.2 HarmonyOS 系统布局与限制
+
+| 现象 | 根因 | 处置 |
+|---|---|---|
+| 沙箱内连 `/bin/sh` 都起不来 | `/bin`、`/lib`、`/lib64`、`/etc` 都是 `/system/...` 的符号链接，而策略按**解析后真实路径**判定 | 系统运行时允许清单显式加入 `/system`（`policy.c`）|
+| `bind()` unix socket 报 `EPERM` / `EACCES` | HMDFS（`$HOME`）拒绝创建 socket 文件；`/dev/shm` 被 SELinux 拒绝；`/tmp` 是只读挂载 | `pipe://` 的 socket 目录改为**实际 bind 探测**选择（`DYNOBOX_PIPE_DIR` 可覆盖）；测试用 `SOCKDIR` |
+| `mkdir -m 0755` 实际得到 `2771` | HMDFS 不保留请求的权限位 | 测试先探测工作区文件系统能力，不满足时跳过该断言 |
+| `mmap(PROT_EXEC)` 恒返回 `EACCES` | 内核拒绝对文件做可执行映射（与 ELF、权限位、文件系统均无关）| `mmap` 门只保留"拒绝"方向的意义；测试先做内核能力探测再断言 |
+| node 启动即失败：`OpenSSL configuration error ... Permission denied` | 它读 `/etc/ssl/openssl.cnf`——该文件**并不存在**，但拦截层在尾段 ENOENT 时退回了词法路径，把"不存在"判成"无权限" | 见 A.3 的尾段解析修复 |
+
+### A.3 拦截层自身的坑（最耗时的一类）
+
+| 现象 | 根因 | 处置 |
+|---|---|---|
+| 沙箱内 python 启动即**挂死** | HarmonyOS 的 DFX **信号处理器**在同一线程上打断了正持有 `g_pol_mu` 的钩子，随即在信号上下文里再次进入钩子（`access("/proc/self/unexpected_die_catch")`）→ 非递归互斥锁**自死锁** | 三把锁改为**递归锁**（`init_mutexes()` 运行时初始化）|
+| 改用递归锁后，任何 `fork` 都挂死 | 递归锁记录 owner TID，`fork` 后子进程 TID 变化 → 锁被误认为"被别的线程持有" | `atfork_child` 重新初始化锁 |
+| `subprocess` / `execFileSync` 崩（SIGTRAP / SIGSEGV）| `free_envp` 按 `"DYNOBOX_"` **前缀**释放，误把 launcher 经 environ 传入的 `DYNOBOX_SANDBOX`（非堆内存）`free()` 掉 → **堆损坏** | `build_envp` 返回自有条目的起始下标，`free_envp` 只释放这一段 |
+| 读取**不存在**的 `/etc/...` 报 `EACCES` 而非 `ENOENT` | `dbox_plan_path` 在尾段 ENOENT 时**丢弃已解析路径**、改用词法路径判定；经符号链接的系统路径因此被误判越权（反向也可能让针对链接名的规则漏掉真实目标）| 始终采用解析结果（"已解析前缀 + 缺失尾段"）|
+| 策略前缀匹配偶发失效 | 解析到根之后拼接产生 `//data/...` | 根处拼接不再追加多余斜杠 |
+| 任意程序传 NULL / 空路径会让**沙箱自己崩** | `gate_resolve` 对 NULL 输入返回"成功"但 `vpath` 为空，随后策略匹配器 `memcmp(NULL)` | `gate1x` 对 NULL/空路径直接透传（交给内核报错）；`gate_resolve` 返回失败 |
+| 子进程被 `SIGKILL`（退出码 137）| `posix_spawn` 的 close-on-exec file actions（node 的 `close_fds`）关掉了看护 fd，`watch_thread` 把 `EBADF` 误判成"launcher 已死"→ 杀掉整棵树 | `start_watch()` 先校验 fd 可用性，无效则不启动看护 |
+| `fork` 与 `exec` 之间创建线程引发异常 | POSIX 只允许该窗口内调用 async-signal-safe 函数，而 `atfork_child` 里调了 `start_watch()` | 移除；`exec` 后构造函数会重建看护 |
+
+这些用例现已全部固化为回归测试（`t_probe` 的 `path` / `posix_spawn [closefds]` /
+`spawn_env`，以及 `unit_policy` 的路径解析断言）。
+
+### A.4 测试与调试
+
+- **策略里的宽规则会放开 fixture**：给对抗测试加 `"$ROOT/tests/**" read` 时，恰好把
+  位于 `tests/work/` 之下的**拒绝区一并放开**，21 项 must-block 全部假失败。现改为把
+  探针脚本复制进允许区运行，并在 `run_all.sh` 内注释说明。
+- **lldb 调不动 exec 场景**：`follow-fork-mode child` 跟踪到的子进程 `execve` 在
+  HarmonyOS 上会因 ptrace/SELinux 返回 `EPERM`（进程 exit 127），无法用它调试沙箱内的
+   spawn。替代手段：`faulthandler.register(SIGTRAP)` 抓 Python 侧栈、`--log -v` 看判定
+  序列、把问题**缩小成独立 C 探针**（`tests/t_adversarial.c` 就是这么长出来的）。
+- **`/proc/<pid>/task/*/syscall` 在该平台为空**，但 `wchan` 可用 —— `FUTEX` 与
+  `EVENTPOLL` 曾直接指向"锁竞争"与"看护线程在 poll"这两个事实。
+- **`pkill -f` 会匹配到自己的命令行**：脚本里清进程请用 `pkill -x <comm>` 或显式 PID。
+
+---
 
 ## 七、许可
 

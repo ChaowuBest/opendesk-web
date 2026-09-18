@@ -9,6 +9,10 @@
 #include <string.h>
 #include <stdio.h>
 #include <ctype.h>
+#include <errno.h>
+#include <sys/stat.h>
+#include <sys/socket.h>
+#include <sys/un.h>
 
 void *dbox_malloc(size_t n)
 {
@@ -193,7 +197,61 @@ unsigned char *dbox_b64decode(const char *in, size_t *outlen)
     return r;
 }
 
+/* Can a unix socket actually be bound in this directory? Directory
+ * existence/writability is not enough: HarmonyOS rejects bind() on HMDFS
+ * (EPERM) and on tmpfs mounts such as /dev/shm (EACCES by SELinux). */
+static int dir_hosts_sockets(const char *dir)
+{
+    int fd = socket(AF_UNIX, SOCK_STREAM, 0);
+    if (fd < 0) return 0;
+    char p[256];
+    snprintf(p, sizeof p, "%s/.dynobox-probe-%ld", dir, (long)getpid());
+    struct sockaddr_un sa;
+    memset(&sa, 0, sizeof sa);
+    sa.sun_family = AF_UNIX;
+    snprintf(sa.sun_path, sizeof sa.sun_path, "%s", p);
+    int ok = bind(fd, (struct sockaddr *)&sa, sizeof sa) == 0;
+    if (ok) unlink(p);
+    close(fd);
+    return ok;
+}
+
+const char *dbox_pipe_dir(void)
+{
+    static char cached[256];
+    if (cached[0]) return cached;
+
+    const char *env = getenv("DYNOBOX_PIPE_DIR");
+    if (env && env[0]) {
+        snprintf(cached, sizeof cached, "%s", env);
+        return cached;
+    }
+    const char *tmpdir = getenv("TMPDIR");
+    char tmpcand[256];
+    tmpcand[0] = '\0';
+    if (tmpdir && tmpdir[0])
+        snprintf(tmpcand, sizeof tmpcand, "%s/dynobox-pipes", tmpdir);
+    /* /tmp is the historical location (parity with the Windows named pipe
+     * namespace) but it is a read-only mount on HarmonyOS, and several other
+     * filesystems reject unix sockets outright, so the directory is chosen by
+     * probing rather than assumed. */
+    const char *cands[] = {
+        tmpcand[0] ? tmpcand : NULL,
+        "/tmp/dynobox-pipes", "/dev/shm/dynobox-pipes", NULL
+    };
+    for (int i = 0; cands[i]; i++) {
+        if (mkdir(cands[i], 0755) != 0 && errno != EEXIST) continue;
+        struct stat st;
+        if (stat(cands[i], &st) != 0 || !S_ISDIR(st.st_mode)) continue;
+        if (!dir_hosts_sockets(cands[i])) continue;
+        snprintf(cached, sizeof cached, "%s", cands[i]);
+        return cached;
+    }
+    snprintf(cached, sizeof cached, "%s", "/tmp/dynobox-pipes");
+    return cached;
+}
+
 void dbox_pipe_path(const char *name, char *out, size_t outsz)
 {
-    snprintf(out, outsz, "/tmp/dynobox-pipes/%s.sock", name);
+    snprintf(out, outsz, "%s/%s.sock", dbox_pipe_dir(), name);
 }

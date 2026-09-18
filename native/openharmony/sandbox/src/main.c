@@ -412,10 +412,9 @@ static int cmd_endpoint(int argc, char **argv)
         }
     }
     if (pipe_name) {
-        /* Windows named pipe parity: \\.\pipe\NAME -> /tmp/dynobox-pipes/NAME.sock */
-        char dir[] = "/tmp/dynobox-pipes";
-        mkdir(dir, 0755);
-        static char pp[128];
+        /* Windows named pipe parity: \\.\pipe\NAME -> <pipe dir>/NAME.sock */
+        (void)dbox_pipe_dir();   /* creates the directory */
+        static char pp[256];
         dbox_pipe_path(pipe_name, pp, sizeof pp);
         o.unix_path = pp;
         unlink(pp);

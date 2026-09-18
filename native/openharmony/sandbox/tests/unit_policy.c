@@ -13,6 +13,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
+#include <sys/stat.h>
 
 static int g_failed, g_total;
 #define CHECK(cond, name) do { \
@@ -320,10 +321,14 @@ static void test_pathmap_identity(void)
     CHECK(rc == 0 && vp && strcmp(vp, "/tmp/docs/x") == 0, "plan relative attr");
     dbox_free(vp); dbox_free(real);
 
-    /* traversal collapses but never escapes */
-    rc = dbox_plan_path(&ctx, "/tmp/../etc/passwd", DBOX_FOLLOW_ALL,
+    /* traversal collapses but never escapes; the target is /tmp itself
+     * because HarmonyOS exposes /etc, /bin and /lib as symlinks into
+     * /system, and the resolver here follows components, so such a path
+     * would come back as the symlink target rather than the literal path
+     * Linux hosts see. */
+    rc = dbox_plan_path(&ctx, "/tmp/../tmp/x", DBOX_FOLLOW_ALL,
                         &vp, &real, &partial);
-    CHECK(rc == 0 && vp && strcmp(vp, "/etc/passwd") == 0, "plan .. collapse");
+    CHECK(rc == 0 && vp && strcmp(vp, "/tmp/x") == 0, "plan .. collapse");
     dbox_free(vp); dbox_free(real);
 }
 
@@ -427,6 +432,46 @@ static void test_duplicate_keys_and_multi_grants(void)
     dbox_policy_free(&p);
 }
 
+static void test_pathmap_missing_tail(void)
+{
+    /* 尾段不存在（ENOENT）时也必须完成符号链接解析，并把解析结果用于策略
+     * 归属。早期实现在该情况下退回词法路径，后果是：经符号链接访问系统
+     * 路径被误判成越权（/etc/ssl/x.cnf 报 EACCES 而不是 ENOENT），反过来
+     * 针对链接名的规则也会漏掉真实目标。
+     * 用 /proc/self 作样本（各平台上都是符号链接）；若该平台不可用则跳过。 */
+    struct stat st;
+    if (lstat("/proc/self", &st) != 0 || !S_ISLNK(st.st_mode)) {
+        printf("skip plan missing-tail (no /proc/self symlink here)\n");
+        return;
+    }
+
+    dbox_ctx_t ctx;
+    memset(&ctx, 0, sizeof ctx);
+    dbox_policy_init(&ctx.pol);
+    strcpy(ctx.rpwd, "/tmp");
+
+    char *vp = NULL, *real = NULL;
+    int partial = 0;
+    int rc;
+
+    rc = dbox_plan_path(&ctx, "/proc/self/no-such-file-xyz", DBOX_FOLLOW_ALL,
+                        &vp, &real, &partial);
+    CHECK(rc == 0 && vp && strncmp(vp, "/proc/self", 10) != 0,
+          "plan missing tail still resolves symlink");
+    CHECK(rc == 0 && vp && vp[0] == '/' && vp[1] != '/',
+          "plan missing tail yields normalized path");
+    dbox_free(vp); dbox_free(real);
+
+    /* 反复回到根之后拼出的路径不得带 "//"：那会让策略前缀匹配失效 */
+    rc = dbox_plan_path(&ctx, "/proc/self/../../etc/no-such-file-xyz",
+                        DBOX_FOLLOW_ALL, &vp, &real, &partial);
+    CHECK(rc == 0 && vp && vp[0] == '/' && vp[1] != '/',
+          "plan root join does not emit //");
+    dbox_free(vp); dbox_free(real);
+
+    dbox_policy_free(&ctx.pol);
+}
+
 int main(void)
 {
     test_normpath();
@@ -438,6 +483,7 @@ int main(void)
     test_system_allow();
     test_cfg_roundtrip();
     test_pathmap_identity();
+    test_pathmap_missing_tail();
     test_bom_crlf_and_literals();
     test_default_allow_cache_overwrite();
     test_duplicate_keys_and_multi_grants();

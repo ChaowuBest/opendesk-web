@@ -43,10 +43,25 @@
 #include <sys/syscall.h>
 #include <sys/time.h>
 #include <sys/wait.h>
+#include <spawn.h>
 #include <linux/fs.h>
+#include <linux/stat.h>
+
+extern char **environ;
 
 #ifndef RENAME_EXCHANGE
 #define RENAME_EXCHANGE (1 << 1)
+#endif
+
+/* musl declares neither statx() nor execveat(): struct statx/STATX_* come
+ * from <linux/stat.h> above, and the prototype has to be supplied here so
+ * the probe still enters through libc (and therefore through the sandbox's
+ * interposition layer) instead of a raw syscall. The declaration is weak
+ * because the SDK's stub libc.so does not export statx() even though the
+ * runtime musl does; the link succeeds and the call binds at run time. */
+#ifndef __GLIBC__
+extern int statx(int, const char *, int, unsigned int, struct statx *)
+    __attribute__((weak));
 #endif
 
 static int fail(const char *msg, const char *arg)
@@ -375,7 +390,13 @@ int main(int argc, char **argv)
         int dfd = open(argv[2], O_RDONLY | O_DIRECTORY);
         if (dfd < 0) return fail("execveat_dir dir", argv[2]);
         char *const args[] = { (char *)"prog", NULL };
+#ifdef __GLIBC__
         execveat(dfd, argv[3], args, environ, 0);
+#else
+        /* musl has no execveat() wrapper; the sandbox does not interpose it
+         * there either, so the raw syscall matches the sandbox's surface */
+        syscall(SYS_execveat, dfd, argv[3], args, environ, 0);
+#endif
         int e = errno;
         close(dfd);
         if (!strcmp(op, "execveat_dir")) return fail("execveat_dir", argv[3]);
@@ -535,6 +556,96 @@ int main(int argc, char **argv)
         while ((n = read(0, buf, sizeof buf)) > 0)
             if (write(out, buf, (size_t)n) < 0) { close(out); return fail("stdin_cp write", argv[2]); }
         close(out);
+        return 0;
+    }
+
+    /* ---- regression probes: 拦截层自身的健壮性 ---- */
+
+    if (!strcmp(op, "path")) {
+        /* 以 NULL / 空路径调用被拦截的入口：必须把错误交给内核，自身不能崩。
+         * 早期实现会把 NULL 喂进策略匹配器（memcmp(NULL)）而导致沙箱段错误。 */
+        struct stat st;
+        const char *nul = NULL;
+        const char *emp = "";
+        volatile int sink = 0;
+        sink += access(nul, F_OK);
+        sink += access(emp, F_OK);
+        sink += stat(nul, &st);
+        sink += stat(emp, &st);
+        sink += lstat(nul, &st);
+        sink += (int)open(nul, O_RDONLY);
+        sink += (int)open(emp, O_RDONLY);
+        sink += unlink(nul);
+        sink += chdir(nul);
+        sink += (int)readlink(nul, NULL, 0);
+        sink += (int)(realpath(nul, NULL) == NULL ? -1 : 0);
+        (void)sink;
+        return 0;   /* 还活着即通过 */
+    }
+
+    if (!strcmp(op, "posix_spawn")) {
+        /* posix_spawn 与 fork+exec 语义不同：musl 用 CLONE_VM|CLONE_VFORK，
+         * 子进程共享父进程地址空间。两种 fd 继承方式都要验证：
+         *   默认         —— 子进程继承全部 fd
+         *   closefds     —— 关闭其余 fd（模拟 node execFileSync）；
+         *                   看护 fd 被关掉时不得被误判成"launcher 已死" */
+        int closefds = argc > 3 && !strcmp(argv[3], "closefds");
+        pid_t p = -1;
+        char *av[] = { argv[2], NULL };
+        int r;
+        if (closefds) {
+            posix_spawn_file_actions_t fa;
+            posix_spawn_file_actions_init(&fa);
+            for (int fd = 3; fd < 64; fd++)
+                posix_spawn_file_actions_addclose(&fa, fd);
+            r = posix_spawn(&p, argv[2], &fa, NULL, av, environ);
+            posix_spawn_file_actions_destroy(&fa);
+        } else {
+            r = posix_spawn(&p, argv[2], NULL, NULL, av, environ);
+        }
+        if (r != 0) { errno = r; return fail("posix_spawn", argv[2]); }
+        int st = 0;
+        if (waitpid(p, &st, 0) < 0) return fail("posix_spawn wait", argv[2]);
+        if (!WIFEXITED(st) || WEXITSTATUS(st) != 0) {
+            printf("PROBE-FAIL posix_spawn child status=%d\n", st);
+            return 1;
+        }
+        return 0;
+    }
+
+    if (!strcmp(op, "spawn_env")) {
+        /* exec 子进程后检查其环境：指定的继承变量必须原样存在，且
+         * LD_PRELOAD 应被重新注入。早期 free_envp 按 "DYNOBOX_" 前缀误释放
+         * 继承自 launcher 的环境字符串，破坏了子进程环境与父进程堆。 */
+        int pfd[2];
+        if (pipe(pfd) != 0) return fail("spawn_env pipe", NULL);
+        pid_t p = fork();
+        if (p == 0) {
+            dup2(pfd[1], 1);
+            close(pfd[0]);
+            close(pfd[1]);
+            char *av[] = { (char *)"/bin/sh", (char *)"-c", (char *)"env", NULL };
+            execv("/bin/sh", av);
+            _exit(127);
+        }
+        close(pfd[1]);
+        char buf[16384];
+        ssize_t n = read(pfd[0], buf, sizeof buf - 1);
+        close(pfd[0]);
+        int st;
+        waitpid(p, &st, 0);
+        if (n <= 0) { printf("PROBE-FAIL spawn_env: no output\n"); return 1; }
+        buf[n] = 0;
+        char needle[128];
+        snprintf(needle, sizeof needle, "%s=", argv[2]);
+        if (!strstr(buf, needle)) {
+            printf("PROBE-FAIL spawn_env: %s missing in child env\n", argv[2]);
+            return 1;
+        }
+        if (!strstr(buf, "LD_PRELOAD=")) {
+            printf("PROBE-FAIL spawn_env: LD_PRELOAD not reinjected\n");
+            return 1;
+        }
         return 0;
     }
 

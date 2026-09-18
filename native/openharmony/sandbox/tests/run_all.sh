@@ -17,8 +17,20 @@ cd "$(dirname "$0")/.."
 ROOT="$PWD"
 B="$ROOT/build/dynobox"
 PROBE="$ROOT/build/t_probe"
-SRC="$ROOT/tests/work/src"
-AUDIT="$ROOT/tests/work/audit.log"
+# Fixture and log workspace. Overridable because the default location can sit
+# on a filesystem that does not preserve what parts of the suite assert on
+# (HarmonyOS HMDFS drops mkdir permission bits, for instance):
+#   DYNOBOX_TEST_WORK=/data/storage/el2/base/temp/dynobox-test bash tests/run_all.sh
+WORK="${DYNOBOX_TEST_WORK:-${ROOT}/tests/work}"
+SRC="$WORK/src"
+AUDIT="$WORK/audit.log"
+# Unix domain sockets: HMDFS (the HarmonyOS $HOME) rejects bind() with EPERM
+# and its tmpfs mounts (/dev/shm) are blocked by SELinux, so prefer the app
+# data filesystem where they do work, then a local tmpfs.
+SOCKDIR=""
+for d in "${TMPDIR:-}" /data/storage/el2/base/temp /dev/shm "$WORK"; do
+    [ -n "$d" ] && [ -d "$d" ] && [ -w "$d" ] && { SOCKDIR="$d"; break; }
+done
 PORT=18099
 
 PASS=0; FAIL=0; FAILED_NAMES=()
@@ -45,8 +57,16 @@ check "unit: policy engine" $?
 # ------------------------------------------------------------------
 echo "== fixtures =="
 pkill -f "dynobox endpoint" 2>/dev/null && sleep 0.3
-rm -rf "$ROOT/tests/work"
-mkdir -p "$SRC"/{public,docs,vault,notes,staging,scratch,reject,guarded,slow,tools/bin,tools/blocked,tools/ask,tools/sub,deep/x1/x2/x3/x4}
+rm -rf "$WORK"
+mkdir -p "$SRC"/{public,docs,vault,notes,staging,scratch,reject,guarded,slow,tools/bin,tools/blocked,tools/ask,tools/sub,deep/x1/x2/x3/x4,denied}
+echo "TOP-SECRET-adv-sentinel" > "$SRC/denied/secret.txt"
+echo "denied-data"            > "$SRC/denied/data.txt"
+printf '#!/bin/sh\necho forbidden-ran\n' > "$SRC/denied/no.sh"
+chmod +x "$SRC/denied/no.sh"
+printf '#!/bin/sh\necho ok-tool-ran\n'   > "$SRC/public/ok.sh"
+chmod +x "$SRC/public/ok.sh"
+echo "allowed-content"        > "$SRC/public/in.txt"
+cp "$ROOT/build/libadv_helper.so" "$SRC/public/" 2>/dev/null
 echo "deep-data" > "$SRC/deep/x1/x2/x3/x4/leaf.txt"
 echo "hello-docs"      > "$SRC/docs/readme.txt"
 echo "secret-content"  > "$SRC/docs/secret.txt"
@@ -69,7 +89,7 @@ echo "unicode"   > "$SRC/public/文件 名.txt"
 cat > "$SRC/public/libhello.c" <<'EOC'
 int hello(void) { return 42; }
 EOC
-gcc -shared -fPIC -o "$SRC/public/libhello.so" "$SRC/public/libhello.c"
+"${CC:-cc}" -shared -fPIC -o "$SRC/public/libhello.so" "$SRC/public/libhello.c"
 printf '\xf4\x14\x40\x00\x00\x00\x00\x00padding-padding' > "$SRC/public/blob.bin"
 
 # ------------------------------------------------------------------
@@ -86,13 +106,32 @@ done
 check "endpoint: listening" $?
 
 # ------------------------------------------------------------------
-POL="$ROOT/tests/work/func.toml"
-LOG="$ROOT/tests/work/sandbox.log"
+POL="$WORK/func.toml"
+LOG="$WORK/sandbox.log"
 UP="http://127.0.0.1:$PORT/decide"
 sed -e "s|@SRC@|$SRC|g" -e "s|@UP@|$UP|g" -e "s|@ROOT@|$ROOT|g" \
     "$ROOT/tests/policies/func.toml.in" > "$POL"
 
 T() { "$B" run --policy "$POL" --log "$LOG" -- "$PROBE" "$@"; }
+
+# ------------------------------------------------------------------
+# 扩展策略：对抗测试与解释器测试需要额外的只读/执行路径。
+# 解释器相关的规则在非 HarmonyOS 平台上不会匹配任何真实路径，属无害冗余。
+APOL="$WORK/adv.toml"
+sed -e "s|@SRC@|$SRC|g" -e "s|@UP@|$UP|g" -e "s|@ROOT@|$ROOT|g" \
+    "$ROOT/tests/policies/func.toml.in" > "$APOL"
+add_rule() {   # add_rule <path-glob> <read|write|execute|all>
+    [ -n "$1" ] || return
+    printf '\n[[rules]]\npath = "%s"\naccess = "%s"\nperm = "allow"\n' "$1" "$2" >> "$APOL"
+}
+# 注意：不要放 "$ROOT/tests/**" 这类宽规则 —— fixture 就位于 tests/work 下，
+# 会把拒绝区一并放开。探针脚本另行复制到 @SRC@/public/（该处已 all allow）。
+add_rule "$HOME/usr/**" read
+add_rule "$HOME/usr/**" execute
+add_rule "$HOME/.harmonybrew/**" read
+add_rule "$HOME/.harmonybrew/**" execute
+add_rule "/data/storage/el2/base/files/interpreters/**" read
+add_rule "/data/storage/el2/base/files/interpreters/**" execute
 
 echo "== functional: read/write/enum =="
 rm -f "$LOG"
@@ -180,7 +219,13 @@ T spawn "$ROOT/build/t_dlopen" "$SRC/docs/readme.txt" fail  >/dev/null; check "d
 # mmap PROT_EXEC follows the CURRENT policy on the fd's path:
 #  - public is all-allow  -> allowed (JIT-style read-then-exec works)
 #  - docs is read-only    -> denied (EPERM)
-T spawn "$ROOT/build/t_mmap" "$SRC/public/blob.bin" allow   >/dev/null; check "mmap PROT_EXEC allowed (exec rule)" $?
+# Some kernels (HarmonyOS) refuse file-backed PROT_EXEC mappings outright, so
+# probe the kernel without the sandbox before asserting the allow direction.
+if "$ROOT/build/t_mmap" "$SRC/public/blob.bin" allow >/dev/null 2>&1; then
+    T spawn "$ROOT/build/t_mmap" "$SRC/public/blob.bin" allow   >/dev/null; check "mmap PROT_EXEC allowed (exec rule)" $?
+else
+    echo "skip mmap PROT_EXEC allow (kernel refuses file-backed PROT_EXEC)"
+fi
 T spawn "$ROOT/build/t_mmap" "$SRC/docs/readme.txt" deny    >/dev/null; check "mmap PROT_EXEC denied (no exec rule)" $?
 # fexecve with attribution
 T spawn "$ROOT/build/t_probe" fexecve_fail "$SRC/vault/secret.txt" >/dev/null 2>&1
@@ -189,7 +234,7 @@ check "fexecve deny 区 fd 拒绝" $?
 echo "== advanced: network =="
 T spawn "$ROOT/build/t_net" unix_ok                     >/dev/null; check "AF_UNIX socketpair always ok" $?
 T spawn "$ROOT/build/t_net" udp_connect 127.0.0.1 $PORT >/dev/null; check "loopback udp connect (default allow)" $?
-NETPOL="$ROOT/tests/work/net.toml"
+NETPOL="$WORK/net.toml"
 cat > "$NETPOL" <<EOT
 version = 1
 default = "deny"
@@ -288,7 +333,7 @@ done
 check "endpoint restarted" $?
 
 echo "== reliability: governance (launcher death kills tree) =="
-MARK="$ROOT/tests/work/marker.out"
+MARK="$WORK/marker.out"
 "$B" run --policy "$POL" --log "$LOG" -- /bin/sh -c "exec $ROOT/build/t_exec_chain $ROOT/build/t_exec_chain 3 KEEPER keep" > "$MARK" 2>/dev/null &
 LPID=$!
 for i in $(seq 1 50); do
@@ -318,16 +363,16 @@ wait $PID_B; RB=$?
 check "two sandboxes in parallel" $rc
 
 echo "== reliability: bad policy refuses to start =="
-echo "this is not toml {{{" > "$ROOT/tests/work/bad.toml"
-"$B" run --policy "$ROOT/tests/work/bad.toml" -- /bin/true >/dev/null 2>&1
+echo "this is not toml {{{" > "$WORK/bad.toml"
+"$B" run --policy "$WORK/bad.toml" -- /bin/true >/dev/null 2>&1
 [ "$?" != "0" ] && rc=0 || rc=1
 check "invalid TOML rejected" $rc
-printf 'version = 1\ndefault = "deny"\n[[rules]]\npath = "/x"\naccess = "sometimes"\nperm = "allow"\n' > "$ROOT/tests/work/bad2.toml"
-"$B" run --policy "$ROOT/tests/work/bad2.toml" -- /bin/true >/dev/null 2>&1
+printf 'version = 1\ndefault = "deny"\n[[rules]]\npath = "/x"\naccess = "sometimes"\nperm = "allow"\n' > "$WORK/bad2.toml"
+"$B" run --policy "$WORK/bad2.toml" -- /bin/true >/dev/null 2>&1
 [ "$?" != "0" ] && rc=0 || rc=1
 check "invalid rule rejected" $rc
-printf 'version = 1\ndefault = "deny"\n[[roots]]\nvirtual = "/C"\nreal = "/host"\n' > "$ROOT/tests/work/bad3.toml"
-"$B" run --policy "$ROOT/tests/work/bad3.toml" -- /bin/true >/dev/null 2>&1
+printf 'version = 1\ndefault = "deny"\n[[roots]]\nvirtual = "/C"\nreal = "/host"\n' > "$WORK/bad3.toml"
+"$B" run --policy "$WORK/bad3.toml" -- /bin/true >/dev/null 2>&1
 [ "$?" != "0" ] && rc=0 || rc=1
 check "[[roots]] rejected in identity namespace" $rc
 
@@ -344,13 +389,13 @@ else
 fi
 
 echo "== reliability: ask via unix socket transport =="
-UEND="/tmp/dynobox-test-ep.sock"
+UEND="$SOCKDIR/dynobox-test-ep.sock"
 rm -f "$UEND"
 "$B" endpoint --unix "$UEND" --default deny >/dev/null 2>&1 &
 UPID=$!
 for i in $(seq 1 50); do [ -S "$UEND" ] && break; sleep 0.1; done
 sleep 0.3
-UNIPOL="$ROOT/tests/work/unix.toml"
+UNIPOL="$WORK/unix.toml"
 sed -e "s|@SRC@|$SRC|g" -e "s|@UP@|unix://$UEND|g" -e "s|@ROOT@|$ROOT|g" \
     "$ROOT/tests/policies/func.toml.in" > "$UNIPOL"
 "$B" run --policy "$UNIPOL" --log "$LOG" -- "$PROBE" rd "$SRC/notes/base.txt" >/dev/null 2>&1
@@ -364,7 +409,10 @@ echo "== round6: identity view consistency =="
 # possible because there is no mapping to leak)
 T readlink_eq "$SRC/public/link-in" "$SRC/docs/readme.txt" >/dev/null; check "r6: readlink 返回真实目标" $?
 T realpath_eq "$SRC/docs/readme.txt" "$SRC/docs/readme.txt" >/dev/null; check "r6: realpath 返回真实路径" $?
-T realpath_eq /usr/bin/ls /usr/bin/ls                    >/dev/null; check "r6: realpath 系统路径不受影响" $?
+# A real system file, resolved first: on HarmonyOS /usr/bin/ls (and /bin, /lib)
+# are symlinks into /system, so a hard-coded literal would not round-trip.
+SYSREAL=$(readlink -f /bin/sh)
+T realpath_eq "$SYSREAL" "$SYSREAL" >/dev/null; check "r6: realpath 系统路径不受影响" $?
 # relative script execution
 "$B" run --policy "$POL" --log "$LOG" -- /bin/sh -c "cd $SRC/tools/bin && $PROBE spawn ./ok.sh" >/dev/null 2>&1
 check "r6: 相对路径执行脚本" $?
@@ -373,8 +421,17 @@ T enotdir_fail "$SRC/docs/readme.txt" "$SRC/docs/readme.txt/x" >/dev/null; check
 # X_OK through symlink to allowed system binary
 T x_ok_through_symlink "$SRC/public/slink"               >/dev/null; check "r6: X_OK 经符号链接解析目标" $?
 # mkdir permission bits
+# mkdir permission bits — HMDFS (the HarmonyOS $HOME) does not preserve the
+# requested mode, so probe the workspace filesystem first and skip where the
+# assertion cannot hold for reasons that have nothing to do with the sandbox.
 T mkdir "$SRC/public/dirmode"                            >/dev/null
-T mode_is "$SRC/public/dirmode" 755                      >/dev/null; check "r6: mkdir 权限位 0755" $?
+rm -rf "$WORK/modeprobe"; mkdir -m 0755 "$WORK/modeprobe"
+if [ "$(stat -c '%a' "$WORK/modeprobe" 2>/dev/null)" = "755" ]; then
+    T mode_is "$SRC/public/dirmode" 755                      >/dev/null; check "r6: mkdir 权限位 0755" $?
+else
+    echo "skip mkdir mode (workspace filesystem does not preserve permission bits)"
+fi
+rm -rf "$WORK/modeprobe"
 
 echo
 echo "== round7: protocol robustness & misc semantics =="
@@ -384,7 +441,7 @@ echo "unicode-ask" > "$SRC/notes/文件 名.txt"
 TSH "$PROBE rd '$SRC/notes/a\"b.txt'"                   >/dev/null; check "ask: 文件名含引号正确解析" $?
 TSH "$PROBE rd '$SRC/notes/文件 名.txt'"                >/dev/null; check "ask: UTF-8 文件名" $?
 # exact directory rule (no glob) allows the dir but not its children
-DIONLY="$ROOT/tests/work/dironly.toml"
+DIONLY="$WORK/dironly.toml"
 mkdir -p "$SRC/dironly"
 echo "inside" > "$SRC/dironly/f.txt"
 cat > "$DIONLY" <<EOT
@@ -410,10 +467,16 @@ T cat_eq "$SRC/public/from-stdin.txt" "from-stdin"      >/dev/null; check "r7: s
 T statx_fail "$SRC/vault/secret.txt"                    >/dev/null; check "r7: statx deny" $?
 T f_ok_fail "$SRC/vault/secret.txt"                     >/dev/null; check "r7: F_OK deny (EACCES)" $?
 T statfs_fail "$SRC/vault/secret.txt"                   >/dev/null; check "r7: statfs deny" $?
-# dlopen of a system library (system exec allowance)
-T spawn "$ROOT/build/t_dlopen" /lib/x86_64-linux-gnu/libm.so.6 ok >/dev/null; check "r7: dlopen 系统库" $?
+# dlopen of a system library (system exec allowance). The path differs by
+# libc and architecture, so probe for one that exists.
+SYSLIB=""
+for c in /lib/x86_64-linux-gnu/libm.so.6 /lib/aarch64-linux-gnu/libm.so.6 \
+         /lib/ld-musl-aarch64.so.1 /lib/ld-musl-x86_64.so.1; do
+    [ -e "$c" ] && { SYSLIB="$c"; break; }
+done
+T spawn "$ROOT/build/t_dlopen" "$SYSLIB" ok >/dev/null; check "r7: dlopen 系统库 ($SYSLIB)" $?
 # verbose logging behavior
-VLOG="$ROOT/tests/work/vlog.log"
+VLOG="$WORK/vlog.log"
 rm -f "$VLOG"
 "$B" run --policy "$POL" --log "$VLOG" -- "$PROBE" rd "$SRC/docs/readme.txt" >/dev/null 2>&1
 grep -q " allow " "$VLOG" 2>/dev/null && rc=1 || rc=0
@@ -426,6 +489,126 @@ check "r7: verbose 记录放行" $rc
 rm -f "$VLOG"
 "$B" run --policy "$POL" --log /nonexistent-dir/x.log -- "$PROBE" rd "$SRC/docs/readme.txt" >/dev/null 2>&1
 check "r7: 日志目录缺失不影响运行" $?
+
+# ------------------------------------------------------------------
+echo
+echo "== adversarial: sandbox escape attempts =="
+# 每种手段尝试读取'禁读哨兵文件'。t_adversarial 自带预期判定：
+#   must-block -> 必须被拦住
+#   boundary   -> 必须仍可绕过（README「安全边界」已声明的机制限制）
+# 边界若被意外扩大（must-block 泄露）或收窄（boundary 失效）都会在此报出。
+ASENT="$SRC/denied/secret.txt"
+AALLOW="$SRC/public"
+A() { "$B" run --policy "$APOL" --log "$LOG" -- "$ROOT/build/t_adversarial" "$@"; }
+
+for t in open openat fopen access statx symlink hardlink rename chmod dotdot \
+         cwd-rel proc-root proc-cwd exec-cat popen system dlopen-lib fork-noexec \
+         dlsym-next wipe-preload tamper-cfg; do
+    A "$t" "$ASENT" "$AALLOW" >/dev/null 2>&1
+    check "adv: $t is blocked" $?
+done
+for t in raw-openat raw-statx dlopen-libc raw-exec; do
+    A "$t" "$ASENT" "$AALLOW" >/dev/null 2>&1
+    check "adv: $t still bypasses (documented boundary)" $?
+done
+
+# ------------------------------------------------------------------
+echo
+echo "== interpreters: shell / python / node =="
+PYBIN=""
+for c in python3 /usr/bin/python3 "$HOME/usr/local/bin/python3"; do
+    if [ -x "$c" ]; then PYBIN="$c"; break; fi
+    if command -v "$c" >/dev/null 2>&1; then PYBIN=$(command -v "$c"); break; fi
+done
+NODEBIN=""
+for c in node /usr/bin/node "$HOME/usr/local/bin/node"; do
+    if [ -x "$c" ]; then NODEBIN="$c"; break; fi
+    if command -v "$c" >/dev/null 2>&1; then NODEBIN=$(command -v "$c"); break; fi
+done
+
+cp "$ROOT/tests/interp_probe.sh" "$SRC/public/" 2>/dev/null
+"$B" run --policy "$APOL" --log "$LOG" -- /bin/sh "$SRC/public/interp_probe.sh" \
+    "$SRC/public" "$SRC/denied" >/dev/null 2>&1
+check "interp(sh): allow/deny matrix" $?
+
+if [ -n "$PYBIN" ]; then
+    cp "$ROOT/tests/interp_probe.py" "$SRC/public/" 2>/dev/null
+    "$B" run --policy "$APOL" --log "$LOG" -- "$PYBIN" "$SRC/public/interp_probe.py" \
+        "$SRC/public" "$SRC/denied" >/dev/null 2>&1
+    check "interp(python3): allow/deny matrix" $?
+    cp "$ROOT/tests/t_adversarial.py" "$SRC/public/" 2>/dev/null
+    for t in py-open py-os-open py-stat py-symlink py-subprocess; do
+        "$B" run --policy "$APOL" --log "$LOG" -- "$PYBIN" "$SRC/public/t_adversarial.py" \
+            "$t" "$ASENT" "$AALLOW" >/dev/null 2>&1
+        check "adv(python3): $t is blocked" $?
+    done
+    "$B" run --policy "$APOL" --log "$LOG" -- "$PYBIN" "$SRC/public/t_adversarial.py" \
+        py-ctypes-syscall "$ASENT" "$AALLOW" >/dev/null 2>&1
+    check "adv(python3): ctypes syscall still bypasses (documented boundary)" $?
+else
+    echo "skip python3 probes (interpreter not found)"
+fi
+
+if [ -n "$NODEBIN" ]; then
+    cp "$ROOT/tests/interp_probe.js" "$SRC/public/" 2>/dev/null
+    "$B" run --policy "$APOL" --log "$LOG" -- "$NODEBIN" "$SRC/public/interp_probe.js" \
+        "$SRC/public" "$SRC/denied" >/dev/null 2>&1
+    check "interp(node): allow/deny matrix" $?
+    cp "$ROOT/tests/t_adversarial.js" "$SRC/public/" 2>/dev/null
+    for t in js-read js-open js-child; do
+        "$B" run --policy "$APOL" --log "$LOG" -- "$NODEBIN" "$SRC/public/t_adversarial.js" \
+            "$t" "$ASENT" "$AALLOW" >/dev/null 2>&1
+        check "adv(node): $t is blocked" $?
+    done
+    "$B" run --policy "$APOL" --log "$LOG" -- "$NODEBIN" "$SRC/public/t_adversarial.js" \
+        js-stat "$ASENT" "$AALLOW" >/dev/null 2>&1
+    check "adv(node): statSync still bypasses (libuv raw syscall)" $?
+else
+    echo "skip node probes (interpreter not found)"
+fi
+
+# ------------------------------------------------------------------
+echo
+echo "== regression: interposition-layer robustness =="
+# 对应历史上真实出现过的缺陷，防止回归。
+T path >/dev/null 2>&1
+check "reg: NULL/empty path does not fault the sandbox" $?
+"$B" run --policy "$POL" --log "$LOG" -- "$PROBE" posix_spawn /bin/true >/dev/null 2>&1
+check "reg: posix_spawn starts child normally" $?
+"$B" run --policy "$POL" --log "$LOG" -- "$PROBE" posix_spawn /bin/true closefds >/dev/null 2>&1
+check "reg: posix_spawn with close_fds keeps tree alive" $?
+"$B" run --policy "$POL" --log "$LOG" -- "$PROBE" spawn_env DYNOBOX_SANDBOX >/dev/null 2>&1
+check "reg: child environment intact after exec" $?
+
+# ------------------------------------------------------------------
+echo
+echo "== runtime artifacts (committed binaries) =="
+# runtime/<target>/ 下是入库的运行时产物。这里在**独立工作区**里验证它开箱
+# 可用（不依赖 build/），避免"源码改了、产物忘了重新生成"的静默腐化。
+# 生成方式：make runtime
+RTROOT="$ROOT/runtime"
+rt_seen=0
+for d in "$RTROOT"/*/; do
+    [ -x "$d/dynobox" ] || continue
+    rt_seen=1
+    rtag=$(basename "$d")
+    RTW="$WORK/runtime-check"
+    rm -rf "$RTW"
+    mkdir -p "$RTW/allowed" "$RTW/denied"
+    echo "TOP-SECRET-rt" > "$RTW/denied/secret.txt"
+    printf 'version = 1\ndefault = "deny"\n\n[[rules]]\npath = "%s/allowed/**"\naccess = "all"\nperm = "allow"\n' \
+        "$RTW" > "$RTW/pol.toml"
+
+    "$d/dynobox" version >/dev/null 2>&1
+    check "runtime($rtag): launcher executes" $?
+    "$d/dynobox" run --policy "$RTW/pol.toml" -- /bin/sh -c "echo ok > $RTW/allowed/a.txt" >/dev/null 2>&1
+    check "runtime($rtag): permits allowed write" $?
+    "$d/dynobox" run --policy "$RTW/pol.toml" -- /bin/sh -c "cat $RTW/denied/secret.txt" >/dev/null 2>&1
+    if [ $? -eq 0 ]; then rc=1; else rc=0; fi
+    check "runtime($rtag): denies unpermitted read" $rc
+    rm -rf "$RTW"
+done
+[ "$rt_seen" = "0" ] && echo "skip runtime artifacts (none committed)"
 
 echo
 echo "== boundary documentation (mechanism limits, see README) =="

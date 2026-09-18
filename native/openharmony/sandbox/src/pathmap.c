@@ -135,7 +135,9 @@ int dbox_resolve_real(const char *abs, int flags, char *out, size_t outsz,
         }
         size_t ol = strlen(out);
         char cand[DBOX_PATH_MAX];
-        if (ol == 0) {
+        if (ol == 0 || (ol == 1 && out[0] == '/')) {
+            /* at the root: appending to "/" must not produce "//comp",
+             * otherwise policy prefixes such as "/data" stop matching */
             if (1 + strlen(comp) + 1 > sizeof cand) { rc = -1; errno = ENAMETOOLONG; dbox_free(comp); break; }
             cand[0] = '/'; strcpy(cand + 1, comp);
         } else if (ol + 1 + strlen(comp) + 1 > sizeof cand) {
@@ -230,13 +232,20 @@ int dbox_plan_path(const dbox_ctx_t *ctx, const char *input, int flags,
     char resolved[DBOX_PATH_MAX];
     int partial = 0;
     int ok = (dbox_resolve_real(abs, flags, resolved, sizeof resolved, &partial) == 0);
-    if (ok && !partial) {
+    if (ok) {
+        /* `resolved` is the correct attribution in both cases: fully
+         * resolved, or the resolved prefix followed by the missing tail.
+         * Falling back to the lexical path when the tail is missing would
+         * attribute a path that traverses a symlink to the wrong tree — it
+         * mis-denies system paths (a missing /etc/ssl/x.cnf is ENOENT, not
+         * EACCES) and can also let a rule written against the symlink name
+         * miss the real target (or the other way round). */
         *out_vpath = dbox_strdup(resolved);
         *out_real = dbox_strdup(resolved);
     } else {
-        /* hard resolve error (EACCES/ELOOP/ENAMETOOLONG) or missing tail:
-         * attribute the lexical path; the real syscall surfaces the
-         * authoritative kernel error */
+        /* hard resolve error (EACCES/ELOOP/ENAMETOOLONG): attribute the
+         * lexical path; the real syscall surfaces the authoritative kernel
+         * error */
         *out_vpath = dbox_strdup(abs);
         *out_real = dbox_strdup(abs);
         partial = 0;
