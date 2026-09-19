@@ -17,6 +17,8 @@ export function hasCardContent(card: { prompt: string; html: string }): boolean 
  * 组装卡片 iframe 的 srcdoc：
  * 1. 注入基础样式 —— 无论 agent 生成的内容是否规范，都保证无默认边距、
  *    不可滚动、使用系统字体栈，并按桌面主题声明 color-scheme；
+ *    同时拍平根容器的自绘外壳（边框/阴影/圆角/外边距）：卡片外框由宿主
+ *    od-card 提供，模型若再画一层"卡片壳"就会形成双层边框；
  * 2. 注入链接拦截脚本 —— 卡片内点击链接不允许就地导航（会毁掉卡片），
  *    拦截后 postMessage 给桌面，由桌面以浏览器浮窗打开。
  * 3. 注入右键拦截脚本 —— 卡片内右键不上报就会弹出 iframe 自己的默认菜单，
@@ -27,6 +29,8 @@ export function composeCardSrcDoc(html: string, theme: 'light' | 'dark'): string
     const baseStyle = [
         '<style>',
         'html,body{margin:0;padding:0;width:100%;height:100%;overflow:hidden;}',
+        // 防御性兜底：即使模型违规画出带壳卡片，也不会与宿主容器叠出双层边框
+        'body>:first-child{margin:0!important;border:0!important;outline:0!important;box-shadow:none!important;border-radius:0!important;min-width:100%;min-height:100%;}',
         "body{font-family:-apple-system,'SF Pro SC','PingFang SC','Microsoft YaHei UI','Segoe UI',sans-serif;}",
         `:root{color-scheme:${theme};}`,
         '</style>'

@@ -238,6 +238,25 @@ describe('immersive desktop card srcdoc composition', () => {
         expect(result).toContain('<title>x</title>');
     });
 
+    test('flattens the root card shell so a self-drawn frame cannot double-frame the host container', () => {
+        // 卡片外框由宿主 od-card 提供（边框+阴影+圆角裁剪）；模型若再画一层壳会出现双层边框。
+        // 注入的兜底样式直接拍平 body 第一个元素的自绘外壳，三条注入路径都必须生效。
+        const expected =
+            'body>:first-child{margin:0!important;border:0!important;outline:0!important;box-shadow:none!important;border-radius:0!important;min-width:100%;min-height:100%;}';
+
+        const withHead = composeCardSrcDoc(
+            '<!doctype html><html><head></head><body><div class="card">x</div></body></html>',
+            'light'
+        );
+        expect(withHead).toContain(expected);
+
+        const bareHtml = composeCardSrcDoc('<html><body><div class="card">x</div></body></html>', 'dark');
+        expect(bareHtml).toContain(expected);
+
+        const fragment = composeCardSrcDoc('<div class="card">x</div>', 'light');
+        expect(fragment).toContain(expected);
+    });
+
     test('pins generated card CSS to the current desktop theme instead of the operating system theme', () => {
         const html = '<html><head><style>:root{color-scheme:light dark}</style></head><body>card</body></html>';
         const result = composeCardSrcDoc(html, 'dark');
