@@ -73,7 +73,8 @@ export class ChannelPermissionPromptProvider implements PermissionPromptProvider
                 tool: toolName,
                 requests,
                 confirmLabel: tLocal('channel.permission.confirm'),
-                cancelLabel: tLocal('channel.permission.deny')
+                cancelLabel: tLocal('channel.permission.deny'),
+                allowRemember: true
             },
             undefined,
             taskInfo?.sourceTaskId ?? taskInfo?.taskId
@@ -85,7 +86,9 @@ export class ChannelPermissionPromptProvider implements PermissionPromptProvider
 
         return {
             decision: outcome.decision,
-            rememberScope: 'none',
+            // 渠道侧"始终允许"映射到 permission 系统的 'type' 范围（当前 enforcer 内所有同类操作放行），
+            // 渠道任务 enforcer 为 task 级实例，规则纯内存，task 销毁即回收，达到"session 内始终允许"效果。
+            rememberScope: outcome.rememberScope === 'session' ? 'type' : 'none',
             denyReason: outcome.decision === 'deny' ? mapDenyReason(outcome.denyReason) : undefined
         };
     }

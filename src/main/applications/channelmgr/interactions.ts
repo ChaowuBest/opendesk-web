@@ -33,6 +33,8 @@ export interface ChannelApprovalRequest {
     requests: unknown[];
     confirmLabel?: string;
     cancelLabel?: string;
+    /** 是否展示"本次会话始终允许"按钮；文案由渠道插件自行本地化 */
+    allowRemember?: boolean;
 }
 
 /** askUser 请求的对外形态（对齐 aikernel/interaction/tools.ts 的 AskUserQuestion） */
@@ -50,6 +52,8 @@ export interface ChannelAskUserRequest {
 /** 审批结果 */
 export interface ChannelApprovalOutcome {
     decision: 'allow' | 'deny';
+    /** 用户选择的记住范围：'session' 表示本次会话内同类操作始终允许（仅当用户点击"始终允许"时携带） */
+    rememberScope?: 'none' | 'session';
     /** deny 的原因（user_denied / timeout / no_interaction / send_failed） */
     denyReason?: 'user_denied' | 'timeout' | 'no_interaction' | 'send_failed';
     /** 发送失败时的底层错误信息（仅 denyReason === 'send_failed' 时携带，用于诊断） */
@@ -69,6 +73,8 @@ export interface ChannelInteractionEventInput {
     accountId?: string;
     operator: { id: string; name?: string };
     decision?: 'allow' | 'deny';
+    /** 用户点击"始终允许"按钮时回传 'session'（仅 decision === 'allow' 时有意义） */
+    rememberScope?: 'none' | 'session';
     answers?: Record<number, string[]>;
     cancelled?: boolean;
     raw?: unknown;
@@ -275,9 +281,14 @@ export class ChannelInteractionService {
         if (pending.kind === 'approval') {
             const decision = event.cancelled ? 'deny' : event.decision === 'allow' ? 'allow' : 'deny';
             logger.info(
-                `[channel-interaction] approval ${event.interactionId} settled: ${decision} by ${event.operator?.id}`
+                `[channel-interaction] approval ${event.interactionId} settled: ${decision} by ${event.operator?.id}` +
+                    (decision === 'allow' && event.rememberScope === 'session' ? ' (remember session)' : '')
             );
-            pending.resolve({ decision, denyReason: decision === 'deny' ? 'user_denied' : undefined });
+            pending.resolve({
+                decision,
+                rememberScope: decision === 'allow' ? (event.rememberScope ?? 'none') : undefined,
+                denyReason: decision === 'deny' ? 'user_denied' : undefined
+            });
         } else {
             const cancelled = event.cancelled === true;
             logger.info(
