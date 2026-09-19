@@ -15,6 +15,12 @@ const desktopEntrySource = readFileSync(
     new URL('../../../renderer/components/desktop/entry.ts', import.meta.url),
     'utf8'
 );
+const confirmModalSource = readFileSync(
+    new URL('../../../renderer/components/confirmModal.ts', import.meta.url),
+    'utf8'
+);
+const zhLocaleSource = readFileSync(new URL('../../../locale/zh-cn.ts', import.meta.url), 'utf8');
+const enLocaleSource = readFileSync(new URL('../../../locale/en-us.ts', import.meta.url), 'utf8');
 const titlebarStylesSource = readFileSync(new URL('../../../renderer/styles/titlebar.css', import.meta.url), 'utf8');
 
 describe('immersive desktop card srcdoc composition', () => {
@@ -33,13 +39,43 @@ describe('immersive desktop card srcdoc composition', () => {
         expect(immersiveDesktopSource).not.toContain('settingAPI?.setFullscreen');
     });
 
-    test('generated card styling uses one-shot entrance animation and hover-only title overlay', () => {
+    test('generated card styling uses one-shot entrance animation and a caption capsule floating below the card', () => {
         const styles = buildDesktopStyles();
         expect(styles).toContain('.od-card.od-card-enter { animation: od-card-in');
         expect(styles).toContain('.od-card.od-card-done .od-card-header');
-        expect(styles).toContain('.od-card.od-card-done:hover .od-card-header');
-        expect(styles).toContain('.od-card.od-card-done .od-card-body { margin: 0; }');
+        // 标题浮层是底部居中的小胶囊，浮出在卡片下缘之外（不遮挡卡片内容）
+        expect(styles).toMatch(/\.od-card\.od-card-done \.od-card-pill\s*\{[^}]*border-radius:\s*999px;/);
+        expect(styles).toMatch(/\.od-card\.od-card-done \.od-card-pill\s*\{[^}]*opacity:\s*0;/);
+        expect(styles).toMatch(/\.od-card\.od-card-done \.od-card-header\s*\{[^}]*top:\s*100%;/);
+        expect(styles).toMatch(/\.od-card\.od-card-done \.od-card-header\s*\{[^}]*margin-top:\s*6px;/);
+        // 胶囊要浮出卡片外，卡片不再裁剪溢出；圆角裁剪由内容区承担
+        expect(styles).toMatch(/\.od-card\s*\{[^}]*overflow:\s*visible;/);
+        expect(styles).toMatch(/\.od-card\.od-card-done \.od-card-body\s*\{[^}]*border-radius:\s*13px;/);
+        // 悬停卡片任意位置即显示（Chromium 将 iframe 上的悬停态传播给父层），拖动中保持显示
+        expect(styles).toContain('.od-card.od-card-done:hover .od-card-pill');
+        expect(styles).toContain('.od-card.od-card-done.od-card-dragging .od-card-pill');
+        expect(styles).not.toContain('.od-card.od-card-done:hover .od-card-header');
+        expect(styles).toContain('.od-card.od-card-done .od-card-body { margin: 0; border-radius: 13px; }');
         expect(styles).not.toContain('.od-card.od-card-done { border-color: rgba(16, 185, 129');
+    });
+
+    test('drag hotspot is a top strip on the card, not the caption capsule', () => {
+        const styles = buildDesktopStyles();
+        // 顶部整条透明拖动区，指针样式为 grab
+        expect(styles).toMatch(/\.od-card-drag-zone\s*\{[^}]*top:\s*0;/);
+        expect(styles).toMatch(/\.od-card-drag-zone\s*\{[^}]*cursor:\s*grab;/);
+        expect(styles).toMatch(/\.od-card\.od-card-dragging \.od-card-drag-zone\s*\{[^}]*cursor:\s*grabbing;/);
+        // data-card-drag 挂在拖动区上，胶囊只是状态指示器
+        expect(immersiveDesktopSource).toContain('<div class="od-card-drag-zone" data-card-drag=');
+        expect(immersiveDesktopSource).not.toContain('<div class="od-card-pill" data-card-drag=');
+        // 双击顶部拖动区仍打开设置（沿用 data-card-drag 上的双击检测）
+        const dragStartSource = immersiveDesktopSource.slice(
+            immersiveDesktopSource.indexOf('private startCardDrag('),
+            immersiveDesktopSource.indexOf('private _lastHeaderDragMoved') >= 0
+                ? immersiveDesktopSource.indexOf('private handleCardDragMove(')
+                : immersiveDesktopSource.indexOf('private handleCardDragMove(')
+        );
+        expect(dragStartSource).toContain('this.showCardEditor(card)');
     });
 
     test('uses the main interface semantic palette and restrained desktop surfaces', () => {
@@ -237,5 +273,168 @@ describe('immersive desktop card srcdoc composition', () => {
         expect(result).toContain(
             "requestAnimationFrame(function(){requestAnimationFrame(function(){window.dispatchEvent(new Event('resize'));});});"
         );
+    });
+
+    test('capsule reveal relies on whole-card hover and the zone tracker is fully removed', () => {
+        const result = composeCardSrcDoc('<div>card</div>', 'light');
+        // 改为悬停卡片任意位置显示后，顶部 1/4 分区上报机制整体移除
+        expect(result).not.toContain('od-card-pointer');
+        expect(result).not.toContain('odHoverZone');
+        expect(immersiveDesktopSource).not.toContain('od-card-pointer');
+        expect(immersiveDesktopSource).not.toContain('od-hover-reset');
+        expect(immersiveDesktopSource).not.toContain('syncCardHoverZone');
+        const endInteractionSource = immersiveDesktopSource.slice(
+            immersiveDesktopSource.indexOf('private endDesktopInteraction(): void'),
+            immersiveDesktopSource.indexOf('private startCardDrag(')
+        );
+        expect(endInteractionSource).not.toContain('od-hover-top');
+        expect(endInteractionSource).toContain("this.classList.remove('od-interacting')");
+    });
+
+    test('injects a context menu interceptor that forwards right clicks to the desktop', () => {
+        const result = composeCardSrcDoc('<div>card</div>', 'light');
+        // 卡片内容铺满 iframe，右键事件不会落到父层：必须拦截默认菜单并回传卡片内坐标
+        expect(result).toContain("addEventListener('contextmenu'");
+        expect(result).toContain('e.preventDefault()');
+        expect(result).toContain('od-card-contextmenu');
+    });
+
+    test('card drag follows the pointer absolutely so the card snaps back after window excursions', () => {
+        const stateSource = immersiveDesktopSource.slice(
+            immersiveDesktopSource.indexOf("type: 'card-drag',"),
+            immersiveDesktopSource.indexOf('private handleCardDragMove(')
+        );
+        // 按下时记录抓取偏移：指针相对卡片左缘的位置
+        expect(stateSource).toContain('grabOffsetX: event.clientX - startRect.left');
+        expect(stateSource).toContain('grabOffsetY: event.clientY - startRect.top');
+        const moveSource = immersiveDesktopSource.slice(
+            immersiveDesktopSource.indexOf('private handleCardDragMove('),
+            immersiveDesktopSource.indexOf('private finishCardDrag(')
+        );
+        // 目标位置 = 指针当前位置 + 抓取偏移（绝对跟随）：移出窗口丢失的事件不再累积
+        // 位移差，指针回到窗口时卡片立即吸附回指针，而不是带着偏移平行漂移
+        expect(moveSource).toContain('event.clientX - state.grabOffsetX - state.currentRect.left');
+        expect(moveSource).toContain('event.clientY - state.grabOffsetY - state.currentRect.top');
+        expect(moveSource).not.toContain('state.lastClientX');
+    });
+
+    test('card context menu opens from anywhere via iframe right-click forwarding', () => {
+        expect(immersiveDesktopSource).toContain("data.type === 'od-card-contextmenu'");
+        expect(immersiveDesktopSource).toContain('this.showCardContextMenuFromFrame(event.source, data.x, data.y)');
+        const forwardSource = immersiveDesktopSource.slice(
+            immersiveDesktopSource.indexOf('private showCardContextMenuFromFrame('),
+            immersiveDesktopSource.indexOf('private async openLinkInBrowser(')
+        );
+        expect(forwardSource).toContain("element.querySelector('iframe')?.contentWindow === source");
+        // iframe 视口坐标需换算为桌面客户区坐标（考虑可能的缩放）
+        expect(forwardSource).toContain('rect.left + x * scaleX');
+        expect(forwardSource).toContain('rect.top + y * scaleY');
+    });
+
+    test('card drag and resize capture the pointer to survive window-boundary excursions', () => {
+        // 移出窗口期间 pointermove 会丢失，回窗产生巨大增量导致卡片跳变：
+        // 按下时对卡片元素 setPointerCapture，移出窗口也能连续收到坐标
+        const dragSource = immersiveDesktopSource.slice(
+            immersiveDesktopSource.indexOf('private startCardDrag('),
+            immersiveDesktopSource.indexOf('private handleCardDragMove(')
+        );
+        expect(dragSource).toContain('this.captureCardPointer(element, event);');
+        const resizeSource = immersiveDesktopSource.slice(
+            immersiveDesktopSource.indexOf('private startCardResize('),
+            immersiveDesktopSource.indexOf('private handleCardResizeMove(')
+        );
+        expect(resizeSource).toContain('this.captureCardPointer(element, event);');
+        expect(immersiveDesktopSource).toContain('element?.setPointerCapture(event.pointerId);');
+        // pointercancel 与 pointerup 共用收尾，系统打断不会让拖动状态卡死
+        expect(immersiveDesktopSource).toContain(
+            "window.addEventListener('pointercancel', this.onGlobalPointerCancel);"
+        );
+        expect(immersiveDesktopSource).toContain('private finishPointerInteraction');
+    });
+
+    test('card editor modal reuses the shared top-banner modal system (modal.html spec)', () => {
+        // 复用 confirmModal 的顶部色带体系：MODAL_CSS + 深浅色检测 + SVG 关闭图标
+        expect(confirmModalSource).toContain('export const CLOSE_SVG');
+        expect(immersiveDesktopSource).toContain("from '../confirmModal.js'");
+        expect(immersiveDesktopSource).toContain('<style>${MODAL_CSS}');
+        expect(immersiveDesktopSource).toContain('od-confirm-modal-overlay');
+        expect(immersiveDesktopSource).toContain('od-confirm-modal-banner info');
+        expect(immersiveDesktopSource).toContain('od-confirm-modal-footer');
+        // 左上角为语义色实心容器内的 SVG 图标（替代旧蓝点），标题"卡片设置"用齿轮
+        expect(immersiveDesktopSource).toContain("renderIcon('fa-gear')");
+        expect(immersiveDesktopSource).not.toContain('<span class="dot"></span>');
+    });
+
+    test('card editor modal never dismisses on overlay click to protect form input', () => {
+        const editorSource = immersiveDesktopSource.slice(
+            immersiveDesktopSource.indexOf('private showCardEditor('),
+            immersiveDesktopSource.indexOf('private closeCardEditor():')
+        );
+        // 旧实现在遮罩上单击即 closeCardEditor，正在填写的表单会丢失
+        expect(editorSource).not.toContain("overlay?.addEventListener('click'");
+        expect(editorSource).not.toContain('event.target === overlay');
+        // 关闭只能通过色带关闭按钮 / 取消按钮 / Escape
+        expect(editorSource).toContain('data-card-editor-close');
+        expect(editorSource).toContain('data-card-editor-cancel');
+    });
+
+    test('card editor footer switches save vs save-and-generate by trimmed prompt diff', () => {
+        const editorSource = immersiveDesktopSource.slice(
+            immersiveDesktopSource.indexOf('private showCardEditor('),
+            immersiveDesktopSource.indexOf('private closeCardEditor():')
+        );
+        // 两个保存动作：未变化只显示"保存"，变化后追加"保存并立即生成"（初始隐藏）
+        expect(editorSource).toContain('data-card-editor-save');
+        expect(editorSource).toMatch(/data-card-editor-save-generate[^>]*hidden/);
+        // 关注内容按首尾空格裁剪后对比，输入时动态切换按钮显隐
+        expect(editorSource).toContain('generateBtn.hidden = textarea.value.trim() === originalPrompt.trim()');
+        expect(editorSource).toContain('syncEditorActions');
+        // 仅"保存并立即生成"触发刷新；"保存"只保存，不做无变化重建
+        expect(editorSource).toContain('applyEditor(false)');
+        expect(editorSource).toContain('applyEditor(true)');
+        expect(editorSource).toContain('if (generate && latest.prompt)');
+        // 两个按钮恒为红色主样式，切换只控制显隐——避免"保存"按钮背景闪变
+        expect(editorSource).toContain('class="od-confirm-btn od-confirm-btn-primary" data-card-editor-save');
+        expect(editorSource).not.toContain("saveBtn.classList.toggle('od-confirm-btn-primary'");
+        expect(editorSource).not.toContain("saveBtn.classList.toggle('od-confirm-btn-cancel'");
+    });
+
+    test('card editor save labels are localized in zh-cn and en-us', () => {
+        expect(zhLocaleSource).toContain("'renderer.desktop.card.save': '保存'");
+        expect(zhLocaleSource).toContain("'renderer.desktop.card.saveAndGenerate': '保存并立即生成'");
+        expect(enLocaleSource).toContain("'renderer.desktop.card.save': 'Save'");
+        expect(enLocaleSource).toContain("'renderer.desktop.card.saveAndGenerate': 'Save & Generate Now'");
+    });
+
+    test('card context menu hosts an interval submenu with the current interval checked', () => {
+        const menuSource = immersiveDesktopSource.slice(
+            immersiveDesktopSource.indexOf('private showCardContextMenu('),
+            immersiveDesktopSource.indexOf('private showBlankContextMenu(')
+        );
+        // "刷新时间"项悬停展开二级菜单，三个间隔选项，当前项打勾
+        expect(menuSource).toContain("this.t('renderer.desktop.menu.interval')");
+        expect(menuSource).toMatch(/od-context-sub-trigger/);
+        expect(menuSource).toContain('od-context-submenu');
+        expect(menuSource).toContain('data-menu="interval"');
+        expect(menuSource).toContain('option.value === card?.interval');
+        // 文案中英双语
+        expect(zhLocaleSource).toContain("'renderer.desktop.menu.interval': '刷新时间'");
+        expect(enLocaleSource).toContain("'renderer.desktop.menu.interval': 'Refresh interval'");
+        // 悬停展开；贴右侧屏幕时翻转到左侧展开
+        const styles = buildDesktopStyles();
+        expect(styles).toMatch(/\.od-context-sub-trigger:hover \.od-context-submenu/);
+        expect(styles).toContain('.od-context-menu.od-sub-opens-left .od-context-submenu');
+        expect(immersiveDesktopSource).toContain("menu.classList.toggle('od-sub-opens-left'");
+    });
+
+    test('context menu interval click saves the new interval and updates the pill badge in place', () => {
+        const clickSource = immersiveDesktopSource.slice(
+            immersiveDesktopSource.indexOf('private handleContextMenuClick'),
+            immersiveDesktopSource.indexOf('/**\n     * 卡片内链接点击')
+        );
+        expect(clickSource).toContain("case 'interval'");
+        expect(clickSource).toContain('normalizeInterval(item.dataset.value)');
+        // 只改间隔不重建卡片：就地更新胶囊上的间隔徽标，避免 iframe 重载闪烁
+        expect(clickSource).toContain('.od-card[data-card-id="${CSS.escape(card.id)}"] .od-card-live');
     });
 });
