@@ -32,6 +32,21 @@ export const StaffPermissionSchema = z.object({
     network_access: z.boolean().default(true)
 });
 
+/** 员工本地网络服务配置：开启后局域网内设备可通过浏览器与该员工对话 */
+export const StaffLocalServiceSchema = z.object({
+    enabled: z.boolean().default(false),
+    host: z.string().trim().min(1).default('127.0.0.1'),
+    port: z.number().int().min(1).max(65535).default(9050)
+});
+
+export type StaffLocalService = z.output<typeof StaffLocalServiceSchema>;
+
+/** 补齐缺失字段并剔除非法取值，保证读到的历史配置可以直接使用 */
+export function normalizeStaffLocalService(value: unknown): StaffLocalService {
+    const parsed = StaffLocalServiceSchema.safeParse(value ?? {});
+    return parsed.success ? parsed.data : StaffLocalServiceSchema.parse({});
+}
+
 export const StaffResourceContentSchema = z.object({
     type: z.literal('resource'),
     resource_id: z.string().min(1),
@@ -65,6 +80,7 @@ export interface StaffMetadata {
     model?: string;
     last_triggered_at?: string;
     usage_summary?: TaskUsageSummary;
+    local_service?: StaffLocalService;
 }
 
 export type StaffTaskSource = 'user' | 'scheduled';
@@ -91,6 +107,7 @@ export interface StaffListItem extends StaffDefinition {
     skill_count: number;
     usage_summary?: TaskUsageSummary;
     active_task_id?: string;
+    local_service?: StaffLocalService;
 }
 
 export interface StaffDetail extends StaffListItem {
@@ -139,6 +156,7 @@ export interface StaffUpdateInput {
     model?: string | null;
     portrait_path?: string | null;
     portrait_data_uri?: string | null;
+    local_service?: StaffLocalService;
 }
 
 export type HistoryQuery =

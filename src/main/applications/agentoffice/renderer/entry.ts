@@ -22,10 +22,13 @@ import {
     type SkillDetailCardModel
 } from '../../../../renderer/components/skills/skill-detail-card.js';
 import {
+    normalizeStaffLocalService,
     unwrapAgentOfficeCallResult,
     type InstalledSkillSummary,
+    type LocalServiceRuntime,
     type StaffDetail,
     type StaffListItem,
+    type StaffLocalService,
     type StaffMessage,
     type StaffSkillBatchImportResult,
     type StaffSkillImportCandidate,
@@ -108,11 +111,20 @@ export class AgentOfficeEntryWidget extends AgentOperableHTMLElement {
     private readonly pendingAutoSaves = new Map<string, StaffUpdateInput>();
     private readonly failedAutoSaveStaffIds = new Set<string>();
     private readonly portraitCache = new Map<string, string>();
+    private localAddresses: Array<{ address: string; name: string }> = [];
+    private localServiceRuntime: LocalServiceRuntime | null = null;
+    private localServicePending = false;
     private readonly onStaffsChanged = () => void this.refreshStaffSummaries();
     private readonly onMessagesChanged = (staffId: string) => {
         if (staffId !== this.selectedStaffId) return;
         if (this.activeTab === 'office') void this.loadMessages();
         else void this.refreshStaffSummaries();
+    };
+    private readonly onLocalServiceChanged = (staffId: string, runtime: LocalServiceRuntime) => {
+        if (this.detail?.id !== staffId) return;
+        this.localServicePending = false;
+        this.localServiceRuntime = runtime;
+        this.updateLocalServiceStatusUI();
     };
     private readonly onThemeChanged = (event: Event) => {
         const detail = (event as CustomEvent<{ effective?: 'light' | 'dark' }>).detail;
@@ -169,6 +181,7 @@ export class AgentOfficeEntryWidget extends AgentOperableHTMLElement {
         window.applicationAPI.subscribe('staffsChanged', this.onStaffsChanged);
         window.applicationAPI.subscribe('messagesChanged', this.onMessagesChanged);
         window.applicationAPI.subscribe('staffTaskChanged', this.onStaffsChanged);
+        window.applicationAPI.subscribe('localServiceChanged', this.onLocalServiceChanged);
         void this.initialize();
     }
 
@@ -184,6 +197,7 @@ export class AgentOfficeEntryWidget extends AgentOperableHTMLElement {
         window.applicationAPI.unsubscribe('staffsChanged', this.onStaffsChanged);
         window.applicationAPI.unsubscribe('messagesChanged', this.onMessagesChanged);
         window.applicationAPI.unsubscribe('staffTaskChanged', this.onStaffsChanged);
+        window.applicationAPI.unsubscribe('localServiceChanged', this.onLocalServiceChanged);
     }
 
     private tr(key: string): string {
@@ -231,10 +245,11 @@ export class AgentOfficeEntryWidget extends AgentOperableHTMLElement {
 
     private async initialize(): Promise<void> {
         try {
-            [this.strings, this.locale, this.modelCatalog] = await Promise.all([
+            [this.strings, this.locale, this.modelCatalog, this.localAddresses] = await Promise.all([
                 this.call('getLocalizedStrings'),
                 this.call('getLocale'),
-                this.call('listChatModels')
+                this.call('listChatModels'),
+                this.call('listLocalAddresses')
             ]);
             // 本地化文案就绪后立即渲染壳（加载态），staff 数据继续异步加载
             this.render();
@@ -356,6 +371,9 @@ export class AgentOfficeEntryWidget extends AgentOperableHTMLElement {
                       focused: this.shadowRoot.activeElement === draftInput
                   }
                 : null;
+        // 消息区滚动位置同理：后台重渲染若不恢复，会从贴底跳回最旧消息
+        const prevMessagesBox = this.shadowRoot.querySelector<HTMLElement>('#messages');
+        const messagesScrollTop = prevMessagesBox ? prevMessagesBox.scrollTop : 0;
         this.shadowRoot.innerHTML = `<style>${contextMenuCss}${css}</style><div class="root ${this.busy ? 'busy' : ''}">
             <div class="tabs">
                 <div class="tab-group">
@@ -379,6 +397,8 @@ export class AgentOfficeEntryWidget extends AgentOperableHTMLElement {
             }
             this.updateSendButtonState();
         }
+        const messagesBox = this.shadowRoot.querySelector<HTMLElement>('#messages');
+        if (messagesBox) messagesBox.scrollTop = messagesScrollTop;
         this.bindEvents();
     }
 
@@ -566,6 +586,9 @@ export class AgentOfficeEntryWidget extends AgentOperableHTMLElement {
                     ? `<option value="${escapeHtml(detail.model)}" selected>${escapeHtml(detail.model)}</option>`
                     : '';
             const triggerInterval = detail.trigger_interval ?? 'never';
+            const serviceConfig = normalizeStaffLocalService(detail.local_service);
+            const serviceOn = serviceConfig.enabled;
+            const hostOptions = this.localServiceHostOptions(serviceConfig.host);
             const triggerOptions = ['5m', '10m', '15m', '30m', '1h', 'never']
                 .map(
                     (value) =>
@@ -574,7 +597,7 @@ export class AgentOfficeEntryWidget extends AgentOperableHTMLElement {
                 .join('');
             return `<div class="settings-page">
                 <section class="settings-section"><h3 class="section-label">${escapeHtml(this.tr('agentoffice.statsSection'))}</h3><div class="stats"><div class="stat"><b>${detail.message_count.toLocaleString(this.locale)}</b><span>${escapeHtml(this.tr('agentoffice.messagesStat'))}</span></div><div class="stat"><b>${detail.task_count.toLocaleString(this.locale)}</b><span>${escapeHtml(this.tr('agentoffice.tasksStat'))}</span></div><div class="stat"><b>${this.formatTokens(usage)}</b><span>${escapeHtml(this.tr('agentoffice.tokensStat'))}</span></div><div class="stat"><b>${escapeHtml(new Date(detail.hired_at).toLocaleDateString(this.locale))}</b><span>${escapeHtml(this.tr('agentoffice.hiredAt'))}</span></div></div></section>
-                <section class="settings-section"><h3 class="section-label">${escapeHtml(this.tr('agentoffice.profileSection'))}</h3><div class="form-grid settings-form"><div class="field" data-basic-field="name"><label for="f-name">${escapeHtml(this.tr('agentoffice.nameLabel'))}${required}</label><input id="f-name" value="${escapeHtml(detail.name)}" required aria-required="true"><div class="field-error">${requiredError}</div></div><div class="field" data-basic-field="vendor"><label for="f-vendor">${escapeHtml(this.tr('agentoffice.vendorLabel'))}${required}</label><input id="f-vendor" value="${escapeHtml(detail.vendor_name)}" required aria-required="true"><div class="field-error">${requiredError}</div></div><div class="field" data-basic-field="title"><label for="f-title">${escapeHtml(this.tr('agentoffice.titleLabel'))}${required}</label><input id="f-title" value="${escapeHtml(detail.title)}" required aria-required="true"><div class="field-error">${requiredError}</div></div><div class="field"><label for="f-specialties">${escapeHtml(this.tr('agentoffice.specialtiesLabel'))}</label><input id="f-specialties" value="${escapeHtml(detail.specialties.join(', '))}"></div><div class="field"><label for="f-trigger-interval">${escapeHtml(this.tr('agentoffice.triggerIntervalLabel'))}</label><select id="f-trigger-interval">${triggerOptions}</select><div class="sub">${escapeHtml(this.tr('agentoffice.triggerIntervalHint'))}</div></div><div class="field"><label for="f-model">${escapeHtml(this.tr('agentoffice.modelLabel'))}</label><select id="f-model"><option value="">${escapeHtml(defaultModelLabel)}</option>${missingSelectedModel}${this.modelCatalog.models.map((model) => `<option value="${escapeHtml(model.alias)}" ${detail.model === model.alias ? 'selected' : ''}>${escapeHtml(model.alias)} · ${escapeHtml(model.provider_name)} / ${escapeHtml(model.model_name)}</option>`).join('')}</select><div class="sub">${escapeHtml(this.tr('agentoffice.modelHint'))}</div></div><div class="field full"><div class="setting-check-row"><span class="setting-check-copy"><b>${escapeHtml(this.tr('agentoffice.enableStaff'))}</b><small>${escapeHtml(this.tr('agentoffice.enableStaffHint'))}</small></span><label class="setting-toggle"><input type="checkbox" id="f-enabled" ${detail.enabled ? 'checked' : ''}><span class="setting-toggle-track"></span></label></div></div></div></section>
+                <section class="settings-section"><h3 class="section-label">${escapeHtml(this.tr('agentoffice.profileSection'))}</h3><div class="form-grid settings-form"><div class="field" data-basic-field="name"><label for="f-name">${escapeHtml(this.tr('agentoffice.nameLabel'))}${required}</label><input id="f-name" value="${escapeHtml(detail.name)}" required aria-required="true"><div class="field-error">${requiredError}</div></div><div class="field" data-basic-field="vendor"><label for="f-vendor">${escapeHtml(this.tr('agentoffice.vendorLabel'))}${required}</label><input id="f-vendor" value="${escapeHtml(detail.vendor_name)}" required aria-required="true"><div class="field-error">${requiredError}</div></div><div class="field" data-basic-field="title"><label for="f-title">${escapeHtml(this.tr('agentoffice.titleLabel'))}${required}</label><input id="f-title" value="${escapeHtml(detail.title)}" required aria-required="true"><div class="field-error">${requiredError}</div></div><div class="field"><label for="f-specialties">${escapeHtml(this.tr('agentoffice.specialtiesLabel'))}</label><input id="f-specialties" value="${escapeHtml(detail.specialties.join(', '))}"></div><div class="field"><label for="f-trigger-interval">${escapeHtml(this.tr('agentoffice.triggerIntervalLabel'))}</label><select id="f-trigger-interval">${triggerOptions}</select><div class="sub">${escapeHtml(this.tr('agentoffice.triggerIntervalHint'))}</div></div><div class="field"><label for="f-model">${escapeHtml(this.tr('agentoffice.modelLabel'))}</label><select id="f-model"><option value="">${escapeHtml(defaultModelLabel)}</option>${missingSelectedModel}${this.modelCatalog.models.map((model) => `<option value="${escapeHtml(model.alias)}" ${detail.model === model.alias ? 'selected' : ''}>${escapeHtml(model.alias)} · ${escapeHtml(model.provider_name)} / ${escapeHtml(model.model_name)}</option>`).join('')}</select><div class="sub">${escapeHtml(this.tr('agentoffice.modelHint'))}</div></div><div class="field full"><div class="setting-check-row"><span class="setting-check-copy"><b>${escapeHtml(this.tr('agentoffice.enableStaff'))}</b><small>${escapeHtml(this.tr('agentoffice.enableStaffHint'))}</small></span><label class="setting-toggle"><input type="checkbox" id="f-enabled" ${detail.enabled ? 'checked' : ''}><span class="setting-toggle-track"></span></label></div><div class="setting-check-row"><span class="setting-check-copy"><b>${escapeHtml(this.tr('agentoffice.localService'))}</b><small>${escapeHtml(this.tr('agentoffice.localServiceHint'))}</small></span><label class="setting-toggle"><input type="checkbox" id="f-local-service" ${serviceOn ? 'checked' : ''}><span class="setting-toggle-track"></span></label></div><div class="local-service-config" id="local-service-config" ${serviceOn ? '' : 'hidden'}><div class="local-service-fields"><div class="field"><label for="f-local-service-host">${escapeHtml(this.tr('agentoffice.localServiceAddress'))}</label><select id="f-local-service-host">${hostOptions}</select></div><div class="field"><label for="f-local-service-port">${escapeHtml(this.tr('agentoffice.localServicePort'))}</label><input id="f-local-service-port" type="number" min="1" max="65535" step="1" value="${serviceConfig.port}"></div></div><div class="local-service-status" id="local-service-status" data-state="${this.localServicePending ? 'pending' : this.localServiceRuntime?.error ? 'error' : this.localServiceRuntime?.listening ? 'running' : 'stopped'}">${this.localServiceStatusHtml()}</div></div></div></div></section>
                 <section class="settings-section"><h3 class="section-label">${escapeHtml(this.tr('agentoffice.instructionsLabel'))}</h3><div class="field"><textarea id="f-agents">${escapeHtml(detail.agents_md)}</textarea></div></section>
             </div>`;
         }
@@ -618,6 +641,130 @@ export class AgentOfficeEntryWidget extends AgentOperableHTMLElement {
                       })
                       .join('');
         return `<div class="settings-page"><section class="settings-section"><h3 class="section-label">${escapeHtml(this.tr('agentoffice.tasks'))}</h3>${tasks}</section></div>`;
+    }
+
+    /** 监听地址下拉：以本机当前网卡地址为基础，已保存但当前不存在的地址保留为选项，避免静默改动配置 */
+    private localServiceHostOptions(selectedHost: string): string {
+        const addresses = [...this.localAddresses];
+        if (selectedHost && !addresses.some((item) => item.address === selectedHost)) {
+            addresses.push({ address: selectedHost, name: selectedHost });
+        }
+        return addresses
+            .map(
+                (item) =>
+                    `<option value="${escapeHtml(item.address)}" ${item.address === selectedHost ? 'selected' : ''}>${escapeHtml(item.name)} · ${escapeHtml(item.address)}</option>`
+            )
+            .join('');
+    }
+
+    private localServiceStatusHtml(): string {
+        // 配置刚变更、尚无服务事件确认时进入过渡态，绝不沿用旧的"绿色可用"状态
+        if (this.localServicePending) {
+            return `<span class="status-dot"></span><span>${escapeHtml(this.tr('agentoffice.localServiceApplying'))}</span>`;
+        }
+        const runtime = this.localServiceRuntime;
+        if (runtime?.listening && runtime.url) {
+            return `<span class="status-dot on"></span><span class="local-service-url" title="${escapeHtml(runtime.url)}">${escapeHtml(runtime.url)}</span><button class="secondary small-btn" data-action="open-service-browser" title="${escapeHtml(this.tr('agentoffice.openInBrowser'))}"><i class="fa-solid fa-arrow-up-right-from-square"></i>${escapeHtml(this.tr('agentoffice.openInBrowser'))}</button><button class="secondary small-btn" data-action="copy-service-url" title="${escapeHtml(this.tr('agentoffice.localServiceCopy'))}">${escapeHtml(this.tr('agentoffice.localServiceCopy'))}</button>`;
+        }
+        if (runtime?.error) {
+            return `<span class="status-dot"></span><span class="local-service-error">${escapeHtml(runtime.error)}</span>`;
+        }
+        return `<span class="status-dot"></span><span>${escapeHtml(this.tr('agentoffice.localServiceStopped'))}</span>`;
+    }
+
+    /** 局部刷新服务状态行（localServiceChanged 事件到达时），避免整树重渲染干扰表单草稿 */
+    private updateLocalServiceStatusUI(): void {
+        const status = this.shadowRoot?.querySelector<HTMLElement>('#local-service-status');
+        if (!status) return;
+        status.dataset.state = this.localServicePending
+            ? 'pending'
+            : this.localServiceRuntime?.error
+              ? 'error'
+              : this.localServiceRuntime?.listening
+                ? 'running'
+                : 'stopped';
+        status.innerHTML = this.localServiceStatusHtml();
+        this.bindServiceCopyButton(status);
+    }
+
+    private bindServiceCopyButton(status: HTMLElement): void {
+        status.querySelector('[data-action="copy-service-url"]')?.addEventListener('click', () => {
+            void this.copyServiceUrl(status);
+        });
+        status.querySelector('[data-action="open-service-browser"]')?.addEventListener('click', () => {
+            void this.openServiceInBrowser();
+        });
+    }
+
+    private async openServiceInBrowser(): Promise<void> {
+        if (!this.detail) return;
+        try {
+            await this.call('openServiceInBrowser', this.detail.id);
+        } catch (error) {
+            this.status = `${this.tr('agentoffice.operationFailed')}: ${this.errorText(error)}`;
+            this.updateLocalServiceStatusUI();
+        }
+    }
+
+    private async copyServiceUrl(status: HTMLElement): Promise<void> {
+        const url = this.localServiceRuntime?.url;
+        if (!url) return;
+        try {
+            await navigator.clipboard.writeText(url);
+        } catch {
+            return;
+        }
+        const button = status.querySelector<HTMLButtonElement>('[data-action="copy-service-url"]');
+        if (!button) return;
+        const previous = button.textContent;
+        button.textContent = this.tr('agentoffice.localServiceCopied');
+        setTimeout(() => {
+            if (button.isConnected) button.textContent = previous;
+        }, 1500);
+    }
+
+    /** 首次开启时补齐默认值：地址优先取局域网网卡，端口默认 9050（schema 默认值） */
+    private handleLocalServiceToggle(enabled: boolean): void {
+        if (!this.detail) return;
+        const saved = this.detail.local_service ? normalizeStaffLocalService(this.detail.local_service) : null;
+        // 未保存过配置时优先选局域网地址，方便其他设备直接访问
+        const firstLan = this.localAddresses.find((item) => item.address !== '127.0.0.1');
+        const host = this.detail.local_service?.host || firstLan?.address || '127.0.0.1';
+        this.detail.local_service = {
+            enabled,
+            host,
+            port: saved?.port ?? 9050
+        };
+        this.localServicePending = true;
+        const configBlock = this.shadowRoot?.querySelector<HTMLElement>('#local-service-config');
+        if (configBlock) {
+            configBlock.hidden = !enabled;
+            const hostSelect = configBlock.querySelector<HTMLSelectElement>('#f-local-service-host');
+            if (hostSelect) hostSelect.innerHTML = this.localServiceHostOptions(host);
+        }
+        this.updateLocalServiceStatusUI();
+        this.queueStaffUpdate({ local_service: this.detail.local_service }, true);
+    }
+
+    private handleLocalServiceConfigChange(update: Partial<StaffLocalService>): void {
+        if (!this.detail) return;
+        const config = normalizeStaffLocalService(this.detail.local_service);
+        this.detail.local_service = { ...config, ...update };
+        this.localServicePending = true;
+        this.updateLocalServiceStatusUI();
+        this.queueStaffUpdate({ local_service: this.detail.local_service }, true);
+    }
+
+    private handleLocalServicePortChange(raw: string): void {
+        if (!this.detail) return;
+        const port = Number(raw);
+        if (!Number.isInteger(port) || port < 1 || port > 65535) {
+            this.localServiceRuntime = { listening: false, error: this.tr('agentoffice.localServicePortInvalid') };
+            this.updateLocalServiceStatusUI();
+            return;
+        }
+        this.localServiceRuntime = null;
+        this.handleLocalServiceConfigChange({ port });
     }
 
     private renderSkillAddMenu(): string {
@@ -1076,6 +1223,21 @@ export class AgentOfficeEntryWidget extends AgentOperableHTMLElement {
             this.detail.enabled = enabled;
             this.queueStaffUpdate({ enabled }, true);
         });
+        this.shadowRoot?.querySelector<HTMLInputElement>('#f-local-service')?.addEventListener('change', (event) => {
+            this.handleLocalServiceToggle((event.target as HTMLInputElement).checked);
+        });
+        this.shadowRoot
+            ?.querySelector<HTMLSelectElement>('#f-local-service-host')
+            ?.addEventListener('change', (event) => {
+                this.handleLocalServiceConfigChange({ host: (event.target as HTMLSelectElement).value });
+            });
+        this.shadowRoot
+            ?.querySelector<HTMLInputElement>('#f-local-service-port')
+            ?.addEventListener('change', (event) => {
+                this.handleLocalServicePortChange((event.target as HTMLInputElement).value);
+            });
+        const serviceStatus = this.shadowRoot?.querySelector<HTMLElement>('#local-service-status');
+        if (serviceStatus) this.bindServiceCopyButton(serviceStatus);
         this.shadowRoot
             ?.querySelector<HTMLTextAreaElement>('#f-mcp')
             ?.addEventListener('input', (event) => this.handleMcpInput(event.target as HTMLTextAreaElement));
@@ -1092,12 +1254,22 @@ export class AgentOfficeEntryWidget extends AgentOperableHTMLElement {
             this.autoSaveState = 'idle';
             this.autoSaveDetail = '';
             this.status = '';
+            this.localServiceRuntime = null;
         }
-        [this.detail, this.skills, this.modelCatalog] = await Promise.all([
-            this.call('getStaffDetail', staffId),
+        // 服务运行状态与详情数据同批获取：若分开请求，先返回的结果会因 detail 尚未赋值被丢弃
+        const [detail, skills, modelCatalog, serviceInfo] = await Promise.all([
+            this.call<StaffDetail>('getStaffDetail', staffId),
             this.call('listSkills', staffId),
-            this.call('listChatModels')
+            this.call('listChatModels'),
+            this.call<{ config: StaffLocalService; runtime: LocalServiceRuntime }>(
+                'getLocalServiceInfo',
+                staffId
+            ).catch(() => null)
         ]);
+        this.detail = detail;
+        this.skills = skills;
+        this.modelCatalog = modelCatalog;
+        this.localServiceRuntime = serviceInfo?.runtime ?? null;
         this.render();
     }
 

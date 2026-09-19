@@ -1981,6 +1981,65 @@ p {
 :host([data-theme='dark']) .setting-toggle-track {
     background: #4b5563;
 }
+/* ---------- 本地网络服务 ---------- */
+.local-service-config {
+    padding: 12px 0 4px;
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+}
+.local-service-config[hidden] {
+    display: none;
+}
+.local-service-fields {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) 150px;
+    gap: 12px;
+    align-items: start;
+}
+.local-service-status {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    min-height: 26px;
+    padding: 6px 10px;
+    border: 1px solid var(--line-soft);
+    border-radius: 9px;
+    background: var(--muted-surface);
+    font-size: var(--fs-sm);
+    color: var(--ink3);
+}
+.local-service-status[data-state='running'] {
+    border-color: color-mix(in srgb, var(--green) 35%, transparent);
+    background: var(--green-soft);
+    color: var(--green);
+}
+.local-service-status[data-state='error'] {
+    border-color: color-mix(in srgb, var(--accent) 35%, transparent);
+    background: var(--accent-soft);
+    color: var(--accent-ink);
+}
+.local-service-status[data-state='pending'] {
+    color: var(--ink3);
+}
+.local-service-url {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    font-weight: 500;
+}
+.local-service-error {
+    min-width: 0;
+    overflow-wrap: anywhere;
+}
+.local-service-status .secondary.small-btn {
+    flex: none;
+}
+/* URL 占左侧，两个操作按钮作为一组靠右排列 */
+.local-service-status .secondary.small-btn:first-of-type {
+    margin-left: auto;
+}
 /* ---------- Skills 管理 ---------- */
 .skills-page {
     position: relative;

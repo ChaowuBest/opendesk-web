@@ -20,6 +20,7 @@ import {
     StaffDefinitionSchema,
     StaffMessageSchema,
     StaffPermissionSchema,
+    normalizeStaffLocalService,
     staffTriggerIntervalMs,
     sumTaskUsage,
     type DueStaffTrigger,
@@ -305,6 +306,7 @@ export class AgentOfficeRepository {
                     hired_at: detail.hired_at,
                     enabled: detail.enabled,
                     model: detail.model,
+                    local_service: detail.local_service,
                     portrait_url: detail.portrait_url,
                     message_count: detail.message_count,
                     task_count: detail.task_count,
@@ -336,6 +338,7 @@ export class AgentOfficeRepository {
             hired_at: metadata.hired_at,
             enabled: metadata.enabled,
             model: metadata.model,
+            local_service: metadata.local_service ? normalizeStaffLocalService(metadata.local_service) : undefined,
             portrait_url: fs.existsSync(path.join(directory, 'agent', 'portrait.png'))
                 ? `agentoffice://resource/${staffId}/portrait`
                 : undefined,
@@ -384,7 +387,7 @@ export class AgentOfficeRepository {
                 StaffPermissionSchema.parse(input.permission)
             );
         }
-        if (input.enabled !== undefined || input.model !== undefined) {
+        if (input.enabled !== undefined || input.model !== undefined || input.local_service !== undefined) {
             const metadataPath = path.join(directory, 'protected', 'metadata.json');
             const metadata = readJson<StaffMetadata>(metadataPath, {
                 id: staffId,
@@ -399,6 +402,9 @@ export class AgentOfficeRepository {
                 const model = input.model?.trim();
                 if (model) metadata.model = model;
                 else delete metadata.model;
+            }
+            if (input.local_service !== undefined) {
+                metadata.local_service = normalizeStaffLocalService(input.local_service);
             }
             atomicWriteJson(metadataPath, metadata);
         }
