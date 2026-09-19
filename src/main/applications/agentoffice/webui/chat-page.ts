@@ -96,6 +96,8 @@ button:focus-visible {
     --fs-lg: 14px;
     --fs-xl: 16px;
 }
+/* 100% 高度链填满宿主容器（含 iframe）：dvh 视口单位在部分嵌入式 WebView 中不受支持 */
+html, body { height: 100%; }
 .root {
     /* 设计令牌：暖灰底 × 珊瑚红点缀（与办公室会话视图一致，浅色） */
     --page: #eeedeb;
@@ -111,7 +113,7 @@ button:focus-visible {
     --accent-soft: #fdeeec;
     --blue: #4267b2;
     --bubble: #f4f3f1;
-    height: 100dvh;
+    height: 100%;
     display: flex;
     flex-direction: column;
     background: var(--surface);
@@ -410,6 +412,10 @@ button:disabled { opacity: 0.4; cursor: default; }
     padding: 12px 28px calc(20px + env(safe-area-inset-bottom));
     flex: none;
 }
+/* 空会话：消息区不再伸展，输入区与空态卡片一起垂直居中；
+   出现消息后（renderMessages 切换 empty-conversation 类）输入区恢复贴底 */
+.root.empty-conversation .messages { flex: 0 1 auto; }
+.root.empty-conversation .composer-wrap { margin-top: auto; margin-bottom: auto; }
 .composer-card.disabled { opacity: 0.55; }
 .scroll-bottom {
     position: absolute;
@@ -677,7 +683,7 @@ button:disabled { opacity: 0.4; cursor: default; }
 </style>
 </head>
 <body>
-<div class="root">
+<div class="root empty-conversation">
     <section class="chat">
         <header class="chat-head">
             <div class="chat-head-main">
@@ -749,14 +755,15 @@ button:disabled { opacity: 0.4; cursor: default; }
         var root = document.querySelector('.root');
         if (root) root.textContent = '';
         var box = document.createElement('div');
-        box.style.cssText = 'min-height:100dvh;display:grid;place-items:center;padding:32px;box-sizing:border-box;';
+        box.style.cssText = 'min-height:100%;display:grid;place-items:center;padding:32px;box-sizing:border-box;';
         var text = document.createElement('p');
         text.style.cssText =
             'max-width:26em;text-align:center;line-height:1.7;font-size:14px;color:#4a4642;' +
             "font-family:system-ui,-apple-system,'Segoe UI',sans-serif;";
         text.textContent = message || 'This page cannot be embedded in an iframe.';
         box.appendChild(text);
-        (root || document.body).appendChild(box);
+        // body 有确定的 height:100%，百分比 min-height 只有挂在这里才能撑满
+        (document.body || root).appendChild(box);
     }
 
     var state = {
@@ -1004,6 +1011,8 @@ button:disabled { opacity: 0.4; cursor: default; }
         var box = $('messages');
         var olderButton = $('load-older');
         var empty = $('empty');
+        // 空会话时输入区垂直居中，出现消息后输入区贴底
+        document.querySelector('.root').classList.toggle('empty-conversation', state.messages.length === 0);
         // 先删后插会让 scrollHeight 骤降、scrollTop 被浏览器钳到 0，导致发消息后列表跳顶
         var prevTop = box.scrollTop;
         var prevCount = box.querySelectorAll('.message').length;

@@ -74,8 +74,8 @@ const CHAT_PAGE_HEADERS: Record<string, string> = {
 function tokenRequiredPageHtml(): string {
     return (
         `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">` +
-        `<title>OpenDesk</title><style>body{font-family:system-ui,-apple-system,'Segoe UI',sans-serif;background:#eeedeb;` +
-        `color:#1c1917;display:grid;place-items:center;height:100dvh;margin:0}p{max-width:26em;text-align:center;` +
+        `<title>OpenDesk</title><style>html{height:100%}body{font-family:system-ui,-apple-system,'Segoe UI',sans-serif;background:#eeedeb;` +
+        `color:#1c1917;display:grid;place-items:center;height:100%;margin:0}p{max-width:26em;text-align:center;` +
         `line-height:1.7;font-size:14px;color:#4a4642}</style></head><body><p>${t('agentoffice.web.tokenRequired')}</p></body></html>`
     );
 }

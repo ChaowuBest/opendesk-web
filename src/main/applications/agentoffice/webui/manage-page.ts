@@ -35,8 +35,12 @@ const MANAGE_PAGE_TEMPLATE = `<!doctype html>
 <style>
 * { box-sizing: border-box; margin: 0; padding: 0; }
 [hidden] { display: none !important; }
+/* 100% 高度链填满宿主容器（含 iframe）：dvh 视口单位在部分嵌入式 WebView 中不受支持。
+   root 固定为视口高度，长内容在页面内部滚动，iframe 层不出现页面级滚动条 */
+html, body { height: 100%; }
 .root {
-    min-height: 100dvh;
+    height: 100%;
+    overflow-y: auto;
     background: var(--page);
     color: var(--ink);
     font-family: system-ui, -apple-system, 'Segoe UI', 'HarmonyOS Sans', 'PingFang SC', 'Microsoft YaHei', sans-serif;
@@ -371,14 +375,15 @@ textarea.code { min-height: 260px; font-family: ui-monospace, SFMono-Regular, Co
         var root = document.querySelector('.root');
         if (root) root.textContent = '';
         var box = document.createElement('div');
-        box.style.cssText = 'min-height:100dvh;display:grid;place-items:center;padding:32px;box-sizing:border-box;';
+        box.style.cssText = 'min-height:100%;display:grid;place-items:center;padding:32px;box-sizing:border-box;';
         var text = document.createElement('p');
         text.style.cssText =
             'max-width:26em;text-align:center;line-height:1.7;font-size:14px;color:#4a4642;' +
             "font-family:system-ui,-apple-system,'Segoe UI',sans-serif;";
         text.textContent = message || 'This page cannot be embedded in an iframe.';
         box.appendChild(text);
-        (root || document.body).appendChild(box);
+        // body 有确定的 height:100%，百分比 min-height 只有挂在这里才能撑满
+        (document.body || root).appendChild(box);
     }
 
     var state = {
