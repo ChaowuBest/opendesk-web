@@ -10,6 +10,7 @@
  */
 
 import fs from 'fs';
+import os from 'os';
 import path from 'path';
 import { BaseApplication, type EventDecl, type ProtocolHandlerConfig } from '../base.js';
 import { GlobalState } from '../../aikernel/states/global.js';
@@ -24,7 +25,8 @@ import { createAgentOfficeTaskToolset } from './tools.js';
 import { createStaffPermissionEnforcer } from './permission.js';
 import { skillRegistry } from '../skillmgr/utils/skill-registry.js';
 import AgentOfficeWorker from './worker.js';
-import { unwrapAgentOfficeCallResult } from './common.js';
+import { normalizeStaffLocalService, unwrapAgentOfficeCallResult, type StaffLocalService } from './common.js';
+import { StaffLocalServiceManager, type LocalServiceRuntime } from './local-service.js';
 import { CustomAgent } from './custom-agent.js';
 import type { AgentMcpRegistration, McpMgrApplication } from '../mcpmgr/app.js';
 import type { AgentDecl, ModeDecl } from '../../aikernel/agents/common.js';
@@ -205,6 +207,9 @@ export class AgentOfficeApplication extends BaseApplication {
     private triggerPollRunning = false;
     private schedulerRecovered = false;
     private schedulerStopping = false;
+    private localService?: StaffLocalServiceManager;
+    private localServiceRestoreDone = false;
+    private localServiceRestoreTimer?: ReturnType<typeof setTimeout>;
 
     constructor() {
         super('agentoffice');
@@ -229,6 +234,8 @@ export class AgentOfficeApplication extends BaseApplication {
         this.schedulerRecovered = false;
         this.triggerPollTimer = setInterval(() => void this.pollScheduledTriggers(), STAFF_TRIGGER_POLL_INTERVAL_MS);
         this.triggerPollTimer.unref?.();
+        // 应用注册即恢复已开启的本地网络服务，无需等用户打开办公室界面
+        void this.restoreLocalServices();
     }
 
     /**
@@ -441,7 +448,8 @@ export class AgentOfficeApplication extends BaseApplication {
         return [
             { eventName: 'staffsChanged', eventDescription: t('agentoffice.event.staffsChanged') },
             { eventName: 'messagesChanged', eventDescription: t('agentoffice.event.messagesChanged') },
-            { eventName: 'staffTaskChanged', eventDescription: t('agentoffice.event.staffTaskChanged') }
+            { eventName: 'staffTaskChanged', eventDescription: t('agentoffice.event.staffTaskChanged') },
+            { eventName: 'localServiceChanged', eventDescription: t('agentoffice.event.localServiceChanged') }
         ];
     }
 
@@ -449,7 +457,23 @@ export class AgentOfficeApplication extends BaseApplication {
         this.schedulerStopping = true;
         if (this.triggerPollTimer) clearInterval(this.triggerPollTimer);
         this.triggerPollTimer = undefined;
+        if (this.localServiceRestoreTimer) clearTimeout(this.localServiceRestoreTimer);
+        this.localServiceRestoreTimer = undefined;
+        await this.getLocalService().stopAll();
         await this.disposeStaffAgents();
+    }
+
+    /**
+     * 主进程事件出口：registry 会把 worker 事件路由到这里，办公室 UI 的订阅也走这里。
+     * 本地网络服务借同一入口感知消息/员工变化，向网页客户端推送 SSE。
+     */
+    override sendEventToSubscribers(eventName: string, ...args: unknown[]): void {
+        super.sendEventToSubscribers(eventName, ...args);
+        if (eventName === 'messagesChanged') {
+            this.getLocalService().notifyMessagesChanged(String(args[0] ?? ''));
+        } else if (eventName === 'staffsChanged') {
+            void this.getLocalService().notifyStaffsChanged();
+        }
     }
 
     getProtocolHandlers(): ProtocolHandlerConfig[] {
@@ -577,6 +601,18 @@ export class AgentOfficeApplication extends BaseApplication {
             'agentoffice.portraitFileTooLarge',
             'agentoffice.portraitLoadFailed',
             'agentoffice.enableStaff',
+            'agentoffice.localService',
+            'agentoffice.localServiceHint',
+            'agentoffice.localServiceAddress',
+            'agentoffice.localServicePort',
+            'agentoffice.localServiceRunning',
+            'agentoffice.localServiceStopped',
+            'agentoffice.localServiceCopy',
+            'agentoffice.localServiceCopied',
+            'agentoffice.localServicePortInvalid',
+            'agentoffice.localServiceLocalhost',
+            'agentoffice.openInBrowser',
+            'agentoffice.localServiceApplying',
             'agentoffice.modelLabel',
             'agentoffice.modelGlobalDefault',
             'agentoffice.modelHint',
@@ -656,6 +692,89 @@ export class AgentOfficeApplication extends BaseApplication {
         };
     }
 
+    private getLocalService(): StaffLocalServiceManager {
+        if (!this.localService) {
+            this.localService = new StaffLocalServiceManager({
+                getStaffDetail: (staffId) => this.callAgentOfficeWorker<StaffDetail>('getStaffDetail', staffId),
+                getHistory: (staffId, query) => this.callAgentOfficeWorker('getHistory', staffId, query),
+                sendMessage: (staffId, input) => this.sendMessage(staffId, input),
+                getResourceFilePath: (staffId, requested) => this.resolveStaffResourcePath(staffId, requested),
+                getLocale: () => getLocale(),
+                onStateChange: (staffId, runtime) => {
+                    void this.emitEvent('localServiceChanged', staffId, runtime).catch(() => undefined);
+                }
+            });
+        }
+        return this.localService;
+    }
+
+    /** 应用注册即恢复已开启的本地网络服务；启动早期 global worker 可能未就绪，按 5s 退避重试 */
+    private async restoreLocalServices(attempt = 0): Promise<void> {
+        if (this.schedulerStopping || this.localServiceRestoreDone) return;
+        try {
+            const staffs = await this.callAgentOfficeWorker<StaffListItem[]>('listStaffs');
+            for (const staff of staffs) {
+                if (!staff.enabled || !staff.local_service?.enabled) continue;
+                await this.getLocalService().apply(staff.id, staff.local_service);
+            }
+            this.localServiceRestoreDone = true;
+        } catch (error) {
+            const maxAttempts = 12;
+            if (attempt >= maxAttempts) {
+                logger.warn(
+                    `AgentOffice: gave up restoring local web services after ${maxAttempts} attempts: ${error}`
+                );
+                return;
+            }
+            this.localServiceRestoreTimer = setTimeout(() => void this.restoreLocalServices(attempt + 1), 5000);
+            this.localServiceRestoreTimer.unref?.();
+        }
+    }
+
+    getLocalServiceInfo(staffId: string): Promise<{ config: StaffLocalService; runtime: LocalServiceRuntime }> {
+        return this.callAgentOfficeWorker<StaffDetail>('getStaffDetail', staffId).then((detail) => ({
+            config: detail.local_service ?? normalizeStaffLocalService(undefined),
+            runtime: this.getLocalService().getRuntime(staffId)
+        }));
+    }
+
+    /** 用系统默认浏览器打开该员工的本地网络服务地址；服务未启动时抛出本地化错误 */
+    async openServiceInBrowser(staffId: string): Promise<void> {
+        const runtime = this.getLocalService().getRuntime(staffId);
+        if (!runtime.listening || !runtime.url) {
+            throw new Error(t('agentoffice.localServiceStopped'));
+        }
+        await getPlatform().openExternal(runtime.url);
+    }
+
+    listLocalAddresses(): Array<{ address: string; name: string }> {
+        const result: Array<{ address: string; name: string }> = [
+            { address: '127.0.0.1', name: t('agentoffice.localServiceLocalhost') }
+        ];
+        const seen = new Set(['127.0.0.1']);
+        for (const [name, addresses] of Object.entries(os.networkInterfaces())) {
+            for (const address of addresses ?? []) {
+                if (address.family !== 'IPv4' || address.internal || seen.has(address.address)) continue;
+                seen.add(address.address);
+                result.push({ address: address.address, name });
+            }
+        }
+        return result;
+    }
+
+    /** 员工停启/配置变化后，把本地服务收敛到与最新配置一致的状态 */
+    private async syncLocalServiceAfterUpdate(staffId: string, detail: StaffDetail): Promise<void> {
+        try {
+            const desired =
+                detail.enabled && detail.local_service?.enabled
+                    ? detail.local_service
+                    : { ...normalizeStaffLocalService(undefined), enabled: false };
+            await this.getLocalService().apply(staffId, desired);
+        } catch (error) {
+            logger.warn(`AgentOffice: failed to sync local service for staff ${staffId}: ${error}`);
+        }
+    }
+
     async createStaff(definition: StaffDefinitionInput) {
         const detail = await this.callAgentOfficeWorker<StaffDetail>(
             'createStaff',
@@ -689,6 +808,10 @@ export class AgentOfficeApplication extends BaseApplication {
             input.enabled !== undefined
         ) {
             await this.refreshStaffAgentAfterMutation(staffId, detail);
+        }
+        // 停用员工或调整服务配置时同步本地网络服务；员工停用后服务必须一并停止
+        if (input.local_service !== undefined || input.enabled !== undefined) {
+            await this.syncLocalServiceAfterUpdate(staffId, detail);
         }
         return detail;
     }
@@ -818,6 +941,7 @@ export class AgentOfficeApplication extends BaseApplication {
 
     private async deleteStaffLocked(staffId: string, mode: 'trash' | 'permanent'): Promise<void> {
         await this.stopActiveStaffTasks(staffId);
+        await this.getLocalService().stop(staffId);
         if (mode === 'permanent') {
             await this.callAgentOfficeWorker('deleteStaff', staffId);
             await this.removeStaffAgent(staffId);
@@ -1326,12 +1450,26 @@ export class AgentOfficeApplication extends BaseApplication {
                 .map((part) => decodeURIComponent(part));
             const staffId = parts.shift();
             if (!staffId) return new Response('Not found', { status: 404 });
-            const staffDirectory = this.staffDirectory(staffId);
-            const requested = parts.join('/');
+            const resolved = this.resolveStaffResourcePath(staffId, parts.join('/'));
+            if (!resolved) return new Response('Not found', { status: 404 });
+            return new Response(fs.readFileSync(resolved), {
+                headers: { 'content-type': mimeTypeFor(resolved), 'cache-control': 'no-store' }
+            });
+        } catch {
+            return new Response('Bad request', { status: 400 });
+        }
+    }
+
+    /**
+     * 校验员工资源请求路径并解析为可下发的文件绝对路径；
+     * agentoffice:// 协议与本地网络服务的 HTTP 接口共用这一份越权防护：
+     * 仅允许 portrait 与 resources/ 前缀，且解析结果必须落在对应目录内。
+     */
+    private resolveStaffResourcePath(staffId: string, requested: string): string | null {
+        try {
             const portraitRequest = requested === 'portrait';
-            if (!portraitRequest && !requested.startsWith('resources/')) {
-                return new Response('Not found', { status: 404 });
-            }
+            if (!portraitRequest && !requested.startsWith('resources/')) return null;
+            const staffDirectory = this.staffDirectory(staffId);
             const filePath = portraitRequest
                 ? path.join(staffDirectory, 'agent', 'portrait.png')
                 : path.join(staffDirectory, requested);
@@ -1339,17 +1477,11 @@ export class AgentOfficeApplication extends BaseApplication {
                 ? path.join(staffDirectory, 'agent')
                 : path.join(staffDirectory, 'resources');
             const resolved = path.resolve(filePath);
-            if (!resolved.startsWith(`${path.resolve(allowedRoot)}${path.sep}`)) {
-                return new Response('Forbidden', { status: 403 });
-            }
-            if (!fs.existsSync(resolved) || !fs.statSync(resolved).isFile()) {
-                return new Response('Not found', { status: 404 });
-            }
-            return new Response(fs.readFileSync(resolved), {
-                headers: { 'content-type': mimeTypeFor(resolved), 'cache-control': 'no-store' }
-            });
+            if (!resolved.startsWith(`${path.resolve(allowedRoot)}${path.sep}`)) return null;
+            if (!fs.existsSync(resolved) || !fs.statSync(resolved).isFile()) return null;
+            return resolved;
         } catch {
-            return new Response('Bad request', { status: 400 });
+            return null;
         }
     }
 }

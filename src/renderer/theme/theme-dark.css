@@ -2525,7 +2525,12 @@ html[data-theme='dark'] message-queue-panel .message-queue-item:hover {
     background: rgba(255, 255, 255, 0.08) !important;
 }
 
-html[data-theme='dark'] message-queue-panel .message-queue-item-index {
+html[data-theme='dark'] message-queue-panel .message-queue-drag-handle {
+    color: var(--od-text-muted) !important;
+}
+
+html[data-theme='dark'] message-queue-panel .message-queue-drag-handle:hover,
+html[data-theme='dark'] message-queue-panel .message-queue-drag-handle:focus-visible {
     background: rgba(96, 165, 250, 0.2) !important;
     color: #93c5fd !important;
 }

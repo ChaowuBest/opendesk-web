@@ -74,10 +74,10 @@ export async function checkTerminationFromMessages(
 ): Promise<TerminationState> {
     const fastResult = fastInterruptionCheck(lastTextResponse);
     if (fastResult === 'interrupted') {
+        // 用户原始任务输入/输出属于敏感内容，日志只记录长度，不记录原文
         logger.info(
-            `termination state checked via fast path: interrupted\n` +
-                `[userQuestion] ${userQuestion}\n` +
-                `[lastTextResponse] ${lastTextResponse}`
+            `termination state checked via fast path: interrupted ` +
+                `(userQuestion length=${userQuestion.length}, lastTextResponse length=${lastTextResponse.length})`
         );
         return 'interrupted';
     }
@@ -86,7 +86,7 @@ export async function checkTerminationFromMessages(
     userMessage += `用户的原始问题为: ${userQuestion}\n`;
     userMessage += `你的回答的最后一部分为: ${lastTextResponse}\n\n请你判断对话的状态。`;
 
-    logger.debug(`termination check LLM input:\n${userMessage}`);
+    logger.debug(`termination check LLM input prepared (${userMessage.length} chars, user content omitted)`);
 
     const modelParam = model || Setting.getInstance().getDefaultModelInstance();
     if (!modelParam) {
@@ -124,9 +124,8 @@ export async function checkTerminationFromMessages(
     const normalized = rawResult.trim().toLowerCase();
 
     logger.info(
-        `termination check LLM output: ${rawResult} (normalized: ${normalized})\n` +
-            `[userQuestion] ${userQuestion}\n` +
-            `[lastTextResponse] ${lastTextResponse}`
+        `termination check LLM output: ${rawResult} (normalized: ${normalized}, ` +
+            `userQuestion length=${userQuestion.length}, lastTextResponse length=${lastTextResponse.length})`
     );
 
     if (normalized.includes('interrupted')) {
@@ -196,8 +195,8 @@ export async function checkTermination(
     const trailingResponse = extractTrailingResponse(lastAssistantMessage.content);
     if (!trailingResponse) {
         logger.warn(
-            'termination check: trailing response is empty, defaulting to interrupted\n' +
-                `[userQuestion] ${lastUserMessage.getPlainText()}`
+            `termination check: trailing response is empty, defaulting to interrupted ` +
+                `(userQuestion length=${lastUserMessage.getPlainText().length})`
         );
         return 'interrupted';
     }

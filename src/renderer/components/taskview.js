@@ -94,6 +94,9 @@ export const TASKVIEW_HISTORY_BATCH_MESSAGE_LIMIT = 20;
 export const TASKVIEW_HISTORY_BATCH_HTML_CHAR_LIMIT = 200000;
 const TASKVIEW_HISTORY_TOP_LOAD_THRESHOLD_PX = 96;
 const TASKVIEW_HISTORY_VIEWPORT_FILL_GUARD = 8;
+// 流式思考预览只保留尾部切片：全文每帧重写的布局/文本成本会随思考长度线性膨胀，
+// 是长任务下渲染进程 CPU 飙高的主因之一。
+const TASKVIEW_REASONING_PREVIEW_TAIL_CHARS = 2000;
 let taskViewT = createRendererTranslator();
 let guiReasonDisplayMode = 'inline';
 
@@ -186,6 +189,19 @@ function formatReasoningElapsedTime(seconds, chars = null) {
         timeStr += taskViewT('reasoning.elapsed.chars', { chars: tokens });
     }
     return timeStr;
+}
+
+/**
+ * 流式思考预览的尾部切片：预览区始终滚动钉底展示最新内容，
+ * 只写尾部可将每帧 DOM 写入与文本排版成本从 O(累计长度) 降到 O(切片长度)。
+ * 切片按行边界对齐，避免首行显示半截内容。
+ */
+function sliceReasoningPreviewTail(text) {
+    const value = text || '';
+    if (value.length <= TASKVIEW_REASONING_PREVIEW_TAIL_CHARS) return value;
+    const tail = value.slice(-TASKVIEW_REASONING_PREVIEW_TAIL_CHARS);
+    const newlineIndex = tail.indexOf('\n');
+    return newlineIndex >= 0 ? tail.slice(newlineIndex + 1) : tail;
 }
 
 class TaskView extends HTMLElement {
@@ -818,7 +834,9 @@ class TaskView extends HTMLElement {
         if (isBubble) {
             // Bubble starts hidden for completed blocks; streaming blocks show it immediately
             const bubbleHiddenClass = isStreaming ? '' : ' reasoning-bubble-hidden';
-            const bubbleHtml = `<div class="reasoning-bubble compact-scroll${bubbleHiddenClass}"><div class="reasoning-bubble-content text-[11px] leading-relaxed whitespace-pre-wrap">${escaped}</div></div>`;
+            // 流式气泡只写尾部切片，全文在 finalize 时一次性回填
+            const bubbleText = escapeHtml(isStreaming ? sliceReasoningPreviewTail(rendered) : rendered || '');
+            const bubbleHtml = `<div class="reasoning-bubble compact-scroll${bubbleHiddenClass}"><div class="reasoning-bubble-content text-[11px] leading-relaxed whitespace-pre-wrap">${bubbleText}</div></div>`;
             return `
         <div class="reasoning-block-od od-inline-toolcall-container ${stateClass}"${isStreaming ? ` data-reasoning-start="${Date.now()}"` : ''}>
             <div class="reasoning-header flex items-center gap-1.5 min-w-0 cursor-pointer select-none py-0.5">
@@ -837,10 +855,15 @@ class TaskView extends HTMLElement {
 
         let previewHtml = '';
         if (isStreaming) {
-            previewHtml = `<div class="reasoning-preview-area"><div class="reasoning-preview-content px-3 pb-1.5 text-slate-500 text-[11px] leading-relaxed whitespace-pre-wrap">${escaped}</div></div>`;
+            previewHtml = `<div class="reasoning-preview-area"><div class="reasoning-preview-content px-3 pb-1.5 text-slate-500 text-[11px] leading-relaxed whitespace-pre-wrap">${escapeHtml(
+                sliceReasoningPreviewTail(rendered)
+            )}</div></div>`;
         }
 
-        const fullHtml = `<div class="reasoning-full-area"><div class="reasoning-content px-3 pb-2 text-slate-500 text-[11px] leading-relaxed whitespace-pre-wrap">${escaped}</div></div>`;
+        // 流式块的全文区保持为空：折叠期间每帧写入全文会让文本布局成本随思考长度
+        // 线性膨胀（历史越长卡顿越明显）。全文由 finalizeReasoningBlock 一次性回填。
+        const fullText = isStreaming ? '' : escaped;
+        const fullHtml = `<div class="reasoning-full-area"><div class="reasoning-content px-3 pb-2 text-slate-500 text-[11px] leading-relaxed whitespace-pre-wrap">${fullText}</div></div>`;
 
         return `
         <div class="reasoning-block-od od-inline-toolcall-container ${stateClass}"${isStreaming ? ` data-reasoning-start="${Date.now()}"` : ''}>
@@ -858,6 +881,10 @@ class TaskView extends HTMLElement {
     /**
      * Update the live preview and hidden full content of a streaming reasoning block.
      * Also updates the elapsed time display in real-time.
+     *
+     * 预览节点只写尾部切片；全文节点折叠期间跳写（仅记录最新全文，由
+     * finalizeReasoningBlock 一次性回填）。流式块在思考期间始终折叠（展开开关
+     * 只对 completed 块生效），因此跳写不影响任何可见内容。
      */
     static updateReasoningPreview(el, text) {
         if (!el) return;
@@ -866,6 +893,8 @@ class TaskView extends HTMLElement {
         // 思考块会继续计时，出现"两个思考块同时活跃同时计时"。
         if (el.classList.contains('reasoning-completed')) return;
         el._reasoningTextLength = (text || '').length;
+        el._reasoningFullText = text || '';
+        el._reasoningFullStale = true;
 
         // Time display refresh (created once per element)
         if (!el._refreshReasoningTime) {
@@ -896,10 +925,12 @@ class TaskView extends HTMLElement {
         // Refresh time display on every content update (real-time char count)
         el._refreshReasoningTime();
 
+        const tailText = sliceReasoningPreviewTail(text);
+
         // Bubble mode: update bubble content
         const bubbleContent = el.querySelector('.reasoning-bubble-content');
         if (bubbleContent) {
-            bubbleContent.textContent = text;
+            bubbleContent.textContent = tailText;
             const bubble = el.querySelector('.reasoning-bubble');
             if (bubble) {
                 bubble.scrollTop = bubble.scrollHeight;
@@ -912,17 +943,13 @@ class TaskView extends HTMLElement {
         // of staring at a frozen head of the preview (clipped by max-height).
         const previewContent = el.querySelector('.reasoning-preview-content');
         if (previewContent) {
-            previewContent.textContent = text;
+            previewContent.textContent = tailText;
             const previewArea = el.querySelector('.reasoning-preview-area');
             if (previewArea) {
                 previewArea.scrollTop = previewArea.scrollHeight;
             }
         }
-
-        const fullContent = el.querySelector('.reasoning-content');
-        if (fullContent) {
-            fullContent.textContent = text;
-        }
+        // 全文节点（.reasoning-content）不再逐帧写入，见 finalizeReasoningBlock 的回填。
     }
 
     /**
@@ -999,6 +1026,20 @@ class TaskView extends HTMLElement {
 
         // Flush any deferred streaming text so the finalized block is complete.
         TaskView.flushReasoningPreview(el);
+
+        // 折叠期间全文区跳写，这里一次性回填，保证完成后展开可见完整内容
+        // （历史长时这是把全文逐帧写入布局树改为仅一次写入的关键）。
+        if (el._reasoningFullStale && el._reasoningFullText !== undefined) {
+            const fullContent = el.querySelector('.reasoning-content');
+            if (fullContent) {
+                fullContent.textContent = el._reasoningFullText;
+            }
+            const bubbleContent = el.querySelector('.reasoning-bubble-content');
+            if (bubbleContent) {
+                bubbleContent.textContent = el._reasoningFullText;
+            }
+            el._reasoningFullStale = false;
+        }
 
         // Clear the per-second time interval
         if (el._reasoningTimeInterval) {
@@ -2496,6 +2537,22 @@ class TaskView extends HTMLElement {
         this._updateMessageQueuePanel();
     }
 
+    /** 将队列消息移动到指定位置，后续自动发送沿用此顺序。 */
+    reorderMessageQueue(id, targetIndex) {
+        const index = this.messageQueue.findIndex((item) => item.id === id);
+        if (
+            index < 0 ||
+            !Number.isInteger(targetIndex) ||
+            targetIndex < 0 ||
+            targetIndex >= this.messageQueue.length ||
+            index === targetIndex
+        )
+            return;
+        const [item] = this.messageQueue.splice(index, 1);
+        this.messageQueue.splice(targetIndex, 0, item);
+        this._updateMessageQueuePanel();
+    }
+
     /**
      * 结束所有活跃 reasoning 块的计时并清理流式残留状态
      * （等待占位、usage spinner、流式光标、最后一条 assistant 消息的元信息行）。
@@ -2710,6 +2767,9 @@ class TaskView extends HTMLElement {
     }
 
     emitTaskStatusChanged(status) {
+        // 流式期间禁用队列面板的 backdrop-filter：聊天区每帧重绘会让背景模糊持续
+        // 重新光栅化，是 GPU 占用的重要来源（对应 CSS 见 task-view[streaming] 规则）。
+        this.toggleAttribute('streaming', status === 'running');
         this.dispatchEvent(
             new CustomEvent('task-status-changed', {
                 detail: {
@@ -5040,7 +5100,8 @@ class TaskView extends HTMLElement {
             queuePanel.setCallbacks(
                 (id) => this.sendQueueMessageImmediately(id),
                 (item) => this.editQueueMessage(item),
-                (id) => this.removeFromMessageQueue(id)
+                (id) => this.removeFromMessageQueue(id),
+                (id, targetIndex) => this.reorderMessageQueue(id, targetIndex)
             );
         }
 
@@ -5177,7 +5238,10 @@ class TaskView extends HTMLElement {
             chatHistory.querySelectorAll('.pool-seg').forEach((seg) => {
                 const indicator = seg.querySelector('.pool-seg-indicator');
                 const active = seg.querySelector('.pool-seg-btn.active');
-                if (indicator && active) {
+                // 历史子项启用 content-visibility:auto 后，视口外卡片是"跳过"态，
+                // 读取 offset 会得到 0；此时不能把 0 写进指示器（否则滚回可见时
+                // 指示器丢失），等卡片真实渲染后由点击/下次变更重新定位。
+                if (indicator && active && active.offsetWidth > 0) {
                     indicator.style.left = active.offsetLeft + 'px';
                     indicator.style.width = active.offsetWidth + 'px';
                 }

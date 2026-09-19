@@ -12,6 +12,7 @@
 import { escapeHtml } from '../../../common/utils/escape.js';
 import { createRendererTranslator, resolveRendererLocale } from '../../locale.js';
 import { isApplicationVisibleInMenu, type ExperimentalFeatureSettings } from '../../utils/application-visibility.js';
+import { CLOSE_SVG, detectDarkMode, MODAL_CSS, renderIcon } from '../confirmModal.js';
 import { composeCardSrcDoc, hasCardContent } from './cardContent.js';
 import { playDesktopExitTransition } from './desktopEffects.js';
 import { buildDesktopStyles } from './desktopStyles.js';
@@ -99,8 +100,9 @@ type PointerState =
           startClientY: number;
           start: GridRect;
           currentRect: PixelRect;
-          lastClientX: number;
-          lastClientY: number;
+          /** 抓取偏移：按下时指针相对卡片左缘/上缘的位置，拖动按"指针 + 偏移"绝对跟随 */
+          grabOffsetX: number;
+          grabOffsetY: number;
       }
     | {
           type: 'card-resize';
@@ -239,6 +241,7 @@ export class ImmersiveDesktop extends HTMLElement {
         window.removeEventListener('pointerdown', this.onGlobalPointerDown);
         window.removeEventListener('pointermove', this.onGlobalPointerMove);
         window.removeEventListener('pointerup', this.onGlobalPointerUp);
+        window.removeEventListener('pointercancel', this.onGlobalPointerCancel);
         window.removeEventListener('keydown', this.onGlobalKeyDown);
         window.removeEventListener('message', this.onCardLinkMessage);
         this._stageObserver?.disconnect();
@@ -487,6 +490,7 @@ export class ImmersiveDesktop extends HTMLElement {
         window.addEventListener('pointerdown', this.onGlobalPointerDown);
         window.addEventListener('pointermove', this.onGlobalPointerMove);
         window.addEventListener('pointerup', this.onGlobalPointerUp);
+        window.addEventListener('pointercancel', this.onGlobalPointerCancel);
         window.addEventListener('keydown', this.onGlobalKeyDown);
         window.addEventListener('message', this.onCardLinkMessage);
 
@@ -597,6 +601,16 @@ export class ImmersiveDesktop extends HTMLElement {
     };
 
     private onGlobalPointerUp = (): void => {
+        this.finishPointerInteraction();
+    };
+
+    // 拖动/缩放被系统打断（如窗口切换触发 pointercancel）时与 pointerup 同样收尾，
+    // 避免拖动状态卡死
+    private onGlobalPointerCancel = (): void => {
+        this.finishPointerInteraction();
+    };
+
+    private finishPointerInteraction(): void {
         if (!this._pointerState) return;
         const state = this._pointerState;
         this._pointerState = null;
@@ -612,7 +626,7 @@ export class ImmersiveDesktop extends HTMLElement {
                 this.endDesktopInteraction();
                 break;
         }
-    };
+    }
 
     /* ================= 卡片数据 ================= */
 
@@ -734,10 +748,13 @@ export class ImmersiveDesktop extends HTMLElement {
         element.dataset.cardId = card.id;
         element.style.setProperty('--od-i', String(this._cardSeq++));
         element.innerHTML = `
-            <header class="od-card-header" data-card-drag="${safeText(card.id)}">
-                <span class="od-card-title" title="${safeText(card.prompt)}">${safeText(card.prompt || this.t('renderer.desktop.card.untitled'))}</span>
-                ${card.prompt ? `<span class="od-card-live">${safeText(this.t(`renderer.desktop.card.interval.${card.interval}`))}</span>` : ''}
-                ${card.html && card.lastError ? this.renderCardErrorBadge(card) : ''}
+            <div class="od-card-drag-zone" data-card-drag="${safeText(card.id)}"></div>
+            <header class="od-card-header">
+                <div class="od-card-pill">
+                    <span class="od-card-title" title="${safeText(card.prompt)}">${safeText(card.prompt || this.t('renderer.desktop.card.untitled'))}</span>
+                    ${card.prompt ? `<span class="od-card-live">${safeText(this.t(`renderer.desktop.card.interval.${card.interval}`))}</span>` : ''}
+                    ${card.html && card.lastError ? this.renderCardErrorBadge(card) : ''}
+                </div>
             </header>
             <div class="od-card-body" data-card-body></div>
             ${this.renderCardResizeHandles()}
@@ -892,6 +909,18 @@ export class ImmersiveDesktop extends HTMLElement {
         this.classList.remove('od-interacting');
     }
 
+    /**
+     * 捕获指针：拖动/缩放期间即使鼠标移出窗口也能连续收到坐标，
+     * 避免回窗时产生巨大位移增量导致卡片跳变、抓取点错位。
+     */
+    private captureCardPointer(element: HTMLElement | null, event: PointerEvent): void {
+        try {
+            element?.setPointerCapture(event.pointerId);
+        } catch {
+            // 指针可能已不再活跃（capture 失败不影响常规拖动），忽略
+        }
+    }
+
     private startCardDrag(event: PointerEvent, cardId: string): void {
         if (this._pointerState) return;
         const card = this.findCard(cardId);
@@ -912,20 +941,22 @@ export class ImmersiveDesktop extends HTMLElement {
         this._lastHeaderClickCardId = cardId;
         this._lastHeaderDragMoved = false;
         this.hideContextMenu();
+        const startRect = gridRectToPixel(card, metrics);
         this._pointerState = {
             type: 'card-drag',
             id: cardId,
             startClientX: event.clientX,
             startClientY: event.clientY,
             start: { gridX: card.gridX, gridY: card.gridY, gridW: card.gridW, gridH: card.gridH },
-            currentRect: gridRectToPixel(card, metrics),
-            lastClientX: event.clientX,
-            lastClientY: event.clientY
+            currentRect: startRect,
+            grabOffsetX: event.clientX - startRect.left,
+            grabOffsetY: event.clientY - startRect.top
         };
         const element = this.querySelector<HTMLElement>(`.od-card[data-card-id="${CSS.escape(cardId)}"]`);
         element?.classList.remove('od-card-enter');
         element?.classList.add('od-card-dragging');
         this.bringCardToFront(element);
+        this.captureCardPointer(element, event);
         this.beginDesktopInteraction(metrics);
     }
 
@@ -940,16 +971,17 @@ export class ImmersiveDesktop extends HTMLElement {
         const others = this._cards
             .filter((card) => card.id !== state.id && hasCardContent(card))
             .map((card) => gridRectToPixel(card, metrics));
+        // 绝对跟随：目标位置 = 指针当前位置 + 抓取偏移。相比按增量位移，
+        // 事件丢失（如鼠标移出窗口、被系统打断）不会累积位移差——
+        // 指针回到窗口时卡片立即吸附回指针，而不是带着错位的偏移平行漂移。
         const next = movePixelRectAvoidingCards(
             state.currentRect,
-            (event.clientX - state.lastClientX) / metrics.viewportScaleX,
-            (event.clientY - state.lastClientY) / metrics.viewportScaleY,
+            (event.clientX - state.grabOffsetX - state.currentRect.left) / metrics.viewportScaleX,
+            (event.clientY - state.grabOffsetY - state.currentRect.top) / metrics.viewportScaleY,
             metrics,
             others
         );
         state.currentRect = next;
-        state.lastClientX = event.clientX;
-        state.lastClientY = event.clientY;
         if (Math.abs(event.clientX - state.startClientX) > 5 || Math.abs(event.clientY - state.startClientY) > 5) {
             this._lastHeaderDragMoved = true;
         }
@@ -993,6 +1025,7 @@ export class ImmersiveDesktop extends HTMLElement {
         element?.classList.remove('od-card-enter');
         element?.classList.add('od-card-resizing');
         this.bringCardToFront(element);
+        this.captureCardPointer(element, event);
         this._pointerState = {
             type: 'card-resize',
             id: cardId,
@@ -1093,6 +1126,11 @@ export class ImmersiveDesktop extends HTMLElement {
         this._contextGrid = null;
         const card = this.findCard(cardId);
         const refreshing = this._refreshingCards.has(cardId);
+        // 刷新时间二级菜单：当前间隔在左侧打勾，点击即改
+        const intervalSubmenu = INTERVAL_OPTIONS.map(
+            (option) =>
+                `<button type="button" class="od-context-item${option.value === card?.interval ? ' od-sub-active' : ''}" data-menu="interval" data-value="${option.value}"><span class="od-context-check">${option.value === card?.interval ? '<i class="fa-solid fa-check"></i>' : ''}</span>${safeText(this.t(option.key))}</button>`
+        ).join('');
         const items: Array<string | false> = [
             `<button class="od-context-item" data-menu="settings"><i class="fa-solid fa-gear"></i>${safeText(this.t('renderer.desktop.menu.settings'))}</button>`,
             card?.prompt && !refreshing
@@ -1100,6 +1138,7 @@ export class ImmersiveDesktop extends HTMLElement {
                 : card?.prompt && refreshing
                   ? `<button class="od-context-item" disabled><i class="fa-solid fa-rotate"></i>${safeText(this.t('renderer.desktop.menu.refreshNow'))}</button>`
                   : false,
+            `<div class="od-context-item od-context-sub-trigger" data-submenu aria-haspopup="true"><i class="fa-solid fa-clock"></i>${safeText(this.t('renderer.desktop.menu.interval'))}<span class="od-context-arrow"><i class="fa-solid fa-chevron-right"></i></span><div class="od-context-submenu">${intervalSubmenu}</div></div>`,
             'sep',
             `<button class="od-context-item" data-menu="copy"><i class="fa-regular fa-copy"></i>${safeText(this.t('renderer.desktop.menu.copy'))}</button>`,
             `<button class="od-context-item danger" data-menu="delete"><i class="fa-regular fa-trash-can"></i>${safeText(this.t('common.delete'))}</button>`
@@ -1142,6 +1181,8 @@ export class ImmersiveDesktop extends HTMLElement {
             .map((item) => (item === 'sep' ? '<div class="od-context-sep"></div>' : item))
             .join('');
         menu.hidden = false;
+        // 菜单贴右侧屏幕时二级菜单翻到左侧展开
+        menu.classList.toggle('od-sub-opens-left', clientX > window.innerWidth - 380);
         const left = clamp(clientX, 8, window.innerWidth - 210);
         const top = clamp(clientY, 8, window.innerHeight - 60);
         menu.style.left = `${left}px`;
@@ -1181,6 +1222,19 @@ export class ImmersiveDesktop extends HTMLElement {
                 if (card) void this.refreshCard(card);
                 break;
             }
+            case 'interval': {
+                const card = this.findCard(this._contextCardId ?? undefined);
+                if (card) {
+                    card.interval = normalizeInterval(item.dataset.value);
+                    this.saveCards();
+                    // 只改间隔不重建卡片：就地更新胶囊上的间隔徽标，避免 iframe 重载闪烁
+                    const live = this.querySelector<HTMLElement>(
+                        `.od-card[data-card-id="${CSS.escape(card.id)}"] .od-card-live`
+                    );
+                    if (live) live.textContent = this.t(`renderer.desktop.card.interval.${card.interval}`);
+                }
+                break;
+            }
             case 'copy': {
                 const card = this.findCard(this._contextCardId ?? undefined);
                 if (card) this.copyCard(card);
@@ -1207,13 +1261,40 @@ export class ImmersiveDesktop extends HTMLElement {
     /**
      * 卡片内链接点击（由 composeCardSrcDoc 注入的拦截脚本转发）：
      * 仅接受 http(s) 链接，以浏览器浮窗打开，避免卡片被就地导航毁掉。
+     * 以及卡片内的右键（od-card-contextmenu）：卡片任意位置右键都弹出卡片菜单。
      */
     private onCardLinkMessage = (event: MessageEvent): void => {
-        const data = event.data as { type?: string; url?: string } | null;
-        if (!data || data.type !== 'od-open-link' || typeof data.url !== 'string') return;
-        if (!/^https?:\/\//i.test(data.url)) return;
-        void this.openLinkInBrowser(data.url);
+        const data = event.data as { type?: string; url?: string; x?: number; y?: number } | null;
+        if (!data || typeof data.type !== 'string') return;
+        if (data.type === 'od-open-link') {
+            if (typeof data.url !== 'string') return;
+            if (!/^https?:\/\//i.test(data.url)) return;
+            void this.openLinkInBrowser(data.url);
+            return;
+        }
+        if (data.type === 'od-card-contextmenu') {
+            this.showCardContextMenuFromFrame(event.source, data.x, data.y);
+        }
     };
+
+    /**
+     * iframe 内右键（由注入脚本转发）：右键事件停留在 iframe 文档内，
+     * 父层拿不到，这里按消息来源定位卡片，把 iframe 视口坐标换算为桌面
+     * 客户区坐标后弹出卡片上下文菜单。
+     */
+    private showCardContextMenuFromFrame(source: MessageEventSource | null, x: unknown, y: unknown): void {
+        if (!source || typeof x !== 'number' || typeof y !== 'number') return;
+        const cardElement = Array.from(this.querySelectorAll<HTMLElement>('.od-card')).find(
+            (element) => element.querySelector('iframe')?.contentWindow === source
+        );
+        const frame = cardElement?.querySelector('iframe');
+        if (!cardElement || !frame || !cardElement.dataset.cardId) return;
+        const rect = frame.getBoundingClientRect();
+        // 桌面可能存在整体缩放，按渲染尺寸/布局尺寸折算 iframe 本地坐标
+        const scaleX = frame.offsetWidth ? rect.width / frame.offsetWidth : 1;
+        const scaleY = frame.offsetHeight ? rect.height / frame.offsetHeight : 1;
+        this.showCardContextMenu(cardElement.dataset.cardId, rect.left + x * scaleX, rect.top + y * scaleY);
+    }
 
     private async openLinkInBrowser(url: string): Promise<void> {
         const desktopWindow = await this.openApplicationWindow('browser');
@@ -1267,45 +1348,87 @@ export class ImmersiveDesktop extends HTMLElement {
 
     /* ================= 卡片设置模态 ================= */
 
+    /**
+     * 卡片设置模态：复用 confirmModal 的顶部色带体系（docs/designs/modal.html 规范，
+     * 与设置界面模型编辑等弹窗一致）。含表单，刻意不绑定"点击遮罩关闭"——
+     * 对应 bindOverlayDismiss 的 enabled=false 语义，避免误触遮罩丢失正在填写的内容。
+     */
     private showCardEditor(card: SmartCard): void {
         const host = this.querySelector('[data-modal-host]') as HTMLElement | null;
         if (!host) return;
+        // 打开时的原始值：底部按钮按"去除首尾空格后的关注内容是否变化"切换
+        const originalPrompt = card.prompt;
+        const originalInterval = card.interval;
         const intervalOptions = INTERVAL_OPTIONS.map(
             (option) =>
                 `<option value="${option.value}" ${card.interval === option.value ? 'selected' : ''}>${safeText(this.t(option.key))}</option>`
         ).join('');
         host.innerHTML = `
-        <div class="od-modal-overlay">
-            <div class="od-modal" role="dialog" aria-modal="true">
-                <h2><span class="dot"></span>${safeText(this.t('renderer.desktop.card.editorTitle'))}</h2>
-                <label>
-                    <span>${safeText(this.t('renderer.desktop.card.promptLabel'))}</span>
-                    <textarea data-card-prompt placeholder="${safeText(this.t('renderer.desktop.card.promptPlaceholder'))}">${safeText(card.prompt)}</textarea>
-                </label>
-                <label>
-                    <span>${safeText(this.t('renderer.desktop.card.intervalLabel'))}</span>
-                    <select data-card-editor-interval>${intervalOptions}</select>
-                </label>
-                <div class="od-modal-actions">
-                    <button type="button" class="od-btn" data-card-editor-cancel>${safeText(this.t('common.cancel'))}</button>
-                    <button type="button" class="od-btn primary" data-card-editor-confirm>${safeText(this.t('renderer.desktop.card.saveAndGenerate'))}</button>
+        <div class="od-confirm-modal-overlay${detectDarkMode(host) ? ' od-modal-dark' : ''}">
+            <style>${MODAL_CSS}
+            /* 卡片设置表单：遵循 modal.html §02 表单区标注（16/24 内边距、12 组间距、11.5 标签） */
+            .od-card-editor-card { width: 460px; max-width: 92vw; }
+            .od-card-editor-form { padding: 16px 24px; display: flex; flex-direction: column; gap: 12px; }
+            .od-card-editor-form .fg { display: flex; flex-direction: column; gap: 5px; }
+            .od-card-editor-form .fl { font-size: 11.5px; font-weight: 500; color: var(--mc-ink2); }
+            .od-card-editor-form textarea, .od-card-editor-form select {
+                appearance: none; -webkit-appearance: none;
+                width: 100%; box-sizing: border-box;
+                border: 1px solid var(--mc-line); border-radius: 8px; background: var(--mc-bg);
+                padding: 7px 10px; font-family: inherit; font-size: 12px; color: var(--mc-ink2);
+                transition: border-color 0.15s; outline: none;
+            }
+            .od-card-editor-form textarea { min-height: 96px; resize: vertical; line-height: 1.6; }
+            .od-card-editor-form textarea::placeholder { color: var(--mc-ink4); }
+            .od-card-editor-form select {
+                padding-right: 24px; cursor: pointer;
+                background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='10' height='10' viewBox='0 0 24 24' fill='none' stroke='%239B968F' stroke-width='2.5' stroke-linecap='round' stroke-linejoin='round'><polyline points='6 9 12 15 18 9'/></svg>");
+                background-repeat: no-repeat; background-position: right 8px center;
+            }
+            .od-card-editor-form textarea:focus, .od-card-editor-form select:focus { border-color: var(--mc-accent); }
+            </style>
+            <div class="od-confirm-modal-card od-card-editor-card" role="dialog" aria-modal="true">
+                <div class="od-confirm-modal-banner info">
+                    <div class="od-confirm-modal-icon">${renderIcon('fa-gear')}</div>
+                    <div class="od-confirm-modal-banner-text">
+                        <div class="od-confirm-modal-title">${safeText(this.t('renderer.desktop.card.editorTitle'))}</div>
+                    </div>
+                    <button type="button" class="od-confirm-modal-close" data-card-editor-close aria-label="${safeText(this.t('common.close'))}">${CLOSE_SVG}</button>
+                </div>
+                <div class="od-card-editor-form">
+                    <div class="fg">
+                        <label class="fl" for="od-card-editor-prompt">${safeText(this.t('renderer.desktop.card.promptLabel'))}</label>
+                        <textarea id="od-card-editor-prompt" data-card-prompt placeholder="${safeText(this.t('renderer.desktop.card.promptPlaceholder'))}">${safeText(card.prompt)}</textarea>
+                    </div>
+                    <div class="fg">
+                        <label class="fl" for="od-card-editor-interval">${safeText(this.t('renderer.desktop.card.intervalLabel'))}</label>
+                        <select id="od-card-editor-interval" data-card-editor-interval>${intervalOptions}</select>
+                    </div>
+                </div>
+                <div class="od-confirm-modal-footer">
+                    <button type="button" class="od-confirm-btn od-confirm-btn-cancel" data-card-editor-cancel>${safeText(this.t('common.cancel'))}</button>
+                    <button type="button" class="od-confirm-btn od-confirm-btn-primary" data-card-editor-save>${safeText(this.t('renderer.desktop.card.save'))}</button>
+                    <button type="button" class="od-confirm-btn od-confirm-btn-primary" data-card-editor-save-generate hidden>${safeText(this.t('renderer.desktop.card.saveAndGenerate'))}</button>
                 </div>
             </div>
         </div>`;
-        const overlay = host.querySelector('.od-modal-overlay') as HTMLElement | null;
         const textarea = host.querySelector('[data-card-prompt]') as HTMLTextAreaElement | null;
+        const saveBtn = host.querySelector('[data-card-editor-save]') as HTMLButtonElement | null;
+        const generateBtn = host.querySelector('[data-card-editor-save-generate]') as HTMLButtonElement | null;
+        host.querySelector('[data-card-editor-close]')?.addEventListener('click', () => this.closeCardEditor());
         host.querySelector('[data-card-editor-cancel]')?.addEventListener('click', () => this.closeCardEditor());
-        // Ctrl/Cmd + Enter 快捷保存；单独 Enter 仍保留换行
-        textarea?.addEventListener('keydown', (event) => {
-            if (event.key === 'Enter' && (event.ctrlKey || event.metaKey)) {
-                event.preventDefault();
-                (host.querySelector('[data-card-editor-confirm]') as HTMLButtonElement | null)?.click();
-            }
-        });
-        overlay?.addEventListener('click', (event) => {
-            if (event.target === overlay) this.closeCardEditor();
-        });
-        host.querySelector('[data-card-editor-confirm]')?.addEventListener('click', () => {
+
+        // 关注内容按首尾空格裁剪后对比：未变化只显示"保存"（避免无谓的重新生成），
+        // 有变化时追加"保存并立即生成"。两个按钮恒为红色主样式，切换只控制显隐，
+        // 避免"保存"按钮背景随输入来回闪变。
+        const syncEditorActions = (): void => {
+            if (!textarea || !saveBtn || !generateBtn) return;
+            generateBtn.hidden = textarea.value.trim() === originalPrompt.trim();
+        };
+        textarea?.addEventListener('input', syncEditorActions);
+        syncEditorActions();
+
+        const applyEditor = (generate: boolean): void => {
             const latest = this.findCard(card.id);
             if (!latest || !textarea) return;
             const interval = host.querySelector('[data-card-editor-interval]') as HTMLSelectElement | null;
@@ -1319,9 +1442,21 @@ export class ImmersiveDesktop extends HTMLElement {
             this._editingNewCardId = null;
             this.saveCards();
             this.closeCardEditor();
-            // 只更新当前卡片，避免全量重渲染导致其它卡片的 iframe 重新加载
-            this.updateSingleCard(latest);
-            if (latest.prompt) void this.refreshCard(latest);
+            // 内容与间隔都未变化时不重建卡片，避免 iframe 无谓重载闪烁
+            if (latest.prompt !== originalPrompt.trim() || latest.interval !== originalInterval) {
+                // 只更新当前卡片，避免全量重渲染导致其它卡片的 iframe 重新加载
+                this.updateSingleCard(latest);
+            }
+            if (generate && latest.prompt) void this.refreshCard(latest);
+        };
+        saveBtn?.addEventListener('click', () => applyEditor(false));
+        generateBtn?.addEventListener('click', () => applyEditor(true));
+        // Ctrl/Cmd + Enter 触发当前主操作：未变更时为"保存"，变更后为"保存并立即生成"
+        textarea?.addEventListener('keydown', (event) => {
+            if (event.key === 'Enter' && (event.ctrlKey || event.metaKey)) {
+                event.preventDefault();
+                (generateBtn && !generateBtn.hidden ? generateBtn : saveBtn)?.click();
+            }
         });
         window.setTimeout(() => textarea?.focus(), 0);
     }

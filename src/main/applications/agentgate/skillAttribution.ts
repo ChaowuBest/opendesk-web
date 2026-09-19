@@ -263,7 +263,8 @@ export async function attributeBatchInterceptions(
         // 调用 LLM
         const modelName = task.model || undefined;
         const sessionId = task.task_id || 'unknown';
-        logger.info(`[AgentGate] batch attribution prompt (${userPrompt.length} chars):\n${userPrompt.slice(0, 2000)}`);
+        // 对话上下文属于用户任务内容，不落日志，仅记录长度
+        logger.info(`[AgentGate] batch attribution prompt prepared (${userPrompt.length} chars, user content omitted)`);
         const response = await LLM.complete(attributionContext, modelName, {}, {
             maxTokens: 3000,
             temperature: 0.1,

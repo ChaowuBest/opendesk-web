@@ -114,6 +114,27 @@ describe('task-view message queue', () => {
         };
     });
 
+    test('reordered queued messages are auto-sent in the new order', () => {
+        const taskView = document.createElement('task-view') as any;
+        taskView.task_id = 'task-reorder';
+        taskView.task_status = 'running';
+        taskView.messageQueue = ['a', 'b', 'c'].map((id) => ({
+            id,
+            message: id,
+            attachedFilePaths: [],
+            attachedImages: []
+        }));
+        taskView._updateMessageQueuePanel = jest.fn();
+
+        taskView.reorderMessageQueue('c', 0);
+        expect(taskView.messageQueue.map((item: { id: string }) => item.id)).toEqual(['c', 'a', 'b']);
+        expect(taskView._updateMessageQueuePanel).toHaveBeenCalledTimes(1);
+
+        taskView.task_status = 'stopped';
+        taskView._autoSendQueueMessages();
+        expect(submitMessage).toHaveBeenCalledWith('task-reorder', expect.objectContaining({ message: 'c' }));
+    });
+
     test.each(['high', 'none', ''])('切换模型档位 %s 时立即传给任务 API，重新加载恢复所选档位', async (effort) => {
         const taskState = {
             model: 'model-a',
@@ -2764,7 +2785,8 @@ describe('task-view message queue', () => {
                 );
             }
 
-            const reasoningContent = taskView.querySelector('.reasoning-content');
+            const reasoningContent = taskView.querySelector('.reasoning-preview-content');
+            const reasoningFullContent = taskView.querySelector('.reasoning-content');
             expect(reasoningContent).not.toBeNull();
             // No frame has fired yet, so the DOM must not have been written once per token.
             expect(reasoningContent?.textContent).toBe('');
@@ -2775,6 +2797,8 @@ describe('task-view message queue', () => {
             Array.from(rafCallbacks.values()).forEach((cb) => cb(0));
             rafCallbacks.clear();
             expect(reasoningContent?.textContent).toBe('reasoning token 5 ');
+            // 全文节点折叠期间跳写（由 finalize 一次性回填）
+            expect(reasoningFullContent?.textContent).toBe('');
 
             // Finalizing flushes a pending update synchronously (no frame required).
             taskView._renderAssistantProgress(
@@ -2838,7 +2862,7 @@ describe('task-view message queue', () => {
                 historyContainer
             );
 
-            const reasoningContent = taskView.querySelector('.reasoning-content') as HTMLElement;
+            const reasoningContent = taskView.querySelector('.reasoning-preview-content') as HTMLElement;
             expect(reasoningContent).not.toBeNull();
             // RAF 全程挂起：未到兜底时间前不更新。
             expect(reasoningContent.textContent).toBe('');

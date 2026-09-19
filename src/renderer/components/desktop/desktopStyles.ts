@@ -130,7 +130,7 @@ export function buildDesktopStyles(): string {
         }
         .od-empty-state[hidden] { display: none; }
         .od-card {
-            position: absolute; overflow: hidden; min-width: 40px; min-height: 40px;
+            position: absolute; overflow: visible; min-width: 40px; min-height: 40px;
             border-radius: 14px; border: 1px solid var(--od-card-border);
             background: var(--od-card); backdrop-filter: blur(18px);
             box-shadow: var(--od-shadow);
@@ -161,19 +161,50 @@ export function buildDesktopStyles(): string {
             flex: none; display: flex; align-items: center; justify-content: space-between; gap: 8px;
             padding: 12px 18px 0; cursor: grab; min-height: 30px;
         }
-        /* 已生成卡片把内容铺满；标题只在悬停时作为顶部浮层出现，不挤压内容。 */
+        /* 生成中/错误态卡片：胶囊不单独成盒，头部布局与原先一致 */
+        .od-card-pill { display: contents; }
+        /* 已生成卡片把内容铺满；标题收进底部居中的小胶囊，浮出在卡片下缘之外
+         * （不遮挡卡片内容）。悬停卡片任意位置（Chromium 会把 iframe 上的悬停态
+         * 传播给父层）或拖动卡片时浮出。 */
         .od-card.od-card-done .od-card-header {
-            position: absolute; z-index: 4; top: 0; left: 0; right: 0;
-            max-height: 0; min-height: 0; padding: 0 18px; opacity: 0;
-            overflow: hidden; pointer-events: none; transform: translateY(-8px);
-            background: var(--od-panel); backdrop-filter: blur(14px);
-            transition: max-height 160ms ease, padding 160ms ease, opacity 120ms ease, transform 160ms ease;
+            position: absolute; z-index: 4; top: 100%; left: 0; right: 0;
+            margin-top: 6px;
+            display: flex; align-items: flex-start; justify-content: center;
+            padding: 0; min-height: 0; background: none; cursor: default; pointer-events: none;
         }
-        .od-card.od-card-done:hover .od-card-header,
-        .od-card.od-card-done.od-card-dragging .od-card-header {
-            max-height: 42px; min-height: 30px; padding: 12px 18px 0; opacity: 1;
-            pointer-events: auto; transform: translateY(0);
+        .od-card.od-card-done .od-card-pill {
+            display: inline-flex; align-items: center; gap: 7px;
+            min-width: 0; max-width: min(82%, 360px);
+            padding: 3px 12px; border-radius: 999px;
+            border: 1px solid var(--od-card-border);
+            background: color-mix(in srgb, var(--od-panel) 92%, transparent);
+            backdrop-filter: blur(14px);
+            box-shadow: 0 1px 2px rgba(28, 25, 23, 0.05), 0 6px 16px rgba(28, 25, 23, 0.1);
+            cursor: default; opacity: 0; transform: translateY(-6px); pointer-events: none;
+            transition: opacity 130ms ease, transform 160ms var(--od-ease-out);
         }
+        immersive-desktop.theme-dark .od-card.od-card-done .od-card-pill {
+            box-shadow: 0 1px 2px rgba(0, 0, 0, 0.36), 0 8px 22px rgba(0, 0, 0, 0.3);
+        }
+        .od-card.od-card-done:hover .od-card-pill,
+        .od-card.od-card-done.od-card-dragging .od-card-pill {
+            opacity: 1; transform: translateY(0); pointer-events: auto;
+        }
+        /* 顶部整条透明拖动区：data-card-drag 挂在这里，双击同样打开设置 */
+        .od-card-drag-zone {
+            position: absolute; z-index: 4; top: 0; left: 0; right: 0; height: 22px;
+            cursor: grab; touch-action: none;
+        }
+        .od-card.od-card-dragging .od-card-drag-zone { cursor: grabbing; }
+        .od-card.od-card-done.od-card-dragging .od-card-pill { cursor: grabbing; }
+        /* 胶囊内的标题与刷新状态用更小的字号，弱化对卡片内容的干扰；
+         * 小字号下 400 字重笔画偏虚，标题加深一档并用 500 字重保证可读性 */
+        .od-card.od-card-done .od-card-title {
+            font-size: 11px; letter-spacing: 0.02em; flex: 0 1 auto;
+            color: color-mix(in srgb, var(--od-ink) 62%, var(--od-ink-dim)); font-weight: 500;
+        }
+        .od-card.od-card-done .od-card-live { font-size: 9.5px; padding: 1px 6px; }
+        .od-card.od-card-done .od-card-warn { width: 16px; height: 16px; font-size: 9px; }
         .od-card.od-card-dragging .od-card-header { cursor: grabbing; }
         .od-card-title {
             font-size: 12.5px; color: var(--od-ink-dim); letter-spacing: 0.06em;
@@ -202,7 +233,9 @@ export function buildDesktopStyles(): string {
         }
         .od-error-task-link:hover { background: color-mix(in srgb, var(--od-blue) 16%, transparent); }
         .od-card-body { flex: 1; min-height: 0; position: relative; margin: 8px 6px 6px; overflow: hidden; }
-        .od-card.od-card-done .od-card-body { margin: 0; }
+        /* 卡片不再裁剪溢出（标题胶囊要浮出卡片下缘），圆角裁剪由内容区承担：
+         * 内半径 = 卡片圆角 14px - 边框 1px */
+        .od-card.od-card-done .od-card-body { margin: 0; border-radius: 13px; }
         .od-card-frame { width: 100%; height: 100%; border: none; background: transparent; }
         .od-card-hint {
             position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center;
@@ -401,42 +434,25 @@ export function buildDesktopStyles(): string {
         .od-context-item:disabled { opacity: 0.4; cursor: default; }
         .od-context-item:disabled:hover { background: transparent; }
         .od-context-sep { height: 1px; background: var(--od-card-line); margin: 4px 8px; }
+        /* 二级菜单：悬停"刷新时间"展开间隔选项（左侧对勾标记当前项）；
+         * 贴右侧屏幕时由 renderContextMenu 翻转到左侧展开。
+         * 左缘与主菜单重叠 3px，避免跨越间隙时 hover 断开导致菜单闪烁。 */
+        .od-context-sub-trigger { position: relative; cursor: pointer; }
+        .od-context-sub-trigger .od-context-arrow { margin-left: auto; font-size: 10px; opacity: 0.6; }
+        .od-context-submenu {
+            display: none; position: absolute; left: calc(100% - 3px); top: -5px; z-index: 1;
+            min-width: 140px; padding: 5px;
+            border-radius: 12px; border: 1px solid var(--od-card-border); background: var(--od-panel);
+            box-shadow: var(--od-shadow);
+        }
+        .od-context-menu.od-sub-opens-left .od-context-submenu { left: auto; right: calc(100% - 3px); }
+        .od-context-sub-trigger:hover .od-context-submenu,
+        .od-context-sub-trigger:focus-within .od-context-submenu { display: block; }
+        .od-context-check { width: 16px; flex: none; display: inline-flex; justify-content: center; font-size: 11px; color: var(--od-ink); }
 
-        /* ---------- 卡片设置模态 ---------- */
-        .od-modal-overlay {
-            position: fixed; inset: 0; z-index: 9400; display: flex; align-items: center; justify-content: center;
-            background: color-mix(in srgb, var(--od-ink) 24%, transparent); backdrop-filter: blur(4px);
-            animation: od-fade-in 0.2s ease-out both;
-        }
-        @keyframes od-fade-in { from { opacity: 0; } }
-        .od-modal {
-            width: min(480px, 92vw); border-radius: 16px; padding: 22px;
-            background: var(--od-panel); border: 1px solid var(--od-card-border);
-            box-shadow: 0 24px 64px rgba(28, 25, 23, 0.24);
-            display: flex; flex-direction: column; gap: 14px;
-            animation: od-modal-in 0.24s var(--od-ease-out) both;
-        }
-        @keyframes od-modal-in { from { opacity: 0; transform: translateY(10px) scale(0.99); } }
-        .od-modal h2 { font-size: 16px; font-weight: 600; display: flex; align-items: center; gap: 8px; }
-        .od-modal h2 .dot { width: 7px; height: 7px; border-radius: 2px; background: var(--od-blue); }
-        .od-modal label { display: flex; flex-direction: column; gap: 6px; font-size: 12.5px; color: var(--od-ink-dim); }
-        .od-modal textarea, .od-modal select {
-            border-radius: 9px; border: 1px solid var(--od-card-line); background: var(--od-bg);
-            color: var(--od-ink); font-family: inherit; font-size: 13.5px; padding: 10px 12px; outline: none;
-        }
-        .od-modal textarea { min-height: 110px; resize: vertical; }
-        .od-modal textarea:focus, .od-modal select:focus { border-color: color-mix(in srgb, var(--od-blue) 52%, var(--od-card-line)); box-shadow: 0 0 0 3px var(--od-accent-soft); }
-        .od-modal-actions { display: flex; justify-content: flex-end; gap: 10px; margin-top: 2px; }
-        .od-btn {
-            padding: 8px 14px; border-radius: 8px; border: 1px solid var(--od-card-line);
-            background: transparent; color: var(--od-ink-dim); font-size: 13px; cursor: pointer; font-family: inherit; transition: 0.15s ease;
-        }
-        .od-btn:hover { color: var(--od-ink); border-color: var(--od-ink-faint); }
-        .od-btn.primary {
-            border-color: transparent; color: #fff; background: var(--od-blue);
-            box-shadow: 0 2px 8px color-mix(in srgb, var(--od-blue) 26%, transparent);
-        }
-        .od-btn.primary:hover { filter: brightness(0.96); color: #fff; }
+        /* ---------- 卡片设置模态 ----------
+         * 弹窗复用全局 confirmModal 的顶部色带体系（MODAL_CSS 由 showCardEditor 注入），
+         * 此处不再保留桌面私有弹窗样式。 */
 
         @media (max-width: 720px) {
             .od-brand em { display: none; }
