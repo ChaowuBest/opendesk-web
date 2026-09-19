@@ -497,6 +497,18 @@ html[data-theme='dark'] .markdown-body .code-block-body::-webkit-scrollbar-thumb
 html[data-theme='dark'] .markdown-body .code-block-body::-webkit-scrollbar-thumb:hover {
     background: rgba(255, 255, 255, 0.28) !important;
 }
+/* Plugin tool code block (pluginmgr render.gui) */
+.plugin-code-block::-webkit-scrollbar {
+    width: 4px !important;
+    height: 4px !important;
+}
+.plugin-code-block::-webkit-scrollbar-thumb {
+    background: #d1d5db !important;
+    border-radius: 2px !important;
+}
+.plugin-code-block::-webkit-scrollbar-track {
+    background: transparent !important;
+}
 /* Fallback for bare pre (no wrapper) */
 .markdown-body pre {
     background: #ffffff !important;
@@ -4219,6 +4231,17 @@ agent-input[hide-disclaimer] .agent-input-footer {
 /* Row hover: subtle highlight on the code column */
 .diff-table tr:hover td {
     filter: brightness(0.97);
+}
+/* Diff body scrollbar (compact, per scrollbar_specification.md) */
+.diff-body::-webkit-scrollbar {
+    height: 4px !important;
+}
+.diff-body::-webkit-scrollbar-thumb {
+    background: #d1d5db !important;
+    border-radius: 2px !important;
+}
+.diff-body::-webkit-scrollbar-track {
+    background: transparent !important;
 }
 
 /* 保护 diff 编辑器的等宽字体 */

@@ -40,7 +40,7 @@ function renderPluginContent(content: ToolRenderContent): string {
     if (content.type === 'code') {
         const language = content.language ? ` data-language="${escapeHtml(content.language)}"` : '';
         return `<div class="od-card-shadow my-2 rounded-[8px] border border-gray-200 bg-white overflow-hidden w-full">
-            <pre class="max-h-[280px] overflow-auto p-3 text-xs"><code${language}>${escapeHtml(content.code)}</code></pre>
+            <pre class="plugin-code-block max-h-[280px] overflow-auto p-3 text-xs"><code${language}>${escapeHtml(content.code)}</code></pre>
         </div>`;
     }
     const items = content.items
