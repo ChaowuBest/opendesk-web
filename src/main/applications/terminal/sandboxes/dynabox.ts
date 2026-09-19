@@ -213,6 +213,12 @@ export async function prepareDynamicSandbox(options: {
     cwd?: string;
     taskState?: TaskState;
     deleteToTrash?: boolean;
+    /**
+     * 沙箱触发权限管控、弹窗等待用户决策时的回调：
+     * waiting=true 表示开始等待（宿主应暂停工具超时计时），
+     * waiting=false 表示决策已返回（批准或拒绝，恢复计时）。
+     */
+    onPermissionWaitChange?: (waiting: boolean) => void;
 }): Promise<DynamicSandboxLaunch | null> {
     if (process.platform !== 'win32') return null;
     // Only the selected Windows pwsh tool requests a native sandbox launch.
@@ -230,6 +236,16 @@ export async function prepareDynamicSandbox(options: {
     const deny: Decision = { decision: 'deny' };
     let context = options.taskState?.harnessContext;
     const decisions = new Map<string, Promise<Decision>>();
+    // 正在等待用户决策的权限请求数；跨过 0↔N 边界时通知宿主暂停/恢复工具超时计时
+    let waitingDecisions = 0;
+    const notifyPermissionWaitChange = (delta: number) => {
+        if (!options.onPermissionWaitChange) return;
+        const before = waitingDecisions;
+        waitingDecisions = Math.max(0, waitingDecisions + delta);
+        if (before > 0 !== waitingDecisions > 0) {
+            options.onPermissionWaitChange(waitingDecisions > 0);
+        }
+    };
     const decideRequest = async (body: Record<string, unknown>): Promise<Decision> => {
         if (closed || !body || (body.token !== undefined && body.token !== token)) return deny;
         const resourcePath = typeof body.path === 'string' ? virtualPathToHostPath(body.path) : null;
@@ -255,35 +271,42 @@ export async function prepareDynamicSandbox(options: {
         let pending = decisions.get(key);
         if (!pending) {
             pending = (async (): Promise<Decision> => {
-                const prefixes = new FileResourcePath(resourcePath).getPrefixes();
-                const response = await provider.prompt([request], 'dynamicSandbox', prefixes, {
-                    taskId: task.task_id,
-                    taskName: task.task_name,
-                    workspace: task.getWorkspace()
-                });
-                if (closed) return deny;
-                if (current !== task.harnessContext) return decideRequest(body);
-                const latest = await current.permission?.check(request);
-                if (closed) return deny;
-                if (current !== task.harnessContext) return decideRequest(body);
-                if (latest?.effect === 'deny') return deny;
-                if (response.decision !== 'allow') return deny;
-                const pattern =
-                    response.rememberScope === 'type'
-                        ? '**'
-                        : response.rememberScope === 'prefix' &&
-                            prefixes.some((prefix) => prefix.pattern === response.selectedPrefixPattern)
-                          ? response.selectedPrefixPattern
-                          : undefined;
-                if (pattern) {
-                    await applyPersistentPermissionAllowForTask(task, {
-                        resourceType: 'file',
-                        action,
-                        pathPattern: pattern,
-                        effect: 'allow'
+                try {
+                    // +1 必须在 try 内：观察者回调抛错时 finally 仍能归还计数，
+                    // 否则 waitingDecisions 永久 >=1，宿主计时器会被永久暂停
+                    notifyPermissionWaitChange(1);
+                    const prefixes = new FileResourcePath(resourcePath).getPrefixes();
+                    const response = await provider.prompt([request], 'dynamicSandbox', prefixes, {
+                        taskId: task.task_id,
+                        taskName: task.task_name,
+                        workspace: task.getWorkspace()
                     });
+                    if (closed) return deny;
+                    if (current !== task.harnessContext) return decideRequest(body);
+                    const latest = await current.permission?.check(request);
+                    if (closed) return deny;
+                    if (current !== task.harnessContext) return decideRequest(body);
+                    if (latest?.effect === 'deny') return deny;
+                    if (response.decision !== 'allow') return deny;
+                    const pattern =
+                        response.rememberScope === 'type'
+                            ? '**'
+                            : response.rememberScope === 'prefix' &&
+                                prefixes.some((prefix) => prefix.pattern === response.selectedPrefixPattern)
+                              ? response.selectedPrefixPattern
+                              : undefined;
+                    if (pattern) {
+                        await applyPersistentPermissionAllowForTask(task, {
+                            resourceType: 'file',
+                            action,
+                            pathPattern: pattern,
+                            effect: 'allow'
+                        });
+                    }
+                    return { decision: 'allow' };
+                } finally {
+                    notifyPermissionWaitChange(-1);
                 }
-                return { decision: 'allow' };
             })().catch(() => deny);
             decisions.set(key, pending);
         }

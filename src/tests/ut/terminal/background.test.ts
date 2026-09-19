@@ -22,7 +22,130 @@ jest.unstable_mockModule('../../../main/utils/setting.js', () => ({
     getOpendeskDirectory: () => '/tmp/opendesk-test'
 }));
 
-const { installTimeoutBackgrounding } = await import('../../../main/applications/terminal/background.js');
+const { installTimeoutBackgrounding, ShellTimeoutClock, BackgroundProcessManager } =
+    await import('../../../main/applications/terminal/background.js');
+
+describe('ShellTimeoutClock', () => {
+    afterEach(() => {
+        jest.useRealTimers();
+    });
+
+    test('resume continues with the budget left at pause time', () => {
+        jest.useFakeTimers();
+        const onTimeout = jest.fn();
+        const clock = new ShellTimeoutClock(1000, Date.now());
+        clock.onTimeout(onTimeout);
+        clock.start();
+        jest.advanceTimersByTime(600);
+        clock.pause();
+        // 权限弹窗等待期间经过的 5s 不消耗超时预算
+        jest.advanceTimersByTime(5000);
+        expect(onTimeout).not.toHaveBeenCalled();
+        clock.resume();
+        jest.advanceTimersByTime(399);
+        expect(onTimeout).not.toHaveBeenCalled();
+        jest.advanceTimersByTime(1);
+        expect(onTimeout).toHaveBeenCalledTimes(1);
+    });
+
+    test('accumulates multiple pause windows and reports active elapsed time', () => {
+        jest.useFakeTimers();
+        const clock = new ShellTimeoutClock(1000, Date.now());
+        clock.onTimeout(jest.fn());
+        clock.start();
+        jest.advanceTimersByTime(300);
+        clock.pause();
+        jest.advanceTimersByTime(1000);
+        expect(clock.getActiveElapsedMs()).toBe(300);
+        clock.resume();
+        jest.advanceTimersByTime(300);
+        clock.pause();
+        jest.advanceTimersByTime(2000);
+        expect(clock.getActiveElapsedMs()).toBe(600);
+        clock.resume();
+        jest.advanceTimersByTime(399);
+        expect(clock.hasFired).toBe(false);
+        jest.advanceTimersByTime(1);
+        expect(clock.hasFired).toBe(true);
+    });
+
+    test('never fires when the timeout is disabled', () => {
+        jest.useFakeTimers();
+        const onTimeout = jest.fn();
+        const clock = new ShellTimeoutClock(0, Date.now());
+        clock.onTimeout(onTimeout);
+        clock.start();
+        clock.pause();
+        clock.resume();
+        jest.advanceTimersByTime(24 * 3600 * 1000);
+        expect(onTimeout).not.toHaveBeenCalled();
+    });
+
+    test('pause and resume before start do not consume the budget', () => {
+        jest.useFakeTimers();
+        const onTimeout = jest.fn();
+        const clock = new ShellTimeoutClock(1000, Date.now());
+        clock.onTimeout(onTimeout);
+        clock.pause();
+        jest.advanceTimersByTime(500);
+        clock.resume();
+        clock.start();
+        jest.advanceTimersByTime(999);
+        expect(onTimeout).not.toHaveBeenCalled();
+        jest.advanceTimersByTime(1);
+        expect(onTimeout).toHaveBeenCalledTimes(1);
+    });
+
+    test('cancel stops the timer and later pause or resume cannot re-arm it', () => {
+        jest.useFakeTimers();
+        const onTimeout = jest.fn();
+        const clock = new ShellTimeoutClock(1000, Date.now());
+        clock.onTimeout(onTimeout);
+        clock.start();
+        jest.advanceTimersByTime(200);
+        clock.cancel();
+        jest.advanceTimersByTime(10000);
+        expect(onTimeout).not.toHaveBeenCalled();
+        clock.pause();
+        clock.resume();
+        jest.advanceTimersByTime(10000);
+        expect(onTimeout).not.toHaveBeenCalled();
+    });
+
+    test('resume after firing does not restart the timer', () => {
+        jest.useFakeTimers();
+        const onTimeout = jest.fn();
+        const clock = new ShellTimeoutClock(100, Date.now());
+        clock.onTimeout(onTimeout);
+        clock.start();
+        jest.advanceTimersByTime(100);
+        clock.resume();
+        jest.advanceTimersByTime(1000);
+        expect(onTimeout).toHaveBeenCalledTimes(1);
+    });
+
+    test('cancel latches: a late resume after settle cannot re-arm the timer', () => {
+        jest.useFakeTimers();
+        const onTimeout = jest.fn();
+        const clock = new ShellTimeoutClock(1000, Date.now());
+        clock.onTimeout(onTimeout);
+        clock.start();
+        jest.advanceTimersByTime(200);
+        // 命令在权限弹窗等待期间被终止（settle → cancel），
+        // 之后迟到的权限决策触发 resume，不得复活计时器
+        clock.pause();
+        clock.cancel();
+        clock.resume();
+        jest.advanceTimersByTime(10000);
+        expect(onTimeout).not.toHaveBeenCalled();
+        expect(jest.getTimerCount()).toBe(0);
+        // cancel 之后 start 同样失效
+        clock.start();
+        jest.advanceTimersByTime(10000);
+        expect(onTimeout).not.toHaveBeenCalled();
+        expect(jest.getTimerCount()).toBe(0);
+    });
+});
 
 describe('installTimeoutBackgrounding', () => {
     afterEach(() => {
@@ -187,5 +310,90 @@ describe('installTimeoutBackgrounding', () => {
             buffer.closeArtifact();
             fs.rmSync(directory, { recursive: true, force: true });
         }
+    });
+
+    test('keeps the timeout paused while a sandbox permission prompt waits for the user', async () => {
+        jest.useFakeTimers();
+        const proc = Object.assign(new EventEmitter(), { pid: 424242 }) as unknown as ChildProcess;
+        const updateResult = jest.fn();
+        const onFinish = jest.fn();
+        const clock = new ShellTimeoutClock(1000, Date.now());
+        const completion = installTimeoutBackgrounding({
+            handle: { proc, detachListeners: jest.fn() },
+            command: 'Set-Content D:/workspace/new.txt hi',
+            startTime: Date.now(),
+            timeout: 1000,
+            getOutput: () => '',
+            result: { updateResult, updateResultObject: jest.fn() } as any,
+            isKilledByStop: () => false,
+            clock,
+            onFinish
+        });
+
+        jest.advanceTimersByTime(300);
+        // 沙箱触发权限管控，弹窗等待用户决策：计时暂停，不再有武装的超时计时器
+        clock.pause();
+        jest.advanceTimersByTime(60000);
+        expect(jest.getTimerCount()).toBe(0);
+        // 权限被批准：恢复剩余预算（暂停时还剩 700ms）
+        clock.resume();
+        jest.advanceTimersByTime(699);
+        expect(jest.getTimerCount()).toBe(1);
+        jest.advanceTimersByTime(1);
+        await expect(completion).resolves.toBe(true);
+        expect(onFinish).toHaveBeenCalledWith(true);
+        // 超时提示中的“已执行”时长排除权限等待时间（实际执行 1.0s，而非 61.3s）
+        expect(updateResult.mock.lastCall![0]).toContain('已执行 1.0s');
+    });
+
+    test('excludes permission wait time from the backgrounded process elapsed time', async () => {
+        jest.useFakeTimers();
+        const proc = Object.assign(new EventEmitter(), {
+            pid: 424243,
+            stdout: new EventEmitter(),
+            stderr: new EventEmitter()
+        }) as unknown as ChildProcess;
+        const clock = new ShellTimeoutClock(1000, Date.now());
+        const completion = installTimeoutBackgrounding({
+            handle: { proc, detachListeners: jest.fn() },
+            command: 'long-running-command',
+            startTime: Date.now(),
+            timeout: 1000,
+            getOutput: () => '',
+            result: { updateResult: jest.fn(), updateResultObject: jest.fn() } as any,
+            isKilledByStop: () => false,
+            clock,
+            onFinish: jest.fn()
+        });
+
+        jest.advanceTimersByTime(400);
+        clock.pause();
+        jest.advanceTimersByTime(60000);
+        clock.resume();
+        jest.advanceTimersByTime(600);
+        await expect(completion).resolves.toBe(true);
+
+        const status = BackgroundProcessManager.getInstance().getStatus(424243);
+        expect(status.found).toBe(true);
+        // checkShellStatus 汇报的已执行时长同样排除 60s 的权限等待
+        expect(status.elapsedMs).toBe(1000);
+    });
+
+    test('times out normally when no permission prompt interrupts the command', async () => {
+        jest.useFakeTimers();
+        const proc = Object.assign(new EventEmitter(), { pid: 424244 }) as unknown as ChildProcess;
+        const completion = installTimeoutBackgrounding({
+            handle: { proc, detachListeners: jest.fn() },
+            command: 'sleep',
+            startTime: Date.now(),
+            timeout: 1000,
+            getOutput: () => '',
+            result: { updateResult: jest.fn(), updateResultObject: jest.fn() } as any,
+            isKilledByStop: () => false,
+            onFinish: jest.fn()
+        });
+
+        jest.advanceTimersByTime(1000);
+        await expect(completion).resolves.toBe(true);
     });
 });
