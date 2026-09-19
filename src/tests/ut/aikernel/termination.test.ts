@@ -1,6 +1,14 @@
 import { jest } from '@jest/globals';
 import { LLM } from '../../../main/aikernel/llm.js';
-import { checkTerminationFromMessages } from '../../../main/aikernel/termination.js';
+import {
+    AssistantMessage,
+    ReasoningMessagePart,
+    TextMessagePart,
+    ToolCallMessagePart,
+    UserMessage
+} from '../../../main/aikernel/messages.js';
+import { TaskManagerState, TaskState } from '../../../main/aikernel/states/tasks.js';
+import { checkTermination, checkTerminationFromMessages } from '../../../main/aikernel/termination.js';
 import { logger } from '../../../main/utils/logger.js';
 import { Setting } from '../../../main/utils/setting.js';
 
@@ -51,6 +59,66 @@ describe('termination request options', () => {
         expect(result).toBe('finished');
         expect(askSpy).toHaveBeenCalledWith(expect.any(String), 'glm53', { reasoningEffort: 'low' });
     });
+
+    test('treats a reasoning-only assistant response as interrupted', async () => {
+        const askSpy = jest.spyOn(LLM, 'ask').mockResolvedValue('finished');
+        const task = new TaskState(new TaskManagerState());
+        task.chat_context.appendMessage(new UserMessage('complete the task'));
+        task.chat_context.appendMessage(
+            new AssistantMessage([
+                new ReasoningMessagePart('I should inspect the repository first.', 'reasoning_content')
+            ])
+        );
+
+        await expect(checkTermination(task)).resolves.toBe('interrupted');
+        expect(askSpy).not.toHaveBeenCalled();
+    });
+
+    test('treats an assistant response ending in reasoning as interrupted', async () => {
+        const askSpy = jest.spyOn(LLM, 'ask').mockResolvedValue('finished');
+        const task = new TaskState(new TaskManagerState());
+        task.chat_context.appendMessage(new UserMessage('complete the task'));
+        task.chat_context.appendMessage(
+            new AssistantMessage([
+                new TextMessagePart('I have started working on the task.'),
+                new ReasoningMessagePart('I still need to produce the final answer.', 'reasoning_content')
+            ])
+        );
+
+        await expect(checkTermination(task)).resolves.toBe('interrupted');
+        expect(askSpy).not.toHaveBeenCalled();
+    });
+
+    test('checks termination normally when visible text follows reasoning', async () => {
+        const askSpy = jest.spyOn(LLM, 'ask').mockResolvedValue('finished');
+        const task = new TaskState(new TaskManagerState());
+        task.chat_context.appendMessage(new UserMessage('complete the task'));
+        task.chat_context.appendMessage(
+            new AssistantMessage([
+                new ReasoningMessagePart('I should inspect the repository first.', 'reasoning_content'),
+                new TextMessagePart('The task is complete.')
+            ])
+        );
+
+        await expect(checkTermination(task)).resolves.toBe('finished');
+        expect(askSpy).toHaveBeenCalledTimes(1);
+    });
+
+    test('only considers output after the latest tool-call round', async () => {
+        const askSpy = jest.spyOn(LLM, 'ask').mockResolvedValue('finished');
+        const task = new TaskState(new TaskManagerState());
+        task.chat_context.appendMessage(new UserMessage('complete the task'));
+        task.chat_context.appendMessage(
+            new AssistantMessage([
+                new TextMessagePart('Earlier visible output.'),
+                new ToolCallMessagePart(),
+                new ReasoningMessagePart('I still need to produce the final answer.', 'reasoning_content')
+            ])
+        );
+
+        await expect(checkTermination(task)).resolves.toBe('interrupted');
+        expect(askSpy).not.toHaveBeenCalled();
+    });
 });
 
 describe('termination logs must not contain user content', () => {
@@ -96,6 +164,22 @@ describe('termination logs must not contain user content', () => {
         for (const message of logMessages) {
             expect(message).not.toContain(USER_QUESTION);
             expect(message).not.toContain(RESPONSE_LLM_PATH);
+        }
+    });
+
+    test('reasoning-only 路径日志不包含用户问题与思考原文', async () => {
+        const reasoning = '机密的内部思考过程';
+        const task = new TaskState(new TaskManagerState());
+        task.chat_context.appendMessage(new UserMessage(USER_QUESTION));
+        task.chat_context.appendMessage(
+            new AssistantMessage([new ReasoningMessagePart(reasoning, 'reasoning_content')])
+        );
+
+        await expect(checkTermination(task)).resolves.toBe('interrupted');
+        expect(logMessages.length).toBeGreaterThan(0);
+        for (const message of logMessages) {
+            expect(message).not.toContain(USER_QUESTION);
+            expect(message).not.toContain(reasoning);
         }
     });
 });
