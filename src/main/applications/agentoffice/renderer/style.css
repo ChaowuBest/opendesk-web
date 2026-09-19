@@ -1998,6 +1998,7 @@ p {
     align-items: start;
 }
 .local-service-status {
+    position: relative;
     display: flex;
     align-items: center;
     gap: 8px;
@@ -2021,6 +2022,29 @@ p {
 }
 .local-service-status[data-state='pending'] {
     color: var(--ink3);
+}
+/* 过渡态保留链接行：整体置灰禁点，容器高度不变，避免切换配置时链接区域塌陷又弹回 */
+.local-service-status[data-state='pending'] .local-service-links {
+    opacity: 0.45;
+    pointer-events: none;
+}
+/* "正在应用"徽标绝对定位叠加在链接行上，不参与布局 */
+.local-service-applying {
+    position: absolute;
+    top: 50%;
+    right: 10px;
+    transform: translateY(-50%);
+    display: inline-flex;
+    align-items: center;
+    padding: 3px 10px;
+    border: 1px solid var(--line);
+    border-radius: 999px;
+    background: var(--surface);
+    color: var(--ink2);
+    font-size: var(--fs-xs);
+    box-shadow: var(--shadow);
+    pointer-events: none;
+    white-space: nowrap;
 }
 .local-service-url {
     min-width: 0;

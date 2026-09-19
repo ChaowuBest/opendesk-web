@@ -665,7 +665,7 @@ export class AgentOfficeEntryWidget extends AgentOperableHTMLElement {
                 .join('');
             return `<div class="settings-page">
                 <section class="settings-section"><h3 class="section-label">${escapeHtml(this.tr('agentoffice.statsSection'))}</h3><div class="stats"><div class="stat"><b>${detail.message_count.toLocaleString(this.locale)}</b><span>${escapeHtml(this.tr('agentoffice.messagesStat'))}</span></div><div class="stat"><b>${detail.task_count.toLocaleString(this.locale)}</b><span>${escapeHtml(this.tr('agentoffice.tasksStat'))}</span></div><div class="stat"><b>${this.formatTokens(usage)}</b><span>${escapeHtml(this.tr('agentoffice.tokensStat'))}</span></div><div class="stat"><b>${escapeHtml(new Date(detail.hired_at).toLocaleDateString(this.locale))}</b><span>${escapeHtml(this.tr('agentoffice.hiredAt'))}</span></div></div></section>
-                <section class="settings-section"><h3 class="section-label">${escapeHtml(this.tr('agentoffice.profileSection'))}</h3><div class="form-grid settings-form"><div class="field" data-basic-field="name"><label for="f-name">${escapeHtml(this.tr('agentoffice.nameLabel'))}${required}</label><input id="f-name" value="${escapeHtml(detail.name)}" required aria-required="true"><div class="field-error">${requiredError}</div></div><div class="field" data-basic-field="vendor"><label for="f-vendor">${escapeHtml(this.tr('agentoffice.vendorLabel'))}${required}</label><input id="f-vendor" value="${escapeHtml(detail.vendor_name)}" required aria-required="true"><div class="field-error">${requiredError}</div></div><div class="field" data-basic-field="title"><label for="f-title">${escapeHtml(this.tr('agentoffice.titleLabel'))}${required}</label><input id="f-title" value="${escapeHtml(detail.title)}" required aria-required="true"><div class="field-error">${requiredError}</div></div><div class="field"><label for="f-specialties">${escapeHtml(this.tr('agentoffice.specialtiesLabel'))}</label><input id="f-specialties" value="${escapeHtml(detail.specialties.join(', '))}"></div><div class="field"><label for="f-trigger-interval">${escapeHtml(this.tr('agentoffice.triggerIntervalLabel'))}</label><select id="f-trigger-interval">${triggerOptions}</select><div class="sub">${escapeHtml(this.tr('agentoffice.triggerIntervalHint'))}</div></div><div class="field"><label for="f-model">${escapeHtml(this.tr('agentoffice.modelLabel'))}</label><select id="f-model"><option value="">${escapeHtml(defaultModelLabel)}</option>${missingSelectedModel}${this.modelCatalog.models.map((model) => `<option value="${escapeHtml(model.alias)}" ${detail.model === model.alias ? 'selected' : ''}>${escapeHtml(model.alias)} · ${escapeHtml(model.provider_name)} / ${escapeHtml(model.model_name)}</option>`).join('')}</select><div class="sub">${escapeHtml(this.tr('agentoffice.modelHint'))}</div></div><div class="field full"><div class="setting-check-row"><span class="setting-check-copy"><b>${escapeHtml(this.tr('agentoffice.enableStaff'))}</b><small>${escapeHtml(this.tr('agentoffice.enableStaffHint'))}</small></span><label class="setting-toggle"><input type="checkbox" id="f-enabled" ${detail.enabled ? 'checked' : ''}><span class="setting-toggle-track"></span></label></div><div class="setting-check-row"><span class="setting-check-copy"><b>${escapeHtml(this.tr('agentoffice.localService'))}</b><small>${escapeHtml(this.tr('agentoffice.localServiceHint'))}</small></span><label class="setting-toggle"><input type="checkbox" id="f-local-service" ${serviceOn ? 'checked' : ''}><span class="setting-toggle-track"></span></label></div><div class="local-service-config" id="local-service-config" ${serviceOn ? '' : 'hidden'}><div class="local-service-fields"><div class="field"><label for="f-local-service-host">${escapeHtml(this.tr('agentoffice.localServiceAddress'))}</label><select id="f-local-service-host">${hostOptions}</select></div><div class="field"><label for="f-local-service-port">${escapeHtml(this.tr('agentoffice.localServicePort'))}</label><input id="f-local-service-port" type="number" min="1" max="65535" step="1" value="${serviceConfig.port}"></div></div><div class="local-service-fields local-service-token-fields"><div class="field"><label for="f-local-service-user-token">${escapeHtml(this.tr('agentoffice.localServiceUserToken'))}</label><div class="local-service-token-row"><input id="f-local-service-user-token" value="${escapeHtml(serviceConfig.user_token)}" autocomplete="off" spellcheck="false" placeholder=""><button class="secondary small-btn" data-action="generate-user-token" title="${escapeHtml(this.tr('agentoffice.localServiceTokenGenerate'))}">${escapeHtml(this.tr('agentoffice.localServiceTokenGenerate'))}</button></div><div class="sub">${escapeHtml(this.tr('agentoffice.localServiceUserTokenHint'))}</div></div><div class="field"><label for="f-local-service-manage-token">${escapeHtml(this.tr('agentoffice.localServiceManageToken'))}</label><div class="local-service-token-row"><input id="f-local-service-manage-token" value="${escapeHtml(serviceConfig.manage_token)}" autocomplete="off" spellcheck="false"><button class="secondary small-btn" data-action="generate-manage-token" title="${escapeHtml(this.tr('agentoffice.localServiceTokenGenerate'))}">${escapeHtml(this.tr('agentoffice.localServiceTokenGenerate'))}</button></div><div class="field-error" id="f-local-service-manage-token-error" role="alert"></div></div></div><div class="setting-check-row"><span class="setting-check-copy"><b>${escapeHtml(this.tr('agentoffice.localServiceHttps'))}</b><small>${escapeHtml(this.tr('agentoffice.localServiceHttpsHint'))}</small></span><label class="setting-toggle"><input type="checkbox" id="f-local-service-https" ${serviceConfig.https ? 'checked' : ''}><span class="setting-toggle-track"></span></label></div><div class="setting-check-row"><span class="setting-check-copy"><b>${escapeHtml(this.tr('agentoffice.localServiceHideStaffInfo'))}</b><small>${escapeHtml(this.tr('agentoffice.localServiceHideStaffInfoHint'))}</small></span><label class="setting-toggle"><input type="checkbox" id="f-local-service-hide-info" ${serviceConfig.hide_staff_info ? 'checked' : ''}><span class="setting-toggle-track"></span></label></div><div class="local-service-status" id="local-service-status" data-state="${this.localServicePending ? 'pending' : this.localServiceRuntime?.error ? 'error' : this.localServiceRuntime?.listening ? 'running' : 'stopped'}">${this.localServiceStatusHtml()}</div></div></div></div></section>
+                <section class="settings-section"><h3 class="section-label">${escapeHtml(this.tr('agentoffice.profileSection'))}</h3><div class="form-grid settings-form"><div class="field" data-basic-field="name"><label for="f-name">${escapeHtml(this.tr('agentoffice.nameLabel'))}${required}</label><input id="f-name" value="${escapeHtml(detail.name)}" required aria-required="true"><div class="field-error">${requiredError}</div></div><div class="field" data-basic-field="vendor"><label for="f-vendor">${escapeHtml(this.tr('agentoffice.vendorLabel'))}${required}</label><input id="f-vendor" value="${escapeHtml(detail.vendor_name)}" required aria-required="true"><div class="field-error">${requiredError}</div></div><div class="field" data-basic-field="title"><label for="f-title">${escapeHtml(this.tr('agentoffice.titleLabel'))}${required}</label><input id="f-title" value="${escapeHtml(detail.title)}" required aria-required="true"><div class="field-error">${requiredError}</div></div><div class="field"><label for="f-specialties">${escapeHtml(this.tr('agentoffice.specialtiesLabel'))}</label><input id="f-specialties" value="${escapeHtml(detail.specialties.join(', '))}"></div><div class="field"><label for="f-trigger-interval">${escapeHtml(this.tr('agentoffice.triggerIntervalLabel'))}</label><select id="f-trigger-interval">${triggerOptions}</select><div class="sub">${escapeHtml(this.tr('agentoffice.triggerIntervalHint'))}</div></div><div class="field"><label for="f-model">${escapeHtml(this.tr('agentoffice.modelLabel'))}</label><select id="f-model"><option value="">${escapeHtml(defaultModelLabel)}</option>${missingSelectedModel}${this.modelCatalog.models.map((model) => `<option value="${escapeHtml(model.alias)}" ${detail.model === model.alias ? 'selected' : ''}>${escapeHtml(model.alias)} · ${escapeHtml(model.provider_name)} / ${escapeHtml(model.model_name)}</option>`).join('')}</select><div class="sub">${escapeHtml(this.tr('agentoffice.modelHint'))}</div></div><div class="field full"><div class="setting-check-row"><span class="setting-check-copy"><b>${escapeHtml(this.tr('agentoffice.enableStaff'))}</b><small>${escapeHtml(this.tr('agentoffice.enableStaffHint'))}</small></span><label class="setting-toggle"><input type="checkbox" id="f-enabled" ${detail.enabled ? 'checked' : ''}><span class="setting-toggle-track"></span></label></div><div class="setting-check-row"><span class="setting-check-copy"><b>${escapeHtml(this.tr('agentoffice.localService'))}</b><small>${escapeHtml(this.tr('agentoffice.localServiceHint'))}</small></span><label class="setting-toggle"><input type="checkbox" id="f-local-service" ${serviceOn ? 'checked' : ''}><span class="setting-toggle-track"></span></label></div><div class="local-service-config" id="local-service-config" ${serviceOn ? '' : 'hidden'}><div class="local-service-fields"><div class="field"><label for="f-local-service-host">${escapeHtml(this.tr('agentoffice.localServiceAddress'))}</label><select id="f-local-service-host">${hostOptions}</select></div><div class="field"><label for="f-local-service-port">${escapeHtml(this.tr('agentoffice.localServicePort'))}</label><input id="f-local-service-port" type="number" min="1" max="65535" step="1" value="${serviceConfig.port}"></div></div><div class="local-service-fields local-service-token-fields"><div class="field"><label for="f-local-service-user-token">${escapeHtml(this.tr('agentoffice.localServiceUserToken'))}</label><div class="local-service-token-row"><input id="f-local-service-user-token" value="${escapeHtml(serviceConfig.user_token)}" autocomplete="off" spellcheck="false" placeholder=""><button class="secondary small-btn" data-action="generate-user-token" title="${escapeHtml(this.tr('agentoffice.localServiceTokenGenerate'))}">${escapeHtml(this.tr('agentoffice.localServiceTokenGenerate'))}</button></div><div class="sub">${escapeHtml(this.tr('agentoffice.localServiceUserTokenHint'))}</div></div><div class="field"><label for="f-local-service-manage-token">${escapeHtml(this.tr('agentoffice.localServiceManageToken'))}</label><div class="local-service-token-row"><input id="f-local-service-manage-token" value="${escapeHtml(serviceConfig.manage_token)}" autocomplete="off" spellcheck="false"><button class="secondary small-btn" data-action="generate-manage-token" title="${escapeHtml(this.tr('agentoffice.localServiceTokenGenerate'))}">${escapeHtml(this.tr('agentoffice.localServiceTokenGenerate'))}</button></div><div class="field-error" id="f-local-service-manage-token-error" role="alert"></div></div></div><div class="setting-check-row"><span class="setting-check-copy"><b>${escapeHtml(this.tr('agentoffice.localServiceHttps'))}</b><small>${escapeHtml(this.tr('agentoffice.localServiceHttpsHint'))}</small></span><label class="setting-toggle"><input type="checkbox" id="f-local-service-https" ${serviceConfig.https ? 'checked' : ''}><span class="setting-toggle-track"></span></label></div><div class="setting-check-row"><span class="setting-check-copy"><b>${escapeHtml(this.tr('agentoffice.localServiceAllowIframe'))}</b><small>${escapeHtml(this.tr('agentoffice.localServiceAllowIframeHint'))}</small></span><label class="setting-toggle"><input type="checkbox" id="f-local-service-allow-iframe" ${serviceConfig.allow_iframe_embedding ? 'checked' : ''}><span class="setting-toggle-track"></span></label></div><div class="setting-check-row"><span class="setting-check-copy"><b>${escapeHtml(this.tr('agentoffice.localServiceHideStaffInfo'))}</b><small>${escapeHtml(this.tr('agentoffice.localServiceHideStaffInfoHint'))}</small></span><label class="setting-toggle"><input type="checkbox" id="f-local-service-hide-info" ${serviceConfig.hide_staff_info ? 'checked' : ''}><span class="setting-toggle-track"></span></label></div><div class="local-service-status" id="local-service-status" data-state="${this.localServicePending ? 'pending' : this.localServiceRuntime?.error ? 'error' : this.localServiceRuntime?.listening ? 'running' : 'stopped'}">${this.localServiceStatusHtml()}</div></div></div></div></section>
                 <section class="settings-section"><h3 class="section-label">${escapeHtml(this.tr('agentoffice.instructionsLabel'))}</h3><div class="field"><textarea id="f-agents">${escapeHtml(detail.agents_md)}</textarea></div></section>
             </div>`;
         }
@@ -742,25 +742,37 @@ export class AgentOfficeEntryWidget extends AgentOperableHTMLElement {
     }
 
     private localServiceStatusHtml(): string {
-        // 配置刚变更、尚无服务事件确认时进入过渡态，绝不沿用旧的"绿色可用"状态
+        // 过渡态：服务运行中的链接行原样保留（CSS 置灰禁点），"正在应用"徽标绝对定位叠加，
+        // 容器高度不变，避免切换 HTTPS/端口等触发重启的配置时链接区域塌陷又弹回
         if (this.localServicePending) {
+            const links = this.localServiceLinksHtml();
+            if (links) {
+                return `${links}<span class="local-service-applying" role="status">${escapeHtml(
+                    this.tr('agentoffice.localServiceApplying')
+                )}</span>`;
+            }
             return `<span class="status-dot"></span><span>${escapeHtml(this.tr('agentoffice.localServiceApplying'))}</span>`;
         }
+        const links = this.localServiceLinksHtml();
+        if (links) return links;
         const runtime = this.localServiceRuntime;
-        if (runtime?.listening && runtime.url) {
-            const urls = this.localServiceUrls();
-            if (urls) {
-                return `<div class="local-service-links">${this.localServiceLinkRowHtml(
-                    'agentoffice.localServiceChatUrl',
-                    urls.chat,
-                    'chat'
-                )}${this.localServiceLinkRowHtml('agentoffice.localServiceManageUrl', urls.manage, 'manage')}</div>`;
-            }
-        }
         if (runtime?.error) {
             return `<span class="status-dot"></span><span class="local-service-error">${escapeHtml(runtime.error)}</span>`;
         }
         return `<span class="status-dot"></span><span>${escapeHtml(this.tr('agentoffice.localServiceStopped'))}</span>`;
+    }
+
+    /** 运行中服务的两条入口链接；仅在服务确在监听时返回内容，令牌按当前草稿实时拼接 */
+    private localServiceLinksHtml(): string {
+        const runtime = this.localServiceRuntime;
+        if (!runtime?.listening || !runtime.url) return '';
+        const urls = this.localServiceUrls();
+        if (!urls) return '';
+        return `<div class="local-service-links">${this.localServiceLinkRowHtml(
+            'agentoffice.localServiceChatUrl',
+            urls.chat,
+            'chat'
+        )}${this.localServiceLinkRowHtml('agentoffice.localServiceManageUrl', urls.manage, 'manage')}</div>`;
     }
 
     /** 局部刷新服务状态行（localServiceChanged 事件到达时），避免整树重渲染干扰表单草稿 */
@@ -831,6 +843,7 @@ export class AgentOfficeEntryWidget extends AgentOperableHTMLElement {
             host,
             port: saved?.port ?? 9050,
             https: saved?.https ?? false,
+            allow_iframe_embedding: saved?.allow_iframe_embedding ?? false,
             user_token: userToken,
             manage_token: manageToken,
             hide_staff_info: saved?.hide_staff_info ?? false
@@ -843,6 +856,8 @@ export class AgentOfficeEntryWidget extends AgentOperableHTMLElement {
             if (hostSelect) hostSelect.innerHTML = this.localServiceHostOptions(host);
             const httpsToggle = configBlock.querySelector<HTMLInputElement>('#f-local-service-https');
             if (httpsToggle) httpsToggle.checked = this.detail.local_service.https;
+            const allowIframeToggle = configBlock.querySelector<HTMLInputElement>('#f-local-service-allow-iframe');
+            if (allowIframeToggle) allowIframeToggle.checked = this.detail.local_service.allow_iframe_embedding;
             const userInput = configBlock.querySelector<HTMLInputElement>('#f-local-service-user-token');
             if (userInput) userInput.value = this.detail.local_service.user_token;
             const manageInput = configBlock.querySelector<HTMLInputElement>('#f-local-service-manage-token');
@@ -860,9 +875,22 @@ export class AgentOfficeEntryWidget extends AgentOperableHTMLElement {
         if (!this.detail) return;
         const config = normalizeStaffLocalService(this.detail.local_service);
         this.detail.local_service = { ...config, ...update };
-        this.localServicePending = true;
+        // 仅在 apply() 会重启服务的变更（host/port/https）进入过渡态；
+        // 令牌/显示选项等原地生效，链接行实时读草稿刷新即可，避免状态区域无谓闪动
+        this.localServicePending = this.localServiceWillRestart();
         this.updateLocalServiceStatusUI();
         this.queueStaffUpdate({ local_service: this.detail.local_service }, true);
+    }
+
+    /** 草稿的 host/port/https 与运行中服务不一致时，apply() 会重启服务（收敛规则见 local-service.ts） */
+    private localServiceWillRestart(): boolean {
+        const runtime = this.localServiceRuntime;
+        if (!runtime?.listening || !runtime.url) return true;
+        // IPv6 等无法解析的地址保守视为会重启
+        const match = /^(https?):\/\/([^:/]+):(\d+)$/.exec(runtime.url);
+        if (!match) return true;
+        const config = normalizeStaffLocalService(this.detail?.local_service);
+        return (match[1] === 'https') !== config.https || match[2] !== config.host || Number(match[3]) !== config.port;
     }
 
     private handleLocalServicePortChange(raw: string): void {
@@ -1373,6 +1401,13 @@ export class AgentOfficeEntryWidget extends AgentOperableHTMLElement {
             ?.querySelector<HTMLInputElement>('#f-local-service-https')
             ?.addEventListener('change', (event) => {
                 this.handleLocalServiceConfigChange({ https: (event.target as HTMLInputElement).checked });
+            });
+        this.shadowRoot
+            ?.querySelector<HTMLInputElement>('#f-local-service-allow-iframe')
+            ?.addEventListener('change', (event) => {
+                this.handleLocalServiceConfigChange({
+                    allow_iframe_embedding: (event.target as HTMLInputElement).checked
+                });
             });
         this.shadowRoot
             ?.querySelector<HTMLInputElement>('#f-local-service-hide-info')

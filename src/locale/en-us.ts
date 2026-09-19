@@ -2845,6 +2845,9 @@ export const enUs: Record<string, string> = {
     'agentoffice.localServiceHttps': 'Use HTTPS',
     'agentoffice.localServiceHttpsHint':
         'Serves HTTPS with a self-signed certificate generated on this device. Browsers will warn that the certificate is not trusted; continue manually to proceed.',
+    'agentoffice.localServiceAllowIframe': 'Allow iframe embedding',
+    'agentoffice.localServiceAllowIframeHint':
+        'Lets third-party systems embed this staff web page in an iframe (for example a chat panel); embedding shows a block notice while off.',
     'agentoffice.openInBrowser': 'Open in browser',
     'agentoffice.localServiceApplying': 'Applying changes…',
     'agentoffice.localServiceChatUrl': 'User link',
@@ -2944,6 +2947,8 @@ export const enUs: Record<string, string> = {
     'agentoffice.localService.error.start': 'Failed to start the local web service: ${message}',
     'agentoffice.web.poweredBy': 'OpenDesk digital staff',
     'agentoffice.web.tokenRequired': 'Invalid or missing access token. Please open the link with its token parameter.',
+    'agentoffice.web.iframeBlocked':
+        'This page cannot be opened inside an iframe. To integrate it into another system, enable "Allow iframe embedding" in the staff local web service settings in OpenDesk.',
     'agentoffice.web.manageBadge': 'Manage',
     'agentoffice.web.processing': 'Processing…',
     'agentoffice.web.copy': 'Copy',

@@ -39,6 +39,8 @@ export const StaffLocalServiceSchema = z.object({
     port: z.number().int().min(1).max(65535).default(9050),
     /** 使用 HTTPS 对外提供服务，证书为现场生成的自签名证书 */
     https: z.boolean().default(false),
+    /** 允许第三方业务系统通过 iframe 集成网页（如内嵌对话页）；关闭时被嵌入的页面会显示禁止集成的提示 */
+    allow_iframe_embedding: z.boolean().default(false),
     /** 访问 /chat 所需的用户令牌，留空表示聊天页无需令牌 */
     user_token: z.string().trim().max(128).default(''),
     /** 访问 /manage 所需的管理令牌；启用服务时必须配置（见 normalizeStaffLocalService 的调用方） */

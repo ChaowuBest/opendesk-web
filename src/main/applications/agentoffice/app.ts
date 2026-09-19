@@ -614,6 +614,8 @@ export class AgentOfficeApplication extends BaseApplication {
             'agentoffice.localServiceLocalhost',
             'agentoffice.localServiceHttps',
             'agentoffice.localServiceHttpsHint',
+            'agentoffice.localServiceAllowIframe',
+            'agentoffice.localServiceAllowIframeHint',
             'agentoffice.localServiceChatUrl',
             'agentoffice.localServiceManageUrl',
             'agentoffice.localServiceUserToken',

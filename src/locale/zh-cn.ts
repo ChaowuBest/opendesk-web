@@ -2762,6 +2762,9 @@ export const zhCn: Record<string, string> = {
     'agentoffice.localServiceHttps': '使用 HTTPS',
     'agentoffice.localServiceHttpsHint':
         '开启后使用现场生成的自签名证书提供 HTTPS 访问；浏览器会提示证书不受信任，需手动选择继续访问。',
+    'agentoffice.localServiceAllowIframe': '允许在 iframe 中集成',
+    'agentoffice.localServiceAllowIframeHint':
+        '开启后，第三方业务系统可以通过 iframe 内嵌该员工的网页（如对话页）；关闭时被嵌入的页面会显示禁止集成的提示。',
     'agentoffice.openInBrowser': '在浏览器中打开',
     'agentoffice.localServiceApplying': '正在应用配置…',
     'agentoffice.localServiceChatUrl': '用户访问',
@@ -2857,6 +2860,8 @@ export const zhCn: Record<string, string> = {
     'agentoffice.localService.error.start': '本地网络服务启动失败：${message}',
     'agentoffice.web.poweredBy': 'OpenDesk 数字员工',
     'agentoffice.web.tokenRequired': '访问令牌无效或缺失，请使用带 token 参数的链接访问。',
+    'agentoffice.web.iframeBlocked':
+        '该页面不允许在 iframe 中打开。如需集成到第三方系统，请在 OpenDesk 数字员工的“本地网络服务”设置中开启“允许在 iframe 中集成”。',
     'agentoffice.web.manageBadge': '管理',
     'agentoffice.web.processing': '正在处理…',
     'agentoffice.web.copy': '复制',

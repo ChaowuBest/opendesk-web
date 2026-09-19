@@ -20,6 +20,24 @@
  * 注意：本文件内容会被 esbuild（CLI）与 Vite（Electron）共同打包，
  * 页面脚本刻意不使用模板字符串与 "${" 序列，避免嵌套模板转义问题。
  */
+/**
+ * 注入页面的 iframe 集成配置：页面脚本据此决定正常运行还是渲染"禁止嵌入"提示。
+ * 不用 CSP frame-ancestors 做拦截，因为浏览器对 CSP 拦截只显示默认"拒绝连接"页，
+ * 无法向集成方解释原因，也展示不了本地化文案。
+ */
+export interface WebPageEmbedOptions {
+    allowIframeEmbedding: boolean;
+    iframeBlockedMessage: string;
+}
+
+/** 生成注入到 <body> 起始处的 bootstrap 脚本；embed 缺省时不注入，页面按安全默认值（禁止嵌入）处理 */
+export function webPageBootstrapScript(embed?: WebPageEmbedOptions): string {
+    if (!embed) return '';
+    // `<` 统一转义为 \u003c，防止文案中出现 </script> 提前闭合脚本标签
+    const payload = JSON.stringify(embed).replace(/</g, '\\u003c');
+    return '<script>window.__OD_WEB__=' + payload + ';</script>';
+}
+
 const CHAT_PAGE_TEMPLATE = `<!doctype html>
 <html>
 <head>
@@ -718,6 +736,29 @@ button:disabled { opacity: 0.4; cursor: default; }
 <script>
 (function () {
     'use strict';
+    var bootstrap = window.__OD_WEB__ || {};
+    // 未允许 iframe 集成时：被嵌入的页面立即渲染明确的禁止提示并停止初始化，
+    // 避免访客只看到浏览器默认的"拒绝连接"占位页
+    if (!bootstrap.allowIframeEmbedding && window.self !== window.top) {
+        renderIframeBlocked(bootstrap.iframeBlockedMessage);
+        return;
+    }
+
+    function renderIframeBlocked(message) {
+        document.title = 'OpenDesk';
+        var root = document.querySelector('.root');
+        if (root) root.textContent = '';
+        var box = document.createElement('div');
+        box.style.cssText = 'min-height:100dvh;display:grid;place-items:center;padding:32px;box-sizing:border-box;';
+        var text = document.createElement('p');
+        text.style.cssText =
+            'max-width:26em;text-align:center;line-height:1.7;font-size:14px;color:#4a4642;' +
+            "font-family:system-ui,-apple-system,'Segoe UI',sans-serif;";
+        text.textContent = message || 'This page cannot be embedded in an iframe.';
+        box.appendChild(text);
+        (root || document.body).appendChild(box);
+    }
+
     var state = {
         strings: {},
         locale: 'en-US',
@@ -1272,8 +1313,8 @@ button:disabled { opacity: 0.4; cursor: default; }
 </html>`;
 
 /**
- * 生成聊天页面 HTML。
+ * 生成聊天页面 HTML。embed 提供 iframe 集成开关与禁止嵌入时的本地化提示文案。
  */
-export function chatPageHtml(): string {
-    return CHAT_PAGE_TEMPLATE;
+export function chatPageHtml(embed?: WebPageEmbedOptions): string {
+    return CHAT_PAGE_TEMPLATE.replace('<body>', '<body>' + webPageBootstrapScript(embed));
 }

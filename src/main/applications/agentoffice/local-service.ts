@@ -21,7 +21,7 @@ import { renderSafeMarkdown } from '../../../renderer/utils/markdown.js';
 import { CTRL_KEY_ICON_SVG, ENTER_KEY_ICON_SVG, SHIFT_KEY_ICON_SVG } from '../../../common/utils/keys.js';
 import { t } from '../../../locale/index.js';
 import { logger } from '../../utils/logger.js';
-import { chatPageHtml } from './webui/chat-page.js';
+import { chatPageHtml, type WebPageEmbedOptions } from './webui/chat-page.js';
 import { managePageHtml } from './webui/manage-page.js';
 import { generateSelfSignedServiceCertificate, type StoredServiceCertificate } from './service-cert.js';
 import {
@@ -53,11 +53,15 @@ const DEFAULT_MAX_SSE_CLIENTS = 50;
 const MAX_SKILL_BODY_BYTES = 140 * 1024 * 1024;
 /** 解码后的 Skill zip 上限，与桌面端 URL 下载上限保持一致 */
 const SKILL_ARCHIVE_MAX_BYTES = 100 * 1024 * 1024;
-/** 页面 CSP：允许外链图片（与桌面端渲染行为一致），其余资源锁同源，内联脚本/样式为页面自身所需 */
+/**
+ * 页面 CSP：允许外链图片（与桌面端渲染行为一致），其余资源锁同源，内联脚本/样式为页面自身所需。
+ * 不发送 frame-ancestors：浏览器对 CSP 拦截只显示默认"拒绝连接"页，无法解释原因；
+ * 是否允许 iframe 集成由注入页面的 __OD_WEB__ 标志 + 页面脚本自检实现（未授权嵌入渲染本地化提示）。
+ */
 const CHAT_PAGE_CSP =
     "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; " +
     "img-src 'self' http: https: data:; media-src 'self' http: https:; font-src 'self'; " +
-    "connect-src 'self'; object-src 'none'; frame-ancestors 'none'; base-uri 'none'";
+    "connect-src 'self'; object-src 'none'; base-uri 'none'";
 
 const CHAT_PAGE_HEADERS: Record<string, string> = {
     'x-content-type-options': 'nosniff',
@@ -677,6 +681,12 @@ export function createStaffWebApp(params: StaffWebAppParams): Hono {
 
     const token = (c: Context): string => c.req.query('token') ?? '';
 
+    /** 实时读取运行期配置：iframe 集成开关原地生效（apply() 热更新 config），无需重启服务 */
+    const webPageEmbedOptions = (): WebPageEmbedOptions => ({
+        allowIframeEmbedding: config.allow_iframe_embedding,
+        iframeBlockedMessage: t('agentoffice.web.iframeBlocked')
+    });
+
     app.get('/', (c) => {
         // 旧入口兼容：重定向到 /chat 并透传 token 参数
         const query = token(c) ? `?token=${encodeURIComponent(token(c))}` : '';
@@ -685,12 +695,12 @@ export function createStaffWebApp(params: StaffWebAppParams): Hono {
 
     app.get('/chat', (c) => {
         if (accessLevelFor(config, token(c)) === 'none') return denyPageRequest(c);
-        return c.html(chatPageHtml(), 200, CHAT_PAGE_HEADERS);
+        return c.html(chatPageHtml(webPageEmbedOptions()), 200, CHAT_PAGE_HEADERS);
     });
 
     app.get('/manage', (c) => {
         if (accessLevelFor(config, token(c)) !== 'manage') return denyPageRequest(c);
-        return c.html(managePageHtml(), 200, CHAT_PAGE_HEADERS);
+        return c.html(managePageHtml(webPageEmbedOptions()), 200, CHAT_PAGE_HEADERS);
     });
 
     app.use('/api/*', async (c, next) => {

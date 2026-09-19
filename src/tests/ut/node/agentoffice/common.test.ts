@@ -27,6 +27,7 @@ test('local service config normalization fills token and privacy defaults', () =
         host: '127.0.0.1',
         port: 9050,
         https: false,
+        allow_iframe_embedding: false,
         user_token: '',
         manage_token: '',
         hide_staff_info: false
@@ -36,6 +37,7 @@ test('local service config normalization fills token and privacy defaults', () =
         host: '192.168.1.8',
         port: 9051,
         https: true,
+        allow_iframe_embedding: true,
         user_token: ' user-token ',
         manage_token: 'manage-token',
         hide_staff_info: true
@@ -43,6 +45,7 @@ test('local service config normalization fills token and privacy defaults', () =
     assert.equal(config.user_token, 'user-token');
     assert.equal(config.manage_token, 'manage-token');
     assert.equal(config.https, true);
+    assert.equal(config.allow_iframe_embedding, true);
     assert.equal(config.hide_staff_info, true);
 });
 

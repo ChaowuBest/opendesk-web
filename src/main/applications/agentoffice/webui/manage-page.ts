@@ -19,6 +19,9 @@
  * 视觉与聊天页同一套设计令牌；页面零第三方依赖。
  * 注意：内容会被 esbuild 与 Vite 共同打包，页面脚本刻意不使用模板字符串与 "${" 序列。
  */
+import type { WebPageEmbedOptions } from './chat-page.js';
+import { webPageBootstrapScript } from './chat-page.js';
+
 const MANAGE_PAGE_TEMPLATE = `<!doctype html>
 <html>
 <head>
@@ -355,6 +358,29 @@ textarea.code { min-height: 260px; font-family: ui-monospace, SFMono-Regular, Co
 <script>
 (function () {
     'use strict';
+    var bootstrap = window.__OD_WEB__ || {};
+    // 未允许 iframe 集成时：被嵌入的页面立即渲染明确的禁止提示并停止初始化，
+    // 避免访客只看到浏览器默认的"拒绝连接"占位页
+    if (!bootstrap.allowIframeEmbedding && window.self !== window.top) {
+        renderIframeBlocked(bootstrap.iframeBlockedMessage);
+        return;
+    }
+
+    function renderIframeBlocked(message) {
+        document.title = 'OpenDesk';
+        var root = document.querySelector('.root');
+        if (root) root.textContent = '';
+        var box = document.createElement('div');
+        box.style.cssText = 'min-height:100dvh;display:grid;place-items:center;padding:32px;box-sizing:border-box;';
+        var text = document.createElement('p');
+        text.style.cssText =
+            'max-width:26em;text-align:center;line-height:1.7;font-size:14px;color:#4a4642;' +
+            "font-family:system-ui,-apple-system,'Segoe UI',sans-serif;";
+        text.textContent = message || 'This page cannot be embedded in an iframe.';
+        box.appendChild(text);
+        (root || document.body).appendChild(box);
+    }
+
     var state = {
         strings: {},
         locale: 'en-US',
@@ -933,8 +959,8 @@ textarea.code { min-height: 260px; font-family: ui-monospace, SFMono-Regular, Co
 </html>`;
 
 /**
- * 生成远程员工管理页面 HTML。
+ * 生成远程员工管理页面 HTML。embed 提供 iframe 集成开关与禁止嵌入时的本地化提示文案。
  */
-export function managePageHtml(): string {
-    return MANAGE_PAGE_TEMPLATE;
+export function managePageHtml(embed?: WebPageEmbedOptions): string {
+    return MANAGE_PAGE_TEMPLATE.replace('<body>', '<body>' + webPageBootstrapScript(embed));
 }

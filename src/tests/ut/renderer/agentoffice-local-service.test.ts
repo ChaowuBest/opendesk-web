@@ -77,6 +77,9 @@ describe('agentoffice local web service settings', () => {
             'agentoffice.localServiceHttps': 'Use HTTPS',
             'agentoffice.localServiceHttpsHint':
                 'Serves HTTPS with a self-signed certificate generated on this device.',
+            'agentoffice.localServiceAllowIframe': 'Allow iframe embedding',
+            'agentoffice.localServiceAllowIframeHint':
+                'Lets third-party systems embed this staff web page in an iframe.',
             'agentoffice.openInBrowser': 'Open in browser'
         };
         widget.localAddresses = [
@@ -141,6 +144,7 @@ describe('agentoffice local web service settings', () => {
             host: '192.168.1.8',
             port: 9050,
             https: false,
+            allow_iframe_embedding: false,
             user_token: expect.stringMatching(/^[a-zA-Z0-9]{16}$/),
             manage_token: expect.stringMatching(/^[a-zA-Z0-9]{16}$/),
             hide_staff_info: false
@@ -206,6 +210,7 @@ describe('agentoffice local web service settings', () => {
                     host: '127.0.0.1',
                     port: 9050,
                     https: false,
+                    allow_iframe_embedding: false,
                     user_token: 'u1',
                     manage_token: 'm1',
                     hide_staff_info: false
@@ -225,6 +230,7 @@ describe('agentoffice local web service settings', () => {
                     host: '127.0.0.1',
                     port: 9060,
                     https: false,
+                    allow_iframe_embedding: false,
                     user_token: 'u1',
                     manage_token: 'm1',
                     hide_staff_info: false
@@ -316,13 +322,16 @@ describe('agentoffice local web service settings', () => {
                 hide_staff_info: false
             }
         });
+        widget.onLocalServiceChanged('staff-id', { listening: true, url: 'http://192.168.3.26:9050' });
 
         widget.handleLocalServiceConfigChange({ port: 9053 });
         let status = widget.shadowRoot.querySelector('#local-service-status');
         expect(status.dataset.state).toBe('pending');
         expect(status.textContent).toContain('Applying changes…');
-        // 过渡态绝不沿用旧的绿色可用状态
-        expect(status.querySelector('.local-service-url')).toBeNull();
+        // 过渡态不沿用旧的绿色可用状态，但链接行原样保留（置灰禁点），容器高度不变
+        expect(status.querySelector('.local-service-links')).not.toBeNull();
+        expect(status.querySelector('.local-service-applying')).not.toBeNull();
+        expect(status.textContent).toContain('http://192.168.3.26:9050/chat');
 
         widget.onLocalServiceChanged('staff-id', { listening: false, error: 'listen EADDRINUSE' });
         status = widget.shadowRoot.querySelector('#local-service-status');
@@ -388,6 +397,7 @@ describe('agentoffice local web service settings', () => {
                     host: '192.168.1.8',
                     port: 9050,
                     https: false,
+                    allow_iframe_embedding: false,
                     user_token: '',
                     manage_token: 'new-manage-token',
                     hide_staff_info: false
@@ -447,6 +457,7 @@ describe('agentoffice local web service settings', () => {
                     host: '192.168.1.8',
                     port: 9050,
                     https: false,
+                    allow_iframe_embedding: false,
                     user_token: '',
                     manage_token: 'm1',
                     hide_staff_info: true
@@ -557,6 +568,7 @@ describe('agentoffice local web service settings', () => {
                 hide_staff_info: false
             }
         });
+        widget.onLocalServiceChanged('staff-id', { listening: true, url: 'http://192.168.1.8:9050' });
 
         const httpsToggle = widget.shadowRoot.querySelector('#f-local-service-https');
         expect(httpsToggle).not.toBeNull();
@@ -571,6 +583,7 @@ describe('agentoffice local web service settings', () => {
                     host: '192.168.1.8',
                     port: 9050,
                     https: true,
+                    allow_iframe_embedding: false,
                     user_token: '',
                     manage_token: 'm1',
                     hide_staff_info: false
@@ -579,11 +592,125 @@ describe('agentoffice local web service settings', () => {
             true
         );
 
+        // 切换 HTTPS 会重启服务：过渡态保留链接行（旧地址置灰 + "正在应用"徽标），容器不塌陷
+        let status = widget.shadowRoot.querySelector('#local-service-status');
+        expect(status.dataset.state).toBe('pending');
+        expect(status.querySelector('.local-service-links')).not.toBeNull();
+        expect(status.querySelector('.local-service-applying')).not.toBeNull();
+        expect(status.textContent).toContain('http://192.168.1.8:9050/chat');
+
         // 链接行直接采用运行时地址（服务重启后为 https://）
         widget.onLocalServiceChanged('staff-id', { listening: true, url: 'https://192.168.1.8:9050' });
+        status = widget.shadowRoot.querySelector('#local-service-status');
+        expect(status.dataset.state).toBe('running');
+        expect(status.querySelector('.local-service-applying')).toBeNull();
         const urls = [...widget.shadowRoot.querySelectorAll('#local-service-status .local-service-url')].map(
             (node: any) => node.textContent
         );
         expect(urls).toEqual(['https://192.168.1.8:9050/chat', 'https://192.168.1.8:9050/manage?token=m1']);
+    });
+
+    test('the allow-iframe toggle sits between HTTPS and hide-staff-info and saves immediately', () => {
+        const widget = openBasicDetail({
+            local_service: {
+                enabled: true,
+                host: '192.168.1.8',
+                port: 9050,
+                https: false,
+                allow_iframe_embedding: false,
+                user_token: '',
+                manage_token: 'm1',
+                hide_staff_info: false
+            }
+        });
+
+        // 开关必须位于"使用 HTTPS"之后、"不显示员工信息"之前
+        const rows = [
+            ...(widget.shadowRoot.querySelectorAll('#local-service-config .setting-check-row') as any)
+        ] as HTMLElement[];
+        const rowIndex = (id: string) => rows.findIndex((row) => row.querySelector(`#${id}`));
+        const httpsRow = rowIndex('f-local-service-https');
+        expect(httpsRow).toBeGreaterThanOrEqual(0);
+        expect(rowIndex('f-local-service-allow-iframe')).toBe(httpsRow + 1);
+        expect(rowIndex('f-local-service-hide-info')).toBe(httpsRow + 2);
+
+        const toggle = widget.shadowRoot.querySelector('#f-local-service-allow-iframe') as HTMLInputElement;
+        // linkedom 不实现 checked 属性读取，初始状态用 attribute 断言
+        expect(toggle.hasAttribute('checked')).toBe(false);
+        toggle.checked = true;
+        toggle.dispatchEvent(new Event('change'));
+
+        expect(widget.detail.local_service.allow_iframe_embedding).toBe(true);
+        expect(widget.queueStaffUpdate).toHaveBeenLastCalledWith(
+            {
+                local_service: {
+                    enabled: true,
+                    host: '192.168.1.8',
+                    port: 9050,
+                    https: false,
+                    allow_iframe_embedding: true,
+                    user_token: '',
+                    manage_token: 'm1',
+                    hide_staff_info: false
+                }
+            },
+            true
+        );
+    });
+
+    test('a saved allow-iframe flag renders the toggle as checked after re-render', () => {
+        const widget = openBasicDetail({
+            local_service: {
+                enabled: true,
+                host: '192.168.1.8',
+                port: 9050,
+                https: false,
+                allow_iframe_embedding: true,
+                user_token: '',
+                manage_token: 'm1',
+                hide_staff_info: false
+            }
+        });
+
+        // linkedom 不实现 checked 属性读取，初始状态用 attribute 断言
+        expect(
+            (widget.shadowRoot.querySelector('#f-local-service-allow-iframe') as HTMLInputElement).hasAttribute(
+                'checked'
+            )
+        ).toBe(true);
+    });
+
+    test('non-restarting toggles keep the status area stable without entering the applying state', () => {
+        const widget = openBasicDetail({
+            local_service: {
+                enabled: true,
+                host: '192.168.1.8',
+                port: 9050,
+                https: false,
+                allow_iframe_embedding: false,
+                user_token: 'u1',
+                manage_token: 'm1',
+                hide_staff_info: false
+            }
+        });
+        widget.onLocalServiceChanged('staff-id', { listening: true, url: 'http://192.168.1.8:9050' });
+        const status = widget.shadowRoot.querySelector('#local-service-status');
+        const htmlBefore = status.innerHTML;
+
+        // 员工信息显示开关不重启服务：状态区保持 running，DOM 不发生任何替换
+        const hideInfo = widget.shadowRoot.querySelector('#f-local-service-hide-info') as HTMLInputElement;
+        hideInfo.checked = true;
+        hideInfo.dispatchEvent(new Event('change'));
+        expect(widget.localServicePending).toBe(false);
+        expect(status.dataset.state).toBe('running');
+        expect(status.innerHTML).toBe(htmlBefore);
+
+        // iframe 集成开关同样原地生效
+        const allowIframe = widget.shadowRoot.querySelector('#f-local-service-allow-iframe') as HTMLInputElement;
+        allowIframe.checked = true;
+        allowIframe.dispatchEvent(new Event('change'));
+        expect(widget.localServicePending).toBe(false);
+        expect(status.dataset.state).toBe('running');
+        expect(status.innerHTML).toBe(htmlBefore);
     });
 });
