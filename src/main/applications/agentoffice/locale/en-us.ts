@@ -297,5 +297,11 @@ export const enUs: Record<string, string> = {
     'agentoffice.error.taskStartFailed': 'Failed to start task: ${message}',
     'agentoffice.error.noReply': 'The staff member completed the task without replying through sendReply.',
     'agentoffice.error.resourceDenied':
-        "Resource is outside this digital staff member's configured permissions: ${path}"
+        "Resource is outside this digital staff member's configured permissions: ${path}",
+    'agentoffice.error.customAgentsMdMissing': 'agents.md not found in ${path}',
+    'agentoffice.error.customAgentsMdEmpty': 'agents.md is empty in ${path}',
+    'agentoffice.error.customAgentManifestInvalid': 'Failed to parse agent.json: ${message}',
+    'agentoffice.customAgent.defaultModeDescription':
+        "Custom agent default mode: inherits the parent task's permission level",
+    'agentoffice.web.scrollBottom': 'Scroll to bottom'
 };

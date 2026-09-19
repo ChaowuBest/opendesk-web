@@ -333,7 +333,8 @@ export function webChatStrings(): Record<string, string> {
         processing: t('agentoffice.web.processing'),
         copy: t('agentoffice.web.copy'),
         copied: t('agentoffice.web.copied'),
-        disconnected: t('agentoffice.web.disconnected')
+        disconnected: t('agentoffice.web.disconnected'),
+        scrollBottom: t('agentoffice.web.scrollBottom')
     };
 }
 

@@ -11,6 +11,7 @@
 
 import { AgentOperableHTMLElement } from '../../widget_utils.js';
 import { escapeHtml } from '../../../../common/utils/escape.js';
+import { resolveRendererLocale } from '../../../../renderer/locale.js';
 import { ENTER_KEY_ICON_SVG, SHIFT_KEY_ICON_SVG, CTRL_KEY_ICON_SVG } from '../../../../common/utils/keys.ts';
 import { OPENDESK_THEME_CHANGED } from '../../../../renderer/theme/theme-iframe-bridge.ts';
 import { syncShadowHostTheme } from '../../../../renderer/theme/theme-shadow-overrides.ts';
@@ -136,6 +137,10 @@ export class AgentOfficeEntryWidget extends AgentOperableHTMLElement {
         const skillDetail = this.shadowRoot?.querySelector<SkillDetailCard>('#staff-skill-detail-card');
         if (skillDetail && detail?.effective) skillDetail.dataset.theme = detail.effective;
     };
+    private settingUnsubscribe?: () => void;
+    /** 语言刷新串行化状态：running 表示取词在途；pending 表示在途期间又有语言变更，完成后需尾随取词 */
+    private localeRefreshRunning = false;
+    private localeRefreshPending = false;
     private readonly dismissMessageContextMenu = (event?: Event) => {
         const target = event?.composedPath()[0];
         if (target instanceof Element && target.closest('.ctx-menu')) return;
@@ -258,6 +263,8 @@ export class AgentOfficeEntryWidget extends AgentOperableHTMLElement {
         window.removeEventListener('mousedown', this.dismissMessageContextMenu);
         this.removeSkillAddMenuListeners();
         this.closeSendMenu();
+        this.settingUnsubscribe?.();
+        this.settingUnsubscribe = undefined;
         void this.flushAutoSave();
         document.removeEventListener(OPENDESK_THEME_CHANGED, this.onThemeChanged);
         window.applicationAPI.unsubscribe('staffsChanged', this.onStaffsChanged);
@@ -324,6 +331,59 @@ export class AgentOfficeEntryWidget extends AgentOperableHTMLElement {
             this.loading = false;
             this.status = `${this.tr('agentoffice.loadFailed')}: ${this.errorText(error)}`;
             this.render();
+        } finally {
+            this.subscribeSettingChanges();
+        }
+    }
+
+    /** 初始化完成后订阅设置广播：设置界面切换语言时重拉文案并按新语言重建界面 */
+    private subscribeSettingChanges(): void {
+        // 初始化在途时元素可能已断连：此时不订阅（避免泄漏监听器），重连会重跑 initialize 再补上
+        if (this.settingUnsubscribe || !this.isConnected) return;
+        const unsubscribe = window.settingAPI?.onSettingChanged?.(this.onSettingChanged);
+        if (typeof unsubscribe === 'function') this.settingUnsubscribe = unsubscribe;
+    }
+
+    private readonly onSettingChanged = (
+        setting: Record<string, unknown> & { locale?: string; resolved_locale?: string }
+    ) => {
+        if (!this.isConnected) return;
+        // 刷新在途时 this.locale 尚未反映最新广播，无法判重：记为待刷新，由在途取词完成后尾随一次
+        if (this.localeRefreshRunning) {
+            this.localeRefreshPending = true;
+            return;
+        }
+        // frame 侧按广播数据快速判重（auto 模式取主进程解析结果），避免无关设置保存触发重拉
+        if (resolveRendererLocale(setting) === this.locale) return;
+        void this.applyLocaleChange();
+    };
+
+    /** 以主进程解析结果为准重拉文案表；详情表单/弹窗打开时推迟重渲染，避免丢草稿 */
+    private async applyLocaleChange(): Promise<void> {
+        // 刷新串行化：快速连续切换时旧请求可能后返回，尾随再取一次保证收敛到主进程最新语言
+        if (this.localeRefreshRunning) {
+            this.localeRefreshPending = true;
+            return;
+        }
+        this.localeRefreshRunning = true;
+        try {
+            do {
+                this.localeRefreshPending = false;
+                const [strings, locale] = await Promise.all([
+                    this.call<Record<string, string>>('getLocalizedStrings'),
+                    this.call<string>('getLocale')
+                ]);
+                if (!this.isConnected) return;
+                if (locale !== this.locale) {
+                    this.strings = strings;
+                    this.locale = locale;
+                    if (this.canRenderInBackground()) this.render();
+                }
+            } while (this.localeRefreshPending);
+        } catch {
+            // 主进程回读失败时保持现有文案，等待下一次设置变更
+        } finally {
+            this.localeRefreshRunning = false;
         }
     }
 

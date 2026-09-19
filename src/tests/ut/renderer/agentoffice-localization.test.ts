@@ -86,4 +86,22 @@ describe('agentoffice renderer localization coverage', () => {
         expect(missing).toEqual([]);
         expect(missingEn).toEqual([]);
     });
+
+    test('zh-CN and en-US tables define the same key set', () => {
+        // 两侧键集必须同步演进，否则某一语言会退化为 fallback（webui 服务端取词无白名单兜底）
+        const zhKeys = new Set(Object.keys(zhCn));
+        const enKeys = new Set(Object.keys(enUs));
+        const onlyZh = [...zhKeys].filter((key) => !enKeys.has(key));
+        const onlyEn = [...enKeys].filter((key) => !zhKeys.has(key));
+        expect(onlyZh).toEqual([]);
+        expect(onlyEn).toEqual([]);
+    });
+
+    test('app.ts never calls a bare t() — the app-local appT is the only translator', () => {
+        // 回归背景：getLocalizedStrings 里的 t(key) 是变量参数调用，
+        // 按字面量 t('agentoffice.…') 批量替换时曾漏掉它；该处 t 未导入，
+        // 运行时 IPC 抛错导致 renderer 拿到空文案表，界面退化为显示原始键名。
+        const bareCalls = [...appSource.matchAll(/(?<![A-Za-z_$."'])t\(/g)].map((match) => match[0]);
+        expect(bareCalls).toEqual([]);
+    });
 });

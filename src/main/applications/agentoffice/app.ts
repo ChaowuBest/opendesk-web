@@ -669,7 +669,7 @@ export class AgentOfficeApplication extends BaseApplication {
             'agentoffice.ctrlEnterSend',
             'agentoffice.sendOptions'
         ];
-        return Object.fromEntries(keys.map((key) => [key, t(key)]));
+        return Object.fromEntries(keys.map((key) => [key, appT(key)]));
     }
 
     listStaffs() {

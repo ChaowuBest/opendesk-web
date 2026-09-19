@@ -287,5 +287,10 @@ export const zhCn: Record<string, string> = {
     'agentoffice.error.imageDataUriOnly': '仅支持图片 data URI',
     'agentoffice.error.taskStartFailed': '任务启动失败：${message}',
     'agentoffice.error.noReply': '该员工已完成任务，但没有通过 sendReply 回复。',
-    'agentoffice.error.resourceDenied': '资源不在这位数字员工已配置的权限范围内：${path}'
+    'agentoffice.error.resourceDenied': '资源不在这位数字员工已配置的权限范围内：${path}',
+    'agentoffice.error.customAgentsMdMissing': '未找到 agents.md：${path}',
+    'agentoffice.error.customAgentsMdEmpty': 'agents.md 内容为空：${path}',
+    'agentoffice.error.customAgentManifestInvalid': 'agent.json 解析失败：${message}',
+    'agentoffice.customAgent.defaultModeDescription': '自定义 agent 默认模式，继承父任务权限级别',
+    'agentoffice.web.scrollBottom': '滚动到底部'
 };

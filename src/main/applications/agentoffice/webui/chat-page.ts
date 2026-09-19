@@ -1307,6 +1307,7 @@ button:disabled { opacity: 0.4; cursor: default; }
             state.strings = session.strings || {};
             state.locale = session.locale || 'en-US';
             $('send-label').textContent = state.strings.send || '';
+            $('scroll-bottom').setAttribute('aria-label', state.strings.scrollBottom || 'scroll to bottom');
             renderStaff(session.staff);
         });
         void ready.then(function () { return loadMessages(false); })
