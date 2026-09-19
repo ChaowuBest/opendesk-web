@@ -1,7 +1,7 @@
 import fs from 'fs';
 import { describe, expect, test } from '@jest/globals';
-import { zhCn } from '../../../locale/zh-cn.js';
-import { enUs } from '../../../locale/en-us.js';
+import { zhCn } from '../../../main/applications/agentoffice/locale/zh-cn.js';
+import { enUs } from '../../../main/applications/agentoffice/locale/en-us.js';
 
 /**
  * 守卫：renderer（entry.ts）引用的每个本地化键必须同时满足

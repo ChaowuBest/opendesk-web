@@ -13,7 +13,7 @@ import fs from 'fs';
 import path from 'path';
 import crypto from 'crypto';
 import AdmZip from 'adm-zip';
-import { t } from '../../../locale/index.js';
+import { t } from './locale/index.js';
 import { getTempDir } from '../../utils/temp.js';
 import { parseAndValidateSkillMd } from '../skillmgr/skill-schema.js';
 import {

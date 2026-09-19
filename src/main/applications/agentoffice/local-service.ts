@@ -19,7 +19,7 @@ import { Hono, type Context } from 'hono';
 import { serve as honoServe } from '@hono/node-server';
 import { renderSafeMarkdown } from '../../../renderer/utils/markdown.js';
 import { CTRL_KEY_ICON_SVG, ENTER_KEY_ICON_SVG, SHIFT_KEY_ICON_SVG } from '../../../common/utils/keys.js';
-import { t } from '../../../locale/index.js';
+import { t } from './locale/index.js';
 import { logger } from '../../utils/logger.js';
 import { chatPageHtml, type WebPageEmbedOptions } from './webui/chat-page.js';
 import { managePageHtml } from './webui/manage-page.js';

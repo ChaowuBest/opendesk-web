@@ -10,7 +10,7 @@
  */
 
 import { BaseWorker } from '../base.js';
-import { t } from '../../../locale/index.js';
+import { t } from './locale/index.js';
 import { AgentOfficeRepository } from './repository.js';
 import type {
     DueStaffTrigger,

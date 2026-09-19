@@ -19,7 +19,7 @@ import type {
     PermissionRule
 } from '../../aikernel/security/permission.js';
 import { normalizePath } from '../../../utils/path.js';
-import { t } from '../../../locale/index.js';
+import { t } from './locale/index.js';
 import type { StaffPermission } from './common.js';
 
 class DenyByDefaultPermissionEnforcer implements PermissionEnforcer {
