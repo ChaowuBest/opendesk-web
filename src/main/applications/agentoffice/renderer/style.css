@@ -2040,6 +2040,46 @@ p {
 .local-service-status .secondary.small-btn:first-of-type {
     margin-left: auto;
 }
+/* 令牌输入 + 随机生成按钮 */
+.local-service-token-fields {
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+}
+.local-service-token-row {
+    display: flex;
+    /* 按钮随输入框等高拉伸，避免一高一矮的观感 */
+    align-items: stretch;
+    gap: 8px;
+}
+.local-service-token-row input {
+    flex: 1;
+    min-width: 0;
+    font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
+}
+.local-service-token-row .secondary.small-btn {
+    flex: none;
+    /* 高度交给拉伸控制，仅保留水平内边距 */
+    padding-top: 0;
+    padding-bottom: 0;
+}
+/* 运行状态里的两条访问链接（用户 / 管理） */
+.local-service-links {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    flex: 1;
+    min-width: 0;
+}
+.local-service-link-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    min-width: 0;
+}
+.local-service-link-label {
+    flex: none;
+    font-size: var(--fs-xs);
+    color: var(--ink3);
+}
 /* ---------- Skills 管理 ---------- */
 .skills-page {
     position: relative;

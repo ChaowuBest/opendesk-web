@@ -20,7 +20,7 @@
  * 注意：本文件内容会被 esbuild（CLI）与 Vite（Electron）共同打包，
  * 页面脚本刻意不使用模板字符串与 "${" 序列，避免嵌套模板转义问题。
  */
-export const CHAT_PAGE_HTML = `<!doctype html>
+const CHAT_PAGE_TEMPLATE = `<!doctype html>
 <html>
 <head>
 <meta charset="utf-8">
@@ -642,6 +642,20 @@ button:disabled { opacity: 0.4; cursor: default; }
     .messages, .composer-wrap { padding-left: 16px; padding-right: 16px; }
     .message-content { max-width: 100%; }
 }
+/* ---------- “不显示员工信息”模式 ---------- */
+/* 仅隐藏头部资料区（头像/姓名/状态），“OpenDesk 数字员工”徽标悬浮到页面右上角；
+   消息流与空态照常展示员工身份，访客依然看得到在和谁对话 */
+.root.hide-staff-info .chat-head-main { display: none; }
+.root.hide-staff-info .chat-head { padding: 0; border-bottom-color: transparent; }
+.root.hide-staff-info .powered {
+    position: fixed;
+    top: 14px;
+    right: 16px;
+    z-index: 50;
+    opacity: 0.88;
+    box-shadow: 0 4px 14px rgba(28, 25, 23, 0.14);
+}
+
 </style>
 </head>
 <body>
@@ -714,7 +728,9 @@ button:disabled { opacity: 0.4; cursor: default; }
         busy: false,
         staffEnabled: true,
         ctrlEnterSend: false,
-        images: []
+        images: [],
+        urlToken: '',
+        hideInfo: false
     };
     var gradients = ['av-g1', 'av-g2', 'av-g3', 'av-g4'];
 
@@ -826,7 +842,7 @@ button:disabled { opacity: 0.4; cursor: default; }
         if (portraitUrl) {
             var img = document.createElement('img');
             img.className = 'avatar-img';
-            img.src = portraitUrl;
+            img.src = apiUrl(portraitUrl);
             img.alt = '';
             avatar.appendChild(img);
         } else {
@@ -837,6 +853,8 @@ button:disabled { opacity: 0.4; cursor: default; }
 
     function resourceNode(part) {
         var wrap = el('div', 'resource');
+        // 资源接口同样受令牌保护，URL 必须透传 token 参数
+        var url = apiUrl(part.url);
         if (part.media_type === 'image') {
             var img = document.createElement('img');
             img.src = part.url;
@@ -969,6 +987,9 @@ button:disabled { opacity: 0.4; cursor: default; }
     function renderStaff(staff) {
         state.staff = staff;
         state.staffEnabled = Boolean(staff.enabled);
+        // “不显示员工信息”：仅隐藏头部资料区，消息流与空态照常展示员工身份
+        state.hideInfo = Boolean(staff.hide_staff_info);
+        document.querySelector('.root').classList.toggle('hide-staff-info', state.hideInfo);
         document.title = staff.name || document.title;
         var avatar = $('avatar');
         avatar.className = 'avatar lg ' + gradients[gradientIndex(staff.name || 'AI')];
@@ -976,7 +997,7 @@ button:disabled { opacity: 0.4; cursor: default; }
         if (staff.portrait) {
             var img = document.createElement('img');
             img.className = 'avatar-img';
-            img.src = staff.portrait;
+            img.src = apiUrl(staff.portrait);
             img.alt = '';
             avatar.appendChild(img);
         } else {
@@ -1024,7 +1045,7 @@ button:disabled { opacity: 0.4; cursor: default; }
         if (staff.portrait) {
             var img = document.createElement('img');
             img.className = 'avatar-img';
-            img.src = staff.portrait;
+            img.src = apiUrl(staff.portrait);
             img.alt = '';
             avatar.appendChild(img);
         } else {
@@ -1051,8 +1072,14 @@ button:disabled { opacity: 0.4; cursor: default; }
         return base;
     }
 
+    /** 令牌透传：页面 URL 携带的 token 参数必须附加到后续所有 API/SSE 请求上 */
+    function apiUrl(path) {
+        if (!state.urlToken) return path;
+        return path + (path.indexOf('?') >= 0 ? '&' : '?') + 'token=' + encodeURIComponent(state.urlToken);
+    }
+
     function fetchJson(url, options) {
-        return fetch(url, options).then(function (response) {
+        return fetch(apiUrl(url), options).then(function (response) {
             if (!response.ok) {
                 return response.json().catch(function () { return null; }).then(function (data) {
                     var error = new Error((data && data.error) || response.statusText || 'request failed');
@@ -1122,7 +1149,7 @@ button:disabled { opacity: 0.4; cursor: default; }
 
     function connectEvents() {
         if (typeof EventSource === 'undefined') return;
-        var source = new EventSource('/api/events');
+        var source = new EventSource(apiUrl('/api/events'));
         source.addEventListener('messages', function () { void refreshMessages(); });
         source.addEventListener('staff', function (event) {
             try {
@@ -1176,6 +1203,8 @@ button:disabled { opacity: 0.4; cursor: default; }
     }
 
     function initialize() {
+        var params = new URLSearchParams(window.location.search);
+        state.urlToken = params.get('token') || '';
         $('send-btn').addEventListener('click', sendMessage);
         $('load-older').addEventListener('click', function () {
             void loadMessages(true);
@@ -1241,3 +1270,10 @@ button:disabled { opacity: 0.4; cursor: default; }
 </script>
 </body>
 </html>`;
+
+/**
+ * 生成聊天页面 HTML。
+ */
+export function chatPageHtml(): string {
+    return CHAT_PAGE_TEMPLATE;
+}

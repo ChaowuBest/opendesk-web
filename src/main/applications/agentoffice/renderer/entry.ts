@@ -22,6 +22,7 @@ import {
     type SkillDetailCardModel
 } from '../../../../renderer/components/skills/skill-detail-card.js';
 import {
+    generateStaffServiceToken,
     normalizeStaffLocalService,
     unwrapAgentOfficeCallResult,
     type InstalledSkillSummary,
@@ -122,6 +123,9 @@ export class AgentOfficeEntryWidget extends AgentOperableHTMLElement {
     };
     private readonly onLocalServiceChanged = (staffId: string, runtime: LocalServiceRuntime) => {
         if (this.detail?.id !== staffId) return;
+        // 服务重启（如切换 HTTPS）时的无错误 stopped 是过渡态：保持"正在应用"直到
+        // 重新监听或报错，避免状态行在 运行→未启动→运行 之间闪一下
+        if (this.localServicePending && !runtime.listening && !runtime.error) return;
         this.localServicePending = false;
         this.localServiceRuntime = runtime;
         this.updateLocalServiceStatusUI();
@@ -142,12 +146,16 @@ export class AgentOfficeEntryWidget extends AgentOperableHTMLElement {
     private readonly dismissContextMenuOnKeydown = (event: KeyboardEvent): void => {
         if (event.key === 'Escape') this.dismissMessageContextMenu();
     };
-    /** Skill 添加菜单：点击菜单锚点以外或按 Escape 时关闭（对齐设计稿模板行为） */
+    /** Skill 添加菜单：点击菜单锚点以外或按 Escape 时关闭（菜单本体为 fixed 浮层） */
     private readonly closeSkillAddMenuOnOutside = (event: Event): void => {
         if (event instanceof KeyboardEvent && event.key !== 'Escape') return;
         if (event instanceof MouseEvent) {
             const target = event.composedPath()[0];
-            if (target instanceof Element && target.closest('.skills-add-anchor')) return;
+            if (
+                target instanceof Element &&
+                (target.closest('.skills-add-anchor') || target.closest('.skills-add-menu'))
+            )
+                return;
         }
         this.closeSkillAddMenu();
     };
@@ -159,7 +167,65 @@ export class AgentOfficeEntryWidget extends AgentOperableHTMLElement {
         this.removeSkillAddMenuListeners();
         if (!this.skillAddMenuOpen) return;
         this.skillAddMenuOpen = false;
-        this.render();
+        this.shadowRoot?.querySelector('.skills-add-menu')?.remove();
+    }
+
+    /**
+     * 以 fixed 浮层打开 Skill 添加菜单：详情内容区是 overflow:auto 的滚动容器，
+     * 内联的 absolute 菜单会被裁剪到需要滚动才能看全，浮层贴着锚点按钮定位即可完整显示
+     */
+    private openSkillAddMenu(): void {
+        if (!this.shadowRoot) return;
+        this.shadowRoot.querySelector('.skills-add-menu')?.remove();
+        const anchor = this.shadowRoot.querySelector<HTMLElement>('[data-action="toggle-skill-menu"]');
+        const menu = document.createElement('div');
+        menu.innerHTML = this.renderSkillAddMenu();
+        const menuElement = menu.firstElementChild as HTMLElement | null;
+        if (!menuElement || !anchor) return;
+        this.shadowRoot.appendChild(menuElement);
+        const rect = anchor.getBoundingClientRect();
+        menuElement.style.position = 'fixed';
+        menuElement.style.top = `${rect.bottom + 6}px`;
+        menuElement.style.right = `${Math.max(12, window.innerWidth - rect.right)}px`;
+        // 输入区贴近窗口底部时改为向上展开，避免菜单被视口截断
+        const menuHeight = menuElement.getBoundingClientRect().height;
+        if (rect.bottom + menuHeight + 8 > window.innerHeight) {
+            menuElement.style.top = `${Math.max(8, rect.top - menuHeight - 6)}px`;
+        }
+        this.skillAddMenuOpen = true;
+        this.bindSkillAddMenuActions(menuElement);
+        setTimeout(() => {
+            document.addEventListener('mousedown', this.closeSkillAddMenuOnOutside);
+            document.addEventListener('keydown', this.closeSkillAddMenuOnOutside);
+        }, 0);
+    }
+
+    /** Skill 添加菜单的动作项（浮层在渲染后才创建，动作绑定随元素一起进行） */
+    private bindSkillAddMenuActions(menu: HTMLElement): void {
+        menu.querySelector('[data-action="add-skill-directory"]')?.addEventListener('click', () => {
+            this.closeSkillAddMenu();
+            void this.addSkillFromDirectory();
+        });
+        menu.querySelector('[data-action="add-skill-zip"]')?.addEventListener('click', () => {
+            this.closeSkillAddMenu();
+            void this.addSkillFromZip();
+        });
+        menu.querySelector('[data-action="batch-import-skills"]')?.addEventListener('click', () => {
+            this.closeSkillAddMenu();
+            void this.openBatchSkillPicker();
+        });
+        menu.querySelector('[data-action="add-skill-url"]')?.addEventListener('click', () => {
+            this.closeSkillAddMenu();
+            this.skillUrl = '';
+            this.skillModalError = '';
+            this.modal = 'skill-url';
+            this.render();
+            this.shadowRoot?.querySelector<HTMLInputElement>('#skill-url-input')?.focus();
+        });
+        menu.querySelector('[data-action="add-installed-skills"]')?.addEventListener('click', () => {
+            this.closeSkillAddMenu();
+            void this.openInstalledSkillPicker();
+        });
     }
     private readonly closeSendMenuHandler = (event?: Event) => {
         const target = event?.composedPath()[0];
@@ -359,6 +425,8 @@ export class AgentOfficeEntryWidget extends AgentOperableHTMLElement {
     private render(): void {
         if (!this.shadowRoot) return;
         this.closeSendMenu();
+        // 整树重建会带走 fixed 浮层，菜单状态一并复位
+        this.closeSkillAddMenu();
         // 后台事件（staffsChanged 等）会触发整树重渲染，正在输入的消息草稿
         // 需要跨渲染保留：重建前暂存值/光标/焦点，重建后恢复。
         const draftInput = this.shadowRoot.querySelector<HTMLTextAreaElement>('#message-input');
@@ -597,12 +665,12 @@ export class AgentOfficeEntryWidget extends AgentOperableHTMLElement {
                 .join('');
             return `<div class="settings-page">
                 <section class="settings-section"><h3 class="section-label">${escapeHtml(this.tr('agentoffice.statsSection'))}</h3><div class="stats"><div class="stat"><b>${detail.message_count.toLocaleString(this.locale)}</b><span>${escapeHtml(this.tr('agentoffice.messagesStat'))}</span></div><div class="stat"><b>${detail.task_count.toLocaleString(this.locale)}</b><span>${escapeHtml(this.tr('agentoffice.tasksStat'))}</span></div><div class="stat"><b>${this.formatTokens(usage)}</b><span>${escapeHtml(this.tr('agentoffice.tokensStat'))}</span></div><div class="stat"><b>${escapeHtml(new Date(detail.hired_at).toLocaleDateString(this.locale))}</b><span>${escapeHtml(this.tr('agentoffice.hiredAt'))}</span></div></div></section>
-                <section class="settings-section"><h3 class="section-label">${escapeHtml(this.tr('agentoffice.profileSection'))}</h3><div class="form-grid settings-form"><div class="field" data-basic-field="name"><label for="f-name">${escapeHtml(this.tr('agentoffice.nameLabel'))}${required}</label><input id="f-name" value="${escapeHtml(detail.name)}" required aria-required="true"><div class="field-error">${requiredError}</div></div><div class="field" data-basic-field="vendor"><label for="f-vendor">${escapeHtml(this.tr('agentoffice.vendorLabel'))}${required}</label><input id="f-vendor" value="${escapeHtml(detail.vendor_name)}" required aria-required="true"><div class="field-error">${requiredError}</div></div><div class="field" data-basic-field="title"><label for="f-title">${escapeHtml(this.tr('agentoffice.titleLabel'))}${required}</label><input id="f-title" value="${escapeHtml(detail.title)}" required aria-required="true"><div class="field-error">${requiredError}</div></div><div class="field"><label for="f-specialties">${escapeHtml(this.tr('agentoffice.specialtiesLabel'))}</label><input id="f-specialties" value="${escapeHtml(detail.specialties.join(', '))}"></div><div class="field"><label for="f-trigger-interval">${escapeHtml(this.tr('agentoffice.triggerIntervalLabel'))}</label><select id="f-trigger-interval">${triggerOptions}</select><div class="sub">${escapeHtml(this.tr('agentoffice.triggerIntervalHint'))}</div></div><div class="field"><label for="f-model">${escapeHtml(this.tr('agentoffice.modelLabel'))}</label><select id="f-model"><option value="">${escapeHtml(defaultModelLabel)}</option>${missingSelectedModel}${this.modelCatalog.models.map((model) => `<option value="${escapeHtml(model.alias)}" ${detail.model === model.alias ? 'selected' : ''}>${escapeHtml(model.alias)} · ${escapeHtml(model.provider_name)} / ${escapeHtml(model.model_name)}</option>`).join('')}</select><div class="sub">${escapeHtml(this.tr('agentoffice.modelHint'))}</div></div><div class="field full"><div class="setting-check-row"><span class="setting-check-copy"><b>${escapeHtml(this.tr('agentoffice.enableStaff'))}</b><small>${escapeHtml(this.tr('agentoffice.enableStaffHint'))}</small></span><label class="setting-toggle"><input type="checkbox" id="f-enabled" ${detail.enabled ? 'checked' : ''}><span class="setting-toggle-track"></span></label></div><div class="setting-check-row"><span class="setting-check-copy"><b>${escapeHtml(this.tr('agentoffice.localService'))}</b><small>${escapeHtml(this.tr('agentoffice.localServiceHint'))}</small></span><label class="setting-toggle"><input type="checkbox" id="f-local-service" ${serviceOn ? 'checked' : ''}><span class="setting-toggle-track"></span></label></div><div class="local-service-config" id="local-service-config" ${serviceOn ? '' : 'hidden'}><div class="local-service-fields"><div class="field"><label for="f-local-service-host">${escapeHtml(this.tr('agentoffice.localServiceAddress'))}</label><select id="f-local-service-host">${hostOptions}</select></div><div class="field"><label for="f-local-service-port">${escapeHtml(this.tr('agentoffice.localServicePort'))}</label><input id="f-local-service-port" type="number" min="1" max="65535" step="1" value="${serviceConfig.port}"></div></div><div class="local-service-status" id="local-service-status" data-state="${this.localServicePending ? 'pending' : this.localServiceRuntime?.error ? 'error' : this.localServiceRuntime?.listening ? 'running' : 'stopped'}">${this.localServiceStatusHtml()}</div></div></div></div></section>
+                <section class="settings-section"><h3 class="section-label">${escapeHtml(this.tr('agentoffice.profileSection'))}</h3><div class="form-grid settings-form"><div class="field" data-basic-field="name"><label for="f-name">${escapeHtml(this.tr('agentoffice.nameLabel'))}${required}</label><input id="f-name" value="${escapeHtml(detail.name)}" required aria-required="true"><div class="field-error">${requiredError}</div></div><div class="field" data-basic-field="vendor"><label for="f-vendor">${escapeHtml(this.tr('agentoffice.vendorLabel'))}${required}</label><input id="f-vendor" value="${escapeHtml(detail.vendor_name)}" required aria-required="true"><div class="field-error">${requiredError}</div></div><div class="field" data-basic-field="title"><label for="f-title">${escapeHtml(this.tr('agentoffice.titleLabel'))}${required}</label><input id="f-title" value="${escapeHtml(detail.title)}" required aria-required="true"><div class="field-error">${requiredError}</div></div><div class="field"><label for="f-specialties">${escapeHtml(this.tr('agentoffice.specialtiesLabel'))}</label><input id="f-specialties" value="${escapeHtml(detail.specialties.join(', '))}"></div><div class="field"><label for="f-trigger-interval">${escapeHtml(this.tr('agentoffice.triggerIntervalLabel'))}</label><select id="f-trigger-interval">${triggerOptions}</select><div class="sub">${escapeHtml(this.tr('agentoffice.triggerIntervalHint'))}</div></div><div class="field"><label for="f-model">${escapeHtml(this.tr('agentoffice.modelLabel'))}</label><select id="f-model"><option value="">${escapeHtml(defaultModelLabel)}</option>${missingSelectedModel}${this.modelCatalog.models.map((model) => `<option value="${escapeHtml(model.alias)}" ${detail.model === model.alias ? 'selected' : ''}>${escapeHtml(model.alias)} · ${escapeHtml(model.provider_name)} / ${escapeHtml(model.model_name)}</option>`).join('')}</select><div class="sub">${escapeHtml(this.tr('agentoffice.modelHint'))}</div></div><div class="field full"><div class="setting-check-row"><span class="setting-check-copy"><b>${escapeHtml(this.tr('agentoffice.enableStaff'))}</b><small>${escapeHtml(this.tr('agentoffice.enableStaffHint'))}</small></span><label class="setting-toggle"><input type="checkbox" id="f-enabled" ${detail.enabled ? 'checked' : ''}><span class="setting-toggle-track"></span></label></div><div class="setting-check-row"><span class="setting-check-copy"><b>${escapeHtml(this.tr('agentoffice.localService'))}</b><small>${escapeHtml(this.tr('agentoffice.localServiceHint'))}</small></span><label class="setting-toggle"><input type="checkbox" id="f-local-service" ${serviceOn ? 'checked' : ''}><span class="setting-toggle-track"></span></label></div><div class="local-service-config" id="local-service-config" ${serviceOn ? '' : 'hidden'}><div class="local-service-fields"><div class="field"><label for="f-local-service-host">${escapeHtml(this.tr('agentoffice.localServiceAddress'))}</label><select id="f-local-service-host">${hostOptions}</select></div><div class="field"><label for="f-local-service-port">${escapeHtml(this.tr('agentoffice.localServicePort'))}</label><input id="f-local-service-port" type="number" min="1" max="65535" step="1" value="${serviceConfig.port}"></div></div><div class="local-service-fields local-service-token-fields"><div class="field"><label for="f-local-service-user-token">${escapeHtml(this.tr('agentoffice.localServiceUserToken'))}</label><div class="local-service-token-row"><input id="f-local-service-user-token" value="${escapeHtml(serviceConfig.user_token)}" autocomplete="off" spellcheck="false" placeholder=""><button class="secondary small-btn" data-action="generate-user-token" title="${escapeHtml(this.tr('agentoffice.localServiceTokenGenerate'))}">${escapeHtml(this.tr('agentoffice.localServiceTokenGenerate'))}</button></div><div class="sub">${escapeHtml(this.tr('agentoffice.localServiceUserTokenHint'))}</div></div><div class="field"><label for="f-local-service-manage-token">${escapeHtml(this.tr('agentoffice.localServiceManageToken'))}</label><div class="local-service-token-row"><input id="f-local-service-manage-token" value="${escapeHtml(serviceConfig.manage_token)}" autocomplete="off" spellcheck="false"><button class="secondary small-btn" data-action="generate-manage-token" title="${escapeHtml(this.tr('agentoffice.localServiceTokenGenerate'))}">${escapeHtml(this.tr('agentoffice.localServiceTokenGenerate'))}</button></div><div class="field-error" id="f-local-service-manage-token-error" role="alert"></div></div></div><div class="setting-check-row"><span class="setting-check-copy"><b>${escapeHtml(this.tr('agentoffice.localServiceHttps'))}</b><small>${escapeHtml(this.tr('agentoffice.localServiceHttpsHint'))}</small></span><label class="setting-toggle"><input type="checkbox" id="f-local-service-https" ${serviceConfig.https ? 'checked' : ''}><span class="setting-toggle-track"></span></label></div><div class="setting-check-row"><span class="setting-check-copy"><b>${escapeHtml(this.tr('agentoffice.localServiceHideStaffInfo'))}</b><small>${escapeHtml(this.tr('agentoffice.localServiceHideStaffInfoHint'))}</small></span><label class="setting-toggle"><input type="checkbox" id="f-local-service-hide-info" ${serviceConfig.hide_staff_info ? 'checked' : ''}><span class="setting-toggle-track"></span></label></div><div class="local-service-status" id="local-service-status" data-state="${this.localServicePending ? 'pending' : this.localServiceRuntime?.error ? 'error' : this.localServiceRuntime?.listening ? 'running' : 'stopped'}">${this.localServiceStatusHtml()}</div></div></div></div></section>
                 <section class="settings-section"><h3 class="section-label">${escapeHtml(this.tr('agentoffice.instructionsLabel'))}</h3><div class="field"><textarea id="f-agents">${escapeHtml(detail.agents_md)}</textarea></div></section>
             </div>`;
         }
         if (this.detailSection === 'skills') {
-            return `<div class="skills-page"><div class="skills-toolbar"><h3 class="section-label inline">${escapeHtml(this.tr('agentoffice.skills'))} · ${this.skills.length}</h3><div class="skills-add-anchor"><button class="secondary small-btn" data-action="toggle-skill-menu" title="${escapeHtml(this.tr('agentoffice.addSkill'))}"><i class="fa-solid fa-plus"></i>${escapeHtml(this.tr('agentoffice.addSkill'))}</button>${this.skillAddMenuOpen ? this.renderSkillAddMenu() : ''}</div></div>${
+            return `<div class="skills-page"><div class="skills-toolbar"><h3 class="section-label inline">${escapeHtml(this.tr('agentoffice.skills'))} · ${this.skills.length}</h3><div class="skills-add-anchor"><button class="secondary small-btn" data-action="toggle-skill-menu" title="${escapeHtml(this.tr('agentoffice.addSkill'))}"><i class="fa-solid fa-plus"></i>${escapeHtml(this.tr('agentoffice.addSkill'))}</button></div></div>${
                 this.skills.length === 0
                     ? `<div class="empty">${escapeHtml(this.tr('agentoffice.noSkills'))}</div>`
                     : `<div class="skill-grid">${this.skills
@@ -657,6 +725,22 @@ export class AgentOfficeEntryWidget extends AgentOperableHTMLElement {
             .join('');
     }
 
+    /** 运行中服务对外的两个入口地址；令牌按当前草稿配置自动拼进链接 */
+    private localServiceUrls(): { chat: string; manage: string } | null {
+        const runtime = this.localServiceRuntime;
+        if (!runtime?.listening || !runtime.url) return null;
+        const config = normalizeStaffLocalService(this.detail?.local_service);
+        const suffix = (token: string) => (token ? `?token=${encodeURIComponent(token)}` : '');
+        return {
+            chat: `${runtime.url}/chat${suffix(config.user_token)}`,
+            manage: `${runtime.url}/manage${suffix(config.manage_token)}`
+        };
+    }
+
+    private localServiceLinkRowHtml(labelKey: string, url: string, target: 'chat' | 'manage'): string {
+        return `<div class="local-service-link-row"><span class="local-service-link-label">${escapeHtml(this.tr(labelKey))}</span><span class="local-service-url" title="${escapeHtml(url)}">${escapeHtml(url)}</span><button class="secondary small-btn" data-service-link="${target}" data-link-action="open" title="${escapeHtml(this.tr('agentoffice.openInBrowser'))}"><i class="fa-solid fa-arrow-up-right-from-square"></i>${escapeHtml(this.tr('agentoffice.openInBrowser'))}</button><button class="secondary small-btn" data-service-link="${target}" data-link-action="copy" title="${escapeHtml(this.tr('agentoffice.localServiceCopy'))}">${escapeHtml(this.tr('agentoffice.localServiceCopy'))}</button></div>`;
+    }
+
     private localServiceStatusHtml(): string {
         // 配置刚变更、尚无服务事件确认时进入过渡态，绝不沿用旧的"绿色可用"状态
         if (this.localServicePending) {
@@ -664,7 +748,14 @@ export class AgentOfficeEntryWidget extends AgentOperableHTMLElement {
         }
         const runtime = this.localServiceRuntime;
         if (runtime?.listening && runtime.url) {
-            return `<span class="status-dot on"></span><span class="local-service-url" title="${escapeHtml(runtime.url)}">${escapeHtml(runtime.url)}</span><button class="secondary small-btn" data-action="open-service-browser" title="${escapeHtml(this.tr('agentoffice.openInBrowser'))}"><i class="fa-solid fa-arrow-up-right-from-square"></i>${escapeHtml(this.tr('agentoffice.openInBrowser'))}</button><button class="secondary small-btn" data-action="copy-service-url" title="${escapeHtml(this.tr('agentoffice.localServiceCopy'))}">${escapeHtml(this.tr('agentoffice.localServiceCopy'))}</button>`;
+            const urls = this.localServiceUrls();
+            if (urls) {
+                return `<div class="local-service-links">${this.localServiceLinkRowHtml(
+                    'agentoffice.localServiceChatUrl',
+                    urls.chat,
+                    'chat'
+                )}${this.localServiceLinkRowHtml('agentoffice.localServiceManageUrl', urls.manage, 'manage')}</div>`;
+            }
         }
         if (runtime?.error) {
             return `<span class="status-dot"></span><span class="local-service-error">${escapeHtml(runtime.error)}</span>`;
@@ -684,38 +775,40 @@ export class AgentOfficeEntryWidget extends AgentOperableHTMLElement {
                 ? 'running'
                 : 'stopped';
         status.innerHTML = this.localServiceStatusHtml();
-        this.bindServiceCopyButton(status);
+        this.bindServiceLinkButtons(status);
     }
 
-    private bindServiceCopyButton(status: HTMLElement): void {
-        status.querySelector('[data-action="copy-service-url"]')?.addEventListener('click', () => {
-            void this.copyServiceUrl(status);
-        });
-        status.querySelector('[data-action="open-service-browser"]')?.addEventListener('click', () => {
-            void this.openServiceInBrowser();
+    private bindServiceLinkButtons(status: HTMLElement): void {
+        status.querySelectorAll<HTMLButtonElement>('[data-service-link]').forEach((button) => {
+            const target = (button.dataset.serviceLink ?? 'chat') as 'chat' | 'manage';
+            if (button.dataset.linkAction === 'copy') {
+                button.addEventListener('click', () => void this.copyServiceUrl(target, button));
+            } else {
+                button.addEventListener('click', () => {
+                    void this.openServiceInBrowser(target);
+                });
+            }
         });
     }
 
-    private async openServiceInBrowser(): Promise<void> {
+    private async openServiceInBrowser(target: 'chat' | 'manage' = 'chat'): Promise<void> {
         if (!this.detail) return;
         try {
-            await this.call('openServiceInBrowser', this.detail.id);
+            await this.call('openServiceInBrowser', this.detail.id, target);
         } catch (error) {
             this.status = `${this.tr('agentoffice.operationFailed')}: ${this.errorText(error)}`;
             this.updateLocalServiceStatusUI();
         }
     }
 
-    private async copyServiceUrl(status: HTMLElement): Promise<void> {
-        const url = this.localServiceRuntime?.url;
+    private async copyServiceUrl(target: 'chat' | 'manage', button: HTMLButtonElement): Promise<void> {
+        const url = this.localServiceUrls()?.[target];
         if (!url) return;
         try {
             await navigator.clipboard.writeText(url);
         } catch {
             return;
         }
-        const button = status.querySelector<HTMLButtonElement>('[data-action="copy-service-url"]');
-        if (!button) return;
         const previous = button.textContent;
         button.textContent = this.tr('agentoffice.localServiceCopied');
         setTimeout(() => {
@@ -723,24 +816,41 @@ export class AgentOfficeEntryWidget extends AgentOperableHTMLElement {
         }, 1500);
     }
 
-    /** 首次开启时补齐默认值：地址优先取局域网网卡，端口默认 9050（schema 默认值） */
+    /** 首次开启时补齐默认值：地址优先取局域网网卡，端口默认 9050，并自动生成 16 位管理令牌 */
     private handleLocalServiceToggle(enabled: boolean): void {
         if (!this.detail) return;
         const saved = this.detail.local_service ? normalizeStaffLocalService(this.detail.local_service) : null;
         // 未保存过配置时优先选局域网地址，方便其他设备直接访问
         const firstLan = this.localAddresses.find((item) => item.address !== '127.0.0.1');
         const host = this.detail.local_service?.host || firstLan?.address || '127.0.0.1';
+        // 首次启用时两个令牌都自动生成，免去手工填写；用户令牌事后清空仍表示聊天页免令牌
+        const manageToken = saved?.manage_token || (enabled ? generateStaffServiceToken() : '');
+        const userToken = enabled && !saved?.user_token ? generateStaffServiceToken() : (saved?.user_token ?? '');
         this.detail.local_service = {
             enabled,
             host,
-            port: saved?.port ?? 9050
+            port: saved?.port ?? 9050,
+            https: saved?.https ?? false,
+            user_token: userToken,
+            manage_token: manageToken,
+            hide_staff_info: saved?.hide_staff_info ?? false
         };
-        this.localServicePending = true;
+        this.localServicePending = enabled;
         const configBlock = this.shadowRoot?.querySelector<HTMLElement>('#local-service-config');
         if (configBlock) {
             configBlock.hidden = !enabled;
             const hostSelect = configBlock.querySelector<HTMLSelectElement>('#f-local-service-host');
             if (hostSelect) hostSelect.innerHTML = this.localServiceHostOptions(host);
+            const httpsToggle = configBlock.querySelector<HTMLInputElement>('#f-local-service-https');
+            if (httpsToggle) httpsToggle.checked = this.detail.local_service.https;
+            const userInput = configBlock.querySelector<HTMLInputElement>('#f-local-service-user-token');
+            if (userInput) userInput.value = this.detail.local_service.user_token;
+            const manageInput = configBlock.querySelector<HTMLInputElement>('#f-local-service-manage-token');
+            if (manageInput) manageInput.value = manageToken;
+            const manageError = configBlock.querySelector<HTMLElement>('#f-local-service-manage-token-error');
+            if (manageError) manageError.textContent = '';
+            const hideInfo = configBlock.querySelector<HTMLInputElement>('#f-local-service-hide-info');
+            if (hideInfo) hideInfo.checked = this.detail.local_service.hide_staff_info;
         }
         this.updateLocalServiceStatusUI();
         this.queueStaffUpdate({ local_service: this.detail.local_service }, true);
@@ -765,6 +875,36 @@ export class AgentOfficeEntryWidget extends AgentOperableHTMLElement {
         }
         this.localServiceRuntime = null;
         this.handleLocalServiceConfigChange({ port });
+    }
+
+    /** 令牌输入统一走这里：管理令牌在服务启用时不允许清空 */
+    private handleLocalServiceTokenChange(target: 'user_token' | 'manage_token', raw: string): void {
+        if (!this.detail) return;
+        const value = raw.trim();
+        const config = normalizeStaffLocalService(this.detail.local_service);
+        const manageError = this.shadowRoot?.querySelector<HTMLElement>('#f-local-service-manage-token-error');
+        if (target === 'manage_token' && config.enabled && !value) {
+            this.localServiceRuntime = {
+                listening: false,
+                error: this.tr('agentoffice.localServiceManageTokenRequired')
+            };
+            if (manageError) manageError.textContent = this.tr('agentoffice.localServiceManageTokenRequired');
+            this.updateLocalServiceStatusUI();
+            return;
+        }
+        if (manageError) manageError.textContent = '';
+        this.handleLocalServiceConfigChange({ [target]: value });
+    }
+
+    /** 随机生成令牌并立即保存；服务启用中清空管理令牌的错误提示一并清除 */
+    private generateServiceTokenField(target: 'user_token' | 'manage_token'): void {
+        if (!this.detail) return;
+        const token = generateStaffServiceToken();
+        const input = this.shadowRoot?.querySelector<HTMLInputElement>(
+            target === 'user_token' ? '#f-local-service-user-token' : '#f-local-service-manage-token'
+        );
+        if (input) input.value = token;
+        this.handleLocalServiceTokenChange(target, token);
     }
 
     private renderSkillAddMenu(): string {
@@ -903,8 +1043,7 @@ export class AgentOfficeEntryWidget extends AgentOperableHTMLElement {
                 this.activeTab = element.dataset.tab as 'office' | 'management';
                 this.detail = null;
                 this.status = '';
-                this.skillAddMenuOpen = false;
-                this.removeSkillAddMenuListeners();
+                this.closeSkillAddMenu();
                 this.render();
             })
         );
@@ -1031,8 +1170,7 @@ export class AgentOfficeEntryWidget extends AgentOperableHTMLElement {
             void this.flushAutoSave();
             this.detail = null;
             this.status = '';
-            this.skillAddMenuOpen = false;
-            this.removeSkillAddMenuListeners();
+            this.closeSkillAddMenu();
             this.render();
         });
         this.shadowRoot?.querySelectorAll<HTMLElement>('[data-section]').forEach((element) =>
@@ -1040,8 +1178,7 @@ export class AgentOfficeEntryWidget extends AgentOperableHTMLElement {
                 void this.flushAutoSave();
                 this.detailSection = element.dataset.section as DetailSection;
                 this.status = '';
-                this.skillAddMenuOpen = false;
-                this.removeSkillAddMenuListeners();
+                this.closeSkillAddMenu();
                 this.render();
             })
         );
@@ -1070,35 +1207,15 @@ export class AgentOfficeEntryWidget extends AgentOperableHTMLElement {
             this.queueStaffUpdate({ permission: this.copyPermission() }, true);
         });
         this.shadowRoot?.querySelector('[data-action="toggle-skill-menu"]')?.addEventListener('click', () => {
-            this.skillAddMenuOpen = !this.skillAddMenuOpen;
             if (this.skillAddMenuOpen) {
-                document.addEventListener('mousedown', this.closeSkillAddMenuOnOutside);
-                document.addEventListener('keydown', this.closeSkillAddMenuOnOutside);
+                this.closeSkillAddMenu();
             } else {
-                this.removeSkillAddMenuListeners();
+                this.openSkillAddMenu();
             }
-            this.render();
         });
         this.shadowRoot
             ?.querySelector('[data-action="add-skill-directory"]')
             ?.addEventListener('click', () => this.runOperation(() => this.addSkillFromDirectory()));
-        this.shadowRoot
-            ?.querySelector('[data-action="add-skill-zip"]')
-            ?.addEventListener('click', () => this.runOperation(() => this.addSkillFromZip()));
-        this.shadowRoot
-            ?.querySelector('[data-action="batch-import-skills"]')
-            ?.addEventListener('click', () => this.runOperation(() => this.openBatchSkillPicker()));
-        this.shadowRoot?.querySelector('[data-action="add-skill-url"]')?.addEventListener('click', () => {
-            this.skillAddMenuOpen = false;
-            this.skillUrl = '';
-            this.skillModalError = '';
-            this.modal = 'skill-url';
-            this.render();
-            this.shadowRoot?.querySelector<HTMLInputElement>('#skill-url-input')?.focus();
-        });
-        this.shadowRoot
-            ?.querySelector('[data-action="add-installed-skills"]')
-            ?.addEventListener('click', () => this.runOperation(() => this.openInstalledSkillPicker()));
         this.shadowRoot?.querySelectorAll<HTMLElement>('[data-skill-detail]').forEach((element) =>
             element.addEventListener('click', () => {
                 this.selectedSkill =
@@ -1236,8 +1353,36 @@ export class AgentOfficeEntryWidget extends AgentOperableHTMLElement {
             ?.addEventListener('change', (event) => {
                 this.handleLocalServicePortChange((event.target as HTMLInputElement).value);
             });
+        this.shadowRoot
+            ?.querySelector<HTMLInputElement>('#f-local-service-user-token')
+            ?.addEventListener('change', (event) => {
+                this.handleLocalServiceTokenChange('user_token', (event.target as HTMLInputElement).value);
+            });
+        this.shadowRoot
+            ?.querySelector<HTMLInputElement>('#f-local-service-manage-token')
+            ?.addEventListener('change', (event) => {
+                this.handleLocalServiceTokenChange('manage_token', (event.target as HTMLInputElement).value);
+            });
+        this.shadowRoot
+            ?.querySelector('[data-action="generate-user-token"]')
+            ?.addEventListener('click', () => this.generateServiceTokenField('user_token'));
+        this.shadowRoot
+            ?.querySelector('[data-action="generate-manage-token"]')
+            ?.addEventListener('click', () => this.generateServiceTokenField('manage_token'));
+        this.shadowRoot
+            ?.querySelector<HTMLInputElement>('#f-local-service-https')
+            ?.addEventListener('change', (event) => {
+                this.handleLocalServiceConfigChange({ https: (event.target as HTMLInputElement).checked });
+            });
+        this.shadowRoot
+            ?.querySelector<HTMLInputElement>('#f-local-service-hide-info')
+            ?.addEventListener('change', (event) => {
+                this.handleLocalServiceConfigChange({
+                    hide_staff_info: (event.target as HTMLInputElement).checked
+                });
+            });
         const serviceStatus = this.shadowRoot?.querySelector<HTMLElement>('#local-service-status');
-        if (serviceStatus) this.bindServiceCopyButton(serviceStatus);
+        if (serviceStatus) this.bindServiceLinkButtons(serviceStatus);
         this.shadowRoot
             ?.querySelector<HTMLTextAreaElement>('#f-mcp')
             ?.addEventListener('input', (event) => this.handleMcpInput(event.target as HTMLTextAreaElement));
@@ -2027,8 +2172,7 @@ export class AgentOfficeEntryWidget extends AgentOperableHTMLElement {
 
     private async addSkillFromDirectory(): Promise<void> {
         if (!this.detail) return;
-        this.skillAddMenuOpen = false;
-        this.removeSkillAddMenuListeners();
+        this.closeSkillAddMenu();
         const source = (await (window as any).fsAPI.selectDirectory()) as string | null;
         if (!source) return;
         await this.call('addSkill', this.detail.id, source);
@@ -2037,8 +2181,7 @@ export class AgentOfficeEntryWidget extends AgentOperableHTMLElement {
 
     private async addSkillFromZip(): Promise<void> {
         if (!this.detail) return;
-        this.skillAddMenuOpen = false;
-        this.removeSkillAddMenuListeners();
+        this.closeSkillAddMenu();
         const files = (await (window as any).fsAPI.selectFile()) as string[];
         const source = files.find((item) => item.toLowerCase().endsWith('.zip'));
         if (!source) return;
@@ -2048,9 +2191,7 @@ export class AgentOfficeEntryWidget extends AgentOperableHTMLElement {
 
     private async openBatchSkillPicker(): Promise<void> {
         if (!this.detail) return;
-        this.skillAddMenuOpen = false;
-        this.removeSkillAddMenuListeners();
-        this.shadowRoot?.querySelector('.skills-add-menu')?.remove();
+        this.closeSkillAddMenu();
         const directory = (await (window as any).fsAPI.selectDirectory()) as string | null;
         if (!directory) return;
         this.batchSkillCandidates = await this.call('scanSkillSources', directory);
@@ -2095,8 +2236,7 @@ export class AgentOfficeEntryWidget extends AgentOperableHTMLElement {
 
     private async openInstalledSkillPicker(): Promise<void> {
         if (!this.detail) return;
-        this.skillAddMenuOpen = false;
-        this.removeSkillAddMenuListeners();
+        this.closeSkillAddMenu();
         this.selectedInstalledSkillIds.clear();
         this.installedSkills = await this.call('listInstalledSkills', this.detail.id);
         this.modal = 'installed-skills';

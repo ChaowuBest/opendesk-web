@@ -36,10 +36,31 @@ export const StaffPermissionSchema = z.object({
 export const StaffLocalServiceSchema = z.object({
     enabled: z.boolean().default(false),
     host: z.string().trim().min(1).default('127.0.0.1'),
-    port: z.number().int().min(1).max(65535).default(9050)
+    port: z.number().int().min(1).max(65535).default(9050),
+    /** 使用 HTTPS 对外提供服务，证书为现场生成的自签名证书 */
+    https: z.boolean().default(false),
+    /** 访问 /chat 所需的用户令牌，留空表示聊天页无需令牌 */
+    user_token: z.string().trim().max(128).default(''),
+    /** 访问 /manage 所需的管理令牌；启用服务时必须配置（见 normalizeStaffLocalService 的调用方） */
+    manage_token: z.string().trim().max(128).default(''),
+    /** 开启后网页聊天页不展示员工头像/姓名等资料，仅保留悬浮的 OpenDesk 数字员工标志 */
+    hide_staff_info: z.boolean().default(false)
 });
 
 export type StaffLocalService = z.output<typeof StaffLocalServiceSchema>;
+
+export const STAFF_SERVICE_TOKEN_LENGTH = 16;
+const STAFF_SERVICE_TOKEN_ALPHABET = 'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789';
+
+/** 生成随机访问令牌（默认 16 位），浏览器与 Node 的 WebCrypto 均可用 */
+export function generateStaffServiceToken(length: number = STAFF_SERVICE_TOKEN_LENGTH): string {
+    const bytes = new Uint8Array(length);
+    globalThis.crypto.getRandomValues(bytes);
+    let token = '';
+    for (let i = 0; i < length; i++)
+        token += STAFF_SERVICE_TOKEN_ALPHABET[bytes[i] % STAFF_SERVICE_TOKEN_ALPHABET.length];
+    return token;
+}
 
 /** 补齐缺失字段并剔除非法取值，保证读到的历史配置可以直接使用 */
 export function normalizeStaffLocalService(value: unknown): StaffLocalService {

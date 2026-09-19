@@ -2842,8 +2842,22 @@ export const enUs: Record<string, string> = {
     'agentoffice.localServiceCopied': 'Copied',
     'agentoffice.localServicePortInvalid': 'Port must be between 1 and 65535',
     'agentoffice.localServiceLocalhost': 'This device',
+    'agentoffice.localServiceHttps': 'Use HTTPS',
+    'agentoffice.localServiceHttpsHint':
+        'Serves HTTPS with a self-signed certificate generated on this device. Browsers will warn that the certificate is not trusted; continue manually to proceed.',
     'agentoffice.openInBrowser': 'Open in browser',
     'agentoffice.localServiceApplying': 'Applying changes…',
+    'agentoffice.localServiceChatUrl': 'User link',
+    'agentoffice.localServiceManageUrl': 'Manage link',
+    'agentoffice.localServiceUserToken': 'User token',
+    'agentoffice.localServiceManageToken': 'Manage token',
+    'agentoffice.localServiceUserTokenHint':
+        'Leave empty to let the chat page work without a token; once set, links must carry the token parameter.',
+    'agentoffice.localServiceTokenGenerate': 'Generate',
+    'agentoffice.localServiceManageTokenRequired': 'A manage token is required while the service is enabled',
+    'agentoffice.localServiceHideStaffInfo': 'Hide staff info',
+    'agentoffice.localServiceHideStaffInfoHint':
+        "Hides the staff member's portrait, name and other profile details on the chat page, keeping only the floating OpenDesk digital staff badge at the top right.",
     'agentoffice.networkAccessHint':
         'When disabled, the staff member cannot access external network resources while running tasks.',
     'agentoffice.triggerIntervalLabel': 'Trigger interval',
@@ -2929,6 +2943,8 @@ export const enUs: Record<string, string> = {
     'agentoffice.error.messageTooLong': 'Message is too long, please split it into smaller messages',
     'agentoffice.localService.error.start': 'Failed to start the local web service: ${message}',
     'agentoffice.web.poweredBy': 'OpenDesk digital staff',
+    'agentoffice.web.tokenRequired': 'Invalid or missing access token. Please open the link with its token parameter.',
+    'agentoffice.web.manageBadge': 'Manage',
     'agentoffice.web.processing': 'Processing…',
     'agentoffice.web.copy': 'Copy',
     'agentoffice.web.copied': 'Copied',

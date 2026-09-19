@@ -27,6 +27,7 @@ import { skillRegistry } from '../skillmgr/utils/skill-registry.js';
 import AgentOfficeWorker from './worker.js';
 import { normalizeStaffLocalService, unwrapAgentOfficeCallResult, type StaffLocalService } from './common.js';
 import { StaffLocalServiceManager, type LocalServiceRuntime } from './local-service.js';
+import type { StoredServiceCertificate } from './service-cert.js';
 import { CustomAgent } from './custom-agent.js';
 import type { AgentMcpRegistration, McpMgrApplication } from '../mcpmgr/app.js';
 import type { AgentDecl, ModeDecl } from '../../aikernel/agents/common.js';
@@ -611,6 +612,17 @@ export class AgentOfficeApplication extends BaseApplication {
             'agentoffice.localServiceCopied',
             'agentoffice.localServicePortInvalid',
             'agentoffice.localServiceLocalhost',
+            'agentoffice.localServiceHttps',
+            'agentoffice.localServiceHttpsHint',
+            'agentoffice.localServiceChatUrl',
+            'agentoffice.localServiceManageUrl',
+            'agentoffice.localServiceUserToken',
+            'agentoffice.localServiceManageToken',
+            'agentoffice.localServiceUserTokenHint',
+            'agentoffice.localServiceTokenGenerate',
+            'agentoffice.localServiceManageTokenRequired',
+            'agentoffice.localServiceHideStaffInfo',
+            'agentoffice.localServiceHideStaffInfoHint',
             'agentoffice.openInBrowser',
             'agentoffice.localServiceApplying',
             'agentoffice.modelLabel',
@@ -700,12 +712,51 @@ export class AgentOfficeApplication extends BaseApplication {
                 sendMessage: (staffId, input) => this.sendMessage(staffId, input),
                 getResourceFilePath: (staffId, requested) => this.resolveStaffResourcePath(staffId, requested),
                 getLocale: () => getLocale(),
+                readServiceCertificate: (staffId) => this.readServiceCertificate(staffId),
+                writeServiceCertificate: (staffId, certificate) => this.writeServiceCertificate(staffId, certificate),
+                updateStaffProfile: (staffId, input) => this.updateStaff(staffId, input),
+                listStaffSkills: (staffId) => this.callAgentOfficeWorker('listSkills', staffId),
+                deleteStaffSkill: (staffId, name) => this.deleteSkill(staffId, name),
+                addStaffSkill: (staffId, zipPath) => this.addSkill(staffId, zipPath),
+                addStaffSkillFromUrl: (staffId, sourceUrl) => this.addSkillFromUrl(staffId, sourceUrl),
+                listChatModelSummaries: () => this.listChatModels(),
                 onStateChange: (staffId, runtime) => {
                     void this.emitEvent('localServiceChanged', staffId, runtime).catch(() => undefined);
                 }
             });
         }
         return this.localService;
+    }
+
+    private serviceCertificatePath(staffId: string): string {
+        return path.join(this.staffDirectory(staffId), 'protected', 'local-service-cert.json');
+    }
+
+    private readServiceCertificate(staffId: string): StoredServiceCertificate | null {
+        try {
+            const filePath = this.serviceCertificatePath(staffId);
+            if (!fs.existsSync(filePath)) return null;
+            const parsed = JSON.parse(fs.readFileSync(filePath, 'utf8')) as Partial<StoredServiceCertificate>;
+            if (
+                typeof parsed.host !== 'string' ||
+                typeof parsed.key !== 'string' ||
+                typeof parsed.cert !== 'string' ||
+                !parsed.key.includes('PRIVATE KEY') ||
+                !parsed.cert.includes('CERTIFICATE')
+            ) {
+                return null;
+            }
+            return { host: parsed.host, key: parsed.key, cert: parsed.cert };
+        } catch {
+            return null;
+        }
+    }
+
+    private writeServiceCertificate(staffId: string, certificate: StoredServiceCertificate): void {
+        const filePath = this.serviceCertificatePath(staffId);
+        fs.mkdirSync(path.dirname(filePath), { recursive: true });
+        // 私钥落盘限制为仅当前用户可读写（Windows 会忽略 mode，风险可接受：目录在用户数据目录内）
+        fs.writeFileSync(filePath, `${JSON.stringify(certificate, null, 4)}\n`, { encoding: 'utf8', mode: 0o600 });
     }
 
     /** 应用注册即恢复已开启的本地网络服务；启动早期 global worker 可能未就绪，按 5s 退避重试 */
@@ -738,13 +789,20 @@ export class AgentOfficeApplication extends BaseApplication {
         }));
     }
 
-    /** 用系统默认浏览器打开该员工的本地网络服务地址；服务未启动时抛出本地化错误 */
-    async openServiceInBrowser(staffId: string): Promise<void> {
+    /**
+     * 用系统默认浏览器打开该员工本地网络服务的指定入口（chat / manage），
+     * 地址按已保存的令牌配置自动补上 token 参数；服务未启动时抛出本地化错误
+     */
+    async openServiceInBrowser(staffId: string, target: 'chat' | 'manage' = 'chat'): Promise<void> {
         const runtime = this.getLocalService().getRuntime(staffId);
         if (!runtime.listening || !runtime.url) {
             throw new Error(t('agentoffice.localServiceStopped'));
         }
-        await getPlatform().openExternal(runtime.url);
+        const detail = await this.callAgentOfficeWorker<StaffDetail>('getStaffDetail', staffId);
+        const config = normalizeStaffLocalService(detail.local_service);
+        const token = target === 'manage' ? config.manage_token : config.user_token;
+        const url = `${runtime.url}/${target}${token ? `?token=${encodeURIComponent(token)}` : ''}`;
+        await getPlatform().openExternal(url);
     }
 
     listLocalAddresses(): Array<{ address: string; name: string }> {

@@ -20,6 +20,7 @@ import {
     StaffDefinitionSchema,
     StaffMessageSchema,
     StaffPermissionSchema,
+    generateStaffServiceToken,
     normalizeStaffLocalService,
     staffTriggerIntervalMs,
     sumTaskUsage,
@@ -404,7 +405,12 @@ export class AgentOfficeRepository {
                 else delete metadata.model;
             }
             if (input.local_service !== undefined) {
-                metadata.local_service = normalizeStaffLocalService(input.local_service);
+                const localService = normalizeStaffLocalService(input.local_service);
+                // 管理端点必须持令牌访问：启用服务但未配置管理令牌时自动补一个 16 位随机令牌
+                if (localService.enabled && !localService.manage_token) {
+                    localService.manage_token = generateStaffServiceToken();
+                }
+                metadata.local_service = localService;
             }
             atomicWriteJson(metadataPath, metadata);
         }
