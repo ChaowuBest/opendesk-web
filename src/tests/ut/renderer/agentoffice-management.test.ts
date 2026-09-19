@@ -143,6 +143,42 @@ describe('agentoffice management form behavior', () => {
         expect(widget.shadowRoot.querySelector('#f-enabled + .setting-toggle-track')).not.toBeNull();
     });
 
+    test('office tab re-render preserves the message list scroll position', () => {
+        const widget = createWidget();
+        widget.activeTab = 'office';
+        widget.staffs = [
+            {
+                id: 's1',
+                name: 'A',
+                title: 'T',
+                vendor_name: 'V',
+                specialties: [],
+                trigger_interval: 'never',
+                hired_at: '2026-01-01T00:00:00.000Z',
+                enabled: true,
+                message_count: 2,
+                task_count: 0,
+                skill_count: 0
+            }
+        ];
+        widget.selectedStaffId = 's1';
+        widget.messages = [
+            { id: 'a', role: 'user', task_id: 't', created_at: '2026-01-01', content: [{ type: 'text', text: 'hi' }] },
+            {
+                id: 'b',
+                role: 'assistant',
+                task_id: 't',
+                created_at: '2026-01-02',
+                content: [{ type: 'text', text: 'hello' }]
+            }
+        ];
+        widget.render();
+        const box = widget.shadowRoot.querySelector('#messages');
+        box.scrollTop = 321;
+        widget.render();
+        expect(widget.shadowRoot.querySelector('#messages').scrollTop).toBe(321);
+    });
+
     test('trigger interval changes update the template definition immediately', () => {
         const widget = createWidget();
         widget.detail = detail();

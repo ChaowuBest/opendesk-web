@@ -1,6 +1,7 @@
 import { jest } from '@jest/globals';
 import { LLM } from '../../../main/aikernel/llm.js';
 import { checkTerminationFromMessages } from '../../../main/aikernel/termination.js';
+import { logger } from '../../../main/utils/logger.js';
 import { Setting } from '../../../main/utils/setting.js';
 
 describe('termination request options', () => {
@@ -49,5 +50,52 @@ describe('termination request options', () => {
 
         expect(result).toBe('finished');
         expect(askSpy).toHaveBeenCalledWith(expect.any(String), 'glm53', { reasoningEffort: 'low' });
+    });
+});
+
+describe('termination logs must not contain user content', () => {
+    const USER_QUESTION = '机密的原始任务输入：请帮我整理 payroll-2026 的员工薪酬数据';
+    const RESPONSE_FAST_PATH = '首先读取配置文件，';
+    const RESPONSE_LLM_PATH = '任务已经处理完成。';
+
+    let logMessages: string[];
+
+    beforeEach(() => {
+        logMessages = [];
+        for (const level of ['info', 'debug', 'warn', 'error'] as const) {
+            jest.spyOn(logger, level).mockImplementation(((msg: unknown) => {
+                logMessages.push(String(msg));
+                return undefined;
+            }) as any);
+        }
+    });
+
+    afterEach(() => {
+        jest.restoreAllMocks();
+        Setting.clearCache();
+    });
+
+    test('fast path 命中时日志不包含用户问题与回复原文', async () => {
+        const result = await checkTerminationFromMessages(USER_QUESTION, RESPONSE_FAST_PATH, 'test-model');
+
+        expect(result).toBe('interrupted');
+        expect(logMessages.length).toBeGreaterThan(0);
+        for (const message of logMessages) {
+            expect(message).not.toContain(USER_QUESTION);
+            expect(message).not.toContain(RESPONSE_FAST_PATH);
+        }
+    });
+
+    test('LLM 判定路径日志不包含用户问题与回复原文', async () => {
+        jest.spyOn(LLM, 'ask').mockResolvedValue('finished');
+
+        const result = await checkTerminationFromMessages(USER_QUESTION, RESPONSE_LLM_PATH, 'test-model');
+
+        expect(result).toBe('finished');
+        expect(logMessages.length).toBeGreaterThan(0);
+        for (const message of logMessages) {
+            expect(message).not.toContain(USER_QUESTION);
+            expect(message).not.toContain(RESPONSE_LLM_PATH);
+        }
     });
 });
