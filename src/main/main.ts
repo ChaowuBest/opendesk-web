@@ -156,6 +156,7 @@ import { getAttachmentFileSupport, UnsupportedAttachmentFileTypeError } from './
 import { switchTaskMode } from './aikernel/task/mode.js';
 import {
     initTaskStatusWidget,
+    installTransparentBackgroundReassert,
     setMainWindowHidden,
     setMainWindowFocused
 } from './windows/task-status-widget-window.js';
@@ -281,6 +282,11 @@ app.commandLine.appendSwitch(
 // 启用 Windows 原生窗口遮挡检测（减少被遮挡时的绘制开销）
 if (process.platform === 'win32') {
     app.commandLine.appendSwitch('enable-features', 'CalculateNativeWinOcclusion');
+}
+// Linux 上启用透明 visual：透明窗口（主窗口/悬浮窗自绘圆角）依赖 ARGB 输出，
+// 缺省合成路径下 alpha 会被写入为不透明，导致圆角外区域呈现底色
+if (process.platform === 'linux') {
+    app.commandLine.appendSwitch('enable-transparent-visuals');
 }
 
 const __dirname = import.meta.dirname;
@@ -694,6 +700,12 @@ const createWindow = () => {
         minHeight: 400,
         minWidth: 850,
         frame: false,
+        // Linux(X11) 窗口管理器不为无边框窗口绘制圆角，改用透明窗口由页面自绘圆角
+        // （参数与 task-status-widget 悬浮窗保持一致）
+        transparent: process.platform === 'linux',
+        roundedCorners: true,
+        // 透明窗口必须显式透明底色，否则 Electron 默认白色画布会垫在圆角缺口下
+        backgroundColor: process.platform === 'linux' ? '#00000000' : undefined,
         icon: appIcon,
         show: false, // 等 ready-to-show 后再显示，避免白屏闪烁
         paintWhenInitiallyHidden: true, // 允许在隐藏状态下预先渲染首帧
@@ -767,6 +779,11 @@ const createWindow = () => {
     // 悬浮窗（pill/card 模式）依赖主窗口是否处于前台的焦点状态。
     mainWindow.on('blur', () => setMainWindowFocused(false));
     mainWindow.on('focus', () => setMainWindowFocused(true));
+
+    // Linux/Windows 透明窗口在显示、尺寸变化等时机合成层偶发丢失 alpha（同
+    // electron/electron#40515 缺陷），导致自绘圆角外露出不透明底色；
+    // 统一挂载恢复钩子，在受影响时机重新声明透明背景并强制重绘。
+    installTransparentBackgroundReassert(mainWindow);
 
     // 全屏状态变化时更新 tray 菜单文案
     mainWindow.on('enter-full-screen', () => {
@@ -2817,6 +2834,12 @@ const registerSettingAPIHandlers = () => {
             }
             return { status: 'ok', data: globalMainWindow.isMaximized() };
         }),
+        ipcMain.handle('setting:isFullScreen', () => {
+            if (globalMainWindow === null) {
+                return { status: 'error', message: 'main window not found' };
+            }
+            return { status: 'ok', data: globalMainWindow.isFullScreen() };
+        }),
         ipcMain.handle('setting:getAppVersion', () => {
             return { status: 'ok', data: app.getVersion() };
         }),
@@ -3643,8 +3666,7 @@ async function startApplication(): Promise<void> {
         ipcMain.handle('application:openInNewWindow', async (_event, bundleName: string) => {
             try {
                 const appConfig = ApplicationRegistry.getApplicationGUIConfig(bundleName) as
-                    | Record<string, unknown>
-                    | undefined;
+                    Record<string, unknown> | undefined;
                 const appName = (appConfig?.name as string) || bundleName;
 
                 const appWindow = new BrowserWindow({

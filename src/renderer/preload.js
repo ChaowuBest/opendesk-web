@@ -1155,6 +1155,13 @@ if (shouldExposeMainWindowAPIs()) {
             }
             return result.data;
         },
+        isFullScreen: async () => {
+            const result = await ipcRenderer.invoke('setting:isFullScreen');
+            if (result.status !== 'ok') {
+                return false;
+            }
+            return result.data;
+        },
         getProviderTemplates: async () => {
             const result = await ipcRenderer.invoke('setting:getProviderTemplates');
             if (result.status !== 'ok') {

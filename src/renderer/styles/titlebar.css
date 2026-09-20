@@ -35,6 +35,52 @@ body.immersive-desktop-open .drag-overlay {
     transform: scale(0.95);
 }
 
+/*
+ * Linux(X11) 窗口管理器不为无边框窗口绘制圆角，改用透明窗口由页面自绘。
+ * 实现与 task-status-widget 悬浮窗同构：透明窗口 + 单容器自绘背景 + 圆角。
+ * 半径与终端工具卡片 (rounded-[14px]) 保持一致。
+ * 仅在 html.window-rounded（仅 Linux 注入）时生效，其他平台不受影响。
+ * 最大化/全屏时通过 window-maximized / window-fullscreen 类取消圆角。
+ */
+html.window-rounded,
+html.window-rounded body {
+    background: transparent;
+    overflow: hidden;
+}
+
+/* body 的 transform 使其成为 fixed 后代的包含块：动态挂到 body 下的全屏
+   覆盖层（确认框遮罩、lightbox、各 overlay 等）统一被圆角裁切，
+   新增全屏场景无需逐个处理 */
+html.window-rounded body {
+    border-radius: 14px;
+    transform: translateZ(0);
+}
+
+/* 与悬浮窗 :host 同构：铺满容器自绘背景并自带圆角。
+   transform 使 #app-root 成为 fixed 后代（沉浸桌面、全屏遮罩等）的包含块，
+   所有全屏覆盖层统一落入此容器的圆角裁切，无需逐场景单独处理 */
+html.window-rounded #app-root {
+    background: var(--od-bg);
+    border-radius: 14px;
+    overflow: hidden;
+    transform: translateZ(0);
+}
+
+/* 启动屏（fixed 铺满）自绘背景，四角自裁 */
+html.window-rounded #startup-shell {
+    border-radius: 14px;
+    overflow: hidden;
+}
+
+html.window-rounded.window-maximized body,
+html.window-rounded.window-maximized #app-root,
+html.window-rounded.window-maximized #startup-shell,
+html.window-rounded.window-fullscreen body,
+html.window-rounded.window-fullscreen #app-root,
+html.window-rounded.window-fullscreen #startup-shell {
+    border-radius: 0;
+}
+
 .markdown-body {
     font-family: var(--font-sans);
 }

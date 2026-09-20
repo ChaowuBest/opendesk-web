@@ -87,6 +87,24 @@ export function resolveNpmInvocation(
     };
 }
 
+/**
+ * npm 11.19+（RFC npm/rfcs#868）规定 project 级安装不允许 CLI/env 层携带
+ * allow-scripts 策略，否则直接抛 EALLOWSCRIPTS。而 `npm run` 会把用户 .npmrc
+ * 里的 allow-scripts 以 npm_config_allow_scripts 环境变量注入子进程，导致本模块
+ * 以子进程方式执行的 project 级 npm install 全部失败。这些安装均带
+ * --ignore-scripts，策略本身不参与脚本判定，剔除 env 层即可让子 npm 回落到
+ * package.json/.npmrc 层（这两层不受限制）。
+ */
+export function stripNpmScriptPolicyEnv(environment: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
+    const result: NodeJS.ProcessEnv = {};
+    for (const [key, value] of Object.entries(environment)) {
+        // npm 解析环境变量时前缀匹配（/^npm_config_/i）不区分大小写，两种拼写都要剔除
+        if (/^npm_config_allow_scripts$/i.test(key)) continue;
+        result[key] = value;
+    }
+    return result;
+}
+
 export async function defaultNpmRunner(args: string[], cwd: string, cacheDirectory: string): Promise<void> {
     const invocation = resolveNpmInvocation(args);
     const npmrcPath = path.join(cwd, '.npmrc');
@@ -98,13 +116,15 @@ export async function defaultNpmRunner(args: string[], cwd: string, cacheDirecto
             cwd,
             timeout: 180_000,
             maxBuffer: 10 * 1024 * 1024,
-            env: buildChildProcessEnv({
-                ...process.env,
-                npm_config_userconfig: npmrcPath,
-                npm_config_cache: cacheDirectory,
-                npm_config_fund: 'false',
-                npm_config_audit: 'false'
-            })
+            env: stripNpmScriptPolicyEnv(
+                buildChildProcessEnv({
+                    ...process.env,
+                    npm_config_userconfig: npmrcPath,
+                    npm_config_cache: cacheDirectory,
+                    npm_config_fund: 'false',
+                    npm_config_audit: 'false'
+                })
+            )
         });
     } finally {
         fs.rmSync(npmrcPath, { force: true });
