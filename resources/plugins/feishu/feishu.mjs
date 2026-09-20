@@ -861,7 +861,19 @@ export class FeishuChannel {
                         oc: 'opendesk-interaction-v1',
                         kind: 'approval',
                         decision: 'deny'
-                    })
+                    }),
+                    // "始终允许"：core 下发 allowRemember=true 时渲染第三按钮，
+                    // 点击回传 decision=allow + rememberScope=session。
+                    ...(payload.allowRemember
+                        ? [
+                              this._buildCardButton('始终允许', 'primary', {
+                                  oc: 'opendesk-interaction-v1',
+                                  kind: 'approval',
+                                  decision: 'allow',
+                                  rememberScope: 'session'
+                              })
+                          ]
+                        : [])
                 ]
             }
         };
@@ -1142,13 +1154,18 @@ export class FeishuChannel {
             this._interactions.delete(interactionId);
             clearTimeout(pending.timer);
             const decision = value.decision === 'allow' ? 'allow' : 'deny';
-            ctx?.logger.info(`feishu: approval ${interactionId} -> ${decision} by ${operatorId}`);
+            // 点击"始终允许"时回传 rememberScope=session，core 侧映射为 task 级 enforcer 放行
+            const rememberScope = value.rememberScope === 'session' ? 'session' : undefined;
+            ctx?.logger.info(
+                `feishu: approval ${interactionId} -> ${decision} by ${operatorId}${rememberScope ? ' (remember session)' : ''}`
+            );
             await ctx?.dispatchInteraction?.({
                 kind: 'approval',
                 interactionId,
                 accountId,
                 operator: { id: operatorId },
                 decision,
+                rememberScope,
                 raw: event
             });
             const doneCard = this._buildApprovalDoneCard(decision, pending.prompt);

@@ -60,7 +60,7 @@ export class WechatChannel {
         description: 'WeChat channel (getUpdates long-poll + sendMessage)',
         aliases: ['wechat']
     };
-    capabilities = { chatTypes: ['direct', 'group'], media: false };
+    capabilities = { chatTypes: ['direct', 'group'], media: false, interactive: true };
     supportLoginWithQr = true;
 
     constructor() {
@@ -70,6 +70,10 @@ export class WechatChannel {
         this._seenMessageIds = new Set();
         this._contextTokens = new Map(); // accountId:recipientId -> context_token
         this._qrSessions = new Map(); // sessionKey -> { qrcode, baseUrl, token }
+        /** pending 审批交互：recipientId -> { interactionId, kind, expiresAt } */
+        this._pendingInteractions = new Map();
+        /** 普通入站消息按会话串行投递，但不阻塞 getUpdates 接收循环。 */
+        this._dispatchChains = new Map();
     }
 
     setChannelRuntimeContext(ctx) {
@@ -310,6 +314,32 @@ export class WechatChannel {
             if (this._contextTokens.size > 2000) this._contextTokens.clear();
         }
 
+        // 结构化交互回复检测：用户回复序号时优先结算 pending 交互，不当作普通消息
+        if (text.trim()) {
+            const pendingKey = groupId || senderId;
+            const pending = this._pendingInteractions.get(pendingKey);
+            if (pending && Date.now() < pending.expiresAt) {
+                const resolved = this._resolveInteractionReply(pending, text);
+                if (resolved) {
+                    this._pendingInteractions.delete(pendingKey);
+                    ctx.logger.info(
+                        `weixin: interaction ${pending.interactionId} resolved by ${senderId}` +
+                            (resolved.decision ? ` decision=${resolved.decision}` : '')
+                    );
+                    await ctx.dispatchInteraction({
+                        kind: pending.kind,
+                        interactionId: pending.interactionId,
+                        accountId,
+                        operator: { id: senderId },
+                        ...resolved
+                    });
+                    return;
+                }
+            }
+            // 过期 / 不匹配则清理该 pending，继续当普通消息处理
+            if (pending) this._pendingInteractions.delete(pendingKey);
+        }
+
         const inbound = {
             messageId: messageId || undefined,
             accountId,
@@ -323,7 +353,19 @@ export class WechatChannel {
         if (media.length > 0) inbound.media = media;
 
         ctx.logger.debug(`incoming from=${senderId} group=${groupId || '-'} len=${text.length} media=${media.length}`);
-        await ctx.dispatch(inbound);
+        const dispatchKey = accountId + ':' + (groupId || senderId);
+        const previousDispatch = this._dispatchChains.get(dispatchKey) || Promise.resolve();
+        const currentDispatch = previousDispatch.catch(() => undefined).then(() => ctx.dispatch(inbound));
+        this._dispatchChains.set(dispatchKey, currentDispatch);
+        void currentDispatch
+            .catch((err) => {
+                ctx.logger.error(`weixin: dispatch incoming message failed: ${err?.message || String(err)}`);
+            })
+            .finally(() => {
+                if (this._dispatchChains.get(dispatchKey) === currentDispatch) {
+                    this._dispatchChains.delete(dispatchKey);
+                }
+            });
     }
 
     async stop(accountId) {
@@ -332,6 +374,120 @@ export class WechatChannel {
             controller.abort();
             this._controllers.delete(accountId);
         }
+    }
+
+    // ── 结构化交互（权限审批 / askUser）──────────────────────────────────────
+
+    /**
+     * 发送结构化交互请求。微信 ilink 为纯文本渠道，无法渲染富交互卡片，
+     * 因此把审批/提问格式化为文本消息，用户回复序号（如 1 / 2 / 3）后
+     * 由 _handleIncoming 解析并经 ctx.dispatchInteraction 回传。
+     */
+    async sendInteraction(request) {
+        const accounts = this.loadAccounts();
+        const data = accounts[request.accountId];
+        if (!data?.token) {
+            throw new Error(`weixin: account ${request.accountId} not configured`);
+        }
+        const recipientId = request.to?.recipientId;
+        if (!recipientId) {
+            throw new Error('weixin: interaction missing recipientId');
+        }
+
+        // 记录 pending 交互（同会话新审批覆盖旧审批，过期项由 _handleIncoming 惰性清理）
+        const payload = request.payload || {};
+        const pending = {
+            interactionId: request.interactionId,
+            kind: request.kind,
+            expiresAt: request.expiresAt || Date.now() + 5 * 60_000,
+            allowRemember: payload.allowRemember === true
+        };
+        this._pendingInteractions.set(recipientId, pending);
+
+        try {
+            const text = this._formatInteractionText(request);
+            await this._sendText(data, recipientId, text);
+        } catch (err) {
+            if (this._pendingInteractions.get(recipientId) === pending) {
+                this._pendingInteractions.delete(recipientId);
+            }
+            throw err;
+        }
+        return {};
+    }
+
+    /** 把审批/提问请求格式化为文本消息。 */
+    _formatInteractionText(request) {
+        const { kind, payload } = request;
+        if (kind === 'approval') {
+            const lines = ['🔒 权限确认', '', payload.prompt || '', ''];
+            if (payload.allowRemember === true) {
+                lines.push('请回复序号选择：', '1️⃣ 允许', '2️⃣ 拒绝', '3️⃣ 本次会话始终允许');
+            } else {
+                lines.push('请回复序号选择：', '1️⃣ 允许', '2️⃣ 拒绝');
+            }
+            return lines.join('\n');
+        }
+        // askUser
+        const questions = Array.isArray(payload.questions) ? payload.questions : [];
+        const lines = ['❓ 向你提问', ''];
+        questions.forEach((q, qi) => {
+            lines.push(`${qi + 1}. ${q.question}`);
+            q.options.forEach((opt, oi) => {
+                const desc = opt.description ? ` - ${opt.description}` : '';
+                lines.push(`   ${qi + 1}.${oi + 1}. ${opt.label}${desc}`);
+            });
+            lines.push('');
+        });
+        lines.push('请回复序号选择，如 1.2（第1题选第2项）；多题用空格分隔：');
+        return lines.join('\n');
+    }
+
+    /** 发送纯文本消息（sendInteraction 复用，无 context_token）。 */
+    async _sendText(data, recipientId, text) {
+        const outboundMsg = {
+            from_user_id: '',
+            to_user_id: recipientId,
+            client_id: 'weixin-' + Date.now() + '-' + Math.random().toString(36).slice(2, 8),
+            message_type: 2,
+            message_state: 2,
+            item_list: text ? [{ type: 1, text_item: { text } }] : undefined
+        };
+        const resp = await this._post(
+            data.baseUrl || DEFAULT_BASE_URL,
+            'ilink/bot/sendmessage',
+            { msg: outboundMsg },
+            data.token,
+            API_TIMEOUT_MS
+        );
+        if (resp.ret && resp.ret !== 0) {
+            throw new Error(`weixin: sendMessage ret=${resp.ret} errmsg=${resp.errmsg || '(none)'}`);
+        }
+    }
+
+    /** 解析用户对交互消息的回复；无法解析时返回 null（按普通消息处理）。 */
+    _resolveInteractionReply(pending, text) {
+        const t = text.trim().replace(/\s+/g, '');
+        if (pending.kind === 'approval') {
+            if (/^(1|允许|allow)$/i.test(t)) return { decision: 'allow', rememberScope: 'none' };
+            if (/^(2|拒绝|deny)$/i.test(t)) return { decision: 'deny' };
+            if (pending.allowRemember && /^(3|始终允许|always)$/i.test(t))
+                return { decision: 'allow', rememberScope: 'session' };
+            return null;
+        }
+        // askUser：解析形如 1.2 或 1.2 3.1 的序号（题号.选项号）
+        const tokens = t.split(/[,，;；\s]+/).filter(Boolean);
+        const answers = {};
+        for (const token of tokens) {
+            const m = token.match(/^(\d+)[.．](\d+)$/);
+            if (!m) return null;
+            const qi = Number(m[1]) - 1;
+            const oi = Number(m[2]) - 1;
+            if (qi < 0) return null;
+            if (!answers[qi]) answers[qi] = [];
+            answers[qi].push(String(oi));
+        }
+        return Object.keys(answers).length > 0 ? { answers } : null;
     }
 
     // ── 出站 ───────────────────────────────────────────────────────────────

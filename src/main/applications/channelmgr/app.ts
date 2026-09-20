@@ -659,6 +659,7 @@ export class ChannelMgrApplication extends BaseApplication {
             interactionId?: string;
             operator?: { id?: string; name?: string };
             decision?: string;
+            rememberScope?: string;
             answers?: Record<number, string[]>;
             cancelled?: boolean;
         };
@@ -672,6 +673,7 @@ export class ChannelMgrApplication extends BaseApplication {
             accountId,
             operator: { id: e.operator?.id ?? '', name: e.operator?.name },
             decision: e.decision === 'deny' ? 'deny' : e.decision === 'allow' ? 'allow' : undefined,
+            rememberScope: e.rememberScope === 'session' ? 'session' : 'none',
             answers: e.answers,
             cancelled: e.cancelled,
             raw: event
