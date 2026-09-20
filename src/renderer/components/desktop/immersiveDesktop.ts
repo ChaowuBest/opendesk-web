@@ -12,6 +12,7 @@
 import { escapeHtml } from '../../../common/utils/escape.js';
 import { createRendererTranslator, resolveRendererLocale } from '../../locale.js';
 import { isApplicationVisibleInMenu, type ExperimentalFeatureSettings } from '../../utils/application-visibility.js';
+import { fixedLayerOrigin, visibleViewportRect } from '../../utils/window-frame.js';
 import { CLOSE_SVG, detectDarkMode, MODAL_CSS, renderIcon } from '../confirmModal.js';
 import { composeCardSrcDoc, hasCardContent } from './cardContent.js';
 import { playDesktopExitTransition } from './desktopEffects.js';
@@ -380,10 +381,16 @@ export class ImmersiveDesktop extends HTMLElement {
         if (!cardInteraction) this.positionAllCards();
         for (const desktopWindow of this._windows.values()) {
             if (desktopWindow.minimized || desktopWindow.maximized) continue;
-            const clampedX = clamp(desktopWindow.x, -desktopWindow.width + 80, Math.max(8, window.innerWidth - 80));
-            const clampedY = clamp(desktopWindow.y, 0, Math.max(8, window.innerHeight - 40));
-            const clampedW = clamp(desktopWindow.width, 320, Math.max(320, window.innerWidth - 8));
-            const clampedH = clamp(desktopWindow.height, 220, Math.max(220, window.innerHeight - 8));
+            // 浮窗坐标是内容区坐标（fixed 于 #app-root），上限基于可视内容区而非窗口矩形
+            const view = visibleViewportRect();
+            const clampedX = clamp(
+                desktopWindow.x,
+                -desktopWindow.width + 80,
+                Math.max(8, view.right - view.left - 80)
+            );
+            const clampedY = clamp(desktopWindow.y, 0, Math.max(8, view.bottom - view.top - 40));
+            const clampedW = clamp(desktopWindow.width, 320, Math.max(320, view.right - view.left - 8));
+            const clampedH = clamp(desktopWindow.height, 220, Math.max(220, view.bottom - view.top - 8));
             if (
                 clampedX !== desktopWindow.x ||
                 clampedY !== desktopWindow.y ||
@@ -1181,10 +1188,14 @@ export class ImmersiveDesktop extends HTMLElement {
             .map((item) => (item === 'sep' ? '<div class="od-context-sep"></div>' : item))
             .join('');
         menu.hidden = false;
+        // 菜单 fixed 定位在 #app-root 内，坐标原点是内容区而非视口（见 window-frame.ts）；
+        // 防溢出修正同样基于可视内容区
+        const view = visibleViewportRect();
+        const origin = fixedLayerOrigin(menu);
         // 菜单贴右侧屏幕时二级菜单翻到左侧展开
-        menu.classList.toggle('od-sub-opens-left', clientX > window.innerWidth - 380);
-        const left = clamp(clientX, 8, window.innerWidth - 210);
-        const top = clamp(clientY, 8, window.innerHeight - 60);
+        menu.classList.toggle('od-sub-opens-left', clientX > view.right - 380);
+        const left = clamp(clientX - origin.x, 8, Math.max(8, view.right - origin.x - 210));
+        const top = clamp(clientY - origin.y, 8, Math.max(8, view.bottom - origin.y - 60));
         menu.style.left = `${left}px`;
         menu.style.top = `${top}px`;
     }
@@ -1300,8 +1311,7 @@ export class ImmersiveDesktop extends HTMLElement {
         const desktopWindow = await this.openApplicationWindow('browser');
         if (!desktopWindow) return;
         const browser = desktopWindow.contentElement.querySelector('browser-entry-widget') as
-            | (HTMLElement & { openUrl?: (url: string) => void })
-            | null;
+            (HTMLElement & { openUrl?: (url: string) => void }) | null;
         browser?.openUrl?.(url);
     }
 
@@ -1635,10 +1645,12 @@ export class ImmersiveDesktop extends HTMLElement {
         height: number;
     }): DesktopWindow {
         const offset = (this._windows.size % 5) * 28;
-        const width = Math.min(input.width, Math.max(360, window.innerWidth - 32));
-        const height = Math.min(input.height, Math.max(260, window.innerHeight - 32));
-        const x = clamp(64 + offset, 8, Math.max(8, window.innerWidth - width - 8));
-        const y = clamp(48 + offset, 8, Math.max(8, window.innerHeight - height - 8));
+        // 浮窗坐标是内容区坐标（fixed 于 #app-root），尺寸/摆放上限基于可视内容区
+        const view = visibleViewportRect();
+        const width = Math.min(input.width, Math.max(360, view.right - view.left - 32));
+        const height = Math.min(input.height, Math.max(260, view.bottom - view.top - 32));
+        const x = clamp(64 + offset, 8, Math.max(8, view.right - view.left - width - 8));
+        const y = clamp(48 + offset, 8, Math.max(8, view.bottom - view.top - height - 8));
         const element = document.createElement('section');
         element.className = 'od-floating-window od-window-enter';
         element.dataset.desktopWindowId = input.id;
@@ -1766,10 +1778,11 @@ export class ImmersiveDesktop extends HTMLElement {
                 width: desktopWindow.width,
                 height: desktopWindow.height
             };
+            const view = visibleViewportRect();
             desktopWindow.x = 12;
             desktopWindow.y = 12;
-            desktopWindow.width = window.innerWidth - 24;
-            desktopWindow.height = window.innerHeight - 24;
+            desktopWindow.width = view.right - view.left - 24;
+            desktopWindow.height = view.bottom - view.top - 24;
             desktopWindow.maximized = true;
         }
         this.positionWindow(desktopWindow);
@@ -1826,12 +1839,17 @@ export class ImmersiveDesktop extends HTMLElement {
         if (state?.type !== 'window-drag') return;
         const desktopWindow = this._windows.get(state.id);
         if (!desktopWindow) return;
+        const view = visibleViewportRect();
         desktopWindow.x = clamp(
             state.startX + (event.clientX - state.startClientX),
             -desktopWindow.width + 80,
-            window.innerWidth - 80
+            Math.max(8, view.right - view.left - 80)
         );
-        desktopWindow.y = clamp(state.startY + (event.clientY - state.startClientY), 0, window.innerHeight - 40);
+        desktopWindow.y = clamp(
+            state.startY + (event.clientY - state.startClientY),
+            0,
+            Math.max(8, view.bottom - view.top - 40)
+        );
         this.positionWindow(desktopWindow);
     }
 
@@ -1865,16 +1883,17 @@ export class ImmersiveDesktop extends HTMLElement {
         const start = state.startRect;
         const dx = event.clientX - state.startClientX;
         const dy = event.clientY - state.startClientY;
+        const view = visibleViewportRect();
         if (state.dir.includes('n')) {
             const delta = clamp(dy, -start.y, start.height - 220);
             desktopWindow.y = start.y + delta;
             desktopWindow.height = start.height - delta;
         }
         if (state.dir.includes('e')) {
-            desktopWindow.width = clamp(start.width + dx, 320, window.innerWidth - start.x);
+            desktopWindow.width = clamp(start.width + dx, 320, view.right - view.left - start.x);
         }
         if (state.dir.includes('s')) {
-            desktopWindow.height = clamp(start.height + dy, 220, window.innerHeight - start.y);
+            desktopWindow.height = clamp(start.height + dy, 220, view.bottom - view.top - start.y);
         }
         if (state.dir.includes('w')) {
             const delta = clamp(dx, -start.x, start.width - 320);
@@ -1959,9 +1978,7 @@ export class ImmersiveDesktop extends HTMLElement {
     private async resolveApplicationFrameSrc(bundleName: string): Promise<string> {
         try {
             const config = (await globalWindow.applicationRegistryAPI?.getApplicationGUIConfig?.(bundleName)) as
-                | ApplicationGuiConfig
-                | null
-                | undefined;
+                ApplicationGuiConfig | null | undefined;
             if (config?.source === 'user' && config.entryUrl) {
                 return config.entryUrl;
             }

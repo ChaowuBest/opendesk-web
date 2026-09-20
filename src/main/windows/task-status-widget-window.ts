@@ -397,8 +397,27 @@ const TRANSPARENT_REASSERT_EVENTS = [
 /**
  * 为透明窗口统一挂载 alpha 恢复钩子（显示、尺寸、最大化、全屏等时机）。
  * 新增透明窗口时调用一次即可，避免每个显示/尺寸变化路径分散处理。
+ *
+ * 同时把窗口登记进透明窗口注册表：这些窗口的 BrowserWindow 底色必须恒为
+ * '#00000000'（自绘圆角/阴影的透明区域依赖它），主题服务等需要设置窗口底色
+ * 的地方通过 isTransparentShadowWindow 判定跳过。
  */
-export function installTransparentBackgroundReassert(win: BrowserWindow): void {
+const transparentWindows = new WeakSet<BrowserWindow>();
+
+export function isTransparentShadowWindow(win: BrowserWindow): boolean {
+    return transparentWindows.has(win);
+}
+
+/**
+ * @param isTransparent 该窗口的 BrowserWindow 底色是否必须恒为透明
+ * （仅创建参数 transparent: true 的窗口传 true；Electron 没有透明的 getter，
+ * 由创建点显式声明）。非透明窗口仅挂载 alpha 恢复钩子，不进注册表——
+ * 例如 Windows 主窗口非透明，切主题时底色需要跟随主题色。
+ */
+export function installTransparentBackgroundReassert(win: BrowserWindow, isTransparent = true): void {
+    if (isTransparent) {
+        transparentWindows.add(win);
+    }
     if (process.platform !== 'win32' && process.platform !== 'linux') {
         return;
     }

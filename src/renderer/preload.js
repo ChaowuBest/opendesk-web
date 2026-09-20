@@ -967,6 +967,15 @@ function isMainFramePreload() {
 }
 
 if (shouldExposeMainWindowAPIs()) {
+    // Linux 阴影窗口的内容边缘 resize（见 main 进程 windows/shadow-resize.ts）
+    safeExposeInMainWorld('shadowResizeAPI', {
+        start: (direction) => {
+            ipcRenderer.send('window:shadowResizeStart', direction);
+        },
+        end: () => {
+            ipcRenderer.send('window:shadowResizeEnd');
+        }
+    });
     safeExposeInMainWorld('memoryAPI', {
         getUserPortrait: async () => {
             const result = await ipcRenderer.invoke('memory:getUserPortrait');

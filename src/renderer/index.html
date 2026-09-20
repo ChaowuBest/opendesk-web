@@ -864,6 +864,10 @@
                 window.updateWindowShape = updateWindowShape;
                 window.addEventListener('resize', updateWindowShape);
                 updateWindowShape();
+                // 阴影边距环内的内容边缘 resize 感应条
+                import('./components/windowShadowResize.js').then(function (m) {
+                    m.installShadowResizeHandles();
+                });
             }
 
             /**

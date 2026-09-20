@@ -20,6 +20,21 @@ body.immersive-desktop-open .drag-overlay {
     display: none;
 }
 
+/*
+ * window-rounded 下窗口矩形含四周透明阴影边距（--od-window-margin），拖拽层与
+ * 窗口控制按钮随内容容器一同内缩，避免按钮画进透明边距区、悬在圆角内容之外。
+ * 最大化/全屏时 --od-window-margin 折叠为 0，自动回到窗口边缘，与其他平台一致。
+ * 注意：宽度必须用 left+right 内缩而非 calc(100% - var() * 2)——margin 折叠为
+ * 无单位 0 时 calc 里「百分比 - 数字」非法，整条声明会在计算值阶段失效，
+ * fixed 层宽度退化为 0，按钮全部飞出窗口（最大化后 titlebar 消失的根因）。
+ */
+html.window-rounded .drag-overlay {
+    top: var(--od-window-margin);
+    left: var(--od-window-margin);
+    right: var(--od-window-margin);
+    width: auto;
+}
+
 /* 窗口控制按钮样式 */
 .window-control-btn {
     -webkit-app-region: no-drag; /* 按钮区域不可拖拽 */
@@ -36,12 +51,19 @@ body.immersive-desktop-open .drag-overlay {
 }
 
 /*
- * Linux(X11) 窗口管理器不为无边框窗口绘制圆角，改用透明窗口由页面自绘。
- * 实现与 task-status-widget 悬浮窗同构：透明窗口 + 单容器自绘背景 + 圆角。
- * 半径与终端工具卡片 (rounded-[14px]) 保持一致。
+ * Linux(X11) 窗口管理器不为无边框窗口绘制圆角与阴影，改用透明窗口由页面自绘。
+ * 实现与 task-status-widget 悬浮窗同构：窗口矩形四周扩展 --od-window-margin 的
+ * 透明边距（main 进程同步扩展 BrowserWindow bounds，见 linux-window-shadow.ts），
+ * 内容容器内缩该边距后自绘背景、圆角与 box-shadow 外阴影。
+ * 圆角半径与终端工具卡片 (rounded-[14px]) 保持一致。
  * 仅在 html.window-rounded（仅 Linux 注入）时生效，其他平台不受影响。
- * 最大化/全屏时通过 window-maximized / window-fullscreen 类取消圆角。
+ * 最大化/全屏时通过 window-maximized / window-fullscreen 类折叠边距并取消圆角。
  */
+html.window-rounded {
+    --od-window-margin: 20px;
+    --od-window-radius: 14px;
+}
+
 html.window-rounded,
 html.window-rounded body {
     background: transparent;
@@ -49,36 +71,135 @@ html.window-rounded body {
 }
 
 /* body 的 transform 使其成为 fixed 后代的包含块：动态挂到 body 下的全屏
-   覆盖层（确认框遮罩、lightbox、各 overlay 等）统一被圆角裁切，
-   新增全屏场景无需逐个处理 */
+   覆盖层（确认框遮罩、lightbox、各 overlay 等）统一落入窗口矩形，
+   新增全屏场景无需逐个处理。注意 body 不能再设 border-radius——阴影边距
+   区在窗口矩形四角之内，圆角会把这些角落的阴影裁掉。
+   body 自身必须 fixed 铺满窗口：#app-root 改为 fixed 后脱离文档流，body
+   失去流式撑高的内容会塌陷为 0 高度，连带 top+bottom 定位的 #app-root
+   高度塌为 0（整个窗口全透明）。 */
 html.window-rounded body {
-    border-radius: 14px;
+    position: fixed;
+    inset: 0;
     transform: translateZ(0);
 }
 
-/* 与悬浮窗 :host 同构：铺满容器自绘背景并自带圆角。
+/* 与悬浮窗 :host 同构：内缩阴影边距后自绘背景并自带圆角与外阴影。
+   position fixed + inset 覆盖 Tailwind 的 w-full/h-screen 定位。
    transform 使 #app-root 成为 fixed 后代（沉浸桌面、全屏遮罩等）的包含块，
    所有全屏覆盖层统一落入此容器的圆角裁切，无需逐场景单独处理 */
 html.window-rounded #app-root {
+    position: fixed;
+    inset: var(--od-window-margin);
+    width: auto;
+    height: auto;
     background: var(--od-bg);
-    border-radius: 14px;
+    border-radius: var(--od-window-radius);
+    box-shadow:
+        0 1px 3px rgba(0, 0, 0, 0.18),
+        0 6px 18px rgba(0, 0, 0, 0.32);
     overflow: hidden;
     transform: translateZ(0);
 }
 
-/* 启动屏（fixed 铺满）自绘背景，四角自裁 */
+/* 启动屏（fixed）同样内缩边距，自绘背景，四角自裁 */
 html.window-rounded #startup-shell {
-    border-radius: 14px;
-    overflow: hidden;
+    inset: var(--od-window-margin);
+    border-radius: var(--od-window-radius);
 }
 
-html.window-rounded.window-maximized body,
+/* 最大化/全屏：窗口矩形由 WM 铺满工作区/整屏，折叠阴影边距让内容铺满窗口，
+   并取消圆角与阴影 */
+html.window-rounded.window-maximized,
+html.window-rounded.window-fullscreen {
+    --od-window-margin: 0;
+    --od-window-radius: 0;
+}
+
 html.window-rounded.window-maximized #app-root,
-html.window-rounded.window-maximized #startup-shell,
-html.window-rounded.window-fullscreen body,
-html.window-rounded.window-fullscreen #app-root,
-html.window-rounded.window-fullscreen #startup-shell {
-    border-radius: 0;
+html.window-rounded.window-fullscreen #app-root {
+    box-shadow: none;
+}
+
+/*
+ * 内容边缘 resize 感应条：覆盖整个阴影边距环，贴着用户看到的内容窗口边缘
+ * 提供 resize 光标与拖拽（拖动逻辑见 windowShadowResize.ts / shadow-resize.ts）。
+ * 边距环外沿 ~8px 仍被 Chromium FramelessView 的原生手柄拦截（两个区域方向
+ * 一致，体验连续）。z-index 低于顶部拖拽层 .drag-overlay（9999）：顶部边距环
+ * 保持"拖动窗口"语义，与原生窗口顶部（边缘 resize + 往内拖动）一致。
+ * 最大化/全屏时边距折叠为 0，感应条必须隐藏，否则会铺满窗口拦截交互。
+ */
+.od-shadow-resize-handle {
+    position: fixed;
+    z-index: 9990;
+}
+
+.od-shadow-resize-handle[data-direction='nw'] {
+    left: 0;
+    top: 0;
+    width: var(--od-window-margin, 0px);
+    height: var(--od-window-margin, 0px);
+    cursor: nwse-resize;
+}
+
+.od-shadow-resize-handle[data-direction='ne'] {
+    right: 0;
+    top: 0;
+    width: var(--od-window-margin, 0px);
+    height: var(--od-window-margin, 0px);
+    cursor: nesw-resize;
+}
+
+.od-shadow-resize-handle[data-direction='sw'] {
+    left: 0;
+    bottom: 0;
+    width: var(--od-window-margin, 0px);
+    height: var(--od-window-margin, 0px);
+    cursor: nesw-resize;
+}
+
+.od-shadow-resize-handle[data-direction='se'] {
+    right: 0;
+    bottom: 0;
+    width: var(--od-window-margin, 0px);
+    height: var(--od-window-margin, 0px);
+    cursor: nwse-resize;
+}
+
+.od-shadow-resize-handle[data-direction='n'] {
+    top: 0;
+    left: var(--od-window-margin, 0px);
+    right: var(--od-window-margin, 0px);
+    height: var(--od-window-margin, 0px);
+    cursor: ns-resize;
+}
+
+.od-shadow-resize-handle[data-direction='s'] {
+    bottom: 0;
+    left: var(--od-window-margin, 0px);
+    right: var(--od-window-margin, 0px);
+    height: var(--od-window-margin, 0px);
+    cursor: ns-resize;
+}
+
+.od-shadow-resize-handle[data-direction='w'] {
+    left: 0;
+    top: var(--od-window-margin, 0px);
+    bottom: var(--od-window-margin, 0px);
+    width: var(--od-window-margin, 0px);
+    cursor: ew-resize;
+}
+
+.od-shadow-resize-handle[data-direction='e'] {
+    right: 0;
+    top: var(--od-window-margin, 0px);
+    bottom: var(--od-window-margin, 0px);
+    width: var(--od-window-margin, 0px);
+    cursor: ew-resize;
+}
+
+html.window-maximized .od-shadow-resize-handle,
+html.window-fullscreen .od-shadow-resize-handle {
+    display: none;
 }
 
 .markdown-body {

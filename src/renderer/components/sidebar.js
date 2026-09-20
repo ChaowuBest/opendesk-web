@@ -16,6 +16,7 @@ import { showFeedbackModal } from './feedbackModal.ts';
 import { createRendererTranslator } from '../locale.ts';
 import { escapeHtml } from '../../common/utils/escape.js';
 import { isApplicationVisibleInMenu } from '../utils/application-visibility.ts';
+import { fixedLayerOrigin, visibleViewportRect } from '../utils/window-frame.js';
 import {
     buildSidebarFavoritesResults,
     buildSidebarTaskGroups,
@@ -526,17 +527,22 @@ class SideBar extends HTMLElement {
                 : panelEl
                   ? panelEl.getBoundingClientRect().right
                   : btnRect.right;
+            // 防溢出修正基于可视内容区，避免把菜单收进阴影边距（见 window-frame.ts）
+            const view = visibleViewportRect();
             let left = dividerX + 8;
-            if (left + popRect.width > window.innerWidth) {
-                left = Math.max(8, window.innerWidth - popRect.width - 8);
+            if (left + popRect.width > view.right) {
+                left = Math.max(view.left + 8, view.right - popRect.width - 8);
             }
             let top = btnRect.top;
-            if (top + popRect.height > window.innerHeight) {
-                top = window.innerHeight - popRect.height - 8;
+            if (top + popRect.height > view.bottom) {
+                top = view.bottom - popRect.height - 8;
             }
-            if (top < 8) top = 8;
-            popover.style.left = `${left}px`;
-            popover.style.top = `${top}px`;
+            if (top < view.top + 8) top = view.top + 8;
+            // popover 挂在 #app-root 子树内，fixed 坐标原点是内容区而非视口（window-rounded
+            // 下内缩一个阴影边距），视口坐标需换算后写入
+            const origin = fixedLayerOrigin(popover);
+            popover.style.left = `${left - origin.x}px`;
+            popover.style.top = `${top - origin.y}px`;
         });
     }
 
@@ -1034,19 +1040,22 @@ class SideBar extends HTMLElement {
             const btnRect = anchorBtn.getBoundingClientRect();
             const panelEl = this.parentElement;
             const dividerX = panelEl ? panelEl.getBoundingClientRect().right : btnRect.right;
+            // 防溢出修正基于可视内容区，坐标换算见 window-frame.ts（菜单挂在 #app-root 子树内）
+            const view = visibleViewportRect();
+            const origin = fixedLayerOrigin(menu);
             let left = dividerX + 8;
-            if (left + menu.offsetWidth > window.innerWidth) {
-                left = Math.max(8, window.innerWidth - menu.offsetWidth - 8);
+            if (left + menu.offsetWidth > view.right) {
+                left = Math.max(view.left + 8, view.right - menu.offsetWidth - 8);
             }
             // 限制菜单最大高度：任务列表需要时出现滚动条，保证下边缘不超出窗口
-            menu.style.maxHeight = `${Math.max(120, window.innerHeight - 16)}px`;
+            menu.style.maxHeight = `${Math.max(120, view.bottom - view.top - 16)}px`;
             let top = btnRect.top;
-            if (top + menu.offsetHeight > window.innerHeight - 8) {
-                top = window.innerHeight - menu.offsetHeight - 8;
+            if (top + menu.offsetHeight > view.bottom - 8) {
+                top = view.bottom - menu.offsetHeight - 8;
             }
-            if (top < 8) top = 8;
-            menu.style.left = `${left}px`;
-            menu.style.top = `${top}px`;
+            if (top < view.top + 8) top = view.top + 8;
+            menu.style.left = `${left - origin.x}px`;
+            menu.style.top = `${top - origin.y}px`;
         });
 
         // 点击任务：直接切换到指定任务，不展开侧边栏
@@ -1421,17 +1430,19 @@ class SideBar extends HTMLElement {
 
         // Position: above the button, aligned to its left edge
         requestAnimationFrame(() => {
+            const view = visibleViewportRect();
+            const origin = fixedLayerOrigin(menu);
             const menuRect = menu.getBoundingClientRect();
             let left = rect.left;
             let top = rect.top - menuRect.height - 4;
-            if (left + menuRect.width > window.innerWidth) {
-                left = window.innerWidth - menuRect.width - 8;
+            if (left + menuRect.width > view.right) {
+                left = view.right - menuRect.width - 8;
             }
-            if (top < 0) {
+            if (top < view.top) {
                 top = rect.bottom + 4;
             }
-            menu.style.left = `${left}px`;
-            menu.style.top = `${top}px`;
+            menu.style.left = `${left - origin.x}px`;
+            menu.style.top = `${top - origin.y}px`;
         });
 
         // Bind actions
@@ -1657,8 +1668,6 @@ class SideBar extends HTMLElement {
         menu.id = 'app-context-menu';
         menu.className = 'ctx-menu';
         menu.style.minWidth = '180px';
-        menu.style.left = `${x}px`;
-        menu.style.top = `${y}px`;
 
         const isUserApp = appSource === 'user';
         const items = [
@@ -1683,13 +1692,19 @@ class SideBar extends HTMLElement {
 
         this.appendChild(menu);
 
+        // menu 挂在 #app-root 子树内，fixed 坐标原点是内容区而非视口（见 window-frame.ts）
+        const origin = fixedLayerOrigin(menu);
+        menu.style.left = `${x - origin.x}px`;
+        menu.style.top = `${y - origin.y}px`;
+
         requestAnimationFrame(() => {
+            const view = visibleViewportRect();
             const rect = menu.getBoundingClientRect();
-            if (rect.right > window.innerWidth) {
-                menu.style.left = `${window.innerWidth - rect.width - 8}px`;
+            if (rect.right > view.right) {
+                menu.style.left = `${view.right - rect.width - 8 - origin.x}px`;
             }
-            if (rect.bottom > window.innerHeight) {
-                menu.style.top = `${window.innerHeight - rect.height - 8}px`;
+            if (rect.bottom > view.bottom) {
+                menu.style.top = `${view.bottom - rect.height - 8 - origin.y}px`;
             }
         });
 
@@ -1747,8 +1762,6 @@ class SideBar extends HTMLElement {
         menu.id = 'task-context-menu';
         menu.className = 'ctx-menu';
         menu.style.minWidth = '180px';
-        menu.style.left = `${x}px`;
-        menu.style.top = `${y}px`;
 
         const isFavorited = this._favoritedTaskIds.has(taskId);
         const items = [
@@ -1814,13 +1827,19 @@ class SideBar extends HTMLElement {
 
         this.appendChild(menu);
 
+        // menu 挂在 #app-root 子树内，fixed 坐标原点是内容区而非视口（见 window-frame.ts）
+        const origin = fixedLayerOrigin(menu);
+        menu.style.left = `${x - origin.x}px`;
+        menu.style.top = `${y - origin.y}px`;
+
         requestAnimationFrame(() => {
+            const view = visibleViewportRect();
             const rect = menu.getBoundingClientRect();
-            if (rect.right > window.innerWidth) {
-                menu.style.left = `${window.innerWidth - rect.width - 8}px`;
+            if (rect.right > view.right) {
+                menu.style.left = `${view.right - rect.width - 8 - origin.x}px`;
             }
-            if (rect.bottom > window.innerHeight) {
-                menu.style.top = `${window.innerHeight - rect.height - 8}px`;
+            if (rect.bottom > view.bottom) {
+                menu.style.top = `${view.bottom - rect.height - 8 - origin.y}px`;
             }
         });
 
@@ -1934,8 +1953,6 @@ class SideBar extends HTMLElement {
         menu.id = 'workspace-context-menu';
         menu.className = 'ctx-menu';
         menu.style.minWidth = '180px';
-        menu.style.left = `${x}px`;
-        menu.style.top = `${y}px`;
 
         const items = [
             { id: 'create-task', icon: 'fa-solid fa-plus', label: this._t('renderer.sidebar.createTaskHere') }
@@ -1969,13 +1986,19 @@ class SideBar extends HTMLElement {
 
         this.appendChild(menu);
 
+        // menu 挂在 #app-root 子树内，fixed 坐标原点是内容区而非视口（见 window-frame.ts）
+        const origin = fixedLayerOrigin(menu);
+        menu.style.left = `${x - origin.x}px`;
+        menu.style.top = `${y - origin.y}px`;
+
         requestAnimationFrame(() => {
+            const view = visibleViewportRect();
             const rect = menu.getBoundingClientRect();
-            if (rect.right > window.innerWidth) {
-                menu.style.left = `${window.innerWidth - rect.width - 8}px`;
+            if (rect.right > view.right) {
+                menu.style.left = `${view.right - rect.width - 8 - origin.x}px`;
             }
-            if (rect.bottom > window.innerHeight) {
-                menu.style.top = `${window.innerHeight - rect.height - 8}px`;
+            if (rect.bottom > view.bottom) {
+                menu.style.top = `${view.bottom - rect.height - 8 - origin.y}px`;
             }
         });
 

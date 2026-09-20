@@ -182,6 +182,31 @@ describe('createMainWindowCloseHandler 关闭确认弹窗', () => {
         });
     });
 
+    it('Linux 阴影窗口退出：normalizeSaveBounds 收缩窗口 bounds 后保存视觉 bounds', () => {
+        // 窗口矩形 = 视觉矩形 + 四周阴影边距；getNormalBounds 返回的是窗口矩形，
+        // 保存到 gui_config.window_bounds 的必须是视觉矩形（与其他平台/历史数据语义一致）
+        const win = makeWindow({
+            getNormalBounds: jest.fn(() => ({ x: 80, y: 30, width: 840, height: 640 }))
+        });
+        const { deps } = makeDeps({ window: win, isAppQuitting: () => true });
+        deps.normalizeSaveBounds = (bounds) => {
+            const margin = 20;
+            return {
+                x: bounds.x + margin,
+                y: bounds.y + margin,
+                width: bounds.width - margin * 2,
+                height: bounds.height - margin * 2
+            };
+        };
+        const handler = createMainWindowCloseHandler(deps);
+
+        handler({ preventDefault: jest.fn() } as CloseEvent);
+
+        expect(deps.saveSettingData).toHaveBeenCalledWith({
+            gui_config: { window_bounds: { x: 100, y: 50, width: 800, height: 600 } }
+        });
+    });
+
     it('用户选择退出：调用 quit 并移除响应监听', () => {
         const { deps } = makeDeps();
         const handler = createMainWindowCloseHandler(deps);
