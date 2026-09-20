@@ -621,6 +621,69 @@ test('directory removal honors --del-to-trash and clears the tree from the sourc
     }
 });
 
+test('files created inside a sandbox instance are hard-deleted while pre-existing files go to trash', { skip: !windows }, async () => {
+    // 同一沙箱实例内的删除分流：探测脚本经卷新建 session.txt 并删除（实例内
+    // 新建 → 直接清除），宿主预置的 pre.txt 在同一实例内删除（实例外已有
+    // 数据 → 送回收站）。分流结果用 --log-file 判定："(已送回收站)" 仅在
+    // SHFileOperation 成功后记录。
+    const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'opendesk-sandbox-session-created-'));
+    try {
+        const policy = path.join(directory, 'policy.toml');
+        fs.writeFileSync(policy, 'version = 1\ndefault = "allow"\n');
+        const logFile = path.join(directory, 'sandbox.log');
+        const target = path.join(directory, 'probe-work');
+        fs.mkdirSync(target);
+        fs.writeFileSync(path.join(target, 'pre.txt'), 'pre-existing-content');
+        const probe = path.join(directory, 'session_probe.cjs');
+        fs.writeFileSync(
+            probe,
+            [
+                'const fs = require("node:fs");',
+                'const path = require("node:path");',
+                ...volumePathJsHelper().split('\n'),
+                'const root = volumePath(process.argv[2]);',
+                'fs.writeFileSync(path.join(root, "session.txt"), "created-in-sandbox");',
+                'fs.rmSync(path.join(root, "session.txt"));',
+                'fs.rmSync(path.join(root, "pre.txt"));',
+                "console.log('DEL-OK', !fs.existsSync(path.join(root, 'session.txt')), !fs.existsSync(path.join(root, 'pre.txt')));",
+                "console.log('PROBE-DONE');",
+                '',
+            ].join('\n')
+        );
+        const result = await run(
+            executable,
+            [
+                'run',
+                '--automount',
+                '--del-to-trash',
+                '--log-file',
+                logFile,
+                '--policy',
+                policy,
+                '--',
+                `"${process.execPath}" "${probe}" "${target}"`
+            ],
+            '',
+            process.env,
+            12000
+        );
+        assert.equal(result.code, 0, result.stdout + result.stderr);
+        assert.match(result.stdout, /DEL-OK true true/, result.stdout);
+        assert.match(result.stdout, /PROBE-DONE/, result.stdout);
+        // 两条路径都必须把文件从源目录移除
+        assert.equal(fs.existsSync(path.join(target, 'pre.txt')), false);
+        assert.equal(fs.existsSync(path.join(target, 'session.txt')), false);
+        const log = fs.readFileSync(logFile, 'utf8');
+        assert.match(log, /session\.txt.*未送回收站/);
+        assert.match(log, /pre\.txt.*已送回收站/);
+        assert.doesNotMatch(log, /session\.txt.*已送回收站/);
+        assert.doesNotMatch(log, /pre\.txt.*未送回收站/);
+        assert.doesNotMatch(log, /回收站删除未执行/);
+    } finally {
+        fs.rmSync(directory, { recursive: true, force: true });
+    }
+});
+
 test('policy-denied directory deletion stays denied and keeps the content', { skip: !windows }, async () => {
     const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'opendesk-sandbox-rmddeny-'));
     try {

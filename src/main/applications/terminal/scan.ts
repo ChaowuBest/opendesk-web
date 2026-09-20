@@ -17,6 +17,21 @@ import {
     getHarmonyLocalRuntimeState,
     type HarmonyLocalRuntimeState
 } from '../../../platforms/bridges/harmonyos/local-runtime.js';
+import { getPlatform } from '../../../platforms/base.js';
+
+/**
+ * CLI 模式不会安装沙箱的二进制与 Dokan 驱动（仅桌面安装包携带），注册沙箱变体
+ * 只会让选中的 PowerShell 在运行时报 executableMissing，并让 TUI 设置页暴露
+ * 无效选项；因此沙箱变体仅在非 CLI 平台（桌面版）注册。
+ */
+function sandboxVariantsAvailable(): boolean {
+    try {
+        return getPlatform().getName() !== 'cli';
+    } catch {
+        // 平台未初始化（如单元测试）时保持原有行为
+        return true;
+    }
+}
 
 /** Discover runnable shells using the current platform and its configured runtime state. */
 export function scanSupportedShells(
@@ -24,12 +39,14 @@ export function scanSupportedShells(
     harmonyState: HarmonyLocalRuntimeState | null = getHarmonyLocalRuntimeState()
 ): SupportedShell[] {
     const shells: SupportedShell[] = [];
+    const allowSandboxVariant = sandboxVariantsAvailable();
     const add = (kind: SupportedShellKind, shellPath: string | null | undefined, sandboxed = false) => {
         if (!shellPath || shells.some((shell) => shell.path === shellPath && shell.sandboxed === sandboxed)) return;
         // Windows command wrappers require cmd.exe and cannot be spawned as the selected shell.
         if (platform === 'win32' && !/\.exe$/i.test(shellPath)) return;
         shells.push({ kind, path: shellPath, sandboxed });
-        if (platform === 'win32' && kind === 'powershell' && !sandboxed) add(kind, shellPath, true);
+        if (platform === 'win32' && kind === 'powershell' && !sandboxed && allowSandboxVariant)
+            add(kind, shellPath, true);
     };
     if (platform === 'win32') {
         for (const shellPath of findExecutablesInPath('powershell')) add('powershell', shellPath);

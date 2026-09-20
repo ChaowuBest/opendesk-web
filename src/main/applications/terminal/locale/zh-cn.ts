@@ -38,7 +38,8 @@ export const zhCn: Record<string, string> = {
         '- 命令、workingDirectory 以及 PowerShell、Python、Node.js 脚本中的绝对路径必须使用 /<盘符>/... 形式；不要使用宿主盘符路径或动态沙箱盘符。',
     'prompt.sandbox.cwd':
         '- 沙箱工作目录与任务工作空间一致，例如工作空间 C:/foo 会映射为 /C/foo；相对路径从该目录解析。',
-    'prompt.sandbox.trash': '- 沙箱内直接删除的文件会送入 Windows 回收站。',
+    'prompt.sandbox.trash':
+        '- 任务开始前已存在的文件被删除时会送入 Windows 回收站；沙箱运行期间创建的文件在同一沙箱实例内删除时直接清除，不进回收站。',
     'sandbox.description':
         '在 Windows 动态沙箱中执行选定的 powershell。使用稳定的根相对路径：/C/... 表示宿主 C:/...，/D/... 表示宿主 D:/...。命令、workingDirectory 和脚本中的绝对路径必须使用 /<盘符>/...；相对路径从映射后的任务工作空间解析。文件访问审批仍显示原始宿主路径。',
     'sandbox.pathErrorHint':

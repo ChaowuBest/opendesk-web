@@ -38,7 +38,8 @@ export const enUs: Record<string, string> = {
         '- Absolute paths in commands, workingDirectory, and PowerShell, Python, or Node.js scripts must use /<drive>/... form; do not use host drive paths or the dynamic sandbox drive letter.',
     'prompt.sandbox.cwd':
         '- The sandbox working directory matches the task workspace; for example, workspace C:/foo maps to /C/foo, and relative paths resolve from there.',
-    'prompt.sandbox.trash': '- Files deleted directly inside the sandbox are sent to the Windows Recycle Bin.',
+    'prompt.sandbox.trash':
+        '- Files that existed before this task started are moved to the Windows Recycle Bin when deleted; files created during a sandbox run are removed permanently when deleted within the same sandbox instance.',
     'sandbox.description':
         'Run the selected powershell in the Windows dynamic sandbox. Use stable root-relative paths: /C/... maps to host C:/..., and /D/... maps to host D:/.... Absolute paths in commands, workingDirectory, and scripts must use /<drive>/... form; relative paths resolve from the mapped task workspace. File approvals still show original host paths.',
     'sandbox.pathErrorHint':

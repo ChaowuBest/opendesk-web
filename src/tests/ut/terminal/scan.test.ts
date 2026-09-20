@@ -1,4 +1,5 @@
 import { jest } from '@jest/globals';
+import { getPlatform, setPlatform, type AbstractPlatform } from '../../../platforms/base.js';
 
 const paths = new Map<string, string>();
 jest.unstable_mockModule('../../../main/utils/shellExec.js', () => ({
@@ -8,6 +9,8 @@ jest.unstable_mockModule('../../../main/utils/shellExec.js', () => ({
     findOpenHarmonyBash: () => paths.get('bash') ?? null
 }));
 const { scanSupportedShells, selectSupportedShell } = await import('../../../main/applications/terminal/scan.js');
+
+const fakePlatform = (name: string): AbstractPlatform => ({ getName: () => name }) as unknown as AbstractPlatform;
 
 beforeEach(() => paths.clear());
 
@@ -74,4 +77,39 @@ test('selection matches path and sandbox together, and falls back to the first a
         shells[2]
     );
     expect(selectSupportedShell([], {})).toBeNull();
+});
+
+test('a desktop platform keeps registering sandbox variants', () => {
+    setPlatform(fakePlatform('electron'));
+    paths.set('powershell', 'C:/Windows/powershell.exe');
+    expect(scanSupportedShells('win32', null)).toEqual([
+        { kind: 'powershell', path: 'C:/Windows/powershell.exe', sandboxed: false },
+        { kind: 'powershell', path: 'C:/Windows/powershell.exe', sandboxed: true }
+    ]);
+});
+
+test('CLI platform does not register sandbox variants, and a saved sandboxed selection falls back', () => {
+    let previous: AbstractPlatform | null = null;
+    try {
+        previous = getPlatform();
+    } catch {
+        previous = null;
+    }
+    setPlatform(fakePlatform('cli'));
+    try {
+        paths.set('powershell', 'C:/Windows/powershell.exe');
+        paths.set('pwsh', 'C:/Program Files/pwsh.exe');
+        const shells = scanSupportedShells('win32', null);
+        expect(shells).toEqual([
+            { kind: 'powershell', path: 'C:/Windows/powershell.exe', sandboxed: false },
+            { kind: 'powershell', path: 'C:/Program Files/pwsh.exe', sandboxed: false }
+        ]);
+        // 桌面端保存的 shell_sandboxed: true 在 CLI 下回退到同路径的普通 shell
+        expect(
+            selectSupportedShell(shells, { shell_path: 'C:/Windows/powershell.exe', shell_sandboxed: true }, 'win32')
+        ).toEqual(shells[0]);
+    } finally {
+        // 平台单例没有重置 API：恢复原有实例，原本未设置时以桌面平台占位
+        setPlatform(previous ?? fakePlatform('electron'));
+    }
 });

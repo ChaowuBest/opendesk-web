@@ -193,7 +193,9 @@ export function sandboxRunArgs(options: {
     return [
         'run',
         '--automount',
-        // 开启后沙箱内的直接删除送 Windows 回收站；必须位于 -- 分隔符之前
+        // 开启后沙箱内的直接删除送 Windows 回收站；必须位于 -- 分隔符之前。
+        // 本沙箱实例运行期间新建的文件由原生侧跟踪，删除时直接清除不进回收站，
+        // 无需宿主传参
         ...(options.deleteToTrash ? ['--del-to-trash'] : []),
         '--policy',
         options.policyPath,
