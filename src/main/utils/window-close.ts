@@ -36,6 +36,17 @@ export interface MainWindowCloseHandlerDeps {
     sendToRenderer: (channel: string, ...args: unknown[]) => boolean;
     /** 生成请求 id 的时间源，测试可注入固定值 */
     now?: () => number;
+    /**
+     * 保存前把窗口 bounds 换算为视觉 bounds。Linux 自绘阴影主窗口的 BrowserWindow
+     * 矩形比用户看到的内容矩形四周大一圈（阴影边距），window_bounds 需保持视觉矩形
+     * 语义；缺省按原样保存。
+     */
+    normalizeSaveBounds?: (bounds: { x: number; y: number; width: number; height: number }) => {
+        x: number;
+        y: number;
+        width: number;
+        height: number;
+    };
 }
 
 export const CLOSE_DIALOG_REQUEST_CHANNEL = 'closeWindow:request';
@@ -75,9 +86,11 @@ export function createMainWindowCloseHandler(
 
     return (event) => {
         if (deps.isAppQuitting()) {
-            // 应用退出时保存窗口 normal bounds，下次启动恢复
+            // 应用退出时保存窗口 normal bounds，下次启动恢复；Linux 阴影窗口需先
+            // 收缩为视觉矩形（见 normalizeSaveBounds 注释）
             try {
-                const bounds = deps.window.getNormalBounds();
+                const rawBounds = deps.window.getNormalBounds();
+                const bounds = deps.normalizeSaveBounds ? deps.normalizeSaveBounds(rawBounds) : rawBounds;
                 const data = deps.getSettingData();
                 const guiConfig = (data.gui_config ?? {}) as Record<string, unknown>;
                 guiConfig.window_bounds = {

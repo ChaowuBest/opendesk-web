@@ -21,7 +21,8 @@ import { parsePluginManifest } from '../src/main/applications/pluginmgr/discover
 import { materializeBuiltinPluginZip } from './lib/builtin-plugin-zip.js';
 import {
     installPluginDependencies,
-    resolveNpmInvocation
+    resolveNpmInvocation,
+    stripNpmScriptPolicyEnv
 } from '../src/main/applications/pluginmgr/management/dependencies.js';
 import { HOST_PACKAGE_SPECIFIERS } from '../src/main/applications/pluginmgr/runtime/package-mapping.js';
 
@@ -85,10 +86,7 @@ function copyPluginSources(
     });
 }
 
-function validateBuiltinPluginSource(
-    sourceDirectory: string,
-    knownIds: Set<string>
-) {
+function validateBuiltinPluginSource(sourceDirectory: string, knownIds: Set<string>) {
     const sourceName = path.basename(sourceDirectory);
     const manifestPath = path.join(sourceDirectory, MANIFEST_FILENAME);
     if (!fs.existsSync(manifestPath)) {
@@ -190,7 +188,10 @@ async function defaultRunNpm(args: string[], cwd: string): Promise<void> {
     await execFileAsync(invocation.executable, invocation.args, {
         cwd,
         timeout: 180_000,
-        maxBuffer: 10 * 1024 * 1024
+        maxBuffer: 10 * 1024 * 1024,
+        // 本脚本通常经 npm run 触发，继承的 npm_config_allow_scripts 会让子 npm
+        // 在 project 级安装中抛 EALLOWSCRIPTS，需剔除（见 stripNpmScriptPolicyEnv）
+        env: stripNpmScriptPolicyEnv(process.env)
     });
 }
 

@@ -27,6 +27,7 @@
  */
 
 import { escapeHtml } from '../../common/utils/escape.js';
+import { fixedLayerOrigin, visibleViewportRect } from '../utils/window-frame.js';
 
 export interface HintPanelTextItem {
     kind: 'text';
@@ -386,22 +387,25 @@ export function createBrowserHintPanel(options: {
         flyout.classList.add('bhp-visible');
         const anchorRect = anchor.getBoundingClientRect();
         const flyRect = flyout.getBoundingClientRect();
+        // 浮层挂在 #app-root 子树内，fixed 坐标原点是内容区而非视口（见 window-frame.ts）
+        const view = visibleViewportRect();
+        const origin = fixedLayerOrigin(flyout);
         let left = anchorRect.left - flyRect.width - 8;
         let top = anchorRect.top - 4;
-        if (left < VIEWPORT_PADDING) {
+        if (left < view.left + VIEWPORT_PADDING) {
             left = anchorRect.right + 8;
         }
-        if (left + flyRect.width > window.innerWidth - VIEWPORT_PADDING) {
-            left = window.innerWidth - flyRect.width - VIEWPORT_PADDING;
+        if (left + flyRect.width > view.right - VIEWPORT_PADDING) {
+            left = view.right - flyRect.width - VIEWPORT_PADDING;
         }
-        if (top + flyRect.height > window.innerHeight - VIEWPORT_PADDING) {
-            top = window.innerHeight - flyRect.height - VIEWPORT_PADDING;
+        if (top + flyRect.height > view.bottom - VIEWPORT_PADDING) {
+            top = view.bottom - flyRect.height - VIEWPORT_PADDING;
         }
-        if (top < VIEWPORT_PADDING) {
-            top = VIEWPORT_PADDING;
+        if (top < view.top + VIEWPORT_PADDING) {
+            top = view.top + VIEWPORT_PADDING;
         }
-        flyout.style.left = `${Math.round(left)}px`;
-        flyout.style.top = `${Math.round(top)}px`;
+        flyout.style.left = `${Math.round(left - origin.x)}px`;
+        flyout.style.top = `${Math.round(top - origin.y)}px`;
         flyout.style.visibility = '';
     }
 

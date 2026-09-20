@@ -50,7 +50,9 @@ function playDesktopTransition(direction: DesktopTransitionDirection, zIndex = 6
                   }
               ];
 
-    document.body.appendChild(veil);
+    // 挂到主内容容器内，Linux 圆角模式下随 #app-root 的圆角裁切（body 直挂会逃逸裁切）
+    const transitionHost = document.getElementById('app-root') ?? document.body;
+    transitionHost.appendChild(veil);
     const animation = veil.animate(keyframes, {
         duration: direction === 'enter' ? 460 : 400,
         easing: direction === 'enter' ? 'cubic-bezier(0.22, 1, 0.36, 1)' : 'cubic-bezier(0.4, 0, 0.6, 1)',

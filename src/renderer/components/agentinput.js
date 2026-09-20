@@ -22,6 +22,7 @@ import {
     executeSlashCommand,
     refreshPluginSlashCommands
 } from './slash-command.ts';
+import { fixedLayerOrigin, visibleViewportRect } from '../utils/window-frame.js';
 
 const fallbackSupportedFileExtensions = [
     'doc',
@@ -1607,31 +1608,37 @@ class AgentInput extends HTMLElement {
     positionPanel(btn, panel, panelWidth = 220, maxHeight = 280) {
         const rect = btn.getBoundingClientRect();
         const panelHeight = Math.min(maxHeight, panel.scrollHeight);
+        // 面板挂在 #app-root 子树内，fixed 坐标原点是内容区而非视口（见 window-frame.ts）；
+        // 防溢出修正同样基于可视内容区，避免收进阴影边距
+        const view = visibleViewportRect();
+        const origin = fixedLayerOrigin(panel);
         let left = rect.left;
-        if (left + panelWidth > window.innerWidth) {
-            left = window.innerWidth - panelWidth - 8;
+        if (left + panelWidth > view.right) {
+            left = view.right - panelWidth - 8;
         }
-        left = Math.max(8, left);
+        left = Math.max(view.left + 8, left);
 
         const spaceAbove = rect.top;
-        const spaceBelow = window.innerHeight - rect.bottom;
+        const spaceBelow = view.bottom - rect.bottom;
 
+        let top;
         if (spaceAbove >= panelHeight + 8) {
-            panel.style.top = rect.top - panelHeight - 8 + 'px';
+            top = rect.top - panelHeight - 8;
             panel.style.maxHeight = maxHeight + 'px';
         } else if (spaceBelow >= panelHeight + 8) {
-            panel.style.top = rect.bottom + 8 + 'px';
+            top = rect.bottom + 8;
             panel.style.maxHeight = maxHeight + 'px';
         } else if (spaceAbove >= spaceBelow) {
             const availHeight = Math.max(120, spaceAbove - 16);
-            panel.style.top = rect.top - availHeight - 8 + 'px';
+            top = rect.top - availHeight - 8;
             panel.style.maxHeight = availHeight + 'px';
         } else {
             const availHeight = Math.max(120, spaceBelow - 16);
-            panel.style.top = rect.bottom + 8 + 'px';
+            top = rect.bottom + 8;
             panel.style.maxHeight = availHeight + 'px';
         }
-        panel.style.left = left + 'px';
+        panel.style.top = top - origin.y + 'px';
+        panel.style.left = left - origin.x + 'px';
     }
 
     /**
@@ -1862,19 +1869,22 @@ class AgentInput extends HTMLElement {
         // 定位：对齐到当前模型项的右侧，并确保不溢出窗口
         const modelPanel = this.querySelector('#agent-input-model-panel');
         if (modelPanel && triggerItem) {
+            // 子菜单挂在 #app-root 子树内，fixed 坐标原点是内容区而非视口（见 window-frame.ts）
+            const view = visibleViewportRect();
+            const origin = fixedLayerOrigin(submenu);
             const panelRect = modelPanel.getBoundingClientRect();
             const itemRect = triggerItem.getBoundingClientRect();
             let top = itemRect.top;
             let left = panelRect.right + 4;
             const submenuHeight = Math.min(280, submenu.scrollHeight || 200);
-            if (top + submenuHeight > window.innerHeight - 8) {
-                top = Math.max(8, window.innerHeight - submenuHeight - 8);
+            if (top + submenuHeight > view.bottom - 8) {
+                top = Math.max(view.top + 8, view.bottom - submenuHeight - 8);
             }
-            if (left + 180 > window.innerWidth - 8) {
+            if (left + 180 > view.right - 8) {
                 left = panelRect.left - 180 - 4;
             }
-            submenu.style.top = top + 'px';
-            submenu.style.left = Math.max(8, left) + 'px';
+            submenu.style.top = top - origin.y + 'px';
+            submenu.style.left = Math.max(view.left + 8, left) - origin.x + 'px';
         }
 
         // 重播弹出动画：先移除再添加 visible 类
@@ -2543,34 +2553,40 @@ class AgentInput extends HTMLElement {
         const triggerPos = this._autocompleteTriggerPosition;
         const textareaRect = textarea.getBoundingClientRect();
 
+        // 面板挂在 #app-root 子树内，fixed 坐标原点是内容区而非视口（见 window-frame.ts）
+        const view = visibleViewportRect();
+        const origin = fixedLayerOrigin(panel);
+
         // 计算基准位置（光标位置或 textarea 左边界）
         const baseLeft = triggerPos ? triggerPos.left : textareaRect.left;
         const baseTop = triggerPos ? triggerPos.top : textareaRect.top;
 
         const panelHeight = Math.min(260, panel.scrollHeight);
         const spaceAbove = baseTop;
-        const spaceBelow = window.innerHeight - baseTop;
+        const spaceBelow = view.bottom - baseTop;
 
+        let top;
         if (spaceAbove >= panelHeight + 8) {
-            panel.style.top = baseTop - panelHeight - 4 + 'px';
+            top = baseTop - panelHeight - 4;
             panel.style.maxHeight = '';
         } else if (spaceBelow >= panelHeight + 8) {
-            panel.style.top = baseTop + 20 + 'px'; // 光标高度约 20px
+            top = baseTop + 20; // 光标高度约 20px
             panel.style.maxHeight = '';
         } else if (spaceAbove >= spaceBelow) {
             const h = Math.max(100, spaceAbove - 12);
-            panel.style.top = baseTop - h - 4 + 'px';
+            top = baseTop - h - 4;
             panel.style.maxHeight = h + 'px';
         } else {
             const h = Math.max(100, spaceBelow - 32);
-            panel.style.top = baseTop + 20 + 'px';
+            top = baseTop + 20;
             panel.style.maxHeight = h + 'px';
         }
+        panel.style.top = top - origin.y + 'px';
 
         // 水平位置：使用触发时的光标位置
         let left = baseLeft;
-        if (left + 300 > window.innerWidth) left = window.innerWidth - 300 - 8;
-        panel.style.left = Math.max(8, left) + 'px';
+        if (left + 300 > view.right) left = view.right - 300 - 8;
+        panel.style.left = Math.max(view.left + 8, left) - origin.x + 'px';
 
         this.bindAutocompleteItemEvents();
     }

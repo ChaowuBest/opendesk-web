@@ -14,12 +14,15 @@
         "start": "npm run build:plugins && run-script-os",
         "start:win32": "npm run build:sandbox && chcp 65001 && electron-vite dev",
         "start:darwin": "node scripts/build-darwin-speech-helper.cjs && electron-vite dev",
-        "start:linux": "electron-vite dev -- --no-sandbox --disable-gpu",
+        "start:linux": "electron-vite dev -- --no-sandbox",
+        "start:linux:nogpu": "electron-vite dev -- --no-sandbox --disable-gpu",
         "preview": "run-script-os",
         "preview:win32": "chcp 65001 && electron-vite preview",
         "preview:darwin": "npm run build && node scripts/build-darwin-speech-helper.cjs && electron-vite preview",
         "preview:linux": "npm run build && electron-vite preview -- --no-sandbox",
-        "build": "npm run build:plugins && npm run build:sandbox && electron-vite build",
+        "build": "run-script-os",
+        "build:win32": "set \"NODE_OPTIONS=--max-old-space-size=8192\" && npm run build:plugins && npm run build:sandbox && electron-vite build",
+        "build:default": "export NODE_OPTIONS=--max-old-space-size=8192 && npm run build:plugins && npm run build:sandbox && electron-vite build",
         "build:sandbox": "node scripts/build-windows-sandbox.cjs",
         "build:plugin-sdk": "npm --prefix packages/plugin-sdk run build",
         "build:plugins": "npm run build:plugin-sdk && tsx scripts/build-builtin-plugins.ts",
@@ -224,13 +227,13 @@
     },
     "overrides": {
         "@kenhkl/agent-moss": {
-            "better-sqlite3": "12.11.1"
+            "better-sqlite3": "13.0.3"
         },
         "import-in-the-middle": "3.2.0"
     },
     "optionalDependencies": {
         "@node-rs/jieba": "^2.0.1",
-        "better-sqlite3": "^12.6.2",
+        "better-sqlite3": "^13.0.3",
         "search-index": "^6.0.1",
         "sqlite-vec": "^0.1.7-alpha.2"
     },

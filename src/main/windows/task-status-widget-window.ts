@@ -278,6 +278,9 @@ function ensureWidgetWindow(): BrowserWindow | null {
     win.setVisibleOnAllWorkspaces(true);
     win.setMenu(null);
 
+    // 显示、尺寸变化等时机合成层偶发丢失 alpha，统一挂载恢复钩子。
+    installTransparentBackgroundReassert(win);
+
     // 禁止浮窗内的捏合缩放，保证固定外壳内的布局不被破坏。
     win.webContents.setVisualZoomLevelLimits(1, 1);
 
@@ -341,21 +344,85 @@ function getWidgetOrigin(): { x: number; y: number } {
 }
 
 /**
- * Windows 上透明无边框窗口的已知缺陷（electron/electron#40515）：窗口显示或尺寸
- * 变化时，DirectComposition 合成层偶发丢失 alpha 通道，透明背景退化为不透明底色，
+ * 透明无边框窗口的已知缺陷（electron/electron#40515）：窗口显示或尺寸
+ * 变化时，合成层偶发丢失 alpha 通道，透明背景退化为不透明底色，
  * 圆角浮窗变成直角矩形且时有时无。在显示与程序化 setBounds 之后重新声明完全透明
- * 的背景色并强制重绘一帧，让合成层恢复 alpha 通道。该问题仅存在于 Windows，其余
- * 平台直接跳过。
+ * 的背景色并强制重绘一帧，让合成层恢复 alpha 通道。Windows（DirectComposition）
+ * 与 Linux（X11 合成路径）均存在，其余平台直接跳过。
+ *
+ * 重新声明与合成层重建之间存在竞态：显示后立即重绘的一帧仍可能被随后
+ * 重建的合成层覆盖（表现为"有概率"失效），因此延迟再补一轮，并按窗口
+ * 合并重复触发（resize 事件高频）。
  */
-function reassertTransparentBackground(win: BrowserWindow): void {
-    if (process.platform !== 'win32') {
+export function reassertTransparentBackground(win: BrowserWindow): void {
+    if (process.platform !== 'win32' && process.platform !== 'linux') {
         return;
     }
+    const taggedWin = win as BrowserWindow & { __bgReassertTimer?: NodeJS.Timeout };
     try {
         win.setBackgroundColor('#00000000');
         win.webContents.invalidate();
     } catch (err) {
         logger.warn(`failed to reassert transparent background: ${errorToMessage(err)}`);
+        return;
+    }
+    if (taggedWin.__bgReassertTimer) {
+        return;
+    }
+    taggedWin.__bgReassertTimer = setTimeout(() => {
+        taggedWin.__bgReassertTimer = undefined;
+        if (win.isDestroyed()) {
+            return;
+        }
+        try {
+            win.setBackgroundColor('#00000000');
+            win.webContents.invalidate();
+        } catch {
+            /* 窗口可能在补刀前销毁 */
+        }
+    }, 150);
+}
+
+/** 需要挂载透明背景恢复钩子的事件集合。 */
+const TRANSPARENT_REASSERT_EVENTS = [
+    'show',
+    'resize',
+    'maximize',
+    'unmaximize',
+    'restore',
+    'enter-full-screen',
+    'leave-full-screen'
+] as const;
+
+/**
+ * 为透明窗口统一挂载 alpha 恢复钩子（显示、尺寸、最大化、全屏等时机）。
+ * 新增透明窗口时调用一次即可，避免每个显示/尺寸变化路径分散处理。
+ *
+ * 同时把窗口登记进透明窗口注册表：这些窗口的 BrowserWindow 底色必须恒为
+ * '#00000000'（自绘圆角/阴影的透明区域依赖它），主题服务等需要设置窗口底色
+ * 的地方通过 isTransparentShadowWindow 判定跳过。
+ */
+const transparentWindows = new WeakSet<BrowserWindow>();
+
+export function isTransparentShadowWindow(win: BrowserWindow): boolean {
+    return transparentWindows.has(win);
+}
+
+/**
+ * @param isTransparent 该窗口的 BrowserWindow 底色是否必须恒为透明
+ * （仅创建参数 transparent: true 的窗口传 true；Electron 没有透明的 getter，
+ * 由创建点显式声明）。非透明窗口仅挂载 alpha 恢复钩子，不进注册表——
+ * 例如 Windows 主窗口非透明，切主题时底色需要跟随主题色。
+ */
+export function installTransparentBackgroundReassert(win: BrowserWindow, isTransparent = true): void {
+    if (isTransparent) {
+        transparentWindows.add(win);
+    }
+    if (process.platform !== 'win32' && process.platform !== 'linux') {
+        return;
+    }
+    for (const event of TRANSPARENT_REASSERT_EVENTS) {
+        win.on(event, () => reassertTransparentBackground(win));
     }
 }
 
@@ -431,9 +498,8 @@ function showWidget(): void {
             setTimeout(() => showWidgetInactiveIfStillWanted(win), 2000);
         } else {
             // 被动状态窗不抢占焦点，避免打断用户当前操作。
+            // 显示时机的透明背景恢复由 installTransparentBackgroundReassert 的 show 钩子处理。
             win.showInactive();
-            // 显示透明窗口是透明背景丢失的另一个触发点，显示后立即修复。
-            reassertTransparentBackground(win);
         }
     } else {
         pushSummary();
@@ -447,9 +513,8 @@ function showWidgetInactiveIfStillWanted(win: BrowserWindow): void {
     }
     const mode = host?.getFloatingWindowMode();
     if (isWidgetTriggerEffective(mode, { hidden: isWindowHidden, focused: isWindowFocused }, suppression)) {
+        // 透明背景恢复同样由 show 钩子统一处理。
         win.showInactive();
-        // ready-to-show 异步显示路径与同步显示路径同样需要修复透明背景。
-        reassertTransparentBackground(win);
     }
 }
 

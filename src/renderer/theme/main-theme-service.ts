@@ -26,6 +26,7 @@ import {
 import { ThemeManager, type ResolvedTheme, type ThemePreference } from './theme-manager.js';
 import { FONT_PRESET_CHANNEL, normalizeFontPreset } from './font-preset.js';
 import { initSystemTheme, detectPlatform, type SystemThemeModuleOptions } from './system-theme.js';
+import { isTransparentShadowWindow } from '../../main/windows/task-status-widget-window.js';
 
 const THEME_CHANNEL = 'theme:changed';
 
@@ -180,10 +181,16 @@ export class MainThemeService {
     private broadcast(resolved: ResolvedTheme): void {
         const bgColor = resolved.effective === 'dark' ? '#1e1e1e' : '#f5f5f5';
         for (const win of BrowserWindow.getAllWindows()) {
-            if (!win.isDestroyed()) {
-                win.setBackgroundColor(bgColor);
-                safeSendToWebContents(win.webContents, THEME_CHANNEL, resolved);
+            if (win.isDestroyed()) {
+                continue;
             }
+            // 透明窗口（Linux 圆角阴影主窗口、任务浮窗）的底色必须保持全透明，
+            // 否则主题底色会填满自绘圆角/阴影的透明区域（表现为方形底色）。
+            // 透明窗口的页面背景由 CSS 变量随主题切换，无需设置窗口底色。
+            if (!isTransparentShadowWindow(win)) {
+                win.setBackgroundColor(bgColor);
+            }
+            safeSendToWebContents(win.webContents, THEME_CHANNEL, resolved);
         }
         for (const contents of webContents.getAllWebContents()) {
             safeSendToWebContents(contents, 'app:theme-changed', resolved.preference);

@@ -13,6 +13,10 @@
                 if (localStorage.getItem('opendesk-sidebar-collapsed') === 'true') {
                     document.documentElement.classList.add('startup-sidebar-collapsed');
                 }
+                // Linux 无边框窗口由页面自绘圆角，需在首帧前挂类避免闪现方形窗口
+                if (window.systemInfo && window.systemInfo.isLinux) {
+                    document.documentElement.classList.add('window-rounded');
+                }
             })();
         </script>
         <title>OpenDesk | 一站式办公生活空间</title>
@@ -239,7 +243,12 @@
                     id="maximize-btn"
                     title="最大化"
                     class="window-control-btn w-10 h-8 text-xs text-gray-500 hover:bg-gray-200 hover:text-gray-700 transition"
-                    onclick="window.settingAPI.maximizeMainWindow().then(() => window.updateMaximizeIcon())"
+                    onclick="
+                        window.settingAPI.maximizeMainWindow().then(() => {
+                            window.updateMaximizeIcon();
+                            if (window.updateWindowShape) window.updateWindowShape();
+                        })
+                    "
                 >
                     <i class="far fa-square" id="maximize-icon"></i>
                 </button>
@@ -837,6 +846,29 @@
             window.updateMaximizeIcon = updateMaximizeIcon;
             window.addEventListener('resize', updateMaximizeIcon);
             updateMaximizeIcon();
+
+            // Linux 无边框窗口自绘圆角：最大化/全屏时取消圆角
+            if (window.systemInfo && window.systemInfo.isLinux) {
+                async function updateWindowShape() {
+                    var maximized = false;
+                    var fullscreen = false;
+                    try {
+                        maximized = !!(await window.settingAPI.isMaximized());
+                        fullscreen = !!(await window.settingAPI.isFullScreen());
+                    } catch (e) {
+                        return;
+                    }
+                    document.documentElement.classList.toggle('window-maximized', maximized);
+                    document.documentElement.classList.toggle('window-fullscreen', fullscreen);
+                }
+                window.updateWindowShape = updateWindowShape;
+                window.addEventListener('resize', updateWindowShape);
+                updateWindowShape();
+                // 阴影边距环内的内容边缘 resize 感应条
+                import('./components/windowShadowResize.js').then(function (m) {
+                    m.installShadowResizeHandles();
+                });
+            }
 
             /**
              * 确保指定任务的 task-view 存在（用于后台任务需要浏览器等 UI 组件的场景）。

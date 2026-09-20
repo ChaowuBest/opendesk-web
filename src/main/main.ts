@@ -155,7 +155,15 @@ import { getLocale, t } from '../locale/index.js';
 import { getAttachmentFileSupport, UnsupportedAttachmentFileTypeError } from './aikernel/attachment-support.js';
 import { switchTaskMode } from './aikernel/task/mode.js';
 import {
+    expandVisualBounds,
+    LINUX_WINDOW_SHADOW_MARGIN,
+    normalizeShadowResizeDirection,
+    shrinkWindowBounds
+} from './windows/linux-window-shadow.js';
+import { endShadowResizeSession, startShadowResizeSession } from './windows/shadow-resize.js';
+import {
     initTaskStatusWidget,
+    installTransparentBackgroundReassert,
     setMainWindowHidden,
     setMainWindowFocused
 } from './windows/task-status-widget-window.js';
@@ -281,6 +289,11 @@ app.commandLine.appendSwitch(
 // 启用 Windows 原生窗口遮挡检测（减少被遮挡时的绘制开销）
 if (process.platform === 'win32') {
     app.commandLine.appendSwitch('enable-features', 'CalculateNativeWinOcclusion');
+}
+// Linux 上启用透明 visual：透明窗口（主窗口/悬浮窗自绘圆角）依赖 ARGB 输出，
+// 缺省合成路径下 alpha 会被写入为不透明，导致圆角外区域呈现底色
+if (process.platform === 'linux') {
+    app.commandLine.appendSwitch('enable-transparent-visuals');
 }
 
 const __dirname = import.meta.dirname;
@@ -655,6 +668,10 @@ function getDefaultCenteredBounds(
 }
 
 const createWindow = () => {
+    // Linux 主窗口自绘阴影：窗口矩形四周扩展阴影边距，renderer 侧内容容器
+    // #app-root 内缩同样距离并绘制 box-shadow（titlebar.css 的 --od-window-margin）。
+    // 非 Linux 平台 margin 为 0，bounds 换算恒等，既有行为不变。
+    const shadowMargin = process.platform === 'linux' ? LINUX_WINDOW_SHADOW_MARGIN : 0;
     // 尝试恢复上次保存的窗口尺寸与位置，无效或未保存时回退默认尺寸居中
     let savedBounds: { x: number; y: number; width: number; height: number } | null = null;
     let windowX: number | undefined;
@@ -686,14 +703,27 @@ const createWindow = () => {
         windowHeight = defaultBounds.height;
     }
 
+    // 上面的 windowX/Y/W/H 均为视觉语义（window_bounds 保存的即用户看到的内容矩形），
+    // 构造 BrowserWindow 前扩展为含阴影边距的窗口矩形
+    const mainWindowBounds = expandVisualBounds(
+        { x: windowX ?? 0, y: windowY ?? 0, width: windowWidth, height: windowHeight },
+        shadowMargin
+    );
+
     const mainWindow = new BrowserWindow({
-        x: windowX,
-        y: windowY,
-        width: windowWidth,
-        height: windowHeight,
-        minHeight: 400,
-        minWidth: 850,
+        x: mainWindowBounds.x,
+        y: mainWindowBounds.y,
+        width: mainWindowBounds.width,
+        height: mainWindowBounds.height,
+        minHeight: 400 + shadowMargin * 2,
+        minWidth: 850 + shadowMargin * 2,
         frame: false,
+        // Linux(X11) 窗口管理器不为无边框窗口绘制圆角与阴影，改用透明窗口由页面
+        // 自绘圆角+外阴影（参数与 task-status-widget 悬浮窗保持一致）
+        transparent: process.platform === 'linux',
+        roundedCorners: true,
+        // 透明窗口必须显式透明底色，否则 Electron 默认白色画布会垫在圆角缺口下
+        backgroundColor: process.platform === 'linux' ? '#00000000' : undefined,
         icon: appIcon,
         show: false, // 等 ready-to-show 后再显示，避免白屏闪烁
         paintWhenInitiallyHidden: true, // 允许在隐藏状态下预先渲染首帧
@@ -719,8 +749,9 @@ const createWindow = () => {
         if (mainWindow.isDestroyed() || hasShownMainWindow || mainWindow.isVisible()) return;
         // per-monitor DPI 下 BrowserWindow 构造时的 bounds 可能被错误缩放，
         // 在窗口已确定最终显示器（DPI 已就绪）后用 setBounds 精确修正
+        // （savedBounds 为视觉语义，扩展阴影边距后再应用到窗口矩形）
         if (savedBounds) {
-            mainWindow.setBounds(savedBounds);
+            mainWindow.setBounds(expandVisualBounds(savedBounds, shadowMargin));
         }
         if (isHuaweiStartupAuthPending) {
             restoreHuaweiLoginForWorkbenchWindow(`workbench ${reason}`);
@@ -768,6 +799,12 @@ const createWindow = () => {
     mainWindow.on('blur', () => setMainWindowFocused(false));
     mainWindow.on('focus', () => setMainWindowFocused(true));
 
+    // Linux/Windows 透明窗口在显示、尺寸变化等时机合成层偶发丢失 alpha（同
+    // electron/electron#40515 缺陷），导致自绘圆角外露出不透明底色；
+    // 统一挂载恢复钩子，在受影响时机重新声明透明背景并强制重绘。
+    // 主窗口仅 Linux 为透明窗口（Windows 保持不透明底色随主题切换）。
+    installTransparentBackgroundReassert(mainWindow, process.platform === 'linux');
+
     // 全屏状态变化时更新 tray 菜单文案
     mainWindow.on('enter-full-screen', () => {
         globalTray?.setContextMenu(buildTrayMenu());
@@ -781,6 +818,8 @@ const createWindow = () => {
         createMainWindowCloseHandler({
             isAppQuitting: () => isAppQuitting,
             window: mainWindow,
+            // 保存前收缩阴影边距，window_bounds 始终保持视觉矩形语义
+            normalizeSaveBounds: (bounds) => shrinkWindowBounds(bounds, shadowMargin),
             getSettingData: () => Setting.getInstance().getData() as Record<string, unknown>,
             saveSettingData: (data) => Setting.getInstance().setData(data),
             ipcMain,
@@ -2817,6 +2856,12 @@ const registerSettingAPIHandlers = () => {
             }
             return { status: 'ok', data: globalMainWindow.isMaximized() };
         }),
+        ipcMain.handle('setting:isFullScreen', () => {
+            if (globalMainWindow === null) {
+                return { status: 'error', message: 'main window not found' };
+            }
+            return { status: 'ok', data: globalMainWindow.isFullScreen() };
+        }),
         ipcMain.handle('setting:getAppVersion', () => {
             return { status: 'ok', data: app.getVersion() };
         }),
@@ -2943,6 +2988,34 @@ const registerScreenAPIHandlers = () => {
         } catch (error: any) {
             return { status: 'error', message: error.message };
         }
+    });
+};
+
+/**
+ * Linux 阴影窗口的内容边缘 resize：renderer 感应条（贴内容边缘）发起/结束
+ * 拖动会话，主进程轮询光标位置实时 setBounds（详见 windows/shadow-resize.ts）。
+ */
+const registerShadowResizeHandlers = () => {
+    if (process.platform !== 'linux') {
+        return;
+    }
+    ipcMain.on('window:shadowResizeStart', (event, direction: unknown) => {
+        const normalized = normalizeShadowResizeDirection(direction);
+        if (normalized === null) {
+            return;
+        }
+        const win = BrowserWindow.fromWebContents(event.sender);
+        if (!win || win.isDestroyed()) {
+            return;
+        }
+        const [minWidth, minHeight] = win.getMinimumSize();
+        startShadowResizeSession(win, normalized, minWidth, minHeight);
+    });
+    ipcMain.on('window:shadowResizeEnd', () => {
+        endShadowResizeSession();
+    });
+    app.on('before-quit', () => {
+        endShadowResizeSession();
     });
 };
 
@@ -3643,8 +3716,7 @@ async function startApplication(): Promise<void> {
         ipcMain.handle('application:openInNewWindow', async (_event, bundleName: string) => {
             try {
                 const appConfig = ApplicationRegistry.getApplicationGUIConfig(bundleName) as
-                    | Record<string, unknown>
-                    | undefined;
+                    Record<string, unknown> | undefined;
                 const appName = (appConfig?.name as string) || bundleName;
 
                 const appWindow = new BrowserWindow({
@@ -3705,6 +3777,7 @@ async function startApplication(): Promise<void> {
         // 确保主窗口加载期间 renderer 的 notification-panel 能正常订阅通知。
         registerScreenAPIHandlers();
         registerMagicPointerHandlers();
+        registerShadowResizeHandlers();
         registerAuthAPIHandlers();
         registerDisplayZoomHandlers();
         // registerThemeHandlers() 已在 createWindow 之前提前注册，
