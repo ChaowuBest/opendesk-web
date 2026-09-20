@@ -16,7 +16,7 @@ import { BaseApplication, type EventDecl, type ProtocolHandlerConfig } from '../
 import { GlobalState } from '../../aikernel/states/global.js';
 import type { TaskManagerState, TaskState } from '../../aikernel/states/tasks.js';
 import { getPlatform } from '../../../platforms/base.js';
-import { getLocale, t } from '../../../locale/index.js';
+import { getLocale } from '../../../locale/index.js';
 import { t as appT } from './locale/index.js';
 import { logger } from '../../utils/logger.js';
 import { getOpendeskDirectory, getTaskArtifactDirectory, Setting } from '../../utils/setting.js';
@@ -27,6 +27,7 @@ import { skillRegistry } from '../skillmgr/utils/skill-registry.js';
 import AgentOfficeWorker from './worker.js';
 import { normalizeStaffLocalService, unwrapAgentOfficeCallResult, type StaffLocalService } from './common.js';
 import { StaffLocalServiceManager, type LocalServiceRuntime } from './local-service.js';
+import type { StoredServiceCertificate } from './service-cert.js';
 import { CustomAgent } from './custom-agent.js';
 import type { AgentMcpRegistration, McpMgrApplication } from '../mcpmgr/app.js';
 import type { AgentDecl, ModeDecl } from '../../aikernel/agents/common.js';
@@ -90,16 +91,16 @@ function buildTaskPrompt(
     resourcesDirectory: string,
     scheduledTaskInProgress: boolean
 ): string {
-    return interpolateAgentOfficePrompt(t('agentoffice.task.prompt'), {
+    return interpolateAgentOfficePrompt(appT('agentoffice.task.prompt'), {
         resourcesDirectory,
         recent: JSON.stringify(recent, null, 2),
         current: JSON.stringify(current, null, 2),
-        scheduledTaskNotice: scheduledTaskInProgress ? t('agentoffice.task.scheduledInProgress') : ''
+        scheduledTaskNotice: scheduledTaskInProgress ? appT('agentoffice.task.scheduledInProgress') : ''
     });
 }
 
 function buildScheduledTaskPrompt(recent: StaffMessage[], memoryPath: string): string {
-    return interpolateAgentOfficePrompt(t('agentoffice.task.scheduledPrompt'), {
+    return interpolateAgentOfficePrompt(appT('agentoffice.task.scheduledPrompt'), {
         recent: JSON.stringify(recent, null, 2),
         memoryPath
     });
@@ -110,7 +111,7 @@ function taskNameFor(input: SendStaffMessageInput): string {
     const fallback = input.attachments
         ?.map((attachment) => attachment.name || path.basename(attachment.path))
         .join(', ');
-    return `${t('agentoffice.taskPrefix')} ${text || fallback || t('agentoffice.attachmentMessage')}`;
+    return `${appT('agentoffice.taskPrefix')} ${text || fallback || appT('agentoffice.attachmentMessage')}`;
 }
 
 export function acquireStaffTaskForMessage(
@@ -347,7 +348,7 @@ export class AgentOfficeApplication extends BaseApplication {
             whenToUse: `${staff.name} — ${staff.title}`,
             skillBundleName: `staff:${staffId}`,
             additionalSystemPrompt: (taskContext) =>
-                interpolateAgentOfficePrompt(t('agentoffice.task.systemRule'), {
+                interpolateAgentOfficePrompt(appT('agentoffice.task.systemRule'), {
                     memoryPath: path.join(taskContext.getWorkspace(), 'MEMORY.md')
                 })
         });
@@ -387,7 +388,7 @@ export class AgentOfficeApplication extends BaseApplication {
         }
         if (loadError && throwOnError) {
             throw new Error(
-                t('agentoffice.error.agentLoadFailed', {
+                appT('agentoffice.error.agentLoadFailed', {
                     message: loadError instanceof Error ? loadError.message : String(loadError)
                 })
             );
@@ -400,7 +401,7 @@ export class AgentOfficeApplication extends BaseApplication {
         if (existing) return existing;
         const loaded = await this.reloadStaffAgent(staffId, detail, true);
         if (!loaded) {
-            throw new Error(t('agentoffice.error.agentUnavailable'));
+            throw new Error(appT('agentoffice.error.agentUnavailable'));
         }
         return loaded;
     }
@@ -446,10 +447,10 @@ export class AgentOfficeApplication extends BaseApplication {
 
     async getSupportedEvents(): Promise<EventDecl[]> {
         return [
-            { eventName: 'staffsChanged', eventDescription: t('agentoffice.event.staffsChanged') },
-            { eventName: 'messagesChanged', eventDescription: t('agentoffice.event.messagesChanged') },
-            { eventName: 'staffTaskChanged', eventDescription: t('agentoffice.event.staffTaskChanged') },
-            { eventName: 'localServiceChanged', eventDescription: t('agentoffice.event.localServiceChanged') }
+            { eventName: 'staffsChanged', eventDescription: appT('agentoffice.event.staffsChanged') },
+            { eventName: 'messagesChanged', eventDescription: appT('agentoffice.event.messagesChanged') },
+            { eventName: 'staffTaskChanged', eventDescription: appT('agentoffice.event.staffTaskChanged') },
+            { eventName: 'localServiceChanged', eventDescription: appT('agentoffice.event.localServiceChanged') }
         ];
     }
 
@@ -611,6 +612,19 @@ export class AgentOfficeApplication extends BaseApplication {
             'agentoffice.localServiceCopied',
             'agentoffice.localServicePortInvalid',
             'agentoffice.localServiceLocalhost',
+            'agentoffice.localServiceHttps',
+            'agentoffice.localServiceHttpsHint',
+            'agentoffice.localServiceAllowIframe',
+            'agentoffice.localServiceAllowIframeHint',
+            'agentoffice.localServiceChatUrl',
+            'agentoffice.localServiceManageUrl',
+            'agentoffice.localServiceUserToken',
+            'agentoffice.localServiceManageToken',
+            'agentoffice.localServiceUserTokenHint',
+            'agentoffice.localServiceTokenGenerate',
+            'agentoffice.localServiceManageTokenRequired',
+            'agentoffice.localServiceHideStaffInfo',
+            'agentoffice.localServiceHideStaffInfoHint',
             'agentoffice.openInBrowser',
             'agentoffice.localServiceApplying',
             'agentoffice.modelLabel',
@@ -655,7 +669,7 @@ export class AgentOfficeApplication extends BaseApplication {
             'agentoffice.ctrlEnterSend',
             'agentoffice.sendOptions'
         ];
-        return Object.fromEntries(keys.map((key) => [key, t(key)]));
+        return Object.fromEntries(keys.map((key) => [key, appT(key)]));
     }
 
     listStaffs() {
@@ -700,12 +714,51 @@ export class AgentOfficeApplication extends BaseApplication {
                 sendMessage: (staffId, input) => this.sendMessage(staffId, input),
                 getResourceFilePath: (staffId, requested) => this.resolveStaffResourcePath(staffId, requested),
                 getLocale: () => getLocale(),
+                readServiceCertificate: (staffId) => this.readServiceCertificate(staffId),
+                writeServiceCertificate: (staffId, certificate) => this.writeServiceCertificate(staffId, certificate),
+                updateStaffProfile: (staffId, input) => this.updateStaff(staffId, input),
+                listStaffSkills: (staffId) => this.callAgentOfficeWorker('listSkills', staffId),
+                deleteStaffSkill: (staffId, name) => this.deleteSkill(staffId, name),
+                addStaffSkill: (staffId, zipPath) => this.addSkill(staffId, zipPath),
+                addStaffSkillFromUrl: (staffId, sourceUrl) => this.addSkillFromUrl(staffId, sourceUrl),
+                listChatModelSummaries: () => this.listChatModels(),
                 onStateChange: (staffId, runtime) => {
                     void this.emitEvent('localServiceChanged', staffId, runtime).catch(() => undefined);
                 }
             });
         }
         return this.localService;
+    }
+
+    private serviceCertificatePath(staffId: string): string {
+        return path.join(this.staffDirectory(staffId), 'protected', 'local-service-cert.json');
+    }
+
+    private readServiceCertificate(staffId: string): StoredServiceCertificate | null {
+        try {
+            const filePath = this.serviceCertificatePath(staffId);
+            if (!fs.existsSync(filePath)) return null;
+            const parsed = JSON.parse(fs.readFileSync(filePath, 'utf8')) as Partial<StoredServiceCertificate>;
+            if (
+                typeof parsed.host !== 'string' ||
+                typeof parsed.key !== 'string' ||
+                typeof parsed.cert !== 'string' ||
+                !parsed.key.includes('PRIVATE KEY') ||
+                !parsed.cert.includes('CERTIFICATE')
+            ) {
+                return null;
+            }
+            return { host: parsed.host, key: parsed.key, cert: parsed.cert };
+        } catch {
+            return null;
+        }
+    }
+
+    private writeServiceCertificate(staffId: string, certificate: StoredServiceCertificate): void {
+        const filePath = this.serviceCertificatePath(staffId);
+        fs.mkdirSync(path.dirname(filePath), { recursive: true });
+        // 私钥落盘限制为仅当前用户可读写（Windows 会忽略 mode，风险可接受：目录在用户数据目录内）
+        fs.writeFileSync(filePath, `${JSON.stringify(certificate, null, 4)}\n`, { encoding: 'utf8', mode: 0o600 });
     }
 
     /** 应用注册即恢复已开启的本地网络服务；启动早期 global worker 可能未就绪，按 5s 退避重试 */
@@ -738,18 +791,25 @@ export class AgentOfficeApplication extends BaseApplication {
         }));
     }
 
-    /** 用系统默认浏览器打开该员工的本地网络服务地址；服务未启动时抛出本地化错误 */
-    async openServiceInBrowser(staffId: string): Promise<void> {
+    /**
+     * 用系统默认浏览器打开该员工本地网络服务的指定入口（chat / manage），
+     * 地址按已保存的令牌配置自动补上 token 参数；服务未启动时抛出本地化错误
+     */
+    async openServiceInBrowser(staffId: string, target: 'chat' | 'manage' = 'chat'): Promise<void> {
         const runtime = this.getLocalService().getRuntime(staffId);
         if (!runtime.listening || !runtime.url) {
-            throw new Error(t('agentoffice.localServiceStopped'));
+            throw new Error(appT('agentoffice.localServiceStopped'));
         }
-        await getPlatform().openExternal(runtime.url);
+        const detail = await this.callAgentOfficeWorker<StaffDetail>('getStaffDetail', staffId);
+        const config = normalizeStaffLocalService(detail.local_service);
+        const token = target === 'manage' ? config.manage_token : config.user_token;
+        const url = `${runtime.url}/${target}${token ? `?token=${encodeURIComponent(token)}` : ''}`;
+        await getPlatform().openExternal(url);
     }
 
     listLocalAddresses(): Array<{ address: string; name: string }> {
         const result: Array<{ address: string; name: string }> = [
-            { address: '127.0.0.1', name: t('agentoffice.localServiceLocalhost') }
+            { address: '127.0.0.1', name: appT('agentoffice.localServiceLocalhost') }
         ];
         const seen = new Set(['127.0.0.1']);
         for (const [name, addresses] of Object.entries(os.networkInterfaces())) {
@@ -779,7 +839,7 @@ export class AgentOfficeApplication extends BaseApplication {
         const detail = await this.callAgentOfficeWorker<StaffDetail>(
             'createStaff',
             definition,
-            t('agentoffice.defaultAgentsMd')
+            appT('agentoffice.defaultAgentsMd')
         );
         await this.refreshStaffAgentAfterMutation(detail.id, detail);
         return detail;
@@ -792,13 +852,13 @@ export class AgentOfficeApplication extends BaseApplication {
     private async updateStaffLocked(staffId: string, input: StaffUpdateInput) {
         if (input.enabled === false) await this.stopActiveStaffTasks(staffId);
         if (input.portrait_path && path.extname(input.portrait_path).toLowerCase() !== '.png') {
-            throw new Error(t('agentoffice.error.portraitPngOnly'));
+            throw new Error(appT('agentoffice.error.portraitPngOnly'));
         }
         if (input.portrait_data_uri && input.portrait_data_uri.length > PORTRAIT_DATA_URI_MAX_LENGTH) {
-            throw new Error(t('agentoffice.portraitFileTooLarge'));
+            throw new Error(appT('agentoffice.portraitFileTooLarge'));
         }
         if (input.portrait_data_uri && !/^data:image\/png;base64,[a-z0-9+/]+={0,2}$/i.test(input.portrait_data_uri)) {
-            throw new Error(t('agentoffice.error.portraitPngOnly'));
+            throw new Error(appT('agentoffice.error.portraitPngOnly'));
         }
         const detail = await this.callAgentOfficeWorker<StaffDetail>('updateStaff', staffId, input);
         if (
@@ -866,23 +926,23 @@ export class AgentOfficeApplication extends BaseApplication {
         try {
             url = new URL(sourceUrl.trim());
         } catch {
-            throw new Error(t('agentoffice.error.skillUrlInvalid'));
+            throw new Error(appT('agentoffice.error.skillUrlInvalid'));
         }
-        if (!['http:', 'https:'].includes(url.protocol)) throw new Error(t('agentoffice.error.skillUrlInvalid'));
+        if (!['http:', 'https:'].includes(url.protocol)) throw new Error(appT('agentoffice.error.skillUrlInvalid'));
 
         const temporaryDirectory = fs.mkdtempSync(path.join(getTempDir(), 'agentoffice-skill-download-'));
         try {
             const response = await getPlatform().fetch(url, { redirect: 'follow' });
             if (!response.ok) {
-                throw new Error(t('agentoffice.error.skillDownloadFailed', { status: String(response.status) }));
+                throw new Error(appT('agentoffice.error.skillDownloadFailed', { status: String(response.status) }));
             }
             const declaredSize = Number(response.headers.get('content-length') || 0);
             if (Number.isFinite(declaredSize) && declaredSize > SKILL_DOWNLOAD_MAX_BYTES) {
-                throw new Error(t('agentoffice.error.skillDownloadTooLarge'));
+                throw new Error(appT('agentoffice.error.skillDownloadTooLarge'));
             }
             const archive = Buffer.from(await response.arrayBuffer());
             if (archive.byteLength > SKILL_DOWNLOAD_MAX_BYTES) {
-                throw new Error(t('agentoffice.error.skillDownloadTooLarge'));
+                throw new Error(appT('agentoffice.error.skillDownloadTooLarge'));
             }
             const archivePath = path.join(temporaryDirectory, 'skill.zip');
             fs.writeFileSync(archivePath, archive);
@@ -919,7 +979,7 @@ export class AgentOfficeApplication extends BaseApplication {
         for (const skillId of [...new Set(skillIds)]) {
             const installed = skillRegistry.getSkillBody(skillId);
             if (!installed?.skillDir) {
-                unavailable.push({ path: skillId, message: t('agentoffice.error.installedSkillUnavailable') });
+                unavailable.push({ path: skillId, message: appT('agentoffice.error.installedSkillUnavailable') });
             } else {
                 sourcePaths.push(installed.skillDir);
             }
@@ -959,7 +1019,7 @@ export class AgentOfficeApplication extends BaseApplication {
 
     private async sendMessageLocked(staffId: string, input: SendStaffMessageInput): Promise<{ task_id: string }> {
         const detail = await this.callAgentOfficeWorker<StaffDetail>('getStaffDetail', staffId);
-        if (!detail.enabled) throw new Error(t('agentoffice.error.staffDisabled'));
+        if (!detail.enabled) throw new Error(appT('agentoffice.error.staffDisabled'));
         this.validateMessageInput(input);
 
         const taskManager = GlobalState.getInstance().taskManagerState;
@@ -998,7 +1058,7 @@ export class AgentOfficeApplication extends BaseApplication {
             );
             await task.submitUserMessage(prompt, { imageDataUris: prepared.image_data_uris });
             if (task.getTurnGeneration() !== runtime.expectedGeneration) {
-                throw new Error(t('agentoffice.error.turnGenerationMismatch'));
+                throw new Error(appT('agentoffice.error.turnGenerationMismatch'));
             }
             if (selection.interruptedTurnKey) {
                 this.invalidatedTurns.delete(selection.interruptedTurnKey);
@@ -1016,7 +1076,7 @@ export class AgentOfficeApplication extends BaseApplication {
                 'appendAssistantMessage',
                 staffId,
                 task.task_id,
-                t('agentoffice.error.taskStartFailed', {
+                appT('agentoffice.error.taskStartFailed', {
                     message: error instanceof Error ? error.message : String(error)
                 }),
                 [],
@@ -1070,11 +1130,11 @@ export class AgentOfficeApplication extends BaseApplication {
                 sendReply: async (text, files, taskState) => {
                     const replyTask = taskState ?? task;
                     if (replyTask.task_id !== task.task_id || replyTask.getTurnGeneration() !== expectedGeneration) {
-                        throw new Error(t('agentoffice.error.staleTurnReply'));
+                        throw new Error(appT('agentoffice.error.staleTurnReply'));
                     }
                     const turnKey = `${replyTask.task_id}:${expectedGeneration}`;
                     if (this.invalidatedTurns.has(turnKey)) {
-                        throw new Error(t('agentoffice.error.staleTurnReply'));
+                        throw new Error(appT('agentoffice.error.staleTurnReply'));
                     }
                     const reply = await this.callAgentOfficeWorker<StaffMessage>(
                         'appendAssistantMessage',
@@ -1131,7 +1191,7 @@ export class AgentOfficeApplication extends BaseApplication {
             const detail = await this.callAgentOfficeWorker<StaffDetail>('getStaffDetail', trigger.staff_id);
             if (!detail.enabled || this.schedulerStopping) return undefined;
             const task = GlobalState.getInstance().taskManagerState.createTask(undefined, {
-                taskName: `${t('agentoffice.taskPrefix')} ${t('agentoffice.task.scheduledName')}`,
+                taskName: `${appT('agentoffice.taskPrefix')} ${appT('agentoffice.task.scheduledName')}`,
                 internal: true
             });
             const record: StaffTaskRecord = {
@@ -1282,7 +1342,7 @@ export class AgentOfficeApplication extends BaseApplication {
                     const runtime = await this.configureStaffTaskTurn(staffId, detail, task, false);
                     await task.submitUserMessage(buildScheduledTaskPrompt(runtime.recent, runtime.memoryPath));
                     if (task.getTurnGeneration() !== runtime.expectedGeneration) {
-                        throw new Error(t('agentoffice.error.turnGenerationMismatch'));
+                        throw new Error(appT('agentoffice.error.turnGenerationMismatch'));
                     }
                     const runningRecord: StaffTaskRecord = {
                         ...record,
@@ -1342,7 +1402,7 @@ export class AgentOfficeApplication extends BaseApplication {
                     'appendAssistantMessage',
                     staffId,
                     task.task_id,
-                    t('agentoffice.error.noReply'),
+                    appT('agentoffice.error.noReply'),
                     [],
                     'error'
                 );
@@ -1415,28 +1475,28 @@ export class AgentOfficeApplication extends BaseApplication {
     private async callAgentOfficeWorker<T>(methodName: string, ...args: unknown[]): Promise<T> {
         return unwrapAgentOfficeCallResult<T>(
             await this.callWorker(methodName, ...args),
-            t('agentoffice.operationFailed')
+            appT('agentoffice.operationFailed')
         );
     }
 
     private validateMessageInput(input: SendStaffMessageInput): void {
         if (!input.text?.trim() && !input.attachments?.length && !input.image_data_uris?.length) {
-            throw new Error(t('agentoffice.error.messageRequired'));
+            throw new Error(appT('agentoffice.error.messageRequired'));
         }
         for (const attachment of input.attachments ?? []) {
             if (!fs.existsSync(attachment.path) || !fs.statSync(attachment.path).isFile()) {
-                throw new Error(t('agentoffice.error.attachmentMustBeFile'));
+                throw new Error(appT('agentoffice.error.attachmentMustBeFile'));
             }
         }
         for (const dataUri of input.image_data_uris ?? []) {
             if (!/^data:image\/[^;,]+;base64,/i.test(dataUri)) {
-                throw new Error(t('agentoffice.error.imageDataUriOnly'));
+                throw new Error(appT('agentoffice.error.imageDataUriOnly'));
             }
         }
     }
 
     private staffDirectory(staffId: string): string {
-        if (!/^[0-9a-f-]{36}$/i.test(staffId)) throw new Error(t('agentoffice.error.invalidStaffId'));
+        if (!/^[0-9a-f-]{36}$/i.test(staffId)) throw new Error(appT('agentoffice.error.invalidStaffId'));
         return path.join(this.getDataDirectory(), 'staffs', staffId);
     }
 

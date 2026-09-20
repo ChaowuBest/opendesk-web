@@ -139,7 +139,11 @@ test('loadFromPath: 缺失 agents.md 时抛出错误', async () => {
         agentJson: { name: 'no-md-agent', when_to_use: 'Missing agents.md.' }
     });
 
-    await assert.rejects(() => CustomAgent.loadFromPath(dir), /agents\.md not found/);
+    // 错误文案已接入 locale，断言保持语言无关：包含文件名与目录片段即可
+    await assert.rejects(
+        () => CustomAgent.loadFromPath(dir),
+        (error: Error) => error.message.includes('agents.md') && error.message.includes('no-md')
+    );
 });
 
 test('loadFromPath: agent.json 缺少 name 字段时抛出错误', async () => {
@@ -149,7 +153,7 @@ test('loadFromPath: agent.json 缺少 name 字段时抛出错误', async () => {
         agentsMd: '# Agent'
     });
 
-    await assert.rejects(() => CustomAgent.loadFromPath(dir), /failed to parse agent\.json/);
+    await assert.rejects(() => CustomAgent.loadFromPath(dir), /agent\.json/);
 });
 
 test('loadFromPath: agent.json 缺少 when_to_use 字段时抛出错误', async () => {
@@ -159,7 +163,7 @@ test('loadFromPath: agent.json 缺少 when_to_use 字段时抛出错误', async 
         agentsMd: '# Agent'
     });
 
-    await assert.rejects(() => CustomAgent.loadFromPath(dir), /failed to parse agent\.json/);
+    await assert.rejects(() => CustomAgent.loadFromPath(dir), /agent\.json/);
 });
 
 test('loadFromPath: agents.md 为空文件时抛出错误', async () => {
@@ -169,7 +173,10 @@ test('loadFromPath: agents.md 为空文件时抛出错误', async () => {
         agentsMd: '   \n  \n  '
     });
 
-    await assert.rejects(() => CustomAgent.loadFromPath(dir), /agents\.md is empty/);
+    await assert.rejects(
+        () => CustomAgent.loadFromPath(dir),
+        (error: Error) => error.message.includes('agents.md') && error.message.includes('empty-md')
+    );
 });
 
 // ─── Mode 和 Prompt 测试 ──────────────────────────────────────

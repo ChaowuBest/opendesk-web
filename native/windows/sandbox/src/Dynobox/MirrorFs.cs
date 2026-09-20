@@ -124,6 +124,50 @@ public sealed class MirrorFs : IDokanOperations
     /// </summary>
     public bool DeleteToTrash { get; set; }
 
+    // 本实例运行期间经镜像文件系统新建的规范虚拟路径（大小写不敏感）。删除这些
+    // 路径时跳过回收站直接清除，避免任务期间的反复增删把回收站灌满；跟踪表随
+    // 进程结束一起消失，不跨沙箱实例残留。超过上限后停止记录，之后的删除退回
+    // 回收站语义（保守方向：宁可多送回收站，不错误永久清除宿主既有数据）。
+    private const int MaxTrackedSessionCreations = 200_000;
+    private readonly ConcurrentDictionary<string, bool> _sessionCreated = new(StringComparer.OrdinalIgnoreCase);
+
+    private void TrackSessionCreated(string virtualPath)
+    {
+        if (_sessionCreated.Count < MaxTrackedSessionCreations) _sessionCreated.TryAdd(virtualPath, true);
+    }
+
+    /// <summary>move/rename 后跟随跟踪记录：oldVirtual 及其后代（目录整体改名）
+    /// 重写到 newVirtual 前缀下。源路径未被跟踪时目标也不跟踪——被移动的可能是
+    /// 宿主既有内容，必须继续受回收站保护；replace 覆盖目标时目标内容被源内容
+    /// 取代，同样按源的跟踪状态归一。</summary>
+    private void FollowSessionCreatedMove(string oldVirtual, string newVirtual, bool targetExistedBefore)
+    {
+        var prefix = oldVirtual.TrimEnd('/') + "/";
+        var moved = new List<string>();
+        foreach (var key in _sessionCreated.Keys)
+        {
+            if (key.Equals(oldVirtual, StringComparison.OrdinalIgnoreCase) ||
+                key.StartsWith(prefix, StringComparison.OrdinalIgnoreCase))
+                moved.Add(key);
+        }
+        var sourceWasTracked = moved.Count > 0;
+        foreach (var key in moved)
+        {
+            _sessionCreated.TryRemove(key, out _);
+            if (sourceWasTracked) _sessionCreated.TryAdd(newVirtual + key[oldVirtual.Length..], true);
+        }
+        if (targetExistedBefore && !sourceWasTracked) _sessionCreated.TryRemove(newVirtual, out _);
+    }
+
+    /// <summary>Cleanup 阶段判断删除目标是否应送回收站：仅在回收站开启、目标不属
+    /// 于沙箱内部区域、且不是本实例运行期间新建时为 true。</summary>
+    private bool ShouldSendToTrash(string virtualPath)
+    {
+        if (!DeleteToTrash) return false;
+        if (IsSandboxInternalPath(virtualPath)) return false;
+        return !_sessionCreated.ContainsKey(virtualPath);
+    }
+
     /// <summary>配置当前运行的可执行文件内容兼容 overlay。
     /// 仅在挂载后、子进程启动前调用一次；此后配置只读。</summary>
     public void ConfigureRuntimeCompatibility(
@@ -540,6 +584,10 @@ public sealed class MirrorFs : IDokanOperations
                 var exists = targetIsDir || File.Exists(real);
                 var creating = mode is FileMode.Create or FileMode.CreateNew or FileMode.Truncate
                                || (mode == FileMode.OpenOrCreate && !exists);
+                // 新建路径条目才跟踪为"实例内创建"：Truncate / 命中已有文件的
+                // OpenOrCreate 与 Create 属于覆盖写，宿主既有内容不受跟踪豁免
+                var createsNewEntry =
+                    (mode is FileMode.Create or FileMode.CreateNew or FileMode.OpenOrCreate) && !exists;
 
                 // 目录上的 Execute 是 traverse 语义，按 read 管控；
                 // 只有"文件 + Execute"才是执行管控（拉起进程/加载 DLL）。
@@ -559,6 +607,7 @@ public sealed class MirrorFs : IDokanOperations
                     if (mode is FileMode.Create or FileMode.CreateNew or FileMode.OpenOrCreate && !exists)
                     {
                         Directory.CreateDirectory(real);
+                        TrackSessionCreated(res.VirtualPath);
                         Log.Info("[FS] mkdir {0}", vpath);
                     }
                     else if (!Directory.Exists(real))
@@ -623,6 +672,7 @@ public sealed class MirrorFs : IDokanOperations
                         return AccessDenied;
                     }
                     info.Context = NewCtx(stream, real);
+                    if (createsNewEntry) TrackSessionCreated(res.VirtualPath);
                 }
                 catch (FileNotFoundException) { return FileNotFound; }
                 catch (DirectoryNotFoundException) { return PathNotFound; }
@@ -670,7 +720,7 @@ public sealed class MirrorFs : IDokanOperations
                 // 必须用规范虚拟路径判断：原始请求名可能携带 .. 段
                 // （如 /dynobox/../C/...，按原始名前缀匹配会误判为内部区域，
                 // 导致开启回收站时用户文件被永久删除）。
-                if (DeleteToTrash && !IsSandboxInternalPath(res.VirtualPath))
+                if (ShouldSendToTrash(res.VirtualPath))
                 {
                     // 回收站模式：先释放本进程持有的句柄（回收站移动要求句柄关闭），
                     // 然后送回收站；任何失败都保留原文件——宁可让删除结果失真，
@@ -700,7 +750,15 @@ public sealed class MirrorFs : IDokanOperations
                             if (info.IsDirectory) Directory.Delete(real);
                             else File.Delete(real);
                         });
-                        Log.Info("[FS] 删除 {0}", Normalize(fileName));
+                        // 删除成功后才移除跟踪：失败保留原文件时仍按"实例内新建"
+                        // 处理，之后的重试删除继续直接清除
+                        _sessionCreated.TryRemove(res.VirtualPath, out _);
+                        // 回收站开启但未送回收站的删除均为刻意绕过（实例内新建或沙箱
+                        // 内部区域），单独标注便于与普通直接删除区分
+                        if (DeleteToTrash)
+                            Log.Info("[FS] 删除 {0} (实例内新建或内部区域，未送回收站)", Normalize(fileName));
+                        else
+                            Log.Info("[FS] 删除 {0}", Normalize(fileName));
                     }
                     catch (FileNotFoundException) { }
                     catch (DirectoryNotFoundException) { }
@@ -1119,6 +1177,7 @@ public sealed class MirrorFs : IDokanOperations
                         cx.Stream = null;
                     }
                 }
+                var targetExistedBefore = replace && File.Exists(newReal);
                 try
                 {
                     if (replace && File.Exists(newReal))
@@ -1139,6 +1198,7 @@ public sealed class MirrorFs : IDokanOperations
                     Log.Warn("[FS] move 失败 {0}: {1}", oldVp, ex.Message);
                     return AccessDenied;
                 }
+                FollowSessionCreatedMove(oldVp, newVp, targetExistedBefore);
                 if (cx is not null && cx.Stream is null)
                 {
                     try

@@ -226,12 +226,111 @@ export interface ShellProcessHandle {
 }
 
 /**
+ * 可暂停的 shell 超时时钟。
+ *
+ * Windows 动态沙箱触发权限管控时，子进程会阻塞等待用户在权限弹窗上做出决策，
+ * 这段等待时间不应计入工具超时：弹窗打开时调用 pause()，权限被批准或拒绝后
+ * 调用 resume()，按暂停时刻剩余的预算恢复计时。
+ */
+export class ShellTimeoutClock {
+    private timer: ReturnType<typeof setTimeout> | undefined;
+    private deadline: number | undefined;
+    private remainingMs: number;
+    private fired = false;
+    private canceled = false;
+    private started = false;
+    private pausedAt: number | undefined;
+    private pausedTotalMs = 0;
+    private timeoutHandler: (() => void) | undefined;
+
+    constructor(
+        private readonly timeoutMs: number,
+        private readonly startTime: number
+    ) {
+        this.remainingMs = Math.max(0, timeoutMs);
+    }
+
+    get hasFired(): boolean {
+        return this.fired;
+    }
+
+    /** 注册超时回调；须在 start() 之前调用 */
+    onTimeout(handler: () => void): void {
+        this.timeoutHandler = handler;
+    }
+
+    /** 排除暂停窗口（权限弹窗等待）后的实际执行毫秒数 */
+    getActiveElapsedMs(): number {
+        let elapsed = Date.now() - this.startTime - this.pausedTotalMs;
+        if (this.pausedAt !== undefined) elapsed -= Date.now() - this.pausedAt;
+        return Math.max(0, elapsed);
+    }
+
+    /** 开始计时；timeout <= 0 表示不限时 */
+    start(): void {
+        if (this.started || this.fired || this.canceled || this.timeoutMs <= 0) return;
+        this.started = true;
+        this.arm(this.remainingMs);
+    }
+
+    /** 暂停计时：沙箱权限弹窗正在等待用户决策 */
+    pause(): void {
+        if (this.canceled || this.timer === undefined || this.fired || this.pausedAt !== undefined) return;
+        clearTimeout(this.timer);
+        this.timer = undefined;
+        this.pausedAt = Date.now();
+        this.remainingMs = Math.max(0, (this.deadline ?? this.pausedAt) - this.pausedAt);
+    }
+
+    /** 恢复计时：权限决策已返回（批准或拒绝） */
+    resume(): void {
+        if (this.canceled || this.fired || this.pausedAt === undefined) return;
+        this.pausedTotalMs += Date.now() - this.pausedAt;
+        this.pausedAt = undefined;
+        this.arm(this.remainingMs);
+    }
+
+    /**
+     * 停止计时且不再触发（命令正常结束或中断时由 settle 调用）。
+     * cancel 是终态：此后 pause/resume/start 一律失效——权限弹窗可能在
+     * 命令结束后才迟迟返回决策（如用户 stop 任务），不得复活计时器。
+     */
+    cancel(): void {
+        if (this.timer !== undefined) {
+            clearTimeout(this.timer);
+            this.timer = undefined;
+        }
+        this.canceled = true;
+        this.deadline = undefined;
+    }
+
+    private arm(delayMs: number): void {
+        this.deadline = Date.now() + delayMs;
+        this.timer = setTimeout(
+            () => {
+                this.timer = undefined;
+                this.fire();
+            },
+            Math.max(0, delayMs)
+        );
+    }
+
+    private fire(): void {
+        if (this.fired) return;
+        this.fired = true;
+        this.deadline = undefined;
+        this.timeoutHandler?.();
+    }
+}
+
+/**
  * 为一个 shell 子进程安装超时后台化逻辑。
  *
  * - 如果命令在 timeout 内完成，正常返回结果（resolve(false)）。
  * - 如果命令超时，进程被移交给 BackgroundProcessManager 继续跟踪，
  *   工具立即返回超时提示信息（resolve(true)）。
  * - 如果用户主动 stop，返回中断提示（resolve(false)）。
+ * - 如果传入 clock，沙箱权限弹窗等待期间计时会被暂停（见 ShellTimeoutClock）。
  *
  * @returns Promise<boolean> — true 表示超时被后台化了，false 表示正常完成/中断
  */
@@ -245,6 +344,8 @@ export function installTimeoutBackgrounding(opts: {
     formatOutput?: (output: string) => string;
     result: ToolResult;
     isKilledByStop: () => boolean;
+    /** 外部持有的可暂停超时时钟（executeShellCommand 用于暂停权限等待时间）；缺省时内部创建 */
+    clock?: ShellTimeoutClock;
     onFinish: (backgrounded: boolean) => void;
 }): Promise<boolean> {
     const {
@@ -263,13 +364,13 @@ export function installTimeoutBackgrounding(opts: {
 
     let timedOut = false;
     let settled = false;
-    let timeoutTimer: ReturnType<typeof setTimeout> | undefined;
+    const clock = opts.clock ?? new ShellTimeoutClock(timeout, startTime);
 
     return new Promise<boolean>((resolve) => {
         const settle = (backgrounded: boolean) => {
             if (settled) return;
             settled = true;
-            if (timeoutTimer) clearTimeout(timeoutTimer);
+            clock.cancel();
             onFinish(backgrounded);
             resolve(backgrounded);
         };
@@ -297,31 +398,32 @@ export function installTimeoutBackgrounding(opts: {
         proc.on('close', onClose);
         proc.on('error', onError);
 
-        if (timeout > 0) {
-            timeoutTimer = setTimeout(() => {
-                if (settled) return;
-                timedOut = true;
+        clock.onTimeout(() => {
+            if (settled) return;
+            timedOut = true;
 
-                // 摘除工具自身的 listener，由后台管理器接管
-                detachListeners();
-                proc.removeListener('close', onClose);
-                proc.removeListener('error', onError);
+            // 摘除工具自身的 listener，由后台管理器接管
+            detachListeners();
+            proc.removeListener('close', onClose);
+            proc.removeListener('error', onError);
 
-                const mgr = BackgroundProcessManager.getInstance();
-                mgr.register(proc, command, getOutputBuffer?.() ?? getOutput(), startTime);
+            const mgr = BackgroundProcessManager.getInstance();
+            // 权限弹窗等待时间不计入后台进程的“已执行时长”
+            const activeElapsedMs = clock.getActiveElapsedMs();
+            mgr.register(proc, command, getOutputBuffer?.() ?? getOutput(), Date.now() - activeElapsedMs);
 
-                const elapsedSec = ((Date.now() - startTime) / 1000).toFixed(1);
-                const pid = proc.pid ?? 'unknown';
-                const header = [
-                    `[超时] 命令已执行 ${elapsedSec}s 未完成，已将进程放到后台继续执行。`,
-                    `PID: ${pid}`,
-                    `提示: 使用 checkShellStatus 工具并传入 pid=${pid} 来检查命令的执行状态。如果这是一个合理的长时间任务，请等待一段时间后再检查输出；如果判断进程已卡住，可以通过 checkShellStatus 的 kill 参数终止它。`
-                ].join('\n');
-                const output = getOutput().trim() || '(暂无输出)';
-                const message = header + '\n---\n' + output;
-                result.updateResult(formatOutput?.(message) ?? message);
-                settle(true);
-            }, timeout);
-        }
+            const elapsedSec = (activeElapsedMs / 1000).toFixed(1);
+            const pid = proc.pid ?? 'unknown';
+            const header = [
+                `[超时] 命令已执行 ${elapsedSec}s 未完成，已将进程放到后台继续执行。`,
+                `PID: ${pid}`,
+                `提示: 使用 checkShellStatus 工具并传入 pid=${pid} 来检查命令的执行状态。如果这是一个合理的长时间任务，请等待一段时间后再检查输出；如果判断进程已卡住，可以通过 checkShellStatus 的 kill 参数终止它。`
+            ].join('\n');
+            const output = getOutput().trim() || '(暂无输出)';
+            const message = header + '\n---\n' + output;
+            result.updateResult(formatOutput?.(message) ?? message);
+            settle(true);
+        });
+        clock.start();
     });
 }

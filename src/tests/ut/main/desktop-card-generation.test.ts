@@ -86,5 +86,13 @@ describe('desktop card generation helpers', () => {
         expect(withHtml).toContain('浅色');
         expect(withHtml).toContain('界面语言：zh-CN');
     });
+
+    test('buildCardGenerationPrompt forbids the model from painting its own card shell', () => {
+        // 宿主 od-card 已提供边框/阴影/圆角；生成内容再画一层壳会导致双层边框
+        const prompt = buildCardGenerationPrompt({ prompt: '天气', width: 400, height: 300, theme: 'light' });
+        expect(prompt).toContain('卡片外框由宿主提供');
+        expect(prompt).toContain('根容器禁止自带边框、外阴影和圆角，背景保持透明');
+        expect(prompt).toContain('边框、阴影、圆角只允许出现在卡片内部的元素上');
+    });
 });
 import { readFileSync } from 'node:fs';

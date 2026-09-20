@@ -13,7 +13,7 @@ import { z } from 'zod';
 import { BaseTool, BaseToolset } from '../../aikernel/tool.js';
 import type { TaskState } from '../../aikernel/states/tasks.js';
 import type { PermissionRequest } from '../../aikernel/security/permission.js';
-import { t } from '../../../locale/index.js';
+import { t } from './locale/index.js';
 import type { HistoryQuery } from './common.js';
 
 const SendReplySchema = z

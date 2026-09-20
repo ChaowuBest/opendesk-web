@@ -20,7 +20,25 @@
  * 注意：本文件内容会被 esbuild（CLI）与 Vite（Electron）共同打包，
  * 页面脚本刻意不使用模板字符串与 "${" 序列，避免嵌套模板转义问题。
  */
-export const CHAT_PAGE_HTML = `<!doctype html>
+/**
+ * 注入页面的 iframe 集成配置：页面脚本据此决定正常运行还是渲染"禁止嵌入"提示。
+ * 不用 CSP frame-ancestors 做拦截，因为浏览器对 CSP 拦截只显示默认"拒绝连接"页，
+ * 无法向集成方解释原因，也展示不了本地化文案。
+ */
+export interface WebPageEmbedOptions {
+    allowIframeEmbedding: boolean;
+    iframeBlockedMessage: string;
+}
+
+/** 生成注入到 <body> 起始处的 bootstrap 脚本；embed 缺省时不注入，页面按安全默认值（禁止嵌入）处理 */
+export function webPageBootstrapScript(embed?: WebPageEmbedOptions): string {
+    if (!embed) return '';
+    // `<` 统一转义为 \u003c，防止文案中出现 </script> 提前闭合脚本标签
+    const payload = JSON.stringify(embed).replace(/</g, '\\u003c');
+    return '<script>window.__OD_WEB__=' + payload + ';</script>';
+}
+
+const CHAT_PAGE_TEMPLATE = `<!doctype html>
 <html>
 <head>
 <meta charset="utf-8">
@@ -78,6 +96,8 @@ button:focus-visible {
     --fs-lg: 14px;
     --fs-xl: 16px;
 }
+/* 100% 高度链填满宿主容器（含 iframe）：dvh 视口单位在部分嵌入式 WebView 中不受支持 */
+html, body { height: 100%; }
 .root {
     /* 设计令牌：暖灰底 × 珊瑚红点缀（与办公室会话视图一致，浅色） */
     --page: #eeedeb;
@@ -93,7 +113,7 @@ button:focus-visible {
     --accent-soft: #fdeeec;
     --blue: #4267b2;
     --bubble: #f4f3f1;
-    height: 100dvh;
+    height: 100%;
     display: flex;
     flex-direction: column;
     background: var(--surface);
@@ -392,6 +412,10 @@ button:disabled { opacity: 0.4; cursor: default; }
     padding: 12px 28px calc(20px + env(safe-area-inset-bottom));
     flex: none;
 }
+/* 空会话：消息区不再伸展，输入区与空态卡片一起垂直居中；
+   出现消息后（renderMessages 切换 empty-conversation 类）输入区恢复贴底 */
+.root.empty-conversation .messages { flex: 0 1 auto; }
+.root.empty-conversation .composer-wrap { margin-top: auto; margin-bottom: auto; }
 .composer-card.disabled { opacity: 0.55; }
 .scroll-bottom {
     position: absolute;
@@ -642,10 +666,24 @@ button:disabled { opacity: 0.4; cursor: default; }
     .messages, .composer-wrap { padding-left: 16px; padding-right: 16px; }
     .message-content { max-width: 100%; }
 }
+/* ---------- “不显示员工信息”模式 ---------- */
+/* 仅隐藏头部资料区（头像/姓名/状态），“OpenDesk 数字员工”徽标悬浮到页面右上角；
+   消息流与空态照常展示员工身份，访客依然看得到在和谁对话 */
+.root.hide-staff-info .chat-head-main { display: none; }
+.root.hide-staff-info .chat-head { padding: 0; border-bottom-color: transparent; }
+.root.hide-staff-info .powered {
+    position: fixed;
+    top: 14px;
+    right: 16px;
+    z-index: 50;
+    opacity: 0.88;
+    box-shadow: 0 4px 14px rgba(28, 25, 23, 0.14);
+}
+
 </style>
 </head>
 <body>
-<div class="root">
+<div class="root empty-conversation">
     <section class="chat">
         <header class="chat-head">
             <div class="chat-head-main">
@@ -704,6 +742,30 @@ button:disabled { opacity: 0.4; cursor: default; }
 <script>
 (function () {
     'use strict';
+    var bootstrap = window.__OD_WEB__ || {};
+    // 未允许 iframe 集成时：被嵌入的页面立即渲染明确的禁止提示并停止初始化，
+    // 避免访客只看到浏览器默认的"拒绝连接"占位页
+    if (!bootstrap.allowIframeEmbedding && window.self !== window.top) {
+        renderIframeBlocked(bootstrap.iframeBlockedMessage);
+        return;
+    }
+
+    function renderIframeBlocked(message) {
+        document.title = 'OpenDesk';
+        var root = document.querySelector('.root');
+        if (root) root.textContent = '';
+        var box = document.createElement('div');
+        box.style.cssText = 'min-height:100%;display:grid;place-items:center;padding:32px;box-sizing:border-box;';
+        var text = document.createElement('p');
+        text.style.cssText =
+            'max-width:26em;text-align:center;line-height:1.7;font-size:14px;color:#4a4642;' +
+            "font-family:system-ui,-apple-system,'Segoe UI',sans-serif;";
+        text.textContent = message || 'This page cannot be embedded in an iframe.';
+        box.appendChild(text);
+        // body 有确定的 height:100%，百分比 min-height 只有挂在这里才能撑满
+        (document.body || root).appendChild(box);
+    }
+
     var state = {
         strings: {},
         locale: 'en-US',
@@ -714,7 +776,9 @@ button:disabled { opacity: 0.4; cursor: default; }
         busy: false,
         staffEnabled: true,
         ctrlEnterSend: false,
-        images: []
+        images: [],
+        urlToken: '',
+        hideInfo: false
     };
     var gradients = ['av-g1', 'av-g2', 'av-g3', 'av-g4'];
 
@@ -826,7 +890,7 @@ button:disabled { opacity: 0.4; cursor: default; }
         if (portraitUrl) {
             var img = document.createElement('img');
             img.className = 'avatar-img';
-            img.src = portraitUrl;
+            img.src = apiUrl(portraitUrl);
             img.alt = '';
             avatar.appendChild(img);
         } else {
@@ -837,6 +901,8 @@ button:disabled { opacity: 0.4; cursor: default; }
 
     function resourceNode(part) {
         var wrap = el('div', 'resource');
+        // 资源接口同样受令牌保护，URL 必须透传 token 参数
+        var url = apiUrl(part.url);
         if (part.media_type === 'image') {
             var img = document.createElement('img');
             img.src = part.url;
@@ -945,6 +1011,8 @@ button:disabled { opacity: 0.4; cursor: default; }
         var box = $('messages');
         var olderButton = $('load-older');
         var empty = $('empty');
+        // 空会话时输入区垂直居中，出现消息后输入区贴底
+        document.querySelector('.root').classList.toggle('empty-conversation', state.messages.length === 0);
         // 先删后插会让 scrollHeight 骤降、scrollTop 被浏览器钳到 0，导致发消息后列表跳顶
         var prevTop = box.scrollTop;
         var prevCount = box.querySelectorAll('.message').length;
@@ -969,6 +1037,9 @@ button:disabled { opacity: 0.4; cursor: default; }
     function renderStaff(staff) {
         state.staff = staff;
         state.staffEnabled = Boolean(staff.enabled);
+        // “不显示员工信息”：仅隐藏头部资料区，消息流与空态照常展示员工身份
+        state.hideInfo = Boolean(staff.hide_staff_info);
+        document.querySelector('.root').classList.toggle('hide-staff-info', state.hideInfo);
         document.title = staff.name || document.title;
         var avatar = $('avatar');
         avatar.className = 'avatar lg ' + gradients[gradientIndex(staff.name || 'AI')];
@@ -976,7 +1047,7 @@ button:disabled { opacity: 0.4; cursor: default; }
         if (staff.portrait) {
             var img = document.createElement('img');
             img.className = 'avatar-img';
-            img.src = staff.portrait;
+            img.src = apiUrl(staff.portrait);
             img.alt = '';
             avatar.appendChild(img);
         } else {
@@ -1024,7 +1095,7 @@ button:disabled { opacity: 0.4; cursor: default; }
         if (staff.portrait) {
             var img = document.createElement('img');
             img.className = 'avatar-img';
-            img.src = staff.portrait;
+            img.src = apiUrl(staff.portrait);
             img.alt = '';
             avatar.appendChild(img);
         } else {
@@ -1051,8 +1122,14 @@ button:disabled { opacity: 0.4; cursor: default; }
         return base;
     }
 
+    /** 令牌透传：页面 URL 携带的 token 参数必须附加到后续所有 API/SSE 请求上 */
+    function apiUrl(path) {
+        if (!state.urlToken) return path;
+        return path + (path.indexOf('?') >= 0 ? '&' : '?') + 'token=' + encodeURIComponent(state.urlToken);
+    }
+
     function fetchJson(url, options) {
-        return fetch(url, options).then(function (response) {
+        return fetch(apiUrl(url), options).then(function (response) {
             if (!response.ok) {
                 return response.json().catch(function () { return null; }).then(function (data) {
                     var error = new Error((data && data.error) || response.statusText || 'request failed');
@@ -1122,7 +1199,7 @@ button:disabled { opacity: 0.4; cursor: default; }
 
     function connectEvents() {
         if (typeof EventSource === 'undefined') return;
-        var source = new EventSource('/api/events');
+        var source = new EventSource(apiUrl('/api/events'));
         source.addEventListener('messages', function () { void refreshMessages(); });
         source.addEventListener('staff', function (event) {
             try {
@@ -1176,6 +1253,8 @@ button:disabled { opacity: 0.4; cursor: default; }
     }
 
     function initialize() {
+        var params = new URLSearchParams(window.location.search);
+        state.urlToken = params.get('token') || '';
         $('send-btn').addEventListener('click', sendMessage);
         $('load-older').addEventListener('click', function () {
             void loadMessages(true);
@@ -1228,6 +1307,7 @@ button:disabled { opacity: 0.4; cursor: default; }
             state.strings = session.strings || {};
             state.locale = session.locale || 'en-US';
             $('send-label').textContent = state.strings.send || '';
+            $('scroll-bottom').setAttribute('aria-label', state.strings.scrollBottom || 'scroll to bottom');
             renderStaff(session.staff);
         });
         void ready.then(function () { return loadMessages(false); })
@@ -1241,3 +1321,10 @@ button:disabled { opacity: 0.4; cursor: default; }
 </script>
 </body>
 </html>`;
+
+/**
+ * 生成聊天页面 HTML。embed 提供 iframe 集成开关与禁止嵌入时的本地化提示文案。
+ */
+export function chatPageHtml(embed?: WebPageEmbedOptions): string {
+    return CHAT_PAGE_TEMPLATE.replace('<body>', '<body>' + webPageBootstrapScript(embed));
+}

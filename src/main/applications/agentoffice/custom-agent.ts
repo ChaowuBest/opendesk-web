@@ -21,6 +21,7 @@ import { listExecutionNodes } from '../../aikernel/security/harness.js';
 import { logger } from '../../utils/logger.js';
 import { Skill, SkillRegistry, type SkillProvider } from '../../aikernel/skill.js';
 import { getSkillsSection } from '../../aikernel/agents/main/agent.js';
+import { t } from './locale/index.js';
 
 // ─── 配置 Schema ──────────────────────────────────────────────
 
@@ -44,7 +45,7 @@ export interface CustomAgentLoadOptions {
 const CUSTOM_AGENT_DEFAULT_MODE: ModeDecl = {
     id: 'default',
     name: 'default',
-    description: '自定义 agent 默认模式，继承父任务权限级别',
+    description: '',
     icon: '🤖',
     color: '#7E57C2',
     permissionFactory: (workspace) => createDefaultPermissionRules(workspace)
@@ -132,11 +133,11 @@ export class CustomAgent extends AgentDecl {
         // 读取 agents.md（必需）
         const agentsMdPath = path.join(resolvedDir, 'agents.md');
         if (!fs.existsSync(agentsMdPath)) {
-            throw new Error(`CustomAgent: agents.md not found in ${resolvedDir}`);
+            throw new Error(t('agentoffice.error.customAgentsMdMissing', { path: resolvedDir }));
         }
         const agentsMd = (await fs.promises.readFile(agentsMdPath, 'utf-8')).trim();
         if (agentsMd.length === 0) {
-            throw new Error(`CustomAgent: agents.md is empty in ${resolvedDir}`);
+            throw new Error(t('agentoffice.error.customAgentsMdEmpty', { path: resolvedDir }));
         }
 
         // 读取 agent.json（可选，缺失时从目录名和 agents.md 推断）
@@ -147,7 +148,11 @@ export class CustomAgent extends AgentDecl {
                 const raw = await fs.promises.readFile(agentJsonPath, 'utf-8');
                 meta = CustomAgentMetaSchema.parse(JSON.parse(raw));
             } catch (err) {
-                throw new Error(`CustomAgent: failed to parse agent.json: ${err}`);
+                throw new Error(
+                    t('agentoffice.error.customAgentManifestInvalid', {
+                        message: err instanceof Error ? err.message : String(err)
+                    })
+                );
             }
         } else {
             // 从目录名推断 agent name，从 agents.md 第一行推断 when_to_use
@@ -212,8 +217,9 @@ export class CustomAgent extends AgentDecl {
         return loaded.filter((skill): skill is Skill => Boolean(skill));
     }
 
+    // 描述在取用时翻译：agent 实例会整个会话存活，模块级求值会把启动时的语言冻结住
     supportedModes(): ModeDecl[] {
-        return [CUSTOM_AGENT_DEFAULT_MODE];
+        return [{ ...CUSTOM_AGENT_DEFAULT_MODE, description: t('agentoffice.customAgent.defaultModeDescription') }];
     }
 
     protected defaultModeId(): string {

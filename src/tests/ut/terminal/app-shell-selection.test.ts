@@ -96,6 +96,20 @@ test('empty discovery registers no terminal tools', async () => {
     expect(await new TerminalApplication().getToolsets()).toEqual([]);
 });
 
+test('a saved sandboxed selection falls back to the plain shell when the platform offers no sandbox variant', async () => {
+    // CLI 平台不注册沙箱变体（见 scan.test.ts 的平台门控），桌面端保存的
+    // shell_sandboxed: true 必须回退到同路径的普通 PowerShell，而不是报错
+    taskConfig = { shell_path: 'C:/Windows/powershell.exe', shell_sandboxed: true, shell_sandbox_del_to_trash: true };
+    scan.mockReturnValueOnce([
+        { kind: 'powershell', path: 'C:/Windows/powershell.exe', sandboxed: false },
+        { kind: 'bash', path: 'C:/Git/bash.exe', sandboxed: false }
+    ]);
+    launches.length = 0;
+    await new TerminalApplication().getToolsets();
+    expect(launches[0]).toEqual({ name: 'executePwsh', args: ['C:/Windows/powershell.exe', false, false] });
+    expect(launches[1]).toEqual({ name: 'checkShellStatus', args: ['powershell', false] });
+});
+
 test('reads the latest shell selection without registering an eager task refresh', async () => {
     const callbackCount = afterSetDataCallbacks.length;
     const app = new TerminalApplication();

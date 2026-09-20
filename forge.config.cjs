@@ -207,6 +207,19 @@ const extraResources = [
     ...(process.platform === 'darwin' ? [] : [path.join(__dirname, 'native')])
 ];
 
+// deb/rpm 安装包共用元数据。icon 用单文件 png（512x512），两个安装器都会落到
+// /usr/share/pixmaps/opendesk.png；categories 是 freedesktop 菜单分类。
+const LINUX_INSTALLER_OPTIONS = {
+    productName: 'OpenDesk',
+    genericName: 'OpenDesk',
+    categories: ['Office', 'Utility'],
+    icon: path.join(__dirname, 'resources', 'renderer', 'images', 'icon_round.png')
+};
+
+// rpmbuild 的 %install 以 cp -r 落盘会丢掉 chrome-sandbox 的 setuid 位（deb 不受
+// 影响），需要在 %post 里恢复，否则非 root 用户启动 Electron 时沙箱不可用。
+const RPM_POST_INSTALL_SCRIPT = path.join(__dirname, 'scripts', 'packaging', 'rpm-post-install.sh');
+
 // Default: produce an unsigned .app so the same packaging step works on any
 // developer machine, then sign via scripts/remote-sign/ on a host that holds
 // the Developer ID private key. Set OPENDESK_SIGN_LOCAL=1 to sign and notarize
@@ -520,7 +533,12 @@ module.exports = {
         ],
         afterCopyExtraResources: [pruneDarwinExtraResources, stageWindowsSandboxResource]
     },
-    rebuildConfig: {},
+    // 打包期的原生依赖均为 N-API prebuild 或纯 wasm（classic-level、sqlite-vec、
+    // node-sqlite3-wasm），N-API 二进制跨 Electron ABI 通用，无需按 ABI rebuild；
+    // 且仓库构建机的系统 g++ 无法编译其中需要 C++20 的源码。onlyModules 置空
+    // 表示 rebuild 阶段不处理任何模块；未来若引入非 N-API 原生依赖，必须在此
+    // 列出其模块名，否则安装后运行时会报 NODE_MODULE_VERSION 不匹配。
+    rebuildConfig: { onlyModules: [] },
     makers: [
         {
             name: '@electron-forge/maker-wix',
@@ -559,11 +577,22 @@ module.exports = {
         },
         {
             name: '@electron-forge/maker-deb',
-            config: {}
+            platforms: ['linux'],
+            config: {
+                options: { ...LINUX_INSTALLER_OPTIONS }
+            }
         },
         {
             name: '@electron-forge/maker-rpm',
-            config: {}
+            platforms: ['linux'],
+            config: {
+                options: {
+                    ...LINUX_INSTALLER_OPTIONS,
+                    scripts: {
+                        post: RPM_POST_INSTALL_SCRIPT
+                    }
+                }
+            }
         }
     ],
     plugins: [

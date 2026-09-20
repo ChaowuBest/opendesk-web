@@ -23,7 +23,7 @@ import chalk from 'chalk';
 import type { TaskState } from '../../../aikernel/states/tasks.js';
 import { runPluginShellEnv } from '../../pluginmgr/runtime/hooks.js';
 import { Setting, getTaskToolResultDirectory } from '../../../utils/setting.js';
-import { installTimeoutBackgrounding } from '../background.js';
+import { installTimeoutBackgrounding, ShellTimeoutClock } from '../background.js';
 import { BoundedOutputBuffer } from '../output-buffer.js';
 import {
     buildChildProcessEnv,
@@ -230,6 +230,8 @@ export async function executeShellCommand(opts: {
     const baseEnv = buildChildProcessEnv(taskState?.harnessContext.environ);
     const env = await runPluginShellEnv(taskState, { shell: shellPath, command }, baseEnv);
     const startTime = Date.now();
+    // 沙箱权限弹窗等待用户决策期间暂停超时计时（见 dynabox 的 onPermissionWaitChange）
+    const timeoutClock = new ShellTimeoutClock(timeout, startTime);
     const sandbox = useDynamicSandbox
         ? await prepareDynamicSandbox({
               shellPath,
@@ -237,7 +239,11 @@ export async function executeShellCommand(opts: {
               command,
               cwd,
               taskState,
-              deleteToTrash: sandboxDeleteToTrash
+              deleteToTrash: sandboxDeleteToTrash,
+              onPermissionWaitChange: (waiting) => {
+                  if (waiting) timeoutClock.pause();
+                  else timeoutClock.resume();
+              }
           })
         : null;
     let proc: ChildProcessWithoutNullStreams;
@@ -300,6 +306,7 @@ export async function executeShellCommand(opts: {
         formatOutput: (message) => appendSandboxPathDiagnostic(message, useDynamicSandbox),
         result,
         isKilledByStop,
+        clock: timeoutClock,
         onFinish: (backgrounded) => {
             if (!backgrounded) output.closeArtifact();
             clearInterval(updateTimer);

@@ -1998,6 +1998,7 @@ p {
     align-items: start;
 }
 .local-service-status {
+    position: relative;
     display: flex;
     align-items: center;
     gap: 8px;
@@ -2022,6 +2023,29 @@ p {
 .local-service-status[data-state='pending'] {
     color: var(--ink3);
 }
+/* 过渡态保留链接行：整体置灰禁点，容器高度不变，避免切换配置时链接区域塌陷又弹回 */
+.local-service-status[data-state='pending'] .local-service-links {
+    opacity: 0.45;
+    pointer-events: none;
+}
+/* "正在应用"徽标绝对定位叠加在链接行上，不参与布局 */
+.local-service-applying {
+    position: absolute;
+    top: 50%;
+    right: 10px;
+    transform: translateY(-50%);
+    display: inline-flex;
+    align-items: center;
+    padding: 3px 10px;
+    border: 1px solid var(--line);
+    border-radius: 999px;
+    background: var(--surface);
+    color: var(--ink2);
+    font-size: var(--fs-xs);
+    box-shadow: var(--shadow);
+    pointer-events: none;
+    white-space: nowrap;
+}
 .local-service-url {
     min-width: 0;
     overflow: hidden;
@@ -2039,6 +2063,46 @@ p {
 /* URL 占左侧，两个操作按钮作为一组靠右排列 */
 .local-service-status .secondary.small-btn:first-of-type {
     margin-left: auto;
+}
+/* 令牌输入 + 随机生成按钮 */
+.local-service-token-fields {
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+}
+.local-service-token-row {
+    display: flex;
+    /* 按钮随输入框等高拉伸，避免一高一矮的观感 */
+    align-items: stretch;
+    gap: 8px;
+}
+.local-service-token-row input {
+    flex: 1;
+    min-width: 0;
+    font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
+}
+.local-service-token-row .secondary.small-btn {
+    flex: none;
+    /* 高度交给拉伸控制，仅保留水平内边距 */
+    padding-top: 0;
+    padding-bottom: 0;
+}
+/* 运行状态里的两条访问链接（用户 / 管理） */
+.local-service-links {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    flex: 1;
+    min-width: 0;
+}
+.local-service-link-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    min-width: 0;
+}
+.local-service-link-label {
+    flex: none;
+    font-size: var(--fs-xs);
+    color: var(--ink3);
 }
 /* ---------- Skills 管理 ---------- */
 .skills-page {

@@ -513,3 +513,84 @@ describe('OpenDeskTUI focusInputAreaIfAvailable', () => {
         expect(setFocus).not.toHaveBeenCalled();
     });
 });
+
+describe('OpenDeskTUI model notice layout focus', () => {
+    const createLayoutTui = (promptOpen: boolean) => {
+        const input = { type: 'input' };
+        const tui = Object.assign(Object.create(OpenDeskTUI.prototype), {
+            configComponent: undefined,
+            textPageActive: false,
+            workspace: '/workspace',
+            container: {
+                clear: jest.fn(),
+                addChild: jest.fn(),
+                setMinLines: jest.fn()
+            },
+            taskView: {},
+            todoList: {},
+            logPanel: { mode: 'off' },
+            dashboardBar: {},
+            inputArea: {
+                input,
+                hasPromptWidget: jest.fn(() => promptOpen)
+            },
+            tui: {
+                requestRender: jest.fn(),
+                setFocus: jest.fn(),
+                terminal: { rows: 40 }
+            }
+        }) as any;
+        // hasOpenOverlay 在原型上是 setter（置 false 时会注册 processPendingPrompts 定时器），
+        // 用自有数据属性绕过，避免无关定时器混入 fake timer 队列
+        Object.defineProperty(tui, 'hasOpenOverlay', { value: promptOpen, writable: true, configurable: true });
+        return tui;
+    };
+
+    afterEach(() => {
+        jest.useRealTimers();
+    });
+
+    test('delayed focus after hiding model notice does not steal focus from the /model success overlay', () => {
+        jest.useFakeTimers();
+        const tui = createLayoutTui(false);
+        tui.modelNotConfiguredNotice = { render: () => [] };
+        tui.modelNotConfiguredMode = true;
+
+        // /model <alias> 切换默认模型：resolveModelInfo() 隐藏引导布局并调度延迟焦点恢复
+        tui.hideModelNotConfiguredNotice();
+
+        // 命令随后显示切换成功 InfoOverlay：挂到输入区 prompt 插槽并持有焦点
+        tui.hasOpenOverlay = true;
+        tui.inputArea.hasPromptWidget.mockReturnValue(true);
+        const overlayList = { type: 'select-list' };
+        tui.tui.setFocus(overlayList);
+        tui.tui.setFocus.mockClear();
+
+        jest.advanceTimersByTime(10);
+
+        // 延迟焦点不得把焦点从成功提示上抢走，否则提示永远无法关闭
+        expect(tui.tui.setFocus).not.toHaveBeenCalled();
+    });
+
+    test('hiding model notice restores input focus when no prompt is open', () => {
+        jest.useFakeTimers();
+        const tui = createLayoutTui(false);
+        tui.modelNotConfiguredNotice = { render: () => [] };
+        tui.modelNotConfiguredMode = true;
+
+        tui.hideModelNotConfiguredNotice();
+        jest.advanceTimersByTime(10);
+
+        expect(tui.tui.setFocus).toHaveBeenCalledWith(tui.inputArea.input);
+    });
+
+    test('showing model notice also skips delayed focus while a prompt overlay is open', () => {
+        jest.useFakeTimers();
+        const tui = createLayoutTui(true);
+
+        tui.showModelNotConfiguredNotice();
+        jest.advanceTimersByTime(10);
+
+        expect(tui.tui.setFocus).not.toHaveBeenCalled();
+    });
+});

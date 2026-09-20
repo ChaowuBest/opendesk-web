@@ -1617,8 +1617,18 @@ export class OpenDeskTUI {
         this.container.addChild(this.dashboardBar);
         this.container.setMinLines(this.tui.terminal.rows);
 
+        this.focusInputAreaAfterLayoutSettle();
+    }
+
+    /**
+     * 布局重建完成后把焦点恢复到输入框。
+     * 延迟期间可能有输入区 prompt 抢先显示（如 /model 切换成功提示），
+     * 此时不能抢占 prompt 的焦点；prompt 关闭时经 focusAfterInputPromptClose 恢复输入焦点。
+     */
+    private focusInputAreaAfterLayoutSettle(): void {
         this.tui.requestRender();
         setTimeout(() => {
+            if (this.isInputBlocked()) return;
             this.tui.setFocus(this.inputArea.input);
             this.tui.requestRender();
         }, 10);
@@ -1653,11 +1663,7 @@ export class OpenDeskTUI {
         this.container.addChild(this.dashboardBar);
         this.container.setMinLines(this.tui.terminal.rows);
 
-        this.tui.requestRender();
-        setTimeout(() => {
-            this.tui.setFocus(this.inputArea.input);
-            this.tui.requestRender();
-        }, 10);
+        this.focusInputAreaAfterLayoutSettle();
     }
 
     private modelNotConfiguredNotice?: Text;

@@ -141,6 +141,9 @@ export class TaskConfigPage implements Component {
         const setting = Setting.getInstance();
         const data = setting.getData();
         const shell = selectSupportedShell(this.shells, values);
+        // 当前平台未注册沙箱变体（如 CLI 模式未安装沙箱二进制）时，设置页不提供
+        // 沙箱开关，保存时也保持原值，避免覆盖桌面端保存的沙箱配置
+        const sandboxAvailable = this.shells.some((candidate) => candidate.sandboxed);
         data.task_config = {
             ...(data.task_config ?? {
                 auto_retry: true,
@@ -153,8 +156,12 @@ export class TaskConfigPage implements Component {
             termination_check: values.termination_check !== false,
             evidence_card: values.evidence_card === true,
             shell_path: shell?.path ?? '',
-            shell_sandboxed: shell?.sandboxed ?? false,
-            shell_sandbox_del_to_trash: values.shell_sandbox_del_to_trash === true
+            shell_sandboxed: sandboxAvailable
+                ? (shell?.sandboxed ?? false)
+                : data.task_config?.shell_sandboxed === true,
+            shell_sandbox_del_to_trash: sandboxAvailable
+                ? values.shell_sandbox_del_to_trash === true
+                : data.task_config?.shell_sandbox_del_to_trash === true
         };
         data.cli_config = {
             ...(data.cli_config ?? {}),

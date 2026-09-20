@@ -7,11 +7,13 @@ import { Setting, setCustomOpendeskDirectory } from '../../../../../main/utils/s
 import { selectSupportedShell } from '../../../../../common/shells.js';
 import { setRuntimeLocale } from '../../../../../locale/index';
 
-const shells = [
+const desktopShells = [
     { kind: 'powershell', path: 'C:/Windows/powershell.exe', sandboxed: false },
     { kind: 'powershell', path: 'C:/Windows/powershell.exe', sandboxed: true },
     { kind: 'bash', path: 'C:/Git/bash.exe', sandboxed: false }
 ];
+// 可变以便用例模拟未提供沙箱变体的平台（如 CLI）
+let shells = desktopShells;
 jest.unstable_mockModule('../../../../../main/applications/terminal/scan.js', () => ({
     scanSupportedShells: () => shells,
     selectSupportedShell
@@ -149,6 +151,36 @@ describe('TaskConfigPage', () => {
             shell_sandboxed: false,
             shell_sandbox_del_to_trash: false
         });
+    });
+
+    test('keeps saved sandbox settings untouched when the platform offers no sandbox variant', () => {
+        // 桌面端已开启沙箱与回收站；CLI 等平台不注册沙箱变体，设置页隐藏开关，
+        // 保存其它配置时不得覆盖这两项
+        Setting.updateInstanceData({
+            task_config: {
+                shell_path: 'C:/Windows/powershell.exe',
+                shell_sandboxed: true,
+                shell_sandbox_del_to_trash: true
+            }
+        });
+        const previous = shells;
+        shells = [
+            { kind: 'powershell', path: 'C:/Windows/powershell.exe', sandboxed: false },
+            { kind: 'bash', path: 'C:/Git/bash.exe', sandboxed: false }
+        ];
+        try {
+            const page = new TaskConfigPage(createTuiMock(), jest.fn());
+            expect(stripAnsi(page.render(120).join('\n'))).not.toContain('Enable sandbox');
+            expect(stripAnsi(page.render(120).join('\n'))).not.toContain('Recycle Bin');
+            (page as any).save({ shell_path: 'C:/Windows/powershell.exe', shell_sandboxed: false });
+            expect(Setting.getInstance().getData().task_config).toMatchObject({
+                shell_path: 'C:/Windows/powershell.exe',
+                shell_sandboxed: true,
+                shell_sandbox_del_to_trash: true
+            });
+        } finally {
+            shells = previous;
+        }
     });
 
     test('saves EvidenceCard together with existing task and CLI settings', () => {

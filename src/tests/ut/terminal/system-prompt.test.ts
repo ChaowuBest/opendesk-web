@@ -13,7 +13,8 @@ const translations: Record<string, string> = {
         '- Absolute paths in commands and PowerShell, Python, or Node.js scripts must use /<drive>/... form.',
     'prompt.sandbox.cwd':
         '- The sandbox working directory matches the task workspace; C:/foo becomes /C/foo, and relative paths resolve from there.',
-    'prompt.sandbox.trash': '- Direct deletion sends files to the Windows Recycle Bin.'
+    'prompt.sandbox.trash':
+        '- Files that existed before this task started are moved to the Windows Recycle Bin when deleted; files created during a sandbox run are removed permanently when deleted within the same sandbox instance.'
 };
 
 jest.unstable_mockModule('../../../main/applications/terminal/locale/index.js', () => ({
@@ -37,6 +38,15 @@ describe('terminal system prompt contribution', () => {
                 .join('\n');
             expect(promptText).not.toContain('SBX_ROOT');
         }
+    });
+
+    test('trash instructions distinguish pre-existing files from files created inside the sandbox', () => {
+        // 回收站只保护实例外已有的文件；沙箱实例运行期间新建的文件在同一实例内
+        // 删除时直接清除。两条语言的文案都必须表达这一边界
+        expect(enUs['prompt.sandbox.trash']).toContain('before this task started');
+        expect(enUs['prompt.sandbox.trash']).toContain('same sandbox instance');
+        expect(zhCn['prompt.sandbox.trash']).toContain('任务开始前已存在');
+        expect(zhCn['prompt.sandbox.trash']).toContain('同一沙箱实例内删除时直接清除');
     });
 
     test.each([

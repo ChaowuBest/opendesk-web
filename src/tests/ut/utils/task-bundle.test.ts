@@ -70,13 +70,14 @@ describe('task bundle format', () => {
         }
     });
 
+    // These 17 MiB boundary cases can exceed Jest's 5-second default under full-suite CPU contention.
     test('rejects oversized exports without creating a partial output', async () => {
         const target = path.join(dir, 'large.zip');
         const json = task('large');
         json.chat_context.messages[0].content[0].text = 'x'.repeat(17 * 1024 * 1024);
         await expect(writeTaskBundle(target, [json])).rejects.toThrow('tooLarge');
         expect(fs.existsSync(target)).toBe(false);
-    });
+    }, 30000);
 
     test('bounds actual inflation even when ZIP size headers lie', async () => {
         const zip = new AdmZip();
@@ -106,7 +107,7 @@ describe('task bundle format', () => {
         const target = path.join(dir, 'forged.zip');
         fs.writeFileSync(target, bytes);
         await expect(readTaskImportFile(target)).rejects.toThrow('tooLarge');
-    });
+    }, 30000);
 
     test('rejects cyclic parent relationships', async () => {
         const target = path.join(dir, 'cycle.zip');

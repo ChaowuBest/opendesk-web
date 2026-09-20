@@ -55,18 +55,27 @@ test('delete-to-trash is wired from the task setting through to the native mirro
 
     // 设置项存在且默认关闭
     assert.match(setting, /shell_sandbox_del_to_trash: z\.boolean\(\)\.default\(false\)/);
-    // TS 侧透传链路：任务设置 -> pwsh 工具 -> 沙箱启动参数
+    // TS 侧透传链路：任务设置 -> pwsh 工具 -> 沙箱启动参数；
+    // 实例内新建的分流由原生侧创建跟踪实现，宿主不传额外参数
     assert.match(app, /shell_sandbox_del_to_trash/);
     assert.match(pwsh, /sandboxDeleteToTrash/);
     assert.match(shellCommon, /deleteToTrash: sandboxDeleteToTrash/);
     assert.match(runtime, /--del-to-trash/);
+    assert.doesNotMatch(runtime, /--created-after/);
     // 原生侧解析与执行：CLI 标志 -> Sandbox -> MirrorFs 回收站删除
     assert.equal(fs.existsSync(recycleBin), true);
     assert.match(program, /--del-to-trash/);
     assert.match(runner, /DeleteToTrash = delToTrash/);
     // 回归（BUG-2）：内部路径判定必须用规范虚拟路径（res.VirtualPath），
-    // 原始请求名可能携带 /dynobox/../ 段逃逸前缀匹配导致用户文件被永久删除
-    assert.match(mirror, /DeleteToTrash && !IsSandboxInternalPath\(res\.VirtualPath\)/);
+    // 原始请求名可能携带 /dynobox/../ 段逃逸前缀匹配导致用户文件被永久删除。
+    // ShouldSendToTrash 汇总回收站判定，必须接收规范虚拟路径并检查内部区域
+    assert.match(mirror, /ShouldSendToTrash\(res\.VirtualPath\)/);
+    assert.match(mirror, /if \(IsSandboxInternalPath\(virtualPath\)\) return false;/);
+    // 实例内创建跟踪：本沙箱实例运行期间新建的路径删除时直接清除（避免回收站
+    // 被任务期间的临时文件灌满），跟踪表随实例结束丢弃，不跨实例残留
+    assert.match(mirror, /_sessionCreated\.ContainsKey\(virtualPath\)/);
+    assert.match(mirror, /TrackSessionCreated\(res\.VirtualPath\)/);
+    assert.match(mirror, /FollowSessionCreatedMove\(oldVp, newVp, targetExistedBefore\)/);
     assert.match(mirror, /Policy\.IsInternalAppContainerPath/);
     assert.match(mirror, /RecycleBin\.TrySend/);
     assert.match(fs.readFileSync(recycleBin, 'utf8'), /SHFileOperationW/);

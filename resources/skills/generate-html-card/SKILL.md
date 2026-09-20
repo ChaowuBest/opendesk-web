@@ -16,7 +16,7 @@ The target look is a quiet "widget board": elevated near-monochrome surfaces on 
 
 ## 1. Hard rules
 
-1. **Self-contained file.** One HTML file per deliverable. System font stack only; icons/charts as inline SVG; no external CSS/JS/fonts/images/network requests.
+1. **Self-contained file.** One HTML file per deliverable. System font stack only; icons/charts as inline SVG; no external CSS/JS/fonts/images/network requests. When the deliverable is an OpenDesk immersive-desktop card (the host usually tells you), the host container owns the outer frame: the root must carry **no border, no outer box-shadow, and no border-radius**, and must fill its iframe edge to edge — a framed card there renders as a double-frame artifact (§4).
 2. **Tokens only.** Every color and shadow lives as a CSS custom property in the token block (§2); radii use the token scale except micro radii ≤8px on chart primitives (bar corners, heatmap cells). No literal color anywhere else — decorative art included (derive it from `color-mix` of tokens). Components reference `var(--*)` so themes and per-card accents work by construction.
 3. **Theme is one switch.** Use `color-scheme: light dark` + the CSS `light-dark()` function so `prefers-color-scheme` works with a single token block. Map `html[data-theme="light"]` / `html[data-theme="dark"]` to a forced `color-scheme` so themes can be pinned for testing/screenshots. In OpenDesk, `data-theme` is the host-theme contract: the host sets it on the iframe document root, so do not replace it with a card-local toggle or an OS-only test. Never write a second "dark stylesheet".
 4. **Cards adapt to themselves, not the viewport.** Every card root sets `container-type: inline-size`. All size-dependent rules are `@container` queries; never viewport media queries for card internals. A card must be correct at any width from ~160px to ~800px regardless of the window size.
@@ -153,6 +153,9 @@ body {
 The host pins `html[data-theme]` before the card paints. Keep the rules from §2 exactly as written so its light/dark choice wins even when the operating-system preference is the opposite. A standalone canvas, fixed slots, and the three-state theme toggle are **preview-only** (§9).
 
 ```css
+/* Preview/standalone shell ONLY — for OpenDesk embedded cards, keep the
+   frame-less root from the embedded-card mode block and add the layout
+   properties below; never ship the border/shadow/radius to the iframe. */
 .card {
     container-type: inline-size;
     min-width: 0;
@@ -171,6 +174,7 @@ The host pins `html[data-theme]` before the card paints. Keep the rules from §2
 ```
 
 - A container cannot style itself, so structural switches (split layouts) live on an inner wrapper. All `cqw` units and `@container` rules apply to descendants only (see §2 for the unit trap).
+- **Frame boundary for OpenDesk embeds (hard rule).** A frame is drawn either by the host `.od-card` container **or** by the card — never both, and never half of each. If the file is consumed by the OpenDesk iframe, the `.card` root must ship with `background:transparent; border:0; border-radius:0; box-shadow:none;` (as the embedded-card mode block above prescribes); to paint an inner panel, wrap the content in a child with `border-radius:var(--r-lg); overflow:hidden` — a child radius cannot stack against the host's rounded clip. The framed `.card` block above is **preview-only**: never copy it into an OpenDesk deliverable, it produces a double frame.
 - Header row: flex, `align-items:center; justify-content:space-between` — title left, optional trailing icon (14px, `stroke:var(--ink-3)`, e.g. an expand arrow) right. **Leading-glyph variant** (icon _before_ the title — todo/event/agenda/weather use it): set `justify-content:flex-start; gap:6px` on that header, or the shell's space-between pushes the title to the far edge.
 - Content tiers get class names and collapse by tier. Compact keeps the identity of the card: **title + hero + primary visual**; drop axis labels, secondary text, pills, footer:
 

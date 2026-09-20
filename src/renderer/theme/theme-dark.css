@@ -1371,6 +1371,13 @@ html[data-theme='dark'] .diff-card .diff-row-del .diff-ln {
     color: #fda4af !important;
     background: rgba(244, 63, 94, 0.08) !important;
 }
+/* diff body scrollbar: translucent white in dark mode (filemgr + devicemgr) */
+html[data-theme='dark'] .diff-body::-webkit-scrollbar-thumb {
+    background: rgba(255, 255, 255, 0.18) !important;
+}
+html[data-theme='dark'] .diff-body::-webkit-scrollbar-thumb:hover {
+    background: rgba(255, 255, 255, 0.28) !important;
+}
 
 /* 文件工具预览卡片 */
 html[data-theme='dark'] .file-tool-card {
@@ -2445,6 +2452,14 @@ html[data-theme='dark'] .pool-task-list::-webkit-scrollbar-thumb {
     background: rgba(255, 255, 255, 0.18) !important;
 }
 html[data-theme='dark'] .pool-task-list::-webkit-scrollbar-thumb:hover {
+    background: rgba(255, 255, 255, 0.28) !important;
+}
+
+/* 插件工具代码块滚动条 */
+html[data-theme='dark'] .plugin-code-block::-webkit-scrollbar-thumb {
+    background: rgba(255, 255, 255, 0.18) !important;
+}
+html[data-theme='dark'] .plugin-code-block::-webkit-scrollbar-thumb:hover {
     background: rgba(255, 255, 255, 0.28) !important;
 }
 
