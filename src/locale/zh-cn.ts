@@ -11,6 +11,10 @@
 
 export const zhCn: Record<string, string> = {
     'credentials.oldPassword': '旧密码',
+    'credentials.clear': '清除密码',
+    'credentials.clearConfirm': '将删除内置浏览器中所有站点已保存的账号密码与自动填充数据。此操作无法撤销，是否继续？',
+    'credentials.cleared': '已清除保存的密码与自动填充数据。',
+    'credentials.clearFailed': '清除密码失败，请稍后重试。',
     'credentials.newPassword': '新密码',
     'credentials.showPasswords': '显示密码',
     'credentials.cancelUpdate': '取消',
