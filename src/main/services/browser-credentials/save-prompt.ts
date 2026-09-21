@@ -14,10 +14,10 @@ import {
     CONFIRM_BUTTON_CSS,
     CONFIRM_LIGHT_TOKENS,
     CONFIRM_DARK_TOKENS
-} from '../../../../common/confirm-button-styles.js';
+} from '../../../common/confirm-button-styles.js';
 import { randomUUID } from 'node:crypto';
 import { renderCredentialPrompt } from './prompt-view.js';
-import { t } from '../locale/index.js';
+import { t } from '../../../locale/index.js';
 
 /** The prompt belongs to the trusted host UI, not the login page or a separate OS window. */
 export async function showCredentialSavePrompt(

@@ -27,8 +27,8 @@ import {
     powerSaveBlocker
 } from 'electron';
 import type { WebContents } from 'electron';
-import { installBrowserCredentials } from './applications/browser/credentials/manager.js';
-import { initializeBrowserCredentials } from './applications/browser/credentials/runtime.js';
+import { installBrowserCredentials } from './services/browser-credentials/manager.js';
+import { initializeBrowserCredentials } from './services/browser-credentials/runtime.js';
 import {
     Setting,
     ModelInstance,

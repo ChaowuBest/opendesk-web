@@ -15,7 +15,7 @@ import { randomUUID } from 'node:crypto';
 import { showCredentialSavePrompt } from './save-prompt.js';
 import { BrowserCredentialStore, credentialOrigin } from './store.js';
 import { initializeBrowserCredentials } from './runtime.js';
-import { t } from '../locale/index.js';
+import { t } from '../../../locale/index.js';
 
 export function installBrowserCredentials(
     host: BrowserWindow,

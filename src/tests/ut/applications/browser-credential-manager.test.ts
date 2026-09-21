@@ -10,11 +10,11 @@ jest.unstable_mockModule('electron', () => ({
     session: { fromPartition: () => partition },
     dialog: { showMessageBox }
 }));
-jest.unstable_mockModule('../../../main/applications/browser/credentials/save-prompt.js', () => ({
+jest.unstable_mockModule('../../../main/services/browser-credentials/save-prompt.js', () => ({
     showCredentialSavePrompt: confirmSave
 }));
-jest.unstable_mockModule('../../../main/applications/browser/locale/index.js', () => ({ t: (key: string) => key }));
-const { installBrowserCredentials } = await import('../../../main/applications/browser/credentials/manager.js');
+jest.unstable_mockModule('../../../locale/index.js', () => ({ t: (key: string) => key }));
+const { installBrowserCredentials } = await import('../../../main/services/browser-credentials/manager.js');
 
 describe('credential IPC boundaries', () => {
     let contents: any;

@@ -11,7 +11,7 @@
 
 import { BaseApplication } from '../base';
 import { t } from './locale/index.js';
-import { clearBrowserCredentials } from './credentials/runtime.js';
+import { clearBrowserCredentials } from '../../services/browser-credentials/runtime.js';
 import { BaseTool, BaseToolset } from '../../aikernel/tool';
 import { Skill } from '../../aikernel/skill.js';
 import { z } from 'zod';

@@ -3,7 +3,7 @@ import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'no
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { createCipheriv, createDecipheriv, randomBytes } from 'node:crypto';
-import { BrowserCredentialStore, credentialOrigin } from '../../../main/applications/browser/credentials/store.js';
+import { BrowserCredentialStore, credentialOrigin } from '../../../main/services/browser-credentials/store.js';
 
 const directories: string[] = [];
 const key = randomBytes(32);
@@ -87,7 +87,7 @@ describe('browser credentials', () => {
             }
         }));
         const { clearBrowserCredentials, initializeBrowserCredentials } =
-            await import('../../../main/applications/browser/credentials/runtime.js');
+            await import('../../../main/services/browser-credentials/runtime.js');
         clearBrowserCredentials();
         expect(existsSync(persisted)).toBe(false);
         const activeVault = initializeBrowserCredentials();

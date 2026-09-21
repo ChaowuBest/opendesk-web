@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it } from '@jest/globals';
 import { parseHTML } from 'linkedom';
-import { renderCredentialPrompt } from '../../../main/applications/browser/credentials/prompt-view.js';
+import { renderCredentialPrompt } from '../../../main/services/browser-credentials/prompt-view.js';
 
 const options = {
     id: 'credential-prompt',

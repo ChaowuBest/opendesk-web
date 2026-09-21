@@ -22,16 +22,16 @@
 
 ## 模块职责
 
+密码服务位于 `src/main/services/browser-credentials/`，通过宿主 webview 生命周期接入，不依赖应用浏览器的菜单、面板、历史、收藏、下载或设置 UI。两处浏览器原有的菜单与功能布局保持不变。
+
+应用浏览器仅在已有的“清除密码与自动填充数据”和“清除所有浏览数据”后端操作中调用密码库清除入口，不修改菜单、面板、样式或其他功能。
+
 - `store.ts`：加密持久化、站点隔离、清除通知，不持有进程级实例。
 - `runtime.ts`：创建唯一密码库实例；初始化和设置页清除共用此入口。
 - `manager.ts`：guest IPC 来源校验、一次性填充令牌、保存确认与清除竞态。
 - `save-prompt.ts`：可信宿主提示的调用和取消生命周期；`prompt-view.ts` 是自包含的宿主注入脚本，不在主进程执行 DOM 操作，也不访问密码库或 IPC。
 - `browserCredentials.ts`：隔离 preload 内的表单识别与填充交互，不暴露凭据接口给网页。
 - `confirm-button-styles.ts`：通用确认按钮样式与主题令牌，无 Electron 或 DOM 依赖。
-
-## 共用浏览器菜单
-
-应用浏览器和任务浏览器使用相同的完整菜单，不按入口筛选菜单项。`browserToolMenu.ts` 负责菜单渲染、缩放、子菜单和关闭交互；`browserTools.ts` 统一处理页面操作以及历史、收藏和下载面板；`browserSettings.ts` 负责共用设置面板；`browserData.ts` 提供历史和收藏持久化及事件通知。浏览器宿主只提供当前 webview、导航、新标签页和 User Agent 等回调，共用组件不依赖 task-view 或应用入口类。页面操作作用于所属浏览器当前标签页，管理面板在所属浏览器内打开。
 
 ## 验证
 

@@ -9,21 +9,9 @@
  * See the Mulan PSL v2 for more details.
  */
 
-import { BrowserTools } from '../../../../renderer/browser/browserTools.js';
-import { BROWSER_TOOLS_CSS } from '../../../../renderer/browser/browserToolsStyles.js';
-import {
-    loadHistory,
-    saveHistory,
-    loadBookmarks,
-    saveBookmarks,
-    generateId,
-    MAX_HISTORY_ITEMS,
-    type HistoryEntry,
-    type BookmarkEntry
-} from '../../../../renderer/browser/browserData.js';
-import { createBrowserToolMenu, type BrowserToolMenuHandle } from '../../../../renderer/components/browserToolMenu.js';
 import type { WebviewTag } from 'electron';
 import { getErrorMessage, buildErrorPageScript, type ErrorInfo } from '../../../../common/browserErrors';
+import { showConfirmModal } from '../../../../renderer/components/confirmModal.js';
 import {
     createBrowserHintPanel,
     fetchBrowserHintsForPage,
@@ -41,6 +29,9 @@ import {
 } from '../../../../renderer/webviewScripts';
 
 const SEARCH_ENGINE = 'https://www.bing.com/search?q=';
+const STORAGE_KEY_HISTORY = 'opendesk-browser-history';
+const STORAGE_KEY_BOOKMARKS = 'opendesk-browser-bookmarks';
+const MAX_HISTORY_ITEMS = 2000;
 const MAX_SUGGESTIONS = 8;
 // 页面加载指示器的延迟显示时间：快速加载的页面不闪烁 loading 遮罩
 const LOADING_OVERLAY_DELAY_MS = 300;
@@ -71,6 +62,73 @@ interface BrowserTab {
     loadingTimer?: ReturnType<typeof setTimeout> | null;
 }
 
+interface HistoryEntry {
+    url: string;
+    title: string;
+    timestamp: number;
+}
+
+interface BookmarkEntry {
+    id: string;
+    url: string;
+    title: string;
+    createdAt: number;
+    parentId?: string;
+    isFolder?: boolean;
+}
+
+interface DownloadState {
+    id: string;
+    url: string;
+    filename: string;
+    savePath: string;
+    receivedBytes: number;
+    totalBytes: number;
+    state: 'progressing' | 'completed' | 'cancelled' | 'interrupted';
+    startTime: number;
+    endTime?: number;
+}
+
+// ---- Persistence helpers ----
+
+function loadHistory(): HistoryEntry[] {
+    try {
+        const raw = localStorage.getItem(STORAGE_KEY_HISTORY);
+        return raw ? JSON.parse(raw) : [];
+    } catch {
+        return [];
+    }
+}
+
+function saveHistory(entries: HistoryEntry[]): void {
+    try {
+        localStorage.setItem(STORAGE_KEY_HISTORY, JSON.stringify(entries.slice(0, MAX_HISTORY_ITEMS)));
+    } catch {
+        /* quota exceeded – best-effort */
+    }
+}
+
+function loadBookmarks(): BookmarkEntry[] {
+    try {
+        const raw = localStorage.getItem(STORAGE_KEY_BOOKMARKS);
+        return raw ? JSON.parse(raw) : [];
+    } catch {
+        return [];
+    }
+}
+
+function saveBookmarks(entries: BookmarkEntry[]): void {
+    try {
+        localStorage.setItem(STORAGE_KEY_BOOKMARKS, JSON.stringify(entries));
+    } catch {
+        /* quota exceeded */
+    }
+}
+
+function generateId(): string {
+    return Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
+}
+
 class BrowserEntryWidget extends HTMLElement {
     private _t = createTranslatorForBrowser();
     private _locale: string | undefined = undefined;
@@ -81,17 +139,10 @@ class BrowserEntryWidget extends HTMLElement {
     private homePageContainer: HTMLElement | null = null;
     private suggestionsEl: HTMLElement | null = null;
     private bookmarkBarEl: HTMLElement | null = null;
-    private browserTools: BrowserTools | null = null;
-    private toolMenu: BrowserToolMenuHandle | null = null;
-    private get historyPanelEl(): HTMLElement | null {
-        return this.browserTools?.historyPanelEl ?? null;
-    }
-    private get bookmarkMgrEl(): HTMLElement | null {
-        return this.browserTools?.bookmarkMgrEl ?? null;
-    }
-    private get downloadPanelEl(): HTMLElement | null {
-        return this.browserTools?.downloadPanelEl ?? null;
-    }
+    private toolMenuEl: HTMLElement | null = null;
+    private historyPanelEl: HTMLElement | null = null;
+    private bookmarkMgrEl: HTMLElement | null = null;
+    private downloadPanelEl: HTMLElement | null = null;
 
     private tabs: BrowserTab[] = [];
     private activeTabId: number = -1;
@@ -111,7 +162,7 @@ class BrowserEntryWidget extends HTMLElement {
 
     private history: HistoryEntry[] = [];
     private bookmarks: BookmarkEntry[] = [];
-
+    private downloads: DownloadState[] = [];
     private _selectedSuggestionIdx: number = -1;
     private _dismissTimer: ReturnType<typeof setTimeout> | null = null;
     private readonly _focusTrapKeydown = (event: KeyboardEvent) => this.handleFocusTrapKeydown(event);
@@ -142,13 +193,42 @@ class BrowserEntryWidget extends HTMLElement {
 
         // 加载浏览器配置（User Agent 等）
         this._loadBrowserConfig();
+
+        window.addEventListener('opendesk-history-changed', () => {
+            this.history = loadHistory();
+            this._refreshHistoryViews();
+        });
+
+        // 监听下载更新
+        window.addEventListener('browser-download-update', ((e: CustomEvent) => {
+            const dl = e.detail as DownloadState;
+            const idx = this.downloads.findIndex((d) => d.id === dl.id);
+            if (idx >= 0) {
+                this.downloads[idx] = dl;
+            } else {
+                this.downloads.unshift(dl);
+            }
+            this.renderDownloadPanel();
+        }) as EventListener);
+
+        // 从主进程加载历史下载记录
+        const downloadAPI = (window as any).downloadAPI;
+        if (downloadAPI) {
+            downloadAPI
+                .getDownloads()
+                .then((list: DownloadState[]) => {
+                    if (list && list.length > 0) {
+                        this.downloads = list.reverse(); // 最新的在前
+                        this.renderDownloadPanel();
+                    }
+                })
+                .catch(() => {
+                    /* ignore */
+                });
+        }
     }
 
     disconnectedCallback() {
-        this.browserTools?.destroy();
-        this.browserTools = null;
-        this.toolMenu?.destroy();
-        this.toolMenu = null;
         this._initialized = false;
         if (this._settingUnsubscribe) {
             this._settingUnsubscribe();
@@ -578,6 +658,72 @@ class BrowserEntryWidget extends HTMLElement {
                 line-height: 1.3;
             }
 
+            /* ---- Tool menu (Edge-style) ---- */
+            .wb-tool-menu {
+                display: none;
+                position: absolute;
+                top: 100%; right: 0;
+                width: 260px;
+                background: white;
+                border: 1px solid #e5e7eb;
+                border-radius: 10px;
+                box-shadow: 0 8px 32px rgba(0,0,0,0.12);
+                z-index: 200;
+                padding: 6px 0;
+                font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            }
+            .wb-tool-menu.wb-visible { display: block; }
+            .wb-tm-item {
+                display: flex; align-items: center; gap: 10px;
+                padding: 8px 16px;
+                font-size: var(--fs-base); color: #374151;
+                cursor: pointer;
+                transition: background 0.1s;
+            }
+            .wb-tm-item:hover { background: #f3f4f6; }
+            .wb-tm-item i { width: 16px; text-align: center; color: #6b7280; font-size: var(--fs-base); }
+            .wb-tm-label { flex: 1; }
+            .wb-tm-shortcut { color: #9ca3af; font-size: var(--fs-sm); }
+            .wb-tm-flyout {
+                display: none;
+                position: fixed;
+                width: 180px;
+                background: white;
+                border: 1px solid #e5e7eb;
+                border-radius: 8px;
+                box-shadow: 0 8px 24px rgba(0,0,0,0.12);
+                z-index: 230;
+                padding: 4px 0;
+            }
+            .wb-tm-flyout.wb-visible { display: block; }
+            .wb-tm-flyout .wb-tm-item {
+                padding: 7px 12px;
+                font-size: var(--fs-md);
+            }
+            .wb-tm-flyout .wb-tm-item i { font-size: var(--fs-md); }
+            .wb-tm-divider {
+                height: 1px; background: #f0f0f0; margin: 4px 0;
+            }
+            .wb-tm-zoom-row {
+                display: flex; align-items: center; gap: 6px;
+                padding: 6px 16px;
+                font-size: var(--fs-base); color: #374151;
+            }
+            .wb-tm-zoom-row i { width: 16px; text-align: center; color: #6b7280; font-size: var(--fs-base); }
+            .wb-tm-zoom-label { flex: 1; }
+            .wb-tm-zoom-controls {
+                display: flex; align-items: center; gap: 4px;
+            }
+            .wb-tm-zoom-btn {
+                width: 24px; height: 24px; border-radius: 4px;
+                border: 1px solid #e5e7eb; background: white;
+                cursor: pointer; display: flex; align-items: center; justify-content: center;
+                font-size: var(--fs-sm); color: #6b7280;
+                transition: background 0.1s;
+            }
+            .wb-tm-zoom-btn:hover { background: #f3f4f6; }
+            .wb-tm-zoom-val { font-size: var(--fs-md); min-width: 36px; text-align: center; }
+
             /* ---- Tool menu anchor (relative positioning) ---- */
             .wb-toolbar-right {
                 position: relative;
@@ -585,7 +731,341 @@ class BrowserEntryWidget extends HTMLElement {
                 flex-shrink: 0;
             }
 
-            ${BROWSER_TOOLS_CSS}
+            /* ---- History / Bookmark management panels ---- */
+            .wb-panel-overlay {
+                display: none;
+                position: absolute; top: 0; right: 0;
+                width: 380px; height: 100%;
+                background: white;
+                border-left: 1px solid #e5e7eb;
+                box-shadow: -4px 0 16px rgba(0,0,0,0.06);
+                z-index: 50;
+                flex-direction: column;
+            }
+            .wb-panel-overlay.wb-visible { display: flex; }
+            .wb-panel-header {
+                display: flex; align-items: center; gap: 8px;
+                padding: 12px 16px;
+                border-bottom: 1px solid #f0f0f0;
+                flex-shrink: 0;
+            }
+            .wb-panel-header-title {
+                flex: 1; font-size: var(--fs-lg); font-weight: 600; color: #1f2937;
+            }
+            .wb-panel-close {
+                width: 28px; height: 28px; border: none; background: transparent;
+                border-radius: 6px; cursor: pointer; color: #6b7280;
+                display: flex; align-items: center; justify-content: center;
+                transition: background 0.12s;
+            }
+            .wb-panel-close:hover { background: #f3f4f6; }
+            .wb-panel-search {
+                margin: 8px 16px; padding: 6px 10px;
+                border: 1px solid #e5e7eb; border-radius: 6px;
+                font-size: var(--fs-base); outline: none;
+                transition: border-color 0.15s;
+            }
+            .wb-panel-search:focus { border-color: #93c5fd; }
+            .wb-panel-body {
+                flex: 1; overflow-y: auto; padding: 4px 0;
+            }
+            .wb-panel-empty {
+                text-align: center; color: #9ca3af; padding: 32px 16px; font-size: var(--fs-base);
+            }
+
+            /* History items */
+            .wb-history-item {
+                display: flex; align-items: center; gap: 8px;
+                padding: 8px 16px;
+                cursor: pointer;
+                transition: background 0.1s;
+            }
+            .wb-history-item:hover { background: #f9fafb; }
+            .wb-hi-icon { color: #9ca3af; font-size: var(--fs-sm); flex-shrink: 0; }
+            .wb-hi-content { flex: 1; min-width: 0; }
+            .wb-hi-title { font-size: var(--fs-base); color: #374151; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+            .wb-hi-url { font-size: var(--fs-sm); color: #9ca3af; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+            .wb-hi-time { font-size: var(--fs-sm); color: #b0b3b8; flex-shrink: 0; }
+            .wb-hi-delete {
+                width: 22px; height: 22px; border: none; background: transparent;
+                border-radius: 4px; cursor: pointer; color: #d1d5db;
+                display: flex; align-items: center; justify-content: center;
+                opacity: 0; transition: all 0.12s; font-size: var(--fs-xs);
+            }
+            .wb-history-item:hover .wb-hi-delete { opacity: 1; }
+            .wb-hi-delete:hover { background: #fee2e2; color: #ef4444; }
+
+            /* Bookmark management items */
+            .wb-bm-mgr-item {
+                display: flex; align-items: center; gap: 8px;
+                padding: 8px 16px;
+                cursor: pointer;
+                transition: background 0.1s;
+            }
+            .wb-bm-mgr-item:hover { background: #f9fafb; }
+            .wb-bm-mgr-icon { color: #f59e0b; font-size: var(--fs-sm); flex-shrink: 0; }
+            .wb-bm-mgr-content { flex: 1; min-width: 0; }
+            .wb-bm-mgr-title { font-size: var(--fs-base); color: #374151; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+            .wb-bm-mgr-url { font-size: var(--fs-sm); color: #9ca3af; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+            .wb-bm-mgr-actions {
+                display: flex; gap: 2px; opacity: 0; transition: opacity 0.12s;
+            }
+            .wb-bm-mgr-item:hover .wb-bm-mgr-actions { opacity: 1; }
+            .wb-bm-mgr-btn {
+                width: 22px; height: 22px; border: none; background: transparent;
+                border-radius: 4px; cursor: pointer; color: #9ca3af;
+                display: flex; align-items: center; justify-content: center;
+                font-size: var(--fs-xs); transition: all 0.12s;
+            }
+            .wb-bm-mgr-btn:hover { background: #f3f4f6; color: #374151; }
+            .wb-bm-mgr-btn.wb-bm-delete:hover { background: #fee2e2; color: #ef4444; }
+
+            /* Inline edit input for bookmark rename */
+            .wb-bm-edit-input {
+                border: 1px solid #93c5fd; border-radius: 4px;
+                padding: 2px 6px; font-size: var(--fs-base); outline: none;
+                width: 100%;
+            }
+
+            /* ---- Download items ---- */
+            .wb-dl-item {
+                display: flex; align-items: center; gap: 8px;
+                padding: 10px 16px;
+                transition: background 0.1s;
+                border-bottom: 1px solid #f5f5f5;
+            }
+            .wb-dl-item:last-child { border-bottom: none; }
+            .wb-dl-item:hover { background: #f9fafb; }
+            .wb-dl-icon {
+                color: #3b82f6; font-size: var(--fs-xl); flex-shrink: 0;
+                width: 24px; text-align: center;
+            }
+            .wb-dl-icon.wb-dl-done { color: #10b981; }
+            .wb-dl-icon.wb-dl-cancelled { color: #9ca3af; }
+            .wb-dl-content { flex: 1; min-width: 0; }
+            .wb-dl-filename {
+                font-size: var(--fs-base); color: #374151;
+                overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+            }
+            .wb-dl-meta {
+                font-size: var(--fs-sm); color: #9ca3af;
+                margin-top: 2px;
+            }
+            .wb-dl-progress-wrap {
+                height: 4px; background: #e5e7eb; border-radius: 2px;
+                margin-top: 4px; overflow: hidden;
+            }
+            .wb-dl-progress-bar {
+                height: 100%; background: #3b82f6; border-radius: 2px;
+                transition: width 0.3s;
+                min-width: 0;
+            }
+            .wb-dl-progress-bar.wb-dl-done { background: #10b981; }
+            .wb-dl-progress-bar.wb-dl-cancelled { background: #9ca3af; }
+            .wb-dl-actions {
+                display: flex; gap: 2px; flex-shrink: 0;
+            }
+            .wb-dl-btn {
+                width: 26px; height: 26px; border: none; background: transparent;
+                border-radius: 4px; cursor: pointer; color: #9ca3af;
+                display: flex; align-items: center; justify-content: center;
+                font-size: var(--fs-sm); transition: all 0.12s;
+            }
+            .wb-dl-btn:hover { background: #f3f4f6; color: #374151; }
+            .wb-dl-btn.wb-dl-cancel:hover { background: #fee2e2; color: #ef4444; }
+
+            /* ---- Clear history button ---- */
+            .wb-panel-footer {
+                padding: 8px 16px;
+                border-top: 1px solid #f0f0f0;
+                flex-shrink: 0;
+            }
+            .wb-clear-btn {
+                width: 100%; padding: 6px 0;
+                border: 1px solid #e5e7eb; border-radius: 6px;
+                background: white; cursor: pointer;
+                font-size: var(--fs-base); color: #ef4444;
+                transition: background 0.12s;
+            }
+            .wb-clear-btn:hover { background: #fef2f2; }
+
+            /* ---- Internal pages (opendesk://) ---- */
+            .wb-internal-page {
+                width: 100%; height: 100%;
+                display: flex; flex-direction: column;
+                background: #f8f9fb;
+                overflow: hidden;
+                font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            }
+            .wb-internal-header {
+                padding: 20px 24px 16px;
+                flex-shrink: 0;
+                display: flex; align-items: center; gap: 12px;
+                border-bottom: 1px solid #e5e7eb;
+                background: white;
+            }
+            .wb-internal-header-icon { font-size: 20px; color: #6b7280; }
+            .wb-internal-title {
+                font-size: 20px; font-weight: 600; color: #1f2937;
+                flex: 1;
+            }
+
+            /* Favorites management page */
+            .wb-fav-layout {
+                flex: 1; display: flex; overflow: hidden;
+            }
+            .wb-fav-tree {
+                width: 260px; flex-shrink: 0;
+                border-right: 1px solid #e5e7eb;
+                display: flex; flex-direction: column;
+                background: white;
+            }
+            .wb-fav-tree-search {
+                margin: 8px 12px; padding: 6px 10px;
+                border: 1px solid #e5e7eb; border-radius: 6px;
+                font-size: var(--fs-base); outline: none;
+                transition: border-color 0.15s;
+            }
+            .wb-fav-tree-search:focus { border-color: #93c5fd; }
+            .wb-fav-tree-body {
+                flex: 1; overflow-y: auto; padding: 4px 0;
+            }
+            .wb-fav-tree-item {
+                display: flex; align-items: center; gap: 6px;
+                padding: 7px 12px 7px 16px;
+                cursor: pointer;
+                font-size: var(--fs-base); color: #374151;
+                transition: background 0.1s;
+            }
+            .wb-fav-tree-item:hover { background: #f3f4f6; }
+            .wb-fav-tree-item.wb-selected { background: #eff6ff; color: #1d4ed8; font-weight: 500; }
+            .wb-fav-tree-item i { width: 16px; text-align: center; font-size: var(--fs-md); color: #9ca3af; flex-shrink: 0; }
+            .wb-fav-tree-item.wb-selected i { color: #3b82f6; }
+            .wb-fav-tree-item-label { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+            .wb-fav-tree-item-count { font-size: var(--fs-sm); color: #9ca3af; flex-shrink: 0; }
+            .wb-fav-tree-item.wb-indent { padding-left: 32px; }
+
+            .wb-fav-detail {
+                flex: 1; display: flex; flex-direction: column;
+                overflow: hidden; background: #fafafa;
+            }
+            .wb-fav-detail-header {
+                display: flex; align-items: center; gap: 8px;
+                padding: 12px 16px;
+                border-bottom: 1px solid #f0f0f0;
+                flex-shrink: 0;
+                background: white;
+            }
+            .wb-fav-detail-title { font-size: var(--fs-lg); font-weight: 500; color: #374151; flex: 1; }
+            .wb-fav-detail-body {
+                flex: 1; overflow-y: auto; padding: 8px 0;
+            }
+            .wb-fav-detail-item {
+                display: flex; align-items: center; gap: 10px;
+                padding: 10px 16px; margin: 0 8px;
+                cursor: pointer; border-radius: 6px;
+                transition: background 0.1s;
+            }
+            .wb-fav-detail-item:hover { background: white; box-shadow: 0 1px 3px rgba(0,0,0,0.05); }
+            .wb-fav-detail-icon { color: #f59e0b; font-size: var(--fs-md); flex-shrink: 0; }
+            .wb-fav-detail-icon.wb-folder-icon { color: #6b7280; }
+            .wb-fav-detail-content { flex: 1; min-width: 0; }
+            .wb-fav-detail-name { font-size: var(--fs-base); color: #374151; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+            .wb-fav-detail-url { font-size: var(--fs-sm); color: #9ca3af; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+            .wb-fav-detail-actions {
+                display: flex; gap: 2px; opacity: 0; transition: opacity 0.12s;
+            }
+            .wb-fav-detail-item:hover .wb-fav-detail-actions { opacity: 1; }
+            .wb-fav-detail-btn {
+                width: 26px; height: 26px; border: none; background: transparent;
+                border-radius: 4px; cursor: pointer; color: #9ca3af;
+                display: flex; align-items: center; justify-content: center;
+                font-size: var(--fs-sm); transition: all 0.12s;
+            }
+            .wb-fav-detail-btn:hover { background: #f3f4f6; color: #374151; }
+            .wb-fav-detail-btn.wb-del:hover { background: #fee2e2; color: #ef4444; }
+            .wb-fav-detail-empty {
+                text-align: center; color: #9ca3af; padding: 48px 16px; font-size: var(--fs-base);
+            }
+
+            /* History management page */
+            .wb-hist-layout {
+                flex: 1; display: flex; flex-direction: column;
+                overflow: hidden;
+            }
+            .wb-hist-toolbar {
+                display: flex; align-items: center; gap: 8px;
+                padding: 12px 24px;
+                flex-shrink: 0;
+            }
+            .wb-hist-search {
+                flex: 1; padding: 8px 12px;
+                border: 1px solid #e5e7eb; border-radius: 8px;
+                font-size: var(--fs-base); outline: none;
+                background: white;
+                transition: border-color 0.15s, box-shadow 0.15s;
+            }
+            .wb-hist-search:focus { border-color: #93c5fd; box-shadow: 0 0 0 2px rgba(59,130,246,0.08); }
+            .wb-hist-clear-btn {
+                padding: 8px 16px; border: 1px solid #e5e7eb; border-radius: 8px;
+                background: white; cursor: pointer; font-size: var(--fs-base); color: #ef4444;
+                transition: background 0.12s; flex-shrink: 0;
+            }
+            .wb-hist-clear-btn:hover { background: #fef2f2; }
+            .wb-hist-body {
+                flex: 1; overflow-y: auto; padding: 0 16px 16px;
+            }
+            .wb-hist-date-group { margin-bottom: 16px; }
+            .wb-hist-date-label {
+                font-size: var(--fs-base); font-weight: 600; color: #374151;
+                padding: 8px 8px 4px; position: sticky; top: 0;
+                background: #f8f9fb; z-index: 1;
+            }
+            .wb-hist-item {
+                display: flex; align-items: center; gap: 10px;
+                padding: 10px 8px; margin: 0 0 1px;
+                cursor: pointer; border-radius: 6px;
+                transition: background 0.1s;
+            }
+            .wb-hist-item:hover { background: white; box-shadow: 0 1px 3px rgba(0,0,0,0.04); }
+            .wb-hist-item-icon { color: #9ca3af; font-size: var(--fs-sm); flex-shrink: 0; }
+            .wb-hist-item-content { flex: 1; min-width: 0; }
+            .wb-hist-item-title { font-size: var(--fs-base); color: #374151; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+            .wb-hist-item-url { font-size: var(--fs-sm); color: #9ca3af; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+            .wb-hist-item-time { font-size: var(--fs-sm); color: #b0b3b8; flex-shrink: 0; }
+            .wb-hist-item-del {
+                width: 24px; height: 24px; border: none; background: transparent;
+                border-radius: 4px; cursor: pointer; color: #d1d5db;
+                display: flex; align-items: center; justify-content: center;
+                opacity: 0; transition: all 0.12s; font-size: var(--fs-xs);
+            }
+            .wb-hist-item:hover .wb-hist-item-del { opacity: 1; }
+            .wb-hist-item-del:hover { background: #fee2e2; color: #ef4444; }
+            .wb-hist-empty {
+                text-align: center; color: #9ca3af; padding: 48px 16px; font-size: var(--fs-base);
+            }
+
+            /* Panel manage button */
+            .wb-panel-manage-btn {
+                padding: 4px 10px; border: 1px solid #e5e7eb; border-radius: 5px;
+                background: white; cursor: pointer; font-size: var(--fs-md); color: #6b7280;
+                transition: all 0.12s; flex-shrink: 0;
+            }
+            .wb-panel-manage-btn:hover { background: #f3f4f6; color: #374151; }
+
+            /* ---- Browser Settings page buttons ---- */
+            .wb-bs-btn {
+                padding: 6px 14px; border-radius: 6px;
+                border: 1px solid #e5e7eb; background: white;
+                cursor: pointer; font-size: var(--fs-base); color: #374151;
+                display: inline-flex; align-items: center; gap: 6px;
+                transition: all 0.12s;
+            }
+            .wb-bs-btn:hover { background: #f3f4f6; }
+            .wb-bs-btn-primary { background: #3b82f6; color: white; border-color: #3b82f6; }
+            .wb-bs-btn-primary:hover { background: #2563eb; border-color: #2563eb; }
+            .wb-bs-btn-danger { color: #ef4444; }
+            .wb-bs-btn-danger:hover { background: #fef2f2; border-color: #fecaca; }
         </style>
         <div class="wb">
             <div class="wb-drag-pad"></div>
@@ -615,6 +1095,9 @@ class BrowserEntryWidget extends HTMLElement {
             <div class="wb-bookmark-bar"></div>
             <div class="wb-webview-container">
                 <div class="wb-homepage wb-hidden" id="wb-homepage"></div>
+                <div class="wb-panel-overlay wb-history-panel"></div>
+                <div class="wb-panel-overlay wb-bookmark-mgr-panel"></div>
+                <div class="wb-panel-overlay wb-downloads-panel"></div>
             </div>
         </div>`;
 
@@ -624,6 +1107,10 @@ class BrowserEntryWidget extends HTMLElement {
         this.homePageContainer = this.querySelector('#wb-homepage') as HTMLElement;
         this.suggestionsEl = this.querySelector('.wb-suggestions') as HTMLElement;
         this.bookmarkBarEl = this.querySelector('.wb-bookmark-bar') as HTMLElement;
+        this.toolMenuEl = this.querySelector('.wb-tool-menu') as HTMLElement;
+        this.historyPanelEl = this.querySelector('.wb-history-panel') as HTMLElement;
+        this.bookmarkMgrEl = this.querySelector('.wb-bookmark-mgr-panel') as HTMLElement;
+        this.downloadPanelEl = this.querySelector('.wb-downloads-panel') as HTMLElement;
 
         // 地址栏右侧的页面提示（Browser Hints）入口
         const hintSlot = this.querySelector('.wb-hint-slot') as HTMLElement;
@@ -676,7 +1163,9 @@ class BrowserEntryWidget extends HTMLElement {
             if (this.downloadPanelEl?.classList.contains('wb-visible')) {
                 this.renderDownloadPanel();
             }
-            this.toolMenu?.refresh();
+            if (this.toolMenuEl && this.toolMenuEl.childElementCount > 0) {
+                this.openToolMenu();
+            }
         });
         if (typeof unsubscribe === 'function') {
             this._settingUnsubscribe = unsubscribe;
@@ -785,7 +1274,6 @@ class BrowserEntryWidget extends HTMLElement {
             this._removeZoomListener = displayAPI.onScaleFactorChanged((factor: number) => {
                 this._currentZoomFactor = factor;
                 this._applyZoomToAllWebviews(factor);
-                this.toolMenu?.updateZoom();
             });
         }
     }
@@ -975,48 +1463,435 @@ class BrowserEntryWidget extends HTMLElement {
     // =====================================================================
 
     private bindToolMenu(): void {
-        const button = this.querySelector<HTMLButtonElement>('.wb-menu-btn');
-        const menu = this.querySelector<HTMLElement>('.wb-tool-menu');
-        if (!button || !menu) return;
-        this.toolMenu?.destroy();
-        this.browserTools?.destroy();
-        this.browserTools = new BrowserTools({
-            container: this.webviewContainer!,
-            t: (key, params) => this._t(key, params),
-            navigateTo: (url) => this.navigateTo(url),
-            addTab: (url) => this.addTab(url),
-            getWebview: () => (this.getActiveTab()?.ready ? this.getActiveWebview() : null),
-            getUserAgent: () => this._cachedUserAgent,
-            setUserAgent: (value) => {
-                this._cachedUserAgent = value;
-            },
-            closeMenu: () => this.closeToolMenu(),
-            onHistoryChanged: () => {
-                this.history = loadHistory();
-                this._refreshHistoryViews();
-            },
-            onBookmarksChanged: () => {
-                this.bookmarks = loadBookmarks();
-                this.renderBookmarkBar();
-                this.syncStarButton();
+        const menuBtn = this.querySelector('.wb-menu-btn') as HTMLButtonElement;
+        if (!menuBtn || !this.toolMenuEl) return;
+
+        menuBtn.addEventListener('click', (e) => {
+            e.stopPropagation();
+            if (this.toolMenuEl!.classList.contains('wb-visible')) {
+                this.closeToolMenu();
+            } else {
+                this.openToolMenu();
             }
         });
-        this.toolMenu = createBrowserToolMenu({
-            button,
-            menu,
-            t: (key) => createRendererTranslator(this._locale)(key),
-            getZoom: () => this._currentZoomFactor,
-            setZoom: (factor) => {
-                this._currentZoomFactor = factor;
-                this._applyZoomToAllWebviews(factor);
-            },
-            onOpen: () => this.closeAllPanels(),
-            onAction: (action) => this.browserTools!.handleAction(action)
+
+        document.addEventListener('click', () => this.closeToolMenu());
+        this.toolMenuEl.addEventListener('click', (e) => e.stopPropagation());
+    }
+
+    private openToolMenu(): void {
+        if (!this.toolMenuEl) return;
+        this.closeAllPanels();
+
+        const zoomPct = Math.round(this._currentZoomFactor * 100);
+
+        this.toolMenuEl.innerHTML = `
+            <div class="wb-tm-item" data-action="newTab">
+                <i class="fas fa-plus"></i>
+                <span class="wb-tm-label">${this._t('renderer.browser.tab.new')}</span>
+                <span class="wb-tm-shortcut">⌘T</span>
+            </div>
+            <div class="wb-tm-divider"></div>
+            <div class="wb-tm-zoom-row">
+                <i class="fas fa-magnifying-glass-plus"></i>
+                <span class="wb-tm-zoom-label">${this._t('renderer.browser.menu.zoom')}</span>
+                <div class="wb-tm-zoom-controls">
+                    <button class="wb-tm-zoom-btn" data-action="zoomOut"><i class="fas fa-minus"></i></button>
+                    <span class="wb-tm-zoom-val">${zoomPct}%</span>
+                    <button class="wb-tm-zoom-btn" data-action="zoomIn"><i class="fas fa-plus"></i></button>
+                </div>
+            </div>
+            <div class="wb-tm-divider"></div>
+            <div class="wb-tm-item" data-action="bookmarks">
+                <i class="fas fa-star"></i>
+                <span class="wb-tm-label">${this._t('renderer.browser.menu.favorites')}</span>
+                <span class="wb-tm-shortcut">⌥⌘B</span>
+            </div>
+            <div class="wb-tm-item" data-action="history">
+                <i class="fas fa-clock-rotate-left"></i>
+                <span class="wb-tm-label">${this._t('renderer.browser.menu.history')}</span>
+                <span class="wb-tm-shortcut">⌘Y</span>
+            </div>
+            <div class="wb-tm-item" data-action="downloads">
+                <i class="fas fa-download"></i>
+                <span class="wb-tm-label">${this._t('renderer.browser.menu.downloads')}</span>
+                <span class="wb-tm-shortcut">⌥⌘L</span>
+            </div>
+            <div class="wb-tm-divider"></div>
+            <div class="wb-tm-item" data-action="print">
+                <i class="fas fa-print"></i>
+                <span class="wb-tm-label">${this._t('renderer.browser.menu.print')}</span>
+                <span class="wb-tm-shortcut">⌘P</span>
+            </div>
+            <div class="wb-tm-item" data-action="screenshot">
+                <i class="fas fa-camera"></i>
+                <span class="wb-tm-label">${this._t('renderer.browser.menu.screenshot')}</span>
+            </div>
+            <div class="wb-tm-item" data-action="findInPage">
+                <i class="fas fa-magnifying-glass"></i>
+                <span class="wb-tm-label">${this._t('renderer.browser.menu.find')}</span>
+                <span class="wb-tm-shortcut">⌘F</span>
+            </div>
+            <div class="wb-tm-item" data-action="toggleDebugMenu" data-flyout-trigger="debug">
+                <i class="fas fa-terminal"></i>
+                <span class="wb-tm-label">${this._t('renderer.browser.menu.debug')}</span>
+                <span class="wb-tm-shortcut"><i class="fas fa-chevron-right" style="font-size: var(--fs-2xs)"></i></span>
+            </div>
+            <div class="wb-tm-flyout" data-flyout="debug">
+                <div class="wb-tm-item" data-action="consoleDebug">
+                    <i class="fas fa-terminal"></i>
+                    <span class="wb-tm-label">${this._t('renderer.browser.menu.devtools')}</span>
+                </div>
+                <div class="wb-tm-item" data-action="snapshotDebug">
+                    <i class="fas fa-sitemap"></i>
+                    <span class="wb-tm-label">${this._t('renderer.browser.menu.exportSnapshot')}</span>
+                </div>
+            </div>
+            <div class="wb-tm-divider"></div>
+            <div class="wb-tm-item" data-action="toggleClearDataFlyout" data-flyout-trigger="clearData">
+                <i class="fas fa-trash-can"></i>
+                <span class="wb-tm-label">${this._t('renderer.browser.menu.clearData')}</span>
+                <span class="wb-tm-shortcut"><i class="fas fa-chevron-right" style="font-size: var(--fs-2xs)"></i></span>
+            </div>
+            <div class="wb-tm-flyout" data-flyout="clearData">
+                <div class="wb-tm-item" data-action="clearHistoryData">
+                    <i class="fas fa-clock-rotate-left"></i>
+                    <span class="wb-tm-label">${this._t('renderer.browser.menu.history')}</span>
+                </div>
+                <div class="wb-tm-item" data-action="clearCookies">
+                    <i class="fas fa-cookie-bite"></i>
+                    <span class="wb-tm-label">Cookies</span>
+                </div>
+                <div class="wb-tm-item" data-action="clearStorage">
+                    <i class="fas fa-database"></i>
+                    <span class="wb-tm-label">localStorage / IndexedDB</span>
+                </div>
+                <div class="wb-tm-item" data-action="clearCache">
+                    <i class="fas fa-box-archive"></i>
+                    <span class="wb-tm-label">${this._t('renderer.browser.menu.sub.httpCache')}</span>
+                </div>
+                <div class="wb-tm-item" data-action="clearAutofill">
+                    <i class="fas fa-key"></i>
+                    <span class="wb-tm-label">${this._t('renderer.browser.menu.sub.passwords')}</span>
+                </div>
+                <div class="wb-tm-divider"></div>
+                <div class="wb-tm-item" data-action="clearAllData">
+                    <i class="fas fa-triangle-exclamation" style="color:#ef4444"></i>
+                    <span class="wb-tm-label" style="color:#ef4444">${this._t('renderer.browser.menu.sub.allData')}</span>
+                </div>
+            </div>
+            <div class="wb-tm-divider"></div>
+            <div class="wb-tm-item" data-action="openBrowserSettings">
+                <i class="fas fa-gear"></i>
+                <span class="wb-tm-label">${this._t('renderer.browser.menu.settings')}</span>
+            </div>
+        `;
+
+        this.toolMenuEl.querySelectorAll('[data-action]').forEach((el) => {
+            el.addEventListener('click', () => {
+                const action = (el as HTMLElement).dataset.action;
+                void this.handleToolMenuAction(action!);
+            });
         });
+
+        const debugTrigger = this.toolMenuEl.querySelector('[data-flyout-trigger="debug"]') as HTMLElement | null;
+        const debugFlyout = this.toolMenuEl.querySelector('[data-flyout="debug"]') as HTMLElement | null;
+        if (debugTrigger && debugFlyout) {
+            const checkShouldClose = () => {
+                this._scheduleDebugFlyoutClose();
+            };
+            const checkShouldKeepOpen = () => {
+                this._cancelDebugFlyoutClose();
+            };
+
+            debugTrigger.addEventListener('mouseenter', () => {
+                checkShouldKeepOpen();
+                this.openDebugFlyout(debugTrigger);
+            });
+            debugTrigger.addEventListener('mouseleave', (e) => {
+                const related = e.relatedTarget as Node | null;
+                if (related && debugFlyout.contains(related)) {
+                    checkShouldKeepOpen();
+                } else {
+                    checkShouldClose();
+                }
+            });
+
+            debugFlyout.addEventListener('mouseenter', () => {
+                checkShouldKeepOpen();
+            });
+            debugFlyout.addEventListener('mouseleave', (e) => {
+                const related = e.relatedTarget as Node | null;
+                if (related && debugTrigger.contains(related)) {
+                    checkShouldKeepOpen();
+                } else {
+                    checkShouldClose();
+                }
+            });
+        }
+
+        const clearDataTrigger = this.toolMenuEl.querySelector(
+            '[data-flyout-trigger="clearData"]'
+        ) as HTMLElement | null;
+        const clearDataFlyout = this.toolMenuEl.querySelector('[data-flyout="clearData"]') as HTMLElement | null;
+        if (clearDataTrigger && clearDataFlyout) {
+            const checkShouldClose = () => {
+                this._scheduleClearDataFlyoutClose();
+            };
+            const checkShouldKeepOpen = () => {
+                this._cancelClearDataFlyoutClose();
+            };
+
+            clearDataTrigger.addEventListener('mouseenter', () => {
+                checkShouldKeepOpen();
+                this.openClearDataFlyout(clearDataTrigger);
+            });
+            clearDataTrigger.addEventListener('mouseleave', (e) => {
+                const related = e.relatedTarget as Node | null;
+                if (related && clearDataFlyout.contains(related)) {
+                    checkShouldKeepOpen();
+                } else {
+                    checkShouldClose();
+                }
+            });
+
+            clearDataFlyout.addEventListener('mouseenter', () => {
+                checkShouldKeepOpen();
+            });
+            clearDataFlyout.addEventListener('mouseleave', (e) => {
+                const related = e.relatedTarget as Node | null;
+                if (related && clearDataTrigger.contains(related)) {
+                    checkShouldKeepOpen();
+                } else {
+                    checkShouldClose();
+                }
+            });
+        }
+
+        this.toolMenuEl.classList.add('wb-visible');
     }
 
     private closeToolMenu(): void {
-        this.toolMenu?.close();
+        this.closeDebugFlyout();
+        this.closeClearDataFlyout();
+        this.toolMenuEl?.classList.remove('wb-visible');
+    }
+
+    private async handleToolMenuAction(action: string): Promise<void> {
+        switch (action) {
+            case 'newTab':
+                this.addTab('opendesk://homepage/');
+                this.closeToolMenu();
+                break;
+            case 'zoomIn':
+                this._currentZoomFactor = Math.min(this._currentZoomFactor + 0.1, 3);
+                this._applyZoomToAllWebviews(this._currentZoomFactor);
+                this.updateZoomDisplay();
+                return; // don't close menu
+            case 'zoomOut':
+                this._currentZoomFactor = Math.max(this._currentZoomFactor - 0.1, 0.25);
+                this._applyZoomToAllWebviews(this._currentZoomFactor);
+                this.updateZoomDisplay();
+                return;
+            case 'bookmarks':
+                this.closeToolMenu();
+                this.openBookmarkManager();
+                break;
+            case 'history':
+                this.closeToolMenu();
+                this.openHistoryPanel();
+                break;
+            case 'downloads':
+                this.closeToolMenu();
+                this.toggleDownloadPanel();
+                break;
+            case 'print':
+                this.closeToolMenu();
+                this.printPage();
+                break;
+            case 'screenshot':
+                this.closeToolMenu();
+                break;
+            case 'findInPage':
+                this.closeToolMenu();
+                break;
+            case 'toggleDebugMenu': {
+                this._cancelDebugFlyoutClose();
+                const trigger = this.toolMenuEl?.querySelector('[data-flyout-trigger="debug"]') as HTMLElement | null;
+                if (trigger) this.openDebugFlyout(trigger);
+                return;
+            }
+            case 'toggleClearDataFlyout': {
+                this._cancelClearDataFlyoutClose();
+                const trigger = this.toolMenuEl?.querySelector(
+                    '[data-flyout-trigger="clearData"]'
+                ) as HTMLElement | null;
+                if (trigger) this.openClearDataFlyout(trigger);
+                return;
+            }
+            case 'consoleDebug':
+                this.closeToolMenu();
+                this.openWebviewDevTools();
+                break;
+            case 'snapshotDebug':
+                this.closeToolMenu();
+                await this.captureAndSaveSnapshot();
+                break;
+            case 'clearHistoryData':
+                this.closeToolMenu();
+                this.clearBrowsingData();
+                break;
+            case 'clearCookies':
+                this.closeToolMenu();
+                await this._callBrowserMain('clearBrowserCookies', this._t('renderer.browser.msg.cookiesCleared'));
+                break;
+            case 'clearStorage':
+                this.closeToolMenu();
+                await this._callBrowserMain('clearBrowserStorage', this._t('renderer.browser.msg.storageCleared'));
+                break;
+            case 'clearCache':
+                this.closeToolMenu();
+                await this._callBrowserMain('clearBrowserCache', this._t('renderer.browser.msg.httpCacheCleared'));
+                break;
+            case 'clearAutofill':
+                this.closeToolMenu();
+                await this._callBrowserMain('clearAutofillData', this._t('renderer.browser.msg.autofillCleared'));
+                break;
+            case 'clearAllData':
+                this.closeToolMenu();
+                await this._confirmAndClearAllData();
+                break;
+            case 'clearData':
+                this.closeToolMenu();
+                this.clearBrowsingData();
+                break;
+            case 'openBrowserSettings':
+                this.closeToolMenu();
+                this.openInternalPage('opendesk://browser-settings/');
+                break;
+            default:
+                this.closeToolMenu();
+        }
+    }
+
+    private openDebugFlyout(triggerEl: HTMLElement): void {
+        const flyout = this.toolMenuEl?.querySelector('[data-flyout="debug"]') as HTMLElement | null;
+        if (!flyout || !this.toolMenuEl) return;
+
+        flyout.classList.add('wb-visible');
+        flyout.style.visibility = 'hidden';
+
+        const viewportPadding = 8;
+        const triggerRect = triggerEl.getBoundingClientRect();
+        const flyoutRect = flyout.getBoundingClientRect();
+
+        let left = triggerRect.right + 6;
+        let top = triggerRect.top - 4;
+
+        if (left + flyoutRect.width > window.innerWidth - viewportPadding) {
+            left = triggerRect.left - flyoutRect.width - 6;
+        }
+        if (left < viewportPadding) {
+            left = Math.max(viewportPadding, window.innerWidth - flyoutRect.width - viewportPadding);
+        }
+        if (top + flyoutRect.height > window.innerHeight - viewportPadding) {
+            top = window.innerHeight - flyoutRect.height - viewportPadding;
+        }
+        if (top < viewportPadding) {
+            top = viewportPadding;
+        }
+
+        flyout.style.left = `${Math.round(left)}px`;
+        flyout.style.top = `${Math.round(top)}px`;
+        flyout.style.visibility = '';
+    }
+
+    private _debugFlyoutCloseTimer: ReturnType<typeof setTimeout> | null = null;
+
+    private _scheduleDebugFlyoutClose(): void {
+        if (this._debugFlyoutCloseTimer !== null) return;
+        this._debugFlyoutCloseTimer = setTimeout(() => {
+            this._debugFlyoutCloseTimer = null;
+            this.closeDebugFlyout();
+        }, 300);
+    }
+
+    private _cancelDebugFlyoutClose(): void {
+        if (this._debugFlyoutCloseTimer !== null) {
+            clearTimeout(this._debugFlyoutCloseTimer);
+            this._debugFlyoutCloseTimer = null;
+        }
+    }
+
+    private closeDebugFlyout(): void {
+        this._cancelDebugFlyoutClose();
+        const flyout = this.toolMenuEl?.querySelector('[data-flyout="debug"]') as HTMLElement | null;
+        if (!flyout) return;
+        flyout.classList.remove('wb-visible');
+        flyout.style.left = '';
+        flyout.style.top = '';
+        flyout.style.visibility = '';
+    }
+
+    // ---- Clear Data flyout ----
+
+    private openClearDataFlyout(triggerEl: HTMLElement): void {
+        const flyout = this.toolMenuEl?.querySelector('[data-flyout="clearData"]') as HTMLElement | null;
+        if (!flyout || !this.toolMenuEl) return;
+
+        flyout.classList.add('wb-visible');
+        flyout.style.visibility = 'hidden';
+
+        const viewportPadding = 8;
+        const triggerRect = triggerEl.getBoundingClientRect();
+        const flyoutRect = flyout.getBoundingClientRect();
+
+        let left = triggerRect.right + 6;
+        let top = triggerRect.top - 4;
+
+        if (left + flyoutRect.width > window.innerWidth - viewportPadding) {
+            left = triggerRect.left - flyoutRect.width - 6;
+        }
+        if (left < viewportPadding) {
+            left = Math.max(viewportPadding, window.innerWidth - flyoutRect.width - viewportPadding);
+        }
+        if (top + flyoutRect.height > window.innerHeight - viewportPadding) {
+            top = window.innerHeight - flyoutRect.height - viewportPadding;
+        }
+        if (top < viewportPadding) {
+            top = viewportPadding;
+        }
+
+        flyout.style.left = `${Math.round(left)}px`;
+        flyout.style.top = `${Math.round(top)}px`;
+        flyout.style.visibility = '';
+    }
+
+    private _clearDataFlyoutCloseTimer: ReturnType<typeof setTimeout> | null = null;
+
+    private _scheduleClearDataFlyoutClose(): void {
+        if (this._clearDataFlyoutCloseTimer !== null) return;
+        this._clearDataFlyoutCloseTimer = setTimeout(() => {
+            this._clearDataFlyoutCloseTimer = null;
+            this.closeClearDataFlyout();
+        }, 300);
+    }
+
+    private _cancelClearDataFlyoutClose(): void {
+        if (this._clearDataFlyoutCloseTimer !== null) {
+            clearTimeout(this._clearDataFlyoutCloseTimer);
+            this._clearDataFlyoutCloseTimer = null;
+        }
+    }
+
+    private closeClearDataFlyout(): void {
+        this._cancelClearDataFlyoutClose();
+        const flyout = this.toolMenuEl?.querySelector('[data-flyout="clearData"]') as HTMLElement | null;
+        if (!flyout) return;
+        flyout.classList.remove('wb-visible');
+        flyout.style.left = '';
+        flyout.style.top = '';
+        flyout.style.visibility = '';
     }
 
     // ---- 辅助方法：调用主进程 browser 应用方法 ----
@@ -1034,8 +1909,179 @@ class BrowserEntryWidget extends HTMLElement {
         }
     }
 
+    private async _callBrowserMain(method: string, successMsg: string): Promise<void> {
+        const registryAPI = (window as any).applicationRegistryAPI;
+        if (!registryAPI?.callMainWorld) {
+            await showConfirmModal({
+                icon: 'fa-circle-exclamation',
+                iconBg: '#FEF2F2',
+                iconColor: '#DC2626',
+                title: this._t('renderer.browser.modal.actionFailed'),
+                message: this._t('renderer.browser.modal.unsupported'),
+                confirmText: this._t('renderer.browser.modal.acknowledge'),
+                cancelText: null
+            });
+            return;
+        }
+        try {
+            const result = await registryAPI.callMainWorld('browser', method);
+            if (result?.success) {
+                await showConfirmModal({
+                    icon: 'fa-circle-check',
+                    iconBg: '#ECFDF5',
+                    iconColor: '#059669',
+                    title: this._t('renderer.browser.modal.actionSuccess'),
+                    message: result.message || successMsg,
+                    confirmText: this._t('renderer.browser.modal.acknowledge'),
+                    cancelText: null
+                });
+            } else {
+                await showConfirmModal({
+                    icon: 'fa-circle-exclamation',
+                    iconBg: '#FEF2F2',
+                    iconColor: '#DC2626',
+                    title: this._t('renderer.browser.modal.actionFailed'),
+                    message: result?.message || this._t('renderer.browser.modal.unknownError'),
+                    confirmText: this._t('renderer.browser.modal.acknowledge'),
+                    cancelText: null
+                });
+            }
+        } catch (err: any) {
+            await showConfirmModal({
+                icon: 'fa-circle-exclamation',
+                iconBg: '#FEF2F2',
+                iconColor: '#DC2626',
+                title: this._t('renderer.browser.modal.actionFailed'),
+                message: err?.message || String(err),
+                confirmText: this._t('renderer.browser.modal.acknowledge'),
+                cancelText: null
+            });
+        }
+    }
+
+    private async _confirmAndClearAllData(): Promise<void> {
+        const confirmed = await showConfirmModal({
+            icon: 'fa-triangle-exclamation',
+            iconBg: '#FEF2F2',
+            iconColor: '#DC2626',
+            title: this._t('renderer.browser.clearAll.title'),
+            message: this._t('renderer.browser.clearAll.message'),
+            confirmText: this._t('renderer.browser.clearAll.confirm'),
+            cancelText: this._t('renderer.browser.modal.cancel'),
+            danger: true
+        });
+        if (confirmed) {
+            // 清除应用侧历史记录
+            this.history = [];
+            saveHistory(this.history);
+            // 清除浏览器数据
+            await this._callBrowserMain('clearAllBrowserData', this._t('renderer.browser.msg.allDataCleared'));
+        }
+    }
+
+    private updateZoomDisplay(): void {
+        const valEl = this.toolMenuEl?.querySelector('.wb-tm-zoom-val');
+        if (valEl) valEl.textContent = `${Math.round(this._currentZoomFactor * 100)}%`;
+    }
+
+    private printPage(): void {
+        const tab = this.getActiveTab();
+        if (tab?.ready && tab.webview) {
+            try {
+                tab.webview.print();
+            } catch {
+                /* ignore */
+            }
+        }
+    }
+
     private clearBrowsingData(): void {
-        this.browserTools?.clearBrowsingData();
+        if (confirm(this._t('renderer.browser.histClear.confirmData'))) {
+            this.history = [];
+            saveHistory(this.history);
+        }
+    }
+
+    private async captureAndSaveSnapshot(): Promise<void> {
+        const tab = this.getActiveTab();
+        if (!tab?.ready || !tab.webview) {
+            await showConfirmModal({
+                icon: 'fa-circle-exclamation',
+                iconBg: '#FEF2F2',
+                iconColor: '#DC2626',
+                title: this._t('renderer.browser.snapshot.notReady.title'),
+                message: this._t('renderer.browser.snapshot.notReady.tab'),
+                confirmText: this._t('renderer.browser.modal.acknowledge'),
+                cancelText: null
+            });
+            return;
+        }
+
+        let webContentsId: number;
+        try {
+            webContentsId = (tab.webview as any).getWebContentsId();
+        } catch {
+            await showConfirmModal({
+                icon: 'fa-circle-exclamation',
+                iconBg: '#FEF2F2',
+                iconColor: '#DC2626',
+                title: this._t('renderer.browser.snapshot.notReady.title'),
+                message: this._t('renderer.browser.snapshot.notReady.handle'),
+                confirmText: this._t('renderer.browser.modal.acknowledge'),
+                cancelText: null
+            });
+            return;
+        }
+
+        const registryAPI = (window as any).applicationRegistryAPI;
+        if (!registryAPI?.callMainWorld) {
+            await showConfirmModal({
+                icon: 'fa-circle-exclamation',
+                iconBg: '#FEF2F2',
+                iconColor: '#DC2626',
+                title: this._t('renderer.browser.snapshot.notReady.title'),
+                message: this._t('renderer.browser.snapshot.unsupported'),
+                confirmText: this._t('renderer.browser.modal.acknowledge'),
+                cancelText: null
+            });
+            return;
+        }
+
+        try {
+            await registryAPI.callMainWorld('browser', 'exportSnapshotByWebContentsId', webContentsId);
+            await showConfirmModal({
+                icon: 'fa-circle-check',
+                iconBg: '#ECFDF5',
+                iconColor: '#059669',
+                title: this._t('renderer.browser.snapshot.saved.title'),
+                message: this._t('renderer.browser.snapshot.saved.message'),
+                confirmText: this._t('renderer.browser.modal.acknowledge'),
+                cancelText: null
+            });
+        } catch (err: any) {
+            await showConfirmModal({
+                icon: 'fa-circle-exclamation',
+                iconBg: '#FEF2F2',
+                iconColor: '#DC2626',
+                title: this._t('renderer.browser.snapshot.failed.title'),
+                message: this._t('renderer.browser.snapshot.failed.message', { message: err?.message || String(err) }),
+                confirmText: this._t('renderer.browser.modal.acknowledge'),
+                cancelText: null
+            });
+        }
+    }
+
+    private openWebviewDevTools(): void {
+        const tab = this.getActiveTab();
+        if (!tab?.ready || !tab.webview) {
+            alert(this._t('renderer.browser.alert.tabNotReady'));
+            return;
+        }
+        try {
+            (tab.webview as any).openDevTools();
+        } catch {
+            alert(this._t('renderer.browser.alert.devtoolsFailed'));
+        }
     }
 
     // =====================================================================
@@ -1068,11 +2114,110 @@ class BrowserEntryWidget extends HTMLElement {
     }
 
     private openHistoryPanel(): void {
-        this.browserTools?.openHistoryPanel();
+        this.closeAllPanels();
+        if (!this.historyPanelEl) return;
+
+        this.renderHistoryPanel('');
+        this.historyPanelEl.classList.add('wb-visible');
     }
 
     private renderHistoryPanel(filter: string): void {
-        this.browserTools?.renderHistoryPanel(filter);
+        if (!this.historyPanelEl) return;
+
+        const lf = filter.toLowerCase();
+        const filtered = lf
+            ? this.history.filter((h) => h.url.toLowerCase().includes(lf) || h.title.toLowerCase().includes(lf))
+            : this.history;
+
+        /* Deduplicate for display, keeping the most recent visit */
+        const seen = new Set<string>();
+        const deduped: HistoryEntry[] = [];
+        for (const h of filtered) {
+            if (!seen.has(h.url)) {
+                seen.add(h.url);
+                deduped.push(h);
+            }
+        }
+
+        this.historyPanelEl.innerHTML = `
+            <div class="wb-panel-header">
+                <span class="wb-panel-header-title">${this._t('renderer.browser.history.title')}</span>
+                <button class="wb-panel-manage-btn wb-hist-open-manage">${this._t('renderer.browser.history.manage')}</button>
+                <button class="wb-panel-close"><i class="fas fa-xmark"></i></button>
+            </div>
+            <input class="wb-panel-search" placeholder="${this._t('renderer.browser.history.search')}" value="${this.escapeHtml(filter)}">
+            <div class="wb-panel-body">
+                ${
+                    deduped.length === 0
+                        ? '<div class="wb-panel-empty">' + this._t('renderer.browser.history.empty') + '</div>'
+                        : deduped
+                              .map(
+                                  (
+                                      h,
+                                      idx
+                                  ) => `<div class="wb-history-item" data-idx="${idx}" data-url="${this.escapeAttr(h.url)}">
+                            <span class="wb-hi-icon"><i class="fas fa-clock-rotate-left"></i></span>
+                            <div class="wb-hi-content">
+                                <div class="wb-hi-title">${this.escapeHtml(h.title)}</div>
+                                <div class="wb-hi-url">${this.escapeHtml(h.url)}</div>
+                            </div>
+                            <span class="wb-hi-time">${this.formatTime(h.timestamp)}</span>
+                            <button class="wb-hi-delete" data-url="${this.escapeAttr(h.url)}" title="${this._t('renderer.browser.modal.delete')}"><i class="fas fa-xmark"></i></button>
+                        </div>`
+                              )
+                              .join('')
+                }
+            </div>
+            <div class="wb-panel-footer">
+                <button class="wb-clear-btn">${this._t('renderer.browser.history.clearAll')}</button>
+            </div>
+        `;
+
+        this.historyPanelEl.querySelector('.wb-panel-close')?.addEventListener('click', () => {
+            this.historyPanelEl?.classList.remove('wb-visible');
+        });
+
+        this.historyPanelEl.querySelector('.wb-hist-open-manage')?.addEventListener('click', () => {
+            this.historyPanelEl?.classList.remove('wb-visible');
+            this.openInternalPage('opendesk://history/');
+        });
+
+        const searchInput = this.historyPanelEl.querySelector('.wb-panel-search') as HTMLInputElement;
+        searchInput?.addEventListener('input', () => {
+            this.renderHistoryPanel(searchInput.value.trim());
+        });
+        searchInput?.focus();
+
+        this.historyPanelEl.querySelectorAll('.wb-history-item').forEach((el) => {
+            el.addEventListener('click', (e) => {
+                if ((e.target as HTMLElement).closest('.wb-hi-delete')) return;
+                const url = (el as HTMLElement).dataset.url;
+                if (url) {
+                    this.navigateTo(url);
+                    this.historyPanelEl?.classList.remove('wb-visible');
+                }
+            });
+        });
+
+        this.historyPanelEl.querySelectorAll('.wb-hi-delete').forEach((btn) => {
+            btn.addEventListener('click', (e) => {
+                e.stopPropagation();
+                const url = (btn as HTMLElement).dataset.url;
+                if (url) {
+                    this.history = this.history.filter((h) => h.url !== url);
+                    saveHistory(this.history);
+                    this.renderHistoryPanel(filter);
+                }
+            });
+        });
+
+        this.historyPanelEl.querySelector('.wb-clear-btn')?.addEventListener('click', () => {
+            if (confirm(this._t('renderer.browser.histClear.confirm1'))) {
+                this.history = [];
+                saveHistory(this.history);
+                this.renderHistoryPanel('');
+            }
+        });
     }
 
     // =====================================================================
@@ -1158,15 +2303,15 @@ class BrowserEntryWidget extends HTMLElement {
 
         const rect = anchor.getBoundingClientRect();
         const dropdown = document.createElement('div');
-        dropdown.className = 'wb-bm-folder-dropdown od-browser-menu';
+        dropdown.className = 'wb-bm-folder-dropdown';
         dropdown.style.cssText = `position:fixed;top:${rect.bottom + 2}px;left:${rect.left}px;
-            right:auto;width:auto;background:var(--od-bg-elevated);border:1px solid var(--od-border-strong);border-radius:8px;
+            background:white;border:1px solid #e5e7eb;border-radius:8px;
             box-shadow:0 4px 16px rgba(0,0,0,0.12);z-index:300;padding:4px 0;min-width:180px;max-width:320px;`;
 
         for (const child of children) {
             const item = document.createElement('div');
-            item.className = 'bm-item';
-            item.innerHTML = `<i class="fas fa-star" style="color:#f59e0b"></i><span class="bm-label" style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${this.escapeHtml(child.title || child.url)}</span>`;
+            item.className = 'wb-tm-item';
+            item.innerHTML = `<i class="fas fa-star" style="color:#f59e0b"></i><span class="wb-tm-label" style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${this.escapeHtml(child.title || child.url)}</span>`;
             item.addEventListener('click', () => {
                 dropdown.remove();
                 this.navigateTo(child.url);
@@ -1187,20 +2332,20 @@ class BrowserEntryWidget extends HTMLElement {
         existing?.remove();
 
         const menu = document.createElement('div');
-        menu.className = 'wb-bm-ctx od-browser-menu';
+        menu.className = 'wb-bm-ctx';
         menu.style.cssText = `position:fixed;top:${e.clientY}px;left:${e.clientX}px;
-            right:auto;width:auto;background:var(--od-bg-elevated);border:1px solid var(--od-border-strong);border-radius:8px;
+            background:white;border:1px solid #e5e7eb;border-radius:8px;
             box-shadow:0 4px 16px rgba(0,0,0,0.12);z-index:300;padding:4px 0;min-width:160px;`;
 
         menu.innerHTML = `
-            <div class="bm-item" data-ctx="addFolder">
+            <div class="wb-tm-item" data-ctx="addFolder">
                 <i class="fas fa-folder-plus"></i>
-                <span class="bm-label">${this._t('renderer.browser.fav.addFolder')}</span>
+                <span class="wb-tm-label">${this._t('renderer.browser.fav.addFolder')}</span>
             </div>
-            <div class="bm-divider"></div>
-            <div class="bm-item" data-ctx="manage">
+            <div class="wb-tm-divider"></div>
+            <div class="wb-tm-item" data-ctx="manage">
                 <i class="fas fa-gear"></i>
-                <span class="bm-label">${this._t('renderer.browser.fav.manage')}</span>
+                <span class="wb-tm-label">${this._t('renderer.browser.fav.manage')}</span>
             </div>
         `;
 
@@ -1226,42 +2371,42 @@ class BrowserEntryWidget extends HTMLElement {
         existing?.remove();
 
         const menu = document.createElement('div');
-        menu.className = 'wb-bm-ctx od-browser-menu';
+        menu.className = 'wb-bm-ctx';
         menu.style.cssText = `position:fixed;top:${e.clientY}px;left:${e.clientX}px;
-            right:auto;width:auto;background:var(--od-bg-elevated);border:1px solid var(--od-border-strong);border-radius:8px;
+            background:white;border:1px solid #e5e7eb;border-radius:8px;
             box-shadow:0 4px 16px rgba(0,0,0,0.12);z-index:300;padding:4px 0;min-width:160px;`;
 
         const items: string[] = [];
         if (!bm.isFolder) {
             items.push(`
-                <div class="bm-item" data-ctx="open">
+                <div class="wb-tm-item" data-ctx="open">
                     <i class="fas fa-arrow-up-right-from-square"></i>
-                    <span class="bm-label">${this._t('renderer.browser.fav.open')}</span>
+                    <span class="wb-tm-label">${this._t('renderer.browser.fav.open')}</span>
                 </div>
-                <div class="bm-item" data-ctx="openNewTab">
+                <div class="wb-tm-item" data-ctx="openNewTab">
                     <i class="fas fa-plus"></i>
-                    <span class="bm-label">${this._t('renderer.browser.fav.openInNewTab')}</span>
+                    <span class="wb-tm-label">${this._t('renderer.browser.fav.openInNewTab')}</span>
                 </div>
-                <div class="bm-divider"></div>`);
+                <div class="wb-tm-divider"></div>`);
         }
         items.push(`
-            <div class="bm-item" data-ctx="rename">
+            <div class="wb-tm-item" data-ctx="rename">
                 <i class="fas fa-pen"></i>
-                <span class="bm-label">${this._t('renderer.browser.modal.edit')}</span>
+                <span class="wb-tm-label">${this._t('renderer.browser.modal.edit')}</span>
             </div>
-            <div class="bm-item" data-ctx="delete">
+            <div class="wb-tm-item" data-ctx="delete">
                 <i class="fas fa-trash-can"></i>
-                <span class="bm-label">${this._t('renderer.browser.modal.delete')}</span>
+                <span class="wb-tm-label">${this._t('renderer.browser.modal.delete')}</span>
             </div>
-            <div class="bm-divider"></div>
-            <div class="bm-item" data-ctx="addFolder">
+            <div class="wb-tm-divider"></div>
+            <div class="wb-tm-item" data-ctx="addFolder">
                 <i class="fas fa-folder-plus"></i>
-                <span class="bm-label">${this._t('renderer.browser.fav.addFolder')}</span>
+                <span class="wb-tm-label">${this._t('renderer.browser.fav.addFolder')}</span>
             </div>
-            <div class="bm-divider"></div>
-            <div class="bm-item" data-ctx="manage">
+            <div class="wb-tm-divider"></div>
+            <div class="wb-tm-item" data-ctx="manage">
                 <i class="fas fa-gear"></i>
-                <span class="bm-label">${this._t('renderer.browser.fav.manage')}</span>
+                <span class="wb-tm-label">${this._t('renderer.browser.fav.manage')}</span>
             </div>`);
         menu.innerHTML = items.join('');
 
@@ -1348,11 +2493,126 @@ class BrowserEntryWidget extends HTMLElement {
     }
 
     private openBookmarkManager(): void {
-        this.browserTools?.openBookmarkManager();
+        this.closeAllPanels();
+        if (!this.bookmarkMgrEl) return;
+
+        this.renderBookmarkManager('');
+        this.bookmarkMgrEl.classList.add('wb-visible');
     }
 
     private renderBookmarkManager(filter: string): void {
-        this.browserTools?.renderBookmarkManager(filter);
+        if (!this.bookmarkMgrEl) return;
+
+        const lf = filter.toLowerCase();
+        const filtered = lf
+            ? this.bookmarks.filter((b) => b.url.toLowerCase().includes(lf) || b.title.toLowerCase().includes(lf))
+            : this.bookmarks;
+
+        this.bookmarkMgrEl.innerHTML = `
+            <div class="wb-panel-header">
+                <span class="wb-panel-header-title">${this._t('renderer.browser.fav.panel.title')}</span>
+                <button class="wb-panel-manage-btn wb-bm-open-manage">${this._t('renderer.browser.history.manage')}</button>
+                <button class="wb-panel-close"><i class="fas fa-xmark"></i></button>
+            </div>
+            <input class="wb-panel-search" placeholder="${this._t('renderer.browser.fav.panel.search')}" value="${this.escapeHtml(filter)}">
+            <div class="wb-panel-body">
+                ${
+                    filtered.length === 0
+                        ? '<div class="wb-panel-empty">' + this._t('renderer.browser.fav.panel.empty') + '</div>'
+                        : filtered
+                              .map(
+                                  (
+                                      b
+                                  ) => `<div class="wb-bm-mgr-item" data-id="${b.id}" data-url="${this.escapeAttr(b.url)}">
+                            <span class="wb-bm-mgr-icon"><i class="fas fa-star"></i></span>
+                            <div class="wb-bm-mgr-content">
+                                <div class="wb-bm-mgr-title">${this.escapeHtml(b.title)}</div>
+                                <div class="wb-bm-mgr-url">${this.escapeHtml(b.url)}</div>
+                            </div>
+                            <div class="wb-bm-mgr-actions">
+                                <button class="wb-bm-mgr-btn wb-bm-rename" data-id="${b.id}" title="${this._t('renderer.browser.fav.rename')}"><i class="fas fa-pen"></i></button>
+                                <button class="wb-bm-mgr-btn wb-bm-delete" data-id="${b.id}" title="${this._t('renderer.browser.modal.delete')}"><i class="fas fa-trash-can"></i></button>
+                            </div>
+                        </div>`
+                              )
+                              .join('')
+                }
+            </div>
+        `;
+
+        this.bookmarkMgrEl.querySelector('.wb-panel-close')?.addEventListener('click', () => {
+            this.bookmarkMgrEl?.classList.remove('wb-visible');
+        });
+
+        this.bookmarkMgrEl.querySelector('.wb-bm-open-manage')?.addEventListener('click', () => {
+            this.bookmarkMgrEl?.classList.remove('wb-visible');
+            this.openInternalPage('opendesk://favorites/');
+        });
+
+        const searchInput = this.bookmarkMgrEl.querySelector('.wb-panel-search') as HTMLInputElement;
+        searchInput?.addEventListener('input', () => {
+            this.renderBookmarkManager(searchInput.value.trim());
+        });
+        searchInput?.focus();
+
+        this.bookmarkMgrEl.querySelectorAll('.wb-bm-mgr-item').forEach((el) => {
+            el.addEventListener('click', (e) => {
+                if ((e.target as HTMLElement).closest('.wb-bm-mgr-btn')) return;
+                const url = (el as HTMLElement).dataset.url;
+                if (url) {
+                    this.navigateTo(url);
+                    this.bookmarkMgrEl?.classList.remove('wb-visible');
+                }
+            });
+        });
+
+        this.bookmarkMgrEl.querySelectorAll('.wb-bm-rename').forEach((btn) => {
+            btn.addEventListener('click', (e) => {
+                e.stopPropagation();
+                const id = (btn as HTMLElement).dataset.id;
+                const bm = this.bookmarks.find((b) => b.id === id);
+                if (!bm) return;
+                const titleEl = (btn as HTMLElement)
+                    .closest('.wb-bm-mgr-item')
+                    ?.querySelector('.wb-bm-mgr-title') as HTMLElement;
+                if (!titleEl) return;
+
+                const input = document.createElement('input');
+                input.className = 'wb-bm-edit-input';
+                input.value = bm.title;
+                titleEl.replaceWith(input);
+                input.focus();
+                input.select();
+
+                const commit = () => {
+                    bm.title = input.value.trim() || bm.url;
+                    saveBookmarks(this.bookmarks);
+                    this.renderBookmarkBar();
+                    this.renderBookmarkManager(filter);
+                };
+                input.addEventListener('blur', commit);
+                input.addEventListener('keydown', (ev) => {
+                    if (ev.key === 'Enter' && !ev.isComposing) {
+                        ev.preventDefault();
+                        commit();
+                    }
+                    if (ev.key === 'Escape') {
+                        this.renderBookmarkManager(filter);
+                    }
+                });
+            });
+        });
+
+        this.bookmarkMgrEl.querySelectorAll('.wb-bm-delete').forEach((btn) => {
+            btn.addEventListener('click', (e) => {
+                e.stopPropagation();
+                const id = (btn as HTMLElement).dataset.id;
+                this.bookmarks = this.bookmarks.filter((b) => b.id !== id);
+                saveBookmarks(this.bookmarks);
+                this.renderBookmarkBar();
+                this.renderBookmarkManager(filter);
+            });
+        });
     }
 
     // =====================================================================
@@ -1360,7 +2620,10 @@ class BrowserEntryWidget extends HTMLElement {
     // =====================================================================
 
     private closeAllPanels(): void {
-        this.browserTools?.closeAllPanels();
+        this.historyPanelEl?.classList.remove('wb-visible');
+        this.bookmarkMgrEl?.classList.remove('wb-visible');
+        this.downloadPanelEl?.classList.remove('wb-visible');
+        this.closeToolMenu();
     }
 
     // =====================================================================
@@ -1368,11 +2631,131 @@ class BrowserEntryWidget extends HTMLElement {
     // =====================================================================
 
     private toggleDownloadPanel(): void {
-        this.browserTools?.toggleDownloadPanel();
+        if (!this.downloadPanelEl) return;
+        const isVisible = this.downloadPanelEl.classList.contains('wb-visible');
+        if (isVisible) {
+            this.downloadPanelEl.classList.remove('wb-visible');
+        } else {
+            this.closeAllPanels();
+            this.renderDownloadPanel();
+            this.downloadPanelEl.classList.add('wb-visible');
+        }
     }
 
     private renderDownloadPanel(): void {
-        this.browserTools?.renderDownloadPanel();
+        if (!this.downloadPanelEl) return;
+
+        const formatBytes = (bytes: number): string => {
+            if (bytes === 0) return '0 B';
+            const units = ['B', 'KB', 'MB', 'GB'];
+            const i = Math.min(Math.floor(Math.log(bytes) / Math.log(1024)), units.length - 1);
+            return (bytes / Math.pow(1024, i)).toFixed(i === 0 ? 0 : 1) + ' ' + units[i];
+        };
+
+        const formatSpeed = (received: number, startTime: number): string => {
+            const elapsed = (Date.now() - startTime) / 1000;
+            if (elapsed < 0.5) return '';
+            const speed = received / elapsed;
+            return formatBytes(speed) + '/s';
+        };
+
+        this.downloadPanelEl.innerHTML = `
+            <div class="wb-panel-header">
+                <span class="wb-panel-header-title">${this._t('renderer.browser.dl.title')}</span>
+                <button class="wb-panel-close"><i class="fas fa-xmark"></i></button>
+            </div>
+            <div class="wb-panel-body">
+                ${
+                    this.downloads.length === 0
+                        ? '<div class="wb-panel-empty">' + this._t('renderer.browser.dl.empty') + '</div>'
+                        : this.downloads
+                              .map((dl) => {
+                                  const pct =
+                                      dl.totalBytes > 0 ? Math.round((dl.receivedBytes / dl.totalBytes) * 100) : 0;
+                                  const isDone = dl.state === 'completed';
+                                  const isCancelled = dl.state === 'cancelled';
+                                  const iconClass = isDone ? 'wb-dl-done' : isCancelled ? 'wb-dl-cancelled' : '';
+                                  const iconEl = isDone
+                                      ? '<i class="fas fa-circle-check"></i>'
+                                      : isCancelled
+                                        ? '<i class="fas fa-circle-xmark"></i>'
+                                        : '<i class="fas fa-arrow-down"></i>';
+                                  let meta = formatBytes(dl.receivedBytes);
+                                  if (dl.totalBytes > 0 && !isDone && !isCancelled) {
+                                      meta += ' / ' + formatBytes(dl.totalBytes);
+                                  }
+                                  const speed =
+                                      dl.state === 'progressing' ? formatSpeed(dl.receivedBytes, dl.startTime) : '';
+                                  if (speed) meta += ' — ' + speed;
+                                  if (isDone) meta += this._t('renderer.browser.dl.done');
+                                  if (isCancelled) meta += this._t('renderer.browser.dl.cancelled');
+                                  if (dl.state === 'interrupted') meta += this._t('renderer.browser.dl.interrupted');
+
+                                  return `
+                                        <div class="wb-dl-item" data-dl-id="${this.escapeAttr(dl.id)}">
+                                            <span class="wb-dl-icon ${iconClass}">${iconEl}</span>
+                                            <div class="wb-dl-content">
+                                                <div class="wb-dl-filename" title="${this.escapeAttr(dl.filename)}">${this.escapeHtml(dl.filename)}</div>
+                                                <div class="wb-dl-meta">${meta}</div>
+                                                ${dl.state === 'progressing' ? `<div class="wb-dl-progress-wrap"><div class="wb-dl-progress-bar" style="width:${pct}%"></div></div>` : isDone ? `<div class="wb-dl-progress-wrap"><div class="wb-dl-progress-bar wb-dl-done" style="width:100%"></div></div>` : ''}
+                                            </div>
+                                            <div class="wb-dl-actions">
+                                                ${dl.state === 'progressing' ? `<button class="wb-dl-btn wb-dl-cancel" title="${this._t('renderer.browser.dl.cancel')}"><i class="fas fa-xmark"></i></button>` : ''}
+                                                ${isDone ? `<button class="wb-dl-btn wb-dl-open-file" title="${this._t('renderer.browser.dl.showInFolder')}"><i class="fas fa-folder-open"></i></button>` : ''}
+                                                ${!dl.state || dl.state === 'completed' || isCancelled || dl.state === 'interrupted' ? `<button class="wb-dl-btn wb-dl-clear" title="${this._t('renderer.browser.dl.remove')}"><i class="fas fa-trash-can"></i></button>` : ''}
+                                            </div>
+                                        </div>`;
+                              })
+                              .join('')
+                }
+            </div>
+        `;
+
+        // Bind close button
+        this.downloadPanelEl.querySelector('.wb-panel-close')?.addEventListener('click', () => {
+            this.downloadPanelEl?.classList.remove('wb-visible');
+        });
+
+        // Bind cancel buttons
+        this.downloadPanelEl.querySelectorAll('.wb-dl-cancel').forEach((btn) => {
+            btn.addEventListener('click', (e) => {
+                e.stopPropagation();
+                const item = (btn as HTMLElement).closest('.wb-dl-item') as HTMLElement;
+                const dlId = item?.dataset.dlId;
+                if (dlId) {
+                    const downloadAPI = (window as any).downloadAPI;
+                    downloadAPI?.cancelDownload(dlId);
+                }
+            });
+        });
+
+        // Bind open file/folder buttons
+        this.downloadPanelEl.querySelectorAll('.wb-dl-open-file').forEach((btn) => {
+            btn.addEventListener('click', (e) => {
+                e.stopPropagation();
+                const item = (btn as HTMLElement).closest('.wb-dl-item') as HTMLElement;
+                const dlId = item?.dataset.dlId;
+                if (dlId) {
+                    const downloadAPI = (window as any).downloadAPI;
+                    downloadAPI?.openDownloadFolder(dlId);
+                }
+            });
+        });
+
+        // Bind clear buttons
+        this.downloadPanelEl.querySelectorAll('.wb-dl-clear').forEach((btn) => {
+            btn.addEventListener('click', (e) => {
+                e.stopPropagation();
+                const item = (btn as HTMLElement).closest('.wb-dl-item') as HTMLElement;
+                const dlId = item?.dataset.dlId;
+                if (dlId) {
+                    const downloadAPI = (window as any).downloadAPI;
+                    downloadAPI?.clearDownload(dlId);
+                    this.downloads = this.downloads.filter((d) => d.id !== dlId);
+                    this.renderDownloadPanel();
+                }
+            });
+        });
     }
 
     // =====================================================================
@@ -1537,7 +2920,6 @@ class BrowserEntryWidget extends HTMLElement {
     }
 
     public switchToTab(tabId: number): void {
-        if (tabId !== this.activeTabId) this.browserTools?.closeAllPanels();
         const tab = this.tabs.find((t) => t.id === tabId);
         if (!tab) return;
 
@@ -2329,7 +3711,7 @@ class BrowserEntryWidget extends HTMLElement {
         } else if (tab.internalUrl.startsWith('opendesk://homepage')) {
             this.renderHomepageInternal(tab.wrapEl, tab);
         } else if (tab.internalUrl.startsWith('opendesk://browser-settings')) {
-            this.renderBrowserSettingsPage(tab.wrapEl);
+            this.renderBrowserSettingsPage(tab.wrapEl, tab);
         } else {
             tab.wrapEl.innerHTML =
                 '<div class="wb-internal-page"><div class="wb-internal-header"><span class="wb-internal-title">' +
@@ -2442,13 +3824,308 @@ class BrowserEntryWidget extends HTMLElement {
     // ---- Favorites management page ----
 
     private renderFavoritesPage(container: HTMLElement, selectedFolderId?: string, searchFilter?: string): void {
-        this.browserTools?.renderFavoritesPage(container, selectedFolderId, searchFilter);
+        const lf = (searchFilter || '').toLowerCase();
+        const folders = this.bookmarks.filter((b) => b.isFolder);
+        const allBookmarksLabel = this._t('renderer.browser.fav.allBookmarks');
+
+        // Filter folders for tree
+        const filteredFolders = lf ? folders.filter((f) => f.title.toLowerCase().includes(lf)) : folders;
+
+        // Determine selected folder
+        const selId = selectedFolderId ?? '__all__';
+
+        // Get detail items
+        let detailItems: BookmarkEntry[];
+        let detailTitle: string;
+        if (selId === '__all__') {
+            detailItems = this.bookmarks.filter((b) => !b.isFolder);
+            detailTitle = allBookmarksLabel;
+        } else {
+            detailItems = this.bookmarks.filter((b) => b.parentId === selId && !b.isFolder);
+            const folder = this.bookmarks.find((b) => b.id === selId);
+            detailTitle = folder ? folder.title : allBookmarksLabel;
+        }
+
+        if (lf) {
+            detailItems = detailItems.filter(
+                (b) => b.title.toLowerCase().includes(lf) || b.url.toLowerCase().includes(lf)
+            );
+        }
+
+        // Count items per folder
+        const folderCounts = new Map<string, number>();
+        for (const b of this.bookmarks) {
+            if (!b.isFolder && b.parentId) {
+                folderCounts.set(b.parentId, (folderCounts.get(b.parentId) || 0) + 1);
+            }
+        }
+        const totalCount = this.bookmarks.filter((b) => !b.isFolder).length;
+        const rootCount = this.bookmarks.filter((b) => !b.isFolder && !b.parentId).length;
+
+        container.innerHTML = `
+            <div class="wb-internal-page">
+                <div class="wb-internal-header">
+                    <i class="fas fa-star wb-internal-header-icon" style="color:#f59e0b"></i>
+                    <span class="wb-internal-title">${this._t('renderer.browser.fav.manageTitle')}</span>
+                </div>
+                <div class="wb-fav-layout">
+                    <div class="wb-fav-tree">
+                        <input class="wb-fav-tree-search" placeholder="${this._t('renderer.browser.fav.search')}" value="${this.escapeHtml(searchFilter || '')}">
+                        <div class="wb-fav-tree-body">
+                            <div class="wb-fav-tree-item${selId === '__all__' ? ' wb-selected' : ''}" data-folder-id="__all__">
+                                <i class="fas fa-bookmark"></i>
+                                <span class="wb-fav-tree-item-label">${allBookmarksLabel}</span>
+                                <span class="wb-fav-tree-item-count">${totalCount}</span>
+                            </div>
+                            <div class="wb-fav-tree-item${selId === '__root__' ? ' wb-selected' : ''}" data-folder-id="__root__">
+                                <i class="fas fa-bars"></i>
+                                <span class="wb-fav-tree-item-label">${this._t('renderer.browser.fav.bar')}</span>
+                                <span class="wb-fav-tree-item-count">${rootCount}</span>
+                            </div>
+                            ${filteredFolders
+                                .map(
+                                    (
+                                        f
+                                    ) => `<div class="wb-fav-tree-item wb-indent${selId === f.id ? ' wb-selected' : ''}" data-folder-id="${f.id}">
+                                <i class="fas fa-folder"></i>
+                                <span class="wb-fav-tree-item-label">${this.escapeHtml(f.title)}</span>
+                                <span class="wb-fav-tree-item-count">${folderCounts.get(f.id) || 0}</span>
+                            </div>`
+                                )
+                                .join('')}
+                        </div>
+                    </div>
+                    <div class="wb-fav-detail">
+                        <div class="wb-fav-detail-header">
+                            <span class="wb-fav-detail-title">${this.escapeHtml(detailTitle)}（${detailItems.length}）</span>
+                        </div>
+                        <div class="wb-fav-detail-body">
+                            ${
+                                detailItems.length === 0
+                                    ? '<div class="wb-fav-detail-empty">' +
+                                      this._t('renderer.browser.fav.folderEmpty') +
+                                      '</div>'
+                                    : detailItems
+                                          .map(
+                                              (
+                                                  b
+                                              ) => `<div class="wb-fav-detail-item" data-id="${b.id}" data-url="${this.escapeAttr(b.url)}">
+                                    <span class="wb-fav-detail-icon"><i class="fas fa-star"></i></span>
+                                    <div class="wb-fav-detail-content">
+                                        <div class="wb-fav-detail-name">${this.escapeHtml(b.title || b.url)}</div>
+                                        <div class="wb-fav-detail-url">${this.escapeHtml(b.url)}</div>
+                                    </div>
+                                    <div class="wb-fav-detail-actions">
+                                        <button class="wb-fav-detail-btn wb-fav-edit" data-id="${b.id}" title="${this._t('renderer.browser.modal.edit')}"><i class="fas fa-pen"></i></button>
+                                        <button class="wb-fav-detail-btn wb-del wb-fav-del" data-id="${b.id}" title="${this._t('renderer.browser.modal.delete')}"><i class="fas fa-trash-can"></i></button>
+                                    </div>
+                                </div>`
+                                          )
+                                          .join('')
+                            }
+                        </div>
+                    </div>
+                </div>
+            </div>`;
+
+        // Bind tree item clicks
+        container.querySelectorAll('.wb-fav-tree-item').forEach((el) => {
+            el.addEventListener('click', () => {
+                const folderId = (el as HTMLElement).dataset.folderId;
+                if (folderId === '__root__') {
+                    this.renderFavoritesPage(container, '__root__', searchFilter);
+                } else {
+                    this.renderFavoritesPage(container, folderId, searchFilter);
+                }
+            });
+        });
+
+        // Override __root__ to show root-level (no parentId) bookmarks
+        if (selId === '__root__') {
+            const detailBody = container.querySelector('.wb-fav-detail-body') as HTMLElement;
+            const detailHeader = container.querySelector('.wb-fav-detail-title') as HTMLElement;
+            if (detailBody && detailHeader) {
+                let rootItems = this.bookmarks.filter((b) => !b.isFolder && !b.parentId);
+                if (lf) {
+                    rootItems = rootItems.filter(
+                        (b) => b.title.toLowerCase().includes(lf) || b.url.toLowerCase().includes(lf)
+                    );
+                }
+                detailHeader.textContent = this._t('renderer.browser.fav.barWithCount', { count: rootItems.length });
+                if (rootItems.length === 0) {
+                    detailBody.innerHTML =
+                        '<div class="wb-fav-detail-empty">' + this._t('renderer.browser.fav.barEmpty') + '</div>';
+                } else {
+                    detailBody.innerHTML = rootItems
+                        .map(
+                            (
+                                b
+                            ) => `<div class="wb-fav-detail-item" data-id="${b.id}" data-url="${this.escapeAttr(b.url)}">
+                            <span class="wb-fav-detail-icon"><i class="fas fa-star"></i></span>
+                            <div class="wb-fav-detail-content">
+                                <div class="wb-fav-detail-name">${this.escapeHtml(b.title || b.url)}</div>
+                                <div class="wb-fav-detail-url">${this.escapeHtml(b.url)}</div>
+                            </div>
+                            <div class="wb-fav-detail-actions">
+                                <button class="wb-fav-detail-btn wb-fav-edit" data-id="${b.id}" title="${this._t('renderer.browser.modal.edit')}"><i class="fas fa-pen"></i></button>
+                                <button class="wb-fav-detail-btn wb-del wb-fav-del" data-id="${b.id}" title="${this._t('renderer.browser.modal.delete')}"><i class="fas fa-trash-can"></i></button>
+                            </div>
+                        </div>`
+                        )
+                        .join('');
+                }
+            }
+        }
+
+        // Bind search
+        const treeSearch = container.querySelector('.wb-fav-tree-search') as HTMLInputElement;
+        treeSearch?.addEventListener('input', () => {
+            this.renderFavoritesPage(container, selId, treeSearch.value.trim());
+        });
+        treeSearch?.focus();
+
+        // Bind detail item clicks (navigate)
+        container.querySelectorAll('.wb-fav-detail-item').forEach((el) => {
+            el.addEventListener('click', (e) => {
+                if ((e.target as HTMLElement).closest('.wb-fav-detail-btn')) return;
+                const url = (el as HTMLElement).dataset.url;
+                if (url) this.addTab(url);
+            });
+        });
+
+        // Bind edit buttons
+        container.querySelectorAll('.wb-fav-edit').forEach((btn) => {
+            btn.addEventListener('click', (e) => {
+                e.stopPropagation();
+                const id = (btn as HTMLElement).dataset.id;
+                const bm = this.bookmarks.find((b) => b.id === id);
+                if (!bm) return;
+                const newTitle = prompt(this._t('renderer.browser.fav.renamePrompt'), bm.title);
+                if (newTitle !== null && newTitle.trim()) {
+                    bm.title = newTitle.trim();
+                    saveBookmarks(this.bookmarks);
+                    this.renderBookmarkBar();
+                    this.renderFavoritesPage(container, selId, searchFilter);
+                }
+            });
+        });
+
+        // Bind delete buttons
+        container.querySelectorAll('.wb-fav-del').forEach((btn) => {
+            btn.addEventListener('click', (e) => {
+                e.stopPropagation();
+                const id = (btn as HTMLElement).dataset.id;
+                this.bookmarks = this.bookmarks.filter((b) => b.id !== id);
+                saveBookmarks(this.bookmarks);
+                this.renderBookmarkBar();
+                this.renderFavoritesPage(container, selId, searchFilter);
+            });
+        });
     }
 
     // ---- History management page ----
 
     private renderHistoryInternalPage(container: HTMLElement, searchFilter?: string): void {
-        this.browserTools?.renderHistoryInternalPage(container, searchFilter);
+        const lf = (searchFilter || '').toLowerCase();
+        const filtered = lf
+            ? this.history.filter((h) => h.url.toLowerCase().includes(lf) || h.title.toLowerCase().includes(lf))
+            : this.history;
+
+        // Deduplicate for display
+        const seen = new Set<string>();
+        const deduped: HistoryEntry[] = [];
+        for (const h of filtered) {
+            if (!seen.has(h.url)) {
+                seen.add(h.url);
+                deduped.push(h);
+            }
+        }
+
+        // Group by date
+        const groups = new Map<string, HistoryEntry[]>();
+        for (const h of deduped) {
+            const d = new Date(h.timestamp);
+            const key = d.toLocaleDateString('zh-CN', { year: 'numeric', month: 'long', day: 'numeric' });
+            if (!groups.has(key)) groups.set(key, []);
+            groups.get(key)!.push(h);
+        }
+
+        let groupsHtml = '';
+        if (groups.size === 0) {
+            groupsHtml = `<div class="wb-hist-empty">${this._t('renderer.browser.history.empty')}</div>`;
+        } else {
+            for (const [dateLabel, items] of groups) {
+                groupsHtml += `<div class="wb-hist-date-group">
+                    <div class="wb-hist-date-label">${this.escapeHtml(dateLabel)}</div>
+                    ${items
+                        .map(
+                            (h) => `<div class="wb-hist-item" data-url="${this.escapeAttr(h.url)}">
+                        <span class="wb-hist-item-icon"><i class="fas fa-clock-rotate-left"></i></span>
+                        <div class="wb-hist-item-content">
+                            <div class="wb-hist-item-title">${this.escapeHtml(h.title || h.url)}</div>
+                            <div class="wb-hist-item-url">${this.escapeHtml(h.url)}</div>
+                        </div>
+                        <span class="wb-hist-item-time">${this.formatTime(h.timestamp)}</span>
+                        <button class="wb-hist-item-del" data-url="${this.escapeAttr(h.url)}" title="${this._t('renderer.browser.modal.delete')}"><i class="fas fa-xmark"></i></button>
+                    </div>`
+                        )
+                        .join('')}
+                </div>`;
+            }
+        }
+
+        container.innerHTML = `
+            <div class="wb-internal-page">
+                <div class="wb-internal-header">
+                    <i class="fas fa-clock-rotate-left wb-internal-header-icon"></i>
+                    <span class="wb-internal-title">${this._t('renderer.browser.history.title')}</span>
+                </div>
+                <div class="wb-hist-layout">
+                    <div class="wb-hist-toolbar">
+                        <input class="wb-hist-search" placeholder="${this._t('renderer.browser.history.search')}" value="${this.escapeHtml(searchFilter || '')}">
+                        <button class="wb-hist-clear-btn">${this._t('renderer.browser.history.clearAll')}</button>
+                    </div>
+                    <div class="wb-hist-body">${groupsHtml}</div>
+                </div>
+            </div>`;
+
+        // Bind search
+        const searchInput = container.querySelector('.wb-hist-search') as HTMLInputElement;
+        searchInput?.addEventListener('input', () => {
+            this.renderHistoryInternalPage(container, searchInput.value.trim());
+        });
+        searchInput?.focus();
+
+        // Bind clear all
+        container.querySelector('.wb-hist-clear-btn')?.addEventListener('click', () => {
+            if (confirm(this._t('renderer.browser.histClear.confirm2'))) {
+                this.history = [];
+                saveHistory(this.history);
+                this.renderHistoryInternalPage(container, searchFilter);
+            }
+        });
+
+        // Bind item clicks (navigate)
+        container.querySelectorAll('.wb-hist-item').forEach((el) => {
+            el.addEventListener('click', (e) => {
+                if ((e.target as HTMLElement).closest('.wb-hist-item-del')) return;
+                const url = (el as HTMLElement).dataset.url;
+                if (url) this.addTab(url);
+            });
+        });
+
+        // Bind delete buttons
+        container.querySelectorAll('.wb-hist-item-del').forEach((btn) => {
+            btn.addEventListener('click', (e) => {
+                e.stopPropagation();
+                const url = (btn as HTMLElement).dataset.url;
+                if (url) {
+                    this.history = this.history.filter((h) => h.url !== url);
+                    saveHistory(this.history);
+                    this.renderHistoryInternalPage(container, searchFilter);
+                }
+            });
+        });
     }
 
     // =====================================================================
@@ -2478,8 +4155,305 @@ class BrowserEntryWidget extends HTMLElement {
 
     // ---- Browser Settings Page ----
 
-    private renderBrowserSettingsPage(container: HTMLElement): void {
-        this.browserTools?.renderBrowserSettingsPage(container);
+    private _escapeHtml(str: string): string {
+        return str.replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+    }
+
+    private renderBrowserSettingsPage(container: HTMLElement, tab: BrowserTab): void {
+        container.innerHTML = `
+        <div class="wb-internal-page" style="overflow-y:auto">
+            <div class="wb-internal-header">
+                <i class="fas fa-gear wb-internal-header-icon"></i>
+                <span class="wb-internal-title">${this._t('renderer.browser.settings.title')}</span>
+            </div>
+
+            <!-- 密码与自动填充 -->
+            <div style="padding:20px 24px;max-width:600px">
+                <div style="font-size: var(--fs-xl);font-weight:600;color:#1f2937;margin-bottom:4px">
+                    <i class="fas fa-key" style="margin-right:8px;color:#6b7280"></i>${this._t('renderer.browser.settings.passwords')}
+                </div>
+                <p style="font-size: var(--fs-base);color:#9ca3af;margin:0 0 16px 0">
+                    ${this._t('renderer.browser.settings.passwords.desc')}
+                </p>
+                <div style="background:white;border:1px solid #e5e7eb;border-radius:10px;padding:16px 20px">
+                    <div style="display:flex;align-items:center;justify-content:space-between">
+                        <div>
+                            <div style="font-size: var(--fs-lg);font-weight:500;color:#374151">${this._t('renderer.browser.settings.autofill')}</div>
+                            <div style="font-size: var(--fs-md);color:#9ca3af;margin-top:2px">${this._t('renderer.browser.settings.autofill.desc')}</div>
+                        </div>
+                        <span style="font-size: var(--fs-md);color:#059669;background:#ecfdf5;padding:2px 10px;border-radius:12px;font-weight:500">${this._t('renderer.browser.settings.enabled')}</span>
+                    </div>
+                    <button class="wb-bs-btn wb-bs-btn-danger" data-action="bs-clear-autofill" style="margin-top:12px">
+                        <i class="fas fa-trash-can"></i> ${this._t('renderer.browser.settings.clearAutofill')}
+                    </button>
+                </div>
+            </div>
+
+            <!-- 证书管理 -->
+            <div style="padding:0 24px 20px;max-width:600px">
+                <div style="font-size: var(--fs-xl);font-weight:600;color:#1f2937;margin-bottom:4px">
+                    <i class="fas fa-certificate" style="margin-right:8px;color:#6b7280"></i>${this._t('renderer.browser.settings.cert.title')}
+                </div>
+                <p style="font-size: var(--fs-base);color:#9ca3af;margin:0 0 16px 0">
+                    ${this._t('renderer.browser.settings.cert.desc')}
+                </p>
+                <div style="background:white;border:1px solid #e5e7eb;border-radius:10px;padding:16px 20px">
+                    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px">
+                        <span style="font-size: var(--fs-lg);font-weight:500;color:#374151">${this._t('renderer.browser.settings.cert.imported')}</span>
+                        <button class="wb-bs-btn wb-bs-btn-primary" data-action="bs-import-cert">
+                            <i class="fas fa-plus"></i> ${this._t('renderer.browser.settings.cert.import')}
+                        </button>
+                    </div>
+                    <div id="wb-cert-list">
+                        <div style="text-align:center;color:#9ca3af;padding:20px 0;font-size: var(--fs-base)">
+                            <i class="fas fa-spinner fa-pulse"></i> ${this._t('renderer.browser.settings.cert.loading')}
+                        </div>
+                    </div>
+                    <div style="margin-top:12px;padding:8px 12px;background:#f0f9ff;border:1px solid #bae6fd;border-radius:6px;font-size: var(--fs-md);color:#0369a1">
+                        <i class="fas fa-info-circle"></i> ${this._t('renderer.browser.settings.cert.systemHint')}
+                    </div>
+                </div>
+            </div>
+
+            <!-- User Agent -->
+            <div style="padding:0 24px 20px;max-width:600px">
+                <div style="font-size: var(--fs-xl);font-weight:600;color:#1f2937;margin-bottom:4px">
+                    <i class="fas fa-globe" style="margin-right:8px;color:#6b7280"></i>User Agent
+                </div>
+                <p style="font-size: var(--fs-base);color:#9ca3af;margin:0 0 16px 0">
+                    ${this._t('renderer.browser.settings.ua.desc')}
+                </p>
+                <div style="background:white;border:1px solid #e5e7eb;border-radius:10px;padding:16px 20px">
+                    <input
+                        id="wb-useragent-input"
+                        type="text"
+                        placeholder="${this._t('renderer.browser.settings.ua.placeholder')}"
+                        value="${this._escapeHtml(this._cachedUserAgent)}"
+                        style="width:100%;box-sizing:border-box;padding:8px 12px;border:1px solid #d1d5db;border-radius:6px;font-size: var(--fs-base);font-family:monospace;color:#374151;outline:none"
+                    />
+                    <div style="display:flex;align-items:center;justify-content:space-between;margin-top:12px">
+                        <span style="font-size: var(--fs-sm);color:#9ca3af">
+                            <i class="fas fa-info-circle"></i> ${this._t('renderer.browser.settings.ua.hint')}
+                        </span>
+                        <button class="wb-bs-btn wb-bs-btn-primary" data-action="bs-save-useragent">
+                            <i class="fas fa-floppy-disk"></i> ${this._t('renderer.browser.modal.save')}
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </div>`;
+
+        // Bind actions
+        container.querySelectorAll('[data-action]').forEach((el) => {
+            el.addEventListener('click', () => {
+                const action = (el as HTMLElement).dataset.action;
+                void this._handleSettingsAction(action!, container, tab);
+            });
+        });
+
+        // Load certificates
+        this._loadCertificates(container);
+    }
+
+    private async _handleSettingsAction(action: string, container: HTMLElement, tab: BrowserTab): Promise<void> {
+        const registryAPI = (window as any).applicationRegistryAPI;
+        if (!registryAPI?.callMainWorld) return;
+
+        switch (action) {
+            case 'bs-clear-autofill': {
+                const confirmed = await showConfirmModal({
+                    icon: 'fa-key',
+                    iconBg: '#FEF2F2',
+                    iconColor: '#DC2626',
+                    title: this._t('renderer.browser.settings.clearAutofill.confirmTitle'),
+                    message: this._t('renderer.browser.settings.clearAutofill.confirmMessage'),
+                    confirmText: this._t('renderer.browser.modal.clear'),
+                    cancelText: this._t('renderer.browser.modal.cancel'),
+                    danger: true
+                });
+                if (!confirmed) return;
+                const result = await registryAPI.callMainWorld('browser', 'clearAutofillData');
+                await showConfirmModal({
+                    icon: result?.success ? 'fa-circle-check' : 'fa-circle-exclamation',
+                    iconBg: result?.success ? '#ECFDF5' : '#FEF2F2',
+                    iconColor: result?.success ? '#059669' : '#DC2626',
+                    title: result?.success
+                        ? this._t('renderer.browser.modal.actionSuccess')
+                        : this._t('renderer.browser.modal.actionFailed'),
+                    message: result?.message || this._t('renderer.browser.modal.unknownResult'),
+                    confirmText: this._t('renderer.browser.modal.acknowledge'),
+                    cancelText: null
+                });
+                break;
+            }
+            case 'bs-import-cert': {
+                await this._importCertificate(container);
+                break;
+            }
+            case 'bs-save-useragent': {
+                const inputEl = container.querySelector('#wb-useragent-input') as HTMLInputElement;
+                const value = inputEl?.value ?? '';
+                await registryAPI.callMainWorld('browser', 'setConfig', { userAgent: value });
+                this._cachedUserAgent = value;
+                await showConfirmModal({
+                    icon: 'fa-circle-check',
+                    iconBg: '#ECFDF5',
+                    iconColor: '#059669',
+                    title: this._t('renderer.browser.settings.ua.saved.title'),
+                    message: this._t('renderer.browser.settings.ua.saved.message'),
+                    confirmText: this._t('renderer.browser.modal.acknowledge'),
+                    cancelText: null
+                });
+                break;
+            }
+        }
+    }
+
+    private async _loadCertificates(container: HTMLElement): Promise<void> {
+        const certListEl = container.querySelector('#wb-cert-list') as HTMLElement;
+        if (!certListEl) return;
+
+        const registryAPI = (window as any).applicationRegistryAPI;
+        if (!registryAPI?.callMainWorld) {
+            certListEl.innerHTML =
+                '<div style="text-align:center;color:#9ca3af;padding:20px 0;font-size: var(--fs-base)">' +
+                this._t('renderer.browser.settings.cert.unsupported') +
+                '</div>';
+            return;
+        }
+
+        try {
+            const result = await registryAPI.callMainWorld('browser', 'getBrowserCertificates');
+            const certs: CertInfo[] = Array.isArray(result) ? result : [];
+
+            if (certs.length === 0) {
+                certListEl.innerHTML =
+                    '<div style="text-align:center;color:#9ca3af;padding:20px 0;font-size: var(--fs-base)">' +
+                    this._t('renderer.browser.settings.cert.none') +
+                    '</div>';
+                return;
+            }
+
+            certListEl.innerHTML = certs
+                .map(
+                    (cert) => `
+                <div style="display:flex;align-items:center;gap:10px;padding:10px 12px;margin:4px 0;border-radius:6px;background:#f9fafb;border:1px solid #f0f0f0">
+                    <i class="fas fa-certificate" style="color:#3b82f6;font-size: var(--fs-xl);flex-shrink:0"></i>
+                    <div style="flex:1;min-width:0">
+                        <div style="font-size: var(--fs-base);font-weight:500;color:#374151;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${this.escapeHtml(cert.commonName)}</div>
+                        <div style="font-size: var(--fs-sm);color:#9ca3af">${this._t('renderer.browser.settings.cert.issuer')}${this.escapeHtml(cert.issuer)}</div>
+                        <div style="font-size: var(--fs-sm);color:#b0b3b8">${this._t('renderer.browser.settings.cert.validity')}${cert.validFrom?.split('T')[0] || ''} ~ ${cert.validTo?.split('T')[0] || ''}</div>
+                    </div>
+                    <button class="wb-bs-btn wb-bs-btn-danger" data-action="bs-delete-cert" data-fingerprint="${cert.fingerprint}" style="font-size: var(--fs-sm);padding:4px 10px">
+                        <i class="fas fa-xmark"></i>
+                    </button>
+                </div>`
+                )
+                .join('');
+
+            // Re-bind delete buttons
+            certListEl.querySelectorAll('[data-action="bs-delete-cert"]').forEach((el) => {
+                el.addEventListener('click', async () => {
+                    const fingerprint = (el as HTMLElement).dataset.fingerprint;
+                    if (!fingerprint) return;
+                    const confirmed = await showConfirmModal({
+                        icon: 'fa-certificate',
+                        iconBg: '#FEF2F2',
+                        iconColor: '#DC2626',
+                        title: this._t('renderer.browser.settings.cert.deleteTitle'),
+                        message: this._t('renderer.browser.settings.cert.deleteMessage'),
+                        confirmText: this._t('renderer.browser.modal.delete'),
+                        cancelText: this._t('renderer.browser.modal.cancel'),
+                        danger: true
+                    });
+                    if (!confirmed) return;
+                    const registryAPI = (window as any).applicationRegistryAPI;
+                    const result = await registryAPI.callMainWorld('browser', 'removeBrowserCertificate', fingerprint);
+                    if (result?.success) {
+                        this._loadCertificates(container);
+                    }
+                    await showConfirmModal({
+                        icon: result?.success ? 'fa-circle-check' : 'fa-circle-exclamation',
+                        iconBg: result?.success ? '#ECFDF5' : '#FEF2F2',
+                        iconColor: result?.success ? '#059669' : '#DC2626',
+                        title: this._t('renderer.browser.modal.opDone'),
+                        message: result?.message || this._t('renderer.browser.modal.unknownResult'),
+                        confirmText: this._t('renderer.browser.modal.acknowledge'),
+                        cancelText: null
+                    });
+                });
+            });
+        } catch {
+            certListEl.innerHTML =
+                '<div style="text-align:center;color:#ef4444;padding:20px 0;font-size: var(--fs-base)">' +
+                this._t('renderer.browser.settings.cert.loadFailed') +
+                '</div>';
+        }
+    }
+
+    private async _importCertificate(container: HTMLElement): Promise<void> {
+        // 使用 FileReader 通过 input[type=file] 选择证书文件
+        const input = document.createElement('input');
+        input.type = 'file';
+        input.accept = '.pem,.crt,.cer,.cert,application/x-pem-file,application/x-x509-ca-cert';
+        input.style.display = 'none';
+        document.body.appendChild(input);
+
+        input.onchange = async () => {
+            const file = input.files?.[0];
+            if (!file) {
+                document.body.removeChild(input);
+                return;
+            }
+
+            try {
+                const pemText = await file.text();
+                const registryAPI = (window as any).applicationRegistryAPI;
+                if (!registryAPI?.callMainWorld) {
+                    await showConfirmModal({
+                        icon: 'fa-circle-exclamation',
+                        iconBg: '#FEF2F2',
+                        iconColor: '#DC2626',
+                        title: this._t('renderer.browser.settings.cert.importFailed'),
+                        message: this._t('renderer.browser.settings.cert.importUnsupported'),
+                        confirmText: this._t('renderer.browser.modal.acknowledge'),
+                        cancelText: null
+                    });
+                    return;
+                }
+
+                const result = await registryAPI.callMainWorld('browser', 'importBrowserCertificate', pemText);
+                await showConfirmModal({
+                    icon: result?.success ? 'fa-circle-check' : 'fa-circle-exclamation',
+                    iconBg: result?.success ? '#ECFDF5' : '#FEF2F2',
+                    iconColor: result?.success ? '#059669' : '#DC2626',
+                    title: result?.success
+                        ? this._t('renderer.browser.settings.cert.importSuccess')
+                        : this._t('renderer.browser.settings.cert.importFailed'),
+                    message: result?.message || this._t('renderer.browser.modal.unknownResult'),
+                    confirmText: this._t('renderer.browser.modal.acknowledge'),
+                    cancelText: null
+                });
+
+                if (result?.success) {
+                    this._loadCertificates(container);
+                }
+            } catch (err: any) {
+                await showConfirmModal({
+                    icon: 'fa-circle-exclamation',
+                    iconBg: '#FEF2F2',
+                    iconColor: '#DC2626',
+                    title: this._t('renderer.browser.settings.cert.importFailed'),
+                    message: err?.message || this._t('renderer.browser.settings.cert.readFailed'),
+                    confirmText: this._t('renderer.browser.modal.acknowledge'),
+                    cancelText: null
+                });
+            }
+
+            document.body.removeChild(input);
+        };
+
+        input.click();
     }
 
     private escapeHtml(str: string): string {
@@ -2490,6 +4464,17 @@ class BrowserEntryWidget extends HTMLElement {
 
     private escapeAttr(str: string): string {
         return str.replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+    }
+
+    private formatTime(ts: number): string {
+        const d = new Date(ts);
+        const now = new Date();
+        const isToday =
+            d.getFullYear() === now.getFullYear() && d.getMonth() === now.getMonth() && d.getDate() === now.getDate();
+        if (isToday) {
+            return d.toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' });
+        }
+        return d.toLocaleDateString('zh-CN', { month: '2-digit', day: '2-digit' });
     }
 }
 
