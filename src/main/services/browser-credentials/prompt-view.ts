@@ -59,7 +59,7 @@ export function renderCredentialPrompt(options: CredentialPromptOptions): Promis
         style.textContent = `
             :host{font-family:var(--font-sans);font-size:var(--fs-base);color:var(--od-text);line-height:1.5}
             *{box-sizing:border-box}
-            section{padding:16px;background:var(--od-bg-elevated);border:1px solid var(--od-border-strong);border-radius:0;box-shadow:0 8px 24px #0003;max-height:var(--credential-prompt-max-height);overflow:auto}
+            section{padding:16px;background:var(--od-bg-elevated);border:1px solid var(--od-border-strong);border-radius:0 0 16px 16px;box-shadow:0 8px 24px #0003;max-height:var(--credential-prompt-max-height);overflow:auto}
             header{display:flex;align-items:center;justify-content:space-between;gap:12px}
             h2{font-size:var(--fs-lg);font-weight:600;line-height:1.5;margin:0}
             ${options.buttonCSS}
