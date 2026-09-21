@@ -7,8 +7,8 @@ import {
     resolveUpdateCacheDirectory
 } from '../../../../main/updater/config.js';
 
-test('uses the temporary public-news-compatible feed and a four-hour polling interval', () => {
-    assert.equal(DEFAULT_UPDATE_FEED_URL, 'http://114.212.84.8:18080/news/');
+test('uses the official OpenDesk release feed and a four-hour polling interval', () => {
+    assert.equal(DEFAULT_UPDATE_FEED_URL, 'https://opendesk.matrix.openharmony.cn/news/');
     assert.equal(UPDATE_CHECK_INTERVAL_MS, 4 * 60 * 60 * 1000);
 });
 

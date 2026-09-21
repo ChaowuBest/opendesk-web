@@ -9,11 +9,9 @@
  * See the Mulan PSL v2 for more details.
  */
 
-const TEMPORARY_HTTP_UPDATE_ORIGINS = new Set(['http://114.212.84.8', 'http://114.212.84.8:18080']);
-
 export function validateUpdateUrl(value: string | URL, label: string): URL {
     const url = value instanceof URL ? value : new URL(value);
     if (url.username || url.password) throw new Error(`${label} must not contain credentials`);
-    if (url.protocol === 'https:' || TEMPORARY_HTTP_UPDATE_ORIGINS.has(url.origin)) return url;
+    if (url.protocol === 'https:') return url;
     throw new Error(`${label} must use HTTPS`);
 }

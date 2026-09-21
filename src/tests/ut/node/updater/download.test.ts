@@ -25,21 +25,14 @@ test('downloadInstaller writes a partial file and atomically completes it', asyn
     assert.equal(progress.at(-1), body.length);
 });
 
-test('downloadInstaller permits HTTP only for the temporary update host', async (t) => {
+test('downloadInstaller rejects HTTP now that the production update feed uses HTTPS', async (t) => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), 'opendesk-updater-download-'));
     t.after(() => fs.rmSync(root, { recursive: true, force: true }));
     const destination = path.join(root, 'OpenDesk-0.3.7-Setup.exe');
 
-    await downloadInstaller({
-        url: 'http://114.212.84.8:18080/OpenDesk/releases/download/v0.3.7/opendesk-win-x86-0.3.7.exe',
-        destination,
-        fetchImpl: async () => new Response(Buffer.from('installer bytes'))
-    });
-    assert.equal(fs.readFileSync(destination, 'utf8'), 'installer bytes');
-
     await assert.rejects(
         downloadInstaller({
-            url: 'http://updates.example.test/OpenDesk-0.3.7-Setup.exe',
+            url: 'http://114.212.84.8:18080/OpenDesk/releases/download/v0.3.7/opendesk-win-x86-0.3.7.exe',
             destination,
             fetchImpl: async () => new Response(Buffer.from('unsafe'))
         }),

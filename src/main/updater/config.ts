@@ -11,8 +11,7 @@
 
 import path from 'node:path';
 
-// Temporary test service. Switch to the no-port HTTPS production URL before release.
-export const DEFAULT_UPDATE_FEED_URL = 'http://114.212.84.8:18080/news/';
+export const DEFAULT_UPDATE_FEED_URL = 'https://opendesk.matrix.openharmony.cn/news/';
 export const UPDATE_CHECK_INTERVAL_MS = 4 * 60 * 60 * 1000;
 export const UPDATE_PACKAGE_TRUST_MODE = 'trusted-source' as const;
 

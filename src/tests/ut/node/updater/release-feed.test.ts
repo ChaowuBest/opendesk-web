@@ -101,34 +101,39 @@ test('parseNewsReleasePage reads the latest stable Windows x86 release from the 
                 <div class="release-downloads"><a href="/nightly.exe">Windows x86 安装包</a></div>
             </article></li>
         </ol></body></html>`,
-        'http://114.212.84.8/news/'
+        'https://opendesk.matrix.openharmony.cn/news/'
     );
 
     assert.deepEqual(release, {
         version: '0.3.7',
-        installerUrl: 'http://114.212.84.8/OpenDesk/releases/download/v0.3.7/opendesk-win-x86-0.3.7.exe',
+        installerUrl:
+            'https://opendesk.matrix.openharmony.cn/OpenDesk/releases/download/v0.3.7/opendesk-win-x86-0.3.7.exe',
         installerName: 'opendesk-win-x86-0.3.7.exe',
         sha256,
         notes: 'OpenDesk 0.3.7：测试更新服务'
     });
 });
 
-test('fetchLatestRelease accepts the official news HTML contract from the temporary test host', async () => {
+test('fetchLatestRelease accepts the official OpenDesk news and GitCode download contract', async () => {
     const fetchImpl = async () =>
         new Response(
             `<li data-release-category="stable-release"><article>
                 <span class="release-item__title">OpenDesk 0.3.7</span>
                 <div class="release-downloads">
-                    <a href="http://114.212.84.8/OpenDesk/releases/download/v0.3.7/opendesk-win-x86-0.3.7.exe">Windows x86 安装包</a>
+                    <a href="https://gitcode.com/openharmony-robot/OpenDesk/releases/download/v0.3.7/opendesk-win-x86-0.3.7.exe">Windows x86 安装包</a>
                 </div>
             </article></li>`,
             { headers: { 'content-type': 'text/html; charset=utf-8' } }
         );
 
-    const release = await fetchLatestRelease('http://114.212.84.8/news/', fetchImpl as typeof fetch);
+    const release = await fetchLatestRelease('https://opendesk.matrix.openharmony.cn/news/', fetchImpl as typeof fetch);
 
     assert.equal(release.version, '0.3.7');
     assert.equal(release.installerName, 'opendesk-win-x86-0.3.7.exe');
+    assert.equal(
+        release.installerUrl,
+        'https://gitcode.com/openharmony-robot/OpenDesk/releases/download/v0.3.7/opendesk-win-x86-0.3.7.exe'
+    );
 });
 
 test('fetchLatestRelease rejects an arbitrary HTTP feed', async () => {

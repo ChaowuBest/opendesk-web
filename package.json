@@ -41,6 +41,7 @@
         "phase0:update:msix-compare": "node scripts/phase0-windows-update/msix-compare.mjs",
         "prototype:windows-silent-update": "node scripts/windows-silent-update-prototype/build-prototype.mjs",
         "build:windows-update-service": "node scripts/windows-update-service/build-service.mjs",
+        "check:windows-update-feed": "tsx scripts/check-windows-update-feed.ts",
         "make:darwin": "npm run build && node scripts/build-darwin-speech-helper.cjs && electron-forge make --platform=darwin",
         "make:linux": "npm run build && electron-forge make --platform=linux",
         "make:rpm": "npm run build && electron-forge make --platform=linux --targets=@electron-forge/maker-rpm",
