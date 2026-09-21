@@ -135,6 +135,7 @@ run(path.join(wixBinDir, 'candle.exe'), [
     '-ext',
     'WixUtilExtension',
     `-dBundleVersion=${bundleVersion}`,
+    `-dDisplayVersion=${packageJson.version}`,
     `-dRequiredInstallSize=${requiredInstallSize}`,
     `-dMsiPath=${msiPath}`,
     `-dDokanMsiPath=${dokanMsiPath}`,

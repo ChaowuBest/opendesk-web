@@ -976,6 +976,29 @@ if (shouldExposeMainWindowAPIs()) {
             ipcRenderer.send('window:shadowResizeEnd');
         }
     });
+
+    safeExposeInMainWorld('updateAPI', {
+        getState: async () => {
+            const result = await ipcRenderer.invoke('updater:getState');
+            if (result.status !== 'ok') throw new Error(result.message);
+            return result.data;
+        },
+        check: async () => {
+            const result = await ipcRenderer.invoke('updater:check');
+            if (result.status !== 'ok') throw new Error(result.message);
+            return result.data;
+        },
+        restart: async () => {
+            const result = await ipcRenderer.invoke('updater:restart');
+            if (result.status !== 'ok') throw new Error(result.message);
+            return result.data;
+        },
+        onStateChanged: (callback) => {
+            const listener = (_event, state) => callback(state);
+            ipcRenderer.on('updater:stateChanged', listener);
+            return () => ipcRenderer.removeListener('updater:stateChanged', listener);
+        }
+    });
     safeExposeInMainWorld('memoryAPI', {
         getUserPortrait: async () => {
             const result = await ipcRenderer.invoke('memory:getUserPortrait');

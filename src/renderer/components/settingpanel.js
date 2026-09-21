@@ -134,6 +134,8 @@ class SettingPanel extends HTMLElement {
         this._editingModelIndex = -1;
         this.appVersion = null;
         this.buildTime = null;
+        this.updateState = { status: 'unsupported' };
+        this._updateStateUnsubscribe = null;
         this._activeTab = 'models';
         this._environEntries = [];
         this.gatewayHostOptions = [];
@@ -144,11 +146,24 @@ class SettingPanel extends HTMLElement {
     }
 
     connectedCallback() {
+        const initialTab = this.getAttribute('initial-tab');
+        if (['models', 'tasks', 'channels', 'agents', 'search', 'general', 'wizard'].includes(initialTab)) {
+            this._activeTab = initialTab;
+        }
         (async () => {
             await this.loadData();
             this.render();
             this.setUpEventListeners();
+            this._updateStateUnsubscribe = window.updateAPI?.onStateChanged((state) => {
+                this.updateState = state;
+                this.refreshUpdateSection();
+            });
         })();
+    }
+
+    disconnectedCallback() {
+        this._updateStateUnsubscribe?.();
+        this._updateStateUnsubscribe = null;
     }
 
     async loadData() {
@@ -176,6 +191,11 @@ class SettingPanel extends HTMLElement {
             this.appVersion = await window.settingAPI.getVersion();
         } catch (e) {
             console.warn('Failed to load version:', e);
+        }
+        try {
+            if (window.updateAPI) this.updateState = await window.updateAPI.getState();
+        } catch (e) {
+            console.warn('Failed to load update state:', e);
         }
         try {
             const info = await window.settingAPI.getBuildTime();
@@ -917,6 +937,7 @@ class SettingPanel extends HTMLElement {
                     <!-- 可滚动内容区 -->
                     <div class="sp-scroll-content flex-1 overflow-y-auto" style="padding:16px 22px 8px;">
                         <div id="tab-models" class="${this._activeTab === 'models' ? '' : 'hidden'} space-y-5">
+                            ${this.renderUpdateSection()}
                             ${this.renderProvidersSection()}
                             ${this.renderModelsSection()}
                             ${this.renderDefaultModelsSection()}
@@ -2390,6 +2411,108 @@ class SettingPanel extends HTMLElement {
         `;
     }
 
+    renderUpdateSection() {
+        const state = this.updateState || { status: 'idle' };
+        if (state.status === 'unsupported') return '';
+        let statusText = this._t('sp.update.status.idle');
+        let disabled = false;
+        let actionText = this._t('sp.update.check');
+        let primary = false;
+        if (state.status === 'checking') {
+            statusText = this._t('sp.update.status.checking');
+            disabled = true;
+        } else if (state.status === 'upToDate') {
+            statusText = this._t('sp.update.status.upToDate');
+        } else if (state.status === 'downloading') {
+            const percent = state.totalBytes
+                ? ` (${Math.min(100, Math.round((state.receivedBytes / state.totalBytes) * 100))}%)`
+                : '';
+            statusText = this._t('sp.update.status.downloading', { version: state.version, progress: percent });
+            disabled = true;
+        } else if (state.status === 'ready') {
+            statusText = this._t('sp.update.status.ready', { version: state.version });
+            actionText = this._t('sp.update.installing');
+            disabled = true;
+        } else if (state.status === 'installing') {
+            statusText = this._t('sp.update.status.installing', { version: state.version });
+            actionText = this._t('sp.update.installing');
+            disabled = true;
+        } else if (state.status === 'installed') {
+            statusText = this._t('sp.update.status.installed', { version: state.version });
+            actionText = this._t('sp.update.restart');
+            primary = true;
+        } else if (state.status === 'restarting') {
+            statusText = this._t('sp.update.status.restarting', { version: state.version });
+            actionText = this._t('sp.update.restart');
+            disabled = true;
+            primary = true;
+        } else if (state.status === 'error') {
+            const errorKeys = {
+                update_service_unavailable: 'sp.update.status.serviceUnavailable',
+                update_service_busy: 'sp.update.status.serviceBusy',
+                update_package_rejected: 'sp.update.status.packageRejected',
+                update_install_failed: 'sp.update.status.installFailed',
+                update_restart_failed: 'sp.update.status.restartFailed'
+            };
+            statusText = this._t(errorKeys[state.code] || 'sp.update.status.error');
+        }
+        return `
+        <section class="sp-section" id="software-update-section">
+            <h2 class="sp-section-title">${this._t('sp.update.title')}</h2>
+            <div class="sp-section-card">
+                <div class="sp-toggle-row">
+                    <div class="sp-toggle-info">
+                        <div class="sp-toggle-label">${this._t('sp.update.currentVersion', { version: this.appVersion || '...' })}</div>
+                        <div class="sp-toggle-desc">${statusText}</div>
+                    </div>
+                    <button id="software-update-action" class="sp-btn ${primary ? 'sp-btn-primary sp-update-primary' : 'sp-btn-secondary'}" ${disabled ? 'disabled' : ''}>
+                        <i class="fas ${primary ? 'fa-power-off' : 'fa-arrows-rotate'}"></i>
+                        ${actionText}
+                    </button>
+                </div>
+            </div>
+        </section>`;
+    }
+
+    refreshUpdateSection() {
+        const current = this.querySelector('#software-update-section');
+        const html = this.renderUpdateSection();
+        if (current) {
+            if (html) current.outerHTML = html;
+            else current.remove();
+        } else if (html) {
+            this.querySelector('#tab-models')?.insertAdjacentHTML('afterbegin', html);
+        }
+        this._bindUpdateEvent();
+    }
+
+    _bindUpdateEvent() {
+        this.querySelector('#software-update-action')?.addEventListener('click', async () => {
+            if (this.updateState?.status === 'installed') {
+                const hasActiveTasks = Number(this.updateState.activeTaskCount) > 0;
+                const confirmed = await showConfirmModal({
+                    variant: 'info',
+                    icon: 'fa-power-off',
+                    title: this._t('update.installed.title'),
+                    message: this._t(hasActiveTasks ? 'update.installed.activeMessage' : 'update.installed.message', {
+                        version: this.updateState.version
+                    }),
+                    confirmText: this._t(
+                        hasActiveTasks ? 'update.installed.stopAndRestart' : 'update.installed.restart'
+                    ),
+                    cancelText: this._t('update.installed.later'),
+                    mountTarget: this
+                });
+                if (confirmed) await window.updateAPI.restart();
+                return;
+            }
+            this.updateState = { status: 'checking' };
+            this.refreshUpdateSection();
+            this.updateState = await window.updateAPI.check();
+            this.refreshUpdateSection();
+        });
+    }
+
     renderConfigManagementSection() {
         return `
         <section class="sp-section">
@@ -3142,6 +3265,7 @@ class SettingPanel extends HTMLElement {
     }
 
     setUpEventListeners() {
+        this._bindUpdateEvent();
         // 监听缩放系数变化（快捷键调整时同步更新输入框）
         if (window.displayAPI?.onScaleFactorChanged) {
             this._scaleFactorChangeUnsub = window.displayAPI.onScaleFactorChanged(async () => {
@@ -4657,6 +4781,7 @@ class SettingPanel extends HTMLElement {
             sections.forEach((s) => s.remove());
             tabGeneral.innerHTML = this.renderGeneralSection();
             // 重新绑定事件
+            this._bindUpdateEvent();
             this.querySelector('#locale-select')?.addEventListener('change', (e) => {
                 this.currentData.locale = e.target.value;
                 this._t = createRendererTranslator(this.currentData.locale === 'auto' ? 'auto' : this.currentData);

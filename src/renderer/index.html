@@ -224,6 +224,10 @@
     <body>
         <div class="drag-overlay">
             <div class="absolute top-0 right-0 z-10 flex">
+                <button id="update-ready-btn" class="window-control-btn update-ready-btn" hidden>
+                    <i class="fa-solid fa-circle-arrow-down"></i>
+                    <span class="update-ready-text"></span>
+                </button>
                 <button
                     id="shortcut-help-btn"
                     title="快捷键帮助"
@@ -910,12 +914,17 @@
                 },
                 returnFromWizard: returnFromWizard,
                 getWizardReturnLabel: getWizardReturnLabel,
-                openSettingEditor: function () {
+                openSettingEditor: function (options) {
                     ensureSlots();
                     closeAllEditorOverlays();
                     hideAllNonAppChildren();
                     clearNonTaskContent();
                     var el = document.createElement('setting-panel');
+                    if (options && options.tab === 'models') {
+                        el.setAttribute('initial-tab', 'models');
+                    } else if (options && options.tab === 'general') {
+                        el.setAttribute('initial-tab', 'general');
+                    }
                     el.style.cssText = 'width:100%;height:100%;';
                     nonAppSlot.appendChild(el);
                     currentNonAppContent = 'setting';

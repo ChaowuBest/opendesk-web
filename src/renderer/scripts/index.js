@@ -79,7 +79,32 @@ window.__odT = createRendererTranslator();
 })();
 window.settingAPI?.onSettingChanged?.((settings) => {
     window.__odT = createRendererTranslator(settings);
+    updateUpdateReadyButton(latestUpdateState);
 });
+
+let latestUpdateState = null;
+function updateUpdateReadyButton(state) {
+    latestUpdateState = state;
+    const updateReadyButton = document.getElementById('update-ready-btn');
+    if (!updateReadyButton) return;
+    updateReadyButton.hidden = state?.status !== 'installed';
+    if (state?.status !== 'installed') return;
+    const t = window.__odT || createRendererTranslator();
+    const label = t('update.available.button', { version: state.version });
+    const text = t('update.available.short');
+    updateReadyButton.title = label;
+    updateReadyButton.setAttribute('aria-label', label);
+    const visibleLabel = updateReadyButton.querySelector('.update-ready-text');
+    if (visibleLabel) visibleLabel.textContent = text;
+}
+
+const updateReadyButton = document.getElementById('update-ready-btn');
+updateReadyButton?.addEventListener('click', () => window.globalControlAPI?.openSettingEditor({ tab: 'models' }));
+window.updateAPI?.onStateChanged(updateUpdateReadyButton);
+window.updateAPI
+    ?.getState()
+    .then(updateUpdateReadyButton)
+    .catch(() => {});
 window.officeHostAPI?.onOpenOfficeTaskFile?.((request) => {
     const routed = routeTaskFileOpenRequest(document, request, (requestId) => {
         window.officeHostAPI?.reportOpenOfficeTaskFileResult?.(requestId, 'not_opened');

@@ -32,6 +32,7 @@ See the Mulan PSL v2 for more details.
             <Payload SourceFile="$(var.LocalizationPath)" Name="zh-cn.wxl" />
         </BootstrapperApplicationRef>
 
+        <Variable Name="OpenDeskDisplayVersion" Type="string" Value="$(var.DisplayVersion)" />
         <Variable Name="InstallFolder"
                   Type="string"
                   Value="[ProgramFiles64Folder]opendesk"
@@ -104,6 +105,9 @@ See the Mulan PSL v2 for more details.
                 <MsiProperty Name="CREATE_START_MENU_SHORTCUT" Value="[CreateStartMenuShortcut]" />
                 <MsiProperty Name="INSTALL_PATH_CUSTOMIZED" Value="[InstallPathCustomized]" />
                 <MsiProperty Name="OPENDESK_BUNDLE_INSTALL" Value="1" />
+                <MsiProperty Name="ARPSYSTEMCOMPONENT" Value="1" />
+                <MsiProperty Name="OPENDESK_BUNDLE_PROVIDER_KEY" Value="[WixBundleProviderKey]" />
+                <MsiProperty Name="OPENDESK_DISPLAY_VERSION" Value="[OpenDeskDisplayVersion]" />
                 <MsiProperty Name="IGNOREDEPENDENCIES" Value="[IGNOREDEPENDENCIES]" />
             </MsiPackage>
             <!-- 覆盖安装防卡死清理程序（PerMachine 使其在提权引擎内执行）。
