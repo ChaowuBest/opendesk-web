@@ -27,6 +27,8 @@ import {
     powerSaveBlocker
 } from 'electron';
 import type { WebContents } from 'electron';
+import { installBrowserCredentials } from './applications/browser/credentials/manager.js';
+import { initializeBrowserCredentials } from './applications/browser/credentials/runtime.js';
 import {
     Setting,
     ModelInstance,
@@ -417,6 +419,7 @@ async function initBrowserSession() {
         // Wire in the project logger for CDP messages
         setCDPLogger(logger);
 
+        initializeBrowserCredentials();
         const ses = await BrowserManager.initSession('persist:opendesk-browser');
         if (ses) {
             logger.info(
@@ -560,11 +563,13 @@ function installWebviewHostHandlers(hostWindow: BrowserWindow): void {
         }
 
         // 仅 browser application 的 webview 注入 window.open proxy preload
-        // 并关闭 contextIsolation（使 preload 能同步 patch window.open）
+        // 页面代理通过同步 contextBridge 注入；凭据逻辑保留在隔离上下文。
         const isBrowserWebview = webPreferences.partition === OPENDESK_BROWSER_PARTITION;
         if (isBrowserWebview) {
             webPreferences.preload = path.join(__dirname, '..', 'preload', 'webviewPreload.js');
-            webPreferences.contextIsolation = false;
+            webPreferences.contextIsolation = true;
+            webPreferences.nodeIntegration = false;
+            webPreferences.sandbox = true;
             // 浏览器面板 webview 关闭后台节流：后台任务 offscreen 渲染时，
             // 麒麟系统定制 Chromium 仍会节流定时器/动画，导致页面 JS 误判触发弹窗告警。
             webPreferences.backgroundThrottling = false;
@@ -600,6 +605,8 @@ function installWebviewHostHandlers(hostWindow: BrowserWindow): void {
             installWebviewKeyboardForwarding(hostWindow, webContents, false);
             return;
         }
+
+        installBrowserCredentials(hostWindow, webContents);
 
         // 导航拦截 workaround：guest 的 renderer 自发起跨文档导航会被框架层静默取消，
         // preload 仅注入主 frame；搜索框位于 OOPIF iframe 的站点（如 Bing 搜索框）

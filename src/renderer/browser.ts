@@ -9,6 +9,9 @@
  * See the Mulan PSL v2 for more details.
  */
 
+import { BrowserTools } from './browser/browserTools.js';
+import { recordBrowserVisit } from './browser/browserData.js';
+import { createBrowserToolMenu, type BrowserToolMenuHandle } from './components/browserToolMenu.js';
 import type { WebviewTag } from 'electron';
 import { BrowserInstance } from '../common/embedBrowserUse/renderer';
 import type { BrowserState, TabInfo } from '../common/embedBrowserUse/protocol';
@@ -40,9 +43,9 @@ const fallbackT = createRendererTranslator();
 // 页面加载指示器的延迟显示时间：快速加载的页面不闪烁 loading 遮罩
 const LOADING_OVERLAY_DELAY_MS = 300;
 
-function browserT(key: string): string {
+function browserT(key: string, params?: Record<string, string | number>): string {
     const runtimeTranslator = (window as any).__odT;
-    return typeof runtimeTranslator === 'function' ? runtimeTranslator(key) : fallbackT(key);
+    return typeof runtimeTranslator === 'function' ? runtimeTranslator(key, params) : fallbackT(key, params);
 }
 
 let nextTabId = 1;
@@ -74,6 +77,9 @@ export class EmbeddedBrowser extends BrowserInstance {
     private container: HTMLElement | null = null;
     private urlInput: HTMLInputElement | null = null;
     private tabBarInner: HTMLElement | null = null;
+    private browserTools: BrowserTools | null = null;
+    private _cachedUserAgent = '';
+    private toolMenu: BrowserToolMenuHandle | null = null;
     private webviewContainer: HTMLElement | null = null;
     private _isPreviewMode: boolean = false;
 
@@ -160,6 +166,7 @@ export class EmbeddedBrowser extends BrowserInstance {
             this._removeZoomListener = displayAPI.onScaleFactorChanged((factor: number) => {
                 this._currentZoomFactor = factor;
                 this._applyZoomToAllWebviews(factor);
+                this.toolMenu?.updateZoom();
             });
         }
     }
@@ -411,54 +418,6 @@ export class EmbeddedBrowser extends BrowserInstance {
             .bw-toolbar-right {
                 position: relative; display: flex; align-items: center;
             }
-            .bw-tool-menu {
-                display: none;
-                position: absolute;
-                top: 100%; right: 0;
-                width: 260px;
-                background: white;
-                border: 1px solid #e5e7eb;
-                border-radius: 10px;
-                box-shadow: 0 8px 32px rgba(0,0,0,0.12);
-                z-index: 200;
-                padding: 6px 0;
-                font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-            }
-            .bw-tool-menu.bw-visible { display: block; }
-            .bw-tm-item {
-                display: flex; align-items: center; gap: 10px;
-                padding: 8px 16px;
-                font-size: var(--fs-base); color: #374151;
-                cursor: pointer;
-                transition: background 0.1s;
-            }
-            .bw-tm-item:hover { background: #f3f4f6; }
-            .bw-tm-item i { width: 16px; text-align: center; color: #6b7280; font-size: var(--fs-base); }
-            .bw-tm-label { flex: 1; }
-            .bw-tm-shortcut { color: #9ca3af; font-size: var(--fs-sm); }
-            .bw-tm-divider {
-                height: 1px; background: #f0f0f0; margin: 4px 0;
-            }
-            .bw-tm-zoom-row {
-                display: flex; align-items: center; gap: 6px;
-                padding: 6px 16px;
-                font-size: var(--fs-base); color: #374151;
-            }
-            .bw-tm-zoom-row i { width: 16px; text-align: center; color: #6b7280; font-size: var(--fs-base); }
-            .bw-tm-zoom-label { flex: 1; }
-            .bw-tm-zoom-controls {
-                display: flex; align-items: center; gap: 4px;
-            }
-            .bw-tm-zoom-btn {
-                width: 24px; height: 24px; border-radius: 4px;
-                border: 1px solid #e5e7eb; background: white;
-                cursor: pointer; display: flex; align-items: center; justify-content: center;
-                font-size: var(--fs-sm); color: #6b7280;
-                transition: background 0.1s;
-            }
-            .bw-tm-zoom-btn:hover { background: #f3f4f6; }
-            .bw-tm-zoom-val { font-size: var(--fs-md); min-width: 36px; text-align: center; }
-
             /* ---- Webview area ---- */
             .bw-webview-container {
                 flex: 1; overflow: hidden;
@@ -562,43 +521,6 @@ export class EmbeddedBrowser extends BrowserInstance {
             }
             :host([data-theme="dark"]) .bw-url-input::placeholder {
                 color: #787878 !important;
-            }
-            :host([data-theme="dark"]) .bw-tool-menu {
-                background: #252526 !important;
-                border-color: rgba(255, 255, 255, 0.12) !important;
-                box-shadow: 0 8px 24px rgba(0,0,0,0.5) !important;
-            }
-            :host([data-theme="dark"]) .bw-tm-item {
-                color: #cccccc !important;
-            }
-            :host([data-theme="dark"]) .bw-tm-item:hover {
-                background: #333333 !important;
-            }
-            :host([data-theme="dark"]) .bw-tm-item i {
-                color: #ababab !important;
-            }
-            :host([data-theme="dark"]) .bw-tm-shortcut {
-                color: #777777 !important;
-            }
-            :host([data-theme="dark"]) .bw-tm-divider {
-                background: rgba(255, 255, 255, 0.1) !important;
-            }
-            :host([data-theme="dark"]) .bw-tm-zoom-row {
-                color: #cccccc !important;
-            }
-            :host([data-theme="dark"]) .bw-tm-zoom-row i {
-                color: #ababab !important;
-            }
-            :host([data-theme="dark"]) .bw-tm-zoom-btn {
-                background: #3c3c3c !important;
-                border-color: rgba(255, 255, 255, 0.12) !important;
-                color: #cccccc !important;
-            }
-            :host([data-theme="dark"]) .bw-tm-zoom-btn:hover {
-                background: #4a4a4a !important;
-            }
-            :host([data-theme="dark"]) .bw-tm-zoom-val {
-                color: #cccccc !important;
             }
             :host([data-theme="dark"]) .bw-webview-container {
                 background: #1e1e1e !important;
@@ -791,15 +713,41 @@ export class EmbeddedBrowser extends BrowserInstance {
             this.container?.dispatchEvent(new CustomEvent('browser-exit-preview'));
         });
 
-        menuBtn.addEventListener('click', (e) => {
-            e.stopPropagation();
-            this.toggleToolMenu(toolMenu);
+        this.toolMenu?.destroy();
+        this.browserTools?.destroy();
+        this.browserTools = new BrowserTools({
+            container: this.webviewContainer!,
+            t: browserT,
+            navigateTo: (url) => {
+                void this.navigateTo(url);
+            },
+            addTab: (url) => {
+                this.addTab(url === 'opendesk://homepage/' ? HOME_PAGE : url);
+            },
+            getWebview: () => (this.getActiveTab()?.ready ? this.getActiveTab()!.webview : null),
+            getUserAgent: () => this._cachedUserAgent,
+            setUserAgent: (value) => {
+                this._cachedUserAgent = value;
+            },
+            closeMenu: () => this.toolMenu?.close()
         });
-
-        document.addEventListener('click', (e) => {
-            if (!toolMenu.contains(e.target as Node) && !menuBtn.contains(e.target as Node)) {
-                toolMenu.classList.remove('bw-visible');
-            }
+        void (window as any).applicationRegistryAPI
+            ?.callMainWorld('browser', 'getConfig')
+            .then((config: { userAgent?: string }) => {
+                this._cachedUserAgent = config?.userAgent ?? '';
+            })
+            .catch(() => {});
+        this.toolMenu = createBrowserToolMenu({
+            button: menuBtn,
+            menu: toolMenu,
+            t: browserT,
+            getZoom: () => this._currentZoomFactor,
+            setZoom: (factor) => {
+                this._currentZoomFactor = factor;
+                this._applyZoomToAllWebviews(factor);
+            },
+            onOpen: () => this.browserTools?.closeAllPanels(),
+            onAction: (action) => this.browserTools!.handleAction(action)
         });
 
         this.urlInput.addEventListener('keypress', (e) => {
@@ -811,145 +759,6 @@ export class EmbeddedBrowser extends BrowserInstance {
         this.urlInput.addEventListener('focus', () => {
             this.urlInput?.select();
         });
-    }
-
-    private toggleToolMenu(toolMenu: HTMLElement): void {
-        if (toolMenu.classList.contains('bw-visible')) {
-            toolMenu.classList.remove('bw-visible');
-            return;
-        }
-
-        const zoomPct = Math.round(this._currentZoomFactor * 100);
-
-        toolMenu.innerHTML = `
-            <div class="bw-tm-zoom-row">
-                <i class="fas fa-magnifying-glass-plus"></i>
-                <span class="bw-tm-zoom-label">缩放</span>
-                <div class="bw-tm-zoom-controls">
-                    <button class="bw-tm-zoom-btn" data-action="zoomOut"><i class="fas fa-minus"></i></button>
-                    <span class="bw-tm-zoom-val">${zoomPct}%</span>
-                    <button class="bw-tm-zoom-btn" data-action="zoomIn"><i class="fas fa-plus"></i></button>
-                </div>
-            </div>
-            <div class="bw-tm-divider"></div>
-            <div class="bw-tm-item" data-action="screenshot">
-                <i class="fas fa-camera"></i>
-                <span class="bw-tm-label">截图</span>
-            </div>
-            <div class="bw-tm-item" data-action="print">
-                <i class="fas fa-print"></i>
-                <span class="bw-tm-label">打印…</span>
-                <span class="bw-tm-shortcut">⌘P</span>
-            </div>
-            <div class="bw-tm-divider"></div>
-            <div class="bw-tm-item" data-action="consoleDebug">
-                <i class="fas fa-terminal"></i>
-                <span class="bw-tm-label">开发者工具</span>
-            </div>
-            <div class="bw-tm-item" data-action="snapshotDebug">
-                <i class="fas fa-sitemap"></i>
-                <span class="bw-tm-label">导出快照</span>
-            </div>
-        `;
-
-        toolMenu.querySelectorAll('[data-action]').forEach((el) => {
-            el.addEventListener('click', () => {
-                const action = (el as HTMLElement).dataset.action;
-                // zoom actions keep menu open
-                if (action !== 'zoomIn' && action !== 'zoomOut') {
-                    toolMenu.classList.remove('bw-visible');
-                }
-                void this.handleToolMenuAction(action!);
-            });
-        });
-
-        toolMenu.classList.add('bw-visible');
-    }
-
-    private async handleToolMenuAction(action: string): Promise<void> {
-        switch (action) {
-            case 'zoomIn':
-                this._currentZoomFactor = Math.min(this._currentZoomFactor + 0.1, 3);
-                this._applyZoomToAllWebviews(this._currentZoomFactor);
-                this._updateZoomDisplay();
-                break;
-            case 'zoomOut':
-                this._currentZoomFactor = Math.max(this._currentZoomFactor - 0.1, 0.25);
-                this._applyZoomToAllWebviews(this._currentZoomFactor);
-                this._updateZoomDisplay();
-                break;
-            case 'screenshot':
-                void this.capturePage();
-                break;
-            case 'print':
-                this._printPage();
-                break;
-            case 'consoleDebug':
-                void this.openWebviewDevTools();
-                break;
-            case 'snapshotDebug':
-                void this.captureAndSaveSnapshot();
-                break;
-        }
-    }
-
-    private _updateZoomDisplay(): void {
-        const valEl = this.container?.querySelector('.bw-tm-zoom-val');
-        if (valEl) valEl.textContent = `${Math.round(this._currentZoomFactor * 100)}%`;
-    }
-
-    private _printPage(): void {
-        const tab = this.getActiveTab();
-        if (tab?.ready && tab.webview) {
-            try {
-                (tab.webview as any).print();
-            } catch {
-                /* ignore */
-            }
-        }
-    }
-
-    private async openWebviewDevTools(): Promise<void> {
-        const tab = this.getActiveTab();
-        if (!tab?.ready || !tab.webview) return;
-
-        try {
-            const wcId = (tab.webview as any).getWebContentsId();
-            const browserAPI = (window as any).browserAPI;
-            if (browserAPI && typeof browserAPI.openDevTools === 'function') {
-                await browserAPI.openDevTools(wcId);
-                return;
-            }
-        } catch {
-            /* fallback below */
-        }
-
-        try {
-            (tab.webview as any).openDevTools();
-        } catch {
-            /* not available */
-        }
-    }
-
-    private async captureAndSaveSnapshot(): Promise<void> {
-        const tab = this.getActiveTab();
-        if (!tab?.ready || !tab.webview) return;
-
-        let webContentsId: number;
-        try {
-            webContentsId = (tab.webview as any).getWebContentsId();
-        } catch {
-            return;
-        }
-
-        const browserAPI = (window as any).browserAPI;
-        if (browserAPI && typeof browserAPI.exportSnapshot === 'function') {
-            try {
-                await browserAPI.exportSnapshot(webContentsId);
-            } catch {
-                /* ignore */
-            }
-        }
     }
 
     // ==== Tab management ====
@@ -966,6 +775,7 @@ export class EmbeddedBrowser extends BrowserInstance {
         wv.setAttribute('tabindex', '0');
         wv.setAttribute('allowpopups', '');
         wv.setAttribute('partition', 'persist:opendesk-browser');
+        if (this._cachedUserAgent) wv.setAttribute('useragent', this._cachedUserAgent);
         wv.setAttribute('webpreferences', 'nodeIntegration=no,autofill=yes,backgroundThrottling=no');
         wrapEl.appendChild(wv as unknown as Node);
         this.webviewContainer?.appendChild(wrapEl);
@@ -1063,6 +873,7 @@ export class EmbeddedBrowser extends BrowserInstance {
     }
 
     public switchToTab(tabId: number): void {
+        if (tabId !== this.activeTabId) this.browserTools?.closeAllPanels();
         const tab = this.tabs.find((t) => t.id === tabId);
         if (!tab) return;
 
@@ -1291,6 +1102,7 @@ export class EmbeddedBrowser extends BrowserInstance {
         });
 
         wv.addEventListener('did-finish-load', () => {
+            recordBrowserVisit(tab.url, tab.title);
             if (tab.errorInfo) {
                 tab.errorInfo = undefined;
             }
@@ -1808,6 +1620,10 @@ export class EmbeddedBrowser extends BrowserInstance {
     }
 
     public destroy(): void {
+        this.browserTools?.destroy();
+        this.browserTools = null;
+        this.toolMenu?.destroy();
+        this.toolMenu = null;
         this.container?.removeAttribute('data-od-browser-focus-scope');
         this.container?.removeEventListener('keydown', this._focusTrapKeydown);
         this._disposeViewportScaling();

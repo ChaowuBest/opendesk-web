@@ -969,7 +969,6 @@ html[data-theme='dark'] browser-entry-widget .wb-hp-tile-label {
     color: var(--od-text-muted) !important;
 }
 
-html[data-theme='dark'] browser-entry-widget .wb-tool-menu,
 html[data-theme='dark'] browser-entry-widget .wb-panel-overlay {
     background: var(--od-bg-elevated) !important;
     border-color: var(--od-border-strong) !important;

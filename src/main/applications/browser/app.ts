@@ -11,6 +11,7 @@
 
 import { BaseApplication } from '../base';
 import { t } from './locale/index.js';
+import { clearBrowserCredentials } from './credentials/runtime.js';
 import { BaseTool, BaseToolset } from '../../aikernel/tool';
 import { Skill } from '../../aikernel/skill.js';
 import { z } from 'zod';
@@ -861,6 +862,7 @@ class BrowserApplication extends BaseApplication {
             });
             await ses.clearCache();
             await ses.clearAuthCache();
+            clearBrowserCredentials();
             return { success: true, message: t('message.allDataCleared') };
         } catch (err: any) {
             logger.error(`清除所有数据失败: ${err.message}`);
@@ -954,6 +956,7 @@ class BrowserApplication extends BaseApplication {
             const ses = BrowserManager.browserSession;
             if (!ses) return { success: false, message: t('error.sessionNotInitialized') };
             await ses.clearStorageData({ storages: ['autofill'] });
+            clearBrowserCredentials();
             return { success: true, message: t('message.autofillCleared') };
         } catch (err: any) {
             logger.error(`清除自动填充数据失败: ${err.message}`);

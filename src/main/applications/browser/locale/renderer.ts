@@ -14,7 +14,7 @@
  * index.ts 依赖主进程的 Setting（getLocale），不能被 renderer 打包引用。
  */
 
-import { createTranslator } from '../../../../renderer/locale.js';
+import { createTranslator, createRendererTranslator } from '../../../../renderer/locale.js';
 import { zhCn } from './zh-cn.js';
 import { enUs } from './en-us.js';
 
@@ -31,5 +31,7 @@ export function createTranslatorForBrowser(
               resolved_locale?: string;
           }
 ): (key: string, params?: Record<string, string | number>) => string {
-    return createTranslator(translations, localeSetting);
+    const local = createTranslator(translations, localeSetting);
+    const shared = createRendererTranslator(localeSetting);
+    return (key, params) => (key.startsWith('renderer.browser.') ? shared(key, params) : local(key, params));
 }
