@@ -266,6 +266,31 @@ function resolveCachedElectronZipDir() {
 
 const electronZipDir = process.env.OPENDESK_ELECTRON_ZIP_DIR || resolveCachedElectronZipDir();
 const forgeOutDir = process.env.OPENDESK_FORGE_OUT_DIR;
+const packagedAppVersion = process.env.OPENDESK_PACKAGE_VERSION;
+if (packagedAppVersion && !/^\d+\.\d+\.\d+$/.test(packagedAppVersion)) {
+    throw new Error('OPENDESK_PACKAGE_VERSION must be a three-part version');
+}
+
+function writePackagedAppVersion(buildPath, version) {
+    if (!/^\d+\.\d+\.\d+$/.test(version)) {
+        throw new Error('packaged app version must be a three-part version');
+    }
+    const packagePath = path.join(buildPath, 'package.json');
+    const stagedPackage = JSON.parse(fs.readFileSync(packagePath, 'utf8'));
+    stagedPackage.version = version;
+    fs.writeFileSync(packagePath, `${JSON.stringify(stagedPackage, null, 4)}\n`);
+}
+
+function applyPackagedAppVersion(buildPath, electronVersion, platform, arch, callback) {
+    try {
+        if (packagedAppVersion) {
+            writePackagedAppVersion(buildPath, packagedAppVersion);
+        }
+        callback();
+    } catch (error) {
+        callback(error);
+    }
+}
 
 function preserveWixInstallDirectory(creator) {
     const installPathProperty = / {4}<Property Id="INSTALLPATH">[\s\S]*? {4}<\/Property>/;
@@ -303,7 +328,8 @@ function preserveWixInstallDirectory(creator) {
     <Property Id="CREATE_DESKTOP_SHORTCUT" Secure="yes" Value="1" />
     <Property Id="CREATE_START_MENU_SHORTCUT" Secure="yes" Value="1" />
     <Property Id="INSTALL_PATH_CUSTOMIZED" Secure="yes" Value="1" />
-    <Property Id="OPENDESK_BUNDLE_INSTALL" Secure="yes">
+    <Property Id="OPENDESK_BUNDLE_INSTALL" Secure="yes" />
+    <Property Id="OPENDESK_BUNDLE_INSTALL_PERSISTED" Secure="yes">
       <RegistrySearch Key="${wixInstallPathRegistryKey}"
                       Root="HKLM"
                       Type="raw"
@@ -406,6 +432,14 @@ function preserveWixInstallDirectory(creator) {
                 forceDeleteOnUninstall: 'yes'
             },
             {
+                id: 'RegistryBundleDisplayVersion',
+                root: 'HKLM',
+                key: 'SOFTWARE\\WOW6432Node\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\[OPENDESK_BUNDLE_PROVIDER_KEY]',
+                name: 'DisplayVersion',
+                type: 'string',
+                value: '[OPENDESK_DISPLAY_VERSION]'
+            },
+            {
                 id: 'RegistryInstallPathCustomized',
                 root: 'HKLM',
                 key: wixInstallPathRegistryKey,
@@ -468,12 +502,15 @@ function preserveWixInstallDirectory(creator) {
 module.exports = {
     ...(forgeOutDir ? { outDir: path.resolve(forgeOutDir) } : {}),
     materializeWorkspacePackageLinks,
+    writePackagedAppVersion,
     // 导出仅为测试复用（forge 只读取其认识的键，多余键不影响打包）
     preserveWixInstallDirectory,
     prunePackagedNativeArtifactsHook,
     prunePackagedShellArtifactsHook,
     stageWindowsSandboxResource,
     packagerConfig: {
+        ...(packagedAppVersion ? { appVersion: packagedAppVersion } : {}),
+        ...(electronZipDir ? { electronZipDir: path.resolve(electronZipDir) } : {}),
         platforms: ['win32', 'darwin'],
         arch: ['x64', 'arm64'],
         appBundleId: 'com.intellios.opendesk',
@@ -509,6 +546,7 @@ module.exports = {
         asar: {
             unpack: '**/node_modules/{sharp,@img,sqlite-vec-*}/**/*'
         },
+        beforeAsar: [applyPackagedAppVersion],
         // 排除打包时不需带入的目录/文件。asar 里若混入开发期垃圾（vite 缓存、
         // 文档、日志等），会膨胀体积并显著拖慢 WiX light 的压缩耗时。
         // PACKAGING_IGNORE_PATTERNS：CLI 构建产物、TS 源码、workspace SDK 嵌套

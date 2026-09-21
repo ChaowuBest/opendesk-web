@@ -202,6 +202,48 @@ html.window-fullscreen .od-shadow-resize-handle {
     display: none;
 }
 
+.drag-overlay .update-ready-btn {
+    --update-ready-accent: #c24135;
+    min-width: 68px;
+    height: 32px;
+    padding: 0 11px;
+    gap: 6px;
+    color: var(--update-ready-accent);
+    background: color-mix(in srgb, var(--update-ready-accent) 9%, transparent);
+    font-size: 13px;
+    font-weight: 600;
+    transition:
+        color 0.15s ease,
+        background 0.15s ease;
+}
+
+.drag-overlay .update-ready-btn:hover {
+    color: var(--update-ready-accent);
+    background: color-mix(in srgb, var(--update-ready-accent) 16%, transparent);
+}
+
+.drag-overlay .update-ready-btn:focus-visible {
+    box-shadow: inset 0 0 0 2px color-mix(in srgb, var(--update-ready-accent) 48%, transparent);
+}
+
+html[data-theme='dark'] .drag-overlay .update-ready-btn {
+    --update-ready-accent: #f08479;
+    background: color-mix(in srgb, var(--update-ready-accent) 12%, transparent);
+}
+
+html[data-theme='dark'] .drag-overlay .update-ready-btn:hover {
+    background: color-mix(in srgb, var(--update-ready-accent) 20%, transparent);
+}
+
+.drag-overlay .update-ready-btn i {
+    color: currentColor;
+    font-size: 14px;
+}
+
+.drag-overlay .update-ready-btn[hidden] {
+    display: none;
+}
+
 .markdown-body {
     font-family: var(--font-sans);
 }

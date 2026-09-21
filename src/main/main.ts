@@ -167,6 +167,7 @@ import {
     setMainWindowHidden,
     setMainWindowFocused
 } from './windows/task-status-widget-window.js';
+import { registerElectronUpdateService } from './updater/electron-service.js';
 
 let telemetryModulePromise: Promise<typeof import('./telemetry/index.js')> | undefined;
 function loadTelemetryModule(): Promise<typeof import('./telemetry/index.js')> {
@@ -3490,6 +3491,17 @@ async function startApplication(): Promise<void> {
         // BrowserWindow 已开始加载；同步恢复任务状态时 renderer 进程可以并行解析页面。
         GlobalState.initialize();
         registerTaskManagerAPIHandlers();
+        registerElectronUpdateService({
+            getMainWindow: () => globalMainWindow,
+            prepareWindowsForQuit: requestCloseOpenDeskOfficeContents,
+            quitForRestart: () => {
+                officeQuitApproved = true;
+                isAppQuitting = true;
+                app.quit();
+            },
+            logInfo: (message) => logger.info(message),
+            logError: (message) => logger.error(message)
+        });
         initTaskStatusWidget({
             getPreloadPath: getRendererPreloadPath,
             getMainWindow: () => globalMainWindow,

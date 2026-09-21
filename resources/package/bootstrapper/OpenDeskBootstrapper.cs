@@ -29,7 +29,11 @@ namespace OpenDesk.Installer
     public sealed class OpenDeskBootstrapperApplication : BootstrapperApplication
     {
         private const string PackageId = "OpenDeskMsi";
+        private const string PlatformPackageId = "OpenDeskPlatform";
+        private const string CleanupPrototypeInstallationsPackageId = "CleanupPrototypeInstallations";
         private const string CleanupRelatedBundlesPackageId = "CleanupRelatedBundles";
+        private const string LegacyMsiUpgradeCode = "{017F8634-A16C-4194-8C94-D9A3F1319D13}";
+        private const uint ErrorSuccess = 0;
         private const int ErrorFailNoActionReboot = unchecked((int)0x8007015E);
         private InstallerForm form;
         private PackageState packageState = PackageState.Unknown;
@@ -42,6 +46,13 @@ namespace OpenDesk.Installer
         private int exitCode;
         private string lastError;
         private string activeInstallFolder;
+        private System.Threading.ManualResetEvent headlessCompletion;
+        private readonly HashSet<string> sameVersionRelatedBundleIds = new HashSet<string>(
+            StringComparer.OrdinalIgnoreCase
+        );
+        private readonly Dictionary<string, PackageState> detectedPackageStates = new Dictionary<string, PackageState>(
+            StringComparer.OrdinalIgnoreCase
+        );
 
         public OpenDeskBootstrapperApplication()
         {
@@ -50,6 +61,7 @@ namespace OpenDesk.Installer
             DetectRelatedMsiPackage += OnDetectRelatedMsiPackage;
             DetectPackageComplete += OnDetectPackageComplete;
             DetectComplete += OnDetectComplete;
+            PlanPackageBegin += OnPlanPackageBegin;
             PlanComplete += OnPlanComplete;
             CacheAcquireBegin += delegate
             {
@@ -94,22 +106,41 @@ namespace OpenDesk.Installer
 
         protected override void Run()
         {
+            if (RunsWithoutUserInteraction)
+            {
+                RunHeadless();
+                return;
+            }
+
             Application.EnableVisualStyles();
             Application.SetCompatibleTextRenderingDefault(false);
 
             form = new InstallerForm(this, new Localizer(GetPayloadPath("zh-cn.wxl")));
             form.Shown += delegate
             {
-                if (RunsWithoutUserInteraction)
-                {
-                    form.Opacity = 0;
-                    form.ShowInTaskbar = false;
-                }
-
                 Engine.Detect(form.Handle);
             };
             Application.Run(form);
             Engine.Quit(exitCode);
+        }
+
+        private void RunHeadless()
+        {
+            headlessCompletion = new System.Threading.ManualResetEvent(false);
+            Engine.Detect(IntPtr.Zero);
+            headlessCompletion.WaitOne();
+            headlessCompletion.Close();
+            headlessCompletion = null;
+            Engine.Quit(exitCode);
+        }
+
+        private void CompleteHeadless()
+        {
+            System.Threading.ManualResetEvent completion = headlessCompletion;
+            if (completion != null)
+            {
+                completion.Set();
+            }
         }
 
         /// <summary>
@@ -140,8 +171,34 @@ namespace OpenDesk.Installer
                 return activeInstallFolder;
             }
 
+            // InstallRoot 已经是平台 MSI 实际使用的完整安装根，而不是供首次安装页
+            // 追加产品目录的父目录。新架构版本间升级时必须原样复用，否则用户把
+            // 0.3.6 安装到 D:\OpenDesk-Test 后，0.3.7 会错误显示为
+            // D:\OpenDesk-Test\opendesk。旧版 MSI 迁移仍由检测回调恢复路径。
+            string savedPrototypeInstallRoot = GetSavedPrototypeInstallRoot();
+            if (!string.IsNullOrWhiteSpace(savedPrototypeInstallRoot))
+            {
+                return InstallerPath.Normalize(savedPrototypeInstallRoot);
+            }
+
             string folder = Engine.FormatString(Engine.StringVariables["InstallFolder"]);
             return InstallerPath.ResolveInitialDirectory(folder, GetSavedInstallPathCustomized());
+        }
+
+        private static string GetSavedPrototypeInstallRoot()
+        {
+            try
+            {
+                using (RegistryKey root = RegistryKey.OpenBaseKey(RegistryHive.LocalMachine, RegistryView.Registry64))
+                using (RegistryKey key = root.OpenSubKey("SOFTWARE\\OpenDesk\\SilentUpdatePrototype"))
+                {
+                    return key == null ? null : key.GetValue("InstallRoot") as string;
+                }
+            }
+            catch
+            {
+                return null;
+            }
         }
 
         public bool GetSavedPreference(string name)
@@ -272,15 +329,29 @@ namespace OpenDesk.Installer
 
         private void StartAction(LaunchAction action)
         {
+#if !SILENT_UPDATE_PROTOTYPE
             if (!EnsureOpenDeskIsNotRunning())
             {
                 return;
             }
+#else
+            if (
+                ((action == LaunchAction.Uninstall && Command.Relation == RelationType.None) ||
+                    IsManualInteractiveInstall(action)) &&
+                !EnsureOpenDeskIsNotRunning()
+            )
+            {
+                return;
+            }
+#endif
 
             activeAction = action;
             cancelRequested = false;
             lastError = null;
-            form.ShowProgress(action);
+            if (form != null)
+            {
+                form.ShowProgress(action);
+            }
             // 清掉引擎无法接管的历史孤儿注册键（缓存丢失的 bundle、0.3.3 遗留的 *.msq、
             // 直接双击旧版 MSI 留下的可见展示键）。修复与升级一样要把应用列表清到只剩
             // 当前实例，能正常卸载的历史 bundle 由 OnPlanRelatedBundle 计划 Absent 交给引擎。
@@ -296,6 +367,13 @@ namespace OpenDesk.Installer
                 IgnorePackageDependencies();
             }
             Engine.Plan(action);
+        }
+
+        private bool IsManualInteractiveInstall(LaunchAction action)
+        {
+            return action == LaunchAction.Install &&
+                Command.Display == Display.Full &&
+                Command.Relation == RelationType.None;
         }
 
         /// <summary>
@@ -328,7 +406,7 @@ namespace OpenDesk.Installer
                 if (RunsWithoutUserInteraction || Command.Display != Display.Full)
                 {
                     exitCode = unchecked((int)0x80070643);
-                    form.Close();
+                    form.CloseFromEngine();
                     return false;
                 }
 
@@ -394,9 +472,101 @@ namespace OpenDesk.Installer
 
         private void OnDetectPackageComplete(object sender, DetectPackageCompleteEventArgs e)
         {
+            detectedPackageStates[e.PackageId] = e.State;
             if (e.PackageId == PackageId)
             {
                 packageState = e.State;
+            }
+        }
+
+        private void OnPlanPackageBegin(object sender, PlanPackageBeginEventArgs e)
+        {
+#if SILENT_UPDATE_PROTOTYPE
+            if (
+                e.PackageId == CleanupPrototypeInstallationsPackageId &&
+                Command.Relation != RelationType.None
+            )
+            {
+                // related bundle 只应释放自己的依赖和登记，绝不能运行“完整卸载”收尾代理。
+                // 该代理会正式卸载机器上的全部原型 MSI，只允许用户直接卸载当前 bundle 时执行。
+                e.State = RequestState.None;
+                return;
+            }
+
+            if (
+                e.PackageId == CleanupRelatedBundlesPackageId &&
+                !IsManualInteractiveInstall(activeAction)
+            )
+            {
+                // 0.3.5 及更早的旧架构 Bundle 只在用户主动运行 Setup 时迁移。
+                // 更新服务的静默安装不能在旧版仍运行时启动旧卸载器。
+                e.State = RequestState.None;
+                return;
+            }
+
+            if (activeAction != LaunchAction.Install && activeAction != LaunchAction.Repair)
+            {
+                return;
+            }
+
+            bool cleanupOldVersions = CleanupOldVersions();
+            if (e.PackageId != PlatformPackageId && e.PackageId != PackageId)
+            {
+                return;
+            }
+
+            PackageState state;
+            if (detectedPackageStates.TryGetValue(e.PackageId, out state) && state == PackageState.Present)
+            {
+                if (cleanupOldVersions)
+                {
+                    // CleanupOldVersions=1 是“只卸载旧版本”的维护动作。Burn 的 /repair
+                    // 默认会修复链中所有 Present 包，运行中的当前版本会因此被 MSI 先删后铺，
+                    // 产生 3010 和延迟到重启的文件替换；显式保持其余包不执行。
+                    e.State = RequestState.Present;
+                    return;
+                }
+
+                if (activeAction == LaunchAction.Install && e.PackageId == PlatformPackageId)
+                {
+                    // 普通升级只修复很小的稳定平台包，以提交新的 ActiveVersion。
+                    // 已接管的旧版本 MSI 必须保持 Present，保证运行中的版本目录完全不动。
+                    e.State = RequestState.Repair;
+                    return;
+                }
+
+                if (activeAction == LaunchAction.Repair && !cleanupOldVersions)
+                {
+                    // 用户明确选择完整修复时才重新执行已安装的平台和版本 MSI。
+                    e.State = RequestState.Repair;
+                }
+            }
+#endif
+        }
+
+        private bool CleanupOldVersions()
+        {
+            // Burn 3 会把自定义参数保留在子进程命令行中，但在当前托管 BA 组合下并未
+            // 将 bal:Overridable 的 numeric 变量写回 Engine.NumericVariables。直接识别
+            // 原始参数，避免默认的 Repair 计划覆盖旧版本包的 Absent 计划。
+            foreach (string argument in Environment.GetCommandLineArgs())
+            {
+                if (
+                    string.Equals(argument, "CleanupOldVersions=1", StringComparison.OrdinalIgnoreCase) ||
+                    string.Equals(argument, "/cleanup-old-versions", StringComparison.OrdinalIgnoreCase)
+                )
+                {
+                    return true;
+                }
+            }
+
+            try
+            {
+                return Engine.NumericVariables["CleanupOldVersions"] != 0;
+            }
+            catch
+            {
+                return false;
             }
         }
 
@@ -414,6 +584,21 @@ namespace OpenDesk.Installer
                 relatedBundleVersions[bundleId] = e.Version;
             }
         }
+
+        private static string FindLegacyMsiProductCode()
+        {
+            StringBuilder productCode = new StringBuilder(39);
+            uint result = MsiEnumRelatedProducts(LegacyMsiUpgradeCode, 0, 0, productCode);
+            return result == ErrorSuccess ? productCode.ToString() : null;
+        }
+
+        [DllImport("msi.dll", CharSet = CharSet.Unicode)]
+        private static extern uint MsiEnumRelatedProducts(
+            string upgradeCode,
+            uint reserved,
+            uint productIndex,
+            StringBuilder productCode
+        );
 
         /// <summary>
         /// 让 Burn 引擎在本次安装/修复/卸载中卸载所有检测到的历史 bundle。
@@ -456,9 +641,20 @@ namespace OpenDesk.Installer
             }
 
             string cachePath = FindBundleCachePath(e.BundleId);
-            e.State = string.IsNullOrWhiteSpace(cachePath) || !File.Exists(cachePath)
-                ? RequestState.None
-                : RequestState.Absent;
+            if (string.IsNullOrWhiteSpace(cachePath) || !File.Exists(cachePath))
+            {
+                e.State = RequestState.None;
+                return;
+            }
+
+            // 应用内后台更新必须保留正在运行的旧 Bundle/MSI，等新版健康上报后再由更新服务
+            // 使用 CleanupOldVersions=1 清理。用户直接运行新版 Setup 时，安装器会先要求关闭
+            // 旧版进程，因此可以在同一 Burn 事务中立即卸载旧 Bundle 和旧版本 MSI。
+            e.State = activeAction == LaunchAction.Uninstall ||
+                CleanupOldVersions() ||
+                IsManualInteractiveInstall(activeAction)
+                ? RequestState.Absent
+                : RequestState.None;
         }
 
         /// <summary>
@@ -558,6 +754,36 @@ namespace OpenDesk.Installer
             {
                 return string.Empty;
             }
+        }
+
+        private bool IsCurrentBundleRegistered()
+        {
+            string bundleId = GetCurrentBundleId();
+            if (string.IsNullOrWhiteSpace(bundleId))
+            {
+                return false;
+            }
+
+            string keyPath = @"SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\" + bundleId;
+            RegistryView[] views = { RegistryView.Registry32, RegistryView.Registry64 };
+            foreach (RegistryView view in views)
+            {
+                try
+                {
+                    using (RegistryKey root = RegistryKey.OpenBaseKey(RegistryHive.LocalMachine, view))
+                    using (RegistryKey key = root.OpenSubKey(keyPath))
+                    {
+                        if (key != null && Convert.ToInt32(key.GetValue("Installed", 0)) != 0)
+                        {
+                            return true;
+                        }
+                    }
+                }
+                catch
+                {
+                }
+            }
+            return false;
         }
 
         private static string FindBundleCachePath(string bundleId)
@@ -764,13 +990,14 @@ namespace OpenDesk.Installer
             if (e.Status < 0)
             {
                 exitCode = e.Status;
+                if (RunsWithoutUserInteraction)
+                {
+                    CompleteHeadless();
+                    return;
+                }
                 Post(delegate
                 {
-                    if (RunsWithoutUserInteraction)
-                    {
-                        form.Close();
-                    }
-                    else if (e.Status == ErrorFailNoActionReboot)
+                    if (e.Status == ErrorFailNoActionReboot)
                     {
                         form.ShowRestartRequired(false);
                         form.Reveal();
@@ -784,18 +1011,45 @@ namespace OpenDesk.Installer
                 return;
             }
 
+#if SILENT_UPDATE_PROTOTYPE
+            string legacyProductCode = FindLegacyMsiProductCode();
+            if (Command.Relation == RelationType.None && !string.IsNullOrWhiteSpace(legacyProductCode))
+            {
+                // 0.3.3 直接以 MSI 发布，没有 Bundle，因此不会触发 DetectRelatedBundle。
+                // 0.3.4/0.3.5 的应用 MSI 也属于这组旧家族。除了让欢迎页进入
+                // “更新 OpenDesk”，还要读取旧 MSI 的 *.msq\InstallPath，让新版默认
+                // 安装到原目录（例如 0.3.3 的 Program Files (x86)\OpenDesk）。
+                relatedMsiUpgradeDetected = true;
+                RestoreRelatedMsiInstallFolder(legacyProductCode);
+            }
+#endif
+
+            if (RunsWithoutUserInteraction)
+            {
+                LaunchAction action = Command.Action == LaunchAction.Unknown ? LaunchAction.Install : Command.Action;
+                StartAction(action);
+                return;
+            }
+
             Post(delegate
             {
                 bool maintenanceRequested =
                     Command.Action == LaunchAction.Uninstall ||
                     Command.Action == LaunchAction.Repair ||
                     Command.Action == LaunchAction.Modify;
+                bool installed = packageState == PackageState.Present;
+#if SILENT_UPDATE_PROTOTYPE
+                // 原型包的 MSI 故意保留以实现多版本目录共存，不能用 MSI 的 Present
+                // 状态判断当前 Setup 是否已安装。Bundle 卸载后 MSI 仍在，但再次打开
+                // Setup 必须回到安装页，因此只检查当前 Bundle 自身的 ARP 注册项。
+                installed = IsCurrentBundleRegistered();
+#endif
                 form.ShowDetected(
-                    packageState == PackageState.Present || maintenanceRequested,
+                    installed || maintenanceRequested,
                     relatedMsiUpgradeDetected,
                     !RunsWithoutUserInteraction
                 );
-                if (RunsWithoutUserInteraction || Command.Display != Display.Full)
+                if (Command.Display != Display.Full)
                 {
                     LaunchAction action = Command.Action == LaunchAction.Unknown ? LaunchAction.Install : Command.Action;
                     StartAction(action);
@@ -808,13 +1062,14 @@ namespace OpenDesk.Installer
             if (e.Status < 0)
             {
                 exitCode = e.Status;
+                if (RunsWithoutUserInteraction)
+                {
+                    CompleteHeadless();
+                    return;
+                }
                 Post(delegate
                 {
-                    if (RunsWithoutUserInteraction)
-                    {
-                        form.Close();
-                    }
-                    else if (e.Status == ErrorFailNoActionReboot)
+                    if (e.Status == ErrorFailNoActionReboot)
                     {
                         form.ShowRestartRequired(false);
                     }
@@ -823,6 +1078,12 @@ namespace OpenDesk.Installer
                         form.ShowFailure(e.Status, lastError);
                     }
                 });
+                return;
+            }
+
+            if (RunsWithoutUserInteraction)
+            {
+                Engine.Apply(IntPtr.Zero);
                 return;
             }
 
@@ -897,13 +1158,14 @@ namespace OpenDesk.Installer
         private void OnApplyComplete(object sender, ApplyCompleteEventArgs e)
         {
             exitCode = e.Status;
+            if (RunsWithoutUserInteraction)
+            {
+                CompleteHeadless();
+                return;
+            }
             Post(delegate
             {
-                if (RunsWithoutUserInteraction)
-                {
-                    form.Close();
-                }
-                else if (e.Status == ErrorFailNoActionReboot)
+                if (e.Status == ErrorFailNoActionReboot)
                 {
                     form.ShowRestartRequired(false);
                 }
@@ -915,7 +1177,14 @@ namespace OpenDesk.Installer
                 else if (e.Status >= 0)
                 {
                     form.UpdateProgress(100);
-                    form.ShowSuccess(activeAction);
+                    if (Command.Display == Display.Passive)
+                    {
+                        form.CloseFromEngine();
+                    }
+                    else
+                    {
+                        form.ShowSuccess(activeAction);
+                    }
                 }
                 else
                 {
@@ -985,6 +1254,7 @@ namespace OpenDesk.Installer
         private bool upgradeDetected;
         private LaunchAction progressAction = LaunchAction.Unknown;
         private bool busy;
+        private bool closingFromEngine;
         // UAC 提权前后把窗口拉回可见状态的看护定时器（见 KeepVisibleThroughElevation）。
         private Timer elevationVisibilityTimer;
         private const int ElevationVisibilityPollInterval = 200;
@@ -1337,6 +1607,12 @@ namespace OpenDesk.Installer
             {
                 SetProgressStatus("ProgressFinishing", "ProgressRepairFinishing", "ProgressUninstallFinishing");
             }
+        }
+
+        public void CloseFromEngine()
+        {
+            closingFromEngine = true;
+            Close();
         }
 
         public void ShowSuccess(LaunchAction action)
@@ -1748,11 +2024,11 @@ namespace OpenDesk.Installer
         {
             StopElevationVisibilityWatch();
 
-            if (application.RunsWithoutUserInteraction)
+            if (closingFromEngine || application.RunsWithoutUserInteraction)
             {
-                // 静默模式/被父 bundle 调起：apply 完成后这里直接放行关闭。
+                // 引擎完成后主动关闭、静默模式或被父 bundle 调起：这里直接放行关闭。
                 // 若还走 busy 守卫，会 e.Cancel + 弹确认框——在 /quiet 下窗体是隐藏的，
-                // 这个 MessageBox 永远没人点，进程不退出，卸载就"卡住"。
+                // 这个 MessageBox 永远没人点，进程不退出，更新就会一直停在 100%。
                 return;
             }
 

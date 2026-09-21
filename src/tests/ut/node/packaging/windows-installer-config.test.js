@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 import { createRequire } from 'node:module';
 import { fileURLToPath } from 'node:url';
@@ -39,6 +40,17 @@ test('excludes top-level build output directories from packaged application file
     assert.ok(ignorePatterns.some((pattern) => pattern.test('/package-lock.json')));
 });
 
+test('does not package the legacy RunAs update helper', () => {
+    const extraResources = forgeConfig.packagerConfig.extraResource;
+
+    assert.ok(Array.isArray(extraResources));
+    assert.equal(
+        extraResources.some((entry) => /update-helper\.ps1$/i.test(entry)),
+        false
+    );
+    assert.equal(fs.existsSync(path.join(projectRoot, 'resources', 'update-helper.ps1')), false);
+});
+
 test('afterPrune workspace-link hook always invokes its callback so packaging does not hang', () => {
     const hook = forgeConfig.materializeWorkspacePackageLinks;
     assert.equal(typeof hook, 'function');
@@ -60,6 +72,24 @@ test('afterPrune workspace-link hook always invokes its callback so packaging do
             resolve();
         });
     });
+});
+
+test('packaged version override updates the staged package before ASAR integrity is generated', () => {
+    const stagingDirectory = fs.mkdtempSync(path.join(os.tmpdir(), 'opendesk-package-version-'));
+    try {
+        fs.writeFileSync(
+            path.join(stagingDirectory, 'package.json'),
+            JSON.stringify({ name: 'opendesk', version: '0.3.7' })
+        );
+
+        forgeConfig.writePackagedAppVersion(stagingDirectory, '0.3.6');
+
+        const stagedPackage = JSON.parse(fs.readFileSync(path.join(stagingDirectory, 'package.json'), 'utf8'));
+        assert.equal(stagedPackage.version, '0.3.6');
+        assert.throws(() => forgeConfig.writePackagedAppVersion(stagingDirectory, '0.3.6.1'), /three-part version/);
+    } finally {
+        fs.rmSync(stagingDirectory, { recursive: true, force: true });
+    }
 });
 
 test('keeps the MSI upgrade identity while enabling the branded Chinese x64 installer', async () => {
@@ -180,9 +210,10 @@ test('keeps versioned application directories without recursively purging the se
     assert.match(creator.wixTemplate, /<Property Id="CREATE_DESKTOP_SHORTCUT"[^>]+Value="1"/);
     assert.match(creator.wixTemplate, /<Property Id="CREATE_START_MENU_SHORTCUT"[^>]+Value="1"/);
     assert.match(creator.wixTemplate, /<Property Id="INSTALL_PATH_CUSTOMIZED"[^>]+Value="1"/);
+    assert.match(creator.wixTemplate, /<Property Id="OPENDESK_BUNDLE_INSTALL" Secure="yes"\s*\/>/);
     assert.match(
         creator.wixTemplate,
-        /<Property Id="OPENDESK_BUNDLE_INSTALL" Secure="yes">[\s\S]*?RegistrySearch[\s\S]*?Type="raw"[\s\S]*?Name="BundleInstall"[\s\S]*?<\/Property>/
+        /<Property Id="OPENDESK_BUNDLE_INSTALL_PERSISTED" Secure="yes">[\s\S]*?RegistrySearch[\s\S]*?Type="raw"[\s\S]*?Name="BundleInstall"[\s\S]*?<\/Property>/
     );
     assert.match(
         creator.wixTemplate,
@@ -210,7 +241,7 @@ test('keeps versioned application directories without recursively purging the se
     assert.match(creator.wixTemplate, /<Property Id="MSIINSTALLPERUSER" Secure="yes" Value="0"\s*\/>/);
     assert.match(
         creator.wixTemplate,
-        /<Media Id="1" Cabinet="product\.cab" EmbedCab="yes" CompressionLevel="low"\s*\/>/
+        /<Media Id="1" Cabinet="product\.cab" EmbedCab="yes" CompressionLevel="high"\s*\/>/
     );
     assert.deepEqual(await creator.getSpecialFiles(), [
         { name: 'opendesk.exe', path: 'temporary-launcher.exe' },
@@ -248,6 +279,14 @@ test('keeps versioned application directories without recursively purging the se
             type: 'string',
             value: '1',
             forceDeleteOnUninstall: 'yes'
+        },
+        {
+            id: 'RegistryBundleDisplayVersion',
+            root: 'HKLM',
+            key: 'SOFTWARE\\WOW6432Node\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\[OPENDESK_BUNDLE_PROVIDER_KEY]',
+            name: 'DisplayVersion',
+            type: 'string',
+            value: '[OPENDESK_DISPLAY_VERSION]'
         },
         {
             id: 'RegistryInstallPathCustomized',
@@ -352,6 +391,10 @@ test('builds a custom bootstrapper that passes location and shortcut choices to 
     const bootstrapper = fs.readFileSync(path.join(bootstrapperResources, 'OpenDeskBootstrapper.cs'), 'utf8');
     const localization = fs.readFileSync(path.join(bootstrapperResources, 'zh-cn.wxl'), 'utf8');
     const buildScript = fs.readFileSync(path.join(projectRoot, 'scripts', 'build-wix-bootstrapper.mjs'), 'utf8');
+    const installerBuilder = fs.readFileSync(
+        path.join(projectRoot, 'scripts', 'windows-installer', 'build-installer.mjs'),
+        'utf8'
+    );
     const packageJson = JSON.parse(fs.readFileSync(path.join(projectRoot, 'package.json'), 'utf8'));
 
     assert.match(
@@ -363,7 +406,7 @@ test('builds a custom bootstrapper that passes location and shortcut choices to 
         /<MsiPackage Id="DokanMsi"[\s\S]*?SourceFile="\$\(var\.DokanMsiPath\)"[\s\S]*?InstallCondition="NOT DokanVersion/
     );
     assert.match(bundle, /<MsiPackage Id="DokanMsi"[\s\S]*?Permanent="yes"/);
-    assert.match(buildScript, /DokanMsiPath/);
+    assert.match(installerBuilder, /dokanMsiPath/);
 
     assert.match(bundle, /BootstrapperApplicationRef Id="ManagedBootstrapperApplicationHost"/);
     // WiX v3 无 Bundle/@PerMachine（v4+ 语法）；per-machine 通过 MsiPackage/@ForcePerMachine 声明
@@ -378,6 +421,9 @@ test('builds a custom bootstrapper that passes location and shortcut choices to 
     assert.match(bundle, /<MsiProperty Name="CREATE_START_MENU_SHORTCUT" Value="\[CreateStartMenuShortcut\]"\s*\/>/);
     assert.match(bundle, /<MsiProperty Name="INSTALL_PATH_CUSTOMIZED" Value="\[InstallPathCustomized\]"\s*\/>/);
     assert.match(bundle, /<MsiProperty Name="OPENDESK_BUNDLE_INSTALL" Value="1"\s*\/>/);
+    assert.match(bundle, /<MsiProperty Name="OPENDESK_BUNDLE_PROVIDER_KEY" Value="\[WixBundleProviderKey\]"\s*\/>/);
+    assert.match(bundle, /<MsiProperty Name="OPENDESK_DISPLAY_VERSION" Value="\[OpenDeskDisplayVersion\]"\s*\/>/);
+    assert.match(bundle, /<MsiProperty Name="ARPSYSTEMCOMPONENT" Value="1"\s*\/>/);
     assert.match(bootstrapper, /CreateDesktopShortcutCheckBox/);
     assert.match(bootstrapper, /CreateStartMenuShortcutCheckBox/);
     assert.match(bootstrapper, /Engine\.FormatString\(Engine\.StringVariables\["InstallFolder"\]\)/);
@@ -395,12 +441,12 @@ test('builds a custom bootstrapper that passes location and shortcut choices to 
     assert.match(bootstrapper, /AppendDefaultDirectory[\s\S]*?Path\.Combine\(normalized, "opendesk"\)/);
     assert.match(bootstrapper, /DetectRelatedMsiPackage \+= OnDetectRelatedMsiPackage/);
     assert.match(bootstrapper, /DetectRelatedBundle \+= OnDetectRelatedBundle/);
-    // 历史 bundle 统一交给 Burn 引擎卸载：Plan 阶段把 related bundle 改写为 Absent。
-    // 引擎默认只卸载版本更低的（RelationType=Upgrade），同版本重装默认 None 会留下重复条目。
+    // 手动安装、修复、卸载时由 Burn 正式清理历史 bundle；后台静默升级先保留旧版，
+    // 等新版健康上报后再由更新服务发起 CleanupOldVersions 维护动作。
     assert.match(bootstrapper, /PlanRelatedBundle \+= OnPlanRelatedBundle/);
     assert.match(
         bootstrapper,
-        /OnPlanRelatedBundle\(object sender, PlanRelatedBundleEventArgs e\)[\s\S]*?activeAction != LaunchAction\.Install[\s\S]*?FindBundleCachePath\(e\.BundleId\)[\s\S]*?RequestState\.None\s*:\s*RequestState\.Absent/
+        /OnPlanRelatedBundle\(object sender, PlanRelatedBundleEventArgs e\)[\s\S]*?activeAction != LaunchAction\.Install[\s\S]*?activeAction != LaunchAction\.Repair[\s\S]*?activeAction != LaunchAction\.Uninstall[\s\S]*?FindBundleCachePath\(e\.BundleId\)[\s\S]*?RequestState\.None[\s\S]*?CleanupOldVersions\(\)[\s\S]*?IsManualInteractiveInstall\(activeAction\)[\s\S]*?RequestState\.Absent[\s\S]*?RequestState\.None/
     );
     assert.match(
         bootstrapper,
@@ -446,7 +492,7 @@ test('builds a custom bootstrapper that passes location and shortcut choices to 
     assert.match(bundle, /<ExePackage Id="CleanupRelatedBundles"/);
     assert.match(bundle, /InstallCommand="\[WixBundleVersion\] \[WixBundleProviderKey\]"/);
     const cleanup = fs.readFileSync(path.join(bootstrapperResources, 'CleanupRelatedBundles.cs'), 'utf8');
-    assert.match(cleanup, /args\.Length < 2/);
+    assert.match(cleanup, /args\.Length < 1/);
     assert.match(cleanup, /CleanupOldBundles\(currentVersion, currentBundleId\)/);
     assert.match(
         cleanup,
@@ -470,11 +516,11 @@ test('builds a custom bootstrapper that passes location and shortcut choices to 
         bootstrapper,
         /OnPlanRelatedBundle\(object sender, PlanRelatedBundleEventArgs e\)[\s\S]*?activeAction != LaunchAction\.Install\s*&&\s*activeAction != LaunchAction\.Repair\s*&&\s*activeAction != LaunchAction\.Uninstall/
     );
-    // 静默模式/被父 bundle 调起时，apply 完成后必须能真正关闭窗体退出；
+    // 引擎完成、静默模式/被父 bundle 调起时，apply 完成后必须能真正关闭窗体退出；
     // 若走 busy 守卫会弹隐藏的确认框，/quiet 下永远没人点，进程不退出
     assert.match(
         bootstrapper,
-        /OnFormClosing[\s\S]*?if \(application\.RunsWithoutUserInteraction\)\s*\{[\s\S]*?return;[\s\S]*?\}/
+        /OnFormClosing[\s\S]*?if \(closingFromEngine \|\| application\.RunsWithoutUserInteraction\)\s*\{[\s\S]*?return;[\s\S]*?\}/
     );
     // BA 进程未提权（Burn 只提升 Apply 阶段的独立进程），清理必须"先只读枚举、有目标才申请写权限"，
     // 否则首次安装（无残留）就会因以写权限打开 HKLM 抛 SecurityException 而崩溃
@@ -544,11 +590,11 @@ test('builds a custom bootstrapper that passes location and shortcut choices to 
     );
     assert.match(
         bootstrapper,
-        /OnDetectComplete[\s\S]*?ShowDetected\([\s\S]*?packageState == PackageState\.Present[\s\S]*?relatedMsiUpgradeDetected/
+        /OnDetectComplete[\s\S]*?bool installed = packageState == PackageState\.Present[\s\S]*?ShowDetected\([\s\S]*?installed[\s\S]*?relatedMsiUpgradeDetected/
     );
     assert.match(
         bootstrapper,
-        /OnDetectComplete[\s\S]*?maintenanceRequested[\s\S]*?LaunchAction\.Uninstall[\s\S]*?LaunchAction\.Repair[\s\S]*?packageState == PackageState\.Present \|\| maintenanceRequested/
+        /OnDetectComplete[\s\S]*?maintenanceRequested[\s\S]*?LaunchAction\.Uninstall[\s\S]*?LaunchAction\.Repair[\s\S]*?installed \|\| maintenanceRequested/
     );
     assert.match(
         bootstrapper,
@@ -577,6 +623,32 @@ test('builds a custom bootstrapper that passes location and shortcut choices to 
     assert.match(bootstrapper, /OnApplyComplete[\s\S]*?e\.Restart != ApplyRestart\.None[\s\S]*?ShowRestartRequired/);
     assert.match(bootstrapper, /OnDetectComplete[\s\S]*?ErrorFailNoActionReboot[\s\S]*?ShowRestartRequired/);
     assert.match(bootstrapper, /ErrorFailNoActionReboot[\s\S]*?ShowRestartRequired/);
+    assert.match(
+        bootstrapper,
+        /RunsWithoutUserInteraction[\s\S]*?Display\.None[\s\S]*?Display\.Embedded[\s\S]*?RelationType\.None/
+    );
+    assert.match(
+        bootstrapper,
+        /Run\(\)[\s\S]*?if \(RunsWithoutUserInteraction\)[\s\S]*?RunHeadless\(\);[\s\S]*?Application\.EnableVisualStyles\(\)/
+    );
+    assert.match(
+        bootstrapper,
+        /RunHeadless\(\)[\s\S]*?Engine\.Detect\(IntPtr\.Zero\)[\s\S]*?headlessCompletion\.WaitOne\(\)/
+    );
+    assert.match(bootstrapper, /OnApplyComplete[\s\S]*?RunsWithoutUserInteraction[\s\S]*?CompleteHeadless\(\)/);
+    assert.match(
+        bootstrapper,
+        /OnDetectComplete[\s\S]*?Command\.Display != Display\.Full[\s\S]*?StartAction\(action\)/
+    );
+    assert.match(
+        bootstrapper,
+        /OnApplyComplete[\s\S]*?form\.UpdateProgress\(100\)[\s\S]*?Command\.Display == Display\.Passive[\s\S]*?form\.CloseFromEngine\(\)/
+    );
+    assert.match(bootstrapper, /CloseFromEngine\(\)[\s\S]*?closingFromEngine = true[\s\S]*?Close\(\)/);
+    assert.match(
+        bootstrapper,
+        /OnFormClosing[\s\S]*?application\.RunsWithoutUserInteraction[\s\S]*?return;[\s\S]*?if \(!busy\)[\s\S]*?return;/
+    );
     assert.match(localization, /<String Id="RestartRequiredHeader">需要重新启动 Windows<\/String>/);
     assert.match(localization, /<String Id="RestartRequiredPendingMessage">[^<]+<\/String>/);
     assert.match(
@@ -594,6 +666,11 @@ test('builds a custom bootstrapper that passes location and shortcut choices to 
     assert.match(localization, /<String Id="OpenDeskRunningMessage">[^<]+<\/String>/);
     assert.match(localization, /<String Id="UpgradeHeader">更新 OpenDesk<\/String>/);
     assert.match(localization, /<String Id="UpgradeInstallButton">开始更新<\/String>/);
+    assert.match(localization, /<String Id="InstallEyebrow">版本 \[OpenDeskDisplayVersion\] · Windows x64<\/String>/);
+    assert.match(
+        localization,
+        /<String Id="InstallVersion">OpenDesk \[OpenDeskDisplayVersion\] · Windows x64<\/String>/
+    );
     assert.doesNotMatch(localization, /LegacyInstall|检测到旧版安装目录|旧版 OpenDesk/);
     assert.equal(
         packageJson.scripts['make:win32'],
@@ -602,7 +679,8 @@ test('builds a custom bootstrapper that passes location and shortcut choices to 
     assert.equal(packageJson.scripts['make:wix-bootstrapper'], 'node scripts/build-wix-bootstrapper.mjs');
     assert.ok(!packageJson.scripts['make:win32:setup'], 'make:win32:setup 已并入 make:win32，不应再单独存在');
     assert.doesNotMatch(buildScript, /npmExecutable|npmCliPath|make:win32|spawnSync\(['"]npm\.cmd['"]/);
-    assert.match(buildScript, /if \(!fs\.existsSync\(msiPath\)\)/);
+    assert.match(buildScript, /windows-installer/);
+    assert.match(buildScript, /packageJson\.version/);
 });
 
 test('renders every bootstrapper page transition atomically', () => {
@@ -621,8 +699,7 @@ test('compiles a 32-bit managed bootstrapper with a valid .NET configuration', (
     const buildScript = fs.readFileSync(path.join(projectRoot, 'scripts', 'build-wix-bootstrapper.mjs'), 'utf8');
     const config = fs.readFileSync(path.join(bootstrapperResources, 'BootstrapperCore.config'), 'utf8');
 
-    assert.match(buildScript, /'\/platform:x86'/);
-    assert.match(buildScript, /BootstrapperCore\.dll/);
+    assert.match(buildScript, /windows-installer/);
     assert.ok(
         config.indexOf('<configSections>') < config.indexOf('<startup '),
         'configSections must be the first .NET configuration child'

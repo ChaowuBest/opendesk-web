@@ -52,6 +52,21 @@ declare global {
             onSettingLoadError: (callback: (message: string) => void) => void;
             offSettingLoadError: (callback: (message: string) => void) => void;
         };
+        updateAPI?: {
+            getState: () => Promise<
+                | { status: 'idle' | 'checking' | 'unsupported' }
+                | { status: 'upToDate'; checkedAt: string }
+                | { status: 'downloading'; version: string; receivedBytes: number; totalBytes?: number }
+                | { status: 'ready'; version: string; notes?: string; activeTaskCount: number }
+                | { status: 'installing'; version: string }
+                | { status: 'installed'; version: string; notes?: string; activeTaskCount: number }
+                | { status: 'restarting'; version: string }
+                | { status: 'error'; code: string; message: string }
+            >;
+            check: () => Promise<unknown>;
+            restart: () => Promise<boolean>;
+            onStateChanged: (callback: (state: Record<string, unknown>) => void) => () => void;
+        };
         settingAPI: {
             listShells: () => Promise<import('../common/shells.js').SupportedShell[]>;
             loadSettingObject: () => Promise<Record<string, unknown> & { locale?: string; resolved_locale?: string }>;

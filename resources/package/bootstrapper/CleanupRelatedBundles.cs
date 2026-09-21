@@ -10,16 +10,19 @@
  */
 
 using System;
+using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
+using System.Runtime.InteropServices;
+using System.Text;
 using System.Threading;
 using Microsoft.Win32;
 
 namespace OpenDesk.Bootstrapper
 {
     /// <summary>
-    /// 覆盖安装时由 bundle 内的 ExePackage（CleanupRelatedBundles）在 OpenDeskMsi 安装之后、
-    /// burn 引擎启动 related bundle 子进程之前执行（此时运行在提权引擎内，无需再弹 UAC）。
+    /// 用户手动运行新版 Setup 时，由 bundle 内的 ExePackage（CleanupRelatedBundles）在新版
+    /// 平台和应用 MSI 之前执行（此时运行在提权引擎内，无需再弹 UAC）。
     ///
     /// 引擎对 related bundle 的卸载固定以 "&lt;旧缓存 exe&gt; -uninstall -quiet ..." 启动旧版
     /// 安装器并无限等待其退出；而 0.3.5 及更早版本的 BA 在静默模式下存在 apply 完成后进程
@@ -32,16 +35,22 @@ namespace OpenDesk.Bootstrapper
     /// "0.3.6.0 {7092ef85-a098-4405-a520-1a1e04babddb}"。
     /// 只处理 DisplayVersion 低于当前版本的 OpenDesk bundle；同版本/更高版本条目
     /// （包括本安装自身的会话条目）与共享 MSI ProductCode 相关，一律不碰。
-    /// 任何异常都以 0 退出：本程序失败绝不能阻断安装。
+    /// 最后再枚举旧 MSI UpgradeCode，覆盖 0.3.3 直接安装 MSI、旧 Bundle 缓存丢失和旧 BA
+    /// 未完整卸载 MSI 的场景。旧 MSI 若仍无法正式卸载则返回失败，禁止留下旧版继续安装。
     /// </summary>
     internal static class CleanupProgram
     {
         private const string UninstallKeyPath = @"SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall";
         private const string BundleUpgradeCode = "e7b412c3-02cc-4ed8-9fcb-5d33fe3390e4";
+        private const string LegacyMsiUpgradeCode = "{017F8634-A16C-4194-8C94-D9A3F1319D13}";
         private const string LogFileName = "OpenDeskCleanup.log";
         private const int EntryRemovalTimeoutMs = 120000;
         private const int CacheRemovalTimeoutMs = 15000;
         private const int PollIntervalMs = 500;
+        private const uint ErrorSuccess = 0;
+        private const uint ErrorMoreData = 234;
+        private const uint ErrorNoMoreItems = 259;
+        private const uint ErrorUnknownProduct = 1605;
 
         private static readonly object LogLock = new object();
 
@@ -52,29 +61,155 @@ namespace OpenDesk.Bootstrapper
                 Log("cleanup started, args: " + string.Join(" ", args));
 
                 uint[] currentVersion;
-                if (args.Length < 2 || !TryParseVersion(args[0], out currentVersion))
+                if (args.Length < 1 || !TryParseVersion(args[0], out currentVersion))
                 {
                     Log("no usable version argument, nothing to do");
                     return 0;
                 }
 
-                string currentBundleId = args[1];
-                if (string.IsNullOrWhiteSpace(currentBundleId))
+                string currentBundleId = args.Length >= 2 ? args[1] : null;
+                if (!string.IsNullOrWhiteSpace(currentBundleId))
                 {
-                    Log("no current bundle id, nothing to do");
-                    return 0;
+                    CleanupOldBundles(currentVersion, currentBundleId);
+                }
+                else
+                {
+                    Log("no current bundle id, skipping old Bundle cleanup");
                 }
 
-                CleanupOldBundles(currentVersion, currentBundleId);
+                CleanupOldMsiProducts(currentVersion);
             }
             catch (Exception ex)
             {
                 Log("unexpected error: " + ex);
+                return 1;
             }
 
             Log("cleanup finished");
             return 0;
         }
+
+        private static void CleanupOldMsiProducts(uint[] currentVersion)
+        {
+            List<string> productCodes = EnumerateLegacyMsiProducts();
+            foreach (string productCode in productCodes)
+            {
+                string versionText;
+                uint queryResult = TryGetMsiProductInfo(productCode, "VersionString", out versionText);
+                if (queryResult == ErrorUnknownProduct)
+                {
+                    continue;
+                }
+                if (queryResult != ErrorSuccess)
+                {
+                    throw new InvalidOperationException(
+                        "failed to query legacy MSI " + productCode + ", error " + queryResult
+                    );
+                }
+
+                uint[] productVersion;
+                if (!TryParseVersion(versionText, out productVersion) ||
+                    CompareVersions(productVersion, currentVersion) >= 0)
+                {
+                    Log("skip legacy MSI " + productCode + " version " + versionText);
+                    continue;
+                }
+
+                Log("uninstalling legacy MSI " + productCode + " version " + versionText);
+                int exitCode = RunMsiUninstall(productCode);
+                if (exitCode != 0 && exitCode != 1605 && exitCode != 3010)
+                {
+                    throw new InvalidOperationException(
+                        "legacy MSI uninstall failed for " + productCode + ", exit code " + exitCode
+                    );
+                }
+
+                string remainingVersion;
+                uint remainingResult = TryGetMsiProductInfo(productCode, "VersionString", out remainingVersion);
+                if (remainingResult != ErrorUnknownProduct)
+                {
+                    throw new InvalidOperationException(
+                        "legacy MSI is still registered after uninstall: " + productCode
+                    );
+                }
+            }
+        }
+
+        private static List<string> EnumerateLegacyMsiProducts()
+        {
+            List<string> productCodes = new List<string>();
+            for (uint productIndex = 0; ; productIndex++)
+            {
+                StringBuilder productCode = new StringBuilder(39);
+                uint result = MsiEnumRelatedProducts(
+                    LegacyMsiUpgradeCode,
+                    0,
+                    productIndex,
+                    productCode
+                );
+                if (result == ErrorNoMoreItems)
+                {
+                    return productCodes;
+                }
+                if (result != ErrorSuccess)
+                {
+                    throw new InvalidOperationException("failed to enumerate legacy MSI products, error " + result);
+                }
+
+                productCodes.Add(productCode.ToString());
+            }
+        }
+
+        private static uint TryGetMsiProductInfo(string productCode, string property, out string value)
+        {
+            uint capacity = 64;
+            StringBuilder buffer = new StringBuilder((int)capacity);
+            uint result = MsiGetProductInfo(productCode, property, buffer, ref capacity);
+            if (result == ErrorMoreData)
+            {
+                capacity++;
+                buffer = new StringBuilder((int)capacity);
+                result = MsiGetProductInfo(productCode, property, buffer, ref capacity);
+            }
+
+            value = result == ErrorSuccess ? buffer.ToString() : null;
+            return result;
+        }
+
+        private static int RunMsiUninstall(string productCode)
+        {
+            ProcessStartInfo startInfo = new ProcessStartInfo();
+            startInfo.FileName = "msiexec.exe";
+            startInfo.Arguments = "/x " + productCode + " /qn /norestart IGNOREDEPENDENCIES=ALL";
+            startInfo.UseShellExecute = false;
+            startInfo.CreateNoWindow = true;
+            using (Process process = Process.Start(startInfo))
+            {
+                if (process == null)
+                {
+                    throw new InvalidOperationException("failed to start msiexec.exe");
+                }
+
+                process.WaitForExit();
+                return process.ExitCode;
+            }
+        }
+
+        [DllImport("msi.dll", CharSet = CharSet.Unicode)]
+        private static extern uint MsiEnumRelatedProducts(
+            string upgradeCode,
+            uint reserved,
+            uint productIndex,
+            StringBuilder productCode
+        );
+
+        [DllImport("msi.dll", CharSet = CharSet.Unicode)]
+        private static extern uint MsiGetProductInfo(
+            string productCode,
+            string property,
+            StringBuilder valueBuffer,
+            ref uint valueBufferSize
+        );
 
         private static void CleanupOldBundles(uint[] currentVersion, string currentBundleId)
         {
@@ -177,6 +312,10 @@ namespace OpenDesk.Bootstrapper
                         return true;
                     }
                 }
+
+                // 新静默更新架构使用另一组 UpgradeCode。只要登记明确声明了别的
+                // Bundle 家族，就不能仅凭 DisplayName 将其误当成旧版清理。
+                return false;
             }
 
             string displayName = entryKey.GetValue("DisplayName") as string;
