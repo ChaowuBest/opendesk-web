@@ -16,8 +16,13 @@ import { loadPoolSkill } from './pool.js';
 import { registerHarmonyosBashFrictionHook } from '../../aikernel/harnesses/platform/harmonyos/harmonyos-recovery/hook.js';
 import { loadUseHarmonySkill } from './skills/use-harmony/skill.js';
 import { skillRegistry } from '../skillmgr/utils/skill-registry.js';
-import { getBuiltinSkillsDirectory, listBuiltinSkillDirectories } from '../skillmgr/builtin-skills.js';
+import {
+    getBuiltinSkillsDirectory,
+    isBuiltinSkillAvailableOnPlatform,
+    listBuiltinSkillDirectories
+} from '../skillmgr/builtin-skills.js';
 import { ReadableDirectoryRegistry } from '../../aikernel/security/enforcer.js';
+import { getPlatform } from '../../../platforms/base.js';
 import { logger } from '../../utils/logger.js';
 
 if ((process.platform as string) === 'openharmony') {
@@ -58,10 +63,15 @@ export class BuiltinApplication extends BaseApplication {
         }
 
         const skills: Skill[] = [];
+        const platformName = getPlatform().getName();
         for (const skillDir of skillDirs) {
             const result = skillRegistry._loadSkillFromDir(skillDir);
             if (!result.success) {
                 logger.warn(`[builtin] 跳过内置技能 ${skillDir} - ${result.error}`);
+                continue;
+            }
+            // 按 skillmgr 的平台配置过滤：限定平台的技能只在对应平台注入
+            if (!isBuiltinSkillAvailableOnPlatform(String(result.frontmatter?.name ?? ''), platformName)) {
                 continue;
             }
             const skill = new Skill({ ...result.frontmatter }, result.body || '', result.skillDir);

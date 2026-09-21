@@ -10,7 +10,13 @@ import {
 } from '../../../main/applications/skillmgr/builtin-skills.js';
 import { skillRegistry } from '../../../main/applications/skillmgr/utils/skill-registry.js';
 import { BuiltinApplication } from '../../../main/applications/builtin/app.js';
+import { setPlatform, type AbstractPlatform } from '../../../platforms/base.js';
 import { setCustomOpendeskDirectory, Setting } from '../../../main/utils/setting.js';
+
+/** 以最小桩替换全局平台，让内置技能加载的平台分支可测 */
+function usePlatform(name: string): void {
+    setPlatform({ getName: () => name } as unknown as AbstractPlatform);
+}
 
 function writeSkill(directory: string, name: string, description: string): void {
     fs.mkdirSync(directory, { recursive: true });
@@ -42,6 +48,7 @@ describe('builtin bundled skills', () => {
 
     beforeEach(() => {
         delete process.env[BUILTIN_SKILLS_DIRECTORY_ENV];
+        usePlatform('electron');
     });
 
     afterEach(() => {
@@ -221,6 +228,7 @@ describe('builtin bundled skills', () => {
         const repoSkillsDir = fileURLToPath(new URL('../../../../resources/skills', import.meta.url));
         process.env[BUILTIN_SKILLS_DIRECTORY_ENV] = repoSkillsDir;
         setCustomOpendeskDirectory(pushTempDir(makeTempDir('builtin-skills-visualizer')));
+        usePlatform('electron');
 
         const application = new BuiltinApplication();
         const skills = await application.getSkills();
@@ -231,5 +239,20 @@ describe('builtin bundled skills', () => {
         expect(visualizer?.directory).toBe(path.join(path.resolve(repoSkillsDir), 'analysis-result-visualizer'));
         expect(visualizer?.body).toContain('# 分析结果可视化');
         expect(visualizer?.body).toContain('Visualizer Core Design System');
+    });
+
+    test('BuiltinApplication skips analysis-result-visualizer outside Electron', async () => {
+        // 可视化技能依赖宿主 UI 的内联图形预览，CLI 没有渲染能力，不注入技能与系统 prompt 介绍
+        const repoSkillsDir = fileURLToPath(new URL('../../../../resources/skills', import.meta.url));
+        process.env[BUILTIN_SKILLS_DIRECTORY_ENV] = repoSkillsDir;
+        setCustomOpendeskDirectory(pushTempDir(makeTempDir('builtin-skills-cli')));
+        usePlatform('cli');
+
+        const application = new BuiltinApplication();
+        const skills = await application.getSkills();
+
+        expect(skills.map((skill) => skill.frontmatter.name)).not.toContain('analysis-result-visualizer');
+        // 其余内置技能不受平台限制
+        expect(skills.map((skill) => skill.frontmatter.name)).toContain('generate-html-card');
     });
 });
