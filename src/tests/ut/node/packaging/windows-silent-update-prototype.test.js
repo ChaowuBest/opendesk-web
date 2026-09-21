@@ -17,12 +17,20 @@ test('builds current-version-only update installers while preserving the release
         'node scripts/windows-silent-update-prototype/build-prototype.mjs'
     );
     assert.equal(packageJson.scripts['make:win32:update'], 'node scripts/build-windows-update-installer.mjs');
+    assert.equal(packageJson.scripts['make:win32'], 'node scripts/build-windows-update-installer.mjs');
     const releaseBuilder = fs.readFileSync(
         path.join(projectRoot, 'scripts', 'build-windows-update-installer.mjs'),
         'utf8'
     );
     assert.match(releaseBuilder, /windows-silent-update-prototype/);
-    assert.match(releaseBuilder, /process\.argv\.slice\(2\)/);
+    assert.match(releaseBuilder, /packageJson\.version/);
+    assert.match(releaseBuilder, /npm run build/);
+    assert.match(releaseBuilder, /electron-forge/);
+    assert.match(releaseBuilder, /'package', '--platform=win32', '--arch=x64'/);
+    assert.match(releaseBuilder, /'--version',\s*version/);
+    assert.match(releaseBuilder, /'--app-dir',\s*packagedAppDirectory/);
+    assert.match(releaseBuilder, /opendesk-win-x86-\$\{version\}\.exe/);
+    assert.match(releaseBuilder, /OPENDESK_SIGNING_CERTIFICATE_THUMBPRINT/);
     assert.doesNotMatch(builder, /<MajorUpgrade/);
     assert.match(builder, /ARPSYSTEMCOMPONENT/);
     assert.doesNotMatch(builder, /Permanent="yes"/);
@@ -74,6 +82,9 @@ test('builds current-version-only update installers while preserving the release
     assert.match(builder, /SilentUpdatePrototype/);
     assert.match(builder, /requiredArgument\('baseline-version'\)/);
     assert.match(builder, /requiredArgument\('candidate-version'\)/);
+    assert.match(builder, /readArgument\('version'\)/);
+    assert.match(builder, /readArgument\('app-dir'\)/);
+    assert.match(builder, /singleVersionMode/);
     assert.match(builder, /additional-version/);
     assert.match(builder, /additional-app-dir/);
     assert.doesNotMatch(builder, /OPENDESK_TEST_TRUSTED_VERSION|TestTrustedVersion|TestTrustedSha256/);

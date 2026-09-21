@@ -615,10 +615,7 @@ test('builds a custom bootstrapper that passes location and shortcut choices to 
         /<String Id="InstallVersion">OpenDesk \[OpenDeskDisplayVersion\] · Windows x64<\/String>/
     );
     assert.doesNotMatch(localization, /LegacyInstall|检测到旧版安装目录|旧版 OpenDesk/);
-    assert.equal(
-        packageJson.scripts['make:win32'],
-        'npm run build && electron-forge make --platform=win32 && npm run make:wix-bootstrapper'
-    );
+    assert.equal(packageJson.scripts['make:win32'], 'node scripts/build-windows-update-installer.mjs');
     assert.equal(packageJson.scripts['make:wix-bootstrapper'], 'node scripts/build-wix-bootstrapper.mjs');
     assert.ok(!packageJson.scripts['make:win32:setup'], 'make:win32:setup 已并入 make:win32，不应再单独存在');
     assert.doesNotMatch(buildScript, /npmExecutable|npmCliPath|make:win32|spawnSync\(['"]npm\.cmd['"]/);

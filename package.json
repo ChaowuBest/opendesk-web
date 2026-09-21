@@ -35,7 +35,7 @@
         "make": "run-script-os",
         "make:wix-bootstrapper": "node scripts/build-wix-bootstrapper.mjs",
         "make:win32:update": "node scripts/build-windows-update-installer.mjs",
-        "make:win32": "npm run build && electron-forge make --platform=win32 && npm run make:wix-bootstrapper",
+        "make:win32": "node scripts/build-windows-update-installer.mjs",
         "phase0:update:wix-inspect": "node scripts/phase0-windows-update/wix-inspect.mjs",
         "phase0:update:msix-package": "node scripts/phase0-windows-update/msix-package.mjs",
         "phase0:update:msix-compare": "node scripts/phase0-windows-update/msix-compare.mjs",

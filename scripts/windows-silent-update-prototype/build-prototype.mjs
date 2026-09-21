@@ -373,12 +373,36 @@ function buildVersionMsi({ version, appDirectory, outputDirectory }) {
     return msiPath;
 }
 
-const baselineVersion = assertVersion(requiredArgument('baseline-version'), 'baseline version');
-const candidateVersion = assertVersion(requiredArgument('candidate-version'), 'candidate version');
-const baselineAppDirectory = path.resolve(requiredArgument('baseline-app-dir'));
-const candidateAppDirectory = path.resolve(requiredArgument('candidate-app-dir'));
+const singleVersionValue = readArgument('version');
+const singleAppDirectoryValue = readArgument('app-dir');
+if (Boolean(singleVersionValue) !== Boolean(singleAppDirectoryValue)) {
+    throw new Error('--version and --app-dir must be provided together');
+}
+const singleVersionMode = Boolean(singleVersionValue);
+if (
+    singleVersionMode &&
+    ['baseline-version', 'candidate-version', 'baseline-app-dir', 'candidate-app-dir'].some((name) =>
+        readArgument(name)
+    )
+) {
+    throw new Error('--version/--app-dir cannot be combined with baseline/candidate arguments');
+}
+
+const version = singleVersionMode ? assertVersion(singleVersionValue, 'version') : undefined;
+const appDirectory = singleVersionMode ? path.resolve(singleAppDirectoryValue) : undefined;
+const baselineVersion = singleVersionMode
+    ? undefined
+    : assertVersion(requiredArgument('baseline-version'), 'baseline version');
+const candidateVersion = singleVersionMode
+    ? undefined
+    : assertVersion(requiredArgument('candidate-version'), 'candidate version');
+const baselineAppDirectory = singleVersionMode ? undefined : path.resolve(requiredArgument('baseline-app-dir'));
+const candidateAppDirectory = singleVersionMode ? undefined : path.resolve(requiredArgument('candidate-app-dir'));
 const additionalVersionValue = readArgument('additional-version');
 const additionalAppDirectoryValue = readArgument('additional-app-dir');
+if (singleVersionMode && (additionalVersionValue || additionalAppDirectoryValue)) {
+    throw new Error('--additional-version/--additional-app-dir are only available in baseline/candidate mode');
+}
 if (Boolean(additionalVersionValue) !== Boolean(additionalAppDirectoryValue)) {
     throw new Error('--additional-version and --additional-app-dir must be provided together');
 }
@@ -395,14 +419,21 @@ const signingCertificateThumbprint = requiredArgument('signing-certificate-thumb
 if (!/^[0-9A-F]{40}$/.test(signingCertificateThumbprint)) {
     throw new Error('--signing-certificate-thumbprint must be a SHA-1 certificate thumbprint');
 }
-for (const directory of [baselineAppDirectory, candidateAppDirectory, additionalAppDirectory].filter(Boolean)) {
+const versionBuilds = singleVersionMode
+    ? [{ version, appDirectory }]
+    : [
+          { version: baselineVersion, appDirectory: baselineAppDirectory },
+          { version: candidateVersion, appDirectory: candidateAppDirectory },
+          ...(additionalVersion && additionalAppDirectory
+              ? [{ version: additionalVersion, appDirectory: additionalAppDirectory }]
+              : [])
+      ];
+for (const { appDirectory: directory } of versionBuilds) {
     if (!fs.existsSync(path.join(directory, 'opendesk.exe')))
         throw new Error(`Packaged OpenDesk executable not found in ${directory}`);
 }
-await verifyPackagedAppDirectory(baselineAppDirectory, baselineVersion);
-await verifyPackagedAppDirectory(candidateAppDirectory, candidateVersion);
-if (additionalVersion && additionalAppDirectory) {
-    await verifyPackagedAppDirectory(additionalAppDirectory, additionalVersion);
+for (const build of versionBuilds) {
+    await verifyPackagedAppDirectory(build.appDirectory, build.version);
 }
 fs.mkdirSync(outputDirectory, { recursive: true });
 
@@ -486,24 +517,6 @@ run(
     projectRoot
 );
 
-const baselineMsiPath = buildVersionMsi({
-    version: baselineVersion,
-    appDirectory: baselineAppDirectory,
-    outputDirectory
-});
-const candidateMsiPath = buildVersionMsi({
-    version: candidateVersion,
-    appDirectory: candidateAppDirectory,
-    outputDirectory
-});
-const additionalMsiPath =
-    additionalVersion && additionalAppDirectory
-        ? buildVersionMsi({
-              version: additionalVersion,
-              appDirectory: additionalAppDirectory,
-              outputDirectory
-          })
-        : undefined;
 function buildBundle({ version, versionMsiPath }) {
     const sourcePath = path.join(outputDirectory, `OpenDesk-${version}-Setup.wxs`);
     const setupPath = path.join(outputDirectory, `OpenDesk-${version}-Setup.exe`);
@@ -522,27 +535,52 @@ function buildBundle({ version, versionMsiPath }) {
     return { version, setupPath, versionMsiPath };
 }
 
-const additionalBundle =
-    additionalVersion && additionalMsiPath
-        ? buildBundle({
-              version: additionalVersion,
-              versionMsiPath: additionalMsiPath
-          })
-        : undefined;
-const additionalSha256 = additionalBundle ? fileSha256(additionalBundle.setupPath) : undefined;
-const candidateBundle = buildBundle({
-    version: candidateVersion,
-    versionMsiPath: candidateMsiPath
-});
-const candidateSha256 = fileSha256(candidateBundle.setupPath);
-const baselineBundle = buildBundle({
-    version: baselineVersion,
-    versionMsiPath: baselineMsiPath
-});
-const bundles = [
-    baselineBundle,
-    { ...candidateBundle, sha256: candidateSha256 },
-    ...(additionalBundle ? [{ ...additionalBundle, sha256: additionalSha256 }] : [])
-];
+let bundles;
+if (singleVersionMode) {
+    const versionMsiPath = buildVersionMsi({ version, appDirectory, outputDirectory });
+    const bundle = buildBundle({ version, versionMsiPath });
+    bundles = [{ ...bundle, sha256: fileSha256(bundle.setupPath) }];
+} else {
+    const baselineMsiPath = buildVersionMsi({
+        version: baselineVersion,
+        appDirectory: baselineAppDirectory,
+        outputDirectory
+    });
+    const candidateMsiPath = buildVersionMsi({
+        version: candidateVersion,
+        appDirectory: candidateAppDirectory,
+        outputDirectory
+    });
+    const additionalMsiPath =
+        additionalVersion && additionalAppDirectory
+            ? buildVersionMsi({
+                  version: additionalVersion,
+                  appDirectory: additionalAppDirectory,
+                  outputDirectory
+              })
+            : undefined;
+    const additionalBundle =
+        additionalVersion && additionalMsiPath
+            ? buildBundle({
+                  version: additionalVersion,
+                  versionMsiPath: additionalMsiPath
+              })
+            : undefined;
+    const additionalSha256 = additionalBundle ? fileSha256(additionalBundle.setupPath) : undefined;
+    const candidateBundle = buildBundle({
+        version: candidateVersion,
+        versionMsiPath: candidateMsiPath
+    });
+    const candidateSha256 = fileSha256(candidateBundle.setupPath);
+    const baselineBundle = buildBundle({
+        version: baselineVersion,
+        versionMsiPath: baselineMsiPath
+    });
+    bundles = [
+        baselineBundle,
+        { ...candidateBundle, sha256: candidateSha256 },
+        ...(additionalBundle ? [{ ...additionalBundle, sha256: additionalSha256 }] : [])
+    ];
+}
 
 console.log(JSON.stringify({ outputDirectory, platformMsiPath, bundles }, null, 2));

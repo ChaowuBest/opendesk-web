@@ -92,7 +92,7 @@ test('prototype platform MSI owns the service and a protected machine cache with
     );
     assert.match(builder, /readArgument\('additional-version'\)/);
     assert.match(builder, /readArgument\('additional-app-dir'\)/);
-    assert.match(builder, /const bundles = \[[\s\S]*additionalBundle[\s\S]*sha256: additionalSha256/);
+    assert.match(builder, /bundles = \[[\s\S]*additionalBundle[\s\S]*sha256: additionalSha256/);
 });
 
 test('manual service client only emits the bounded update protocol actions', () => {
