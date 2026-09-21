@@ -78,14 +78,15 @@ describe('browser credentials', () => {
         const { file } = fixture();
         const persisted = path.join(path.dirname(file), 'browser-credentials.enc');
         new BrowserCredentialStore(persisted, encryption).save('https://example.com', 'alice', 'secret');
-        jest.unstable_mockModule('electron', () => ({
+        const electron = {
             app: { getPath: () => path.dirname(file) },
             safeStorage: {
                 isEncryptionAvailable: () => true,
                 encryptString: encryption.encrypt,
                 decryptString: encryption.decrypt
             }
-        }));
+        };
+        jest.unstable_mockModule('node:module', () => ({ createRequire: () => () => electron }));
         const { clearBrowserCredentials, initializeBrowserCredentials } =
             await import('../../../main/services/browser-credentials/runtime.js');
         clearBrowserCredentials();
