@@ -46,6 +46,10 @@ export class BuiltinApplication extends BaseApplication {
      * 加载随安装包分发的内置技能（resources/skills 下的 SKILL.md 目录）。
      * 解析与校验复用 skillmgr 的 SkillRegistry；技能文件为只读分发内容，
      * 仅由 builtin 应用提供，不进入 skillmgr 注册表（避免技能中心与自动补全重复）。
+     *
+     * 不设置 readOnly：该标记表示生命周期由外部托管（如插件贡献技能），
+     * 技能中心会因此隐藏启用开关；内置技能的约定是「可禁用、不可删除」，
+     * 禁用控制由 skillmgr 的 status.json 过滤器承担。
      */
     private loadBuiltinResourcesSkills(): Skill[] {
         const skillDirs = listBuiltinSkillDirectories();
@@ -70,7 +74,6 @@ export class BuiltinApplication extends BaseApplication {
                 continue;
             }
             const skill = new Skill({ ...result.frontmatter }, result.body || '', result.skillDir);
-            skill.readOnly = true;
             skills.push(skill);
         }
         return skills;
