@@ -35,6 +35,7 @@
         "make": "run-script-os",
         "make:wix-bootstrapper": "node scripts/build-wix-bootstrapper.mjs",
         "make:win32": "npm run build && electron-forge make --platform=win32 && npm run make:wix-bootstrapper",
+        "make:win32:arm64": "node scripts/make-arm64-setup.mjs",
         "make:darwin": "npm run build && node scripts/build-darwin-speech-helper.cjs && electron-forge make --platform=darwin",
         "make:linux": "npm run build && electron-forge make --platform=linux",
         "make:rpm": "npm run build && electron-forge make --platform=linux --targets=@electron-forge/maker-rpm",

@@ -78,6 +78,59 @@ test('keeps the MSI upgrade identity while enabling the branded Chinese x64 inst
     assert.deepEqual([banner.width, banner.height], [493, 58]);
 });
 
+test('parameterizes the WiX MSI arch so ARM64 machines can build native installers', () => {
+    const forgeConfigPath = require.resolve(path.join(projectRoot, 'forge.config.cjs'));
+    const previousArch = process.env.OPENDESK_WIX_ARCH;
+    const loadFreshConfig = () => {
+        delete require.cache[forgeConfigPath];
+        const config = require(forgeConfigPath).makers.find(
+            (entry) => entry.name === '@electron-forge/maker-wix'
+        ).config;
+        delete require.cache[forgeConfigPath];
+        return config;
+    };
+
+    try {
+        delete process.env.OPENDESK_WIX_ARCH;
+        assert.equal(loadFreshConfig().arch, 'x64', '未设置环境变量时必须保持 x64 默认行为');
+
+        process.env.OPENDESK_WIX_ARCH = 'arm64';
+        assert.equal(loadFreshConfig().arch, 'arm64', 'OPENDESK_WIX_ARCH=arm64 必须产出 arm64 MSI');
+    } finally {
+        if (previousArch === undefined) {
+            delete process.env.OPENDESK_WIX_ARCH;
+        } else {
+            process.env.OPENDESK_WIX_ARCH = previousArch;
+        }
+        delete require.cache[forgeConfigPath];
+    }
+});
+
+test('provides a one-command ARM64 installer pipeline pinned to the arm64 toolchain', () => {
+    const packageJson = JSON.parse(fs.readFileSync(path.join(projectRoot, 'package.json'), 'utf8'));
+
+    assert.equal(packageJson.scripts['make:win32:arm64'], 'node scripts/make-arm64-setup.mjs');
+
+    const script = fs.readFileSync(path.join(projectRoot, 'scripts', 'make-arm64-setup.mjs'), 'utf8');
+
+    // 全链路：build → forge make（arm64）→ WiX bootstrapper
+    assert.match(script, /\[\s*['"]run['"],\s*['"]build['"]\s*\]/);
+    assert.match(script, /electron-forge/);
+    assert.match(script, /--platform=win32/);
+    assert.match(script, /--arch=arm64/);
+    // 环境变量必须显式固化，否则 forge/bootstrapper 会回退到 x64 默认路径
+    assert.match(script, /OPENDESK_WIX_ARCH/);
+    assert.match(script, /OPENDESK_MSI_PATH/);
+    assert.match(script, /OPENDESK_STAGED_APP_DIR/);
+    assert.match(script, /OPENDESK_DOKAN_MSI_PATH/);
+    assert.match(script, /OPENDESK_SETUP_OUT_DIR/);
+    // Dokan 必须取 win-arm64 驱动包：x64 Dokan 内核驱动在 ARM64 Windows 上无法加载（0x80070643）
+    assert.match(script, /win-arm64/);
+    assert.match(script, /DokanSetup\.msi/);
+    // bootstrapper 逻辑保持单一来源，arm64 管线复用既有脚本
+    assert.match(script, /build-wix-bootstrapper\.mjs/);
+});
+
 test('keeps versioned application directories without recursively purging the selected root', async () => {
     const config = getWixConfig();
     const creator = {
