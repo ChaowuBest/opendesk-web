@@ -552,7 +552,8 @@ module.exports = {
                 programFilesFolderName: 'opendesk',
                 language: 2052,
                 cultures: 'zh-cn',
-                arch: 'x64',
+                // MSI 平台架构：默认 x64；ARM64 构建机用 OPENDESK_WIX_ARCH=arm64 产出原生arm64 MSI
+                arch: process.env.OPENDESK_WIX_ARCH || 'x64',
                 upgradeCode: '017f8634-a16c-4194-8c94-d9a3f1319d13',
                 beforeCreate: preserveWixInstallDirectory,
                 icon: path.join(__dirname, 'resources', 'package', 'icons', 'icon_round.ico'),
