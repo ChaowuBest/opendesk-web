@@ -260,7 +260,7 @@ function bundleSource({
     <Chain>
       <MsiPackage Id="DokanMsi" SourceFile="${xml(dokanMsi)}" InstallCondition="NOT DokanVersion OR DokanVersion &lt; v2.3.1.1000" ForcePerMachine="yes" DisplayInternalUI="no" Visible="no" Vital="yes" Permanent="yes" />
       <ExePackage Id="CleanupPrototypeInstallations" SourceFile="${xml(cleanupExecutable)}" PerMachine="yes" Vital="yes" Compressed="yes" DetectCondition="CleanupAgentInstalled" InstallCommand="--register" RepairCommand="--register" UninstallCommand="--uninstall-all" />
-      <ExePackage Id="CleanupRelatedBundles" SourceFile="${xml(legacyBundleCleanupExecutable)}" PerMachine="yes" Vital="yes" Compressed="yes" DetectCondition="LegacyBundleCleanupDetect" InstallCommand="[WixBundleVersion]" RepairCommand="[WixBundleVersion]" UninstallCommand="/noop" />
+      <ExePackage Id="CleanupRelatedBundles" SourceFile="${xml(legacyBundleCleanupExecutable)}" PerMachine="yes" Vital="yes" Compressed="yes" DetectCondition="LegacyBundleCleanupDetect" InstallCommand="[WixBundleVersion] [WixBundleProviderKey]" RepairCommand="[WixBundleVersion] [WixBundleProviderKey]" UninstallCommand="/noop" />
       <MsiPackage Id="OpenDeskPlatform" SourceFile="${xml(platformMsi)}" ForcePerMachine="yes" Visible="no">
         <MsiProperty Name="APPLICATIONROOTDIRECTORY" Value="[InstallFolder]" />
         <MsiProperty Name="OPENDESK_TARGET_VERSION" Value="[OpenDeskDisplayVersion]" />

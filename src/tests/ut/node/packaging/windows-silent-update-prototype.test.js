@@ -61,6 +61,10 @@ test('builds current-version-only update installers while preserving the release
     assert.match(builder, /CleanupRelatedBundles/);
     assert.match(builder, /CleanupRelatedBundles\.cs/);
     assert.match(builder, /LegacyBundleCleanupDetect/);
+    assert.match(
+        builder,
+        /InstallCommand="\[WixBundleVersion\] \[WixBundleProviderKey\]"[\s\S]*RepairCommand="\[WixBundleVersion\] \[WixBundleProviderKey\]"/
+    );
     assert.doesNotMatch(builder, /BaselineProductState|baselineMsi:/);
     assert.match(builder, /Name="ProductCode" Value="\[ProductCode\]"/);
     assert.match(builder, /Name="OPENDESK_TARGET_VERSION" Value="\[OpenDeskDisplayVersion\]"/);
@@ -172,6 +176,11 @@ test('bundle cleanup only accepts the declared OpenDesk Bundle family', () => {
     assert.match(cleanup, /LegacyMsiUpgradeCode = "\{017F8634-A16C-4194-8C94-D9A3F1319D13\}"/);
     assert.match(cleanup, /MsiEnumRelatedProducts/);
     assert.match(cleanup, /CleanupOldMsiProducts\(currentVersion\)/);
+    assert.match(cleanup, /args\.Length < 1/);
+    assert.match(
+        cleanup,
+        /string currentBundleId = args\.Length >= 2 \? args\[1\] : null;[\s\S]*if \(!string\.IsNullOrWhiteSpace\(currentBundleId\)\)[\s\S]*CleanupOldBundles\(currentVersion, currentBundleId\);[\s\S]*CleanupOldMsiProducts\(currentVersion\);/
+    );
     assert.match(cleanup, /msiexec\.exe/);
     assert.match(cleanup, /\/x /);
     assert.match(cleanup, /\/qn \/norestart/);

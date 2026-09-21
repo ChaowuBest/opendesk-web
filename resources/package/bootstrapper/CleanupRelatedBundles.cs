@@ -61,20 +61,22 @@ namespace OpenDesk.Bootstrapper
                 Log("cleanup started, args: " + string.Join(" ", args));
 
                 uint[] currentVersion;
-                if (args.Length < 2 || !TryParseVersion(args[0], out currentVersion))
+                if (args.Length < 1 || !TryParseVersion(args[0], out currentVersion))
                 {
                     Log("no usable version argument, nothing to do");
                     return 0;
                 }
 
-                string currentBundleId = args[1];
-                if (string.IsNullOrWhiteSpace(currentBundleId))
+                string currentBundleId = args.Length >= 2 ? args[1] : null;
+                if (!string.IsNullOrWhiteSpace(currentBundleId))
                 {
-                    Log("no current bundle id, nothing to do");
-                    return 0;
+                    CleanupOldBundles(currentVersion, currentBundleId);
+                }
+                else
+                {
+                    Log("no current bundle id, skipping old Bundle cleanup");
                 }
 
-                CleanupOldBundles(currentVersion, currentBundleId);
                 CleanupOldMsiProducts(currentVersion);
             }
             catch (Exception ex)

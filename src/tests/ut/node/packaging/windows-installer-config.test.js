@@ -439,7 +439,7 @@ test('builds a custom bootstrapper that passes location and shortcut choices to 
     assert.match(bundle, /<ExePackage Id="CleanupRelatedBundles"/);
     assert.match(bundle, /InstallCommand="\[WixBundleVersion\] \[WixBundleProviderKey\]"/);
     const cleanup = fs.readFileSync(path.join(bootstrapperResources, 'CleanupRelatedBundles.cs'), 'utf8');
-    assert.match(cleanup, /args\.Length < 2/);
+    assert.match(cleanup, /args\.Length < 1/);
     assert.match(cleanup, /CleanupOldBundles\(currentVersion, currentBundleId\)/);
     assert.match(
         cleanup,
