@@ -28,9 +28,10 @@ const csharpCompiler = process.env.CSC_PATH || 'C:\\Windows\\Microsoft.NET\\Fram
 const bootstrapperResourcesDirectory = path.join(projectRoot, 'resources', 'package', 'bootstrapper');
 const iconPath = path.join(projectRoot, 'resources', 'package', 'icons', 'icon_round.ico');
 const serviceBuilderPath = path.join(projectRoot, 'scripts', 'windows-update-service', 'build-service.mjs');
-const signTool =
-    process.env.SIGNTOOL_PATH || 'C:\\Program Files (x86)\\Windows Kits\\10\\bin\\10.0.26100.0\\x64\\signtool.exe';
-const insignia = path.join(wixDirectory, 'insignia.exe');
+const dokanMsiPath = path.resolve(
+    process.env.OPENDESK_DOKAN_MSI_PATH ||
+        path.join(projectRoot, 'native', 'windows', 'sandbox', 'dist', 'win-x64', 'bin', 'DokanSetup.msi')
+);
 
 function readArgument(name, fallback) {
     const index = process.argv.indexOf(`--${name}`);
@@ -66,12 +67,6 @@ function xml(value) {
 function productCode(seed) {
     const hash = createHash('sha256').update(seed).digest('hex');
     return `{${hash.slice(0, 8)}-${hash.slice(8, 12)}-${hash.slice(12, 16)}-${hash.slice(16, 20)}-${hash.slice(20, 32)}}`;
-}
-
-function fileSha256(filePath) {
-    const hash = createHash('sha256');
-    hash.update(fs.readFileSync(filePath));
-    return hash.digest('hex');
 }
 
 function collectPackedNativeModules(node, currentPath = '') {
@@ -117,26 +112,6 @@ async function verifyPackagedAppDirectory(appDirectory, expectedVersion) {
     }
 }
 
-function signAuthenticodeFile(filePath) {
-    run(signTool, ['sign', '/sha1', signingCertificateThumbprint, '/fd', 'SHA256', '/v', filePath], projectRoot);
-}
-
-function signBundle(setupPath) {
-    const enginePath = `${setupPath}.engine.exe`;
-    const signedBundlePath = `${setupPath}.signed.exe`;
-    try {
-        // Burn bundles require the engine and the reattached bundle to be signed separately.
-        run(insignia, ['-nologo', '-ib', setupPath, '-o', enginePath], projectRoot);
-        signAuthenticodeFile(enginePath);
-        run(insignia, ['-nologo', '-ab', enginePath, setupPath, '-o', signedBundlePath], projectRoot);
-        signAuthenticodeFile(signedBundlePath);
-        fs.copyFileSync(signedBundlePath, setupPath);
-    } finally {
-        fs.rmSync(enginePath, { force: true });
-        fs.rmSync(signedBundlePath, { force: true });
-    }
-}
-
 function wixProduct({ id, name, version, body, featureRefs }) {
     return `<?xml version="1.0" encoding="utf-8"?>
 <Wix xmlns="http://schemas.microsoft.com/wix/2006/wi" xmlns:util="http://schemas.microsoft.com/wix/UtilExtension">
@@ -158,7 +133,7 @@ ${featureRefs}
 `;
 }
 
-function platformSource({ launcherPath, servicePath, trustedSignerThumbprint }) {
+function platformSource({ launcherPath, servicePath }) {
     const body = `    <Icon Id="OpenDeskIcon" SourceFile="${xml(iconPath)}" />
     <Directory Id="TARGETDIR" Name="SourceDir">
       <Directory Id="ProgramFiles64Folder">
@@ -205,11 +180,6 @@ function platformSource({ launcherPath, servicePath, trustedSignerThumbprint }) 
         <RegistryValue Root="HKLM" Key="SOFTWARE\\OpenDesk\\UpdateService" Name="DataDirectoryInstalled" Value="1" Type="integer" KeyPath="yes" />
       </Component>
     </DirectoryRef>
-    <DirectoryRef Id="APPLICATIONROOTDIRECTORY">
-      <Component Id="OpenDeskUpdatePublisherTrust" Guid="${productCode('platform:4:update-publisher-trust')}" Win64="yes">
-          <RegistryValue Root="HKLM" Key="SOFTWARE\\OpenDesk\\UpdateService" Name="TrustedSignerThumbprints" Value="${xml(trustedSignerThumbprint)}" Type="string" KeyPath="yes" />
-      </Component>
-    </DirectoryRef>
     <DirectoryRef Id="LegacyShortcutFolder">
       <Component Id="LegacyShortcutCleanup" Guid="${productCode('platform:4:legacy-shortcut-cleanup')}" Win64="yes">
         <RemoveFile Id="RemoveMisplacedShortcut" Name="OpenDesk.lnk" On="install" />
@@ -223,7 +193,7 @@ function platformSource({ launcherPath, servicePath, trustedSignerThumbprint }) 
         version: '4.0.0',
         body,
         featureRefs:
-            '      <ComponentRef Id="StableLauncher" />\n      <ComponentRef Id="OpenDeskShortcut" />\n      <ComponentRef Id="OpenDeskUpdateServiceComponent" />\n      <ComponentRef Id="OpenDeskUpdateDataDirectoryComponent" />\n      <ComponentRef Id="OpenDeskUpdatePublisherTrust" />\n      <ComponentRef Id="LegacyShortcutCleanup" />'
+            '      <ComponentRef Id="StableLauncher" />\n      <ComponentRef Id="OpenDeskShortcut" />\n      <ComponentRef Id="OpenDeskUpdateServiceComponent" />\n      <ComponentRef Id="OpenDeskUpdateDataDirectoryComponent" />\n      <ComponentRef Id="LegacyShortcutCleanup" />'
     });
 }
 
@@ -252,7 +222,14 @@ function versionSource(version) {
     };
 }
 
-function bundleSource({ version, platformMsi, versionMsi, cleanupExecutable, legacyBundleCleanupExecutable }) {
+function bundleSource({
+    version,
+    platformMsi,
+    versionMsi,
+    cleanupExecutable,
+    legacyBundleCleanupExecutable,
+    dokanMsi
+}) {
     return `<?xml version="1.0" encoding="utf-8"?>
 <Wix xmlns="http://schemas.microsoft.com/wix/2006/wi" xmlns:bal="http://schemas.microsoft.com/wix/BalExtension" xmlns:util="http://schemas.microsoft.com/wix/UtilExtension">
   <Bundle Name="OpenDesk" Version="${version}" Manufacturer="OpenDesk Team, Openharmony" UpgradeCode="{E7B412C3-02CC-4ED8-9FCB-5D33FE3390E4}" IconSourceFile="${xml(iconPath)}" Compressed="yes">
@@ -279,7 +256,9 @@ function bundleSource({ version, platformMsi, versionMsi, cleanupExecutable, leg
     <util:RegistrySearch Id="FindPrototypeInstallFolder" Variable="PreviousPrototypeInstallFolder" Root="HKLM" Key="SOFTWARE\\OpenDesk\\SilentUpdatePrototype" Value="InstallRoot" Result="value" Format="raw" Win64="yes" />
     <util:RegistrySearch Id="RestoreLegacyInstallFolder" Variable="InstallFolder" Condition="PreviousLegacyInstallFolder AND NOT PreviousPrototypeInstallFolder" After="FindPrototypeInstallFolder" Root="HKLM" Key="SOFTWARE\\OpenDesk\\Installer" Value="InstallPath" Result="value" Format="raw" Win64="yes" />
     <util:RegistrySearch Id="RestorePrototypeInstallFolder" Variable="InstallFolder" Condition="PreviousPrototypeInstallFolder" After="RestoreLegacyInstallFolder" Root="HKLM" Key="SOFTWARE\\OpenDesk\\SilentUpdatePrototype" Value="InstallRoot" Result="value" Format="raw" Win64="yes" />
+    <util:FileSearch Id="FindDokanVersion" Variable="DokanVersion" Path="[SystemFolder]dokan2.dll" Result="version" />
     <Chain>
+      <MsiPackage Id="DokanMsi" SourceFile="${xml(dokanMsi)}" InstallCondition="NOT DokanVersion OR DokanVersion &lt; v2.3.1.1000" ForcePerMachine="yes" DisplayInternalUI="no" Visible="no" Vital="yes" Permanent="yes" />
       <ExePackage Id="CleanupPrototypeInstallations" SourceFile="${xml(cleanupExecutable)}" PerMachine="yes" Vital="yes" Compressed="yes" DetectCondition="CleanupAgentInstalled" InstallCommand="--register" RepairCommand="--register" UninstallCommand="--uninstall-all" />
       <ExePackage Id="CleanupRelatedBundles" SourceFile="${xml(legacyBundleCleanupExecutable)}" PerMachine="yes" Vital="yes" Compressed="yes" DetectCondition="LegacyBundleCleanupDetect" InstallCommand="[WixBundleVersion]" RepairCommand="[WixBundleVersion]" UninstallCommand="/noop" />
       <MsiPackage Id="OpenDeskPlatform" SourceFile="${xml(platformMsi)}" ForcePerMachine="yes" Visible="no">
@@ -373,68 +352,15 @@ function buildVersionMsi({ version, appDirectory, outputDirectory }) {
     return msiPath;
 }
 
-const singleVersionValue = readArgument('version');
-const singleAppDirectoryValue = readArgument('app-dir');
-if (Boolean(singleVersionValue) !== Boolean(singleAppDirectoryValue)) {
-    throw new Error('--version and --app-dir must be provided together');
+const version = assertVersion(requiredArgument('version'), 'version');
+const appDirectory = path.resolve(requiredArgument('app-dir'));
+const outputDirectory = path.resolve(readArgument('output-dir', path.join(projectRoot, 'out', 'make', 'wix', 'x64')));
+if (!fs.existsSync(path.join(appDirectory, 'opendesk.exe')))
+    throw new Error(`Packaged OpenDesk executable not found in ${appDirectory}`);
+if (!fs.existsSync(dokanMsiPath)) {
+    throw new Error(`Dokan MSI not found: ${dokanMsiPath}. Run npm run build:sandbox first.`);
 }
-const singleVersionMode = Boolean(singleVersionValue);
-if (
-    singleVersionMode &&
-    ['baseline-version', 'candidate-version', 'baseline-app-dir', 'candidate-app-dir'].some((name) =>
-        readArgument(name)
-    )
-) {
-    throw new Error('--version/--app-dir cannot be combined with baseline/candidate arguments');
-}
-
-const version = singleVersionMode ? assertVersion(singleVersionValue, 'version') : undefined;
-const appDirectory = singleVersionMode ? path.resolve(singleAppDirectoryValue) : undefined;
-const baselineVersion = singleVersionMode
-    ? undefined
-    : assertVersion(requiredArgument('baseline-version'), 'baseline version');
-const candidateVersion = singleVersionMode
-    ? undefined
-    : assertVersion(requiredArgument('candidate-version'), 'candidate version');
-const baselineAppDirectory = singleVersionMode ? undefined : path.resolve(requiredArgument('baseline-app-dir'));
-const candidateAppDirectory = singleVersionMode ? undefined : path.resolve(requiredArgument('candidate-app-dir'));
-const additionalVersionValue = readArgument('additional-version');
-const additionalAppDirectoryValue = readArgument('additional-app-dir');
-if (singleVersionMode && (additionalVersionValue || additionalAppDirectoryValue)) {
-    throw new Error('--additional-version/--additional-app-dir are only available in baseline/candidate mode');
-}
-if (Boolean(additionalVersionValue) !== Boolean(additionalAppDirectoryValue)) {
-    throw new Error('--additional-version and --additional-app-dir must be provided together');
-}
-const additionalVersion = additionalVersionValue
-    ? assertVersion(additionalVersionValue, 'additional version')
-    : undefined;
-const additionalAppDirectory = additionalAppDirectoryValue ? path.resolve(additionalAppDirectoryValue) : undefined;
-const outputDirectory = path.resolve(
-    readArgument('output-dir', path.join(projectRoot, 'out', 'windows-silent-update-prototype'))
-);
-const signingCertificateThumbprint = requiredArgument('signing-certificate-thumbprint')
-    .replaceAll(' ', '')
-    .toUpperCase();
-if (!/^[0-9A-F]{40}$/.test(signingCertificateThumbprint)) {
-    throw new Error('--signing-certificate-thumbprint must be a SHA-1 certificate thumbprint');
-}
-const versionBuilds = singleVersionMode
-    ? [{ version, appDirectory }]
-    : [
-          { version: baselineVersion, appDirectory: baselineAppDirectory },
-          { version: candidateVersion, appDirectory: candidateAppDirectory },
-          ...(additionalVersion && additionalAppDirectory
-              ? [{ version: additionalVersion, appDirectory: additionalAppDirectory }]
-              : [])
-      ];
-for (const { appDirectory: directory } of versionBuilds) {
-    if (!fs.existsSync(path.join(directory, 'opendesk.exe')))
-        throw new Error(`Packaged OpenDesk executable not found in ${directory}`);
-}
-for (const build of versionBuilds) {
-    await verifyPackagedAppDirectory(build.appDirectory, build.version);
-}
+await verifyPackagedAppDirectory(appDirectory, version);
 fs.mkdirSync(outputDirectory, { recursive: true });
 
 run(process.execPath, [serviceBuilderPath, '--output-dir', outputDirectory], projectRoot);
@@ -450,7 +376,7 @@ run(
         '/platform:x64',
         `/win32icon:${iconPath}`,
         `/out:${launcherPath}`,
-        path.join(scriptDirectory, 'OpenDeskLauncher.cs')
+        path.join(projectRoot, 'resources', 'package', 'windows-installer', 'OpenDeskLauncher.cs')
     ],
     projectRoot
 );
@@ -463,7 +389,7 @@ run(
         '/optimize+',
         '/platform:x64',
         `/out:${cleanupExecutable}`,
-        path.join(scriptDirectory, 'CleanupPrototypeInstallations.cs')
+        path.join(projectRoot, 'resources', 'package', 'windows-installer', 'CleanupOpenDeskInstallations.cs')
     ],
     projectRoot
 );
@@ -502,10 +428,7 @@ run(
 );
 const platformSourcePath = path.join(outputDirectory, 'opendesk-platform.wxs');
 const platformMsiPath = path.join(outputDirectory, 'OpenDesk-platform.msi');
-fs.writeFileSync(
-    platformSourcePath,
-    platformSource({ launcherPath, servicePath, trustedSignerThumbprint: signingCertificateThumbprint })
-);
+fs.writeFileSync(platformSourcePath, platformSource({ launcherPath, servicePath }));
 run(
     path.join(wixDirectory, 'candle.exe'),
     ['-nologo', '-arch', 'x64', '-ext', 'WixUtilExtension', '-out', `${platformSourcePath}.wixobj`, platformSourcePath],
@@ -527,60 +450,16 @@ function buildBundle({ version, versionMsiPath }) {
             platformMsi: platformMsiPath,
             versionMsi: versionMsiPath,
             cleanupExecutable,
-            legacyBundleCleanupExecutable
+            legacyBundleCleanupExecutable,
+            dokanMsi: dokanMsiPath
         })
     );
     compileBundle(sourcePath, setupPath);
-    signBundle(setupPath);
     return { version, setupPath, versionMsiPath };
 }
 
-let bundles;
-if (singleVersionMode) {
-    const versionMsiPath = buildVersionMsi({ version, appDirectory, outputDirectory });
-    const bundle = buildBundle({ version, versionMsiPath });
-    bundles = [{ ...bundle, sha256: fileSha256(bundle.setupPath) }];
-} else {
-    const baselineMsiPath = buildVersionMsi({
-        version: baselineVersion,
-        appDirectory: baselineAppDirectory,
-        outputDirectory
-    });
-    const candidateMsiPath = buildVersionMsi({
-        version: candidateVersion,
-        appDirectory: candidateAppDirectory,
-        outputDirectory
-    });
-    const additionalMsiPath =
-        additionalVersion && additionalAppDirectory
-            ? buildVersionMsi({
-                  version: additionalVersion,
-                  appDirectory: additionalAppDirectory,
-                  outputDirectory
-              })
-            : undefined;
-    const additionalBundle =
-        additionalVersion && additionalMsiPath
-            ? buildBundle({
-                  version: additionalVersion,
-                  versionMsiPath: additionalMsiPath
-              })
-            : undefined;
-    const additionalSha256 = additionalBundle ? fileSha256(additionalBundle.setupPath) : undefined;
-    const candidateBundle = buildBundle({
-        version: candidateVersion,
-        versionMsiPath: candidateMsiPath
-    });
-    const candidateSha256 = fileSha256(candidateBundle.setupPath);
-    const baselineBundle = buildBundle({
-        version: baselineVersion,
-        versionMsiPath: baselineMsiPath
-    });
-    bundles = [
-        baselineBundle,
-        { ...candidateBundle, sha256: candidateSha256 },
-        ...(additionalBundle ? [{ ...additionalBundle, sha256: additionalSha256 }] : [])
-    ];
-}
+const versionMsiPath = buildVersionMsi({ version, appDirectory, outputDirectory });
+const bundle = buildBundle({ version, versionMsiPath });
+const bundles = [bundle];
 
 console.log(JSON.stringify({ outputDirectory, platformMsiPath, bundles }, null, 2));

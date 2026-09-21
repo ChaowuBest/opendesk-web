@@ -10,7 +10,6 @@ const testDir = path.dirname(fileURLToPath(import.meta.url));
 const projectRoot = path.resolve(testDir, '../../../../..');
 const serviceDirectory = path.join(projectRoot, 'resources', 'windows-update-service');
 const builderPath = path.join(projectRoot, 'scripts', 'windows-update-service', 'build-service.mjs');
-const clientPath = path.join(projectRoot, 'scripts', 'windows-update-service', 'client.mjs');
 
 test(
     'Windows update service core rejects unsafe requests and serializes installation work',
@@ -58,8 +57,7 @@ test('service host exposes only the bounded v1 protocol over a restricted local 
     assert.doesNotMatch(protocol, /arguments|commandLine|shell/i);
     assert.match(security, /ReparsePoint/);
     assert.doesNotMatch(security, /TestTrustedVersion|TestTrustedSha256/);
-    assert.match(security, /TrustedSignerThumbprints/);
-    assert.match(security, /TrustedSignerThumbprints/);
+    assert.match(host, /new UpdatePackageSecurity\([\s\S]*false\)/);
     assert.match(security, /WinVerifyTrust/);
     const engine = fs.readFileSync(path.join(serviceDirectory, 'UpdateEngine.cs'), 'utf8');
     assert.match(engine, /Arguments = "\/quiet \/norestart"/);
@@ -72,7 +70,7 @@ test('service host exposes only the bounded v1 protocol over a restricted local 
 
 test('prototype platform MSI owns the service and a protected machine cache without stopping it on repair', () => {
     const builder = fs.readFileSync(
-        path.join(projectRoot, 'scripts', 'windows-silent-update-prototype', 'build-prototype.mjs'),
+        path.join(projectRoot, 'scripts', 'windows-installer', 'build-installer.mjs'),
         'utf8'
     );
 
@@ -84,25 +82,5 @@ test('prototype platform MSI owns the service and a protected machine cache with
     assert.match(builder, /PermissionEx[\s\S]*User="Administrators"[\s\S]*GenericAll="yes"/);
     assert.doesNotMatch(builder, /ServiceControl[^>]*Stop="both"/);
     assert.doesNotMatch(builder, /OPENDESK_TEST_TRUSTED_VERSION|OPENDESK_TEST_TRUSTED_SHA256/);
-    assert.match(builder, /TrustedSignerThumbprints/);
-    assert.match(builder, /signtool\.exe/);
-    assert.match(
-        builder,
-        /const additionalBundle =\s*additionalVersion[\s\S]*buildBundle\(\{[\s\S]*version: additionalVersion,[\s\S]*const additionalSha256 = additionalBundle[\s\S]*fileSha256\(additionalBundle\.setupPath\)/
-    );
-    assert.match(builder, /readArgument\('additional-version'\)/);
-    assert.match(builder, /readArgument\('additional-app-dir'\)/);
-    assert.match(builder, /bundles = \[[\s\S]*additionalBundle[\s\S]*sha256: additionalSha256/);
-});
-
-test('manual service client only emits the bounded update protocol actions', () => {
-    const client = fs.readFileSync(clientPath, 'utf8');
-
-    assert.match(client, /OpenDesk\.UpdateService\.v1/);
-    assert.match(client, /queryStatus/);
-    assert.match(client, /submitUpdate/);
-    assert.match(client, /reportHealthy/);
-    assert.match(client, /randomUUID/);
-    assert.match(client, /process\.argv\[2\] === 'submit' \? 30 \* 60 \* 1000 : 30000/);
-    assert.doesNotMatch(client, /commandLine|shell|arguments/);
+    assert.doesNotMatch(builder, /TrustedSignerThumbprints|signtool\.exe|additional-version/);
 });

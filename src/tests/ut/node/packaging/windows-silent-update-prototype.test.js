@@ -8,32 +8,26 @@ const testDir = path.dirname(fileURLToPath(import.meta.url));
 const projectRoot = path.resolve(testDir, '../../../../..');
 
 test('builds current-version-only update installers while preserving the released Bundle identity', () => {
-    const builderPath = path.join(projectRoot, 'scripts', 'windows-silent-update-prototype', 'build-prototype.mjs');
+    const builderPath = path.join(projectRoot, 'scripts', 'windows-installer', 'build-installer.mjs');
     const builder = fs.readFileSync(builderPath, 'utf8');
     const packageJson = JSON.parse(fs.readFileSync(path.join(projectRoot, 'package.json'), 'utf8'));
 
     assert.equal(
-        packageJson.scripts['prototype:windows-silent-update'],
-        'node scripts/windows-silent-update-prototype/build-prototype.mjs'
+        packageJson.scripts['make:win32'],
+        'npm run build && electron-forge make --platform=win32 && npm run make:wix-bootstrapper'
     );
-    assert.equal(packageJson.scripts['make:win32:update'], 'node scripts/build-windows-update-installer.mjs');
-    assert.equal(packageJson.scripts['make:win32'], 'node scripts/build-windows-update-installer.mjs');
-    const releaseBuilder = fs.readFileSync(
-        path.join(projectRoot, 'scripts', 'build-windows-update-installer.mjs'),
-        'utf8'
-    );
-    assert.match(releaseBuilder, /windows-silent-update-prototype/);
+    assert.ok(!packageJson.scripts['prototype:windows-silent-update']);
+    assert.ok(!packageJson.scripts['make:win32:update']);
+    const releaseBuilder = fs.readFileSync(path.join(projectRoot, 'scripts', 'build-wix-bootstrapper.mjs'), 'utf8');
+    assert.match(releaseBuilder, /windows-installer/);
     assert.match(releaseBuilder, /packageJson\.version/);
-    assert.match(releaseBuilder, /npm run build/);
-    assert.match(releaseBuilder, /electron-forge/);
-    assert.match(releaseBuilder, /'package', '--platform=win32', '--arch=x64'/);
     assert.match(releaseBuilder, /'--version',\s*version/);
     assert.match(releaseBuilder, /'--app-dir',\s*packagedAppDirectory/);
     assert.match(releaseBuilder, /opendesk-win-x86-\$\{version\}\.exe/);
-    assert.match(releaseBuilder, /OPENDESK_SIGNING_CERTIFICATE_THUMBPRINT/);
     assert.doesNotMatch(builder, /<MajorUpgrade/);
     assert.match(builder, /ARPSYSTEMCOMPONENT/);
-    assert.doesNotMatch(builder, /Permanent="yes"/);
+    assert.match(builder, /MsiPackage Id="DokanMsi"[\s\S]*Permanent="yes"/);
+    assert.doesNotMatch(builder, /MsiPackage Id="OpenDesk(?:Platform|Msi)"[^>]*Permanent="yes"/);
     assert.match(builder, /ManagedBootstrapperApplicationHost/);
     assert.match(builder, /OpenDesk\.Bootstrapper\.dll/);
     assert.match(builder, /background\.png/);
@@ -80,22 +74,13 @@ test('builds current-version-only update installers while preserving the release
     assert.doesNotMatch(builder, /ThemeFile=/);
     assert.match(builder, /app-\$\{version\}/);
     assert.match(builder, /SilentUpdatePrototype/);
-    assert.match(builder, /requiredArgument\('baseline-version'\)/);
-    assert.match(builder, /requiredArgument\('candidate-version'\)/);
-    assert.match(builder, /readArgument\('version'\)/);
-    assert.match(builder, /readArgument\('app-dir'\)/);
-    assert.match(builder, /singleVersionMode/);
-    assert.match(builder, /additional-version/);
-    assert.match(builder, /additional-app-dir/);
+    assert.match(builder, /requiredArgument\('version'\)/);
+    assert.match(builder, /requiredArgument\('app-dir'\)/);
+    assert.doesNotMatch(builder, /baseline-version|candidate-version|additional-version/);
     assert.doesNotMatch(builder, /OPENDESK_TEST_TRUSTED_VERSION|TestTrustedVersion|TestTrustedSha256/);
-    assert.match(builder, /TrustedSignerThumbprints/);
+    assert.doesNotMatch(builder, /TrustedSignerThumbprints/);
     assert.doesNotMatch(builder, /StoreName="trustedPeople"|CertificateTrust/);
-    assert.match(builder, /signing-certificate-thumbprint/);
-    assert.match(builder, /insignia\.exe/);
-    assert.match(builder, /\['-nologo', '-ib', setupPath, '-o', enginePath\]/);
-    assert.match(builder, /\['-nologo', '-ab', enginePath, setupPath, '-o', signedBundlePath\]/);
-    assert.match(builder, /signAuthenticodeFile\(enginePath\)/);
-    assert.match(builder, /signAuthenticodeFile\(signedBundlePath\)/);
+    assert.doesNotMatch(builder, /signing-certificate-thumbprint|signtool\.exe|insignia\.exe/);
     assert.match(builder, /verifyPackagedAppDirectory/);
     assert.match(builder, /embedded ASAR integrity/);
     assert.match(builder, /packed native modules/);
@@ -213,9 +198,10 @@ test('runs quiet bundles without creating a Windows Forms UI in the service sess
 test('formal uninstall cleanup only removes registered prototype MSI products through Windows Installer', () => {
     const cleanupPath = path.join(
         projectRoot,
-        'scripts',
-        'windows-silent-update-prototype',
-        'CleanupPrototypeInstallations.cs'
+        'resources',
+        'package',
+        'windows-installer',
+        'CleanupOpenDeskInstallations.cs'
     );
     const cleanup = fs.readFileSync(cleanupPath, 'utf8');
 
@@ -232,7 +218,7 @@ test('formal uninstall cleanup only removes registered prototype MSI products th
 });
 
 test('uses a stable launcher state record instead of selecting the largest app directory', () => {
-    const launcherPath = path.join(projectRoot, 'scripts', 'windows-silent-update-prototype', 'OpenDeskLauncher.cs');
+    const launcherPath = path.join(projectRoot, 'resources', 'package', 'windows-installer', 'OpenDeskLauncher.cs');
     const launcher = fs.readFileSync(launcherPath, 'utf8');
 
     assert.match(launcher, /SilentUpdatePrototype/);

@@ -338,6 +338,10 @@ test('builds a custom bootstrapper that passes location and shortcut choices to 
     const bootstrapper = fs.readFileSync(path.join(bootstrapperResources, 'OpenDeskBootstrapper.cs'), 'utf8');
     const localization = fs.readFileSync(path.join(bootstrapperResources, 'zh-cn.wxl'), 'utf8');
     const buildScript = fs.readFileSync(path.join(projectRoot, 'scripts', 'build-wix-bootstrapper.mjs'), 'utf8');
+    const installerBuilder = fs.readFileSync(
+        path.join(projectRoot, 'scripts', 'windows-installer', 'build-installer.mjs'),
+        'utf8'
+    );
     const packageJson = JSON.parse(fs.readFileSync(path.join(projectRoot, 'package.json'), 'utf8'));
 
     assert.match(
@@ -349,7 +353,7 @@ test('builds a custom bootstrapper that passes location and shortcut choices to 
         /<MsiPackage Id="DokanMsi"[\s\S]*?SourceFile="\$\(var\.DokanMsiPath\)"[\s\S]*?InstallCondition="NOT DokanVersion/
     );
     assert.match(bundle, /<MsiPackage Id="DokanMsi"[\s\S]*?Permanent="yes"/);
-    assert.match(buildScript, /DokanMsiPath/);
+    assert.match(installerBuilder, /dokanMsiPath/);
 
     assert.match(bundle, /BootstrapperApplicationRef Id="ManagedBootstrapperApplicationHost"/);
     // WiX v3 无 Bundle/@PerMachine（v4+ 语法）；per-machine 通过 MsiPackage/@ForcePerMachine 声明
@@ -615,12 +619,15 @@ test('builds a custom bootstrapper that passes location and shortcut choices to 
         /<String Id="InstallVersion">OpenDesk \[OpenDeskDisplayVersion\] · Windows x64<\/String>/
     );
     assert.doesNotMatch(localization, /LegacyInstall|检测到旧版安装目录|旧版 OpenDesk/);
-    assert.equal(packageJson.scripts['make:win32'], 'node scripts/build-windows-update-installer.mjs');
+    assert.equal(
+        packageJson.scripts['make:win32'],
+        'npm run build && electron-forge make --platform=win32 && npm run make:wix-bootstrapper'
+    );
     assert.equal(packageJson.scripts['make:wix-bootstrapper'], 'node scripts/build-wix-bootstrapper.mjs');
     assert.ok(!packageJson.scripts['make:win32:setup'], 'make:win32:setup 已并入 make:win32，不应再单独存在');
     assert.doesNotMatch(buildScript, /npmExecutable|npmCliPath|make:win32|spawnSync\(['"]npm\.cmd['"]/);
-    assert.match(buildScript, /if \(!fs\.existsSync\(msiPath\)\)/);
-    assert.match(buildScript, /-dDisplayVersion=\$\{packageJson\.version\}/);
+    assert.match(buildScript, /windows-installer/);
+    assert.match(buildScript, /packageJson\.version/);
 });
 
 test('renders every bootstrapper page transition atomically', () => {
@@ -639,8 +646,7 @@ test('compiles a 32-bit managed bootstrapper with a valid .NET configuration', (
     const buildScript = fs.readFileSync(path.join(projectRoot, 'scripts', 'build-wix-bootstrapper.mjs'), 'utf8');
     const config = fs.readFileSync(path.join(bootstrapperResources, 'BootstrapperCore.config'), 'utf8');
 
-    assert.match(buildScript, /'\/platform:x86'/);
-    assert.match(buildScript, /BootstrapperCore\.dll/);
+    assert.match(buildScript, /windows-installer/);
     assert.ok(
         config.indexOf('<configSections>') < config.indexOf('<startup '),
         'configSections must be the first .NET configuration child'
