@@ -39,6 +39,11 @@ test('builds current-version-only update installers while preserving the release
     assert.match(builder, /\/win32icon:\$\{iconPath\}/);
     assert.match(builder, /Icon="OpenDeskIcon"/);
     assert.match(builder, /productCode\('platform:4'\)/);
+    assert.match(builder, /packageCode: productCode\('platform-package:4'\)/);
+    assert.match(
+        builder,
+        /function wixProduct\(\{ id, name, version, body, featureRefs, packageCode \}\)[\s\S]*<Package\$\{packageCode \? ` Id="\$\{packageCode\}"` : ''\}/
+    );
     assert.match(builder, /productCode\('platform:4:launcher'\)/);
     assert.match(builder, /productCode\('platform:4:shortcut'\)/);
     assert.match(builder, /productCode\('platform:4:legacy-shortcut-cleanup'\)/);

@@ -112,11 +112,11 @@ async function verifyPackagedAppDirectory(appDirectory, expectedVersion) {
     }
 }
 
-function wixProduct({ id, name, version, body, featureRefs }) {
+function wixProduct({ id, name, version, body, featureRefs, packageCode }) {
     return `<?xml version="1.0" encoding="utf-8"?>
 <Wix xmlns="http://schemas.microsoft.com/wix/2006/wi" xmlns:util="http://schemas.microsoft.com/wix/UtilExtension">
   <Product Id="${id}" UpgradeCode="{0E0C2E6A-34E1-4DA7-919D-A5BE5EF4C045}" Name="${name}" Version="${version}" Manufacturer="OpenDesk Team, Openharmony" Language="1033">
-    <Package InstallerVersion="405" Compressed="yes" InstallScope="perMachine" Platform="x64" />
+    <Package${packageCode ? ` Id="${packageCode}"` : ''} InstallerVersion="405" Compressed="yes" InstallScope="perMachine" Platform="x64" />
     <Media Id="1" Cabinet="product.cab" EmbedCab="yes" />
     <Property Id="ARPSYSTEMCOMPONENT" Value="1" />
     <Property Id="APPLICATIONROOTDIRECTORY" Secure="yes" />
@@ -191,6 +191,7 @@ function platformSource({ launcherPath, servicePath }) {
         id: productCode('platform:4'),
         name: 'OpenDesk Platform (silent-update prototype)',
         version: '4.0.0',
+        packageCode: productCode('platform-package:4'),
         body,
         featureRefs:
             '      <ComponentRef Id="StableLauncher" />\n      <ComponentRef Id="OpenDeskShortcut" />\n      <ComponentRef Id="OpenDeskUpdateServiceComponent" />\n      <ComponentRef Id="OpenDeskUpdateDataDirectoryComponent" />\n      <ComponentRef Id="LegacyShortcutCleanup" />'
