@@ -124,7 +124,7 @@ function wixProduct({ id, name, version, body, featureRefs, packageCode }) {
 <Wix xmlns="http://schemas.microsoft.com/wix/2006/wi" xmlns:util="http://schemas.microsoft.com/wix/UtilExtension">
   <Product Id="${id}" UpgradeCode="{0E0C2E6A-34E1-4DA7-919D-A5BE5EF4C045}" Name="${name}" Version="${version}" Manufacturer="OpenDesk Team, Openharmony" Language="1033">
     <Package${packageCode ? ` Id="${packageCode}"` : ''} InstallerVersion="405" Compressed="yes" InstallScope="perMachine" Platform="x64" />
-    <Media Id="1" Cabinet="product.cab" EmbedCab="yes" />
+    <Media Id="1" Cabinet="product.cab" EmbedCab="yes" CompressionLevel="high" />
     <Property Id="ARPSYSTEMCOMPONENT" Value="1" />
     <Property Id="APPLICATIONROOTDIRECTORY" Secure="yes" />
     <Property Id="OPENDESK_BUNDLE_PROVIDER_KEY" Secure="yes" />
