@@ -37,6 +37,10 @@ const PACKAGING_IGNORE_PATTERNS = [
     /^[/\\]dist[/\\]cli(?:-release)?(?:[/\\]|$)/,
     // TypeScript 源码不进包（dist/main 才是运行入口）
     /^[/\\]src(?:[/\\]|$)/,
+    // Windows 沙箱由 afterCopyExtraResources 按目标架构单独放入 resources/sandbox；
+    // native/windows/sandbox 下还包含另一架构、开发 runtime、Dokan 缓存和 .NET 构建目录，
+    // 这些都不能随应用源码进入 app.asar。
+    /^[/\\]native[/\\]windows[/\\]sandbox(?:[/\\]|$)/,
     // workspace SDK 的嵌套 node_modules 是本地开发安装的开发依赖，运行时只读其 dist
     /^[/\\]packages[/\\](?:app-sdk|plugin-sdk)[/\\]node_modules(?:[/\\]|$)/
 ];

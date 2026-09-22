@@ -28,9 +28,16 @@ const csharpCompiler = process.env.CSC_PATH || 'C:\\Windows\\Microsoft.NET\\Fram
 const bootstrapperResourcesDirectory = path.join(projectRoot, 'resources', 'package', 'bootstrapper');
 const iconPath = path.join(projectRoot, 'resources', 'package', 'icons', 'icon_round.ico');
 const serviceBuilderPath = path.join(projectRoot, 'scripts', 'windows-update-service', 'build-service.mjs');
+// The current WiX v3 MSI templates remain x64; use the requested target only
+// to select the matching Dokan payload in the bootstrapper chain.
+const targetWindowsArch = process.env.OPENDESK_WIX_ARCH || 'x64';
+if (targetWindowsArch !== 'x64' && targetWindowsArch !== 'arm64') {
+    throw new Error(`Unsupported OPENDESK_WIX_ARCH: ${targetWindowsArch}`);
+}
+const targetWindowsRid = targetWindowsArch === 'arm64' ? 'win-arm64' : 'win-x64';
 const dokanMsiPath = path.resolve(
     process.env.OPENDESK_DOKAN_MSI_PATH ||
-        path.join(projectRoot, 'native', 'windows', 'sandbox', 'dist', 'win-x64', 'bin', 'DokanSetup.msi')
+        path.join(projectRoot, 'native', 'windows', 'sandbox', 'dist', targetWindowsRid, 'bin', 'DokanSetup.msi')
 );
 
 function readArgument(name, fallback) {

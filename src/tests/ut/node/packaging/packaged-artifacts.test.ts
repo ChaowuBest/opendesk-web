@@ -10,6 +10,8 @@ const require = createRequire(import.meta.url);
 const helper: any = require('../../../../../scripts/packaging/prune-packaged-artifacts.cjs');
 
 const forgeConfig: any = require('../../../../../forge.config.cjs');
+const { populateIgnoredPaths, userPathFilter } = require('@electron/packager/dist/copy-filter.js');
+const asar = require('@electron/asar');
 
 function writeFile(filePath: string, content = 'x'): void {
     fs.mkdirSync(path.dirname(filePath), { recursive: true });
@@ -21,7 +23,7 @@ function exists(filePath: string): boolean {
 }
 
 test('PACKAGING_IGNORE_PATTERNS 命中 CLI 产物 / 源码 / workspace 嵌套依赖，且不误伤运行时目录', () => {
-    const [cliPattern, srcPattern, packagesPattern] = helper.PACKAGING_IGNORE_PATTERNS;
+    const [cliPattern, srcPattern, sandboxPattern, packagesPattern] = helper.PACKAGING_IGNORE_PATTERNS;
 
     assert.match('/dist/cli/opendesk-debug', cliPattern);
     assert.match('\\dist\\cli-release\\bundle.js', cliPattern);
@@ -33,6 +35,11 @@ test('PACKAGING_IGNORE_PATTERNS 命中 CLI 产物 / 源码 / workspace 嵌套依
     assert.match('/src/main/main.ts', srcPattern);
     assert.match('/src', srcPattern);
     assert.doesNotMatch('/srcdist/keep.js', srcPattern);
+
+    assert.match('/native/windows/sandbox/src/Dynobox/bin/Release/runtime.dll', sandboxPattern);
+    assert.match('\\native\\windows\\sandbox\\dist\\win-arm64\\bin\\sandbox.exe', sandboxPattern);
+    assert.match('/native/windows/sandbox', sandboxPattern);
+    assert.doesNotMatch('/native/windows/sandbox-other/keep.exe', sandboxPattern);
 
     assert.match('/packages/plugin-sdk/node_modules/typescript/lib.js', packagesPattern);
     assert.match('\\packages\\app-sdk\\node_modules\\x', packagesPattern);
@@ -46,6 +53,65 @@ test('forge.config.cjs 的 ignore 列表必须包含全部剪裁模式（防止�
         assert.ok(ignoreList.includes(pattern), `missing ignore pattern: ${pattern}`);
     }
     assert.equal(typeof forgeConfig.preserveWixInstallDirectory, 'function');
+});
+
+test('应用复制阶段排除整个 Windows 沙箱构建树，且不误伤其他 native 资源', async () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'opendesk-sandbox-copy-'));
+    try {
+        const source = path.join(root, 'source');
+        const destination = path.join(root, 'app');
+        const sandboxDirectory = 'native/windows/sandbox';
+        const sandboxFiles = [
+            'src/Dynobox/Program.cs',
+            'src/Dynobox/bin/Release/runtime.dll',
+            'src/Dynobox/obj/project.assets.json',
+            'dist/win-x64/bin/sandbox.exe',
+            'dist/win-arm64/bin/sandbox.exe',
+            'dist/win-x64/bin/DokanSetup.msi',
+            'dist/win-arm64/bin/DokanSetup.msi',
+            'runtime/sandbox.exe',
+            '_setup/Dokan_x64.msi',
+            'tests/fixture.txt'
+        ];
+        for (const relative of ['', ...sandboxFiles]) {
+            const relativePath = `/${sandboxDirectory}${relative ? `/${relative}` : ''}`;
+            for (const candidate of [relativePath, relativePath.replaceAll('/', '\\')]) {
+                assert.ok(
+                    forgeConfig.packagerConfig.ignore.some((pattern: RegExp) => pattern.test(candidate)),
+                    `should exclude ${candidate}`
+                );
+            }
+        }
+        for (const relative of sandboxFiles) {
+            writeFile(path.join(source, sandboxDirectory, relative));
+        }
+        const keptFiles = [
+            'dist/main/main.js',
+            'native/openharmony/sandbox/bin/helper',
+            'native/darwin/speech-helper/helper',
+            'native/windows/sandbox-other/keep.txt'
+        ];
+        for (const relative of keptFiles) {
+            writeFile(path.join(source, relative));
+        }
+        const options = { ...forgeConfig.packagerConfig, dir: source, out: destination, prune: true };
+        populateIgnoredPaths(options);
+        // 使用 packager 的实际复制过滤器，避免只检查正则而遗漏复制阶段的路径语义。
+        await fs.promises.cp(source, destination, { recursive: true, filter: userPathFilter(options) });
+        assert.equal(exists(path.join(destination, sandboxDirectory)), false);
+        const archivePath = path.join(root, 'app.asar');
+        await asar.createPackage(destination, archivePath);
+        const entries = asar.listPackage(archivePath).map((entry: string) => entry.replaceAll('\\', '/'));
+        assert.equal(
+            entries.some((entry: string) => /^\/native\/windows\/sandbox(?:\/|$)/.test(entry)),
+            false
+        );
+        for (const relative of keptFiles) {
+            assert.ok(entries.includes(`/${relative}`), `should keep ${relative}`);
+        }
+    } finally {
+        fs.rmSync(root, { recursive: true, force: true });
+    }
 });
 
 test('keepNativePrebuildDirectory 按目标平台架构保留 prebuilds', () => {
