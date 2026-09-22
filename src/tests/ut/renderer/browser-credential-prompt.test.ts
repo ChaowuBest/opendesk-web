@@ -84,15 +84,15 @@ describe('credential prompt DOM lifecycle', () => {
         const result = renderCredentialPrompt(options);
         const card = document.getElementById(options.id);
         expect(card).not.toBeNull();
-        expect(card!.style.top).toBe('150px');
+        expect(card!.style.top).toBe('158px');
         card!.dispatchEvent(new Event('opendesk-credential-dismiss'));
         expect(await result).toBe(false);
     });
     it('anchors to the owning browser and keeps reveal with actions without accepting synthetic clicks', async () => {
         const result = renderCredentialPrompt(options);
         const card = document.getElementById(options.id)!;
-        expect(card.style.top).toBe('150px');
-        expect(card.style.right).toBe('100px');
+        expect(card.style.top).toBe('158px');
+        expect(card.style.right).toBe('108px');
         const root = card.shadowRoot!;
         expect(root.querySelector('nav label input')).not.toBeNull();
         expect(root.querySelector('#old')!.textContent).not.toContain('old-secret');

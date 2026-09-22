@@ -59,7 +59,7 @@ export function renderCredentialPrompt(options: CredentialPromptOptions): Promis
         style.textContent = `
             :host{font-family:var(--font-sans);font-size:var(--fs-base);color:var(--od-text);line-height:1.5}
             *{box-sizing:border-box}
-            section{padding:16px;background:var(--od-bg-elevated);border:1px solid var(--od-border-strong);border-radius:0 0 16px 16px;box-shadow:0 8px 24px #0003;max-height:var(--credential-prompt-max-height);overflow:auto}
+            section{padding:16px;background:var(--od-bg-elevated);border:1px solid var(--od-border-strong);border-radius:16px;box-shadow:0 8px 24px #0003;max-height:var(--credential-prompt-max-height);overflow:auto}
             header{display:flex;align-items:center;justify-content:space-between;gap:12px}
             h2{font-size:var(--fs-lg);font-weight:600;line-height:1.5;margin:0}
             ${options.buttonCSS}
@@ -159,8 +159,8 @@ export function renderCredentialPrompt(options: CredentialPromptOptions): Promis
                 finish(false);
                 return;
             }
-            const top = bounds.bottom;
-            const right = Math.min(bounds.right, innerWidth);
+            const top = bounds.bottom + 8;
+            const right = Math.min(bounds.right, innerWidth) - 8;
             host.style.top = `${top}px`;
             host.style.right = `${innerWidth - right}px`;
             host.style.width = `${Math.max(0, Math.min(360, right - Math.max(bounds.left, 0)))}px`;
