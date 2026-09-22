@@ -79,7 +79,9 @@ test('builds current-version-only update installers while preserving the release
     assert.match(builder, /PreviousLegacyInstallFolder/);
     assert.match(builder, /SOFTWARE\\\\OpenDesk\\\\Installer/);
     assert.match(builder, /Condition="PreviousLegacyInstallFolder AND NOT PreviousPrototypeInstallFolder"/);
-    assert.match(builder, /<Media Id="1" Cabinet="product\.cab" EmbedCab="yes"/);
+    // The shared wixProduct template generates both the platform MSI and version MSI.
+    // Keep the high-compression setting on this new release path, not only on the legacy Forge template.
+    assert.match(builder, /<Media Id="1" Cabinet="product\.cab" EmbedCab="yes" CompressionLevel="high"\s*\/>/);
     assert.doesNotMatch(builder, /ThemeFile=/);
     assert.match(builder, /app-\$\{version\}/);
     assert.match(builder, /SilentUpdatePrototype/);

@@ -71,6 +71,7 @@ run('npx', ['electron-forge', 'make', '--platform=win32', '--arch=arm64'], {
 
 // 3. 生成带 Dokan ARM64 驱动的 Setup.exe，四个路径全部指到 arm64 产物
 const arm64Env = {
+    OPENDESK_WIX_ARCH: 'arm64',
     OPENDESK_MSI_PATH: path.join(wixOutDir, 'opendesk.msi'),
     OPENDESK_STAGED_APP_DIR: path.join(projectRoot, 'out', 'opendesk-win32-arm64'),
     OPENDESK_DOKAN_MSI_PATH: path.join(

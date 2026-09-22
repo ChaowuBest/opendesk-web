@@ -549,7 +549,7 @@ module.exports = {
         beforeAsar: [applyPackagedAppVersion],
         // 排除打包时不需带入的目录/文件。asar 里若混入开发期垃圾（vite 缓存、
         // 文档、日志等），会膨胀体积并显著拖慢 WiX light 的压缩耗时。
-        // PACKAGING_IGNORE_PATTERNS：CLI 构建产物、TS 源码、workspace SDK 嵌套
+        // PACKAGING_IGNORE_PATTERNS：CLI 构建产物、TS 源码、Windows 沙箱构建树、workspace SDK 嵌套
         // node_modules（见 scripts/packaging/prune-packaged-artifacts.cjs）。
         ignore: [
             ...PACKAGING_IGNORE_PATTERNS,
