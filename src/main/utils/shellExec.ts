@@ -44,11 +44,11 @@ function* executablePaths(executable: string): Generator<string> {
     const pathSeparator = isWindows ? ';' : ':';
     const pathEnv = process.env.PATH || '';
     const searchDirs: string[] = pathEnv.split(pathSeparator).filter(Boolean);
+    const sysRoot = process.env.SystemRoot || process.env.WINDIR || 'C:\\Windows';
 
     if (isWindows) {
         // Windows 系统工具可能不在 PATH 中（如精简版 / Server Core / 32位进程在64位系统上的重定向等），
         // 补充已知的默认安装位置作为 fallback
-        const sysRoot = process.env.SystemRoot || process.env.WINDIR || 'C:\\Windows';
         searchDirs.push(
             `${sysRoot}\\System32`,
             `${sysRoot}\\System32\\WindowsPowerShell\\v1.0`,
@@ -85,6 +85,15 @@ function* executablePaths(executable: string): Generator<string> {
     for (const dir of searchDirs) {
         for (const name of executableNames) {
             const fullPath = joinPath(dir.replace(/^"|"$/g, ''), name);
+            // Windows 的 %SystemRoot%\System32\bash.exe 是 WSL 启动器而非真正的 bash：
+            // 以它作为 shell 执行 Windows 路径会被当作 Linux 路径处理（issue #319），
+            // 因此在唯一查找出口处排除，shell 扫描、默认 shell 与 TUI 检测统一受益
+            if (
+                isWindows &&
+                executable === 'bash' &&
+                fullPath.toLowerCase() === path.win32.join(sysRoot, 'System32', 'bash.exe').toLowerCase()
+            )
+                continue;
             const key = isWindows ? fullPath.toLowerCase() : fullPath;
             if (seen.has(key)) continue;
             seen.add(key);
