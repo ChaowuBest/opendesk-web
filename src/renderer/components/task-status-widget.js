@@ -108,17 +108,25 @@ const WIDGET_CSS = `
     border-radius: 999px;
 }
 
-/* 复用通用确认框，只压缩留白以适配 340 × 215 的浮窗。 */
+/* 复用通用确认框，填满浮窗并沿用同一外沿圆角。 */
 .widget .od-confirm-modal-overlay {
     border-radius: 16px;
+    overflow: hidden;
     -webkit-app-region: no-drag;
 }
 .widget .od-confirm-modal-card {
-    width: calc(100% - 16px);
+    width: 100%;
+    height: 100%;
     max-width: none;
-    max-height: calc(100% - 16px);
+    max-height: 100%;
+    border-radius: inherit;
+    box-shadow: none;
     display: flex;
     flex-direction: column;
+}
+.widget .od-confirm-modal-card,
+.widget .od-confirm-modal-overlay.od-modal-leaving .od-confirm-modal-card {
+    animation: none;
 }
 .widget .od-confirm-modal-banner,
 .widget .od-confirm-modal-footer {
@@ -127,6 +135,7 @@ const WIDGET_CSS = `
 }
 .widget .od-confirm-modal-body {
     padding: 12px 16px;
+    flex: 1;
     min-height: 0;
     overflow: auto;
 }
