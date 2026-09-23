@@ -11,6 +11,7 @@
 
 import { createRendererTranslator } from '../locale.ts';
 import { normalizeFontPreset } from '../theme/font-preset.ts';
+import { showConfirmModal, escapeModalText } from './confirmModal.js';
 
 const t = createRendererTranslator();
 
@@ -105,6 +106,29 @@ const WIDGET_CSS = `
 
 .widget.is-collapsed {
     border-radius: 999px;
+}
+
+/* 复用通用确认框，只压缩留白以适配 340 × 215 的浮窗。 */
+.widget .od-confirm-modal-overlay {
+    border-radius: 16px;
+    -webkit-app-region: no-drag;
+}
+.widget .od-confirm-modal-card {
+    width: calc(100% - 16px);
+    max-width: none;
+    max-height: calc(100% - 16px);
+    display: flex;
+    flex-direction: column;
+}
+.widget .od-confirm-modal-banner,
+.widget .od-confirm-modal-footer {
+    padding: 12px 16px;
+    flex-shrink: 0;
+}
+.widget .od-confirm-modal-body {
+    padding: 12px 16px;
+    min-height: 0;
+    overflow: auto;
 }
 
 .lst-view,
@@ -912,6 +936,7 @@ export class TaskStatusWidget extends HTMLElement {
         this._elapsedEls = [];
         this._closeMenuEl = null;
         this._closeMenuDismiss = null;
+        this._permanentClosePending = false;
         /** 是否已收到首份摘要数据（在此之前展示加载视图）。 */
         this._dataReady = false;
         this._listSignature = '';
@@ -1027,7 +1052,7 @@ export class TaskStatusWidget extends HTMLElement {
         if (mode !== this._mode) {
             this._mode = mode;
             // 模式变化时重置形态：pill 默认胶囊，card 默认完整卡片。
-            this._collapsed = mode === 'pill';
+            this._collapsed = mode === 'pill' && !this._permanentClosePending;
             window.taskStatusWidgetAPI?.setCollapsed(this._collapsed);
         }
         this._render();
@@ -1254,7 +1279,7 @@ export class TaskStatusWidget extends HTMLElement {
 
     _onWindowBlur = () => {
         // 仅「单行胶囊」模式在失焦时自动收回；「完整卡片」模式保持展开，除非手动收起。
-        if (this._mode === 'pill' && !this._collapsed) {
+        if (this._mode === 'pill' && !this._collapsed && !this._permanentClosePending) {
             this._collapse();
         }
     };
@@ -1326,7 +1351,7 @@ export class TaskStatusWidget extends HTMLElement {
         );
         menu.appendChild(
             buildItem(t('renderer.taskStatusWidget.closeMenu.hidePermanent'), GEAR_SVG, () => {
-                window.taskStatusWidgetAPI?.closePermanently?.();
+                void this._confirmPermanentClose();
             })
         );
 
@@ -1364,6 +1389,29 @@ export class TaskStatusWidget extends HTMLElement {
         this.shadowRoot.addEventListener('mousedown', this._closeMenuDismiss, true);
         document.addEventListener('keydown', this._closeMenuKeydown);
         window.addEventListener('blur', this._closeMenuDismiss);
+    }
+
+    async _confirmPermanentClose() {
+        if (this._permanentClosePending) return;
+        this._permanentClosePending = true;
+        this._expand();
+        try {
+            const confirmed = await showConfirmModal({
+                variant: 'warn',
+                icon: 'fa-gear',
+                title: escapeModalText(t('renderer.taskStatusWidget.closePermanent.confirm')),
+                message: escapeModalText(t('renderer.taskStatusWidget.closePermanent.hint')),
+                confirmText: t('common.confirm'),
+                cancelText: t('common.cancel'),
+                mountTarget: this._container
+            });
+            if (confirmed) {
+                await window.taskStatusWidgetAPI?.closePermanently?.();
+            }
+        } finally {
+            this._permanentClosePending = false;
+            if (!document.hasFocus()) this._onWindowBlur();
+        }
     }
 
     _closeMenuKeydown = (ev) => {
