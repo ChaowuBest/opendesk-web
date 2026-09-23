@@ -2432,6 +2432,8 @@ export const zhCn: Record<string, string> = {
     'renderer.taskStatusWidget.closeMenu.hide': '关闭任务浮窗',
     'renderer.taskStatusWidget.closeMenu.hideSession': '关闭任务浮窗（下次启动恢复）',
     'renderer.taskStatusWidget.closeMenu.hidePermanent': '关闭任务浮窗（永久）',
+    'renderer.taskStatusWidget.closePermanent.confirm': '确认永久关闭任务浮窗？',
+    'renderer.taskStatusWidget.closePermanent.hint': '可通过【设置】→【通用设置】→【悬浮窗】再次启用。',
 
     // Renderer - Developer Menu
     'renderer.developer.menu': '开发者',

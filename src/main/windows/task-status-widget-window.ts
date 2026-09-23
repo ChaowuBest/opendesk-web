@@ -9,7 +9,7 @@
  * See the Mulan PSL v2 for more details.
  */
 
-import { app, BrowserWindow, ipcMain, screen } from 'electron';
+import { app, BrowserWindow, dialog, ipcMain, screen } from 'electron';
 import { BaseTaskManagerUpdateSubscriber } from '../aikernel/task/manager.js';
 import { errorToMessage, type TaskUpdateChunk } from '../aikernel/task/types.js';
 import { BaseTaskUpdateSubscriber } from '../aikernel/states/tasks.js';
@@ -32,6 +32,7 @@ import {
 import type { TaskUsageSnapshot } from '../aikernel/task/types.js';
 import { getTaskTodosForDisplay } from '../aikernel/todos/task-todos.js';
 import { Setting } from '../utils/setting.js';
+import { t } from '../../locale/index.js';
 
 /**
  * 任务状态浮窗（主进程侧窗口管理）。
@@ -70,6 +71,7 @@ export interface TaskStatusWidgetHost {
 let host: TaskStatusWidgetHost | null = null;
 let widgetWindow: BrowserWindow | null = null;
 let initialized = false;
+let permanentClosePending = false;
 
 /** 主窗口是否处于隐藏状态（最小化或最小化到托盘）。 */
 let isWindowHidden = false;
@@ -688,20 +690,36 @@ export function initTaskStatusWidget(nextHost: TaskStatusWidgetHost): void {
         syncTaskUpdateSubscriptions();
         hideWidget();
     });
-    // 关闭菜单 · 永久：恢复主窗口并打开系统设置，高亮悬浮窗模式下拉框引导用户关闭。
-    ipcMain.handle('taskStatusWidget:closePermanently', () => {
-        const main = host?.getMainWindow();
-        if (main && !main.isDestroyed()) {
-            activateMainWindow(main);
-            // 主窗口从最小化/隐藏恢复是异步的；延迟到恢复后再发送，避免 IPC 在窗口恢复
-            // 期间被丢弃。
-            setTimeout(() => {
-                safeSendToWebContents(main.webContents, 'command:openSettingEditor', {
-                    highlightFloatingWindowMode: true
-                });
-            }, 150);
+    // 关闭菜单 · 永久：确认后持久化关闭，由设置变更回调立即隐藏浮窗。
+    ipcMain.handle('taskStatusWidget:closePermanently', async () => {
+        const win = widgetWindow;
+        if (permanentClosePending || !win || win.isDestroyed()) {
+            return;
         }
-        hideWidget();
+        permanentClosePending = true;
+        try {
+            const { response } = await dialog.showMessageBox(win, {
+                type: 'question',
+                message: t('renderer.taskStatusWidget.closePermanent.confirm'),
+                detail: t('renderer.taskStatusWidget.closePermanent.hint'),
+                buttons: [t('common.confirm'), t('common.cancel')],
+                defaultId: 1,
+                cancelId: 1,
+                noLink: true
+            });
+            if (response !== 0) {
+                return;
+            }
+            // 确认期间其他窗口可能修改设置，保存时读取最新值，避免覆盖无关配置。
+            const setting = Setting.getInstance();
+            const data = setting.getData();
+            setting.setData({
+                ...data,
+                gui_config: { ...data.gui_config, floating_window_mode: 'off' }
+            });
+        } finally {
+            permanentClosePending = false;
+        }
     });
     ipcMain.on('taskStatusWidget:notifyWaiting', (_event, taskId: unknown, waiting: unknown) => {
         notifyTaskWaitingForInput(typeof taskId === 'string' ? taskId : '', waiting === true);
