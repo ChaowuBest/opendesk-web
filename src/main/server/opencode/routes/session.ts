@@ -16,6 +16,7 @@ import path from 'path';
 import { BlockList, isIP } from 'node:net';
 import { GlobalState } from '../../../aikernel/states/global.js';
 import { BaseTaskUpdateSubscriber, type TaskUpdateChunk } from '../../../aikernel/states/tasks.js';
+import { BaseTaskManagerUpdateSubscriber } from '../../../aikernel/task/manager.js';
 import { createAskUserToolset } from '../../../aikernel/interaction/tools.js';
 import { EventBus } from '../event-bus.js';
 import { modelAliasFromOpenCodeRef } from '../config-compat.js';
@@ -461,6 +462,63 @@ class ServerTaskUpdateSubscriber extends BaseTaskUpdateSubscriber {
     send(chunkUpdate: TaskUpdateChunk) {
         this.onUpdate(chunkUpdate);
     }
+}
+
+/**
+ * 将 OpenDesk 内部的任务名称变化桥接为 opencode 协议的 session.updated 事件。
+ * 所有改名路径（LLM 自动命名、rename、关闭自动命名时的截断命名、任务导入等）
+ * 都会触发 publishTaskListUpdate，订阅该汇聚点并对比名称快照，即可不遗漏地感知变化。
+ */
+class TaskNameSyncSubscriber extends BaseTaskManagerUpdateSubscriber {
+    private lastNameByTaskId = new Map<string, string | null>();
+
+    send(taskList: object[]): void {
+        const seen = new Set<string>();
+        for (const entry of taskList as Array<{ task_id?: string; task_name?: string | null }>) {
+            if (typeof entry?.task_id !== 'string') continue;
+            seen.add(entry.task_id);
+            const lastName = this.lastNameByTaskId.get(entry.task_id);
+            const newName = entry.task_name ?? null;
+            this.lastNameByTaskId.set(entry.task_id, newName);
+            // lastName === undefined 表示首次观察到该任务（baseline），只记录不发事件
+            if (lastName !== undefined && lastName !== newName) {
+                this.publishSessionNameUpdated(entry.task_id);
+            }
+        }
+        for (const taskId of [...this.lastNameByTaskId.keys()]) {
+            if (!seen.has(taskId)) {
+                this.lastNameByTaskId.delete(taskId);
+            }
+        }
+    }
+
+    private publishSessionNameUpdated(taskId: string): void {
+        const task = GlobalState.getInstance().taskManagerState.getTask(taskId);
+        if (!task) return;
+        const workspace = getTaskWorkspace(task);
+        EventBus.publish({
+            type: 'session.updated',
+            directory: workspace,
+            properties: {
+                sessionID: toExternalId(task.task_id),
+                info: taskToSessionInfo(task, workspace, task.workspaceID)
+            }
+        });
+    }
+}
+
+let taskNameSyncSubscriptionId: string | undefined;
+
+export function registerTaskNameSyncSubscriber(): void {
+    if (taskNameSyncSubscriptionId !== undefined) return;
+    const tms = GlobalState.getInstance().taskManagerState;
+    taskNameSyncSubscriptionId = tms.addSubscriber(new TaskNameSyncSubscriber());
+}
+
+export function disposeTaskNameSyncSubscriber(): void {
+    if (taskNameSyncSubscriptionId === undefined) return;
+    GlobalState.getInstance().taskManagerState.removeSubscriber(taskNameSyncSubscriptionId);
+    taskNameSyncSubscriptionId = undefined;
 }
 
 const _serverSubTaskLifecycleParents = new WeakSet<object>();
