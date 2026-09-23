@@ -57,6 +57,8 @@ export interface ConfirmModalOptions {
     enterToConfirm?: boolean;
     /** 打开后自动聚焦"确认"按钮（信息提示类弹窗使用，回车/空格可直接关闭） */
     autoFocusConfirm?: boolean;
+    /** 是否播放进入/退出动效（默认 true）；关闭时同时跳过动画等待。 */
+    animate?: boolean;
 }
 
 const ANIM_DURATION_IN = 250;
@@ -422,6 +424,10 @@ export const MODAL_CSS = `
 }
 .od-confirm-btn-danger:hover { filter: brightness(0.9); }
 
+.od-confirm-modal-overlay.od-modal-no-animation,
+.od-confirm-modal-overlay.od-modal-no-animation .od-confirm-modal-card {
+    animation: none;
+}
 @keyframes od-modal-fade-in { from { opacity: 0; } to { opacity: 1; } }
 @keyframes od-modal-fade-out { from { opacity: 1; } to { opacity: 0; } }
 @keyframes od-modal-scale-in {
@@ -507,6 +513,7 @@ export function showConfirmModal(options: ConfirmModalOptions): Promise<boolean>
             challengeHint,
             enterToConfirm = false,
             autoFocusConfirm = false,
+            animate = true,
             mountTarget = document.body
         } = options;
 
@@ -531,6 +538,9 @@ export function showConfirmModal(options: ConfirmModalOptions): Promise<boolean>
 
         const overlay = document.createElement('div');
         overlay.className = 'od-confirm-modal-overlay';
+        if (!animate) {
+            overlay.classList.add('od-modal-no-animation');
+        }
         if (detectDarkMode(mountTarget)) {
             overlay.classList.add('od-modal-dark');
         }
@@ -556,11 +566,16 @@ export function showConfirmModal(options: ConfirmModalOptions): Promise<boolean>
         const close = (result: boolean) => {
             if (resolved) return;
             resolved = true;
-            overlay.classList.add('od-modal-leaving');
-            setTimeout(() => {
+            const finish = () => {
                 overlay.remove();
                 resolve(result);
-            }, ANIM_DURATION_OUT);
+            };
+            if (animate) {
+                overlay.classList.add('od-modal-leaving');
+                setTimeout(finish, ANIM_DURATION_OUT);
+            } else {
+                finish();
+            }
             document.removeEventListener('keydown', escHandler);
             if (enterHandler) {
                 document.removeEventListener('keydown', enterHandler);
@@ -623,7 +638,7 @@ export function showConfirmModal(options: ConfirmModalOptions): Promise<boolean>
                     close(true);
                 }
             });
-            setTimeout(() => challengeInput.focus(), ANIM_DURATION_IN);
+            setTimeout(() => challengeInput.focus(), animate ? ANIM_DURATION_IN : 0);
         }
 
         mountTarget.appendChild(overlay);

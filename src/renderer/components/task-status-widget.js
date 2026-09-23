@@ -124,10 +124,6 @@ const WIDGET_CSS = `
     display: flex;
     flex-direction: column;
 }
-.widget .od-confirm-modal-card,
-.widget .od-confirm-modal-overlay.od-modal-leaving .od-confirm-modal-card {
-    animation: none;
-}
 .widget .od-confirm-modal-banner,
 .widget .od-confirm-modal-footer {
     padding: 12px 16px;
@@ -1415,6 +1411,7 @@ export class TaskStatusWidget extends HTMLElement {
                 message: escapeModalText(t('renderer.taskStatusWidget.closePermanent.hint')),
                 confirmText: t('common.confirm'),
                 cancelText: t('common.cancel'),
+                animate: false,
                 mountTarget: this._container
             });
             if (confirmed) {
