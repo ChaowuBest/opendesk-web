@@ -1396,6 +1396,9 @@ export class TaskStatusWidget extends HTMLElement {
         this._permanentClosePending = true;
         this._expand();
         try {
+            // 独立浮窗未加载主窗口的语言初始化，弹窗须使用应用设置而非浏览器语言。
+            const settings = await window.settingAPI.loadSettingObject();
+            const t = createRendererTranslator(settings);
             const confirmed = await showConfirmModal({
                 variant: 'warn',
                 icon: 'fa-gear',
