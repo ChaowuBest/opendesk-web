@@ -18,6 +18,7 @@ import {
     getAccountApi,
     resolveLocalizedText,
     runAccountLoginFlow,
+    splitLoginMethods,
     type AccountApi,
     type AccountLoginMethod
 } from '../utils/account-login.ts';
@@ -107,16 +108,16 @@ class SetupWizard extends HTMLElement {
     private t = createRendererTranslator();
     // 企业账号：先输入服务器地址，再进入登录表单
     private enterpriseBaseUrlStep = true;
-    private accountLoginComplete = false;
     // 账号登录表单状态
     private loginUsername = '';
     private loginPassword = '';
     private loginMethods: AccountLoginMethod[] = [];
-    private selectedLoginMethodId: string | null = null;
     private loginMethodLoading = false;
+    private loginMethodsLoaded = false;
     private activeLoginFlowId: string | null = null;
     private loginBusy = false;
     private loginError: string | null = null;
+    private loginBrowserUrl: string | null = null;
     private enterpriseBaseUrlDraft = '';
 
     async connectedCallback(): Promise<void> {
@@ -156,7 +157,10 @@ class SetupWizard extends HTMLElement {
     }
 
     private _renderStepper(): string {
-        const labels = ['账号选择', '模型配置', '完成'];
+        // 账号登录流程的第二步是账号登录，不登录流程仍是模型配置
+        const step2Label =
+            this.loginChoice === 'nologin' || !isAccountFeatureEnabled(this.currentData) ? '模型配置' : '账号登录';
+        const labels = ['账号选择', step2Label, '完成'];
         let html = '';
         for (let i = 1; i <= this.totalSteps; i++) {
             const isActive = i === this.currentStep;
@@ -233,11 +237,7 @@ class SetupWizard extends HTMLElement {
 
     // =================== Step 2 ===================
     private _renderStep2(): string {
-        const view = resolveWizardStep2View(
-            this.loginChoice ?? 'nologin',
-            this.accountLoginComplete,
-            isAccountFeatureEnabled(this.currentData)
-        );
+        const view = resolveWizardStep2View(this.loginChoice ?? 'nologin', isAccountFeatureEnabled(this.currentData));
         switch (view) {
             case 'personal-login':
                 return this._renderAccountLogin('personal');
@@ -277,19 +277,10 @@ class SetupWizard extends HTMLElement {
             `;
         }
 
-        const method = this.loginMethods.find((candidate) => candidate.id === this.selectedLoginMethodId);
-        const methodOptions =
-            this.loginMethods.length > 1
-                ? `<div class="f-row"><div class="f-actions">${this.loginMethods
-                      .map(
-                          (candidate) =>
-                              `<button class="wiz-btn ${candidate.id === method?.id ? 'wiz-btn-primary' : 'wiz-btn-secondary'}" type="button" data-login-method="${this._escapeHtml(candidate.id)}">${this._escapeHtml(resolveLocalizedText(candidate.displayName))}</button>`
-                      )
-                      .join('')}</div></div>`
-                : '';
+        const { passwordMethod, providerMethods } = splitLoginMethods(this.loginMethods);
         const fields =
-            method?.type === 'form'
-                ? method.fields
+            passwordMethod?.type === 'form'
+                ? passwordMethod.fields
                       .map((field) => {
                           const value =
                               field.id === 'username'
@@ -302,20 +293,44 @@ class SetupWizard extends HTMLElement {
                       })
                       .join('')
                 : '';
+        const providers = providerMethods.length
+            ? `<div class="f-row"><div class="f-actions">${providerMethods
+                  .map((providerMethod) => {
+                      const provider = resolveLocalizedText(providerMethod.displayName);
+                      const label = this.t('renderer.account.loginWithProvider', { provider });
+                      return `<button class="wiz-btn wiz-btn-secondary" type="button" data-browser-method="${this._escapeHtml(providerMethod.id)}" ${this.loginBusy ? 'disabled' : ''}>${this._escapeHtml(label)}</button>`;
+                  })
+                  .join('')}</div></div>`
+            : '';
+        const unavailable =
+            !this.loginMethodLoading && this.loginMethodsLoaded && !passwordMethod && providerMethods.length === 0;
+        const result = this.loginError
+            ? `<div id="wizard-account-result" class="verify-result verify-error">${this._escapeHtml(this.loginError)}</div>`
+            : unavailable
+              ? `<div id="wizard-account-result" class="verify-result verify-error">${this._escapeHtml(this.t('renderer.wizard.accountServiceUnavailable'))}</div>`
+              : `<div id="wizard-account-result" class="verify-result hidden"></div>`;
+        const browserHint = this.loginBrowserUrl
+            ? `<p class="ob-desc">${this._escapeHtml(this.t('renderer.account.browserLoginHint'))}</p>
+                <div class="f-actions"><button id="wizard-copy-login-link" class="wiz-btn wiz-btn-secondary" type="button"><i class="fas fa-copy"></i>${this._escapeHtml(this.t('renderer.account.copyLoginLink'))}</button></div>`
+            : '';
+        const submit = passwordMethod
+            ? `<div class="f-actions">
+                <button id="wizard-account-finish" class="wiz-btn wiz-btn-primary" type="button" ${this.loginBusy || this.loginMethodLoading ? 'disabled' : ''}>
+                    ${this.loginBusy || this.loginMethodLoading ? '<i class="fas fa-spinner fa-spin"></i>' : '<i class="fas fa-check-double"></i>'}${this._escapeHtml(this.t('renderer.wizard.loginAndFinish'))}
+                </button>
+            </div>`
+            : '';
 
         return `
         <span class="step-tag">Step 2 · ${this._escapeHtml(this.t('renderer.wizard.accountLoginStep'))}</span>
         <h2>${this._escapeHtml(kind === 'enterprise' ? this.t('renderer.wizard.enterpriseLoginTitle') : this.t('renderer.wizard.personalLoginTitle'))}</h2>
         <p class="ob-desc">${this._escapeHtml(this.t('renderer.wizard.accountLoginDesc'))}</p>
         <div class="form-card">
-            ${methodOptions}
             ${fields}
-            ${this.loginError ? `<div id="wizard-account-result" class="verify-result verify-error">${this._escapeHtml(this.loginError)}</div>` : `<div id="wizard-account-result" class="verify-result hidden"></div>`}
-            <div class="f-actions">
-                <button id="wizard-account-finish" class="wiz-btn wiz-btn-primary" type="button" ${this.loginBusy || this.loginMethodLoading || !method ? 'disabled' : ''}>
-                    ${this.loginBusy || this.loginMethodLoading ? '<i class="fas fa-spinner fa-spin"></i>' : '<i class="fas fa-check-double"></i>'}${this._escapeHtml(this.t('renderer.wizard.loginAndFinish'))}
-                </button>
-            </div>
+            ${result}
+            ${browserHint}
+            ${submit}
+            ${providers}
         </div>
         <div class="ob-back">
             <button id="wizard-account-back" class="wiz-btn-ghost" type="button">
@@ -460,8 +475,8 @@ class SetupWizard extends HTMLElement {
             card.addEventListener('click', () => {
                 if (card.dataset.disabled === 'true') return;
                 this.loginChoice = card.dataset.choice as LoginChoice;
-                this.accountLoginComplete = false;
                 this.enterpriseBaseUrlStep = true;
+                this.loginBrowserUrl = null;
                 this._render();
                 this._bindEvents();
             });
@@ -521,14 +536,15 @@ class SetupWizard extends HTMLElement {
                 if (fieldId === 'password') this.loginPassword = (event.target as HTMLInputElement).value;
             })
         );
-        this.querySelectorAll<HTMLButtonElement>('[data-login-method]').forEach((button) =>
+        this.querySelectorAll<HTMLButtonElement>('[data-browser-method]').forEach((button) =>
             button.addEventListener('click', () => {
-                this.selectedLoginMethodId = button.dataset.loginMethod || null;
-                this.loginError = null;
-                this._render();
-                this._bindEvents();
+                void this._handleBrowserLogin(button.dataset.browserMethod ?? '');
             })
         );
+        this.querySelector<HTMLButtonElement>('#wizard-copy-login-link')?.addEventListener('click', () => {
+            const url = this.loginBrowserUrl;
+            if (url) void navigator.clipboard?.writeText(url).catch(() => {});
+        });
         this.querySelector<HTMLInputElement>('#wizard-enterprise-base-url')?.addEventListener('input', (event) => {
             this.enterpriseBaseUrlDraft = (event.target as HTMLInputElement).value;
         });
@@ -572,22 +588,33 @@ class SetupWizard extends HTMLElement {
 
     private async _handleAccountLogin(): Promise<void> {
         if (this.loginBusy) return;
-        const method = this.loginMethods.find((candidate) => candidate.id === this.selectedLoginMethodId);
+        const method = splitLoginMethods(this.loginMethods).passwordMethod;
         const resultDiv = this.querySelector<HTMLElement>('#wizard-account-result');
-        if (!method) return;
+        if (!method || method.type !== 'form') return;
         const values: Record<string, string> = {};
-        if (method.type === 'form') {
-            for (const field of method.fields) {
-                const value = this.querySelector<HTMLInputElement>(`[data-login-field="${field.id}"]`)?.value ?? '';
-                values[field.id] = value;
-                if (field.required && !value.trim()) {
-                    this._showResult(resultDiv, 'error', this.t('renderer.wizard.loginRequired'));
-                    return;
-                }
+        for (const field of method.fields) {
+            const value = this.querySelector<HTMLInputElement>(`[data-login-field="${field.id}"]`)?.value ?? '';
+            values[field.id] = value;
+            if (field.required && !value.trim()) {
+                this._showResult(resultDiv, 'error', this.t('renderer.wizard.loginRequired'));
+                return;
             }
         }
+        await this._performAccountLogin(method, values);
+    }
+
+    /** Provider 按钮直接发起浏览器登录，无需再点击“登录并继续”。 */
+    private async _handleBrowserLogin(methodId: string): Promise<void> {
+        if (this.loginBusy) return;
+        const method = this.loginMethods.find((candidate) => candidate.id === methodId);
+        if (!method) return;
+        await this._performAccountLogin(method, {});
+    }
+
+    private async _performAccountLogin(method: AccountLoginMethod, values: Record<string, string>): Promise<void> {
         this.loginBusy = true;
         this.loginError = null;
+        this.loginBrowserUrl = null;
         this._render();
         this._bindEvents();
         try {
@@ -604,6 +631,11 @@ class SetupWizard extends HTMLElement {
                         this._showResult(target, 'info', message);
                     }
                 },
+                onBrowserUrl: (url) => {
+                    this.loginBrowserUrl = url;
+                    this._render();
+                    this._bindEvents();
+                },
                 onFlowStarted: (flowId) => {
                     this.activeLoginFlowId = flowId;
                 }
@@ -611,11 +643,14 @@ class SetupWizard extends HTMLElement {
             this.activeLoginFlowId = null;
             await this._saveAccountMode();
             this.loginBusy = false;
-            this.accountLoginComplete = true;
+            this.loginBrowserUrl = null;
+            // 账号登录自带内置模型，跳过模型配置直接进入完成页
+            this.currentStep = 3;
             this._render();
             this._bindEvents();
         } catch (error: unknown) {
             this.activeLoginFlowId = null;
+            this.loginBrowserUrl = null;
             this.loginError = formatAccountLoginError(error, this.t, this.t('renderer.wizard.loginFailed'));
             this.loginBusy = false;
             this._render();
@@ -625,6 +660,7 @@ class SetupWizard extends HTMLElement {
 
     private async _loadLoginMethods(kind: 'personal' | 'enterprise'): Promise<void> {
         this.loginMethodLoading = true;
+        this.loginMethodsLoaded = false;
         this.loginError = null;
         this._render();
         this._bindEvents();
@@ -632,11 +668,11 @@ class SetupWizard extends HTMLElement {
             const api = this.requireAccountApi();
             if (!api.getLoginMethods) throw new Error('account:backend_unavailable');
             this.loginMethods = await api.getLoginMethods(kind);
-            this.selectedLoginMethodId = this.loginMethods[0]?.id ?? null;
         } catch (error: unknown) {
             this.loginError = error instanceof Error ? error.message : String(error);
         } finally {
             this.loginMethodLoading = false;
+            this.loginMethodsLoaded = true;
             this._render();
             this._bindEvents();
         }
@@ -650,7 +686,7 @@ class SetupWizard extends HTMLElement {
         this.loginChoice = 'nologin';
         this.loginError = null;
         this.loginBusy = false;
-        this.accountLoginComplete = false;
+        this.loginBrowserUrl = null;
         this.currentStep = 1;
         this._render();
         this._bindEvents();

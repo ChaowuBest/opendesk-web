@@ -19,8 +19,7 @@ import { t, getLocale } from '../../../locale/index.js';
 import { getAccountRuntime } from '../../applications/account/factory.js';
 import { describeLoginError, runLoginFlow, type LoginFlowIo } from '../../applications/account/login-flow.js';
 import type { AccountKind } from '../../applications/account/types.js';
-
-const DEFAULT_ENTERPRISE_URL = 'http://127.0.0.1:8000/api/v1';
+import { refreshBuiltinModels } from '../../applications/account/model-provider.js';
 
 // ─── 登录 widget 配色 ────────────────────────────────────────────────────────
 
@@ -180,6 +179,7 @@ function runTuiLogin(tui: OpenDeskTUI): void {
             const method: PluginAccountLoginMethod =
                 methods.length === 1 ? methods[0] : await chooseLoginMethod(methods, io);
             const session = await runLoginFlow(service, kind, method, io);
+            await refreshBuiltinModels();
             finish(tui, t('cli.account.login.success', { username: session.user.username }), 'info');
         } catch (err) {
             finish(tui, t('cli.account.login.failed', { detail: describeLoginError(err) }), 'error');
@@ -204,7 +204,7 @@ function runTuiLogin(tui: OpenDeskTUI): void {
 
     const askEnterpriseBaseUrl = (): void => {
         const cfg = getAccountRuntime().config.get();
-        const current = cfg.enterprise_base_url || DEFAULT_ENTERPRISE_URL;
+        const current = cfg.enterprise_base_url || cfg.default_base_url;
         askField(tui, `${t('cli.account.enterprise_url')} [${current}]`, false, (value) => {
             const baseUrl = (value || current).trim();
             getAccountRuntime().config.configure({ enterprise_base_url: baseUrl });
@@ -293,6 +293,7 @@ export function registerLogoutCommand(tui: OpenDeskTUI): void {
             }
             try {
                 await service.logout();
+                await refreshBuiltinModels();
                 finish(tui, t('cli.account.logout.success'), 'info');
             } catch (err) {
                 const detail = err instanceof Error ? err.message : String(err);

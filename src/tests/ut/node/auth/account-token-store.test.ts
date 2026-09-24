@@ -30,7 +30,7 @@ function withTempDir(prefix: string, fn: (dir: string) => void): void {
 const sampleSession = {
     version: 1 as const,
     kind: 'personal' as const,
-    baseUrl: 'http://127.0.0.1:8000/api/v1',
+    baseUrl: 'https://personal.example.com/api/v1',
     accessToken: 'access-token-123',
     tokenType: 'Bearer',
     user: {

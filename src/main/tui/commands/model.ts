@@ -24,6 +24,13 @@ function isChatModel(model: any): boolean {
     return model?.model_type !== 'embedding';
 }
 
+/**
+ * 可切换模型列表 = 用户配置模型 + 内置虚拟模型（如账号内置模型，登录后出现）。
+ */
+function listSelectableModels(setting: Setting): any[] {
+    return [...(setting.getData().models ?? []), ...(setting.getData().builtin_models ?? [])].filter(isChatModel);
+}
+
 function formatInferred(value: number): string {
     if (!value) return '';
     return chalk.cyan(`~${Math.round(value / 1000)}k`);
@@ -155,7 +162,7 @@ export function registerModelCommand(tui: OpenDeskTUI): void {
 
         getArgumentCompletions: (argPrefix: string): AutocompleteItem[] | null => {
             const setting = Setting.getInstance();
-            const models = (setting.getData().models ?? []).filter(isChatModel);
+            const models = listSelectableModels(setting);
 
             const items: AutocompleteItem[] = models
                 .filter(
@@ -185,7 +192,7 @@ export function registerModelCommand(tui: OpenDeskTUI): void {
         execute: async (args: string) => {
             const alias = args.trim();
             const setting = Setting.getInstance();
-            const models = (setting.getData().models ?? []).filter(isChatModel);
+            const models = listSelectableModels(setting);
 
             // 无参数时显示模型选择列表
             if (!alias) {

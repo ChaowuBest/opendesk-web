@@ -90,7 +90,7 @@ describe('个人中心账号面板重新登录', () => {
         accountAPI = {
             getConfig: jest.fn(async () => ({
                 mode: 'enterprise',
-                default_base_url: 'http://127.0.0.1:8000/api/v1',
+                default_base_url: 'https://personal.example.com/api/v1',
                 enterprise_base_url: 'https://enterprise.example.com'
             })),
             configure: jest.fn(async () => ({})),
@@ -167,7 +167,7 @@ describe('个人中心账号面板重新登录', () => {
     test('企业服务器地址为空时提示必填，填写后先保存再登录', async () => {
         accountAPI.getConfig.mockResolvedValue({
             mode: 'enterprise',
-            default_base_url: 'http://127.0.0.1:8000/api/v1',
+            default_base_url: 'https://personal.example.com/api/v1',
             enterprise_base_url: ''
         });
         const root = await openLoginPopover();
@@ -205,7 +205,7 @@ describe('个人中心账号面板重新登录', () => {
         expect(root.querySelector('[data-login-field="username"]')).not.toBeNull();
     });
 
-    test('存在多个登录方式时允许用户选择后再启动对应流程', async () => {
+    test('密码登录与 provider 同时存在时展示表单，provider 按钮点击即启动对应流程', async () => {
         accountAPI.getLoginMethods.mockResolvedValue([
             ...loginMethods,
             { id: 'sso', type: 'browser', displayName: { en: 'SSO', zh: '单点登录' } }
@@ -216,11 +216,11 @@ describe('个人中心账号面板重新登录', () => {
         });
         const root = await openLoginPopover();
 
-        const ssoButton = root.querySelector('[data-login-method="sso"]') as HTMLButtonElement;
-        expect(ssoButton?.textContent).toContain('单点登录');
+        // password=true 时直接展示用户名密码表单
+        expect(root.querySelector('[data-login-field="username"]')).not.toBeNull();
+        const ssoButton = root.querySelector('[data-browser-method="sso"]') as HTMLButtonElement;
+        expect(ssoButton?.textContent).toContain('使用 单点登录 登录');
         ssoButton.click();
-        await flush();
-        submitLoginForm(root);
         await flush();
 
         expect(accountAPI.startLogin).toHaveBeenCalledWith('enterprise', 'sso');
