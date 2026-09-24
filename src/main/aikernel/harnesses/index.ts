@@ -10,7 +10,6 @@
  */
 
 import { registerDeadloopHarness } from './chat/deadloop.js';
-import { registerHarmonyosFallbackHooks } from './platform/harmonyos/skill-fallback.js';
 
 let initialized = false;
 
@@ -19,7 +18,4 @@ export function initializeHarnesses(): void {
     initialized = true;
 
     registerDeadloopHarness();
-    if ((process.platform as string) === 'openharmony') {
-        registerHarmonyosFallbackHooks();
-    }
 }
