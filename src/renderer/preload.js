@@ -1617,7 +1617,7 @@ if (shouldExposeMainWindowAPIs()) {
         hideWidget: () => ipcRenderer.invoke('taskStatusWidget:hide'),
         // 关闭菜单 · 下次启动恢复：本次会话内不再显示。
         disableForSession: () => ipcRenderer.invoke('taskStatusWidget:disableSession'),
-        // 关闭菜单 · 永久：恢复主窗口并打开系统设置引导用户关闭。
+        // 关闭菜单 · 永久：renderer 确认后保存关闭设置。
         closePermanently: () => ipcRenderer.invoke('taskStatusWidget:closePermanently'),
         notifyWaitingForInput: (taskId, waiting) => ipcRenderer.send('taskStatusWidget:notifyWaiting', taskId, waiting),
         onSummaryUpdate: (callback) => {

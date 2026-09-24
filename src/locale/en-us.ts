@@ -2504,6 +2504,9 @@ export const enUs: Record<string, string> = {
     'renderer.taskStatusWidget.closeMenu.hide': 'Close task widget',
     'renderer.taskStatusWidget.closeMenu.hideSession': 'Close task widget (restore on next launch)',
     'renderer.taskStatusWidget.closeMenu.hidePermanent': 'Close task widget (permanent)',
+    'renderer.taskStatusWidget.closePermanent.confirm': 'Permanently close the task widget?',
+    'renderer.taskStatusWidget.closePermanent.hint':
+        'You can enable it again in Settings → General Settings → Floating Window.',
 
     // Renderer - Developer Menu
     'renderer.developer.menu': 'Developer',

@@ -688,20 +688,18 @@ export function initTaskStatusWidget(nextHost: TaskStatusWidgetHost): void {
         syncTaskUpdateSubscriptions();
         hideWidget();
     });
-    // 关闭菜单 · 永久：恢复主窗口并打开系统设置，高亮悬浮窗模式下拉框引导用户关闭。
+    // 关闭菜单 · 永久：确认后持久化关闭，由设置变更回调立即隐藏浮窗。
     ipcMain.handle('taskStatusWidget:closePermanently', () => {
-        const main = host?.getMainWindow();
-        if (main && !main.isDestroyed()) {
-            activateMainWindow(main);
-            // 主窗口从最小化/隐藏恢复是异步的；延迟到恢复后再发送，避免 IPC 在窗口恢复
-            // 期间被丢弃。
-            setTimeout(() => {
-                safeSendToWebContents(main.webContents, 'command:openSettingEditor', {
-                    highlightFloatingWindowMode: true
-                });
-            }, 150);
+        if (!widgetWindow || widgetWindow.isDestroyed()) {
+            return;
         }
-        hideWidget();
+        // renderer 已通过通用确认框取得确认；读取最新配置，保留其他窗口的设置修改。
+        const setting = Setting.getInstance();
+        const data = setting.getData();
+        setting.setData({
+            ...data,
+            gui_config: { ...data.gui_config, floating_window_mode: 'off' }
+        });
     });
     ipcMain.on('taskStatusWidget:notifyWaiting', (_event, taskId: unknown, waiting: unknown) => {
         notifyTaskWaitingForInput(typeof taskId === 'string' ? taskId : '', waiting === true);
