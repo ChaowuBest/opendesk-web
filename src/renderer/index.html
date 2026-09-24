@@ -540,23 +540,23 @@
                 currentOpenAppBundleName = null;
                 if (nonAppSlot) nonAppSlot.style.display = '';
                 if (appFramesContainer) appFramesContainer.style.display = 'none';
-                notifyViewChanged();
+                notifyViewChanged(currentNonAppContent);
             }
 
             function showAppFrames() {
                 ensureSlots();
                 if (nonAppSlot) nonAppSlot.style.display = 'none';
                 if (appFramesContainer) appFramesContainer.style.display = 'block';
-                notifyViewChanged();
+                notifyViewChanged('application', currentOpenAppBundleName);
             }
 
-            /** 广播当前视图状态，供侧边栏底部导航栏更新激活态 */
-            function notifyViewChanged() {
+            /** 只广播前台视图，避免隐藏容器保留的页面状态影响导航激活态。 */
+            function notifyViewChanged(view, appBundle = null) {
                 window.dispatchEvent(
                     new CustomEvent('od-view-changed', {
                         detail: {
-                            view: currentNonAppContent,
-                            appBundle: currentOpenAppBundleName
+                            view: view,
+                            appBundle: appBundle
                         }
                     })
                 );
