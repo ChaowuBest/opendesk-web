@@ -6,8 +6,8 @@
     "projectRepository": "https://gitcode.com/IntelliOS/opendesk-wps-skill",
     "generatorSchemaVersion": 1,
     "archive": "opendesk-wps-slides.zip",
-    "archiveSha256": "fa1e824073d32ac598dfcc5e2dc66591bcf8db980c1e6d1b9e4fa69ac809aec5",
-    "archiveBytes": 796299,
-    "treeSha256": "a57f973324601631382b9531bf26b0ca2cbdece1748d42072a9003a51ea83600",
-    "releaseManifestSha256": "a7b767ea994a82211b85855b1b17c1cba027647f9aebb7a72d8b07e89e94e3b9"
+    "archiveSha256": "27fe220b4b330d5307268b081dce373e7d1482d1de62bbc492f2b6c8fe93123d",
+    "archiveBytes": 798156,
+    "treeSha256": "9003cdc623a58934a5a14c02178203d9562353a64e286937ab0bf2a394ee16f0",
+    "releaseManifestSha256": "c59f6baeb76ddfcebf0b902d9caeff65eddcf3e3f17cf0c3c637a29f9ddce0c3"
 }
