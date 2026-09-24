@@ -22,6 +22,7 @@ import {
 import { ModelInstance, ReasoningEffort } from '../../utils/setting.js';
 import { logger } from '../../utils/logger.js';
 import { fetchModelUrl } from '../../utils/model-network.js';
+import { extractErrorMessage } from './http-error.js';
 import { lookupKnownMaxOutputTokens } from '../../utils/model-context.js';
 import iconv from 'iconv-lite';
 import { RateLimitDetector, withRateLimitRetry } from '../../utils/rate-limit-retry.js';
@@ -174,6 +175,21 @@ function buildRuntimeExtraHeaders(extraHeaders?: Record<string, string>): Record
 }
 
 /**
+ * 把非 2xx 的错误 body 换成 `{ error: { message } }` 再交回 SDK。
+ *
+ * SDK 处理原本平铺的 `{ code, message }` 时会丢成 "403 status code (no body)"。
+ */
+async function normalizeErrorResponse(response: Response): Promise<Response> {
+    const rawText = await response.text().catch(() => '');
+    const message = extractErrorMessage(response.status, response.statusText, rawText);
+    return new Response(JSON.stringify({ error: { message } }), {
+        status: response.status,
+        statusText: response.statusText,
+        headers: response.headers
+    });
+}
+
+/**
  * OpenAI-compatible chat/embedding protocol adapter.
  */
 export class OpenAIAdapter {
@@ -193,7 +209,10 @@ export class OpenAIAdapter {
                       ])
                   )
                 : undefined,
-            fetch: (url: RequestInfo, init?: RequestInit): Promise<Response> => fetchModelUrl(modelInstance, url, init)
+            fetch: async (url: RequestInfo, init?: RequestInit): Promise<Response> => {
+                const response = await fetchModelUrl(modelInstance, url, init);
+                return response.ok ? response : await normalizeErrorResponse(response);
+            }
         });
     }
 

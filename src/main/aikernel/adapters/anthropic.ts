@@ -26,6 +26,7 @@ import {
 import { ModelInstance, ReasoningEffort } from '../../utils/setting.js';
 import { logger } from '../../utils/logger.js';
 import { fetchModelUrl } from '../../utils/model-network.js';
+import { extractErrorMessage } from './http-error.js';
 import { lookupKnownMaxOutputTokens } from '../../utils/model-context.js';
 import iconv from 'iconv-lite';
 import { RateLimitDetector, withRateLimitRetry } from '../../utils/rate-limit-retry.js';
@@ -164,24 +165,8 @@ export class AnthropicAdapter {
     }
 
     private async httpError(response: Response): Promise<Error & { status?: number }> {
-        let bodyText = '';
-        try {
-            bodyText = await response.text();
-        } catch {
-            /* ignore */
-        }
-
-        let message = bodyText;
-        try {
-            const body = JSON.parse(bodyText) as Record<string, unknown>;
-            const error = asRecord(body.error);
-            message =
-                (typeof error?.message === 'string' ? error.message : undefined) ??
-                (typeof body.message === 'string' ? body.message : undefined) ??
-                bodyText;
-        } catch {
-            /* keep raw body text */
-        }
+        const bodyText = await response.text().catch(() => '');
+        const message = extractErrorMessage(response.status, response.statusText, bodyText);
 
         const error = new Error(
             `Anthropic API request failed (${response.status} ${response.statusText}): ${message}`

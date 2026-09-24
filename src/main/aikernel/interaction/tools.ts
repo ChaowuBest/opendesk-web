@@ -22,6 +22,7 @@ import { Card } from '../../tui/components/card.js';
 import { statusDisplay, truncText } from '../../tui/components/toolcall.js';
 import type { ToolCall } from '../messages.js';
 import type { TaskState } from '../states/tasks.js';
+import { findMessageIdForToolCallForTask } from '../task/permission.js';
 import { t } from '../../../locale/index.js';
 import chalk from 'chalk';
 
@@ -49,6 +50,11 @@ export interface AskUserRequest {
     workspace?: string;
 }
 
+export interface AskUserPromptContext {
+    toolCallId?: string;
+    messageId?: string;
+}
+
 export interface AskUserResponse {
     /** question index → 选中的 label 数组（单选时长度为 1） */
     answers: Record<number, string[]>;
@@ -61,7 +67,7 @@ export interface AskUserResponse {
  * TUI 和 Electron 各自实现此接口。
  */
 export interface AskUserProvider {
-    prompt(request: AskUserRequest): Promise<AskUserResponse>;
+    prompt(request: AskUserRequest, context?: AskUserPromptContext): Promise<AskUserResponse>;
     /** 当前是否正在显示用户交互界面（TUI 专用，避免 taskview 重复渲染） */
     isPrompting?(): boolean;
     /** 主动取消当前等待中的提问（模式切换为不交互模式时调用），resolve 为 cancelled。 */
@@ -324,7 +330,8 @@ export class AskUserTool extends InteractiveTool<typeof AskUserArgsSchema> {
     private async handleExecute(
         rawArgs: z.output<typeof AskUserArgsSchema>,
         toolResult: ToolResult,
-        taskState?: TaskState
+        taskState?: TaskState,
+        toolCall?: ToolCall
     ): Promise<void> {
         const args = normalizeQuestions(rawArgs) as z.output<typeof AskUserArgsSchema>;
 
@@ -348,8 +355,14 @@ export class AskUserTool extends InteractiveTool<typeof AskUserArgsSchema> {
             taskName: taskState?.task_name ?? null,
             workspace: taskState?.getWorkspace()
         };
+        const context: AskUserPromptContext | undefined = toolCall
+            ? {
+                  toolCallId: toolCall.id,
+                  messageId: taskState ? findMessageIdForToolCallForTask(taskState, toolCall) : undefined
+              }
+            : undefined;
 
-        const response = await this.provider.prompt(request);
+        const response = await this.provider.prompt(request, context);
 
         if (response.cancelled) {
             toolResult.result = JSON.stringify({ cancelled: true, answers: {} });

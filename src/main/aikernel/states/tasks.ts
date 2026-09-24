@@ -2708,7 +2708,8 @@ export class TaskState {
                         tool_call.result_object = result.result_object;
                         await this.sendSubscriptionFeedback();
                     },
-                    this
+                    this,
+                    tool_call
                 );
                 toolOperation.setAttribute('tool.status', r.status);
                 return r;

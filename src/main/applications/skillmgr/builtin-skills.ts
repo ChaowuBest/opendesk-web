@@ -107,3 +107,18 @@ export function listBuiltinSkillDirectories(): string[] {
         return [];
     }
 }
+
+/**
+ * 内置技能的平台限定配置：按技能名列出允许加载的平台，未列出的技能在所有平台加载。
+ * 平台名与 getPlatform().getName() 一致（electron / cli / worker）。
+ */
+const BUILTIN_SKILL_PLATFORMS: Readonly<Record<string, readonly string[]>> = {
+    // 可视化技能依赖宿主 UI 的内联图形预览，CLI 没有渲染能力，不注入技能与系统 prompt 介绍
+    'analysis-result-visualizer': ['electron']
+};
+
+/** 判断指定名称的内置技能是否适用于给定平台 */
+export function isBuiltinSkillAvailableOnPlatform(skillName: string, platformName: string): boolean {
+    const platforms = BUILTIN_SKILL_PLATFORMS[skillName];
+    return platforms === undefined || platforms.includes(platformName);
+}

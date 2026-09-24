@@ -1,5 +1,7 @@
+import { jest } from '@jest/globals';
 import { QuestionRoutes } from '../../../main/server/opencode/routes/question.js';
 import { ServerQuestionBroker } from '../../../main/server/opencode/question-broker.js';
+import { EventBus } from '../../../main/server/opencode/event-bus.js';
 
 describe('opencode question routes', () => {
     let broker: ServerQuestionBroker;
@@ -10,6 +12,7 @@ describe('opencode question routes', () => {
 
     afterEach(() => {
         broker.dispose();
+        jest.restoreAllMocks();
     });
 
     test('lists pending question requests', async () => {
@@ -51,6 +54,64 @@ describe('opencode question routes', () => {
             ]
         });
         expect(body[0].id).toMatch(/^que_/);
+    });
+
+    test('attributes a question to the active assistant message and askUser tool call', async () => {
+        const publishSpy = jest.spyOn(EventBus, 'publish');
+        broker.setActiveAssistantMessage('task_abc', 'msg_assistant');
+
+        void broker.prompt(
+            {
+                requestId: 'ask_1',
+                taskId: 'task_abc',
+                taskName: 'test',
+                workspace: 'D:/repo',
+                questions: [
+                    {
+                        question: 'Which mode should be used?',
+                        header: 'Mode',
+                        options: [
+                            { label: 'Fast', description: 'Use the faster path' },
+                            { label: 'Safe', description: 'Use the safer path' }
+                        ]
+                    }
+                ]
+            },
+            { toolCallId: 'call_ask', messageId: 'msg_fallback' }
+        );
+
+        expect(publishSpy).toHaveBeenCalledWith(
+            expect.objectContaining({
+                type: 'question.asked',
+                properties: expect.objectContaining({
+                    sessionID: 'ses_abc',
+                    tool: { messageID: 'msg_assistant', callID: 'call_ask' }
+                })
+            })
+        );
+    });
+
+    test('falls back to the context messageId when no active assistant message is recorded', async () => {
+        void broker.prompt(
+            {
+                requestId: 'ask_1',
+                taskId: 'task_abc',
+                taskName: null,
+                questions: [
+                    {
+                        question: 'Pick one',
+                        header: 'Pick',
+                        options: [
+                            { label: 'A', description: 'Option A' },
+                            { label: 'B', description: 'Option B' }
+                        ]
+                    }
+                ]
+            },
+            { toolCallId: 'call_ask', messageId: 'msg_fallback' }
+        );
+
+        expect(broker.list()[0].tool).toEqual({ messageID: 'msg_fallback', callID: 'call_ask' });
     });
 
     test('resolves reply answers', async () => {

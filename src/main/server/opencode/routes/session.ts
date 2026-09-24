@@ -342,6 +342,9 @@ function applyOpenCodeRequestModel(task: any, body: unknown): void {
     const modelAlias = modelAliasFromOpenCodeRef(Setting.getInstance().getData(), modelRef);
     if (modelAlias !== undefined) {
         task.model = modelAlias;
+        if (Setting.getInstance().getModelInstance(modelAlias, 'chat')) {
+            setServerDefaultModel(modelAlias);
+        }
     }
 }
 
@@ -1542,6 +1545,7 @@ export function publishChunkEvents(
             publishStreamingMessagePart(sessionID, workspace, part);
         }
         ServerPermissionBroker.getInstance().setActiveAssistantMessage(chunk.task_id, assistantMsgId);
+        ServerQuestionBroker.getInstance().setActiveAssistantMessage(chunk.task_id, assistantMsgId);
         return undefined;
     }
 
@@ -1563,8 +1567,19 @@ export function publishChunkEvents(
             }
         }
         ServerPermissionBroker.getInstance().setActiveAssistantMessage(chunk.task_id, assistantMsgId);
+        ServerQuestionBroker.getInstance().setActiveAssistantMessage(chunk.task_id, assistantMsgId);
     }
     return undefined;
+}
+
+let serverDefaultModel: string | undefined;
+
+export function getServerDefaultModel(): string | undefined {
+    return serverDefaultModel;
+}
+
+export function setServerDefaultModel(model: string | undefined): void {
+    serverDefaultModel = model;
 }
 
 /**
@@ -1573,6 +1588,10 @@ export function publishChunkEvents(
  * 内部使用 OpenDesk 的 TaskManagerState 和 TaskState。
  */
 export function SessionRoutes(permissionRuntime?: ConfigPermissionRuntime) {
+    const applyRequestModel = (task: any, body: unknown): void => {
+        applyOpenCodeRequestModel(task, body);
+        task.model ??= getServerDefaultModel();
+    };
     const app = new Hono();
 
     // GET /session - 列出所有会话
@@ -1626,7 +1645,7 @@ export function SessionRoutes(permissionRuntime?: ConfigPermissionRuntime) {
         if (body.title) {
             task.task_name = body.title;
         }
-        applyOpenCodeRequestModel(task, body);
+        applyRequestModel(task, body);
 
         // 初始化 harness 和 system prompt
         await ensureServerTaskHarness(tms, task, workspace, permissionRuntime);
@@ -1672,7 +1691,7 @@ export function SessionRoutes(permissionRuntime?: ConfigPermissionRuntime) {
         if (body.title !== undefined) {
             task.task_name = body.title;
         }
-        applyOpenCodeRequestModel(task, body);
+        applyRequestModel(task, body);
         if (task.task_name !== previousTaskName || task.model !== previousModel) {
             task.persistLater();
         }
@@ -1898,7 +1917,7 @@ export function SessionRoutes(permissionRuntime?: ConfigPermissionRuntime) {
         if (task.task_status === 'running') {
             await waitUntilServerTaskFinished(task);
         }
-        applyOpenCodeRequestModel(task, body);
+        applyRequestModel(task, body);
         const modelInfo = getOpenCodeModelInfo(task, getOpenCodeRequestModelRef(body));
         const telemetryContext: TaskTurnInstrumentationExternalContext = {
             observationName: 'opencode.request',
@@ -1993,7 +2012,7 @@ export function SessionRoutes(permissionRuntime?: ConfigPermissionRuntime) {
         if (task.task_status === 'running') {
             await waitUntilServerTaskFinished(task);
         }
-        applyOpenCodeRequestModel(task, body);
+        applyRequestModel(task, body);
         const modelInfo = getOpenCodeModelInfo(task, getOpenCodeRequestModelRef(body));
         const telemetryContext: TaskTurnInstrumentationExternalContext = {
             observationName: 'opencode.request',
