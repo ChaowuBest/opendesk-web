@@ -847,11 +847,12 @@ class SideBar extends HTMLElement {
 
         // 映射视图到导航按钮 ID
         let activeId = null;
-        if (view === 'memory') activeId = 'open-memory-btn';
-        else if (appBundle === 'filemgr') activeId = 'open-file-system-btn';
+        if (view === 'application') {
+            if (appBundle === 'filemgr') activeId = 'open-file-system-btn';
+            else if (appBundle === 'agentgate') activeId = 'open-agentgate-btn';
+        } else if (view === 'memory') activeId = 'open-memory-btn';
         else if (view === 'setting' || view === 'wizard') activeId = 'open-setting-editor-btn';
         else if (view === 'personal-center') activeId = 'open-personal-center-btn';
-        else if (appBundle === 'agentgate') activeId = 'open-agentgate-btn';
 
         toolbar.setActiveButton(activeId);
     }
