@@ -1,0 +1,161 @@
+import { afterEach, describe, expect, jest, test } from '@jest/globals';
+import { EventEmitter } from 'events';
+import type { ChildProcess } from 'child_process';
+import type { TaskState } from '../../../main/aikernel/states/tasks.js';
+import {
+    BackgroundProcessManager,
+    type BackgroundProcessStatus
+} from '../../../main/applications/terminal/background.js';
+import { CheckShellStatusTool, MAX_STATUS_WAIT_MS } from '../../../main/applications/terminal/shells/status.js';
+
+const runningStatus: BackgroundProcessStatus = {
+    found: true,
+    finished: false,
+    exitCode: null,
+    output: 'working',
+    elapsedMs: 2500,
+    command: 'long-job'
+};
+
+const completedStatus: BackgroundProcessStatus = {
+    ...runningStatus,
+    finished: true,
+    exitCode: 0,
+    output: 'done',
+    elapsedMs: 3000
+};
+
+function mockManager(statuses: BackgroundProcessStatus[]) {
+    const getStatus = jest.fn<() => BackgroundProcessStatus>();
+    for (const status of statuses) {
+        getStatus.mockReturnValueOnce(status);
+    }
+    getStatus.mockReturnValue(statuses.at(-1)!);
+
+    const manager = {
+        getStatus,
+        waitForFinish: jest.fn<(pid: number, waitMs: number, signal?: AbortSignal) => Promise<boolean>>(),
+        killProcess: jest.fn<(pid: number) => boolean>()
+    };
+    manager.waitForFinish.mockResolvedValue(false);
+    manager.killProcess.mockReturnValue(true);
+    jest.spyOn(BackgroundProcessManager, 'getInstance').mockReturnValue(manager as unknown as BackgroundProcessManager);
+    return manager;
+}
+
+function registerRunningProcess(manager: BackgroundProcessManager, pid: number): ChildProcess {
+    const proc = new EventEmitter() as ChildProcess;
+    Object.defineProperty(proc, 'pid', { value: pid });
+    manager.register(proc, 'long-job', '', Date.now());
+    return proc;
+}
+
+afterEach(() => {
+    jest.restoreAllMocks();
+    jest.useRealTimers();
+});
+
+describe('BackgroundProcessManager.waitForFinish', () => {
+    test('returns early on completion, honours short bounds, and leaves no timers behind', async () => {
+        jest.useFakeTimers();
+        jest.setSystemTime(0);
+        const manager = new BackgroundProcessManager();
+        const proc = registerRunningProcess(manager, 60001);
+
+        const waiting = manager.waitForFinish(60001, MAX_STATUS_WAIT_MS);
+        proc.emit('close', 0);
+        await jest.advanceTimersByTimeAsync(200);
+
+        await expect(waiting).resolves.toBe(true);
+        expect(jest.now()).toBe(200);
+        expect(jest.getTimerCount()).toBe(0);
+
+        // 等待上限小于轮询间隔时不得超出上限
+        registerRunningProcess(manager, 60002);
+        const bounded = manager.waitForFinish(60002, 50);
+        await jest.advanceTimersByTimeAsync(50);
+
+        await expect(bounded).resolves.toBe(false);
+        expect(jest.now()).toBe(250);
+        expect(jest.getTimerCount()).toBe(0);
+    });
+
+    test('ends promptly and clears its timer when the task signal is aborted', async () => {
+        jest.useFakeTimers();
+        jest.setSystemTime(0);
+        const manager = new BackgroundProcessManager();
+        registerRunningProcess(manager, 60003);
+        const controller = new AbortController();
+
+        const waiting = manager.waitForFinish(60003, MAX_STATUS_WAIT_MS, controller.signal);
+        controller.abort();
+
+        await expect(waiting).resolves.toBe(false);
+        expect(jest.now()).toBe(0);
+        expect(jest.getTimerCount()).toBe(0);
+    });
+});
+
+describe('CheckShellStatusTool waitMs', () => {
+    test('rejects out-of-range waits and stays immediate when waitMs is omitted or zero', async () => {
+        const tool = new CheckShellStatusTool('powershell', false);
+        expect(tool.validateArgs({ pid: 42, kill: false, waitMs: MAX_STATUS_WAIT_MS }).success).toBe(true);
+        expect(tool.validateArgs({ pid: 42, kill: false, waitMs: MAX_STATUS_WAIT_MS + 1 }).success).toBe(false);
+        expect(tool.validateArgs({ pid: 42, kill: false, waitMs: -1 }).success).toBe(false);
+        expect(tool.validateArgs({ pid: 42, kill: false, waitMs: 1.5 }).success).toBe(false);
+
+        const immediate: Array<{ pid: number; kill: boolean; waitMs?: number }> = [
+            { pid: 42, kill: false },
+            { pid: 42, kill: false, waitMs: 0 }
+        ];
+        for (const args of immediate) {
+            jest.restoreAllMocks();
+            const manager = mockManager([runningStatus]);
+
+            const result = await tool.execute(args);
+
+            expect(manager.getStatus).toHaveBeenCalledTimes(1);
+            expect(manager.waitForFinish).not.toHaveBeenCalled();
+            expect(result.result).toContain('进程状态: 仍在执行中');
+        }
+
+        jest.restoreAllMocks();
+        const partialContextManager = mockManager([runningStatus]);
+
+        const partialContextResult = await tool.execute({ pid: 42, kill: false, waitMs: 0 }, undefined, {
+            getWorkspace: () => '/tmp'
+        } as TaskState);
+
+        expect(partialContextResult.status).toBe('success');
+        expect(partialContextManager.getStatus).toHaveBeenCalledTimes(1);
+        expect(partialContextManager.waitForFinish).not.toHaveBeenCalled();
+        expect(partialContextResult.result).toContain('进程状态: 仍在执行中');
+    });
+
+    test('waits once, returns the refreshed status, and surfaces cancellation as an error', async () => {
+        const tool = new CheckShellStatusTool('powershell', false);
+        const controller = new AbortController();
+        const taskState = { getAbortSignal: () => controller.signal } as TaskState;
+        const args = { pid: 42, kill: false, waitMs: MAX_STATUS_WAIT_MS };
+
+        const manager = mockManager([runningStatus, completedStatus]);
+        manager.waitForFinish.mockResolvedValue(true);
+
+        const refreshed = await tool.execute(args, undefined, taskState);
+
+        expect(manager.waitForFinish).toHaveBeenCalledWith(42, MAX_STATUS_WAIT_MS, controller.signal);
+        expect(refreshed.result).toContain('进程状态: 已完成');
+
+        jest.restoreAllMocks();
+        const aborted = mockManager([runningStatus]);
+        aborted.waitForFinish.mockImplementation(async () => {
+            controller.abort();
+            return false;
+        });
+
+        const stopped = await tool.execute(args, undefined, taskState);
+
+        expect(stopped.status).toBe('error');
+        expect(stopped.result).toContain('任务已停止');
+    });
+});

@@ -62,6 +62,29 @@ interface BackgroundProcessEntry {
 // 已完成的进程条目最多保留 5 分钟，防止无限增长
 const FINISHED_ENTRY_TTL_MS = 5 * 60 * 1000;
 const PROCESS_TERMINATION_GRACE_MS = 1000;
+const PROCESS_STATUS_POLL_INTERVAL_MS = 200;
+
+/** 可被 abortSignal 打断的延时；返回 true 表示计时结束，false 表示已取消。 */
+function waitForDelayOrAbort(delayMs: number, abortSignal?: AbortSignal): Promise<boolean> {
+    if (abortSignal?.aborted) return Promise.resolve(false);
+
+    return new Promise((resolve) => {
+        let settled = false;
+
+        const settle = (timerElapsed: boolean) => {
+            if (settled) return;
+            settled = true;
+            clearTimeout(timer);
+            abortSignal?.removeEventListener('abort', onAbort);
+            resolve(timerElapsed);
+        };
+        const onAbort = () => settle(false);
+
+        const timer = setTimeout(() => settle(true), delayMs);
+        abortSignal?.addEventListener('abort', onAbort, { once: true });
+        if (abortSignal?.aborted) onAbort();
+    });
+}
 
 // ── BackgroundProcessManager ─────────────────────────────────────────────────
 
@@ -155,14 +178,25 @@ export class BackgroundProcessManager {
     /**
      * 等待进程结束，最多等待 maxWaitMs 毫秒
      */
-    async waitForFinish(pid: number, maxWaitMs: number = 2000): Promise<boolean> {
+    async waitForFinish(pid: number, maxWaitMs: number = 2000, abortSignal?: AbortSignal): Promise<boolean> {
         const entry = this.entries.get(pid);
         if (!entry) return false;
         if (entry.finished) return true;
-        const start = Date.now();
-        while (Date.now() - start < maxWaitMs) {
-            await new Promise((resolve) => setTimeout(resolve, 200));
-            if (entry.finished) return true;
+
+        if (!Number.isFinite(maxWaitMs) || maxWaitMs <= 0 || abortSignal?.aborted) {
+            return entry.finished;
+        }
+
+        const deadline = Date.now() + maxWaitMs;
+        while (!entry.finished) {
+            const remainingMs = deadline - Date.now();
+            if (remainingMs <= 0 || abortSignal?.aborted) break;
+
+            const timerElapsed = await waitForDelayOrAbort(
+                Math.min(PROCESS_STATUS_POLL_INTERVAL_MS, remainingMs),
+                abortSignal
+            );
+            if (!timerElapsed) break;
         }
         return entry.finished;
     }
@@ -417,7 +451,7 @@ export function installTimeoutBackgrounding(opts: {
             const header = [
                 `[超时] 命令已执行 ${elapsedSec}s 未完成，已将进程放到后台继续执行。`,
                 `PID: ${pid}`,
-                `提示: 使用 checkShellStatus 工具并传入 pid=${pid} 来检查命令的执行状态。如果这是一个合理的长时间任务，请等待一段时间后再检查输出；如果判断进程已卡住，可以通过 checkShellStatus 的 kill 参数终止它。`
+                `提示: 使用 checkShellStatus 工具并传入 pid=${pid}；waitMs 的允许范围是 0-30000 毫秒。仅在确实需要即时状态、且查询后可继续其他独立工作时使用 waitMs=0；确实需要很快再次观察进度时可用 waitMs=1000-5000；若下一步依赖完成结果，优先使用 waitMs=10000-30000。进程完成时会提前返回，无需等满 waitMs。避免对同一运行中 PID 连续零等待查询；只有判断进程卡住时才使用 kill=true。`
             ].join('\n');
             const output = getOutput().trim() || '(暂无输出)';
             const message = header + '\n---\n' + output;

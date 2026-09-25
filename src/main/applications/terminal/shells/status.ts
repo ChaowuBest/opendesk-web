@@ -19,28 +19,50 @@ import { statusDisplay } from '../../../tui/components/toolcall.js';
 import { z } from 'zod';
 import { BackgroundProcessManager, type BackgroundProcessStatus } from '../background.js';
 import { t as terminalT } from '../locale/index.js';
+import type { TaskState } from '../../../aikernel/states/tasks.js';
 import type { SupportedShellKind } from '../../../../common/shells.js';
 import { appendSandboxPathDiagnostic } from '../sandboxes/path-diagnostic.js';
 
-const CheckShellStatusArgsSchema = z.object({
-    pid: z.number().describe('要检查的后台 shell 进程的 PID'),
-    kill: z.boolean().optional().describe('如果设为 true，则强制终止该后台进程').default(false)
-});
+/** checkShellStatus 允许请求的最大等待时间（毫秒）。参数 schema 与工具描述都引用此常量。 */
+export const MAX_STATUS_WAIT_MS = 30 * 1000;
 
-export class CheckShellStatusTool extends BaseTool<typeof CheckShellStatusArgsSchema> {
+const createCheckShellStatusArgsSchema = () =>
+    z.object({
+        pid: z.number().describe('要检查的后台 shell 进程的 PID'),
+        waitMs: z
+            .number()
+            .int()
+            .min(0)
+            .max(MAX_STATUS_WAIT_MS)
+            .optional()
+            .describe(terminalT('status.waitMs', { max: String(MAX_STATUS_WAIT_MS) })),
+        kill: z.boolean().optional().describe('如果设为 true，则强制终止该后台进程').default(false)
+    });
+type CheckShellStatusArgsSchema = ReturnType<typeof createCheckShellStatusArgsSchema>;
+
+export class CheckShellStatusTool extends BaseTool<CheckShellStatusArgsSchema> {
     constructor(
         private readonly shellKind: SupportedShellKind = 'powershell',
         private readonly sandboxed = false
     ) {
-        super('checkShellStatus', terminalT('status.description'), CheckShellStatusArgsSchema);
+        super(
+            'checkShellStatus',
+            terminalT('status.description', { max: String(MAX_STATUS_WAIT_MS) }),
+            createCheckShellStatusArgsSchema()
+        );
         this.serialExecution = sandboxed;
 
         this.setUniversalExecutor(this.executeCheck.bind(this));
     }
 
-    async executeCheck(args: z.output<typeof CheckShellStatusArgsSchema>, result: ToolResult): Promise<void> {
-        const { pid, kill } = args;
+    async executeCheck(
+        args: z.output<CheckShellStatusArgsSchema>,
+        result: ToolResult,
+        taskState?: TaskState
+    ): Promise<void> {
+        const { pid, kill, waitMs = 0 } = args;
         const mgr = BackgroundProcessManager.getInstance();
+        const abortSignal = taskState?.getAbortSignal?.();
 
         if (kill) {
             const killed = mgr.killProcess(pid);
@@ -48,10 +70,17 @@ export class CheckShellStatusTool extends BaseTool<typeof CheckShellStatusArgsSc
                 result.updateResult(`PID ${pid} 对应的进程未找到或已经结束，无法终止。`);
                 return;
             }
-            await mgr.waitForFinish(pid, 3000);
+            await mgr.waitForFinish(pid, 3000, abortSignal);
+            if (abortSignal?.aborted) throw new Error('任务已停止');
         }
 
-        const status: BackgroundProcessStatus = mgr.getStatus(pid);
+        let status: BackgroundProcessStatus = mgr.getStatus(pid);
+
+        if (!kill && status.found && !status.finished && waitMs > 0) {
+            await mgr.waitForFinish(pid, waitMs, abortSignal);
+            if (abortSignal?.aborted) throw new Error('任务已停止');
+            status = mgr.getStatus(pid);
+        }
 
         if (!status.found) {
             result.updateResult(
@@ -80,7 +109,7 @@ export class CheckShellStatusTool extends BaseTool<typeof CheckShellStatusArgsSc
                 `PID: ${pid}`,
                 `命令: ${status.command}`,
                 `已运行: ${elapsedSec}s`,
-                '提示: 进程仍在运行，可以稍后再次检查，或使用 kill=true 来终止它。',
+                '提示: waitMs 的单位是毫秒。仅在确实需要即时状态、且查询后可继续其他独立工作时使用 waitMs=0；确实需要很快再次观察进度时可用 waitMs=1000-5000；若下一步依赖完成结果，优先使用 waitMs=10000-30000。进程完成时会提前返回，无需等满 waitMs。避免对同一运行中 PID 连续零等待查询；只有判断进程卡住时才使用 kill=true。',
                 '---',
                 output || '(暂无输出)'
             ];
