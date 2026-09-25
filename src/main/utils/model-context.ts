@@ -438,7 +438,7 @@ const KNOWN_MODELS: Record<string, ModelInfo> = {
     'deepseek-v4-1-flash': {
         contextSize: 1000000,
         maxOutputTokens: 384000,
-        vision: false,
+        vision: true,
         reasoningEfforts: ['none', 'low', 'high', 'max']
     },
     'deepseek-v4': { contextSize: 1000000, maxOutputTokens: 384000, vision: false },
