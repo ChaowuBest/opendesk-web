@@ -17,6 +17,7 @@ import { getLogDirectory, getOpendeskDirectory } from '../../../utils/setting.js
 import type { TaskState } from '../../../aikernel/states/tasks.js';
 import { t } from '../locale/index.js';
 import { ensureSandboxLoopback } from './loopback.js';
+import { ensureSandboxPipes } from './pipes.js';
 import { virtualPathToHostPath } from './ask-path.js';
 import { createSandboxDecideEndpoint } from './sandbox-decide.js';
 import { policyText } from './dynabox-policy.js';
@@ -134,6 +135,8 @@ export async function prepareDynamicSandbox(options: {
     // 否则不可映射的 cwd（UNC/相对路径）抛错时会泄漏已监听的服务器与临时文件。
     const childArgs = withSandboxWorkingDirectory(options.shellPath, options.shellArgs, options.cwd);
     await ensureSandboxLoopback(executable);
+    // 可选增强：放通沙箱内命名管道（需要管理员，失败静默——由失败诊断兜底）
+    void ensureSandboxPipes(executable);
     const configDirectory = getOpendeskDirectory();
     fs.mkdirSync(configDirectory, { recursive: true });
     const runId = `dynamic-sandbox-${crypto.randomUUID()}`;

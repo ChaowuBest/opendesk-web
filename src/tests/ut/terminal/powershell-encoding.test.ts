@@ -30,7 +30,8 @@ test('powershell tool injects UTF-8 defaults for Get-Content to fix ANSI mojibak
     const tool = new ExecutePwshTool('C:/shells/powershell.exe');
     await tool.executeCommand({ command: 'Get-Content src/a.ts', timeout: 30000 }, {} as any);
 
-    const sentCommand = execute.mock.lastCall![0].shellArgs[2] as string;
+    const args = execute.mock.lastCall![0].shellArgs as string[];
+    const sentCommand = args[args.indexOf('-Command') + 1] as string;
     expect(sentCommand).toContain("$PSDefaultParameterValues['Get-Content:Encoding'] = 'utf8'");
     // 前缀必须位于用户命令之前才能生效
     expect(sentCommand.indexOf('Get-Content:Encoding')).toBeLessThan(sentCommand.indexOf('Get-Content src/a.ts'));

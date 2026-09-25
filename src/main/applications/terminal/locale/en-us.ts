@@ -32,6 +32,7 @@ export const enUs: Record<string, string> = {
     'prompt.shell.zsh': 'Zsh',
     'prompt.mode.host': '- Execution mode: directly on the host system',
     'prompt.mode.sandbox': '- Execution mode: Windows dynamic sandbox',
+    'prompt.mode.sandbox.linux': '- Execution mode: Linux dynamic sandbox',
     'prompt.sandbox.rootPaths':
         '- Use stable root-relative paths: /C/... maps to host C:/..., /D/... maps to host D:/..., and so on.',
     'prompt.sandbox.absolutePaths':
@@ -44,6 +45,8 @@ export const enUs: Record<string, string> = {
         'Run the selected powershell in the Windows dynamic sandbox. Use stable root-relative paths: /C/... maps to host C:/..., and /D/... maps to host D:/.... Absolute paths in commands, workingDirectory, and scripts must use /<drive>/... form; relative paths resolve from the mapped task workspace. File approvals still show original host paths.',
     'sandbox.pathErrorHint':
         'Sandbox path hint: a Windows drive path was reported with an access-denied error. If the path refers to a host file, use the sandbox root-relative path instead, for example C:\\foo -> /C/foo or D:\\bar -> /D/bar.',
+    'sandbox.pipeErrorHint':
+        'Sandbox pipe hint: AppContainer processes inside the sandbox cannot create named pipes. Tools that rely on named-pipe IPC fail here; for example run tsx via node --import tsx instead of npx tsx, or use an equivalent command that does not need pipes.',
     'sandbox.cwdUnsupported':
         'The sandbox working directory must be an absolute Windows drive path that can be mapped: ${path}',
     'sandbox.executableMissing':
@@ -59,6 +62,8 @@ export const enUs: Record<string, string> = {
         'Dynamic sandbox enabled but dynobox-linux was not found. Rebuild the Linux package.',
     'sandbox.cwdMissing.linux': 'Dynamic sandbox requires a task workspace as the controlled path.',
     'sandbox.cwdUnsupported.linux': 'Sandbox working directory is missing or unusable: ${path}',
+    'sandbox.description.linux':
+        'Run the selected shell in the Linux dynamic sandbox. The root filesystem mirrors the host layout and reads/writes go through permission checks; workspace writes are allowed while other writes prompt or are denied; deletions can optionally go to the trash (XDG Trash). File approvals show original host paths.',
     'sandbox.loopbackSetupFailed':
         'Could not initialize local network access for the sandbox. Allow the Windows administrator confirmation and retry. OpenDesk continues to run without administrator privileges after setup.'
 };

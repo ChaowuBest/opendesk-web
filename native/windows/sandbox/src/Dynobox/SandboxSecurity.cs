@@ -13,8 +13,37 @@ using Microsoft.Win32;
 
 namespace Dynobox;
 
+/// <summary>沙箱安全上下文的统一接口：Runner 只面向它编程，
+/// 具体隔离机制（AppContainer / restricted token）可切换。</summary>
+public interface ISandboxSecurity : IDisposable
+{
+    /// <summary>初始化安全上下文（AppContainer 模式创建身份，受限令牌模式构造令牌）。</summary>
+    void Prepare(string? profileName);
+
+    byte[] CreateVolumeSecurityDescriptor();
+
+    int VolumeSecurityDescriptorLength { get; }
+
+    /// <summary>返回用于 CreateProcessAsUserW 的主令牌句柄。</summary>
+    IntPtr OpenBaseToken();
+
+    /// <summary>该模式是否需要向进程属性注入 AppContainer 安全能力。</summary>
+    bool UsesAppContainer { get; }
+
+    /// <summary>受限令牌模式下需要授权的沙箱 SID（AppContainer 模式返回 package SID）。</summary>
+    string SandboxSid { get; }
+
+    /// <summary>AppContainer 模式专用：在持有原生 package SID 的作用域内执行。
+    /// 非 AppContainer 实现应抛出 NotSupportedException。</summary>
+    T WithPackageSid<T>(Func<IntPtr, T> action);
+
+    void HideDriveLetter(char letter);
+
+    void RestoreDriveLetters();
+}
+
 /// <summary>沙箱安全上下文：盘符隐藏（NoDrives 策略位，HKCU，无需管理员）。</summary>
-public sealed class SandboxSecurity : IDisposable
+public sealed class SandboxSecurity : IDisposable, ISandboxSecurity
 {
     private const string NoDrivesKey =
         @"Software\Microsoft\Windows\CurrentVersion\Policies\Explorer";
@@ -22,12 +51,17 @@ public sealed class SandboxSecurity : IDisposable
     private string? _profileName;
     private string? _packageSid;
 
+    public bool UsesAppContainer => true;
+
+    /// <summary>AppContainer 模式下需要授权的就是 package SID 本身。</summary>
+    public string SandboxSid => PackageSid;
+
     /// <summary>
     /// Prepares a per-run Windows AppContainer identity.  The child process is
     /// started with this token; an AppContainer has no access to ordinary user
     /// files unless the target volume explicitly grants its package SID.
     /// </summary>
-    public void PrepareAppContainer(string? profileName = null)
+    public void Prepare(string? profileName = null)
     {
         if (_packageSid is not null) return;
 
@@ -75,7 +109,7 @@ public sealed class SandboxSecurity : IDisposable
     /// the per-run AppContainer package SID only.</summary>
     public byte[] CreateVolumeSecurityDescriptor()
     {
-        PrepareAppContainer();
+        Prepare();
         var userSid = WindowsIdentity.GetCurrent().User?.Value
             ?? throw new InvalidOperationException("无法取得当前用户 SID");
         var sddl = $"D:(A;;GA;;;SY)(A;;GA;;;{userSid})(A;;GA;;;{PackageSid})";
@@ -92,7 +126,7 @@ public sealed class SandboxSecurity : IDisposable
     {
         get
         {
-            PrepareAppContainer();
+            Prepare();
             var userSid = WindowsIdentity.GetCurrent().User?.Value
                 ?? throw new InvalidOperationException("无法取得当前用户 SID");
             var raw = new RawSecurityDescriptor(
@@ -105,7 +139,7 @@ public sealed class SandboxSecurity : IDisposable
     /// after mounting. Normal runs pass the descriptor through Dokan options.</summary>
     public void ApplyVolumeAcl(string mountPoint)
     {
-        PrepareAppContainer();
+        Prepare();
         var userSid = WindowsIdentity.GetCurrent().User?.Value
             ?? throw new InvalidOperationException("无法取得当前用户 SID");
         var raw = new RawSecurityDescriptor(
@@ -144,7 +178,7 @@ public sealed class SandboxSecurity : IDisposable
     /// <summary>Open the manager's primary token for CreateProcessAsUserW.</summary>
     public IntPtr OpenBaseToken()
     {
-        PrepareAppContainer();
+        Prepare();
         if (!OpenProcessToken(GetCurrentProcess(),
                 TokenQuery | TokenDuplicate | TokenAssignPrimary | TokenAdjustDefault |
                 TokenAdjustSessionId, out var baseToken))
@@ -156,7 +190,7 @@ public sealed class SandboxSecurity : IDisposable
     /// <summary>Runs an action while holding a valid native package SID.</summary>
     public T WithPackageSid<T>(Func<IntPtr, T> action)
     {
-        PrepareAppContainer();
+        Prepare();
         var hr = DeriveAppContainerSidFromAppContainerName(_profileName!, out var sid);
         if (hr != 0) Marshal.ThrowExceptionForHR(hr);
         try { return action(sid); }

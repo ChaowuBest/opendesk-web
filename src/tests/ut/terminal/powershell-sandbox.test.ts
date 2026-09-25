@@ -95,7 +95,16 @@ test.each(['win32', 'linux', 'darwin'])(
                         useDynamicSandbox: platform === 'win32'
                     })
                 );
-                expect(execute.mock.lastCall![0].shellArgs[2].includes('chcp')).toBe(platform === 'win32');
+                const shellArgs = execute.mock.lastCall![0].shellArgs as string[];
+                expect(shellArgs[shellArgs.indexOf('-Command') + 1].includes('chcp')).toBe(platform === 'win32');
+                // Windows 的 AppContainer 读不到用户执行策略时按 Restricted 处理，
+                // npx.ps1 等 npm shim 会被 AuthorizationManager 拦截；进程级 Bypass 绕开
+                if (platform === 'win32') {
+                    expect(shellArgs.slice(0, 2)).toEqual(['-ExecutionPolicy', 'Bypass']);
+                } else {
+                    expect(shellArgs[0]).toBe('-NoProfile');
+                    expect(shellArgs).not.toContain('-ExecutionPolicy');
+                }
             }
             expect(findExecutable).not.toHaveBeenCalled();
         } finally {

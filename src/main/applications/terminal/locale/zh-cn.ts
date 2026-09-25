@@ -44,6 +44,8 @@ export const zhCn: Record<string, string> = {
         '在 Windows 动态沙箱中执行选定的 powershell。使用稳定的根相对路径：/C/... 表示宿主 C:/...，/D/... 表示宿主 D:/...。命令、workingDirectory 和脚本中的绝对路径必须使用 /<盘符>/...；相对路径从映射后的任务工作空间解析。文件访问审批仍显示原始宿主路径。',
     'sandbox.pathErrorHint':
         '沙箱路径提示：检测到 Windows 盘符绝对路径和访问拒绝错误。如果路径指向宿主文件，请改用沙箱根相对路径，例如 C:\\foo 改为 /C/foo，D:\\bar 改为 /D/bar。',
+    'sandbox.pipeErrorHint':
+        '沙箱管道提示：沙箱内的 AppContainer 进程无法创建命名管道。依赖命名管道 IPC 的工具会在此失败，例如 tsx CLI 可改用 node --import tsx 代替 npx tsx，或改用不依赖管道的等价命令。',
     'sandbox.cwdUnsupported': '沙箱工作目录必须是可映射的 Windows 盘符绝对路径：${path}',
     'sandbox.executableMissing': '动态沙箱已启用，但未找到 sandbox.exe。请重新构建 Windows 版本。',
     'sandbox.endpointFailed': '动态沙箱授权端点未能获取端口。',

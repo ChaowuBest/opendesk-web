@@ -1244,3 +1244,412 @@ test('hung ask endpoints fail closed within the configured timeout (pipe and htt
         fs.rmSync(directory, { recursive: true, force: true });
     }
 });
+
+test('node children resolve native realpath on the sandbox volume', { skip: !windows }, async () => {
+    const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'opendesk-sandbox-realpath-'));
+    try {
+        const policy = path.join(directory, 'policy.toml');
+        fs.writeFileSync(policy, 'version = 1\ndefault = "allow"\n');
+        // AppContainer 无法完成 GetFinalPathNameByHandle 的盘符映射
+        // （\GLOBAL??/MountPointManager 拒访），native realpath 一律 EPERM；
+        // 沙箱必须注入预加载补丁让 jest 等依赖 native realpath 的工具可用。
+        const command =
+            `"${process.execPath}" -e "const fs = require('fs'); ` +
+            `console.log(fs.realpathSync.native(process.argv[1]))" "${directory}"`;
+        const result = await run(executable, [
+            'run',
+            '--automount',
+            '--policy',
+            policy,
+            '--log-file',
+            path.join(directory, 'manager.log'),
+            '--',
+            command
+        ]);
+        assert.equal(result.code, 0, JSON.stringify(result));
+        assert.match(result.stdout.trim(), /^[A-Za-z]:\\/);
+    } finally {
+        fs.rmSync(directory, { recursive: true, force: true });
+    }
+});
+
+test('forward-slash drive paths embedded in the command keep their separators', { skip: !windows }, async () => {
+    const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'opendesk-sandbox-separators-'));
+    try {
+        const policy = path.join(directory, 'policy.toml');
+        fs.writeFileSync(policy, 'version = 1\ndefault = "allow"\n');
+        const probe = path.join(directory, 'probe.txt');
+        fs.writeFileSync(probe, 'separator-ok');
+        // 路径内嵌于 JS 字符串字面量：若被改写成反斜杠形式，\D 会被字面量转义
+        // 吞掉（实证：require('D:/x') 变成 require('Z:DProjects/x')）
+        const command =
+            `"${process.execPath}" -e "console.log(require('fs').readFileSync('${probe.replace(/\\/g, '/')}','utf8'))"`;
+        const result = await run(executable, [
+            'run',
+            '--automount',
+            '--policy',
+            policy,
+            '--log-file',
+            path.join(directory, 'manager.log'),
+            '--',
+            command
+        ]);
+        assert.equal(result.code, 0, JSON.stringify(result));
+        assert.equal(result.stdout.trim(), 'separator-ok');
+    } finally {
+        fs.rmSync(directory, { recursive: true, force: true });
+    }
+});
+
+test('directory removal reports failure while the host holds the directory open', { skip: !windows }, async () => {
+    const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'opendesk-sandbox-rmdir-'));
+    let holder: ReturnType<typeof spawn> | undefined;
+    try {
+        const policy = path.join(directory, 'policy.toml');
+        fs.writeFileSync(policy, 'version = 1\ndefault = "allow"\n');
+        const locked = path.join(directory, 'locked');
+        fs.mkdirSync(locked);
+        // 进程 CWD 持有目录句柄：宿主 RemoveDirectory 必然失败，沙箱不得把它
+        // 吞成"删除成功"，再让父目录报误导性的 ENOTEMPTY（幽灵空目录）
+        holder = spawn('cmd.exe', ['/d', '/s', '/c', 'ping -n 30 127.0.0.1 > nul'], {
+            cwd: locked,
+            windowsHide: true,
+            stdio: 'ignore'
+        });
+        await new Promise((resolve) => setTimeout(resolve, 500));
+        const cmd = path.join(process.env.SystemRoot!, 'System32/cmd.exe');
+        const removeLocked = await run(executable, [
+            'run',
+            '--automount',
+            '--policy',
+            policy,
+            '--log-file',
+            path.join(directory, 'manager.log'),
+            '--',
+            `"${cmd}" /c rmdir "${locked}"`
+        ]);
+        assert.notEqual(removeLocked.code, 0, JSON.stringify(removeLocked));
+
+        const plain = path.join(directory, 'plain');
+        fs.mkdirSync(plain);
+        const removePlain = await run(executable, [
+            'run',
+            '--automount',
+            '--policy',
+            policy,
+            '--log-file',
+            path.join(directory, 'manager.log'),
+            '--',
+            `"${cmd}" /c rmdir "${plain}"`
+        ]);
+        assert.equal(removePlain.code, 0, JSON.stringify(removePlain));
+    } finally {
+        if (holder?.pid) {
+            // 同步等待宿主持有者退出，否则 rmSync 会撞上未释放的目录句柄
+            spawnSync('taskkill', ['/pid', String(holder.pid), '/T', '/F'], { windowsHide: true, stdio: 'ignore' });
+            spawnSync('ping', ['/n', '2', '127.0.0.1'], { windowsHide: true, stdio: 'ignore' });
+        }
+        fs.rmSync(directory, { recursive: true, force: true });
+    }
+});
+
+test('powershell Add-Type can compile through the sandbox temp directory', { skip: !windows }, async () => {
+    const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'opendesk-sandbox-addtype-'));
+    try {
+        const policy = path.join(directory, 'policy.toml');
+        fs.writeFileSync(policy, 'version = 1\ndefault = "allow"\n');
+        // csc 以 CREATE_NEW + 只读属性位创建资源临时文件（合法的 Win32 组合）；
+        // 镜像层若把它原样交给 .NET FileStream 会抛 ArgumentException 并以
+        // AccessDenied 收场，沙箱内所有 .NET 编译（Add-Type/CodeDom）随之失败。
+        const shell = path.join(process.env.SystemRoot!, 'System32/WindowsPowerShell/v1.0/powershell.exe');
+        const command =
+            `"${shell}" -NoProfile -NonInteractive -Command "try { Add-Type -TypeDefinition 'public class T { }'; exit 0 } catch { exit 3 }"`;
+        const result = await run(executable, [
+            'run',
+            '--automount',
+            '--policy',
+            policy,
+            '--log-file',
+            path.join(directory, 'manager.log'),
+            '--',
+            command
+        ]);
+        assert.equal(result.code, 0, JSON.stringify(result));
+    } finally {
+        fs.rmSync(directory, { recursive: true, force: true });
+    }
+});
+
+test('native realpath resolves through graceful-fs the way jest consumes it', { skip: !windows }, async () => {
+    const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'opendesk-sandbox-gfs-'));
+    try {
+        const policy = path.join(directory, 'policy.toml');
+        fs.writeFileSync(policy, 'version = 1\ndefault = "allow"\n');
+        // jest-util 的 tryRealpath 走 graceful-fs.realpathSync.native；
+        // graceful-fs 用 clone(fs) 复制导出，补丁必须沿这条引用链可见。
+        // node -e 的 process.argv[1] 是第一个用户参数（没有脚本名占位）
+        const command =
+            `"${process.execPath}" -e "const g = require(process.argv[1]); ` +
+            `console.log(g.realpathSync.native(process.argv[2]))" ` +
+            `"${fixtureRequire.resolve('graceful-fs')}" "${directory}"`;
+        const result = await run(executable, [
+            'run',
+            '--automount',
+            '--policy',
+            policy,
+            '--log-file',
+            path.join(directory, 'manager.log'),
+            '--',
+            command
+        ]);
+        assert.equal(result.code, 0, JSON.stringify(result));
+        assert.match(result.stdout.trim(), /^[A-Za-z]:\\/);
+    } finally {
+        fs.rmSync(directory, { recursive: true, force: true });
+    }
+});
+
+test('forward-slash paths embedded in environment values keep their separators', { skip: !windows }, async () => {
+    const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'opendesk-sandbox-envsep-'));
+    try {
+        const policy = path.join(directory, 'policy.toml');
+        fs.writeFileSync(policy, 'version = 1\ndefault = "allow"\n');
+        const probeValue = 'D:/tmp/opendesk-env-probe';
+        const command = `"${process.execPath}" -e "console.log(process.env.OD_PROBE_PATH)"`;
+        const result = await run(
+            executable,
+            [
+                'run',
+                '--automount',
+                '--policy',
+                policy,
+                '--log-file',
+                path.join(directory, 'manager.log'),
+                '--',
+                command
+            ],
+            '',
+            { ...process.env, OD_PROBE_PATH: probeValue }
+        );
+        assert.equal(result.code, 0, JSON.stringify(result));
+        // 环境变量里的正斜杠盘符路径改写后必须仍是正斜杠（与命令行同一规则）
+        assert.match(result.stdout.trim(), /^[A-Za-z]:\/D\/tmp\/opendesk-env-probe$/);
+    } finally {
+        fs.rmSync(directory, { recursive: true, force: true });
+    }
+});
+
+test('locked file deletion reports failure while the host keeps the file open', { skip: !windows }, async () => {
+    const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'opendesk-sandbox-rmfile-'));
+    let holder: ReturnType<typeof spawn> | undefined;
+    try {
+        const policy = path.join(directory, 'policy.toml');
+        fs.writeFileSync(policy, 'version = 1\ndefault = "allow"\n');
+        const locked = path.join(directory, 'locked.txt');
+        fs.writeFileSync(locked, 'locked');
+        // FileShare.None 独占持有：宿主 File.Delete 必然失败，沙箱必须如实
+        // 回报删除错误，而不是吞成"删除成功"让条目从视图里凭空消失
+        holder = spawn(
+            path.join(process.env.SystemRoot!, 'System32/WindowsPowerShell/v1.0/powershell.exe'),
+            ['-NoProfile', '-Command', `$f = [IO.File]::Open('${locked}', 'Open', 'Read', 'None'); Start-Sleep 25; $f.Close()`],
+            { windowsHide: true, stdio: 'ignore' }
+        );
+        await new Promise((resolve) => setTimeout(resolve, 800));
+        const cmd = path.join(process.env.SystemRoot!, 'System32/cmd.exe');
+        const removeLocked = await run(executable, [
+            'run',
+            '--automount',
+            '--policy',
+            policy,
+            '--log-file',
+            path.join(directory, 'manager.log'),
+            '--',
+            `"${cmd}" /c del "${locked}"`
+        ]);
+        // cmd del 失败时退出码恒为 0：准确断言 stderr 的占用报错与文件仍存在
+        assert.match(removeLocked.stderr, /used by another process/i, JSON.stringify(removeLocked));
+        assert.equal(fs.existsSync(locked), true, 'locked file must survive the failed deletion');
+
+        const plain = path.join(directory, 'plain.txt');
+        fs.writeFileSync(plain, 'plain');
+        const removePlain = await run(executable, [
+            'run',
+            '--automount',
+            '--policy',
+            policy,
+            '--log-file',
+            path.join(directory, 'manager.log'),
+            '--',
+            `"${cmd}" /c del "${plain}"`
+        ]);
+        assert.equal(removePlain.code, 0, JSON.stringify(removePlain));
+        assert.equal(fs.existsSync(plain), false);
+    } finally {
+        if (holder?.pid) {
+            spawnSync('taskkill', ['/pid', String(holder.pid), '/T', '/F'], { windowsHide: true, stdio: 'ignore' });
+            spawnSync('ping', ['/n', '2', '127.0.0.1'], { windowsHide: true, stdio: 'ignore' });
+        }
+        fs.rmSync(directory, { recursive: true, force: true });
+    }
+});
+
+test('the volume nul file behaves as an empty discard target', { skip: !windows }, async () => {
+    const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'opendesk-sandbox-vnul-'));
+    try {
+        const policy = path.join(directory, 'policy.toml');
+        fs.writeFileSync(policy, 'version = 1\ndefault = "allow"\n');
+        // 工具链补丁（GOSANDBOXNUL）把子进程的 NUL 需求落到卷内虚拟文件：
+        // 读必须 EOF，写必须被丢弃且文件不产生宿主实体
+        const command =
+            `"${process.execPath}" -e "const fs = require('fs'); ` +
+            `const p = process.env.SBX_ROOT + 'dynobox\\\\nul.file'; ` +
+            `const fd = fs.openSync(p, 'w'); fs.writeSync(fd, 'junk'); fs.closeSync(fd); ` +
+            `const fd2 = fs.openSync(p, 'r'); const buf = Buffer.alloc(16); ` +
+            `const n = fs.readSync(fd2, buf, 0, 16, 0); fs.closeSync(fd2); ` +
+            `console.log('BYTES=' + n)" "${directory}"`;
+        const result = await run(executable, [
+            'run',
+            '--automount',
+            '--policy',
+            policy,
+            '--log-file',
+            path.join(directory, 'manager.log'),
+            '--',
+            command
+        ]);
+        assert.equal(result.code, 0, JSON.stringify(result));
+        assert.match(result.stdout, /BYTES=0/);
+        assert.equal(fs.existsSync(path.join(directory, 'nul.file')), false,
+            'virtual nul file must not materialize on the host');
+    } finally {
+        fs.rmSync(directory, { recursive: true, force: true });
+    }
+});
+
+test('sandbox children create and connect named pipes once the platform setup is applied', { skip: !windows }, async (t) => {
+    // 放通依赖管理员确认的管道根目录 ACE（pipes-ensure）。ACE 写入成功不等于
+    // 一定生效（部分 Windows 版本对 AppContainer 的内核对象访问有 DACL 之外
+    // 的限制），因此用一次功能性探测决定是否跳过。
+    const configured = await pipeCreationWorks();
+    if (!configured) {
+        t.skip('named pipe creation is not permitted for AppContainer on this OS build');
+        return;
+    }
+    const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'opendesk-sandbox-namedpipe-'));
+    try {
+        const policy = path.join(directory, 'policy.toml');
+        fs.writeFileSync(policy, 'version = 1\ndefault = "allow"\n');
+        const script = String.raw`
+const net = require('net');
+const name = '\\\\.\\pipe\\opendesk-sandbox-probe-' + process.pid;
+const server = net.createServer((socket) => socket.end('roundtrip'));
+server.listen(name, () => {
+    const client = net.connect(name);
+    client.on('data', (data) => {
+        console.log('ROUNDTRIP=' + data.toString());
+        process.exit(0);
+    });
+});
+server.on('error', (error) => {
+    console.log('ERR ' + error.code);
+    process.exit(1);
+});
+setTimeout(() => process.exit(2), 8000);
+`;
+        fs.writeFileSync(path.join(directory, 'pipe-probe.cjs'), script);
+        const command = `"${process.execPath}" "${path.join(directory, 'pipe-probe.cjs')}"`;
+        const result = await run(executable, [
+            'run',
+            '--automount',
+            '--policy',
+            policy,
+            '--log-file',
+            path.join(directory, 'manager.log'),
+            '--',
+            command
+        ]);
+        assert.equal(result.code, 0, JSON.stringify(result));
+        assert.match(result.stdout, /ROUNDTRIP=roundtrip/);
+    } finally {
+        fs.rmSync(directory, { recursive: true, force: true });
+    }
+});
+
+
+async function pipeCreationWorks(): Promise<boolean> {
+    const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'opendesk-pipe-cap-'));
+    try {
+        const policy = path.join(directory, 'policy.toml');
+        fs.writeFileSync(policy, 'version = 1' + String.fromCharCode(10) + 'default = "allow"' + String.fromCharCode(10));
+        const script = String.raw`
+const net = require('net');
+const server = net.createServer(() => {});
+server.on('error', () => process.exit(1));
+server.listen('\\.\pipe\opendesk-pipe-cap-probe', () => {
+    server.close();
+    process.exit(0);
+});
+setTimeout(() => process.exit(2), 8000);
+`;
+        fs.writeFileSync(path.join(directory, 'pipe-cap.cjs'), script);
+        const command = `"${process.execPath}" "${path.join(directory, 'pipe-cap.cjs')}"`;
+        const result = await run(executable, [
+            'run', '--automount', '--policy', policy, '--', command
+        ]);
+        return result.code === 0 && /EXITED/.test('') === false;
+    } finally {
+        fs.rmSync(directory, { recursive: true, force: true });
+    }
+}
+
+const nulSetupConfigured = windows
+    && (() => {
+        try {
+            const status = spawnSync(executable, ['pipes-status'], { encoding: 'utf8' });
+            return JSON.parse(status.stdout.trim()).configured === true;
+        } catch {
+            return false;
+        }
+    })();
+
+test('sandbox provides virtual NUL semantics for toolchains', { skip: !windows }, async () => {
+    const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'opendesk-sandbox-nul-'));
+    try {
+        const policy = path.join(directory, 'policy.toml');
+        fs.writeFileSync(policy, 'version = 1\ndefault = "allow"\n');
+        // /dynobox/nul.file 是沙箱内置的虚拟 NUL（读 EOF、写丢弃）。cargo 的
+        // Stdio::null、go 的 os/exec 默认 stdin 都打开 NUL 设备；在 NUL 设备
+        // 无法放行 AppContainer 的系统上，工具链经由卷内路径访问它。
+        fs.writeFileSync(
+            path.join(directory, 'nul-probe.cmd'),
+            '@echo off\necho x > "%SBX_ROOT%dynobox\\nul.file" || exit /b 1\ntype "%SBX_ROOT%dynobox\\nul.file"\n'
+        );
+        const cmd = path.join(process.env.SystemRoot!, 'System32', 'cmd.exe');
+        const command = `"${cmd}" /d /c "%SBX_ROOT%nul-probe.cmd"`;
+        const result = await run(
+            executable,
+            ['run', '--src', directory, '--policy', policy, '--', command]
+        );
+        assert.equal(result.code, 0, result.stdout + result.stderr);
+    } finally {
+        fs.rmSync(directory, { recursive: true, force: true });
+    }
+});
+
+test('NUL device opens inside the sandbox once pipes setup granted access', { skip: !nulSetupConfigured }, async () => {
+    const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'opendesk-sandbox-nul-device-'));
+    try {
+        const policy = path.join(directory, 'policy.toml');
+        fs.writeFileSync(policy, 'version = 1\ndefault = "allow"\n');
+        const cmd = path.join(process.env.SystemRoot!, 'System32', 'cmd.exe');
+        const command = `"${cmd}" /d /c "echo x > NUL"`;
+        const result = await run(
+            executable,
+            ['run', '--src', directory, '--policy', policy, '--', command]
+        );
+        assert.equal(result.code, 0, result.stdout + result.stderr);
+        assert.doesNotMatch(result.stdout + result.stderr, /Access is denied|拒绝访问/);
+    } finally {
+        fs.rmSync(directory, { recursive: true, force: true });
+    }
+});

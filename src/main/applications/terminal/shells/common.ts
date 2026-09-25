@@ -33,7 +33,7 @@ import {
 } from '../../../utils/shellExec.js';
 import { prepareDynamicSandbox } from '../sandboxes/dynabox.js';
 import { prepareLinuxSandbox } from '../sandboxes/linux-sandbox.js';
-import { appendSandboxPathDiagnostic } from '../sandboxes/path-diagnostic.js';
+import { appendSandboxPathDiagnostic, appendSandboxPipeDiagnostic } from '../sandboxes/path-diagnostic.js';
 import { t } from '../locale/index.js';
 
 const ansiConverter = new Convert({ escapeXML: true });
@@ -323,7 +323,8 @@ export async function executeShellCommand(opts: {
         timeout,
         getOutput: () => output.getText(),
         getOutputBuffer: () => output,
-        formatOutput: (message) => appendSandboxPathDiagnostic(message, useDynamicSandbox),
+        formatOutput: (message) =>
+            appendSandboxPipeDiagnostic(appendSandboxPathDiagnostic(message, useDynamicSandbox), useDynamicSandbox),
         result,
         isKilledByStop,
         clock: timeoutClock,
