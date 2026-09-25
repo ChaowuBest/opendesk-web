@@ -20,6 +20,9 @@ import { describe, it, expect } from '@jest/globals';
 
 import {
     LINUX_WINDOW_SHADOW_MARGIN,
+    computeDragBounds,
+    computeShadowResizeBounds,
+    normalizeShadowResizeDirection,
     expandVisualBounds,
     shrinkWindowBounds
 } from '../../../main/windows/linux-window-shadow.js';
@@ -69,5 +72,31 @@ describe('shrinkWindowBounds', () => {
         expect(
             shrinkWindowBounds(expandVisualBounds(visual, LINUX_WINDOW_SHADOW_MARGIN), LINUX_WINDOW_SHADOW_MARGIN)
         ).toEqual(visual);
+    });
+});
+
+describe('computeDragBounds', () => {
+    const START = { x: 100, y: 80, width: 1200, height: 800 };
+
+    it('按光标位移整体平移，尺寸不变', () => {
+        expect(computeDragBounds({ startBounds: START, dx: 40, dy: -25 })).toEqual({
+            x: 140,
+            y: 55,
+            width: 1200,
+            height: 800
+        });
+    });
+
+    it('无位移时返回起始 bounds', () => {
+        expect(computeDragBounds({ startBounds: START, dx: 0, dy: 0 })).toEqual(START);
+    });
+
+    it('非整数位移取整（X11 光标坐标为整数，防御小数）', () => {
+        expect(computeDragBounds({ startBounds: START, dx: 10.4, dy: -3.6 })).toEqual({
+            x: 110,
+            y: 76,
+            width: 1200,
+            height: 800
+        });
     });
 });

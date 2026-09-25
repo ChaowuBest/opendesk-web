@@ -35,6 +35,17 @@ html.window-rounded .drag-overlay {
     width: auto;
 }
 
+/*
+ * Linux(X11) 下关闭拖拽层的原生 drag region：drag 区域会被 GTK 当作自绘标题栏，
+ * 右键触发 WM 系统窗口菜单（弹于左上角、grab 输入导致点不动/关不掉，见
+ * linux-context-menu.ts 说明）。拖动改为主进程手动会话（window-drag.ts），
+ * 渲染侧用 pointer 事件发起/结束。仅 html.window-rounded（仅 Linux 注入）
+ * 时生效，其他平台保持原生拖拽，行为不变。
+ */
+html.window-rounded .drag-overlay {
+    -webkit-app-region: no-drag;
+}
+
 /* 窗口控制按钮样式 */
 .window-control-btn {
     -webkit-app-region: no-drag; /* 按钮区域不可拖拽 */

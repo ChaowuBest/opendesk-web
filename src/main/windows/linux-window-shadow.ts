@@ -103,3 +103,26 @@ export function computeShadowResizeBounds(input: ShadowResizeInput): WindowBound
     }
     return { x: Math.round(x), y: Math.round(y), width: Math.round(width), height: Math.round(height) };
 }
+
+export interface WindowDragInput {
+    startBounds: WindowBounds;
+    /** 光标相对拖动起点的位移（屏幕坐标） */
+    dx: number;
+    dy: number;
+}
+
+/**
+ * 整窗移动：起始 bounds 按光标位移整体平移，尺寸不变。
+ * 会话管理见 window-drag.ts（Linux 下拖拽层为 no-drag，renderer 通知主进程
+ * 轮询光标驱动整窗移动——避免 -webkit-app-region: drag 触发 GTK 标题栏右键
+ * 系统窗口菜单，见 linux-context-menu.ts 说明）。
+ */
+export function computeDragBounds(input: WindowDragInput): WindowBounds {
+    const { startBounds, dx, dy } = input;
+    return {
+        x: Math.round(startBounds.x + dx),
+        y: Math.round(startBounds.y + dy),
+        width: startBounds.width,
+        height: startBounds.height
+    };
+}

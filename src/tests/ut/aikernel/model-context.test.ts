@@ -16,4 +16,9 @@ describe('model-context known models', () => {
     test('识别带厂商前缀的 glm-5.3-flash 模型名', () => {
         expect(lookupKnownVisionSupport('zai-org/GLM-5.3-Flash')).toBe(true);
     });
+
+    test('deepseek-v4.1-flash 支持视觉输入（图像理解）', () => {
+        expect(lookupKnownVisionSupport('deepseek-v4.1-flash')).toBe(true);
+        expect(lookupKnownVisionSupport('DeepSeek-V4.1-Flash')).toBe(true);
+    });
 });

@@ -977,6 +977,18 @@ if (shouldExposeMainWindowAPIs()) {
         }
     });
 
+    // Linux 顶部拖拽层的手动拖动（见 main 进程 windows/window-drag.ts）：
+    // drag region 在 Linux 会触发 GTK 标题栏右键 WM 系统菜单，拖拽层已改为
+    // no-drag（titlebar.css），由本 API 通知主进程轮询光标驱动整窗移动。
+    safeExposeInMainWorld('windowDragAPI', {
+        start: (grabX, grabY) => {
+            ipcRenderer.send('window:dragStart', { x: grabX, y: grabY });
+        },
+        end: () => {
+            ipcRenderer.send('window:dragEnd');
+        }
+    });
+
     safeExposeInMainWorld('updateAPI', {
         getState: async () => {
             const result = await ipcRenderer.invoke('updater:getState');

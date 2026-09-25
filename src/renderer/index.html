@@ -812,6 +812,61 @@
                 window.updateWindowShape = updateWindowShape;
                 window.addEventListener('resize', updateWindowShape);
                 updateWindowShape();
+                // Linux 上 drag region 无系统级双击最大化（仅发送 _NET_WM_MOVERESIZE
+                // 拖动请求），行为取决于窗口管理器且不稳定，这里手动监听双击。
+                // 同时拖拽层被覆盖为 no-drag（见 titlebar.css），拖动与右键也
+                // 一并手动处理：拖动通知主进程轮询光标移动窗口；右键 preventDefault
+                // 阻止 Chromium 默认行为（GTK 标题栏右键系统菜单已被 no-drag 消除）。
+                var dragOverlay = document.querySelector('.drag-overlay');
+                if (dragOverlay) {
+                    dragOverlay.addEventListener('dblclick', function (event) {
+                        // 窗口控制按钮为 no-drag，双击会冒泡至此，需交回按钮自身处理
+                        if (event.target instanceof Element && event.target.closest('button')) return;
+                        window.settingAPI.maximizeMainWindow().then(function () {
+                            updateMaximizeIcon();
+                            if (window.updateWindowShape) window.updateWindowShape();
+                        });
+                    });
+                    dragOverlay.addEventListener('contextmenu', function (event) {
+                        event.preventDefault();
+                    });
+                    // 拖动采用「按下记录 + 移动超阈值才启动」：单击（无位移）不触发
+                    // 窗口还原/跳位，双击最大化与单击聚焦等行为不受影响；确认为拖动
+                    // 后再通知主进程（携带按下点，保持按下点相对窗口位置不变）。
+                    var dragPointerState = null;
+                    var DRAG_THRESHOLD = 4;
+                    dragOverlay.addEventListener('pointerdown', function (event) {
+                        if (event.button !== 0) return;
+                        if (event.target instanceof Element && event.target.closest('button')) return;
+                        event.preventDefault();
+                        try {
+                            dragOverlay.setPointerCapture(event.pointerId);
+                        } catch (e) {
+                            /* 捕获失败不影响拖动：移动由主进程轮询光标驱动 */
+                        }
+                        dragPointerState = { startX: event.clientX, startY: event.clientY, started: false };
+                    });
+                    dragOverlay.addEventListener('pointermove', function (event) {
+                        if (!dragPointerState || dragPointerState.started) return;
+                        if (
+                            Math.abs(event.clientX - dragPointerState.startX) > DRAG_THRESHOLD ||
+                            Math.abs(event.clientY - dragPointerState.startY) > DRAG_THRESHOLD
+                        ) {
+                            dragPointerState.started = true;
+                            if (window.windowDragAPI) {
+                                window.windowDragAPI.start(dragPointerState.startX, dragPointerState.startY);
+                            }
+                        }
+                    });
+                    var endWindowDrag = function () {
+                        if (dragPointerState && dragPointerState.started && window.windowDragAPI) {
+                            window.windowDragAPI.end();
+                        }
+                        dragPointerState = null;
+                    };
+                    dragOverlay.addEventListener('pointerup', endWindowDrag);
+                    dragOverlay.addEventListener('pointercancel', endWindowDrag);
+                }
                 // 阴影边距环内的内容边缘 resize 感应条
                 import('./components/windowShadowResize.js').then(function (m) {
                     m.installShadowResizeHandles();
