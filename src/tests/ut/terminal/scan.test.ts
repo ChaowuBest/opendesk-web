@@ -32,16 +32,59 @@ test('Windows does not advertise command wrappers that cannot be launched as a s
     expect(scanSupportedShells('win32', null)).toEqual([]);
 });
 
-test.each(['darwin', 'linux'])('%s exposes all available supported kinds without sandbox variants', (platform) => {
+test('darwin exposes all available supported kinds without sandbox variants', () => {
     paths.set('zsh', '/bin/zsh');
     paths.set('bash', '/bin/bash');
     paths.set('pwsh', '/usr/local/bin/pwsh');
-    const shells = scanSupportedShells(platform, null);
+    const shells = scanSupportedShells('darwin', null);
     expect(shells.map((shell) => shell.kind)).toEqual(['zsh', 'bash', 'powershell']);
     expect(shells.every((shell) => shell.sandboxed === false)).toBe(true);
     paths.clear();
-    expect(scanSupportedShells(platform, null)).toEqual([]);
+    expect(scanSupportedShells('darwin', null)).toEqual([]);
 });
+
+// Linux 沙箱变体依赖：dynobox-linux 二进制存在 + 非特权 userns 可用
+// （否则注册变体必然运行失败）。CI 未构建二进制或 userns 受限时跳过该断言。
+const linuxSandboxAvailable = (() => {
+    try {
+        const { spawnSync } = require('node:child_process') as typeof import('node:child_process');
+        const usernsOk = spawnSync('unshare', ['-U', 'true'], { timeout: 3000 }).status === 0;
+        if (!usernsOk) return false;
+        const fs = require('node:fs') as typeof import('node:fs');
+        const path = require('node:path') as typeof import('node:path');
+        const dev = path.join(
+            process.env.INIT_CWD || process.cwd(),
+            'native',
+            'linux',
+            'sandbox',
+            'target',
+            'release',
+            'dynobox-linux'
+        );
+        return fs.existsSync(dev);
+    } catch {
+        return false;
+    }
+})();
+
+(linuxSandboxAvailable ? test : test.skip)(
+    'linux registers sandbox variants for bash/zsh when the binary is available',
+    () => {
+        paths.set('zsh', '/bin/zsh');
+        paths.set('bash', '/bin/bash');
+        paths.set('pwsh', '/usr/local/bin/pwsh');
+        const shells = scanSupportedShells('linux', null);
+        // zsh/bash 各注册普通与沙箱两个变体（开发环境二进制存在时）
+        expect(shells.map((shell) => `${shell.kind}:${shell.sandboxed}`)).toEqual([
+            'zsh:false',
+            'zsh:true',
+            'bash:false',
+            'bash:true',
+            'powershell:false'
+        ]);
+        paths.clear();
+    }
+);
 
 test('OpenHarmony exposes both verified shells and keeps the tablet gate', () => {
     const state: any = {

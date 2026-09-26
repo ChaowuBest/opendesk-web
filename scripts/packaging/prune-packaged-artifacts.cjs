@@ -42,7 +42,11 @@ const PACKAGING_IGNORE_PATTERNS = [
     // 这些都不能随应用源码进入 app.asar。
     /^[/\\]native[/\\]windows[/\\]sandbox(?:[/\\]|$)/,
     // workspace SDK 的嵌套 node_modules 是本地开发安装的开发依赖，运行时只读其 dist
-    /^[/\\]packages[/\\](?:app-sdk|plugin-sdk)[/\\]node_modules(?:[/\\]|$)/
+    /^[/\\]packages[/\\](?:app-sdk|plugin-sdk)[/\\]node_modules(?:[/\\]|$)/,
+    // Linux 沙箱同理：整树（源码/vendor/target/tests）不进 asar；发布态二进制由
+    // stageLinuxSandboxResource 按目标架构放入 resources/sandbox/dynobox-linux。
+    // （追加在末尾：packaged-artifacts.test.ts 按位置解构前四个模式）
+    /^[/\\]native[/\\]linux[/\\]sandbox(?:[/\\]|$)/
 ];
 
 // node-gyp 构建垃圾：调试符号、静态库、链接中间产物与 MSVC 工程文件

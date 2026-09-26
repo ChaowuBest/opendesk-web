@@ -32,6 +32,7 @@ import {
     trackDetachedProcess
 } from '../../../utils/shellExec.js';
 import { prepareDynamicSandbox } from '../sandboxes/dynabox.js';
+import { prepareLinuxSandbox } from '../sandboxes/linux-sandbox.js';
 import { appendSandboxPathDiagnostic } from '../sandboxes/path-diagnostic.js';
 import { t } from '../locale/index.js';
 
@@ -232,24 +233,43 @@ export async function executeShellCommand(opts: {
     const startTime = Date.now();
     // 沙箱权限弹窗等待用户决策期间暂停超时计时（见 dynabox 的 onPermissionWaitChange）
     const timeoutClock = new ShellTimeoutClock(timeout, startTime);
-    const sandbox = useDynamicSandbox
-        ? await prepareDynamicSandbox({
-              shellPath,
-              shellArgs,
-              command,
-              cwd,
-              taskState,
-              deleteToTrash: sandboxDeleteToTrash,
-              onPermissionWaitChange: (waiting) => {
-                  if (waiting) timeoutClock.pause();
-                  else timeoutClock.resume();
-              }
-          })
-        : null;
+    const sandbox =
+        useDynamicSandbox && process.platform === 'linux'
+            ? await prepareLinuxSandbox({
+                  shellPath,
+                  shellArgs,
+                  command,
+                  cwd,
+                  taskState,
+                  deleteToTrash: sandboxDeleteToTrash,
+                  onPermissionWaitChange: (waiting) => {
+                      if (waiting) timeoutClock.pause();
+                      else timeoutClock.resume();
+                  }
+              })
+            : useDynamicSandbox
+              ? await prepareDynamicSandbox({
+                    shellPath,
+                    shellArgs,
+                    command,
+                    cwd,
+                    taskState,
+                    deleteToTrash: sandboxDeleteToTrash,
+                    onPermissionWaitChange: (waiting) => {
+                        if (waiting) timeoutClock.pause();
+                        else timeoutClock.resume();
+                    }
+                })
+              : null;
     let proc: ChildProcessWithoutNullStreams;
     try {
         proc = sandbox
-            ? spawn(sandbox.file, sandbox.args, { cwd: sandbox.cwd, env, detached: false, windowsHide: true })
+            ? spawn(sandbox.file, sandbox.args, {
+                  cwd: sandbox.cwd,
+                  env: sandbox.env ? { ...env, ...sandbox.env } : env,
+                  detached: false,
+                  windowsHide: true
+              })
             : spawn(shellPath, shellArgs, { cwd, env, detached: process.platform !== 'win32' });
         sandbox?.attach(proc);
     } catch (error) {

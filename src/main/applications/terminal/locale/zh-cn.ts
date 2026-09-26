@@ -48,5 +48,17 @@ export const zhCn: Record<string, string> = {
     'sandbox.executableMissing': '动态沙箱已启用，但未找到 sandbox.exe。请重新构建 Windows 版本。',
     'sandbox.endpointFailed': '动态沙箱授权端点未能获取端口。',
     'sandbox.loopbackSetupFailed':
-        '未能完成沙箱本地网络初始化。请允许 Windows 管理员确认后重试；初始化完成后，OpenDesk 仍以普通权限运行。'
+        '未能完成沙箱本地网络初始化。请允许 Windows 管理员确认后重试；初始化完成后，OpenDesk 仍以普通权限运行。',
+    // Linux 动态沙箱（dynobox-linux）
+    'sandbox.executableMissing.linux': '动态沙箱已启用，但未找到 dynobox-linux。请重新构建 Linux 版本。',
+    'sandbox.cwdMissing.linux': '动态沙箱需要任务工作目录作为受控路径。',
+    'sandbox.cwdUnsupported.linux': '沙箱工作目录不存在或不可用：${path}',
+    'prompt.mode.sandbox.linux': '- 当前运行模式：Linux 动态沙箱',
+    'prompt.sandbox.linux.transparent':
+        '- 沙箱内根文件系统布局与宿主完全一致（/home、/tmp、/var 等均可访问），读写操作经权限检查。',
+    'prompt.sandbox.linux.workspace':
+        '- 工作区可写；工作区外的写入需要审批（或按规则拒绝）。系统目录（/usr /lib /etc 等）只读。',
+    'prompt.sandbox.linux.tmp': '- /tmp 透传宿主目录：沙箱内写入的文件跨命令/跨沙箱实例持久，关闭不丢失。',
+    'sandbox.description.linux':
+        '在 Linux 动态沙箱中执行选定的 shell。根文件系统布局与宿主一致，读写经权限检查；工作区写放行、其余写询问或拒绝；删除可选送回收站（XDG Trash）。文件访问审批显示原始宿主路径。'
 };

@@ -9,6 +9,9 @@
  * See the Mulan PSL v2 for more details.
  */
 
+import fs from 'node:fs';
+import path from 'node:path';
+import { spawnSync } from 'node:child_process';
 import { findExecutablesInPath, findOpenHarmonyBash, findOpenHarmonyZsh } from '../../utils/shellExec.js';
 import type { SupportedShell, SupportedShellKind } from '../../../common/shells.js';
 export { selectSupportedShell, type SupportedShell, type SupportedShellKind } from '../../../common/shells.js';
@@ -23,13 +26,35 @@ import { getPlatform } from '../../../platforms/base.js';
  * CLI 模式不会安装沙箱的二进制与 Dokan 驱动（仅桌面安装包携带），注册沙箱变体
  * 只会让选中的 PowerShell 在运行时报 executableMissing，并让 TUI 设置页暴露
  * 无效选项；因此沙箱变体仅在非 CLI 平台（桌面版）注册。
+ * @param targetPlatform 目标平台（与运行时平台分离，便于跨平台测试模拟）
  */
-function sandboxVariantsAvailable(): boolean {
+function sandboxVariantsAvailable(targetPlatform: string): boolean {
     try {
-        return getPlatform().getName() !== 'cli';
+        if (getPlatform().getName() === 'cli') return false;
     } catch {
         // 平台未初始化（如单元测试）时保持原有行为
-        return true;
+    }
+    // 仅 Linux 沙箱变体依赖 dynobox-linux 二进制与 unprivileged user namespace；
+    // win32/darwin 的沙箱组件随桌面安装包提供，无需本机探测
+    if (targetPlatform !== 'linux') return true;
+    const electronProcess = process as NodeJS.Process & { defaultApp?: boolean; resourcesPath?: string };
+    const dev = path.join(
+        process.env.INIT_CWD || process.cwd(),
+        'native',
+        'linux',
+        'sandbox',
+        'target',
+        'release',
+        'dynobox-linux'
+    );
+    const packaged = path.join(electronProcess.resourcesPath || '', 'sandbox', 'dynobox-linux');
+    if (!fs.existsSync(dev) && !fs.existsSync(packaged)) return false;
+    // userns 探测：fork 子进程 unshare(CLONE_NEWUSER)（AppArmor/内核限制时 EPERM）
+    try {
+        const probe = spawnSync('unshare', ['-U', 'true'], { timeout: 3000 });
+        return probe.status === 0 && probe.error === undefined;
+    } catch {
+        return false;
     }
 }
 
@@ -39,13 +64,15 @@ export function scanSupportedShells(
     harmonyState: HarmonyLocalRuntimeState | null = getHarmonyLocalRuntimeState()
 ): SupportedShell[] {
     const shells: SupportedShell[] = [];
-    const allowSandboxVariant = sandboxVariantsAvailable();
+    const allowSandboxVariant = sandboxVariantsAvailable(platform);
     const add = (kind: SupportedShellKind, shellPath: string | null | undefined, sandboxed = false) => {
         if (!shellPath || shells.some((shell) => shell.path === shellPath && shell.sandboxed === sandboxed)) return;
         // Windows command wrappers require cmd.exe and cannot be spawned as the selected shell.
         if (platform === 'win32' && !/\.exe$/i.test(shellPath)) return;
         shells.push({ kind, path: shellPath, sandboxed });
         if (platform === 'win32' && kind === 'powershell' && !sandboxed && allowSandboxVariant)
+            add(kind, shellPath, true);
+        if (platform === 'linux' && (kind === 'bash' || kind === 'zsh') && !sandboxed && allowSandboxVariant)
             add(kind, shellPath, true);
     };
     if (platform === 'win32') {

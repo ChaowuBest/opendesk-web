@@ -102,6 +102,36 @@ function stageWindowsSandboxResource(buildPath, electronVersion, platform, arch,
     }
 }
 
+// 发布态 Linux 沙箱固定解包到 resources/sandbox/dynobox-linux。
+// 必须按打包目标架构（arch 参数）挑选对应 rust target 的产物：build-linux-sandbox.cjs
+// 把产物落盘 runtime/<triple>/dynobox-linux（本机构建按宿主架构，交叉构建由
+// OPENDESK_SANDBOX_TARGET 指定）。缺失即报错（fail-fast），并校验 ELF e_machine，
+// 防止构建机架构与目标不一致时把错架构二进制静默打进安装包（安装后 exec format error）。
+function stageLinuxSandboxResource(buildPath, electronVersion, platform, arch, callback) {
+    try {
+        if (platform === 'linux') {
+            const { tripleForLinuxArch, assertLinuxElfMachine } = require('./scripts/packaging/linux-sandbox-arch.cjs');
+            const triple = tripleForLinuxArch(arch);
+            const source = path.join(__dirname, 'native', 'linux', 'sandbox', 'runtime', triple, 'dynobox-linux');
+            const resourcesRoot = path.join(buildPath, 'resources');
+            const targetDirectory = path.join(resourcesRoot, 'sandbox');
+            if (!fs.existsSync(source)) {
+                throw new Error(
+                    `Linux sandbox binary is missing for ${arch} (${triple}): ${source}。` +
+                        `请先构建对应架构：OPENDESK_SANDBOX_TARGET=${triple} npm run build:sandbox:linux（或在该架构构建机上直接构建）`
+                );
+            }
+            assertLinuxElfMachine(source, arch);
+            fs.mkdirSync(targetDirectory, { recursive: true });
+            fs.copyFileSync(source, path.join(targetDirectory, 'dynobox-linux'));
+            removePathIfExists(path.join(resourcesRoot, 'native', 'linux', 'sandbox'));
+        }
+        callback();
+    } catch (error) {
+        callback(error);
+    }
+}
+
 // afterPrune 钩子：清原生包编译产物/跨平台 prebuilds（需按 platform+arch 参数化），
 // 以及 win32/linux 平铺布局下的多语言 .pak 与 Chromium 许可证清单。
 // darwin 的 .pak 位于签名过的 Electron Framework 内，不在剪裁范围。
@@ -508,6 +538,7 @@ module.exports = {
     prunePackagedNativeArtifactsHook,
     prunePackagedShellArtifactsHook,
     stageWindowsSandboxResource,
+    stageLinuxSandboxResource,
     packagerConfig: {
         ...(packagedAppVersion ? { appVersion: packagedAppVersion } : {}),
         ...(electronZipDir ? { electronZipDir: path.resolve(electronZipDir) } : {}),
@@ -569,7 +600,7 @@ module.exports = {
             pruneDarwinAppNativePrebuilds,
             materializeWorkspacePackageLinks
         ],
-        afterCopyExtraResources: [pruneDarwinExtraResources, stageWindowsSandboxResource]
+        afterCopyExtraResources: [pruneDarwinExtraResources, stageWindowsSandboxResource, stageLinuxSandboxResource]
     },
     // 打包期的原生依赖均为 N-API prebuild 或纯 wasm（classic-level、sqlite-vec、
     // node-sqlite3-wasm），N-API 二进制跨 Electron ABI 通用，无需按 ABI rebuild；

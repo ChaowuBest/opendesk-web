@@ -46,10 +46,23 @@ export class TerminalApplication extends BaseApplication {
                 );
                 break;
             case 'bash':
-                toolset.addTool(new ExecuteBashTool(shell.path));
+                toolset.addTool(
+                    new ExecuteBashTool(
+                        shell.path,
+                        shell.sandboxed,
+                        shell.sandboxed && taskConfig?.shell_sandbox_del_to_trash === true
+                    )
+                );
                 break;
             case 'zsh':
-                toolset.addTool(new ExecuteZshTool(shell.path, (process.platform as string) === 'openharmony'));
+                toolset.addTool(
+                    new ExecuteZshTool(
+                        shell.path,
+                        (process.platform as string) === 'openharmony',
+                        shell.sandboxed,
+                        shell.sandboxed && taskConfig?.shell_sandbox_del_to_trash === true
+                    )
+                );
                 break;
         }
         toolset.addTool(new CheckShellStatusTool(shell.kind, shell.sandboxed));

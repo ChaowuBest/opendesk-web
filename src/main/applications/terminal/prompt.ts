@@ -34,9 +34,19 @@ export function createTerminalSystemPromptContribution(
     ];
 
     if (options.sandboxed) {
-        items.push(t('prompt.sandbox.rootPaths'), t('prompt.sandbox.absolutePaths'), t('prompt.sandbox.cwd'));
-        if (options.deleteToTrash) {
-            items.push(t('prompt.sandbox.trash'));
+        // Linux 沙箱仅用于 bash/zsh（透明路径）；PowerShell 沙箱为 Windows 语义
+        if (options.kind !== 'powershell') {
+            items.push(
+                t('prompt.mode.sandbox.linux'),
+                t('prompt.sandbox.linux.transparent'),
+                t('prompt.sandbox.linux.workspace'),
+                t('prompt.sandbox.linux.system')
+            );
+        } else {
+            items.push(t('prompt.sandbox.rootPaths'), t('prompt.sandbox.absolutePaths'), t('prompt.sandbox.cwd'));
+            if (options.deleteToTrash) {
+                items.push(t('prompt.sandbox.trash'));
+            }
         }
     }
 

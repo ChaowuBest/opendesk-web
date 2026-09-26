@@ -37,7 +37,11 @@ export class ExecuteBashTool extends BaseTool<typeof ExecuteBashArgsSchema> {
     private _killedByStop = false;
     private _stopPromises: Map<ChildProcess, Promise<void>> = new Map();
 
-    constructor(private readonly shellPath: string) {
+    constructor(
+        private readonly shellPath: string,
+        private readonly sandboxed = false,
+        private readonly deleteToTrash = false
+    ) {
         super(
             'executeBash',
             '该工具可以执行Bash终端命令, 并且默认已经将标准错误流和标准输出流合并, 无需额外配置 2>&1。不要用 || true、; true、| head 等兜底后缀或管道吞掉退出码；让命令以真实退出码结束，系统依赖退出码判定命令成败',
@@ -51,7 +55,7 @@ export class ExecuteBashTool extends BaseTool<typeof ExecuteBashArgsSchema> {
         return createTerminalSystemPromptContribution({
             kind: 'bash',
             shellPath: this.shellPath,
-            sandboxed: false
+            sandboxed: this.sandboxed
         });
     }
 
@@ -106,15 +110,17 @@ export class ExecuteBashTool extends BaseTool<typeof ExecuteBashArgsSchema> {
             taskState,
             runningProcesses: this.runningProcesses,
             stopPromises: this._stopPromises,
-            isKilledByStop: () => this._killedByStop
+            isKilledByStop: () => this._killedByStop,
+            useDynamicSandbox: this.sandboxed,
+            sandboxDeleteToTrash: this.sandboxed && this.deleteToTrash
         });
     }
 
     async renderToolCall(toolcall: ToolCall): Promise<string | undefined> {
-        return renderTerminalToolCall('bash', toolcall);
+        return renderTerminalToolCall('bash', toolcall, this.sandboxed);
     }
 
     renderToolCallCli(toolcall: ToolCall, width: number): string[] | undefined {
-        return renderTerminalToolCallCli('bash', toolcall, width);
+        return renderTerminalToolCallCli('bash', toolcall, width, this.sandboxed);
     }
 }

@@ -188,7 +188,7 @@ test('RunWorkflowTool returns a started result and owns its detail navigation ca
     };
     call.result_object = result.result_object;
     call.status = result.status;
-    await runTask.hooks.noticeAfterToolCall(runTask, call);
+    await runTask.hooks.noticeAfterToolCall({ task: runTask, toolCall: call });
 
     const html = await tool.renderToolCall(call);
     const resultObject = result.result_object as { runId?: string } | undefined;

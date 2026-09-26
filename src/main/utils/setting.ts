@@ -273,9 +273,8 @@ const TaskSettingSchema = z.object({
     evidence_card: z.boolean().default(false).describe('是否启用 EvidenceCard 节省 Token 功能'),
     shell_path: z.string().default(''),
     shell_sandboxed: z.boolean().default(false),
-    // 仅在 shell_sandboxed 且为 Windows PowerShell 时生效：任务开始前已存在的文件
-    // 被删除时送回收站；沙箱实例运行期间新建的文件在同一实例内删除时直接清除
-    // （由原生侧创建跟踪实现，无需宿主传参）
+    // Windows 仅 PowerShell 提供沙箱；Linux 上 bash/zsh 提供（dynobox-linux）。
+    // 删除送回收站仅在 Windows PowerShell 沙箱生效（原生侧实现创建跟踪）。
     shell_sandbox_del_to_trash: z.boolean().default(false)
 });
 

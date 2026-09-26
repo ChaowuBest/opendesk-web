@@ -245,3 +245,53 @@ describe('titlebar.css drag overlay inset (regression)', () => {
         expect(css).toMatch(/\.window-fullscreen[\s\S]{0,120}?--od-window-margin:\s*0\s*;/);
     });
 });
+/**
+ * index.html 拖拽层双击最大化回归钉。
+ *
+ * Linux(X11) 上 -webkit-app-region: drag 仅发送 _NET_WM_MOVERESIZE 拖动请求，
+ * 没有系统级双击最大化（Windows/macOS 由 Chromium 原生处理），行为随窗口管理器
+ * 变化而不稳定。必须在 Linux 分支手动监听 dblclick 调用 maximizeMainWindow，
+ * 并排除窗口控制按钮（no-drag 按钮双击会冒泡到拖拽层，若放行会误触发最大化）。
+ */
+describe('index.html drag overlay double-click (regression)', () => {
+    const html = readFileSync(path.resolve(process.cwd(), 'src/renderer/index.html'), 'utf8');
+
+    test('Linux 分支为拖拽层注册双击最大化，且排除窗口控制按钮', () => {
+        const anchor = 'if (window.systemInfo && window.systemInfo.isLinux)';
+        const start = html.indexOf(anchor);
+        const end = html.indexOf('window.globalControlAPI =', start);
+        expect(start).toBeGreaterThan(-1);
+        expect(end).toBeGreaterThan(start);
+        const linuxBlock = html.slice(start, end);
+        expect(linuxBlock).toContain("dragOverlay.addEventListener('dblclick'");
+        expect(linuxBlock).toContain("closest('button')");
+        expect(linuxBlock).toContain('settingAPI.maximizeMainWindow()');
+        expect(linuxBlock).toContain('updateWindowShape');
+        // Linux 拖拽层为 no-drag：pointer 拖动通知主进程手动会话，右键 preventDefault
+        expect(linuxBlock).toContain("dragOverlay.addEventListener('pointerdown'");
+        expect(linuxBlock).toContain('window.windowDragAPI.start(');
+        expect(linuxBlock).toContain("dragOverlay.addEventListener('contextmenu'");
+        // 移动超阈值才启动拖动（单击不触发窗口还原/跳位，双击最大化不受影响）
+        expect(linuxBlock).toContain("dragOverlay.addEventListener('pointermove'");
+        expect(linuxBlock).toContain('DRAG_THRESHOLD');
+    });
+}); /**
+ * Linux 拖拽层 no-drag 覆盖的回归钉：
+ *
+ * -webkit-app-region: drag 在 Linux(X11)/GTK 下被当作自绘标题栏，右键触发
+ * WM 系统窗口菜单（弹位错误、grab 输入导致点不动/关不掉）。主窗口拖拽层
+ * 因此在 html.window-rounded（仅 Linux 注入）下切为 no-drag，拖动改走
+ * windowDragAPI 手动会话。基础规则必须保持 drag，确保其他平台不受影响。
+ */
+describe('titlebar.css drag overlay no-drag override (regression)', () => {
+    const css = readFileSync(path.resolve(process.cwd(), 'src/renderer/styles/titlebar.css'), 'utf8');
+
+    test('基础拖拽层仍为 drag（Windows/macOS 原生拖拽路径不变）', () => {
+        expect(css).toMatch(/\.drag-overlay\s*\{[^}]*app-region:\s*drag/);
+    });
+
+    test('window-rounded（Linux 专属）下存在 no-drag 覆盖', () => {
+        const blocks = css.match(/html\.window-rounded \.drag-overlay\s*\{[^}]*\}/g) ?? [];
+        expect(blocks.some((block) => /-webkit-app-region:\s*no-drag\s*;/.test(block))).toBe(true);
+    });
+});

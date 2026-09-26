@@ -59,8 +59,8 @@ test('only the selected execution tool and status tool are registered, using the
             shell.kind === 'powershell'
                 ? [shell.path, shell.sandboxed, false]
                 : shell.kind === 'zsh'
-                  ? [shell.path, false]
-                  : [shell.path];
+                  ? [shell.path, false, shell.sandboxed, false]
+                  : [shell.path, shell.sandboxed, false];
         expect(launches[0]).toEqual({ name, args });
     }
     expect(scan).toHaveBeenCalledTimes(1);

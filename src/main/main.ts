@@ -161,6 +161,8 @@ import {
     shrinkWindowBounds
 } from './windows/linux-window-shadow.js';
 import { endShadowResizeSession, startShadowResizeSession } from './windows/shadow-resize.js';
+import { endWindowDragSession, startWindowDragSession } from './windows/window-drag.js';
+import { suppressWmSystemMenuOnLinux } from './windows/linux-context-menu.js';
 import {
     initTaskStatusWidget,
     installTransparentBackgroundReassert,
@@ -847,7 +849,8 @@ const createWindow = () => {
             });
     };
 
-    // 可编辑区域恢复 Electron 默认右键菜单（剪切/复制/粘贴/全选），非编辑区域保持禁用。
+    // 可编辑区域恢复 Electron 默认右键菜单（剪切/复制/粘贴/全选），非编辑区域由
+    // 全局 web-contents-created 钩子统一 preventDefault（Linux 下阻止 WM 系统菜单）。
     // label 使用 t() 以跟随 OpenDesk 语言设置；role 保留以维持系统原生快捷键和启用/禁用逻辑。
     mainWindow.webContents.on('context-menu', (_event, params) => {
         if (!params.isEditable) return;
@@ -3020,6 +3023,31 @@ const registerShadowResizeHandlers = () => {
     });
 };
 
+/**
+ * 主窗口顶部拖拽层的手动拖动（Linux only）：renderer 通知开始/结束，
+ * 本进程轮询光标驱动整窗移动。背景与 bounds 换算见 windows/window-drag.ts。
+ */
+const registerWindowDragHandlers = () => {
+    if (process.platform !== 'linux') {
+        return;
+    }
+    ipcMain.on('window:dragStart', (event, grab: unknown) => {
+        const win = BrowserWindow.fromWebContents(event.sender);
+        if (!win || win.isDestroyed()) {
+            return;
+        }
+        const p = grab as { x?: unknown; y?: unknown } | null | undefined;
+        const grabPoint = p && typeof p.x === 'number' && typeof p.y === 'number' ? { x: p.x, y: p.y } : undefined;
+        startWindowDragSession(win, grabPoint);
+    });
+    ipcMain.on('window:dragEnd', () => {
+        endWindowDragSession();
+    });
+    app.on('before-quit', () => {
+        endWindowDragSession();
+    });
+};
+
 const registerMagicPointerHandlers = () => {
     ipcMain.handle('magicPointer:getCursorPosition', (event) => {
         try {
@@ -3426,6 +3454,15 @@ async function startApplication(): Promise<void> {
         }
     });
 
+    // Linux(X11) 无边框窗口在未设置应用菜单时，右键非编辑区域会走 _NET_WM_MENU
+    // 协议请求 WM 弹系统窗口菜单（Muffin/Cinnamon 的最小化/移动/关闭菜单）：
+    // 弹于窗口左上角而非鼠标位置，弹出后 WM grab 输入导致菜单点不动、关不掉，
+    // 期间标题栏按钮也失效。对所有 BrowserWindow 统一阻止该默认行为（编辑区域
+    // 的剪切/复制/粘贴菜单由各级 handler 按需弹出，不受影响）。
+    app.on('web-contents-created', (_event, contents) => {
+        suppressWmSystemMenuOnLinux(contents);
+    });
+
     app.whenReady().then(async () => {
         let resolveRegistryWorkerReady!: () => void;
         const registryWorkerReady = new Promise<void>((resolve) => {
@@ -3790,6 +3827,7 @@ async function startApplication(): Promise<void> {
         registerScreenAPIHandlers();
         registerMagicPointerHandlers();
         registerShadowResizeHandlers();
+        registerWindowDragHandlers();
         registerAuthAPIHandlers();
         registerDisplayZoomHandlers();
         // registerThemeHandlers() 已在 createWindow 之前提前注册，
