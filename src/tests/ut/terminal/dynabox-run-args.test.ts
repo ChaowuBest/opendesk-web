@@ -33,6 +33,28 @@ describe('sandboxRunArgs', () => {
     test('deleteToTrash 为 false 与缺省一致', () => {
         expect(sandboxRunArgs({ ...base, deleteToTrash: false })).toEqual(sandboxRunArgs(base));
     });
+
+    test('envExtra 展开为 --env NAME=VALUE 且位于 -- 之前', () => {
+        const args = sandboxRunArgs({
+            ...base,
+            envExtra: {
+                npm_config_cache: 'C:/Users/x/.cache/opendesk-sandbox/npm',
+                JEST_CACHE_DIR: 'C:/Users/x/.cache/opendesk-sandbox/jest'
+            }
+        });
+        expect(args).toContain('--env');
+        expect(args.filter((arg) => arg === '--env')).toHaveLength(2);
+        expect(args).toContain('npm_config_cache=C:/Users/x/.cache/opendesk-sandbox/npm');
+        expect(args).toContain('JEST_CACHE_DIR=C:/Users/x/.cache/opendesk-sandbox/jest');
+        // --env 参数对必须在 -- 分隔符之前
+        const dashIdx = args.indexOf('--');
+        expect(args.indexOf('--env')).toBeLessThan(dashIdx);
+        expect(args.indexOf('npm_config_cache=C:/Users/x/.cache/opendesk-sandbox/npm')).toBeLessThan(dashIdx);
+    });
+
+    test('envExtra 缺省时不产生 --env 参数', () => {
+        expect(sandboxRunArgs(base)).not.toContain('--env');
+    });
 });
 
 describe('sandbox working directory', () => {

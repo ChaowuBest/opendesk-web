@@ -92,6 +92,7 @@ export function sandboxRunArgs(options: {
     logPath: string;
     deleteToTrash?: boolean;
     childCommand: string;
+    envExtra?: Record<string, string>;
 }): string[] {
     return [
         'run',
@@ -106,6 +107,9 @@ export function sandboxRunArgs(options: {
         options.endpoint,
         '--log-file',
         options.logPath,
+        // 工具链缓存重定向（npm_config_cache 等指向宿主持久目录，跨实例复用）；
+        // --env 可重复，每个 NAME=VALUE 一个
+        ...Object.entries(options.envExtra ?? {}).flatMap(([key, value]) => ['--env', `${key}=${value}`]),
         '--',
         options.childCommand
     ];
@@ -163,7 +167,12 @@ export async function prepareDynamicSandbox(options: {
     try {
         fs.writeFileSync(
             policyPath,
-            policyText(decide.endpoint, decide.token, options.taskState?.harnessContext.permission?.getRules?.()),
+            policyText(
+                decide.endpoint,
+                decide.token,
+                options.taskState?.harnessContext.permission?.getRules?.(),
+                process.env.USERPROFILE
+            ),
             'utf8'
         );
         // 策略文件含 ask token：收紧权限（Windows 上为继承 ACL，chmod 为无害对齐）
@@ -171,6 +180,21 @@ export async function prepareDynamicSandbox(options: {
     } catch (error) {
         await cleanup();
         throw error;
+    }
+
+    // 工具链缓存重定向到宿主持久目录（~/.cache/opendesk-sandbox/...）：npm/jest
+    // 缓存跨沙箱实例复用（首次构建才需下载/全量编译），且写放行已由 policyText
+    // 的 cacheRoot 规则覆盖。与 linux-sandbox.ts 的 CARGO_HOME/GOCACHE 同语义；
+    // Windows 侧暂只重定向 npm 与 jest（PSModulePath 等系统路径不动）。
+    const cacheRoot = process.env.USERPROFILE
+        ? `${process.env.USERPROFILE.replace(/\\/g, '/')}/.cache/opendesk-sandbox`
+        : null;
+    const envExtra: Record<string, string> = {};
+    if (cacheRoot) {
+        envExtra['npm_config_cache'] = `${cacheRoot}/npm`;
+        // jest 的 transform 缓存默认落在 %TEMP%（沙箱内每次重建的私有 profile），
+        // 重定向到持久目录避免每次全量 ts-jest 编译
+        envExtra['JEST_CACHE_DIR'] = `${cacheRoot}/jest`;
     }
 
     const childCommand = [options.shellPath, ...childArgs].map(quoteWindowsArgument).join(' ');
@@ -181,7 +205,8 @@ export async function prepareDynamicSandbox(options: {
             endpoint: decide.endpoint,
             logPath,
             deleteToTrash: options.deleteToTrash,
-            childCommand
+            childCommand,
+            envExtra
         }),
         cwd: undefined,
         attach: (proc) => {

@@ -34,11 +34,59 @@ async function run(file: string, args: string[], stdin = '', env = process.env, 
     }
 }
 
+/** 写一个全放行的多根策略：挂载 /C -> C:\、/D -> D:\。
+ * 原 --automount 移除后，测试要访问 PATH 中的系统工具（node/pip 等）必须显式
+ * 声明盘符映射；这正是实际使用的多根策略形态。 */
+function writeDriveAllowPolicy(policyPath: string): void {
+    fs.writeFileSync(
+        policyPath,
+        [
+            'version = 1',
+            'default = "allow"',
+            '',
+            '[[roots]]',
+            'virtual = "/C"',
+            'real    = "C:\\\\"',
+            '',
+            '[[roots]]',
+            'virtual = "/D"',
+            'real    = "D:\\\\"',
+            '',
+            '[[rules]]',
+            'path    = "/C/**"',
+            'access  = "all"',
+            'perm    = "allow"',
+            '',
+            '[[rules]]',
+            'path    = "/D/**"',
+            'access  = "all"',
+            'perm    = "allow"',
+            '',
+        ].join('\n')
+    );
+}
+
+/** 写一个最简单的全放行策略（无 [[roots]]）：配合 --src 单目录挂载到卷根 /。 */
+function writeSimplePolicy(policyPath: string): void {
+    fs.writeFileSync(policyPath, 'version = 1\ndefault = "allow"\n');
+}
+
+/** 在自定义策略内容前注入 /C、/D 盘符 roots（替代原 --automount 的盘符枚举，
+ * 让子进程能访问 PATH 中的系统工具与探针所在的主机路径）。 */
+function withDriveRoots(content: string): string {
+    return (
+        'version = 1\n' +
+        '[[roots]]\nvirtual = "/C"\nreal    = "C:\\\\"\n' +
+        '[[roots]]\nvirtual = "/D"\nreal    = "D:\\\\"\n' +
+        content.replace(/^version = 1\n/, '')
+    );
+}
+
 test('manager exits after a child leaves an inherited output handle open', { skip: !windows }, async () => {
     const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'opendesk-sandbox-pipe-lifecycle-'));
     try {
         const policy = path.join(directory, 'policy.toml');
-        fs.writeFileSync(policy, 'version = 1\ndefault = "allow"\n');
+        writeSimplePolicy(policy);
         const shell = path.join(process.env.SystemRoot!, 'System32/WindowsPowerShell/v1.0/powershell.exe');
         const command =
             `"${shell}" -NoProfile -NonInteractive -Command "` +
@@ -128,13 +176,13 @@ test(
         try {
             const policy = path.join(directory, 'policy.toml');
             const log = path.join(directory, 'manager.log');
-            fs.writeFileSync(policy, 'version = 1\ndefault = "allow"\n');
+            writeDriveAllowPolicy(policy);
             const shellRoot = path.join(process.env.SystemRoot!, 'System32/WindowsPowerShell/v1.0');
             const result = await run(
                 executable,
                 [
                     'run',
-                    '--automount',
+
                     '--policy',
                     policy,
                     '--log-file',
@@ -161,7 +209,7 @@ test(
         const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'opendesk-sandbox-parallel-'));
         try {
             const policy = path.join(directory, 'policy.toml');
-            fs.writeFileSync(policy, 'version = 1\ndefault = "allow"\n');
+            writeDriveAllowPolicy(policy);
             const shellRoot = path.join(process.env.SystemRoot!, 'System32/WindowsPowerShell/v1.0');
             const results = await Promise.all(
                 [0, 1, 2].map((index) => {
@@ -176,7 +224,7 @@ test(
                         executable,
                         [
                             'run',
-                            '--automount',
+
                             '--policy',
                             policy,
                             '--log-file',
@@ -213,10 +261,10 @@ test('PowerShell 7 starts with its adjacent runtime files', { skip: !windows }, 
     const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'opendesk-sandbox-pwsh-'));
     try {
         const policy = path.join(directory, 'policy.toml');
-        fs.writeFileSync(policy, 'version = 1\ndefault = "allow"\n');
+        writeDriveAllowPolicy(policy);
         const result = await run(executable, [
             'run',
-            '--automount',
+
             '--policy',
             policy,
             '--log-file',
@@ -240,13 +288,13 @@ test(
         try {
             const policy = path.join(directory, 'policy.toml');
             const log = path.join(directory, 'manager.log');
-            fs.writeFileSync(policy, 'version = 1\ndefault = "allow"\n');
+            writeDriveAllowPolicy(policy);
             const cmd = path.join(process.env.SystemRoot!, 'System32', 'cmd.exe');
             const result = await run(
                 executable,
                 [
                     'run',
-                    '--automount',
+
                     '--policy',
                     policy,
                     '--log-file',
@@ -275,7 +323,7 @@ test('sandbox runs Python, Node.js and Windows console fixtures', { skip: !windo
     }
 
     const policy = path.join(directory, 'policy.toml');
-    fs.writeFileSync(policy, 'version = 1\ndefault = "allow"\n');
+    writeDriveAllowPolicy(policy);
     const pyFile = path.join(directory, 'fixture.py');
     const nodeMjs = path.join(directory, 'fixture.mjs');
     const nodeCjs = path.join(directory, 'fixture.cjs');
@@ -326,7 +374,7 @@ test('sandbox runs Python, Node.js and Windows console fixtures', { skip: !windo
             [`${quote(python)} ${quote(pythonLibraries)} ${quote(pptxOutput)}`, /numpy-sum=12[\r\n]+pptx-exists=True/]
         ] as const;
         for (const [command, output] of cases) {
-            const result = await run(executable, ['run', '--automount', '--policy', policy, '--', command]);
+            const result = await run(executable, ['run',  '--policy', policy, '--', command]);
             assert.equal(result.code, 0, `${command}\n${result.stdout}\n${result.stderr}`);
             assert.match(result.stdout, output);
         }
@@ -341,9 +389,9 @@ test('unmapped volume paths fail as not-found, not access-denied', { skip: !wind
     try {
         const policy = path.join(directory, 'policy.toml');
         const log = path.join(directory, 'manager.log');
-        fs.writeFileSync(policy, 'version = 1\ndefault = "allow"\n');
+        writeDriveAllowPolicy(policy);
         const shell = path.join(process.env.SystemRoot!, 'System32/WindowsPowerShell/v1.0/powershell.exe');
-        // 卷根（automount 下未映射到任何根的路径）必须返回 not-found 语义。
+        // 卷根（多根模式下未映射到任何根的路径）必须返回 not-found 语义。
         // AccessDenied 会让工具的 PATH/资源探测表现为错误而非正常未命中。
         const inner =
             "$ErrorActionPreference = 'Stop'; " +
@@ -354,7 +402,7 @@ test('unmapped volume paths fail as not-found, not access-denied', { skip: !wind
         const command = `"${shell}" -NoProfile -NonInteractive -Command "${inner}"`;
         const result = await run(executable, [
             'run',
-            '--automount',
+
             '--policy',
             policy,
             '--log-file',
@@ -380,7 +428,7 @@ test('recursive copy via PowerShell Copy-Item works against the volume', { skip:
     try {
         const policy = path.join(directory, 'policy.toml');
         const log = path.join(directory, 'manager.log');
-        fs.writeFileSync(policy, 'version = 1\ndefault = "allow"\n');
+        writeDriveAllowPolicy(policy);
         fs.mkdirSync(path.join(directory, 'src'));
         fs.writeFileSync(path.join(directory, 'src', 'one.txt'), '1');
         const shell = path.join(process.env.SystemRoot!, 'System32/WindowsPowerShell/v1.0/powershell.exe');
@@ -393,7 +441,7 @@ test('recursive copy via PowerShell Copy-Item works against the volume', { skip:
             executable,
             [
                 'run',
-                '--automount',
+
                 '--policy',
                 policy,
                 '--log-file',
@@ -418,7 +466,7 @@ test('multi-handle concurrent appends keep every writer bytes', { skip: !windows
     const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'opendesk-sandbox-append-'));
     try {
         const policy = path.join(directory, 'policy.toml');
-        fs.writeFileSync(policy, 'version = 1\ndefault = "allow"\n');
+        writeDriveAllowPolicy(policy);
         const target = path.join(directory, 'shared.txt');
         fs.writeFileSync(target, '');
         // 多句柄顺序追加：第二个句柄打开时必须看到第一个句柄已落盘的数据
@@ -443,7 +491,7 @@ test('multi-handle concurrent appends keep every writer bytes', { skip: !windows
         );
         const result = await run(executable, [
             'run',
-            '--automount',
+
             '--policy',
             policy,
             '--',
@@ -462,7 +510,7 @@ test('Move-Item -Force replaces an existing destination file', { skip: !windows 
     const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'opendesk-sandbox-moveforce-'));
     try {
         const policy = path.join(directory, 'policy.toml');
-        fs.writeFileSync(policy, 'version = 1\ndefault = "allow"\n');
+        writeDriveAllowPolicy(policy);
         fs.writeFileSync(path.join(directory, 'src.txt'), 'new-content');
         fs.writeFileSync(path.join(directory, 'dst.txt'), 'old-content-old-content');
         const shell = path.join(process.env.SystemRoot!, 'System32/WindowsPowerShell/v1.0/powershell.exe');
@@ -473,7 +521,7 @@ test('Move-Item -Force replaces an existing destination file', { skip: !windows 
             executable,
             [
                 'run',
-                '--automount',
+
                 '--policy',
                 policy,
                 '--',
@@ -508,7 +556,7 @@ test('directory deletion via Node rmdir/rmSync and PowerShell Remove-Item works 
     const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'opendesk-sandbox-rmdir-'));
     try {
         const policy = path.join(directory, 'policy.toml');
-        fs.writeFileSync(policy, 'version = 1\ndefault = "allow"\n');
+        writeDriveAllowPolicy(policy);
         // Node/PowerShell/.NET 的目录删除（RemoveDirectoryW）以文件句柄方式
         // （BACKUP_SEMANTICS，无 FILE_DIRECTORY_FILE）打开目录并请求 DELETE；
         // 打开阶段拒绝会让删除永远到不了策略与 DeleteDirectory 回调。
@@ -547,7 +595,7 @@ test('directory deletion via Node rmdir/rmSync and PowerShell Remove-Item works 
         );
         const result = await run(executable, [
             'run',
-            '--automount',
+
             '--policy',
             policy,
             '--log-file',
@@ -568,7 +616,7 @@ test('directory deletion via Node rmdir/rmSync and PowerShell Remove-Item works 
         fs.writeFileSync(path.join(psTarget, 'child', 'file.txt'), 'x');
         const psResult = await run(executable, [
             'run',
-            '--automount',
+
             '--policy',
             policy,
             '--',
@@ -586,7 +634,7 @@ test('directory removal honors --del-to-trash and clears the tree from the sourc
     const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'opendesk-sandbox-rmdir-trash-'));
     try {
         const policy = path.join(directory, 'policy.toml');
-        fs.writeFileSync(policy, 'version = 1\ndefault = "allow"\n');
+        writeDriveAllowPolicy(policy);
         const probe = path.join(directory, 'rmdir_probe.cjs');
         fs.writeFileSync(
             probe,
@@ -606,7 +654,7 @@ test('directory removal honors --del-to-trash and clears the tree from the sourc
         );
         const result = await run(executable, [
             'run',
-            '--automount',
+
             '--del-to-trash',
             '--policy',
             policy,
@@ -629,7 +677,7 @@ test('files created inside a sandbox instance are hard-deleted while pre-existin
     const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'opendesk-sandbox-session-created-'));
     try {
         const policy = path.join(directory, 'policy.toml');
-        fs.writeFileSync(policy, 'version = 1\ndefault = "allow"\n');
+        writeDriveAllowPolicy(policy);
         const logFile = path.join(directory, 'sandbox.log');
         const target = path.join(directory, 'probe-work');
         fs.mkdirSync(target);
@@ -654,7 +702,7 @@ test('files created inside a sandbox instance are hard-deleted while pre-existin
             executable,
             [
                 'run',
-                '--automount',
+
                 '--del-to-trash',
                 '--log-file',
                 logFile,
@@ -695,9 +743,11 @@ test('policy-denied directory deletion stays denied and keeps the content', { sk
         const policy = path.join(directory, 'policy.toml');
         fs.writeFileSync(
             policy,
-            'version = 1\ndefault = "deny"\n' +
-                '[[rules]]\npath = "/**"\naccess = "read"\nperm = "allow"\n' +
-                '[[rules]]\npath = "/**"\naccess = "execute"\nperm = "allow"\n'
+            withDriveRoots(
+                'version = 1\ndefault = "deny"\n' +
+                    '[[rules]]\npath = "/**"\naccess = "read"\nperm = "allow"\n' +
+                    '[[rules]]\npath = "/**"\naccess = "execute"\nperm = "allow"\n'
+            )
         );
         const probe = path.join(directory, 'rmdir_probe.cjs');
         fs.writeFileSync(
@@ -719,7 +769,7 @@ test('policy-denied directory deletion stays denied and keeps the content', { sk
         );
         const result = await run(executable, [
             'run',
-            '--automount',
+
             '--policy',
             policy,
             '--',
@@ -761,7 +811,13 @@ test('rename survives a transient holder without FILE_SHARE_DELETE', { skip: !wi
         { windowsHide: true, stdio: 'ignore' }
     );
     try {
-        fs.writeFileSync(path.join(directory, 'policy.toml'), 'version = 1\ndefault = "allow"\n');
+        fs.writeFileSync(
+            path.join(directory, 'policy.toml'),
+            withDriveRoots(
+                'version = 1\ndefault = "allow"\n' +
+                    '[[rules]]\npath = "/**"\naccess = "all"\nperm = "allow"\n'
+            )
+        );
         fs.writeFileSync(target, 'rename-retry-content');
         const deadline = Date.now() + 15000;
         while (!fs.existsSync(ready)) {
@@ -791,7 +847,7 @@ test('rename survives a transient holder without FILE_SHARE_DELETE', { skip: !wi
         );
         const result = await run(executable, [
             'run',
-            '--automount',
+
             '--policy',
             path.join(directory, 'policy.toml'),
             '--',
@@ -827,12 +883,12 @@ test('content-based launcher compatibility does not depend on the executable nam
     const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'opendesk-sandbox-generic-launcher-'));
     const alias = path.join(directory, 'renamed-runtime.exe');
     const policy = path.join(directory, 'policy.toml');
-    fs.writeFileSync(policy, 'version = 1\ndefault = "allow"\n');
+    writeDriveAllowPolicy(policy);
     fs.copyFileSync(pip, alias);
     try {
         const result = await run(executable, [
             'run',
-            '--automount',
+
             '--policy',
             policy,
             '--log-file',
@@ -853,7 +909,7 @@ test('sandbox creates a presentation with PptxGenJS', { skip: !windows }, async 
     const policy = path.join(directory, 'policy.toml');
     const script = path.join(directory, 'fixture.cjs');
     const output = path.join(directory, 'slides.pptx');
-    fs.writeFileSync(policy, 'version = 1\ndefault = "allow"\n');
+    writeDriveAllowPolicy(policy);
     fs.writeFileSync(
         script,
         'const PptxGenJS = require(process.argv[2]);\n' +
@@ -864,7 +920,7 @@ test('sandbox creates a presentation with PptxGenJS', { skip: !windows }, async 
     try {
         const result = await run(executable, [
             'run',
-            '--automount',
+
             '--policy',
             policy,
             '--',
@@ -897,10 +953,12 @@ test('ask deny decisions are cached within the TTL (single endpoint hit)', { ski
         const policy = path.join(directory, 'policy.toml');
         fs.writeFileSync(
             policy,
-            `version = 1\ndefault = "deny"\n[ask]\nendpoint = "http://127.0.0.1:${port}/decide"\ntimeout_ms = 3000\ncache_ttl_seconds = 30\n` +
-                `[[rules]]\npath = "/**"\naccess = "read"\nperm = "allow"\n` +
-                `[[rules]]\npath = "/**"\naccess = "execute"\nperm = "allow"\n` +
-                `[[rules]]\npath = "/**"\naccess = "write"\nperm = "ask"\n`
+            withDriveRoots(
+                `version = 1\ndefault = "deny"\n[ask]\nendpoint = "http://127.0.0.1:${port}/decide"\ntimeout_ms = 3000\ncache_ttl_seconds = 30\n` +
+                    `[[rules]]\npath = "/**"\naccess = "read"\nperm = "allow"\n` +
+                    `[[rules]]\npath = "/**"\naccess = "execute"\nperm = "allow"\n` +
+                    `[[rules]]\npath = "/**"\naccess = "write"\nperm = "ask"\n`
+            )
         );
         const shell = path.join(process.env.SystemRoot!, 'System32/WindowsPowerShell/v1.0/powershell.exe');
         const command =
@@ -908,7 +966,7 @@ test('ask deny decisions are cached within the TTL (single endpoint hit)', { ski
             `try { Set-Content -LiteralPath '${directory}\\w.txt' '2' -ErrorAction Stop } catch {}"`;
         const result = await run(executable, [
             'run',
-            '--automount',
+
             '--policy',
             policy,
             '--',
@@ -932,11 +990,11 @@ test('pip launcher runs successfully in the sandbox', { skip: !windows }, async 
     const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'opendesk-sandbox-pipnoise-'));
     try {
         const policy = path.join(directory, 'policy.toml');
-        fs.writeFileSync(policy, 'version = 1\ndefault = "allow"\n');
+        writeDriveAllowPolicy(policy);
         const shell = path.join(process.env.SystemRoot!, 'System32/WindowsPowerShell/v1.0/powershell.exe');
         const result = await run(executable, [
             'run',
-            '--automount',
+
             '--policy',
             policy,
             '--',
@@ -980,13 +1038,15 @@ test('PowerShell can wait beyond the Dokan timeout for a real file authorization
         fs.writeFileSync(target, 'authorized child content');
         fs.writeFileSync(
             policy,
-            `version = 1\ndefault = "deny"\n[ask]\nendpoint = "http://127.0.0.1:${port}/decide"\ntoken = "test-token"\ntimeout_ms = 330000\ncache_ttl_seconds = 0\n[[rules]]\npath = "/**"\naccess = "all"\nperm = "ask"\n`
+            withDriveRoots(
+                `version = 1\ndefault = "deny"\n[ask]\nendpoint = "http://127.0.0.1:${port}/decide"\ntoken = "test-token"\ntimeout_ms = 330000\ncache_ttl_seconds = 0\n[[rules]]\npath = "/**"\naccess = "all"\nperm = "ask"\n`
+            )
         );
         const shell = path.join(process.env.SystemRoot!, 'System32/WindowsPowerShell/v1.0/powershell.exe');
         const command = `"${shell}" -NoLogo -NoProfile -NonInteractive -Command "[Console]::Out.WriteLine('child stdout'); [Console]::Error.WriteLine('child stderr'); Get-Content -LiteralPath '${target.replace(/'/g, "''")}'; exit 7"`;
         const result = await run(executable, [
             'run',
-            '--automount',
+
             '--policy',
             policy,
             '--log-file',
@@ -1027,10 +1087,12 @@ test('deny rules cannot be evaded through .. aliases, short names or trailing do
         const policy = path.join(directory, 'policy.toml');
         fs.writeFileSync(
             policy,
-            `version = 1\ndefault = "deny"\n` +
-                `[[rules]]\npath = "${virtualRoot}/secret/**"\naccess = "all"\nperm = "deny"\n` +
-                `[[rules]]\npath = "/**"\naccess = "read"\nperm = "allow"\n` +
-                `[[rules]]\npath = "/**"\naccess = "execute"\nperm = "allow"\n`
+            withDriveRoots(
+                `version = 1\ndefault = "deny"\n` +
+                    `[[rules]]\npath = "${virtualRoot}/secret/**"\naccess = "all"\nperm = "deny"\n` +
+                    `[[rules]]\npath = "/**"\naccess = "read"\nperm = "allow"\n` +
+                    `[[rules]]\npath = "/**"\naccess = "execute"\nperm = "allow"\n`
+            )
         );
 
         // 8.3 短名仅当卷上真实生成时才参与断言（可按注册表/卷配置关闭）
@@ -1103,7 +1165,7 @@ print("PROBE-DONE")
         const t0 = Date.now();
         const result = await run(executable, [
             'run',
-            '--automount',
+
             '--policy',
             policy,
             '--',
@@ -1229,7 +1291,7 @@ test('hung ask endpoints fail closed within the configured timeout (pipe and htt
         const t0 = Date.now();
         const result = await run(executable, [
             'run',
-            '--automount',
+
             '--policy',
             policy,
             '--',
@@ -1249,7 +1311,7 @@ test('node children resolve native realpath on the sandbox volume', { skip: !win
     const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'opendesk-sandbox-realpath-'));
     try {
         const policy = path.join(directory, 'policy.toml');
-        fs.writeFileSync(policy, 'version = 1\ndefault = "allow"\n');
+        writeDriveAllowPolicy(policy);
         // AppContainer 无法完成 GetFinalPathNameByHandle 的盘符映射
         // （\GLOBAL??/MountPointManager 拒访），native realpath 一律 EPERM；
         // 沙箱必须注入预加载补丁让 jest 等依赖 native realpath 的工具可用。
@@ -1258,7 +1320,7 @@ test('node children resolve native realpath on the sandbox volume', { skip: !win
             `console.log(fs.realpathSync.native(process.argv[1]))" "${directory}"`;
         const result = await run(executable, [
             'run',
-            '--automount',
+
             '--policy',
             policy,
             '--log-file',
@@ -1277,7 +1339,7 @@ test('forward-slash drive paths embedded in the command keep their separators', 
     const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'opendesk-sandbox-separators-'));
     try {
         const policy = path.join(directory, 'policy.toml');
-        fs.writeFileSync(policy, 'version = 1\ndefault = "allow"\n');
+        writeDriveAllowPolicy(policy);
         const probe = path.join(directory, 'probe.txt');
         fs.writeFileSync(probe, 'separator-ok');
         // 路径内嵌于 JS 字符串字面量：若被改写成反斜杠形式，\D 会被字面量转义
@@ -1286,7 +1348,7 @@ test('forward-slash drive paths embedded in the command keep their separators', 
             `"${process.execPath}" -e "console.log(require('fs').readFileSync('${probe.replace(/\\/g, '/')}','utf8'))"`;
         const result = await run(executable, [
             'run',
-            '--automount',
+
             '--policy',
             policy,
             '--log-file',
@@ -1306,7 +1368,7 @@ test('directory removal reports failure while the host holds the directory open'
     let holder: ReturnType<typeof spawn> | undefined;
     try {
         const policy = path.join(directory, 'policy.toml');
-        fs.writeFileSync(policy, 'version = 1\ndefault = "allow"\n');
+        writeDriveAllowPolicy(policy);
         const locked = path.join(directory, 'locked');
         fs.mkdirSync(locked);
         // 进程 CWD 持有目录句柄：宿主 RemoveDirectory 必然失败，沙箱不得把它
@@ -1320,7 +1382,7 @@ test('directory removal reports failure while the host holds the directory open'
         const cmd = path.join(process.env.SystemRoot!, 'System32/cmd.exe');
         const removeLocked = await run(executable, [
             'run',
-            '--automount',
+
             '--policy',
             policy,
             '--log-file',
@@ -1334,7 +1396,7 @@ test('directory removal reports failure while the host holds the directory open'
         fs.mkdirSync(plain);
         const removePlain = await run(executable, [
             'run',
-            '--automount',
+
             '--policy',
             policy,
             '--log-file',
@@ -1357,7 +1419,7 @@ test('powershell Add-Type can compile through the sandbox temp directory', { ski
     const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'opendesk-sandbox-addtype-'));
     try {
         const policy = path.join(directory, 'policy.toml');
-        fs.writeFileSync(policy, 'version = 1\ndefault = "allow"\n');
+        writeDriveAllowPolicy(policy);
         // csc 以 CREATE_NEW + 只读属性位创建资源临时文件（合法的 Win32 组合）；
         // 镜像层若把它原样交给 .NET FileStream 会抛 ArgumentException 并以
         // AccessDenied 收场，沙箱内所有 .NET 编译（Add-Type/CodeDom）随之失败。
@@ -1366,7 +1428,7 @@ test('powershell Add-Type can compile through the sandbox temp directory', { ski
             `"${shell}" -NoProfile -NonInteractive -Command "try { Add-Type -TypeDefinition 'public class T { }'; exit 0 } catch { exit 3 }"`;
         const result = await run(executable, [
             'run',
-            '--automount',
+
             '--policy',
             policy,
             '--log-file',
@@ -1384,7 +1446,7 @@ test('native realpath resolves through graceful-fs the way jest consumes it', { 
     const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'opendesk-sandbox-gfs-'));
     try {
         const policy = path.join(directory, 'policy.toml');
-        fs.writeFileSync(policy, 'version = 1\ndefault = "allow"\n');
+        writeDriveAllowPolicy(policy);
         // jest-util 的 tryRealpath 走 graceful-fs.realpathSync.native；
         // graceful-fs 用 clone(fs) 复制导出，补丁必须沿这条引用链可见。
         // node -e 的 process.argv[1] 是第一个用户参数（没有脚本名占位）
@@ -1394,7 +1456,7 @@ test('native realpath resolves through graceful-fs the way jest consumes it', { 
             `"${fixtureRequire.resolve('graceful-fs')}" "${directory}"`;
         const result = await run(executable, [
             'run',
-            '--automount',
+
             '--policy',
             policy,
             '--log-file',
@@ -1413,14 +1475,14 @@ test('forward-slash paths embedded in environment values keep their separators',
     const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'opendesk-sandbox-envsep-'));
     try {
         const policy = path.join(directory, 'policy.toml');
-        fs.writeFileSync(policy, 'version = 1\ndefault = "allow"\n');
+        writeDriveAllowPolicy(policy);
         const probeValue = 'D:/tmp/opendesk-env-probe';
         const command = `"${process.execPath}" -e "console.log(process.env.OD_PROBE_PATH)"`;
         const result = await run(
             executable,
             [
                 'run',
-                '--automount',
+
                 '--policy',
                 policy,
                 '--log-file',
@@ -1444,7 +1506,7 @@ test('locked file deletion reports failure while the host keeps the file open', 
     let holder: ReturnType<typeof spawn> | undefined;
     try {
         const policy = path.join(directory, 'policy.toml');
-        fs.writeFileSync(policy, 'version = 1\ndefault = "allow"\n');
+        writeDriveAllowPolicy(policy);
         const locked = path.join(directory, 'locked.txt');
         fs.writeFileSync(locked, 'locked');
         // FileShare.None 独占持有：宿主 File.Delete 必然失败，沙箱必须如实
@@ -1458,7 +1520,7 @@ test('locked file deletion reports failure while the host keeps the file open', 
         const cmd = path.join(process.env.SystemRoot!, 'System32/cmd.exe');
         const removeLocked = await run(executable, [
             'run',
-            '--automount',
+
             '--policy',
             policy,
             '--log-file',
@@ -1474,7 +1536,7 @@ test('locked file deletion reports failure while the host keeps the file open', 
         fs.writeFileSync(plain, 'plain');
         const removePlain = await run(executable, [
             'run',
-            '--automount',
+
             '--policy',
             policy,
             '--log-file',
@@ -1497,7 +1559,7 @@ test('the volume nul file behaves as an empty discard target', { skip: !windows 
     const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'opendesk-sandbox-vnul-'));
     try {
         const policy = path.join(directory, 'policy.toml');
-        fs.writeFileSync(policy, 'version = 1\ndefault = "allow"\n');
+        writeDriveAllowPolicy(policy);
         // 工具链补丁（GOSANDBOXNUL）把子进程的 NUL 需求落到卷内虚拟文件：
         // 读必须 EOF，写必须被丢弃且文件不产生宿主实体
         const command =
@@ -1509,7 +1571,7 @@ test('the volume nul file behaves as an empty discard target', { skip: !windows 
             `console.log('BYTES=' + n)" "${directory}"`;
         const result = await run(executable, [
             'run',
-            '--automount',
+
             '--policy',
             policy,
             '--log-file',
@@ -1538,7 +1600,7 @@ test('sandbox children create and connect named pipes once the platform setup is
     const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'opendesk-sandbox-namedpipe-'));
     try {
         const policy = path.join(directory, 'policy.toml');
-        fs.writeFileSync(policy, 'version = 1\ndefault = "allow"\n');
+        writeDriveAllowPolicy(policy);
         const script = String.raw`
 const net = require('net');
 const name = '\\\\.\\pipe\\opendesk-sandbox-probe-' + process.pid;
@@ -1560,7 +1622,7 @@ setTimeout(() => process.exit(2), 8000);
         const command = `"${process.execPath}" "${path.join(directory, 'pipe-probe.cjs')}"`;
         const result = await run(executable, [
             'run',
-            '--automount',
+
             '--policy',
             policy,
             '--log-file',
@@ -1580,7 +1642,7 @@ async function pipeCreationWorks(): Promise<boolean> {
     const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'opendesk-pipe-cap-'));
     try {
         const policy = path.join(directory, 'policy.toml');
-        fs.writeFileSync(policy, 'version = 1' + String.fromCharCode(10) + 'default = "allow"' + String.fromCharCode(10));
+        writeDriveAllowPolicy(policy);
         const script = String.raw`
 const net = require('net');
 const server = net.createServer(() => {});
@@ -1594,7 +1656,7 @@ setTimeout(() => process.exit(2), 8000);
         fs.writeFileSync(path.join(directory, 'pipe-cap.cjs'), script);
         const command = `"${process.execPath}" "${path.join(directory, 'pipe-cap.cjs')}"`;
         const result = await run(executable, [
-            'run', '--automount', '--policy', policy, '--', command
+            'run',  '--policy', policy, '--', command
         ]);
         return result.code === 0 && /EXITED/.test('') === false;
     } finally {
@@ -1616,7 +1678,7 @@ test('sandbox provides virtual NUL semantics for toolchains', { skip: !windows }
     const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'opendesk-sandbox-nul-'));
     try {
         const policy = path.join(directory, 'policy.toml');
-        fs.writeFileSync(policy, 'version = 1\ndefault = "allow"\n');
+        writeSimplePolicy(policy);
         // /dynobox/nul.file 是沙箱内置的虚拟 NUL（读 EOF、写丢弃）。cargo 的
         // Stdio::null、go 的 os/exec 默认 stdin 都打开 NUL 设备；在 NUL 设备
         // 无法放行 AppContainer 的系统上，工具链经由卷内路径访问它。
@@ -1640,7 +1702,7 @@ test('NUL device opens inside the sandbox once pipes setup granted access', { sk
     const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'opendesk-sandbox-nul-device-'));
     try {
         const policy = path.join(directory, 'policy.toml');
-        fs.writeFileSync(policy, 'version = 1\ndefault = "allow"\n');
+        writeSimplePolicy(policy);
         const cmd = path.join(process.env.SystemRoot!, 'System32', 'cmd.exe');
         const command = `"${cmd}" /d /c "echo x > NUL"`;
         const result = await run(

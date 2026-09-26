@@ -414,6 +414,32 @@ python tests\reliability.py
 （`tests\` 与 `tests2\` 中的 python 用例需要目标机有 python；缺失时自动跳过，
 bat 用例照常执行。`tests\reliability.py` 是开发机上的编排工具，驱动发行 exe。）
 
+## 五b、性能目标与架构边界
+
+**目标（2026-09 定稿，双驱动实测校准）**：
+
+| 场景 | 目标退化 | 实测 | 说明 |
+|---|---|---|---|
+| 缓存友好工具（npm/cargo/jest 等重复 I/O 负载） | ≤2x | 接近 | 用户态 stat 缓存（88% 命中）+ 集成层持久缓存吸收重复 I/O |
+| 冷缓存 / 首次构建（模块解析 stat 风暴） | ≤8x | 7.5x | pass-through 用户态文件系统 IRP 往返地板 |
+| 普通命令（ls/cp/git 等少量 I/O） | ≤2x | ✅ | 启动开销 ~ms 级 |
+
+**架构地板**：Dokan 与 WinFsp 实测同量级（镜像卷首次按路径 stat 5.5-5.9K IOPS，
+不随线程扩展）。瓶颈是"每 IRP 一次内核↔用户态往返"（~140µs），是用户态文件
+系统（Dokan/WinFsp/FUSE 的 Windows 对等）的物理约束，非实现缺陷。
+
+**已排除的优化路径**：
+- **WinFsp 迁移**：实测首次按路径 stat 与 Dokan 同量级；FileInfoTimeout 内核缓存
+  仅覆盖已打开句柄的查询（fstat 222K ops/s = 宿主水平），无法缓解 Node statSync
+  的"open→query→close 每此新句柄"模式。投入产出为负，不迁移。
+- **Dokan 驱动参数**：AllowIpcBatching 实测并发下死锁（900s 无响应），禁启用。
+
+**已实施的用户态优化**（详见 commit `24c64ea3`）：GetFileInformation TTL 缓存、
+CreateFile 探测缓存、ENOENT 负缓存、FindFiles 预填充（.exe 除外）、无锁 Ctx
+登记表、集成层持久缓存目录（npm_config_cache/JEST_CACHE_DIR 重定向宿主持久路径）。
+
+**基准数据**（2026-09-27，本机）：`npm run test` 全量宿主 15.2s / 沙箱 ~114s。
+
 ---
 
 ## 六、构建与分发

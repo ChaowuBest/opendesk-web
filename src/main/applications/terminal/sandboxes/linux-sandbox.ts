@@ -70,7 +70,27 @@ export function detectToolchainReadOnlyDirs(env: NodeJS.ProcessEnv = process.env
         if (dir && fs.existsSync(dir) && !candidates.includes(dir)) candidates.push(dir);
     };
     const tools = ['node', 'npm', 'npx', 'pnpm', 'yarn', 'cargo', 'rustc', 'go', 'python3', 'python'];
-    const pathValue = (env.PATH || '').split(':').filter(Boolean);
+    // PATH 分隔符平台自适应：Windows 用 ';'；POSIX 用 ':'。测试可能显式传
+    // Linux 风格（':' 分隔）字符串，因此在 Windows 上需额外识别盘符（C:）
+    // 以免把 "C:\bin:D:\bin" 切成碎片。实现：先按 ';' 拆；若无 ';' 再按
+    // ':' 拆，单字母段（盘符）与下一段合并。
+    const rawPath = env.PATH || '';
+    let pathValue: string[];
+    if (rawPath.includes(';')) {
+        pathValue = rawPath.split(';').filter(Boolean);
+    } else {
+        const segs = rawPath.split(':').filter(Boolean);
+        pathValue = [];
+        for (let i = 0; i < segs.length; i++) {
+            // 单字母盘符段（C / D）与后续段合并成 "C:\..."
+            if (i + 1 < segs.length && /^[A-Za-z]$/.test(segs[i])) {
+                pathValue.push(`${segs[i]}:${segs[i + 1]}`);
+                i++;
+            } else {
+                pathValue.push(segs[i]);
+            }
+        }
+    }
     for (const tool of tools) {
         for (const base of pathValue) {
             const bin = path.join(base, tool);

@@ -1,23 +1,30 @@
 import { jest } from '@jest/globals';
 import type { SpawnSyncReturns } from 'child_process';
+import os from 'node:os';
+import path from 'node:path';
 
 // setting.ts 含 create(import.meta.url) 写法，ts-jest 编译为 CJS 后与 require 标识符冲突，mock 掉
-jest.unstable_mockModule('../../../main/utils/setting.js', () => ({
-    Setting: class {
-        static afterSetDataCallbacks: unknown[] = [];
-        static getInstance() {
-            return {
-                data: { locale: 'zh-CN' },
-                // TerminalApplication 构造时通过 shell 选择读取 task_config
-                getData: () => ({ task_config: {} }),
-                getEffectiveWorkspace: () => '/'
-            };
-        }
-    },
-    getOpendeskDirectory: () => '/tmp/opendesk-test',
-    getLogDirectory: () => '/tmp/opendesk-test/logs',
-    getTaskToolResultDirectory: () => '/tmp/opendesk-test/tool-results'
-}));
+jest.unstable_mockModule('../../../main/utils/setting.js', () => {
+    // 用真实系统临时目录而非硬编码 POSIX /tmp：硬编码路径在 Windows 解析到
+    // 当前盘根（宿主 D:\tmp 可写，沙箱卷合成根 Z:\tmp 只读）导致沙箱内 mkdir 失败。
+    const tmp = path.join(os.tmpdir(), 'opendesk-test');
+    return {
+        Setting: class {
+            static afterSetDataCallbacks: unknown[] = [];
+            static getInstance() {
+                return {
+                    data: { locale: 'zh-CN' },
+                    // TerminalApplication 构造时通过 shell 选择读取 task_config
+                    getData: () => ({ task_config: {} }),
+                    getEffectiveWorkspace: () => '/'
+                };
+            }
+        },
+        getOpendeskDirectory: () => tmp,
+        getLogDirectory: () => path.join(tmp, 'logs'),
+        getTaskToolResultDirectory: () => path.join(tmp, 'tool-results')
+    };
+});
 
 jest.unstable_mockModule('../../../main/aikernel/states/global.js', () => ({
     GlobalState: class {

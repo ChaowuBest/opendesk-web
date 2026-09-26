@@ -58,6 +58,19 @@ describe('policyText', () => {
         expect(text).not.toContain('/dev/null');
     });
 
+    test('home 提供时生成缓存目录写放行规则（虚路径）', () => {
+        const text = policyText('http://ep/decide', 't', undefined, 'C:\\Users\\liyif');
+        expect(text).toContain('path = "/C/Users/liyif/.cache/opendesk-sandbox/**"');
+        const ruleStart = text.indexOf('.cache/opendesk-sandbox');
+        const ruleBlock = text.slice(ruleStart - 40, ruleStart + 120);
+        expect(ruleBlock).toContain('access = "write"');
+        expect(ruleBlock).toContain('perm = "allow"');
+    });
+
+    test('home 缺失时不生成缓存目录规则', () => {
+        expect(policyText('http://ep/decide', 't')).not.toContain('opendesk-sandbox');
+    });
+
     test('追加只读兜底与写入问询、执行放行的兜底规则', () => {
         const text = policyText('http://ep/decide', 't', undefined);
         expect(text.indexOf('access = "read"')).toBeGreaterThanOrEqual(0);

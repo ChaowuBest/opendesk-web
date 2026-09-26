@@ -1,23 +1,31 @@
 import { jest } from '@jest/globals';
 import { EventEmitter } from 'events';
+import os from 'node:os';
+import path from 'node:path';
 
 // setting.ts 含 create(import.meta.url) 写法，ts-jest 编译为 CJS 后与 require 标识符冲突，mock 掉
-jest.unstable_mockModule('../../../main/utils/setting.js', () => ({
-    Setting: class {
-        static getInstance() {
-            return {
-                data: { locale: 'zh-CN' },
-                getData: () => {
-                    throw new Error('Setting not initialized in test');
-                },
-                getEffectiveWorkspace: () => '/'
-            };
-        }
-    },
-    getOpendeskDirectory: () => '/tmp/opendesk-test',
-    getLogDirectory: () => '/tmp/opendesk-test/logs',
-    getTaskToolResultDirectory: () => '/tmp/opendesk-test/tool-results'
-}));
+jest.unstable_mockModule('../../../main/utils/setting.js', () => {
+    // 用真实系统临时目录（os.tmpdir()）而非硬编码 POSIX /tmp：硬编码路径在
+    // Windows 会解析到当前盘根（宿主 D:\tmp 可写，沙箱卷合成根 Z:\tmp 只读），
+    // 导致沙箱内 mkdir 失败。系统 tmp 在两平台都可写，语义一致。
+    const tmp = path.join(os.tmpdir(), 'opendesk-test');
+    return {
+        Setting: class {
+            static getInstance() {
+                return {
+                    data: { locale: 'zh-CN' },
+                    getData: () => {
+                        throw new Error('Setting not initialized in test');
+                    },
+                    getEffectiveWorkspace: () => '/'
+                };
+            }
+        },
+        getOpendeskDirectory: () => tmp,
+        getLogDirectory: () => path.join(tmp, 'logs'),
+        getTaskToolResultDirectory: () => path.join(tmp, 'tool-results')
+    };
+});
 
 // 通过 fs mock 控制 findExecutableInPath 的结果（默认构造时动态查找 zsh 的场景）
 const existsSyncMock = jest.fn((p: unknown) => typeof p === 'string' && String(p).endsWith('/zsh'));

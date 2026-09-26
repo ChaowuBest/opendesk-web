@@ -15,13 +15,21 @@ const executable = path.resolve(import.meta.dirname, '..', 'runtime', 'sandbox.e
 async function runSandbox(directory: string, command: string, rules = '', extraArgs: string[] = []) {
     const policy = path.join(directory, 'policy.toml');
     const log = path.join(directory, 'sandbox.log');
-    fs.writeFileSync(policy, 'version = 1\ndefault = "allow"\n' + rules);
+    // 全放行的多根策略：显式挂载 /C、/D，替代原 --automount 的盘符枚举，
+    // 让子进程能访问 PATH 中的系统工具（PowerShell/Python/pip 等）。
+    const driveRoots =
+        'version = 1\n' +
+        'default = "allow"\n' +
+        '\n[[roots]]\nvirtual = "/C"\nreal    = "C:\\\\"\n' +
+        '\n[[roots]]\nvirtual = "/D"\nreal    = "D:\\\\"\n' +
+        rules;
+    fs.writeFileSync(policy, driveRoots);
     const shell = path.join(process.env.SystemRoot!, 'System32/WindowsPowerShell/v1.0/powershell.exe');
     const quote = (value: string) => `"${value.replace(/(\\*)"/g, '$1$1\\"').replace(/(\\+)$/, '$1$1')}"`;
     const child = [shell, '-NoProfile', '-NonInteractive', '-Command', command].map(quote).join(' ');
     const proc = spawn(
         executable,
-        ['run', '--automount', ...extraArgs, '--policy', policy, '--log-file', log, '--', child],
+        ['run',  ...extraArgs, '--policy', policy, '--log-file', log, '--', child],
         {
             windowsHide: true
         }

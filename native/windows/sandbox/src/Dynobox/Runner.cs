@@ -48,7 +48,7 @@ public sealed class Sandbox : IDisposable
     private MountLease? _mountLease;
     private readonly Dictionary<string, string> _bootstrapExecutables = new(StringComparer.OrdinalIgnoreCase);
 
-    public Sandbox(Policy policy, bool automount, string? letter = null, bool delToTrash = false,
+    public Sandbox(Policy policy, string? letter = null, bool delToTrash = false,
         string tokenMode = "appcontainer")
     {
         Policy = policy;
@@ -64,36 +64,13 @@ public sealed class Sandbox : IDisposable
             // child must never fall back to the manager's unrestricted token.
             Security.Prepare(LoopbackAccess.ProfileName(LoopbackAccess.CurrentUserSid, Letter[0]));
 
+            // 虚拟根完全由策略文件的 [[roots]]（或 --src 单目录）决定：
+            // /C -> C:\、/D -> D:\ …。不做盘符自动枚举——隐式挂载会把整块系统盘
+            // 暴露进沙箱，也让 PATH 里的盘符语义不可控。多根场景请按盘符显式声明。
             var roots = new List<(string Virtual, string Real)>();
             foreach (var r in policy.Roots)
             {
-                if (automount && r.Virtual == "/")
-                    throw new ArgumentException(
-                        "--automount 与映射到卷根 / 的 [[roots]] 冲突（/ 会吞掉所有盘符）");
                 roots.Add((r.Virtual, r.Real));
-            }
-            if (automount)
-            {
-                // 枚举全部本机盘符（本地盘、可移动盘、映射的网络驱动器），
-                // 以盘符名为虚拟目录挂进卷根：C:\ -> /C、E:\ -> /E ...
-                var declared = new HashSet<string>(
-                    roots.Select(r => r.Virtual.TrimStart('/')), StringComparer.OrdinalIgnoreCase);
-                foreach (var d in DriveInfo.GetDrives())
-                {
-                    if (d.Name.Length < 3 || d.Name[1] != ':') continue;
-                    var driveLetter = char.ToUpperInvariant(d.Name[0]);
-                    // 其他运行实例的虚拟卷不能再次镜像，否则会串接其权限端点和生命周期。
-                    if (MountLease.IsReserved(driveLetter)) continue;
-                    if (!d.IsReady)
-                    {
-                        Log.Info("[AUTOMOUNT] 跳过未就绪的驱动器 {0}:", driveLetter);
-                        continue;
-                    }
-                    if (!declared.Add(driveLetter.ToString()))
-                        continue;   // 用户已在 [[roots]] 里手动声明，不覆盖
-                    roots.Add(("/" + driveLetter, driveLetter + ":\\"));
-                    Log.Info("[AUTOMOUNT] {0}: -> /{1} ({2})", driveLetter, driveLetter, d.DriveType);
-                }
             }
 
             // 子进程引导区：存放 AppContainer 无法从宿主原生目录读取的 exe 副本
@@ -147,9 +124,11 @@ public sealed class Sandbox : IDisposable
             .ConfigureOptions(o =>
             {
                 o.MountPoint = MountPoint;
-                // 注：DokanOptions.AllowIpcBatching 在本机实测使元数据延迟恶化
-                // 一个数量级以上（fsbench 5s → 4m33s），不要启用。
-                o.Options = DokanOptions.MountManager | DokanOptions.CurrentSession;
+                // 注：DokanOptions.AllowIpcBatching 实测使元数据延迟恶化且并发下
+                // 可致卷 I/O 死锁（2026-09-27 复测并行 stat 900s 无响应），勿启用。
+                o.Options = DokanOptions.MountManager | DokanOptions.CurrentSession
+                    | (Environment.GetEnvironmentVariable("OPENDESK_DOKAN_DEBUG") == "1"
+                        ? DokanOptions.DebugMode | DokanOptions.StderrOutput : 0);
                 o.TimeOut = TimeSpan.FromSeconds(30);
                 o.AllocationUnitSize = 4096;
                 o.SectorSize = 512;
@@ -180,7 +159,18 @@ public sealed class Sandbox : IDisposable
             Log.Info("[RUN] 等待卷就绪... poll={0} viaDir={1} viaInfo={2}", i, viaDir, viaInfo);
             Thread.Sleep(100);
         }
-        throw new TimeoutException("挂载超时：卷未就绪");
+        // 卷已挂载（MountedPoint 已设置）但根目录始终不可访问（viaDir/viaInfo
+        // 持续 false）时，是 Dokan 驱动层进入了坏状态：典型表现为挂载成功却
+        // "已挂载但 Z:\ 不可访问"，驱动事件里伴随 STATUS_INVALID_PARAMETER
+        // (0xc000000d)。此状态由驱动/系统持有句柄造成，用户态卸载无济于事，
+        // sc stop Dokan2 会卡 STOP_PENDING，唯一恢复手段是重启系统。
+        var mountedButUnreachable = !string.IsNullOrEmpty(Fs.MountedPoint);
+        throw new TimeoutException(
+            mountedButUnreachable
+                ? "挂载超时：卷已挂载但根目录不可访问（Dokan 驱动可能进入坏状态）。" +
+                  "若此前出现过 STATUS_INVALID_PARAMETER (0xc000000d) 或反复挂载失败，" +
+                  "请重启系统恢复 Dokan 驱动；重启前重试不会成功。"
+                : "挂载超时：卷未就绪");
     }
 
     public void Unmount()
@@ -433,7 +423,8 @@ public sealed class Sandbox : IDisposable
                     stderrPipe?.Dispose();
                 }
         }
-        return 0;
+        // try 块内所有路径要么返回子进程退出码，要么抛异常，控制流不会到达
+        // 方法末尾，故无需兜底 return（原 return 0 为编译器证明的不可达代码）。
     }
 
     private static async Task RelayOutputAsync(Stream source, Stream target, string? virtualRoot = null)

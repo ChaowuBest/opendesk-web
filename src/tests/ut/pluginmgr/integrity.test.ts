@@ -60,8 +60,11 @@ describe('OpenDesk plugin distribution security', () => {
             try {
                 fs.symlinkSync(outside, path.join(root, 'dist', 'linked.js'));
             } catch (error) {
-                // Windows 上创建符号链接需要管理员/开发者模式权限，权限不足时跳过该用例
-                if ((error as NodeJS.ErrnoException).code === 'EPERM') return;
+                // Windows 上创建符号链接需要管理员/开发者模式权限，权限不足时跳过该用例；
+                // Dokan 卷（沙箱）不支持符号链接创建，驱动返回 EISDIR——同样跳过，
+                // 语义等价于"当前卷不支持符号链接"。
+                const code = (error as NodeJS.ErrnoException).code;
+                if (code === 'EPERM' || code === 'EISDIR') return;
                 throw error;
             }
             expect(() => computePluginIntegrity(root)).toThrow('plugin.integrity_symlink_unsupported');

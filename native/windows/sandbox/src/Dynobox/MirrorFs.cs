@@ -34,8 +34,11 @@ public sealed class MirrorFs : IDokanOperations
 
     private readonly Policy _policy;
     private readonly List<RootMap> _roots = new();
+    // 生命周期一致性锁（MoveFile 换流等需要跨字段原子性的操作）；
+    // 活跃句柄登记表用无锁 ConcurrentDictionary，消除 stat 序列
+    // （CreateFile+CloseFile）高频争用同一把全局锁的串行瓶颈。
     private readonly object _life = new();
-    private readonly Dictionary<Ctx, Ctx> _ctx = new();
+    private readonly ConcurrentDictionary<Ctx, Ctx> _ctx = new();
     // 运行时兼容 overlay 配置在子进程产生任何 I/O 之前写入，之后只读；
     // volatile 保证 Dokan 线程池上的可见性。
     private volatile string? _runtimeOverlayDirectory;
@@ -61,6 +64,13 @@ public sealed class MirrorFs : IDokanOperations
         public System.IO.FileAccess OpenAccess;
         public System.IO.FileShare OpenShare;
         public FileSystemInfo? Probe;
+
+        // SetEndOfFile 的最终长度提示：Dokan 驱动对部分页写入做 read-modify-write
+        // （ReadFile 整页 + WriteFile 整页回写，未初始化部分补 NUL），实测 tar 解压
+        // 的 write(30)+ftruncate(30) 被驱动拆成 SetEndOfFile(30) 先到、WriteFile(4096)
+        // 后到覆盖（宿主 NTFS 无此问题）。CloseFile 时按本提示强制截断，保证文件
+        // 最终长度与 ftruncate 语义一致。null 表示未设置。
+        public long? EndOfFileHint;
     }
 
     /// <summary>纯元数据探测打开：仅请求属性/权限/同步位，不含任何数据读写、
@@ -88,8 +98,12 @@ public sealed class MirrorFs : IDokanOperations
         if (!cx.PendingOpen) return cx.Stream is not null;
         try
         {
-            cx.Stream = new FileStream(cx.OpenPath, cx.OpenMode, cx.OpenAccess,
-                cx.OpenShare, 64 * 1024, FileOptions.None);
+            // 高并发 worker（jest 24 worker）同时读同一缓存文件时，Dokan 卷上
+            // 偶发 ERROR_BUSY（0x80070021）——另一 worker 的句柄尚未完全释放。
+            // 宿主 NTFS 无此问题；这里对瞬态 BUSY/共享冲突重试少量几次。
+            cx.Stream = WithTransientShareRetry(() =>
+                new FileStream(cx.OpenPath, cx.OpenMode, cx.OpenAccess,
+                    cx.OpenShare, 64 * 1024, FileOptions.None));
             cx.PendingOpen = false;
             cx.Probe = null;   // 打开后写入可能改变大小/时间，探针数据作废
             return true;
@@ -192,6 +206,47 @@ public sealed class MirrorFs : IDokanOperations
     private readonly ConcurrentDictionary<string, (DateTime Expiry, System.Collections.Generic.List<FileInformation> Entries)>
         _dirListingCache = new(StringComparer.Ordinal);
 
+    // 文件元数据缓存（stat 缓存）：键 = 规范虚拟路径。TTL 1 秒 + 本卷变更立即失效。
+    // 每次 stat（GetFileInformation）都会穿透宿主 new FileInfo/DirectoryInfo——这是
+    // node_modules 爬取类负载（jest 模块解析）的最大头。缓存只覆盖"存在"条目，
+    // 不做负缓存（FileNotFound 不缓存）：创建后立即 stat 必须看到新条目，负缓存
+    // 会让新建文件在 TTL 内不可见。仅缓存存在性已知且元数据稳定的快照。
+    private readonly struct FileInfoSnapshot
+    {
+        public readonly FileAttributes Attributes;
+        public readonly DateTime CreationTime;
+        public readonly DateTime LastAccessTime;
+        public readonly DateTime LastWriteTime;
+        public readonly long Length;
+
+        public FileInfoSnapshot(FileAttributes attributes, DateTime creationTime,
+            DateTime lastAccessTime, DateTime lastWriteTime, long length)
+        {
+            Attributes = attributes;
+            CreationTime = creationTime;
+            LastAccessTime = lastAccessTime;
+            LastWriteTime = lastWriteTime;
+            Length = length;
+        }
+    }
+
+    // 负缓存（ENOENT 探测缓存）：Node/工具链的模块解析会对候选路径反复探测
+    // （扩展名轮询、node_modules 目录逐级上探），每个不存在的路径一次完整 IRP
+    // 往返（~140µs）。短期负缓存（300ms）把这些探测压成一次宿主 stat。
+    // 正确性：所有写路径（创建/删除/改名）已对对应路径失效 _fileInfoCache，
+    // 因此"创建后立即 stat 可见"成立；300ms 窗口仅覆盖宿主带外变更，与正缓存
+    // 同一失效保证。以规范虚拟路径为键，容量受限，超出后不缓存新负条目。
+    private readonly ConcurrentDictionary<string, DateTime> _fileInfoNegativeCache =
+        new(StringComparer.Ordinal);
+    private const int MaxNegativeEntries = 200_000;
+    private static readonly TimeSpan NegativeCacheTtl = TimeSpan.FromMilliseconds(300);
+
+    private readonly ConcurrentDictionary<string, (DateTime Expiry, FileInfoSnapshot Snapshot)>
+        _fileInfoCache = new(StringComparer.Ordinal);
+    // TTL 10s：写路径都会立即失效，TTL 只兜底宿主带外变更（与目录枚举 2s 同一
+    // 思路，但 stat 更频繁，拉长命中窗口；正确性由失效保证）。
+    private static readonly TimeSpan FileInfoCacheTtl = TimeSpan.FromSeconds(10);
+
     /// <summary>条目变更（创建/删除/改名/延后删除）后使其【父目录】的枚举
     /// 缓存失效——枚举缓存以目录为键，条目增删改变的是父目录的列表内容。
     /// fileName 为目录本身时（mkdir/rmdir）额外失效该目录自身的缓存。</summary>
@@ -203,6 +258,34 @@ public sealed class MirrorFs : IDokanOperations
         var parent = slash > 0 ? vpath[..slash] : "/";
         _dirListingCache.TryRemove(parent, out _);
         if (isDirectory) _dirListingCache.TryRemove(vpath, out _);
+    }
+
+    /// <summary>写操作后使目标条目的 stat 缓存失效（长度/时间/属性可能已变）。
+    /// stop 缓存只存正条目，删除/改名后残留的旧快照必须移除，否则后续
+    /// GetFileInformation 会命中已不存在的条目。负缓存（ENOENT 探测）同
+    /// 一并清：创建新文件后立即 stat 不能命中旧的"不存在"。
+    /// 目录创建（mkdirSync recursive）只下发最深子路径的 CreateFile，中间
+    /// 祖先目录由系统隐式创建——必须递归失效祖先链，否则"先 existsSync 探测
+    /// 得到 ENOENT 负缓存、再 mkdir 子目录、随即 readdirSync 父目录"的场景
+    /// 会命中父目录残留的负缓存而误报目录不存在（appmgr 安装流程实测）。</summary>
+    private void InvalidateFileInfo(string fileName)
+    {
+        var vpath = CanonicalVirtual(fileName).TrimEnd('/');
+        if (vpath.Length > 0)
+        {
+            _fileInfoCache.TryRemove(vpath, out _);
+            _fileInfoNegativeCache.TryRemove(vpath, out _);
+            // 递归失效祖先：/a/b/c → /a/b、/a（负缓存命中"不存在"后会阻止
+            // 祖先显影）。自环到跟即可，根 "/" 不做条目缓存。
+            var idx = vpath.LastIndexOf('/');
+            while (idx > 0)
+            {
+                var ancestor = vpath[..idx];
+                _fileInfoCache.TryRemove(ancestor, out _);
+                _fileInfoNegativeCache.TryRemove(ancestor, out _);
+                idx = ancestor.LastIndexOf('/');
+            }
+        }
     }
 
     private void EnqueueDeferredDelete(string realPath)
@@ -626,6 +709,19 @@ public sealed class MirrorFs : IDokanOperations
         IntPtr securityAttributes, uint creationDisposition, uint flagsAndAttributes, IntPtr templateFile);
 
     [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool MoveFileExW(string existingName, string newName, uint flags);
+
+    /// <summary>仅大小写改名（skill.md → SKILL.md）：MoveFileExW 语义与 Node
+    /// fs.renameSync 一致——NTFS 对同文件的大小写变更允许，.NET File.Move
+    /// 的"目标存在"预检查会误判。MOVEFILE_REPLACE_EXISTING(1) 用于覆盖。</summary>
+    private static void MoveFileExCaseRename(string oldReal, string newReal)
+    {
+        if (!MoveFileExW(oldReal, newReal, 1 /* MOVEFILE_REPLACE_EXISTING */))
+            throw new IOException(null, Marshal.GetLastWin32Error());
+    }
+
+    [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
     private static extern uint GetFinalPathNameByHandleW(IntPtr handle, [Out] StringBuilder buffer,
         uint bufferLength, uint flags);
 
@@ -645,10 +741,11 @@ public sealed class MirrorFs : IDokanOperations
             // 放行决策走 Debug：jest 等工具的模块解析风暴会把默认 INFO 级别的
             // 逐访问日志放大成数十万行同步刷盘（全局锁串行所有 IO 线程），
             // 是沙箱内构建极慢的主因。拒绝与提权询问罕见且是诊断关键，保留 INFO。
-            if (allowed)
+            // VerboseEnabled 守卫避免热路径上无谓的 params 数组分配。
+            if (Log.VerboseEnabled)
                 Log.Debug("[POLICY] pid={0,-6} {1,-7} {2,-32} -> {3} ({4})",
-                    info.ProcessId, kind, vpath, "ALLOW", why);
-            else
+                    info.ProcessId, kind, vpath, allowed ? "ALLOW" : "DENY", why);
+            else if (!allowed)
                 Log.Info("[POLICY] pid={0,-6} {1,-7} {2,-32} -> {3} ({4})",
                     info.ProcessId, kind, vpath, "DENY", why);
             if (!allowed) ok = false;
@@ -761,16 +858,25 @@ public sealed class MirrorFs : IDokanOperations
 
     private Ctx? PopCtx(IDokanFileInfo info)
     {
-        lock (_life)
-        {
-            var cx = info.Context as Ctx;
-            info.Context = null;
-            if (cx is not null) _ctx.Remove(cx);
-            return cx;
-        }
+        var cx = info.Context as Ctx;
+        info.Context = null;
+        if (cx is not null) _ctx.TryRemove(cx, out _);
+        return cx;
     }
 
     // -- 文件生命周期 --------------------------------------------------------
+    // ⚠️ 稳定性红线：本文件所有 Dokan 回调（CreateFile/GetFileInformation/
+    // ReadFile/WriteFile/Cleanup/CloseFile/FindFiles 等）由 Dokan 驱动的
+    // 多线程并发派发（SingleThread=false）。2026-09-27 曾因在 CreateFile
+    // 热路径加入非线程安全的静态 Stopwatch + 静态数组累加插桩，导致回调
+    // 竞争返回异常状态（DokanEndDispatchCreate STATUS_INVALID_PARAMETER），
+    // 驱动进入不可恢复的坏卷状态——后续所有挂载"已挂载但 Z:\ 不可访问"，
+    // 只能重启系统恢复（sc stop Dokan2 卡 STOP_PENDING，explorer 持有句柄）。
+    // 因此：
+    // 1. 严禁在热路径引入任何非线程安全静态/实例共享可变状态（Stopwatch、
+    //    计数器、数组累加、未加锁的 DateTime.UtcNow 采样等）；
+    // 2. 回调内共享数据必须用 ConcurrentDictionary/锁，或干脆不复用；
+    // 3. 需要性能剖析时用独立实验进程 + 外部计时，绝不改生产回调代码。
 
     public NtStatus CreateFile(string fileName, FileAccess access, FileShare share,
         FileMode mode, FileOptions options, FileAttributes attributes, IDokanFileInfo info)
@@ -814,12 +920,32 @@ public sealed class MirrorFs : IDokanOperations
 
                 var res = ResolveCached(fileName);
                 var real = res.RealPath;
-                // 单次属性探测同时回答"是否存在"与"是否目录"（原 Directory.Exists +
-                // File.Exists 组合对文件路径要付两次元数据系统调用的开销）。
-                var probe = ProbeFile(real);
-                var exists = probe is not null;
-                var hostAttrs = probe?.Attributes ?? NotExists;
-                var targetIsDir = exists && (hostAttrs & FileAttributes.Directory) != 0;
+                _fileInfoCache.TryGetValue(vpath, out var statHit);
+                // .exe 不走探测缓存：launcher 兼容 overlay 会改写 exe 的大小/属性
+                // 语义（GetFileInformation 对 overlay 返回改写副本元数据），快照只
+                // 反映宿主原始文件，缓存命中会让 pip 等 launcher 拿到错误尺寸被
+                // Python 当脚本解析。其余路径缓存命中即与宿主一致。
+                var cachedStat = !real.EndsWith(".exe", StringComparison.OrdinalIgnoreCase)
+                    && !(mode is FileMode.Create or FileMode.CreateNew or FileMode.Truncate)
+                    && statHit.Expiry > DateTime.UtcNow;
+                // 负缓存命中：300ms 内已确认该路径不存在（模块解析 ENOENT 探测
+                // 风暴），跳过宿主 stat。创建类打开不走此路径——新建文件必须先
+                // 真实验证宿主状态，不能因负缓存漏建。
+                var cachedMissing = !cachedStat && !(mode is FileMode.Create or FileMode.CreateNew)
+                    && _fileInfoNegativeCache.TryGetValue(vpath, out var negAt)
+                    && negAt + NegativeCacheTtl > DateTime.UtcNow;
+                FileSystemInfo? probe = cachedStat || cachedMissing ? null : ProbeFile(real);
+                var exists = cachedStat || (probe is not null);
+                var hostAttrs = cachedStat
+                    ? statHit.Snapshot.Attributes
+                    : probe?.Attributes ?? NotExists;
+                var targetIsDir = cachedStat
+                    ? hostAttrs.HasFlag(FileAttributes.Directory)
+                    : exists && (hostAttrs & FileAttributes.Directory) != 0;
+                // 负缓存命中时 exists=false，后续 FileNotFound 分支自然成立；
+                // 但 Open/OpenOrCreate 不存在时仍应返回 FileNotFound（非 AccessDenied）。
+                if (cachedMissing && mode is FileMode.Open) return FileNotFound;
+
                 var creating = mode is FileMode.Create or FileMode.CreateNew or FileMode.Truncate
                                || (mode == FileMode.OpenOrCreate && !exists);
                 // 新建路径条目才跟踪为"实例内创建"：Truncate / 命中已有文件的
@@ -853,6 +979,7 @@ public sealed class MirrorFs : IDokanOperations
                         Directory.CreateDirectory(real);
                         TrackSessionCreated(res.VirtualPath);
                         InvalidateDirListing(fileName, isDirectory: true);
+                        InvalidateFileInfo(fileName);
                         NotifyCreate(fileName, isDirectory: true);
                         Log.Info("[FS] mkdir {0}", vpath);
                     }
@@ -887,7 +1014,14 @@ public sealed class MirrorFs : IDokanOperations
                 }
 
                 if (mode == FileMode.CreateNew && exists) return FileExists;
-                if (mode is FileMode.Open or FileMode.Truncate && !exists) return FileNotFound;
+                if (mode is FileMode.Open or FileMode.Truncate && !exists)
+                {
+                    // ENOENT 探测写入负缓存：模块解析对同一路径反复 Open 探测，
+                    // 缓存"不存在"避免每次完整 IRP 往返宿主 stat。
+                    if (_fileInfoNegativeCache.Count < MaxNegativeEntries)
+                        _fileInfoNegativeCache[vpath] = DateTime.UtcNow;
+                    return FileNotFound;
+                }
 
                 try
                 {
@@ -942,22 +1076,34 @@ public sealed class MirrorFs : IDokanOperations
                             FileShare.ReadWrite | FileShare.Delete, real, probe);
                         return Success;
                     }
-                    var stream = new FileStream(streamPath, mode,
+                    var stream = WithTransientShareRetry(() => new FileStream(streamPath, mode,
                         streamAccess,
                         FileShare.ReadWrite | FileShare.Delete,
-                        64 * 1024, FileOptions.None);
+                        64 * 1024, FileOptions.None));
                     info.Context = NewCtx(stream, real);
                     if (createsNewEntry)
                     {
                         TrackSessionCreated(res.VirtualPath);
                         InvalidateDirListing(fileName);
+                        InvalidateFileInfo(fileName);
                         NotifyCreate(fileName, isDirectory: false);
                     }
+                    // Truncate/覆盖写改变长度与时间：即使未新建条目，stat 快照也过期
+                    if (!createsNewEntry && mode is FileMode.Truncate) InvalidateFileInfo(fileName);
                 }
                 catch (FileNotFoundException) { return FileNotFound; }
                 catch (DirectoryNotFoundException) { return PathNotFound; }
                 catch (UnauthorizedAccessException ex) { Log.Warn("[FS] 打开被宿主拒绝 {0}: {1}", vpath, ex.Message); return AccessDenied; }
-                catch (IOException ex) when ((uint)ex.HResult == 0x80070020u) { return SharingViolation; }
+                catch (IOException ex) when ((uint)ex.HResult is 0x80070020u or 0x80070021u)
+                {
+                    // 0x80070020 = ERROR_SHARING_VIOLATION；0x80070021 = ERROR_BUSY
+                    //（文件/句柄被占用）。两者都是"目标暂被占用"语义：映射为
+                    // SharingViolation 让调用方按共享冲突重试/报错，而不是笼统的
+                    // AccessDenied（后者会误导为权限问题）。Dokan 卷在高并发 worker
+                    // 读同一缓存文件时偶发 ERROR_BUSY（宿主 NTFS 无此问题），映射后
+                    // 语义与 NTFS 对齐。
+                    return SharingViolation;
+                }
                 catch (IOException ex) { Log.Warn("[FS] 打开失败 {0}: {1}", vpath, ex.Message); return AccessDenied; }
                 return Success;
             }
@@ -987,14 +1133,14 @@ public sealed class MirrorFs : IDokanOperations
             RealPath = realPath,
             Probe = probe,
         };
-        lock (_life) _ctx[cx] = cx;
+        _ctx.TryAdd(cx, cx);
         return cx;
     }
 
     private Ctx NewCtx(FileStream? stream, string realPath = "")
     {
         var cx = new Ctx { Stream = stream, RealPath = realPath };
-        lock (_life) _ctx[cx] = cx;
+        _ctx.TryAdd(cx, cx);
         return cx;
     }
 
@@ -1013,9 +1159,9 @@ public sealed class MirrorFs : IDokanOperations
             // Executable images and memory-mapped files can still issue paging IO
             // after Cleanup. Keep the authorized stream until the final CloseFile.
             var cx = GetCtx(info);
-            if (cx is not null)
+            if (cx is not null && cx.Stream is not null)
             {
-                lock (cx.Gate) { cx.Stream?.Flush(); }
+                lock (cx.Gate) { cx.Stream.Flush(); }
             }
             if (info.DeletePending)
             {
@@ -1046,7 +1192,11 @@ public sealed class MirrorFs : IDokanOperations
                     var trashError = "";
                     var trashed = WithTransientShareRetry(() => RecycleBin.TrySend(real, out trashError));
                     if (trashed)
+                    {
+                        InvalidateFileInfo(fileName);
+                        InvalidateDirListing(fileName, isDirectory: info.IsDirectory);
                         Log.Info("[FS] 删除 {0} (已送回收站)", Normalize(fileName));
+                    }
                     else
                         Log.Warn("[FS] 回收站删除未执行，文件保留 {0}: {1}", fileName, trashError);
                 }
@@ -1062,6 +1212,7 @@ public sealed class MirrorFs : IDokanOperations
                         // 删除成功后才移除跟踪：失败保留原文件时仍按"实例内新建"
                         // 处理，之后的重试删除继续直接清除
                         _sessionCreated.TryRemove(res.VirtualPath, out _);
+                        InvalidateFileInfo(fileName);
                         // 回收站开启但未送回收站的删除均为刻意绕过（实例内新建或沙箱
                         // 内部区域），单独标注便于与普通直接删除区分
                         if (DeleteToTrash)
@@ -1079,6 +1230,32 @@ public sealed class MirrorFs : IDokanOperations
                         EnqueueDeferredDelete(real);
                         InvalidateDirListing(fileName, isDirectory: false);
                     }
+                }
+            }
+            // SetEndOfFile 最终长度兜底：Dokan 驱动部分页读改写（RMW）会在
+            // ftruncate IRP 之后补发整页 WriteFile（tar 解压实测 30→4096 NUL
+            // 覆盖），宿主 NTFS 无此行为。此处（句柄关闭前，所有写已完成）按
+            // 提示强制截断，保证文件最终长度与 ftruncate 语义一致。
+            if (!info.DeletePending && cx is not null && cx.EndOfFileHint is { } hintLen
+                && cx.Stream is not null)
+            {
+                try
+                {
+                    lock (cx.Gate)
+                    {
+                        if (cx.Stream.Length > hintLen)
+                        {
+                            cx.Stream.SetLength(hintLen);
+                            cx.Stream.Flush(flushToDisk: true);
+                            Log.Debug("[FS] Cleanup 按 SetEndOfFile 提示截断 {0} {1} -> {2}",
+                                Normalize(fileName), cx.Stream.Length, hintLen);
+                            InvalidateFileInfo(fileName);
+                        }
+                    }
+                }
+                catch (Exception ex)
+                {
+                    Log.Debug("[FS] Cleanup 截断失败（忽略） {0}: {1}", fileName, ex.Message);
                 }
             }
         }
@@ -1153,6 +1330,20 @@ public sealed class MirrorFs : IDokanOperations
     /// 位置（打开时的旧 EOF），两个句柄并发追加会互相覆盖丢数据。</summary>
     private readonly object _appendGate = new();
 
+    /// <summary>按规范虚拟路径的写互斥锁。tar 解压等场景下，同一个文件的
+    /// WriteFile 与 SetEndOfFile 可能携带不同句柄（探测句柄 vs 写句柄），
+    /// 各自持不同 Gate 不互斥，导致 Dokan IRP 顺序错乱——实测 SetEndOfFile(30)
+    /// 先于 WriteFile(4096) 到达时截断被覆盖，解压文件残留 4KB NUL pad
+    /// （pluginmgr/skillmgr 读取 package.json 解析失败）。按路径加锁保证
+    /// 同一文件的写与截断串行、按 IRP 到达顺序执行。</summary>
+    private readonly ConcurrentDictionary<string, object> _writeLocks = new();
+
+    private object WriteLockFor(string fileName)
+    {
+        var key = CanonicalVirtual(fileName).TrimEnd('/');
+        return _writeLocks.GetOrAdd(key, static _ => new object());
+    }
+
     public NtStatus WriteFile(string fileName, byte[] buffer, out int bytesWritten, long offset,
         IDokanFileInfo info)
     {
@@ -1163,6 +1354,7 @@ public sealed class MirrorFs : IDokanOperations
             if (cx is not null && cx.Stream is null && cx.RealPath == "NUL") { bytesWritten = buffer.Length; return Success; }
             if (cx is null || (cx.Stream is null && !EnsureStream(cx))) { bytesWritten = 0; return AccessDenied; }
             cx.Probe = null;   // 写入改变大小/时间，探针数据作废
+            InvalidateFileInfo(fileName);   // 长度/时间变化，stat 快照作废
             lock (cx.Gate)
             {
                 if (cx.Stream is null) { bytesWritten = 0; return AccessDenied; }
@@ -1258,6 +1450,34 @@ public sealed class MirrorFs : IDokanOperations
                 };
                 return Success;
             }
+            // stat 缓存命中：TTL 内重复 stat 零宿主系统调用。只在"存在"且无写
+            // 未失效时命中（写路径都会失效），因此快照与宿主一致。
+            var statKey = CanonicalVirtual(fileName).TrimEnd('/');
+            if (statKey.Length > 0 && _fileInfoCache.TryGetValue(statKey, out var hit)
+                && hit.Expiry > DateTime.UtcNow)
+            {
+                var snap = hit.Snapshot;
+                fileInfo = new FileInformation
+                {
+                    FileName = fileName,
+                    Attributes = snap.Attributes == 0 ? FileAttributes.Normal
+                               : snap.Attributes & ~FileAttributes.Normal,
+                    CreationTime = snap.CreationTime,
+                    LastAccessTime = snap.LastAccessTime,
+                    LastWriteTime = snap.LastWriteTime,
+                    Length = snap.Length,
+                };
+                return Success;
+            }
+            // 负缓存命中：300ms 内已确认不存在，直接 FileNotFound（模块解析的
+            // ENOENT 探测风暴免去重复宿主 stat）。创建/删除/改名已失效对应
+            // 路径，创建后立即 stat 不会误判。
+            if (statKey.Length > 0 && _fileInfoNegativeCache.TryGetValue(statKey, out var negAt)
+                && negAt + NegativeCacheTtl > DateTime.UtcNow)
+            {
+                fileInfo = default;
+                return FileNotFound;
+            }
             // 延迟打开 ctx 自带创建时刻的探测结果（一次系统调用），查询 IRP
             // 直接复用——stat 的 QueryInformation 零宿主系统调用。写入/截断
             // 已使探针失效，长生命周期句柄的陈旧窗口仅限只读探测。
@@ -1285,6 +1505,12 @@ public sealed class MirrorFs : IDokanOperations
             var fi = new FileInfo(real);
             if (fi.Exists)
             {
+                var length = GetRuntimeOverlay(real) is { } overlay
+                    ? new FileInfo(overlay).Length
+                    : fi.Length;
+                _fileInfoCache[statKey] = (DateTime.UtcNow + FileInfoCacheTtl,
+                    new FileInfoSnapshot(fi.Attributes, fi.CreationTime, fi.LastAccessTime,
+                        fi.LastWriteTime, length));
                 fileInfo = new FileInformation
                 {
                     FileName = fileName,
@@ -1293,15 +1519,16 @@ public sealed class MirrorFs : IDokanOperations
                     CreationTime = fi.CreationTime,
                     LastAccessTime = fi.LastAccessTime,
                     LastWriteTime = fi.LastWriteTime,
-                    Length = GetRuntimeOverlay(real) is { } overlay
-                        ? new FileInfo(overlay).Length
-                        : fi.Length,
+                    Length = length,
                 };
                 return Success;
             }
             var di = new DirectoryInfo(real);
             if (di.Exists)
             {
+                _fileInfoCache[statKey] = (DateTime.UtcNow + FileInfoCacheTtl,
+                    new FileInfoSnapshot(di.Attributes, di.CreationTime, di.LastAccessTime,
+                        di.LastWriteTime, 0));
                 fileInfo = new FileInformation
                 {
                     FileName = fileName,
@@ -1314,6 +1541,8 @@ public sealed class MirrorFs : IDokanOperations
                 return Success;
             }
             fileInfo = default;
+            if (statKey.Length > 0 && _fileInfoNegativeCache.Count < MaxNegativeEntries)
+                _fileInfoNegativeCache[statKey] = DateTime.UtcNow;
             return FileNotFound;
         }
         catch (Exception ex) when (ex is FileNotFoundException or DirectoryNotFoundException)
@@ -1380,12 +1609,37 @@ public sealed class MirrorFs : IDokanOperations
             var listing = new List<FileInformation>();
             foreach (var entry in dir.EnumerateFileSystemInfos())
             {
+                var isDirEntry = entry is DirectoryInfo;
+                var entryAttrs = isDirEntry
+                    ? FileAttributes.Directory
+                    : entry.Attributes & ~FileAttributes.Normal;
+                // 预填 stat 缓存（紧随其后的 GetFileInformation 直接命中，免去
+                // node_modules 爬取级负载的每文件宿主 stat）。.exe 例外：launcher
+                // 兼容 overlay 会让 GetFileInformation 返回 overlay 副本的大小/属性
+                // （AnalyzeRuntimeOverlay 生成一次性改写副本），此处枚举到的是宿主
+                // 原始文件元数据，预填会覆盖 overlay 语义（pip 等 launcher 读自身
+                // 拿到错误尺寸被 Python 当脚本解析）——.exe 一律不预填，走常规路径。
+                if (!isDirEntry && entry.Name.EndsWith(".exe", StringComparison.OrdinalIgnoreCase))
+                {
+                    listing.Add(new FileInformation
+                    {
+                        FileName = entry.Name,
+                        Attributes = entryAttrs,
+                        CreationTime = entry.CreationTime,
+                        LastAccessTime = entry.LastAccessTime,
+                        LastWriteTime = entry.LastWriteTime,
+                        Length = (entry as FileInfo)?.Length ?? 0,
+                    });
+                    continue;
+                }
+                var childKey = resolved.VirtualPath.TrimEnd('/') + "/" + entry.Name;
+                _fileInfoCache[childKey] = (DateTime.UtcNow + FileInfoCacheTtl,
+                    new FileInfoSnapshot(entryAttrs, entry.CreationTime, entry.LastAccessTime,
+                        entry.LastWriteTime, (entry as FileInfo)?.Length ?? 0));
                 listing.Add(new FileInformation
                 {
                     FileName = entry.Name,
-                    Attributes = entry is DirectoryInfo
-                        ? FileAttributes.Directory
-                        : entry.Attributes & ~FileAttributes.Normal,
+                    Attributes = entryAttrs,
                     CreationTime = entry.CreationTime,
                     LastAccessTime = entry.LastAccessTime,
                     LastWriteTime = entry.LastWriteTime,
@@ -1410,8 +1664,64 @@ public sealed class MirrorFs : IDokanOperations
     public NtStatus FindFilesWithPattern(string fileName, string searchPattern,
         out IList<FileInformation> files, IDokanFileInfo info)
     {
-        files = new List<FileInformation>();
-        return NotImplemented;
+        if (Log.VerboseEnabled) Log.Debug("[ENTRY] FindFilesWithPattern {0} pattern={1}", fileName, searchPattern);
+        // Node readdirSync(dir, { withFileTypes: true }) 走这个回调；此前返回
+        // NotImplemented 被 Dokan 映射为错误，导致 scandir 刚创建目录报 ENOENT
+        // （appmgr/pluginmgr/skillmgr 安装流程的共性失败）。实现：无过滤通配符
+        // （"*" 或空）时等价 FindFiles（复用其缓存与预填）；否则枚举后按
+        // DOS 风格通配符（* 任意、? 单字符）过滤。
+        if (string.IsNullOrEmpty(searchPattern) || searchPattern == "*")
+            return FindFiles(fileName, out files, info);
+
+        var status = FindFiles(fileName, out var all, info);
+        if (status != Success) { files = all; return status; }
+        var filtered = new List<FileInformation>();
+        foreach (var entry in all)
+        {
+            if (MatchesDosPattern(entry.FileName, searchPattern)) filtered.Add(entry);
+        }
+        files = filtered;
+        return Success;
+    }
+
+    /// <summary>DOS 风格通配符匹配：* 匹配任意序列（含空），? 匹配单字符。大小写不敏感。</summary>
+    private static bool MatchesDosPattern(string name, string pattern)
+    {
+        // cmd.exe 等系统组件用 DOS 8.3 风格通配符枚举目录找可执行文件，pattern
+        // 形如 node"*（8.3 名基 node 后接 " 与扩展名通配）。此前把 " 当字面
+        // 字符导致 node"* 匹配不上 node.exe，cmd 报 "'node' is not recognized"
+        // （PATH 搜索在卷上失效）。" 的语义：它终止 8.3 名基；其后按通配继续。
+        // 对长名文件，基匹配仍按前缀生效（NODE.EXE 的 8.3 名基为 NODE）。
+        // 处理：把 " 前后段拼接成普通模式——" 前为基，去掉 " 后按 * / ? 匹配。
+        var normalized = pattern.Replace("\"", "");
+        return Match(name, 0, normalized, 0);
+
+        static bool Match(string s, int si, string p, int pi)
+        {
+            while (pi < p.Length)
+            {
+                if (p[pi] == '*')
+                {
+                    // 跳过连续 *，贪心匹配剩余 pattern
+                    while (pi < p.Length && p[pi] == '*') pi++;
+                    if (pi == p.Length) return true;
+                    for (var k = si; k <= s.Length; k++)
+                    {
+                        if (Match(s, k, p, pi)) return true;
+                    }
+                    return false;
+                }
+                if (si >= s.Length) return false;
+                if (p[pi] == '?' || char.ToUpperInvariant(p[pi]) == char.ToUpperInvariant(s[si]))
+                {
+                    si++;
+                    pi++;
+                    continue;
+                }
+                return false;
+            }
+            return si == s.Length;
+        }
     }
 
     public NtStatus SetFileAttributes(string fileName, FileAttributes attributes,
@@ -1430,6 +1740,7 @@ public sealed class MirrorFs : IDokanOperations
                     File.SetAttributes(real, cur | FileAttributes.ReadOnly);
                 else
                     File.SetAttributes(real, cur & ~FileAttributes.ReadOnly);
+                InvalidateFileInfo(fileName);
                 Log.Debug("[FS] SetAttr 完成 {0} -> {1}", fileName, attributes);
                 return Success;
             }
@@ -1458,6 +1769,7 @@ public sealed class MirrorFs : IDokanOperations
             if (creationTime.HasValue) File.SetCreationTime(real, creationTime.Value);
             if (lastAccessTime.HasValue) File.SetLastAccessTime(real, lastAccessTime.Value);
             if (lastWriteTime.HasValue) File.SetLastWriteTime(real, lastWriteTime.Value);
+            InvalidateFileInfo(fileName);
             return Success;
         }
         catch (FileNotFoundException)
@@ -1494,6 +1806,7 @@ public sealed class MirrorFs : IDokanOperations
                 WithDeleteRetry(() => File.Delete(real));
                 _sessionCreated.TryRemove(res.VirtualPath, out _);
                 InvalidateDirListing(fileName);
+                InvalidateFileInfo(fileName);
                 NotifyDelete(fileName, isDirectory: false);
                 // 与 Cleanup 的删除日志保持同一形态，回收站开启时标注绕过原因
                 if (DeleteToTrash)
@@ -1543,14 +1856,17 @@ public sealed class MirrorFs : IDokanOperations
             // 立即判空会短暂看到"非空"（go 的 RemoveAll 收尾即此形态）。短退避等待
             // 删除落地；仍有残留才是真非空，按原语义拒绝。判空时排除挂起删除
             // 队列中的"幽灵"条目——它们在宿主侧尚存但视图上已删除。
+            // 退避窗口：Dokan 卷上递归删除（rmSync recursive）时子目录的
+            // Cleanup 完成可能跨越数百 ms（appmgr 大目录树实测），5 次不够；
+            // 拉长到 ~2.5s，同时每次退避后主动清理 deferred 幽灵条目。
             var viewEmpty = false;
             for (var attempt = 0; ; attempt++)
             {
                 viewEmpty = !Directory.EnumerateFileSystemEntries(real)
                     .Any(entry => !IsDeferredDelete(entry));
                 if (viewEmpty) break;
-                if (attempt >= 5) return DirectoryNotEmpty;
-                Thread.Sleep(50 + attempt * 50);
+                if (attempt >= 12) return DirectoryNotEmpty;
+                Thread.Sleep(50 + attempt * 30);
             }
             // 与 DeleteFile 相同：尽早执行真实删除，避免 Cleanup 失败被吞成
             // "删除成功"后视图与宿主状态脱节（目录被占用时报准确错误）
@@ -1560,6 +1876,7 @@ public sealed class MirrorFs : IDokanOperations
                 WithTransientShareRetry(() => Directory.Delete(real));
                 _sessionCreated.TryRemove(res.VirtualPath, out _);
                 InvalidateDirListing(fileName, isDirectory: true);
+                InvalidateFileInfo(fileName);
                 NotifyDelete(fileName, isDirectory: true);
                 if (DeleteToTrash)
                     Log.Info("[FS] 删除 {0} (实例内新建或内部区域，未送回收站)", Normalize(fileName));
@@ -1570,7 +1887,7 @@ public sealed class MirrorFs : IDokanOperations
             catch (FileNotFoundException) { return PathNotFound; }
             catch (DirectoryNotFoundException) { return PathNotFound; }
             catch (UnauthorizedAccessException) { return AccessDenied; }
-            catch (IOException ex) when (Directory.EnumerateFileSystemEntries(real).Any()
+            catch (IOException) when (Directory.EnumerateFileSystemEntries(real).Any()
                 && Directory.EnumerateFileSystemEntries(real).All(entry => IsDeferredDelete(entry)))
             {
                 // 视图已空、宿主侧只剩挂起删除的幽灵条目：目录挂入队列由后台
@@ -1581,6 +1898,7 @@ public sealed class MirrorFs : IDokanOperations
                 EnqueueDeferredDelete(real);
                 _sessionCreated.TryRemove(res.VirtualPath, out _);
                 InvalidateDirListing(fileName, isDirectory: true);
+                InvalidateFileInfo(fileName);
                 NotifyDelete(fileName, isDirectory: true);
                 return Success;
             }
@@ -1639,9 +1957,21 @@ public sealed class MirrorFs : IDokanOperations
                     }
                 }
                 var targetExistedBefore = replace && File.Exists(newReal);
+                // 仅大小写 rename（skill.md → SKILL.md）：Windows/NTFS 语义下是
+                // 同文件的 case 变更。宿主 Node fs.renameSync（MoveFileExW）成功，
+                // 但 .NET File.Move 会因目标"已存在"（大小写不敏感匹配）报共享
+                // 冲突；skillmgr 安装流程的 lowercase-skill.md → SKILL.md 即此场景。
+                // 走 MoveFileExW（与 Node/Windows 语义一致）而非 File.Move 预检查。
+                var caseOnlyRename =
+                    !string.Equals(oldReal, newReal, StringComparison.Ordinal)
+                    && Path.GetFileName(oldReal).Equals(Path.GetFileName(newReal), StringComparison.OrdinalIgnoreCase)
+                    && File.Exists(oldReal)
+                    && !Directory.Exists(oldReal);
                 try
                 {
-                    if (replace && File.Exists(newReal))
+                    if (caseOnlyRename)
+                        WithTransientShareRetry(() => MoveFileExCaseRename(oldReal, newReal));
+                    else if (replace && File.Exists(newReal))
                         WithTransientShareRetry(() => File.Replace(oldReal, newReal, null));
                     else if (Directory.Exists(oldReal))
                         WithTransientShareRetry(() => Directory.Move(oldReal, newReal));
@@ -1662,6 +1992,8 @@ public sealed class MirrorFs : IDokanOperations
                 FollowSessionCreatedMove(oldVp, newVp, targetExistedBefore);
                 InvalidateDirListing(oldName);
                 InvalidateDirListing(newName);
+                InvalidateFileInfo(oldName);
+                InvalidateFileInfo(newName);
                 NotifyRename(oldName, newName, Directory.Exists(newReal));
                 if (cx is not null && cx.Stream is null && cx.PendingOpen)
                 {
@@ -1700,33 +2032,86 @@ public sealed class MirrorFs : IDokanOperations
         if (Log.VerboseEnabled) Log.Debug("[ENTRY] SetEndOfFile {0} {1}", fileName, length);
         try
         {
+            // 与 WriteFile 同路径串行（见 _writeLocks 说明）：同一文件的写与
+            // 截断按 IRP 到达顺序执行。若此处不拿锁，tar 解压时 SetEndOfFile
+            // 会与并发 WriteFile(4096) 竞态——截断先到则被后到写覆盖，解压
+            // 文件残留 4KB NUL pad（pluginmgr 读 package.json 解析失败）。
+            lock (WriteLockFor(fileName))
+            {
+                return SetEndOfFileCore(fileName, length, info);
+            }
+        }
+        catch (Exception ex)
+        {
+            Log.Error("SetEndOfFile 内部异常: {0}", ex);
+            return AccessDenied;
+        }
+    }
+
+    private NtStatus SetEndOfFileCore(string fileName, long length, IDokanFileInfo info)
+    {
+        try
+        {
             var cx = GetCtx(info);
+            // 流句柄可能是只读打开的（tar 解压先用只读句柄再 ftruncate），对只读
+            // FileStream 调 SetLength 会抛 NotSupportedException——此时改用独立
+            // Write 句柄完成截断。无论流路径是否成功，最终都以宿主实际长度为准校验。
+            var truncatedByStream = false;
             if (cx is not null)
             {
                 if (cx.Stream is null && cx.PendingOpen && !EnsureStream(cx))
                     return AccessDenied;
                 if (cx.Stream is not null)
                 {
-                    lock (cx.Gate)
+                    try
                     {
-                        cx.Stream!.SetLength(length);
+                        lock (cx.Gate)
+                        {
+                            cx.Stream.SetLength(length);
+                            cx.Stream.Flush(flushToDisk: true);
+                            truncatedByStream = true;
+                            // 记录最终长度提示：Dokan 驱动部分页读改写（RMW）会
+                            // 在 SetEndOfFile 之后补发整页 WriteFile（tar 解压实测
+                            // 30→4096 覆盖），CloseFile 时按此提示兜底截断。
+                            cx.EndOfFileHint = length;
+                        }
                         cx.Probe = null;
+                    }
+                    catch (Exception ex) when (ex is NotSupportedException or IOException)
+                    {
+                        // 只读流无法截断（tar 解压的 ftruncate 形态）：落到
+                        // 独立 Write 句柄路径。
+                        Log.Debug("[FS] SetEndOfFile 流不可写({0})，改用独立句柄", ex.GetType().Name);
                     }
                 }
             }
-            else
+            InvalidateFileInfo(fileName);
+            // 流路径失败或压根无流时，用独立 Write 句柄截断（Windows 上只读句柄
+            // 不阻止其他 Write 句柄打开同文件——FileShare.ReadWrite|Delete）。
+            if (!truncatedByStream)
             {
-                // 无句柄流的兜底路径必须与常规写入同一策略闸门（fail-closed），
-                // 不能因为缺少上下文就绕过 write 判定直接落盘。
                 var res = ResolveCached(fileName);
                 var (allowed, _) = CheckCached(res.VirtualPath, AccessKind.Write);
                 if (!allowed) return AccessDenied;
                 if (!PathLandsWithinRoot(res.RealPath, res.Map)) return AccessDenied;
-                // 与常规写入同一共享语义：该构造重载缺省 FileShare.Read，会在句柄
-                // 存续期间挡住其他句柄的写/删除，制造不必要的瞬时共享冲突。
-                using var fs = new FileStream(res.RealPath, FileMode.Open, System.IO.FileAccess.Write,
-                    FileShare.ReadWrite | FileShare.Delete);
-                fs.SetLength(length);
+                try
+                {
+                    using var fs = new FileStream(res.RealPath, FileMode.Open, System.IO.FileAccess.Write,
+                        FileShare.ReadWrite | FileShare.Delete);
+                    // .NET FileStream.SetLength 依赖当前位置：从文件尾截短时，
+                    // 若当前位置不在目标位置，SetLength 只更新逻辑长度、宿主
+                    // 磁盘长度不变（Dokan 卷实测 4096 残留）。先 Seek(0) 使
+                    // 截断按从头计算，Flush 落盘后宿主长度才真正更新。
+                    fs.Seek(0, SeekOrigin.Begin);
+                    fs.SetLength(length);
+                    fs.Flush(flushToDisk: true);
+                }
+                catch (Exception ex)
+                {
+                    Log.Warn("[FS] SetEndOfFile 独立句柄截断失败 {0}: {1} ({2})", Normalize(fileName), ex.Message,
+                        unchecked((uint)ex.HResult).ToString("X8"));
+                    throw;
+                }
             }
             return Success;
         }
