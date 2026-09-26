@@ -44,7 +44,9 @@ export class ExecuteZshTool extends BaseTool<typeof ExecuteZshArgsSchema> {
      */
     constructor(
         private readonly shellPath: string,
-        interactive = false
+        interactive = false,
+        private readonly sandboxed = false,
+        private readonly deleteToTrash = false
     ) {
         super(
             'executeZsh',
@@ -60,7 +62,7 @@ export class ExecuteZshTool extends BaseTool<typeof ExecuteZshArgsSchema> {
         return createTerminalSystemPromptContribution({
             kind: 'zsh',
             shellPath: this.shellPath,
-            sandboxed: false
+            sandboxed: this.sandboxed
         });
     }
 
@@ -124,12 +126,14 @@ export class ExecuteZshTool extends BaseTool<typeof ExecuteZshArgsSchema> {
             taskState,
             runningProcesses: this.runningProcesses,
             stopPromises: this._stopPromises,
-            isKilledByStop: () => this._killedByStop
+            isKilledByStop: () => this._killedByStop,
+            useDynamicSandbox: this.sandboxed,
+            sandboxDeleteToTrash: this.sandboxed && this.deleteToTrash
         });
     }
 
     async renderToolCall(toolcall: ToolCall): Promise<string | undefined> {
-        return renderTerminalToolCall('zsh', toolcall);
+        return renderTerminalToolCall('zsh', toolcall, this.sandboxed);
     }
 
     renderToolCallCli(toolcall: ToolCall, width: number): string[] | undefined {

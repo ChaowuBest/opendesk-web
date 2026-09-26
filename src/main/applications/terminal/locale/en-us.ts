@@ -49,6 +49,16 @@ export const enUs: Record<string, string> = {
     'sandbox.executableMissing':
         'Dynamic sandbox is enabled, but sandbox.exe was not found. Rebuild the Windows version.',
     'sandbox.endpointFailed': 'Could not obtain a port for the dynamic sandbox authorization endpoint.',
+    'prompt.sandbox.linux.transparent':
+        '- The sandbox root filesystem mirrors the host layout (/home, /tmp, /var, etc. are all visible); reads and writes go through permission checks.',
+    'prompt.sandbox.linux.workspace':
+        '- The workspace is writable; writes outside the workspace require approval (or are denied by rules). System dirs (/usr /lib /etc etc.) are read-only.',
+    'prompt.sandbox.linux.tmp':
+        '- /tmp maps to the host directory: files written in the sandbox persist across commands and sandbox instances.',
+    'sandbox.executableMissing.linux':
+        'Dynamic sandbox enabled but dynobox-linux was not found. Rebuild the Linux package.',
+    'sandbox.cwdMissing.linux': 'Dynamic sandbox requires a task workspace as the controlled path.',
+    'sandbox.cwdUnsupported.linux': 'Sandbox working directory is missing or unusable: ${path}',
     'sandbox.loopbackSetupFailed':
         'Could not initialize local network access for the sandbox. Allow the Windows administrator confirmation and retry. OpenDesk continues to run without administrator privileges after setup.'
 };
