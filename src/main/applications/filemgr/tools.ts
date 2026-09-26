@@ -29,6 +29,7 @@ import { ImageSourceError, isOnlineImageSource, loadImageSource } from './image.
 import { FILEMGR_SEARCH_MAX_PATHS } from './search/indexed.js';
 import fs from 'fs';
 import path from 'path';
+import readline from 'node:readline';
 import * as diff from 'diff';
 import fileType from 'file-type';
 import chalk from 'chalk';
@@ -2773,6 +2774,10 @@ const DEFAULT_GREP_IGNORE = [
     'coverage/**'
 ];
 
+const GREP_MAX_FILE_SIZE_BYTES = 20 * 1024 * 1024;
+const GREP_FILE_SEARCH_CONCURRENCY = 4;
+const GREP_MAX_GITIGNORE_PATTERNS = 50_000;
+
 /**
  * 将单条 .gitignore 规则转换为相对于 basePath 的 fastGlob ignore 模式。
  * 对齐 git 的语义：
@@ -2837,35 +2842,61 @@ function convertGitignoreRule(rule: string, prefix: string): string[] | null {
  * 收集 basePath 下所有 .gitignore 中的规则，转换为 fastGlob 兼容的 ignore 模式。
  * 行为对齐 ripgrep：递归收集各层级 .gitignore 并按所在目录正确作用域化。
  */
-async function collectGitignorePatterns(basePath: string): Promise<string[]> {
+async function readGitignorePatterns(filePath: string, prefix: string): Promise<string[]> {
     const patterns: string[] = [];
     try {
-        const gitignoreFiles = await fastGlob('**/.gitignore', {
+        const stat = await fs.promises.stat(filePath);
+        if (!stat.isFile()) return patterns;
+
+        const input = fs.createReadStream(filePath, { encoding: 'utf-8' });
+        const lineReader = readline.createInterface({ input, crlfDelay: Infinity });
+        for await (const rawLine of lineReader) {
+            const converted = convertGitignoreRule(rawLine, prefix);
+            if (converted) {
+                const remaining = GREP_MAX_GITIGNORE_PATTERNS - patterns.length;
+                patterns.push(...converted.slice(0, remaining));
+                if (patterns.length >= GREP_MAX_GITIGNORE_PATTERNS) break;
+            }
+        }
+    } catch {
+        // 读取失败则跳过该 .gitignore
+    }
+    return patterns;
+}
+
+async function collectGitignorePatterns(basePath: string): Promise<string[]> {
+    const patterns: string[] = [];
+    const appendPatterns = (newPatterns: string[]): boolean => {
+        const remaining = GREP_MAX_GITIGNORE_PATTERNS - patterns.length;
+        if (remaining <= 0) return false;
+        patterns.push(...newPatterns.slice(0, remaining));
+        return patterns.length < GREP_MAX_GITIGNORE_PATTERNS;
+    };
+
+    try {
+        // 先读取根规则，让后续的 .gitignore 扫描可以对大型忽略目录提前剪枝。
+        const rootGitignore = path.join(basePath, '.gitignore');
+        const rootPatterns = (await readGitignorePatterns(rootGitignore, '')).slice(0, GREP_MAX_GITIGNORE_PATTERNS);
+        appendPatterns(rootPatterns);
+
+        const gitignoreStream = fastGlob.stream('**/.gitignore', {
             cwd: basePath,
-            ignore: DEFAULT_GREP_IGNORE,
+            ignore: [...DEFAULT_GREP_IGNORE, ...rootPatterns],
             absolute: false,
             onlyFiles: true,
             suppressErrors: true,
             dot: true
         });
 
-        for (const relPath of gitignoreFiles) {
+        for await (const entry of gitignoreStream) {
+            const relPath = String(entry);
+            if (relPath === '.gitignore') continue;
             const dir = path.dirname(relPath);
             const prefix = dir === '.' ? '' : dir + '/';
-            try {
-                const content = await fs.promises.readFile(path.join(basePath, relPath), 'utf-8');
-                for (const rawLine of content.split('\n')) {
-                    const converted = convertGitignoreRule(rawLine, prefix);
-                    if (converted) {
-                        patterns.push(...converted);
-                    }
-                }
-            } catch {
-                // 读取失败则跳过该 .gitignore
-            }
+            if (!appendPatterns(await readGitignorePatterns(path.join(basePath, relPath), prefix))) break;
         }
     } catch {
-        // fastGlob 失败（如目录不存在）则返回空
+        // fastGlob 失败（如目录不存在）则返回已读取的根规则
     }
     return patterns;
 }
@@ -3043,41 +3074,17 @@ export class GrepFilesTool extends BaseTool<typeof grepSchema> {
             const basePath = searchPath ? sanitizePath(searchPath, workingDir) : workingDir;
             const globPattern = this.normalizeFilePattern(filePattern);
 
-            // 单文件搜索快速路径
-            let filesToSearch: string[];
-            try {
-                const stat = await fs.promises.stat(basePath);
-                if (stat.isFile()) {
-                    filesToSearch = [basePath];
-                } else {
-                    const gitignorePatterns = await collectGitignorePatterns(basePath);
-                    const allIgnorePatterns = [...DEFAULT_GREP_IGNORE, ...gitignorePatterns];
-                    filesToSearch = await fastGlob(globPattern, {
-                        cwd: basePath,
-                        ignore: allIgnorePatterns,
-                        absolute: true,
-                        onlyFiles: true,
-                        suppressErrors: true
-                    });
-                }
-            } catch {
-                const gitignorePatterns = await collectGitignorePatterns(basePath);
-                const allIgnorePatterns = [...DEFAULT_GREP_IGNORE, ...gitignorePatterns];
-                filesToSearch = await fastGlob(globPattern, {
-                    cwd: basePath,
-                    ignore: allIgnorePatterns,
-                    absolute: true,
-                    onlyFiles: true,
-                    suppressErrors: true
-                });
-            }
-
             const matches: GrepMatch[] = [];
 
             const searchFile = async (filePath: string): Promise<GrepMatch[]> => {
                 const fileMatches: GrepMatch[] = [];
 
                 try {
+                    const stat = await fs.promises.stat(filePath);
+                    if (stat.size > GREP_MAX_FILE_SIZE_BYTES) {
+                        return fileMatches;
+                    }
+
                     // 预检测二进制文件：读取文件头判断
                     const fd = await fs.promises.open(filePath, 'r');
                     const headBuf = Buffer.alloc(512);
@@ -3092,25 +3099,46 @@ export class GrepFilesTool extends BaseTool<typeof grepSchema> {
                         return fileMatches;
                     }
 
-                    const content = await fs.promises.readFile(filePath, 'utf-8');
-                    const lines = content.split('\n');
+                    const input = fs.createReadStream(filePath, { encoding: 'utf-8' });
+                    const lineReader = readline.createInterface({ input, crlfDelay: Infinity });
+                    const contextBefore: string[] = [];
+                    let pendingContextAfter: GrepMatch[] = [];
+                    let lineNumber = 0;
+                    let stopAfterLine: number | undefined;
 
-                    for (let i = 0; i < lines.length; i++) {
-                        const line = lines[i];
+                    for await (const line of lineReader) {
+                        lineNumber++;
+
+                        for (const match of pendingContextAfter) {
+                            if (match.contextAfter.length < contextLines) {
+                                match.contextAfter.push(line);
+                            }
+                        }
+                        pendingContextAfter = pendingContextAfter.filter(
+                            (match) => match.contextAfter.length < contextLines
+                        );
+
                         regex.lastIndex = 0;
 
                         let match;
                         while ((match = regex.exec(line)) !== null) {
-                            fileMatches.push({
+                            const grepMatch: GrepMatch = {
                                 file: filePath,
-                                line: i + 1,
+                                line: lineNumber,
                                 column: match.index + 1,
                                 content: line,
-                                contextBefore: lines.slice(Math.max(0, i - contextLines), i),
-                                contextAfter: lines.slice(i + 1, Math.min(lines.length, i + 1 + contextLines))
-                            });
+                                contextBefore: contextBefore.slice(),
+                                contextAfter: []
+                            };
+                            fileMatches.push(grepMatch);
+                            if (contextLines > 0) {
+                                pendingContextAfter.push(grepMatch);
+                            }
 
-                            if (fileMatches.length >= maxResults) break;
+                            if (fileMatches.length >= maxResults) {
+                                stopAfterLine = lineNumber + contextLines;
+                                break;
+                            }
 
                             // 防止零宽匹配导致无限循环
                             if (match[0].length === 0) {
@@ -3119,7 +3147,16 @@ export class GrepFilesTool extends BaseTool<typeof grepSchema> {
                         }
 
                         regex.lastIndex = 0;
-                        if (fileMatches.length >= maxResults) break;
+                        if (contextLines > 0) {
+                            contextBefore.push(line);
+                            if (contextBefore.length > contextLines) {
+                                contextBefore.shift();
+                            }
+                        }
+                        if (stopAfterLine !== undefined && lineNumber >= stopAfterLine) {
+                            input.destroy();
+                            break;
+                        }
                     }
                 } catch {
                     // 跳过无法读取的文件
@@ -3128,15 +3165,47 @@ export class GrepFilesTool extends BaseTool<typeof grepSchema> {
                 return fileMatches;
             };
 
-            const batchSize = 20;
-            for (let i = 0; i < filesToSearch.length && matches.length < maxResults; i += batchSize) {
-                const batch = filesToSearch.slice(i, i + batchSize);
+            const appendBatchMatches = async (batch: string[]): Promise<void> => {
                 const batchResults = await Promise.all(batch.map(searchFile));
-                matches.push(...batchResults.flat());
+                for (const fileMatches of batchResults) {
+                    const remaining = maxResults - matches.length;
+                    if (remaining <= 0) break;
+                    matches.push(...fileMatches.slice(0, remaining));
+                }
+            };
 
-                if (matches.length >= maxResults) {
-                    matches.length = maxResults;
-                    break;
+            let isSingleFile = false;
+            try {
+                isSingleFile = (await fs.promises.stat(basePath)).isFile();
+            } catch {
+                // 将不存在或不可访问的路径交给 fast-glob 处理，保持原有的空结果行为
+            }
+
+            if (isSingleFile) {
+                await appendBatchMatches([basePath]);
+            } else {
+                const gitignorePatterns = await collectGitignorePatterns(basePath);
+                const allIgnorePatterns = [...DEFAULT_GREP_IGNORE, ...gitignorePatterns];
+                const fileStream = fastGlob.stream(globPattern, {
+                    cwd: basePath,
+                    ignore: allIgnorePatterns,
+                    absolute: true,
+                    onlyFiles: true,
+                    suppressErrors: true
+                });
+                let batch: string[] = [];
+
+                for await (const filePath of fileStream) {
+                    batch.push(String(filePath));
+                    if (batch.length < GREP_FILE_SEARCH_CONCURRENCY) continue;
+
+                    await appendBatchMatches(batch);
+                    if (matches.length >= maxResults) break;
+                    batch = [];
+                }
+
+                if (batch.length > 0 && matches.length < maxResults) {
+                    await appendBatchMatches(batch);
                 }
             }
 
@@ -3368,6 +3437,11 @@ export class SemanticSearchTool extends BaseTool<typeof semanticSearchSchema> {
         );
         this.searchIndexedFiles = searchIndexedFiles;
         this.setExecutor(this.executeCommand);
+    }
+
+    // 未配置向量嵌入模型时语义搜索必然失败，不应向模型暴露该工具。
+    isAvailable(_taskState?: TaskState): boolean {
+        return Setting.getInstance().getDefaultEmbeddingModelInstance() != null;
     }
 
     async renderToolCall(toolcall: ToolCall): Promise<string | undefined> {

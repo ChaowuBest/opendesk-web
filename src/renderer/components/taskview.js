@@ -11,18 +11,24 @@
 
 import { ElasticToolbarWidget } from './toolbar.ts';
 import { morphDomChildren } from '../utils/dom-morph.js';
+import { updateStreamingText } from '../utils/streaming-text.js';
+import { AssistantProgressBuffer } from '../utils/assistant-progress-buffer.js';
+import { nestedScrollerConsumesWheel } from '../utils/history-scroll.js';
+import { ChatNavigation, buildConversationStops, mergeRenderedConversationStops } from './chatNavigation.js';
 import './taskartifacts.ts';
 import { BrowserPip } from './browserPip.ts';
 import { showImageLightbox } from './imageLightbox.js';
 import { showWorkspacePicker } from './workspacePicker.ts';
 import { showConfirmModal } from './confirmModal.ts';
 import './skills/skill-detail-card.ts';
-import { enhanceCodeBlocks, enhanceToolPreviewCards } from './previewer.ts';
+import { enhanceCodeBlocks, enhanceToolPreviewCards, renderMermaidBlocks } from './previewer.ts';
 import { escapeHtml } from '../../common/utils/escape.js';
 import { resolveToolDisplayName } from '../../common/tool-display-name.js';
 import { getSafeWebUrl } from '../../common/web-link.js';
+import { normalizeDriveRootPath } from '../../common/utils/path.js';
 import { createRendererTranslator } from '../locale.ts';
 import { renderSafeMarkdown } from '../utils/markdown.ts';
+import { buildTaskExportHtml } from '../utils/task-export.ts';
 import { createWebLinkContextMenuItems } from '../utils/web-link-context-menu.ts';
 import {
     GoalController,
@@ -38,6 +44,10 @@ const SIDEBAR_TOGGLE_SVG =
     '<svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="3" width="12" height="10" rx="1.5"/><path d="M6.5 3v10"/></svg>';
 const EXPORT_DOWNLOAD_SVG =
     '<svg width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"><path d="M8 3v6.5M8 9.5 5.5 7M8 9.5 10.5 7"/><path d="M3 11v1.5A1.5 1.5 0 0 0 4.5 14h7a1.5 1.5 0 0 0 1.5-1.5V11"/></svg>';
+const EXPORT_WEBPAGE_SVG =
+    '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M12 2a14.5 14.5 0 0 0 0 20 14.5 14.5 0 0 0 0-20"/><path d="M2 12h20"/></svg>';
+const EXPORT_JSON_SVG =
+    '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6"/><path d="M10 11c-.6 0-1 .4-1 1v1c0 .6-.4 1-1 1 .6 0 1 .4 1 1v1c0 .6.4 1 1 1"/><path d="M14 11c.6 0 1 .4 1 1v1c0 .6.4 1 1 1-.6 0-1 .4-1 1v1c0 .6-.4 1-1 1"/></svg>';
 const COPY_ICON_SVG =
     '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect width="14" height="14" x="8" y="8" rx="2" ry="2"/><path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2"/></svg>';
 const CHECK_ICON_SVG =
@@ -92,6 +102,7 @@ export const TASKVIEW_HISTORY_BATCH_HTML_CHAR_LIMIT = 200000;
 const TASKVIEW_HISTORY_TOP_LOAD_THRESHOLD_PX = 96;
 const TASKVIEW_HISTORY_VIEWPORT_FILL_GUARD = 8;
 const PROCESS_INNER_SCROLL_BOTTOM_THRESHOLD_PX = 24;
+const TASKVIEW_REASONING_PREVIEW_TAIL_CHARS = 2000;
 let taskViewT = createRendererTranslator();
 let guiOutputMode = 'minimal';
 let guiReasonDisplayMode = 'inline';
@@ -114,6 +125,14 @@ void window.settingAPI
     .then(updateTaskViewTranslator)
     .catch(() => {});
 window.settingAPI?.onSettingChanged?.(updateTaskViewTranslator);
+
+function sliceReasoningPreviewTail(text) {
+    const value = text || '';
+    if (value.length <= TASKVIEW_REASONING_PREVIEW_TAIL_CHARS) return value;
+    const tail = value.slice(-TASKVIEW_REASONING_PREVIEW_TAIL_CHARS);
+    const newlineIndex = tail.indexOf('\n');
+    return newlineIndex >= 0 ? tail.slice(newlineIndex + 1) : tail;
+}
 
 function removeDangerousNodes(root) {
     root.querySelectorAll(Array.from(DANGEROUS_TAGS).join(',')).forEach((el) => el.remove());
@@ -326,6 +345,13 @@ class TaskView extends HTMLElement {
         this._contextSizeModel = null;
         /** @type {Map<string, HTMLElement>} 缓存活跃的 message container 元素 */
         this._messageContainerCache = new Map();
+        this._assistantProgressBuffer = new AssistantProgressBuffer((progress) => {
+            if (this._shouldSuppressIncrementalRender()) return;
+            const historyContainer = this.getHistoryContainer();
+            if (!historyContainer) return;
+            this._renderAssistantProgress(progress, historyContainer);
+            this.tryScrollToEnd();
+        });
         /** @type {number | null} 节流滚动的 rAF id */
         this._scrollRafId = null;
         /** @type {number | null} 节流过程区内部滚动的 rAF id */
@@ -344,12 +370,16 @@ class TaskView extends HTMLElement {
         this._renderedUserParts = new Map();
         /** @type {Map<string, Array<object>>} 增量消息的完整 part 快照。 */
         this._assistantPartsByMessage = new Map();
-        /** @type {Map<string, {isRunning: boolean}>} assistant 输出重绘所需的渲染状态。 */
+        /** @type {Map<string, {isRunning: boolean, isInterrupted: boolean}>} assistant 输出重绘所需的渲染状态。 */
         this._assistantRenderStateByMessage = new Map();
         /** @type {Map<string, Map<string, boolean>>} 模式切换期间不可见 disclosure 的展开状态。 */
         this._assistantDisclosureStateByMessage = new Map();
         /** @type {Map<string, boolean>} 极简运行态是否展开了当前消息的执行过程。 */
         this._assistantRunningDetails = new Map();
+        /** @type {boolean} 当前任务是否由用户手动停止。 */
+        this._stopRequestedByUser = false;
+        /** @type {string | null} 被手动停止时对应的 assistant 消息。 */
+        this._interruptedAssistantMessageId = null;
         /** @type {boolean} 是否正在执行 reload()，用于暂停订阅回调的 DOM 操作 */
         this._reloading = false;
         /** @type {number} reload 版本号，用于丢弃过期 reload 的后续操作 */
@@ -446,6 +476,8 @@ class TaskView extends HTMLElement {
     /** @type {number} 最近一次用户主动滚动输入的时间戳，用于区分缩放等引起的被动 scroll。 */
     _lastUserScrollTs = 0;
 
+    _lastUserScrollDirection = 0;
+
     /** @type {((e: KeyboardEvent) => void) | null} document 级键盘滚动意图监听，组件销毁时移除。 */
     _historyScrollKeydownHandler = null;
 
@@ -463,8 +495,10 @@ class TaskView extends HTMLElement {
     }
 
     /** 记录一次用户主动滚动输入（滚轮/触摸/滚动键），缩放等被动滚动不应调用。 */
-    _markUserScrollIntent() {
+    _markUserScrollIntent(direction = 0) {
+        this._conversationJumpInProgress = false;
         this._lastUserScrollTs = Date.now();
+        this._lastUserScrollDirection = direction;
     }
 
     /** 判断最近是否刚发生过用户主动滚动，避免把缩放引起的被动 scroll 当作手动离开底部。 */
@@ -806,6 +840,8 @@ class TaskView extends HTMLElement {
         // 思考块会继续计时，出现"两个思考块同时活跃同时计时"。
         if (el.classList.contains('reasoning-completed')) return;
         el._reasoningTextLength = (text || '').length;
+        el._reasoningFullText = text || '';
+        el._reasoningFullStale = true;
 
         // Time display refresh (created once per element)
         if (!el._refreshReasoningTime) {
@@ -839,7 +875,7 @@ class TaskView extends HTMLElement {
         // Bubble mode: update bubble content
         const bubbleContent = el.querySelector('.reasoning-bubble-content');
         if (bubbleContent) {
-            bubbleContent.textContent = text;
+            bubbleContent.textContent = sliceReasoningPreviewTail(text);
             const bubble = el.querySelector('.reasoning-bubble');
             if (bubble) {
                 bubble.scrollTop = bubble.scrollHeight;
@@ -852,17 +888,14 @@ class TaskView extends HTMLElement {
         // of staring at a frozen head of the preview (clipped by max-height).
         const previewContent = el.querySelector('.reasoning-preview-content');
         if (previewContent) {
-            previewContent.textContent = text;
+            previewContent.textContent = sliceReasoningPreviewTail(text);
             const previewArea = el.querySelector('.reasoning-preview-area');
             if (previewArea) {
                 previewArea.scrollTop = previewArea.scrollHeight;
             }
         }
 
-        const fullContent = el.querySelector('.reasoning-content');
-        if (fullContent) {
-            fullContent.textContent = text;
-        }
+        // 流式期间不逐帧写入全文，在 finalize 时一次性回填。
     }
 
     /**
@@ -939,6 +972,14 @@ class TaskView extends HTMLElement {
 
         // Flush any deferred streaming text so the finalized block is complete.
         TaskView.flushReasoningPreview(el);
+
+        if (el._reasoningFullStale && el._reasoningFullText !== undefined) {
+            const fullContent = el.querySelector('.reasoning-content');
+            if (fullContent) fullContent.textContent = el._reasoningFullText;
+            const bubbleContent = el.querySelector('.reasoning-bubble-content');
+            if (bubbleContent) bubbleContent.textContent = el._reasoningFullText;
+            el._reasoningFullStale = false;
+        }
 
         // Clear the per-second time interval
         if (el._reasoningTimeInterval) {
@@ -1042,17 +1083,18 @@ class TaskView extends HTMLElement {
                         <span class="reasoning-time text-xs text-slate-400 shrink-0">${timeText}</span>
                     </div>
                     <div class="reasoning-bubble compact-scroll${bubbleHiddenClass}">
-                        <div class="reasoning-bubble-content text-[11px] leading-relaxed whitespace-pre-wrap"${streamingAttribute}>${escaped}</div>
+                        <div class="reasoning-bubble-content text-[11px] leading-relaxed whitespace-pre-wrap"${streamingAttribute}>${escapeHtml(isStreaming ? sliceReasoningPreviewTail(rendered) : rendered || '')}</div>
                     </div>
                 </div>`;
         }
 
         const previewHtml =
             isStreaming && !expanded
-                ? `<div class="reasoning-preview-area"><div class="reasoning-preview-content px-3 pb-1.5 text-slate-500 text-[11px] leading-relaxed whitespace-pre-wrap"${streamingAttribute}>${escaped}</div></div>`
+                ? `<div class="reasoning-preview-area"><div class="reasoning-preview-content px-3 pb-1.5 text-slate-500 text-[11px] leading-relaxed whitespace-pre-wrap"${streamingAttribute}>${escapeHtml(sliceReasoningPreviewTail(rendered))}</div></div>`
                 : '';
         const fullStreamingAttribute = isStreaming ? ` data-streaming-part-index="${partIndex}"` : '';
         const wrapperExpandedClass = expanded ? ' reasoning-expanded reasoning-content-visible' : '';
+        const fullText = isStreaming ? '' : escaped;
         return `
             <div class="reasoning-block-od od-inline-toolcall-container ${stateClass}${wrapperExpandedClass}"${timingAttribute}${disclosureAttribute}>
                 <div class="reasoning-header flex items-center gap-1.5 min-w-0 cursor-pointer select-none py-0.5">
@@ -1061,7 +1103,7 @@ class TaskView extends HTMLElement {
                     <span class="reasoning-time text-xs text-slate-400 shrink-0">${timeText}</span>
                 </div>
                 ${previewHtml}
-                <div class="reasoning-full-area" data-reasoning-scroll-key="${partIndex}"><div class="reasoning-content px-3 pb-2 text-slate-500 text-[11px] leading-relaxed whitespace-pre-wrap"${fullStreamingAttribute}>${escaped}</div></div>
+                <div class="reasoning-full-area" data-reasoning-scroll-key="${partIndex}"><div class="reasoning-content px-3 pb-2 text-slate-500 text-[11px] leading-relaxed whitespace-pre-wrap"${fullStreamingAttribute}>${fullText}</div></div>
             </div>`;
     }
 
@@ -1151,27 +1193,32 @@ class TaskView extends HTMLElement {
         });
     }
 
-    _renderProcessEntry(entry, messageId, disclosureState) {
+    _renderProcessEntry(entry, messageId, disclosureState, options = {}) {
         if (entry.type === 'reasoning') {
             const streaming = entry.part?.streaming === true;
-            const content = streaming ? entry.part?.text : entry.part?.rendered;
+            const content = streaming ? (entry.part?.text ?? entry.part?.rendered) : entry.part?.rendered;
             const disclosureKey = `${messageId}-reasoning-${entry.partIndex}`;
             return TaskView.createReasoningPartHtml(
                 content,
                 streaming,
                 entry.partIndex,
                 entry.part?.elapsedSeconds,
-                disclosureState?.get(disclosureKey),
+                options.forceReasoningCollapsed === true
+                    ? false
+                    : options.forceExpanded === true
+                      ? true
+                      : disclosureState?.get(disclosureKey),
                 disclosureKey
             );
         }
         return String(entry.part?.rendered || '');
     }
 
-    _renderProcessItem(item, messageId, disclosureState) {
+    _renderProcessItem(item, messageId, disclosureState, options = {}) {
         const processKey = `${messageId}-${item.key}`;
         const stored = disclosureState?.get(processKey);
-        const expanded = stored === undefined ? getDefaultExpanded(guiOutputMode) : stored;
+        const expanded =
+            options.forceExpanded === true || (stored === undefined ? getDefaultExpanded(guiOutputMode) : stored);
         const detailId = `od-${this.widget_id}-${processKey}-detail`;
         const summary = TaskView._processSummary(item);
         return `
@@ -1189,7 +1236,9 @@ class TaskView extends HTMLElement {
                     </span>
                 </button>
                 <div id="${escapeHtml(detailId)}" class="od-process-detail${expanded ? ' is-open' : ''}">
-                    ${item.entries.map((entry) => this._renderProcessEntry(entry, messageId, disclosureState)).join('')}
+                    ${item.entries
+                        .map((entry) => this._renderProcessEntry(entry, messageId, disclosureState, options))
+                        .join('')}
                 </div>
             </section>`;
     }
@@ -1233,21 +1282,38 @@ class TaskView extends HTMLElement {
     _renderAssistantOutputHtml(parts, options = {}) {
         const normalizedParts = Array.isArray(parts) ? parts : [];
         const messageId = String(options.messageId || 'assistant');
+        const isInterrupted = options.isInterrupted === true;
+        const preserveProcessTimeline = options.preserveProcessTimeline === true;
         const showRunningDetails =
-            options.showRunningDetails === true || this._assistantRunningDetails.get(messageId) === true;
-        const items = buildAssistantOutputItems(normalizedParts, { isRunning: Boolean(options.isRunning) });
+            options.showRunningDetails === true ||
+            this._assistantRunningDetails.get(messageId) === true ||
+            normalizedParts.some(
+                (part) =>
+                    part?.type === 'tool_call' &&
+                    String(part.rendered || '').trim() &&
+                    (!Array.isArray(part.toolcalls) || part.toolcalls.length === 0)
+            );
+        const items = buildAssistantOutputItems(normalizedParts, {
+            isRunning: Boolean(options.isRunning),
+            isInterrupted
+        });
         const visibleItems = getVisibleAssistantOutputItems(items, {
             mode: guiOutputMode,
             isRunning: Boolean(options.isRunning),
             showRunningDetails,
             parts: normalizedParts
         });
+        const finalItem = visibleItems.find((item) => item.type === 'final');
+        const processItems = visibleItems.filter((item) => item !== finalItem);
+        const hasProcessItem = processItems.some((item) => item.type === 'process');
         const renderItem = (item, showFinalLabel = true, runningProcessDetails = false) => {
             if (item.type === 'process') {
                 if (runningProcessDetails) {
                     return this._renderRunningProcessDetails(item, messageId, options.disclosureState);
                 }
-                return this._renderProcessItem(item, messageId, options.disclosureState);
+                return this._renderProcessItem(item, messageId, options.disclosureState, {
+                    forceReasoningCollapsed: preserveProcessTimeline
+                });
             }
             if (item.type === 'status') {
                 return this._renderRunningStatus(item, messageId, {
@@ -1255,25 +1321,34 @@ class TaskView extends HTMLElement {
                 });
             }
             if (item.type === 'final') {
-                const label = showFinalLabel
-                    ? `<div class="od-final-result-label">${taskViewT('renderer.taskview.output.finalResult')}</div>`
-                    : '';
+                const label =
+                    showFinalLabel && guiOutputMode !== 'verbose'
+                        ? `<div class="od-final-result-label">${taskViewT('renderer.taskview.output.finalResult')}</div>`
+                        : '';
                 const content = item.part.rendered
                     ? item.part.rendered
                     : `<div class="od-streaming-text">${renderSafeMarkdown(String(item.part.text || ''))}</div>`;
-                return `${label}<div class="od-final-result markdown-body">${content}</div>`;
+                const dividerClass =
+                    guiOutputMode === 'verbose' && hasProcessItem ? ' od-final-result-with-divider' : '';
+                return `${label}<div class="od-final-result markdown-body${dividerClass}">${content}</div>`;
             }
             const className = item.type === 'error' ? 'od-stage-body od-stage-error' : 'od-stage-body';
             const content = item.part.streaming
-                ? `<div class="od-streaming-text" data-streaming-part-index="${item.partIndex}">${renderSafeMarkdown(String(item.part.text || ''))}</div>`
+                ? `<div class="od-streaming-text" data-streaming-part-index="${item.partIndex}">${
+                      item.part.rendered || renderSafeMarkdown(String(item.part.text || ''))
+                  }</div>`
                 : item.part.rendered || '';
             return `<div class="${className} markdown-body" data-output-part-index="${item.partIndex}">${content}</div>`;
         };
 
         let html;
-        const finalItem = visibleItems.find((item) => item.type === 'final');
-        const processItems = visibleItems.filter((item) => item !== finalItem);
-        if (guiOutputMode === 'minimal' && !options.isRunning && finalItem && processItems.length > 0) {
+        if (
+            guiOutputMode === 'minimal' &&
+            !options.isRunning &&
+            !preserveProcessTimeline &&
+            finalItem &&
+            processItems.length > 0
+        ) {
             const disclosureKey = `${messageId}-completed-process`;
             const expanded = options.disclosureState?.get(disclosureKey) === true;
             const detailId = `od-${this.widget_id}-${disclosureKey}-detail`;
@@ -1309,17 +1384,25 @@ class TaskView extends HTMLElement {
     _rememberAssistantOutput(messageId, parts, options = {}) {
         this._assistantPartsByMessage.set(messageId, [...parts]);
         this._assistantRenderStateByMessage.set(messageId, {
-            isRunning: options.isRunning === true
+            isRunning: options.isRunning === true,
+            isInterrupted: options.isInterrupted === true
         });
+    }
+
+    _shouldPreserveInterruptedProcess(messageId) {
+        return this._stopRequestedByUser === true && this._interruptedAssistantMessageId === messageId;
     }
 
     renderAssistantMessage(assistant_message, isLast = false, options = {}) {
         this._rememberAssistantOutput(assistant_message.message_id, assistant_message.content, {
-            isRunning: options.isRunning
+            isRunning: options.isRunning,
+            isInterrupted: options.isInterrupted
         });
         const content = this._renderAssistantOutputHtml(assistant_message.content, {
             isRunning: Boolean(options.isRunning),
-            messageId: assistant_message.message_id
+            messageId: assistant_message.message_id,
+            isInterrupted: options.isInterrupted === true,
+            preserveProcessTimeline: options.preserveProcessTimeline === true
         });
         const usageHtml = isLast ? TaskView.formatUsageHtml(assistant_message.usage, this._modelContextSize) : '';
         const metaRowHtml = TaskView.buildMsgMetaRow(
@@ -1395,7 +1478,9 @@ class TaskView extends HTMLElement {
                 if (!Array.isArray(message.content) || message.content.length === 0) continue;
                 htmlParts.push(
                     this.renderAssistantMessage(message, i === usageAssistantIdx, {
-                        isRunning: i === options.runningAssistantIdx
+                        isRunning: i === options.runningAssistantIdx,
+                        isInterrupted: options.interruptedAssistantMessageId === message.message_id,
+                        preserveProcessTimeline: options.interruptedAssistantMessageId === message.message_id
                     })
                 );
             } else if (TaskView.isCompactBoundaryMessage(message)) {
@@ -1415,6 +1500,7 @@ class TaskView extends HTMLElement {
     }
 
     _renderInitialHistoryWindow(messages, options = {}) {
+        this._navigationHistorySource = null;
         this._historyMessages = Array.isArray(messages) ? messages : [];
         this._historyGoalEvaluationRecords = getTaskGoalEvaluationRecords(options.goal, options.goalFinalSnapshots);
         this._historyRenderStartIndex = TaskView.findHistoryBatchStart(
@@ -1436,7 +1522,8 @@ class TaskView extends HTMLElement {
             this._renderHistoryRangeToHtml(this._historyRenderStartIndex, this._historyMessages.length, {
                 markRenderedUserParts: true,
                 usageAssistantIdx: options.usageAssistantIdx,
-                runningAssistantIdx
+                runningAssistantIdx,
+                interruptedAssistantMessageId: options.interruptedAssistantMessageId
             })
         ];
         const unanchoredGoalEvaluationHtml = renderGoalEvaluationRecordsHtml(
@@ -1478,6 +1565,7 @@ class TaskView extends HTMLElement {
         }
         enhanceCodeBlocks(historyContainer);
         enhanceToolPreviewCards(historyContainer);
+        renderMermaidBlocks(historyContainer);
         this._syncReasoningTimers(historyContainer);
         this._syncPendingGoalEditToArtifacts();
     }
@@ -1490,8 +1578,9 @@ class TaskView extends HTMLElement {
         if (nextStartIndex >= previousStartIndex) return false;
 
         const historyContainer = this.getHistoryContainer();
-        const previousScrollHeight = historyContainer.scrollHeight;
-        const previousScrollTop = historyContainer.scrollTop;
+        const preserveScrollPosition = options.preserveScrollPosition !== false;
+        const previousScrollHeight = preserveScrollPosition ? historyContainer.scrollHeight : 0;
+        const previousScrollTop = preserveScrollPosition ? historyContainer.scrollTop : 0;
 
         this._loadingOlderHistory = true;
         try {
@@ -1509,10 +1598,11 @@ class TaskView extends HTMLElement {
                 for (const element of insertedElements) {
                     enhanceCodeBlocks(element);
                     enhanceToolPreviewCards(element);
+                    renderMermaidBlocks(element);
                 }
             }
 
-            if (options.preserveScrollPosition !== false) {
+            if (preserveScrollPosition) {
                 const scrollDelta = historyContainer.scrollHeight - previousScrollHeight;
                 historyContainer.scrollTop = previousScrollTop + scrollDelta;
             }
@@ -1555,6 +1645,8 @@ class TaskView extends HTMLElement {
     }
 
     _applyHiddenUserProgressToHistory(progress) {
+        this._navigationHistorySource = null;
+        this._chatNavigation?.refresh();
         const index = this._getHistoryMessageIndexById(progress.message_id);
         if (index < 0) return;
         const message = this._historyMessages[index];
@@ -1576,6 +1668,8 @@ class TaskView extends HTMLElement {
     }
 
     _applyHiddenUserReplaceToHistory(progress) {
+        this._navigationHistorySource = null;
+        this._chatNavigation?.refresh();
         const index = this._getHistoryMessageIndexById(progress.message_id);
         if (index < 0) return;
         const message = this._historyMessages[index];
@@ -1590,6 +1684,8 @@ class TaskView extends HTMLElement {
     }
 
     _applyHiddenAssistantProgressToHistory(progress) {
+        this._navigationHistorySource = null;
+        this._chatNavigation?.refresh();
         const index = this._getHistoryMessageIndexById(progress.message_id);
         if (index < 0) return;
         const message = this._historyMessages[index];
@@ -1606,6 +1702,8 @@ class TaskView extends HTMLElement {
     }
 
     _applyHiddenAssistantReplaceToHistory(progress) {
+        this._navigationHistorySource = null;
+        this._chatNavigation?.refresh();
         const index = this._getHistoryMessageIndexById(progress.message_id);
         if (index < 0) return;
         const message = this._historyMessages[index];
@@ -1755,9 +1853,14 @@ class TaskView extends HTMLElement {
         const processScrollFollowState = this._captureProcessScrollFollowState(message_content);
 
         const isRunning = progress.task_status === 'running';
+        if (!isRunning && this._stopRequestedByUser) {
+            this._interruptedAssistantMessageId = progress.message_id;
+        }
+        const isInterrupted = !isRunning && this._shouldPreserveInterruptedProcess(progress.message_id);
         const parts = progress.parts;
         this._rememberAssistantOutput(progress.message_id, parts, {
-            isRunning
+            isRunning,
+            isInterrupted
         });
         const disclosureState = this._captureProcessDisclosureState(message_content);
         message_content
@@ -1766,10 +1869,13 @@ class TaskView extends HTMLElement {
         message_content.innerHTML = this._renderAssistantOutputHtml(parts, {
             isRunning,
             messageId: progress.message_id,
-            disclosureState
+            disclosureState,
+            isInterrupted,
+            preserveProcessTimeline: isInterrupted
         });
         enhanceCodeBlocks(message_content);
         enhanceToolPreviewCards(message_content);
+        renderMermaidBlocks(message_content, { defer: isRunning });
         this._syncReasoningTimers(message_content);
         this._restoreProcessScrollFollowState(message_content, processScrollFollowState);
 
@@ -1838,27 +1944,36 @@ class TaskView extends HTMLElement {
         const partIndex = getProgressPartIndex(progress);
         const parts = [...(this._assistantPartsByMessage.get(progress.message_id) || [])];
         const previousPart = parts[partIndex];
+        const isIncrementalTextPart =
+            (progress.last_part?.type === 'text' || progress.last_part?.type === 'reasoning') &&
+            progress.task_status === 'running';
         const canPatchStreamingPart =
-            progress.streaming === true &&
-            previousPart?.streaming === true &&
-            previousPart.type === progress.last_part.type;
-        parts[partIndex] =
-            progress.streaming === true ? { ...progress.last_part, streaming: true } : progress.last_part;
+            isIncrementalTextPart && previousPart?.streaming === true && previousPart.type === progress.last_part.type;
+        parts[partIndex] = isIncrementalTextPart ? { ...progress.last_part, streaming: true } : progress.last_part;
+        const isRunning = progress.task_status === 'running';
+        if (!isRunning && this._stopRequestedByUser) {
+            this._interruptedAssistantMessageId = progress.message_id;
+        }
+        const isInterrupted = !isRunning && this._shouldPreserveInterruptedProcess(progress.message_id);
         this._rememberAssistantOutput(progress.message_id, parts, {
-            isRunning: progress.task_status === 'running'
+            isRunning,
+            isInterrupted
         });
         let patchedStreamingPart = false;
         if (canPatchStreamingPart) {
             const targets = message_content.querySelectorAll(`[data-streaming-part-index="${partIndex}"]`);
             if (targets.length > 0) {
                 targets.forEach((target) => {
-                    const text = String(parts[partIndex].text || '');
+                    const text = String(parts[partIndex].text ?? parts[partIndex].rendered ?? '');
                     if (progress.last_part.type === 'reasoning') {
-                        target.textContent = text;
+                        const block = target.closest('.reasoning-block-od');
+                        if (block) TaskView.scheduleReasoningPreviewUpdate(block, text);
                         const scrollingContainer = target.closest('.reasoning-bubble, .reasoning-preview-area');
                         if (scrollingContainer) scrollingContainer.scrollTop = scrollingContainer.scrollHeight;
                     } else {
-                        TaskView.morphDomChildren(target, renderSafeMarkdown(text));
+                        const html =
+                            parts[partIndex].rendered || renderSafeMarkdown(String(parts[partIndex].text || ''));
+                        updateStreamingText(target, html);
                     }
                 });
                 patchedStreamingPart = true;
@@ -1873,13 +1988,15 @@ class TaskView extends HTMLElement {
             const outputHtml = this._renderAssistantOutputHtml(parts, {
                 isRunning: !isTerminal,
                 messageId: progress.message_id,
-                disclosureState
+                disclosureState,
+                isInterrupted,
+                preserveProcessTimeline: isInterrupted
             });
             if (isTerminal) {
-                // Completion changes the output hierarchy from a streaming timeline to a
-                // collapsed process plus final result. Preview enhancers may also have
-                // inserted nodes that are absent from outputHtml, so index-based morphing
-                // cannot safely reconcile this structural transition.
+                // Terminal updates may change the output hierarchy (for example, a normal
+                // completion collapses the process timeline, while a user interruption
+                // keeps it expanded). Preview enhancers may also have inserted nodes that
+                // are absent from outputHtml, so index-based morphing is unsafe here.
                 message_content
                     .querySelectorAll('.reasoning-block-od.reasoning-active')
                     .forEach((el) => TaskView.finalizeReasoningBlock(el));
@@ -1889,11 +2006,24 @@ class TaskView extends HTMLElement {
             }
         }
         if (!patchedStreamingPart) {
+            if (isRunning) {
+                message_content.querySelectorAll('[data-streaming-part-index]').forEach((target) => {
+                    const targetPart = parts[Number(target.dataset.streamingPartIndex)];
+                    if (targetPart?.type !== 'text') return;
+                    const html = targetPart.rendered || renderSafeMarkdown(String(targetPart.text || ''));
+                    updateStreamingText(target, html);
+                });
+            }
             message_content.querySelectorAll('.terminal-tool-scroll').forEach((el) => {
                 el.scrollTop = el.scrollHeight;
             });
             enhanceCodeBlocks(message_content);
             enhanceToolPreviewCards(message_content);
+            renderMermaidBlocks(message_content, { defer: isRunning });
+        }
+        message_content.querySelectorAll('.stream-cursor').forEach((el) => el.remove());
+        if (isRunning && progress.last_part.type === 'text') {
+            TaskView._appendStreamCursor(message_content.querySelector(`[data-streaming-part-index="${partIndex}"]`));
         }
         this._syncReasoningTimers(message_content);
         this._restoreProcessScrollFollowState(message_content, processScrollFollowState);
@@ -2099,6 +2229,40 @@ class TaskView extends HTMLElement {
         return null;
     }
 
+    _getConversationStops() {
+        const attachmentLabel = taskViewT('renderer.taskview.navigation.attachment');
+        if (this._navigationHistorySource !== this._historyMessages) {
+            this._navigationHistorySource = this._historyMessages;
+            this._navigationHistoryStops = buildConversationStops(
+                this._historyMessages,
+                shouldRenderUserHistoryMessage,
+                attachmentLabel,
+                getGoalSupplementDisplayText
+            );
+        }
+        return mergeRenderedConversationStops(
+            this._navigationHistoryStops,
+            this.getHistoryContainer(),
+            attachmentLabel
+        );
+    }
+
+    _navigateConversation(messageId) {
+        const history = this.getHistoryContainer();
+        if (!history || typeof messageId !== 'string' || messageId.length === 0) return;
+        if (!this._findGoalMessageTarget(messageId) && this._getHistoryMessageIndexById(messageId) < 0) return;
+        this.setAutoScrollingToBottom(false);
+        this._ensureHistoryLoadedThroughMessage(messageId);
+        const target = this._findGoalMessageTarget(messageId);
+        if (!target) return;
+        const requestedTop =
+            history.scrollTop + target.getBoundingClientRect().top - history.getBoundingClientRect().top - 20;
+        const top = Math.max(0, Math.min(requestedTop, history.scrollHeight - history.clientHeight));
+        this._conversationJumpInProgress = Math.abs(history.scrollTop - top) > 0.5;
+        if (!this._conversationJumpInProgress) return;
+        history.scrollTo({ top, behavior: 'instant' });
+    }
+
     _scrollToGoalMessage(messageId, options = {}) {
         const target = this._findGoalMessageTarget(messageId);
         if (!target) return false;
@@ -2231,6 +2395,7 @@ class TaskView extends HTMLElement {
     };
 
     async reload() {
+        this._assistantProgressBuffer.clear();
         this._reloading = true;
         const version = ++this._reloadVersion;
         let shouldAutoSendQueuedMessage = false;
@@ -2241,6 +2406,12 @@ class TaskView extends HTMLElement {
 
             const previousStatus = this.task_status;
             this.task_status = task_state.task_status || 'waiting';
+            this._stopRequestedByUser = task_state.stop_requested_by_user === true;
+            this._interruptedAssistantMessageId = this._stopRequestedByUser
+                ? [...(task_state.chat_context?.messages || [])]
+                      .reverse()
+                      .find((message) => message?.role === 'assistant')?.message_id || null
+                : null;
             if (this.task_status === 'running') {
                 this._cancelBrowserIdleTimer();
             }
@@ -2278,6 +2449,7 @@ class TaskView extends HTMLElement {
                     },
                     taskViewT('workspace.taskLabel')
                 );
+                this._syncInputTaskWorkspace();
                 // 任务工作空间加载完成后同步刷新右边栏，避免首次打开时显示全局工作空间
                 if (artifacts && typeof artifacts.refreshWorkspace === 'function') {
                     artifacts.refreshWorkspace(this._taskWorkspace);
@@ -2338,7 +2510,8 @@ class TaskView extends HTMLElement {
             this._renderInitialHistoryWindow(messages, {
                 goal: task_state.goal,
                 goalFinalSnapshots: task_state.goal_final_snapshots,
-                usageAssistantIdx
+                usageAssistantIdx,
+                interruptedAssistantMessageId: this._interruptedAssistantMessageId
             });
             if (isWaitingForGoalEditAssistant) {
                 this._showWaitingAssistantPlaceholder({ force: true });
@@ -2702,10 +2875,14 @@ class TaskView extends HTMLElement {
             if (this.task_status === 'running') {
                 inputWidget.setDisabled(true);
                 inputWidget.setStopMode(true, async () => {
+                    this._stopRequestedByUser = true;
                     try {
                         if (this._hasActiveGoal()) {
                             const stopped = await this._stopActiveGoal();
-                            if (!stopped) return;
+                            if (!stopped) {
+                                this._stopRequestedByUser = false;
+                                return;
+                            }
                         } else {
                             await window.taskManagerAPI.stopTask(this.task_id);
                         }
@@ -2725,6 +2902,7 @@ class TaskView extends HTMLElement {
                             this._autoSendQueueMessages();
                         }
                     } catch (error) {
+                        this._stopRequestedByUser = false;
                         console.error('Failed to stop task:', error);
                     }
                 });
@@ -2773,6 +2951,23 @@ class TaskView extends HTMLElement {
         this._updateMessageQueuePanel();
     }
 
+    /** 将队列消息移动到指定位置，后续自动发送沿用此顺序。 */
+    reorderMessageQueue(id, targetIndex) {
+        const index = this.messageQueue.findIndex((item) => item.id === id);
+        if (
+            index < 0 ||
+            !Number.isInteger(targetIndex) ||
+            targetIndex < 0 ||
+            targetIndex >= this.messageQueue.length ||
+            index === targetIndex
+        ) {
+            return;
+        }
+        const [item] = this.messageQueue.splice(index, 1);
+        this.messageQueue.splice(targetIndex, 0, item);
+        this._updateMessageQueuePanel();
+    }
+
     /**
      * 结束所有活跃 reasoning 块的计时并清理流式残留状态
      * （等待占位、usage spinner、流式光标、最后一条 assistant 消息的元信息行）。
@@ -2782,6 +2977,7 @@ class TaskView extends HTMLElement {
      * 结束分支被 _handleTaskStatusUpdate 短路跳过、活跃 reasoning 块永不 finalize。
      */
     _cleanupStreamingState(timestamp = Date.now()) {
+        this._assistantProgressBuffer.flush();
         const historyContainer = this.getHistoryContainer();
         if (!historyContainer) return;
         // 完成所有活跃 reasoning 块的计时（清除每秒计时器、定格耗时）
@@ -2836,6 +3032,8 @@ class TaskView extends HTMLElement {
 
         this._immediateQueueSending = true;
         this.removeFromMessageQueue(id);
+        this._stopRequestedByUser = false;
+        this._interruptedAssistantMessageId = null;
 
         // 立即锁定并滚动到底部，及时展示即将发出的新消息
         this.forceScrollToEnd();
@@ -2921,6 +3119,8 @@ class TaskView extends HTMLElement {
 
         const item = this.messageQueue.shift();
         this._updateMessageQueuePanel();
+        this._stopRequestedByUser = false;
+        this._interruptedAssistantMessageId = null;
 
         // 立即同步状态为 running，防止用户在 submitMessage 异步完成前
         // 通过正常 submit 路径再次发送消息，造成竞态
@@ -2962,6 +3162,10 @@ class TaskView extends HTMLElement {
 
         const wasRunning = this.task_status === 'running';
         this.task_status = nextStatus;
+        if (nextStatus === 'running') {
+            this._stopRequestedByUser = false;
+            this._interruptedAssistantMessageId = null;
+        }
         this.emitTaskStatusChanged(this.task_status);
         this._syncArtifactsTaskStatus();
         this.updateStopButtonVisibility();
@@ -2986,6 +3190,7 @@ class TaskView extends HTMLElement {
     }
 
     emitTaskStatusChanged(status) {
+        this.toggleAttribute('streaming', status === 'running');
         this.dispatchEvent(
             new CustomEvent('task-status-changed', {
                 detail: {
@@ -3201,6 +3406,12 @@ class TaskView extends HTMLElement {
                 const sidebar = this._getRightSidebarEl();
                 if (!sidebar || typeof sidebar.browserGetActiveTabUrl !== 'function') return '';
                 return sidebar.browserGetActiveTabUrl();
+            },
+            onVisibilityChanged: (visible) => {
+                const sidebar = this._getRightSidebarEl();
+                if (sidebar && typeof sidebar.browserSetViewportFixed === 'function') {
+                    sidebar.browserSetViewportFixed(visible);
+                }
             }
         });
     }
@@ -3313,7 +3524,7 @@ class TaskView extends HTMLElement {
         if (!target) return;
         e.preventDefault();
         e.stopPropagation();
-        const filePath = target.dataset.openEditor;
+        const filePath = normalizeDriveRootPath(target.dataset.openEditor || '');
         if (!filePath) return;
         const lineAttr = target.dataset.editorLine;
         const line = lineAttr ? parseInt(lineAttr, 10) : undefined;
@@ -3458,6 +3669,7 @@ class TaskView extends HTMLElement {
      */
     _openFileContextMenu(filePath, x, y) {
         this._dismissFilePillContextMenu();
+        filePath = normalizeDriveRootPath(filePath);
 
         const dark =
             this.dataset.theme === 'dark' ||
@@ -3655,13 +3867,16 @@ class TaskView extends HTMLElement {
             const outputHtml = this._renderAssistantOutputHtml(parts, {
                 isRunning: renderState.isRunning,
                 messageId,
-                disclosureState
+                disclosureState,
+                isInterrupted: renderState.isInterrupted === true,
+                preserveProcessTimeline: renderState.isInterrupted === true
             });
             if (messageContent.innerHTML !== outputHtml) {
                 TaskView.morphDomChildren(messageContent, outputHtml);
             }
             enhanceCodeBlocks(messageContent);
             enhanceToolPreviewCards(messageContent);
+            renderMermaidBlocks(messageContent);
             this._syncReasoningTimers(messageContent);
         }
 
@@ -3714,6 +3929,7 @@ class TaskView extends HTMLElement {
             }
             enhanceCodeBlocks(messageContent);
             enhanceToolPreviewCards(messageContent);
+            renderMermaidBlocks(messageContent, { defer: true });
             return;
         }
         const processToggle = e.target.closest('[data-process-toggle]');
@@ -3783,12 +3999,49 @@ class TaskView extends HTMLElement {
     /**
      * 公开方法：在当前任务的右侧工作空间中打开文件。
      */
-    openFileInSidebar(filePath, line, onSwitchBlocked) {
+    async openFileInSidebar(filePath, line, onSwitchBlocked) {
+        filePath = normalizeDriveRootPath(filePath);
+        try {
+            const exists = await window.fsAPI?.fileExists?.(filePath);
+            if (exists === false) {
+                this._showFileMissingModal(filePath);
+                return;
+            }
+        } catch {
+            // 存在性校验失败时不阻塞打开，由后续打开流程自行处理。
+        }
         this._forceExpandRightSidebar();
         const sidebar = this._getRightSidebarEl();
         if (sidebar && typeof sidebar.openFilePreview === 'function') {
             sidebar.openFilePreview(filePath, line, onSwitchBlocked);
         }
+    }
+
+    _showFileMissingModal(filePath) {
+        document.getElementById('od-file-missing-modal')?.remove();
+        const dark =
+            this.dataset.theme === 'dark' ||
+            document.documentElement.dataset.theme === 'dark' ||
+            document.body.dataset.theme === 'dark';
+        const overlay = document.createElement('div');
+        overlay.id = 'od-file-missing-modal';
+        overlay.className = 'fixed inset-0 z-[9999] flex items-center justify-center bg-black/40';
+        overlay.innerHTML = `
+            <div class="${dark ? 'bg-[#26262a] text-gray-100 ring-white/10' : 'bg-white text-gray-800 ring-black/10'} max-w-[460px] w-[88%] rounded-2xl p-5 shadow-2xl ring-1 flex flex-col gap-3">
+                <div class="flex items-center gap-2">
+                    <span class="text-red-500 flex-shrink-0"><svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"></circle><line x1="15" y1="9" x2="9" y2="15"></line><line x1="9" y1="9" x2="15" y2="15"></line></svg></span>
+                    <span class="font-semibold text-sm">${escapeHtml(taskViewT('renderer.taskview.file.missing.title'))}</span>
+                </div>
+                <div class="text-xs leading-relaxed ${dark ? 'text-gray-400' : 'text-gray-500'}">${escapeHtml(taskViewT('renderer.taskview.file.missing.hint'))}</div>
+                <div class="text-xs font-mono break-all rounded-lg px-3 py-2 ${dark ? 'bg-white/5 text-gray-300' : 'bg-gray-50 text-gray-600'}">${escapeHtml(filePath)}</div>
+                <div class="flex justify-end"><button type="button" class="od-file-missing-close text-xs font-medium rounded-lg px-3.5 py-1.5 ${dark ? 'bg-white/10 hover:bg-white/15 text-gray-200' : 'bg-gray-100 hover:bg-gray-200 text-gray-700'} transition-colors">${escapeHtml(taskViewT('renderer.taskview.file.missing.close'))}</button></div>
+            </div>`;
+        const close = () => overlay.remove();
+        overlay.addEventListener('click', (event) => {
+            if (event.target === overlay) close();
+        });
+        overlay.querySelector('.od-file-missing-close')?.addEventListener('click', close);
+        document.body.appendChild(overlay);
     }
 
     /**
@@ -4093,7 +4346,15 @@ class TaskView extends HTMLElement {
         const resizer = this.querySelector(`#task-${this.task_id}-resizer`);
         if (!rightSidebar) return;
 
-        if (this._rightSidebarExpanded) {
+        const pendingBrowserReveal =
+            typeof rightSidebar.applyPendingBrowserAutoReveal === 'function' &&
+            rightSidebar.applyPendingBrowserAutoReveal();
+        if (pendingBrowserReveal) {
+            this._forceExpandRightSidebar();
+            if (typeof rightSidebar.forceBrowserActive === 'function') {
+                rightSidebar.forceBrowserActive();
+            }
+        } else if (this._rightSidebarExpanded) {
             this._restoreRightSidebarFromOffscreen(rightSidebar);
             rightSidebar.style.display = '';
             rightSidebar.style.width = this._workspaceFocusLayout.getTargetPanelWidth();
@@ -4136,6 +4397,7 @@ class TaskView extends HTMLElement {
                     await window.taskManagerAPI.updateTaskWorkspace(this.task_id, selected);
                     this._taskWorkspace = selected;
                     this._toolbar.setToolbarSubtitle(selected, wsClickHandler, taskViewT('workspace.taskLabel'));
+                    this._syncInputTaskWorkspace();
                     document.dispatchEvent(new CustomEvent('workspace-changed'));
                 }
             };
@@ -4174,14 +4436,171 @@ class TaskView extends HTMLElement {
                 },
                 taskViewT('workspace.taskLabel')
             );
+            this._syncInputTaskWorkspace();
             document.dispatchEvent(new CustomEvent('workspace-changed'));
+        }
+    }
+
+    /** 将任务工作空间同步给输入框，使 @ 文件补全跟随当前任务。 */
+    _syncInputTaskWorkspace() {
+        const inputWidget = this.querySelector(`#task-${this.task_id}-input`);
+        if (inputWidget && typeof inputWidget.setTaskWorkspace === 'function') {
+            inputWidget.setTaskWorkspace(this._taskWorkspace);
+        }
+    }
+
+    _renderFullHistoryForExport() {
+        const messages = this._historyMessages;
+        let lastAssistantIdx = -1;
+        for (let i = 0; i < messages.length; i++) {
+            if (messages[i]?.role === 'assistant') lastAssistantIdx = i;
+        }
+        const htmlParts = [this._renderHistoryRangeToHtml(0, messages.length, { usageAssistantIdx: lastAssistantIdx })];
+        const unanchoredGoalEvaluationHtml = renderGoalEvaluationRecordsHtml(
+            getUnanchoredGoalEvaluationRecords(this._historyGoalEvaluationRecords, messages),
+            this.task_id,
+            taskViewT
+        );
+        if (unanchoredGoalEvaluationHtml) htmlParts.push(unanchoredGoalEvaluationHtml);
+        return htmlParts;
+    }
+
+    async _buildExportHeaderInfo() {
+        const formatDateTime = (value) => {
+            if (!value) return null;
+            const date = new Date(value);
+            if (Number.isNaN(date.getTime())) return null;
+            const pad = (number) => String(number).padStart(2, '0');
+            return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())} ${pad(date.getHours())}:${pad(date.getMinutes())}`;
+        };
+        const exportedAt = taskViewT('renderer.taskview.export.meta.exportedAt', {
+            time: formatDateTime(Date.now())
+        });
+        const labels = {
+            model: taskViewT('renderer.taskview.export.meta.model'),
+            startedAt: '',
+            exportedAt,
+            totalTokens: taskViewT('renderer.taskStatusWidget.totalTokens'),
+            inputTokens: taskViewT('renderer.taskStatusWidget.inputTokens'),
+            outputTokens: taskViewT('renderer.taskStatusWidget.outputTokens'),
+            toggleToLight: taskViewT('renderer.sidebar.themeToggleToLight'),
+            toggleToDark: taskViewT('renderer.sidebar.themeToggleToDark')
+        };
+        const header = { title: this._taskName || this.task_id || 'OpenDesk', exportedAt, labels };
+        try {
+            const info = await window.taskManagerAPI.getTaskInfo(this.task_id);
+            if (info.model) header.model = info.model;
+            const startedAt = formatDateTime(info.started_at || info.created_at);
+            if (startedAt) {
+                header.startedAt = startedAt;
+                labels.startedAt = taskViewT('renderer.taskStatusWidget.startedAt', { time: startedAt });
+            }
+            const usage = info.usage_summary;
+            if (usage && typeof usage.total_tokens === 'number') {
+                header.usage = {
+                    total: usage.total_tokens,
+                    input: usage.input_tokens,
+                    output: usage.output_tokens
+                };
+            }
+        } catch (error) {
+            console.warn('Failed to load task info for export header:', error);
+        }
+        try {
+            const version = await window.settingAPI.getVersion();
+            if (version) header.generatedBy = taskViewT('renderer.taskview.export.meta.generatedBy', { version });
+        } catch (error) {
+            console.warn('Failed to load app version for export header:', error);
+        }
+        return header;
+    }
+
+    _openExportMenu(anchorEl) {
+        if (!anchorEl) return;
+        if (document.getElementById('od-taskview-export-menu') || this._exportMenuDismissHandler) {
+            this._dismissExportMenu();
+            return;
+        }
+        const dark =
+            this.dataset.theme === 'dark' ||
+            document.documentElement.dataset.theme === 'dark' ||
+            document.body.dataset.theme === 'dark';
+        const menu = document.createElement('div');
+        menu.id = 'od-taskview-export-menu';
+        menu.className = 'ctx-menu' + (dark ? ' ctx-menu-dark' : '');
+        menu.style.minWidth = '150px';
+        const items = [
+            { action: 'export-html', icon: EXPORT_WEBPAGE_SVG, label: taskViewT('renderer.taskview.export.menu.html') },
+            { action: 'export-json', icon: EXPORT_JSON_SVG, label: taskViewT('renderer.taskview.export.menu.json') }
+        ];
+        menu.innerHTML = items
+            .map(
+                (item) =>
+                    `<button class="ctx-item" data-action="${item.action}"><span class="ctx-icon-sm">${item.icon}</span><span class="ctx-label">${item.label}</span></button>`
+            )
+            .join('');
+        const rect = anchorEl.getBoundingClientRect();
+        menu.style.left = `${Math.max(8, rect.right - 150)}px`;
+        menu.style.top = `${rect.bottom + 6}px`;
+        document.body.appendChild(menu);
+        requestAnimationFrame(() => {
+            const margin = 8;
+            const menuRect = menu.getBoundingClientRect();
+            const left = Math.max(
+                margin,
+                Math.min(rect.right - menuRect.width, window.innerWidth - menuRect.width - margin)
+            );
+            let top = rect.bottom + 6;
+            if (top + menuRect.height > window.innerHeight - margin) {
+                top = Math.max(margin, rect.top - menuRect.height - 6);
+            }
+            menu.style.left = `${left}px`;
+            menu.style.top = `${top}px`;
+        });
+        menu.querySelector('[data-action="export-html"]').addEventListener('click', () => {
+            this._dismissExportMenu();
+            void this.exportTask();
+        });
+        menu.querySelector('[data-action="export-json"]').addEventListener('click', () => {
+            this._dismissExportMenu();
+            void this.exportTaskJson();
+        });
+        this._exportMenuDismissHandler = (event) => {
+            if (!menu.contains(event.target) && !anchorEl.contains(event.target)) this._dismissExportMenu();
+        };
+        document.addEventListener('mousedown', this._exportMenuDismissHandler);
+    }
+
+    _dismissExportMenu() {
+        document.getElementById('od-taskview-export-menu')?.remove();
+        if (this._exportMenuDismissHandler) {
+            document.removeEventListener('mousedown', this._exportMenuDismissHandler);
+            this._exportMenuDismissHandler = null;
+        }
+    }
+
+    async exportTaskJson() {
+        try {
+            const saveResult = await window.fsAPI.saveFile({
+                title: taskViewT('renderer.taskview.export.jsonTitle'),
+                defaultPath: `${this.task_id}.json`,
+                filters: [
+                    { name: 'JSON Files', extensions: ['json'] },
+                    { name: 'All Files', extensions: ['*'] }
+                ]
+            });
+            if (saveResult.canceled || !saveResult.filePath) return;
+            await window.taskManagerAPI.exportTaskJson(this.task_id, saveResult.filePath);
+        } catch (error) {
+            console.error('Failed to export task json:', error);
+            alert(taskViewT('renderer.taskview.export.failed', { message: error.message }));
         }
     }
 
     async exportTask() {
         try {
             const timestamp = new Date().toISOString().slice(0, 10);
-            const defaultFileName = `conversation-${timestamp}.html`;
+            const defaultFileName = `task-${this.task_id}-${timestamp}.html`;
 
             // 1. 显示保存文件对话框（Electron 会自动处理文件覆盖确认）
             const saveResult = await window.fsAPI.saveFile({
@@ -4198,9 +4617,18 @@ class TaskView extends HTMLElement {
             }
 
             const filePath = saveResult.filePath;
-
-            // 2. 保存文件
-            await window.taskManagerAPI.exportTask(this.task_id, filePath);
+            const chatHistory = this.getHistoryContainer();
+            if (!chatHistory) return;
+            const header = await this._buildExportHeaderInfo();
+            const { html, fontUrls } = buildTaskExportHtml({
+                taskName: header.title,
+                contentHtml: this._renderFullHistoryForExport(),
+                chatHistory,
+                doc: document,
+                reasoningCollapseLabel: taskViewT('reasoning.hide.content'),
+                header
+            });
+            await window.taskManagerAPI.saveExportHtml(filePath, html, fontUrls);
         } catch (error) {
             console.error('Failed to export task:', error);
             alert(taskViewT('renderer.taskview.export.failed', { message: error.message }));
@@ -4456,8 +4884,8 @@ class TaskView extends HTMLElement {
                         iconSvg: EXPORT_DOWNLOAD_SVG,
                         label: taskViewT('renderer.taskview.toolbar.export'),
                         expandLabel: true,
-                        action: () => {
-                            this.exportTask();
+                        action: (event) => {
+                            this._openExportMenu(event?.currentTarget);
                         }
                     },
                     {
@@ -4591,6 +5019,7 @@ class TaskView extends HTMLElement {
                     },
                     taskViewT('workspace.taskLabel')
                 );
+                this._syncInputTaskWorkspace();
                 // task-list 事件携带最新工作空间时，同步刷新右边栏
                 const taskSidebar = this.querySelector(`#task-${this.task_id}-artifacts`);
                 if (taskSidebar && typeof taskSidebar.refreshWorkspace === 'function') {
@@ -4636,6 +5065,7 @@ class TaskView extends HTMLElement {
                         return;
                     }
                     if (this.style.display === 'none' || this.hasAttribute('data-background')) {
+                        this._assistantProgressBuffer.clear();
                         this._handleTaskStatusUpdate(progress.task_status);
                         if (progress.type === 'goal_eval') {
                             this._handleGoalEvalProgress(progress, { renderToConversation: false });
@@ -4643,6 +5073,7 @@ class TaskView extends HTMLElement {
                         return;
                     }
 
+                    if (progress.type !== 'assistant') this._assistantProgressBuffer.flush();
                     const history_container = this.getHistoryContainer();
 
                     if (progress.type === 'user_replace') {
@@ -4683,7 +5114,7 @@ class TaskView extends HTMLElement {
                     } else if (progress.type === 'goal_eval') {
                         this._handleGoalEvalProgress(progress);
                     } else {
-                        this._renderAssistantProgress(progress, history_container);
+                        this._assistantProgressBuffer.push(progress);
                         // 有 assistant token 输出 → 移除过渡中的 goal supplement 卡片
                         this.resolvePendingGoalSupplements();
                         // 任务运行中且有 goal 时，节流刷新 goal 面板（token 进度条实时推进）。
@@ -4747,6 +5178,9 @@ class TaskView extends HTMLElement {
     }
 
     disconnectedCallback() {
+        this._assistantProgressBuffer.clear();
+        this._chatNavigation?.destroy();
+        this._chatNavigation = null;
         this._connectionEpoch += 1;
         this._reloadVersion += 1;
         this._reloading = false;
@@ -4852,7 +5286,7 @@ class TaskView extends HTMLElement {
 
     _renderEmbedded() {
         this.innerHTML = `
-        <div class="bg-gray-30 h-full flex flex-col">
+        <div class="bg-gray-30 h-full flex flex-col" data-agent-input-height-reference>
             <div class="relative flex-1 overflow-hidden min-h-0">
                 <div id="taskview-chat-history" class="w-full h-full overflow-y-auto px-3 pt-3"></div>
                 <!-- 滚动控制按钮组 -->
@@ -4905,6 +5339,9 @@ class TaskView extends HTMLElement {
     }
 
     render() {
+        this._conversationJumpInProgress = false;
+        this._chatNavigation?.destroy();
+        this._chatNavigation = null;
         if (this.isEmbedded) {
             this._renderEmbedded();
             return;
@@ -4914,7 +5351,7 @@ class TaskView extends HTMLElement {
         <div class="bg-gray-30 h-full flex flex-col">
             <header id="taskview-toolbar" class="w-full"></header>
             <div id="task-${this.task_id}-content-row" class="flex-1 flex flex-row min-h-0 overflow-hidden relative">
-                <div class="flex-1 flex flex-col min-w-0">
+                <div class="flex-1 flex flex-col min-w-0" data-agent-input-height-reference>
                     <div class="relative flex-1 overflow-hidden">
                         <!-- 对话历史区域 - 可滚动 -->
                         <div id="taskview-chat-history" class="w-full h-full overflow-y-auto px-3 pt-4">
@@ -5056,11 +5493,12 @@ class TaskView extends HTMLElement {
         // 为输入框添加事件监听器
         const input_widget = this.querySelector(`#task-${this.task_id}-input`);
         input_widget.taskId = this.task_id;
+        this._syncInputTaskWorkspace();
         input_widget.addEventListener('model-changed', async (event) => {
             const modelAlias = event.detail?.model;
             if (modelAlias) {
                 try {
-                    await window.taskManagerAPI.setTaskModel(this.task_id, modelAlias);
+                    await window.taskManagerAPI.setTaskModel(this.task_id, modelAlias, event.detail.reasoningEffort);
                 } catch (err) {
                     console.error('setTaskModel failed:', err);
                 }
@@ -5106,6 +5544,8 @@ class TaskView extends HTMLElement {
             }
 
             this.task_status = 'running';
+            this._stopRequestedByUser = false;
+            this._interruptedAssistantMessageId = null;
             this.emitTaskStatusChanged(this.task_status);
             this._syncArtifactsTaskStatus();
             this._cancelBrowserIdleTimer();
@@ -5139,13 +5579,25 @@ class TaskView extends HTMLElement {
             queuePanel.setCallbacks(
                 (id) => this.sendQueueMessageImmediately(id),
                 (item) => this.editQueueMessage(item),
-                (id) => this.removeFromMessageQueue(id)
+                (id) => this.removeFromMessageQueue(id),
+                (id, targetIndex) => this.reorderMessageQueue(id, targetIndex)
             );
         }
 
         const chatHistory = this.querySelector('#taskview-chat-history');
+        this._chatNavigation?.destroy();
+        this._chatNavigation = new ChatNavigation(chatHistory, {
+            navigate: (messageId) => this._navigateConversation(messageId),
+            translate: (key, params) => taskViewT(key, params),
+            refresh: () => this._getConversationStops()
+        });
+        this._chatNavigation.setStops(this._getConversationStops());
+        chatHistory.addEventListener('scrollend', () => {
+            this._conversationJumpInProgress = false;
+        });
         chatHistory.addEventListener('scroll', () => {
             if (this._programmaticScrolling) return;
+            if (this._conversationJumpInProgress) return;
             if (chatHistory.scrollTop <= TASKVIEW_HISTORY_TOP_LOAD_THRESHOLD_PX) {
                 this._loadOlderHistoryFromScroll();
             }
@@ -5153,6 +5605,7 @@ class TaskView extends HTMLElement {
             const distanceToBottom = Math.abs(chatHistory.scrollHeight - scrollBottom);
             // 使用更宽松的阈值避免因内容增长导致的误 detach
             if (distanceToBottom < 80) {
+                if (this._lastUserScrollDirection < 0 && this._hasRecentUserScrollIntent()) return;
                 if (!this.auto_scrolling_to_bottom) {
                     this.setAutoScrollingToBottom(true);
                 }
@@ -5174,14 +5627,13 @@ class TaskView extends HTMLElement {
                 // 忽略浏览器缩放/捏合手势（Ctrl/⌘ + 滚轮、触控板捏合），
                 // 缩放不应改变“锁定底部自动更新”的状态
                 if (e.ctrlKey || e.metaKey) return;
+                if (e.deltaY !== 0 && nestedScrollerConsumesWheel(chatHistory, e)) return;
                 if (e.deltaY !== 0) {
-                    this._markUserScrollIntent();
+                    this._markUserScrollIntent(Math.sign(e.deltaY));
                 }
                 // 向上滚动（deltaY < 0）→ 解锁；向下滚动到底部 → 重新锁定
                 if (e.deltaY < 0) {
-                    const scrollBottom = chatHistory.scrollTop + chatHistory.clientHeight;
-                    const distanceToBottom = Math.abs(chatHistory.scrollHeight - scrollBottom);
-                    if (distanceToBottom >= 80 && this.auto_scrolling_to_bottom) {
+                    if (chatHistory.scrollTop > 0 && this.auto_scrolling_to_bottom) {
                         this.setAutoScrollingToBottom(false);
                     }
                 } else if (e.deltaY > 0) {
@@ -5234,6 +5686,7 @@ class TaskView extends HTMLElement {
         this._historyScrollKeydownHandler = (e) => {
             if (e.ctrlKey || e.metaKey) return; // Ctrl/⌘+方向键为跳词，⌘+± 为缩放
             const target = e.target;
+            if (target?.closest?.('.od-chat-nav')) return;
             if (target && (target.tagName === 'TEXTAREA' || target.tagName === 'INPUT' || target.isContentEditable)) {
                 return;
             }

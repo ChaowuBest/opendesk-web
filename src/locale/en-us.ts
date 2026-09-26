@@ -1221,6 +1221,8 @@ export const enUs: Record<string, string> = {
     'reasoning.elapsed.seconds': 'Thought for ${seconds}s',
     'reasoning.elapsed.minutes': 'Thought for ${minutes}m ${seconds}s',
     'reasoning.elapsed.chars': ' · ${chars} tokens',
+    'reasoning.show.content': 'Show thinking',
+    'reasoning.hide.content': 'Hide',
     'reasoning.partial.hint': '…… (use /reason display full to show all thinking)',
     'display.level.minimal': 'Minimal display',
     'display.level.verbose': 'Detailed',

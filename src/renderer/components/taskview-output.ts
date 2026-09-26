@@ -78,7 +78,7 @@ function hasVisibleContent(part: GuiAssistantPart): boolean {
 
 export function buildAssistantOutputItems(
     parts: GuiAssistantPart[],
-    options: { isRunning: boolean }
+    options: { isRunning: boolean; isInterrupted?: boolean }
 ): GuiAssistantOutputItem[] {
     const items: GuiAssistantOutputItem[] = [];
     let entries: GuiProcessEntry[] = [];
@@ -140,7 +140,7 @@ export function buildAssistantOutputItems(
 
     flushProcess();
 
-    if (!options.isRunning) {
+    if (!options.isRunning && options.isInterrupted !== true) {
         for (let index = items.length - 1; index >= 0; index -= 1) {
             if (items[index].type === 'body') {
                 (items[index] as GuiBodyItem).type = 'final';

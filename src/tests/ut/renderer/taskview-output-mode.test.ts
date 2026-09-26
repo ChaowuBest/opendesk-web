@@ -61,7 +61,8 @@ describe('task-view GUI output modes', () => {
         }));
         await jest.unstable_mockModule('../../../renderer/components/previewer.ts', () => ({
             enhanceCodeBlocks: jest.fn(),
-            enhanceToolPreviewCards: jest.fn()
+            enhanceToolPreviewCards: jest.fn(),
+            renderMermaidBlocks: jest.fn()
         }));
 
         window.settingAPI = {
@@ -164,6 +165,30 @@ describe('task-view GUI output modes', () => {
         expect(view.querySelectorAll('.mainline-tool-card')).toHaveLength(30);
     });
 
+    test('minimal interrupted output keeps the preceding process timeline expanded', () => {
+        const view = createView();
+        view.task_id = 'task-interrupted-output';
+        view.innerHTML = '<div id="taskview-chat-history"></div>';
+        view._stopRequestedByUser = true;
+        view._interruptedAssistantMessageId = 'message-interrupted-output';
+
+        view.handleAssistantReplace({
+            task_status: 'stopped',
+            message_id: 'message-interrupted-output',
+            parts: transcript().slice(0, 6)
+        });
+
+        expect(view.querySelector('[data-completed-process-toggle]')).toBeNull();
+        expect(view.querySelectorAll('.od-process-segment')).toHaveLength(2);
+        view.querySelectorAll('.od-process-segment').forEach((segment: Element) => {
+            expect(segment.querySelector('[data-process-toggle]')?.getAttribute('aria-expanded')).toBe('false');
+            expect(segment.querySelector('.od-process-detail')?.classList.contains('is-open')).toBe(false);
+            expect(segment.querySelector('.reasoning-block-od')?.classList.contains('reasoning-expanded')).toBe(false);
+        });
+        expect(view.querySelector('.od-final-result')).toBeNull();
+        expect(view.querySelector('.od-stage-body')?.textContent).toContain('第一段正文');
+    });
+
     test('completed output safely renders Markdown text when rendered HTML is missing', () => {
         const view = createView();
         view.innerHTML = view.renderAssistantMessage({
@@ -200,6 +225,22 @@ describe('task-view GUI output modes', () => {
         });
         expect(view.querySelectorAll('.mainline-tool-card')).toHaveLength(30);
         expect(view.querySelector('.od-process-tool')).toBeNull();
+    });
+
+    test('verbose completed output omits the final result label and separates the final body', () => {
+        onSettingChanged?.({ locale: 'zh-CN', gui_config: { output_mode: 'verbose' } });
+        const view = createView();
+        view.innerHTML = view.renderAssistantMessage({
+            message_id: 'message-verbose-final-divider',
+            content: transcript(),
+            timestamp: Date.now()
+        });
+
+        expect(view.querySelector('.od-final-result-label')).toBeNull();
+        const finalResult = view.querySelector('.od-final-result');
+        expect(finalResult?.classList.contains('od-final-result-with-divider')).toBe(true);
+        expect(finalResult?.previousElementSibling?.classList.contains('od-process-segment')).toBe(true);
+        expect(taskViewStyles).toMatch(/\.od-final-result-with-divider\{[^}]*border-top:1pxsolidvar\(--od-border\);/);
     });
 
     test('output mode changes rerender mounted assistant output without full reload', () => {
@@ -742,7 +783,7 @@ describe('task-view GUI output modes', () => {
     });
 
     test('process details reuse mainline reasoning and tool card classes', () => {
-        expect(taskViewStyles).toMatch(/\.reasoning-block-od\.reasoning-full-area\{[^}]*max-height:0;/);
+        expect(taskViewStyles).toMatch(/\.reasoning-block-od\.reasoning-full-area\{[^}]*display:none;/);
         expect(taskViewStyles).not.toContain('.od-process-tool{');
         expect(taskViewStyles).not.toContain('.od-process-entry-detail{');
     });
