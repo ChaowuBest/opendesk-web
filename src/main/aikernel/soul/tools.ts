@@ -28,8 +28,7 @@ export class ListSoulsTool extends BaseTool<typeof ListSoulsArgsSchema> {
         super(
             'listSouls',
             '列出所有可用的人设及当前激活的人设。返回每个人设的 uid、昵称、描述和激活状态。',
-            ListSoulsArgsSchema,
-            'tools.soul.listSouls.name'
+            ListSoulsArgsSchema
         );
         this.setExecutor(this.execute_impl.bind(this));
     }
@@ -52,7 +51,7 @@ const GetSoulArgsSchema = z.object({
 
 export class GetSoulTool extends BaseTool<typeof GetSoulArgsSchema> {
     constructor() {
-        super('getSoul', '获取指定人设的完整内容（通过 uid 查找）', GetSoulArgsSchema, 'tools.soul.getSoul.name');
+        super('getSoul', '获取指定人设的完整内容（通过 uid 查找）', GetSoulArgsSchema);
         this.setExecutor(this.execute_impl.bind(this));
     }
 
@@ -86,8 +85,7 @@ export class CreateSoulTool extends BaseTool<typeof CreateSoulArgsSchema> {
         super(
             'createSoul',
             '创建一个全新的人设。注意：如果用户只是想修改现有人设，应该使用 updateSoul 而非本工具。',
-            CreateSoulArgsSchema,
-            'tools.soul.createSoul.name'
+            CreateSoulArgsSchema
         );
         this.setExecutor(this.execute_impl.bind(this));
     }
@@ -111,8 +109,7 @@ export class UpdateSoulTool extends BaseTool<typeof UpdateSoulArgsSchema> {
         super(
             'updateSoul',
             '修改一个已有的人设。可以更新昵称、描述或内容。这是修改人设的首选方式。',
-            UpdateSoulArgsSchema,
-            'tools.soul.updateSoul.name'
+            UpdateSoulArgsSchema
         );
         this.setExecutor(this.execute_impl.bind(this));
     }
@@ -134,7 +131,7 @@ const DeleteSoulArgsSchema = z.object({
 
 export class DeleteSoulTool extends BaseTool<typeof DeleteSoulArgsSchema> {
     constructor() {
-        super('deleteSoul', '删除一个人设（不能删除默认人设）', DeleteSoulArgsSchema, 'tools.soul.deleteSoul.name');
+        super('deleteSoul', '删除一个人设（不能删除默认人设）', DeleteSoulArgsSchema);
         this.setExecutor(this.execute_impl.bind(this));
     }
 
@@ -151,12 +148,7 @@ const SwitchSoulArgsSchema = z.object({
 
 export class SwitchSoulTool extends BaseTool<typeof SwitchSoulArgsSchema> {
     constructor() {
-        super(
-            'switchSoul',
-            '切换当前激活的人设。切换后在新会话中生效。',
-            SwitchSoulArgsSchema,
-            'tools.soul.switchSoul.name'
-        );
+        super('switchSoul', '切换当前激活的人设。切换后在新会话中生效。', SwitchSoulArgsSchema);
         this.setExecutor(this.execute_impl.bind(this));
     }
 
@@ -174,8 +166,7 @@ export class ResetDefaultSoulTool extends BaseTool<typeof ResetDefaultSoulArgsSc
         super(
             'resetDefaultSoul',
             '重置系统默认人设（uid=default）到初始状态。会覆盖用户对默认人设的任何修改。',
-            ResetDefaultSoulArgsSchema,
-            'tools.soul.resetDefaultSoul.name'
+            ResetDefaultSoulArgsSchema
         );
         this.setExecutor(this.execute_impl.bind(this));
     }

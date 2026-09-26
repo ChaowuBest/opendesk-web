@@ -25,8 +25,7 @@ export class AddSkillFromDirectoryTool extends BaseTool<typeof AddSkillFromDirec
         super(
             'addSkillFromDirectory',
             '从本地目录添加一个Skill。目录必须包含SKILL.md文件。添加成功后需要刷新才能生效。',
-            AddSkillFromDirectoryArgsSchema,
-            'tools.skillmgr.addSkillFromDirectory.name'
+            AddSkillFromDirectoryArgsSchema
         );
         this.skillApp = skillApp;
         this.executor = this.add.bind(this);
@@ -49,8 +48,7 @@ export class AddSkillFromUrlTool extends BaseTool<typeof AddSkillFromUrlArgsSche
         super(
             'addSkillFromUrl',
             '从URL下载并添加一个Skill。URL指向的文件可以是.zip等压缩包格式。添加成功后需要刷新才能生效。',
-            AddSkillFromUrlArgsSchema,
-            'tools.skillmgr.addSkillFromUrl.name'
+            AddSkillFromUrlArgsSchema
         );
         this.skillApp = skillApp;
         this.executor = this.add.bind(this);
@@ -73,8 +71,7 @@ export class SearchSkillFromRegistryTool extends BaseTool<typeof SearchSkillFrom
         super(
             'searchSkillFromRegistry',
             '按技能名称关键字从所有Skill Registry中搜索可安装技能，返回技能全名、安装量和Registry名称等信息。',
-            SearchSkillFromRegistryArgsSchema,
-            'tools.skillmgr.searchSkillFromRegistry.name'
+            SearchSkillFromRegistryArgsSchema
         );
         this.skillApp = skillApp;
         this.executor = this.search.bind(this);
@@ -99,8 +96,7 @@ export class AddSkillFromRegistryTool extends BaseTool<typeof AddSkillFromRegist
         super(
             'addSkillFromRegistry',
             '指定技能名称和Registry名称，从该Registry安装一个Skill。添加成功后需要刷新才能生效。',
-            AddSkillFromRegistryArgsSchema,
-            'tools.skillmgr.addSkillFromRegistry.name'
+            AddSkillFromRegistryArgsSchema
         );
         this.skillApp = skillApp;
         this.executor = this.add.bind(this);
@@ -118,12 +114,7 @@ export class ListSkillsTool extends BaseTool<typeof ListSkillsArgsSchema> {
     private skillApp: any;
 
     constructor(skillApp: any) {
-        super(
-            'listSkills',
-            '列出所有已安装的Skills及其详细信息，包括名称、描述、许可证等',
-            ListSkillsArgsSchema,
-            'tools.skillmgr.listSkills.name'
-        );
+        super('listSkills', '列出所有已安装的Skills及其详细信息，包括名称、描述、许可证等', ListSkillsArgsSchema);
         this.skillApp = skillApp;
         this.executor = this.list.bind(this);
     }
@@ -146,12 +137,7 @@ export class DeleteSkillsTool extends BaseTool<typeof DeleteSkillsArgsSchema> {
     private skillApp: any;
 
     constructor(skillApp: any) {
-        super(
-            'deleteSkills',
-            '批量删除指定的Skill。删除后需要刷新才能生效。',
-            DeleteSkillsArgsSchema,
-            'tools.skillmgr.deleteSkills.name'
-        );
+        super('deleteSkills', '批量删除指定的Skill。删除后需要刷新才能生效。', DeleteSkillsArgsSchema);
         this.skillApp = skillApp;
         this.executor = this.delete.bind(this);
     }
@@ -184,8 +170,7 @@ export class RefreshSkillsTool extends BaseTool<typeof RefreshSkillsArgsSchema> 
         super(
             'refreshSkills',
             '刷新所有Skills，重新加载并注册到AI内核。在添加或删除Skill后调用此工具。',
-            RefreshSkillsArgsSchema,
-            'tools.skillmgr.refreshSkills.name'
+            RefreshSkillsArgsSchema
         );
         this.skillApp = skillApp;
         this.executor = this.refresh.bind(this);
@@ -203,12 +188,7 @@ export class GetSkillsDirectoryTool extends BaseTool<typeof GetSkillsDirectoryAr
     private skillApp: any;
 
     constructor(skillApp: any) {
-        super(
-            'getSkillsDirectory',
-            '获取当前Skills的存储目录路径',
-            GetSkillsDirectoryArgsSchema,
-            'tools.skillmgr.getSkillsDirectory.name'
-        );
+        super('getSkillsDirectory', '获取当前Skills的存储目录路径', GetSkillsDirectoryArgsSchema);
         this.skillApp = skillApp;
         this.executor = this.get.bind(this);
     }

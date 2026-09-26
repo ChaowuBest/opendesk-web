@@ -41,12 +41,7 @@ export class ExaSearchTool extends BaseTool<typeof ExaSearchArgsSchema> {
     private apiKey: string;
 
     constructor(apiKey: string) {
-        super(
-            'ExaSearch',
-            '使用Exa搜索引擎搜索网页信息，返回搜索结果的标题、URL和摘要',
-            ExaSearchArgsSchema,
-            'search.exa.name'
-        );
+        super('ExaSearch', '使用Exa搜索引擎搜索网页信息，返回搜索结果的标题、URL和摘要', ExaSearchArgsSchema);
         this.apiKey = apiKey;
         this.setExecutor(this.search.bind(this));
     }

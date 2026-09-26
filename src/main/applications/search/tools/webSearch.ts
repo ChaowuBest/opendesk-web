@@ -23,9 +23,6 @@ import { TavilySearchTool } from './tavily';
 import { BochaSearchTool } from './bocha';
 import { ExaSearchTool } from './exa';
 import { BaiduSearchTool } from './baidu';
-import { t } from '../../../../locale/index.js';
-
-const WEB_SEARCH_DISPLAY_NAME_KEY = 'search.websearch.name';
 
 /** 所有 Web 搜索渠道的标识 */
 export type WebSearchChannel = 'tavily' | 'bing' | 'duckduckgo' | 'brave' | 'bocha' | 'exa' | 'baidu';
@@ -69,8 +66,7 @@ export class WebSearchTool extends BaseTool<typeof WebSearchArgsSchema> {
         super(
             'WebSearch',
             '使用搜索引擎搜索网页信息。返回搜索结果的标题、URL和摘要。当前使用的搜索引擎由用户配置决定。',
-            WebSearchArgsSchema,
-            WEB_SEARCH_DISPLAY_NAME_KEY
+            WebSearchArgsSchema
         );
         this.appConfig = appConfig;
         this.channel = appConfig.getEffectiveWebSearchChannel();
@@ -108,7 +104,7 @@ export class WebSearchTool extends BaseTool<typeof WebSearchArgsSchema> {
         const query = toolcall.args_object?.['query'] as string | undefined;
         return renderSearchToolCall({
             icon: 'fas fa-magnifying-glass',
-            title: t(WEB_SEARCH_DISPLAY_NAME_KEY),
+            title: `搜索 (${this.getChannelLabel()})`,
             toolcall,
             query,
             resultCountExtractor: extractResultCount
@@ -137,7 +133,7 @@ export class WebSearchTool extends BaseTool<typeof WebSearchArgsSchema> {
 
         return new Card({
             icon: '🔍',
-            title: t(WEB_SEARCH_DISPLAY_NAME_KEY),
+            title: `搜索 (${this.getChannelLabel()})`,
             status: statusDisplay(toolcall.status),
             body
         }).render(width);

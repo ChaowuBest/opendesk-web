@@ -80,8 +80,7 @@ export class AcademicSearchTool extends BaseTool<typeof AcademicSearchArgsSchema
         super(
             'AcademicSearch',
             '使用学术搜索引擎搜索学术论文。返回论文的标题、作者、摘要、发布日期等信息。支持arXiv和DBLP搜索。',
-            AcademicSearchArgsSchema,
-            'tools.search.AcademicSearch.name'
+            AcademicSearchArgsSchema
         );
         this.channel = channel;
         this.delegate = AcademicSearchTool.createDelegate(channel);

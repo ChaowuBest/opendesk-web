@@ -760,13 +760,13 @@ describe('TaskView chunk handling', () => {
         taskView.setOutputDisplayLevel('minimal');
         taskView.startStreaming();
         const toolGroup = new ToolCallMessagePart();
-        const todoWrite = createNamedToolPart(1, 'todomgr-TodoWrite').toolcalls[0];
-        todoWrite.display_name_key = 'tools.todoWrite.name';
-        const webSearch = createNamedToolPart(2, 'search-webSearch').toolcalls[0];
-        webSearch.display_name_key = 'search.websearch.name';
-        const readFile = createNamedToolPart(3, 'filemgr-readFile').toolcalls[0];
+        const readFile = createNamedToolPart(1, 'filemgr-readFile').toolcalls[0];
         readFile.display_name_key = 'filemgr.readFile.name';
-        toolGroup.toolcalls.push(todoWrite, webSearch, readFile);
+        const grepFiles = createNamedToolPart(2, 'filemgr-grepFiles').toolcalls[0];
+        grepFiles.display_name_key = 'filemgr.grep.name';
+        const addMemory = createNamedToolPart(3, 'memory-addMemory').toolcalls[0];
+        addMemory.display_name_key = 'tools.memory.add.name';
+        toolGroup.toolcalls.push(readFile, grepFiles, addMemory);
         const parts = [
             new ReasoningMessagePart('private reasoning', 'reasoning_content'),
             toolGroup,
@@ -787,11 +787,11 @@ describe('TaskView chunk handling', () => {
         chalk.level = 3;
         const rawOutput = taskView.render(100).join('\n');
         const output = stripAnsi(rawOutput);
-        expect(output).toContain('✓ 深度思考 · 使用了 更新任务计划、搜索网页 等 3个工具');
+        expect(output).toContain('✓ 深度思考 · 使用了 读取文件、内容搜索 等 3个工具');
         expect(output).not.toContain('4个工具');
         expect(output).not.toContain('已执行工具');
         expect(rawOutput).toContain(
-            `${chalk.greenBright('✓')} ${chalk.dim('深度思考 · 使用了 更新任务计划、搜索网页 等 3个工具')}`
+            `${chalk.greenBright('✓')} ${chalk.dim('深度思考 · 使用了 读取文件、内容搜索 等 3个工具')}`
         );
     });
 

@@ -23,6 +23,49 @@ const validationTranslations: Record<string, Record<string, string>> = {
     'en-US': enUs
 };
 
+const toolDisplayNamePrefixes: Record<string, readonly string[]> = {
+    filemgr: ['filemgr'],
+    interaction: ['tools'],
+    memory: ['tools.memory'],
+    planning: ['tools'],
+    search: ['search'],
+    'task-info': ['tools'],
+    user_portrait: ['tools.memory']
+};
+
+const toolDisplayNameAliases: Record<string, string> = {
+    'knowledgebase-operate:askKnowledgeBase': 'search.kb.ask.name',
+    'knowledgebase-operate:retrieveFromKnowledgeBase': 'search.kb.retrieve.name',
+    'mailbox:searchEmails': 'search.email.name'
+};
+
+function hasToolDisplayName(key: string): boolean {
+    return Boolean(validationTranslations['zh-CN'][key] && validationTranslations['en-US'][key]);
+}
+
+function resolveExistingToolDisplayNameKey(toolsetName: string, toolName: string): string | undefined {
+    const alias = toolDisplayNameAliases[toolsetName + ':' + toolName];
+    if (alias && hasToolDisplayName(alias)) return alias;
+
+    const prefixes = toolDisplayNamePrefixes[toolsetName] ?? [];
+    const stems = new Set([toolName, toolName.charAt(0).toLowerCase() + toolName.slice(1), toolName.toLowerCase()]);
+    for (const suffix of ['Files', 'Memory', 'Search']) {
+        if (toolName.endsWith(suffix) && toolName.length > suffix.length) {
+            const stem = toolName.slice(0, -suffix.length);
+            stems.add(stem);
+            stems.add(stem.charAt(0).toLowerCase() + stem.slice(1));
+        }
+    }
+
+    for (const prefix of prefixes) {
+        for (const stem of stems) {
+            const key = prefix + '.' + stem + '.name';
+            if (hasToolDisplayName(key)) return key;
+        }
+    }
+    return undefined;
+}
+
 function getToolValidationLocale(): string {
     const navigatorLanguages =
         typeof globalThis.navigator !== 'undefined' && Array.isArray(globalThis.navigator.languages)
@@ -440,6 +483,7 @@ export class BaseToolset<T extends BaseTool<any> = BaseTool<any>> {
      * Add a tool to the toolset
      */
     addTool(tool: T) {
+        tool.displayNameKey ??= resolveExistingToolDisplayNameKey(this.name, tool.name);
         this.tools.set(tool.name, tool);
     }
 

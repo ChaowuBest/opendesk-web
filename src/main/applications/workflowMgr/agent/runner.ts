@@ -69,8 +69,7 @@ class CompleteWorkflowAgentTool extends BaseTool<z.ZodType> {
         super(
             'CompleteWorkflowAgent',
             '完成当前 Workflow agent 步骤，并向 Workflow 脚本返回状态、摘要和结构化结果。',
-            createWorkflowAgentCompletionSchema(outputSchema),
-            'tools.workflowMgr.CompleteWorkflowAgent.name'
+            createWorkflowAgentCompletionSchema(outputSchema)
         );
         this.setUniversalExecutor(async (rawArgs, result, task) => {
             if (!task) {

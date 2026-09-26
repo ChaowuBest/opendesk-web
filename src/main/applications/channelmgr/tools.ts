@@ -40,8 +40,7 @@ export class ListPairingRequestsTool extends BaseTool<typeof ListPairingRequests
         super(
             'listPairingRequests',
             'List all pending pairing requests from external users. Shows user ID, display name, channel, and pairing code.',
-            ListPairingRequestsSchema,
-            'tools.channelmgr.listPairingRequests.name'
+            ListPairingRequestsSchema
         );
         this.setExecutor(this.run.bind(this));
     }
@@ -72,8 +71,7 @@ export class ApprovePairingTool extends BaseTool<typeof ApprovePairingSchema> {
         super(
             'approvePairing',
             'Approve a pending pairing request. The user will then be able to send messages that are routed to the agent.',
-            ApprovePairingSchema,
-            'tools.channelmgr.approvePairing.name'
+            ApprovePairingSchema
         );
         this.setExecutor(this.run.bind(this));
     }
@@ -106,8 +104,7 @@ export class RevokePairingTool extends BaseTool<typeof RevokePairingSchema> {
         super(
             'revokePairing',
             'Revoke an approved user or reject a pending pairing request. The user will no longer be able to send messages.',
-            RevokePairingSchema,
-            'tools.channelmgr.revokePairing.name'
+            RevokePairingSchema
         );
         this.setExecutor(this.run.bind(this));
     }
@@ -134,12 +131,7 @@ const ListApprovedUsersSchema = z.object({
 
 export class ListApprovedUsersTool extends BaseTool<typeof ListApprovedUsersSchema> {
     constructor() {
-        super(
-            'listApprovedUsers',
-            'List all approved/paired users across all channels.',
-            ListApprovedUsersSchema,
-            'tools.channelmgr.listApprovedUsers.name'
-        );
+        super('listApprovedUsers', 'List all approved/paired users across all channels.', ListApprovedUsersSchema);
         this.setExecutor(this.run.bind(this));
     }
 
@@ -167,8 +159,7 @@ export class ListChannelStatusTool extends BaseTool<typeof ListChannelStatusSche
         super(
             'listChannelStatus',
             'List all channel plugins and their current connection status.',
-            ListChannelStatusSchema,
-            'tools.channelmgr.listChannelStatus.name'
+            ListChannelStatusSchema
         );
         this.app = app;
         this.setExecutor(this.run.bind(this));
@@ -202,8 +193,7 @@ export class InstallChannelPluginTool extends BaseTool<typeof InstallChannelPlug
         super(
             'installChannelPlugin',
             'Install an OpenDesk channel plugin by local directory, .tgz file, URL or npm package name.',
-            InstallChannelPluginSchema,
-            'tools.channelmgr.installChannelPlugin.name'
+            InstallChannelPluginSchema
         );
         this.app = app;
         this.setExecutor(this.run.bind(this));
@@ -233,8 +223,7 @@ export class UninstallChannelPluginTool extends BaseTool<typeof UninstallChannel
         super(
             'uninstallChannelPlugin',
             'Uninstall a previously installed channel plugin by its ID.',
-            UninstallChannelPluginSchema,
-            'tools.channelmgr.uninstallChannelPlugin.name'
+            UninstallChannelPluginSchema
         );
         this.app = app;
         this.setExecutor(this.run.bind(this));
@@ -259,8 +248,7 @@ export class ListChannelPluginsTool extends BaseTool<typeof ListChannelPluginsSc
         super(
             'listChannelPlugins',
             'List all installed channel plugins with their status (enabled/disabled).',
-            ListChannelPluginsSchema,
-            'tools.channelmgr.listChannelPlugins.name'
+            ListChannelPluginsSchema
         );
         this.setExecutor(this.run.bind(this));
     }
@@ -291,8 +279,7 @@ export class ToggleChannelPluginTool extends BaseTool<typeof ToggleChannelPlugin
         super(
             'toggleChannelPlugin',
             'Enable or disable a channel plugin. Takes effect immediately.',
-            ToggleChannelPluginSchema,
-            'tools.channelmgr.toggleChannelPlugin.name'
+            ToggleChannelPluginSchema
         );
         this.app = app;
         this.setExecutor(this.run.bind(this));
@@ -325,8 +312,7 @@ export class SetChannelConfigTool extends BaseTool<typeof SetChannelConfigSchema
         super(
             'setChannelConfig',
             'Set the configuration for a channel plugin. The config will be saved to settings.json under applications.channelmgr.<channelId>.',
-            SetChannelConfigSchema,
-            'tools.channelmgr.setChannelConfig.name'
+            SetChannelConfigSchema
         );
         this.app = app;
         this.setExecutor(this.run.bind(this));
@@ -359,8 +345,7 @@ export class GetChannelConfigTool extends BaseTool<typeof GetChannelConfigSchema
         super(
             'getChannelConfig',
             'Get the configuration JSON for a specific channel plugin. Useful for debugging.',
-            GetChannelConfigSchema,
-            'tools.channelmgr.getChannelConfig.name'
+            GetChannelConfigSchema
         );
         this.app = app;
         this.setExecutor(this.run.bind(this));
@@ -410,8 +395,7 @@ export class LoginChannelTool extends BaseTool<typeof LoginChannelSchema> {
         super(
             'loginChannel',
             '触发消息渠道的登录流程。支持的 channelId：\n  - "weixin"：微信登录（扫码）\n  - "feishu"：飞书登录（扫码创建机器人）\n  - "whatsapp"：WhatsApp 登录（扫码）\n  - "zalouser"：Zalo 登录（扫码）\n登录成功后会返回结果。',
-            LoginChannelSchema,
-            'tools.channelmgr.loginChannel.name'
+            LoginChannelSchema
         );
         this.app = app;
         this.setUniversalExecutor(this.run.bind(this));
@@ -597,8 +581,7 @@ export class CreateFeishuBotTool extends BaseTool<typeof CreateFeishuBotSchema> 
         super(
             'createFeishuBot',
             '通过手机扫码一键创建飞书机器人。会在界面上生成二维码供用户使用飞书 App 扫描，扫码完成后自动创建飞书应用并返回 App ID、App Secret 和用户 Open ID。',
-            CreateFeishuBotSchema,
-            'tools.channelmgr.createFeishuBot.name'
+            CreateFeishuBotSchema
         );
         this.setUniversalExecutor(this.run.bind(this));
     }
@@ -868,8 +851,7 @@ export class SendFileTool extends BaseTool<typeof SendFileSchema> {
         super(
             'SendFile',
             '发送文件给用户。在消息渠道中该文件会作为附件发送，而非以文本形式发送文件内容。',
-            SendFileSchema,
-            'tools.channelmgr.SendFile.name'
+            SendFileSchema
         );
         this.setExecutor(this.run.bind(this));
     }

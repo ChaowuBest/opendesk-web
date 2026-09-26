@@ -60,8 +60,7 @@ export class GetGatewayStatusTool extends BaseTool<typeof GetGatewayStatusSchema
         super(
             'getDeviceGatewayStatus',
             'Get the status of the device gateway WebSocket server, including port, running state, and number of connected nodes.',
-            GetGatewayStatusSchema,
-            'tools.devicemgr.getDeviceGatewayStatus.name'
+            GetGatewayStatusSchema
         );
         this.app = app;
         this.setExecutor(this.run.bind(this));
@@ -100,8 +99,7 @@ export class ListConnectedDevicesTool extends BaseTool<typeof ListConnectedDevic
         super(
             'listConnectedDevices',
             'List all currently online/connected device nodes via the OpenClaw WebSocket gateway. Shows node ID, display name, platform, capabilities, and connection time.',
-            ListConnectedDevicesSchema,
-            'tools.devicemgr.listConnectedDevices.name'
+            ListConnectedDevicesSchema
         );
         this.app = app;
         this.setExecutor(this.run.bind(this));
@@ -148,8 +146,7 @@ export class ListPairedDevicesTool extends BaseTool<typeof ListPairedDevicesSche
         super(
             'listPairedDevices',
             'List all paired (approved) device nodes, including both online and offline ones.',
-            ListPairedDevicesSchema,
-            'tools.devicemgr.listPairedDevices.name'
+            ListPairedDevicesSchema
         );
         this.app = app;
         this.setExecutor(this.run.bind(this));
@@ -199,8 +196,7 @@ export class ListPendingPairingsTool extends BaseTool<typeof ListPendingPairings
         super(
             'listPendingDevicePairings',
             'List all pending device pairing requests waiting for approval.',
-            ListPendingPairingsSchema,
-            'tools.devicemgr.listPendingDevicePairings.name'
+            ListPendingPairingsSchema
         );
         this.app = app;
         this.setExecutor(this.run.bind(this));
@@ -246,8 +242,7 @@ export class ApproveDevicePairingTool extends BaseTool<typeof ApprovePairingSche
         super(
             'approveDevicePairing',
             'Approve a pending device pairing request. The device will receive a pairing token and can reconnect as an authenticated node.',
-            ApprovePairingSchema,
-            'tools.devicemgr.approveDevicePairing.name'
+            ApprovePairingSchema
         );
         this.app = app;
         this.setExecutor(this.run.bind(this));
@@ -274,12 +269,7 @@ export class RejectDevicePairingTool extends BaseTool<typeof RejectPairingSchema
     private app: DeviceMgrApplication;
 
     constructor(app: DeviceMgrApplication) {
-        super(
-            'rejectDevicePairing',
-            'Reject a pending device pairing request.',
-            RejectPairingSchema,
-            'tools.devicemgr.rejectDevicePairing.name'
-        );
+        super('rejectDevicePairing', 'Reject a pending device pairing request.', RejectPairingSchema);
         this.app = app;
         this.setExecutor(this.run.bind(this));
     }
@@ -313,8 +303,7 @@ export class InvokeDeviceCommandTool extends BaseTool<typeof InvokeDeviceCommand
         super(
             'invokeDeviceCommand',
             'Invoke a command on a connected device node. The device must be online and support the specified command. Common commands: camera.snap, canvas.navigate, screen.record, location.get, voice.record.',
-            InvokeDeviceCommandSchema,
-            'tools.devicemgr.invokeDeviceCommand.name'
+            InvokeDeviceCommandSchema
         );
         this.app = app;
         this.setExecutor(this.run.bind(this));

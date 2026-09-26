@@ -135,8 +135,7 @@ export class LoadWorkflowToolsTool extends BaseTool<typeof LoadWorkflowToolsSche
         super(
             LOAD_WORKFLOW_TOOLS_TOOL_NAME,
             '当用户要创建、查找、运行或停止工作流时，为当前 Task 加载对应的 Workflow 操作工具。',
-            LoadWorkflowToolsSchema,
-            'tools.workflowMgr.LoadWorkflowTools.name'
+            LoadWorkflowToolsSchema
         );
         this.setUniversalExecutor(async (_args, result, taskState) => {
             if (!taskState) {
@@ -159,8 +158,7 @@ export class AuthorWorkflowTool extends BaseTool<typeof AuthorWorkflowSchema> {
         super(
             'AuthorWorkflow',
             '读取当前 Task 中按时间顺序保留的用户真实原始输入，设计、生成并校验一个临时 JavaScript Workflow Definition。',
-            AuthorWorkflowSchema,
-            'tools.workflowMgr.AuthorWorkflow.name'
+            AuthorWorkflowSchema
         );
         this.setUniversalExecutor(async (_args, result, taskState) => {
             if (!taskState) {
@@ -272,8 +270,7 @@ export class ListWorkflowsTool extends BaseTool<typeof ListWorkflowsSchema> {
         super(
             'ListWorkflows',
             '列出当前 Task 临时、已保存和内置的 Workflow Definition，并返回来源、输入结构和准确调用方式。',
-            ListWorkflowsSchema,
-            'tools.workflowMgr.ListWorkflows.name'
+            ListWorkflowsSchema
         );
         this.setUniversalExecutor(async (_args, result, taskState) => {
             if (!taskState) {
@@ -299,8 +296,7 @@ export class RunWorkflowTool extends BaseTool<typeof RunWorkflowSchema> {
         super(
             'RunWorkflow',
             '根据准确 reference 和符合 inputSchema 的 input 对象创建一次异步 Workflow run，并返回启动回执。',
-            RunWorkflowSchema,
-            'tools.workflowMgr.RunWorkflow.name'
+            RunWorkflowSchema
         );
         this.setUniversalExecutor(async (args, result, taskState) => {
             if (!taskState) {
@@ -438,12 +434,7 @@ function toWorkflowListEntry(
 
 export class StopWorkflowTool extends BaseTool<typeof StopWorkflowSchema> {
     constructor(private readonly host: WorkflowToolHost) {
-        super(
-            'StopWorkflow',
-            '使用稳定的 run id 停止正在运行的 Workflow。',
-            StopWorkflowSchema,
-            'tools.workflowMgr.StopWorkflow.name'
-        );
+        super('StopWorkflow', '使用稳定的 run id 停止正在运行的 Workflow。', StopWorkflowSchema);
         this.setUniversalExecutor(async (args, result, taskState) => {
             if (!taskState) {
                 throw new Error('StopWorkflow 需要宿主 Task。');

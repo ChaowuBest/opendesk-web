@@ -139,7 +139,7 @@ const McpSearchToolsSchema = z.object({
 
 export class McpSearchToolsTool extends McpGatewayTool<typeof McpSearchToolsSchema> {
     constructor(private readonly tools: readonly McpToolInfo[]) {
-        super('mcpSearchTools', t('gateway.search.description'), McpSearchToolsSchema, 'tools.mcpmgr.mcpSearchTools.name');
+        super('mcpSearchTools', t('gateway.search.description'), McpSearchToolsSchema);
         this.renderToolCallOnError = true;
         this.setExecutor(this.handleExecute.bind(this));
     }
@@ -194,7 +194,7 @@ const McpGetToolSchema = z.object({
 
 export class McpGetToolTool extends McpGatewayTool<typeof McpGetToolSchema> {
     constructor(private readonly tools: readonly McpToolInfo[]) {
-        super('mcpGetTool', t('gateway.get.description'), McpGetToolSchema, 'tools.mcpmgr.mcpGetTool.name');
+        super('mcpGetTool', t('gateway.get.description'), McpGetToolSchema);
         this.renderToolCallOnError = true;
         this.setExecutor(this.handleExecute.bind(this));
     }
@@ -254,7 +254,7 @@ export class McpCallToolTool extends McpGatewayTool<typeof McpCallToolSchema> {
         private readonly tools: readonly McpToolInfo[],
         callTool: (tool: McpToolInfo, args: Record<string, unknown>) => Promise<string>
     ) {
-        super('mcpCallTool', t('gateway.call.description'), McpCallToolSchema, 'tools.mcpmgr.mcpCallTool.name');
+        super('mcpCallTool', t('gateway.call.description'), McpCallToolSchema);
         this.renderToolCallOnError = true;
         this.setExecutor(async (args) => {
             const tool = this.tools.find(

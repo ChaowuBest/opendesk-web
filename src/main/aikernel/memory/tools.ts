@@ -54,8 +54,7 @@ class AddMemoryTool extends BaseTool<typeof AddMemoryArgsSchema> {
         super(
             ADD_MEMORY_TOOL_NAME,
             '创建一条关键事实记忆片段并保存到 memory.json。只保存长期关键事实；用户身份、个人偏好、沟通风格和长期协作偏好应写入 user.md，而不是 memory.json。每条记忆应尽量原子化，不要承载多件独立事情。',
-            AddMemoryArgsSchema,
-            'tools.memory.add.name'
+            AddMemoryArgsSchema
         );
         this.setExecutor(this.handleExecute.bind(this));
     }
@@ -137,8 +136,7 @@ class RemoveMemoryTool extends BaseTool<typeof RemoveMemoryArgsSchema> {
         super(
             REMOVE_MEMORY_TOOL_NAME,
             '根据 UID 删除一条关键事实记忆片段。只会修改 memory.json。',
-            RemoveMemoryArgsSchema,
-            'tools.memory.remove.name'
+            RemoveMemoryArgsSchema
         );
         this.setExecutor(this.handleExecute.bind(this));
     }
@@ -205,8 +203,7 @@ class SearchMemoryTool extends BaseTool<typeof SearchMemoryArgsSchema> {
         super(
             SEARCH_MEMORY_TOOL_NAME,
             '按关键词搜索全局和工作区关键事实记忆。返回 JSON 列表，仅包含匹配记忆的 uid 和 title。',
-            SearchMemoryArgsSchema,
-            'tools.memory.search.name'
+            SearchMemoryArgsSchema
         );
         this.setExecutor(this.handleExecute.bind(this));
     }
@@ -291,8 +288,7 @@ class GetMemoryTool extends BaseTool<typeof GetMemoryArgsSchema> {
             options.maintenance
                 ? '根据 UID 获取一条关键事实记忆的全文。记忆维护任务读取不增加热度。'
                 : '根据 UID 获取一条关键事实记忆的全文。读取成功时该记忆热度会加 1。',
-            GetMemoryArgsSchema,
-            'tools.memory.get.name'
+            GetMemoryArgsSchema
         );
         this.maintenance = options.maintenance === true;
         this.setExecutor(this.handleExecute.bind(this));

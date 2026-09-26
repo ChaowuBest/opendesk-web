@@ -854,8 +854,7 @@ export class ListDevicesTool extends HarmonyBaseTool<typeof ListDevicesArgsSchem
         super(
             'listDevices',
             '列出当前通过 hdc 连接的所有鸿蒙设备（设备 ID、连接状态、设备类型）。多台设备连接时先调用本工具确认目标设备，再把 deviceId 传给其他工具',
-            ListDevicesArgsSchema,
-            'tools.harmony.listDevices.name'
+            ListDevicesArgsSchema
         );
         this.setExecutor(this.handleExecute.bind(this));
     }
@@ -886,8 +885,7 @@ export class ListAppsTool extends HarmonyBaseTool<typeof ListAppsArgsSchema> {
         super(
             'listApps',
             '获取设备上所有可从桌面/开始菜单打开的应用列表，返回每个应用的 bundleName 和显示名称。结果会按设备 ID 缓存在内存中，同一设备不会重复查询',
-            ListAppsArgsSchema,
-            'tools.harmony.listApps.name'
+            ListAppsArgsSchema
         );
         this.setExecutor(this.handleExecute.bind(this));
     }
@@ -984,12 +982,7 @@ const OpenAppArgsSchema = z.object({
 
 export class OpenAppTool extends HarmonyBaseTool<typeof OpenAppArgsSchema> {
     constructor() {
-        super(
-            'openApp',
-            '通过 bundleName 打开指定应用。会自动查找应用的入口 Ability 并启动',
-            OpenAppArgsSchema,
-            'tools.harmony.openApp.name'
-        );
+        super('openApp', '通过 bundleName 打开指定应用。会自动查找应用的入口 Ability 并启动', OpenAppArgsSchema);
         this.setExecutor(this.handleExecute.bind(this));
     }
 
@@ -1033,8 +1026,7 @@ export class AppLifecycleTool extends HarmonyBaseTool<typeof AppLifecycleArgsSch
             'appLifecycle',
             '控制应用测试生命周期：强制停止、冷重启、清除缓存或清除全部应用数据。' +
                 'clearData 会删除应用本地数据，必须通过 confirmDestructive=true 显式确认。',
-            AppLifecycleArgsSchema,
-            'tools.harmony.appLifecycle.name'
+            AppLifecycleArgsSchema
         );
         this.serialExecution = true;
         this.setExecutor(this.handleExecute.bind(this));
@@ -1104,8 +1096,7 @@ export class ListWindowsTool extends HarmonyBaseTool<typeof ListWindowsArgsSchem
         super(
             'listWindows',
             '获取设备当前所有窗口列表，返回每个窗口的 bundleName、abilityName 和边界范围',
-            ListWindowsArgsSchema,
-            'tools.harmony.listWindows.name'
+            ListWindowsArgsSchema
         );
         this.setExecutor(this.handleExecute.bind(this));
     }
@@ -1146,8 +1137,7 @@ export class SnapshotTool extends HarmonyBaseTool<typeof SnapshotArgsSchema> {
             'snapshot',
             '获取设备当前界面的无障碍快照（aria tree）。' +
                 '可交互元素会带有 [ref=eN x=<cx> y=<cy>] 标签；每次快照都会刷新 ref，结果中的 snapshotId 可与 ref 一起用于 clickRef',
-            SnapshotArgsSchema,
-            'tools.harmony.snapshot.name'
+            SnapshotArgsSchema
         );
         this.setExecutor(this.handleExecute.bind(this));
     }
@@ -1224,8 +1214,7 @@ export class ClickRefTool extends HarmonyBaseTool<typeof ClickRefArgsSchema> {
         super(
             'clickRef',
             '按最近一次 snapshot 返回的元素 ref 点击。每次成功快照都会刷新 ref，并使旧 ref 失效；发送按钮应使用 position="left-center"。',
-            ClickRefArgsSchema,
-            'tools.harmony.clickRef.name'
+            ClickRefArgsSchema
         );
         this.setExecutor(this.handleExecute.bind(this));
     }
@@ -1403,8 +1392,7 @@ export class SelectOptionTool extends HarmonyBaseTool<typeof SelectOptionArgsSch
         super(
             'selectOption',
             '稳定操作下拉框：重新获取快照，展开触发器，优先按无障碍文本选择选项，必要时用局部 OCR 兜底，并验证选择结果。',
-            SelectOptionArgsSchema,
-            'tools.harmony.selectOption.name'
+            SelectOptionArgsSchema
         );
         this.serialExecution = true;
         this.setExecutor(this.handleExecute.bind(this));
@@ -1512,8 +1500,7 @@ export class HandlePermissionTool extends HarmonyBaseTool<typeof HandlePermissio
         super(
             'handlePermission',
             '检测当前系统权限确认框，并按明确指定的方式处理。不会自动授予权限；仅识别带标准“允许/仅此一次/拒绝”按钮的权限对话框。',
-            HandlePermissionArgsSchema,
-            'tools.harmony.handlePermission.name'
+            HandlePermissionArgsSchema
         );
         this.setExecutor(this.handleExecute.bind(this));
     }
@@ -1582,8 +1569,7 @@ export class ClickTool extends HarmonyBaseTool<typeof ClickArgsSchema> {
         super(
             'click',
             '在设备屏幕的指定坐标处执行点击操作。若按钮旁边有下拉箭头/选项按钮，建议点击按钮左侧区域',
-            ClickArgsSchema,
-            'tools.harmony.click.name'
+            ClickArgsSchema
         );
         this.setExecutor(this.handleExecute.bind(this));
     }
@@ -1630,8 +1616,7 @@ export class DoubleClickTool extends HarmonyBaseTool<typeof DoubleClickArgsSchem
         super(
             'doubleClick',
             '在指定坐标执行原生双击。不支持该手势的设备会明确返回失败，不会降级为两次普通点击。',
-            DoubleClickArgsSchema,
-            'tools.harmony.doubleClick.name'
+            DoubleClickArgsSchema
         );
         this.setExecutor(this.handleExecute.bind(this));
     }
@@ -1667,8 +1652,7 @@ export class DragTool extends HarmonyBaseTool<typeof DragArgsSchema> {
         super(
             'drag',
             '从起点连续拖动到终点，使用原生按下、移动、抬起手势；不会以两次点击或 fling 降级。',
-            DragArgsSchema,
-            'tools.harmony.drag.name'
+            DragArgsSchema
         );
         this.setExecutor(this.handleExecute.bind(this));
     }
@@ -1699,8 +1683,7 @@ export class LongClickTool extends HarmonyBaseTool<typeof LongClickArgsSchema> {
             'longClick',
             '在指定坐标执行原生长按。部分 HarmonyOS WebView 可能将长按转换为 contextmenu；' +
                 '此工具只保证发送 longClick，不声称等价于鼠标右键。',
-            LongClickArgsSchema,
-            'tools.harmony.longClick.name'
+            LongClickArgsSchema
         );
         this.setExecutor(this.handleExecute.bind(this));
     }
@@ -1823,12 +1806,7 @@ const ScrollArgsSchema = z.object({
 
 export class ScrollTool extends HarmonyBaseTool<typeof ScrollArgsSchema> {
     constructor() {
-        super(
-            'scroll',
-            '在设备屏幕上执行滑动操作，支持全屏滚动、区域滚动和按元素定位滚动',
-            ScrollArgsSchema,
-            'tools.harmony.scroll.name'
-        );
+        super('scroll', '在设备屏幕上执行滑动操作，支持全屏滚动、区域滚动和按元素定位滚动', ScrollArgsSchema);
         this.setExecutor(this.handleExecute.bind(this));
     }
 
@@ -2097,8 +2075,7 @@ export class ScrollToTool extends HarmonyBaseTool<typeof ScrollToArgsSchema> {
             '滚动页面直到指定元素可见（scrollIntoView 语义）。\n' +
                 '从最新快照中按 role/name/hint 搜索目标元素；未找到时按指定方向滚动指定距离后重新获取快照并搜索，\n' +
                 '重复直到目标出现或达到最大尝试次数。返回最终快照和滚动次数。',
-            ScrollToArgsSchema,
-            'tools.harmony.scrollTo.name'
+            ScrollToArgsSchema
         );
         this.setExecutor(this.handleExecute.bind(this));
     }
@@ -2369,8 +2346,7 @@ export class ScrollInScrollableTool extends HarmonyBaseTool<typeof ScrollInScrol
             '在 Web 虚拟滚动弹窗（时间/日期选择器等）的滚动容器内滑动，直到目标元素进入容器可视区，并返回其真实屏幕坐标。' +
                 '虚拟滚动列表报告的按钮 bounds 是内容坐标（含滚动偏移），直接点击会落在弹窗遮罩上导致值不变；' +
                 '本工具用 dumpLayout 定位滚动容器可视区，在容器内滑动直到目标 bounds 进入可视区，返回 targetCenter（真实可点击坐标）。',
-            ScrollInScrollableArgsSchema,
-            'tools.harmony.scrollInScrollable.name'
+            ScrollInScrollableArgsSchema
         );
         this.setExecutor(this.handleExecute.bind(this));
     }
@@ -2736,8 +2712,7 @@ export class InputTool extends HarmonyBaseTool<typeof InputArgsSchema> {
             'input',
             '在指定坐标的输入框中输入文本。会先点击坐标获取焦点，然后输入文本。' +
                 '支持中文输入：对非 ASCII 文本，通过剪贴板粘贴实现',
-            InputArgsSchema,
-            'tools.harmony.input.name'
+            InputArgsSchema
         );
         this.setExecutor(this.handleExecute.bind(this));
     }
@@ -2919,8 +2894,7 @@ export class ChooseFileTool extends HarmonyBaseTool<typeof ChooseFileArgsSchema>
         super(
             'chooseFile',
             '操控当前 HarmonyOS 系统文件选择器：按设备路径中的可见目录逐层导航，选择文件/目录，或填写保存文件名并确认。',
-            ChooseFileArgsSchema,
-            'tools.harmony.chooseFile.name'
+            ChooseFileArgsSchema
         );
         this.serialExecution = true;
         this.setExecutor(this.handleExecute.bind(this));
@@ -3070,8 +3044,7 @@ export class DropFixtureTool extends HarmonyBaseTool<typeof DropFixtureArgsSchem
         super(
             'dropFixture',
             '读取宿主机文件并在目标 WebView 坐标派发真实 dragenter/dragover/drop 事件，适用于图片上传和附件拖放。',
-            DropFixtureArgsSchema,
-            'tools.harmony.dropFixture.name'
+            DropFixtureArgsSchema
         );
         this.serialExecution = true;
         this.setExecutor(this.handleExecute.bind(this));
@@ -3188,7 +3161,7 @@ const GoBackArgsSchema = z.object({
 
 export class GoBackTool extends HarmonyBaseTool<typeof GoBackArgsSchema> {
     constructor() {
-        super('goBack', '按下返回键，返回上一级页面或退出当前应用', GoBackArgsSchema, 'tools.harmony.goBack.name');
+        super('goBack', '按下返回键，返回上一级页面或退出当前应用', GoBackArgsSchema);
         this.setExecutor(this.handleExecute.bind(this));
     }
 
@@ -3213,12 +3186,7 @@ const GoForwardArgsSchema = z.object({
 
 export class GoForwardTool extends HarmonyBaseTool<typeof GoForwardArgsSchema> {
     constructor() {
-        super(
-            'goForward',
-            '按下 Alt+Right 方向键，在支持前进导航的应用中向前导航',
-            GoForwardArgsSchema,
-            'tools.harmony.goForward.name'
-        );
+        super('goForward', '按下 Alt+Right 方向键，在支持前进导航的应用中向前导航', GoForwardArgsSchema);
         this.setExecutor(this.handleExecute.bind(this));
     }
 
@@ -3262,8 +3230,7 @@ export class PressKeyTool extends HarmonyBaseTool<typeof PressKeyArgsSchema> {
             'pressKey',
             '在当前焦点元素上按下指定按键。支持功能键、方向键、字母数字键和修饰键组合。' +
                 '按键名称参考 HarmonyOS 键值定义。在输入框中输入文本后，推荐优先使用 pressKey({ key: "Enter" }) 发送消息',
-            PressKeyArgsSchema,
-            'tools.harmony.pressKey.name'
+            PressKeyArgsSchema
         );
         this.setExecutor(this.handleExecute.bind(this));
     }
@@ -3517,8 +3484,7 @@ export class WaitForTool extends HarmonyBaseTool<typeof WaitForArgsSchema> {
         super(
             'waitFor',
             '等待固定时间，或轮询等待文本、元素状态、窗口状态或快照内容变化。条件满足或超时时都会返回最后一份可用快照。',
-            WaitForArgsSchema,
-            'tools.harmony.waitFor.name'
+            WaitForArgsSchema
         );
         this.setExecutor(this.handleExecute.bind(this));
     }
@@ -3684,8 +3650,7 @@ export class ScreenshotTool extends HarmonyBaseTool<typeof ScreenshotArgsSchema>
                 '当 snapshot（无障碍树）无法获取界面文本时（如原生 select 弹窗、XComponent 渲染内容），' +
                 '使用此工具获取屏幕上的可视文本及其坐标。' +
                 '返回 OCR 文本列表（含坐标和置信度）和区域亮度分析（可识别高亮/选中行）。',
-            ScreenshotArgsSchema,
-            'tools.harmony.screenshot.name'
+            ScreenshotArgsSchema
         );
         this.setExecutor(this.handleExecute.bind(this));
     }
@@ -3792,8 +3757,7 @@ export class VisualAssertTool extends HarmonyBaseTool<typeof VisualAssertArgsSch
                 '- diff：截图与基线图片像素级对比，用于回归测试和布局变化检测\n' +
                 '- color：采样指定坐标的 RGB 颜色值，用于验证主题色、按钮状态（disabled 灰化、active 高亮）\n' +
                 '- theme：自动检测当前界面是浅色还是深色主题',
-            VisualAssertArgsSchema,
-            'tools.harmony.visualAssert.name'
+            VisualAssertArgsSchema
         );
         this.setExecutor(this.handleExecute.bind(this));
     }
@@ -4041,8 +4005,7 @@ export class HoverTool extends HarmonyBaseTool<typeof HoverArgsSchema> {
                 '2. 降级为 WebView JavaScript 事件注入\n' +
                 '3. 最后降级为 0 像素低速 drag 变通（不可靠）\n' +
                 '工具返回实际生效的路径（method 字段），用于判断环境支持情况。',
-            HoverArgsSchema,
-            'tools.harmony.hover.name'
+            HoverArgsSchema
         );
         this.setExecutor(this.handleExecute.bind(this));
     }
@@ -4170,8 +4133,7 @@ export class FindElementTool extends HarmonyBaseTool<typeof FindElementArgsSchem
                 '返回匹配元素的 ref、role、name、bounds、center 和状态标记。\n' +
                 '所有条件是 AND 关系——只返回同时满足全部条件的元素。\n' +
                 '返回的 ref 可直接用于 clickRef / getElementState 等后续操作。',
-            FindElementArgsSchema,
-            'tools.harmony.findElement.name'
+            FindElementArgsSchema
         );
         this.setExecutor(this.handleExecute.bind(this));
     }
@@ -4223,8 +4185,7 @@ export class GetElementStateTool extends HarmonyBaseTool<typeof GetElementStateA
             'getElementState',
             '获取指定 ref 元素的完整状态信息，包括 role、name、bounds、center 和 checked/disabled/selected 状态标记。\n' +
                 'ref 必须来自最新快照——过期的 ref 会返回 not-found。',
-            GetElementStateArgsSchema,
-            'tools.harmony.getElementState.name'
+            GetElementStateArgsSchema
         );
         this.setExecutor(this.handleExecute.bind(this));
     }
@@ -4543,8 +4504,7 @@ export class SystemDialogTool extends HarmonyBaseTool<typeof SystemDialogArgsSch
             '通用系统弹窗交互工具，用于操作原生 <select> 选择器、Picker 等不在无障碍树中的系统级弹窗。\n' +
                 '三种模式：inspect（仅检测） / select（按文本或索引选择） / dismiss（关闭）。\n' +
                 '原理：snapshot_display 全屏截图 → 对比度扫描高亮行（系统选中态）→ 计算选项位置 → 点击。',
-            SystemDialogArgsSchema,
-            'tools.harmony.systemDialog.name'
+            SystemDialogArgsSchema
         );
         this.serialExecution = true;
         this.setExecutor(this.handleExecute.bind(this));
@@ -4760,8 +4720,7 @@ export class ShellTool extends HarmonyBaseTool<typeof ShellArgsSchema> {
                 '用于框架未覆盖的场景：查询系统信息、查看文件、执行 bm/aa/hidumper 等运维命令。' +
                 '注意：命令直接在设备端执行，删除文件、修改系统配置等破坏性操作须谨慎；' +
                 '已有专用工具（openApp/appLifecycle/pressKey/screenshot 等）的场景优先使用专用工具',
-            ShellArgsSchema,
-            'tools.harmony.shell.name'
+            ShellArgsSchema
         );
         this.setExecutor(this.handleExecute.bind(this));
     }
@@ -4810,8 +4769,7 @@ export class GetDeviceInfoTool extends HarmonyBaseTool<typeof GetDeviceInfoArgsS
             '获取设备基本信息：型号、品牌、产品名、系统版本、SDK/API 版本、屏幕分辨率、WLAN IP。' +
                 '分辨率为绝对坐标类操作（click/input/scroll 等）提供坐标换算与校验基准，也能用于判断设备形态（手机/平板/PC）。' +
                 '单个字段读取失败不影响整体，缺失字段返回 undefined',
-            GetDeviceInfoArgsSchema,
-            'tools.harmony.getDeviceInfo.name'
+            GetDeviceInfoArgsSchema
         );
         this.setExecutor(this.handleExecute.bind(this));
     }
@@ -4859,8 +4817,7 @@ export class PushFileTool extends HarmonyBaseTool<typeof PushFileArgsSchema> {
         super(
             'pushFile',
             '将本机文件推送到设备（等价于 hdc file send）。用于导入测试数据、HAP 包、配置文件等到设备端 /data/local/tmp 等目录。返回设备端路径',
-            PushFileArgsSchema,
-            'tools.harmony.pushFile.name'
+            PushFileArgsSchema
         );
         this.setExecutor(this.handleExecute.bind(this));
     }
@@ -4889,8 +4846,7 @@ export class PullFileTool extends HarmonyBaseTool<typeof PullFileArgsSchema> {
         super(
             'pullFile',
             '将设备端文件拉取到本机（等价于 hdc file recv）。用于提取设备端日志、截图、配置文件等。返回本机保存路径',
-            PullFileArgsSchema,
-            'tools.harmony.pullFile.name'
+            PullFileArgsSchema
         );
         this.setExecutor(this.handleExecute.bind(this));
     }
@@ -4920,8 +4876,7 @@ export class InstallAppTool extends HarmonyBaseTool<typeof InstallAppArgsSchema>
             'installApp',
             '通过 hdc 安装 .hap 应用到设备（等价于 hdc install）。安装前校验本机文件存在且为 .hap 后缀。' +
                 '安装成功后如需启动应用请使用 openApp',
-            InstallAppArgsSchema,
-            'tools.harmony.installApp.name'
+            InstallAppArgsSchema
         );
         this.setExecutor(this.handleExecute.bind(this));
     }
@@ -4957,8 +4912,7 @@ export class UninstallAppTool extends HarmonyBaseTool<typeof UninstallAppArgsSch
             'uninstallApp',
             '卸载设备上的应用（等价于 hdc uninstall）。卸载是破坏性操作，会删除应用及其全部数据，' +
                 '须显式传入 confirmDestructive: true 才执行',
-            UninstallAppArgsSchema,
-            'tools.harmony.uninstallApp.name'
+            UninstallAppArgsSchema
         );
         this.setExecutor(this.handleExecute.bind(this));
     }

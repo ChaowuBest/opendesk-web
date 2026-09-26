@@ -127,8 +127,7 @@ export class ListPluginsTool extends BaseTool<typeof ListPluginsArgsSchema> {
         super(
             'listPlugins',
             'List discovered OpenDesk plugins with their source, version, enabled state and runtime status.',
-            ListPluginsArgsSchema,
-            'tools.pluginmgr.listPlugins.name'
+            ListPluginsArgsSchema
         );
         this.setExecutor(this.list.bind(this));
     }
@@ -155,8 +154,7 @@ export class GetPluginDetailsTool extends BaseTool<typeof GetPluginDetailsArgsSc
         super(
             'getPluginDetails',
             'Get one OpenDesk plugin including its manifest, Skills, MCP servers, capabilities and verification state.',
-            GetPluginDetailsArgsSchema,
-            'tools.pluginmgr.getPluginDetails.name'
+            GetPluginDetailsArgsSchema
         );
         this.setExecutor(this.get.bind(this));
     }
@@ -185,8 +183,7 @@ export class InstallPluginTool extends BaseTool<typeof InstallPluginArgsSchema> 
         super(
             'installPlugin',
             'Install an OpenDesk plugin into the plugins directory from a local directory, TGZ, URL or npm package spec.',
-            InstallPluginArgsSchema,
-            'tools.pluginmgr.installPlugin.name'
+            InstallPluginArgsSchema
         );
         this.serialExecution = true;
         this.setExecutor(this.install.bind(this));
@@ -213,8 +210,7 @@ export class UninstallPluginTool extends BaseTool<typeof UninstallPluginArgsSche
         super(
             'uninstallPlugin',
             'Uninstall an OpenDesk plugin by ID. Builtin and external plugins cannot be uninstalled.',
-            UninstallPluginArgsSchema,
-            'tools.pluginmgr.uninstallPlugin.name'
+            UninstallPluginArgsSchema
         );
         this.serialExecution = true;
         this.setExecutor(this.uninstall.bind(this));
@@ -236,12 +232,7 @@ const SetPluginEnabledArgsSchema = z.object({
 
 export class SetPluginEnabledTool extends BaseTool<typeof SetPluginEnabledArgsSchema> {
     constructor(private readonly pluginApp: PluginManagementApplication) {
-        super(
-            'setPluginEnabled',
-            'Enable or disable a discovered OpenDesk plugin.',
-            SetPluginEnabledArgsSchema,
-            'tools.pluginmgr.setPluginEnabled.name'
-        );
+        super('setPluginEnabled', 'Enable or disable a discovered OpenDesk plugin.', SetPluginEnabledArgsSchema);
         this.serialExecution = true;
         this.setExecutor(this.setEnabled.bind(this));
     }
@@ -267,8 +258,7 @@ export class ReloadPluginsTool extends BaseTool<typeof ReloadPluginsArgsSchema> 
         super(
             'reloadPlugins',
             'Rediscover and reload all OpenDesk plugins, including external and runtime plugin directories.',
-            ReloadPluginsArgsSchema,
-            'tools.pluginmgr.reloadPlugins.name'
+            ReloadPluginsArgsSchema
         );
         this.serialExecution = true;
         this.setExecutor(this.reload.bind(this));

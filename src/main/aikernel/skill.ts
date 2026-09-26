@@ -42,13 +42,10 @@ import type { TaskSkillExposure } from './agents/common.js';
 import { SoulSkillProvider } from './soul/skills';
 import { SoulRegistry } from './soul/registry';
 import { GlobalHooks, type Hooks, type SkillLoadContext } from './hooks.js';
-import { t } from '../../locale/index.js';
 
 const NAME_MAX_LEN = 64;
 const DESCRIPTION_MAX_LEN = 1024;
 const COMPATIBILITY_MAX_LEN = 500;
-const LOAD_SKILL_DISPLAY_NAME_KEY = 'tools.loadSkill.name';
-const CALL_SKILL_DISPLAY_NAME_KEY = 'tools.callSkill.name';
 
 const SKILL_FRONTMATTER_XML = `
 <skill>
@@ -387,7 +384,7 @@ const LoadSkillSchema = z.object({
 
 class LoadSkillTool extends BaseTool<typeof LoadSkillSchema> {
     constructor() {
-        super('LoadSkill', '读取指定技能(Skill)的内容', LoadSkillSchema, LOAD_SKILL_DISPLAY_NAME_KEY);
+        super('LoadSkill', '读取指定技能(Skill)的内容', LoadSkillSchema);
         this.setExecutor(this.loadSkill.bind(this));
     }
 
@@ -424,7 +421,7 @@ class LoadSkillTool extends BaseTool<typeof LoadSkillSchema> {
         return `<div class="od-inline-toolcall-container">
             <div class="flex items-center gap-1.5 min-w-0">
                 <i class="fas fa-book shrink-0 text-slate-400 text-xs"></i>
-                <span class="shrink-0 text-slate-500 text-xs">${t(LOAD_SKILL_DISPLAY_NAME_KEY)}</span>
+                <span class="shrink-0 text-slate-500 text-xs">加载技能</span>
                 ${statusIcon}
                 ${breadcrumbHtml}
             </div>
@@ -545,8 +542,7 @@ class CallSkillTool extends BaseTool<typeof CallSkillToolSchema> {
         super(
             'CallSkillTool',
             '调用Skill提供的内部工具, 只有先调用LoadSkillTool加载了Skill, 才能调用它的内部工具',
-            CallSkillToolSchema,
-            CALL_SKILL_DISPLAY_NAME_KEY
+            CallSkillToolSchema
         );
         this.setUniversalExecutor(this.callSkillToolUniversal.bind(this));
     }
@@ -612,7 +608,7 @@ class CallSkillTool extends BaseTool<typeof CallSkillToolSchema> {
         return `<div class="od-inline-toolcall-container">
             <div class="flex items-center gap-1.5 min-w-0">
                 <i class="fas fa-bolt shrink-0 text-slate-400 text-xs"></i>
-                <span class="shrink-0 text-slate-500 text-xs">${t(CALL_SKILL_DISPLAY_NAME_KEY)}</span>
+                <span class="shrink-0 text-slate-500 text-xs">调用技能</span>
                 ${statusIcon}
                 ${breadcrumbHtml}
             </div>

@@ -756,15 +756,8 @@ abstract class NodeCommandTool<T extends z.ZodType> extends BaseTool<T> {
     protected app: DeviceMgrApplication;
     protected nodeCommand: string;
 
-    constructor(
-        app: DeviceMgrApplication,
-        name: string,
-        description: string,
-        params: T,
-        nodeCommand: string,
-        displayNameKey: string
-    ) {
-        super(name, description, params, displayNameKey);
+    constructor(app: DeviceMgrApplication, name: string, description: string, params: T, nodeCommand: string) {
+        super(name, description, params);
         this.app = app;
         this.nodeCommand = nodeCommand;
     }
@@ -834,14 +827,7 @@ const NodeShellSchema = z.object({
 
 export class ExecuteNodeShellTool extends NodeCommandTool<typeof NodeShellSchema> {
     constructor(app: DeviceMgrApplication) {
-        super(
-            app,
-            'executeNodeShell',
-            t('tool.nodeShell.description'),
-            NodeShellSchema,
-            NODE_SHELL_COMMAND,
-            'tools.devicemgr.executeNodeShell.name'
-        );
+        super(app, 'executeNodeShell', t('tool.nodeShell.description'), NodeShellSchema, NODE_SHELL_COMMAND);
         this.setUniversalExecutor(this.run.bind(this));
     }
 
@@ -894,8 +880,7 @@ export class ReadNodeFileTool extends NodeCommandTool<typeof NodeReadFileSchema>
             'readNodeFile',
             '读取指定或默认 node 本地文件系统中的文本文件。通过 nodeId 选择目标节点。该工具不读取 OpenDesk 本机文件。',
             NodeReadFileSchema,
-            NODE_FILE_COMMANDS.readText,
-            'tools.devicemgr.readNodeFile.name'
+            NODE_FILE_COMMANDS.readText
         );
         this.setExecutor(this.run.bind(this));
     }
@@ -981,8 +966,7 @@ export class WriteNodeFileTool extends NodeCommandTool<typeof NodeWriteFileSchem
             'writeNodeFile',
             '将文本写入指定或默认 node 的本地文件系统。通过 nodeId 选择目标节点。该工具不写入 OpenDesk 本机文件。',
             NodeWriteFileSchema,
-            NODE_FILE_COMMANDS.writeText,
-            'tools.devicemgr.writeNodeFile.name'
+            NODE_FILE_COMMANDS.writeText
         );
         this.setExecutor(this.run.bind(this));
         this.serialExecution = true;
@@ -1064,8 +1048,7 @@ export class FetchNodeFileTool extends NodeCommandTool<typeof FetchNodeFileSchem
             'fetchNodeFile',
             '从指定或默认 node 拉取文件到 OpenDesk 本机/网关侧。参数结构对齐 file_fetch：node/path/maxBytes/timeoutMs，并额外支持 localPath 保存位置。',
             FetchNodeFileSchema,
-            NODE_FILE_COMMANDS.fetch,
-            'tools.devicemgr.fetchNodeFile.name'
+            NODE_FILE_COMMANDS.fetch
         );
         this.setExecutor(this.run.bind(this));
         this.serialExecution = true;
@@ -1196,8 +1179,7 @@ export class SendNodeFileTool extends NodeCommandTool<typeof SendNodeFileSchema>
             'sendNodeFile',
             '将 OpenDesk 本机/网关侧文件或 base64 内容写入指定或默认 node。参数结构对齐 file_write：node/path/contentBase64/sourceMediaId/overwrite/createParents，并额外支持 localPath。',
             SendNodeFileSchema,
-            NODE_FILE_COMMANDS.write,
-            'tools.devicemgr.sendNodeFile.name'
+            NODE_FILE_COMMANDS.write
         );
         this.setExecutor(this.run.bind(this));
         this.serialExecution = true;
@@ -1318,8 +1300,7 @@ export class EditNodeFileTool extends NodeCommandTool<typeof NodeEditFileSchema>
             'editNodeFile',
             '在指定或默认 node 的文件中执行精确文本替换。通过 nodeId 选择目标节点。',
             NodeEditFileSchema,
-            NODE_FILE_COMMANDS.editText,
-            'tools.devicemgr.editNodeFile.name'
+            NODE_FILE_COMMANDS.editText
         );
         this.setExecutor(this.run.bind(this));
         this.serialExecution = true;
@@ -1399,8 +1380,7 @@ export class SearchReplaceNodeFileTool extends NodeCommandTool<typeof NodeSearch
             'searchReplaceNodeFile',
             '在指定或默认 node 的指定文件中执行一次搜索替换操作。通过 nodeId 选择目标节点。',
             NodeSearchReplaceSchema,
-            NODE_FILE_COMMANDS.searchReplace,
-            'tools.devicemgr.searchReplaceNodeFile.name'
+            NODE_FILE_COMMANDS.searchReplace
         );
         this.setExecutor(this.run.bind(this));
         this.serialExecution = true;
@@ -1483,8 +1463,7 @@ export class GlobNodeFilesTool extends NodeCommandTool<typeof NodeGlobSchema> {
             'globNodeFiles',
             '在指定或默认 node 的文件系统中使用 glob 模式搜索文件。通过 nodeId 选择目标节点。',
             NodeGlobSchema,
-            NODE_FILE_COMMANDS.glob,
-            'tools.devicemgr.globNodeFiles.name'
+            NODE_FILE_COMMANDS.glob
         );
         this.setExecutor(this.run.bind(this));
     }
@@ -1568,8 +1547,7 @@ export class GrepNodeFilesTool extends NodeCommandTool<typeof NodeGrepSchema> {
             'grepNodeFiles',
             '在指定或默认 node 的文件内容中搜索文本或正则表达式。通过 nodeId 选择目标节点。',
             NodeGrepSchema,
-            NODE_FILE_COMMANDS.grep,
-            'tools.devicemgr.grepNodeFiles.name'
+            NODE_FILE_COMMANDS.grep
         );
         this.setExecutor(this.run.bind(this));
     }

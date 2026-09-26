@@ -107,8 +107,7 @@ export class GetCalendarItemsTool extends BaseTool<typeof GetCalendarItemsArgsSc
         super(
             'getCalendarItems',
             '获取指定日期的日程安排和会议列表（注：交流，研讨，培训等各种广义的日程安排也包含在内）',
-            GetCalendarItemsArgsSchema,
-            'tools.calendar.getCalendarItems.name'
+            GetCalendarItemsArgsSchema
         );
         this.calendarApp = calendarApp;
         this.setExecutor(this.handleExecute.bind(this));
@@ -187,8 +186,7 @@ export class AddCalendarItemTool extends BaseTool<typeof AddCalendarItemArgsSche
         super(
             'addCalendarItem',
             '添加一个新的日程项（会议、约会、活动等），需要指定日期、时间和标题',
-            AddCalendarItemArgsSchema,
-            'tools.calendar.addCalendarItem.name'
+            AddCalendarItemArgsSchema
         );
         this.calendarApp = calendarApp;
         this.setExecutor(this.handleExecute.bind(this));
@@ -313,8 +311,7 @@ export class DeleteCalendarItemTool extends BaseTool<typeof DeleteCalendarItemAr
         super(
             'deleteCalendarItem',
             '删除指定的日程项，需要提供日程项的uid（可通过getCalendarItems获取）',
-            DeleteCalendarItemArgsSchema,
-            'tools.calendar.deleteCalendarItem.name'
+            DeleteCalendarItemArgsSchema
         );
         this.calendarApp = calendarApp;
         this.setExecutor(this.handleExecute.bind(this));
@@ -369,8 +366,7 @@ export class EditCalendarItemTool extends BaseTool<typeof EditCalendarItemArgsSc
         super(
             'editCalendarItem',
             '修改一个已有的日程项，需要提供日程项的uid和要修改的字段',
-            EditCalendarItemArgsSchema,
-            'tools.calendar.editCalendarItem.name'
+            EditCalendarItemArgsSchema
         );
         this.calendarApp = calendarApp;
         this.setExecutor(this.handleExecute.bind(this));

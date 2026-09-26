@@ -87,8 +87,7 @@ export class InstallMcpServerTool extends BaseTool<typeof InstallMcpServerArgsSc
         super(
             'installMcpServer',
             'Install a new MCP server with specified configuration. Use this when user wants to add a new MCP server.',
-            InstallMcpServerArgsSchema,
-            'tools.mcpmgr.installMcpServer.name'
+            InstallMcpServerArgsSchema
         );
         this.mcpApp = mcpApp;
         this.setExecutor(this.install.bind(this));
@@ -196,8 +195,7 @@ export class ListMcpServersTool extends BaseTool<typeof ListMcpServersArgsSchema
         super(
             'listMcpServers',
             'List all installed MCP servers with their status and configuration',
-            ListMcpServersArgsSchema,
-            'tools.mcpmgr.listMcpServers.name'
+            ListMcpServersArgsSchema
         );
         this.mcpApp = mcpApp;
         this.setExecutor(this.list.bind(this));
@@ -263,8 +261,7 @@ export class ListMcpRegistriesTool extends BaseTool<typeof ListMcpRegistriesArgs
         super(
             'listMcpRegistries',
             'List MCP registries available in the MCP marketplace, including registry IDs used by searchMcpRegistry.',
-            ListMcpRegistriesArgsSchema,
-            'tools.mcpmgr.listMcpRegistries.name'
+            ListMcpRegistriesArgsSchema
         );
         this.mcpApp = mcpApp;
         this.setExecutor(this.list.bind(this));
@@ -291,8 +288,7 @@ export class SearchMcpRegistryTool extends BaseTool<typeof SearchMcpRegistryArgs
         super(
             'searchMcpRegistry',
             'Search an MCP registry marketplace for MCP servers. Use listMcpRegistries first if the registry ID is unknown.',
-            SearchMcpRegistryArgsSchema,
-            'tools.mcpmgr.searchMcpRegistry.name'
+            SearchMcpRegistryArgsSchema
         );
         this.mcpApp = mcpApp;
         this.setExecutor(this.search.bind(this));
@@ -322,8 +318,7 @@ export class GetMcpRegistryEntryTool extends BaseTool<typeof GetMcpRegistryEntry
         super(
             'getMcpRegistryEntry',
             'Get full details and install configuration for one MCP registry entry.',
-            GetMcpRegistryEntryArgsSchema,
-            'tools.mcpmgr.getMcpRegistryEntry.name'
+            GetMcpRegistryEntryArgsSchema
         );
         this.mcpApp = mcpApp;
         this.setExecutor(this.getDetail.bind(this));
@@ -371,8 +366,7 @@ export class InstallMcpServerFromRegistryTool extends BaseTool<typeof InstallMcp
         super(
             'installMcpServerFromRegistry',
             'Install an MCP server from a registry marketplace entry. Use searchMcpRegistry to find entries first.',
-            InstallMcpServerFromRegistryArgsSchema,
-            'tools.mcpmgr.installMcpServerFromRegistry.name'
+            InstallMcpServerFromRegistryArgsSchema
         );
         this.mcpApp = mcpApp;
         this.setExecutor(this.install.bind(this));
@@ -412,8 +406,7 @@ export class ImportMcpServersFromJsonTool extends BaseTool<typeof ImportMcpServe
         super(
             'importMcpServersFromJson',
             'Import MCP server configurations from JSON, including Claude Desktop or Cursor mcpServers config.',
-            ImportMcpServersFromJsonArgsSchema,
-            'tools.mcpmgr.importMcpServersFromJson.name'
+            ImportMcpServersFromJsonArgsSchema
         );
         this.mcpApp = mcpApp;
         this.setExecutor(this.importJson.bind(this));
@@ -449,8 +442,7 @@ export class UpdateMcpServerTool extends BaseTool<typeof UpdateMcpServerArgsSche
         super(
             'updateMcpServer',
             'Edit an installed MCP server configuration by name or ID. Supports the same fields as the GUI editor.',
-            UpdateMcpServerArgsSchema,
-            'tools.mcpmgr.updateMcpServer.name'
+            UpdateMcpServerArgsSchema
         );
         this.mcpApp = mcpApp;
         this.setExecutor(this.update.bind(this));
@@ -518,8 +510,7 @@ export class ReconnectMcpServerTool extends BaseTool<typeof ReconnectMcpServerAr
         super(
             'reconnectMcpServer',
             'Reconnect an installed MCP server by name or ID, matching the GUI reconnect action.',
-            ReconnectMcpServerArgsSchema,
-            'tools.mcpmgr.reconnectMcpServer.name'
+            ReconnectMcpServerArgsSchema
         );
         this.mcpApp = mcpApp;
         this.setExecutor(this.reconnect.bind(this));
@@ -550,12 +541,7 @@ export class DeleteMcpServerTool extends BaseTool<typeof DeleteMcpServerArgsSche
     private mcpApp: any;
 
     constructor(mcpApp: any) {
-        super(
-            'deleteMcpServer',
-            'Delete an MCP server by name or ID',
-            DeleteMcpServerArgsSchema,
-            'tools.mcpmgr.deleteMcpServer.name'
-        );
+        super('deleteMcpServer', 'Delete an MCP server by name or ID', DeleteMcpServerArgsSchema);
         this.mcpApp = mcpApp;
         this.setExecutor(this.delete.bind(this));
     }
@@ -620,8 +606,7 @@ export class ToggleMcpServerTool extends BaseTool<typeof ToggleMcpServerArgsSche
         super(
             'toggleMcpServer',
             'Toggle an MCP server on/off by name or ID. Set enabled=true to activate the server, enabled=false to deactivate it. The server configuration is preserved.',
-            ToggleMcpServerArgsSchema,
-            'tools.mcpmgr.toggleMcpServer.name'
+            ToggleMcpServerArgsSchema
         );
         this.mcpApp = mcpApp;
         this.setExecutor(this.toggle.bind(this));

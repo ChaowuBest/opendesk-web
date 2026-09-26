@@ -26,12 +26,7 @@ export class CreateNoteTool extends BaseTool<typeof CreateNoteArgsSchema> {
     private notesApp: any;
 
     constructor(notesApp: any) {
-        super(
-            'createNote',
-            '创建一条新笔记，可指定标题、内容、标签和置顶状态',
-            CreateNoteArgsSchema,
-            'tools.notes.createNote.name'
-        );
+        super('createNote', '创建一条新笔记，可指定标题、内容、标签和置顶状态', CreateNoteArgsSchema);
         this.notesApp = notesApp;
         this.setExecutor(this.handleExecute.bind(this));
     }
@@ -57,12 +52,7 @@ export class EditNoteTool extends BaseTool<typeof EditNoteArgsSchema> {
     private notesApp: any;
 
     constructor(notesApp: any) {
-        super(
-            'editNote',
-            '编辑已有笔记的标题、内容、标签或置顶状态，仅需提供要修改的字段',
-            EditNoteArgsSchema,
-            'tools.notes.editNote.name'
-        );
+        super('editNote', '编辑已有笔记的标题、内容、标签或置顶状态，仅需提供要修改的字段', EditNoteArgsSchema);
         this.notesApp = notesApp;
         this.setExecutor(this.handleExecute.bind(this));
     }
@@ -101,12 +91,7 @@ export class ReadNoteTool extends BaseTool<typeof ReadNoteArgsSchema> {
     private notesApp: any;
 
     constructor(notesApp: any) {
-        super(
-            'readNote',
-            '读取指定笔记的完整内容，包括元数据和HTML内容',
-            ReadNoteArgsSchema,
-            'tools.notes.readNote.name'
-        );
+        super('readNote', '读取指定笔记的完整内容，包括元数据和HTML内容', ReadNoteArgsSchema);
         this.notesApp = notesApp;
         this.setExecutor(this.handleExecute.bind(this));
     }
@@ -142,12 +127,7 @@ export class ListNotesTool extends BaseTool<typeof ListNotesArgsSchema> {
     private notesApp: any;
 
     constructor(notesApp: any) {
-        super(
-            'listNotes',
-            '获取笔记列表，支持按关键词搜索、按标签过滤、按日期范围筛选和排序',
-            ListNotesArgsSchema,
-            'tools.notes.listNotes.name'
-        );
+        super('listNotes', '获取笔记列表，支持按关键词搜索、按标签过滤、按日期范围筛选和排序', ListNotesArgsSchema);
         this.notesApp = notesApp;
         this.setExecutor(this.handleExecute.bind(this));
     }
@@ -167,7 +147,7 @@ export class ListTagsTool extends BaseTool<typeof ListTagsArgsSchema> {
     private notesApp: any;
 
     constructor(notesApp: any) {
-        super('listTags', '获取所有标签列表', ListTagsArgsSchema, 'tools.notes.listTags.name');
+        super('listTags', '获取所有标签列表', ListTagsArgsSchema);
         this.notesApp = notesApp;
         this.setExecutor(this.handleExecute.bind(this));
     }
@@ -189,12 +169,7 @@ export class DeleteNotesTool extends BaseTool<typeof DeleteNotesArgsSchema> {
     private notesApp: any;
 
     constructor(notesApp: any) {
-        super(
-            'deleteNotes',
-            '删除一条或多条笔记，删除后笔记将移入回收站，10天内可恢复',
-            DeleteNotesArgsSchema,
-            'tools.notes.deleteNotes.name'
-        );
+        super('deleteNotes', '删除一条或多条笔记，删除后笔记将移入回收站，10天内可恢复', DeleteNotesArgsSchema);
         this.notesApp = notesApp;
         this.setExecutor(this.handleExecute.bind(this));
     }

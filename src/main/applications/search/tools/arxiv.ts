@@ -28,8 +28,7 @@ export class ArxivSearchTool extends BaseAcademicSearchEngine {
     constructor() {
         super(
             'arxivSearch',
-            '使用arXiv API搜索学术论文，返回论文的标题、作者、摘要、发布日期等信息。无需API密钥，支持多种搜索语法。',
-            'search.arxiv.name'
+            '使用arXiv API搜索学术论文，返回论文的标题、作者、摘要、发布日期等信息。无需API密钥，支持多种搜索语法。'
         );
     }
 

@@ -67,8 +67,8 @@ export abstract class BaseAcademicSearchEngine extends BaseTool<typeof ACADEMIC_
     /** CLI 渲染图标 */
     protected abstract cliIcon: string;
 
-    constructor(name: string, description: string, displayNameKey: string) {
-        super(name, description, ACADEMIC_ENGINE_ARGS_SCHEMA, displayNameKey);
+    constructor(name: string, description: string) {
+        super(name, description, ACADEMIC_ENGINE_ARGS_SCHEMA);
         this.setExecutor(this._executeSearch.bind(this));
     }
 

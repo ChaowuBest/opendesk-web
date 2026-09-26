@@ -84,8 +84,7 @@ class ListRecentTasksTool extends BaseTool<typeof ListRecentTasksSchema> {
         super(
             'listRecentTasks',
             '按照指定的起止日期列出日期范围内所有任务的信息摘要，包含任务ID、名称、时间和消息摘要',
-            ListRecentTasksSchema,
-            'tools.listRecentTasks.name'
+            ListRecentTasksSchema
         );
         this.taskManagerState = taskManagerState;
         this.setExecutor(this.handleExecute.bind(this));
@@ -223,12 +222,7 @@ class AskFromTaskTool extends BaseTool<typeof AskFromTaskSchema> {
     private taskManagerState: TaskManagerState;
 
     constructor(taskManagerState: TaskManagerState) {
-        super(
-            'askFromTask',
-            '给定任务ID和一个问题，由大模型根据该任务的完整对话记录回答问题',
-            AskFromTaskSchema,
-            'tools.askFromTask.name'
-        );
+        super('askFromTask', '给定任务ID和一个问题，由大模型根据该任务的完整对话记录回答问题', AskFromTaskSchema);
         this.taskManagerState = taskManagerState;
         this.setExecutor(this.handleExecute.bind(this));
     }
@@ -368,8 +362,7 @@ class GetTaskHistoryTool extends BaseTool<typeof GetTaskHistorySchema> {
         super(
             'getTaskHistory',
             '获取指定任务的最近N条消息历史，可选择是否包含完整的工具调用细节',
-            GetTaskHistorySchema,
-            'tools.getTaskHistory.name'
+            GetTaskHistorySchema
         );
         this.taskManagerState = taskManagerState;
         this.setExecutor(this.handleExecute.bind(this));
@@ -505,12 +498,7 @@ class DeleteTasksTool extends BaseTool<typeof DeleteTasksSchema> {
     private taskManagerState: TaskManagerState;
 
     constructor(taskManagerState: TaskManagerState) {
-        super(
-            'deleteTasks',
-            '删除指定的一个或多个任务（含子任务）。删除后自动通知前端刷新任务列表',
-            DeleteTasksSchema,
-            'tools.deleteTasks.name'
-        );
+        super('deleteTasks', '删除指定的一个或多个任务（含子任务）。删除后自动通知前端刷新任务列表', DeleteTasksSchema);
         this.taskManagerState = taskManagerState;
         this.setExecutor(this.handleExecute.bind(this));
     }

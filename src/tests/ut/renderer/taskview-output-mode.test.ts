@@ -650,19 +650,19 @@ describe('task-view GUI output modes', () => {
         expect(summary).not.toContain('分析项目结构');
     });
 
-    test('process labels translate skill and web search protocol names into user-facing actions', () => {
+    test('process labels translate protocol names with existing user-facing titles', () => {
         const view = createView();
         const tools = toolPart(1, 2);
         tools.toolcalls = [
             {
                 ...tools.toolcalls[0],
-                tool_name: 'skill-manager-LoadSkill',
-                display_name_key: 'tools.loadSkill.name'
+                tool_name: 'filemgr-globFiles',
+                display_name_key: 'filemgr.glob.name'
             },
             {
                 ...tools.toolcalls[1],
-                tool_name: 'search-WebSearch',
-                display_name_key: 'search.websearch.name'
+                tool_name: 'memory-addMemory',
+                display_name_key: 'tools.memory.add.name'
             }
         ];
         view.innerHTML = view._renderAssistantOutputHtml([{ type: 'reasoning', rendered: '分析请求。' }, tools], {
@@ -671,7 +671,7 @@ describe('task-view GUI output modes', () => {
         });
 
         const summary = view.querySelector('.od-process-summary-text')?.textContent || '';
-        expect(summary).toBe('深度思考 · 调用了加载技能、搜索网页等 2个工具');
+        expect(summary).toBe('深度思考 · 调用了模式匹配、添加记忆等 2个工具');
     });
 
     test('a failed child tool does not replace the process summary icon', () => {
@@ -688,7 +688,7 @@ describe('task-view GUI output modes', () => {
         expect(view.querySelector('.od-process-tool-status')).toBeNull();
     });
 
-    test('process labels use a readable fallback tool name instead of reasoning or parameters', () => {
+    test('process labels preserve the protocol name instead of using reasoning or parameters', () => {
         const view = createView();
         const browserTool = toolPart(1, 1);
         browserTool.toolcalls[0] = {
@@ -713,7 +713,7 @@ describe('task-view GUI output modes', () => {
         );
 
         const summary = view.querySelector('.od-process-summary-text')?.textContent || '';
-        expect(summary).toBe('深度思考 · 调用了web Fetch等 1个工具');
+        expect(summary).toBe('深度思考 · 调用了webFetch等 1个工具');
         expect(summary).not.toContain('meta');
         expect(summary).not.toContain('developer.huawei.com');
     });
@@ -738,7 +738,7 @@ describe('task-view GUI output modes', () => {
 
         const summary = view.querySelector('.od-process-summary-text')?.textContent || '';
         expect(Array.from(summary).length).toBeLessThanOrEqual(40);
-        expect(summary).toBe('深度思考 · 调用了very / long…等 4个工具');
+        expect(summary).toBe('深度思考 · 调用了very-long-s…等 4个工具');
     });
 
     test('process details reuse mainline reasoning and tool card classes', () => {

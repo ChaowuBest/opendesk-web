@@ -40,12 +40,6 @@ import { cleanPathInput, fromMsysPath, getHomePath, normalizePath } from '../../
 import { randomUUID } from 'node:crypto';
 import fs from 'node:fs/promises';
 import path from 'node:path';
-import { t } from '../../../locale/index.js';
-
-const BROWSER_NAVIGATE_DISPLAY_NAME_KEY = 'tools.browser.navigate.name';
-const BROWSER_SNAPSHOT_DISPLAY_NAME_KEY = 'tools.browser.snapshot.name';
-const BROWSER_CLICK_DISPLAY_NAME_KEY = 'tools.browser.click.name';
-const BROWSER_TYPE_DISPLAY_NAME_KEY = 'tools.browser.type.name';
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -181,8 +175,7 @@ export class BrowserNavigateTool extends BaseTool<typeof BrowserNavigateArgsSche
         super(
             'navigate',
             '在当前任务的嵌入式浏览器中打开指定的网页。支持在当前标签页或新标签页中打开。当前可见任务首次使用时可自动展示；后续及后台任务保持静默，不改变用户当前布局或标签。',
-            BrowserNavigateArgsSchema,
-            BROWSER_NAVIGATE_DISPLAY_NAME_KEY
+            BrowserNavigateArgsSchema
         );
         this.browserApp = browserApp;
         this.setExecutor(this.handleExecute.bind(this));
@@ -200,7 +193,7 @@ export class BrowserNavigateTool extends BaseTool<typeof BrowserNavigateArgsSche
             body.push(chalk.redBright('  ' + truncText(String(toolcall.result), width - 10)));
         return new Card({
             icon: '🌐',
-            title: t(BROWSER_NAVIGATE_DISPLAY_NAME_KEY),
+            title: t('cli.newTab.cardTitle'),
             status: statusDisplay(toolcall.status),
             body
         }).render(width);
@@ -254,8 +247,7 @@ export class BrowserSnapshotTool extends BaseTool<typeof BrowserSnapshotArgsSche
         super(
             'snapshot',
             '获取当前页面的无障碍（Accessibility）快照，以 YAML 格式返回完整的 ARIA 树结构。每个可交互元素标注 ref（如 e0、e3），用于后续 click / type 等操作的 target 定位。这是与页面交互前的必要步骤。噪声区域（iframe、页脚、深层装饰）默认折叠为一行摘要，可用 explore(ref) 展开。',
-            BrowserSnapshotArgsSchema,
-            BROWSER_SNAPSHOT_DISPLAY_NAME_KEY
+            BrowserSnapshotArgsSchema
         );
         this.browserApp = browserApp;
         this.setExecutor(this.handleExecute.bind(this));
@@ -280,7 +272,7 @@ export class BrowserSnapshotTool extends BaseTool<typeof BrowserSnapshotArgsSche
         }
         return new Card({
             icon: '📊',
-            title: t(BROWSER_SNAPSHOT_DISPLAY_NAME_KEY),
+            title: t('cli.snapshot.cardTitle'),
             status: statusDisplay(toolcall.status),
             body
         }).render(width);
@@ -326,8 +318,7 @@ export class BrowserExploreTool extends BaseTool<typeof BrowserExploreArgsSchema
         super(
             'explore',
             '展开快照中某个 ref 折叠的子树，返回其完整 ARIA 内容。默认快照会把 iframe、页脚、深层装饰等噪声区域折叠为一行摘要；当你需要查看其中具体内容（如页脚链接、某个 iframe 的内部结构）时，用 explore(ref) 按需展开，避免每次快照都把整页内容塞进上下文。',
-            BrowserExploreArgsSchema,
-            'tools.browser.explore.name'
+            BrowserExploreArgsSchema
         );
         this.browserApp = browserApp;
         this.setExecutor(this.handleExecute.bind(this));
@@ -388,8 +379,7 @@ export class BrowserClickTool extends BaseTool<typeof BrowserClickArgsSchema> {
         super(
             'click',
             '点击页面元素。使用 ref（从 snapshot 获取，如 e3）或 CSS 选择器定位。通过 CDP 发送真实鼠标事件，兼容 React/Vue 等所有前端框架。',
-            BrowserClickArgsSchema,
-            BROWSER_CLICK_DISPLAY_NAME_KEY
+            BrowserClickArgsSchema
         );
         this.browserApp = browserApp;
         this.setExecutor(this.handleExecute.bind(this));
@@ -406,7 +396,7 @@ export class BrowserClickTool extends BaseTool<typeof BrowserClickArgsSchema> {
             body.push(chalk.redBright('  ' + truncText(String(toolcall.result), width - 10)));
         return new Card({
             icon: '👆',
-            title: t(BROWSER_CLICK_DISPLAY_NAME_KEY),
+            title: t('cli.click.cardTitle'),
             status: statusDisplay(toolcall.status),
             body
         }).render(width);
@@ -451,8 +441,7 @@ export class BrowserTypeTool extends BaseTool<typeof BrowserTypeArgsSchema> {
         super(
             'type',
             '在页面输入框中输入文本。使用 ref 或 CSS 选择器定位元素，通过 CDP 发送真实键盘事件。支持清空已有内容和输入后按 Enter 提交。',
-            BrowserTypeArgsSchema,
-            BROWSER_TYPE_DISPLAY_NAME_KEY
+            BrowserTypeArgsSchema
         );
         this.browserApp = browserApp;
         this.setExecutor(this.handleExecute.bind(this));
@@ -472,7 +461,7 @@ export class BrowserTypeTool extends BaseTool<typeof BrowserTypeArgsSchema> {
             body.push(chalk.redBright('  ' + truncText(String(toolcall.result), width - 10)));
         return new Card({
             icon: '⌨️',
-            title: t(BROWSER_TYPE_DISPLAY_NAME_KEY),
+            title: t('cli.type.cardTitle'),
             status: statusDisplay(toolcall.status),
             body
         }).render(width);
@@ -519,8 +508,7 @@ export class BrowserUploadFileTool extends BaseTool<typeof BrowserUploadFileArgs
         super(
             'uploadFile',
             '向网页上传本地文件。使用 snapshot 得到上传控件 ref 后调用本工具，直接设置关联的 input[type=file]，不会弹出系统文件选择窗口。适用于图片上传、附件上传等控件。',
-            BrowserUploadFileArgsSchema,
-            'tools.browser.uploadFile.name'
+            BrowserUploadFileArgsSchema
         );
         this.browserApp = browserApp;
         this.setExecutor(this.handleExecute.bind(this));
@@ -607,8 +595,7 @@ export class BrowserHoverTool extends BaseTool<typeof BrowserHoverArgsSchema> {
         super(
             'hover',
             '将鼠标悬停在指定元素上。用于触发 hover 效果、显示 tooltip、展开下拉菜单等。',
-            BrowserHoverArgsSchema,
-            'tools.browser.hover.name'
+            BrowserHoverArgsSchema
         );
         this.browserApp = browserApp;
         this.setExecutor(this.handleExecute.bind(this));
@@ -666,8 +653,7 @@ export class BrowserPressKeyTool extends BaseTool<typeof BrowserPressKeyArgsSche
         super(
             'pressKey',
             '在当前焦点元素上按下指定按键。支持功能键（Enter、Tab、Escape、方向键等）和修饰键组合。',
-            BrowserPressKeyArgsSchema,
-            'tools.browser.pressKey.name'
+            BrowserPressKeyArgsSchema
         );
         this.browserApp = browserApp;
         this.setExecutor(this.handleExecute.bind(this));
@@ -719,8 +705,7 @@ export class BrowserSelectOptionTool extends BaseTool<typeof BrowserSelectOption
         super(
             'selectOption',
             '在下拉选择框（<select>）中选择指定选项。通过 value 值匹配要选中的选项。',
-            BrowserSelectOptionArgsSchema,
-            'tools.browser.selectOption.name'
+            BrowserSelectOptionArgsSchema
         );
         this.browserApp = browserApp;
         this.setExecutor(this.handleExecute.bind(this));
@@ -777,12 +762,7 @@ export class BrowserScrollToTool extends BaseTool<typeof BrowserScrollToArgsSche
     private browserApp: BrowserApplication;
 
     constructor(browserApp: BrowserApplication) {
-        super(
-            'scrollTo',
-            '滚动到指定元素。自动处理页面内和 iframe 内的可滚动容器。',
-            BrowserScrollToArgsSchema,
-            'tools.browser.scrollTo.name'
-        );
+        super('scrollTo', '滚动到指定元素。自动处理页面内和 iframe 内的可滚动容器。', BrowserScrollToArgsSchema);
         this.browserApp = browserApp;
         this.setExecutor(this.handleExecute.bind(this));
     }
@@ -833,7 +813,7 @@ export class BrowserGoBackTool extends BaseTool<typeof BrowserGoBackArgsSchema> 
     private browserApp: BrowserApplication;
 
     constructor(browserApp: BrowserApplication) {
-        super('goBack', '在浏览器中后退到上一个页面', BrowserGoBackArgsSchema, 'tools.browser.goBack.name');
+        super('goBack', '在浏览器中后退到上一个页面', BrowserGoBackArgsSchema);
         this.browserApp = browserApp;
         this.setExecutor(this.handleExecute.bind(this));
     }
@@ -879,7 +859,7 @@ export class BrowserGoForwardTool extends BaseTool<typeof BrowserGoForwardArgsSc
     private browserApp: BrowserApplication;
 
     constructor(browserApp: BrowserApplication) {
-        super('goForward', '在浏览器中前进到下一个页面', BrowserGoForwardArgsSchema, 'tools.browser.goForward.name');
+        super('goForward', '在浏览器中前进到下一个页面', BrowserGoForwardArgsSchema);
         this.browserApp = browserApp;
         this.setExecutor(this.handleExecute.bind(this));
     }
@@ -925,7 +905,7 @@ export class BrowserReloadTool extends BaseTool<typeof BrowserReloadArgsSchema> 
     private browserApp: BrowserApplication;
 
     constructor(browserApp: BrowserApplication) {
-        super('reload', '刷新当前浏览器页面', BrowserReloadArgsSchema, 'tools.browser.reload.name');
+        super('reload', '刷新当前浏览器页面', BrowserReloadArgsSchema);
         this.browserApp = browserApp;
         this.setExecutor(this.handleExecute.bind(this));
     }
@@ -979,8 +959,7 @@ export class BrowserEvaluateTool extends BaseTool<typeof BrowserEvaluateArgsSche
         super(
             'evaluate',
             '在当前页面执行任意 JavaScript 并返回结果。适用于其他工具无法满足需求时的高级操作或数据提取。',
-            BrowserEvaluateArgsSchema,
-            'tools.browser.evaluate.name'
+            BrowserEvaluateArgsSchema
         );
         this.browserApp = browserApp;
         this.setExecutor(this.handleExecute.bind(this));
@@ -1039,8 +1018,7 @@ export class BrowserTriggerTool extends BaseTool<typeof BrowserTriggerArgsSchema
         super(
             'trigger',
             '触发当前页面的 Action Hint（由插件为该站点注册的快捷动作）。动作列表见 snapshot 返回的 Browser Hints / Action Hints 小节，动作只在匹配的页面上可用。',
-            BrowserTriggerArgsSchema,
-            'tools.browser.trigger.name'
+            BrowserTriggerArgsSchema
         );
         this.browserApp = browserApp;
         this.setExecutor(this.handleExecute.bind(this));
@@ -1111,8 +1089,7 @@ export class BrowserTabsTool extends BaseTool<typeof BrowserTabsArgsSchema> {
         super(
             'tabs',
             '管理浏览器标签页：列出 (list)、新建 (new)、关闭 (close)、切换 (switch)。',
-            BrowserTabsArgsSchema,
-            'tools.browser.tabs.name'
+            BrowserTabsArgsSchema
         );
         this.browserApp = browserApp;
         this.setExecutor(this.handleExecute.bind(this));
@@ -1249,8 +1226,7 @@ export class BrowserWaitForTool extends BaseTool<typeof BrowserWaitForArgsSchema
         super(
             'waitFor',
             '等待页面满足指定条件：出现指定文本 (text) 或文本消失 (textGone)。用于等待页面加载、动态内容渲染等。',
-            BrowserWaitForArgsSchema,
-            'tools.browser.waitFor.name'
+            BrowserWaitForArgsSchema
         );
         this.browserApp = browserApp;
         this.setExecutor(this.handleExecute.bind(this));
@@ -1313,8 +1289,7 @@ export class BrowserDropHistoryTool extends BaseTool<typeof BrowserDropHistoryAr
         super(
             'dropHistory',
             '按条件批量删除浏览器历史记录。支持按时间范围和/或域名筛选，可同时指定多个条件（AND 逻辑）。至少需要指定一个筛选条件。',
-            BrowserDropHistoryArgsSchema,
-            'tools.browser.dropHistory.name'
+            BrowserDropHistoryArgsSchema
         );
         this.setExecutor(this.handleExecute.bind(this));
     }

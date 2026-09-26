@@ -9,24 +9,7 @@
  * See the Mulan PSL v2 for more details.
  */
 
-function splitCamelCase(value: string): string {
-    return value.replace(/([a-z0-9])([A-Z])/g, '$1 $2').replace(/([A-Z]+)([A-Z][a-z])/g, '$1 $2');
-}
-
-/** Makes an unknown plugin/tool identifier readable without changing its protocol name. */
-export function humanizeToolName(toolName: unknown): string {
-    const normalized = typeof toolName === 'string' ? toolName.trim() : '';
-    if (!normalized) return '';
-    return normalized
-        .split(/[-_.:\s]+/)
-        .filter(Boolean)
-        .map((segment) => splitCamelCase(segment))
-        .join(' / ')
-        .replace(/\s+/g, ' ')
-        .trim();
-}
-
-/** Resolves display metadata owned by the tool, with a readable fallback for legacy calls and plugins. */
+/** Resolves an existing localized title and otherwise preserves the protocol name used by mainline. */
 export function resolveToolDisplayName(
     toolName: unknown,
     displayNameKey: unknown,
@@ -37,5 +20,6 @@ export function resolveToolDisplayName(
         const translated = translate(key);
         if (translated && translated !== key) return translated;
     }
-    return humanizeToolName(toolName) || translate('renderer.taskview.output.tool');
+    const protocolName = typeof toolName === 'string' ? toolName.trim() : '';
+    return protocolName || translate('renderer.taskview.output.tool');
 }
