@@ -2874,7 +2874,8 @@ async function collectGitignorePatterns(basePath: string): Promise<string[]> {
     };
 
     try {
-        // 先读取根规则，让后续的 .gitignore 扫描可以对大型忽略目录提前剪枝。
+        // 先读取根规则。这样 fast-glob 在发现嵌套 .gitignore 时可以直接剪枝，
+        // 避免在大型工作区中先遍历 node_modules、构建产物和缓存目录。
         const rootGitignore = path.join(basePath, '.gitignore');
         const rootPatterns = (await readGitignorePatterns(rootGitignore, '')).slice(0, GREP_MAX_GITIGNORE_PATTERNS);
         appendPatterns(rootPatterns);
@@ -3439,7 +3440,7 @@ export class SemanticSearchTool extends BaseTool<typeof semanticSearchSchema> {
         this.setExecutor(this.executeCommand);
     }
 
-    // 未配置向量嵌入模型时语义搜索必然失败，不应向模型暴露该工具。
+    // 未配置向量嵌入模型时语义搜索必然失败（EMBED_UNAVAILABLE），直接从工具集中屏蔽
     isAvailable(_taskState?: TaskState): boolean {
         return Setting.getInstance().getDefaultEmbeddingModelInstance() != null;
     }

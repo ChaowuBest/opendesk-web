@@ -159,26 +159,6 @@ describe('交互工具集挂载语义（interactive 决定）', () => {
         expect(toolNames(toolsets)).toContain('askUser');
         expect(task.interactionToolset).not.toBeNull();
     });
-
-    test('历史交互工具调用通过额外查找源恢复显示元数据但不暴露给当前 turn', async () => {
-        const { AssistantMessage, ToolCall, ToolCallMessagePart } = await import('../../../main/aikernel/messages.js');
-        const task = await makeTask(null);
-        task.interactionToolset = null;
-        (task as any)._currentTurnInteractive = false;
-        const call = new ToolCall(0, 'ask-user-history', 'interaction-askUser', '{}');
-        call.status = 'success';
-        const part = new ToolCallMessagePart();
-        part.push(call);
-        task.chat_context.appendMessage(new AssistantMessage([part]));
-
-        sharedCreateInteractionToolset.mockClear();
-        await task.ensureToolsResolved();
-
-        expect(sharedCreateInteractionToolset).toHaveBeenCalledWith(task);
-        expect(call.tool?.name).toBe('askUser');
-        expect(call.display_name_key).toBe('tools.askUser.name');
-        expect(task.chat_context.getTool('interaction-askUser')).toBeUndefined();
-    });
 });
 
 describe('cancelInteractionPrompts', () => {

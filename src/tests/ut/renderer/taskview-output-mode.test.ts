@@ -165,30 +165,6 @@ describe('task-view GUI output modes', () => {
         expect(view.querySelectorAll('.mainline-tool-card')).toHaveLength(30);
     });
 
-    test('minimal interrupted output keeps the preceding process timeline expanded', () => {
-        const view = createView();
-        view.task_id = 'task-interrupted-output';
-        view.innerHTML = '<div id="taskview-chat-history"></div>';
-        view._stopRequestedByUser = true;
-        view._interruptedAssistantMessageId = 'message-interrupted-output';
-
-        view.handleAssistantReplace({
-            task_status: 'stopped',
-            message_id: 'message-interrupted-output',
-            parts: transcript().slice(0, 6)
-        });
-
-        expect(view.querySelector('[data-completed-process-toggle]')).toBeNull();
-        expect(view.querySelectorAll('.od-process-segment')).toHaveLength(2);
-        view.querySelectorAll('.od-process-segment').forEach((segment: Element) => {
-            expect(segment.querySelector('[data-process-toggle]')?.getAttribute('aria-expanded')).toBe('false');
-            expect(segment.querySelector('.od-process-detail')?.classList.contains('is-open')).toBe(false);
-            expect(segment.querySelector('.reasoning-block-od')?.classList.contains('reasoning-expanded')).toBe(false);
-        });
-        expect(view.querySelector('.od-final-result')).toBeNull();
-        expect(view.querySelector('.od-stage-body')?.textContent).toContain('第一段正文');
-    });
-
     test('completed output safely renders Markdown text when rendered HTML is missing', () => {
         const view = createView();
         view.innerHTML = view.renderAssistantMessage({
@@ -563,6 +539,23 @@ describe('task-view GUI output modes', () => {
         const flow = view.querySelector('.od-assistant-output-flow') as HTMLElement;
         expect(flow.lastElementChild?.classList.contains('od-running-status')).toBe(true);
         expect(flow.lastElementChild?.textContent).toContain('正在调用 Tool20…');
+    });
+
+    test('minimal running output stays collapsed while a tool call is still streaming its arguments', () => {
+        const view = createView();
+        const streamingTool = {
+            type: 'tool_call',
+            rendered: '<div class="mainline-tool-card" data-mainline-tool="call-0">正在解析参数…</div>',
+            toolcalls: []
+        };
+        view.innerHTML = view._renderAssistantOutputHtml([streamingTool], {
+            isRunning: true,
+            messageId: 'message-streaming-tool-collapsed'
+        });
+
+        expect(view.querySelector('.od-running-process-detail')).toBeNull();
+        expect(view.querySelector('[data-running-output-toggle]')?.getAttribute('aria-expanded')).toBe('false');
+        expect(view.querySelector('.od-running-status')?.textContent).toContain('正在调用');
     });
 
     test('minimal reasoning status hides reasoning content from the current-operation row', () => {

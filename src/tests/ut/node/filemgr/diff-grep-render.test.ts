@@ -417,7 +417,13 @@ test('grepFiles - 跳过超过 20 MiB 的文件', async () => {
         content.write(marker, 0, 'utf8');
         fs.writeFileSync(filePath, content);
 
-        const result = await new GrepFilesTool().executeCommand({ pattern: marker, path: dir, maxResults: 20 });
+        const tool = new GrepFilesTool();
+        const result = await tool.executeCommand({
+            pattern: marker,
+            path: dir,
+            maxResults: 20
+        });
+
         assert.match(result, /未找到匹配/);
     } finally {
         cleanup(dir);
@@ -433,12 +439,14 @@ test('grepFiles - 允许恰好 20 MiB 的文件', async () => {
         content.write(`${marker}\n`, 0, 'utf8');
         fs.writeFileSync(filePath, content);
 
-        const result = await new GrepFilesTool().executeCommand({
+        const tool = new GrepFilesTool();
+        const result = await tool.executeCommand({
             pattern: marker,
             path: dir,
             contextLines: 0,
             maxResults: 20
         });
+
         assert.match(result, new RegExp(marker));
     } finally {
         cleanup(dir);
@@ -455,12 +463,14 @@ test('grepFiles - 使用流式读取而非整文件 readFile', async () => {
             throw new Error('grepFiles 不应使用 readFile 读取搜索文件');
         };
 
-        const result = await new GrepFilesTool().executeCommand({
+        const tool = new GrepFilesTool();
+        const result = await tool.executeCommand({
             pattern: 'STREAMED_MARKER',
             path: dir,
             maxResults: 20,
             contextLines: 1
         });
+
         assert.match(result, /STREAMED_MARKER/);
         assert.match(result, /第一行/);
         assert.match(result, /最后一行/);
@@ -476,12 +486,14 @@ test('grepFiles - 保留最后一个结果的后文上下文', async () => {
         const filePath = path.join(dir, 'match-context.txt');
         fs.writeFileSync(filePath, '前文\nMATCH_ONE\n后文\nMATCH_TWO\n末行', 'utf8');
 
-        const result = await new GrepFilesTool().executeCommand({
+        const tool = new GrepFilesTool();
+        const result = await tool.executeCommand({
             pattern: 'MATCH_',
             path: dir,
             contextLines: 1,
             maxResults: 1
         });
+
         assert.match(result, /在 1 个文件中找到 1 处匹配/);
         assert.match(result, /前文/);
         assert.match(result, /MATCH_ONE/);
@@ -498,12 +510,14 @@ test('grepFiles - 规范化 CRLF 行和上下文', async () => {
         const filePath = path.join(dir, 'crlf.txt');
         fs.writeFileSync(filePath, '前文\r\nCRLF_MARKER\r\n后文\r\n', 'utf8');
 
-        const result = await new GrepFilesTool().executeCommand({
+        const tool = new GrepFilesTool();
+        const result = await tool.executeCommand({
             pattern: 'CRLF_MARKER',
             path: dir,
             contextLines: 1,
             maxResults: 20
         });
+
         assert.match(result, /前文/);
         assert.match(result, /CRLF_MARKER/);
         assert.match(result, /后文/);
@@ -535,7 +549,12 @@ test('grepFiles - 目录扫描最多同时读取四个文件', async () => {
         }) as typeof fs.createReadStream;
 
         const tool = new GrepFilesTool();
-        resultPromise = tool.executeCommand({ pattern: 'NO_MATCH', path: dir, maxResults: 20 });
+        resultPromise = tool.executeCommand({
+            pattern: 'NO_MATCH',
+            path: dir,
+            maxResults: 20
+        });
+
         for (let attempt = 0; attempt < 100 && startedStreams < 4; attempt++) {
             await new Promise<void>((resolve) => setTimeout(resolve, 1));
         }

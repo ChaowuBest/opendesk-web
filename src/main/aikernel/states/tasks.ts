@@ -2568,12 +2568,7 @@ export class TaskState {
     }
 
     async ensureToolsResolved() {
-        let historicalInteractionToolset = this.interactionToolset;
-        if (!historicalInteractionToolset && this.parent_id === null) {
-            historicalInteractionToolset = getPlatform().createInteractionToolset(this);
-            this.interactionToolset = historicalInteractionToolset;
-        }
-        return ensureToolsResolvedForTask(this, historicalInteractionToolset ? [historicalInteractionToolset] : []);
+        return ensureToolsResolvedForTask(this);
     }
 
     resolveAllToolCalls() {
@@ -3137,7 +3132,7 @@ export class TaskState {
                     }
                     this.extensions.onTurnSettled();
                     this.persistLater();
-                    await this.sendSubscriptionFeedback();
+                    this.sendSubscriptionFeedback();
                     this.task_manager_state.publishTaskListUpdate();
                     this.extensions.afterTurnFinished();
                     if (shouldScheduleSessionMemoryUpdate) {

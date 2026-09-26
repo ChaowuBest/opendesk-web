@@ -1758,11 +1758,7 @@ const registerTaskManagerAPIHandlers = () => {
         }
         const result = await applyTaskExecutionNode(task, nodeId);
         if (result.status !== 'ok') return result;
-        await refreshTaskSystemPrompt(task);
         return result;
-    }
-    async function refreshTaskSystemPrompt(task: TaskState): Promise<void> {
-        await task.rebuildSystemPrompt();
     }
     ipcMain.handle('node:listExecutionNodes', async () => {
         return { status: 'ok', data: listExecutionNodes() };
@@ -3841,7 +3837,6 @@ async function startApplication(): Promise<void> {
 
                     // 自动切换到渠道消息对应的任务会话
                     if (globalMainWindow) {
-                        globalMainWindow.show();
                         safeSendToWebContents(globalMainWindow.webContents, 'command:openTask', task.task_id);
                     }
                 };

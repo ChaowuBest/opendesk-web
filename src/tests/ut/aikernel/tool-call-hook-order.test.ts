@@ -4,7 +4,6 @@ import { ToolCall } from '../../../main/aikernel/messages.js';
 import { TaskManagerState, TaskState } from '../../../main/aikernel/states/tasks.js';
 import { BaseTool, BaseToolset } from '../../../main/aikernel/tool.js';
 import { GlobPermissionEnforcer } from '../../../main/aikernel/security/enforcer.js';
-import type { PermissionRequest } from '../../../main/aikernel/security/permission.js';
 import { AgentExecutionInstrumentationRegistry } from '../../../main/telemetry/agent-execution.js';
 import {
     TelemetryOperationRegistry,

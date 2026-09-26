@@ -1,4 +1,3 @@
-import { jest } from '@jest/globals';
 import { AssistantMessage, ReasoningMessagePart, TextMessagePart } from '../../../main/aikernel/messages';
 import { LLM } from '../../../main/aikernel/llm';
 

@@ -12,7 +12,7 @@
 import { parseJsonWithRepair, repairJsonString } from '../../../utils/json.js';
 import { logger } from '../../utils/logger.js';
 import { BaseTool, BaseToolset } from '../tool.js';
-import { AssistantMessage, ChatContext, ToolCall, tryExtractFirstJson } from '../messages.js';
+import { AssistantMessage, ToolCall, tryExtractFirstJson } from '../messages.js';
 import { SkillRegistry } from '../skill.js';
 import { createMemoryToolset } from '../memory/tools.js';
 import { createMainPlanningToolset, createSubTaskPlanningToolset } from '../planning/tools.js';
@@ -129,12 +129,12 @@ async function applyToolAvailabilityFilters(task: TaskState, toolsets: BaseTools
  * 从硬盘加载任务后 toolsets 为空、ToolCall.tool 为 undefined，
  * 调用此方法后 CLI 自定义渲染器即可正常工作。
  */
-export async function ensureToolsResolvedForTask(task: TaskState, historicalToolsets: BaseToolset[] = []) {
+export async function ensureToolsResolvedForTask(task: TaskState) {
     if (task.chat_context.toolsets.size === 0) {
         const allToolsets = await buildToolsetsForTask(task);
         task.chat_context.attachToolsets(...allToolsets);
     }
-    resolveAllToolCallsForTask(task, historicalToolsets);
+    resolveAllToolCallsForTask(task);
 }
 
 /**
@@ -142,9 +142,7 @@ export async function ensureToolsResolvedForTask(task: TaskState, historicalTool
  * 用于从硬盘加载任务后、在 toolsets 已挂载的前提下重新绑定工具，
  * 使 CLI 自定义渲染器能正常工作。
  */
-export function resolveAllToolCallsForTask(task: TaskState, historicalToolsets: BaseToolset[] = []) {
-    const historicalContext = new ChatContext();
-    historicalContext.attachToolsets(...historicalToolsets);
+export function resolveAllToolCallsForTask(task: TaskState) {
     for (const message of task.chat_context.messages) {
         if (!(message instanceof AssistantMessage)) continue;
         const content = Array.isArray(message.content) ? message.content : [];
@@ -154,7 +152,7 @@ export function resolveAllToolCallsForTask(task: TaskState, historicalToolsets: 
             for (const tc of toolcalls) {
                 if (!tc) continue;
                 if (!tc.tool && tc.tool_name) {
-                    const tool = task.chat_context.getTool(tc.tool_name) ?? historicalContext.getTool(tc.tool_name);
+                    const tool = task.chat_context.getTool(tc.tool_name);
                     if (tool) tc.setTool(tool);
                 }
                 if (tc.args_string && !tc.args_object) {

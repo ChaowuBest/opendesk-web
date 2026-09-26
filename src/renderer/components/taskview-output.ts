@@ -78,7 +78,7 @@ function hasVisibleContent(part: GuiAssistantPart): boolean {
 
 export function buildAssistantOutputItems(
     parts: GuiAssistantPart[],
-    options: { isRunning: boolean; isInterrupted?: boolean }
+    options: { isRunning: boolean }
 ): GuiAssistantOutputItem[] {
     const items: GuiAssistantOutputItem[] = [];
     let entries: GuiProcessEntry[] = [];
@@ -140,7 +140,7 @@ export function buildAssistantOutputItems(
 
     flushProcess();
 
-    if (!options.isRunning && options.isInterrupted !== true) {
+    if (!options.isRunning) {
         for (let index = items.length - 1; index >= 0; index -= 1) {
             if (items[index].type === 'body') {
                 (items[index] as GuiBodyItem).type = 'final';
@@ -216,6 +216,16 @@ export function getVisibleAssistantOutputItems(
         if (!hasBody) return [status];
 
         const committedItems = items.at(-1)?.type === 'process' ? items.slice(0, -1) : items;
+        // 内联工具边界：无 toolcalls 但有可见 rendered 内容的 tool entry 表示已经产生的
+        // 工具结果/边界（如 tool result 卡片），minimal 运行中不能折叠成 status 使其从 DOM
+        // 消失，否则后续 buffered text 刷新时该边界会被错误覆盖。
+        const lastItem = items.at(-1);
+        const hasInlineToolBoundary =
+            lastItem?.type === 'process' &&
+            lastItem.entries.some(
+                (entry) => entry.type === 'tool' && entry.tools?.length === 0 && hasVisibleContent(entry.part)
+            );
+        if (hasInlineToolBoundary) return [...committedItems, lastItem];
         return [...committedItems, status];
     }
     if (options.mode === 'minimal') {

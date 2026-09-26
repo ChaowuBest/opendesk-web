@@ -1095,7 +1095,7 @@ export class AgentInputArea implements Component {
     private updateQueueHint() {
         const len = this.messageQueue.length;
         if (len === 0) {
-            this.refreshHint();
+            this.hintText.setText('');
         } else if (len === 1) {
             const preview =
                 this.messageQueue[0].length > 60 ? this.messageQueue[0].slice(0, 57) + '...' : this.messageQueue[0];

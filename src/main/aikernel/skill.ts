@@ -26,7 +26,7 @@
 import path from 'path';
 import fs from 'fs';
 import { parse as parseYaml } from 'yaml';
-import { BaseToolset, BaseTool, ToolResult, type ToolArgsValidationResult } from './tool';
+import { BaseToolset, BaseTool, ToolResult } from './tool';
 import { z } from 'zod';
 import { logger } from '../utils/logger';
 import dotenv from 'dotenv';
@@ -204,7 +204,7 @@ export class Skill {
                 result += format(TOOL_XML, {
                     name: tool.name,
                     description: tool.description,
-                    parameters: JSON.stringify(tool.params.toJSONSchema())
+                    parameters: JSON.stringify(tool.getJsonSchema())
                 });
             }
         }
@@ -580,6 +580,7 @@ class CallSkillTool extends BaseTool<typeof CallSkillToolSchema> {
             return { bundleName, skillName, toolName, toolArgs };
         }
 
+        // toolName 缺失：合并顶层平铺字段与显式 toolArgs（同名字段以显式 toolArgs 为准）后推断
         const flatArgs: Record<string, unknown> = {};
         let hasFlatArgs = false;
         for (const [key, value] of Object.entries(record)) {
@@ -589,8 +590,8 @@ class CallSkillTool extends BaseTool<typeof CallSkillToolSchema> {
             flatArgs[key] = value;
             hasFlatArgs = true;
         }
-
-        // 显式 toolArgs 优先于同名平铺字段，并兼容部分模型传入 JSON 字符串。
+        // toolName 缺失：合并顶层平铺字段与显式 toolArgs（同名字段以显式 toolArgs 为准）后推断。
+        // toolArgs 可能是 JSON 字符串（部分模型按字符串嵌套传递，见 task_mtvpprvf_91ts 故障），先解析成对象
         let parsedExplicitToolArgs: unknown;
         try {
             parsedExplicitToolArgs = parseCallSkillToolArgs(record['toolArgs']);
@@ -622,7 +623,8 @@ class CallSkillTool extends BaseTool<typeof CallSkillToolSchema> {
 
     /**
      * 根据平铺参数在各内部工具 schema 上的命中情况推断 toolName。
-     * 候选必须能解释全部字段且至少命中一个必填字段；最高分并列时拒绝修复。
+     * 候选必须满足：所有平铺字段都能被该工具 schema 解释，且至少命中一个必填字段；
+     * 多个候选打分完全相同时视为歧义，返回 undefined（宁可不修复也不误判）。
      */
     private inferInnerToolName(skill: Skill, flatArgs: Record<string, unknown>): string | undefined {
         if (!skill.toolsets) {
@@ -676,7 +678,7 @@ class CallSkillTool extends BaseTool<typeof CallSkillToolSchema> {
         return top.name;
     }
 
-    validateArgs(args: unknown): ToolArgsValidationResult<typeof CallSkillToolSchema> {
+    validateArgs(args: unknown): ToolArgsValidationResult<T> {
         const baseResult = super.validateArgs(args);
         if (baseResult.success) {
             return baseResult;
@@ -690,7 +692,9 @@ class CallSkillTool extends BaseTool<typeof CallSkillToolSchema> {
     }
 
     getDeclaredPermissions(args: z.output<typeof CallSkillToolSchema>): PermissionRequest[] {
-        // 参数可能尚未经过 schema 校验，需先修复再委托，避免容错调用绕过内部工具权限审批。
+        // 委托给内部工具的权限声明。
+        // args 可能未经 schema 校验（如缺失 toolName 的平铺参数），
+        // 先尝试解析/修复，保证修复后的调用不会绕过内部工具的权限审批
         const resolved = this.resolveSkillToolArgs(args);
         if (!resolved) {
             return [];

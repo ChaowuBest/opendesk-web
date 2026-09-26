@@ -48,6 +48,7 @@ const EXPORT_WEBPAGE_SVG =
     '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M12 2a14.5 14.5 0 0 0 0 20 14.5 14.5 0 0 0 0-20"/><path d="M2 12h20"/></svg>';
 const EXPORT_JSON_SVG =
     '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6"/><path d="M10 11c-.6 0-1 .4-1 1v1c0 .6-.4 1-1 1 .6 0 1 .4 1 1v1c0 .6.4 1 1 1"/><path d="M14 11c.6 0 1 .4 1 1v1c0 .6.4 1 1 1-.6 0-1 .4-1 1v1c0 .6-.4 1-1 1"/></svg>';
+
 const COPY_ICON_SVG =
     '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect width="14" height="14" x="8" y="8" rx="2" ry="2"/><path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2"/></svg>';
 const CHECK_ICON_SVG =
@@ -102,6 +103,8 @@ export const TASKVIEW_HISTORY_BATCH_HTML_CHAR_LIMIT = 200000;
 const TASKVIEW_HISTORY_TOP_LOAD_THRESHOLD_PX = 96;
 const TASKVIEW_HISTORY_VIEWPORT_FILL_GUARD = 8;
 const PROCESS_INNER_SCROLL_BOTTOM_THRESHOLD_PX = 24;
+// 流式思考预览只保留尾部切片：全文每帧重写的布局/文本成本会随思考长度线性膨胀，
+// 是长任务下渲染进程 CPU 飙高的主因之一。
 const TASKVIEW_REASONING_PREVIEW_TAIL_CHARS = 2000;
 let taskViewT = createRendererTranslator();
 let guiOutputMode = 'minimal';
@@ -125,14 +128,6 @@ void window.settingAPI
     .then(updateTaskViewTranslator)
     .catch(() => {});
 window.settingAPI?.onSettingChanged?.(updateTaskViewTranslator);
-
-function sliceReasoningPreviewTail(text) {
-    const value = text || '';
-    if (value.length <= TASKVIEW_REASONING_PREVIEW_TAIL_CHARS) return value;
-    const tail = value.slice(-TASKVIEW_REASONING_PREVIEW_TAIL_CHARS);
-    const newlineIndex = tail.indexOf('\n');
-    return newlineIndex >= 0 ? tail.slice(newlineIndex + 1) : tail;
-}
 
 function removeDangerousNodes(root) {
     root.querySelectorAll(Array.from(DANGEROUS_TAGS).join(',')).forEach((el) => el.remove());
@@ -212,6 +207,19 @@ function formatReasoningElapsedTime(seconds, chars = null) {
         timeStr += taskViewT('reasoning.elapsed.chars', { chars: tokens });
     }
     return timeStr;
+}
+
+/**
+ * 流式思考预览的尾部切片：预览区始终滚动钉底展示最新内容，
+ * 只写尾部可将每帧 DOM 写入与文本排版成本从 O(累计长度) 降到 O(切片长度)。
+ * 切片按行边界对齐，避免首行显示半截内容。
+ */
+function sliceReasoningPreviewTail(text) {
+    const value = text || '';
+    if (value.length <= TASKVIEW_REASONING_PREVIEW_TAIL_CHARS) return value;
+    const tail = value.slice(-TASKVIEW_REASONING_PREVIEW_TAIL_CHARS);
+    const newlineIndex = tail.indexOf('\n');
+    return newlineIndex >= 0 ? tail.slice(newlineIndex + 1) : tail;
 }
 
 class TaskView extends HTMLElement {
@@ -370,16 +378,12 @@ class TaskView extends HTMLElement {
         this._renderedUserParts = new Map();
         /** @type {Map<string, Array<object>>} 增量消息的完整 part 快照。 */
         this._assistantPartsByMessage = new Map();
-        /** @type {Map<string, {isRunning: boolean, isInterrupted: boolean}>} assistant 输出重绘所需的渲染状态。 */
+        /** @type {Map<string, {isRunning: boolean}>} assistant 输出重绘所需的渲染状态。 */
         this._assistantRenderStateByMessage = new Map();
         /** @type {Map<string, Map<string, boolean>>} 模式切换期间不可见 disclosure 的展开状态。 */
         this._assistantDisclosureStateByMessage = new Map();
         /** @type {Map<string, boolean>} 极简运行态是否展开了当前消息的执行过程。 */
         this._assistantRunningDetails = new Map();
-        /** @type {boolean} 当前任务是否由用户手动停止。 */
-        this._stopRequestedByUser = false;
-        /** @type {string | null} 被手动停止时对应的 assistant 消息。 */
-        this._interruptedAssistantMessageId = null;
         /** @type {boolean} 是否正在执行 reload()，用于暂停订阅回调的 DOM 操作 */
         this._reloading = false;
         /** @type {number} reload 版本号，用于丢弃过期 reload 的后续操作 */
@@ -872,10 +876,12 @@ class TaskView extends HTMLElement {
         // Refresh time display on every content update (real-time char count)
         el._refreshReasoningTime();
 
+        const tailText = sliceReasoningPreviewTail(text);
+
         // Bubble mode: update bubble content
         const bubbleContent = el.querySelector('.reasoning-bubble-content');
         if (bubbleContent) {
-            bubbleContent.textContent = sliceReasoningPreviewTail(text);
+            bubbleContent.textContent = tailText;
             const bubble = el.querySelector('.reasoning-bubble');
             if (bubble) {
                 bubble.scrollTop = bubble.scrollHeight;
@@ -888,14 +894,14 @@ class TaskView extends HTMLElement {
         // of staring at a frozen head of the preview (clipped by max-height).
         const previewContent = el.querySelector('.reasoning-preview-content');
         if (previewContent) {
-            previewContent.textContent = sliceReasoningPreviewTail(text);
+            previewContent.textContent = tailText;
             const previewArea = el.querySelector('.reasoning-preview-area');
             if (previewArea) {
                 previewArea.scrollTop = previewArea.scrollHeight;
             }
         }
 
-        // 流式期间不逐帧写入全文，在 finalize 时一次性回填。
+        // 全文节点（.reasoning-content）不再逐帧写入，见 finalizeReasoningBlock 的回填。
     }
 
     /**
@@ -973,11 +979,17 @@ class TaskView extends HTMLElement {
         // Flush any deferred streaming text so the finalized block is complete.
         TaskView.flushReasoningPreview(el);
 
+        // 折叠期间全文区跳写，这里一次性回填，保证完成后展开可见完整内容
+        // （历史长时这是把全文逐帧写入布局树改为仅一次写入的关键）。
         if (el._reasoningFullStale && el._reasoningFullText !== undefined) {
             const fullContent = el.querySelector('.reasoning-content');
-            if (fullContent) fullContent.textContent = el._reasoningFullText;
+            if (fullContent) {
+                fullContent.textContent = el._reasoningFullText;
+            }
             const bubbleContent = el.querySelector('.reasoning-bubble-content');
-            if (bubbleContent) bubbleContent.textContent = el._reasoningFullText;
+            if (bubbleContent) {
+                bubbleContent.textContent = el._reasoningFullText;
+            }
             el._reasoningFullStale = false;
         }
 
@@ -1282,20 +1294,10 @@ class TaskView extends HTMLElement {
     _renderAssistantOutputHtml(parts, options = {}) {
         const normalizedParts = Array.isArray(parts) ? parts : [];
         const messageId = String(options.messageId || 'assistant');
-        const isInterrupted = options.isInterrupted === true;
-        const preserveProcessTimeline = options.preserveProcessTimeline === true;
         const showRunningDetails =
-            options.showRunningDetails === true ||
-            this._assistantRunningDetails.get(messageId) === true ||
-            normalizedParts.some(
-                (part) =>
-                    part?.type === 'tool_call' &&
-                    String(part.rendered || '').trim() &&
-                    (!Array.isArray(part.toolcalls) || part.toolcalls.length === 0)
-            );
+            options.showRunningDetails === true || this._assistantRunningDetails.get(messageId) === true;
         const items = buildAssistantOutputItems(normalizedParts, {
-            isRunning: Boolean(options.isRunning),
-            isInterrupted
+            isRunning: Boolean(options.isRunning)
         });
         const visibleItems = getVisibleAssistantOutputItems(items, {
             mode: guiOutputMode,
@@ -1311,9 +1313,7 @@ class TaskView extends HTMLElement {
                 if (runningProcessDetails) {
                     return this._renderRunningProcessDetails(item, messageId, options.disclosureState);
                 }
-                return this._renderProcessItem(item, messageId, options.disclosureState, {
-                    forceReasoningCollapsed: preserveProcessTimeline
-                });
+                return this._renderProcessItem(item, messageId, options.disclosureState);
             }
             if (item.type === 'status') {
                 return this._renderRunningStatus(item, messageId, {
@@ -1342,13 +1342,7 @@ class TaskView extends HTMLElement {
         };
 
         let html;
-        if (
-            guiOutputMode === 'minimal' &&
-            !options.isRunning &&
-            !preserveProcessTimeline &&
-            finalItem &&
-            processItems.length > 0
-        ) {
+        if (guiOutputMode === 'minimal' && !options.isRunning && finalItem && processItems.length > 0) {
             const disclosureKey = `${messageId}-completed-process`;
             const expanded = options.disclosureState?.get(disclosureKey) === true;
             const detailId = `od-${this.widget_id}-${disclosureKey}-detail`;
@@ -1384,25 +1378,17 @@ class TaskView extends HTMLElement {
     _rememberAssistantOutput(messageId, parts, options = {}) {
         this._assistantPartsByMessage.set(messageId, [...parts]);
         this._assistantRenderStateByMessage.set(messageId, {
-            isRunning: options.isRunning === true,
-            isInterrupted: options.isInterrupted === true
+            isRunning: options.isRunning === true
         });
-    }
-
-    _shouldPreserveInterruptedProcess(messageId) {
-        return this._stopRequestedByUser === true && this._interruptedAssistantMessageId === messageId;
     }
 
     renderAssistantMessage(assistant_message, isLast = false, options = {}) {
         this._rememberAssistantOutput(assistant_message.message_id, assistant_message.content, {
-            isRunning: options.isRunning,
-            isInterrupted: options.isInterrupted
+            isRunning: options.isRunning
         });
         const content = this._renderAssistantOutputHtml(assistant_message.content, {
             isRunning: Boolean(options.isRunning),
-            messageId: assistant_message.message_id,
-            isInterrupted: options.isInterrupted === true,
-            preserveProcessTimeline: options.preserveProcessTimeline === true
+            messageId: assistant_message.message_id
         });
         const usageHtml = isLast ? TaskView.formatUsageHtml(assistant_message.usage, this._modelContextSize) : '';
         const metaRowHtml = TaskView.buildMsgMetaRow(
@@ -1478,9 +1464,7 @@ class TaskView extends HTMLElement {
                 if (!Array.isArray(message.content) || message.content.length === 0) continue;
                 htmlParts.push(
                     this.renderAssistantMessage(message, i === usageAssistantIdx, {
-                        isRunning: i === options.runningAssistantIdx,
-                        isInterrupted: options.interruptedAssistantMessageId === message.message_id,
-                        preserveProcessTimeline: options.interruptedAssistantMessageId === message.message_id
+                        isRunning: i === options.runningAssistantIdx
                     })
                 );
             } else if (TaskView.isCompactBoundaryMessage(message)) {
@@ -1522,8 +1506,7 @@ class TaskView extends HTMLElement {
             this._renderHistoryRangeToHtml(this._historyRenderStartIndex, this._historyMessages.length, {
                 markRenderedUserParts: true,
                 usageAssistantIdx: options.usageAssistantIdx,
-                runningAssistantIdx,
-                interruptedAssistantMessageId: options.interruptedAssistantMessageId
+                runningAssistantIdx
             })
         ];
         const unanchoredGoalEvaluationHtml = renderGoalEvaluationRecordsHtml(
@@ -1853,14 +1836,9 @@ class TaskView extends HTMLElement {
         const processScrollFollowState = this._captureProcessScrollFollowState(message_content);
 
         const isRunning = progress.task_status === 'running';
-        if (!isRunning && this._stopRequestedByUser) {
-            this._interruptedAssistantMessageId = progress.message_id;
-        }
-        const isInterrupted = !isRunning && this._shouldPreserveInterruptedProcess(progress.message_id);
         const parts = progress.parts;
         this._rememberAssistantOutput(progress.message_id, parts, {
-            isRunning,
-            isInterrupted
+            isRunning
         });
         const disclosureState = this._captureProcessDisclosureState(message_content);
         message_content
@@ -1869,9 +1847,7 @@ class TaskView extends HTMLElement {
         message_content.innerHTML = this._renderAssistantOutputHtml(parts, {
             isRunning,
             messageId: progress.message_id,
-            disclosureState,
-            isInterrupted,
-            preserveProcessTimeline: isInterrupted
+            disclosureState
         });
         enhanceCodeBlocks(message_content);
         enhanceToolPreviewCards(message_content);
@@ -1951,13 +1927,8 @@ class TaskView extends HTMLElement {
             isIncrementalTextPart && previousPart?.streaming === true && previousPart.type === progress.last_part.type;
         parts[partIndex] = isIncrementalTextPart ? { ...progress.last_part, streaming: true } : progress.last_part;
         const isRunning = progress.task_status === 'running';
-        if (!isRunning && this._stopRequestedByUser) {
-            this._interruptedAssistantMessageId = progress.message_id;
-        }
-        const isInterrupted = !isRunning && this._shouldPreserveInterruptedProcess(progress.message_id);
         this._rememberAssistantOutput(progress.message_id, parts, {
-            isRunning,
-            isInterrupted
+            isRunning
         });
         let patchedStreamingPart = false;
         if (canPatchStreamingPart) {
@@ -1988,15 +1959,13 @@ class TaskView extends HTMLElement {
             const outputHtml = this._renderAssistantOutputHtml(parts, {
                 isRunning: !isTerminal,
                 messageId: progress.message_id,
-                disclosureState,
-                isInterrupted,
-                preserveProcessTimeline: isInterrupted
+                disclosureState
             });
             if (isTerminal) {
                 // Terminal updates may change the output hierarchy (for example, a normal
-                // completion collapses the process timeline, while a user interruption
-                // keeps it expanded). Preview enhancers may also have inserted nodes that
-                // are absent from outputHtml, so index-based morphing is unsafe here.
+                // completion collapses the process timeline). Preview enhancers may also have
+                // inserted nodes that are absent from outputHtml, so index-based morphing is
+                // unsafe here.
                 message_content
                     .querySelectorAll('.reasoning-block-od.reasoning-active')
                     .forEach((el) => TaskView.finalizeReasoningBlock(el));
@@ -2258,9 +2227,13 @@ class TaskView extends HTMLElement {
         const requestedTop =
             history.scrollTop + target.getBoundingClientRect().top - history.getBoundingClientRect().top - 20;
         const top = Math.max(0, Math.min(requestedTop, history.scrollHeight - history.clientHeight));
+        // Browsers do not emit scrollend when the clamped destination is already reached.
         this._conversationJumpInProgress = Math.abs(history.scrollTop - top) > 0.5;
         if (!this._conversationJumpInProgress) return;
-        history.scrollTo({ top, behavior: 'instant' });
+        history.scrollTo({
+            top,
+            behavior: 'instant'
+        });
     }
 
     _scrollToGoalMessage(messageId, options = {}) {
@@ -2406,12 +2379,6 @@ class TaskView extends HTMLElement {
 
             const previousStatus = this.task_status;
             this.task_status = task_state.task_status || 'waiting';
-            this._stopRequestedByUser = task_state.stop_requested_by_user === true;
-            this._interruptedAssistantMessageId = this._stopRequestedByUser
-                ? [...(task_state.chat_context?.messages || [])]
-                      .reverse()
-                      .find((message) => message?.role === 'assistant')?.message_id || null
-                : null;
             if (this.task_status === 'running') {
                 this._cancelBrowserIdleTimer();
             }
@@ -2449,7 +2416,6 @@ class TaskView extends HTMLElement {
                     },
                     taskViewT('workspace.taskLabel')
                 );
-                this._syncInputTaskWorkspace();
                 // 任务工作空间加载完成后同步刷新右边栏，避免首次打开时显示全局工作空间
                 if (artifacts && typeof artifacts.refreshWorkspace === 'function') {
                     artifacts.refreshWorkspace(this._taskWorkspace);
@@ -2459,6 +2425,7 @@ class TaskView extends HTMLElement {
             const input_widget = this.querySelector(`#task-${this.task_id}-input`);
             if (input_widget) {
                 input_widget.taskId = this.task_id;
+                this._syncInputTaskWorkspace();
                 if (task_state.model) {
                     input_widget.setModel(task_state.model);
                 }
@@ -2468,7 +2435,7 @@ class TaskView extends HTMLElement {
                     // 任务没有显式设置推理模式时，重置为模型默认值，防止跨任务泄漏
                     const modelAlias = task_state.model || input_widget.selectedModel;
                     const model = input_widget.availableModels.find((m) => m.alias === modelAlias);
-                    input_widget.setReasoningEffort(model?.reasoning_effort || '');
+                    input_widget.setReasoningEffort(model?.reasoning_effort);
                     input_widget._updateEffortIcon?.();
                 }
                 input_widget.selectedExecutionNodeId = task_state.executionNodeId || '';
@@ -2510,8 +2477,7 @@ class TaskView extends HTMLElement {
             this._renderInitialHistoryWindow(messages, {
                 goal: task_state.goal,
                 goalFinalSnapshots: task_state.goal_final_snapshots,
-                usageAssistantIdx,
-                interruptedAssistantMessageId: this._interruptedAssistantMessageId
+                usageAssistantIdx
             });
             if (isWaitingForGoalEditAssistant) {
                 this._showWaitingAssistantPlaceholder({ force: true });
@@ -2875,12 +2841,10 @@ class TaskView extends HTMLElement {
             if (this.task_status === 'running') {
                 inputWidget.setDisabled(true);
                 inputWidget.setStopMode(true, async () => {
-                    this._stopRequestedByUser = true;
                     try {
                         if (this._hasActiveGoal()) {
                             const stopped = await this._stopActiveGoal();
                             if (!stopped) {
-                                this._stopRequestedByUser = false;
                                 return;
                             }
                         } else {
@@ -2902,7 +2866,6 @@ class TaskView extends HTMLElement {
                             this._autoSendQueueMessages();
                         }
                     } catch (error) {
-                        this._stopRequestedByUser = false;
                         console.error('Failed to stop task:', error);
                     }
                 });
@@ -2960,9 +2923,8 @@ class TaskView extends HTMLElement {
             targetIndex < 0 ||
             targetIndex >= this.messageQueue.length ||
             index === targetIndex
-        ) {
+        )
             return;
-        }
         const [item] = this.messageQueue.splice(index, 1);
         this.messageQueue.splice(targetIndex, 0, item);
         this._updateMessageQueuePanel();
@@ -3032,8 +2994,6 @@ class TaskView extends HTMLElement {
 
         this._immediateQueueSending = true;
         this.removeFromMessageQueue(id);
-        this._stopRequestedByUser = false;
-        this._interruptedAssistantMessageId = null;
 
         // 立即锁定并滚动到底部，及时展示即将发出的新消息
         this.forceScrollToEnd();
@@ -3119,8 +3079,6 @@ class TaskView extends HTMLElement {
 
         const item = this.messageQueue.shift();
         this._updateMessageQueuePanel();
-        this._stopRequestedByUser = false;
-        this._interruptedAssistantMessageId = null;
 
         // 立即同步状态为 running，防止用户在 submitMessage 异步完成前
         // 通过正常 submit 路径再次发送消息，造成竞态
@@ -3162,10 +3120,6 @@ class TaskView extends HTMLElement {
 
         const wasRunning = this.task_status === 'running';
         this.task_status = nextStatus;
-        if (nextStatus === 'running') {
-            this._stopRequestedByUser = false;
-            this._interruptedAssistantMessageId = null;
-        }
         this.emitTaskStatusChanged(this.task_status);
         this._syncArtifactsTaskStatus();
         this.updateStopButtonVisibility();
@@ -3190,6 +3144,8 @@ class TaskView extends HTMLElement {
     }
 
     emitTaskStatusChanged(status) {
+        // 流式期间禁用队列面板的 backdrop-filter：聊天区每帧重绘会让背景模糊持续
+        // 重新光栅化，是 GPU 占用的重要来源（对应 CSS 见 task-view[streaming] 规则）。
         this.toggleAttribute('streaming', status === 'running');
         this.dispatchEvent(
             new CustomEvent('task-status-changed', {
@@ -3407,6 +3363,7 @@ class TaskView extends HTMLElement {
                 if (!sidebar || typeof sidebar.browserGetActiveTabUrl !== 'function') return '';
                 return sidebar.browserGetActiveTabUrl();
             },
+            // 浮窗可见时固定 webview 视口为 16:9（避免窄高容器把截图拉长），隐藏时恢复自适应
             onVisibilityChanged: (visible) => {
                 const sidebar = this._getRightSidebarEl();
                 if (sidebar && typeof sidebar.browserSetViewportFixed === 'function') {
@@ -3669,6 +3626,7 @@ class TaskView extends HTMLElement {
      */
     _openFileContextMenu(filePath, x, y) {
         this._dismissFilePillContextMenu();
+        // 历史消息的 rendered HTML 可能仍存有 "/C:/..." 形式的路径，菜单全部动作统一使用规范化路径
         filePath = normalizeDriveRootPath(filePath);
 
         const dark =
@@ -3867,9 +3825,7 @@ class TaskView extends HTMLElement {
             const outputHtml = this._renderAssistantOutputHtml(parts, {
                 isRunning: renderState.isRunning,
                 messageId,
-                disclosureState,
-                isInterrupted: renderState.isInterrupted === true,
-                preserveProcessTimeline: renderState.isInterrupted === true
+                disclosureState
             });
             if (messageContent.innerHTML !== outputHtml) {
                 TaskView.morphDomChildren(messageContent, outputHtml);
@@ -3947,6 +3903,9 @@ class TaskView extends HTMLElement {
         }
     }
 
+    /**
+     * 处理已完成 reasoning 块的 header 点击事件，展开/收起完整思考内容。
+     */
     _handleReasoningToggleClick(e) {
         const header = e.target.closest('.reasoning-block-od.reasoning-completed .reasoning-header');
         if (!header) return;
@@ -3955,18 +3914,26 @@ class TaskView extends HTMLElement {
         const wrapper = header.closest('.reasoning-block-od');
         if (!wrapper) return;
 
+        // Bubble mode: toggle pin state
         const bubble = wrapper.querySelector('.reasoning-bubble');
         if (bubble) {
             const isPinned = wrapper.classList.toggle('reasoning-bubble-pinned');
-            bubble.classList.toggle('reasoning-bubble-hidden', !isPinned);
-            wrapper.classList.toggle('reasoning-content-visible', isPinned);
+            if (isPinned) {
+                bubble.classList.remove('reasoning-bubble-hidden');
+                wrapper.classList.add('reasoning-content-visible');
+            } else {
+                bubble.classList.add('reasoning-bubble-hidden');
+                wrapper.classList.remove('reasoning-content-visible');
+            }
             return;
         }
 
+        // Inline mode: toggle expanded class
         const isExpanded = wrapper.classList.toggle('reasoning-expanded');
         wrapper.classList.toggle('reasoning-content-visible', isExpanded);
     }
 
+    /** Bubble mode: show bubble on header hover (unless pinned) */
     _handleReasoningHoverEnter(e) {
         const header = e.target.closest('.reasoning-block-od.reasoning-completed .reasoning-header');
         if (!header) return;
@@ -3979,6 +3946,7 @@ class TaskView extends HTMLElement {
         }
     }
 
+    /** Bubble mode: hide bubble on leave (unless pinned). Only reacts when leaving header or bubble, not internal element transitions. */
     _handleReasoningHoverLeave(e) {
         const isFromHeader = e.target.closest('.reasoning-block-od.reasoning-completed .reasoning-header');
         const isFromBubble = e.target.closest('.reasoning-bubble');
@@ -4000,6 +3968,9 @@ class TaskView extends HTMLElement {
      * 公开方法：在当前任务的右侧工作空间中打开文件。
      */
     async openFileInSidebar(filePath, line, onSwitchBlocked) {
+        // 渲染阶段不校验文件存在性（允许路径样式文本的误报 pill），
+        // 点击时在此处统一校验：不存在则弹模态提示，不再进入预览流程。
+        // 历史消息的 rendered HTML 可能仍存有 "/C:/..." 形式的路径，入口统一规范化。
         filePath = normalizeDriveRootPath(filePath);
         try {
             const exists = await window.fsAPI?.fileExists?.(filePath);
@@ -4008,7 +3979,7 @@ class TaskView extends HTMLElement {
                 return;
             }
         } catch {
-            // 存在性校验失败时不阻塞打开，由后续打开流程自行处理。
+            // 存在性校验失败时不阻塞打开，由后续打开流程自行处理
         }
         this._forceExpandRightSidebar();
         const sidebar = this._getRightSidebarEl();
@@ -4017,28 +3988,39 @@ class TaskView extends HTMLElement {
         }
     }
 
+    /**
+     * 文件不存在时的模态提示弹窗（简单展示类：遮罩点击可关闭）。
+     */
     _showFileMissingModal(filePath) {
         document.getElementById('od-file-missing-modal')?.remove();
         const dark =
             this.dataset.theme === 'dark' ||
             document.documentElement.dataset.theme === 'dark' ||
             document.body.dataset.theme === 'dark';
+
         const overlay = document.createElement('div');
         overlay.id = 'od-file-missing-modal';
         overlay.className = 'fixed inset-0 z-[9999] flex items-center justify-center bg-black/40';
         overlay.innerHTML = `
             <div class="${dark ? 'bg-[#26262a] text-gray-100 ring-white/10' : 'bg-white text-gray-800 ring-black/10'} max-w-[460px] w-[88%] rounded-2xl p-5 shadow-2xl ring-1 flex flex-col gap-3">
                 <div class="flex items-center gap-2">
-                    <span class="text-red-500 flex-shrink-0"><svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"></circle><line x1="15" y1="9" x2="9" y2="15"></line><line x1="9" y1="9" x2="15" y2="15"></line></svg></span>
+                    <span class="text-red-500 flex-shrink-0">
+                        <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"></circle><line x1="15" y1="9" x2="9" y2="15"></line><line x1="9" y1="9" x2="15" y2="15"></line></svg>
+                    </span>
                     <span class="font-semibold text-sm">${escapeHtml(taskViewT('renderer.taskview.file.missing.title'))}</span>
                 </div>
                 <div class="text-xs leading-relaxed ${dark ? 'text-gray-400' : 'text-gray-500'}">${escapeHtml(taskViewT('renderer.taskview.file.missing.hint'))}</div>
                 <div class="text-xs font-mono break-all rounded-lg px-3 py-2 ${dark ? 'bg-white/5 text-gray-300' : 'bg-gray-50 text-gray-600'}">${escapeHtml(filePath)}</div>
-                <div class="flex justify-end"><button type="button" class="od-file-missing-close text-xs font-medium rounded-lg px-3.5 py-1.5 ${dark ? 'bg-white/10 hover:bg-white/15 text-gray-200' : 'bg-gray-100 hover:bg-gray-200 text-gray-700'} transition-colors">${escapeHtml(taskViewT('renderer.taskview.file.missing.close'))}</button></div>
+                <div class="flex justify-end">
+                    <button type="button" class="od-file-missing-close text-xs font-medium rounded-lg px-3.5 py-1.5 ${dark ? 'bg-white/10 hover:bg-white/15 text-gray-200' : 'bg-gray-100 hover:bg-gray-200 text-gray-700'} transition-colors">
+                        ${escapeHtml(taskViewT('renderer.taskview.file.missing.close'))}
+                    </button>
+                </div>
             </div>`;
+
         const close = () => overlay.remove();
-        overlay.addEventListener('click', (event) => {
-            if (event.target === overlay) close();
+        overlay.addEventListener('click', (e) => {
+            if (e.target === overlay) close();
         });
         overlay.querySelector('.od-file-missing-close')?.addEventListener('click', close);
         document.body.appendChild(overlay);
@@ -4320,6 +4302,10 @@ class TaskView extends HTMLElement {
                 sidebar.ensureBrowserReady(true);
             }
         } else {
+            if (initialBrowserUse && typeof sidebar.markPendingBrowserAutoReveal === 'function') {
+                // 后台/隐藏期间的首次 Browser Use：记录大屏预览状态，待用户切回任务时生效
+                sidebar.markPendingBrowserAutoReveal();
+            }
             if (typeof sidebar.ensureBrowserReady === 'function') {
                 sidebar.ensureBrowserReady(false);
             }
@@ -4346,6 +4332,8 @@ class TaskView extends HTMLElement {
         const resizer = this.querySelector(`#task-${this.task_id}-resizer`);
         if (!rightSidebar) return;
 
+        // 后台首次 Browser Use 记录的大屏预览状态：按任务维度延迟到切回任务时生效，
+        // 不受上次离开时的折叠状态影响（_expandRightSidebar 内部会隐藏画中画）。
         const pendingBrowserReveal =
             typeof rightSidebar.applyPendingBrowserAutoReveal === 'function' &&
             rightSidebar.applyPendingBrowserAutoReveal();
@@ -4441,14 +4429,20 @@ class TaskView extends HTMLElement {
         }
     }
 
-    /** 将任务工作空间同步给输入框，使 @ 文件补全跟随当前任务。 */
+    /** 将任务工作空间同步给任务内输入框，使 @ 文件补全跟随任务工作空间 */
     _syncInputTaskWorkspace() {
-        const inputWidget = this.querySelector(`#task-${this.task_id}-input`);
-        if (inputWidget && typeof inputWidget.setTaskWorkspace === 'function') {
-            inputWidget.setTaskWorkspace(this._taskWorkspace);
+        const input_widget = this.querySelector(`#task-${this.task_id}-input`);
+        if (input_widget && typeof input_widget.setTaskWorkspace === 'function') {
+            input_widget.setTaskWorkspace(this._taskWorkspace);
         }
     }
 
+    /**
+     * 用与 GUI 完全相同的渲染管线输出全量历史消息 HTML 分片，供导出使用。
+     * DOM 中只渲染尾部窗口（虚拟化），这里必须显式覆盖全量消息；
+     * 未锚定到具体消息的 goal evaluation 卡片与初始渲染保持一致地追加在末尾。
+     * 返回分片数组而非单个巨串，避免超大任务的一次性字符串拼接开销。
+     */
     _renderFullHistoryForExport() {
         const messages = this._historyMessages;
         let lastAssistantIdx = -1;
@@ -4461,17 +4455,23 @@ class TaskView extends HTMLElement {
             this.task_id,
             taskViewT
         );
-        if (unanchoredGoalEvaluationHtml) htmlParts.push(unanchoredGoalEvaluationHtml);
+        if (unanchoredGoalEvaluationHtml) {
+            htmlParts.push(unanchoredGoalEvaluationHtml);
+        }
         return htmlParts;
     }
 
+    /**
+     * 收集导出 header 所需的任务元数据（模型/起止时间/累计 token 消耗）。
+     * getTaskInfo 失败时返回 null，header 相应降级为仅标题 + 导出时间。
+     */
     async _buildExportHeaderInfo() {
         const formatDateTime = (value) => {
             if (!value) return null;
-            const date = new Date(value);
-            if (Number.isNaN(date.getTime())) return null;
-            const pad = (number) => String(number).padStart(2, '0');
-            return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())} ${pad(date.getHours())}:${pad(date.getMinutes())}`;
+            const d = new Date(value);
+            if (Number.isNaN(d.getTime())) return null;
+            const pad = (n) => String(n).padStart(2, '0');
+            return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
         };
         const exportedAt = taskViewT('renderer.taskview.export.meta.exportedAt', {
             time: formatDateTime(Date.now())
@@ -4486,7 +4486,11 @@ class TaskView extends HTMLElement {
             toggleToLight: taskViewT('renderer.sidebar.themeToggleToLight'),
             toggleToDark: taskViewT('renderer.sidebar.themeToggleToDark')
         };
-        const header = { title: this._taskName || this.task_id || 'OpenDesk', exportedAt, labels };
+        const header = {
+            title: this._taskName || this.task_id || 'OpenDesk',
+            exportedAt,
+            labels
+        };
         try {
             const info = await window.taskManagerAPI.getTaskInfo(this.task_id);
             if (info.model) header.model = info.model;
@@ -4508,19 +4512,26 @@ class TaskView extends HTMLElement {
         }
         try {
             const version = await window.settingAPI.getVersion();
-            if (version) header.generatedBy = taskViewT('renderer.taskview.export.meta.generatedBy', { version });
+            if (version) {
+                header.generatedBy = taskViewT('renderer.taskview.export.meta.generatedBy', { version });
+            }
         } catch (error) {
             console.warn('Failed to load app version for export header:', error);
         }
         return header;
     }
 
+    /**
+     * 弹出导出下拉菜单（锚定在工具栏导出按钮下方）。
+     * 再次点击导出按钮时关闭菜单（mousedown 处理器忽略按钮自身区域的点击）。
+     */
     _openExportMenu(anchorEl) {
         if (!anchorEl) return;
         if (document.getElementById('od-taskview-export-menu') || this._exportMenuDismissHandler) {
             this._dismissExportMenu();
             return;
         }
+
         const dark =
             this.dataset.theme === 'dark' ||
             document.documentElement.dataset.theme === 'dark' ||
@@ -4529,6 +4540,7 @@ class TaskView extends HTMLElement {
         menu.id = 'od-taskview-export-menu';
         menu.className = 'ctx-menu' + (dark ? ' ctx-menu-dark' : '');
         menu.style.minWidth = '150px';
+
         const items = [
             { action: 'export-html', icon: EXPORT_WEBPAGE_SVG, label: taskViewT('renderer.taskview.export.menu.html') },
             { action: 'export-json', icon: EXPORT_JSON_SVG, label: taskViewT('renderer.taskview.export.menu.json') }
@@ -4536,13 +4548,18 @@ class TaskView extends HTMLElement {
         menu.innerHTML = items
             .map(
                 (item) =>
-                    `<button class="ctx-item" data-action="${item.action}"><span class="ctx-icon-sm">${item.icon}</span><span class="ctx-label">${item.label}</span></button>`
+                    `<button class="ctx-item" data-action="${item.action}">` +
+                    `<span class="ctx-icon-sm">${item.icon}</span>` +
+                    `<span class="ctx-label">${item.label}</span></button>`
             )
             .join('');
+
         const rect = anchorEl.getBoundingClientRect();
+        // 菜单与按钮右缘对齐，锚定在按钮下方；待真实尺寸渲染后在 rAF 中修正越界
         menu.style.left = `${Math.max(8, rect.right - 150)}px`;
         menu.style.top = `${rect.bottom + 6}px`;
         document.body.appendChild(menu);
+
         requestAnimationFrame(() => {
             const margin = 8;
             const menuRect = menu.getBoundingClientRect();
@@ -4557,6 +4574,7 @@ class TaskView extends HTMLElement {
             menu.style.left = `${left}px`;
             menu.style.top = `${top}px`;
         });
+
         menu.querySelector('[data-action="export-html"]').addEventListener('click', () => {
             this._dismissExportMenu();
             void this.exportTask();
@@ -4565,8 +4583,11 @@ class TaskView extends HTMLElement {
             this._dismissExportMenu();
             void this.exportTaskJson();
         });
-        this._exportMenuDismissHandler = (event) => {
-            if (!menu.contains(event.target) && !anchorEl.contains(event.target)) this._dismissExportMenu();
+
+        this._exportMenuDismissHandler = (ev) => {
+            if (!menu.contains(ev.target) && !anchorEl.contains(ev.target)) {
+                this._dismissExportMenu();
+            }
         };
         document.addEventListener('mousedown', this._exportMenuDismissHandler);
     }
@@ -4581,6 +4602,7 @@ class TaskView extends HTMLElement {
 
     async exportTaskJson() {
         try {
+            // .task.json 的默认导出名与任务存储文件名一致，便于后续 /import task 导回
             const saveResult = await window.fsAPI.saveFile({
                 title: taskViewT('renderer.taskview.export.jsonTitle'),
                 defaultPath: `${this.task_id}.json`,
@@ -4589,7 +4611,9 @@ class TaskView extends HTMLElement {
                     { name: 'All Files', extensions: ['*'] }
                 ]
             });
-            if (saveResult.canceled || !saveResult.filePath) return;
+            if (saveResult.canceled || !saveResult.filePath) {
+                return; // 用户取消了操作
+            }
             await window.taskManagerAPI.exportTaskJson(this.task_id, saveResult.filePath);
         } catch (error) {
             console.error('Failed to export task json:', error);
@@ -4618,7 +4642,11 @@ class TaskView extends HTMLElement {
 
             const filePath = saveResult.filePath;
             const chatHistory = this.getHistoryContainer();
-            if (!chatHistory) return;
+            if (!chatHistory) {
+                return;
+            }
+
+            // 2. 复用 task view 的渲染管线与实时样式构建导出文档，保证显示效果与 GUI 对齐
             const header = await this._buildExportHeaderInfo();
             const { html, fontUrls } = buildTaskExportHtml({
                 taskName: header.title,
@@ -4628,6 +4656,8 @@ class TaskView extends HTMLElement {
                 reasoningCollapseLabel: taskViewT('reasoning.hide.content'),
                 header
             });
+
+            // 3. 交由主进程内联字体并写盘
             await window.taskManagerAPI.saveExportHtml(filePath, html, fontUrls);
         } catch (error) {
             console.error('Failed to export task:', error);
@@ -4943,16 +4973,19 @@ class TaskView extends HTMLElement {
         this._handleProcessToggleClick = this._handleProcessToggleClick.bind(this);
         this.addEventListener('click', this._handleProcessToggleClick);
 
+        // 添加 reasoning 块展开/收起的事件代理
         this._handleReasoningToggleClick = this._handleReasoningToggleClick.bind(this);
         this.addEventListener('click', this._handleReasoningToggleClick);
-        this._handleReasoningHoverEnter = this._handleReasoningHoverEnter.bind(this);
-        this.addEventListener('mouseover', this._handleReasoningHoverEnter);
-        this._handleReasoningHoverLeave = this._handleReasoningHoverLeave.bind(this);
-        this.addEventListener('mouseout', this._handleReasoningHoverLeave);
 
         // 消息 hover 菜单按钮事件代理
         this._handleMsgActionClick = this._handleMsgActionClick.bind(this);
         this.addEventListener('click', this._handleMsgActionClick);
+
+        // Bubble mode hover handlers
+        this._handleReasoningHoverEnter = this._handleReasoningHoverEnter.bind(this);
+        this._handleReasoningHoverLeave = this._handleReasoningHoverLeave.bind(this);
+        this.addEventListener('mouseover', this._handleReasoningHoverEnter);
+        this.addEventListener('mouseout', this._handleReasoningHoverLeave);
 
         this._goalController.connect();
 
@@ -5019,7 +5052,6 @@ class TaskView extends HTMLElement {
                     },
                     taskViewT('workspace.taskLabel')
                 );
-                this._syncInputTaskWorkspace();
                 // task-list 事件携带最新工作空间时，同步刷新右边栏
                 const taskSidebar = this.querySelector(`#task-${this.task_id}-artifacts`);
                 if (taskSidebar && typeof taskSidebar.refreshWorkspace === 'function') {
@@ -5073,6 +5105,7 @@ class TaskView extends HTMLElement {
                         return;
                     }
 
+                    // Control/replacement events must observe all preceding text.
                     if (progress.type !== 'assistant') this._assistantProgressBuffer.flush();
                     const history_container = this.getHistoryContainer();
 
@@ -5202,15 +5235,18 @@ class TaskView extends HTMLElement {
         this.removeEventListener('click', this._handleFileCardMenuClick);
         this.removeEventListener('contextmenu', this._handleFilePillContextMenu);
         this._dismissFilePillContextMenu();
+        this.removeEventListener('contextmenu', this._handleLinkContextMenu);
+        this._dismissLinkContextMenu();
+        this._dismissExportMenu();
         this.removeEventListener('click', this._handleProcessToggleClick);
         this.removeEventListener('click', this._handleReasoningToggleClick);
+        this._disconnectAgentInputRequests?.();
+        this._disconnectAgentInputRequests = null;
         this.removeEventListener('mouseover', this._handleReasoningHoverEnter);
         this.removeEventListener('mouseout', this._handleReasoningHoverLeave);
         this.getHistoryContainer()
             ?.querySelectorAll('.reasoning-block-od.reasoning-active')
             .forEach((el) => TaskView.finalizeReasoningBlock(el));
-        this._disconnectAgentInputRequests?.();
-        this._disconnectAgentInputRequests = null;
         this._goalController.disconnect();
         this._workspaceFocusLayout.dispose();
         this._cancelBrowserIdleTimer();
@@ -5398,7 +5434,7 @@ class TaskView extends HTMLElement {
                     <exit-plan-mode-prompt id="task-${this.task_id}-exit-plan" class="block px-4"></exit-plan-mode-prompt>
 
                     <!-- 输入区域 -->
-                    <div class="px-3 pb-3 pt-1">
+                    <div class="pb-3 pt-1" style="padding-left: 30px; padding-right: 30px;">
                         <!-- 消息队列面板 -->
                         <message-queue-panel id="message-queue-panel"></message-queue-panel>
                         <agent-input id="task-${this.task_id}-input" hide-search />
@@ -5544,8 +5580,6 @@ class TaskView extends HTMLElement {
             }
 
             this.task_status = 'running';
-            this._stopRequestedByUser = false;
-            this._interruptedAssistantMessageId = null;
             this.emitTaskStatusChanged(this.task_status);
             this._syncArtifactsTaskStatus();
             this._cancelBrowserIdleTimer();
@@ -5597,6 +5631,7 @@ class TaskView extends HTMLElement {
         });
         chatHistory.addEventListener('scroll', () => {
             if (this._programmaticScrolling) return;
+            // Keep streamed output detached until the navigation scroll has completed.
             if (this._conversationJumpInProgress) return;
             if (chatHistory.scrollTop <= TASKVIEW_HISTORY_TOP_LOAD_THRESHOLD_PX) {
                 this._loadOlderHistoryFromScroll();
@@ -5605,6 +5640,7 @@ class TaskView extends HTMLElement {
             const distanceToBottom = Math.abs(chatHistory.scrollHeight - scrollBottom);
             // 使用更宽松的阈值避免因内容增长导致的误 detach
             if (distanceToBottom < 80) {
+                // A small upward gesture must not immediately reattach at the bottom.
                 if (this._lastUserScrollDirection < 0 && this._hasRecentUserScrollIntent()) return;
                 if (!this.auto_scrolling_to_bottom) {
                     this.setAutoScrollingToBottom(true);
@@ -5633,6 +5669,7 @@ class TaskView extends HTMLElement {
                 }
                 // 向上滚动（deltaY < 0）→ 解锁；向下滚动到底部 → 重新锁定
                 if (e.deltaY < 0) {
+                    // Unlock before native scrolling; a queued render must not win the race.
                     if (chatHistory.scrollTop > 0 && this.auto_scrolling_to_bottom) {
                         this.setAutoScrollingToBottom(false);
                     }
@@ -5714,7 +5751,10 @@ class TaskView extends HTMLElement {
             chatHistory.querySelectorAll('.pool-seg').forEach((seg) => {
                 const indicator = seg.querySelector('.pool-seg-indicator');
                 const active = seg.querySelector('.pool-seg-btn.active');
-                if (indicator && active) {
+                // 历史子项启用 content-visibility:auto 后，视口外卡片是"跳过"态，
+                // 读取 offset 会得到 0；此时不能把 0 写进指示器（否则滚回可见时
+                // 指示器丢失），等卡片真实渲染后由点击/下次变更重新定位。
+                if (indicator && active && active.offsetWidth > 0) {
                     indicator.style.left = active.offsetLeft + 'px';
                     indicator.style.width = active.offsetWidth + 'px';
                 }

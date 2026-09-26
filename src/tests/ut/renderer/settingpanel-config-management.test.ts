@@ -71,7 +71,6 @@ describe('setting-panel config management', () => {
         expect(panel.querySelector('#export-quickpass-btn')).toBeNull();
     });
 
-<<<<<<< HEAD
     test('renders development and debugging after telemetry as the final general section', () => {
         const panel = createPanel();
         panel.innerHTML = panel.renderGeneralSection();

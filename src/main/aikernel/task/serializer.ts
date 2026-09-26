@@ -173,7 +173,6 @@ export function serializeTaskForRender(task: TaskState): object {
         task_id: task.task_id,
         task_name: task.task_name,
         task_status: task.task_status,
-        stop_requested_by_user: task.stop_requested_by_user,
         ...(task.internal === true ? { internal: true } : {}),
         model: task.model,
         reasoningEffort: task.reasoningEffort,

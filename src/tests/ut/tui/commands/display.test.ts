@@ -5,7 +5,6 @@ import path from 'path';
 import { registerDisplayCommand } from '../../../../main/tui/commands/display';
 import { Setting, setCustomOpendeskDirectory } from '../../../../main/utils/setting';
 import { setRuntimeLocale } from '../../../../locale/index';
-import { persistOutputDisplayLevel } from '../../../../main/tui/display';
 
 describe('/display command', () => {
     let tempRoot: string;
@@ -33,7 +32,7 @@ describe('/display command', () => {
     test.each([
         ['minimal', 'minimal'],
         ['verbose', 'verbose']
-    ] as const)('persists and immediately applies %s', async (commandLevel, outputLevel) => {
+    ] as const)('applies %s to the current task without changing the default', async (commandLevel, outputLevel) => {
         let handler: any;
         const tui = {
             commandRegistry: {
@@ -42,16 +41,14 @@ describe('/display command', () => {
                     return true;
                 })
             },
-            setOutputDisplayLevel: jest.fn((nextLevel, options) => {
-                if (options?.persist) persistOutputDisplayLevel(nextLevel);
-            })
+            setOutputDisplayLevel: jest.fn()
         } as any;
         registerDisplayCommand(tui);
 
         await handler.execute(commandLevel);
 
-        expect(tui.setOutputDisplayLevel).toHaveBeenCalledWith(outputLevel, { persist: true });
-        expect(Setting.getInstance().getData().cli_config?.output_display).toBe(outputLevel);
+        expect(tui.setOutputDisplayLevel).toHaveBeenCalledWith(outputLevel);
+        expect(Setting.getInstance().getData().cli_config?.output_display).toBe('minimal');
     });
 
     test('offers only canonical minimal and verbose completions', () => {

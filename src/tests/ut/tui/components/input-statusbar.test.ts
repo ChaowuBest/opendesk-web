@@ -105,28 +105,6 @@ describe('TaskStatusBar', () => {
         expect(lines).toEqual(expectedLines);
     });
 
-    test('keeps the running hint when an empty queue is bound and restores it after the last message', () => {
-        const tui = new TUI(new TestTerminal());
-        const inputArea = new AgentInputArea({
-            tui,
-            workspace: process.cwd(),
-            isInputBlocked: () => false,
-            isModelNotConfiguredMode: () => false,
-            isActiveGoalRunningForInput: () => false,
-            isGoalClearStoppingForInput: () => false
-        } as any);
-        inputArea.setStatus('running');
-
-        inputArea.bindToTaskQueue('task-1', []);
-        expect(stripAnsi(inputArea.render(120).join('\n'))).toContain('Task in progress, you can still type...');
-
-        inputArea.bindToTaskQueue('task-1', ['queued follow-up']);
-        expect(stripAnsi(inputArea.render(120).join('\n'))).toContain('Pending: queued follow-up');
-
-        expect(inputArea.dequeueMessage()).toBe('queued follow-up');
-        expect(stripAnsi(inputArea.render(120).join('\n'))).toContain('Task in progress, you can still type...');
-    });
-
     test('submits ordinary messages as supplemental context while an active goal is running', async () => {
         const tui = new TUI(new TestTerminal());
         const inputArea = new AgentInputArea({

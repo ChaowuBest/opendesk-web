@@ -36,7 +36,7 @@ export function registerDisplayCommand(tui: OpenDeskTUI): void {
                 tui.showTextPage(t('display.command.title'), t('display.command.usage'));
                 return;
             }
-            tui.setOutputDisplayLevel(level, { persist: true });
+            tui.setOutputDisplayLevel(level);
         }
     });
 }

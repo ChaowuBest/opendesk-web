@@ -65,7 +65,6 @@ describe('task artifacts goal disclosure state', () => {
         (window as any).clearTimeout = nativeClearTimeout;
         (window as any).setInterval = nativeSetInterval;
         (window as any).clearInterval = nativeClearInterval;
-        (window as any).taskManagerAPI = {};
 
         await jest.unstable_mockModule('../../../renderer/components/fileExplorer.ts', () => ({
             FileExplorer: class {
@@ -74,7 +73,6 @@ describe('task artifacts goal disclosure state', () => {
                 mount() {}
                 refresh() {}
                 softRefresh() {}
-                setTaskId() {}
                 selectFile(filePath: string) {
                     this.onWorkspaceFocusLayoutChange?.({ active: filePath.endsWith('.pptx'), fullscreen: true });
                 }
