@@ -1,4 +1,4 @@
-/*
+﻿/*
  * Copyright (c) 2026 The OpenDesk Team
  * OpenDesk is licensed under Mulan PSL v2.
  * You can use this software according to the terms and conditions of the Mulan PSL v2.
@@ -291,6 +291,52 @@ public sealed class MirrorFs : IDokanOperations
     private void EnqueueDeferredDelete(string realPath)
     {
         _deferredDeletes.TryAdd(realPath.TrimEnd(Sep), true);
+    }
+
+    /// <summary>路径被重新创建（目录 mkdir / 文件 create）时撤销挂起删除状态：
+    /// 挂起删除的目标若已被沙箱内进程重建，后台队列绝不能再清掉新内容——
+    /// 否则"删旧目录（占用挂起）→ 立即 mkdir 同名 → 写入产物"的时序会把新
+    /// 文件静默吞掉（pluginmgr 临时目录复用固定路径实测）。
+    /// 撤销前必须等宿主侧旧删除真正落地：否则新建目录被后台 worker 连同
+    /// 旧删除一起抹掉，或与延迟删除赛跑形成宿主/视图分裂的"幽灵复活"目录
+    /// （appmgr afterEach rmSync → soul 单例复活写 → 下一用例 ENOTEMPTY 实测）。
+    /// 等待只在"该路径确实处于挂起删除"时发生，常规创建零开销。
+    /// ⚠️ 调用方在 Dokan 回调线程内：等待必须短且有界。</summary>
+    private void CancelDeferredDelete(string realPath)
+    {
+        var trimmed = realPath.TrimEnd(Sep);
+        if (!_deferredDeletes.ContainsKey(trimmed) && !DescendantOfDeferredDelete(trimmed)) return;
+        // 热轮询等宿主落地：绝大多数在前几十毫秒内完成。有界 3 秒兜底。
+        for (var attempt = 0; attempt < 100; attempt++)
+        {
+            var gone = !File.Exists(trimmed) && !Directory.Exists(trimmed);
+            var stillQueued = _deferredDeletes.ContainsKey(trimmed) || DescendantOfDeferredDelete(trimmed);
+            if (gone && !stillQueued) break;
+            if (!stillQueued && !gone)
+            {
+                // 队列已清但路径仍在：worker 可能已删完（视图重建）或删除失败。
+                // 再确认一轮即可继续（create 会覆盖/合并语义由调用方处理）。
+                break;
+            }
+            Thread.Sleep(attempt < 50 ? 1 : 20);
+        }
+        _deferredDeletes.TryRemove(trimmed, out _);
+        var prefix = trimmed + Sep;
+        foreach (var key in _deferredDeletes.Keys)
+        {
+            if (key.StartsWith(prefix, StringComparison.OrdinalIgnoreCase))
+                _deferredDeletes.TryRemove(key, out _);
+        }
+    }
+
+    /// <summary>路径是否为某个挂起删除目录的后代。</summary>
+    private bool DescendantOfDeferredDelete(string realPath)
+    {
+        foreach (var queued in _deferredDeletes.Keys)
+        {
+            if (realPath.StartsWith(queued + Sep, StringComparison.OrdinalIgnoreCase)) return true;
+        }
+        return false;
     }
 
     /// <summary>宿主路径是否处于挂起删除状态（或是挂起删除目录的后代）。</summary>
@@ -732,10 +778,12 @@ public sealed class MirrorFs : IDokanOperations
     private static extern uint GetLongPathNameW(string shortPath,
         [Out] System.Text.StringBuilder longPath, uint bufferLength);
 
-    private bool Check(string vpath, IEnumerable<string> kinds, IDokanFileInfo info)
+    private bool Check(string vpath, AccessKinds kinds, IDokanFileInfo info)
     {
+        // 热路径（每 Create/stat 一次）：位序展开（read → write → execute），
+        // 与旧 Ordinal 排序一致；零分配。
         var ok = true;
-        foreach (var kind in kinds.OrderBy(k => k, StringComparer.Ordinal))
+        while (TryNextKind(ref kinds, out var kind))
         {
             var (allowed, why) = CheckCached(vpath, kind);
             // 放行决策走 Debug：jest 等工具的模块解析风暴会把默认 INFO 级别的
@@ -780,20 +828,54 @@ public sealed class MirrorFs : IDokanOperations
         FileAccess.WriteAttributes | FileAccess.Delete | FileAccess.ChangePermissions |
         FileAccess.SetOwnership;
 
-    private static HashSet<string> AccessToKinds(FileAccess access)
+    // 访问类别位掩码（热路径零分配：AccessToKinds 每次分配 HashSet 在
+    // 126 万次 Create 下产生可观 GC 压力）。位序即旧 Ordinal 排序（read/write/execute）。
+    [Flags]
+    private enum AccessKinds : byte
+    {
+        None = 0,
+        Read = 1,
+        Write = 2,
+        Execute = 4,
+        All = Read | Write | Execute,
+    }
+
+    private static AccessKinds AccessToKinds(FileAccess access)
     {
         if ((access & FileAccess.GenericAll) != 0)
-            return new HashSet<string> { AccessKind.Read, AccessKind.Write, AccessKind.Execute };
-        var kinds = new HashSet<string>();
-        if ((access & (ReadBits | FileAccess.GenericRead)) != 0) kinds.Add(AccessKind.Read);
-        if ((access & (WriteBits | FileAccess.GenericWrite)) != 0) kinds.Add(AccessKind.Write);
+            return AccessKinds.All;
+        var kinds = AccessKinds.None;
+        if ((access & (ReadBits | FileAccess.GenericRead)) != 0) kinds |= AccessKinds.Read;
+        if ((access & (WriteBits | FileAccess.GenericWrite)) != 0) kinds |= AccessKinds.Write;
         if ((access & (FileAccess.Execute | FileAccess.GenericExecute)) != 0)
-            kinds.Add(AccessKind.Execute);
+            kinds |= AccessKinds.Execute;
         return kinds;
+    }
+
+    /// <summary>按位序展开类别（read → write → execute），与旧 HashSet+OrderBy
+    /// 语义一致；零分配。</summary>
+    private static bool TryNextKind(ref AccessKinds remaining, out string kind)
+    {
+        if ((remaining & AccessKinds.Read) != 0) { remaining &= ~AccessKinds.Read; kind = AccessKind.Read; return true; }
+        if ((remaining & AccessKinds.Write) != 0) { remaining &= ~AccessKinds.Write; kind = AccessKind.Write; return true; }
+        if ((remaining & AccessKinds.Execute) != 0) { remaining &= ~AccessKinds.Execute; kind = AccessKind.Execute; return true; }
+        kind = "";
+        return false;
     }
 
     private static FileAccess WithoutExecute(FileAccess access) =>
         access & ~(FileAccess.Execute | FileAccess.GenericExecute);
+
+    /// <summary>任一类别命中静态 ask 规则时返回 true（低频：只为这一次打开
+    /// 付 KeepRequestAlive 定时器的分配代价）。</summary>
+    private bool NeedsAskAny(AccessKinds kinds, string vpath)
+    {
+        while (TryNextKind(ref kinds, out var kind))
+        {
+            if (_policy.NeedsAsk(vpath, kind)) return true;
+        }
+        return false;
+    }
 
     private Ctx? GetCtx(IDokanFileInfo info) => info.Context as Ctx;
 
@@ -910,7 +992,7 @@ public sealed class MirrorFs : IDokanOperations
                 {
                     // Assembly nodes have no host file behind them. Traversal must
                     // work before the child starts, even under an all-ask policy.
-                    if (kinds.Contains(AccessKind.Write) ||
+                    if ((kinds & AccessKinds.Write) != 0 ||
                         mode is not (FileMode.Open or FileMode.OpenOrCreate))
                         return AccessDenied;
                     info.IsDirectory = true;
@@ -955,17 +1037,17 @@ public sealed class MirrorFs : IDokanOperations
 
                 // 目录上的 Execute 是 traverse 语义，按 read 管控；
                 // 只有"文件 + Execute"才是执行管控（拉起进程/加载 DLL）。
-                if (kinds.Contains(AccessKind.Execute) && (isDirReq || targetIsDir))
+                if ((kinds & AccessKinds.Execute) != 0 && (isDirReq || targetIsDir))
                 {
-                    kinds.Remove(AccessKind.Execute);
-                    kinds.Add(AccessKind.Read);
+                    kinds &= ~AccessKinds.Execute;
+                    kinds |= AccessKinds.Read;
                     access = WithoutExecute(access);
                 }
 
                 // 命中静态 ask 规则时，问询可能等待用户决策远超 Dokan 的 30 秒
                 // IRP 超时；必须在进入阻塞问询之前安装续期定时器（ask 是低频
                 // 操作，只为这一次打开付定时器分配的代价）。
-                using var keepAlive = kinds.Any(kind => _policy.NeedsAsk(res.VirtualPath, kind))
+                using var keepAlive = NeedsAskAny(kinds, res.VirtualPath)
                     ? KeepRequestAlive(info)
                     : null;
                 if (!Check(res.VirtualPath, kinds, info)) return AccessDenied;
@@ -976,8 +1058,29 @@ public sealed class MirrorFs : IDokanOperations
                     if (!PathLandsWithinRoot(real, res.Map)) return AccessDenied;
                     if (mode is FileMode.Create or FileMode.CreateNew or FileMode.OpenOrCreate && !exists)
                     {
+                        // mkdirSync recursive 只对最深路径下发 CreateFile，中间祖先由
+                        // 宿主在 Directory.CreateDirectory 时隐式创建。必须对每个
+                        // 新建的宿主层级（含隐式祖先）失效其虚拟父目录的枚举缓存并
+                        // 投递 Notify——否则父目录枚举（驱动缓存）漏掉新目录，
+                        // node rmSync 枚举后 rmdir 报 ENOTEMPTY（appmgr 实测）。
+                        var newlyCreated = new List<string>();
+                        var relative = Path.GetRelativePath(res.Map.RealTrim, real);
+                        var cursor = res.Map.RealTrim;
+                        foreach (var segment in relative.Split(Sep, StringSplitOptions.RemoveEmptyEntries))
+                        {
+                            var next = Path.Combine(cursor, segment);
+                            if (!Directory.Exists(next)) newlyCreated.Add(next);
+                            cursor = next;
+                        }
                         Directory.CreateDirectory(real);
-                        TrackSessionCreated(res.VirtualPath);
+                        foreach (var createdDir in newlyCreated)
+                        {
+                            var createdVirtual = VirtualOfReal(createdDir, res.Map);
+                            TrackSessionCreated(createdVirtual);
+                            InvalidateDirListing(createdVirtual, isDirectory: true);
+                            InvalidateFileInfo(createdVirtual);
+                            NotifyCreate(createdVirtual.Replace('/', Sep), isDirectory: true);
+                        }
                         InvalidateDirListing(fileName, isDirectory: true);
                         InvalidateFileInfo(fileName);
                         NotifyCreate(fileName, isDirectory: true);
@@ -1031,7 +1134,7 @@ public sealed class MirrorFs : IDokanOperations
                     // for execution. Keep every read-only handle on the same
                     // compatibility view; otherwise it sees the host path
                     // again and falls back to an unrelated PATH executable.
-                    if (!kinds.Contains(AccessKind.Write) &&
+                    if ((kinds & AccessKinds.Write) == 0 &&
                         GetRuntimeOverlay(real) is { } overlay)
                         streamPath = overlay;
                     // Win32 允许 CREATE_NEW/TRUNCATE 携带只读属性位（csc 资源
@@ -1041,10 +1144,10 @@ public sealed class MirrorFs : IDokanOperations
                     // 经文件符号链接指向根外，校验拒绝时宿主文件已被清零。因此在
                     // 打开前先做一次不跟随的落点预检，发现越界即拒绝。
                     var streamAccess = mode is FileMode.Create or FileMode.CreateNew or FileMode.Truncate
-                        ? (kinds.Contains(AccessKind.Read)
+                        ? ((kinds & AccessKinds.Read) != 0
                             ? System.IO.FileAccess.ReadWrite
                             : System.IO.FileAccess.Write)
-                        : kinds.Contains(AccessKind.Write)
+                        : (kinds & AccessKinds.Write) != 0
                             ? System.IO.FileAccess.ReadWrite
                             : System.IO.FileAccess.Read;
                     // 破坏性模式（Create/Truncate）在打开瞬间即清空目标——若 real
@@ -1083,6 +1186,7 @@ public sealed class MirrorFs : IDokanOperations
                     info.Context = NewCtx(stream, real);
                     if (createsNewEntry)
                     {
+                        CancelDeferredDelete(real);
                         TrackSessionCreated(res.VirtualPath);
                         InvalidateDirListing(fileName);
                         InvalidateFileInfo(fileName);
@@ -1865,8 +1969,14 @@ public sealed class MirrorFs : IDokanOperations
                 viewEmpty = !Directory.EnumerateFileSystemEntries(real)
                     .Any(entry => !IsDeferredDelete(entry));
                 if (viewEmpty) break;
-                if (attempt >= 12) return DirectoryNotEmpty;
-                Thread.Sleep(50 + attempt * 30);
+                if (attempt >= 40) return DirectoryNotEmpty;
+                // 退避在 Dokan 回调线程内执行：百毫秒级 sleep 会阻塞驱动请求泵，
+                // 24 并发 worker 的删除风暴下全局串行化（全量 npm test 110s→258s
+                // 的回退根因）。改两段式：前 8 次零等待热轮询（句柄释放是亚毫秒级，
+                // 绝大多数第一次重试即成功），之后 2ms 短退避兜底异步删除落地；
+                // 稳定失败（宿主真持有句柄）时仍会在 ~2.5s 内如实返回
+                // DirectoryNotEmpty，不吞错误。
+                Thread.Sleep(attempt < 8 ? 0 : 2);
             }
             // 与 DeleteFile 相同：尽早执行真实删除，避免 Cleanup 失败被吞成
             // "删除成功"后视图与宿主状态脱节（目录被占用时报准确错误）
@@ -1932,8 +2042,8 @@ public sealed class MirrorFs : IDokanOperations
             var newVp = newRes.VirtualPath;
             var oldReal = oldRes.RealPath;
             var newReal = newRes.RealPath;
-            if (!Check(oldVp, new[] { AccessKind.Write }, info) ||
-                !Check(newVp, new[] { AccessKind.Write }, info))
+            if (!Check(oldVp, AccessKinds.Write, info) ||
+                !Check(newVp, AccessKinds.Write, info))
                 return AccessDenied;
             // 目标经 junction 目录会落到根外（写入逃逸），先校验落点
             if (!PathLandsWithinRoot(newReal, newRes.Map))
@@ -2335,3 +2445,5 @@ public sealed class MirrorFs : IDokanOperations
         return NotImplemented;
     }
 }
+
+

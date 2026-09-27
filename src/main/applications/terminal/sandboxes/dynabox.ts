@@ -182,19 +182,26 @@ export async function prepareDynamicSandbox(options: {
         throw error;
     }
 
-    // 工具链缓存重定向到宿主持久目录（~/.cache/opendesk-sandbox/...）：npm/jest
-    // 缓存跨沙箱实例复用（首次构建才需下载/全量编译），且写放行已由 policyText
-    // 的 cacheRoot 规则覆盖。与 linux-sandbox.ts 的 CARGO_HOME/GOCACHE 同语义；
-    // Windows 侧暂只重定向 npm 与 jest（PSModulePath 等系统路径不动）。
+    // 工具链缓存重定向到宿主持久目录（~/.cache/opendesk-sandbox/...）：npm 缓存
+    // 跨沙箱实例复用（首次构建才需下载），且写放行已由 policyText 的 cacheRoot
+    // 规则覆盖。与 linux-sandbox.ts 的 CARGO_HOME/GOCACHE 同语义；Windows 侧暂只
+    // 重定向 npm（jest 的 transform 缓存经镜像层共享 Temp 别名自动落在宿主
+    // %TEMP%\jest，见 dynobox Runner 的 ConfigureSharedTempAlias，无需也无效的
+    // JEST_CACHE_DIR 环境变量——jest 只认 os.tmpdir()/jest 与 cacheDirectory 配置）。
     const cacheRoot = process.env.USERPROFILE
         ? `${process.env.USERPROFILE.replace(/\\/g, '/')}/.cache/opendesk-sandbox`
         : null;
     const envExtra: Record<string, string> = {};
     if (cacheRoot) {
         envExtra['npm_config_cache'] = `${cacheRoot}/npm`;
-        // jest 的 transform 缓存默认落在 %TEMP%（沙箱内每次重建的私有 profile），
-        // 重定向到持久目录避免每次全量 ts-jest 编译
-        envExtra['JEST_CACHE_DIR'] = `${cacheRoot}/jest`;
+    }
+    // --preserve-symlinks：unrs-resolver（jest-resolve 底层）对虚拟卷上 junction
+    // 化的共享 Temp 做默认 realpath 时会报 NOT_A_REPARSE_POINT (os error 4390)，
+    // 导致 jest 环境内 import 绝对路径报 Cannot find module。该 flag 让
+    // jest-resolve 跳过 symlink 解析绕开此问题（对普通命令无影响）。
+    // 仅在用户未自行设置 NODE_OPTIONS 时注入，避免覆盖用户配置。
+    if (!process.env.NODE_OPTIONS) {
+        envExtra['NODE_OPTIONS'] = '--preserve-symlinks';
     }
 
     const childCommand = [options.shellPath, ...childArgs].map(quoteWindowsArgument).join(' ');

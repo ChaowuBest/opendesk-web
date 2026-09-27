@@ -67,8 +67,20 @@ describe('policyText', () => {
         expect(ruleBlock).toContain('perm = "allow"');
     });
 
+    test('home 提供时生成宿主 Temp 写放行规则（共享 Temp 别名落点）', () => {
+        const text = policyText('http://ep/decide', 't', undefined, 'C:\\Users\\liyif');
+        expect(text).toContain('path = "/C/Users/liyif/AppData/Local/Temp/**"');
+        const ruleStart = text.indexOf('/AppData/Local/Temp/**');
+        const ruleBlock = text.slice(ruleStart - 40, ruleStart + 120);
+        expect(ruleBlock).toContain('access = "write"');
+        expect(ruleBlock).toContain('perm = "allow"');
+        // 放行规则须早于兜底 write ask 命中
+        expect(text.indexOf('/AppData/Local/Temp/**')).toBeLessThan(text.indexOf('perm = "ask"'));
+    });
+
     test('home 缺失时不生成缓存目录规则', () => {
         expect(policyText('http://ep/decide', 't')).not.toContain('opendesk-sandbox');
+        expect(policyText('http://ep/decide', 't')).not.toContain('AppData/Local/Temp');
     });
 
     test('追加只读兜底与写入问询、执行放行的兜底规则', () => {

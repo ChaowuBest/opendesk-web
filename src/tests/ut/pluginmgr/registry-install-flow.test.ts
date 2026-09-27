@@ -58,6 +58,8 @@ async function writeAcmePluginSource(): Promise<string> {
 }
 
 describe('插件市场安装流 × registry capability', () => {
+    // 沙箱化运行（dynobox 卷）下该端到端安装流（下载解压、完整性校验、注册、
+    // 卸载回收）比宿主慢约 5x，jest 默认 5s 超时不够；显式放宽到 30s。
     test('installPlugin 安装的注册表插件经完整性校验与授权后生效，卸载后回收', async () => {
         const sourceDir = await writeAcmePluginSource();
         const configDir = fs.mkdtempSync(path.join(os.tmpdir(), 'acme-store-config-'));
@@ -171,5 +173,5 @@ describe('插件市场安装流 × registry capability', () => {
             fs.rmSync(sourceDir, { recursive: true, force: true });
             fs.rmSync(configDir, { recursive: true, force: true });
         }
-    });
+    }, 30_000);
 });

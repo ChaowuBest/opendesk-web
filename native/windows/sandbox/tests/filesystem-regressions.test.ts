@@ -11,6 +11,10 @@ const executable = path.join(sandboxRoot, 'runtime', 'sandbox.exe');
 const windows = process.platform === 'win32';
 
 async function run(file: string, args: string[], stdin = '', env = process.env, timeoutMs = 60000) {
+    // --automount 已恢复：run 子进程默认把所有盘符挂进卷根（/C -> C:\ …）。
+    // --src 单目录与 automount 冲突，该场景不注入。
+    if (file === executable && args[0] === 'run' && !args.includes('--src') && !args.includes('--automount'))
+        args = ['run', '--automount', ...args.slice(1)];
     const proc = spawn(file, args, { windowsHide: true, env });
     let stdout = '',
         stderr = '';
@@ -45,40 +49,15 @@ function volumePathJsHelper(): string {
     ].join('\n');
 }
 
-/** 写一个全放行的多根策略：挂载 /C -> C:\、/D -> D:\。
- * 原 --automount 移除后，测试要访问 PATH 中的系统工具必须显式声明盘符映射。 */
+/** 写一个全放行的策略（无 [[roots]]）：盘符由 --automount 枚举挂载进卷根
+ * （/C -> C:\、/D -> D:\ …），子进程可访问 PATH 中的系统工具。 */
 function writeDriveAllowPolicy(policyPath: string): void {
-    fs.writeFileSync(
-        policyPath,
-        [
-            'version = 1',
-            'default = "allow"',
-            '',
-            '[[roots]]',
-            'virtual = "/C"',
-            'real    = "C:\\\\"',
-            '',
-            '[[roots]]',
-            'virtual = "/D"',
-            'real    = "D:\\\\"',
-            '',
-            '[[rules]]',
-            'path    = "/C/**"',
-            'access  = "all"',
-            'perm    = "allow"',
-            '',
-            '[[rules]]',
-            'path    = "/D/**"',
-            'access  = "all"',
-            'perm    = "allow"',
-            '',
-        ].join('\n')
-    );
+    fs.writeFileSync(policyPath, 'version = 1\ndefault = "allow"\n');
 }
 
 /**
  * 这批回归测试覆盖 2026-09-27 沙箱全量测试对齐时修复的文件系统语义。
- * 每个用例都通过多根策略（/C、/D）挂载盘符，在卷内跑 Node probe 脚本，
+ * 每个用例通过 --automount 枚举挂载盘符（/C、/D …），在卷内跑 Node probe 脚本，
  * 断言此前修复的 Dokan/MirrorFs 行为不再回归。所有用例仅依赖 Windows。
  */
 

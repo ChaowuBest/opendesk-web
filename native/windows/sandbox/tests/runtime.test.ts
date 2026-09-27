@@ -14,6 +14,11 @@ const windows = process.platform === 'win32';
 const fixtureRoot = path.join(sandboxRoot, 'tests');
 const fixtureRequire = createRequire(path.join(fixtureRoot, 'package.json'));
 async function run(file: string, args: string[], stdin = '', env = process.env, timeoutMs = 60000) {
+    // --automount 已恢复：run 子进程默认把所有盘符挂进卷根（/C -> C:\ …）。
+    // 显式 roots 优先于 automount（declared 跳过），--src 单目录与 automount 冲突，
+    // 这两类场景不注入。
+    if (file === executable && args[0] === 'run' && !args.includes('--src') && !args.includes('--automount'))
+        args = ['run', '--automount', ...args.slice(1)];
     const proc = spawn(file, args, { windowsHide: true, env });
     let stdout = '',
         stderr = '';
@@ -34,36 +39,10 @@ async function run(file: string, args: string[], stdin = '', env = process.env, 
     }
 }
 
-/** 写一个全放行的多根策略：挂载 /C -> C:\、/D -> D:\。
- * 原 --automount 移除后，测试要访问 PATH 中的系统工具（node/pip 等）必须显式
- * 声明盘符映射；这正是实际使用的多根策略形态。 */
+/** 写一个全放行的策略（无 [[roots]]）：盘符由 --automount 枚举挂载进卷根
+ * （/C -> C:\、/D -> D:\ …），子进程可访问 PATH 中的系统工具（node/pip 等）。 */
 function writeDriveAllowPolicy(policyPath: string): void {
-    fs.writeFileSync(
-        policyPath,
-        [
-            'version = 1',
-            'default = "allow"',
-            '',
-            '[[roots]]',
-            'virtual = "/C"',
-            'real    = "C:\\\\"',
-            '',
-            '[[roots]]',
-            'virtual = "/D"',
-            'real    = "D:\\\\"',
-            '',
-            '[[rules]]',
-            'path    = "/C/**"',
-            'access  = "all"',
-            'perm    = "allow"',
-            '',
-            '[[rules]]',
-            'path    = "/D/**"',
-            'access  = "all"',
-            'perm    = "allow"',
-            '',
-        ].join('\n')
-    );
+    fs.writeFileSync(policyPath, 'version = 1\ndefault = "allow"\n');
 }
 
 /** 写一个最简单的全放行策略（无 [[roots]]）：配合 --src 单目录挂载到卷根 /。 */
@@ -71,15 +50,10 @@ function writeSimplePolicy(policyPath: string): void {
     fs.writeFileSync(policyPath, 'version = 1\ndefault = "allow"\n');
 }
 
-/** 在自定义策略内容前注入 /C、/D 盘符 roots（替代原 --automount 的盘符枚举，
+/** 在自定义策略内容前保留 version 头（盘符由 --automount 枚举挂载，
  * 让子进程能访问 PATH 中的系统工具与探针所在的主机路径）。 */
 function withDriveRoots(content: string): string {
-    return (
-        'version = 1\n' +
-        '[[roots]]\nvirtual = "/C"\nreal    = "C:\\\\"\n' +
-        '[[roots]]\nvirtual = "/D"\nreal    = "D:\\\\"\n' +
-        content.replace(/^version = 1\n/, '')
-    );
+    return content;
 }
 
 test('manager exits after a child leaves an inherited output handle open', { skip: !windows }, async () => {

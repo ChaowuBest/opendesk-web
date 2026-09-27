@@ -12,8 +12,8 @@ public static class Program
 {
     private const string Usage = """
         用法:
-          dynobox run  --policy <rules.toml> [--src DIR] [--del-to-trash] [--upstream URL] [--token TOKEN] [--mount X] [--log-file FILE] -- <子进程命令行>
-          dynobox mount --policy <rules.toml> [--src DIR] [--del-to-trash] [--upstream URL] [--token TOKEN] [--mount X]
+          dynobox run  --policy <rules.toml> [--src DIR] [--automount] [--del-to-trash] [--upstream URL] [--token TOKEN] [--mount X] [--log-file FILE] -- <子进程命令行>
+          dynobox mount --policy <rules.toml> [--src DIR] [--automount] [--del-to-trash] [--upstream URL] [--token TOKEN] [--mount X]
           dynobox endpoint [--port 8080] [--pipe 管道名] [--default deny]
           dynobox network-status
           dynobox network-ensure
@@ -22,7 +22,7 @@ public static class Program
           dynobox cleanup
 
         示例:
-          dynobox run --policy examples\rules_drive.toml ^
+          dynobox run --automount --policy examples\rules_drive.toml ^
               --upstream pipe://dynobox-decide -- cmd /c tests\run_tests.bat
         """;
 
@@ -158,10 +158,11 @@ public static class Program
     }
 
     private static (string Policy, string? Src, string? Upstream, string? Token, string? Mount,
-        List<(string From, string To)> PathMaps, bool DelToTrash,
+        bool Automount, List<(string From, string To)> PathMaps, bool DelToTrash,
         Dictionary<string, string> EnvExtra) Parse(string[] args, bool requireCmd)
     {
         string? policy = null, src = null, upstream = null, token = null, mount = null;
+        var automount = false;
         var delToTrash = false;
         var pathMaps = new List<(string From, string To)>();
         var envExtra = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
@@ -169,6 +170,7 @@ public static class Program
         {
             switch (args[i])
             {
+                case "--automount": automount = true; break;
                 case "--del-to-trash": delToTrash = true; break;
                 case "--policy" when i + 1 < args.Length: policy = args[++i]; break;
                 case "--src" when i + 1 < args.Length: src = args[++i]; break;
@@ -215,12 +217,12 @@ public static class Program
             Console.WriteLine(Usage);
             Environment.Exit(2);
         }
-        return (policy, src, upstream, token, mount, pathMaps, delToTrash, envExtra);
+        return (policy, src, upstream, token, mount, automount, pathMaps, delToTrash, envExtra);
     }
 
     private static Sandbox Build(string[] args, string tokenMode = "compatible")
     {
-        var (policyFile, src, upstream, token, mount, pathMaps, delToTrash, _) = Parse(args, requireCmd: false);
+        var (policyFile, src, upstream, token, mount, automount, pathMaps, delToTrash, _) = Parse(args, requireCmd: false);
         var policy = Policy.Load(policyFile);
         if (src is not null)
         {
@@ -242,7 +244,7 @@ public static class Program
             policy.Rules.Count, policy.Default,
             policy.Ask.Endpoint.Length == 0 ? "<未配置>" : policy.Ask.Endpoint,
             policy.Ask.TimeoutMs, policy.Ask.CacheTtlSeconds);
-        var sandbox = new Sandbox(policy, mount, delToTrash, tokenMode);
+        var sandbox = new Sandbox(policy, automount, mount, delToTrash, tokenMode);
         sandbox.PathMaps.AddRange(pathMaps);
         return sandbox;
     }
@@ -269,7 +271,7 @@ public static class Program
             return 1;
         }
 
-        var (_, _, _, _, _, _, _, envExtra) = Parse(args, requireCmd: false);
+        var (_, _, _, _, _, _, _, _, envExtra) = Parse(args, requireCmd: false);
         var rc = sandbox.Run(string.Join(' ', childCmd), envExtra);
         Log.Info("[RUN] 子进程退出码: {0}", rc);
         return rc;

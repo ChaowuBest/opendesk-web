@@ -48,7 +48,7 @@ public sealed class Sandbox : IDisposable
     private MountLease? _mountLease;
     private readonly Dictionary<string, string> _bootstrapExecutables = new(StringComparer.OrdinalIgnoreCase);
 
-    public Sandbox(Policy policy, string? letter = null, bool delToTrash = false,
+    public Sandbox(Policy policy, bool automount, string? letter = null, bool delToTrash = false,
         string tokenMode = "appcontainer")
     {
         Policy = policy;
@@ -64,13 +64,39 @@ public sealed class Sandbox : IDisposable
             // child must never fall back to the manager's unrestricted token.
             Security.Prepare(LoopbackAccess.ProfileName(LoopbackAccess.CurrentUserSid, Letter[0]));
 
-            // 虚拟根完全由策略文件的 [[roots]]（或 --src 单目录）决定：
-            // /C -> C:\、/D -> D:\ …。不做盘符自动枚举——隐式挂载会把整块系统盘
-            // 暴露进沙箱，也让 PATH 里的盘符语义不可控。多根场景请按盘符显式声明。
+            // 虚拟根由策略文件的 [[roots]]（或 --src 单目录）与 --automount 共同决定：
+            // /C -> C:\、/D -> D:\ …。--automount 把宿主全部盘符自动挂进卷根，便于
+            // PATH 里的解释器与用户工作区直接以 /C、/D 形式访问。
             var roots = new List<(string Virtual, string Real)>();
             foreach (var r in policy.Roots)
             {
+                if (automount && r.Virtual == "/")
+                    throw new ArgumentException(
+                        "--automount 与映射到卷根 / 的 [[roots]] 冲突（/ 会吞掉所有盘符）");
                 roots.Add((r.Virtual, r.Real));
+            }
+            if (automount)
+            {
+                // 枚举全部本机盘符（本地盘、可移动盘、映射的网络驱动器），
+                // 以盘符名为虚拟目录挂进卷根：C:\ -> /C、E:\ -> /E ...
+                var declared = new HashSet<string>(
+                    roots.Select(r => r.Virtual.TrimStart('/')), StringComparer.OrdinalIgnoreCase);
+                foreach (var d in DriveInfo.GetDrives())
+                {
+                    if (d.Name.Length < 3 || d.Name[1] != ':') continue;
+                    var driveLetter = char.ToUpperInvariant(d.Name[0]);
+                    // 其他运行实例的虚拟卷不能再次镜像，否则会串接其权限端点和生命周期。
+                    if (MountLease.IsReserved(driveLetter)) continue;
+                    if (!d.IsReady)
+                    {
+                        Log.Info("[AUTOMOUNT] 跳过未就绪的驱动器 {0}:", driveLetter);
+                        continue;
+                    }
+                    if (!declared.Add(driveLetter.ToString()))
+                        continue;   // 用户已在 [[roots]] 里手动声明，不覆盖
+                    roots.Add(("/" + driveLetter, driveLetter + ":\\"));
+                    Log.Info("[AUTOMOUNT] {0}: -> /{1} ({2})", driveLetter, driveLetter, d.DriveType);
+                }
             }
 
             // 子进程引导区：存放 AppContainer 无法从宿主原生目录读取的 exe 副本
@@ -88,6 +114,20 @@ public sealed class Sandbox : IDisposable
             // 排除挂载盘符自身，避免 Y:\ -> /Y -> Y:\ 的自引用循环
             roots.RemoveAll(r => r.Virtual.Equals("/" + Letter, StringComparison.OrdinalIgnoreCase));
             Fs.RebuildRoots(roots);
+
+            // 共享宿主 Temp：AppContainer 强制把 %TEMP% 重定向到包私有
+            // %LOCALAPPDATA%\Packages\<profile>\AC\Temp（每次运行重建，env 注入无效）。
+            // 把私有 AC\Temp 目录替换为指向宿主用户 Temp 的 junction（NTFS 重解析点，
+            // 无需管理员）：工具缓存（jest transform 缓存、node-compile-cache 等）
+            // 跨沙箱实例与宿主共享，首次/每次运行不再重付全量编译成本。
+            // junction 在真实路径层面重定向，Dokan 的 FCB 缓存与用户态打开看到的是
+            // 同一个物理位置，不会出现镜像层改路与内核缓存不一致的问题。
+            LinkSharedTemp(
+                Path.Combine(
+                    Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+                    "Packages", LoopbackAccess.ProfileName(LoopbackAccess.CurrentUserSid, Letter[0]), "AC", "Temp"),
+                Environment.GetEnvironmentVariable("TEMP")
+                    ?? Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "Temp"));
         }
         catch
         {
@@ -118,15 +158,76 @@ public sealed class Sandbox : IDisposable
         throw new InvalidOperationException("没有空闲盘符");
     }
 
+    /// <summary>
+    /// 把当前实例 AppContainer 私有 Temp 目录（%LOCALAPPDATA%\Packages\&lt;profile&gt;\AC\Temp）
+    /// 替换为指向宿主用户 Temp 的 junction（NTFS 重解析点，无需管理员），使沙箱内工具
+    /// 的临时文件（jest transform 缓存、node-compile-cache 等）与宿主共享，跨实例复用。
+    /// 在真实路径层面重定向：Dokan 的 FCB 缓存、用户态打开与 NTFS 解析看到同一个物理
+    /// 位置，避免镜像层改路与内核缓存不一致（csc 二次打开经别名创建的文件会 CS2001）。
+    /// 任一步骤失败都保持私有 Temp（fail-open，不影响隔离与功能）并记警告日志；
+    /// OPENDESK_SANDBOX_DISABLE_SHARED_TEMP=1 可跳过（调试/回归对比）。
+    /// </summary>
+    private static void LinkSharedTemp(string acTemp, string hostTemp)
+    {
+        try
+        {
+            if (Environment.GetEnvironmentVariable("OPENDESK_SANDBOX_DISABLE_SHARED_TEMP") == "1") return;
+            var link = Path.GetFullPath(acTemp).TrimEnd(Path.DirectorySeparatorChar);
+            var target = Path.GetFullPath(hostTemp).TrimEnd(Path.DirectorySeparatorChar);
+            if (link.Equals(target, StringComparison.OrdinalIgnoreCase)) return;
+            if (!Directory.Exists(target))
+            {
+                Log.Warn("[SHARED-TEMP] 宿主 Temp 不存在（保持私有 Temp）: {0}", target);
+                return;
+            }
+            if (Directory.Exists(link))
+            {
+                // 已是 junction（profile 复用时可能的残留）：目录级重定向已生效
+                if ((File.GetAttributes(link) & FileAttributes.ReparsePoint) != 0) return;
+                // profile 刚创建时 AC\Temp 是空目录；非空说明 AppContainer 已在写入，
+                // 保持私有 Temp（fail-open），避免删除在用目录
+                if (Directory.EnumerateFileSystemEntries(link).Any()) return;
+                Directory.Delete(link);
+            }
+            // mklink /J：junction 不需要 SeCreateSymbolicLink 特权（与目录符号链接不同）
+            var psi = new System.Diagnostics.ProcessStartInfo("cmd.exe")
+            {
+                Arguments = $"/c mklink /J \"{link}\" \"{target}\"",
+                UseShellExecute = false,
+                CreateNoWindow = true,
+                RedirectStandardOutput = true,
+                RedirectStandardError = true,
+            };
+            using (var p = System.Diagnostics.Process.Start(psi)!)
+            {
+                p.WaitForExit();
+                if (p.ExitCode != 0)
+                {
+                    Log.Warn("[SHARED-TEMP] junction 创建失败（保持私有 Temp）: {0}",
+                        p.StandardError.ReadToEnd().Trim());
+                    return;
+                }
+            }
+            Log.Info("[SHARED-TEMP] 沙箱 Temp 共享宿主 {0}", target);
+        }
+        catch (Exception ex)
+        {
+            Log.Warn("[SHARED-TEMP] 共享 Temp 配置失败（保持私有 Temp）: {0}", ex.Message);
+        }
+    }
+
     public void Mount(int waitTimeoutMs = 15_000)
     {
         var instance = new DokanInstanceBuilder(_dokan)
             .ConfigureOptions(o =>
             {
                 o.MountPoint = MountPoint;
-                // 注：DokanOptions.AllowIpcBatching 实测使元数据延迟恶化且并发下
-                // 可致卷 I/O 死锁（2026-09-27 复测并行 stat 900s 无响应），勿启用。
+                // 注：AllowIpcBatching 实测并发下死锁（2026-09-27 复测并行 stat 900s
+                // 无响应；退避修复后重测仍死锁，与回调 sleep 无关，勿启用）。
+                // 保留 OPENDESK_DOKAN_IPCBATCH=1 开关仅供死锁复验，默认不启用。
                 o.Options = DokanOptions.MountManager | DokanOptions.CurrentSession
+                    | (Environment.GetEnvironmentVariable("OPENDESK_DOKAN_IPCBATCH") == "1"
+                        ? DokanOptions.AllowIpcBatching : 0)
                     | (Environment.GetEnvironmentVariable("OPENDESK_DOKAN_DEBUG") == "1"
                         ? DokanOptions.DebugMode | DokanOptions.StderrOutput : 0);
                 o.TimeOut = TimeSpan.FromSeconds(30);

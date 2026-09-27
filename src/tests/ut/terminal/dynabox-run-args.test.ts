@@ -39,13 +39,13 @@ describe('sandboxRunArgs', () => {
             ...base,
             envExtra: {
                 npm_config_cache: 'C:/Users/x/.cache/opendesk-sandbox/npm',
-                JEST_CACHE_DIR: 'C:/Users/x/.cache/opendesk-sandbox/jest'
+                NODE_OPTIONS: '--preserve-symlinks'
             }
         });
         expect(args).toContain('--env');
         expect(args.filter((arg) => arg === '--env')).toHaveLength(2);
         expect(args).toContain('npm_config_cache=C:/Users/x/.cache/opendesk-sandbox/npm');
-        expect(args).toContain('JEST_CACHE_DIR=C:/Users/x/.cache/opendesk-sandbox/jest');
+        expect(args).toContain('NODE_OPTIONS=--preserve-symlinks');
         // --env 参数对必须在 -- 分隔符之前
         const dashIdx = args.indexOf('--');
         expect(args.indexOf('--env')).toBeLessThan(dashIdx);
