@@ -18,6 +18,28 @@ namespace Dynobox;
 /// <summary>沙箱运行器：挂载 -> 拉起子进程（Job 容器）-> 等待 -> 卸载。</summary>
 public sealed class Sandbox : IDisposable
 {
+    /// <summary>这些环境变量描述 Windows 安装本身而非用户数据路径。把它们
+    /// 改写为虚拟卷路径会破坏 .NET Framework 初始化/关机与系统目录定位，
+    /// 因此路径翻译时保持原样。</summary>
+    private static readonly HashSet<string> NeverRewriteEnvVars = new(StringComparer.OrdinalIgnoreCase)
+    {
+        "SystemDrive",
+        "SystemRoot",
+        "windir",
+    };
+
+    /// <summary>卷内 DOS 设备别名表：设备名 → 卷内路径。NUL 设备在部分
+    /// Windows 版本上对 AppContainer 关闭（cargo Stdio::null、go os/exec、
+    /// python os.devnull 都依赖它）；允许用户会话重定义该名称的系统上，把
+    /// 别名定义到卷内虚拟 NUL 即可整体放行。不允许的系统上定义会失败并被
+    /// 静默跳过（此时由 RuntimePreload 的各运行时预载补丁兜底）。定义随
+    /// 运行成对创建/撤销。</summary>
+    private static readonly (string Device, string VolumePath)[] DosDeviceAliases =
+    [
+        ("NUL", @"\dynobox\nul.file"),
+    ];
+
+    private readonly List<string> _definedDosDevices = new();
     private DokanInstance? _instance;
     private readonly Dokan _dokan = new(new DokanNet.Logging.NullLogger());
     private IntPtr _job = IntPtr.Zero;
@@ -26,10 +48,13 @@ public sealed class Sandbox : IDisposable
     private MountLease? _mountLease;
     private readonly Dictionary<string, string> _bootstrapExecutables = new(StringComparer.OrdinalIgnoreCase);
 
-    public Sandbox(Policy policy, bool automount, string? letter = null, bool delToTrash = false)
+    public Sandbox(Policy policy, bool automount, string? letter = null, bool delToTrash = false,
+        string tokenMode = "appcontainer")
     {
         Policy = policy;
-        Security = new SandboxSecurity();
+        // compatible 模式（默认）：受限令牌 + 显式 ACL 白名单；
+        // strict 模式：AppContainer（保留代码路径，--token strict 切换）。
+        Security = SandboxSecurityFactory.Create(tokenMode);
         try
         {
             _mountLease = MountLease.Acquire(letter);
@@ -37,8 +62,11 @@ public sealed class Sandbox : IDisposable
             MountPoint = Letter + ":";
             // Fail closed if the host cannot create the AppContainer identity. The
             // child must never fall back to the manager's unrestricted token.
-            Security.PrepareAppContainer(LoopbackAccess.ProfileName(LoopbackAccess.CurrentUserSid, Letter[0]));
+            Security.Prepare(LoopbackAccess.ProfileName(LoopbackAccess.CurrentUserSid, Letter[0]));
 
+            // 虚拟根由策略文件的 [[roots]]（或 --src 单目录）与 --automount 共同决定：
+            // /C -> C:\、/D -> D:\ …。--automount 把宿主全部盘符自动挂进卷根，便于
+            // PATH 里的解释器与用户工作区直接以 /C、/D 形式访问。
             var roots = new List<(string Virtual, string Real)>();
             foreach (var r in policy.Roots)
             {
@@ -86,6 +114,20 @@ public sealed class Sandbox : IDisposable
             // 排除挂载盘符自身，避免 Y:\ -> /Y -> Y:\ 的自引用循环
             roots.RemoveAll(r => r.Virtual.Equals("/" + Letter, StringComparison.OrdinalIgnoreCase));
             Fs.RebuildRoots(roots);
+
+            // 共享宿主 Temp：AppContainer 强制把 %TEMP% 重定向到包私有
+            // %LOCALAPPDATA%\Packages\<profile>\AC\Temp（每次运行重建，env 注入无效）。
+            // 把私有 AC\Temp 目录替换为指向宿主用户 Temp 的 junction（NTFS 重解析点，
+            // 无需管理员）：工具缓存（jest transform 缓存、node-compile-cache 等）
+            // 跨沙箱实例与宿主共享，首次/每次运行不再重付全量编译成本。
+            // junction 在真实路径层面重定向，Dokan 的 FCB 缓存与用户态打开看到的是
+            // 同一个物理位置，不会出现镜像层改路与内核缓存不一致的问题。
+            LinkSharedTemp(
+                Path.Combine(
+                    Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+                    "Packages", LoopbackAccess.ProfileName(LoopbackAccess.CurrentUserSid, Letter[0]), "AC", "Temp"),
+                Environment.GetEnvironmentVariable("TEMP")
+                    ?? Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "Temp"));
         }
         catch
         {
@@ -100,7 +142,7 @@ public sealed class Sandbox : IDisposable
     public string Src => Fs.Src;
     public Policy Policy { get; }
     public MirrorFs Fs { get; }
-    public SandboxSecurity Security { get; }
+    public ISandboxSecurity Security { get; }
     public string Letter { get; }
     public string MountPoint { get; }
 
@@ -116,13 +158,78 @@ public sealed class Sandbox : IDisposable
         throw new InvalidOperationException("没有空闲盘符");
     }
 
+    /// <summary>
+    /// 把当前实例 AppContainer 私有 Temp 目录（%LOCALAPPDATA%\Packages\&lt;profile&gt;\AC\Temp）
+    /// 替换为指向宿主用户 Temp 的 junction（NTFS 重解析点，无需管理员），使沙箱内工具
+    /// 的临时文件（jest transform 缓存、node-compile-cache 等）与宿主共享，跨实例复用。
+    /// 在真实路径层面重定向：Dokan 的 FCB 缓存、用户态打开与 NTFS 解析看到同一个物理
+    /// 位置，避免镜像层改路与内核缓存不一致（csc 二次打开经别名创建的文件会 CS2001）。
+    /// 任一步骤失败都保持私有 Temp（fail-open，不影响隔离与功能）并记警告日志；
+    /// OPENDESK_SANDBOX_DISABLE_SHARED_TEMP=1 可跳过（调试/回归对比）。
+    /// </summary>
+    private static void LinkSharedTemp(string acTemp, string hostTemp)
+    {
+        try
+        {
+            if (Environment.GetEnvironmentVariable("OPENDESK_SANDBOX_DISABLE_SHARED_TEMP") == "1") return;
+            var link = Path.GetFullPath(acTemp).TrimEnd(Path.DirectorySeparatorChar);
+            var target = Path.GetFullPath(hostTemp).TrimEnd(Path.DirectorySeparatorChar);
+            if (link.Equals(target, StringComparison.OrdinalIgnoreCase)) return;
+            if (!Directory.Exists(target))
+            {
+                Log.Warn("[SHARED-TEMP] 宿主 Temp 不存在（保持私有 Temp）: {0}", target);
+                return;
+            }
+            if (Directory.Exists(link))
+            {
+                // 已是 junction（profile 复用时可能的残留）：目录级重定向已生效
+                if ((File.GetAttributes(link) & FileAttributes.ReparsePoint) != 0) return;
+                // profile 刚创建时 AC\Temp 是空目录；非空说明 AppContainer 已在写入，
+                // 保持私有 Temp（fail-open），避免删除在用目录
+                if (Directory.EnumerateFileSystemEntries(link).Any()) return;
+                Directory.Delete(link);
+            }
+            // mklink /J：junction 不需要 SeCreateSymbolicLink 特权（与目录符号链接不同）
+            var psi = new System.Diagnostics.ProcessStartInfo("cmd.exe")
+            {
+                Arguments = $"/c mklink /J \"{link}\" \"{target}\"",
+                UseShellExecute = false,
+                CreateNoWindow = true,
+                RedirectStandardOutput = true,
+                RedirectStandardError = true,
+            };
+            using (var p = System.Diagnostics.Process.Start(psi)!)
+            {
+                p.WaitForExit();
+                if (p.ExitCode != 0)
+                {
+                    Log.Warn("[SHARED-TEMP] junction 创建失败（保持私有 Temp）: {0}",
+                        p.StandardError.ReadToEnd().Trim());
+                    return;
+                }
+            }
+            Log.Info("[SHARED-TEMP] 沙箱 Temp 共享宿主 {0}", target);
+        }
+        catch (Exception ex)
+        {
+            Log.Warn("[SHARED-TEMP] 共享 Temp 配置失败（保持私有 Temp）: {0}", ex.Message);
+        }
+    }
+
     public void Mount(int waitTimeoutMs = 15_000)
     {
         var instance = new DokanInstanceBuilder(_dokan)
             .ConfigureOptions(o =>
             {
                 o.MountPoint = MountPoint;
-                o.Options = DokanOptions.MountManager | DokanOptions.CurrentSession;
+                // 注：AllowIpcBatching 实测并发下死锁（2026-09-27 复测并行 stat 900s
+                // 无响应；退避修复后重测仍死锁，与回调 sleep 无关，勿启用）。
+                // 保留 OPENDESK_DOKAN_IPCBATCH=1 开关仅供死锁复验，默认不启用。
+                o.Options = DokanOptions.MountManager | DokanOptions.CurrentSession
+                    | (Environment.GetEnvironmentVariable("OPENDESK_DOKAN_IPCBATCH") == "1"
+                        ? DokanOptions.AllowIpcBatching : 0)
+                    | (Environment.GetEnvironmentVariable("OPENDESK_DOKAN_DEBUG") == "1"
+                        ? DokanOptions.DebugMode | DokanOptions.StderrOutput : 0);
                 o.TimeOut = TimeSpan.FromSeconds(30);
                 o.AllocationUnitSize = 4096;
                 o.SectorSize = 512;
@@ -134,6 +241,8 @@ public sealed class Sandbox : IDisposable
             .Build(Fs);
 
         _instance = instance;
+        // 回调里直接改宿主侧文件后，让 Dokan 的目录枚举缓存同步刷新
+        Fs.AttachNotify(instance);
         Security.HideDriveLetter(Letter[0]);
         var deadline = DateTime.UtcNow.AddMilliseconds(waitTimeoutMs);
         var i = 0;
@@ -151,7 +260,18 @@ public sealed class Sandbox : IDisposable
             Log.Info("[RUN] 等待卷就绪... poll={0} viaDir={1} viaInfo={2}", i, viaDir, viaInfo);
             Thread.Sleep(100);
         }
-        throw new TimeoutException("挂载超时：卷未就绪");
+        // 卷已挂载（MountedPoint 已设置）但根目录始终不可访问（viaDir/viaInfo
+        // 持续 false）时，是 Dokan 驱动层进入了坏状态：典型表现为挂载成功却
+        // "已挂载但 Z:\ 不可访问"，驱动事件里伴随 STATUS_INVALID_PARAMETER
+        // (0xc000000d)。此状态由驱动/系统持有句柄造成，用户态卸载无济于事，
+        // sc stop Dokan2 会卡 STOP_PENDING，唯一恢复手段是重启系统。
+        var mountedButUnreachable = !string.IsNullOrEmpty(Fs.MountedPoint);
+        throw new TimeoutException(
+            mountedButUnreachable
+                ? "挂载超时：卷已挂载但根目录不可访问（Dokan 驱动可能进入坏状态）。" +
+                  "若此前出现过 STATUS_INVALID_PARAMETER (0xc000000d) 或反复挂载失败，" +
+                  "请重启系统恢复 Dokan 驱动；重启前重试不会成功。"
+                : "挂载超时：卷未就绪");
     }
 
     public void Unmount()
@@ -176,6 +296,20 @@ public sealed class Sandbox : IDisposable
         // 用 Mounted 回调回报的实际挂载点（MountManager 可能改派盘符）
         var actual = (Fs.MountedPoint ?? MountPoint).TrimEnd('\\', '/');
 
+        // 卷内 DOS 设备别名（见 DosDeviceAliases）：允许重定义的系统上沙箱内
+        // 的 "NUL" 直接获得虚拟语义；不允许的系统上失败即跳过（Debug 级），
+        // 由 RuntimePreload 的各运行时预载补丁兜底。Dispose 成对撤销。
+        foreach (var (device, volumePath) in DosDeviceAliases)
+        {
+            if (!DefineDosDeviceW(0, device, actual + volumePath))
+            {
+                Log.Debug("[RUN] DOS 设备别名 {0} 定义失败（该系统不允许，已跳过）: {1}",
+                    device, Marshal.GetLastWin32Error());
+                continue;
+            }
+            _definedDosDevices.Add(device);
+        }
+
         var envVars = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
         foreach (System.Collections.DictionaryEntry e in Environment.GetEnvironmentVariables())
             envVars[(string)e.Key!] = (string)e.Value!;
@@ -195,7 +329,8 @@ public sealed class Sandbox : IDisposable
             var target = actual + root.Prefix.Replace('/', '\\');   // Z:\C
             var real = root.RealTrim;                                   // C:
             maps.Add((real + "\\", target + "\\"));
-            maps.Add((real + "/", target + "\\"));
+            // 保留原路径的分隔符风格：正斜杠改写后仍为正斜杠
+            maps.Add((real + "/", actual + root.Prefix + "/"));
             maps.Add((real, target));
         }
 
@@ -212,12 +347,7 @@ public sealed class Sandbox : IDisposable
             cmdline = ReplaceLiteralAll(cmdline, maps);
             foreach (var k in envVars.Keys.ToList())
             {
-                // These describe the Windows installation, not user data paths.
-                // .NET Framework requires a drive designator in SystemDrive and
-                // native system paths during initialization and shutdown.
-                if (k.Equals("SystemDrive", StringComparison.OrdinalIgnoreCase) ||
-                    k.Equals("SystemRoot", StringComparison.OrdinalIgnoreCase) ||
-                    k.Equals("windir", StringComparison.OrdinalIgnoreCase)) continue;
+                if (NeverRewriteEnvVars.Contains(k)) continue;
                 if (k.Equals("PSModulePath", StringComparison.OrdinalIgnoreCase))
                 {
                     // Windows PowerShell 的内置模块由系统 ACL/GAC 提供。将其原生路径
@@ -232,6 +362,9 @@ public sealed class Sandbox : IDisposable
             }
         }
 
+        // 运行时预载 shim 统一注入（Node/Python/…，见 RuntimePreload.All）。
+        RuntimePreload.InjectAll(_bootstrapDir!, actual + Path.DirectorySeparatorChar + "dynobox",
+            envVars, (id, ex) => Log.Warn("[RUN] 预载补丁注入失败 {0}: {1}", id, ex.Message));
         // 使用 per-run AppContainer primary token 启动。这个 token 没有普通
         // 用户文件系统权限；只有 Dokan 卷的安全描述符显式授予它访问权。
         var envBytes = Encoding.Unicode.GetBytes(
@@ -240,17 +373,34 @@ public sealed class Sandbox : IDisposable
         Marshal.Copy(envBytes, 0, envBlock, envBytes.Length);
 
         Log.Info("[RUN] 拉起子进程: {0} (cwd={1}\\)", cmdline, actual);
+        var baseToken = Security.OpenBaseToken();
+        try
+        {
+            return Security.UsesAppContainer
+                ? Security.WithPackageSid(packageSid => SandboxSecurity.WithNetworkCapabilities((caps, capCount) =>
+                    SpawnCore(cmdline, actual, envBlock, baseToken, packageSid, caps, (int)capCount)))
+                : SpawnCore(cmdline, actual, envBlock, baseToken, IntPtr.Zero, IntPtr.Zero, 0);
+        }
+        finally
+        {
+            Marshal.FreeHGlobal(envBlock);
+            CloseHandle(baseToken);
+        }
+    }
+
+    /// <summary>以指定令牌拉起子进程：AppContainer 模式附加安全能力属性，
+    /// 受限令牌模式仅注入句柄继承属性。</summary>
+    private int SpawnCore(string cmdline, string actual, IntPtr envBlock, IntPtr baseToken,
+        IntPtr packageSid, IntPtr capabilities, int capabilityCount)
+    {
+        var appContainer = packageSid != IntPtr.Zero;
         var si = new STARTUPINFOW();
         // STARTUPINFO.cb must include the trailing attribute-list pointer when
         // EXTENDED_STARTUPINFO_PRESENT is used.
         si.cb = (uint)Marshal.SizeOf<STARTUPINFOEXW>();
         var cmd = new StringBuilder(cmdline);
-        var baseToken = Security.OpenBaseToken();
-        try
         {
-            return Security.WithPackageSid(packageSid => SandboxSecurity.WithNetworkCapabilities((capabilities, capabilityCount) =>
-            {
-                var attrBytes = IntPtr.Zero;
+            var attrBytes = IntPtr.Zero;
                 var handleList = IntPtr.Zero;
                 var stdinHandle = IntPtr.Zero;
                 AnonymousPipeServerStream? stdoutPipe = null;
@@ -280,24 +430,28 @@ public sealed class Sandbox : IDisposable
                     si.hStdError = childHandles[2];
                     handleList = Marshal.AllocHGlobal(IntPtr.Size * childHandles.Length);
                     Marshal.Copy(childHandles, 0, handleList, childHandles.Length);
+                    var attrCount = appContainer ? 2u : 1u;
                     nuint attrSize = 0;
-                    InitializeProcThreadAttributeList(IntPtr.Zero, 2, 0, ref attrSize);
+                    InitializeProcThreadAttributeList(IntPtr.Zero, attrCount, 0, ref attrSize);
                     attrBytes = Marshal.AllocHGlobal(checked((int)attrSize));
-                    if (!InitializeProcThreadAttributeList(attrBytes, 2, 0, ref attrSize))
+                    if (!InitializeProcThreadAttributeList(attrBytes, attrCount, 0, ref attrSize))
                         throw new Win32Exception(Marshal.GetLastWin32Error(),
                             "InitializeProcThreadAttributeList 失败");
 
-                    var caps = new SECURITY_CAPABILITIES
+                    if (appContainer)
                     {
-                        AppContainerSid = packageSid,
-                        Capabilities = capabilities,
-                        CapabilityCount = capabilityCount,
-                        Reserved = 0,
-                    };
-                    if (!UpdateProcThreadAttribute(attrBytes, 0,
-                            PROC_THREAD_ATTRIBUTE_SECURITY_CAPABILITIES, ref caps,
-                            (nuint)Marshal.SizeOf<SECURITY_CAPABILITIES>(), IntPtr.Zero, IntPtr.Zero))
-                        throw new Win32Exception(Marshal.GetLastWin32Error(), "UpdateProcThreadAttribute 失败");
+                        var caps = new SECURITY_CAPABILITIES
+                        {
+                            AppContainerSid = packageSid,
+                            Capabilities = capabilities,
+                            CapabilityCount = (uint)capabilityCount,
+                            Reserved = 0,
+                        };
+                        if (!UpdateProcThreadAttribute(attrBytes, 0,
+                                PROC_THREAD_ATTRIBUTE_SECURITY_CAPABILITIES, ref caps,
+                                (nuint)Marshal.SizeOf<SECURITY_CAPABILITIES>(), IntPtr.Zero, IntPtr.Zero))
+                            throw new Win32Exception(Marshal.GetLastWin32Error(), "UpdateProcThreadAttribute 失败");
+                    }
 
                     if (!UpdateProcThreadAttribute(attrBytes, 0, new IntPtr(0x20002), handleList,
                             (nuint)(IntPtr.Size * childHandles.Length), IntPtr.Zero, IntPtr.Zero))
@@ -369,13 +523,9 @@ public sealed class Sandbox : IDisposable
                     stdoutPipe?.Dispose();
                     stderrPipe?.Dispose();
                 }
-            }));
         }
-        finally
-        {
-            Marshal.FreeHGlobal(envBlock);
-            CloseHandle(baseToken);
-        }
+        // try 块内所有路径要么返回子进程退出码，要么抛异常，控制流不会到达
+        // 方法末尾，故无需兜底 return（原 return 0 为编译器证明的不可达代码）。
     }
 
     private static async Task RelayOutputAsync(Stream source, Stream target, string? virtualRoot = null)
@@ -652,6 +802,10 @@ public sealed class Sandbox : IDisposable
 
     public void Dispose()
     {
+        // 撤销 Run 期间成功定义的 DOS 设备别名（与 DosDeviceAliases 成对）。
+        foreach (var device in _definedDosDevices)
+            DefineDosDeviceW(2 /* DDD_REMOVE_DEFINITION */, device, null);
+        _definedDosDevices.Clear();
         CloseJob();
         try
         {
@@ -771,6 +925,9 @@ public sealed class Sandbox : IDisposable
         public uint CapabilityCount;
         public uint Reserved;
     }
+
+    [DllImport("kernel32.dll", SetLastError = true, CharSet = CharSet.Unicode)]
+    private static extern bool DefineDosDeviceW(uint flags, string deviceName, string? targetPath);
 
     [DllImport("advapi32.dll", SetLastError = true, CharSet = CharSet.Unicode)]
     private static extern bool CreateProcessAsUserW(

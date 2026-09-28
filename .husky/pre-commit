@@ -1,3 +1,10 @@
 #!/usr/bin/env bash
 
+# 沙箱热路径静态状态守卫：仅当 native/windows/sandbox 下有 .cs 变更时运行。
+# 防止在 Dokan 并发回调热路径引入非线程安全静态状态（历史曾致驱动坏卷，
+# 见 MirrorFs.cs 稳定性红线注释）。
+if git diff --cached --name-only --diff-filter=ACM | grep -q '^native/windows/sandbox/.*\.cs$'; then
+  node scripts/check-sandbox-hotpath.cjs || exit 1
+fi
+
 npx lint-staged

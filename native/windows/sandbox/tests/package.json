@@ -1,7 +1,8 @@
 {
-    "name": "opendesk-sandbox-test-fixtures",
-    "private": true,
-    "devDependencies": {
-        "pptxgenjs": "4.0.1"
-    }
+  "name": "opendesk-sandbox-test-fixtures",
+  "private": true,
+  "devDependencies": {
+    "pptxgenjs": "4.0.1",
+    "graceful-fs": "^4.2.11"
+  }
 }

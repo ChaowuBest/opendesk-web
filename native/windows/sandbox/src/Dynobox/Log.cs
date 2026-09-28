@@ -39,6 +39,10 @@ public static class Log
         set => _level = value ? LogLevel.Debug : LogLevel.Info;
     }
 
+    /// <summary>热路径日志守卫：Verbose 关闭时调用点用它在格式化/装箱之前
+    /// 直接跳过（params 数组分配与实参求值在级别检查前就发生了）。</summary>
+    public static bool VerboseEnabled => _level <= LogLevel.Debug;
+
     private enum LogLevel { Debug = 0, Info = 1, Warn = 2, Error = 3 }
 
     public static void Debug(string fmt, params object?[] args)

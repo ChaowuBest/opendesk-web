@@ -17,6 +17,9 @@ public static class Program
           dynobox endpoint [--port 8080] [--pipe 管道名] [--default deny]
           dynobox network-status
           dynobox network-ensure
+          dynobox pipes-status
+          dynobox pipes-ensure
+          dynobox cleanup
 
         示例:
           dynobox run --automount --policy examples\rules_drive.toml ^
@@ -45,8 +48,67 @@ public static class Program
         Log.Verbose = verbose;
         if (verbose) args = args.Where(a => a is not ("-v" or "--verbose")).ToArray();
 
+        // 隔离模式：compatible（受限令牌，默认）/ strict（AppContainer）
+        var tokenMode = "appcontainer";
+        var tokenIndex = Array.IndexOf(args, "--token");
+        if (tokenIndex >= 0 && tokenIndex + 1 < args.Length)
+        {
+            tokenMode = args[tokenIndex + 1];
+            args = args.Where((a, i) => i != tokenIndex && i != tokenIndex + 1).ToArray();
+        }
+
         var sub = args[0];
         args = args[1..];
+
+        if (sub is "session-setup" or "install-logon-task" or "grant")
+        {
+            string[] ReadDirs(string[] a)
+            {
+                var d = Array.IndexOf(a, "--dirs");
+                return d >= 0 && d + 1 < a.Length
+                    ? a[d + 1].Split(';', StringSplitOptions.RemoveEmptyEntries)
+                    : Array.Empty<string>();
+            }
+
+            try
+            {
+                var sidIndex = Array.IndexOf(args, "--sandbox-sid");
+                var sandboxSid = sidIndex >= 0 && sidIndex + 1 < args.Length
+                    ? args[sidIndex + 1]
+                    : SandboxGrant.SandboxSidFor(LoopbackAccess.CurrentUserSid);
+                switch (sub)
+                {
+                    case "session-setup":
+                        NamedPipeAccess.ProvisionForSandboxSid(sandboxSid);
+                        Console.WriteLine("session-setup OK");
+                        return 0;
+                    case "install-logon-task":
+                        // 一次性：仅注册登录触发的重放任务（设备 ACE）。
+                        // AppContainer 模式不需要 NTFS/注册表授权（系统 ACL 已覆盖只读），
+                        // 之前包含它们会因系统目录 DACL 写入被拒而整体失败。
+                        SandboxGrant.InstallLogonTask(LoopbackAccess.CurrentUserSid);
+                        Console.WriteLine("install-logon-task OK");
+                        return 0;
+                    case "grant":
+                    {
+                        SandboxGrant.Setup(LoopbackAccess.CurrentUserSid, ReadDirs(args));
+                        Console.WriteLine("grant OK");
+                        return 0;
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                Log.Error("{0}", ex.Message);
+                try
+                {
+                    File.WriteAllText(Path.Combine(Path.GetTempPath(), "dynobox-grant-error.log"),
+                        ex.ToString());
+                }
+                catch { }
+                return 1;
+            }
+        }
 
         try
         {
@@ -59,11 +121,14 @@ public static class Program
             }
             return sub switch
             {
+                "cleanup" => CleanupOrphans(),
                 "network-status" or "network-ensure" or "network-setup" => LoopbackAccess.Run(sub, args),
+                "pipes-status" or "pipes-ensure" or "pipes-setup" => NamedPipeAccess.Run(sub, args),
+                "ensure-all" or "setup-all" => EnsureCompat.Run(args),
                 "endpoint" => RunEndpoint(args),
                 "debug-rules" => RunDebugRules(args),
                 "mount" => RunMount(args),
-                "run" => RunSandbox(args, childCmd),
+                "run" => RunSandbox(args, childCmd, tokenMode),
                 _ => Unknown(sub),
             };
         }
@@ -75,6 +140,16 @@ public static class Program
         finally { Log.Close(); }
     }
 
+    /// <summary>清理被强制结束的沙箱运行遗留的孤儿卷（系统级卡死的根源）。</summary>
+    private static int CleanupOrphans()
+    {
+        var cleaned = MountSweep.Sweep();
+        Console.WriteLine(cleaned.Count == 0
+            ? "没有发现孤儿卷"
+            : "已清理: " + string.Join(", ", cleaned.Select(l => l + ":")));
+        return 0;
+    }
+
     private static int Unknown(string sub)
     {
         Log.Error("未知子命令: {0}", sub);
@@ -82,13 +157,15 @@ public static class Program
         return 2;
     }
 
-    private static (string Policy, string? Src, string? Upstream, string? Token, string? Mount, bool Automount,
-        List<(string From, string To)> PathMaps, bool DelToTrash) Parse(string[] args, bool requireCmd)
+    private static (string Policy, string? Src, string? Upstream, string? Token, string? Mount,
+        bool Automount, List<(string From, string To)> PathMaps, bool DelToTrash,
+        Dictionary<string, string> EnvExtra) Parse(string[] args, bool requireCmd)
     {
         string? policy = null, src = null, upstream = null, token = null, mount = null;
         var automount = false;
         var delToTrash = false;
         var pathMaps = new List<(string From, string To)>();
+        var envExtra = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
         for (var i = 0; i < args.Length; i++)
         {
             switch (args[i])
@@ -100,6 +177,20 @@ public static class Program
                 case "--upstream" when i + 1 < args.Length: upstream = args[++i]; break;
                 case "--token" when i + 1 < args.Length: token = args[++i]; break;
                 case "--mount" when i + 1 < args.Length: mount = args[++i]; break;
+                // 透传子进程环境变量（工具链缓存重定向等）：--env NAME=VALUE，可重复
+                case "--env" when i + 1 < args.Length:
+                {
+                    var kv = args[++i];
+                    var eq = kv.IndexOf('=');
+                    if (eq <= 0 || eq == kv.Length - 1)
+                    {
+                        Log.Error("--env 格式应为 NAME=VALUE: {0}", kv);
+                        Console.WriteLine(Usage);
+                        Environment.Exit(2);
+                    }
+                    envExtra[kv[..eq]] = kv[(eq + 1)..];
+                    break;
+                }
                 case "--map" when i + 1 < args.Length:
                 {
                     var m = args[++i];
@@ -126,12 +217,12 @@ public static class Program
             Console.WriteLine(Usage);
             Environment.Exit(2);
         }
-        return (policy, src, upstream, token, mount, automount, pathMaps, delToTrash);
+        return (policy, src, upstream, token, mount, automount, pathMaps, delToTrash, envExtra);
     }
 
-    private static Sandbox Build(string[] args)
+    private static Sandbox Build(string[] args, string tokenMode = "compatible")
     {
-        var (policyFile, src, upstream, token, mount, automount, pathMaps, delToTrash) = Parse(args, requireCmd: false);
+        var (policyFile, src, upstream, token, mount, automount, pathMaps, delToTrash, _) = Parse(args, requireCmd: false);
         var policy = Policy.Load(policyFile);
         if (src is not null)
         {
@@ -153,12 +244,12 @@ public static class Program
             policy.Rules.Count, policy.Default,
             policy.Ask.Endpoint.Length == 0 ? "<未配置>" : policy.Ask.Endpoint,
             policy.Ask.TimeoutMs, policy.Ask.CacheTtlSeconds);
-        var sandbox = new Sandbox(policy, automount, mount, delToTrash);
+        var sandbox = new Sandbox(policy, automount, mount, delToTrash, tokenMode);
         sandbox.PathMaps.AddRange(pathMaps);
         return sandbox;
     }
 
-    private static int RunSandbox(string[] args, string[] childCmd)
+    private static int RunSandbox(string[] args, string[] childCmd, string tokenMode)
     {
         if (childCmd.Length == 0)
         {
@@ -166,6 +257,9 @@ public static class Program
             Console.WriteLine(Usage);
             return 2;
         }
+        // 启动前清扫被强制结束的上一次运行遗留的孤儿卷（详见 MountSweep）
+        foreach (var letter in MountSweep.Sweep())
+            Log.Info("[SWEEP] 启动前清理孤儿卷 {0}:", letter);
         using var sandbox = Build(args);
         try
         {
@@ -177,7 +271,8 @@ public static class Program
             return 1;
         }
 
-        var rc = sandbox.Run(string.Join(' ', childCmd));
+        var (_, _, _, _, _, _, _, _, envExtra) = Parse(args, requireCmd: false);
+        var rc = sandbox.Run(string.Join(' ', childCmd), envExtra);
         Log.Info("[RUN] 子进程退出码: {0}", rc);
         return rc;
     }

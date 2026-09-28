@@ -71,8 +71,19 @@ export function permissionRulesForSandbox(rules: PermissionRule[] | undefined): 
     return rulesToLines(rules, (expanded) => (expanded === '**' ? '/**' : hostPatternToVirtual(expanded)));
 }
 
-export function policyText(endpoint: string, token: string, rules?: PermissionRule[]): string {
+export function policyText(endpoint: string, token: string, rules?: PermissionRule[], home?: string): string {
     const quote = (value: string) => JSON.stringify(value);
+    // Windows 侧工具链缓存重定向（与 linux-sandbox.ts 的 ~/.cache/opendesk-sandbox
+    // 同语义）：npm/jest 缓存写放行到宿主持久目录，跨沙箱实例复用（首次才下载）。
+    // home 为宿主用户目录（如 C:\Users\liyif），经 hostPatternToVirtual 映射为
+    // /C/Users/liyif/... 虚路径；写放行早于兜底 write ask 命中。
+    const cacheRoot =
+        home && home.length > 0 ? hostPatternToVirtual(`${home.replace(/\\/g, '/')}/.cache/opendesk-sandbox/**`) : null;
+    // 宿主用户 Temp（%TEMP%）：AppContainer 强制把沙箱内 %TEMP% 私有化，dynobox 在
+    // 镜像层把私有 AC\Temp 的落点改写为宿主 Temp（跨实例共享）。此处放行写，使
+    // jest transform 缓存（os.tmpdir()/jest）与 node-compile-cache 与宿主共用。
+    const tempRoot =
+        home && home.length > 0 ? hostPatternToVirtual(`${home.replace(/\\/g, '/')}/AppData/Local/Temp/**`) : null;
     return [
         'version = 1',
         'default = "deny"',
@@ -86,6 +97,11 @@ export function policyText(endpoint: string, token: string, rules?: PermissionRu
         'grant_ttl_seconds = 0',
         '',
         ...permissionRulesForSandbox(rules),
+        // 工具链缓存目录写入放行（沙箱 env 重定向：npm_config_cache 等指向
+        // ~/.cache/opendesk-sandbox/...，见 prepareDynamicSandbox）
+        ...(cacheRoot ? [`[[rules]]\npath = ${quote(cacheRoot)}\naccess = "write"\nperm = "allow"`] : []),
+        // 宿主用户 Temp 写入放行（镜像层共享 Temp 别名，见 dynobox Runner）
+        ...(tempRoot ? [`[[rules]]\npath = ${quote(tempRoot)}\naccess = "write"\nperm = "allow"`] : []),
         '[[rules]]',
         'path = "/**"',
         'access = "read"',

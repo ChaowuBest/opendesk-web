@@ -15,7 +15,10 @@ const executable = path.resolve(import.meta.dirname, '..', 'runtime', 'sandbox.e
 async function runSandbox(directory: string, command: string, rules = '', extraArgs: string[] = []) {
     const policy = path.join(directory, 'policy.toml');
     const log = path.join(directory, 'sandbox.log');
-    fs.writeFileSync(policy, 'version = 1\ndefault = "allow"\n' + rules);
+    // --automount 枚举挂载宿主盘符（/C、/D …），子进程可访问 PATH 中的系统工具
+    // （PowerShell/Python/pip 等）；rules 只描述策略规则，不含 [[roots]]。
+    const driveRoots = `version = 1\ndefault = "allow"\n${rules}`;
+    fs.writeFileSync(policy, driveRoots);
     const shell = path.join(process.env.SystemRoot!, 'System32/WindowsPowerShell/v1.0/powershell.exe');
     const quote = (value: string) => `"${value.replace(/(\\*)"/g, '$1$1\\"').replace(/(\\+)$/, '$1$1')}"`;
     const child = [shell, '-NoProfile', '-NonInteractive', '-Command', command].map(quote).join(' ');

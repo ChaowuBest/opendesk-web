@@ -17,6 +17,7 @@ import { getLogDirectory, getOpendeskDirectory } from '../../../utils/setting.js
 import type { TaskState } from '../../../aikernel/states/tasks.js';
 import { t } from '../locale/index.js';
 import { ensureSandboxLoopback } from './loopback.js';
+import { ensureSandboxPipes } from './pipes.js';
 import { virtualPathToHostPath } from './ask-path.js';
 import { createSandboxDecideEndpoint } from './sandbox-decide.js';
 import { policyText } from './dynabox-policy.js';
@@ -91,6 +92,7 @@ export function sandboxRunArgs(options: {
     logPath: string;
     deleteToTrash?: boolean;
     childCommand: string;
+    envExtra?: Record<string, string>;
 }): string[] {
     return [
         'run',
@@ -105,6 +107,9 @@ export function sandboxRunArgs(options: {
         options.endpoint,
         '--log-file',
         options.logPath,
+        // 工具链缓存重定向（npm_config_cache 等指向宿主持久目录，跨实例复用）；
+        // --env 可重复，每个 NAME=VALUE 一个
+        ...Object.entries(options.envExtra ?? {}).flatMap(([key, value]) => ['--env', `${key}=${value}`]),
         '--',
         options.childCommand
     ];
@@ -134,6 +139,8 @@ export async function prepareDynamicSandbox(options: {
     // 否则不可映射的 cwd（UNC/相对路径）抛错时会泄漏已监听的服务器与临时文件。
     const childArgs = withSandboxWorkingDirectory(options.shellPath, options.shellArgs, options.cwd);
     await ensureSandboxLoopback(executable);
+    // 可选增强：放通沙箱内命名管道（需要管理员，失败静默——由失败诊断兜底）
+    void ensureSandboxPipes(executable);
     const configDirectory = getOpendeskDirectory();
     fs.mkdirSync(configDirectory, { recursive: true });
     const runId = `dynamic-sandbox-${crypto.randomUUID()}`;
@@ -160,7 +167,12 @@ export async function prepareDynamicSandbox(options: {
     try {
         fs.writeFileSync(
             policyPath,
-            policyText(decide.endpoint, decide.token, options.taskState?.harnessContext.permission?.getRules?.()),
+            policyText(
+                decide.endpoint,
+                decide.token,
+                options.taskState?.harnessContext.permission?.getRules?.(),
+                process.env.USERPROFILE
+            ),
             'utf8'
         );
         // 策略文件含 ask token：收紧权限（Windows 上为继承 ACL，chmod 为无害对齐）
@@ -168,6 +180,28 @@ export async function prepareDynamicSandbox(options: {
     } catch (error) {
         await cleanup();
         throw error;
+    }
+
+    // 工具链缓存重定向到宿主持久目录（~/.cache/opendesk-sandbox/...）：npm 缓存
+    // 跨沙箱实例复用（首次构建才需下载），且写放行已由 policyText 的 cacheRoot
+    // 规则覆盖。与 linux-sandbox.ts 的 CARGO_HOME/GOCACHE 同语义；Windows 侧暂只
+    // 重定向 npm（jest 的 transform 缓存经镜像层共享 Temp 别名自动落在宿主
+    // %TEMP%\jest，见 dynobox Runner 的 ConfigureSharedTempAlias，无需也无效的
+    // JEST_CACHE_DIR 环境变量——jest 只认 os.tmpdir()/jest 与 cacheDirectory 配置）。
+    const cacheRoot = process.env.USERPROFILE
+        ? `${process.env.USERPROFILE.replace(/\\/g, '/')}/.cache/opendesk-sandbox`
+        : null;
+    const envExtra: Record<string, string> = {};
+    if (cacheRoot) {
+        envExtra['npm_config_cache'] = `${cacheRoot}/npm`;
+    }
+    // --preserve-symlinks：unrs-resolver（jest-resolve 底层）对虚拟卷上 junction
+    // 化的共享 Temp 做默认 realpath 时会报 NOT_A_REPARSE_POINT (os error 4390)，
+    // 导致 jest 环境内 import 绝对路径报 Cannot find module。该 flag 让
+    // jest-resolve 跳过 symlink 解析绕开此问题（对普通命令无影响）。
+    // 仅在用户未自行设置 NODE_OPTIONS 时注入，避免覆盖用户配置。
+    if (!process.env.NODE_OPTIONS) {
+        envExtra['NODE_OPTIONS'] = '--preserve-symlinks';
     }
 
     const childCommand = [options.shellPath, ...childArgs].map(quoteWindowsArgument).join(' ');
@@ -178,7 +212,8 @@ export async function prepareDynamicSandbox(options: {
             endpoint: decide.endpoint,
             logPath,
             deleteToTrash: options.deleteToTrash,
-            childCommand
+            childCommand,
+            envExtra
         }),
         cwd: undefined,
         attach: (proc) => {

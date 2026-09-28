@@ -4,7 +4,7 @@ using Dynobox;
 
 if (args[0] == "reserve")
 {
-    using var sandbox = new Sandbox(new Policy(), automount: true);
+    using var sandbox = new Sandbox(new Policy(), automount: false);
     Console.WriteLine(sandbox.Letter);
     Console.ReadLine();
     return;

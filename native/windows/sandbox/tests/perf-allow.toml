@@ -1,0 +1,18 @@
+# npm run test 性能对照（全放行，无 ask，度量纯镜像 FS 开销）
+version = 1
+default = "deny"
+
+[[rules]]
+path = "/**"
+access = "read"
+perm = "allow"
+
+[[rules]]
+path = "/**"
+access = "write"
+perm = "allow"
+
+[[rules]]
+path = "/**"
+access = "execute"
+perm = "allow"

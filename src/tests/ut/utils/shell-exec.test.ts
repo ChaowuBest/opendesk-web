@@ -79,6 +79,26 @@ describe('shell inventory paths', () => {
         expect(findExecutablesInPath('bash')).toEqual(['C:\\tools\\bash.exe', 'D:\\tools\\bash.exe', gitBash]);
     });
 
+    test('excludes the WSL launcher bash.exe under System32 and keeps Git bash', () => {
+        // issue #319：%SystemRoot%\System32\bash.exe 是 WSL 启动器而非真正的 bash，
+        // 选中后 Windows 路径会被当作 Linux 路径执行，必须在 shell 扫描中排除
+        Object.defineProperty(process, 'platform', { value: 'win32', configurable: true });
+        process.env.PATH = 'C:/Windows/System32;C:/Program Files/Git/bin';
+        existsSyncMock.mockImplementation((p) =>
+            ['C:\\Windows\\System32\\bash.exe', 'C:\\Program Files\\Git\\bin\\bash.exe'].includes(String(p))
+        );
+        expect(findExecutablesInPath('bash')).toEqual(['C:\\Program Files\\Git\\bin\\bash.exe']);
+    });
+
+    test('does not fall back to the WSL launcher bash as the default shell', () => {
+        // PowerShell 缺失时，默认 shell 应回退到兜底 powershell.exe 而非 WSL 启动器
+        Object.defineProperty(process, 'platform', { value: 'win32', configurable: true });
+        process.env.PATH = 'C:/Windows/System32';
+        existsSyncMock.mockImplementation((p) => String(p) === 'C:\\Windows\\System32\\bash.exe');
+        clearDefaultShellCache();
+        expect(getDefaultShell()).toEqual({ shellPath: 'powershell.exe', shellArgs: ['-NoProfile', '-Command'] });
+    });
+
     test('finds all executable Unix paths and skips paths without execute permission', () => {
         Object.defineProperty(process, 'platform', { value: 'darwin', configurable: true });
         process.env.PATH = '/custom/bin:/custom/bin';

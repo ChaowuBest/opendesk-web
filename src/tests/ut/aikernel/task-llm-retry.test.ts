@@ -24,6 +24,10 @@ import {
 import { Setting, setCustomOpendeskDirectory } from '../../../main/utils/setting.js';
 import { AbstractPlatform, setPlatform } from '../../../platforms/base.js';
 
+// 沙箱化运行（dynobox 卷）下 IO 放大 ~5x，本文件的异步用例（重试延迟、流回退等）
+// 需要 >5s 真实时间推进；全局放宽到 60s（sandbox framework 下 jest 默认 5s 不够）。
+jest.setTimeout(60_000);
+
 class TestPlatform extends AbstractPlatform {
     getName(): string {
         return 'test';
@@ -119,7 +123,10 @@ function createRunningTask(autoRetry: boolean): { task: TaskState; chunks: TaskU
     return { task, chunks };
 }
 
-async function waitForCondition(predicate: () => boolean, attempts = 200): Promise<void> {
+async function waitForCondition(predicate: () => boolean, attempts = 2000): Promise<void> {
+    // 注意：本文件启用 jest 假时钟（fake timers）。真实 setTimeout 在假时钟环境里
+    // 不按真实时间线触发，混用会挂起；只能靠 advanceTimersByTimeAsync 推进微任务。
+    // 沙箱卷 IO 放大下被测 async generator 完成更慢，放宽轮询次数兜底。
     for (let i = 0; i < attempts; i++) {
         if (predicate()) return;
         await jest.advanceTimersByTimeAsync(0);

@@ -30,7 +30,7 @@ internal static class LoopbackAccess
         return $"dynobox-{hash}-{char.ToLowerInvariant(letter)}";
     }
 
-    private static string[] ProfileSids(string userSid)
+    public static string[] ProfileSids(string userSid)
     {
         var result = new List<string>();
         for (var letter = 'A'; letter <= 'Z'; letter++)
@@ -68,9 +68,9 @@ internal static class LoopbackAccess
         return result;
     }
 
-    private static bool IsConfigured(string userSid) => ProfileSids(userSid).All(ReadConfiguredSids().Contains);
+    internal static bool IsConfigured(string userSid) => ProfileSids(userSid).All(ReadConfiguredSids().Contains);
 
-    private static void Configure(string userSid)
+    internal static void Configure(string userSid)
     {
         using var gate = new Mutex(false, @"Global\OpenDesk.Dynobox.LoopbackSetup");
         try { if (!gate.WaitOne(30000)) throw new Win32Exception(1460); }

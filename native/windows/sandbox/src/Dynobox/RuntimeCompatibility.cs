@@ -21,6 +21,81 @@ internal static class RuntimeCompatibility
     private static readonly byte[] LegacyPipeSuffix = Encoding.ASCII.GetBytes("\\%llu-%lu");
     private static readonly byte[] LocalPipeTemplate = Encoding.ASCII.GetBytes("\\\\.\\pipe\\LOCAL\\%llu");
 
+    /// <summary>
+    /// Node native realpath 预加载补丁（Runner.Run 经 NODE_OPTIONS 注入）。
+    /// AppContainer 内 GetFinalPathNameByHandle 的盘符映射被 Windows 拒绝，
+    /// native realpath 一律 EPERM；这里在 native 失败时回退到纯 JS 实现。
+    /// 只替换 .native 成员且保持函数对象不变，graceful-fs 等的引用复制不受影响。
+    /// </summary>
+    public const string NodeRealpathPatch = """
+// Windows 动态沙箱（AppContainer + Dokan 卷）内 native realpath 必然失败，
+// 回退到纯 JS 实现以保证 jest 等工具可用。补丁本身绝不能阻断 Node 启动。
+'use strict';
+(function () {
+    try {
+        var fs = require('fs');
+        function isRealpathDenial(error) {
+            return error && (error.code === 'EPERM' || error.code === 'EACCES');
+        }
+        var nativeSync = fs.realpathSync && fs.realpathSync.native;
+        if (typeof nativeSync === 'function') {
+            fs.realpathSync.native = function (path, options) {
+                try {
+                    return nativeSync(path, options);
+                } catch (error) {
+                    if (isRealpathDenial(error)) return fs.realpathSync(path, options);
+                    throw error;
+                }
+            };
+        }
+        var nativeCallback = fs.realpath && fs.realpath.native;
+        if (typeof nativeCallback === 'function') {
+            fs.realpath.native = function (path, options, callback) {
+                if (typeof options === 'function') { callback = options; options = undefined; }
+                nativeCallback(path, options, function (error, resolved) {
+                    if (isRealpathDenial(error)) {
+                        fs.realpath(path, options, callback);
+                        return;
+                    }
+                    callback(error, resolved);
+                });
+            };
+        }
+        var nativePromise = fs.promises && fs.promises.realpath;
+        if (typeof nativePromise === 'function') {
+            fs.promises.realpath = function (path, options) {
+                return nativePromise.call(fs.promises, path, options).catch(function (error) {
+                    if (isRealpathDenial(error)) return fs.realpathSync(path, options);
+                    throw error;
+                });
+            };
+        }
+    } catch (patchError) {
+        // 预加载阶段没有任何可靠的输出通道，静默保持原行为
+    }
+})();
+""";
+
+    /// <summary>
+    /// Python 生态兼容补丁（经引导区 sitecustomize.py 注入）：dill、pytest 等
+    /// 库在导入期打开 os.devnull（NUL 设备），而 AppContainer 打开 NUL 在部分
+    /// Windows 版本上被拒。沙箱卷内的 /dynobox/nul.file 提供等价语义（读 EOF、
+    /// 写丢弃），把 os.devnull 指向它即可让整个 Python 生态继续工作。
+    /// </summary>
+    public const string PythonDevnullPatch = """
+# Windows 动态沙箱（AppContainer + Dokan 卷）内打开 NUL 设备可能被拒，
+# 把 os.devnull 指向卷内虚拟 NUL 文件。补丁本身绝不能阻断 Python 启动。
+import os
+
+if os.environ.get('DYNOBOX_SANDBOX') == '1':
+    _root = os.environ.get('SBX_ROOT')
+    if _root:
+        try:
+            os.devnull = os.path.join(_root, 'dynobox', 'nul.file')
+        except Exception:
+            pass
+""";
+
     public static bool PrepareExecutable(
         string source,
         string destination,
@@ -161,12 +236,25 @@ internal static class RuntimeCompatibility
     }
 
     /// <summary>
-    /// 行级诊断判定（不依赖卷根）：行内任意位置出现 getpath 警告前缀即认为
+    /// 已知的"无害但必然出现"的沙箱诊断前缀。运行时库在沙箱卷上探测自身
+    /// 路径失败时会向 stderr 打这些行（如 Node 的 getpath 警告）；逐条列出，
+    /// 命中即从输出中剥离。仅前缀匹配，不影响其余输出。
+    /// </summary>
+    public static readonly string[] HarmlessDiagnosticPrefixes =
+    [
+        "Failed to find real location of ",
+    ];
+
+    /// <summary>
+    /// 行级诊断判定（不依赖卷根）：行内任意位置出现任一已知诊断前缀即认为
     /// 是需要抑制的诊断行（覆盖 raw 与 PowerShell 包装两种形态）。
     /// </summary>
     public static bool IsRealpathDiagnosticLine(string text)
     {
-        return text.Contains("Failed to find real location of ", StringComparison.OrdinalIgnoreCase);
+        foreach (var prefix in HarmlessDiagnosticPrefixes)
+            if (text.Contains(prefix, StringComparison.OrdinalIgnoreCase))
+                return true;
+        return false;
     }
 
 }

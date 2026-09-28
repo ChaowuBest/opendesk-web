@@ -414,6 +414,108 @@ python tests\reliability.py
 （`tests\` 与 `tests2\` 中的 python 用例需要目标机有 python；缺失时自动跳过，
 bat 用例照常执行。`tests\reliability.py` 是开发机上的编排工具，驱动发行 exe。）
 
+## 五b、性能目标与架构边界
+
+**目标（2026-09 定稿，双驱动实测校准）**：
+
+| 场景 | 目标退化 | 实测 | 说明 |
+|---|---|---|---|
+| 缓存友好工具（npm/cargo/jest 等重复 I/O 负载） | ≤2x | 接近 | 用户态 stat 缓存（88% 命中）+ 集成层持久缓存吸收重复 I/O |
+| 冷缓存 / 首次构建（模块解析 stat 风暴） | ≤8x | 7.5x | pass-through 用户态文件系统 IRP 往返地板 |
+| 普通命令（ls/cp/git 等少量 I/O） | ≤2x | ✅ | 启动开销 ~ms 级 |
+
+**架构地板**：Dokan 与 WinFsp 实测同量级（镜像卷首次按路径 stat 5.5-5.9K IOPS，
+不随线程扩展）。瓶颈是"每 IRP 一次内核↔用户态往返"（~140µs），是用户态文件
+系统（Dokan/WinFsp/FUSE 的 Windows 对等）的物理约束，非实现缺陷。
+
+**已排除的优化路径**：
+- **WinFsp 迁移**：实测首次按路径 stat 与 Dokan 同量级；FileInfoTimeout 内核缓存
+  仅覆盖已打开句柄的查询（fstat 222K ops/s = 宿主水平），无法缓解 Node statSync
+  的"open→query→close 每此新句柄"模式。投入产出为负，不迁移。
+- **Dokan 驱动参数**：AllowIpcBatching 实测并发下死锁（900s 无响应），禁启用。
+
+**已实施的用户态优化**（详见 commit `24c64ea3`）：GetFileInformation TTL 缓存、
+CreateFile 探测缓存、ENOENT 负缓存、FindFiles 预填充（.exe 除外）、无锁 Ctx
+登记表、集成层持久缓存目录（npm_config_cache 重定向宿主持久路径）。
+
+### 共享宿主 Temp（AppContainer 私有 Temp → junction）
+
+AppContainer 在 `CreateProcess` 时**强制**把子进程 `%TEMP%/%TMP` 改写为包私有目录
+`%LOCALAPPDATA%\Packages\<profile>\AC\Temp`（env 注入无效，Runner 的路径翻译只能改写
+进程继承的环境变量值，改不掉 Windows 自身的重定向），且每次运行重建 profile。
+后果：jest transform 缓存（`os.tmpdir()/jest`）、node-compile-cache 等工具缓存既
+无法跨沙箱实例复用，也无法与宿主复用——每次沙箱运行都重付全量编译成本。
+
+`Runner.LinkSharedTemp` 在每次运行（profile 创建后、子进程启动前）把本实例的
+`AC\Temp` 空目录替换为指向宿主用户 `%TEMP%` 的 **junction**（`mklink /J`，NTFS
+重解析点，无需管理员）：所有沙箱实例与宿主进程共享同一临时目录，且子进程看到的
+路径形态不变（`Z:\C\...\AC\Temp\...`）。junction 创建失败时 fail-open 保持私有
+Temp（不影响隔离与功能）。`OPENDESK_SANDBOX_DISABLE_SHARED_TEMP=1` 可全局关闭。
+
+**配套约束（OpenDesk 集成）**：共享 Temp 的 junction 会让 unrs-resolver
+（jest-resolve 底层）在默认 realpath 时报 NOT_A_REPARSE_POINT (os error 4390)，
+表现为 jest 环境内 `import(绝对路径)` 报 Cannot find module。OpenDesk 通过
+`--env NODE_OPTIONS=--preserve-symlinks` 注入解决（用户已设置 NODE_OPTIONS 时
+不覆盖）。
+
+**为什么在镜像层做路径别名（`ApplySharedTempAlias`）的方案被放弃**：镜像层改写
+真实路径会让 Dokan 内核 FCB 缓存（FileInfoTimeout）与用户态实际落点不一致——
+csc/Add-Type 编译"主进程创建临时源文件 → 子进程 csc 二次打开"报 CS2001
+（未能找到源文件）。junction 在真实路径层重定向，内核缓存与用户态看到同一个物理
+位置，Add-Type/PowerShell 编译恢复正常（runtime 用例覆盖）。
+
+**安全语义**：共享 Temp 意味着沙箱内进程（经卷）可读写宿主用户 `%TEMP%` 下的全部
+内容，与宿主进程的临时文件可见性一致；策略层需放行该目录的写（OpenDesk
+`policyText` 的 tempRoot 规则）。
+
+**基准数据**（2026-09-27 本机，`npm run test` 全量 405 suites / 3753 tests，宿主 ~15s）：
+
+| 配置 | 耗时 | vs 宿主 |
+|---|---|---|
+| 24c64ea3（历史最优） | ~112s | 7.5x |
+| 1feee13b（删除退避恶化后） | ~258s | 17x |
+| **当前（退避修复 + 共享 Temp + automount + preserve-symlinks + 热路径零分配）** | **~73-80s** | **~4.7-5.2x** |
+
+**全量 IRP 分布**（Dokan DebugMode 采样，608 万 IRP）：GetFileInfo 27.5% +
+Create 20.7% + Cleanup 18.6% + Close 18.6%（stat 链合计 ~85%）；
+QueryVolumeInfo 9.5%（内核缓存旁路，不计耗时）；Read 4.0%；FindFiles 1.0%。
+每 statSync = Create+GetFileInfo+Cleanup 3 IRP × ~150µs 内核↔用户态往返。
+
+**已评估并排除的路线（本轮）**：
+- **FileInfoTimeout 内核元数据缓存**：DokanNet 2.3.0.3 的 `DOKAN_OPTIONS`
+  无该字段（反射确认只有 Version/SingleThread/Options/GlobalContext/MountPoint/
+  UNCName/Timeout/AllocationUnitSize/SectorSize/VolumeSecurityDescriptor*）。
+  实测 statSync 三轮 187µs→163µs（-13%，纯用户态缓存收益），内核层对新句柄
+  stat 无缓存——与既有结论一致，数据再证实。
+- **分发线程数**：`DOKAN_OPTIONS.SingleThread` 是唯一线程控制位（默认多线程，
+  由驱动管理，不可调数量）。
+- **热路径零分配改造**（AccessKinds 位掩码替代 HashSet + OrderBy，126 万次
+  Create 的 GC 压力消除）：实测全量无显著变化（73→80s 波动带内），保留改造
+  （正确的工程决策，为后续 stat 缓存命中率优化铺路）。
+- **FindFiles 缓存**：目录枚举仅占 IRP 1%，已有 2s TTL 缓存，无优化空间。
+
+**1feee13b 的性能回退根因**（2026-09-27 复盘定位）：`DeleteDirectory` 的判空退避
+窗口被拉到 ~2.5s（`Thread.Sleep(50+attempt*30)` × 12 次）。该 sleep 在 Dokan 回调
+线程内执行，jest 24 并发 worker 的删除风暴（rmSync recursive）下所有回调线程
+同时陷入长睡眠，驱动请求泵被整体串行化——单测试套件仅 +22%（几乎无删除并发），
+全量 +130%，CPU 反而更低，是"等待型"而非"计算型"退化的典型特征。
+修复：两段式退避（前 8 次零等待热轮询 + 2ms 短退避，总窗口 ~2.5s 不变，语义
+等价），回归全绿后全量降至 73s。
+
+**热路径纪律的延伸教训**：`Thread.Sleep` 与插桩同属"回调线程不可阻塞"红线——
+不仅禁止非线程安全状态，也禁止毫秒级以上的睡眠（数万 IRP/秒的负载下，一次
+100ms 睡眠 ≈ 放弃数千次服务机会）。
+
+余下 gap 的归因（对照实验）：单测试套件沙箱内 13.5s vs 宿主 0.85s（~16x），
+镜像层微基准 stat 单价 187µs vs 宿主 22µs（8.4x），Dokan DebugMode 计数显示
+一个测试套件即产生 3.8 万次 GetFileInfo（Node/jest 模块解析的 stat 风暴，
+每次 statSync = Create+GetFileInfo+Cleanup 三个 IRP 往返 ≈150µs，用户态缓存命中
+也不降该成本）。全量 405 套件读 2.7GB/21 万次 IO，即剩余瓶颈是"用户态文件系统
+每 IRP 一次内核↔用户态往返"这一架构地板（statSync 新句柄模式无路径级内核缓存
+可依赖），而非 Temp/缓存布局——实测 junction 指向宿主 Temp 根与其小子目录性能
+一致。镜像层改写路径的别名方案实测更快（~150s），但依赖 FCB 缓存对部分 re-open
+的非常规命中，伴随 csc 二次打开失败的正确性问题，不予采用。
+
 ---
 
 ## 六、构建与分发

@@ -21,6 +21,12 @@ jest.unstable_mockModule('../../../main/utils/setting.js', () => ({
 jest.unstable_mockModule('../../../main/applications/terminal/sandboxes/loopback.js', () => ({
     ensureSandboxLoopback: async () => {}
 }));
+// 命名管道放通同样依赖原生沙箱可执行文件，测试中直接跳过；
+// 以 spy 形式断言 prepareDynamicSandbox 确实接入了该流程
+const ensureSandboxPipes = jest.fn(async () => false);
+jest.unstable_mockModule('../../../main/applications/terminal/sandboxes/pipes.js', () => ({
+    ensureSandboxPipes
+}));
 // 权限批准后的持久化规则写入依赖完整任务状态，本测试不触发 rememberScope
 jest.unstable_mockModule('../../../main/aikernel/task/permission.js', () => ({
     applyPersistentPermissionAllowForTask: jest.fn()
@@ -243,5 +249,12 @@ const waitFor = async (condition: () => boolean, message: string): Promise<void>
         expect(JSON.parse(secondResponse.body)).toEqual({ decision: 'allow' });
         await waitFor(() => calls.length === 4, 'resume notification');
         expect(calls).toEqual([true, false, true, false]);
+    });
+
+    test('sandbox launches wire the named-pipe enablement attempt once per launch', async () => {
+        const before = ensureSandboxPipes.mock.calls.length;
+        await launchSandbox();
+        expect(ensureSandboxPipes).toHaveBeenCalledTimes(before + 1);
+        expect(ensureSandboxPipes).toHaveBeenLastCalledWith(expect.stringMatching(/sandbox\.exe$/));
     });
 });

@@ -31,16 +31,30 @@ public sealed class Rule
         Access = access;
         Perm = perm;
         _re = GlobToRegex(path);
+        // 字面前缀（首个通配符之前的字面部分，小写）：Check 热路径用它做
+        // O(len) 的廉价预筛，未命中直接跳过正则。前缀只是预筛——通配语义
+        // 仍由 _re 精确判定（如 "/dynobox" 的前缀也会被 "/dynobox-x" 命中，
+        // 由正则否决）。
+        var wildcard = path.IndexOfAny(new[] { '*', '?' });
+        var literal = wildcard < 0 ? path : path[..wildcard];
+        LiteralPrefix = literal.ToLowerInvariant();
     }
 
     public string Path { get; }
     public string Access { get; }
     public string Perm { get; }
+    public string LiteralPrefix { get; }
 
     public string RegexPattern => _re.ToString();
 
     public bool Matches(string vpath, string kind) =>
         (Access == "all" || Access == kind) && _re.IsMatch(vpath);
+
+    /// <summary>Check 热路径专用：访问类别匹配 + 字面前缀预筛 + 正则精确匹配。</summary>
+    public bool MatchesFast(string vpath, string kind) =>
+        (Access == "all" || Access == kind)
+        && vpath.StartsWith(LiteralPrefix, StringComparison.OrdinalIgnoreCase)
+        && _re.IsMatch(vpath);
 
     /// <summary>
     /// 策略路径 -> 正则。`**` 跨层级、`*` 单层级、`?` 单字符；
@@ -210,7 +224,7 @@ public sealed class Policy
         for (var i = 0; i < Rules.Count; i++)
         {
             var rule = Rules[i];
-            if (!rule.Matches(vpath, kind)) continue;
+            if (!rule.MatchesFast(vpath, kind)) continue;
             if (rule.Perm != "ask") return (rule.Perm == "allow", $"rule#{i}");
             // 静态策略委托给端点：先看端点之前下发的子树授权
             if (MatchGrant(vpath, kind)) return (true, $"rule#{i}+grant");
@@ -222,14 +236,22 @@ public sealed class Policy
     }
 
     /// <summary>沙箱为每次运行创建的 AppContainer 私有 AC 数据不是用户数据；
-    /// MirrorFs 的回收站分支同样用它排除内部文件（直接删除，不进回收站）。</summary>
-    public static bool IsInternalAppContainerPath(string vpath)
+    /// 实际判定已统一到 SandboxPaths（引导区 ∪ 虚拟 NUL ∪ AC 数据）。</summary>
+    public static bool IsInternalAppContainerPath(string vpath) =>
+        SandboxPaths.IsAppContainerPrivateData(vpath);
+
+    /// <summary>预判该虚拟路径是否会命中静态 ask 规则（不发问询、无副作用）。
+    /// 供 CreateFile 决定是否需要安装 IRP 续期定时器：ask 问询可能因等待用户
+    /// 决策远超 Dokan 的 30 秒超时，必须在阻塞前完成续期准备。</summary>
+    public bool NeedsAsk(string vpath, string kind)
     {
-        var normalized = NormalizeVirtualPath(vpath);
-        return Regex.IsMatch(
-            normalized,
-            @"^/[A-Za-z]/Users/[^/]+/AppData/Local/Packages/dynobox-[^/]+/AC(?:/|$)",
-            RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
+        if (IsInternalAppContainerPath(vpath)) return false;
+        for (var i = 0; i < Rules.Count; i++)
+        {
+            if (!Rules[i].MatchesFast(vpath, kind)) continue;
+            return Rules[i].Perm == "ask";
+        }
+        return false;
     }
 
     // -- 端点下发的临时授权 ---------------------------------------------------
