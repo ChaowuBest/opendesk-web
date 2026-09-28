@@ -1067,9 +1067,27 @@ class AgentInput extends HTMLElement {
         searchBtn.setAttribute('aria-pressed', this.searchMode ? 'true' : 'false');
     }
 
+    /**
+     * 发送组（发送/清空输入）与停止按钮互斥显示：
+     * 任务运行中且输入内容为空时只显示停止按钮，其余情况只显示发送组。
+     * 输入内容为空指文本为空白且无图片附件。
+     */
+    _updateSendStopVisibility() {
+        const sendGroup = this.querySelector('.agent-send-group');
+        const stopBtn = this.querySelector('#agent-input-stop-btn');
+        const textarea = this.querySelector('#agent-input-textarea');
+        const hasContent = (textarea ? textarea.value.trim().length > 0 : false) || this.attachedImages.length > 0;
+        const showStopOnly = this.showStopButton && !hasContent;
+        if (sendGroup) {
+            sendGroup.style.display = showStopOnly ? 'none' : '';
+        }
+        if (stopBtn) {
+            stopBtn.style.display = showStopOnly ? '' : 'none';
+        }
+    }
+
     updateInputState() {
         const textarea = this.querySelector('#agent-input-textarea');
-        const stopBtn = this.querySelector('#agent-input-stop-btn');
         const queueHint = this.querySelector('#agent-input-queue-hint');
 
         if (textarea) {
@@ -1098,11 +1116,8 @@ class AgentInput extends HTMLElement {
             queueHint.style.display = this.isRunning && this.runningInputMode === 'queue' ? 'flex' : 'none';
         }
 
-        // 任务运行中时发送和停止按钮同时显示，用户可以将消息加入队列
-        const sendGroup = this.querySelector('.agent-send-group');
-        if (sendGroup) {
-            sendGroup.style.display = '';
-        }
+        // 发送组与停止按钮互斥显示：任务运行中且输入为空时只显示停止按钮
+        this._updateSendStopVisibility();
 
         const speechBtn = this.querySelector('#agent-input-speech-btn');
         if (speechBtn) {
@@ -1124,10 +1139,6 @@ class AgentInput extends HTMLElement {
         const container = this.querySelector('#agent-input-container');
         if (container) {
             container.classList.toggle('agent-recording', this.speechRecording);
-        }
-
-        if (stopBtn) {
-            stopBtn.style.display = this.showStopButton ? '' : 'none';
         }
 
         this.updateSendButtonState();
@@ -1230,6 +1241,9 @@ class AgentInput extends HTMLElement {
         if (clearBtn) {
             clearBtn.disabled = !hasText || this.speechRecording;
         }
+
+        // 输入内容变化时实时刷新发送组/停止按钮的互斥显示
+        this._updateSendStopVisibility();
     }
 
     render() {
