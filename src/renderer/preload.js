@@ -659,6 +659,13 @@ function exposeFSAPI() {
                 throw new Error(result.message);
             }
         },
+        openTrash: async () => {
+            const result = await ipcRenderer.invoke('fs:openTrash');
+            if (result.status !== 'ok') {
+                console.error('opening trash failed', result.message);
+                throw new Error(result.message);
+            }
+        },
         selectFile: async () => {
             // 调用主进程的 dialog
             const filePaths = await ipcRenderer.invoke('fs:dialog-open');

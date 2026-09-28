@@ -210,6 +210,7 @@ function migrateFileMgrWorkspaceSettingsOnStartup() {
 import Convert from 'ansi-to-html';
 import fs from 'fs';
 import path from 'path';
+import { openSystemTrash } from './utils/trash.js';
 import os from 'os';
 import fsPromises from 'fs/promises';
 
@@ -1992,6 +1993,16 @@ const registerTaskManagerAPIHandlers = () => {
             return { status: 'ok' };
         } catch (error: any) {
             logger.error('showing item in folder failed', error);
+            return { status: 'error', message: error.message };
+        }
+    });
+    // 打开各平台的回收站（Windows 系统回收站窗口；macOS/Linux/OpenHarmony 打开回收站目录）
+    ipcMain.handle('fs:openTrash', async () => {
+        try {
+            await openSystemTrash();
+            return { status: 'ok' };
+        } catch (error: any) {
+            logger.error('opening trash failed', error);
             return { status: 'error', message: error.message };
         }
     });

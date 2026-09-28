@@ -1,5 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import fs from 'node:fs';
+import path from 'node:path';
 import { scanSupportedShells } from '../../../main/applications/terminal/scan.js';
 import { getMcpServerLocalRuntimeAvailability } from '../../../main/applications/mcpmgr/worker.js';
 import type { HarmonyLocalRuntimeState } from '../../../platforms/bridges/harmonyos/local-runtime.js';
@@ -42,24 +44,35 @@ const ZSH_PC_STATE: HarmonyLocalRuntimeState = {
     status: 'incomplete'
 };
 
+/** repo 是否携带 OpenHarmony 沙箱运行时产物（决定沙箱变体是否注册） */
+function ohRuntimePresent(): boolean {
+    const dev = path.join(
+        process.env.INIT_CWD || process.cwd(),
+        'native',
+        'openharmony',
+        'sandbox',
+        'runtime',
+        'aarch64-linux-ohos',
+        'dynobox'
+    );
+    return fs.existsSync(dev);
+}
+
 test('terminal inventory includes verified Harmony PC shells and keeps the tablet gate', () => {
     assert.deepEqual(scanSupportedShells('openharmony', TABLET_STATE), []);
     assert.deepEqual(scanSupportedShells('openharmony', SHELL_MISSING_PC_STATE), []);
-    assert.deepEqual(scanSupportedShells('openharmony', INCOMPLETE_PC_STATE), [
-        {
-            kind: 'bash',
-            path: '/data/service/hnp/bin/bash',
-            sandboxed: false
-        }
-    ]);
-    assert.deepEqual(scanSupportedShells('openharmony', ZSH_PC_STATE), [
-        {
-            kind: 'zsh',
-            path: '/usr/bin/zsh',
-            sandboxed: false
-        },
-        { kind: 'bash', path: '/data/service/hnp/bin/bash', sandboxed: false }
-    ]);
+    // 沙箱变体是否注册取决于 repo 是否携带 runtime/aarch64-linux-ohos 产物
+    const hasSandbox = ohRuntimePresent();
+    const bashOnly = scanSupportedShells('openharmony', INCOMPLETE_PC_STATE);
+    assert.deepEqual(
+        bashOnly.map((s) => `${s.kind}:${s.sandboxed}`),
+        hasSandbox ? ['bash:false', 'bash:true'] : ['bash:false']
+    );
+    const both = scanSupportedShells('openharmony', ZSH_PC_STATE);
+    assert.deepEqual(
+        both.map((s) => `${s.kind}:${s.sandboxed}`),
+        hasSandbox ? ['zsh:false', 'zsh:true', 'bash:false', 'bash:true'] : ['zsh:false', 'bash:false']
+    );
 });
 
 test('tablet rejects stdio MCP before transport creation while remote MCP remains available', () => {

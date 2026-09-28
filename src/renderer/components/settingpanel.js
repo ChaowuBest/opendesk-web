@@ -1893,6 +1893,8 @@ class SettingPanel extends HTMLElement {
         const paths = [...new Map(this.supportedShells.map((shell) => [shell.path, shell])).values()];
         const displayKind = (kind) => (kind === 'pwsh' || kind === 'powershell' ? 'powershell' : kind);
         const supportsSandbox = this.supportedShells.some((shell) => shell.path === selected?.path && shell.sandboxed);
+        // 沙箱/回收站语义随平台不同：OpenHarmony 是 LD_PRELOAD 沙箱 + 家目录 .trash
+        const isOpenHarmony = window.systemInfo?.isOpenHarmony === true;
         return `
             <label class="sp-form-label" for="task-shell-path">${this._t('sp.task.terminal.shell')}</label>
             <select id="task-shell-path" class="sp-form-input" ${selected ? '' : 'disabled'}>
@@ -1905,7 +1907,7 @@ class SettingPanel extends HTMLElement {
             <div class="sp-toggle-row">
                 <div class="sp-toggle-info">
                     <label class="sp-toggle-label" for="task-shell-sandboxed">${this._t('sp.task.terminal.sandbox')}</label>
-                    <div class="sp-toggle-desc">${this._t('sp.task.terminal.sandbox.desc')}</div>
+                    <div class="sp-toggle-desc">${this._t(isOpenHarmony ? 'sp.task.terminal.sandbox.desc.ohos' : 'sp.task.terminal.sandbox.desc')}</div>
                 </div>
                 <label class="sp-toggle-switch">
                     <input id="task-shell-sandboxed" type="checkbox" ${selected.sandboxed ? 'checked' : ''}>
@@ -1917,8 +1919,14 @@ class SettingPanel extends HTMLElement {
                     ? `
             <div class="sp-toggle-row">
                 <div class="sp-toggle-info">
-                    <label class="sp-toggle-label" for="task-shell-del-to-trash">${this._t('sp.task.terminal.sandbox.delToTrash')}</label>
-                    <div class="sp-toggle-desc">${this._t('sp.task.terminal.sandbox.delToTrash.desc')}</div>
+                    <div class="sp-toggle-label-row" style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
+                        <label class="sp-toggle-label" for="task-shell-del-to-trash">${this._t('sp.task.terminal.sandbox.delToTrash')}</label>
+                        <button id="task-shell-open-trash" type="button" class="sp-nav-item" style="width:auto;flex:none;background:var(--sp-color-primary-light,#FDEEEC);color:var(--sp-color-primary,#DF4436);font-size:12px;padding:3px 8px;border-radius:6px;">
+                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18"/><path d="M8 6V4a1 1 0 0 1 1-1h6a1 1 0 0 1 1 1v2"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/></svg>
+                            ${this._t('sp.task.terminal.sandbox.openTrash')}
+                        </button>
+                    </div>
+                    <div class="sp-toggle-desc">${this._t(isOpenHarmony ? 'sp.task.terminal.sandbox.delToTrash.desc.ohos' : 'sp.task.terminal.sandbox.delToTrash.desc')}</div>
                 </div>
                 <label class="sp-toggle-switch">
                     <input id="task-shell-del-to-trash" type="checkbox" ${this.currentData?.task_config?.shell_sandbox_del_to_trash === true ? 'checked' : ''}>
@@ -1963,6 +1971,14 @@ class SettingPanel extends HTMLElement {
                 { shell_path: this.querySelector('#task-shell-path').value, shell_sandboxed: true },
                 { shell_sandbox_del_to_trash: event.target.checked }
             );
+        });
+        // “打开回收站”：用系统能力打开当前平台对应的回收站目录
+        this.querySelector('#task-shell-open-trash')?.addEventListener('click', async () => {
+            try {
+                await window.fsAPI.openTrash();
+            } catch (error) {
+                console.error('open trash failed', error);
+            }
         });
     }
 

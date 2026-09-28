@@ -106,6 +106,8 @@ static __thread int g_in_spawn;
 static int g_shm_fd = -1;
 static char g_self_so[DBOX_PATH_MAX];
 static char g_cfg_b64[65536];
+static char g_tmp_dir[DBOX_PATH_MAX];   /* --tmp 映射目录（/tmp 重定向目标） */
+static char g_trash_dir[DBOX_PATH_MAX]; /* --del-to-trash 回收站目录 */
 static char g_inject_ldpreload[DBOX_PATH_MAX * 2];
 
 typedef struct {
@@ -441,14 +443,28 @@ typedef struct {
     char *vpath;   /* path the policy sees (== real path, identity namespace) */
     char *real;    /* resolved real path (fd attribution) */
     int   partial;
+    int   tmp_area;   /* 1 = --tmp 映射区：总是可读可写，跳过策略 */
 } gate_t;
 
 static int gate_resolve(const char *input, int nofollow_last, gate_t *g)
 {
     memset(g, 0, sizeof *g);
     if (!input || !input[0]) return -1;  /* nothing to attribute */
+    const char *src = input;
+    char mapped[DBOX_PATH_MAX];
+    if (g_tmp_dir[0]) {
+        /* /tmp 前缀重定向到 g_tmp_dir（应用视角不变，落点可写） */
+        if (strcmp(input, "/tmp") == 0) {
+            src = g_tmp_dir;
+            g->tmp_area = 1;
+        } else if (strncmp(input, "/tmp/", 5) == 0) {
+            snprintf(mapped, sizeof mapped, "%s%s", g_tmp_dir, input + 4);
+            src = mapped;
+            g->tmp_area = 1;
+        }
+    }
     int flags = nofollow_last ? DBOX_NOFOLLOW_LAST : DBOX_FOLLOW_ALL;
-    return dbox_plan_path(&g_ctx, input, flags, &g->vpath,
+    return dbox_plan_path(&g_ctx, src, flags, &g->vpath,
                           &g->real, &g->partial);
 }
 
@@ -458,8 +474,19 @@ static int ask_gate(const dbox_policy_t *p, const char *vpath, int acc,
     return dbox_ask(p, vpath, acc, err, errsz);
 }
 
+/* 回收站保护：回收站内的**任何写操作**一律拒绝（只读保护）——包括
+ * unlink/rmdir/rename/truncate，以及 open 写模式（O_WRONLY/O_RDWR/O_TRUNC，
+ * 覆盖 open+ftruncate 类实现的"清空"路径）；读不受影响。 */
 static int check_one(gate_t *g, int acc, const char *what, int allow_system)
 {
+    if (g->tmp_area) return 1;   /* tmp 映射区总是可读可写，无需策略规则 */
+    if (g_trash_dir[0] && (acc & ACC_WRITE) &&
+        dbox_path_under(g->vpath, g_trash_dir)) {
+        dbox_logf("DENY  %-7s %s (trash-protected)", dbox_access_name(acc & ACC_ALL),
+                  g->vpath);
+        errno = EACCES;
+        return 0;
+    }
     pthread_mutex_lock(&g_pol_mu);
     dperm_t perm = dbox_policy_check_ex(&g_ctx.pol, g->vpath, acc, ask_gate,
                                         dbox_now_ms(), allow_system);
@@ -528,6 +555,30 @@ static int gate1(const char *input, int nofollow_last, int acc,
     return gate1x(input, nofollow_last, acc, what, 1, realp);
 }
 
+/* --tmp 映射激活时，实际执行目标改为 gate 解析后的映射路径（/tmp -> 映射目录）；
+ * 非映射场景原样返回，行为与之前完全一致（零回归）。 */
+static inline const char *xpath(const char *path, const char *real)
+{
+    if (g_tmp_dir[0] && real && real[0]) return real;
+    return path;
+}
+/* 前缀替换（无 gate real 的场景，如 execve）：/tmp -> g_tmp_dir */
+static inline const char *xtmp_prefix(const char *path, char *buf, size_t bufsz)
+{
+    if (!g_tmp_dir[0] || !path || path[0] != '/') return path;
+    if (strcmp(path, "/tmp") == 0) return g_tmp_dir;
+    if (strncmp(path, "/tmp/", 5) == 0) {
+        snprintf(buf, bufsz, "%s%s", g_tmp_dir, path + 4);
+        return buf;
+    }
+    return path;
+}
+/* at 变体：tmp 映射激活时改用绝对映射路径 + AT_FDCWD，否则保持 (dirfd, path)。 */
+#define XPAT_EXEC(fn, dirfd, path, real, ...) \
+    ((g_tmp_dir[0] && (real) && (real)[0]) \
+         ? (fn)(AT_FDCWD, (real), __VA_ARGS__) \
+         : (fn)((dirfd), (path), __VA_ARGS__))
+
 /* *at() helper: absolute input string from dirfd+path (malloc'd) */
 static char *at_abs(int dirfd, const char *path)
 {
@@ -561,7 +612,8 @@ static int mode_to_acc(int mode)
 
 static const char *const k_inject_names[] = {
     "LD_PRELOAD", "DYNOBOX_CFG", "DYNOBOX_PRELOAD", "DYNOBOX_WATCH_FD",
-    "DYNOBOX_SHM_FD", "DYNOBOX_LOG", "DYNOBOX_VERBOSE", NULL
+    "DYNOBOX_SHM_FD", "DYNOBOX_LOG", "DYNOBOX_VERBOSE", "DYNOBOX_TMP",
+    "DYNOBOX_TRASH", NULL
 };
 
 static char **build_envp(char *const *envp, size_t *first_new)
@@ -600,6 +652,14 @@ static char **build_envp(char *const *envp, size_t *first_new)
         out[w++] = dbox_strdup(buf);
     }
     if (dbox_verbose_enabled) out[w++] = dbox_strdup("DYNOBOX_VERBOSE=1");
+    if (g_tmp_dir[0]) {
+        snprintf(buf, sizeof buf, "DYNOBOX_TMP=%s", g_tmp_dir);
+        out[w++] = dbox_strdup(buf);
+    }
+    if (g_trash_dir[0]) {
+        snprintf(buf, sizeof buf, "DYNOBOX_TRASH=%s", g_trash_dir);
+        out[w++] = dbox_strdup(buf);
+    }
     out[w] = NULL;
     *first_new = base;
     return out;
@@ -837,6 +897,20 @@ static void init_from_env(void)
     const char *lg = getenv("DYNOBOX_LOG");
     if (lg && lg[0]) dbox_log_open(lg);
     if (getenv("DYNOBOX_VERBOSE")) dbox_verbose_enabled = 1;
+    const char *tmpenv = getenv("DYNOBOX_TMP");
+    if (tmpenv && tmpenv[0]) {
+        char *n = dbox_normpath(tmpenv);
+        if (n && n[0] == '/')
+            snprintf(g_tmp_dir, sizeof g_tmp_dir, "%s", n);
+        dbox_free(n);
+    }
+    const char *trash = getenv("DYNOBOX_TRASH");
+    if (trash && trash[0]) {
+        char *n = dbox_normpath(trash);
+        if (n && n[0] == '/')
+            snprintf(g_trash_dir, sizeof g_trash_dir, "%s", n);
+        dbox_free(n);
+    }
 
     g_ready = 1;
     dbox_logf("sandbox active (pid %ld, cwd %s, %d rules)",
@@ -891,7 +965,7 @@ int open(const char *path, int flags, ...)
     int acc = acc_from_open_flags(flags);
     int nofollow = (flags & O_NOFOLLOW) ? 1 : 0;
     if (!gate1(path, nofollow, acc, "open", &real)) return -1;
-    const char *p = path;
+    const char *p = xpath(path, real);
     int fd;
     if (flags & (O_CREAT | O_TMPFILE)) {
         va_list ap; va_start(ap, flags);
@@ -902,7 +976,11 @@ int open(const char *path, int flags, ...)
         fd = real_open(p, flags);
     }
     int e = errno;
-    if (fd >= 0) fd_record(fd, real ? real : p, NULL, acc);
+    if (fd >= 0) {
+        fd_record(fd, real ? real : p, NULL, acc);
+        /* 本次沙箱实例新建的文件：删除时直接清除，不进回收站（临时文件语义） */
+        if (flags & O_CREAT) dbox_shm_newfile_add(real ? real : p);
+    }
 
     dbox_free(real);
     errno = e;
@@ -916,7 +994,7 @@ int open64(const char *path, int flags, ...)
     int acc = acc_from_open_flags(flags);
     int nofollow = (flags & O_NOFOLLOW) ? 1 : 0;
     if (!gate1(path, nofollow, acc, "open64", &real)) return -1;
-    const char *p = path;
+    const char *p = xpath(path, real);
     int fd;
     if (flags & (O_CREAT | O_TMPFILE)) {
         va_list ap; va_start(ap, flags);
@@ -927,7 +1005,10 @@ int open64(const char *path, int flags, ...)
         fd = real_open64(p, flags);
     }
     int e = errno;
-    if (fd >= 0) fd_record(fd, real ? real : p, NULL, acc);
+    if (fd >= 0) {
+        fd_record(fd, real ? real : p, NULL, acc);
+        if (flags & O_CREAT) dbox_shm_newfile_add(real ? real : p);
+    }
 
     dbox_free(real);
     errno = e;
@@ -954,7 +1035,7 @@ int openat(int dirfd, const char *path, int flags, ...)
     abs = at_abs(dirfd, path);
     if (!abs) { errno = EBADF; return -1; }
     if (!gate1(abs, nofollow, acc, "openat", &real)) { dbox_free(abs); return -1; }
-    const char *p = path;
+    const char *p = xpath(path, real);
     if (flags & (O_CREAT | O_TMPFILE)) {
         va_list ap; va_start(ap, flags);
         mode_t mode = (mode_t)va_arg(ap, int);
@@ -964,7 +1045,10 @@ int openat(int dirfd, const char *path, int flags, ...)
         fd = real_openat(dirfd, p, flags);
     }
     int e = errno;
-    if (fd >= 0) fd_record(fd, real ? real : abs, NULL, acc);
+    if (fd >= 0) {
+        fd_record(fd, real ? real : abs, NULL, acc);
+        if (flags & O_CREAT) dbox_shm_newfile_add(real ? real : abs);
+    }
     dbox_free(abs);
 
     dbox_free(real);
@@ -992,7 +1076,7 @@ int openat64(int dirfd, const char *path, int flags, ...)
     abs = at_abs(dirfd, path);
     if (!abs) { errno = EBADF; return -1; }
     if (!gate1(abs, nofollow, acc, "openat64", &real)) { dbox_free(abs); return -1; }
-    const char *p = path;
+    const char *p = xpath(path, real);
     if (flags & (O_CREAT | O_TMPFILE)) {
         va_list ap; va_start(ap, flags);
         mode_t mode = (mode_t)va_arg(ap, int);
@@ -1002,7 +1086,10 @@ int openat64(int dirfd, const char *path, int flags, ...)
         fd = real_openat64(dirfd, p, flags);
     }
     int e = errno;
-    if (fd >= 0) fd_record(fd, real ? real : abs, NULL, acc);
+    if (fd >= 0) {
+        fd_record(fd, real ? real : abs, NULL, acc);
+        if (flags & O_CREAT) dbox_shm_newfile_add(real ? real : abs);
+    }
     dbox_free(abs);
 
     dbox_free(real);
@@ -1015,9 +1102,12 @@ int creat(const char *path, mode_t mode)
 {
     char *real = NULL;
     if (!gate1(path, 0, ACC_WRITE | ACC_READ, "creat", &real)) return -1;
-    int fd = real_creat(path, mode);
+    int fd = real_creat(xpath(path, real), mode);
     int e = errno;
-    if (fd >= 0) fd_record(fd, real ? real : path, NULL, ACC_WRITE | ACC_READ);
+    if (fd >= 0) {
+        fd_record(fd, real ? real : path, NULL, ACC_WRITE | ACC_READ);
+        dbox_shm_newfile_add(real ? real : path);
+    }
 
     dbox_free(real);
     errno = e;
@@ -1038,7 +1128,7 @@ static FILE *fopen_common(FILE *(*fn)(const char *, const char *),
     char *real = NULL;
     if (!gate1(path, 0, w ? ACC_WRITE | ACC_READ : ACC_READ, what, &real))
         return NULL;
-    FILE *f = fn(path, mstr);
+    FILE *f = fn(xpath(path, real), mstr);
     int e = errno;
     if (f) {
         int fd = fileno(f);
@@ -1071,7 +1161,7 @@ static FILE *freopen_common(FILE *(*fn)(const char *, const char *, FILE *),
     char *real = NULL;
     if (!gate1(path, 0, w ? ACC_WRITE | ACC_READ : ACC_READ, what, &real))
         return NULL;
-    FILE *nf = fn(path, mstr, f);
+    FILE *nf = fn(xpath(path, real), mstr, f);
     int e = errno;
     if (nf) {
         int fd = fileno(nf);
@@ -1124,7 +1214,7 @@ int stat(const char *path, struct stat *st)
 {
     char *real = NULL;
     if (!gate1(path, 0, ACC_READ, "stat", &real)) return -1;
-    int r = real_stat(path, st);
+    int r = real_stat(xpath(path, real), st);
 
     return r;
 }
@@ -1134,7 +1224,7 @@ int stat64(const char *path, struct stat64 *st)
 {
     char *real = NULL;
     if (!gate1(path, 0, ACC_READ, "stat64", &real)) return -1;
-    int r = real_stat64(path, st);
+    int r = real_stat64(xpath(path, real), st);
 
     return r;
 }
@@ -1144,7 +1234,7 @@ int lstat(const char *path, struct stat *st)
 {
     char *real = NULL;
     if (!gate1(path, 1, ACC_READ, "lstat", &real)) return -1;
-    int r = real_lstat(path, st);
+    int r = real_lstat(xpath(path, real), st);
 
     return r;
 }
@@ -1154,7 +1244,7 @@ int lstat64(const char *path, struct stat64 *st)
 {
     char *real = NULL;
     if (!gate1(path, 1, ACC_READ, "lstat64", &real)) return -1;
-    int r = real_lstat64(path, st);
+    int r = real_lstat64(xpath(path, real), st);
 
     return r;
 }
@@ -1169,7 +1259,7 @@ int fstatat(int dirfd, const char *path, struct stat *st, int flags)
     char *real = NULL;
     int nofollow = (flags & AT_SYMLINK_NOFOLLOW) ? 1 : 0;
     if (!gate1(abs, nofollow, ACC_READ, "fstatat", &real)) { dbox_free(abs); return -1; }
-    int r = real_fstatat(dirfd, path, st, flags);
+    int r = XPAT_EXEC(real_fstatat, dirfd, path, real, st, flags);
     dbox_free(abs); dbox_free(real);
     return r;
 }
@@ -1184,7 +1274,7 @@ int fstatat64(int dirfd, const char *path, struct stat64 *st, int flags)
     char *real = NULL;
     int nofollow = (flags & AT_SYMLINK_NOFOLLOW) ? 1 : 0;
     if (!gate1(abs, nofollow, ACC_READ, "fstatat64", &real)) { dbox_free(abs); return -1; }
-    int r = real_fstatat64(dirfd, path, st, flags);
+    int r = XPAT_EXEC(real_fstatat64, dirfd, path, real, st, flags);
     dbox_free(abs); dbox_free(real);
     return r;
 }
@@ -1200,7 +1290,7 @@ int statx(int dirfd, const char *path, int flags, unsigned int mask,
     char *real = NULL;
     int nofollow = (flags & AT_SYMLINK_NOFOLLOW) ? 1 : 0;
     if (!gate1(abs, nofollow, ACC_READ, "statx", &real)) { dbox_free(abs); return -1; }
-    int r = real_statx(dirfd, path, flags, mask, stx);
+    int r = XPAT_EXEC(real_statx, dirfd, path, real, flags, mask, stx);
     dbox_free(abs); dbox_free(real);
     return r;
 }
@@ -1209,7 +1299,7 @@ int access(const char *path, int mode)
 {
     char *real = NULL;
     if (!gate1(path, 0, mode_to_acc(mode), "access", &real)) return -1;
-    int r = real_access(path, mode);
+    int r = real_access(xpath(path, real), mode);
 
     return r;
 }
@@ -1222,7 +1312,7 @@ int faccessat(int dirfd, const char *path, int mode, int flags)
     if (!abs) { errno = EBADF; return -1; }
     char *real = NULL;
     if (!gate1(abs, 0, mode_to_acc(mode), "faccessat", &real)) { dbox_free(abs); return -1; }
-    int r = real_faccessat(dirfd, path, mode, flags);
+    int r = XPAT_EXEC(real_faccessat, dirfd, path, real, mode, flags);
     dbox_free(abs); dbox_free(real);
     return r;
 }
@@ -1238,7 +1328,7 @@ int faccessat2(int dirfd, const char *path, int mode, int flags)
     char *real = NULL;
     int nofollow = (flags & AT_SYMLINK_NOFOLLOW) ? 1 : 0;
     if (!gate1(abs, nofollow, mode_to_acc(mode), "faccessat2", &real)) { dbox_free(abs); return -1; }
-    int r = real_faccessat2(dirfd, path, mode, flags);
+    int r = XPAT_EXEC(real_faccessat2, dirfd, path, real, mode, flags);
     dbox_free(abs); dbox_free(real);
     return r;
 }
@@ -1248,7 +1338,7 @@ ssize_t readlink(const char *path, char *buf, size_t sz)
 {
     char *real = NULL;
     if (!gate1(path, 1, ACC_READ, "readlink", &real)) return -1;
-    ssize_t r = real_readlink(path, buf, sz);
+    ssize_t r = real_readlink(xpath(path, real), buf, sz);
 
     return r;
 }
@@ -1261,7 +1351,7 @@ ssize_t readlinkat(int dirfd, const char *path, char *buf, size_t sz)
     if (!abs) { errno = EBADF; return -1; }
     char *real = NULL;
     if (!gate1(abs, 1, ACC_READ, "readlinkat", &real)) { dbox_free(abs); return -1; }
-    ssize_t r = real_readlinkat(dirfd, path, buf, sz);
+    ssize_t r = XPAT_EXEC(real_readlinkat, dirfd, path, real, buf, sz);
     dbox_free(abs); dbox_free(real);
     return r;
 }
@@ -1271,7 +1361,7 @@ char *realpath(const char *path, char *resolved)
     if (!g_ready || !path || !path[0]) return real_realpath(path, resolved);
     char *real = NULL;
     if (!gate1(path, 0, ACC_READ, "realpath", &real)) return NULL;
-    char *r = real_realpath(path, resolved);
+    char *r = real_realpath(xpath(path, real), resolved);
 
     return r;
 }
@@ -1280,7 +1370,7 @@ int statfs(const char *path, struct statfs *buf)
 {
     char *real = NULL;
     if (!gate1(path, 0, ACC_READ, "statfs", &real)) return -1;
-    int r = real_statfs(path, buf);
+    int r = real_statfs(xpath(path, real), buf);
 
     return r;
 }
@@ -1290,7 +1380,7 @@ int statfs64(const char *path, struct statfs64 *buf)
 {
     char *real = NULL;
     if (!gate1(path, 0, ACC_READ, "statfs64", &real)) return -1;
-    int r = real_statfs64(path, buf);
+    int r = real_statfs64(xpath(path, real), buf);
 
     return r;
 }
@@ -1300,7 +1390,7 @@ int statvfs(const char *path, struct statvfs *buf)
 {
     char *real = NULL;
     if (!gate1(path, 0, ACC_READ, "statvfs", &real)) return -1;
-    int r = real_statvfs(path, buf);
+    int r = real_statvfs(xpath(path, real), buf);
 
     return r;
 }
@@ -1310,7 +1400,7 @@ int statvfs64(const char *path, struct statvfs64 *buf)
 {
     char *real = NULL;
     if (!gate1(path, 0, ACC_READ, "statvfs64", &real)) return -1;
-    int r = real_statvfs64(path, buf);
+    int r = real_statvfs64(xpath(path, real), buf);
 
     return r;
 }
@@ -1324,7 +1414,7 @@ DIR *opendir(const char *path)
 {
     char *real = NULL;
     if (!gate1(path, 0, ACC_READ, "opendir", &real)) return NULL;
-    DIR *d = real_opendir(path);
+    DIR *d = real_opendir(xpath(path, real));
     int e = errno;
     if (d) {
         int fd = dirfd(d);
@@ -1342,7 +1432,7 @@ static int scandir_common(int (*fn)(const char *, struct dirent ***, int (*)(con
 {
     char *real = NULL;
     if (!gate1(path, 0, ACC_READ, "scandir", &real)) return -1;
-    int r = fn(path, out, sel, cmp);
+    int r = fn(xpath(path, real), out, sel, cmp);
 
     return r;
 }
@@ -1361,7 +1451,7 @@ int scandir64(const char *path, struct dirent64 ***out,
 {
     char *real = NULL;
     if (!gate1(path, 0, ACC_READ, "scandir64", &real)) return -1;
-    int r = real_scandir64(path, out, sel, cmp);
+    int r = real_scandir64(xpath(path, real), out, sel, cmp);
 
     return r;
 }
@@ -1378,7 +1468,7 @@ int scandirat(int dirfd, const char *path, struct dirent ***out,
     if (!abs) { errno = EBADF; return -1; }
     char *real = NULL;
     if (!gate1(abs, 0, ACC_READ, "scandirat", &real)) { dbox_free(abs); return -1; }
-    int r = real_scandirat(dirfd, path, out, sel, cmp);
+    int r = XPAT_EXEC(real_scandirat, dirfd, path, real, out, sel, cmp);
     dbox_free(abs); dbox_free(real);
     return r;
 }
@@ -1388,7 +1478,7 @@ int ftw(const char *path, int (*fn)(const char *, const struct stat *, int), int
 {
     char *real = NULL;
     if (!gate1(path, 0, ACC_READ, "ftw", &real)) return -1;
-    int r = real_ftw(path, fn, nfd);
+    int r = real_ftw(xpath(path, real), fn, nfd);
 
     return r;
 }
@@ -1398,7 +1488,7 @@ int ftw64(const char *path, int (*fn)(const char *, const struct stat64 *, int),
 {
     char *real = NULL;
     if (!gate1(path, 0, ACC_READ, "ftw64", &real)) return -1;
-    int r = real_ftw64(path, fn, nfd);
+    int r = real_ftw64(xpath(path, real), fn, nfd);
 
     return r;
 }
@@ -1408,7 +1498,7 @@ int nftw(const char *path, int (*fn)(const char *, const struct stat *, int, str
 {
     char *real = NULL;
     if (!gate1(path, 0, ACC_READ, "nftw", &real)) return -1;
-    int r = real_nftw(path, fn, nfd, flags);
+    int r = real_nftw(xpath(path, real), fn, nfd, flags);
 
     return r;
 }
@@ -1418,7 +1508,7 @@ int nftw64(const char *path, int (*fn)(const char *, const struct stat64 *, int,
 {
     char *real = NULL;
     if (!gate1(path, 0, ACC_READ, "nftw64", &real)) return -1;
-    int r = real_nftw64(path, fn, nfd, flags);
+    int r = real_nftw64(xpath(path, real), fn, nfd, flags);
 
     return r;
 }
@@ -1428,12 +1518,56 @@ int nftw64(const char *path, int (*fn)(const char *, const struct stat64 *, int,
 /* mutations                                                           */
 /* ------------------------------------------------------------------ */
 
+/* --del-to-trash：把删除目标移入回收站目录（Windows 回收站等价物）。
+ * 保留原文件名；同名冲突时追加短序号（.1/.2/…）。回收站目录由 launcher 创建，
+ * 此处防御性重建；跨文件系统（rename 失败）时退回 -1，由调用方直接删除。 */
+static int trash_move(const char *path, const char *what)
+{
+    if (!g_trash_dir[0] || !path || !path[0]) return -1;
+    {
+        char tb[DBOX_PATH_MAX];
+        snprintf(tb, sizeof tb, "%s", g_trash_dir);
+        for (char *p = tb + 1; *p; p++) {
+            if (*p == '/') {
+                *p = 0;
+                if (syscall(SYS_mkdirat, AT_FDCWD, tb, 0755) != 0 && errno != EEXIST) { *p = '/'; return -1; }
+                *p = '/';
+            }
+        }
+        if (syscall(SYS_mkdirat, AT_FDCWD, tb, 0755) != 0 && errno != EEXIST) return -1;
+    }
+    const char *base = strrchr(path, '/');
+    base = base ? base + 1 : path;
+    const char *name = base && base[0] ? base : "unnamed";
+    char dest[DBOX_PATH_MAX];
+    int n = 0;
+    do {
+        if (n == 0) snprintf(dest, sizeof dest, "%s/%s", g_trash_dir, name);
+        else snprintf(dest, sizeof dest, "%s/%s.%d", g_trash_dir, name, n);
+        n++;
+    } while (n < 1000 && syscall(SYS_faccessat, AT_FDCWD, dest, F_OK) == 0);
+    if (n >= 1000) {
+        dbox_logf("trash %s: name collision for %s", what, path);
+        return -1;
+    }
+    int r = real_rename(path, dest);
+    if (r == 0) { dbox_logf("trash %s: %s -> %s", what, path, dest); return 0; }
+    dbox_logf("trash %s failed (%s), fallback unlink: %s", what, strerror(errno), path);
+    return -1;
+}
+
 int unlink(const char *path)
 {
     char *real = NULL;
     if (!gate1(path, 1, ACC_WRITE, "unlink", &real)) return -1;
-    int r = real_unlink(path);
-
+    const char *xp = xpath(path, real);
+    /* 本次沙箱实例新建的文件：删除直接清除，不进回收站（临时文件语义） */
+    if (g_trash_dir[0] && !dbox_shm_newfile_has(xp) && trash_move(xp, "unlink") == 0) {
+        dbox_free(real);
+        return 0;
+    }
+    int r = real_unlink(xp);
+    dbox_free(real);
     return r;
 }
 
@@ -1445,7 +1579,13 @@ int unlinkat(int dirfd, const char *path, int flags)
     if (!abs) { errno = EBADF; return -1; }
     char *real = NULL;
     if (!gate1(abs, 1, ACC_WRITE, "unlinkat", &real)) { dbox_free(abs); return -1; }
-    int r = real_unlinkat(dirfd, path, flags);
+    const char *target = real && real[0] ? real : abs;
+    int r;
+    if (g_trash_dir[0] && !dbox_shm_newfile_has(target) && trash_move(target, "unlinkat") == 0) {
+        r = 0;
+    } else {
+        r = XPAT_EXEC(real_unlinkat, dirfd, path, real, flags);
+    }
     dbox_free(abs); dbox_free(real);
     return r;
 }
@@ -1454,22 +1594,29 @@ int rmdir(const char *path)
 {
     char *real = NULL;
     if (!gate1(path, 1, ACC_WRITE, "rmdir", &real)) return -1;
-    int r = real_rmdir(path);
-
+    const char *xp = xpath(path, real);
+    if (g_trash_dir[0] && !dbox_shm_newfile_has(xp) && trash_move(xp, "rmdir") == 0) {
+        dbox_free(real);
+        return 0;
+    }
+    int r = real_rmdir(xp);
+    dbox_free(real);
     return r;
 }
 
 /* gate both ends of a rename */
-static int gate_rename(const char *old, const char *newp)
+static int gate_rename(const char *old, const char *newp,
+                       char **oreal_out, char **nreal_out)
 {
     char *oreal = NULL;
     char *nreal = NULL;
     if (!gate1(old, 1, ACC_WRITE, "rename", &oreal)) return 0;
     if (!gate1(newp, 1, ACC_WRITE, "rename", &nreal)) {
-        dbox_free(oreal); dbox_free(nreal);
+        dbox_free(oreal);
         return 0;
     }
-    dbox_free(oreal); dbox_free(nreal);
+    if (oreal_out) *oreal_out = oreal; else dbox_free(oreal);
+    if (nreal_out) *nreal_out = nreal; else dbox_free(nreal);
     return 1;
 }
 
@@ -1477,8 +1624,10 @@ int rename(const char *old, const char *newp)
 {
     ensure_ready();
     if (!g_ready) return real_rename(old, newp);
-    if (!gate_rename(old, newp)) return -1;
-    int r = real_rename(old, newp);
+    char *oreal = NULL, *nreal = NULL;
+    if (!gate_rename(old, newp, &oreal, &nreal)) return -1;
+    int r = real_rename(xpath(old, oreal), xpath(newp, nreal));
+    dbox_free(oreal); dbox_free(nreal);
     return r;
 }
 
@@ -1489,9 +1638,12 @@ int renameat(int oldfd, const char *old, int newfd, const char *newp)
     char *ao = at_abs(oldfd, old);
     char *an = at_abs(newfd, newp);
     if (!ao || !an) { dbox_free(ao); dbox_free(an); errno = EBADF; return -1; }
-    if (!gate_rename(ao, an)) { dbox_free(ao); dbox_free(an); return -1; }
-    int r = real_renameat(oldfd, old, newfd, newp);
-    dbox_free(ao); dbox_free(an);
+    char *oreal = NULL, *nreal = NULL;
+    if (!gate_rename(ao, an, &oreal, &nreal)) { dbox_free(ao); dbox_free(an); return -1; }
+    int r = (g_tmp_dir[0] && oreal && nreal)
+                ? real_renameat(AT_FDCWD, oreal, AT_FDCWD, nreal)
+                : real_renameat(oldfd, old, newfd, newp);
+    dbox_free(ao); dbox_free(an); dbox_free(oreal); dbox_free(nreal);
     return r;
 }
 
@@ -1507,9 +1659,12 @@ int renameat2(int oldfd, const char *old, int newfd, const char *newp,
     char *ao = at_abs(oldfd, old);
     char *an = at_abs(newfd, newp);
     if (!ao || !an) { dbox_free(ao); dbox_free(an); errno = EBADF; return -1; }
-    if (!gate_rename(ao, an)) { dbox_free(ao); dbox_free(an); return -1; }
-    int r = real_renameat2(oldfd, old, newfd, newp, flags);
-    dbox_free(ao); dbox_free(an);
+    char *oreal = NULL, *nreal = NULL;
+    if (!gate_rename(ao, an, &oreal, &nreal)) { dbox_free(ao); dbox_free(an); return -1; }
+    int r = (g_tmp_dir[0] && oreal && nreal)
+                ? real_renameat2(AT_FDCWD, oreal, AT_FDCWD, nreal, flags)
+                : real_renameat2(oldfd, old, newfd, newp, flags);
+    dbox_free(ao); dbox_free(an); dbox_free(oreal); dbox_free(nreal);
     return r;
 }
 
@@ -1517,8 +1672,12 @@ int mkdir(const char *path, mode_t mode)
 {
     char *real = NULL;
     if (!gate1(path, 0, ACC_WRITE, "mkdir", &real)) return -1;
-    int r = real_mkdir(path, mode);
-
+    const char *p = xpath(path, real);
+    int r = real_mkdir(p, mode);
+    int e = errno;
+    if (r == 0) dbox_shm_newfile_add(p);   /* 新建目录：删除时不进回收站 */
+    dbox_free(real);
+    errno = e;
     return r;
 }
 
@@ -1530,7 +1689,7 @@ int mkdirat(int dirfd, const char *path, mode_t mode)
     if (!abs) { errno = EBADF; return -1; }
     char *real = NULL;
     if (!gate1(abs, 0, ACC_WRITE, "mkdirat", &real)) { dbox_free(abs); return -1; }
-    int r = real_mkdirat(dirfd, path, mode);
+    int r = XPAT_EXEC(real_mkdirat, dirfd, path, real, mode);
     dbox_free(abs); dbox_free(real);
     return r;
 }
@@ -1539,7 +1698,7 @@ int chmod(const char *path, mode_t mode)
 {
     char *real = NULL;
     if (!gate1(path, 0, ACC_WRITE, "chmod", &real)) return -1;
-    int r = real_chmod(path, mode);
+    int r = real_chmod(xpath(path, real), mode);
 
     return r;
 }
@@ -1553,7 +1712,7 @@ int fchmodat(int dirfd, const char *path, mode_t mode, int flags)
     char *real = NULL;
     int nofollow = (flags & AT_SYMLINK_NOFOLLOW) ? 1 : 0;
     if (!gate1(abs, nofollow, ACC_WRITE, "fchmodat", &real)) { dbox_free(abs); return -1; }
-    int r = real_fchmodat(dirfd, path, mode, flags);
+    int r = XPAT_EXEC(real_fchmodat, dirfd, path, real, mode, flags);
     dbox_free(abs); dbox_free(real);
     return r;
 }
@@ -1562,7 +1721,7 @@ int chown(const char *path, uid_t u, gid_t g)
 {
     char *real = NULL;
     if (!gate1(path, 0, ACC_WRITE, "chown", &real)) return -1;
-    int r = real_chown(path, u, g);
+    int r = real_chown(xpath(path, real), u, g);
 
     return r;
 }
@@ -1571,7 +1730,7 @@ int lchown(const char *path, uid_t u, gid_t g)
 {
     char *real = NULL;
     if (!gate1(path, 1, ACC_WRITE, "lchown", &real)) return -1;
-    int r = real_lchown(path, u, g);
+    int r = real_lchown(xpath(path, real), u, g);
 
     return r;
 }
@@ -1585,7 +1744,7 @@ int fchownat(int dirfd, const char *path, uid_t u, gid_t g, int flags)
     char *real = NULL;
     int nofollow = (flags & AT_SYMLINK_NOFOLLOW) ? 1 : 0;
     if (!gate1(abs, nofollow, ACC_WRITE, "fchownat", &real)) { dbox_free(abs); return -1; }
-    int r = real_fchownat(dirfd, path, u, g, flags);
+    int r = XPAT_EXEC(real_fchownat, dirfd, path, real, u, g, flags);
     dbox_free(abs); dbox_free(real);
     return r;
 }
@@ -1594,7 +1753,7 @@ int truncate(const char *path, off_t len)
 {
     char *real = NULL;
     if (!gate1(path, 0, ACC_WRITE, "truncate", &real)) return -1;
-    int r = real_truncate(path, len);
+    int r = real_truncate(xpath(path, real), len);
 
     return r;
 }
@@ -1604,7 +1763,7 @@ int truncate64(const char *path, off64_t len)
 {
     char *real = NULL;
     if (!gate1(path, 0, ACC_WRITE, "truncate64", &real)) return -1;
-    int r = real_truncate64(path, len);
+    int r = real_truncate64(xpath(path, real), len);
 
     return r;
 }
@@ -1621,7 +1780,7 @@ int link(const char *old, const char *newp)
     if (!gate1(newp, 1, ACC_WRITE, "link", &nreal)) {
         dbox_free(oreal); dbox_free(nreal); return -1;
     }
-    int r = real_link(old, newp);
+    int r = real_link(xpath(old, oreal), xpath(newp, nreal));
     dbox_free(oreal); dbox_free(nreal);
     return r;
 }
@@ -1645,7 +1804,9 @@ int linkat(int oldfd, const char *old, int newfd, const char *newp, int flags)
         dbox_free(oreal); dbox_free(nreal);
         return -1;
     }
-    int r = real_linkat(oldfd, old, newfd, newp, flags);
+    int r = (g_tmp_dir[0] && oreal && nreal)
+                ? real_linkat(AT_FDCWD, oreal, AT_FDCWD, nreal, flags)
+                : real_linkat(oldfd, old, newfd, newp, flags);
     dbox_free(ao); dbox_free(an);
     dbox_free(oreal); dbox_free(nreal);
     return r;
@@ -1659,7 +1820,7 @@ int symlink(const char *target, const char *linkpath)
 {
     char *real = NULL;
     if (!gate1(linkpath, 1, ACC_WRITE, "symlink", &real)) return -1;
-    int r = real_symlink(target, linkpath);
+    int r = real_symlink(target, xpath(linkpath, real));
     int e = errno;
 
     errno = e;
@@ -1674,7 +1835,9 @@ int symlinkat(const char *target, int newdirfd, const char *linkpath)
     if (!an) { errno = EBADF; return -1; }
     char *real = NULL;
     if (!gate1(an, 1, ACC_WRITE, "symlinkat", &real)) { dbox_free(an); return -1; }
-    int r = real_symlinkat(target, newdirfd, linkpath);
+    int r = (g_tmp_dir[0] && real)
+                ? real_symlinkat(target, AT_FDCWD, real)
+                : real_symlinkat(target, newdirfd, linkpath);
     int e = errno;
     dbox_free(an); dbox_free(real);
     errno = e;
@@ -1685,7 +1848,7 @@ int mknod(const char *path, mode_t mode, dev_t dev)
 {
     char *real = NULL;
     if (!gate1(path, 1, ACC_WRITE, "mknod", &real)) return -1;
-    int r = real_mknod(path, mode, dev);
+    int r = real_mknod(xpath(path, real), mode, dev);
 
     return r;
 }
@@ -1698,7 +1861,7 @@ int mknodat(int dirfd, const char *path, mode_t mode, dev_t dev)
     if (!abs) { errno = EBADF; return -1; }
     char *real = NULL;
     if (!gate1(abs, 1, ACC_WRITE, "mknodat", &real)) { dbox_free(abs); return -1; }
-    int r = real_mknodat(dirfd, path, mode, dev);
+    int r = XPAT_EXEC(real_mknodat, dirfd, path, real, mode, dev);
     dbox_free(abs); dbox_free(real);
     return r;
 }
@@ -1707,7 +1870,7 @@ int mkfifo(const char *path, mode_t mode)
 {
     char *real = NULL;
     if (!gate1(path, 1, ACC_WRITE, "mkfifo", &real)) return -1;
-    int r = real_mkfifo(path, mode);
+    int r = real_mkfifo(xpath(path, real), mode);
 
     return r;
 }
@@ -1720,7 +1883,7 @@ int mkfifoat(int dirfd, const char *path, mode_t mode)
     if (!abs) { errno = EBADF; return -1; }
     char *real = NULL;
     if (!gate1(abs, 1, ACC_WRITE, "mkfifoat", &real)) { dbox_free(abs); return -1; }
-    int r = real_mkfifoat(dirfd, path, mode);
+    int r = XPAT_EXEC(real_mkfifoat, dirfd, path, real, mode);
     dbox_free(abs); dbox_free(real);
     return r;
 }
@@ -1729,7 +1892,7 @@ int utime(const char *path, const struct utimbuf *t)
 {
     char *real = NULL;
     if (!gate1(path, 0, ACC_WRITE, "utime", &real)) return -1;
-    int r = real_utime(path, t);
+    int r = real_utime(xpath(path, real), t);
 
     return r;
 }
@@ -1738,7 +1901,7 @@ int utimes(const char *path, const struct timeval t[2])
 {
     char *real = NULL;
     if (!gate1(path, 0, ACC_WRITE, "utimes", &real)) return -1;
-    int r = real_utimes(path, t);
+    int r = real_utimes(xpath(path, real), t);
 
     return r;
 }
@@ -1747,7 +1910,7 @@ int lutimes(const char *path, const struct timeval t[2])
 {
     char *real = NULL;
     if (!gate1(path, 1, ACC_WRITE, "lutimes", &real)) return -1;
-    int r = real_lutimes(path, t);
+    int r = real_lutimes(xpath(path, real), t);
 
     return r;
 }
@@ -1760,7 +1923,7 @@ int futimesat(int dirfd, const char *path, const struct timeval t[2])
     if (!abs) { errno = EBADF; return -1; }
     char *real = NULL;
     if (!gate1(abs, 0, ACC_WRITE, "futimesat", &real)) { dbox_free(abs); return -1; }
-    int r = real_futimesat(dirfd, path, t);
+    int r = XPAT_EXEC(real_futimesat, dirfd, path, real, t);
     dbox_free(abs); dbox_free(real);
     return r;
 }
@@ -1774,7 +1937,7 @@ int utimensat(int dirfd, const char *path, const struct timespec t[2], int flags
     char *real = NULL;
     int nofollow = (flags & AT_SYMLINK_NOFOLLOW) ? 1 : 0;
     if (!gate1(abs, nofollow, ACC_WRITE, "utimensat", &real)) { dbox_free(abs); return -1; }
-    int r = real_utimensat(dirfd, path, t, flags);
+    int r = XPAT_EXEC(real_utimensat, dirfd, path, real, t, flags);
     dbox_free(abs); dbox_free(real);
     return r;
 }
@@ -1791,7 +1954,9 @@ int execve(const char *path, char *const argv[], char *const envp[])
     /* identity namespace: no argv rewriting */
     size_t env_owned = 0;
     char **env = build_envp(envp, &env_owned);
-    int r = real_execve(path, argv, env);
+    char ebuf[DBOX_PATH_MAX];
+    const char *ep = xtmp_prefix(path, ebuf, sizeof ebuf);
+    int r = real_execve(ep, argv, env);
     int e = errno;
     free_envp(env, env_owned);
 
@@ -1815,7 +1980,7 @@ int execveat(int dirfd, const char *path, char *const argv[],
     /* identity namespace: no argv rewriting */
     size_t env_owned = 0;
     char **env = build_envp(envp, &env_owned);
-    int r = real_execveat(dirfd, path, argv, env, flags);
+    int r = XPAT_EXEC(real_execveat, dirfd, path, real, argv, env, flags);
     int e = errno;
     free_envp(env, env_owned);
     dbox_free(abs);
@@ -2039,7 +2204,7 @@ int chdir(const char *path)
     if (!g_ready) return real_chdir(path);
     char *real = NULL;
     if (!gate1(path, 0, ACC_READ, "chdir", &real)) return -1;
-    int r = real_chdir(path);
+    int r = real_chdir(xpath(path, real));
     if (r == 0 && real) ctx_set_cwd(real);
 
     dbox_free(real);
@@ -2098,7 +2263,7 @@ void *dlopen(const char *path, int flags)
         /* a shared object is code: treat loading it as execute */
         char *real = NULL;
         if (!gate1(path, 0, ACC_EXEC, "dlopen", &real)) return NULL;
-        void *h = real_dlopen(path, flags);
+        void *h = real_dlopen(xpath(path, real), flags);
         dbox_free(real);
         return h;
     }

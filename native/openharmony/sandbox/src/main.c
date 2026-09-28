@@ -1,4 +1,4 @@
-/* main.c — dynobox-linux CLI.
+/* main.c — dynobox CLI.
  *
  * Subcommands:
  *   run         start a command inside the LD_PRELOAD sandbox
@@ -88,7 +88,7 @@ static char *find_preload_lib(void)
 static void usage(FILE *out)
 {
     fprintf(out,
-"dynobox-linux %s — LD_PRELOAD 文件访问控制沙箱 (OpenDesk dynobox 的 Linux 对应实现)\n"
+"dynobox %s — LD_PRELOAD 文件访问控制沙箱 (OpenDesk dynobox 的 OpenHarmony 实现)\n"
 "\n"
 "用法（子命令与 Windows 版 dynobox 对齐）:\n"
 "  dynobox run --policy <rules.toml> [选项] -- <命令> [参数...]\n"
@@ -104,22 +104,29 @@ static void usage(FILE *out)
 "  --upstream URL     ask 决策端点：http://host:port/path、unix://PATH、\n"
 "                     或 pipe://名字（Windows 命名管道等价物，见 endpoint --pipe）\n"
 "  --map OLD=NEW      接受但为 no-op（身份命名空间下无路径翻译）\n"
-"  --del-to-trash     接受但为 no-op（Linux 无回收站）\n"
-"  --mount 盘符       接受但为 no-op（Linux 无盘符概念）\n"
+"  --del-to-trash     接受但为 no-op（OpenHarmony 无回收站）\n"
+"  --mount 盘符       接受但为 no-op（无盘符概念）\n"
 "  --log FILE         沙箱诊断日志（--log-file 为别名；含全部拒绝记录）\n"
+"  --tmp DIR          把沙箱内 /tmp 映射到宿主 DIR（可读可写，无需策略规则）\n"
 "  -v                 每次放行也记录\n"
 "\n"
-"run 选项（Linux 扩展）:\n"
+"run 选项（扩展）:\n"
 "  --default a|d      未命中规则的兜底（allow|deny），覆盖策略\n"
 "  --net MODE         网络策略 allow|deny|loopback（默认 allow）\n"
 "  --timeout-ms N     ask 超时（默认 2000，超时=拒绝，fail-closed）\n"
 "  --cache-ttl N      ask 决策缓存秒数（默认 60，0=禁用）\n"
 "  --grant-ttl N      端点子树授权默认 TTL 秒数（默认 300，上限 3600）\n"
 "  --no-system-read   关闭内建系统目录读/执行允许清单\n"
+"  --ro-dirs D1,D2     将宿主目录以只读方式暴露（身份命名空间下实现为\n"
+"                      write/delete 拒绝，对应 FUSE 版的只读 bind 挂载）\n"
+"  --tmp DIR           把沙箱内 /tmp（与 /tmp/*）映射到宿主 DIR：映射区总是\n"
+"                      可读可写，无需策略规则（OpenHarmony 的 /tmp 为只读挂载）\n"
+"  --del-to-trash      删除文件/目录时移入回收站目录（Windows 回收站等价物）\n"
+"  --trash DIR         回收站目录（默认 $HOME/Trash，不存在则自动创建）\n"
 "  --cwd DIR          子进程工作目录（默认：--src 模式为 DIR，否则当前目录）\n"
 "\n"
-"说明: mount 子命令不适用于 Linux（虚拟化逐进程生效，无 Dokan 卷/盘符）；\n"
-"network-* 为兼容 Windows 启动脚本的 no-op（Linux 回环访问默认可用）。\n"
+"说明: mount 子命令不适用于 OpenHarmony（虚拟化逐进程生效，无 Dokan 卷/盘符）；\n"
+"network-* 为兼容 Windows 启动脚本的 no-op（本平台回环访问默认可用）。\n"
 , g_version);
 }
 
@@ -137,6 +144,10 @@ typedef struct {
     int no_system_read;
     const char *cwd;
     const char *log_file;
+    const char *ro_dirs;
+    const char *tmp_dir;
+    int del_to_trash;
+    const char *trash_dir;
     int verbose;
 } run_opts_t;
 
@@ -182,6 +193,24 @@ static volatile sig_atomic_t g_sig = 0;
 static volatile sig_atomic_t g_child_pgid = 0;
 static void on_sig(int s) { g_sig = s; }
 
+/* mkdir -p：逐组件创建目录（回收站目录自动创建用） */
+static int mkdir_p(const char *path)
+{
+    char tmp[PATH_MAX];
+    snprintf(tmp, sizeof tmp, "%s", path);
+    size_t len = strlen(tmp);
+    while (len > 1 && tmp[len - 1] == '/') tmp[--len] = 0;
+    for (char *p = tmp + 1; *p; p++) {
+        if (*p == '/') {
+            *p = 0;
+            if (mkdir(tmp, 0755) != 0 && errno != EEXIST) { *p = '/'; return -1; }
+            *p = '/';
+        }
+    }
+    if (mkdir(tmp, 0755) != 0 && errno != EEXIST) return -1;
+    return access(tmp, R_OK | W_OK) == 0 ? 0 : -1;
+}
+
 static int cmd_run(int argc, char **argv)
 {
     run_opts_t o;
@@ -199,16 +228,16 @@ static int cmd_run(int argc, char **argv)
         else if (strcmp(argv[i], "--upstream") == 0 && i + 1 < argc) o.upstream = argv[++i];
         else if (strcmp(argv[i], "--automount") == 0) automount = 1;
         else if (strcmp(argv[i], "--del-to-trash") == 0) {
-            /* Windows recycle-bin semantics have no Linux equivalent; the
-             * flag is accepted so cross-platform launchers keep working */
-            fprintf(stderr, "dynobox: --del-to-trash 在 Linux 上为 no-op\n");
+            /* 删除落到回收站目录（Windows 回收站的等价物） */
+            o.del_to_trash = 1;
         }
+        else if (strcmp(argv[i], "--trash") == 0 && i + 1 < argc) o.trash_dir = argv[++i];
         else if (strcmp(argv[i], "--mount") == 0 && i + 1 < argc) {
             have_mount = 1; i++;
         }
         else if (strcmp(argv[i], "--map") == 0) {
             /* mapping removed in the identity namespace: accepted as no-op */
-            fprintf(stderr, "dynobox: --map 在 Linux 上为 no-op（无路径映射）\n");
+            fprintf(stderr, "dynobox: --map 在本平台上为 no-op（无路径映射）\n");
             if (i + 1 < argc) i++;
         }
         else if (strcmp(argv[i], "--default") == 0 && i + 1 < argc) {
@@ -228,8 +257,10 @@ static int cmd_run(int argc, char **argv)
         else if (strcmp(argv[i], "--cache-ttl") == 0 && i + 1 < argc) o.cache_ttl = atoi(argv[++i]);
         else if (strcmp(argv[i], "--grant-ttl") == 0 && i + 1 < argc) o.grant_ttl = atoi(argv[++i]);
         else if (strcmp(argv[i], "--no-system-read") == 0) o.no_system_read = 1;
+        else if (strcmp(argv[i], "--ro-dirs") == 0 && i + 1 < argc) o.ro_dirs = argv[++i];
         else if (strcmp(argv[i], "--cwd") == 0 && i + 1 < argc) o.cwd = argv[++i];
         else if ((strcmp(argv[i], "--log") == 0 || strcmp(argv[i], "--log-file") == 0) && i + 1 < argc) o.log_file = argv[++i];
+        else if (strcmp(argv[i], "--tmp") == 0 && i + 1 < argc) o.tmp_dir = argv[++i];
         else if (strcmp(argv[i], "-v") == 0) o.verbose = 1;
         else {
             fprintf(stderr, "dynobox run: 未知参数 `%s`\n", argv[i]);
@@ -242,7 +273,7 @@ static int cmd_run(int argc, char **argv)
         return 2;
     }
     if (have_mount)
-        fprintf(stderr, "dynobox: --mount 在 Linux 上为 no-op（无盘符概念，虚拟化逐进程生效）\n");
+        fprintf(stderr, "dynobox: --mount 在本平台上为 no-op（无盘符概念，虚拟化逐进程生效）\n");
 
     char err[512];
     dbox_policy_t pol;
@@ -253,10 +284,18 @@ static int cmd_run(int argc, char **argv)
     if (automount) {
         /* identity namespace is the default view; --automount is accepted
          * for Windows-parity command lines and is effectively a no-op */
-        fprintf(stderr, "dynobox: --automount 在 Linux 上为默认行为（恒等视图），no-op\n");
+        fprintf(stderr, "dynobox: --automount 为本平台默认行为（恒等视图），no-op\n");
     }
     if (apply_opts(&pol, &o, err, sizeof err) != 0) {
         fprintf(stderr, "dynobox: %s\n", err);
+        return 2;
+    }
+    /* --ro-dirs: inject read-only directories as leading write-deny rules
+     * (identity namespace has no mount primitive; must happen before
+     * dbox_cfg_encode serializes the policy into the child environment) */
+    if (dbox_policy_prepend_ro_dirs(&pol, o.ro_dirs) != 0) {
+        fprintf(stderr, "dynobox: --ro-dirs 规则注入失败（内存不足）\n");
+        dbox_policy_free(&pol);
         return 2;
     }
 
@@ -297,6 +336,44 @@ static int cmd_run(int argc, char **argv)
         unsetenv("SBX_REAL_SRC");
     }
     if (o.log_file) setenv("DYNOBOX_LOG", o.log_file, 1);
+    if (o.tmp_dir) {
+        char *n = dbox_normpath(o.tmp_dir);
+        if (!n || n[0] != '/' || access(n, R_OK | W_OK) != 0) {
+            fprintf(stderr, "dynobox: --tmp 目录不可用（需已存在且可读写）: %s\n",
+                    o.tmp_dir);
+            dbox_free(n);
+            dbox_policy_free(&pol);
+            return 2;
+        }
+        setenv("DYNOBOX_TMP", n, 1);
+        dbox_free(n);
+    }
+    if (o.del_to_trash) {
+        /* 回收站目录：--trash 指定，否则 $HOME/.trash；不存在则创建（mkdir -p） */
+        char tb[PATH_MAX];
+        const char *td = o.trash_dir;
+        if (!td || !td[0]) {
+            const char *home = getenv("HOME");
+            if (home && home[0]) {
+                snprintf(tb, sizeof tb, "%s/Trash", home);
+                td = tb;
+            }
+        }
+        if (!td || !td[0]) {
+            fprintf(stderr, "dynobox: --del-to-trash 需要 --trash 目录或 HOME\n");
+            dbox_policy_free(&pol);
+            return 2;
+        }
+        char *n = dbox_normpath(td);
+        if (!n || n[0] != '/' || mkdir_p(n) != 0 || access(n, R_OK | W_OK) != 0) {
+            fprintf(stderr, "dynobox: 回收站目录不可用（已尝试创建但不可读写）: %s\n", td);
+            dbox_free(n);
+            dbox_policy_free(&pol);
+            return 2;
+        }
+        setenv("DYNOBOX_TRASH", n, 1);
+        dbox_free(n);
+    }
     if (o.verbose) setenv("DYNOBOX_VERBOSE", "1", 1);
 
     /* watchdog pipe: launcher holds the write end; sandboxed processes
@@ -518,14 +595,14 @@ static int cmd_debug_rules(int argc, char **argv)
 
 /* ---- Windows loopback-exemption subcommands -------------------------- *
  * On Windows, AppContainer needs a one-time admin "network-ensure" step to
- * grant loopback access. Linux sandboxed processes have loopback access by
- * default (subject to [network] policy), so these exist only to keep
- * cross-platform launch scripts working. */
+ * grant loopback access. On this platform (OpenHarmony) sandboxed
+ * processes have loopback access by default (subject to [network] policy),
+ * so these exist only to keep cross-platform launch scripts working. */
 static int cmd_network_status(int argc, char **argv)
 {
     (void)argc; (void)argv;
     printf("{\"configured\": true, \"userSid\": null, "
-           "\"note\": \"linux: loopback access needs no setup\"}\n");
+           "\"note\": \"loopback access needs no setup on this platform\"}\n");
     return 0;
 }
 
@@ -558,12 +635,12 @@ int main(int argc, char **argv)
     if (strcmp(argv[1], "network-setup") == 0) return cmd_network_setup(argc - 2, argv + 2);
     if (strcmp(argv[1], "mount") == 0) {
         fprintf(stderr,
-                "dynobox: mount 子命令不适用于 Linux —— 虚拟化是逐进程的"
+                "dynobox: mount 子命令不适用于 OpenHarmony —— 虚拟化是逐进程的"
                 "（无 Dokan 卷/盘符），请使用 `dynobox run`\n");
         return 2;
     }
     if (strcmp(argv[1], "version") == 0 || strcmp(argv[1], "--version") == 0) {
-        printf("dynobox-linux %s\n", g_version);
+        printf("dynobox %s\n", g_version);
         return 0;
     }
     if (strcmp(argv[1], "--help") == 0 || strcmp(argv[1], "help") == 0) {

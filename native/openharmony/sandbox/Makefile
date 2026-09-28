@@ -28,7 +28,7 @@ unit: tests/unit_policy.c $(CORE_SRCS)
 	@mkdir -p $(BUILD)
 	$(CC) $(CFLAGS) -o $(BUILD)/unit_policy tests/unit_policy.c $(CORE_SRCS) -lpthread
 
-tests: $(LIB) $(CLI) $(BUILD)/t_probe $(BUILD)/t_threads $(BUILD)/t_exec_chain $(BUILD)/t_net $(BUILD)/t_mmap $(BUILD)/t_dlopen $(BUILD)/t_adversarial $(BUILD)/libadv_helper.so unit
+tests: $(LIB) $(CLI) $(BUILD)/t_probe $(BUILD)/t_threads $(BUILD)/t_exec_chain $(BUILD)/t_net $(BUILD)/t_mmap $(BUILD)/t_dlopen $(BUILD)/t_adversarial $(BUILD)/t_stat_storm $(BUILD)/libadv_helper.so unit
 
 $(BUILD)/t_adversarial: tests/t_adversarial.c
 	@mkdir -p $(BUILD)
@@ -57,6 +57,10 @@ $(BUILD)/t_mmap: tests/t_mmap.c
 
 $(BUILD)/t_dlopen: tests/t_dlopen.c
 	$(CC) $(CFLAGS) -o $@ $< -ldl
+
+# file stat 风暴压测探针（性能基线与退化记录见 tests/PERF.md）
+$(BUILD)/t_stat_storm: tests/t_stat_storm.c
+	$(CC) $(CFLAGS) -o $@ $<
 
 # ---------------------------------------------------------------------------
 # 运行时产物：把 dynobox + libdynobox.so 收敛到 runtime/<target>/。

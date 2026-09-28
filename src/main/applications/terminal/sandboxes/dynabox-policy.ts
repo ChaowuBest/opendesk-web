@@ -137,24 +137,19 @@ const SENSITIVE_HOME_DIRS = [
     '.git-credentials'
 ];
 
-export function policyTextLinux(
+/** 从 [ask] 到文件末尾的策略行（Linux / OpenHarmony 共用）。两者的区别仅在
+ * 头部：Linux(FUSE) 用 [[roots]] 整根映射，OpenHarmony(LD_PRELOAD 身份命名
+ * 空间) 无路径映射、规则直接用真实路径。 */
+function policyLinuxTail(
+    quote: (value: string) => string,
     endpoint: string,
     token: string,
-    workspace: string,
+    workspaceRoot: string,
     rules?: PermissionRule[],
-    home?: string
-): string {
-    const quote = (value: string) => JSON.stringify(value);
-    const workspaceRoot = workspace.replace(/\/+$/, '') || '/';
+    home?: string,
+    extraWritableDirs?: string[]
+): string[] {
     return [
-        'version = 1',
-        'default = "deny"',
-        '',
-        // 整根视图：FUSE 挂到沙箱根，沙箱内布局与宿主完全一致；系统目录在其上
-        // 只读 bind 覆盖，其余路径读写经策略检查（写工作区放行，其余询问）
-        '[[roots]]',
-        'virtual = "/"',
-        'real    = "/"',
         '',
         '[ask]',
         `endpoint = ${quote(endpoint)}`,
@@ -173,8 +168,9 @@ export function policyTextLinux(
                   (dir) => `[[rules]]\npath = ${quote(`${home}/${dir}/**`)}\naccess = "read"\nperm = "deny"`
               )
             : []),
-        // 工具链缓存目录写入放行（linux-sandbox 的 env 重定向：CARGO_HOME/
-        // npm_config_cache/GOCACHE 等指向 ~/.cache/opendesk-sandbox/...）
+        // 工具链缓存目录写入放行（linux-sandbox/openHarmony-sandbox 的 env
+        // 重定向：CARGO_HOME/npm_config_cache/GOCACHE 等指向
+        // ~/.cache/opendesk-sandbox/...）
         ...(home
             ? [`[[rules]]\npath = ${quote(`${home}/.cache/opendesk-sandbox/**`)}\naccess = "write"\nperm = "allow"`]
             : []),
@@ -194,6 +190,8 @@ export function policyTextLinux(
         'access = "write"',
         'perm = "allow"',
         '',
+        // 额外可写目录（OpenHarmony 应用沙箱 temp/cache 等；须在兜底 write ask 之前）
+        ...(extraWritableDirs ?? []),
         // /var/tmp（bash here doc 临时文件、sort 临时文件等）——不放行则
         // configure/自动工具在沙箱内全部卡死
         '[[rules]]',
@@ -221,5 +219,58 @@ export function policyTextLinux(
         'access = "execute"',
         'perm = "allow"',
         ''
+    ];
+}
+
+export function policyTextLinux(
+    endpoint: string,
+    token: string,
+    workspace: string,
+    rules?: PermissionRule[],
+    home?: string
+): string {
+    const quote = (value: string) => JSON.stringify(value);
+    const workspaceRoot = workspace.replace(/\/+$/, '') || '/';
+    return [
+        'version = 1',
+        'default = "deny"',
+        '',
+        // 整根视图：FUSE 挂到沙箱根，沙箱内布局与宿主完全一致；系统目录在其上
+        // 只读 bind 覆盖，其余路径读写经策略检查（写工作区放行，其余询问）
+        '[[roots]]',
+        'virtual = "/"',
+        'real    = "/"',
+        ...policyLinuxTail(quote, endpoint, token, workspaceRoot, rules, home)
+    ].join('\n');
+}
+
+/** OpenHarmony 版策略文本：LD_PRELOAD 身份命名空间（路径无映射），不含
+ * `[[roots]]`（OH 版 native 会拒绝 `[[roots]]`，见 policy.c）。其余规则与
+ * Linux(FUSE) 版一致——规则 path 均为宿主真实路径。
+ * `writableDirs`：应用沙箱 temp/cache 等目录总是可读可写（无需 ask）。 */
+export function policyTextOpenHarmony(
+    endpoint: string,
+    token: string,
+    workspace: string,
+    rules?: PermissionRule[],
+    home?: string,
+    writableDirs?: string[]
+): string {
+    const quote = (value: string) => JSON.stringify(value);
+    const workspaceRoot = workspace.replace(/\/+$/, '') || '/';
+    const writable =
+        writableDirs && writableDirs.length > 0
+            ? writableDirs
+                  .filter((dir) => dir && dir.startsWith('/'))
+                  .flatMap((dir) => [`[[rules]]\npath = ${quote(`${dir}/**`)}\naccess = "write"\nperm = "allow"`])
+            : [];
+    return [
+        'version = 1',
+        'default = "deny"',
+        '',
+        // LD_PRELOAD 身份命名空间：沙箱内路径与宿主完全一致，无需 roots 映射。
+        // 系统运行时读/执行由内建 system_read 清单放行（与 Windows/Linux 对齐）。
+        // 应用沙箱 temp/cache 总是可读可写（早于兜底 write ask）。
+        ...policyLinuxTail(quote, endpoint, token, workspaceRoot, rules, home, writable)
     ].join('\n');
 }

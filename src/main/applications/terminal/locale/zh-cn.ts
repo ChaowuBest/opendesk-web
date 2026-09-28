@@ -57,6 +57,9 @@ export const zhCn: Record<string, string> = {
     'sandbox.executableMissing.linux': '动态沙箱已启用，但未找到 dynobox-linux。请重新构建 Linux 版本。',
     'sandbox.cwdMissing.linux': '动态沙箱需要任务工作目录作为受控路径。',
     'sandbox.cwdUnsupported.linux': '沙箱工作目录不存在或不可用：${path}',
+    // OpenHarmony 动态沙箱（LD_PRELOAD 版 dynobox-linux）
+    'sandbox.executableMissing.ohos': '动态沙箱已启用，但未找到 OpenHarmony 版 dynobox。请重新构建 OpenHarmony 版本。',
+    'sandbox.trashDirUnavailable': '无法创建回收站目录 ${path}，请检查家目录写入权限或关闭回收站选项。',
     'prompt.mode.sandbox.linux': '- 当前运行模式：Linux 动态沙箱',
     'prompt.sandbox.linux.transparent':
         '- 沙箱内根文件系统布局与宿主完全一致（/home、/tmp、/var 等均可访问），读写操作经权限检查。',

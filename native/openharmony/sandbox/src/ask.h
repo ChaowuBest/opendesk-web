@@ -15,7 +15,8 @@ int dbox_ask(const dbox_policy_t *p, const char *vpath, int acc,
 
 /* Reference decision protocol helpers shared with the endpoint:
  * build request JSON and parse a response JSON (decision + grants). */
-int dbox_ask_build_request(char *out, size_t outsz, const char *vpath, int acc);
+int dbox_ask_build_request(char *out, size_t outsz, const char *vpath, int acc,
+                           const char *token);
 /* Parses `body`; on allow installs grants into p (mutable). */
 int dbox_ask_parse_response(const char *body, dbox_policy_t *p, int64_t now_ms);
 

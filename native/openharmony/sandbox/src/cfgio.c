@@ -59,6 +59,12 @@ char *dbox_cfg_encode(const dbox_policy_t *p)
     sb_field(&b, p->ask_endpoint);
     sb_add(&b, "\n");
 
+    if (p->ask_token && p->ask_token[0]) {
+        sb_add(&b, "T ");
+        sb_field(&b, p->ask_token);
+        sb_add(&b, "\n");
+    }
+
     for (int i = 0; i < p->nrules; i++) {
         char tail[64];
         sb_add(&b, "L ");
@@ -144,6 +150,20 @@ int dbox_cfg_decode(const char *b64, dbox_policy_t *p)
                     p->rules[p->nrules].perm = (dperm_t)atoi(f3);
                     p->nrules++;
                     dbox_free(ld);
+                    rc = 0;
+                }
+            }
+            goto next;
+        case 'T':
+            {
+                size_t tl = 0;
+                unsigned char *td = f1 ? dbox_b64decode(f1, &tl) : NULL;
+                if (td) {
+                    dbox_free(p->ask_token);
+                    p->ask_token = dbox_malloc(tl + 1);
+                    memcpy(p->ask_token, td, tl);
+                    p->ask_token[tl] = '\0';
+                    dbox_free(td);
                     rc = 0;
                 }
             }

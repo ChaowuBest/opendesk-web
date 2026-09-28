@@ -92,7 +92,7 @@ const linuxSandboxAvailable = (() => {
     }
 );
 
-test('OpenHarmony exposes both verified shells and keeps the tablet gate', () => {
+test('OpenHarmony exposes shells and their sandbox variants (runtime ships with repo), keeps the tablet gate', () => {
     const state: any = {
         variant: 'pc',
         commands: { zsh: '/usr/bin/zsh', bash: '/data/service/hnp/bin/bash' },
@@ -100,14 +100,19 @@ test('OpenHarmony exposes both verified shells and keeps the tablet gate', () =>
         status: 'available',
         missing: []
     };
+    // repo 携带 runtime/aarch64-linux-ohos 产物（git 管理），且 openharmony 平台
+    // 已接入动态沙箱：zsh/bash 各注册普通与沙箱变体（与 linux 分支一致）
     expect(scanSupportedShells('openharmony', state)).toEqual([
         { kind: 'zsh', path: '/usr/bin/zsh', sandboxed: false },
-        { kind: 'bash', path: '/data/service/hnp/bin/bash', sandboxed: false }
+        { kind: 'zsh', path: '/usr/bin/zsh', sandboxed: true },
+        { kind: 'bash', path: '/data/service/hnp/bin/bash', sandboxed: false },
+        { kind: 'bash', path: '/data/service/hnp/bin/bash', sandboxed: true }
     ]);
     expect(scanSupportedShells('openharmony', { ...state, variant: 'tablet' })).toEqual([]);
     paths.set('bash', '/data/service/hnp/bin/bash');
     expect(scanSupportedShells('openharmony', null)).toEqual([
-        { kind: 'bash', path: '/data/service/hnp/bin/bash', sandboxed: false }
+        { kind: 'bash', path: '/data/service/hnp/bin/bash', sandboxed: false },
+        { kind: 'bash', path: '/data/service/hnp/bin/bash', sandboxed: true }
     ]);
 });
 

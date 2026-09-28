@@ -64,6 +64,10 @@ export const enUs: Record<string, string> = {
         'Dynamic sandbox enabled but dynobox-linux was not found. Rebuild the Linux package.',
     'sandbox.cwdMissing.linux': 'Dynamic sandbox requires a task workspace as the controlled path.',
     'sandbox.cwdUnsupported.linux': 'Sandbox working directory is missing or unusable: ${path}',
+    'sandbox.executableMissing.ohos':
+        'Dynamic sandbox enabled but the OpenHarmony dynobox was not found. Rebuild the OpenHarmony package.',
+    'sandbox.trashDirUnavailable':
+        'Could not create the recycle bin directory ${path}. Check home directory write permission or disable the recycle bin option.',
     'sandbox.description.linux':
         'Run the selected shell in the Linux dynamic sandbox. The root filesystem mirrors the host layout and reads/writes go through permission checks; workspace writes are allowed while other writes prompt or are denied; deletions can optionally go to the trash (XDG Trash). File approvals show original host paths.',
     'sandbox.executableMissing.darwin':

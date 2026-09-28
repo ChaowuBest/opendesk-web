@@ -2,10 +2,10 @@
  * Copyright (c) 2026 The OpenDesk Team
  * OpenDesk is licensed under Mulan PSL v2.
  * You can use this software according to the terms and conditions of the Mulan PSL v2.
- * You may obtain a copy of Mulan PSL v2 at: http://license.coscl.org.cn/MulanPSL2
+ * You may obtain a copy of the Mulan PSL v2 at: http://license.coscl.org.cn/MulanPSL2
  * THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND,
  * EITHER EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT,
- * MERCHANTABILITY OR FITNESS FOR A PARTICULAR PURPOSE.
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.
  * See the Mulan PSL v2 for more details.
  */
 
@@ -21,6 +21,7 @@ import {
     type HarmonyLocalRuntimeState
 } from '../../../platforms/bridges/harmonyos/local-runtime.js';
 import { getPlatform } from '../../../platforms/base.js';
+import { resolveOpenHarmonySandboxExecutable } from './sandboxes/resolve-ohos.js';
 
 /**
  * CLI 模式不会安装沙箱的二进制与 Dokan 驱动（仅桌面安装包携带），注册沙箱变体
@@ -34,9 +35,14 @@ function sandboxVariantsAvailable(targetPlatform: string): boolean {
     } catch {
         // 平台未初始化（如单元测试）时保持原有行为
     }
-    // 仅 Linux 沙箱变体依赖 dynobox-linux 二进制与 unprivileged user namespace；
+    // 仅 Linux/OpenHarmony 沙箱变体依赖本地二进制（dynobox-linux）；
     // win32/darwin 的沙箱组件随桌面安装包提供，无需本机探测
     if (targetPlatform === 'win32' || targetPlatform === 'darwin') return true;
+    if (targetPlatform === 'openharmony') {
+        // 与 openharmony-sandbox.ts 共用同一解析：OPENDESK_DYNOBOX_BIN →
+        // /data/app/bin/dynobox（真机壳工程部署）→ resources/sandbox → 仓库 runtime
+        return resolveOpenHarmonySandboxExecutable() !== null;
+    }
     if (targetPlatform !== 'linux') return false;
     const electronProcess = process as NodeJS.Process & { defaultApp?: boolean; resourcesPath?: string };
     const dev = path.join(
@@ -57,6 +63,7 @@ function sandboxVariantsAvailable(targetPlatform: string): boolean {
     } catch {
         return false;
     }
+    return true;
 }
 
 /** Discover runnable shells using the current platform and its configured runtime state. */
@@ -76,6 +83,8 @@ export function scanSupportedShells(
         if (platform === 'linux' && (kind === 'bash' || kind === 'zsh') && !sandboxed && allowSandboxVariant)
             add(kind, shellPath, true);
         if (platform === 'darwin' && (kind === 'zsh' || kind === 'bash') && !sandboxed && allowSandboxVariant)
+            add(kind, shellPath, true);
+        if (platform === 'openharmony' && (kind === 'bash' || kind === 'zsh') && !sandboxed && allowSandboxVariant)
             add(kind, shellPath, true);
     };
     if (platform === 'win32') {
@@ -101,4 +110,3 @@ export function scanSupportedShells(
 
 export const scanShells = scanSupportedShells;
 export const getSupportedShells = scanSupportedShells;
-export const detectSupportedShells = scanSupportedShells;
