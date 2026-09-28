@@ -229,8 +229,11 @@
         "zod": "^4.2.1"
     },
     "overrides": {
+        "@kenhkl/agent-gate": {
+            "better-sqlite3": "$better-sqlite3"
+        },
         "@kenhkl/agent-moss": {
-            "better-sqlite3": "13.0.3"
+            "better-sqlite3": "$better-sqlite3"
         },
         "import-in-the-middle": "3.2.0"
     },
