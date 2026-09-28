@@ -22,6 +22,7 @@ import {
     type TaskUpdateRetryChunk
 } from '../../../main/aikernel/states/tasks.js';
 import { Setting, setCustomOpendeskDirectory } from '../../../main/utils/setting.js';
+import { ModelRequestError } from '../../../main/utils/model-request-error.js';
 import { AbstractPlatform, setPlatform } from '../../../platforms/base.js';
 
 // 沙箱化运行（dynobox 卷）下 IO 放大 ~5x，本文件的异步用例（重试延迟、流回退等）
@@ -220,6 +221,66 @@ describe('task LLM auto retry', () => {
         const assistant = task.chat_context.lastMessage() as AssistantMessage;
         expect(assistant.content.filter((part) => part.type === 'error')).toHaveLength(1);
         expect(chunks.some((chunk) => chunk.type === 'assistant' && chunk.last_part.type === 'error')).toBe(true);
+    });
+
+    test('does not retry a known non-retryable model error when auto retry is enabled', async () => {
+        const { task, chunks } = createRunningTask(true);
+        let requestCount = 0;
+
+        jest.spyOn(LLM, 'streamComplete').mockImplementation(async function* () {
+            requestCount++;
+            const response = AssistantResponse.richError('Stream Completion Failed', 'credit balance exhausted');
+            response.request_error = new ModelRequestError({
+                provider: 'openai',
+                message: 'credit balance exhausted',
+                status: 429,
+                code: 'credit_balance_exhausted'
+            });
+            yield response;
+        });
+
+        await task.processCompletion();
+
+        expect(requestCount).toBe(1);
+        expect(retryChunks(chunks)).toHaveLength(0);
+        const assistant = task.chat_context.lastMessage() as AssistantMessage;
+        expect(assistant.content.filter((part) => part.type === 'error')).toHaveLength(1);
+        expect(assistant.content.some((part) => part.type === 'error' && part.message.includes('credit balance'))).toBe(
+            true
+        );
+    });
+
+    test('stops and clears retry feedback when a transient failure becomes non-retryable', async () => {
+        const { task, chunks } = createRunningTask(true);
+        let requestCount = 0;
+
+        jest.spyOn(LLM, 'streamComplete').mockImplementation(async function* () {
+            requestCount++;
+            if (requestCount === 1) {
+                throw new Error('temporary network failure');
+            }
+            const response = AssistantResponse.richError('Stream Completion Failed', 'monthly quota exhausted');
+            response.request_error = new ModelRequestError({
+                provider: 'anthropic',
+                message: 'monthly quota exhausted',
+                status: 429,
+                type: 'rate_limit_error',
+                detailsCode: 'enforced_spend_limit_reached'
+            });
+            yield response;
+        });
+
+        const completion = task.processCompletion();
+        await waitForCondition(() =>
+            retryChunks(chunks).some((chunk) => chunk.status === 'scheduled' && chunk.attempt === 1)
+        );
+        await jest.advanceTimersByTimeAsync(10_000);
+        await completion;
+
+        expect(requestCount).toBe(2);
+        expect(retryChunks(chunks).some((chunk) => chunk.status === 'cleared' && chunk.attempt === 1)).toBe(true);
+        const assistant = task.chat_context.lastMessage() as AssistantMessage;
+        expect(assistant.content.some((part) => part.type === 'error' && part.message.includes('quota'))).toBe(true);
     });
 
     test('does not count tool calls completed before the current completion request', async () => {

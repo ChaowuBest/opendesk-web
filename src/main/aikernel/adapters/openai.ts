@@ -27,6 +27,11 @@ import { lookupKnownMaxOutputTokens } from '../../utils/model-context.js';
 import iconv from 'iconv-lite';
 import { RateLimitDetector, withRateLimitRetry } from '../../utils/rate-limit-retry.js';
 import { StreamIdleTimeoutError, withStreamIdleTimeout } from '../../utils/stream-timeout.js';
+import {
+    classifyModelRequestError,
+    normalizeModelRequestError,
+    parseModelErrorResponse
+} from '../../utils/model-request-error.js';
 import { t } from '../../../locale/index.js';
 import {
     buildContextProjection,
@@ -182,10 +187,37 @@ function buildRuntimeExtraHeaders(extraHeaders?: Record<string, string>): Record
 async function normalizeErrorResponse(response: Response): Promise<Response> {
     const rawText = await response.text().catch(() => '');
     const message = extractErrorMessage(response.status, response.statusText, rawText);
-    return new Response(JSON.stringify({ error: { message } }), {
+    let errorBody: Record<string, unknown> = { message };
+    try {
+        const parsed = JSON.parse(rawText) as unknown;
+        if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+            const record = parsed as Record<string, unknown>;
+            const nested = record.error;
+            errorBody =
+                nested && typeof nested === 'object' && !Array.isArray(nested)
+                    ? { ...(nested as Record<string, unknown>), message }
+                    : { ...record, message };
+        }
+    } catch {
+        // 非 JSON 错误仍包装为 OpenAI SDK 可识别的 error.message。
+    }
+
+    const headers = new Headers(response.headers);
+    const requestError = parseModelErrorResponse({
+        provider: 'openai',
         status: response.status,
         statusText: response.statusText,
-        headers: response.headers
+        headers,
+        rawText
+    });
+    if (classifyModelRequestError(requestError) === 'non_retryable') {
+        headers.set('x-should-retry', 'false');
+    }
+
+    return new Response(JSON.stringify({ error: errorBody }), {
+        status: response.status,
+        statusText: response.statusText,
+        headers
     });
 }
 
@@ -562,13 +594,15 @@ export class OpenAIAdapter {
             if (RateLimitDetector.isRateLimitError(err)) {
                 logger.warn('Rate limit error during stream reading, will be caught by outer retry logic', String(err));
             }
-            yield AssistantResponse.richError(
+            const response = AssistantResponse.richError(
                 'Stream Completion Failed',
                 err instanceof StreamIdleTimeoutError
                     ? t('error.model.stream_idle_timeout', { timeoutMs: err.timeoutMs })
                     : String(err),
                 JSON.stringify(messages, undefined, 2)
             );
+            response.request_error = normalizeModelRequestError(err, 'openai');
+            yield response;
         }
     }
 

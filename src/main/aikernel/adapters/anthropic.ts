@@ -31,6 +31,11 @@ import { lookupKnownMaxOutputTokens } from '../../utils/model-context.js';
 import iconv from 'iconv-lite';
 import { RateLimitDetector, withRateLimitRetry } from '../../utils/rate-limit-retry.js';
 import { readWithIdleTimeout, StreamIdleTimeoutError } from '../../utils/stream-timeout.js';
+import {
+    ModelRequestError,
+    normalizeModelRequestError,
+    parseModelErrorResponse
+} from '../../utils/model-request-error.js';
 import { t } from '../../../locale/index.js';
 import {
     buildContextProjection,
@@ -164,15 +169,23 @@ export class AnthropicAdapter {
         return Object.keys(headers).length > 0 ? headers : undefined;
     }
 
-    private async httpError(response: Response): Promise<Error & { status?: number }> {
+    private async httpError(response: Response): Promise<ModelRequestError> {
         const bodyText = await response.text().catch(() => '');
         const message = extractErrorMessage(response.status, response.statusText, bodyText);
-
-        const error = new Error(
-            `Anthropic API request failed (${response.status} ${response.statusText}): ${message}`
-        ) as Error & { status?: number };
-        error.status = response.status;
-        return error;
+        const parsed = parseModelErrorResponse({
+            provider: 'anthropic',
+            status: response.status,
+            statusText: response.statusText,
+            headers: response.headers,
+            rawText: bodyText
+        });
+        return new ModelRequestError(
+            {
+                ...parsed.metadata,
+                message: `Anthropic API request failed (${response.status} ${response.statusText}): ${message}`
+            },
+            { cause: parsed }
+        );
     }
 
     private async createMessage(body: object, requestOptions?: AnthropicAdapterRequestOptions): Promise<any> {
@@ -650,7 +663,19 @@ export class AnthropicAdapter {
 
         if (eventData.type === 'error') {
             const message = eventData.error?.message ?? JSON.stringify(eventData.error ?? eventData);
-            responses.push(AssistantResponse.error(`Anthropic stream error: ${message}`));
+            const requestError = new ModelRequestError({
+                provider: 'anthropic',
+                type: typeof eventData.error?.type === 'string' ? eventData.error.type : undefined,
+                detailsCode:
+                    typeof eventData.error?.details?.error_code === 'string'
+                        ? eventData.error.details.error_code
+                        : undefined,
+                message: `Anthropic stream error: ${message}`,
+                requestId: typeof eventData.request_id === 'string' ? eventData.request_id : undefined
+            });
+            const response = AssistantResponse.error(requestError.message);
+            response.request_error = requestError;
+            responses.push(response);
         }
 
         return responses;
@@ -823,13 +848,15 @@ export class AnthropicAdapter {
             if (RateLimitDetector.isRateLimitError(err)) {
                 logger.warn('Rate limit error during Anthropic stream reading', String(err));
             }
-            yield AssistantResponse.richError(
+            const response = AssistantResponse.richError(
                 'Stream Completion Failed',
                 err instanceof StreamIdleTimeoutError
                     ? t('error.model.stream_idle_timeout', { timeoutMs: err.timeoutMs })
                     : String(err),
                 JSON.stringify(anthropicMessages, undefined, 2)
             );
+            response.request_error = normalizeModelRequestError(err, 'anthropic');
+            yield response;
         }
     }
 

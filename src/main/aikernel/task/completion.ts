@@ -48,10 +48,15 @@ import {
 } from './types.js';
 import type { ReasoningEffort } from '../types/reasoning.js';
 import { AgentExecutionInstrumentationRegistry } from '../../telemetry/agent-execution.js';
+import { classifyModelRequestError } from '../../utils/model-request-error.js';
 
 function getAssistantResponseError(response: AssistantResponse): Error | undefined {
     if (response.finish_reason !== 'error') {
         return undefined;
+    }
+
+    if (response.request_error) {
+        return response.request_error;
     }
 
     const errorPart = response.content.content.find((part) => part.type === 'error');
@@ -779,8 +784,9 @@ export async function processTaskCompletion(
                     break;
                 }
 
+                const errorDisposition = classifyModelRequestError(err);
                 const autoRetry = Setting.getInstance().getData().task_config?.auto_retry !== false;
-                if (!autoRetry) {
+                if (!autoRetry || errorDisposition === 'non_retryable') {
                     if (lastRetryState) {
                         await clearLLMRetryFeedbackForTask(
                             task,
