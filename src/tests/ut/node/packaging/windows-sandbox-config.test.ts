@@ -43,7 +43,7 @@ test('Windows sandbox sources and build entrypoint are included', () => {
     assert.match(fs.readFileSync(policy, 'utf8'), /AuthenticationHeaderValue\("Bearer"/);
 });
 
-test('stageWindowsSandboxResource 仅复制目标架构 sandbox.exe 并移除外侧构建树', async () => {
+test('stageWindowsSandboxResource 仅复制目标架构 sandbox.exe，不裁剪暂存目录', async () => {
     const sourceRoot = path.join(root, 'native', 'windows', 'sandbox', 'dist');
     const architectures = [
         ['x64', 'win-x64'],
@@ -94,7 +94,9 @@ test('stageWindowsSandboxResource 仅复制目标架构 sandbox.exe 并移除外
                     target
                 }
             ]);
-            assert.equal(fs.existsSync(staleTree), false);
+            // extraResources 已不携带 native/，正常打包时暂存目录不存在该树；
+            // 钩子只负责落位产物，不得重新引入"复制后裁剪"的副作用
+            assert.equal(fs.existsSync(staleTree), true);
             assert.equal(
                 copiedFiles.some(({ source }) => /Dokan|\.msi$/i.test(source)),
                 false

@@ -114,6 +114,19 @@ test('应用复制阶段排除整个 Windows 沙箱构建树，且不误伤其�
     }
 });
 
+test('extraResources 不携带 native/，沙箱由 stage 钩子按平台落位而非复制后裁剪', () => {
+    const extraResourceEntries = forgeConfig.packagerConfig.extraResource;
+    assert.ok(Array.isArray(extraResourceEntries));
+    assert.ok(extraResourceEntries.length > 0);
+    // 运行时零引用 resourcesPath/native/**，携带整棵 native/ 源码树只会导致
+    // 复制后再裁剪（且曾因非 ASCII 夹具名触发 WiX LGHT0311），不允许回归
+    assert.ok(extraResourceEntries.every((entry: string) => path.basename(path.normalize(entry)) !== 'native'));
+    // 事后裁剪钩子应保持移除状态；沙箱落位钩子仍按 (platform, arch) 精确触发
+    assert.equal(forgeConfig.pruneLinuxSandboxResources, undefined);
+    assert.equal(typeof forgeConfig.stageWindowsSandboxResource, 'function');
+    assert.equal(typeof forgeConfig.stageLinuxSandboxResource, 'function');
+});
+
 test('keepNativePrebuildDirectory 按目标平台架构保留 prebuilds', () => {
     assert.equal(helper.keepNativePrebuildDirectory('win32-x64', 'win32', 'x64'), true);
     assert.equal(helper.keepNativePrebuildDirectory('win32-arm64', 'win32', 'x64'), false);
