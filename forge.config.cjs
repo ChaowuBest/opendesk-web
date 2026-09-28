@@ -19,6 +19,7 @@ const {
     prunePackagedNativeArtifacts,
     prunePackagedShellArtifacts
 } = require('./scripts/packaging/prune-packaged-artifacts.cjs');
+const { buildAgentUnpackDirPattern } = require('./scripts/packaging/agent-runtime-unpack.cjs');
 
 const DARWIN_PRUNED_NATIVE_PATHS = [
     'native/openharmony',
@@ -634,7 +635,14 @@ module.exports = {
                 'OpenDesk uses macOS speech recognition to convert your speech into text.'
         },
         asar: {
-            unpack: '**/node_modules/{sharp,@img,sqlite-vec-*}/**/*'
+            // 基础原生库：由 OS / 动态链接器直接加载，必须落在真实路径上。
+            // unpack 是拿【绝对路径】去 match，故模式必须带「任意深度」前缀。
+            unpack: '**/node_modules/{sharp,@img,sqlite-vec-*}/**/*',
+            // AgentGate / AgentMoss 子进程的依赖闭包：按「node 实际解析到的目录」精确解包，
+            // 规则由 agent-runtime-unpack.cjs 按依赖树算出（写死包名会随依赖升级静默腐化）。
+            // 这里必须用 unpackDir 而非 unpack：unpack 的绝对路径匹配会把任意深度的同名目录
+            // 一起命中，凭空多解出 1.5 万个用不上的冗余副本。
+            unpackDir: buildAgentUnpackDirPattern(path.join(__dirname, 'node_modules'))
         },
         beforeAsar: [applyPackagedAppVersion],
         // 排除打包时不需带入的目录/文件。asar 里若混入开发期垃圾（vite 缓存、
