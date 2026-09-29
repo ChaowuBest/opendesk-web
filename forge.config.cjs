@@ -71,7 +71,6 @@ function pruneDarwinAppNativePrebuilds(buildPath, electronVersion, platform, arc
 function pruneDarwinExtraResources(buildPath, electronVersion, platform, arch, callback) {
     try {
         if (platform === 'darwin') {
-            removePathIfExists(path.join(buildPath, 'Contents', 'Resources', 'native', 'openharmony'));
             removePathIfExists(path.join(buildPath, 'Contents', 'Resources', 'LICENSES.chromium.html'));
         }
         callback();
@@ -94,7 +93,6 @@ function stageWindowsSandboxResource(buildPath, electronVersion, platform, arch,
             }
             fs.mkdirSync(targetDirectory, { recursive: true });
             fs.copyFileSync(source, path.join(targetDirectory, 'sandbox.exe'));
-            removePathIfExists(path.join(resourcesRoot, 'native', 'windows', 'sandbox'));
         }
         callback();
     } catch (error) {
@@ -124,7 +122,6 @@ function stageLinuxSandboxResource(buildPath, electronVersion, platform, arch, c
             assertLinuxElfMachine(source, arch);
             fs.mkdirSync(targetDirectory, { recursive: true });
             fs.copyFileSync(source, path.join(targetDirectory, 'dynobox-linux'));
-            removePathIfExists(path.join(resourcesRoot, 'native', 'linux', 'sandbox'));
         }
         callback();
     } catch (error) {
@@ -230,11 +227,15 @@ function materializeWorkspacePackageLinks(buildPath, electronVersion, platform, 
     }
 }
 
+// 运行时不读 resourcesPath/native/**：沙箱二进制由 stage*SandboxResource 钩子从
+// 仓库构建产物按目标平台+架构落位到 resources/sandbox；OHOS helper 经应用目录
+// 复制进 asar（保留范围由 PACKAGING_IGNORE_PATTERNS 控制）。因此这里不携带
+// native/，避免把整棵源码树（含 400MB 级 windows/sandbox 构建树）复制进暂存
+// 目录后再由钩子逐平台裁剪。
 const extraResources = [
     path.join(__dirname, 'dist', 'plugins'),
     // 随安装包分发的内置技能（BuiltinApplication 加载，skillmgr 中可禁用不可删除）
-    path.join(__dirname, 'resources', 'skills'),
-    ...(process.platform === 'darwin' ? [] : [path.join(__dirname, 'native')])
+    path.join(__dirname, 'resources', 'skills')
 ];
 
 // deb/rpm 安装包共用元数据。icon 用单文件 png（512x512），两个安装器都会落到
