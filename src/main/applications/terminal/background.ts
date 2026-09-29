@@ -17,7 +17,7 @@
 
 import { execSync, type ChildProcess } from 'child_process';
 import { ToolResult } from '../../aikernel/tool';
-import { decodeShellOutput, filterShellEnvironmentWarnings } from '../../utils/shellExec.js';
+import { createShellOutputDecoder, filterShellEnvironmentWarnings } from '../../utils/shellExec.js';
 import { BoundedOutputBuffer } from './output-buffer.js';
 
 // ── 公共类型 ─────────────────────────────────────────────────────────────────
@@ -124,18 +124,29 @@ export class BackgroundProcessManager {
             finished: false
         };
 
-        // 与 executeShellCommand 的采集逻辑保持一致：解码 + 过滤交互模式终端序列噪音
-        const appendFiltered = (data: Buffer) => {
-            entry.output.append(filterShellEnvironmentWarnings(decodeShellOutput(data)));
+        // 与 executeShellCommand 的采集逻辑保持一致：流式解码（跨 chunk 还原
+        // UTF-8 多字节字符，避免分片误判 GBK 乱码）+ 过滤交互模式终端序列噪音
+        const stdoutDecoder = createShellOutputDecoder();
+        const stderrDecoder = createShellOutputDecoder();
+        const appendStdout = (data: Buffer) => {
+            entry.output.append(filterShellEnvironmentWarnings(stdoutDecoder.push(data)));
         };
-        proc.stdout?.on('data', appendFiltered);
-        proc.stderr?.on('data', appendFiltered);
+        const appendStderr = (data: Buffer) => {
+            entry.output.append(filterShellEnvironmentWarnings(stderrDecoder.push(data)));
+        };
+        proc.stdout?.on('data', appendStdout);
+        proc.stderr?.on('data', appendStderr);
 
         const markFinished = (code: number | null) => {
             if (entry.finished) return;
             entry.exitCode = code;
             entry.finished = true;
             entry.finishedAt = Date.now();
+            // 冲刷流式解码器残留（未换行结尾的最后一屏），保证 artifact 不丢尾
+            const tailOut = filterShellEnvironmentWarnings(stdoutDecoder.flush());
+            const tailErr = filterShellEnvironmentWarnings(stderrDecoder.flush());
+            if (tailOut) entry.output.append(tailOut);
+            if (tailErr) entry.output.append(tailErr);
             entry.output.closeArtifact();
         };
 
