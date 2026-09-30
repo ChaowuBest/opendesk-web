@@ -142,7 +142,8 @@ export async function checkTerminationFromMessages(
 /**
  * 从 AssistantMessage 的 content 中提取用于终止状态判断的文本。
  * 从后往前扫描，收集 TextMessagePart 和 ReasoningMessagePart，
- * 遇到第一个 ToolCallMessagePart 时停止。
+ * 遇到第一个 ToolCallMessagePart 时停止。如果末尾的有效内容是 reasoning，
+ * 返回空字符串，由调用方将本轮补全判定为中断。
  */
 function extractTrailingResponse(parts: AssistantMessagePart[]): string {
     const lines: string[] = [];
@@ -159,6 +160,9 @@ function extractTrailingResponse(parts: AssistantMessagePart[]): string {
         } else if (part.type === 'reasoning') {
             const content = String(part.content);
             if (content.trim()) {
+                if (lines.length === 0) {
+                    return '';
+                }
                 lines.unshift(`[思考] ${content.trim()}`);
             }
         }
