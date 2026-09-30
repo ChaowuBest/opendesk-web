@@ -99,6 +99,7 @@ describe('termination request options', () => {
                 new TextMessagePart('The task is complete.')
             ])
         );
+        task.model = 'test-model';
 
         await expect(checkTermination(task)).resolves.toBe('finished');
         expect(askSpy).toHaveBeenCalledTimes(1);
