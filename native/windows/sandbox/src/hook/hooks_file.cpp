@@ -82,7 +82,20 @@ bool recycleToTrash(const std::wstring& path)
     return true;
 }
 
+
 // -- CreateFileW/A -----------------------------------------------------------
+
+// 目录句柄打开（BACKUP_SEMANTICS + OPEN_EXISTING 且目标为已存在目录）：这是
+// .NET/PowerShell 等框架的可写性/存在性探测，不携带也读不到文件内容——不论请求
+// 的读/写权限，完全跳过权限判定（不触发任何 ask）。打开文件不在此列。
+static bool isDirOpenProbe(LPCWSTR path, DWORD dwFlagsAndAttributes, DWORD dwCreationDisposition)
+{
+    if ((dwFlagsAndAttributes & FILE_FLAG_BACKUP_SEMANTICS) == 0 || dwCreationDisposition != OPEN_EXISTING)
+        return false;
+    WIN32_FILE_ATTRIBUTE_DATA fad;
+    return GetFileAttributesExW(path, GetFileExInfoStandard, &fad) &&
+           (fad.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) != 0;
+}
 
 HANDLE WINAPI Hook_CreateFileW(LPCWSTR lpFileName, DWORD dwDesiredAccess, DWORD dwShareMode,
                                LPSECURITY_ATTRIBUTES lpSA, DWORD dwCreationDisposition,
@@ -93,6 +106,16 @@ HANDLE WINAPI Hook_CreateFileW(LPCWSTR lpFileName, DWORD dwDesiredAccess, DWORD 
                                 dwCreationDisposition, dwFlagsAndAttributes, hTemplateFile);
     }
     HookGuard guard;
+    if (isDirOpenProbe(lpFileName, dwFlagsAndAttributes, dwCreationDisposition)) {
+        // 目录探测不触发 ask；deny 规则仍拦截（防尾斜杠/别名逃逸）
+        DWORD perr = ERROR_SUCCESS;
+        if (!sandboxCheckPathDenyOnly(lpFileName, categorizeCreateAccess(dwDesiredAccess, dwCreationDisposition), perr)) {
+            SetLastError(perr);
+            return INVALID_HANDLE_VALUE;
+        }
+        return Real_CreateFileW(lpFileName, dwDesiredAccess, dwShareMode, lpSA,
+                                dwCreationDisposition, dwFlagsAndAttributes, hTemplateFile);
+    }
     DWORD err = ERROR_SUCCESS;
     if (!sandboxCheckPath(lpFileName, categorizeCreateAccess(dwDesiredAccess, dwCreationDisposition), err)) {
         SetLastError(err);
@@ -120,6 +143,16 @@ HANDLE WINAPI Hook_CreateFileA(LPCSTR lpFileName, DWORD dwDesiredAccess, DWORD d
         }
     }
     DWORD err = ERROR_SUCCESS;
+    if (isDirOpenProbe(wide.c_str(), dwFlagsAndAttributes, dwCreationDisposition)) {
+        // 目录探测不触发 ask；deny 规则仍拦截
+        DWORD perr = ERROR_SUCCESS;
+        if (!wide.empty() && !sandboxCheckPathDenyOnly(wide, categorizeCreateAccess(dwDesiredAccess, dwCreationDisposition), perr)) {
+            SetLastError(perr);
+            return INVALID_HANDLE_VALUE;
+        }
+        return Real_CreateFileA(lpFileName, dwDesiredAccess, dwShareMode, lpSA,
+                                dwCreationDisposition, dwFlagsAndAttributes, hTemplateFile);
+    }
     if (!wide.empty() && !sandboxCheckPath(wide, categorizeCreateAccess(dwDesiredAccess, dwCreationDisposition), err)) {
         SetLastError(err);
         return INVALID_HANDLE_VALUE;
@@ -135,8 +168,11 @@ DWORD WINAPI Hook_GetFileAttributesW(LPCWSTR lpFileName)
     if (HookGuard::inHook() || !g_hooked || lpFileName == nullptr)
         return Real_GetFileAttributesW(lpFileName);
     HookGuard guard;
+    // 属性/存在性探测（GetFileAttributes）只读元数据、不携带文件内容，是框架
+    // "确保存在"检查的常用路径（.NET/PowerShell 启动）——不触发 ask，但 deny
+    // 规则仍拦截（防尾斜杠/别名逃逸）。
     DWORD err = ERROR_SUCCESS;
-    if (!sandboxCheckPath(lpFileName, AccessClass::Read, err)) {
+    if (!sandboxCheckPathDenyOnly(lpFileName, AccessClass::Read, err)) {
         SetLastError(err);
         return INVALID_FILE_ATTRIBUTES;
     }
@@ -148,6 +184,7 @@ DWORD WINAPI Hook_GetFileAttributesA(LPCSTR lpFileName)
     if (HookGuard::inHook() || !g_hooked || lpFileName == nullptr)
         return Real_GetFileAttributesA(lpFileName);
     HookGuard guard;
+    // 属性/存在性探测（GetFileAttributes）只读元数据，不触发 ask（deny 仍拦，见 W 版）
     std::wstring wide;
     int n = MultiByteToWideChar(CP_ACP, 0, lpFileName, -1, nullptr, 0);
     if (n > 0) {
@@ -155,7 +192,7 @@ DWORD WINAPI Hook_GetFileAttributesA(LPCSTR lpFileName)
         MultiByteToWideChar(CP_ACP, 0, lpFileName, -1, &wide[0], n);
     }
     DWORD err = ERROR_SUCCESS;
-    if (!wide.empty() && !sandboxCheckPath(wide, AccessClass::Read, err)) {
+    if (!wide.empty() && !sandboxCheckPathDenyOnly(wide, AccessClass::Read, err)) {
         SetLastError(err);
         return INVALID_FILE_ATTRIBUTES;
     }
@@ -227,6 +264,20 @@ BOOL WINAPI Hook_CreateDirectoryW(LPCWSTR lpPathName, LPSECURITY_ATTRIBUTES lpSA
     if (HookGuard::inHook() || !g_hooked || lpPathName == nullptr)
         return Real_CreateDirectoryW(lpPathName, lpSA);
     HookGuard guard;
+    // 目录已存在时 CreateDirectoryW 是无操作（"确保目录存在"探测，PowerShell
+    // 等框架行为）：不触发 ask，但 deny 规则仍拦截（防逃逸）。真实创建（目录
+    // 不存在）按 write 正常判定。
+    {
+        WIN32_FILE_ATTRIBUTE_DATA fad;
+        if (GetFileAttributesExW(lpPathName, GetFileExInfoStandard, &fad)) {
+            DWORD perr = ERROR_SUCCESS;
+            if (!sandboxCheckPathDenyOnly(lpPathName, AccessClass::Write, perr)) {
+                SetLastError(perr);
+                return FALSE;
+            }
+            return Real_CreateDirectoryW(lpPathName, lpSA);
+        }
+    }
     DWORD err = ERROR_SUCCESS;
     if (!sandboxCheckPath(lpPathName, AccessClass::Write, err)) {
         SetLastError(err);
@@ -245,6 +296,18 @@ BOOL WINAPI Hook_CreateDirectoryA(LPCSTR lpPathName, LPSECURITY_ATTRIBUTES lpSA)
     if (n > 0) {
         wide.resize((size_t)n - 1);
         MultiByteToWideChar(CP_ACP, 0, lpPathName, -1, &wide[0], n);
+    }
+    // 目录已存在：无操作探测（不触发 ask，deny 仍拦，见 W 版注释）
+    if (!wide.empty()) {
+        WIN32_FILE_ATTRIBUTE_DATA fad;
+        if (GetFileAttributesExW(wide.c_str(), GetFileExInfoStandard, &fad)) {
+            DWORD perr = ERROR_SUCCESS;
+            if (!sandboxCheckPathDenyOnly(wide, AccessClass::Write, perr)) {
+                SetLastError(perr);
+                return FALSE;
+            }
+            return Real_CreateDirectoryA(lpPathName, lpSA);
+        }
     }
     DWORD err = ERROR_SUCCESS;
     if (!wide.empty() && !sandboxCheckPath(wide, AccessClass::Write, err)) {

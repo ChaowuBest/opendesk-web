@@ -96,7 +96,10 @@ export function policyText(endpoint: string, token: string, rules?: PermissionRu
         '/C/Windows/Temp/**', // 系统 Temp（安装器/更新临时文件）
         '/C/ProgramData/Microsoft/Windows/Caches/**', // 系统级缓存
         '/C/Users/*/AppData/Local/Microsoft/Windows/Caches/**', // 用户级缓存
-        '/C/Users/*/AppData/Roaming/Microsoft/Windows/Recent/**' // Recent/AutomaticDestinations
+        '/C/Users/*/AppData/Roaming/Microsoft/Windows/Recent/**', // Recent/AutomaticDestinations
+        // PowerShell 启动配置数据（框架静默写；家目录根/Roaming 根不放通——
+        // 写探测由 hook 按"目录写探测"降级为 read，见 hooks_file.cpp）
+        '/C/Users/*/AppData/Local/Microsoft/Windows/PowerShell/**'
     ];
     return [
         'version = 1',

@@ -57,6 +57,8 @@ constexpr ULONG kFileRenameInformation = 10;
 constexpr ULONG kFileDispositionInformationEx = 64;
 constexpr ULONG kFileRenameInformationEx = 65;
 constexpr ULONG kFileDispositionInformationEx2 = 71;
+constexpr ULONG kFileDirectoryFile = 0x00000001;       // FILE_DIRECTORY_FILE
+constexpr ULONG kFileOpenForBackupIntent = 0x00004000; // FILE_OPEN_FOR_BACKUP_INTENT
 
 // -- Detour 目标（真实函数，DllMain 里 attach） ------------------------------
 
@@ -159,6 +161,28 @@ NTSTATUS NTAPI Hook_NtCreateFile(PHANDLE fileHandle, ACCESS_MASK desiredAccess,
 
     std::wstring winPath;
     if (objectAttributes->ObjectName && ntPathToWin32(objectAttributes->ObjectName, winPath)) {
+        // 目录写探测（FILE_OPEN + 目录标志）与"确保存在"（FILE_CREATE +
+        // FILE_DIRECTORY_FILE 落在已存在目录上）是无副作用的框架行为（.NET/
+        // PowerShell 启动时对家目录/AppData 的可写性检查）——完全跳过权限判定，
+        // 不触发任何 ask。目标非目录或目录不存在时仍是真实创建/写入，走正常判定。
+        const bool isDirProbe =
+            (createDisposition == FILE_CREATE && (createOptions & kFileDirectoryFile) != 0) ||
+            (createDisposition == FILE_OPEN &&
+             (createOptions & (kFileDirectoryFile | kFileOpenForBackupIntent)) != 0);
+        if (isDirProbe) {
+            WIN32_FILE_ATTRIBUTE_DATA fad;
+            if (GetFileAttributesExW(winPath.c_str(), GetFileExInfoStandard, &fad) &&
+                (fad.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) != 0) {
+                // 目录探测不触发 ask；deny 规则仍拦截（防尾斜杠/别名逃逸）
+                DWORD perr = ERROR_SUCCESS;
+                if (!sandboxCheckPathDenyOnly(winPath, categorizeNtCreateAccess(desiredAccess, createDisposition), perr)) {
+                    return ntStatusForWinError(perr);
+                }
+                return Real_NtCreateFile(fileHandle, desiredAccess, objectAttributes, ioStatusBlock,
+                                         allocationSize, fileAttributes, shareAccess,
+                                         createDisposition, createOptions, eaBuffer, eaLength);
+            }
+        }
         DWORD err = ERROR_SUCCESS;
         if (!sandboxCheckPath(winPath, categorizeNtCreateAccess(desiredAccess, createDisposition), err)) {
             return ntStatusForWinError(err);

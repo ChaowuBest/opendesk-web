@@ -58,17 +58,22 @@ describe('policyText', () => {
         expect(text).not.toContain('/dev/null');
     });
 
-    test('系统维护路径（组件存储/缓存/Recent）写放行；回收站不放通且早于兜底 write ask', () => {
+    test('系统维护路径（组件存储/缓存/Recent/PowerShell 框架写）放通；回收站不放通且早于兜底 write ask', () => {
         const text = policyText('http://ep/decide', 't', undefined, 'C:\\Users\\liyif');
         for (const p of [
             '/C/Windows/system32/catroot**',
             '/C/Windows/Temp/**',
             '/C/ProgramData/Microsoft/Windows/Caches/**',
             '/C/Users/*/AppData/Local/Microsoft/Windows/Caches/**',
-            '/C/Users/*/AppData/Roaming/Microsoft/Windows/Recent/**'
+            '/C/Users/*/AppData/Roaming/Microsoft/Windows/Recent/**',
+            '/C/Users/*/AppData/Local/Microsoft/Windows/PowerShell/**'
         ]) {
             expect(text).toContain(`path = ${JSON.stringify(p)}`);
         }
+        // 家目录根 / Roaming 根不放通（避免关键配置被静默覆盖的风险）——写探测由
+        // hook 按"目录写探测/已存在目录创建"降级为 read（见 hooks_file/hooks_nt）
+        expect(text).not.toContain('path = "/C/Users/*"');
+        expect(text).not.toContain('/C/Users/*/AppData/Roaming"');
         // 回收站是误删数据的恢复区，不放通 write（--del-to-trash 经 SHFileOperation
         // 内部操作不受策略判定，不需要放通回收站）
         expect(text).not.toContain('/C/$RECYCLE.BIN');

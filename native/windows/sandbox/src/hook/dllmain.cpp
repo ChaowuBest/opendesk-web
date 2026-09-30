@@ -157,6 +157,31 @@ bool sandboxCheckPath(const std::wstring& hostPath, AccessClass access, DWORD& w
     return false;
 }
 
+// 框架探测类操作（目录可写性检查/确保存在/属性查询）：仅 deny 硬边界生效，
+// ask/allow 一律放行——探测不打扰弹窗，但 deny 规则仍拦（防尾斜杠等逃逸）。
+bool sandboxCheckPathDenyOnly(const std::wstring& hostPath, AccessClass access, DWORD& winErr)
+{
+    winErr = ERROR_SUCCESS;
+    if (HookScope::active) return true;
+    if (isSpecialDevicePath(hostPath)) return true;
+
+    std::wstring host;
+    if (!normalizeHostPath(hostPath, host)) return true;
+
+    std::wstring vpath;
+    if (!mapHostToVirtual(host, g_policy.roots(), vpath)) {
+        winErr = ERROR_PATH_NOT_FOUND;
+        return false;
+    }
+
+    const char* kind = access == AccessClass::Read ? kAccessRead
+                       : access == AccessClass::Write ? kAccessWrite
+                       : kAccessExecute;
+    if (!g_policy.checkDenyOnly(vpath, kind)) return true;
+    winErr = ERROR_ACCESS_DENIED;
+    return false;
+}
+
 // -- 初始化：加载环境策略并安装 Detours ---------------------------------------
 
 static std::wstring envOrEmpty(const wchar_t* name)

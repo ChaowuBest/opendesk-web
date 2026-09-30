@@ -235,6 +235,18 @@ bool Policy::check(const std::wstring& vpath, const std::string& kind, std::stri
     return allowed;
 }
 
+bool Policy::checkDenyOnly(const std::wstring& vpath, const std::string& kind) const
+{
+    // 顺序匹配：第一个命中的规则决定。deny -> 拦截；allow/ask -> 放行（探测不触发 ask）。
+    for (size_t i = 0; i < m_rules.size(); i++) {
+        const Rule& rule = m_rules[i];
+        if (!rule.matches(vpath, kind)) continue;
+        if (rule.perm == Perm::Deny) return true;
+        return false;
+    }
+    return m_default == "deny";
+}
+
 bool Policy::needsAsk(const std::wstring& vpath, const std::string& kind) const
 {
     for (const auto& rule : m_rules) {

@@ -6,6 +6,7 @@ import { spawn, spawnSync } from 'node:child_process';
 import { once } from 'node:events';
 import { createServer } from 'node:http';
 import test from 'node:test';
+import { policyText } from '../../../../src/main/applications/terminal/sandboxes/dynabox-policy.ts';
 
 const sandboxRoot = path.resolve(import.meta.dirname, '..');
 const executable = path.join(sandboxRoot, 'runtime', 'sandbox.exe');
@@ -296,6 +297,44 @@ test('--del-to-trash works from bash via a Win32 descendant (node unlink)', { sk
         assert.match(result.stdout, /REMOVED/);
         assert.equal(fs.existsSync(target), false, 'trashed file must leave the source directory');
     } finally {
+        fs.rmSync(directory, { recursive: true, force: true });
+    }
+});
+
+test('launching PowerShell with no command triggers zero asks', { skip: !windows }, async () => {
+    // PowerShell 启动本身不得触发任何 write ask：Temp 下的 __PSScriptPolicyTest_*
+    // 临时脚本与 StartupProfileData 由产品策略放通；家目录/AppData 可写性探测由
+    // hook 降级为 read（目录可写性探测 / 已存在目录的"创建"）。两层任一回归即失败。
+    const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'opendesk-sandbox-ps-boot-'));
+    let asks = 0;
+    const server = createServer((req, res) => {
+        let body = '';
+        req.on('data', (c) => (body += c));
+        req.on('end', () => {
+            asks++;
+            res.end(JSON.stringify({ decision: 'allow', grants: [] }));
+        });
+    });
+    server.listen(0, '127.0.0.1');
+    await once(server, 'listening');
+    try {
+        const port = (server.address() as { port: number }).port;
+        const policy = path.join(directory, 'policy.toml');
+        // 使用 OpenDesk 产品动态沙箱策略（含工具链缓存/Temp/PowerShell 启动配置等
+        // 框架写放通）；hook 层另有"目录写探测/已存在目录创建"降级——两者结合保证
+        // PS 启动零 ask。若产品策略或 hook 降级任一回归，此用例即失败。
+        fs.writeFileSync(policy, policyText(`http://127.0.0.1:${port}/decide`, '', undefined, os.homedir()));
+        const shell = path.join(process.env.SystemRoot!, 'System32/WindowsPowerShell/v1.0/powershell.exe');
+        // 拉起 PowerShell 但不执行任何命令（-Command ""）：仅启动开销，不应触发 ask
+        const result = await run(executable, [
+            'run', '--policy', policy, '--',
+            `"${shell}" -NoProfile -NonInteractive -Command ""`
+        ]);
+        assert.equal(result.code, 0, result.stdout + result.stderr);
+        assert.equal(asks, 0, `PowerShell boot must not trigger asks (got ${asks})`);
+    } finally {
+        server.closeAllConnections();
+        await new Promise<void>((resolve) => server.close(() => resolve()));
         fs.rmSync(directory, { recursive: true, force: true });
     }
 });

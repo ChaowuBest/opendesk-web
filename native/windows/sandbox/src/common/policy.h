@@ -65,6 +65,10 @@ public:
     // 求值：vpath 为虚拟路径（/ 开头正斜杠）。
     bool check(const std::wstring& vpath, const std::string& kind, std::string* why = nullptr);
 
+    // 仅检查静态 deny 硬边界（框架探测类操作使用）：ask/allow 一律放行、不触发
+    // ask，但 deny 规则仍拦截——保证探测不打扰的同时不削弱 deny 防逃逸。
+    bool checkDenyOnly(const std::wstring& vpath, const std::string& kind) const;
+
     // 预判该虚拟路径是否会命中静态 ask 规则（不发问询、无副作用）。
     bool needsAsk(const std::wstring& vpath, const std::string& kind) const;
 

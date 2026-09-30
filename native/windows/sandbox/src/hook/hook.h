@@ -36,6 +36,9 @@ struct HookGuard {
 //   ERROR_ACCESS_DENIED  = 策略拒绝）。
 bool sandboxCheckPath(const std::wstring& hostPath, AccessClass access, DWORD& winErr);
 
+// 框架探测类操作的仅-deny 判定：ask/allow 一律放行（不触发 ask），deny 仍拦截。
+bool sandboxCheckPathDenyOnly(const std::wstring& hostPath, AccessClass access, DWORD& winErr);
+
 // 路径特殊设备/虚设备（NUL、CON、\\.\ 设备、命名管道）不做文件系统判定。
 bool isSpecialDevicePath(const std::wstring& path);
 
