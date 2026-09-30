@@ -49,6 +49,13 @@ const EXPORT_WEBPAGE_SVG =
 const EXPORT_JSON_SVG =
     '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6"/><path d="M10 11c-.6 0-1 .4-1 1v1c0 .6-.4 1-1 1 .6 0 1 .4 1 1v1c0 .6.4 1 1 1"/><path d="M14 11c.6 0 1 .4 1 1v1c0 .6.4 1 1 1-.6 0-1 .4-1 1v1c0 .6-.4 1-1 1"/></svg>';
 
+const RUNNING_TOOL_ICON_SVG =
+    '<svg class="lucide lucide-wrench od-running-status-tool-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94L14.7 6.3z"/></svg>';
+const RUNNING_THINKING_ICON_SVG =
+    '<svg class="lucide lucide-lightbulb od-running-status-thinking-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 18h6"/><path d="M10 22h4"/><path d="M15.09 14c.18-.68.66-1.17 1.16-1.75A6 6 0 1 0 7.75 12.25c.48.56.97 1.07 1.16 1.75"/></svg>';
+const CHEVRON_RIGHT_ICON_SVG =
+    '<svg class="lucide lucide-chevron-right" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 18l6-6-6-6"/></svg>';
+
 const COPY_ICON_SVG =
     '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect width="14" height="14" x="8" y="8" rx="2" ry="2"/><path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2"/></svg>';
 const CHECK_ICON_SVG =
@@ -1244,7 +1251,7 @@ class TaskView extends HTMLElement {
                     </svg>
                     <span class="od-process-summary-text" title="${escapeHtml(summary)}">${escapeHtml(summary)}</span>
                     <span class="od-process-action">
-                        <span class="od-process-chevron" aria-hidden="true">&gt;</span>
+                        <span class="od-process-chevron">${CHEVRON_RIGHT_ICON_SVG}</span>
                     </span>
                 </button>
                 <div id="${escapeHtml(detailId)}" class="od-process-detail${expanded ? ' is-open' : ''}">
@@ -1266,23 +1273,30 @@ class TaskView extends HTMLElement {
     }
 
     _renderRunningStatus(item, messageId, options = {}) {
-        let icon = 'fa-lightbulb';
+        let icon = '';
+        let iconStyle = '';
+        let iconStateClass = ' is-thinking';
+        let iconMarkup = RUNNING_THINKING_ICON_SVG;
         let action = taskViewT('renderer.taskview.output.status.thinking');
         if (item.kind === 'tool') {
-            icon = 'fa-wrench';
+            iconStateClass = ' is-tool';
+            iconMarkup = RUNNING_TOOL_ICON_SVG;
             const name = TaskView._toolDisplayName(item.tool);
             action = taskViewT('renderer.taskview.output.status.tool', { name });
         } else if (item.kind === 'working') {
             icon = 'fa-spinner fa-spin';
+            iconStyle = 'fa-solid';
+            iconStateClass = '';
             action = taskViewT('renderer.taskview.output.status.working');
         }
         const expandable = guiOutputMode === 'minimal' && options.isRunning === true;
         const expanded = expandable && this._assistantRunningDetails.get(messageId) === true;
         const tag = expandable ? 'button' : 'div';
+        const renderedIcon = iconMarkup || `<i class="${iconStyle} ${icon}" aria-hidden="true"></i>`;
         return `
             <${tag}${expandable ? ' type="button" data-running-output-toggle' : ''} class="od-running-status" role="status" aria-live="polite"
                 ${expandable ? `data-message-id="${escapeHtml(messageId)}" aria-expanded="${expanded}" aria-controls="od-${escapeHtml(messageId)}-running-details"` : ''}>
-                <span class="od-running-status-icon"><i class="fa-solid ${icon}" aria-hidden="true"></i></span>
+                <span class="od-running-status-icon${iconStateClass}">${renderedIcon}</span>
                 <span class="od-running-status-viewport">
                     <span class="od-running-status-line">
                         <span>${escapeHtml(action)}</span>
@@ -1352,7 +1366,7 @@ class TaskView extends HTMLElement {
                         data-disclosure-key="${escapeHtml(disclosureKey)}" aria-expanded="${expanded}"
                         aria-controls="${escapeHtml(detailId)}">
                         <span>${escapeHtml(taskViewT('renderer.taskview.output.completedProcess'))}</span>
-                        <span class="od-completed-process-chevron" aria-hidden="true">&gt;</span>
+                        <span class="od-completed-process-chevron">${CHEVRON_RIGHT_ICON_SVG}</span>
                     </button>
                     <div id="${escapeHtml(detailId)}" class="od-completed-process-detail${expanded ? ' is-open' : ''}">
                         ${processItems.map((item) => renderItem(item)).join('')}

@@ -216,7 +216,7 @@ describe('TaskView chunk handling', () => {
 
         taskView.rebuildFromHistory();
 
-        expect(stripAnsi(taskView.render(100).join('\n'))).toContain('Complete');
+        expect(taskView.render(100).map((line) => stripAnsi(line).trim())).toContain('─'.repeat(100));
     });
 
     test('rebuilds earlier assistant messages as sealed phases and only completes the final message', () => {
@@ -238,7 +238,7 @@ describe('TaskView chunk handling', () => {
         const output = stripAnsi(taskView.render(100).join('\n'));
         expect(output).toContain('Used filemgr-rea… in 1 tool call');
         expect(output).toContain('Final response');
-        expect(output.match(/Complete ·/g)).toHaveLength(1);
+        expect(output.split('\n').filter((line) => /^─+$/.test(line.trim()))).toHaveLength(1);
         expect(output).not.toMatch(/[✣✤✥✦]/);
     });
 
@@ -262,7 +262,7 @@ describe('TaskView chunk handling', () => {
         const output = stripAnsi(taskView.render(100).join('\n'));
         expect(output).toContain('First turn response');
         expect(output).toContain('Second turn response');
-        expect(output.match(/Complete ·/g)).toHaveLength(2);
+        expect(output.split('\n').filter((line) => /^─+$/.test(line.trim()))).toHaveLength(2);
     });
 
     test('rebuilds assistant errors with a failed terminal status', () => {
@@ -530,7 +530,8 @@ describe('TaskView chunk handling', () => {
 
         const output = stripAnsi(taskView.render(100).join('\n'));
         expect(output).toContain('Recovered response');
-        expect(output).toContain('Complete ·');
+        expect(output.split('\n').some((line) => /^─+$/.test(line.trim()))).toBe(true);
+        expect(output).not.toContain('Complete ·');
         expect(output).not.toContain('Failed');
     });
 
@@ -588,7 +589,7 @@ describe('TaskView chunk handling', () => {
         let output = stripAnsi(taskView.render(100).join('\n'));
         expect(output).toContain('Used filemgr-rea… in 1 tool call');
         expect(output).toContain('Final response');
-        expect(output.match(/Complete ·/g)).toHaveLength(1);
+        expect(output.split('\n').filter((line) => /^─+$/.test(line.trim()))).toHaveLength(1);
         expect(output).not.toMatch(/[✣✤✥✦]/);
 
         now.mockReturnValue(20_000);
@@ -658,11 +659,11 @@ describe('TaskView chunk handling', () => {
         expect(renderedLines[0].trim()).toBe('');
         expect(renderedLines.at(-1)?.trim()).toBe('');
         expect(firstBodyLine - firstSummaryLine).toBe(2);
-        expect(secondSummaryLine - firstBodyLine).toBe(2);
+        expect(secondSummaryLine - firstBodyLine).toBe(1);
         expect(secondBodyLine - secondSummaryLine).toBe(2);
     });
 
-    test('minimal mode keeps one gap when a body ends with markdown blank lines', async () => {
+    test('minimal mode removes extra gaps when a body ends with markdown blank lines', async () => {
         const taskView = new TaskView({ requestRender: jest.fn() } as any);
         taskView.setOutputDisplayLevel('minimal');
         taskView.startStreaming();
@@ -683,7 +684,7 @@ describe('TaskView chunk handling', () => {
         const bodyLine = renderedLines.findIndex((line) => line.includes('Body with trailing markdown breaks'));
         const statusLine = renderedLines.findIndex((line) => line.includes('Generating response…'));
         expect(bodyLine).toBeGreaterThanOrEqual(0);
-        expect(statusLine - bodyLine).toBe(2);
+        expect(statusLine - bodyLine).toBe(1);
     });
 
     test('minimal mode removes spacing between consecutive assistant messages', () => {
@@ -703,11 +704,11 @@ describe('TaskView chunk handling', () => {
 
         const renderedLines = taskView.render(100).map((line) => stripAnsi(line));
         const firstBodyLine = renderedLines.findIndex((line) => line.includes('First final'));
-        const secondSummaryLine = renderedLines.findIndex(
-            (line, index) => index > firstBodyLine && line.includes('Complete ·')
+        const secondDividerLine = renderedLines.findIndex(
+            (line, index) => index > firstBodyLine && /^─+$/.test(line.trim())
         );
         expect(firstBodyLine).toBeGreaterThanOrEqual(0);
-        expect(secondSummaryLine - firstBodyLine).toBe(1);
+        expect(secondDividerLine - firstBodyLine).toBe(1);
     });
 
     test('verbose mode removes spacing between consecutive assistant messages', () => {
@@ -748,9 +749,9 @@ describe('TaskView chunk handling', () => {
 
         const renderedLines = taskView.render(100).map((line) => stripAnsi(line));
         const userLine = renderedLines.findIndex((line) => line.includes('User prompt'));
-        const assistantSummaryLine = renderedLines.findIndex((line) => line.includes('Complete ·'));
+        const assistantDividerLine = renderedLines.findIndex((line) => /^─+$/.test(line.trim()));
         expect(userLine).toBeGreaterThanOrEqual(0);
-        expect(assistantSummaryLine - userLine).toBe(2);
+        expect(assistantDividerLine - userLine).toBe(2);
     });
 
     test('minimal tool summary shows localized reasoning, readable tool names, and elapsed time', async () => {
@@ -798,6 +799,7 @@ describe('TaskView chunk handling', () => {
     test('minimal tool summary uses the mainline tool name', async () => {
         const taskView = new TaskView({ requestRender: jest.fn() } as any);
         taskView.setOutputDisplayLevel('minimal');
+        taskView.startStreaming();
         const part = createNamedToolPart(1, 'plugin-opaqueOperation');
         part.toolcalls[0].setTool({
             renderToolCallCli: jest.fn(() => ['custom detail'])
@@ -819,8 +821,6 @@ describe('TaskView chunk handling', () => {
             last_part_index: 1,
             last_part: new TextMessagePart('Done')
         });
-        taskView.clearStreamThrottle();
-
         const output = stripAnsi(taskView.render(100).join('\n'));
         expect(output).toContain('Used plugin-opaq… in 1 tool call');
     });
@@ -896,7 +896,7 @@ describe('TaskView chunk handling', () => {
         expect(output).toContain('Deep reasoning · Used filemgr-rea… in 1 tool call');
     });
 
-    test('minimal completion suppresses a duplicate tool summary and dims its metadata', async () => {
+    test('minimal completion uses a divider without repeating tool metadata', async () => {
         const now = jest.spyOn(Date, 'now').mockReturnValue(1_000);
         const taskView = new TaskView({ requestRender: jest.fn() } as any);
         taskView.setOutputDisplayLevel('minimal');
@@ -920,17 +920,18 @@ describe('TaskView chunk handling', () => {
         taskView.clearStreamThrottle();
 
         chalk.level = 3;
-        const rawOutput = taskView.render(100).join('\n');
+        const renderedLines = taskView.render(100);
+        const rawOutput = renderedLines.join('\n');
         const output = stripAnsi(rawOutput);
+        const plainLines = renderedLines.map((line) => stripAnsi(line));
+        const dividerLine = plainLines.findIndex((line) => /^─+$/.test(line.trim()));
+        const finalBodyLine = plainLines.findIndex((line) => line.includes('Final output'));
         expect(output).not.toContain('✓ 1 tool');
-        expect(output.indexOf('Complete · Deep reasoning · Used filemgr-rea… in 1 tool call')).toBeLessThan(
-            output.indexOf('Final output')
-        );
-        expect(rawOutput).toContain(
-            `${chalk.greenBright('●')} ${chalk.greenBright('Complete')} ${chalk.dim(
-                '· Deep reasoning · Used filemgr-rea… in 1 tool call'
-            )}`
-        );
+        expect(output).not.toContain('Complete ·');
+        expect(output).not.toContain('Deep reasoning · Used filemgr-rea… in 1 tool call');
+        expect(dividerLine).toBeGreaterThanOrEqual(0);
+        expect(finalBodyLine - dividerLine).toBe(2);
+        expect(rawOutput).toContain(chalk.dim('─'.repeat(100)));
         expect(output).not.toContain('CUSTOM TOOL 1');
     });
 
@@ -972,14 +973,16 @@ describe('TaskView chunk handling', () => {
 
         let output = stripAnsi(taskView.render(100).join('\n'));
         expect(output).not.toContain('✓ 1 tool');
-        expect(output).toContain('Complete · Used filemgr-rea… in 1 tool call');
+        expect(output).not.toContain('Complete ·');
+        expect(output.split('\n').some((line) => /^─+$/.test(line.trim()))).toBe(true);
         expect(output).not.toContain('body segment');
 
         now.mockReturnValue(20_000);
         taskView.invalidate();
         output = stripAnsi(taskView.render(100).join('\n'));
         expect(output).not.toContain('✓ 1 tool');
-        expect(output).toContain('Complete · Used filemgr-rea… in 1 tool call');
+        expect(output).not.toContain('Complete ·');
+        expect(output.split('\n').some((line) => /^─+$/.test(line.trim()))).toBe(true);
         expect(output).not.toContain('body segment');
     });
 
@@ -1009,7 +1012,8 @@ describe('TaskView chunk handling', () => {
 
         const output = stripAnsi(taskView.render(100).join('\n'));
         expect(output.match(/✓ Used filemgr-rea… in 1 tool call/g)).toHaveLength(3);
-        expect(output).toContain('Complete · Used filemgr-rea… in 3 tool calls');
+        expect(output).not.toContain('Complete ·');
+        expect(output.split('\n').some((line) => /^─+$/.test(line.trim()))).toBe(true);
         expect(output).not.toContain('body segment');
     });
 

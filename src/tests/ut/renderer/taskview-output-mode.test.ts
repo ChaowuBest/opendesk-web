@@ -139,11 +139,17 @@ describe('task-view GUI output modes', () => {
         const completedToggle = view.querySelector('[data-completed-process-toggle]') as HTMLElement;
         expect(view.querySelectorAll('.od-completed-process')).toHaveLength(1);
         expect(completedToggle.textContent).toContain('查看过程');
+        const chevron = completedToggle.querySelector('.od-completed-process-chevron svg');
+        expect(chevron?.getAttribute('fill')).toBe('none');
+        expect(chevron?.getAttribute('stroke')).toBe('currentColor');
         expect(completedToggle.getAttribute('aria-expanded')).toBe('false');
         expect(view.querySelector('.od-completed-process-detail')?.classList.contains('is-open')).toBe(false);
 
         const processSegments = view.querySelectorAll('.od-process-segment');
         expect(processSegments).toHaveLength(3);
+        const processChevron = processSegments[0].querySelector('.od-process-chevron svg');
+        expect(processChevron?.getAttribute('fill')).toBe('none');
+        expect(processChevron?.getAttribute('stroke')).toBe('currentColor');
         processSegments.forEach((segment: Element) => {
             expect(segment.querySelector('[data-process-toggle]')?.getAttribute('aria-expanded')).toBe('false');
         });
@@ -476,6 +482,17 @@ describe('task-view GUI output modes', () => {
 
         const runningStatus = view.querySelector('.od-running-status') as HTMLElement;
         expect(runningStatus.querySelector('.od-running-status-icon')).not.toBeNull();
+        const toolIcon = runningStatus.querySelector('.od-running-status-tool-icon');
+        expect(toolIcon?.tagName.toLowerCase()).toBe('svg');
+        expect(toolIcon?.getAttribute('fill')).toBe('none');
+        expect(toolIcon?.getAttribute('stroke')).toBe('currentColor');
+        expect(toolIcon?.getAttribute('stroke-width')).toBe('1.8');
+        expect(toolIcon?.querySelector('[transform]')).toBeNull();
+        expect(toolIcon?.querySelectorAll('path')).toHaveLength(1);
+        expect(toolIcon?.querySelector('path')?.getAttribute('d')).toBe(
+            'M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94L14.7 6.3z'
+        );
+        expect(runningStatus.querySelector('.od-running-status-icon')?.classList).toContain('is-tool');
         expect(runningStatus.querySelector('.od-running-status-viewport .od-running-status-line')).not.toBeNull();
         expect(runningStatus.getAttribute('aria-expanded')).toBe('false');
 
@@ -569,6 +586,13 @@ describe('task-view GUI output modes', () => {
         const status = view.querySelector('.od-running-status')?.textContent || '';
         expect(status).toContain('正在思考…');
         expect(status).not.toContain('详细思考内容');
+        const icon = view.querySelector('.od-running-status-icon');
+        expect(icon?.classList).toContain('is-thinking');
+        const thinkingIcon = icon?.querySelector('.od-running-status-thinking-icon');
+        expect(thinkingIcon?.tagName.toLowerCase()).toBe('svg');
+        expect(thinkingIcon?.getAttribute('fill')).toBe('none');
+        expect(thinkingIcon?.getAttribute('stroke')).toBe('currentColor');
+        expect(thinkingIcon?.getAttribute('stroke-width')).toBe('1.8');
     });
 
     test('verbose running reasoning shows its full content without a duplicate thinking row', () => {
@@ -782,10 +806,24 @@ describe('task-view GUI output modes', () => {
     });
 
     test('process typography and row spacing stay compact', () => {
-        expect(taskViewStyles).toMatch(/\.od-process-main-icon\{[^}]*width:14px;[^}]*height:14px;/);
-        expect(taskViewStyles).toMatch(/\.od-process-chevron\{[^}]*font-size:var\(--fs-sm\);/);
-        expect(taskViewStyles).toMatch(/\.od-completed-process-chevron\{[^}]*font-size:var\(--fs-sm\);/);
+        expect(taskViewStyles).toMatch(
+            /\.od-process-main-icon\{[^}]*width:14px;[^}]*height:14px;[^}]*color:var\(--od-text-muted\);/
+        );
+        expect(taskViewStyles).toMatch(
+            /\.od-process-chevron\{[^}]*display:inline-flex;[^}]*width:14px;[^}]*height:14px;/
+        );
+        expect(taskViewStyles).toMatch(
+            /\.od-completed-process-chevron\{[^}]*display:inline-flex;[^}]*width:14px;[^}]*height:14px;/
+        );
         expect(taskViewStyles).toMatch(/\.reasoning-block-od\.reasoning-header\{[^}]*list-style:none;/);
+        expect(taskViewStyles).toMatch(/\.od-process-segment\{[^}]*margin-bottom:0;/);
+        expect(taskViewStyles).toMatch(/\.od-stage-body\{[^}]*margin:04px;/);
+        expect(taskViewStyles).toMatch(
+            /\.od-running-status-icon\{[^}]*display:flex;[^}]*align-items:center;[^}]*line-height:1;/
+        );
+        expect(taskViewStyles).toMatch(/\.od-running-status-icon\.is-thinking\{[^}]*color:#f59e0b;/);
+        expect(taskViewStyles).toMatch(/\.od-running-status-icon\.is-tool\{[^}]*color:#f59e0b;/);
+        expect(taskViewStyles).toMatch(/\.od-running-status-line\{[^}]*display:flex;[^}]*align-items:center;/);
     });
 
     test('expanded completed process grows naturally while nested process details keep their height limit', () => {

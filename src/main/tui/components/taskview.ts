@@ -924,10 +924,18 @@ export class AssistantMessageView implements Component {
         failed: boolean,
         width: number
     ): string {
+        if (!failed) {
+            return chalk.dim('─'.repeat(Math.max(1, width)));
+        }
+
         const metadata = formatMinimalProcessSummary(toolCalls, hasReasoning);
-        const color = failed ? chalk.redBright : chalk.greenBright;
-        const label = t(failed ? 'display.minimal.failed.label' : 'display.minimal.complete.label');
-        return truncateToWidth(`${color('●')} ${color(label)} ${chalk.dim(`· ${metadata}`)}`, width, '', true);
+        const label = t('display.minimal.failed.label');
+        return truncateToWidth(
+            `${chalk.redBright('●')} ${chalk.redBright(label)} ${chalk.dim(`· ${metadata}`)}`,
+            width,
+            '',
+            true
+        );
     }
 
     private renderMinimalRunning(toolCalls: ToolCall[], isReasoning: boolean, width: number): string {
@@ -961,7 +969,7 @@ export class AssistantMessageView implements Component {
         let pendingToolCalls: ToolCall[] = [];
         let completionRendered = false;
 
-        const appendBlock = (block: string[], separated = true) => {
+        const appendBlock = (block: string[], separated = false) => {
             let start = 0;
             let end = block.length;
             while (start < end && block[start] === '') start += 1;
@@ -974,11 +982,14 @@ export class AssistantMessageView implements Component {
         };
 
         const flushPendingTools = () => {
-            if (pendingToolCalls.length === 0) return;
+            if (pendingToolCalls.length === 0) return false;
+            let rendered = false;
             if (showPhaseSummaries) {
                 appendBlock([this.renderMinimalToolSummary(pendingToolCalls, hasReasoning, width)]);
+                rendered = true;
             }
             pendingToolCalls = [];
+            return rendered;
         };
 
         for (let index = 0; index < this.parts.length; index += 1) {
@@ -994,14 +1005,17 @@ export class AssistantMessageView implements Component {
                 continue;
             }
 
-            flushPendingTools();
+            const processSummaryRendered = flushPendingTools();
             if (part instanceof TextMessagePartView) {
                 if (index === finalTextPartIndex) {
-                    appendBlock([this.renderMinimalTerminal(allToolCalls, hasReasoning, hasError, width)]);
+                    appendBlock(
+                        [this.renderMinimalTerminal(allToolCalls, hasReasoning, hasError, width)],
+                        processSummaryRendered
+                    );
                     completionRendered = true;
-                    appendBlock(part.render(width));
+                    appendBlock(part.render(width), true);
                 } else {
-                    appendBlock(renderAssistantBody(part, width));
+                    appendBlock(renderAssistantBody(part, width), processSummaryRendered);
                 }
             } else {
                 appendBlock(part.render(width));

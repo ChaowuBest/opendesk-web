@@ -3472,9 +3472,12 @@ agent-input[hide-disclaimer] .agent-input-footer {
 }
 
 .od-completed-process-chevron {
-    display: inline-block;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 14px;
+    height: 14px;
     color: var(--od-text-faint);
-    font-size: var(--fs-sm);
     line-height: 1;
     transition: transform 140ms ease;
 }
@@ -3496,7 +3499,7 @@ agent-input[hide-disclaimer] .agent-input-footer {
 
 .od-process-segment {
     min-width: 0;
-    margin-bottom: 6px;
+    margin-bottom: 0;
     overflow: visible;
     background: transparent;
     border: 0;
@@ -3540,7 +3543,7 @@ agent-input[hide-disclaimer] .agent-input-footer {
     justify-content: center;
     width: 14px;
     height: 14px;
-    color: var(--chat-green);
+    color: var(--od-text-muted);
     font-size: 14px;
     line-height: 1;
 }
@@ -3568,10 +3571,12 @@ agent-input[hide-disclaimer] .agent-input-footer {
 }
 
 .od-process-chevron {
-    display: inline-block;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 14px;
+    height: 14px;
     color: var(--od-text-disabled);
-    font-size: var(--fs-sm);
-    font-weight: 400;
     line-height: 1;
     transform: rotate(0deg);
     transition: transform 150ms ease;
@@ -3649,7 +3654,7 @@ html[data-theme='dark'] .od-process-detail::-webkit-scrollbar-thumb {
 }
 
 .od-stage-body {
-    margin: 9px 4px 12px;
+    margin: 0 4px;
 }
 
 .od-streaming-text {
@@ -3706,8 +3711,25 @@ html[data-theme='dark'] .od-process-detail::-webkit-scrollbar-thumb {
 }
 
 .od-running-status-icon {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    line-height: 1;
     flex: none;
     color: var(--chat-green);
+}
+
+.od-running-status-icon.is-thinking {
+    color: #f59e0b;
+}
+
+.od-running-status-icon.is-tool {
+    color: #f59e0b;
+}
+
+.od-running-status-tool-icon,
+.od-running-status-thinking-icon {
+    display: block;
 }
 
 .od-running-status-viewport {
@@ -3718,7 +3740,8 @@ html[data-theme='dark'] .od-process-detail::-webkit-scrollbar-thumb {
 }
 
 .od-running-status-line {
-    display: block;
+    display: flex;
+    align-items: center;
     height: 26px;
     animation: od-status-roll-in 180ms ease-out;
 }
