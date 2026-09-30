@@ -14,10 +14,10 @@ describe('terminal locale', () => {
 
     test('sandbox hints exist in both languages and stay actionable', () => {
         for (const dictionary of [zhCn, enUs]) {
-            // 路径提示必须给出根相对路径的改写方向
-            expect(dictionary['sandbox.pathErrorHint']).toContain('/C/');
-            // 管道提示必须给出可行动的等价命令
-            expect(dictionary['sandbox.pipeErrorHint']).toContain('node --import tsx');
+            // 路径提示：宿主盘符路径在沙箱内直接可用（Detours 语义）
+            expect(dictionary['sandbox.pathErrorHint']).toMatch(/host drive paths|宿主盘符路径/i);
+            // 管道提示：普通令牌下命名管道可用（无 AppContainer 限制）
+            expect(dictionary['sandbox.pipeErrorHint']).toMatch(/named pipes|命名管道/);
         }
     });
 });

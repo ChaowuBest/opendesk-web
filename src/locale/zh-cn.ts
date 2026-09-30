@@ -1463,7 +1463,8 @@ export const zhCn: Record<string, string> = {
     'sp.task.terminal.shell.desc': '任务仅使用选定的 shell；路径不可用时自动使用列表中的第一个可用 shell。',
     'sp.task.terminal.noShells': '未找到支持的 shell',
     'sp.task.terminal.sandbox': '启用沙箱',
-    'sp.task.terminal.sandbox.desc': '在 Windows 沙箱中执行此 powershell，文件访问需要时请求授权。',
+    'sp.task.terminal.sandbox.desc':
+        '在 Windows 沙箱（Detours）中执行此 powershell 或 Git Bash，文件访问需要时请求授权；子进程直接使用宿主真实路径。',
     'sp.task.terminal.sandbox.delToTrash': '将删除的文件放到回收站',
     'sp.task.terminal.sandbox.delToTrash.desc':
         '沙箱里直接删除的文件会移入 Windows 回收站而非永久删除；覆盖与移动操作不受影响。',

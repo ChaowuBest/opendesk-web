@@ -19,7 +19,7 @@ export const enUs: Record<string, string> = {
     'pwsh.command': 'The powershell command to execute',
     'pwsh.intent': 'A short description of the command intent for display, such as "Check powershell version"',
     'pwsh.cwd': 'Working directory; defaults to the task workspace',
-    'pwsh.cwd.sandbox': 'Sandbox working directory in /C/... form; defaults to the mapped task workspace',
+    'pwsh.cwd.sandbox': 'Sandbox working directory as a host real path (C:...); defaults to the task workspace',
     'pwsh.timeout': 'Execution timeout in milliseconds; defaults to 30000 (30 seconds)',
     'checkShellStatus.name': 'Check Shell Status',
     'status.description':
@@ -38,17 +38,17 @@ export const enUs: Record<string, string> = {
     'prompt.sandbox.rootPaths':
         '- Use stable root-relative paths: /C/... maps to host C:/..., /D/... maps to host D:/..., and so on.',
     'prompt.sandbox.absolutePaths':
-        '- Absolute paths in commands, workingDirectory, and PowerShell, Python, or Node.js scripts must use /<drive>/... form; do not use host drive paths or the dynamic sandbox drive letter.',
+        '- Absolute paths in commands, workingDirectory, and PowerShell, Python, or Node.js scripts use host drive paths (C:\\X or C:/X) directly; policy and approvals map through the root-relative convention /C/....',
     'prompt.sandbox.cwd':
-        '- The sandbox working directory matches the task workspace; for example, workspace C:/foo maps to /C/foo, and relative paths resolve from there.',
+        '- The sandbox working directory matches the task workspace (host real path, e.g. C:/foo); relative paths resolve from there.',
     'prompt.sandbox.trash':
-        '- Files that existed before this task started are moved to the Windows Recycle Bin when deleted; files created during a sandbox run are removed permanently when deleted within the same sandbox instance.',
+        '- Deletions are always moved to the Windows Recycle Bin (same semantics as the Linux/OHOS sandbox; no instance-created tracking).',
     'sandbox.description':
-        'Run the selected powershell in the Windows dynamic sandbox. Use stable root-relative paths: /C/... maps to host C:/..., and /D/... maps to host D:/.... Absolute paths in commands, workingDirectory, and scripts must use /<drive>/... form; relative paths resolve from the mapped task workspace. File approvals still show original host paths.',
+        'Run the selected powershell or Git Bash in the Windows dynamic sandbox. Child processes use host real paths (C:X or C:/X) directly; policy and approvals map through the root-relative convention /C/... to host C:/...; relative paths resolve from the task workspace (host real path). File approvals still show original host paths.',
     'sandbox.pathErrorHint':
-        'Sandbox path hint: a Windows drive path was reported with an access-denied error. If the path refers to a host file, use the sandbox root-relative path instead, for example C:\\foo -> /C/foo or D:\\bar -> /D/bar.',
+        'Sandbox path hint: an access-denied error was reported. Host drive paths (C:\\foo) work directly inside the sandbox; check the path spelling and the task permission rules, or request approval for the target path.',
     'sandbox.pipeErrorHint':
-        'Sandbox pipe hint: AppContainer processes inside the sandbox cannot create named pipes. Tools that rely on named-pipe IPC fail here; for example run tsx via node --import tsx instead of npx tsx, or use an equivalent command that does not need pipes.',
+        'Sandbox named pipes: sandboxed processes run with an ordinary user token, so named pipes can be created and connected (tsx / npx / IPC-based tools work normally).',
     'sandbox.cwdUnsupported':
         'The sandbox working directory must be an absolute Windows drive path that can be mapped: ${path}',
     'sandbox.executableMissing':

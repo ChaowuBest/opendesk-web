@@ -84,6 +84,20 @@ export function policyText(endpoint: string, token: string, rules?: PermissionRu
     // jest transform 缓存（os.tmpdir()/jest）与 node-compile-cache 与宿主共用。
     const tempRoot =
         home && home.length > 0 ? hostPatternToVirtual(`${home.replace(/\\/g, '/')}/AppData/Local/Temp/**`) : null;
+    // Windows 框架/PowerShell 启动时的静默写入路径（组件存储、缓存、Recent 跳转
+    // 列表等）。这些路径在普通令牌下本就写不动（OS ACL 拒绝），放通只为免去每次
+    // 触发 write ask 弹窗。顺序：用户 deny 规则仍在此之前（permissionRulesForSandbox
+    // 按 deny > ask > allow 排序），系统放行不会覆盖用户显式拒绝。
+    // 注意：$RECYCLE.BIN 不放通——回收站是误删数据的恢复区，agent 若可写就能清理
+    // 整个回收站（数据风险）；而 --del-to-trash 写入回收站经 SHFileOperation 内部
+    // 操作（hook 已用进程级 RecycleGuard 抑制，不做策略判定），本就无需放通。
+    const systemWritePaths = [
+        '/C/Windows/system32/catroot**', // Windows Update 组件存储（catroot/catroot2）
+        '/C/Windows/Temp/**', // 系统 Temp（安装器/更新临时文件）
+        '/C/ProgramData/Microsoft/Windows/Caches/**', // 系统级缓存
+        '/C/Users/*/AppData/Local/Microsoft/Windows/Caches/**', // 用户级缓存
+        '/C/Users/*/AppData/Roaming/Microsoft/Windows/Recent/**' // Recent/AutomaticDestinations
+    ];
     return [
         'version = 1',
         'default = "deny"',
@@ -102,6 +116,8 @@ export function policyText(endpoint: string, token: string, rules?: PermissionRu
         ...(cacheRoot ? [`[[rules]]\npath = ${quote(cacheRoot)}\naccess = "write"\nperm = "allow"`] : []),
         // 宿主用户 Temp 写入放行（镜像层共享 Temp 别名，见 dynobox Runner）
         ...(tempRoot ? [`[[rules]]\npath = ${quote(tempRoot)}\naccess = "write"\nperm = "allow"`] : []),
+        // 系统维护路径写放通（见 systemWritePaths 注释）
+        ...systemWritePaths.map((path) => `[[rules]]\npath = ${quote(path)}\naccess = "write"\nperm = "allow"`),
         '[[rules]]',
         'path = "/**"',
         'access = "read"',

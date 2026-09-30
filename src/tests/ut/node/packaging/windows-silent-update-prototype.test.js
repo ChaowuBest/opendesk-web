@@ -26,7 +26,7 @@ test('builds current-version-only update installers while preserving the release
     assert.match(releaseBuilder, /opendesk-win-x86-\$\{version\}\.exe/);
     assert.doesNotMatch(builder, /<MajorUpgrade/);
     assert.match(builder, /ARPSYSTEMCOMPONENT/);
-    assert.match(builder, /MsiPackage Id="DokanMsi"[\s\S]*Permanent="yes"/);
+    assert.doesNotMatch(builder, /DokanMsi|DokanSetup|dokan2\.dll/);
     assert.doesNotMatch(builder, /MsiPackage Id="OpenDesk(?:Platform|Msi)"[^>]*Permanent="yes"/);
     assert.match(builder, /ManagedBootstrapperApplicationHost/);
     assert.match(builder, /OpenDesk\.Bootstrapper\.dll/);

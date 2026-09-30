@@ -2,14 +2,18 @@ import { jest } from '@jest/globals';
 import path from 'path';
 import { fileURLToPath, pathToFileURL } from 'url';
 import type { McpServerConfig } from '../../../main/applications/mcpmgr/common';
+// 顶层静态 import（jest 30 对"动态 import() 链里的 node_modules CJS 依赖（zod）"
+// 会报 module not been linked；静态 import 走正常模块注册，无此限制）。
+import { ContributedMCPRegistry } from '../../../main/applications/mcpmgr/registry/contributed.js';
+import { allRegistries } from '../../../main/applications/mcpmgr/registry/index.js';
+import { McpMgrApplication } from '../../../main/applications/mcpmgr/app.js';
 
 const fetchMock = jest.fn();
 
-jest.unstable_mockModule('../../../platforms/base', () => ({
-    getPlatform: () => ({
-        fetch: fetchMock
-    })
-}));
+// 注意：不使用 jest.unstable_mockModule——它会把 jest 拉入 mockModule 的 ESM
+// 模块上下文，导致动态 import 主进程模块（mcpmgr/app 依赖 zod）时报
+// "module not been linked"。fetchMock 已显式传给插件注册表定义，无需 mock
+// platforms/base；app/contributed/index 也不依赖该 mock。
 
 // ModelScope MCP 注册表实现已迁移到内置插件 modelscope（按品牌划分）；
 // 这里直接针对插件的注册表定义（与主进程消费的是同一份实现）做回归。
@@ -253,11 +257,7 @@ describe('ModelScope MCP registry', () => {
         );
 
         // 与主进程一致：插件贡献的注册表经 ContributedMCPRegistry 适配后进 allRegistries
-        const [{ ContributedMCPRegistry }, { allRegistries }, { McpMgrApplication }] = await Promise.all([
-            import('../../../main/applications/mcpmgr/registry/contributed'),
-            import('../../../main/applications/mcpmgr/registry/index'),
-            import('../../../main/applications/mcpmgr/app')
-        ]);
+        // （静态 import 已提供三个符号，避免动态 import 触发 zod 链接问题）
         const definition = await loadModelScopeDefinition();
         const adapter = new ContributedMCPRegistry(definition);
         const originalRegistries = [...allRegistries];

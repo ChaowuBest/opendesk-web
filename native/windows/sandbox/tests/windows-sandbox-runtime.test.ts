@@ -48,15 +48,10 @@ async function runSandbox(directory: string, command: string, rules = '', extraA
 test('the shipped sandbox starts PowerShell repeatedly and forwards its output', { skip: !enabled }, async () => {
     const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'opendesk-sandbox-startup-'));
     try {
-        let previousSid: string | undefined;
         for (let i = 0; i < 3; i++) {
             const result = await runSandbox(directory, `Write-Output 'sandbox-alive-${i}'; Get-Date -Format yyyy`);
             assert.match(result.stdout, new RegExp(`sandbox-alive-${i}[\\r\\n]+\\d{4}`));
             assert.equal(result.stderr, '');
-            const sid = /SID=(S-[0-9-]+)/.exec(result.log)?.[1];
-            assert.ok(sid);
-            if (previousSid) assert.equal(sid, previousSid, 'loopback initialization must survive a fresh run');
-            previousSid = sid;
         }
     } finally {
         fs.rmSync(directory, { recursive: true, force: true });
@@ -131,32 +126,29 @@ test('--del-to-trash sends removed files to the recycle bin and plain runs delet
     }
 });
 
-test('network capabilities reach the child without disabling file isolation', { skip: !enabled }, async () => {
+test('file deny rules reach the child while local networking stays usable', { skip: !enabled }, async () => {
     const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'opendesk-sandbox-token-'));
     const secret = path.join(directory, 'private.txt');
     fs.writeFileSync(secret, 'must stay private');
     const virtualSecret = '/' + secret.replace(/\\/g, '/').replace(':', '');
+    const proxy = createServer((_request, response) => response.end('local-net-ok'));
+    proxy.listen(0, '127.0.0.1');
+    await once(proxy, 'listening');
+    const port = (proxy.address() as { port: number }).port;
     try {
-        const probe = path.join(directory, 'probe.exe');
-        const compiler = path.join(process.env.SystemRoot!, 'Microsoft.NET/Framework64/v4.0.30319/csc.exe');
-        await promisify(execFile)(
-            compiler,
-            [
-                '/nologo',
-                '/target:exe',
-                `/out:${probe}`,
-                path.resolve(import.meta.dirname, 'fixtures/SandboxTokenProbe.cs')
-            ],
-            { windowsHide: true }
-        );
         const quote = (value: string) => `'${value.replace(/'/g, "''")}'`;
-        const command = `& ${quote(probe)} ${quote(secret)}; exit $LASTEXITCODE`;
-        const rules = `[[rules]]\npath = ${JSON.stringify(virtualSecret)}\naccess = "all"\nperm = "deny"\n`;
+        const command =
+            `try { Get-Content -LiteralPath ${quote(secret)} -ErrorAction Stop; 'FILE-ESCAPED' } catch { 'FILE-BLOCKED' }; ` +
+            `try { (Invoke-WebRequest -Uri 'http://127.0.0.1:${port}/x' -UseBasicParsing -TimeoutSec 5).Content } catch { 'NET-FAIL' }`;
+        const rules = `[[rules]]\npath = ${JSON.stringify(virtualSecret)}\naccess = \"all\"\nperm = \"deny\"\n`;
         const result = await runSandbox(directory, command, rules);
-        assert.match(result.stdout, /capabilities-and-isolation-ok/);
+        assert.match(result.stdout, /FILE-BLOCKED/);
+        assert.match(result.stdout, /local-net-ok/);
         assert.equal(result.stderr, '');
         assert.equal(fs.readFileSync(secret, 'utf8'), 'must stay private');
     } finally {
+        proxy.closeAllConnections();
+        await new Promise<void>((resolve) => proxy.close(() => resolve()));
         fs.rmSync(directory, { recursive: true, force: true });
     }
 });
@@ -200,32 +192,9 @@ test('PowerShell runs Python and pip launchers without sandbox path errors', { s
 // Direct native launches exercise overlapping background/cross-task processes.
 // OpenDesk serializes sandboxed shell tools even though the native boundary also
 // protects against overlap from separate tasks or background processes.
-test(
-    'overlapping native sandboxes use different identities and fresh runs clear private profile data',
-    { skip: !enabled },
-    async () => {
-        const directories = [0, 1].map(() => fs.mkdtempSync(path.join(os.tmpdir(), 'opendesk-sandbox-identities-')));
-        const command =
-            "$p = Join-Path ([Environment]::GetFolderPath('LocalApplicationData')) 'opendesk-profile-marker.txt'; " +
-            "if (Test-Path -LiteralPath $p) { throw 'stale profile data' }; " +
-            "[IO.File]::WriteAllText($p, 'private'); Start-Sleep -Seconds 2; Write-Output 'fresh-profile'";
-        try {
-            const results = await Promise.all(directories.map((directory) => runSandbox(directory, command)));
-            for (const result of results) assert.match(result.stdout, /fresh-profile/);
-            const sids = results.map((result) => /SID=(S-[0-9-]+)/.exec(result.log)?.[1]);
-            assert.ok(sids[0]);
-            assert.ok(sids[1]);
-            assert.notEqual(sids[0], sids[1], 'concurrent tasks must not share an AppContainer SID');
-            const fresh = await runSandbox(directories[0], command);
-            assert.match(fresh.stdout, /fresh-profile/);
-        } finally {
-            for (const directory of directories) fs.rmSync(directory, { recursive: true, force: true });
-        }
-    }
-);
 
 test(
-    'initialized sandboxes reuse a host loopback HTTP proxy across fresh runs',
+    'sandboxes reach a host local HTTP service across fresh runs',
     {
         skip: !enabled || process.env.OPENDESK_SANDBOX_LOOPBACK_TEST !== '1'
     },
@@ -242,8 +211,7 @@ test(
         assert.ok(address && typeof address !== 'string');
         const command =
             "$ErrorActionPreference = 'Stop'; " +
-            `$r = [Net.HttpWebRequest]::Create('http://sandbox.invalid/proxy-test'); ` +
-            `$r.Proxy = [Net.WebProxy]::new('http://127.0.0.1:${address.port}'); $r.Timeout = 3000; ` +
+            `$r = [Net.HttpWebRequest]::Create('http://127.0.0.1:${address.port}/proxy-test'); $r.Timeout = 3000; ` +
             '$response = $r.GetResponse(); $reader = [IO.StreamReader]::new($response.GetResponseStream()); ' +
             'try { $reader.ReadToEnd() } finally { $reader.Dispose(); $response.Dispose() }';
         try {
@@ -251,7 +219,7 @@ test(
                 const result = await runSandbox(directory, command);
                 assert.match(result.stdout, /sandbox-proxy-ok/);
             }
-            assert.deepEqual(requests, Array(2).fill('http://sandbox.invalid/proxy-test'));
+            assert.deepEqual(requests, Array(2).fill('/proxy-test'));
         } finally {
             proxy.closeAllConnections();
             await new Promise<void>((resolve) => proxy.close(() => resolve()));

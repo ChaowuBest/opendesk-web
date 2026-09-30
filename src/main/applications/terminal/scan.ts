@@ -24,7 +24,7 @@ import { getPlatform } from '../../../platforms/base.js';
 import { resolveOpenHarmonySandboxExecutable } from './sandboxes/resolve-ohos.js';
 
 /**
- * CLI 模式不会安装沙箱的二进制与 Dokan 驱动（仅桌面安装包携带），注册沙箱变体
+ * CLI 模式不会安装沙箱的二进制与 hook DLL（仅桌面安装包携带），注册沙箱变体
  * 只会让选中的 PowerShell 在运行时报 executableMissing，并让 TUI 设置页暴露
  * 无效选项；因此沙箱变体仅在非 CLI 平台（桌面版）注册。
  * @param targetPlatform 目标平台（与运行时平台分离，便于跨平台测试模拟）
@@ -78,6 +78,9 @@ export function scanSupportedShells(
         // Windows command wrappers require cmd.exe and cannot be spawned as the selected shell.
         if (platform === 'win32' && !/\.exe$/i.test(shellPath)) return;
         shells.push({ kind, path: shellPath, sandboxed });
+        // Windows 上只有 PowerShell（powershell/pwsh）提供沙箱变体：cygwin 程序
+        // （Git Bash 等）与 detours hook 原理上不兼容（注入后 fork 挂死，且连基本
+        // 文件操作都异常），因此 bash/zsh 在 Windows 上只提供普通变体。
         if (platform === 'win32' && kind === 'powershell' && !sandboxed && allowSandboxVariant)
             add(kind, shellPath, true);
         if (platform === 'linux' && (kind === 'bash' || kind === 'zsh') && !sandboxed && allowSandboxVariant)

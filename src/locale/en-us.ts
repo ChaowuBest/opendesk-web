@@ -1502,7 +1502,8 @@ export const enUs: Record<string, string> = {
         'Tasks use only the selected shell. If its path is unavailable, the first available shell is used.',
     'sp.task.terminal.noShells': 'No supported shells found',
     'sp.task.terminal.sandbox': 'Enable sandbox',
-    'sp.task.terminal.sandbox.desc': 'Run this powershell in a Windows sandbox and request file access when needed.',
+    'sp.task.terminal.sandbox.desc':
+        'Run this powershell or Git Bash in the Windows sandbox (Detours) and request file access when needed; child processes use host real paths directly.',
     'sp.task.terminal.sandbox.delToTrash': 'Move deleted files to the Recycle Bin',
     'sp.task.terminal.sandbox.delToTrash.desc':
         'Files deleted inside the sandbox go to the Windows Recycle Bin instead of being permanently removed. Overwrites and moves are unaffected.',

@@ -13,7 +13,7 @@
  * 一条命令产出 Windows ARM64 原生安装包：npm run make:win32:arm64
  *
  * 链路：npm run build → electron-forge make（--arch=arm64，OPENDESK_WIX_ARCH=arm64）
- *       → build-wix-bootstrapper.mjs（指到 arm64 MSI / staged 应用 / Dokan ARM64 驱动）
+ *       → build-wix-bootstrapper.mjs（指到 arm64 MSI / staged 应用）
  *
  * 环境前提（开发机需在系统/用户环境变量中配置，见团队构建文档）：
  * - PATH 含 WiX Toolset v3.14 bin（maker-wix 查找 candle.exe/light.exe）
@@ -69,21 +69,11 @@ run('npx', ['electron-forge', 'make', '--platform=win32', '--arch=arm64'], {
     OPENDESK_WIX_ARCH: 'arm64'
 });
 
-// 3. 生成带 Dokan ARM64 驱动的 Setup.exe，四个路径全部指到 arm64 产物
+// 3. 生成 Setup.exe，路径全部指到 arm64 产物
 const arm64Env = {
     OPENDESK_WIX_ARCH: 'arm64',
     OPENDESK_MSI_PATH: path.join(wixOutDir, 'opendesk.msi'),
     OPENDESK_STAGED_APP_DIR: path.join(projectRoot, 'out', 'opendesk-win32-arm64'),
-    OPENDESK_DOKAN_MSI_PATH: path.join(
-        projectRoot,
-        'native',
-        'windows',
-        'sandbox',
-        'dist',
-        'win-arm64',
-        'bin',
-        'DokanSetup.msi'
-    ),
     OPENDESK_SETUP_OUT_DIR: wixOutDir
 };
 run(process.execPath, [path.join('scripts', 'build-wix-bootstrapper.mjs')], arm64Env);

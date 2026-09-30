@@ -58,6 +58,29 @@ describe('policyText', () => {
         expect(text).not.toContain('/dev/null');
     });
 
+    test('系统维护路径（组件存储/缓存/Recent）写放行；回收站不放通且早于兜底 write ask', () => {
+        const text = policyText('http://ep/decide', 't', undefined, 'C:\\Users\\liyif');
+        for (const p of [
+            '/C/Windows/system32/catroot**',
+            '/C/Windows/Temp/**',
+            '/C/ProgramData/Microsoft/Windows/Caches/**',
+            '/C/Users/*/AppData/Local/Microsoft/Windows/Caches/**',
+            '/C/Users/*/AppData/Roaming/Microsoft/Windows/Recent/**'
+        ]) {
+            expect(text).toContain(`path = ${JSON.stringify(p)}`);
+        }
+        // 回收站是误删数据的恢复区，不放通 write（--del-to-trash 经 SHFileOperation
+        // 内部操作不受策略判定，不需要放通回收站）
+        expect(text).not.toContain('/C/$RECYCLE.BIN');
+        // 放行规则须是 write allow，且早于兜底 write ask（沙箱按顺序匹配）
+        const recentAt = text.indexOf('/AppData/Roaming/Microsoft/Windows/Recent/**');
+        const block = text.slice(recentAt - 40, recentAt + 120);
+        expect(block).toContain('access = "write"');
+        expect(block).toContain('perm = "allow"');
+        const fallbackAskAt = text.indexOf('access = "write"\nperm = "ask"');
+        expect(recentAt).toBeLessThan(fallbackAskAt);
+    });
+
     test('home 提供时生成缓存目录写放行规则（虚路径）', () => {
         const text = policyText('http://ep/decide', 't', undefined, 'C:\\Users\\liyif');
         expect(text).toContain('path = "/C/Users/liyif/.cache/opendesk-sandbox/**"');

@@ -10,11 +10,11 @@ const translations: Record<string, string> = {
     'prompt.sandbox.rootPaths':
         '- Use stable root-relative paths: /C/... maps to host C:/..., /D/... maps to host D:/..., and so on.',
     'prompt.sandbox.absolutePaths':
-        '- Absolute paths in commands and PowerShell, Python, or Node.js scripts must use /<drive>/... form.',
+        '- Absolute paths in commands and PowerShell, Python, or Node.js scripts use host drive paths (C:/X) directly; policy and approvals map through the root-relative convention /C/....',
     'prompt.sandbox.cwd':
-        '- The sandbox working directory matches the task workspace; C:/foo becomes /C/foo, and relative paths resolve from there.',
+        '- The sandbox working directory matches the task workspace (host real path, e.g. C:/foo); relative paths resolve from there.',
     'prompt.sandbox.trash':
-        '- Files that existed before this task started are moved to the Windows Recycle Bin when deleted; files created during a sandbox run are removed permanently when deleted within the same sandbox instance.'
+        '- Deletions are always moved to the Windows Recycle Bin (same semantics as the Linux/OHOS sandbox).'
 };
 
 jest.unstable_mockModule('../../../main/applications/terminal/locale/index.js', () => ({
@@ -40,13 +40,13 @@ describe('terminal system prompt contribution', () => {
         }
     });
 
-    test('trash instructions distinguish pre-existing files from files created inside the sandbox', () => {
-        // 回收站只保护实例外已有的文件；沙箱实例运行期间新建的文件在同一实例内
-        // 删除时直接清除。两条语言的文案都必须表达这一边界
-        expect(enUs['prompt.sandbox.trash']).toContain('before this task started');
-        expect(enUs['prompt.sandbox.trash']).toContain('same sandbox instance');
-        expect(zhCn['prompt.sandbox.trash']).toContain('任务开始前已存在');
-        expect(zhCn['prompt.sandbox.trash']).toContain('同一沙箱实例内删除时直接清除');
+    test('trash instructions state that deletions always go to the Recycle Bin', () => {
+        // Detours 实现与 Linux/OHOS 对齐：删除一律送回收站，不区分实例内新建
+        // （Dokan 版的"实例内创建跟踪"语义已移除）。两条语言都要表达这一点。
+        expect(enUs['prompt.sandbox.trash']).toMatch(/always moved to the Windows Recycle Bin/i);
+        expect(enUs['prompt.sandbox.trash']).not.toContain('removed permanently');
+        expect(zhCn['prompt.sandbox.trash']).toContain('一律送入 Windows 回收站');
+        expect(zhCn['prompt.sandbox.trash']).not.toContain('直接清除');
     });
 
     test.each([
@@ -74,7 +74,7 @@ describe('terminal system prompt contribution', () => {
         expect(contribution.content).toContain('/C/... maps to host C:/...');
         expect(contribution.content).toContain('/D/... maps to host D:/...');
         expect(contribution.content).toContain('PowerShell, Python, or Node.js scripts');
-        expect(contribution.content).toContain('C:/foo becomes /C/foo');
+        expect(contribution.content).toMatch(/host real path|host drive paths/);
         expect(contribution.content).not.toContain('SBX_ROOT');
         expect(contribution.content).not.toMatch(/[A-Z]:\/C\//);
         expect(contribution.content).toContain('Windows Recycle Bin');
