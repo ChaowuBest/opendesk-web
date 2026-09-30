@@ -23,7 +23,9 @@ export const enUs: Record<string, string> = {
     'pwsh.timeout': 'Execution timeout in milliseconds; defaults to 30000 (30 seconds)',
     'checkShellStatus.name': 'Check Shell Status',
     'status.description':
-        'Check the current status, exit code and output of a background process started by executeBash, executePwsh or executeZsh. Use kill to terminate it. Returns immediately without waiting for the process to finish.',
+        'Check the current status, exit code and output of a background process started by executeBash, executePwsh or executeZsh. Use kill to terminate it. Omitting waitMs or setting it to 0 returns immediately; when the next step depends on the process finishing, pass a positive waitMs bounded to 0-${max} ms and it returns early once the process completes.',
+    'status.waitMs':
+        'Optional bounded wait in milliseconds, 0-${max}, default 0 (immediate). Use 0 only when you need the current status and have other independent work; use 1000-5000 to observe progress again soon; prefer 10000-30000 when the next step depends on completion. Returns early once the process completes, so it never has to consume the full waitMs. Avoid consecutive zero-wait checks of the same running PID.',
     'shell.sandboxTag': 'Sandbox',
     'prompt.title': '# Terminal execution environment',
     'prompt.active': '- Active terminal: ${shell} (`${path}`)',
