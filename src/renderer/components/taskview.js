@@ -5439,16 +5439,16 @@ class TaskView extends HTMLElement {
                     </div>
 
                     <!-- 权限确认浮窗 -->
-                    <permission-prompt id="task-${this.task_id}-permission" data-task-id="${this.task_id}" class="block px-4"></permission-prompt>
+                    <permission-prompt id="task-${this.task_id}-permission" data-task-id="${this.task_id}" class="block px-[30px]"></permission-prompt>
 
                     <!-- 用户提问面板 -->
-                    <ask-user-prompt id="task-${this.task_id}-ask-user" data-task-id="${this.task_id}" class="block px-4"></ask-user-prompt>
+                    <ask-user-prompt id="task-${this.task_id}-ask-user" data-task-id="${this.task_id}" class="block px-[30px]"></ask-user-prompt>
 
                     <!-- 计划审批面板 -->
-                    <exit-plan-mode-prompt id="task-${this.task_id}-exit-plan" class="block px-4"></exit-plan-mode-prompt>
+                    <exit-plan-mode-prompt id="task-${this.task_id}-exit-plan" class="block px-[30px]"></exit-plan-mode-prompt>
 
                     <!-- 输入区域 -->
-                    <div class="pb-3 pt-1" style="padding-left: 30px; padding-right: 30px;">
+                    <div class="px-[30px] pb-3 pt-1">
                         <!-- 消息队列面板 -->
                         <message-queue-panel id="message-queue-panel"></message-queue-panel>
                         <agent-input id="task-${this.task_id}-input" hide-search />

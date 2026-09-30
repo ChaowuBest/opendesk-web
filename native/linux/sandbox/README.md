@@ -34,10 +34,14 @@ OpenDesk / CLI ── spawn ──> dynobox-linux run --policy rules.toml --upst
 
 ```bash
 # 依赖：Rust 工具链 + libfuse3-dev（Debian/Ubuntu：apt install libfuse3-dev）
-npm run build:sandbox:linux        # 或直接在 native/linux/sandbox 下 cargo build --release
+npm run build:linux-sandbox        # 或直接在 native/linux/sandbox 下 cargo build --release
 ```
 
 产物：`native/linux/sandbox/target/release/dynobox-linux`（及 `runtime/dynobox-linux`）。
+
+> 注意：脚本名不能写成 `build:sandbox:linux` 这类"平台段在末尾"的形式。
+> run-script-os 会用正则把 `xxx:<中间段>:linux` 匹配为 `xxx` 的 Linux 平台变体，
+> 导致 `npm run build` 在 Linux 上只执行沙箱构建就退出、跳过 `electron-vite build`。
 
 前置检查（rootless 环境必须）：
 

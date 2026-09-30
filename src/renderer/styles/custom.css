@@ -3443,6 +3443,10 @@ agent-input[hide-disclaimer] .agent-input-footer {
 .od-assistant-output-flow {
     display: block;
     min-width: 0;
+    /* 过程行统一行规范：阶段摘要行与运行状态行共用，保证行内上下呼吸空间一致，
+       避免最新一轮运行视图中工具行与上下文本的间距和已完成视图不一致 */
+    --od-process-row-min-height: 28px;
+    --od-process-row-pad-block: 3px;
 }
 
 .od-completed-process {
@@ -3519,9 +3523,9 @@ agent-input[hide-disclaimer] .agent-input-footer {
     display: flex;
     align-items: center;
     gap: 8px;
-    min-height: 28px;
+    min-height: var(--od-process-row-min-height);
     margin: 0;
-    padding: 3px 0;
+    padding: var(--od-process-row-pad-block) 0;
     border-bottom: 0;
     border-radius: 0;
 }
@@ -3687,8 +3691,8 @@ html[data-theme='dark'] .od-process-detail::-webkit-scrollbar-thumb {
     width: 100%;
     gap: 8px;
     min-width: 0;
-    min-height: 34px;
-    padding: 0;
+    min-height: var(--od-process-row-min-height);
+    padding: var(--od-process-row-pad-block) 0;
     border: 0;
     background: transparent;
     color: var(--od-text);
@@ -3735,14 +3739,14 @@ html[data-theme='dark'] .od-process-detail::-webkit-scrollbar-thumb {
 .od-running-status-viewport {
     flex: 1;
     min-width: 0;
-    height: 26px;
+    height: 22px;
     overflow: hidden;
 }
 
 .od-running-status-line {
     display: flex;
     align-items: center;
-    height: 26px;
+    height: 22px;
     animation: od-status-roll-in 180ms ease-out;
 }
 
