@@ -20,6 +20,7 @@ import {
     NAV_INTERCEPT_CONSOLE_PREFIX
 } from './webviewScripts';
 import { createRendererTranslator } from './locale.js';
+import { showConfirmModal, showInfoModal } from './components/confirmModal.js';
 import {
     createBrowserHintPanel,
     fetchBrowserHintsForPage,
@@ -850,6 +851,11 @@ export class EmbeddedBrowser extends BrowserInstance {
                 <i class="fas fa-sitemap"></i>
                 <span class="bw-tm-label">导出快照</span>
             </div>
+            <div class="bw-tm-divider"></div>
+            <div class="bw-tm-item" data-action="clearPasswords">
+                <i class="fas fa-key"></i>
+                <span class="bw-tm-label">${browserT('credentials.clear')}</span>
+            </div>
         `;
 
         toolMenu.querySelectorAll('[data-action]').forEach((el) => {
@@ -890,7 +896,34 @@ export class EmbeddedBrowser extends BrowserInstance {
             case 'snapshotDebug':
                 void this.captureAndSaveSnapshot();
                 break;
+            case 'clearPasswords':
+                await this.clearSavedPasswords();
+                break;
         }
+    }
+
+    private async clearSavedPasswords(): Promise<void> {
+        const confirmed = await showConfirmModal({
+            title: browserT('credentials.clear'),
+            message: browserT('credentials.clearConfirm'),
+            confirmText: browserT('credentials.clear'),
+            cancelText: browserT('credentials.cancelUpdate'),
+            variant: 'danger'
+        });
+        if (!confirmed) return;
+        let success = false;
+        try {
+            const result = await (window as any).applicationRegistryAPI.callMainWorld('browser', 'clearAutofillData');
+            success = result?.success === true;
+        } catch {
+            // Show the localized failure below; never present a failed clear as success.
+        }
+        await showInfoModal({
+            title: browserT('credentials.clear'),
+            message: browserT(success ? 'credentials.cleared' : 'credentials.clearFailed'),
+            confirmText: browserT('credentials.ok'),
+            variant: success ? 'success' : 'warn'
+        });
     }
 
     private _updateZoomDisplay(): void {

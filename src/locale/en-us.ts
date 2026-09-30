@@ -10,6 +10,27 @@
  */
 
 export const enUs: Record<string, string> = {
+    'credentials.oldPassword': 'Old password',
+    'credentials.clear': 'Clear passwords',
+    'credentials.clearConfirm':
+        'Delete saved accounts, passwords and autofill data for all sites in the built-in browser? This cannot be undone.',
+    'credentials.cleared': 'Saved passwords and autofill data have been cleared.',
+    'credentials.clearFailed': 'Unable to clear passwords. Please try again later.',
+    'credentials.newPassword': 'New password',
+    'credentials.showPasswords': 'Show passwords',
+    'credentials.cancelUpdate': 'Cancel',
+    'credentials.close': 'Close',
+    'credentials.title': 'Saved passwords',
+    'credentials.accounts': 'Choose a saved account',
+    'credentials.ok': 'OK',
+    'credentials.saveQuestion': 'Save password?',
+    'credentials.save': 'Save',
+    'credentials.updateQuestion': 'Update password',
+    'credentials.update': 'Update',
+    'credentials.unavailable': 'Secure system storage is unavailable. Passwords cannot be saved.',
+    'credentials.failed':
+        'Unable to read or save passwords. Check your system keychain, or reset saved passwords and autofill data in browser settings.',
+
     // Task transfer
     'taskTransfer.title': 'Task data',
     'taskTransfer.import': 'Import tasks',

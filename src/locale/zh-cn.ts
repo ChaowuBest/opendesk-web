@@ -10,6 +10,25 @@
  */
 
 export const zhCn: Record<string, string> = {
+    'credentials.oldPassword': '旧密码',
+    'credentials.clear': '清除密码',
+    'credentials.clearConfirm': '将删除内置浏览器中所有站点已保存的账号密码与自动填充数据。此操作无法撤销，是否继续？',
+    'credentials.cleared': '已清除保存的密码与自动填充数据。',
+    'credentials.clearFailed': '清除密码失败，请稍后重试。',
+    'credentials.newPassword': '新密码',
+    'credentials.showPasswords': '显示密码',
+    'credentials.cancelUpdate': '取消',
+    'credentials.close': '关闭',
+    'credentials.title': '保存的密码',
+    'credentials.accounts': '选择已保存的账号',
+    'credentials.ok': '知道了',
+    'credentials.saveQuestion': '是否保存密码？',
+    'credentials.save': '保存',
+    'credentials.updateQuestion': '更新密码',
+    'credentials.update': '更新',
+    'credentials.unavailable': '系统安全存储不可用，无法保存密码。',
+    'credentials.failed': '无法读取或保存密码。请检查系统钥匙串；如需重置，可在浏览器设置中清除密码与自动填充数据。',
+
     // Task transfer
     'taskTransfer.title': '任务数据',
     'taskTransfer.import': '导入任务',
