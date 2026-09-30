@@ -27,10 +27,7 @@ export type SlidesCapabilityExecutor = (
     input: Record<string, unknown>
 ) => Promise<SlidesCapabilityExecution>;
 
-export type SlidesPresentationOpener = (
-    taskId: string,
-    filePath: string
-) => Promise<SlidesPresentationOpenResult>;
+export type SlidesPresentationOpener = (taskId: string, filePath: string) => Promise<SlidesPresentationOpenResult>;
 
 const SLIDES_ACTION_CATEGORIES = ['read', 'text', 'layout', 'slide', 'insert', 'chart', 'table'] as const;
 type SlidesActionCategory = (typeof SLIDES_ACTION_CATEGORIES)[number];

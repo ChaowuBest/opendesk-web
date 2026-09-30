@@ -50,7 +50,9 @@ jest.unstable_mockModule('../../../main/applications/devicemgr/gateway-methods.j
 }));
 
 jest.unstable_mockModule('../../../main/applications/channelmgr/tools.js', () => ({
-    SendFileTool: class {}
+    SendFileTool: class {
+        name = 'SendFile';
+    }
 }));
 
 jest.unstable_mockModule('../../../main/aikernel/states/global.js', () => ({

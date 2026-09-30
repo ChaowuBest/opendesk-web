@@ -14,6 +14,7 @@ import { type Component, visibleWidth, truncateToWidth } from '@earendil-works/p
 import type { CardStatus } from './card';
 import type { ToolCall } from '../../aikernel/messages';
 import { t } from '../../../locale/index.js';
+import { resolveToolDisplayName } from '../../../common/tool-display-name.js';
 
 /**
  * Truncate a string (may contain ANSI codes / wide chars) to fit within
@@ -57,7 +58,7 @@ export class DefaultToolCallView implements Component {
 
     render(width: number): string[] {
         const { icon, text } = statusDisplay(this.toolCall.status);
-        const name = chalk.bold(this.toolCall.tool_name);
+        const name = chalk.bold(resolveToolDisplayName(this.toolCall.tool_name, this.toolCall.display_name_key, t));
 
         const iconVis = visibleWidth(icon);
         const nameVis = visibleWidth(name);

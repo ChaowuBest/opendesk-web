@@ -157,6 +157,20 @@ describe('setting-panel config management', () => {
         expect(panel.saveImmediately).toHaveBeenCalled();
     });
 
+    test('uses canonical minimal and verbose output mode values without removing reasoning display', () => {
+        const panel = createPanel();
+        panel.innerHTML = panel.renderGeneralSection();
+
+        const outputMode = panel.querySelector('#gui-output-mode-select');
+        const values = Array.from(outputMode?.querySelectorAll('option') || []).map((option: Element) =>
+            option.getAttribute('value')
+        );
+
+        expect(outputMode).not.toBeNull();
+        expect(values).toEqual(['minimal', 'verbose']);
+        expect(panel.querySelector('#gui-reason-display-select')).not.toBeNull();
+    });
+
     test('renders unified telemetry endpoints and saves a Langfuse endpoint', async () => {
         const panel = createPanel();
         panel.currentData.telemetry = {

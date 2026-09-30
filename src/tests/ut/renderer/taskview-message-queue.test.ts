@@ -1826,7 +1826,7 @@ describe('task-view message queue', () => {
         expect(taskView.querySelectorAll('.od-goal-eval-end.od-goal-eval-status-superseded')).toHaveLength(1);
     });
 
-    test('assistant replace swaps a provisional text block for reasoning and visible text', () => {
+    test('assistant replace swaps provisional content for the minimal interleaved running stream', () => {
         const taskView = document.createElement('task-view') as HTMLElement & {
             task_id: string;
             handleAssistantReplace: (progress: unknown) => void;
@@ -1856,8 +1856,17 @@ describe('task-view message queue', () => {
         });
 
         expect(taskView.textContent).not.toContain('old provisional text');
-        expect(taskView.querySelector('.reasoning-content')?.textContent?.trim()).toBe('hidden reasoning');
         expect(taskView.textContent).toContain('visible answer');
+        expect(taskView.querySelector('.od-process-segment')).not.toBeNull();
+        expect(taskView.querySelector('[data-process-toggle]')?.getAttribute('aria-expanded')).toBe('false');
+        expect(taskView.querySelector('[data-running-output-toggle]')).toBeNull();
+        expect(taskView.querySelectorAll('.od-running-status')).toHaveLength(0);
+        expect(
+            taskView
+                .querySelector('#message-content-assistant-1 .od-assistant-output-flow')
+                ?.lastElementChild?.classList.contains('od-stage-body')
+        ).toBe(true);
+        expect((taskView as any)._assistantPartsByMessage.get('assistant-1')).toHaveLength(2);
     });
 
     test('streaming text keeps completed blocks and their controls while updating the tail', () => {
@@ -1917,6 +1926,7 @@ describe('task-view message queue', () => {
             )
         ).toBe(true);
 
+        expect(taskView.querySelector('#message-content-assistant-missing-index .od-running-status')).toBeNull();
         expect(taskView.querySelector('#message-content-assistant-missing-index')?.textContent).toContain(
             'safe output'
         );
@@ -1958,6 +1968,7 @@ describe('task-view message queue', () => {
             )
         ).toBe(true);
 
+        expect(taskView.querySelector('#message-content-assistant-2 .od-running-status')).toBeNull();
         expect(taskView.querySelector('#message-content-assistant-2')?.textContent).toContain('new output');
         // 新消息流式期间立即出现按 chars/4 估算的胶囊（'new output' 11 chars → 3 词），
         // 同时按「仅保留最新一条胶囊」的既有规则移除旧消息上的 usage
@@ -2744,134 +2755,47 @@ describe('task-view message queue', () => {
         expect(historyContainer.textContent?.match(/编辑后的目标/g)).toHaveLength(1);
     });
 
-    test('coalesces rapid reasoning streaming updates to one per animation frame', () => {
-        // updateReasoningPreview 会启动每秒一次的 setInterval 计时器，
-        // 与文件中其他用例一致使用 fake timers，不依赖环境是否暴露真实计时器全局变量
-        jest.useFakeTimers();
-        const originalRaf = globalThis.requestAnimationFrame;
-        const originalCaf = globalThis.cancelAnimationFrame;
-        const rafCallbacks = new Map<number, FrameRequestCallback>();
-        let nextRafId = 1;
-        globalThis.requestAnimationFrame = (cb: FrameRequestCallback) => {
-            const id = nextRafId;
-            nextRafId += 1;
-            rafCallbacks.set(id, cb);
-            return id;
+    test('minimal mode keeps rapid reasoning updates in one collapsed expandable process segment', () => {
+        const taskView = document.createElement('task-view') as HTMLElement & {
+            task_id: string;
+            _assistantPartsByMessage: Map<string, Array<{ rendered: string }>>;
+            _renderAssistantProgress: (progress: Record<string, unknown>, historyContainer: HTMLElement) => boolean;
         };
-        globalThis.cancelAnimationFrame = (id: number) => {
-            rafCallbacks.delete(id);
-        };
+        taskView.task_id = 'task-1';
+        taskView.innerHTML = '<div id="taskview-chat-history"></div>';
+        const historyContainer = taskView.querySelector('#taskview-chat-history') as HTMLElement;
 
-        try {
-            const TaskViewClass = customElements.get('task-view') as any;
-            const taskView = document.createElement('task-view') as HTMLElement & {
-                task_id: string;
-                _renderAssistantProgress: (progress: Record<string, unknown>, historyContainer: HTMLElement) => boolean;
-            };
-            taskView.task_id = 'task-1';
-            taskView.innerHTML = '<div id="taskview-chat-history"></div>';
-            const historyContainer = taskView.querySelector('#taskview-chat-history') as HTMLElement;
-
-            // Stream several reasoning tokens in quick succession (the "thinking" phase).
-            for (let i = 1; i <= 5; i += 1) {
-                taskView._renderAssistantProgress(
-                    {
-                        task_status: 'running',
-                        message_id: 'assistant-1',
-                        last_part_index: 0,
-                        last_part: { type: 'reasoning', rendered: `reasoning token ${i} ` }
-                    },
-                    historyContainer
-                );
-            }
-
-            const reasoningContent = taskView.querySelector('.reasoning-preview-content');
-            const reasoningFullContent = taskView.querySelector('.reasoning-content');
-            expect(reasoningContent).not.toBeNull();
-            // No frame has fired yet, so the DOM must not have been written once per token.
-            expect(reasoningContent?.textContent).toBe('');
-            // All five tokens were coalesced into a single pending animation frame.
-            expect(rafCallbacks.size).toBe(1);
-
-            // Flush the frame: only the latest text is applied, once.
-            Array.from(rafCallbacks.values()).forEach((cb) => cb(0));
-            rafCallbacks.clear();
-            expect(reasoningContent?.textContent).toBe('reasoning token 5 ');
-            // 全文节点折叠期间跳写（由 finalize 一次性回填）
-            expect(reasoningFullContent?.textContent).toBe('');
-
-            // Finalizing flushes a pending update synchronously (no frame required).
+        for (let i = 1; i <= 5; i += 1) {
             taskView._renderAssistantProgress(
                 {
                     task_status: 'running',
                     message_id: 'assistant-1',
                     last_part_index: 0,
-                    last_part: { type: 'reasoning', rendered: 'reasoning token 6 ' }
+                    last_part: { type: 'reasoning', rendered: `reasoning token ${i} ` }
                 },
                 historyContainer
             );
-            expect(rafCallbacks.size).toBe(1);
-
-            const block = taskView.querySelector('.reasoning-block-od') as HTMLElement;
-            TaskViewClass.finalizeReasoningBlock(block);
-            expect(rafCallbacks.size).toBe(0);
-            expect(reasoningContent?.textContent).toBe('reasoning token 6 ');
-        } finally {
-            globalThis.requestAnimationFrame = originalRaf;
-            globalThis.cancelAnimationFrame = originalCaf;
-            restoreRealTimerGlobals();
         }
+
+        expect(taskView.querySelectorAll('.od-running-status')).toHaveLength(1);
+        expect(taskView.querySelectorAll('.od-process-segment')).toHaveLength(0);
+        expect(taskView.querySelector('[data-running-output-toggle]')?.getAttribute('aria-expanded')).toBe('false');
+        expect(taskView._assistantPartsByMessage.get('assistant-1')?.[0].rendered).toBe('reasoning token 5 ');
     });
 
-    test('reasoning preview keeps advancing when animation frames are suspended (background throttling)', () => {
-        // 复现：窗口最小化/后台时 requestAnimationFrame 暂停触发，但 setInterval 仍在走，
-        // 导致标题栏字数在变、内容预览却冻结。内容更新必须有独立于 RAF 的兜底节流。
-        jest.useFakeTimers();
+    test('minimal reasoning state does not depend on animation frames while backgrounded', () => {
         const originalRaf = globalThis.requestAnimationFrame;
-        const originalCaf = globalThis.cancelAnimationFrame;
-        // RAF 挂起：回调只排队、从不执行（模拟 Electron backgroundThrottling）。
-        const rafCallbacks = new Map<number, FrameRequestCallback>();
-        let nextRafId = 1;
-        globalThis.requestAnimationFrame = (cb: FrameRequestCallback) => {
-            const id = nextRafId;
-            nextRafId += 1;
-            rafCallbacks.set(id, cb);
-            return id;
-        };
-        globalThis.cancelAnimationFrame = (id: number) => {
-            rafCallbacks.delete(id);
-        };
-
+        globalThis.requestAnimationFrame = () => 1;
         try {
-            const TaskViewClass = customElements.get('task-view') as any;
             const taskView = document.createElement('task-view') as HTMLElement & {
                 task_id: string;
+                _assistantPartsByMessage: Map<string, Array<{ rendered: string }>>;
                 _renderAssistantProgress: (progress: Record<string, unknown>, historyContainer: HTMLElement) => boolean;
             };
             taskView.task_id = 'task-1';
             taskView.innerHTML = '<div id="taskview-chat-history"></div>';
             const historyContainer = taskView.querySelector('#taskview-chat-history') as HTMLElement;
 
-            taskView._renderAssistantProgress(
-                {
-                    task_status: 'running',
-                    message_id: 'assistant-1',
-                    last_part_index: 0,
-                    last_part: { type: 'reasoning', rendered: 'reasoning v1 ' }
-                },
-                historyContainer
-            );
-
-            const reasoningContent = taskView.querySelector('.reasoning-preview-content') as HTMLElement;
-            expect(reasoningContent).not.toBeNull();
-            // RAF 全程挂起：未到兜底时间前不更新。
-            expect(reasoningContent.textContent).toBe('');
-
-            // 推进兜底定时器：即使 RAF 从不触发，内容也必须推进。
-            jest.advanceTimersByTime(1000);
-            expect(reasoningContent.textContent).toBe('reasoning v1 ');
-
-            // 持续流式更新，RAF 仍挂起：内容应继续推进，而不是冻结在旧状态。
             taskView._renderAssistantProgress(
                 {
                     task_status: 'running',
@@ -2881,15 +2805,14 @@ describe('task-view message queue', () => {
                 },
                 historyContainer
             );
-            jest.advanceTimersByTime(1000);
-            expect(reasoningContent.textContent).toBe('reasoning v1 reasoning v2 ');
 
-            // 挂起的 RAF 回调应当已被取消，不会在恢复后重复写 DOM。
-            expect(rafCallbacks.size).toBe(0);
+            expect(taskView.querySelectorAll('.od-running-status')).toHaveLength(1);
+            expect(taskView.querySelectorAll('.od-process-segment')).toHaveLength(0);
+            expect(taskView._assistantPartsByMessage.get('assistant-1')?.[0].rendered).toBe(
+                'reasoning v1 reasoning v2 '
+            );
         } finally {
             globalThis.requestAnimationFrame = originalRaf;
-            globalThis.cancelAnimationFrame = originalCaf;
-            restoreRealTimerGlobals();
         }
     });
 

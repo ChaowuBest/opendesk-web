@@ -21,11 +21,12 @@ import { ElectronAskUserProvider } from '../main/aikernel/interaction/electronAs
 import { ElectronExitPlanModeProvider } from '../main/aikernel/interaction/electronExitPlanMode.js';
 import { createInteractionToolset } from '../main/aikernel/interaction/tools.js';
 import { switchTaskMode } from '../main/aikernel/task/mode.js';
+import { serializeTaskUpdateForRender } from '../main/aikernel/task/update-render.js';
 import { resolveNativeBridge } from './bridges/main.js';
 import type { NativeBridge } from './bridges/common.js';
 import { electron } from '../utils/electron.js';
 import { safeSendToWebContents, safeSendToWebFrame } from '../main/utils/electron-ipc.js';
-import { isHostInNoProxy, resolveProxyUrl } from '../main/utils/proxy.js';
+import { isHostInNoProxy } from '../main/utils/proxy.js';
 import { getHarmonyOSSystemProxy } from './bridges/harmonyos/proxy.js';
 import { Setting } from '../main/utils/setting.js';
 import type { PlatformFetchOptions } from './base.js';
@@ -123,7 +124,11 @@ export class ElectronTaskUpdateSubscriber extends BaseTaskUpdateSubscriber {
      * @param chunkUpdate the chunk update to send
      */
     send(chunkUpdate: TaskUpdateChunk) {
-        safeSendToWebFrame(this.senderFrame, `taskManager:taskUpdate:${this.subscription_id}`, chunkUpdate);
+        safeSendToWebFrame(
+            this.senderFrame,
+            `taskManager:taskUpdate:${this.subscription_id}`,
+            serializeTaskUpdateForRender(chunkUpdate)
+        );
     }
 }
 

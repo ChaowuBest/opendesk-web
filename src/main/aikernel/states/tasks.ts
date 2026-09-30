@@ -2401,6 +2401,11 @@ export class TaskState {
             return;
         }
 
+        if (last_message instanceof AssistantMessage && this.task_status !== 'running' && this.needsHtmlRender) {
+            await this.sendAssistantMessageReplace(last_message);
+            return;
+        }
+
         this.retainAvailableTaskUpdateSubscribers('subscription feedback');
         if (this.subscribers.length === 0) return;
 
@@ -2444,7 +2449,11 @@ export class TaskState {
                     );
                     return;
                 }
-                if (this.needsHtmlRender) {
+                const streaming =
+                    this.task_status === 'running' &&
+                    updated_part_index === content.length - 1 &&
+                    (last_part.type === 'text' || last_part.type === 'reasoning');
+                if (this.needsHtmlRender && !streaming) {
                     await last_part.render();
                 }
                 chunkUpdate = {
@@ -2454,6 +2463,7 @@ export class TaskState {
                     message_id: last_message.message_id,
                     last_part_index: updated_part_index,
                     last_part: last_part,
+                    streaming: streaming || undefined,
                     provisional: last_message.isImplicitThinkCandidatePart(updated_part_index)
                         ? 'implicit_think_close_candidate'
                         : undefined,

@@ -19,6 +19,8 @@ export interface TextFieldDef {
     label: string;
     value: string;
     visible?: boolean;
+    disabled?: boolean;
+    disabledHint?: string;
 }
 
 export interface BooleanFieldDef {
@@ -27,6 +29,8 @@ export interface BooleanFieldDef {
     label: string;
     value: boolean;
     visible?: boolean;
+    disabled?: boolean;
+    disabledHint?: string;
 }
 
 export interface SelectFieldDef {
@@ -38,6 +42,8 @@ export interface SelectFieldDef {
     /** 可选的显示标签映射，key 为 option value，value 为显示文本 */
     optionLabels?: Record<string, string>;
     visible?: boolean;
+    disabled?: boolean;
+    disabledHint?: string;
 }
 
 export type FieldDef = TextFieldDef | BooleanFieldDef | SelectFieldDef;
@@ -49,8 +55,24 @@ export interface ActionDef {
 }
 
 type FormItem =
-    | { type: 'text'; key: string; label: string; input: Input; visible?: boolean }
-    | { type: 'boolean'; key: string; label: string; value: boolean; visible?: boolean }
+    | {
+          type: 'text';
+          key: string;
+          label: string;
+          input: Input;
+          visible?: boolean;
+          disabled?: boolean;
+          disabledHint?: string;
+      }
+    | {
+          type: 'boolean';
+          key: string;
+          label: string;
+          value: boolean;
+          visible?: boolean;
+          disabled?: boolean;
+          disabledHint?: string;
+      }
     | {
           type: 'select';
           key: string;
@@ -59,8 +81,17 @@ type FormItem =
           options: string[];
           optionLabels?: Record<string, string>;
           visible?: boolean;
+          disabled?: boolean;
+          disabledHint?: string;
       }
-    | { type: 'action'; key: string; label: string; style: string; visible?: boolean };
+    | {
+          type: 'action';
+          key: string;
+          label: string;
+          style: string;
+          visible?: boolean;
+          disabled?: false;
+      };
 
 /**
  * 可复用的配置表单组件。
@@ -98,14 +129,24 @@ export class ConfigForm implements Component {
                 const input = new Input();
                 input.setValue(field.value);
                 input.onSubmit = () => this.moveToNext();
-                this.items.push({ type: 'text', key: field.key, label: field.label, input, visible: field.visible });
+                this.items.push({
+                    type: 'text',
+                    key: field.key,
+                    label: field.label,
+                    input,
+                    visible: field.visible,
+                    disabled: field.disabled,
+                    disabledHint: field.disabledHint
+                });
             } else if (field.type === 'boolean') {
                 this.items.push({
                     type: 'boolean',
                     key: field.key,
                     label: field.label,
                     value: field.value,
-                    visible: field.visible
+                    visible: field.visible,
+                    disabled: field.disabled,
+                    disabledHint: field.disabledHint
                 });
             } else if (field.type === 'select') {
                 this.items.push({
@@ -115,7 +156,9 @@ export class ConfigForm implements Component {
                     value: field.value,
                     options: [...field.options],
                     optionLabels: field.optionLabels,
-                    visible: field.visible
+                    visible: field.visible,
+                    disabled: field.disabled,
+                    disabledHint: field.disabledHint
                 });
             }
         }
@@ -163,6 +206,10 @@ export class ConfigForm implements Component {
 
         const item = this.items[this.activeIndex];
 
+        if (item.disabled) {
+            return { consume: true };
+        }
+
         if (item.type === 'text') {
             return undefined;
         }
@@ -209,7 +256,10 @@ export class ConfigForm implements Component {
 
     private moveToNext() {
         let nextIndex = this.activeIndex + 1;
-        while (nextIndex < this.items.length && this.items[nextIndex].visible === false) {
+        while (
+            nextIndex < this.items.length &&
+            (this.items[nextIndex].visible === false || this.items[nextIndex].disabled === true)
+        ) {
             nextIndex++;
         }
         if (nextIndex < this.items.length) {
@@ -220,7 +270,7 @@ export class ConfigForm implements Component {
 
     private moveToPrev() {
         let prevIndex = this.activeIndex - 1;
-        while (prevIndex >= 0 && this.items[prevIndex].visible === false) {
+        while (prevIndex >= 0 && (this.items[prevIndex].visible === false || this.items[prevIndex].disabled === true)) {
             prevIndex--;
         }
         if (prevIndex >= 0) {
@@ -264,6 +314,13 @@ export class ConfigForm implements Component {
         for (const key of keys) {
             this.setItemVisible(key, visible);
         }
+    }
+
+    setItemDisabled(key: string, disabled: boolean, disabledHint?: string) {
+        const item = this.items.find((candidate) => candidate.key === key);
+        if (!item || item.type === 'action') return;
+        item.disabled = disabled;
+        item.disabledHint = disabledHint;
     }
 
     invalidate() {}
@@ -322,6 +379,11 @@ export class ConfigForm implements Component {
     }
 
     private renderBooleanField(lines: string[], item: FormItem & { type: 'boolean' }, active: boolean) {
+        if (item.disabled) {
+            const hint = item.disabledHint ? ` · ${item.disabledHint}` : '';
+            lines.push(`  ${chalk.dim(item.label)}: ${chalk.dim(t('config.common.no') + hint)}`);
+            return;
+        }
         const indicator = active ? chalk.cyan('❯ ') : '  ';
         const label = active ? chalk.cyan(item.label) : chalk.dim(item.label);
         const value = item.value ? chalk.green(t('config.common.yes')) : chalk.red(t('config.common.no'));
@@ -329,6 +391,12 @@ export class ConfigForm implements Component {
     }
 
     private renderSelectField(lines: string[], item: FormItem & { type: 'select' }, active: boolean) {
+        if (item.disabled) {
+            const displayValue = item.optionLabels?.[item.value] ?? (item.value || t('config.common.unselected'));
+            const hint = item.disabledHint ? ` · ${item.disabledHint}` : '';
+            lines.push(`  ${chalk.dim(item.label)}: ${chalk.dim(displayValue + hint)}`);
+            return;
+        }
         const indicator = active ? chalk.cyan('❯ ') : '  ';
         const label = active ? chalk.cyan(item.label) : chalk.dim(item.label);
         const displayValue = item.optionLabels?.[item.value] ?? (item.value || t('config.common.unselected'));

@@ -31,6 +31,7 @@ import { getShellCompletions, executeShellCommand } from './shell';
 import { findExecutableInPath } from '../../utils/shellExec.js';
 import { SkillRegistry as AISkillRegistry } from '../../aikernel/skill';
 import { t } from '../../../locale/index.js';
+import type { OutputDisplayLevel } from '../display.js';
 
 type AgentInputStatus = 'idle' | 'running';
 type AutocompleteOptions = Parameters<AutocompleteProvider['getSuggestions']>[3];
@@ -45,6 +46,8 @@ export interface TaskStatusBarData {
     modeDisplay?: string;
     /** 当前模式的颜色 (如 '#00E5FF') */
     modeColor?: string;
+    /** 当前任务的输出显示模式 */
+    outputDisplayLevel?: OutputDisplayLevel;
     /**
      * 任务名称，用于在状态栏右侧显示。
      * - undefined: 没有活跃任务，显示"新任务"
@@ -174,6 +177,7 @@ export class TaskStatusBar implements Component {
             shellMode,
             modeDisplay,
             modeColor,
+            outputDisplayLevel,
             taskName,
             workspace
         } = this.data;
@@ -186,6 +190,12 @@ export class TaskStatusBar implements Component {
         if (modeDisplay) {
             const colorFn = modeColor ? chalk.hex(modeColor) : chalk.hex(colors.fg);
             leftCells.push({ text: colorFn(modeDisplay) });
+        }
+
+        if (outputDisplayLevel) {
+            leftCells.push({
+                text: chalk.hex(colors.fgDim)(t(`display.level.${outputDisplayLevel}`))
+            });
         }
 
         if (shellMode) {

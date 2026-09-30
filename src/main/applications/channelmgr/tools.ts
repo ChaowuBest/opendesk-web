@@ -401,6 +401,11 @@ export class LoginChannelTool extends BaseTool<typeof LoginChannelSchema> {
         this.setUniversalExecutor(this.run.bind(this));
     }
 
+    requiresUserAttention(toolcall: ToolCall): boolean {
+        const phase = (toolcall.result_object as LoginChannelState | undefined)?.phase;
+        return phase === 'generating_qr' || phase === 'polling';
+    }
+
     async renderToolCall(toolcall: ToolCall): Promise<string | undefined> {
         const state = toolcall.result_object as LoginChannelState | undefined;
         if (!state) return undefined;
@@ -579,6 +584,11 @@ export class CreateFeishuBotTool extends BaseTool<typeof CreateFeishuBotSchema> 
             CreateFeishuBotSchema
         );
         this.setUniversalExecutor(this.run.bind(this));
+    }
+
+    requiresUserAttention(toolcall: ToolCall): boolean {
+        const phase = (toolcall.result_object as FeishuBotToolState | undefined)?.phase;
+        return phase === 'qr_code' || phase === 'polling';
     }
 
     // ── Electron 渲染 ─────────────────────────────────────────────────────

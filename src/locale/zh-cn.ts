@@ -724,7 +724,7 @@ export const zhCn: Record<string, string> = {
 
     // Commands - Reason
     'reason.description':
-        '调整思考强度，用法: /reason effort [default|none|low|medium|high|max] | display [full|partial]',
+        '调整思考强度和显示方式，用法: /reason effort [default|none|low|medium|high|max] | display [full|partial]',
     'reason.effort.description': '设置推理深度',
     'reason.display.description': '设置思考显示模式',
     'reason.display.full': '完整显示',
@@ -743,6 +743,8 @@ export const zhCn: Record<string, string> = {
     'reason.error.no.model': '未设置默认模型。请先在设置中配置模型。',
     'reason.error.invalid.effort': '无效的推理深度: ${value}\n有效值: default, none, low, medium, high, max',
     'reason.error.invalid.display': '无效的显示模式: ${value}\n有效值: full, partial',
+    'reason.error.full.requires.output':
+        '当前任务处于极简输出模式，无法设置完整思考显示。请先执行 /display verbose 或按 ${shortcut} 切换为详细输出。',
     'reason.error.specify.effort': '请指定推理深度: /reason effort [default|none|low|medium|high|max]',
     'reason.error.specify.display': '请指定显示模式: /reason display [full|partial]',
     'reason.error.unknown': '未知子命令: ${subcmd}\n可用: effort, display',
@@ -819,6 +821,7 @@ export const zhCn: Record<string, string> = {
 
     // Input StatusBar
     'input.statusbar.switchmode': '切换模式',
+    'input.statusbar.switchDisplay': '切换显示',
     'input.statusbar.help': '帮助',
 
     // Help Command
@@ -983,9 +986,13 @@ export const zhCn: Record<string, string> = {
     // Config - Display
     'config.display.title': '显示设置',
     'config.display.title.hint': '配置 CLI 显示行为',
+    'config.display.field.output_display': '输出显示',
+    'config.display.option.output_display.minimal': '极简模式',
+    'config.display.option.output_display.verbose': '详细模式',
     'config.display.field.reason_display': '推理显示',
-    'config.display.option.reason_display.full': '完整推理内容 (full)',
-    'config.display.option.reason_display.partial': '仅显示最新部分 (partial)',
+    'config.display.option.reason_display.full': '完整推理内容（full）',
+    'config.display.option.reason_display.partial': '部分推理内容（partial）',
+    'config.display.reason_display.unavailable': '极简模式下不可用',
 
     // Config - Network
     'config.network.title': '网络设置',
@@ -1205,7 +1212,23 @@ export const zhCn: Record<string, string> = {
     'reasoning.elapsed.chars': ' · 输出 ${chars} 词',
     'reasoning.show.content': '显示思考内容',
     'reasoning.hide.content': '收起',
-    'reasoning.partial.hint': '…… (使用 /reason display full 来显示完整思考内容)',
+    'reasoning.partial.hint': '……（使用 /reason display full 可显示完整思考）',
+    'display.level.minimal': '极简显示',
+    'display.level.verbose': '详细显示',
+    'display.command.description': '设置当前任务的 TUI 输出显示',
+    'display.command.title': '输出显示',
+    'display.command.usage': '用法: /display minimal|verbose',
+    'display.minimal.running.reading': '正在读取 `${path}`…',
+    'display.minimal.running.tool': '正在执行 ${tool}…',
+    'display.minimal.running.thinking': '正在思考…',
+    'display.minimal.running.waiting': '正在生成回复…',
+    'display.minimal.tools.summary.reasoning': '深度思考',
+    'display.minimal.tools.summary.combined': '${reasoning} · ${tools}',
+    'display.minimal.tools.summary.listSeparator': '、',
+    'display.minimal.tools.summary.usedTools.one': '使用了 ${tools} 等 ${count}个工具',
+    'display.minimal.tools.summary.usedTools.many': '使用了 ${tools} 等 ${count}个工具',
+    'display.minimal.complete.label': '完成',
+    'display.minimal.failed.label': '失败',
 
     // Compact Boundary
     'compact.boundary.loading': '正在压缩上下文...',
@@ -1247,6 +1270,7 @@ export const zhCn: Record<string, string> = {
 
     // Shortcuts
     'shortcut.switch_mode': '模式切换',
+    'shortcut.output_display': '输出显示切换',
     'shortcut.switch_model': '模型切换',
     'shortcut.endline': '回车换行',
     'shortcut.show_help': '打开帮助',
@@ -1630,6 +1654,9 @@ export const zhCn: Record<string, string> = {
     'sp.general.reasoningDisplay': '思考内容显示',
     'sp.general.reasoningDisplay.inline': '内联式',
     'sp.general.reasoningDisplay.bubble': '气泡式',
+    'sp.general.outputMode': '输出模式',
+    'sp.general.outputMode.minimal': '极简模式',
+    'sp.general.outputMode.verbose': '详细模式',
     'sp.general.displaySize': '显示大小',
     'sp.general.inputSettings': '输入设置',
     'sp.general.sendShortcut': '发送快捷键',
@@ -2406,6 +2433,17 @@ export const zhCn: Record<string, string> = {
     'renderer.taskview.toolbar.export': '导出',
     'renderer.taskview.toolbar.panel': '面板',
     'renderer.taskview.toolbar.title': '智能体对话',
+    'renderer.taskview.output.deepReasoning': '深度思考',
+    'renderer.taskview.output.processSummary': '查看过程信息',
+    'renderer.taskview.output.processSummary.combined': '${reasoning} · ${tools}',
+    'renderer.taskview.output.processSummary.listSeparator': '、',
+    'renderer.taskview.output.processSummary.usedTools': '调用了${tools}等 ${count}个工具',
+    'renderer.taskview.output.tool': '工具',
+    'renderer.taskview.output.finalResult': '最终结果',
+    'renderer.taskview.output.completedProcess': '查看过程',
+    'renderer.taskview.output.status.thinking': '正在思考…',
+    'renderer.taskview.output.status.tool': '正在调用 ${name}…',
+    'renderer.taskview.output.status.working': '正在执行任务…',
     'renderer.taskview.quickpass.scope.all': '全部设置（含应用配置）',
     'renderer.taskview.quickpass.scope.base': '基础设置（不含应用配置）',
     'renderer.taskview.quickpass.settingsTitle': '设置',

@@ -23,6 +23,49 @@ const validationTranslations: Record<string, Record<string, string>> = {
     'en-US': enUs
 };
 
+const toolDisplayNamePrefixes: Record<string, readonly string[]> = {
+    filemgr: ['filemgr'],
+    interaction: ['tools'],
+    memory: ['tools.memory'],
+    planning: ['tools'],
+    search: ['search'],
+    'task-info': ['tools'],
+    user_portrait: ['tools.memory']
+};
+
+const toolDisplayNameAliases: Record<string, string> = {
+    'knowledgebase-operate:askKnowledgeBase': 'search.kb.ask.name',
+    'knowledgebase-operate:retrieveFromKnowledgeBase': 'search.kb.retrieve.name',
+    'mailbox:searchEmails': 'search.email.name'
+};
+
+function hasToolDisplayName(key: string): boolean {
+    return Boolean(validationTranslations['zh-CN'][key] && validationTranslations['en-US'][key]);
+}
+
+function resolveExistingToolDisplayNameKey(toolsetName: string, toolName: string): string | undefined {
+    const alias = toolDisplayNameAliases[toolsetName + ':' + toolName];
+    if (alias && hasToolDisplayName(alias)) return alias;
+
+    const prefixes = toolDisplayNamePrefixes[toolsetName] ?? [];
+    const stems = new Set([toolName, toolName.charAt(0).toLowerCase() + toolName.slice(1), toolName.toLowerCase()]);
+    for (const suffix of ['Files', 'Memory', 'Search']) {
+        if (toolName.endsWith(suffix) && toolName.length > suffix.length) {
+            const stem = toolName.slice(0, -suffix.length);
+            stems.add(stem);
+            stems.add(stem.charAt(0).toLowerCase() + stem.slice(1));
+        }
+    }
+
+    for (const prefix of prefixes) {
+        for (const stem of stems) {
+            const key = prefix + '.' + stem + '.name';
+            if (hasToolDisplayName(key)) return key;
+        }
+    }
+    return undefined;
+}
+
 function getToolValidationLocale(): string {
     const navigatorLanguages =
         typeof globalThis.navigator !== 'undefined' && Array.isArray(globalThis.navigator.languages)
@@ -190,6 +233,8 @@ export class ToolResult implements ToolResultWriter {
 
 export class BaseTool<T extends z.ZodType> {
     name: string;
+    /** Locale key for the tool's canonical user-facing name. */
+    displayNameKey?: string;
     description: string;
     params: T;
     /**
@@ -215,8 +260,9 @@ export class BaseTool<T extends z.ZodType> {
     private jsonSchemaCache?: Record<string, any>;
     private jsonSchemaCacheSource?: z.ZodType;
 
-    constructor(name: string, description: string, params: T) {
+    constructor(name: string, description: string, params: T, displayNameKey?: string) {
         this.name = name;
+        this.displayNameKey = displayNameKey;
         this.description = description;
         this.params = params;
         this.executor = undefined;
@@ -240,6 +286,7 @@ export class BaseTool<T extends z.ZodType> {
     toJSON() {
         return {
             name: this.name,
+            displayNameKey: this.displayNameKey,
             description: this.description,
             params: this.getJsonSchema(),
             agentIds: this.agentIds
@@ -250,7 +297,8 @@ export class BaseTool<T extends z.ZodType> {
         const tool = new BaseTool(
             jsonObject['name'],
             jsonObject['description'],
-            z.fromJSONSchema(jsonObject['params'])
+            z.fromJSONSchema(jsonObject['params']),
+            jsonObject['displayNameKey']
         );
         tool.agentIds = Array.isArray(jsonObject['agentIds']) ? jsonObject['agentIds'] : undefined;
         return tool;
@@ -306,6 +354,15 @@ export class BaseTool<T extends z.ZodType> {
      * 返回 string[] 表示渲染后的行，返回 undefined 则使用默认渲染。
      */
     renderToolCallCli(toolcall: ToolCall, width: number): string[] | undefined {
+        return undefined;
+    }
+
+    /**
+     * 当前工具调用是否正在等待用户关注。
+     * 返回 true 时，极简模式会在运行期间保留工具的自定义渲染。
+     * 返回 false 表示明确不需要关注；返回 undefined 则交由 ToolCall 的兼容推断处理。
+     */
+    requiresUserAttention(_toolcall: ToolCall): boolean | undefined {
         return undefined;
     }
 
@@ -426,6 +483,7 @@ export class BaseToolset<T extends BaseTool<any> = BaseTool<any>> {
      * Add a tool to the toolset
      */
     addTool(tool: T) {
+        tool.displayNameKey ??= resolveExistingToolDisplayNameKey(this.name, tool.name);
         this.tools.set(tool.name, tool);
     }
 

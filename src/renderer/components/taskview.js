@@ -23,6 +23,7 @@ import { showConfirmModal } from './confirmModal.ts';
 import './skills/skill-detail-card.ts';
 import { enhanceCodeBlocks, enhanceToolPreviewCards, renderMermaidBlocks } from './previewer.ts';
 import { escapeHtml } from '../../common/utils/escape.js';
+import { resolveToolDisplayName } from '../../common/tool-display-name.js';
 import { getSafeWebUrl } from '../../common/web-link.js';
 import { normalizeDriveRootPath } from '../../common/utils/path.js';
 import { createRendererTranslator } from '../locale.ts';
@@ -47,6 +48,13 @@ const EXPORT_WEBPAGE_SVG =
     '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M12 2a14.5 14.5 0 0 0 0 20 14.5 14.5 0 0 0 0-20"/><path d="M2 12h20"/></svg>';
 const EXPORT_JSON_SVG =
     '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6"/><path d="M10 11c-.6 0-1 .4-1 1v1c0 .6-.4 1-1 1 .6 0 1 .4 1 1v1c0 .6.4 1 1 1"/><path d="M14 11c.6 0 1 .4 1 1v1c0 .6.4 1 1 1-.6 0-1 .4-1 1v1c0 .6-.4 1-1 1"/></svg>';
+
+const RUNNING_TOOL_ICON_SVG =
+    '<svg class="lucide lucide-wrench od-running-status-tool-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94L14.7 6.3z"/></svg>';
+const RUNNING_THINKING_ICON_SVG =
+    '<svg class="lucide lucide-lightbulb od-running-status-thinking-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 18h6"/><path d="M10 22h4"/><path d="M15.09 14c.18-.68.66-1.17 1.16-1.75A6 6 0 1 0 7.75 12.25c.48.56.97 1.07 1.16 1.75"/></svg>';
+const CHEVRON_RIGHT_ICON_SVG =
+    '<svg class="lucide lucide-chevron-right" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 18l6-6-6-6"/></svg>';
 
 const COPY_ICON_SVG =
     '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect width="14" height="14" x="8" y="8" rx="2" ry="2"/><path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2"/></svg>';
@@ -86,6 +94,13 @@ import {
 } from '../../common/goal/user-message-display.ts';
 import { WORKSPACE_FOCUS_LAYOUT_CHANGE_EVENT, WorkspaceFocusLayoutController } from './workspaceFocusLayout.js';
 import { listenForAgentInputRequests } from '../input/agentInputRequest.js';
+import {
+    buildAssistantOutputItems,
+    getDefaultExpanded,
+    getVisibleAssistantOutputItems,
+    normalizeGuiOutputMode,
+    normalizeGuiReasonDisplayMode
+} from './taskview-output.js';
 
 const DANGEROUS_TAGS = new Set(['STYLE', 'SCRIPT', 'LINK', 'META', 'IFRAME', 'OBJECT', 'EMBED', 'APPLET', 'BASE']);
 const BROWSER_IDLE_TIMEOUT_MS = 5 * 60 * 1000;
@@ -94,15 +109,25 @@ export const TASKVIEW_HISTORY_BATCH_MESSAGE_LIMIT = 20;
 export const TASKVIEW_HISTORY_BATCH_HTML_CHAR_LIMIT = 200000;
 const TASKVIEW_HISTORY_TOP_LOAD_THRESHOLD_PX = 96;
 const TASKVIEW_HISTORY_VIEWPORT_FILL_GUARD = 8;
+const PROCESS_INNER_SCROLL_BOTTOM_THRESHOLD_PX = 24;
 // 流式思考预览只保留尾部切片：全文每帧重写的布局/文本成本会随思考长度线性膨胀，
 // 是长任务下渲染进程 CPU 飙高的主因之一。
 const TASKVIEW_REASONING_PREVIEW_TAIL_CHARS = 2000;
 let taskViewT = createRendererTranslator();
+let guiOutputMode = 'minimal';
 let guiReasonDisplayMode = 'inline';
 
 function updateTaskViewTranslator(setting) {
     taskViewT = createRendererTranslator(setting);
-    guiReasonDisplayMode = setting?.gui_config?.gui_reason_display || 'inline';
+    const nextOutputMode = normalizeGuiOutputMode(setting?.gui_config?.output_mode);
+    const nextReasonDisplayMode = normalizeGuiReasonDisplayMode(setting?.gui_config?.gui_reason_display);
+    const outputModeChanged = nextOutputMode !== guiOutputMode;
+    const reasonDisplayModeChanged = nextReasonDisplayMode !== guiReasonDisplayMode;
+    guiOutputMode = nextOutputMode;
+    guiReasonDisplayMode = nextReasonDisplayMode;
+    if (outputModeChanged || reasonDisplayModeChanged) {
+        document.querySelectorAll('task-view').forEach((view) => view._handleGuiDisplaySettingsChanged?.());
+    }
 }
 
 void window.settingAPI
@@ -344,6 +369,10 @@ class TaskView extends HTMLElement {
         });
         /** @type {number | null} 节流滚动的 rAF id */
         this._scrollRafId = null;
+        /** @type {number | null} 节流过程区内部滚动的 rAF id */
+        this._processScrollFollowRafId = null;
+        /** @type {Map<string, {root: HTMLElement, targetKey: string}>} */
+        this._pendingProcessScrollFollowTargets = new Map();
         /** @type {BrowserPip | null} 浏览器画中画浮窗 */
         this._browserPip = null;
         /** @type {number | null} 浏览器空闲销毁倒计时 */
@@ -354,10 +383,22 @@ class TaskView extends HTMLElement {
         this._immediateQueueSending = false;
         /** @type {Map<string, Set<number>>} 跟踪已渲染的用户消息 part（message_id → part_index 集合），防止重复渲染 */
         this._renderedUserParts = new Map();
+        /** @type {Map<string, Array<object>>} 增量消息的完整 part 快照。 */
+        this._assistantPartsByMessage = new Map();
+        /** @type {Map<string, {isRunning: boolean}>} assistant 输出重绘所需的渲染状态。 */
+        this._assistantRenderStateByMessage = new Map();
+        /** @type {Map<string, Map<string, boolean>>} 模式切换期间不可见 disclosure 的展开状态。 */
+        this._assistantDisclosureStateByMessage = new Map();
+        /** @type {Map<string, boolean>} 极简运行态是否展开了当前消息的执行过程。 */
+        this._assistantRunningDetails = new Map();
         /** @type {boolean} 是否正在执行 reload()，用于暂停订阅回调的 DOM 操作 */
         this._reloading = false;
         /** @type {number} reload 版本号，用于丢弃过期 reload 的后续操作 */
         this._reloadVersion = 0;
+        /** @type {Array<object>} reload 重建 DOM 期间到达、待重放的任务更新。 */
+        this._deferredTaskUpdates = [];
+        /** @type {((progress: object) => void) | null} 当前订阅的统一更新处理器。 */
+        this._taskUpdateHandler = null;
         /** @type {Array<object>} 当前任务的完整持久化消息列表，DOM 只渲染其中的尾部窗口。 */
         this._historyMessages = [];
         /** @type {Array<object>} 当前任务持久化的 goal evaluation 记录，用 message anchor 插入历史上下文。 */
@@ -656,18 +697,6 @@ class TaskView extends HTMLElement {
         text: 'bg-transparent markdown-body'
     };
 
-    static ASSISTANT_PART_CLASS_MAP = {
-        text: 'py-1.5 bg-transparent markdown-body',
-        reasoning: '',
-        tool_call: ''
-    };
-
-    /**
-     * 流式 reasoning 内容更新的兜底节流间隔。
-     * RAF 在页面不可见/窗口后台时（Electron backgroundThrottling）会暂停触发，
-     * 若只依赖 RAF，思考内容会在后台长时间冻结（标题栏秒数/字数却仍在走）。
-     * 兜底定时器以该间隔强制推进内容，保证「已思考字数在涨、渲染内容不动」不再发生。
-     */
     static REASONING_UPDATE_FALLBACK_MS = 250;
 
     static SPINNER_SVG = `<i class="fa-solid fa-circle-notch fa-spin"></i>`;
@@ -812,79 +841,8 @@ class TaskView extends HTMLElement {
     }
 
     /**
-     * Create reasoning block HTML in inline-tool style.
-     * @param {string} rendered - Reasoning text content
-     * @param {boolean} isStreaming - Whether the reasoning is currently being streamed
-     */
-    static createReasoningPartHtml(rendered, isStreaming = false, elapsedSeconds = null) {
-        const escaped = escapeHtml(rendered || '');
-        const title = escapeHtml(taskViewT('reasoning.card.title'));
-        const stateClass = isStreaming ? 'reasoning-active' : 'reasoning-completed';
-
-        // During streaming: icon breathes with gradient to indicate active thinking
-        const iconBreathClass = isStreaming ? ' reasoning-icon-breathing' : '';
-
-        // Pre-fill elapsed time for completed (e.g. historical) reasoning blocks
-        const chars = (rendered || '').length;
-        const timeText =
-            !isStreaming && elapsedSeconds != null ? `（${formatReasoningElapsedTime(elapsedSeconds, chars)}）` : '';
-
-        const isBubble = guiReasonDisplayMode === 'bubble';
-
-        if (isBubble) {
-            // Bubble starts hidden for completed blocks; streaming blocks show it immediately
-            const bubbleHiddenClass = isStreaming ? '' : ' reasoning-bubble-hidden';
-            // 流式气泡只写尾部切片，全文在 finalize 时一次性回填
-            const bubbleText = escapeHtml(isStreaming ? sliceReasoningPreviewTail(rendered) : rendered || '');
-            const bubbleHtml = `<div class="reasoning-bubble compact-scroll${bubbleHiddenClass}"><div class="reasoning-bubble-content text-[11px] leading-relaxed whitespace-pre-wrap">${bubbleText}</div></div>`;
-            return `
-        <div class="reasoning-block-od od-inline-toolcall-container ${stateClass}"${isStreaming ? ` data-reasoning-start="${Date.now()}"` : ''}>
-            <div class="reasoning-header flex items-center gap-1.5 min-w-0 cursor-pointer select-none py-0.5">
-                <i class="fa-regular fa-lightbulb${iconBreathClass} shrink-0 text-slate-400 text-xs"></i>
-                <span class="shrink-0 text-slate-500 text-xs">${title}</span>
-                <span class="reasoning-time text-xs text-slate-400 shrink-0">${timeText}</span>
-            </div>
-            ${bubbleHtml}
-        </div>`;
-        }
-
-        // Inline mode
-        const toggleHtml = isStreaming
-            ? ''
-            : `<span class="reasoning-toggle text-xs text-blue-500 hover:text-blue-600 cursor-pointer shrink-0"></span>`;
-
-        let previewHtml = '';
-        if (isStreaming) {
-            previewHtml = `<div class="reasoning-preview-area"><div class="reasoning-preview-content px-3 pb-1.5 text-slate-500 text-[11px] leading-relaxed whitespace-pre-wrap">${escapeHtml(
-                sliceReasoningPreviewTail(rendered)
-            )}</div></div>`;
-        }
-
-        // 流式块的全文区保持为空：折叠期间每帧写入全文会让文本布局成本随思考长度
-        // 线性膨胀（历史越长卡顿越明显）。全文由 finalizeReasoningBlock 一次性回填。
-        const fullText = isStreaming ? '' : escaped;
-        const fullHtml = `<div class="reasoning-full-area"><div class="reasoning-content px-3 pb-2 text-slate-500 text-[11px] leading-relaxed whitespace-pre-wrap">${fullText}</div></div>`;
-
-        return `
-        <div class="reasoning-block-od od-inline-toolcall-container ${stateClass}"${isStreaming ? ` data-reasoning-start="${Date.now()}"` : ''}>
-            <div class="reasoning-header flex items-center gap-1.5 min-w-0 cursor-pointer select-none py-0.5">
-                <i class="fa-regular fa-lightbulb${iconBreathClass} shrink-0 text-slate-400 text-xs"></i>
-                <span class="shrink-0 text-slate-500 text-xs">${title}</span>
-                <span class="reasoning-time text-xs text-slate-400 shrink-0">${timeText}</span>
-                ${toggleHtml}
-            </div>
-            ${previewHtml}
-            ${fullHtml}
-        </div>`;
-    }
-
-    /**
      * Update the live preview and hidden full content of a streaming reasoning block.
      * Also updates the elapsed time display in real-time.
-     *
-     * 预览节点只写尾部切片；全文节点折叠期间跳写（仅记录最新全文，由
-     * finalizeReasoningBlock 一次性回填）。流式块在思考期间始终折叠（展开开关
-     * 只对 completed 块生效），因此跳写不影响任何可见内容。
      */
     static updateReasoningPreview(el, text) {
         if (!el) return;
@@ -949,6 +907,7 @@ class TaskView extends HTMLElement {
                 previewArea.scrollTop = previewArea.scrollHeight;
             }
         }
+
         // 全文节点（.reasoning-content）不再逐帧写入，见 finalizeReasoningBlock 的回填。
     }
 
@@ -1052,7 +1011,7 @@ class TaskView extends HTMLElement {
 
         // Bubble mode: auto-hide the bubble after a short delay
         const bubble = el.querySelector('.reasoning-bubble');
-        if (bubble) {
+        if (bubble && el.isConnected) {
             setTimeout(() => {
                 if (
                     el.classList.contains('reasoning-completed') &&
@@ -1107,19 +1066,344 @@ class TaskView extends HTMLElement {
         }
     }
 
-    renderAssistantPart(part, classMap = TaskView.ASSISTANT_PART_CLASS_MAP) {
-        if (part.type === 'reasoning') {
-            return TaskView.createReasoningPartHtml(part.rendered, false, part.elapsedSeconds);
+    static createReasoningPartHtml(
+        rendered,
+        isStreaming = false,
+        partIndex = -1,
+        elapsedSeconds = null,
+        expandedOverride,
+        disclosureKey = ''
+    ) {
+        const escaped = escapeHtml(rendered || '');
+        const title = escapeHtml(taskViewT('reasoning.card.title'));
+        const stateClass = isStreaming ? 'reasoning-active' : 'reasoning-completed';
+        const iconBreathClass = isStreaming ? ' reasoning-icon-breathing' : '';
+        const streamingAttribute = isStreaming ? ` data-streaming-part-index="${partIndex}"` : '';
+        const timingAttribute = isStreaming ? ` data-reasoning-start="${Date.now()}"` : '';
+        const disclosureAttribute = disclosureKey
+            ? ` data-reasoning-disclosure-key="${escapeHtml(disclosureKey)}"`
+            : '';
+        const timeText =
+            !isStreaming && elapsedSeconds != null
+                ? `（${formatReasoningElapsedTime(elapsedSeconds, (rendered || '').length)}）`
+                : '';
+        const expanded = typeof expandedOverride === 'boolean' ? expandedOverride : getDefaultExpanded(guiOutputMode);
+
+        if (guiReasonDisplayMode === 'bubble') {
+            const bubbleOpen = isStreaming || expanded;
+            const wrapperExpandedClass =
+                expanded && !isStreaming ? ' reasoning-bubble-pinned reasoning-content-visible' : '';
+            const bubbleHiddenClass = bubbleOpen ? '' : ' reasoning-bubble-hidden';
+            return `
+                <div class="reasoning-block-od od-inline-toolcall-container ${stateClass}${wrapperExpandedClass}"${timingAttribute}${disclosureAttribute}>
+                    <div class="reasoning-header flex items-center gap-1.5 min-w-0 cursor-pointer select-none py-0.5">
+                        <i class="fa-regular fa-lightbulb${iconBreathClass} shrink-0 text-slate-400 text-xs"></i>
+                        <span class="shrink-0 text-slate-500 text-xs">${title}</span>
+                        <span class="reasoning-time text-xs text-slate-400 shrink-0">${timeText}</span>
+                    </div>
+                    <div class="reasoning-bubble compact-scroll${bubbleHiddenClass}">
+                        <div class="reasoning-bubble-content text-[11px] leading-relaxed whitespace-pre-wrap"${streamingAttribute}>${escapeHtml(isStreaming ? sliceReasoningPreviewTail(rendered) : rendered || '')}</div>
+                    </div>
+                </div>`;
         }
-        return `<div class="${classMap[part.type] || ''}">${part.rendered || ''}</div>`;
+
+        const previewHtml =
+            isStreaming && !expanded
+                ? `<div class="reasoning-preview-area"><div class="reasoning-preview-content px-3 pb-1.5 text-slate-500 text-[11px] leading-relaxed whitespace-pre-wrap"${streamingAttribute}>${escapeHtml(sliceReasoningPreviewTail(rendered))}</div></div>`
+                : '';
+        const fullStreamingAttribute = isStreaming ? ` data-streaming-part-index="${partIndex}"` : '';
+        const wrapperExpandedClass = expanded ? ' reasoning-expanded reasoning-content-visible' : '';
+        const fullText = isStreaming ? '' : escaped;
+        return `
+            <div class="reasoning-block-od od-inline-toolcall-container ${stateClass}${wrapperExpandedClass}"${timingAttribute}${disclosureAttribute}>
+                <div class="reasoning-header flex items-center gap-1.5 min-w-0 cursor-pointer select-none py-0.5">
+                    <i class="fa-regular fa-lightbulb${iconBreathClass} shrink-0 text-slate-400 text-xs"></i>
+                    <span class="shrink-0 text-slate-500 text-xs">${title}</span>
+                    <span class="reasoning-time text-xs text-slate-400 shrink-0">${timeText}</span>
+                </div>
+                ${previewHtml}
+                <div class="reasoning-full-area" data-reasoning-scroll-key="${partIndex}"><div class="reasoning-content px-3 pb-2 text-slate-500 text-[11px] leading-relaxed whitespace-pre-wrap"${fullStreamingAttribute}>${fullText}</div></div>
+            </div>`;
     }
 
-    renderAssistantParts(parts, classMap = TaskView.ASSISTANT_PART_CLASS_MAP) {
-        return parts.map((part) => this.renderAssistantPart(part, classMap)).join('');
+    static _plainTextFromHtml(value) {
+        const container = document.createElement('div');
+        container.innerHTML = String(value || '');
+        return (container.textContent || '').replace(/\s+/g, ' ').trim();
     }
 
-    renderAssistantMessage(assistant_message, isLast = false) {
-        const content = this.renderAssistantParts(assistant_message.content);
+    static _toolDisplayName(tool) {
+        return resolveToolDisplayName(tool?.tool_name, tool?.display_name_key, taskViewT);
+    }
+
+    static _compactProcessPhrase(value, maxLength = 18) {
+        const plainText = TaskView._plainTextFromHtml(value);
+        const phrase = plainText.split(/[，,。！？!?；;]/, 1)[0].trim();
+        const characters = Array.from(phrase);
+        if (characters.length <= maxLength) return phrase;
+        return `${characters
+            .slice(0, maxLength - 1)
+            .join('')
+            .trim()}…`;
+    }
+
+    static _truncateProcessSummary(value, maxLength = 40) {
+        const characters = Array.from(value);
+        if (characters.length <= maxLength) return value;
+        return `${characters
+            .slice(0, maxLength - 1)
+            .join('')
+            .trim()}…`;
+    }
+
+    static _processSummary(item) {
+        const entries = item.entries || [];
+        const tools = entries.filter((entry) => entry.type === 'tool').flatMap((entry) => entry.tools || []);
+        const displayNames = Array.from(new Set(tools.map((tool) => TaskView._toolDisplayName(tool)).filter(Boolean)));
+        const toolNames = Array.from(new Set(displayNames.map((name) => TaskView._compactProcessPhrase(name, 12))));
+        let toolSummary = '';
+        const summarizeTools = (names) => {
+            const listedNames = names
+                .slice(0, 2)
+                .join(taskViewT('renderer.taskview.output.processSummary.listSeparator'));
+            return taskViewT('renderer.taskview.output.processSummary.usedTools', {
+                tools: listedNames,
+                count: tools.length
+            });
+        };
+        if (toolNames.length > 0) {
+            toolSummary = summarizeTools(toolNames);
+        }
+        const reasoningSummary = item.hasReasoning ? taskViewT('renderer.taskview.output.deepReasoning') : '';
+        const combine = () =>
+            reasoningSummary && toolSummary
+                ? taskViewT('renderer.taskview.output.processSummary.combined', {
+                      reasoning: reasoningSummary,
+                      tools: toolSummary
+                  })
+                : reasoningSummary || toolSummary || taskViewT('renderer.taskview.output.processSummary');
+        let summary = combine();
+        if (Array.from(summary).length > 40 && toolNames.length > 1) {
+            toolSummary = summarizeTools(toolNames.slice(0, 1));
+            summary = combine();
+        }
+        return TaskView._truncateProcessSummary(summary);
+    }
+
+    _captureProcessDisclosureState(root) {
+        const state = new Map();
+        root?.querySelectorAll?.('[data-disclosure-key]').forEach((toggle) => {
+            state.set(toggle.dataset.disclosureKey, toggle.getAttribute('aria-expanded') === 'true');
+        });
+        root?.querySelectorAll?.('[data-reasoning-disclosure-key]').forEach((block) => {
+            state.set(
+                block.dataset.reasoningDisclosureKey,
+                block.classList.contains('reasoning-expanded') || block.classList.contains('reasoning-bubble-pinned')
+            );
+        });
+        return state;
+    }
+
+    _syncReasoningTimers(root) {
+        if (!root?.isConnected) return;
+        root?.querySelectorAll?.('.reasoning-block-od.reasoning-active').forEach((block) => {
+            const content = block.querySelector('[data-streaming-part-index]');
+            TaskView.updateReasoningPreview(block, content?.textContent || '');
+        });
+    }
+
+    _renderProcessEntry(entry, messageId, disclosureState, options = {}) {
+        if (entry.type === 'reasoning') {
+            const streaming = entry.part?.streaming === true;
+            const content = streaming ? (entry.part?.text ?? entry.part?.rendered) : entry.part?.rendered;
+            const disclosureKey = `${messageId}-reasoning-${entry.partIndex}`;
+            return TaskView.createReasoningPartHtml(
+                content,
+                streaming,
+                entry.partIndex,
+                entry.part?.elapsedSeconds,
+                options.forceReasoningCollapsed === true
+                    ? false
+                    : options.forceExpanded === true
+                      ? true
+                      : disclosureState?.get(disclosureKey),
+                disclosureKey
+            );
+        }
+        return String(entry.part?.rendered || '');
+    }
+
+    _renderProcessItem(item, messageId, disclosureState, options = {}) {
+        const processKey = `${messageId}-${item.key}`;
+        const stored = disclosureState?.get(processKey);
+        const expanded =
+            options.forceExpanded === true || (stored === undefined ? getDefaultExpanded(guiOutputMode) : stored);
+        const detailId = `od-${this.widget_id}-${processKey}-detail`;
+        const summary = TaskView._processSummary(item);
+        return `
+            <section class="od-process-segment${expanded ? ' is-expanded' : ''}" data-output-key="${escapeHtml(item.key)}">
+                <button type="button" class="od-process-summary" data-process-toggle
+                    data-disclosure-key="${escapeHtml(processKey)}" aria-expanded="${expanded}" aria-controls="${escapeHtml(detailId)}">
+                    <svg class="lucide lucide-lightbulb od-process-main-icon" xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                        <path d="M9 18h6"></path>
+                        <path d="M10 22h4"></path>
+                        <path d="M15.09 14c.18-.68.66-1.17 1.16-1.75A6 6 0 1 0 7.75 12.25c.48.56.97 1.07 1.16 1.75"></path>
+                    </svg>
+                    <span class="od-process-summary-text" title="${escapeHtml(summary)}">${escapeHtml(summary)}</span>
+                    <span class="od-process-action">
+                        <span class="od-process-chevron">${CHEVRON_RIGHT_ICON_SVG}</span>
+                    </span>
+                </button>
+                <div id="${escapeHtml(detailId)}" class="od-process-detail${expanded ? ' is-open' : ''}">
+                    ${item.entries
+                        .map((entry) => this._renderProcessEntry(entry, messageId, disclosureState, options))
+                        .join('')}
+                </div>
+            </section>`;
+    }
+
+    _renderRunningProcessDetails(item, messageId, disclosureState) {
+        const detailId = `od-${messageId}-running-details`;
+        const attentionClass = item.requiresUserAttention ? ' od-user-attention-process-detail' : '';
+        return `
+            <div id="${escapeHtml(detailId)}" class="od-process-detail od-running-process-detail${attentionClass} is-open"
+                data-output-key="${escapeHtml(item.key)}">
+                ${item.entries.map((entry) => this._renderProcessEntry(entry, messageId, disclosureState)).join('')}
+            </div>`;
+    }
+
+    _renderRunningStatus(item, messageId, options = {}) {
+        let icon = '';
+        let iconStyle = '';
+        let iconStateClass = ' is-thinking';
+        let iconMarkup = RUNNING_THINKING_ICON_SVG;
+        let action = taskViewT('renderer.taskview.output.status.thinking');
+        if (item.kind === 'tool') {
+            iconStateClass = ' is-tool';
+            iconMarkup = RUNNING_TOOL_ICON_SVG;
+            const name = TaskView._toolDisplayName(item.tool);
+            action = taskViewT('renderer.taskview.output.status.tool', { name });
+        } else if (item.kind === 'working') {
+            icon = 'fa-spinner fa-spin';
+            iconStyle = 'fa-solid';
+            iconStateClass = '';
+            action = taskViewT('renderer.taskview.output.status.working');
+        }
+        const expandable = guiOutputMode === 'minimal' && options.isRunning === true;
+        const expanded = expandable && this._assistantRunningDetails.get(messageId) === true;
+        const tag = expandable ? 'button' : 'div';
+        const renderedIcon = iconMarkup || `<i class="${iconStyle} ${icon}" aria-hidden="true"></i>`;
+        return `
+            <${tag}${expandable ? ' type="button" data-running-output-toggle' : ''} class="od-running-status" role="status" aria-live="polite"
+                ${expandable ? `data-message-id="${escapeHtml(messageId)}" aria-expanded="${expanded}" aria-controls="od-${escapeHtml(messageId)}-running-details"` : ''}>
+                <span class="od-running-status-icon${iconStateClass}">${renderedIcon}</span>
+                <span class="od-running-status-viewport">
+                    <span class="od-running-status-line">
+                        <span>${escapeHtml(action)}</span>
+                    </span>
+                </span>
+            </${tag}>`;
+    }
+
+    _renderAssistantOutputHtml(parts, options = {}) {
+        const normalizedParts = Array.isArray(parts) ? parts : [];
+        const messageId = String(options.messageId || 'assistant');
+        const showRunningDetails =
+            options.showRunningDetails === true || this._assistantRunningDetails.get(messageId) === true;
+        const items = buildAssistantOutputItems(normalizedParts, {
+            isRunning: Boolean(options.isRunning)
+        });
+        const visibleItems = getVisibleAssistantOutputItems(items, {
+            mode: guiOutputMode,
+            isRunning: Boolean(options.isRunning),
+            showRunningDetails,
+            parts: normalizedParts
+        });
+        const finalItem = visibleItems.find((item) => item.type === 'final');
+        const processItems = visibleItems.filter((item) => item !== finalItem);
+        const hasProcessItem = processItems.some((item) => item.type === 'process');
+        const renderItem = (item, showFinalLabel = true, runningProcessDetails = false) => {
+            if (item.type === 'process') {
+                if (runningProcessDetails) {
+                    return this._renderRunningProcessDetails(item, messageId, options.disclosureState);
+                }
+                return this._renderProcessItem(item, messageId, options.disclosureState);
+            }
+            if (item.type === 'status') {
+                return this._renderRunningStatus(item, messageId, {
+                    isRunning: Boolean(options.isRunning)
+                });
+            }
+            if (item.type === 'final') {
+                const label =
+                    showFinalLabel && guiOutputMode !== 'verbose'
+                        ? `<div class="od-final-result-label">${taskViewT('renderer.taskview.output.finalResult')}</div>`
+                        : '';
+                const content = item.part.rendered
+                    ? item.part.rendered
+                    : `<div class="od-streaming-text">${renderSafeMarkdown(String(item.part.text || ''))}</div>`;
+                const dividerClass =
+                    guiOutputMode === 'verbose' && hasProcessItem ? ' od-final-result-with-divider' : '';
+                return `${label}<div class="od-final-result markdown-body${dividerClass}">${content}</div>`;
+            }
+            const className = item.type === 'error' ? 'od-stage-body od-stage-error' : 'od-stage-body';
+            const content = item.part.streaming
+                ? `<div class="od-streaming-text" data-streaming-part-index="${item.partIndex}">${
+                      item.part.rendered || renderSafeMarkdown(String(item.part.text || ''))
+                  }</div>`
+                : item.part.rendered || '';
+            return `<div class="${className} markdown-body" data-output-part-index="${item.partIndex}">${content}</div>`;
+        };
+
+        let html;
+        if (guiOutputMode === 'minimal' && !options.isRunning && finalItem && processItems.length > 0) {
+            const disclosureKey = `${messageId}-completed-process`;
+            const expanded = options.disclosureState?.get(disclosureKey) === true;
+            const detailId = `od-${this.widget_id}-${disclosureKey}-detail`;
+            html = `
+                <section class="od-completed-process${expanded ? ' is-expanded' : ''}">
+                    <button type="button" class="od-completed-process-summary" data-completed-process-toggle
+                        data-disclosure-key="${escapeHtml(disclosureKey)}" aria-expanded="${expanded}"
+                        aria-controls="${escapeHtml(detailId)}">
+                        <span>${escapeHtml(taskViewT('renderer.taskview.output.completedProcess'))}</span>
+                        <span class="od-completed-process-chevron">${CHEVRON_RIGHT_ICON_SVG}</span>
+                    </button>
+                    <div id="${escapeHtml(detailId)}" class="od-completed-process-detail${expanded ? ' is-open' : ''}">
+                        ${processItems.map((item) => renderItem(item)).join('')}
+                    </div>
+                </section>
+                ${renderItem(finalItem, false)}`;
+        } else {
+            html = visibleItems
+                .map((item, index) => {
+                    const runningProcessDetails =
+                        guiOutputMode === 'minimal' &&
+                        options.isRunning &&
+                        item.type === 'process' &&
+                        (item.requiresUserAttention === true ||
+                            (showRunningDetails && visibleItems[index - 1]?.type === 'status'));
+                    return renderItem(item, true, runningProcessDetails);
+                })
+                .join('');
+        }
+        return `<div class="od-assistant-output-flow" data-output-mode="${guiOutputMode}" data-reason-display="${guiReasonDisplayMode}">${html}</div>`;
+    }
+
+    _rememberAssistantOutput(messageId, parts, options = {}) {
+        this._assistantPartsByMessage.set(messageId, [...parts]);
+        this._assistantRenderStateByMessage.set(messageId, {
+            isRunning: options.isRunning === true
+        });
+    }
+
+    renderAssistantMessage(assistant_message, isLast = false, options = {}) {
+        this._rememberAssistantOutput(assistant_message.message_id, assistant_message.content, {
+            isRunning: options.isRunning
+        });
+        const content = this._renderAssistantOutputHtml(assistant_message.content, {
+            isRunning: Boolean(options.isRunning),
+            messageId: assistant_message.message_id
+        });
         const usageHtml = isLast ? TaskView.formatUsageHtml(assistant_message.usage, this._modelContextSize) : '';
         const metaRowHtml = TaskView.buildMsgMetaRow(
             'assistant',
@@ -1192,7 +1476,11 @@ class TaskView extends HTMLElement {
                 htmlParts.push(this.renderUserMessage(message));
             } else if (message.role === 'assistant') {
                 if (!Array.isArray(message.content) || message.content.length === 0) continue;
-                htmlParts.push(this.renderAssistantMessage(message, i === usageAssistantIdx));
+                htmlParts.push(
+                    this.renderAssistantMessage(message, i === usageAssistantIdx, {
+                        isRunning: i === options.runningAssistantIdx
+                    })
+                );
             } else if (TaskView.isCompactBoundaryMessage(message)) {
                 htmlParts.push(TaskView.renderCompactBoundary());
             }
@@ -1219,10 +1507,20 @@ class TaskView extends HTMLElement {
         );
 
         const historyContainer = this.getHistoryContainer();
+        let runningAssistantIdx = -1;
+        if (this.task_status === 'running') {
+            for (let index = this._historyMessages.length - 1; index >= 0; index -= 1) {
+                if (this._historyMessages[index]?.role === 'assistant') {
+                    runningAssistantIdx = index;
+                    break;
+                }
+            }
+        }
         const htmlParts = [
             this._renderHistoryRangeToHtml(this._historyRenderStartIndex, this._historyMessages.length, {
                 markRenderedUserParts: true,
-                usageAssistantIdx: options.usageAssistantIdx
+                usageAssistantIdx: options.usageAssistantIdx,
+                runningAssistantIdx
             })
         ];
         const unanchoredGoalEvaluationHtml = renderGoalEvaluationRecordsHtml(
@@ -1265,6 +1563,7 @@ class TaskView extends HTMLElement {
         enhanceCodeBlocks(historyContainer);
         enhanceToolPreviewCards(historyContainer);
         renderMermaidBlocks(historyContainer);
+        this._syncReasoningTimers(historyContainer);
         this._syncPendingGoalEditToArtifacts();
     }
 
@@ -1391,7 +1690,9 @@ class TaskView extends HTMLElement {
         if (!Array.isArray(message.content)) {
             message.content = [];
         }
-        message.content[getProgressPartIndex(progress)] = progress.last_part;
+        const partIndex = getProgressPartIndex(progress);
+        message.content[partIndex] =
+            progress.streaming === true ? { ...progress.last_part, streaming: true } : progress.last_part;
         if (TaskView.hasDisplayableUsage(progress.usage)) {
             message.usage = progress.usage;
         }
@@ -1503,6 +1804,10 @@ class TaskView extends HTMLElement {
     }
 
     handleAssistantReplace(progress) {
+        const previousRenderState = this._assistantRenderStateByMessage.get(progress.message_id);
+        if (previousRenderState?.isRunning === false && progress.task_status === 'running') {
+            return;
+        }
         const history_container = this.getHistoryContainer();
         let message_container =
             this._messageContainerCache.get(progress.message_id) ||
@@ -1522,6 +1827,9 @@ class TaskView extends HTMLElement {
                     message_container.remove();
                 }
                 this._messageContainerCache.delete(progress.message_id);
+                this._assistantPartsByMessage.delete(progress.message_id);
+                this._assistantRenderStateByMessage.delete(progress.message_id);
+                this._assistantDisclosureStateByMessage.delete(progress.message_id);
             }
             if (TaskView.canShowWaitingAssistantPlaceholder(progress.task_status, this._currentGoal)) {
                 this._showWaitingAssistantPlaceholder();
@@ -1539,33 +1847,27 @@ class TaskView extends HTMLElement {
 
         const message_content = message_container.querySelector(`#message-content-${progress.message_id}`);
         if (!message_content) return;
+        const processScrollFollowState = this._captureProcessScrollFollowState(message_content);
 
-        // When the task is still running and the last part is reasoning (still being streamed),
-        // render it as streaming so the real-time timer starts. Otherwise the block would be
-        // created as completed with no data-reasoning-start, and the timer would never work.
         const isRunning = progress.task_status === 'running';
         const parts = progress.parts;
-        const lastPartIndex = parts.length - 1;
-        const lastPart = parts[lastPartIndex];
-
-        if (isRunning && lastPart && lastPart.type === 'reasoning') {
-            const beforeLastHtml = parts
-                .slice(0, lastPartIndex)
-                .map((part) => this.renderAssistantPart(part))
-                .join('');
-            const streamingHtml = TaskView.createReasoningPartHtml(lastPart.rendered || '', true);
-            message_content.innerHTML = beforeLastHtml + streamingHtml;
-            // Start the timer and initialise content for the streaming reasoning block
-            const streamingEl = message_content.children[lastPartIndex];
-            if (streamingEl) {
-                TaskView.updateReasoningPreview(streamingEl, lastPart.rendered || '');
-            }
-        } else {
-            message_content.innerHTML = this.renderAssistantParts(parts);
-        }
+        this._rememberAssistantOutput(progress.message_id, parts, {
+            isRunning
+        });
+        const disclosureState = this._captureProcessDisclosureState(message_content);
+        message_content
+            .querySelectorAll('.reasoning-block-od.reasoning-active')
+            .forEach((el) => TaskView.finalizeReasoningBlock(el));
+        message_content.innerHTML = this._renderAssistantOutputHtml(parts, {
+            isRunning,
+            messageId: progress.message_id,
+            disclosureState
+        });
         enhanceCodeBlocks(message_content);
         enhanceToolPreviewCards(message_content);
         renderMermaidBlocks(message_content, { defer: isRunning });
+        this._syncReasoningTimers(message_content);
+        this._restoreProcessScrollFollowState(message_content, processScrollFollowState);
 
         const usageEl = message_container.querySelector('.message-usage');
         if (TaskView.hasDisplayableUsage(progress.usage)) {
@@ -1602,6 +1904,11 @@ class TaskView extends HTMLElement {
     _renderAssistantProgress(progress, history_container) {
         if (!progress.last_part) return false;
 
+        const previousRenderState = this._assistantRenderStateByMessage.get(progress.message_id);
+        if (previousRenderState?.isRunning === false && progress.task_status === 'running') {
+            return false;
+        }
+
         let message_container =
             this._messageContainerCache.get(progress.message_id) ||
             this.querySelector(`#message-container-${progress.message_id}`);
@@ -1622,54 +1929,87 @@ class TaskView extends HTMLElement {
 
         const message_content = message_container.querySelector(`#message-content-${progress.message_id}`);
         if (!message_content) return false;
+        const processScrollFollowState = this._captureProcessScrollFollowState(message_content);
 
         const partIndex = getProgressPartIndex(progress);
-        while (message_content.children.length <= partIndex) {
-            if (progress.last_part.type === 'reasoning') {
-                message_content.insertAdjacentHTML('beforeend', TaskView.createReasoningPartHtml('', true));
-            } else {
-                // Finalize any active reasoning blocks before inserting a new non-reasoning part
-                message_content.querySelectorAll('.reasoning-block-od.reasoning-active').forEach((el) => {
-                    TaskView.finalizeReasoningBlock(el);
+        const parts = [...(this._assistantPartsByMessage.get(progress.message_id) || [])];
+        const previousPart = parts[partIndex];
+        const isIncrementalTextPart =
+            (progress.last_part?.type === 'text' || progress.last_part?.type === 'reasoning') &&
+            progress.task_status === 'running';
+        const canPatchStreamingPart =
+            isIncrementalTextPart && previousPart?.streaming === true && previousPart.type === progress.last_part.type;
+        parts[partIndex] = isIncrementalTextPart ? { ...progress.last_part, streaming: true } : progress.last_part;
+        const isRunning = progress.task_status === 'running';
+        this._rememberAssistantOutput(progress.message_id, parts, {
+            isRunning
+        });
+        let patchedStreamingPart = false;
+        if (canPatchStreamingPart) {
+            const targets = message_content.querySelectorAll(`[data-streaming-part-index="${partIndex}"]`);
+            if (targets.length > 0) {
+                targets.forEach((target) => {
+                    const text = String(parts[partIndex].text ?? parts[partIndex].rendered ?? '');
+                    if (progress.last_part.type === 'reasoning') {
+                        const block = target.closest('.reasoning-block-od');
+                        if (block) TaskView.scheduleReasoningPreviewUpdate(block, text);
+                        const scrollingContainer = target.closest('.reasoning-bubble, .reasoning-preview-area');
+                        if (scrollingContainer) scrollingContainer.scrollTop = scrollingContainer.scrollHeight;
+                    } else {
+                        const html =
+                            parts[partIndex].rendered || renderSafeMarkdown(String(parts[partIndex].text || ''));
+                        updateStreamingText(target, html);
+                    }
                 });
-                message_content.insertAdjacentHTML(
-                    'beforeend',
-                    `<div class='${TaskView.ASSISTANT_PART_CLASS_MAP[progress.last_part.type]}'></div>`
-                );
+                patchedStreamingPart = true;
+            } else if (progress.last_part.type === 'reasoning') {
+                // Collapsed minimal mode does not mount reasoning details while streaming.
+                patchedStreamingPart = true;
             }
         }
-
-        const last_part_element = message_content.children[partIndex];
-        if (!last_part_element) return false;
-
-        if (progress.last_part.type === 'reasoning') {
-            TaskView.scheduleReasoningPreviewUpdate(last_part_element, progress.last_part.rendered || '');
-        } else if (progress.last_part.type === 'tool_call') {
-            TaskView.morphDomChildren(last_part_element, progress.last_part.rendered || '');
-        } else if (progress.last_part.type === 'text') {
-            message_content.querySelectorAll('.stream-cursor').forEach((el) => el.remove());
-            updateStreamingText(last_part_element, progress.last_part.rendered || '');
-        } else {
-            last_part_element.innerHTML = progress.last_part.rendered || '';
+        if (!patchedStreamingPart) {
+            const disclosureState = this._captureProcessDisclosureState(message_content);
+            const isTerminal = progress.task_status !== 'running';
+            const outputHtml = this._renderAssistantOutputHtml(parts, {
+                isRunning: !isTerminal,
+                messageId: progress.message_id,
+                disclosureState
+            });
+            if (isTerminal) {
+                // Terminal updates may change the output hierarchy (for example, a normal
+                // completion collapses the process timeline). Preview enhancers may also have
+                // inserted nodes that are absent from outputHtml, so index-based morphing is
+                // unsafe here.
+                message_content
+                    .querySelectorAll('.reasoning-block-od.reasoning-active')
+                    .forEach((el) => TaskView.finalizeReasoningBlock(el));
+                message_content.innerHTML = outputHtml;
+            } else if (message_content.innerHTML !== outputHtml) {
+                TaskView.morphDomChildren(message_content, outputHtml);
+            }
         }
-
-        if (progress.last_part.type === 'tool_call') {
-            last_part_element.querySelectorAll('.terminal-tool-scroll').forEach((el) => {
+        if (!patchedStreamingPart) {
+            if (isRunning) {
+                message_content.querySelectorAll('[data-streaming-part-index]').forEach((target) => {
+                    const targetPart = parts[Number(target.dataset.streamingPartIndex)];
+                    if (targetPart?.type !== 'text') return;
+                    const html = targetPart.rendered || renderSafeMarkdown(String(targetPart.text || ''));
+                    updateStreamingText(target, html);
+                });
+            }
+            message_content.querySelectorAll('.terminal-tool-scroll').forEach((el) => {
                 el.scrollTop = el.scrollHeight;
             });
-            enhanceToolPreviewCards(last_part_element);
+            enhanceCodeBlocks(message_content);
+            enhanceToolPreviewCards(message_content);
+            renderMermaidBlocks(message_content, { defer: isRunning });
         }
-
-        if (progress.last_part.type === 'text') {
-            enhanceCodeBlocks(last_part_element);
-            renderMermaidBlocks(last_part_element, { defer: progress.task_status === 'running' });
+        message_content.querySelectorAll('.stream-cursor').forEach((el) => el.remove());
+        if (isRunning && progress.last_part.type === 'text') {
+            TaskView._appendStreamCursor(message_content.querySelector(`[data-streaming-part-index="${partIndex}"]`));
         }
-
-        // 流式光标：任务运行中且当前 part 为文本时，在末尾追加闪烁光标
-        if (progress.task_status === 'running' && progress.last_part.type === 'text') {
-            message_content.querySelectorAll('.stream-cursor').forEach((el) => el.remove());
-            TaskView._appendStreamCursor(last_part_element);
-        }
+        this._syncReasoningTimers(message_content);
+        this._restoreProcessScrollFollowState(message_content, processScrollFollowState);
 
         const isStreaming = progress.task_status === 'running';
         // 实时输出速度 + 消息级 token 估算（无 usage 时按 chars/4 临时估算「已输出/总计」）
@@ -1761,6 +2101,51 @@ class TaskView extends HTMLElement {
         }
 
         return true;
+    }
+
+    _getProcessScrollFollowTargets(root) {
+        const targets = new Map();
+        root.querySelectorAll('.od-process-detail.is-open[id]').forEach((element) => {
+            targets.set(`process:${element.id}`, element);
+        });
+        root.querySelectorAll('.reasoning-block-od.reasoning-expanded .reasoning-full-area').forEach((element) => {
+            const key = element.dataset.reasoningScrollKey;
+            if (key !== undefined) targets.set(`reasoning:${key}`, element);
+        });
+        return targets;
+    }
+
+    _captureProcessScrollFollowState(root) {
+        if (!this.auto_scrolling_to_bottom) return null;
+        const state = new Map();
+        for (const [key, element] of this._getProcessScrollFollowTargets(root)) {
+            const distanceToBottom = element.scrollHeight - element.scrollTop - element.clientHeight;
+            state.set(key, distanceToBottom <= PROCESS_INNER_SCROLL_BOTTOM_THRESHOLD_PX);
+        }
+        return state;
+    }
+
+    _restoreProcessScrollFollowState(root, state) {
+        if (!state || !this.auto_scrolling_to_bottom) return;
+        const rootKey = root.id || this.widget_id;
+        for (const [targetKey] of this._getProcessScrollFollowTargets(root)) {
+            if (state.get(targetKey) === false) continue;
+            this._pendingProcessScrollFollowTargets.set(`${rootKey}:${targetKey}`, { root, targetKey });
+        }
+        if (this._pendingProcessScrollFollowTargets.size === 0 || this._processScrollFollowRafId !== null) return;
+
+        this._processScrollFollowRafId = -1;
+        const rafId = requestAnimationFrame(() => {
+            this._processScrollFollowRafId = null;
+            const pending = [...this._pendingProcessScrollFollowTargets.values()];
+            this._pendingProcessScrollFollowTargets.clear();
+            if (!this.auto_scrolling_to_bottom) return;
+            for (const { root: pendingRoot, targetKey } of pending) {
+                const element = this._getProcessScrollFollowTargets(pendingRoot).get(targetKey);
+                if (element) element.scrollTop = Math.max(0, element.scrollHeight - element.clientHeight);
+            }
+        });
+        if (this._processScrollFollowRafId !== null) this._processScrollFollowRafId = rafId;
     }
 
     tryScrollToEnd() {
@@ -2028,6 +2413,9 @@ class TaskView extends HTMLElement {
             this.updateStopButtonVisibility();
             this._messageContainerCache.clear();
             this._renderedUserParts.clear();
+            this._assistantPartsByMessage.clear();
+            this._assistantRenderStateByMessage.clear();
+            this._assistantDisclosureStateByMessage.clear();
 
             if (this._toolbar && task_state.task_name) {
                 this._taskName = task_state.task_name;
@@ -2149,6 +2537,7 @@ class TaskView extends HTMLElement {
             // 只有最新的 reload 才能重置标志，避免过期 reload 提前解除守卫
             if (version === this._reloadVersion) {
                 this._reloading = false;
+                this._flushDeferredTaskUpdates();
                 if (shouldAutoSendQueuedMessage) {
                     this._autoSendQueueMessages();
                 }
@@ -2469,7 +2858,9 @@ class TaskView extends HTMLElement {
                     try {
                         if (this._hasActiveGoal()) {
                             const stopped = await this._stopActiveGoal();
-                            if (!stopped) return;
+                            if (!stopped) {
+                                return;
+                            }
                         } else {
                             await window.taskManagerAPI.stopTask(this.task_id);
                         }
@@ -2783,6 +3174,25 @@ class TaskView extends HTMLElement {
 
     _shouldSuppressIncrementalRender() {
         return this._reloading || this.style.display === 'none' || this.hasAttribute('data-background');
+    }
+
+    _deferTaskUpdateDuringReload(progress) {
+        this._deferredTaskUpdates.push(progress);
+    }
+
+    _flushDeferredTaskUpdates() {
+        if (
+            this._reloading ||
+            this.style.display === 'none' ||
+            this.hasAttribute('data-background') ||
+            typeof this._taskUpdateHandler !== 'function' ||
+            this._deferredTaskUpdates.length === 0
+        ) {
+            return;
+        }
+
+        const updates = this._deferredTaskUpdates.splice(0);
+        updates.forEach((progress) => this._taskUpdateHandler(progress));
     }
 
     /**
@@ -3407,6 +3817,106 @@ class TaskView extends HTMLElement {
         }
     }
 
+    _rerenderAssistantOutputsForModeChange() {
+        const historyContainer = this.getHistoryContainer();
+        const previousScrollTop = historyContainer?.scrollTop ?? 0;
+        const wasAtBottom = historyContainer
+            ? historyContainer.scrollHeight - historyContainer.scrollTop - historyContainer.clientHeight <= 24
+            : false;
+
+        const messageContents = Array.from(this.querySelectorAll('[id^="message-content-"]'));
+        for (const messageContent of messageContents) {
+            const messageId = messageContent.id.slice('message-content-'.length);
+            const parts = this._assistantPartsByMessage.get(messageId);
+            const renderState = this._assistantRenderStateByMessage.get(messageId);
+            if (!Array.isArray(parts) || !renderState) continue;
+
+            const disclosureState = this._assistantDisclosureStateByMessage.get(messageId) || new Map();
+            for (const [key, expanded] of this._captureProcessDisclosureState(messageContent)) {
+                disclosureState.set(key, expanded);
+            }
+            this._assistantDisclosureStateByMessage.set(messageId, disclosureState);
+            const outputHtml = this._renderAssistantOutputHtml(parts, {
+                isRunning: renderState.isRunning,
+                messageId,
+                disclosureState
+            });
+            if (messageContent.innerHTML !== outputHtml) {
+                TaskView.morphDomChildren(messageContent, outputHtml);
+            }
+            enhanceCodeBlocks(messageContent);
+            enhanceToolPreviewCards(messageContent);
+            renderMermaidBlocks(messageContent);
+            this._syncReasoningTimers(messageContent);
+        }
+
+        if (historyContainer) {
+            historyContainer.scrollTop = wasAtBottom ? historyContainer.scrollHeight : previousScrollTop;
+        }
+    }
+
+    _handleGuiDisplaySettingsChanged() {
+        if (!this.isConnected || !this.task_id) return;
+        this._rerenderAssistantOutputsForModeChange();
+    }
+
+    _handleProcessToggleClick(e) {
+        if (e.target.closest('[data-open-preview]')) return;
+        const completedToggle = e.target.closest('[data-completed-process-toggle]');
+        if (completedToggle) {
+            e.preventDefault();
+            e.stopPropagation();
+            const process = completedToggle.closest('.od-completed-process');
+            if (!process) return;
+            const expanded = completedToggle.getAttribute('aria-expanded') !== 'true';
+            completedToggle.setAttribute('aria-expanded', String(expanded));
+            process.classList.toggle('is-expanded', expanded);
+            const detail = Array.from(process.children).find((child) =>
+                child.classList.contains('od-completed-process-detail')
+            );
+            detail?.classList.toggle('is-open', expanded);
+            return;
+        }
+        const runningToggle = e.target.closest('[data-running-output-toggle]');
+        if (runningToggle) {
+            e.preventDefault();
+            e.stopPropagation();
+            const messageId = runningToggle.dataset.messageId;
+            const messageContent = messageId ? this.querySelector(`#message-content-${messageId}`) : null;
+            if (!messageId || !messageContent) return;
+            const expanded = runningToggle.getAttribute('aria-expanded') !== 'true';
+            this._assistantRunningDetails.set(messageId, expanded);
+            const parts = this._assistantPartsByMessage.get(messageId) || [];
+            const disclosureState = this._captureProcessDisclosureState(messageContent);
+            const outputHtml = this._renderAssistantOutputHtml(parts, {
+                isRunning: true,
+                messageId,
+                disclosureState,
+                showRunningDetails: expanded
+            });
+            if (messageContent.innerHTML !== outputHtml) {
+                TaskView.morphDomChildren(messageContent, outputHtml);
+            }
+            enhanceCodeBlocks(messageContent);
+            enhanceToolPreviewCards(messageContent);
+            renderMermaidBlocks(messageContent, { defer: true });
+            return;
+        }
+        const processToggle = e.target.closest('[data-process-toggle]');
+        if (processToggle) {
+            e.preventDefault();
+            e.stopPropagation();
+            const process = processToggle.closest('.od-process-segment');
+            if (!process) return;
+            const expanded = processToggle.getAttribute('aria-expanded') !== 'true';
+            processToggle.setAttribute('aria-expanded', String(expanded));
+            process.classList.toggle('is-expanded', expanded);
+            const detail = Array.from(process.children).find((child) => child.classList.contains('od-process-detail'));
+            detail?.classList.toggle('is-open', expanded);
+            return;
+        }
+    }
+
     /**
      * 处理已完成 reasoning 块的 header 点击事件，展开/收起完整思考内容。
      */
@@ -3435,10 +3945,6 @@ class TaskView extends HTMLElement {
         // Inline mode: toggle expanded class
         const isExpanded = wrapper.classList.toggle('reasoning-expanded');
         wrapper.classList.toggle('reasoning-content-visible', isExpanded);
-        const toggle = wrapper.querySelector('.reasoning-toggle');
-        if (toggle) {
-            toggle.textContent = isExpanded ? taskViewT('reasoning.hide.content') : '';
-        }
     }
 
     /** Bubble mode: show bubble on header hover (unless pinned) */
@@ -4478,6 +4984,9 @@ class TaskView extends HTMLElement {
         this._handleLinkContextMenu = this._handleLinkContextMenu.bind(this);
         this.addEventListener('contextmenu', this._handleLinkContextMenu);
 
+        this._handleProcessToggleClick = this._handleProcessToggleClick.bind(this);
+        this.addEventListener('click', this._handleProcessToggleClick);
+
         // 添加 reasoning 块展开/收起的事件代理
         this._handleReasoningToggleClick = this._handleReasoningToggleClick.bind(this);
         this.addEventListener('click', this._handleReasoningToggleClick);
@@ -4582,7 +5091,7 @@ class TaskView extends HTMLElement {
                         this._expandRightSidebar(artifacts, resizer);
                     }
                 }
-                const subscriptionId = await window.taskManagerAPI.subscribeTaskUpdate(this.task_id, (progress) => {
+                const handleTaskUpdate = (progress) => {
                     if (!this.isConnected || connectionEpoch !== this._connectionEpoch) {
                         return;
                     }
@@ -4593,7 +5102,15 @@ class TaskView extends HTMLElement {
                     // 用户切回时 openTask() 会调用 reload() 补齐所有跳过的更新。
                     // 检查 display:none（hideAllNonAppChildren 隐藏）和 data-background
                     // （ensureTaskViewExists 创建的不可见视图，用 opacity:0 隐藏）。
-                    if (this._shouldSuppressIncrementalRender()) {
+                    if (this._reloading) {
+                        this._deferTaskUpdateDuringReload(progress);
+                        this._handleTaskStatusUpdate(progress.task_status);
+                        if (progress.type === 'goal_eval') {
+                            this._handleGoalEvalProgress(progress, { renderToConversation: false });
+                        }
+                        return;
+                    }
+                    if (this.style.display === 'none' || this.hasAttribute('data-background')) {
                         this._assistantProgressBuffer.clear();
                         this._handleTaskStatusUpdate(progress.task_status);
                         if (progress.type === 'goal_eval') {
@@ -4691,7 +5208,9 @@ class TaskView extends HTMLElement {
                     }
 
                     this.tryScrollToEnd();
-                });
+                };
+                this._taskUpdateHandler = handleTaskUpdate;
+                const subscriptionId = await window.taskManagerAPI.subscribeTaskUpdate(this.task_id, handleTaskUpdate);
                 if (!this.isConnected || connectionEpoch !== this._connectionEpoch) {
                     await window.taskManagerAPI.unsubscribeTaskUpdate(this.task_id, subscriptionId);
                     return;
@@ -4712,6 +5231,13 @@ class TaskView extends HTMLElement {
         this._connectionEpoch += 1;
         this._reloadVersion += 1;
         this._reloading = false;
+        this._deferredTaskUpdates = [];
+        this._taskUpdateHandler = null;
+        if (this._processScrollFollowRafId !== null && this._processScrollFollowRafId >= 0) {
+            cancelAnimationFrame(this._processScrollFollowRafId);
+        }
+        this._processScrollFollowRafId = null;
+        this._pendingProcessScrollFollowTargets.clear();
         const artifacts = this.querySelector(`#task-${this.task_id}-artifacts`);
         if (artifacts && typeof artifacts.setTaskTodos === 'function') {
             artifacts.setTaskTodos([]);
@@ -4726,6 +5252,7 @@ class TaskView extends HTMLElement {
         this.removeEventListener('contextmenu', this._handleLinkContextMenu);
         this._dismissLinkContextMenu();
         this._dismissExportMenu();
+        this.removeEventListener('click', this._handleProcessToggleClick);
         this.removeEventListener('click', this._handleReasoningToggleClick);
         this._disconnectAgentInputRequests?.();
         this._disconnectAgentInputRequests = null;

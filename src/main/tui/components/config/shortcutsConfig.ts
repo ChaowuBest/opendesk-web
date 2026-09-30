@@ -64,6 +64,12 @@ export class ShortcutsConfigPage implements Component {
                 currentValue: shortcuts.switch_mode
             },
             {
+                key: 'output_display',
+                descriptionKey: 'shortcut.output_display',
+                defaultValue: DEFAULT_SHORTCUTS.output_display,
+                currentValue: shortcuts.output_display
+            },
+            {
                 key: 'switch_model',
                 descriptionKey: 'shortcut.switch_model',
                 defaultValue: DEFAULT_SHORTCUTS.switch_model,
@@ -102,6 +108,7 @@ export class ShortcutsConfigPage implements Component {
         const data = Setting.getInstance().getData() as any;
         return {
             switch_mode: data.cli_config?.shortcuts?.switch_mode ?? DEFAULT_SHORTCUTS.switch_mode,
+            output_display: data.cli_config?.shortcuts?.output_display ?? DEFAULT_SHORTCUTS.output_display,
             switch_model: data.cli_config?.shortcuts?.switch_model ?? DEFAULT_SHORTCUTS.switch_model,
             endline: data.cli_config?.shortcuts?.endline ?? DEFAULT_SHORTCUTS.endline,
             show_help: data.cli_config?.shortcuts?.show_help ?? DEFAULT_SHORTCUTS.show_help,

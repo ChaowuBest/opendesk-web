@@ -23,6 +23,11 @@ export interface ToolExecutionContext {
 export interface ToolResultWriter {
     attachResult(chunk: string): void;
     updateResult(result: string): void;
+    /**
+     * Replaces the structured result. Legacy tools may set
+     * `ui.requiresUserAttention` to a boolean when they cannot provide a
+     * `render.requiresUserAttention` callback.
+     */
     updateResultObject(resultObject: object): void;
 }
 
@@ -64,6 +69,13 @@ export type ToolRenderContent =
 export interface ToolRenderers {
     gui?(context: ToolRenderContext): ToolRenderContent | undefined | Promise<ToolRenderContent | undefined>;
     cli?(context: ToolRenderContext & { width: number }): string[] | undefined;
+    /**
+     * Whether the current tool-call phase requires direct user action, such as
+     * scanning a QR code or completing OAuth authorization. Returning true keeps
+     * the custom renderer visible in minimal mode; return false to explicitly
+     * suppress it, or undefined to use OpenDesk's structured-state fallback.
+     */
+    requiresUserAttention?(context: ToolRenderContext): boolean | undefined;
 }
 
 /**

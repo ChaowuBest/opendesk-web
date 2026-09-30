@@ -122,6 +122,16 @@ class PluginTool extends BaseTool<any> {
             return undefined;
         }
     }
+
+    override requiresUserAttention(toolCall: ToolCall): boolean | undefined {
+        if (!this.definition.render?.requiresUserAttention) return undefined;
+        try {
+            return this.definition.render.requiresUserAttention(buildRenderContext(toolCall));
+        } catch (error) {
+            logger.error(`Plugin tool attention check failed: ${this.name}`, error);
+            return undefined;
+        }
+    }
 }
 
 function createPluginTool(pluginId: string, definition: ToolDefinition): BaseTool<any> {
@@ -134,7 +144,7 @@ class PluginDefinedTool extends BaseTool<any> {
         description: string,
         parameters: ToolDefinition['parameters']
     ) {
-        super(source.name, description, parameters);
+        super(source.name, description, parameters, source.displayNameKey);
         this.agentIds = source.agentIds;
         this.serialExecution = source.serialExecution;
     }
@@ -153,6 +163,10 @@ class PluginDefinedTool extends BaseTool<any> {
 
     renderToolCallCli(toolCall: Parameters<BaseTool<any>['renderToolCallCli']>[0], width: number) {
         return this.source.renderToolCallCli(toolCall, width);
+    }
+
+    requiresUserAttention(toolCall: ToolCall): boolean | undefined {
+        return this.source.requiresUserAttention(toolCall);
     }
 
     async execute(

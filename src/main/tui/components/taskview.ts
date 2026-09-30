@@ -42,7 +42,6 @@ import {
 import { prepareContextForModel } from '../../aikernel/compaction/pipeline.js';
 import type { GoalFinalSnapshot } from '../../aikernel/goal/state.js';
 import { logger, getDebugMode } from '../../utils/logger.js';
-import { Setting } from '../../utils/setting.js';
 import { defaultMarkdownTheme } from '../theme';
 import { DefaultToolCallView } from './toolcall';
 import { Card } from './card';
@@ -51,6 +50,7 @@ import {
     getGoalSupplementDisplayText,
     shouldRenderGoalUserMessage as shouldRenderTuiUserMessage
 } from '../../../common/goal/user-message-display.js';
+import { resolveToolDisplayName } from '../../../common/tool-display-name.js';
 import { TaskViewGoalController } from './taskview-goal/controller.js';
 import {
     getGoalTerminalTimestamp,
@@ -61,12 +61,19 @@ import {
 import chalk from 'chalk';
 import type { TaskStatusBarData } from './input';
 import { t } from '../../../locale/index.js';
+import {
+    getConfiguredOutputDisplayLevel,
+    isReasoningDisplayFullConfigured,
+    type OutputDisplayLevel
+} from '../display.js';
 
 const MAX_TUI_PART_INDEX = 10_000;
 const USER_MESSAGE_PART_TYPES = new Set(['text', 'image_url', 'file']);
 const ASSISTANT_MESSAGE_PART_TYPES = new Set(['text', 'reasoning', 'tool_call', 'error']);
 
 type TaskViewMessage = UserMessageView | AssistantMessageView | CompactBoundaryView | RetryStatusView | GoalPanel;
+type AssistantMessageLifecycle = 'active' | 'sealed' | 'terminal';
+
 function isRecord(value: unknown): value is Record<string, unknown> {
     return typeof value === 'object' && value !== null;
 }
@@ -185,8 +192,8 @@ function getReasoningPartialOmitHint(): string {
 }
 
 /** 思考/推理内容用卡片展示：
- * - reason_display = 'partial'：只显示最后 REASONING_TAIL_LINES 行；超出时首行省略号 + 切换 full 提示
- * - reason_display = 'full'：完整 Markdown 渲染
+ * - 默认只显示最后 REASONING_TAIL_LINES 行；超出时在上方显示省略提示
+ * - 当前任务为 verbose 输出且配置要求完整思考时显示完整 Markdown
  * - 正文均为斜体
  */
 export class ReasoningMessagePartView implements Component {
@@ -199,6 +206,7 @@ export class ReasoningMessagePartView implements Component {
     private invalidated = true;
     private lastWidth?: number;
     private cachedOutput?: string[];
+    private outputDisplayProvider: () => OutputDisplayLevel = getConfiguredOutputDisplayLevel;
 
     setContent(content: string) {
         this._content = content ?? '';
@@ -209,6 +217,11 @@ export class ReasoningMessagePartView implements Component {
 
     setStreaming(streaming: boolean) {
         this._streaming = streaming;
+        this.invalidated = true;
+    }
+
+    setOutputDisplayProvider(provider: () => OutputDisplayLevel): void {
+        this.outputDisplayProvider = provider;
         this.invalidated = true;
     }
 
@@ -223,8 +236,7 @@ export class ReasoningMessagePartView implements Component {
 
     /** 判断是否应该完整显示思考内容 */
     private shouldDisplayFull(): boolean {
-        const setting = Setting.getInstance();
-        return setting.data.cli_config?.reason_display === 'full';
+        return this.outputDisplayProvider() === 'verbose' && isReasoningDisplayFullConfigured();
     }
 
     render(width: number): string[] {
@@ -347,6 +359,20 @@ export class ToolCallMessagePartView implements Component {
             }
         }
         this.invalidated = true;
+    }
+
+    getToolCalls(): ToolCall[] {
+        return [...this.viewMap.keys()];
+    }
+
+    getAttentionToolCalls(): ToolCall[] {
+        return this.getToolCalls().filter((toolCall) => toolCall.requiresUserAttention());
+    }
+
+    renderAttentionToolCalls(width: number): string[] {
+        return [...this.viewMap.entries()]
+            .filter(([toolCall]) => toolCall.requiresUserAttention())
+            .flatMap(([, view]) => view.render(width));
     }
 
     needsFreshRender(): boolean {
@@ -501,6 +527,7 @@ export class RetryStatusView implements Component {
         const errorMessage = typeof this.state.error_message === 'string' ? this.state.error_message : '';
         const remainingSeconds = Math.max(0, Math.ceil((nextRetryAt - Date.now()) / 1000));
         const retryTime = new Date(nextRetryAt).toLocaleTimeString();
+
         const contentWidth = Math.max(1, width - 4);
         const statusLine =
             this.state.status === 'retrying'
@@ -613,14 +640,97 @@ export class UserMessageView implements Component {
     }
 }
 
+const MINIMAL_RUNNING_SPINNER_FRAMES = ['✣', '✤', '✥', '✦'];
+const MINIMAL_RUNNING_SPINNER_MS = 300;
+
+function getMinimalRunningIcon(): string {
+    const frame = Math.floor(Date.now() / MINIMAL_RUNNING_SPINNER_MS) % MINIMAL_RUNNING_SPINNER_FRAMES.length;
+    return chalk.blueBright(MINIMAL_RUNNING_SPINNER_FRAMES[frame]);
+}
+
+function getMinimalToolDisplayName(toolCall: ToolCall): string {
+    if (!toolCall.display_name_key) return toolCall.tool_name;
+    return resolveToolDisplayName(toolCall.tool_name, toolCall.display_name_key, t);
+}
+
+function getMinimalRunningAction(toolCall: ToolCall | undefined, isReasoning: boolean): string {
+    if (toolCall) {
+        return t('display.minimal.running.tool', {
+            tool: getMinimalToolDisplayName(toolCall)
+        });
+    }
+    return t(isReasoning ? 'display.minimal.running.thinking' : 'display.minimal.running.waiting');
+}
+
+function compactMinimalToolName(value: string, maxLength: number = 12): string {
+    const phrase = value.split(/[，,。！？!?；;]/, 1)[0].trim();
+    const characters = Array.from(phrase);
+    if (characters.length <= maxLength) return phrase;
+    return `${characters
+        .slice(0, maxLength - 1)
+        .join('')
+        .trim()}…`;
+}
+
+function formatMinimalProcessSummary(toolCalls: ToolCall[], hasReasoning: boolean): string {
+    const toolNames = Array.from(
+        new Set(
+            toolCalls.map((toolCall) => compactMinimalToolName(getMinimalToolDisplayName(toolCall))).filter(Boolean)
+        )
+    );
+    const listedNames = toolNames.slice(0, 2).join(t('display.minimal.tools.summary.listSeparator'));
+    const tools = listedNames
+        ? t(
+              toolCalls.length === 1
+                  ? 'display.minimal.tools.summary.usedTools.one'
+                  : 'display.minimal.tools.summary.usedTools.many',
+              { tools: listedNames, count: toolCalls.length }
+          )
+        : '';
+    const reasoning = hasReasoning ? t('display.minimal.tools.summary.reasoning') : '';
+    return reasoning && tools ? t('display.minimal.tools.summary.combined', { reasoning, tools }) : reasoning || tools;
+}
+
+function renderAssistantBody(part: TextMessagePartView, width: number): string[] {
+    const bodyWidth = Math.max(1, width - 2);
+    const body = part.render(bodyWidth);
+    if (body.length === 0) return [];
+    return body.map((line, index) => `${index === 0 ? chalk.blueBright('◆') : ' '} ${line}`);
+}
+
 export class AssistantMessageView implements Component {
     box: Box = new Box(0, 1);
     parts: Array<ReasoningMessagePartView | TextMessagePartView | ToolCallMessagePartView | ErrorMessagePartView> = [];
     private invalidated = true;
     private lastWidth?: number;
     private cachedOutput?: string[];
+    private outputDisplayProvider: () => OutputDisplayLevel = getConfiguredOutputDisplayLevel;
+    private lifecycle: AssistantMessageLifecycle = 'terminal';
     /** 当前正在更新的 message_id，用于检测新的 AssistantMessage 并重置 parts */
     private currentMessageId?: string;
+
+    setOutputDisplayProvider(provider: () => OutputDisplayLevel): void {
+        this.outputDisplayProvider = provider;
+        for (const part of this.parts) {
+            if (part instanceof ReasoningMessagePartView) {
+                part.setOutputDisplayProvider(provider);
+            }
+        }
+        this.invalidated = true;
+    }
+
+    setLifecycle(lifecycle: AssistantMessageLifecycle): void {
+        this.lifecycle = lifecycle;
+        this.invalidated = true;
+    }
+
+    seal(): void {
+        if (this.lifecycle === 'active') this.setLifecycle('sealed');
+    }
+
+    isActive(): boolean {
+        return this.lifecycle === 'active';
+    }
 
     private canApplyPart(index: number, part: AssistantMessagePart, expectedType: string): boolean {
         if (!isValidPartIndex(index) || getPartType(part) !== expectedType) {
@@ -654,6 +764,7 @@ export class AssistantMessageView implements Component {
         if (!this.canApplyPart(index, reasoningPart, 'reasoning')) return;
         while (index >= this.parts.length) {
             const newPartView = new ReasoningMessagePartView();
+            newPartView.setOutputDisplayProvider(this.outputDisplayProvider);
             this.parts.push(newPartView);
             this.box.addChild(newPartView);
         }
@@ -802,6 +913,128 @@ export class AssistantMessageView implements Component {
         return false;
     }
 
+    private renderMinimalToolSummary(toolCalls: ToolCall[], hasReasoning: boolean, width: number): string {
+        const summary = formatMinimalProcessSummary(toolCalls, hasReasoning);
+        return truncateToWidth(`${chalk.greenBright('✓')} ${chalk.dim(summary)}`, width, '', true);
+    }
+
+    private renderMinimalTerminal(
+        toolCalls: ToolCall[],
+        hasReasoning: boolean,
+        failed: boolean,
+        width: number
+    ): string {
+        if (!failed) {
+            return chalk.dim('─'.repeat(Math.max(1, width)));
+        }
+
+        const metadata = formatMinimalProcessSummary(toolCalls, hasReasoning);
+        const label = t('display.minimal.failed.label');
+        return truncateToWidth(
+            `${chalk.redBright('●')} ${chalk.redBright(label)} ${chalk.dim(`· ${metadata}`)}`,
+            width,
+            '',
+            true
+        );
+    }
+
+    private renderMinimalRunning(toolCalls: ToolCall[], isReasoning: boolean, width: number): string {
+        const activeToolCall = toolCalls.findLast(
+            (toolCall) => toolCall.status === 'pending' || toolCall.status === 'running'
+        );
+        const action = getMinimalRunningAction(activeToolCall, isReasoning);
+        return truncateToWidth(`${getMinimalRunningIcon()} ${action}`, width, '', true);
+    }
+
+    private renderMinimal(width: number): string[] {
+        const lines: string[] = [];
+        const allToolCalls = this.parts.flatMap((part) =>
+            part instanceof ToolCallMessagePartView ? part.getToolCalls() : []
+        );
+        const textPartIndexes = this.parts.flatMap((part, index) =>
+            part instanceof TextMessagePartView ? [index] : []
+        );
+        const isTerminal = this.lifecycle === 'terminal';
+        const finalTextPartIndex = isTerminal ? textPartIndexes[textPartIndexes.length - 1] : undefined;
+        const bodyCount = isTerminal ? Math.max(0, textPartIndexes.length - 1) : textPartIndexes.length;
+        const showPhaseSummaries = !isTerminal || bodyCount > 1;
+        const hasReasoning = this.parts.some((part) => part instanceof ReasoningMessagePartView);
+        const hasError = this.parts.some((part) => part instanceof ErrorMessagePartView);
+        const hasActiveToolCall = allToolCalls.some(
+            (toolCall) => toolCall.status === 'pending' || toolCall.status === 'running'
+        );
+        const hasAttentionToolCall = allToolCalls.some((toolCall) => toolCall.requiresUserAttention());
+        const isStreamingText = this.parts[this.parts.length - 1] instanceof TextMessagePartView;
+        const isStreamingReasoning = this.parts[this.parts.length - 1] instanceof ReasoningMessagePartView;
+        let pendingToolCalls: ToolCall[] = [];
+        let completionRendered = false;
+
+        const appendBlock = (block: string[], separated = false) => {
+            let start = 0;
+            let end = block.length;
+            while (start < end && block[start] === '') start += 1;
+            while (end > start && block[end - 1] === '') end -= 1;
+            if (start === end) return;
+            if (separated && lines.length > 0 && lines[lines.length - 1] !== '') {
+                lines.push('');
+            }
+            lines.push(...block.slice(start, end));
+        };
+
+        const flushPendingTools = () => {
+            if (pendingToolCalls.length === 0) return false;
+            let rendered = false;
+            if (showPhaseSummaries) {
+                appendBlock([this.renderMinimalToolSummary(pendingToolCalls, hasReasoning, width)]);
+                rendered = true;
+            }
+            pendingToolCalls = [];
+            return rendered;
+        };
+
+        for (let index = 0; index < this.parts.length; index += 1) {
+            const part = this.parts[index];
+            if (part instanceof ReasoningMessagePartView) continue;
+            if (part instanceof ToolCallMessagePartView) {
+                const attentionToolCalls = new Set(part.getAttentionToolCalls());
+                pendingToolCalls.push(...part.getToolCalls().filter((toolCall) => !attentionToolCalls.has(toolCall)));
+                if (attentionToolCalls.size > 0) {
+                    flushPendingTools();
+                    appendBlock(part.renderAttentionToolCalls(width));
+                }
+                continue;
+            }
+
+            const processSummaryRendered = flushPendingTools();
+            if (part instanceof TextMessagePartView) {
+                if (index === finalTextPartIndex) {
+                    appendBlock(
+                        [this.renderMinimalTerminal(allToolCalls, hasReasoning, hasError, width)],
+                        processSummaryRendered
+                    );
+                    completionRendered = true;
+                    appendBlock(part.render(width), true);
+                } else {
+                    appendBlock(renderAssistantBody(part, width), processSummaryRendered);
+                }
+            } else {
+                appendBlock(part.render(width));
+            }
+        }
+
+        if (isTerminal) {
+            flushPendingTools();
+            if (!completionRendered) {
+                appendBlock([this.renderMinimalTerminal(allToolCalls, hasReasoning, hasError, width)]);
+            }
+        } else if (this.lifecycle === 'sealed') {
+            flushPendingTools();
+        } else if (!hasAttentionToolCall && (hasActiveToolCall || !isStreamingText)) {
+            appendBlock([this.renderMinimalRunning(allToolCalls, isStreamingReasoning, width)]);
+        }
+        return lines.length === 0 ? [] : ['', ...lines, ''];
+    }
+
     render(width: number): string[] {
         const fresh = this.hasToolCallUpdates();
         if (!fresh && !this.invalidated && this.lastWidth === width && this.cachedOutput) {
@@ -809,7 +1042,8 @@ export class AssistantMessageView implements Component {
         }
         if (fresh) this.box.invalidate();
         this.lastWidth = width;
-        this.cachedOutput = this.box.render(width);
+        this.cachedOutput =
+            this.outputDisplayProvider() === 'minimal' ? this.renderMinimal(width) : this.box.render(width);
         this.invalidated = false;
         return this.cachedOutput;
     }
@@ -854,9 +1088,16 @@ class IncrementalBox implements Component {
 
         // 渲染所有 children（大部分返回缓存，开销极低）
         const childLines: string[] = [];
+        let previousChild: Component | undefined;
         for (const child of this.children) {
             const lines = child.render(width);
-            for (const line of lines) childLines.push(line);
+            let start = 0;
+            if (previousChild instanceof AssistantMessageView && child instanceof AssistantMessageView) {
+                while (childLines.length > 0 && childLines.at(-1)?.trim() === '') childLines.pop();
+                while (start < lines.length && lines[start].trim() === '') start += 1;
+            }
+            for (let index = start; index < lines.length; index += 1) childLines.push(lines[index]);
+            previousChild = child;
         }
 
         if (childLines.length === 0) return [];
@@ -942,6 +1183,7 @@ export class TaskView implements Component {
     private messageIdToAssistantView: Map<string, AssistantMessageView> = new Map();
     private readonly goalController: TaskViewGoalController;
     private retryStatusView?: RetryStatusView;
+    private outputDisplayLevel: OutputDisplayLevel = getConfiguredOutputDisplayLevel();
 
     private tui: TUI;
     private messageLayout: IncrementalBox = new IncrementalBox();
@@ -981,6 +1223,23 @@ export class TaskView implements Component {
                 this.invalidated = true;
             }
         });
+    }
+
+    setOutputDisplayLevel(level: OutputDisplayLevel): void {
+        if (this.outputDisplayLevel === level) return;
+        this.outputDisplayLevel = level;
+        this.invalidate();
+    }
+
+    getOutputDisplayLevel(): OutputDisplayLevel {
+        return this.outputDisplayLevel;
+    }
+
+    private createAssistantView(options: { lifecycle?: AssistantMessageLifecycle } = {}): AssistantMessageView {
+        const view = new AssistantMessageView();
+        view.setOutputDisplayProvider(() => this.outputDisplayLevel);
+        view.setLifecycle(options.lifecycle ?? 'active');
+        return view;
     }
 
     /** 兼容既有测试和诊断代码；Goal 面板状态实际由 goalController 持有。 */
@@ -1075,6 +1334,7 @@ export class TaskView implements Component {
     /** 标记流式输出开始 */
     startStreaming() {
         this._streaming = true;
+        this.invalidated = true;
     }
 
     /** 流式输出结束：清除节流状态，确保最终帧完整渲染 */
@@ -1082,6 +1342,7 @@ export class TaskView implements Component {
         this._streaming = false;
         this._lastRenderMs = 0;
         this._lastRenderDurationMs = 0;
+        this.getLastAssistantView()?.setLifecycle('terminal');
         this.invalidated = true;
     }
 
@@ -1221,9 +1482,8 @@ export class TaskView implements Component {
         if (lastMsg instanceof AssistantMessage && preloadedParts.length > 0) {
             let view = this.messageIdToAssistantView.get(lastMsg.message_id);
             if (!view) {
-                view = new AssistantMessageView();
+                view = this.createAssistantView();
                 view.setMessageId(lastMsg.message_id);
-                view.throttleMsProvider = () => this.getMdRenderThrottleMs();
                 this.messageIdToAssistantView.set(lastMsg.message_id, view);
                 this.messages.push(view);
                 this.messageLayout.addChild(view);
@@ -1295,7 +1555,6 @@ export class TaskView implements Component {
         this.goalController.reset();
         this.retryStatusView = undefined;
         this.currentTaskId = undefined;
-        this._dynamicThrottleMs = undefined;
         this.invalidated = true;
     }
 
@@ -1356,7 +1615,7 @@ export class TaskView implements Component {
     }
 
     private async showLocalSubmitError(messageKey: string, messageArgs?: Record<string, unknown>): Promise<void> {
-        const view = new AssistantMessageView();
+        const view = this.createAssistantView({ lifecycle: 'terminal' });
         view.setMessageId(`local-submit-error-${crypto.randomUUID()}`);
         await view.updateErrorPart(
             0,
@@ -1421,9 +1680,9 @@ export class TaskView implements Component {
                 }
             } else {
                 if (!view) {
-                    view = new AssistantMessageView();
+                    this.getLastAssistantView()?.seal();
+                    view = this.createAssistantView();
                     view.setMessageId(chunkUpdate.message_id);
-                    view.throttleMsProvider = () => this.getMdRenderThrottleMs();
                     this.messageIdToAssistantView.set(chunkUpdate.message_id, view);
                     this.messages.push(view);
                     this.messageLayout.addChild(view);
@@ -1450,9 +1709,9 @@ export class TaskView implements Component {
             if (!hasMessageId(chunkUpdate, 'assistant')) return;
             let view = this.messageIdToAssistantView.get(chunkUpdate.message_id);
             if (!view) {
-                view = new AssistantMessageView();
+                this.getLastAssistantView()?.seal();
+                view = this.createAssistantView();
                 view.setMessageId(chunkUpdate.message_id);
-                view.throttleMsProvider = () => this.getMdRenderThrottleMs();
                 this.messageIdToAssistantView.set(chunkUpdate.message_id, view);
                 this.messages.push(view);
                 this.messageLayout.addChild(view);
@@ -1510,9 +1769,16 @@ export class TaskView implements Component {
             } else if (msg instanceof UserMessage) {
                 this.appendUserMessageView(msg);
             } else if (msg instanceof AssistantMessage) {
-                const view = new AssistantMessageView();
+                const isRunningTail = this.taskState.task_status === 'running' && messageIndex === messages.length - 1;
+                const lifecycle: AssistantMessageLifecycle = isRunningTail
+                    ? 'active'
+                    : messages[messageIndex + 1] instanceof AssistantMessage
+                      ? 'sealed'
+                      : 'terminal';
+                const view = this.createAssistantView({
+                    lifecycle
+                });
                 view.setMessageId(msg.message_id);
-                view.throttleMsProvider = () => this.getMdRenderThrottleMs();
                 this.messageIdToAssistantView.set(msg.message_id, view);
                 const content = Array.isArray(msg.content) ? msg.content : [];
                 for (let i = 0; i < content.length; i++) {
@@ -1588,7 +1854,8 @@ export class TaskView implements Component {
     }
 
     render(width: number): string[] {
-        if (!this.invalidated && this.lastWidth === width && this.cachedOutput) {
+        const animateMinimalStatus = this._streaming && this.outputDisplayLevel === 'minimal';
+        if (!animateMinimalStatus && !this.invalidated && this.lastWidth === width && this.cachedOutput) {
             return this.cachedOutput;
         }
 
@@ -1607,7 +1874,19 @@ export class TaskView implements Component {
 
         this.lastWidth = width;
         const now = Date.now();
+        if (animateMinimalStatus) {
+            this.getLastAssistantView()?.invalidate();
+        }
         this.cachedOutput = this.messageLayout.render(width);
+        const lastAssistant = this.getLastAssistantView();
+        if (this._streaming && this.outputDisplayLevel === 'minimal' && (!lastAssistant || !lastAssistant.isActive())) {
+            this.cachedOutput = [
+                ...this.cachedOutput,
+                '',
+                truncateToWidth(`${getMinimalRunningIcon()} ${t('display.minimal.running.waiting')}`, width, '', true),
+                ''
+            ];
+        }
         this._lastRenderDurationMs = Date.now() - now;
         this.invalidated = false;
         return this.cachedOutput;

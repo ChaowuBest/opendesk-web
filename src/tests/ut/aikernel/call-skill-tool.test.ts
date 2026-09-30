@@ -476,5 +476,52 @@ describe('CallSkillTool', () => {
             expect(toolCall.status).toBe('success');
             expect(toolCall.args_string).toBe(validArgs);
         });
+    test('propagates user-attention state from an inner tool', async () => {
+        const loginTool = new BaseTool('loginChannel', 'Login channel', z.object({}));
+        loginTool.setExecutor(async () => 'ok');
+        loginTool.requiresUserAttention = (toolcall) =>
+            (toolcall.result_object as { phase?: string } | undefined)?.phase === 'polling';
+
+        const callTool = registerSkillWithTool(loginTool);
+        await callTool.execute({
+            bundleName: TEST_BUNDLE,
+            skillName: TEST_SKILL,
+            toolName: 'loginChannel',
+            toolArgs: {}
+        });
+        const outerCall = new ToolCall(0, 'call-login', 'CallSkillTool', '{}');
+        outerCall.args_object = {
+            bundleName: TEST_BUNDLE,
+            skillName: TEST_SKILL,
+            toolName: 'loginChannel',
+            toolArgs: {}
+        };
+        outerCall.status = 'running';
+        outerCall.result_object = { phase: 'polling' };
+
+        expect(callTool.requiresUserAttention(outerCall)).toBe(true);
+        outerCall.result_object = { phase: 'success' };
+        expect(callTool.requiresUserAttention(outerCall)).toBe(false);
+    });
+
+    test('leaves an undeclared inner attention state available to outer fallback inference', () => {
+        const legacyTool = new BaseTool('legacyAuthorize', 'Legacy authorization', z.object({}));
+        const callTool = registerSkillWithTool(legacyTool);
+        const outerCall = new ToolCall(0, 'call-legacy', 'CallSkillTool', '{}');
+        outerCall.args_object = {
+            bundleName: TEST_BUNDLE,
+            skillName: TEST_SKILL,
+            toolName: 'legacyAuthorize',
+            toolArgs: {}
+        };
+        outerCall.status = 'running';
+        outerCall.result_object = {
+            phase: 'qr_code',
+            verification_url: 'https://example.com/verify'
+        };
+        outerCall.setTool(callTool);
+
+        expect(callTool.requiresUserAttention(outerCall)).toBeUndefined();
+        expect(outerCall.requiresUserAttention()).toBe(true);
     });
 });

@@ -17,6 +17,7 @@ import { workerData, isMainThread } from 'worker_threads';
 import type { BaseApplication } from '../applications/base.js';
 import { REASONING_EFFORT_VALUES, type ReasoningEffort } from '../aikernel/types/reasoning.js';
 import { parseTokenCount, DEFAULT_MODEL_TIMEOUT_SECONDS } from '../../utils/model.js';
+import { OUTPUT_DISPLAY_LEVELS } from '../../common/output-display.js';
 import {
     getHarmonyRuntimeEnvironment,
     getHarmonyWorkspaceDirectory
@@ -174,6 +175,11 @@ const WindowBoundsSchema = z
     .nullable()
     .describe('上次退出时保存的窗口尺寸与位置， 表示从未保存');
 
+const OutputDisplaySchema = z.preprocess(
+    (value: unknown) => (value === 'full' || value === 'detailed' ? 'verbose' : value),
+    z.enum(OUTPUT_DISPLAY_LEVELS).default('minimal')
+);
+
 const GUIConfigSchema = z.object({
     theme_preference: z
         .enum(['system', 'light', 'dark'])
@@ -212,6 +218,7 @@ const GUIConfigSchema = z.object({
         .optional()
         .default('inline')
         .describe('思考内容显示模式: inline=内联式, bubble=气泡式'),
+    output_mode: OutputDisplaySchema.describe('GUI 输出模式: minimal=极简, verbose=详细'),
     on_mainwindow_close: z
         .enum(['quit', 'minimize'])
         .optional()
@@ -224,6 +231,7 @@ const GUIConfigSchema = z.object({
 
 export const DEFAULT_SHORTCUTS = {
     switch_mode: 'ctrl+k',
+    output_display: 'ctrl+o',
     switch_model: 'f2',
     clear_input: 'ctrl+c',
     endline: 'ctrl+j',
@@ -233,6 +241,7 @@ export const DEFAULT_SHORTCUTS = {
 
 const ShortcutsSchema = z.object({
     switch_mode: z.string().default(DEFAULT_SHORTCUTS.switch_mode).describe('模式切换'),
+    output_display: z.string().default(DEFAULT_SHORTCUTS.output_display).describe('输出显示切换'),
     switch_model: z.string().default(DEFAULT_SHORTCUTS.switch_model).describe('模型切换'),
     endline: z.string().default(DEFAULT_SHORTCUTS.endline).describe('回车换行'),
     show_help: z.string().default(DEFAULT_SHORTCUTS.show_help).describe('打开帮助'),
@@ -240,12 +249,11 @@ const ShortcutsSchema = z.object({
     list_tasks: z.string().default(DEFAULT_SHORTCUTS.list_tasks).describe('显示任务列表')
 });
 
-/** 思考区显示模式；兼容旧配置 on/off */
-const ReasonDisplaySchema = z.preprocess(
-    (val: unknown) => {
-        if (val === 'on') return 'full';
-        if (val === 'off') return 'partial';
-        return val;
+const LegacyReasonDisplaySchema = z.preprocess(
+    (value: unknown) => {
+        if (value === 'on') return 'full';
+        if (value === 'off') return 'partial';
+        return value;
     },
     z.enum(['full', 'partial']).default('partial')
 );
@@ -253,6 +261,7 @@ const ReasonDisplaySchema = z.preprocess(
 const TerminalCliSchema = z.object({
     shortcuts: ShortcutsSchema.default({
         switch_mode: DEFAULT_SHORTCUTS.switch_mode,
+        output_display: DEFAULT_SHORTCUTS.output_display,
         switch_model: DEFAULT_SHORTCUTS.switch_model,
         endline: DEFAULT_SHORTCUTS.endline,
         show_help: DEFAULT_SHORTCUTS.show_help,
@@ -261,8 +270,10 @@ const TerminalCliSchema = z.object({
     }).describe('快捷键配置'),
     use_isolated_python: z.boolean().default(true).describe('是否在终端命令中使用 OpenDesk 隔离 Python 环境'),
     inherit_venv: z.boolean().default(true).describe('是否自动继承启动 OpenDesk 时的 Python 虚拟环境'),
-    reason_display: ReasonDisplaySchema.describe(
-        '思考内容显示模式: full=完整 Markdown, partial=仅显示末尾若干行(流式与结束后一致)'
+    output_display: OutputDisplaySchema.describe('TUI 输出显示: minimal=聚合过程, verbose=详细时间线'),
+    show_all_reasoning: z.boolean().default(false).describe('是否在 verbose 输出显示下展示全部 Reason 内容'),
+    reason_display: LegacyReasonDisplaySchema.describe(
+        'TUI Reason 显示配置，兼容旧版配置并参与 verbose 输出显示判断'
     ).default('partial')
 });
 
@@ -451,11 +462,13 @@ function getSettingSchema(): z.ZodObject<z.ZodRawShape> {
             floating_window_position: 'bottom-right',
             sidebar_width: 320,
             gui_reason_display: 'inline',
+            output_mode: 'minimal',
             floating_window_mode: 'card'
         }),
         cli_config: TerminalCliSchema.describe('终端 CLI 设置').default({
             shortcuts: {
                 switch_mode: DEFAULT_SHORTCUTS.switch_mode,
+                output_display: DEFAULT_SHORTCUTS.output_display,
                 switch_model: DEFAULT_SHORTCUTS.switch_model,
                 endline: DEFAULT_SHORTCUTS.endline,
                 show_help: DEFAULT_SHORTCUTS.show_help,
@@ -464,6 +477,8 @@ function getSettingSchema(): z.ZodObject<z.ZodRawShape> {
             },
             use_isolated_python: true,
             inherit_venv: true,
+            output_display: 'minimal',
+            show_all_reasoning: false,
             reason_display: 'partial'
         }),
         task_config: TaskSettingSchema.describe('任务设置').default({
@@ -502,6 +517,23 @@ export interface BuiltinModelProvider {
     readonly providerName: string;
     resolveInstance(model: Model, expectedType?: ModelType): ModelInstance | null;
     refreshModels(fetchImpl?: BuiltinModelFetch): Promise<Model[]>;
+}
+
+function migrateLegacyTuiOutputDisplay(settingRawObject: unknown): boolean {
+    if (!settingRawObject || typeof settingRawObject !== 'object' || Array.isArray(settingRawObject)) return false;
+    const cliConfig = (settingRawObject as Record<string, unknown>).cli_config;
+    if (!cliConfig || typeof cliConfig !== 'object' || Array.isArray(cliConfig)) return false;
+
+    const rawCliConfig = cliConfig as Record<string, unknown>;
+    if (Object.prototype.hasOwnProperty.call(rawCliConfig, 'output_display')) return false;
+    const usedFullReasoning =
+        rawCliConfig.reason_display === 'full' ||
+        rawCliConfig.reason_display === 'on' ||
+        rawCliConfig.show_all_reasoning === true;
+    if (!usedFullReasoning) return false;
+
+    rawCliConfig.output_display = 'verbose';
+    return true;
 }
 
 export class ModelInstance {
@@ -801,6 +833,8 @@ export class Setting {
         }
 
         removeLegacyExperimentalFeature(settingRawObject);
+        // Migration: preserve full TUI output for users whose legacy reasoning setting showed full content.
+        const migratedLegacyTuiOutputDisplay = migrateLegacyTuiOutputDisplay(settingRawObject);
 
         const setting = new Setting();
         try {
@@ -813,6 +847,9 @@ export class Setting {
 
         // 校验默认模型引用，清除已不存在的模型别名
         setting.validateDefaultModels();
+        if (migratedLegacyTuiOutputDisplay) {
+            setting.save();
+        }
         return setting;
     }
 

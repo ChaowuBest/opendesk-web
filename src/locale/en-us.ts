@@ -742,7 +742,7 @@ export const enUs: Record<string, string> = {
 
     // Commands - Reason
     'reason.description':
-        'Adjust reasoning effort, usage: /reason effort [default|none|low|medium|high|max] | display [full|partial]',
+        'Adjust reasoning effort and display, usage: /reason effort [default|none|low|medium|high|max] | display [full|partial]',
     'reason.effort.description': 'Set reasoning depth',
     'reason.display.description': 'Set thinking display mode',
     'reason.display.full': 'Full Display',
@@ -762,6 +762,8 @@ export const enUs: Record<string, string> = {
     'reason.error.invalid.effort':
         'Invalid reasoning depth: ${value}\nValid values: default, none, low, medium, high, max',
     'reason.error.invalid.display': 'Invalid display mode: ${value}\nValid values: full, partial',
+    'reason.error.full.requires.output':
+        'The current task is using minimal output, so full reasoning cannot be enabled. Run /display verbose or press ${shortcut} to switch to detailed output first.',
     'reason.error.specify.effort': 'Please specify reasoning depth: /reason effort [default|none|low|medium|high|max]',
     'reason.error.specify.display': 'Please specify display mode: /reason display [full|partial]',
     'reason.error.unknown': 'Unknown subcommand: ${subcmd}\nAvailable: effort, display',
@@ -840,6 +842,7 @@ export const enUs: Record<string, string> = {
 
     // Input StatusBar
     'input.statusbar.switchmode': 'switch mode',
+    'input.statusbar.switchDisplay': 'switch display',
     'input.statusbar.help': 'help',
 
     // Help Command
@@ -1008,9 +1011,13 @@ export const enUs: Record<string, string> = {
     // Config - Display
     'config.display.title': 'Display Settings',
     'config.display.title.hint': 'Configure CLI display behavior',
+    'config.display.field.output_display': 'Output Display',
+    'config.display.option.output_display.minimal': 'Minimal mode',
+    'config.display.option.output_display.verbose': 'Detailed mode',
     'config.display.field.reason_display': 'Reasoning Display',
     'config.display.option.reason_display.full': 'Full reasoning content (full)',
-    'config.display.option.reason_display.partial': 'Latest portion only (partial)',
+    'config.display.option.reason_display.partial': 'Partial reasoning content (partial)',
+    'config.display.reason_display.unavailable': 'Unavailable in minimal mode',
 
     // Config - Network
     'config.network.title': 'Network Settings',
@@ -1237,7 +1244,23 @@ export const enUs: Record<string, string> = {
     'reasoning.elapsed.chars': ' · ${chars} tokens',
     'reasoning.show.content': 'Show thinking',
     'reasoning.hide.content': 'Hide',
-    'reasoning.partial.hint': '…… (use /reason display full to show full thinking)',
+    'reasoning.partial.hint': '…… (use /reason display full to show all thinking)',
+    'display.level.minimal': 'Minimal display',
+    'display.level.verbose': 'Detailed',
+    'display.command.description': 'Set TUI output display for the current task',
+    'display.command.title': 'Output Display',
+    'display.command.usage': 'Usage: /display minimal|verbose',
+    'display.minimal.running.reading': 'Reading `${path}`…',
+    'display.minimal.running.tool': 'Running ${tool}…',
+    'display.minimal.running.thinking': 'Thinking…',
+    'display.minimal.running.waiting': 'Generating response…',
+    'display.minimal.tools.summary.reasoning': 'Deep reasoning',
+    'display.minimal.tools.summary.combined': '${reasoning} · ${tools}',
+    'display.minimal.tools.summary.listSeparator': ', ',
+    'display.minimal.tools.summary.usedTools.one': 'Used ${tools} in ${count} tool call',
+    'display.minimal.tools.summary.usedTools.many': 'Used ${tools} in ${count} tool calls',
+    'display.minimal.complete.label': 'Complete',
+    'display.minimal.failed.label': 'Failed',
 
     // Compact Boundary
     'compact.boundary.loading': 'Compressing context...',
@@ -1279,6 +1302,7 @@ export const enUs: Record<string, string> = {
 
     // Shortcuts
     'shortcut.switch_mode': 'Switch Mode',
+    'shortcut.output_display': 'Switch Output Display',
     'shortcut.switch_model': 'Switch Model',
     'shortcut.endline': 'Insert Newline',
     'shortcut.show_help': 'Show Help',
@@ -1684,6 +1708,9 @@ export const enUs: Record<string, string> = {
     'sp.general.reasoningDisplay': 'Reasoning Display',
     'sp.general.reasoningDisplay.inline': 'Inline',
     'sp.general.reasoningDisplay.bubble': 'Bubble',
+    'sp.general.outputMode': 'Output Mode',
+    'sp.general.outputMode.minimal': 'Minimal',
+    'sp.general.outputMode.verbose': 'Detailed',
     'sp.general.displaySize': 'Display Size',
     'sp.general.inputSettings': 'Input Settings',
     'sp.general.sendShortcut': 'Send Shortcut',
@@ -2475,6 +2502,17 @@ export const enUs: Record<string, string> = {
     'renderer.taskview.toolbar.export': 'Export',
     'renderer.taskview.toolbar.panel': 'Panel',
     'renderer.taskview.toolbar.title': 'Agent Chat',
+    'renderer.taskview.output.deepReasoning': 'Deep reasoning',
+    'renderer.taskview.output.processSummary': 'View process details',
+    'renderer.taskview.output.processSummary.combined': '${reasoning} · ${tools}',
+    'renderer.taskview.output.processSummary.listSeparator': ', ',
+    'renderer.taskview.output.processSummary.usedTools': 'Used ${tools} and other tools (${count} total)',
+    'renderer.taskview.output.tool': 'Tool',
+    'renderer.taskview.output.finalResult': 'Final result',
+    'renderer.taskview.output.completedProcess': 'View process',
+    'renderer.taskview.output.status.thinking': 'Thinking…',
+    'renderer.taskview.output.status.tool': 'Running ${name}…',
+    'renderer.taskview.output.status.working': 'Running task…',
     'renderer.taskview.quickpass.scope.all': 'All settings (including app config)',
     'renderer.taskview.quickpass.scope.base': 'Base settings (excluding app config)',
     'renderer.taskview.quickpass.settingsTitle': 'Settings',

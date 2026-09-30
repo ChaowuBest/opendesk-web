@@ -22,7 +22,8 @@ function createMockInteractionToolset(): BaseToolset {
                     multiple: z.boolean().default(false)
                 })
             )
-        })
+        }),
+        'tools.askUser.name'
     );
     askUserTool.setUniversalExecutor(async (_args: any, _result: ToolResult) => {
         // no-op

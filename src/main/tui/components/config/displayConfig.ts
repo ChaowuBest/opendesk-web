@@ -13,8 +13,7 @@ import { type Component, type TUI } from '@earendil-works/pi-tui';
 import { Setting } from '../../../utils/setting.js';
 import { ConfigForm, type ActionDef, type FieldDef } from './form.js';
 import { t } from '../../../../locale/index.js';
-
-const REASON_DISPLAY_OPTIONS = ['full', 'partial'];
+import { OUTPUT_DISPLAY_LEVELS } from '../../display.js';
 
 export class DisplayConfigPage implements Component {
     private tui: TUI;
@@ -31,19 +30,36 @@ export class DisplayConfigPage implements Component {
 
     private showForm() {
         const data = Setting.getInstance().getData();
-        const reasonDisplay = data.cli_config?.reason_display || 'partial';
+        const outputDisplay = data.cli_config?.output_display ?? 'minimal';
+        const reasonDisplay =
+            data.cli_config?.reason_display === 'full' || data.cli_config?.show_all_reasoning === true
+                ? 'full'
+                : 'partial';
 
         const fields: FieldDef[] = [
+            {
+                type: 'select',
+                key: 'output_display',
+                label: t('config.display.field.output_display'),
+                value: outputDisplay,
+                options: [...OUTPUT_DISPLAY_LEVELS],
+                optionLabels: {
+                    minimal: t('config.display.option.output_display.minimal'),
+                    verbose: t('config.display.option.output_display.verbose')
+                }
+            },
             {
                 type: 'select',
                 key: 'reason_display',
                 label: t('config.display.field.reason_display'),
                 value: reasonDisplay,
-                options: REASON_DISPLAY_OPTIONS,
+                options: ['full', 'partial'],
                 optionLabels: {
                     full: t('config.display.option.reason_display.full'),
                     partial: t('config.display.option.reason_display.partial')
-                }
+                },
+                disabled: outputDisplay === 'minimal',
+                disabledHint: t('config.display.reason_display.unavailable')
             }
         ];
 
@@ -52,7 +68,7 @@ export class DisplayConfigPage implements Component {
             { key: 'cancel', label: t('config.common.cancel') }
         ];
 
-        this.form = new ConfigForm(
+        const form = new ConfigForm(
             this.tui,
             t('config.display.title'),
             fields,
@@ -61,8 +77,13 @@ export class DisplayConfigPage implements Component {
                 if (actionKey === 'save') this.save(values);
                 else this.close();
             },
-            () => this.close()
+            () => this.close(),
+            (values) => {
+                const minimal = values.output_display !== 'verbose';
+                form.setItemDisabled('reason_display', minimal, t('config.display.reason_display.unavailable'));
+            }
         );
+        this.form = form;
         this.form.activate();
         this.tui.requestRender();
     }
@@ -73,7 +94,15 @@ export class DisplayConfigPage implements Component {
         if (!data.cli_config) {
             data.cli_config = {} as typeof data.cli_config;
         }
-        data.cli_config.reason_display = values.reason_display === 'full' ? 'full' : 'partial';
+        data.cli_config.output_display = values.output_display === 'verbose' ? 'verbose' : 'minimal';
+        data.cli_config.show_all_reasoning =
+            data.cli_config.output_display === 'verbose' && values.reason_display === 'full';
+        if (
+            data.cli_config.output_display === 'verbose' &&
+            (values.reason_display === 'full' || values.reason_display === 'partial')
+        ) {
+            data.cli_config.reason_display = values.reason_display;
+        }
         setting.setData(data);
         this.onConfigChange?.();
         this.close();

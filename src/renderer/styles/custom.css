@@ -90,7 +90,6 @@ html[data-theme='dark'] .reasoning-block-od .reasoning-preview-area::-webkit-scr
 .reasoning-block-od.reasoning-content-visible .reasoning-header i.fa-lightbulb {
     color: #f59e0b !important;
 }
-
 /* Reasoning icon breathing gradient (active thinking).
    只做 opacity 脉冲（合成器动画）：background-position 动画会让图标每帧重绘，
    流式思考期间与文本重绘叠加放大 GPU/渲染进程占用。 */
@@ -3440,6 +3439,352 @@ agent-input[hide-disclaimer] .agent-input-footer {
     margin-bottom: 6px;
 }
 
+/* Assistant output modes: shared process timeline for minimal and verbose views. */
+.od-assistant-output-flow {
+    display: block;
+    min-width: 0;
+}
+
+.od-completed-process {
+    min-width: 0;
+    margin: 0 0 14px;
+    border-bottom: 1px solid var(--od-border);
+}
+
+.od-completed-process-summary {
+    display: flex;
+    align-items: center;
+    gap: 7px;
+    min-height: 34px;
+    padding: 4px 0 8px;
+    border: 0;
+    background: transparent;
+    color: var(--od-text-muted);
+    cursor: pointer;
+    font-size: var(--fs-md);
+    text-align: left;
+}
+
+.od-completed-process-summary:focus-visible {
+    border-radius: 3px;
+    outline: 2px solid color-mix(in srgb, var(--od-accent) 65%, transparent);
+    outline-offset: 2px;
+}
+
+.od-completed-process-chevron {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 14px;
+    height: 14px;
+    color: var(--od-text-faint);
+    line-height: 1;
+    transition: transform 140ms ease;
+}
+
+.od-completed-process.is-expanded .od-completed-process-chevron {
+    transform: rotate(90deg);
+}
+
+.od-completed-process-detail {
+    display: none;
+    padding: 2px 4px 8px 0;
+}
+
+.od-completed-process-detail.is-open {
+    display: block;
+    max-height: none;
+    overflow: visible;
+}
+
+.od-process-segment {
+    min-width: 0;
+    margin-bottom: 0;
+    overflow: visible;
+    background: transparent;
+    border: 0;
+    border-radius: 0;
+}
+
+.od-process-summary {
+    width: 100%;
+    border: 0;
+    color: var(--od-text);
+    background: transparent;
+    cursor: pointer;
+    text-align: left;
+}
+
+.od-process-summary {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    min-height: 28px;
+    margin: 0;
+    padding: 3px 0;
+    border-bottom: 0;
+    border-radius: 0;
+}
+
+.od-process-summary:hover .od-process-action,
+.od-process-summary:focus-visible .od-process-action {
+    color: var(--chat-green);
+}
+
+.od-process-summary:focus-visible {
+    outline: 2px solid color-mix(in srgb, var(--od-accent) 65%, transparent);
+    outline-offset: -2px;
+}
+
+.od-process-main-icon {
+    display: inline-flex;
+    flex: none;
+    align-items: center;
+    justify-content: center;
+    width: 14px;
+    height: 14px;
+    color: var(--od-text-muted);
+    font-size: 14px;
+    line-height: 1;
+}
+
+.od-process-summary-text {
+    flex: 1;
+    min-width: 0;
+    overflow: hidden;
+    color: var(--od-text-muted);
+    font-size: var(--fs-md);
+    font-weight: 500;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.od-process-action {
+    display: inline-flex;
+    flex: none;
+    align-items: center;
+    gap: 3px;
+    margin-left: auto;
+    color: var(--chat-green);
+    font-size: var(--fs-sm);
+    font-weight: 600;
+}
+
+.od-process-chevron {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 14px;
+    height: 14px;
+    color: var(--od-text-disabled);
+    line-height: 1;
+    transform: rotate(0deg);
+    transition: transform 150ms ease;
+}
+
+[aria-expanded='true'] > .od-process-chevron {
+    transform: rotate(90deg);
+}
+
+.od-process-summary[aria-expanded='true'] .od-process-chevron {
+    transform: rotate(90deg);
+}
+
+.od-process-detail {
+    display: none;
+    box-sizing: border-box;
+    max-height: 280px;
+    overflow-y: auto;
+    overscroll-behavior: auto;
+    scrollbar-gutter: stable;
+    margin: 0;
+    padding: 2px 0 0;
+    border: 0;
+    border-radius: 0;
+    background: transparent;
+}
+
+.od-process-detail.is-open {
+    display: block;
+}
+
+.od-user-attention-process-detail {
+    max-height: none;
+    overflow: visible;
+    scrollbar-gutter: auto;
+}
+
+.od-assistant-output-flow[data-reason-display='bubble'] .od-process-detail.is-open {
+    max-height: none;
+    overflow: visible;
+    scrollbar-gutter: auto;
+}
+
+.od-process-detail {
+    scrollbar-color: #9aa3ad transparent;
+    scrollbar-width: thin;
+}
+
+.od-process-detail::-webkit-scrollbar {
+    width: 8px;
+}
+
+.od-process-detail::-webkit-scrollbar-track {
+    background: transparent;
+}
+
+.od-process-detail::-webkit-scrollbar-thumb {
+    border: 2px solid var(--od-bg-elevated);
+    border-radius: 5px;
+    background: #9aa3ad;
+}
+
+html[data-theme='dark'] .od-process-detail {
+    scrollbar-color: rgba(255, 255, 255, 0.18) transparent;
+}
+
+html[data-theme='dark'] .od-process-detail::-webkit-scrollbar-thumb {
+    background: rgba(255, 255, 255, 0.18);
+}
+
+.od-stage-body,
+.od-final-result {
+    min-width: 0;
+    background: transparent !important;
+}
+
+.od-stage-body {
+    margin: 0 4px;
+}
+
+.od-streaming-text {
+    white-space: normal;
+    overflow-wrap: anywhere;
+}
+
+.od-final-result-label {
+    margin: 0 0 5px;
+    color: var(--od-text-muted);
+    font-size: 10px;
+    font-weight: 650;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+}
+
+.od-final-result-with-divider {
+    margin-top: 14px;
+    padding-top: 12px;
+    border-top: 1px solid var(--od-border);
+}
+
+.od-stage-error {
+    color: #c2413a;
+}
+
+.od-running-status {
+    display: flex;
+    align-items: center;
+    width: 100%;
+    gap: 8px;
+    min-width: 0;
+    min-height: 34px;
+    padding: 0;
+    border: 0;
+    background: transparent;
+    color: var(--od-text);
+    cursor: pointer;
+    font-size: var(--fs-md);
+    text-align: left;
+}
+
+.od-running-status:hover .od-running-status-line,
+.od-running-status:focus-visible .od-running-status-line {
+    color: var(--od-text);
+    text-decoration: underline;
+    text-decoration-color: var(--od-border-strong);
+    text-underline-offset: 3px;
+}
+
+.od-running-status:focus-visible {
+    outline: 2px solid color-mix(in srgb, var(--od-accent) 65%, transparent);
+    outline-offset: 2px;
+}
+
+.od-running-status-icon {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    line-height: 1;
+    flex: none;
+    color: var(--chat-green);
+}
+
+.od-running-status-icon.is-thinking {
+    color: #f59e0b;
+}
+
+.od-running-status-icon.is-tool {
+    color: #f59e0b;
+}
+
+.od-running-status-tool-icon,
+.od-running-status-thinking-icon {
+    display: block;
+}
+
+.od-running-status-viewport {
+    flex: 1;
+    min-width: 0;
+    height: 26px;
+    overflow: hidden;
+}
+
+.od-running-status-line {
+    display: flex;
+    align-items: center;
+    height: 26px;
+    animation: od-status-roll-in 180ms ease-out;
+}
+
+.od-running-status-line > span {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+@keyframes od-status-roll-in {
+    from {
+        opacity: 0;
+        transform: translateY(5px);
+    }
+    to {
+        opacity: 1;
+        transform: translateY(0);
+    }
+}
+
+@media (max-width: 640px) {
+    .od-process-summary {
+        align-items: flex-start;
+        flex-wrap: wrap;
+    }
+
+    .od-process-action {
+        width: auto;
+        margin-left: auto;
+    }
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .od-completed-process-chevron,
+    .od-process-chevron,
+    .od-running-status-line {
+        animation: none;
+        transition: none;
+    }
+}
+
 .waiting-usage-placeholder {
     animation: od-thinking-enter 160ms ease-out;
 }
@@ -4427,23 +4772,19 @@ html[data-theme='dark'] .message-queue-list::-webkit-scrollbar-thumb:hover {
     touch-action: none;
     flex-shrink: 0;
 }
-
 .message-queue-drag-handle:hover,
 .message-queue-drag-handle:focus-visible {
     background: rgba(59, 130, 246, 0.12);
     color: #2563eb;
 }
-
 .message-queue-drag-handle:active {
     cursor: grabbing;
 }
-
 .message-queue-drag-handle svg {
     width: 16px;
     height: 16px;
     pointer-events: none;
 }
-
 .message-queue-item-dragging {
     opacity: 0.85;
     position: relative;

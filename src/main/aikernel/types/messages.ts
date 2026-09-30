@@ -92,6 +92,7 @@ export interface BaseChatToolCall {
     index: number;
     id: string;
     tool_name: string;
+    display_name_key?: string;
     args_string: string;
     args_object: unknown;
     status: 'pending' | 'running' | 'success' | 'error';
@@ -113,10 +114,7 @@ export interface BaseToolCallMessagePart {
 export type UserMessagePart = BaseTextMessagePart | BaseImageMessagePart | BaseFileMessagePart;
 
 export type AssistantMessagePart =
-    | BaseTextMessagePart
-    | BaseReasoningMessagePart
-    | BaseToolCallMessagePart
-    | BaseErrorMessagePart;
+    BaseTextMessagePart | BaseReasoningMessagePart | BaseToolCallMessagePart | BaseErrorMessagePart;
 
 export interface BaseUsage {
     prompt_tokens?: number;
