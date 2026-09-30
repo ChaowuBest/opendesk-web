@@ -10,6 +10,7 @@
  */
 
 import { AgentOperableHTMLElement } from '../../widget_utils.js';
+import { hasPowerPointClipboardText } from '../../../../common/clipboard.js';
 import { escapeHtml } from '../../../../common/utils/escape.js';
 import { resolveRendererLocale } from '../../../../renderer/locale.js';
 import { ENTER_KEY_ICON_SVG, SHIFT_KEY_ICON_SVG, CTRL_KEY_ICON_SVG } from '../../../../common/utils/keys.ts';
@@ -90,14 +91,8 @@ export class AgentOfficeEntryWidget extends AgentOperableHTMLElement {
     /** 首次 staff 数据尚未返回时为 true，office/management 空列表先渲染加载态而不是"无员工" */
     private loading = true;
     private modal:
-        | 'new'
-        | 'delete'
-        | 'portrait'
-        | 'installed-skills'
-        | 'batch-skills'
-        | 'skill-url'
-        | 'skill-detail'
-        | null = null;
+        'new' | 'delete' | 'portrait' | 'installed-skills' | 'batch-skills' | 'skill-url' | 'skill-detail' | null =
+        null;
     private status = '';
     private previewHideTimer?: ReturnType<typeof setTimeout>;
     private portraitImage?: HTMLImageElement;
@@ -1725,6 +1720,7 @@ export class AgentOfficeEntryWidget extends AgentOperableHTMLElement {
     private handleComposerPaste(event: ClipboardEvent): void {
         const items = event.clipboardData?.items;
         if (!items) return;
+        if (hasPowerPointClipboardText(event.clipboardData)) return;
         let hasImage = false;
         for (const item of items) {
             if (item.type.startsWith('image/')) {
@@ -1857,8 +1853,7 @@ export class AgentOfficeEntryWidget extends AgentOperableHTMLElement {
                     .filter(Boolean),
                 trigger_interval:
                     (this.shadowRoot?.querySelector<HTMLSelectElement>('#new-trigger-interval')?.value as
-                        | StaffDetail['trigger_interval']
-                        | undefined) ?? 'never'
+                        StaffDetail['trigger_interval'] | undefined) ?? 'never'
             });
             this.modal = null;
             this.status = '';

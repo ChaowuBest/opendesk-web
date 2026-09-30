@@ -14,6 +14,7 @@ import { ENTER_KEY_ICON_SVG, SHIFT_KEY_ICON_SVG, CTRL_KEY_ICON_SVG } from '../..
 import { showImageLightbox } from './imageLightbox.js';
 import { showConfirmModal } from './confirmModal.ts';
 import { escapeHtml } from '../../common/utils/escape.js';
+import { hasPowerPointClipboardText } from '../../common/clipboard.js';
 import { NativeBridgeProxy } from '../../platforms/bridges/renderer.ts';
 import { createRendererTranslator, resolveRendererLocale } from '../locale.ts';
 import {
@@ -3160,7 +3161,10 @@ class AgentInput extends HTMLElement {
             const items = e.clipboardData?.items;
             if (!items) return;
 
-            // 如果有图片，优先处理图片；文本由 textarea 原生粘贴逻辑处理
+            // PowerPoint 会附带图片预览；存在可用文本时保留 textarea 的原生文本粘贴。
+            if (hasPowerPointClipboardText(e.clipboardData)) return;
+
+            // 如果有图片，优先处理图片；其他文本由 textarea 原生粘贴逻辑处理
             const hasImage = Array.from(items).some((item) => item.type.startsWith('image/'));
             if (!hasImage) return;
 
