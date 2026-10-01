@@ -22,10 +22,8 @@ import path from 'path';
 import { createRequire } from 'module';
 import { ColumnSchema, validateColumnSchema, type ColumnConstraint } from './abstract-storage.js';
 import { removeSqliteStoreFiles } from './drop-utils.js';
-import {
-    normalizePathDescendantOrSelfValues,
-    pathDescendantOrSelfSqlValues
-} from './path-scope.js';
+import { normalizePathDescendantOrSelfValues, pathDescendantOrSelfSqlValues } from './path-scope.js';
+import { ensureWasmOpenableDb } from './wasm-wal-compat.js';
 import type {
     BaseIndexStoreProbeResult,
     BaseQueryCondition,
@@ -62,6 +60,7 @@ const SUPPORTED_OPERATORS: BaseQueryOperator[] = [
 
 export function probeBaseIndexStoreWasm(dbPath: string): BaseIndexStoreProbeResult {
     if (!fs.existsSync(dbPath)) return 'missing';
+    ensureWasmOpenableDb(dbPath);
     let db: InstanceType<(typeof sqlite3Wasm)['Database']> | null = null;
     try {
         db = new sqlite3Wasm.Database(dbPath);
@@ -99,6 +98,9 @@ export class BaseIndexDBWasm implements IBaseIndexDB {
         if (!fs.existsSync(dir)) {
             fs.mkdirSync(dir, { recursive: true });
         }
+
+        // 既有库可能由 native better-sqlite3 以 WAL 模式创建，wasm 后端先降级 header 再打开
+        ensureWasmOpenableDb(dbPath);
 
         this.db = new sqlite3Wasm.Database(dbPath);
         this.db.run('PRAGMA journal_mode = WAL');
