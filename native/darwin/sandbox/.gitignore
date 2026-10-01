@@ -1,0 +1,2 @@
+# 构建产物：由 scripts/build-darwin-sandbox.cjs 生成，不跟踪二进制
+runtime/

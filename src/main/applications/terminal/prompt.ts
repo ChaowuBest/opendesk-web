@@ -34,7 +34,7 @@ export function createTerminalSystemPromptContribution(
     ];
 
     if (options.sandboxed) {
-        // Linux 沙箱仅用于 bash/zsh（透明路径）；PowerShell 沙箱为 Windows 语义
+        // darwin 沙箱与 Linux 同为透明路径语义；PowerShell 沙箱为 Windows 语义
         if (options.kind !== 'powershell') {
             items.push(
                 t('prompt.mode.sandbox.linux'),
@@ -42,6 +42,9 @@ export function createTerminalSystemPromptContribution(
                 t('prompt.sandbox.linux.workspace'),
                 t('prompt.sandbox.linux.system')
             );
+            if (options.deleteToTrash) {
+                items.push(t('prompt.sandbox.darwin.trash'));
+            }
         } else {
             items.push(t('prompt.sandbox.rootPaths'), t('prompt.sandbox.absolutePaths'), t('prompt.sandbox.cwd'));
             if (options.deleteToTrash) {

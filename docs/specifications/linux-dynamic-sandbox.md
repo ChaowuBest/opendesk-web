@@ -348,7 +348,7 @@ M1/M2 已完成并验收：
 
 **回收站（--del-to-trash）**
 
-- unlink/rmdir 改写为移动至 XDG Trash（~/.local/share/Trash）：files/ + info/*.trashinfo
+- unlink/rmdir 改写为移动至 XDG Trash（~/.local/share/Trash）：files/ + info/\*.trashinfo
   （Path + 本地时间 DeletionDate）；跨文件系统（/tmp 等异盘）保留原文件并报错
   （fail-closed，不静默误删）；
 - OpenDesk 侧 `shell_sandbox_del_to_trash` 开关在 Linux 沙箱生效（此前开关显示但无效）。
@@ -468,7 +468,7 @@ x86_64 二进制，安装后沙箱命令直接 `exec format error`。本轮修�
 
 1. **产物按 rust target triple 落盘**（`scripts/build-linux-sandbox.cjs`）：
     - 本机构建：`cargo build --release` → `runtime/<host-triple>/dynobox-linux`；
-    - 交叉构建：`OPENDESK_SANDBOX_TARGET=aarch64-unknown-linux-gnu npm run build:linux-sandbox`
+    - 交叉构建：`OPENDESK_SANDBOX_TARGET=aarch64-unknown-linux-gnu npm run build-sandbox:linux`
       → `cargo build --release --target <triple>` → `runtime/<triple>/dynobox-linux`
       （rustup 预检未安装 target 时给出 `rustup target add` 修复提示）；
 2. **stage 钩子按目标架构取产物并校验 ELF**（`forge.config.cjs` + 共享模块

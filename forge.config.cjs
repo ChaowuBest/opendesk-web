@@ -116,12 +116,52 @@ function stageLinuxSandboxResource(buildPath, electronVersion, platform, arch, c
             if (!fs.existsSync(source)) {
                 throw new Error(
                     `Linux sandbox binary is missing for ${arch} (${triple}): ${source}。` +
-                        `请先构建对应架构：OPENDESK_SANDBOX_TARGET=${triple} npm run build:sandbox:linux（或在该架构构建机上直接构建）`
+                        `请先构建对应架构：OPENDESK_SANDBOX_TARGET=${triple} npm run build-sandbox:linux（或在该架构构建机上直接构建）`
                 );
             }
             assertLinuxElfMachine(source, arch);
             fs.mkdirSync(targetDirectory, { recursive: true });
             fs.copyFileSync(source, path.join(targetDirectory, 'dynobox-linux'));
+        }
+        callback();
+    } catch (error) {
+        callback(error);
+    }
+}
+
+// 发布态 darwin 沙箱固定解包到 resources/sandbox/dynobox-darwin.dylib。
+// dylib 为 universal（arm64 + arm64e [+ x86_64]），打包前用 lipo 校验目标架构
+// slice 存在，防止宿主架构产物静默打进另一架构安装包（运行时 dyld 拒绝加载）。
+// arm64e slice 必需：/bin/zsh 等系统平台二进制仅接受 arm64e 插入库。
+function stageDarwinSandboxResource(buildPath, electronVersion, platform, arch, callback) {
+    try {
+        if (platform === 'darwin') {
+            const source = path.join(__dirname, 'native', 'darwin', 'sandbox', 'runtime', 'dynobox-darwin.dylib');
+            const resourcesRoot = path.join(buildPath, 'resources');
+            const targetDirectory = path.join(resourcesRoot, 'sandbox');
+            if (!fs.existsSync(source)) {
+                throw new Error(
+                    `Darwin sandbox dylib is missing: ${source}。` +
+                        `请先构建：npm run build-sandbox:darwin（或 OPENDESK_SANDBOX_ARCH=all 构建双架构 slice）`
+                );
+            }
+            const lipo = require('node:child_process').execFileSync('/usr/bin/lipo', ['-archs', source], {
+                encoding: 'utf8'
+            });
+            const built = lipo.trim().split(/\s+/);
+            // x64 安装包必须含 x86_64 slice；arm64 安装包必须含 arm64 与 arm64e slice
+            const required = arch === 'arm64' ? ['arm64', 'arm64e'] : ['x86_64'];
+            for (const wanted of required) {
+                if (!built.includes(wanted)) {
+                    throw new Error(
+                        `Darwin sandbox dylib is missing the ${wanted} slice (got: ${built.join(' ')})。` +
+                            `请构建对应架构：OPENDESK_SANDBOX_ARCH=all npm run build-sandbox:darwin`
+                    );
+                }
+            }
+            fs.mkdirSync(targetDirectory, { recursive: true });
+            fs.copyFileSync(source, path.join(targetDirectory, 'dynobox-darwin.dylib'));
+            removePathIfExists(path.join(resourcesRoot, 'native', 'darwin', 'sandbox'));
         }
         callback();
     } catch (error) {
@@ -601,7 +641,12 @@ module.exports = {
             pruneDarwinAppNativePrebuilds,
             materializeWorkspacePackageLinks
         ],
-        afterCopyExtraResources: [pruneDarwinExtraResources, stageWindowsSandboxResource, stageLinuxSandboxResource]
+        afterCopyExtraResources: [
+            pruneDarwinExtraResources,
+            stageWindowsSandboxResource,
+            stageLinuxSandboxResource,
+            stageDarwinSandboxResource
+        ]
     },
     // 打包期的原生依赖均为 N-API prebuild 或纯 wasm（classic-level、sqlite-vec、
     // node-sqlite3-wasm），N-API 二进制跨 Electron ABI 通用，无需按 ABI rebuild；

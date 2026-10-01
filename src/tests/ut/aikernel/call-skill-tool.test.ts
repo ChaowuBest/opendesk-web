@@ -310,7 +310,7 @@ describe('CallSkillTool', () => {
             const triggerTool = new BaseTool(
                 'trigger',
                 '触发页面动作',
-                z.object({ action: z.string(), args: z.record(z.unknown()), snapshot: z.boolean() })
+                z.object({ action: z.string(), args: z.record(z.string(), z.unknown()), snapshot: z.boolean() })
             );
             tabsTool.setExecutor(async (args) => {
                 receivedArgs = args;

@@ -36,7 +36,8 @@ function sandboxVariantsAvailable(targetPlatform: string): boolean {
     }
     // 仅 Linux 沙箱变体依赖 dynobox-linux 二进制与 unprivileged user namespace；
     // win32/darwin 的沙箱组件随桌面安装包提供，无需本机探测
-    if (targetPlatform !== 'linux') return true;
+    if (targetPlatform === 'win32' || targetPlatform === 'darwin') return true;
+    if (targetPlatform !== 'linux') return false;
     const electronProcess = process as NodeJS.Process & { defaultApp?: boolean; resourcesPath?: string };
     const dev = path.join(
         process.env.INIT_CWD || process.cwd(),
@@ -73,6 +74,8 @@ export function scanSupportedShells(
         if (platform === 'win32' && kind === 'powershell' && !sandboxed && allowSandboxVariant)
             add(kind, shellPath, true);
         if (platform === 'linux' && (kind === 'bash' || kind === 'zsh') && !sandboxed && allowSandboxVariant)
+            add(kind, shellPath, true);
+        if (platform === 'darwin' && (kind === 'zsh' || kind === 'bash') && !sandboxed && allowSandboxVariant)
             add(kind, shellPath, true);
     };
     if (platform === 'win32') {

@@ -46,7 +46,10 @@ const PACKAGING_IGNORE_PATTERNS = [
     // Linux 沙箱同理：整树（源码/vendor/target/tests）不进 asar；发布态二进制由
     // stageLinuxSandboxResource 按目标架构放入 resources/sandbox/dynobox-linux。
     // （追加在末尾：packaged-artifacts.test.ts 按位置解构前四个模式）
-    /^[/\\]native[/\\]linux[/\\]sandbox(?:[/\\]|$)/
+    /^[/\\]native[/\\]linux[/\\]sandbox(?:[/\\]|$)/,
+    // darwin 沙箱整树不进 asar；发布态 dylib 由 stageDarwinSandboxResource
+    // 校验目标架构 slice 后放入 resources/sandbox/dynobox-darwin.dylib。
+    /^[/\\]native[/\\]darwin[/\\]sandbox(?:[/\\]|$)/
 ];
 
 // node-gyp 构建垃圾：调试符号、静态库、链接中间产物与 MSVC 工程文件

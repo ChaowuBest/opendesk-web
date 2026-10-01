@@ -41,6 +41,14 @@ test('PACKAGING_IGNORE_PATTERNS 命中 CLI 产物 / 源码 / workspace 嵌套依
     assert.match('/native/windows/sandbox', sandboxPattern);
     assert.doesNotMatch('/native/windows/sandbox-other/keep.exe', sandboxPattern);
 
+    // 第六个模式为 darwin 沙箱构建树：整树不进 asar，发布态 dylib 由
+    // stageDarwinSandboxResource 校验 slice 后放入 resources/sandbox
+    const darwinSandboxPattern = helper.PACKAGING_IGNORE_PATTERNS[5];
+    assert.match('/native/darwin/sandbox/src/boxdylib.c', darwinSandboxPattern);
+    assert.match('\\native\\darwin\\sandbox\\runtime\\dynobox-darwin.dylib', darwinSandboxPattern);
+    assert.match('/native/darwin/sandbox', darwinSandboxPattern);
+    assert.doesNotMatch('/native/darwin/speech-helper/helper', darwinSandboxPattern);
+
     assert.match('/packages/plugin-sdk/node_modules/typescript/lib.js', packagesPattern);
     assert.match('\\packages\\app-sdk\\node_modules\\x', packagesPattern);
     assert.doesNotMatch('/packages/plugin-sdk/dist/index.js', packagesPattern);
@@ -89,7 +97,8 @@ test('应用复制阶段排除整个 Windows 沙箱构建树，且不误伤其�
             'dist/main/main.js',
             'native/openharmony/sandbox/bin/helper',
             'native/darwin/speech-helper/helper',
-            'native/windows/sandbox-other/keep.txt'
+            'native/windows/sandbox-other/keep.txt',
+            'native/darwin/speech-other/keep.txt'
         ];
         for (const relative of keptFiles) {
             writeFile(path.join(source, relative));

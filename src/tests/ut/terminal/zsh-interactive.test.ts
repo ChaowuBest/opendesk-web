@@ -43,12 +43,15 @@ jest.unstable_mockModule('fs', () => {
 const spawnMock = jest.fn();
 const spawnSyncMock = jest.fn();
 
-jest.unstable_mockModule('child_process', () => ({
+const childProcessMock = {
     execFile: jest.fn(),
+    execFileSync: jest.fn(),
     spawn: (...args: unknown[]) => spawnMock(...args),
     spawnSync: (...args: unknown[]) => spawnSyncMock(...args),
     execSync: jest.fn()
-}));
+};
+jest.unstable_mockModule('child_process', () => childProcessMock);
+jest.unstable_mockModule('node:child_process', () => childProcessMock);
 
 const { ExecuteZshTool } = await import('../../../main/applications/terminal/shells/index.js');
 const { clearZshExitNoiseCache } = await import('../../../main/utils/shellExec.js');

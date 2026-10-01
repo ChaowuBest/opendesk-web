@@ -32,13 +32,19 @@ test('Windows does not advertise command wrappers that cannot be launched as a s
     expect(scanSupportedShells('win32', null)).toEqual([]);
 });
 
-test('darwin exposes all available supported kinds without sandbox variants', () => {
+test('darwin exposes all available supported kinds plus sandbox variants', () => {
     paths.set('zsh', '/bin/zsh');
     paths.set('bash', '/bin/bash');
     paths.set('pwsh', '/usr/local/bin/pwsh');
     const shells = scanSupportedShells('darwin', null);
-    expect(shells.map((shell) => shell.kind)).toEqual(['zsh', 'bash', 'powershell']);
-    expect(shells.every((shell) => shell.sandboxed === false)).toBe(true);
+    // zsh/bash 各注册普通与沙箱两个变体（darwin 沙箱组件随桌面安装包提供）
+    expect(shells.map((shell) => `${shell.kind}:${shell.sandboxed}`)).toEqual([
+        'zsh:false',
+        'zsh:true',
+        'bash:false',
+        'bash:true',
+        'powershell:false'
+    ]);
     paths.clear();
     expect(scanSupportedShells('darwin', null)).toEqual([]);
 });

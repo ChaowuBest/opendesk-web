@@ -366,7 +366,7 @@ const outputDirectory = path.resolve(readArgument('output-dir', path.join(projec
 if (!fs.existsSync(path.join(appDirectory, 'opendesk.exe')))
     throw new Error(`Packaged OpenDesk executable not found in ${appDirectory}`);
 if (!fs.existsSync(dokanMsiPath)) {
-    throw new Error(`Dokan MSI not found: ${dokanMsiPath}. Run npm run build:sandbox first.`);
+    throw new Error(`Dokan MSI not found: ${dokanMsiPath}. Run npm run build-sandbox:windows first.`);
 }
 await verifyPackagedAppDirectory(appDirectory, version);
 fs.mkdirSync(outputDirectory, { recursive: true });

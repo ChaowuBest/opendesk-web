@@ -19,12 +19,12 @@
 - 部分 Windows launcher 会把宿主绝对路径或命名对象格式嵌入 PE 文件。镜像文件系统按可执行文件内容识别这些兼容性特征，在私有 `/dynobox` overlay 中生成一次性副本，并把已声明的宿主路径映射到沙箱视图；不会按 `python`、`pip` 等工具名生成专用 shim。通过 PATH 启动的 launcher 与命令行直接启动的程序共享同一套处理。relay 只移除严格匹配当前虚拟盘符的运行时自定位诊断，其他 stderr 和退出码原样保留。
 - `ConstrainedLanguage` 是 PowerShell 的语言限制，限制任意 .NET 调用、非核心类型属性赋值及 COM 等能力，并不等同于沙箱文件权限。挂载丢失会使 PowerShell 启动检查失败；本集成不强制切换语言模式，也不覆盖宿主的 AppLocker/WDAC 策略。
 
-回归验证：`npm test -- --runInBand --runTestsByPath src/tests/ut/terminal/powershell-sandbox.test.ts src/tests/ut/terminal/background.test.ts src/tests/ut/aikernel/tool-serial-execution.test.ts`，以及 `npx tsx --test native/windows/sandbox/tests/runtime.test.ts`。原生集成用例需要 Windows、.NET SDK、已安装的 Dokany 驱动和 `npm run build:sandbox` 产物，覆盖子进程流、虚拟根和 35 秒授权等待。
+回归验证：`npm test -- --runInBand --runTestsByPath src/tests/ut/terminal/powershell-sandbox.test.ts src/tests/ut/terminal/background.test.ts src/tests/ut/aikernel/tool-serial-execution.test.ts`，以及 `npx tsx --test native/windows/sandbox/tests/runtime.test.ts`。原生集成用例需要 Windows、.NET SDK、已安装的 Dokany 驱动和 `npm run build-sandbox:windows` 产物，覆盖子进程流、虚拟根和 35 秒授权等待。
 
 网络初始化单元测试：`npm test -- --runInBand --runTestsByPath src/tests/ut/terminal/sandbox-loopback.test.ts`。真实运行测试已随沙箱实现放在 `native/windows/sandbox/tests/windows-sandbox-runtime.test.ts`，默认跳过，可在 PowerShell 中显式开启：
 
 ```powershell
-npm run build:sandbox
+npm run build-sandbox:windows
 native/windows/sandbox/runtime/sandbox.exe network-ensure
 $env:OPENDESK_SANDBOX_INTEGRATION = '1'
 $env:OPENDESK_SANDBOX_LOOPBACK_TEST = '1'

@@ -33,6 +33,7 @@ import {
 } from '../../../utils/shellExec.js';
 import { prepareDynamicSandbox } from '../sandboxes/dynabox.js';
 import { prepareLinuxSandbox } from '../sandboxes/linux-sandbox.js';
+import { prepareDarwinSandbox } from '../sandboxes/darwin-sandbox.js';
 import { appendSandboxPathDiagnostic, appendSandboxPipeDiagnostic } from '../sandboxes/path-diagnostic.js';
 import { t } from '../locale/index.js';
 
@@ -247,8 +248,8 @@ export async function executeShellCommand(opts: {
                       else timeoutClock.resume();
                   }
               })
-            : useDynamicSandbox
-              ? await prepareDynamicSandbox({
+            : useDynamicSandbox && process.platform === 'darwin'
+              ? await prepareDarwinSandbox({
                     shellPath,
                     shellArgs,
                     command,
@@ -260,7 +261,20 @@ export async function executeShellCommand(opts: {
                         else timeoutClock.resume();
                     }
                 })
-              : null;
+              : useDynamicSandbox
+                ? await prepareDynamicSandbox({
+                      shellPath,
+                      shellArgs,
+                      command,
+                      cwd,
+                      taskState,
+                      deleteToTrash: sandboxDeleteToTrash,
+                      onPermissionWaitChange: (waiting) => {
+                          if (waiting) timeoutClock.pause();
+                          else timeoutClock.resume();
+                      }
+                  })
+                : null;
     let proc: ChildProcessWithoutNullStreams;
     try {
         proc = sandbox
