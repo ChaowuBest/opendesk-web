@@ -154,7 +154,8 @@ export async function prepareDynamicSandbox(options: {
                 decide.endpoint,
                 decide.token,
                 options.taskState?.harnessContext.permission?.getRules?.(),
-                process.env.USERPROFILE
+                process.env.USERPROFILE,
+                getOpendeskDirectory()
             ),
             'utf8'
         );

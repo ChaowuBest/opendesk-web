@@ -5,8 +5,11 @@ import { zhCn } from '../../../main/applications/terminal/locale/zh-cn.js';
 const translations: Record<string, string> = {
     'prompt.title': '# Terminal environment',
     'prompt.active': '- Active terminal: ${shell} (`${path}`)',
+    'prompt.shell.powershell': 'PowerShell',
+    'prompt.shell.bash': 'Bash',
     'prompt.mode.host': '- Execution mode: host',
     'prompt.mode.sandbox': '- Execution mode: Windows dynamic sandbox',
+    'prompt.mode.sandbox.linux': '- Execution mode: Linux dynamic sandbox',
     'prompt.sandbox.rootPaths':
         '- Use stable root-relative paths: /C/... maps to host C:/..., /D/... maps to host D:/..., and so on.',
     'prompt.sandbox.absolutePaths':
@@ -14,7 +17,10 @@ const translations: Record<string, string> = {
     'prompt.sandbox.cwd':
         '- The sandbox working directory matches the task workspace (host real path, e.g. C:/foo); relative paths resolve from there.',
     'prompt.sandbox.trash':
-        '- Deletions are always moved to the Windows Recycle Bin (same semantics as the Linux/OHOS sandbox).'
+        '- Deletions are always moved to the Windows Recycle Bin (same semantics as the Linux/OHOS sandbox).',
+    'prompt.sandbox.linux.transparent': '- transparent path semantics',
+    'prompt.sandbox.linux.workspace': '- workspace writes, system dirs read-only',
+    'prompt.sandbox.linux.system': '- system dirs mounted read-only from the host'
 };
 
 jest.unstable_mockModule('../../../main/applications/terminal/locale/index.js', () => ({
@@ -63,11 +69,14 @@ describe('terminal system prompt contribution', () => {
     });
 
     test('uses stable root-relative paths for sandboxed powershell', () => {
+        // platform 缺省取 process.platform；不显式传 win32 的话，Linux CI 会走
+        // Linux 沙箱分支而非 Windows 动态沙箱分支。
         const contribution = createTerminalSystemPromptContribution({
             kind: 'powershell',
             shellPath: 'C:\\Program Files\\PowerShell\\7\\pwsh.exe',
             sandboxed: true,
-            deleteToTrash: true
+            deleteToTrash: true,
+            platform: 'win32'
         });
 
         expect(contribution.content).toContain('Windows dynamic sandbox');
@@ -78,5 +87,35 @@ describe('terminal system prompt contribution', () => {
         expect(contribution.content).not.toContain('SBX_ROOT');
         expect(contribution.content).not.toMatch(/[A-Z]:\/C\//);
         expect(contribution.content).toContain('Windows Recycle Bin');
+    });
+
+    test('uses transparent-path semantics for sandboxed linux shells', () => {
+        const contribution = createTerminalSystemPromptContribution({
+            kind: 'bash',
+            shellPath: '/bin/bash',
+            sandboxed: true,
+            platform: 'linux'
+        });
+
+        expect(contribution.content).toContain('Linux dynamic sandbox');
+        expect(contribution.content).toContain('transparent path semantics');
+        expect(contribution.content).toContain('system dirs mounted read-only from the host');
+        expect(contribution.content).not.toContain('SBX_ROOT');
+        // 分支内所有条目都必须命中 mock 译文，不允许裸 i18n key 泄漏进提示词
+        expect(contribution.content).not.toMatch(/prompt\./);
+    });
+
+    test('linux sandbox prompt keys exist in both real locale dictionaries', () => {
+        // 回归：prompt.ts 的 Linux 分支引用 prompt.sandbox.linux.system，
+        // 曾在 zh-cn/en-us 中同时缺失，导致线上提示词漏出裸 key。
+        for (const key of [
+            'prompt.mode.sandbox.linux',
+            'prompt.sandbox.linux.transparent',
+            'prompt.sandbox.linux.workspace',
+            'prompt.sandbox.linux.system'
+        ]) {
+            expect(zhCn[key]).toBeTruthy();
+            expect(enUs[key]).toBeTruthy();
+        }
     });
 });

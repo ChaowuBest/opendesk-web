@@ -61,6 +61,8 @@ export const zhCn: Record<string, string> = {
         '- 沙箱内根文件系统布局与宿主完全一致（/home、/tmp、/var 等均可访问），读写操作经权限检查。',
     'prompt.sandbox.linux.workspace':
         '- 工作区可写；工作区外的写入需要审批（或按规则拒绝）。系统目录（/usr /lib /etc 等）只读。',
+    'prompt.sandbox.linux.system':
+        '- 系统目录（/usr /lib /bin /etc 等）从宿主只读挂载：Python、Node.js 等运行时依赖原生可用且不可修改。',
     'prompt.sandbox.linux.tmp': '- /tmp 透传宿主目录：沙箱内写入的文件跨命令/跨沙箱实例持久，关闭不丢失。',
     'sandbox.description.linux':
         '在 Linux 动态沙箱中执行选定的 shell。根文件系统布局与宿主一致，读写经权限检查；工作区写放行、其余写询问或拒绝；删除可选送回收站（XDG Trash）。文件访问审批显示原始宿主路径。',

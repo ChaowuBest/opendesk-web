@@ -71,7 +71,13 @@ export function permissionRulesForSandbox(rules: PermissionRule[] | undefined): 
     return rulesToLines(rules, (expanded) => (expanded === '**' ? '/**' : hostPatternToVirtual(expanded)));
 }
 
-export function policyText(endpoint: string, token: string, rules?: PermissionRule[], home?: string): string {
+export function policyText(
+    endpoint: string,
+    token: string,
+    rules?: PermissionRule[],
+    home?: string,
+    opendeskDataDir?: string
+): string {
     const quote = (value: string) => JSON.stringify(value);
     // Windows 侧工具链缓存重定向（与 linux-sandbox.ts 的 ~/.cache/opendesk-sandbox
     // 同语义）：npm/jest 缓存写放行到宿主持久目录，跨沙箱实例复用（首次才下载）。
@@ -84,6 +90,21 @@ export function policyText(endpoint: string, token: string, rules?: PermissionRu
     // jest transform 缓存（os.tmpdir()/jest）与 node-compile-cache 与宿主共用。
     const tempRoot =
         home && home.length > 0 ? hostPatternToVirtual(`${home.replace(/\\/g, '/')}/AppData/Local/Temp/**`) : null;
+    // OpenDesk 框架自身数据目录（%APPDATA%\opendesk\logs、artifacts、tasks）写放行。
+    // 沙箱内加载/运行业务源码（npm run test、脚本、任务紧凑化等）时 logger 与任务
+    // 模块会持续写入这些目录，属框架自身的合法 IO，不应反复打扰用户；与 Linux/OHOS
+    // 策略放行工作区同哲学。opendeskDataDir 为宿主 getOpendeskDirectory()；未显式
+    // 传入时按默认布局（%APPDATA%\opendesk，即 home/AppData/Roaming/opendesk）推导。
+    const opendeskRoot = opendeskDataDir
+        ? opendeskDataDir.replace(/\\/g, '/')
+        : home && home.length > 0
+          ? `${home.replace(/\\/g, '/')}/AppData/Roaming/opendesk`
+          : null;
+    const opendeskWritePaths = opendeskRoot
+        ? ['logs', 'artifacts', 'tasks']
+              .map((sub) => hostPatternToVirtual(`${opendeskRoot}/${sub}/**`))
+              .filter((p): p is string => p !== null)
+        : [];
     // Windows 框架/PowerShell 启动时的静默写入路径（组件存储、缓存、Recent 跳转
     // 列表等）。这些路径在普通令牌下本就写不动（OS ACL 拒绝），放通只为免去每次
     // 触发 write ask 弹窗。顺序：用户 deny 规则仍在此之前（permissionRulesForSandbox
@@ -99,7 +120,14 @@ export function policyText(endpoint: string, token: string, rules?: PermissionRu
         '/C/Users/*/AppData/Roaming/Microsoft/Windows/Recent/**', // Recent/AutomaticDestinations
         // PowerShell 启动配置数据（框架静默写；家目录根/Roaming 根不放通——
         // 写探测由 hook 按"目录写探测"降级为 read，见 hooks_file.cpp）
-        '/C/Users/*/AppData/Local/Microsoft/Windows/PowerShell/**'
+        '/C/Users/*/AppData/Local/Microsoft/Windows/PowerShell/**',
+        // Python 解释器字节码缓存：import 时原子写 __pycache__/*.pyc.<随机数> 临时
+        // 文件再 rename（解释器在宿主 Python 安装目录下生成），内容仅为字节码缓存，
+        // 放行写入免去每次 spawn python 子进程都触发 ask
+        '/C/**/__pycache__/**',
+        // Windows App Installer（winget 等组件）诊断日志目录：组件启动时静默写入，
+        // 与 catroot/Caches 同类，放通不产生安全面（仅日志落盘）
+        '/C/Users/*/AppData/Local/Packages/*/LocalState/DiagOutputDir/**'
     ];
     return [
         'version = 1',
@@ -119,6 +147,8 @@ export function policyText(endpoint: string, token: string, rules?: PermissionRu
         ...(cacheRoot ? [`[[rules]]\npath = ${quote(cacheRoot)}\naccess = "write"\nperm = "allow"`] : []),
         // 宿主用户 Temp 写入放行（镜像层共享 Temp 别名，见 dynobox Runner）
         ...(tempRoot ? [`[[rules]]\npath = ${quote(tempRoot)}\naccess = "write"\nperm = "allow"`] : []),
+        // OpenDesk 框架自身数据目录（日志/任务产物/任务数据）写放行
+        ...opendeskWritePaths.map((path) => `[[rules]]\npath = ${quote(path)}\naccess = "write"\nperm = "allow"`),
         // 系统维护路径写放通（见 systemWritePaths 注释）
         ...systemWritePaths.map((path) => `[[rules]]\npath = ${quote(path)}\naccess = "write"\nperm = "allow"`),
         '[[rules]]',

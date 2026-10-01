@@ -1,8 +1,14 @@
+import { setRuntimeLocale } from '../../../locale/index.js';
 import {
     mapHostPathToSandboxRoot,
     sandboxRunArgs,
     withSandboxWorkingDirectory
 } from '../../../main/applications/terminal/sandboxes/dynabox.js';
+
+// 错误文案经真实 i18n 管道输出，语言随环境变化（CI 为 en-US），
+// 固定为 zh-CN 使断言与运行环境解耦。
+beforeAll(() => setRuntimeLocale('zh-CN'));
+afterAll(() => setRuntimeLocale(null));
 
 describe('sandboxRunArgs', () => {
     const base = {

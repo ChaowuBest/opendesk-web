@@ -58,6 +58,8 @@ export const enUs: Record<string, string> = {
         '- The sandbox root filesystem mirrors the host layout (/home, /tmp, /var, etc. are all visible); reads and writes go through permission checks.',
     'prompt.sandbox.linux.workspace':
         '- The workspace is writable; writes outside the workspace require approval (or are denied by rules). System dirs (/usr /lib /etc etc.) are read-only.',
+    'prompt.sandbox.linux.system':
+        '- System directories (/usr /lib /bin /etc etc.) are mounted read-only from the host: runtimes such as Python and Node.js are available natively and cannot be modified.',
     'prompt.sandbox.linux.tmp':
         '- /tmp maps to the host directory: files written in the sandbox persist across commands and sandbox instances.',
     'sandbox.executableMissing.linux':
@@ -75,7 +77,5 @@ export const enUs: Record<string, string> = {
     'sandbox.cwdMissing.darwin': 'Dynamic sandbox requires a task workspace as the controlled path.',
     'sandbox.cwdUnsupported.darwin': 'Sandbox working directory is missing or unusable: ${path}',
     'prompt.sandbox.darwin.trash':
-        '- Files that existed before this task started are moved to the macOS Trash when deleted; files created during a sandbox run are removed permanently when deleted within the same sandbox instance.',
-    'sandbox.loopbackSetupFailed':
-        'Could not initialize local network access for the sandbox. Allow the Windows administrator confirmation and retry. OpenDesk continues to run without administrator privileges after setup.'
+        '- Files that existed before this task started are moved to the macOS Trash when deleted; files created during a sandbox run are removed permanently when deleted within the same sandbox instance.'
 };
