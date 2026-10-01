@@ -129,6 +129,46 @@ function stageLinuxSandboxResource(buildPath, electronVersion, platform, arch, c
     }
 }
 
+// 发布态 darwin 沙箱固定解包到 resources/sandbox/dynobox-darwin.dylib。
+// dylib 为 universal（arm64 + arm64e [+ x86_64]），打包前用 lipo 校验目标架构
+// slice 存在，防止宿主架构产物静默打进另一架构安装包（运行时 dyld 拒绝加载）。
+// arm64e slice 必需：/bin/zsh 等系统平台二进制仅接受 arm64e 插入库。
+function stageDarwinSandboxResource(buildPath, electronVersion, platform, arch, callback) {
+    try {
+        if (platform === 'darwin') {
+            const source = path.join(__dirname, 'native', 'darwin', 'sandbox', 'runtime', 'dynobox-darwin.dylib');
+            const resourcesRoot = path.join(buildPath, 'resources');
+            const targetDirectory = path.join(resourcesRoot, 'sandbox');
+            if (!fs.existsSync(source)) {
+                throw new Error(
+                    `Darwin sandbox dylib is missing: ${source}。` +
+                        `请先构建：npm run build:sandbox:darwin（或 OPENDESK_SANDBOX_ARCH=all 构建双架构 slice）`
+                );
+            }
+            const lipo = require('node:child_process').execFileSync('/usr/bin/lipo', ['-archs', source], {
+                encoding: 'utf8'
+            });
+            const built = lipo.trim().split(/\s+/);
+            // x64 安装包必须含 x86_64 slice；arm64 安装包必须含 arm64 与 arm64e slice
+            const required = arch === 'arm64' ? ['arm64', 'arm64e'] : ['x86_64'];
+            for (const wanted of required) {
+                if (!built.includes(wanted)) {
+                    throw new Error(
+                        `Darwin sandbox dylib is missing the ${wanted} slice (got: ${built.join(' ')})。` +
+                            `请构建对应架构：OPENDESK_SANDBOX_ARCH=all npm run build:sandbox:darwin`
+                    );
+                }
+            }
+            fs.mkdirSync(targetDirectory, { recursive: true });
+            fs.copyFileSync(source, path.join(targetDirectory, 'dynobox-darwin.dylib'));
+            removePathIfExists(path.join(resourcesRoot, 'native', 'darwin', 'sandbox'));
+        }
+        callback();
+    } catch (error) {
+        callback(error);
+    }
+}
+
 // afterPrune 钩子：清原生包编译产物/跨平台 prebuilds（需按 platform+arch 参数化），
 // 以及 win32/linux 平铺布局下的多语言 .pak 与 Chromium 许可证清单。
 // darwin 的 .pak 位于签名过的 Electron Framework 内，不在剪裁范围。
@@ -601,7 +641,12 @@ module.exports = {
             pruneDarwinAppNativePrebuilds,
             materializeWorkspacePackageLinks
         ],
-        afterCopyExtraResources: [pruneDarwinExtraResources, stageWindowsSandboxResource, stageLinuxSandboxResource]
+        afterCopyExtraResources: [
+            pruneDarwinExtraResources,
+            stageWindowsSandboxResource,
+            stageLinuxSandboxResource,
+            stageDarwinSandboxResource
+        ]
     },
     // 打包期的原生依赖均为 N-API prebuild 或纯 wasm（classic-level、sqlite-vec、
     // node-sqlite3-wasm），N-API 二进制跨 Electron ABI 通用，无需按 ABI rebuild；

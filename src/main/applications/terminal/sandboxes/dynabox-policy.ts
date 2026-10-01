@@ -178,9 +178,31 @@ export function policyTextLinux(
         ...(home
             ? [`[[rules]]\npath = ${quote(`${home}/.cache/opendesk-sandbox/**`)}\naccess = "write"\nperm = "allow"`]
             : []),
+        // macOS 系统 Python 字节码缓存（com.apple.python）——不放行则每次 import
+        // django 等大框架都重新编译字节码，migrate/runserver 会慢到卡死
+        ...(home
+            ? [
+                  `[[rules]]\npath = ${quote(`${home}/Library/Caches/com.apple.python/**`)}\naccess = "write"\nperm = "allow"`
+              ]
+            : []),
+        // OpenDesk 自身数据目录（回收站 ~/.opendesk/trash/<taskId>/ 由 C 侧 rename
+        // 写入，不经弹窗；沙箱进程无感知）——放行避免误弹窗
+        ...(home ? [`[[rules]]\npath = ${quote(`${home}/.opendesk/**`)}\naccess = "write"\nperm = "allow"`] : []),
         // 任务工作区写入放行（早于兜底 write ask 命中）
         '[[rules]]',
         `path = ${quote(`${workspaceRoot}/**`)}`,
+        'access = "write"',
+        'perm = "allow"',
+        '',
+        // /var/tmp（bash here doc 临时文件、sort 临时文件等）——不放行则
+        // configure/自动工具在沙箱内全部卡死
+        '[[rules]]',
+        'path = "/var/tmp/**"',
+        'access = "write"',
+        'perm = "allow"',
+        '',
+        '[[rules]]',
+        'path = "/private/var/tmp/**"',
         'access = "write"',
         'perm = "allow"',
         '',

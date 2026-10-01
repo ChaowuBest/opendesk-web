@@ -64,5 +64,11 @@ export const zhCn: Record<string, string> = {
         '- 工作区可写；工作区外的写入需要审批（或按规则拒绝）。系统目录（/usr /lib /etc 等）只读。',
     'prompt.sandbox.linux.tmp': '- /tmp 透传宿主目录：沙箱内写入的文件跨命令/跨沙箱实例持久，关闭不丢失。',
     'sandbox.description.linux':
-        '在 Linux 动态沙箱中执行选定的 shell。根文件系统布局与宿主一致，读写经权限检查；工作区写放行、其余写询问或拒绝；删除可选送回收站（XDG Trash）。文件访问审批显示原始宿主路径。'
+        '在 Linux 动态沙箱中执行选定的 shell。根文件系统布局与宿主一致，读写经权限检查；工作区写放行、其余写询问或拒绝；删除可选送回收站（XDG Trash）。文件访问审批显示原始宿主路径。',
+    // darwin 动态沙箱（dynobox-darwin.dylib，DYLD interposing）
+    'sandbox.executableMissing.darwin': '动态沙箱已启用，但未找到 dynobox-darwin.dylib。请重新构建 macOS 版本。',
+    'sandbox.cwdMissing.darwin': '动态沙箱需要任务工作目录作为受控路径。',
+    'sandbox.cwdUnsupported.darwin': '沙箱工作目录不存在或不可用：${path}',
+    'prompt.sandbox.darwin.trash':
+        '- 任务开始前已存在的文件被删除时会送入 macOS 废纸篓；沙箱运行期间创建的文件在同一沙箱实例内删除时直接清除，不进废纸篓。'
 };

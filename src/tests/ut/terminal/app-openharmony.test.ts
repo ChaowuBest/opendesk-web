@@ -49,12 +49,15 @@ jest.unstable_mockModule('fs', () => {
 
 const spawnSyncMock = jest.fn(() => ({ status: 0, error: undefined }) as SpawnSyncReturns<Buffer>);
 
-jest.unstable_mockModule('child_process', () => ({
+const childProcessMock = {
     execFile: jest.fn(),
+    execFileSync: jest.fn(),
     spawn: jest.fn(),
     spawnSync: (...args: unknown[]) => spawnSyncMock(...args),
     execSync: jest.fn()
-}));
+};
+jest.unstable_mockModule('child_process', () => childProcessMock);
+jest.unstable_mockModule('node:child_process', () => childProcessMock);
 
 // bash 回退路径来自 local-runtime state，mock 为可控；默认 null（无门控限制，也不提供 bash 路径）
 const localRuntimeStateMock = jest.fn((): unknown => null);

@@ -66,6 +66,12 @@ export const enUs: Record<string, string> = {
     'sandbox.cwdUnsupported.linux': 'Sandbox working directory is missing or unusable: ${path}',
     'sandbox.description.linux':
         'Run the selected shell in the Linux dynamic sandbox. The root filesystem mirrors the host layout and reads/writes go through permission checks; workspace writes are allowed while other writes prompt or are denied; deletions can optionally go to the trash (XDG Trash). File approvals show original host paths.',
+    'sandbox.executableMissing.darwin':
+        'Dynamic sandbox enabled but dynobox-darwin.dylib was not found. Rebuild the macOS package.',
+    'sandbox.cwdMissing.darwin': 'Dynamic sandbox requires a task workspace as the controlled path.',
+    'sandbox.cwdUnsupported.darwin': 'Sandbox working directory is missing or unusable: ${path}',
+    'prompt.sandbox.darwin.trash':
+        '- Files that existed before this task started are moved to the macOS Trash when deleted; files created during a sandbox run are removed permanently when deleted within the same sandbox instance.',
     'sandbox.loopbackSetupFailed':
         'Could not initialize local network access for the sandbox. Allow the Windows administrator confirmation and retry. OpenDesk continues to run without administrator privileges after setup.'
 };
