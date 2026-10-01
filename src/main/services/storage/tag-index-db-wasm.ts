@@ -28,6 +28,7 @@ import type {
     TagQueryOperator
 } from './tag-indexer.js';
 import { removeSqliteStoreFiles } from './drop-utils.js';
+import { ensureWasmOpenableDb } from './wasm-wal-compat.js';
 
 const require = createRequire(import.meta.url);
 const sqlite3Wasm = require('node-sqlite3-wasm') as {
@@ -110,6 +111,9 @@ export class TagIndexDBWasm implements ITagIndexDB {
         if (!fs.existsSync(dir)) {
             fs.mkdirSync(dir, { recursive: true });
         }
+
+        // 既有库可能由 native better-sqlite3 以 WAL 模式创建，wasm 后端先降级 header 再打开
+        ensureWasmOpenableDb(dbPath);
 
         this.db = new sqlite3Wasm.Database(dbPath);
         this.db.run('PRAGMA journal_mode = WAL');

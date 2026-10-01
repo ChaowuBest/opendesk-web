@@ -23,6 +23,7 @@ import { createRequire } from 'module';
 import { ColumnSchema } from './abstract-storage.js';
 import type { BM25Record, BM25SearchOptions, BM25SearchResult, IBM25IndexDB } from './bm25-indexer.js';
 import { removeSqliteStoreFiles } from './drop-utils.js';
+import { ensureWasmOpenableDb } from './wasm-wal-compat.js';
 
 const require = createRequire(import.meta.url);
 const sqlite3Wasm = require('node-sqlite3-wasm') as {
@@ -89,6 +90,9 @@ export class BM25IndexDBWasm implements IBM25IndexDB {
         if (!fs.existsSync(dir)) {
             fs.mkdirSync(dir, { recursive: true });
         }
+
+        // 既有库可能由 native better-sqlite3 创建（header 标记 WAL），wasm 后端先降级再打开
+        ensureWasmOpenableDb(dbPath);
 
         this.db = new sqlite3Wasm.Database(dbPath);
     }

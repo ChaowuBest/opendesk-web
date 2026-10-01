@@ -735,7 +735,7 @@ const createWindow = () => {
         roundedCorners: true,
         // 透明窗口必须显式透明底色，否则 Electron 默认白色画布会垫在圆角缺口下
         backgroundColor: process.platform === 'linux' ? '#00000000' : undefined,
-        icon: appIcon,
+        icon: getWindowIcon(),
         show: false, // 等 ready-to-show 后再显示，避免白屏闪烁
         paintWhenInitiallyHidden: true, // 允许在隐藏状态下预先渲染首帧
         webPreferences: {
@@ -3268,7 +3268,7 @@ function openLogViewFromTray(): void {
         minWidth: 480,
         minHeight: 300,
         frame: false,
-        icon: appIcon,
+        icon: getWindowIcon(),
         title: 'OpenDesk',
         show: false,
         paintWhenInitiallyHidden: true,
@@ -3342,6 +3342,26 @@ const buildTrayMenu = () => {
         });
     }
     return Menu.buildFromTemplate(menuitems);
+};
+
+/**
+ * 桌面任务栏/窗口切换器使用的窗口图标。
+ *
+ * 把 512px 原图直接交给 Electron 时，窗口图标属性（如 X11 的 _NET_WM_ICON）中只有
+ * 单一超大尺寸，任务栏需自行做 10 倍以上低质量降采样，圆形边缘出现明显锯齿；而托盘
+ * 图标柔和，是因为 Electron 已先用高质量算法缩放后才交给系统。这里复用同样思路：
+ * 先用 Electron 高质量算法缩到略大于任务栏显示尺寸，再交给系统，使系统侧只剩轻微缩放。
+ *
+ * 不能用 addRepresentation 塞入多档尺寸：Electron 在 Linux 下只写入主 representation，
+ * 实测多档图标会退化成最小档（16px）再被任务栏放大，反而彻底糊掉。
+ */
+const getWindowIcon = (): Electron.NativeImage => {
+    // 任务栏图标一般 24~64 逻辑像素。X11 下一个窗口只有一份图标数据（_NET_WM_ICON），
+    // 无法按不同缩放的显示器切换，因此按所有显示器中的最大缩放系数取值，并留出余量
+    // （取 64 逻辑像素），保证窗口出现在任何屏幕上图标都只被轻微缩小，绝不放大。
+    const scaleFactor = Math.max(1, ...screen.getAllDisplays().map((display) => display.scaleFactor || 1));
+    const size = Math.round(64 * scaleFactor);
+    return nativeImage.createFromPath(appIcon).resize({ width: size, height: size });
 };
 
 const registerTray = () => {
@@ -3792,7 +3812,7 @@ async function startApplication(): Promise<void> {
                     minWidth: 480,
                     minHeight: 320,
                     frame: false,
-                    icon: appIcon,
+                    icon: getWindowIcon(),
                     title: appName,
                     show: false,
                     paintWhenInitiallyHidden: true,
