@@ -127,6 +127,88 @@
 - pread/pwrite 定位语义、并发 seek+write（宿主一致：python 线程不安全，非沙箱）
 - 混合长任务稳定性：git+node+tar+find+xargs 序列 ×2 结果一致
 
+## 9c. 策略逃逸与语义修复（第 1 轮审视，2026-09-30）
+
+- **硬链接逃逸**：link 对 all-deny 源文件必须拒绝（link 现同时要求源路径 write
+  放行——否则敏感文件可链进可写目录后经 `/** read allow` 兜底读出）
+- **O_TRUNC 逃逸**：open 携带 O_TRUNC（含 O_RDONLY|O_TRUNC）计入 write 类别——
+  write-deny 文件不可被"只读"打开清空；经写授权（staging ask→allow）仍可截断
+- **组合类别逐类别判定**：O_RDWR（read|write）拆分逐一判定，任一类别被拒即拒绝
+  （对齐 Windows MirrorFs.Check）；read allow 不再放行 write deny 的组合打开
+- **ask 上报类别**：组合位按更敏感类别上报（read|write → "write"），不再错报
+  "execute" 导致 TS 端点 execute 规则静默放行
+- **rmdir 回收站语义**：--del-to-trash 下 rmdir 非空目录返回 ENOTEMPTY（此前
+  rename 绕过内核空检查，整棵目录树被移进回收站且返回成功）
+- **cgroup 登记竞态**：仅父进程登记 cgroup（子进程分支 cgroup_setup(0) 在
+  delegation 环境创建孤儿 dynobox-0 并竞争迁移装配进程）
+- **readdir 分页边界**：offset 编码统一（"."=1、".."=2、条目 i=i+3），极端小
+  缓冲续传不再跳过 ".."
+- **attr x 位掩码范围**：execute-deny 仅掩文件 x 位；目录 x 位是遍历权限不掩
+- **fixture 完整性**：scratch/reject/slow 目录纳入 makeFixture（此前相关测试
+  假阳/失败）；ls 大小断言改用"属组+大小"列（中文 locale 时刻含数字不再假阳）
+
+## 9d. 第 2-5 轮审视（2026-09-30）
+
+- **ask 连接超时**：端点 IP 不可达（黑洞路由）时 connect 受 timeout_ms 约束
+  （此前系统级 TCP 超时 ~2min 会冻结单线程 FUSE 会话）；测试
+  ask_connect_timeout_is_bounded（部分环境 connect 立即失败，测试仍作回归保护）
+- **rename 目标 deny**：rename 到 write-deny 路径被拒、源文件保留（双侧检查
+  的目标分支固化）
+- **stat ctime 语义**：FileAttr.ctime 为 inode change time（st_ctim，经
+  MetadataExt::ctime/ctime_nsec）——此前误用 birth time（created()）填充，
+  chmod 等元数据变更后沙箱内 ctime 与宿主不一致
+- **daemon 会话诊断**：FUSE 会话异常退出时输出 stderr 线索（此前静默退出，
+  沙箱内只表现突发 EIO 难以定位）
+- **优化**：daemon fork 后关闭无关 socket fd（防 daemon 间互持对端）；ask
+  决策缓存 4096 条上限（与 MAX_GRANTS 对称）；诊断日志真实日期（civil_time，
+  此前输出 epoch 天数）；execute-deny 不掩目录 x 位（目录 x 是遍历权限）；
+  内置测试端点用 serde_json 构造响应（path 含特殊字符不破坏 JSON）；
+  readdir 条目列表 Arc 共享（大目录多页不逐页克隆）
+
+## 9e. 第二次循环（2026-10-01）
+
+- **daemon umask 双重叠加**：create/mkfifo/mknod 的 mode 已按请求方 umask
+  计算，daemon 自身 umask 被内核再次叠加——子进程 `umask 000` 创建文件期望
+  0666 实际 0664。修复：daemon 启动 `umask(0)`；回收站目录显式 0700（防
+  umask(0) 后首次创建权限落入 0777）；mkdir 改一步 `libc::mkdir`（消除
+  "先创建再 chmod"两步之间的宽权限窗口）
+- **rename flags 被忽略**：`RENAME_EXCHANGE` 实测被当作普通覆盖执行（目标
+  数据静默丢失、源消失）；修复：EXCHANGE/WHITEOUT fail-closed 拒绝（EINVAL），
+  NOREPLACE 防御性实现（内核 VFS 层当前已拦截）。`mv -n` 与 renameat2 端到端断言
+- **roots 嵌套/重复 fail-fast**：局部 [[roots]] 互相嵌套（/a 与 /a/b）会形成
+  嵌套 FUSE 死锁（此前仅拦截"整根+其他"混用）；validate_roots 单测覆盖
+  前缀边界（/tmp/w2 与 /tmp/w 不误判）
+- **mknod 设备节点拒绝固化**：字符设备 mknod 必须 EPERM 且不落盘（行为已正确，
+  测试防御回归）
+
+## 9f. 第三次循环（2026-10-01，协议层视角）
+
+- **xattr 透传**：getxattr/setxattr/listxattr/removexattr 从 ENOSYS 改为透传
+  宿主真实路径（l 前缀变体，读=read 写=write 策略；字节级名字支持）——此前
+  cp -a/rsync -X/tar --xattrs 退化或警告
+- **fallocate 透传**：裸 fallocate 从 ENOSYS 改为透传（fh 优先，路径兜底）；
+  os.posix_fallocate 因 glibc 写零 fallback 掩盖缺口，测试用裸 syscall 断言
+  且宿主侧验证 size=8192 真实落盘
+- **copy_file_range / 裸 mknod(mode 无类型位)**：实测内核已兜底（自动降级拷贝 /
+  宿主同为 EINVAL），行为与宿主一致，无需实现（记录判定依据）
+- **参数防呆**：--ro-dirs 拒绝相对路径（防沙箱内错误挂载点）；endpoint
+  --default 非法值报错（此前静默按 deny）
+
+## 9g. 第四次循环（2026-10-01，协议语义视角）
+
+- **deny 响应的 grants 不再安装**（ask/grants 协议缺陷）：历史实现不检查
+  decision 一律安装端点下发的 grants——"虚假拒绝 + 后门授权"可经 grant_hit
+  （优先于端点询问）绕过决策。修复：仅 allow 时安装（fail-closed）。Windows 版
+  Policy.cs:231-232 存在同一缺陷（本次仅修 Linux，Windows 待单独任务对齐）。
+  TS 生产端点 deny 时不带 grants，生产行为不变，纯协议加固
+- **fuser 负缓存补丁判定**：ReplyEntry::error 拦截 errno 发 nodeid=0 负缓存回复
+  ——与内核 fuse_lookup 对错误的原生处理一致（错误除 ENOMEM/ENAMETOOLONG 外
+  本就以 negative dentry 呈现），无需修改
+- **连续 `**` 回溯复杂度判定**：glob_match_at 对连续 `**` 的最坏全回溯实测
+  4×`**`×25 层路径仅 ~4ms（段比较快速剪枝），非真实问题
+- **回归事故与恢复**：临时基准测试清理时误用 git checkout 回滚了 policy.rs
+  全部未提交修改，已按会话记录完整重建并全量回归（22/22 + 46/46）
+
 ## 10. 性能
 
 - OpenDesk `npm run test` 全量：宿主 92s；沙箱（分离 TTL）117.5s（+27.7%）
@@ -167,7 +249,7 @@ grants 过期清理。
 - build-linux-sandbox.cjs：本机构建落 runtime/<host-triple>/；交叉构建
   OPENDESK_SANDBOX_TARGET 时 rustup target 预检给出 rustup target add 提示
 
-## 12. Rust 单元测试（policy.rs，`cargo test`，16 项）
+## 12. Rust 单元测试（policy.rs / mirror_fs.rs / sandbox.rs，`cargo test`，22 项）
 
 | 测试 | 场景 |
 |---|---|
@@ -187,6 +269,11 @@ grants 过期清理。
 | grant_matches_subtree_only | grants 子树匹配（含自身）且类别需匹配 |
 | normalize_rejects_control_chars | 拒绝控制字符、空路径 |
 | policy_load_rejects_bad_perm_and_relative_path | 策略加载拒绝非法 perm 与相对路径规则 |
+| check_combined_access_requires_every_kind_allowed | 组合类别逐类别判定：write deny 不被 read allow 绕过 |
+| ask_reports_write_for_combined_rw_access | 组合位 ask 上报 write（不错报 execute） |
+| grants_from_deny_response_are_not_installed | deny 响应的 grants 不安装（防虚假拒绝+后门授权） |
+| ask_connect_timeout_is_bounded | 端点不可达时 connect 受 timeout_ms 约束 |
+| civil_time_converts_epoch_seconds | civil_from_days 时间换算锚点（回收站/日志依赖） |
 
 ## 13. 挂载泄漏事故与防传播加固（宿主根曾被 FUSE 覆盖）
 

@@ -12,6 +12,7 @@
 use std::collections::HashMap;
 use std::io::{Read, Write};
 use std::net::TcpStream;
+use std::net::ToSocketAddrs;
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
@@ -270,22 +271,36 @@ impl Policy {
             Some(s) => s,
             None => return false,
         };
+        // 组合类别（如 O_RDWR 的 read|write）拆分为单类别逐一判定：任一类别被拒
+        // 即整体拒绝。仅按首条相交规则判定会让 O_RDWR 经 read 规则放行而绕过
+        // write deny（对齐 Windows 版 MirrorFs.Check 的逐类别语义）。
+        let mut allowed = true;
+        for bit in [ACC_READ, ACC_WRITE, ACC_EXECUTE] {
+            if access & bit != 0 && !self.check_kind(&segments, bit) {
+                allowed = false;
+            }
+        }
+        allowed
+    }
+
+    /// 单类别判定（首条命中规则生效；未命中规则按 default）
+    fn check_kind(&self, segments: &[String], access: u8) -> bool {
         for rule in &self.rules {
             if rule.access & access == 0 {
                 continue;
             }
-            if glob_match(&rule.segments, &segments) {
+            if glob_match(&rule.segments, segments) {
                 match rule.perm {
                     Perm::Allow => return true,
                     Perm::Deny => return false,
-                    Perm::Ask => return self.ask_decide(&segments, access),
+                    Perm::Ask => return self.ask_decide(segments, access),
                 }
             }
         }
         match self.default {
             Perm::Allow => true,
             Perm::Deny => false,
-            Perm::Ask => self.ask_decide(&segments, access),
+            Perm::Ask => self.ask_decide(segments, access),
         }
     }
 
@@ -304,6 +319,10 @@ impl Policy {
 
     /// 单实例 grants 数量上限：防止恶意/异常端点海量下发授权导致内存与匹配开销失控
     const MAX_GRANTS: usize = 1024;
+
+    /// 决策缓存条目上限（与 MAX_GRANTS 同款约束）：防异常端点对不同路径海量
+    /// allow 导致缓存无界增长。超出时仅保留已有条目（下次过期清理后再试）
+    const MAX_CACHE_ENTRIES: usize = 4096;
 
     fn install_grants(&self, grants: &[serde_json::Value]) {
         let now = Instant::now();
@@ -361,10 +380,15 @@ impl Policy {
                 }
             }
         }
-        let access_name = match access {
-            ACC_READ => "read",
-            ACC_WRITE => "write",
-            _ => "execute",
+        // 组合类别（O_RDWR 的 read|write）按更敏感的 write 上报：历史实现落入
+        // `_ => "execute"` 分支，TS 端点按 execute 询问可能被宽泛 execute 规则
+        // 静默放行，绕过写授权弹窗
+        let access_name = if access & ACC_WRITE != 0 {
+            "write"
+        } else if access & ACC_READ != 0 {
+            "read"
+        } else {
+            "execute"
         };
         let body = serde_json::json!({ "path": canonical, "access": access_name });
         // 超时/不可达/非 200/字段缺失 → deny 且不进缓存（fail-closed）
@@ -382,21 +406,28 @@ impl Policy {
             Some("deny") => false,
             _ => return false,
         };
-        if let Some(grants) = value.get("grants").and_then(|v| v.as_array()) {
-            self.install_grants(grants);
+        // 仅 allow 时安装 grants：deny 响应携带的 grants 若被安装，后续同子树
+        // 访问经 grant_hit 直接放行（grant_hit 优先于端点询问）——"虚假拒绝 +
+        // 后门授权"可绕过端点决策（fail-closed）
+        if allow {
+            if let Some(grants) = value.get("grants").and_then(|v| v.as_array()) {
+                self.install_grants(grants);
+            }
         }
         if allow && self.ask.cache_ttl_seconds > 0 {
             let now = Instant::now();
             let mut cache = self.cache.lock().unwrap();
             // 插入前清理过期条目，防止缓存无界增长（决策缓存多为临时写入）
             cache.retain(|_, entry| entry.expires > now);
-            cache.insert(
-                key,
-                CacheEntry {
-                    allow,
-                    expires: now + Duration::from_secs(self.ask.cache_ttl_seconds),
-                },
-            );
+            if cache.len() < Self::MAX_CACHE_ENTRIES {
+                cache.insert(
+                    key,
+                    CacheEntry {
+                        allow,
+                        expires: now + Duration::from_secs(self.ask.cache_ttl_seconds),
+                    },
+                );
+            }
         }
         allow
     }
@@ -419,9 +450,25 @@ impl Policy {
         {
             return Err("端点 authority 含非法字符".to_string());
         }
-        let mut stream =
-            TcpStream::connect(&address).map_err(|e| format!("连接端点失败: {e}"))?;
+        // 解析后 connect_timeout：端点 IP 不可达（黑洞路由）时受 timeout_ms 约束，
+        // 而非系统默认 TCP 连接超时（~2min，期间单线程 FUSE 会话整体冻结）
         let timeout = Duration::from_millis(self.ask.timeout_ms.max(1));
+        let mut last_error: Option<std::io::Error> = None;
+        let mut stream: Option<TcpStream> = None;
+        let addrs = address
+            .to_socket_addrs()
+            .map_err(|e| format!("解析端点地址失败: {e}"))?;
+        for addr in addrs {
+            match TcpStream::connect_timeout(&addr, timeout) {
+                Ok(s) => {
+                    stream = Some(s);
+                    break;
+                }
+                Err(e) => last_error = Some(e),
+            }
+        }
+        let mut stream =
+            stream.ok_or_else(|| format!("连接端点失败: {}", last_error.map(|e| e.to_string()).unwrap_or_default()))?;
         stream.set_read_timeout(Some(timeout)).ok();
         stream.set_write_timeout(Some(timeout)).ok();
         // 用 HTTP/1.0：不支持 chunked 传输，端点为满足 Content-Length 响应（或连接
@@ -782,5 +829,108 @@ mod tests {
         assert!(received.contains("POST /decide HTTP/1.0"));
         assert!(received.contains("Bearer t"));
         assert!(received.contains("/work/staging/x.txt"));
+    }
+
+    #[test]
+    fn check_combined_access_requires_every_kind_allowed() {
+        // 组合类别（O_RDWR 的 read|write）逐类别判定：read allow 不足以放行
+        // 整体——write deny 必须仍然生效（历史首条相交规则判定会绕过）
+        let policy = mk_policy(
+            Perm::Deny,
+            vec![
+                mk_rule("/work/**", ACC_READ, Perm::Allow),
+                mk_rule("/work/**", ACC_WRITE, Perm::Deny),
+            ],
+            "",
+        );
+        assert!(policy.check("/work/a.txt", ACC_READ));
+        assert!(!policy.check("/work/a.txt", ACC_READ | ACC_WRITE));
+        assert!(!policy.check("/work/a.txt", ACC_WRITE));
+        // 全允许时组合位放行
+        let policy2 = mk_policy(
+            Perm::Deny,
+            vec![mk_rule("/work/**", ACC_READ | ACC_WRITE, Perm::Allow)],
+            "",
+        );
+        assert!(policy2.check("/work/a.txt", ACC_READ | ACC_WRITE));
+    }
+
+    #[test]
+    fn ask_reports_write_for_combined_rw_access() {
+        // O_RDWR 打开的组合 access（ACC_READ|ACC_WRITE）命中 write ask 规则时，
+        // 端点收到的 access 必须是 "write"——历史上错报 "execute"，TS 端点的
+        // execute 规则可能静默放行，绕过写授权弹窗。
+        use std::io::Write;
+        use std::net::TcpListener;
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let thread = std::thread::spawn(move || {
+            let (mut stream, _) = listener.accept().unwrap();
+            let mut buf = [0u8; 4096];
+            let n = stream.read(&mut buf).unwrap();
+            let received = String::from_utf8_lossy(&buf[..n]).to_string();
+            let resp = "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: 16\r\nConnection: close\r\n\r\n{\"decision\":\"deny\"}";
+            let _ = stream.write_all(resp.as_bytes());
+            let _ = stream.flush();
+            received
+        });
+        let policy = mk_policy(
+            Perm::Deny,
+            vec![mk_rule("/work/**", ACC_WRITE, Perm::Ask)],
+            &format!("http://127.0.0.1:{port}/decide"),
+        );
+        // 组合位（O_RDWR 语义）：规则 access=write 与之有交集 → 命中 ask；端点拒 → deny
+        assert!(!policy.check("/work/a.txt", ACC_READ | ACC_WRITE));
+        let received = thread.join().unwrap();
+        assert!(
+            received.contains("\"access\":\"write\""),
+            "端点应收到 write 类别: {received}"
+        );
+        assert!(
+            !received.contains("\"access\":\"execute\""),
+            "组合位不得错报为 execute: {received}"
+        );
+    }
+
+    #[test]
+    fn grants_from_deny_response_are_not_installed() {
+        // deny 响应携带的 grants 不得安装：否则"虚假拒绝 + 后门授权"可经
+        // grant_hit 绕过端点决策（历史实现不检查 decision 一律安装，与
+        // Windows 版 Policy.cs 的同一缺陷一致）
+        use std::io::Write;
+        use std::net::TcpListener;
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let thread = std::thread::spawn(move || {
+            let (mut stream, _) = listener.accept().unwrap();
+            let mut buf = [0u8; 4096];
+            let n = stream.read(&mut buf).unwrap();
+            let received = String::from_utf8_lossy(&buf[..n]).to_string();
+            let resp = "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: 89\r\nConnection: close\r\n\r\n{\"decision\":\"deny\",\"grants\":[{\"path\":\"/work/staging/**\",\"access\":\"write\",\"ttl\":300}]}";
+            let _ = stream.write_all(resp.as_bytes());
+            let _ = stream.flush();
+            received
+        });
+        let policy = mk_policy(Perm::Deny, vec![], &format!("http://127.0.0.1:{port}/decide"));
+        assert!(!policy.ask_decide(&segs("/work/staging/x.txt"), ACC_WRITE));
+        assert!(
+            policy.grants.lock().unwrap().is_empty(),
+            "deny 响应的 grants 不得被安装"
+        );
+        let _ = thread.join();
+    }
+
+    #[test]
+    fn ask_connect_timeout_is_bounded() {
+        // 端点 IP 不可路由（黑洞）：connect 必须受 timeout_ms 约束而非系统默认
+        // TCP 连接超时（可达 ~2min），否则一次 ask 会冻结整个单线程 FUSE 会话
+        let policy = mk_policy(Perm::Deny, vec![], "http://10.255.255.1:81/decide");
+        let start = Instant::now();
+        assert!(!policy.check("/work/x", ACC_READ));
+        assert!(
+            start.elapsed() < Duration::from_secs(5),
+            "connect 应受 timeout_ms 约束，实际耗时 {:?}",
+            start.elapsed()
+        );
     }
 }

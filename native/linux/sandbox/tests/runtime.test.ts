@@ -31,6 +31,11 @@ async function run(file: string, args: string[], opts: { stdin?: string; env?: N
 function makeFixture(): string {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'dynobox-linux-test-'));
     fs.cpSync(fixtureRoot, dir, { recursive: true });
+    // 策略模板引用的 ask 类别目录（scratch/reject/slow）此前不在 fixture 中：
+    // 引用它们的测试要么失败、要么因 ENOENT 恰好也是非 0 退出码而假阳
+    for (const name of ['scratch', 'reject', 'slow']) {
+        fs.mkdirSync(path.join(dir, name), { recursive: true });
+    }
     return dir;
 }
 
@@ -339,8 +344,10 @@ test('regression: readdir in subdirectory maps inos consistently (no root-level 
         const result = await sbx(dir, ep.url, 't', 'ls -la /work/public/w.txt; cat /work/public/w.txt');
         assert.equal(result.code, 0, result.stderr);
         assert.match(result.stdout, /pub-copy/);
-        assert.match(result.stdout, new RegExp('8'), 'size 应反映 public/w.txt');
-        assert.doesNotMatch(result.stdout, new RegExp('23'), '不应读到根级 w.txt 的大小');
+        // 用"属组+大小"列匹配而非裸数字：中文 locale 的 ls 输出含时刻（如 23:46），
+        // 裸数字断言会在特定小时假阳
+        assert.match(result.stdout, /root\s+root\s+8\b/, 'size 应反映 public/w.txt');
+        assert.doesNotMatch(result.stdout, /root\s+root\s+23\b/, '不应读到根级 w.txt 的大小');
     } finally {
         await ep.close();
     }
@@ -932,3 +939,241 @@ test('cgroup 登记覆盖 shell 进程树（best effort：环境支持时严格�
         await ep.close();
     }
 });
+
+// ─────────────────────────── 回归：策略逃逸与语义（第 1 轮审视） ───────────────────────────
+
+test('escape: hard link to an all-deny file must be rejected (link checks source write)', { skip }, async () => {
+    // secret.txt 为 all deny：若 link 只检查目标路径，攻击者可把敏感文件硬链接进
+    // 可写目录，再经 "/** read allow" 兜底读出内容（策略逃逸）。
+    // 修复语义：link 对源路径同样要求 write 被允许（fail-closed）。
+    const dir = makeFixture();
+    const ep = await startEndpoint();
+    try {
+        const result = await sbx(dir, ep.url, 't', 'ln /work/secret.txt /work/public/link.txt 2>&1; exit $?');
+        assert.notEqual(result.code, 0, '硬链接 all-deny 源文件应被拒绝: ' + result.stdout);
+        assert.ok(!fs.existsSync(path.join(dir, 'public', 'link.txt')), '不应创建硬链接');
+    } finally {
+        await ep.close();
+    }
+});
+
+test('escape: rename into a write-deny path is rejected', { skip }, async () => {
+    // rename 双侧检查的目标分支：可写区 → 系统路径（write ask → 端点 default deny）
+    const dir = makeFixture();
+    const ep = await startEndpoint();
+    try {
+        const result = await sbx(dir, ep.url, 't', 'mv /work/w.txt /etc/hosts 2>&1; exit $?');
+        assert.notEqual(result.code, 0, 'rename 到 write-deny 路径应被拒绝');
+        assert.ok(fs.existsSync(path.join(dir, 'w.txt')), '源文件应保留');
+    } finally {
+        await ep.close();
+    }
+});
+
+test('stat ctime reflects inode change time (consistent with host)', { skip }, async () => {
+    // FileAttr.ctime 必须是 inode change time（st_ctim）：历史上误用 birth time
+    // （created()）填充，chmod 等元数据变更后沙箱内 ctime 与宿主不一致
+    const dir = makeFixture();
+    const ep = await startEndpoint();
+    try {
+        const target = path.join(dir, 'public', 'ctime.txt');
+        fs.writeFileSync(target, 'x');
+        // 拉开 birth time 与 change time 的秒级差距后改变 inode 元数据
+        await new Promise((r) => setTimeout(r, 1100));
+        fs.chmodSync(target, 0o755);
+        const hostCtime = Math.floor(fs.statSync(target).ctimeMs / 1000);
+        const result = await sbx(dir, ep.url, 't', 'stat -c %Z /work/public/ctime.txt');
+        assert.equal(result.code, 0, result.stderr);
+        const sandboxCtime = parseInt(result.stdout.trim(), 10);
+        assert.equal(
+            sandboxCtime,
+            hostCtime,
+            `沙箱内 ctime 应与宿主一致（change time）：沙箱=${sandboxCtime} 宿主=${hostCtime}`
+        );
+    } finally {
+        await ep.close();
+    }
+});
+
+test('file creation honors the child umask (no daemon umask double-masking)', { skip }, async () => {
+    // create/mkfifo 的 mode 计算已应用请求方 umask，但 daemon 自身 umask 会被
+    // 内核再次叠加：子进程 umask 000 期望 0666，实际产出 0644（与宿主不一致）。
+    // 修复：daemon 启动时 umask(0)（回收站目录显式 0700，目录 mkdir 一步到位）。
+    const dir = makeFixture();
+    const ep = await startEndpoint();
+    try {
+        const result = await sbx(
+            dir,
+            ep.url,
+            't',
+            [
+                'umask 000',
+                'touch /work/public/u1.txt',
+                'stat -c %a /work/public/u1.txt',
+                'mkfifo /work/public/u1.fifo',
+                'stat -c %a /work/public/u1.fifo',
+                'mkdir /work/public/ud',
+                'stat -c %a /work/public/ud',
+                'umask 077',
+                'touch /work/public/u2.txt',
+                'stat -c %a /work/public/u2.txt'
+            ].join('; ')
+        );
+        assert.equal(result.code, 0, result.stderr);
+        const modes = result.stdout.trim().split('\n');
+        assert.deepEqual(modes, ['666', '666', '777', '600'], `权限应与宿主一致: ${result.stdout}`);
+    } finally {
+        await ep.close();
+    }
+});
+
+test('mknod: device nodes are rejected (fail-closed, no host privileges)', { skip }, async () => {
+    // 字符/块设备 mknod 需要 root 特权：daemon 必须拒绝（EPERM）而非静默失败
+    const dir = makeFixture();
+    const ep = await startEndpoint();
+    try {
+        const result = await sbx(
+            dir,
+            ep.url,
+            't',
+            'python3 -c "import os,stat; os.mknod(\'/work/public/dev-zero\', stat.S_IFCHR | 0o600, os.makedev(1, 5))" 2>&1; exit $?'
+        );
+        assert.notEqual(result.code, 0, '设备节点 mknod 应被拒绝');
+        assert.ok(!fs.existsSync(path.join(dir, 'public', 'dev-zero')), '不应创建设备节点');
+    } finally {
+        await ep.close();
+    }
+});
+
+test('xattr and fallocate pass through to the backing file', { skip }, async () => {
+    // 协议回调缺口：xattr 全部 ENOSYS（cp -a/rsync -X 退化）、裸 fallocate
+    // ENOSYS（宿主成功，glibc posix_fallocate 的写零 fallback 掩盖了缺口）。
+    // 修复：透传宿主真实路径（xattr 读=read 写=write 策略；fallocate=write）
+    const dir = makeFixture();
+    const ep = await startEndpoint();
+    try {
+        const result = await sbx(
+            dir,
+            ep.url,
+            't',
+            [
+                "python3 - <<'PY'",
+                'import os, ctypes',
+                "p = '/work/public/x.txt'",
+                "open(p, 'w').write('x')",
+                "os.setxattr(p, b'user.tag', b'v1')",
+                'assert os.getxattr(p, b"user.tag") == b"v1"',
+                'assert "user.tag" in os.listxattr(p)',
+                "os.removexattr(p, b'user.tag')",
+                'assert "user.tag" not in os.listxattr(p)',
+                'fd = os.open(p, os.O_WRONLY)',
+                'libc = ctypes.CDLL("libc.so.6", use_errno=True)',
+                'assert libc.fallocate(fd, 0, 0, 8192) == 0, ctypes.get_errno()',
+                'os.close(fd)',
+                'print("OK")',
+                'PY',
+                'exit $?'
+            ].join('\n')
+        );
+        assert.equal(result.code, 0, result.stdout + result.stderr);
+        // 宿主侧验证 fallocate 真实落盘（size=8192）
+        assert.equal(fs.statSync(path.join(dir, 'public', 'x.txt')).size, 8192, 'fallocate 应真实生效');
+    } finally {
+        await ep.close();
+    }
+});
+
+test('rename: RENAME_NOREPLACE (mv -n) does not overwrite the target', { skip }, async () => {
+    // rename 回调忽略 flags 会让 RENAME_EXCHANGE 静默变成覆盖（实测目标数据
+    // 丢失）；NOREPLACE 由内核 VFS 拦截，daemon 侧防御性实现。
+    // 修复语义：EXCHANGE/WHITEOUT fail-closed 拒绝（EINVAL）。
+    const dir = makeFixture();
+    const ep = await startEndpoint();
+    try {
+        fs.writeFileSync(path.join(dir, 'public', 'n1.txt'), 'src');
+        fs.writeFileSync(path.join(dir, 'public', 'n2.txt'), 'dst-original');
+        await sbx(dir, ep.url, 't', 'mv -n /work/public/n1.txt /work/public/n2.txt; exit 0');
+        assert.equal(
+            fs.readFileSync(path.join(dir, 'public', 'n2.txt'), 'utf8'),
+            'dst-original',
+            'RENAME_NOREPLACE 下目标不得被覆盖'
+        );
+        assert.ok(fs.existsSync(path.join(dir, 'public', 'n1.txt')), '源文件应保留');
+
+        // RENAME_EXCHANGE：必须被拒绝（EINVAL），两侧数据都保持原样
+        fs.writeFileSync(path.join(dir, 'public', 'e1.txt'), 'AAA');
+        fs.writeFileSync(path.join(dir, 'public', 'e2.txt'), 'BBB');
+        const exchange = await sbx(
+            dir,
+            ep.url,
+            't',
+            [
+                'python3 -c "import ctypes; libc=ctypes.CDLL(\'libc.so.6\', use_errno=True); '
+                    + 'r=libc.renameat2(-100, b\'/work/public/e1.txt\', -100, b\'/work/public/e2.txt\', 2); '
+                    + 'print(r); exit(0 if r == -1 else 1)" 2>&1',
+                'exit $?'
+            ].join('; ')
+        );
+        // python 端：renameat2 返回 -1（被拒）→ exit 0
+        assert.equal(exchange.code, 0, 'RENAME_EXCHANGE 应被拒绝（返回 -1）: ' + exchange.stdout);
+        assert.match(exchange.stdout, /-1/, 'renameat2 应返回 -1: ' + exchange.stdout);
+        assert.equal(fs.readFileSync(path.join(dir, 'public', 'e1.txt'), 'utf8'), 'AAA', '交换被拒后 e1 应原样保留');
+        assert.equal(fs.readFileSync(path.join(dir, 'public', 'e2.txt'), 'utf8'), 'BBB', '交换被拒后 e2 应原样保留');
+    } finally {
+        await ep.close();
+    }
+});
+
+test('escape: open with O_TRUNC requires write policy (no truncation via read-only open)', { skip }, async () => {
+    // O_RDONLY|O_TRUNC 若只按 read 检查，内核允许只读打开携带 O_TRUNC →
+    // write-deny 的文件被清空。修复后 O_TRUNC 计入 write 类别：
+    // - notes（write deny）→ 整体拒绝，内容完好；
+    // - staging（write ask→端点 allow）→ 仍可截断（授权语义未被一刀切禁用）。
+    const dir = makeFixture();
+    const ep = await startEndpoint();
+    try {
+        const deniedTarget = path.join(dir, 'notes', 'n1.txt');
+        const deniedBefore = fs.readFileSync(deniedTarget, 'utf8');
+        const denied = await sbx(
+            dir,
+            ep.url,
+            't',
+            `python3 -c "import os; os.close(os.open('/work/notes/n1.txt', os.O_RDONLY | os.O_TRUNC))" 2>&1; exit $?`
+        );
+        assert.notEqual(denied.code, 0, 'O_TRUNC 对 write-deny 文件应被拒绝: ' + denied.stdout);
+        assert.equal(fs.readFileSync(deniedTarget, 'utf8'), deniedBefore, '文件内容不应被截断');
+
+        const allowedTarget = path.join(dir, 'staging', 's1.txt');
+        const allowed = await sbx(
+            dir,
+            ep.url,
+            't',
+            `python3 -c "import os; os.close(os.open('/work/staging/s1.txt', os.O_RDONLY | os.O_TRUNC))" 2>&1; exit $?`
+        );
+        assert.equal(allowed.code, 0, '经写授权后 O_TRUNC 打开应放行: ' + allowed.stdout + allowed.stderr);
+        assert.equal(fs.readFileSync(allowedTarget, 'utf8'), '', '经授权的截断应生效');
+    } finally {
+        await ep.close();
+    }
+});
+
+test('del-to-trash: rmdir on a non-empty directory fails (ENOTEMPTY) instead of trashing the tree', { skip }, async () => {
+    // POSIX 语义：rmdir 只删空目录。回收站路径的 rename 会绕过空检查，
+    // 把整棵目录树移进回收站且返回成功——语义错误且数据"消失"。
+    const dir = makeFixture();
+    const ep = await startEndpoint();
+    try {
+        const policy = path.join(dir, 'policy.toml');
+        fs.writeFileSync(policy, policyText(dir, ep.url, 't'));
+        const result = await run(
+            executable,
+            ['run', '--policy', policy, '--cwd', dir, '--del-to-trash', '--', '/usr/bin/bash', '-c', `rmdir ${dir}/public 2>&1; exit $?`],
+            { timeoutMs: 30000 }
+        );
+        assert.notEqual(result.code, 0, 'rmdir 非空目录应失败（ENOTEMPTY）');
+        assert.ok(fs.existsSync(path.join(dir, 'public')), '非空目录应留在原地（不得整棵移入回收站）');
+    } finally {
+        await ep.close();
+    }
+});
+
