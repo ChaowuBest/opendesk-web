@@ -36,6 +36,7 @@ import {
     CompactSeparatorMessage,
     extractImagePaths,
     imageToDataUri,
+    type AssistantMessagePart,
     type RuntimeMetadata
 } from '../messages.js';
 import { setRenderWorkspace } from '../../utils/marked-file-link.js';
@@ -141,6 +142,7 @@ import {
     TaskModelRequestOptions,
     TaskStatus
 } from '../task/types.js';
+import { StreamFeedbackThrottle } from '../task/stream-feedback-throttle.js';
 export { ATTEMPT_COMPLETION_TOOL_NAME, getLLMRetryDelayMs };
 
 export interface TaskCompactOptions {
@@ -471,6 +473,8 @@ export class TaskState {
     hooks: Hooks = GlobalHooks.createChildHooks();
     /** 订阅者，主要用于在 TUI/GUI 中获取任务状态更新等 */
     subscribers: BaseTaskUpdateSubscriber[] = [];
+    /** 流式订阅反馈限流器（运行时状态，不持久化），按 (message_id, part_index) 限频发送全量快照 */
+    private streaming_feedback_throttle = new StreamFeedbackThrottle();
     /** 文本片段完成回调，用于 channel 增量发送 - 当一个文本片段生成结束时调用（下一个片段创建时） */
     onTextPartComplete?: (text: string) => void;
     /** 全局任务管理器的状态 */
@@ -2392,6 +2396,16 @@ export class TaskState {
     }
 
     /**
+     * 流式快照限流判断：同一 (message_id, part_index) 的全量文本快照按最小间隔发送，
+     * 文本增量超过阈值时立即放行。仅作用于增长中的 text/reasoning part。
+     */
+    private shouldSendStreamingFeedback(messageId: string, partIndex: number, part: AssistantMessagePart): boolean {
+        const textLength =
+            part.type === 'text' ? part.text.length : part.type === 'reasoning' ? part.content.length : 0;
+        return this.streaming_feedback_throttle.shouldSend(`${messageId}:${partIndex}`, textLength);
+    }
+
+    /**
      * 向前端的订阅者发布任务状态更新，如果指定了part_index，则只更新该part
      * 否则更新最后一个 part。根据最后一条消息类型发送 UserChunk 或 AssistantChunk。
      */
@@ -2453,6 +2467,14 @@ export class TaskState {
                     this.task_status === 'running' &&
                     updated_part_index === content.length - 1 &&
                     (last_part.type === 'text' || last_part.type === 'reasoning');
+                if (
+                    streaming &&
+                    !this.shouldSendStreamingFeedback(last_message.message_id, updated_part_index, last_part)
+                ) {
+                    // 流式快照限频：跳过本次发送。快照始终携带全量累积文本，
+                    // 下一次放行的快照会自然补齐，最终内容由非流式更新兜底。
+                    return;
+                }
                 if (this.needsHtmlRender && !streaming) {
                     await last_part.render();
                 }

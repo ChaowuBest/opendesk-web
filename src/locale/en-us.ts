@@ -1882,6 +1882,7 @@ export const enUs: Record<string, string> = {
     'renderer.agentInput.placeholder.ctrlEnter':
         'Type a message · Drag files · Press {iconCtrl}Ctrl + {iconEnter}Enter to send · {iconShift}Shift + {iconEnter}Enter for new line',
     'renderer.agentInput.modelRequired': 'Please choose a model before chatting',
+    'renderer.agentInput.taskLoading': 'Loading task, please wait…',
     'renderer.agentInput.model.visionTag': 'vision',
     'renderer.agentInput.submit.sendLabel': 'Send',
     'renderer.agentInput.submit.enterTitle': 'Send (Enter)',

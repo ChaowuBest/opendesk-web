@@ -14,11 +14,6 @@ import { logger, getDebugMode } from '../utils/logger.js';
 import { BaseTool, BaseToolset } from './tool.js';
 import { escapeHtml } from '../../common/utils/escape.js';
 import { levenshteinDistance } from '../../utils/string.js';
-import {
-    getDefaultToolCallPresentation,
-    sanitizeToolCallPresentation,
-    type ToolCallPresentation
-} from './tool-presentation.js';
 import markedKatex from 'marked-katex-extension';
 import hljs from 'highlight.js';
 import path from 'path';
@@ -240,17 +235,13 @@ marked.use({
             const headerHtml = `<div class="code-block-header"><span class="code-block-lang">${displayLang}</span></div>`;
             const lines = highlighted.split('\n');
             if (lines.length > 0 && lines[lines.length - 1] === '') lines.pop();
-            const rows = lines
-                .map(
-                    (line, i) =>
-                        `<tr><td class="code-ln font-mono">${i + 1}</td><td class="code-line font-mono">${line || ' '}</td></tr>`
-                )
-                .join('');
+
+            const codeLines = lines.map((line) => `<span class="code-line font-mono">${line || ' '}</span>`).join('');
             const langLower = lang?.toLowerCase() || '';
             const previewAttrs = PREVIEWABLE_LANGS.has(langLower)
                 ? ` data-previewable="true" data-preview-lang="${langLower}" data-raw-code="${Buffer.from(text).toString('base64')}"`
                 : '';
-            return `<div class="code-block-wrapper"${previewAttrs}>${headerHtml}<div class="code-block-body ${langClass}"><table class="code-table"><tbody>${rows}</tbody></table></div></div>`;
+            return `<div class="code-block-wrapper"${previewAttrs}>${headerHtml}<div class="code-block-body ${langClass}"><pre class="code-block-pre font-mono"><code class="code-lines">${codeLines}</code></pre></div></div>`;
         }
     },
     hooks: {

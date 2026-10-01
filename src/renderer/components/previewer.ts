@@ -22,7 +22,7 @@
  *      `data-raw-code` (produced by the updated messages.ts renderer).
  *   2. Legacy / cached blocks without data attributes are detected by their
  *      `language-*` CSS class on `.code-block-body` and the raw text is
- *      reconstructed from the highlighted `td.code-line` cells.
+ *      reconstructed from the highlighted `span.code-line` cells.
  *
  * Supported preview types: html, htm, svg.
  */
@@ -128,12 +128,14 @@ function detectLangFromBody(codeBody: Element): string | null {
 }
 
 /**
- * Extract raw source code text from highlighted table rows.
- * Each `td.code-line` contains one line of (highlighted) code;
- * we take the textContent to strip HTML tags and recover the original source.
+ * Extract raw source code text from highlighted code lines.
+ * Each `span.code-line` contains one line of (highlighted) code; legacy blocks
+ * persisted in old tasks may still carry the per-row `td.code-line` table
+ * structure. We take the textContent to strip HTML tags and recover the
+ * original source.
  */
 function extractRawCodeFromTable(codeBody: Element): string | null {
-    const lines = codeBody.querySelectorAll('td.code-line');
+    const lines = codeBody.querySelectorAll('span.code-line, td.code-line');
     if (lines.length === 0) return null;
     const parts: string[] = [];
     for (const td of lines) {
@@ -233,7 +235,7 @@ function enhanceBlock(block: HTMLElement): void {
         }
     }
 
-    // Fallback: detect from CSS class + extract from rendered table cells
+    // Fallback: detect from CSS class + extract from rendered code lines
     if (!lang || !PREVIEWABLE_LANGS.has(lang)) {
         lang = detectLangFromBody(codeBody);
     }
@@ -763,6 +765,23 @@ function trackPreviewerContainer(container: HTMLElement): void {
         previewerContainersByDocument.set(doc, containers);
     }
     containers.add(container);
+}
+
+/**
+ * 容器销毁时显式解除追踪：Set 对容器是强引用，若不移除，已销毁视图的整棵
+ * DOM 子树会一直存活到下一次主题变更才被顺带清理，阻碍内存回收。
+ * root 给定时，移除注册表中位于 root 子树内（或等于 root）的全部容器。
+ */
+export function untrackPreviewerContainers(root: ParentNode): void {
+    const doc = root.ownerDocument ?? (typeof document !== 'undefined' ? document : undefined);
+    if (!doc) return;
+    const containers = previewerContainersByDocument.get(doc);
+    if (!containers) return;
+    for (const container of containers) {
+        if (container === root || (root.contains?.(container) ?? false)) {
+            containers.delete(container);
+        }
+    }
 }
 
 function installMermaidThemeListener(doc: Document): void {

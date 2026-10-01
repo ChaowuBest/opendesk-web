@@ -568,7 +568,15 @@
             function hideAllNonAppChildren() {
                 if (!nonAppSlot) return;
                 for (var i = 0; i < nonAppSlot.children.length; i++) {
-                    nonAppSlot.children[i].style.display = 'none';
+                    var child = nonAppSlot.children[i];
+                    child.style.display = 'none';
+                    if (child.tagName === 'TASK-VIEW' && typeof child.markViewHidden === 'function') {
+                        // 记录进入后台的时间，供后台超时释放扫描使用。
+                        // 隐性契约：所有显示 task-view 的路径必须统一走 openTask()
+                        // （其中会配对调用 markViewShown），否则当前可见的视图会因
+                        // 未清除后台计时而被 sweepStaleTaskViews 误杀。
+                        child.markViewHidden();
+                    }
                 }
             }
 
@@ -659,6 +667,9 @@
                         tv.removeAttribute('data-background');
                         tv.style.cssText = 'width:100%;height:100%;';
                         tv.style.display = '';
+                        if (typeof tv.markViewShown === 'function') {
+                            tv.markViewShown();
+                        }
                         // 等待首屏内容就绪信号（reload 完成时由 task-view 派发）；
                         // 超时兜底，防止异常路径下占位永不消失。
                         contentReady = new Promise(function (resolve) {
@@ -776,6 +787,26 @@
                 });
             }
 
+            /**
+             * 释放长时间未显示的后台任务视图。
+             * 切换任务只隐藏不销毁，长会话的整棵 DOM 会持续驻留；不可见超过
+             * 5 分钟且任务非运行态的视图整体销毁（disconnectedCallback 内完成
+             * 订阅退订与缓存清理，内存可被回收），下次打开时重新创建并全量加载。
+             * 运行中任务跳过：后台工具（如浏览器自动化）可能正在使用视图内组件，
+             * 任务结束后的下一轮扫描会将其释放。
+             */
+            function sweepStaleTaskViews() {
+                var now = Date.now();
+                Object.keys(taskViewCache).forEach(function (tid) {
+                    var tv = taskViewCache[tid];
+                    if (tv && typeof tv.shouldReleaseInBackground === 'function' && tv.shouldReleaseInBackground(now)) {
+                        removeTaskViewCache(tid);
+                    }
+                });
+            }
+
+            setInterval(sweepStaleTaskViews, 60 * 1000);
+
             window.settingAPI.registerCommandCallback('openHomePage', openHomePage);
             window.settingAPI.registerCommandCallback('openTask', function (taskId) {
                 return openTask(taskId);
@@ -890,6 +921,10 @@
                     'position:fixed;left:0;top:0;width:1280px;height:800px;opacity:0;pointer-events:none;z-index:-1;';
                 nonAppSlot.appendChild(el);
                 taskViewCache[taskId] = el;
+                if (typeof el.markViewHidden === 'function') {
+                    // 后台挂载视图同样参与超时释放扫描
+                    el.markViewHidden();
+                }
             }
 
             window.globalControlAPI = {

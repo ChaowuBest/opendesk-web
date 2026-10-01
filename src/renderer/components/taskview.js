@@ -21,13 +21,20 @@ import { showImageLightbox } from './imageLightbox.js';
 import { showWorkspacePicker } from './workspacePicker.ts';
 import { showConfirmModal } from './confirmModal.ts';
 import './skills/skill-detail-card.ts';
-import { enhanceCodeBlocks, enhanceToolPreviewCards, renderMermaidBlocks } from './previewer.ts';
+import {
+    enhanceCodeBlocks,
+    enhanceToolPreviewCards,
+    renderMermaidBlocks,
+    untrackPreviewerContainers
+} from './previewer.ts';
 import { escapeHtml } from '../../common/utils/escape.js';
 import { resolveToolDisplayName } from '../../common/tool-display-name.js';
 import { getSafeWebUrl } from '../../common/web-link.js';
 import { normalizeDriveRootPath } from '../../common/utils/path.js';
 import { createRendererTranslator } from '../locale.ts';
 import { renderSafeMarkdown } from '../utils/markdown.ts';
+import { DeferredTaskUpdateQueue } from '../utils/deferred-task-updates.ts';
+import { shouldReleaseTaskView, TASK_VIEW_BACKGROUND_RELEASE_MS } from '../utils/task-view-release.ts';
 import { buildTaskExportHtml } from '../utils/task-export.ts';
 import { createWebLinkContextMenuItems } from '../utils/web-link-context-menu.ts';
 import {
@@ -109,6 +116,10 @@ export const TASKVIEW_HISTORY_BATCH_MESSAGE_LIMIT = 20;
 export const TASKVIEW_HISTORY_BATCH_HTML_CHAR_LIMIT = 200000;
 const TASKVIEW_HISTORY_TOP_LOAD_THRESHOLD_PX = 96;
 const TASKVIEW_HISTORY_VIEWPORT_FILL_GUARD = 8;
+// 锁定底部时滚动跟随的最小间隔：scrollHeight 读取会强制同步布局，
+// 高频流式输出下需限频，避免在巨大会话 DOM 上反复全量重排。
+// 150ms 可跟上主进程限流后 ~8Hz 的快照节奏；首次跟随与 forceScrollToEnd 不受限。
+const TASKVIEW_SCROLL_FOLLOW_MIN_INTERVAL_MS = 150;
 const PROCESS_INNER_SCROLL_BOTTOM_THRESHOLD_PX = 24;
 // 流式思考预览只保留尾部切片：全文每帧重写的布局/文本成本会随思考长度线性膨胀，
 // 是长任务下渲染进程 CPU 飙高的主因之一。
@@ -369,6 +380,12 @@ class TaskView extends HTMLElement {
         });
         /** @type {number | null} 节流滚动的 rAF id */
         this._scrollRafId = null;
+        /** @type {ReturnType<typeof setTimeout> | null} 滚动跟随限流的定时器 */
+        this._scrollFollowTimer = null;
+        /** @type {number} 上次滚动跟随的时间戳 */
+        this._lastScrollFollowAt = 0;
+        /** @type {number} 视图进入后台不可见的时间戳；0 表示可见。用于后台超时释放。 */
+        this._viewHiddenAt = 0;
         /** @type {number | null} 节流过程区内部滚动的 rAF id */
         this._processScrollFollowRafId = null;
         /** @type {Map<string, {root: HTMLElement, targetKey: string}>} */
@@ -395,8 +412,8 @@ class TaskView extends HTMLElement {
         this._reloading = false;
         /** @type {number} reload 版本号，用于丢弃过期 reload 的后续操作 */
         this._reloadVersion = 0;
-        /** @type {Array<object>} reload 重建 DOM 期间到达、待重放的任务更新。 */
-        this._deferredTaskUpdates = [];
+        /** reload 重建 DOM 期间到达、待重放的任务更新（流式快照按 key 去重，防积压）。 */
+        this._deferredTaskUpdates = new DeferredTaskUpdateQueue();
         /** @type {((progress: object) => void) | null} 当前订阅的统一更新处理器。 */
         this._taskUpdateHandler = null;
         /** @type {Array<object>} 当前任务的完整持久化消息列表，DOM 只渲染其中的尾部窗口。 */
@@ -1214,7 +1231,11 @@ class TaskView extends HTMLElement {
 
     _renderProcessEntry(entry, messageId, disclosureState, options = {}) {
         if (entry.type === 'reasoning') {
-            const streaming = entry.part?.streaming === true;
+            // 已完成消息（isRunning === false）中即使 part 残留 streaming 标记，也必须按
+            // 已完成渲染：否则历史折叠内容里的推理块会保持 reasoning-active 并重新启动
+            // 每秒计时器（data-reasoning-start 被设置为当前时间），出现"早已完成的内容
+            // 还在持续计时"。运行中消息（isRunning === true）才允许流式布局。
+            const streaming = options.isRunning === false ? false : entry.part?.streaming === true;
             const content = streaming ? (entry.part?.text ?? entry.part?.rendered) : entry.part?.rendered;
             const disclosureKey = `${messageId}-reasoning-${entry.partIndex}`;
             return TaskView.createReasoningPartHtml(
@@ -1268,7 +1289,9 @@ class TaskView extends HTMLElement {
         return `
             <div id="${escapeHtml(detailId)}" class="od-process-detail od-running-process-detail${attentionClass} is-open"
                 data-output-key="${escapeHtml(item.key)}">
-                ${item.entries.map((entry) => this._renderProcessEntry(entry, messageId, disclosureState)).join('')}
+                ${item.entries
+                    .map((entry) => this._renderProcessEntry(entry, messageId, disclosureState, { isRunning: true }))
+                    .join('')}
             </div>`;
     }
 
@@ -1327,7 +1350,9 @@ class TaskView extends HTMLElement {
                 if (runningProcessDetails) {
                     return this._renderRunningProcessDetails(item, messageId, options.disclosureState);
                 }
-                return this._renderProcessItem(item, messageId, options.disclosureState);
+                return this._renderProcessItem(item, messageId, options.disclosureState, {
+                    isRunning: Boolean(options.isRunning)
+                });
             }
             if (item.type === 'status') {
                 return this._renderRunningStatus(item, messageId, {
@@ -1901,6 +1926,60 @@ class TaskView extends HTMLElement {
         }
     }
 
+    /**
+     * 运行中终端命令 live 输出快路径的判定：part 为 tool_call、前后同为 tool_call 且
+     * toolcall id 一一对应、状态均为 running。静态纯函数，便于单测覆盖。
+     */
+    static canPatchRunningTerminalToolCall(progress, previousPart, isRunning) {
+        return (
+            progress?.last_part?.type === 'tool_call' &&
+            previousPart?.type === 'tool_call' &&
+            isRunning === true &&
+            Array.isArray(progress.last_part.toolcalls) &&
+            progress.last_part.toolcalls.length > 0 &&
+            Array.isArray(previousPart.toolcalls) &&
+            previousPart.toolcalls.length === progress.last_part.toolcalls.length &&
+            progress.last_part.toolcalls.every((tc, i) => {
+                const prev = previousPart.toolcalls[i];
+                return Boolean(prev) && prev.id === tc.id && prev.status === 'running' && tc.status === 'running';
+            })
+        );
+    }
+
+    /**
+     * 运行中终端命令的 live 输出快路径：part 级 rendered 为该 part 内全部终端卡片的
+     * 拼接 HTML，按 toolcall id 在新旧结构间配对，仅替换各卡片的输出区域
+     * （.terminal-tool-scroll）并滚动到底部。
+     * 任一卡片缺失或结构不符（如非终端工具、刚发生状态迁移）时返回 false，回退全量渲染路径。
+     */
+    static patchRunningTerminalToolOutput(message_content, toolcalls, partRenderedHtml) {
+        if (typeof partRenderedHtml !== 'string' || partRenderedHtml === '') return false;
+        if (!Array.isArray(toolcalls) || toolcalls.length === 0) return false;
+        const runningIds = [];
+        for (const tc of toolcalls) {
+            if (typeof tc?.id !== 'string' || tc.id === '' || tc.status !== 'running') return false;
+            runningIds.push(tc.id);
+        }
+        const template = document.createElement('template');
+        template.innerHTML = partRenderedHtml;
+        const patches = [];
+        for (const id of runningIds) {
+            const escapedId = id.replace(/[^a-zA-Z0-9_-]/g, '\\$&');
+            const liveCard = message_content.querySelector(`[data-toolcall-id="${escapedId}"]`);
+            const freshCard = template.content.querySelector(`[data-toolcall-id="${escapedId}"]`);
+            if (!liveCard || !freshCard) return false;
+            const freshScroll = freshCard.querySelector('.terminal-tool-scroll');
+            const liveScroll = liveCard.querySelector('.terminal-tool-scroll');
+            if (!freshScroll || !liveScroll) return false;
+            patches.push({ freshScroll, liveScroll });
+        }
+        for (const { freshScroll, liveScroll } of patches) {
+            liveScroll.innerHTML = freshScroll.innerHTML;
+            liveScroll.scrollTop = liveScroll.scrollHeight;
+        }
+        return true;
+    }
+
     _renderAssistantProgress(progress, history_container) {
         if (!progress.last_part) return false;
 
@@ -1934,17 +2013,27 @@ class TaskView extends HTMLElement {
         const partIndex = getProgressPartIndex(progress);
         const parts = [...(this._assistantPartsByMessage.get(progress.message_id) || [])];
         const previousPart = parts[partIndex];
+        const isRunning = progress.task_status === 'running';
         const isIncrementalTextPart =
             (progress.last_part?.type === 'text' || progress.last_part?.type === 'reasoning') &&
             progress.task_status === 'running';
         const canPatchStreamingPart =
             isIncrementalTextPart && previousPart?.streaming === true && previousPart.type === progress.last_part.type;
+        // 运行中终端命令的 live 输出（每 200ms 一次）：同一批 toolcall 且状态均为 running 时，
+        // 只需替换对应卡片内的输出区域，避免每 200ms 对整条消息做全量 morph + 增强。
+        const canPatchStreamingToolCall = TaskView.canPatchRunningTerminalToolCall(progress, previousPart, isRunning);
         parts[partIndex] = isIncrementalTextPart ? { ...progress.last_part, streaming: true } : progress.last_part;
-        const isRunning = progress.task_status === 'running';
         this._rememberAssistantOutput(progress.message_id, parts, {
             isRunning
         });
         let patchedStreamingPart = false;
+        if (canPatchStreamingToolCall) {
+            patchedStreamingPart = TaskView.patchRunningTerminalToolOutput(
+                message_content,
+                progress.last_part.toolcalls,
+                progress.last_part.rendered
+            );
+        }
         if (canPatchStreamingPart) {
             const targets = message_content.querySelectorAll(`[data-streaming-part-index="${partIndex}"]`);
             if (targets.length > 0) {
@@ -1989,6 +2078,7 @@ class TaskView extends HTMLElement {
             }
         }
         if (!patchedStreamingPart) {
+            // 与既有行为保持一致：终态更新同样执行增强器（代码块复制按钮、mermaid 等）。
             if (isRunning) {
                 message_content.querySelectorAll('[data-streaming-part-index]').forEach((target) => {
                     const targetPart = parts[Number(target.dataset.streamingPartIndex)];
@@ -2148,29 +2238,92 @@ class TaskView extends HTMLElement {
         if (this._processScrollFollowRafId !== null) this._processScrollFollowRafId = rafId;
     }
 
+    /** 记录视图进入后台不可见状态（切换任务 / 后台创建时由宿主调用）。 */
+    markViewHidden() {
+        if (!this._viewHiddenAt) this._viewHiddenAt = Date.now();
+    }
+
+    /** 视图重新可见时清除后台计时。 */
+    markViewShown() {
+        this._viewHiddenAt = 0;
+    }
+
+    /**
+     * 消息队列是否非空。队列消息仅存于控件内存且未持久化，释放控件会静默丢弃；
+     * 草稿与附件已由 task-draft-storage 持久化，不在此列。
+     */
+    _hasQueuedMessages() {
+        return Array.isArray(this.messageQueue) && this.messageQueue.length > 0;
+    }
+
+    /**
+     * 后台释放判定：不可见超过 timeoutMs、任务非运行态、且消息队列为空时
+     * 返回 true，宿主据此销毁控件并从缓存移除，下次打开重新加载。
+     */
+    shouldReleaseInBackground(now = Date.now(), timeoutMs = TASK_VIEW_BACKGROUND_RELEASE_MS) {
+        return shouldReleaseTaskView(
+            {
+                isHidden: this.style.display === 'none' || this.hasAttribute('data-background'),
+                hiddenAt: this._viewHiddenAt || 0,
+                isRunning: this.task_status === 'running',
+                hasQueuedMessages: this._hasQueuedMessages()
+            },
+            now,
+            timeoutMs
+        );
+    }
+
+    /** 取消尚未执行的滚动跟随定时器/rAF（断连与强制滚动时调用，防止游离回调）。 */
+    _cancelPendingScrollFollow() {
+        if (this._scrollFollowTimer !== null) {
+            clearTimeout(this._scrollFollowTimer);
+            this._scrollFollowTimer = null;
+        }
+        if (this._scrollRafId !== null && this._scrollRafId >= 0) {
+            cancelAnimationFrame(this._scrollRafId);
+        }
+        this._scrollRafId = null;
+    }
+
     tryScrollToEnd() {
         if (!this.auto_scrolling_to_bottom) {
             return;
         }
-        if (this._scrollRafId !== null) return;
-        this._scrollRafId = requestAnimationFrame(() => {
-            this._scrollRafId = null;
+        if (this._scrollRafId !== null || this._scrollFollowTimer !== null) return;
+        // scrollHeight 读取会强制同步布局；高频流式输出期间（每个快照一次）这在
+        // 巨大会话 DOM 上曾是主要 CPU 消耗之一，因此限制最小跟随间隔。
+        // 首次跟随（或 forceScrollToEnd 重置后）delay 为 0，直接走 rAF 保持即时性。
+        const elapsed = Date.now() - (this._lastScrollFollowAt || 0);
+        const delay = Math.max(0, TASKVIEW_SCROLL_FOLLOW_MIN_INTERVAL_MS - elapsed);
+        const scheduleScroll = () => {
+            this._scrollFollowTimer = null;
             if (!this.auto_scrolling_to_bottom) return;
-            const domElement = this.getHistoryContainer();
-            const targetScrollTop = domElement.scrollHeight - domElement.clientHeight;
-            // 仅在需要向下滚动时才设置 scrollTop，避免因布局抖动导致向上回跳
-            if (targetScrollTop > domElement.scrollTop) {
-                this._programmaticScrolling = true;
-                domElement.scrollTop = targetScrollTop;
-                // 使用 rAF 而非 setTimeout，将保护窗口从 150ms 缩短到 ~16ms
-                // 避免 AI 快速输出时用户滚动被长时间屏蔽
-                if (this._programmaticScrollTimer) cancelAnimationFrame(this._programmaticScrollTimer);
-                this._programmaticScrollTimer = requestAnimationFrame(() => {
-                    this._programmaticScrolling = false;
-                    this._programmaticScrollTimer = null;
-                });
-            }
-        });
+            this._lastScrollFollowAt = Date.now();
+            this._scrollRafId = requestAnimationFrame(() => {
+                this._scrollRafId = null;
+                if (!this.auto_scrolling_to_bottom) return;
+                const domElement = this.getHistoryContainer();
+                if (!domElement) return;
+                const targetScrollTop = domElement.scrollHeight - domElement.clientHeight;
+                // 仅在需要向下滚动时才设置 scrollTop，避免因布局抖动导致向上回跳
+                if (targetScrollTop > domElement.scrollTop) {
+                    this._programmaticScrolling = true;
+                    domElement.scrollTop = targetScrollTop;
+                    // 使用 rAF 而非 setTimeout，将保护窗口从 150ms 缩短到 ~16ms
+                    // 避免 AI 快速输出时用户滚动被长时间屏蔽
+                    if (this._programmaticScrollTimer) cancelAnimationFrame(this._programmaticScrollTimer);
+                    this._programmaticScrollTimer = requestAnimationFrame(() => {
+                        this._programmaticScrolling = false;
+                        this._programmaticScrollTimer = null;
+                    });
+                }
+            });
+        };
+        if (delay === 0) {
+            scheduleScroll();
+        } else {
+            this._scrollFollowTimer = setTimeout(scheduleScroll, delay);
+        }
     }
 
     /**
@@ -2183,6 +2336,9 @@ class TaskView extends HTMLElement {
         this.setAutoScrollingToBottom(true);
         // 组件可能尚未渲染历史容器（如仅存在于 model 层的最小 task-view），此时仅锁定状态
         if (this.getHistoryContainer()) {
+            // 用户主动产生新消息流时绕过滚动跟随限流，立即回到底部
+            this._cancelPendingScrollFollow();
+            this._lastScrollFollowAt = 0;
             this.tryScrollToEnd();
         }
     }
@@ -2385,6 +2541,10 @@ class TaskView extends HTMLElement {
         this._assistantProgressBuffer.clear();
         this._reloading = true;
         const version = ++this._reloadVersion;
+        // 加载期间锁定输入框（与 finally 中的解锁成对）：
+        // 1) 确保 taskId 赋值（草稿恢复）必然发生在用户输入之前，消除恢复竞态；
+        // 2) 加载中的 task_status 等状态尚未就绪，此时也不应允许编辑/发送。
+        this.querySelector(`#task-${this.task_id}-input`)?.setTaskLoading?.(true);
         let shouldAutoSendQueuedMessage = false;
         try {
             const task_state = await window.taskManagerAPI.getFullTask(this.task_id);
@@ -2537,6 +2697,7 @@ class TaskView extends HTMLElement {
             // 只有最新的 reload 才能重置标志，避免过期 reload 提前解除守卫
             if (version === this._reloadVersion) {
                 this._reloading = false;
+                this.querySelector(`#task-${this.task_id}-input`)?.setTaskLoading?.(false);
                 this._flushDeferredTaskUpdates();
                 if (shouldAutoSendQueuedMessage) {
                     this._autoSendQueueMessages();
@@ -3191,7 +3352,7 @@ class TaskView extends HTMLElement {
             return;
         }
 
-        const updates = this._deferredTaskUpdates.splice(0);
+        const updates = this._deferredTaskUpdates.drain();
         updates.forEach((progress) => this._taskUpdateHandler(progress));
     }
 
@@ -5228,15 +5389,19 @@ class TaskView extends HTMLElement {
         this._assistantProgressBuffer.clear();
         this._chatNavigation?.destroy();
         this._chatNavigation = null;
+        // previewer 的容器注册表对历史/消息容器是强引用，销毁前显式解除，
+        // 避免已销毁视图的整棵 DOM 驻留到下一次主题变更才被清理
+        untrackPreviewerContainers(this);
         this._connectionEpoch += 1;
         this._reloadVersion += 1;
         this._reloading = false;
-        this._deferredTaskUpdates = [];
+        this._deferredTaskUpdates.clear();
         this._taskUpdateHandler = null;
         if (this._processScrollFollowRafId !== null && this._processScrollFollowRafId >= 0) {
             cancelAnimationFrame(this._processScrollFollowRafId);
         }
         this._processScrollFollowRafId = null;
+        this._cancelPendingScrollFollow();
         this._pendingProcessScrollFollowTargets.clear();
         const artifacts = this.querySelector(`#task-${this.task_id}-artifacts`);
         if (artifacts && typeof artifacts.setTaskTodos === 'function') {

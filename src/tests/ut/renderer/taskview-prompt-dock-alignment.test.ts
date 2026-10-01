@@ -59,7 +59,8 @@ describe('task-view prompt dock alignment', () => {
         await jest.unstable_mockModule('../../../renderer/components/previewer.ts', () => ({
             enhanceCodeBlocks: jest.fn(),
             enhanceToolPreviewCards: jest.fn(),
-            renderMermaidBlocks: jest.fn()
+            renderMermaidBlocks: jest.fn(),
+            untrackPreviewerContainers: jest.fn()
         }));
 
         window.settingAPI = {

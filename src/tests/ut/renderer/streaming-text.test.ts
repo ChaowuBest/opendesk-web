@@ -28,7 +28,7 @@ describe('streaming Markdown snapshots', () => {
         const attrs = preview
             ? ` data-previewable="true" data-preview-lang="svg" data-raw-code="${Buffer.from(text).toString('base64')}"`
             : '';
-        return `<div class="code-block-wrapper"${attrs}><div class="code-block-header">Code</div><div class="code-block-body"><table><tbody><tr><td class="code-line">${text.replaceAll('<', '&lt;')}</td></tr></tbody></table></div></div>`;
+        return `<div class="code-block-wrapper"${attrs}><div class="code-block-header">Code</div><div class="code-block-body"><pre class="code-block-pre"><code class="code-lines"><span class="code-line">${text.replaceAll('<', '&lt;')}</span></code></pre></div></div>`;
     }
 
     test('keeps copy listeners and preview state when another block grows', async () => {
@@ -67,6 +67,21 @@ describe('streaming Markdown snapshots', () => {
         button.click();
         expect(clipboard).toHaveBeenLastCalledWith('new');
         expect(container.querySelectorAll('.code-copy-btn')).toHaveLength(1);
+    });
+
+    test('legacy persisted table structure still copies code (old task rendered HTML)', () => {
+        const container = document.createElement('div');
+        // 旧版 messages.ts 渲染的逐行表格结构，随任务 JSON 持久化，历史消息会原样加载
+        container.innerHTML =
+            '<div class="code-block-wrapper"><div class="code-block-header">Code</div>' +
+            '<div class="code-block-body"><table class="code-table"><tbody>' +
+            '<tr><td class="code-ln">1</td><td class="code-line">legacy-line-1</td></tr>' +
+            '<tr><td class="code-ln">2</td><td class="code-line">legacy-line-2</td></tr>' +
+            '</tbody></table></div></div>';
+        enhanceCodeBlocks(container);
+        const copy = container.querySelector<HTMLButtonElement>('.code-copy-btn')!;
+        copy.click();
+        expect(clipboard).toHaveBeenLastCalledWith('legacy-line-1\nlegacy-line-2');
     });
 
     test('updates earlier blocks when later Markdown resolves references or changes structure', () => {

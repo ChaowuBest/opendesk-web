@@ -62,7 +62,8 @@ describe('task-view GUI output modes', () => {
         await jest.unstable_mockModule('../../../renderer/components/previewer.ts', () => ({
             enhanceCodeBlocks: jest.fn(),
             enhanceToolPreviewCards: jest.fn(),
-            renderMermaidBlocks: jest.fn()
+            renderMermaidBlocks: jest.fn(),
+            untrackPreviewerContainers: jest.fn()
         }));
 
         window.settingAPI = {
@@ -1221,5 +1222,49 @@ describe('task-view GUI output modes', () => {
 
         expect(processToggle.getAttribute('aria-expanded')).toBe('false');
         expect(process.querySelector('.od-process-detail')?.classList).not.toContain('is-open');
+    });
+
+    test('completed minimal output renders a stale streaming reasoning part as completed without a live timer', () => {
+        const view = createView();
+        view.innerHTML = view._renderAssistantOutputHtml(
+            [
+                { type: 'reasoning', rendered: '残留流式标记的思考', streaming: true },
+                { type: 'text', text: '最终回复', rendered: '<p>最终回复</p>' }
+            ],
+            { isRunning: false, messageId: 'message-completed-stale-streaming' }
+        );
+
+        const reason = view.querySelector('.od-completed-process-detail .reasoning-block-od') as HTMLElement;
+        expect(reason).not.toBeNull();
+        expect(reason.classList).toContain('reasoning-completed');
+        expect(reason.classList).not.toContain('reasoning-active');
+        expect(reason.hasAttribute('data-reasoning-start')).toBe(false);
+        expect(reason.querySelector('.reasoning-time')?.textContent ?? '').not.toMatch(/已思考/);
+
+        // 展开详情重新渲染也保持 completed，不会因为 disclosure 重建重新启动计时。
+        const completedToggle = view.querySelector('[data-completed-process-toggle]') as HTMLElement;
+        view._handleProcessToggleClick({ target: completedToggle, preventDefault() {}, stopPropagation() {} });
+        const reopened = view.querySelector('.od-completed-process-detail .reasoning-block-od') as HTMLElement;
+        expect(reopened.classList).toContain('reasoning-completed');
+        expect(reopened.classList).not.toContain('reasoning-active');
+        expect(reopened.hasAttribute('data-reasoning-start')).toBe(false);
+    });
+
+    test('running minimal reasoning details keep the streaming state and live timer', () => {
+        const view = createView();
+        view.innerHTML = view._renderAssistantOutputHtml(
+            [{ type: 'reasoning', rendered: '正在思考', streaming: true }],
+            { isRunning: true, messageId: 'message-running-reasoning-detail', showRunningDetails: true }
+        );
+
+        const reason = view.querySelector('.od-running-process-detail .reasoning-block-od') as HTMLElement;
+        expect(reason).not.toBeNull();
+        expect(reason.classList).toContain('reasoning-active');
+        expect(reason.hasAttribute('data-reasoning-start')).toBe(true);
+    });
+
+    test('completed process rows keep symmetric spacing around the collapsed summary', () => {
+        expect(taskViewStyles).toMatch(/\.od-completed-process\{[^}]*margin:008px;/);
+        expect(taskViewStyles).toMatch(/\.od-completed-process-detail\{[^}]*padding:2px4px2px0;/);
     });
 });
