@@ -468,7 +468,7 @@ x86_64 二进制，安装后沙箱命令直接 `exec format error`。本轮修�
 
 1. **产物按 rust target triple 落盘**（`scripts/build-linux-sandbox.cjs`）：
     - 本机构建：`cargo build --release` → `runtime/<host-triple>/dynobox-linux`；
-    - 交叉构建：`OPENDESK_SANDBOX_TARGET=aarch64-unknown-linux-gnu npm run build:sandbox:linux`
+    - 交叉构建：`OPENDESK_SANDBOX_TARGET=aarch64-unknown-linux-gnu npm run build:linux-sandbox`
       → `cargo build --release --target <triple>` → `runtime/<triple>/dynobox-linux`
       （rustup 预检未安装 target 时给出 `rustup target add` 修复提示）；
 2. **stage 钩子按目标架构取产物并校验 ELF**（`forge.config.cjs` + 共享模块

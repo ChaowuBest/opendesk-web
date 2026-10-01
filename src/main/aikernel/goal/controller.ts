@@ -12,6 +12,7 @@
 import type { TaskState } from '../states/tasks.js';
 import { getGoalElapsedMs } from '../../../common/goal/format.js';
 import type { GoalCommandSnapshotLike, GoalEditConflict, GoalEditIfMatch } from '../../../common/goal/command.js';
+import { Setting } from '../../utils/setting.js';
 import {
     GoalEvents,
     GoalStates,
@@ -311,7 +312,18 @@ export class GoalController {
         goal.tokenUsageBaseline = computeTotalTokenUsage(task);
         task.goal_state = goal;
         if (shouldDeriveTaskNameFromGoal(task)) {
+            // objective 派生名仅作同步占位，保证任务列表立即可见；
+            // 开启自动命名时再异步由 LLM 基于 objective 生成正式任务名，
+            // 与普通消息路径（submitUserMessage -> generateTaskName）保持一致，
+            // 避免"/goal 开场"的任务名永远停留在 goal 原文
             task.task_name = deriveTaskNameFromGoalObjective(objective);
+            task.name_pending = false;
+            if (Setting.getInstance().getData().task_config?.generate_taskname !== false) {
+                void task.generateTaskName(objective).then(() => {
+                    task.persistLater();
+                    task.task_manager_state.publishTaskListUpdate();
+                });
+            }
         }
         const source = input.source ?? 'api';
         appendEvent(task, goal, 'created', source, {

@@ -25,7 +25,7 @@ import {
 } from '../../../main/aikernel/states/tasks.js';
 import { deleteTaskTodos, getTaskTodosForDisplay, setTaskTodos } from '../../../main/aikernel/todos/task-todos.js';
 import { setRuntimeLocale, t } from '../../../locale/index.js';
-import { getTaskArtifactDirectory, setCustomOpendeskDirectory } from '../../../main/utils/setting.js';
+import { getTaskArtifactDirectory, setCustomOpendeskDirectory, Setting } from '../../../main/utils/setting.js';
 import { getGoalElapsedMs } from '../../../common/goal/format.js';
 
 let tempRootDir: string | undefined;
@@ -84,6 +84,8 @@ function createTask(): TaskState {
 describe('goal controller and scheduler', () => {
     beforeEach(() => {
         resetHookRegistry();
+        // GoalController.create 会对未命名任务异步触发 LLM 自动命名，统一 mock 掉真实请求
+        jest.spyOn(LLM, 'ask').mockResolvedValue('<taskname>goal</taskname>');
     });
 
     afterEach(() => {
@@ -2280,24 +2282,77 @@ describe('goal controller and scheduler', () => {
         expect(JSON.stringify(summary.objectiveEvents)).not.toContain('old goal');
     });
 
-    test('creating a goal names an unnamed task from the objective', () => {
+    test('creating a goal names an unnamed task from the objective', async () => {
         const task = createTask();
+        const ask = jest.spyOn(LLM, 'ask').mockResolvedValue('<taskname>ship fix</taskname>');
 
         GoalController.create(task, { objective: 'ship the goal sidebar timeline fix', source: 'gui' });
 
+        // objective 派生名先作为同步占位，保证任务列表立即可见
         expect(task.task_name).toBe('ship the goal sidebar timeline fix');
 
+        await new Promise<void>((resolve) => setImmediate(resolve));
+
+        // 随后 LLM 基于 objective 自动生成正式任务名（与普通消息路径一致）
+        expect(task.task_name).toBe('ship fix');
+
+        // 已有名称的任务：不派生占位名、不触发自动命名
         task.task_name = 'Existing task title';
         GoalController.clear(task, 'gui');
         GoalController.create(task, { objective: 'replacement objective', source: 'gui' });
 
         expect(task.task_name).toBe('Existing task title');
 
+        // 占位名"未命名任务"视同未命名
         const placeholderTask = createTask();
         placeholderTask.task_name = '未命名任务';
         GoalController.create(placeholderTask, { objective: 'goal derived from placeholder', source: 'gui' });
 
         expect(placeholderTask.task_name).toBe('goal derived from placeholder');
+        await new Promise<void>((resolve) => setImmediate(resolve));
+        expect(placeholderTask.task_name).toBe('ship fix');
+    });
+
+    test('creating a goal on an unnamed task schedules LLM auto naming from the objective', async () => {
+        const task = createTask();
+        task.name_pending = true;
+        const ask = jest.spyOn(LLM, 'ask').mockResolvedValue('<taskname>修复导出</taskname>');
+
+        GoalController.create(task, { objective: '修复导出 PDF 的乱码问题', source: 'gui' });
+
+        expect(task.name_pending).toBe(false);
+        expect(task.task_name).toBe('修复导出 PDF 的乱码问题');
+        // 自动命名以 goal objective 作为输入
+        expect(ask.mock.calls[0]?.[0]).toContain('修复导出 PDF 的乱码问题');
+
+        await new Promise<void>((resolve) => setImmediate(resolve));
+
+        expect(task.task_name).toBe('修复导出');
+    });
+
+    test('goal creation keeps the derived name when auto task naming is disabled', async () => {
+        const task = createTask();
+        const ask = jest.spyOn(LLM, 'ask');
+        ask.mockClear();
+        Setting.updateInstanceData({
+            task_config: {
+                auto_retry: true,
+                generate_taskname: false,
+                termination_check: true,
+                evidence_card: false
+            }
+        });
+
+        try {
+            GoalController.create(task, { objective: 'no auto naming goal', source: 'gui' });
+
+            await new Promise<void>((resolve) => setImmediate(resolve));
+
+            expect(task.task_name).toBe('no auto naming goal');
+            expect(ask).not.toHaveBeenCalled();
+        } finally {
+            Setting.clearCache();
+        }
     });
 
     test('load migrates legacy event log tail over legacy full event log when both exist', () => {

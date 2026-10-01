@@ -10,17 +10,20 @@
 
 use std::io::{Read, Write};
 use std::net::{TcpListener, TcpStream};
-use std::sync::atomic::AtomicUsize;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 pub fn run(port: u16, default_decision: &str) -> Result<i32, String> {
     let listener = TcpListener::bind(("127.0.0.1", port))
         .map_err(|e| format!("监听 127.0.0.1:{port} 失败: {e}"))?;
-    let default = if default_decision == "allow" { "allow" } else { "deny" };
+    // 非法值报错而非静默按 deny（防调用方拼写错误被掩盖）
+    let default = match default_decision {
+        "allow" => "allow",
+        "deny" => "deny",
+        other => return Err(format!("--default 非法: {other}（allow|deny）")),
+    };
     eprintln!("决策端点已启动: http://127.0.0.1:{port}/decide (default={default})");
     let log: Arc<Mutex<Vec<String>>> = Arc::new(Mutex::new(Vec::new()));
-    let _seq = AtomicUsize::new(0);
     for stream in listener.incoming() {
         match stream {
             Ok(stream) => {
@@ -102,17 +105,19 @@ fn handle(mut stream: TcpStream, default: &str, log: &Mutex<Vec<String>>) {
     } else if path == "/decide" && method == "POST" {
         let (req_path, req_access) = parse_decide_body(body);
         let (decision, grants) = decide(&req_path, &req_access, default);
-        log.lock().unwrap().push(format!(
-            r#"{{"path":"{}","access":"{}","decision":"{}"}}"#,
-            req_path, req_access, decision
-        ));
-        let grants_json: Vec<String> = grants
+        // serde_json 构造：path 含引号等特殊字符时仍产出合法 JSON（手写 format!
+        // 会注入破坏响应与审计日志）
+        log.lock().unwrap().push(
+            serde_json::json!({ "path": req_path, "access": req_access, "decision": decision })
+                .to_string(),
+        );
+        let grants_json: Vec<serde_json::Value> = grants
             .iter()
-            .map(|(p, a)| format!(r#"{{"path":"{p}","access":"{a}","ttl":120}}"#))
+            .map(|(p, a)| serde_json::json!({ "path": p, "access": a, "ttl": 120 }))
             .collect();
         (
             200,
-            format!(r#"{{"decision":"{decision}","grants":[{}]}}"#, grants_json.join(",")),
+            serde_json::json!({ "decision": decision, "grants": grants_json }).to_string(),
         )
     } else {
         (404, r#"{"error":"not found"}"#.to_string())

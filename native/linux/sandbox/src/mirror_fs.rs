@@ -66,9 +66,10 @@ impl InoMap {
 
 /// 打开的目录句柄：记录父目录 inner 路径，readdir 用 parent.join(name) 分配 ino，
 /// 与 lookup 的路径拼接保持一致（否则子目录条目会映射到错误的根级路径）。
+/// entries 用 Arc 共享：大目录多页 readdir 不再逐页克隆整个条目列表。
 struct DirHandle {
     parent: PathBuf,
-    entries: Vec<(String, FileType)>,
+    entries: Arc<Vec<(String, FileType)>>,
 }
 
 pub struct MirrorFs {
@@ -110,6 +111,11 @@ impl MirrorFs {
         if del_to_trash {
             let _ = fs::create_dir_all(trash_dir.join("files"));
             let _ = fs::create_dir_all(trash_dir.join("info"));
+            // daemon umask 已清零（见 daemon_main）：回收站属用户私有数据，
+            // 显式收紧为 0700，防首次创建时权限落入 0777
+            let _ = fs::set_permissions(&trash_dir, fs::Permissions::from_mode(0o700));
+            let _ = fs::set_permissions(trash_dir.join("files"), fs::Permissions::from_mode(0o700));
+            let _ = fs::set_permissions(trash_dir.join("info"), fs::Permissions::from_mode(0o700));
         }
         MirrorFs {
             backing,
@@ -182,7 +188,10 @@ impl MirrorFs {
             blocks: meta.blocks(),
             atime: meta.accessed().unwrap_or(SystemTime::UNIX_EPOCH),
             mtime: meta.modified().unwrap_or(SystemTime::UNIX_EPOCH),
-            ctime: meta.created().unwrap_or(SystemTime::UNIX_EPOCH),
+            // ctime 是 inode change time（st_ctim，chmod/chown/rename 时更新），
+            // 不是 birth time——created() 返回的 btime 语义不同，误用会让沙箱内
+            // stat 与宿主不一致（make/rsync 等依赖 ctime 判断元数据变更）
+            ctime: system_time_from(meta.ctime(), meta.ctime_nsec()),
             crtime: meta.created().unwrap_or(SystemTime::UNIX_EPOCH),
             kind,
             // 单映射 userns（0→宿主用户）无法表达其他宿主 uid：attr 的 uid/gid 若
@@ -260,8 +269,9 @@ impl MirrorFs {
         Ok(true)
     }
 
-    /// 秒数 → (年,月,日,时,分,秒)（Howard Hinnant civil_from_days 算法，无 chrono）
-    fn civil_time(secs: i64) -> (i64, u32, u32, u32, u32, u32) {
+    /// 秒数 → (年,月,日,时,分,秒)（Howard Hinnant civil_from_days 算法，无 chrono；
+    /// 供诊断日志等复用）
+    pub fn civil_time(secs: i64) -> (i64, u32, u32, u32, u32, u32) {
         let (days, rem) = (secs.div_euclid(86400), secs.rem_euclid(86400));
         let z = days + 719468;
         let era = if z >= 0 { z } else { z - 146096 } / 146097;
@@ -289,26 +299,48 @@ impl MirrorFs {
         reply.attr(&ATTR_TTL, &self.attr_checked(ino, inner, meta));
     }
 
-    /// 构造 attr：execute 策略拒绝执行时掩去 x 位（子进程 exec 会得到 EACCES）
+    /// 构造 attr：execute 策略拒绝执行时掩去 x 位（子进程 exec 会得到 EACCES）。
+    /// 目录的 x 位是遍历（搜索）权限而非"执行"：不掩，否则 execute-deny 的
+    /// 目录会不可进入（cd/stat 子项全挂），read-allow 语义被破坏。
     fn attr_checked(&self, ino: u64, inner: &Path, meta: &fs::Metadata) -> FileAttr {
         let mut attr = self.attr(ino, meta);
-        if !self.policy.check_exec(&self.policy_path(inner)) {
+        if !meta.is_dir() && !self.policy.check_exec(&self.policy_path(inner)) {
             attr.perm &= !(0o111u16);
         }
         attr
     }
+
+    /// xattr 名字/路径 → CString（字节透传，防非 UTF-8 名字被拒绝丢失语义）
+    fn c_bytes(bytes: &[u8]) -> Result<std::ffi::CString, ()> {
+        std::ffi::CString::new(bytes).map_err(|_| ())
+    }
 }
 
 fn open_flags_access(flags: i32) -> u8 {
-    match flags & libc::O_ACCMODE {
+    let mut access = match flags & libc::O_ACCMODE {
         libc::O_WRONLY => ACC_WRITE,
         libc::O_RDWR => ACC_READ | ACC_WRITE,
         _ => ACC_READ,
+    };
+    // O_TRUNC 即便搭配 O_RDONLY 也是写操作（Linux 内核允许只读打开携带 O_TRUNC
+    // 并截断文件）：必须计入 write 类别，否则 write-deny 文件可被"只读"打开清空
+    if flags & libc::O_TRUNC != 0 {
+        access |= ACC_WRITE;
     }
+    access
 }
 
 fn errno_of(error: &std::io::Error) -> i32 {
     error.raw_os_error().unwrap_or(EIO)
+}
+
+/// st_ctim（秒+纳秒，可能为负）→ SystemTime
+fn system_time_from(secs: i64, nsecs: i64) -> SystemTime {
+    if secs >= 0 {
+        SystemTime::UNIX_EPOCH + Duration::new(secs as u64, nsecs as u32)
+    } else {
+        SystemTime::UNIX_EPOCH - Duration::new((-(secs + 1)) as u64, (1_000_000_000 - nsecs) as u32)
+    }
 }
 
 impl Filesystem for MirrorFs {
@@ -389,20 +421,25 @@ impl Filesystem for MirrorFs {
             reply.error(EACCES);
             return;
         }
-        match fs::create_dir(self.real(&inner)) {
-            Ok(()) => {
-                fs::set_permissions(
-                    self.real(&inner),
-                    fs::Permissions::from_mode((mode & !umask) & 0o7777),
-                )
-                .ok();
-                match fs::symlink_metadata(self.real(&inner)) {
-                    Ok(meta) => {
-                        let ino = self.alloc_ino(inner);
-                        reply.entry_ex(&ENTRY_TTL, &ATTR_TTL, &self.attr(ino, &meta), 0);
-                    }
-                    Err(e) => reply.error(errno_of(&e)),
-                }
+        // 一步 libc::mkdir（mode 已应用请求方 umask）：先 create_dir 再
+        // set_permissions 的两步写法存在权限窗口（中间态按 daemon umask 暴露）
+        let real = self.real(&inner);
+        let computed = (mode & !umask) & 0o7777;
+        let cpath = match std::ffi::CString::new(real.as_os_str().as_encoded_bytes()) {
+            Ok(c) => c,
+            Err(_) => {
+                reply.error(EINVAL);
+                return;
+            }
+        };
+        if unsafe { libc::mkdir(cpath.as_ptr(), computed as libc::mode_t) } != 0 {
+            reply.error(errno_of(&std::io::Error::last_os_error()));
+            return;
+        }
+        match fs::symlink_metadata(&real) {
+            Ok(meta) => {
+                let ino = self.alloc_ino(inner);
+                reply.entry_ex(&ENTRY_TTL, &ATTR_TTL, &self.attr(ino, &meta), 0);
             }
             Err(e) => reply.error(errno_of(&e)),
         }
@@ -444,6 +481,22 @@ impl Filesystem for MirrorFs {
         if self.deny(&inner, ACC_WRITE) {
             reply.error(EACCES);
             return;
+        }
+        // POSIX 语义：rmdir 只删空目录。回收站路径的 rename 会绕过内核空检查
+        // （整棵目录树被移走且返回成功），必须前置空校验
+        if self.del_to_trash {
+            match fs::read_dir(self.real(&inner)) {
+                Ok(mut entries) => {
+                    if entries.next().is_some() {
+                        reply.error(libc::ENOTEMPTY);
+                        return;
+                    }
+                }
+                Err(e) => {
+                    reply.error(errno_of(&e));
+                    return;
+                }
+            }
         }
         match self.move_to_trash(&inner, true) {
             Ok(true) => reply.ok(),
@@ -516,6 +569,20 @@ impl Filesystem for MirrorFs {
         // 改名/移动视为对相关路径的 write，两个目标都要通过
         if self.deny(&old_inner, ACC_WRITE) || self.deny(&new_inner, ACC_WRITE) {
             reply.error(EACCES);
+            return;
+        }
+        // renameat2 flags：NOREPLACE 目标存在时 EEXIST（当前内核已在 VFS 层拦截，
+        // 此处防御性实现，防内核行为变化）；EXCHANGE/WHITEOUT 需要原子交换语义，
+        // 普通 rename 无法模拟——忽略会把交换变成覆盖（实测目标数据静默丢失），
+        // fail-closed 拒绝。
+        if _flags & libc::RENAME_NOREPLACE != 0
+            && fs::symlink_metadata(self.real(&new_inner)).is_ok()
+        {
+            reply.error(libc::EEXIST);
+            return;
+        }
+        if _flags & (libc::RENAME_EXCHANGE | libc::RENAME_WHITEOUT) != 0 {
+            reply.error(EINVAL);
             return;
         }
         match fs::rename(self.real(&old_inner), self.real(&new_inner)) {
@@ -632,6 +699,13 @@ impl Filesystem for MirrorFs {
                 return;
             }
         };
+        // 硬链接后经新路径的访问与源是同一 inode：策略按路径判定无法感知这一点，
+        // 若源 write 被拒绝仍允许链接，敏感文件可被链进可写目录后经宽泛兜底规则
+        // 读取/改写（策略逃逸）。源路径 write 同样要求放行（fail-closed）。
+        if self.deny(&old_inner, ACC_WRITE) {
+            reply.error(EACCES);
+            return;
+        }
         let old_real = self.real(&old_inner);
         match fs::hard_link(&old_real, self.real(&new_inner)) {
             Ok(()) => match fs::symlink_metadata(&old_real) {
@@ -789,7 +863,7 @@ impl Filesystem for MirrorFs {
         self.dirs
             .lock()
             .unwrap()
-            .insert(fh, DirHandle { parent: inner, entries });
+            .insert(fh, DirHandle { parent: inner, entries: Arc::new(entries) });
         reply.opened(fh, 0);
     }
 
@@ -804,7 +878,7 @@ impl Filesystem for MirrorFs {
         let (parent, entries) = {
             let guard = self.dirs.lock().unwrap();
             match guard.get(&fh) {
-                Some(handle) => (handle.parent.clone(), handle.entries.clone()),
+                Some(handle) => (handle.parent.clone(), Arc::clone(&handle.entries)),
                 None => {
                     reply.error(EBADF);
                     return;
@@ -813,15 +887,15 @@ impl Filesystem for MirrorFs {
         };
         // fuser 的 add() 返回 true 表示缓冲区已满（需停止填充）；满时也要 ok()
         // 发送已填充部分，内核会用 offset 续传。
-        if offset == 0 {
-            if reply.add(1, 1, FileType::Directory, ".") {
-                reply.ok();
-                return;
-            }
-            if reply.add(1, 2, FileType::Directory, "..") {
-                reply.ok();
-                return;
-            }
+        // offset 编码："."=1、".."=2、条目 i（0-based）=i+3；每个 offset 唯一
+        // 对应流内位置（极端小缓冲下内核会以任意已发送 offset 续传）
+        if offset == 0 && reply.add(1, 1, FileType::Directory, ".") {
+            reply.ok();
+            return;
+        }
+        if offset <= 1 && reply.add(1, 2, FileType::Directory, "..") {
+            reply.ok();
+            return;
         }
         let mut index = (offset.max(2) - 2) as usize;
         while index < entries.len() {
@@ -1062,6 +1136,237 @@ impl Filesystem for MirrorFs {
         reply: fuser::ReplyLseek,
     ) {
         reply.error(ENOSYS);
+    }
+
+    /// 扩展属性透传：读按 ACC_READ、写按 ACC_WRITE 策略判定；l 前缀变体
+    /// 与 getattr 的 symlink_metadata 语义一致（不跟随符号链接）。
+    /// cp -a/rsync -X/tar --xattrs 等依赖，ENOSYS 会让这些工具退化或警告。
+    fn setxattr(
+        &mut self,
+        _req: &Request<'_>,
+        ino: u64,
+        name: &std::ffi::OsStr,
+        value: &[u8],
+        flags: i32,
+        _position: u32,
+        reply: ReplyEmpty,
+    ) {
+        let inner = match self.ino_map.lock().unwrap().get_path(ino).cloned() {
+            Some(p) => p,
+            None => {
+                reply.error(ENOENT);
+                return;
+            }
+        };
+        if self.deny(&inner, ACC_WRITE) {
+            reply.error(EACCES);
+            return;
+        }
+        let (cpath, cname) = match (Self::c_bytes(self.real(&inner).as_os_str().as_encoded_bytes()), Self::c_bytes(name.as_encoded_bytes())) {
+            (Ok(p), Ok(n)) => (p, n),
+            _ => {
+                reply.error(EINVAL);
+                return;
+            }
+        };
+        if unsafe {
+            libc::lsetxattr(cpath.as_ptr(), cname.as_ptr(), value.as_ptr().cast(), value.len(), flags)
+        } != 0
+        {
+            reply.error(errno_of(&std::io::Error::last_os_error()));
+            return;
+        }
+        reply.ok();
+    }
+
+    fn getxattr(
+        &mut self,
+        _req: &Request<'_>,
+        ino: u64,
+        name: &std::ffi::OsStr,
+        size: u32,
+        reply: fuser::ReplyXattr,
+    ) {
+        let inner = match self.ino_map.lock().unwrap().get_path(ino).cloned() {
+            Some(p) => p,
+            None => {
+                reply.error(ENOENT);
+                return;
+            }
+        };
+        if self.deny(&inner, ACC_READ) {
+            reply.error(EACCES);
+            return;
+        }
+        let (cpath, cname) = match (Self::c_bytes(self.real(&inner).as_os_str().as_encoded_bytes()), Self::c_bytes(name.as_encoded_bytes())) {
+            (Ok(p), Ok(n)) => (p, n),
+            _ => {
+                reply.error(EINVAL);
+                return;
+            }
+        };
+        if size == 0 {
+            let needed =
+                unsafe { libc::lgetxattr(cpath.as_ptr(), cname.as_ptr(), std::ptr::null_mut(), 0) };
+            if needed < 0 {
+                reply.error(errno_of(&std::io::Error::last_os_error()));
+                return;
+            }
+            reply.size(needed as u32);
+            return;
+        }
+        let mut buf = vec![0u8; size as usize];
+        let n = unsafe {
+            libc::lgetxattr(cpath.as_ptr(), cname.as_ptr(), buf.as_mut_ptr().cast(), size as usize)
+        };
+        if n < 0 {
+            reply.error(errno_of(&std::io::Error::last_os_error()));
+            return;
+        }
+        buf.truncate(n as usize);
+        reply.data(&buf);
+    }
+
+    fn listxattr(&mut self, _req: &Request<'_>, ino: u64, size: u32, reply: fuser::ReplyXattr) {
+        let inner = match self.ino_map.lock().unwrap().get_path(ino).cloned() {
+            Some(p) => p,
+            None => {
+                reply.error(ENOENT);
+                return;
+            }
+        };
+        if self.deny(&inner, ACC_READ) {
+            reply.error(EACCES);
+            return;
+        }
+        let cpath = match Self::c_bytes(self.real(&inner).as_os_str().as_encoded_bytes()) {
+            Ok(c) => c,
+            Err(_) => {
+                reply.error(EINVAL);
+                return;
+            }
+        };
+        if size == 0 {
+            let needed =
+                unsafe { libc::llistxattr(cpath.as_ptr(), std::ptr::null_mut(), 0) };
+            if needed < 0 {
+                reply.error(errno_of(&std::io::Error::last_os_error()));
+                return;
+            }
+            reply.size(needed as u32);
+            return;
+        }
+        let mut buf = vec![0u8; size as usize];
+        let n = unsafe {
+            libc::llistxattr(cpath.as_ptr(), buf.as_mut_ptr().cast(), size as usize)
+        };
+        if n < 0 {
+            reply.error(errno_of(&std::io::Error::last_os_error()));
+            return;
+        }
+        buf.truncate(n as usize);
+        reply.data(&buf);
+    }
+
+    fn removexattr(&mut self, _req: &Request<'_>, ino: u64, name: &std::ffi::OsStr, reply: ReplyEmpty) {
+        let inner = match self.ino_map.lock().unwrap().get_path(ino).cloned() {
+            Some(p) => p,
+            None => {
+                reply.error(ENOENT);
+                return;
+            }
+        };
+        if self.deny(&inner, ACC_WRITE) {
+            reply.error(EACCES);
+            return;
+        }
+        let (cpath, cname) = match (Self::c_bytes(self.real(&inner).as_os_str().as_encoded_bytes()), Self::c_bytes(name.as_encoded_bytes())) {
+            (Ok(p), Ok(n)) => (p, n),
+            _ => {
+                reply.error(EINVAL);
+                return;
+            }
+        };
+        if unsafe { libc::lremovexattr(cpath.as_ptr(), cname.as_ptr()) } != 0 {
+            reply.error(errno_of(&std::io::Error::last_os_error()));
+            return;
+        }
+        reply.ok();
+    }
+
+    /// 空间预分配/释放透传（数据库、dd oflag 等场景）：宿主 ext4/tmpfs 均支持，
+    /// ENOSYS 会让调用方退化或失败。fh 优先（与 open/create 句柄一致），
+    /// 否则按路径打开。
+    fn fallocate(
+        &mut self,
+        _req: &Request<'_>,
+        ino: u64,
+        fh: u64,
+        offset: i64,
+        length: i64,
+        mode: i32,
+        reply: ReplyEmpty,
+    ) {
+        let inner = match self.ino_map.lock().unwrap().get_path(ino).cloned() {
+            Some(p) => p,
+            None => {
+                reply.error(ENOENT);
+                return;
+            }
+        };
+        if self.deny(&inner, ACC_WRITE) {
+            reply.error(EACCES);
+            return;
+        }
+        let result = if fh != 0 {
+            // fh 由 open/create 分配（0 恒为"无句柄"）
+            match self.files.lock().unwrap().get(&fh).cloned() {
+                Some(file) => {
+                    let r = unsafe {
+                        libc::fallocate(std::os::fd::AsRawFd::as_raw_fd(&file), mode, offset, length)
+                    };
+                    if r == 0 { Ok(()) } else { Err(std::io::Error::last_os_error()) }
+                }
+                None => Err(std::io::Error::from_raw_os_error(EBADF)),
+            }
+        } else {
+            let cpath = match Self::c_bytes(self.real(&inner).as_os_str().as_encoded_bytes()) {
+                Ok(c) => c,
+                Err(_) => {
+                    reply.error(EINVAL);
+                    return;
+                }
+            };
+            let fd = unsafe {
+                libc::open(cpath.as_ptr(), libc::O_WRONLY | libc::O_CLOEXEC)
+            };
+            if fd < 0 {
+                reply.error(errno_of(&std::io::Error::last_os_error()));
+                return;
+            }
+            let r = unsafe { libc::fallocate(fd, mode, offset, length) };
+            let err = std::io::Error::last_os_error();
+            unsafe { libc::close(fd) };
+            if r == 0 { Ok(()) } else { Err(err) }
+        };
+        match result {
+            Ok(()) => reply.ok(),
+            Err(e) => reply.error(errno_of(&e)),
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::MirrorFs;
+
+    #[test]
+    fn civil_time_converts_epoch_seconds() {
+        // 已知 UTC 时间戳锚点：换算错误会破坏回收站 DeletionDate 与诊断日志
+        assert_eq!(MirrorFs::civil_time(0), (1970, 1, 1, 0, 0, 0));
+        assert_eq!(MirrorFs::civil_time(1_767_225_600), (2026, 1, 1, 0, 0, 0));
+        assert_eq!(MirrorFs::civil_time(1_790_726_400), (2026, 9, 30, 0, 0, 0));
+        assert_eq!(MirrorFs::civil_time(1_790_726_400 + 86_399), (2026, 9, 30, 23, 59, 59));
     }
 }
 

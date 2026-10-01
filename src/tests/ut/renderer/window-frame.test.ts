@@ -295,3 +295,22 @@ describe('titlebar.css drag overlay no-drag override (regression)', () => {
         expect(blocks.some((block) => /-webkit-app-region:\s*no-drag\s*;/.test(block))).toBe(true);
     });
 });
+
+/**
+ * window-rounded 下贴角窗口控制按钮圆角的回归钉：
+ *
+ * 窗口控制层（.drag-overlay）是 #app-root 的兄弟节点，不受其圆角 overflow 裁切；
+ * 贴住内容区右上角的最右按钮（关闭）hover 背景若保持直角矩形，会画进内容圆角
+ * 弧线之外、破坏窗口圆角形状。必须给贴角按钮补与窗口一致的右上圆角，半径引用
+ * var(--od-window-radius)（最大化/全屏折叠为 0 时自动退化直角），且规则仅挂
+ * html.window-rounded（仅 Linux 注入）前缀，其他平台不受影响。
+ */
+describe('titlebar.css corner control button radius (regression)', () => {
+    const css = readFileSync(path.resolve(process.cwd(), 'src/renderer/styles/titlebar.css'), 'utf8');
+
+    test('window-rounded 下贴角按钮引用窗口圆角变量补右上圆角', () => {
+        const block = css.match(/html\.window-rounded \.drag-overlay \.window-control-btn:last-child\s*\{[^}]*\}/);
+        expect(block).toBeTruthy();
+        expect(block![0]).toContain('border-top-right-radius: var(--od-window-radius);');
+    });
+});

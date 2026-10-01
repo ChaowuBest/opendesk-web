@@ -18,7 +18,7 @@
  * 环境前提（开发机需在系统/用户环境变量中配置，见团队构建文档）：
  * - PATH 含 WiX Toolset v3.14 bin（maker-wix 查找 candle.exe/light.exe）
  * - PATH 含 dotnet 或设置 DOTNET_EXE（build:sandbox 编译沙箱）
- * - NODE_OPTIONS 含 --max-old-space-size=8192（Rollup 压缩大 chunk 需要 8GB 堆）
+ * - NODE_OPTIONS 由仓库 .npmrc 的 node-options 自动注入（Rollup 压缩大 chunk 需要 8GB 堆）
  *
  * 为什么必须走 arm64 专属链路：x64 Dokan 内核驱动在 ARM64 Windows 上无法加载
  * （ERROR_DRIVER_BLOCKED），bundle 里的 Dokan_x64.msi 会导致安装以 0x80070643 失败，

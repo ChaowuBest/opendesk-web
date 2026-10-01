@@ -32,7 +32,7 @@ use nix::sys::socket::{
 use std::io::IoSliceMut;
 
 use crate::mirror_fs::MirrorFs;
-use crate::policy::Policy;
+use crate::policy::{Policy, Root};
 
 const RO_BIND_DIRS: &[&str] = &["/usr", "/lib", "/lib64", "/bin", "/sbin", "/etc", "/opt", "/usr/local"];
 const DEV_BINDS: &[&str] = &[
@@ -254,6 +254,29 @@ fn send_fuse_fds(sockets: &[RawFd], fuse_fds: &[RawFd]) -> Result<(), String> {
     Ok(())
 }
 
+/// roots 声明的静态校验：拒绝重复与嵌套（如 /a 与 /a/b）。嵌套会让子 FUSE
+/// 挂载点落在父 FUSE 卷内（嵌套死锁），与"整根+其他混用"同类，fail-fast。
+pub fn validate_roots(roots: &[Root]) -> Result<(), String> {
+    for (index, left) in roots.iter().enumerate() {
+        for right in &roots[index + 1..] {
+            let (short, long) = {
+                let (l, r) = (
+                    left.virtual_path.trim_end_matches('/'),
+                    right.virtual_path.trim_end_matches('/'),
+                );
+                if l.len() <= r.len() { (l, r) } else { (r, l) }
+            };
+            if long == short || long.starts_with(&format!("{short}/")) {
+                return Err(format!(
+                    "[[roots]] 重复或嵌套: {} 与 {}（嵌套 FUSE 会死锁）",
+                    left.virtual_path, right.virtual_path
+                ));
+            }
+        }
+    }
+    Ok(())
+}
+
 fn mount_roots(policy: &Policy, fuse_fds: &[RawFd], root_dir: &Path) -> Result<(), String> {
     // 整根（virtual="/"）与其他局部 root 混用会导致嵌套 FUSE（子挂载在整根卷内），
     // 双 daemon 单线程互相等待而死锁——fail-fast 拒绝
@@ -261,6 +284,7 @@ fn mount_roots(policy: &Policy, fuse_fds: &[RawFd], root_dir: &Path) -> Result<(
     if root_count > 1 && policy.roots.iter().any(|r| r.virtual_path == "/") {
         return Err("整根视图（virtual=\"/\"）不能与其他 [[roots]] 混用（会形成嵌套 FUSE 死锁）".to_string());
     }
+    validate_roots(&policy.roots)?;
     for (index, root) in policy.roots.iter().enumerate() {
         let fd = fuse_fds[index];
         let mountpoint = if root.virtual_path == "/" {
@@ -300,6 +324,32 @@ fn cgroup_kill_and_remove(dir: &Path) {
         }
     }
     let _ = fs::remove_dir(dir);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::validate_roots;
+    use crate::policy::Root;
+
+    #[test]
+    fn validate_roots_rejects_nested_and_duplicate() {
+        fn root(virtual_path: &str) -> Root {
+            Root {
+                virtual_path: virtual_path.to_string(),
+                real_path: virtual_path.to_string(),
+            }
+        }
+        assert!(validate_roots(&[root("/")]).is_ok());
+        assert!(validate_roots(&[root("/tmp/w"), root("/opt/t")]).is_ok());
+        // 整根与局部混用
+        assert!(validate_roots(&[root("/"), root("/tmp/w")]).is_err());
+        // 前缀嵌套（/tmp/w 是 /tmp/w/sub 的前缀）
+        assert!(validate_roots(&[root("/tmp/w"), root("/tmp/w/sub")]).is_err());
+        // 重复
+        assert!(validate_roots(&[root("/a"), root("/a")]).is_err());
+        // 前缀字符串相同但路径边界不同：/tmp/w2 与 /tmp/w 不嵌套
+        assert!(validate_roots(&[root("/tmp/w"), root("/tmp/w2")]).is_ok());
+    }
 }
 
 /// 装配编排（对齐 bwrap 结构）：A 进入 namespace 并 fork S；S（pid ns 内 pid 1）
@@ -634,13 +684,23 @@ fn daemon_main(
     };
     let host_uid = unsafe { libc::getuid() };
     let host_gid = unsafe { libc::getgid() };
+    // 清零 daemon umask：create/mkfifo/mknod 的 mode 已按请求方 (mode & !umask)
+    // 计算，daemon 自身 umask 会被内核再次叠加（子进程 umask 000 期望 0666 实际
+    // 0644）。回收站目录由 MirrorFs 显式 0700 收紧，不受 umask(0) 影响。
+    unsafe {
+        libc::umask(0o000);
+    }
     let owned = unsafe { OwnedFd::from_raw_fd(raw) };
     let fs = MirrorFs::new(backing, virtual_root, policy, host_uid, host_gid, del_to_trash);
     // 请求 uid 按挂载 userns（fc->user_ns）表达（ns 内 uid 0 = 宿主用户），与 daemon
     // 在宿主 ns 的 uid 不直接可比，Owner ACL 会误拒所有请求。挂载点位于装配进程
     // 私有 mount ns，只有沙箱内进程可达，采用 All 无暴露面。
     let mut session = fuser::Session::from_fd(fs, owned, fuser::SessionACL::All);
-    let _ = session.run();
+    if let Err(e) = session.run() {
+        // /dev/fuse 读错误（宿主侧 umount、设备异常）等：留下诊断线索，
+        // 否则 daemon 静默退出，沙箱内只表现为突发 EIO 难以定位
+        eprintln!("沙箱 daemon: FUSE 会话异常退出: {e}");
+    }
     std::process::exit(0);
 }
 
@@ -648,22 +708,19 @@ fn daemon_main(
 fn log_diagnostic(log_file: &Option<String>, message: &str) {
     if let Some(path) = log_file {
         if let Ok(mut file) = fs::OpenOptions::new().create(true).append(true).open(path) {
-            let line = format!("[{}] {}\n", chrono_like_now(), message);
+            let line = format!("[{}] {}\n", format_timestamp(), message);
             let _ = file.write_all(line.as_bytes());
         }
     }
 }
 
-/// 轻量时间戳（无 chrono 依赖）：YYYY-MM-DD HH:MM:SS
-fn chrono_like_now() -> String {
+/// 轻量时间戳（无 chrono 依赖）：YYYY-MM-DD HH:MM:SS（UTC）
+fn format_timestamp() -> String {
     let now = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap_or_default();
-    let secs = now.as_secs();
-    let days = secs / 86400;
-    let rem = secs % 86400;
-    let (h, m, s) = (rem / 3600, (rem % 3600) / 60, rem % 60);
-    format!("{days}day {h:02}:{m:02}:{s:02}")
+    let (y, m, d, hh, mm, ss) = crate::mirror_fs::MirrorFs::civil_time(now.as_secs() as i64);
+    format!("{y:04}-{m:02}-{d:02} {hh:02}:{mm:02}:{ss:02}")
 }
 
 pub fn run(options: RunOptions) -> Result<i32, String> {
@@ -683,6 +740,12 @@ pub fn run(options: RunOptions) -> Result<i32, String> {
     let policy = options.policy;
     if policy.roots.is_empty() {
         return Err("策略需要至少一个 [[roots]] 声明受控路径".to_string());
+    }
+    // --ro-dirs 必须绝对路径：相对路径会在沙箱内拼出错误挂载点（静默错挂）
+    for dir in &options.ro_dirs {
+        if !dir.starts_with('/') {
+            return Err(format!("--ro-dirs 路径必须为绝对路径: {dir}"));
+        }
     }
     // virtual="/" 为整根视图（FUSE 挂到新根），布局与宿主一致——合法且推荐。
     // 启动前校验镜像源存在（fail-fast）：避免挂载空卷后所有 IO 静默 ENOENT
@@ -738,6 +801,16 @@ pub fn run(options: RunOptions) -> Result<i32, String> {
             if pid == 0 {
                 libc::close(status_pipe[0]);
                 libc::close(status_pipe[1]);
+                // 关闭无关 socket fd（其它 daemon 的两端与本 daemon 的装配端）：
+                // daemon 间互持对端会让 socket 生命周期与进程组互锁，且泄漏 fd
+                for &(a, b) in sockets.iter() {
+                    if a != socket {
+                        libc::close(a);
+                    }
+                    if b != socket {
+                        libc::close(b);
+                    }
+                }
                 daemon_main(socket, backing, virtual_root, policy, del_to_trash);
             }
             daemon_pids.push(pid);
@@ -771,7 +844,10 @@ pub fn run(options: RunOptions) -> Result<i32, String> {
     // A 还需两次 unshare 与 uid_map 写入（远慢于本调用）；cgroup v2 把进程移入
     // cgroup 不带动其已 fork 的子进程，登记晚了则 S 及 shell 后代不在 cgroup 内，
     // cgroup.kill 兜底对进程树失效（pid ns + pdeathsig 仍为主保障，cgroup 为第三保险）。
-    let cgroup = cgroup_setup(assemble_pid);
+    // 仅父进程登记：子进程分支执行 cgroup_setup(0) 会在 delegation 环境下创建
+    // 孤儿 dynobox-0 目录并与父进程竞争迁移 A（一个进程只能位于一个 cgroup），
+    // 破坏第三保险且泄漏目录。
+    let cgroup = if assemble_pid > 0 { cgroup_setup(assemble_pid) } else { None };
     if assemble_pid == 0 {
         unsafe {
             libc::close(status_pipe[0]);

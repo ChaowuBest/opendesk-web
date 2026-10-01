@@ -826,6 +826,20 @@ describe('task-view GUI output modes', () => {
         expect(taskViewStyles).toMatch(/\.od-running-status-line\{[^}]*display:flex;[^}]*align-items:center;/);
     });
 
+    test('process summary and running status rows share one row metric', () => {
+        // 阶段摘要行与"正在调用"运行状态行必须共用同一行规范，
+        // 否则运行中的最新一轮会出现工具行与上下文本间距不一致（5px vs 8px）。
+        expect(taskViewStyles).toMatch(/\.od-process-summary\{[^}]*min-height:var\(--od-process-row-min-height\);/);
+        expect(taskViewStyles).toMatch(/\.od-running-status\{[^}]*min-height:var\(--od-process-row-min-height\);/);
+        expect(taskViewStyles).toMatch(/\.od-running-status\{[^}]*padding:var\(--od-process-row-pad-block\)0;/);
+        expect(taskViewStyles).toMatch(
+            /\.od-assistant-output-flow\{[^}]*--od-process-row-min-height:28px;[^}]*--od-process-row-pad-block:3px;/
+        );
+        // 运行状态行的滚动视口高度跟随行规范收缩，保证文本垂直居中后与摘要行留白一致
+        expect(taskViewStyles).toMatch(/\.od-running-status-viewport\{[^}]*height:22px;/);
+        expect(taskViewStyles).toMatch(/\.od-running-status-line\{[^}]*height:22px;/);
+    });
+
     test('expanded completed process grows naturally while nested process details keep their height limit', () => {
         expect(taskViewStyles).toMatch(
             /\.od-completed-process-detail\.is-open\{[^}]*display:block;[^}]*max-height:none;[^}]*overflow:visible;/
@@ -835,7 +849,7 @@ describe('task-view GUI output modes', () => {
             /\.od-process-segment\{[^}]*overflow:visible;[^}]*background:transparent;[^}]*border:0;[^}]*border-radius:0;/
         );
         expect(taskViewStyles).toMatch(
-            /\.od-process-summary\{[^}]*min-height:28px;[^}]*padding:3px0;[^}]*border-bottom:0;[^}]*border-radius:0;/
+            /\.od-process-summary\{[^}]*min-height:var\(--od-process-row-min-height\);[^}]*padding:var\(--od-process-row-pad-block\)0;[^}]*border-bottom:0;[^}]*border-radius:0;/
         );
         expect(taskViewStyles).not.toContain(".od-process-summary[aria-expanded='true']{border-bottom-color:");
         expect(taskViewStyles).toMatch(

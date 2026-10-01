@@ -132,6 +132,17 @@ html.window-rounded.window-fullscreen #app-root {
 }
 
 /*
+ * 窗口控制层（.drag-overlay）是 #app-root 的兄弟节点，不受其圆角 overflow 裁切：
+ * 贴住内容区右上角的窗口控制行里，最右（贴角）按钮的 hover 背景若保持直角矩形，
+ * 会画进内容圆角弧线之外、盖住窗口右上圆角。给贴角按钮补与窗口一致的右上圆角；
+ * 最大化/全屏时 --od-window-radius 折叠为 0，自动退化为直角贴合窗口。
+ * 仅 html.window-rounded（仅 Linux 注入）生效，其他平台不变。
+ */
+html.window-rounded .drag-overlay .window-control-btn:last-child {
+    border-top-right-radius: var(--od-window-radius);
+}
+
+/*
  * 内容边缘 resize 感应条：覆盖整个阴影边距环，贴着用户看到的内容窗口边缘
  * 提供 resize 光标与拖拽（拖动逻辑见 windowShadowResize.ts / shadow-resize.ts）。
  * 边距环外沿 ~8px 仍被 Chromium FramelessView 的原生手柄拦截（两个区域方向
