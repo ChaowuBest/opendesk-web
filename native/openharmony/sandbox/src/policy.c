@@ -148,6 +148,7 @@ void dbox_policy_free(dbox_policy_t *p)
     for (int i = 0; i < p->ngrants; i++) dbox_free(p->grants[i].path);
     dbox_free(p->grants);
     dbox_free(p->ask_endpoint);
+    dbox_free(p->ask_token);
     memset(p, 0, sizeof(*p));
 }
 
@@ -248,6 +249,9 @@ int dbox_policy_load_toml(const char *text, dbox_policy_t *p,
             if (strcmp(e->key, "endpoint") == 0) {
                 dbox_free(p->ask_endpoint);
                 p->ask_endpoint = dbox_strdup(e->s);
+            } else if (strcmp(e->key, "token") == 0) {
+                dbox_free(p->ask_token);
+                p->ask_token = dbox_strdup(e->s);
             } else if (strcmp(e->key, "timeout_ms") == 0) {
                 p->ask_timeout_ms = (int)e->i;
             } else if (strcmp(e->key, "cache_ttl_seconds") == 0) {
@@ -277,6 +281,83 @@ bad:
     mini_toml_free(&doc);
     dbox_policy_free(p);
     return -1;
+}
+
+/* ------------------------------------------------------------------ */
+/* CLI-injected rules (--ro-dirs)                                      */
+/* ------------------------------------------------------------------ */
+
+int dbox_policy_prepend_ro_dirs(dbox_policy_t *p, const char *spec)
+{
+    if (!spec || !*spec) return 0;
+
+    /* count comma-separated non-empty entries (whitespace tolerated) */
+    int n = 0, in = 0;
+    for (const char *q = spec;; q++) {
+        if (*q == ',' || *q == '\0') {
+            if (in) n++;
+            in = 0;
+            if (*q == '\0') break;
+        } else if (*q != ' ' && *q != '\t') {
+            in = 1;
+        }
+    }
+    if (n == 0) return 0;
+
+    dbox_rule_t *nr = dbox_malloc(sizeof(dbox_rule_t) * (size_t)(p->nrules + n));
+    if (!nr) return -1;
+
+    int w = 0;
+    const char *cur = spec;
+    while (cur && *cur) {
+        while (*cur == ',' || *cur == ' ' || *cur == '\t') cur++;
+        if (!*cur) break;
+        const char *end = cur;
+        while (*end && *end != ',') end++;
+        size_t len = (size_t)(end - cur);
+        while (len > 0 && (cur[len - 1] == ' ' || cur[len - 1] == '\t')) len--;
+
+        char *dir = dbox_strndup(cur, len);
+        char *norm = dir ? dbox_normpath(dir) : NULL;
+        dbox_free(dir);
+        if (!norm) { /* allocation failure or unparsable input: roll back */
+            for (int i = 0; i < w; i++) dbox_free(nr[i].path);
+            dbox_free(nr);
+            return -1;
+        }
+        /* pattern "{norm}**" with recursive-glob suffix — also matches the
+         * directory itself */
+        size_t plen = strlen(norm);
+        char *pat = dbox_malloc(plen + 4);   /* slash + 双星号 + NUL */
+        if (!pat) {
+            dbox_free(norm);
+            for (int i = 0; i < w; i++) dbox_free(nr[i].path);
+            dbox_free(nr);
+            return -1;
+        }
+        if (plen == 1 && norm[0] == '/') {
+            memcpy(pat, "/**", 4);
+        } else {
+            memcpy(pat, norm, plen);
+            memcpy(pat + plen, "/**", 4);
+        }
+        dbox_free(norm);
+
+        dbox_rule_t *r = &nr[w++];
+        memset(r, 0, sizeof(*r));
+        r->path = pat;
+        r->acc  = ACC_WRITE;
+        r->perm = PERM_DENY;
+        cur = end;
+    }
+
+    /* keep the user rules after the injected ones */
+    if (p->nrules > 0)
+        memcpy(nr + w, p->rules, sizeof(dbox_rule_t) * (size_t)p->nrules);
+    dbox_free(p->rules);
+    p->rules   = nr;
+    p->nrules += w;
+    return 0;
 }
 
 /* ------------------------------------------------------------------ */
@@ -415,7 +496,8 @@ int dbox_grant_add(dbox_policy_t *p, const char *path_glob, int acc,
             snprintf(norm, sizeof norm, "%s", n);
             dbox_free(n);
         }
-        pthread_mutex_lock(&g_shm->mu);
+        if (pthread_mutex_trylock(&g_shm->mu) != 0) { return 0; } /* trylock: 拿不到锁立即放弃（fail-safe 降级），避免 fork 后子进程继承
+         * 父进程持有的锁 + 父子互相等待的死锁窗口 */
         if (g_shm->ngrants < DBOX_SHM_GRANTS) {
             dbox_shm_ent_t *e = &g_shm->grants[g_shm->ngrants++];
             snprintf(e->path, sizeof e->path, "%s", norm);
@@ -462,7 +544,8 @@ int dbox_grant_match(const dbox_policy_t *p, const char *vpath, int acc, int64_t
 {
     if (g_shm) {
         int hit = 0;
-        pthread_mutex_lock(&g_shm->mu);
+        if (pthread_mutex_trylock(&g_shm->mu) != 0) { return 0; } /* trylock: 拿不到锁立即放弃（fail-safe 降级），避免 fork 后子进程继承
+         * 父进程持有的锁 + 父子互相等待的死锁窗口 */
         for (int i = 0; i < g_shm->ngrants; i++) {
             const dbox_shm_ent_t *g = &g_shm->grants[i];
             if (g->expires_ms <= now_ms) continue;
@@ -505,7 +588,8 @@ static unsigned cache_hash(const char *s, int acc)
 void dbox_cache_put(const char *vpath, int acc, int64_t expires_ms)
 {
     if (g_shm) {
-        pthread_mutex_lock(&g_shm->mu);
+        if (pthread_mutex_trylock(&g_shm->mu) != 0) { return; } /* trylock: 拿不到锁立即放弃（fail-safe 降级），避免 fork 后子进程继承
+         * 父进程持有的锁 + 父子互相等待的死锁窗口 */
         /* round-robin slot (simple, no chain) */
         int slot = (int)(g_shm->cache_stamp % DBOX_SHM_CACHE);
         g_shm->cache_stamp++;
@@ -538,7 +622,8 @@ int dbox_cache_hit(const char *vpath, int acc, int64_t now_ms)
 {
     if (g_shm) {
         int found = 0;
-        pthread_mutex_lock(&g_shm->mu);
+        if (pthread_mutex_trylock(&g_shm->mu) != 0) { return 0; } /* trylock: 拿不到锁立即放弃（fail-safe 降级），避免 fork 后子进程继承
+         * 父进程持有的锁 + 父子互相等待的死锁窗口 */
         for (int i = 0; i < DBOX_SHM_CACHE; i++) {
             const dbox_shm_ent_t *e = &g_shm->cache[i];
             if (e->expires_ms <= now_ms) continue;
@@ -564,7 +649,8 @@ int dbox_cache_hit(const char *vpath, int acc, int64_t now_ms)
 void dbox_cache_clear(void)
 {
     if (g_shm) {
-        pthread_mutex_lock(&g_shm->mu);
+        if (pthread_mutex_trylock(&g_shm->mu) != 0) { return; } /* trylock: 拿不到锁立即放弃（fail-safe 降级），避免 fork 后子进程继承
+         * 父进程持有的锁 + 父子互相等待的死锁窗口 */
         memset(g_shm->cache, 0, sizeof g_shm->cache);
         g_shm->ngrants = 0;
         pthread_mutex_unlock(&g_shm->mu);
@@ -577,6 +663,39 @@ void dbox_cache_clear(void)
         cache_buckets[i] = NULL;
     }
     pthread_mutex_unlock(&cache_mu);
+}
+
+/* ------------------------------------------------------------------ */
+/* instance-created files (temp-file semantics: creation+deletion of    */
+/* freshly made files is not sent to the recycle bin)                   */
+/* ------------------------------------------------------------------ */
+
+void dbox_shm_newfile_add(const char *realpath)
+{
+    if (!g_shm || !realpath || !realpath[0]) return;
+    if (pthread_mutex_trylock(&g_shm->mu) != 0) { return; } /* trylock: 拿不到锁立即放弃（fail-safe 降级），避免 fork 后子进程继承
+         * 父进程持有的锁 + 父子互相等待的死锁窗口 */
+    int slot = (int)(g_shm->newfile_stamp % DBOX_SHM_NEWFILES);
+    g_shm->newfile_stamp++;
+    dbox_shm_ent_t *e = &g_shm->newfiles[slot];
+    snprintf(e->path, sizeof e->path, "%s", realpath);
+    e->acc = ACC_WRITE;
+    e->expires_ms = INT64_MAX;   /* valid for the whole sandbox life */
+    if (g_shm->nnewfiles < DBOX_SHM_NEWFILES) g_shm->nnewfiles++;
+    pthread_mutex_unlock(&g_shm->mu);
+}
+
+int dbox_shm_newfile_has(const char *realpath)
+{
+    if (!g_shm || !realpath || !realpath[0]) return 0;
+    int found = 0;
+    if (pthread_mutex_trylock(&g_shm->mu) != 0) { return 0; } /* trylock: 拿不到锁立即放弃（fail-safe 降级），避免 fork 后子进程继承
+         * 父进程持有的锁 + 父子互相等待的死锁窗口 */
+    for (int i = 0; i < g_shm->nnewfiles; i++) {
+        if (strcmp(g_shm->newfiles[i].path, realpath) == 0) { found = 1; break; }
+    }
+    pthread_mutex_unlock(&g_shm->mu);
+    return found;
 }
 
 dperm_t dbox_policy_check_ex(dbox_policy_t *p, const char *vpath, int acc,

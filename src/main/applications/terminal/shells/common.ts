@@ -27,13 +27,14 @@ import { installTimeoutBackgrounding, ShellTimeoutClock } from '../background.js
 import { BoundedOutputBuffer } from '../output-buffer.js';
 import {
     buildChildProcessEnv,
-    decodeShellOutput,
+    createShellOutputDecoder,
     filterShellEnvironmentWarnings,
     trackDetachedProcess
 } from '../../../utils/shellExec.js';
 import { prepareDynamicSandbox } from '../sandboxes/dynabox.js';
 import { prepareLinuxSandbox } from '../sandboxes/linux-sandbox.js';
 import { prepareDarwinSandbox } from '../sandboxes/darwin-sandbox.js';
+import { prepareOpenHarmonySandbox } from '../sandboxes/openharmony-sandbox.js';
 import { appendSandboxPathDiagnostic, appendSandboxPipeDiagnostic } from '../sandboxes/path-diagnostic.js';
 import { t } from '../locale/index.js';
 
@@ -261,8 +262,8 @@ export async function executeShellCommand(opts: {
                         else timeoutClock.resume();
                     }
                 })
-              : useDynamicSandbox
-                ? await prepareDynamicSandbox({
+              : useDynamicSandbox && (process.platform as string) === 'openharmony'
+                ? await prepareOpenHarmonySandbox({
                       shellPath,
                       shellArgs,
                       command,
@@ -274,7 +275,20 @@ export async function executeShellCommand(opts: {
                           else timeoutClock.resume();
                       }
                   })
-                : null;
+                : useDynamicSandbox
+                  ? await prepareDynamicSandbox({
+                        shellPath,
+                        shellArgs,
+                        command,
+                        cwd,
+                        taskState,
+                        deleteToTrash: sandboxDeleteToTrash,
+                        onPermissionWaitChange: (waiting) => {
+                            if (waiting) timeoutClock.pause();
+                            else timeoutClock.resume();
+                        }
+                    })
+                  : null;
     let proc: ChildProcessWithoutNullStreams;
     try {
         proc = sandbox
@@ -302,11 +316,28 @@ export async function executeShellCommand(opts: {
     );
     let lastSentOutput = '';
     // zsh -i 等交互模式下，shell integration 会向 stdout/stderr 输出终端控制序列噪音，统一过滤
-    const appendFiltered = (data: Buffer) => {
-        output.append(filterShellEnvironmentWarnings(decodeShellOutput(data)));
+    // stdout 与 stderr 各自独立走流式解码器：UTF-8 多字节字符（中文/emoji）可能被管道分片
+    // 切断在 chunk 边界，逐 chunk 解码会把半个字符误判为 GBK 产生乱码（锟斤拷）
+    const stdoutDecoder = createShellOutputDecoder();
+    const stderrDecoder = createShellOutputDecoder();
+    const appendFiltered = (data: Buffer, decoder: ReturnType<typeof createShellOutputDecoder>) => {
+        output.append(filterShellEnvironmentWarnings(decoder.push(data)));
     };
-    proc.stdout.on('data', appendFiltered);
-    proc.stderr.on('data', appendFiltered);
+    const onStdout = (data: Buffer) => appendFiltered(data, stdoutDecoder);
+    const onStderr = (data: Buffer) => appendFiltered(data, stderrDecoder);
+    proc.stdout.on('data', onStdout);
+    proc.stderr.on('data', onStderr);
+    // 冲刷流式解码器残留：无换行结尾的最后一段输出在 close 前只缓存未 append，
+    // 必须在 installTimeoutBackgrounding 读取最终输出之前 flush（注册先于其
+    // onClose；exit/close 幂等，超时转后台后同样兜底不丢尾）
+    const flushDecoders = () => {
+        const tailOut = filterShellEnvironmentWarnings(stdoutDecoder.flush());
+        const tailErr = filterShellEnvironmentWarnings(stderrDecoder.flush());
+        if (tailOut) output.append(tailOut);
+        if (tailErr) output.append(tailErr);
+    };
+    proc.on('close', flushDecoders);
+    proc.on('exit', flushDecoders);
 
     const updateTimer = setInterval(() => {
         const currentOutput = output.getText();
@@ -328,8 +359,8 @@ export async function executeShellCommand(opts: {
         handle: {
             proc,
             detachListeners: () => {
-                proc.stdout.removeListener('data', appendFiltered);
-                proc.stderr.removeListener('data', appendFiltered);
+                proc.stdout.removeListener('data', onStdout);
+                proc.stderr.removeListener('data', onStderr);
             }
         },
         command,

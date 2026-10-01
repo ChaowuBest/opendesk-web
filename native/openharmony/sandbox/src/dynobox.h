@@ -54,6 +54,7 @@ typedef struct {
 
     /* [ask] */
     char  *ask_endpoint;      /* "http://127.0.0.1:8080/decide" or "unix:///path" */
+    char  *ask_token;         /* optional bearer token sent to the endpoint */
     int    ask_timeout_ms;    /* default 2000 */
     int    cache_ttl_s;       /* ask decision cache, 0 = disabled */
     int    grant_ttl_s;       /* default TTL for endpoint grants, default 300 */

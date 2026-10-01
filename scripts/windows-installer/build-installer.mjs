@@ -28,17 +28,11 @@ const csharpCompiler = process.env.CSC_PATH || 'C:\\Windows\\Microsoft.NET\\Fram
 const bootstrapperResourcesDirectory = path.join(projectRoot, 'resources', 'package', 'bootstrapper');
 const iconPath = path.join(projectRoot, 'resources', 'package', 'icons', 'icon_round.ico');
 const serviceBuilderPath = path.join(projectRoot, 'scripts', 'windows-update-service', 'build-service.mjs');
-// The current WiX v3 MSI templates remain x64; use the requested target only
-// to select the matching Dokan payload in the bootstrapper chain.
+// The current WiX v3 MSI templates remain x64.
 const targetWindowsArch = process.env.OPENDESK_WIX_ARCH || 'x64';
 if (targetWindowsArch !== 'x64' && targetWindowsArch !== 'arm64') {
     throw new Error(`Unsupported OPENDESK_WIX_ARCH: ${targetWindowsArch}`);
 }
-const targetWindowsRid = targetWindowsArch === 'arm64' ? 'win-arm64' : 'win-x64';
-const dokanMsiPath = path.resolve(
-    process.env.OPENDESK_DOKAN_MSI_PATH ||
-        path.join(projectRoot, 'native', 'windows', 'sandbox', 'dist', targetWindowsRid, 'bin', 'DokanSetup.msi')
-);
 
 function readArgument(name, fallback) {
     const index = process.argv.indexOf(`--${name}`);
@@ -230,14 +224,7 @@ function versionSource(version) {
     };
 }
 
-function bundleSource({
-    version,
-    platformMsi,
-    versionMsi,
-    cleanupExecutable,
-    legacyBundleCleanupExecutable,
-    dokanMsi
-}) {
+function bundleSource({ version, platformMsi, versionMsi, cleanupExecutable, legacyBundleCleanupExecutable }) {
     return `<?xml version="1.0" encoding="utf-8"?>
 <Wix xmlns="http://schemas.microsoft.com/wix/2006/wi" xmlns:bal="http://schemas.microsoft.com/wix/BalExtension" xmlns:util="http://schemas.microsoft.com/wix/UtilExtension">
   <Bundle Name="OpenDesk" Version="${version}" Manufacturer="OpenDesk Team, Openharmony" UpgradeCode="{E7B412C3-02CC-4ED8-9FCB-5D33FE3390E4}" IconSourceFile="${xml(iconPath)}" Compressed="yes">
@@ -264,9 +251,7 @@ function bundleSource({
     <util:RegistrySearch Id="FindPrototypeInstallFolder" Variable="PreviousPrototypeInstallFolder" Root="HKLM" Key="SOFTWARE\\OpenDesk\\SilentUpdatePrototype" Value="InstallRoot" Result="value" Format="raw" Win64="yes" />
     <util:RegistrySearch Id="RestoreLegacyInstallFolder" Variable="InstallFolder" Condition="PreviousLegacyInstallFolder AND NOT PreviousPrototypeInstallFolder" After="FindPrototypeInstallFolder" Root="HKLM" Key="SOFTWARE\\OpenDesk\\Installer" Value="InstallPath" Result="value" Format="raw" Win64="yes" />
     <util:RegistrySearch Id="RestorePrototypeInstallFolder" Variable="InstallFolder" Condition="PreviousPrototypeInstallFolder" After="RestoreLegacyInstallFolder" Root="HKLM" Key="SOFTWARE\\OpenDesk\\SilentUpdatePrototype" Value="InstallRoot" Result="value" Format="raw" Win64="yes" />
-    <util:FileSearch Id="FindDokanVersion" Variable="DokanVersion" Path="[SystemFolder]dokan2.dll" Result="version" />
     <Chain>
-      <MsiPackage Id="DokanMsi" SourceFile="${xml(dokanMsi)}" InstallCondition="NOT DokanVersion OR DokanVersion &lt; v2.3.1.1000" ForcePerMachine="yes" DisplayInternalUI="no" Visible="no" Vital="yes" Permanent="yes" />
       <ExePackage Id="CleanupPrototypeInstallations" SourceFile="${xml(cleanupExecutable)}" PerMachine="yes" Vital="yes" Compressed="yes" DetectCondition="CleanupAgentInstalled" InstallCommand="--register" RepairCommand="--register" UninstallCommand="--uninstall-all" />
       <ExePackage Id="CleanupRelatedBundles" SourceFile="${xml(legacyBundleCleanupExecutable)}" PerMachine="yes" Vital="yes" Compressed="yes" DetectCondition="LegacyBundleCleanupDetect" InstallCommand="[WixBundleVersion] [WixBundleProviderKey]" RepairCommand="[WixBundleVersion] [WixBundleProviderKey]" UninstallCommand="/noop" />
       <MsiPackage Id="OpenDeskPlatform" SourceFile="${xml(platformMsi)}" ForcePerMachine="yes" Visible="no">
@@ -365,9 +350,6 @@ const appDirectory = path.resolve(requiredArgument('app-dir'));
 const outputDirectory = path.resolve(readArgument('output-dir', path.join(projectRoot, 'out', 'make', 'wix', 'x64')));
 if (!fs.existsSync(path.join(appDirectory, 'opendesk.exe')))
     throw new Error(`Packaged OpenDesk executable not found in ${appDirectory}`);
-if (!fs.existsSync(dokanMsiPath)) {
-    throw new Error(`Dokan MSI not found: ${dokanMsiPath}. Run npm run build-sandbox:windows first.`);
-}
 await verifyPackagedAppDirectory(appDirectory, version);
 fs.mkdirSync(outputDirectory, { recursive: true });
 
@@ -458,8 +440,7 @@ function buildBundle({ version, versionMsiPath }) {
             platformMsi: platformMsiPath,
             versionMsi: versionMsiPath,
             cleanupExecutable,
-            legacyBundleCleanupExecutable,
-            dokanMsi: dokanMsiPath
+            legacyBundleCleanupExecutable
         })
     );
     compileBundle(sourcePath, setupPath);

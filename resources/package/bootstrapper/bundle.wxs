@@ -73,27 +73,10 @@ See the Mulan PSL v2 for more details.
                              Result="value"
                              Format="raw"
                              Win64="yes" />
-        <!-- 文件版本覆盖“其他 Agent 使用不同 ProductCode 安装了 Dokany”的情况：
-             当前或更高版本直接跳过，旧版本交给 Dokany MSI 的 Upgrade 表升级。 -->
-        <util:FileSearch Id="FindDokanVersion"
-                         Variable="DokanVersion"
-                         Path="[SystemFolder]dokan2.dll"
-                         Result="version" />
 
         <Chain>
             <!-- WiX v3 无 Bundle/@PerMachine（v4+ 语法）；per-machine 通过 MsiPackage/@ForcePerMachine 声明，
                  burn engine 检测到 per-machine 包后会把整个 bundle 按 per-machine 处理并自动触发提升 -->
-            <!-- Dokany 使用官方 MSI 的 ProductCode/UpgradeCode 做 Burn 检测：
-                 其他 Agent 已安装同一 Dokany 产品时自动跳过，旧版本则由 MSI 自己升级，
-                 因此不会因为 OpenDesk 被卸载而移除仍被其他 Agent 使用的共享驱动。 -->
-            <MsiPackage Id="DokanMsi"
-                        SourceFile="$(var.DokanMsiPath)"
-                        InstallCondition="NOT DokanVersion OR DokanVersion &lt; v2.3.1.1000"
-                        ForcePerMachine="yes"
-                        DisplayInternalUI="no"
-                        Visible="no"
-                        Vital="yes"
-                        Permanent="yes" />
             <MsiPackage Id="OpenDeskMsi"
                         SourceFile="$(var.MsiPath)"
                         ForcePerMachine="yes"

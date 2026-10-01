@@ -6,6 +6,7 @@
 #include "policy.h"
 #include "pathmap.h"
 #include "cfgio.h"
+#include "ask.h"
 #include "util.h"
 #include "mini_toml.h"
 
@@ -293,6 +294,30 @@ static void test_cfg_roundtrip(void)
           q.rules[0].acc == ACC_ALL && q.rules[0].perm == PERM_DENY,
           "roundtrip rule0");
 
+    /* ask token 解析 + 序列化往返 + 请求构造（vs Windows/Linux 的 Bearer 认证） */
+    dbox_policy_t pt, qt;
+    dbox_policy_init(&pt);
+    dbox_policy_init(&qt);
+    CHECK(dbox_policy_load_toml(
+              "default = \"deny\"\n"
+              "[ask]\n"
+              "endpoint = \"http://127.0.0.1:1/decide\"\n"
+              "token = \"secret-token\"\n", &pt, err, sizeof err) == 0,
+          "token toml parse");
+    CHECK(pt.ask_token && strcmp(pt.ask_token, "secret-token") == 0, "token parsed");
+    char *enc2 = dbox_cfg_encode(&pt);
+    CHECK(enc2 && dbox_cfg_decode(enc2, &qt) == 0, "token cfg roundtrip");
+    CHECK(qt.ask_token && strcmp(qt.ask_token, "secret-token") == 0, "token decode");
+    char req[512];
+    CHECK(dbox_ask_build_request(req, sizeof req, "/x", ACC_READ, "tok") == 0 &&
+          strstr(req, "\"token\":\"tok\"") != NULL, "ask request carries token");
+    CHECK(dbox_ask_build_request(req, sizeof req, "/x", ACC_READ, NULL) == 0 &&
+          strstr(req, "token") == NULL,
+          "ask request without token omits field");
+    dbox_free(enc2);
+    dbox_policy_free(&pt);
+    dbox_policy_free(&qt);
+
     dbox_policy_free(&p);
     dbox_policy_free(&q);
     dbox_free(enc);
@@ -472,6 +497,62 @@ static void test_pathmap_missing_tail(void)
     dbox_policy_free(&ctx.pol);
 }
 
+static void test_ro_dirs(void)
+{
+    char err[256];
+    dbox_policy_t p;
+
+    /* 整棵 /data 显式放行写，再把其中两部分标为只读：注入的 deny 必须
+     * 前置（优先于 allow），且只约束写、不影响读。 */
+    int rc = dbox_policy_load_toml(
+        "default = \"deny\"\n"
+        "[[rules]]\n"
+        "path = \"/data/**\"\n"
+        "access = \"write\"\n"
+        "perm = \"allow\"\n"
+        "[[rules]]\n"
+        "path = \"/**\"\n"
+        "access = \"read\"\n"
+        "perm = \"allow\"\n", &p, err, sizeof err);
+    if (rc != 0) { CHECK(0, "ro-dirs base policy load"); return; }
+    CHECK(rc == 0 && p.nrules == 2, "ro-dirs base rule count");
+
+    /* spec 含空白与尾斜杠；重复/空段需被容忍 */
+    rc = dbox_policy_prepend_ro_dirs(&p, "/data/readonly, /data/ro2/ ,,  ");
+    CHECK(rc == 0, "ro-dirs prepend ok");
+    CHECK(p.nrules == 4, "ro-dirs prepend count (2 injected + 2 base)");
+    CHECK(strcmp(p.rules[0].path, "/data/readonly/**") == 0,
+          "ro-dirs first injected normalized");
+    CHECK(strcmp(p.rules[1].path, "/data/ro2/**") == 0,
+          "ro-dirs second injected trailing-slash stripped");
+    CHECK(p.rules[0].acc == ACC_WRITE && p.rules[0].perm == PERM_DENY,
+          "ro-dirs injected rule is write-deny");
+
+    CHECK(dbox_policy_eval_static(&p, "/data/w.txt", ACC_WRITE) == PERM_ALLOW,
+          "ro-dirs outside dir still writable");
+    CHECK(dbox_policy_eval_static(&p, "/data/readonly/a.txt", ACC_WRITE) == PERM_DENY,
+          "ro-dirs write denied inside");
+    CHECK(dbox_policy_eval_static(&p, "/data/ro2", ACC_WRITE) == PERM_DENY,
+          "ro-dirs dir itself write denied");
+    CHECK(dbox_policy_eval_static(&p, "/data/rox", ACC_WRITE) == PERM_ALLOW,
+          "ro-dirs prefix boundary respected");
+    CHECK(dbox_policy_eval_static(&p, "/data/readonly/a.txt", ACC_READ) == PERM_ALLOW,
+          "ro-dirs read still allowed");
+    dbox_policy_free(&p);
+
+    /* 空 spec：不动已有规则 */
+    rc = dbox_policy_load_toml(
+        "default = \"deny\"\n"
+        "[[rules]]\n"
+        "path = \"/a/**\"\n"
+        "access = \"write\"\n"
+        "perm = \"allow\"\n", &p, err, sizeof err);
+    CHECK(rc == 0 && p.nrules == 1, "ro-dirs empty base load");
+    rc = dbox_policy_prepend_ro_dirs(&p, "");
+    CHECK(rc == 0 && p.nrules == 1, "ro-dirs empty spec is no-op");
+    dbox_policy_free(&p);
+}
+
 int main(void)
 {
     test_normpath();
@@ -487,6 +568,7 @@ int main(void)
     test_bom_crlf_and_literals();
     test_default_allow_cache_overwrite();
     test_duplicate_keys_and_multi_grants();
+    test_ro_dirs();
     printf("\n%d checks, %d failed\n", g_total, g_failed);
     return g_failed ? 1 : 0;
 }

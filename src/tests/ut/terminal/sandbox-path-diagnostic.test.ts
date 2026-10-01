@@ -45,8 +45,7 @@ describe('sandbox drive path diagnostic', () => {
 
     test('provides localized guidance for both supported languages', () => {
         for (const translation of [zhCn, enUs]) {
-            expect(translation['sandbox.pathErrorHint']).toContain('/C/');
-            expect(translation['sandbox.pathErrorHint']).toContain('/D/');
+            expect(translation['sandbox.pathErrorHint']).toMatch(/host drive paths|宿主盘符路径/i);
         }
     });
 });
@@ -78,7 +77,8 @@ describe('sandbox named pipe diagnostic', () => {
 
     test('provides actionable localized guidance for both supported languages', () => {
         for (const translation of [zhCn, enUs]) {
-            expect(translation['sandbox.pipeErrorHint']).toContain('node --import tsx');
+            // Detours 实现普通令牌下命名管道可用：提示应说明可用性而非替代命令
+            expect(translation['sandbox.pipeErrorHint']).toMatch(/named pipes|命名管道/);
         }
     });
 });

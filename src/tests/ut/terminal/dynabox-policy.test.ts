@@ -58,6 +58,34 @@ describe('policyText', () => {
         expect(text).not.toContain('/dev/null');
     });
 
+    test('系统维护路径（组件存储/缓存/Recent/PowerShell 框架写）放通；回收站不放通且早于兜底 write ask', () => {
+        const text = policyText('http://ep/decide', 't', undefined, 'C:\\Users\\liyif');
+        for (const p of [
+            '/C/Windows/system32/catroot**',
+            '/C/Windows/Temp/**',
+            '/C/ProgramData/Microsoft/Windows/Caches/**',
+            '/C/Users/*/AppData/Local/Microsoft/Windows/Caches/**',
+            '/C/Users/*/AppData/Roaming/Microsoft/Windows/Recent/**',
+            '/C/Users/*/AppData/Local/Microsoft/Windows/PowerShell/**'
+        ]) {
+            expect(text).toContain(`path = ${JSON.stringify(p)}`);
+        }
+        // 家目录根 / Roaming 根不放通（避免关键配置被静默覆盖的风险）——写探测由
+        // hook 按"目录写探测/已存在目录创建"降级为 read（见 hooks_file/hooks_nt）
+        expect(text).not.toContain('path = "/C/Users/*"');
+        expect(text).not.toContain('/C/Users/*/AppData/Roaming"');
+        // 回收站是误删数据的恢复区，不放通 write（--del-to-trash 经 SHFileOperation
+        // 内部操作不受策略判定，不需要放通回收站）
+        expect(text).not.toContain('/C/$RECYCLE.BIN');
+        // 放行规则须是 write allow，且早于兜底 write ask（沙箱按顺序匹配）
+        const recentAt = text.indexOf('/AppData/Roaming/Microsoft/Windows/Recent/**');
+        const block = text.slice(recentAt - 40, recentAt + 120);
+        expect(block).toContain('access = "write"');
+        expect(block).toContain('perm = "allow"');
+        const fallbackAskAt = text.indexOf('access = "write"\nperm = "ask"');
+        expect(recentAt).toBeLessThan(fallbackAskAt);
+    });
+
     test('home 提供时生成缓存目录写放行规则（虚路径）', () => {
         const text = policyText('http://ep/decide', 't', undefined, 'C:\\Users\\liyif');
         expect(text).toContain('path = "/C/Users/liyif/.cache/opendesk-sandbox/**"');
@@ -81,6 +109,58 @@ describe('policyText', () => {
     test('home 缺失时不生成缓存目录规则', () => {
         expect(policyText('http://ep/decide', 't')).not.toContain('opendesk-sandbox');
         expect(policyText('http://ep/decide', 't')).not.toContain('AppData/Local/Temp');
+    });
+
+    test('opendeskDataDir 提供时生成 OpenDesk 数据目录（logs/artifacts/tasks）写放行且先于兜底 write ask', () => {
+        const text = policyText(
+            'http://ep/decide',
+            't',
+            undefined,
+            'C:\\Users\\liyif',
+            'C:\\Users\\liyif\\AppData\\Roaming\\opendesk'
+        );
+        for (const p of [
+            '/C/Users/liyif/AppData/Roaming/opendesk/logs/**',
+            '/C/Users/liyif/AppData/Roaming/opendesk/artifacts/**',
+            '/C/Users/liyif/AppData/Roaming/opendesk/tasks/**'
+        ]) {
+            expect(text).toContain(`path = ${JSON.stringify(p)}`);
+        }
+        const idx = text.indexOf('/opendesk/logs/**');
+        const ruleBlock = text.slice(idx - 40, idx + 120);
+        expect(ruleBlock).toContain('access = "write"');
+        expect(ruleBlock).toContain('perm = "allow"');
+        const fallbackAskAt = text.indexOf('access = "write"\nperm = "ask"');
+        expect(idx).toBeGreaterThanOrEqual(0);
+        expect(idx).toBeLessThan(fallbackAskAt);
+    });
+
+    test('opendeskDataDir 缺失时由 home 推导 OpenDesk 数据目录写放行', () => {
+        const text = policyText('http://ep/decide', 't', undefined, 'C:\\Users\\liyif');
+        expect(text).toContain('path = "/C/Users/liyif/AppData/Roaming/opendesk/logs/**"');
+        expect(text).toContain('path = "/C/Users/liyif/AppData/Roaming/opendesk/artifacts/**"');
+        expect(text).toContain('path = "/C/Users/liyif/AppData/Roaming/opendesk/tasks/**"');
+    });
+
+    test('home 与 opendeskDataDir 均缺失时无 OpenDesk 数据目录规则', () => {
+        const text = policyText('http://ep/decide', 't');
+        expect(text).not.toContain('/opendesk/logs');
+    });
+
+    test('Python 字节码缓存目录（__pycache__）写放行', () => {
+        const text = policyText('http://ep/decide', 't');
+        expect(text).toContain('path = "/C/**/__pycache__/**"');
+    });
+
+    test('Windows AppInstaller 诊断日志目录写放行', () => {
+        const text = policyText('http://ep/decide', 't');
+        expect(text).toContain('path = "/C/Users/*/AppData/Local/Packages/*/LocalState/DiagOutputDir/**"');
+    });
+
+    test('OpenDesk 数据目录放行不影响家目录根与 Roaming 根不放通的约束', () => {
+        const text = policyText('http://ep/decide', 't', undefined, 'C:\\Users\\liyif');
+        expect(text).not.toContain('path = "/C/Users/*"');
+        expect(text).not.toContain('/C/Users/liyif/AppData/Roaming"');
     });
 
     test('追加只读兜底与写入问询、执行放行的兜底规则', () => {

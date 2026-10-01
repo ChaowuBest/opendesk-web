@@ -70,15 +70,13 @@ test('应用复制阶段排除整个 Windows 沙箱构建树，且不误伤其�
         const destination = path.join(root, 'app');
         const sandboxDirectory = 'native/windows/sandbox';
         const sandboxFiles = [
-            'src/Dynobox/Program.cs',
-            'src/Dynobox/bin/Release/runtime.dll',
-            'src/Dynobox/obj/project.assets.json',
+            'src/Makefile',
+            'src/build-native.cjs',
             'dist/win-x64/bin/sandbox.exe',
             'dist/win-arm64/bin/sandbox.exe',
-            'dist/win-x64/bin/DokanSetup.msi',
-            'dist/win-arm64/bin/DokanSetup.msi',
+            'dist/win-x64/bin/sandbox_hook.dll',
             'runtime/sandbox.exe',
-            '_setup/Dokan_x64.msi',
+            'runtime/sandbox_hook.dll',
             'tests/fixture.txt'
         ];
         for (const relative of ['', ...sandboxFiles]) {

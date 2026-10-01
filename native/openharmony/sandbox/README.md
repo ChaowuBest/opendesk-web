@@ -1,7 +1,7 @@
-# dynobox-linux —— 基于 LD_PRELOAD 的轻量级文件访问控制沙箱
+# dynobox —— 基于 LD_PRELOAD 的轻量级文件访问控制沙箱（OpenHarmony）
 
 OpenDesk 中 Windows 版 [dynobox](../OpenDesk/native/windows/sandbox)（基于 Dokany 虚拟卷）
-的 Linux 对应实现。把宿主任意目录镜像进一个**虚拟命名空间**，被拉起的子进程及其
+的 OpenHarmony/Linux 对应实现。把宿主任意目录镜像进一个**虚拟命名空间**，被拉起的子进程及其
 全部后代对这个命名空间的每一次文件操作——读、写、执行、删除、改名、枚举——都先经过
 策略判定：
 
@@ -214,7 +214,10 @@ dynobox run --policy <rules.toml> [选项] -- <命令> [参数...]
                               或 pipe://名字（对应 Windows 命名管道，
                               endpoint --pipe 创建 /tmp/dynobox-pipes/<名>.sock）
          --map OLD=NEW        接受但为 no-op（身份命名空间下无路径翻译）
-         --del-to-trash       接受但为 no-op（Linux 无回收站机制）
+         --del-to-trash       删除文件/目录时移入回收站目录（--trash 指定，
+                              默认 $HOME/Trash，不存在自动创建；回收站内
+                              写操作一律拒绝，防止沙箱进程清空回收内容）
+         --trash DIR          回收站目录（配合 --del-to-trash；无需策略规则）
          --mount 盘符         接受但为 no-op（Linux 无盘符概念）
          --log FILE           诊断日志（--log-file 为别名；OpenDesk 集成传
                               --log-file；全部 DENY 均记录）
@@ -227,6 +230,13 @@ dynobox run --policy <rules.toml> [选项] -- <命令> [参数...]
          --cache-ttl N              ask 决策缓存秒数（默认 60，0 禁用）
          --grant-ttl N              端点授权默认 TTL（默认 300，上限 3600）
          --no-system-read           关闭系统目录读/执行允许清单
+         --ro-dirs D1,D2            将宿主目录以只读方式暴露（身份命名空间下
+                                    实现为对这些目录 write/delete 的 deny 规则，
+                                    对应 FUSE 版 dynobox-linux 的只读 bind 挂载，
+                                    可重复逗号分隔多项）
+         --tmp DIR                  把沙箱内 /tmp（与 /tmp/*）映射到宿主 DIR：
+                                    映射区总是可读可写，无需策略规则
+                                    （OpenHarmony 的 /tmp 为只读挂载）
          --cwd DIR                  子进程工作目录（--src 模式默认为 DIR，
                                     对齐 Windows"以卷根启动"）
 
@@ -243,8 +253,7 @@ dynobox version
 ```
 
 与 Windows 版的刻意差异（机制使然）：`mount` 子命令不适用——虚拟化逐进程生效、
-无 Dokan 卷/盘符，调用会得到明确报错并指向 `run`；`--del-to-trash` 与 `--mount`
-被接受但为 no-op，保证跨平台启动脚本无需改写即可运行。
+无 Dokan 卷/盘符，调用会得到明确报错并指向 `run`；`--mount` 被接受但为 no-op。
 
 ---
 
@@ -256,6 +265,9 @@ default  = "deny"          # allow | deny（未命中任何规则时的兜底）
 
 [ask]
 endpoint          = "http://127.0.0.1:8080/decide"  # 或 "unix:///path/to/sock"
+token             = "..."    # 可选：发送给端点的 Bearer 认证（HTTP 头
+                             # Authorization: Bearer 与 body 均携带），
+                             # 防止本地其他进程伪造 allow；OpenDesk 集成必带
 timeout_ms        = 2000     # 超时/不可达 => deny（fail-closed）
 cache_ttl_seconds = 60       # ask 决策缓存（树内共享），0 = 不缓存
 grant_ttl_seconds = 300      # 端点子树授权默认有效期（响应可覆盖，上限 1h）
@@ -383,6 +395,10 @@ tests/wsl_run.sh               # WSL 推荐：同步到 ext4 后构建+运行
 - **回归**：拦截层自身的健壮性 —— NULL/空路径调用不得让沙箱崩溃、
   `posix_spawn`（含 close-on-exec file actions，等价 node `execFileSync`）不得
   误杀进程树、exec 后子进程环境变量必须完整且 `LD_PRELOAD` 已重注入。
+
+- **性能**：`tests/t_stat_storm.c`（file stat 风暴探针）与 `tests/PERF.md`
+  （鸿蒙真机宿主/沙箱吞吐基线：纯属性访问 +30µs/次、HOT 场景约 6.4× 慢，
+  并说明与 Windows 侧 +27.7% 的口径差异）。
 
 ---
 

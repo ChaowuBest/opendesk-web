@@ -1,8 +1,14 @@
+import { setRuntimeLocale } from '../../../locale/index.js';
 import {
     mapHostPathToSandboxRoot,
     sandboxRunArgs,
     withSandboxWorkingDirectory
 } from '../../../main/applications/terminal/sandboxes/dynabox.js';
+
+// 错误文案经真实 i18n 管道输出，语言随环境变化（CI 为 en-US），
+// 固定为 zh-CN 使断言与运行环境解耦。
+beforeAll(() => setRuntimeLocale('zh-CN'));
+afterAll(() => setRuntimeLocale(null));
 
 describe('sandboxRunArgs', () => {
     const base = {
@@ -71,23 +77,34 @@ describe('sandbox working directory', () => {
         expect(mapHostPathToSandboxRoot('\\\\server\\share')).toBeNull();
     });
 
-    test('enters the mapped task workspace before running a PowerShell command', () => {
+    test('validates the cwd is a mappable drive path but leaves shell args untouched', () => {
+        // Detours 实现子进程直接使用宿主真实路径：cwd 经宿主 spawn 的 cwd 继承，
+        // 不再注入 Set-Location（Dokan 卷语义已移除）。
         expect(
             withSandboxWorkingDirectory(
                 'C:/Windows/System32/WindowsPowerShell/v1.0/powershell.exe',
                 ['-NoProfile', '-Command', 'Get-ChildItem .'],
                 'C:\\foo bar'
             )
-        ).toEqual(['-NoProfile', '-Command', "Set-Location -LiteralPath '/C/foo bar'; Get-ChildItem ."]);
+        ).toEqual(['-NoProfile', '-Command', 'Get-ChildItem .']);
     });
 
-    test('escapes apostrophes in the mapped PowerShell working directory', () => {
+    test('bash shell args are left untouched for a mappable cwd', () => {
         expect(
+            withSandboxWorkingDirectory('C:/Program Files/Git/bin/bash.exe', ['-c', 'ls -la'], 'D:\\workspace')
+        ).toEqual(['-c', 'ls -la']);
+    });
+
+    test('rejects a non-drive cwd regardless of shell', () => {
+        expect(() =>
+            withSandboxWorkingDirectory('C:/Program Files/Git/bin/bash.exe', ['-c', 'pwd'], '\\\\server\\share')
+        ).toThrow(/cwdUnsupported|沙箱工作目录/);
+        expect(() =>
             withSandboxWorkingDirectory(
-                'C:/Program Files/PowerShell/7/pwsh.exe',
-                ['-NoProfile', '-Command', 'Get-Location'],
-                "D:/team's/work"
-            )[2]
-        ).toBe("Set-Location -LiteralPath '/D/team''s/work'; Get-Location");
+                'C:/Windows/System32/WindowsPowerShell/v1.0/powershell.exe',
+                ['-Command', 'pwd'],
+                'relative/path'
+            )
+        ).toThrow();
     });
 });

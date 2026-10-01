@@ -79,20 +79,29 @@ function pruneDarwinExtraResources(buildPath, electronVersion, platform, arch, c
     }
 }
 
-// 发布态沙箱固定解包到 resources/sandbox/sandbox.exe。这样运行时不依赖
-// native 源码目录或构建机的临时布局。
+// 发布态沙箱固定解包到 resources/sandbox/sandbox.exe（与 sandbox_hook.dll）。
+// 这样运行时不依赖 native 源码目录或构建机的临时布局。
 function stageWindowsSandboxResource(buildPath, electronVersion, platform, arch, callback) {
     try {
         if (platform === 'win32') {
             const rid = arch === 'arm64' ? 'win-arm64' : arch === 'ia32' ? 'win-x86' : 'win-x64';
-            const source = path.join(__dirname, 'native', 'windows', 'sandbox', 'dist', rid, 'bin', 'sandbox.exe');
+            const sourceDir = path.join(__dirname, 'native', 'windows', 'sandbox', 'dist', rid, 'bin');
             const resourcesRoot = path.join(buildPath, 'resources');
             const targetDirectory = path.join(resourcesRoot, 'sandbox');
-            if (!fs.existsSync(source)) {
-                throw new Error(`Windows sandbox binary is missing for ${rid}: ${source}`);
+            const exeSource = path.join(sourceDir, 'sandbox.exe');
+            if (!fs.existsSync(exeSource)) {
+                throw new Error(`Windows sandbox binary is missing for ${rid}: ${exeSource}`);
             }
             fs.mkdirSync(targetDirectory, { recursive: true });
-            fs.copyFileSync(source, path.join(targetDirectory, 'sandbox.exe'));
+            fs.copyFileSync(exeSource, path.join(targetDirectory, 'sandbox.exe'));
+            // hook DLL 必须与 sandbox.exe 同目录（子进程注入按目标位数选名）
+            for (const name of ['sandbox_hook.dll', 'sandbox_hook32.dll']) {
+                const hookSource = path.join(sourceDir, name);
+                if (fs.existsSync(hookSource)) {
+                    fs.copyFileSync(hookSource, path.join(targetDirectory, name));
+                }
+            }
+            removePathIfExists(path.join(resourcesRoot, 'native', 'windows', 'sandbox'));
         }
         callback();
     } catch (error) {

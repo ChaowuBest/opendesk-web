@@ -19,7 +19,7 @@ export const zhCn: Record<string, string> = {
     'pwsh.command': '要执行的 powershell 命令',
     'pwsh.intent': '对命令意图的简短描述，用于在界面中展示，例如“检查 powershell 版本”',
     'pwsh.cwd': '执行命令的工作目录，默认使用任务工作区',
-    'pwsh.cwd.sandbox': '沙箱内工作目录，使用 /C/... 形式；默认映射到任务工作区',
+    'pwsh.cwd.sandbox': '沙箱内工作目录，使用宿主真实路径（C:...）；默认任务工作区',
     'pwsh.timeout': '命令执行超时时间（毫秒），默认 30000（30 秒）',
     'checkShellStatus.name': '检查Shell状态',
     'status.description':
@@ -37,31 +37,32 @@ export const zhCn: Record<string, string> = {
     'prompt.sandbox.rootPaths':
         '- 使用稳定的根相对路径映射：/C/... 表示宿主 C:/...，/D/... 表示宿主 D:/...，其他盘符以此类推。',
     'prompt.sandbox.absolutePaths':
-        '- 命令、workingDirectory 以及 PowerShell、Python、Node.js 脚本中的绝对路径必须使用 /<盘符>/... 形式；不要使用宿主盘符路径或动态沙箱盘符。',
-    'prompt.sandbox.cwd':
-        '- 沙箱工作目录与任务工作空间一致，例如工作空间 C:/foo 会映射为 /C/foo；相对路径从该目录解析。',
-    'prompt.sandbox.trash':
-        '- 任务开始前已存在的文件被删除时会送入 Windows 回收站；沙箱运行期间创建的文件在同一沙箱实例内删除时直接清除，不进回收站。',
+        '- 命令、workingDirectory 以及 PowerShell、Python、Node.js 脚本中的绝对路径直接使用宿主盘符路径（C:X 或 C:/X）；策略与授权按根相对约定 /C/... 映射。',
+    'prompt.sandbox.cwd': '- 沙箱工作目录与任务工作空间一致（宿主真实路径，例如 C:/foo）；相对路径从该目录解析。',
+    'prompt.sandbox.trash': '- 删除一律送入 Windows 回收站（与 Linux/OHOS 沙箱一致，不区分实例内新建）。',
     'sandbox.description':
-        '在 Windows 动态沙箱中执行选定的 powershell。使用稳定的根相对路径：/C/... 表示宿主 C:/...，/D/... 表示宿主 D:/...。命令、workingDirectory 和脚本中的绝对路径必须使用 /<盘符>/...；相对路径从映射后的任务工作空间解析。文件访问审批仍显示原始宿主路径。',
+        '在 Windows 动态沙箱中执行选定的 powershell 或 Git Bash。子进程直接使用宿主真实路径（C:X 或 C:/X）；策略与授权按根相对约定 /C/... 映射到宿主 C:/...；相对路径从任务工作区（宿主真实路径）解析。文件访问审批仍显示原始宿主路径。',
     'sandbox.pathErrorHint':
-        '沙箱路径提示：检测到 Windows 盘符绝对路径和访问拒绝错误。如果路径指向宿主文件，请改用沙箱根相对路径，例如 C:\\foo 改为 /C/foo，D:\\bar 改为 /D/bar。',
+        '沙箱路径提示：检测到访问拒绝错误。宿主盘符路径（C:\\foo）在沙箱内直接可用；请检查路径拼写与任务权限规则，或对目标路径发起授权。',
     'sandbox.pipeErrorHint':
-        '沙箱管道提示：沙箱内的 AppContainer 进程无法创建命名管道。依赖命名管道 IPC 的工具会在此失败，例如 tsx CLI 可改用 node --import tsx 代替 npx tsx，或改用不依赖管道的等价命令。',
+        '沙箱命名管道：沙箱内进程以普通用户身份运行，命名管道创建与连接均可用（tsx / npx / IPC 类工具可正常工作）。',
     'sandbox.cwdUnsupported': '沙箱工作目录必须是可映射的 Windows 盘符绝对路径：${path}',
     'sandbox.executableMissing': '动态沙箱已启用，但未找到 sandbox.exe。请重新构建 Windows 版本。',
     'sandbox.endpointFailed': '动态沙箱授权端点未能获取端口。',
-    'sandbox.loopbackSetupFailed':
-        '未能完成沙箱本地网络初始化。请允许 Windows 管理员确认后重试；初始化完成后，OpenDesk 仍以普通权限运行。',
     // Linux 动态沙箱（dynobox-linux）
     'sandbox.executableMissing.linux': '动态沙箱已启用，但未找到 dynobox-linux。请重新构建 Linux 版本。',
     'sandbox.cwdMissing.linux': '动态沙箱需要任务工作目录作为受控路径。',
     'sandbox.cwdUnsupported.linux': '沙箱工作目录不存在或不可用：${path}',
+    // OpenHarmony 动态沙箱（LD_PRELOAD 版 dynobox-linux）
+    'sandbox.executableMissing.ohos': '动态沙箱已启用，但未找到 OpenHarmony 版 dynobox。请重新构建 OpenHarmony 版本。',
+    'sandbox.trashDirUnavailable': '无法创建回收站目录 ${path}，请检查家目录写入权限或关闭回收站选项。',
     'prompt.mode.sandbox.linux': '- 当前运行模式：Linux 动态沙箱',
     'prompt.sandbox.linux.transparent':
         '- 沙箱内根文件系统布局与宿主完全一致（/home、/tmp、/var 等均可访问），读写操作经权限检查。',
     'prompt.sandbox.linux.workspace':
         '- 工作区可写；工作区外的写入需要审批（或按规则拒绝）。系统目录（/usr /lib /etc 等）只读。',
+    'prompt.sandbox.linux.system':
+        '- 系统目录（/usr /lib /bin /etc 等）从宿主只读挂载：Python、Node.js 等运行时依赖原生可用且不可修改。',
     'prompt.sandbox.linux.tmp': '- /tmp 透传宿主目录：沙箱内写入的文件跨命令/跨沙箱实例持久，关闭不丢失。',
     'sandbox.description.linux':
         '在 Linux 动态沙箱中执行选定的 shell。根文件系统布局与宿主一致，读写经权限检查；工作区写放行、其余写询问或拒绝；删除可选送回收站（XDG Trash）。文件访问审批显示原始宿主路径。',

@@ -57,7 +57,6 @@
         "format": "prettier --write .",
         "format:check": "prettier --check .",
         "check:architecture": "node scripts/check-architecture.cjs",
-        "check:sandbox": "node scripts/check-sandbox-hotpath.cjs",
         "check:docs": "tsx scripts/docs-freshness/docs-freshness.ts",
         "changelog": "node scripts/collect-changelog.js",
         "version": "node scripts/sync-version.mjs",

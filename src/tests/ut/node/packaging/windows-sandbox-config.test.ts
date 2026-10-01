@@ -10,40 +10,40 @@ const require = createRequire(import.meta.url);
 const forgeConfig = require('../../../../../forge.config.cjs');
 
 test('Windows sandbox sources and build entrypoint are included', () => {
-    const project = path.join(root, 'native', 'windows', 'sandbox', 'src', 'Dynobox', 'Dynobox.csproj');
+    const nativeDir = path.join(root, 'native', 'windows', 'sandbox', 'src');
+    const makefile = path.join(nativeDir, 'Makefile');
+    const buildNative = path.join(nativeDir, 'build-native.cjs');
     const buildScript = path.join(root, 'scripts', 'build-windows-sandbox.cjs');
-    const policy = path.join(root, 'native', 'windows', 'sandbox', 'src', 'Dynobox', 'Policy.cs');
+    const hookDll = path.join(nativeDir, 'hook', 'dllmain.cpp');
     const runtime = fs.readFileSync(
         path.join(root, 'src', 'main', 'applications', 'terminal', 'sandboxes', 'dynabox.ts'),
         'utf8'
     );
     const forgeConfigSource = fs.readFileSync(path.join(root, 'forge.config.cjs'), 'utf8');
     const installer = fs.readFileSync(path.join(root, 'scripts', 'windows-installer', 'build-installer.mjs'), 'utf8');
-    const arm64Installer = fs.readFileSync(path.join(root, 'scripts', 'make-arm64-setup.mjs'), 'utf8');
 
-    assert.equal(fs.existsSync(project), true);
+    assert.equal(fs.existsSync(makefile), true);
+    assert.equal(fs.existsSync(buildNative), true);
     assert.equal(fs.existsSync(buildScript), true);
-    assert.match(fs.readFileSync(buildScript, 'utf8'), /PublishSingleFile=true/);
+    assert.equal(fs.existsSync(hookDll), true);
+    // MSVC + nmake 构建；hook DLL 与 sandbox.exe 同目录交付
+    assert.match(fs.readFileSync(buildNative, 'utf8'), /vcvars(?:64|32|amd64_arm64)\.bat/);
+    assert.match(fs.readFileSync(buildScript, 'utf8'), /build-native\.cjs/);
     assert.match(fs.readFileSync(buildScript, 'utf8'), /runtimeDirectory[\s\S]*sandbox\.exe/);
     assert.match(forgeConfigSource, /resourcesRoot, 'sandbox'/);
-    assert.match(
-        installer,
-        /const targetWindowsArch = process\.env\.OPENDESK_WIX_ARCH \|\| 'x64'[\s\S]*?const targetWindowsRid = targetWindowsArch === 'arm64' \? 'win-arm64' : 'win-x64'[\s\S]*?path\.join\(projectRoot, 'native', 'windows', 'sandbox', 'dist', targetWindowsRid, 'bin', 'DokanSetup\.msi'\)/
-    );
-    assert.match(
-        installer,
-        /<MsiPackage Id="DokanMsi"[\s\S]*?SourceFile="\$\{xml\(dokanMsi\)\}"[\s\S]*?InstallCondition="NOT DokanVersion/
-    );
-    assert.match(
-        arm64Installer,
-        /OPENDESK_DOKAN_MSI_PATH:\s*path\.join\([\s\S]*?'native',[\s\S]*?'windows',[\s\S]*?'sandbox',[\s\S]*?'dist',[\s\S]*?'win-arm64',[\s\S]*?'bin',[\s\S]*?'DokanSetup\.msi'/
-    );
+    assert.match(forgeConfigSource, /sandbox_hook\.dll/);
+    // 安装器不再打包 Dokan 驱动
+    assert.doesNotMatch(installer, /DokanMsi|DokanSetup|dokan2\.dll/);
     assert.match(runtime, /resourcesPath \|\| ''[\s\S]*?sandbox', 'sandbox\.exe'/);
     assert.match(runtime, /native', 'windows', 'sandbox', 'runtime', 'sandbox\.exe'/);
-    assert.match(fs.readFileSync(policy, 'utf8'), /AuthenticationHeaderValue\("Bearer"/);
+    // Detours 注入 DLL 的入口必须是全局 extern "C"（被名字修饰会导致 CRT 不调用、
+    // 链接器 /OPT:REF 丢弃整个 hook 链）
+    assert.match(fs.readFileSync(hookDll, 'utf8'), /extern "C" BOOL APIENTRY DllMain/);
+    // ask 协议带 Bearer token（C++ 侧）
+    assert.match(fs.readFileSync(path.join(nativeDir, 'common', 'ask.cpp'), 'utf8'), /Bearer/);
 });
 
-test('stageWindowsSandboxResource 仅复制目标架构 sandbox.exe，不裁剪暂存目录', async () => {
+test('stageWindowsSandboxResource 仅复制目标架构 sandbox.exe/hook DLL 并移除外侧构建树', async () => {
     const sourceRoot = path.join(root, 'native', 'windows', 'sandbox', 'dist');
     const architectures = [
         ['x64', 'win-x64'],
@@ -60,13 +60,19 @@ test('stageWindowsSandboxResource 仅复制目标架构 sandbox.exe，不裁剪�
 
         try {
             fs.mkdirSync(path.join(staleTree, 'dist', 'win-x64', 'bin'), { recursive: true });
-            fs.writeFileSync(path.join(staleTree, 'dist', 'win-x64', 'bin', 'DokanSetup.msi'), 'driver');
+            fs.writeFileSync(path.join(staleTree, 'dist', 'win-x64', 'bin', 'sandbox_hook.dll'), 'hook');
 
             // Mock only the native source existence check. The destination remains a real
             // temporary directory, so this test never creates or modifies build artifacts.
             fs.existsSync = ((candidate: fs.PathLike): boolean => {
                 const candidatePath = path.resolve(candidate.toString());
                 if (candidatePath.startsWith(sourceRoot) && candidatePath.endsWith(path.join('bin', 'sandbox.exe'))) {
+                    return true;
+                }
+                if (
+                    candidatePath.startsWith(sourceRoot) &&
+                    candidatePath.endsWith(path.join('bin', 'sandbox_hook.dll'))
+                ) {
                     return true;
                 }
                 return originalExistsSync(candidate);
@@ -86,17 +92,23 @@ test('stageWindowsSandboxResource 仅复制目标架构 sandbox.exe，不裁剪�
             assert.equal(error, undefined);
 
             const target = path.join(buildPath, 'resources', 'sandbox', 'sandbox.exe');
+            const hookTarget = path.join(buildPath, 'resources', 'sandbox', 'sandbox_hook.dll');
             assert.equal(fs.existsSync(target), true);
             assert.equal(fs.readFileSync(target, 'utf8'), 'sandbox');
-            assert.deepEqual(copiedFiles, [
-                {
-                    source: path.join(sourceRoot, rid, 'bin', 'sandbox.exe'),
-                    target
-                }
-            ]);
-            // extraResources 已不携带 native/，正常打包时暂存目录不存在该树；
-            // 钩子只负责落位产物，不得重新引入"复制后裁剪"的副作用
-            assert.equal(fs.existsSync(staleTree), true);
+            assert.equal(fs.existsSync(hookTarget), true);
+            assert.ok(
+                copiedFiles.some(
+                    ({ source, target: t }) =>
+                        source === path.join(sourceRoot, rid, 'bin', 'sandbox.exe') && t === target
+                )
+            );
+            assert.ok(
+                copiedFiles.some(
+                    ({ source, target: t }) =>
+                        source === path.join(sourceRoot, rid, 'bin', 'sandbox_hook.dll') && t === hookTarget
+                )
+            );
+            assert.equal(fs.existsSync(staleTree), false);
             assert.equal(
                 copiedFiles.some(({ source }) => /Dokan|\.msi$/i.test(source)),
                 false
@@ -109,12 +121,11 @@ test('stageWindowsSandboxResource 仅复制目标架构 sandbox.exe，不裁剪�
     }
 });
 
-test('delete-to-trash is wired from the task setting through to the native mirror', () => {
-    const nativeDir = path.join(root, 'native', 'windows', 'sandbox', 'src', 'Dynobox');
-    const program = fs.readFileSync(path.join(nativeDir, 'Program.cs'), 'utf8');
-    const runner = fs.readFileSync(path.join(nativeDir, 'Runner.cs'), 'utf8');
-    const mirror = fs.readFileSync(path.join(nativeDir, 'MirrorFs.cs'), 'utf8');
-    const recycleBin = path.join(nativeDir, 'RecycleBin.cs');
+test('delete-to-trash is wired from the task setting through to the native hooks', () => {
+    const nativeDir = path.join(root, 'native', 'windows', 'sandbox', 'src');
+    const main = fs.readFileSync(path.join(nativeDir, 'manager', 'main.cpp'), 'utf8');
+    const runner = fs.readFileSync(path.join(nativeDir, 'manager', 'runner.cpp'), 'utf8');
+    const hooksFile = fs.readFileSync(path.join(nativeDir, 'hook', 'hooks_file.cpp'), 'utf8');
     const runtime = fs.readFileSync(
         path.join(root, 'src', 'main', 'applications', 'terminal', 'sandboxes', 'dynabox.ts'),
         'utf8'
@@ -132,32 +143,17 @@ test('delete-to-trash is wired from the task setting through to the native mirro
 
     // 设置项存在且默认关闭
     assert.match(setting, /shell_sandbox_del_to_trash: z\.boolean\(\)\.default\(false\)/);
-    // TS 侧透传链路：任务设置 -> pwsh 工具 -> 沙箱启动参数；
-    // 实例内新建的分流由原生侧创建跟踪实现，宿主不传额外参数
+    // TS 侧透传链路：任务设置 -> pwsh 工具 -> 沙箱启动参数
     assert.match(app, /shell_sandbox_del_to_trash/);
     assert.match(pwsh, /sandboxDeleteToTrash/);
     assert.match(shellCommon, /deleteToTrash: sandboxDeleteToTrash/);
     assert.match(runtime, /--del-to-trash/);
-    assert.doesNotMatch(runtime, /--created-after/);
-    // 原生侧解析与执行：CLI 标志 -> Sandbox -> MirrorFs 回收站删除
-    assert.equal(fs.existsSync(recycleBin), true);
-    assert.match(program, /--del-to-trash/);
-    assert.match(runner, /DeleteToTrash = delToTrash/);
-    // 回归（BUG-2）：内部路径判定必须用规范虚拟路径（res.VirtualPath），
-    // 原始请求名可能携带 /dynobox/../ 段逃逸前缀匹配导致用户文件被永久删除。
-    // ShouldSendToTrash 汇总回收站判定，必须接收规范虚拟路径并检查内部区域
-    assert.match(mirror, /ShouldSendToTrash\(res\.VirtualPath\)/);
-    assert.match(mirror, /if \(IsSandboxInternalPath\(virtualPath\)\) return false;/);
-    // 实例内创建跟踪：本沙箱实例运行期间新建的路径删除时直接清除（避免回收站
-    // 被任务期间的临时文件灌满），跟踪表随实例结束丢弃，不跨实例残留
-    assert.match(mirror, /_sessionCreated\.ContainsKey\(virtualPath\)/);
-    assert.match(mirror, /TrackSessionCreated\(res\.VirtualPath\)/);
-    assert.match(mirror, /FollowSessionCreatedMove\(oldVp, newVp, targetExistedBefore\)/);
-    assert.match(mirror, /Policy\.IsInternalAppContainerPath/);
-    assert.match(mirror, /RecycleBin\.TrySend/);
-    assert.match(fs.readFileSync(recycleBin, 'utf8'), /SHFileOperationW/);
-    // 回归（BUG-4）：系统禁用回收站（NukeOnDelete/MaxCapacity=0）时
-    // FOF_ALLOWUNDO 会静默永久删除，必须在删除前检测并拒绝
-    assert.match(fs.readFileSync(recycleBin, 'utf8'), /IsBinDisabledForDrive/);
-    assert.match(fs.readFileSync(recycleBin, 'utf8'), /NukeOnDelete/);
+    // 原生侧解析与执行：CLI 标志 -> 注入 DLL 环境 -> 回收站删除（hook 内）
+    assert.match(main, /--del-to-trash/);
+    assert.match(runner, /DYNOBOX_DEL_TO_TRASH/);
+    assert.match(hooksFile, /SHFileOperationW/);
+    assert.match(hooksFile, /FOF_ALLOWUNDO/);
+    assert.match(hooksFile, /recycleToTrash/);
+    // 回收站不可用时保留原文件、绝不静默永久删除
+    assert.match(hooksFile, /回收站删除失败/);
 });

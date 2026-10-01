@@ -1502,10 +1502,16 @@ export const enUs: Record<string, string> = {
         'Tasks use only the selected shell. If its path is unavailable, the first available shell is used.',
     'sp.task.terminal.noShells': 'No supported shells found',
     'sp.task.terminal.sandbox': 'Enable sandbox',
-    'sp.task.terminal.sandbox.desc': 'Run this powershell in a Windows sandbox and request file access when needed.',
+    'sp.task.terminal.sandbox.desc':
+        'Run this powershell or Git Bash in the Windows sandbox (Detours) and request file access when needed; child processes use host real paths directly.',
     'sp.task.terminal.sandbox.delToTrash': 'Move deleted files to the Recycle Bin',
     'sp.task.terminal.sandbox.delToTrash.desc':
         'Files deleted inside the sandbox go to the Windows Recycle Bin instead of being permanently removed. Overwrites and moves are unaffected.',
+    'sp.task.terminal.sandbox.openTrash': 'Open trash',
+    'sp.task.terminal.sandbox.desc.ohos':
+        'Run this shell (zsh/bash) in the OpenHarmony dynamic sandbox and request file access when needed.',
+    'sp.task.terminal.sandbox.delToTrash.desc.ohos':
+        'Files deleted inside the sandbox are moved to ~/Trash under the home directory instead of being permanently removed (no system recycle bin; trash contents are read-only protected inside the sandbox).',
     'sp.agents.title': 'ACP Agents',
     'sp.agents.desc':
         'Connect local stdio or remote Streamable HTTP agents. Task context and event records remain stored locally.',

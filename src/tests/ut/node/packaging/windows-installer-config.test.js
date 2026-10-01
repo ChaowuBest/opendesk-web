@@ -152,11 +152,10 @@ test('provides a one-command ARM64 installer pipeline pinned to the arm64 toolch
     assert.match(script, /OPENDESK_WIX_ARCH/);
     assert.match(script, /OPENDESK_MSI_PATH/);
     assert.match(script, /OPENDESK_STAGED_APP_DIR/);
-    assert.match(script, /OPENDESK_DOKAN_MSI_PATH/);
     assert.match(script, /OPENDESK_SETUP_OUT_DIR/);
-    // Dokan 必须取 win-arm64 驱动包：x64 Dokan 内核驱动在 ARM64 Windows 上无法加载（0x80070643）
     assert.match(script, /win-arm64/);
-    assert.match(script, /DokanSetup\.msi/);
+    // Detours 实现无需 Dokan 驱动包
+    assert.doesNotMatch(script, /DokanSetup\.msi|OPENDESK_DOKAN_MSI_PATH/);
     // bootstrapper 逻辑保持单一来源，arm64 管线复用既有脚本
     assert.match(script, /build-wix-bootstrapper\.mjs/);
 });
@@ -397,16 +396,9 @@ test('builds a custom bootstrapper that passes location and shortcut choices to 
     );
     const packageJson = JSON.parse(fs.readFileSync(path.join(projectRoot, 'package.json'), 'utf8'));
 
-    assert.match(
-        bundle,
-        /<util:FileSearch Id="FindDokanVersion"[\s\S]*?Variable="DokanVersion"[\s\S]*?Result="version"/
-    );
-    assert.match(
-        bundle,
-        /<MsiPackage Id="DokanMsi"[\s\S]*?SourceFile="\$\(var\.DokanMsiPath\)"[\s\S]*?InstallCondition="NOT DokanVersion/
-    );
-    assert.match(bundle, /<MsiPackage Id="DokanMsi"[\s\S]*?Permanent="yes"/);
-    assert.match(installerBuilder, /dokanMsiPath/);
+    // Detours 实现无需 Dokan 驱动：bundle 不得携带 Dokan 包/检测
+    assert.doesNotMatch(bundle, /DokanMsi|DokanVersion|dokan2\.dll/);
+    assert.doesNotMatch(installerBuilder, /dokanMsiPath/);
 
     assert.match(bundle, /BootstrapperApplicationRef Id="ManagedBootstrapperApplicationHost"/);
     // WiX v3 无 Bundle/@PerMachine（v4+ 语法）；per-machine 通过 MsiPackage/@ForcePerMachine 声明

@@ -1463,10 +1463,15 @@ export const zhCn: Record<string, string> = {
     'sp.task.terminal.shell.desc': '任务仅使用选定的 shell；路径不可用时自动使用列表中的第一个可用 shell。',
     'sp.task.terminal.noShells': '未找到支持的 shell',
     'sp.task.terminal.sandbox': '启用沙箱',
-    'sp.task.terminal.sandbox.desc': '在 Windows 沙箱中执行此 powershell，文件访问需要时请求授权。',
+    'sp.task.terminal.sandbox.desc':
+        '在 Windows 沙箱（Detours）中执行此 powershell 或 Git Bash，文件访问需要时请求授权；子进程直接使用宿主真实路径。',
     'sp.task.terminal.sandbox.delToTrash': '将删除的文件放到回收站',
     'sp.task.terminal.sandbox.delToTrash.desc':
         '沙箱里直接删除的文件会移入 Windows 回收站而非永久删除；覆盖与移动操作不受影响。',
+    'sp.task.terminal.sandbox.openTrash': '打开回收站',
+    'sp.task.terminal.sandbox.desc.ohos': '在 OpenHarmony 动态沙箱中执行此 shell（zsh/bash），文件访问需要时请求授权。',
+    'sp.task.terminal.sandbox.delToTrash.desc.ohos':
+        '沙箱里删除的文件移入家目录下的 Trash 而非永久删除（系统无回收站；回收站内容只读保护，沙箱内不可删除）。',
     'sp.agents.title': 'ACP Agent',
     'sp.agents.desc': '连接本地 stdio 或远程 Streamable HTTP Agent。任务上下文和事件记录仍保存在本地。',
     'sp.agents.add': '添加 Agent',

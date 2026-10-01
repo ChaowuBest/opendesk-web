@@ -163,10 +163,18 @@ static void json_escape(const char *in, char *out, size_t outsz)
     out[o] = '\0';
 }
 
-int dbox_ask_build_request(char *out, size_t outsz, const char *vpath, int acc)
+int dbox_ask_build_request(char *out, size_t outsz, const char *vpath, int acc,
+                           const char *token)
 {
     char jp[DBOX_PATH_MAX];
     json_escape(vpath, jp, sizeof jp);
+    if (token && token[0]) {
+        char jt[256];
+        json_escape(token, jt, sizeof jt);
+        return snprintf(out, outsz,
+                        "{\"path\":\"%s\",\"access\":\"%s\",\"token\":\"%s\"}",
+                        jp, dbox_access_name(acc & ACC_ALL), jt) < 0 ? -1 : 0;
+    }
     return snprintf(out, outsz, "{\"path\":\"%s\",\"access\":\"%s\"}",
                     jp, dbox_access_name(acc & ACC_ALL)) < 0 ? -1 : 0;
 }
@@ -312,6 +320,7 @@ int dbox_ask_parse_response(const char *body, dbox_policy_t *p, int64_t now_ms)
 
 static int ask_roundtrip(const endpoint_t *ep, const char *req,
                          char *resp, size_t rsz, int timeout_ms,
+                         const char *token,
                          char *err, size_t errsz)
 {
     int fd;
@@ -353,15 +362,19 @@ static int ask_roundtrip(const endpoint_t *ep, const char *req,
     }
 
     if (ep->kind == EP_HTTP) {
-        char hdr[1024];
+        char hdr[4096];
         size_t nreq = strlen(req);
-        int hl = snprintf(hdr, sizeof hdr,
-                          "POST %s HTTP/1.1\r\nHost: %s:%s\r\n"
-                          "Content-Type: application/json\r\nContent-Length: %zu\r\n"
-                          "Connection: close\r\n\r\n",
-                          ep->path, ep->host, ep->port, nreq);
-        int ok = hl > 0 && (size_t)hl < sizeof hdr
-                 && raw_send(fd, hdr, (size_t)hl) == hl
+        int n = snprintf(hdr, sizeof hdr,
+                         "POST %s HTTP/1.1\r\nHost: %s:%s\r\n",
+                         ep->path, ep->host, ep->port);
+        if (token && token[0])
+            n += snprintf(hdr + n, sizeof hdr - n,
+                          "Authorization: Bearer %s\r\n", token);
+        n += snprintf(hdr + n, sizeof hdr - n,
+                      "Content-Type: application/json\r\nContent-Length: %zu\r\n"
+                      "Connection: close\r\n\r\n", nreq);
+        int ok = n > 0 && (size_t)n < sizeof hdr
+                 && raw_send(fd, hdr, (size_t)n) == n
                  && raw_send(fd, req, nreq) == (ssize_t)nreq;
         if (!ok) {
             snprintf(err, errsz, "send: %s", strerror(errno));
@@ -437,14 +450,14 @@ int dbox_ask(const dbox_policy_t *p, const char *vpath, int acc,
         snprintf(err, errsz, "bad endpoint url");
         return 0;   /* fail-closed */
     }
-    char req[DBOX_PATH_MAX + 128];
-    if (dbox_ask_build_request(req, sizeof req, vpath, acc) != 0) {
+    char req[DBOX_PATH_MAX + 256];
+    if (dbox_ask_build_request(req, sizeof req, vpath, acc, p->ask_token) != 0) {
         snprintf(err, errsz, "request build failed");
         return 0;
     }
     static _Thread_local char resp[ASK_IO_BUF];
     int tmo = p->ask_timeout_ms > 0 ? p->ask_timeout_ms : 2000;
-    if (ask_roundtrip(&ep, req, resp, sizeof resp, tmo, err, errsz) != 0) {
+    if (ask_roundtrip(&ep, req, resp, sizeof resp, tmo, p->ask_token, err, errsz) != 0) {
         dbox_logf("ask transport failed: %s", err);
         return 0;   /* fail-closed */
     }

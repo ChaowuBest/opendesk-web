@@ -71,7 +71,13 @@ export function permissionRulesForSandbox(rules: PermissionRule[] | undefined): 
     return rulesToLines(rules, (expanded) => (expanded === '**' ? '/**' : hostPatternToVirtual(expanded)));
 }
 
-export function policyText(endpoint: string, token: string, rules?: PermissionRule[], home?: string): string {
+export function policyText(
+    endpoint: string,
+    token: string,
+    rules?: PermissionRule[],
+    home?: string,
+    opendeskDataDir?: string
+): string {
     const quote = (value: string) => JSON.stringify(value);
     // Windows 侧工具链缓存重定向（与 linux-sandbox.ts 的 ~/.cache/opendesk-sandbox
     // 同语义）：npm/jest 缓存写放行到宿主持久目录，跨沙箱实例复用（首次才下载）。
@@ -84,6 +90,45 @@ export function policyText(endpoint: string, token: string, rules?: PermissionRu
     // jest transform 缓存（os.tmpdir()/jest）与 node-compile-cache 与宿主共用。
     const tempRoot =
         home && home.length > 0 ? hostPatternToVirtual(`${home.replace(/\\/g, '/')}/AppData/Local/Temp/**`) : null;
+    // OpenDesk 框架自身数据目录（%APPDATA%\opendesk\logs、artifacts、tasks）写放行。
+    // 沙箱内加载/运行业务源码（npm run test、脚本、任务紧凑化等）时 logger 与任务
+    // 模块会持续写入这些目录，属框架自身的合法 IO，不应反复打扰用户；与 Linux/OHOS
+    // 策略放行工作区同哲学。opendeskDataDir 为宿主 getOpendeskDirectory()；未显式
+    // 传入时按默认布局（%APPDATA%\opendesk，即 home/AppData/Roaming/opendesk）推导。
+    const opendeskRoot = opendeskDataDir
+        ? opendeskDataDir.replace(/\\/g, '/')
+        : home && home.length > 0
+          ? `${home.replace(/\\/g, '/')}/AppData/Roaming/opendesk`
+          : null;
+    const opendeskWritePaths = opendeskRoot
+        ? ['logs', 'artifacts', 'tasks']
+              .map((sub) => hostPatternToVirtual(`${opendeskRoot}/${sub}/**`))
+              .filter((p): p is string => p !== null)
+        : [];
+    // Windows 框架/PowerShell 启动时的静默写入路径（组件存储、缓存、Recent 跳转
+    // 列表等）。这些路径在普通令牌下本就写不动（OS ACL 拒绝），放通只为免去每次
+    // 触发 write ask 弹窗。顺序：用户 deny 规则仍在此之前（permissionRulesForSandbox
+    // 按 deny > ask > allow 排序），系统放行不会覆盖用户显式拒绝。
+    // 注意：$RECYCLE.BIN 不放通——回收站是误删数据的恢复区，agent 若可写就能清理
+    // 整个回收站（数据风险）；而 --del-to-trash 写入回收站经 SHFileOperation 内部
+    // 操作（hook 已用进程级 RecycleGuard 抑制，不做策略判定），本就无需放通。
+    const systemWritePaths = [
+        '/C/Windows/system32/catroot**', // Windows Update 组件存储（catroot/catroot2）
+        '/C/Windows/Temp/**', // 系统 Temp（安装器/更新临时文件）
+        '/C/ProgramData/Microsoft/Windows/Caches/**', // 系统级缓存
+        '/C/Users/*/AppData/Local/Microsoft/Windows/Caches/**', // 用户级缓存
+        '/C/Users/*/AppData/Roaming/Microsoft/Windows/Recent/**', // Recent/AutomaticDestinations
+        // PowerShell 启动配置数据（框架静默写；家目录根/Roaming 根不放通——
+        // 写探测由 hook 按"目录写探测"降级为 read，见 hooks_file.cpp）
+        '/C/Users/*/AppData/Local/Microsoft/Windows/PowerShell/**',
+        // Python 解释器字节码缓存：import 时原子写 __pycache__/*.pyc.<随机数> 临时
+        // 文件再 rename（解释器在宿主 Python 安装目录下生成），内容仅为字节码缓存，
+        // 放行写入免去每次 spawn python 子进程都触发 ask
+        '/C/**/__pycache__/**',
+        // Windows App Installer（winget 等组件）诊断日志目录：组件启动时静默写入，
+        // 与 catroot/Caches 同类，放通不产生安全面（仅日志落盘）
+        '/C/Users/*/AppData/Local/Packages/*/LocalState/DiagOutputDir/**'
+    ];
     return [
         'version = 1',
         'default = "deny"',
@@ -102,6 +147,10 @@ export function policyText(endpoint: string, token: string, rules?: PermissionRu
         ...(cacheRoot ? [`[[rules]]\npath = ${quote(cacheRoot)}\naccess = "write"\nperm = "allow"`] : []),
         // 宿主用户 Temp 写入放行（镜像层共享 Temp 别名，见 dynobox Runner）
         ...(tempRoot ? [`[[rules]]\npath = ${quote(tempRoot)}\naccess = "write"\nperm = "allow"`] : []),
+        // OpenDesk 框架自身数据目录（日志/任务产物/任务数据）写放行
+        ...opendeskWritePaths.map((path) => `[[rules]]\npath = ${quote(path)}\naccess = "write"\nperm = "allow"`),
+        // 系统维护路径写放通（见 systemWritePaths 注释）
+        ...systemWritePaths.map((path) => `[[rules]]\npath = ${quote(path)}\naccess = "write"\nperm = "allow"`),
         '[[rules]]',
         'path = "/**"',
         'access = "read"',
@@ -137,24 +186,19 @@ const SENSITIVE_HOME_DIRS = [
     '.git-credentials'
 ];
 
-export function policyTextLinux(
+/** 从 [ask] 到文件末尾的策略行（Linux / OpenHarmony 共用）。两者的区别仅在
+ * 头部：Linux(FUSE) 用 [[roots]] 整根映射，OpenHarmony(LD_PRELOAD 身份命名
+ * 空间) 无路径映射、规则直接用真实路径。 */
+function policyLinuxTail(
+    quote: (value: string) => string,
     endpoint: string,
     token: string,
-    workspace: string,
+    workspaceRoot: string,
     rules?: PermissionRule[],
-    home?: string
-): string {
-    const quote = (value: string) => JSON.stringify(value);
-    const workspaceRoot = workspace.replace(/\/+$/, '') || '/';
+    home?: string,
+    extraWritableDirs?: string[]
+): string[] {
     return [
-        'version = 1',
-        'default = "deny"',
-        '',
-        // 整根视图：FUSE 挂到沙箱根，沙箱内布局与宿主完全一致；系统目录在其上
-        // 只读 bind 覆盖，其余路径读写经策略检查（写工作区放行，其余询问）
-        '[[roots]]',
-        'virtual = "/"',
-        'real    = "/"',
         '',
         '[ask]',
         `endpoint = ${quote(endpoint)}`,
@@ -173,8 +217,9 @@ export function policyTextLinux(
                   (dir) => `[[rules]]\npath = ${quote(`${home}/${dir}/**`)}\naccess = "read"\nperm = "deny"`
               )
             : []),
-        // 工具链缓存目录写入放行（linux-sandbox 的 env 重定向：CARGO_HOME/
-        // npm_config_cache/GOCACHE 等指向 ~/.cache/opendesk-sandbox/...）
+        // 工具链缓存目录写入放行（linux-sandbox/openHarmony-sandbox 的 env
+        // 重定向：CARGO_HOME/npm_config_cache/GOCACHE 等指向
+        // ~/.cache/opendesk-sandbox/...）
         ...(home
             ? [`[[rules]]\npath = ${quote(`${home}/.cache/opendesk-sandbox/**`)}\naccess = "write"\nperm = "allow"`]
             : []),
@@ -194,6 +239,8 @@ export function policyTextLinux(
         'access = "write"',
         'perm = "allow"',
         '',
+        // 额外可写目录（OpenHarmony 应用沙箱 temp/cache 等；须在兜底 write ask 之前）
+        ...(extraWritableDirs ?? []),
         // /var/tmp（bash here doc 临时文件、sort 临时文件等）——不放行则
         // configure/自动工具在沙箱内全部卡死
         '[[rules]]',
@@ -221,5 +268,58 @@ export function policyTextLinux(
         'access = "execute"',
         'perm = "allow"',
         ''
+    ];
+}
+
+export function policyTextLinux(
+    endpoint: string,
+    token: string,
+    workspace: string,
+    rules?: PermissionRule[],
+    home?: string
+): string {
+    const quote = (value: string) => JSON.stringify(value);
+    const workspaceRoot = workspace.replace(/\/+$/, '') || '/';
+    return [
+        'version = 1',
+        'default = "deny"',
+        '',
+        // 整根视图：FUSE 挂到沙箱根，沙箱内布局与宿主完全一致；系统目录在其上
+        // 只读 bind 覆盖，其余路径读写经策略检查（写工作区放行，其余询问）
+        '[[roots]]',
+        'virtual = "/"',
+        'real    = "/"',
+        ...policyLinuxTail(quote, endpoint, token, workspaceRoot, rules, home)
+    ].join('\n');
+}
+
+/** OpenHarmony 版策略文本：LD_PRELOAD 身份命名空间（路径无映射），不含
+ * `[[roots]]`（OH 版 native 会拒绝 `[[roots]]`，见 policy.c）。其余规则与
+ * Linux(FUSE) 版一致——规则 path 均为宿主真实路径。
+ * `writableDirs`：应用沙箱 temp/cache 等目录总是可读可写（无需 ask）。 */
+export function policyTextOpenHarmony(
+    endpoint: string,
+    token: string,
+    workspace: string,
+    rules?: PermissionRule[],
+    home?: string,
+    writableDirs?: string[]
+): string {
+    const quote = (value: string) => JSON.stringify(value);
+    const workspaceRoot = workspace.replace(/\/+$/, '') || '/';
+    const writable =
+        writableDirs && writableDirs.length > 0
+            ? writableDirs
+                  .filter((dir) => dir && dir.startsWith('/'))
+                  .flatMap((dir) => [`[[rules]]\npath = ${quote(`${dir}/**`)}\naccess = "write"\nperm = "allow"`])
+            : [];
+    return [
+        'version = 1',
+        'default = "deny"',
+        '',
+        // LD_PRELOAD 身份命名空间：沙箱内路径与宿主完全一致，无需 roots 映射。
+        // 系统运行时读/执行由内建 system_read 清单放行（与 Windows/Linux 对齐）。
+        // 应用沙箱 temp/cache 总是可读可写（早于兜底 write ask）。
+        ...policyLinuxTail(quote, endpoint, token, workspaceRoot, rules, home, writable)
     ].join('\n');
 }

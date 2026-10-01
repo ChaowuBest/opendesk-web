@@ -309,6 +309,50 @@ export function decodeShellOutput(buffer: Buffer): string {
     }
 }
 
+/**
+ * 跨数据分片的 shell 输出流式解码器。
+ *
+ * 管道以任意大小分片到达 data 事件（尤其 dynobox 沙箱经中继转发时），UTF-8
+ * 多字节字符（中文 3 字节、emoji 4 字节）可能被切断在 chunk 边界。逐 chunk 调
+ * 用 decodeShellOutput 时，被切断的半个字符会解码出 U+FFFD 替换符，误触发"回退
+ * GBK"分支，把本应完好的 UTF-8 中文变成 GBK 乱码（"锟斤拷"），且错误不可逆。
+ *
+ * 解法：缓冲到完整行（\n 结尾）再解码。\n（0x0A）在 UTF-8 与 GBK 双字节编码中
+ * 都只会作为独立的 ASCII 字节出现，绝不会成为多字节序列的内部字节，因此行边界
+ * 是安全的解码切分点；行内字符必然完整，不会被误判编码。未到行尾的残片缓存到
+ * 下一分片；流结束时 flush 吐出剩余内容。
+ */
+export function createShellOutputDecoder() {
+    let pending = Buffer.alloc(0);
+
+    const decode = (buf: Buffer): string => decodeShellOutput(buf);
+
+    return {
+        /** 喂入一分片，返回可安全解码的完整文本（可能为空字符串）。 */
+        push(chunk: Buffer): string {
+            if (chunk.length === 0) return '';
+            const combined = pending.length > 0 ? Buffer.concat([pending, chunk]) : chunk;
+            // 找最后一个 \n：其前（含 \n）都是完整行，可立即解码
+            const lastNl = combined.lastIndexOf(0x0a);
+            if (lastNl < 0) {
+                // 无换行：整段都是残片，全部缓存等后续
+                pending = combined;
+                return '';
+            }
+            const complete = combined.subarray(0, lastNl + 1);
+            pending = combined.subarray(lastNl + 1);
+            return decode(complete);
+        },
+        /** 流结束：把剩余残片（可能是不带换行的完整最后一行）解码吐出。 */
+        flush(): string {
+            if (pending.length === 0) return '';
+            const out = decode(pending);
+            pending = Buffer.alloc(0);
+            return out;
+        }
+    };
+}
+
 // ── shell 输出噪音过滤 ──────────────────────────────────────────────────────
 
 // 过滤 shell 在某些受限环境下启动时的噪音警告
