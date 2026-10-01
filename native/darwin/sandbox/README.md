@@ -15,8 +15,8 @@
 ## 构建
 
 ```bash
-npm run build:sandbox:darwin                    # 宿主架构 + 必备 slice
-OPENDESK_SANDBOX_ARCH=all npm run build:sandbox:darwin   # 三架构全量（打包前建议）
+npm run build-sandbox:darwin                    # 宿主架构 + 必备 slice
+OPENDESK_SANDBOX_ARCH=all npm run build-sandbox:darwin   # 三架构全量（打包前建议）
 ```
 
 产物：`runtime/dynobox-darwin.dylib`（universal）。

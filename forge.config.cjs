@@ -116,7 +116,7 @@ function stageLinuxSandboxResource(buildPath, electronVersion, platform, arch, c
             if (!fs.existsSync(source)) {
                 throw new Error(
                     `Linux sandbox binary is missing for ${arch} (${triple}): ${source}。` +
-                        `请先构建对应架构：OPENDESK_SANDBOX_TARGET=${triple} npm run build:sandbox:linux（或在该架构构建机上直接构建）`
+                        `请先构建对应架构：OPENDESK_SANDBOX_TARGET=${triple} npm run build-sandbox:linux（或在该架构构建机上直接构建）`
                 );
             }
             assertLinuxElfMachine(source, arch);
@@ -142,7 +142,7 @@ function stageDarwinSandboxResource(buildPath, electronVersion, platform, arch, 
             if (!fs.existsSync(source)) {
                 throw new Error(
                     `Darwin sandbox dylib is missing: ${source}。` +
-                        `请先构建：npm run build:sandbox:darwin（或 OPENDESK_SANDBOX_ARCH=all 构建双架构 slice）`
+                        `请先构建：npm run build-sandbox:darwin（或 OPENDESK_SANDBOX_ARCH=all 构建双架构 slice）`
                 );
             }
             const lipo = require('node:child_process').execFileSync('/usr/bin/lipo', ['-archs', source], {
@@ -155,7 +155,7 @@ function stageDarwinSandboxResource(buildPath, electronVersion, platform, arch, 
                 if (!built.includes(wanted)) {
                     throw new Error(
                         `Darwin sandbox dylib is missing the ${wanted} slice (got: ${built.join(' ')})。` +
-                            `请构建对应架构：OPENDESK_SANDBOX_ARCH=all npm run build:sandbox:darwin`
+                            `请构建对应架构：OPENDESK_SANDBOX_ARCH=all npm run build-sandbox:darwin`
                     );
                 }
             }
