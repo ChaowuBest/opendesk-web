@@ -1591,8 +1591,7 @@ export class FileExplorer {
         if (this._officeClosePending) return true;
 
         const webview = this._rootNode?.querySelector<HTMLElement>('.ws-office-editor-frame') as
-            | (HTMLElement & { getWebContentsId?: () => number })
-            | null;
+            (HTMLElement & { getWebContentsId?: () => number }) | null;
         const webContentsId = webview?.getWebContentsId?.();
         if (!webContentsId || !window.officeHostAPI?.requestClose) return false;
 
@@ -1764,8 +1763,9 @@ export class FileExplorer {
                         window.fsAPI?.openPath?.(filePath);
                         break;
                     case 'reveal': {
-                        const parentDir = isDirectory ? filePath : this._parentOf(filePath);
-                        window.fsAPI?.openPath?.(parentDir);
+                        // 用 showItemInFolder 走常驻文件管理器的 DBus 接口，避免
+                        // 每次 spawn xdg-open 触发 GApplication 单实例竞态死锁
+                        window.fsAPI?.showItemInFolder?.(filePath);
                         break;
                     }
                     case 'copy-path':

@@ -282,7 +282,7 @@ class HomePage extends HTMLElement {
         });
         recommendation?.addEventListener('homepage-search-reveal', (event) => {
             const filePath = event.detail?.path;
-            if (filePath) window.fsAPI?.openPath?.(this._parentOf(filePath))?.catch?.(() => {});
+            if (filePath) window.fsAPI?.showItemInFolder?.(filePath)?.catch?.(() => {});
         });
         recommendation?.addEventListener('homepage-search-attach', (event) => {
             const filePath = event.detail?.path;
@@ -463,16 +463,6 @@ class HomePage extends HTMLElement {
         const code = result?.code;
         if (code && SEARCH_WARNING_TEXT[code]) return SEARCH_WARNING_TEXT[code];
         return null;
-    }
-
-    _parentOf(filePath) {
-        const value = String(filePath ?? '');
-        const slash = value.lastIndexOf('/');
-        const backslash = value.lastIndexOf('\\');
-        const index = Math.max(slash, backslash);
-        if (index === 2 && /^[A-Za-z]:\\/.test(value)) return value.slice(0, 3);
-        if (index === 0) return value[0] === '/' ? '/' : value;
-        return index < 0 ? value : value.slice(0, index);
     }
 
     render() {
