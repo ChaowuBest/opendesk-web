@@ -46,7 +46,7 @@ test('ACP agent profile schema supports stdio and Streamable HTTP transports', (
         initialDelayMs: 500,
         maxDelayMs: 5000
     });
-    assert.deepEqual(stdio.timeouts, { connectMs: 30_000, promptMs: 1_800_000 });
+    assert.deepEqual(stdio.timeouts, { connectMs: 30_000, promptMs: 1_800_000, idleReleaseMs: 120_000 });
     assert.equal(http.transport.type, 'streamableHttp');
     assert.equal(http.transport.cookies, 'include');
     assert.deepEqual(http.execution, {
@@ -84,7 +84,7 @@ test('ACP profiles persist protocol authentication and bounded timeouts', () => 
     });
 
     assert.equal(parsed.session.authMethodId, 'agent-login');
-    assert.deepEqual(parsed.timeouts, { connectMs: 12_000, promptMs: 240_000 });
+    assert.deepEqual(parsed.timeouts, { connectMs: 12_000, promptMs: 240_000, idleReleaseMs: 120_000 });
     assert.throws(
         () =>
             AcpAgentProfileSchema.parse({
