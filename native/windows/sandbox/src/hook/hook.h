@@ -48,6 +48,18 @@ AccessClass categorizeCreateAccess(DWORD desiredAccess, DWORD creationDispositio
 // 回收站删除（SHFileOperation FOF_ALLOWUNDO）。成功返回 true。
 bool recycleToTrash(const std::wstring& path);
 
+// 取句柄的完整规范化路径（\\?\ 前缀，动态缓冲避免 MAX_PATH 截断 fail-open）。
+// 成功返回 true 并写 out；失败返回 false（句柄无路径/不可解析）。
+bool finalPathByHandle(HANDLE hFile, std::wstring& out);
+
+// 解析 FILE_RENAME_INFORMATION / FILE_RENAME_INFORMATION_EX 的目标路径并做 write 判定。
+// info/bufferBytes：调用方传入的信息结构及其字节数（防越界读）。
+// isEx：Ex 变体（Flags 字段版本，FileName 布局偏移相同）。
+// 源路径已由调用方检查（sandboxCheckPath），此处只检查 rename 目标。
+// 返回 true = 放行；false = 拒绝（*winErr 写 Win32 错误码）。
+bool sandboxCheckRenameTarget(const std::wstring& sourcePath, const void* info, size_t bufferBytes,
+                              bool isEx, DWORD& winErr);
+
 // 判断路径是否"沙箱会话内创建"（文件创建时间 >= 会话开始时间，DYNOBOX_SESSION_START
 // 由 runner 注入）。会话内创建的文件删除视为自发清理：不触发 ask、不进回收站，
 // 直接删除（Dokan 版"实例内创建跟踪"的等价语义，无需共享内存/ADS）。

@@ -80,6 +80,14 @@ __declspec(thread) bool HookGuard::active = false;
 bool isSpecialDevicePath(const std::wstring& path)
 {
     if (path.empty()) return true;
+    // GLOBALROOT 卷文件路径（\\?\GLOBALROOT\Device\HarddiskVolumeN\... 或
+    // \\.\GLOBALROOT\Device\HarddiskVolumeN\...）不是虚设备：它们在设备命名空间
+    // 里映射到真实卷上的文件，必须参与策略判定（由 sandboxCheckPath 经
+    // mapGlobalRootToDrive 转换为盘符路径后判定），否则可绕过 roots 映射读任意文件。
+    {
+        std::wstring dummy;
+        if (mapGlobalRootToDrive(path, dummy)) return false;
+    }
     // 虚设备：\\.\* 与 \\?\*
     if (path.rfind(L"\\\\.\\", 0) == 0) return true;
     if (path.rfind(L"\\\\?\\", 0) == 0) {
@@ -136,8 +144,13 @@ bool sandboxCheckPath(const std::wstring& hostPath, AccessClass access, DWORD& w
     if (HookScope::active) return true;
     if (isSpecialDevicePath(hostPath)) return true;
 
+    // GLOBALROOT 设备命名空间路径（\\?\GLOBALROOT\Device\HarddiskVolumeN\...）转盘符
+    // 参与正常判定——否则直接走 isSpecialDevicePath 的虚设备放行会绕过 roots 映射。
+    std::wstring drivePath;
+    if (!mapGlobalRootToDrive(hostPath, drivePath)) drivePath = hostPath;
+
     std::wstring host;
-    if (!normalizeHostPath(hostPath, host)) {
+    if (!normalizeHostPath(drivePath, host)) {
         // 无法归一化：放行（避免工具探测行为被误杀）
         return true;
     }
@@ -165,8 +178,10 @@ bool sandboxCheckPathDenyOnly(const std::wstring& hostPath, AccessClass access, 
     if (HookScope::active) return true;
     if (isSpecialDevicePath(hostPath)) return true;
 
+    std::wstring drivePath;
+    if (!mapGlobalRootToDrive(hostPath, drivePath)) drivePath = hostPath;
     std::wstring host;
-    if (!normalizeHostPath(hostPath, host)) return true;
+    if (!normalizeHostPath(drivePath, host)) return true;
 
     std::wstring vpath;
     if (!mapHostToVirtual(host, g_policy.roots(), vpath)) {
@@ -224,33 +239,49 @@ static void loadEnvironmentPolicy()
 
 static void installHooks()
 {
-    if (DetourTransactionBegin() != NO_ERROR) return;
+    if (DetourTransactionBegin() != NO_ERROR) {
+        Log::error(L"DetourTransactionBegin 失败: %ld", GetLastError());
+        return;
+    }
     if (DetourUpdateThread(GetCurrentThread()) != NO_ERROR) {
+        Log::error(L"DetourUpdateThread 失败: %ld", GetLastError());
         DetourTransactionAbort();
         return;
     }
-    DetourAttach(&reinterpret_cast<PVOID&>(Real_CreateFileW), Hook_CreateFileW);
-    DetourAttach(&reinterpret_cast<PVOID&>(Real_CreateFileA), Hook_CreateFileA);
-    DetourAttach(&reinterpret_cast<PVOID&>(Real_GetFileAttributesW), Hook_GetFileAttributesW);
-    DetourAttach(&reinterpret_cast<PVOID&>(Real_GetFileAttributesA), Hook_GetFileAttributesA);
-    DetourAttach(&reinterpret_cast<PVOID&>(Real_FindFirstFileW), Hook_FindFirstFileW);
-    DetourAttach(&reinterpret_cast<PVOID&>(Real_FindFirstFileA), Hook_FindFirstFileA);
-    DetourAttach(&reinterpret_cast<PVOID&>(Real_CreateDirectoryW), Hook_CreateDirectoryW);
-    DetourAttach(&reinterpret_cast<PVOID&>(Real_CreateDirectoryA), Hook_CreateDirectoryA);
-    DetourAttach(&reinterpret_cast<PVOID&>(Real_DeleteFileW), Hook_DeleteFileW);
-    DetourAttach(&reinterpret_cast<PVOID&>(Real_DeleteFileA), Hook_DeleteFileA);
-    DetourAttach(&reinterpret_cast<PVOID&>(Real_RemoveDirectoryW), Hook_RemoveDirectoryW);
-    DetourAttach(&reinterpret_cast<PVOID&>(Real_RemoveDirectoryA), Hook_RemoveDirectoryA);
-    DetourAttach(&reinterpret_cast<PVOID&>(Real_MoveFileW), Hook_MoveFileW);
-    DetourAttach(&reinterpret_cast<PVOID&>(Real_MoveFileA), Hook_MoveFileA);
-    DetourAttach(&reinterpret_cast<PVOID&>(Real_MoveFileExW), Hook_MoveFileExW);
-    DetourAttach(&reinterpret_cast<PVOID&>(Real_MoveFileExA), Hook_MoveFileExA);
-    DetourAttach(&reinterpret_cast<PVOID&>(Real_CopyFileW), Hook_CopyFileW);
-    DetourAttach(&reinterpret_cast<PVOID&>(Real_CopyFileA), Hook_CopyFileA);
-    DetourAttach(&reinterpret_cast<PVOID&>(Real_CopyFileExW), Hook_CopyFileExW);
-    DetourAttach(&reinterpret_cast<PVOID&>(Real_SetFileAttributesW), Hook_SetFileAttributesW);
-    DetourAttach(&reinterpret_cast<PVOID&>(Real_SetFileAttributesA), Hook_SetFileAttributesA);
-    DetourAttach(&reinterpret_cast<PVOID&>(Real_SetFileInformationByHandle), Hook_SetFileInformationByHandle);
+    // 记录 attach 失败：任何关键 hook 未装上都会导致对应 API 不受管控，
+    // 静默失败会让子进程"无管控但看似沙箱化"。逐个检查返回值并在提交后
+    // 汇总报警（fail-closed 语义：attach 不完整则 g_hooked=false，调用方
+    // 仍会运行但日志明确标记未管控）。
+    size_t attachFailures = 0;
+    auto attach = [&attachFailures](PVOID* pp, PVOID detour, const wchar_t* name) {
+        LONG ra = DetourAttach(pp, detour);
+        if (ra != NO_ERROR) {
+            Log::error(L"DetourAttach(%ls) 失败: %d", name, ra);
+            attachFailures++;
+        }
+    };
+    attach(&reinterpret_cast<PVOID&>(Real_CreateFileW), (PVOID)Hook_CreateFileW, L"CreateFileW");
+    attach(&reinterpret_cast<PVOID&>(Real_CreateFileA), (PVOID)Hook_CreateFileA, L"CreateFileA");
+    attach(&reinterpret_cast<PVOID&>(Real_GetFileAttributesW), (PVOID)Hook_GetFileAttributesW, L"GetFileAttributesW");
+    attach(&reinterpret_cast<PVOID&>(Real_GetFileAttributesA), (PVOID)Hook_GetFileAttributesA, L"GetFileAttributesA");
+    attach(&reinterpret_cast<PVOID&>(Real_FindFirstFileW), (PVOID)Hook_FindFirstFileW, L"FindFirstFileW");
+    attach(&reinterpret_cast<PVOID&>(Real_FindFirstFileA), (PVOID)Hook_FindFirstFileA, L"FindFirstFileA");
+    attach(&reinterpret_cast<PVOID&>(Real_CreateDirectoryW), (PVOID)Hook_CreateDirectoryW, L"CreateDirectoryW");
+    attach(&reinterpret_cast<PVOID&>(Real_CreateDirectoryA), (PVOID)Hook_CreateDirectoryA, L"CreateDirectoryA");
+    attach(&reinterpret_cast<PVOID&>(Real_DeleteFileW), (PVOID)Hook_DeleteFileW, L"DeleteFileW");
+    attach(&reinterpret_cast<PVOID&>(Real_DeleteFileA), (PVOID)Hook_DeleteFileA, L"DeleteFileA");
+    attach(&reinterpret_cast<PVOID&>(Real_RemoveDirectoryW), (PVOID)Hook_RemoveDirectoryW, L"RemoveDirectoryW");
+    attach(&reinterpret_cast<PVOID&>(Real_RemoveDirectoryA), (PVOID)Hook_RemoveDirectoryA, L"RemoveDirectoryA");
+    attach(&reinterpret_cast<PVOID&>(Real_MoveFileW), (PVOID)Hook_MoveFileW, L"MoveFileW");
+    attach(&reinterpret_cast<PVOID&>(Real_MoveFileA), (PVOID)Hook_MoveFileA, L"MoveFileA");
+    attach(&reinterpret_cast<PVOID&>(Real_MoveFileExW), (PVOID)Hook_MoveFileExW, L"MoveFileExW");
+    attach(&reinterpret_cast<PVOID&>(Real_MoveFileExA), (PVOID)Hook_MoveFileExA, L"MoveFileExA");
+    attach(&reinterpret_cast<PVOID&>(Real_CopyFileW), (PVOID)Hook_CopyFileW, L"CopyFileW");
+    attach(&reinterpret_cast<PVOID&>(Real_CopyFileA), (PVOID)Hook_CopyFileA, L"CopyFileA");
+    attach(&reinterpret_cast<PVOID&>(Real_CopyFileExW), (PVOID)Hook_CopyFileExW, L"CopyFileExW");
+    attach(&reinterpret_cast<PVOID&>(Real_SetFileAttributesW), (PVOID)Hook_SetFileAttributesW, L"SetFileAttributesW");
+    attach(&reinterpret_cast<PVOID&>(Real_SetFileAttributesA), (PVOID)Hook_SetFileAttributesA, L"SetFileAttributesA");
+    attach(&reinterpret_cast<PVOID&>(Real_SetFileInformationByHandle), (PVOID)Hook_SetFileInformationByHandle, L"SetFileInformationByHandle");
     // CreateSymbolicLinkW/A 真实入口在 kernelbase（GetProcAddress 解析；见定义处注释）。
     // 注入时点（CREATE_SUSPENDED 早期）kernelbase 可能尚未进入模块表，用
     // LoadLibraryW 确保拿到句柄（GetModuleHandleW 会因未加载返回 NULL）。
@@ -261,23 +292,37 @@ static void installHooks()
             Real_CreateSymbolicLinkW = (BOOLEAN(WINAPI*)(LPCWSTR, LPCWSTR, DWORD))GetProcAddress(kb, "CreateSymbolicLinkW");
             Real_CreateSymbolicLinkA = (BOOLEAN(WINAPI*)(LPCSTR, LPCSTR, DWORD))GetProcAddress(kb, "CreateSymbolicLinkA");
             if (Real_CreateSymbolicLinkW) {
-                LONG ra = DetourAttach(&reinterpret_cast<PVOID&>(Real_CreateSymbolicLinkW), Hook_CreateSymbolicLinkW);
-                if (ra != NO_ERROR)
+                LONG ra = DetourAttach(&reinterpret_cast<PVOID&>(Real_CreateSymbolicLinkW), (PVOID)Hook_CreateSymbolicLinkW);
+                if (ra != NO_ERROR) {
                     Log::error(L"DetourAttach(CreateSymbolicLinkW) 失败: %d", ra);
+                    attachFailures++;
+                }
             }
             if (Real_CreateSymbolicLinkA) {
-                LONG ra = DetourAttach(&reinterpret_cast<PVOID&>(Real_CreateSymbolicLinkA), Hook_CreateSymbolicLinkA);
-                if (ra != NO_ERROR)
+                LONG ra = DetourAttach(&reinterpret_cast<PVOID&>(Real_CreateSymbolicLinkA), (PVOID)Hook_CreateSymbolicLinkA);
+                if (ra != NO_ERROR) {
                     Log::error(L"DetourAttach(CreateSymbolicLinkA) 失败: %d", ra);
+                    attachFailures++;
+                }
             }
+        } else {
+            Log::error(L"kernelbase.dll 加载失败，CreateSymbolicLink 不受管控");
+            attachFailures++;
         }
     }
     // ntdll 层 hook（cygwin/bash 直调 NtCreateFile 等）
     installNtHooks();
-    DetourAttach(&reinterpret_cast<PVOID&>(Real_CreateProcessW), Hook_CreateProcessW);
-    DetourAttach(&reinterpret_cast<PVOID&>(Real_CreateProcessA), Hook_CreateProcessA);
+    attach(&reinterpret_cast<PVOID&>(Real_CreateProcessW), (PVOID)Hook_CreateProcessW, L"CreateProcessW");
+    attach(&reinterpret_cast<PVOID&>(Real_CreateProcessA), (PVOID)Hook_CreateProcessA, L"CreateProcessA");
     if (DetourTransactionCommit() == NO_ERROR) {
-        g_hooked = true;
+        if (attachFailures == 0) {
+            g_hooked = true;
+        } else {
+            // 有关键 hook 未装上：不标记已管控（日志已逐条报警）。
+            Log::error(L"Detours hook 安装不完整（%zu 个 attach 失败），子进程不受完整管控", attachFailures);
+        }
+    } else {
+        Log::error(L"DetourTransactionCommit 失败: %ld", GetLastError());
     }
 }
 

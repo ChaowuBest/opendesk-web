@@ -8,6 +8,7 @@
 #include "inject.h"
 
 #include "../common/log.h"
+#include "../common/utf.h"
 #include "detours.h"
 
 namespace sbx {
@@ -87,8 +88,8 @@ static BOOL createProcessWithHook(LPCWSTR lpApplicationName, LPWSTR lpCommandLin
     // 代价：cygwin 程序 IO 不受管控（README 已知边界，引导用 Win32 等价物）。
     {
         const std::wstring& t = target;
-        if (t.find(L"\Git\\") != std::wstring::npos ||
-            t.find(L"\usr\bin\\") != std::wstring::npos ||
+        if (t.find(L"\\Git\\") != std::wstring::npos ||
+            t.find(L"\\usr\\bin\\") != std::wstring::npos ||
             t.find(L"msys64") != std::wstring::npos) {
             return Real_CreateProcessW(lpApplicationName, lpCommandLine, lpProcessAttributes,
                                        lpThreadAttributes, bInheritHandles, dwCreationFlags,
@@ -117,7 +118,7 @@ static BOOL createProcessWithHook(LPCWSTR lpApplicationName, LPWSTR lpCommandLin
                              lpProcessInformation)) {
         return FALSE;
     }
-    if (!injectHookDll(lpProcessInformation->hProcess, dllPath, true)) {
+    if (!injectHookDll(lpProcessInformation->hProcess, dllPath)) {
         // 注入失败（常见于系统目录进程/受保护进程）：不终止后代——那会连坐
         // 中断父进程的正常启动流程（如 PowerShell 的 Process.Start）。后代
         // 不受管控是已知降级，记录诊断；父进程继续运行。
@@ -177,21 +178,8 @@ BOOL WINAPI Hook_CreateProcessA(LPCSTR lpApplicationName, LPSTR lpCommandLine,
     HookGuard guard;
 
     // 窄字符 -> 宽字符解析 exe 路径（判定用）
-    std::wstring appWide, cmdWide;
-    if (lpApplicationName) {
-        int n = MultiByteToWideChar(CP_ACP, 0, lpApplicationName, -1, nullptr, 0);
-        if (n > 0) {
-            appWide.resize((size_t)n - 1);
-            MultiByteToWideChar(CP_ACP, 0, lpApplicationName, -1, &appWide[0], n);
-        }
-    }
-    if (lpCommandLine) {
-        int n = MultiByteToWideChar(CP_ACP, 0, lpCommandLine, -1, nullptr, 0);
-        if (n > 0) {
-            cmdWide.resize((size_t)n - 1);
-            MultiByteToWideChar(CP_ACP, 0, lpCommandLine, -1, &cmdWide[0], n);
-        }
-    }
+    std::wstring appWide = lpApplicationName ? ansiToWide(lpApplicationName) : L"";
+    std::wstring cmdWide = lpCommandLine ? ansiToWide(lpCommandLine) : L"";
     std::wstring exePath = resolveExePath(appWide.empty() ? nullptr : appWide.c_str(),
                                           cmdWide.empty() ? nullptr : cmdWide.c_str());
     if (!exePath.empty()) {

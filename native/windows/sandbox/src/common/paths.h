@@ -35,4 +35,9 @@ bool mapHostToVirtual(const std::wstring& hostPath, const std::vector<RootMap>& 
 bool mapVirtualToHost(const std::wstring& vpath, const std::vector<RootMap>& roots,
                       std::wstring& hostPath);
 
+// 将 `\\?\GLOBALROOT\Device\HarddiskVolumeN\...` 设备命名空间路径转换为等价盘符路径
+// （`\\?\GLOBALROOT\Device\HarddiskVolume3\foo` -> `C:\foo`）。非 GLOBALROOT 卷路径
+// 返回 false（原样调用方处理）。用于拦截经设备命名空间绕过 roots 映射的访问。
+bool mapGlobalRootToDrive(const std::wstring& path, std::wstring& drivePath);
+
 } // namespace sbx

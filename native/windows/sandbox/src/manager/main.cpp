@@ -18,6 +18,7 @@
 
 #include "../common/log.h"
 #include "../common/policy.h"
+#include "../common/utf.h"
 #include "endpoint.h"
 #include "runner.h"
 
@@ -44,7 +45,6 @@ struct CliOptions {
     bool automount = false;
     bool delToTrash = false;
     std::vector<std::pair<std::wstring, std::wstring>> envExtra;
-    std::vector<std::pair<std::wstring, std::wstring>> pathMaps;
 };
 
 static void printUsage()
@@ -102,10 +102,11 @@ static bool parseRunArgs(const std::vector<std::wstring>& args, CliOptions& opts
             std::wstring kv;
             if (!next(kv)) return false;
             size_t eq = kv.find(L'=');
-            if (eq == std::wstring::npos || eq == 0 || eq + 1 == kv.size()) {
+            if (eq == std::wstring::npos || eq == 0) {
                 Log::error(L"--env 格式应为 NAME=VALUE: %ls", kv.c_str());
                 return false;
             }
+            // 允许空值（NAME= 表示设置/清空环境变量）
             opts.envExtra.emplace_back(kv.substr(0, eq), kv.substr(eq + 1));
         } else if (a == L"--map") {
             // 兼容参数：Detours 实现子进程直接使用宿主路径，启动期翻译不再需要
@@ -117,7 +118,6 @@ static bool parseRunArgs(const std::vector<std::wstring>& args, CliOptions& opts
                 return false;
             }
             Log::warn(L"--map 在 Detours 实现下为空操作（子进程直接使用宿主路径）: %ls", kv.c_str());
-            opts.pathMaps.emplace_back(kv.substr(0, eq), kv.substr(eq + 1));
         } else {
             Log::error(L"无法识别的参数: %ls", a.c_str());
             return false;
@@ -147,13 +147,13 @@ static int runDebugRules(const std::vector<std::wstring>& args)
     Policy p = Policy::loadFromFile(policyFile);
     fwprintf(stdout, L"default=%hs\n", p.def().c_str());
     for (const auto& r : p.rules()) {
-        fwprintf(stdout, L"  rule path=%ls access=%hs perm=%s\n", r.path.c_str(), r.access.c_str(),
+        fwprintf(stdout, L"  rule path=%ls access=%hs perm=%hs\n", r.path.c_str(), r.access.c_str(),
                  r.perm == Perm::Allow ? "allow" : (r.perm == Perm::Ask ? "ask" : "deny"));
     }
-    std::string acc(access.begin(), access.end());
+    std::string acc = narrowAscii(access);
     std::string why;
     bool ok = p.check(normalizeVirtualPath(path), acc, &why);
-    fwprintf(stdout, L"check -> %s (%hs)\n", ok ? "allow" : "deny", why.c_str());
+    fwprintf(stdout, L"check -> %hs (%hs)\n", ok ? "allow" : "deny", why.c_str());
     return 0;
 }
 

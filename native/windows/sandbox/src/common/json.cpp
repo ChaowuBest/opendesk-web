@@ -122,9 +122,10 @@ static JsonValue parseValueRec(const wchar_t*& p)
             throw std::runtime_error("JSON 数组格式错误");
         }
     }
-    if (c == L't') { p += 4; return JsonValue::boolean(true); }
-    if (c == L'f') { p += 5; return JsonValue::boolean(false); }
-    if (c == L'n') { p += 4; return JsonValue(); }
+    // 逐字符校验 true/false/null（p 可能停在字符串末尾，p += N 会越界读）
+    if (c == L't' && wcsncmp(p, L"true", 4) == 0) { p += 4; return JsonValue::boolean(true); }
+    if (c == L'f' && wcsncmp(p, L"false", 5) == 0) { p += 5; return JsonValue::boolean(false); }
+    if (c == L'n' && wcsncmp(p, L"null", 4) == 0) { p += 4; return JsonValue(); }
     if (c == L'-' || (c >= L'0' && c <= L'9')) {
         const wchar_t* start = p;
         if (*p == L'-') p++;

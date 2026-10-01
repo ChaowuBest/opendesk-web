@@ -8,6 +8,8 @@
 
 #include <stdexcept>
 
+#include "utf.h"
+
 namespace sbx {
 
 static std::wstring stripComment(const std::wstring& line)
@@ -78,7 +80,7 @@ static TomlValue parseValue(const std::wstring& v, int lineNo)
         return t;
     }
     throw std::runtime_error("第 " + std::to_string(lineNo) + " 行不支持的值: " +
-                             std::string(v.begin(), v.end()));
+                             wideToUtf8(v));
 }
 
 static TomlTable& enterTable(TomlTable& root, const std::wstring& name, int lineNo)
@@ -90,7 +92,7 @@ static TomlTable& enterTable(TomlTable& root, const std::wstring& name, int line
         if (it != node->end()) {
             if (it->second.kind() != TomlValue::Kind::Table)
                 throw std::runtime_error("第 " + std::to_string(lineNo) + " 行: [ " +
-                                         std::string(name.begin(), name.end()) + " ] 与已有键冲突");
+                                         wideToUtf8(name) + " ] 与已有键冲突");
             node = &it->second.table();
         } else {
             auto [ins, ok] = node->emplace(part, TomlValue::makeTable());

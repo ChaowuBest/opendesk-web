@@ -224,7 +224,7 @@ int runSandbox(const SandboxLaunchOptions& opts)
     }
     // 经典注入：CreateRemoteThread + LoadLibraryW（完整路径）；等待注入完成
     // （DllMain 已安装 hook）再 Assign Job / resume，无加载竞态。
-    if (injectHook && !injectHookDll(pi.hProcess, hookDll, true)) {
+    if (injectHook && !injectHookDll(pi.hProcess, hookDll)) {
         DWORD err = GetLastError();
         Log::error(L"hook DLL 注入失败: %lu（hook=%ls）", err, hookDll.c_str());
         TerminateProcess(pi.hProcess, 1);

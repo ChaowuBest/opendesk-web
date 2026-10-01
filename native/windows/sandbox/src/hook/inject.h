@@ -13,8 +13,8 @@ namespace sbx {
 
 // 在目标进程中注入 hook DLL（CreateRemoteThread + LoadLibraryW 完整路径）。
 // 仅支持同架构（64->64 / 32->32）；跨架构返回 FALSE（GetLastError=ERROR_NOT_SUPPORTED）。
-// 调用方应保证目标进程处于挂起状态、且注入线程结束后再 resume，避免竞态。
-// 注入成功返回 TRUE，并可选择等待注入线程结束（waitDone=true 默认）。
-bool injectHookDll(HANDLE hProcess, const std::wstring& dllPath, bool waitDone = true);
+// 调用方应保证目标进程处于挂起状态；本函数会等待注入线程结束（DllMain 已安装
+// hook）再返回，调用方在返回后 resume，避免竞态。
+bool injectHookDll(HANDLE hProcess, const std::wstring& dllPath);
 
 } // namespace sbx

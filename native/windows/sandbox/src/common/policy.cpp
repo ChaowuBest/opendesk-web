@@ -12,6 +12,7 @@
 #include "glob.h"
 #include "log.h"
 #include "toml.h"
+#include "utf.h"
 
 namespace sbx {
 
@@ -47,11 +48,11 @@ static Perm parsePerm(const std::wstring& perm)
 static bool buildRule(const std::wstring& rawPath, const std::wstring& rawAccess,
                       const std::wstring& rawPerm, Rule& out)
 {
-    std::string access(rawAccess.begin(), rawAccess.end());
+    std::string access = narrowAscii(rawAccess);
     for (auto& c : access) c = (char)tolower((unsigned char)c);
     if (access != "read" && access != "write" && access != "execute" && access != "all")
         return false;
-    std::wstring perm(rawPerm.begin(), rawPerm.end());
+    std::wstring perm = rawPerm;
     for (auto& c : perm) c = (wchar_t)towlower(c);
     if (perm != L"allow" && perm != L"ask" && perm != L"deny") return false;
 
@@ -74,7 +75,7 @@ Policy Policy::loadFromFile(const std::wstring& path)
     HANDLE h = CreateFileW(path.c_str(), GENERIC_READ, FILE_SHARE_READ, nullptr,
                            OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
     if (h == INVALID_HANDLE_VALUE)
-        throw std::runtime_error("无法打开策略文件: " + std::string(path.begin(), path.end()));
+        throw std::runtime_error("无法打开策略文件: " + wideToUtf8(path));
     std::wstring text;
     do {
         LARGE_INTEGER size;
@@ -99,7 +100,7 @@ Policy Policy::loadFromFile(const std::wstring& path)
     } while (false);
     CloseHandle(h);
     if (text.empty())
-        throw std::runtime_error("策略文件为空或不可读: " + std::string(path.begin(), path.end()));
+        throw std::runtime_error("策略文件为空或不可读: " + wideToUtf8(path));
 
     TomlTable root;
     try {
@@ -247,15 +248,6 @@ bool Policy::checkDenyOnly(const std::wstring& vpath, const std::string& kind) c
     return m_default == "deny";
 }
 
-bool Policy::needsAsk(const std::wstring& vpath, const std::string& kind) const
-{
-    for (const auto& rule : m_rules) {
-        if (!rule.matches(vpath, kind)) continue;
-        return rule.perm == Perm::Ask;
-    }
-    return false;
-}
-
 bool Policy::tryCached(const std::wstring& vpath, const std::string& kind, bool& allowed) const
 {
     if (m_ask.cacheTtlSeconds <= 0) return false;
@@ -314,12 +306,10 @@ void Policy::installGrants(const std::vector<Grant>& grants)
     for (const auto& g : grants) {
         int ttl = std::max(0, std::min(3600, g.ttlSeconds));
         Rule rule;
-        std::wstring acc(g.access.begin(), g.access.end());
+        std::wstring acc = ansiToWide(g.access.c_str());
         if (buildRule(g.path, acc, L"allow", rule)) {
             m_state->grants.push_back(Ephemeral{ std::move(rule), now + (long long)ttl * 1000 });
-            Log::debug(L"[GRANT] + %ls %ls (ttl=%ds)",
-                       std::wstring(g.access.begin(), g.access.end()).c_str(),
-                       g.path.c_str(), ttl);
+            Log::debug(L"[GRANT] + %ls %ls (ttl=%ds)", acc.c_str(), g.path.c_str(), ttl);
         }
     }
 }

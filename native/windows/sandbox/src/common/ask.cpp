@@ -11,34 +11,17 @@
 #include <ws2tcpip.h>
 #include <windows.h>
 #include <algorithm>
+#include <cstdlib>
+#include <cstring>
 #include <cwchar>
 #include <stdexcept>
 
 #include "json.h"
 #include "hook_scope.h"
 #include "log.h"
+#include "utf.h"
 
 namespace sbx {
-
-// -- UTF-8 <-> UTF-16（ask 协议线上格式为 UTF-8） ----------------------------
-
-static std::string wideToUtf8(const std::wstring& w)
-{
-    if (w.empty()) return std::string();
-    int n = WideCharToMultiByte(CP_UTF8, 0, w.c_str(), (int)w.size(), nullptr, 0, nullptr, nullptr);
-    std::string s((size_t)n, '\0');
-    WideCharToMultiByte(CP_UTF8, 0, w.c_str(), (int)w.size(), &s[0], n, nullptr, nullptr);
-    return s;
-}
-
-static std::wstring utf8ToWide(const char* bytes, size_t len)
-{
-    if (len == 0) return std::wstring();
-    int n = MultiByteToWideChar(CP_UTF8, 0, bytes, (int)len, nullptr, 0);
-    std::wstring w((size_t)n, L'\0');
-    MultiByteToWideChar(CP_UTF8, 0, bytes, (int)len, &w[0], n);
-    return w;
-}
 
 // -- HTTP 传输（WinHTTP 同步模式） --------------------------------------------
 
@@ -67,12 +50,16 @@ static bool parseHttpUrl(const std::wstring& url, ParsedUrl& out)
     std::wstring host;
     if (colon != std::wstring::npos && hostPort.find(L']') == std::wstring::npos) {
         host = hostPort.substr(0, colon);
-        port = (unsigned short)_wtoi(hostPort.substr(colon + 1).c_str());
+        int p = _wtoi(hostPort.substr(colon + 1).c_str());
+        // 端口必须是 1-65535：`(unsigned short)` 截断会把 70000 静默变成 4464
+        // 连错端口（配置错误不报警），空端口 `host:` 得 0 也会被截断后的检查放过。
+        if (p <= 0 || p > 65535) return false;
+        port = (unsigned short)p;
     } else {
         host = hostPort;
         port = https ? 443 : 80;
     }
-    if (host.empty() || port == 0) return false;
+    if (host.empty()) return false;
     out.host = host;
     out.port = port;
     out.path = path;
@@ -219,14 +206,20 @@ static bool httpAskImpl(const AskConfig& cfg, const std::wstring& vpath, const s
         if (u.host == L"localhost") {
             addr.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
         } else {
-            struct hostent* he = gethostbyname(hostNarrow.c_str());
-            if (!he) {
+            // 用 getaddrinfo 替代已弃用的 gethostbyname（同一结果，无警告）
+            struct addrinfo hints = {};
+            hints.ai_family = AF_INET;
+            hints.ai_socktype = SOCK_STREAM;
+            struct addrinfo* res = nullptr;
+            if (getaddrinfo(hostNarrow.c_str(), nullptr, &hints, &res) != 0 || !res) {
+                if (res) freeaddrinfo(res);
                 err = L"无法解析端点主机: " + u.host;
                 closesocket(s);
                 outcome = AskOutcome::TransportError;
                 return false;
             }
-            memcpy(&addr.sin_addr, he->h_addr, he->h_length);
+            addr.sin_addr = ((sockaddr_in*)res->ai_addr)->sin_addr;
+            freeaddrinfo(res);
         }
     }
 
@@ -433,7 +426,7 @@ std::vector<Grant> parseGrantsFromJson(const JsonValue& root)
             auto tit = g.obj().find(L"ttl");
             if (tit != g.obj().end() && tit->second.isInt()) ttl = tit->second.intValue();
             ttl = std::max(0LL, std::min(3600LL, ttl));
-            std::string acc(access.begin(), access.end());
+            std::string acc = narrowAscii(access);
             for (auto& c : acc) c = (char)tolower((unsigned char)c);
             if (path.empty()) continue;
             if (acc != "read" && acc != "write" && acc != "execute" && acc != "all") continue;

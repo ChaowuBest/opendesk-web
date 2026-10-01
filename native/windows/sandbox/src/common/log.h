@@ -25,8 +25,6 @@ public:
     static void error(const wchar_t* fmt, ...);
     static void debug(const wchar_t* fmt, ...);   // 仅 verbose
 
-    static void setQuiet(bool q) { g_quiet = q; }
-
 private:
     static void write(int level, const wchar_t* prefix, const std::wstring& msg);
     static CRITICAL_SECTION s_lock;

@@ -7,7 +7,8 @@
 
 // 构建 sandbox.exe + sandbox_hook.dll（Detours 实现，MSVC + nmake）。
 // 用法: node build-native.cjs [x64|x86]
-const { execFileSync } = require('node:child_process');
+// 成功时只输出一行简短结论；失败时输出完整构建日志（nmake/cl 详情）。
+const { spawnSync, execFileSync } = require('node:child_process');
 const path = require('node:path');
 const fs = require('node:fs');
 const os = require('node:os');
@@ -25,8 +26,7 @@ function findVsInstall() {
         if (fs.existsSync(path.join(c, 'VC', 'Auxiliary', 'Build', 'vcvars64.bat'))) return c;
     }
     try {
-        const out = execFileSync(
-            'C:\\Program Files (x86)\\Microsoft Visual Studio\\Installer\\vswhere.exe',
+        const out = execFileSync(            'C:\\Program Files (x86)\\Microsoft Visual Studio\\Installer\\vswhere.exe',
             ['-latest', '-products', '*', '-requires', 'Microsoft.VisualStudio.Component.VC.Tools.x86.x64', '-property', 'installationPath'],
             { encoding: 'utf8' }
         ).trim();
@@ -57,9 +57,17 @@ fs.writeFileSync(tmpScript, [
 ].join('\r\n'));
 
 try {
-    execFileSync('cmd.exe', ['/d', '/c', tmpScript], { stdio: 'inherit', windowsHide: true });
-} catch (error) {
-    process.exit(error.status ?? 1);
+    // 用 buffer 捕获并原样透出：cl 在中文系统按 GBK 输出，utf8 解码会乱码
+    const out = spawnSync('cmd.exe', ['/d', '/c', tmpScript], { encoding: 'buffer', windowsHide: true, maxBuffer: 32 * 1024 * 1024 });
+    if (out.error || out.status !== 0) {
+        // 失败：完整输出（nmake/cl 的 stdout+stderr）
+        if (out.stdout && out.stdout.length) process.stdout.write(out.stdout);
+        if (out.stderr && out.stderr.length) process.stderr.write(out.stderr);
+        if (out.error) console.error(out.error.message);
+        process.exit(out.status ?? 1);
+    }
+    // 成功：仅输出简短结论（完整构建日志被丢弃）
+    console.log(`[native] sandbox ${arch} 构建成功`);
 } finally {
     fs.rmSync(tmpScript, { force: true });
 }

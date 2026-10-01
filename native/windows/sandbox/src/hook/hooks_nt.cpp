@@ -111,12 +111,15 @@ ALWAYS_INLINE static bool ntPathToWin32(const UNICODE_STRING* name, std::wstring
         }
         return false;
     }
-    // \SystemRoot\... -> %SystemRoot% （启动时缓存）
+    // \SystemRoot\... -> %SystemRoot% （magic static 缓存，避免热路径重复查环境）
     if (p.rfind(L"\\SystemRoot\\", 0) == 0) {
-        wchar_t sysRoot[260];
-        DWORD n = GetEnvironmentVariableW(L"SystemRoot", sysRoot, 260);
-        if (n > 0 && n < 260) {
-            out = std::wstring(sysRoot) + p.substr(11);
+        static const std::wstring sysRoot = [] {
+            wchar_t buf[260];
+            DWORD n = GetEnvironmentVariableW(L"SystemRoot", buf, 260);
+            return (n > 0 && n < 260) ? std::wstring(buf) : std::wstring();
+        }();
+        if (!sysRoot.empty()) {
+            out = sysRoot + p.substr(11);
             return true;
         }
     }
@@ -152,7 +155,9 @@ NTSTATUS NTAPI Hook_NtCreateFile(PHANDLE fileHandle, ACCESS_MASK desiredAccess,
                                  PLARGE_INTEGER allocationSize, ULONG fileAttributes, ULONG shareAccess,
                                  ULONG createDisposition, ULONG createOptions, PVOID eaBuffer, ULONG eaLength)
 {
-    if (HookScope::active || !g_hooked || !objectAttributes) {
+    // HookGuard 已置位说明调用来自本 DLL 内的 hook 路径（经 trampoline 回到
+    // 真实 ntdll），已在上层判定过——避免二次判定（额外开销 + 语义混乱）。
+    if (HookGuard::inHook() || HookScope::active || !g_hooked || !objectAttributes) {
         return Real_NtCreateFile(fileHandle, desiredAccess, objectAttributes, ioStatusBlock,
                                  allocationSize, fileAttributes, shareAccess, createDisposition,
                                  createOptions, eaBuffer, eaLength);
@@ -197,7 +202,8 @@ NTSTATUS NTAPI Hook_NtSetInformationFile(HANDLE fileHandle, PIO_STATUS_BLOCK ioS
                                          PVOID fileInformation, ULONG length,
                                          FILE_INFORMATION_CLASS fileInformationClass)
 {
-    if (HookScope::active || !g_hooked || !fileHandle || fileHandle == INVALID_HANDLE_VALUE) {
+    // HookGuard 已置位（来自本 DLL hook 路径）→ 直通，避免二次判定
+    if (HookGuard::inHook() || HookScope::active || !g_hooked || !fileHandle || fileHandle == INVALID_HANDLE_VALUE) {
         return Real_NtSetInformationFile(fileHandle, ioStatusBlock, fileInformation, length,
                                          fileInformationClass);
     }
@@ -222,7 +228,7 @@ NTSTATUS NTAPI Hook_NtSetInformationFile(HANDLE fileHandle, PIO_STATUS_BLOCK ioS
                 // 句柄级删除同样接入回收站（python os.remove / Node 等可能走此路径）；
                 // 回收站移动文件后，原句柄的删除标记落空即可（文件已不在原位置）。
                 if (g_delToTrash) {
-                    if (RecycleGuard::active()) return STATUS_SUCCESS;   // 回收站流程内 no-op
+                    if (RecycleGuard::active()) break;   // 回收流程进行中：交由真实句柄删除
                     return recycleToTrash(p) ? STATUS_SUCCESS : STATUS_ACCESS_DENIED;
                 }
             }
@@ -231,11 +237,15 @@ NTSTATUS NTAPI Hook_NtSetInformationFile(HANDLE fileHandle, PIO_STATUS_BLOCK ioS
         case kFileRenameInformation:
         case kFileRenameInformationEx:
         {
-            wchar_t pathBuf[MAX_PATH];
-            DWORD n = GetFinalPathNameByHandleW(fileHandle, pathBuf, MAX_PATH, FILE_NAME_NORMALIZED);
-            if (n > 0 && n < MAX_PATH) {
+            std::wstring src;
+            if (finalPathByHandle(fileHandle, src)) {
                 DWORD err = ERROR_SUCCESS;
-                if (!sandboxCheckPath(std::wstring(pathBuf, n), AccessClass::Write, err)) {
+                if (!sandboxCheckPath(src, AccessClass::Write, err)) {
+                    return ntStatusForWinError(err);
+                }
+                // 目标路径同样必须通过策略判定（防句柄级 rename 把文件移入 deny 目录）
+                bool isEx = (ULONG)fileInformationClass == kFileRenameInformationEx;
+                if (!sandboxCheckRenameTarget(src, fileInformation, length, isEx, err)) {
                     return ntStatusForWinError(err);
                 }
             }
@@ -250,7 +260,8 @@ NTSTATUS NTAPI Hook_NtSetInformationFile(HANDLE fileHandle, PIO_STATUS_BLOCK ioS
 
 NTSTATUS NTAPI Hook_NtDeleteFile(POBJECT_ATTRIBUTES objectAttributes)
 {
-    if (HookScope::active || !g_hooked || !objectAttributes) {
+    // HookGuard 已置位（来自本 DLL hook 路径）→ 直通，避免二次判定
+    if (HookGuard::inHook() || HookScope::active || !g_hooked || !objectAttributes) {
         return Real_NtDeleteFile(objectAttributes);
     }
     HookGuard guard;
@@ -266,7 +277,7 @@ NTSTATUS NTAPI Hook_NtDeleteFile(POBJECT_ATTRIBUTES objectAttributes)
         // 句柄级删除路径（python os.remove、Node fs.unlink 等可能直调 ntdll）
         // 同样接入回收站：--del-to-trash 下删除经 SHFileOperation 送回收站。
         if (g_delToTrash) {
-            if (RecycleGuard::active()) return STATUS_SUCCESS;   // 回收站流程内 no-op
+            if (RecycleGuard::active()) return Real_NtDeleteFile(objectAttributes);   // 回收流程进行中：直接真实删除
             if (recycleToTrash(winPath)) return STATUS_SUCCESS;
             return STATUS_ACCESS_DENIED;
         }

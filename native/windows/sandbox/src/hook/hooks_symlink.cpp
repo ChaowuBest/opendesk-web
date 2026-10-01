@@ -14,6 +14,7 @@
 
 #include "../common/hook_scope.h"
 #include "../common/log.h"
+#include "../common/utf.h"
 #include "detours.h"
 
 namespace sbx {
@@ -21,16 +22,6 @@ namespace sbx {
 // -- Detour 目标（真实函数，dllmain.cpp 定义并 attach） -----------------------
 
 // Real_CreateSymbolicLinkW/A 由 dllmain.cpp 定义初始化（Detour 目标），此处仅引用。
-
-static std::wstring ansiToWide(LPCSTR s)
-{
-    if (!s) return L"";
-    int n = MultiByteToWideChar(CP_ACP, 0, s, -1, nullptr, 0);
-    if (n <= 0) return L"";
-    std::wstring w((size_t)n - 1, L'\0');
-    MultiByteToWideChar(CP_ACP, 0, s, -1, &w[0], n);
-    return w;
-}
 
 // -- hook 实现 ----------------------------------------------------------------
 

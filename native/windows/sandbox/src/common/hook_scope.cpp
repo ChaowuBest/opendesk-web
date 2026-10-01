@@ -10,8 +10,15 @@
 
 __declspec(thread) bool HookScope::active = false;
 
-// 进程级回收站重入保护（TLS 计数 + 进程级标志；SHFileOperation 的工作线程
-// 无调用者 TLS 上下文，因此需要进程级标志而非仅 TLS）。
+// 进程级回收站流程保护：深度计数。
+// SHFileOperation 是 shell 级共享操作，同一进程并发调用会互相等待直至死锁
+// （hook 环境下实测）；且其内部（工作线程）删除原文件再进 recycleToTrash 会
+// 无限递归。语义：
+//  - 首个回收者（depth 0 -> 1）真实执行 SHFileOperation；
+//  - 流程进行中（active()）的其他删除请求退化为"直接删除原文件"（不进回收站），
+//    既避免第二个并发 SHFileOperation 死锁，也避免静默吞掉无关删除；
+//  - SHFileOperation 内部（工作线程）删除原文件也命中 active()，直接删除——
+//    此时文件已被 shell 移入回收站，原位置删除是 no-op 或失败但无害。
 static volatile LONG g_recycleDepth = 0;
 
 bool RecycleGuard::tryEnter()

@@ -18,6 +18,7 @@
 
 #include "../common/json.h"
 #include "../common/log.h"
+#include "../common/utf.h"
 
 namespace sbx {
 
@@ -27,24 +28,6 @@ static std::wstring g_default = L"deny";
 static std::atomic<bool> g_quit{false};
 static std::mutex g_logGate;
 static std::vector<std::wstring> g_requestLog;
-
-static std::string wideToUtf8(const std::wstring& w)
-{
-    if (w.empty()) return std::string();
-    int n = WideCharToMultiByte(CP_UTF8, 0, w.c_str(), (int)w.size(), nullptr, 0, nullptr, nullptr);
-    std::string s((size_t)n, '\0');
-    WideCharToMultiByte(CP_UTF8, 0, w.c_str(), (int)w.size(), &s[0], n, nullptr, nullptr);
-    return s;
-}
-
-static std::wstring utf8ToWide(const char* bytes, size_t len)
-{
-    if (len == 0) return std::wstring();
-    int n = MultiByteToWideChar(CP_UTF8, 0, bytes, (int)len, nullptr, 0);
-    std::wstring w((size_t)n, L'\0');
-    MultiByteToWideChar(CP_UTF8, 0, bytes, (int)len, &w[0], n);
-    return w;
-}
 
 // 演示规则（与 C# 版一致）：见 README §3.2 端点行为表
 static void decide(const std::wstring& path, const std::wstring& access,

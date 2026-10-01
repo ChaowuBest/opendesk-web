@@ -69,9 +69,6 @@ public:
     // ask，但 deny 规则仍拦截——保证探测不打扰的同时不削弱 deny 防逃逸。
     bool checkDenyOnly(const std::wstring& vpath, const std::string& kind) const;
 
-    // 预判该虚拟路径是否会命中静态 ask 规则（不发问询、无副作用）。
-    bool needsAsk(const std::wstring& vpath, const std::string& kind) const;
-
     // ask 决策的进程内缓存（TTL 来自 ask.cache_ttl_seconds）。
     bool tryCached(const std::wstring& vpath, const std::string& kind, bool& allowed) const;
     void putCached(const std::wstring& vpath, const std::string& kind, bool allowed);

@@ -24,14 +24,40 @@ std::wstring normalizeVirtualPath(const std::wstring& raw)
 
 static void stripTrailingDotsAndSpaces(std::wstring& s)
 {
-    // 去掉路径分量末尾的 '.' 与空格（Windows 归一化别名，如 "a.txt." -> "a.txt"）
-    size_t end = s.size();
-    while (end > 0) {
-        wchar_t c = s[end - 1];
-        if (c == L'.' || c == L' ') end--;
-        else break;
+    // 逐路径分量剥离尾部的 '.' 与空格（Windows 归一化别名：每个分量末尾的
+    // 点/空格都会被文件系统忽略，如 "a.txt." -> "a.txt"、"C:\dir. \file" 中
+    // 的 "dir. " 等同 "dir"）。只处理整串末尾会漏掉中间分量，导致 hook 判定
+    // 用的 vpath 与系统实际解析的路径不一致（deny 可被中间分量尾点绕过）。
+    for (size_t i = 0; i < s.size();) {
+        size_t start = i;
+        size_t sep = s.find_first_of(L"/\\", i);
+        size_t end = (sep == std::wstring::npos) ? s.size() : sep;
+        // 该分量末尾（不含分隔符）向前剥离 '.' 与空格
+        size_t compEnd = end;
+        while (compEnd > start && (s[compEnd - 1] == L'.' || s[compEnd - 1] == L' ')) compEnd--;
+        if (compEnd < end) s.erase(compEnd, end - compEnd);
+        if (sep == std::wstring::npos) break;
+        i = sep + 1;
     }
-    s.resize(end);
+}
+
+// 路径含 `.` 或 `..` 分量（正/反斜杠分隔的完整段）。
+// 这类段必须经 GetFullPathNameW 展开：绝对路径（C:\a\..\b）中的 `..`
+// 同样要展开，否则 hook 判定基于未规范化 vpath，deny 规则可被 `..` 别名绕过
+// （GetFileAttributesW 等不经 NtCreateFile 二次判定的 API 直接泄露 deny 目录）。
+static bool hasDotSegment(const std::wstring& p)
+{
+    size_t start = 0;
+    while (start < p.size()) {
+        size_t sep = p.find_first_of(L"/\\", start);
+        size_t end = (sep == std::wstring::npos) ? p.size() : sep;
+        size_t n = end - start;
+        if ((n == 1 && p[start] == L'.') || (n == 2 && p[start] == L'.' && p[start + 1] == L'.'))
+            return true;
+        if (sep == std::wstring::npos) break;
+        start = sep + 1;
+    }
+    return false;
 }
 
 bool normalizeHostPath(const std::wstring& raw, std::wstring& out)
@@ -51,8 +77,9 @@ bool normalizeHostPath(const std::wstring& raw, std::wstring& out)
     }
     if (p.empty()) return false;
 
-    // 相对路径展开（GetFullPathName 解析 '..' 并结合进程 cwd）
-    if (!(isalpha(p[0]) && p.size() > 1 && p[1] == L':') && p.rfind(L"\\\\", 0) != 0) {
+    // 含 `.`/`..` 分量的路径（无论相对还是绝对）经 GetFullPathNameW 展开，
+    // 解析 `..` 并结合进程 cwd；无可疑段时不调用（热路径零开销）。
+    if (hasDotSegment(p)) {
         DWORD need = GetFullPathNameW(p.c_str(), 0, nullptr, nullptr);
         if (need == 0) return false;
         std::wstring buf(need, L'\0');
@@ -90,6 +117,46 @@ static bool startsWithNoCase(const std::wstring& s, const std::wstring& prefix)
 {
     if (s.size() < prefix.size()) return false;
     return _wcsnicmp(s.c_str(), prefix.c_str(), prefix.size()) == 0;
+}
+
+bool mapGlobalRootToDrive(const std::wstring& path, std::wstring& drivePath)
+{
+    // 目标形如 \\?\GLOBALROOT\Device\HarddiskVolumeN\...（也接受 \\.\GLOBALROOT\...）
+    const wchar_t* prefix = nullptr;
+    if (path.rfind(L"\\\\?\\GLOBALROOT\\", 0) == 0) prefix = L"\\\\?\\GLOBALROOT\\";
+    else if (path.rfind(L"\\\\.\\GLOBALROOT\\", 0) == 0) prefix = L"\\\\.\\GLOBALROOT\\";
+    else return false;
+
+    std::wstring rest = path.substr(wcslen(prefix));
+    if (rest.rfind(L"Device\\HarddiskVolume", 0) != 0) return false;   // 非卷设备（NamedPipe 等）不映射
+
+    // 解析卷号（数字，可能后跟 '\' 或路径）
+    size_t numStart = wcslen(L"Device\\HarddiskVolume");
+    size_t i = numStart;
+    std::wstring num;
+    while (i < rest.size() && iswdigit(rest[i])) { num.push_back(rest[i]); i++; }
+    if (num.empty()) return false;
+    // 找到该卷号对应的盘符（QueryDosDeviceW 反查 \Device\HarddiskVolumeN -> "X:"）
+    wchar_t buf[1024] = {};
+    for (wchar_t letter = L'Z'; letter >= L'A'; letter--) {
+        wchar_t dos[4] = { letter, L':', L'\0', L'\0' };
+        DWORD need = QueryDosDeviceW(dos, buf, 1024);
+        if (need == 0) continue;
+        // buf 可能是多字符串：找到与 \Device\HarddiskVolumeN 匹配的那条
+        wchar_t* entry = buf;
+        while (entry && *entry) {
+            std::wstring target(entry);
+            if (target.find(L"\\Device\\HarddiskVolume" + num) == 0) {
+                std::wstring letterStr(1, letter);
+                // rest 从数字之后开始：卷号后的部分（'\' 或 '\path'）
+                std::wstring tail = rest.substr(i);
+                drivePath = letterStr + L":" + (tail.empty() ? std::wstring(L"\\") : tail);
+                return true;
+            }
+            entry += wcslen(entry) + 1;
+        }
+    }
+    return false;
 }
 
 bool mapHostToVirtual(const std::wstring& hostPath, const std::vector<RootMap>& roots,

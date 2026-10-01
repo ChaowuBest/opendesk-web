@@ -49,7 +49,7 @@ DETOURS_DEFS = /DDETOURS_64BIT /DDETOURS_ARM64
 !ENDIF
 DETOURS_CFLAGS = $(CFLAGS) $(DETOURS_DEFS)
 
-COMMON_OBJS = $(OBJDIR)\log.obj $(OBJDIR)\toml.obj $(OBJDIR)\glob.obj $(OBJDIR)\paths.obj $(OBJDIR)\json.obj $(OBJDIR)\ask.obj $(OBJDIR)\policy.obj $(OBJDIR)\hook_scope.obj
+COMMON_OBJS = $(OBJDIR)\log.obj $(OBJDIR)\utf.obj $(OBJDIR)\toml.obj $(OBJDIR)\glob.obj $(OBJDIR)\paths.obj $(OBJDIR)\json.obj $(OBJDIR)\ask.obj $(OBJDIR)\policy.obj $(OBJDIR)\hook_scope.obj
 DETOURS_OBJS = $(OBJDIR)\detours.obj $(OBJDIR)\image.obj $(OBJDIR)\creatwth.obj $(OBJDIR)\modules.obj $(OBJDIR)\detour_shim.obj $(DETOURS_ARCH_OBJ)
 MANAGER_OBJS = $(OBJDIR)\main.obj $(OBJDIR)\runner.obj $(OBJDIR)\endpoint.obj
 HOOK_OBJS = $(OBJDIR)\dllmain.obj $(OBJDIR)\hooks_file.obj $(OBJDIR)\hooks_proc.obj $(OBJDIR)\hooks_nt.obj $(OBJDIR)\hooks_symlink.obj
