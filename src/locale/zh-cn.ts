@@ -1824,6 +1824,7 @@ export const zhCn: Record<string, string> = {
     'renderer.agentInput.placeholder.ctrlEnter':
         '输入消息 · 拖拽文件 · 按 {iconCtrl}Ctrl + {iconEnter}Enter 发送 · {iconShift}Shift + {iconEnter}Enter 换行',
     'renderer.agentInput.modelRequired': '请先选择模型才能开始对话',
+    'renderer.agentInput.taskLoading': '正在加载任务，请稍候…',
     'renderer.agentInput.model.visionTag': '视觉',
     'renderer.agentInput.submit.sendLabel': '发送',
     'renderer.agentInput.submit.enterTitle': '发送 (Enter)',

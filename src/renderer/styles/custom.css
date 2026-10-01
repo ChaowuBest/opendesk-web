@@ -426,6 +426,70 @@ html[data-theme='dark'][data-font-preset] .markdown-body .code-block-body {
     background: var(--chat-code-bg) !important;
     color: var(--chat-ink2) !important;
 }
+.markdown-body .code-block-pre {
+    display: block !important;
+    margin: 0 !important;
+    padding: 0 !important;
+    border: none !important;
+    border-radius: 0 !important;
+    background: transparent !important;
+    font-size: inherit !important;
+    line-height: inherit !important;
+    font-family: inherit !important;
+}
+.markdown-body .code-lines {
+    display: block !important;
+    margin: 0 !important;
+    padding: 0.5em 0 !important;
+    counter-reset: codeln !important;
+    white-space: pre !important;
+    font-size: inherit !important;
+    line-height: inherit !important;
+    font-family: inherit !important;
+}
+.markdown-body .code-line {
+    display: block !important;
+    position: relative !important;
+    counter-increment: codeln !important;
+    margin: 0 !important;
+    padding: 0 0.8em 0 3.4em !important;
+    white-space: pre !important;
+    border: none !important;
+    background: transparent !important;
+    background-color: transparent !important;
+    font-family: inherit !important;
+}
+.markdown-body .code-line::before {
+    content: counter(codeln) !important;
+    position: absolute !important;
+    left: 0 !important;
+    top: 0 !important;
+    height: 100% !important;
+    width: 3.4em !important;
+    padding: 0 0.6em !important;
+    box-sizing: border-box !important;
+    text-align: right !important;
+    color: #c0c5ce !important;
+    user-select: none !important;
+    background: #f8fafc !important;
+    border-right: 1px solid #f1f5f9 !important;
+    font-family: inherit !important;
+}
+.markdown-body .code-line:hover {
+    background: #f8fafc !important;
+    background-color: #f8fafc !important;
+}
+/* 深色模式下（非 task-view 上下文，如首页/预览卡片）：行号列与 hover 改用主题变量 */
+html[data-theme='dark'] .markdown-body .code-line::before {
+    background: var(--chat-sb-bg) !important;
+    border-right: 1px solid var(--chat-line-soft) !important;
+    color: var(--chat-ink4) !important;
+}
+html[data-theme='dark'] .markdown-body .code-line:hover {
+    background: var(--chat-hover) !important;
+    background-color: var(--chat-hover) !important;
+}
+/* ── 旧代码块表格结构（仅历史任务持久化的 rendered HTML 会命中，新渲染不再产出） ── */
 html[data-font-preset] .markdown-body .code-table {
     border-collapse: collapse !important;
     border-spacing: 0 !important;
@@ -729,7 +793,8 @@ task-view .markdown-body .code-block-body {
     background: var(--chat-code-bg) !important;
     color: var(--chat-ink2) !important;
 }
-task-view .markdown-body td.code-ln {
+task-view .markdown-body td.code-ln,
+task-view .markdown-body .code-line::before {
     background: var(--chat-sb-bg) !important;
     border-right: 1px solid var(--chat-line-soft) !important;
     color: var(--chat-ink4) !important;
@@ -737,9 +802,12 @@ task-view .markdown-body td.code-ln {
 task-view .markdown-body .code-table tr:hover {
     background: var(--chat-hover) !important;
 }
+task-view .markdown-body .code-line:hover {
+    background: var(--chat-hover) !important;
+}
 
 /* Fallback pre (no wrapper) */
-task-view .markdown-body pre {
+task-view .markdown-body pre:not(.code-block-pre) {
     background: var(--chat-code-bg) !important;
     border: 1px solid var(--chat-line-soft) !important;
     border-radius: 8px !important;
@@ -3451,7 +3519,7 @@ agent-input[hide-disclaimer] .agent-input-footer {
 
 .od-completed-process {
     min-width: 0;
-    margin: 0 0 14px;
+    margin: 0 0 8px;
     border-bottom: 1px solid var(--od-border);
 }
 
@@ -3492,7 +3560,7 @@ agent-input[hide-disclaimer] .agent-input-footer {
 
 .od-completed-process-detail {
     display: none;
-    padding: 2px 4px 8px 0;
+    padding: 2px 4px 2px 0;
 }
 
 .od-completed-process-detail.is-open {
@@ -4614,7 +4682,14 @@ html[data-font-preset='lxgwwenkai'] body .markdown-body .code-block-body * {
         'Maple Mono', 'Cascadia Code', 'Fira Code', 'JetBrains Mono', 'Consolas', 'Monaco', monospace !important;
 }
 
-/* 保护代码表格和行号 */
+/* 保护代码块行号与代码行 */
+html[data-font-preset='lxgwwenkai'] body .markdown-body .code-lines,
+html[data-font-preset='lxgwwenkai'] body .markdown-body .code-lines * {
+    font-family:
+        'Maple Mono', 'Cascadia Code', 'Fira Code', 'JetBrains Mono', 'Consolas', 'Monaco', monospace !important;
+}
+
+/* 旧代码块表格结构（历史任务持久化 HTML）的等宽字体保护 */
 html[data-font-preset='lxgwwenkai'] body .markdown-body .code-table,
 html[data-font-preset='lxgwwenkai'] body .markdown-body .code-table * {
     font-family:

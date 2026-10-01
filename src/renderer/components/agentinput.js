@@ -23,6 +23,10 @@ import {
     refreshPluginSlashCommands
 } from './slash-command.ts';
 import { fixedLayerOrigin, visibleViewportRect } from '../utils/window-frame.js';
+import { clearTaskDraft, loadTaskDraft, saveTaskDraft } from '../utils/task-draft-storage.ts';
+
+/** 草稿持久化的防抖间隔：输入停顿后落盘，避免每次按键同步写 localStorage */
+const TASK_DRAFT_SAVE_DEBOUNCE_MS = 500;
 
 const fallbackSupportedFileExtensions = [
     'doc',
@@ -289,7 +293,11 @@ class AgentInput extends HTMLElement {
         /** 是否使用 Ctrl+Enter 发送（false=Enter 发送） */
         this.ctrlEnterSend = false;
         /** 关联的任务 ID，用于per-task模式管理 */
-        this.taskId = null;
+        this._taskId = null;
+        /** 草稿防抖落盘定时器 */
+        this._draftSaveTimer = undefined;
+        /** 任务加载期间禁止输入（宿主在 reload 开始/结束时调用），保证草稿恢复先于用户输入 */
+        this._taskLoadingLocked = false;
         this.speechSession = null;
         this.speechRecording = false;
         this._speechStopping = false;
@@ -300,6 +308,83 @@ class AgentInput extends HTMLElement {
         this._handleSpeechButtonPointerDown = this.handleSpeechButtonPointerDown.bind(this);
         this.searchMode = false;
         this._t = createRendererTranslator();
+    }
+
+    /** 关联任务 ID；赋值时恢复该任务持久化的草稿（控件由宿主在挂载后赋值） */
+    get taskId() {
+        return this._taskId;
+    }
+
+    set taskId(value) {
+        const previous = this._taskId;
+        this._taskId = value;
+        if (value && value !== previous) {
+            this._restorePersistedDraft();
+        }
+    }
+
+    /** 输入停顿后防抖落盘草稿（taskId 未设置时为 no-op，如首页输入框） */
+    _scheduleDraftSave() {
+        if (!this._taskId) return;
+        if (this._draftSaveTimer !== undefined) clearTimeout(this._draftSaveTimer);
+        this._draftSaveTimer = setTimeout(() => {
+            this._draftSaveTimer = undefined;
+            this._saveDraftNow();
+        }, TASK_DRAFT_SAVE_DEBOUNCE_MS);
+    }
+
+    /** 立即落盘当前草稿；内容为空时清除持久化记录 */
+    _saveDraftNow() {
+        if (!this._taskId) return;
+        if (this._draftSaveTimer !== undefined) {
+            clearTimeout(this._draftSaveTimer);
+            this._draftSaveTimer = undefined;
+        }
+        const textarea = this.querySelector('#agent-input-textarea');
+        saveTaskDraft(this._taskId, {
+            text: textarea?.value ?? '',
+            images: (Array.isArray(this.attachedImages) ? this.attachedImages : []).map((img) => ({
+                dataUrl: img.dataUrl,
+                name: img.name
+            })),
+            filePaths: Array.isArray(this.attachedFilePaths) ? [...this.attachedFilePaths] : []
+        });
+    }
+
+    /** 消息已发送/入队或用户主动清空时同步清除持久化草稿，避免下次打开恢复出已发送内容 */
+    _clearPersistedDraft() {
+        if (this._draftSaveTimer !== undefined) {
+            clearTimeout(this._draftSaveTimer);
+            this._draftSaveTimer = undefined;
+        }
+        if (this._taskId) clearTaskDraft(this._taskId);
+    }
+
+    /**
+     * 控件挂载并绑定 taskId 后恢复持久化草稿（文本 + 图片附件 + 文件附件）。
+     * 统一前提：输入框非空视为用户已开始新的输入，整个草稿都不恢复；
+     * 输入框为空则恢复完整草稿。宿主保证在输入可编辑（解锁）之前赋值 taskId，
+     * 因此正常时序下恢复时输入框必然为空，此检查仅为防御。
+     */
+    _restorePersistedDraft() {
+        const draft = loadTaskDraft(this._taskId);
+        if (!draft) return;
+        const textarea = this.querySelector('#agent-input-textarea');
+        if (!textarea || textarea.value.trim().length > 0) return;
+        if (draft.text) {
+            textarea.value = draft.text;
+            // 触发既有监听：自动调高与发送按钮状态
+            textarea.dispatchEvent(new Event('input', { bubbles: true }));
+        }
+        if (Array.isArray(draft.images) && draft.images.length > 0) {
+            for (const img of draft.images) {
+                this.addImage(img.dataUrl, img.name);
+            }
+        }
+        if (Array.isArray(draft.filePaths) && draft.filePaths.length > 0) {
+            // 文件路径是瞬态引用：恢复时按当前文件系统重新校验，失效路径会被过滤
+            void this.attachFilePaths(draft.filePaths);
+        }
     }
 
     ensureInputExpanded() {
@@ -813,6 +898,9 @@ class AgentInput extends HTMLElement {
     disconnectedCallback() {
         if (!this.taskId) {
             _homeDraftText = this.getCurrentText();
+        } else {
+            // 任务视图被释放/销毁前冲刷草稿，保证重新打开任务时可恢复
+            this._saveDraftNow();
         }
         this._hideSkillPreviewCard();
         this._hideAutocompletePreviewCard();
@@ -855,6 +943,7 @@ class AgentInput extends HTMLElement {
         const cursorPos = this.querySelector('#agent-input-textarea')?.selectionStart;
         if (changed) {
             this.render();
+            this._scheduleDraftSave();
         }
         if (unsupported.length > 0) {
             this.pasteFilePathsToTextarea(unsupported, cursorPos);
@@ -887,24 +976,28 @@ class AgentInput extends HTMLElement {
     removeFilePath(filePath) {
         this.attachedFilePaths = this.attachedFilePaths.filter((p) => p !== filePath);
         this.render();
+        this._scheduleDraftSave();
     }
 
     clearAttachedFilePaths() {
         this.attachedFilePaths = [];
         this.attachedImages = [];
         this.render();
+        this._scheduleDraftSave();
     }
 
     addImage(dataUrl, name = '图片') {
         this.attachedImages.push({ dataUrl, name });
         this._renderImagePreviews();
         this.updateSendButtonState();
+        this._scheduleDraftSave();
     }
 
     removeImage(index) {
         this.attachedImages.splice(index, 1);
         this._renderImagePreviews();
         this.updateSendButtonState();
+        this._scheduleDraftSave();
     }
 
     _renderImagePreviews() {
@@ -955,6 +1048,16 @@ class AgentInput extends HTMLElement {
     setDisabled(disabled) {
         this.isDisabled = disabled;
         this.isRunning = disabled && this.showStopButton;
+        this.updateInputState();
+    }
+
+    /**
+     * 任务加载期间锁定输入。宿主在 reload() 开始/结束时成对调用：
+     * 加载未完成时禁止编辑，使 taskId 赋值（草稿恢复）必然发生在用户输入之前，
+     * 从根上消除"恢复的旧草稿混入/覆盖用户新输入"的竞态。
+     */
+    setTaskLoading(loading) {
+        this._taskLoadingLocked = Boolean(loading);
         this.updateInputState();
     }
 
@@ -1091,13 +1194,15 @@ class AgentInput extends HTMLElement {
         const queueHint = this.querySelector('#agent-input-queue-hint');
 
         if (textarea) {
-            // 判断是否需要禁用：仅对话输入依赖对话模型，文件搜索不依赖。
-            const shouldDisable = this.isModelNotSelected && !this.searchMode;
+            // 判断是否需要禁用：任务加载中，或未选对话模型（文件搜索不依赖对话模型）。
+            const shouldDisable = this._taskLoadingLocked || (this.isModelNotSelected && !this.searchMode);
             const overlay = this.querySelector('#agent-input-placeholder');
             if (shouldDisable) {
                 textarea.disabled = true;
                 textarea.classList.add('opacity-50', 'cursor-not-allowed');
-                const requiredText = this.t('renderer.agentInput.modelRequired');
+                const requiredText = this._taskLoadingLocked
+                    ? this.t('renderer.agentInput.taskLoading')
+                    : this.t('renderer.agentInput.modelRequired');
                 textarea.placeholder = requiredText;
                 if (overlay) {
                     overlay.textContent = requiredText;
@@ -1122,7 +1227,8 @@ class AgentInput extends HTMLElement {
         const speechBtn = this.querySelector('#agent-input-speech-btn');
         if (speechBtn) {
             speechBtn.style.display = this.speechAvailable ? '' : 'none';
-            speechBtn.disabled = this.isModelNotSelected && !this.searchMode && !this.speechRecording;
+            speechBtn.disabled =
+                this._taskLoadingLocked || (this.isModelNotSelected && !this.searchMode && !this.speechRecording);
             speechBtn.classList.toggle('opacity-50', speechBtn.disabled);
             speechBtn.classList.toggle('cursor-not-allowed', speechBtn.disabled);
         }
@@ -1147,7 +1253,10 @@ class AgentInput extends HTMLElement {
     updatePlaceholder() {
         const textarea = this.querySelector('#agent-input-textarea');
         const overlay = this.querySelector('#agent-input-placeholder');
-        if (!textarea || this.isDisabled || (this.isModelNotSelected && !this.searchMode)) return;
+        // isDisabled（任务运行中）不作为跳过条件：运行中任务同样需要正常输入占位，
+        // 若跳过，reload 解锁（setTaskLoading(false)）后"正在加载任务"文案会残留。
+        // _taskLoadingLocked 期间占位由 updateInputState 管理（加载中文案），不在此覆盖。
+        if (!textarea || this._taskLoadingLocked || (this.isModelNotSelected && !this.searchMode)) return;
         const text = this.getInputPlaceholder();
         textarea.placeholder = text;
         if (overlay) overlay.innerHTML = this.buildPlaceholderHTML();
@@ -1228,7 +1337,7 @@ class AgentInput extends HTMLElement {
         const hasText = textarea.value.trim().length > 0;
         const hasImages = this.attachedImages.length > 0;
         const hasContent = hasText || hasImages;
-        const active = hasContent && !this.isModelNotSelected && !this.speechRecording;
+        const active = hasContent && !this.isModelNotSelected && !this.speechRecording && !this._taskLoadingLocked;
         submitBtn.disabled = this.speechRecording;
         if (active) {
             submitBtn.classList.add('agent-send-active');
@@ -2982,6 +3091,7 @@ class AgentInput extends HTMLElement {
                 this.attachedImages = [];
                 this._renderImagePreviews();
                 this.updateSendButtonState();
+                this._clearPersistedDraft();
                 textarea.focus();
                 return;
             }
@@ -3002,6 +3112,7 @@ class AgentInput extends HTMLElement {
 
             textarea.value = '';
             this.clearAttachedFilePaths();
+            this._clearPersistedDraft();
         };
 
         submitBtn.addEventListener('click', () => {
@@ -3168,6 +3279,8 @@ class AgentInput extends HTMLElement {
             this.autoResizeTextarea(textarea);
             // 更新发送按钮状态
             this.updateSendButtonState();
+            // 任务草稿防抖持久化
+            this._scheduleDraftSave();
         });
 
         textarea.addEventListener('paste', (e) => {
@@ -3629,6 +3742,7 @@ class ApplicationAgentInput extends HTMLElement {
                 this.dispatchEvent(submitEvent);
                 textarea.value = '';
                 this.autoResizeTextarea(textarea);
+                this._clearPersistedDraft();
             }
         });
 
