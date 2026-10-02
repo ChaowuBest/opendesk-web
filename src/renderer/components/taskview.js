@@ -116,10 +116,10 @@ export const TASKVIEW_HISTORY_BATCH_MESSAGE_LIMIT = 20;
 export const TASKVIEW_HISTORY_BATCH_HTML_CHAR_LIMIT = 200000;
 const TASKVIEW_HISTORY_TOP_LOAD_THRESHOLD_PX = 96;
 const TASKVIEW_HISTORY_VIEWPORT_FILL_GUARD = 8;
-// 锁定底部时滚动跟随的最小间隔：scrollHeight 读取会强制同步布局，
-// 高频流式输出下需限频，避免在巨大会话 DOM 上反复全量重排。
-// 150ms 可跟上主进程限流后 ~8Hz 的快照节奏；首次跟随与 forceScrollToEnd 不受限。
-const TASKVIEW_SCROLL_FOLLOW_MIN_INTERVAL_MS = 150;
+// 锁定底部时滚动跟随使用 rAF 合并（每帧最多执行一次）：scrollHeight 读取会强制
+// 同步布局，高频流式输出下把同一帧内多次 DOM 更新合并为一次读取与滚动，避免在
+// 巨大会话 DOM 上反复全量重排。相比时间节流（旧 150ms），每次快照后下一帧即跟随
+// 到最新底部，消除"内容已增高但滚动未跟上"导致的滚动条 thumb 抖动。
 const PROCESS_INNER_SCROLL_BOTTOM_THRESHOLD_PX = 24;
 // 流式思考预览只保留尾部切片：全文每帧重写的布局/文本成本会随思考长度线性膨胀，
 // 是长任务下渲染进程 CPU 飙高的主因之一。
@@ -378,12 +378,8 @@ class TaskView extends HTMLElement {
             this._renderAssistantProgress(progress, historyContainer);
             this.tryScrollToEnd();
         });
-        /** @type {number | null} 节流滚动的 rAF id */
+        /** @type {number | null} 滚动跟随的 rAF id（同一帧内多次更新合并为一次跟随） */
         this._scrollRafId = null;
-        /** @type {ReturnType<typeof setTimeout> | null} 滚动跟随限流的定时器 */
-        this._scrollFollowTimer = null;
-        /** @type {number} 上次滚动跟随的时间戳 */
-        this._lastScrollFollowAt = 0;
         /** @type {number} 视图进入后台不可见的时间戳；0 表示可见。用于后台超时释放。 */
         this._viewHiddenAt = 0;
         /** @type {number | null} 节流过程区内部滚动的 rAF id */
@@ -2324,12 +2320,8 @@ class TaskView extends HTMLElement {
         );
     }
 
-    /** 取消尚未执行的滚动跟随定时器/rAF（断连与强制滚动时调用，防止游离回调）。 */
+    /** 取消尚未执行的滚动跟随 rAF（断连与强制滚动时调用，防止游离回调）。 */
     _cancelPendingScrollFollow() {
-        if (this._scrollFollowTimer !== null) {
-            clearTimeout(this._scrollFollowTimer);
-            this._scrollFollowTimer = null;
-        }
         if (this._scrollRafId !== null && this._scrollRafId >= 0) {
             cancelAnimationFrame(this._scrollRafId);
         }
@@ -2340,41 +2332,34 @@ class TaskView extends HTMLElement {
         if (!this.auto_scrolling_to_bottom) {
             return;
         }
-        if (this._scrollRafId !== null || this._scrollFollowTimer !== null) return;
-        // scrollHeight 读取会强制同步布局；高频流式输出期间（每个快照一次）这在
-        // 巨大会话 DOM 上曾是主要 CPU 消耗之一，因此限制最小跟随间隔。
-        // 首次跟随（或 forceScrollToEnd 重置后）delay 为 0，直接走 rAF 保持即时性。
-        const elapsed = Date.now() - (this._lastScrollFollowAt || 0);
-        const delay = Math.max(0, TASKVIEW_SCROLL_FOLLOW_MIN_INTERVAL_MS - elapsed);
-        const scheduleScroll = () => {
-            this._scrollFollowTimer = null;
-            if (!this.auto_scrolling_to_bottom) return;
-            this._lastScrollFollowAt = Date.now();
-            this._scrollRafId = requestAnimationFrame(() => {
-                this._scrollRafId = null;
-                if (!this.auto_scrolling_to_bottom) return;
-                const domElement = this.getHistoryContainer();
-                if (!domElement) return;
-                const targetScrollTop = domElement.scrollHeight - domElement.clientHeight;
-                // 仅在需要向下滚动时才设置 scrollTop，避免因布局抖动导致向上回跳
-                if (targetScrollTop > domElement.scrollTop) {
-                    this._programmaticScrolling = true;
-                    domElement.scrollTop = targetScrollTop;
-                    // 使用 rAF 而非 setTimeout，将保护窗口从 150ms 缩短到 ~16ms
-                    // 避免 AI 快速输出时用户滚动被长时间屏蔽
-                    if (this._programmaticScrollTimer) cancelAnimationFrame(this._programmaticScrollTimer);
-                    this._programmaticScrollTimer = requestAnimationFrame(() => {
-                        this._programmaticScrolling = false;
-                        this._programmaticScrollTimer = null;
-                    });
-                }
-            });
-        };
-        if (delay === 0) {
-            scheduleScroll();
-        } else {
-            this._scrollFollowTimer = setTimeout(scheduleScroll, delay);
+        // 同一帧（或 rAF 尚未消费）内已排队的跟随请求直接合并，避免重复读取
+        // scrollHeight（该读取会强制同步布局，是高频流式输出下主要的布局成本）。
+        if (this._scrollRafId !== null) {
+            return;
         }
+        this._scrollRafId = requestAnimationFrame(() => {
+            this._scrollRafId = null;
+            if (!this.auto_scrolling_to_bottom) {
+                return;
+            }
+            const domElement = this.getHistoryContainer();
+            if (!domElement) {
+                return;
+            }
+            const targetScrollTop = domElement.scrollHeight - domElement.clientHeight;
+            // 仅在需要向下滚动时才设置 scrollTop，避免因布局抖动导致向上回跳
+            if (targetScrollTop > domElement.scrollTop) {
+                this._programmaticScrolling = true;
+                domElement.scrollTop = targetScrollTop;
+                // 使用 rAF 而非 setTimeout，将保护窗口从 150ms 缩短到 ~16ms
+                // 避免 AI 快速输出时用户滚动被长时间屏蔽
+                if (this._programmaticScrollTimer) cancelAnimationFrame(this._programmaticScrollTimer);
+                this._programmaticScrollTimer = requestAnimationFrame(() => {
+                    this._programmaticScrolling = false;
+                    this._programmaticScrollTimer = null;
+                });
+            }
+        });
     }
 
     /**
@@ -2387,9 +2372,8 @@ class TaskView extends HTMLElement {
         this.setAutoScrollingToBottom(true);
         // 组件可能尚未渲染历史容器（如仅存在于 model 层的最小 task-view），此时仅锁定状态
         if (this.getHistoryContainer()) {
-            // 用户主动产生新消息流时绕过滚动跟随限流，立即回到底部
+            // 用户主动产生新消息流时取消在途跟随并立即重新排队，下一帧回到底部
             this._cancelPendingScrollFollow();
-            this._lastScrollFollowAt = 0;
             this.tryScrollToEnd();
         }
     }

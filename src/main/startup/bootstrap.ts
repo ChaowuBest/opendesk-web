@@ -5,26 +5,12 @@
  * You may obtain a copy of Mulan PSL v2 at: http://license.coscl.org.cn/MulanPSL2
  * THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND,
  * EITHER EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT,
- * MERCHANTABILITY OR FITNESS FOR A PARTICULAR PURPOSE.
+ * MERCHANTABILITY OR FIT FOR A PARTICULAR PURPOSE.
  * See the Mulan PSL v2 for more details.
  */
 
-import { spawnSync } from 'node:child_process';
-import { OPENDESK_V8_HEAP_CONFIGURED_ENV, buildV8HeapRestartArgs, shouldConfigureV8Heap } from './v8-heap.js';
-
-if (shouldConfigureV8Heap(process.argv, process.execArgv, process.env)) {
-    const child = spawnSync(process.execPath, buildV8HeapRestartArgs(process.argv), {
-        env: { ...process.env, [OPENDESK_V8_HEAP_CONFIGURED_ENV]: '1' },
-        stdio: 'inherit'
-    });
-
-    if (child.error) {
-        console.error(`Failed to restart OpenDesk with the V8 heap limit: ${child.error.message}`);
-        process.exit(1);
-    }
-
-    process.exit(child.status ?? 1);
-}
-
-// Delay the full application import until the restarted process has the requested V8 heap limit.
+// OpenDesk 单进程启动入口。
+// Electron 64 位主进程的默认 V8 堆上限（heap_size_limit）即为 4096MB，
+// 无需再通过「带 --js-flags 重启子进程」的方式注入堆上限 —— 那会额外
+// 常驻一层什么也不干的 bootstrap 空壳进程（约 40~50MB 私有内存）。
 await import('../main.js');
