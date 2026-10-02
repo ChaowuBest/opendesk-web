@@ -155,6 +155,56 @@ describe('agent-input attachment support', () => {
         expect(pasteEvent.defaultPrevented).toBe(false);
     });
 
+    test('leaves PowerPoint clipboard text to the textarea instead of attaching its image preview', () => {
+        const input = document.createElement('agent-input') as HTMLElement & {
+            render: () => void;
+        };
+        input.render();
+        const textarea = input.querySelector('#agent-input-textarea') as HTMLTextAreaElement;
+        const pasteEvent = new Event('paste', { bubbles: true, cancelable: true });
+        Object.defineProperty(pasteEvent, 'clipboardData', {
+            value: {
+                items: [
+                    { type: 'text/plain' },
+                    { type: 'text/html' },
+                    { type: 'image/png', getAsFile: jest.fn(() => null) }
+                ],
+                getData: jest.fn((type: string) => {
+                    if (type === 'text/plain') return 'Quarterly review';
+                    if (type === 'text/html') {
+                        return '<html xmlns:p="urn:schemas-microsoft-com:office:powerpoint"><body>Quarterly review</body></html>';
+                    }
+                    return '';
+                })
+            }
+        });
+
+        textarea.dispatchEvent(pasteEvent);
+
+        expect(pasteEvent.defaultPrevented).toBe(false);
+    });
+
+    test('still intercepts copied web images when HTML accompanies the image', () => {
+        const input = document.createElement('agent-input') as HTMLElement & {
+            render: () => void;
+        };
+        input.render();
+        const textarea = input.querySelector('#agent-input-textarea') as HTMLTextAreaElement;
+        const pasteEvent = new Event('paste', { bubbles: true, cancelable: true });
+        Object.defineProperty(pasteEvent, 'clipboardData', {
+            value: {
+                items: [{ type: 'text/html' }, { type: 'image/png', getAsFile: jest.fn(() => null) }],
+                getData: jest.fn((type: string) =>
+                    type === 'text/html' ? '<img src="https://example.com/chart.png">' : ''
+                )
+            }
+        });
+
+        textarea.dispatchEvent(pasteEvent);
+
+        expect(pasteEvent.defaultPrevented).toBe(true);
+    });
+
     test('hides the goal button when requested by the host surface', () => {
         const input = document.createElement('agent-input') as HTMLElement & {
             render: () => void;

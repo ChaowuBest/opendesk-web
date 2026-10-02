@@ -1252,6 +1252,14 @@ button:disabled { opacity: 0.4; cursor: default; }
         document.removeEventListener('mousedown', closeSendMenuOnOutside);
     }
 
+    function hasPowerPointClipboardText(clipboardData) {
+        if (!clipboardData || !clipboardData.getData) return false;
+        var plainText = clipboardData.getData('text/plain').trim();
+        if (!plainText) return false;
+        var html = clipboardData.getData('text/html') || '';
+        return /urn:schemas-microsoft-com:office:powerpoint|PowerPoint\\.Slide|Microsoft PowerPoint/i.test(html);
+    }
+
     function initialize() {
         var params = new URLSearchParams(window.location.search);
         state.urlToken = params.get('token') || '';
@@ -1279,6 +1287,7 @@ button:disabled { opacity: 0.4; cursor: default; }
         input.addEventListener('paste', function (event) {
             var items = event.clipboardData ? event.clipboardData.items : null;
             if (!items) return;
+            if (hasPowerPointClipboardText(event.clipboardData)) return;
             var imageFiles = [];
             for (var i = 0; i < items.length; i++) {
                 if (items[i].kind === 'file' && items[i].type.indexOf('image/') === 0) {
