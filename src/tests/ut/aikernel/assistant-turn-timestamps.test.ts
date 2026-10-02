@@ -10,6 +10,7 @@ function createTask(): TaskState {
     manager.publishTaskListUpdate = jest.fn();
     manager.moveTaskToEnd = jest.fn();
     const task = new TaskState(manager);
+    jest.spyOn(task, 'ensureValidModelOrFallback').mockReturnValue('gpt-4o');
     manager.tasks.push(task);
     return task;
 }

@@ -1,3 +1,4 @@
+import { ModelInstance, Setting } from '../../../main/utils/setting.js';
 import fs from 'fs';
 import os from 'os';
 import path from 'path';
@@ -8,6 +9,7 @@ import { FULL_COMPACT_BOUNDARY_STRATEGY } from '../../../main/aikernel/compactio
 import { prepareContextForModel } from '../../../main/aikernel/compaction/pipeline';
 import { estimateVisibleContextTokens } from '../../../main/aikernel/compaction/token-estimation';
 import { ToolResultReplacementStates } from '../../../main/aikernel/compaction/tool-results';
+import { estimateRequestPayloadTokens } from '../../../main/aikernel/compaction/request-budget.js';
 import { OpenAIAdapter } from '../../../main/aikernel/adapters/openai';
 import { LLM } from '../../../main/aikernel/llm';
 import {
@@ -44,7 +46,7 @@ function createChatContext(): ChatContext {
     return chatContext;
 }
 
-function createForcedCompactDecision(estimatedContextTokens = 720) {
+function createForcedCompactDecision(estimatedContextTokens = 800) {
     return createAutoCompactDecision({
         contextWindow: 1000,
         promptTokens: estimatedContextTokens,
@@ -212,6 +214,16 @@ function createStep4AndStep5ChatContext(): {
     };
 }
 
+beforeEach(() => {
+    jest.spyOn(Setting, 'getInstance').mockReturnValue({
+        getModelInstance: () =>
+            new ModelInstance('compact-test-model', 'https://example.com', 'test-key', false, false, '', 200000),
+        getDefaultModelInstance: () =>
+            new ModelInstance('compact-test-model', 'https://example.com', 'test-key', false, false, '', 200000),
+        getData: () => ({ locale: 'en-US' })
+    } as unknown as Setting);
+});
+
 describe('压缩 pipeline 的自动压缩状态流', () => {
     beforeEach(() => {
         jest.useFakeTimers();
@@ -251,6 +263,15 @@ describe('压缩 pipeline 的自动压缩状态流', () => {
         expect(executeCompact).toHaveBeenCalledTimes(1);
         expect(result.shouldCompact).toBe(true);
         expect(result.compacted).toBe(true);
+        expect(result.contextTokenEstimate.estimatedContextTokens).toBe(
+            estimateRequestPayloadTokens({
+                messages: OpenAIAdapter.buildMessages(chatContext, true, {
+                    activeContext: result.activeContext,
+                    toolResultOverrides: result.toolResultOverrides
+                }),
+                ...OpenAIAdapter.buildToolOptions(chatContext)
+            })
+        );
         expect(result.autoCompactDecision.reason).toBe('at_or_above_threshold');
         expect(result.autoCompactStateChanged).toBe(true);
         expect(result.autoCompactState).toBe(autoCompactState);
@@ -279,24 +300,20 @@ describe('压缩 pipeline 的自动压缩状态流', () => {
         const beforeCompact = jest.fn();
         const executeCompact = jest.fn();
 
-        const result = await prepareContextForModel(chatContext, undefined, {
-            autoCompactDecisionOverride: createForcedCompactDecision(),
-            autoCompactState,
-            beforeCompact,
-            executeCompact
-        });
+        await expect(
+            prepareContextForModel(chatContext, undefined, {
+                autoCompactDecisionOverride: createForcedCompactDecision(),
+                autoCompactState,
+                beforeCompact,
+                executeCompact
+            })
+        ).rejects.toThrow('circuit_open');
 
         expect(beforeCompact).not.toHaveBeenCalled();
         expect(executeCompact).not.toHaveBeenCalled();
-        expect(result.autoCompactDecision.shouldCompact).toBe(true);
-        expect(result.shouldCompact).toBe(false);
-        expect(result.compacted).toBe(false);
-        expect(result.autoCompactStateChanged).toBe(false);
-        expect(result.autoCompactState).toBe(autoCompactState);
         expect(autoCompactState.consecutiveFailures).toBe(3);
         expect(autoCompactState.cooldownUntil).toBe('2026-04-17T02:05:00.000Z');
         expect(autoCompactState.lastFailureReason).toBe('compact failed');
-        expect(result.activeContext.messages).toHaveLength(1);
     });
 
     test('自动 compact 失败时会记录失败次数、失败原因并重新抛错', async () => {
@@ -329,7 +346,8 @@ describe('压缩 pipeline 的自动压缩状态流', () => {
         expect(autoCompactState.lastAttemptAt).toBe(now.toISOString());
         expect(autoCompactState.lastFailureAt).toBe(now.toISOString());
         expect(autoCompactState.lastFailureReason).toBe('compact failed');
-        expect(autoCompactState.cooldownUntil).toBe('2026-04-17T02:01:00.000Z');
+        expect(autoCompactState.cooldownUntil).toBeUndefined();
+        expect(autoCompactState.status).toBe('circuit_open');
         expect(AutoCompactStates.isCoolingDown(autoCompactState, now)).toBe(true);
     });
 
@@ -379,9 +397,11 @@ describe('压缩 pipeline 的自动压缩状态流', () => {
             cooldown_ms: 60000
         });
         const beforeCompact = jest.fn();
-        const askSpy = jest
-            .spyOn(LLM, 'ask')
-            .mockResolvedValue('<state_snapshot><overall_goal>pipeline compact</overall_goal></state_snapshot>');
+        const askSpy = jest.spyOn(LLM, 'askWithMetadata').mockResolvedValue({
+            text: '<state_snapshot><overall_goal>pipeline compact</overall_goal></state_snapshot>',
+            reasoningLength: 0,
+            finishReason: 'stop'
+        });
         const requestOptions = {
             extraHeaders: {
                 cookie: 'session=demo',
@@ -409,14 +429,24 @@ describe('压缩 pipeline 的自动压缩状态流', () => {
         const boundary = chatContext.findCompactBoundary();
         expect(boundary).toBeDefined();
         expect(boundary!.message.summary).toContain('pipeline compact');
+        expect(result.contextTokenEstimate.source).toBe('rough_estimate_only');
+        expect(result.contextTokenEstimate.estimatedContextTokens).toBe(
+            estimateRequestPayloadTokens({
+                messages: OpenAIAdapter.buildMessages(chatContext, true, {
+                    activeContext: result.activeContext,
+                    toolResultOverrides: result.toolResultOverrides
+                }),
+                ...OpenAIAdapter.buildToolOptions(chatContext)
+            })
+        );
         expect(boundary!.message.metadata).toMatchObject({
             trigger: 'auto',
             strategy: FULL_COMPACT_BOUNDARY_STRATEGY,
-            summarized_messages: 2,
-            kept_messages: 8
+            summarized_messages: 7,
+            kept_messages: 3
         });
         expect(result.activeContext.messages[0]).toBe(boundary!.message);
-        expect(result.activeContext.messages).toHaveLength(9);
+        expect(result.activeContext.messages).toHaveLength(4);
         const tailContainsBoundary = result.activeContext.messages.some(
             (message, index) => index > 0 && isCompactBoundaryMessage(message)
         );
@@ -440,9 +470,11 @@ describe('压缩 pipeline 的自动压缩状态流', () => {
         chatContext.appendMessage(new UserMessage('user 4'));
         appendAssistantMessage(chatContext, 'assistant 4');
 
-        const askSpy = jest
-            .spyOn(LLM, 'ask')
-            .mockResolvedValue('<state_snapshot><overall_goal>step9 pipeline default</overall_goal></state_snapshot>');
+        const askSpy = jest.spyOn(LLM, 'askWithMetadata').mockResolvedValue({
+            text: '<state_snapshot><overall_goal>step9 pipeline default</overall_goal></state_snapshot>',
+            reasoningLength: 0,
+            finishReason: 'stop'
+        });
 
         const result = await prepareContextForModel(chatContext, 'demo-model', {
             autoCompactDecisionOverride: createForcedCompactDecision(),
@@ -491,9 +523,11 @@ describe('压缩 pipeline 的自动压缩状态流', () => {
         chatContext.appendMessage(new UserMessage('user 4'));
         appendAssistantMessage(chatContext, 'assistant 4');
 
-        const askSpy = jest
-            .spyOn(LLM, 'ask')
-            .mockResolvedValue('<state_snapshot><overall_goal>step9 pipeline rollback</overall_goal></state_snapshot>');
+        const askSpy = jest.spyOn(LLM, 'askWithMetadata').mockResolvedValue({
+            text: '<state_snapshot><overall_goal>step9 pipeline rollback</overall_goal></state_snapshot>',
+            reasoningLength: 0,
+            finishReason: 'stop'
+        });
 
         const result = await prepareContextForModel(chatContext, 'demo-model', {
             autoCompactDecisionOverride: createForcedCompactDecision(),
@@ -519,7 +553,7 @@ describe('压缩 pipeline 的自动压缩状态流', () => {
         createTempAppDirectory();
         const chatContext = new ChatContext();
         chatContext.appendMessage(new UserMessage('inspect the latest build output'));
-        const largeResult = `HEAD\n${'x'.repeat(80_000)}\nTAIL`;
+        const largeResult = `HEAD\n${'x'.repeat(320_000)}\nTAIL`;
         const { message } = createAssistantWithUsageAndLargeToolResult(90_000, largeResult);
         chatContext.appendMessage(message);
 

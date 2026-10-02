@@ -7,6 +7,8 @@ import {
     AssistantMessage,
     AssistantResponse,
     ChatContext,
+    ToolCall,
+    ToolCallMessagePart,
     Usage,
     UserMessage
 } from '../../../main/aikernel/messages.js';
@@ -19,6 +21,7 @@ import {
     type TaskUpdateRetryChunk
 } from '../../../main/aikernel/states/tasks.js';
 import { Setting, setCustomOpendeskDirectory } from '../../../main/utils/setting.js';
+import { ModelRequestError } from '../../../main/utils/model-request-error.js';
 import { AbstractPlatform, setPlatform } from '../../../platforms/base.js';
 
 class TestPlatform extends AbstractPlatform {
@@ -57,6 +60,7 @@ function textResponse(text: string, finishReason: 'stop' | 'tool_calls' | null =
 
 function configureSetting(): void {
     Setting.updateInstanceData({
+        ...Setting.getInstance().getData(),
         default_model: 'mock-model',
         providers: [
             {
@@ -72,7 +76,7 @@ function configureSetting(): void {
                 alias: 'mock-model',
                 provider_name: 'mock-provider',
                 model_name: 'mock/model',
-                context_length: 8192,
+                context_length: 70000,
                 max_output_tokens: 4096
             }
         ],
@@ -135,6 +139,161 @@ describe('task LLM request tail via onTailcardGenerate', () => {
         jest.useRealTimers();
         Setting.clearCache();
         fs.rmSync(tempDir, { recursive: true, force: true });
+    });
+
+    function seedUsageHistory(task: TaskState): AssistantMessage {
+        const assistant = task.chat_context.lastMessage() as AssistantMessage;
+        for (const [index, tokens] of [10000, 20000, 30000, 45000].entries()) {
+            assistant.beginCompletionRound(false);
+            assistant.appendText(`completed work ${index} ` + 'history '.repeat(5500));
+            const part = new ToolCallMessagePart();
+            const call = new ToolCall(index, `saved-${index}`, 'readImage', '{}');
+            part.push(call);
+            assistant.appendToolCallPart(part);
+            assistant.usage = new Usage(tokens - 100, 100, tokens);
+            assistant.recordCompletionUsage('mock-model');
+            call.status = 'success';
+            call.result = `saved result ${index}`;
+        }
+        return assistant;
+    }
+
+    test('provider context overflow compacts and rebuilds the request without rerunning tools', async () => {
+        const { task } = createRunningTask();
+        const assistant = seedUsageHistory(task);
+        const asks = jest
+            .spyOn(LLM, 'askWithMetadata')
+            .mockResolvedValue({ text: 'saved history', reasoningLength: 0 });
+        let requests = 0;
+        const seen: string[] = [];
+        jest.spyOn(LLM, 'streamComplete').mockImplementation(async function* (context) {
+            seen.push(JSON.stringify(context.messages));
+            if (++requests === 1) throw new Error('maximum context length exceeded');
+            yield textResponse('recovered', 'stop');
+        });
+        await task.processCompletion();
+        expect(requests).toBe(2);
+        expect(asks).toHaveBeenCalledTimes(1);
+        expect(seen[1]).toContain('saved history');
+        expect(seen[1]).toContain('saved result 3');
+        expect(assistant.content.some((part) => part.type === 'text' && part.text === 'recovered')).toBe(true);
+        expect(task.task_status).toBe('running');
+    });
+
+    test.each(['context_length_exceeded', 'prompt_too_long'])(
+        'normalized %s responses recover through compaction before non-retryable handling',
+        async (code) => {
+            const { task, chunks } = createRunningTask();
+            const assistant = seedUsageHistory(task);
+            const asks = jest
+                .spyOn(LLM, 'askWithMetadata')
+                .mockResolvedValue({ text: 'saved history', reasoningLength: 0 });
+            let requests = 0;
+            const seen: string[] = [];
+            jest.spyOn(LLM, 'streamComplete').mockImplementation(async function* (context) {
+                seen.push(JSON.stringify(context.messages));
+                if (++requests === 1) {
+                    const response = AssistantResponse.error('Request rejected');
+                    response.request_error = new ModelRequestError({
+                        provider: 'openai',
+                        status: 400,
+                        code,
+                        type: 'invalid_request_error',
+                        message: 'Request rejected'
+                    });
+                    yield response;
+                    return;
+                }
+                yield textResponse('recovered', 'stop');
+            });
+
+            await task.processCompletion();
+
+            expect(requests).toBe(2);
+            expect(asks).toHaveBeenCalledTimes(1);
+            expect(seen[1]).toContain('saved history');
+            expect(seen[1]).toContain('saved result 3');
+            expect(assistant.content.some((part) => part.type === 'text' && part.text === 'recovered')).toBe(true);
+            expect(retryChunks(chunks)).toEqual([]);
+            expect(task.task_status).toBe('running');
+        }
+    );
+
+    test('successful usage at 80 percent waits until the next request to compact', async () => {
+        const { task } = createRunningTask();
+        seedUsageHistory(task);
+        const asks = jest
+            .spyOn(LLM, 'askWithMetadata')
+            .mockResolvedValue({ text: 'saved history', reasoningLength: 0 });
+        jest.spyOn(LLM, 'streamComplete').mockImplementation(async function* () {
+            const response = textResponse('large successful response', 'stop');
+            response.usage = new Usage(55000, 1000, 56000);
+            yield response;
+        });
+        await task.processCompletion();
+        expect(asks).not.toHaveBeenCalled();
+        expect(task.chat_context.findCompactBoundary()).toBeUndefined();
+        await task.processCompletion();
+        expect(asks).toHaveBeenCalledTimes(1);
+        expect(task.chat_context.findCompactBoundary()).toBeDefined();
+        expect(task.task_status).toBe('running');
+    });
+
+    test('repeated business context errors share a three-attempt recovery budget', async () => {
+        const { task } = createRunningTask();
+        seedUsageHistory(task);
+        const asks = jest
+            .spyOn(LLM, 'askWithMetadata')
+            .mockResolvedValue({ text: 'saved history', reasoningLength: 0 });
+        const stream = jest.spyOn(LLM, 'streamComplete').mockImplementation(async function* () {
+            yield await Promise.reject(new Error('context_length_exceeded'));
+        });
+        await task.processCompletion();
+        expect(asks).toHaveBeenCalledTimes(3);
+        expect(stream).toHaveBeenCalledTimes(4);
+        expect(task.task_status).toBe('stopped');
+    });
+
+    test('estimated input above 100 percent compacts before the first business request', async () => {
+        const { task } = createRunningTask();
+        const assistant = seedUsageHistory(task);
+        const part = assistant.content.at(-1)!;
+        if (part.type !== 'tool_call') throw new Error('missing tool call');
+        part.toolcalls[0].result_object = {
+            type: 'image',
+            images: Array.from({ length: 22 }, () => ({ image_url: 'data:image/png;base64,AAAA' }))
+        };
+        // Summarize the earlier prefix; do not discard the latest large image result.
+        const events: string[] = [];
+        jest.spyOn(LLM, 'askWithMetadata').mockImplementation(async () => {
+            events.push('summary');
+            return { text: 'saved history', reasoningLength: 0 };
+        });
+        jest.spyOn(LLM, 'streamComplete').mockImplementation(async function* (context) {
+            events.push('business');
+            expect(JSON.stringify(context.messages)).toContain('data:image/png;base64,AAAA');
+            yield textResponse('recovered', 'stop');
+        });
+        await task.processCompletion();
+        expect(events).toEqual(['summary', 'business']);
+        expect(task.task_status).toBe('running');
+    });
+
+    test('mixed summary and business overflow cannot reset the recovery attempt counter', async () => {
+        const { task } = createRunningTask();
+        seedUsageHistory(task);
+        let count = 0;
+        const summary = jest.spyOn(LLM, 'askWithMetadata').mockImplementation(async () => {
+            if (++count < 3) throw new Error('prompt is too long');
+            return { text: 'saved history', reasoningLength: 0 };
+        });
+        const stream = jest.spyOn(LLM, 'streamComplete').mockImplementation(async function* () {
+            yield await Promise.reject(new Error('context_length_exceeded'));
+        });
+        await task.processCompletion();
+        expect(summary).toHaveBeenCalledTimes(3);
+        expect(stream).toHaveBeenCalledTimes(2);
+        expect(task.task_status).toBe('stopped');
     });
 
     test('builds the active main-task tail once and reuses it across provider retries', async () => {
@@ -220,6 +379,7 @@ describe('task LLM request tail via onTailcardGenerate', () => {
 
         // EvidenceCard 关闭时：不注入任何内容，requestTailText 字段不出现
         Setting.updateInstanceData({
+            ...Setting.getInstance().getData(),
             task_config: {
                 auto_retry: true,
                 generate_taskname: true,
@@ -234,6 +394,7 @@ describe('task LLM request tail via onTailcardGenerate', () => {
 
         // EvidenceCard 开启时：注入包含 EvidenceCard section 的 TailCards
         Setting.updateInstanceData({
+            ...Setting.getInstance().getData(),
             task_config: {
                 auto_retry: true,
                 generate_taskname: true,
@@ -259,6 +420,7 @@ describe('task LLM request tail via onTailcardGenerate', () => {
         const internal = createRunningTask().task;
         internal.internal = true;
         Setting.updateInstanceData({
+            ...Setting.getInstance().getData(),
             task_config: {
                 auto_retry: true,
                 generate_taskname: true,
@@ -280,7 +442,7 @@ describe('task LLM request tail via onTailcardGenerate', () => {
         expect(requestTails[1]).toContain('## Section: evidence-card');
     });
 
-    test('uses the raw chat context fallback without rebuilding the active view when preparation fails', async () => {
+    test('pauses without sending raw history or generating tailcards when preparation fails', async () => {
         const { task } = createRunningTask();
         const deduplicateSpy = jest
             .spyOn(task.chat_context, 'deduplicateCompactBoundaries')
@@ -307,8 +469,8 @@ describe('task LLM request tail via onTailcardGenerate', () => {
 
         expect(deduplicateSpy).toHaveBeenCalledTimes(1);
         expect(callbackContext?.activeContext).toBeUndefined();
-        expect(callbackContext?.chatContext).toBe(task.chat_context);
-        expect(requestTails[0]).toContain('## Section: fallback-tail');
-        expect(requestTails[0]).toContain('fallback tail content');
+        expect(callbackContext).toBeUndefined();
+        expect(requestTails).toHaveLength(0);
+        expect(task.task_status).toBe('stopped');
     });
 });

@@ -1436,6 +1436,13 @@ class TaskView extends HTMLElement {
     }
 
     _renderProcessEntry(entry, messageId, disclosureState, options = {}) {
+        const html = this._renderProcessEntryContent(entry, messageId, disclosureState, options);
+        return this._getAssistantCompactBoundary(messageId)
+            ? `<div data-output-part-index="${entry.partIndex}">${html}</div>`
+            : html;
+    }
+
+    _renderProcessEntryContent(entry, messageId, disclosureState, options = {}) {
         if (entry.type === 'reasoning') {
             // 已完成消息（isRunning === false）中即使 part 残留 streaming 标记，也必须按
             // 已完成渲染：否则历史折叠内容里的推理块会保持 reasoning-active 并重新启动
@@ -1669,7 +1676,7 @@ class TaskView extends HTMLElement {
                     : `<div class="od-streaming-text">${renderSafeMarkdown(String(item.part.text || ''))}</div>`;
                 const dividerClass =
                     guiOutputMode === 'verbose' && hasProcessItem ? ' od-final-result-with-divider' : '';
-                return `${label}<div class="od-final-result markdown-body${dividerClass}">${content}</div>`;
+                return `${label}<div class="od-final-result markdown-body${dividerClass}" data-output-part-index="${item.partIndex}">${content}</div>`;
             }
             const className = item.type === 'error' ? 'od-stage-body od-stage-error' : 'od-stage-body';
             const content = item.part.streaming
@@ -1714,7 +1721,12 @@ class TaskView extends HTMLElement {
                 })
                 .join('');
         }
-        return `<div class="od-assistant-output-flow" data-output-mode="${guiOutputMode}" data-reason-display="${guiReasonDisplayMode}">${html}</div>`;
+        const output = `<div class="od-assistant-output-flow" data-output-mode="${guiOutputMode}" data-reason-display="${guiReasonDisplayMode}">${html}</div>`;
+        if (!this._getAssistantCompactBoundary(messageId)) return output;
+        const container = document.createElement('div');
+        container.innerHTML = output;
+        this._placeAssistantCompactBoundary(messageId, container);
+        return container.innerHTML;
     }
 
     _rememberAssistantOutput(messageId, parts, options = {}) {
@@ -1813,7 +1825,17 @@ class TaskView extends HTMLElement {
                     })
                 );
             } else if (TaskView.isCompactBoundaryMessage(message)) {
-                htmlParts.push(TaskView.renderCompactBoundary());
+                const target = this._historyMessages.find(
+                    (item) => item.role === 'assistant' && item.message_id === message.kept_anchor_message_id
+                );
+                if (
+                    !target ||
+                    this._getAssistantCompactBoundary(target.message_id) !== message ||
+                    !Array.isArray(target.content) ||
+                    message.kept_anchor_start_part_index > target.content.length
+                ) {
+                    htmlParts.push(TaskView.renderCompactBoundary(message));
+                }
             }
             const goalEvaluationHtml = renderGoalEvaluationRecordsHtml(
                 getGoalEvaluationRecordsForMessage(this._historyGoalEvaluationRecords, message),
@@ -2209,6 +2231,7 @@ class TaskView extends HTMLElement {
             disclosureState,
             turnDurationMs: extractAssistantTurnDurationMs(progress)
         });
+        this._placeAssistantCompactBoundary(progress.message_id, message_content);
         enhanceCodeBlocks(message_content);
         enhanceToolPreviewCards(message_content);
         renderMermaidBlocks(message_content, { defer: isRunning });
@@ -2377,6 +2400,9 @@ class TaskView extends HTMLElement {
         if (!message_content) return false;
         const processScrollFollowState = this._captureProcessScrollFollowState(message_content);
 
+        // A display-only boundary must never shift the model part indices.
+        message_content.querySelectorAll(':scope > .od-compact-boundary').forEach((element) => element.remove());
+
         const partIndex = getProgressPartIndex(progress);
         const parts = [...(this._assistantPartsByMessage.get(progress.message_id) || [])];
         const previousPart = parts[partIndex];
@@ -2489,6 +2515,7 @@ class TaskView extends HTMLElement {
         this._syncReasoningTimers(message_content);
         this._restoreProcessScrollFollowState(message_content, processScrollFollowState);
 
+        this._placeAssistantCompactBoundary(progress.message_id, message_content);
         const isStreaming = progress.task_status === 'running';
         // 实时输出速度 + 消息级 token 估算（无 usage 时按 chars/4 临时估算「已输出/总计」）
         const speedInfo = this._trackOutputSpeed(progress);
@@ -2921,6 +2948,7 @@ class TaskView extends HTMLElement {
     };
 
     async reload() {
+        const compactRevision = this._compactProgressRevision || 0;
         this._assistantProgressBuffer.clear();
         this._reloading = true;
         const version = ++this._reloadVersion;
@@ -3042,6 +3070,11 @@ class TaskView extends HTMLElement {
                 this._showWaitingAssistantPlaceholder();
             }
 
+            this.handleCompactProgress(
+                compactRevision === (this._compactProgressRevision || 0)
+                    ? task_state.compact_progress
+                    : this._latestCompactProgress
+            );
             this._fillHistoryViewportIfNeeded();
             this.tryScrollToEnd();
 
@@ -3298,18 +3331,89 @@ class TaskView extends HTMLElement {
         return { speed, estPrompt, estCompletion, estTotal };
     }
 
-    static renderCompactBoundary() {
+    static renderCompactBoundary(message = {}) {
         return `
-        <div class="flex items-center my-6 select-none">
-            <div class="flex-grow border-t border-dashed border-amber-300/60"></div>
-            <span class="mx-4 text-xs text-amber-500/80 font-medium tracking-wide flex items-center gap-1.5">
-                <svg class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                    <path d="M6 9l6 6 6-6"/>
-                </svg>
-                ${taskViewT('renderer.taskview.usage.contextCompressed')}
-            </span>
-            <div class="flex-grow border-t border-dashed border-amber-300/60"></div>
+        <div class="od-compact-boundary flex items-center gap-1.5 my-4 mx-2 text-xs text-gray-400 select-none">
+            <i class="fa-solid fa-compress" aria-hidden="true"></i>
+            <span>${escapeHtml(taskViewT(message.trigger === 'auto' ? 'compact.boundary.autoDone' : 'compact.boundary.done'))}</span>
         </div>`;
+    }
+
+    _getAssistantCompactBoundary(messageId) {
+        return (this._historyMessages || []).find(
+            (message) =>
+                TaskView.isCompactBoundaryMessage(message) &&
+                message.kept_anchor_message_id === messageId &&
+                Number.isInteger(message.kept_anchor_start_part_index) &&
+                message.kept_anchor_start_part_index >= 0
+        );
+    }
+
+    _placeAssistantCompactBoundary(messageId, content) {
+        const boundary = this._getAssistantCompactBoundary(messageId);
+        if (!boundary || !content) return false;
+        content.querySelectorAll('.od-compact-boundary').forEach((element) => element.remove());
+        const index = boundary.kept_anchor_start_part_index;
+        const html = TaskView.renderCompactBoundary(boundary);
+        const target = Array.from(content.querySelectorAll('[data-output-part-index]')).find(
+            (element) => Number(element.dataset.outputPartIndex) >= index
+        );
+        if (target) target.insertAdjacentHTML('beforebegin', html);
+        else (content.querySelector('.od-assistant-output-flow') || content).insertAdjacentHTML('beforeend', html);
+        return true;
+    }
+
+    handleCompactProgress(progress) {
+        const existing = this.querySelector('.od-compact-progress');
+        if (progress?.phase === 'start') {
+            this._removeWaitingAssistantPlaceholder();
+            if (!existing) {
+                this.getHistoryContainer().insertAdjacentHTML(
+                    'beforeend',
+                    `
+                    <div class="od-compact-progress flex items-center gap-2 my-4 mx-2 text-xs text-gray-400" role="status" aria-live="polite">
+                        <i class="fa-solid fa-spinner fa-spin" aria-hidden="true"></i>
+                        <span>${escapeHtml(taskViewT('compact.boundary.loading'))}</span>
+                    </div>`
+                );
+                this.tryScrollToEnd();
+            }
+            return;
+        }
+        existing?.remove();
+        if (!progress?.compacted || !progress.boundary) return;
+
+        // Keep lazy history in sync without reloading over an active response stream.
+        const oldMessages = this._historyMessages || [];
+        const oldStart = this._historyRenderStartIndex || 0;
+        let start = oldStart - oldMessages.slice(0, oldStart).filter(TaskView.isCompactBoundaryMessage).length;
+        const messages = oldMessages.filter((message) => !TaskView.isCompactBoundaryMessage(message));
+        const anchorIndex = messages.findIndex((message) => message.message_id === progress.before_message_id);
+        const insertIndex = anchorIndex < 0 ? messages.length : anchorIndex;
+        messages.splice(insertIndex, 0, progress.boundary);
+        this._historyMessages = messages;
+        if (insertIndex < start) start++;
+        this._historyRenderStartIndex = start;
+        this.querySelectorAll('.od-compact-boundary').forEach((element) => element.remove());
+        if (insertIndex < start) return;
+        const anchorElement = progress.before_message_id
+            ? Array.from(this.getHistoryContainer().querySelectorAll('[id]')).find(
+                  (element) =>
+                      element.id === `user-msg-${progress.before_message_id}` ||
+                      element.id === `message-container-${progress.before_message_id}`
+              )
+            : null;
+        const anchor = anchorElement?.closest('.od-assistant-msg-container') || anchorElement;
+        if (
+            this._placeAssistantCompactBoundary(
+                progress.boundary.kept_anchor_message_id,
+                anchorElement?.querySelector('[id^="message-content-"]')
+            )
+        )
+            return;
+        const html = TaskView.renderCompactBoundary(progress.boundary);
+        if (anchor) anchor.insertAdjacentHTML('beforebegin', html);
+        else this.getHistoryContainer().insertAdjacentHTML('beforeend', html);
     }
 
     _hasActiveGoal() {
@@ -5681,6 +5785,10 @@ class TaskView extends HTMLElement {
                     if (!this.isConnected || connectionEpoch !== this._connectionEpoch) {
                         return;
                     }
+                    if (progress.type === 'compact') {
+                        this._latestCompactProgress = progress;
+                        this._compactProgressRevision = (this._compactProgressRevision || 0) + 1;
+                    }
                     if (progress.type === 'user') {
                         this._consumeGoalEditReminder(progress);
                     }
@@ -5737,6 +5845,8 @@ class TaskView extends HTMLElement {
                         this.handleAssistantReplace(progress);
                     } else if (progress.type === 'retry') {
                         this.handleRetryProgress(progress);
+                    } else if (progress.type === 'compact') {
+                        this.handleCompactProgress(progress);
                     } else if (progress.type === 'user') {
                         // last_part 可能不存在（如流式更新异常），跳过内容渲染但仍处理状态迁移
                         if (this._isHistoryMessageBeforeRenderedWindow(progress.message_id)) {

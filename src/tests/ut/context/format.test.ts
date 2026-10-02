@@ -132,13 +132,13 @@ describe('context diagnostics formatter', () => {
         expect(text).toContain('Context estimate: 7,600 + 500 + 400 (usage_plus_tail_estimate)');
         expect(text).toContain('Context strategy');
         expect(text).toContain('- compact boundary: yes');
-        expect(text).toContain('- auto compact: no (below threshold)');
+        expect(text).toContain('- auto compact: should compact (at or above threshold)');
         expect(text).toContain('- reserved summary output: 100 tokens');
         expect(text).toContain('- effective window: 9,900 tokens');
         expect(text).toContain('- buffer: 0 tokens');
-        expect(text).toContain('- auto compact threshold: 9,900 tokens');
+        expect(text).toContain('- auto compact threshold: 8,000 tokens');
         expect(text).toContain('- window usage ratio: 85.0%');
-        expect(text).toContain('- margin tokens: 1,400');
+        expect(text).toContain('- margin tokens: -500');
         expect(text).toContain('- microcompact: local_clear');
         expect(text).toContain('- tool result budget: enabled (groups: 2, over budget groups: 1)');
         expect(text).toContain('Categories');

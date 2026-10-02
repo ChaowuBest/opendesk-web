@@ -9,8 +9,23 @@
  * See the Mulan PSL v2 for more details.
  */
 
+import {
+    calculateCompactionBudget,
+    assertRequestBudget,
+    estimateRequestPayloadTokens
+} from '../compaction/request-budget.js';
+import type { UsageCompactRecovery } from '../compaction/full-compact.js';
+import { CompactError, ContextPreparationBlockedError } from '../compaction/compact-error.js';
+import { OpenAIAdapter } from '../adapters/openai.js';
+import { estimateTextTokens } from '../compaction/token-estimation.js';
+import { t } from '../../../locale/index.js';
 import { ToolResultReplacementStates, type ToolResultReplacementState } from '../compaction/tool-results.js';
-import { AutoCompactStates, type AutoCompactState } from '../compaction/auto-compact.js';
+import {
+    resolveContextWindow,
+    resolveMaxOutputTokens,
+    AutoCompactStates,
+    type AutoCompactState
+} from '../compaction/auto-compact.js';
 import { MicrocompactStates, type MicrocompactState } from '../compaction/microcompact-state.js';
 import {
     SessionMemoryStates,
@@ -40,7 +55,6 @@ import {
     type RuntimeMetadata
 } from '../messages.js';
 import { runWithRenderWorkspace } from '../../utils/marked-file-link.js';
-import { prepareContextForModel } from '../compaction/pipeline.js';
 import { logCompactInfo } from '../compaction/compact-trace.js';
 import type { MicrocompactTaskRole } from '../compaction/types.js';
 import { compactContext } from '../compact.js';
@@ -134,7 +148,12 @@ export type {
     TaskUpdateGoalEvalChunk,
     TaskUpdateChunk
 } from '../task/types.js';
-import type { SubmitUserMessageOptions, TailCardSectionEntry, TaskUsageSnapshot } from '../task/types.js';
+import type {
+    SubmitUserMessageOptions,
+    TailCardSectionEntry,
+    TaskUsageSnapshot,
+    TaskUpdateCompactChunk
+} from '../task/types.js';
 import {
     ATTEMPT_COMPLETION_TOOL_NAME,
     getLLMRetryDelayMs,
@@ -146,9 +165,12 @@ import { StreamFeedbackThrottle } from '../task/stream-feedback-throttle.js';
 export { ATTEMPT_COMPLETION_TOOL_NAME, getLLMRetryDelayMs };
 
 export interface TaskCompactOptions {
+    trigger?: 'manual' | 'auto';
+    recover?: boolean;
     /** 仅用于本次压缩，不修改任务后续对话所使用的模型。 */
     model?: string;
     modelRequestOptions?: TaskModelRequestOptions;
+    usageRecovery?: UsageCompactRecovery;
 }
 
 export interface TaskCompactResult {
@@ -1274,7 +1296,8 @@ export class TaskState {
     }
 
     setAutoCompactState(state: AutoCompactState) {
-        this.auto_compact_state = AutoCompactStates.clone(state);
+        Object.assign(this.auto_compact_state, AutoCompactStates.clone(state));
+        this.persistLater();
     }
 
     recordAutoCompactAttempt(at: Date = new Date()) {
@@ -1581,30 +1604,145 @@ export class TaskState {
         return this.parent_id === null ? 'main' : 'subtask';
     }
 
+    private _compactModel?: string;
+    compactProgress?: TaskUpdateCompactChunk;
+
     async compactTaskContext(options: TaskCompactOptions = {}): Promise<TaskCompactResult> {
+        const requestedModel = options.model ?? this.ensureValidModelOrFallback();
         if (this._compactPromise) {
-            return this._compactPromise;
+            if (this._compactModel === requestedModel) return this._compactPromise;
+            try {
+                await this._compactPromise;
+            } catch {
+                /* The original caller receives its failure. */
+            }
+            return this.compactTaskContext(options);
         }
+        this._compactModel = requestedModel;
 
         const compactPromise = (async (): Promise<TaskCompactResult> => {
             const model = options.model ?? this.ensureValidModelOrFallback();
-            const compacted = await compactContext(this.chat_context, model, {
-                taskId: this.task_id,
-                requestOptions: this.withUsageTelemetry(options.modelRequestOptions)
-            });
-            if (!compacted) {
-                return { compacted: false };
+            const usageRecovery = options.usageRecovery ?? (options.trigger === 'auto' ? { attempts: 0 } : undefined);
+            if (options.trigger !== 'auto' && this._pluginAbortController.signal.aborted) this.resetPluginAbortSignal();
+            if (options.recover || options.trigger !== 'auto') {
+                this.setAutoCompactState(AutoCompactStates.beginRecovery(this.auto_compact_state));
             }
-
-            const boundary = this.chat_context.findCompactBoundary()?.message;
-            this.clearFileReadStateAfterContextCompaction('manual_full_compact');
-            this.markCompacted();
-            this.persistLater();
-            return {
-                compacted: true,
-                boundary,
-                summary: boundary?.summary
+            if (!AutoCompactStates.canAttempt(this.auto_compact_state))
+                throw new ContextPreparationBlockedError('circuit_open');
+            const previous = AutoCompactStates.clone(this.auto_compact_state);
+            const generation = this.getTurnGeneration();
+            const isCurrent = () =>
+                this.getTurnGeneration() === generation && !this._pluginAbortController.signal.aborted;
+            const budget = calculateCompactionBudget(await resolveContextWindow(model));
+            const output = options.modelRequestOptions?.maxCompletionTokens ?? (await resolveMaxOutputTokens(model));
+            this.setAutoCompactState(AutoCompactStates.recordAttempt(this.auto_compact_state));
+            this.compactProgress = {
+                type: 'compact',
+                task_id: this.task_id,
+                task_status: this.task_status,
+                phase: 'start',
+                trigger: options.trigger === 'auto' ? 'auto' : 'manual'
             };
+            this.publishTaskUpdate(this.compactProgress, 'context compaction');
+            let completed = false;
+            try {
+                const compacted = await compactContext(this.chat_context, model, {
+                    taskId: this.task_id,
+                    trigger: options.trigger ?? 'manual',
+                    budget,
+                    requestedOutputTokens: output,
+                    usageRecovery,
+                    requestOptions: {
+                        ...this.withUsageTelemetry(options.modelRequestOptions),
+                        signal: this._pluginAbortController.signal
+                    },
+                    halfOpen: previous.status === 'half_open',
+                    isCurrent,
+                    onAttemptFailure: (error) =>
+                        this.setAutoCompactState(
+                            AutoCompactStates.recordFailure(this.auto_compact_state, new Date(), error.code)
+                        ),
+                    canRetryEmpty: () => AutoCompactStates.canAttempt(this.auto_compact_state)
+                });
+                if (!isCurrent()) throw new ContextPreparationBlockedError('cancelled');
+                if (!compacted) {
+                    if (
+                        options.trigger !== 'auto' &&
+                        estimateTextTokens(JSON.stringify(OpenAIAdapter.buildMessages(this.chat_context))) <
+                            budget.triggerTokens
+                    ) {
+                        this.setAutoCompactState({
+                            ...previous,
+                            status: previous.status === 'half_open' ? 'circuit_open' : previous.status
+                        });
+                        return { compacted: false };
+                    }
+                    throw new ContextPreparationBlockedError('no_progress');
+                }
+                const payload = {
+                    messages: OpenAIAdapter.buildMessages(this.chat_context),
+                    ...OpenAIAdapter.buildToolOptions(this.chat_context)
+                };
+                const input = estimateRequestPayloadTokens(payload);
+                if (input >= budget.triggerTokens)
+                    throw new ContextPreparationBlockedError('no_progress', input, budget.triggerTokens);
+                assertRequestBudget(payload, output, budget.contextWindow);
+                if (options.trigger === 'auto') this.compactionAwaitingRequest = true;
+                else this.setAutoCompactState(AutoCompactStates.recordSuccess(this.auto_compact_state));
+                const boundary = this.chat_context.findCompactBoundary()?.message;
+                this.clearFileReadStateAfterContextCompaction('full_compact');
+                this.markCompacted();
+                this.persistLater();
+                completed = true;
+                return { compacted: true, boundary, summary: boundary?.summary };
+            } catch (error) {
+                if (this.getTurnGeneration() === generation) {
+                    const state = this.getAutoCompactState();
+                    if (error instanceof CompactError && error.code === 'cancelled') {
+                        this.setAutoCompactState({
+                            ...previous,
+                            status: previous.status === 'half_open' ? 'circuit_open' : previous.status
+                        });
+                    } else {
+                        this.setAutoCompactState({
+                            ...state,
+                            status:
+                                previous.status === 'half_open' || state.status === 'circuit_open'
+                                    ? 'circuit_open'
+                                    : 'degraded',
+                            lastFailureReason: error instanceof CompactError ? error.code : 'request_failed'
+                        });
+                    }
+                }
+                if (error instanceof CompactError) error.message = t('compact.reason.' + error.code);
+                throw error;
+            } finally {
+                const boundary = completed ? this.chat_context.findCompactBoundary() : undefined;
+                const progress = this.compactProgress;
+                this.compactProgress = undefined;
+                if (progress) {
+                    this.publishTaskUpdate(
+                        {
+                            ...progress,
+                            task_status: this.task_status,
+                            phase: 'end',
+                            compacted: completed,
+                            boundary: boundary
+                                ? {
+                                      role: 'compact_separator',
+                                      message_id: boundary.message.metadata.boundary_id,
+                                      trigger: boundary.message.metadata.trigger,
+                                      kept_anchor_message_id: boundary.message.metadata.kept_anchor_message_id,
+                                      kept_anchor_start_part_index:
+                                          boundary.message.metadata.kept_anchor_start_part_index
+                                  }
+                                : undefined,
+                            before_message_id: boundary?.message.metadata.kept_anchor_message_id
+                        },
+                        'context compaction'
+                    );
+                }
+            }
         })();
 
         this._compactPromise = compactPromise;
@@ -1615,6 +1753,39 @@ export class TaskState {
                 this._compactPromise = undefined;
             }
         }
+    }
+
+    compactionAwaitingRequest = false;
+
+    confirmCompactionRequestBudget(): void {
+        if (!this.compactionAwaitingRequest) return;
+        this.compactionAwaitingRequest = false;
+        this.setAutoCompactState(AutoCompactStates.recordSuccess(this.auto_compact_state));
+    }
+
+    private _contextCompactionPaused = false;
+
+    async pauseForContextCompaction(error: unknown): Promise<void> {
+        this._contextCompactionPaused = true;
+        this.compactionAwaitingRequest = false;
+        if (this.auto_compact_state.status !== 'circuit_open') {
+            this.setAutoCompactState({ ...this.auto_compact_state, status: 'degraded' });
+        }
+        const reason = error instanceof CompactError ? error.code : 'request_failed';
+        this.task_status = 'stopped';
+        this.finished_at = new Date();
+        const message = this.chat_context.lastMessage();
+        if (message instanceof AssistantMessage) {
+            message.appendError(
+                t('compact.paused.title'),
+                t('compact.paused.detail', {
+                    reason: t('compact.reason.' + reason),
+                    count: this.auto_compact_state.consecutiveFailures
+                })
+            );
+            await this.sendSubscriptionFeedback();
+        }
+        this.persistLater();
     }
 
     async manualCompact(): Promise<boolean> {
@@ -1681,8 +1852,9 @@ export class TaskState {
         await this.task_manager_state.refreshLazyTaskSystemPrompt(this);
         const extensionInputResult = await this.extensions.handleUserMessage(message, options.imageDataUris);
         if (extensionInputResult) return extensionInputResult;
-        const model = this.ensureValidModelOrFallback();
         const telemetryRequestOptions = this.withUsageTelemetry(options.modelRequestOptions);
+        this.setAutoCompactState(AutoCompactStates.beginRecovery(this.auto_compact_state));
+        this._contextCompactionPaused = false;
         this._currentTurnInteractive = options.interactive === true;
         const allToolsets = await this.buildToolsets();
         await this.rebuildSystemPrompt(allToolsets);
@@ -1748,46 +1920,9 @@ export class TaskState {
             await this.sendSubscriptionFeedback(i);
         }
 
-        // 在追加新消息后检查是否需要自动压缩上下文（TUI 层可能已经做过，此处为 GUI 等场景的兜底）
-        if (this._compactedBeforeSubmit) {
-            this._compactedBeforeSubmit = false;
-        } else {
-            try {
-                const preparation = await prepareContextForModel(this.chat_context, model, {
-                    beforeCompact: () => {
-                        logCompactInfo(this.task_id, {
-                            source: 'tasks',
-                            event: 'auto_compacting_context',
-                            message: `Auto-compacting context for task ${this.task_id}`
-                        });
-                    },
-                    enableSessionMemoryCompact: true,
-                    autoCompactState: this.auto_compact_state,
-                    microcompactState: this.microcompact_state,
-                    microcompactRequestKind: 'pre_submit_check',
-                    microcompactTaskRole: this.getMicrocompactTaskRole(),
-                    sessionMemoryState: this.session_memory_state,
-                    taskId: this.task_id,
-                    requestOptions: telemetryRequestOptions
-                });
-                if (preparation.autoCompactState) {
-                    this.setAutoCompactState(preparation.autoCompactState);
-                }
-                if (preparation.microcompactState) {
-                    this.setMicrocompactState(preparation.microcompactState);
-                }
-                if (preparation.sessionMemoryState) {
-                    this.setSessionMemoryState(preparation.sessionMemoryState);
-                }
-                if (preparation.compacted) {
-                    this.clearFileReadStateAfterContextCompaction(
-                        preparation.sessionMemoryCompacted ? 'session_memory_compact' : 'full_compact'
-                    );
-                }
-            } catch (err: unknown) {
-                logger.warn(`Auto-compact check failed: ${err instanceof Error ? err.message : err}`);
-            }
-        }
+        // Compaction runs once at completion preparation, after skills and tools are attached.
+        // The former pre-submit check could race that request and retry the same failure twice.
+        this._compactedBeforeSubmit = false;
 
         // 检测用户消息中的 /skillname，替换文本（用户消息已经显示，如果有替换则更新显示）
         const displayMessage = await this.replaceSlashSkillsInText(message);
@@ -3181,7 +3316,8 @@ export class TaskState {
                     }
 
                     // 即使被新 turn 取代，也先完成当前 turn 的 runtime interrupt 清理
-                    const skipInterruptedTurnHooks = this.finishRuntimeInterruptIfCurrentTurn(myGeneration);
+                    const skipInterruptedTurnHooks =
+                        this.finishRuntimeInterruptIfCurrentTurn(myGeneration) || this._contextCompactionPaused;
 
                     // 清理代码：仅在未被新 turn 取代时执行
                     if (this._turnGeneration !== myGeneration) return;

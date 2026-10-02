@@ -1,3 +1,4 @@
+import { ModelInstance, Setting } from '../../../main/utils/setting.js';
 import fs from 'fs';
 import os from 'os';
 import path from 'path';
@@ -163,6 +164,16 @@ _Terse chronological worklog._
 - Integrated pipeline fallback behavior.
 `;
 }
+
+beforeEach(() => {
+    jest.spyOn(Setting, 'getInstance').mockReturnValue({
+        getModelInstance: () =>
+            new ModelInstance('compact-test-model', 'https://example.com', 'test-key', false, false, '', 200000),
+        getDefaultModelInstance: () =>
+            new ModelInstance('compact-test-model', 'https://example.com', 'test-key', false, false, '', 200000),
+        getData: () => ({ locale: 'en-US' })
+    } as unknown as Setting);
+});
 
 describe('session memory compact planning and apply', () => {
     test('session memory compact boundary metadata omits scope summary and summary details', () => {
@@ -646,12 +657,14 @@ describe('session memory compact try/pipeline integration', () => {
             last_summarized_message_id: (chatContext.messages[3] as AssistantMessage).message_id,
             tokens_at_last_extraction: 12000
         });
-        const askSpy = jest.spyOn(LLM, 'ask').mockResolvedValue('full compact should not run');
+        const askSpy = jest
+            .spyOn(LLM, 'askWithMetadata')
+            .mockResolvedValue({ text: 'full compact should not run', reasoningLength: 0, finishReason: 'stop' });
 
         const result = await prepareContextForModel(chatContext, 'demo-model', {
             autoCompactDecisionOverride: createAutoCompactDecision({
                 contextWindow: 1000,
-                promptTokens: 720,
+                promptTokens: 800,
                 reservedSummaryOutput: 100,
                 buffer: 180
             }),
@@ -690,14 +703,16 @@ describe('session memory compact try/pipeline integration', () => {
         jest.setSystemTime(now);
         const chatContext = createCompactableChatContext();
         const autoCompactState = AutoCompactStates.create();
-        const askSpy = jest
-            .spyOn(LLM, 'ask')
-            .mockResolvedValue('<state_snapshot><overall_goal>fallback compact</overall_goal></state_snapshot>');
+        const askSpy = jest.spyOn(LLM, 'askWithMetadata').mockResolvedValue({
+            text: '<state_snapshot><overall_goal>fallback compact</overall_goal></state_snapshot>',
+            reasoningLength: 0,
+            finishReason: 'stop'
+        });
 
         const result = await prepareContextForModel(chatContext, 'demo-model', {
             autoCompactDecisionOverride: createAutoCompactDecision({
                 contextWindow: 1000,
-                promptTokens: 720,
+                promptTokens: 800,
                 reservedSummaryOutput: 100,
                 buffer: 180
             }),
@@ -728,12 +743,14 @@ describe('session memory compact try/pipeline integration', () => {
         appendMessages(chatContext, [olderUser, olderAssistant, bigAssistant]);
 
         const autoCompactState = AutoCompactStates.create();
-        const askSpy = jest.spyOn(LLM, 'ask').mockResolvedValue('full compact should not run');
+        const askSpy = jest
+            .spyOn(LLM, 'askWithMetadata')
+            .mockResolvedValue({ text: 'full compact should not run', reasoningLength: 0, finishReason: 'stop' });
 
         const result = await prepareContextForModel(chatContext, 'demo-model', {
             autoCompactDecisionOverride: createAutoCompactDecision({
                 contextWindow: 1000,
-                promptTokens: 720,
+                promptTokens: 800,
                 reservedSummaryOutput: 100,
                 buffer: 180
             }),
@@ -794,12 +811,14 @@ describe('session memory compact try/pipeline integration', () => {
         appendMessages(chatContext, [recentUser, bigAssistant]);
 
         const autoCompactState = AutoCompactStates.create();
-        const askSpy = jest.spyOn(LLM, 'ask').mockResolvedValue('full compact should not run');
+        const askSpy = jest
+            .spyOn(LLM, 'askWithMetadata')
+            .mockResolvedValue({ text: 'full compact should not run', reasoningLength: 0, finishReason: 'stop' });
 
         const result = await prepareContextForModel(chatContext, 'demo-model', {
             autoCompactDecisionOverride: createAutoCompactDecision({
                 contextWindow: 1000,
-                promptTokens: 720,
+                promptTokens: 800,
                 reservedSummaryOutput: 100,
                 buffer: 180
             }),
@@ -867,12 +886,14 @@ describe('session memory compact try/pipeline integration', () => {
         appendMessages(chatContext, [olderUser, olderAssistant, bigAssistant]);
 
         const autoCompactState = AutoCompactStates.create();
-        const askSpy = jest.spyOn(LLM, 'ask').mockResolvedValue('full compact should not run');
+        const askSpy = jest
+            .spyOn(LLM, 'askWithMetadata')
+            .mockResolvedValue({ text: 'full compact should not run', reasoningLength: 0, finishReason: 'stop' });
 
         const result = await prepareContextForModel(chatContext, 'demo-model', {
             autoCompactDecisionOverride: createAutoCompactDecision({
                 contextWindow: 1000,
-                promptTokens: 720,
+                promptTokens: 800,
                 reservedSummaryOutput: 100,
                 buffer: 180
             }),

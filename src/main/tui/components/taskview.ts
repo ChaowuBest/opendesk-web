@@ -453,10 +453,11 @@ const COMPACT_SPINNER_MS = 120;
 
 /**
  * 上下文压缩 boundary 视图。
- * - 静态模式：渲染为一条带 ✂ 的水平分隔线
+ * - 静态模式：渲染为灰色的压缩完成提示
  * - loading 模式：渲染为带旋转动画的"正在压缩…"提示
  */
 export class CompactBoundaryView implements Component {
+    constructor(private readonly trigger?: string) {}
     private _loading = false;
     private invalidated = true;
     private lastWidth?: number;
@@ -472,12 +473,7 @@ export class CompactBoundaryView implements Component {
     }
 
     private buildLine(label: string, width: number): string {
-        const labelW = visibleWidth(label);
-        const available = Math.max(0, width - labelW);
-        const left = Math.floor(available / 2);
-        const right = available - left;
-        const raw = chalk.dim('─'.repeat(left)) + chalk.yellow(label) + chalk.dim('─'.repeat(right));
-        return truncateToWidth(raw, width, '', true);
+        return truncateToWidth(chalk.gray(label), width, '', true);
     }
 
     render(width: number): string[] {
@@ -491,7 +487,8 @@ export class CompactBoundaryView implements Component {
             return this.cachedOutput;
         }
         this.lastWidth = width;
-        this.cachedOutput = ['', this.buildLine(` ✂ ${t('compact.boundary.done')} `, width), ''];
+        const label = t(this.trigger === 'auto' ? 'compact.boundary.autoDone' : 'compact.boundary.done');
+        this.cachedOutput = ['', this.buildLine(` ⇤⇥ ${label} `, width), ''];
         this.invalidated = false;
         return this.cachedOutput;
     }
@@ -745,6 +742,12 @@ function renderAssistantBody(part: TextMessagePartView, width: number): string[]
 }
 
 export class AssistantMessageView implements Component {
+    private compactBoundary?: { index: number; view: CompactBoundaryView };
+
+    setCompactBoundary(index: number, trigger?: string): void {
+        this.compactBoundary = { index, view: new CompactBoundaryView(trigger) };
+        this.invalidated = true;
+    }
     box: Box = new Box(0, 1);
     parts: Array<ReasoningMessagePartView | TextMessagePartView | ToolCallMessagePartView | ErrorMessagePartView> = [];
     private invalidated = true;
@@ -1045,6 +1048,10 @@ export class AssistantMessageView implements Component {
 
         for (let index = 0; index < this.parts.length; index += 1) {
             const part = this.parts[index];
+            if (this.compactBoundary?.index === index) {
+                flushPendingTools();
+                appendBlock(this.compactBoundary.view.render(width), true);
+            }
             if (part instanceof ReasoningMessagePartView) continue;
             if (part instanceof ToolCallMessagePartView) {
                 const attentionToolCalls = new Set(part.getAttentionToolCalls());
@@ -1093,6 +1100,14 @@ export class AssistantMessageView implements Component {
         }
         if (fresh) this.box.invalidate();
         this.lastWidth = width;
+        if (this.compactBoundary) {
+            const children: Component[] = [...this.parts];
+            if (this.compactBoundary.index <= children.length) {
+                children.splice(this.compactBoundary.index, 0, this.compactBoundary.view);
+            }
+            this.box.children = children;
+            this.box.invalidate();
+        }
         this.cachedOutput =
             this.outputDisplayProvider() === 'minimal' ? this.renderMinimal(width) : this.box.render(width);
         this.invalidated = false;
@@ -1228,6 +1243,29 @@ export class TaskView implements Component {
     private currentTaskId?: string;
     /** 防止 performCompactWithAnimation 重入 */
     private _compacting = false;
+    private compactIndicator?: CompactBoundaryView;
+    private compactSpinner?: ReturnType<typeof setInterval>;
+
+    private showCompactIndicator(active: boolean): void {
+        if (!active) {
+            if (this.compactSpinner) clearInterval(this.compactSpinner);
+            this.compactSpinner = undefined;
+            if (this.compactIndicator) {
+                this.messageLayout.removeChild(this.compactIndicator);
+                this.messages = this.messages.filter((message) => message !== this.compactIndicator);
+                this.compactIndicator = undefined;
+            }
+        } else if (!this.compactIndicator) {
+            this.compactIndicator = new CompactBoundaryView();
+            this.compactIndicator.setLoading(true);
+            this.messages.push(this.compactIndicator);
+            this.messageLayout.addChild(this.compactIndicator);
+            this.compactSpinner = setInterval(() => this.tui.requestRender(), COMPACT_SPINNER_MS);
+            this.compactSpinner.unref?.();
+        }
+        this.invalidated = true;
+        this.tui.requestRender();
+    }
     lastCompactErrorMessage?: string;
     /** message_id -> AssistantMessageView，用于按 message_id 追加而非覆盖 */
     private messageIdToUserView: Map<string, UserMessageView> = new Map();
@@ -1370,7 +1408,7 @@ export class TaskView implements Component {
     }
 
     get isCompacting() {
-        return this._compacting;
+        return this._compacting || this.compactIndicator !== undefined;
     }
 
     /**
@@ -1401,35 +1439,37 @@ export class TaskView implements Component {
      * 执行上下文压缩并在消息列表中展示动画。
      * 内置防重入：如果上一次压缩尚未完成，直接返回。
      */
-    async performCompactWithAnimation(taskState: TaskState | undefined = this.taskState): Promise<boolean> {
+    async performCompactWithAnimation(
+        taskState: TaskState | undefined = this.taskState,
+        trigger: 'auto' | 'manual' = 'manual'
+    ): Promise<boolean> {
         if (!taskState || this._compacting) return false;
         this._compacting = true;
         this.lastCompactErrorMessage = undefined;
 
-        const indicatorView = new CompactBoundaryView();
-        indicatorView.setLoading(true);
-        this.messageLayout.addChild(indicatorView);
-        this.invalidated = true;
-
-        const spinnerInterval = setInterval(() => {
-            this.tui.requestRender();
-        }, COMPACT_SPINNER_MS);
+        this.showCompactIndicator(true);
 
         try {
-            const compacted = await taskState.manualCompact();
+            const compacted =
+                trigger === 'auto'
+                    ? (await taskState.compactTaskContext({ trigger })).compacted
+                    : await taskState.manualCompact();
             if (!compacted) {
                 this.lastCompactErrorMessage = 'No compactable context available';
                 return false;
             }
             taskState.markCompacted();
+            if (this.taskState === taskState) {
+                this.clearMessages({ preserveCommunication: true });
+                this.rebuildFromHistory();
+            }
             return true;
         } catch (err: any) {
             logger.warn(`Context compact failed: ${err?.message ?? err}`);
             this.lastCompactErrorMessage = err?.message ?? String(err);
             return false;
         } finally {
-            clearInterval(spinnerInterval);
-            this.messageLayout.removeChild(indicatorView);
+            if (this.taskState === taskState) this.showCompactIndicator(false);
             this._compacting = false;
             this.invalidated = true;
             this.tui.requestRender();
@@ -1475,6 +1515,7 @@ export class TaskView implements Component {
         // 在提交新消息前检查是否需要压缩上下文（TUI 层负责展示动画）
         try {
             const preparation = await prepareContextForModel(taskState.chat_context, model, {
+                compactStateManaged: true,
                 beforeCompact: () => {
                     logger.info(`Auto-compacting context for task ${taskState.task_id}`);
                 },
@@ -1484,7 +1525,7 @@ export class TaskView implements Component {
                 microcompactTaskRole: taskState.parent_id === null ? 'main' : 'subtask',
                 taskId: taskState.task_id,
                 executeCompact: async () => {
-                    const compacted = await this.performCompactWithAnimation(taskState);
+                    const compacted = await this.performCompactWithAnimation(taskState, 'auto');
                     if (!compacted) {
                         throw new Error(this.lastCompactErrorMessage ?? 'Context compact failed');
                     }
@@ -1598,6 +1639,7 @@ export class TaskView implements Component {
 
     /** 清空消息视图（用于切换任务时），同时重置动态节流阈值 */
     clearMessages(options: { preserveCommunication?: boolean } = {}) {
+        this.showCompactIndicator(false);
         if (!options.preserveCommunication) this.clearStreamThrottle();
         this.messageLayout.clear();
         this.messages = [];
@@ -1741,6 +1783,12 @@ export class TaskView implements Component {
                 }
                 await view.replace({ ...chunkUpdate, parts });
             }
+        } else if (chunkUpdate.type === 'compact') {
+            this.showCompactIndicator(chunkUpdate.phase === 'start');
+            if (chunkUpdate.phase === 'end' && chunkUpdate.compacted && this.taskState) {
+                this.clearMessages({ preserveCommunication: true });
+                this.rebuildFromHistory();
+            }
         } else if (chunkUpdate.type === 'retry') {
             if (chunkUpdate.status === 'cleared') {
                 if (this.retryStatusView) {
@@ -1802,6 +1850,21 @@ export class TaskView implements Component {
         let terminalGoalPanelInserted = false;
 
         const messages = this.taskState.chat_context.messages;
+        const internalBoundary = messages.find((message) => {
+            if (!isCompactBoundaryMessage(message)) return false;
+            const index = message.metadata.kept_anchor_start_part_index;
+            return (
+                typeof index === 'number' &&
+                Number.isInteger(index) &&
+                index >= 0 &&
+                messages.some(
+                    (target) =>
+                        target instanceof AssistantMessage &&
+                        target.message_id === message.metadata.kept_anchor_message_id &&
+                        index <= target.content.length
+                )
+            );
+        });
         for (let messageIndex = 0; messageIndex < messages.length; messageIndex += 1) {
             const msg = messages[messageIndex];
             if (
@@ -1814,7 +1877,8 @@ export class TaskView implements Component {
             }
 
             if (isCompactBoundaryMessage(msg)) {
-                const view = new CompactBoundaryView();
+                if (msg === internalBoundary) continue;
+                const view = new CompactBoundaryView(msg.metadata.trigger);
                 this.messages.push(view);
                 this.messageLayout.addChild(view);
             } else if (msg instanceof UserMessage) {
@@ -1830,6 +1894,16 @@ export class TaskView implements Component {
                     lifecycle
                 });
                 view.setMessageId(msg.message_id);
+                if (
+                    isCompactBoundaryMessage(internalBoundary) &&
+                    internalBoundary.metadata.kept_anchor_message_id === msg.message_id
+                ) {
+                    view.setCompactBoundary(
+                        internalBoundary.metadata.kept_anchor_start_part_index!,
+                        internalBoundary.metadata.trigger
+                    );
+                }
+                view.throttleMsProvider = () => this.getMdRenderThrottleMs();
                 this.messageIdToAssistantView.set(msg.message_id, view);
                 const content = Array.isArray(msg.content) ? msg.content : [];
                 for (let i = 0; i < content.length; i++) {
@@ -1883,6 +1957,7 @@ export class TaskView implements Component {
             }
         }
         // 重建结束后确保 GoalPanel 位于消息列表末尾
+        this.showCompactIndicator(this.taskState.compactProgress?.phase === 'start');
         this.ensureGoalPanelLast();
         this.invalidated = true;
     }

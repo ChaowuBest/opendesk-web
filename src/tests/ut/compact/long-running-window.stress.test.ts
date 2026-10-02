@@ -1,3 +1,4 @@
+import { ModelInstance, Setting } from '../../../main/utils/setting.js';
 import fs from 'fs';
 import os from 'os';
 import path from 'path';
@@ -129,7 +130,7 @@ function expectActiveContextMessages(
 function createForcedCompactDecision() {
     return createAutoCompactDecision({
         contextWindow: 1000,
-        promptTokens: 720,
+        promptTokens: 800,
         reservedSummaryOutput: 100,
         buffer: 180
     });
@@ -163,6 +164,16 @@ window stays bounded
 `;
 }
 
+beforeEach(() => {
+    jest.spyOn(Setting, 'getInstance').mockReturnValue({
+        getModelInstance: () =>
+            new ModelInstance('compact-test-model', 'https://example.com', 'test-key', false, false, '', 200000),
+        getDefaultModelInstance: () =>
+            new ModelInstance('compact-test-model', 'https://example.com', 'test-key', false, false, '', 200000),
+        getData: () => ({ locale: 'en-US' })
+    } as unknown as Setting);
+});
+
 describe('long-running compaction window regressions', () => {
     beforeEach(() => {
         jest.useFakeTimers();
@@ -189,11 +200,11 @@ describe('long-running compaction window regressions', () => {
         appendAssistantRoundSequence(bigAssistant, 'builder', 1, 20);
         appendMessages(chatContext, [hiddenUser, initialBoundary, bigAssistant]);
 
-        const askSpy = jest
-            .spyOn(LLM, 'ask')
-            .mockResolvedValue(
-                '<state_snapshot><overall_goal>long running full compact</overall_goal></state_snapshot>'
-            );
+        const askSpy = jest.spyOn(LLM, 'askWithMetadata').mockResolvedValue({
+            text: '<state_snapshot><overall_goal>long running full compact</overall_goal></state_snapshot>',
+            reasoningLength: 0,
+            finishReason: 'stop'
+        });
 
         const autoCompactState = AutoCompactStates.create();
         const anchorHistory: number[] = [];
@@ -233,13 +244,13 @@ describe('long-running compaction window regressions', () => {
 
             const visibleRoundIndices = getVisibleAssistantRoundIndices(chatContext, bigAssistant);
             visibleWindowStarts.push(visibleRoundIndices[0] ?? -1);
-            expect(visibleRoundIndices).toHaveLength(8);
+            expect(visibleRoundIndices).toHaveLength(3);
             expect(visibleRoundIndices[0]).toBe(anchorRoundIndex);
-            expect(visibleRoundIndices).toEqual(Array.from({ length: 8 }, (_, index) => anchorRoundIndex! + index));
+            expect(visibleRoundIndices).toEqual(Array.from({ length: 3 }, (_, index) => anchorRoundIndex! + index));
 
             const serialized = serializeVisibleMessages(chatContext);
             const firstVisibleRoundNumber = anchorRoundIndex! + 1;
-            const lastVisibleRoundNumber = anchorRoundIndex! + 8;
+            const lastVisibleRoundNumber = anchorRoundIndex! + 3;
             expect(serialized).not.toContain(formatRoundLabel(anchorRoundIndex!));
             expect(serialized).toContain(formatRoundLabel(firstVisibleRoundNumber));
             expect(serialized).toContain(formatRoundLabel(lastVisibleRoundNumber));
@@ -252,7 +263,7 @@ describe('long-running compaction window regressions', () => {
         }
 
         expect(askSpy).toHaveBeenCalledTimes(4);
-        expect(anchorHistory).toEqual([12, 20, 28, 36]);
+        expect(anchorHistory).toEqual([17, 25, 33, 41]);
         expect(visibleWindowStarts).toEqual(anchorHistory);
     });
 
@@ -271,7 +282,9 @@ describe('long-running compaction window regressions', () => {
         appendAssistantRoundSequence(bigAssistant, 'builder', 1, 4, 40);
         appendMessages(chatContext, [recentUser, bigAssistant]);
 
-        const askSpy = jest.spyOn(LLM, 'ask').mockResolvedValue('full compact should not run');
+        const askSpy = jest
+            .spyOn(LLM, 'askWithMetadata')
+            .mockResolvedValue({ text: 'full compact should not run', reasoningLength: 0, finishReason: 'stop' });
         const autoCompactState = AutoCompactStates.create();
         const sessionMemoryState = SessionMemoryStates.create();
         const anchorHistory: number[] = [];
@@ -362,11 +375,11 @@ describe('long-running compaction window regressions', () => {
         const chatContext = new ChatContext();
         const autoCompactState = AutoCompactStates.create();
         const sessionMemoryState = SessionMemoryStates.create();
-        const askSpy = jest
-            .spyOn(LLM, 'ask')
-            .mockResolvedValue(
-                '<state_snapshot><overall_goal>mixed long running compact</overall_goal></state_snapshot>'
-            );
+        const askSpy = jest.spyOn(LLM, 'askWithMetadata').mockResolvedValue({
+            text: '<state_snapshot><overall_goal>mixed long running compact</overall_goal></state_snapshot>',
+            reasoningLength: 0,
+            finishReason: 'stop'
+        });
 
         const u1 = new UserMessage('user asks a short setup question');
         const a1 = createTextAssistant('short setup answer');
@@ -393,7 +406,7 @@ describe('long-running compaction window regressions', () => {
         const fullAnchorPhase1 = fullBoundaryPhase1.metadata.kept_anchor_round_index;
         expect(typeof fullAnchorPhase1).toBe('number');
         expect(getVisibleAssistantRoundIndices(chatContext, hugeAssistant1)).toEqual(
-            Array.from({ length: 8 }, (_, index) => fullAnchorPhase1! + index)
+            Array.from({ length: 3 }, (_, index) => fullAnchorPhase1! + index)
         );
         const serializedAfterFullPhase1 = serializeVisibleMessages(chatContext);
         expect(serializedAfterFullPhase1).toContain('user asks for a very large first response');
@@ -401,7 +414,7 @@ describe('long-running compaction window regressions', () => {
         expect(serializedAfterFullPhase1).not.toContain('second short answer');
         expect(serializedAfterFullPhase1).not.toContain(formatRoundLabel(fullAnchorPhase1!));
         expect(serializedAfterFullPhase1).toContain(formatRoundLabel(fullAnchorPhase1! + 1));
-        expect(serializedAfterFullPhase1).toContain(formatRoundLabel(fullAnchorPhase1! + 8));
+        expect(serializedAfterFullPhase1).toContain(formatRoundLabel(fullAnchorPhase1! + 3));
 
         appendAssistantRoundSequence(hugeAssistant1, 'builder', 21, 8, 2);
         const fullCompactPhase2 = await prepareContextForModel(chatContext, 'demo-model', {
@@ -425,13 +438,13 @@ describe('long-running compaction window regressions', () => {
         expect(typeof fullAnchorPhase2).toBe('number');
         expect(fullAnchorPhase2).toBeGreaterThan(fullAnchorPhase1!);
         expect(getVisibleAssistantRoundIndices(chatContext, hugeAssistant1)).toEqual(
-            Array.from({ length: 8 }, (_, index) => fullAnchorPhase2! + index)
+            Array.from({ length: 3 }, (_, index) => fullAnchorPhase2! + index)
         );
         const serializedAfterFullPhase2 = serializeVisibleMessages(chatContext);
         expect(serializedAfterFullPhase2).toContain('user asks for a very large first response');
         expect(serializedAfterFullPhase2).not.toContain(formatRoundLabel(fullAnchorPhase2!));
         expect(serializedAfterFullPhase2).toContain(formatRoundLabel(fullAnchorPhase2! + 1));
-        expect(serializedAfterFullPhase2).toContain(formatRoundLabel(fullAnchorPhase2! + 8));
+        expect(serializedAfterFullPhase2).toContain(formatRoundLabel(fullAnchorPhase2! + 3));
 
         appendAssistantRoundSequence(hugeAssistant1, 'builder', 29, 1, 1);
         const u4 = new UserMessage('user asks a short follow-up after the first huge response');

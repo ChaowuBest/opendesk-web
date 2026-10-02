@@ -1,5 +1,10 @@
 import { jest } from '@jest/globals';
-import { ReasoningMessagePartView, TaskView, ToolCallMessagePartView } from '../../../../main/tui/components/taskview';
+import {
+    AssistantMessageView,
+    ReasoningMessagePartView,
+    TaskView,
+    ToolCallMessagePartView
+} from '../../../../main/tui/components/taskview';
 import {
     AssistantMessage,
     ChatContext,
@@ -92,6 +97,36 @@ describe('TaskView chunk handling', () => {
         jest.restoreAllMocks();
         setRuntimeLocale(null);
         Setting.clearCache();
+    });
+    test('internal compact marker does not change assistant part indices', async () => {
+        const view = new AssistantMessageView();
+        await view.updateTextPart(0, { type: 'text', text: 'before' } as any);
+        await view.updateTextPart(1, { type: 'text', text: 'after' } as any);
+        view.setCompactBoundary(1, 'auto');
+        expect(stripAnsi(view.render(80).join('\n'))).toContain('Context automatically compressed');
+        expect(view.parts).toHaveLength(2);
+        expect(view.box.children).toHaveLength(3);
+        expect(view.box.children[0]).toBe(view.parts[0]);
+        expect(view.box.children[2]).toBe(view.parts[1]);
+        await view.updateTextPart(1, { type: 'text', text: 'updated' } as any);
+        view.render(80);
+        expect(view.box.children).toHaveLength(3);
+        expect(view.box.children[2]).toBe(view.parts[1]);
+    });
+    test('shows one temporary compact indicator and clears it on failure', async () => {
+        const taskView = new TaskView({ requestRender: jest.fn() } as any);
+        const update = {
+            type: 'compact' as const,
+            task_id: 'task_1',
+            task_status: 'running' as const,
+            trigger: 'auto' as const,
+            phase: 'start' as const
+        };
+        await taskView.handleChunkUpdate(update);
+        await taskView.handleChunkUpdate(update);
+        expect(taskView.messages).toHaveLength(1);
+        await taskView.handleChunkUpdate({ ...update, phase: 'end', compacted: false });
+        expect(taskView.messages).toHaveLength(0);
     });
 
     test('skips malformed user chunks without throwing', async () => {

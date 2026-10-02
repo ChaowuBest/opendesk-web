@@ -65,6 +65,22 @@ export const zhCn: Record<string, string> = {
     'taskTransfer.error.writeFailed': '读写任务文件失败，请检查文件权限和磁盘空间。',
     'taskTransfer.error.expired': '导入预览已过期或另一个操作正在进行，请关闭后重新选择文件。',
 
+    'compact.paused.title': '上下文压缩已暂停',
+    'compact.paused.detail':
+        '原因：${reason}。连续失败 ${count} 次，自动执行已暂停，历史和已执行操作已保留。请使用压缩功能重试，或在模型配置中调整设置后发送新消息继续。',
+    'compact.reason.empty_choices': '模型返回空 choices',
+    'compact.reason.reasoning_only': '模型只返回推理，没有摘要正文',
+    'compact.reason.empty_content': '模型未返回有效摘要',
+    'compact.reason.output_truncated': '摘要输出被截断',
+    'compact.reason.protocol_error': '模型响应格式异常',
+    'compact.reason.context_limit': '请求超过配置的上下文预算',
+    'compact.reason.invalid_budget': '上下文窗口或 token 估算无效',
+    'compact.reason.request_failed': '摘要请求失败',
+    'compact.reason.no_progress': '压缩未能将上下文降至安全范围',
+    'compact.reason.no_safe_usage_boundary': '找不到满足压缩预算的边界（真实 usage 和估算均不可用）',
+    'compact.reason.recovery_exhausted': '已达到三次压缩恢复尝试上限',
+    'compact.reason.circuit_open': '连续失败已达到上限，自动压缩已停止',
+    'compact.reason.cancelled': '压缩已取消或上下文已变化',
     // App
     'app.name': 'OpenDesk',
     'app.description': 'AI 工作站',
@@ -1244,6 +1260,7 @@ export const zhCn: Record<string, string> = {
     // Compact Boundary
     'compact.boundary.loading': '正在压缩上下文...',
     'compact.boundary.done': '上下文已压缩',
+    'compact.boundary.autoDone': '上下文已自动压缩',
 
     // Task Retry
     'task.retry.title': 'LLM 请求自动重试',

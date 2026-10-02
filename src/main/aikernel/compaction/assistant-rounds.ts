@@ -58,8 +58,13 @@ export function buildAssistantRounds(message: AssistantMessage): AssistantRound[
 
     const rounds: AssistantRound[] = [];
     let startPartIndex = 0;
+    const completionStarts = new Set(message.usageCheckpoints?.map((checkpoint) => checkpoint.startPartIndex));
 
     for (let partIndex = 0; partIndex < message.content.length; partIndex++) {
+        if (partIndex > startPartIndex && completionStarts.has(partIndex)) {
+            rounds.push(buildAssistantRound(message, rounds.length, startPartIndex, partIndex, 'message_tail'));
+            startPartIndex = partIndex;
+        }
         const part = message.content[partIndex];
         if (part.type !== 'tool_call') {
             continue;

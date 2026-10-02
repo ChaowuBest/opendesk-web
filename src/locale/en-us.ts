@@ -70,6 +70,22 @@ export const enUs: Record<string, string> = {
     'taskTransfer.error.expired':
         'The import preview expired or another operation is running. Close this dialog and choose the file again.',
 
+    'compact.paused.title': 'Context compaction paused',
+    'compact.paused.detail':
+        'Reason: ${reason}. Consecutive failures: ${count}. Execution is paused; history and completed operations are preserved. Retry using Compact, or adjust model settings and send a new message to continue.',
+    'compact.reason.empty_choices': 'The model returned empty choices',
+    'compact.reason.reasoning_only': 'The model returned reasoning without a summary',
+    'compact.reason.empty_content': 'The model returned no valid summary',
+    'compact.reason.output_truncated': 'The summary was truncated',
+    'compact.reason.protocol_error': 'Invalid model response format',
+    'compact.reason.context_limit': 'The request exceeds the configured context budget',
+    'compact.reason.invalid_budget': 'Invalid context window or token estimate',
+    'compact.reason.request_failed': 'The summary request failed',
+    'compact.reason.no_progress': 'Compaction did not reduce context to a safe size',
+    'compact.reason.no_safe_usage_boundary': 'No compaction boundary fits the budget using recorded usage or estimates',
+    'compact.reason.recovery_exhausted': 'Context recovery stopped after three compaction attempts',
+    'compact.reason.circuit_open': 'Repeated failures have stopped automatic compaction',
+    'compact.reason.cancelled': 'Compaction was cancelled or context changed',
     // App
     'app.name': 'OpenDesk',
     'app.description': 'AI Workstation',
@@ -1275,6 +1291,7 @@ export const enUs: Record<string, string> = {
     // Compact Boundary
     'compact.boundary.loading': 'Compressing context...',
     'compact.boundary.done': 'Context compressed',
+    'compact.boundary.autoDone': 'Context automatically compressed',
 
     // Task Retry
     'task.retry.title': 'LLM Request Auto Retry',

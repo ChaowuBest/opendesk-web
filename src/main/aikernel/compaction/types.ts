@@ -118,15 +118,15 @@ export interface ProjectedAssistantRoundItem extends BaseProjectedContextItem {
 }
 
 export type ProjectedContextItem =
-    | ProjectedBoundaryContextItem
-    | ProjectedUserContextItem
-    | ProjectedAssistantRoundItem;
+    ProjectedBoundaryContextItem | ProjectedUserContextItem | ProjectedAssistantRoundItem;
 
 export type MicrocompactRequestKind = 'task_turn' | 'pre_submit_check' | 'view_only' | 'manual_compact';
 
 export type MicrocompactTaskRole = 'main' | 'subtask';
 
 export interface PrepareContextOptions {
+    forceCompact?: boolean;
+    compactStateManaged?: boolean;
     readonlyOnly?: boolean;
     beforeCompact?: () => void;
     executeCompact?: () => Promise<boolean | void> | boolean | void;
@@ -159,7 +159,7 @@ export interface PrepareContextOptions {
 
 export interface PreparedContextResult {
     activeContext: ActiveContextView;
-    /** Token estimate used to compute the auto-compact decision before any full compact rerun. */
+    /** Token estimate for the prepared request; rebuilt after compaction without reusing stale usage. */
     contextTokenEstimate: VisibleContextTokenEstimate;
     autoCompactDecision: AutoCompactDecision;
     autoCompactState?: AutoCompactState;

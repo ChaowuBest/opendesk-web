@@ -8,6 +8,8 @@
  * See the Mulan PSL v2 for more details.
  */
 
+import { assertRequestBudget } from '../compaction/request-budget.js';
+import { type TextCompletionResult } from '../compaction/compact-error.js';
 import crypto from 'crypto';
 import {
     AssistantMessage,
@@ -47,6 +49,9 @@ import {
 } from './context.js';
 
 export interface AnthropicAdapterRequestOptions {
+    contextBudget?: { window: number; inputEstimate?: number; requireBelowTrigger?: boolean };
+    onBudgetValidated?: () => void;
+    signal?: AbortSignal;
     reasoningEffort?: ReasoningEffort;
     maxCompletionTokens?: number;
     extraHeaders?: Record<string, string>;
@@ -195,7 +200,8 @@ export class AnthropicAdapter {
             {
                 method: 'POST',
                 headers: this.headers(this.requestHeaders(requestOptions)),
-                body: JSON.stringify(body)
+                body: JSON.stringify(body),
+                signal: requestOptions?.signal
             }
         );
         if (!response.ok) {
@@ -768,6 +774,41 @@ export class AnthropicAdapter {
         }
     }
 
+    async completeTextWithMetadata(
+        chatContext: ChatContext,
+        supportsVision = true,
+        options: AdapterMessageBuildOptions = {},
+        requestOptions?: AnthropicAdapterRequestOptions
+    ): Promise<TextCompletionResult> {
+        const messages = AnthropicAdapter.buildMessages(chatContext, supportsVision, options);
+        const output = this.requestMaxCompletionTokens(requestOptions);
+        if (requestOptions?.contextBudget) assertRequestBudget(messages, output, requestOptions.contextBudget.window);
+        const response = await this.createMessage(
+            {
+                model: this.modelInstance.model_name,
+                max_tokens: output,
+                ...(messages.system ? { system: messages.system } : {}),
+                messages: messages.messages,
+                thinking: { type: 'disabled' }
+            },
+            { ...requestOptions, disableInternalRetry: true }
+        );
+        const usage = AnthropicAdapter.parseUsage(response?.usage);
+        await this.notifyUsage(requestOptions, usage, 'completeText');
+        return {
+            text: AnthropicAdapter.extractText(response),
+            usage,
+            reasoningLength: Array.isArray(response?.content)
+                ? response.content.reduce(
+                      (n: number, p: any) => n + (typeof p.thinking === 'string' ? p.thinking.length : 0),
+                      0
+                  )
+                : 0,
+            finishReason: response?.stop_reason,
+            protocolError: !Array.isArray(response?.content) ? 'invalid_response' : undefined
+        };
+    }
+
     async completeText(
         chatContext: ChatContext,
         supportsVision: boolean = true,
@@ -825,6 +866,15 @@ export class AnthropicAdapter {
         requestOptions?: AnthropicAdapterRequestOptions
     ): AsyncIterable<AssistantResponse> {
         const anthropicMessages = AnthropicAdapter.buildMessages(chatContext, supportsVision, options);
+        if (requestOptions?.contextBudget)
+            assertRequestBudget(
+                { ...anthropicMessages, ...AnthropicAdapter.buildToolOptions(chatContext) },
+                this.requestMaxCompletionTokens(requestOptions),
+                requestOptions.contextBudget.window,
+                requestOptions.contextBudget.inputEstimate,
+                requestOptions.contextBudget.requireBelowTrigger
+            );
+        requestOptions?.onBudgetValidated?.();
         try {
             let finalUsage: Usage | undefined;
             for await (const response of this.streamMessages(
