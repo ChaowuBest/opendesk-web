@@ -106,13 +106,17 @@ export interface StaffMetadata {
     local_service?: StaffLocalService;
 }
 
-export type StaffTaskSource = 'user' | 'scheduled';
+export type StaffTaskSource = 'user' | 'scheduled' | 'flow';
 
 export interface StaffTaskRecord {
     task_id: string;
     message_ids: string[];
     status: string;
     source?: StaffTaskSource;
+    flow_id?: string;
+    flow_message_id?: string;
+    flow_batch_id?: string;
+    client_request_id?: string;
     triggered_at?: string;
     created_at: string;
     updated_at: string;

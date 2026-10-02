@@ -43,33 +43,39 @@ describe('agentoffice progressive loading', () => {
         return new Promise((resolve) => setTimeout(resolve, 0));
     }
 
-    test('the shell renders with a loading state before staff data arrives', async () => {
-        const widget = createWidget();
-        let resolveStaffs!: (value: unknown) => void;
-        widget.call = jest.fn((method: string) => {
-            if (method === 'getLocalizedStrings') return Promise.resolve(widget.strings);
-            if (method === 'getLocale') return Promise.resolve('en-US');
-            if (method === 'listChatModels') return Promise.resolve({ default_model: '', models: [] });
-            if (method === 'listStaffs')
-                return new Promise((resolve) => {
-                    resolveStaffs = resolve;
-                });
-            return Promise.resolve(undefined);
-        });
+    test.each([false, true])(
+        'the shell renders before staff data arrives (groups enabled: %s)',
+        async (flowEnabled) => {
+            const widget = createWidget();
+            let resolveStaffs!: (value: unknown) => void;
+            widget.call = jest.fn((method: string) => {
+                if (method === 'getLocalizedStrings') return Promise.resolve(widget.strings);
+                if (method === 'getLocale') return Promise.resolve('en-US');
+                if (method === 'listChatModels') return Promise.resolve({ default_model: '', models: [] });
+                if (method === 'getFlowFeatureState') return Promise.resolve({ enabled: flowEnabled });
+                if (method === 'listLocalAddresses' || method === 'listFlows') return Promise.resolve([]);
+                if (method === 'listStaffs')
+                    return new Promise((resolve) => {
+                        resolveStaffs = resolve;
+                    });
+                return Promise.resolve(undefined);
+            });
 
-        const initialized = widget.initialize();
-        await flushTasks();
+            const initialized = widget.initialize();
+            await flushTasks();
 
-        expect(widget.shadowRoot.querySelector('.tabs')).not.toBeNull();
-        expect(widget.shadowRoot.querySelector('.empty')?.textContent).toContain('Loading…');
-        expect(widget.shadowRoot.querySelector('.staff-list')).toBeNull();
-        expect(widget.loading).toBe(true);
+            expect(widget.shadowRoot.querySelector('.tabs')).not.toBeNull();
+            expect(widget.flowFeatureEnabled).toBe(flowEnabled);
+            expect(widget.shadowRoot.querySelector('.empty')?.textContent).toContain('Loading…');
+            expect(widget.shadowRoot.querySelector('.staff-list')).toBeNull();
+            expect(widget.loading).toBe(true);
 
-        resolveStaffs([]);
-        await initialized;
+            resolveStaffs([]);
+            await initialized;
 
-        expect(widget.loading).toBe(false);
-    });
+            expect(widget.loading).toBe(false);
+        }
+    );
 
     test('the staff list renders before portraits and chat history finish loading', async () => {
         const widget = createWidget();
@@ -173,7 +179,7 @@ describe('agentoffice progressive loading', () => {
         expect(widget.shadowRoot.querySelector('.messages')).not.toBeNull();
     });
 
-    test('a failed initial load stops the loading state and reports the error', async () => {
+    test.each([false, true])('a failed initial load reports the error (groups enabled: %s)', async (flowEnabled) => {
         const widget = createWidget({
             'agentoffice.loading': 'Loading…',
             'agentoffice.loadFailed': 'Load failed',
@@ -184,6 +190,8 @@ describe('agentoffice progressive loading', () => {
             if (method === 'getLocalizedStrings') return Promise.resolve(widget.strings);
             if (method === 'getLocale') return Promise.resolve('en-US');
             if (method === 'listChatModels') return Promise.resolve({ default_model: '', models: [] });
+            if (method === 'getFlowFeatureState') return Promise.resolve({ enabled: flowEnabled });
+            if (method === 'listLocalAddresses') return Promise.resolve([]);
             if (method === 'listStaffs') return Promise.reject(new Error('worker unavailable'));
             return Promise.resolve(undefined);
         });
