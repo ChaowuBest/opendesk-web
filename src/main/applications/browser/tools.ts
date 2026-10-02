@@ -1214,7 +1214,7 @@ export class BrowserScreenshotTool extends BaseTool<typeof BrowserScreenshotArgs
 const BrowserWaitForArgsSchema = z.object({
     text: z.string().optional().describe('等待页面出现指定文本'),
     textGone: z.string().optional().describe('等待页面中指定文本消失'),
-    timeout: z.number().default(10).describe('超时时间（秒），默认 10'),
+    timeout: z.number().default(3).describe('超时时间（秒），默认 3'),
     iframeRef: z.string().optional().describe('如果要在 iframe 内检测文本，指定该 iframe 的 ref（如 e3 或 e3-e5）'),
     snapshot: z.boolean().default(false).describe('操作完成后是否自动获取页面快照，默认 false')
 });

@@ -41,9 +41,20 @@ export interface NestedJSResult {
     frameResults: Record<string, NestedJSResult>;
 }
 
+/**
+ * 默认 CDP 命令超时。debugger.sendCommand 在页面导航竞态 / debugger 中途
+ * detach / webview 状态异常时可能永久挂起，必须限时失败并重建连接，
+ * 否则一次挂起的命令会让整个 controller 的独占锁队列永久阻塞。
+ */
+export const DEFAULT_CDP_COMMAND_TIMEOUT_MS = 20000;
+
 export class CDPSession {
     private _wc: Electron.WebContents;
     private _attached = false;
+    /** Disposed sessions must never re-attach or send — prevents a wedged
+     * operation's orphaned session from "resurrecting" onto a fresh debugger
+     * connection and interleaving commands with the next locked operation. */
+    private _disposed = false;
     private _enabledDomains = new Set<string>();
     private _eventHandlers = new Map<string, Set<(params: any) => void>>();
     /** Guard: only one set of native listeners per webContents */
@@ -119,6 +130,9 @@ export class CDPSession {
      * This is the core reconnection mechanism.
      */
     private async _ensureAttached(): Promise<void> {
+        if (this._disposed) {
+            throw new Error('CDP session is disposed — reattach not allowed');
+        }
         if (this._attached && !this._wc.isDestroyed()) return;
 
         if (this._wc.isDestroyed()) {
@@ -155,11 +169,20 @@ export class CDPSession {
     /**
      * Send a CDP command.
      * Automatically re-attaches the debugger if it was detached (e.g. by reload).
+     * Bounded by a timeout: a wedged sendCommand (navigation race, mid-detach,
+     * frozen guest renderer) must fail instead of hanging forever.
      */
-    async send(method: string, params?: Record<string, any>): Promise<any> {
+    async send(
+        method: string,
+        params?: Record<string, any>,
+        timeoutMs: number = DEFAULT_CDP_COMMAND_TIMEOUT_MS
+    ): Promise<any> {
+        if (this._disposed) {
+            throw new Error(`CDP session is disposed — cannot send ${method}`);
+        }
         await this._ensureAttached();
         try {
-            return await this._wc.debugger.sendCommand(method, params ?? {});
+            return await this._sendCommandWithTimeout(method, params ?? {}, timeoutMs);
         } catch (err: any) {
             // If the send failed due to a stale attachment, try once more
             const msg = String(err.message || err);
@@ -170,9 +193,47 @@ export class CDPSession {
             ) {
                 this._attached = false;
                 await this._ensureAttached();
-                return this._wc.debugger.sendCommand(method, params ?? {});
+                return this._sendCommandWithTimeout(method, params ?? {}, timeoutMs);
             }
             throw err;
+        }
+    }
+
+    /**
+     * Run debugger.sendCommand bounded by a timeout. On expiry the debugger is
+     * detached and marked unattached so the next send() re-attaches cleanly
+     * instead of continuing to hang on the same wedged connection.
+     */
+    private async _sendCommandWithTimeout(
+        method: string,
+        params: Record<string, any>,
+        timeoutMs: number
+    ): Promise<any> {
+        let timer: ReturnType<typeof setTimeout> | undefined;
+        try {
+            return await Promise.race([
+                this._wc.debugger.sendCommand(method, params),
+                new Promise<never>((_, reject) => {
+                    timer = setTimeout(() => {
+                        // In-flight command is hopeless — reset the connection so
+                        // the next send re-attaches a fresh debugger session.
+                        this._attached = false;
+                        // Domain state is tied to the attachment; clear it explicitly
+                        // (do not rely on the detach event firing for manual detach).
+                        this._enabledDomains.clear();
+                        try {
+                            if (!this._wc.isDestroyed() && this._wc.debugger.isAttached()) {
+                                this._wc.debugger.detach();
+                            }
+                        } catch {
+                            // already detached / destroyed
+                        }
+                        reject(new Error(`CDP command ${method} timed out after ${timeoutMs}ms`));
+                    }, timeoutMs);
+                })
+            ]);
+        } finally {
+            if (timer !== undefined) clearTimeout(timer);
         }
     }
 
@@ -204,9 +265,14 @@ export class CDPSession {
     /**
      * Wait until the page's JS context is ready (e.g. after navigation / reload).
      * Polls Runtime.evaluate with exponential backoff.
+     *
+     * Each probe is individually bounded so one wedged sendCommand cannot freeze
+     * the whole poll loop past its deadline.
      */
     async waitForPageReady(timeoutMs: number = 15000): Promise<void> {
         const deadline = Date.now() + timeoutMs;
+        // Single-probe cap: short enough to stay well under the overall deadline.
+        const probeTimeoutMs = 5000;
         const delays = [100, 200, 300, 500, 800, 1000, 1500, 2000, 2000, 2000, 2000];
         let attempt = 0;
 
@@ -214,10 +280,14 @@ export class CDPSession {
             try {
                 // _ensureAttached first in case debugger detached during reload
                 await this._ensureAttached();
-                const result = await this._wc.debugger.sendCommand('Runtime.evaluate', {
-                    expression: 'document.readyState',
-                    returnByValue: true
-                });
+                const result = await this._sendCommandWithTimeout(
+                    'Runtime.evaluate',
+                    {
+                        expression: 'document.readyState',
+                        returnByValue: true
+                    },
+                    probeTimeoutMs
+                );
                 const state = result?.result?.value;
                 if (state === 'complete' || state === 'interactive') {
                     return;
@@ -336,8 +406,10 @@ export class CDPSession {
 
     /**
      * Dispose the session: detach debugger and clean up listeners.
+     * After disposal the session is permanently unusable (send/reattach throw).
      */
     dispose(): void {
+        this._disposed = true;
         this._unbindNativeListeners();
         if (this._attached && !this._wc.isDestroyed()) {
             try {
