@@ -222,8 +222,14 @@ function getEffortIconSVG(effortValue) {
     return `<svg width="16" height="16" viewBox="0 0 16 16" fill="none">${paths}</svg>`;
 }
 
-/** 主页 AgentInput 草稿文本，在组件销毁/重建之间持久化 */
-let _homeDraftText = '';
+/**
+ * 主页 AgentInput 草稿（文本 + 图片附件 + 文件附件），在组件销毁/重建之间持久化。
+ * 首页输入框没有 taskId，无法走 task-draft-storage 落盘，模块级内存变量在页面存活期间即可完成恢复。
+ * 与任务草稿保持一致：图片以 dataUrl 保存，文件路径为瞬态引用，恢复时经 attachFilePaths 重新校验。
+ * restoringFilePaths 标记文件路径的异步恢复是否仍在进行：恢复未完成时组件再次被销毁（切走），
+ * 断连保存需合并这批待恢复路径，避免覆盖为空导致永久丢失。
+ */
+let _homeDraft = { text: '', images: [], filePaths: [], restoringFilePaths: false };
 
 /** 输入框最小高度（px），对应 class 的 min-h-14。 */
 const INPUT_MIN_HEIGHT = 56;
@@ -897,7 +903,23 @@ class AgentInput extends HTMLElement {
 
     disconnectedCallback() {
         if (!this.taskId) {
-            _homeDraftText = this.getCurrentText();
+            _homeDraft = {
+                text: this.getCurrentText(),
+                images: (Array.isArray(this.attachedImages) ? this.attachedImages : []).map((img) => ({
+                    dataUrl: img.dataUrl,
+                    name: img.name
+                })),
+                // 文件路径恢复是异步的（attachFilePaths 先校验扩展名支持）。若恢复尚未完成（restoringFilePaths），
+                // 当前 attachedFilePaths 可能还没包含待恢复路径，需合并草稿中的原值，防止覆盖为空丢失。
+                filePaths: Array.isArray(this.attachedFilePaths)
+                    ? [
+                          ...new Set([
+                              ...this.attachedFilePaths,
+                              ...(_homeDraft.restoringFilePaths ? _homeDraft.filePaths : [])
+                          ])
+                      ]
+                    : []
+            };
         } else {
             // 任务视图被释放/销毁前冲刷草稿，保证重新打开任务时可恢复
             this._saveDraftNow();
@@ -1392,7 +1414,7 @@ class AgentInput extends HTMLElement {
 
     render() {
         const prevTextarea = this.querySelector('#agent-input-textarea');
-        const savedValue = prevTextarea ? prevTextarea.value : this.hasAttribute('hide-goal') ? _homeDraftText : '';
+        const savedValue = prevTextarea ? prevTextarea.value : this.hasAttribute('hide-goal') ? _homeDraft.text : '';
         const savedSelStart = prevTextarea ? prevTextarea.selectionStart : 0;
         const savedSelEnd = prevTextarea ? prevTextarea.selectionEnd : 0;
 
@@ -1679,6 +1701,23 @@ class AgentInput extends HTMLElement {
         this.updateInputState();
         this.updateModeIndicator();
         this._renderImagePreviews();
+        // 首页输入框场景：组件销毁重建后恢复内存草稿中的图片附件与文件附件（文本已由 savedValue 恢复）。
+        // prevTextarea 为空说明是首次渲染（新建组件），re-render 时附件仍挂在实例上，无需重复添加。
+        if (!prevTextarea && this.hasAttribute('hide-goal')) {
+            for (const img of _homeDraft.images) {
+                this.addImage(img.dataUrl, img.name);
+            }
+            if (_homeDraft.filePaths.length > 0) {
+                // 文件路径是瞬态引用：恢复时按当前文件系统重新校验，失效路径会被过滤。
+                // restore 期间组件可能再次被销毁（切走），用标记让断连保存合并未完成恢复的路径。
+                _homeDraft.restoringFilePaths = true;
+                void this.attachFilePaths(_homeDraft.filePaths)
+                    .catch(() => {})
+                    .finally(() => {
+                        _homeDraft.restoringFilePaths = false;
+                    });
+            }
+        }
         this._initToolbarOverflow();
         this._initInputHeightObserver();
     }

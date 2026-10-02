@@ -153,6 +153,147 @@ describe('agent-input 草稿持久化', () => {
         expect(storage.getItem('opendesk:task-draft:task-1')).toBeNull();
     });
 
+    test('首页输入框（无 taskId）：断连重建后文本与图片附件一并恢复', () => {
+        const input = document.createElement('agent-input');
+        input.setAttribute('hide-goal', '');
+        input.render();
+        const textarea = input.querySelector('#agent-input-textarea') as HTMLTextAreaElement;
+        textarea.value = '看看这张图';
+        textarea.dispatchEvent(new Event('input', { bubbles: true }));
+        (input as unknown as { addImage: (dataUrl: string, name?: string) => void }).addImage(
+            'data:image/png;base64,BBBB',
+            'home.png'
+        );
+
+        // 模拟切换到其他任务：首页组件被销毁
+        document.body.appendChild(input as unknown as Node);
+        document.body.removeChild(input as unknown as Node);
+
+        // 模拟切回首页：重建组件，文本与图片都应恢复
+        const restored = document.createElement('agent-input');
+        restored.setAttribute('hide-goal', '');
+        restored.render();
+        const restoredTextarea = restored.querySelector('#agent-input-textarea') as HTMLTextAreaElement;
+        expect(restoredTextarea.value).toBe('看看这张图');
+        const restoredInput = restored as unknown as { attachedImages: Array<{ dataUrl: string; name: string }> };
+        expect(restoredInput.attachedImages).toEqual([{ dataUrl: 'data:image/png;base64,BBBB', name: 'home.png' }]);
+        // 预览区应渲染出缩略图
+        const previews = restored.querySelector('#agent-input-image-previews');
+        expect(previews?.querySelectorAll('.agent-input-image-thumb').length).toBe(1);
+    });
+
+    test('首页输入框（无 taskId）：断连重建后文件附件也恢复', async () => {
+        const input = document.createElement('agent-input');
+        input.setAttribute('hide-goal', '');
+        input.render();
+        await (input as unknown as { attachFilePaths: (paths: string[]) => Promise<boolean> }).attachFilePaths([
+            'D:/proj/notes.txt'
+        ]);
+        expect((input as unknown as { attachedFilePaths: string[] }).attachedFilePaths).toEqual(['D:/proj/notes.txt']);
+
+        // 模拟切换到其他任务：首页组件被销毁
+        document.body.appendChild(input as unknown as Node);
+        document.body.removeChild(input as unknown as Node);
+
+        // 模拟切回首页：重建组件，文件附件应恢复
+        const restored = document.createElement('agent-input');
+        restored.setAttribute('hide-goal', '');
+        restored.render();
+        for (let i = 0; i < 5; i++) await Promise.resolve(); // 等待恢复路径上的异步校验完成
+        const restoredInput = restored as unknown as { attachedFilePaths: string[] };
+        expect(restoredInput.attachedFilePaths).toEqual(['D:/proj/notes.txt']);
+        // 文件标签区应渲染出来
+        expect(restored.querySelector('.agent-input-file-tags')).not.toBeNull();
+    });
+
+    test('首页输入框：文件附件恢复尚未完成即切走时，待恢复路径不被丢弃', async () => {
+        interface HomeInputWithApi {
+            render: () => void;
+            attachFilePaths: (paths: string[]) => Promise<boolean>;
+            attachedFilePaths: string[];
+        }
+        const createHomeInput = (): HomeInputWithApi => {
+            const element = document.createElement('agent-input');
+            element.setAttribute('hide-goal', '');
+            (element as unknown as HomeInputWithApi).render();
+            return element as unknown as HomeInputWithApi;
+        };
+        const switchAway = (input: unknown): void => {
+            document.body.appendChild(input as Node);
+            document.body.removeChild(input as Node);
+        };
+
+        // 阶段一：正常 attach 文件后切走，内存草稿记录文件路径
+        const inputA = createHomeInput();
+        await inputA.attachFilePaths(['D:/proj/notes.txt']);
+        switchAway(inputA);
+
+        // 阶段二：重建后让恢复路径上的扩展名校验挂起（模拟 IPC 未返回），随即切走
+        let releaseSupport: ((value: unknown) => void) | undefined;
+        const pendingSupport = new Promise((resolve) => {
+            releaseSupport = resolve;
+        });
+        Object.defineProperty(globalThis.window, 'taskManagerAPI', {
+            value: { getAttachmentFileSupport: () => pendingSupport },
+            configurable: true,
+            writable: true
+        });
+        const inputB = createHomeInput();
+        switchAway(inputB);
+        releaseSupport?.(undefined);
+        delete (globalThis.window as unknown as { taskManagerAPI?: unknown }).taskManagerAPI;
+
+        // 阶段三：重建并等待恢复完成，待恢复路径仍应回到输入框
+        const inputC = createHomeInput();
+        for (let i = 0; i < 8; i++) await Promise.resolve();
+        expect(inputC.attachedFilePaths).toEqual(['D:/proj/notes.txt']);
+    });
+
+    test('首页输入框：发送后切走再切回，不恢复已发送的草稿内容', async () => {
+        interface HomeInputWithApi {
+            render: () => void;
+            addImage: (dataUrl: string, name?: string) => void;
+            attachFilePaths: (paths: string[]) => Promise<boolean>;
+            clearAttachedFilePaths: () => void;
+            attachedFilePaths: string[];
+            attachedImages: Array<{ dataUrl: string; name: string }>;
+        }
+        const createHomeInput = (): HomeInputWithApi => {
+            const element = document.createElement('agent-input');
+            element.setAttribute('hide-goal', '');
+            (element as unknown as HomeInputWithApi).render();
+            return element as unknown as HomeInputWithApi;
+        };
+
+        const input = createHomeInput();
+        const textarea = (input as unknown as HTMLElement).querySelector(
+            '#agent-input-textarea'
+        ) as HTMLTextAreaElement;
+        textarea.value = '已发送的消息';
+        textarea.dispatchEvent(new Event('input', { bubbles: true }));
+        input.addImage('data:image/png;base64,CCCC', 'sent.png');
+        await input.attachFilePaths(['D:/proj/sent.txt']);
+        // 模拟发送成功后的清理（handleSubmit 中 textarea 清空 + clearAttachedFilePaths）。
+        // attachFilePaths 可能已触发 re-render 替换 textarea 节点，须重新取当前节点，与真实发送路径一致。
+        const currentTextarea = (input as unknown as HTMLElement).querySelector(
+            '#agent-input-textarea'
+        ) as HTMLTextAreaElement;
+        currentTextarea.value = '';
+        currentTextarea.dispatchEvent(new Event('input', { bubbles: true }));
+        input.clearAttachedFilePaths();
+
+        // 切走再切回：不应恢复任何已发送内容
+        document.body.appendChild(input as unknown as Node);
+        document.body.removeChild(input as unknown as Node);
+        const restored = createHomeInput();
+        const restoredTextarea = (restored as unknown as HTMLElement).querySelector(
+            '#agent-input-textarea'
+        ) as HTMLTextAreaElement;
+        expect(restoredTextarea.value).toBe('');
+        expect(restored.attachedImages).toEqual([]);
+        expect(restored.attachedFilePaths).toEqual([]);
+    });
+
     test('恢复不覆盖已有输入', () => {
         storage.setItem('opendesk:task-draft:task-1', JSON.stringify({ text: 'persisted', images: [] }));
         const { input, textarea } = createInput();
