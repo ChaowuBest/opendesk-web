@@ -355,6 +355,7 @@
         } from './theme/theme-iframe-bridge.ts';
         import { registerApplicationFrameProxyHost } from './scripts/application-frame-proxy.ts';
         import { isExperimentalApplicationEnabled } from './utils/application-visibility.ts';
+        import { selectTaskViewsToEvict, MAX_RESIDENT_TASK_VIEWS } from './utils/task-view-release.ts';
 
         registerApplicationFrameProxyHost();
         initRendererTheme().catch((err) => console.warn('[theme] init failed', err));
@@ -505,6 +506,9 @@
             var appFramesContainer = null;
             var appFrameCache = {};
             var taskViewCache = {};
+            // 任务最近访问时间戳（taskId -> Date.now()），仅存内存不落盘；
+            // 点击打开任务时由 openTask() 更新，供 LRU 驻留数量上限淘汰使用。
+            var taskViewLastAccess = {};
             var currentNonAppContent = null; // 'home' | 'task:xxx' | 'setting' | 'memory' | 'logview'
             var currentOpenAppBundleName = null; // 当前打开的应用包名，用于版本更新时自动重载
 
@@ -654,6 +658,8 @@
                         currentOpenAppBundleName = null;
                     } else {
                         clearNonTaskContent();
+                        // 点击打开任务即视为一次访问，刷新最近访问时间（仅内存）
+                        taskViewLastAccess[taskId] = Date.now();
                         var isNewTaskView = !taskViewCache[taskId];
                         if (isNewTaskView) {
                             var el = document.createElement('task-view');
@@ -718,6 +724,10 @@
                         sidebar._updateTaskHighlight();
                     }
                 }
+                // 打开任务后立即按 LRU 上限修剪，让驻留数量限制即时生效
+                if (taskId !== null) {
+                    sweepExcessTaskViews();
+                }
             }
 
             async function needsWizard() {
@@ -776,6 +786,7 @@
                     }
                     delete taskViewCache[taskId];
                 }
+                delete taskViewLastAccess[taskId];
             }
 
             /**
@@ -790,7 +801,7 @@
             /**
              * 释放长时间未显示的后台任务视图。
              * 切换任务只隐藏不销毁，长会话的整棵 DOM 会持续驻留；不可见超过
-             * 5 分钟且任务非运行态的视图整体销毁（disconnectedCallback 内完成
+             * TASK_VIEW_BACKGROUND_RELEASE_MS（10 分钟）且任务非运行态的视图整体销毁（disconnectedCallback 内完成
              * 订阅退订与缓存清理，内存可被回收），下次打开时重新创建并全量加载。
              * 运行中任务跳过：后台工具（如浏览器自动化）可能正在使用视图内组件，
              * 任务结束后的下一轮扫描会将其释放。
@@ -805,7 +816,37 @@
                 });
             }
 
-            setInterval(sweepStaleTaskViews, 60 * 1000);
+            /**
+             * LRU 数量上限淘汰：驻留的 task-view 数量超过 MAX_RESIDENT_TASK_VIEWS 时，
+             * 销毁最近访问时间最久（且非前台显示、非运行中、消息队列为空）的多余视图，
+             * 下次打开该任务时重新创建并全量加载。与超时释放互补：即使没有打开新任务，
+             * 周期扫描也会保持驻留数量不超过上限。
+             */
+            function sweepExcessTaskViews() {
+                var entries = Object.keys(taskViewCache).map(function (tid) {
+                    var tv = taskViewCache[tid];
+                    return {
+                        taskId: tid,
+                        lastAccessAt: taskViewLastAccess[tid] || 0,
+                        isActive:
+                            currentNonAppContent === 'task:' + tid && nonAppSlot && nonAppSlot.style.display !== 'none',
+                        isRunning: !!(tv && tv.task_status === 'running'),
+                        hasQueuedMessages: !!(
+                            tv &&
+                            typeof tv.hasQueuedMessages === 'function' &&
+                            tv.hasQueuedMessages()
+                        )
+                    };
+                });
+                selectTaskViewsToEvict(entries, MAX_RESIDENT_TASK_VIEWS).forEach(function (tid) {
+                    removeTaskViewCache(tid);
+                });
+            }
+
+            setInterval(function () {
+                sweepStaleTaskViews();
+                sweepExcessTaskViews();
+            }, 60 * 1000);
 
             window.settingAPI.registerCommandCallback('openHomePage', openHomePage);
             window.settingAPI.registerCommandCallback('openTask', function (taskId) {

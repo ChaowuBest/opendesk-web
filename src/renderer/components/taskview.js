@@ -2304,6 +2304,14 @@ class TaskView extends HTMLElement {
     }
 
     /**
+     * 消息队列是否非空（公开接口，供宿主 LRU 驻留数量上限淘汰判定调用）。
+     * 队列仅存于控件内存且未持久化，淘汰/释放会静默丢弃待发送内容。
+     */
+    hasQueuedMessages() {
+        return this._hasQueuedMessages();
+    }
+
+    /**
      * 后台释放判定：不可见超过 timeoutMs、任务非运行态、且消息队列为空时
      * 返回 true，宿主据此销毁控件并从缓存移除，下次打开重新加载。
      */
