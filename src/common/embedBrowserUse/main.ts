@@ -643,6 +643,34 @@ export class BrowserController {
     // ---- Page Info Helpers ----
 
     /**
+     * Detect Chromium error pages (chrome-error://chromewebdata/) and extract the
+     * underlying error code + details. Returns null when the page is not an error
+     * page or the check itself fails (page in transition / execution context gone).
+     */
+    private async detectChromeError(session: CDPSession): Promise<string | null> {
+        try {
+            const result = await session.send('Runtime.evaluate', {
+                expression: `(() => {
+                    var href = location.href || '';
+                    if (href.indexOf('chrome-error://') !== 0) return '';
+                    var diag = document.getElementById('sub-frame-error-details') || document.getElementById('main-message');
+                    var details = diag ? diag.innerText.trim() : '';
+                    var heading = document.querySelector('.error-code') || document.querySelector('h1');
+                    var code = heading ? heading.innerText.trim() : '';
+                    return JSON.stringify({ code: code, details: details });
+                })()`,
+                returnByValue: true
+            });
+            const raw = result?.result?.value;
+            if (typeof raw !== 'string' || raw === '') return null;
+            const errInfo = JSON.parse(raw);
+            return [errInfo.code, errInfo.details].filter(Boolean).join(': ') || 'Page failed to load';
+        } catch {
+            return null; // page may be reloading — let the caller decide
+        }
+    }
+
+    /**
      * Read current page URL + title from a CDP session.
      */
     async readPageInfo(session: CDPSession): Promise<{ url: string; title: string; error?: string }> {
@@ -654,23 +682,8 @@ export class BrowserController {
 
         // Detect Chromium error pages (chrome-error://chromewebdata/)
         if (typeof info.url === 'string' && info.url.startsWith('chrome-error://')) {
-            try {
-                const errResult = await session.send('Runtime.evaluate', {
-                    expression: `(() => {
-                        var diag = document.getElementById('sub-frame-error-details') || document.getElementById('main-message');
-                        var details = diag ? diag.innerText.trim() : '';
-                        var heading = document.querySelector('.error-code') || document.querySelector('h1');
-                        var code = heading ? heading.innerText.trim() : '';
-                        return JSON.stringify({ code: code, details: details });
-                    })()`,
-                    returnByValue: true
-                });
-                const errInfo = JSON.parse(errResult.result.value);
-                const errorMsg = [errInfo.code, errInfo.details].filter(Boolean).join(': ') || 'Page failed to load';
-                return { url: info.url, title: info.title, error: errorMsg };
-            } catch {
-                return { url: info.url, title: info.title, error: 'Page failed to load (chrome-error)' };
-            }
+            const error = (await this.detectChromeError(session)) ?? 'Page failed to load (chrome-error)';
+            return { url: info.url, title: info.title, error };
         }
 
         return info;
@@ -2202,7 +2215,8 @@ export class BrowserController {
             }
 
             const session = await this.requireCDP();
-            const timeoutMs = (options.timeout ?? 10) * 1000;
+            const timeoutSec = options.timeout ?? 3;
+            const timeoutMs = timeoutSec * 1000;
             const pollInterval = 400;
             const deadline = Date.now() + timeoutMs;
 
@@ -2231,7 +2245,16 @@ export class BrowserController {
             return false;
         })()`;
 
+            let consecutiveFailures = 0;
             while (Date.now() < deadline) {
+                // Error pages (chrome-error://) can never satisfy a text condition —
+                // fail fast with the actual error code instead of waiting out the
+                // whole timeout.
+                const pageError = await this.detectChromeError(session);
+                if (pageError) {
+                    throw new Error(`页面加载失败：${pageError}`);
+                }
+
                 try {
                     let found: boolean;
                     if (targetFrame) {
@@ -2243,17 +2266,28 @@ export class BrowserController {
                         });
                         found = result.result.value === true;
                     }
+                    consecutiveFailures = 0;
                     if (wantPresent ? found : !found) {
                         return { condition: wantPresent ? 'text found' : 'text gone' };
                     }
                 } catch {
-                    // Page may be reloading — retry
+                    // A failing evaluate is NORMAL while the page is navigating
+                    // (the JS context is destroyed during navigation). Only count
+                    // it as a real failure when the webContents is no longer
+                    // loading — otherwise a slow-but-viable navigation would be
+                    // mistaken for a crashed tab.
+                    if (!session.webContents.isLoading()) {
+                        consecutiveFailures++;
+                        if (consecutiveFailures >= 3) {
+                            throw new Error('页面执行环境异常：连续多次检查失败，页面可能已崩溃或正在跳转');
+                        }
+                    }
                 }
                 await sleep(pollInterval);
             }
 
             throw new Error(
-                `等待超时（${options.timeout}秒）：${wantPresent ? `文本 "${needle}" 未出现` : `文本 "${needle}" 未消失`}`
+                `等待超时（${timeoutSec}秒）：${wantPresent ? `文本 "${needle}" 未出现` : `文本 "${needle}" 未消失`}`
             );
         });
     }

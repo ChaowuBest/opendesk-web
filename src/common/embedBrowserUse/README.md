@@ -208,9 +208,7 @@ BrowserManager.initSession('persist:my-browser');
 BrowserManager.bind(ipcMain, openDeskScriptGenerators);
 
 // 4. 创建窗口后设置 mainWindow 引用
-const mainWindow = new BrowserWindow({
-    /* ... */
-});
+const mainWindow = new BrowserWindow({/* ... */});
 BrowserManager.setMainWindow(mainWindow);
 
 // 应用退出前保存 session cookies
@@ -444,9 +442,9 @@ interface PageSnapshot {
 
 ### 等待条件
 
-| 方法      | 签名                                 | 说明                                                                                               |
-| --------- | ------------------------------------ | -------------------------------------------------------------------------------------------------- |
-| `waitFor` | `(options) → Promise<{ condition }>` | 等待页面满足条件。`text`: 等待文本出现；`textGone`: 等待文本消失；`timeout`: 超时秒数（默认 10）。 |
+| 方法      | 签名                                 | 说明                                                                                                                            |
+| --------- | ------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------- |
+| `waitFor` | `(options) → Promise<{ condition }>` | 等待页面满足条件。`text`: 等待文本出现；`textGone`: 等待文本消失；`timeout`: 超时秒数（默认 3）。错误页会立即失败并返回错误码。 |
 
 ### 标签页管理
 
