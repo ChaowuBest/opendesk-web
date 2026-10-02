@@ -704,6 +704,15 @@ task-view .markdown-body > *:first-child {
 task-view .markdown-body > *:last-child {
     margin-bottom: 0 !important;
 }
+/* 流式正文包在 .od-streaming-text wrapper 内（增量补丁的挂载点），
+   上面的直接子元素清零规则覆盖不到内部块，会让运行态段落顶部残留 UA/旧规则
+   的 margin（实测 6.5px），与完成态相比导致摘要行上下间距不对称。 */
+task-view .markdown-body > .od-streaming-text > *:first-child {
+    margin-top: 0 !important;
+}
+task-view .markdown-body > .od-streaming-text > *:last-child {
+    margin-bottom: 0 !important;
+}
 
 /* 标题 */
 task-view .markdown-body h1,
