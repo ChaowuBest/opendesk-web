@@ -10,7 +10,12 @@ import { PassThrough } from 'node:stream';
 import { diffLines } from 'diff';
 import { setRuntimeLocale } from '../../../../locale/index.js';
 import { ToolCall } from '../../../../main/aikernel/messages.js';
-import { EditFileTool, SearchReplaceTool, GrepFilesTool } from '../../../../main/applications/filemgr/tools.js';
+import {
+    EditFileTool,
+    SearchReplaceTool,
+    GrepFilesTool,
+    hasNestedUnboundedQuantifier
+} from '../../../../main/applications/filemgr/tools.js';
 
 setRuntimeLocale('zh-CN');
 
@@ -294,8 +299,14 @@ test('grepFiles - 按文件分组且行号对齐', async () => {
 
         // 检查小文件中行号对齐：小文件最大行号 8+2=10，宽度=2
         // 行号用 padStart 右对齐：' 3'、' 8'（前面有一个空格）
-        assert.match(result, />  +3 \| MARKER_FOUND 小文件/);
-        assert.match(result, />  +8 \| MARKER_FOUND 小文件/);
+        assert.match(result, />  +3 \| +MARKER_FOUND 小文件/);
+        assert.match(result, />  +8 \| +MARKER_FOUND 小文件/);
+
+        // 匹配行带 > 标记，上下文行不带（格式语义：> 用于区分匹配与上下文）
+        assert.match(result, /^ +4 \| 小文件普通行 4$/m);
+        assert.match(result, /^ +6 \| 大文件普通行 6: 填充内容使文件变长$/m);
+        assert.doesNotMatch(result, /^> +4 \| 小文件普通行 4/m);
+        assert.doesNotMatch(result, /^> +6 \| 大文件普通行 6/m);
     } finally {
         cleanup(dir);
     }
@@ -337,6 +348,60 @@ test('grepFiles - 同一文件内匹配去重', async () => {
         // 总共找到 2 处（第10行和第15行），但 matches 计数可能 >2（因为同一行有多个 regex match）
         // 验证找到的匹配数
         assert.match(result, /在 1 个文件中找到/);
+    } finally {
+        cleanup(dir);
+    }
+});
+
+test('grepFiles - 上下文重叠时行号不回退不重复', async () => {
+    const dir = makeTempDir();
+    try {
+        const filePath = path.join(dir, 'overlap_ctx.txt');
+        // 20 行文件，第 5 行和第 7 行匹配，间距 2 <= contextLines 3，
+        // 两个匹配的上下文区间重叠，输出不得出现行号回退或行重复
+        const lines: string[] = [];
+        for (let i = 1; i <= 20; i++) {
+            lines.push(i === 5 || i === 7 ? `OVERLAP_MARKER 第${i}行匹配` : `普通第${i}行内容`);
+        }
+        fs.writeFileSync(filePath, lines.join('\n'), 'utf8');
+
+        const tool = new GrepFilesTool();
+        const result = await tool.executeCommand({
+            pattern: 'OVERLAP_MARKER',
+            path: dir,
+            contextLines: 3,
+            maxResults: 20
+        });
+
+        console.log('\n=== GrepFiles 重叠上下文测试 ===');
+        console.log(result);
+        console.log('=== 结束 ===\n');
+
+        // 两个匹配行都应保留
+        assert.match(result, /> +5 \| OVERLAP_MARKER/);
+        assert.match(result, /> +7 \| OVERLAP_MARKER/);
+
+        // 上下文覆盖 2..10 行
+        for (let i = 2; i <= 10; i++) {
+            assert.ok(result.includes(`第${i}行`), `缺少第 ${i} 行内容`);
+        }
+
+        // 提取所有输出行的行号，必须严格递增（不得出现行号回退）
+        const bodyLines = result.split('\n').filter((l) => /^[> ]\s*\d+ \| /.test(l));
+        assert.ok(bodyLines.length > 0, '应输出匹配行与上下文行');
+        const lineNums = bodyLines.map((l) => Number(l.match(/^[> ]\s*(\d+) \| /)![1]));
+        for (let i = 1; i < lineNums.length; i++) {
+            assert.ok(
+                lineNums[i] > lineNums[i - 1],
+                `行号必须严格递增，但在索引 ${i} 处出现回退: ${lineNums[i - 1]} -> ${lineNums[i]}`
+            );
+        }
+
+        // 重叠区间的行内容只应输出一次
+        for (const n of [4, 6, 8]) {
+            const count = (result.match(new RegExp(`普通第${n}行内容`, 'g')) || []).length;
+            assert.equal(count, 1, `第 ${n} 行的内容只应输出一次，实际输出 ${count} 次`);
+        }
     } finally {
         cleanup(dir);
     }
@@ -524,6 +589,317 @@ test('grepFiles - 规范化 CRLF 行和上下文', async () => {
         assert.doesNotMatch(result, /\r/);
     } finally {
         cleanup(dir);
+    }
+});
+
+test('grepFiles - 超长行按 maxColumns 截断（匹配行取窗口，上下文行截头）', async () => {
+    const dir = makeTempDir();
+    try {
+        const filePath = path.join(dir, 'long_line.txt');
+        // 第 1 行：长上下文行（415 字符），第 2 行：超长匹配行（1499 字符，匹配点在第 1000 列）
+        const ctxLine = 'CTXSTART' + 'c'.repeat(400) + 'CTXEND';
+        const matchLineText = 'a'.repeat(999) + 'NEEDLE' + 'a'.repeat(494);
+        fs.writeFileSync(filePath, `${ctxLine}\n${matchLineText}\n`, 'utf8');
+
+        const tool = new GrepFilesTool();
+        const result = await tool.executeCommand({
+            pattern: 'NEEDLE',
+            path: dir,
+            contextLines: 1,
+            maxColumns: 300,
+            maxResults: 20
+        });
+
+        // 匹配行：按匹配位置取 300 字符窗口（前留 40 字符），两端加省略号
+        const matchLine = result.split('\n').find((l) => l.includes('NEEDLE'));
+        assert.ok(matchLine, '应输出匹配行');
+        const matchContent = matchLine.slice(matchLine.indexOf(' | ') + 3);
+        assert.ok(matchContent.startsWith('...') && matchContent.endsWith('...'), '匹配行窗口两端应有省略号');
+        assert.ok(
+            matchContent.length >= 300 && matchContent.length <= 320,
+            `匹配行窗口长度异常: ${matchContent.length}`
+        );
+
+        // 上下文行：截头保留前 300 字符，尾部加省略号
+        const ctxOutLine = result.split('\n').find((l) => l.includes('CTXSTART'));
+        assert.ok(ctxOutLine, '应输出上下文行');
+        const ctxContent = ctxOutLine.slice(ctxOutLine.indexOf(' | ') + 3);
+        assert.ok(ctxContent.startsWith('CTXSTART'), '上下文行应保留头部');
+        assert.ok(ctxContent.endsWith('...'), '截断的上下文行应带省略号');
+        assert.ok(!ctxContent.includes('CTXEND'), '上下文行尾部应被截断');
+        assert.ok(ctxContent.length <= 303, `上下文行截断长度异常: ${ctxContent.length}`);
+
+        // maxColumns: 0 关闭截断，整行原样输出
+        const full = await new GrepFilesTool().executeCommand({
+            pattern: 'NEEDLE',
+            path: dir,
+            contextLines: 0,
+            maxColumns: 0,
+            maxResults: 20
+        });
+        const fullLine = full.split('\n').find((l) => l.includes('NEEDLE'))!;
+        const fullContent = fullLine.slice(fullLine.indexOf(' | ') + 3);
+        assert.equal(fullContent, matchLineText, 'maxColumns=0 时应输出完整行');
+    } finally {
+        cleanup(dir);
+    }
+});
+
+test('grepFiles - 同一长行多个匹配时按首个匹配截断且不虚报匹配数', async () => {
+    const dir = makeTempDir();
+    try {
+        const filePath = path.join(dir, 'multi_match_long_line.txt');
+        // 600 字符单行，两个 NEEDLE 分别在列 50 和列 400
+        const longLine = 'x'.repeat(49) + 'NEEDLE' + 'x'.repeat(344) + 'NEEDLE' + 'x'.repeat(195);
+        assert.equal(longLine.length, 600);
+        fs.writeFileSync(filePath, longLine + '\n', 'utf8');
+
+        const tool = new GrepFilesTool();
+        const result = await tool.executeCommand({
+            pattern: 'NEEDLE',
+            path: dir,
+            contextLines: 0,
+            maxColumns: 300,
+            maxResults: 20
+        });
+
+        // 窗口以首个匹配为锚：第一个 NEEDLE 可见
+        assert.match(result, /NEEDLE/);
+        // 摘要计数按 2 处匹配计算
+        assert.match(result, /找到 2 处匹配/);
+        // 窗口外不可见的匹配必须有省略号提示，且输出体量有界
+        assert.match(result, /\.\.\./);
+        const needleCount = (result.match(/NEEDLE/g) || []).length;
+        assert.ok(needleCount <= 2, `窗口内不应展示超出 maxColumns 的内容，NEEDLE 出现 ${needleCount} 次`);
+        // 行被截断且行内多匹配时，必须显式注记窗口外可能有未展示的匹配
+        assert.match(result, /本行共 2 处匹配/);
+    } finally {
+        cleanup(dir);
+    }
+});
+
+test('grepFiles - 合法量词模式不被 ReDoS 静态检测误伤', async () => {
+    const dir = makeTempDir();
+    try {
+        const filePath = path.join(dir, 'quant.txt');
+        fs.writeFileSync(filePath, '版本号 v1.2.13 在这里\n带连字符的词 foo-bar-baz\n', 'utf8');
+
+        const tool = new GrepFilesTool();
+
+        // 这些常见模式都是安全的，静态检测不得拒绝
+        const legalPatterns = [
+            '(\\d+\\.)*\\d+', // 版本号：分组内以字面量结尾
+            '(?:\\w+-)*\\w+', // 连字符词
+            '[a-z]+(\\.[a-z]+)*', // 域名
+            'a{2,3}', // 有界量词
+            '(foo|bar)+baz', // 分组以字面量结尾
+            'a+?b', // 惰性量词本身不构成嵌套
+            '(?:https?://)?[\\w.-]+(?:/\\w*)*' // URL 类常见模式
+        ];
+        for (const p of legalPatterns) {
+            const r = await tool.executeCommand({ pattern: p, path: dir, maxResults: 10 });
+            assert.doesNotMatch(r, /拒绝执行/, `模式 ${p} 不应被静态检测拒绝`);
+        }
+
+        // 这些才是真正要拦的：分组内以无限量词结尾 + 分组整体再被无限量词修饰
+        const dangerous: Array<[string, RegExp]> = [
+            ['(a+)+$', /拒绝执行/],
+            ['(.*)*', /拒绝执行/],
+            ['(\\d+)*X', /拒绝执行/],
+            ['((a+)+)b', /拒绝执行/],
+            ['(a+){2,}$', /拒绝执行/],
+            // 空匹配歧义类：尾 token 可匹配空/字符类重叠，迭代边界可移动
+            ['(?:\\w+\\s*)*END', /拒绝执行/],
+            ['(a?)+b', /拒绝执行/],
+            ['((a+))+b', /拒绝执行/],
+            ['(?:\\s*\\w+)+END', /拒绝执行/],
+            ['(a*?)+b', /拒绝执行/]
+        ];
+        for (const [p, expect] of dangerous) {
+            const r = await tool.executeCommand({ pattern: p, path: dir, maxResults: 10 });
+            assert.match(r, expect, `模式 ${p} 应被静态检测拒绝`);
+        }
+    } finally {
+        cleanup(dir);
+    }
+});
+
+test('grepFiles - 跳过行中含 NUL 字节的二进制文件', async () => {
+    const dir = makeTempDir();
+    try {
+        // 文件头 512 字节是干净的，NUL 字节出现在 1KB 处：头部检测会漏放行，
+        // 流式 NUL 检测必须拦下
+        const filePath = path.join(dir, 'mid_binary.txt');
+        const content = Buffer.concat([
+            Buffer.from('clean header line\n'.repeat(60), 'utf8'),
+            Buffer.from([0x00, 0x01, 0x02]),
+            Buffer.from('\nMATCH_BINARY_MARKER here\nmore text\n', 'utf8')
+        ]);
+        fs.writeFileSync(filePath, content);
+
+        const result = await new GrepFilesTool().executeCommand({
+            pattern: 'MATCH_BINARY_MARKER',
+            path: dir,
+            maxResults: 20
+        });
+
+        assert.match(result, /未找到匹配/);
+    } finally {
+        cleanup(dir);
+    }
+});
+
+test('grepFiles - 识别 UTF-16LE BOM 文件', async () => {
+    const dir = makeTempDir();
+    try {
+        const filePath = path.join(dir, 'utf16le.txt');
+        const content = Buffer.concat([
+            Buffer.from([0xff, 0xfe]),
+            Buffer.from('UTF16LE_MARKER 前文\nUTF16LE_MARKER 后文\n', 'utf16le')
+        ]);
+        fs.writeFileSync(filePath, content);
+
+        const result = await new GrepFilesTool().executeCommand({
+            pattern: 'UTF16LE_MARKER',
+            path: dir,
+            maxResults: 20
+        });
+
+        assert.match(result, /在 1 个文件中找到 2 处匹配/);
+        assert.match(result, /UTF16LE_MARKER 前文/);
+        assert.match(result, /UTF16LE_MARKER 后文/);
+    } finally {
+        cleanup(dir);
+    }
+});
+
+test('grepFiles - 无 BOM 时非 UTF-8 文件回退 gb18030 解码', async () => {
+    const dir = makeTempDir();
+    try {
+        const filePath = path.join(dir, 'gbk.txt');
+        // Node Buffer 不支持 gbk/gb18030 编码名，用 iconv 手工构造 GBK 字节：
+        // "中文注释 GBK_MARKER 苹果\n" 的 GBK 编码字节序列
+        const gbkBytes = [
+            0xd6,
+            0xd0,
+            0xce,
+            0xc4, // 中文
+            0xd7,
+            0xa2,
+            0xca,
+            0xcd, // 注释
+            0x20,
+            0x47,
+            0x42,
+            0x4b,
+            0x5f,
+            0x4d,
+            0x41,
+            0x52,
+            0x4b,
+            0x45,
+            0x52,
+            0x20, // GBK_MARKER
+            0xc6,
+            0xbb,
+            0xb9,
+            0xfb, // 苹果
+            0x0a
+        ];
+        fs.writeFileSync(filePath, Buffer.from(gbkBytes));
+
+        const result = await new GrepFilesTool().executeCommand({
+            pattern: 'GBK_MARKER',
+            path: dir,
+            maxResults: 20
+        });
+
+        assert.match(result, /GBK_MARKER/);
+        assert.match(result, /中文注释/);
+    } finally {
+        cleanup(dir);
+    }
+});
+
+test('grepFiles - 静态拒绝嵌套无限量词的 ReDoS 模式', async () => {
+    const tool = new GrepFilesTool();
+    const result = await tool.executeCommand({
+        pattern: '(a+)+$',
+        path: '.',
+        maxResults: 5
+    });
+    assert.match(result, /拒绝执行/);
+    assert.match(result, /嵌套量词/);
+});
+
+test('grepFiles - 超时中断搜索并返回部分结果', async () => {
+    const dir = makeTempDir();
+    try {
+        const originalEnv = process.env['OPENDESK_GREP_TIME_BUDGET_MS'];
+        process.env['OPENDESK_GREP_TIME_BUDGET_MS'] = '50';
+        try {
+            // 用大量中小文件拖慢扫描触发时间预算（慢正则会被静态检测拦截，不能用它）
+            const padding = 'x'.repeat(300);
+            for (let i = 0; i < 600; i++) {
+                fs.writeFileSync(path.join(dir, `bulk-${i}.txt`), `file ${i} padding ${padding}\n`, 'utf8');
+            }
+            const tool = new GrepFilesTool();
+            const result = await tool.executeCommand({
+                pattern: 'TARGET_MARKER_THAT_DOES_NOT_EXIST',
+                path: dir,
+                maxResults: 500
+            });
+
+            // 应以超时说明结束，而不是继续扫完所有文件
+            assert.match(result, /超时/);
+            assert.ok(result.length > 0);
+        } finally {
+            if (originalEnv === undefined) {
+                delete process.env['OPENDESK_GREP_TIME_BUDGET_MS'];
+            } else {
+                process.env['OPENDESK_GREP_TIME_BUDGET_MS'] = originalEnv;
+            }
+        }
+    } finally {
+        cleanup(dir);
+    }
+});
+
+test('grepFiles - ReDoS 静态检测判定矩阵', async () => {
+    // 直接对检测器函数做判定矩阵测试（24 个样例：12 危险 + 12 合法）
+    const dangerous = [
+        '(a+)+',
+        '(.*)*',
+        '(\\d+)*X',
+        '(a+){2,}$',
+        '(?:\\w+\\s*)*END',
+        '(\\w+\\s*)*END',
+        '(a?)+b',
+        '((a+))+b',
+        '(a*?)+b',
+        '(?:\\s*\\w+)+END',
+        '(a+|b)+',
+        '(\\w|)+x'
+    ];
+    const legal = [
+        '(\\d+\\.)*\\d+',
+        '(?:\\w+-)*\\w+',
+        '[a-z]+(\\.[a-z]+)*',
+        '(?:https?://)?[\\w.-]+(?:/\\w*)*',
+        'a{2,3}',
+        '(foo|bar)+baz',
+        'a+?b',
+        '(aa)+b',
+        '(ab?)+c',
+        'x(?:\\d{4}-\\d{2}-\\d{2})+y',
+        '(\\s?a)+b',
+        '(a\\s?)+b'
+    ];
+    for (const p of dangerous) {
+        assert.equal(hasNestedUnboundedQuantifier(p), true, `${p} 应判定为危险`);
+    }
+    for (const p of legal) {
+        assert.equal(hasNestedUnboundedQuantifier(p), false, `${p} 应判定为安全`);
     }
 });
 

@@ -2777,6 +2777,338 @@ const DEFAULT_GREP_IGNORE = [
 const GREP_MAX_FILE_SIZE_BYTES = 20 * 1024 * 1024;
 const GREP_FILE_SEARCH_CONCURRENCY = 4;
 const GREP_MAX_GITIGNORE_PATTERNS = 50_000;
+/** 单行输出字符数上限：匹配行按匹配位置取窗口，上下文行保留头部 */
+const GREP_DEFAULT_MAX_COLUMNS = 300;
+/** 匹配行窗口中，匹配点之前保留的字符数（提供可读的上下文） */
+const GREP_MATCH_CONTEXT_BEFORE = 40;
+/** ReDoS 防护：整个搜索的时间预算（毫秒），超时中断并返回部分结果 */
+const GREP_TIME_BUDGET_MS = 10_000;
+
+/**
+ * ReDoS 静态检测：拒绝"嵌套无限量词"形态，如 (a+)+、(.*)*、(\d+)*X、(a+){2,}、
+ * (\w+\s*)*、(a?)+、(a+|b)+。判据（分组被无限量词（{m,}、星号、加号）修饰时，逐一
+ * 检查每个分支末端 token E 与分组首 token F 的邻接歧义）：
+ *  1. 空分支（ε）—— 迭代可零宽重复
+ *  2. E 可无界重复或可匹配空，且 E.key === F.key —— 迭代边界可在同类 run 内滑动
+ *  3. E 可匹配空且 E 的前一个 token 无界且与 F 同类 —— E 消失后暴露同类邻接
+ *     （(\w+\s*)*：\s* 消失 → \w+‖\w+）
+ *  4. F 可匹配空，分支内第二 token 无界且与 E 同类且 E 无界 —— F 消失后暴露
+ *     同类邻接（(\s*\w+)+；多分支时 second 随分支端点快照）
+ * (aa)+、(ab?)+、(?:/\w*)*、(\d+\.)*\d+ 等边界确定的常见合法模式不会误伤。
+ * 已知盲区：分支间前缀歧义（如 (a|aa)+），由时间预算兜底。
+ * 这是 JS RegExp 缺少线性时间保证下的保守启发式。
+ */
+export function hasNestedUnboundedQuantifier(pattern: string): boolean {
+    interface TokenInfo {
+        key: string;
+        /** 可匹配空串（量词下界为 0） */
+        empty: boolean;
+        /** 可无界重复（量词上界为 Infinity） */
+        unbounded: boolean;
+    }
+    /**
+     * 分支末端快照：end/prev/second 三元组在 | 与 ) 时机捕获，
+     * 保证多分支模式下每个分支用自己的 token 上下文参与判定。
+     */
+    interface BranchEnd {
+        /** 末端 token 字符类；null 表示空分支（ε） */
+        endKey: string | null;
+        endEmpty: boolean;
+        endUnbounded: boolean;
+        prevKey: string | null;
+        prevUnbounded: boolean;
+        secondKey: string | null;
+        secondUnbounded: boolean;
+    }
+    interface GroupFrame {
+        /** 分支内已记录的 token 数（不含继承的共享前缀 first） */
+        branchCount: number;
+        first: TokenInfo | null;
+        second: TokenInfo | null;
+        prev: TokenInfo | null;
+        last: TokenInfo | null;
+        branchEnds: BranchEnd[];
+    }
+    const stack: GroupFrame[] = [];
+    let lastWasQuantifier = false;
+
+    const readAtomKey = (pos: number): { key: string | null; next: number } => {
+        const ch = pattern[pos];
+        if (ch === '\\') {
+            return { key: pattern.slice(pos, pos + 2), next: pos + 2 };
+        }
+        if (ch === '[') {
+            let j = pos + 1;
+            while (j < pattern.length && pattern[j] !== ']') {
+                if (pattern[j] === '\\') j++;
+                j++;
+            }
+            return { key: pattern.slice(pos, j + 1), next: j + 1 };
+        }
+        return { key: ch, next: pos + 1 };
+    };
+    const readBraceQuantifier = (pos: number): { min: number; max: number; next: number } | null => {
+        const m = /^\{(\d+)(,(\d*)?)?\}/.exec(pattern.slice(pos));
+        if (!m) return null;
+        const min = Number(m[1]);
+        const max = m[2] === undefined ? min : m[3] === undefined || m[3] === '' ? Infinity : Number(m[3]);
+        return { min, max, next: pos + m[0].length };
+    };
+    const recordAtom = (key: string) => {
+        if (stack.length === 0) return;
+        const frame = stack[stack.length - 1];
+        frame.prev = frame.last;
+        const token: TokenInfo = { key, empty: false, unbounded: false };
+        if (!frame.first) {
+            frame.first = token;
+        } else if (frame.branchCount === 1) {
+            // 分支内第二个 token（branchCount 在记录第一个后已为 1）
+            frame.second = token;
+        }
+        frame.last = token;
+        frame.branchCount++;
+    };
+    const applyQuantifier = (min: number, max: number) => {
+        if (stack.length === 0) return;
+        const frame = stack[stack.length - 1];
+        if (!frame.last) return;
+        frame.last.empty = min === 0;
+        frame.last.unbounded = max === Infinity;
+    };
+    /** 将分组作为父层的一个原子记录：字符类取分组首 token，风险取首 token 与各分支末端的并集 */
+    const recordGroupAtom = (frame: GroupFrame) => {
+        if (stack.length === 0 || !frame.first) return;
+        const anyEmpty = frame.first.empty || frame.branchEnds.some((e) => e.endEmpty);
+        const anyUnbounded = frame.first.unbounded || frame.branchEnds.some((e) => e.endUnbounded);
+        const parent = stack[stack.length - 1];
+        parent.prev = parent.last;
+        const token: TokenInfo = { key: frame.first.key, empty: anyEmpty, unbounded: anyUnbounded };
+        if (!parent.first) {
+            parent.first = token;
+        } else if (parent.branchCount === 1) {
+            parent.second = token;
+        }
+        parent.last = token;
+        parent.branchCount++;
+    };
+    /** 在 | 与 ) 时机捕获当前分支末端快照；last 为 null 表示空分支（ε） */
+    const captureBranchEnd = (frame: GroupFrame) => {
+        frame.branchEnds.push({
+            endKey: frame.last ? frame.last.key : null,
+            endEmpty: frame.last ? frame.last.empty : true,
+            endUnbounded: frame.last ? frame.last.unbounded : false,
+            prevKey: frame.prev ? frame.prev.key : null,
+            prevUnbounded: frame.prev ? frame.prev.unbounded : false,
+            secondKey: frame.second ? frame.second.key : null,
+            secondUnbounded: frame.second ? frame.second.unbounded : false
+        });
+    };
+    /** 分组被无限量词修饰时，逐分支检查末端 E 与首 token F 的邻接歧义 */
+    const checkQuantifiedGroup = (frame: GroupFrame): boolean => {
+        if (!frame.first) return false;
+        const fKey = frame.first.key;
+        const fEmpty = frame.first.empty;
+        for (const e of frame.branchEnds) {
+            // 空分支：迭代可零宽重复，划分歧义
+            if (e.endKey === null) return true;
+            // 判据 1：同类邻接，末端可滑动（(a+)+、(.* )*）
+            if ((e.endUnbounded || e.endEmpty) && e.endKey === fKey) return true;
+            // 判据 2：末端可空，消失后暴露的 prev 与 F 同类且无界（(\w+\s*)*）
+            if (e.endEmpty && e.prevUnbounded && e.prevKey !== null && e.prevKey === fKey) return true;
+            // 判据 3：F 可空，暴露的分支内第二 token 与末端同类且双方无界（(\s*\w+)+）
+            if (fEmpty && e.secondUnbounded && e.endUnbounded && e.secondKey !== null && e.secondKey === e.endKey) {
+                return true;
+            }
+        }
+        return false;
+    };
+
+    let i = 0;
+    while (i < pattern.length) {
+        const ch = pattern[i];
+        if (ch === '\\') {
+            const { key, next } = readAtomKey(i);
+            if (key) recordAtom(key);
+            i = next;
+            lastWasQuantifier = false;
+            continue;
+        }
+        if (ch === '[') {
+            const { key, next } = readAtomKey(i);
+            if (key) recordAtom(key);
+            i = next;
+            lastWasQuantifier = false;
+            continue;
+        }
+        if (ch === '(') {
+            stack.push({ branchCount: 0, first: null, second: null, prev: null, last: null, branchEnds: [] });
+            i++;
+            // 跳过分组前缀：(?:、(?=、(?!、(?<=、(?<!、(?<name>
+            if (pattern[i] === '?') {
+                if (pattern[i + 1] === '<' && pattern[i + 2] !== '=' && pattern[i + 2] !== '!') {
+                    const close = pattern.indexOf('>', i + 2);
+                    i = close > 0 ? close + 1 : pattern.length;
+                } else {
+                    i += 2;
+                }
+            }
+            lastWasQuantifier = false;
+            continue;
+        }
+        if (ch === ')') {
+            const frame = stack.pop();
+            if (!frame) {
+                // 括号不配对，交给 RegExp 编译阶段报错
+                i++;
+                lastWasQuantifier = false;
+                continue;
+            }
+            captureBranchEnd(frame);
+            // 检查分组整体是否被无限量词修饰（{n,m} 有限上界为多项式，不拦）
+            const nextCh = pattern[i + 1];
+            let unboundedQuantified = false;
+            if (nextCh === '*' || nextCh === '+') {
+                unboundedQuantified = true;
+            } else if (nextCh === '{') {
+                const brace = readBraceQuantifier(i + 1);
+                unboundedQuantified = brace !== null && brace.max === Infinity;
+            }
+            if (unboundedQuantified && checkQuantifiedGroup(frame)) {
+                return true;
+            }
+            // 分组作为父层的一个原子
+            recordGroupAtom(frame);
+            i++;
+            lastWasQuantifier = false;
+            continue;
+        }
+        if (ch === '*' || ch === '+') {
+            applyQuantifier(ch === '*' ? 0 : 1, Infinity);
+            lastWasQuantifier = true;
+            i++;
+            continue;
+        }
+        if (ch === '{') {
+            const brace = readBraceQuantifier(i);
+            if (brace) {
+                applyQuantifier(brace.min, brace.max);
+                lastWasQuantifier = true;
+                i = brace.next;
+                continue;
+            }
+            // 非量词形态的字面量 '{'，按普通原子处理
+            recordAtom('{');
+            lastWasQuantifier = false;
+            i++;
+            continue;
+        }
+        if (ch === '?') {
+            if (!lastWasQuantifier) {
+                // 0/1 有界量词；紧跟量词之后的 '?' 是惰性标记，不改变量词语义
+                applyQuantifier(0, 1);
+            }
+            lastWasQuantifier = false;
+            i++;
+            continue;
+        }
+        if (ch === '|') {
+            // 分支切换：捕获当前分支末端，重置为待记录的新分支
+            if (stack.length > 0) {
+                const frame = stack[stack.length - 1];
+                captureBranchEnd(frame);
+                // 新分支从零开始记录：first 保留（分组共享），second/prev/last 归零
+                frame.last = null;
+                frame.prev = null;
+                frame.second = null;
+                frame.branchCount = 0;
+            }
+            lastWasQuantifier = false;
+            i++;
+            continue;
+        }
+        if (ch === '^' || ch === '$') {
+            // 锚点不消费字符：不影响 token 追踪
+            i++;
+            continue;
+        }
+        recordAtom(ch);
+        lastWasQuantifier = false;
+        i++;
+    }
+    return false;
+}
+
+/** 按头部截断单行，超出部分以省略号结尾 */
+function truncateLineHead(line: string, maxColumns: number): string {
+    if (maxColumns <= 0 || line.length <= maxColumns) {
+        return line;
+    }
+    return line.slice(0, maxColumns) + '...';
+}
+
+/**
+ * 匹配行截断：以首个匹配为锚取窗口（前留 GREP_MATCH_CONTEXT_BEFORE 字符），
+ * 窗口总长不超过 maxColumns，保证匹配内容可见；两端超出处以省略号标记。
+ * matchColumns 为匹配起点的列号（1-based，与 GrepMatch.column 一致）。
+ */
+function truncateMatchWindow(line: string, maxColumns: number, matchColumns: number[]): string {
+    if (maxColumns <= 0 || line.length <= maxColumns) {
+        return line;
+    }
+    const first = matchColumns.length > 0 ? Math.min(...matchColumns) : 1;
+    const windowStart = Math.max(0, first - 1 - GREP_MATCH_CONTEXT_BEFORE);
+    const windowEnd = Math.min(line.length, windowStart + maxColumns);
+    const slice = line.slice(windowStart, windowEnd);
+    return (windowStart > 0 ? '...' : '') + slice + (windowEnd < line.length ? '...' : '');
+}
+
+/**
+ * 嗅探文件编码：BOM 优先（UTF-16LE/BE、UTF-8）；
+ * 无 BOM 时试解码为 UTF-8（尾部多字节字符被截断造成的失败会去掉尾部后重试），
+ * 失败则回退 gb18030（Windows 中文环境常见的 ANSI 编码超集）。
+ */
+async function detectFileEncoding(filePath: string): Promise<string> {
+    const fd = await fs.promises.open(filePath, 'r');
+    try {
+        const buf = Buffer.alloc(4);
+        const { bytesRead } = await fd.read(buf, 0, 4, 0);
+        if (bytesRead >= 2 && buf[0] === 0xff && buf[1] === 0xfe) {
+            return 'utf-16le';
+        }
+        if (bytesRead >= 2 && buf[0] === 0xfe && buf[1] === 0xff) {
+            return 'utf-16be';
+        }
+        if (bytesRead >= 3 && buf[0] === 0xef && buf[1] === 0xbb && buf[2] === 0xbf) {
+            return 'utf-8';
+        }
+
+        // 无 BOM：取 64KB 头部做 UTF-8 合法性试解码。
+        // 最后一字节可能是被截断的多字节字符前缀，去掉尾部重试一次防止误判。
+        const probe = Buffer.alloc(64 * 1024);
+        const probeRead = await fd.read(probe, 0, probe.length, 0);
+        const isProbablyUtf8 = (data: Buffer): boolean => {
+            try {
+                new TextDecoder('utf-8', { fatal: true }).decode(data);
+                return true;
+            } catch {
+                return false;
+            }
+        };
+        if (probeRead.bytesRead > 0 && isProbablyUtf8(probe.subarray(0, probeRead.bytesRead))) {
+            return 'utf-8';
+        }
+        if (probeRead.bytesRead > 3) {
+            // 去掉尾部 3 字节（多字节字符被读取边界截断的场景）后重试
+            const trimmed = probe.subarray(0, probeRead.bytesRead - 3);
+            if (isProbablyUtf8(trimmed)) {
+                return 'utf-8';
+            }
+        }
+        return 'gb18030';
+    } finally {
+        await fd.close();
+    }
+}
 
 /**
  * 将单条 .gitignore 规则转换为相对于 basePath 的 fastGlob ignore 模式。
@@ -2908,7 +3240,16 @@ const grepSchema = z.object({
     filePattern: z.string().optional().describe('文件名 glob 模式，如 *.ts、**/*.js，默认搜索所有文件'),
     ignoreCase: z.boolean().default(true).describe('是否忽略大小写，默认 true'),
     maxResults: z.number().min(1).max(500).default(50).describe('最大返回结果数，默认 50'),
-    contextLines: z.number().min(0).max(100).default(2).describe('显示匹配行的上下文行数，默认 2')
+    contextLines: z.number().min(0).max(100).default(2).describe('显示匹配行的上下文行数，默认 2'),
+    maxColumns: z
+        .number()
+        .int()
+        .min(0)
+        .max(2000)
+        .default(GREP_DEFAULT_MAX_COLUMNS)
+        .describe(
+            '单行最大输出字符数，默认 300，超出部分被截断（匹配行按匹配位置取窗口，上下文行保留头部）；0 表示不截断'
+        )
 });
 
 interface GrepMatch {
@@ -3044,7 +3385,15 @@ export class GrepFilesTool extends BaseTool<typeof grepSchema> {
     }
 
     async executeCommand(args: z.output<typeof grepSchema>, taskState?: TaskState): Promise<string> {
-        const { pattern, path: searchPath, filePattern, ignoreCase, maxResults, contextLines } = args;
+        const {
+            pattern,
+            path: searchPath,
+            filePattern,
+            ignoreCase,
+            maxResults,
+            contextLines,
+            maxColumns = GREP_DEFAULT_MAX_COLUMNS
+        } = args;
         const workingDir = getWorkingDirectory(taskState);
 
         if (!pattern || pattern.trim() === '') {
@@ -3052,6 +3401,15 @@ export class GrepFilesTool extends BaseTool<typeof grepSchema> {
         }
 
         try {
+            // ReDoS 静态防线：拒绝嵌套无限量词（JS RegExp 无线性时间保证）
+            if (hasNestedUnboundedQuantifier(pattern)) {
+                return '错误: 拒绝执行包含嵌套量词的正则表达式（如 (a+)+、(.*)*），该模式可能导致灾难性回溯。请改写模式（如使用占有量词、明确边界）后重试';
+            }
+
+            const startTime = Date.now();
+            const timeBudgetMs = Number(process.env['OPENDESK_GREP_TIME_BUDGET_MS']) || GREP_TIME_BUDGET_MS;
+            let timedOut = false;
+
             // 预处理 pattern 中的 \uXXXX 字面量转义序列，将其转换为实际的 Unicode 字符
             // 这样 AI agent 发送的 [\u4e00-\u9fa5] 等 Unicode 范围模式能被正确处理
             const processedPattern = pattern.replace(/\\u([0-9a-fA-F]{4})/g, (_, hex) =>
@@ -3081,83 +3439,166 @@ export class GrepFilesTool extends BaseTool<typeof grepSchema> {
                 const fileMatches: GrepMatch[] = [];
 
                 try {
+                    if (Date.now() - startTime > timeBudgetMs) {
+                        timedOut = true;
+                        return fileMatches;
+                    }
+
                     const stat = await fs.promises.stat(filePath);
                     if (stat.size > GREP_MAX_FILE_SIZE_BYTES) {
                         return fileMatches;
                     }
 
-                    // 预检测二进制文件：读取文件头判断
-                    const fd = await fs.promises.open(filePath, 'r');
-                    const headBuf = Buffer.alloc(512);
-                    let bytesRead: number;
-                    try {
-                        const readResult = await fd.read(headBuf, 0, 512, 0);
-                        bytesRead = readResult.bytesRead;
-                    } finally {
-                        await fd.close();
-                    }
-                    if (bytesRead > 0 && hasBinaryContent(headBuf.subarray(0, bytesRead))) {
-                        return fileMatches;
-                    }
+                    // 编码嗅探：BOM（UTF-16LE/BE、UTF-8）→ 无 BOM 时 UTF-8 校验 → 回退 gb18030。
+                    // 统一用 TextDecoder 增量解码，避免 createReadStream 硬编码 utf-8 乱码漏检
+                    const encoding = await detectFileEncoding(filePath);
+                    const decoder = new TextDecoder(encoding, { fatal: false });
+                    const NUL_RE = /\u0000/;
 
-                    const input = fs.createReadStream(filePath, { encoding: 'utf-8' });
-                    const lineReader = readline.createInterface({ input, crlfDelay: Infinity });
+                    const input = fs.createReadStream(filePath);
+                    // 主动 destroy 会触发底层流的 AbortError，挂空监听防止 uncaughtException
+                    input.on('error', () => undefined);
                     const contextBefore: string[] = [];
                     let pendingContextAfter: GrepMatch[] = [];
                     let lineNumber = 0;
                     let stopAfterLine: number | undefined;
+                    let decoderCarry = '';
+                    let sawNul = false;
 
-                    for await (const line of lineReader) {
-                        lineNumber++;
-
-                        for (const match of pendingContextAfter) {
-                            if (match.contextAfter.length < contextLines) {
-                                match.contextAfter.push(line);
-                            }
-                        }
-                        pendingContextAfter = pendingContextAfter.filter(
-                            (match) => match.contextAfter.length < contextLines
-                        );
-
-                        regex.lastIndex = 0;
-
-                        let match;
-                        while ((match = regex.exec(line)) !== null) {
-                            const grepMatch: GrepMatch = {
-                                file: filePath,
-                                line: lineNumber,
-                                column: match.index + 1,
-                                content: line,
-                                contextBefore: contextBefore.slice(),
-                                contextAfter: []
-                            };
-                            fileMatches.push(grepMatch);
-                            if (contextLines > 0) {
-                                pendingContextAfter.push(grepMatch);
-                            }
-
-                            if (fileMatches.length >= maxResults) {
-                                stopAfterLine = lineNumber + contextLines;
+                    try {
+                        for await (const chunk of input) {
+                            if (Date.now() - startTime > timeBudgetMs) {
+                                timedOut = true;
+                                input.destroy();
                                 break;
                             }
 
-                            // 防止零宽匹配导致无限循环
-                            if (match[0].length === 0) {
-                                regex.lastIndex++;
+                            // 增量解码：decoder 以 stream 模式处理跨块的多字节字符，
+                            // 最后一段可能是不完整行（流未结束时），回退到下一块处理
+                            const text = decoderCarry + decoder.decode(chunk as Buffer, { stream: true });
+                            const lines = text.split('\n');
+                            const completeLines = lines.slice(0, -1);
+                            decoderCarry = lines[lines.length - 1];
+
+                            for (const line of completeLines) {
+                                lineNumber++;
+                                const content = line.endsWith('\r') ? line.slice(0, -1) : line;
+
+                                if (NUL_RE.test(content)) {
+                                    sawNul = true;
+                                    break;
+                                }
+
+                                for (const m of pendingContextAfter) {
+                                    if (m.contextAfter.length < contextLines) {
+                                        m.contextAfter.push(content);
+                                    }
+                                }
+                                pendingContextAfter = pendingContextAfter.filter(
+                                    (m) => m.contextAfter.length < contextLines
+                                );
+
+                                regex.lastIndex = 0;
+                                let match;
+                                while ((match = regex.exec(content)) !== null) {
+                                    const grepMatch: GrepMatch = {
+                                        file: filePath,
+                                        line: lineNumber,
+                                        column: match.index + 1,
+                                        content,
+                                        contextBefore: contextBefore.slice(),
+                                        contextAfter: []
+                                    };
+                                    fileMatches.push(grepMatch);
+                                    if (contextLines > 0) {
+                                        pendingContextAfter.push(grepMatch);
+                                    }
+
+                                    if (fileMatches.length >= maxResults) {
+                                        stopAfterLine = lineNumber + contextLines;
+                                        break;
+                                    }
+
+                                    // 防止零宽匹配导致无限循环
+                                    if (match[0].length === 0) {
+                                        regex.lastIndex++;
+                                    }
+                                }
+
+                                regex.lastIndex = 0;
+                                if (contextLines > 0) {
+                                    contextBefore.push(content);
+                                    if (contextBefore.length > contextLines) {
+                                        contextBefore.shift();
+                                    }
+                                }
+                                if (stopAfterLine !== undefined && lineNumber >= stopAfterLine) {
+                                    input.destroy();
+                                    break;
+                                }
+                            }
+
+                            if (sawNul || stopAfterLine !== undefined) {
+                                break;
                             }
                         }
 
-                        regex.lastIndex = 0;
-                        if (contextLines > 0) {
-                            contextBefore.push(line);
-                            if (contextBefore.length > contextLines) {
-                                contextBefore.shift();
+                        // 流结束：处理最后一段残余行（不完整行同样走完整匹配与上下文逻辑）
+                        if (!sawNul && stopAfterLine === undefined) {
+                            const tailText = decoderCarry + decoder.decode();
+                            if (tailText) {
+                                lineNumber++;
+                                const content = tailText.endsWith('\r') ? tailText.slice(0, -1) : tailText;
+                                if (!NUL_RE.test(content)) {
+                                    for (const m of pendingContextAfter) {
+                                        if (m.contextAfter.length < contextLines) {
+                                            m.contextAfter.push(content);
+                                        }
+                                    }
+                                    pendingContextAfter = pendingContextAfter.filter(
+                                        (m) => m.contextAfter.length < contextLines
+                                    );
+
+                                    regex.lastIndex = 0;
+                                    let match;
+                                    while ((match = regex.exec(content)) !== null) {
+                                        const grepMatch: GrepMatch = {
+                                            file: filePath,
+                                            line: lineNumber,
+                                            column: match.index + 1,
+                                            content,
+                                            contextBefore: contextBefore.slice(),
+                                            contextAfter: []
+                                        };
+                                        fileMatches.push(grepMatch);
+                                        if (contextLines > 0) {
+                                            pendingContextAfter.push(grepMatch);
+                                        }
+                                        if (fileMatches.length >= maxResults) {
+                                            break;
+                                        }
+                                        if (match[0].length === 0) {
+                                            regex.lastIndex++;
+                                        }
+                                    }
+
+                                    regex.lastIndex = 0;
+                                    if (contextLines > 0) {
+                                        contextBefore.push(content);
+                                        if (contextBefore.length > contextLines) {
+                                            contextBefore.shift();
+                                        }
+                                    }
+                                }
                             }
                         }
-                        if (stopAfterLine !== undefined && lineNumber >= stopAfterLine) {
-                            input.destroy();
-                            break;
-                        }
+                    } finally {
+                        input.destroy();
+                    }
+
+                    // 流式 NUL 检测：任意位置出现 NUL 即判定为二进制，丢弃该文件全部结果
+                    if (sawNul) {
+                        return [];
                     }
                 } catch {
                     // 跳过无法读取的文件
@@ -3211,7 +3652,7 @@ export class GrepFilesTool extends BaseTool<typeof grepSchema> {
             }
 
             if (matches.length === 0) {
-                return '未找到匹配的内容';
+                return timedOut ? `搜索超时（时间预算 ${timeBudgetMs}ms），未找到匹配的内容` : '未找到匹配的内容';
             }
 
             const output: string[] = [];
@@ -3237,37 +3678,67 @@ export class GrepFilesTool extends BaseTool<typeof grepSchema> {
                 }
                 const lineNumWidth = String(maxLineNum).length;
 
-                // 去重输出
-                let lastLine = -1;
+                // 合并重叠的上下文区间：相邻匹配的上下文重叠时（匹配间距 <= contextLines），
+                // 按行号合并成连续块输出，保证行号严格递增且每行只出现一次，
+                // 避免行号回退被误判为多个文件的内容串在一起；匹配行始终保留 > 标记。
+                // 记录每行首个匹配的列号，供匹配行窗口截断定位
+                const lineContents = new Map<number, string>();
+                const lineMatchColumns = new Map<number, number>();
+                const lineMatchCounts = new Map<number, number>();
                 for (const match of fileMatches) {
-                    if (match.line === lastLine) {
-                        continue;
-                    }
-                    lastLine = match.line;
-
-                    if (contextLines > 0 && match.contextBefore.length > 0) {
-                        for (let j = 0; j < match.contextBefore.length; j++) {
-                            const ctxLineNum = match.line - match.contextBefore.length + j;
-                            const ctxNumStr = String(ctxLineNum).padStart(lineNumWidth, ' ');
-                            output.push(`  ${ctxNumStr} | ${match.contextBefore[j]}`);
+                    for (let j = 0; j < match.contextBefore.length; j++) {
+                        const ctxLineNum = match.line - match.contextBefore.length + j;
+                        if (ctxLineNum > 0 && !lineContents.has(ctxLineNum)) {
+                            lineContents.set(ctxLineNum, match.contextBefore[j]);
                         }
                     }
-
-                    const lineNumStr = String(match.line).padStart(lineNumWidth, ' ');
-                    output.push(`> ${lineNumStr} | ${match.content}`);
-
-                    if (contextLines > 0 && match.contextAfter.length > 0) {
-                        for (let j = 0; j < match.contextAfter.length; j++) {
-                            const ctxLineNum = match.line + 1 + j;
-                            const ctxNumStr = String(ctxLineNum).padStart(lineNumWidth, ' ');
-                            output.push(`  ${ctxNumStr} | ${match.contextAfter[j]}`);
+                    if (!lineContents.has(match.line)) {
+                        lineContents.set(match.line, match.content);
+                    }
+                    // 匹配行身份与列号必须无条件覆盖（该行可能已被前一匹配的上下文注册）
+                    lineMatchColumns.set(match.line, match.column);
+                    lineMatchCounts.set(match.line, (lineMatchCounts.get(match.line) ?? 0) + 1);
+                    for (let j = 0; j < match.contextAfter.length; j++) {
+                        const ctxLineNum = match.line + 1 + j;
+                        if (!lineContents.has(ctxLineNum)) {
+                            lineContents.set(ctxLineNum, match.contextAfter[j]);
                         }
                     }
+                }
+
+                const sortedLineNums = [...lineContents.keys()].sort((a, b) => a - b);
+                let prevLineNum = 0;
+                for (const lineNum of sortedLineNums) {
+                    if (prevLineNum > 0 && lineNum > prevLineNum + 1) {
+                        output.push('');
+                    }
+                    prevLineNum = lineNum;
+                    const lineNumStr = String(lineNum).padStart(lineNumWidth, ' ');
+                    const content = lineContents.get(lineNum)!;
+                    const isMatchLine = lineMatchColumns.has(lineNum);
+                    let rendered = isMatchLine
+                        ? truncateMatchWindow(content, maxColumns, [lineMatchColumns.get(lineNum)!])
+                        : truncateLineHead(content, maxColumns);
+                    // 行被截断且行内有多个匹配时，窗口外可能还有未展示的匹配，需显式注记
+                    // （保持每行一个行号的不变量，不做多窗口）
+                    const matchCount = lineMatchCounts.get(lineNum) ?? 0;
+                    if (isMatchLine && matchCount > 1 && content.length > maxColumns) {
+                        rendered += ` [本行共 ${matchCount} 处匹配，窗口外可能有未展示的匹配]`;
+                    }
+                    // > 标记区分匹配行与上下文行（模型依赖此语义判读结果）
+                    output.push(`${isMatchLine ? '>' : ' '} ${lineNumStr} | ${rendered}`);
                 }
             }
 
             const fileCount = fileGroups.size;
             output.unshift(`在 ${fileCount} 个文件中找到 ${matches.length} 处匹配:`);
+
+            if (timedOut) {
+                output.push('');
+                output.push(
+                    `注意: 搜索在时间预算（${timeBudgetMs}ms）内未完成，以上为部分结果。建议缩小搜索范围后重试`
+                );
+            }
 
             return output.join('\n');
         } catch (err: any) {
