@@ -15,7 +15,6 @@ import { ToolResult } from '../../../aikernel/tool.js';
 import { ToolCall } from '../../../aikernel/messages.js';
 import { escapeHtml } from '../../../../common/utils/escape.js';
 import stripAnsi from 'strip-ansi';
-import Convert from 'ansi-to-html';
 import { Card } from '../../../tui/components/card.js';
 import { statusDisplay, truncText } from '../../../tui/components/toolcall.js';
 import fs from 'node:fs';
@@ -25,6 +24,7 @@ import { runPluginShellEnv } from '../../pluginmgr/runtime/hooks.js';
 import { Setting, getTaskToolResultDirectory } from '../../../utils/setting.js';
 import { installTimeoutBackgrounding, ShellTimeoutClock } from '../background.js';
 import { BoundedOutputBuffer } from '../output-buffer.js';
+import { computeTerminalOutputDelta } from '../output-delta.js';
 import {
     buildChildProcessEnv,
     createShellOutputDecoder,
@@ -37,8 +37,6 @@ import { prepareDarwinSandbox } from '../sandboxes/darwin-sandbox.js';
 import { prepareOpenHarmonySandbox } from '../sandboxes/openharmony-sandbox.js';
 import { appendSandboxPathDiagnostic, appendSandboxPipeDiagnostic } from '../sandboxes/path-diagnostic.js';
 import { t } from '../locale/index.js';
-
-const ansiConverter = new Convert({ escapeXML: true });
 
 export function getTaskWorkspace(taskState?: TaskState): string {
     return taskState?.getWorkspace() || Setting.getInstance().getEffectiveWorkspace();
@@ -147,11 +145,12 @@ export function renderTerminalToolCall(cmdName: string, toolcall: ToolCall, sand
             </div>`;
         if (toolcall.result) {
             const outputColor = isError ? 'text-red-600' : 'text-gray-600';
-            // 使用模块级转换器将 ANSI 颜色码转为 HTML 样式
-            const styledOutput = ansiConverter.toHtml(toolcall.result);
+            // 终端输出以纯文本展示：剥离 ANSI 颜色控制序列后仅做 HTML 转义，
+            // 避免终端配色与前端主题背景冲突导致的可读性问题（用户要求）。
+            const cleanOutput = escapeHtml(stripAnsi(toolcall.result));
             bodyContent += `
             <div class="px-4 py-2.5 border-t border-gray-100">
-                <pre class="terminal-tool-output ${outputColor}">${styledOutput}</pre>
+                <pre class="terminal-tool-output ${outputColor}">${cleanOutput}</pre>
             </div>`;
         }
     }
@@ -341,10 +340,14 @@ export async function executeShellCommand(opts: {
 
     const updateTimer = setInterval(() => {
         const currentOutput = output.getText();
-        if (currentOutput !== lastSentOutput) {
-            lastSentOutput = currentOutput;
-            result.updateResult(currentOutput);
-        }
+        if (currentOutput === lastSentOutput) return;
+        // live 推送携带增量：未截断时输出只做尾部追加，只传新增部分（剥离 ANSI）；
+        // 截断/重置时 outputReset 置位、delta 为全量，渲染端整体重写输出区。
+        const { reset, delta } = computeTerminalOutputDelta(lastSentOutput, currentOutput);
+        lastSentOutput = currentOutput;
+        result.outputDelta = stripAnsi(delta);
+        result.outputReset = reset || undefined;
+        result.updateResult(currentOutput);
     }, LIVE_UPDATE_INTERVAL_MS);
 
     let resolveStopPromise: (() => void) | undefined;

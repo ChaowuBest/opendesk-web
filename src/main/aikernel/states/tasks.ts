@@ -2738,6 +2738,15 @@ export class TaskState {
                     async (result) => {
                         tool_call.result = result.result;
                         tool_call.result_object = result.result_object;
+                        // 终端 live 增量：tick 推送携带 outputDelta 时同步到 toolcall，
+                        // 供渲染端做无解析的文本追加；非终端工具不携带，显式清理残留。
+                        if (result.outputDelta !== undefined) {
+                            tool_call.outputDelta = result.outputDelta;
+                            tool_call.outputReset = result.outputReset;
+                        } else {
+                            delete tool_call.outputDelta;
+                            delete tool_call.outputReset;
+                        }
                         await this.sendSubscriptionFeedback();
                     },
                     this,
@@ -2749,6 +2758,9 @@ export class TaskState {
             tool_call.status = result.status;
             tool_call.result = result.result;
             tool_call.result_object = result.result_object;
+            // 终态渲染走全量 rendered，live 增量字段不再有意义，避免持久化残留。
+            delete tool_call.outputDelta;
+            delete tool_call.outputReset;
         } catch (err) {
             logger.error(err);
             tool_call.status = 'error';

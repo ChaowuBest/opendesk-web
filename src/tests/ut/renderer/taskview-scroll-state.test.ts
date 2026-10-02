@@ -720,3 +720,60 @@ describe('task-view 发送消息时强制进入滚动到底部状态', () => {
         window.taskManagerAPI = prevAPI;
     });
 });
+
+describe('task-view 流式快照期间滚动跟随不滞后', () => {
+    function createTaskView() {
+        const taskView = document.createElement('task-view') as any;
+        taskView.setAttribute('task_id', 'task-scroll-follow-1');
+        taskView.task_id = 'task-scroll-follow-1';
+        taskView.render();
+        taskView.setUpEventListeners();
+        return taskView;
+    }
+
+    function getHistory(taskView: any) {
+        return taskView.querySelector('#taskview-chat-history') as HTMLElement & {
+            scrollTop: number;
+            scrollHeight: number;
+            clientHeight: number;
+        };
+    }
+
+    function setScrollMetrics(
+        container: HTMLElement & { scrollTop: number; scrollHeight: number; clientHeight: number },
+        scrollTop: number,
+        scrollHeight: number,
+        clientHeight: number
+    ) {
+        Object.defineProperty(container, 'scrollTop', { value: scrollTop, configurable: true, writable: true });
+        Object.defineProperty(container, 'scrollHeight', { value: scrollHeight, configurable: true, writable: true });
+        Object.defineProperty(container, 'clientHeight', { value: clientHeight, configurable: true, writable: true });
+    }
+
+    /**
+     * 复现 bug：工具流式刷新（主进程 ~8Hz 快照）期间，每次快照把聊天内容增高，
+     * 滚动跟随的 150ms 节流窗口会让 DOM 增长与滚动执行之间出现最长 150ms 的滞后，
+     * 期间滚动条 thumb 停在旧位置（相对上移），随后被拉回底部，形成每秒多次的
+     * "上移-回落"抖动。修复后每次快照都在下一帧（rAF 合并）跟随到最新底部，不滞后。
+     */
+    test('锁定底部时，节流窗口内连续快照仍应立即跟随到最新底部', () => {
+        const taskView = createTaskView();
+        const history = getHistory(taskView);
+        taskView.setAutoScrollingToBottom(true);
+        setScrollMetrics(history, 2500, 3000, 500);
+
+        // 快照 1：内容增高后触发滚动跟随，应滚到新底部（3300 - 500 = 2800）
+        setScrollMetrics(history, 2500, 3300, 500);
+        taskView.tryScrollToEnd();
+        expect(history.scrollTop).toBe(2800);
+
+        // 快照 2：紧跟其后的下一次流式刷新（仍在 150ms 节流窗口内），内容再次增高。
+        // 手动清掉已消费的 rAF id，模拟真实浏览器中上一帧 rAF 已经执行完毕。
+        taskView._scrollRafId = null;
+        setScrollMetrics(history, 2800, 3600, 500);
+        taskView.tryScrollToEnd();
+        // 修复前：滚动被节流 timer 延迟，scrollTop 停留在 2800（滞后一整批快照）；
+        // 修复后：rAF 合并，立即跟随到 3600 - 500 = 3100。
+        expect(history.scrollTop).toBe(3100);
+    });
+});

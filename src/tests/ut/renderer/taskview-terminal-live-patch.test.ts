@@ -254,5 +254,84 @@ describe('task-view terminal live output fast path', () => {
             const outputs = [...content.querySelectorAll('.terminal-tool-output')].map((el) => el.textContent);
             expect(outputs).toEqual(['a-new', 'b-new']);
         });
+
+        describe('incremental outputDelta fast path', () => {
+            test('携带 outputDelta 时只追加文本，不解析 part HTML', () => {
+                const content = makeMessageContent('tc1', 'base');
+                const liveCard = content.querySelector('[data-toolcall-id="tc1"]')!;
+                const livePre = liveCard.querySelector('.terminal-tool-output')!;
+                const patched = TaskViewClass.patchRunningTerminalToolOutput(
+                    content,
+                    [{ id: 'tc1', status: 'running', outputDelta: ' new tail' }],
+                    '' // 增量路径不依赖 rendered
+                );
+                expect(patched).toBe(true);
+                expect(content.querySelector('[data-toolcall-id="tc1"]')).toBe(liveCard);
+                expect(content.querySelector('.terminal-tool-output')).toBe(livePre);
+                expect(livePre.textContent).toBe('base new tail');
+            });
+
+            test('outputReset 为 true 时整体重写输出区（缓冲截断）', () => {
+                const content = makeMessageContent('tc1', 'head that is now gone');
+                const patched = TaskViewClass.patchRunningTerminalToolOutput(
+                    content,
+                    [{ id: 'tc1', status: 'running', outputDelta: 'head+tail', outputReset: true }],
+                    ''
+                );
+                expect(patched).toBe(true);
+                expect(content.querySelector('.terminal-tool-output')!.textContent).toBe('head+tail');
+            });
+
+            test('卡片缺失时增量失败 → 返回 false 由上层全量渲染兜底', () => {
+                const content = makeMessageContent('tc-other', 'output');
+                const before = content.innerHTML;
+                const patched = TaskViewClass.patchRunningTerminalToolOutput(
+                    content,
+                    [{ id: 'tc1', status: 'running', outputDelta: 'x' }],
+                    terminalCardHtml('tc1', 'fresh')
+                );
+                expect(patched).toBe(false);
+                expect(content.innerHTML).toBe(before);
+            });
+
+            test('无 outputDelta（旧主进程/非终端工具）→ 走既有全量路径', () => {
+                const content = makeMessageContent('tc1', 'old');
+                const patched = TaskViewClass.patchRunningTerminalToolOutput(
+                    content,
+                    [{ id: 'tc1', status: 'running' }],
+                    terminalCardHtml('tc1', 'full replace')
+                );
+                expect(patched).toBe(true);
+                expect(content.querySelector('.terminal-tool-output')!.textContent).toBe('full replace');
+            });
+
+            test('同 part 多卡片全部增量追加', () => {
+                const content = document.createElement('div');
+                content.innerHTML = terminalCardHtml('tc1', 'a') + terminalCardHtml('tc2', 'b');
+                const patched = TaskViewClass.patchRunningTerminalToolOutput(
+                    content,
+                    [
+                        { id: 'tc1', status: 'running', outputDelta: 'A' },
+                        { id: 'tc2', status: 'running', outputDelta: 'B' }
+                    ],
+                    ''
+                );
+                expect(patched).toBe(true);
+                const outputs = [...content.querySelectorAll('.terminal-tool-output')].map((el) => el.textContent);
+                expect(outputs).toEqual(['aA', 'bB']);
+            });
+
+            test('增量内容以纯文本插入，不解析 HTML（防注入）', () => {
+                const content = makeMessageContent('tc1', 'before');
+                TaskViewClass.patchRunningTerminalToolOutput(
+                    content,
+                    [{ id: 'tc1', status: 'running', outputDelta: '<img src=x onerror=1>' }],
+                    ''
+                );
+                const pre = content.querySelector('.terminal-tool-output')!;
+                expect(pre.querySelector('img')).toBeNull();
+                expect(pre.textContent).toBe('before<img src=x onerror=1>');
+            });
+        });
     });
 });

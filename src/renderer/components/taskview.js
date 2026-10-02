@@ -116,10 +116,10 @@ export const TASKVIEW_HISTORY_BATCH_MESSAGE_LIMIT = 20;
 export const TASKVIEW_HISTORY_BATCH_HTML_CHAR_LIMIT = 200000;
 const TASKVIEW_HISTORY_TOP_LOAD_THRESHOLD_PX = 96;
 const TASKVIEW_HISTORY_VIEWPORT_FILL_GUARD = 8;
-// 锁定底部时滚动跟随的最小间隔：scrollHeight 读取会强制同步布局，
-// 高频流式输出下需限频，避免在巨大会话 DOM 上反复全量重排。
-// 150ms 可跟上主进程限流后 ~8Hz 的快照节奏；首次跟随与 forceScrollToEnd 不受限。
-const TASKVIEW_SCROLL_FOLLOW_MIN_INTERVAL_MS = 150;
+// 锁定底部时滚动跟随使用 rAF 合并（每帧最多执行一次）：scrollHeight 读取会强制
+// 同步布局，高频流式输出下把同一帧内多次 DOM 更新合并为一次读取与滚动，避免在
+// 巨大会话 DOM 上反复全量重排。相比时间节流（旧 150ms），每次快照后下一帧即跟随
+// 到最新底部，消除"内容已增高但滚动未跟上"导致的滚动条 thumb 抖动。
 const PROCESS_INNER_SCROLL_BOTTOM_THRESHOLD_PX = 24;
 // 流式思考预览只保留尾部切片：全文每帧重写的布局/文本成本会随思考长度线性膨胀，
 // 是长任务下渲染进程 CPU 飙高的主因之一。
@@ -378,12 +378,8 @@ class TaskView extends HTMLElement {
             this._renderAssistantProgress(progress, historyContainer);
             this.tryScrollToEnd();
         });
-        /** @type {number | null} 节流滚动的 rAF id */
+        /** @type {number | null} 滚动跟随的 rAF id（同一帧内多次更新合并为一次跟随） */
         this._scrollRafId = null;
-        /** @type {ReturnType<typeof setTimeout> | null} 滚动跟随限流的定时器 */
-        this._scrollFollowTimer = null;
-        /** @type {number} 上次滚动跟随的时间戳 */
-        this._lastScrollFollowAt = 0;
         /** @type {number} 视图进入后台不可见的时间戳；0 表示可见。用于后台超时释放。 */
         this._viewHiddenAt = 0;
         /** @type {number | null} 节流过程区内部滚动的 rAF id */
@@ -905,10 +901,15 @@ class TaskView extends HTMLElement {
         // Bubble mode: update bubble content
         const bubbleContent = el.querySelector('.reasoning-bubble-content');
         if (bubbleContent) {
-            bubbleContent.textContent = tailText;
-            const bubble = el.querySelector('.reasoning-bubble');
-            if (bubble) {
-                bubble.scrollTop = bubble.scrollHeight;
+            // 流式快照会同时经由 scheduleReasoningPreviewUpdate（RAF 合并）与本函数
+            // （_syncReasoningTimers 的兜底同步）到达，内容多数重复；textContent 相同
+            // 时跳过写入与 scrollTop 读取，避免每快照一次无谓的 DOM 写 + 强制布局。
+            if (bubbleContent.textContent !== tailText) {
+                bubbleContent.textContent = tailText;
+                const bubble = el.querySelector('.reasoning-bubble');
+                if (bubble) {
+                    bubble.scrollTop = bubble.scrollHeight;
+                }
             }
             return;
         }
@@ -918,10 +919,12 @@ class TaskView extends HTMLElement {
         // of staring at a frozen head of the preview (clipped by max-height).
         const previewContent = el.querySelector('.reasoning-preview-content');
         if (previewContent) {
-            previewContent.textContent = tailText;
-            const previewArea = el.querySelector('.reasoning-preview-area');
-            if (previewArea) {
-                previewArea.scrollTop = previewArea.scrollHeight;
+            if (previewContent.textContent !== tailText) {
+                previewContent.textContent = tailText;
+                const previewArea = el.querySelector('.reasoning-preview-area');
+                if (previewArea) {
+                    previewArea.scrollTop = previewArea.scrollHeight;
+                }
             }
         }
 
@@ -1947,12 +1950,53 @@ class TaskView extends HTMLElement {
     }
 
     /**
-     * 运行中终端命令的 live 输出快路径：part 级 rendered 为该 part 内全部终端卡片的
-     * 拼接 HTML，按 toolcall id 在新旧结构间配对，仅替换各卡片的输出区域
+     * 运行中终端命令的 live 输出快路径。优先走增量分支：主进程 tick 携带
+     * outputDelta（已剥离 ANSI 的纯文本）时，直接向已挂载卡片的
+     * .terminal-tool-output 追加文本，跳过整份 part HTML 的解析与节点替换
+     * （超长输出下每 200ms 一次的双重 HTML 解析曾是渲染进程的重要 CPU 来源）。
+     * 任一前提不满足（卡片缺失、非终端工具、无增量字段、状态迁移）时回退
+     * 全量路径：按 toolcall id 在新旧结构间配对，仅替换各卡片的输出区域
      * （.terminal-tool-scroll）并滚动到底部。
-     * 任一卡片缺失或结构不符（如非终端工具、刚发生状态迁移）时返回 false，回退全量渲染路径。
      */
     static patchRunningTerminalToolOutput(message_content, toolcalls, partRenderedHtml) {
+        if (Array.isArray(toolcalls) && toolcalls.length > 0) {
+            let incremental = true;
+            const deltas = [];
+            for (const tc of toolcalls) {
+                if (
+                    typeof tc?.id !== 'string' ||
+                    tc.id === '' ||
+                    tc.status !== 'running' ||
+                    typeof tc.outputDelta !== 'string' ||
+                    tc.outputDelta === ''
+                ) {
+                    incremental = false;
+                    break;
+                }
+                const escapedId = tc.id.replace(/[^a-zA-Z0-9_-]/g, '\\$&');
+                const liveCard = message_content.querySelector(`[data-toolcall-id="${escapedId}"]`);
+                const pre = liveCard?.querySelector('.terminal-tool-output');
+                if (!liveCard || !pre) {
+                    incremental = false;
+                    break;
+                }
+                deltas.push({ pre, delta: tc.outputDelta, reset: tc.outputReset === true });
+            }
+            if (incremental) {
+                for (const { pre, delta, reset } of deltas) {
+                    if (reset) {
+                        pre.textContent = delta;
+                    } else {
+                        pre.appendChild(document.createTextNode(delta));
+                    }
+                    const scroll = pre.closest('.terminal-tool-scroll');
+                    if (scroll) {
+                        scroll.scrollTop = scroll.scrollHeight;
+                    }
+                }
+                return true;
+            }
+        }
         if (typeof partRenderedHtml !== 'string' || partRenderedHtml === '') return false;
         if (!Array.isArray(toolcalls) || toolcalls.length === 0) return false;
         const runningIds = [];
@@ -2027,6 +2071,10 @@ class TaskView extends HTMLElement {
             isRunning
         });
         let patchedStreamingPart = false;
+        // 流式光标在每次快照后追加到流式容器/末块内。在下一次快照的增量渲染前先移除，
+        // 保证 updateStreamingText 的"已渲染块序列与 childNodes 一一对应"不被光标节点
+        // 打破（否则每快照退化为全量重建，超长单回合下会引发全文档样式重算与布局）。
+        message_content.querySelectorAll('.stream-cursor').forEach((el) => el.remove());
         if (canPatchStreamingToolCall) {
             patchedStreamingPart = TaskView.patchRunningTerminalToolOutput(
                 message_content,
@@ -2094,7 +2142,6 @@ class TaskView extends HTMLElement {
             enhanceToolPreviewCards(message_content);
             renderMermaidBlocks(message_content, { defer: isRunning });
         }
-        message_content.querySelectorAll('.stream-cursor').forEach((el) => el.remove());
         if (isRunning && progress.last_part.type === 'text') {
             TaskView._appendStreamCursor(message_content.querySelector(`[data-streaming-part-index="${partIndex}"]`));
         }
@@ -2257,6 +2304,14 @@ class TaskView extends HTMLElement {
     }
 
     /**
+     * 消息队列是否非空（公开接口，供宿主 LRU 驻留数量上限淘汰判定调用）。
+     * 队列仅存于控件内存且未持久化，淘汰/释放会静默丢弃待发送内容。
+     */
+    hasQueuedMessages() {
+        return this._hasQueuedMessages();
+    }
+
+    /**
      * 后台释放判定：不可见超过 timeoutMs、任务非运行态、且消息队列为空时
      * 返回 true，宿主据此销毁控件并从缓存移除，下次打开重新加载。
      */
@@ -2273,12 +2328,8 @@ class TaskView extends HTMLElement {
         );
     }
 
-    /** 取消尚未执行的滚动跟随定时器/rAF（断连与强制滚动时调用，防止游离回调）。 */
+    /** 取消尚未执行的滚动跟随 rAF（断连与强制滚动时调用，防止游离回调）。 */
     _cancelPendingScrollFollow() {
-        if (this._scrollFollowTimer !== null) {
-            clearTimeout(this._scrollFollowTimer);
-            this._scrollFollowTimer = null;
-        }
         if (this._scrollRafId !== null && this._scrollRafId >= 0) {
             cancelAnimationFrame(this._scrollRafId);
         }
@@ -2289,41 +2340,34 @@ class TaskView extends HTMLElement {
         if (!this.auto_scrolling_to_bottom) {
             return;
         }
-        if (this._scrollRafId !== null || this._scrollFollowTimer !== null) return;
-        // scrollHeight 读取会强制同步布局；高频流式输出期间（每个快照一次）这在
-        // 巨大会话 DOM 上曾是主要 CPU 消耗之一，因此限制最小跟随间隔。
-        // 首次跟随（或 forceScrollToEnd 重置后）delay 为 0，直接走 rAF 保持即时性。
-        const elapsed = Date.now() - (this._lastScrollFollowAt || 0);
-        const delay = Math.max(0, TASKVIEW_SCROLL_FOLLOW_MIN_INTERVAL_MS - elapsed);
-        const scheduleScroll = () => {
-            this._scrollFollowTimer = null;
-            if (!this.auto_scrolling_to_bottom) return;
-            this._lastScrollFollowAt = Date.now();
-            this._scrollRafId = requestAnimationFrame(() => {
-                this._scrollRafId = null;
-                if (!this.auto_scrolling_to_bottom) return;
-                const domElement = this.getHistoryContainer();
-                if (!domElement) return;
-                const targetScrollTop = domElement.scrollHeight - domElement.clientHeight;
-                // 仅在需要向下滚动时才设置 scrollTop，避免因布局抖动导致向上回跳
-                if (targetScrollTop > domElement.scrollTop) {
-                    this._programmaticScrolling = true;
-                    domElement.scrollTop = targetScrollTop;
-                    // 使用 rAF 而非 setTimeout，将保护窗口从 150ms 缩短到 ~16ms
-                    // 避免 AI 快速输出时用户滚动被长时间屏蔽
-                    if (this._programmaticScrollTimer) cancelAnimationFrame(this._programmaticScrollTimer);
-                    this._programmaticScrollTimer = requestAnimationFrame(() => {
-                        this._programmaticScrolling = false;
-                        this._programmaticScrollTimer = null;
-                    });
-                }
-            });
-        };
-        if (delay === 0) {
-            scheduleScroll();
-        } else {
-            this._scrollFollowTimer = setTimeout(scheduleScroll, delay);
+        // 同一帧（或 rAF 尚未消费）内已排队的跟随请求直接合并，避免重复读取
+        // scrollHeight（该读取会强制同步布局，是高频流式输出下主要的布局成本）。
+        if (this._scrollRafId !== null) {
+            return;
         }
+        this._scrollRafId = requestAnimationFrame(() => {
+            this._scrollRafId = null;
+            if (!this.auto_scrolling_to_bottom) {
+                return;
+            }
+            const domElement = this.getHistoryContainer();
+            if (!domElement) {
+                return;
+            }
+            const targetScrollTop = domElement.scrollHeight - domElement.clientHeight;
+            // 仅在需要向下滚动时才设置 scrollTop，避免因布局抖动导致向上回跳
+            if (targetScrollTop > domElement.scrollTop) {
+                this._programmaticScrolling = true;
+                domElement.scrollTop = targetScrollTop;
+                // 使用 rAF 而非 setTimeout，将保护窗口从 150ms 缩短到 ~16ms
+                // 避免 AI 快速输出时用户滚动被长时间屏蔽
+                if (this._programmaticScrollTimer) cancelAnimationFrame(this._programmaticScrollTimer);
+                this._programmaticScrollTimer = requestAnimationFrame(() => {
+                    this._programmaticScrolling = false;
+                    this._programmaticScrollTimer = null;
+                });
+            }
+        });
     }
 
     /**
@@ -2336,9 +2380,8 @@ class TaskView extends HTMLElement {
         this.setAutoScrollingToBottom(true);
         // 组件可能尚未渲染历史容器（如仅存在于 model 层的最小 task-view），此时仅锁定状态
         if (this.getHistoryContainer()) {
-            // 用户主动产生新消息流时绕过滚动跟随限流，立即回到底部
+            // 用户主动产生新消息流时取消在途跟随并立即重新排队，下一帧回到底部
             this._cancelPendingScrollFollow();
-            this._lastScrollFollowAt = 0;
             this.tryScrollToEnd();
         }
     }
@@ -5076,6 +5119,11 @@ class TaskView extends HTMLElement {
             throw new Error('task_id is required');
         }
         this.task_id = task_id;
+
+        // task-view 子树的 DOM 全部由组件自身管理（innerHTML/morph），不使用 Alpine 指令。
+        // 标记 x-ignore 后 Alpine 的全局 MutationObserver 会跳过本子树的初始化与
+        // 指令扫描，否则流式期间每次快照插入的新块都会被全树 walk 一遍。
+        this.setAttribute('x-ignore', '');
 
         this.render();
 

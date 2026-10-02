@@ -857,6 +857,19 @@ describe('task-view GUI output modes', () => {
         expect(taskViewStyles).toMatch(/\.od-running-status-line\{[^}]*height:22px;/);
     });
 
+    test('streaming stage body zeroes first/last child margins to match completed output spacing', () => {
+        // 运行态流式正文包在 .od-streaming-text wrapper 内，markdown-body 的
+        // 直接子元素清零规则覆盖不到内部块；缺失时运行态段落顶部残留
+        // .markdown-body p 的 margin-top（13px 字号下实测 6.5px），导致摘要行
+        // 上下间距与已完成 turn 不对称。
+        expect(taskViewStyles).toMatch(
+            /task-view\.markdown-body>\.od-streaming-text>\*:first-child\{margin-top:0!important;\}/
+        );
+        expect(taskViewStyles).toMatch(
+            /task-view\.markdown-body>\.od-streaming-text>\*:last-child\{margin-bottom:0!important;\}/
+        );
+    });
+
     test('expanded completed process grows naturally while nested process details keep their height limit', () => {
         expect(taskViewStyles).toMatch(
             /\.od-completed-process-detail\.is-open\{[^}]*display:block;[^}]*max-height:none;[^}]*overflow:visible;/
