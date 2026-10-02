@@ -1,5 +1,5 @@
 import { readFileSync } from 'node:fs';
-import { beforeAll, beforeEach, describe, expect, jest, test } from '@jest/globals';
+import { afterEach, beforeAll, beforeEach, describe, expect, jest, test } from '@jest/globals';
 import { parseHTML } from 'linkedom';
 
 const taskViewStyles = readFileSync(new URL('../../../renderer/styles/custom.css', import.meta.url), 'utf8')
@@ -9,6 +9,7 @@ const taskViewStyles = readFileSync(new URL('../../../renderer/styles/custom.css
 describe('task-view GUI output modes', () => {
     let onSettingChanged: ((setting: Record<string, any>) => void) | undefined;
     let TaskViewClass: any;
+    const createdViews: any[] = [];
 
     beforeAll(async () => {
         const { window } = parseHTML('<!doctype html><html><body></body></html>');
@@ -91,6 +92,19 @@ describe('task-view GUI output modes', () => {
         } as any;
     });
 
+    // Streaming reasoning blocks start a per-second elapsed-time interval (see
+    // updateReasoningPreview in taskview.js). Tests below create such blocks but
+    // never mount the view, so disconnectedCallback (which finalizes them) never
+    // runs and the interval would keep the jest worker alive until force-exit.
+    // Finalize every block created by the test to match the real teardown path.
+    afterEach(() => {
+        for (const view of createdViews.splice(0)) {
+            view.querySelectorAll('.reasoning-block-od.reasoning-active').forEach((el) => {
+                TaskViewClass.finalizeReasoningBlock(el);
+            });
+        }
+    });
+
     function toolPart(start: number, count: number, withMainlineCards = false) {
         const toolcalls = Array.from({ length: count }, (_, offset) => ({
             id: `call-${start + offset}`,
@@ -126,7 +140,9 @@ describe('task-view GUI output modes', () => {
     }
 
     function createView() {
-        return new TaskViewClass() as any;
+        const view = new TaskViewClass() as any;
+        createdViews.push(view);
+        return view;
     }
 
     test('minimal completed output collapses the full process behind one process row', () => {

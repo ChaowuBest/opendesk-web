@@ -415,6 +415,22 @@ export interface ClickHitElement {
 }
 
 /**
+ * Renderer 桥接调用超时。webContents.executeJavaScript 在 renderer 主线程
+ * 忙/导航中/等待 beforeunload 时可能永久挂起（无响应即不 resolve），
+ * 必须限时失败；否则一次挂起的调用会卡住独占锁队列，导致该任务后续
+ * 所有浏览器操作（含 tabs）全部排队等死。
+ */
+export const RENDERER_CALL_TIMEOUT_MS = 15000;
+
+/**
+ * 独占锁看门狗超时。作为底层原语（CDP send / renderer 调用）超时之上的
+ * 兜底保险：任何被忽略的挂起点（如 frame.executeJavaScript）都不会让
+ * controller 队列永久阻塞，超时后自动释放锁并重置 CDP 会话自愈。
+ * 取较大值以避免误杀 waitFor 等用户可配时长的合法长操作。
+ */
+export const LOCK_OP_TIMEOUT_MS = 180000;
+
+/**
  * Per-instance browser controller that encapsulates all CDP-based automation
  * operations. Each controller is associated with a unique instance ID
  * (typically a taskId) and a main BrowserWindow for renderer communication.
@@ -450,8 +466,14 @@ export class BrowserController {
      * Acquire an exclusive lock before executing `fn`.  All public action
      * methods are wrapped with this so that at most one CDP interaction
      * runs at a time per controller instance.
+     *
+     * A watchdog bounds each operation: if any inner primitive ever wedges
+     * (e.g. an unguarded frame.executeJavaScript), the slot times out, the
+     * stalled CDP sessions are reset (`_recoverAfterStall`) and the lock is
+     * released, so one hung call can never permanently block the queue and
+     * turn into a "必现" deadlock for the whole task.
      */
-    private _withExclusiveLock<T>(fn: () => Promise<T>): Promise<T> {
+    private _withExclusiveLock<T>(fn: () => Promise<T>, timeoutMs: number = LOCK_OP_TIMEOUT_MS): Promise<T> {
         let releaseLock!: () => void;
         const nextSlot = new Promise<void>((resolve) => {
             releaseLock = resolve;
@@ -459,12 +481,44 @@ export class BrowserController {
         const waiting = this._actionQueue;
         this._actionQueue = nextSlot;
         return waiting.then(async () => {
+            let timer: ReturnType<typeof setTimeout> | undefined;
             try {
+                if (timeoutMs > 0) {
+                    return await Promise.race([
+                        fn(),
+                        new Promise<never>((_, reject) => {
+                            timer = setTimeout(() => {
+                                this._recoverAfterStall();
+                                reject(
+                                    new Error(
+                                        `浏览器操作卡死超过 ${timeoutMs}ms，已自动解除阻塞并重置浏览器会话，请重试`
+                                    )
+                                );
+                            }, timeoutMs);
+                        })
+                    ]);
+                }
                 return await fn();
             } finally {
+                if (timer !== undefined) clearTimeout(timer);
                 releaseLock();
             }
         });
+    }
+
+    /**
+     * Self-heal after a stalled locked operation: dispose all CDP sessions so
+     * orphaned in-flight commands fail fast and the next operation re-attaches
+     * a fresh debugger instead of reusing the wedged connection.
+     */
+    private _recoverAfterStall(): void {
+        try {
+            this._cdpManager.disposeAll();
+        } catch (err) {
+            console.error(`Failed to reset CDP sessions after stall: ${err}`);
+            return;
+        }
+        console.warn(`[browser:${this.id}] recovered from stalled operation; CDP sessions reset`);
     }
 
     setMainWindow(win: Electron.BrowserWindow | null): void {
@@ -587,8 +641,10 @@ export class BrowserController {
         // Run registered host hooks (e.g. prepare a renderable embedded browser).
         await this._beforeCallRenderer();
 
-        const result = await this._mainWindow.webContents.executeJavaScript(
-            makeCallBrowserScript(this.id, method, args)
+        const result = await this._executeInRendererWithTimeout(
+            makeCallBrowserScript(this.id, method, args),
+            RENDERER_CALL_TIMEOUT_MS,
+            `renderer call ${method}`
         );
 
         if (result?.__e) throw new Error(result.__e);
@@ -636,7 +692,37 @@ export class BrowserController {
         if (!this._mainWindow || this._mainWindow.isDestroyed()) return;
         if (!this._beforeCallRendererHooks) return;
         for (const hook of this._beforeCallRendererHooks.beforeCallRenderer) {
-            await this._mainWindow.webContents.executeJavaScript(`(() => { ${hook(this.id)} })()`);
+            await this._executeInRendererWithTimeout(
+                `(() => { ${hook(this.id)} })()`,
+                RENDERER_CALL_TIMEOUT_MS,
+                'beforeCallRenderer hook'
+            );
+        }
+    }
+
+    /**
+     * Run a script in the OpenDesk renderer, bounded by a timeout.
+     * webContents.executeJavaScript can hang indefinitely when the renderer is
+     * busy / navigating / waiting on beforeunload; without this guard a single
+     * wedged renderer call would permanently block the controller's exclusive
+     * lock queue (and thus every subsequent browser tool in the same task).
+     */
+    private async _executeInRendererWithTimeout(script: string, timeoutMs: number, label: string): Promise<any> {
+        if (!this._mainWindow || this._mainWindow.isDestroyed()) {
+            throw new Error('No main window available');
+        }
+        const jsPromise = this._mainWindow.webContents.executeJavaScript(script);
+
+        let timeout: ReturnType<typeof setTimeout> | undefined;
+        try {
+            return await Promise.race([
+                jsPromise,
+                new Promise<never>((_, reject) => {
+                    timeout = setTimeout(() => reject(new Error(`${label} timed out after ${timeoutMs}ms`)), timeoutMs);
+                })
+            ]);
+        } finally {
+            if (timeout !== undefined) clearTimeout(timeout);
         }
     }
 
@@ -646,11 +732,17 @@ export class BrowserController {
      * Detect Chromium error pages (chrome-error://chromewebdata/) and extract the
      * underlying error code + details. Returns null when the page is not an error
      * page or the check itself fails (page in transition / execution context gone).
+     *
+     * @param timeoutMs Optional CDP command timeout. Polling callers (waitFor)
+     *                  pass a short timeout so a wedged CDP connection cannot
+     *                  stall the whole wait far beyond its deadline.
      */
-    private async detectChromeError(session: CDPSession): Promise<string | null> {
+    private async detectChromeError(session: CDPSession, timeoutMs?: number): Promise<string | null> {
         try {
-            const result = await session.send('Runtime.evaluate', {
-                expression: `(() => {
+            const result = await session.send(
+                'Runtime.evaluate',
+                {
+                    expression: `(() => {
                     var href = location.href || '';
                     if (href.indexOf('chrome-error://') !== 0) return '';
                     var diag = document.getElementById('sub-frame-error-details') || document.getElementById('main-message');
@@ -659,8 +751,10 @@ export class BrowserController {
                     var code = heading ? heading.innerText.trim() : '';
                     return JSON.stringify({ code: code, details: details });
                 })()`,
-                returnByValue: true
-            });
+                    returnByValue: true
+                },
+                timeoutMs
+            );
             const raw = result?.result?.value;
             if (typeof raw !== 'string' || raw === '') return null;
             const errInfo = JSON.parse(raw);
@@ -2246,11 +2340,44 @@ export class BrowserController {
         })()`;
 
             let consecutiveFailures = 0;
+            // CDP commands inside the polling loop must never hang for the full
+            // 20s default timeout — a wedged connection (navigation race, frozen
+            // guest renderer) would otherwise stall waitFor far beyond its own
+            // deadline. A short command timeout keeps each poll bounded.
+            const cdpTimeoutMs = Math.min(1500, timeoutMs);
+            // WebFrameMain.executeJavaScript has no built-in timeout — a wedged
+            // iframe would hang the poll past its deadline, so bound it here.
+            const runFrameScript = async (
+                frame: Electron.WebFrameMain,
+                code: string,
+                timeoutMs: number
+            ): Promise<boolean> => {
+                let timer: ReturnType<typeof setTimeout> | undefined;
+                try {
+                    return (await Promise.race([
+                        frame.executeJavaScript(code),
+                        new Promise<never>((_, reject) => {
+                            timer = setTimeout(() => reject(new Error('iframe evaluate timed out')), timeoutMs);
+                        })
+                    ])) as boolean;
+                } finally {
+                    if (timer !== undefined) clearTimeout(timer);
+                }
+            };
             while (Date.now() < deadline) {
+                // Every command inside a poll is bounded by the REMAINING budget,
+                // recomputed before each individual command — a single poll runs
+                // two commands (error check + text check), so computing the
+                // budget once at the top would let the first command burn the
+                // whole deadline and the second one start with stale, oversized
+                // budget (e.g. timeout:1s would actually take ~2s when CDP
+                // wedges). Recomputing keeps total wait strictly ≤ deadline.
+                const commandTimeoutMs = () => Math.min(cdpTimeoutMs, Math.max(0, deadline - Date.now()));
+
                 // Error pages (chrome-error://) can never satisfy a text condition —
                 // fail fast with the actual error code instead of waiting out the
                 // whole timeout.
-                const pageError = await this.detectChromeError(session);
+                const pageError = await this.detectChromeError(session, commandTimeoutMs());
                 if (pageError) {
                     throw new Error(`页面加载失败：${pageError}`);
                 }
@@ -2258,12 +2385,16 @@ export class BrowserController {
                 try {
                     let found: boolean;
                     if (targetFrame) {
-                        found = (await targetFrame.executeJavaScript(checkExpr)) as boolean;
+                        found = await runFrameScript(targetFrame, checkExpr, commandTimeoutMs());
                     } else {
-                        const result = await session.send('Runtime.evaluate', {
-                            expression: checkExpr,
-                            returnByValue: true
-                        });
+                        const result = await session.send(
+                            'Runtime.evaluate',
+                            {
+                                expression: checkExpr,
+                                returnByValue: true
+                            },
+                            commandTimeoutMs()
+                        );
                         found = result.result.value === true;
                     }
                     consecutiveFailures = 0;
@@ -2276,14 +2407,33 @@ export class BrowserController {
                     // it as a real failure when the webContents is no longer
                     // loading — otherwise a slow-but-viable navigation would be
                     // mistaken for a crashed tab.
-                    if (!session.webContents.isLoading()) {
+                    //
+                    // The guard applies to the main frame only: for iframe
+                    // checks we cannot cheaply distinguish "iframe navigating"
+                    // from "iframe crashed" (webContents.isLoading() reflects
+                    // the top-level page), so iframe failures fall back to the
+                    // plain timeout instead of risking a false positive.
+                    // isLoading() itself can throw once the webContents is
+                    // destroyed — treat that as "still loading" (timeout path).
+                    let canCount = false;
+                    try {
+                        canCount =
+                            !targetFrame && !session.webContents.isDestroyed() && !session.webContents.isLoading();
+                    } catch {
+                        canCount = false;
+                    }
+                    if (canCount) {
                         consecutiveFailures++;
                         if (consecutiveFailures >= 3) {
-                            throw new Error('页面执行环境异常：连续多次检查失败，页面可能已崩溃或正在跳转');
+                            throw new Error('页面执行环境异常：连续多次检查失败，页面可能已崩溃或执行环境不可用');
                         }
                     }
                 }
-                await sleep(pollInterval);
+                // Sleep is also bounded by the remaining budget: a plain
+                // pollInterval sleep after the deadline would burn up to 400ms
+                // of extra wait for nothing.
+                const sleepMs = Math.min(pollInterval, Math.max(0, deadline - Date.now()));
+                if (sleepMs > 0) await sleep(sleepMs);
             }
 
             throw new Error(
@@ -2301,6 +2451,33 @@ export class BrowserController {
 // ---------------------------------------------------------------------------
 // BrowserManager — singleton controller registry + IPC binding
 // ---------------------------------------------------------------------------
+
+/**
+ * Run a script in the OpenDesk renderer, bounded by a timeout.
+ * Used by the IPC bridge path (BrowserManager.bind) — same hang-protection
+ * rationale as BrowserController._executeInRendererWithTimeout: a wedged
+ * executeJavaScript must fail instead of blocking the caller forever.
+ */
+async function executeInRendererWithTimeout(
+    mainWindow: Electron.BrowserWindow,
+    script: string,
+    timeoutMs: number,
+    label: string
+): Promise<any> {
+    const jsPromise = mainWindow.webContents.executeJavaScript(script);
+
+    let timeout: ReturnType<typeof setTimeout> | undefined;
+    try {
+        return await Promise.race([
+            jsPromise,
+            new Promise<never>((_, reject) => {
+                timeout = setTimeout(() => reject(new Error(`${label} timed out after ${timeoutMs}ms`)), timeoutMs);
+            })
+        ]);
+    } finally {
+        if (timeout !== undefined) clearTimeout(timeout);
+    }
+}
 
 export class BrowserManager {
     private static _controllers = new Map<string, BrowserController>();
@@ -2435,7 +2612,12 @@ export class BrowserManager {
         const runBeforeCallRendererHooks = async (taskId: string): Promise<void> => {
             if (!BrowserManager._mainWindow || !BrowserManager._beforeCallRendererHooks) return;
             for (const hook of BrowserManager._beforeCallRendererHooks.beforeCallRenderer) {
-                await BrowserManager._mainWindow.webContents.executeJavaScript(`(() => { ${hook(taskId)} })()`);
+                await executeInRendererWithTimeout(
+                    BrowserManager._mainWindow,
+                    `(() => { ${hook(taskId)} })()`,
+                    RENDERER_CALL_TIMEOUT_MS,
+                    'beforeCallRenderer hook'
+                );
             }
         };
 
@@ -2445,8 +2627,11 @@ export class BrowserManager {
             }
             try {
                 await runBeforeCallRendererHooks(taskId);
-                const result = await BrowserManager._mainWindow.webContents.executeJavaScript(
-                    makeCallBrowserScript(taskId, method, args)
+                const result = await executeInRendererWithTimeout(
+                    BrowserManager._mainWindow,
+                    makeCallBrowserScript(taskId, method, args),
+                    RENDERER_CALL_TIMEOUT_MS,
+                    `renderer call ${method}`
                 );
                 if (result && result.error) {
                     return { status: 'error', message: result.error };
@@ -2471,8 +2656,11 @@ export class BrowserManager {
             }
             try {
                 await runBeforeCallRendererHooks(taskId);
-                const result = await BrowserManager._mainWindow.webContents.executeJavaScript(
-                    makeExecuteScriptOnBrowser(taskId, script)
+                const result = await executeInRendererWithTimeout(
+                    BrowserManager._mainWindow,
+                    makeExecuteScriptOnBrowser(taskId, script),
+                    RENDERER_CALL_TIMEOUT_MS,
+                    'browserExecuteScript'
                 );
                 if (result && result.error) {
                     return { status: 'error', message: result.error };

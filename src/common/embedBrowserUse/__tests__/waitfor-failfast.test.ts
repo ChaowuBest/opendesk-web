@@ -15,7 +15,7 @@ function makeMockSession(isLoading = false) {
         waitForPageReady: jest.fn(async () => {}),
         waitForDOMStable: jest.fn(async () => {}),
         isHealthy: jest.fn(async () => true),
-        webContents: { isLoading: jest.fn(() => isLoading) },
+        webContents: { isLoading: jest.fn(() => isLoading), isDestroyed: jest.fn(() => false) },
         send: jest.fn()
     };
 }
@@ -158,5 +158,68 @@ describe('waitFor fail-fast', () => {
 
         const result = await ctrl.waitFor({ textGone: '加载中' });
         expect(result).toEqual({ condition: 'text gone' });
+    });
+
+    it('does not trip the crash guard for failing iframe checks', async () => {
+        jest.useFakeTimers();
+        const session = makeMockSession(false);
+        session.send.mockImplementation(async (_method: string, params: any) => {
+            const expr = params.expression as string;
+            if (expr.includes('chrome-error://')) {
+                return { result: { value: '' } };
+            }
+            throw new Error('unexpected main-frame text check');
+        });
+        // Build a real (fake) frame tree so navigateIntoFrame resolves through
+        // its actual implementation: main frame exposes an iframe descriptor to
+        // findChildFrame, and the child frame keeps failing its text checks.
+        const fakeFrame = {
+            url: 'https://example.com/iframe',
+            executeJavaScript: jest.fn(async () => {
+                throw new Error('frame gone');
+            })
+        };
+        const fakeMainFrame = {
+            url: 'https://example.com/main',
+            frames: [fakeFrame],
+            executeJavaScript: jest.fn(async () => ({ index: 0, src: 'https://example.com/iframe' }))
+        };
+        session.webContents.mainFrame = fakeMainFrame;
+        const ctrl = makeController(session);
+
+        const promise = ctrl.waitFor({ text: '目标文本', iframeRef: 'e3' });
+        const rejection = expect(promise).rejects.toThrow('等待超时（3秒）');
+        await jest.advanceTimersByTimeAsync(3200 + 100);
+        await rejection;
+    });
+
+    it('bounds every poll by the remaining deadline budget (wedged CDP, 1s timeout)', async () => {
+        jest.useFakeTimers();
+        const session = makeMockSession(false);
+        // Simulate a wedged CDP connection: every command hangs until its own
+        // timeout fires. Without the per-poll remaining-budget clamp a 1s wait
+        // would burn 2×1s + 0.4s sleep in a single poll (~2.4s total).
+        session.send.mockImplementation(async (_method: string, _params: any, timeoutMs: number = 1500) => {
+            await new Promise((r) => setTimeout(r, timeoutMs));
+            throw new Error('CDP command timed out');
+        });
+        const ctrl = makeController(session);
+
+        const promise = ctrl.waitFor({ text: '目标文本', timeout: 1 });
+        let settled = false;
+        promise.then(
+            () => {
+                settled = true;
+            },
+            () => {
+                settled = true;
+            }
+        );
+        // At t≈1s the wait must already have finished — a pre-fix implementation
+        // would still be stuck inside the first poll.
+        await jest.advanceTimersByTimeAsync(1000 + 100);
+        expect(settled).toBe(true);
+        // Settle the promise chain so no unhandled rejection leaks after the test.
+        await promise.catch(() => undefined);
     });
 });
