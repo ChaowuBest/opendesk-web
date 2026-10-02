@@ -186,6 +186,13 @@ export class ToolResult implements ToolResultWriter {
     status: 'running' | 'success' | 'error' = 'running';
     result: string = '';
     result_object?: object;
+    /**
+     * 终端 live 输出增量（已剥离 ANSI 的纯文本）：终端执行器的 tick 推送在更新
+     * result 的同时携带本次新增尾部；渲染端用它做无解析的文本追加。
+     */
+    outputDelta?: string;
+    /** true 时 outputDelta 携带全量文本（缓冲截断/重置），渲染端需整体重写输出区。 */
+    outputReset?: boolean;
 
     updatedCallback?: (result: ToolResult) => void;
 

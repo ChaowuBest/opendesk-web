@@ -79,7 +79,6 @@ html[data-font-preset='lxgwwenkai'],
 html[data-font-preset='lxgwwenkai'] body {
     font-family:
         'LXGW WenKai Screen',
-        'HarmonyOS Sans',
         'PingFang SC',
         system-ui,
         -apple-system,
@@ -90,16 +89,22 @@ html[data-font-preset='lxgwwenkai'] body {
         Arial,
         sans-serif;
 }
-/* 排除 FontAwesome 图标和代码字体 */
-html[data-font-preset='lxgwwenkai']
-    body
-    *:not(.fa):not(.fas):not(.far):not(.fab):not(.fa-brands):not(.fa-solid):not(.fa-regular):not(i):not(code):not(
-        pre
-    ):not(.monospace):not(.font-mono):not(.diff-body):not(.code-block-body):not(.code-table):not(
-        .terminal-tool-output
-    ):not(.code-ln):not(.code-line):not([class*='hljs']):not(
-        :has(.font-mono, .monospace, code, pre, .diff-body, .code-block-body, .hljs)
-    ) {
+/*
+ * 字体预设只在文档根设置，靠继承传播到全站：
+ * - var(--font-sans) 已在预设下重定义为 LXGW 开头的栈，所有引用它的规则自动跟随；
+ * - 代码/终端/图标（code、pre、.monospace、.font-mono、.code-*、.terminal-tool-output、
+ *   [class*='hljs']、FontAwesome 等）各自拥有显式 font-family 声明（多为 !important），
+ *   继承不会覆盖它们；
+ * - 早期版本这里是一条 `body *:not(...):not(:has(...))` 的通配 !important 覆盖规则，
+ *   它把每次 DOM 变更的样式失效面扩大到整个文档（流式渲染时全量重算的元凶之一），
+ *   且无法穿透 shadow boundary，故废弃；computed 字体快照对比验证渲染结果不变
+ *   （scripts/manual/font-snapshot.mjs）。
+ */
+html[data-font-preset='lxgwwenkai'] .markdown-body {
+    font-family: 'LXGW WenKai Screen', 'HarmonyOS Sans', 'PingFang SC', sans-serif;
+}
+/* 通配规则时代被强制覆盖的硬编码字体组件：预设激活时保持跟随正文字体。 */
+html[data-font-preset='lxgwwenkai'] #magic-pointer-input-box {
     font-family:
         'LXGW WenKai Screen',
         'PingFang SC',
@@ -110,8 +115,5 @@ html[data-font-preset='lxgwwenkai']
         Roboto,
         'Helvetica Neue',
         Arial,
-        sans-serif !important;
-}
-html[data-font-preset='lxgwwenkai'] .markdown-body {
-    font-family: 'LXGW WenKai Screen', 'HarmonyOS Sans', 'PingFang SC', sans-serif;
+        sans-serif;
 }

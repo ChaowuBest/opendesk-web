@@ -149,6 +149,8 @@ function dispatchPendingGoalEvent(
 
 export class TaskArtifactsGoalController {
     private _goalState: GoalRenderSummaryLike | null = null;
+    /** 上次 setGoalState 的内容签名：goal active 期间 1Hz 轮询反复以相同内容调用，签名未变时跳过全部状态迁移与面板重建。 */
+    private _lastGoalSignature: string | null | undefined = undefined;
     private _goalEvalProgress: GoalEvalProgressLike | null = null;
     private _goalEditing = false;
     private _goalEditPending = false;
@@ -206,6 +208,12 @@ export class TaskArtifactsGoalController {
     }
 
     setGoalState(goal: GoalRenderSummaryLike | null | undefined): void {
+        // goal active 期间宿主每秒轮询一次 getGoalStatus，内容多数不变。签名未变时
+        // 内部状态迁移、编辑/创建态保护判断与面板全量 innerHTML 重建全部冗余，直接
+        // 跳过；内容真正变化（revision/status/事件/评估）时才走完整迁移并重建。
+        const signature = goal === null || goal === undefined ? null : JSON.stringify(goal);
+        if (signature === this._lastGoalSignature) return;
+        this._lastGoalSignature = signature;
         const hadGoal = this._goalState !== null;
         const hadGoalSuggestion = this.hasGoalSuggestion();
         const previousGoalId = this._goalState?.id;

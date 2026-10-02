@@ -36,7 +36,15 @@ const renderedText = new WeakMap<HTMLElement, RenderedText>();
  */
 export function updateStreamingText(container: HTMLElement, html: string): void {
     const previous = renderedText.get(container);
-    const children = [...container.childNodes];
+    const allChildren = [...container.childNodes];
+    // 流式光标由调用方在每次快照后追加（容器末尾或最后一个块内）。它不属于任何
+    // Markdown 块，若混入 children 会破坏"已渲染块序列与 childNodes 一一对应"的
+    // 前提，导致头部冻结失效、每快照退化为全量重建（超长单回合下是渲染进程的
+    // 主要 CPU 来源），因此这里把它从比较与替换序列中剔除，并保证新块插入其之前。
+    const cursor = allChildren.find(
+        (node) => node.nodeType === Node.ELEMENT_NODE && (node as Element).classList.contains('stream-cursor')
+    );
+    const children = cursor ? allChildren.filter((node) => node !== cursor) : allChildren;
     const valid =
         previous &&
         previous.blocks.length === children.length &&
@@ -67,6 +75,8 @@ export function updateStreamingText(container: HTMLElement, html: string): void 
         } else {
             if (children[blockIndex]) {
                 children[blockIndex].replaceWith(node);
+            } else if (cursor) {
+                container.insertBefore(node, cursor);
             } else {
                 container.appendChild(node);
             }

@@ -905,10 +905,15 @@ class TaskView extends HTMLElement {
         // Bubble mode: update bubble content
         const bubbleContent = el.querySelector('.reasoning-bubble-content');
         if (bubbleContent) {
-            bubbleContent.textContent = tailText;
-            const bubble = el.querySelector('.reasoning-bubble');
-            if (bubble) {
-                bubble.scrollTop = bubble.scrollHeight;
+            // 流式快照会同时经由 scheduleReasoningPreviewUpdate（RAF 合并）与本函数
+            // （_syncReasoningTimers 的兜底同步）到达，内容多数重复；textContent 相同
+            // 时跳过写入与 scrollTop 读取，避免每快照一次无谓的 DOM 写 + 强制布局。
+            if (bubbleContent.textContent !== tailText) {
+                bubbleContent.textContent = tailText;
+                const bubble = el.querySelector('.reasoning-bubble');
+                if (bubble) {
+                    bubble.scrollTop = bubble.scrollHeight;
+                }
             }
             return;
         }
@@ -918,10 +923,12 @@ class TaskView extends HTMLElement {
         // of staring at a frozen head of the preview (clipped by max-height).
         const previewContent = el.querySelector('.reasoning-preview-content');
         if (previewContent) {
-            previewContent.textContent = tailText;
-            const previewArea = el.querySelector('.reasoning-preview-area');
-            if (previewArea) {
-                previewArea.scrollTop = previewArea.scrollHeight;
+            if (previewContent.textContent !== tailText) {
+                previewContent.textContent = tailText;
+                const previewArea = el.querySelector('.reasoning-preview-area');
+                if (previewArea) {
+                    previewArea.scrollTop = previewArea.scrollHeight;
+                }
             }
         }
 
@@ -1947,12 +1954,53 @@ class TaskView extends HTMLElement {
     }
 
     /**
-     * 运行中终端命令的 live 输出快路径：part 级 rendered 为该 part 内全部终端卡片的
-     * 拼接 HTML，按 toolcall id 在新旧结构间配对，仅替换各卡片的输出区域
+     * 运行中终端命令的 live 输出快路径。优先走增量分支：主进程 tick 携带
+     * outputDelta（已剥离 ANSI 的纯文本）时，直接向已挂载卡片的
+     * .terminal-tool-output 追加文本，跳过整份 part HTML 的解析与节点替换
+     * （超长输出下每 200ms 一次的双重 HTML 解析曾是渲染进程的重要 CPU 来源）。
+     * 任一前提不满足（卡片缺失、非终端工具、无增量字段、状态迁移）时回退
+     * 全量路径：按 toolcall id 在新旧结构间配对，仅替换各卡片的输出区域
      * （.terminal-tool-scroll）并滚动到底部。
-     * 任一卡片缺失或结构不符（如非终端工具、刚发生状态迁移）时返回 false，回退全量渲染路径。
      */
     static patchRunningTerminalToolOutput(message_content, toolcalls, partRenderedHtml) {
+        if (Array.isArray(toolcalls) && toolcalls.length > 0) {
+            let incremental = true;
+            const deltas = [];
+            for (const tc of toolcalls) {
+                if (
+                    typeof tc?.id !== 'string' ||
+                    tc.id === '' ||
+                    tc.status !== 'running' ||
+                    typeof tc.outputDelta !== 'string' ||
+                    tc.outputDelta === ''
+                ) {
+                    incremental = false;
+                    break;
+                }
+                const escapedId = tc.id.replace(/[^a-zA-Z0-9_-]/g, '\\$&');
+                const liveCard = message_content.querySelector(`[data-toolcall-id="${escapedId}"]`);
+                const pre = liveCard?.querySelector('.terminal-tool-output');
+                if (!liveCard || !pre) {
+                    incremental = false;
+                    break;
+                }
+                deltas.push({ pre, delta: tc.outputDelta, reset: tc.outputReset === true });
+            }
+            if (incremental) {
+                for (const { pre, delta, reset } of deltas) {
+                    if (reset) {
+                        pre.textContent = delta;
+                    } else {
+                        pre.appendChild(document.createTextNode(delta));
+                    }
+                    const scroll = pre.closest('.terminal-tool-scroll');
+                    if (scroll) {
+                        scroll.scrollTop = scroll.scrollHeight;
+                    }
+                }
+                return true;
+            }
+        }
         if (typeof partRenderedHtml !== 'string' || partRenderedHtml === '') return false;
         if (!Array.isArray(toolcalls) || toolcalls.length === 0) return false;
         const runningIds = [];
@@ -2027,6 +2075,10 @@ class TaskView extends HTMLElement {
             isRunning
         });
         let patchedStreamingPart = false;
+        // 流式光标在每次快照后追加到流式容器/末块内。在下一次快照的增量渲染前先移除，
+        // 保证 updateStreamingText 的"已渲染块序列与 childNodes 一一对应"不被光标节点
+        // 打破（否则每快照退化为全量重建，超长单回合下会引发全文档样式重算与布局）。
+        message_content.querySelectorAll('.stream-cursor').forEach((el) => el.remove());
         if (canPatchStreamingToolCall) {
             patchedStreamingPart = TaskView.patchRunningTerminalToolOutput(
                 message_content,
@@ -2094,7 +2146,6 @@ class TaskView extends HTMLElement {
             enhanceToolPreviewCards(message_content);
             renderMermaidBlocks(message_content, { defer: isRunning });
         }
-        message_content.querySelectorAll('.stream-cursor').forEach((el) => el.remove());
         if (isRunning && progress.last_part.type === 'text') {
             TaskView._appendStreamCursor(message_content.querySelector(`[data-streaming-part-index="${partIndex}"]`));
         }
@@ -5076,6 +5127,11 @@ class TaskView extends HTMLElement {
             throw new Error('task_id is required');
         }
         this.task_id = task_id;
+
+        // task-view 子树的 DOM 全部由组件自身管理（innerHTML/morph），不使用 Alpine 指令。
+        // 标记 x-ignore 后 Alpine 的全局 MutationObserver 会跳过本子树的初始化与
+        // 指令扫描，否则流式期间每次快照插入的新块都会被全树 walk 一遍。
+        this.setAttribute('x-ignore', '');
 
         this.render();
 

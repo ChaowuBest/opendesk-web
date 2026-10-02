@@ -1046,6 +1046,18 @@ class AgentInput extends HTMLElement {
     }
 
     setDisabled(disabled) {
+        // goal 运行期宿主每秒重复调用：值未变时 DOM 状态不可能需要刷新，跳过
+        // 整轮 updateInputState（含占位/提示/按钮的重复写入）。
+        if (this.isDisabled === disabled) {
+            // isRunning 可能被此前的中间赋值带偏（isRunning = disabled && showStopButton），
+            // 漂移时回正并刷新一次，保证后续调用序列不依赖特定顺序。
+            const expectedRunning = disabled && this.showStopButton;
+            if (this.isRunning !== expectedRunning) {
+                this.isRunning = expectedRunning;
+                this.updateInputState();
+            }
+            return;
+        }
         this.isDisabled = disabled;
         this.isRunning = disabled && this.showStopButton;
         this.updateInputState();
@@ -1062,6 +1074,16 @@ class AgentInput extends HTMLElement {
     }
 
     setStopMode(showStop, onStopCallback = null) {
+        // 显示状态未变时只更新回调闭包（stop 按钮点击时必须取最新闭包），
+        // 跳过整轮 updateInputState；isRunning 被中间赋值带偏时回正。
+        if (this.showStopButton === showStop) {
+            this.onStopCallback = onStopCallback;
+            if (this.isRunning !== showStop) {
+                this.isRunning = showStop;
+                this.updateInputState();
+            }
+            return;
+        }
         this.showStopButton = showStop;
         this.onStopCallback = onStopCallback;
         this.isRunning = showStop;
@@ -1069,7 +1091,9 @@ class AgentInput extends HTMLElement {
     }
 
     setRunningInputMode(mode) {
-        this.runningInputMode = mode === 'goal_supplement' ? 'goal_supplement' : 'queue';
+        const normalized = mode === 'goal_supplement' ? 'goal_supplement' : 'queue';
+        if (this.runningInputMode === normalized) return;
+        this.runningInputMode = normalized;
         this.updateInputState();
     }
 
@@ -1207,6 +1231,9 @@ class AgentInput extends HTMLElement {
                 if (overlay) {
                     overlay.textContent = requiredText;
                     overlay.classList.add('is-muted');
+                    // 禁用文案绕过了 updatePlaceholder 的签名缓存，清除签名，
+                    // 恢复后强制重建富文本占位（避免"正在加载"文案残留）。
+                    delete overlay.dataset.odPlaceholderText;
                 }
             } else {
                 textarea.disabled = false;
@@ -1259,7 +1286,15 @@ class AgentInput extends HTMLElement {
         if (!textarea || this._taskLoadingLocked || (this.isModelNotSelected && !this.searchMode)) return;
         const text = this.getInputPlaceholder();
         textarea.placeholder = text;
-        if (overlay) overlay.innerHTML = this.buildPlaceholderHTML();
+        if (overlay) {
+            // goal 运行期宿主每秒经 updateStopButtonVisibility → updateInputState 多次
+            // 到达这里：占位文案未变时跳过富文本（含内嵌 SVG 键位图标）的 innerHTML
+            // 全量重建，只做一次字符串比较。
+            if (overlay.dataset.odPlaceholderText !== text) {
+                overlay.dataset.odPlaceholderText = text;
+                overlay.innerHTML = this.buildPlaceholderHTML();
+            }
+        }
     }
 
     /**

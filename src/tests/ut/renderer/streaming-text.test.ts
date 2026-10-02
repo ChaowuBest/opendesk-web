@@ -122,4 +122,33 @@ describe('streaming Markdown snapshots', () => {
         expect(container.firstChild).toBe(original);
         create.mockRestore();
     });
+
+    test('stream cursor at container end keeps stable blocks and stays last', () => {
+        const container = document.createElement('div');
+        updateStreamingText(container, '<p>one</p><p>two</p>');
+        const first = container.children[0];
+        const second = container.children[1];
+        // taskview 每快照把流式光标追加到容器末尾；它不属于任何 Markdown 块，
+        // 不能破坏头部冻结（否则每快照全量重建，超长回合下打脏整棵样式树）。
+        container.insertAdjacentHTML('beforeend', '<span class="stream-cursor"></span>');
+        updateStreamingText(container, '<p>one</p><p>two</p><p>three</p>');
+        expect(container.children[0]).toBe(first);
+        expect(container.children[1]).toBe(second);
+        expect(container.children[2].textContent).toBe('three');
+        expect(container.lastElementChild!.classList.contains('stream-cursor')).toBe(true);
+        expect(container.querySelectorAll('.stream-cursor')).toHaveLength(1);
+    });
+
+    test('stream cursor inside the last block keeps earlier blocks and updates the tail', () => {
+        const container = document.createElement('div');
+        updateStreamingText(container, '<p>one</p><p>tail</p>');
+        const first = container.children[0];
+        container
+            .querySelector('p:last-of-type')!
+            .insertAdjacentHTML('beforeend', '<span class="stream-cursor"></span>');
+        updateStreamingText(container, '<p>one</p><p>tail grows</p>');
+        expect(container.children[0]).toBe(first);
+        expect(container.textContent).toBe('onetail grows');
+        expect(container.querySelectorAll('.stream-cursor')).toHaveLength(0);
+    });
 });
