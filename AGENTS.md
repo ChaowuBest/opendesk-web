@@ -6,7 +6,7 @@ OpenDesk 是一个基于 Electron 的全能型 AI 工作站，同时提供 CLI �
 ## 开发命令
 
 - 安装依赖: `npm install`
-- 启动开发服务器 (Electron GUI): `npm start`
+- 启动开发态桌面端: `npm run start`
 - 构建 CLI: `npm run build-cli`
 - 构建全部 (Electron): `npm run build`
 - 运行 CLI: `npm run cli`
@@ -20,6 +20,17 @@ OpenDesk 是一个基于 Electron 的全能型 AI 工作站，同时提供 CLI �
 
 - 如果是定位 OpenDesk 的 bug，那么尽可能通过设计新的单元测试来复现这些问题，不要仅靠猜测。同样地，修复完 bug 之后要用你的单元测试进行回归，确保问题真正得到了解决；
 - 在新特性的开发过程中要使用测试用例先行 (Test-Driven Development) 的模式;
+
+### 启动调试实例
+
+当你在使用OpenDesk开发OpenDesk时，可能会因为OpenDesk的单实例锁导致无法启动新的 OpenDesk 实例以验证你的改动。这时候你可以设置环境变量
+
+```
+OPENDESK_DEBUG_MODE=1
+```
+
+然后再通过 `npm run start` 来启动一个独立的调试版本。该版本使用独立的实例锁，配置目录，并且图标会变为蓝色色调。你可以在这个调试版本中验证
+你的功能修改是否符合预期。需要注意的是，如果该版本没有配置模型，你可以从 OpenDesk 主版本中把配置复制过来。
 
 ## 验证变更
 

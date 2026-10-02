@@ -37,7 +37,8 @@ import {
     getTaskArtifactDirectory,
     getLogDirectory,
     isDeveloperModeEnabled,
-    isDebugLogEnabled
+    isDebugLogEnabled,
+    isOpendeskDebugMode
 } from './utils/setting.js';
 import { QuickPassHelper } from './utils/quickpass.js';
 import { getWindowsDrives } from './utils/drives.js';
@@ -215,6 +216,7 @@ import os from 'os';
 import fsPromises from 'fs/promises';
 
 import appIcon from '../../resources/main/images/icon_round.png?asset';
+import appIconDebug from '../../resources/main/images/icon_round_blue.png?asset';
 import { initTempDir, closeTempDir } from './utils/temp.js';
 import {
     getHarmonyBrowseRoots,
@@ -263,13 +265,15 @@ process.on('uncaughtException', (err, origin) => {
     }
 
     logger.error(`[FATAL] uncaughtException (${origin}): ${errDetails}`);
-    try {
-        dialog.showErrorBox(
-            'OpenDesk 发生不可恢复的错误',
-            `${origin}\n\n${errDetails}\n\n程序即将退出，请查看日志获取详细信息。`
-        );
-    } catch {
-        /* dialog 可能在 app ready 前不可用 */
+    if (!isOpendeskDebugMode()) {
+        try {
+            dialog.showErrorBox(
+                'OpenDesk 发生不可恢复的错误',
+                `${origin}\n\n${errDetails}\n\n程序即将退出，请查看日志获取详细信息。`
+            );
+        } catch {
+            /* dialog 可能在 app ready 前不可用 */
+        }
     }
     app.exit(1);
 });
@@ -277,13 +281,15 @@ process.on('uncaughtException', (err, origin) => {
 process.on('unhandledRejection', (reason, _promise) => {
     const reasonDetails = reason instanceof Error ? reason.stack || reason.message : String(reason);
     logger.error(`[FATAL] unhandledRejection: ${reasonDetails}`);
-    try {
-        dialog.showErrorBox(
-            'OpenDesk 发生不可恢复的错误',
-            `unhandledRejection\n\n${reasonDetails}\n\n程序即将退出，请查看日志获取详细信息。`
-        );
-    } catch {
-        /* dialog 可能在 app ready 前不可用 */
+    if (!isOpendeskDebugMode()) {
+        try {
+            dialog.showErrorBox(
+                'OpenDesk 发生不可恢复的错误',
+                `unhandledRejection\n\n${reasonDetails}\n\n程序即将退出，请查看日志获取详细信息。`
+            );
+        } catch {
+            /* dialog 可能在 app ready 前不可用 */
+        }
     }
     app.exit(1);
 });
@@ -3355,17 +3361,21 @@ const buildTrayMenu = () => {
  * 不能用 addRepresentation 塞入多档尺寸：Electron 在 Linux 下只写入主 representation，
  * 实测多档图标会退化成最小档（16px）再被任务栏放大，反而彻底糊掉。
  */
+const getAppIconPath = (): string => {
+    return isOpendeskDebugMode() ? appIconDebug : appIcon;
+};
+
 const getWindowIcon = (): Electron.NativeImage => {
     // 任务栏图标一般 24~64 逻辑像素。X11 下一个窗口只有一份图标数据（_NET_WM_ICON），
     // 无法按不同缩放的显示器切换，因此按所有显示器中的最大缩放系数取值，并留出余量
     // （取 64 逻辑像素），保证窗口出现在任何屏幕上图标都只被轻微缩小，绝不放大。
     const scaleFactor = Math.max(1, ...screen.getAllDisplays().map((display) => display.scaleFactor || 1));
     const size = Math.round(64 * scaleFactor);
-    return nativeImage.createFromPath(appIcon).resize({ width: size, height: size });
+    return nativeImage.createFromPath(getAppIconPath()).resize({ width: size, height: size });
 };
 
 const registerTray = () => {
-    let icon = nativeImage.createFromPath(appIcon);
+    let icon = nativeImage.createFromPath(getAppIconPath());
     icon = icon.resize({ width: 22, height: 22 });
 
     globalTray = new Tray(icon);
@@ -3431,6 +3441,12 @@ async function startApplication(): Promise<void> {
     const defaultUserData = app.getPath('userData');
     if (configDir !== defaultUserData) {
         app.setPath('userData', configDir);
+    }
+
+    // debug 模式设置独立的 AppUserModelID：dev 下主/调试版共用同一 electron.exe，
+    // 不设置时 Windows 11 任务栏会按 exe 路径合并分组；独立 AUMID 让调试版自成一组。
+    if (isOpendeskDebugMode()) {
+        app.setAppUserModelId('OpenDesk.Debug');
     }
 
     if (app.requestSingleInstanceLock()) {

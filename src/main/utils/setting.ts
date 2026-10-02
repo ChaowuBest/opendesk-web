@@ -24,6 +24,16 @@ import {
 } from '../../platforms/bridges/harmonyos/runtime.js';
 
 /**
+ * 是否以 debug 模式运行（由 npm run start-debug 设置 OPENDESK_DEBUG_MODE=1）。
+ * debug 模式使用独立的配置目录（默认目录追加 -debug 后缀），
+ * 从而与主版本隔离单例锁、设置、日志与数据文件。
+ */
+function isOpendeskDebugMode(): boolean {
+    const value = process.env.OPENDESK_DEBUG_MODE;
+    return value === '1' || value === 'true';
+}
+
+/**
  * 解析可写的应用数据根目录（与主进程、Worker 通过 workerData 传入的路径一致）
  *
  * HarmonyOS 始终使用 ArkTS 注入的应用沙箱 filesDir。PC 用户家目录只用于用户文件，
@@ -47,14 +57,16 @@ function resolveWritableUserDataRoot(): string {
     if (envConfigDirectory) {
         return path.resolve(envConfigDirectory);
     }
+    // debug 模式在平台默认路径上追加 -debug 后缀，确保与主版本的数据完全隔离
+    const directorySuffix = isOpendeskDebugMode() ? '-debug' : '';
     if (process.env.APPDATA) {
-        return path.join(process.env.APPDATA, 'opendesk');
+        return path.join(process.env.APPDATA, `opendesk${directorySuffix}`);
     }
     if (process.env.HOME) {
-        return path.join(process.env.HOME, '.opendesk');
+        return path.join(process.env.HOME, `.opendesk${directorySuffix}`);
     }
     // 最终回退使用临时目录，避免依赖当前工作目录（cwd 可能指向无权限路径）
-    return path.join(os.tmpdir(), '.opendesk');
+    return path.join(os.tmpdir(), `.opendesk${directorySuffix}`);
 }
 
 const ProviderSchema = z.object({
@@ -1093,9 +1105,9 @@ function getDefaultOpendeskDirectory(): string {
     if (harmonyRuntime) {
         return harmonyRuntime.appDataDir;
     } else if (process.env.APPDATA) {
-        return path.join(process.env.APPDATA, 'opendesk');
+        return path.join(process.env.APPDATA, 'opendesk' + (isOpendeskDebugMode() ? '-debug' : ''));
     } else if (process.env.HOME) {
-        return path.join(process.env.HOME, '.opendesk');
+        return path.join(process.env.HOME, '.opendesk' + (isOpendeskDebugMode() ? '-debug' : ''));
     } else {
         return '<unknown>';
     }
@@ -1288,6 +1300,7 @@ export {
     getOpendeskDirectory,
     getDefaultOpendeskDirectory,
     setCustomOpendeskDirectory,
+    isOpendeskDebugMode,
     getLogDirectory,
     getTaskDirectory,
     getArtifactDirectory,
