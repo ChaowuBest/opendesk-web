@@ -1292,6 +1292,91 @@ describe('task-view GUI output modes', () => {
         expect(reason.hasAttribute('data-reasoning-start')).toBe(true);
     });
 
+    test('a non-streaming snapshot freezes the finished reasoning block and its timer', () => {
+        onSettingChanged?.({
+            locale: 'zh-CN',
+            gui_config: { output_mode: 'verbose', gui_reason_display: 'inline' }
+        });
+        const view = createView();
+        view.task_id = 'task-freeze-timer';
+        view.innerHTML = '<div id="taskview-chat-history"></div>';
+        const history = view.querySelector('#taskview-chat-history');
+
+        // part 0：思考块流式中
+        view._renderAssistantProgress(
+            {
+                type: 'assistant',
+                task_status: 'running',
+                message_id: 'message-freeze-timer',
+                last_part_index: 0,
+                streaming: true,
+                last_part: { type: 'reasoning', text: '第一段思考' }
+            },
+            history
+        );
+        const liveBlock = view.querySelector('.reasoning-block-od') as HTMLElement;
+        expect(liveBlock.classList).toContain('reasoning-active');
+        // 视图未挂载时 _syncReasoningTimers 因 isConnected 短路（与既有测试约定一致），
+        // 这里手动等价调用模拟已挂载视图的流式同步，启动每秒计时器。
+        TaskViewClass.updateReasoningPreview(liveBlock, '第一段思考');
+        expect(liveBlock._reasoningTimeInterval).not.toBeNull();
+
+        // part 0 结束：主进程发送非流式最终快照（streaming 标志消失，携带固化耗时）
+        view._renderAssistantProgress(
+            {
+                type: 'assistant',
+                task_status: 'running',
+                message_id: 'message-freeze-timer',
+                last_part_index: 0,
+                last_part: { type: 'reasoning', rendered: '第一段思考', elapsedSeconds: 14 }
+            },
+            history
+        );
+        // 完成态渲染与活跃态 class 不同，morph 前先 finalize 活跃块：
+        // 节点（无论被替换还是原地保留）必须定格为 completed 并显示固化耗时，
+        // 旧节点的每秒计时器必须被清理。
+        const frozenBlock = view.querySelector('.reasoning-block-od') as HTMLElement;
+        expect(frozenBlock.classList).toContain('reasoning-completed');
+        expect(view.querySelectorAll('.reasoning-block-od.reasoning-active')).toHaveLength(0);
+        expect(liveBlock._reasoningTimeInterval).toBeNull();
+        expect(frozenBlock._reasoningTimeInterval).toBeNull();
+        expect(frozenBlock.querySelector('.reasoning-time')?.textContent).toContain('14');
+
+        // part 1（工具执行中）的快照不得让已完成的思考块回到流式计时
+        view._renderAssistantProgress(
+            {
+                type: 'assistant',
+                task_status: 'running',
+                message_id: 'message-freeze-timer',
+                last_part_index: 1,
+                last_part: { type: 'tool_call', rendered: '<div>tool</div>' }
+            },
+            history
+        );
+        const stillFrozen = view.querySelector('.reasoning-block-od') as HTMLElement;
+        expect(stillFrozen.classList).toContain('reasoning-completed');
+        expect(view.querySelectorAll('.reasoning-block-od.reasoning-active')).toHaveLength(0);
+        expect(stillFrozen.querySelector('.reasoning-time')?.textContent).toContain('14');
+
+        // 新的思考 part 开始流式：新块正常进入活跃计时，已完成块不受影响
+        view._renderAssistantProgress(
+            {
+                type: 'assistant',
+                task_status: 'running',
+                message_id: 'message-freeze-timer',
+                last_part_index: 2,
+                streaming: true,
+                last_part: { type: 'reasoning', text: '第二段思考' }
+            },
+            history
+        );
+        const blocks = view.querySelectorAll('.reasoning-block-od');
+        expect(blocks).toHaveLength(2);
+        expect(blocks[0].classList).toContain('reasoning-completed');
+        expect(blocks[1].classList).toContain('reasoning-active');
+        expect((blocks[1] as HTMLElement)._reasoningTimeInterval).not.toBeNull();
+    });
+
     test('completed process rows keep symmetric spacing around the collapsed summary', () => {
         expect(taskViewStyles).toMatch(/\.od-completed-process\{[^}]*margin:008px;/);
         expect(taskViewStyles).toMatch(/\.od-completed-process-detail\{[^}]*padding:2px4px2px0;/);

@@ -2061,12 +2061,21 @@ class TaskView extends HTMLElement {
         const isIncrementalTextPart =
             (progress.last_part?.type === 'text' || progress.last_part?.type === 'reasoning') &&
             progress.task_status === 'running';
+        // streaming 标志是主进程对「该 part 仍在生成」的判定，必须原样保留：
+        // 运行中同一 part 的增量快照才带 streaming=true；part 结束/切换后主进程
+        // 发送的非流式快照（可能携带固化耗时）若被这里强行改写回 streaming=true，
+        // 思考块会保持 reasoning-active 继续每秒计时，出现"早已结束还在已思考 N 秒"。
+        // 同理，partIndex 未提供时不能假定 0 一定在流式（getFullTask 快照等场景）。
+        const treatAsStreaming = isIncrementalTextPart && progress.streaming === true;
+        // 增量补丁仅适用于「新旧快照都处于流式中的同一 part」；主进程在 part 结束时
+        // 发送的非流式最终快照（streaming 标志消失，可能携带固化耗时）必须走全量
+        // 渲染，思考块才能从 reasoning-active 切换为 completed 并定格计时。
         const canPatchStreamingPart =
-            isIncrementalTextPart && previousPart?.streaming === true && previousPart.type === progress.last_part.type;
+            treatAsStreaming && previousPart?.streaming === true && previousPart.type === progress.last_part.type;
         // 运行中终端命令的 live 输出（每 200ms 一次）：同一批 toolcall 且状态均为 running 时，
         // 只需替换对应卡片内的输出区域，避免每 200ms 对整条消息做全量 morph + 增强。
         const canPatchStreamingToolCall = TaskView.canPatchRunningTerminalToolCall(progress, previousPart, isRunning);
-        parts[partIndex] = isIncrementalTextPart ? { ...progress.last_part, streaming: true } : progress.last_part;
+        parts[partIndex] = treatAsStreaming ? { ...progress.last_part, streaming: true } : progress.last_part;
         this._rememberAssistantOutput(progress.message_id, parts, {
             isRunning
         });
@@ -2122,6 +2131,14 @@ class TaskView extends HTMLElement {
                     .forEach((el) => TaskView.finalizeReasoningBlock(el));
                 message_content.innerHTML = outputHtml;
             } else if (message_content.innerHTML !== outputHtml) {
+                // 增量 morph 可能替换掉带活跃计时器的思考块节点（完成态 class 与活跃态
+                // 不同导致 morphNode 整体替换）。被替换节点从文档脱钩后，每秒计时器
+                // setInterval 若不显式清理，会在游离节点上空转并在头部显示持续增长的
+                // 已思考耗时。与 disconnectedCallback 的 finalize 语义保持一致：先收尾
+                // 计时再 morph。
+                message_content
+                    .querySelectorAll('.reasoning-block-od.reasoning-active')
+                    .forEach((el) => TaskView.finalizeReasoningBlock(el));
                 TaskView.morphDomChildren(message_content, outputHtml);
             }
         }

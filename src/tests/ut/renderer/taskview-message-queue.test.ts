@@ -1884,6 +1884,8 @@ describe('task-view message queue', () => {
                     task_status: 'running',
                     message_id: 'streaming-text',
                     last_part_index: 0,
+                    // 真实链路中运行中的增量快照始终携带 streaming 标志（tasks.ts sendSubscriptionFeedback）
+                    streaming: true,
                     last_part: { type: 'text', rendered }
                 },
                 history
