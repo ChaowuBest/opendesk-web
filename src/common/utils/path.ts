@@ -38,3 +38,90 @@ export function sandboxPathToHostPath(filePath: string): string {
     const rest = match[2] ? match[2].slice(1) : '';
     return `${match[1].toUpperCase()}:\\${rest}`;
 }
+
+/**
+ * 将文件路径统一规范化为正斜杠形式，供渲染层内部比较/拼接使用：
+ *  - 去除历史消息遗留的 "/C:/..." 盘符前缀斜杠
+ *  - Windows 反斜杠 → 正斜杠（"D:\a\b.ts" → "D:/a/b.ts"）
+ * 纯字符串处理，无 IO。
+ */
+export function normalizeExplorerFilePath(filePath: string): string {
+    return normalizeDriveRootPath(filePath).replace(/\\/g, '/');
+}
+
+/**
+ * 跨平台判定两个文件路径是否指向同一文件。
+ * Windows / macOS 默认使用大小写不敏感的文件系统（APFS/NTFS），而对话点击、
+ * 工作空间列表等来源的路径大小写可能不一致；直接 === 比较会把同一文件
+ * 判为不同，导致树/网格高亮与面包屑选中态失效。统一先规范化分隔符，
+ * 再做大小写不敏感的决策（该函数仅用于 UI 展示态匹配，不参与真实 IO）。
+ */
+export function explorerPathsEqual(a: string, b: string): boolean {
+    return normalizeExplorerFilePath(a).toLowerCase() === normalizeExplorerFilePath(b).toLowerCase();
+}
+
+/**
+ * 跨平台判定 filePath 是否位于 root 目录（或其子目录）之下。
+ * 与 explorerPathsEqual 同理：大小写不敏感 + 分隔符归一，避免 Windows 上
+ * "位于工作空间内"被误判为"在工作空间外"，导致分级导航退化为单段。
+ * 纯字符串处理，无 IO。
+ */
+export function isPathUnder(filePath: string, root: string): boolean {
+    const normalizedFile = normalizeExplorerFilePath(filePath);
+    const normalizedRoot = normalizeExplorerFilePath(root);
+    if (!normalizedRoot) return true;
+    const lowerFile = normalizedFile.toLowerCase();
+    const lowerRoot = normalizedRoot.toLowerCase();
+    return lowerFile === lowerRoot || lowerFile.startsWith(lowerRoot + '/');
+}
+
+/**
+ * 返回路径的父目录（正斜杠形式）。根级路径（无分隔符或盘符根）返回自身。
+ * 兼容反斜杠输入，统一输出正斜杠，避免旧实现只在 "/" 上切分导致
+ * Windows 路径被误当成"无父目录"而返回文件自身。
+ */
+export function parentDirPath(p: string): string {
+    const normalized = p.replace(/\\/g, '/');
+    const idx = normalized.lastIndexOf('/');
+    if (idx <= 0) return normalized;
+    return normalized.slice(0, idx);
+}
+
+export interface BreadcrumbSegment {
+    name: string;
+    dir: string;
+}
+
+/**
+ * 为文件路径构建分级导航面包屑分段（供编辑器/预览头部展示与点击展开）。
+ * 输入兼容正斜杠与 Windows 反斜杠绝对路径；内部统一规范化为正斜杠后，
+ * 再按"是否位于 workspaceRoot 下"决定：
+ *  - 位于 workspace 下：输出从 workspace 根到文件的完整分级，每段 dir 为
+ *    对应目录（最后一段即文件所在目录）；
+ *  - 不位于 workspace 下：退化为单段（文件名 + 父目录），保证点击后
+ *    展开的是父目录而不是把文件自身当目录去扫描（ENOTDIR 的根因）。
+ * 纯字符串处理，无 IO。
+ */
+export function buildFileBreadcrumbSegments(filePath: string, workspaceRoot: string | null): BreadcrumbSegment[] {
+    const file = normalizeExplorerFilePath(filePath);
+    const root = workspaceRoot ? normalizeExplorerFilePath(workspaceRoot) : '';
+
+    const segments: BreadcrumbSegment[] = [];
+    if (root && isPathUnder(file, root)) {
+        const relPath = file.slice(root.length + 1);
+        const parts = relPath.split('/');
+        let currentDir = root;
+        for (let i = 0; i < parts.length; i++) {
+            const isLast = i === parts.length - 1;
+            if (!isLast) {
+                currentDir = currentDir + '/' + parts[i];
+                segments.push({ name: parts[i], dir: currentDir });
+            } else {
+                segments.push({ name: parts[i], dir: currentDir });
+            }
+        }
+    } else {
+        segments.push({ name: file.split('/').pop() || file, dir: parentDirPath(file) });
+    }
+    return segments;
+}

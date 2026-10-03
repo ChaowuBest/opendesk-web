@@ -32,6 +32,13 @@ import 'ace-builds/css/ace.css';
 import aceCss from 'ace-builds/css/ace.css?inline';
 import type { Ace as AceLib } from 'ace-builds';
 import { escapeHtml } from '../../common/utils/escape.js';
+import { filePathToFileUrl } from '../../common/file-url.js';
+import {
+    buildFileBreadcrumbSegments,
+    explorerPathsEqual,
+    normalizeExplorerFilePath,
+    parentDirPath
+} from '../../common/utils/path.js';
 import {
     OPENDESK_OFFICE_DOCUMENT_READY_CHANNEL,
     OPENDESK_OFFICE_EDITOR_VISIBLE_CHANNEL
@@ -1504,6 +1511,10 @@ export class FileExplorer {
      * 可由外部调用（如工具卡片中的"查看文件"按钮）。
      */
     selectFile(filePath: string, line?: number, onSwitchBlocked?: () => void): void {
+        // 从对话点击打开的文件可能是 Windows 反斜杠绝对路径，而树/网格条目与
+        // workspaceRoot 均使用正斜杠。统一规范化后再存储/匹配，保证分级导航、
+        // 树高亮与 listDirectory 传参一致（否则反斜杠文件路径会被误当目录扫描）。
+        filePath = normalizeExplorerFilePath(filePath);
         if (this._selectedFile === filePath && isOfficeDocument(filePath)) return;
         if (this._deferUntilOfficeCanClose(() => this.selectFile(filePath, line, onSwitchBlocked), onSwitchBlocked)) {
             return;
@@ -2163,7 +2174,10 @@ export class FileExplorer {
                 ${childrenHtml}
             </div>`;
         }
-        const selected = this._selectedFile === entry.path ? 'ws-file-selected' : '';
+        // Windows/macOS 大小写不敏感文件系统：对话打开路径与列表返回路径可能存在
+        // 大小写差异，用跨平台比较保证选中高亮不失效
+        const selected =
+            this._selectedFile && explorerPathsEqual(this._selectedFile, entry.path) ? 'ws-file-selected' : '';
         return `
         <div class="ws-tree-node">
             <div class="ws-tree-row ws-tree-file ${selected}" data-action="tree-file"
@@ -2256,7 +2270,8 @@ export class FileExplorer {
                             <div class="ws-grid-name">${escapeHtml(e.name)}</div>
                         </div>`;
                 }
-                const selected = this._selectedFile === e.path ? 'ws-file-selected' : '';
+                const selected =
+                    this._selectedFile && explorerPathsEqual(this._selectedFile, e.path) ? 'ws-file-selected' : '';
                 return `<div class="ws-grid-item ws-grid-file ${selected}" data-action="grid-file"
                         data-path="${escapeHtml(e.path)}" data-file="${escapeHtml(e.path)}"
                         title="${escapeHtml(e.name)}">
@@ -2273,9 +2288,9 @@ export class FileExplorer {
     }
 
     private _parentOf(p: string): string {
-        const idx = p.lastIndexOf('/');
-        if (idx <= 0) return p;
-        return p.slice(0, idx);
+        // 兼容 Windows 反斜杠路径（对话点击打开的文件常为反斜杠绝对路径），
+        // 统一按正斜杠切分返回父目录，避免反斜杠路径被误判为"无父目录"而返回自身。
+        return parentDirPath(p);
     }
 
     // ----- file open / editor -----
@@ -2284,6 +2299,9 @@ export class FileExplorer {
      * 打开文件编辑器。
      */
     openEditor(filePath: string, line?: number, readOnly?: boolean): void {
+        // 与 selectFile 一致：统一规范化为正斜杠，避免反斜杠路径导致
+        // 面包屑分级失败或把文件路径误当目录扫描（ENOTDIR）。
+        filePath = normalizeExplorerFilePath(filePath);
         if (isOfficeDocument(filePath)) {
             this.selectFile(filePath);
             return;
@@ -2902,8 +2920,11 @@ export class FileExplorer {
         if (!host || host.dataset.attached) return;
         host.dataset.attached = '1';
 
+        // 复用 file-url 工具处理 Windows 盘符/UNC 路径：手写 `file://${dirPath}`
+        // 在 Windows 上会产出 file://D:/...（被解析为 host=盘符），导致 iframe 内
+        // 相对资源解析错乱；标准形式应为 file:///D:/...
         const dirPath = this._selectedFile.replace(/[^/\\]+$/, '');
-        const baseHref = `file://${dirPath}`;
+        const baseHref = filePathToFileUrl(dirPath);
 
         const iframe = document.createElement('iframe');
         iframe.sandbox.add('allow-same-origin');
@@ -2980,26 +3001,10 @@ export class FileExplorer {
 
     private _renderBreadcrumbHtml(): string {
         if (!this._selectedFile) return '';
-        const file = this._selectedFile;
-        const root = this._workspaceRoot || '';
-
-        const segments: { name: string; dir: string }[] = [];
-        if (root && file.startsWith(root + '/')) {
-            const relPath = file.slice(root.length + 1);
-            const parts = relPath.split('/');
-            let currentDir = root;
-            for (let i = 0; i < parts.length; i++) {
-                const isLast = i === parts.length - 1;
-                if (!isLast) {
-                    currentDir = currentDir + '/' + parts[i];
-                    segments.push({ name: parts[i], dir: currentDir });
-                } else {
-                    segments.push({ name: parts[i], dir: currentDir });
-                }
-            }
-        } else {
-            segments.push({ name: file.split('/').pop() || file, dir: this._parentOf(file) });
-        }
+        // 从对话点击打开的文件可能是 Windows 反斜杠绝对路径，而 _workspaceRoot
+        // 已规范化为正斜杠；统一交给 buildFileBreadcrumbSegments 规范化并构建分级，
+        // 避免斜杠方向不一致导致分级失败、或把文件路径误当目录去扫描（ENOTDIR）。
+        const segments = buildFileBreadcrumbSegments(this._selectedFile, this._workspaceRoot);
 
         const html = segments
             .map((seg, i) => {
@@ -3062,7 +3067,7 @@ export class FileExplorer {
             let html = '';
 
             for (const entry of sorted) {
-                const isCurrent = entry.path === currentFile;
+                const isCurrent = currentFile !== null && explorerPathsEqual(entry.path, currentFile);
                 const paddingLeft = 12 + depth * BC_INDENT;
 
                 if (entry.isDirectory) {
