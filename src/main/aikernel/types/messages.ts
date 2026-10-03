@@ -24,6 +24,10 @@ export interface RuntimeMetadata {
     execution?: {
         turnId?: string;
         generation?: number;
+        /** 本 turn assistant 消息的创建时间（毫秒时间戳）。 */
+        startAt?: number;
+        /** 本 turn 收尾时间（毫秒时间戳），turn 结束时固化，用于"本轮耗时"展示。 */
+        finishAt?: number;
         controller?: 'normal' | 'goal' | 'subtask' | 'system';
         controllerId?: string;
         controllerRevision?: number;
@@ -147,7 +151,6 @@ export interface BaseAssistantMessage {
     content: AssistantMessagePart[];
     usage?: BaseUsage;
     metadata?: RuntimeMetadata;
-    timestamp?: number;
 }
 
 export interface CompactSummarizedRange {

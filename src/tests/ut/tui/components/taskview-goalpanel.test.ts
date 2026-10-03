@@ -152,7 +152,12 @@ describe('TaskView goal panel history placement', () => {
         const startMessage = new UserMessage('start goal work');
         startMessage.timestamp = Date.parse('2026-01-01T00:00:00.000Z');
         const assistantMessage = new AssistantMessage([new TextMessagePart('assistant finished goal')]);
-        assistantMessage.timestamp = Date.parse('2026-01-01T00:00:05.000Z');
+        assistantMessage.metadata = {
+            execution: {
+                startAt: Date.parse('2026-01-01T00:00:00.000Z'),
+                finishAt: Date.parse('2026-01-01T00:00:05.000Z')
+            }
+        };
         snapshot.anchorMessageId = assistantMessage.message_id;
         const afterGoalMessage = new UserMessage('message after goal');
         afterGoalMessage.timestamp = Date.parse('2026-01-01T00:00:06.000Z');

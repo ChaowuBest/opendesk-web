@@ -227,6 +227,46 @@ function formatReasoningElapsedTime(seconds, chars = null) {
     return timeStr;
 }
 
+/** 将毫秒耗时格式化为耗时展示文案：<60s 显示秒，<1h 显示分+秒，≥1h 显示小时+分。 */
+function formatTurnDuration(durationMs) {
+    if (!Number.isFinite(durationMs) || durationMs < 0) return '';
+    const totalSeconds = Math.floor(durationMs / 1000);
+    if (totalSeconds < 60) {
+        return taskViewT('renderer.taskview.output.duration.seconds', { seconds: totalSeconds });
+    }
+    if (totalSeconds < 3600) {
+        return taskViewT('renderer.taskview.output.duration.minutes', {
+            minutes: Math.floor(totalSeconds / 60),
+            seconds: totalSeconds % 60
+        });
+    }
+    const totalMinutes = Math.floor(totalSeconds / 60);
+    return taskViewT('renderer.taskview.output.duration.hours', {
+        hours: Math.floor(totalMinutes / 60),
+        minutes: totalMinutes % 60
+    });
+}
+
+/** 提取一条 assistant 消息的 turn 耗时（毫秒）：读取 execution.startAt/finishAt；老任务缺少任一字段则无法计算。 */
+function extractAssistantTurnDurationMs(message) {
+    if (!message) return null;
+    const execution = message.metadata?.execution;
+    const startAt = typeof execution?.startAt === 'number' ? execution.startAt : null;
+    const finishAt = typeof execution?.finishAt === 'number' ? execution.finishAt : null;
+    if (startAt != null && finishAt != null && finishAt >= startAt) {
+        return finishAt - startAt;
+    }
+    return null;
+}
+
+/** 提取 assistant 消息 turn 的结束时间（毫秒时间戳）：优先 finishAt，回退 startAt；老任务在反序列化时已迁移。 */
+function getAssistantTurnEndTimestamp(message) {
+    const execution = message?.metadata?.execution;
+    if (typeof execution?.finishAt === 'number') return execution.finishAt;
+    if (typeof execution?.startAt === 'number') return execution.startAt;
+    return null;
+}
+
 /**
  * 流式思考预览的尾部切片：预览区始终滚动钉底展示最新内容，
  * 只写尾部可将每帧 DOM 写入与文本排版成本从 O(累计长度) 降到 O(切片长度)。
@@ -414,6 +454,8 @@ class TaskView extends HTMLElement {
         this._taskUpdateHandler = null;
         /** @type {Array<object>} 当前任务的完整持久化消息列表，DOM 只渲染其中的尾部窗口。 */
         this._historyMessages = [];
+        /** @type {number|null} 最近一次 assistant turn 的本地完成时间，用于隐藏历史消息场景下的时间戳兜底。 */
+        this._lastAssistantCompletedAt = null;
         /** @type {Array<object>} 当前任务持久化的 goal evaluation 记录，用 message anchor 插入历史上下文。 */
         this._historyGoalEvaluationRecords = [];
         /** @type {number} 当前已经渲染的最早持久化消息下标。 */
@@ -1388,12 +1430,16 @@ class TaskView extends HTMLElement {
             const disclosureKey = `${messageId}-completed-process`;
             const expanded = options.disclosureState?.get(disclosureKey) === true;
             const detailId = `od-${this.widget_id}-${disclosureKey}-detail`;
+            const durationText = formatTurnDuration(options.turnDurationMs);
+            const toggleLabel = durationText
+                ? taskViewT('renderer.taskview.output.completedProcessWithDuration', { duration: durationText })
+                : taskViewT('renderer.taskview.output.completedProcess');
             html = `
                 <section class="od-completed-process${expanded ? ' is-expanded' : ''}">
                     <button type="button" class="od-completed-process-summary" data-completed-process-toggle
                         data-disclosure-key="${escapeHtml(disclosureKey)}" aria-expanded="${expanded}"
                         aria-controls="${escapeHtml(detailId)}">
-                        <span>${escapeHtml(taskViewT('renderer.taskview.output.completedProcess'))}</span>
+                        <span>${escapeHtml(toggleLabel)}</span>
                         <span class="od-completed-process-chevron">${CHEVRON_RIGHT_ICON_SVG}</span>
                     </button>
                     <div id="${escapeHtml(detailId)}" class="od-completed-process-detail${expanded ? ' is-open' : ''}">
@@ -1420,22 +1466,25 @@ class TaskView extends HTMLElement {
     _rememberAssistantOutput(messageId, parts, options = {}) {
         this._assistantPartsByMessage.set(messageId, [...parts]);
         this._assistantRenderStateByMessage.set(messageId, {
-            isRunning: options.isRunning === true
+            isRunning: options.isRunning === true,
+            ...(options.turnDurationMs != null ? { turnDurationMs: options.turnDurationMs } : {})
         });
     }
 
     renderAssistantMessage(assistant_message, isLast = false, options = {}) {
         this._rememberAssistantOutput(assistant_message.message_id, assistant_message.content, {
-            isRunning: options.isRunning
+            isRunning: options.isRunning,
+            turnDurationMs: extractAssistantTurnDurationMs(assistant_message)
         });
         const content = this._renderAssistantOutputHtml(assistant_message.content, {
             isRunning: Boolean(options.isRunning),
-            messageId: assistant_message.message_id
+            messageId: assistant_message.message_id,
+            turnDurationMs: extractAssistantTurnDurationMs(assistant_message)
         });
         const usageHtml = isLast ? TaskView.formatUsageHtml(assistant_message.usage, this._modelContextSize) : '';
         const metaRowHtml = TaskView.buildMsgMetaRow(
             'assistant',
-            assistant_message.timestamp,
+            getAssistantTurnEndTimestamp(assistant_message),
             assistant_message.message_id
         );
         const html = `
@@ -1734,6 +1783,9 @@ class TaskView extends HTMLElement {
         const message = this._historyMessages[index];
         if (!message || message.role !== 'assistant') return;
         message.content = Array.isArray(progress.parts) ? progress.parts : [];
+        if (progress.metadata) {
+            message.metadata = progress.metadata;
+        }
         if (TaskView.hasDisplayableUsage(progress.usage)) {
             message.usage = progress.usage;
         }
@@ -1879,9 +1931,20 @@ class TaskView extends HTMLElement {
 
         const isRunning = progress.task_status === 'running';
         const parts = progress.parts;
+        const turnDurationMs = extractAssistantTurnDurationMs(progress);
         this._rememberAssistantOutput(progress.message_id, parts, {
-            isRunning
+            isRunning,
+            turnDurationMs
         });
+        if (!isRunning) {
+            const execution = progress.metadata?.execution;
+            const finishedAt =
+                (typeof execution?.finishAt === 'number' && execution.finishAt) ||
+                (typeof execution?.startAt === 'number' && execution.startAt);
+            if (finishedAt) {
+                this._lastAssistantCompletedAt = finishedAt;
+            }
+        }
         const disclosureState = this._captureProcessDisclosureState(message_content);
         message_content
             .querySelectorAll('.reasoning-block-od.reasoning-active')
@@ -1889,7 +1952,8 @@ class TaskView extends HTMLElement {
         message_content.innerHTML = this._renderAssistantOutputHtml(parts, {
             isRunning,
             messageId: progress.message_id,
-            disclosureState
+            disclosureState,
+            turnDurationMs: extractAssistantTurnDurationMs(progress)
         });
         enhanceCodeBlocks(message_content);
         enhanceToolPreviewCards(message_content);
@@ -1916,7 +1980,12 @@ class TaskView extends HTMLElement {
 
         // 任务非运行状态时（已完成），为消息追加时间戳与 hover 菜单
         if (!isRunning && !message_container.querySelector('.od-msg-meta-row')) {
-            const ts = progress.timestamp || Date.now();
+            const execution = progress.metadata?.execution;
+            const ts =
+                (typeof execution?.finishAt === 'number' && execution.finishAt) ||
+                (typeof execution?.startAt === 'number' && execution.startAt) ||
+                this._lastAssistantCompletedAt ||
+                Date.now();
             const metaRowHtml = TaskView.buildMsgMetaRow('assistant', ts, progress.message_id);
             if (metaRowHtml) {
                 const usageEl2 = message_container.querySelector('.message-usage');
@@ -2119,7 +2188,8 @@ class TaskView extends HTMLElement {
             const outputHtml = this._renderAssistantOutputHtml(parts, {
                 isRunning: !isTerminal,
                 messageId: progress.message_id,
-                disclosureState
+                disclosureState,
+                turnDurationMs: extractAssistantTurnDurationMs(progress)
             });
             if (isTerminal) {
                 // Terminal updates may change the output hierarchy (for example, a normal
@@ -4060,7 +4130,8 @@ class TaskView extends HTMLElement {
             const outputHtml = this._renderAssistantOutputHtml(parts, {
                 isRunning: renderState.isRunning,
                 messageId,
-                disclosureState
+                disclosureState,
+                turnDurationMs: renderState.turnDurationMs
             });
             if (messageContent.innerHTML !== outputHtml) {
                 TaskView.morphDomChildren(messageContent, outputHtml);
@@ -5400,7 +5471,9 @@ class TaskView extends HTMLElement {
                     if (this._handleTaskStatusUpdate(progress.task_status) && this.task_status !== 'running') {
                         // 流式结束：结束活跃 reasoning 块计时并清理等待占位/spinner/流式光标，
                         // 为最后一条 assistant 消息追加时间戳与 hover 菜单
-                        this._cleanupStreamingState(progress.timestamp || Date.now());
+                        this._cleanupStreamingState(
+                            getAssistantTurnEndTimestamp(progress) || this._lastAssistantCompletedAt || Date.now()
+                        );
                         // 任务结束时也清理过渡中的 supplement 卡片
                         this.resolvePendingGoalSupplements();
                         const inputWidget = this.querySelector(`#task-${this.task_id}-input`);

@@ -639,7 +639,9 @@ export class TaskState {
             if (last instanceof AssistantMessage && last.usage) {
                 snapshot.live = {
                     message_id: last.message_id,
-                    message_timestamp: last.timestamp,
+                    // 与旧 timestamp 语义对齐：优先 turn 收尾时间（≈最后一次请求提交时刻），
+                    // 无 finishAt 时回退 startAt，供浮窗「请求是否已提交」启发式使用
+                    message_timestamp: last.metadata?.execution?.finishAt ?? last.metadata?.execution?.startAt,
                     usage: last.usage
                 };
             }
@@ -690,7 +692,9 @@ export class TaskState {
             metadata;
         await this.appendInternalUserMessage(prompt, effectiveMetadata, rawText);
         const assistantMessage = new AssistantMessage();
-        assistantMessage.metadata = effectiveMetadata;
+        assistantMessage.metadata = effectiveMetadata
+            ? this.withAssistantTurnExecutionMetadata(effectiveMetadata)
+            : undefined;
         this.chat_context.appendMessage(assistantMessage);
         this._activeTurnMetadata = effectiveMetadata;
     }
@@ -1094,6 +1098,35 @@ export class TaskState {
         };
     }
 
+    /** 为一条新建的 assistant 消息补齐 turn 级 execution 元数据（startAt 立即固化，finishAt 由 turn 收尾回填）。 */
+    private withAssistantTurnExecutionMetadata(metadata: RuntimeMetadata): RuntimeMetadata {
+        return {
+            ...metadata,
+            execution: {
+                ...metadata.execution,
+                startAt: metadata.execution?.startAt ?? Date.now()
+            }
+        };
+    }
+
+    /**
+     * turn 收尾时为本 turn 的所有 assistant 消息固化 finishAt。
+     * 多轮工具循环共享同一条 assistant 消息，finishAt 记录整个 turn 的结束点，
+     * 配合 startAt 即可得到"本轮耗时"；仅处理当前 generation 的消息，不触碰历史 turn。
+     */
+    private finalizeTurnFinishAt(myGeneration: number): void {
+        for (const message of this.chat_context.messages) {
+            if (!(message instanceof AssistantMessage)) continue;
+            const execution = message.metadata?.execution;
+            if (!execution || execution.finishAt !== undefined) continue;
+            if (execution.generation !== undefined && execution.generation !== myGeneration) continue;
+            message.metadata = {
+                ...message.metadata,
+                execution: { ...execution, finishAt: Date.now() }
+            };
+        }
+    }
+
     applyRuntimeMetadataToAssistant(assistantMessage: AssistantMessage, metadata?: RuntimeMetadata): void {
         const effective = metadata ?? assistantMessage.metadata ?? this._activeTurnMetadata;
         if (!effective) return;
@@ -1138,7 +1171,7 @@ export class TaskState {
         }
 
         const assistantMessage = new AssistantMessage();
-        assistantMessage.metadata = metadata;
+        assistantMessage.metadata = this.withAssistantTurnExecutionMetadata(metadata);
         this.chat_context.appendMessage(assistantMessage);
 
         this.chat_context.attachToolsets(...allToolsets);
@@ -1782,20 +1815,19 @@ export class TaskState {
                 `autoParseThinkTags=${autoParseThinkTags}`
         );
         const assistant_message = new AssistantMessage([], { allowThinkTagParsing: autoParseThinkTags });
-        assistant_message.metadata = this.extensions.getAssistantMetadata(user_message.metadata);
         // 与 user_message 对称：保证 assistant 消息携带本 turn 的 generation，
         // 同时使 _activeTurnMetadata 非空，applyRuntimeMetadataToAssistant 不再 early-return（tasks.ts:763）。
-        assistant_message.metadata = {
-            ...(assistant_message.metadata ?? {}),
+        const extensionMetadata = this.extensions.getAssistantMetadata(user_message.metadata);
+        assistant_message.metadata = this.withAssistantTurnExecutionMetadata({
+            ...(extensionMetadata ?? {}),
             execution: {
-                ...(assistant_message.metadata?.execution ?? {}),
                 turnId:
-                    assistant_message.metadata?.execution?.turnId ??
+                    extensionMetadata?.execution?.turnId ??
                     user_message.metadata?.execution?.turnId ??
                     this.getTurnId(generation),
                 generation
             }
-        };
+        });
         this.chat_context.appendMessage(assistant_message);
 
         this.chat_context.attachToolsets(...allToolsets);
@@ -2549,7 +2581,7 @@ export class TaskState {
                 message_id: assistantMessage.message_id,
                 parts: Array.isArray(assistantMessage.content) ? [...assistantMessage.content] : [],
                 usage: assistantMessage.usage,
-                timestamp: assistantMessage.timestamp
+                metadata: assistantMessage.metadata
             };
             this.publishTaskUpdate(chunkUpdate, 'assistant message replace');
         } catch (err) {
@@ -3122,6 +3154,10 @@ export class TaskState {
                                 const assistant_message = new AssistantMessage([], {
                                     allowThinkTagParsing: autoParseThinkTags
                                 });
+                                // hook 拒绝后的重试轮次与当前 turn 同代，沿用 active turn 元数据并补充 startAt
+                                assistant_message.metadata = this.withAssistantTurnExecutionMetadata(
+                                    this._activeTurnMetadata ?? {}
+                                );
                                 this.chat_context.appendMessage(assistant_message);
                                 continue;
                             }
@@ -3161,6 +3197,7 @@ export class TaskState {
                     if (this._turnGeneration !== myGeneration) return;
                     const completedAt = new Date();
                     this.finished_at = completedAt;
+                    this.finalizeTurnFinishAt(myGeneration);
                     if (shouldScheduleSessionMemoryUpdate) {
                         this.recordMicrocompactAssistantCompleted(completedAt);
                     }
@@ -3172,6 +3209,13 @@ export class TaskState {
                     if (shouldScheduleSessionMemoryUpdate) {
                         this.scheduleSessionMemoryUpdateAfterCompletion(modelRequestOptions);
                     }
+                } catch (turnSettleErr) {
+                    // 收尾阶段（finish hooks 之后）异常同样需要固化 finishAt，保证本轮耗时数据不丢失
+                    if (this._turnGeneration === myGeneration) {
+                        this.finalizeTurnFinishAt(myGeneration);
+                        this.persistLater();
+                    }
+                    throw turnSettleErr;
                 } finally {
                     if (this._turnGeneration === myGeneration) {
                         this._turnRunning = false;

@@ -1,0 +1,79 @@
+{
+    "locale": "auto",
+    "default_model": "",
+    "default_quick_model": "",
+    "default_intent_parsing_model": "",
+    "default_embedding_model": "",
+    "default_reranker_model": "",
+    "default_vision_model": "",
+    "default_workspace": "",
+    "debug": {
+        "developer_mode": false,
+        "log_raw_llm_request": false,
+        "debug_log": false
+    },
+    "telemetry": {
+        "opentelemetry": {
+            "endpoints": []
+        },
+        "langfuse": {
+            "endpoints": [],
+            "environment": "development",
+            "max_payload_chars": 20000
+        }
+    },
+    "providers": [],
+    "models": [],
+    "builtin_models": [],
+    "gui_config": {
+        "theme_preference": "system",
+        "scale_factor": 1,
+        "font_preset": "default",
+        "ctrl_enter_send": false,
+        "recent_workspaces": [],
+        "window_bounds": null,
+        "floating_window_position": "bottom-right",
+        "sidebar_width": 320,
+        "gui_reason_display": "inline",
+        "output_mode": "minimal",
+        "floating_window_mode": "card"
+    },
+    "cli_config": {
+        "shortcuts": {
+            "switch_mode": "ctrl+k",
+            "output_display": "ctrl+o",
+            "switch_model": "f2",
+            "endline": "ctrl+j",
+            "show_help": "ctrl+h",
+            "clear_input": "ctrl+c",
+            "list_tasks": "ctrl+l"
+        },
+        "use_isolated_python": true,
+        "inherit_venv": true,
+        "output_display": "minimal",
+        "show_all_reasoning": false,
+        "reason_display": "partial"
+    },
+    "task_config": {
+        "auto_retry": true,
+        "generate_taskname": true,
+        "termination_check": true,
+        "evidence_card": false,
+        "shell_path": "",
+        "shell_sandboxed": false,
+        "shell_sandbox_del_to_trash": false
+    },
+    "network_config": {
+        "no_ssl": false,
+        "use_proxy": "custom",
+        "custom_proxy_addr": "http://new:9090",
+        "no_proxy": ""
+    },
+    "environ": {},
+    "account_config": {
+        "mode": "nologin",
+        "default_base_url": "",
+        "enterprise_base_url": ""
+    },
+    "applications": {}
+}

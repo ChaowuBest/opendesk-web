@@ -875,13 +875,20 @@ function messageToApiFormat(
     const modelInfo = opts.modelInfo ?? EMPTY_OPEN_CODE_MODEL_INFO;
 
     if (msg.role === 'assistant') {
+        // assistant 消息的时间语义统一在 execution 元数据上（turn 收尾优先）；
+        // 老任务的 legacy timestamp 已在反序列化边界（AssistantMessage.assign）迁移为 finishAt
+        const execution = msg.metadata?.execution;
+        const createdAt =
+            (typeof execution?.finishAt === 'number' && execution.finishAt) ||
+            (typeof execution?.startAt === 'number' && execution.startAt) ||
+            Date.now();
         return {
             info: {
                 id: msgId,
                 sessionID,
                 role: 'assistant',
                 time: {
-                    created: msg.timestamp || Date.now(),
+                    created: createdAt,
                     completed: msg.completed_at || Date.now()
                 },
                 parentID,

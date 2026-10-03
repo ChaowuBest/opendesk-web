@@ -206,7 +206,6 @@ describe('TaskView chunk handling', () => {
         const taskView = new TaskView({ requestRender: jest.fn() } as any);
         const chatContext = new ChatContext();
         const assistantMessage = new AssistantMessage([new TextMessagePart('Finished response')]);
-        assistantMessage.timestamp = 1_000;
         chatContext.appendMessage(assistantMessage);
         taskView.taskState = {
             task_id: 'task_1',

@@ -205,6 +205,77 @@ describe('task-view GUI output modes', () => {
         expect(view.querySelector('.od-final-result script')).toBeNull();
     });
 
+    test('completed minimal toggle shows the persisted turn duration when execution timestamps exist', () => {
+        const now = Date.now();
+        const view = createView();
+        view.innerHTML = view.renderAssistantMessage({
+            message_id: 'message-with-duration',
+            content: [
+                { type: 'reasoning', rendered: '分析过程' },
+                { type: 'text', text: '最终回复', rendered: '<p>最终回复</p>' }
+            ],
+            metadata: {
+                execution: { startAt: now - 65 * 1000, finishAt: now }
+            }
+        });
+
+        const toggle = view.querySelector('[data-completed-process-toggle]') as HTMLElement;
+        expect(toggle.textContent).toContain('查看过程（本轮共耗时 1 分 5 秒）');
+    });
+
+    test('completed minimal toggle falls back to plain label when turn duration is unavailable', () => {
+        const view = createView();
+        view.innerHTML = view.renderAssistantMessage({
+            message_id: 'message-without-duration',
+            content: [
+                { type: 'reasoning', rendered: '分析过程' },
+                { type: 'text', text: '最终回复', rendered: '<p>最终回复</p>' }
+            ],
+            timestamp: Date.now()
+        });
+
+        const toggle = view.querySelector('[data-completed-process-toggle]') as HTMLElement;
+        expect(toggle.textContent).toContain('查看过程');
+        expect(toggle.textContent).not.toContain('本轮共耗时');
+    });
+
+    test('turn duration formats hours and plain seconds across ranges', () => {
+        const view = createView();
+        const now = Date.now();
+        const render = (durationMs: number, messageId: string) =>
+            view.renderAssistantMessage({
+                message_id: messageId,
+                content: [
+                    { type: 'reasoning', rendered: '过程' },
+                    { type: 'text', text: '回复', rendered: '<p>回复</p>' }
+                ],
+                metadata: { execution: { startAt: now - durationMs, finishAt: now } }
+            });
+
+        const seconds = createView();
+        seconds.innerHTML = render(9_000, 'message-duration-seconds');
+        expect((seconds.querySelector('[data-completed-process-toggle]') as HTMLElement).textContent).toContain(
+            '查看过程（本轮共耗时 9 秒）'
+        );
+
+        const hours = createView();
+        hours.innerHTML = render(2 * 3600_000 + 5 * 60_000, 'message-duration-hours');
+        expect((hours.querySelector('[data-completed-process-toggle]') as HTMLElement).textContent).toContain(
+            '查看过程（本轮共耗时 2 小时 5 分）'
+        );
+
+        const enView = createView();
+        onSettingChanged?.({
+            locale: 'en-US',
+            gui_config: { output_mode: 'minimal', gui_reason_display: 'inline' }
+        });
+        enView.innerHTML = render(65_000, 'message-duration-en');
+        expect((enView.querySelector('[data-completed-process-toggle]') as HTMLElement).textContent).toContain(
+            'View process (took 1m 5s)'
+        );
+        onSettingChanged?.({ locale: 'zh-CN', gui_config: { output_mode: 'minimal', gui_reason_display: 'inline' } });
+    });
+
     test('verbose output defaults every process segment and completed reasoning body open', () => {
         onSettingChanged?.({ locale: 'zh-CN', gui_config: { output_mode: 'verbose' } });
         const view = createView();
