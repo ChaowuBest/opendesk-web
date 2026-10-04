@@ -128,8 +128,10 @@ export async function prepareLinuxSandbox(options: {
     command: string;
     cwd?: string;
     taskState?: TaskState;
-    /** 删除送回收站（XDG Trash） */
+    /** 删除送回收站（OpenDesk 统一回收站，目录见 trashDir） */
     deleteToTrash?: boolean;
+    /** 任务级统一回收站目录（<opendesk>/trash/<taskId>），每次拉起都传入 */
+    trashDir?: string;
     onPermissionWaitChange?: (waiting: boolean) => void;
 }): Promise<DynamicSandboxLaunch | null> {
     if (process.platform !== 'linux') return null;
@@ -175,7 +177,9 @@ export async function prepareLinuxSandbox(options: {
                 decide.token,
                 workspace,
                 options.taskState?.harnessContext.permission?.getRules?.(),
-                process.env.HOME
+                process.env.HOME,
+                // 回收站写保护 deny 需要真实数据目录（debug/自定义目录布局）
+                getOpendeskDirectory()
             ),
             'utf8'
         );
@@ -202,6 +206,9 @@ export async function prepareLinuxSandbox(options: {
             '--log-file',
             logPath,
             ...(options.deleteToTrash ? ['--del-to-trash'] : []),
+            // 任务级回收站目录无论删除开关与否都传入（值由宿主统一构建），
+            // daemon 仅在 --del-to-trash 启用时使用
+            ...(options.trashDir ? ['--trash-dir', options.trashDir] : []),
             ...(roDirs.length > 0 ? ['--ro-dirs', roDirs.join(',')] : []),
             '--',
             ...childArgs

@@ -104,7 +104,7 @@ static void usage(FILE *out)
 "  --upstream URL     ask 决策端点：http://host:port/path、unix://PATH、\n"
 "                     或 pipe://名字（Windows 命名管道等价物，见 endpoint --pipe）\n"
 "  --map OLD=NEW      接受但为 no-op（身份命名空间下无路径翻译）\n"
-"  --del-to-trash     接受但为 no-op（OpenHarmony 无回收站）\n"
+"  --del-to-trash     删除文件/目录时移入回收站目录（Windows 回收站等价物）\n"
 "  --mount 盘符       接受但为 no-op（无盘符概念）\n"
 "  --log FILE         沙箱诊断日志（--log-file 为别名；含全部拒绝记录）\n"
 "  --tmp DIR          把沙箱内 /tmp 映射到宿主 DIR（可读可写，无需策略规则）\n"
@@ -122,7 +122,8 @@ static void usage(FILE *out)
 "  --tmp DIR           把沙箱内 /tmp（与 /tmp/*）映射到宿主 DIR：映射区总是\n"
 "                      可读可写，无需策略规则（OpenHarmony 的 /tmp 为只读挂载）\n"
 "  --del-to-trash      删除文件/目录时移入回收站目录（Windows 回收站等价物）\n"
-"  --trash DIR         回收站目录（默认 $HOME/Trash，不存在则自动创建）\n"
+"  --trash-dir DIR     回收站目录（OpenDesk 统一回收站，与 Windows/Linux 版同\n"
+"                      格式；等价于 --trash）\n"
 "  --cwd DIR          子进程工作目录（默认：--src 模式为 DIR，否则当前目录）\n"
 "\n"
 "说明: mount 子命令不适用于 OpenHarmony（虚拟化逐进程生效，无 Dokan 卷/盘符）；\n"
@@ -232,6 +233,7 @@ static int cmd_run(int argc, char **argv)
             o.del_to_trash = 1;
         }
         else if (strcmp(argv[i], "--trash") == 0 && i + 1 < argc) o.trash_dir = argv[++i];
+        else if (strcmp(argv[i], "--trash-dir") == 0 && i + 1 < argc) o.trash_dir = argv[++i];
         else if (strcmp(argv[i], "--mount") == 0 && i + 1 < argc) {
             have_mount = 1; i++;
         }

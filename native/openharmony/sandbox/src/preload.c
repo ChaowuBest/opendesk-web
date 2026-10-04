@@ -49,6 +49,7 @@
 #include <sys/syscall.h>
 #include <sys/types.h>
 #include <sys/time.h>
+#include <sys/file.h>
 #include <sys/wait.h>
 #include <spawn.h>
 
@@ -1518,9 +1519,191 @@ int nftw64(const char *path, int (*fn)(const char *, const struct stat64 *, int,
 /* mutations                                                           */
 /* ------------------------------------------------------------------ */
 
-/* --del-to-trash：把删除目标移入回收站目录（Windows 回收站等价物）。
- * 保留原文件名；同名冲突时追加短序号（.1/.2/…）。回收站目录由 launcher 创建，
- * 此处防御性重建；跨文件系统（rename 失败）时退回 -1，由调用方直接删除。 */
+/* flock 阻塞等待可能被信号打断（EINTR）：shell 进程信号频繁，必须重试，
+ * 否则会在未持锁状态下读-改-写 summary.json，与其他并发写者互相覆盖 */
+static void trash_flock(int fd, int operation)
+{
+    while (flock(fd, operation) != 0 && errno == EINTR) {
+    }
+}
+
+/* 生成随机 UUID v4（/dev/urandom → RFC 4122 小写连字符格式，与宿主侧
+ * TrashEntry 校验一致）；urandom 不可用时退化为时间+pid 拼接（保留唯一性）。 */
+static void trash_uuid(char out[37])
+{
+    unsigned char b[16];
+    int ok = 0;
+    /* open 被本文件拦截：直调会进策略层，用 real 直通（/dev/urandom 读取） */
+    int fd = real_open("/dev/urandom", O_RDONLY | O_CLOEXEC);
+    if (fd >= 0) {
+        ok = read(fd, b, sizeof b) == (ssize_t)sizeof b;
+        close(fd);
+    }
+    if (!ok) {
+        struct timespec ts;
+        clock_gettime(CLOCK_REALTIME, &ts);
+        unsigned long long n =
+            (unsigned long long)ts.tv_nsec ^ ((unsigned long long)getpid() << 47);
+        memcpy(b, &n, sizeof n);
+        memcpy(b + 8, &ts.tv_sec, 8);
+    }
+    b[6] = (b[6] & 0x0f) | 0x40;
+    b[8] = (b[8] & 0x3f) | 0x80;
+    snprintf(out, 37,
+             "%02x%02x%02x%02x-%02x%02x-%02x%02x-%02x%02x-%02x%02x%02x%02x%02x%02x",
+             b[0], b[1], b[2], b[3], b[4], b[5], b[6], b[7],
+             b[8], b[9], b[10], b[11], b[12], b[13], b[14], b[15]);
+}
+
+/* 当前 UTC 时间的 ISO 8601 毫秒精度时间戳（与宿主侧 deleted_at 一致）。 */
+static void trash_iso_utc(char *out, size_t outsz)
+{
+    struct timespec ts;
+    clock_gettime(CLOCK_REALTIME, &ts);
+    struct tm tm;
+    gmtime_r(&ts.tv_sec, &tm);
+    snprintf(out, outsz, "%04d-%02d-%02dT%02d:%02d:%02d.%03ldZ",
+             tm.tm_year + 1900, tm.tm_mon + 1, tm.tm_mday,
+             tm.tm_hour, tm.tm_min, tm.tm_sec, (long)(ts.tv_nsec / 1000000));
+}
+
+/* JSON 字符串转义（仅 \" \\ 与控制字符；非 ASCII 按 UTF-8 原样输出，合法 JSON）。 */
+static void trash_json_escape(const char *s, char *out, size_t outsz)
+{
+    size_t n = 0;
+    if (outsz == 0) return;
+    out[n++] = '"';
+    for (const unsigned char *p = (const unsigned char *)s; *p && n + 8 < outsz; p++) {
+        unsigned char ch = *p;
+        if (ch == '"' || ch == '\\') { out[n++] = '\\'; out[n++] = (char)ch; }
+        else if (ch == '\b') { out[n++] = '\\'; out[n++] = 'b'; }
+        else if (ch == '\f') { out[n++] = '\\'; out[n++] = 'f'; }
+        else if (ch == '\n') { out[n++] = '\\'; out[n++] = 'n'; }
+        else if (ch == '\r') { out[n++] = '\\'; out[n++] = 'r'; }
+        else if (ch == '\t') { out[n++] = '\\'; out[n++] = 't'; }
+        else if (ch < 0x20) { snprintf(out + n, 8, "\\u%04x", ch); n += 6; }
+        else out[n++] = (char)ch;
+    }
+    out[n++] = '"';
+    out[n] = 0;
+}
+
+/* 追加一条删除记录到 <trash>/summary.json（顶层 JSON 数组，字段顺序与宿主
+ * TrashEntry 一致）。flock 独占锁下读-改-写：新条目定位数组尾部 ']' 追加，
+ * 避免整表解析；损坏文件留存为 summary.json.corrupt-<秒> 后重建。
+ * 成功返回 0。 */
+static int trash_append_summary(const char *trash_dir, const char *uuid,
+                                const char *original_path,
+                                long long size, const char *deleted_at)
+{
+    char path[DBOX_PATH_MAX];
+    snprintf(path, sizeof path, "%s/summary.json", trash_dir);
+
+    /* open 被本文件拦截（回收站目录对沙箱进程写保护 DENY，经策略层必然被拒）：
+     * summary 是 loader 自身簿记，用 real 直通 */
+    int fd = real_open(path, O_RDWR | O_CREAT | O_CLOEXEC, 0600);
+    if (fd < 0) return -1;
+    trash_flock(fd, LOCK_EX);
+
+    int result = -1;
+    char *content = NULL;
+    char *out = NULL;
+    do {
+        struct stat st;
+        if (fstat(fd, &st) != 0 || st.st_size > 256 * 1024 * 1024) break;
+        size_t len = (size_t)st.st_size;
+        content = (char *)dbox_malloc(len + 1);
+        if (!content) break;
+        if (len > 0) {
+            if (lseek(fd, 0, SEEK_SET) != 0 ||
+                read(fd, content, len) != (ssize_t)len) break;
+        }
+        content[len] = 0;
+
+        /* 结构校验：首个 '[' 与最后一个 ']'；缺失或顺序颠倒视为损坏（留存重建） */
+        const char *o = strchr(content, '[');
+        const char *c = len ? strrchr(content, ']') : NULL;
+        int corrupt = (!o || !c || o > c);
+        if (corrupt && len > 0) {
+            char backup[DBOX_PATH_MAX];
+            snprintf(backup, sizeof backup, "%s/summary.json.corrupt-%ld",
+                     trash_dir, (long)time(NULL));
+            trash_flock(fd, LOCK_UN);
+            close(fd);
+            if (real_rename(path, backup) != 0) break;
+            dbox_logf("trash: summary.json 损坏，旧内容留存 %s", backup);
+            fd = real_open(path, O_RDWR | O_CREAT | O_CLOEXEC, 0600);
+            if (fd < 0) break;
+            trash_flock(fd, LOCK_EX);
+            len = 0;
+            content[0] = 0;
+            o = NULL;
+            c = NULL;
+        }
+
+        /* 条目 JSON：动态缓冲——POSIX 文件名可合法包含控制字符（转义后最多
+         * 膨胀 6 倍），固定栈缓冲会截断 original_path 导致找回路径错误 */
+        size_t escCap = strlen(original_path) * 6 + 16;
+        char *esc = (char *)dbox_malloc(escCap);
+        char *entry = (char *)dbox_malloc(escCap + 160);
+        if (!esc || !entry) { dbox_free(esc); dbox_free(entry); break; }
+        trash_json_escape(original_path, esc, escCap);
+        snprintf(entry, escCap + 160,
+                 "{\"uuid\":\"%s\",\"original_path\":%s,\"size\":%lld,\"deleted_at\":\"%s\"}",
+                 uuid, esc, size, deleted_at);
+        dbox_free(esc);
+        esc = NULL;
+
+        /* 空文件/损坏重建 → 单条目数组；否则定位数组边界追加 */
+        size_t outcap = len + strlen(entry) + 64;
+        out = (char *)dbox_malloc(outcap);
+        if (!out) { dbox_free(entry); break; }
+        if (!o || !c) {
+            snprintf(out, outcap, "[\n  %s\n]", entry);
+        } else {
+            int empty_array = 1;
+            for (const char *p = o + 1; p < c; p++) {
+                if (*p != ' ' && *p != '\t' && *p != '\r' && *p != '\n') {
+                    empty_array = 0;
+                    break;
+                }
+            }
+            if (empty_array) {
+                snprintf(out, outcap, "%.*s\n  %s\n]%s",
+                         (int)(o - content) + 1, content, entry, c + 1);
+            } else {
+                size_t headlen = (size_t)(c - content);
+                while (headlen > 0 && (content[headlen - 1] == ' ' ||
+                                       content[headlen - 1] == '\n' ||
+                                       content[headlen - 1] == '\r' ||
+                                       content[headlen - 1] == '\t'))
+                    headlen--;
+                snprintf(out, outcap, "%.*s,\n  %s\n]%s",
+                         (int)headlen, content, entry, c + 1);
+            }
+        }
+        dbox_free(entry);
+        entry = NULL;
+
+        size_t outlen = strlen(out);
+        /* 先写后截断：写失败（如被信号打断）时旧内容完整保留，避免清空索引 */
+        if (lseek(fd, 0, SEEK_SET) != 0 ||
+            write(fd, out, outlen) != (ssize_t)outlen ||
+            ftruncate(fd, (off_t)outlen) != 0) break;
+        result = 0;
+    } while (0);
+
+    trash_flock(fd, LOCK_UN);
+    close(fd);
+    dbox_free(content);
+    dbox_free(out);
+    return result;
+}
+
+/* --del-to-trash：把删除目标移入 OpenDesk 统一回收站（Windows 回收站等价物）。
+ * 目标名 <uuid>.back（随机 UUID，无冲突），并追加 summary.json 记录（原始路径/
+ * 大小/删除时间，供宿主 GUI 搜索与找回）。回收站目录由 launcher 创建，此处防御
+ * 性重建；跨文件系统（rename 失败）时退回 -1，由调用方直接删除。 */
 static int trash_move(const char *path, const char *what)
 {
     if (!g_trash_dir[0] || !path || !path[0]) return -1;
@@ -1536,22 +1719,29 @@ static int trash_move(const char *path, const char *what)
         }
         if (syscall(SYS_mkdirat, AT_FDCWD, tb, 0755) != 0 && errno != EEXIST) return -1;
     }
-    const char *base = strrchr(path, '/');
-    base = base ? base + 1 : path;
-    const char *name = base && base[0] ? base : "unnamed";
-    char dest[DBOX_PATH_MAX];
-    int n = 0;
-    do {
-        if (n == 0) snprintf(dest, sizeof dest, "%s/%s", g_trash_dir, name);
-        else snprintf(dest, sizeof dest, "%s/%s.%d", g_trash_dir, name, n);
-        n++;
-    } while (n < 1000 && syscall(SYS_faccessat, AT_FDCWD, dest, F_OK) == 0);
-    if (n >= 1000) {
-        dbox_logf("trash %s: name collision for %s", what, path);
-        return -1;
+    /* 大小必须在 rename 前取（目录记 0；lstat 被本文件拦截，用 raw syscall） */
+    long long size_bytes = 0;
+    {
+        struct stat st;
+        if (syscall(SYS_newfstatat, AT_FDCWD_C, path, &st, AT_SYMLINK_NOFOLLOW) == 0 &&
+            !S_ISDIR(st.st_mode)) {
+            size_bytes = (long long)st.st_size;
+        }
     }
+    char uuid[37];
+    trash_uuid(uuid);
+    char dest[DBOX_PATH_MAX];
+    snprintf(dest, sizeof dest, "%s/%s.back", g_trash_dir, uuid);
     int r = real_rename(path, dest);
-    if (r == 0) { dbox_logf("trash %s: %s -> %s", what, path, dest); return 0; }
+    if (r == 0) {
+        /* 记录失败不回滚移动（文件已在回收站，仅缺索引），留下诊断日志 */
+        char iso[40];
+        trash_iso_utc(iso, sizeof iso);
+        if (trash_append_summary(g_trash_dir, uuid, path, size_bytes, iso) != 0)
+            dbox_logf("trash %s: summary.json 记录失败: %s", what, path);
+        dbox_logf("trash %s: %s -> %s", what, path, dest);
+        return 0;
+    }
     dbox_logf("trash %s failed (%s), fallback unlink: %s", what, strerror(errno), path);
     return -1;
 }

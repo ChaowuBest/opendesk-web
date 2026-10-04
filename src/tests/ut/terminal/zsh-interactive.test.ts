@@ -23,7 +23,9 @@ jest.unstable_mockModule('../../../main/utils/setting.js', () => {
         },
         getOpendeskDirectory: () => tmp,
         getLogDirectory: () => path.join(tmp, 'logs'),
-        getTaskToolResultDirectory: () => path.join(tmp, 'tool-results')
+        getTaskToolResultDirectory: () => path.join(tmp, 'tool-results'),
+        getTrashRootDirectory: () => path.join(tmp, 'trash'),
+        getTaskTrashDirectory: (taskId: string) => path.join(tmp, 'trash', taskId)
     };
 });
 

@@ -196,7 +196,8 @@ function policyLinuxTail(
     workspaceRoot: string,
     rules?: PermissionRule[],
     home?: string,
-    extraWritableDirs?: string[]
+    extraWritableDirs?: string[],
+    opendeskDataDir?: string
 ): string[] {
     return [
         '',
@@ -230,9 +231,22 @@ function policyLinuxTail(
                   `[[rules]]\npath = ${quote(`${home}/Library/Caches/com.apple.python/**`)}\naccess = "write"\nperm = "allow"`
               ]
             : []),
-        // OpenDesk 自身数据目录（回收站 ~/.opendesk/trash/<taskId>/ 由 C 侧 rename
-        // 写入，不经弹窗；沙箱进程无感知）——放行避免误弹窗
-        ...(home ? [`[[rules]]\npath = ${quote(`${home}/.opendesk/**`)}\naccess = "write"\nperm = "allow"`] : []),
+        // 统一回收站目录写保护（对齐 Windows 不放行回收站、OH 原生 trash-protected
+        // DENY 的姿态）：回收站是误删数据的恢复区，沙箱进程可写即可清空整个回收站。
+        // --del-to-trash 的写入由 FUSE daemon（Linux）/ C 侧 internal 豁免（macOS）
+        // 完成，不经策略判定，不受此 deny 影响
+        ...(opendeskDataDir
+            ? [
+                  `[[rules]]\npath = ${quote(`${opendeskDataDir.replace(/\/+$/, '')}/trash/**`)}\naccess = "write"\nperm = "deny"`
+              ]
+            : []),
+        // OpenDesk 自身数据目录（logs/artifacts/tasks 等框架运行期写入）写放行避免
+        // 误弹窗；未显式传入时按默认布局 ~/.opendesk 推导
+        ...(home
+            ? [
+                  `[[rules]]\npath = ${quote(`${(opendeskDataDir ?? `${home}/.opendesk`).replace(/\/+$/, '')}/**`)}\naccess = "write"\nperm = "allow"`
+              ]
+            : []),
         // 任务工作区写入放行（早于兜底 write ask 命中）
         '[[rules]]',
         `path = ${quote(`${workspaceRoot}/**`)}`,
@@ -276,7 +290,8 @@ export function policyTextLinux(
     token: string,
     workspace: string,
     rules?: PermissionRule[],
-    home?: string
+    home?: string,
+    opendeskDataDir?: string
 ): string {
     const quote = (value: string) => JSON.stringify(value);
     const workspaceRoot = workspace.replace(/\/+$/, '') || '/';
@@ -289,7 +304,7 @@ export function policyTextLinux(
         '[[roots]]',
         'virtual = "/"',
         'real    = "/"',
-        ...policyLinuxTail(quote, endpoint, token, workspaceRoot, rules, home)
+        ...policyLinuxTail(quote, endpoint, token, workspaceRoot, rules, home, undefined, opendeskDataDir)
     ].join('\n');
 }
 

@@ -72,8 +72,11 @@ pub struct RunOptions {
     pub ro_dirs: Vec<String>,
     /// 诊断日志文件（追加写入装配/退出关键事件；终端结果不受影响）
     pub log_file: Option<String>,
-    /// 删除送回收站（XDG Trash）：unlink/rmdir 改写为移动到 trash 目录
+    /// 删除送回收站（OpenDesk 统一回收站）：unlink/rmdir 改写为移动到 trash 目录
     pub del_to_trash: bool,
+    /// 统一回收站目录（<opendesk>/trash/<taskId>，宿主经 --trash-dir 传入；
+    /// 空表示未指定，回退 XDG Trash）
+    pub trash_dir: Option<String>,
 }
 
 fn last_err(context: &str) -> String {
@@ -653,6 +656,7 @@ fn daemon_main(
     virtual_root: String,
     policy: Arc<Policy>,
     del_to_trash: bool,
+    trash_dir: String,
 ) {
     set_pdeathsig();
     let mut buf = [0u8; 16];
@@ -691,7 +695,7 @@ fn daemon_main(
         libc::umask(0o000);
     }
     let owned = unsafe { OwnedFd::from_raw_fd(raw) };
-    let fs = MirrorFs::new(backing, virtual_root, policy, host_uid, host_gid, del_to_trash);
+    let fs = MirrorFs::new(backing, virtual_root, policy, host_uid, host_gid, del_to_trash, trash_dir);
     // 请求 uid 按挂载 userns（fc->user_ns）表达（ns 内 uid 0 = 宿主用户），与 daemon
     // 在宿主 ns 的 uid 不直接可比，Owner ACL 会误拒所有请求。挂载点位于装配进程
     // 私有 mount ns，只有沙箱内进程可达，采用 All 无暴露面。
@@ -789,6 +793,7 @@ pub fn run(options: RunOptions) -> Result<i32, String> {
         let socket = sockets[index].1;
         let (policy, virtual_root) = (Arc::clone(&daemon_policy), virtual_root);
         let del_to_trash = options.del_to_trash;
+        let trash_dir = options.trash_dir.clone().unwrap_or_default();
         unsafe {
             let pid = libc::fork();
             if pid < 0 {
@@ -811,7 +816,7 @@ pub fn run(options: RunOptions) -> Result<i32, String> {
                         libc::close(b);
                     }
                 }
-                daemon_main(socket, backing, virtual_root, policy, del_to_trash);
+                daemon_main(socket, backing, virtual_root, policy, del_to_trash, trash_dir);
             }
             daemon_pids.push(pid);
         }

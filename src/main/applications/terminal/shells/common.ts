@@ -21,7 +21,7 @@ import fs from 'node:fs';
 import chalk from 'chalk';
 import type { TaskState } from '../../../aikernel/states/tasks.js';
 import { runPluginShellEnv } from '../../pluginmgr/runtime/hooks.js';
-import { Setting, getTaskToolResultDirectory } from '../../../utils/setting.js';
+import { Setting, getTaskToolResultDirectory, getTaskTrashDirectory } from '../../../utils/setting.js';
 import { installTimeoutBackgrounding, ShellTimeoutClock } from '../background.js';
 import { BoundedOutputBuffer } from '../output-buffer.js';
 import { computeTerminalOutputDelta } from '../output-delta.js';
@@ -231,6 +231,18 @@ export async function executeShellCommand(opts: {
 
     const baseEnv = buildChildProcessEnv(taskState?.harnessContext.environ);
     const env = await runPluginShellEnv(taskState, { shell: shellPath, command }, baseEnv);
+    // 任务级统一回收站目录（<opendesk>/trash/<taskId>）：每次拉起沙箱都基于当前
+    // 任务 ID 构建并传入，各平台参数格式见各 prepare*Sandbox 实现。删除送回收站
+    // 的开关（sandboxDeleteToTrash）仍由设置控制，原生层仅在开启时使用该目录。
+    let sandboxTrashDir: string | undefined;
+    if (useDynamicSandbox) {
+        try {
+            sandboxTrashDir = getTaskTrashDirectory(taskState?.task_id || 'unknown-task');
+        } catch (error) {
+            // 任务 ID 非法等异常情况不阻塞命令执行，仅放弃回收站隔离
+            console.warn('[trash] 构建 sandbox trash dir 失败:', error);
+        }
+    }
     const startTime = Date.now();
     // 沙箱权限弹窗等待用户决策期间暂停超时计时（见 dynabox 的 onPermissionWaitChange）
     const timeoutClock = new ShellTimeoutClock(timeout, startTime);
@@ -243,6 +255,7 @@ export async function executeShellCommand(opts: {
                   cwd,
                   taskState,
                   deleteToTrash: sandboxDeleteToTrash,
+                  trashDir: sandboxTrashDir,
                   onPermissionWaitChange: (waiting) => {
                       if (waiting) timeoutClock.pause();
                       else timeoutClock.resume();
@@ -256,6 +269,7 @@ export async function executeShellCommand(opts: {
                     cwd,
                     taskState,
                     deleteToTrash: sandboxDeleteToTrash,
+                    trashDir: sandboxTrashDir,
                     onPermissionWaitChange: (waiting) => {
                         if (waiting) timeoutClock.pause();
                         else timeoutClock.resume();
@@ -269,6 +283,7 @@ export async function executeShellCommand(opts: {
                       cwd,
                       taskState,
                       deleteToTrash: sandboxDeleteToTrash,
+                      trashDir: sandboxTrashDir,
                       onPermissionWaitChange: (waiting) => {
                           if (waiting) timeoutClock.pause();
                           else timeoutClock.resume();
@@ -282,6 +297,7 @@ export async function executeShellCommand(opts: {
                         cwd,
                         taskState,
                         deleteToTrash: sandboxDeleteToTrash,
+                        trashDir: sandboxTrashDir,
                         onPermissionWaitChange: (waiting) => {
                             if (waiting) timeoutClock.pause();
                             else timeoutClock.resume();

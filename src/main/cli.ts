@@ -23,6 +23,7 @@ import {
 import { initializeRegistry, initializeRegistryWorker, ApplicationRegistry } from './applications/registry';
 import { initializeAppWorkers } from './applications/worker';
 import { GlobalState } from './aikernel/states/global.js';
+import { initializeTrash, startTrashPreviewCleanupScheduler } from './utils/trash.js';
 import { FULL_CLEAR } from './tui/components/constants';
 import { OpenDeskTUI, CommandLineArgs } from './tui/entry.js';
 import { HeadlessRunner } from './tui/headless.js';
@@ -404,6 +405,12 @@ async function main(args: CommandLineArgs) {
     if (args.headless && args.command) {
         GlobalState.initialize();
         initializeRegistry();
+        // 统一回收站：确保 trash/ 根目录存在，并清理超过 7 天无交互任务的回收站
+        initializeTrash(() => {
+            const state = GlobalState.getInstance().taskManagerState;
+            return new Map(state.getTaskList().map((task) => [task.task_id, task.updated_at] as const));
+        });
+        startTrashPreviewCleanupScheduler();
         await initializePluginHost();
         AgentRegistry.initBuiltinAgents();
         registerGoalHooks();
@@ -431,6 +438,13 @@ async function main(args: CommandLineArgs) {
         AgentRegistry.initBuiltinAgents();
         registerGoalHooks();
         initializeHarnesses();
+
+        // 统一回收站：确保 trash/ 根目录存在，并清理超过 7 天无交互任务的回收站
+        initializeTrash(() => {
+            const state = GlobalState.getInstance().taskManagerState;
+            return new Map(state.getTaskList().map((task) => [task.task_id, task.updated_at] as const));
+        });
+        startTrashPreviewCleanupScheduler();
 
         // 在 TUI 接管 stdin 之前检测终端配色方案（OSC 11 查询需要直接读写 stdin/stdout）
         const { detectTerminalColorScheme } = await import('./tui/theme.js');

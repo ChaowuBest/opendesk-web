@@ -99,13 +99,19 @@ darwinOnly('prepareDarwinSandbox 端到端（真实进程）', () => {
             const code2 = await new Promise<number | null>((resolve) => proc2.once('exit', resolve));
             expect(code2).toBe(0);
             // 预存在文件已从工作区消失并进入废纸篓（经重签的 /bin/rm 执行）；
-            // 废纸篓目标带 毫秒.pid 后缀（防同名覆盖 TOCTOU），按前缀匹配
+            // 统一回收站目标名为 <uuid>.back（随机 UUID，防同名覆盖 TOCTOU），
+            // 且 summary.json 记录原始路径/大小/删除时间供宿主 GUI 找回
             expect(await waitFor(() => !fs.existsSync(path.join(workspace, 'to-delete.txt')))).toBe(true);
-            expect(await waitFor(() => fs.readdirSync(trashDir).some((name) => name.startsWith('to-delete.txt')))).toBe(
-                true
-            );
-            const trashed = fs.readdirSync(trashDir).find((name) => name.startsWith('to-delete.txt'));
-            expect(fs.readFileSync(path.join(trashDir, trashed!), 'utf8')).toBe('bye');
+            expect(await waitFor(() => fs.readdirSync(trashDir).some((name) => name.endsWith('.back')))).toBe(true);
+            const trashed = fs.readdirSync(trashDir).find((name) => name.endsWith('.back'))!;
+            expect(fs.readFileSync(path.join(trashDir, trashed), 'utf8')).toBe('bye');
+            const summary = JSON.parse(fs.readFileSync(path.join(trashDir, 'summary.json'), 'utf8'));
+            expect(Array.isArray(summary)).toBe(true);
+            expect(summary).toHaveLength(1);
+            expect(summary[0].uuid + '.back').toBe(trashed);
+            expect(summary[0].original_path).toContain('to-delete.txt');
+            expect(summary[0].size).toBe(3);
+            expect(Number.isNaN(Date.parse(summary[0].deleted_at))).toBe(false);
             // 外部读放行（capture.txt 有内容），外部写被拒（原内容保留）
             expect(await waitFor(() => fs.existsSync(path.join(workspace, 'capture.txt')))).toBe(true);
             expect(fs.readFileSync(outsideTarget, 'utf8')).toBe('secret');

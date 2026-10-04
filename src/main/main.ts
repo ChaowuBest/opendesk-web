@@ -121,7 +121,7 @@ import { submitFeedback } from './utils/feedback.js';
 import { getUsageDashboardSummary, getUsageRankings, type RankPeriod } from './telemetry/local-telemetry.js';
 import { TelemetryOperation, TelemetryOperationRegistry } from './telemetry/operation.js';
 import { registerGoalHooks } from './aikernel/goal/hooks.js';
-import { registerDesktopAPIHandlers } from './desktop/handlers.js';
+import { registerDesktopAPIHandlers, registerTrashAPIHandlers } from './windows/handlers.js';
 import { initializeHarnesses } from './aikernel/harnesses/index.js';
 import { initAgentGateHook } from './applications/agentgate/hook.js';
 import {
@@ -211,7 +211,7 @@ function migrateFileMgrWorkspaceSettingsOnStartup() {
 import Convert from 'ansi-to-html';
 import fs from 'fs';
 import path from 'path';
-import { openSystemTrash } from './utils/trash.js';
+import { openSystemTrash, initializeTrash, startTrashPreviewCleanupScheduler } from './utils/trash.js';
 import os from 'os';
 import fsPromises from 'fs/promises';
 
@@ -3782,6 +3782,7 @@ async function startApplication(): Promise<void> {
         registerMemoryAPIHandlers();
         registerUsageAPIHandlers();
         registerDesktopAPIHandlers();
+        registerTrashAPIHandlers();
         // registerTaskManagerAPIHandlers() 已在同步恢复 GlobalState 后注册；首次让出主进程
         // 事件循环前 handler 已就绪，可响应 renderer sidebar 的 taskManager:getTaskList。
         registerFSAPIHandlers();
@@ -3996,6 +3997,19 @@ async function startApplication(): Promise<void> {
 
         // 启动完成后异步清理过期日志，不阻塞主流程
         dropDeprecatedLogs().catch(() => {});
+
+        // 统一回收站：确保 trash/ 根目录存在，并清理最后一次用户交互超过 7 天
+        // 的任务的回收站（不阻塞主流程，失败仅记日志）
+        try {
+            initializeTrash(() => {
+                const state = GlobalState.getInstance().taskManagerState;
+                return new Map(state.getTaskList().map((task) => [task.task_id, task.updated_at] as const));
+            });
+        } catch (error) {
+            logger.warn(`初始化统一回收站失败（忽略）: ${error}`);
+        }
+        // 运行期周期清扫"打开"生成的预览副本（保留期 24 小时）
+        startTrashPreviewCleanupScheduler();
     });
 
     app.on('will-quit', async () => {

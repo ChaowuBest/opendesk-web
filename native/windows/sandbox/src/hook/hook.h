@@ -19,6 +19,7 @@ enum class AccessClass { Read, Write, Execute };
 // hook 全局状态（dllmain.cpp 初始化，hooks_*.cpp 使用）
 extern bool g_hooked;           // Detour patch 是否已提交
 extern bool g_delToTrash;       // 删除送回收站
+extern std::wstring g_trashDir; // OpenDesk 统一回收站目录（DYNOBOX_TRASH_DIR，<opendesk>/trash/<taskId>）
 extern Policy g_policy;         // 子进程内联策略（roots 已展开）
 
 // 重入保护：hook 函数内部调用其他被 hook 的 API（SHFileOperation/GetLongPathName）
@@ -45,7 +46,10 @@ bool isSpecialDevicePath(const std::wstring& path);
 // CreateFileW 的访问类别分解（与 Dokan 版 AccessKinds 语义对齐）。
 AccessClass categorizeCreateAccess(DWORD desiredAccess, DWORD creationDisposition);
 
-// 回收站删除（SHFileOperation FOF_ALLOWUNDO）。成功返回 true。
+// 删除分流送回收站：配置了 DYNOBOX_TRASH_DIR 时移入 OpenDesk 统一回收站
+// （<uuid>.back + summary.json 记录，供 GUI 文件回收站找回）；未配置时退回
+// 系统回收站（SHFileOperation FOF_ALLOWUNDO）。成功返回 true（原文件已不在
+// 原位置）；失败返回 false（调用方保留原文件，绝不静默永久删除）。
 bool recycleToTrash(const std::wstring& path);
 
 // 取句柄的完整规范化路径（\\?\ 前缀，动态缓冲避免 MAX_PATH 截断 fail-open）。

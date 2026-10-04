@@ -23,13 +23,14 @@ import { getPlatform } from '../../platforms/base.js';
 import { getOpendeskDirectory, getTaskArtifactDirectory, Setting } from '../utils/setting.js';
 import { getLocale, t } from '../../locale/index.js';
 import { logger } from '../utils/logger.js';
+import { TRASH_RETENTION_MS, prepareTrashPreviewCopy, restoreTrashEntry, searchTrashEntries } from '../utils/trash.js';
 import {
     buildCardGenerationPrompt,
     extractHtmlFromAssistantText,
     getLastAssistantMessageText,
     normalizeCardData,
     summarizeCardPromptForTaskName
-} from './cardGeneration.js';
+} from '../utils/cardGeneration.js';
 
 function getCardGenerationTaskName(prompt: string, isRefresh: boolean): string {
     return t(isRefresh ? 'main.desktop.card.refreshTaskName' : 'main.desktop.card.createTaskName', {
@@ -162,6 +163,120 @@ export function registerDesktopAPIHandlers(): void {
             }
             logger.warn(`[desktop] card generation failed: ${error?.message || String(error)}`);
             return { status: 'error', message: error?.message || String(error), taskId: task.task_id };
+        }
+    });
+}
+
+// ── 文件回收站 IPC：统一回收站（<opendeskDir>/trash/）的搜索、找回、
+// "打开"（原始文件名预览副本 + 系统默认应用）与任务上下文。供 GUI 文件回收站
+// 弹窗调用（trashAPI），数据格式见 main/utils/trash.ts。
+
+interface TrashSearchIpcOptions {
+    scope?: 'task' | 'global';
+    taskId?: string;
+    keyword?: string;
+    offset?: number;
+    limit?: number;
+}
+
+/** 注册文件回收站相关 IPC handler（trash:search / trash:restore / trash:openEntry / trash:getTaskContext）。 */
+export function registerTrashAPIHandlers(): void {
+    ipcMain.handle('trash:search', async (_event, options: TrashSearchIpcOptions) => {
+        try {
+            const scope = options?.scope === 'task' ? 'task' : 'global';
+            const keyword = typeof options?.keyword === 'string' ? options.keyword : '';
+            // 全局范围且无关键字时只列出"最近一个星期"有交互的任务
+            // （任务最后一次用户交互 = updated_at，超期回收站在启动时已被清理）
+            let recentTaskIds: string[] | undefined;
+            if (scope === 'global' && !keyword) {
+                const since = Date.now() - TRASH_RETENTION_MS;
+                recentTaskIds = GlobalState.getInstance()
+                    .taskManagerState.getTaskList()
+                    .filter((task) => {
+                        const time = Date.parse(task.updated_at ?? '');
+                        return Number.isFinite(time) && time >= since;
+                    })
+                    .map((task) => task.task_id);
+            }
+            const result = searchTrashEntries({
+                scope,
+                taskId: typeof options?.taskId === 'string' ? options.taskId : undefined,
+                keyword: keyword || undefined,
+                recentTaskIds,
+                offset: typeof options?.offset === 'number' ? options.offset : undefined,
+                limit: typeof options?.limit === 'number' ? options.limit : undefined
+            });
+            return { status: 'ok', data: result };
+        } catch (error: any) {
+            logger.error('searching trash failed', error);
+            return { status: 'error', message: error?.message || String(error) };
+        }
+    });
+
+    ipcMain.handle(
+        'trash:restore',
+        async (_event, payload: { taskId?: string; uuid?: string; overwrite?: boolean }) => {
+            try {
+                const taskId = typeof payload?.taskId === 'string' ? payload.taskId : '';
+                const uuid = typeof payload?.uuid === 'string' ? payload.uuid : '';
+                if (!taskId || !uuid) {
+                    return { status: 'error', message: 'taskId and uuid are required' };
+                }
+                const result = restoreTrashEntry({
+                    taskId,
+                    uuid,
+                    overwrite: payload?.overwrite === true
+                });
+                return { status: 'ok', data: result };
+            } catch (error: any) {
+                logger.error('restoring trash entry failed', error);
+                return { status: 'error', message: error?.message || String(error) };
+            }
+        }
+    );
+
+    // 浮窗任务信息区：任务名称 + 最后一条用户消息（getFullTask 太重，这里走懒加载）
+    ipcMain.handle('trash:getTaskContext', async (_event, taskId: string) => {
+        try {
+            if (typeof taskId !== 'string' || !taskId) {
+                return { status: 'error', message: 'taskId is required' };
+            }
+            const { task } = GlobalState.getInstance().taskManagerState.getTaskLoadResult(taskId);
+            if (!task) {
+                return { status: 'ok', data: null };
+            }
+            const lastUserMessage = task.chat_context.lastUserMessage();
+            return {
+                status: 'ok',
+                data: {
+                    task_id: task.task_id,
+                    task_name: task.task_name,
+                    last_user_message: lastUserMessage ? lastUserMessage.getPlainText() : ''
+                }
+            };
+        } catch (error: any) {
+            logger.error('loading trash task context failed', error);
+            return { status: 'error', message: error?.message || String(error) };
+        }
+    });
+
+    // "打开"：以原始文件名生成回收站内容的临时副本（.back 的扩展名无应用关联，
+    // 按原名命名后系统默认应用才能选中正确的程序），再经平台能力用系统默认
+    // 方式打开——与 taskview 文件卡片的 openPath 同一实现
+    ipcMain.handle('trash:openEntry', async (_event, payload: { taskId?: string; uuid?: string }) => {
+        try {
+            const result = prepareTrashPreviewCopy({
+                taskId: typeof payload?.taskId === 'string' ? payload.taskId : '',
+                uuid: typeof payload?.uuid === 'string' ? payload.uuid : ''
+            });
+            if (!result.path) {
+                return { status: 'error', message: result.message ?? 'preview copy failed' };
+            }
+            await getPlatform().openPath(result.path);
+            return { status: 'ok', data: { path: result.path } };
+        } catch (error: any) {
+            logger.error('opening trash entry failed', error);
+            return { status: 'error', message: error?.message || String(error) };
         }
     });
 }

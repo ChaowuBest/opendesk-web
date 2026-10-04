@@ -102,20 +102,24 @@ impl MirrorFs {
         host_uid: u32,
         host_gid: u32,
         del_to_trash: bool,
+        trash_dir_override: String,
     ) -> MirrorFs {
-        // XDG Trash（~/.local/share/Trash）：与家目录文件同文件系统（rename 语义），
-        // /tmp 等异盘文件跨 fs 时保留原文件（fail-closed，见 move_to_trash）
-        let trash_dir = std::env::var("HOME")
-            .map(|home| PathBuf::from(home).join(".local/share/Trash"))
-            .unwrap_or_else(|_| PathBuf::from("/tmp/.dynobox-trash"));
+        // OpenDesk 统一回收站目录（<opendesk>/trash/<taskId>，宿主经 --trash-dir
+        // 传入）；未传入时退回 XDG Trash（~/.local/share/Trash）。两者都与家目录
+        // 文件同文件系统（rename 语义），/tmp 等异盘文件跨 fs 时保留原文件
+        // （fail-closed，见 move_to_trash）
+        let trash_dir = if !trash_dir_override.is_empty() {
+            PathBuf::from(trash_dir_override)
+        } else {
+            std::env::var("HOME")
+                .map(|home| PathBuf::from(home).join(".local/share/Trash"))
+                .unwrap_or_else(|_| PathBuf::from("/tmp/.dynobox-trash"))
+        };
         if del_to_trash {
-            let _ = fs::create_dir_all(trash_dir.join("files"));
-            let _ = fs::create_dir_all(trash_dir.join("info"));
+            let _ = fs::create_dir_all(&trash_dir);
             // daemon umask 已清零（见 daemon_main）：回收站属用户私有数据，
             // 显式收紧为 0700，防首次创建时权限落入 0777
             let _ = fs::set_permissions(&trash_dir, fs::Permissions::from_mode(0o700));
-            let _ = fs::set_permissions(trash_dir.join("files"), fs::Permissions::from_mode(0o700));
-            let _ = fs::set_permissions(trash_dir.join("info"), fs::Permissions::from_mode(0o700));
         }
         MirrorFs {
             backing,
@@ -214,59 +218,206 @@ impl MirrorFs {
         }
     }
 
-    /// 把文件/目录移入回收站（XDG Trash）：rename 到 files/ + 写 info/*.trashinfo。
-    /// 返回 Ok(true)=已移入回收站，Ok(false)=未开启回收站；Err=跨文件系统/其他失败
-    /// （保留原文件，调用方按删除失败处理，fail-closed）。
+    /// 把文件/目录移入 OpenDesk 统一回收站：rename 到 `<trash>/<uuid>.back` +
+    /// 追加 `summary.json` 记录（uuid/原始路径/大小/删除时间，供宿主 GUI 搜索
+    /// 与找回）。返回 Ok(true)=已移入回收站，Ok(false)=未开启回收站；
+    /// Err=跨文件系统/其他失败（保留原文件，调用方按删除失败处理，fail-closed）。
     fn move_to_trash(&self, inner: &Path, is_dir: bool) -> Result<bool, String> {
         if !self.del_to_trash {
             return Ok(false);
         }
         let real = self.real(inner);
-        let file_name = inner
-            .file_name()
-            .and_then(|n| n.to_str())
-            .unwrap_or("trash");
-        // 冲突时追加序号（files/ 下已有同名则 + .N）
-        let mut name = file_name.to_string();
-        let mut counter = 1;
-        while self.trash_dir.join("files").join(&name).exists() {
-            name = format!("{file_name}.{counter}");
-            counter += 1;
-        }
-        let target = self.trash_dir.join("files").join(&name);
+        // 大小必须在 rename 前取（目录记 0；symlink 记 0，目标内容不随删丢失）
+        let size_bytes = match fs::symlink_metadata(&real) {
+            Ok(meta) if !meta.is_dir() => meta.len(),
+            _ => 0,
+        };
+        let uuid = Self::generate_uuid_v4();
+        let target = self.trash_dir.join(format!("{uuid}.back"));
         if let Err(e) = fs::rename(&real, &target) {
             // 跨文件系统（EXDEV）或权限失败：保留原文件，不静默删除
             return Err(format!("移入回收站失败（文件保留）: {e}"));
         }
-        // XDG Trash info：Path 为删除时的相对路径，DeletionDate 为 ISO 时间
-        let info_path = self.trash_dir.join("info").join(format!("{name}.trashinfo"));
-        // DeletionDate 用本地时间（XDG 规范）：daemon 在宿主 ns，可执行 date 取
-        // 本地时区；失败时回退 UTC（civil_time）
-        let local = std::process::Command::new("/bin/date")
-            .args(["+%Y-%m-%dT%H:%M:%S"])
-            .output()
-            .ok()
-            .filter(|o| o.status.success())
-            .and_then(|o| String::from_utf8(o.stdout).ok())
-            .map(|s| s.trim().to_string())
-            .filter(|s| s.len() >= 19);
-        let date_value = match local {
-            Some(s) => s,
-            None => {
-                let now = std::time::SystemTime::now()
-                    .duration_since(std::time::UNIX_EPOCH)
-                    .unwrap_or_default();
-                let (y, m, d, hh, mm, ss) = Self::civil_time(now.as_secs() as i64);
-                format!("{y:04}-{m:02}-{d:02}T{hh:02}:{mm:02}:{ss:02}")
-            }
-        };
-        let path_value = inner.display().to_string();
-        let _ = fs::write(
-            &info_path,
-            format!("[Trash Info]\nPath={path_value}\nDeletionDate={date_value}\n"),
-        );
+        // 原始路径：宿主绝对路径（透明路径，与策略匹配同视角），GUI 找回时按
+        // 该路径恢复
+        let original_path = self.policy_path(inner);
+        let deleted_at = Self::iso_utc_now();
+        if let Err(e) = Self::append_summary_entry(&self.trash_dir, &uuid, &original_path, size_bytes, &deleted_at) {
+            // 记录失败不回滚移动（文件已在回收站，仅缺索引）：留下诊断日志
+            eprintln!("沙箱 daemon: summary.json 记录失败: {e}");
+        }
         let _ = is_dir;
         Ok(true)
+    }
+
+    /// 生成随机 UUID v4（/dev/urandom → RFC 4122 小写连字符格式）。
+    /// 失败时退化为时间+pid 拼接的伪随机串（保留唯一性，放弃随机性）。
+    fn generate_uuid_v4() -> String {
+        let mut bytes = [0u8; 16];
+        let mut ok = false;
+        if let Ok(mut f) = std::fs::File::open("/dev/urandom") {
+            use std::io::Read;
+            ok = f.read_exact(&mut bytes).is_ok();
+        }
+        if !ok {
+            let nanos = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_nanos();
+            bytes[..8].copy_from_slice(&nanos.to_le_bytes()[..8]);
+            bytes[8..12].copy_from_slice(&std::process::id().to_le_bytes());
+            bytes[12..16].copy_from_slice(&(nanos as u32).to_le_bytes());
+        }
+        bytes[6] = (bytes[6] & 0x0f) | 0x40; // version 4
+        bytes[8] = (bytes[8] & 0x3f) | 0x80; // RFC 4122 variant
+        format!(
+            "{:02x}{:02x}{:02x}{:02x}-{:02x}{:02x}-{:02x}{:02x}-{:02x}{:02x}-{:02x}{:02x}{:02x}{:02x}{:02x}{:02x}",
+            bytes[0], bytes[1], bytes[2], bytes[3], bytes[4], bytes[5], bytes[6], bytes[7],
+            bytes[8], bytes[9], bytes[10], bytes[11], bytes[12], bytes[13], bytes[14], bytes[15]
+        )
+    }
+
+    /// 当前 UTC 时间的 ISO 8601 毫秒精度时间戳（无 chrono，civil_time 换算）。
+    fn iso_utc_now() -> String {
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default();
+        let millis = now.as_millis() % 1000;
+        let (y, m, d, hh, mm, ss) = Self::civil_time(now.as_secs() as i64);
+        format!("{y:04}-{m:02}-{d:02}T{hh:02}:{mm:02}:{ss:02}.{millis:03}Z")
+    }
+
+    /// JSON 字符串转义（仅 \" \\ 与控制字符；非 ASCII 按 UTF-8 原样输出，合法 JSON）。
+    fn json_escape(value: &str, out: &mut String) {
+        out.push('"');
+        for ch in value.chars() {
+            match ch {
+                '"' => out.push_str("\\\""),
+                '\\' => out.push_str("\\\\"),
+                '\u{8}' => out.push_str("\\b"),
+                '\u{c}' => out.push_str("\\f"),
+                '\n' => out.push_str("\\n"),
+                '\r' => out.push_str("\\r"),
+                '\t' => out.push_str("\\t"),
+                c if (c as u32) < 0x20 => out.push_str(&format!("\\u{:04x}", c as u32)),
+                c => out.push(c),
+            }
+        }
+        out.push('"');
+    }
+
+    /// 追加一条删除记录到 `<trash>/summary.json`（顶层 JSON 数组）。
+    /// flock 独占锁下读-改-写：新条目定位数组尾部 ']' 追加，避免整表解析/重写；
+    /// 损坏文件留存为 summary.json.corrupt-<millis> 后重开重建（锁随之转移到
+    /// 新 inode）。返回 Ok(()) 或原因。
+    fn append_summary_entry(
+        trash_dir: &Path,
+        uuid: &str,
+        original_path: &str,
+        size_bytes: u64,
+        deleted_at: &str,
+    ) -> Result<(), String> {
+        use std::io::{Read, Seek, SeekFrom, Write};
+        fn open_rw(path: &Path) -> Result<std::fs::File, String> {
+            // mode(0o600)：daemon umask 已清零（见 daemon_main），不显式收紧会落成 0666
+            std::fs::OpenOptions::new()
+                .read(true)
+                .write(true)
+                .create(true)
+                .truncate(false)
+                .mode(0o600)
+                .open(path)
+                .map_err(|e| format!("open {}: {e}", path.display()))
+        }
+        // flock 阻塞等待可能被信号打断（EINTR）：必须重试，否则会在未持锁状态下
+        // 读-改-写 summary.json，与其他并发写者互相覆盖
+        fn flock_retry(file: &std::fs::File, operation: libc::c_int) {
+            let fd = std::os::fd::AsRawFd::as_raw_fd(file);
+            loop {
+                let rc = unsafe { libc::flock(fd, operation) };
+                if rc == 0 {
+                    return;
+                }
+                let errno = std::io::Error::last_os_error().raw_os_error().unwrap_or(0);
+                if errno != libc::EINTR {
+                    return;
+                }
+            }
+        }
+        let summary_path = trash_dir.join("summary.json");
+        let mut file = open_rw(&summary_path)?;
+        flock_retry(&file, libc::LOCK_EX);
+        let result = loop {
+            let mut raw = Vec::new();
+            if let Err(e) = file.read_to_end(&mut raw) {
+                break Err(format!("read: {e}"));
+            }
+            if raw.len() > 256 * 1024 * 1024 {
+                break Err("summary.json 过大".to_string());
+            }
+            let content = String::from_utf8_lossy(&raw);
+
+            let mut entry = String::from("{\"uuid\":");
+            Self::json_escape(uuid, &mut entry);
+            entry.push_str(",\"original_path\":");
+            Self::json_escape(original_path, &mut entry);
+            entry.push_str(&format!(",\"size\":{size_bytes},\"deleted_at\":"));
+            Self::json_escape(deleted_at, &mut entry);
+            entry.push('}');
+
+            let open_idx = content.find('[');
+            let close_idx = content.rfind(']');
+            let corrupt = match (open_idx, close_idx) {
+                (Some(o), Some(c)) => o > c,
+                _ => true,
+            };
+            if corrupt && !content.is_empty() {
+                // 损坏文件留存后重开：当前 fd 指向被改名的旧 inode，锁保护需
+                // 转移到 summary_path 处的新 inode（重开 + 重新 flock 后续轮追加）
+                let backup = trash_dir.join(format!(
+                    "summary.json.corrupt-{}",
+                    std::time::SystemTime::now()
+                        .duration_since(std::time::UNIX_EPOCH)
+                        .unwrap_or_default()
+                        .as_millis()
+                ));
+                if let Err(e) = std::fs::rename(&summary_path, &backup) {
+                    break Err(format!("留存损坏 summary 失败: {e}"));
+                }
+                flock_retry(&file, libc::LOCK_UN);
+                file = match open_rw(&summary_path) {
+                    Ok(f) => f,
+                    Err(e) => break Err(e),
+                };
+                flock_retry(&file, libc::LOCK_EX);
+                continue;
+            }
+            let updated = if corrupt {
+                // 空文件（目录首轮）或留存后的重建：单条目数组
+                format!("[\n  {}\n]", entry)
+            } else {
+                let (o, c) = (open_idx.unwrap(), close_idx.unwrap());
+                let empty_array =
+                    content[o + 1..c].bytes().all(|b| matches!(b, b' ' | b'\t' | b'\r' | b'\n'));
+                if empty_array {
+                    format!("{}\n  {}\n]{}", &content[..=o], entry, &content[c + 1..])
+                } else {
+                    let head = content[..c].trim_end().to_string();
+                    format!("{},\n  {}\n]{}", head, entry, &content[c + 1..])
+                }
+            };
+            file.seek(SeekFrom::Start(0)).map_err(|e| format!("seek: {e}"))?;
+            if let Err(e) = file.write_all(updated.as_bytes()) {
+                // 先写后截断：写失败（如被信号打断）时旧内容完整保留，避免清空索引
+                break Err(format!("write: {e}"));
+            }
+            if let Err(e) = file.set_len(updated.len() as u64) {
+                break Err(format!("truncate: {e}"));
+            }
+            break Ok(());
+        };
+        flock_retry(&file, libc::LOCK_UN);
+        result
     }
 
     /// 秒数 → (年,月,日,时,分,秒)（Howard Hinnant civil_from_days 算法，无 chrono；
@@ -1367,6 +1518,87 @@ mod tests {
         assert_eq!(MirrorFs::civil_time(1_767_225_600), (2026, 1, 1, 0, 0, 0));
         assert_eq!(MirrorFs::civil_time(1_790_726_400), (2026, 9, 30, 0, 0, 0));
         assert_eq!(MirrorFs::civil_time(1_790_726_400 + 86_399), (2026, 9, 30, 23, 59, 59));
+    }
+
+    #[test]
+    fn uuid_v4_has_canonical_shape() {
+        // 与宿主侧 TrashEntry 校验正则一致：8-4-4-4-12 小写十六进制，v4 版本位
+        for _ in 0..32 {
+            let uuid = MirrorFs::generate_uuid_v4();
+            assert_eq!(uuid.len(), 36);
+            let parts: Vec<&str> = uuid.split('-').collect();
+            assert_eq!(parts.len(), 5);
+            assert_eq!((parts[0].len(), parts[1].len(), parts[2].len(), parts[3].len(), parts[4].len()),
+                       (8, 4, 4, 4, 12));
+            assert!(uuid.chars().all(|c| c == '-' || c.is_ascii_hexdigit()));
+            assert!(uuid.chars().all(|c| !c.is_ascii_uppercase()));
+            assert_eq!(&parts[2][0..1], "4");
+        }
+        // 唯一性抽查
+        let a = MirrorFs::generate_uuid_v4();
+        let b = MirrorFs::generate_uuid_v4();
+        assert_ne!(a, b);
+    }
+
+    #[test]
+    fn json_escape_quotes_control_chars_and_keeps_utf8() {
+        let mut out = String::new();
+        MirrorFs::json_escape("C:\\dir\\名前\"quote\"\n\u{1}", &mut out);
+        assert_eq!(out, "\"C:\\\\dir\\\\名前\\\"quote\\\"\\n\\u0001\"");
+    }
+
+    #[test]
+    fn summary_append_grows_array_and_survives_rebuild() {
+        let dir = std::env::temp_dir().join(format!("dynobox-summary-test-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+
+        let entry = |uuid: &str| {
+            MirrorFs::append_summary_entry(&dir, uuid, "/tmp/a.txt", 42, "2026-05-01T00:00:00.000Z")
+                .unwrap();
+        };
+        entry("00000000-0000-4000-8000-000000000001");
+        entry("00000000-0000-4000-8000-000000000002");
+
+        let content = std::fs::read_to_string(dir.join("summary.json")).unwrap();
+        let parsed: serde_json::Value = serde_json::from_str(&content).unwrap();
+        assert_eq!(parsed.as_array().unwrap().len(), 2);
+        assert_eq!(parsed[1]["original_path"], "/tmp/a.txt");
+        assert_eq!(parsed[1]["size"], 42);
+
+        // 空数组形式（宿主或旧数据可能写入 "[]"）：追加后仍是合法数组
+        std::fs::write(dir.join("summary.json"), "[]").unwrap();
+        entry("00000000-0000-4000-8000-000000000003");
+        let parsed: serde_json::Value =
+            serde_json::from_str(&std::fs::read_to_string(dir.join("summary.json")).unwrap()).unwrap();
+        assert_eq!(parsed.as_array().unwrap().len(), 1);
+        assert_eq!(parsed[0]["uuid"], "00000000-0000-4000-8000-000000000003");
+
+        // 损坏内容：留存重建，新条目可查且旧文件有备份
+        std::fs::write(dir.join("summary.json"), "{broken").unwrap();
+        entry("00000000-0000-4000-8000-000000000004");
+        let parsed: serde_json::Value =
+            serde_json::from_str(&std::fs::read_to_string(dir.join("summary.json")).unwrap()).unwrap();
+        assert_eq!(parsed[0]["uuid"], "00000000-0000-4000-8000-000000000004");
+        let leftovers: Vec<_> = std::fs::read_dir(&dir)
+            .unwrap()
+            .filter_map(|e| e.ok())
+            .filter(|e| e.file_name().to_string_lossy().starts_with("summary.json.corrupt"))
+            .collect();
+        assert_eq!(leftovers.len(), 1);
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn iso_utc_now_has_millisecond_precision() {
+        let stamp = MirrorFs::iso_utc_now();
+        // 2026-05-01T00:00:00.000Z
+        assert_eq!(stamp.len(), 24);
+        assert!(stamp.ends_with('Z'));
+        assert_eq!(&stamp[4..5], "-");
+        assert_eq!(&stamp[10..11], "T");
+        assert_eq!(&stamp[19..20], ".");
     }
 }
 

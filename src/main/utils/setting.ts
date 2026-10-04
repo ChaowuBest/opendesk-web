@@ -1246,6 +1246,38 @@ function getTaskSessionMemoryPath(taskId: string, ensureExists: boolean = true):
     return path.join(getTaskSessionMemoryDirectory(taskId, ensureExists), 'session-memory.md');
 }
 
+/**
+ * 获取统一回收站根目录 `<opendeskDir>/trash/`。
+ * 各平台沙箱的删除回收统一落在这里（访问时创建，应用启动时也会显式创建）。
+ */
+function getTrashRootDirectory(): string {
+    return ensureDirectoryExists(path.join(getOpendeskDirectory(), 'trash'));
+}
+
+/** 任务 ID 的合法性约束与 TaskManagerState 导入校验保持一致（防路径穿越）。 */
+const TRASH_TASK_ID_PATTERN = /^[a-zA-Z0-9_-]{1,128}$/;
+
+/**
+ * 获取任务级回收站目录 `<opendeskDir>/trash/<taskId>/`。
+ * 沙箱删除的文件以 `<uuid>.back` + `summary.json` 的形式组织在该目录下，
+ * 目录名即任务 ID（形如 task_xxx）。默认在访问时创建，仅读场景（清理扫描）
+ * 可显式关闭创建。
+ */
+function getTaskTrashDirectory(taskId: string, ensureExists: boolean = true): string {
+    if (!TRASH_TASK_ID_PATTERN.test(taskId)) {
+        throw new Error(`invalid task id for trash directory: ${taskId}`);
+    }
+    const trashRoot = path.join(getOpendeskDirectory(), 'trash');
+    const taskTrashDirectory = path.join(trashRoot, taskId);
+
+    if (ensureExists) {
+        ensureDirectoryExists(trashRoot);
+        ensureDirectoryExists(taskTrashDirectory);
+    }
+
+    return taskTrashDirectory;
+}
+
 export type ShortcutsConfig = z.infer<typeof ShortcutsSchema>;
 
 /**
@@ -1308,6 +1340,8 @@ export {
     getTaskToolResultDirectory,
     getTaskSessionMemoryDirectory,
     getTaskSessionMemoryPath,
+    getTrashRootDirectory,
+    getTaskTrashDirectory,
     getTempWorkspaceDirectory,
     getSettingSchema,
     getShortcuts,

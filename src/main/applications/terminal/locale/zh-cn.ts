@@ -39,7 +39,8 @@ export const zhCn: Record<string, string> = {
     'prompt.sandbox.absolutePaths':
         '- 命令、workingDirectory 以及 PowerShell、Python、Node.js 脚本中的绝对路径直接使用宿主盘符路径（C:X 或 C:/X）；策略与授权按根相对约定 /C/... 映射。',
     'prompt.sandbox.cwd': '- 沙箱工作目录与任务工作空间一致（宿主真实路径，例如 C:/foo）；相对路径从该目录解析。',
-    'prompt.sandbox.trash': '- 删除一律送入 Windows 回收站（与 Linux/OHOS 沙箱一致，不区分实例内新建）。',
+    'prompt.sandbox.trash':
+        '- 删除一律送入 OpenDesk 文件回收站（统一回收站，删除的文件可在界面中找回；本沙箱实例内新建的文件删除时直接清除）。',
     'sandbox.description':
         '在 Windows 动态沙箱中执行选定的 powershell 或 Git Bash。子进程直接使用宿主真实路径（C:X 或 C:/X）；策略与授权按根相对约定 /C/... 映射到宿主 C:/...；相对路径从任务工作区（宿主真实路径）解析。文件访问审批仍显示原始宿主路径。',
     'sandbox.pathErrorHint':
@@ -71,5 +72,5 @@ export const zhCn: Record<string, string> = {
     'sandbox.cwdMissing.darwin': '动态沙箱需要任务工作目录作为受控路径。',
     'sandbox.cwdUnsupported.darwin': '沙箱工作目录不存在或不可用：${path}',
     'prompt.sandbox.darwin.trash':
-        '- 任务开始前已存在的文件被删除时会送入 macOS 废纸篓；沙箱运行期间创建的文件在同一沙箱实例内删除时直接清除，不进废纸篓。'
+        '- 任务开始前已存在的文件被删除时会送入 OpenDesk 文件回收站（可在界面中找回）；沙箱运行期间创建的文件在同一沙箱实例内删除时直接清除，不进回收站。'
 };

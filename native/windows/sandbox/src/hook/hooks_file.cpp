@@ -7,6 +7,7 @@
 #include "hook.h"
 
 #include <shellapi.h>
+#include <objbase.h>
 #include <cstring>
 #include <cwctype>
 #include <vector>
@@ -16,8 +17,271 @@
 #include "../common/utf.h"
 
 #pragma comment(lib, "shell32.lib")
+#pragma comment(lib, "ole32.lib")
 
 namespace sbx {
+
+// 去掉 GetFinalPathNameByHandle 返回的 \\?\ / \\?\UNC\ 前缀（SHFileOperation 与
+// summary.json 记录都需要普通路径）。
+static std::wstring normalizeWin32Path(const std::wstring& path)
+{
+    if (path.rfind(L"\\\\?\\UNC\\", 0) == 0) {
+        return L"\\\\" + path.substr(8);
+    }
+    if (path.rfind(L"\\\\?\\", 0) == 0) {
+        return path.substr(4);
+    }
+    return path;
+}
+
+// 生成随机 UUID v4（CoCreateGuid）并格式化为 RFC 4122 小写连字符形式，
+// 与 Linux/OH/macOS 原生层及宿主侧回收站格式一致。
+static bool generateUuidV4(std::wstring& out)
+{
+    GUID guid;
+    if (CoCreateGuid(&guid) != S_OK) return false;
+    wchar_t buf[40] = {};
+    swprintf_s(buf, L"%08x-%04x-%04x-%02x%02x-%02x%02x%02x%02x%02x%02x",
+               (unsigned)guid.Data1, (unsigned)guid.Data2, (unsigned)guid.Data3,
+               (unsigned)guid.Data4[0], (unsigned)guid.Data4[1],
+               (unsigned)guid.Data4[2], (unsigned)guid.Data4[3], (unsigned)guid.Data4[4],
+               (unsigned)guid.Data4[5], (unsigned)guid.Data4[6], (unsigned)guid.Data4[7]);
+    out.assign(buf);
+    return true;
+}
+
+// JSON 字符串转义：仅 \" \\ 与控制字符需要转义（\b \f \n \r \t 及 \u00XX）；
+// 非 ASCII 按UTF-8 原样输出（合法 JSON，中文路径无需 \u 转义）。
+static void jsonEscapeToUtf8(const std::wstring& value, std::string& out)
+{
+    out += '"';
+    // 先整体转 UTF-8 再按字节转义：逐 wchar_t 转换会把非 BMP 字符（emoji 等
+    // UTF-16 代理对）拆成孤立代理项，WideCharToMultiByte 产出 U+FFFD 损坏路径
+    const std::string utf8 = wideToUtf8(value);
+    for (unsigned char ch : utf8) {
+        switch (ch) {
+            case '"': out += "\\\""; break;
+            case '\\': out += "\\\\"; break;
+            case '\b': out += "\\b"; break;
+            case '\f': out += "\\f"; break;
+            case '\n': out += "\\n"; break;
+            case '\r': out += "\\r"; break;
+            case '\t': out += "\\t"; break;
+            default:
+                if (ch < 0x20) {
+                    char esc[8];
+                    sprintf_s(esc, "\\u%04x", (unsigned)ch);
+                    out += esc;
+                } else {
+                    out += static_cast<char>(ch);
+                }
+                break;
+        }
+    }
+    out += '"';
+}
+
+// ISO 8601 UTC 时间戳（毫秒精度），与宿主侧 TrashEntry.deleted_at 一致。
+static std::wstring isoUtcNow()
+{
+    SYSTEMTIME st;
+    GetSystemTime(&st);
+    wchar_t buf[40] = {};
+    swprintf_s(buf, L"%04u-%02u-%02uT%02u:%02u:%02u.%03uZ",
+               st.wYear, st.wMonth, st.wDay, st.wHour, st.wMinute, st.wSecond, st.wMilliseconds);
+    return buf;
+}
+
+// 逐级创建目录（mkdir -p 等价；回收站目录多级：<opendesk>/trash/<taskId>）。
+static bool ensureDirectoryRecursive(const std::wstring& directory)
+{
+    std::wstring dir = directory;
+    while (!dir.empty() && (dir.back() == L'\\' || dir.back() == L'/')) dir.pop_back();
+    if (dir.size() < 2) return false;
+    for (size_t i = 1; i < dir.size(); i++) {
+        if (dir[i] == L'\\' || dir[i] == L'/') {
+            std::wstring prefix = dir.substr(0, i);
+            // 跳过盘符根（C:\）与非前缀分隔符
+            if (prefix.size() == 2 && prefix[1] == L':') continue;
+            CreateDirectoryW(prefix.c_str(), nullptr); // 已存在时忽略错误
+        }
+    }
+    if (!CreateDirectoryW(dir.c_str(), nullptr)) {
+        DWORD err = GetLastError();
+        if (err != ERROR_ALREADY_EXISTS) return false;
+    }
+    return true;
+}
+
+// 追加一条删除记录到 summary.json（顶层 JSON 数组）。同一任务的并发沙箱实例
+// 会共写同一文件：独占 LockFileEx 下读-改-写；新条目追加到数组尾部（定位最后
+// 的 ']'），避免整表解析/重写。旧文件损坏时改名留存（.corrupt-<tick>）后重建。
+// 写入成功返回 true。
+static bool appendTrashSummary(const std::wstring& trashDir, const std::wstring& uuid,
+                               const std::wstring& originalPath, unsigned long long size,
+                               const std::wstring& deletedAtIso)
+{
+    std::wstring summaryPath = trashDir + L"\\summary.json";
+    // FILE_SHARE_DELETE：损坏重建需把已打开的 summary.json 改名留存
+    HANDLE handle = CreateFileW(summaryPath.c_str(), GENERIC_READ | GENERIC_WRITE,
+                                FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+                                nullptr, OPEN_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
+    if (handle == INVALID_HANDLE_VALUE) {
+        Log::warn(L"[TRASH] 打开 summary.json 失败(%lu): %ls", GetLastError(), summaryPath.c_str());
+        return false;
+    }
+    OVERLAPPED region = {};
+    if (!LockFileEx(handle, LOCKFILE_EXCLUSIVE_LOCK, 0, MAXDWORD, MAXDWORD, &region)) {
+        Log::warn(L"[TRASH] 锁定 summary.json 失败(%lu)", GetLastError());
+        CloseHandle(handle);
+        return false;
+    }
+
+    bool ok = false;
+    std::string content;
+    do {
+        LARGE_INTEGER fileSize = {};
+        if (!GetFileSizeEx(handle, &fileSize) || fileSize.QuadPart < 0 ||
+            fileSize.QuadPart > 256 * 1024 * 1024) {
+            Log::warn(L"[TRASH] summary.json 大小异常，跳过记录");
+            break;
+        }
+        content.resize(static_cast<size_t>(fileSize.QuadPart));
+        DWORD read = 0;
+        SetFilePointer(handle, 0, nullptr, FILE_BEGIN);
+        if (!ReadFile(handle, content.empty() ? nullptr : &content[0],
+                      static_cast<DWORD>(content.size()), &read, nullptr)) {
+            Log::warn(L"[TRASH] 读取 summary.json 失败(%lu)", GetLastError());
+            break;
+        }
+        content.resize(read);
+
+        // 条目 JSON（字段顺序与 Linux/OH/macOS 一致）
+        std::string entry = "{\"uuid\":\"" + wideToUtf8(uuid) + "\",\"original_path\":";
+        jsonEscapeToUtf8(originalPath, entry);
+        entry += ",\"size\":" + std::to_string(size) + ",\"deleted_at\":\"" + wideToUtf8(deletedAtIso) + "\"}";
+
+        // 顶层结构定位：合法文件形如 [ ... ]；缺失括号或顺序颠倒视为损坏
+        size_t closeIdx = content.find_last_of(']');
+        size_t openIdx = content.find('[');
+        bool corrupt = closeIdx == std::string::npos || openIdx == std::string::npos || openIdx > closeIdx;
+
+        std::string updated;
+        if (!corrupt) {
+            bool emptyArray = true;
+            for (size_t i = openIdx + 1; i < closeIdx; i++) {
+                unsigned char ch = static_cast<unsigned char>(content[i]);
+                if (ch != ' ' && ch != '\t' && ch != '\r' && ch != '\n') {
+                    emptyArray = false;
+                    break;
+                }
+            }
+            if (emptyArray) {
+                // "[ ]" → "[\n  <entry>\n]"
+                updated = content.substr(0, openIdx + 1) + "\n  " + entry + "\n]" +
+                          (closeIdx + 1 < content.size() ? content.substr(closeIdx + 1) : "");
+            } else {
+                // 非空数组：去掉尾部 ']' 及其后空白，追加逗号与条目
+                updated = content.substr(0, closeIdx);
+                while (!updated.empty() &&
+                       (updated.back() == '\n' || updated.back() == '\r' || updated.back() == ' ' ||
+                        updated.back() == '\t')) {
+                    updated.pop_back();
+                }
+                updated += ",\n  " + entry + "\n]" +
+                           (closeIdx + 1 < content.size() ? content.substr(closeIdx + 1) : "");
+            }
+        } else {
+            // 文件损坏（非空时）：改名留存旧内容后重建空数组
+            if (!content.empty()) {
+                std::wstring backup = trashDir + L"\\summary.json.corrupt-" +
+                                      std::to_wstring(GetTickCount64());
+                if (!MoveFileExW(summaryPath.c_str(), backup.c_str(), MOVEFILE_REPLACE_EXISTING)) {
+                    Log::warn(L"[TRASH] summary.json 留存失败(%lu)，跳过记录", GetLastError());
+                    break;
+                }
+                Log::warn(L"[TRASH] summary.json 损坏，旧内容留存: %ls", backup.c_str());
+                // 关闭指向已改名文件的句柄，重建全新文件
+                UnlockFileEx(handle, 0, MAXDWORD, MAXDWORD, &region);
+                CloseHandle(handle);
+                handle = CreateFileW(summaryPath.c_str(), GENERIC_READ | GENERIC_WRITE,
+                                     FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+                                     nullptr, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
+                if (handle == INVALID_HANDLE_VALUE) {
+                    Log::warn(L"[TRASH] 重建 summary.json 失败(%lu)", GetLastError());
+                    return false;
+                }
+                OVERLAPPED region2 = {};
+                if (!LockFileEx(handle, LOCKFILE_EXCLUSIVE_LOCK, 0, MAXDWORD, MAXDWORD, &region2)) {
+                    Log::warn(L"[TRASH] 锁定重建的 summary.json 失败(%lu)", GetLastError());
+                    CloseHandle(handle);
+                    return false;
+                }
+                region = region2;
+            }
+            updated = "[\n  " + entry + "\n]";
+        }
+
+        DWORD written = 0;
+        SetFilePointer(handle, 0, nullptr, FILE_BEGIN);
+        // 先写后截断：写失败时旧内容完整保留，避免清空索引（WriteFile 成功后
+        // 文件指针位于新内容末尾，SetEndOfFile 恰好截掉旧内容的残留尾部）
+        if (!WriteFile(handle, updated.data(), static_cast<DWORD>(updated.size()), &written, nullptr) ||
+            written != updated.size() ||
+            !SetEndOfFile(handle)) {
+            Log::warn(L"[TRASH] 写入 summary.json 失败(%lu)", GetLastError());
+            break;
+        }
+        ok = true;
+    } while (false);
+
+    UnlockFileEx(handle, 0, MAXDWORD, MAXDWORD, &region);
+    CloseHandle(handle);
+    return ok;
+}
+
+// 配置了统一回收站（DYNOBOX_TRASH_DIR）时的删除实现：MoveFileExW 移动到
+// <trashDir>\<uuid>.back（跨卷文件自动复制+删除），并追加 summary.json 记录
+// 供 GUI 文件回收站搜索与找回。
+static bool moveToOpenDeskTrash(const std::wstring& normalizedPath)
+{
+    // 多级回收站目录防御性创建（宿主通常已建）
+    if (!ensureDirectoryRecursive(g_trashDir)) {
+        Log::warn(L"[TRASH] 回收站目录不可用，保留原文件: %ls", g_trashDir.c_str());
+        return false;
+    }
+    std::wstring uuid;
+    if (!generateUuidV4(uuid)) {
+        Log::warn(L"[TRASH] UUID 生成失败，保留原文件: %ls", normalizedPath.c_str());
+        return false;
+    }
+    // 大小：目录记 0，文件按字节数（GUI 列表展示用）
+    unsigned long long sizeBytes = 0;
+    bool isDirectory = false;
+    {
+        WIN32_FILE_ATTRIBUTE_DATA fad;
+        if (GetFileAttributesExW(normalizedPath.c_str(), GetFileExInfoStandard, &fad)) {
+            isDirectory = (fad.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) != 0;
+            if (!isDirectory) {
+                ULARGE_INTEGER fileSize;
+                fileSize.LowPart = fad.nFileSizeLow;
+                fileSize.HighPart = fad.nFileSizeHigh;
+                sizeBytes = fileSize.QuadPart;
+            }
+        }
+    }
+    std::wstring target = g_trashDir + L"\\" + uuid + L".back";
+    // MOVEFILE_COPY_ALLOWED：跨卷文件复制+删除（目录跨卷无法复制，保持 fail-closed）
+    DWORD flags = MOVEFILE_WRITE_THROUGH | (isDirectory ? 0 : MOVEFILE_COPY_ALLOWED);
+    if (!MoveFileExW(normalizedPath.c_str(), target.c_str(), flags)) {
+        // 跨卷目录/权限等失败：保留原文件（绝不静默永久删除）
+        Log::warn(L"[TRASH] 移入回收站失败(%lu)，保留原文件: %ls", GetLastError(), normalizedPath.c_str());
+        return false;
+    }
+    // 记录失败不回滚移动（文件已在回收站，仅无索引；下次删除可继续记录）
+    appendTrashSummary(g_trashDir, uuid, normalizedPath, sizeBytes, isoUtcNow());
+    return true;
+}
 
 // 系统策略禁用回收站时（Policies\Explorer 的 NoRecycleBin / NukeOnDelete=1），
 // SHFileOperation 的 FOF_ALLOWUNDO 会静默退化为永久删除——违反"绝不静默永久
@@ -47,30 +311,15 @@ static bool isRecycleBinDisabled()
     return disabled;
 }
 
-bool recycleToTrash(const std::wstring& path)
+// 退路：系统回收站（未配置统一回收站目录时使用，SHFileOperation FOF_ALLOWUNDO）。
+static bool recycleToSystemBin(const std::wstring& path)
 {
-    // 进程级重入/并发保护：SHFileOperation 是 shell 级共享操作，同一进程并发
-    // 调用会互相等待直至死锁（hook 环境下实测），且其内部（工作线程）删除原
-    // 文件若再进 recycleToTrash 会无限递归。首个回收者执行 SHFileOperation；
-    // 流程进行中其他删除请求由各删除 hook 退化为直接删除（见 active() 调用点）。
-    if (!RecycleGuard::tryEnter()) return true;
-    struct RecycleLeave {
-        ~RecycleLeave() { RecycleGuard::leave(); }
-    } recycleLeave;
-
     if (isRecycleBinDisabled()) {
         Log::warn(L"[TRASH] 回收站被系统策略禁用（NoRecycleBin/NukeOnDelete），保留原文件: %ls",
                   path.c_str());
         return false;
     }
-    // GetFinalPathNameByHandle 返回 \\?\C:\... 前缀；SHFileOperation 需要普通路径
-    std::wstring p = path;
-    if (p.rfind(L"\\\\?\\UNC\\", 0) == 0) {
-        p = L"\\\\" + p.substr(8);
-    } else if (p.rfind(L"\\\\?\\", 0) == 0) {
-        p = p.substr(4);
-    }
-    std::vector<wchar_t> buf(p.begin(), p.end());
+    std::vector<wchar_t> buf(path.begin(), path.end());
     buf.push_back(L'\0');
     buf.push_back(L'\0');
     SHFILEOPSTRUCTW op = {};
@@ -80,10 +329,29 @@ bool recycleToTrash(const std::wstring& path)
     op.fFlags = FOF_ALLOWUNDO | FOF_NOCONFIRMATION | FOF_NOERRORUI | FOF_SILENT;
     int r = SHFileOperationW(&op);
     if (r != 0) {
-        Log::warn(L"[TRASH] 回收站删除失败(%d)，保留原文件: %ls", r, p.c_str());
+        Log::warn(L"[TRASH] 回收站删除失败(%d)，保留原文件: %ls", r, path.c_str());
         return false;
     }
     return true;
+}
+
+bool recycleToTrash(const std::wstring& path)
+{
+    // 进程级重入/并发保护：SHFileOperation 是 shell 级共享操作，同一进程并发
+    // 调用会互相等待直至死锁（hook 环境下实测），且其内部（工作线程）删除原
+    // 文件若再进 recycleToTrash 会无限递归。首个回收者执行删除分流；
+    // 流程进行中其他删除请求由各删除 hook 退化为直接删除（见 active() 调用点）。
+    if (!RecycleGuard::tryEnter()) return true;
+    struct RecycleLeave {
+        ~RecycleLeave() { RecycleGuard::leave(); }
+    } recycleLeave;
+
+    std::wstring p = normalizeWin32Path(path);
+    // 配置了 OpenDesk 统一回收站目录：移入该目录并记录 summary.json
+    if (!g_trashDir.empty()) {
+        return moveToOpenDeskTrash(p);
+    }
+    return recycleToSystemBin(p);
 }
 
 bool finalPathByHandle(HANDLE hFile, std::wstring& out)

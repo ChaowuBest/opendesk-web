@@ -40,6 +40,21 @@ describe('sandboxRunArgs', () => {
         expect(sandboxRunArgs({ ...base, deleteToTrash: false })).toEqual(sandboxRunArgs(base));
     });
 
+    test('trashDir 始终以 --trash-dir 传入且位于 -- 之前', () => {
+        const args = sandboxRunArgs({ ...base, trashDir: 'C:/Users/x/AppData/Roaming/opendesk/trash/task_abc_01' });
+        expect(args).toContain('--trash-dir');
+        expect(args).toContain('C:/Users/x/AppData/Roaming/opendesk/trash/task_abc_01');
+        const dashIdx = args.indexOf('--');
+        expect(args.indexOf('--trash-dir')).toBeLessThan(dashIdx);
+        expect(args.indexOf('C:/Users/x/AppData/Roaming/opendesk/trash/task_abc_01')).toBe(
+            args.indexOf('--trash-dir') + 1
+        );
+    });
+
+    test('trashDir 缺省时不产生 --trash-dir 参数', () => {
+        expect(sandboxRunArgs(base)).not.toContain('--trash-dir');
+    });
+
     test('envExtra 展开为 --env NAME=VALUE 且位于 -- 之前', () => {
         const args = sandboxRunArgs({
             ...base,

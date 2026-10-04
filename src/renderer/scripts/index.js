@@ -34,6 +34,7 @@ import '../components/schemaeditor.js';
 import '../components/shortcutManager.ts';
 import '../components/shortcutHelp.ts';
 import '../components/agentgate-floating-window.js';
+import '../components/trashFloatingWindow.ts';
 import '../components/desktop/entry.ts';
 import './magicPointer.js';
 import '../../main/applications/browser/renderer/entry.ts';

@@ -44,6 +44,7 @@ struct CliOptions {
     std::wstring mount;
     bool automount = false;
     bool delToTrash = false;
+    std::wstring trashDir;       // --trash-dir（OpenDesk 统一回收站目录）
     std::vector<std::pair<std::wstring, std::wstring>> envExtra;
 };
 
@@ -92,6 +93,7 @@ static bool parseRunArgs(const std::vector<std::wstring>& args, CliOptions& opts
         };
         if (a == L"--automount") opts.automount = true;
         else if (a == L"--del-to-trash") opts.delToTrash = true;
+        else if (a == L"--trash-dir") { if (!next(opts.trashDir)) return false; }
         else if (a == L"--policy") { if (!next(opts.policy)) return false; }
         else if (a == L"--src") { if (!next(opts.src)) return false; }
         else if (a == L"--upstream") { if (!next(opts.upstream)) return false; }
@@ -228,6 +230,7 @@ int wmain(int argc, wchar_t** argv)
             launch.automount = opts.automount;
             launch.srcDir = opts.src;
             launch.delToTrash = opts.delToTrash;
+            launch.trashDir = opts.trashDir;
             launch.upstream = opts.upstream;
             launch.askToken = opts.askToken;
             for (const auto& [k, v] : opts.envExtra) launch.envExtra[k] = v;

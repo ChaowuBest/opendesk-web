@@ -16,16 +16,17 @@ use std::sync::Arc;
 
 fn usage() {
     println!(
-        "用法:\n  dynobox-linux run --policy <rules.toml> [--upstream URL] [--cwd DIR] [--log-file FILE] [--del-to-trash] [--ro-dirs P1,P2] -- <子进程命令行...>\n  dynobox-linux endpoint [--port P] [--default allow|deny]\n  dynobox-linux debug-rules --policy <rules.toml> [--path P] [--access K]\n  dynobox-linux detect\n\n示例:\n  dynobox-linux run --policy rules.toml --upstream http://127.0.0.1:8080/decide -- /usr/bin/bash -c 'echo hi'"
+        "用法:\n  dynobox-linux run --policy <rules.toml> [--upstream URL] [--cwd DIR] [--log-file FILE] [--del-to-trash] [--trash-dir DIR] [--ro-dirs P1,P2] -- <子进程命令行...>\n  dynobox-linux endpoint [--port P] [--default allow|deny]\n  dynobox-linux debug-rules --policy <rules.toml> [--path P] [--access K]\n  dynobox-linux detect\n\n示例:\n  dynobox-linux run --policy rules.toml --upstream http://127.0.0.1:8080/decide -- /usr/bin/bash -c 'echo hi'"
     );
 }
 
-fn parse_run_args(args: &[String]) -> (String, Option<String>, Option<String>, Option<String>, bool, Vec<String>) {
+fn parse_run_args(args: &[String]) -> (String, Option<String>, Option<String>, Option<String>, bool, Option<String>, Vec<String>) {
     let mut policy: Option<String> = None;
     let mut upstream: Option<String> = None;
     let mut cwd: Option<String> = None;
     let mut log_file: Option<String> = None;
     let mut del_to_trash = false;
+    let mut trash_dir: Option<String> = None;
     let mut ro_dirs: Vec<String> = Vec::new();
     let mut index = 0;
     while index < args.len() {
@@ -50,6 +51,10 @@ fn parse_run_args(args: &[String]) -> (String, Option<String>, Option<String>, O
                 del_to_trash = true;
                 index += 1;
             }
+            "--trash-dir" if index + 1 < args.len() => {
+                trash_dir = Some(args[index + 1].clone());
+                index += 2;
+            }
             "--ro-dirs" if index + 1 < args.len() => {
                 ro_dirs = args[index + 1]
                     .split(',')
@@ -73,7 +78,7 @@ fn parse_run_args(args: &[String]) -> (String, Option<String>, Option<String>, O
             std::process::exit(2);
         }
     };
-    (policy, upstream, cwd, log_file, del_to_trash, ro_dirs)
+    (policy, upstream, cwd, log_file, del_to_trash, trash_dir, ro_dirs)
 }
 
 fn main() {
@@ -98,13 +103,15 @@ fn main() {
                     std::process::exit(2);
                 }
             };
-            let (policy_path, upstream, cwd, log_file, del_to_trash, ro_dirs) = parse_run_args(before);
+            let (policy_path, upstream, cwd, log_file, del_to_trash, trash_dir, ro_dirs) =
+                parse_run_args(before);
             run_sandbox(
                 &policy_path,
                 upstream.as_deref(),
                 cwd.as_deref(),
                 log_file.as_deref(),
                 del_to_trash,
+                trash_dir.as_deref(),
                 &ro_dirs,
                 after,
             )
@@ -216,6 +223,7 @@ fn run_sandbox(
     cwd: Option<&str>,
     log_file: Option<&str>,
     del_to_trash: bool,
+    trash_dir: Option<&str>,
     ro_dirs: &[String],
     child_argv: &[String],
 ) -> Result<i32, String> {
@@ -230,5 +238,6 @@ fn run_sandbox(
         ro_dirs: ro_dirs.to_vec(),
         log_file: log_file.map(|f| f.to_string()),
         del_to_trash,
+        trash_dir: trash_dir.map(|d| d.to_string()),
     })
 }

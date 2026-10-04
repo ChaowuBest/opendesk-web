@@ -18,6 +18,7 @@ struct SandboxLaunchOptions {
     bool automount = false;       // --automount（hook 内枚举盘符）
     std::wstring srcDir;          // --src（单根模式，与 automount 互斥）
     bool delToTrash = false;      // --del-to-trash（回收站）
+    std::wstring trashDir;        // --trash-dir（OpenDesk 统一回收站目录）
     std::wstring upstream;        // --upstream 覆盖策略端点
     std::wstring askToken;        // --token 覆盖策略 token（兼容参数）
     std::map<std::wstring, std::wstring> envExtra;  // --env NAME=VALUE

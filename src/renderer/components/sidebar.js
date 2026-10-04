@@ -1774,6 +1774,7 @@ class SideBar extends HTMLElement {
             },
             { id: 'fork', icon: 'fa-solid fa-code-fork', label: this._t('renderer.sidebar.forkTask') },
             { id: 'rename', icon: 'fa-solid fa-pen', label: this._t('renderer.sidebar.rename') },
+            { id: 'file-trash', icon: 'fa-solid fa-trash-arrow-up', label: this._t('renderer.sidebar.fileTrash') },
             { id: 'delete', icon: 'fa-solid fa-trash-can', label: this._t('renderer.sidebar.deleteTask'), danger: true }
         ];
         if (this._taskView === 'workspace') {
@@ -1912,6 +1913,10 @@ class SideBar extends HTMLElement {
         menu.querySelector('[data-action="rename"]').addEventListener('click', () => {
             this._dismissContextMenu();
             this._startInlineRename(taskId);
+        });
+        menu.querySelector('[data-action="file-trash"]')?.addEventListener('click', () => {
+            this._dismissContextMenu();
+            document.getElementById('trash-floating-window')?.open({ taskId });
         });
         menu.querySelector('[data-action="trigger-task-review"]')?.addEventListener('click', async () => {
             this._dismissContextMenu();

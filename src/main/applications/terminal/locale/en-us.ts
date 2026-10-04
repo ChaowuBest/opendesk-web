@@ -42,7 +42,7 @@ export const enUs: Record<string, string> = {
     'prompt.sandbox.cwd':
         '- The sandbox working directory matches the task workspace (host real path, e.g. C:/foo); relative paths resolve from there.',
     'prompt.sandbox.trash':
-        '- Deletions are always moved to the Windows Recycle Bin (same semantics as the Linux/OHOS sandbox; no instance-created tracking).',
+        '- Deletions are always moved to the OpenDesk file trash (unified trash; deleted files can be restored from the GUI; files created within this sandbox instance are removed permanently).',
     'sandbox.description':
         'Run the selected powershell or Git Bash in the Windows dynamic sandbox. Child processes use host real paths (C:X or C:/X) directly; policy and approvals map through the root-relative convention /C/... to host C:/...; relative paths resolve from the task workspace (host real path). File approvals still show original host paths.',
     'sandbox.pathErrorHint':
@@ -77,5 +77,5 @@ export const enUs: Record<string, string> = {
     'sandbox.cwdMissing.darwin': 'Dynamic sandbox requires a task workspace as the controlled path.',
     'sandbox.cwdUnsupported.darwin': 'Sandbox working directory is missing or unusable: ${path}',
     'prompt.sandbox.darwin.trash':
-        '- Files that existed before this task started are moved to the macOS Trash when deleted; files created during a sandbox run are removed permanently when deleted within the same sandbox instance.'
+        '- Files that existed before this task started are moved to the OpenDesk file trash (restorable from the GUI) when deleted; files created during a sandbox run are removed permanently when deleted within the same sandbox instance.'
 };
