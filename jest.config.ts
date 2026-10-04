@@ -35,6 +35,9 @@ if (!vmModulesEnabled && invokedAsJestCli && !process.env.OPENDESK_JEST_ESM_REEX
 const shared: Config = {
     preset: 'ts-jest/presets/default-esm',
     testEnvironment: 'node',
+    // 每个测试文件加载前将 OpenDesk 数据目录重定向到一次性临时目录，
+    // 防止测试把任务/设置/日志写进真实用户数据（详见 src/tests/test-env.ts）
+    setupFiles: ['<rootDir>/src/tests/test-env.ts'],
     extensionsToTreatAsEsm: ['.ts'],
     moduleNameMapper: {
         // ?inline / ?raw 后缀（如 ace.css?inline）与裸 .css 一样映射为占位样式文本
