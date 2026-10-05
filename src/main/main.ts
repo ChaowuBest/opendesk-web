@@ -3632,7 +3632,7 @@ async function startApplication(): Promise<void> {
         await initializePluginHost();
         GlobalState.getInstance().taskManagerState.toolsetProvider = combineToolsetProviders(
             {
-                listAvailableToolsets: () => ApplicationRegistry.listAvailableToolsets()
+                listAvailableToolsets: (taskState) => ApplicationRegistry.listAvailableToolsets(taskState)
             },
             new PluginToolsetProvider()
         );

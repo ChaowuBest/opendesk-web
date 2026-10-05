@@ -275,7 +275,7 @@ async function initializeSkillTestRuntime(command: Command, silent: boolean): Pr
     initializeRegistryWorker();
     await ApplicationRegistry.ensureFullyLoaded();
     GlobalState.getInstance().taskManagerState.toolsetProvider = {
-        listAvailableToolsets: () => ApplicationRegistry.listAvailableToolsets()
+        listAvailableToolsets: (taskState) => ApplicationRegistry.listAvailableToolsets(taskState)
     };
     runtimeInitialized = true;
 }

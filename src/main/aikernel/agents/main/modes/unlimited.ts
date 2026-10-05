@@ -33,12 +33,14 @@ export function createUnlimitedModePermissionRules(): PermissionRule[] {
 /**
  * unlimited mode：无限制模式，所有权限全部放通（不限制任何权限）。
  * 等价于 --allow-everything 参数。
+ * 此模式下所有 shell 沙箱被禁用，命令直接以宿主身份执行，文件删除不进入回收站。
  */
 export const MAIN_AGENT_UNLIMITED_MODE: ModeDecl = {
     id: 'unlimited',
     name: 'Unlimited',
     displayNameKey: 'mode.unlimited.name',
-    description: 'Unlimited mode: all permissions are allowed without restriction',
+    description:
+        'All permissions are allowed; commands run directly with host privileges; deleted files do not go to the trash. Use with caution',
     descriptionKey: 'mode.unlimited.description',
     icon: '🔓',
     color: '#FF4081',

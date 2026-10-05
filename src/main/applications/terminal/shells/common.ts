@@ -36,6 +36,7 @@ import { prepareLinuxSandbox } from '../sandboxes/linux-sandbox.js';
 import { prepareDarwinSandbox } from '../sandboxes/darwin-sandbox.js';
 import { prepareOpenHarmonySandbox } from '../sandboxes/openharmony-sandbox.js';
 import { appendSandboxPathDiagnostic, appendSandboxPipeDiagnostic } from '../sandboxes/path-diagnostic.js';
+import { MAIN_AGENT_UNLIMITED_MODE } from '../../../aikernel/agents/main/modes/unlimited.js';
 import { t } from '../locale/index.js';
 
 export function getTaskWorkspace(taskState?: TaskState): string {
@@ -229,13 +230,19 @@ export async function executeShellCommand(opts: {
         sandboxDeleteToTrash = false
     } = opts;
 
+    // 无限制模式强制禁用沙箱：即使工具实例早于模式切换创建（如已缓存的沙箱工具），
+    // unlimited 下也直接以宿主权限 spawn，删除送回收站（依赖沙箱原生层拦截）随之失效。
+    const unlimitedMode = taskState?.activeModeId === MAIN_AGENT_UNLIMITED_MODE.id;
+    const effectiveUseDynamicSandbox = unlimitedMode ? false : useDynamicSandbox;
+    const effectiveDeleteToTrash = unlimitedMode ? false : sandboxDeleteToTrash;
+
     const baseEnv = buildChildProcessEnv(taskState?.harnessContext.environ);
     const env = await runPluginShellEnv(taskState, { shell: shellPath, command }, baseEnv);
     // 任务级统一回收站目录（<opendesk>/trash/<taskId>）：每次拉起沙箱都基于当前
     // 任务 ID 构建并传入，各平台参数格式见各 prepare*Sandbox 实现。删除送回收站
     // 的开关（sandboxDeleteToTrash）仍由设置控制，原生层仅在开启时使用该目录。
     let sandboxTrashDir: string | undefined;
-    if (useDynamicSandbox) {
+    if (effectiveUseDynamicSandbox) {
         try {
             sandboxTrashDir = getTaskTrashDirectory(taskState?.task_id || 'unknown-task');
         } catch (error) {
@@ -247,56 +254,56 @@ export async function executeShellCommand(opts: {
     // 沙箱权限弹窗等待用户决策期间暂停超时计时（见 dynabox 的 onPermissionWaitChange）
     const timeoutClock = new ShellTimeoutClock(timeout, startTime);
     const sandbox =
-        useDynamicSandbox && process.platform === 'linux'
+        effectiveUseDynamicSandbox && process.platform === 'linux'
             ? await prepareLinuxSandbox({
                   shellPath,
                   shellArgs,
                   command,
                   cwd,
                   taskState,
-                  deleteToTrash: sandboxDeleteToTrash,
+                  deleteToTrash: effectiveDeleteToTrash,
                   trashDir: sandboxTrashDir,
                   onPermissionWaitChange: (waiting) => {
                       if (waiting) timeoutClock.pause();
                       else timeoutClock.resume();
                   }
               })
-            : useDynamicSandbox && process.platform === 'darwin'
+            : effectiveUseDynamicSandbox && process.platform === 'darwin'
               ? await prepareDarwinSandbox({
                     shellPath,
                     shellArgs,
                     command,
                     cwd,
                     taskState,
-                    deleteToTrash: sandboxDeleteToTrash,
+                    deleteToTrash: effectiveDeleteToTrash,
                     trashDir: sandboxTrashDir,
                     onPermissionWaitChange: (waiting) => {
                         if (waiting) timeoutClock.pause();
                         else timeoutClock.resume();
                     }
                 })
-              : useDynamicSandbox && (process.platform as string) === 'openharmony'
+              : effectiveUseDynamicSandbox && (process.platform as string) === 'openharmony'
                 ? await prepareOpenHarmonySandbox({
                       shellPath,
                       shellArgs,
                       command,
                       cwd,
                       taskState,
-                      deleteToTrash: sandboxDeleteToTrash,
+                      deleteToTrash: effectiveDeleteToTrash,
                       trashDir: sandboxTrashDir,
                       onPermissionWaitChange: (waiting) => {
                           if (waiting) timeoutClock.pause();
                           else timeoutClock.resume();
                       }
                   })
-                : useDynamicSandbox
+                : effectiveUseDynamicSandbox
                   ? await prepareDynamicSandbox({
                         shellPath,
                         shellArgs,
                         command,
                         cwd,
                         taskState,
-                        deleteToTrash: sandboxDeleteToTrash,
+                        deleteToTrash: effectiveDeleteToTrash,
                         trashDir: sandboxTrashDir,
                         onPermissionWaitChange: (waiting) => {
                             if (waiting) timeoutClock.pause();
@@ -391,7 +398,10 @@ export async function executeShellCommand(opts: {
         getOutput: () => output.getText(),
         getOutputBuffer: () => output,
         formatOutput: (message) =>
-            appendSandboxPipeDiagnostic(appendSandboxPathDiagnostic(message, useDynamicSandbox), useDynamicSandbox),
+            appendSandboxPipeDiagnostic(
+                appendSandboxPathDiagnostic(message, effectiveUseDynamicSandbox),
+                effectiveUseDynamicSandbox
+            ),
         result,
         isKilledByStop,
         clock: timeoutClock,

@@ -509,18 +509,17 @@ export const enUs: Record<string, string> = {
     'mode.available': 'Available modes: ',
     'mode.unsupportedForAgent': 'Agent "${agentId}" does not support mode "${modeId}"',
     'mode.standard.name': 'Standard',
-    'mode.standard.description':
-        'Default mode: freely read and write inside the workspace, ask for confirmation outside it',
+    'mode.standard.description': 'Freely read and write inside the workspace, ask for confirmation outside it',
     'mode.readonly.name': 'Readonly',
     'mode.readonly.description':
-        'Read-only mode: workspace reads are allowed; shell commands and file writes are blocked; outside reads ask for confirmation',
+        'Workspace reads are allowed; shell commands and file writes are blocked; outside reads ask for confirmation',
     'mode.plan.name': 'Plan',
-    'mode.plan.description': 'Planning mode: read-only exploration with writable .plan output, design before execution',
+    'mode.plan.description': 'Read-only exploration with writable .plan output, design before execution',
     'mode.solo.name': 'Solo',
-    'mode.solo.description':
-        'High-permission unattended mode: everything is automatically allowed except a few sensitive paths',
+    'mode.solo.description': 'Everything is automatically allowed except a few sensitive paths',
     'mode.unlimited.name': 'Unlimited',
-    'mode.unlimited.description': 'Unlimited mode: all permissions are allowed without restriction',
+    'mode.unlimited.description':
+        'All permissions are allowed; commands run directly with host privileges; deleted files do not go to the trash. Use with caution',
 
     // Commands - Import
     'import.fail': 'Import Failed',

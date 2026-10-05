@@ -420,7 +420,7 @@ async function main(args: CommandLineArgs) {
         await ApplicationRegistry.ensureFullyLoaded();
         GlobalState.getInstance().taskManagerState.toolsetProvider = combineToolsetProviders(
             {
-                listAvailableToolsets: () => ApplicationRegistry.listAvailableToolsets()
+                listAvailableToolsets: (taskState) => ApplicationRegistry.listAvailableToolsets(taskState)
             },
             new PluginToolsetProvider()
         );
@@ -458,7 +458,7 @@ async function main(args: CommandLineArgs) {
         await ApplicationRegistry.ensureFullyLoaded();
         GlobalState.getInstance().taskManagerState.toolsetProvider = combineToolsetProviders(
             {
-                listAvailableToolsets: () => ApplicationRegistry.listAvailableToolsets()
+                listAvailableToolsets: (taskState) => ApplicationRegistry.listAvailableToolsets(taskState)
             },
             new PluginToolsetProvider()
         );

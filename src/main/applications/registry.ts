@@ -10,6 +10,7 @@
  */
 
 import { BaseToolset } from '../aikernel/tool.js';
+import type { TaskState } from '../aikernel/states/tasks.js';
 import { BaseApplication } from './base';
 import { Setting, getOpendeskDirectory } from '../utils/setting.js';
 import { logger, LogStream } from '../utils/logger.js';
@@ -259,10 +260,10 @@ export class ApplicationRegistry {
         return this.applications.get(bundleName);
     }
 
-    static async listAvailableToolsets(): Promise<BaseToolset[]> {
+    static async listAvailableToolsets(taskState?: TaskState): Promise<BaseToolset[]> {
         const result: BaseToolset[] = [];
         for (const application of this.applications.values()) {
-            result.push(...(await application.getToolsets()));
+            result.push(...(await application.getToolsets(taskState)));
         }
 
         return result;
