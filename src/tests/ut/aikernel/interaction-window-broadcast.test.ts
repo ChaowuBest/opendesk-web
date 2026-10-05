@@ -129,6 +129,43 @@ describe('ElectronAskUserProvider 多窗口广播', () => {
         mainWindow = null;
         await expect(provider.prompt(askRequest)).resolves.toEqual({ answers: {}, cancelled: true });
     });
+
+    it('并发多个 askUser 时 cancelCurrent 应取消全部 pending（避免旧 pending 泄漏）', async () => {
+        const p1 = provider.prompt(askRequest);
+        const p2 = provider.prompt({ ...askRequest, requestId: 'ask-2' });
+        const p3 = provider.prompt({ ...askRequest, requestId: 'ask-3' });
+
+        provider.cancelCurrent();
+
+        await expect(p1).resolves.toEqual({ answers: {}, cancelled: true });
+        await expect(p2).resolves.toEqual({ answers: {}, cancelled: true });
+        await expect(p3).resolves.toEqual({ answers: {}, cancelled: true });
+
+        const dismissed = widgetSend.mock.calls
+            .filter(([channel]) => channel === 'askUser:dismiss')
+            .map((call) => call[1]);
+        expect(dismissed).toEqual(expect.arrayContaining(['ask-1', 'ask-2', 'ask-3']));
+    });
+
+    it('并发多个 askUser 时逐个响应对应 requestId，互不干扰', async () => {
+        const p1 = provider.prompt(askRequest);
+        const p2 = provider.prompt({ ...askRequest, requestId: 'ask-2' });
+
+        // 并发注册了多个 response handler，逐一触发，只有 requestId 匹配的 handler 生效
+        const handlers = ipcMainMock.on.mock.calls
+            .filter(([channel]) => channel === 'askUser:response')
+            .map((call) => call[1] as (event: unknown, requestId: string, data: unknown) => void);
+
+        for (const handler of handlers) {
+            handler(null, 'ask-2', { answers: { '0': ['B'] } });
+        }
+        await expect(p2).resolves.toMatchObject({ answers: { '0': ['B'] } });
+
+        for (const handler of handlers) {
+            handler(null, 'ask-1', { answers: { '0': ['A'] } });
+        }
+        await expect(p1).resolves.toMatchObject({ answers: { '0': ['A'] } });
+    });
 });
 
 describe('ElectronExitPlanModeProvider 多窗口广播', () => {

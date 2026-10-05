@@ -1,10 +1,14 @@
-# Copyright (c) 2026 The OpenDesk Team
+﻿# Copyright (c) 2026 The OpenDesk Team
 # OpenDesk is licensed under Mulan PSL v2.
 #
 # nmake 构建 sandbox.exe（管理进程）与 sandbox_hook.dll（Detours 注入库）。
 # 需先执行 vcvars：call "%ProgramFiles%\Microsoft Visual Studio\...\VC\Auxiliary\Build\vcvars64.bat"
 #   nmake /f Makefile                 # x64（默认）
 #   nmake /f Makefile ARCH=x86         # x86（32 位工具链，hook DLL = sandbox_hook32.dll）
+#
+# 本文件必须保留 UTF-8 BOM：nmake 按 ANSI 代码页（中文系统为 GBK）读取无 BOM 的
+# makefile，UTF-8 中文注释会被逐字节错位配对，可能吞掉紧随其后的宏定义行
+# （表现为链接 sandbox_hook.dll 时大量 LNK2019）。BOM 使 nmake 按 UTF-8 正确解析。
 
 !IF "$(ARCH)" == ""
 ARCH = x64
@@ -38,8 +42,9 @@ HOOK_DLL = sandbox_hook.dll
 
 OUT = ..\dist\$(RID)\bin
 
-# 共享 core 源码目录（native/openharmony/sandbox/src，三平台单一来源）
-CORE_SRC_DIR = ..\..\openharmony\sandbox\src
+# 共享 core 源码目录（native/openharmony/sandbox/src，三平台单一来源）。
+# 注意：本文件位于 native/windows/sandbox/src，到达 native/ 需要三级 ".."。
+CORE_SRC_DIR = ..\..\..\openharmony\sandbox\src
 
 CFLAGS = /nologo /W3 /O2 /MT /EHsc /std:c++17 /utf-8 /DNOMINMAX /DUNICODE /D_UNICODE /D_WIN32_WINNT=0x0A00 /D_WINVER=0x0A00 /I$(COMMON) /I$(DETOURS) /I$(CORE_SRC_DIR)
 # Detours 内部需要架构宏（跳板布局）；只对 detours-src 编译生效

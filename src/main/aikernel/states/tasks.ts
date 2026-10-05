@@ -1935,6 +1935,8 @@ export class TaskState {
             this._currentTurnInteractive = false;
             logger.info(`task ${this.task_id} stopped (reason=${reason})`);
             this.harnessContext.permissionPrompt?.cancelTaskPrompts?.([this.task_id]);
+            // 取消 askUser / exitPlanMode 等阻塞式交互提示，避免任务停止后 GUI 中残留无响应的提示窗口
+            this.cancelInteractionPrompts();
             this.markInterruptedToolCalls('任务已停止');
             // 清除 LLM 重试等待状态，防止 tick 在 task_status 被 submitUserMessage
             // 改回 'running' 后继续发送 scheduled 状态
@@ -1995,6 +1997,8 @@ export class TaskState {
             this.finished_at = new Date();
             logger.info(`task ${this.task_id} interrupted for new message`);
             this.harnessContext.permissionPrompt?.cancelTaskPrompts?.([this.task_id]);
+            // 取消 askUser / exitPlanMode 等阻塞式交互提示，避免任务中断后 GUI 中残留无响应的提示窗口
+            this.cancelInteractionPrompts();
             this.markInterruptedToolCalls('任务已停止');
             this._retryDelayPending = false;
         }
@@ -2042,6 +2046,8 @@ export class TaskState {
         if (options.cancelPermissionPrompts) {
             this.harnessContext.permissionPrompt?.cancelTaskPrompts?.([this.task_id]);
         }
+        // 取消 askUser / exitPlanMode 等阻塞式交互提示（goal 停止/清除、执行超时等中断场景）
+        this.cancelInteractionPrompts();
         if (options.stopRunningTools) {
             const stops: Promise<void>[] = [];
             for (const message of this.chat_context.messages) {

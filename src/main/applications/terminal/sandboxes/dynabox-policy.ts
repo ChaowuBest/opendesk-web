@@ -119,7 +119,7 @@ export function policyText(
         '/C/Windows/system32/catroot**', // Windows Update 组件存储（catroot/catroot2）
         // 系统 Temp（安装器/更新临时文件）：系统盘符随机器（泛化：从 home 盘符
         // 推导 %SystemRoot%，系统装在其他盘时 C: 版本可能不存在但不有害）
-        ...(home && home.length >= 2 ? [`${home[0].toUpperCase()}:/Windows/Temp/**`] : []),
+        ...(home && home.length >= 2 ? [`/${home[0].toUpperCase()}/Windows/Temp/**`] : []),
         '/C/Windows/Temp/**',
         '/C/ProgramData/Microsoft/Windows/Caches/**', // 系统级缓存
         '/C/Users/*/AppData/Local/Microsoft/Windows/Caches/**', // 用户级缓存
@@ -133,7 +133,16 @@ export function policyText(
         '/C/**/__pycache__/**',
         // Windows App Installer（winget 等组件）诊断日志目录：组件启动时静默写入，
         // 与 catroot/Caches 同类，放通不产生安全面（仅日志落盘）
-        '/C/Users/*/AppData/Local/Packages/*/LocalState/DiagOutputDir/**'
+        '/C/Users/*/AppData/Local/Packages/*/LocalState/DiagOutputDir/**',
+        // Authenticode 签名校验缓存（CryptnetUrlCache）：.NET/PowerShell 校验下载
+        // 证书时落盘 MetaData/<内容哈希> 文件，每次签名校验都写；read 已由
+        // windowsRuntimeReadPatterns 放行，write 在此放行（纯缓存，路径为 GUID/
+        // 哈希命名，用户不可读——此前每次启动 PowerShell 都对它弹 ask）
+        '/C/Users/*/AppData/LocalLow/Microsoft/CryptnetUrlCache/**',
+        // PowerShell 执行策略检测临时脚本落盘区（LocalLow\Temp，随机名形如
+        // __PSScriptPolicyTest_<随机>.ps1）：引擎启动时创建/清理，放行写入
+        // （对齐 tempRoot 的 %TEMP% 语义，仅 LocalLow 变体）
+        '/C/Users/*/AppData/LocalLow/Temp/**'
     ];
     return [
         'version = 1',
@@ -223,10 +232,19 @@ export function policyText(
  * Windows 运行时读放行路径清单（standard 外读 ask 兜底下的豁免集）。
  * 全部从当前环境推导（盘符/用户/工具布局随机器变化，不硬编码）：
  * - 系统目录（Windows/Program Files/ProgramData，盘符从 home 推导）
- * - PATH 上的一切目录（命令 PATH 搜索 = 逐目录 stat，实测每目录一次读 ask）
+ * - PSModulePath 用户模块目录（PowerShell 5.1/7 的模块搜索逐目录 stat）
+ * - PATH 上的一切目录（命令 PATH 搜索 = 逐目录 stat，实测每目录一次读 ask，
+ *   生成时展开当前 PATH——任何机器的工具布局都覆盖）
  * - CryptoAPI 证书链缓存（LocalLow/Microsoft/CryptnetUrlCache——签名校验必需）
  * - .NET/PowerShell 运行时缓存（AppData/Local/Microsoft）
  * 只放 read：这些目录的写仍由 ask/权限引擎管控（防运行时目录持久化攻击）。
+ *
+ * 路径格式：返回的每条规则都必须经 hostPatternToVirtual 转为沙箱虚拟路径
+ * （/C/...）。此前直接拼接 `C:/Windows/**` 会经 normalizeVirtualPath 变成
+ * `/C:/Windows/**`（盘符后带冒号），与 vpath `/C/Windows/**` 永不匹配——
+ * 系统运行时读豁免整体失效，PowerShell/.NET 启动时 Defender 平台 DLL、证书
+ * 缓存、模块分析缓存等每次访问都落到兜底 read ask（cache_ttl=0 不缓存，
+ * 同一路径被反复询问，表现为删除命令时冒大量奇怪地址的 ask）。
  */
 function windowsRuntimeReadPatterns(home?: string): string[] {
     const patterns: string[] = [];
@@ -234,14 +252,27 @@ function windowsRuntimeReadPatterns(home?: string): string[] {
         home && home.length >= 2 ? `${home[0].toUpperCase()}:${home.slice(2).replace(/\\/g, '/')}` : null;
     if (virtualHome) {
         const sysDrive = `${virtualHome[0]}:`;
-        patterns.push(
+        for (const raw of [
             `${sysDrive}/Windows/**`,
             `${sysDrive}/Program Files/**`,
             `${sysDrive}/Program Files (x86)/**`,
             `${sysDrive}/ProgramData/**`,
             `${virtualHome}/AppData/Local/Microsoft/**`,
             `${virtualHome}/AppData/LocalLow/Microsoft/**`
-        );
+        ]) {
+            const virtual = hostPatternToVirtual(raw);
+            if (virtual) patterns.push(virtual);
+        }
+        // PSModulePath 用户模块目录（Windows PowerShell 5.1 与 PowerShell 7 各一）：
+        // 模块搜索对目录本身逐 stat，`/**` 规则只覆盖子树，须与 PATH 目录同样
+        // 同时放行目录本身与子树
+        for (const raw of [
+            `${virtualHome}/Documents/WindowsPowerShell/Modules`,
+            `${virtualHome}/Documents/PowerShell/Modules`
+        ]) {
+            const virtual = hostPatternToVirtual(raw);
+            if (virtual) patterns.push(virtual, `${virtual}/**`);
+        }
     }
     // PATH 展开：命令的 PATH 搜索逐目录 stat（观测证实每目录一次读 ask），
     // 目录本身与子树都放行（stat 命中目录本身，读文件命中子树）。
@@ -258,6 +289,15 @@ function windowsRuntimeReadPatterns(home?: string): string[] {
 export function permissionRulesForSandboxLinux(rules: PermissionRule[] | undefined): string[] {
     return rulesToLines(rules, hostPatternToVirtualLinux);
 }
+
+/**
+ * git 凭据与运行时读规则已迁移至 security/policies/git.ts（app 专属策略，
+ * 注入 standard 模式权限引擎）。沙箱启动时 enforcer.getRules() 会把引擎全部
+ * 规则（含 app 策略）经 permissionRulesForSandbox / permissionRulesForSandboxLinux
+ * 导出为策略文本——单一来源，此处不再维护终端专用副本。
+ * 注意：app 策略的凭据 ask 保护在导出后成为原生层 ask 规则；凭据读在沙箱内
+ * 仍会弹窗确认（与引擎语义一致，用户确认一次即可记住）。
+ */
 
 /** 默认读放行兜底下的显式收窄：家目录内不允许读取的敏感路径 */
 const SENSITIVE_HOME_DIRS = [

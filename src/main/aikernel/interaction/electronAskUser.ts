@@ -30,15 +30,24 @@ interface PendingPrompt {
 }
 
 export class ElectronAskUserProvider implements AskUserProvider {
-    private pending: PendingPrompt | null = null;
+    /**
+     * 同时等待用户响应的所有请求。
+     * 模型在单个 turn 内可能并行发起多个 askUser 调用，单 pending 会被后一个覆盖，
+     * 导致旧请求的 ipcMain 监听器与定时器泄漏、promise 永不 resolve。
+     */
+    private pendingPrompts: PendingPrompt[] = [];
 
     isPrompting(): boolean {
-        return this.pending !== null;
+        return this.pendingPrompts.length > 0;
     }
 
     cancelCurrent(): void {
-        if (!this.pending) return;
-        this.settle(this.pending, { answers: {}, cancelled: true }, true);
+        if (this.pendingPrompts.length === 0) return;
+        const pendingList = this.pendingPrompts;
+        this.pendingPrompts = [];
+        for (const pending of pendingList) {
+            this.settle(pending, { answers: {}, cancelled: true }, true);
+        }
     }
 
     /**
@@ -49,8 +58,9 @@ export class ElectronAskUserProvider implements AskUserProvider {
         if (pending.settled) return;
         pending.settled = true;
         if (pending.timer) clearTimeout(pending.timer);
-        if (this.pending === pending) {
-            this.pending = null;
+        const index = this.pendingPrompts.indexOf(pending);
+        if (index >= 0) {
+            this.pendingPrompts.splice(index, 1);
         }
         try {
             const { ipcMain } = electron();
@@ -117,7 +127,7 @@ export class ElectronAskUserProvider implements AskUserProvider {
 
                 pending.timer = timer;
                 pending.handler = handler;
-                this.pending = pending;
+                this.pendingPrompts.push(pending);
 
                 ipcMain.on('askUser:response', handler);
 

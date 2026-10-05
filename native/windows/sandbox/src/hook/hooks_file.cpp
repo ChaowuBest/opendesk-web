@@ -240,9 +240,17 @@ static bool appendTrashSummary(const std::wstring& trashDir, const std::wstring&
     return ok;
 }
 
+// 递归复制目录树 src -> dst（跨卷目录移入回收站的兜底，定义见后）：
+// 调用方必然处于回收流程（RecycleGuard 已进入、HookGuard TLS 已持有），
+// 内部所有 Win32 API 都走真实实现，不会再被 hook 分流到回收站。
+static bool copyDirectoryTree(const std::wstring& src, const std::wstring& dst);
+// 递归删除目录树（原目录完整复制进回收站后清空原位置）。
+static bool removeDirectoryTree(const std::wstring& dir);
+
 // 配置了统一回收站（DYNOBOX_TRASH_DIR）时的删除实现：MoveFileExW 移动到
 // <trashDir>\<uuid>.back（跨卷文件自动复制+删除），并追加 summary.json 记录
-// 供 GUI 文件回收站搜索与找回。
+// 供 GUI 文件回收站搜索与找回。跨卷目录 MoveFileExW 不支持，退化为
+// 复制目录树到回收站 + 删除原目录树（见 copyDirectoryTree / removeDirectoryTree）。
 static bool moveToOpenDeskTrash(const std::wstring& normalizedPath)
 {
     // 多级回收站目录防御性创建（宿主通常已建）
@@ -271,16 +279,113 @@ static bool moveToOpenDeskTrash(const std::wstring& normalizedPath)
         }
     }
     std::wstring target = g_trashDir + L"\\" + uuid + L".back";
-    // MOVEFILE_COPY_ALLOWED：跨卷文件复制+删除（目录跨卷无法复制，保持 fail-closed）
+    // MOVEFILE_COPY_ALLOWED：跨卷文件复制+删除；目录同卷直接移动、跨卷复制+删除
     DWORD flags = MOVEFILE_WRITE_THROUGH | (isDirectory ? 0 : MOVEFILE_COPY_ALLOWED);
     if (!MoveFileExW(normalizedPath.c_str(), target.c_str(), flags)) {
-        // 跨卷目录/权限等失败：保留原文件（绝不静默永久删除）
-        Log::warn(L"[TRASH] 移入回收站失败(%lu)，保留原文件: %ls", GetLastError(), normalizedPath.c_str());
+        DWORD moveErr = GetLastError();
+        // 跨卷目录：MoveFileExW 不支持跨卷移动目录（ERROR_NOT_SAME_DEVICE）。
+        // 退化为"先复制目录树到回收站，成功后再删除原目录树"——
+        // 复制全部成功前绝不触碰原目录（fail-closed，绝不静默丢数据）。
+        if (isDirectory && moveErr == ERROR_NOT_SAME_DEVICE) {
+            if (!copyDirectoryTree(normalizedPath, target)) {
+                Log::warn(L"[TRASH] 目录复制到回收站失败(%lu)，保留原文件: %ls",
+                          GetLastError(), normalizedPath.c_str());
+                return false;
+            }
+            // 原目录树已完整备份进回收站，删除原树。删除失败（如文件被占用）时
+            // 残留留在原位置、回收站已有完整副本，下次删除可继续，不丢数据。
+            if (!removeDirectoryTree(normalizedPath)) {
+                Log::warn(L"[TRASH] 目录回收后原目录清理失败(%lu)，回收站已保留副本: %ls",
+                          GetLastError(), normalizedPath.c_str());
+            }
+            appendTrashSummary(g_trashDir, uuid, normalizedPath, sizeBytes, isoUtcNow());
+            return true;
+        }
+        // 跨卷文件/权限等失败：保留原文件（绝不静默永久删除）
+        Log::warn(L"[TRASH] 移入回收站失败(%lu)，保留原文件: %ls", moveErr, normalizedPath.c_str());
         return false;
     }
     // 记录失败不回滚移动（文件已在回收站，仅无索引；下次删除可继续记录）
     appendTrashSummary(g_trashDir, uuid, normalizedPath, sizeBytes, isoUtcNow());
     return true;
+}
+
+// 递归复制目录树 src -> dst（跨卷目录移入回收站的兜底）。
+// 调用方必然处于回收流程（RecycleGuard 已进入、HookGuard TLS 已持有），
+// 此处所有 Win32 API 都走真实实现，不会再被 hook 分流到回收站。
+// 目录符号链接/联接点（reparse point）只建同名空目录、不复制内容，避免
+// 跟随链接递归到无关位置；文件链接按普通文件复制其指向的数据。
+// 全部复制成功返回 true；中途失败返回 false（可能残留部分副本，无索引）。
+static bool copyDirectoryTree(const std::wstring& src, const std::wstring& dst)
+{
+    if (!CreateDirectoryW(dst.c_str(), nullptr)) {
+        DWORD err = GetLastError();
+        if (err != ERROR_ALREADY_EXISTS) {
+            return false;
+        }
+    }
+    std::wstring search = src + L"\\*";
+    WIN32_FIND_DATAW fd;
+    HANDLE hFind = FindFirstFileW(search.c_str(), &fd);
+    if (hFind == INVALID_HANDLE_VALUE) {
+        // 空目录（无子项可枚举）视为复制完成；其他错误（无权限等）视为失败
+        DWORD err = GetLastError();
+        return err == ERROR_FILE_NOT_FOUND || err == ERROR_PATH_NOT_FOUND;
+    }
+    bool ok = true;
+    do {
+        if (wcscmp(fd.cFileName, L".") == 0 || wcscmp(fd.cFileName, L"..") == 0) continue;
+        std::wstring childSrc = src + L"\\" + fd.cFileName;
+        std::wstring childDst = dst + L"\\" + fd.cFileName;
+        if (fd.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) {
+            if (fd.dwFileAttributes & FILE_ATTRIBUTE_REPARSE_POINT) {
+                // 目录链接：只建同名空目录，不跟随复制
+                if (!CreateDirectoryW(childDst.c_str(), nullptr) &&
+                    GetLastError() != ERROR_ALREADY_EXISTS) {
+                    ok = false;
+                    break;
+                }
+            } else if (!copyDirectoryTree(childSrc, childDst)) {
+                ok = false;
+                break;
+            }
+        } else if (!CopyFileExW(childSrc.c_str(), childDst.c_str(), nullptr, nullptr, nullptr, 0)) {
+            ok = false;
+            break;
+        }
+    } while (FindNextFileW(hFind, &fd));
+    FindClose(hFind);
+    return ok;
+}
+
+// 递归删除目录树（回收流程内使用：原目录已完整复制进回收站后清空原位置）。
+// 只读文件先清属性再删；目录链接按普通目录删除（RemoveDirectoryW 删链接本身）。
+static bool removeDirectoryTree(const std::wstring& dir)
+{
+    std::wstring search = dir + L"\\*";
+    WIN32_FIND_DATAW fd;
+    HANDLE hFind = FindFirstFileW(search.c_str(), &fd);
+    if (hFind != INVALID_HANDLE_VALUE) {
+        do {
+            if (wcscmp(fd.cFileName, L".") == 0 || wcscmp(fd.cFileName, L"..") == 0) continue;
+            std::wstring child = dir + L"\\" + fd.cFileName;
+            if (fd.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) {
+                if (!removeDirectoryTree(child)) {
+                    FindClose(hFind);
+                    return false;
+                }
+            } else {
+                SetFileAttributesW(child.c_str(), FILE_ATTRIBUTE_NORMAL);
+                if (!DeleteFileW(child.c_str())) {
+                    FindClose(hFind);
+                    return false;
+                }
+            }
+        } while (FindNextFileW(hFind, &fd));
+        FindClose(hFind);
+    }
+    SetFileAttributesW(dir.c_str(), FILE_ATTRIBUTE_NORMAL);
+    return RemoveDirectoryW(dir.c_str()) != FALSE;
 }
 
 // 系统策略禁用回收站时（Policies\Explorer 的 NoRecycleBin / NukeOnDelete=1），
@@ -479,6 +584,19 @@ HANDLE WINAPI Hook_CreateFileW(LPCWSTR lpFileName, DWORD dwDesiredAccess, DWORD 
                                 dwCreationDisposition, dwFlagsAndAttributes, hTemplateFile);
     }
     HookGuard guard;
+    // read 类通用探测豁免：目标为已存在目录（路径链校验/可遍历性检查）、会话内
+    // 自建文件读回（PowerShell __PSScriptPolicyTest 等）、目标不存在（ENOENT
+    // 透传——真实 API 对宿主返回 not-found，与无沙箱行为一致）→ 均不触发 ask，
+    // deny 仍拦截。目标存在且为文件时走正常 read 判定（内容读取受策略管控）。
+    if (categorizeCreateAccess(dwDesiredAccess, dwCreationDisposition) == AccessClass::Read) {
+        DWORD perr = ERROR_SUCCESS;
+        if (sandboxCheckDirReadProbe(lpFileName, perr) ||
+            sandboxCheckSessionCreatedRead(lpFileName, perr) ||
+            sandboxCheckNotExistRead(lpFileName, perr)) {
+            return Real_CreateFileW(lpFileName, dwDesiredAccess, dwShareMode, lpSA,
+                                    dwCreationDisposition, dwFlagsAndAttributes, hTemplateFile);
+        }
+    }
     if (isDirOpenProbe(lpFileName, dwFlagsAndAttributes, dwCreationDisposition)) {
         // 目录探测不触发 ask；deny 规则仍拦截（防尾斜杠/别名逃逸）
         DWORD perr = ERROR_SUCCESS;
@@ -509,6 +627,17 @@ HANDLE WINAPI Hook_CreateFileA(LPCSTR lpFileName, DWORD dwDesiredAccess, DWORD d
     HookGuard guard;
     std::wstring wide = ansiToWide(lpFileName);
     DWORD err = ERROR_SUCCESS;
+    // 同 W 版：read 类访问的目录探测/会话内读回/不存在路径透传 → 不 ask
+    if (!wide.empty() &&
+        categorizeCreateAccess(dwDesiredAccess, dwCreationDisposition) == AccessClass::Read) {
+        DWORD perr = ERROR_SUCCESS;
+        if (sandboxCheckDirReadProbe(wide, perr) ||
+            sandboxCheckSessionCreatedRead(wide, perr) ||
+            sandboxCheckNotExistRead(wide, perr)) {
+            return Real_CreateFileA(lpFileName, dwDesiredAccess, dwShareMode, lpSA,
+                                    dwCreationDisposition, dwFlagsAndAttributes, hTemplateFile);
+        }
+    }
     if (isDirOpenProbe(wide.c_str(), dwFlagsAndAttributes, dwCreationDisposition)) {
         // 目录探测不触发 ask；deny 规则仍拦截
         DWORD perr = ERROR_SUCCESS;
@@ -588,7 +717,13 @@ HANDLE WINAPI Hook_FindFirstFileW(LPCWSTR lpFileName, LPWIN32_FIND_DATAW lpFindD
     std::wstring checkPath;
     if (findFirstPathForCheck(lpFileName, checkPath)) {
         DWORD err = ERROR_SUCCESS;
-        if (!sandboxCheckPath(checkPath, AccessClass::Read, err)) {
+        // read 类通用探测豁免：已存在目录枚举（列目录只返回名字）、会话内自建
+        // 文件读回、不存在路径透传（FindFirstFile 返回 not-found，与宿主一致）
+        // → 不触发 ask，deny 仍拦截。存在文件走正常 read 判定。
+        if (!sandboxCheckDirReadProbe(checkPath, err) &&
+            !sandboxCheckSessionCreatedRead(checkPath, err) &&
+            !sandboxCheckNotExistRead(checkPath, err) &&
+            !sandboxCheckPath(checkPath, AccessClass::Read, err)) {
             SetLastError(err);
             return INVALID_HANDLE_VALUE;
         }
@@ -605,7 +740,11 @@ HANDLE WINAPI Hook_FindFirstFileA(LPCSTR lpFileName, LPWIN32_FIND_DATAA lpFindDa
     std::wstring checkPath;
     if (!wide.empty() && findFirstPathForCheck(wide, checkPath)) {
         DWORD err = ERROR_SUCCESS;
-        if (!sandboxCheckPath(checkPath, AccessClass::Read, err)) {
+        // 同 W 版：已存在目录枚举/会话内读回/不存在路径透传按探测处理
+        if (!sandboxCheckDirReadProbe(checkPath, err) &&
+            !sandboxCheckSessionCreatedRead(checkPath, err) &&
+            !sandboxCheckNotExistRead(checkPath, err) &&
+            !sandboxCheckPath(checkPath, AccessClass::Read, err)) {
             SetLastError(err);
             return INVALID_HANDLE_VALUE;
         }

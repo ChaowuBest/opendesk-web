@@ -182,3 +182,10 @@ vite.config.ts.timestamp-*
 native/linux/sandbox/target/
 native/linux/sandbox/runtime/
 native/linux/sandbox/vendor/
+
+# 原生编译产物（散落的 .obj 等，不限于 sandbox 的 obj/ 目录）
+*.obj
+
+# PowerShell 误重定向产物（如 `2>$` 生成的名为 `$` 的文件）与 agent 临时目录
+\$
+.agent-tmp/

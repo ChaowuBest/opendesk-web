@@ -80,6 +80,9 @@ describe('policyTextLinux', () => {
         expect(text).toContain('path = "/home/liyi/.zshenv"\naccess = "read"\nperm = "allow"');
         // temp 读放行
         expect(text).toContain('path = "/tmp/**"\naccess = "read"\nperm = "allow"');
+        // git 凭据/配置规则已迁移至 security/policies/git.ts（app 策略注入引擎），
+        // 沙箱文本由 enforcer.getRules() 导出（回归见 ut/aikernel/app-policies.test.ts）；
+        // 无 home 传入时（本用例未传）不含 git 规则。
     });
     test('solo/unlimited（用户含全盘 read allow）：读/写兜底均为 allow（同长平局 ask 会架空全放行语义）', () => {
         const soloRules = [

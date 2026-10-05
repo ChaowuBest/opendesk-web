@@ -170,6 +170,55 @@ describe('policyText', () => {
         expect(text).toContain('path = "/**"');
     });
 
+    test('PowerShell 启动运行时豁免：证书缓存写/PSModulePath 读/LocalLow-Temp 写不触发 ask（回归：删除命令时冒大量奇怪路径 ask）', () => {
+        // 复现自 task_muui9c74_ikhu：沙箱内启动 PowerShell 执行 Remove-Item 时，
+        // hook 对 CryptnetUrlCache 的 GUID 哈希文件（read/write）、
+        // Documents\\WindowsPowerShell\\Modules（PSModulePath 逐目录 stat read）、
+        // LocalLow\\Temp\\__PSScriptPolicyTest_*.ps1（执行策略检测临时脚本 write）
+        // 反复发起 ask——这些是每次启动必然访问的运行时路径，须豁免。
+        const text = policyText('http://ep/decide', 't', undefined, 'C:\\Users\\liyif');
+        // 证书签名校验缓存：read 已由 LocalLow/Microsoft/** read 覆盖，write 须放行
+        for (const p of ['/C/Users/*/AppData/LocalLow/Microsoft/CryptnetUrlCache/**']) {
+            const at = text.indexOf(`path = ${JSON.stringify(p)}`);
+            expect(at).toBeGreaterThanOrEqual(0);
+            expect(text.slice(at - 40, at + 120)).toContain('access = "write"');
+            expect(text.slice(at - 40, at + 120)).toContain('perm = "allow"');
+        }
+        // PowerShell 执行策略检测临时脚本落盘区（LocalLow\\Temp）
+        for (const p of ['/C/Users/*/AppData/LocalLow/Temp/**']) {
+            const at = text.indexOf(`path = ${JSON.stringify(p)}`);
+            expect(at).toBeGreaterThanOrEqual(0);
+            expect(text.slice(at - 40, at + 120)).toContain('access = "write"');
+            expect(text.slice(at - 40, at + 120)).toContain('perm = "allow"');
+        }
+        // PSModulePath 用户模块目录（PowerShell 5.1 与 7 各一）：模块搜索逐目录 stat
+        // 须放行 read——目录本身与子树都要（stat 命中目录本身，读文件命中子树）
+        for (const p of [
+            '/C/Users/liyif/Documents/WindowsPowerShell/Modules',
+            '/C/Users/liyif/Documents/WindowsPowerShell/Modules/**',
+            '/C/Users/liyif/Documents/PowerShell/Modules',
+            '/C/Users/liyif/Documents/PowerShell/Modules/**'
+        ]) {
+            const at = text.indexOf(`path = ${JSON.stringify(p)}`);
+            expect(at).toBeGreaterThanOrEqual(0);
+            expect(text.slice(at - 40, at + 120)).toContain('access = "read"');
+            expect(text.slice(at - 40, at + 120)).toContain('perm = "allow"');
+        }
+        // 放行规则须早于兜底 write ask 命中
+        const fallbackAskAt = text.indexOf('access = "write"\nperm = "ask"');
+        expect(text.indexOf('CryptnetUrlCache')).toBeLessThan(fallbackAskAt);
+        expect(text.indexOf('/AppData/LocalLow/Temp/**')).toBeLessThan(fallbackAskAt);
+    });
+
+    test('git 运行时读放行与凭据规则已迁移至 security/policies（策略文本由引擎规则导出）', () => {
+        // git 规则单一来源在 security/policies/git.ts（app 策略注入 standard 模式
+        // 引擎），沙箱文本由 enforcer.getRules() 经 rulesToLines 导出。
+        // 导出行为回归见 src/tests/ut/aikernel/app-policies.test.ts；
+        // 此处仅确认 policyText 未再内联 git 专用清单（终端侧无重复维护）。
+        const text = policyText('http://ep/decide', 't', undefined, 'C:\\Users\\liyif');
+        expect(text).not.toContain('GIT_CREDENTIAL_HOME_PATHS');
+    });
+
     test('virtualPathToHostPath 回转（ask 路径 → 宿主路径）', () => {
         expect(virtualPathToHostPath('/C/Users/a.txt')).toBe('C:/Users/a.txt');
         expect(virtualPathToHostPath('/C/a/../b')).toBeNull();

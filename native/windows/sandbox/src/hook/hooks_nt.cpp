@@ -166,6 +166,20 @@ NTSTATUS NTAPI Hook_NtCreateFile(PHANDLE fileHandle, ACCESS_MASK desiredAccess,
 
     std::wstring winPath;
     if (objectAttributes->ObjectName && ntPathToWin32(objectAttributes->ObjectName, winPath)) {
+        // read 类通用探测豁免（与 CreateFileW 路径同语义）：目标为已存在目录
+        // （路径链校验/可遍历性检查）、会话内自建文件读回（PowerShell
+        // __PSScriptPolicyTest 读回等）、目标不存在（ENOENT 透传）→ 均不触发
+        // ask，deny 仍拦截。目标是普通存在文件时走正常 read 判定。
+        if (categorizeNtCreateAccess(desiredAccess, createDisposition) == AccessClass::Read) {
+            DWORD perr = ERROR_SUCCESS;
+            if (sandboxCheckDirReadProbe(winPath, perr) ||
+                sandboxCheckSessionCreatedRead(winPath, perr) ||
+                sandboxCheckNotExistRead(winPath, perr)) {
+                return Real_NtCreateFile(fileHandle, desiredAccess, objectAttributes, ioStatusBlock,
+                                         allocationSize, fileAttributes, shareAccess,
+                                         createDisposition, createOptions, eaBuffer, eaLength);
+            }
+        }
         // 目录写探测（FILE_OPEN + 目录标志）与"确保存在"（FILE_CREATE +
         // FILE_DIRECTORY_FILE 落在已存在目录上）是无副作用的框架行为（.NET/
         // PowerShell 启动时对家目录/AppData 的可写性检查）——完全跳过权限判定，

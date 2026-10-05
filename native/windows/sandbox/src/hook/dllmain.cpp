@@ -67,6 +67,9 @@ bool sandboxSessionCreated(const std::wstring& hostPath)
     std::wstring p = hostPath;
     if (p.rfind(L"\\\\?\\UNC\\", 0) == 0) p = L"\\\\" + p.substr(8);
     else if (p.rfind(L"\\\\?\\", 0) == 0) p = p.substr(4);
+    // 尾部分隔符归一化：引擎打开文件时可能附加尾反斜杠（err=267 的属性查询
+    // 直接失败导致"会话内创建"判定失准，读回自建文件的豁免被绕过）
+    while (p.size() > 1 && (p.back() == L'\\' || p.back() == L'/')) p.pop_back();
     if (!g_trashDir.empty()) {
         std::wstring trashNorm = g_trashDir;
         while (!trashNorm.empty() && (trashNorm.back() == L'\\' || trashNorm.back() == L'/'))
@@ -239,6 +242,56 @@ bool sandboxCheckPathDenyOnly(const std::wstring& hostPath, AccessClass access, 
     if (!g_policy.checkDenyOnly(vpath, kind)) return true;
     winErr = ERROR_ACCESS_DENIED;
     return false;
+}
+
+// 目录读探测的通用判定：read 类访问且目标**当前是已存在目录**时，视为存在性/
+// 可遍历性探测——目录句柄不携带文件数据，读不到任何内容（列目录/校验路径链/
+// 可读性检查均属此类，.NET/PowerShell/git 启动时对家目录与 Temp 链的逐层访问
+// 都走这里）。仅 deny 硬边界生效（ask 不弹、allow 照常），deny 仍拦截防逃逸。
+// 目标是文件或不存在时返回 false，走正常 read 判定（读文件内容仍受策略管控）。
+bool sandboxCheckDirReadProbe(const std::wstring& hostPath, DWORD& winErr)
+{
+    // 尾部分隔符归一化：探测调用可能带尾反斜杠（目录语义），属性查询前剥掉，
+    // 否则 GetFileAttributesExW 对文件+尾斜杠返回 err=267，探测判定失准
+    std::wstring p = hostPath;
+    while (p.size() > 1 && (p.back() == L'\\' || p.back() == L'/')) p.pop_back();
+    WIN32_FILE_ATTRIBUTE_DATA fad;
+    if (!GetFileAttributesExW(p.c_str(), GetFileExInfoStandard, &fad) ||
+        (fad.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) == 0) {
+        return false;
+    }
+    return sandboxCheckPathDenyOnly(p, AccessClass::Read, winErr);
+}
+
+// 会话内自建文件的读回判定：read 类访问且目标由沙箱会话内进程创建（创建时间
+// >= 会话开始）→ 视为进程读回自己的产物，不触发 ask。典型：PowerShell 引擎
+// 写入 __PSScriptPolicyTest_*.ps1 后立即读回（执行策略检测），写已受 write 规则
+// 管控，读回同进程刚写的内容不产生新的信息泄露面。与"会话内创建文件的删除 =
+// 自发清理"（sandboxSessionCreated）同哲学。deny 规则仍拦截（防逃逸）。
+bool sandboxCheckSessionCreatedRead(const std::wstring& hostPath, DWORD& winErr)
+{
+    if (!sandboxSessionCreated(hostPath)) return false;
+    return sandboxCheckPathDenyOnly(hostPath, AccessClass::Read, winErr);
+}
+
+// 不存在路径的读放行：read 类访问且目标**当前不存在** → 不触发 ask，直接放行。
+// 真实 API 随后对宿主返回 ENOENT/PATH_NOT_FOUND，与无沙箱行为完全一致——读不到
+// 任何内容，只是把"不存在"的错误结果透传给调用方（工具的探测/容错逻辑依赖它）。
+// 典型：解释器启动时逐级向上探测 pyvenv.cfg / package.json / 标记文件。
+// 边界：deny 规则仍优先拦截（deny 区路径的存在性探测不泄露）；写不在豁免内
+// （创建文件是真实副作用，照常管控）；TOCTOU 下读到的是沙箱内进程自己预置的
+// 文件，与"会话内自建读回"等价，无新增泄露面。
+bool sandboxCheckNotExistRead(const std::wstring& hostPath, DWORD& winErr)
+{
+    WIN32_FILE_ATTRIBUTE_DATA fad;
+    if (GetFileAttributesExW(hostPath.c_str(), GetFileExInfoStandard, &fad)) {
+        return false;   // 目标存在：正常 read 判定（内容读取受策略管控）
+    }
+    DWORD err = GetLastError();
+    if (err != ERROR_FILE_NOT_FOUND && err != ERROR_PATH_NOT_FOUND) {
+        return false;   // 查询失败（权限等）：正常 read 判定，不扩大豁免
+    }
+    return sandboxCheckPathDenyOnly(hostPath, AccessClass::Read, winErr);
 }
 
 // -- 初始化：加载环境策略并安装 Detours ---------------------------------------

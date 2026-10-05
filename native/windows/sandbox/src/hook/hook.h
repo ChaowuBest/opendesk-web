@@ -40,6 +40,18 @@ bool sandboxCheckPath(const std::wstring& hostPath, AccessClass access, DWORD& w
 // 框架探测类操作的仅-deny 判定：ask/allow 一律放行（不触发 ask），deny 仍拦截。
 bool sandboxCheckPathDenyOnly(const std::wstring& hostPath, AccessClass access, DWORD& winErr);
 
+// 目录读探测的通用判定：read 类访问且目标当前是已存在目录时视为探测（不触发
+// ask，deny 仍拦截）；目标非目录或不存在时返回 false（调用方走正常 read 判定）。
+bool sandboxCheckDirReadProbe(const std::wstring& hostPath, DWORD& winErr);
+
+// 会话内自建文件的读回判定：read 类访问且目标由沙箱会话内进程创建时视为读回
+// 自身产物（不触发 ask，deny 仍拦截）；非会话内创建时返回 false。
+bool sandboxCheckSessionCreatedRead(const std::wstring& hostPath, DWORD& winErr);
+
+// 不存在路径的读放行：read 类访问且目标当前不存在（ENOENT 透传，不触发 ask，
+// deny 仍拦截）；目标存在或查询失败时返回 false（走正常 read 判定）。
+bool sandboxCheckNotExistRead(const std::wstring& hostPath, DWORD& winErr);
+
 // 路径特殊设备/虚设备（NUL、CON、\\.\ 设备、命名管道）不做文件系统判定。
 bool isSpecialDevicePath(const std::wstring& path);
 
