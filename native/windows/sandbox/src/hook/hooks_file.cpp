@@ -814,6 +814,14 @@ BOOL WINAPI Hook_DeleteFileW(LPCWSTR lpFileName)
     if (HookGuard::inHook() || !g_hooked || lpFileName == nullptr)
         return Real_DeleteFileW(lpFileName);
     HookGuard guard;
+    // 删除不存在的文件 = no-op（POSIX unlink 同样返回 ENOENT）：透传真实 API，
+    // 不触发 ask、不进回收站（否则无害操作被回收站失败变成 ACCESS_DENIED，破坏
+    // clang 等工具对已清理临时文件的残留句柄清理）。
+    DWORD notExistErr = ERROR_SUCCESS;
+    if (sandboxCheckNotExistDelete(lpFileName, notExistErr)) {
+        SetLastError(notExistErr);
+        return Real_DeleteFileW(lpFileName);
+    }
     // 沙箱会话内创建的文件：自发清理，不 ask、不进回收站，直接删除
     if (sandboxSessionCreated(lpFileName)) return Real_DeleteFileW(lpFileName);
     DWORD err = ERROR_SUCCESS;
@@ -841,6 +849,12 @@ BOOL WINAPI Hook_DeleteFileA(LPCSTR lpFileName)
         return Real_DeleteFileA(lpFileName);
     HookGuard guard;
     std::wstring wide = ansiToWide(lpFileName);
+    // 删除不存在的文件 = no-op：透传真实 API，不进回收站
+    DWORD notExistErr = ERROR_SUCCESS;
+    if (!wide.empty() && sandboxCheckNotExistDelete(wide, notExistErr)) {
+        SetLastError(notExistErr);
+        return Real_DeleteFileA(lpFileName);
+    }
     if (!wide.empty() && sandboxSessionCreated(wide)) return Real_DeleteFileA(lpFileName);
     DWORD err = ERROR_SUCCESS;
     if (!wide.empty() && !sandboxCheckPath(wide, AccessClass::Write, err)) {
@@ -856,6 +870,12 @@ BOOL WINAPI Hook_RemoveDirectoryW(LPCWSTR lpPathName)
     if (HookGuard::inHook() || !g_hooked || lpPathName == nullptr)
         return Real_RemoveDirectoryW(lpPathName);
     HookGuard guard;
+    // 删除不存在的目录 = no-op：透传真实 API，不进回收站
+    DWORD notExistErr = ERROR_SUCCESS;
+    if (sandboxCheckNotExistDelete(lpPathName, notExistErr)) {
+        SetLastError(notExistErr);
+        return Real_RemoveDirectoryW(lpPathName);
+    }
     DWORD err = ERROR_SUCCESS;
     if (!sandboxCheckPath(lpPathName, AccessClass::Write, err)) {
         SetLastError(err);
@@ -871,6 +891,12 @@ BOOL WINAPI Hook_RemoveDirectoryA(LPCSTR lpPathName)
         return Real_RemoveDirectoryA(lpPathName);
     HookGuard guard;
     std::wstring wide = ansiToWide(lpPathName);
+    // 删除不存在的目录 = no-op：透传真实 API，不进回收站
+    DWORD notExistErr = ERROR_SUCCESS;
+    if (!wide.empty() && sandboxCheckNotExistDelete(wide, notExistErr)) {
+        SetLastError(notExistErr);
+        return Real_RemoveDirectoryA(lpPathName);
+    }
     DWORD err = ERROR_SUCCESS;
     if (!wide.empty() && !sandboxCheckPath(wide, AccessClass::Write, err)) {
         SetLastError(err);
@@ -1015,6 +1041,13 @@ BOOL WINAPI Hook_SetFileInformationByHandle(HANDLE hFile, FILE_INFO_BY_HANDLE_CL
             DWORD n = GetFinalPathNameByHandleW(hFile, pathBuf, MAX_PATH, FILE_NAME_NORMALIZED);
             if (n > 0 && n < MAX_PATH) {
                 std::wstring p(pathBuf, n);
+                // 句柄指向的文件已不存在（残留句柄的删除标记，clang 等工具对已
+                // rename/清理文件的清理）：透传真实句柄删除（no-op），不进回收站。
+                DWORD notExistErr = ERROR_SUCCESS;
+                if (sandboxCheckNotExistDelete(p, notExistErr)) {
+                    SetLastError(notExistErr);
+                    break;   // 交真实句柄删除（文件已不在，返回宿主一致的 ENOENT 语义）
+                }
                 // 沙箱会话内创建：自发清理，直接删（不 ask、不进回收站）
                 if (sandboxSessionCreated(p)) break;
                 DWORD err = ERROR_SUCCESS;

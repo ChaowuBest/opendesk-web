@@ -233,6 +233,13 @@ NTSTATUS NTAPI Hook_NtSetInformationFile(HANDLE fileHandle, PIO_STATUS_BLOCK ioS
             DWORD n = GetFinalPathNameByHandleW(fileHandle, pathBuf, MAX_PATH, FILE_NAME_NORMALIZED);
             if (n > 0 && n < MAX_PATH) {
                 std::wstring p(pathBuf, n);
+                // 句柄指向的文件已不存在（残留句柄删除标记）：透传真实句柄删除，
+                // 不进回收站（no-op 语义，避免回收站失败破坏 clang 等工具清理）。
+                DWORD notExistErr = ERROR_SUCCESS;
+                if (sandboxCheckNotExistDelete(p, notExistErr)) {
+                    SetLastError(notExistErr);
+                    break;   // 交真实句柄删除
+                }
                 // 沙箱会话内创建：自发清理，直接删（不 ask、不进回收站）。
                 // 注意 sandboxSessionCreated 对回收站路径有豁免（返回 false），
                 // 回收站内容的删除/写入由 sandboxCheckPath 的 trash-protected 拦。
@@ -284,6 +291,12 @@ NTSTATUS NTAPI Hook_NtDeleteFile(POBJECT_ATTRIBUTES objectAttributes)
 
     std::wstring winPath;
     if (objectAttributes->ObjectName && ntPathToWin32(objectAttributes->ObjectName, winPath)) {
+        // 删除不存在的文件 = no-op：透传真实 API，不进回收站
+        DWORD notExistErr = ERROR_SUCCESS;
+        if (sandboxCheckNotExistDelete(winPath, notExistErr)) {
+            SetLastError(notExistErr);
+            return Real_NtDeleteFile(objectAttributes);
+        }
         // 沙箱会话内创建：自发清理，直接删（不 ask、不进回收站）
         if (sandboxSessionCreated(winPath)) return Real_NtDeleteFile(objectAttributes);
         DWORD err = ERROR_SUCCESS;

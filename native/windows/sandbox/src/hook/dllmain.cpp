@@ -274,6 +274,27 @@ bool sandboxCheckSessionCreatedRead(const std::wstring& hostPath, DWORD& winErr)
     return sandboxCheckPathDenyOnly(hostPath, AccessClass::Read, winErr);
 }
 
+// 不存在路径的删除透传：删除类操作（DeleteFileW/A、RemoveDirectoryW/A、NtDeleteFile、
+// 句柄级 FileDispositionInfo）且目标**当前不可见** → 直接透传真实 API（返回宿主一致的
+// FILE_NOT_FOUND / PATH_NOT_FOUND / ACCESS_DENIED 等错误码），不触发 ask、不进回收站。
+// 与 sandboxCheckNotExistRead 同哲学：删除不存在的文件是 no-op（POSIX unlink 同样返回
+// ENOENT），沙箱若把它分流进回收站会返回 ACCESS_DENIED，把无害操作变成致命错误——
+// 典型破坏：clang/LLVM 对已 rename 走的 .o.tmp 残留句柄设置删除标记时，回收站移动失败
+// 导致编译报 "unable to rename temporary ... Permission denied"。
+//
+// 注意 GetFileAttributesExW 失败码不止 2/3：文件被 FileDispositionInfo 标记删除后处于
+// pending-delete 状态，属性查询返回 ERROR_ACCESS_DENIED(5)（clang 场景实测）。因此
+// 只要属性查询失败即视为"不可见/非正常文件"，不做回收站分流；deny 规则仍优先拦截
+// （防 deny 区路径的存在性探测/枚举逃逸，sandboxCheckPathDenyOnly 兜底）。
+bool sandboxCheckNotExistDelete(const std::wstring& hostPath, DWORD& winErr)
+{
+    WIN32_FILE_ATTRIBUTE_DATA fad;
+    if (GetFileAttributesExW(hostPath.c_str(), GetFileExInfoStandard, &fad)) {
+        return false;   // 目标存在：正常删除判定（进回收站等）
+    }
+    return sandboxCheckPathDenyOnly(hostPath, AccessClass::Write, winErr);
+}
+
 // 不存在路径的读放行：read 类访问且目标**当前不存在** → 不触发 ask，直接放行。
 // 真实 API 随后对宿主返回 ENOENT/PATH_NOT_FOUND，与无沙箱行为完全一致——读不到
 // 任何内容，只是把"不存在"的错误结果透传给调用方（工具的探测/容错逻辑依赖它）。

@@ -81,6 +81,13 @@ bool sandboxCheckRenameTarget(const std::wstring& sourcePath, const void* info, 
 // 直接删除（Dokan 版"实例内创建跟踪"的等价语义，无需共享内存/ADS）。
 bool sandboxSessionCreated(const std::wstring& hostPath);
 
+// 删除类操作的目标不存在判定：目标当前不存在（GetFileAttributesExW 返回
+// FILE_NOT_FOUND / PATH_NOT_FOUND）→ 透传真实 API 结果，不进回收站。与
+// sandboxCheckNotExistRead 同哲学（删除不存在文件是 no-op，回收站分流会把
+// 无害操作变成 ACCESS_DENIED 致命错误——clang 编译 .o.tmp rename 即受害）。
+// 返回 true = 应透传真实 API（*winErr 写判定错误码）；false = 正常删除判定。
+bool sandboxCheckNotExistDelete(const std::wstring& hostPath, DWORD& winErr);
+
 // -- 被拦截的 API 的原始入口（dllmain.cpp 初始化，hooks_*.cpp 使用）---------
 
 extern "C" {

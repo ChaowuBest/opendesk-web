@@ -1677,3 +1677,60 @@ test('session-created files delete without recycle bin while host files still tr
         fs.rmSync(directory, { recursive: true, force: true });
     }
 });
+
+test('deleting a missing/non-visible file is a transparent no-op (no recycle-bin failure log)', { skip: !windows }, async () => {
+    // 回归：clang/LLVM 等工具对已 rename 走的 .o.tmp 残留句柄设置删除标记（或清理
+    // 已不存在的临时文件）时，沙箱必须把"删除不可见文件"透传给真实 API（返回宿主
+    // 一致的 FILE_NOT_FOUND），而不是分流进回收站——回收站移动不存在的文件必然失败，
+    // 会把无害的 no-op 变成 ACCESS_DENIED 致命错误（曾致 clang 编译报
+    // "unable to rename temporary ... Permission denied"）。
+    const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'opendesk-sandbox-notexist-del-'));
+    try {
+        const policy = path.join(directory, 'policy.toml');
+        writeDriveAllowPolicy(policy);
+        const logFile = path.join(directory, 'sandbox.log');
+        const script = path.join(directory, 'notexist.cjs');
+        fs.writeFileSync(
+            script,
+            "const fs = require('fs');\n" +
+            "const path = require('path');\n" +
+            "const dir = process.argv[2];\n" +
+            "fs.mkdirSync(dir, { recursive: true });\n" +
+            "// 1) 删除不存在的文件：应透传 ENOENT（不抛非预期错误、不触发回收站日志）\n" +
+            "let enoent = false;\n" +
+            "try { fs.unlinkSync(path.join(dir, 'missing.txt')); } catch (e) { enoent = e.code === 'ENOENT'; }\n" +
+            "// 2) 删除不存在的空目录：同样透传\n" +
+            "let rmdirEnoent = false;\n" +
+            "try { fs.rmdirSync(path.join(dir, 'missing-dir')); } catch (e) { rmdirEnoent = e.code === 'ENOENT'; }\n" +
+            "// 3) 会话内创建 -> rename 走（模拟 clang .o.tmp -> .o），目标文件消失后对\n" +
+            "//    残留句柄设置删除标记：不得触发回收站失败日志\n" +
+            "const tmp = path.join(dir, 'probe.o.tmp');\n" +
+            "const out = path.join(dir, 'probe.o');\n" +
+            "fs.writeFileSync(tmp, 'x');\n" +
+            "fs.renameSync(tmp, out);\n" +
+            "console.log('ENOENT_FILE=' + enoent + ' ENOENT_DIR=' + rmdirEnoent + ' RENAMED=' + fs.existsSync(out));\n"
+        );
+        const result = await run(executable, [
+            'run',
+            '--log-file',
+            logFile,
+            '--policy',
+            policy,
+            '--del-to-trash',
+            '--',
+            process.execPath,
+            script,
+            path.join(directory, 'probe-work')
+        ]);
+        assert.equal(result.code, 0, result.stdout + result.stderr);
+        assert.match(result.stdout, /ENOENT_FILE=true ENOENT_DIR=true RENAMED=true/);
+        // 回收站日志不得出现"删除失败/回收站失败"（删除不可见文件应被透传）
+        if (fs.existsSync(logFile)) {
+            const log = fs.readFileSync(logFile, 'utf8');
+            assert.doesNotMatch(log, /TRASH\]\s*(回收站删除失败|移入回收站失败)/);
+        }
+    } finally {
+        fs.rmSync(directory, { recursive: true, force: true });
+    }
+});
+

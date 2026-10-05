@@ -446,9 +446,11 @@ int dbox_system_allow(const char *path, int acc)
     return 0;
 }
 
-/* 规则模式的"具体性"：剥离尾部 "/**" 后的前缀长度（最具体模式优先的排序键）。
- * 与 macOS boxdylib 的 pattern_base_len 同义：`/a/**` 的键是 `/a`（长度 3），
- * `/a/b` 的键是 `/a/b`（长度 5）——更长的键更具体。 */
+/* 规则模式的"具体性"：剥离尾部以斜杠加双星号结尾的后缀后取前缀长度
+ * （最具体模式优先的排序键）。与 macOS boxdylib 的 pattern_base_len 同义：
+ * 以斜杠加双星号结尾的 `/a/b` 变体，其键是 `/a/b`（长度 5）；普通路径
+ * 如 `/a/b` 的键是 `/a/b`（长度 5）、`/a` 是 `/a`（长度 3）——更长的键
+ * 更具体。 */
 static size_t rule_specificity(const char *pat)
 {
     size_t n = strlen(pat);
