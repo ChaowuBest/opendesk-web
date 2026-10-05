@@ -81,7 +81,9 @@ const TRASH_MODAL_CSS = `
 .trash-modal-card { width: 560px; max-width: 92vw; }
 
 /* 对齐设置面板 od-sp-scroll：body 超高时滚动（footer 固定在卡片底部） */
-.trash-modal-body { padding-top: 14px; max-height: 62vh; overflow-y: auto; }
+/* 头部（搜索框/任务信息）固定：body 不滚动，列表包在 .trash-list-scroll 中独立滚动 */
+.trash-modal-body { padding-top: 14px; max-height: 62vh; display: flex; flex-direction: column; overflow: hidden; }
+.trash-list-scroll { flex: 1; min-height: 0; overflow-y: auto; }
 
 .trash-search {
     position: relative;
@@ -296,15 +298,26 @@ class TrashFloatingWindow extends HTMLElement {
         return options;
     }
 
-    private async _loadFirstPage(): Promise<void> {
+    /**
+     * 加载第一页。keepList 模式下不清空现有列表、不渲染加载态（静默刷新），
+     * 等结果返回后整体替换，用于范围切换等场景，避免整窗闪烁/跳动。
+     */
+    private async _loadFirstPage(options: { keepList?: boolean } = {}): Promise<void> {
         if (!this._overlay) return;
         this._searchSeq++;
         const seq = this._searchSeq;
+        // 新一轮首屏加载会作废在途的追加分页（其 seq 已失效，结果将被丢弃），
+        // 同步复位标记，避免 _loadingMore 卡死导致后续滚动无法继续分页。
+        this._loadingMore = false;
         this._loading = true;
         this._loadFailed = false;
-        this._entries = [];
-        this._total = 0;
-        this._renderList();
+        if (!options.keepList) {
+            this._entries = [];
+            this._total = 0;
+            this._renderList();
+        }
+        // keepList（静默）模式：保留当前列表与滚动位置，仅阻止并发分页，
+        // 等结果返回后整体替换，避免整窗因清空+加载态而闪烁/跳动。
         try {
             const result = await window.trashAPI.search(this._buildSearchOptions(0));
             if (seq !== this._searchSeq) return;
@@ -475,14 +488,16 @@ class TrashFloatingWindow extends HTMLElement {
                     </div>
                     <button class="od-confirm-modal-close trash-close" title="${escapeHtml(t('common.close'))}" aria-label="${escapeHtml(t('common.close'))}">${CLOSE_SVG}</button>
                 </div>
-                <div class="od-confirm-modal-body od-sp-scroll trash-modal-body">
+                <div class="od-confirm-modal-body trash-modal-body">
                     <div class="trash-search">
                         <i class="fa-solid fa-magnifying-glass trash-search-icon"></i>
                         <input type="text" class="trash-search-input" placeholder="${escapeHtml(t('trash.window.searchPlaceholder'))}">
                         <button type="button" class="trash-search-clear" title="${escapeHtml(t('renderer.sidebar.clearSearch'))}" aria-label="${escapeHtml(t('renderer.sidebar.clearSearch'))}"><i class="fa-solid fa-xmark"></i></button>
                     </div>
                     ${isTaskMode ? this._taskInfoHtml() : ''}
-                    <div class="trash-list"></div>
+                    <div class="trash-list-scroll">
+                        <div class="trash-list"></div>
+                    </div>
                 </div>
                 <div class="od-confirm-modal-footer">
                     <button class="od-confirm-btn od-confirm-btn-cancel trash-close">${escapeHtml(t('common.close'))}</button>
@@ -522,12 +537,13 @@ class TrashFloatingWindow extends HTMLElement {
 
         overlay.querySelector('.trash-scope-only')?.addEventListener('change', (event) => {
             this._taskScopeOnly = (event.target as HTMLInputElement).checked;
-            void this._loadFirstPage();
+            // 静默刷新：保留旧列表直至新结果返回，避免整窗闪烁
+            void this._loadFirstPage({ keepList: true });
         });
 
-        const body = overlay.querySelector('.trash-modal-body') as HTMLElement | null;
-        body?.addEventListener('scroll', () => {
-            if (body.scrollTop + body.clientHeight >= body.scrollHeight - 48) {
+        const listScroll = overlay.querySelector('.trash-list-scroll') as HTMLElement | null;
+        listScroll?.addEventListener('scroll', () => {
+            if (listScroll.scrollTop + listScroll.clientHeight >= listScroll.scrollHeight - 48) {
                 void this._loadMore();
             }
         });
