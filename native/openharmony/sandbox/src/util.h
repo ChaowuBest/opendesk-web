@@ -3,26 +3,16 @@
 #define DYNOBOX_UTIL_H
 
 #include <stddef.h>
-#include <poll.h>
 #include <time.h>
+#ifndef _WIN32
 #include <unistd.h>
-#include <sys/syscall.h>
 
-/* Raw poll(2) on the wrapper's own fds, issued as a syscall so it can never
- * recurse into the interposed libc entry points. Ports without a poll/select
- * syscall (aarch64 and friends) fall back to ppoll(2), which is what musl and
- * glibc implement poll() with there. */
-static inline int dbox_raw_poll(struct pollfd *fds, unsigned long nfds,
-                                int timeout_ms)
-{
-#ifdef SYS_poll
-    return (int)syscall(SYS_poll, fds, nfds, timeout_ms);
-#else
-    struct timespec ts = { timeout_ms / 1000,
-                           (long)(timeout_ms % 1000) * 1000000L };
-    return (int)syscall(SYS_ppoll, fds, nfds, &ts, 0, 0);
+/* 沙箱自身 I/O 原语（dbox_raw_poll 等）统一由 rawio 抽象层提供。
+ * Linux/OH: syscall 绕 LD_PRELOAD；macOS: libc + interpose 豁免；
+ * Windows: Win32。util.h 历史上直接暴露 dbox_raw_poll，这里透传以保持
+ * 既有调用方（ask.c / preload.c）无需改动。 */
+#include "rawio.h"
 #endif
-}
 
 char *dbox_strdup(const char *s);
 char *dbox_strndup(const char *s, size_t n);

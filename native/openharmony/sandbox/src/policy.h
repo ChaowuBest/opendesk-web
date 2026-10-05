@@ -3,7 +3,11 @@
 #define DYNOBOX_POLICY_H
 
 #include "dynobox.h"
+#ifndef _WIN32
 #include <pthread.h>
+#else
+#include "pthread_compat.h"
+#endif
 #include <stddef.h>
 
 /* Parse policy TOML text into p. Returns 0 or -1 with `err` filled. */

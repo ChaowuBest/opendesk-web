@@ -62,8 +62,7 @@ export const enUs: Record<string, string> = {
         '- System directories (/usr /lib /bin /etc etc.) are mounted read-only from the host: runtimes such as Python and Node.js are available natively and cannot be modified.',
     'prompt.sandbox.linux.tmp':
         '- /tmp maps to the host directory: files written in the sandbox persist across commands and sandbox instances.',
-    'sandbox.executableMissing.linux':
-        'Dynamic sandbox enabled but dynobox-linux was not found. Rebuild the Linux package.',
+    'sandbox.executableMissing.linux': 'Dynamic sandbox enabled but dynobox was not found. Rebuild the Linux package.',
     'sandbox.cwdMissing.linux': 'Dynamic sandbox requires a task workspace as the controlled path.',
     'sandbox.cwdUnsupported.linux': 'Sandbox working directory is missing or unusable: ${path}',
     'sandbox.executableMissing.ohos':

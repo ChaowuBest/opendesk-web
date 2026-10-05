@@ -11,8 +11,10 @@
 #include <ctype.h>
 #include <errno.h>
 #include <sys/stat.h>
+#ifndef _WIN32
 #include <sys/socket.h>
 #include <sys/un.h>
+#endif
 
 void *dbox_malloc(size_t n)
 {
@@ -197,6 +199,7 @@ unsigned char *dbox_b64decode(const char *in, size_t *outlen)
     return r;
 }
 
+#ifndef _WIN32
 /* Can a unix socket actually be bound in this directory? Directory
  * existence/writability is not enough: HarmonyOS rejects bind() on HMDFS
  * (EPERM) and on tmpfs mounts such as /dev/shm (EACCES by SELinux). */
@@ -255,3 +258,21 @@ void dbox_pipe_path(const char *name, char *out, size_t outsz)
 {
     snprintf(out, outsz, "%s/%s.sock", dbox_pipe_dir(), name);
 }
+#else
+/* Windows：pipe:// 由既有 ask.cpp 的命名管道传输实现，core 侧无需 unix
+ * socket 探测。提供 getenv 兜底避免链接错误（bridge 不调用时为死代码）。 */
+const char *dbox_pipe_dir(void)
+{
+    static char cached[256];
+    if (cached[0]) return cached;
+    const char *env = getenv("DYNOBOX_PIPE_DIR");
+    if (env && env[0]) { snprintf(cached, sizeof cached, "%s", env); return cached; }
+    snprintf(cached, sizeof cached, "\\\\.\\pipe\\dynobox-pipes");
+    return cached;
+}
+
+void dbox_pipe_path(const char *name, char *out, size_t outsz)
+{
+    snprintf(out, outsz, "%s\\%s", dbox_pipe_dir(), name);
+}
+#endif

@@ -177,8 +177,8 @@ vite.config.ts.timestamp-*
 *.swo
 *~
 
-# Linux 沙箱构建产物与打包二进制；vendor/ 是构建时生成的第三方源码缓存
-# （fuser 由 scripts/build-linux-sandbox.cjs 下载指定版本并应用 patches/ 补丁）
+# Linux 沙箱构建产物（LD_PRELOAD 版）：runtime/<triple>/{dynobox,libdynobox.so} 由
+# Makefile 的 runtime 目标生成；vendor/ 为历史 FUSE 版（cargo vendor）残留，不再使用
 native/linux/sandbox/target/
 native/linux/sandbox/runtime/
 native/linux/sandbox/vendor/

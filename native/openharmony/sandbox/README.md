@@ -275,9 +275,9 @@ grant_ttl_seconds = 300      # 端点子树授权默认有效期（响应可覆�
 [network]
 default = "allow"            # allow | deny | loopback（仅 127.0.0.0/8 与 ::1）
 
-[[rules]]                    # 按声明顺序匹配，第一条命中生效 —— 具体的放前面！
-path   = "/etc/shadow"
-access = "all"
+[[rules]]                    # most-specific 匹配（四平台统一）：命中多条取最具体
+path   = "/etc/shadow"       # 模式（剥尾 /** 的前缀最长），同长 deny > ask > allow；
+access = "all"               # 规则书写顺序无关，宽 allow 在前也不吞掉精确 deny
 perm   = "deny"
 
 [[rules]]

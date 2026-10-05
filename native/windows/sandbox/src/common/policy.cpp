@@ -9,9 +9,8 @@
 #include <windows.h>
 #include <stdexcept>
 
-#include "glob.h"
+#include "core_policy.h"
 #include "log.h"
-#include "toml.h"
 #include "utf.h"
 
 namespace sbx {
@@ -29,9 +28,9 @@ bool Rule::matches(const std::wstring& vpath, const std::string& kind) const
     // 字面前缀预筛
     if (vpath.size() < literalPrefix.size()) return false;
     if (_wcsnicmp(vpath.c_str(), literalPrefix.c_str(), literalPrefix.size()) != 0) return false;
-    if (globMatch(path, vpath)) return true;
+    if (coreGlobMatch(path, vpath)) return true;
     // `/dir/**` 同时匹配 `/dir` 本身
-    if (!basePath.empty() && globMatch(basePath, vpath)) return true;
+    if (!basePath.empty() && coreGlobMatch(basePath, vpath)) return true;
     return false;
 }
 
@@ -60,7 +59,7 @@ static bool buildRule(const std::wstring& rawPath, const std::wstring& rawAccess
     r.path = normalizeVirtualPath(rawPath);
     r.access = access;
     r.perm = parsePerm(perm);
-    r.literalPrefix = globLiteralPrefix(r.path);
+    r.literalPrefix = coreGlobLiteralPrefix(r.path);
     if (r.path.size() >= 3 && r.path.compare(r.path.size() - 3, 3, L"/**") == 0) {
         std::wstring base = r.path.substr(0, r.path.size() - 3);
         r.basePath = base.empty() ? L"/" : base;
@@ -102,36 +101,24 @@ Policy Policy::loadFromFile(const std::wstring& path)
     if (text.empty())
         throw std::runtime_error("策略文件为空或不可读: " + wideToUtf8(path));
 
-    TomlTable root;
-    try {
-        root = parseToml(text);
-    } catch (const std::exception& e) {
-        throw std::runtime_error(std::string("策略文件解析失败: ") + e.what());
+    // TOML 解析与规则评估内核委托给共享 core（native/openharmony/sandbox/src，
+    // 三平台单一来源）：core 做 fail-loud 校验（未知表名/旧 schema 一律报错，
+    // 含 [[rule]] 单数与 decision= 旧字段的静默降级防护）。
+    std::vector<CorePolicyRule> coreRules;
+    CoreAskConfig coreAsk;
+    std::string coreDefault;
+    std::wstring coreError;
+    if (!coreParsePolicyToml(text, coreRules, coreAsk, coreDefault, coreError)) {
+        throw std::runtime_error("策略文件解析失败: " + wideToUtf8(coreError));
     }
 
     Policy p;
-
-    auto defIt = root.find(L"default");
-    if (defIt != root.end()) {
-        std::wstring def = defIt->second.toString();
-        for (auto& c : def) c = (wchar_t)towlower(c);
-        p.m_default = (def == L"allow") ? "allow" : "deny";
-    }
-
-    auto askIt = root.find(L"ask");
-    if (askIt != root.end() && askIt->second.kind() == TomlValue::Kind::Table) {
-        const TomlTable& ask = askIt->second.table();
-        auto it = ask.find(L"endpoint");
-        if (it != ask.end()) p.m_ask.endpoint = it->second.toString();
-        it = ask.find(L"token");
-        if (it != ask.end()) p.m_ask.token = it->second.toString();
-        it = ask.find(L"timeout_ms");
-        if (it != ask.end()) p.m_ask.timeoutMs = (int)it->second.toInteger();
-        it = ask.find(L"cache_ttl_seconds");
-        if (it != ask.end()) p.m_ask.cacheTtlSeconds = (int)it->second.toInteger();
-        it = ask.find(L"grant_ttl_seconds");
-        if (it != ask.end()) p.m_ask.grantTtlSeconds = (int)it->second.toInteger();
-    }
+    p.m_default = coreDefault.empty() ? "deny" : coreDefault;
+    p.m_ask.endpoint = coreAsk.endpoint;
+    p.m_ask.token = coreAsk.token;
+    p.m_ask.timeoutMs = (int)coreAsk.timeoutMs;
+    p.m_ask.cacheTtlSeconds = (int)coreAsk.cacheTtlSeconds;
+    p.m_ask.grantTtlSeconds = (int)coreAsk.grantTtlSeconds;
 
     // 内置引导区规则（与 C# 版一致：用户规则无法关闭沙箱内部路径）
     {
@@ -142,40 +129,16 @@ Policy Policy::loadFromFile(const std::wstring& path)
         p.m_rules.push_back(std::move(dynoboxDeep));
     }
 
-    auto rootsIt = root.find(L"roots");
-    if (rootsIt != root.end() && rootsIt->second.kind() == TomlValue::Kind::TableArray) {
-        for (const auto& r : rootsIt->second.array()) {
-            auto vit = r.find(L"virtual");
-            auto rit = r.find(L"real");
-            if (vit == r.end() || rit == r.end())
-                throw std::runtime_error("roots 项缺少 virtual/real");
-            std::wstring real = rit->second.toString();
-            while (real.size() > 1 && real.back() == L'\\') real.pop_back();
-            if (real.size() == 2 && real[1] == L':') real.push_back(L'\\');   // "C:" -> "C:\"
-            RootMap m;
-            m.virtualPrefix = normalizeVirtualPath(vit->second.toString());
-            while (m.virtualPrefix.size() > 1 && m.virtualPrefix.back() == L'/')
-                m.virtualPrefix.pop_back();
-            m.realPrefix = real;
-            p.m_roots.push_back(std::move(m));
-        }
-    }
-
-    auto rulesIt = root.find(L"rules");
-    if (rulesIt != root.end() && rulesIt->second.kind() == TomlValue::Kind::TableArray) {
-        size_t i = 0;
-        for (const auto& r : rulesIt->second.array()) {
-            auto pit = r.find(L"path");
-            auto ait = r.find(L"access");
-            auto perIt = r.find(L"perm");
-            if (pit == r.end() || ait == r.end() || perIt == r.end())
-                throw std::runtime_error("rules[" + std::to_string(i) + "] 缺少字段");
-            Rule rule;
-            if (!buildRule(pit->second.toString(), ait->second.toString(), perIt->second.toString(), rule))
-                throw std::runtime_error("rules[" + std::to_string(i) + "] 字段非法");
-            p.m_rules.push_back(std::move(rule));
-            i++;
-        }
+    // core 解析出的用户规则 → Windows Rule（含 literalPrefix 热路径预筛）。
+    // [[roots]] 不再支持（core 侧 fail-loud 拒绝；Windows 的虚拟根映射由
+    // addAutomountRoots/addSrcRoot 运行时构造，不经策略文件）。
+    for (const auto& cr : coreRules) {
+        Rule rule;
+        std::wstring accessW(cr.access.begin(), cr.access.end());
+        std::wstring permW(cr.perm.begin(), cr.perm.end());
+        if (!buildRule(cr.path, accessW, permW, rule))
+            throw std::runtime_error("rules 字段非法: " + wideToUtf8(cr.path));
+        p.m_rules.push_back(std::move(rule));
     }
     return p;
 }

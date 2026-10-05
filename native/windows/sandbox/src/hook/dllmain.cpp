@@ -8,9 +8,10 @@
 
 #include "../common/log.h"
 #include "../common/paths.h"
-#include "../common/toml.h"
 #include "../common/hook_scope.h"
 #include "detours.h"
+
+#include <stdexcept>
 
 // 本 DLL 内需要与 Detours 对接的真实函数指针（hooks_*.cpp 定义 Hook_* 实现）
 extern "C" {
@@ -57,12 +58,31 @@ static unsigned __int64 g_sessionStartFiletime = 0;
 
 // 判断路径是否沙箱会话内创建（文件创建时间 >= 会话开始时间）。
 // 会话内创建的文件删除 = 自发清理：不 ask、不进回收站，直接删除。
+// 例外：回收站目录内的文件永不走此短路——回收站产物（<uuid>.back）本身就是
+// 会话内由回收流程创建的，若无此豁免，"删回收站内容"会被误判为临时文件清理
+// 而直接真删（蓝队 B1：回收站可恢复性承诺被绕过）。
 bool sandboxSessionCreated(const std::wstring& hostPath)
 {
     if (g_sessionStartFiletime == 0) return false;
     std::wstring p = hostPath;
     if (p.rfind(L"\\\\?\\UNC\\", 0) == 0) p = L"\\\\" + p.substr(8);
     else if (p.rfind(L"\\\\?\\", 0) == 0) p = p.substr(4);
+    if (!g_trashDir.empty()) {
+        std::wstring trashNorm = g_trashDir;
+        while (!trashNorm.empty() && (trashNorm.back() == L'\\' || trashNorm.back() == L'/'))
+            trashNorm.pop_back();
+        std::wstring pn = p;
+        while (!pn.empty() && (pn.back() == L'\\' || pn.back() == L'/')) pn.pop_back();
+        std::wstring trashLower = trashNorm, pLower = pn;
+        for (auto& c : trashLower) c = (wchar_t)towlower(c);
+        for (auto& c : pLower) c = (wchar_t)towlower(c);
+        if (pLower == trashLower ||
+            (pLower.size() > trashLower.size() &&
+             pLower.compare(0, trashLower.size(), trashLower) == 0 &&
+             (pLower[trashLower.size()] == L'\\' || pLower[trashLower.size()] == L'/'))) {
+            return false;   /* 回收站内：不视为会话内临时文件（删除/写由 trash-protected 拦） */
+        }
+    }
     WIN32_FILE_ATTRIBUTE_DATA fad;
     if (!GetFileAttributesExW(p.c_str(), GetFileExInfoStandard, &fad)) return false;
     ULARGE_INTEGER created;
@@ -161,6 +181,29 @@ bool sandboxCheckPath(const std::wstring& hostPath, AccessClass access, DWORD& w
         // 未映射到任何 root：按"沙箱内不存在"处理（not-found 语义）
         winErr = ERROR_PATH_NOT_FOUND;
         return false;
+    }
+
+    // 回收站写保护（对齐 Linux/OH core 的 trash-protected DENY）：回收站是误删
+    // 数据的恢复区，沙箱进程可写即可清空整个回收站（T3 蓝队发现）。--del-to-trash
+    // 的移动由 hook 的 RecycleGuard 分支完成，不经此判定，不受影响。读不受限。
+    if (access == AccessClass::Write && !g_trashDir.empty()) {
+        std::wstring trashNorm = g_trashDir;
+        while (!trashNorm.empty() && (trashNorm.back() == L'\\' || trashNorm.back() == L'/'))
+            trashNorm.pop_back();
+        std::wstring hostNorm = host;
+        while (!hostNorm.empty() && (hostNorm.back() == L'\\' || hostNorm.back() == L'/'))
+            hostNorm.pop_back();
+        // 大小写不敏感前缀 + 组件边界（\trash\<taskId>\... 或恰为目录本身）
+        std::wstring trashLower = trashNorm, hostLower = hostNorm;
+        for (auto& c : trashLower) c = (wchar_t)towlower(c);
+        for (auto& c : hostLower) c = (wchar_t)towlower(c);
+        if (hostLower == trashLower ||
+            (hostLower.size() > trashLower.size() &&
+             hostLower.compare(0, trashLower.size(), trashLower) == 0 &&
+             (hostLower[trashLower.size()] == L'\\' || hostLower[trashLower.size()] == L'/'))) {
+            winErr = ERROR_ACCESS_DENIED;
+            return false;
+        }
     }
 
     const char* kind = access == AccessClass::Read ? kAccessRead
@@ -342,11 +385,17 @@ extern "C" BOOL APIENTRY DllMain(HMODULE hModule, DWORD reason, LPVOID lpReserve
         try {
             sbx::loadEnvironmentPolicy();
             sbx::installHooks();
+        } catch (const std::exception& e) {
+            // 策略加载失败 = fail-closed：不安装 hook（进程仍可运行但无管控）。
+            // 异常原文透出（stderr + 调试器），便于定位（core 桥接层的解析错误
+            // 带具体原因，如表名/字段校验失败）。
+            wchar_t msg[512];
+            MultiByteToWideChar(CP_UTF8, 0, e.what(), -1, msg, 512);
+            OutputDebugStringW(msg);
+            sbx::Log::error(L"sandbox_hook: 策略加载失败: %ls", msg);
         } catch (...) {
-            // 策略加载失败 = fail-closed：不安装 hook（进程仍可运行但无管控，
-            // 诊断经 stderr 输出，宿主日志可见）。
-            OutputDebugStringW(L"sandbox_hook: policy load failed, hooks not installed\n");
-            sbx::Log::error(L"sandbox_hook: 策略加载失败，未安装管控");
+            OutputDebugStringW(L"sandbox_hook: policy load failed (unknown), hooks not installed\n");
+            sbx::Log::error(L"sandbox_hook: 策略加载失败（未知异常），未安装管控");
         }
     }
     return TRUE;

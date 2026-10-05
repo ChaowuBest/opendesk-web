@@ -219,7 +219,9 @@ NTSTATUS NTAPI Hook_NtSetInformationFile(HANDLE fileHandle, PIO_STATUS_BLOCK ioS
             DWORD n = GetFinalPathNameByHandleW(fileHandle, pathBuf, MAX_PATH, FILE_NAME_NORMALIZED);
             if (n > 0 && n < MAX_PATH) {
                 std::wstring p(pathBuf, n);
-                // 沙箱会话内创建：自发清理，直接删（不 ask、不进回收站）
+                // 沙箱会话内创建：自发清理，直接删（不 ask、不进回收站）。
+                // 注意 sandboxSessionCreated 对回收站路径有豁免（返回 false），
+                // 回收站内容的删除/写入由 sandboxCheckPath 的 trash-protected 拦。
                 if (sandboxSessionCreated(p)) break;
                 DWORD err = ERROR_SUCCESS;
                 if (!sandboxCheckPath(p, AccessClass::Write, err)) {

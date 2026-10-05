@@ -182,8 +182,10 @@ REAL(int, mkdir, (const char *, mode_t))
 REAL(int, mkdirat, (int, const char *, mode_t))
 REAL(int, rmdir, (const char *))
 REAL(int, chmod, (const char *, mode_t))
+REAL(int, fchmod, (int, mode_t))
 REAL(int, fchmodat, (int, const char *, mode_t, int))
 REAL(int, chown, (const char *, uid_t, gid_t))
+REAL(int, fchown, (int, uid_t, gid_t))
 REAL(int, lchown, (const char *, uid_t, gid_t))
 REAL(int, fchownat, (int, const char *, uid_t, gid_t, int))
 REAL(int, truncate, (const char *, off_t))
@@ -197,6 +199,7 @@ REAL(int, mknodat, (int, const char *, mode_t, dev_t))
 REAL(int, mkfifo, (const char *, mode_t))
 REAL(int, mkfifoat, (int, const char *, mode_t))
 REAL(int, utime, (const char *, const struct utimbuf *))
+REAL(int, futimens, (int, const struct timespec *))
 REAL(int, utimes, (const char *, const struct timeval *))
 REAL(int, lutimes, (const char *, const struct timeval *))
 REAL(int, futimesat, (int, const char *, const struct timeval *))
@@ -265,13 +268,13 @@ static void resolve_all(void)
     RESOLVE(unlink); RESOLVE(unlinkat);
     RESOLVE(rename); RESOLVE(renameat); RESOLVE(renameat2);
     RESOLVE(mkdir); RESOLVE(mkdirat); RESOLVE(rmdir);
-    RESOLVE(chmod); RESOLVE(fchmodat);
-    RESOLVE(chown); RESOLVE(lchown); RESOLVE(fchownat);
+    RESOLVE(chmod); RESOLVE(fchmod); RESOLVE(fchmodat);
+    RESOLVE(chown); RESOLVE(fchown); RESOLVE(lchown); RESOLVE(fchownat);
     RESOLVE(truncate); RESOLVE64(truncate64);
     RESOLVE(link); RESOLVE(linkat); RESOLVE(symlink); RESOLVE(symlinkat);
     RESOLVE(mknod); RESOLVE(mknodat); RESOLVE(mkfifo); RESOLVE(mkfifoat);
     RESOLVE(utime); RESOLVE(utimes); RESOLVE(lutimes); RESOLVE(futimesat);
-    RESOLVE(utimensat);
+    RESOLVE(utimensat); RESOLVE(futimens);
     RESOLVE(execve);
 #ifdef DBOX_EXTRA_HOOKS
     RESOLVE(execveat);
@@ -877,11 +880,21 @@ static void init_from_env(void)
 {
     const char *cfg = getenv("DYNOBOX_CFG");
     if (!cfg || !cfg[0]) return;   /* not sandboxed: full passthrough */
-    snprintf(g_cfg_b64, sizeof g_cfg_b64, "%s", cfg);
+    /* BUG-015：DYNOBOX_CFG 是 base64 编码的策略（约 ×4/3 膨胀）。历史实现用固定
+     * 64KB 缓冲静默截断，截断后解码失败仅告警不阻断——策略超过约 48-50KB（或
+     * 单条超长 endpoint/path）时沙箱形同虚设（fail-open），被禁文件可读且调用方
+     * 难以察觉。现在：超长或解码失败一律 fail-closed（终止进程），宁可不执行也
+     * 不让"看似有沙箱、实则裸奔"的子进程继续运行。 */
+    if (strlen(cfg) >= sizeof g_cfg_b64) {
+        fprintf(stderr, "dynobox: DYNOBOX_CFG 超长（%zu bytes，缓冲 %zu），沙箱拒绝启动\n",
+                strlen(cfg), sizeof g_cfg_b64);
+        _exit(127);
+    }
+    memcpy(g_cfg_b64, cfg, strlen(cfg) + 1);
     dbox_policy_init(&g_ctx.pol);
     if (dbox_cfg_decode(g_cfg_b64, &g_ctx.pol) != 0) {
-        fprintf(stderr, "dynobox: invalid DYNOBOX_CFG; sandbox not enabled\n");
-        return;
+        fprintf(stderr, "dynobox: invalid DYNOBOX_CFG; sandbox refused to start\n");
+        _exit(127);
     }
     if (syscall(SYS_getcwd, g_ctx.rpwd, sizeof g_ctx.rpwd) <= 0)
         strcpy(g_ctx.rpwd, "/");
@@ -1703,7 +1716,15 @@ static int trash_append_summary(const char *trash_dir, const char *uuid,
 /* --del-to-trash：把删除目标移入 OpenDesk 统一回收站（Windows 回收站等价物）。
  * 目标名 <uuid>.back（随机 UUID，无冲突），并追加 summary.json 记录（原始路径/
  * 大小/删除时间，供宿主 GUI 搜索与找回）。回收站目录由 launcher 创建，此处防御
- * 性重建；跨文件系统（rename 失败）时退回 -1，由调用方直接删除。 */
+ * 性重建。
+ *
+ * 返回值约定（调用方据此决定是否回退真实删除）：
+ *   0  已移入回收站；
+ *  -1  常规失败（回收站不可用/权限等）——调用方按旧语义回退真实删除；
+ *  -2  跨文件系统（EXDEV）：回收站目录与被删文件在不同设备，rename 无法原子
+ *      移动。此时**绝不可静默回退真删**（用户以为文件进了回收站可恢复，实则
+ *      永久丢失且仅一行日志）——保留原文件并置 errno=EXDEV，由调用方把错误
+ *      透出给用户（对齐 Windows MoveFileExW / Linux move_to_trash 的 fail-closed）。 */
 static int trash_move(const char *path, const char *what)
 {
     if (!g_trash_dir[0] || !path || !path[0]) return -1;
@@ -1742,6 +1763,13 @@ static int trash_move(const char *path, const char *what)
         dbox_logf("trash %s: %s -> %s", what, path, dest);
         return 0;
     }
+    /* 跨文件系统（EXDEV）：回收站目录须与被删文件同设备才能 rename 移动。
+     * 静默回退真删会造成"回收站 illusion"（BUG-020，数据永久丢失）——
+     * fail-closed：保留原文件，errno 透出 EXDEV，由调用方拒绝删除。 */
+    if (errno == EXDEV) {
+        dbox_logf("trash %s failed (Cross-device link), keeping file: %s", what, path);
+        return -2;
+    }
     dbox_logf("trash %s failed (%s), fallback unlink: %s", what, strerror(errno), path);
     return -1;
 }
@@ -1752,9 +1780,18 @@ int unlink(const char *path)
     if (!gate1(path, 1, ACC_WRITE, "unlink", &real)) return -1;
     const char *xp = xpath(path, real);
     /* 本次沙箱实例新建的文件：删除直接清除，不进回收站（临时文件语义） */
-    if (g_trash_dir[0] && !dbox_shm_newfile_has(xp) && trash_move(xp, "unlink") == 0) {
-        dbox_free(real);
-        return 0;
+    if (g_trash_dir[0] && !dbox_shm_newfile_has(xp)) {
+        int tr = trash_move(xp, "unlink");
+        if (tr == 0) {
+            dbox_free(real);
+            return 0;
+        }
+        if (tr == -2) {
+            /* 跨设备回收站不可用（fail-closed）：保留文件，errno 透出 EXDEV */
+            errno = EXDEV;
+            dbox_free(real);
+            return -1;
+        }
     }
     int r = real_unlink(xp);
     dbox_free(real);
@@ -1771,8 +1808,18 @@ int unlinkat(int dirfd, const char *path, int flags)
     if (!gate1(abs, 1, ACC_WRITE, "unlinkat", &real)) { dbox_free(abs); return -1; }
     const char *target = real && real[0] ? real : abs;
     int r;
-    if (g_trash_dir[0] && !dbox_shm_newfile_has(target) && trash_move(target, "unlinkat") == 0) {
-        r = 0;
+    if (g_trash_dir[0] && !dbox_shm_newfile_has(target)) {
+        int tr = trash_move(target, "unlinkat");
+        if (tr == 0) {
+            r = 0;
+        } else if (tr == -2) {
+            /* 跨设备回收站不可用（fail-closed）：保留文件 */
+            dbox_free(abs); dbox_free(real);
+            errno = EXDEV;
+            return -1;
+        } else {
+            r = XPAT_EXEC(real_unlinkat, dirfd, path, real, flags);
+        }
     } else {
         r = XPAT_EXEC(real_unlinkat, dirfd, path, real, flags);
     }
@@ -1785,9 +1832,18 @@ int rmdir(const char *path)
     char *real = NULL;
     if (!gate1(path, 1, ACC_WRITE, "rmdir", &real)) return -1;
     const char *xp = xpath(path, real);
-    if (g_trash_dir[0] && !dbox_shm_newfile_has(xp) && trash_move(xp, "rmdir") == 0) {
-        dbox_free(real);
-        return 0;
+    if (g_trash_dir[0] && !dbox_shm_newfile_has(xp)) {
+        int tr = trash_move(xp, "rmdir");
+        if (tr == 0) {
+            dbox_free(real);
+            return 0;
+        }
+        if (tr == -2) {
+            /* 跨设备回收站不可用（fail-closed）：保留目录 */
+            errno = EXDEV;
+            dbox_free(real);
+            return -1;
+        }
     }
     int r = real_rmdir(xp);
     dbox_free(real);
@@ -1905,6 +1961,47 @@ int fchmodat(int dirfd, const char *path, mode_t mode, int flags)
     int r = XPAT_EXEC(real_fchmodat, dirfd, path, real, mode, flags);
     dbox_free(abs); dbox_free(real);
     return r;
+}
+
+/* BUG-025：纯 fd 属性入口（fchmod/fchown/futimens）此前无 hook，write-deny 的
+ * 文件经"已打开的只读 fd"仍可被改权限位/属主/时间戳，与路径版 chmod/chown/
+ * utimensat 的 write 判定不一致（策略一致性破坏）。三者统一按 fd 指向的路径做
+ * ACC_WRITE 判定：取不到路径（fd 不可归属）时 fail-closed。 */
+static int fd_attr_gate(int fd, const char *what)
+{
+    ensure_ready();
+    if (!g_ready) return 1;
+    char *rp = fd_path(fd);
+    if (!rp) {
+        /* fd 无法归属（理论上不可达：fd_path 会回退 /proc/self/fd）：保守拒绝，
+         * 与 fexecve 的不可归属即拒一致 */
+        dbox_logf("DENY %s(fd=%d) 无法归属路径", what, fd);
+        errno = EACCES;
+        return 0;
+    }
+    char *real = NULL;
+    int ok = gate1(rp, 0, ACC_WRITE, what, &real);
+    dbox_free(real);
+    dbox_free(rp);
+    return ok;
+}
+
+int fchmod(int fd, mode_t mode)
+{
+    if (!fd_attr_gate(fd, "fchmod")) return -1;
+    return real_fchmod(fd, mode);
+}
+
+int fchown(int fd, uid_t u, gid_t g)
+{
+    if (!fd_attr_gate(fd, "fchown")) return -1;
+    return real_fchown(fd, u, g);
+}
+
+int futimens(int fd, const struct timespec times[2])
+{
+    if (!fd_attr_gate(fd, "futimens")) return -1;
+    return real_futimens(fd, times);
 }
 
 int chown(const char *path, uid_t u, gid_t g)
@@ -2166,7 +2263,10 @@ int execveat(int dirfd, const char *path, char *const argv[],
     }
     char *abs = at_abs(dirfd, path);
     if (!abs) { errno = EBADF; return -1; }
-    if (gate_exec(abs) != 0) { dbox_free(abs); errno = EACCES; return -1; }
+    /* 解析符号链接后的真实路径：XPAT_EXEC 需要它做 tmp 映射下改用绝对路径调用 */
+    char *real = NULL;
+    int nofollow = (flags & AT_SYMLINK_NOFOLLOW) ? 1 : 0;
+    if (!gate1(abs, nofollow, ACC_EXEC, "execveat", &real)) { dbox_free(abs); return -1; }
     /* identity namespace: no argv rewriting */
     size_t env_owned = 0;
     char **env = build_envp(envp, &env_owned);
@@ -2174,6 +2274,7 @@ int execveat(int dirfd, const char *path, char *const argv[],
     int e = errno;
     free_envp(env, env_owned);
     dbox_free(abs);
+    dbox_free(real);
 
     errno = e;
     return r;

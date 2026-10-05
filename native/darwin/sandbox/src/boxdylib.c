@@ -40,6 +40,7 @@
 #include <fcntl.h>
 #include <limits.h>
 #include <mach-o/dyld_images.h>
+#include <mach-o/dyld.h>
 #include <mach-o/fat.h>
 #include <mach-o/getsect.h>
 #include <mach-o/loader.h>
@@ -54,6 +55,8 @@
 #include <string.h>
 #include <sys/acl.h>
 #include <sys/attr.h>
+#include <sys/event.h>
+#include <signal.h>
 #include <sys/param.h>
 #include <sys/socket.h>
 #include <sys/stat.h>
@@ -67,6 +70,15 @@
 #include <stdatomic.h>
 #include <CommonCrypto/CommonDigest.h>
 
+/* 共享 core（native/openharmony/sandbox/src，与 Linux/OpenHarmony 同一份源码）：
+ * 策略 TOML 解析、路径 glob 匹配、小工具函数。I/O 经 rawio 抽象
+ * （rawio_darwin.c 用 libc + boxdylib 的 is_internal 豁免）。 */
+#include "dynobox.h"
+#include "policy.h"
+#include "ask.h"
+#include "util.h"
+#include "rawio.h"
+
 /* <security/codesigning.h> 不在公开 SDK 中，内联所需的常量 */
 #define CSMAGIC_EMBEDDED_SIGNATURE 0xfade0cc0
 
@@ -79,6 +91,26 @@
  * 替换函数自身（导致递归），所有 exec 路径必须经此直通内核。
  */
 extern int __execve(const char *path, char *const argv[], char *const envp[]);
+/* 本 dylib 的绝对路径（构造函数记录）：子进程注入强制重注入的来源。
+ * macOS 蓝队 M4：沙箱内进程清掉 DYLD_INSERT_LIBRARIES 后 exec，新进程无注入
+ * 完全脱管（Linux/OH 版的 build_envp 有强制重注入对齐）。exec 家族传 envp 时
+ * 必须经 build_reinjected_env 强制补回本 dylib（strip_dyld_env 的刻意脱管除外）。 */
+static char g_self_dylib[PATH_MAX] = { 0 };
+
+static void record_self_dylib(void)
+{
+    for (uint32_t i = 0; i < _dyld_image_count(); i++) {
+        const char *img = _dyld_get_image_name(i);
+        if (!img) continue;
+        /* 本 dylib 的特征：文件名 dynobox-darwin.dylib（打包/测试同名） */
+        const char *slash = strrchr(img, '/');
+        if (slash && strstr(slash, "dynobox-darwin.dylib")) {
+            snprintf(g_self_dylib, sizeof g_self_dylib, "%s", img);
+            return;
+        }
+    }
+}
+
 /* 构造剥离 DYLD_INSERT_LIBRARIES 的 envp（放行的工具链进程脱离沙箱注入） */
 static char **build_stripped_env(char *const *envp)
 {
@@ -90,6 +122,42 @@ static char **build_stripped_env(char *const *envp)
     for (size_t i = 0; i < count; i++) {
         if (strncmp(envp[i], "DYLD_INSERT_LIBRARIES=", 22) == 0) continue;
         out[o++] = envp[i];
+    }
+    out[o] = NULL;
+    return out;
+}
+
+/* 构造强制重注入的 envp：DYLD_INSERT_LIBRARIES 恒为本 dylib（覆盖调用方的
+ * 篡改/缺失）。返回 malloc 数组（调用方 free）。g_self_dylib 未记录时原样
+ * 复制（构造函数早期 exec 的窗口，此时注入必然由父进程 env 携带）。 */
+static char **build_reinjected_env(char *const *envp)
+{
+    size_t count = 0;
+    while (envp[count]) count++;
+    char **out = malloc((count + 2) * sizeof(char *));
+    if (!out) return NULL;
+    size_t o = 0;
+    bool have = false;
+    for (size_t i = 0; i < count; i++) {
+        if (strncmp(envp[i], "DYLD_INSERT_LIBRARIES=", 22) == 0) {
+            if (!g_self_dylib[0]) { out[o++] = envp[i]; have = true; continue; }
+            size_t need = 22 + strlen(g_self_dylib) + 1;
+            char *entry = malloc(need);
+            if (!entry) { out[o++] = envp[i]; have = true; continue; }
+            snprintf(entry, need, "DYLD_INSERT_LIBRARIES=%s", g_self_dylib);
+            out[o++] = entry;
+            have = true;
+        } else {
+            out[o++] = envp[i];
+        }
+    }
+    if (!have && g_self_dylib[0]) {
+        size_t need = 22 + strlen(g_self_dylib) + 1;
+        char *entry = malloc(need);
+        if (entry) {
+            snprintf(entry, need, "DYLD_INSERT_LIBRARIES=%s", g_self_dylib);
+            out[o++] = entry;
+        }
     }
     out[o] = NULL;
     return out;
@@ -211,15 +279,25 @@ static char *xstrdup(const char *s)
     return p;
 }
 
-/* ── 迷你 TOML 解析（仅支持沙箱策略所需的子集） ──────────────────────────── */
-
-enum { PERM_DENY = 0, PERM_ASK = 1, PERM_ALLOW = 2 };
-enum { ACCESS_READ = 1, ACCESS_WRITE = 2, ACCESS_EXECUTE = 4 };
+/* ── 策略引擎：复用共享 core（native/openharmony/sandbox/src） ──────────────
+ * TOML 解析与路径 glob 匹配不再内嵌，改用 core：
+ *   - dbox_policy_init / dbox_policy_load_toml（mini_toml 完整解析，含
+ *     [[rules]]/[ask]/[network] 与未知表名 fail-loud 校验）
+ *   - dbox_glob_match（路径 glob：** 跨层、* 单层、? 单字符）
+ * 保留 macOS 特有判定外壳：/var↔/private/var 别名竞争、most-specific（最长
+ * 模式前缀优先）语义、curl ask 传输——多年沉淀的行为，不因换引擎而改变。
+ *
+ * access 位：core ACC_READ/ACC_WRITE/ACC_EXEC 与旧 ACCESS_* 数值一致，直接用
+ * core 名字。perm：core（ALLOW=0/ASK=1/DENY=2）与 boxdylib 历史值（DENY=0/
+ * ASK=1/ALLOW=2）不同——most-specific 排序（同长度 deny>ask>allow）依赖
+ * 历史数值，保留 _box 后缀常量并在加载时从 core 值换算。
+ */
+enum { PERM_DENY_box = 0, PERM_ASK_box = 1, PERM_ALLOW_box = 2 };
 
 typedef struct {
     char *path; /* 绝对路径前缀，** 结尾表示整棵子树 */
-    int access; /* ACCESS_* 位或 */
-    int perm;   /* PERM_* */
+    int access; /* ACC_* 位或 */
+    int perm;   /* PERM_*_box */
 } PolicyRule;
 
 typedef struct {
@@ -259,163 +337,53 @@ static void policy_add_rule(Policy *p, const char *path, int access, int perm)
     p->rule_count++;
 }
 
-/* 去除首尾空白（原地截断） */
-static char *trim(char *s)
-{
-    while (*s && isspace((unsigned char)*s)) s++;
-    char *end = s + strlen(s);
-    while (end > s && isspace((unsigned char)end[-1])) *--end = '\0';
-    return s;
-}
-
-/* 解析 key = value 行；value 支持 "json 字符串"、裸数字、裸布尔 */
-static bool toml_string_value(char *value, char **out)
-{
-    char *v = trim(value);
-    size_t n = strlen(v);
-    if (n >= 2 && v[0] == '"' && v[n - 1] == '"') {
-        /* 去引号 + 反序列化 \\ 与 \" 等最小转义（JSON.stringify 只会产出这些） */
-        char *buf = malloc(n - 1);
-        if (!buf) return false;
-        size_t o = 0;
-        for (size_t i = 1; i < n - 1; i++) {
-            char c = v[i];
-            if (c == '\\' && i + 1 < n - 1) {
-                char next = v[++i];
-                if (next == 'n') buf[o++] = '\n';
-                else if (next == 't') buf[o++] = '\t';
-                else if (next == 'r') buf[o++] = '\r';
-                else buf[o++] = next;
-            } else {
-                buf[o++] = c;
-            }
-        }
-        buf[o] = '\0';
-        *out = buf;
-        return true;
-    }
-    return false;
-}
-
-static bool toml_long_value(char *value, long *out)
-{
-    char *v = trim(value);
-    if (!*v) return false;
-    char *end = NULL;
-    long parsed = strtol(v, &end, 10);
-    if (end && *end == '\0') {
-        *out = parsed;
-        return true;
-    }
-    return false;
-}
-
-static int access_bit(const char *name)
-{
-    if (strcmp(name, "read") == 0) return ACCESS_READ;
-    if (strcmp(name, "write") == 0) return ACCESS_WRITE;
-    if (strcmp(name, "execute") == 0) return ACCESS_EXECUTE;
-    if (strcmp(name, "all") == 0) return ACCESS_READ | ACCESS_WRITE | ACCESS_EXECUTE;
-    return 0;
-}
-
-static int perm_value(const char *name)
-{
-    if (strcmp(name, "deny") == 0) return PERM_DENY;
-    if (strcmp(name, "ask") == 0) return PERM_ASK;
-    if (strcmp(name, "allow") == 0) return PERM_ALLOW;
-    return -1;
-}
-
-/* 逐行解析 [[rules]] 表。返回 0 成功；-1 失败（g_policy_error 有原因） */
+/* 经 core 的 dbox_policy_load_toml 解析（语法 + 表名 fail-loud 校验），
+ * 再把规则平移进 boxdylib 的 Policy 视图（most-specific 判定需逐规则遍历，
+ * 且 perm 数值体系不同）。返回 0 成功；-1 失败（g_policy_error 有原因）。 */
 static int policy_parse(Policy *p, const char *text)
 {
-    char *copy = xstrdup(text);
-    if (!copy) {
-        snprintf(g_policy_error, sizeof(g_policy_error), "out of memory");
+    char err[512];
+    dbox_policy_t core_policy;
+    dbox_policy_init(&core_policy);
+    if (dbox_policy_load_toml(text, &core_policy, err, sizeof err) != 0) {
+        snprintf(g_policy_error, sizeof(g_policy_error), "%s", err);
+        dbox_policy_free(&core_policy);
         return -1;
     }
-    char *save = NULL;
-    bool in_rules = false;
-    char cur_path[PATH_MAX] = { 0 };
-    int cur_access = 0;
-    int cur_perm = -1;
-    for (char *line = strtok_r(copy, "\n", &save); line; line = strtok_r(NULL, "\n", &save)) {
-        char *s = trim(line);
-        if (!*s || *s == '#') continue;
-        if (*s == '[') {
-            /* 表头：先落盘上一条累积中的 rule */
-            if (in_rules && cur_path[0] && cur_access && cur_perm >= 0) {
-                policy_add_rule(p, cur_path, cur_access, cur_perm);
-            }
-            cur_path[0] = '\0';
-            cur_access = 0;
-            cur_perm = -1;
-            in_rules = strncmp(s, "[[rules]]", 9) == 0;
-            continue;
+    /* [ask] 段（core 解析结果 → boxdylib 历史字段） */
+    dbox_free(p->endpoint);
+    dbox_free(p->token);
+    p->endpoint    = core_policy.ask_endpoint ? xstrdup(core_policy.ask_endpoint) : NULL;
+    p->token       = core_policy.ask_token ? xstrdup(core_policy.ask_token) : NULL;
+    p->timeout_ms  = core_policy.ask_timeout_ms > 0 ? core_policy.ask_timeout_ms : 0;
+
+    /* 规则平移：core PERM_ALLOW=0/ASK=1/DENY=2 → box DENY=0/ASK=1/ALLOW=2。
+     * 注意 case 匹配的是 core 的枚举值，不能写成 _box 名（否则永远不命中）。 */
+    for (int i = 0; i < core_policy.nrules; i++) {
+        int perm_box;
+        switch (core_policy.rules[i].perm) {
+            case PERM_ALLOW: perm_box = PERM_ALLOW_box; break; /* core 0 → box 2 */
+            case PERM_ASK:   perm_box = PERM_ASK_box;   break; /* core 1 → box 1 */
+            default:         perm_box = PERM_DENY_box;  break; /* core 2 → box 0 */
         }
-        char *eq = strchr(s, '=');
-        if (!eq) continue;
-        *eq = '\0';
-        char *key = trim(s);
-        char *value = eq + 1;
-        if (in_rules) {
-            if (strcmp(key, "path") == 0) {
-                char *sv = NULL;
-                if (toml_string_value(value, &sv)) {
-                    snprintf(cur_path, sizeof(cur_path), "%s", sv);
-                    free(sv);
-                }
-            } else if (strcmp(key, "access") == 0) {
-                char *sv = NULL;
-                if (toml_string_value(value, &sv)) {
-                    cur_access = access_bit(sv);
-                    free(sv);
-                }
-            } else if (strcmp(key, "perm") == 0) {
-                char *sv = NULL;
-                if (toml_string_value(value, &sv)) {
-                    cur_perm = perm_value(sv);
-                    free(sv);
-                }
-            }
-        } else if (strcmp(key, "endpoint") == 0) {
-            toml_string_value(value, &p->endpoint);
-        } else if (strcmp(key, "token") == 0) {
-            toml_string_value(value, &p->token);
-        } else if (strcmp(key, "timeout_ms") == 0) {
-            toml_long_value(value, &p->timeout_ms);
-        }
+        policy_add_rule(p, core_policy.rules[i].path, core_policy.rules[i].acc, perm_box);
     }
-    if (in_rules && cur_path[0] && cur_access && cur_perm >= 0) {
-        policy_add_rule(p, cur_path, cur_access, cur_perm);
-    }
-    free(copy);
-    if (g_policy_error[0]) return -1; /* 解析期间发生 OOM：fail closed */
+    dbox_policy_free(&core_policy);
+    if (g_policy_error[0]) return -1; /* 平移期间 OOM：fail closed */
     if (p->endpoint && p->token && p->timeout_ms <= 0) p->timeout_ms = 330000;
     return 0;
 }
 
-/* ── 策略匹配与 ask 客户端 ──────────────────────────────────────────────── */
-
 /*
- * 路径匹配语义与 GlobPermissionEnforcer 的前缀导出保持一致：
+ * 路径匹配语义（经 core 的 dbox_glob_match，glob 语义一致）：
  * pattern "**"      → 匹配一切
- * pattern "/a 星星" → 匹配 /a 与 /a 下整棵子树
+ * pattern "/a/星"   → 匹配 /a 与 /a 下整棵子树（星 = 双星号）
  * pattern "/a/b"    → 仅匹配 /a/b
- * 匹配基于路径前缀（不解析符号链接，与调用时路径语义一致）。
+ * 匹配基于调用时路径（不解析符号链接，与调用时路径语义一致）。
  */
 static bool pattern_matches(const char *pattern, const char *path)
 {
-    size_t plen = strlen(pattern);
-    if (strcmp(pattern, "**") == 0) return true;
-    if (plen >= 3 && strcmp(pattern + plen - 3, "/**") == 0) {
-        size_t base = plen - 3;
-        if (base == 0) return true;
-        return strncmp(path, pattern, base) == 0 &&
-               (path[base] == '/' || path[base] == '\0');
-    }
-    return strcmp(pattern, path) == 0;
+    return dbox_glob_match(pattern, path) != 0;
 }
 
 /*
@@ -444,6 +412,7 @@ static struct PolicyHit policy_lookup_detailed(const char *path, int access)
         if ((r->access & access) == 0) continue;
         if (!pattern_matches(r->path, path)) continue;
         size_t len = pattern_base_len(r->path);
+        slog("rule[%zu] hit: path=%s access=%d perm=%d (len=%zu) for %s", i, r->path, r->access, r->perm, len, path);
         if (hit.perm < 0 || len > hit.base_len || (len == hit.base_len && r->perm < hit.perm)) {
             hit.perm = r->perm;
             hit.base_len = len;
@@ -452,46 +421,14 @@ static struct PolicyHit policy_lookup_detailed(const char *path, int access)
     return hit;
 }
 
+
 /* ── HTTP ask（curl 子进程；libcurl 链接进每个进程反而增重） ────────────── */
-
-#define ASK_MAX_PAYLOAD 8192
-
-/* JSON 字符串转义（输出需 ≤ cap，含结尾 NUL）。返回输出长度，放不下返回 -1 */
-static int json_escape_into(const char *src, char *out, size_t cap)
-{
-    size_t o = 0;
-    for (const char *p = src; *p; p++) {
-        unsigned char c = (unsigned char)*p;
-        const char *esc = NULL;
-        switch (c) {
-            case '"': esc = "\\\""; break;
-            case '\\': esc = "\\\\"; break;
-            case '\n': esc = "\\n"; break;
-            case '\r': esc = "\\r"; break;
-            case '\t': esc = "\\t"; break;
-            default: break;
-        }
-        if (esc) {
-            size_t n = strlen(esc);
-            if (o + n + 1 > cap) return -1;
-            memcpy(out + o, esc, n);
-            o += n;
-        } else if (c < 0x20) {
-            if (o + 7 > cap) return -1;
-            o += (size_t)snprintf(out + o, cap - o, "\\u%04x", c);
-        } else {
-            if (o + 2 > cap) return -1;
-            out[o++] = (char)c;
-        }
-        if (o + 1 > cap) return -1;
-    }
-    out[o] = '\0';
-    return (int)o;
-}
+/* 请求构造（dbox_ask_build_request）与响应解析（dbox_ask_parse_response）
+ * 走共享 core 的协议实现；本文件只负责 curl 传输。 */
 
 /*
  * 同步 ask：POST {endpoint}，body {"token","path","access"}，响应 {"decision"}。
- * 返回 PERM_ALLOW / PERM_DENY；异常一律 DENY（fail closed）。
+ * 返回 PERM_ALLOW_box / PERM_DENY_box；异常一律 DENY（fail closed）。
  * 经 posix_spawn 执行 /usr/bin/curl（系统工具不插桩，无递归风险）。
  */
 static int ask_remote_internal(const char *path, int access);
@@ -514,30 +451,30 @@ static int ask_remote(const char *path, int access)
 
 static int ask_remote_internal(const char *path, int access)
 {
-    if (!g_policy.endpoint || !g_policy.token) return PERM_DENY;
-    const char *action = access == ACCESS_EXECUTE ? "execute" : access == ACCESS_WRITE ? "write" : "read";
-    char esc_path[PATH_MAX * 6];
-    if (json_escape_into(path, esc_path, sizeof(esc_path)) < 0) return PERM_DENY;
+    if (!g_policy.endpoint || !g_policy.token) return PERM_DENY_box;
+    /* 请求构造与响应解析统一走共享 core 的协议函数（与 Linux/OH/endpoint
+     * 同一份实现）：严格 JSON 解析替代历史的 strstr("allow") 宽松子串匹配
+     * （响应中任意位置的 "allow" 子串都会误判为放行），并支持 grants 下发
+     * （响应携带的子树授权与 Linux/OH 语义一致地安装进策略）。 */
     char payload[PATH_MAX * 6 + 256];
-    int plen = snprintf(payload, sizeof(payload), "{\"token\":\"%s\",\"path\":\"%s\",\"access\":\"%s\"}",
-                        g_policy.token, esc_path, action);
-    if (plen <= 0 || (size_t)plen >= sizeof(payload)) return PERM_DENY;
+    if (dbox_ask_build_request(payload, sizeof payload, path, access, g_policy.token) != 0) {
+        return PERM_DENY_box;
+    }
+    size_t plen = strlen(payload);
+    if (plen == 0 || plen >= sizeof(payload) - 1) return PERM_DENY_box;
 
-    /* macOS curl 8.x 对 "--data=VALUE" 粘连式返回 unknown option（实测），
-     * 用 "-d" + VALUE 两参数形式（curl 手册推荐写法） */
-    if ((size_t)plen >= sizeof(payload)) return PERM_DENY;
+    /* macOS curl 8.x 对 "--opt=VALUE" 粘连式解析有回归，统一 -m 空格分隔 */
     char max_time[32];
-    /* 该镜像的 curl 8.7.1 对 "--opt=VALUE" 粘连式解析有回归，统一 -m 空格分隔 */
     snprintf(max_time, sizeof(max_time), "%ld", g_policy.timeout_ms / 1000 + 5);
 
     extern char **environ;
     posix_spawn_file_actions_t actions;
-    if (posix_spawn_file_actions_init(&actions) != 0) return PERM_DENY;
+    if (posix_spawn_file_actions_init(&actions) != 0) return PERM_DENY_box;
     /* stdout/stderr → /dev/null，避免 curl 输出污染命令输出流 */
     if (posix_spawn_file_actions_addopen(&actions, STDOUT_FILENO, "/dev/null", O_WRONLY, 0) != 0 ||
         posix_spawn_file_actions_addopen(&actions, STDERR_FILENO, "/dev/null", O_WRONLY, 0) != 0) {
         posix_spawn_file_actions_destroy(&actions);
-        return PERM_DENY;
+        return PERM_DENY_box;
     }
     int pipefd[2];
     bool have_pipe = pipe(pipefd) == 0;
@@ -551,7 +488,7 @@ static int ask_remote_internal(const char *path, int access)
     size_t token_len = strlen(g_policy.token);
     size_t auth_size = token_len + 32;
     char *auth_header = malloc(auth_size);
-    if (!auth_header) return PERM_DENY;
+    if (!auth_header) return PERM_DENY_box;
     snprintf(auth_header, auth_size, "Authorization: Bearer %s", g_policy.token);
     argv[5] = auth_header;
     pid_t pid = -1;
@@ -562,7 +499,7 @@ static int ask_remote_internal(const char *path, int access)
     if (have_pipe) close(pipefd[1]);
     if (spawn_rc != 0) {
         if (have_pipe) close(pipefd[0]);
-        return PERM_DENY;
+        return PERM_DENY_box;
     }
     char response[256];
     size_t got = 0;
@@ -576,11 +513,21 @@ static int ask_remote_internal(const char *path, int access)
     }
     int status = 0;
     while (waitpid(pid, &status, 0) < 0 && errno == EINTR) {}
-    if (!WIFEXITED(status) || WEXITSTATUS(status) != 0 || got == 0) return PERM_DENY;
+    if (!WIFEXITED(status) || WEXITSTATUS(status) != 0 || got == 0) return PERM_DENY_box;
     response[got] = '\0';
-    /* 解析 "decision":"allow"（宽松子串匹配，响应由宿主受控生成） */
-    if (strstr(response, "\"allow\"")) return PERM_ALLOW;
-    return PERM_DENY;
+    /* 响应解析走 core 协议函数：严格 decision 校验 + grants 安装（semantics
+     * 与 Linux/OH 完全一致）。解析失败/decision 非 allow 一律 DENY（fail-closed）。
+     * 注意 grants 安装进 core 侧策略——boxdylib 的 most-specific 判定目前不
+     * 消费 grants（curl 路径维持既有行为），后续 most-specific 统一时接入。 */
+    {
+        dbox_policy_t core_policy;
+        dbox_policy_init(&core_policy);
+        int64_t now = dbox_now_ms();
+        int prc = dbox_ask_parse_response(response, &core_policy, now);
+        dbox_policy_free(&core_policy);
+        if (prc) return PERM_ALLOW_box;
+    }
+    return PERM_DENY_box;
 }
 
 /*
@@ -609,9 +556,31 @@ static bool path_alias_variant(const char *path, char *out, size_t cap)
     return false;
 }
 
+/* 回收站写保护（对齐 Linux/OH core 的 trash-protected / Windows hook 的
+ * trash DENY）：回收站目录内的任何写操作一律拒绝——沙箱进程可写即可清空
+ * 整个回收站（macOS 蓝队 M8 发现缺失）。--del-to-trash 的 rename 移动由
+ * trash_or_remove 的 internal 豁免完成，不经 policy_check，不受影响。 */
+static bool path_in_trash(const char *path)
+{
+    const char *trash = getenv(ENV_TRASH_DIR);
+    if (!trash || !*trash || !path || !*path) return false;
+    size_t tn = strlen(trash);
+    while (tn > 1 && trash[tn - 1] == '/') tn--;
+    size_t pn = strlen(path);
+    while (pn > 1 && path[pn - 1] == '/') pn--;
+    if (pn < tn) return false;
+    if (strncmp(path, trash, tn) != 0) return false;
+    /* 组件边界：恰好等于目录本身，或后随 '/' */
+    return pn == tn || path[tn] == '/';
+}
+
 /* 策略判定主入口：0=放行，非 0=拒绝（errno=EACCES） */
 static int policy_check(const char *path, int access)
 {
+    if ((access & ACC_WRITE) != 0 && path_in_trash(path)) {
+        slog("trash-protected DENY: %s", path);
+        return EACCES;
+    }
     struct PolicyHit hit = policy_lookup_detailed(path, access);
     /*
      * macOS 别名路径（/var ↔ /private/var 等）：用户命令常用短路径而策略
@@ -628,13 +597,14 @@ static int policy_check(const char *path, int access)
             hit = alias_hit;
         }
     }
-    if (hit.perm == PERM_ALLOW) return 0;
-    if (hit.perm == PERM_DENY) return EACCES;
-    if (hit.perm == PERM_ASK) return ask_remote(path, access) == PERM_ALLOW ? 0 : EACCES;
+    if (hit.perm == PERM_ALLOW_box) return 0;
+    if (hit.perm == PERM_DENY_box) return EACCES;
+    if (hit.perm == PERM_ASK_box) return ask_remote(path, access) == PERM_ALLOW_box ? 0 : EACCES;
     /* 未命中任何规则：读放行、写/执行询问（与 policyTextLinux 兜底一致） */
-    if (access == ACCESS_READ) return 0;
-    return ask_remote(path, access) == PERM_ALLOW ? 0 : EACCES;
+    if (access == ACC_READ) return 0;
+    return ask_remote(path, access) == PERM_ALLOW_box ? 0 : EACCES;
 }
+
 
 /* ── 平台二进制处理：探测 → 复制+adhoc 重签+缓存 → exec ─────────────────── */
 
@@ -1868,6 +1838,69 @@ static void resolve_relative(const char *in, char *out, size_t cap)
 /* 插桩开启判定：策略加载成功才管控（缺省 passthrough，供弱链接环境） */
 static volatile bool g_active = false;
 
+/* ── watchdog：宿主（launcher）死亡 → 整树陪葬（对齐 Linux/OH 管道方案）────
+ * macOS 无 Linux 的 fork 管道传递（TS 层 spawn 不经 wrapper），用 kqueue
+ * EVFILT_PROC/NOTE_EXIT 监听父进程：宿主退出 → 事件触发 → kill 本进程组。
+ * kqueue 的 proc 事件绑定注册时的进程对象，pid 复用不误判（事件先于复用）。
+ * 防宿主崩溃后沙箱 shell 树残留。 */
+
+static int g_watch_kq = -1;
+static pid_t g_watch_parent = -1;
+static pthread_mutex_t g_watch_mu = PTHREAD_MUTEX_INITIALIZER;
+
+static void *watch_thread(void *arg)
+{
+    (void)arg;
+    struct kevent ev;
+    EV_SET(&ev, (uintptr_t)g_watch_parent, EVFILT_PROC, EV_ADD | EV_ENABLE, NOTE_EXIT, 0, NULL);
+    if (kevent(g_watch_kq, &ev, 1, NULL, 0, NULL) != 0) {
+        slog("watchdog: kevent register failed errno=%d", errno);
+        return NULL;
+    }
+    struct kevent out;
+    int n;
+    for (;;) {
+        n = kevent(g_watch_kq, NULL, 0, &out, 1, NULL);   /* 阻塞等父进程退出 */
+        if (n > 0) break;
+        if (n < 0 && errno != EINTR) break;
+        /* n < 0 && EINTR：继续等 */
+    }
+    slog("watchdog: launcher (pid %d) gone, killing sandboxed process tree", (int)g_watch_parent);
+    pid_t pg = getpgid(0);
+    if (pg > 0) kill(-pg, SIGKILL);
+    kill(getpid(), SIGKILL);
+    _exit(129);
+    return NULL;
+}
+
+static void start_watch(void)
+{
+    /* 只有策略生效的沙箱进程需要 watchdog（passthrough 进程非沙箱树成员）。
+     * 父进程是 TS 宿主（OpenDesk 主进程或调试实例）；宿主退出 → 沙箱树陪葬。 */
+    if (!g_active) return;
+    pid_t parent = getppid();
+    if (parent <= 1) return;
+    int kq = kqueue();
+    if (kq < 0) {
+        slog("watchdog: kqueue failed errno=%d, not armed", errno);
+        return;
+    }
+    pthread_mutex_lock(&g_watch_mu);
+    g_watch_kq = kq;
+    g_watch_parent = parent;
+    pthread_mutex_unlock(&g_watch_mu);
+    pthread_t t;
+    pthread_attr_t a;
+    pthread_attr_init(&a);
+    pthread_attr_setdetachstate(&a, PTHREAD_CREATE_DETACHED);
+    pthread_attr_setstacksize(&a, 256 * 1024);
+    if (pthread_create(&t, &a, watch_thread, NULL) != 0) {
+        slog("watchdog thread create failed: watchdog not armed");
+        return;
+    }
+    slog("watchdog armed: parent pid %d", (int)parent);
+}
+
 /* fd 写判定缓存（open/openat 打开成功时填充、close 清除；定义在文件写段之前供 open 用） */
 #define FD_CACHE_SLOTS 1024
 static volatile int g_fd_cache[FD_CACHE_SLOTS]; /* 0=未缓存 1=可写 -1=拒绝 */
@@ -1898,7 +1931,7 @@ static int check_write_path(const char *pathname, const char *fn)
         errno = EACCES;
         return -1;
     }
-    int rc = policy_check(norm, ACCESS_WRITE);
+    int rc = policy_check(norm, ACC_WRITE);
     if (rc != 0) {
         slog("%s denied: %s", fn, norm);
         errno = EACCES;
@@ -1917,7 +1950,7 @@ static int check_read_path(const char *pathname, const char *fn)
         errno = EACCES;
         return -1;
     }
-    int rc = policy_check(norm, ACCESS_READ);
+    int rc = policy_check(norm, ACC_READ);
     if (rc != 0) {
         slog("%s denied: %s", fn, norm);
         errno = EACCES;
@@ -2002,7 +2035,7 @@ static int prepare_exec(const char *path, char *const argv[], char **resolved_pa
         errno = EACCES;
         return -1;
     }
-    int rc = policy_check(norm, ACCESS_EXECUTE);
+    int rc = policy_check(norm, ACC_EXEC);
     if (rc != 0) {
         slog("exec denied: %s", norm);
         errno = EACCES;
@@ -2154,11 +2187,17 @@ static int wrap_execve(const char *path, char *const argv[], char *const envp[])
     if (prepare_exec(path, argv, &resolved, &new_argv, &framework_home, &strip_dyld_env) != 0) return -1;
     const char *use = resolved ? resolved : path;
     char *const *use_argv = new_argv ? new_argv : argv;
+    /* 注入强制重注入（M4）：非 strip 目标的子进程恒携带本 dylib（对齐
+     * Linux/OH 的 build_envp），沙箱内清 DYLD_INSERT_LIBRARIES 无法脱管 */
+    char **reinjected = strip_dyld_env ? NULL : build_reinjected_env(envp);
     char **stripped = strip_dyld_env ? build_stripped_env((char *const *)envp) : NULL;
-    char **py_env = framework_home ? envp_with_python_home(stripped ? (char *const *)stripped : envp, framework_home) : NULL;
-    int rc = real_execve(use, use_argv, py_env ? (char *const *)py_env : (stripped ? (char *const *)stripped : envp));
+    char *const *base_env = reinjected ? (char *const *)reinjected
+                            : stripped ? (char *const *)stripped : envp;
+    char **py_env = framework_home ? envp_with_python_home(base_env, framework_home) : NULL;
+    int rc = real_execve(use, use_argv, py_env ? (char *const *)py_env : base_env);
     int saved = errno;
     free_python_home_envp(py_env);
+    free(reinjected);
     free(stripped);
     free_exec_prep(resolved, new_argv);
     errno = saved;
@@ -2204,10 +2243,16 @@ static int wrap_execvp(const char *file, char *const argv[])
         if (prepare_exec(file, argv, &resolved, &new_argv, &framework_home, &strip_dyld_env) != 0) return -1;
         const char *use = resolved ? resolved : file;
         char *const *use_argv = new_argv ? new_argv : argv;
+        /* 注入强制重注入（M4）：非 strip 目标的子进程恒携带本 dylib，
+         * 沙箱内清 DYLD_INSERT_LIBRARIES 无法让子进程脱管 */
+        char **reinjected = strip_dyld_env ? NULL : build_reinjected_env(environ);
         char **stripped = strip_dyld_env ? build_stripped_env(environ) : NULL;
-        char **py_env = framework_home ? envp_with_python_home(stripped ? (char *const *)stripped : environ, framework_home) : NULL;
-        int rc = real_execve(use, use_argv, py_env ? (char *const *)py_env : (stripped ? (char *const *)stripped : environ));
+        char *const *base_env = reinjected ? (char *const *)reinjected
+                                : stripped ? (char *const *)stripped : (char *const *)environ;
+        char **py_env = framework_home ? envp_with_python_home(base_env, framework_home) : NULL;
+        int rc = real_execve(use, use_argv, py_env ? (char *const *)py_env : base_env);
         free_python_home_envp(py_env);
+        free(reinjected);
         int saved = errno;
         free_exec_prep(resolved, new_argv);
         errno = saved;
@@ -2231,9 +2276,14 @@ static int wrap_execvp(const char *file, char *const argv[])
             if (prepare_exec(candidate, argv, &resolved, &new_argv, &framework_home, &strip_dyld_env) == 0) {
                 const char *use = resolved ? resolved : candidate;
                 char *const *use_argv = new_argv ? new_argv : argv;
+                char **reinjected = strip_dyld_env ? NULL : build_reinjected_env(environ);
                 char **stripped = strip_dyld_env ? build_stripped_env(environ) : NULL;
-                char **py_env = framework_home ? envp_with_python_home(stripped ? (char *const *)stripped : environ, framework_home) : NULL;
-                int rc = real_execve(use, use_argv, py_env ? (char *const *)py_env : (stripped ? (char *const *)stripped : environ));
+                char *const *base_env = reinjected ? (char *const *)reinjected
+                                        : stripped ? (char *const *)stripped : (char *const *)environ;
+                char **py_env = framework_home ? envp_with_python_home(base_env, framework_home) : NULL;
+                int rc = real_execve(use, use_argv, py_env ? (char *const *)py_env : base_env);
+                free_python_home_envp(py_env);
+                free(reinjected);
                 free(stripped);
                 int saved = errno;
                 free_exec_prep(resolved, new_argv);
@@ -2369,10 +2419,12 @@ static int wrap_posix_spawn_common(pid_t *pid, const char *path, const posix_spa
     if (prepare_exec(full, argv, &resolved, &new_argv, &framework_home, &strip_dyld_env) != 0) return errno;
     const char *use = resolved ? resolved : full;
     char *const *use_argv = new_argv ? new_argv : argv;
+    /* 注入强制重注入（M4，与 wrap_execve 对齐） */
+    char **reinjected = strip_dyld_env ? NULL : build_reinjected_env(envp);
     char **stripped = strip_dyld_env ? build_stripped_env(envp) : NULL;
-    char **base_env = stripped ? stripped : (char **)envp;
+    char **base_env = reinjected ? reinjected : (stripped ? stripped : (char **)envp);
     char **py_env = framework_home ? envp_with_python_home(base_env, framework_home) : NULL;
-    if (py_env) envp = py_env; else if (stripped) envp = stripped;
+    if (py_env) envp = py_env; else if (base_env != (char **)envp) envp = base_env;
     /*
      * attr 含 POSIX_SPAWN_CLOEXEC_DEFAULT 时 __posix_spawn 直呼返回 -1/EFAULT
      * （该 flag 的 fd 快照在 libsystem_c 用户态实现）——降级 fork+execve 模拟。
@@ -2398,6 +2450,7 @@ static int wrap_posix_spawn_common(pid_t *pid, const char *path, const posix_spa
         slog("__posix_spawn failed: %s rc=%d errno=%d", use, rc, errno);
     }
     free_python_home_envp(py_env);
+    free(reinjected);
     free(stripped);
     free_exec_prep(resolved, new_argv);
     return rc;
@@ -2529,7 +2582,7 @@ static int wrap_unlink(const char *path)
     }
     struct stat st;
     if (stat(norm, &st) != 0) return unlink(path);
-    int check_rc = policy_check(norm, ACCESS_WRITE);
+    int check_rc = policy_check(norm, ACC_WRITE);
     slog("unlink check: %s rc=%d", norm, check_rc);
     if (check_rc != 0) {
         errno = EACCES;
@@ -2551,7 +2604,7 @@ static int wrap_rmdir(const char *path)
     }
     struct stat st;
     if (stat(norm, &st) != 0) return rmdir(path);
-    if (policy_check(norm, ACCESS_WRITE) != 0) {
+    if (policy_check(norm, ACC_WRITE) != 0) {
         slog("rmdir denied: %s", norm);
         errno = EACCES;
         return -1;
@@ -2647,7 +2700,7 @@ static int wrap_symlink(const char *target, const char *linkpath)
      * 解析失败（悬空链接）放行——悬空链接不构成逃逸。
      */
     if (target && target[0] == '/') {
-        if (policy_check(target, ACCESS_WRITE) != 0) {
+        if (policy_check(target, ACC_WRITE) != 0) {
             slog("symlink denied (target outside): %s -> %s", linkpath, target);
             errno = EACCES;
             return -1;
@@ -2665,7 +2718,7 @@ static int wrap_symlink(const char *target, const char *linkpath)
             snprintf(resolved, sizeof(resolved), "%s/%s", base, target);
             char norm_target[PATH_MAX];
             if (normalize_path(resolved, norm_target, sizeof(norm_target)) == 0 &&
-                policy_check(norm_target, ACCESS_WRITE) != 0) {
+                policy_check(norm_target, ACC_WRITE) != 0) {
                 slog("symlink denied (target outside): %s -> %s", linkpath, target);
                 errno = EACCES;
                 return -1;
@@ -2755,14 +2808,14 @@ static int fd_write_verdict(int fd)
         char target[PATH_MAX];
         if (!fd_path_lookup(fd, target, sizeof(target))) return 0;
         if (strncmp(target, "/dev/", 5) == 0 || strncmp(target, "pipe:", 5) == 0) return 0;
-        return policy_check(target, ACCESS_WRITE) == 0 ? 1 : -1;
+        return policy_check(target, ACC_WRITE) == 0 ? 1 : -1;
     }
     int cached = g_fd_cache[fd];
     if (cached != 0) return cached;
     char target[PATH_MAX];
     if (!fd_path_lookup(fd, target, sizeof(target))) return 0;
     if (strncmp(target, "/dev/", 5) == 0 || strncmp(target, "pipe:", 5) == 0) return 0;
-    int verdict = policy_check(target, ACCESS_WRITE) == 0 ? 1 : -1;
+    int verdict = policy_check(target, ACC_WRITE) == 0 ? 1 : -1;
     /* 只缓存放行：拒绝不缓存——用户在审批弹窗批准该路径后，同 fd 的后续写
      * 应当生效（与宿主 decide 端点 cache_ttl_seconds=0 的不缓存决策语义一致）；
      * 拒绝每次重新走策略（allow 规则命中即放行，不会重复弹窗）。 */
@@ -2828,7 +2881,7 @@ static int wrap_unlinkat(int dirfd, const char *path, int flags)
     if (resolve_dirfd_path(dirfd, path, full, sizeof(full)) != 0) return unlinkat(dirfd, path, flags);
     struct stat st;
     if (stat(full, &st) != 0) return unlinkat(dirfd, path, flags);
-    if (policy_check(full, ACCESS_WRITE) != 0) {
+    if (policy_check(full, ACC_WRITE) != 0) {
         slog("unlinkat denied: %s", full);
         errno = EACCES;
         return -1;
@@ -2888,6 +2941,8 @@ static void boxdylib_init(void)
         slog("policy parse failed (%s): fail closed read-only", g_policy_error);
         return;
     }
+    record_self_dylib();
+    start_watch();
     slog("sandbox active: rules=%zu trash=%s", g_policy.rule_count, getenv(ENV_TRASH) ? "yes" : "no");
 }
 

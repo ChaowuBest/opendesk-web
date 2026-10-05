@@ -25,44 +25,93 @@ export interface DynamicSandboxLaunch {
     cwd?: string;
     /** 附加环境变量（spawn 时与继承环境合并，如工具链缓存重定向到沙箱内 /tmp） */
     env?: Record<string, string>;
+    /**
+     * spawn 时是否 detached（POSIX setpgid 建立独立进程组）。需要 watchdog
+     * "宿主死 → kill(-pg) 整树陪葬" 语义的平台（macOS DYLD 版）必须为 true；
+     * Linux/OH 的 dynobox launcher 自管进程组，Windows 用 Job 对象，无需此位。
+     */
+    detached?: boolean;
     attach: (process: ChildProcess) => void;
     cleanup: () => Promise<void>;
 }
 
 /**
- * 解析 Linux 动态沙箱二进制：
- * - 开发运行：native/linux/sandbox/target/release/dynobox-linux
- * - 安装包：resources/sandbox/dynobox-linux（由 forge stageLinuxSandboxResource 落盘）
+ * 解析 Linux 动态沙箱二进制（LD_PRELOAD 版，源码与 OpenHarmony 共用
+ * native/openharmony/sandbox/src，产物名为 dynobox + libdynobox.so）。
+ * 优先级：
+ *   1. OPENDESK_DYNOBOX_BIN 环境变量（联调钩子，与 OH 版一致）
+ *   2. 打包路径 <resourcesPath>/sandbox/dynobox
+ *   3. 开发路径 <repo>/native/linux/sandbox/runtime/<triple>/dynobox
+ *      （Makefile 的 runtime 目标按宿主 triple 落盘，见 native/linux/sandbox/Makefile）
  */
 export function resolveLinuxSandboxExecutable(): string | null {
     const electronProcess = process as NodeJS.Process & {
         defaultApp?: boolean;
         resourcesPath?: string;
     };
+    const override = process.env.OPENDESK_DYNOBOX_BIN;
+    if (override && fs.existsSync(override)) return override;
     const dev = path.join(
         process.env.INIT_CWD || process.cwd(),
         'native',
         'linux',
         'sandbox',
-        'target',
-        'release',
-        'dynobox-linux'
+        'runtime',
+        linuxRuntimeTriple(),
+        'dynobox'
     );
     if (electronProcess.defaultApp === true) {
         return fs.existsSync(dev) ? dev : null;
     }
     // 打包路径优先；开发路径兜底（CLI/测试等非 Electron 环境也可用）
-    const packaged = path.join(electronProcess.resourcesPath || '', 'sandbox', 'dynobox-linux');
+    const packaged = path.join(electronProcess.resourcesPath || '', 'sandbox', 'dynobox');
     if (fs.existsSync(packaged)) return packaged;
     return fs.existsSync(dev) ? dev : null;
 }
 
+/** 与可执行同目录的 preload 库（launcher 在自身目录查找 libdynobox.so）。 */
+export function resolveLinuxSandboxLibrary(): string | null {
+    const electronProcess = process as NodeJS.Process & { resourcesPath?: string };
+    const executable = resolveLinuxSandboxExecutable();
+    if (!executable) return null;
+    const candidates: string[] = [];
+    // 同目录（launcher 的 find_preload_lib 语义）
+    candidates.push(path.join(path.dirname(executable), 'libdynobox.so'));
+    // 打包布局兜底：resources/sandbox/libdynobox.so
+    if (electronProcess.resourcesPath) {
+        candidates.push(path.join(electronProcess.resourcesPath, 'sandbox', 'libdynobox.so'));
+    }
+    for (const candidate of candidates) {
+        if (fs.existsSync(candidate)) return candidate;
+    }
+    return null;
+}
+
 /**
- * 探测沙箱内需要可见的工具链目录（二进制所在目录，只读挂载）：
+ * 本机 Makefile runtime 落盘目录的 triple（与 native/linux/sandbox/Makefile 的
+ * RUNTIME_TARGET ?= $(shell uname -m)-unknown-linux-gnu 约定一致）。
+ */
+export function linuxRuntimeTriple(arch: string = process.arch): string {
+    switch (arch) {
+        case 'x64':
+            return 'x86_64-unknown-linux-gnu';
+        case 'arm64':
+            return 'aarch64-unknown-linux-gnu';
+        case 'ia32':
+            return 'i686-unknown-linux-gnu';
+        default:
+            return `${arch}-unknown-linux-gnu`;
+    }
+}
+
+/**
+ * 探测沙箱内需要可见的工具链目录（经 --ro-dirs 以只读方式暴露）：
  * - 从 PATH 解析常见工具（node/npm/npx/cargo/rustc/go/python3 等）的所在目录；
  * - 补充常见布局候选（nvm/cargo/rustup/go），存在才加入。
- * 缓存/配置目录（~/.npm、~/.cargo/registry 等）刻意不挂：通过环境变量重定向到
- * 沙箱内 /tmp（见 prepareLinuxSandbox 的 env），避免把宿主可写路径暴露进沙箱。
+ * LD_PRELOAD 身份命名空间没有挂载原语：--ro-dirs 由原生层展开为这些目录上的
+ * write/delete deny 规则（见 main.c / policy.c）。
+ * 缓存/配置目录（~/.npm、~/.cargo/registry 等）刻意不加：通过环境变量重定向到
+ * 宿主持久缓存目录（见 prepareLinuxSandbox 的 env），避免把宿主可写缓存暴露进沙箱。
  */
 export function detectToolchainReadOnlyDirs(env: NodeJS.ProcessEnv = process.env): string[] {
     const candidates: string[] = [];
@@ -119,8 +168,9 @@ export function detectToolchainReadOnlyDirs(env: NodeJS.ProcessEnv = process.env
 }
 
 /**
- * Linux 动态沙箱：dynobox-linux run。透明路径——沙箱内路径与宿主一致，受控路径
- * 为任务工作区（roots virtual=real=workspace），ask 请求 path 即宿主真实路径。
+ * Linux 动态沙箱：dynobox run（LD_PRELOAD 身份命名空间，源码与 OpenHarmony 共用）。
+ * 路径无映射——沙箱内路径与宿主一致（无 [[roots]] 整根/局部视图概念），策略规则
+ * 直接作用于宿主真实路径；受控路径为任务工作区，ask 请求 path 即宿主真实路径。
  */
 export async function prepareLinuxSandbox(options: {
     shellPath: string;
@@ -206,8 +256,9 @@ export async function prepareLinuxSandbox(options: {
             '--log-file',
             logPath,
             ...(options.deleteToTrash ? ['--del-to-trash'] : []),
-            // 任务级回收站目录无论删除开关与否都传入（值由宿主统一构建），
-            // daemon 仅在 --del-to-trash 启用时使用
+            // 任务级回收站目录无论删除开关与否都传入（值由宿主统一构建，与
+            // Windows/OpenHarmony 的 --trash-dir 格式一致）；原生层仅在
+            // --del-to-trash 启用时使用
             ...(options.trashDir ? ['--trash-dir', options.trashDir] : []),
             ...(roDirs.length > 0 ? ['--ro-dirs', roDirs.join(',')] : []),
             '--',
@@ -218,7 +269,7 @@ export async function prepareLinuxSandbox(options: {
         // 避免写宿主家目录不可见路径或把宿主可写缓存暴露进沙箱；持久目录让
         // CARGO_HOME/npm 缓存跨沙箱实例复用（首次构建才需网络下载依赖）。
         // 注意：RUSTUP_HOME 不在此列——工具链目录已由 --ro-dirs 从宿主 ~/.rustup
-        // 只读挂载，重定向会导致 rustc 找不到 toolchain。
+        // 以只读（write-deny）方式暴露，重定向会导致 rustc 找不到 toolchain。
         env: {
             CARGO_HOME: `${process.env.HOME || ''}/.cache/opendesk-sandbox/cargo`,
             npm_config_cache: `${process.env.HOME || ''}/.cache/opendesk-sandbox/npm`,

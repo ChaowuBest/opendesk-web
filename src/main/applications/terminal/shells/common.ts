@@ -310,7 +310,10 @@ export async function executeShellCommand(opts: {
             ? spawn(sandbox.file, sandbox.args, {
                   cwd: sandbox.cwd,
                   env: sandbox.env ? { ...env, ...sandbox.env } : env,
-                  detached: false,
+                  // detached：macOS 沙箱的 watchdog（宿主死 → kill(-pg) 整树陪葬）
+                  // 依赖独立进程组（shell setpgid）；其余平台 sandbox 不设此位，
+                  // 保持既有 detached: false 语义。
+                  detached: sandbox.detached ?? false,
                   windowsHide: true
               })
             : spawn(shellPath, shellArgs, { cwd, env, detached: process.platform !== 'win32' });

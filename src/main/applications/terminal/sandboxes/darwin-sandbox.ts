@@ -452,6 +452,9 @@ export async function prepareDarwinSandbox(options: {
         file: sandboxShellPath,
         args: childArgs,
         cwd: requestedWorkspace,
+        // macOS watchdog（宿主死 → 整树陪葬）依赖独立进程组：shell 必须 setpgid
+        //（POSIX detached），watchdog 才能对 -pg 发信号覆盖沙箱树。
+        detached: true,
         env: {
             DYLD_INSERT_LIBRARIES: dylib,
             OPENDESK_SANDBOX_POLICY: policyPath,

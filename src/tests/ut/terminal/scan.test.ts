@@ -49,32 +49,31 @@ test('darwin exposes all available supported kinds plus sandbox variants', () =>
     expect(scanSupportedShells('darwin', null)).toEqual([]);
 });
 
-// Linux 沙箱变体依赖：dynobox-linux 二进制存在 + 非特权 userns 可用
-// （否则注册变体必然运行失败）。CI 未构建二进制或 userns 受限时跳过该断言。
+// Linux 沙箱变体依赖：LD_PRELOAD 版产物存在（dynobox + 同目录 libdynobox.so，
+// launcher 在自身目录查找 .so）。LD_PRELOAD 版无需 userns/fuse 探测。
+// CI 未构建产物时跳过该断言。
 const linuxSandboxAvailable = (() => {
     try {
-        const { spawnSync } = require('node:child_process') as typeof import('node:child_process');
-        const usernsOk = spawnSync('unshare', ['-U', 'true'], { timeout: 3000 }).status === 0;
-        if (!usernsOk) return false;
         const fs = require('node:fs') as typeof import('node:fs');
         const path = require('node:path') as typeof import('node:path');
-        const dev = path.join(
+        const { linuxRuntimeTriple } =
+            require('../../../main/applications/terminal/sandboxes/linux-sandbox.js') as typeof import('../../../main/applications/terminal/sandboxes/linux-sandbox.js');
+        const runtimeDir = path.join(
             process.env.INIT_CWD || process.cwd(),
             'native',
             'linux',
             'sandbox',
-            'target',
-            'release',
-            'dynobox-linux'
+            'runtime',
+            linuxRuntimeTriple()
         );
-        return fs.existsSync(dev);
+        return fs.existsSync(path.join(runtimeDir, 'dynobox')) && fs.existsSync(path.join(runtimeDir, 'libdynobox.so'));
     } catch {
         return false;
     }
 })();
 
 (linuxSandboxAvailable ? test : test.skip)(
-    'linux registers sandbox variants for bash/zsh when the binary is available',
+    'linux registers sandbox variants for bash/zsh when the LD_PRELOAD artifacts are available',
     () => {
         paths.set('zsh', '/bin/zsh');
         paths.set('bash', '/bin/bash');

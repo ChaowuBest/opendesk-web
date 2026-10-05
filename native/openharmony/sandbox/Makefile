@@ -6,7 +6,7 @@ CFLAGS  ?= -O2 -g -Wall -Wextra -Wno-unused-parameter -Wno-nonnull-compare -fPIC
 LDFLAGS ?=
 BUILD   ?= build
 
-CORE_SRCS = src/policy.c src/pathmap.c src/ask.c src/cfgio.c src/util.c src/log.c src/mini_toml.c
+CORE_SRCS = src/policy.c src/pathmap.c src/ask.c src/cfgio.c src/util.c src/log.c src/mini_toml.c src/rawio_linux.c
 LIB_SRCS  = $(CORE_SRCS) src/preload.c
 CLI_SRCS  = $(CORE_SRCS) src/main.c src/endpoint.c
 

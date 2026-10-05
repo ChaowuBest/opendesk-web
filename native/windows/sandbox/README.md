@@ -82,17 +82,28 @@ Detours 在用户态 API 层），详见"安全模型"。
 
 ### 2.2 决策引擎与求值顺序
 
-与 Dokan 版一致：静态规则（`[[rules]]`，顺序匹配）、端点下发的**临时授权**
-（`grants`，带 TTL）、决策缓存（`路径+访问类型` 键）。
+与 Linux/OpenHarmony/macOS 一致：静态规则（`[[rules]]`，**most-specific 匹配**——
+四平台统一，详见下方语义说明）、端点下发的**临时授权**（`grants`，带 TTL）、
+决策缓存（`路径+访问类型` 键）。TOML 解析与路径 glob 匹配由共享 core
+（`native/openharmony/sandbox/src` 的 mini_toml.c / policy.c）提供，经
+`common/core_policy.cpp` 桥接（UTF-16↔UTF-8 + 大小写折叠）。
 
 ```
-静态规则按声明顺序匹配
+静态规则 most-specific 匹配（规则顺序无关）
+  ├─ 命中多条取最具体模式（剥尾 /** 的前缀最长），同长 deny > ask > allow
   ├─ deny  → 拒绝（硬边界，授权无法覆盖）
   ├─ allow → 该类别通过（硬边界，无需问询）
   └─ ask   → 先查端点下发的子树授权（TTL 内命中 → 通过）
              └─ 未命中 → 同步调端点 → allow/deny（失败=deny，不进缓存）
 无规则命中 → default（默认 deny）
 ```
+
+#### 规则匹配语义（四平台统一：most-specific）
+
+一条路径命中多条规则时，取**最具体**的模式（剥离尾部 `/**` 后的前缀最长）；
+同长按 deny > ask > allow。**规则书写顺序无关**——"宽 allow 在前 + 精确 deny
+在后"的防御写法总是生效（历史 first-match 语义下该写法是 fail-open 陷阱）。
+同一策略在 Windows / Linux / OpenHarmony / macOS 上判定结果一致。
 
 fail-closed：超时、连接失败、非 200、字段缺失 → 按 deny 且失败决策不进缓存。
 策略判定发生在子进程内的 hook 中（无跨进程 IPC 往返，stat 单价 ~10µs）。

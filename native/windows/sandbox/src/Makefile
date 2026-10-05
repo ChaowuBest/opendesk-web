@@ -38,7 +38,10 @@ HOOK_DLL = sandbox_hook.dll
 
 OUT = ..\dist\$(RID)\bin
 
-CFLAGS = /nologo /W3 /O2 /MT /EHsc /std:c++17 /utf-8 /DNOMINMAX /DUNICODE /D_UNICODE /D_WIN32_WINNT=0x0A00 /D_WINVER=0x0A00 /I$(COMMON) /I$(DETOURS)
+# 共享 core 源码目录（native/openharmony/sandbox/src，三平台单一来源）
+CORE_SRC_DIR = ..\..\openharmony\sandbox\src
+
+CFLAGS = /nologo /W3 /O2 /MT /EHsc /std:c++17 /utf-8 /DNOMINMAX /DUNICODE /D_UNICODE /D_WIN32_WINNT=0x0A00 /D_WINVER=0x0A00 /I$(COMMON) /I$(DETOURS) /I$(CORE_SRC_DIR)
 # Detours 内部需要架构宏（跳板布局）；只对 detours-src 编译生效
 !IF "$(ARCH)" == "x64"
 DETOURS_DEFS = /DDETOURS_64BIT /DDETOURS_X64
@@ -49,7 +52,14 @@ DETOURS_DEFS = /DDETOURS_64BIT /DDETOURS_ARM64
 !ENDIF
 DETOURS_CFLAGS = $(CFLAGS) $(DETOURS_DEFS)
 
-COMMON_OBJS = $(OBJDIR)\log.obj $(OBJDIR)\utf.obj $(OBJDIR)\toml.obj $(OBJDIR)\glob.obj $(OBJDIR)\paths.obj $(OBJDIR)\json.obj $(OBJDIR)\ask.obj $(OBJDIR)\policy.obj $(OBJDIR)\hook_scope.obj
+# toml.obj / glob.obj 已移除：TOML 解析与 glob 匹配改由共享 core 提供
+# （mini_toml.c + policy.c，经 core_policy.cpp 桥接），Windows 侧不再维护
+# 第二份实现。toml.cpp / glob.cpp 源文件一并废弃。
+COMMON_OBJS = $(OBJDIR)\log.obj $(OBJDIR)\utf.obj $(OBJDIR)\paths.obj $(OBJDIR)\json.obj $(OBJDIR)\ask.obj $(OBJDIR)\policy.obj $(OBJDIR)\hook_scope.obj $(OBJDIR)\core_policy.obj
+# 共享 core（native/openharmony/sandbox/src，三平台单一来源）：mini_toml（TOML
+# 解析）+ policy（dbox_policy_load_toml / dbox_glob_match 评估内核）+ util（路径
+# 归一化）。经 common/core_policy.cpp 桥接（UTF-16↔UTF-8 + 大小写折叠）。
+CORE_OBJS = $(OBJDIR)\mini_toml_core.obj $(OBJDIR)\policy_core.obj $(OBJDIR)\util_core.obj
 DETOURS_OBJS = $(OBJDIR)\detours.obj $(OBJDIR)\image.obj $(OBJDIR)\creatwth.obj $(OBJDIR)\modules.obj $(OBJDIR)\detour_shim.obj $(DETOURS_ARCH_OBJ)
 MANAGER_OBJS = $(OBJDIR)\main.obj $(OBJDIR)\runner.obj $(OBJDIR)\endpoint.obj
 HOOK_OBJS = $(OBJDIR)\dllmain.obj $(OBJDIR)\hooks_file.obj $(OBJDIR)\hooks_proc.obj $(OBJDIR)\hooks_nt.obj $(OBJDIR)\hooks_symlink.obj
@@ -82,15 +92,29 @@ $(OBJDIR):
 	@if not exist "$(OBJDIR)" mkdir "$(OBJDIR)"
 	$(CC) $(DETOURS_CFLAGS) /Fo$@ /c $<
 
+# -- 共享 core 的 .c 编译（C 编译单元，include core 目录；/TC 强制 C 编译） -----
+# 显式规则（nmake 的 {dir}.c{dir2}.obj 双后缀推断不支持自定义目标后缀）。
+$(OBJDIR)\mini_toml_core.obj: $(CORE_SRC_DIR)\mini_toml.c
+	@if not exist "$(OBJDIR)" mkdir "$(OBJDIR)"
+	$(CC) $(CFLAGS) /TC /I$(CORE_SRC_DIR) /Fo$@ /c $(CORE_SRC_DIR)\mini_toml.c
+
+$(OBJDIR)\policy_core.obj: $(CORE_SRC_DIR)\policy.c $(CORE_SRC_DIR)\pthread_compat.h
+	@if not exist "$(OBJDIR)" mkdir "$(OBJDIR)"
+	$(CC) $(CFLAGS) /TC /I$(CORE_SRC_DIR) /Fo$@ /c $(CORE_SRC_DIR)\policy.c
+
+$(OBJDIR)\util_core.obj: $(CORE_SRC_DIR)\util.c $(CORE_SRC_DIR)\util.h
+	@if not exist "$(OBJDIR)" mkdir "$(OBJDIR)"
+	$(CC) $(CFLAGS) /TC /I$(CORE_SRC_DIR) /Fo$@ /c $(CORE_SRC_DIR)\util.c
+
 # -- 链接 ---------------------------------------------------------------------
 
-$(OUT)\sandbox.exe: $(COMMON_OBJS) $(DETOURS_OBJS) $(MANAGER_OBJS) $(INJECT_OBJ)
+$(OUT)\sandbox.exe: $(COMMON_OBJS) $(CORE_OBJS) $(DETOURS_OBJS) $(MANAGER_OBJS) $(INJECT_OBJ)
 	@if not exist "$(OUT)" mkdir "$(OUT)"
-	link /nologo /INCREMENTAL:NO /SUBSYSTEM:CONSOLE /ENTRY:wmainCRTStartup /OUT:$@ $(COMMON_OBJS) $(DETOURS_OBJS) $(MANAGER_OBJS) $(INJECT_OBJ) shell32.lib winhttp.lib advapi32.lib user32.lib ws2_32.lib ole32.lib
+	link /nologo /INCREMENTAL:NO /SUBSYSTEM:CONSOLE /ENTRY:wmainCRTStartup /OUT:$@ $(COMMON_OBJS) $(CORE_OBJS) $(DETOURS_OBJS) $(MANAGER_OBJS) $(INJECT_OBJ) shell32.lib winhttp.lib advapi32.lib user32.lib ws2_32.lib ole32.lib
 
-$(OUT)\$(HOOK_DLL): $(COMMON_OBJS) $(DETOURS_OBJS) $(HOOK_OBJS) $(INJECT_OBJ)
+$(OUT)\$(HOOK_DLL): $(COMMON_OBJS) $(CORE_OBJS) $(DETOURS_OBJS) $(HOOK_OBJS) $(INJECT_OBJ)
 	@if not exist "$(OUT)" mkdir "$(OUT)"
-	link /nologo /INCREMENTAL:NO /DLL /OUT:$@ $(COMMON_OBJS) $(DETOURS_OBJS) $(HOOK_OBJS) $(INJECT_OBJ) shell32.lib ws2_32.lib advapi32.lib
+	link /nologo /INCREMENTAL:NO /DLL /OUT:$@ $(COMMON_OBJS) $(CORE_OBJS) $(DETOURS_OBJS) $(HOOK_OBJS) $(INJECT_OBJ) shell32.lib ws2_32.lib advapi32.lib
 
 clean:
 	@-rmdir /s /q $(OBJDIR) 2>nul

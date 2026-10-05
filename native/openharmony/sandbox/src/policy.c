@@ -20,7 +20,12 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <time.h>
+#ifndef _WIN32
 #include <pthread.h>
+#else
+#include "pthread_compat.h"
+#include <windows.h>
+#endif
 
 const char *dbox_perm_name(dperm_t p)
 {
@@ -45,9 +50,13 @@ const char *dbox_access_name(int acc)
 
 int64_t dbox_now_ms(void)
 {
+#ifndef _WIN32
     struct timespec ts;
     clock_gettime(CLOCK_MONOTONIC, &ts);
     return (int64_t)ts.tv_sec * 1000 + ts.tv_nsec / 1000000;
+#else
+    return (int64_t)GetTickCount64();
+#endif
 }
 
 /* ------------------------------------------------------------------ */
@@ -202,8 +211,19 @@ int dbox_policy_load_toml(const char *text, dbox_policy_t *p,
     for (int i = 0; i < doc.n; i++) {
         const tentry_t *e = &doc.e[i];
         if (e->aot_index >= 0) {
-            if (strcmp(e->section, "rules") != 0 || e->aot_index != p->nrules)
-                continue;
+            /* 数组表（[[...]]）：只接受 [[rules]]；其他表名（如 [[rule]] 单数、
+             * [[Rule]]、[[rules2]]）一律视为配置错误 fail-loud——历史实现静默
+             * 跳过导致"默认放行 + 显式拒绝"策略的 deny 规则全部失效（BUG-012/
+             * BUG-002 高危静默降级，沙箱形同虚设）。 */
+            if (strcmp(e->section, "rules") != 0) {
+                snprintf(err, errsz, "未知数组表 `[[%s]]`（应为 [[rules]]；注意表名必须精确匹配）",
+                         e->section);
+                goto bad;
+            }
+            /* 每条规则的各 key 是独立 entry，按文档顺序出现：仅当本 entry 的
+             * aot_index 等于"已消费的规则数"时才是一条新规则的首 key（path），
+             * 该规则的后续 key（access/perm）因索引已消费而跳过。 */
+            if (e->aot_index != p->nrules) continue;
             dbox_rule_t *r = &p->rules[p->nrules];
             memset(r, 0, sizeof(*r));
             const tentry_t *pa = mini_toml_find(&doc, "rules", e->aot_index, "path");
@@ -213,6 +233,17 @@ int dbox_policy_load_toml(const char *text, dbox_policy_t *p,
                 snprintf(err, errsz, "[[rules]] #%d needs path=, access=, perm= strings",
                          e->aot_index + 1);
                 goto bad;
+            }
+            /* BUG-002：旧式 schema 的 decision= 字段不再静默忽略——与 perm 并存
+             * 时报错，避免用户误以为拒绝规则生效 */
+            {
+                const tentry_t *de = mini_toml_find(&doc, "rules", e->aot_index, "decision");
+                if (de) {
+                    snprintf(err, errsz,
+                             "[[rules]] #%d 使用 `decision`（旧 schema），应为 `perm`（allow|deny|ask）",
+                             e->aot_index + 1);
+                    goto bad;
+                }
             }
             if (parse_access(ac->s, &r->acc) != 0) {
                 snprintf(err, errsz, "invalid access `%s`", ac->s);
@@ -272,6 +303,12 @@ int dbox_policy_load_toml(const char *text, dbox_policy_t *p,
                 snprintf(err, errsz, "unknown key `%s` in [network]", e->key);
                 goto bad;
             }
+        } else {
+            /* BUG-012：未知普通表（如 [rule]、[Rule]）历史静默跳过，导致策略
+             * 规则不生效且无任何诊断。fail-loud：表名必须精确匹配
+             * （rules/ask/network），拼写错误立即报错。 */
+            snprintf(err, errsz, "未知表 `[%s]`（支持: rules / ask / network）", e->section);
+            goto bad;
         }
     }
 
@@ -409,14 +446,38 @@ int dbox_system_allow(const char *path, int acc)
     return 0;
 }
 
+/* 规则模式的"具体性"：剥离尾部 "/**" 后的前缀长度（最具体模式优先的排序键）。
+ * 与 macOS boxdylib 的 pattern_base_len 同义：`/a/**` 的键是 `/a`（长度 3），
+ * `/a/b` 的键是 `/a/b`（长度 5）——更长的键更具体。 */
+static size_t rule_specificity(const char *pat)
+{
+    size_t n = strlen(pat);
+    if (n >= 3 && strcmp(pat + n - 3, "/**") == 0) return n - 3;
+    return n;
+}
+
 dperm_t dbox_policy_eval_static_ex(const dbox_policy_t *p, const char *vpath,
                                    int acc, int allow_system)
 {
+    /* most-specific 语义（四平台统一，对齐 macOS boxdylib 既有行为）：
+     * 命中的规则里取"最具体模式"（specificity 最长）；同长按 deny > ask >
+     * allow（core 的 PERM 数值序恰为 ALLOW=0 < ASK=1 < DENY=2，取 max 即
+     * deny 优先）。历史 first-match-wins 会让"宽 allow 在前"吞掉后续精确
+     * deny（bugs.md BUG-009 的 fail-open 陷阱），most-specific 下规则书写
+     * 顺序无关，防护不依赖作者记得把 deny 放前面。 */
+    int best = -1;
+    size_t best_len = 0;
     for (int i = 0; i < p->nrules; i++) {
         const dbox_rule_t *r = &p->rules[i];
         if (!(r->acc & acc)) continue;
-        if (dbox_glob_match(r->path, vpath)) return r->perm;
+        if (!dbox_glob_match(r->path, vpath)) continue;
+        size_t len = rule_specificity(r->path);
+        if (best < 0 || len > best_len || (len == best_len && r->perm > p->rules[best].perm)) {
+            best = i;
+            best_len = len;
+        }
     }
+    if (best >= 0) return p->rules[best].perm;
     if (allow_system && p->system_read && dbox_system_allow(vpath, acc))
         return PERM_ALLOW;
     return p->default_perm;
@@ -431,17 +492,26 @@ dperm_t dbox_policy_eval_static(const dbox_policy_t *p, const char *vpath, int a
 /* shared region (launcher-created, whole tree shares decisions)       */
 /* ------------------------------------------------------------------ */
 
+#include <stdlib.h>
+#ifndef _WIN32
 #include <pthread.h>
 #include <sys/mman.h>
 #include <sys/stat.h>
 #include <fcntl.h>
 #include <unistd.h>
-#include <stdlib.h>
+#endif
+/* MSVC：core 在 Windows 只走 in-process fallback（见下方 dbox_shared_* 的
+ * _WIN32 分支），不需要 POSIX 头；pthread 由顶部的 pthread_compat.h 提供。 */
 
 static dbox_shm_t *g_shm;
 
 dbox_shm_t *dbox_shared_region(void) { return g_shm; }
 
+#ifndef _WIN32
+/* POSIX shm 版（Linux/OpenHarmony/macOS）。Windows 无 shm_open/mmap 语义：
+ * 桥接层（Windows 的 ask/policy C++ 侧）不创建共享区，g_shm 恒为 NULL，
+ * grants/cache 全部走 in-process fallback（dbox_shared_region()==NULL 分支），
+ * 与 Windows "策略随 hook 进程、无 fork 共享" 的语义一致。 */
 int dbox_shared_create(void)
 {
     char name[64];
@@ -476,6 +546,12 @@ int dbox_shared_attach(int fd)
     g_shm = s;
     return 0;
 }
+#else
+/* Windows：无跨进程共享需求（hook 随进程注入，无 fork 树共享语义）。
+ * 保留接口符号，创建/附着一律失败 → 调用方走 in-process fallback。 */
+int dbox_shared_create(void) { return -1; }
+int dbox_shared_attach(int fd) { (void)fd; return -1; }
+#endif
 
 /* ------------------------------------------------------------------ */
 /* grants                                                              */

@@ -46,6 +46,26 @@ if (!fs.existsSync(source)) {
     process.exit(1);
 }
 
+// 共享 core（与 Linux/OpenHarmony 同一份 C 源码）：策略 TOML 解析、glob 匹配、
+// 小工具 + rawio_darwin（libc 版自身 I/O，配合 boxdylib 的 is_internal 豁免）。
+const sharedSrcDir = path.join(root, 'native', 'openharmony', 'sandbox', 'src');
+const coreSources = [
+    'policy.c',
+    'pathmap.c',
+    'ask.c',
+    'cfgio.c',
+    'util.c',
+    'log.c',
+    'mini_toml.c',
+    'rawio_darwin.c'
+].map((f) => path.join(sharedSrcDir, f));
+for (const f of coreSources) {
+    if (!fs.existsSync(f)) {
+        process.stderr.write(`[sandbox-darwin] shared core source missing: ${f}\n`);
+        process.exit(1);
+    }
+}
+
 const archChoice = process.env.OPENDESK_SANDBOX_ARCH || 'host';
 /** Node 架构名 → clang -arch。arm64 机器必须附带 arm64e slice（系统二进制 ABI）。 */
 function slicesFor(choice) {
@@ -59,7 +79,8 @@ fs.mkdirSync(runtimeDir, { recursive: true });
 
 const args = ['-dynamiclib', '-O2', '-Wall', '-Wextra', '-fvisibility=hidden'];
 for (const arch of slices) args.push('-arch', arch);
-args.push('-o', output, source);
+args.push('-I', sharedSrcDir);
+args.push('-o', output, source, ...coreSources);
 
 process.stdout.write(`[sandbox-darwin] building ${slices.join(' + ')} → ${path.relative(root, output)}\n`);
 execFileSync('/usr/bin/clang', args, { cwd: root, stdio: 'inherit' });

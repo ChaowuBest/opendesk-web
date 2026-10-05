@@ -32,8 +32,9 @@ export { resolveOpenHarmonySandboxExecutable, resolveOpenHarmonySandboxLibrary }
 /**
  * OpenHarmony 动态沙箱：dynobox（LD_PRELOAD 身份命名空间）run。路径无映射，
  * 策略规则直接作用于宿主真实路径；受控路径为任务工作区，ask 请求 path 即宿主
- * 真实路径（与 Linux-sandbox 同语义）。与 Linux(FUSE) 版的差异：无 [[roots]]、
- * 走 --ro-dirs 把工具链目录以只读（write-deny）方式暴露。
+ * 真实路径（与 Linux 版同语义：同为 LD_PRELOAD 拦截，无 [[roots]]，工具链目录
+ * 走 --ro-dirs 以只读（write-deny）方式暴露）。与 Linux 版的差异：额外用 --tmp
+ * 把 /tmp 映射到应用沙箱目录，且应用沙箱 temp/cache 经 writableDirs 在策略放行。
  */
 export async function prepareOpenHarmonySandbox(options: {
     shellPath: string;
@@ -129,8 +130,7 @@ export async function prepareOpenHarmonySandbox(options: {
     const childArgs = [options.shellPath, ...options.shellArgs];
     return {
         file: executable,
-        // 工具链目录经 --ro-dirs 以只读（write-denied）方式暴露，对齐 Linux(FUSE)
-        // 的只读挂载。
+        // 工具链目录经 --ro-dirs 以只读（write-denied）方式暴露，与 Linux 版一致。
         args: [
             'run',
             '--policy',
@@ -146,9 +146,9 @@ export async function prepareOpenHarmonySandbox(options: {
             getTempDir(),
             // 任务级回收站目录无论删除开关与否都传入（值由宿主统一构建，与
             // Windows/Linux 的 --trash-dir 格式一致）；原生层仅在 --del-to-trash
-            // 启用时使用
+            // 启用时使用（--trash 为 --trash-dir 的兼容别名，二者等价）
             ...(options.trashDir ? ['--trash-dir', options.trashDir] : []),
-            ...(options.deleteToTrash && trashDir ? ['--del-to-trash', '--trash', trashDir] : []),
+            ...(options.deleteToTrash ? ['--del-to-trash'] : []),
             ...(roDirs.length > 0 ? ['--ro-dirs', roDirs.join(',')] : []),
             '--',
             ...childArgs

@@ -23,7 +23,9 @@
 #include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
+#if defined(__linux__)
 #include <sys/prctl.h>
+#endif
 #include <sys/stat.h>
 #include <sys/wait.h>
 #include <sys/mman.h>
@@ -318,6 +320,19 @@ static int cmd_run(int argc, char **argv)
     char *cfg = dbox_cfg_encode(&pol);
     if (!cfg) { fprintf(stderr, "dynobox: 配置序列化失败\n"); return 2; }
 
+    /* BUG-015：编码后的策略注入 DYNOBOX_CFG（base64，约 ×4/3 膨胀）。超过 64KB
+     * 会溢出沙箱侧固定缓冲并被静默截断，导致策略失效（fail-open）。此处主动检查
+     * 并 fail-loud 报错退出，而不是让子进程"看似沙箱化、实则裸奔"地继续执行。 */
+    if (strlen(cfg) >= 65536) {
+        fprintf(stderr,
+                "dynobox: 策略序列化后为 %zu 字节，超过 64KB 上限（沙箱无法承载）。\n"
+                "  请精简策略：拆分过长的 endpoint URL / path，或减少规则数量。\n",
+                strlen(cfg));
+        dbox_free(cfg);
+        dbox_policy_free(&pol);
+        return 2;
+    }
+
     /* child environment */
     setenv("LD_PRELOAD", lib_abs, 1);
     setenv("DYNOBOX_CFG", cfg, 1);
@@ -351,9 +366,14 @@ static int cmd_run(int argc, char **argv)
         dbox_free(n);
     }
     if (o.del_to_trash) {
-        /* 回收站目录：--trash 指定，否则 $HOME/.trash；不存在则创建（mkdir -p） */
+        /* 回收站目录优先级：--trash/--trash-dir 显式参数 > 已注入的
+         * DYNOBOX_TRASH 环境变量 > $HOME/Trash 兜底。历史问题（BUG-021）：
+         * 用户在 launcher 层设了 DYNOBOX_TRASH 后再加 --del-to-trash（无
+         * --trash-dir），原实现直接用 $HOME/Trash 覆盖用户 env，导致三种
+         * 配置方式行为不一致。现在显式参数优先、env 次之、兜底最后。 */
         char tb[PATH_MAX];
         const char *td = o.trash_dir;
+        if (!td || !td[0]) td = getenv("DYNOBOX_TRASH");
         if (!td || !td[0]) {
             const char *home = getenv("HOME");
             if (home && home[0]) {
@@ -410,7 +430,9 @@ static int cmd_run(int argc, char **argv)
         /* child */
         close(wfd);
         setpgid(0, 0);
+#if defined(__linux__)
         prctl(PR_SET_PDEATHSIG, SIGKILL, 0, 0, 0);
+#endif
         if (chdir_to && chdir(chdir_to) != 0) {
             fprintf(stderr, "dynobox: chdir %s: %s\n", chdir_to, strerror(errno));
             _exit(126);

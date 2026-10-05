@@ -1,8 +1,8 @@
 /* ask.c — upstream decision endpoint client (protocol v2).
  *
- * Used from inside the LD_PRELOAD library: every socket operation below
- * goes through raw syscalls so the ask transport can never recurse into
- * the sandbox's own interposed wrappers.
+ * ask 传输层的自身 I/O 走 rawio 抽象（Linux 为绕过 LD_PRELOAD 的 syscall，
+ * macOS 为 libc + interpose 豁免，Windows 为 Win32），确保 ask transport
+ * 永不递归进入沙箱自身的拦截封装。
  *
  * fail-closed: any timeout, connection error, non-200 status or malformed
  * response => deny, and failed decisions are never cached (policy.c).
@@ -11,6 +11,7 @@
 #include "ask.h"
 #include "policy.h"
 #include "pathmap.h"
+#include "rawio.h"
 #include "util.h"
 #include "log.h"
 
@@ -23,7 +24,6 @@
 #include <netdb.h>
 #include <netinet/in.h>
 #include <sys/socket.h>
-#include <sys/syscall.h>
 #include <sys/time.h>
 #include <sys/un.h>
 #include <arpa/inet.h>
@@ -35,15 +35,15 @@
 
 static int raw_socket(int domain, int type, int proto)
 {
-    return (int)syscall(SYS_socket, domain, type, proto);
+    return dbox_raw_socket(domain, type, proto);
 }
 
 static int raw_connect(int fd, const struct sockaddr *sa, socklen_t sl,
                        int timeout_ms)
 {
-    int fl = (int)syscall(SYS_fcntl, fd, F_GETFL, 0);
-    syscall(SYS_fcntl, fd, F_SETFL, fl | O_NONBLOCK);
-    int rc = (int)syscall(SYS_connect, fd, sa, sl);
+    int fl = dbox_raw_fcntl(fd, F_GETFL, 0);
+    dbox_raw_fcntl(fd, F_SETFL, fl | O_NONBLOCK);
+    int rc = dbox_raw_connect(fd, sa, sl);
     if (rc != 0 && errno == EINPROGRESS) {
         struct pollfd p = { .fd = fd, .events = POLLOUT };
         for (;;) {
@@ -53,27 +53,27 @@ static int raw_connect(int fd, const struct sockaddr *sa, socklen_t sl,
         if (rc == 0) { errno = ETIMEDOUT; return -1; }
         if (rc < 0) return -1;
         int err = 0; socklen_t el = sizeof err;
-        if (syscall(SYS_getsockopt, fd, SOL_SOCKET, SO_ERROR, &err, &el) < 0) return -1;
+        if (dbox_raw_getsockopt(fd, SOL_SOCKET, SO_ERROR, &err, &el) < 0) return -1;
         if (err) { errno = err; return -1; }
     } else if (rc != 0) {
         return -1;
     }
-    syscall(SYS_fcntl, fd, F_SETFL, fl);
+    dbox_raw_fcntl(fd, F_SETFL, fl);
     struct timeval tv = { .tv_sec = timeout_ms / 1000,
                           .tv_usec = (timeout_ms % 1000) * 1000 };
-    syscall(SYS_setsockopt, fd, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof tv);
-    syscall(SYS_setsockopt, fd, SOL_SOCKET, SO_SNDTIMEO, &tv, sizeof tv);
+    dbox_raw_setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof tv);
+    dbox_raw_setsockopt(fd, SOL_SOCKET, SO_SNDTIMEO, &tv, sizeof tv);
     return 0;
 }
 
 static ssize_t raw_send(int fd, const void *buf, size_t n)
 {
-    return syscall(SYS_sendto, fd, buf, n, 0, NULL, 0);
+    return dbox_raw_sendto(fd, buf, n, 0, NULL, 0);
 }
 
 static ssize_t raw_recv(int fd, void *buf, size_t n)
 {
-    return syscall(SYS_recvfrom, fd, buf, n, 0, NULL, NULL);
+    return dbox_raw_recvfrom(fd, buf, n, 0, NULL, NULL);
 }
 
 /* ------------------------------------------------------------------ */
@@ -335,7 +335,7 @@ static int ask_roundtrip(const endpoint_t *ep, const char *req,
             snprintf(err, errsz, "connect %s: %s",
                      ep->unix_path[0] ? ep->unix_path : "(abstract)",
                      strerror(errno));
-            syscall(SYS_close, fd);
+            dbox_raw_close(fd);
             return -1;
         }
     } else {
@@ -355,7 +355,7 @@ static int ask_roundtrip(const endpoint_t *ep, const char *req,
         if (raw_connect(fd, res->ai_addr, res->ai_addrlen, timeout_ms) != 0) {
             snprintf(err, errsz, "connect %s:%s: %s", ep->host, ep->port, strerror(errno));
             freeaddrinfo(res);
-            syscall(SYS_close, fd);
+            dbox_raw_close(fd);
             return -1;
         }
         freeaddrinfo(res);
@@ -378,7 +378,7 @@ static int ask_roundtrip(const endpoint_t *ep, const char *req,
                  && raw_send(fd, req, nreq) == (ssize_t)nreq;
         if (!ok) {
             snprintf(err, errsz, "send: %s", strerror(errno));
-            syscall(SYS_close, fd);
+            dbox_raw_close(fd);
             return -1;
         }
     } else {
@@ -392,7 +392,7 @@ static int ask_roundtrip(const endpoint_t *ep, const char *req,
         frame[3] = (unsigned char)((n >> 24) & 0xff);
         if (raw_send(fd, frame, 4) != 4 || (size_t)raw_send(fd, req, n) != n) {
             snprintf(err, errsz, "send: %s", strerror(errno));
-            syscall(SYS_close, fd);
+            dbox_raw_close(fd);
             return -1;
         }
     }
@@ -404,13 +404,13 @@ static int ask_roundtrip(const endpoint_t *ep, const char *req,
         if (n < 0) {
             if (errno == EINTR) continue;
             snprintf(err, errsz, "recv: %s", strerror(errno));
-            syscall(SYS_close, fd);
+            dbox_raw_close(fd);
             return -1;
         }
         if (n == 0) break;
         got += (size_t)n;
     }
-    syscall(SYS_close, fd);
+    dbox_raw_close(fd);
     resp[got] = '\0';
     if (got == 0) { snprintf(err, errsz, "empty response"); return -1; }
 

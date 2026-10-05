@@ -9,7 +9,7 @@
  * See the Mulan PSL v2 for more details.
  */
 
-// 统一文件回收站：各平台沙箱（Windows Detours / Linux FUSE / OpenHarmony
+// 统一文件回收站：各平台沙箱（Windows Detours / Linux LD_PRELOAD / OpenHarmony
 // LD_PRELOAD / macOS DYLD interpose）在拦截到删除时，把文件移动到任务级回收站
 // 目录 `<opendeskDir>/trash/<taskId>/<uuid>.back`，并追加记录到同目录的
 // `summary.json`（顶层为条目数组）。本模块负责宿主侧的读取、搜索、恢复与过期

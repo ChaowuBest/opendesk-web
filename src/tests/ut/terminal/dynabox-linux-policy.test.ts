@@ -26,14 +26,75 @@ describe('hostPatternToVirtualLinux', () => {
 });
 
 describe('policyTextLinux', () => {
-    test('roots 使用整根视图（virtual=real=/）', () => {
+    test('LD_PRELOAD 版不含 [[roots]]（身份命名空间，无路径映射）', () => {
         const text = policyTextLinux('http://127.0.0.1:1/decide', 't', '/home/liyi/work');
-        expect(text).toContain('virtual = "/"');
-        expect(text).toContain('real    = "/"');
-        // 工作区写放行规则
+        expect(text).not.toContain('[[roots]]');
+        expect(text).not.toContain('virtual = "/"');
+        // 规则 path 直接用宿主真实路径
         expect(text).toContain('path = "/home/liyi/work/**"\naccess = "write"\nperm = "allow"');
     });
-    test('家目录敏感路径读 deny（整根读放行兜底下的收窄）', () => {
+    test('全盘 write deny（readonly 模式）：不追加工作区 write allow、外读兜底改为 deny、temp 读写放行', () => {
+        const rules = [
+            { resourceType: 'file', action: 'read', pathPattern: '/home/liyi/work/**', effect: 'allow' },
+            { resourceType: 'file', action: 'write', pathPattern: '**', effect: 'deny' }
+        ] as any[];
+        const text = policyTextLinux('http://127.0.0.1:1/decide', 't', '/home/liyi/work', rules);
+        // 全盘 write deny 规则在位（** 经 hostPatternToVirtualLinux 映射为 /**）
+        expect(text).toContain('path = "/**"\naccess = "write"\nperm = "deny"');
+        // 工作区 write allow 被跳过（否则 most-specific 下顶掉全盘 deny，readonly 写保护失效）
+        expect(text).not.toContain('path = "/home/liyi/work/**"\naccess = "write"\nperm = "allow"');
+        // 非 write 的用户规则仍导出
+        expect(text).toContain('path = "/home/liyi/work/**"\naccess = "read"\nperm = "allow"');
+        // 外读兜底改为 deny（readonly 不弹窗外读：工作区外读写全部拒绝）
+        expect(text).toContain('path = "/**"\naccess = "read"\nperm = "deny"');
+        // 临时目录读写放行（shell 管道/heredoc 必需；泛化清单）
+        expect(text).toContain('path = "/tmp/**"\naccess = "write"\nperm = "allow"');
+        expect(text).toContain('path = "/tmp/**"\naccess = "read"\nperm = "allow"');
+        expect(text).toContain('path = "/private/var/folders/**"\naccess = "write"\nperm = "allow"');
+        expect(text).toContain('path = "/dev/shm/**"\naccess = "write"\nperm = "allow"');
+    });
+    test('临时目录读写放行（非 readonly 也生效：管道/heredoc/编译器落盘区泛化清单）', () => {
+        const text = policyTextLinux('http://127.0.0.1:1/decide', 't', '/home/liyi/work');
+        for (const p of ['/tmp/**', '/var/tmp/**', '/private/var/tmp/**', '/private/var/folders/**', '/dev/shm/**']) {
+            expect(text).toContain(`path = "${p}"\naccess = "write"\nperm = "allow"`);
+            expect(text).toContain(`path = "${p}"\naccess = "read"\nperm = "allow"`);
+        }
+    });
+    test('standard（无全盘 read allow 规则）：外读兜底为 ask（"工作空间外需确认"）+ 系统路径/shell rc/temp 读放行', () => {
+        const text = policyTextLinux('http://127.0.0.1:1/decide', 't', '/home/liyi/work', undefined, '/home/liyi');
+        if (!text.includes('.zshenv')) {
+            console.log(
+                '[DUMP] zshenv missing; all paths:\n' +
+                    text
+                        .split('\n')
+                        .filter((l) => l.startsWith('path = '))
+                        .join('\n')
+            );
+        }
+        // 兜底 ask（外读需确认的落实）
+        expect(text).toContain('path = "/**"\naccess = "read"\nperm = "ask"');
+        // 系统运行时路径读放行（PATH 搜索的 stat 是 read，全盘 ask 会让 shell 不可用）
+        expect(text).toContain('path = "/usr/**"\naccess = "read"\nperm = "allow"');
+        expect(text).toContain('path = "/bin/**"\naccess = "read"\nperm = "allow"');
+        // shell rc 文件读放行
+        expect(text).toContain('path = "/home/liyi/.zshenv"\naccess = "read"\nperm = "allow"');
+        // temp 读放行
+        expect(text).toContain('path = "/tmp/**"\naccess = "read"\nperm = "allow"');
+    });
+    test('solo/unlimited（用户含全盘 read allow）：读/写兜底均为 allow（同长平局 ask 会架空全放行语义）', () => {
+        const soloRules = [
+            { resourceType: 'file', action: 'write', pathPattern: '**', effect: 'allow' },
+            { resourceType: 'file', action: 'read', pathPattern: '**', effect: 'allow' },
+            { resourceType: 'file', action: 'execute', pathPattern: '**', effect: 'allow' }
+        ] as any[];
+        const text = policyTextLinux('http://127.0.0.1:1/decide', 't', '/home/liyi/work', soloRules);
+        // 读/写兜底 allow（不是 ask）
+        expect(text).toContain('path = "/**"\naccess = "read"\nperm = "allow"');
+        expect(text).not.toContain('path = "/**"\naccess = "read"\nperm = "ask"');
+        expect(text).toContain('path = "/**"\naccess = "write"\nperm = "allow"');
+        expect(text).not.toContain('path = "/**"\naccess = "write"\nperm = "ask"');
+    });
+    test('家目录敏感路径读 deny（默认读放行兜底下的收窄）', () => {
         const text = policyTextLinux('http://127.0.0.1:1/decide', 't', '/home/liyi/work', undefined, '/home/liyi');
         expect(text).toContain('path = "/home/liyi/.ssh/**"\naccess = "read"\nperm = "deny"');
         expect(text).toContain('path = "/home/liyi/.aws/**"\naccess = "read"\nperm = "deny"');
@@ -68,9 +129,9 @@ describe('policyTextLinux', () => {
         expect(allowIndex).toBeGreaterThan(denyIndex);
         expect(lines).not.toContain('"execute"');
     });
-    test('兜底规则：读放行、写询问、执行放行', () => {
+    test('兜底规则：读询问（standard 外读确认）、写询问、执行放行', () => {
         const text = policyTextLinux('http://127.0.0.1:1/decide', 't', '/home/liyi/work');
-        expect(text).toContain('path = "/**"\naccess = "read"\nperm = "allow"');
+        expect(text).toContain('path = "/**"\naccess = "read"\nperm = "ask"');
         expect(text).toContain('path = "/**"\naccess = "write"\nperm = "ask"');
         expect(text).toContain('path = "/**"\naccess = "execute"\nperm = "allow"');
     });

@@ -11,12 +11,14 @@ describe('policyTextOpenHarmony', () => {
         expect(text).toContain('default = "deny"');
     });
 
-    test('工作区写放行与兜底规则（与 Linux(FUSE) 版同样的真实路径语义）', () => {
+    test('工作区写放行与兜底规则（真实路径语义；外读 ask 兜底 + 系统路径读放行）', () => {
         const text = policyTextOpenHarmony('e', 't', '/data/home/work');
         expect(text).toContain('path = "/data/home/work/**"\naccess = "write"\nperm = "allow"');
-        expect(text).toContain('path = "/**"\naccess = "read"\nperm = "allow"');
+        expect(text).toContain('path = "/**"\naccess = "read"\nperm = "ask"');
         expect(text).toContain('path = "/**"\naccess = "write"\nperm = "ask"');
         expect(text).toContain('path = "/**"\naccess = "execute"\nperm = "allow"');
+        // 系统运行时路径读放行（PATH 搜索的 stat 是 read）
+        expect(text).toContain('path = "/usr/**"\naccess = "read"\nperm = "allow"');
     });
 
     test('家目录敏感路径 deny 与工具链缓存写放行（OH 上同样收窄）', () => {

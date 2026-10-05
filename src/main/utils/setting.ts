@@ -296,8 +296,10 @@ const TaskSettingSchema = z.object({
     evidence_card: z.boolean().default(false).describe('是否启用 EvidenceCard 节省 Token 功能'),
     shell_path: z.string().default(''),
     shell_sandboxed: z.boolean().default(false),
-    // Windows 仅 PowerShell 提供沙箱；Linux 上 bash/zsh 提供（dynobox-linux）。
-    // 删除送回收站仅在 Windows PowerShell 沙箱生效（原生侧实现创建跟踪）。
+    // Windows 仅 PowerShell 提供沙箱；Linux 上 bash/zsh 提供（LD_PRELOAD 版 dynobox）。
+    // 删除送回收站在所有平台沙箱生效（Windows Detours / Linux LD_PRELOAD /
+    // OH dynobox / macOS DYLD），统一回收站目录 <opendesk>/trash/<taskId>
+    // 由宿主每次拉起传入。
     shell_sandbox_del_to_trash: z.boolean().default(false)
 });
 
