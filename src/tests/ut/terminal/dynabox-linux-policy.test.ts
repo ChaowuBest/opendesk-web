@@ -84,6 +84,16 @@ describe('policyTextLinux', () => {
         // 沙箱文本由 enforcer.getRules() 导出（回归见 ut/aikernel/app-policies.test.ts）；
         // 无 home 传入时（本用例未传）不含 git 规则。
     });
+    test('系统运行时读前缀补全：/system、/lib32、/sys、/proc、/data/service（回归：启动探测路径触发 ask 风暴）', () => {
+        const text = policyTextLinux('http://127.0.0.1:1/decide', 't', '/home/liyi/work');
+        // 与 OH 版共用同一清单：进程启动时系统库必读这些路径；缺失则每次 spawn
+        // 都对 /system 等触发一次 ask（兜底 ask 不缓存），命令异常缓慢
+        for (const prefix of ['/system', '/sys', '/proc', '/data/service', '/lib32']) {
+            expect(text).toContain(`path = "${prefix}/**"\naccess = "read"\nperm = "allow"`);
+            expect(text).toContain(`path = "${prefix}"\naccess = "read"\nperm = "allow"`);
+        }
+    });
+
     test('solo/unlimited（用户含全盘 read allow）：读/写兜底均为 allow（同长平局 ask 会架空全放行语义）', () => {
         const soloRules = [
             { resourceType: 'file', action: 'write', pathPattern: '**', effect: 'allow' },

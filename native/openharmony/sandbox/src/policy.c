@@ -405,7 +405,12 @@ int dbox_system_allow(const char *path, int acc)
 {
     /* Runtime/toolchain prefixes: read always, exec also allowed
      * (parity with Windows: sandboxed processes keep system runtime
-     * read access; see README "known boundaries"). */
+     * read access; see README "known boundaries").
+     * 与 TS 侧 dynabox-policy.ts 的 LINUX_SYSTEM_READ_PREFIXES 保持一致：
+     * /system（OH 运行时根）、/sys 与 /proc（SELinux/崩溃处理/mounts 等
+     * 进程启动探测）、/data/service（OH hilog 公共配置）——缺失时这些路径
+     * 每次进程启动都会触发 ask，命令异常缓慢（BUG：find 家目录 2000+ 次
+     * 无关 ask）。 */
     static const char *const sys_read[] = {
         "/usr", "/bin", "/sbin", "/lib", "/lib32", "/lib64", "/opt",
         /* OpenHarmony/HarmonyOS keeps the system runtime under /system and
@@ -413,6 +418,7 @@ int dbox_system_allow(const char *path, int acc)
          * Policy is evaluated on resolved (real) paths, so the real prefix
          * has to be listed here as well. */
         "/system",
+        "/sys", "/proc", "/data/service",
         "/etc/ld.so.cache", "/etc/ld.so.preload", "/etc/nsswitch.conf",
         "/etc/localtime", "/etc/timezone", "/etc/hosts", "/etc/hostname",
         "/etc/resolv.conf", "/etc/gai.conf", "/etc/passwd", "/etc/group",

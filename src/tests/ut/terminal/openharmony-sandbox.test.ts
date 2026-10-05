@@ -56,4 +56,22 @@ describe('policyTextOpenHarmony', () => {
         expect(askIdx).toBeGreaterThan(tempIdx);
         expect(text).not.toContain('[[roots]]');
     });
+
+    test('系统运行时读前缀补全：/system、/lib32、/sys、/proc、/data/service（回归：任务中启动探测路径触发 ask 风暴）', () => {
+        const text = policyTextOpenHarmony('e', 't', '/data/home/work', undefined, '/data/home');
+        // OH 系统运行时根 /system 与 /lib32：此前清单缺失导致每次 spawn 进程
+        // 的 hilog/SELinux/崩溃处理探测都落入 /** read ask 兜底（cache_ttl=0
+        // 不缓存），find/ls/cat 等命令被海量无关 ask 拖到超时
+        for (const prefix of ['/system', '/sys', '/proc', '/data/service', '/lib32']) {
+            expect(text).toContain(`path = "${prefix}/**"\naccess = "read"\nperm = "allow"`);
+            expect(text).toContain(`path = "${prefix}"\naccess = "read"\nperm = "allow"`);
+        }
+        // 系统前缀只放行 read：write 兜底仍是 ask（不放大写授权面）
+        expect(text).toContain('path = "/**"\naccess = "write"\nperm = "ask"');
+        // read allow 规则须位于兜底 read ask 之前（first-match/most-specific 语义下放行生效）
+        const systemIdx = text.indexOf('path = "/system/**"\naccess = "read"\nperm = "allow"');
+        const readAskIdx = text.indexOf('path = "/**"\naccess = "read"\nperm = "ask"');
+        expect(systemIdx).toBeGreaterThanOrEqual(0);
+        expect(systemIdx).toBeLessThan(readAskIdx);
+    });
 });

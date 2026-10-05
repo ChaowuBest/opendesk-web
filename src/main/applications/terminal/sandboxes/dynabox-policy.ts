@@ -414,7 +414,7 @@ function policyLinuxTail(
                   // 系统运行时路径 read allow：PATH 搜索（sh 找 cat/ls）是 read stat，
                   // 全盘 read deny 会连 /usr/bin/cat 都找不到（readonly 仍需基础工具
                   // "检查工作区内容"）。清单与 core 的 system_read 内建前缀一致。
-                  ...['/usr', '/bin', '/sbin', '/lib', '/lib64', '/opt', '/etc', '/dev'].flatMap((p) => [
+                  ...LINUX_SYSTEM_READ_PREFIXES.flatMap((p) => [
                       `[[rules]]\npath = ${quote(`${p}/**`)}\naccess = "read"\nperm = "allow"`,
                       `[[rules]]\npath = ${quote(p)}\naccess = "read"\nperm = "allow"`
                   ]),
@@ -447,7 +447,7 @@ function policyLinuxTail(
                   //   3. 临时目录（管道/heredoc/编译器落盘区）。
                   //   工作区内读由用户规则（workspace read allow）覆盖。
                   // 这些清单对 solo/unlimited 同样无害（allow 幂等）。
-                  ...['/usr', '/bin', '/sbin', '/lib', '/lib64', '/opt', '/etc', '/dev'].flatMap((p) => [
+                  ...LINUX_SYSTEM_READ_PREFIXES.flatMap((p) => [
                       `[[rules]]\npath = ${quote(`${p}/**`)}\naccess = "read"\nperm = "allow"`,
                       `[[rules]]\npath = ${quote(p)}\naccess = "read"\nperm = "allow"`
                   ]),
@@ -598,6 +598,38 @@ const POSIX_TEMP_DIR_PATTERNS: string[] = [
     '/private/var/tmp/**',
     '/private/var/folders/**',
     '/dev/shm/**'
+];
+
+/**
+ * 系统运行时读放行前缀（Linux / OpenHarmony 共用，与 native core 的 system_read
+ * 内建清单对齐并扩展）。这些目录是进程启动时 shell / 动态链接器 / 系统库初始化的
+ * 必读路径（PATH 搜索的 stat、/etc 配置、/system 运行时、SELinux/hilog 探测等），
+ * 若不放行 read，**每次 spawn 进程都会对它们逐个触发 ask**（cache_ttl=0 不缓存），
+ * 表现为任何命令都异常缓慢/超时（BUG：任务里 find 家目录触发 2000+ 次无关 ask）。
+ *
+ * 与 native policy.c `dbox_system_allow` 的 sys_read 清单保持一致：
+ * - /usr /bin /sbin /lib /lib32 /lib64 /opt /system /etc /dev 为基础前缀；
+ * - OpenHarmony 系统运行时根为 /system（与 /bin、/lib64 等互为 symlink，策略按
+ *   解析后的真实路径求值，须把真实前缀列出）；
+ * - /sys 与 /proc 为内核运行时探测（SELinux 状态、崩溃处理钩子、mounts 等），
+ *   find/ls/任何命令启动时系统库都会 stat 它们；只放行 read，写/执行仍受管控。
+ * 注意：只对 read 放行，execute 由 sys_exec_prefix 另行管控，避免把 /proc、/sys
+ * 中的可执行内容（如 /proc/self/exe）纳入执行白名单。
+ */
+const LINUX_SYSTEM_READ_PREFIXES = [
+    '/usr',
+    '/bin',
+    '/sbin',
+    '/lib',
+    '/lib32',
+    '/lib64',
+    '/opt',
+    '/system',
+    '/etc',
+    '/dev',
+    '/sys',
+    '/proc',
+    '/data/service'
 ];
 
 /** OpenHarmony 版策略文本：LD_PRELOAD 身份命名空间（路径无映射），不含

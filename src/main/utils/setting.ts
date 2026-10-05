@@ -19,6 +19,7 @@ import { REASONING_EFFORT_VALUES, type ReasoningEffort } from '../aikernel/types
 import { parseTokenCount, DEFAULT_MODEL_TIMEOUT_SECONDS } from '../../utils/model.js';
 import { OUTPUT_DISPLAY_LEVELS } from '../../common/output-display.js';
 import {
+    getHarmonyHomeDirectory,
     getHarmonyRuntimeEnvironment,
     getHarmonyWorkspaceDirectory
 } from '../../platforms/bridges/harmonyos/runtime.js';
@@ -1249,18 +1250,35 @@ function getTaskSessionMemoryPath(taskId: string, ensureExists: boolean = true):
 }
 
 /**
- * 获取统一回收站根目录 `<opendeskDir>/trash/`。
+ * 统一回收站根目录的平台判定（纯逻辑，无 IO，便于单元测试）：
+ * - 其他平台：`<opendeskDir>/trash/`（与用户文件通常同设备，rename 移动成立）；
+ * - OpenHarmony：`<userHomeDir>/.opendesk-trash`（应用数据目录与用户文件分布在
+ *   不同文件系统上，回收站若放 `<opendeskDir>/trash` 会因跨设备 rename（EXDEV）
+ *   导致沙箱删除全部失败——见 BUG-031：任务级回收站跨设备）。
+ * `opendeskDir` 为应用数据目录（OH 上即 appDataDir）；`home` 为用户家目录。
+ */
+export function resolveTrashRootDirectory(opendeskDir: string, home: string | undefined): string {
+    if (process.platform === 'openharmony') {
+        if (home) return path.join(home, '.opendesk-trash');
+    }
+    return path.join(opendeskDir, 'trash');
+}
+
+/**
+ * 获取统一回收站根目录（平台判定见 resolveTrashRootDirectory）。
  * 各平台沙箱的删除回收统一落在这里（访问时创建，应用启动时也会显式创建）。
  */
 function getTrashRootDirectory(): string {
-    return ensureDirectoryExists(path.join(getOpendeskDirectory(), 'trash'));
+    const runtime = getHarmonyRuntimeEnvironment();
+    const home = runtime ? getHarmonyHomeDirectory(runtime) : process.env.HOME;
+    return ensureDirectoryExists(resolveTrashRootDirectory(getOpendeskDirectory(), home));
 }
 
 /** 任务 ID 的合法性约束与 TaskManagerState 导入校验保持一致（防路径穿越）。 */
 const TRASH_TASK_ID_PATTERN = /^[a-zA-Z0-9_-]{1,128}$/;
 
 /**
- * 获取任务级回收站目录 `<opendeskDir>/trash/<taskId>/`。
+ * 获取任务级回收站目录（根目录见 getTrashRootDirectory，各平台取不同根）。
  * 沙箱删除的文件以 `<uuid>.back` + `summary.json` 的形式组织在该目录下，
  * 目录名即任务 ID（形如 task_xxx）。默认在访问时创建，仅读场景（清理扫描）
  * 可显式关闭创建。
@@ -1269,7 +1287,7 @@ function getTaskTrashDirectory(taskId: string, ensureExists: boolean = true): st
     if (!TRASH_TASK_ID_PATTERN.test(taskId)) {
         throw new Error(`invalid task id for trash directory: ${taskId}`);
     }
-    const trashRoot = path.join(getOpendeskDirectory(), 'trash');
+    const trashRoot = getTrashRootDirectory();
     const taskTrashDirectory = path.join(trashRoot, taskId);
 
     if (ensureExists) {
