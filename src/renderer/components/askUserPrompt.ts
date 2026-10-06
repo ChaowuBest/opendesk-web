@@ -299,14 +299,14 @@ class AskUserPrompt extends HTMLElement {
             'inline-flex items-center justify-center w-6 h-6 rounded text-[10px] transition-colors duration-150 cursor-pointer';
         const navPrevHtml = hasMultiple
             ? `<button id="ask-prev-btn"
-                    class="${navBtnBase} ${isFirst ? 'text-gray-300 cursor-not-allowed' : 'text-gray-500 hover:bg-gray-100 hover:text-gray-700'}"
+                    class="${navBtnBase} ${isFirst ? 'text-[var(--chat-ink4)] cursor-not-allowed' : 'text-[var(--chat-ink3)] hover:bg-[var(--chat-hover)] hover:text-[var(--chat-ink2)]'}"
                     ${isFirst ? 'disabled' : ''}>
                     <i class="fa-solid fa-chevron-left text-[9px]"></i>
                 </button>`
             : '';
         const navNextHtml = hasMultiple
             ? `<button id="ask-next-btn"
-                    class="${navBtnBase} ${isLast || !hasCurrentAnswer ? 'text-gray-300 cursor-not-allowed' : 'text-gray-500 hover:bg-gray-100 hover:text-gray-700'}"
+                    class="${navBtnBase} ${isLast || !hasCurrentAnswer ? 'text-[var(--chat-ink4)] cursor-not-allowed' : 'text-[var(--chat-ink3)] hover:bg-[var(--chat-hover)] hover:text-[var(--chat-ink2)]'}"
                     ${isLast || !hasCurrentAnswer ? 'disabled' : ''}>
                     <i class="fa-solid fa-chevron-right text-[9px]"></i>
                 </button>`
@@ -319,10 +319,10 @@ class AskUserPrompt extends HTMLElement {
             .map((opt, i) => {
                 const isSelected = this._selectedValues.has(i);
                 const selectedClass = isSelected
-                    ? 'bg-blue-50 border-blue-300 ring-1 ring-blue-200'
-                    : 'bg-white border-gray-200 hover:bg-gray-50 hover:border-gray-300';
+                    ? 'bg-[var(--chat-blue-soft)] border-[color-mix(in_srgb,var(--chat-blue)_55%,transparent)] ring-1 ring-[color-mix(in_srgb,var(--chat-blue)_35%,transparent)]'
+                    : 'bg-[var(--od-bg-elevated)] border-[var(--od-border-strong)] hover:bg-[var(--od-bg-muted)] hover:border-[var(--od-text-disabled)]';
                 const checkHtml = q.multiple
-                    ? `<div class="flex-shrink-0 w-4 h-4 rounded border ${isSelected ? 'bg-blue-500 border-blue-500' : 'border-slate-300'} flex items-center justify-center">
+                    ? `<div class="flex-shrink-0 w-4 h-4 rounded border ${isSelected ? 'bg-[var(--chat-blue)] border-[var(--chat-blue)]' : 'border-[var(--od-text-disabled)]'} flex items-center justify-center">
                         ${isSelected ? '<svg class="w-2.5 h-2.5 text-white" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>' : ''}
                        </div>`
                     : '';
@@ -341,7 +341,7 @@ class AskUserPrompt extends HTMLElement {
         const confirmBtnHtml = q.multiple
             ? `<button id="ask-confirm-btn"
                     class="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-[12px] font-medium
-                           bg-blue-500 text-white hover:bg-blue-600 border border-blue-500
+                           bg-[var(--chat-blue)] text-white hover:bg-[color-mix(in_srgb,var(--chat-blue)_85%,var(--chat-ink))] border border-[var(--chat-blue)]
                            transition-colors duration-150 cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed"
                     ${this._selectedValues.size === 0 ? 'disabled' : ''}>
                     <i class="fa-solid fa-check text-[10px]"></i>
@@ -352,11 +352,11 @@ class AskUserPrompt extends HTMLElement {
         const customInputHtml = this._customInputOpen
             ? `<div class="px-4 pb-3 flex items-center gap-2">
                     <input id="ask-custom-input" type="text" placeholder="输入自定义回答后按 Enter 确认"
-                           class="flex-1 px-3 py-1.5 rounded-lg text-[12px] border border-blue-300 bg-white
-                                  focus:outline-none focus:ring-1 focus:ring-blue-300 text-gray-700 placeholder-gray-400" />
+                           class="flex-1 px-3 py-1.5 rounded-lg text-[12px] border border-[color-mix(in_srgb,var(--chat-blue)_55%,transparent)] bg-[var(--od-bg-elevated)]
+                                  focus:outline-none focus:ring-1 focus:ring-[color-mix(in_srgb,var(--chat-blue)_40%,transparent)] text-[var(--chat-ink2)] placeholder:text-[var(--od-placeholder)]" />
                     <button id="ask-custom-submit"
                             class="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg text-[12px] font-medium
-                                   bg-blue-500 text-white hover:bg-blue-600 border border-blue-500
+                                   bg-[var(--chat-blue)] text-white hover:bg-[color-mix(in_srgb,var(--chat-blue)_85%,var(--chat-ink))] border border-[var(--chat-blue)]
                                    transition-colors duration-150 cursor-pointer">
                         <i class="fa-solid fa-paper-plane text-[10px]"></i>
                         发送
@@ -366,27 +366,28 @@ class AskUserPrompt extends HTMLElement {
 
         this.innerHTML = `
         <div id="ask-user-panel"
-             class="mb-2 rounded-xl border border-blue-200 bg-gradient-to-b from-blue-50/80 to-white shadow-sm
+             class="mb-2 rounded-xl border shadow-sm
+                    bg-[var(--chat-blue-soft)] border-[color-mix(in_srgb,var(--chat-blue)_35%,transparent)]
                     transition-all duration-200 translate-y-4 opacity-0">
             <!-- 标题栏 -->
-            <div class="flex items-center gap-2 px-4 py-2.5 border-b border-blue-100">
-                <span class="inline-flex items-center justify-center w-6 h-6 rounded-lg bg-blue-100 text-blue-600">
+            <div class="flex items-center gap-2 px-4 py-2.5 border-b border-[color-mix(in_srgb,var(--chat-blue)_16%,transparent)]">
+                <span class="inline-flex items-center justify-center w-6 h-6 rounded-lg bg-[color-mix(in_srgb,var(--chat-blue)_16%,transparent)] text-[var(--chat-blue)]">
                     <i class="fa-solid fa-circle-question text-[12px]"></i>
                 </span>
-                <span class="text-[13px] font-medium text-gray-700">需要确认</span>
-                ${progressText ? `<span class="text-[11px] text-blue-400 ml-1">${escapeHtml(progressText)}</span>` : ''}
+                <span class="text-[13px] font-medium text-[var(--chat-ink2)]">需要确认</span>
+                ${progressText ? `<span class="text-[11px] text-[color-mix(in_srgb,var(--chat-blue)_75%,transparent)] ml-1">${escapeHtml(progressText)}</span>` : ''}
                 ${navButtonsHtml}
                 <div class="flex-1"></div>
                 <button id="ask-cancel-btn"
-                        class="inline-flex items-center justify-center w-5 h-5 rounded text-gray-400 hover:text-gray-600 hover:bg-gray-100 transition-colors cursor-pointer">
+                        class="inline-flex items-center justify-center w-5 h-5 rounded text-[var(--chat-ink4)] hover:text-[var(--chat-ink3)] hover:bg-[var(--chat-hover)] transition-colors cursor-pointer">
                     <i class="fa-solid fa-xmark text-[10px]"></i>
                 </button>
             </div>
 
             <!-- 问题文本 -->
-            <div class="px-4 py-2 border-b border-gray-100">
-                <p class="text-[12px] text-gray-600 leading-snug">${escapeHtml(q.question)}</p>
-                ${q.multiple ? '<p class="text-[11px] text-gray-400 mt-1">可多选</p>' : ''}
+            <div class="px-4 py-2 border-b border-[var(--chat-line-soft)]">
+                <p class="text-[12px] text-[var(--chat-ink2)] leading-snug">${escapeHtml(q.question)}</p>
+                ${q.multiple ? '<p class="text-[11px] text-[var(--chat-ink4)] mt-1">可多选</p>' : ''}
             </div>
 
             <!-- 选项列表 -->
@@ -395,8 +396,8 @@ class AskUserPrompt extends HTMLElement {
                 ${confirmBtnHtml}
                 <button id="ask-custom-toggle"
                         class="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-[12px] font-medium
-                               bg-white border border-dashed border-gray-300 text-gray-500
-                               hover:bg-gray-50 hover:border-gray-400 hover:text-gray-600
+                               bg-[var(--od-bg-elevated)] border border-dashed border-[var(--od-text-disabled)] text-[var(--chat-ink3)]
+                               hover:bg-[var(--od-bg-muted)] hover:border-[var(--chat-ink3)] hover:text-[var(--chat-ink2)]
                                transition-colors duration-150 cursor-pointer">
                     <i class="fa-solid fa-pen-to-square text-[10px]"></i>
                     自定义

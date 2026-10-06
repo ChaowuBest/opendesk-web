@@ -256,37 +256,39 @@ class PermissionPrompt extends HTMLElement {
                 data-action="prefix"
                 data-pattern="${escapeHtml(opt.pattern)}"
                 class="permission-btn inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-[12px] font-medium
-                       bg-blue-50 border border-blue-200 text-blue-700
-                       hover:bg-blue-100 hover:border-blue-300 transition-colors duration-150 cursor-pointer">
+                       bg-[var(--chat-blue-soft)] border border-[color-mix(in_srgb,var(--chat-blue)_30%,transparent)] text-[var(--chat-blue)]
+                       hover:bg-[color-mix(in_srgb,var(--chat-blue)_22%,transparent)] hover:border-[color-mix(in_srgb,var(--chat-blue)_45%,transparent)]
+                       transition-colors duration-150 cursor-pointer">
                 <span>始终允许${actionLabel}</span>
-                <span class="text-blue-500 font-mono text-[11px]">${escapeHtml(opt.label)}</span>
+                <span class="text-[color-mix(in_srgb,var(--chat-blue)_78%,transparent)] font-mono text-[11px]">${escapeHtml(opt.label)}</span>
             </button>`
             )
             .join('');
 
         this.innerHTML = `
         <div id="permission-prompt-panel"
-             class="mb-2 rounded-xl border border-amber-200 bg-gradient-to-b from-amber-50/80 to-white shadow-sm
+             class="mb-2 rounded-xl border shadow-sm
+                    bg-[var(--chat-amber-soft)] border-[color-mix(in_srgb,var(--chat-amber)_35%,transparent)]
                     transition-all duration-200 translate-y-4 opacity-0">
             <!-- 标题栏 -->
-            <div class="flex items-center gap-2 px-4 py-2.5 border-b border-amber-100">
-                <span class="inline-flex items-center justify-center w-6 h-6 rounded-lg bg-amber-100 text-amber-600">
+            <div class="flex items-center gap-2 px-4 py-2.5 border-b border-[color-mix(in_srgb,var(--chat-amber)_16%,transparent)]">
+                <span class="inline-flex items-center justify-center w-6 h-6 rounded-lg bg-[color-mix(in_srgb,var(--chat-amber)_16%,transparent)] text-[var(--chat-amber)]">
                     <i class="fa-solid fa-shield-halved text-[12px]"></i>
                 </span>
-                <span class="text-[13px] font-medium text-gray-700">
+                <span class="text-[13px] font-medium text-[var(--chat-ink2)]">
                     <span class="font-semibold">${escapeHtml(toolName)}</span>
-                    <span class="text-gray-500 ml-1">请求${actionLabel}${typeLabel}</span>
+                    <span class="text-[var(--chat-ink3)] ml-1">请求${actionLabel}${typeLabel}</span>
                 </span>
                 ${
                     sourceLabel
-                        ? `<span class="ml-auto min-w-0 max-w-[180px] truncate rounded bg-purple-50 px-1.5 py-0.5 text-[11px] font-medium text-purple-600" title="${escapeHtml(sourceLabel)}">来自 ${escapeHtml(sourceLabel)}</span>`
+                        ? `<span class="ml-auto min-w-0 max-w-[180px] truncate rounded bg-[color-mix(in_srgb,#a855f7_12%,transparent)] px-1.5 py-0.5 text-[11px] font-medium text-[color-mix(in_srgb,#a855f7_72%,var(--chat-ink))]" title="${escapeHtml(sourceLabel)}">来自 ${escapeHtml(sourceLabel)}</span>`
                         : ''
                 }
             </div>
 
             <!-- 资源路径 -->
-            <div class="px-4 py-2 text-[11px] text-gray-400 font-mono flex items-center gap-1.5 border-b border-gray-100">
-                <i class="fa-solid fa-file-lines text-[10px] text-gray-300"></i>
+            <div class="px-4 py-2 text-[11px] text-[var(--chat-ink4)] font-mono flex items-center gap-1.5 border-b border-[var(--chat-line-soft)]">
+                <i class="fa-solid fa-file-lines text-[10px] text-[var(--chat-ink4)] opacity-70"></i>
                 <span class="truncate" title="${escapeHtml(fullPath)}">${escapeHtml(fullPath)}</span>
             </div>
 
@@ -295,8 +297,9 @@ class PermissionPrompt extends HTMLElement {
                 <button
                     data-action="allow"
                     class="permission-btn inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-[12px] font-medium
-                           bg-emerald-50 border border-emerald-200 text-emerald-700
-                           hover:bg-emerald-100 hover:border-emerald-300 transition-colors duration-150 cursor-pointer">
+                           bg-[var(--chat-green-soft)] border border-[color-mix(in_srgb,var(--chat-green)_30%,transparent)] text-[var(--chat-green)]
+                           hover:bg-[color-mix(in_srgb,var(--chat-green)_22%,transparent)] hover:border-[color-mix(in_srgb,var(--chat-green)_45%,transparent)]
+                           transition-colors duration-150 cursor-pointer">
                     <i class="fa-solid fa-check text-[10px]"></i>
                     允许${actionLabel} ${escapeHtml(shortName)}
                 </button>
@@ -307,8 +310,9 @@ class PermissionPrompt extends HTMLElement {
                     data-action="prefix"
                     data-pattern="${escapeHtml(firstPrefix.pattern)}"
                     class="permission-btn inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-[12px] font-medium
-                           bg-blue-50 border border-blue-200 text-blue-700
-                           hover:bg-blue-100 hover:border-blue-300 transition-colors duration-150 cursor-pointer">
+                           bg-[var(--chat-blue-soft)] border border-[color-mix(in_srgb,var(--chat-blue)_30%,transparent)] text-[var(--chat-blue)]
+                           hover:bg-[color-mix(in_srgb,var(--chat-blue)_22%,transparent)] hover:border-[color-mix(in_srgb,var(--chat-blue)_45%,transparent)]
+                           transition-colors duration-150 cursor-pointer">
                     <i class="fa-solid fa-folder-open text-[10px]"></i>
                     始终允许${actionLabel} ${escapeHtml(shortName)}
                 </button>`
@@ -317,8 +321,9 @@ class PermissionPrompt extends HTMLElement {
                 <button
                     data-action="deny"
                     class="permission-btn inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-[12px] font-medium
-                           bg-red-50 border border-red-200 text-red-600
-                           hover:bg-red-100 hover:border-red-300 transition-colors duration-150 cursor-pointer">
+                           bg-[var(--chat-accent-soft)] border border-[color-mix(in_srgb,var(--chat-accent)_30%,transparent)] text-[var(--chat-accent)]
+                           hover:bg-[color-mix(in_srgb,var(--chat-accent)_22%,transparent)] hover:border-[color-mix(in_srgb,var(--chat-accent)_45%,transparent)]
+                           transition-colors duration-150 cursor-pointer">
                     <i class="fa-solid fa-xmark text-[10px]"></i>
                     拒绝
                 </button>
@@ -326,8 +331,8 @@ class PermissionPrompt extends HTMLElement {
                 <button
                     data-action="allow_type"
                     class="permission-btn inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-[12px] font-medium
-                           bg-white border border-gray-200 text-gray-600
-                           hover:bg-gray-50 hover:border-gray-300 transition-colors duration-150 cursor-pointer">
+                           bg-[var(--od-bg-elevated)] border border-[var(--od-border-strong)] text-[var(--od-text-muted)]
+                           hover:bg-[var(--od-bg-muted)] hover:border-[var(--od-text-disabled)] transition-colors duration-150 cursor-pointer">
                     <i class="fa-solid fa-unlock text-[10px]"></i>
                     始终允许所有${actionLabel}${typeLabel}操作
                 </button>
@@ -335,7 +340,7 @@ class PermissionPrompt extends HTMLElement {
 
             <!-- 倒计时提示 -->
             <div class="px-4 pb-3">
-                <span id="permission-countdown" class="text-[11px] text-gray-400">${this._remaining}s 后自动拒绝</span>
+                <span id="permission-countdown" class="text-[11px] text-[var(--chat-ink4)]">${this._remaining}s 后自动拒绝</span>
             </div>
         </div>
         `;

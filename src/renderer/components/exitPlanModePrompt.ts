@@ -163,19 +163,20 @@ class ExitPlanModePrompt extends HTMLElement {
 
         this.innerHTML = `
             <div id="exit-plan-panel"
-                 class="mb-2 rounded-xl border border-amber-200 bg-gradient-to-b from-amber-50/80 to-white shadow-sm
+                 class="mb-2 rounded-xl border shadow-sm
+                        bg-[var(--chat-amber-soft)] border-[color-mix(in_srgb,var(--chat-amber)_35%,transparent)]
                         transition-all duration-200 translate-y-4 opacity-0">
                 <!-- 标题栏 -->
-                <div class="flex items-center gap-2 px-4 py-2.5 border-b border-amber-100">
-                    <span class="inline-flex items-center justify-center w-6 h-6 rounded-lg bg-amber-100 text-amber-600">
+                <div class="flex items-center gap-2 px-4 py-2.5 border-b border-[color-mix(in_srgb,var(--chat-amber)_16%,transparent)]">
+                    <span class="inline-flex items-center justify-center w-6 h-6 rounded-lg bg-[color-mix(in_srgb,var(--chat-amber)_16%,transparent)] text-[var(--chat-amber)]">
                         <i class="fa-solid fa-clipboard-check text-[12px]"></i>
                     </span>
-                    <span class="text-[13px] font-medium text-gray-700">计划审批</span>
+                    <span class="text-[13px] font-medium text-[var(--chat-ink2)]">计划审批</span>
                 </div>
 
                 <!-- 计划文件路径 -->
-                <div class="px-4 py-2 text-[11px] text-gray-400 font-mono flex items-center gap-1.5 border-b border-gray-100">
-                    <i class="fa-solid fa-file-lines text-[10px] text-gray-300"></i>
+                <div class="px-4 py-2 text-[11px] text-[var(--chat-ink4)] font-mono flex items-center gap-1.5 border-b border-[var(--chat-line-soft)]">
+                    <i class="fa-solid fa-file-lines text-[10px] text-[var(--chat-ink4)] opacity-70"></i>
                     <span class="truncate">${filePath}</span>
                 </div>
 
@@ -183,36 +184,36 @@ class ExitPlanModePrompt extends HTMLElement {
                 <div class="px-4 py-3 flex flex-wrap gap-2">
                     <button id="exit-plan-btn-preview"
                             class="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-[12px] font-medium
-                                   bg-white border border-gray-200 text-gray-600
-                                   hover:bg-gray-50 hover:border-gray-300 transition-colors duration-150 cursor-pointer">
+                                   bg-[var(--od-bg-elevated)] border border-[var(--od-border-strong)] text-[var(--od-text-muted)]
+                                   hover:bg-[var(--od-bg-muted)] hover:border-[var(--od-text-disabled)] transition-colors duration-150 cursor-pointer">
                         <i class="fa-solid fa-eye text-[10px]"></i>
                         查看完整计划
                     </button>
                     <button id="exit-plan-btn-standard"
                             class="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-[12px] font-medium
-                                   bg-emerald-50 border border-emerald-200 text-emerald-700
-                                   hover:bg-emerald-100 hover:border-emerald-300 transition-colors duration-150 cursor-pointer">
+                                   bg-[var(--chat-green-soft)] border border-[color-mix(in_srgb,var(--chat-green)_30%,transparent)] text-[var(--chat-green)]
+                                   hover:bg-[color-mix(in_srgb,var(--chat-green)_22%,transparent)] hover:border-[color-mix(in_srgb,var(--chat-green)_45%,transparent)] transition-colors duration-150 cursor-pointer">
                         <i class="fa-solid fa-shield-halved text-[10px]"></i>
                         同意计划并在标准模式执行
                     </button>
                     <button id="exit-plan-btn-solo"
                             class="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-[12px] font-medium
-                                   bg-blue-50 border border-blue-200 text-blue-700
-                                   hover:bg-blue-100 hover:border-blue-300 transition-colors duration-150 cursor-pointer">
+                                   bg-[var(--chat-blue-soft)] border border-[color-mix(in_srgb,var(--chat-blue)_30%,transparent)] text-[var(--chat-blue)]
+                                   hover:bg-[color-mix(in_srgb,var(--chat-blue)_22%,transparent)] hover:border-[color-mix(in_srgb,var(--chat-blue)_45%,transparent)] transition-colors duration-150 cursor-pointer">
                         <i class="fa-solid fa-bolt text-[10px]"></i>
                         同意计划并在效率模式执行
                     </button>
                     <button id="exit-plan-btn-edit"
                             class="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-[12px] font-medium
-                                   bg-white border border-gray-200 text-gray-600
-                                   hover:bg-gray-50 hover:border-gray-300 transition-colors duration-150 cursor-pointer">
+                                   bg-[var(--od-bg-elevated)] border border-[var(--od-border-strong)] text-[var(--od-text-muted)]
+                                   hover:bg-[var(--od-bg-muted)] hover:border-[var(--od-text-disabled)] transition-colors duration-150 cursor-pointer">
                         <i class="fa-solid fa-pen text-[10px]"></i>
                         继续编辑计划
                     </button>
                 </div>
 
                 <!-- 提示信息 -->
-                <div class="px-4 pb-3 text-[11px] text-gray-400 flex items-center gap-1.5">
+                <div class="px-4 pb-3 text-[11px] text-[var(--chat-ink4)] flex items-center gap-1.5">
                     <i class="fa-solid fa-circle-info text-[9px]"></i>
                     <span>如果希望修改或进一步完善计划，可以直接在对话中提出意见</span>
                 </div>
