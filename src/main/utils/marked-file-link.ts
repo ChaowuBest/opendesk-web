@@ -10,12 +10,18 @@
  */
 
 import path from 'path';
+import { AsyncLocalStorage } from 'node:async_hooks';
 import { escapeHtml } from '../../common/utils/escape.js';
 import { normalizeDriveRootPath, sandboxPathToHostPath } from '../../common/utils/path.js';
 import { fileUrlToFilePath } from '../../common/file-url.js';
 import type { MarkedExtension, Tokens } from 'marked';
 
 // ── Workspace context ──────────────────────────────────────────────
+
+// 渲染上下文优先走 AsyncLocalStorage：任务渲染链路里存在大量 await 切换，
+// 模块级全局变量会被并发任务（或嵌套的带外渲染）互相覆盖；ALS 把 workspace
+// 绑定在各自的异步调用链上，天然隔离。全局变量仅供测试或同步调用兜底。
+const renderWorkspaceStorage = new AsyncLocalStorage<string | null>();
 
 let _renderWorkspace: string | null = null;
 
@@ -24,7 +30,16 @@ export function setRenderWorkspace(ws: string | null): void {
 }
 
 export function getRenderWorkspace(): string | null {
-    return _renderWorkspace;
+    const store = renderWorkspaceStorage.getStore();
+    return store !== undefined ? store : _renderWorkspace;
+}
+
+/**
+ * 在指定的渲染 workspace 上下文中执行回调（可为异步）。
+ * 回调整个异步链路内的 marked 渲染都会以该 workspace 解析 file pill 相对路径。
+ */
+export function runWithRenderWorkspace<T>(ws: string | null, fn: () => T): T {
+    return renderWorkspaceStorage.run(ws, fn);
 }
 
 // ── File path resolution ───────────────────────────────────────────
@@ -59,8 +74,9 @@ export function resolveFilePath(rawPath: string): string | null {
     if (candidate !== rawPath || path.isAbsolute(candidate)) {
         return candidate;
     }
-    if (_renderWorkspace) {
-        return path.resolve(_renderWorkspace, candidate);
+    const workspace = getRenderWorkspace();
+    if (workspace) {
+        return path.resolve(workspace, candidate);
     }
     return path.resolve(candidate);
 }

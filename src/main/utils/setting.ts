@@ -1259,10 +1259,16 @@ function getTaskSessionMemoryPath(taskId: string, ensureExists: boolean = true):
  * `opendeskDir` 为应用数据目录（OH 上即 appDataDir）；`home` 为用户家目录。
  */
 export function resolveTrashRootDirectory(opendeskDir: string, home: string | undefined): string {
+    // 分隔符按目标平台显式选择（win32 反斜杠、其余 POSIX 正斜杠），不随运行
+    // 宿主的 path 模块漂移：同一输入在任何宿主上产出一致，单测可 mock 平台
+    // 跨宿主断言（真实宿主上与 path.join 的结果逐字节相同）。
     if (process.platform === 'openharmony') {
-        if (home) return path.join(home, '.opendesk-trash');
+        if (home) return path.posix.join(home, '.opendesk-trash');
     }
-    return path.join(opendeskDir, 'trash');
+    if (process.platform === 'win32') {
+        return path.win32.join(opendeskDir, 'trash');
+    }
+    return path.posix.join(opendeskDir, 'trash');
 }
 
 /**

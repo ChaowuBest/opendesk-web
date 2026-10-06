@@ -18,7 +18,7 @@ import markedKatex from 'marked-katex-extension';
 import hljs from 'highlight.js';
 import path from 'path';
 import fs from 'fs';
-import { fileLinkExtension } from '../utils/marked-file-link.js';
+import { fileLinkExtension, getRenderWorkspace } from '../utils/marked-file-link.js';
 import { cjkAutolinkFix } from '../../common/markdown/cjk-autolink-fix.js';
 import { resolveToolDisplayName } from '../../common/tool-display-name.js';
 import { t } from '../../locale/index.js';
@@ -1059,10 +1059,15 @@ export class TextMessagePart implements BaseTextMessagePart {
     rendered?: string;
     /** 标记 rendered 是否已冻结（流式结束后冻结，避免重复渲染） */
     private _frozen!: boolean;
+    /** 计算当前 rendered 缓存时使用的渲染 workspace（非枚举，不持久化）。
+     *  与当前上下文不一致（含 undefined：缓存来自磁盘反序列化或旧版本落盘数据，
+     *  可能在无 workspace 上下文时以进程 CWD 解析出错误 pill 路径）时必须重新渲染。 */
+    private _renderedWorkspace!: string | null | undefined;
 
     constructor(text: string) {
         this.text = text;
         Object.defineProperty(this, '_frozen', { value: false, writable: true, enumerable: false });
+        Object.defineProperty(this, '_renderedWorkspace', { value: undefined, writable: true, enumerable: false });
     }
 
     toOpenAIMessagePart(): object {
@@ -1073,6 +1078,7 @@ export class TextMessagePart implements BaseTextMessagePart {
         Object.setPrototypeOf(text_message_part_obj, TextMessagePart.prototype);
         const part = text_message_part_obj as TextMessagePart;
         Object.defineProperty(part, '_frozen', { value: false, writable: true, enumerable: false });
+        Object.defineProperty(part, '_renderedWorkspace', { value: undefined, writable: true, enumerable: false });
         return part;
     }
 
@@ -1089,10 +1095,12 @@ export class TextMessagePart implements BaseTextMessagePart {
     }
 
     async render(): Promise<string> {
-        if (this.rendered !== undefined) {
+        const workspace = getRenderWorkspace();
+        if (this.rendered !== undefined && this._renderedWorkspace === workspace) {
             return this.rendered;
         }
         this.rendered = await marked.parse(this.text);
+        this._renderedWorkspace = workspace;
         return this.rendered;
     }
 

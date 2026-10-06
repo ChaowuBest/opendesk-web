@@ -42,7 +42,7 @@ import { createEditorPolicyRules } from './editor.js';
 import { createRubyPolicyRules } from './ruby.js';
 import { createAgentsPolicyRules } from './agents.js';
 
-type AppPolicyFactory = () => PermissionRule[];
+type AppPolicyFactory = (homeDir?: string) => PermissionRule[];
 
 /** 全部 app 策略工厂（聚合顺序即声明顺序；引擎效果排序 deny > ask > allow）。 */
 const ALL_APP_POLICY_FACTORIES: AppPolicyFactory[] = [
@@ -63,7 +63,8 @@ const ALL_APP_POLICY_FACTORIES: AppPolicyFactory[] = [
     createAgentsPolicyRules
 ];
 
-/** 聚合所有 app 专属策略规则（standard 模式使用）。 */
-export function createAppPolicyRules(): PermissionRule[] {
-    return ALL_APP_POLICY_FACTORIES.flatMap((factory) => factory());
+/** 聚合所有 app 专属策略规则（standard 模式使用）。homeDir 供测试注入固定家目录，
+ *  生产省略（各工厂取 os.homedir() 展开 {home} 模板）。 */
+export function createAppPolicyRules(homeDir?: string): PermissionRule[] {
+    return ALL_APP_POLICY_FACTORIES.flatMap((factory) => factory(homeDir));
 }

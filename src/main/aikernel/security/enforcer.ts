@@ -396,7 +396,7 @@ export class GlobPermissionEnforcer implements PermissionEnforcer {
  * - 技能和插件读取 → allow
  * - 技能和插件的修改或执行 → ask（隐式回退，需用户确认）
  */
-export function createDefaultPermissionRules(workspace: string): PermissionRule[] {
+export function createDefaultPermissionRules(workspace: string, appPolicyHomeDir?: string): PermissionRule[] {
     const workspaceNorm = normalizePath(path.resolve(fromMsysPath(workspace)));
 
     // 使用 brace expansion 同时匹配工作空间根目录和子路径：{,/**} = 根目录自身 + 所有子路径
@@ -430,8 +430,9 @@ export function createDefaultPermissionRules(workspace: string): PermissionRule[
         // 插件列表和详情读取允许，安装、卸载、启停和重载需用户确认（隐式 ask）
         { resourceType: 'plugin', action: 'read', pathPattern: '**', effect: 'allow' },
         // 常用 CLI 工具的 app 专属策略（git/python/node/uv 的运行时读放行与
-        // 凭据 ask 保护；经引擎 check 与沙箱导出两端生效）
-        ...createAppPolicyRules(),
+        // 凭据 ask 保护；经引擎 check 与沙箱导出两端生效）。appPolicyHomeDir
+        // 供测试注入固定家目录，保证沙箱导出断言不依赖宿主 os.homedir() 形态
+        ...createAppPolicyRules(appPolicyHomeDir),
         // 敏感路径保护规则（即使在工作空间内也需要用户确认）
         ...createSensitivePathRules(workspace)
     ];

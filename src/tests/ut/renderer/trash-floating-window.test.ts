@@ -58,10 +58,13 @@ describe('trash floating window scope switch', () => {
             },
             cancelAnimationFrame: () => undefined
         });
-        // 固定渲染语言为中文，避免 locale 检测依赖运行环境的 navigator.language 而漂移（CI 上可能为 en-US）
+        // 固定渲染语言为中文：组件文案经 createRendererTranslator 按
+        // navigator.language 解析，CI（Linux 宿主）为 en-US 会让"加载回收站失败"
+        // 等词条断言漂移为英文，须显式钉住（组件在 import 后按元素构造时取值）
         Object.defineProperty(globalThis, 'navigator', {
-            value: { languages: ['zh-CN'], language: 'zh-CN' },
-            configurable: true
+            configurable: true,
+            writable: true,
+            value: { language: 'zh-CN', languages: ['zh-CN'] }
         });
         (window.Element.prototype as any).getRootNode = function () {
             return window.document;

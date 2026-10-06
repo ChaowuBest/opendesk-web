@@ -18,7 +18,7 @@ test('normalizeExplorerFilePath converts backslashes to forward slashes', () => 
     // 已为正斜杠的路径保持原样
     assert.equal(normalizeExplorerFilePath('D:/Projects/OpenDesk/src/main.ts'), 'D:/Projects/OpenDesk/src/main.ts');
     // 历史消息中的 POSIX 盘符前缀形式也规范化
-    assert.equal(normalizeExplorerFilePath('/C:/Users/liyif/a.txt'), 'C:/Users/liyif/a.txt');
+    assert.equal(normalizeExplorerFilePath('/C:/Users/tester/a.txt'), 'C:/Users/tester/a.txt');
 });
 
 test('parentDirPath handles backslash Windows paths', () => {
@@ -66,11 +66,11 @@ test('buildFileBreadcrumbSegments builds hierarchy for backslash path from chat 
 });
 
 test('buildFileBreadcrumbSegments falls back to single segment with parent dir when file is outside workspace', () => {
-    const segments = buildFileBreadcrumbSegments('C:\\Users\\liyif\\notes.txt', 'D:/Projects/OpenDesk');
-    assert.deepEqual(segments, [{ name: 'notes.txt', dir: 'C:/Users/liyif' }]);
+    const segments = buildFileBreadcrumbSegments('C:\\Users\\tester\\notes.txt', 'D:/Projects/OpenDesk');
+    assert.deepEqual(segments, [{ name: 'notes.txt', dir: 'C:/Users/tester' }]);
     // workspace 为空时同样不能把文件自身当作目录
-    const noWorkspace = buildFileBreadcrumbSegments('C:\\Users\\liyif\\notes.txt', null);
-    assert.deepEqual(noWorkspace, [{ name: 'notes.txt', dir: 'C:/Users/liyif' }]);
+    const noWorkspace = buildFileBreadcrumbSegments('C:\\Users\\tester\\notes.txt', null);
+    assert.deepEqual(noWorkspace, [{ name: 'notes.txt', dir: 'C:/Users/tester' }]);
 });
 
 test('buildFileBreadcrumbSegments handles workspaceRoot given with backslashes', () => {
@@ -97,7 +97,7 @@ test('isPathUnder reports containment case-insensitively for workspace membershi
     assert.equal(isPathUnder('D:/Projects/OpenDesk/src/main/tool.ts', 'D:/Projects/OpenDesk'), true);
     // 大小写不一致时仍应认定为位于工作空间下（分级导航需要）
     assert.equal(isPathUnder('D:/Projects/OpenDesk/src/main/tool.ts', 'd:/projects/opendesk'), true);
-    assert.equal(isPathUnder('C:/Users/liyif/notes.txt', 'D:/Projects/OpenDesk'), false);
+    assert.equal(isPathUnder('C:/Users/tester/notes.txt', 'D:/Projects/OpenDesk'), false);
 });
 
 test('filePathToFileUrl produces a correct base URL for Windows drive paths', () => {

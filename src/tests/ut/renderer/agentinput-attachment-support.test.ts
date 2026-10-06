@@ -145,7 +145,7 @@ describe('agent-input attachment support', () => {
             value: {
                 items: [{ type: 'text/html' }],
                 getData: jest.fn((type: string) =>
-                    type === 'text/plain' ? '/Users/liyi/.ssh/known_hosts' : '<strong>known_hosts</strong>'
+                    type === 'text/plain' ? '/Users/tester/.ssh/known_hosts' : '<strong>known_hosts</strong>'
                 )
             }
         });

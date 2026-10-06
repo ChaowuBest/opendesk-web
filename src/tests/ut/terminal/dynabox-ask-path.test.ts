@@ -2,7 +2,7 @@ import { virtualPathToHostPath } from '../../../main/applications/terminal/sandb
 
 test('ask path: converts single-drive virtual paths to host paths', () => {
     // ask 协议中路径恒为 "/盘符/..." 正斜杠形式（原生侧已归一化）
-    expect(virtualPathToHostPath('/C/Users/liyif/a.txt')).toBe('C:/Users/liyif/a.txt');
+    expect(virtualPathToHostPath('/C/Users/tester/a.txt')).toBe('C:/Users/tester/a.txt');
     expect(virtualPathToHostPath('/c/work')).toBe('C:/work');
     expect(virtualPathToHostPath('/D/data/x.bin')).toBe('D:/data/x.bin');
     expect(virtualPathToHostPath('/C')).toBe('C:/');

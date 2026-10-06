@@ -250,20 +250,16 @@ describe('app 策略接入 standard 模式引擎', () => {
     });
 
     test('沙箱导出：standard 规则生成的 Windows/Linux 策略文本包含 git 运行时读放行', () => {
-        const rules = createDefaultPermissionRules('D:/work');
-        const osHome = os.homedir().replace(/\\/g, '/').replace(/\/+$/, '');
-        // Windows 宿主：createDefaultPermissionRules 展开的 home 即 os.homedir()
-        // （盘符路径），经 hostPatternToVirtual 映射后应出现在导出文本中。Linux/
-        // macOS 宿主上 home 展开为 POSIX 路径，Windows 导出会跳过（hostPatternToVirtual
-        // 仅映射盘符路径），该链路由下方 policyTextLinux 覆盖等价语义。
-        if (process.platform === 'win32') {
-            const winText = policyText('http://ep/decide', 't', rules, 'C:\\Users\\liyif');
-            const winVirtualHome = hostPatternToVirtual(osHome)!;
-            expect(winText).toContain(`path = ${JSON.stringify(`${winVirtualHome}/.gitconfig`)}`);
-            expect(winText).toContain(`path = ${JSON.stringify(`${winVirtualHome}/.config/git/ignore`)}`);
-            // 凭据在沙箱层导出为 ask（引擎 ask 规则原样导出）
-            expect(winText).toContain(`path = ${JSON.stringify(`${winVirtualHome}/.git-credentials`)}`);
-        }
+        // 注入固定 Windows 家目录：CI 等 Linux 宿主的 os.homedir() 非盘符路径，
+        // hostPatternToVirtual 映射为 null 会被 Windows 导出跳过，断言将随宿主
+        // 平台漂移；注入后导出链路（引擎规则 → 沙箱策略文本）在各宿主上一致。
+        const rules = createDefaultPermissionRules('D:/work', HOME_WIN);
+        const winText = policyText('http://ep/decide', 't', rules, HOME_WIN);
+        const winVirtualHome = hostPatternToVirtual(HOME_WIN)!;
+        expect(winText).toContain(`path = ${JSON.stringify(`${winVirtualHome}/.gitconfig`)}`);
+        expect(winText).toContain(`path = ${JSON.stringify(`${winVirtualHome}/.config/git/ignore`)}`);
+        // 凭据在沙箱层导出为 ask（引擎 ask 规则原样导出）
+        expect(winText).toContain(`path = ${JSON.stringify(`${winVirtualHome}/.git-credentials`)}`);
 
         // Linux 版直接用 Linux 形态 app 规则验证导出链路：引擎规则在 Windows
         // 宿主生成（{home} 已展开为 C:/Users/...），Linux 导出会跳过 Windows
