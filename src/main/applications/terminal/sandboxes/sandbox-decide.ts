@@ -45,9 +45,23 @@ export interface SandboxDecideEndpoint {
 export type Decision = { decision: 'allow' | 'deny' };
 
 /**
+ * 会话级"允许"决策缓存（按任务 harnessContext 索引）：弹窗上不带记住范围的
+ * 普通"允许读取 X"批准，在本次任务的沙箱执行会话内对后续沙箱实例（后续命令
+ * 拉起的新端点）持续生效，同 (action, 路径) 的 ask 不再重复弹窗。WeakMap 以
+ * harnessContext 为键：会话更换/任务结束后旧条目随上下文对象一并回收。
+ * 只记 allow：拒绝在后续实例中仍重新询问（避免用户某次的拒绝演变为整个会话
+ * 的静默自动拒绝）；带记住范围（prefix/type）的批准走权限引擎规则，不在此重复。
+ */
+const sessionAllows = new WeakMap<object, Map<string, 'allow'>>();
+
+/**
  * 动态沙箱的授权决策端点（HTTP /decide，协议 v2）：接收原生沙箱的 ask 请求，
  * 查询当前权限引擎（先查持久规则，再弹窗审批），返回 allow/deny；支持决策缓存
  * 与"记住"回写权限引擎。Windows 与 Linux 沙箱共用。
+ *
+ * 决策作用域分三层：引擎规则（prefix/type 记住，任务生命周期，随策略导出到
+ * 后续沙箱原生层）> 会话级 allow（普通批准，按 harnessContext 记忆，本次任务
+ * 执行期间跨沙箱实例生效）> 端点内缓存（含 deny，仅当前沙箱实例）。
  */
 export async function createSandboxDecideEndpoint(
     options: SandboxDecideEndpointOptions
@@ -83,9 +97,11 @@ export async function createSandboxDecideEndpoint(
         if (closed) return deny;
         if (current !== task.harnessContext) return decideRequest(body);
         if (existing?.effect === 'deny' || existing?.effect === 'allow') return { decision: existing.effect };
+        const key = `${action}:${options.caseInsensitivePathKey ? resourcePath.toLowerCase() : resourcePath}`;
+        // 本次会话内已批准过同路径同操作：直接放行（引擎显式 ask/deny 已在上方短路）
+        if (sessionAllows.get(current)?.get(key) === 'allow') return { decision: 'allow' };
         const provider = current.permissionPrompt;
         if (!provider) return deny;
-        const key = `${action}:${options.caseInsensitivePathKey ? resourcePath.toLowerCase() : resourcePath}`;
         let pending = decisions.get(key);
         if (!pending) {
             pending = (async (): Promise<Decision> => {
@@ -118,6 +134,14 @@ export async function createSandboxDecideEndpoint(
                             pathPattern: pattern,
                             effect: 'allow'
                         });
+                    } else {
+                        // 普通批准记入会话缓存：后续沙箱实例（后续命令）不再重复弹窗
+                        let session = sessionAllows.get(current);
+                        if (!session) {
+                            session = new Map();
+                            sessionAllows.set(current, session);
+                        }
+                        session.set(key, 'allow');
                     }
                     return { decision: 'allow' };
                 } finally {
