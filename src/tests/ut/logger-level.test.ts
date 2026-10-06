@@ -4,15 +4,14 @@ import os from 'os';
 import path from 'path';
 import fs from 'fs';
 
-// 日志目录指向系统临时目录：logger 模块加载时会创建文件 transport，
-// 不能让测试在真实用户日志目录创建 app-*.log
+// 日志目录指向系统临时目录，避免测试影响真实用户日志目录
 const testLogDir = path.join(os.tmpdir(), `opendesk-logger-level-test-${process.pid}`);
 
 jest.unstable_mockModule('../../main/utils/setting.js', () => ({
     getLogDirectory: () => testLogDir
 }));
 
-// 动态导入被测模块，确保日志目录 mock 先于 logger 加载（createLogger）生效
+// 动态导入被测模块，确保日志目录 mock 先于 logger 加载生效
 const { logger, setDebugMode, getDebugMode } = await import('../../main/utils/logger.js');
 
 interface CapturedEntry {
