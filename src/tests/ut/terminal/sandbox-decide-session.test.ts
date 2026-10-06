@@ -217,4 +217,79 @@ describe('sandbox decide session-scoped allow', () => {
             effect: 'allow'
         });
     });
+
+    test('asks are denied immediately after the task is stopped', async () => {
+        const taskState = makeTaskState();
+        const decide = await launchEndpoint(taskState);
+
+        // 任务被手动终止：task_status 翻转为 stopped 后，沙箱进程退出前新到达的
+        // 排队 ask 必须直接拒绝，不再弹窗（已弹出的由 cancelTaskPrompts 关闭）。
+        taskState.task_status = 'stopped';
+
+        const ask = postDecision(decide, '/home/liyi/secret.txt');
+        const response = await ask;
+        expect(promptCalls).toBe(0);
+        expect(JSON.parse(response.body)).toEqual({ decision: 'deny' });
+    });
+
+    test('asks are denied while a runtime interrupt is pending before status flips', async () => {
+        const taskState = makeTaskState();
+        const decide = await launchEndpoint(taskState);
+
+        // interruptRunningTurn 场景：runtimeInterrupt 置位早于 task_status 翻转
+        // （中间有 stopRunningTools 的 await 窗口），必须同样直接拒绝。
+        taskState.runtimeInterrupt = {
+            requested: true,
+            reason: 'goal_clear',
+            requestedAt: new Date().toISOString(),
+            turnGeneration: 0
+        };
+
+        const ask = postDecision(decide, '/home/liyi/secret.txt');
+        const response = await ask;
+        expect(promptCalls).toBe(0);
+        expect(JSON.parse(response.body)).toEqual({ decision: 'deny' });
+    });
+
+    test('asks in flight through permission.check are denied if the task stops before prompting', async () => {
+        const taskState = makeTaskState();
+        const decide = await launchEndpoint(taskState);
+
+        // permission.check 挂起：请求在任务停止前通过入口活性检查，进入异步检查
+        let resolveCheck!: (value: any) => void;
+        checkOverride = () => new Promise<any>((resolve) => (resolveCheck = resolve));
+
+        const ask = postDecision(decide, '/home/liyi/secret.txt');
+        await new Promise((resolve) => setTimeout(resolve, 20));
+
+        // 检查期间任务被停止（此时 cancelTaskPrompts 已执行、弹窗队列尚空）
+        taskState.task_status = 'stopped';
+        resolveCheck(undefined);
+
+        const response = await ask;
+        expect(promptCalls).toBe(0);
+        expect(JSON.parse(response.body)).toEqual({ decision: 'deny' });
+    });
+
+    test('asks prompt normally again after the task resumes', async () => {
+        const taskState = makeTaskState();
+        const decide = await launchEndpoint(taskState);
+
+        taskState.task_status = 'stopped';
+        taskState.runtimeInterrupt = {
+            requested: true,
+            reason: 'goal_clear',
+            requestedAt: new Date().toISOString(),
+            turnGeneration: 0
+        };
+
+        // 用户恢复任务（新 turn）：清除中断标记并回到 running，新沙箱实例正常询问
+        taskState.task_status = 'running';
+        taskState.runtimeInterrupt = undefined;
+
+        const ask = postDecision(decide, '/home/liyi/secret.txt');
+        await waitFor(() => promptCalls === 1, 'the prompt to open after resume');
+        deferreds[0].resolve({ decision: 'deny', rememberScope: 'none' });
+        expect(JSON.parse((await ask).body)).toEqual({ decision: 'deny' });
+    });
 });

@@ -45,6 +45,26 @@ export interface SandboxDecideEndpoint {
 export type Decision = { decision: 'allow' | 'deny' };
 
 /**
+ * 任务是否已停止/中断。任务停止后沙箱进程的退出是异步的，在进程真正退出前，
+ * 沙箱原生侧排队的 ask 请求仍会持续打到 /decide 端点；若不在此拦截，这些请求
+ * 会继续弹权限弹窗，且任务停止时的 cancelTaskPrompts 已执行完毕、无人再取消。
+ *
+ * - task_status === 'stopped'：stop() / interruptForNewMessage() 在取消弹窗之前
+ *   就已置位，晚到的请求可直接拒绝。
+ * - runtimeInterrupt.requested：interruptRunningTurn() 把 task_status 翻转为
+ *   stopped 之前存在 await 窗口（stopRunningTools），而 runtimeInterrupt 在
+ *   取消弹窗之前就已置位，用它兜住该窗口。
+ *
+ * 任务恢复（新 turn）会清除 runtimeInterrupt 并把 task_status 改回 'running'，
+ * 因此恢复后的新沙箱实例不受影响、可正常询问。
+ */
+function isTaskStopped(task: TaskState): boolean {
+    if (task.task_status === 'stopped') return true;
+    if (task.runtimeInterrupt?.requested === true) return true;
+    return false;
+}
+
+/**
  * 会话级"允许"决策缓存（按任务 harnessContext 索引）：弹窗上不带记住范围的
  * 普通"允许读取 X"批准，在本次任务的沙箱执行会话内对后续沙箱实例（后续命令
  * 拉起的新端点）持续生效，同 (action, 路径) 的 ask 不再重复弹窗。WeakMap 以
@@ -87,6 +107,9 @@ export async function createSandboxDecideEndpoint(
         if (!resourcePath || (action !== 'read' && action !== 'write' && action !== 'execute')) return deny;
         const task = options.taskState;
         if (!task) return deny;
+        // 任务已停止/中断：新到达的沙箱 ask 直接拒绝，避免任务停止后仍持续弹窗
+        // （已进入宿主弹窗队列的旧请求由任务停止时的 cancelTaskPrompts 统一拒绝）。
+        if (isTaskStopped(task)) return deny;
         const current = task.harnessContext;
         if (context !== current) {
             context = current;
@@ -102,6 +125,10 @@ export async function createSandboxDecideEndpoint(
         if (sessionAllows.get(current)?.get(key) === 'allow') return { decision: 'allow' };
         const provider = current.permissionPrompt;
         if (!provider) return deny;
+        // 弹窗前二次检查：请求可能在任务停止前已通过入口检查，但在 await
+        // permission.check 期间任务被停止（此时 cancelTaskPrompts 已执行、队列
+        // 尚空），若不在此拦截仍会弹窗且无人取消。
+        if (isTaskStopped(task)) return deny;
         let pending = decisions.get(key);
         if (!pending) {
             pending = (async (): Promise<Decision> => {

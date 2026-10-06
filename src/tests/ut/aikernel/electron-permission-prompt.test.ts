@@ -1,15 +1,9 @@
 import { jest } from '@jest/globals';
-import { MAIN_AGENT_STANDARD_MODE } from '../../../main/aikernel/agents/main/modes/standard.js';
-import { MAIN_AGENT_UNLIMITED_MODE } from '../../../main/aikernel/agents/main/modes/unlimited.js';
-import { GlobPermissionEnforcer } from '../../../main/aikernel/security/enforcer';
-import { HarnessContext } from '../../../main/aikernel/security/harness.js';
 import type {
     PermissionCheckResult,
     PermissionEnforcer,
     PermissionRequest
 } from '../../../main/aikernel/security/permission';
-import { TaskManagerState, TaskState } from '../../../main/aikernel/states/tasks.js';
-import { replaceTaskHarnessForMode } from '../../../main/aikernel/task/mode.js';
 
 type IpcHandler = (_event: unknown, requestId: string, response: Record<string, unknown>) => void;
 
@@ -72,7 +66,26 @@ jest.unstable_mockModule('../../../utils/electron.js', () => ({
     })
 }));
 
+// 测试链路（replaceTaskHarnessForMode → buildSystemPrompt → SkillRegistry →
+// SoulRegistry）会连带真实加载 logger 并触发文件 transport 懒激活，依赖
+// Node 全局定时器；按项目惯例整体 mock logger，避免测试触碰真实日志落盘
+jest.unstable_mockModule('../../../main/utils/logger.js', () => ({
+    logger: { info: jest.fn(), warn: jest.fn(), error: jest.fn(), debug: jest.fn() },
+    // ESM loader 对命名导入严格校验：import 链会连带 aikernel/messages.ts
+    // （import { logger, getDebugMode }）等模块，mock 必须覆盖全部被引用导出
+    getDebugMode: jest.fn().mockReturnValue(false),
+    setDebugMode: jest.fn(),
+    LogStream: class {}
+}));
+
 const { ElectronPermissionPromptProvider } = await import('../../../main/aikernel/security/electronPrompt');
+const { MAIN_AGENT_STANDARD_MODE } = await import('../../../main/aikernel/agents/main/modes/standard.js');
+const { MAIN_AGENT_UNLIMITED_MODE } = await import('../../../main/aikernel/agents/main/modes/unlimited.js');
+const { GlobPermissionEnforcer } = await import('../../../main/aikernel/security/enforcer');
+const { HarnessContext } = await import('../../../main/aikernel/security/harness.js');
+const { TaskManagerState, TaskState } = await import('../../../main/aikernel/states/tasks.js');
+const { replaceTaskHarnessForMode } = await import('../../../main/aikernel/task/mode.js');
+const { logger } = await import('../../../main/utils/logger.js');
 
 const providers: InstanceType<typeof ElectronPermissionPromptProvider>[] = [];
 
@@ -116,6 +129,10 @@ describe('ElectronPermissionPromptProvider queue', () => {
             provider.dispose();
         }
         jest.useRealTimers();
+    });
+
+    test('logger is mocked so the import chain never activates a real file transport', () => {
+        expect(jest.isMockFunction(logger.info)).toBe(true);
     });
 
     test('shows one prompt at a time and advances after one-time allow', async () => {
