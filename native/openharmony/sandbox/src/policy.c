@@ -16,6 +16,7 @@
 #include "util.h"
 #include "mini_toml.h"
 
+#include <fcntl.h>
 #include <string.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -323,6 +324,31 @@ bad:
 /* ------------------------------------------------------------------ */
 /* CLI-injected rules (--ro-dirs)                                      */
 /* ------------------------------------------------------------------ */
+
+#ifndef _WIN32
+int dbox_acc_from_open_flags(int flags)
+{
+#ifndef O_DIRECTORY
+#define O_DIRECTORY 0200000
+#endif
+#ifndef O_TMPFILE
+#define O_TMPFILE 020200000
+#endif
+    /* O_TMPFILE 的"创建无名文件"语义位：glibc/musl 的 O_TMPFILE 定义为
+     * __O_TMPFILE | O_DIRECTORY，按位检测会把一切 O_RDONLY|O_DIRECTORY 的
+     * 目录打开（find/fts 遍历目录正是此形态）误判为写模式，必须剥离
+     * O_DIRECTORY 位。 */
+    int write_bits = O_WRONLY | O_RDWR | O_CREAT | O_TRUNC | O_APPEND
+                     | (O_TMPFILE & ~O_DIRECTORY);
+    if (flags & write_bits) return ACC_READ | ACC_WRITE;
+    /* 目录枚举（O_DIRECTORY 且无写位）与 opendir 同语义：只做 deny 检查、
+     * 不参与 allow/ask（返回 0，由 open 族调用方走 gate_meta_read）。对齐
+     * macOS boxdylib 的 (flags & O_DIRECTORY) == 0 豁免——find（fts 经
+     * openat 打开目录）与 ls（opendir）的行为不应因 libc 路径不同而分叉。 */
+    if (flags & O_DIRECTORY) return 0;
+    return ACC_READ;
+}
+#endif /* !_WIN32 */
 
 int dbox_policy_prepend_ro_dirs(dbox_policy_t *p, const char *spec)
 {

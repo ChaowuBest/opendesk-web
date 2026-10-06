@@ -15,6 +15,7 @@
 #include <string.h>
 #include <unistd.h>
 #include <sys/stat.h>
+#include <fcntl.h>
 
 static int g_failed, g_total;
 #define CHECK(cond, name) do { \
@@ -597,6 +598,34 @@ static void test_trash_excluded(void)
     CHECK(dbox_trash_excluded("/tmp/f", "/tmp:/var/tmp:", ':') == 1, "trash-excl: trailing sep ok");
 }
 
+static void test_acc_from_open_flags(void)
+{
+#ifndef O_DIRECTORY
+#define O_DIRECTORY 0200000
+#endif
+#ifndef O_TMPFILE
+#define O_TMPFILE 020200000
+#endif
+    /* 回归（BUG find-ask-storm）：O_TMPFILE 定义含 O_DIRECTORY 位，按位
+     * 检测曾把一切目录打开误判为写模式——standard 模式下 `find /` 逐目录
+     * 触发幽灵 write ask。目录枚举（无写位 + O_DIRECTORY）必须是 0
+     * （deny-only，与 opendir 同口径），O_TMPFILE 必须仍算写。 */
+    CHECK(dbox_acc_from_open_flags(O_RDONLY) == ACC_READ, "acc: plain rd");
+    CHECK(dbox_acc_from_open_flags(O_RDONLY | O_CLOEXEC) == ACC_READ, "acc: rd + cloexec");
+    CHECK(dbox_acc_from_open_flags(O_RDONLY | O_DIRECTORY) == 0, "acc: dir enum is deny-only(0)");
+    CHECK(dbox_acc_from_open_flags(O_RDONLY | O_DIRECTORY | O_NONBLOCK | O_CLOEXEC) == 0,
+          "acc: fts-style dir open is deny-only(0)");
+    CHECK(dbox_acc_from_open_flags(O_WRONLY) == (ACC_READ | ACC_WRITE), "acc: wr");
+    CHECK(dbox_acc_from_open_flags(O_RDWR) == (ACC_READ | ACC_WRITE), "acc: rdwr");
+    CHECK(dbox_acc_from_open_flags(O_WRONLY | O_CREAT | O_TRUNC) == (ACC_READ | ACC_WRITE), "acc: creat+trunc");
+    CHECK(dbox_acc_from_open_flags(O_WRONLY | O_APPEND) == (ACC_READ | ACC_WRITE), "acc: append");
+    CHECK(dbox_acc_from_open_flags(O_TMPFILE | O_WRONLY) == (ACC_READ | ACC_WRITE), "acc: O_TMPFILE is write");
+    CHECK(dbox_acc_from_open_flags(O_TMPFILE) == (ACC_READ | ACC_WRITE), "acc: O_TMPFILE alone is write");
+    /* O_DIRECTORY|O_CREAT：创建位在，仍走写判定（不是目录枚举） */
+    CHECK(dbox_acc_from_open_flags(O_RDONLY | O_DIRECTORY | O_CREAT) == (ACC_READ | ACC_WRITE),
+          "acc: dir+creat is write");
+}
+
 int main(void)
 {
     test_normpath();
@@ -615,6 +644,7 @@ int main(void)
     test_ro_dirs();
     test_trash_worth_keeping();
     test_trash_excluded();
+    test_acc_from_open_flags();
     printf("\n%d checks, %d failed\n", g_total, g_failed);
     return g_failed ? 1 : 0;
 }

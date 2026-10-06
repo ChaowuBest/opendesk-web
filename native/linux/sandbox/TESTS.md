@@ -15,6 +15,16 @@
 
 - **基础访问控制**：read/write/execute 三类独立求值，组合类别（O_RDWR）逐类别判定；
   静态 deny / ask 动态决策 / grants 子树授权 / 决策缓存
+- **open flags 语义**（BUG find-ask-storm 修复）：`open(O_RDONLY|O_DIRECTORY)` 是目录
+  枚举语义，与 `opendir` 同口径（deny-only：只拦 deny 规则、不参与 allow/ask）——
+  `find` 的 fts 经 openat 打开每个被遍历目录，若误判为写模式，standard 模式（write
+  兜底 ask）下会对每个被遍历目录弹一次幽灵 write ask（实测 `find /` 弹"读 /"+"编辑 /"）。
+  判定核心为 `dbox_acc_from_open_flags`（policy.c）：O_TMPFILE 的写检测必须剥离
+  O_DIRECTORY 位（glibc/musl 定义 = `__O_TMPFILE | O_DIRECTORY`），目录枚举返回 0。
+  单元测试见 `make unit` 的 `test_acc_from_open_flags`；端到端回归见
+  `tests/run_all.sh` 的 `regression: directory-open is never write` 分段（t_probe
+  的 `odir_open_ok`/`odir_open_fail`/`otmpfile_fail`：目录枚举放行、deny 规则仍拦、
+  O_TMPFILE 仍走写判定、find 遍历零 ask）。
 - **路径语义**：身份命名空间（真实路径规则）；符号链接真实路径解析；`*`/`**` glob
 - **删除与回收站**：`--del-to-trash` 移入统一回收站（`<uuid>.back` + `summary.json`，
   协议与 Windows/Linux/macOS 一致）；回收站目录写保护（trash-protected DENY）；

@@ -57,6 +57,12 @@
 #define O_TMPFILE 020200000
 #endif
 
+/* O_TMPFILE 的"创建无名文件"语义位：glibc/musl 的 O_TMPFILE 定义为
+ * __O_TMPFILE | O_DIRECTORY，按位检测会把一切 O_RDONLY|O_DIRECTORY 的
+ * 目录打开（find/fts 遍历目录正是此形态）误判为写模式，必须剥离
+ * O_DIRECTORY 位。 */
+#define DBOX_O_TMPFILE_BIT (O_TMPFILE & ~O_DIRECTORY)
+
 /* ------------------------------------------------------------------ */
 /* libc ABI differences                                                */
 /* ------------------------------------------------------------------ */
@@ -653,12 +659,9 @@ static char *at_abs(int dirfd, const char *path)
     return j;
 }
 
-static int acc_from_open_flags(int flags)
-{
-    int w = O_WRONLY | O_RDWR | O_CREAT | O_TRUNC | O_APPEND | O_TMPFILE;
-    if (flags & w) return ACC_WRITE | ACC_READ;
-    return ACC_READ;
-}
+/* open 族 flags → 访问类别的语义判定在 core（policy.c 的
+ * dbox_acc_from_open_flags）：目录枚举（O_DIRECTORY 无写位）= deny-only、
+ * O_TMPFILE（剥离 O_DIRECTORY 位）= 写模式。带单元测试（unit_policy）。 */
 
 static int mode_to_acc(int mode)
 {
@@ -1048,7 +1051,7 @@ static void dbox_preload_ctor_body(void)
 int open(const char *path, int flags, ...)
 {
     char *real = NULL;
-    int acc = acc_from_open_flags(flags);
+    int acc = dbox_acc_from_open_flags(flags);
     int nofollow = (flags & O_NOFOLLOW) ? 1 : 0;
     /* 读模式且目标不存在 → 透传（真实 open 返回 ENOENT），不判定不 ask：
      * 读不到任何内容，只是把"不存在"结果透传给探测/容错逻辑（Windows
@@ -1061,10 +1064,20 @@ int open(const char *path, int flags, ...)
         errno = e;
         return fd;
     }
+    /* 目录枚举（acc==0，O_DIRECTORY 无写位）：deny-only 判定，对齐 opendir */
+    if (acc == 0) {
+        if (!gate_meta(path, nofollow, ACC_READ, "open", &real)) return -1;
+        int fd = real_open(xpath(path, real), flags);
+        int e = errno;
+        if (fd >= 0) fd_record(fd, real ? real : path, NULL, ACC_READ);
+        dbox_free(real);
+        errno = e;
+        return fd;
+    }
     if (!gate1(path, nofollow, acc, "open", &real)) return -1;
     const char *p = xpath(path, real);
     int fd;
-    if (flags & (O_CREAT | O_TMPFILE)) {
+    if (flags & (O_CREAT | DBOX_O_TMPFILE_BIT)) {
         va_list ap; va_start(ap, flags);
         mode_t mode = (mode_t)va_arg(ap, int);
         va_end(ap);
@@ -1088,7 +1101,7 @@ int open(const char *path, int flags, ...)
 int open64(const char *path, int flags, ...)
 {
     char *real = NULL;
-    int acc = acc_from_open_flags(flags);
+    int acc = dbox_acc_from_open_flags(flags);
     int nofollow = (flags & O_NOFOLLOW) ? 1 : 0;
     if (acc == ACC_READ && dbox_path_has_content(path) && path_not_exist(path)) {
         int fd = real_open64(path, flags);
@@ -1097,10 +1110,20 @@ int open64(const char *path, int flags, ...)
         errno = e;
         return fd;
     }
+    /* 目录枚举（acc==0，O_DIRECTORY 无写位）：deny-only 判定，对齐 opendir */
+    if (acc == 0) {
+        if (!gate_meta(path, nofollow, ACC_READ, "open64", &real)) return -1;
+        int fd = real_open64(xpath(path, real), flags);
+        int e = errno;
+        if (fd >= 0) fd_record(fd, real ? real : path, NULL, ACC_READ);
+        dbox_free(real);
+        errno = e;
+        return fd;
+    }
     if (!gate1(path, nofollow, acc, "open64", &real)) return -1;
     const char *p = xpath(path, real);
     int fd;
-    if (flags & (O_CREAT | O_TMPFILE)) {
+    if (flags & (O_CREAT | DBOX_O_TMPFILE_BIT)) {
         va_list ap; va_start(ap, flags);
         mode_t mode = (mode_t)va_arg(ap, int);
         va_end(ap);
@@ -1123,12 +1146,12 @@ int open64(const char *path, int flags, ...)
 int openat(int dirfd, const char *path, int flags, ...)
 {
     char *abs = NULL, *real = NULL;
-    int acc = acc_from_open_flags(flags);
+    int acc = dbox_acc_from_open_flags(flags);
     int nofollow = (flags & O_NOFOLLOW) ? 1 : 0;
     int fd = -1;
     ensure_ready();
     if (!g_ready) {
-        if (flags & (O_CREAT | O_TMPFILE)) {
+        if (flags & (O_CREAT | DBOX_O_TMPFILE_BIT)) {
             va_list ap; va_start(ap, flags);
             mode_t mode = (mode_t)va_arg(ap, int);
             va_end(ap);
@@ -1147,9 +1170,20 @@ int openat(int dirfd, const char *path, int flags, ...)
         errno = e;
         return fd;
     }
+    /* 目录枚举（acc==0，O_DIRECTORY 无写位）：deny-only 判定，对齐 opendir */
+    if (acc == 0) {
+        if (!gate_meta(abs, nofollow, ACC_READ, "openat", &real)) { dbox_free(abs); return -1; }
+        fd = real_openat(dirfd, xpath(path, real), flags);
+        int e = errno;
+        if (fd >= 0) fd_record(fd, real ? real : abs, NULL, ACC_READ);
+        dbox_free(abs);
+        dbox_free(real);
+        errno = e;
+        return fd;
+    }
     if (!gate1(abs, nofollow, acc, "openat", &real)) { dbox_free(abs); return -1; }
     const char *p = xpath(path, real);
-    if (flags & (O_CREAT | O_TMPFILE)) {
+    if (flags & (O_CREAT | DBOX_O_TMPFILE_BIT)) {
         va_list ap; va_start(ap, flags);
         mode_t mode = (mode_t)va_arg(ap, int);
         va_end(ap);
@@ -1173,12 +1207,12 @@ int openat(int dirfd, const char *path, int flags, ...)
 int openat64(int dirfd, const char *path, int flags, ...)
 {
     char *abs = NULL, *real = NULL;
-    int acc = acc_from_open_flags(flags);
+    int acc = dbox_acc_from_open_flags(flags);
     int nofollow = (flags & O_NOFOLLOW) ? 1 : 0;
     int fd = -1;
     ensure_ready();
     if (!g_ready) {
-        if (flags & (O_CREAT | O_TMPFILE)) {
+        if (flags & (O_CREAT | DBOX_O_TMPFILE_BIT)) {
             va_list ap; va_start(ap, flags);
             mode_t mode = (mode_t)va_arg(ap, int);
             va_end(ap);
@@ -1196,9 +1230,20 @@ int openat64(int dirfd, const char *path, int flags, ...)
         errno = e;
         return fd;
     }
+    /* 目录枚举（acc==0，O_DIRECTORY 无写位）：deny-only 判定，对齐 opendir */
+    if (acc == 0) {
+        if (!gate_meta(abs, nofollow, ACC_READ, "openat64", &real)) { dbox_free(abs); return -1; }
+        fd = real_openat64(dirfd, xpath(path, real), flags);
+        int e = errno;
+        if (fd >= 0) fd_record(fd, real ? real : abs, NULL, ACC_READ);
+        dbox_free(abs);
+        dbox_free(real);
+        errno = e;
+        return fd;
+    }
     if (!gate1(abs, nofollow, acc, "openat64", &real)) { dbox_free(abs); return -1; }
     const char *p = xpath(path, real);
-    if (flags & (O_CREAT | O_TMPFILE)) {
+    if (flags & (O_CREAT | DBOX_O_TMPFILE_BIT)) {
         va_list ap; va_start(ap, flags);
         mode_t mode = (mode_t)va_arg(ap, int);
         va_end(ap);

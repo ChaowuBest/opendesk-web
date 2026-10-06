@@ -303,6 +303,32 @@ AUDG1=$(grep -c "/scratch" "$AUDIT"); AUDG1=${AUDG1:-0}
 check "grants: 5 files, 1 ask round (grant covers write, got=$AUDG1 base=$AUDG0)" $rc
 TSH "for i in 6 7 8; do $PROBE wr $SRC/scratch/grant\$i.txt g\$i || exit 1; done" >/dev/null; check "grant persists for more files" $?
 
+echo "== regression: directory-open is never write (find ask storm) =="
+# `find` 的 fts 用 openat(O_RDONLY|O_DIRECTORY) 打开每个被遍历目录。
+# acc_from_open_flags 曾把 O_TMPFILE（定义 = __O_TMPFILE | O_DIRECTORY）按位
+# 检测，使一切目录打开误判为写模式——standard 形态（write 兜底 ask）下
+# `find /` 对每个被遍历目录触发一次幽灵 write ask（弹"编辑 /"）。
+# 回归策略 = standard 形态：read 全放行、write 兜底 ask、endpoint deny。
+RPOL="$WORK/regress-odir.toml"
+{
+    printf 'version = 1\ndefault = "deny"\n\n'
+    printf '[ask]\nendpoint = "%s"\ntimeout_ms = 2000\ncache_ttl_seconds = 0\ngrant_ttl_seconds = 0\n\n' "$UP"
+    printf '[[rules]]\npath = "@SRC@/vault/**"\naccess = "read"\nperm = "deny"\n\n'
+    printf '[[rules]]\npath = "/**"\naccess = "read"\nperm = "allow"\n\n'
+    printf '[[rules]]\npath = "/**"\naccess = "write"\nperm = "ask"\n'
+} | sed -e "s|@SRC@|$SRC|g" > "$RPOL"
+RT() { "$B" run --policy "$RPOL" --log "$LOG" -- "$PROBE" "$@"; }
+RT odir_open_ok "$SRC/public"                       >/dev/null; check "dir open (O_DIRECTORY) never write-asked" $?
+RT otmpfile_fail "$SRC/public"                      >/dev/null; check "O_TMPFILE still write-checked (EACCES)" $?
+RT odir_open_fail "$SRC/vault"                      >/dev/null; check "dir open honors read-deny rules" $?
+RT ls "$SRC/public"                                 >/dev/null; check "opendir unaffected" $?
+AUDR0=$(grep -c "decide" "$AUDIT" 2>/dev/null); AUDR0=${AUDR0:-0}
+"$B" run --policy "$RPOL" --log "$LOG" -- /usr/bin/find "$SRC" -maxdepth 3 >/dev/null 2>&1
+check "find traversal rc=0 (no EACCES)" $?
+AUDR1=$(grep -c "decide" "$AUDIT"); AUDR1=${AUDR1:-0}
+[ "$AUDR1" = "$AUDR0" ] && rc=0 || rc=1
+check "find traversal zero asks (audit)" $rc
+
 echo "== ask: staging write approval =="
 TSH "$PROBE app $SRC/staging/base.txt -ap; $PROBE app $SRC/staging/base.txt -ap2" >/dev/null; check "staging write ask -> allow + grant covers appends" $?
 
