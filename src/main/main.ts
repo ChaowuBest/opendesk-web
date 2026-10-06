@@ -165,6 +165,7 @@ import {
 } from './windows/linux-window-shadow.js';
 import { endShadowResizeSession, startShadowResizeSession } from './windows/shadow-resize.js';
 import { endWindowDragSession, startWindowDragSession } from './windows/window-drag.js';
+import { attachNormalBoundsTracker } from './utils/normal-bounds-tracker.js';
 import { suppressWmSystemMenuOnLinux } from './windows/linux-context-menu.js';
 import {
     initTaskStatusWidget,
@@ -690,14 +691,20 @@ const createWindow = () => {
     // 非 Linux 平台 margin 为 0，bounds 换算恒等，既有行为不变。
     const shadowMargin = process.platform === 'linux' ? LINUX_WINDOW_SHADOW_MARGIN : 0;
     // 尝试恢复上次保存的窗口尺寸与位置，无效或未保存时回退默认尺寸居中
-    let savedBounds: { x: number; y: number; width: number; height: number } | null = null;
+    let savedBounds: { x: number; y: number; width: number; height: number; is_maximized?: boolean } | null = null;
     let windowX: number | undefined;
     let windowY: number | undefined;
     let windowWidth = DEFAULT_WINDOW_WIDTH;
     let windowHeight = DEFAULT_WINDOW_HEIGHT;
     try {
         const guiConfig = Setting.getInstance().getData().gui_config as Record<string, unknown>;
-        const bounds = guiConfig.window_bounds as { x: number; y: number; width: number; height: number } | null;
+        const bounds = guiConfig.window_bounds as {
+            x: number;
+            y: number;
+            width: number;
+            height: number;
+            is_maximized?: boolean;
+        } | null;
         if (bounds && isValidWindowBounds(bounds)) {
             savedBounds = bounds;
             const targetDisplay = screen.getDisplayMatching(bounds);
@@ -769,6 +776,13 @@ const createWindow = () => {
         // （savedBounds 为视觉语义，扩展阴影边距后再应用到窗口矩形）
         if (savedBounds) {
             mainWindow.setBounds(expandVisualBounds(savedBounds, shadowMargin));
+            // 上次退出时处于最大化：先按 normal bounds 布局再调用 maximize()，
+            // 让 WM 真实最大化（isMaximized() 同步为 true，还原几何也是本次
+            // setBounds 的值）。不能直接把最大化尺寸的 bounds 当普通窗口尺寸
+            // 模拟"假最大化"——双击标题栏的切换判断依赖 isMaximized()。
+            if (savedBounds.is_maximized) {
+                mainWindow.maximize();
+            }
         }
         if (isHuaweiStartupAuthPending) {
             restoreHuaweiLoginForWorkbenchWindow(`workbench ${reason}`);
@@ -830,6 +844,19 @@ const createWindow = () => {
         globalTray?.setContextMenu(buildTrayMenu());
     });
 
+    // 跟踪 normal bounds：Linux 透明无边框窗口最大化后 getNormalBounds() 可能
+    // 返回最大化尺寸（restored bounds 缓存被污染），退出保存时改用跟踪缓存。
+    const normalBoundsTracker = attachNormalBoundsTracker(mainWindow);
+
+    // 最大化状态变化主动推送 renderer：X11 下 WM 异步应用最大化，IPC 返回后
+    // 立即回查 isMaximized() 拿到的还是旧值，图标/自绘圆角等 UI 状态会失同步。
+    mainWindow.on('maximize', () => {
+        safeSendToWebContents(mainWindow.webContents, 'setting:maximizeStateChanged', true);
+    });
+    mainWindow.on('unmaximize', () => {
+        safeSendToWebContents(mainWindow.webContents, 'setting:maximizeStateChanged', false);
+    });
+
     mainWindow.on(
         'close',
         createMainWindowCloseHandler({
@@ -837,6 +864,7 @@ const createWindow = () => {
             window: mainWindow,
             // 保存前收缩阴影边距，window_bounds 始终保持视觉矩形语义
             normalizeSaveBounds: (bounds) => shrinkWindowBounds(bounds, shadowMargin),
+            getTrustedNormalBounds: () => normalBoundsTracker.getNormalBounds(),
             getSettingData: () => Setting.getInstance().getData() as Record<string, unknown>,
             saveSettingData: (data) => Setting.getInstance().setData(data),
             ipcMain,

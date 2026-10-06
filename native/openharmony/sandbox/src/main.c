@@ -126,6 +126,8 @@ static void usage(FILE *out)
 "  --del-to-trash      删除文件/目录时移入回收站目录（Windows 回收站等价物）\n"
 "  --trash-dir DIR     回收站目录（OpenDesk 统一回收站，与 Windows/Linux 版同\n"
 "                      格式；等价于 --trash）\n"
+"  --trash-exclude DIR 删除分流命中该目录前缀时直接真删、不入回收站（可重复；\n"
+"                      已知临时目录内建默认，宿主还会显式传入）\n"
 "  --cwd DIR          子进程工作目录（默认：--src 模式为 DIR，否则当前目录）\n"
 "\n"
 "说明: mount 子命令不适用于 OpenHarmony（虚拟化逐进程生效，无 Dokan 卷/盘符）；\n"
@@ -151,6 +153,10 @@ typedef struct {
     const char *tmp_dir;
     int del_to_trash;
     const char *trash_dir;
+    /* --trash-exclude 累积（可重复）：':' 分隔拼接入 DYNOBOX_TRASH_EXCLUDE，
+     * 原生删除分流命中清单直接真删（已知临时目录由宿主传入，内建默认见
+     * preload.c 的 trash 排除初始化） */
+    char trash_exclude[4096];
     int verbose;
 } run_opts_t;
 
@@ -236,6 +242,29 @@ static int cmd_run(int argc, char **argv)
         }
         else if (strcmp(argv[i], "--trash") == 0 && i + 1 < argc) o.trash_dir = argv[++i];
         else if (strcmp(argv[i], "--trash-dir") == 0 && i + 1 < argc) o.trash_dir = argv[++i];
+        else if (strcmp(argv[i], "--trash-exclude") == 0 && i + 1 < argc) {
+            /* 可重复：逐条归一化拼接（':' 分隔）；条数/总长超限时拒绝启动
+             * 而非静默截断（截断会把"排除"变成"部分排除"，用户难以察觉） */
+            char *n = dbox_normpath(argv[++i]);
+            if (!n || n[0] != '/') {
+                fprintf(stderr, "dynobox: --trash-exclude 需要绝对路径: %s\n", argv[i]);
+                free(n);
+                return 2;
+            }
+            {
+                size_t used = strlen(o.trash_exclude);
+                size_t need = strlen(n) + 2;
+                if (used + need >= sizeof o.trash_exclude) {
+                    fprintf(stderr, "dynobox: --trash-exclude 条目过多（上限 %zu 字节）\n",
+                            sizeof o.trash_exclude);
+                    free(n);
+                    return 2;
+                }
+                if (used > 0) o.trash_exclude[used++] = ':';
+                snprintf(o.trash_exclude + used, sizeof o.trash_exclude - used, "%s", n);
+            }
+            dbox_free(n);
+        }
         else if (strcmp(argv[i], "--mount") == 0 && i + 1 < argc) {
             have_mount = 1; i++;
         }
@@ -396,6 +425,7 @@ static int cmd_run(int argc, char **argv)
         setenv("DYNOBOX_TRASH", n, 1);
         dbox_free(n);
     }
+    if (o.trash_exclude[0]) setenv("DYNOBOX_TRASH_EXCLUDE", o.trash_exclude, 1);
     if (o.verbose) setenv("DYNOBOX_VERBOSE", "1", 1);
 
     /* watchdog pipe: launcher holds the write end; sandboxed processes

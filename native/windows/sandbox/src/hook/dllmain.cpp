@@ -51,6 +51,7 @@ namespace sbx {
 bool g_hooked = false;
 bool g_delToTrash = false;
 std::wstring g_trashDir;
+std::wstring g_trashExclude;
 Policy g_policy;
 
 // 沙箱会话开始时刻（FILETIME，runner 经 DYNOBOX_SESSION_START 注入）；0 表示未设置。
@@ -351,6 +352,9 @@ static void loadEnvironmentPolicy()
     // OpenDesk 统一回收站目录（<opendesk>/trash/<taskId>，宿主每次拉起都传入）；
     // 非空时删除分流到该目录（<uuid>.back + summary.json），否则退回系统回收站
     g_trashDir = envOrEmpty(L"DYNOBOX_TRASH_DIR");
+    // 回收站排除清单（';' 分隔目录前缀，命中直接真删不入站）：宿主传入
+    // （--trash-exclude 累积）+ 内建 %TEMP%/%TMP%（构建零时文件噪音主源）
+    g_trashExclude = envOrEmpty(L"DYNOBOX_TRASH_EXCLUDE");
     // 沙箱会话开始时刻（runner 注入，FILETIME 十进制）：用于"会话内创建"判定
     std::wstring sessionStart = envOrEmpty(L"DYNOBOX_SESSION_START");
     if (!sessionStart.empty()) {

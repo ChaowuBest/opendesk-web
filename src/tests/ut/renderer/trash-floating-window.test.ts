@@ -171,4 +171,58 @@ describe('trash floating window scope switch', () => {
 
         expect(listEl.textContent).toContain('加载回收站失败');
     });
+
+    test('每个条目在文件名下以小字显示完整原始路径', async () => {
+        await openTaskScope();
+
+        const items = listEl.querySelectorAll('.trash-item');
+        expect(items).toHaveLength(2);
+
+        const pathLines = listEl.querySelectorAll('.trash-item-path');
+        expect(pathLines).toHaveLength(2);
+        expect((pathLines[0] as HTMLElement).textContent).toBe('/tmp/task-file-a.txt');
+        expect((pathLines[1] as HTMLElement).textContent).toBe('/tmp/task-file-b.txt');
+        // 完整路径悬停可见（截断时不丢信息）
+        expect((pathLines[0] as HTMLElement).getAttribute('title')).toBe('/tmp/task-file-a.txt');
+        // 文件名行仍只显示名称本身
+        expect((items[0].querySelector('.trash-item-name') as HTMLElement).textContent).toBe('task-file-a.txt');
+    });
+
+    /**
+     * bug 复现：点击「找回」后 showConfirmModal 会向 document.body 末尾追加
+     * 携带 `.od-confirm-modal-card { width: 400px }` 的 overlay（含 <style>）。
+     * 回收站卡片同时命中 `.od-confirm-modal-card` 与 `.trash-modal-card`，
+     * 若宽度覆盖规则只有单类特异性 (0,1,0)，后注入的 400px 规则按文档顺序
+     * 获胜 → 回收站弹窗宽度 560px→400px 突然变窄，关闭状态弹窗后恢复。
+     * 因此宽度覆盖规则的选择器特异性必须严格高于 MODAL_CSS 的单类基础规则。
+     */
+    test('回收站卡片宽度规则特异性必须高于 MODAL_CSS 基础卡片规则', async () => {
+        await openTaskScope();
+
+        const styleEl = hostEl.querySelector('style');
+        expect(styleEl).not.toBeNull();
+        const css = styleEl?.textContent ?? '';
+
+        // 提取 style 内全部 "selector { body }" 规则（keyframes 的 from/to 片段无 width，不影响）
+        const rules: Array<{ selector: string; body: string }> = [];
+        const ruleRe = /([^{}]+)\{([^{}]*)\}/g;
+        let m: RegExpExecArray | null;
+        while ((m = ruleRe.exec(css)) !== null) {
+            rules.push({ selector: m[1].trim(), body: m[2] });
+        }
+
+        const classCount = (selector: string): number => (selector.match(/\.[A-Za-z0-9_-]+/g) ?? []).length;
+        // MODAL_CSS 注入的基础规则：showConfirmModal 状态弹窗及其 <style> 会后注入 body
+        const baseRules = rules.filter((r) => /(^|[^-])width:\s*400px/.test(r.body));
+        expect(baseRules.length).toBeGreaterThan(0);
+        // 回收站卡片自身的宽度覆盖规则
+        const cardRules = rules.filter(
+            (r) => /(^|[^-])width:\s*560px/.test(r.body) && r.selector.includes('trash-modal-card')
+        );
+        expect(cardRules.length).toBeGreaterThan(0);
+
+        for (const rule of cardRules) {
+            expect(classCount(rule.selector)).toBeGreaterThan(classCount(baseRules[0].selector));
+        }
+    });
 });

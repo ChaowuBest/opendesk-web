@@ -362,6 +362,8 @@ export async function prepareDarwinSandbox(options: {
     deleteToTrash?: boolean;
     /** 任务级统一回收站目录（<opendesk>/trash/<taskId>），每次拉起都传入 */
     trashDir?: string;
+    /** 删除分流排除清单：命中目录前缀真删不入站（':' 分隔注入环境变量） */
+    trashExcludeDirs?: string[];
     onPermissionWaitChange?: (waiting: boolean) => void;
 }): Promise<DynamicSandboxLaunch | null> {
     if (process.platform !== 'darwin') return null;
@@ -460,6 +462,10 @@ export async function prepareDarwinSandbox(options: {
             OPENDESK_SANDBOX_POLICY: policyPath,
             OPENDESK_SANDBOX_LOG: logPath,
             OPENDESK_SANDBOX_TRASH_DIR: trashDir,
+            // 排除清单：命中目录前缀的删除真删不入站（构建零时产物零噪音）
+            ...(options.trashExcludeDirs && options.trashExcludeDirs.length > 0
+                ? { OPENDESK_SANDBOX_TRASH_EXCLUDE: options.trashExcludeDirs.join(':') }
+                : {}),
             ...(options.deleteToTrash ? { OPENDESK_SANDBOX_TRASH: '1' } : {})
         },
         attach: (proc: ChildProcess) => {

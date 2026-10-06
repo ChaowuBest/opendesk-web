@@ -207,12 +207,15 @@ static int dir_hosts_sockets(const char *dir)
 {
     int fd = socket(AF_UNIX, SOCK_STREAM, 0);
     if (fd < 0) return 0;
-    char p[256];
-    snprintf(p, sizeof p, "%s/.dynobox-probe-%ld", dir, (long)getpid());
     struct sockaddr_un sa;
+    /* sun_path 容量为 108（Linux/glibc）；超长路径本就无法 bind unix socket，
+     * 探测失败返回 0，避免截断后 bind 到错误路径误判目录可用。 */
+    char p[sizeof sa.sun_path];
+    int plen = snprintf(p, sizeof p, "%s/.dynobox-probe-%ld", dir, (long)getpid());
+    if (plen < 0 || (size_t)plen >= sizeof p) { close(fd); return 0; }
     memset(&sa, 0, sizeof sa);
     sa.sun_family = AF_UNIX;
-    snprintf(sa.sun_path, sizeof sa.sun_path, "%s", p);
+    memcpy(sa.sun_path, p, (size_t)plen + 1);
     int ok = bind(fd, (struct sockaddr *)&sa, sizeof sa) == 0;
     if (ok) unlink(p);
     close(fd);
@@ -276,3 +279,40 @@ void dbox_pipe_path(const char *name, char *out, size_t outsz)
     snprintf(out, outsz, "%s\\%s", dbox_pipe_dir(), name);
 }
 #endif
+
+int dbox_trash_worth_keeping(unsigned int mode, long long size)
+{
+    if (S_ISDIR(mode)) return 0;               /* 空壳目录（rmdir 语义保证为空） */
+    if (S_ISREG(mode) && size == 0) return 0;  /* 0 字节普通文件 */
+    return 1;
+}
+
+int dbox_trash_excluded(const char *path, const char *list, char sep)
+{
+    if (!path || !path[0] || !list || !list[0]) return 0;
+    const char *start = list;
+    for (const char *p = list;; p++) {
+        if (*p == sep || *p == '\0') {
+            size_t len = (size_t)(p - start);
+            if (len > 0 && len < 1024) {
+                char seg[1024];
+                memcpy(seg, start, len);
+                seg[len] = '\0';
+                if (dbox_path_under(path, seg)) return 1;
+            }
+            if (*p == '\0') break;
+            start = p + 1;
+        }
+    }
+    return 0;
+}
+
+int dbox_path_has_content(const char *p)
+{
+    return p && p[0] != '\0';
+}
+
+int dbox_ptr_set(const void *p)
+{
+    return p != NULL;
+}

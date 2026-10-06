@@ -18,7 +18,15 @@
 - **路径语义**：身份命名空间（真实路径规则）；符号链接真实路径解析；`*`/`**` glob
 - **删除与回收站**：`--del-to-trash` 移入统一回收站（`<uuid>.back` + `summary.json`，
   协议与 Windows/Linux/macOS 一致）；回收站目录写保护（trash-protected DENY）；
-  跨设备 EXDEV fail-closed 保留文件；沙箱内新建文件删除直接清除
+  跨设备 EXDEV fail-closed 保留文件；沙箱内新建文件删除直接清除；
+  **无恢复价值目标不入站**（0 字节普通文件、空目录——含 `rmdir` 与
+  `unlinkat(AT_REMOVEDIR)` 两条路径，判定核心为 `dbox_trash_worth_keeping`，
+  单元测试见 `make unit` 的 `test_trash_worth_keeping`，真机回归见
+  `tests/run_all.sh` 的 `trash` 分段；`rm -rf` 只留下内容条目，不再产生空壳）；
+  **排除清单**（`--trash-exclude` 可重复 → `DYNOBOX_TRASH_EXCLUDE`，':' 分隔）：
+  命中目录前缀的删除直接真删、不入站（内建临时目录 `/tmp`、`/var/tmp`、`/dev/shm`
+  + `DYNOBOX_TMP` 兜底，宿主再显式传入已知临时目录），判定核心为
+  `dbox_trash_excluded`（`make unit` 的 `test_trash_excluded`）
 - **进程治理**：watchdog 管道（launcher 退出 → 整树陪葬）；`build_envp` 环境变量
   强制重注入（9 个 DYNOBOX_* + LD_PRELOAD 不可篡改）；exec 家族拦截（execve/execvp/
   execvpe/posix_spawn/system/popen/fexecve）

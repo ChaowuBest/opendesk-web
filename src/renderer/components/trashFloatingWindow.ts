@@ -76,14 +76,40 @@ interface TrashEntryView {
 /**
  * 模态内自定义样式：复用 MODAL_CSS 注入的 --mc-* 主题变量（深浅色自动适配），
  * 卡片宽度对齐设置面板的宽弹窗（od-sp-wider 同款 560px）。
+ * 宽度覆盖用双类选择器：找回状态弹窗（showConfirmModal）会把携带
+ * `.od-confirm-modal-card { width: 400px }` 的 <style> 后注入 body 末尾，
+ * 单类特异性会在级联中被其反噬（弹窗突然变窄），必须保持 (0,2,0) 以上。
  */
 const TRASH_MODAL_CSS = `
-.trash-modal-card { width: 560px; max-width: 92vw; }
+.od-confirm-modal-card.trash-modal-card { width: 560px; max-width: 92vw; }
 
 /* 对齐设置面板 od-sp-scroll：body 超高时滚动（footer 固定在卡片底部） */
 /* 头部（搜索框/任务信息）固定：body 不滚动，列表包在 .trash-list-scroll 中独立滚动 */
 .trash-modal-body { padding-top: 14px; max-height: 62vh; display: flex; flex-direction: column; overflow: hidden; }
 .trash-list-scroll { flex: 1; min-height: 0; overflow-y: auto; }
+
+/* 列表滚动条对齐 TaskView 聊天历史（一级滚动条）：透明轨道 + 半透明 thumb，
+   深色（.od-modal-dark）切换为半透明白，避免回退系统原生样式的白色滚动条 */
+.trash-list-scroll::-webkit-scrollbar {
+    width: 6px;
+    height: 6px;
+}
+.trash-list-scroll::-webkit-scrollbar-track {
+    background: transparent;
+}
+.trash-list-scroll::-webkit-scrollbar-thumb {
+    background: rgba(0, 0, 0, 0.14);
+    border-radius: 3px;
+}
+.trash-list-scroll::-webkit-scrollbar-thumb:hover {
+    background: rgba(0, 0, 0, 0.24);
+}
+.od-modal-dark .trash-list-scroll::-webkit-scrollbar-thumb {
+    background: rgba(255, 255, 255, 0.18);
+}
+.od-modal-dark .trash-list-scroll::-webkit-scrollbar-thumb:hover {
+    background: rgba(255, 255, 255, 0.28);
+}
 
 .trash-search {
     position: relative;
@@ -163,6 +189,11 @@ const TRASH_MODAL_CSS = `
 .trash-item-main { flex: 1; min-width: 0; }
 .trash-item-name {
     font-size: 13px; font-weight: 500; color: var(--mc-ink);
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.trash-item-path {
+    margin-top: 1px;
+    font-size: 11px; color: var(--mc-ink3);
     white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
 }
 .trash-item-meta {
@@ -619,7 +650,8 @@ class TrashFloatingWindow extends HTMLElement {
                 return `
                 <div class="trash-item">
                     <div class="trash-item-main">
-                        <div class="trash-item-name" title="${escapeHtml(entry.original_path)}">${escapeHtml(name)}</div>
+                        <div class="trash-item-name">${escapeHtml(name)}</div>
+                        <div class="trash-item-path" title="${escapeHtml(entry.original_path)}">${escapeHtml(entry.original_path)}</div>
                         <div class="trash-item-meta">
                             <span>${escapeHtml(formatBytes(entry.size))}</span>
                             <span>·</span>

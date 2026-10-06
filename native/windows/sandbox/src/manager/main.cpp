@@ -45,6 +45,7 @@ struct CliOptions {
     bool automount = false;
     bool delToTrash = false;
     std::wstring trashDir;       // --trash-dir（OpenDesk 统一回收站目录）
+    std::wstring trashExclude;   // --trash-exclude 累积（';' 分隔，命中真删不入站）
     std::vector<std::pair<std::wstring, std::wstring>> envExtra;
 };
 
@@ -94,6 +95,13 @@ static bool parseRunArgs(const std::vector<std::wstring>& args, CliOptions& opts
         if (a == L"--automount") opts.automount = true;
         else if (a == L"--del-to-trash") opts.delToTrash = true;
         else if (a == L"--trash-dir") { if (!next(opts.trashDir)) return false; }
+        else if (a == L"--trash-exclude") {
+            // 可重复：';' 分隔累积（Win32 路径含盘符冒号，不能用 ':' 分隔）
+            std::wstring dir;
+            if (!next(dir)) return false;
+            if (!opts.trashExclude.empty()) opts.trashExclude += L';';
+            opts.trashExclude += dir;
+        }
         else if (a == L"--policy") { if (!next(opts.policy)) return false; }
         else if (a == L"--src") { if (!next(opts.src)) return false; }
         else if (a == L"--upstream") { if (!next(opts.upstream)) return false; }
@@ -231,6 +239,7 @@ int wmain(int argc, wchar_t** argv)
             launch.srcDir = opts.src;
             launch.delToTrash = opts.delToTrash;
             launch.trashDir = opts.trashDir;
+            launch.trashExclude = opts.trashExclude;
             launch.upstream = opts.upstream;
             launch.askToken = opts.askToken;
             for (const auto& [k, v] : opts.envExtra) launch.envExtra[k] = v;

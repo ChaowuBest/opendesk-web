@@ -20,6 +20,7 @@ enum class AccessClass { Read, Write, Execute };
 extern bool g_hooked;           // Detour patch 是否已提交
 extern bool g_delToTrash;       // 删除送回收站
 extern std::wstring g_trashDir; // OpenDesk 统一回收站目录（DYNOBOX_TRASH_DIR，<opendesk>/trash/<taskId>）
+extern std::wstring g_trashExclude; // 回收站排除清单（DYNOBOX_TRASH_EXCLUDE，';' 分隔目录前缀）
 extern Policy g_policy;         // 子进程内联策略（roots 已展开）
 
 // 重入保护：hook 函数内部调用其他被 hook 的 API（SHFileOperation/GetLongPathName）

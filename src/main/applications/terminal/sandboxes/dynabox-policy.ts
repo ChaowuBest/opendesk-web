@@ -398,6 +398,12 @@ function policyLinuxTail(
             `[[rules]]\npath = ${quote(p)}\naccess = "write"\nperm = "allow"`,
             `[[rules]]\npath = ${quote(p)}\naccess = "read"\nperm = "allow"`
         ]),
+        // /dev 终端与黑洞设备读写放行（standard 的 `/** write ask` 会让每条
+        // `>/dev/null` 重定向都弹窗；readonly 亦保留——黑洞/终端 IO 无持久化面）
+        ...[...POSIX_DEV_DEVICES, ...POSIX_DEV_TREES].flatMap((p) => [
+            `[[rules]]\npath = ${quote(p)}\naccess = "write"\nperm = "allow"`,
+            `[[rules]]\npath = ${quote(p)}\naccess = "read"\nperm = "allow"`
+        ]),
         // readonly：工作区 write deny 重申（在 temp allow 之后）——工作区恰位于
         // 临时目录之下时（测试特例/用户把项目放进 /tmp），temp 的更宽 allow
         // 会顶掉全盘 deny；工作区前缀比 /tmp/** 更具体，写保护恢复。
@@ -418,6 +424,11 @@ function policyLinuxTail(
                       `[[rules]]\npath = ${quote(`${p}/**`)}\naccess = "read"\nperm = "allow"`,
                       `[[rules]]\npath = ${quote(p)}\naccess = "read"\nperm = "allow"`
                   ]),
+                  // PATH 上工具链目录（nvm/pyenv 等家目录布局）的打开读取放行
+                  //（readonly 保留：只读放行，工具自检 execPath/dlopen 必需）
+                  ...linuxRuntimeReadPatterns().map(
+                      (p) => `[[rules]]\npath = ${quote(p)}\naccess = "read"\nperm = "allow"`
+                  ),
                   // shell 启动文件（zsh/bash 的 rc 文件在家目录）：shell 起不来一切
                   // 免谈。macOS 上 zsh 读 ~/.zshenv 等，bash 读 ~/.profile 等。
                   ...(home
@@ -451,6 +462,16 @@ function policyLinuxTail(
                       `[[rules]]\npath = ${quote(`${p}/**`)}\naccess = "read"\nperm = "allow"`,
                       `[[rules]]\npath = ${quote(p)}\naccess = "read"\nperm = "allow"`
                   ]),
+                  // PATH 上工具链目录的打开读取（nvm/pyenv 等家目录布局；node 启动
+                  // 即读自身二进制与随附库，不在系统前缀内会逐次弹外读 ask）
+                  ...linuxRuntimeReadPatterns().map(
+                      (p) => `[[rules]]\npath = ${quote(p)}\naccess = "read"\nperm = "allow"`
+                  ),
+                  // 注：bash 的 PATH 搜索（逐目录 stat 候选命令）与 cwd 祖先链
+                  // stat、/selinux 探测不再需要策略规则——native preload 层对
+                  // stat 家族统一改为 deny-only（不参与 allow/ask），见
+                  // native/openharmony/sandbox/src/preload.c 的 gate_meta_read。
+                  // 此处只放行"打开读取内容"所需的系统运行时路径。
                   ...(home
                       ? ['.zshenv', '.zprofile', '.zshrc', '.zlogin', '.profile', '.bash_profile', '.bashrc'].flatMap(
                             (rc) => [`[[rules]]\npath = ${quote(`${home}/${rc}`)}\naccess = "read"\nperm = "allow"`]
@@ -627,15 +648,48 @@ const LINUX_SYSTEM_READ_PREFIXES = [
     '/system',
     '/etc',
     '/dev',
+    '/run',
     '/sys',
     '/proc',
     '/data/service'
 ];
 
+/**
+ * Linux 运行时工具链读放行（对齐 Windows windowsRuntimeReadPatterns 的角色）：
+ * 展开当前 PATH——用户工具链（nvm/pyenv/rustup/conda 等）普遍位于家目录而非
+ * 系统前缀，其可执行文件与随附动态库/资源的**打开读取**（open64 read，非
+ * stat——stat 家族由 native deny-only 承载，与已移除的 stat 补丁规则无关）
+ * 不在 LINUX_SYSTEM_READ_PREFIXES 内，standard 模式下会逐次弹外读 ask
+ * （node 放在 ~/.nvm 时首个命令即弹）。只放 read；写仍由兜底 ask 管控
+ * （防工具链目录持久化）。
+ */
+function linuxRuntimeReadPatterns(): string[] {
+    const patterns: string[] = [];
+    for (const dir of (process.env.PATH || '').split(':')) {
+        const trimmed = dir.trim();
+        if (!trimmed || !trimmed.startsWith('/')) continue;
+        const normalized = path.posix.normalize(trimmed).replace(/\/+$/, '');
+        if (!normalized || patterns.includes(normalized)) continue;
+        patterns.push(normalized, `${normalized}/**`);
+    }
+    return patterns;
+}
+
+/**
+ * /dev 终端与黑洞设备（对齐 native core `dbox_system_allow` 的 tty_dev/null
+ * 内建语义：终端设备 read+write、/dev/null 是"重定向必须不失败"的黑洞）。
+ * 策略表若不放行，standard 的 `/** write ask` 兜底会让**每条带 `>/dev/null`
+ * 重定向的命令**都触发 ask 弹窗（实测 shell 会话一次运行 10+ 次）。这些写入
+ * 无持久化面（黑洞/终端 IO），readonly 模式同样保留。
+ */
+const POSIX_DEV_DEVICES = ['/dev/null', '/dev/tty', '/dev/console', '/dev/ptmx'];
+const POSIX_DEV_TREES = ['/dev/pts/**'];
+
 /** OpenHarmony 版策略文本：LD_PRELOAD 身份命名空间（路径无映射），不含
  * `[[roots]]`（LD_PRELOAD 版 native 无路径映射，见 policy.c）。其余规则与
  * Linux 版一致——规则 path 均为宿主真实路径。
  * `writableDirs`：应用沙箱 temp/cache 等目录总是可读可写（无需 ask）。 */
+
 export function policyTextOpenHarmony(
     endpoint: string,
     token: string,

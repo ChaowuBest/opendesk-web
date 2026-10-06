@@ -182,6 +182,11 @@ export async function prepareLinuxSandbox(options: {
     deleteToTrash?: boolean;
     /** 任务级统一回收站目录（<opendesk>/trash/<taskId>），每次拉起都传入 */
     trashDir?: string;
+    /**
+     * 删除分流排除清单（--trash-exclude 可重复）：命中目录前缀的删除直接
+     * 真删、不入回收站——已知临时目录由宿主传入（构建零时产物零噪音）
+     */
+    trashExcludeDirs?: string[];
     onPermissionWaitChange?: (waiting: boolean) => void;
 }): Promise<DynamicSandboxLaunch | null> {
     if (process.platform !== 'linux') return null;
@@ -260,6 +265,8 @@ export async function prepareLinuxSandbox(options: {
             // Windows/OpenHarmony 的 --trash-dir 格式一致）；原生层仅在
             // --del-to-trash 启用时使用
             ...(options.trashDir ? ['--trash-dir', options.trashDir] : []),
+            // 排除清单：命中目录前缀的删除真删不入站（构建零时产物零噪音）
+            ...(options.trashExcludeDirs ?? []).flatMap((dir) => ['--trash-exclude', dir]),
             ...(roDirs.length > 0 ? ['--ro-dirs', roDirs.join(',')] : []),
             '--',
             ...childArgs

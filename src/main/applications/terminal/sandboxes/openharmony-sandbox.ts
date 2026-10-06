@@ -46,6 +46,8 @@ export async function prepareOpenHarmonySandbox(options: {
     deleteToTrash?: boolean;
     /** 任务级统一回收站目录（<opendesk>/trash/<taskId>），每次拉起都传入 */
     trashDir?: string;
+    /** 删除分流排除清单（--trash-exclude）：命中目录前缀真删不入站 */
+    trashExcludeDirs?: string[];
     onPermissionWaitChange?: (waiting: boolean) => void;
 }): Promise<DynamicSandboxLaunch | null> {
     if ((process.platform as string) !== 'openharmony') return null;
@@ -149,6 +151,8 @@ export async function prepareOpenHarmonySandbox(options: {
             // 启用时使用（--trash 为 --trash-dir 的兼容别名，二者等价）
             ...(options.trashDir ? ['--trash-dir', options.trashDir] : []),
             ...(options.deleteToTrash ? ['--del-to-trash'] : []),
+            // 排除清单：命中目录前缀的删除真删不入站（构建零时产物零噪音）
+            ...(options.trashExcludeDirs ?? []).flatMap((dir) => ['--trash-exclude', dir]),
             ...(roDirs.length > 0 ? ['--ro-dirs', roDirs.join(',')] : []),
             '--',
             ...childArgs

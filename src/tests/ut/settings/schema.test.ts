@@ -14,6 +14,27 @@ describe('设置 schema', () => {
         expect(setting.debug.developer_mode).toBe(false);
     });
 
+    test('window_bounds 保留 is_maximized 字段（最大化状态持久化）', () => {
+        const setting = Setting.getSettingSchema().parse({
+            gui_config: {
+                window_bounds: { x: 0, y: 0, width: 1920, height: 1080, is_maximized: true }
+            }
+        }) as { gui_config: { window_bounds: { is_maximized?: boolean } | null } };
+
+        // zod object 默认 strip 未知字段，未声明时保存→读取链路会静默丢失该标志
+        expect(setting.gui_config.window_bounds?.is_maximized).toBe(true);
+    });
+
+    test('window_bounds 缺省 is_maximized 时不注入默认值（历史配置兼容）', () => {
+        const setting = Setting.getSettingSchema().parse({
+            gui_config: {
+                window_bounds: { x: 10, y: 20, width: 1200, height: 800 }
+            }
+        }) as { gui_config: { window_bounds: { is_maximized?: boolean } | null } };
+
+        expect(setting.gui_config.window_bounds).toEqual({ x: 10, y: 20, width: 1200, height: 800 });
+    });
+
     test('Langfuse 遥测默认关闭并提供安全的运行默认值', () => {
         const setting = Setting.getSettingSchema().parse({});
 

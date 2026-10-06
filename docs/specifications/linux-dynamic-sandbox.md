@@ -529,3 +529,51 @@ bind 前创建目标空目录；整根视图下绝不创建（会经 FUSE 在宿
 - 回归：packaging 三件套 33 项全绿；Rust 单测 16 项全绿；jest unit
   377/381 通过（3 个失败为预置 builtin-account-plugin、scan 测试在嵌套 userns
   环境的 unshare 探测差异（宿主通过）、task-llm-retry 偶发，均与本次改动无关）。
+
+## 21. 第三轮命令行场景压测：stat 语义跨平台统一（2026-10-05）
+
+**现象**：standard 模式下平凡命令 `ls && cat package.json | head -60`（工作区=
+当前目录）触发 **37 次 read ask**，路径全是"幽灵路径"：PATH 每目录的 `dir/ls`/
+`dir/cat`/`dir/head`（命令并不存在）、`/home`、`/home/liyi`（cwd 祖先）、`/selinux`。
+
+**定位**（strace + 记录型 decide 端点复现）：
+
+1. bash 的 command lookup 用 **libc stat**（而非 execvp/execve）逐 PATH 目录探测
+   候选命令，命令不存在也 stat；每个候选 = 一次 read gate。Linux 版策略只放行
+   固定系统前缀（`LINUX_SYSTEM_READ_PREFIXES`），**用户 PATH 目录**（~/.nvm/.../bin、
+   node_modules/.bin、~/.cargo/bin、~/.local/bin、.opendesk/interpreters 等）每次
+   命令查找都触发 ask；`cache_ttl=0` 不缓存 → 同路径反复弹。
+2. bash 启动时对 cwd 祖先链（$PWD 验证）逐级 stat；祖先在 `workspace/**`（子树）
+   之外 → 每次 shell 启动 3 条 ask。
+3. `/selinux`（libselinux 探测）在系统读前缀外 → 每进程启动 1 条 ask。
+
+**根因**：stat 家族（stat/access/readlink/opendir 等元数据读）在 Linux/OH 的
+preload 层被当作完整 read 权限判定对象。跨平台对照：
+
+| 平台               | stat/元数据读                    | open 读不存在 | 删除不存在                          |
+| ------------------ | -------------------------------- | ------------- | ----------------------------------- |
+| Windows            | deny-only（GetFileAttributes）   | 透传 ENOENT   | 透传 ENOENT（735dec5a）             |
+| macOS              | 完全不 interpose（全透传）       | 透传          | 透传（wrap_unlink stat 失败即透传） |
+| Linux/OH（修复前） | **完整 read 判定（ask 风暴源）** | 判定（ask）   | 判定（ask）                         |
+
+**修复（native 统一，`native/openharmony/sandbox/src/preload.c`，Linux/OH 共用）**：
+
+- 新增 `gate_meta_read`（deny-only）：stat/lstat/fstatat/statx/access/readlink/
+  realpath/statfs/statvfs/opendir/scandir/ftw/nftw 改为**只查 deny**，不参与
+  allow/ask——存在性/属性探测不携带文件内容，查询结果由真实 API 返回，与宿主
+  行为一致；敏感路径 deny（含 readonly 全盘 read deny）仍拦截；
+- **不存在路径透传**：open 读模式目标不存在 → 透传 ENOENT（对齐 Windows
+  `sandboxCheckNotExistRead`）；unlink/unlinkat/rmdir 目标不存在 → 透传 ENOENT、
+  不进回收站（对齐 Windows 735dec5a `sandboxCheckNotExistDelete` 与 macOS
+  `wrap_unlink`——clang 清理已 rename 走的 .o.tmp 残留时回收站分流会变成
+  ACCESS_DENIED 致命错误）；
+- TS 策略层（dynabox-policy.ts）移除 stat 驱动的 PATH 展开/祖先目录/静态
+  /selinux 补丁——由 native 单一来源承载，策略只保留"打开读取内容"所需放行。
+
+**效果（记录型端点实测）**：`ls && cat package.json | head -60` ask **37 → 0**；
+删除/打开不存在的文件 **0 ask**（宿主一致 ENOENT）；工作区外存在文件的**内容
+读取保留 1 ask**（"工作空间外需确认"语义不变）；敏感 deny 路径 stat/枚举仍被拒。
+
+**回归**：TS 单测新增"策略不含 stat 驱动补丁"防回归断言；`make unit` 全绿
+（1 个失败为 HEAD 98165a7b 引入的 /proc 断言与 sys_read 冲突，预存问题）；
+jest 全量 443 项通过；lint / 架构检查 / build-cli / build 通过。

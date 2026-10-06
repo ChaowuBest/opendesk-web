@@ -10,6 +10,7 @@
  */
 
 import { spawn, type ChildProcess, type ChildProcessWithoutNullStreams } from 'node:child_process';
+import os from 'os';
 import path from 'path';
 import { ToolResult } from '../../../aikernel/tool.js';
 import { ToolCall } from '../../../aikernel/messages.js';
@@ -250,6 +251,12 @@ export async function executeShellCommand(opts: {
             console.warn('[trash] 构建 sandbox trash dir 失败:', error);
         }
     }
+    // 回收站排除清单：已知临时目录（构建零时产物如 /tmp/esbuild-* 灌进回收站
+    // 是纯噪音，原生层还有内建默认兜底）。Windows 的 %TEMP% 由原生层展开内建，
+    // 这里统一传 os.tmpdir() 的解析结果保证覆盖。
+    const sandboxTrashExcludeDirs = effectiveUseDynamicSandbox
+        ? ['/tmp', '/var/tmp', '/dev/shm', os.tmpdir()].filter((dir, index, all) => dir && all.indexOf(dir) === index)
+        : undefined;
     const startTime = Date.now();
     // 沙箱权限弹窗等待用户决策期间暂停超时计时（见 dynabox 的 onPermissionWaitChange）
     const timeoutClock = new ShellTimeoutClock(timeout, startTime);
@@ -263,6 +270,7 @@ export async function executeShellCommand(opts: {
                   taskState,
                   deleteToTrash: effectiveDeleteToTrash,
                   trashDir: sandboxTrashDir,
+                  trashExcludeDirs: sandboxTrashExcludeDirs,
                   onPermissionWaitChange: (waiting) => {
                       if (waiting) timeoutClock.pause();
                       else timeoutClock.resume();
@@ -277,6 +285,7 @@ export async function executeShellCommand(opts: {
                     taskState,
                     deleteToTrash: effectiveDeleteToTrash,
                     trashDir: sandboxTrashDir,
+                    trashExcludeDirs: sandboxTrashExcludeDirs,
                     onPermissionWaitChange: (waiting) => {
                         if (waiting) timeoutClock.pause();
                         else timeoutClock.resume();
@@ -291,6 +300,7 @@ export async function executeShellCommand(opts: {
                       taskState,
                       deleteToTrash: effectiveDeleteToTrash,
                       trashDir: sandboxTrashDir,
+                      trashExcludeDirs: sandboxTrashExcludeDirs,
                       onPermissionWaitChange: (waiting) => {
                           if (waiting) timeoutClock.pause();
                           else timeoutClock.resume();
@@ -305,6 +315,7 @@ export async function executeShellCommand(opts: {
                         taskState,
                         deleteToTrash: effectiveDeleteToTrash,
                         trashDir: sandboxTrashDir,
+                        trashExcludeDirs: sandboxTrashExcludeDirs,
                         onPermissionWaitChange: (waiting) => {
                             if (waiting) timeoutClock.pause();
                             else timeoutClock.resume();

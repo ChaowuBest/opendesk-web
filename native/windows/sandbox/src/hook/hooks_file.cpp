@@ -247,6 +247,74 @@ static bool copyDirectoryTree(const std::wstring& src, const std::wstring& dst);
 // 递归删除目录树（原目录完整复制进回收站后清空原位置）。
 static bool removeDirectoryTree(const std::wstring& dir);
 
+// 目录是否为空（不含任何子项）。枚举失败（无权限等）返回 false 保守入站，
+// 绝不因判定失败而真删可能有内容的目录。
+static bool directoryIsEmpty(const std::wstring& dir)
+{
+    WIN32_FIND_DATAW fd;
+    HANDLE hFind = FindFirstFileW((dir + L"\\*").c_str(), &fd);
+    if (hFind == INVALID_HANDLE_VALUE) {
+        // 目录没有可枚举子项（ERROR_FILE_NOT_FOUND）视为空；其他错误保守视为非空
+        DWORD err = GetLastError();
+        return err == ERROR_FILE_NOT_FOUND || err == ERROR_PATH_NOT_FOUND;
+    }
+    bool empty = true;
+    do {
+        if (wcscmp(fd.cFileName, L".") == 0 || wcscmp(fd.cFileName, L"..") == 0) continue;
+        empty = false;
+        break;
+    } while (FindNextFileW(hFind, &fd));
+    FindClose(hFind);
+    return empty;
+}
+
+// 回收站排除清单命中判定（DYNOBOX_TRASH_EXCLUDE，';' 分隔目录前缀）：
+// 命中直接真删不入站——构建工具零时产物（%TEMP% 下 esbuild 缓存等）是
+// 回收站条目主要噪音。内建 %TEMP%/%TMP%/%SystemRoot%\Temp（即使宿主未传
+// 清单也保护）；大小写不敏感（Win32 路径语义）、组件边界、尾斜杠容忍。
+static bool trashExcluded(const std::wstring& normalizedPath)
+{
+    std::wstring list = g_trashExclude;
+    wchar_t tempBuf[MAX_PATH + 1];
+    for (const wchar_t* var : {L"TEMP", L"TMP"}) {
+        DWORD n = GetEnvironmentVariableW(var, tempBuf, MAX_PATH);
+        if (n > 0 && n <= MAX_PATH) {
+            if (!list.empty()) list += L';';
+            list += tempBuf;
+        }
+    }
+    {
+        wchar_t sysRoot[MAX_PATH + 1];
+        n = GetEnvironmentVariableW(L"SystemRoot", sysRoot, MAX_PATH);
+        if (n > 0 && n <= MAX_PATH) {
+            if (!list.empty()) list += L';';
+            list += std::wstring(sysRoot) + L"\\Temp";
+        }
+    }
+    // 条目规范化：剥尾斜杠 + 小写比较缓冲
+    std::wstring lowerPath = normalizedPath;
+    for (wchar_t& ch : lowerPath) ch = towlower(ch);
+    size_t start = 0;
+    while (start <= list.size()) {
+        size_t end = list.find(L';', start);
+        if (end == std::wstring::npos) end = list.size();
+        std::wstring entry = list.substr(start, end - start);
+        while (!entry.empty() && entry.back() == L'\\') entry.pop_back();
+        if (!entry.empty()) {
+            std::wstring lowerEntry = entry;
+            for (wchar_t& ch : lowerEntry) ch = towlower(ch);
+            if (lowerPath.size() >= lowerEntry.size() &&
+                lowerPath.compare(0, lowerEntry.size(), lowerEntry) == 0 &&
+                (lowerPath.size() == lowerEntry.size() || lowerPath[lowerEntry.size()] == L'\\')) {
+                return true;
+            }
+        }
+        if (end == list.size()) break;
+        start = end + 1;
+    }
+    return false;
+}
+
 // 配置了统一回收站（DYNOBOX_TRASH_DIR）时的删除实现：MoveFileExW 移动到
 // <trashDir>\<uuid>.back（跨卷文件自动复制+删除），并追加 summary.json 记录
 // 供 GUI 文件回收站搜索与找回。跨卷目录 MoveFileExW 不支持，退化为
@@ -266,9 +334,11 @@ static bool moveToOpenDeskTrash(const std::wstring& normalizedPath)
     // 大小：目录记 0，文件按字节数（GUI 列表展示用）
     unsigned long long sizeBytes = 0;
     bool isDirectory = false;
+    bool gotAttributes = false;
     {
         WIN32_FILE_ATTRIBUTE_DATA fad;
         if (GetFileAttributesExW(normalizedPath.c_str(), GetFileExInfoStandard, &fad)) {
+            gotAttributes = true;
             isDirectory = (fad.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) != 0;
             if (!isDirectory) {
                 ULARGE_INTEGER fileSize;
@@ -276,6 +346,36 @@ static bool moveToOpenDeskTrash(const std::wstring& normalizedPath)
                 fileSize.HighPart = fad.nFileSizeHigh;
                 sizeBytes = fileSize.QuadPart;
             }
+        }
+    }
+    // 无恢复价值的删除不入统一回收站（与 Linux/macOS 原生层语义一致），直接
+    // 真实删除：RecycleGuard/HookGuard 均已持有，此处的删除 API 直通真实实现，
+    // 不会再被 hook 分流。属性获取失败时保守入站，绝不据此真删可能有内容的对象。
+    //   - 空目录：rm -rf 的收尾 RemoveDirectory 全是空壳，找回没有意义；
+    //   - 0 字节普通文件：构建工具零时文件是回收站噪音主源；
+    //   - 非空目录保持整树入站（句柄级目录删除可能携带内容，有价值）；
+    //   - --trash-exclude 命中（含内建 %TEMP% 清单）：临时目录零噪音语义，真删
+    //     （非空排除树用 removeDirectoryTree 整树清除——排除命中已无"保留内容"价值）。
+    if (gotAttributes) {
+        bool excluded = trashExcluded(normalizedPath);
+        bool emptyDir = isDirectory && directoryIsEmpty(normalizedPath);
+        bool zeroFile = !isDirectory && sizeBytes == 0;
+        if (excluded || emptyDir || zeroFile) {
+            BOOL removed;
+            if (!isDirectory) {
+                removed = DeleteFileW(normalizedPath.c_str());
+            } else if (!excluded || emptyDir) {
+                removed = RemoveDirectoryW(normalizedPath.c_str());
+            } else {
+                // 排除命中的非空目录树：整树真删；失败保留残树并报错（下次可续删）
+                removed = removeDirectoryTree(normalizedPath) ? TRUE : FALSE;
+            }
+            if (!removed) {
+                Log::warn(L"[TRASH] 空内容/排除对象直接删除失败(%lu)，保留原文件: %ls",
+                          GetLastError(), normalizedPath.c_str());
+                return false;
+            }
+            return true;
         }
     }
     std::wstring target = g_trashDir + L"\\" + uuid + L".back";

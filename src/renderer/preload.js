@@ -1252,6 +1252,13 @@ if (shouldExposeMainWindowAPIs()) {
             }
             return result.data;
         },
+        // 主进程在窗口 maximize/unmaximize 事件时主动推送（X11 下 WM 异步应用
+        // 状态，invoke 返回后立即回查 isMaximized 会拿到旧值）
+        onMaximizeStateChanged: (callback) => {
+            ipcRenderer.on('setting:maximizeStateChanged', (_event, maximized) => {
+                callback(maximized);
+            });
+        },
         getProviderTemplates: async () => {
             const result = await ipcRenderer.invoke('setting:getProviderTemplates');
             if (result.status !== 'ok') {

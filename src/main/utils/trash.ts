@@ -460,6 +460,18 @@ export function cleanupTrashPreviewCopies(options?: TrashPreviewCleanupOptions):
             logger.warn(`[trash] 清理预览副本失败（跳过）: ${p} ${error}`);
         }
     };
+    // 收敛空目录：只删真正为空的目录。不可依赖 rmdirSync 对非空目录抛
+    // ENOTEMPTY 来"只删空目录"——各平台沙箱把删除拦截为移入统一回收站后，
+    // 非空目录也会被整体移走（未过期副本随之丢失），先显式确认目录为空再删。
+    const removeEmptyDirectory = (dir: string): boolean => {
+        try {
+            if (fs.readdirSync(dir).length > 0) return false;
+            fs.rmdirSync(dir);
+            return true;
+        } catch {
+            return false; // 非空、被占用或已消失：保留
+        }
+    };
 
     let taskDirs: string[];
     try {
@@ -490,17 +502,10 @@ export function cleanupTrashPreviewCopies(options?: TrashPreviewCleanupOptions):
                 removeIfExpired(path.join(uuidDir, name));
             }
             // 副本清空后收敛空的 uuid 目录
-            try {
-                fs.rmdirSync(uuidDir);
-            } catch {
-                // 非空或清理失败：保留
-            }
+            removeEmptyDirectory(uuidDir);
         }
-        try {
-            fs.rmdirSync(taskDir);
-        } catch {
-            // 非空：保留
-        }
+        // uuid 子目录全部清空后收敛空的 task 目录
+        removeEmptyDirectory(taskDir);
     }
     return removed;
 }

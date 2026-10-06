@@ -11,6 +11,7 @@
  *   rm <p> / rm_fail <p>          unlink
  *   mv <a> <b> / mv_fail <a> <b>  rename
  *   mkdir <d> / mkdir_fail <d> / rmdir <d> / rmdir_fail <d>
+ *   rmdirat <d> / rmdirat_fail <d>  unlinkat(AT_FDCWD, d, AT_REMOVEDIR)
  *   ls <d> / ls_fail <d>          opendir+readdir (count>0 for ls)
  *   stat_ok <p> / stat_fail <p>
  *   chmod_ok <p> / chmod_fail <p>
@@ -114,6 +115,9 @@ int main(int argc, char **argv)
     if (!strcmp(op, "mkdir_fail"))    return mkdir(argv[2], 0755) == 0 ? (printf("PROBE-FAIL mkdir succeeded\n"), 1) : 0;
     if (!strcmp(op, "rmdir"))         return rmdir(argv[2]) ? fail("rmdir", argv[2]) : 0;
     if (!strcmp(op, "rmdir_fail"))    return rmdir(argv[2]) == 0 ? (printf("PROBE-FAIL rmdir succeeded\n"), 1) : 0;
+    /* Node fs.rmdir/fs.rm 走 unlinkat(AT_REMOVEDIR)：回收站分流必须同样覆盖 */
+    if (!strcmp(op, "rmdirat"))       return unlinkat(AT_FDCWD, argv[2], AT_REMOVEDIR) ? fail("rmdirat", argv[2]) : 0;
+    if (!strcmp(op, "rmdirat_fail"))  return unlinkat(AT_FDCWD, argv[2], AT_REMOVEDIR) == 0 ? (printf("PROBE-FAIL rmdirat succeeded\n"), 1) : 0;
     if (!strcmp(op, "ls") || !strcmp(op, "ls_fail")) {
         DIR *d = opendir(argv[2]);
         if (op[0] == 'l' && op[1] == 's' && !strchr(op, '_')) {

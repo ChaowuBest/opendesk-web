@@ -869,6 +869,15 @@
             window.updateMaximizeIcon = updateMaximizeIcon;
             window.addEventListener('resize', updateMaximizeIcon);
             updateMaximizeIcon();
+            // 主进程在 maximize/unmaximize 事件时推送真实状态：X11 下 WM 异步
+            // 应用最大化，双击后立即回查拿到的还是旧值，靠 resize 兜底也不够
+            // （尺寸未变时无 resize）。订阅推送保证图标与自绘圆角及时同步。
+            if (window.settingAPI.onMaximizeStateChanged) {
+                window.settingAPI.onMaximizeStateChanged(function () {
+                    updateMaximizeIcon();
+                    if (window.updateWindowShape) window.updateWindowShape();
+                });
+            }
 
             // Linux 无边框窗口自绘圆角：最大化/全屏时取消圆角
             if (window.systemInfo && window.systemInfo.isLinux) {

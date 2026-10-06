@@ -117,7 +117,7 @@ describe('searchTrashEntries', () => {
         ]);
         const result = searchTrashEntries({ trashRoot, scope: 'task', taskId: 'task_a', keyword: 'report.q1' });
         expect(result.total).toBe(1);
-        expect(path.basename(result.entries[0].original_path)).toBe('Report.Q1.xlsx');
+        expect(result.entries[0].original_path.split(/[\\/]/).pop()).toBe('Report.Q1.xlsx');
     });
 
     test('全局范围：无关键字且提供 recentTaskIds 时只列出最近任务', () => {

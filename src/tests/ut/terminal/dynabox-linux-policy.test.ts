@@ -84,14 +84,26 @@ describe('policyTextLinux', () => {
         // 沙箱文本由 enforcer.getRules() 导出（回归见 ut/aikernel/app-policies.test.ts）；
         // 无 home 传入时（本用例未传）不含 git 规则。
     });
-    test('系统运行时读前缀补全：/system、/lib32、/sys、/proc、/data/service（回归：启动探测路径触发 ask 风暴）', () => {
+    test('系统运行时读前缀补全：/system、/lib32、/sys、/proc、/run、/data/service（回归：启动探测路径触发 ask 风暴）', () => {
         const text = policyTextLinux('http://127.0.0.1:1/decide', 't', '/home/liyi/work');
         // 与 OH 版共用同一清单：进程启动时系统库必读这些路径；缺失则每次 spawn
         // 都对 /system 等触发一次 ask（兜底 ask 不缓存），命令异常缓慢
-        for (const prefix of ['/system', '/sys', '/proc', '/data/service', '/lib32']) {
+        for (const prefix of ['/system', '/sys', '/proc', '/run', '/data/service', '/lib32']) {
             expect(text).toContain(`path = "${prefix}/**"\naccess = "read"\nperm = "allow"`);
             expect(text).toContain(`path = "${prefix}"\naccess = "read"\nperm = "allow"`);
         }
+    });
+    test('stat 家族由 native deny-only 承载：策略不再包含 stat 驱动的补丁规则（PATH 展开/祖先目录/静态 selinux）', () => {
+        // stat/access/readlink/opendir 等元数据读在 native preload 层统一为
+        // deny-only（不参与 allow/ask），见 preload.c 的 gate_meta_read——bash
+        // 的 PATH 搜索 stat、cwd 祖先链 stat、/selinux 探测都不再需要策略放行
+        // 规则。此处断言这些补丁未死灰复燃（防止回归成"策略膨胀 + 两处维护"）。
+        const text = policyTextLinux('http://127.0.0.1:1/decide', 't', '/home/liyi/work');
+        // 工作区祖先目录（bash $PWD 验证 stat 的对象）不应有 read allow
+        expect(text).not.toContain('path = "/home"\naccess = "read"\nperm = "allow"');
+        expect(text).not.toContain('path = "/home/liyi"\naccess = "read"\nperm = "allow"');
+        // 静态 /selinux 前缀规则不应出现（SELinux 探测是 access/stat，native 已豁免）
+        expect(text).not.toContain('path = "/selinux/**"\naccess = "read"\nperm = "allow"');
     });
 
     test('solo/unlimited（用户含全盘 read allow）：读/写兜底均为 allow（同长平局 ask 会架空全放行语义）', () => {
@@ -112,6 +124,36 @@ describe('policyTextLinux', () => {
         expect(text).toContain('path = "/home/liyi/.ssh/**"\naccess = "read"\nperm = "deny"');
         expect(text).toContain('path = "/home/liyi/.aws/**"\naccess = "read"\nperm = "deny"');
         expect(text).toContain('path = "/home/liyi/.gnupg/**"\naccess = "read"\nperm = "deny"');
+    });
+    test('/dev 终端与黑洞设备读写放行（对齐 core tty_dev/null 内建语义：重定向与终端 IO 不弹窗）', () => {
+        const text = policyTextLinux('http://127.0.0.1:1/decide', 't', '/home/liyi/work');
+        for (const p of ['/dev/null', '/dev/tty', '/dev/console', '/dev/ptmx']) {
+            expect(text).toContain(`path = "${p}"\naccess = "write"\nperm = "allow"`);
+            expect(text).toContain(`path = "${p}"\naccess = "read"\nperm = "allow"`);
+        }
+        expect(text).toContain('path = "/dev/pts/**"\naccess = "write"\nperm = "allow"');
+    });
+    test('readonly：/dev/null 与 /dev/tty 写仍放行（黑洞重定向与终端 IO 非持久化写入）', () => {
+        const rules = [
+            { resourceType: 'file', action: 'read', pathPattern: '/home/liyi/work/**', effect: 'allow' },
+            { resourceType: 'file', action: 'write', pathPattern: '**', effect: 'deny' }
+        ] as any[];
+        const text = policyTextLinux('http://127.0.0.1:1/decide', 't', '/home/liyi/work', rules);
+        expect(text).toContain('path = "/dev/null"\naccess = "write"\nperm = "allow"');
+        expect(text).toContain('path = "/dev/tty"\naccess = "write"\nperm = "allow"');
+    });
+    test('PATH 工具链目录读放行（nvm/pyenv 等家目录工具链的打开读取；区别于已移除的 stat 补丁）', () => {
+        // 非空段（绝对路径）都应展开为"目录本身 + 子树"读 allow
+        const dirs = (process.env.PATH || '')
+            .split(':')
+            .map((d) => d.trim())
+            .filter((d) => d.startsWith('/'));
+        expect(dirs.length).toBeGreaterThan(0);
+        const text = policyTextLinux('http://127.0.0.1:1/decide', 't', '/home/liyi/work');
+        for (const dir of dirs.slice(0, 3)) {
+            expect(text).toContain(`path = "${dir}"\naccess = "read"\nperm = "allow"`);
+            expect(text).toContain(`path = "${dir}/**"\naccess = "read"\nperm = "allow"`);
+        }
     });
     test('工具链缓存目录（~/.cache/opendesk-sandbox）写入放行（与 linux-sandbox env 重定向一致）', () => {
         const text = policyTextLinux('http://127.0.0.1:1/decide', 't', '/home/liyi/work', undefined, '/home/liyi');

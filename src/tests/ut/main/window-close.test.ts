@@ -28,6 +28,7 @@ function makeWindow(overrides: Record<string, unknown> = {}): MainWindowLike {
         isDestroyed: () => false,
         isMinimized: jest.fn(() => false),
         isVisible: jest.fn(() => true),
+        isMaximized: jest.fn(() => false),
         getNormalBounds: jest.fn(() => ({ x: 10, y: 20, width: 300, height: 200 })),
         restore: jest.fn(),
         show: jest.fn(),
@@ -204,6 +205,60 @@ describe('createMainWindowCloseHandler 关闭确认弹窗', () => {
 
         expect(deps.saveSettingData).toHaveBeenCalledWith({
             gui_config: { window_bounds: { x: 100, y: 50, width: 800, height: 600 } }
+        });
+    });
+
+    it('非最大化退出：window_bounds 不携带 is_maximized 字段', () => {
+        const win = makeWindow({ isMaximized: jest.fn(() => false) });
+        const { deps } = makeDeps({ window: win, isAppQuitting: () => true });
+        const handler = createMainWindowCloseHandler(deps);
+
+        handler({ preventDefault: jest.fn() } as CloseEvent);
+
+        const saved = (deps.saveSettingData as jest.Mock).mock.calls[0][0] as Record<string, unknown>;
+        expect(saved.gui_config).toEqual({
+            window_bounds: { x: 10, y: 20, width: 300, height: 200 }
+        });
+    });
+
+    it('最大化状态退出：保存 is_maximized 且 bounds 取可信 normal bounds（bug 复现）', () => {
+        // bug 复现：Linux 透明无边框窗口最大化后 getNormalBounds() 可能返回
+        // 最大化尺寸（restored bounds 缓存被污染）。若把坏值当 normal bounds
+        // 持久化，下次启动 setBounds 还原出"假最大化"窗口。
+        const badMaximizedBounds = { x: 0, y: 0, width: 1920, height: 1080 };
+        const realNormalBounds = { x: 100, y: 80, width: 1200, height: 800 };
+        const win = makeWindow({
+            isMaximized: jest.fn(() => true),
+            getNormalBounds: jest.fn(() => badMaximizedBounds)
+        });
+        const { deps } = makeDeps({ window: win, isAppQuitting: () => true });
+        deps.getTrustedNormalBounds = () => realNormalBounds;
+        const handler = createMainWindowCloseHandler(deps);
+
+        handler({ preventDefault: jest.fn() } as CloseEvent);
+
+        expect(deps.saveSettingData).toHaveBeenCalledWith({
+            gui_config: {
+                window_bounds: { ...realNormalBounds, is_maximized: true }
+            }
+        });
+    });
+
+    it('最大化状态退出且未注入可信 bounds 时：回退 getNormalBounds() 并保存 is_maximized', () => {
+        const badMaximizedBounds = { x: 0, y: 0, width: 1920, height: 1080 };
+        const win = makeWindow({
+            isMaximized: jest.fn(() => true),
+            getNormalBounds: jest.fn(() => badMaximizedBounds)
+        });
+        const { deps } = makeDeps({ window: win, isAppQuitting: () => true });
+        const handler = createMainWindowCloseHandler(deps);
+
+        handler({ preventDefault: jest.fn() } as CloseEvent);
+
+        expect(deps.saveSettingData).toHaveBeenCalledWith({
+            gui_config: {
+                window_bounds: { ...badMaximizedBounds, is_maximized: true }
+            }
         });
     });
 

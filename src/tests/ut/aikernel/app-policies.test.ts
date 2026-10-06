@@ -23,6 +23,7 @@ import { createAppPolicyRules } from '../../../main/aikernel/security/policies/i
 import { createGitPolicyRules } from '../../../main/aikernel/security/policies/git.js';
 import { createPythonPolicyRules } from '../../../main/aikernel/security/policies/python.js';
 import { createNodePolicyRules } from '../../../main/aikernel/security/policies/node.js';
+import { createNvmPolicyRules } from '../../../main/aikernel/security/policies/nvm.js';
 import { createUvPolicyRules } from '../../../main/aikernel/security/policies/uv.js';
 import { createSshPolicyRules } from '../../../main/aikernel/security/policies/ssh.js';
 import { createCargoPolicyRules } from '../../../main/aikernel/security/policies/cargo.js';
@@ -98,6 +99,18 @@ describe('node app 策略', () => {
         expect(allows).toContain(`${HOME_UNIX}/.harmonybrew/**`);
         const npmrc = rules.find((r) => r.pathPattern.endsWith('.npmrc'));
         expect(npmrc?.effect).toBe('ask');
+    });
+});
+
+describe('nvm app 策略', () => {
+    test('工具链整体读放行（版本树/nvm.sh/缓存），仅 read 无凭据规则', () => {
+        const rules = createNvmPolicyRules(HOME_UNIX);
+        const allows = rules.filter((r) => r.effect === 'allow').map((r) => r.pathPattern);
+        // 版本树整树：bin（PATH 上）与 lib/node_modules（bin 的兄弟目录，npm 自读）
+        expect(allows).toContain(`${HOME_UNIX}/.nvm/**`);
+        // 只有 read，无 write（防工具链持久化），无凭据类 ask 条目
+        expect(rules.every((r) => r.action === 'read')).toBe(true);
+        expect(createAppPolicyRules()).toEqual(expect.arrayContaining(createNvmPolicyRules()));
     });
 });
 
@@ -239,12 +252,18 @@ describe('app 策略接入 standard 模式引擎', () => {
     test('沙箱导出：standard 规则生成的 Windows/Linux 策略文本包含 git 运行时读放行', () => {
         const rules = createDefaultPermissionRules('D:/work');
         const osHome = os.homedir().replace(/\\/g, '/').replace(/\/+$/, '');
-        const winText = policyText('http://ep/decide', 't', rules, 'C:\\Users\\liyif');
-        const winVirtualHome = hostPatternToVirtual(osHome)!;
-        expect(winText).toContain(`path = ${JSON.stringify(`${winVirtualHome}/.gitconfig`)}`);
-        expect(winText).toContain(`path = ${JSON.stringify(`${winVirtualHome}/.config/git/ignore`)}`);
-        // 凭据在沙箱层导出为 ask（引擎 ask 规则原样导出）
-        expect(winText).toContain(`path = ${JSON.stringify(`${winVirtualHome}/.git-credentials`)}`);
+        // Windows 宿主：createDefaultPermissionRules 展开的 home 即 os.homedir()
+        // （盘符路径），经 hostPatternToVirtual 映射后应出现在导出文本中。Linux/
+        // macOS 宿主上 home 展开为 POSIX 路径，Windows 导出会跳过（hostPatternToVirtual
+        // 仅映射盘符路径），该链路由下方 policyTextLinux 覆盖等价语义。
+        if (process.platform === 'win32') {
+            const winText = policyText('http://ep/decide', 't', rules, 'C:\\Users\\liyif');
+            const winVirtualHome = hostPatternToVirtual(osHome)!;
+            expect(winText).toContain(`path = ${JSON.stringify(`${winVirtualHome}/.gitconfig`)}`);
+            expect(winText).toContain(`path = ${JSON.stringify(`${winVirtualHome}/.config/git/ignore`)}`);
+            // 凭据在沙箱层导出为 ask（引擎 ask 规则原样导出）
+            expect(winText).toContain(`path = ${JSON.stringify(`${winVirtualHome}/.git-credentials`)}`);
+        }
 
         // Linux 版直接用 Linux 形态 app 规则验证导出链路：引擎规则在 Windows
         // 宿主生成（{home} 已展开为 C:/Users/...），Linux 导出会跳过 Windows

@@ -183,7 +183,8 @@ const WindowBoundsSchema = z
         x: z.number(),
         y: z.number(),
         width: z.number().min(400),
-        height: z.number().min(300)
+        height: z.number().min(300),
+        is_maximized: z.boolean().optional().describe('上次退出时窗口是否处于最大化状态，缺省表示非最大化')
     })
     .nullable()
     .describe('上次退出时保存的窗口尺寸与位置， 表示从未保存');

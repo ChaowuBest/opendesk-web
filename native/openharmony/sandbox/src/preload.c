@@ -109,6 +109,9 @@ static char g_self_so[DBOX_PATH_MAX];
 static char g_cfg_b64[65536];
 static char g_tmp_dir[DBOX_PATH_MAX];   /* --tmp 映射目录（/tmp 重定向目标） */
 static char g_trash_dir[DBOX_PATH_MAX]; /* --del-to-trash 回收站目录 */
+/* 回收站排除清单（':' 分隔目录前缀，命中即真删不入站）：内建临时目录 +
+ * DYNOBOX_TRASH_EXCLUDE（--trash-exclude 累积），见 init 的 trash 段 */
+static char g_trash_exclude[8192];
 static char g_inject_ldpreload[DBOX_PATH_MAX * 2];
 
 typedef struct {
@@ -524,6 +527,60 @@ static int gate_check(gate_t *g, int acc, const char *what, int allow_system)
     return 1;
 }
 
+/* 元数据读（stat/access/readlink/opendir 等）：只做 deny 检查，**不参与
+ * allow/ask 判定**——存在性/属性探测不携带文件内容，查询结果（存在与否/
+ * 时间戳/大小）由真实 API 返回，与宿主导无沙箱行为一致。此前全量 read 判定
+ * 让 bash 的 PATH 搜索（逐目录 stat 候选命令，命令不存在也 stat）每次都触发
+ * read ask：cache_ttl=0 不缓存 → "ls && cat" 平凡命令冒 30+ 次无关 ask。
+ * 跨平台统一：Windows GetFileAttributes 即 sandboxCheckPathDenyOnly（只拦
+ * deny）；macOS 完全不 interpose stat 家族（全透传）。此处已对齐到 deny-only。
+ * 命中 deny 规则（含 readonly 全盘 read deny）→ EACCES；否则放行。 */
+static int gate_meta_read(gate_t *g, int acc, const char *what)
+{
+    if (g->tmp_area) return 1;
+    if (!g_ready) return 1;
+    pthread_mutex_lock(&g_pol_mu);
+    dperm_t perm = dbox_policy_eval_static_ex(&g_ctx.pol, g->vpath, acc, 1);
+    pthread_mutex_unlock(&g_pol_mu);
+    if (perm == PERM_DENY) {
+        dbox_logf("DENY  %-7s %s (%s)", dbox_access_name(acc & ACC_ALL), g->vpath, what);
+        errno = EACCES;
+        return 0;
+    }
+    return 1;
+}
+
+/* 元数据读 gate 入口：解析路径 → deny-only 判定。通过时把解析后的真实路径
+ * 交给调用方（--tmp 映射场景透传用）；未启用时返回 1（透传原路径）。 */
+static void gate_free(gate_t *g);   /* 定义在本函数之后 */
+static int gate_meta(const char *input, int nofollow_last, int acc,
+                     const char *what, char **realp)
+{
+    ensure_ready();
+    *realp = NULL;
+    if (!g_ready || !input || !input[0]) return 1;
+    gate_t g;
+    if (gate_resolve(input, nofollow_last, &g) != 0) { errno = EACCES; return 0; }
+    int ok = gate_meta_read(&g, acc, what);
+    if (ok && realp) {
+        *realp = g.real;
+        g.real = NULL;
+    }
+    gate_free(&g);
+    return ok;
+}
+
+/* 目标当前不存在（读/删探测语义，与 Windows GetFileAttributesExW 失败同源）：
+ * 用于"不存在路径透传"——read 打开/删除不存在的目标是 no-op（真实 API 返回
+ * ENOENT），沙箱若强行判定会把无害的探测变成 EACCES/ask 弹窗。 */
+static int path_not_exist(const char *p)
+{
+    struct stat st;
+    if (syscall(SYS_newfstatat, AT_FDCWD_C, p, &st, 0) != 0)
+        return errno == ENOENT;
+    return 0;
+}
+
 static void gate_free(gate_t *g)
 {
     dbox_free(g->vpath);
@@ -925,6 +982,21 @@ static void init_from_env(void)
             snprintf(g_trash_dir, sizeof g_trash_dir, "%s", n);
         dbox_free(n);
     }
+    /* 回收站排除清单：内建临时目录 + --trash-exclude 累积（DYNOBOX_TRASH_EXCLUDE，
+     * ':' 分隔）。构建工具的零时产物（/tmp 下的 esbuild 缓存目录等）是回收站
+     * 条目的主要噪音，命中清单的删除直接真删（trash_move 返回 -3）。清单截断
+     * 只缩小保护面（漏排除多入站），不会误删清单外路径。 */
+    {
+        const char *user_exclude = getenv("DYNOBOX_TRASH_EXCLUDE");
+        const char *built = "/tmp:/var/tmp:/dev/shm";
+        size_t off = 0;
+        int wrote = snprintf(g_trash_exclude, sizeof g_trash_exclude, "%s", built);
+        if (wrote > 0) off = (size_t)wrote;
+        if (g_tmp_dir[0] && off + 1 < sizeof g_trash_exclude)
+            off += (size_t)snprintf(g_trash_exclude + off, sizeof g_trash_exclude - off, ":%s", g_tmp_dir);
+        if (user_exclude && user_exclude[0] && off + 1 < sizeof g_trash_exclude)
+            snprintf(g_trash_exclude + off, sizeof g_trash_exclude - off, ":%s", user_exclude);
+    }
 
     g_ready = 1;
     dbox_logf("sandbox active (pid %ld, cwd %s, %d rules)",
@@ -978,6 +1050,17 @@ int open(const char *path, int flags, ...)
     char *real = NULL;
     int acc = acc_from_open_flags(flags);
     int nofollow = (flags & O_NOFOLLOW) ? 1 : 0;
+    /* 读模式且目标不存在 → 透传（真实 open 返回 ENOENT），不判定不 ask：
+     * 读不到任何内容，只是把"不存在"结果透传给探测/容错逻辑（Windows
+     * sandboxCheckNotExistRead、macOS wrap_unlink 同一哲学）。有创建位的
+     * open（O_CREAT/O_TMPFILE/截断/追加/写模式）走正常判定——那是"写入"语义。 */
+    if (acc == ACC_READ && dbox_path_has_content(path) && path_not_exist(path)) {
+        int fd = real_open(path, flags);
+        int e = errno;
+        if (fd >= 0) fd_record(fd, path, NULL, acc);
+        errno = e;
+        return fd;
+    }
     if (!gate1(path, nofollow, acc, "open", &real)) return -1;
     const char *p = xpath(path, real);
     int fd;
@@ -1007,6 +1090,13 @@ int open64(const char *path, int flags, ...)
     char *real = NULL;
     int acc = acc_from_open_flags(flags);
     int nofollow = (flags & O_NOFOLLOW) ? 1 : 0;
+    if (acc == ACC_READ && dbox_path_has_content(path) && path_not_exist(path)) {
+        int fd = real_open64(path, flags);
+        int e = errno;
+        if (fd >= 0) fd_record(fd, path, NULL, acc);
+        errno = e;
+        return fd;
+    }
     if (!gate1(path, nofollow, acc, "open64", &real)) return -1;
     const char *p = xpath(path, real);
     int fd;
@@ -1048,6 +1138,15 @@ int openat(int dirfd, const char *path, int flags, ...)
     }
     abs = at_abs(dirfd, path);
     if (!abs) { errno = EBADF; return -1; }
+    /* 读模式且目标不存在 → 透传（真实 openat 返回 ENOENT），不判定不 ask */
+    if (acc == ACC_READ && path_not_exist(abs)) {
+        fd = real_openat(dirfd, path, flags);
+        int e = errno;
+        if (fd >= 0) fd_record(fd, abs, NULL, acc);
+        dbox_free(abs);
+        errno = e;
+        return fd;
+    }
     if (!gate1(abs, nofollow, acc, "openat", &real)) { dbox_free(abs); return -1; }
     const char *p = xpath(path, real);
     if (flags & (O_CREAT | O_TMPFILE)) {
@@ -1089,6 +1188,14 @@ int openat64(int dirfd, const char *path, int flags, ...)
     }
     abs = at_abs(dirfd, path);
     if (!abs) { errno = EBADF; return -1; }
+    if (acc == ACC_READ && path_not_exist(abs)) {
+        fd = real_openat64(dirfd, path, flags);
+        int e = errno;
+        if (fd >= 0) fd_record(fd, abs, NULL, acc);
+        dbox_free(abs);
+        errno = e;
+        return fd;
+    }
     if (!gate1(abs, nofollow, acc, "openat64", &real)) { dbox_free(abs); return -1; }
     const char *p = xpath(path, real);
     if (flags & (O_CREAT | O_TMPFILE)) {
@@ -1227,9 +1334,10 @@ FILE *tmpfile64(void) { return tmpfile_common(real_tmpfile64, "tmpfile64"); }
 int stat(const char *path, struct stat *st)
 {
     char *real = NULL;
-    if (!gate1(path, 0, ACC_READ, "stat", &real)) return -1;
+    if (!gate_meta(path, 0, ACC_READ, "stat", &real)) return -1;
     int r = real_stat(xpath(path, real), st);
 
+    dbox_free(real);
     return r;
 }
 
@@ -1237,9 +1345,10 @@ int stat(const char *path, struct stat *st)
 int stat64(const char *path, struct stat64 *st)
 {
     char *real = NULL;
-    if (!gate1(path, 0, ACC_READ, "stat64", &real)) return -1;
+    if (!gate_meta(path, 0, ACC_READ, "stat64", &real)) return -1;
     int r = real_stat64(xpath(path, real), st);
 
+    dbox_free(real);
     return r;
 }
 #endif
@@ -1247,9 +1356,10 @@ int stat64(const char *path, struct stat64 *st)
 int lstat(const char *path, struct stat *st)
 {
     char *real = NULL;
-    if (!gate1(path, 1, ACC_READ, "lstat", &real)) return -1;
+    if (!gate_meta(path, 1, ACC_READ, "lstat", &real)) return -1;
     int r = real_lstat(xpath(path, real), st);
 
+    dbox_free(real);
     return r;
 }
 
@@ -1257,22 +1367,23 @@ int lstat(const char *path, struct stat *st)
 int lstat64(const char *path, struct stat64 *st)
 {
     char *real = NULL;
-    if (!gate1(path, 1, ACC_READ, "lstat64", &real)) return -1;
+    if (!gate_meta(path, 1, ACC_READ, "lstat64", &real)) return -1;
     int r = real_lstat64(xpath(path, real), st);
 
+    dbox_free(real);
     return r;
 }
 #endif
 
 int fstatat(int dirfd, const char *path, struct stat *st, int flags)
 {
-    if (!g_ready || !path || !path[0])
+    if (!g_ready || !dbox_path_has_content(path))
         return real_fstatat(dirfd, path, st, flags);
     char *abs = at_abs(dirfd, path);
     if (!abs) { errno = EBADF; return -1; }
     char *real = NULL;
     int nofollow = (flags & AT_SYMLINK_NOFOLLOW) ? 1 : 0;
-    if (!gate1(abs, nofollow, ACC_READ, "fstatat", &real)) { dbox_free(abs); return -1; }
+    if (!gate_meta(abs, nofollow, ACC_READ, "fstatat", &real)) { dbox_free(abs); return -1; }
     int r = XPAT_EXEC(real_fstatat, dirfd, path, real, st, flags);
     dbox_free(abs); dbox_free(real);
     return r;
@@ -1281,13 +1392,13 @@ int fstatat(int dirfd, const char *path, struct stat *st, int flags)
 #ifndef DBOX_LFS64_ARE_MACROS
 int fstatat64(int dirfd, const char *path, struct stat64 *st, int flags)
 {
-    if (!g_ready || !path || !path[0])
+    if (!g_ready || !dbox_path_has_content(path))
         return real_fstatat64(dirfd, path, st, flags);
     char *abs = at_abs(dirfd, path);
     if (!abs) { errno = EBADF; return -1; }
     char *real = NULL;
     int nofollow = (flags & AT_SYMLINK_NOFOLLOW) ? 1 : 0;
-    if (!gate1(abs, nofollow, ACC_READ, "fstatat64", &real)) { dbox_free(abs); return -1; }
+    if (!gate_meta(abs, nofollow, ACC_READ, "fstatat64", &real)) { dbox_free(abs); return -1; }
     int r = XPAT_EXEC(real_fstatat64, dirfd, path, real, st, flags);
     dbox_free(abs); dbox_free(real);
     return r;
@@ -1297,13 +1408,13 @@ int fstatat64(int dirfd, const char *path, struct stat64 *st, int flags)
 int statx(int dirfd, const char *path, int flags, unsigned int mask,
           struct statx *stx)
 {
-    if (!g_ready || !path || !path[0] || (flags & AT_EMPTY_PATH))
+    if (!g_ready || !dbox_path_has_content(path) || (flags & AT_EMPTY_PATH))
         return real_statx(dirfd, path, flags, mask, stx);
     char *abs = at_abs(dirfd, path);
     if (!abs) { errno = EBADF; return -1; }
     char *real = NULL;
     int nofollow = (flags & AT_SYMLINK_NOFOLLOW) ? 1 : 0;
-    if (!gate1(abs, nofollow, ACC_READ, "statx", &real)) { dbox_free(abs); return -1; }
+    if (!gate_meta(abs, nofollow, ACC_READ, "statx", &real)) { dbox_free(abs); return -1; }
     int r = XPAT_EXEC(real_statx, dirfd, path, real, flags, mask, stx);
     dbox_free(abs); dbox_free(real);
     return r;
@@ -1312,20 +1423,21 @@ int statx(int dirfd, const char *path, int flags, unsigned int mask,
 int access(const char *path, int mode)
 {
     char *real = NULL;
-    if (!gate1(path, 0, mode_to_acc(mode), "access", &real)) return -1;
+    if (!gate_meta(path, 0, mode_to_acc(mode), "access", &real)) return -1;
     int r = real_access(xpath(path, real), mode);
 
+    dbox_free(real);
     return r;
 }
 
 int faccessat(int dirfd, const char *path, int mode, int flags)
 {
-    if (!g_ready || !path || !path[0])
+    if (!g_ready || !dbox_path_has_content(path))
         return real_faccessat(dirfd, path, mode, flags);
     char *abs = at_abs(dirfd, path);
     if (!abs) { errno = EBADF; return -1; }
     char *real = NULL;
-    if (!gate1(abs, 0, mode_to_acc(mode), "faccessat", &real)) { dbox_free(abs); return -1; }
+    if (!gate_meta(abs, 0, mode_to_acc(mode), "faccessat", &real)) { dbox_free(abs); return -1; }
     int r = XPAT_EXEC(real_faccessat, dirfd, path, real, mode, flags);
     dbox_free(abs); dbox_free(real);
     return r;
@@ -1335,13 +1447,13 @@ int faccessat(int dirfd, const char *path, int mode, int flags)
 int faccessat2(int dirfd, const char *path, int mode, int flags)
 {
     if (!real_faccessat2) return faccessat(dirfd, path, mode, flags);
-    if (!g_ready || !path || !path[0])
+    if (!g_ready || !dbox_path_has_content(path))
         return real_faccessat2(dirfd, path, mode, flags);
     char *abs = at_abs(dirfd, path);
     if (!abs) { errno = EBADF; return -1; }
     char *real = NULL;
     int nofollow = (flags & AT_SYMLINK_NOFOLLOW) ? 1 : 0;
-    if (!gate1(abs, nofollow, mode_to_acc(mode), "faccessat2", &real)) { dbox_free(abs); return -1; }
+    if (!gate_meta(abs, nofollow, mode_to_acc(mode), "faccessat2", &real)) { dbox_free(abs); return -1; }
     int r = XPAT_EXEC(real_faccessat2, dirfd, path, real, mode, flags);
     dbox_free(abs); dbox_free(real);
     return r;
@@ -1351,20 +1463,21 @@ int faccessat2(int dirfd, const char *path, int mode, int flags)
 ssize_t readlink(const char *path, char *buf, size_t sz)
 {
     char *real = NULL;
-    if (!gate1(path, 1, ACC_READ, "readlink", &real)) return -1;
+    if (!gate_meta(path, 1, ACC_READ, "readlink", &real)) return -1;
     ssize_t r = real_readlink(xpath(path, real), buf, sz);
 
+    dbox_free(real);
     return r;
 }
 
 ssize_t readlinkat(int dirfd, const char *path, char *buf, size_t sz)
 {
-    if (!g_ready || !path || !path[0])
+    if (!g_ready || !dbox_path_has_content(path))
         return real_readlinkat(dirfd, path, buf, sz);
     char *abs = at_abs(dirfd, path);
     if (!abs) { errno = EBADF; return -1; }
     char *real = NULL;
-    if (!gate1(abs, 1, ACC_READ, "readlinkat", &real)) { dbox_free(abs); return -1; }
+    if (!gate_meta(abs, 1, ACC_READ, "readlinkat", &real)) { dbox_free(abs); return -1; }
     ssize_t r = XPAT_EXEC(real_readlinkat, dirfd, path, real, buf, sz);
     dbox_free(abs); dbox_free(real);
     return r;
@@ -1372,20 +1485,22 @@ ssize_t readlinkat(int dirfd, const char *path, char *buf, size_t sz)
 
 char *realpath(const char *path, char *resolved)
 {
-    if (!g_ready || !path || !path[0]) return real_realpath(path, resolved);
+    if (!g_ready || !dbox_path_has_content(path)) return real_realpath(path, resolved);
     char *real = NULL;
-    if (!gate1(path, 0, ACC_READ, "realpath", &real)) return NULL;
+    if (!gate_meta(path, 0, ACC_READ, "realpath", &real)) return NULL;
     char *r = real_realpath(xpath(path, real), resolved);
 
+    dbox_free(real);
     return r;
 }
 
 int statfs(const char *path, struct statfs *buf)
 {
     char *real = NULL;
-    if (!gate1(path, 0, ACC_READ, "statfs", &real)) return -1;
+    if (!gate_meta(path, 0, ACC_READ, "statfs", &real)) return -1;
     int r = real_statfs(xpath(path, real), buf);
 
+    dbox_free(real);
     return r;
 }
 
@@ -1393,9 +1508,10 @@ int statfs(const char *path, struct statfs *buf)
 int statfs64(const char *path, struct statfs64 *buf)
 {
     char *real = NULL;
-    if (!gate1(path, 0, ACC_READ, "statfs64", &real)) return -1;
+    if (!gate_meta(path, 0, ACC_READ, "statfs64", &real)) return -1;
     int r = real_statfs64(xpath(path, real), buf);
 
+    dbox_free(real);
     return r;
 }
 #endif
@@ -1403,9 +1519,10 @@ int statfs64(const char *path, struct statfs64 *buf)
 int statvfs(const char *path, struct statvfs *buf)
 {
     char *real = NULL;
-    if (!gate1(path, 0, ACC_READ, "statvfs", &real)) return -1;
+    if (!gate_meta(path, 0, ACC_READ, "statvfs", &real)) return -1;
     int r = real_statvfs(xpath(path, real), buf);
 
+    dbox_free(real);
     return r;
 }
 
@@ -1413,9 +1530,10 @@ int statvfs(const char *path, struct statvfs *buf)
 int statvfs64(const char *path, struct statvfs64 *buf)
 {
     char *real = NULL;
-    if (!gate1(path, 0, ACC_READ, "statvfs64", &real)) return -1;
+    if (!gate_meta(path, 0, ACC_READ, "statvfs64", &real)) return -1;
     int r = real_statvfs64(xpath(path, real), buf);
 
+    dbox_free(real);
     return r;
 }
 #endif
@@ -1427,7 +1545,10 @@ int statvfs64(const char *path, struct statvfs64 *buf)
 DIR *opendir(const char *path)
 {
     char *real = NULL;
-    if (!gate1(path, 0, ACC_READ, "opendir", &real)) return NULL;
+    /* 目录枚举只返回名字（元数据读）：deny-only，不参与 allow/ask（对齐
+     * Windows FindFirstFile 的目录探测豁免）。不存在目录由真实 opendir
+     * 返回 ENOENT，与宿主一致。 */
+    if (!gate_meta(path, 0, ACC_READ, "opendir", &real)) return NULL;
     DIR *d = real_opendir(xpath(path, real));
     int e = errno;
     if (d) {
@@ -1436,6 +1557,7 @@ DIR *opendir(const char *path)
     }
 
     errno = e;
+    dbox_free(real);
     return d;
 }
 
@@ -1445,9 +1567,10 @@ static int scandir_common(int (*fn)(const char *, struct dirent ***, int (*)(con
                           int (*cmp)(const struct dirent **, const struct dirent **))
 {
     char *real = NULL;
-    if (!gate1(path, 0, ACC_READ, "scandir", &real)) return -1;
+    if (!gate_meta(path, 0, ACC_READ, "scandir", &real)) return -1;
     int r = fn(xpath(path, real), out, sel, cmp);
 
+    dbox_free(real);
     return r;
 }
 
@@ -1464,9 +1587,10 @@ int scandir64(const char *path, struct dirent64 ***out,
               int (*cmp)(const struct dirent64 **, const struct dirent64 **))
 {
     char *real = NULL;
-    if (!gate1(path, 0, ACC_READ, "scandir64", &real)) return -1;
+    if (!gate_meta(path, 0, ACC_READ, "scandir64", &real)) return -1;
     int r = real_scandir64(xpath(path, real), out, sel, cmp);
 
+    dbox_free(real);
     return r;
 }
 #endif
@@ -1476,12 +1600,12 @@ int scandirat(int dirfd, const char *path, struct dirent ***out,
               int (*sel)(const struct dirent *),
               int (*cmp)(const struct dirent **, const struct dirent **))
 {
-    if (!g_ready || !path || !path[0])
+    if (!g_ready || !dbox_path_has_content(path))
         return real_scandirat(dirfd, path, out, sel, cmp);
     char *abs = at_abs(dirfd, path);
     if (!abs) { errno = EBADF; return -1; }
     char *real = NULL;
-    if (!gate1(abs, 0, ACC_READ, "scandirat", &real)) { dbox_free(abs); return -1; }
+    if (!gate_meta(abs, 0, ACC_READ, "scandirat", &real)) { dbox_free(abs); return -1; }
     int r = XPAT_EXEC(real_scandirat, dirfd, path, real, out, sel, cmp);
     dbox_free(abs); dbox_free(real);
     return r;
@@ -1491,9 +1615,10 @@ int scandirat(int dirfd, const char *path, struct dirent ***out,
 int ftw(const char *path, int (*fn)(const char *, const struct stat *, int), int nfd)
 {
     char *real = NULL;
-    if (!gate1(path, 0, ACC_READ, "ftw", &real)) return -1;
+    if (!gate_meta(path, 0, ACC_READ, "ftw", &real)) return -1;
     int r = real_ftw(xpath(path, real), fn, nfd);
 
+    dbox_free(real);
     return r;
 }
 
@@ -1501,9 +1626,10 @@ int ftw(const char *path, int (*fn)(const char *, const struct stat *, int), int
 int ftw64(const char *path, int (*fn)(const char *, const struct stat64 *, int), int nfd)
 {
     char *real = NULL;
-    if (!gate1(path, 0, ACC_READ, "ftw64", &real)) return -1;
+    if (!gate_meta(path, 0, ACC_READ, "ftw64", &real)) return -1;
     int r = real_ftw64(xpath(path, real), fn, nfd);
 
+    dbox_free(real);
     return r;
 }
 #endif
@@ -1511,9 +1637,10 @@ int ftw64(const char *path, int (*fn)(const char *, const struct stat64 *, int),
 int nftw(const char *path, int (*fn)(const char *, const struct stat *, int, struct FTW *), int nfd, int flags)
 {
     char *real = NULL;
-    if (!gate1(path, 0, ACC_READ, "nftw", &real)) return -1;
+    if (!gate_meta(path, 0, ACC_READ, "nftw", &real)) return -1;
     int r = real_nftw(xpath(path, real), fn, nfd, flags);
 
+    dbox_free(real);
     return r;
 }
 
@@ -1521,9 +1648,10 @@ int nftw(const char *path, int (*fn)(const char *, const struct stat *, int, str
 int nftw64(const char *path, int (*fn)(const char *, const struct stat64 *, int, struct FTW *), int nfd, int flags)
 {
     char *real = NULL;
-    if (!gate1(path, 0, ACC_READ, "nftw64", &real)) return -1;
+    if (!gate_meta(path, 0, ACC_READ, "nftw64", &real)) return -1;
     int r = real_nftw64(xpath(path, real), fn, nfd, flags);
 
+    dbox_free(real);
     return r;
 }
 #endif
@@ -1575,9 +1703,18 @@ static void trash_iso_utc(char *out, size_t outsz)
     clock_gettime(CLOCK_REALTIME, &ts);
     struct tm tm;
     gmtime_r(&ts.tv_sec, &tm);
-    snprintf(out, outsz, "%04d-%02d-%02dT%02d:%02d:%02d.%03ldZ",
-             tm.tm_year + 1900, tm.tm_mon + 1, tm.tm_mday,
-             tm.tm_hour, tm.tm_min, tm.tm_sec, (long)(ts.tv_nsec / 1000000));
+    /* 固定格式 "YYYY-MM-DDTHH:MM:SS.mmmZ"（24 字符）。先用 128 字节局部缓冲
+     * 格式化——固定字面 25 字节 + 6 个整数域（int 最宽 11 字节、long 最宽 20
+     * 字节）上界 111 < 128，绝无溢出；再按 outsz 受控复制到调用方缓冲。 */
+    char buf[128];
+    int len = sprintf(buf, "%04d-%02d-%02dT%02d:%02d:%02d.%03ldZ",
+                      tm.tm_year + 1900, tm.tm_mon + 1, tm.tm_mday,
+                      tm.tm_hour, tm.tm_min, tm.tm_sec, (long)(ts.tv_nsec / 1000000));
+    if (len < 0) len = 0;
+    if (outsz == 0) return;
+    if ((size_t)len >= outsz) len = (int)outsz - 1;
+    memcpy(out, buf, (size_t)len);
+    out[len] = '\0';
 }
 
 /* JSON 字符串转义（仅 \" \\ 与控制字符；非 ASCII 按 UTF-8 原样输出，合法 JSON）。 */
@@ -1610,7 +1747,9 @@ static int trash_append_summary(const char *trash_dir, const char *uuid,
                                 long long size, const char *deleted_at)
 {
     char path[DBOX_PATH_MAX];
-    snprintf(path, sizeof path, "%s/summary.json", trash_dir);
+    /* 路径超长（回收站目录接近 PATH_MAX）时截断会指向错误文件：fail-closed
+     * 直接失败（调用方记日志并回退），绝不静默写错位置。 */
+    if (snprintf(path, sizeof path, "%s/summary.json", trash_dir) >= (int)sizeof path) return -1;
 
     /* open 被本文件拦截（回收站目录对沙箱进程写保护 DENY，经策略层必然被拒）：
      * summary 是 loader 自身簿记，用 real 直通 */
@@ -1639,8 +1778,8 @@ static int trash_append_summary(const char *trash_dir, const char *uuid,
         int corrupt = (!o || !c || o > c);
         if (corrupt && len > 0) {
             char backup[DBOX_PATH_MAX];
-            snprintf(backup, sizeof backup, "%s/summary.json.corrupt-%ld",
-                     trash_dir, (long)time(NULL));
+            if (snprintf(backup, sizeof backup, "%s/summary.json.corrupt-%ld",
+                         trash_dir, (long)time(NULL)) >= (int)sizeof backup) break;
             trash_flock(fd, LOCK_UN);
             close(fd);
             if (real_rename(path, backup) != 0) break;
@@ -1724,10 +1863,33 @@ static int trash_append_summary(const char *trash_dir, const char *uuid,
  *  -2  跨文件系统（EXDEV）：回收站目录与被删文件在不同设备，rename 无法原子
  *      移动。此时**绝不可静默回退真删**（用户以为文件进了回收站可恢复，实则
  *      永久丢失且仅一行日志）——保留原文件并置 errno=EXDEV，由调用方把错误
- *      透出给用户（对齐 Windows MoveFileExW / Linux move_to_trash 的 fail-closed）。 */
+ *      透出给用户（对齐 Windows MoveFileExW / Linux move_to_trash 的 fail-closed）；
+ *  -3  无恢复价值（空目录 / 0 字节普通文件）——不入回收站，调用方直接真实删除。
+ *      找回空壳没有意义：rm -rf 的收尾 rmdir 与构建工具零时文件是回收站条目的
+ *      主要噪音源（目录经 rmdir/AT_REMOVEDIR 到达此处时内核语义保证必为空）。 */
 static int trash_move(const char *path, const char *what)
 {
     if (!g_trash_dir[0] || !path || !path[0]) return -1;
+    /* 命中排除清单（--trash-exclude / 内建临时目录）：与空目录/0B 文件同为
+     * "无保留价值"语义，直接真删（-3 由调用方回退真实删除） */
+    if (g_trash_exclude[0] && dbox_trash_excluded(path, g_trash_exclude, ':')) {
+        dbox_logf("trash %s excluded (matches --trash-exclude), unlinking: %s", what, path);
+        return -3;
+    }
+    /* 大小必须在 rename 前取（目录记 0；lstat 被本文件拦截，用 raw syscall） */
+    long long size_bytes = 0;
+    {
+        struct stat st;
+        if (syscall(SYS_newfstatat, AT_FDCWD_C, path, &st, AT_SYMLINK_NOFOLLOW) == 0) {
+            /* 空目录/0B 文件无恢复价值：不入站直接真删（-3），判定逻辑与
+             * Windows/macOS 原生层一致（dbox_trash_worth_keeping，有单测） */
+            if (!dbox_trash_worth_keeping(st.st_mode, (long long)st.st_size)) return -3;
+            if (!S_ISDIR(st.st_mode)) size_bytes = (long long)st.st_size;
+        }
+        /* stat 失败时保守入站：绝不因取不到大小而真删可能有内容的文件 */
+    }
+    /* 回收站目录由 launcher 创建，此处防御性重建（放在无价值分流之后：
+     * 空目录/0B 文件直接真删，不必为它们建目录） */
     {
         char tb[DBOX_PATH_MAX];
         snprintf(tb, sizeof tb, "%s", g_trash_dir);
@@ -1740,19 +1902,16 @@ static int trash_move(const char *path, const char *what)
         }
         if (syscall(SYS_mkdirat, AT_FDCWD, tb, 0755) != 0 && errno != EEXIST) return -1;
     }
-    /* 大小必须在 rename 前取（目录记 0；lstat 被本文件拦截，用 raw syscall） */
-    long long size_bytes = 0;
-    {
-        struct stat st;
-        if (syscall(SYS_newfstatat, AT_FDCWD_C, path, &st, AT_SYMLINK_NOFOLLOW) == 0 &&
-            !S_ISDIR(st.st_mode)) {
-            size_bytes = (long long)st.st_size;
-        }
-    }
     char uuid[37];
     trash_uuid(uuid);
     char dest[DBOX_PATH_MAX];
-    snprintf(dest, sizeof dest, "%s/%s.back", g_trash_dir, uuid);
+    /* 回收站目录 + 36 字符 uuid 超过 PATH_MAX 时 rename 目标名会截断成另一个
+     * 合法路径（数据风险）：fail-closed 保留原文件，由调用方按回收站不可用
+     * 语义回退（unlink 时真删、rmdir 时原语义），绝不静默改名。 */
+    if (snprintf(dest, sizeof dest, "%s/%s.back", g_trash_dir, uuid) >= (int)sizeof dest) {
+        dbox_logf("trash %s failed (trash dir too long), keeping file: %s", what, path);
+        return -1;
+    }
     int r = real_rename(path, dest);
     if (r == 0) {
         /* 记录失败不回滚移动（文件已在回收站，仅缺索引），留下诊断日志 */
@@ -1776,10 +1935,22 @@ static int trash_move(const char *path, const char *what)
 
 int unlink(const char *path)
 {
+    ensure_ready();
+    /* 目标不存在 → no-op 透传（POSIX unlink 返回 ENOENT）：不判定不 ask、
+     * 不进回收站。对齐 Windows sandboxCheckNotExistDelete（commit 735dec5a：
+     * clang 等工具清理已 rename 走的 .o.tmp 残留时，回收站分流会把无害操作
+     * 变成 ACCESS_DENIED 致命错误）与 macOS wrap_unlink（stat 失败即透传）。 */
+    if (g_ready && dbox_path_has_content(path)) {
+        struct stat st;
+        if (syscall(SYS_newfstatat, AT_FDCWD_C, path, &st, AT_SYMLINK_NOFOLLOW) != 0 &&
+            errno == ENOENT)
+            return real_unlink(path);
+    }
     char *real = NULL;
     if (!gate1(path, 1, ACC_WRITE, "unlink", &real)) return -1;
     const char *xp = xpath(path, real);
-    /* 本次沙箱实例新建的文件：删除直接清除，不进回收站（临时文件语义） */
+    /* 本次沙箱实例新建的文件：删除直接清除，不进回收站（临时文件语义）；
+     * trash_move 返回 -3（空目录/0B 文件，无恢复价值）同样落到末尾真实删除 */
     if (g_trash_dir[0] && !dbox_shm_newfile_has(xp)) {
         int tr = trash_move(xp, "unlink");
         if (tr == 0) {
@@ -1800,14 +1971,26 @@ int unlink(const char *path)
 
 int unlinkat(int dirfd, const char *path, int flags)
 {
-    if (!g_ready || !path || !path[0])
+    ensure_ready();
+    if (!g_ready || !dbox_path_has_content(path))
         return real_unlinkat(dirfd, path, flags);
     char *abs = at_abs(dirfd, path);
     if (!abs) { errno = EBADF; return -1; }
+    /* 目标不存在 → no-op 透传（真实 unlinkat 返回 ENOENT），不判定不 ask */
+    {
+        struct stat st;
+        if (syscall(SYS_newfstatat, AT_FDCWD_C, abs, &st, AT_SYMLINK_NOFOLLOW) != 0 &&
+            errno == ENOENT) {
+            dbox_free(abs);
+            return real_unlinkat(dirfd, path, flags);
+        }
+    }
     char *real = NULL;
     if (!gate1(abs, 1, ACC_WRITE, "unlinkat", &real)) { dbox_free(abs); return -1; }
     const char *target = real && real[0] ? real : abs;
     int r;
+    /* trash_move 返回 -3（空目录/0B 文件，无恢复价值）落到末尾真实删除；
+     * AT_REMOVEDIR 的空目录与 rmdir 同语义，一并跳过回收站 */
     if (g_trash_dir[0] && !dbox_shm_newfile_has(target)) {
         int tr = trash_move(target, "unlinkat");
         if (tr == 0) {
@@ -1829,9 +2012,19 @@ int unlinkat(int dirfd, const char *path, int flags)
 
 int rmdir(const char *path)
 {
+    ensure_ready();
+    /* 目录不存在 → no-op 透传（真实 rmdir 返回 ENOENT），不判定不 ask */
+    if (g_ready && dbox_path_has_content(path)) {
+        struct stat st;
+        if (syscall(SYS_newfstatat, AT_FDCWD_C, path, &st, AT_SYMLINK_NOFOLLOW) != 0 &&
+            errno == ENOENT)
+            return real_rmdir(path);
+    }
     char *real = NULL;
     if (!gate1(path, 1, ACC_WRITE, "rmdir", &real)) return -1;
     const char *xp = xpath(path, real);
+    /* rmdir 语义只删空目录：trash_move 返回 -3（无恢复价值）落到末尾真实删除，
+     * rm -rf 的收尾 rmdir 不再产生空壳回收站条目 */
     if (g_trash_dir[0] && !dbox_shm_newfile_has(xp)) {
         int tr = trash_move(xp, "rmdir");
         if (tr == 0) {
@@ -1929,7 +2122,7 @@ int mkdir(const char *path, mode_t mode)
 
 int mkdirat(int dirfd, const char *path, mode_t mode)
 {
-    if (!g_ready || !path || !path[0])
+    if (!g_ready || !dbox_path_has_content(path))
         return real_mkdirat(dirfd, path, mode);
     char *abs = at_abs(dirfd, path);
     if (!abs) { errno = EBADF; return -1; }
@@ -1951,7 +2144,7 @@ int chmod(const char *path, mode_t mode)
 
 int fchmodat(int dirfd, const char *path, mode_t mode, int flags)
 {
-    if (!g_ready || !path || !path[0])
+    if (!g_ready || !dbox_path_has_content(path))
         return real_fchmodat(dirfd, path, mode, flags);
     char *abs = at_abs(dirfd, path);
     if (!abs) { errno = EBADF; return -1; }
@@ -2024,7 +2217,7 @@ int lchown(const char *path, uid_t u, gid_t g)
 
 int fchownat(int dirfd, const char *path, uid_t u, gid_t g, int flags)
 {
-    if (!g_ready || !path || !path[0] || (flags & AT_EMPTY_PATH))
+    if (!g_ready || !dbox_path_has_content(path) || (flags & AT_EMPTY_PATH))
         return real_fchownat(dirfd, path, u, g, flags);
     char *abs = at_abs(dirfd, path);
     if (!abs) { errno = EBADF; return -1; }
@@ -2116,7 +2309,7 @@ int symlink(const char *target, const char *linkpath)
 
 int symlinkat(const char *target, int newdirfd, const char *linkpath)
 {
-    if (!g_ready || !linkpath || !linkpath[0])
+    if (!g_ready || !dbox_path_has_content(linkpath))
         return real_symlinkat(target, newdirfd, linkpath);
     char *an = at_abs(newdirfd, linkpath);
     if (!an) { errno = EBADF; return -1; }
@@ -2142,7 +2335,7 @@ int mknod(const char *path, mode_t mode, dev_t dev)
 
 int mknodat(int dirfd, const char *path, mode_t mode, dev_t dev)
 {
-    if (!g_ready || !path || !path[0])
+    if (!g_ready || !dbox_path_has_content(path))
         return real_mknodat(dirfd, path, mode, dev);
     char *abs = at_abs(dirfd, path);
     if (!abs) { errno = EBADF; return -1; }
@@ -2164,7 +2357,7 @@ int mkfifo(const char *path, mode_t mode)
 
 int mkfifoat(int dirfd, const char *path, mode_t mode)
 {
-    if (!g_ready || !path || !path[0])
+    if (!g_ready || !dbox_path_has_content(path))
         return real_mkfifoat(dirfd, path, mode);
     char *abs = at_abs(dirfd, path);
     if (!abs) { errno = EBADF; return -1; }
@@ -2204,7 +2397,7 @@ int lutimes(const char *path, const struct timeval t[2])
 
 int futimesat(int dirfd, const char *path, const struct timeval t[2])
 {
-    if (!g_ready || !path || !path[0])
+    if (!g_ready || !dbox_path_has_content(path))
         return real_futimesat(dirfd, path, t);
     char *abs = at_abs(dirfd, path);
     if (!abs) { errno = EBADF; return -1; }
@@ -2217,7 +2410,7 @@ int futimesat(int dirfd, const char *path, const struct timeval t[2])
 
 int utimensat(int dirfd, const char *path, const struct timespec t[2], int flags)
 {
-    if (!g_ready || !path || !path[0])
+    if (!g_ready || !dbox_path_has_content(path))
         return real_utimensat(dirfd, path, t, flags);
     char *abs = at_abs(dirfd, path);
     if (!abs) { errno = EBADF; return -1; }
@@ -2550,7 +2743,7 @@ char *getcwd(char *buf, size_t size)
 void *dlopen(const char *path, int flags)
 {
     ensure_ready();
-    if (g_ready && path && path[0] && !(flags & RTLD_NOLOAD)) {
+    if (g_ready && dbox_path_has_content(path) && !(flags & RTLD_NOLOAD)) {
         /* a shared object is code: treat loading it as execute */
         char *real = NULL;
         if (!gate1(path, 0, ACC_EXEC, "dlopen", &real)) return NULL;
@@ -2565,7 +2758,7 @@ void *dlopen(const char *path, int flags)
 void *dlmopen(Lmid_t lmid, const char *path, int flags)
 {
     ensure_ready();
-    if (g_ready && path && path[0] && !(flags & RTLD_NOLOAD)) {
+    if (g_ready && dbox_path_has_content(path) && !(flags & RTLD_NOLOAD)) {
         char *real = NULL;
         if (!gate1(path, 0, ACC_EXEC, "dlmopen", &real)) return NULL;
         void *h = real_dlmopen(lmid, path, flags);

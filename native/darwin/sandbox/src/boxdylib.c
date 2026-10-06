@@ -225,6 +225,7 @@ extern int __posix_spawn(pid_t *pid, const char *path, const posix_spawn_file_ac
 #define ENV_LOG "OPENDESK_SANDBOX_LOG"
 #define ENV_TRASH "OPENDESK_SANDBOX_TRASH"
 #define ENV_TRASH_DIR "OPENDESK_SANDBOX_TRASH_DIR"
+#define ENV_TRASH_EXCLUDE "OPENDESK_SANDBOX_TRASH_EXCLUDE"
 #define ENV_EXEC_CACHE "OPENDESK_SANDBOX_EXEC_CACHE"
 
 #define DEFAULT_EXEC_CACHE "/private/tmp/opendesk-sandbox-exec"
@@ -572,6 +573,39 @@ static bool path_in_trash(const char *path)
     if (strncmp(path, trash, tn) != 0) return false;
     /* 组件边界：恰好等于目录本身，或后随 '/' */
     return pn == tn || path[tn] == '/';
+}
+
+/* 回收站排除清单匹配（--trash-exclude / OPENDESK_SANDBOX_TRASH_EXCLUDE，
+ * ':' 分隔）：命中任一目录前缀（组件边界，同 path_in_trash 的比较模式）
+ * 返回 true——删除分流直接真删、不入回收站。内建临时目录 + 宿主传入清单。
+ * 清单截断只缩小保护面（漏排除多入站），不会误删清单外路径。 */
+static bool trash_excluded(const char *path)
+{
+    if (!path || !*path) return false;
+    char list[4096];
+    const char *built = "/tmp:/var/tmp:/private/var/tmp:/private/var/folders";
+    const char *user = getenv(ENV_TRASH_EXCLUDE);
+    const char *tmpdir = getenv("TMPDIR");
+    size_t off = (size_t)snprintf(list, sizeof list, "%s", built);
+    if (tmpdir && *tmpdir && off + 1 < sizeof list)
+        off += (size_t)snprintf(list + off, sizeof list - off, ":%s", tmpdir);
+    if (user && *user && off + 1 < sizeof list)
+        snprintf(list + off, sizeof list - off, ":%s", user);
+    const char *start = list;
+    for (const char *p = list;; p++) {
+        if (*p == ':' || *p == '\0') {
+            size_t tn = (size_t)(p - start);
+            while (tn > 1 && start[tn - 1] == '/') tn--;
+            size_t pn = strlen(path);
+            while (pn > 1 && path[pn - 1] == '/') pn--;
+            if (tn > 0 && pn >= tn && strncmp(path, start, tn) == 0 &&
+                (pn == tn || path[tn] == '/'))
+                return true;
+            if (*p == '\0') break;
+            start = p + 1;
+        }
+    }
+    return false;
 }
 
 /* 策略判定主入口：0=放行，非 0=拒绝（errno=EACCES） */
@@ -1285,6 +1319,18 @@ static int trash_or_remove_internal(const char *path, const struct stat *st, boo
         /* 沙箱实例内新建：直接清除 */
         int rc = is_dir ? rmdir(path) : unlink(path);
         return rc;
+    }
+    /* 命中排除清单（--trash-exclude / 内建临时目录，如 $TMPDIR 下构建工具
+     * 的零时产物）：与空目录/0B 文件同为"无保留价值"，直接清除不入回收站 */
+    if (trash_excluded(path)) {
+        slog("trash excluded (matches --trash-exclude), removing: %s", path);
+        return is_dir ? rmdir(path) : unlink(path);
+    }
+    /* 无恢复价值的目标不入回收站：空目录（rmdir/AT_REMOVEDIR 语义只删空目录，
+     * rm -rf 的收尾 rmdir 是空壳条目主要来源）与 0 字节普通文件（构建零时文件
+     * 噪音），找回空壳没有意义——直接清除，与 Linux/Windows 原生层语义一致 */
+    if (is_dir || (S_ISREG(st->st_mode) && st->st_size == 0)) {
+        return is_dir ? rmdir(path) : unlink(path);
     }
     const char *trash_dir = getenv(ENV_TRASH_DIR);
     char resolved_trash[PATH_MAX];

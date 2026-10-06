@@ -418,7 +418,7 @@ int dbox_system_allow(const char *path, int acc)
          * Policy is evaluated on resolved (real) paths, so the real prefix
          * has to be listed here as well. */
         "/system",
-        "/sys", "/proc", "/data/service",
+        "/sys", "/proc", "/run", "/data/service",
         "/etc/ld.so.cache", "/etc/ld.so.preload", "/etc/nsswitch.conf",
         "/etc/localtime", "/etc/timezone", "/etc/hosts", "/etc/hostname",
         "/etc/resolv.conf", "/etc/gai.conf", "/etc/passwd", "/etc/group",

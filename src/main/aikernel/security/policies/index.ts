@@ -29,6 +29,7 @@ import type { PermissionRule } from '../permission.js';
 import { createGitPolicyRules } from './git.js';
 import { createPythonPolicyRules } from './python.js';
 import { createNodePolicyRules } from './node.js';
+import { createNvmPolicyRules } from './nvm.js';
 import { createUvPolicyRules } from './uv.js';
 import { createSshPolicyRules } from './ssh.js';
 import { createCargoPolicyRules } from './cargo.js';
@@ -48,6 +49,7 @@ const ALL_APP_POLICY_FACTORIES: AppPolicyFactory[] = [
     createGitPolicyRules,
     createPythonPolicyRules,
     createNodePolicyRules,
+    createNvmPolicyRules,
     createUvPolicyRules,
     createSshPolicyRules,
     createCargoPolicyRules,
