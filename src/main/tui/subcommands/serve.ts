@@ -125,7 +125,7 @@ async function initializeServeRuntime(opts: { consoleTransport: boolean }) {
     await ApplicationRegistry.ensureFullyLoaded();
     GlobalState.getInstance().taskManagerState.toolsetProvider = combineToolsetProviders(
         {
-            listAvailableToolsets: () => ApplicationRegistry.listAvailableToolsets()
+            listAvailableToolsets: (taskState) => ApplicationRegistry.listAvailableToolsets(taskState)
         },
         new PluginToolsetProvider()
     );

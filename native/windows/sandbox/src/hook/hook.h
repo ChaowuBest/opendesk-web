@@ -19,6 +19,8 @@ enum class AccessClass { Read, Write, Execute };
 // hook 全局状态（dllmain.cpp 初始化，hooks_*.cpp 使用）
 extern bool g_hooked;           // Detour patch 是否已提交
 extern bool g_delToTrash;       // 删除送回收站
+extern std::wstring g_trashDir; // OpenDesk 统一回收站目录（DYNOBOX_TRASH_DIR，<opendesk>/trash/<taskId>）
+extern std::wstring g_trashExclude; // 回收站排除清单（DYNOBOX_TRASH_EXCLUDE，';' 分隔目录前缀）
 extern Policy g_policy;         // 子进程内联策略（roots 已展开）
 
 // 重入保护：hook 函数内部调用其他被 hook 的 API（SHFileOperation/GetLongPathName）
@@ -39,13 +41,28 @@ bool sandboxCheckPath(const std::wstring& hostPath, AccessClass access, DWORD& w
 // 框架探测类操作的仅-deny 判定：ask/allow 一律放行（不触发 ask），deny 仍拦截。
 bool sandboxCheckPathDenyOnly(const std::wstring& hostPath, AccessClass access, DWORD& winErr);
 
+// 目录读探测的通用判定：read 类访问且目标当前是已存在目录时视为探测（不触发
+// ask，deny 仍拦截）；目标非目录或不存在时返回 false（调用方走正常 read 判定）。
+bool sandboxCheckDirReadProbe(const std::wstring& hostPath, DWORD& winErr);
+
+// 会话内自建文件的读回判定：read 类访问且目标由沙箱会话内进程创建时视为读回
+// 自身产物（不触发 ask，deny 仍拦截）；非会话内创建时返回 false。
+bool sandboxCheckSessionCreatedRead(const std::wstring& hostPath, DWORD& winErr);
+
+// 不存在路径的读放行：read 类访问且目标当前不存在（ENOENT 透传，不触发 ask，
+// deny 仍拦截）；目标存在或查询失败时返回 false（走正常 read 判定）。
+bool sandboxCheckNotExistRead(const std::wstring& hostPath, DWORD& winErr);
+
 // 路径特殊设备/虚设备（NUL、CON、\\.\ 设备、命名管道）不做文件系统判定。
 bool isSpecialDevicePath(const std::wstring& path);
 
 // CreateFileW 的访问类别分解（与 Dokan 版 AccessKinds 语义对齐）。
 AccessClass categorizeCreateAccess(DWORD desiredAccess, DWORD creationDisposition);
 
-// 回收站删除（SHFileOperation FOF_ALLOWUNDO）。成功返回 true。
+// 删除分流送回收站：配置了 DYNOBOX_TRASH_DIR 时移入 OpenDesk 统一回收站
+// （<uuid>.back + summary.json 记录，供 GUI 文件回收站找回）；未配置时退回
+// 系统回收站（SHFileOperation FOF_ALLOWUNDO）。成功返回 true（原文件已不在
+// 原位置）；失败返回 false（调用方保留原文件，绝不静默永久删除）。
 bool recycleToTrash(const std::wstring& path);
 
 // 取句柄的完整规范化路径（\\?\ 前缀，动态缓冲避免 MAX_PATH 截断 fail-open）。
@@ -64,6 +81,13 @@ bool sandboxCheckRenameTarget(const std::wstring& sourcePath, const void* info, 
 // 由 runner 注入）。会话内创建的文件删除视为自发清理：不触发 ask、不进回收站，
 // 直接删除（Dokan 版"实例内创建跟踪"的等价语义，无需共享内存/ADS）。
 bool sandboxSessionCreated(const std::wstring& hostPath);
+
+// 删除类操作的目标不存在判定：目标当前不存在（GetFileAttributesExW 返回
+// FILE_NOT_FOUND / PATH_NOT_FOUND）→ 透传真实 API 结果，不进回收站。与
+// sandboxCheckNotExistRead 同哲学（删除不存在文件是 no-op，回收站分流会把
+// 无害操作变成 ACCESS_DENIED 致命错误——clang 编译 .o.tmp rename 即受害）。
+// 返回 true = 应透传真实 API（*winErr 写判定错误码）；false = 正常删除判定。
+bool sandboxCheckNotExistDelete(const std::wstring& hostPath, DWORD& winErr);
 
 // -- 被拦截的 API 的原始入口（dllmain.cpp 初始化，hooks_*.cpp 使用）---------
 

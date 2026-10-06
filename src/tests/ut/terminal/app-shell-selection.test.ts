@@ -11,6 +11,7 @@ const shells = [
 ];
 jest.unstable_mockModule('../../../main/utils/setting.js', () => ({
     getLogDirectory: () => '/tmp/opendesk-test',
+    getOpendeskDirectory: () => '/tmp/opendesk-test',
     Setting: class {
         static afterSetDataCallbacks = afterSetDataCallbacks;
         static getInstance() {
@@ -77,6 +78,48 @@ test.each([{}, { shell_path: 'C:/missing.exe', shell_sandboxed: true }])(
         expect(launches[0]).toEqual({ name: 'executePwsh', args: [shells[0].path, false, false] });
     }
 );
+
+test('unlimited mode forces every shell to run without the sandbox and drops the recycle-bin preference', async () => {
+    // 模拟 Linux/macOS/OpenHarmony 形态：bash、zsh 各有沙箱变体（LD_PRELOAD/DYLD/dynobox）
+    const platformShells = [
+        { kind: 'powershell', path: 'C:/Windows/powershell.exe', sandboxed: false },
+        { kind: 'powershell', path: 'C:/Windows/powershell.exe', sandboxed: true },
+        { kind: 'bash', path: '/bin/bash', sandboxed: false },
+        { kind: 'bash', path: '/bin/bash', sandboxed: true },
+        { kind: 'zsh', path: '/bin/zsh', sandboxed: false },
+        { kind: 'zsh', path: '/bin/zsh', sandboxed: true }
+    ];
+    scan.mockReturnValueOnce(platformShells);
+    const app = new TerminalApplication();
+
+    // Windows PowerShell 沙箱变体 + 回收站偏好：unlimited 下强制降级为非沙箱
+    taskConfig = { shell_path: shells[1].path, shell_sandboxed: true, shell_sandbox_del_to_trash: true };
+    launches.length = 0;
+    await app.getToolsets({ activeModeId: 'unlimited' } as never);
+    expect(launches[0]).toEqual({ name: 'executePwsh', args: [shells[1].path, false, false] });
+    expect(launches[1]).toEqual({ name: 'checkShellStatus', args: ['powershell', false] });
+
+    // Linux/macOS/OpenHarmony 的 bash 沙箱变体同样被禁用，回收站随沙箱失效
+    taskConfig = { shell_path: '/bin/bash', shell_sandboxed: true, shell_sandbox_del_to_trash: true };
+    launches.length = 0;
+    await app.getToolsets({ activeModeId: 'unlimited' } as never);
+    expect(launches[0]).toEqual({ name: 'executeBash', args: ['/bin/bash', false, false] });
+    expect(launches[1]).toEqual({ name: 'checkShellStatus', args: ['bash', false] });
+
+    // zsh（macOS/OpenHarmony 默认 shell）沙箱变体同样被禁用
+    taskConfig = { shell_path: '/bin/zsh', shell_sandboxed: true, shell_sandbox_del_to_trash: true };
+    launches.length = 0;
+    await app.getToolsets({ activeModeId: 'unlimited' } as never);
+    expect(launches[0]).toEqual({ name: 'executeZsh', args: ['/bin/zsh', false, false, false] });
+    expect(launches[1]).toEqual({ name: 'checkShellStatus', args: ['zsh', false] });
+
+    // 非 unlimited 模式（standard）不受影响：bash 沙箱变体与回收站偏好照常生效
+    taskConfig = { shell_path: '/bin/bash', shell_sandboxed: true, shell_sandbox_del_to_trash: true };
+    launches.length = 0;
+    await app.getToolsets({ activeModeId: 'standard' } as never);
+    expect(launches[0]).toEqual({ name: 'executeBash', args: ['/bin/bash', true, true] });
+    expect(launches[1]).toEqual({ name: 'checkShellStatus', args: ['bash', true] });
+});
 
 test('passes the recycle-bin preference only to an enabled sandboxed powershell', async () => {
     const app = new TerminalApplication();

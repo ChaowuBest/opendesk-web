@@ -11,8 +11,10 @@
 #include <ctype.h>
 #include <errno.h>
 #include <sys/stat.h>
+#ifndef _WIN32
 #include <sys/socket.h>
 #include <sys/un.h>
+#endif
 
 void *dbox_malloc(size_t n)
 {
@@ -197,6 +199,7 @@ unsigned char *dbox_b64decode(const char *in, size_t *outlen)
     return r;
 }
 
+#ifndef _WIN32
 /* Can a unix socket actually be bound in this directory? Directory
  * existence/writability is not enough: HarmonyOS rejects bind() on HMDFS
  * (EPERM) and on tmpfs mounts such as /dev/shm (EACCES by SELinux). */
@@ -204,12 +207,15 @@ static int dir_hosts_sockets(const char *dir)
 {
     int fd = socket(AF_UNIX, SOCK_STREAM, 0);
     if (fd < 0) return 0;
-    char p[256];
-    snprintf(p, sizeof p, "%s/.dynobox-probe-%ld", dir, (long)getpid());
     struct sockaddr_un sa;
+    /* sun_path 容量为 108（Linux/glibc）；超长路径本就无法 bind unix socket，
+     * 探测失败返回 0，避免截断后 bind 到错误路径误判目录可用。 */
+    char p[sizeof sa.sun_path];
+    int plen = snprintf(p, sizeof p, "%s/.dynobox-probe-%ld", dir, (long)getpid());
+    if (plen < 0 || (size_t)plen >= sizeof p) { close(fd); return 0; }
     memset(&sa, 0, sizeof sa);
     sa.sun_family = AF_UNIX;
-    snprintf(sa.sun_path, sizeof sa.sun_path, "%s", p);
+    memcpy(sa.sun_path, p, (size_t)plen + 1);
     int ok = bind(fd, (struct sockaddr *)&sa, sizeof sa) == 0;
     if (ok) unlink(p);
     close(fd);
@@ -254,4 +260,59 @@ const char *dbox_pipe_dir(void)
 void dbox_pipe_path(const char *name, char *out, size_t outsz)
 {
     snprintf(out, outsz, "%s/%s.sock", dbox_pipe_dir(), name);
+}
+#else
+/* Windows：pipe:// 由既有 ask.cpp 的命名管道传输实现，core 侧无需 unix
+ * socket 探测。提供 getenv 兜底避免链接错误（bridge 不调用时为死代码）。 */
+const char *dbox_pipe_dir(void)
+{
+    static char cached[256];
+    if (cached[0]) return cached;
+    const char *env = getenv("DYNOBOX_PIPE_DIR");
+    if (env && env[0]) { snprintf(cached, sizeof cached, "%s", env); return cached; }
+    snprintf(cached, sizeof cached, "\\\\.\\pipe\\dynobox-pipes");
+    return cached;
+}
+
+void dbox_pipe_path(const char *name, char *out, size_t outsz)
+{
+    snprintf(out, outsz, "%s\\%s", dbox_pipe_dir(), name);
+}
+#endif
+
+int dbox_trash_worth_keeping(unsigned int mode, long long size)
+{
+    if (S_ISDIR(mode)) return 0;               /* 空壳目录（rmdir 语义保证为空） */
+    if (S_ISREG(mode) && size == 0) return 0;  /* 0 字节普通文件 */
+    return 1;
+}
+
+int dbox_trash_excluded(const char *path, const char *list, char sep)
+{
+    if (!path || !path[0] || !list || !list[0]) return 0;
+    const char *start = list;
+    for (const char *p = list;; p++) {
+        if (*p == sep || *p == '\0') {
+            size_t len = (size_t)(p - start);
+            if (len > 0 && len < 1024) {
+                char seg[1024];
+                memcpy(seg, start, len);
+                seg[len] = '\0';
+                if (dbox_path_under(path, seg)) return 1;
+            }
+            if (*p == '\0') break;
+            start = p + 1;
+        }
+    }
+    return 0;
+}
+
+int dbox_path_has_content(const char *p)
+{
+    return p && p[0] != '\0';
+}
+
+int dbox_ptr_set(const void *p)
+{
+    return p != NULL;
 }

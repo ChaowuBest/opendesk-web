@@ -9,6 +9,8 @@
  * See the Mulan PSL v2 for more details.
  */
 
+import path from 'node:path';
+
 import type { PermissionRule } from '../../../aikernel/security/permission.js';
 
 export function expandPermissionPattern(pattern: string): string[] {
@@ -113,8 +115,12 @@ export function policyText(
     // 整个回收站（数据风险）；而 --del-to-trash 写入回收站经 SHFileOperation 内部
     // 操作（hook 已用进程级 RecycleGuard 抑制，不做策略判定），本就无需放通。
     const systemWritePaths = [
+        ...(home && home.length >= 2 ? [`/${home[0].toUpperCase()}/Windows/system32/catroot**`] : []),
         '/C/Windows/system32/catroot**', // Windows Update 组件存储（catroot/catroot2）
-        '/C/Windows/Temp/**', // 系统 Temp（安装器/更新临时文件）
+        // 系统 Temp（安装器/更新临时文件）：系统盘符随机器（泛化：从 home 盘符
+        // 推导 %SystemRoot%，系统装在其他盘时 C: 版本可能不存在但不有害）
+        ...(home && home.length >= 2 ? [`/${home[0].toUpperCase()}/Windows/Temp/**`] : []),
+        '/C/Windows/Temp/**',
         '/C/ProgramData/Microsoft/Windows/Caches/**', // 系统级缓存
         '/C/Users/*/AppData/Local/Microsoft/Windows/Caches/**', // 用户级缓存
         '/C/Users/*/AppData/Roaming/Microsoft/Windows/Recent/**', // Recent/AutomaticDestinations
@@ -127,7 +133,16 @@ export function policyText(
         '/C/**/__pycache__/**',
         // Windows App Installer（winget 等组件）诊断日志目录：组件启动时静默写入，
         // 与 catroot/Caches 同类，放通不产生安全面（仅日志落盘）
-        '/C/Users/*/AppData/Local/Packages/*/LocalState/DiagOutputDir/**'
+        '/C/Users/*/AppData/Local/Packages/*/LocalState/DiagOutputDir/**',
+        // Authenticode 签名校验缓存（CryptnetUrlCache）：.NET/PowerShell 校验下载
+        // 证书时落盘 MetaData/<内容哈希> 文件，每次签名校验都写；read 已由
+        // windowsRuntimeReadPatterns 放行，write 在此放行（纯缓存，路径为 GUID/
+        // 哈希命名，用户不可读——此前每次启动 PowerShell 都对它弹 ask）
+        '/C/Users/*/AppData/LocalLow/Microsoft/CryptnetUrlCache/**',
+        // PowerShell 执行策略检测临时脚本落盘区（LocalLow\Temp，随机名形如
+        // __PSScriptPolicyTest_<随机>.ps1）：引擎启动时创建/清理，放行写入
+        // （对齐 tempRoot 的 %TEMP% 语义，仅 LocalLow 变体）
+        '/C/Users/*/AppData/LocalLow/Temp/**'
     ];
     return [
         'version = 1',
@@ -147,34 +162,144 @@ export function policyText(
         ...(cacheRoot ? [`[[rules]]\npath = ${quote(cacheRoot)}\naccess = "write"\nperm = "allow"`] : []),
         // 宿主用户 Temp 写入放行（镜像层共享 Temp 别名，见 dynobox Runner）
         ...(tempRoot ? [`[[rules]]\npath = ${quote(tempRoot)}\naccess = "write"\nperm = "allow"`] : []),
-        // OpenDesk 框架自身数据目录（日志/任务产物/任务数据）写放行
-        ...opendeskWritePaths.map((path) => `[[rules]]\npath = ${quote(path)}\naccess = "write"\nperm = "allow"`),
-        // 系统维护路径写放通（见 systemWritePaths 注释）
+        // OpenDesk 框架自身数据目录（日志/任务产物/任务数据）写放行。
+        // readonly 模式（全盘 write deny 用户规则在位）跳过——most-specific 下
+        // 这些更具体的 allow 会架空 readonly 的写保护（与 Linux/OH 同理）。
+        ...(!isReadonlyModeRules(rules)
+            ? opendeskWritePaths.map((path) => `[[rules]]\npath = ${quote(path)}\naccess = "write"\nperm = "allow"`)
+            : []),
+        // 系统维护路径写放通（见 systemWritePaths 注释；readonly 下保留——系统
+        // 组件的自更新写入本就在 OS ACL 层被拒，deny 它们不增加保护只会制造
+        // 噪声错误；readonly 的写保护针对用户数据区）
         ...systemWritePaths.map((path) => `[[rules]]\npath = ${quote(path)}\naccess = "write"\nperm = "allow"`),
-        '[[rules]]',
-        'path = "/**"',
-        'access = "read"',
-        'perm = "allow"',
-        '',
-        '[[rules]]',
-        'path = "/**"',
-        'access = "write"',
-        'perm = "ask"',
-        '',
-        '[[rules]]',
-        'path = "/**"',
-        'access = "execute"',
-        'perm = "allow"',
-        ''
+        ...(isReadonlyModeRules(rules)
+            ? [
+                  // readonly：系统运行时 read allow（PATH 搜索的 stat 是 read，
+                  // 全盘 read deny 会让 PowerShell 连 cmdlet 都加载不出来），然后
+                  // 工作区外读写全拒（不弹 ask——readonly 无交互可用）。
+                  // temp 读也要放行（PowerShell 管道临时文件写后需读回；tempRoot
+                  // 的盘符/用户前缀已由 %TEMP% 展开泛化）。temp 的 write allow 在
+                  // 前面已声明（tempRoot），most-specific 下胜过此处的全盘 deny。
+                  ...(tempRoot ? [`[[rules]]\npath = ${quote(tempRoot)}\naccess = "read"\nperm = "allow"`] : []),
+                  ...['/C/Windows/**', '/C/Program Files/**', '/C/Program Files (x86)/**', '/C/ProgramData/**'].flatMap(
+                      (p) => [`[[rules]]\npath = ${quote(p)}\naccess = "read"\nperm = "allow"`]
+                  ),
+                  '[[rules]]',
+                  'path = "/**"',
+                  'access = "read"',
+                  'perm = "deny"',
+                  '',
+                  '[[rules]]',
+                  'path = "/**"',
+                  'access = "write"',
+                  'perm = "deny"',
+                  ''
+              ]
+            : [
+                  // 非 readonly：工作区外读走 ask（standard"工作空间外需确认"）。
+                  // 系统运行时读放行（windowsRuntimeReadPatterns：系统目录、PATH 上
+                  // 的一切目录（命令 PATH 搜索=逐目录 stat，实测每目录一次读 ask，
+                  // 生成时展开当前 PATH——任何机器的工具布局都覆盖）、CryptoAPI
+                  // 证书链缓存、.NET 运行时缓存）。读兜底按用户规则取值：
+                  // solo/unlimited（全盘 read allow）用 allow（同长平局 ask>allow，
+                  // ask 会架空全放行）；standard 用 ask。
+                  ...windowsRuntimeReadPatterns(home).map(
+                      (p) => `[[rules]]\npath = ${quote(p)}\naccess = "read"\nperm = "allow"`
+                  ),
+                  ...POSIX_TEMP_DIR_PATTERNS.map(
+                      (p) => `[[rules]]\npath = ${quote(p)}\naccess = "read"\nperm = "allow"`
+                  ),
+                  '[[rules]]',
+                  'path = "/**"',
+                  'access = "read"',
+                  `perm = ${quote(readFallbackPerm(rules))}`,
+                  '',
+                  '[[rules]]',
+                  'path = "/**"',
+                  'access = "write"',
+                  'perm = "ask"',
+                  '',
+                  '[[rules]]',
+                  'path = "/**"',
+                  'access = "execute"',
+                  'perm = "allow"',
+                  ''
+              ])
     ].join('\n');
 }
 
-/** Linux 版策略文本：透明路径（roots virtual=real=工作区），规则 path 为宿主真实路径。 */
+/**
+ * Windows 运行时读放行路径清单（standard 外读 ask 兜底下的豁免集）。
+ * 全部从当前环境推导（盘符/用户/工具布局随机器变化，不硬编码）：
+ * - 系统目录（Windows/Program Files/ProgramData，盘符从 home 推导）
+ * - PSModulePath 用户模块目录（PowerShell 5.1/7 的模块搜索逐目录 stat）
+ * - PATH 上的一切目录（命令 PATH 搜索 = 逐目录 stat，实测每目录一次读 ask，
+ *   生成时展开当前 PATH——任何机器的工具布局都覆盖）
+ * - CryptoAPI 证书链缓存（LocalLow/Microsoft/CryptnetUrlCache——签名校验必需）
+ * - .NET/PowerShell 运行时缓存（AppData/Local/Microsoft）
+ * 只放 read：这些目录的写仍由 ask/权限引擎管控（防运行时目录持久化攻击）。
+ *
+ * 路径格式：返回的每条规则都必须经 hostPatternToVirtual 转为沙箱虚拟路径
+ * （/C/...）。此前直接拼接 `C:/Windows/**` 会经 normalizeVirtualPath 变成
+ * `/C:/Windows/**`（盘符后带冒号），与 vpath `/C/Windows/**` 永不匹配——
+ * 系统运行时读豁免整体失效，PowerShell/.NET 启动时 Defender 平台 DLL、证书
+ * 缓存、模块分析缓存等每次访问都落到兜底 read ask（cache_ttl=0 不缓存，
+ * 同一路径被反复询问，表现为删除命令时冒大量奇怪地址的 ask）。
+ */
+function windowsRuntimeReadPatterns(home?: string): string[] {
+    const patterns: string[] = [];
+    const virtualHome =
+        home && home.length >= 2 ? `${home[0].toUpperCase()}:${home.slice(2).replace(/\\/g, '/')}` : null;
+    if (virtualHome) {
+        const sysDrive = `${virtualHome[0]}:`;
+        for (const raw of [
+            `${sysDrive}/Windows/**`,
+            `${sysDrive}/Program Files/**`,
+            `${sysDrive}/Program Files (x86)/**`,
+            `${sysDrive}/ProgramData/**`,
+            `${virtualHome}/AppData/Local/Microsoft/**`,
+            `${virtualHome}/AppData/LocalLow/Microsoft/**`
+        ]) {
+            const virtual = hostPatternToVirtual(raw);
+            if (virtual) patterns.push(virtual);
+        }
+        // PSModulePath 用户模块目录（Windows PowerShell 5.1 与 PowerShell 7 各一）：
+        // 模块搜索对目录本身逐 stat，`/**` 规则只覆盖子树，须与 PATH 目录同样
+        // 同时放行目录本身与子树
+        for (const raw of [
+            `${virtualHome}/Documents/WindowsPowerShell/Modules`,
+            `${virtualHome}/Documents/PowerShell/Modules`
+        ]) {
+            const virtual = hostPatternToVirtual(raw);
+            if (virtual) patterns.push(virtual, `${virtual}/**`);
+        }
+    }
+    // PATH 展开：命令的 PATH 搜索逐目录 stat（观测证实每目录一次读 ask），
+    // 目录本身与子树都放行（stat 命中目录本身，读文件命中子树）。
+    for (const dir of (process.env.PATH || '').split(';')) {
+        if (!dir) continue;
+        const virtual = hostPatternToVirtual(path.win32.normalize(dir.trim()));
+        if (!virtual) continue;
+        patterns.push(virtual, `${virtual}/**`);
+    }
+    return patterns;
+}
+
+/** Linux 版策略文本：LD_PRELOAD 身份命名空间（路径无映射），规则 path 为宿主真实路径。 */
 export function permissionRulesForSandboxLinux(rules: PermissionRule[] | undefined): string[] {
     return rulesToLines(rules, hostPatternToVirtualLinux);
 }
 
-/** 整根读放行兜底下的显式收窄：家目录内不允许读取的敏感路径 */
+/**
+ * git 凭据与运行时读规则已迁移至 security/policies/git.ts（app 专属策略，
+ * 注入 standard 模式权限引擎）。沙箱启动时 enforcer.getRules() 会把引擎全部
+ * 规则（含 app 策略）经 permissionRulesForSandbox / permissionRulesForSandboxLinux
+ * 导出为策略文本——单一来源，此处不再维护终端专用副本。
+ * 注意：app 策略的凭据 ask 保护在导出后成为原生层 ask 规则；凭据读在沙箱内
+ * 仍会弹窗确认（与引擎语义一致，用户确认一次即可记住）。
+ */
+
+/** 默认读放行兜底下的显式收窄：家目录内不允许读取的敏感路径 */
 const SENSITIVE_HOME_DIRS = [
     '.ssh',
     '.aws',
@@ -186,9 +311,9 @@ const SENSITIVE_HOME_DIRS = [
     '.git-credentials'
 ];
 
-/** 从 [ask] 到文件末尾的策略行（Linux / OpenHarmony 共用）。两者的区别仅在
- * 头部：Linux(FUSE) 用 [[roots]] 整根映射，OpenHarmony(LD_PRELOAD 身份命名
- * 空间) 无路径映射、规则直接用真实路径。 */
+/** 从 [ask] 到文件末尾的策略行（Linux / OpenHarmony 共用：两者都是 LD_PRELOAD
+ * 身份命名空间，路径无映射，规则 path 直接用宿主真实路径）。区别仅在
+ * `extraWritableDirs`（OH 版有应用沙箱 temp/cache 总是可写）。 */
 function policyLinuxTail(
     quote: (value: string) => string,
     endpoint: string,
@@ -196,8 +321,17 @@ function policyLinuxTail(
     workspaceRoot: string,
     rules?: PermissionRule[],
     home?: string,
-    extraWritableDirs?: string[]
+    extraWritableDirs?: string[],
+    opendeskDataDir?: string,
+    readonlyMode?: boolean
 ): string[] {
+    // 读兜底：readonly=deny（不弹窗）；solo/unlimited=allow（用户已全放行，
+    // 同长平局下 ask 会架空）；standard=ask（"工作空间外需确认"）。
+    const readAllowFallback = readFallbackPerm(rules);
+    // 写兜底同理：solo/unlimited 的全盘 write allow 不能被兜底 ask 架空
+    //（unlimited e2e U2 实测：工作区外写被 ask 拒）。readonly 不走这里（全盘
+    // write deny 由用户规则+工作区重申承载）。
+    const writeAllowFallback = hasGlobalWriteAllow(rules) ? 'allow' : 'ask';
     return [
         '',
         '[ask]',
@@ -211,7 +345,7 @@ function policyLinuxTail(
         ...permissionRulesForSandboxLinux(rules),
         // git 全局身份配置允许写（沙箱内 git commit 常用；凭据文件在敏感清单中已 deny）
         ...(home ? [`[[rules]]\npath = ${quote(`${home}/.gitconfig`)}\naccess = "write"\nperm = "allow"`] : []),
-        // 家目录敏感路径读 deny（整根布局下默认读放行，须显式收窄私密文件）
+        // 家目录敏感路径读 deny（默认读放行，须显式收窄私密文件）
         ...(home
             ? SENSITIVE_HOME_DIRS.map(
                   (dir) => `[[rules]]\npath = ${quote(`${home}/${dir}/**`)}\naccess = "read"\nperm = "deny"`
@@ -230,39 +364,136 @@ function policyLinuxTail(
                   `[[rules]]\npath = ${quote(`${home}/Library/Caches/com.apple.python/**`)}\naccess = "write"\nperm = "allow"`
               ]
             : []),
-        // OpenDesk 自身数据目录（回收站 ~/.opendesk/trash/<taskId>/ 由 C 侧 rename
-        // 写入，不经弹窗；沙箱进程无感知）——放行避免误弹窗
-        ...(home ? [`[[rules]]\npath = ${quote(`${home}/.opendesk/**`)}\naccess = "write"\nperm = "allow"`] : []),
-        // 任务工作区写入放行（早于兜底 write ask 命中）
-        '[[rules]]',
-        `path = ${quote(`${workspaceRoot}/**`)}`,
-        'access = "write"',
-        'perm = "allow"',
-        '',
+        // 统一回收站目录写保护（对齐 Windows 不放行回收站、OH 原生 trash-protected
+        // DENY 的姿态）：回收站是误删数据的恢复区，沙箱进程可写即可清空整个回收站。
+        // --del-to-trash 的写入由 C 侧 internal 豁免（LD_PRELOAD 层自身写回收站
+        // 目录不受策略判定），不经策略判定，不受此 deny 影响
+        ...(opendeskDataDir
+            ? [
+                  `[[rules]]\npath = ${quote(`${opendeskDataDir.replace(/\/+$/, '')}/trash/**`)}\naccess = "write"\nperm = "deny"`
+              ]
+            : []),
+        // OpenDesk 自身数据目录（logs/artifacts/tasks 等框架运行期写入）写放行避免
+        // 误弹窗；未显式传入时按默认布局 ~/.opendesk 推导。
+        // readonlyMode：跳过（readonly 下框架数据目录同样不可写——模式承诺"禁止
+        // 任何写入"，most-specific 下这条规则会架空同区域的全盘 deny）。
+        ...(home && !readonlyMode
+            ? [
+                  `[[rules]]\npath = ${quote(`${(opendeskDataDir ?? `${home}/.opendesk`).replace(/\/+$/, '')}/**`)}\naccess = "write"\nperm = "allow"`
+              ]
+            : []),
+        // 任务工作区写入放行（早于兜底 write ask 命中）。
+        // readonlyMode：用户规则含全盘 write deny（readonly 模式签名）时
+        // 不追加——most-specific 下更具体的 workspace allow 会架空全盘 deny。
+        ...(readonlyMode
+            ? []
+            : ['[[rules]]', `path = ${quote(`${workspaceRoot}/**`)}`, 'access = "write"', 'perm = "allow"', '']),
         // 额外可写目录（OpenHarmony 应用沙箱 temp/cache 等；须在兜底 write ask 之前）
         ...(extraWritableDirs ?? []),
-        // /var/tmp（bash here doc 临时文件、sort 临时文件等）——不放行则
-        // configure/自动工具在沙箱内全部卡死
-        '[[rules]]',
-        'path = "/var/tmp/**"',
-        'access = "write"',
-        'perm = "allow"',
+        // 跨平台临时目录（shell 管道/heredoc/编译器落盘区；泛化清单见
+        // POSIX_TEMP_DIR_PATTERNS）。readonly 模式下这些目录**读写 allow**：
+        // 管道命令的临时文件必须可落盘（盘符/路径差异已由清单泛化，Windows 的
+        // %TEMP% 由 policyText 的 tempRoot 覆盖）。
+        ...POSIX_TEMP_DIR_PATTERNS.flatMap((p) => [
+            `[[rules]]\npath = ${quote(p)}\naccess = "write"\nperm = "allow"`,
+            `[[rules]]\npath = ${quote(p)}\naccess = "read"\nperm = "allow"`
+        ]),
+        // /dev 终端与黑洞设备读写放行（standard 的 `/** write ask` 会让每条
+        // `>/dev/null` 重定向都弹窗；readonly 亦保留——黑洞/终端 IO 无持久化面）
+        ...[...POSIX_DEV_DEVICES, ...POSIX_DEV_TREES].flatMap((p) => [
+            `[[rules]]\npath = ${quote(p)}\naccess = "write"\nperm = "allow"`,
+            `[[rules]]\npath = ${quote(p)}\naccess = "read"\nperm = "allow"`
+        ]),
+        // readonly：工作区 write deny 重申（在 temp allow 之后）——工作区恰位于
+        // 临时目录之下时（测试特例/用户把项目放进 /tmp），temp 的更宽 allow
+        // 会顶掉全盘 deny；工作区前缀比 /tmp/** 更具体，写保护恢复。
+        ...(readonlyMode
+            ? ['[[rules]]', `path = ${quote(`${workspaceRoot}/**`)}`, 'access = "write"', 'perm = "deny"']
+            : []),
         '',
-        '[[rules]]',
-        'path = "/private/var/tmp/**"',
-        'access = "write"',
-        'perm = "allow"',
-        '',
-        '[[rules]]',
-        'path = "/**"',
-        'access = "read"',
-        'perm = "allow"',
-        '',
-        '[[rules]]',
-        'path = "/**"',
-        'access = "write"',
-        'perm = "ask"',
-        '',
+        ...(readonlyMode
+            ? [
+                  // readonly 模式：工作区外读写一律拒绝（不弹 ask——readonly 无交互
+                  // 可用，弹窗只会卡死无人值守会话；"工作区外需确认"的确认途径是
+                  // 建议用户切换模式）。temp/工作区 read allow（更具体）已放行所需路径。
+                  //
+                  // 系统运行时路径 read allow：PATH 搜索（sh 找 cat/ls）是 read stat，
+                  // 全盘 read deny 会连 /usr/bin/cat 都找不到（readonly 仍需基础工具
+                  // "检查工作区内容"）。清单与 core 的 system_read 内建前缀一致。
+                  ...LINUX_SYSTEM_READ_PREFIXES.flatMap((p) => [
+                      `[[rules]]\npath = ${quote(`${p}/**`)}\naccess = "read"\nperm = "allow"`,
+                      `[[rules]]\npath = ${quote(p)}\naccess = "read"\nperm = "allow"`
+                  ]),
+                  // PATH 上工具链目录（nvm/pyenv 等家目录布局）的打开读取放行
+                  //（readonly 保留：只读放行，工具自检 execPath/dlopen 必需）
+                  ...linuxRuntimeReadPatterns().map(
+                      (p) => `[[rules]]\npath = ${quote(p)}\naccess = "read"\nperm = "allow"`
+                  ),
+                  // shell 启动文件（zsh/bash 的 rc 文件在家目录）：shell 起不来一切
+                  // 免谈。macOS 上 zsh 读 ~/.zshenv 等，bash 读 ~/.profile 等。
+                  ...(home
+                      ? ['.zshenv', '.zprofile', '.zshrc', '.zlogin', '.profile', '.bash_profile', '.bashrc'].flatMap(
+                            (rc) => [`[[rules]]\npath = ${quote(`${home}/${rc}`)}\naccess = "read"\nperm = "allow"`]
+                        )
+                      : []),
+                  '[[rules]]',
+                  'path = "/**"',
+                  'access = "read"',
+                  'perm = "deny"',
+                  '',
+                  '[[rules]]',
+                  'path = "/**"',
+                  'access = "write"',
+                  'perm = "deny"',
+                  ''
+              ]
+            : [
+                  // 非 readonly：工作区外读走 ask（standard 模式"工作空间外需确认"
+                  // 的落实——ask 经 decide 端点查权限引擎，未命中走用户审批）。
+                  // 必须先放行的读（most-specific 下更具体，先于 ask 兜底声明即可，
+                  // 顺序无关但集中声明便于阅读）：
+                  //   1. 系统运行时路径（PATH 搜索的 stat 是 read——全盘 read ask
+                  //      会让每个命令的 PATH 搜索都弹窗，shell 完全不可用）；
+                  //   2. shell 启动文件（zsh/bash 的 rc 文件在家目录）；
+                  //   3. 临时目录（管道/heredoc/编译器落盘区）。
+                  //   工作区内读由用户规则（workspace read allow）覆盖。
+                  // 这些清单对 solo/unlimited 同样无害（allow 幂等）。
+                  ...LINUX_SYSTEM_READ_PREFIXES.flatMap((p) => [
+                      `[[rules]]\npath = ${quote(`${p}/**`)}\naccess = "read"\nperm = "allow"`,
+                      `[[rules]]\npath = ${quote(p)}\naccess = "read"\nperm = "allow"`
+                  ]),
+                  // PATH 上工具链目录的打开读取（nvm/pyenv 等家目录布局；node 启动
+                  // 即读自身二进制与随附库，不在系统前缀内会逐次弹外读 ask）
+                  ...linuxRuntimeReadPatterns().map(
+                      (p) => `[[rules]]\npath = ${quote(p)}\naccess = "read"\nperm = "allow"`
+                  ),
+                  // 注：bash 的 PATH 搜索（逐目录 stat 候选命令）与 cwd 祖先链
+                  // stat、/selinux 探测不再需要策略规则——native preload 层对
+                  // stat 家族统一改为 deny-only（不参与 allow/ask），见
+                  // native/openharmony/sandbox/src/preload.c 的 gate_meta_read。
+                  // 此处只放行"打开读取内容"所需的系统运行时路径。
+                  ...(home
+                      ? ['.zshenv', '.zprofile', '.zshrc', '.zlogin', '.profile', '.bash_profile', '.bashrc'].flatMap(
+                            (rc) => [`[[rules]]\npath = ${quote(`${home}/${rc}`)}\naccess = "read"\nperm = "allow"`]
+                        )
+                      : []),
+                  ...POSIX_TEMP_DIR_PATTERNS.map(
+                      (p) => `[[rules]]\npath = ${quote(p)}\naccess = "read"\nperm = "allow"`
+                  ),
+                  '[[rules]]',
+                  'path = "/**"',
+                  'access = "read"',
+                  // solo/unlimited 已有全盘 read allow：兜底用 allow（同长平局
+                  // ask>allow，用 ask 会架空用户的全放行语义）。standard 用 ask
+                  //（"工作空间外需确认"）。
+                  `perm = ${quote(readAllowFallback)}`,
+                  '',
+                  '[[rules]]',
+                  'path = "/**"',
+                  'access = "write"',
+                  `perm = ${quote(writeAllowFallback)}`,
+                  ''
+              ]),
         '[[rules]]',
         'path = "/**"',
         'access = "execute"',
@@ -271,12 +502,22 @@ function policyLinuxTail(
     ];
 }
 
+/**
+ * Linux 版策略文本：LD_PRELOAD 拦截（与 OpenHarmony 版同构）。
+ *
+ * 路径语义：沙箱内路径与宿主完全一致（无 FUSE 根/局部视图概念），规则 path
+ * 直接是宿主真实路径。系统运行时读/执行由内建 system_read 清单放行；写工作区
+ * 放行、其余询问。
+ *
+ * `opendeskDataDir`：OpenDesk 数据目录（<opendesk>/），用于回收站写保护 deny。
+ */
 export function policyTextLinux(
     endpoint: string,
     token: string,
     workspace: string,
     rules?: PermissionRule[],
-    home?: string
+    home?: string,
+    opendeskDataDir?: string
 ): string {
     const quote = (value: string) => JSON.stringify(value);
     const workspaceRoot = workspace.replace(/\/+$/, '') || '/';
@@ -284,19 +525,171 @@ export function policyTextLinux(
         'version = 1',
         'default = "deny"',
         '',
-        // 整根视图：FUSE 挂到沙箱根，沙箱内布局与宿主完全一致；系统目录在其上
-        // 只读 bind 覆盖，其余路径读写经策略检查（写工作区放行，其余询问）
-        '[[roots]]',
-        'virtual = "/"',
-        'real    = "/"',
-        ...policyLinuxTail(quote, endpoint, token, workspaceRoot, rules, home)
+        // LD_PRELOAD 身份命名空间：沙箱内路径与宿主完全一致，无需 roots 映射。
+        ...policyLinuxTail(
+            quote,
+            endpoint,
+            token,
+            workspaceRoot,
+            rules,
+            home,
+            undefined,
+            opendeskDataDir,
+            isReadonlyModeRules(rules)
+        )
     ].join('\n');
 }
 
+/**
+ * 用户规则是否对**所有路径**显式 read allow（solo/unlimited 模式的签名形态）。
+ * 此时读兜底用 allow 而非 ask——most-specific 同长平局取 deny > ask > allow，
+ * 兜底 ask 会把用户的全盘 read allow 顶成 ask（solo/unlimited 的"全放行"
+ * 语义被架空，外读开始弹窗）。
+ */
+function hasGlobalReadAllow(rules?: PermissionRule[]): boolean {
+    return (rules ?? []).some(
+        (r) =>
+            (r.resourceType === 'file' || r.resourceType === '*') &&
+            (r.action === 'read' || r.action === '*') &&
+            (r.pathPattern === '**' || r.pathPattern === '/**') &&
+            r.effect === 'allow'
+    );
+}
+
+/** 用户规则是否对**所有路径**显式 write allow（solo/unlimited 签名）。 */
+function hasGlobalWriteAllow(rules?: PermissionRule[]): boolean {
+    return (rules ?? []).some(
+        (r) =>
+            (r.resourceType === 'file' || r.resourceType === '*') &&
+            (r.action === 'write' || r.action === '*') &&
+            (r.pathPattern === '**' || r.pathPattern === '/**') &&
+            r.effect === 'allow'
+    );
+}
+
+/**
+ * 读兜底规则取值：readonly=deny（不弹窗）；solo/unlimited（用户已全放行）=
+ * allow（most-specific 同长平局取 deny > ask > allow，兜底 ask 会架空用户的
+ * 全放行语义）；standard=ask（"工作空间外需确认"）。
+ */
+function readFallbackPerm(rules?: PermissionRule[]): 'allow' | 'ask' | 'deny' {
+    return isReadonlyModeRules(rules) ? 'deny' : hasGlobalReadAllow(rules) ? 'allow' : 'ask';
+}
+
+/**
+ * 用户规则是否呈 readonly 模式的签名形态（全盘 write deny **且** read 只允许
+ * 工作区——即不存在全盘 read allow）。此时：
+ * - 策略尾部的"工作区 write allow"不得追加（most-specific 下会架空全盘 deny）；
+ * - `/** read allow` 兜底改为 `/** read deny`（readonly 不弹窗外读：模式语义
+ *   是"工作空间外读写全部拒绝"，ask 即弹窗，readonly 无交互可用）；
+ * - 临时目录读写 allow 保留（shell 管道/heredoc 仍需要）。
+ *
+ * 注意不能只看 write deny：审计类自定义模式（全盘 write deny + 全盘 read
+ * allow）的读路径依赖外读放行，套用 readonly 的 read deny 会破坏其语义。
+ */
+function isReadonlyModeRules(rules?: PermissionRule[]): boolean {
+    const list = rules ?? [];
+    const has = (action: string, effect: 'allow' | 'deny', allPath: boolean) =>
+        list.some(
+            (r) =>
+                (r.resourceType === 'file' || r.resourceType === '*') &&
+                (r.action === action || r.action === '*') &&
+                (allPath ? r.pathPattern === '**' || r.pathPattern === '/**' : false) &&
+                r.effect === effect
+        );
+    return has('write', 'deny', true) && !has('read', 'allow', true);
+}
+
+/**
+ * 跨平台临时目录模式清单（泛化形态）。
+ *
+ * 这些路径是 shell 管道/heredoc/编译器/包管理器的落盘工作区（bash here-doc 的
+ * /tmp 临时文件、sort 的 /var/tmp 暂存、/dev/shm 共享内存段、macOS 的 Darwin
+ * per-user 临时区），不放行则管道与自动工具在沙箱内卡死。
+ *
+ * 盘符/路径差异的泛化：
+ * - Windows 由 policyText 的 tempRoot（%TEMP% 展开，盘符随机器）覆盖，不在本清单；
+ * - macOS 的 /tmp 与 /private/tmp 是同一路径的别名（符号链接），/private/var/
+ *   folders/** 是 Darwin 的 per-user 临时区（os.tmpdir() 的宿主）；
+ * - Linux 的 /tmp 与 /dev/shm 由发行版普遍提供，/var/tmp 供大文件暂存。
+ */
+const POSIX_TEMP_DIR_PATTERNS: string[] = [
+    '/tmp/**',
+    '/var/tmp/**',
+    '/private/var/tmp/**',
+    '/private/var/folders/**',
+    '/dev/shm/**'
+];
+
+/**
+ * 系统运行时读放行前缀（Linux / OpenHarmony 共用，与 native core 的 system_read
+ * 内建清单对齐并扩展）。这些目录是进程启动时 shell / 动态链接器 / 系统库初始化的
+ * 必读路径（PATH 搜索的 stat、/etc 配置、/system 运行时、SELinux/hilog 探测等），
+ * 若不放行 read，**每次 spawn 进程都会对它们逐个触发 ask**（cache_ttl=0 不缓存），
+ * 表现为任何命令都异常缓慢/超时（BUG：任务里 find 家目录触发 2000+ 次无关 ask）。
+ *
+ * 与 native policy.c `dbox_system_allow` 的 sys_read 清单保持一致：
+ * - /usr /bin /sbin /lib /lib32 /lib64 /opt /system /etc /dev 为基础前缀；
+ * - OpenHarmony 系统运行时根为 /system（与 /bin、/lib64 等互为 symlink，策略按
+ *   解析后的真实路径求值，须把真实前缀列出）；
+ * - /sys 与 /proc 为内核运行时探测（SELinux 状态、崩溃处理钩子、mounts 等），
+ *   find/ls/任何命令启动时系统库都会 stat 它们；只放行 read，写/执行仍受管控。
+ * 注意：只对 read 放行，execute 由 sys_exec_prefix 另行管控，避免把 /proc、/sys
+ * 中的可执行内容（如 /proc/self/exe）纳入执行白名单。
+ */
+const LINUX_SYSTEM_READ_PREFIXES = [
+    '/usr',
+    '/bin',
+    '/sbin',
+    '/lib',
+    '/lib32',
+    '/lib64',
+    '/opt',
+    '/system',
+    '/etc',
+    '/dev',
+    '/run',
+    '/sys',
+    '/proc',
+    '/data/service'
+];
+
+/**
+ * Linux 运行时工具链读放行（对齐 Windows windowsRuntimeReadPatterns 的角色）：
+ * 展开当前 PATH——用户工具链（nvm/pyenv/rustup/conda 等）普遍位于家目录而非
+ * 系统前缀，其可执行文件与随附动态库/资源的**打开读取**（open64 read，非
+ * stat——stat 家族由 native deny-only 承载，与已移除的 stat 补丁规则无关）
+ * 不在 LINUX_SYSTEM_READ_PREFIXES 内，standard 模式下会逐次弹外读 ask
+ * （node 放在 ~/.nvm 时首个命令即弹）。只放 read；写仍由兜底 ask 管控
+ * （防工具链目录持久化）。
+ */
+function linuxRuntimeReadPatterns(): string[] {
+    const patterns: string[] = [];
+    for (const dir of (process.env.PATH || '').split(':')) {
+        const trimmed = dir.trim();
+        if (!trimmed || !trimmed.startsWith('/')) continue;
+        const normalized = path.posix.normalize(trimmed).replace(/\/+$/, '');
+        if (!normalized || patterns.includes(normalized)) continue;
+        patterns.push(normalized, `${normalized}/**`);
+    }
+    return patterns;
+}
+
+/**
+ * /dev 终端与黑洞设备（对齐 native core `dbox_system_allow` 的 tty_dev/null
+ * 内建语义：终端设备 read+write、/dev/null 是"重定向必须不失败"的黑洞）。
+ * 策略表若不放行，standard 的 `/** write ask` 兜底会让**每条带 `>/dev/null`
+ * 重定向的命令**都触发 ask 弹窗（实测 shell 会话一次运行 10+ 次）。这些写入
+ * 无持久化面（黑洞/终端 IO），readonly 模式同样保留。
+ */
+const POSIX_DEV_DEVICES = ['/dev/null', '/dev/tty', '/dev/console', '/dev/ptmx'];
+const POSIX_DEV_TREES = ['/dev/pts/**'];
+
 /** OpenHarmony 版策略文本：LD_PRELOAD 身份命名空间（路径无映射），不含
- * `[[roots]]`（OH 版 native 会拒绝 `[[roots]]`，见 policy.c）。其余规则与
- * Linux(FUSE) 版一致——规则 path 均为宿主真实路径。
+ * `[[roots]]`（LD_PRELOAD 版 native 无路径映射，见 policy.c）。其余规则与
+ * Linux 版一致——规则 path 均为宿主真实路径。
  * `writableDirs`：应用沙箱 temp/cache 等目录总是可读可写（无需 ask）。 */
+
 export function policyTextOpenHarmony(
     endpoint: string,
     token: string,
@@ -320,6 +713,16 @@ export function policyTextOpenHarmony(
         // LD_PRELOAD 身份命名空间：沙箱内路径与宿主完全一致，无需 roots 映射。
         // 系统运行时读/执行由内建 system_read 清单放行（与 Windows/Linux 对齐）。
         // 应用沙箱 temp/cache 总是可读可写（早于兜底 write ask）。
-        ...policyLinuxTail(quote, endpoint, token, workspaceRoot, rules, home, writable)
+        ...policyLinuxTail(
+            quote,
+            endpoint,
+            token,
+            workspaceRoot,
+            rules,
+            home,
+            writable,
+            undefined,
+            isReadonlyModeRules(rules)
+        )
     ].join('\n');
 }

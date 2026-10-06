@@ -227,6 +227,46 @@ function formatReasoningElapsedTime(seconds, chars = null) {
     return timeStr;
 }
 
+/** 将毫秒耗时格式化为耗时展示文案：<60s 显示秒，<1h 显示分+秒，≥1h 显示小时+分。 */
+function formatTurnDuration(durationMs) {
+    if (!Number.isFinite(durationMs) || durationMs < 0) return '';
+    const totalSeconds = Math.floor(durationMs / 1000);
+    if (totalSeconds < 60) {
+        return taskViewT('renderer.taskview.output.duration.seconds', { seconds: totalSeconds });
+    }
+    if (totalSeconds < 3600) {
+        return taskViewT('renderer.taskview.output.duration.minutes', {
+            minutes: Math.floor(totalSeconds / 60),
+            seconds: totalSeconds % 60
+        });
+    }
+    const totalMinutes = Math.floor(totalSeconds / 60);
+    return taskViewT('renderer.taskview.output.duration.hours', {
+        hours: Math.floor(totalMinutes / 60),
+        minutes: totalMinutes % 60
+    });
+}
+
+/** 提取一条 assistant 消息的 turn 耗时（毫秒）：读取 execution.startAt/finishAt；老任务缺少任一字段则无法计算。 */
+function extractAssistantTurnDurationMs(message) {
+    if (!message) return null;
+    const execution = message.metadata?.execution;
+    const startAt = typeof execution?.startAt === 'number' ? execution.startAt : null;
+    const finishAt = typeof execution?.finishAt === 'number' ? execution.finishAt : null;
+    if (startAt != null && finishAt != null && finishAt >= startAt) {
+        return finishAt - startAt;
+    }
+    return null;
+}
+
+/** 提取 assistant 消息 turn 的结束时间（毫秒时间戳）：优先 finishAt，回退 startAt；老任务在反序列化时已迁移。 */
+function getAssistantTurnEndTimestamp(message) {
+    const execution = message?.metadata?.execution;
+    if (typeof execution?.finishAt === 'number') return execution.finishAt;
+    if (typeof execution?.startAt === 'number') return execution.startAt;
+    return null;
+}
+
 /**
  * 流式思考预览的尾部切片：预览区始终滚动钉底展示最新内容，
  * 只写尾部可将每帧 DOM 写入与文本排版成本从 O(累计长度) 降到 O(切片长度)。
@@ -414,6 +454,8 @@ class TaskView extends HTMLElement {
         this._taskUpdateHandler = null;
         /** @type {Array<object>} 当前任务的完整持久化消息列表，DOM 只渲染其中的尾部窗口。 */
         this._historyMessages = [];
+        /** @type {number|null} 最近一次 assistant turn 的本地完成时间，用于隐藏历史消息场景下的时间戳兜底。 */
+        this._lastAssistantCompletedAt = null;
         /** @type {Array<object>} 当前任务持久化的 goal evaluation 记录，用 message anchor 插入历史上下文。 */
         this._historyGoalEvaluationRecords = [];
         /** @type {number} 当前已经渲染的最早持久化消息下标。 */
@@ -1388,12 +1430,16 @@ class TaskView extends HTMLElement {
             const disclosureKey = `${messageId}-completed-process`;
             const expanded = options.disclosureState?.get(disclosureKey) === true;
             const detailId = `od-${this.widget_id}-${disclosureKey}-detail`;
+            const durationText = formatTurnDuration(options.turnDurationMs);
+            const toggleLabel = durationText
+                ? taskViewT('renderer.taskview.output.completedProcessWithDuration', { duration: durationText })
+                : taskViewT('renderer.taskview.output.completedProcess');
             html = `
                 <section class="od-completed-process${expanded ? ' is-expanded' : ''}">
                     <button type="button" class="od-completed-process-summary" data-completed-process-toggle
                         data-disclosure-key="${escapeHtml(disclosureKey)}" aria-expanded="${expanded}"
                         aria-controls="${escapeHtml(detailId)}">
-                        <span>${escapeHtml(taskViewT('renderer.taskview.output.completedProcess'))}</span>
+                        <span>${escapeHtml(toggleLabel)}</span>
                         <span class="od-completed-process-chevron">${CHEVRON_RIGHT_ICON_SVG}</span>
                     </button>
                     <div id="${escapeHtml(detailId)}" class="od-completed-process-detail${expanded ? ' is-open' : ''}">
@@ -1420,22 +1466,25 @@ class TaskView extends HTMLElement {
     _rememberAssistantOutput(messageId, parts, options = {}) {
         this._assistantPartsByMessage.set(messageId, [...parts]);
         this._assistantRenderStateByMessage.set(messageId, {
-            isRunning: options.isRunning === true
+            isRunning: options.isRunning === true,
+            ...(options.turnDurationMs != null ? { turnDurationMs: options.turnDurationMs } : {})
         });
     }
 
     renderAssistantMessage(assistant_message, isLast = false, options = {}) {
         this._rememberAssistantOutput(assistant_message.message_id, assistant_message.content, {
-            isRunning: options.isRunning
+            isRunning: options.isRunning,
+            turnDurationMs: extractAssistantTurnDurationMs(assistant_message)
         });
         const content = this._renderAssistantOutputHtml(assistant_message.content, {
             isRunning: Boolean(options.isRunning),
-            messageId: assistant_message.message_id
+            messageId: assistant_message.message_id,
+            turnDurationMs: extractAssistantTurnDurationMs(assistant_message)
         });
         const usageHtml = isLast ? TaskView.formatUsageHtml(assistant_message.usage, this._modelContextSize) : '';
         const metaRowHtml = TaskView.buildMsgMetaRow(
             'assistant',
-            assistant_message.timestamp,
+            getAssistantTurnEndTimestamp(assistant_message),
             assistant_message.message_id
         );
         const html = `
@@ -1734,6 +1783,9 @@ class TaskView extends HTMLElement {
         const message = this._historyMessages[index];
         if (!message || message.role !== 'assistant') return;
         message.content = Array.isArray(progress.parts) ? progress.parts : [];
+        if (progress.metadata) {
+            message.metadata = progress.metadata;
+        }
         if (TaskView.hasDisplayableUsage(progress.usage)) {
             message.usage = progress.usage;
         }
@@ -1879,9 +1931,20 @@ class TaskView extends HTMLElement {
 
         const isRunning = progress.task_status === 'running';
         const parts = progress.parts;
+        const turnDurationMs = extractAssistantTurnDurationMs(progress);
         this._rememberAssistantOutput(progress.message_id, parts, {
-            isRunning
+            isRunning,
+            turnDurationMs
         });
+        if (!isRunning) {
+            const execution = progress.metadata?.execution;
+            const finishedAt =
+                (typeof execution?.finishAt === 'number' && execution.finishAt) ||
+                (typeof execution?.startAt === 'number' && execution.startAt);
+            if (finishedAt) {
+                this._lastAssistantCompletedAt = finishedAt;
+            }
+        }
         const disclosureState = this._captureProcessDisclosureState(message_content);
         message_content
             .querySelectorAll('.reasoning-block-od.reasoning-active')
@@ -1889,7 +1952,8 @@ class TaskView extends HTMLElement {
         message_content.innerHTML = this._renderAssistantOutputHtml(parts, {
             isRunning,
             messageId: progress.message_id,
-            disclosureState
+            disclosureState,
+            turnDurationMs: extractAssistantTurnDurationMs(progress)
         });
         enhanceCodeBlocks(message_content);
         enhanceToolPreviewCards(message_content);
@@ -1916,7 +1980,12 @@ class TaskView extends HTMLElement {
 
         // 任务非运行状态时（已完成），为消息追加时间戳与 hover 菜单
         if (!isRunning && !message_container.querySelector('.od-msg-meta-row')) {
-            const ts = progress.timestamp || Date.now();
+            const execution = progress.metadata?.execution;
+            const ts =
+                (typeof execution?.finishAt === 'number' && execution.finishAt) ||
+                (typeof execution?.startAt === 'number' && execution.startAt) ||
+                this._lastAssistantCompletedAt ||
+                Date.now();
             const metaRowHtml = TaskView.buildMsgMetaRow('assistant', ts, progress.message_id);
             if (metaRowHtml) {
                 const usageEl2 = message_container.querySelector('.message-usage');
@@ -2061,12 +2130,21 @@ class TaskView extends HTMLElement {
         const isIncrementalTextPart =
             (progress.last_part?.type === 'text' || progress.last_part?.type === 'reasoning') &&
             progress.task_status === 'running';
+        // streaming 标志是主进程对「该 part 仍在生成」的判定，必须原样保留：
+        // 运行中同一 part 的增量快照才带 streaming=true；part 结束/切换后主进程
+        // 发送的非流式快照（可能携带固化耗时）若被这里强行改写回 streaming=true，
+        // 思考块会保持 reasoning-active 继续每秒计时，出现"早已结束还在已思考 N 秒"。
+        // 同理，partIndex 未提供时不能假定 0 一定在流式（getFullTask 快照等场景）。
+        const treatAsStreaming = isIncrementalTextPart && progress.streaming === true;
+        // 增量补丁仅适用于「新旧快照都处于流式中的同一 part」；主进程在 part 结束时
+        // 发送的非流式最终快照（streaming 标志消失，可能携带固化耗时）必须走全量
+        // 渲染，思考块才能从 reasoning-active 切换为 completed 并定格计时。
         const canPatchStreamingPart =
-            isIncrementalTextPart && previousPart?.streaming === true && previousPart.type === progress.last_part.type;
+            treatAsStreaming && previousPart?.streaming === true && previousPart.type === progress.last_part.type;
         // 运行中终端命令的 live 输出（每 200ms 一次）：同一批 toolcall 且状态均为 running 时，
         // 只需替换对应卡片内的输出区域，避免每 200ms 对整条消息做全量 morph + 增强。
         const canPatchStreamingToolCall = TaskView.canPatchRunningTerminalToolCall(progress, previousPart, isRunning);
-        parts[partIndex] = isIncrementalTextPart ? { ...progress.last_part, streaming: true } : progress.last_part;
+        parts[partIndex] = treatAsStreaming ? { ...progress.last_part, streaming: true } : progress.last_part;
         this._rememberAssistantOutput(progress.message_id, parts, {
             isRunning
         });
@@ -2110,7 +2188,8 @@ class TaskView extends HTMLElement {
             const outputHtml = this._renderAssistantOutputHtml(parts, {
                 isRunning: !isTerminal,
                 messageId: progress.message_id,
-                disclosureState
+                disclosureState,
+                turnDurationMs: extractAssistantTurnDurationMs(progress)
             });
             if (isTerminal) {
                 // Terminal updates may change the output hierarchy (for example, a normal
@@ -2122,6 +2201,14 @@ class TaskView extends HTMLElement {
                     .forEach((el) => TaskView.finalizeReasoningBlock(el));
                 message_content.innerHTML = outputHtml;
             } else if (message_content.innerHTML !== outputHtml) {
+                // 增量 morph 可能替换掉带活跃计时器的思考块节点（完成态 class 与活跃态
+                // 不同导致 morphNode 整体替换）。被替换节点从文档脱钩后，每秒计时器
+                // setInterval 若不显式清理，会在游离节点上空转并在头部显示持续增长的
+                // 已思考耗时。与 disconnectedCallback 的 finalize 语义保持一致：先收尾
+                // 计时再 morph。
+                message_content
+                    .querySelectorAll('.reasoning-block-od.reasoning-active')
+                    .forEach((el) => TaskView.finalizeReasoningBlock(el));
                 TaskView.morphDomChildren(message_content, outputHtml);
             }
         }
@@ -4043,7 +4130,8 @@ class TaskView extends HTMLElement {
             const outputHtml = this._renderAssistantOutputHtml(parts, {
                 isRunning: renderState.isRunning,
                 messageId,
-                disclosureState
+                disclosureState,
+                turnDurationMs: renderState.turnDurationMs
             });
             if (messageContent.innerHTML !== outputHtml) {
                 TaskView.morphDomChildren(messageContent, outputHtml);
@@ -5383,7 +5471,9 @@ class TaskView extends HTMLElement {
                     if (this._handleTaskStatusUpdate(progress.task_status) && this.task_status !== 'running') {
                         // 流式结束：结束活跃 reasoning 块计时并清理等待占位/spinner/流式光标，
                         // 为最后一条 assistant 消息追加时间戳与 hover 菜单
-                        this._cleanupStreamingState(progress.timestamp || Date.now());
+                        this._cleanupStreamingState(
+                            getAssistantTurnEndTimestamp(progress) || this._lastAssistantCompletedAt || Date.now()
+                        );
                         // 任务结束时也清理过渡中的 supplement 卡片
                         this.resolvePendingGoalSupplements();
                         const inputWidget = this.querySelector(`#task-${this.task_id}-input`);

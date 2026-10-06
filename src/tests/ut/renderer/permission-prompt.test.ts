@@ -290,4 +290,49 @@ describe('permission-prompt component', () => {
         const lastEvent = dispatched[dispatched.length - 1];
         expect(lastEvent).toEqual({ taskId: 'task-parent', waiting: false });
     });
+
+    test('renders theme tokens instead of light-only palette classes so dark mode adapts', () => {
+        const prompt = document.createElement('permission-prompt') as HTMLElement & {
+            connectedCallback?: () => void;
+        };
+        prompt.setAttribute('data-task-id', 'task-parent');
+        document.body.appendChild(prompt);
+        if (requestCallbacks.size === 0) {
+            prompt.connectedCallback?.();
+        }
+
+        for (const callback of requestCallbacks) {
+            callback('perm-1', buildRequest('task-parent', '/tmp/first.txt'));
+        }
+
+        const html = prompt.innerHTML;
+        // 深浅色自适应依赖 html[data-theme] 切换的语义 token（theme.css）；
+        // 这些硬编码浅色类在深色模式下无法跟随主题，禁止回归。
+        const lightOnlyPalette = [
+            'bg-white',
+            'bg-gray-',
+            'text-gray-',
+            'border-gray-',
+            'amber-50',
+            'amber-100',
+            'amber-200',
+            'emerald-',
+            'blue-50',
+            'blue-100',
+            'blue-200',
+            'blue-500',
+            'blue-700',
+            'red-50',
+            'red-100',
+            'red-200',
+            'purple-50',
+            'purple-600',
+            'to-white'
+        ];
+        for (const palette of lightOnlyPalette) {
+            expect(html).not.toContain(palette);
+        }
+        expect(html).toContain('var(--chat-');
+        expect(html).toContain('var(--od-');
+    });
 });

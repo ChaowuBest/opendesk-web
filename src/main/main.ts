@@ -121,7 +121,7 @@ import { submitFeedback } from './utils/feedback.js';
 import { getUsageDashboardSummary, getUsageRankings, type RankPeriod } from './telemetry/local-telemetry.js';
 import { TelemetryOperation, TelemetryOperationRegistry } from './telemetry/operation.js';
 import { registerGoalHooks } from './aikernel/goal/hooks.js';
-import { registerDesktopAPIHandlers } from './desktop/handlers.js';
+import { registerDesktopAPIHandlers, registerTrashAPIHandlers } from './windows/handlers.js';
 import { initializeHarnesses } from './aikernel/harnesses/index.js';
 import { initAgentGateHook } from './applications/agentgate/hook.js';
 import {
@@ -165,6 +165,7 @@ import {
 } from './windows/linux-window-shadow.js';
 import { endShadowResizeSession, startShadowResizeSession } from './windows/shadow-resize.js';
 import { endWindowDragSession, startWindowDragSession } from './windows/window-drag.js';
+import { attachNormalBoundsTracker } from './utils/normal-bounds-tracker.js';
 import { suppressWmSystemMenuOnLinux } from './windows/linux-context-menu.js';
 import {
     initTaskStatusWidget,
@@ -211,7 +212,7 @@ function migrateFileMgrWorkspaceSettingsOnStartup() {
 import Convert from 'ansi-to-html';
 import fs from 'fs';
 import path from 'path';
-import { openSystemTrash } from './utils/trash.js';
+import { openSystemTrash, initializeTrash, startTrashPreviewCleanupScheduler } from './utils/trash.js';
 import os from 'os';
 import fsPromises from 'fs/promises';
 
@@ -690,14 +691,20 @@ const createWindow = () => {
     // 非 Linux 平台 margin 为 0，bounds 换算恒等，既有行为不变。
     const shadowMargin = process.platform === 'linux' ? LINUX_WINDOW_SHADOW_MARGIN : 0;
     // 尝试恢复上次保存的窗口尺寸与位置，无效或未保存时回退默认尺寸居中
-    let savedBounds: { x: number; y: number; width: number; height: number } | null = null;
+    let savedBounds: { x: number; y: number; width: number; height: number; is_maximized?: boolean } | null = null;
     let windowX: number | undefined;
     let windowY: number | undefined;
     let windowWidth = DEFAULT_WINDOW_WIDTH;
     let windowHeight = DEFAULT_WINDOW_HEIGHT;
     try {
         const guiConfig = Setting.getInstance().getData().gui_config as Record<string, unknown>;
-        const bounds = guiConfig.window_bounds as { x: number; y: number; width: number; height: number } | null;
+        const bounds = guiConfig.window_bounds as {
+            x: number;
+            y: number;
+            width: number;
+            height: number;
+            is_maximized?: boolean;
+        } | null;
         if (bounds && isValidWindowBounds(bounds)) {
             savedBounds = bounds;
             const targetDisplay = screen.getDisplayMatching(bounds);
@@ -769,6 +776,13 @@ const createWindow = () => {
         // （savedBounds 为视觉语义，扩展阴影边距后再应用到窗口矩形）
         if (savedBounds) {
             mainWindow.setBounds(expandVisualBounds(savedBounds, shadowMargin));
+            // 上次退出时处于最大化：先按 normal bounds 布局再调用 maximize()，
+            // 让 WM 真实最大化（isMaximized() 同步为 true，还原几何也是本次
+            // setBounds 的值）。不能直接把最大化尺寸的 bounds 当普通窗口尺寸
+            // 模拟"假最大化"——双击标题栏的切换判断依赖 isMaximized()。
+            if (savedBounds.is_maximized) {
+                mainWindow.maximize();
+            }
         }
         if (isHuaweiStartupAuthPending) {
             restoreHuaweiLoginForWorkbenchWindow(`workbench ${reason}`);
@@ -830,6 +844,19 @@ const createWindow = () => {
         globalTray?.setContextMenu(buildTrayMenu());
     });
 
+    // 跟踪 normal bounds：Linux 透明无边框窗口最大化后 getNormalBounds() 可能
+    // 返回最大化尺寸（restored bounds 缓存被污染），退出保存时改用跟踪缓存。
+    const normalBoundsTracker = attachNormalBoundsTracker(mainWindow);
+
+    // 最大化状态变化主动推送 renderer：X11 下 WM 异步应用最大化，IPC 返回后
+    // 立即回查 isMaximized() 拿到的还是旧值，图标/自绘圆角等 UI 状态会失同步。
+    mainWindow.on('maximize', () => {
+        safeSendToWebContents(mainWindow.webContents, 'setting:maximizeStateChanged', true);
+    });
+    mainWindow.on('unmaximize', () => {
+        safeSendToWebContents(mainWindow.webContents, 'setting:maximizeStateChanged', false);
+    });
+
     mainWindow.on(
         'close',
         createMainWindowCloseHandler({
@@ -837,6 +864,7 @@ const createWindow = () => {
             window: mainWindow,
             // 保存前收缩阴影边距，window_bounds 始终保持视觉矩形语义
             normalizeSaveBounds: (bounds) => shrinkWindowBounds(bounds, shadowMargin),
+            getTrustedNormalBounds: () => normalBoundsTracker.getNormalBounds(),
             getSettingData: () => Setting.getInstance().getData() as Record<string, unknown>,
             saveSettingData: (data) => Setting.getInstance().setData(data),
             ipcMain,
@@ -3632,7 +3660,7 @@ async function startApplication(): Promise<void> {
         await initializePluginHost();
         GlobalState.getInstance().taskManagerState.toolsetProvider = combineToolsetProviders(
             {
-                listAvailableToolsets: () => ApplicationRegistry.listAvailableToolsets()
+                listAvailableToolsets: (taskState) => ApplicationRegistry.listAvailableToolsets(taskState)
             },
             new PluginToolsetProvider()
         );
@@ -3782,6 +3810,7 @@ async function startApplication(): Promise<void> {
         registerMemoryAPIHandlers();
         registerUsageAPIHandlers();
         registerDesktopAPIHandlers();
+        registerTrashAPIHandlers();
         // registerTaskManagerAPIHandlers() 已在同步恢复 GlobalState 后注册；首次让出主进程
         // 事件循环前 handler 已就绪，可响应 renderer sidebar 的 taskManager:getTaskList。
         registerFSAPIHandlers();
@@ -3996,6 +4025,19 @@ async function startApplication(): Promise<void> {
 
         // 启动完成后异步清理过期日志，不阻塞主流程
         dropDeprecatedLogs().catch(() => {});
+
+        // 统一回收站：确保 trash/ 根目录存在，并清理最后一次用户交互超过 7 天
+        // 的任务的回收站（不阻塞主流程，失败仅记日志）
+        try {
+            initializeTrash(() => {
+                const state = GlobalState.getInstance().taskManagerState;
+                return new Map(state.getTaskList().map((task) => [task.task_id, task.updated_at] as const));
+            });
+        } catch (error) {
+            logger.warn(`初始化统一回收站失败（忽略）: ${error}`);
+        }
+        // 运行期周期清扫"打开"生成的预览副本（保留期 24 小时）
+        startTrashPreviewCleanupScheduler();
     });
 
     app.on('will-quit', async () => {

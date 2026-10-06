@@ -1,4 +1,6 @@
 import { beforeEach, describe, expect, jest, test } from '@jest/globals';
+import os from 'os';
+import path from 'path';
 
 const setProxy = jest.fn(async () => undefined);
 const sessionFetch = jest.fn(async () => new Response('system-proxy'));
@@ -95,6 +97,8 @@ jest.unstable_mockModule('../../../platforms/bridges/harmonyos/proxy.js', () => 
 }));
 
 jest.unstable_mockModule('../../../main/utils/setting.js', () => ({
+    // electron.ts 间接依赖 logger（openPath 兜底诊断），其顶层初始化需要日志目录
+    getLogDirectory: () => path.join(os.tmpdir(), 'opendesk-test-logs'),
     Setting: {
         getInstance: () => ({
             getData: () => settingData

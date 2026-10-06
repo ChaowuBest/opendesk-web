@@ -45,9 +45,43 @@ export interface SandboxDecideEndpoint {
 export type Decision = { decision: 'allow' | 'deny' };
 
 /**
+ * 任务是否已停止/中断。任务停止后沙箱进程的退出是异步的，在进程真正退出前，
+ * 沙箱原生侧排队的 ask 请求仍会持续打到 /decide 端点；若不在此拦截，这些请求
+ * 会继续弹权限弹窗，且任务停止时的 cancelTaskPrompts 已执行完毕、无人再取消。
+ *
+ * - task_status === 'stopped'：stop() / interruptForNewMessage() 在取消弹窗之前
+ *   就已置位，晚到的请求可直接拒绝。
+ * - runtimeInterrupt.requested：interruptRunningTurn() 把 task_status 翻转为
+ *   stopped 之前存在 await 窗口（stopRunningTools），而 runtimeInterrupt 在
+ *   取消弹窗之前就已置位，用它兜住该窗口。
+ *
+ * 任务恢复（新 turn）会清除 runtimeInterrupt 并把 task_status 改回 'running'，
+ * 因此恢复后的新沙箱实例不受影响、可正常询问。
+ */
+function isTaskStopped(task: TaskState): boolean {
+    if (task.task_status === 'stopped') return true;
+    if (task.runtimeInterrupt?.requested === true) return true;
+    return false;
+}
+
+/**
+ * 会话级"允许"决策缓存（按任务 harnessContext 索引）：弹窗上不带记住范围的
+ * 普通"允许读取 X"批准，在本次任务的沙箱执行会话内对后续沙箱实例（后续命令
+ * 拉起的新端点）持续生效，同 (action, 路径) 的 ask 不再重复弹窗。WeakMap 以
+ * harnessContext 为键：会话更换/任务结束后旧条目随上下文对象一并回收。
+ * 只记 allow：拒绝在后续实例中仍重新询问（避免用户某次的拒绝演变为整个会话
+ * 的静默自动拒绝）；带记住范围（prefix/type）的批准走权限引擎规则，不在此重复。
+ */
+const sessionAllows = new WeakMap<object, Map<string, 'allow'>>();
+
+/**
  * 动态沙箱的授权决策端点（HTTP /decide，协议 v2）：接收原生沙箱的 ask 请求，
  * 查询当前权限引擎（先查持久规则，再弹窗审批），返回 allow/deny；支持决策缓存
  * 与"记住"回写权限引擎。Windows 与 Linux 沙箱共用。
+ *
+ * 决策作用域分三层：引擎规则（prefix/type 记住，任务生命周期，随策略导出到
+ * 后续沙箱原生层）> 会话级 allow（普通批准，按 harnessContext 记忆，本次任务
+ * 执行期间跨沙箱实例生效）> 端点内缓存（含 deny，仅当前沙箱实例）。
  */
 export async function createSandboxDecideEndpoint(
     options: SandboxDecideEndpointOptions
@@ -73,6 +107,9 @@ export async function createSandboxDecideEndpoint(
         if (!resourcePath || (action !== 'read' && action !== 'write' && action !== 'execute')) return deny;
         const task = options.taskState;
         if (!task) return deny;
+        // 任务已停止/中断：新到达的沙箱 ask 直接拒绝，避免任务停止后仍持续弹窗
+        // （已进入宿主弹窗队列的旧请求由任务停止时的 cancelTaskPrompts 统一拒绝）。
+        if (isTaskStopped(task)) return deny;
         const current = task.harnessContext;
         if (context !== current) {
             context = current;
@@ -83,9 +120,15 @@ export async function createSandboxDecideEndpoint(
         if (closed) return deny;
         if (current !== task.harnessContext) return decideRequest(body);
         if (existing?.effect === 'deny' || existing?.effect === 'allow') return { decision: existing.effect };
+        const key = `${action}:${options.caseInsensitivePathKey ? resourcePath.toLowerCase() : resourcePath}`;
+        // 本次会话内已批准过同路径同操作：直接放行（引擎显式 ask/deny 已在上方短路）
+        if (sessionAllows.get(current)?.get(key) === 'allow') return { decision: 'allow' };
         const provider = current.permissionPrompt;
         if (!provider) return deny;
-        const key = `${action}:${options.caseInsensitivePathKey ? resourcePath.toLowerCase() : resourcePath}`;
+        // 弹窗前二次检查：请求可能在任务停止前已通过入口检查，但在 await
+        // permission.check 期间任务被停止（此时 cancelTaskPrompts 已执行、队列
+        // 尚空），若不在此拦截仍会弹窗且无人取消。
+        if (isTaskStopped(task)) return deny;
         let pending = decisions.get(key);
         if (!pending) {
             pending = (async (): Promise<Decision> => {
@@ -118,6 +161,14 @@ export async function createSandboxDecideEndpoint(
                             pathPattern: pattern,
                             effect: 'allow'
                         });
+                    } else {
+                        // 普通批准记入会话缓存：后续沙箱实例（后续命令）不再重复弹窗
+                        let session = sessionAllows.get(current);
+                        if (!session) {
+                            session = new Map();
+                            sessionAllows.set(current, session);
+                        }
+                        session.set(key, 'allow');
                     }
                     return { decision: 'allow' };
                 } finally {

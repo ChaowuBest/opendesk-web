@@ -245,16 +245,8 @@ export class FileSelector {
 
         // 将各列的选中项竖直滚动到可见区域
         requestAnimationFrame(() => {
-            this.element.querySelectorAll('.od-fscol').forEach((colEl) => {
-                const selected = colEl.querySelector('.od-fsitem.selected') as HTMLElement | null;
-                if (!selected) return;
-                const colRect = (colEl as HTMLElement).getBoundingClientRect();
-                const itemRect = selected.getBoundingClientRect();
-                if (itemRect.top < colRect.top) {
-                    (colEl as HTMLElement).scrollTop -= colRect.top - itemRect.top;
-                } else if (itemRect.bottom > colRect.bottom) {
-                    (colEl as HTMLElement).scrollTop += itemRect.bottom - colRect.bottom;
-                }
+            this._columns.forEach((col, colIdx) => {
+                if (col.selectedPath) this._revealEntry(colIdx, col.selectedPath);
             });
         });
     }
@@ -385,7 +377,7 @@ html[data-theme="dark"] .od-fscol::-webkit-scrollbar-thumb:hover {
 
     /* ───────── render ───────── */
 
-    private _render(newColumnIndex?: number): void {
+    private _render(newColumnIndex?: number, revealEntry?: { colIdx: number; path: string }): void {
         const savedScrollTops: number[] = [];
         this.element.querySelectorAll('.od-fscol').forEach((el) => {
             savedScrollTops.push((el as HTMLElement).scrollTop);
@@ -436,7 +428,32 @@ html[data-theme="dark"] .od-fscol::-webkit-scrollbar-thumb:hover {
                 }
             });
             this.element.scrollLeft = this.element.scrollWidth;
+            // 条目插入/重命名后按名称重排，位置可能落到视野之外，需显式滚动到可见
+            if (revealEntry) this._revealEntry(revealEntry.colIdx, revealEntry.path);
         });
+    }
+
+    /** 将指定列中的条目竖直滚动到可见区域（已在视野内时不滚动） */
+    private _revealEntry(colIdx: number, path: string): void {
+        const colEl = this.element.querySelector(`.od-fscol[data-col-idx="${colIdx}"]`) as HTMLElement | null;
+        if (!colEl) return;
+        const items = colEl.querySelectorAll('.od-fsitem');
+        let itemEl: HTMLElement | null = null;
+        for (let i = 0; i < items.length; i++) {
+            if ((items[i] as HTMLElement).dataset.path === path) {
+                itemEl = items[i] as HTMLElement;
+                break;
+            }
+        }
+        if (!itemEl) return;
+
+        const colRect = colEl.getBoundingClientRect();
+        const itemRect = itemEl.getBoundingClientRect();
+        if (itemRect.top < colRect.top) {
+            colEl.scrollTop -= colRect.top - itemRect.top;
+        } else if (itemRect.bottom > colRect.bottom) {
+            colEl.scrollTop += itemRect.bottom - colRect.bottom;
+        }
     }
 
     private _buildItem(entry: FSEntry, colIdx: number): HTMLButtonElement {
@@ -827,8 +844,9 @@ html[data-theme="dark"] .od-fscol::-webkit-scrollbar-thumb:hover {
                 this._editing = false;
                 return;
             }
+            let newPath: string | null = null;
             try {
-                const newPath = await this._opts.createDirectory!(targetCol.parentPath, dirName);
+                newPath = await this._opts.createDirectory!(targetCol.parentPath, dirName);
                 targetCol.entries.push({ name: dirName, path: newPath, isDirectory: true });
                 targetCol.entries.sort((a, b) => {
                     if (a.isDirectory !== b.isDirectory) return a.isDirectory ? -1 : 1;
@@ -838,7 +856,8 @@ html[data-theme="dark"] .od-fscol::-webkit-scrollbar-thumb:hover {
                 console.warn('Create directory failed:', err);
             }
             this._editing = false;
-            this._render();
+            // 新目录按名称排序后可能落在列的可视区域之外，渲染后滚动到可见
+            this._render(undefined, newPath ? { colIdx: targetColIdx, path: newPath } : undefined);
         };
 
         input.addEventListener('blur', commit, { once: true });

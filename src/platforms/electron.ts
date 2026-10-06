@@ -25,6 +25,7 @@ import { serializeTaskUpdateForRender } from '../main/aikernel/task/update-rende
 import { resolveNativeBridge } from './bridges/main.js';
 import type { NativeBridge } from './bridges/common.js';
 import { electron } from '../utils/electron.js';
+import { logger } from '../main/utils/logger.js';
 import { safeSendToWebContents, safeSendToWebFrame } from '../main/utils/electron-ipc.js';
 import { isHostInNoProxy } from '../main/utils/proxy.js';
 import { getHarmonyOSSystemProxy } from './bridges/harmonyos/proxy.js';
@@ -49,6 +50,10 @@ interface ElectronFetchSessionOptions {
 }
 
 const electronFetchSessionCache = new Map<string, Promise<Electron.Session>>();
+
+/** openPath 等待上游 settle 的上限：xdg-open 正常派发在数百毫秒内完成，
+ * 超过该时长仍未 settle 即视为命中上游挂起缺陷，放行调用方（详见 openPath） */
+const OPEN_PATH_SETTLE_TIMEOUT_MS = 5000;
 
 function formatProxyHostPort(proxyUrl: URL): string {
     const hostname = proxyUrl.hostname.includes(':')
@@ -236,7 +241,27 @@ export class ElectronPlatform extends WorkerPlatform {
     }
 
     async openPath(filePath: string): Promise<void> {
-        await electron().shell.openPath(filePath);
+        const opened = electron().shell.openPath(filePath);
+        // 超时兜底后上游 promise 仍可能拒绝（不能成为 unhandled rejection），
+        // 真实失败信息保留在日志里供诊断
+        opened.catch((error) => logger.warn(`[platform] openPath rejected: ${filePath} ${error}`));
+        let timer: NodeJS.Timeout | undefined;
+        const settled = await Promise.race([
+            opened.then(() => true),
+            new Promise<false>((resolve) => {
+                timer = setTimeout(() => resolve(false), OPEN_PATH_SETTLE_TIMEOUT_MS);
+            })
+        ]);
+        clearTimeout(timer);
+        if (!settled) {
+            // Electron Linux 的 shell.openPath 存在 promise 永不 settle 的上游分支
+            // （xdg-open wait_for_exit=false 路径不回调）：此时系统默认应用通常已被
+            // 成功派发（文件实际已打开），等待只会让 await 本方法的 IPC handler
+            // 永不 reply（renderer 卡"打开中"，窗口重载后报 "reply was never sent"）。
+            logger.warn(
+                `[platform] openPath not settled in ${OPEN_PATH_SETTLE_TIMEOUT_MS}ms, assuming dispatched: ${filePath}`
+            );
+        }
     }
 
     async openExternal(url: string): Promise<void> {

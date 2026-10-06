@@ -11,7 +11,11 @@
  *   rm <p> / rm_fail <p>          unlink
  *   mv <a> <b> / mv_fail <a> <b>  rename
  *   mkdir <d> / mkdir_fail <d> / rmdir <d> / rmdir_fail <d>
+ *   rmdirat <d> / rmdirat_fail <d>  unlinkat(AT_FDCWD, d, AT_REMOVEDIR)
  *   ls <d> / ls_fail <d>          opendir+readdir (count>0 for ls)
+ *   odir_open_ok <d> / odir_open_fail <d>  open(O_RDONLY|O_DIRECTORY) is
+ *                 directory-enum semantics (deny-only), never "write" (find ask storm)
+ *   otmpfile_fail <d>          open(O_TMPFILE|O_WRONLY) must take the write path
  *   stat_ok <p> / stat_fail <p>
  *   chmod_ok <p> / chmod_fail <p>
  *   trunc <p> <n>
@@ -114,6 +118,9 @@ int main(int argc, char **argv)
     if (!strcmp(op, "mkdir_fail"))    return mkdir(argv[2], 0755) == 0 ? (printf("PROBE-FAIL mkdir succeeded\n"), 1) : 0;
     if (!strcmp(op, "rmdir"))         return rmdir(argv[2]) ? fail("rmdir", argv[2]) : 0;
     if (!strcmp(op, "rmdir_fail"))    return rmdir(argv[2]) == 0 ? (printf("PROBE-FAIL rmdir succeeded\n"), 1) : 0;
+    /* Node fs.rmdir/fs.rm 走 unlinkat(AT_REMOVEDIR)：回收站分流必须同样覆盖 */
+    if (!strcmp(op, "rmdirat"))       return unlinkat(AT_FDCWD, argv[2], AT_REMOVEDIR) ? fail("rmdirat", argv[2]) : 0;
+    if (!strcmp(op, "rmdirat_fail"))  return unlinkat(AT_FDCWD, argv[2], AT_REMOVEDIR) == 0 ? (printf("PROBE-FAIL rmdirat succeeded\n"), 1) : 0;
     if (!strcmp(op, "ls") || !strcmp(op, "ls_fail")) {
         DIR *d = opendir(argv[2]);
         if (op[0] == 'l' && op[1] == 's' && !strchr(op, '_')) {
@@ -248,6 +255,32 @@ int main(int argc, char **argv)
             return 0;
         }
         return r ? fail("ln", argv[2]) : 0;
+    }
+    if (!strcmp(op, "odir_open_ok") || !strcmp(op, "odir_open_fail")) {
+        /* 回归（BUG find-ask-storm）：O_RDONLY|O_DIRECTORY 的目录打开是目录
+         * 枚举语义，与 opendir 同口径（deny-only：只拦 deny 规则、不参与
+         * allow/ask）。acc_from_open_flags 曾把 O_TMPFILE（定义含 O_DIRECTORY
+         * 位）按位检测，使一切目录打开误判为写模式——standard 模式（write
+         * 兜底 ask）下 `find /` 逐目录触发幽灵 write ask。 */
+        int fd = open(argv[2], O_RDONLY | O_DIRECTORY | O_CLOEXEC);
+        if (!strcmp(op, "odir_open_ok")) {
+            if (fd < 0) return fail("odir_open_ok", argv[2]);
+            close(fd);
+            return 0;
+        }
+        int e = errno;
+        if (fd >= 0) { close(fd); printf("PROBE-FAIL odir_open_fail succeeded\n"); return 1; }
+        if (e != EACCES) { printf("PROBE-FAIL odir_open_fail errno=%s\n", strerror(e)); return 1; }
+        return 0;
+    }
+    if (!strcmp(op, "otmpfile_fail")) {
+        /* O_TMPFILE（剥离 O_DIRECTORY 位后的 __O_TMPFILE 位）必须仍走写
+         * 判定：在 write-ask + fail-closed 端点策略下必须 EACCES。若被误归
+         * 为目录枚举（deny-only）会意外成功，此处断言失败以捕获该回归。 */
+        int fd = open(argv[2], O_TMPFILE | O_WRONLY, 0600);
+        if (fd >= 0) { close(fd); printf("PROBE-FAIL otmpfile succeeded\n"); return 1; }
+        if (errno != EACCES) { printf("PROBE-FAIL otmpfile errno=%s\n", strerror(errno)); return 1; }
+        return 0;
     }
     if (!strcmp(op, "openat_rd") || !strcmp(op, "openat_rd_fail")) {
         int dfd = open(argv[2], O_RDONLY | O_DIRECTORY);

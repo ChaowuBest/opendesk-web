@@ -76,16 +76,25 @@ export function sandboxRunArgs(options: {
     endpoint: string;
     logPath: string;
     deleteToTrash?: boolean;
+    /** 任务级统一回收站目录（<opendesk>/trash/<taskId>），每次拉起都传入 */
+    trashDir?: string;
+    /** 删除分流排除清单（--trash-exclude 可重复）：命中目录前缀真删不入站 */
+    trashExcludeDirs?: string[];
     childCommand: string;
     envExtra?: Record<string, string>;
 }): string[] {
     return [
         'run',
         '--automount',
-        // 开启后沙箱内的直接删除送 Windows 回收站；必须位于 -- 分隔符之前。
-        // 本沙箱实例运行期间新建的文件由原生侧跟踪，删除时直接清除不进回收站，
-        // 无需宿主传参
+        // 开启后沙箱内的直接删除送 OpenDesk 统一回收站（--trash-dir）；必须位于
+        // -- 分隔符之前。本沙箱实例运行期间新建的文件由原生侧跟踪，删除时直接
+        // 清除不进回收站，无需宿主传参
         ...(options.deleteToTrash ? ['--del-to-trash'] : []),
+        // 任务级回收站目录无论删除开关与否都传入（值由宿主统一构建），原生层
+        // 仅在 --del-to-trash 启用时使用
+        ...(options.trashDir ? ['--trash-dir', options.trashDir] : []),
+        // 排除清单：命中目录前缀的删除真删不入站（构建零时产物零噪音）
+        ...(options.trashExcludeDirs ?? []).flatMap((dir) => ['--trash-exclude', dir]),
         '--policy',
         options.policyPath,
         '--upstream',
@@ -107,6 +116,10 @@ export async function prepareDynamicSandbox(options: {
     cwd?: string;
     taskState?: TaskState;
     deleteToTrash?: boolean;
+    /** 任务级统一回收站目录（<opendesk>/trash/<taskId>） */
+    trashDir?: string;
+    /** 删除分流排除清单（已知临时目录由宿主传入） */
+    trashExcludeDirs?: string[];
     /**
      * 沙箱触发权限管控、弹窗等待用户决策时的回调：
      * waiting=true 表示开始等待（宿主应暂停工具超时计时），
@@ -185,6 +198,8 @@ export async function prepareDynamicSandbox(options: {
             endpoint: decide.endpoint,
             logPath,
             deleteToTrash: options.deleteToTrash,
+            trashDir: options.trashDir,
+            trashExcludeDirs: options.trashExcludeDirs,
             childCommand,
             envExtra
         }),

@@ -2,18 +2,19 @@
  * symlink resolution.
  *
  * 虚拟路径 == 真实路径：沙箱不再映射任何路径，只按真实路径做策略判定。
- * 所有内核接触（newfstatat / readlinkat）走 raw syscall，避免递归进入
- * 被拦截的 libc 封装。
+ * 所有内核接触（fstatat / readlinkat）走 rawio 抽象（Linux 为绕过 LD_PRELOAD
+ * 的 syscall，macOS 为 libc + interpose 豁免，Windows 为 Win32），避免递归
+ * 进入被拦截的 libc 封装。
  */
 #define _GNU_SOURCE
 #include "pathmap.h"
+#include "rawio.h"
 #include "util.h"
 #include "policy.h"
 
 #include <string.h>
 #include <errno.h>
 #include <fcntl.h>
-#include <sys/syscall.h>
 #include <sys/stat.h>
 #include <unistd.h>
 
@@ -26,12 +27,12 @@
 
 static int raw_fstatat(int fd, const char *p, struct stat *st, int flags)
 {
-    return (int)syscall(SYS_newfstatat, fd, p, st, flags);
+    return dbox_raw_fstatat(fd, p, st, flags);
 }
 
 static ssize_t raw_readlinkat(int fd, const char *p, char *buf, size_t sz)
 {
-    return syscall(SYS_readlinkat, fd, p, buf, sz);
+    return dbox_raw_readlinkat(fd, p, buf, sz);
 }
 
 /* ------------------------------------------------------------------ */

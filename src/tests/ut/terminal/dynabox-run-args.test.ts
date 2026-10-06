@@ -27,6 +27,20 @@ describe('sandboxRunArgs', () => {
         expect(args[args.length - 1]).toBe(base.childCommand);
     });
 
+    test('trashExcludeDirs 展开为可重复的 --trash-exclude <dir>，位于 -- 之前', () => {
+        const args = sandboxRunArgs({
+            ...base,
+            deleteToTrash: true,
+            trashExcludeDirs: ['C:/Users/x/AppData/Local/Temp', 'C:/Windows/Temp']
+        });
+        expect(args.filter((a) => a === '--trash-exclude')).toHaveLength(2);
+        const first = args.indexOf('--trash-exclude');
+        expect(args[first + 1]).toBe('C:/Users/x/AppData/Local/Temp');
+        expect(args.indexOf('--trash-exclude', first + 1)).toBeLessThan(args.indexOf('--'));
+        // 未传时不产生参数
+        expect(sandboxRunArgs(base)).not.toContain('--trash-exclude');
+    });
+
     test('deleteToTrash 开启时在 -- 之前追加 --del-to-trash', () => {
         const args = sandboxRunArgs({ ...base, deleteToTrash: true });
         expect(args).toContain('--del-to-trash');
@@ -38,6 +52,21 @@ describe('sandboxRunArgs', () => {
 
     test('deleteToTrash 为 false 与缺省一致', () => {
         expect(sandboxRunArgs({ ...base, deleteToTrash: false })).toEqual(sandboxRunArgs(base));
+    });
+
+    test('trashDir 始终以 --trash-dir 传入且位于 -- 之前', () => {
+        const args = sandboxRunArgs({ ...base, trashDir: 'C:/Users/x/AppData/Roaming/opendesk/trash/task_abc_01' });
+        expect(args).toContain('--trash-dir');
+        expect(args).toContain('C:/Users/x/AppData/Roaming/opendesk/trash/task_abc_01');
+        const dashIdx = args.indexOf('--');
+        expect(args.indexOf('--trash-dir')).toBeLessThan(dashIdx);
+        expect(args.indexOf('C:/Users/x/AppData/Roaming/opendesk/trash/task_abc_01')).toBe(
+            args.indexOf('--trash-dir') + 1
+        );
+    });
+
+    test('trashDir 缺省时不产生 --trash-dir 参数', () => {
+        expect(sandboxRunArgs(base)).not.toContain('--trash-dir');
     });
 
     test('envExtra 展开为 --env NAME=VALUE 且位于 -- 之前', () => {

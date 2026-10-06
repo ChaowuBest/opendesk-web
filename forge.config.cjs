@@ -109,28 +109,37 @@ function stageWindowsSandboxResource(buildPath, electronVersion, platform, arch,
     }
 }
 
-// 发布态 Linux 沙箱固定解包到 resources/sandbox/dynobox-linux。
-// 必须按打包目标架构（arch 参数）挑选对应 rust target 的产物：build-linux-sandbox.cjs
-// 把产物落盘 runtime/<triple>/dynobox-linux（本机构建按宿主架构，交叉构建由
-// OPENDESK_SANDBOX_TARGET 指定）。缺失即报错（fail-fast），并校验 ELF e_machine，
-// 防止构建机架构与目标不一致时把错架构二进制静默打进安装包（安装后 exec format error）。
+// 发布态 Linux 沙箱固定解包到 resources/sandbox/{dynobox,libdynobox.so}。
+// 必须按打包目标架构（arch 参数）挑选对应 triple 的产物：build-linux-sandbox.cjs
+// 把产物落盘 runtime/<triple>/{dynobox,libdynobox.so}（本机构建按宿主架构，交叉
+// 构建由 OPENDESK_SANDBOX_TARGET 指定）。dynobox 在自身目录旁查找 libdynobox.so
+// （main.c 的 find_preload_lib() 语义），两者必须同时拷贝。任一缺失即报错
+// （fail-fast），并逐个校验 ELF e_machine，防止构建机架构与目标不一致时把错架构
+// 二进制静默打进安装包（安装后 exec format error）。
 function stageLinuxSandboxResource(buildPath, electronVersion, platform, arch, callback) {
     try {
         if (platform === 'linux') {
             const { tripleForLinuxArch, assertLinuxElfMachine } = require('./scripts/packaging/linux-sandbox-arch.cjs');
             const triple = tripleForLinuxArch(arch);
-            const source = path.join(__dirname, 'native', 'linux', 'sandbox', 'runtime', triple, 'dynobox-linux');
+            const runtimeDir = path.join(__dirname, 'native', 'linux', 'sandbox', 'runtime', triple);
             const resourcesRoot = path.join(buildPath, 'resources');
             const targetDirectory = path.join(resourcesRoot, 'sandbox');
-            if (!fs.existsSync(source)) {
-                throw new Error(
-                    `Linux sandbox binary is missing for ${arch} (${triple}): ${source}。` +
-                        `请先构建对应架构：OPENDESK_SANDBOX_TARGET=${triple} npm run build-sandbox:linux（或在该架构构建机上直接构建）`
-                );
+            // dynobox + libdynobox.so 必须同目录（launcher 在自身目录查找 .so）
+            const artifacts = ['dynobox', 'libdynobox.so'];
+            for (const name of artifacts) {
+                const source = path.join(runtimeDir, name);
+                if (!fs.existsSync(source)) {
+                    throw new Error(
+                        `Linux sandbox artifact is missing for ${arch} (${triple}): ${source}。` +
+                            `请先构建对应架构：OPENDESK_SANDBOX_TARGET=${triple} npm run build-sandbox:linux（或在该架构构建机上直接构建）`
+                    );
+                }
+                assertLinuxElfMachine(source, arch);
             }
-            assertLinuxElfMachine(source, arch);
             fs.mkdirSync(targetDirectory, { recursive: true });
-            fs.copyFileSync(source, path.join(targetDirectory, 'dynobox-linux'));
+            for (const name of artifacts) {
+                fs.copyFileSync(path.join(runtimeDir, name), path.join(targetDirectory, name));
+            }
         }
         callback();
     } catch (error) {

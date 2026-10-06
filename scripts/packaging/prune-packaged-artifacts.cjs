@@ -43,8 +43,9 @@ const PACKAGING_IGNORE_PATTERNS = [
     /^[/\\]native[/\\]windows[/\\]sandbox(?:[/\\]|$)/,
     // workspace SDK 的嵌套 node_modules 是本地开发安装的开发依赖，运行时只读其 dist
     /^[/\\]packages[/\\](?:app-sdk|plugin-sdk)[/\\]node_modules(?:[/\\]|$)/,
-    // Linux 沙箱同理：整树（源码/vendor/target/tests）不进 asar；发布态二进制由
-    // stageLinuxSandboxResource 按目标架构放入 resources/sandbox/dynobox-linux。
+    // Linux 沙箱同理：整树（源码/build/runtime/tests）不进 asar；发布态产物由
+    // stageLinuxSandboxResource 按目标架构放入 resources/sandbox/dynobox
+    // 与同目录 libdynobox.so。
     // （追加在末尾：packaged-artifacts.test.ts 按位置解构前四个模式）
     /^[/\\]native[/\\]linux[/\\]sandbox(?:[/\\]|$)/,
     // darwin 沙箱整树不进 asar；发布态 dylib 由 stageDarwinSandboxResource

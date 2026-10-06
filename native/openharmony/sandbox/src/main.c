@@ -23,7 +23,9 @@
 #include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
+#if defined(__linux__)
 #include <sys/prctl.h>
+#endif
 #include <sys/stat.h>
 #include <sys/wait.h>
 #include <sys/mman.h>
@@ -104,7 +106,7 @@ static void usage(FILE *out)
 "  --upstream URL     ask 决策端点：http://host:port/path、unix://PATH、\n"
 "                     或 pipe://名字（Windows 命名管道等价物，见 endpoint --pipe）\n"
 "  --map OLD=NEW      接受但为 no-op（身份命名空间下无路径翻译）\n"
-"  --del-to-trash     接受但为 no-op（OpenHarmony 无回收站）\n"
+"  --del-to-trash     删除文件/目录时移入回收站目录（Windows 回收站等价物）\n"
 "  --mount 盘符       接受但为 no-op（无盘符概念）\n"
 "  --log FILE         沙箱诊断日志（--log-file 为别名；含全部拒绝记录）\n"
 "  --tmp DIR          把沙箱内 /tmp 映射到宿主 DIR（可读可写，无需策略规则）\n"
@@ -122,7 +124,10 @@ static void usage(FILE *out)
 "  --tmp DIR           把沙箱内 /tmp（与 /tmp/*）映射到宿主 DIR：映射区总是\n"
 "                      可读可写，无需策略规则（OpenHarmony 的 /tmp 为只读挂载）\n"
 "  --del-to-trash      删除文件/目录时移入回收站目录（Windows 回收站等价物）\n"
-"  --trash DIR         回收站目录（默认 $HOME/Trash，不存在则自动创建）\n"
+"  --trash-dir DIR     回收站目录（OpenDesk 统一回收站，与 Windows/Linux 版同\n"
+"                      格式；等价于 --trash）\n"
+"  --trash-exclude DIR 删除分流命中该目录前缀时直接真删、不入回收站（可重复；\n"
+"                      已知临时目录内建默认，宿主还会显式传入）\n"
 "  --cwd DIR          子进程工作目录（默认：--src 模式为 DIR，否则当前目录）\n"
 "\n"
 "说明: mount 子命令不适用于 OpenHarmony（虚拟化逐进程生效，无 Dokan 卷/盘符）；\n"
@@ -148,6 +153,10 @@ typedef struct {
     const char *tmp_dir;
     int del_to_trash;
     const char *trash_dir;
+    /* --trash-exclude 累积（可重复）：':' 分隔拼接入 DYNOBOX_TRASH_EXCLUDE，
+     * 原生删除分流命中清单直接真删（已知临时目录由宿主传入，内建默认见
+     * preload.c 的 trash 排除初始化） */
+    char trash_exclude[4096];
     int verbose;
 } run_opts_t;
 
@@ -232,6 +241,30 @@ static int cmd_run(int argc, char **argv)
             o.del_to_trash = 1;
         }
         else if (strcmp(argv[i], "--trash") == 0 && i + 1 < argc) o.trash_dir = argv[++i];
+        else if (strcmp(argv[i], "--trash-dir") == 0 && i + 1 < argc) o.trash_dir = argv[++i];
+        else if (strcmp(argv[i], "--trash-exclude") == 0 && i + 1 < argc) {
+            /* 可重复：逐条归一化拼接（':' 分隔）；条数/总长超限时拒绝启动
+             * 而非静默截断（截断会把"排除"变成"部分排除"，用户难以察觉） */
+            char *n = dbox_normpath(argv[++i]);
+            if (!n || n[0] != '/') {
+                fprintf(stderr, "dynobox: --trash-exclude 需要绝对路径: %s\n", argv[i]);
+                free(n);
+                return 2;
+            }
+            {
+                size_t used = strlen(o.trash_exclude);
+                size_t need = strlen(n) + 2;
+                if (used + need >= sizeof o.trash_exclude) {
+                    fprintf(stderr, "dynobox: --trash-exclude 条目过多（上限 %zu 字节）\n",
+                            sizeof o.trash_exclude);
+                    free(n);
+                    return 2;
+                }
+                if (used > 0) o.trash_exclude[used++] = ':';
+                snprintf(o.trash_exclude + used, sizeof o.trash_exclude - used, "%s", n);
+            }
+            dbox_free(n);
+        }
         else if (strcmp(argv[i], "--mount") == 0 && i + 1 < argc) {
             have_mount = 1; i++;
         }
@@ -316,6 +349,19 @@ static int cmd_run(int argc, char **argv)
     char *cfg = dbox_cfg_encode(&pol);
     if (!cfg) { fprintf(stderr, "dynobox: 配置序列化失败\n"); return 2; }
 
+    /* BUG-015：编码后的策略注入 DYNOBOX_CFG（base64，约 ×4/3 膨胀）。超过 64KB
+     * 会溢出沙箱侧固定缓冲并被静默截断，导致策略失效（fail-open）。此处主动检查
+     * 并 fail-loud 报错退出，而不是让子进程"看似沙箱化、实则裸奔"地继续执行。 */
+    if (strlen(cfg) >= 65536) {
+        fprintf(stderr,
+                "dynobox: 策略序列化后为 %zu 字节，超过 64KB 上限（沙箱无法承载）。\n"
+                "  请精简策略：拆分过长的 endpoint URL / path，或减少规则数量。\n",
+                strlen(cfg));
+        dbox_free(cfg);
+        dbox_policy_free(&pol);
+        return 2;
+    }
+
     /* child environment */
     setenv("LD_PRELOAD", lib_abs, 1);
     setenv("DYNOBOX_CFG", cfg, 1);
@@ -349,9 +395,14 @@ static int cmd_run(int argc, char **argv)
         dbox_free(n);
     }
     if (o.del_to_trash) {
-        /* 回收站目录：--trash 指定，否则 $HOME/.trash；不存在则创建（mkdir -p） */
+        /* 回收站目录优先级：--trash/--trash-dir 显式参数 > 已注入的
+         * DYNOBOX_TRASH 环境变量 > $HOME/Trash 兜底。历史问题（BUG-021）：
+         * 用户在 launcher 层设了 DYNOBOX_TRASH 后再加 --del-to-trash（无
+         * --trash-dir），原实现直接用 $HOME/Trash 覆盖用户 env，导致三种
+         * 配置方式行为不一致。现在显式参数优先、env 次之、兜底最后。 */
         char tb[PATH_MAX];
         const char *td = o.trash_dir;
+        if (!td || !td[0]) td = getenv("DYNOBOX_TRASH");
         if (!td || !td[0]) {
             const char *home = getenv("HOME");
             if (home && home[0]) {
@@ -374,6 +425,7 @@ static int cmd_run(int argc, char **argv)
         setenv("DYNOBOX_TRASH", n, 1);
         dbox_free(n);
     }
+    if (o.trash_exclude[0]) setenv("DYNOBOX_TRASH_EXCLUDE", o.trash_exclude, 1);
     if (o.verbose) setenv("DYNOBOX_VERBOSE", "1", 1);
 
     /* watchdog pipe: launcher holds the write end; sandboxed processes
@@ -408,7 +460,9 @@ static int cmd_run(int argc, char **argv)
         /* child */
         close(wfd);
         setpgid(0, 0);
+#if defined(__linux__)
         prctl(PR_SET_PDEATHSIG, SIGKILL, 0, 0, 0);
+#endif
         if (chdir_to && chdir(chdir_to) != 0) {
             fprintf(stderr, "dynobox: chdir %s: %s\n", chdir_to, strerror(errno));
             _exit(126);

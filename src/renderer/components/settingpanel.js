@@ -1972,13 +1972,9 @@ class SettingPanel extends HTMLElement {
                 { shell_sandbox_del_to_trash: event.target.checked }
             );
         });
-        // “打开回收站”：用系统能力打开当前平台对应的回收站目录
-        this.querySelector('#task-shell-open-trash')?.addEventListener('click', async () => {
-            try {
-                await window.fsAPI.openTrash();
-            } catch (error) {
-                console.error('open trash failed', error);
-            }
+        // “打开回收站”：弹出 OpenDesk 文件回收站模态弹窗（系统级回收站界面）
+        this.querySelector('#task-shell-open-trash')?.addEventListener('click', () => {
+            document.getElementById('trash-floating-window')?.open();
         });
     }
 

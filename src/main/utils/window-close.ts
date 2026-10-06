@@ -17,6 +17,7 @@ export interface MainWindowLike {
     isDestroyed(): boolean;
     isMinimized(): boolean;
     isVisible(): boolean;
+    isMaximized(): boolean;
     getNormalBounds(): { x: number; y: number; width: number; height: number };
     restore(): void;
     show(): void;
@@ -47,6 +48,13 @@ export interface MainWindowCloseHandlerDeps {
         width: number;
         height: number;
     };
+    /**
+     * 获取可信的 normal bounds。Linux 透明无边框窗口最大化后
+     * getNormalBounds() 可能返回最大化尺寸（restored bounds 缓存缺失/被污染），
+     * 由调用方注入基于 normal-bounds-tracker 的实现；缺省回退 getNormalBounds()。
+     * 仅在退出时窗口处于最大化时使用。
+     */
+    getTrustedNormalBounds?: () => { x: number; y: number; width: number; height: number };
 }
 
 export const CLOSE_DIALOG_REQUEST_CHANNEL = 'closeWindow:request';
@@ -86,10 +94,16 @@ export function createMainWindowCloseHandler(
 
     return (event) => {
         if (deps.isAppQuitting()) {
-            // 应用退出时保存窗口 normal bounds，下次启动恢复；Linux 阴影窗口需先
-            // 收缩为视觉矩形（见 normalizeSaveBounds 注释）
+            // 应用退出时保存窗口 normal bounds 与最大化标志，下次启动恢复；
+            // Linux 阴影窗口需先收缩为视觉矩形（见 normalizeSaveBounds 注释）。
+            // 最大化时 getNormalBounds() 在 Linux 上不可信（可能返回最大化尺寸），
+            // 改用跟踪缓存的 trusted normal bounds。
             try {
-                const rawBounds = deps.window.getNormalBounds();
+                const maximized = deps.window.isMaximized();
+                const rawBounds =
+                    maximized && deps.getTrustedNormalBounds
+                        ? deps.getTrustedNormalBounds()
+                        : deps.window.getNormalBounds();
                 const bounds = deps.normalizeSaveBounds ? deps.normalizeSaveBounds(rawBounds) : rawBounds;
                 const data = deps.getSettingData();
                 const guiConfig = (data.gui_config ?? {}) as Record<string, unknown>;
@@ -97,7 +111,9 @@ export function createMainWindowCloseHandler(
                     x: bounds.x,
                     y: bounds.y,
                     width: bounds.width,
-                    height: bounds.height
+                    height: bounds.height,
+                    // 仅在最大化时写入，缺省（undefined）即非最大化，兼容历史数据
+                    ...(maximized ? { is_maximized: true } : {})
                 };
                 deps.saveSettingData(data);
             } catch {

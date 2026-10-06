@@ -944,9 +944,48 @@ function exposeApplicationAPI() {
     });
 }
 
+// 文件回收站：统一回收站的搜索、找回与任务上下文（GUI 文件回收站弹窗使用）
+function exposeTrashAPI() {
+    safeExposeInMainWorld('trashAPI', {
+        search: async (options) => {
+            const result = await ipcRenderer.invoke('trash:search', options);
+            if (result.status !== 'ok') {
+                console.error('searching trash failed', result.message);
+                throw new Error(result.message);
+            }
+            return result.data;
+        },
+        restore: async (taskId, uuid, overwrite) => {
+            const result = await ipcRenderer.invoke('trash:restore', { taskId, uuid, overwrite });
+            if (result.status !== 'ok') {
+                console.error('restoring trash entry failed', result.message);
+                throw new Error(result.message);
+            }
+            return result.data;
+        },
+        openEntry: async (taskId, uuid) => {
+            const result = await ipcRenderer.invoke('trash:openEntry', { taskId, uuid });
+            if (result.status !== 'ok') {
+                console.error('opening trash entry failed', result.message);
+                throw new Error(result.message);
+            }
+            return result.data;
+        },
+        getTaskContext: async (taskId) => {
+            const result = await ipcRenderer.invoke('trash:getTaskContext', taskId);
+            if (result.status !== 'ok') {
+                console.error('loading trash task context failed', result.message);
+                throw new Error(result.message);
+            }
+            return result.data;
+        }
+    });
+}
+
 exposeApplicationAPI();
 exposeTaskManagerAPI();
 exposeFSAPI();
+exposeTrashAPI();
 exposeOfficeHostAPI();
 exposeThemeAPI();
 exposeOpenDeskAppAPI();
@@ -1212,6 +1251,13 @@ if (shouldExposeMainWindowAPIs()) {
                 return false;
             }
             return result.data;
+        },
+        // 主进程在窗口 maximize/unmaximize 事件时主动推送（X11 下 WM 异步应用
+        // 状态，invoke 返回后立即回查 isMaximized 会拿到旧值）
+        onMaximizeStateChanged: (callback) => {
+            ipcRenderer.on('setting:maximizeStateChanged', (_event, maximized) => {
+                callback(maximized);
+            });
         },
         getProviderTemplates: async () => {
             const result = await ipcRenderer.invoke('setting:getProviderTemplates');

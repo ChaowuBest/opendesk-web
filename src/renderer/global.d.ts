@@ -79,6 +79,42 @@ declare global {
                 ) => void
             ) => () => void;
         };
+        trashAPI: {
+            search: (options: {
+                scope: 'task' | 'global';
+                taskId?: string;
+                keyword?: string;
+                offset?: number;
+                limit?: number;
+            }) => Promise<{
+                total: number;
+                entries: Array<{
+                    uuid: string;
+                    original_path: string;
+                    size: number;
+                    deleted_at: string;
+                    task_id: string;
+                }>;
+            }>;
+            restore: (
+                taskId: string,
+                uuid: string,
+                overwrite: boolean
+            ) => Promise<{
+                restored: boolean;
+                exists?: boolean;
+                identical?: boolean;
+                target_mtime?: number;
+                target?: string;
+                message?: string;
+            }>;
+            openEntry: (taskId: string, uuid: string) => Promise<{ path: string }>;
+            getTaskContext: (taskId: string) => Promise<{
+                task_id: string;
+                task_name: string;
+                last_user_message: string;
+            } | null>;
+        };
     }
 }
 

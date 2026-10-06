@@ -205,6 +205,77 @@ describe('task-view GUI output modes', () => {
         expect(view.querySelector('.od-final-result script')).toBeNull();
     });
 
+    test('completed minimal toggle shows the persisted turn duration when execution timestamps exist', () => {
+        const now = Date.now();
+        const view = createView();
+        view.innerHTML = view.renderAssistantMessage({
+            message_id: 'message-with-duration',
+            content: [
+                { type: 'reasoning', rendered: '分析过程' },
+                { type: 'text', text: '最终回复', rendered: '<p>最终回复</p>' }
+            ],
+            metadata: {
+                execution: { startAt: now - 65 * 1000, finishAt: now }
+            }
+        });
+
+        const toggle = view.querySelector('[data-completed-process-toggle]') as HTMLElement;
+        expect(toggle.textContent).toContain('查看过程（本轮共耗时 1 分 5 秒）');
+    });
+
+    test('completed minimal toggle falls back to plain label when turn duration is unavailable', () => {
+        const view = createView();
+        view.innerHTML = view.renderAssistantMessage({
+            message_id: 'message-without-duration',
+            content: [
+                { type: 'reasoning', rendered: '分析过程' },
+                { type: 'text', text: '最终回复', rendered: '<p>最终回复</p>' }
+            ],
+            timestamp: Date.now()
+        });
+
+        const toggle = view.querySelector('[data-completed-process-toggle]') as HTMLElement;
+        expect(toggle.textContent).toContain('查看过程');
+        expect(toggle.textContent).not.toContain('本轮共耗时');
+    });
+
+    test('turn duration formats hours and plain seconds across ranges', () => {
+        const view = createView();
+        const now = Date.now();
+        const render = (durationMs: number, messageId: string) =>
+            view.renderAssistantMessage({
+                message_id: messageId,
+                content: [
+                    { type: 'reasoning', rendered: '过程' },
+                    { type: 'text', text: '回复', rendered: '<p>回复</p>' }
+                ],
+                metadata: { execution: { startAt: now - durationMs, finishAt: now } }
+            });
+
+        const seconds = createView();
+        seconds.innerHTML = render(9_000, 'message-duration-seconds');
+        expect((seconds.querySelector('[data-completed-process-toggle]') as HTMLElement).textContent).toContain(
+            '查看过程（本轮共耗时 9 秒）'
+        );
+
+        const hours = createView();
+        hours.innerHTML = render(2 * 3600_000 + 5 * 60_000, 'message-duration-hours');
+        expect((hours.querySelector('[data-completed-process-toggle]') as HTMLElement).textContent).toContain(
+            '查看过程（本轮共耗时 2 小时 5 分）'
+        );
+
+        const enView = createView();
+        onSettingChanged?.({
+            locale: 'en-US',
+            gui_config: { output_mode: 'minimal', gui_reason_display: 'inline' }
+        });
+        enView.innerHTML = render(65_000, 'message-duration-en');
+        expect((enView.querySelector('[data-completed-process-toggle]') as HTMLElement).textContent).toContain(
+            'View process (took 1m 5s)'
+        );
+        onSettingChanged?.({ locale: 'zh-CN', gui_config: { output_mode: 'minimal', gui_reason_display: 'inline' } });
+    });
+
     test('verbose output defaults every process segment and completed reasoning body open', () => {
         onSettingChanged?.({ locale: 'zh-CN', gui_config: { output_mode: 'verbose' } });
         const view = createView();
@@ -1290,6 +1361,91 @@ describe('task-view GUI output modes', () => {
         expect(reason).not.toBeNull();
         expect(reason.classList).toContain('reasoning-active');
         expect(reason.hasAttribute('data-reasoning-start')).toBe(true);
+    });
+
+    test('a non-streaming snapshot freezes the finished reasoning block and its timer', () => {
+        onSettingChanged?.({
+            locale: 'zh-CN',
+            gui_config: { output_mode: 'verbose', gui_reason_display: 'inline' }
+        });
+        const view = createView();
+        view.task_id = 'task-freeze-timer';
+        view.innerHTML = '<div id="taskview-chat-history"></div>';
+        const history = view.querySelector('#taskview-chat-history');
+
+        // part 0：思考块流式中
+        view._renderAssistantProgress(
+            {
+                type: 'assistant',
+                task_status: 'running',
+                message_id: 'message-freeze-timer',
+                last_part_index: 0,
+                streaming: true,
+                last_part: { type: 'reasoning', text: '第一段思考' }
+            },
+            history
+        );
+        const liveBlock = view.querySelector('.reasoning-block-od') as HTMLElement;
+        expect(liveBlock.classList).toContain('reasoning-active');
+        // 视图未挂载时 _syncReasoningTimers 因 isConnected 短路（与既有测试约定一致），
+        // 这里手动等价调用模拟已挂载视图的流式同步，启动每秒计时器。
+        TaskViewClass.updateReasoningPreview(liveBlock, '第一段思考');
+        expect(liveBlock._reasoningTimeInterval).not.toBeNull();
+
+        // part 0 结束：主进程发送非流式最终快照（streaming 标志消失，携带固化耗时）
+        view._renderAssistantProgress(
+            {
+                type: 'assistant',
+                task_status: 'running',
+                message_id: 'message-freeze-timer',
+                last_part_index: 0,
+                last_part: { type: 'reasoning', rendered: '第一段思考', elapsedSeconds: 14 }
+            },
+            history
+        );
+        // 完成态渲染与活跃态 class 不同，morph 前先 finalize 活跃块：
+        // 节点（无论被替换还是原地保留）必须定格为 completed 并显示固化耗时，
+        // 旧节点的每秒计时器必须被清理。
+        const frozenBlock = view.querySelector('.reasoning-block-od') as HTMLElement;
+        expect(frozenBlock.classList).toContain('reasoning-completed');
+        expect(view.querySelectorAll('.reasoning-block-od.reasoning-active')).toHaveLength(0);
+        expect(liveBlock._reasoningTimeInterval).toBeNull();
+        expect(frozenBlock._reasoningTimeInterval).toBeNull();
+        expect(frozenBlock.querySelector('.reasoning-time')?.textContent).toContain('14');
+
+        // part 1（工具执行中）的快照不得让已完成的思考块回到流式计时
+        view._renderAssistantProgress(
+            {
+                type: 'assistant',
+                task_status: 'running',
+                message_id: 'message-freeze-timer',
+                last_part_index: 1,
+                last_part: { type: 'tool_call', rendered: '<div>tool</div>' }
+            },
+            history
+        );
+        const stillFrozen = view.querySelector('.reasoning-block-od') as HTMLElement;
+        expect(stillFrozen.classList).toContain('reasoning-completed');
+        expect(view.querySelectorAll('.reasoning-block-od.reasoning-active')).toHaveLength(0);
+        expect(stillFrozen.querySelector('.reasoning-time')?.textContent).toContain('14');
+
+        // 新的思考 part 开始流式：新块正常进入活跃计时，已完成块不受影响
+        view._renderAssistantProgress(
+            {
+                type: 'assistant',
+                task_status: 'running',
+                message_id: 'message-freeze-timer',
+                last_part_index: 2,
+                streaming: true,
+                last_part: { type: 'reasoning', text: '第二段思考' }
+            },
+            history
+        );
+        const blocks = view.querySelectorAll('.reasoning-block-od');
+        expect(blocks).toHaveLength(2);
+        expect(blocks[0].classList).toContain('reasoning-completed');
+        expect(blocks[1].classList).toContain('reasoning-active');
+        expect((blocks[1] as HTMLElement)._reasoningTimeInterval).not.toBeNull();
     });
 
     test('completed process rows keep symmetric spacing around the collapsed summary', () => {

@@ -293,3 +293,40 @@ describe('交互工具挂载场景（standard / solo / unlimited / plan）', () 
         expect(exitProvider.cancelCurrent).toHaveBeenCalledTimes(1);
     });
 });
+
+describe('手动停止/中断任务时自动取消交互提示（askUser / exitPlanMode）', () => {
+    async function makeStoppingTask() {
+        const task = await makeTask(null);
+        const askProvider = { cancelCurrent: jest.fn() };
+        const exitProvider = { cancelCurrent: jest.fn() };
+        task.interactionToolset = await makeRealInteractionToolset(askProvider, exitProvider);
+        return { task, askProvider, exitProvider };
+    }
+
+    test('stop() 取消 askUser / exitPlanMode 交互提示', async () => {
+        const { task, askProvider, exitProvider } = await makeStoppingTask();
+        task.stop('user');
+        expect(askProvider.cancelCurrent).toHaveBeenCalledTimes(1);
+        expect(exitProvider.cancelCurrent).toHaveBeenCalledTimes(1);
+    });
+
+    test('interruptForNewMessage() 取消交互提示', async () => {
+        const { task, askProvider, exitProvider } = await makeStoppingTask();
+        task.interruptForNewMessage();
+        expect(askProvider.cancelCurrent).toHaveBeenCalledTimes(1);
+        expect(exitProvider.cancelCurrent).toHaveBeenCalledTimes(1);
+    });
+
+    test('interruptRunningTurn() 取消交互提示（goal 停止/清除路径）', async () => {
+        const { task, askProvider, exitProvider } = await makeStoppingTask();
+        await task.interruptRunningTurn({
+            reason: 'goal_pause',
+            stopRunningTools: true,
+            cancelPermissionPrompts: true,
+            userInitiated: true,
+            skipFinishHooks: true
+        });
+        expect(askProvider.cancelCurrent).toHaveBeenCalledTimes(1);
+        expect(exitProvider.cancelCurrent).toHaveBeenCalledTimes(1);
+    });
+});

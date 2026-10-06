@@ -75,6 +75,14 @@ export function getGoalSnapshotTimestamp(snapshot: GoalFinalSnapshot): number | 
 
 function getMessageTimestamp(message: unknown): number | undefined {
     if (!(message instanceof UserMessage) && !(message instanceof AssistantMessage)) return undefined;
+    if (message instanceof AssistantMessage) {
+        // assistant 消息的时间语义统一在 execution 元数据上（turn 结束优先）；
+        // 老任务的 legacy timestamp 已在反序列化边界（AssistantMessage.assign）迁移为 finishAt
+        const execution = message.metadata?.execution;
+        if (typeof execution?.finishAt === 'number') return execution.finishAt;
+        if (typeof execution?.startAt === 'number') return execution.startAt;
+        return undefined;
+    }
     const timestamp = message.timestamp;
     return typeof timestamp === 'number' && Number.isFinite(timestamp) ? timestamp : undefined;
 }

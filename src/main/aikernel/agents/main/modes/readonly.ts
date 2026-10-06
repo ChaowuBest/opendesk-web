@@ -18,9 +18,12 @@ import { fromMsysPath, normalizePath } from '../../../../../utils/path.js';
 /**
  * Readonly Mode 权限规则：
  * - 工作空间内文件读取 allow
- * - 所有文件写入 deny
- * - 所有文件执行 deny
- * - 工作空间外读取保持隐式 ask
+ * - 所有文件写入 deny（写保护是本模式的核心承诺）
+ * - 执行不显式 deny：工具链（cat/ls 等）必须可运行才能"检查工作区内容"，
+ *   全盘 execute deny 会连 PATH 搜索都拦掉（cat: Permission denied）。
+ *   沙箱策略的兜底 execute allow + decide 端点的 execute ask 维持管控；
+ *   模式的"禁止 shell 命令"由 disabledTools（不注册 shell 工具）落实。
+ * - 工作空间外读取：由沙箱策略兜底 deny（不弹 ask，readonly 无交互可用）
  * - 技能可读
  */
 export function createReadonlyModePermissionRules(workspace: string): PermissionRule[] {
@@ -31,7 +34,6 @@ export function createReadonlyModePermissionRules(workspace: string): Permission
         ...createDeviceNodeRules(),
         { resourceType: 'file', action: 'read', pathPattern: wsPattern, effect: 'allow' },
         { resourceType: 'file', action: 'write', pathPattern: '**', effect: 'deny' },
-        { resourceType: 'file', action: 'execute', pathPattern: '**', effect: 'deny' },
         { resourceType: 'skill', action: 'read', pathPattern: '**', effect: 'allow' }
     ];
 }

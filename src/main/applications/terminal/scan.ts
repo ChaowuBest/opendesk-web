@@ -9,9 +9,6 @@
  * See the Mulan PSL v2 for more details.
  */
 
-import fs from 'node:fs';
-import path from 'node:path';
-import { spawnSync } from 'node:child_process';
 import { findExecutablesInPath, findOpenHarmonyBash, findOpenHarmonyZsh } from '../../utils/shellExec.js';
 import type { SupportedShell, SupportedShellKind } from '../../../common/shells.js';
 export { selectSupportedShell, type SupportedShell, type SupportedShellKind } from '../../../common/shells.js';
@@ -22,6 +19,7 @@ import {
 } from '../../../platforms/bridges/harmonyos/local-runtime.js';
 import { getPlatform } from '../../../platforms/base.js';
 import { resolveOpenHarmonySandboxExecutable } from './sandboxes/resolve-ohos.js';
+import { resolveLinuxSandboxExecutable, resolveLinuxSandboxLibrary } from './sandboxes/linux-sandbox.js';
 
 /**
  * CLI 模式不会安装沙箱的二进制与 hook DLL（仅桌面安装包携带），注册沙箱变体
@@ -35,7 +33,7 @@ function sandboxVariantsAvailable(targetPlatform: string): boolean {
     } catch {
         // 平台未初始化（如单元测试）时保持原有行为
     }
-    // 仅 Linux/OpenHarmony 沙箱变体依赖本地二进制（dynobox-linux）；
+    // 仅 Linux/OpenHarmony 沙箱变体依赖本地二进制（dynobox + libdynobox.so）；
     // win32/darwin 的沙箱组件随桌面安装包提供，无需本机探测
     if (targetPlatform === 'win32' || targetPlatform === 'darwin') return true;
     if (targetPlatform === 'openharmony') {
@@ -44,26 +42,10 @@ function sandboxVariantsAvailable(targetPlatform: string): boolean {
         return resolveOpenHarmonySandboxExecutable() !== null;
     }
     if (targetPlatform !== 'linux') return false;
-    const electronProcess = process as NodeJS.Process & { defaultApp?: boolean; resourcesPath?: string };
-    const dev = path.join(
-        process.env.INIT_CWD || process.cwd(),
-        'native',
-        'linux',
-        'sandbox',
-        'target',
-        'release',
-        'dynobox-linux'
-    );
-    const packaged = path.join(electronProcess.resourcesPath || '', 'sandbox', 'dynobox-linux');
-    if (!fs.existsSync(dev) && !fs.existsSync(packaged)) return false;
-    // userns 探测：fork 子进程 unshare(CLONE_NEWUSER)（AppArmor/内核限制时 EPERM）
-    try {
-        const probe = spawnSync('unshare', ['-U', 'true'], { timeout: 3000 });
-        return probe.status === 0 && probe.error === undefined;
-    } catch {
-        return false;
-    }
-    return true;
+    // 与 linux-sandbox.ts 共用同一解析（OPENDESK_DYNOBOX_BIN → resources/sandbox →
+    // 仓库 runtime/<triple>/）。LD_PRELOAD 版无需 userns/fuse 探测，仅要求二进制与
+    // 同目录的 libdynobox.so 都存在（launcher 在自身目录查找 .so）。
+    return resolveLinuxSandboxExecutable() !== null && resolveLinuxSandboxLibrary() !== null;
 }
 
 /** Discover runnable shells using the current platform and its configured runtime state. */

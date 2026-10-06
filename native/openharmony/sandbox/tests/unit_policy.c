@@ -15,6 +15,7 @@
 #include <string.h>
 #include <unistd.h>
 #include <sys/stat.h>
+#include <fcntl.h>
 
 static int g_failed, g_total;
 #define CHECK(cond, name) do { \
@@ -262,7 +263,10 @@ static void test_system_allow(void)
     CHECK(dbox_system_allow("/etc/shadow", ACC_READ) == 0, "no read /etc/shadow");
     CHECK(dbox_system_allow("/dev/null", ACC_READ) == 1, "read /dev/null");
     CHECK(dbox_system_allow("/dev/null", ACC_WRITE) == 1, "write /dev/null allowed (redirects)");
-    CHECK(dbox_system_allow("/proc/self/mem", ACC_READ) == 0, "no read /proc by default");
+    CHECK(dbox_system_allow("/proc/self/mem", ACC_READ) == 1, "read /proc via system_read");
+    CHECK(dbox_system_allow("/proc/self/mem", ACC_WRITE) == 0, "no write /proc");
+    CHECK(dbox_system_allow("/run/user/1000/bus", ACC_READ) == 1, "read /run (runtime probes)");
+    CHECK(dbox_system_allow("/run", ACC_WRITE) == 0, "no write /run");
     CHECK(dbox_system_allow("/usr", ACC_WRITE) == 0, "no write /usr");
 }
 
@@ -553,6 +557,75 @@ static void test_ro_dirs(void)
     dbox_policy_free(&p);
 }
 
+/* 回收站分流判定（--del-to-trash）：空目录与 0 字节普通文件无恢复价值，
+ * 直接真删不入站——rm -rf 收尾 rmdir 与构建零时文件曾是回收站噪音主源 */
+static void test_trash_worth_keeping(void)
+{
+    CHECK(dbox_trash_worth_keeping(S_IFREG | 0644, 123) == 1, "trash keep: regular non-empty");
+    CHECK(dbox_trash_worth_keeping(S_IFREG | 0644, 1) == 1, "trash keep: single byte file");
+    CHECK(dbox_trash_worth_keeping(S_IFREG | 0644, 0) == 0, "trash skip: zero-byte file");
+    CHECK(dbox_trash_worth_keeping(S_IFDIR | 0755, 4096) == 0, "trash skip: directory (rmdir-only semantics)");
+    CHECK(dbox_trash_worth_keeping(S_IFDIR | 0755, 0) == 0, "trash skip: directory size 0");
+    CHECK(dbox_trash_worth_keeping(S_IFLNK | 0777, 11) == 1, "trash keep: symlink");
+    CHECK(dbox_trash_worth_keeping(S_IFIFO | 0644, 0) == 1, "trash keep: fifo (conservative)");
+    CHECK(dbox_trash_worth_keeping(S_IFSOCK | 0644, 0) == 1, "trash keep: socket (conservative)");
+}
+
+/* 回收站排除清单匹配（--trash-exclude / DYNOBOX_TRASH_EXCLUDE）：
+ * 分隔符切段 + 组件边界前缀匹配，命中即真删不入站 */
+static void test_trash_excluded(void)
+{
+    const char *list = "/tmp:/var/tmp:/dev/shm:/home/u/.cache/build";
+    CHECK(dbox_trash_excluded("/tmp/esbuild-abc", list, ':') == 1, "trash-excl: tmp file");
+    CHECK(dbox_trash_excluded("/tmp/a/b/c.bin", list, ':') == 1, "trash-excl: tmp subtree");
+    CHECK(dbox_trash_excluded("/var/tmp/x", list, ':') == 1, "trash-excl: var/tmp");
+    CHECK(dbox_trash_excluded("/dev/shm/seg", list, ':') == 1, "trash-excl: shm");
+    CHECK(dbox_trash_excluded("/home/u/.cache/build/out.o", list, ':') == 1, "trash-excl: deep prefix");
+    /* 组件边界：前缀相同但下一字符不是 '/' 的不得命中 */
+    CHECK(dbox_trash_excluded("/tmp2/keep.txt", list, ':') == 0, "trash-excl: boundary /tmp2 not /tmp");
+    CHECK(dbox_trash_excluded("/home/u/.cache/buildx/f", list, ':') == 0, "trash-excl: boundary buildx");
+    /* 清单外路径 */
+    CHECK(dbox_trash_excluded("/home/u/work/src/main.c", list, ':') == 0, "trash-excl: outside kept");
+    CHECK(dbox_trash_excluded("/tmpx", list, ':') == 0, "trash-excl: prefix-only mismatch");
+    /* 空清单/空路径：绝不排除（排除=真删，空输入必须保守返回 0） */
+    CHECK(dbox_trash_excluded("/tmp/f", "", ':') == 0, "trash-excl: empty list");
+    CHECK(dbox_trash_excluded(NULL, list, ':') == 0, "trash-excl: NULL path");
+    /* 分隔符参数化（Windows 侧 hook 层用自己的实现，这里仅验证分隔符通用性；
+     * 路径仍为 POSIX 形态——dbox_path_under 的组件边界按 '/' 判定） */
+    CHECK(dbox_trash_excluded("/home/u/temp/x.tmp", "/home/u/temp;/home/u/cache", ';') == 1,
+          "trash-excl: semicolon delimiter");
+    /* 尾随分隔符产生的空段被跳过 */
+    CHECK(dbox_trash_excluded("/tmp/f", "/tmp:/var/tmp:", ':') == 1, "trash-excl: trailing sep ok");
+}
+
+static void test_acc_from_open_flags(void)
+{
+#ifndef O_DIRECTORY
+#define O_DIRECTORY 0200000
+#endif
+#ifndef O_TMPFILE
+#define O_TMPFILE 020200000
+#endif
+    /* 回归（BUG find-ask-storm）：O_TMPFILE 定义含 O_DIRECTORY 位，按位
+     * 检测曾把一切目录打开误判为写模式——standard 模式下 `find /` 逐目录
+     * 触发幽灵 write ask。目录枚举（无写位 + O_DIRECTORY）必须是 0
+     * （deny-only，与 opendir 同口径），O_TMPFILE 必须仍算写。 */
+    CHECK(dbox_acc_from_open_flags(O_RDONLY) == ACC_READ, "acc: plain rd");
+    CHECK(dbox_acc_from_open_flags(O_RDONLY | O_CLOEXEC) == ACC_READ, "acc: rd + cloexec");
+    CHECK(dbox_acc_from_open_flags(O_RDONLY | O_DIRECTORY) == 0, "acc: dir enum is deny-only(0)");
+    CHECK(dbox_acc_from_open_flags(O_RDONLY | O_DIRECTORY | O_NONBLOCK | O_CLOEXEC) == 0,
+          "acc: fts-style dir open is deny-only(0)");
+    CHECK(dbox_acc_from_open_flags(O_WRONLY) == (ACC_READ | ACC_WRITE), "acc: wr");
+    CHECK(dbox_acc_from_open_flags(O_RDWR) == (ACC_READ | ACC_WRITE), "acc: rdwr");
+    CHECK(dbox_acc_from_open_flags(O_WRONLY | O_CREAT | O_TRUNC) == (ACC_READ | ACC_WRITE), "acc: creat+trunc");
+    CHECK(dbox_acc_from_open_flags(O_WRONLY | O_APPEND) == (ACC_READ | ACC_WRITE), "acc: append");
+    CHECK(dbox_acc_from_open_flags(O_TMPFILE | O_WRONLY) == (ACC_READ | ACC_WRITE), "acc: O_TMPFILE is write");
+    CHECK(dbox_acc_from_open_flags(O_TMPFILE) == (ACC_READ | ACC_WRITE), "acc: O_TMPFILE alone is write");
+    /* O_DIRECTORY|O_CREAT：创建位在，仍走写判定（不是目录枚举） */
+    CHECK(dbox_acc_from_open_flags(O_RDONLY | O_DIRECTORY | O_CREAT) == (ACC_READ | ACC_WRITE),
+          "acc: dir+creat is write");
+}
+
 int main(void)
 {
     test_normpath();
@@ -569,6 +642,9 @@ int main(void)
     test_default_allow_cache_overwrite();
     test_duplicate_keys_and_multi_grants();
     test_ro_dirs();
+    test_trash_worth_keeping();
+    test_trash_excluded();
+    test_acc_from_open_flags();
     printf("\n%d checks, %d failed\n", g_total, g_failed);
     return g_failed ? 1 : 0;
 }

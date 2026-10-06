@@ -17,7 +17,7 @@ const translations: Record<string, string> = {
     'prompt.sandbox.cwd':
         '- The sandbox working directory matches the task workspace (host real path, e.g. C:/foo); relative paths resolve from there.',
     'prompt.sandbox.trash':
-        '- Deletions are always moved to the Windows Recycle Bin (same semantics as the Linux/OHOS sandbox).',
+        '- Deletions are always moved to the OpenDesk file trash (unified trash; files created within this sandbox instance are removed permanently).',
     'prompt.sandbox.linux.transparent': '- transparent path semantics',
     'prompt.sandbox.linux.workspace': '- workspace writes, system dirs read-only',
     'prompt.sandbox.linux.system': '- system dirs mounted read-only from the host'
@@ -46,13 +46,13 @@ describe('terminal system prompt contribution', () => {
         }
     });
 
-    test('trash instructions state that deletions always go to the Recycle Bin', () => {
-        // Detours 实现与 Linux/OHOS 对齐：删除一律送回收站，不区分实例内新建
-        // （Dokan 版的"实例内创建跟踪"语义已移除）。两条语言都要表达这一点。
-        expect(enUs['prompt.sandbox.trash']).toMatch(/always moved to the Windows Recycle Bin/i);
-        expect(enUs['prompt.sandbox.trash']).not.toContain('removed permanently');
-        expect(zhCn['prompt.sandbox.trash']).toContain('一律送入 Windows 回收站');
-        expect(zhCn['prompt.sandbox.trash']).not.toContain('直接清除');
+    test('trash instructions state that deletions go to the OpenDesk file trash', () => {
+        // 统一回收站：删除送 OpenDesk 文件回收站（可在 GUI 中找回），实例内新建
+        // 的文件删除时直接清除。两条语言都要表达这一点。
+        expect(enUs['prompt.sandbox.trash']).toMatch(/OpenDesk file trash/i);
+        expect(enUs['prompt.sandbox.trash']).toContain('removed permanently');
+        expect(zhCn['prompt.sandbox.trash']).toContain('OpenDesk 文件回收站');
+        expect(zhCn['prompt.sandbox.trash']).toContain('直接清除');
     });
 
     test.each([
@@ -86,7 +86,7 @@ describe('terminal system prompt contribution', () => {
         expect(contribution.content).toMatch(/host real path|host drive paths/);
         expect(contribution.content).not.toContain('SBX_ROOT');
         expect(contribution.content).not.toMatch(/[A-Z]:\/C\//);
-        expect(contribution.content).toContain('Windows Recycle Bin');
+        expect(contribution.content).toContain('OpenDesk file trash');
     });
 
     test('uses transparent-path semantics for sandboxed linux shells', () => {

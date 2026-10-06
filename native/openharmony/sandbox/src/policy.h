@@ -3,7 +3,11 @@
 #define DYNOBOX_POLICY_H
 
 #include "dynobox.h"
+#ifndef _WIN32
 #include <pthread.h>
+#else
+#include "pthread_compat.h"
+#endif
 #include <stddef.h>
 
 /* Parse policy TOML text into p. Returns 0 or -1 with `err` filled. */
@@ -27,6 +31,14 @@ dperm_t dbox_policy_eval_static_ex(const dbox_policy_t *p, const char *vpath,
                                    int acc, int allow_system);
 dperm_t dbox_policy_check_ex(dbox_policy_t *p, const char *vpath, int acc,
                              dbox_ask_fn ask, int64_t now_ms, int allow_system);
+
+/* open(2) flags → access categories. Returns 0 for directory-enumeration
+ * opens (O_DIRECTORY without write bits): those share opendir's deny-only
+ * semantics (metadata read, never allow/ask) — find/fts open directories
+ * this way and must not trip the write fallback (BUG find-ask-storm).
+ * O_TMPFILE counts as write, but its O_DIRECTORY bit must be stripped
+ * before the bit test (the glibc/musl definition ORs it in). */
+int dbox_acc_from_open_flags(int flags);
 
 /* ------------------------------------------------------------------ *
  * Shared ask state (parity with the Windows manager: decisions and

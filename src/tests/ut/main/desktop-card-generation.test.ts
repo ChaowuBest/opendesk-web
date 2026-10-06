@@ -4,11 +4,11 @@ import {
     getLastAssistantMessageText,
     normalizeCardData,
     summarizeCardPromptForTaskName
-} from '../../../main/desktop/cardGeneration.js';
+} from '../../../main/utils/cardGeneration.js';
 
 describe('desktop card generation helpers', () => {
     test("generation task uses the selected model's supported minimum reasoning effort", () => {
-        const handler = readFileSync(new URL('../../../main/desktop/handlers.ts', import.meta.url), 'utf8');
+        const handler = readFileSync(new URL('../../../main/windows/handlers.ts', import.meta.url), 'utf8');
         expect(handler).toContain(
             'task.reasoningEffort = LLM.getMinimalReasoningEffort(task.ensureValidModelOrFallback());'
         );

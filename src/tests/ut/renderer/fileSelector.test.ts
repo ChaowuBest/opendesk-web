@@ -178,4 +178,172 @@ describe('FileSelector column animation', () => {
         expect(emptyEl).not.toBeNull();
         expect(NO_SUBDIR_TEXTS).toContain(emptyEl.textContent);
     });
+
+    describe('new folder scroll reveal（新建文件夹后自动滚动到可见区域）', () => {
+        const ITEM_H = 30;
+        const COL_H = 200;
+
+        beforeAll(() => {
+            const origRect = (window.HTMLElement.prototype as any).getBoundingClientRect;
+            const origScrollTopDesc = Object.getOwnPropertyDescriptor(window.HTMLElement.prototype, 'scrollTop');
+            (globalThis as any).__origFsRect = origRect;
+            (globalThis as any).__origFsScrollTop = origScrollTopDesc;
+            // linkedom 不实现滚动语义，这里模拟：条目按索引排布，列可视高度 COL_H，
+            // 条目视口坐标 = 文档坐标 - 列 scrollTop
+            Object.defineProperty(window.HTMLElement.prototype, 'scrollTop', {
+                configurable: true,
+                get(this: HTMLElement) {
+                    return (this as any).__scrollTop || 0;
+                },
+                set(this: HTMLElement, v: number) {
+                    (this as any).__scrollTop = v;
+                }
+            });
+            (window.HTMLElement.prototype as any).getBoundingClientRect = function (this: HTMLElement) {
+                if (this.classList.contains('od-fscol')) {
+                    return { top: 0, bottom: COL_H, left: 0, right: 200, width: 200, height: COL_H };
+                }
+                if (this.classList.contains('od-fsitem')) {
+                    const col = this.parentElement as HTMLElement;
+                    const items = Array.from(col.children).filter((c) =>
+                        (c as HTMLElement).classList.contains('od-fsitem')
+                    );
+                    const idx = items.indexOf(this);
+                    const top = idx * ITEM_H - ((col as any).scrollTop || 0);
+                    return { top, bottom: top + ITEM_H, left: 0, right: 200, width: 200, height: ITEM_H };
+                }
+                return { top: 0, bottom: 0, left: 0, right: 0, width: 0, height: 0 };
+            };
+            (window.HTMLElement.prototype as any).scrollIntoView = () => {};
+        });
+
+        afterAll(() => {
+            (window.HTMLElement.prototype as any).getBoundingClientRect = (globalThis as any).__origFsRect;
+            const origScrollTopDesc = (globalThis as any).__origFsScrollTop;
+            if (origScrollTopDesc) {
+                Object.defineProperty(window.HTMLElement.prototype, 'scrollTop', origScrollTopDesc);
+            } else {
+                delete (window.HTMLElement.prototype as any).scrollTop;
+            }
+        });
+
+        function createTreeSelector(createDirectory: (parent: string, name: string) => Promise<string>) {
+            const tree: Record<string, string[]> = {
+                '/root': Array.from({ length: 20 }, (_, i) => `dir${String(i + 1).padStart(2, '0')}`),
+                '/root/x': Array.from({ length: 10 }, (_, i) => `sub${String(i + 1).padStart(2, '0')}`)
+            };
+            const selector = new FileSelector({
+                listDirectory: (dirPath) =>
+                    Promise.resolve(
+                        (tree[dirPath] ?? []).map((name) => ({
+                            name,
+                            path: `${dirPath}/${name}`,
+                            isDirectory: true
+                        }))
+                    ),
+                createDirectory,
+                directoryOnly: true
+            });
+            document.body.appendChild(selector.element);
+            return selector;
+        }
+
+        /** 触发新建文件夹输入框的提交（blur）并等待 commit + _render 完成 */
+        async function commitNewFolder(
+            selector: FileSelectorModule['FileSelector'],
+            input: HTMLInputElement
+        ): Promise<void> {
+            input.dispatchEvent(new window.Event('blur'));
+            await new Promise((r) => setTimeout(r, 0));
+            await new Promise((r) => setTimeout(r, 0));
+        }
+
+        test('同级新建的目录排序在末尾（视野外）时，自动向下滚动到可见', async () => {
+            const createDirectory = jest.fn(async (_parent: string, name: string) => `/root/${name}`);
+            const selector = createTreeSelector(createDirectory);
+            await (selector as any).setRoot('/root');
+
+            const colEl = selector.element.querySelector('.od-fscol') as HTMLElement;
+            colEl.scrollTop = 0;
+
+            await (selector as any)._startNewFolder(0, '/root');
+            await new Promise((r) => setTimeout(r, 0));
+
+            const input = colEl.querySelector('.od-fsitem-edit') as HTMLInputElement;
+            expect(input).not.toBeNull();
+            input.value = 'zz';
+            await commitNewFolder(selector, input);
+
+            // 新目录已加入（_render 会重建 DOM，需重新查询列）
+            const newColEl = selector.element.querySelector('.od-fscol') as HTMLElement;
+            expect(newColEl.querySelector('.od-fsitem[data-path="/root/zz"]')).not.toBeNull();
+            // zz 排序在 20 个 dir* 之后（index 20），bottom=630 > 列底 200 → 向下滚动 430
+            expect(newColEl.scrollTop).toBe(430);
+        });
+
+        test('新建的目录排序在最前而当前滚动位置在下方时，自动向上滚动到可见', async () => {
+            const createDirectory = jest.fn(async (_parent: string, name: string) => `/root/${name}`);
+            const selector = createTreeSelector(createDirectory);
+            await (selector as any).setRoot('/root');
+
+            const colEl = selector.element.querySelector('.od-fscol') as HTMLElement;
+            colEl.scrollTop = 600;
+
+            await (selector as any)._startNewFolder(0, '/root');
+            await new Promise((r) => setTimeout(r, 0));
+
+            const input = colEl.querySelector('.od-fsitem-edit') as HTMLInputElement;
+            input.value = 'a0';
+            await commitNewFolder(selector, input);
+
+            const newColEl = selector.element.querySelector('.od-fscol') as HTMLElement;
+            // a0 排序在最前（index 0），top=-600 < 列顶 0 → 向上滚动 600
+            expect(newColEl.scrollTop).toBe(0);
+        });
+
+        test('新建的目录排序后已在视野内时不额外滚动', async () => {
+            const createDirectory = jest.fn(async (_parent: string, name: string) => `/root/${name}`);
+            const selector = createTreeSelector(createDirectory);
+            await (selector as any).setRoot('/root');
+
+            const colEl = selector.element.querySelector('.od-fscol') as HTMLElement;
+            colEl.scrollTop = 300;
+
+            await (selector as any)._startNewFolder(0, '/root');
+            await new Promise((r) => setTimeout(r, 0));
+
+            const input = colEl.querySelector('.od-fsitem-edit') as HTMLInputElement;
+            input.value = 'dir15b'; // 排序后位于 dir15 与 dir16 之间（index 15）
+            await commitNewFolder(selector, input);
+
+            const newColEl = selector.element.querySelector('.od-fscol') as HTMLElement;
+            // index 15：top=150、bottom=180，均在 [0,200] 视野内，不滚动
+            expect(newColEl.scrollTop).toBe(300);
+        });
+
+        test('在子目录内新建（newFolderInside 路径）同样滚动到可见', async () => {
+            const createDirectory = jest.fn(async (parent: string, name: string) => `${parent}/${name}`);
+            const selector = createTreeSelector(createDirectory);
+            await (selector as any).setRoot('/root');
+
+            // 右键 /root/x → 新建文件夹（在 x 内），展开后在第 1 列输入
+            await (selector as any)._startNewFolder(0, '/root/x');
+            await new Promise((r) => setTimeout(r, 0));
+
+            const colEls = selector.element.querySelectorAll('.od-fscol');
+            expect(colEls.length).toBe(2);
+            const col1 = colEls[1] as HTMLElement;
+            col1.scrollTop = 0;
+
+            const input = col1.querySelector('.od-fsitem-edit') as HTMLInputElement;
+            expect(input).not.toBeNull();
+            input.value = 'zz';
+            await commitNewFolder(selector, input);
+
+            const newCol1 = selector.element.querySelectorAll('.od-fscol')[1] as HTMLElement;
+            expect(newCol1.querySelector('.od-fsitem[data-path="/root/x/zz"]')).not.toBeNull();
+            // zz 在 10 个 sub* 之后（index 10），bottom=330 > 200 → 向下滚动 130
+            expect(newCol1.scrollTop).toBe(130);
+        });
+    });
 });

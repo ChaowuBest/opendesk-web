@@ -119,6 +119,11 @@ static std::wstring buildEnvironment(const SandboxLaunchOptions& opts)
         set(L"DYNOBOX_AUTOMOUNT", L"1");
     }
     if (opts.delToTrash) set(L"DYNOBOX_DEL_TO_TRASH", L"1");
+    // 统一回收站目录：hook 据此移入 <opendesk>/trash/<taskId>/<uuid>.back 并记录
+    // summary.json；无论 delToTrash 开关与否都注入（原生层仅在开关开启时使用）
+    if (!opts.trashDir.empty()) set(L"DYNOBOX_TRASH_DIR", opts.trashDir);
+    // 回收站排除清单：hook 删除分流命中直接真删（临时目录零噪音，见 hooks_file.cpp）
+    if (!opts.trashExclude.empty()) set(L"DYNOBOX_TRASH_EXCLUDE", opts.trashExclude);
     if (!opts.upstream.empty()) set(L"DYNOBOX_UPSTREAM", opts.upstream);
     if (!opts.askToken.empty()) set(L"DYNOBOX_ASK_TOKEN", opts.askToken);
     for (const auto& [k, v] : opts.envExtra) set(k, v);

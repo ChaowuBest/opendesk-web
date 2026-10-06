@@ -1,8 +1,11 @@
-/* log.c — thread-safe diagnostic logging via raw syscalls.
+/* log.c — thread-safe diagnostic logging via raw I/O.
  * Deliberately avoids hooked libc entry points (open/fopen/write), so the
- * sandbox library can log from inside its own interposed wrappers. */
+ * sandbox library can log from inside its own interposed wrappers. The
+ * underlying I/O goes through the rawio abstraction (Linux: syscall to bypass
+ * LD_PRELOAD; macOS/Windows: libc/Win32 with interpose guard). */
 #define _GNU_SOURCE
 #include "log.h"
+#include "rawio.h"
 #include "util.h"
 
 #include <stdarg.h>
@@ -12,7 +15,6 @@
 #include <unistd.h>
 #include <fcntl.h>
 #include <time.h>
-#include <sys/syscall.h>
 
 int dbox_verbose_enabled = 0;
 
@@ -26,10 +28,10 @@ void dbox_log_open(const char *path)
 {
     if (!path || !path[0]) return;
     pthread_mutex_lock(&g_mu);
-    if (g_fd >= 0) { syscall(SYS_close, g_fd); g_fd = -1; }
+    if (g_fd >= 0) { dbox_raw_close(g_fd); g_fd = -1; }
     snprintf(g_path, sizeof g_path, "%s", path);
-    g_fd = (int)syscall(SYS_openat, (unsigned long)-100 /*AT_FDCWD*/, path,
-                        O_WRONLY | O_APPEND | O_CREAT, 0644);
+    g_fd = dbox_raw_openat(-100 /*AT_FDCWD*/, path,
+                           O_WRONLY | O_APPEND | O_CREAT, 0644);
     pthread_mutex_unlock(&g_mu);
 }
 
@@ -54,6 +56,6 @@ void dbox_logf(const char *fmt, ...)
     if (n > (int)sizeof buf - 2) n = (int)sizeof buf - 2;
     buf[n++] = '\n';
     pthread_mutex_lock(&g_mu);
-    if (g_fd >= 0) syscall(SYS_write, g_fd, buf, (size_t)n);
+    if (g_fd >= 0) dbox_raw_write(g_fd, buf, (size_t)n);
     pthread_mutex_unlock(&g_mu);
 }

@@ -82,17 +82,28 @@ Detours 在用户态 API 层），详见"安全模型"。
 
 ### 2.2 决策引擎与求值顺序
 
-与 Dokan 版一致：静态规则（`[[rules]]`，顺序匹配）、端点下发的**临时授权**
-（`grants`，带 TTL）、决策缓存（`路径+访问类型` 键）。
+与 Linux/OpenHarmony/macOS 一致：静态规则（`[[rules]]`，**most-specific 匹配**——
+四平台统一，详见下方语义说明）、端点下发的**临时授权**（`grants`，带 TTL）、
+决策缓存（`路径+访问类型` 键）。TOML 解析与路径 glob 匹配由共享 core
+（`native/openharmony/sandbox/src` 的 mini_toml.c / policy.c）提供，经
+`common/core_policy.cpp` 桥接（UTF-16↔UTF-8 + 大小写折叠）。
 
 ```
-静态规则按声明顺序匹配
+静态规则 most-specific 匹配（规则顺序无关）
+  ├─ 命中多条取最具体模式（剥尾 /** 的前缀最长），同长 deny > ask > allow
   ├─ deny  → 拒绝（硬边界，授权无法覆盖）
   ├─ allow → 该类别通过（硬边界，无需问询）
   └─ ask   → 先查端点下发的子树授权（TTL 内命中 → 通过）
              └─ 未命中 → 同步调端点 → allow/deny（失败=deny，不进缓存）
 无规则命中 → default（默认 deny）
 ```
+
+#### 规则匹配语义（四平台统一：most-specific）
+
+一条路径命中多条规则时，取**最具体**的模式（剥离尾部 `/**` 后的前缀最长）；
+同长按 deny > ask > allow。**规则书写顺序无关**——"宽 allow 在前 + 精确 deny
+在后"的防御写法总是生效（历史 first-match 语义下该写法是 fail-open 陷阱）。
+同一策略在 Windows / Linux / OpenHarmony / macOS 上判定结果一致。
 
 fail-closed：超时、连接失败、非 200、字段缺失 → 按 deny 且失败决策不进缓存。
 策略判定发生在子进程内的 hook 中（无跨进程 IPC 往返，stat 单价 ~10µs）。
@@ -319,6 +330,8 @@ node scripts/build-windows-sandbox.cjs      # x64（默认）；OPENDESK_SANDBOX
 - 路径别名归一化（`..`、8.3 短名、尾点、`\\?\` 前缀）不能逃逸策略；
 - 未映射路径按 not-found 语义返回（PATH 探测不报错）；
 - **框架探测不打扰**：打开已存在目录（可写性检查）、"确保存在"的目录创建、属性/存在性查询（GetFileAttributes）等无副作用探测**不触发任何 ask**（连 read 也不触发），但 deny 规则仍拦截（防尾斜杠/别名逃逸）；沙箱会话内创建的文件删除同样不 ask、不进回收站；
+- **通用读探测豁免（判定层）**：read 类访问且目标**当前是已存在目录**（目录句柄打开、目录枚举、路径链逐层校验——句柄读不到文件数据）、目标**当前不存在**（ENOENT 透传：真实 API 对宿主返回 not-found，与无沙箱行为完全一致，探测/容错逻辑依赖它）、或目标由**沙箱会话内进程创建**（进程读回自己的产物，如 PowerShell `__PSScriptPolicyTest_*.ps1`，与"会话内创建文件删除=自发清理"同哲学）→ 不触发 ask；deny 规则仍优先拦截（deny 区的存在性探测不泄露），存在文件的内容读取照常受策略管控；
+- **App 专属策略（策略层，security/policies）**：常用 CLI 工具的运行时读放行定义在 `src/main/aikernel/security/policies/`（git/python/node/uv，standard 模式注入权限引擎，读写文件工具与沙箱两端生效）——git 全局配置、Python 用户站点包与 pip 缓存、npm 缓存与全局前缀、uv 缓存与工具区；`~/.git-credentials`/`~/.netrc`/`~/.npmrc` 等凭据文件 read ask 保护（standard 确认一次即可记住），沙箱导出时按 most-specific 同长 deny > ask > allow 保序；
 - 回收站不可用时保留原文件、绝不静默永久删除。
 
 **已知限制（Detours 方案的固有边界）：**

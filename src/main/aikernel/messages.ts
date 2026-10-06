@@ -1564,7 +1564,6 @@ export class AssistantMessage implements BaseAssistantMessage {
     content: Array<AssistantMessagePart> = [];
     usage?: Usage;
     metadata?: RuntimeMetadata;
-    timestamp?: number;
     private _insideThinkTag: boolean = false;
     private _allowThinkTagParsing: boolean = true;
     private _allowImplicitThinkClose: boolean = true;
@@ -1633,6 +1632,22 @@ export class AssistantMessage implements BaseAssistantMessage {
                 }
             }
         }
+        // 兼容老任务：legacy timestamp（旧"最后一轮流结束"打点）在反序列化边界迁移为
+        // execution.finishAt，使内存实例与下游（渲染 JSON、TUI、API）只消费新字段；
+        // 迁移后删除旧字段，保证单一数据源，磁盘数据随下次保存自然收敛为新格式
+        const legacy = assistant_message as { timestamp?: unknown };
+        if (typeof legacy.timestamp === 'number' && Number.isFinite(legacy.timestamp)) {
+            if (assistant_message.metadata?.execution?.finishAt === undefined) {
+                assistant_message.metadata = {
+                    ...assistant_message.metadata,
+                    execution: {
+                        ...assistant_message.metadata?.execution,
+                        finishAt: legacy.timestamp
+                    }
+                };
+            }
+            delete legacy.timestamp;
+        }
         assistant_message.usage = Usage.fromRaw(assistant_message.usage);
         return assistant_message;
     }
@@ -1649,7 +1664,6 @@ export class AssistantMessage implements BaseAssistantMessage {
             message_id: this.message_id,
             usage: this.usage,
             metadata: this.metadata,
-            timestamp: this.timestamp,
             content: this.content.map((part) => part.toRenderJSON())
         };
     }

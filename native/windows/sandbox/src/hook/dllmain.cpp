@@ -8,9 +8,10 @@
 
 #include "../common/log.h"
 #include "../common/paths.h"
-#include "../common/toml.h"
 #include "../common/hook_scope.h"
 #include "detours.h"
+
+#include <stdexcept>
 
 // 本 DLL 内需要与 Detours 对接的真实函数指针（hooks_*.cpp 定义 Hook_* 实现）
 extern "C" {
@@ -49,6 +50,8 @@ namespace sbx {
 
 bool g_hooked = false;
 bool g_delToTrash = false;
+std::wstring g_trashDir;
+std::wstring g_trashExclude;
 Policy g_policy;
 
 // 沙箱会话开始时刻（FILETIME，runner 经 DYNOBOX_SESSION_START 注入）；0 表示未设置。
@@ -56,12 +59,34 @@ static unsigned __int64 g_sessionStartFiletime = 0;
 
 // 判断路径是否沙箱会话内创建（文件创建时间 >= 会话开始时间）。
 // 会话内创建的文件删除 = 自发清理：不 ask、不进回收站，直接删除。
+// 例外：回收站目录内的文件永不走此短路——回收站产物（<uuid>.back）本身就是
+// 会话内由回收流程创建的，若无此豁免，"删回收站内容"会被误判为临时文件清理
+// 而直接真删（蓝队 B1：回收站可恢复性承诺被绕过）。
 bool sandboxSessionCreated(const std::wstring& hostPath)
 {
     if (g_sessionStartFiletime == 0) return false;
     std::wstring p = hostPath;
     if (p.rfind(L"\\\\?\\UNC\\", 0) == 0) p = L"\\\\" + p.substr(8);
     else if (p.rfind(L"\\\\?\\", 0) == 0) p = p.substr(4);
+    // 尾部分隔符归一化：引擎打开文件时可能附加尾反斜杠（err=267 的属性查询
+    // 直接失败导致"会话内创建"判定失准，读回自建文件的豁免被绕过）
+    while (p.size() > 1 && (p.back() == L'\\' || p.back() == L'/')) p.pop_back();
+    if (!g_trashDir.empty()) {
+        std::wstring trashNorm = g_trashDir;
+        while (!trashNorm.empty() && (trashNorm.back() == L'\\' || trashNorm.back() == L'/'))
+            trashNorm.pop_back();
+        std::wstring pn = p;
+        while (!pn.empty() && (pn.back() == L'\\' || pn.back() == L'/')) pn.pop_back();
+        std::wstring trashLower = trashNorm, pLower = pn;
+        for (auto& c : trashLower) c = (wchar_t)towlower(c);
+        for (auto& c : pLower) c = (wchar_t)towlower(c);
+        if (pLower == trashLower ||
+            (pLower.size() > trashLower.size() &&
+             pLower.compare(0, trashLower.size(), trashLower) == 0 &&
+             (pLower[trashLower.size()] == L'\\' || pLower[trashLower.size()] == L'/'))) {
+            return false;   /* 回收站内：不视为会话内临时文件（删除/写由 trash-protected 拦） */
+        }
+    }
     WIN32_FILE_ATTRIBUTE_DATA fad;
     if (!GetFileAttributesExW(p.c_str(), GetFileExInfoStandard, &fad)) return false;
     ULARGE_INTEGER created;
@@ -162,6 +187,29 @@ bool sandboxCheckPath(const std::wstring& hostPath, AccessClass access, DWORD& w
         return false;
     }
 
+    // 回收站写保护（对齐 Linux/OH core 的 trash-protected DENY）：回收站是误删
+    // 数据的恢复区，沙箱进程可写即可清空整个回收站（T3 蓝队发现）。--del-to-trash
+    // 的移动由 hook 的 RecycleGuard 分支完成，不经此判定，不受影响。读不受限。
+    if (access == AccessClass::Write && !g_trashDir.empty()) {
+        std::wstring trashNorm = g_trashDir;
+        while (!trashNorm.empty() && (trashNorm.back() == L'\\' || trashNorm.back() == L'/'))
+            trashNorm.pop_back();
+        std::wstring hostNorm = host;
+        while (!hostNorm.empty() && (hostNorm.back() == L'\\' || hostNorm.back() == L'/'))
+            hostNorm.pop_back();
+        // 大小写不敏感前缀 + 组件边界（\trash\<taskId>\... 或恰为目录本身）
+        std::wstring trashLower = trashNorm, hostLower = hostNorm;
+        for (auto& c : trashLower) c = (wchar_t)towlower(c);
+        for (auto& c : hostLower) c = (wchar_t)towlower(c);
+        if (hostLower == trashLower ||
+            (hostLower.size() > trashLower.size() &&
+             hostLower.compare(0, trashLower.size(), trashLower) == 0 &&
+             (hostLower[trashLower.size()] == L'\\' || hostLower[trashLower.size()] == L'/'))) {
+            winErr = ERROR_ACCESS_DENIED;
+            return false;
+        }
+    }
+
     const char* kind = access == AccessClass::Read ? kAccessRead
                        : access == AccessClass::Write ? kAccessWrite
                        : kAccessExecute;
@@ -197,6 +245,77 @@ bool sandboxCheckPathDenyOnly(const std::wstring& hostPath, AccessClass access, 
     return false;
 }
 
+// 目录读探测的通用判定：read 类访问且目标**当前是已存在目录**时，视为存在性/
+// 可遍历性探测——目录句柄不携带文件数据，读不到任何内容（列目录/校验路径链/
+// 可读性检查均属此类，.NET/PowerShell/git 启动时对家目录与 Temp 链的逐层访问
+// 都走这里）。仅 deny 硬边界生效（ask 不弹、allow 照常），deny 仍拦截防逃逸。
+// 目标是文件或不存在时返回 false，走正常 read 判定（读文件内容仍受策略管控）。
+bool sandboxCheckDirReadProbe(const std::wstring& hostPath, DWORD& winErr)
+{
+    // 尾部分隔符归一化：探测调用可能带尾反斜杠（目录语义），属性查询前剥掉，
+    // 否则 GetFileAttributesExW 对文件+尾斜杠返回 err=267，探测判定失准
+    std::wstring p = hostPath;
+    while (p.size() > 1 && (p.back() == L'\\' || p.back() == L'/')) p.pop_back();
+    WIN32_FILE_ATTRIBUTE_DATA fad;
+    if (!GetFileAttributesExW(p.c_str(), GetFileExInfoStandard, &fad) ||
+        (fad.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) == 0) {
+        return false;
+    }
+    return sandboxCheckPathDenyOnly(p, AccessClass::Read, winErr);
+}
+
+// 会话内自建文件的读回判定：read 类访问且目标由沙箱会话内进程创建（创建时间
+// >= 会话开始）→ 视为进程读回自己的产物，不触发 ask。典型：PowerShell 引擎
+// 写入 __PSScriptPolicyTest_*.ps1 后立即读回（执行策略检测），写已受 write 规则
+// 管控，读回同进程刚写的内容不产生新的信息泄露面。与"会话内创建文件的删除 =
+// 自发清理"（sandboxSessionCreated）同哲学。deny 规则仍拦截（防逃逸）。
+bool sandboxCheckSessionCreatedRead(const std::wstring& hostPath, DWORD& winErr)
+{
+    if (!sandboxSessionCreated(hostPath)) return false;
+    return sandboxCheckPathDenyOnly(hostPath, AccessClass::Read, winErr);
+}
+
+// 不存在路径的删除透传：删除类操作（DeleteFileW/A、RemoveDirectoryW/A、NtDeleteFile、
+// 句柄级 FileDispositionInfo）且目标**当前不可见** → 直接透传真实 API（返回宿主一致的
+// FILE_NOT_FOUND / PATH_NOT_FOUND / ACCESS_DENIED 等错误码），不触发 ask、不进回收站。
+// 与 sandboxCheckNotExistRead 同哲学：删除不存在的文件是 no-op（POSIX unlink 同样返回
+// ENOENT），沙箱若把它分流进回收站会返回 ACCESS_DENIED，把无害操作变成致命错误——
+// 典型破坏：clang/LLVM 对已 rename 走的 .o.tmp 残留句柄设置删除标记时，回收站移动失败
+// 导致编译报 "unable to rename temporary ... Permission denied"。
+//
+// 注意 GetFileAttributesExW 失败码不止 2/3：文件被 FileDispositionInfo 标记删除后处于
+// pending-delete 状态，属性查询返回 ERROR_ACCESS_DENIED(5)（clang 场景实测）。因此
+// 只要属性查询失败即视为"不可见/非正常文件"，不做回收站分流；deny 规则仍优先拦截
+// （防 deny 区路径的存在性探测/枚举逃逸，sandboxCheckPathDenyOnly 兜底）。
+bool sandboxCheckNotExistDelete(const std::wstring& hostPath, DWORD& winErr)
+{
+    WIN32_FILE_ATTRIBUTE_DATA fad;
+    if (GetFileAttributesExW(hostPath.c_str(), GetFileExInfoStandard, &fad)) {
+        return false;   // 目标存在：正常删除判定（进回收站等）
+    }
+    return sandboxCheckPathDenyOnly(hostPath, AccessClass::Write, winErr);
+}
+
+// 不存在路径的读放行：read 类访问且目标**当前不存在** → 不触发 ask，直接放行。
+// 真实 API 随后对宿主返回 ENOENT/PATH_NOT_FOUND，与无沙箱行为完全一致——读不到
+// 任何内容，只是把"不存在"的错误结果透传给调用方（工具的探测/容错逻辑依赖它）。
+// 典型：解释器启动时逐级向上探测 pyvenv.cfg / package.json / 标记文件。
+// 边界：deny 规则仍优先拦截（deny 区路径的存在性探测不泄露）；写不在豁免内
+// （创建文件是真实副作用，照常管控）；TOCTOU 下读到的是沙箱内进程自己预置的
+// 文件，与"会话内自建读回"等价，无新增泄露面。
+bool sandboxCheckNotExistRead(const std::wstring& hostPath, DWORD& winErr)
+{
+    WIN32_FILE_ATTRIBUTE_DATA fad;
+    if (GetFileAttributesExW(hostPath.c_str(), GetFileExInfoStandard, &fad)) {
+        return false;   // 目标存在：正常 read 判定（内容读取受策略管控）
+    }
+    DWORD err = GetLastError();
+    if (err != ERROR_FILE_NOT_FOUND && err != ERROR_PATH_NOT_FOUND) {
+        return false;   // 查询失败（权限等）：正常 read 判定，不扩大豁免
+    }
+    return sandboxCheckPathDenyOnly(hostPath, AccessClass::Read, winErr);
+}
+
 // -- 初始化：加载环境策略并安装 Detours ---------------------------------------
 
 static std::wstring envOrEmpty(const wchar_t* name)
@@ -230,6 +349,12 @@ static void loadEnvironmentPolicy()
         g_policy.addAutomountRoots();
     }
     g_delToTrash = envOrEmpty(L"DYNOBOX_DEL_TO_TRASH") == L"1";
+    // OpenDesk 统一回收站目录（<opendesk>/trash/<taskId>，宿主每次拉起都传入）；
+    // 非空时删除分流到该目录（<uuid>.back + summary.json），否则退回系统回收站
+    g_trashDir = envOrEmpty(L"DYNOBOX_TRASH_DIR");
+    // 回收站排除清单（';' 分隔目录前缀，命中直接真删不入站）：宿主传入
+    // （--trash-exclude 累积）+ 内建 %TEMP%/%TMP%（构建零时文件噪音主源）
+    g_trashExclude = envOrEmpty(L"DYNOBOX_TRASH_EXCLUDE");
     // 沙箱会话开始时刻（runner 注入，FILETIME 十进制）：用于"会话内创建"判定
     std::wstring sessionStart = envOrEmpty(L"DYNOBOX_SESSION_START");
     if (!sessionStart.empty()) {
@@ -338,11 +463,17 @@ extern "C" BOOL APIENTRY DllMain(HMODULE hModule, DWORD reason, LPVOID lpReserve
         try {
             sbx::loadEnvironmentPolicy();
             sbx::installHooks();
+        } catch (const std::exception& e) {
+            // 策略加载失败 = fail-closed：不安装 hook（进程仍可运行但无管控）。
+            // 异常原文透出（stderr + 调试器），便于定位（core 桥接层的解析错误
+            // 带具体原因，如表名/字段校验失败）。
+            wchar_t msg[512];
+            MultiByteToWideChar(CP_UTF8, 0, e.what(), -1, msg, 512);
+            OutputDebugStringW(msg);
+            sbx::Log::error(L"sandbox_hook: 策略加载失败: %ls", msg);
         } catch (...) {
-            // 策略加载失败 = fail-closed：不安装 hook（进程仍可运行但无管控，
-            // 诊断经 stderr 输出，宿主日志可见）。
-            OutputDebugStringW(L"sandbox_hook: policy load failed, hooks not installed\n");
-            sbx::Log::error(L"sandbox_hook: 策略加载失败，未安装管控");
+            OutputDebugStringW(L"sandbox_hook: policy load failed (unknown), hooks not installed\n");
+            sbx::Log::error(L"sandbox_hook: 策略加载失败（未知异常），未安装管控");
         }
     }
     return TRUE;

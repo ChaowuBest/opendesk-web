@@ -317,36 +317,65 @@ function getCurrentLogFilePath(): string {
     return path.join(getLogDirectory(), getLogFilename());
 }
 
-function createFileTransport(): Transport {
-    fileTransportFilename = getCurrentLogFilePath();
-    fileTransport = new winston.transports.File({ filename: fileTransportFilename });
+/**
+ * 文件 transport 的懒激活门卫：import logger 不得打开任何日志文件，否则纯构建
+ * 脚本/CLI 工具链经 import 链加载 logger 就会触碰 ~/.opendesk/logs，在动态沙箱
+ * 下演变成无意义的权限弹窗。真正写下第一条日志时才创建并挂载文件 transport，
+ * 转发本条日志后自移除，此后日志由挂载的真实 File transport 承载。
+ */
+class LazyFileTransport extends Transport {
+    private activated = false;
+
+    log(info: any, callback: () => void) {
+        if (this.activated) {
+            callback();
+            return;
+        }
+        this.activated = true;
+        const target = ensureFileTransport();
+        target.log(info, callback);
+        // 延迟到下一个 tick 自移除：winston 正在本条日志的分发过程中遍历
+        // transports，同步增删数组可能跳过后续 transport
+        setImmediate(() => {
+            loggerInstance?.remove(this);
+        });
+    }
+}
+
+/**
+ * 确保文件 transport 存在且指向当前日期与日志目录；跨天或日志目录变更时
+ * 关闭旧的并重建。只在真正产生日志时被调用（懒激活/显式 reload）。
+ */
+function ensureFileTransport(): Transport {
+    const nextFilename = getCurrentLogFilePath();
+    if (fileTransport && fileTransportFilename === nextFilename) {
+        return fileTransport;
+    }
+
+    const previous = fileTransport;
+    fileTransportFilename = nextFilename;
+    fileTransport = new winston.transports.File({ filename: nextFilename });
+    if (previous) {
+        loggerInstance?.remove(previous);
+        (previous as { close?: () => void }).close?.();
+    }
+    loggerInstance?.add(fileTransport);
     return fileTransport;
 }
 
 function reloadLoggerFileTransport(): string {
     const nextFilename = getCurrentLogFilePath();
-    if (!loggerInstance) {
+    if (!loggerInstance || !fileTransport) {
+        // 文件 transport 尚未懒激活：首次写日志时会按最新目录创建，此处保持零副作用
         return nextFilename;
     }
-    if (fileTransportFilename === nextFilename) {
-        return nextFilename;
-    }
-
-    const previous = fileTransport;
-    if (previous) {
-        loggerInstance.remove(previous);
-        (previous as { close?: () => void }).close?.();
-    }
-
-    fileTransportFilename = nextFilename;
-    fileTransport = new winston.transports.File({ filename: nextFilename });
-    loggerInstance.add(fileTransport);
+    ensureFileTransport();
     return nextFilename;
 }
 
 function createLogger() {
     const transports: Transport[] = [];
-    transports.push(createFileTransport());
+    transports.push(new LazyFileTransport());
 
     if (!isMainThread) {
         transports.push(new WorkerLogTransport());

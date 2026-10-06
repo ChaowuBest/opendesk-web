@@ -4,13 +4,23 @@
 
 - **透明路径**：沙箱内文件系统布局与宿主完全一致，无虚拟根；
 - **策略管控**：读默认放行、任务工作区写放行、其余写按策略 ask/deny（TOML 策略与 Linux 同构，复用 `policyTextLinux`）；
-- **权限审批**：ask 请求走与 Linux/Windows 相同的 HTTP `/decide` 协议（`sandbox-decide.ts`）；
+- **匹配语义**：most-specific（四平台统一）——命中多条规则取最具体模式（剥尾
+  `/**` 的前缀最长），同长 deny > ask > allow，规则顺序无关；
+- **策略引擎复用共享 core**：TOML 解析（mini_toml.c）与路径 glob 匹配由
+  `native/openharmony/sandbox/src` 提供（三平台单一来源）；本 dylib 保留 macOS
+  特有外壳：`/var↔/private/var` 别名竞争、curl ask 传输；
+- **权限审批**：ask 请求走与 Linux/Windows 相同的 HTTP `/decide` 协议
+  （`sandbox-decide.ts`），请求构造/响应解析用共享 core 的协议函数（严格 JSON，
+  含 grants 下发语义对齐）；
+- **watchdog 进程治理**（对齐 Linux/OH）：dylib 为每个沙箱进程布防 kqueue
+  EVFILT_PROC 监听父进程；宿主退出 → kill 本进程组整树陪葬（沙箱 shell 由
+  TS 层 detached spawn 建立独立进程组）；
 - **回收站**：`OPENDESK_SANDBOX_TRASH=1` 时，任务开始前已存在的文件删除送
   **OpenDesk 任务级回收站** `<opendesk>/trash/<taskId>/`（由宿主通过
   `OPENDESK_SANDBOX_TRASH_DIR` 传入），沙箱实例内新建文件删除时直接清除（与
-  Linux TTL/Windows 跟踪语义一致）。同一任务的同名文件多次删除以
-  `.<毫秒>.<pid>` 后缀区分，不覆盖。不用 `~/.Trash`（系统废纸篓无任务归属、
-  无"放回"信息，用户难以辨认）。
+  Linux TTL/Windows 跟踪语义一致）。同一任务多次删除以 UUID 命名（`<uuid>.back`
+  + summary.json，四平台协议一致）。回收站目录写保护：写/删除回收站内容一律
+  拒绝（对齐 Linux/OH/Windows 的 trash-protected）。
 
 ## 构建
 

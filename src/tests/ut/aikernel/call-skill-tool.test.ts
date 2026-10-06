@@ -476,6 +476,8 @@ describe('CallSkillTool', () => {
             expect(toolCall.status).toBe('success');
             expect(toolCall.args_string).toBe(validArgs);
         });
+    });
+
     test('propagates user-attention state from an inner tool', async () => {
         const loginTool = new BaseTool('loginChannel', 'Login channel', z.object({}));
         loginTool.setExecutor(async () => 'ok');

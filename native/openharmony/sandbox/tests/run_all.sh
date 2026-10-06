@@ -303,6 +303,32 @@ AUDG1=$(grep -c "/scratch" "$AUDIT"); AUDG1=${AUDG1:-0}
 check "grants: 5 files, 1 ask round (grant covers write, got=$AUDG1 base=$AUDG0)" $rc
 TSH "for i in 6 7 8; do $PROBE wr $SRC/scratch/grant\$i.txt g\$i || exit 1; done" >/dev/null; check "grant persists for more files" $?
 
+echo "== regression: directory-open is never write (find ask storm) =="
+# `find` 的 fts 用 openat(O_RDONLY|O_DIRECTORY) 打开每个被遍历目录。
+# acc_from_open_flags 曾把 O_TMPFILE（定义 = __O_TMPFILE | O_DIRECTORY）按位
+# 检测，使一切目录打开误判为写模式——standard 形态（write 兜底 ask）下
+# `find /` 对每个被遍历目录触发一次幽灵 write ask（弹"编辑 /"）。
+# 回归策略 = standard 形态：read 全放行、write 兜底 ask、endpoint deny。
+RPOL="$WORK/regress-odir.toml"
+{
+    printf 'version = 1\ndefault = "deny"\n\n'
+    printf '[ask]\nendpoint = "%s"\ntimeout_ms = 2000\ncache_ttl_seconds = 0\ngrant_ttl_seconds = 0\n\n' "$UP"
+    printf '[[rules]]\npath = "@SRC@/vault/**"\naccess = "read"\nperm = "deny"\n\n'
+    printf '[[rules]]\npath = "/**"\naccess = "read"\nperm = "allow"\n\n'
+    printf '[[rules]]\npath = "/**"\naccess = "write"\nperm = "ask"\n'
+} | sed -e "s|@SRC@|$SRC|g" > "$RPOL"
+RT() { "$B" run --policy "$RPOL" --log "$LOG" -- "$PROBE" "$@"; }
+RT odir_open_ok "$SRC/public"                       >/dev/null; check "dir open (O_DIRECTORY) never write-asked" $?
+RT otmpfile_fail "$SRC/public"                      >/dev/null; check "O_TMPFILE still write-checked (EACCES)" $?
+RT odir_open_fail "$SRC/vault"                      >/dev/null; check "dir open honors read-deny rules" $?
+RT ls "$SRC/public"                                 >/dev/null; check "opendir unaffected" $?
+AUDR0=$(grep -c "decide" "$AUDIT" 2>/dev/null); AUDR0=${AUDR0:-0}
+"$B" run --policy "$RPOL" --log "$LOG" -- /usr/bin/find "$SRC" -maxdepth 3 >/dev/null 2>&1
+check "find traversal rc=0 (no EACCES)" $?
+AUDR1=$(grep -c "decide" "$AUDIT"); AUDR1=${AUDR1:-0}
+[ "$AUDR1" = "$AUDR0" ] && rc=0 || rc=1
+check "find traversal zero asks (audit)" $rc
+
 echo "== ask: staging write approval =="
 TSH "$PROBE app $SRC/staging/base.txt -ap; $PROBE app $SRC/staging/base.txt -ap2" >/dev/null; check "staging write ask -> allow + grant covers appends" $?
 
@@ -566,6 +592,95 @@ if [ -n "$NODEBIN" ]; then
 else
     echo "skip node probes (interpreter not found)"
 fi
+
+# ------------------------------------------------------------------
+echo
+echo "== trash (del-to-trash 回收站分流) =="
+# 回收站只收"有恢复价值"的删除：非空普通文件与非空目录树。空目录
+# （rmdir / unlinkat AT_REMOVEDIR 的内核语义保证为空）与 0 字节普通文件
+# 直接真删，不产生 <uuid>.back 与 summary.json 条目——rm -rf 的收尾 rmdir
+# 与构建零时文件曾是回收站条目的主要噪音源。
+# 注意：本段依赖 LD_PRELOAD 注入里层沙箱；若本脚本自身已运行在 dynobox
+# 沙箱内（宿主终端集成等场景），外层会按防逃逸语义强制重注入 LD_PRELOAD，
+# 里层分流不生效、本段全部失真——在无外层沙箱的环境执行本套件即可。
+TRASH="$WORK/trash-task"
+trash_count() { # 输出 "<summary条目数>/<back文件数>"
+    local entries=0 backs=0
+    if [ -f "$TRASH/summary.json" ]; then
+        entries=$(grep -c '"uuid"' "$TRASH/summary.json")
+    fi
+    backs=$(ls "$TRASH" 2>/dev/null | grep -c '\.back$')
+    echo "$entries/$backs"
+}
+T_TRASH() { "$B" run --policy "$POL" --log "$LOG" --del-to-trash --trash "$TRASH" -- "$PROBE" "$@"; }
+
+rm -rf "$TRASH"
+printf 'real-content' > "$SRC/public/tr-data.txt"
+: > "$SRC/public/tr-zero.txt"
+mkdir -p "$SRC/public/tr-empty-dir" "$SRC/public/tr-full-dir"
+echo "inner" > "$SRC/public/tr-full-dir/inner.txt"
+
+# 非空普通文件 → 入回收站（.back + summary 条目 + 原路径消失）
+T_TRASH rm "$SRC/public/tr-data.txt" >/dev/null 2>&1
+rc=0
+[ ! -e "$SRC/public/tr-data.txt" ] || rc=1
+[ "$(trash_count)" = "1/1" ] || rc=1
+check "trash: non-empty file lands in trash" $rc
+
+# 0 字节普通文件 → 真删，不入站
+T_TRASH rm "$SRC/public/tr-zero.txt" >/dev/null 2>&1
+rc=0
+[ ! -e "$SRC/public/tr-zero.txt" ] || rc=1
+[ "$(trash_count)" = "1/1" ] || rc=1
+check "trash: zero-byte file is hard-deleted" $rc
+
+# 空目录 rmdir → 真删，不入站
+T_TRASH rmdir "$SRC/public/tr-empty-dir" >/dev/null 2>&1
+rc=0
+[ ! -e "$SRC/public/tr-empty-dir" ] || rc=1
+[ "$(trash_count)" = "1/1" ] || rc=1
+check "trash: empty dir via rmdir is hard-deleted" $rc
+
+# 空目录 unlinkat(AT_REMOVEDIR)（Node fs.rmdir 的实际路径）→ 同样真删不入站
+mkdir -p "$SRC/public/tr-empty-dir2"
+T_TRASH rmdirat "$SRC/public/tr-empty-dir2" >/dev/null 2>&1
+rc=0
+[ ! -e "$SRC/public/tr-empty-dir2" ] || rc=1
+[ "$(trash_count)" = "1/1" ] || rc=1
+check "trash: empty dir via unlinkat(AT_REMOVEDIR) is hard-deleted" $rc
+
+# rm -rf 语义：目录内文件入站，收尾 rmdir 目录壳不入站（最终只有内容条目）
+T_TRASH rm "$SRC/public/tr-full-dir/inner.txt" >/dev/null 2>&1
+T_TRASH rmdir "$SRC/public/tr-full-dir" >/dev/null 2>&1
+rc=0
+[ ! -e "$SRC/public/tr-full-dir" ] || rc=1
+[ "$(trash_count)" = "2/2" ] || rc=1
+check "trash: rm -rf leaves only content entry, no empty shell" $rc
+
+# 非空目录 rmdir → ENOTEMPTY 失败，目录与内容保留（内核语义不受分流影响）
+mkdir -p "$SRC/public/tr-guarded-dir"
+echo "guard" > "$SRC/public/tr-guarded-dir/keep.txt"
+T_TRASH rmdir_fail "$SRC/public/tr-guarded-dir" >/dev/null 2>&1
+rc=0
+[ -e "$SRC/public/tr-guarded-dir/keep.txt" ] || rc=1
+[ "$(trash_count)" = "2/2" ] || rc=1
+check "trash: rmdir on non-empty dir still fails with ENOTEMPTY" $rc
+
+# --trash-exclude：命中清单的删除直接真删（临时目录零噪音），清单外照常入站
+echo "cache" > "$SRC/public/tr-excl.txt"
+echo "real" > "$SRC/public/tr-keep.txt"
+"$B" run --policy "$POL" --log "$LOG" --del-to-trash --trash "$TRASH" \
+    --trash-exclude "$SRC/public" -- "$PROBE" rm "$SRC/public/tr-excl.txt" >/dev/null 2>&1
+rc=0
+[ ! -e "$SRC/public/tr-excl.txt" ] || rc=1
+[ "$(trash_count)" = "2/2" ] || rc=1
+check "trash: --trash-exclude hard-deletes without index entry" $rc
+"$B" run --policy "$POL" --log "$LOG" --del-to-trash --trash "$TRASH" \
+    -- "$PROBE" rm "$SRC/public/tr-keep.txt" >/dev/null 2>&1
+rc=0
+[ ! -e "$SRC/public/tr-keep.txt" ] || rc=1
+[ "$(trash_count)" = "3/3" ] || rc=1
+check "trash: outside exclude list still lands in trash" $rc
 
 # ------------------------------------------------------------------
 echo

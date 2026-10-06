@@ -24,7 +24,7 @@ export type TaskCompletionStatus = 'success' | 'fail' | 'ask';
  */
 export interface TaskLiveUsageSnapshot {
     message_id: string;
-    /** 消息创建时间（毫秒时间戳），用于判断该消息的请求是否已提交进 usage_summary。 */
+    /** 消息 turn 的开始时间（毫秒时间戳，来自 execution.startAt），用于判断该消息的请求是否已提交进 usage_summary。 */
     message_timestamp?: number;
     usage: Usage;
 }
@@ -121,7 +121,7 @@ export interface TaskUpdateAssistantReplaceChunk {
     message_id: string;
     parts: AssistantMessagePart[];
     usage?: Usage;
-    timestamp?: number;
+    metadata?: RuntimeMetadata;
 }
 
 export interface TaskUpdateUserReplaceChunk {

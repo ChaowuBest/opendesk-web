@@ -358,8 +358,12 @@ export async function prepareDarwinSandbox(options: {
     command: string;
     cwd?: string;
     taskState?: TaskState;
-    /** 删除送废纸篓（~/.Trash） */
+    /** 删除送废纸篓（OpenDesk 统一回收站，目录见 trashDir） */
     deleteToTrash?: boolean;
+    /** 任务级统一回收站目录（<opendesk>/trash/<taskId>），每次拉起都传入 */
+    trashDir?: string;
+    /** 删除分流排除清单：命中目录前缀真删不入站（':' 分隔注入环境变量） */
+    trashExcludeDirs?: string[];
     onPermissionWaitChange?: (waiting: boolean) => void;
 }): Promise<DynamicSandboxLaunch | null> {
     if (process.platform !== 'darwin') return null;
@@ -413,7 +417,9 @@ export async function prepareDarwinSandbox(options: {
                 decide.token,
                 policyWorkspace,
                 options.taskState?.harnessContext.permission?.getRules?.(),
-                process.env.HOME
+                process.env.HOME,
+                // 回收站写保护 deny 需要真实数据目录（debug/自定义目录布局）
+                getOpendeskDirectory()
             ),
             'utf8'
         );
@@ -435,23 +441,32 @@ export async function prepareDarwinSandbox(options: {
     // node spawn(file, args) 自动以 file 充当 argv[0]，args 只含后续参数；
     // 误把 shellPath 放进 args 会让 zsh 把 argv[1]（shell 路径）当脚本执行
     const childArgs = [...options.shellArgs];
-    // 回收站目录：OpenDesk 自管（<opendesk>/trash/<taskId>/），与 Windows/HarmonyOS
-    // dynobox 的任务级隔离一致；不用 ~/.Trash（系统废纸篓无任务归属、放回信息缺失，
-    // 且用户在访达看到一大堆重命名文件难以辨认）
-    const taskConfig = options.taskState;
-    const taskId = taskConfig?.task_id || 'unknown-task';
-    const trashDir = path.join(getOpendeskDirectory(), 'trash', taskId);
-    if (options.deleteToTrash) fs.mkdirSync(trashDir, { recursive: true });
+    // 回收站目录：OpenDesk 统一回收站（<opendesk>/trash/<taskId>/），与其他平台
+    // 的 --trash-dir 语义一致；宿主未传时退回按任务 ID 推导。不用 ~/.Trash（系统
+    // 废纸篓无任务归属、放回信息缺失，且用户在访达看到一大堆重命名文件难以辨认）。
+    // darwin 沙箱无 wrapper 进程、配置全走环境变量：目录路径每次拉起都注入
+    // （原生层仅在 OPENDESK_SANDBOX_TRASH=1 时启用删除拦截）。
+    const taskId = options.taskState?.task_id || 'unknown-task';
+    const trashDir = options.trashDir || path.join(getOpendeskDirectory(), 'trash', taskId);
+    if (options.deleteToTrash || options.trashDir) fs.mkdirSync(trashDir, { recursive: true });
 
     return {
         file: sandboxShellPath,
         args: childArgs,
         cwd: requestedWorkspace,
+        // macOS watchdog（宿主死 → 整树陪葬）依赖独立进程组：shell 必须 setpgid
+        //（POSIX detached），watchdog 才能对 -pg 发信号覆盖沙箱树。
+        detached: true,
         env: {
             DYLD_INSERT_LIBRARIES: dylib,
             OPENDESK_SANDBOX_POLICY: policyPath,
             OPENDESK_SANDBOX_LOG: logPath,
-            ...(options.deleteToTrash ? { OPENDESK_SANDBOX_TRASH: '1', OPENDESK_SANDBOX_TRASH_DIR: trashDir } : {})
+            OPENDESK_SANDBOX_TRASH_DIR: trashDir,
+            // 排除清单：命中目录前缀的删除真删不入站（构建零时产物零噪音）
+            ...(options.trashExcludeDirs && options.trashExcludeDirs.length > 0
+                ? { OPENDESK_SANDBOX_TRASH_EXCLUDE: options.trashExcludeDirs.join(':') }
+                : {}),
+            ...(options.deleteToTrash ? { OPENDESK_SANDBOX_TRASH: '1' } : {})
         },
         attach: (proc: ChildProcess) => {
             const finish = () => {

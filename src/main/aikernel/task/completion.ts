@@ -873,7 +873,6 @@ export async function processTaskCompletion(
 
         // After streaming ends, finalize all reasoning timing
         assistant_message.finalizeReasoningTiming();
-        assistant_message.timestamp = Date.now();
 
         // After streaming ends, send any remaining text part if it hasn't been sent
         const lastPart = assistant_message.content[assistant_message.content.length - 1];
@@ -905,8 +904,15 @@ export async function processTaskCompletion(
         }
         // 确保无论流式成功还是异常，持久化前所有 reasoning part 的耗时都已固化
         assistant_message.finalizeReasoningTiming();
-        if (!assistant_message.timestamp) {
-            assistant_message.timestamp = Date.now();
+        // 非标准路径（渠道、邮箱等）创建的 assistant 消息可能没有 execution 元数据，
+        // 此处为其补记 turn 级时间戳，保证前端 meta row 与耗时展示不因元数据缺失而退化。
+        // 已有 execution 的消息不动：finishAt 统一由 turn 收尾的 finalizeTurnFinishAt 固化。
+        if (!assistant_message.metadata?.execution) {
+            const finalizedAt = Date.now();
+            assistant_message.metadata = {
+                ...assistant_message.metadata,
+                execution: { finishAt: finalizedAt }
+            };
         }
     }
 
