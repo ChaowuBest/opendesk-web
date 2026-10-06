@@ -1044,7 +1044,7 @@ test('sandboxPathToHostPath: leaves non-sandbox paths untouched', () => {
 
 test('resolveFilePath: resolves sandbox artifact path to the host path', () => {
     setRenderWorkspace(null);
-    const result = resolveFilePath('Z:\\C\\Users\\liyif\\AppData\\Local\\Temp\\out.pptx');
+    const result = resolveFilePath('Z:\\C\\Users\\tester\\AppData\\Local\\Temp\\out.pptx');
     assert.ok(result, 'sandbox path must resolve to a pill target');
     assert.ok(!result.includes('Z:'), 'virtual drive must be stripped');
     assert.ok(/[A-Z]:/.test(result), 'host drive must remain');
@@ -1054,7 +1054,7 @@ test('markdown link: sandbox artifact href renders a pill with host path', () =>
     const marked = new Marked(fileLinkExtension);
     setRenderWorkspace(null);
     try {
-        const href = 'Z:\\C\\Users\\liyif\\AppData\\Local\\Temp\\out.pptx';
+        const href = 'Z:\\C\\Users\\tester\\AppData\\Local\\Temp\\out.pptx';
         const html = marked.parse(`[产物](${href})`) as string;
         assert.ok(html.includes('od-file-pill'), 'sandbox path must still render a pill');
         assert.ok(html.includes('data-open-preview="C:'), 'pill must carry the host path');

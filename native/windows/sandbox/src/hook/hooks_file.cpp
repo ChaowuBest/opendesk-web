@@ -285,7 +285,7 @@ static bool trashExcluded(const std::wstring& normalizedPath)
     }
     {
         wchar_t sysRoot[MAX_PATH + 1];
-        n = GetEnvironmentVariableW(L"SystemRoot", sysRoot, MAX_PATH);
+        DWORD n = GetEnvironmentVariableW(L"SystemRoot", sysRoot, MAX_PATH);
         if (n > 0 && n <= MAX_PATH) {
             if (!list.empty()) list += L';';
             list += std::wstring(sysRoot) + L"\\Temp";

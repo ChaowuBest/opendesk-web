@@ -59,7 +59,7 @@ describe('policyText', () => {
     });
 
     test('系统维护路径（组件存储/缓存/Recent/PowerShell 框架写）放通；回收站不放通且早于兜底 write ask', () => {
-        const text = policyText('http://ep/decide', 't', undefined, 'C:\\Users\\liyif');
+        const text = policyText('http://ep/decide', 't', undefined, 'C:\\Users\\tester');
         for (const p of [
             '/C/Windows/system32/catroot**',
             '/C/Windows/Temp/**',
@@ -87,8 +87,8 @@ describe('policyText', () => {
     });
 
     test('home 提供时生成缓存目录写放行规则（虚路径）', () => {
-        const text = policyText('http://ep/decide', 't', undefined, 'C:\\Users\\liyif');
-        expect(text).toContain('path = "/C/Users/liyif/.cache/opendesk-sandbox/**"');
+        const text = policyText('http://ep/decide', 't', undefined, 'C:\\Users\\tester');
+        expect(text).toContain('path = "/C/Users/tester/.cache/opendesk-sandbox/**"');
         const ruleStart = text.indexOf('.cache/opendesk-sandbox');
         const ruleBlock = text.slice(ruleStart - 40, ruleStart + 120);
         expect(ruleBlock).toContain('access = "write"');
@@ -96,8 +96,8 @@ describe('policyText', () => {
     });
 
     test('home 提供时生成宿主 Temp 写放行规则（共享 Temp 别名落点）', () => {
-        const text = policyText('http://ep/decide', 't', undefined, 'C:\\Users\\liyif');
-        expect(text).toContain('path = "/C/Users/liyif/AppData/Local/Temp/**"');
+        const text = policyText('http://ep/decide', 't', undefined, 'C:\\Users\\tester');
+        expect(text).toContain('path = "/C/Users/tester/AppData/Local/Temp/**"');
         const ruleStart = text.indexOf('/AppData/Local/Temp/**');
         const ruleBlock = text.slice(ruleStart - 40, ruleStart + 120);
         expect(ruleBlock).toContain('access = "write"');
@@ -116,13 +116,13 @@ describe('policyText', () => {
             'http://ep/decide',
             't',
             undefined,
-            'C:\\Users\\liyif',
-            'C:\\Users\\liyif\\AppData\\Roaming\\opendesk'
+            'C:\\Users\\tester',
+            'C:\\Users\\tester\\AppData\\Roaming\\opendesk'
         );
         for (const p of [
-            '/C/Users/liyif/AppData/Roaming/opendesk/logs/**',
-            '/C/Users/liyif/AppData/Roaming/opendesk/artifacts/**',
-            '/C/Users/liyif/AppData/Roaming/opendesk/tasks/**'
+            '/C/Users/tester/AppData/Roaming/opendesk/logs/**',
+            '/C/Users/tester/AppData/Roaming/opendesk/artifacts/**',
+            '/C/Users/tester/AppData/Roaming/opendesk/tasks/**'
         ]) {
             expect(text).toContain(`path = ${JSON.stringify(p)}`);
         }
@@ -136,10 +136,10 @@ describe('policyText', () => {
     });
 
     test('opendeskDataDir 缺失时由 home 推导 OpenDesk 数据目录写放行', () => {
-        const text = policyText('http://ep/decide', 't', undefined, 'C:\\Users\\liyif');
-        expect(text).toContain('path = "/C/Users/liyif/AppData/Roaming/opendesk/logs/**"');
-        expect(text).toContain('path = "/C/Users/liyif/AppData/Roaming/opendesk/artifacts/**"');
-        expect(text).toContain('path = "/C/Users/liyif/AppData/Roaming/opendesk/tasks/**"');
+        const text = policyText('http://ep/decide', 't', undefined, 'C:\\Users\\tester');
+        expect(text).toContain('path = "/C/Users/tester/AppData/Roaming/opendesk/logs/**"');
+        expect(text).toContain('path = "/C/Users/tester/AppData/Roaming/opendesk/artifacts/**"');
+        expect(text).toContain('path = "/C/Users/tester/AppData/Roaming/opendesk/tasks/**"');
     });
 
     test('home 与 opendeskDataDir 均缺失时无 OpenDesk 数据目录规则', () => {
@@ -158,9 +158,9 @@ describe('policyText', () => {
     });
 
     test('OpenDesk 数据目录放行不影响家目录根与 Roaming 根不放通的约束', () => {
-        const text = policyText('http://ep/decide', 't', undefined, 'C:\\Users\\liyif');
+        const text = policyText('http://ep/decide', 't', undefined, 'C:\\Users\\tester');
         expect(text).not.toContain('path = "/C/Users/*"');
-        expect(text).not.toContain('/C/Users/liyif/AppData/Roaming"');
+        expect(text).not.toContain('/C/Users/tester/AppData/Roaming"');
     });
 
     test('追加只读兜底与写入问询、执行放行的兜底规则', () => {
@@ -176,7 +176,7 @@ describe('policyText', () => {
         // Documents\\WindowsPowerShell\\Modules（PSModulePath 逐目录 stat read）、
         // LocalLow\\Temp\\__PSScriptPolicyTest_*.ps1（执行策略检测临时脚本 write）
         // 反复发起 ask——这些是每次启动必然访问的运行时路径，须豁免。
-        const text = policyText('http://ep/decide', 't', undefined, 'C:\\Users\\liyif');
+        const text = policyText('http://ep/decide', 't', undefined, 'C:\\Users\\tester');
         // 证书签名校验缓存：read 已由 LocalLow/Microsoft/** read 覆盖，write 须放行
         for (const p of ['/C/Users/*/AppData/LocalLow/Microsoft/CryptnetUrlCache/**']) {
             const at = text.indexOf(`path = ${JSON.stringify(p)}`);
@@ -194,10 +194,10 @@ describe('policyText', () => {
         // PSModulePath 用户模块目录（PowerShell 5.1 与 7 各一）：模块搜索逐目录 stat
         // 须放行 read——目录本身与子树都要（stat 命中目录本身，读文件命中子树）
         for (const p of [
-            '/C/Users/liyif/Documents/WindowsPowerShell/Modules',
-            '/C/Users/liyif/Documents/WindowsPowerShell/Modules/**',
-            '/C/Users/liyif/Documents/PowerShell/Modules',
-            '/C/Users/liyif/Documents/PowerShell/Modules/**'
+            '/C/Users/tester/Documents/WindowsPowerShell/Modules',
+            '/C/Users/tester/Documents/WindowsPowerShell/Modules/**',
+            '/C/Users/tester/Documents/PowerShell/Modules',
+            '/C/Users/tester/Documents/PowerShell/Modules/**'
         ]) {
             const at = text.indexOf(`path = ${JSON.stringify(p)}`);
             expect(at).toBeGreaterThanOrEqual(0);
@@ -215,7 +215,7 @@ describe('policyText', () => {
         // 引擎），沙箱文本由 enforcer.getRules() 经 rulesToLines 导出。
         // 导出行为回归见 src/tests/ut/aikernel/app-policies.test.ts；
         // 此处仅确认 policyText 未再内联 git 专用清单（终端侧无重复维护）。
-        const text = policyText('http://ep/decide', 't', undefined, 'C:\\Users\\liyif');
+        const text = policyText('http://ep/decide', 't', undefined, 'C:\\Users\\tester');
         expect(text).not.toContain('GIT_CREDENTIAL_HOME_PATHS');
     });
 

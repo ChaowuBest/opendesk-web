@@ -16,6 +16,20 @@
 #include <sys/un.h>
 #endif
 
+#ifdef _WIN32
+/* MSVC 的 <sys/stat.h> 只有 _S_IFMT/_S_IFDIR/_S_IFREG，不提供 POSIX
+ * S_ISDIR/S_ISREG 判型宏；宏未定义时函数体会按隐式函数声明编译，把
+ * 错误拖成链接期 LNK2019（sandbox.exe 链接 dbox_trash_worth_keeping
+ * 触发）。st_mode 的类型位布局与 POSIX 一致，按 _S_IF* 补齐等价宏；
+ * #ifndef 兜底，MinGW 等已定义 S_IS* 的工具链不重复定义。 */
+#ifndef S_ISDIR
+#define S_ISDIR(m) (((m) & _S_IFMT) == _S_IFDIR)
+#endif
+#ifndef S_ISREG
+#define S_ISREG(m) (((m) & _S_IFMT) == _S_IFREG)
+#endif
+#endif
+
 void *dbox_malloc(size_t n)
 {
     void *p = malloc(n ? n : 1);

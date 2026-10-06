@@ -117,7 +117,9 @@ describe('searchTrashEntries', () => {
         ]);
         const result = searchTrashEntries({ trashRoot, scope: 'task', taskId: 'task_a', keyword: 'report.q1' });
         expect(result.total).toBe(1);
-        expect(result.entries[0].original_path.split(/[\\/]/).pop()).toBe('Report.Q1.xlsx');
+        // 测试数据是 Windows 反斜杠路径，path.basename 在 POSIX 宿主上不按 '\\' 分隔，
+        // 改为断言完整路径（同时验证命中 Report.Q1.xlsx 而非 notes.md）
+        expect(result.entries[0].original_path).toBe('C:\\Proj\\Report.Q1.xlsx');
     });
 
     test('全局范围：无关键字且提供 recentTaskIds 时只列出最近任务', () => {

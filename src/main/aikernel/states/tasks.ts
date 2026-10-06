@@ -39,7 +39,7 @@ import {
     type AssistantMessagePart,
     type RuntimeMetadata
 } from '../messages.js';
-import { setRenderWorkspace } from '../../utils/marked-file-link.js';
+import { runWithRenderWorkspace } from '../../utils/marked-file-link.js';
 import { prepareContextForModel } from '../compaction/pipeline.js';
 import { logCompactInfo } from '../compaction/compact-trace.js';
 import type { MicrocompactTaskRole } from '../compaction/types.js';
@@ -2475,7 +2475,7 @@ export class TaskState {
                     return;
                 }
                 if (this.needsHtmlRender) {
-                    await last_message.render();
+                    await this.renderInWorkspace(() => last_message.render());
                 }
                 chunkUpdate = {
                     type: 'user',
@@ -2514,7 +2514,7 @@ export class TaskState {
                     return;
                 }
                 if (this.needsHtmlRender && !streaming) {
-                    await last_part.render();
+                    await this.renderInWorkspace(() => last_part.render());
                 }
                 chunkUpdate = {
                     type: 'assistant',
@@ -2553,7 +2553,7 @@ export class TaskState {
 
         try {
             if (this.needsHtmlRender) {
-                await userMessage.render();
+                await this.renderInWorkspace(() => userMessage.render());
             }
             const chunkUpdate: TaskUpdateUserReplaceChunk = {
                 type: 'user_replace',
@@ -2578,7 +2578,7 @@ export class TaskState {
 
         try {
             if (this.needsHtmlRender) {
-                await assistantMessage.render();
+                await this.renderInWorkspace(() => assistantMessage.render());
             }
             const chunkUpdate: TaskUpdateAssistantReplaceChunk = {
                 type: 'assistant_replace',
@@ -2825,7 +2825,7 @@ export class TaskState {
                 logger.error('TaskState.processToolCall: instrumentation error', instrumentationError);
             }
             if (this.needsHtmlRender) {
-                await tool_call.freezeRenderResult();
+                await this.renderInWorkspace(() => tool_call.freezeRenderResult());
             }
             recordEvidenceCardToolCall(this, tool_call);
         }
@@ -2871,7 +2871,7 @@ export class TaskState {
         for (const { tool_call, partIndex } of pendingCalls) {
             if (this.extensions.beforeToolCall(tool_call)) {
                 permissionResults.set(tool_call, true);
-                if (this.needsHtmlRender) await tool_call.render();
+                if (this.needsHtmlRender) await this.renderInWorkspace(() => tool_call.render());
                 await this.sendSubscriptionFeedback(partIndex);
                 continue;
             }
@@ -2898,12 +2898,12 @@ export class TaskState {
             try {
                 const alreadyDenied = permissionResults.get(tool_call);
                 if (alreadyDenied) {
-                    if (this.needsHtmlRender) await tool_call.render();
+                    if (this.needsHtmlRender) await this.renderInWorkspace(() => tool_call.render());
                     await this.sendSubscriptionFeedback(partIndex);
                     return;
                 }
                 await this.processToolCall(tool_call, true);
-                if (this.needsHtmlRender) await tool_call.render();
+                if (this.needsHtmlRender) await this.renderInWorkspace(() => tool_call.render());
                 await this.sendSubscriptionFeedback(partIndex);
             } catch (err) {
                 logger.error(
@@ -2912,7 +2912,7 @@ export class TaskState {
                 tool_call.status = 'error';
                 tool_call.result = `工具执行异常: ${(err as Error)?.message || String(err)}`;
                 try {
-                    if (this.needsHtmlRender) await tool_call.render();
+                    if (this.needsHtmlRender) await this.renderInWorkspace(() => tool_call.render());
                     await this.sendSubscriptionFeedback(partIndex);
                 } catch (renderErr) {
                     logger.error(
@@ -3234,14 +3234,24 @@ export class TaskState {
     }
 
     async render() {
-        setRenderWorkspace(this.getWorkspace() || null);
-        try {
+        // 渲染链路含大量 await，模块级全局 workspace 会被并发任务互相覆盖；
+        // ALS 把 workspace 绑定在本次调用的异步链上，per-part 解析始终正确。
+        return runWithRenderWorkspace(this.getWorkspace() || null, async () => {
             for (const message of this.chat_context.messages) {
                 await message.render();
             }
-        } finally {
-            setRenderWorkspace(null);
-        }
+        });
+    }
+
+    /**
+     * 在任务工作空间上下文中渲染消息/part。
+     * file pill 扩展按渲染 workspace 解析相对路径；sendSubscriptionFeedback、
+     * message replace 等带外渲染不在 render() 的作用域内，必须显式包上
+     * workspace，否则相对路径会按主进程 CWD 解析成错误绝对路径并缓存进
+     * rendered（表现为点击 pill 提示文件不存在）。
+     */
+    private renderInWorkspace(render: () => Promise<void>): Promise<void> {
+        return runWithRenderWorkspace(this.getWorkspace() || null, render) as Promise<void>;
     }
 
     addSubscriber(subscriber: BaseTaskUpdateSubscriber) {

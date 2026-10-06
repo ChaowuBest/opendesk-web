@@ -1,5 +1,4 @@
 import { describe, expect, test } from '@jest/globals';
-import path from 'node:path';
 import { resolveTrashRootDirectory } from '../../../main/utils/setting.js';
 
 /**
@@ -13,6 +12,9 @@ import { resolveTrashRootDirectory } from '../../../main/utils/setting.js';
  *
  * 修复：OH 平台统一回收站根目录改为 `<userHomeDir>/.opendesk-trash`（与用户文件
  * 同设备，rename 可成功；GUI 回收站展示/恢复走同一 getTaskTrashDirectory）。
+ *
+ * resolveTrashRootDirectory 的分隔符由目标平台决定（win32 反斜杠、其余 POSIX
+ * 正斜杠），与运行宿主无关，以下断言在任意宿主上均确定。
  */
 describe('resolveTrashRootDirectory（回收站根目录平台判定）', () => {
     const originalPlatform = Object.getOwnPropertyDescriptor(process, 'platform');
@@ -44,21 +46,22 @@ describe('resolveTrashRootDirectory（回收站根目录平台判定）', () => 
 
     test('Linux/macOS：保持 <opendeskDir>/trash（不回归）', () => {
         withPlatform('linux', () => {
-            expect(resolveTrashRootDirectory('/home/liyi/.opendesk', '/home/liyi')).toBe('/home/liyi/.opendesk/trash');
+            expect(resolveTrashRootDirectory('/home/tester/.opendesk', '/home/tester')).toBe(
+                '/home/tester/.opendesk/trash'
+            );
         });
         withPlatform('darwin', () => {
-            expect(resolveTrashRootDirectory('/Users/liyi/Library/opendesk', '/Users/liyi')).toBe(
-                '/Users/liyi/Library/opendesk/trash'
+            expect(resolveTrashRootDirectory('/Users/tester/Library/opendesk', '/Users/tester')).toBe(
+                '/Users/tester/Library/opendesk/trash'
             );
         });
     });
 
-    test('Windows：保持 <opendeskDir>/trash（Windows 回收站路径由 SHFileOperation 管理；分隔符随运行平台）', () => {
+    test('Windows：保持 <opendeskDir>/trash（Windows 回收站路径由 SHFileOperation 管理；分隔符随目标平台）', () => {
         withPlatform('win32', () => {
-            // 注意：path.join 的分隔符取决于真实运行平台（OH/Linux 上为 /），仅验证目录拼接语义
-            expect(resolveTrashRootDirectory('C:\\Users\\liyi\\AppData\\Roaming\\opendesk', 'C:\\Users\\liyi')).toBe(
-                path.join('C:\\Users\\liyi\\AppData\\Roaming\\opendesk', 'trash')
-            );
+            expect(
+                resolveTrashRootDirectory('C:\\Users\\tester\\AppData\\Roaming\\opendesk', 'C:\\Users\\tester')
+            ).toBe('C:\\Users\\tester\\AppData\\Roaming\\opendesk\\trash');
         });
     });
 });
