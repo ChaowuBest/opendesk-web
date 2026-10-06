@@ -50,35 +50,6 @@ test('sandbox powershell accepts stable root-relative working directories', () =
     ).toMatchObject({ command: 'Get-ChildItem .', workingDirectory: 'D:/workspace' });
 });
 
-test('sandbox defers virtual and dynamic paths to runtime host authorization', () => {
-    // process.platform 可 mock，但 path 模块按真实 OS 选定：盘符路径（D:/...）
-    // 只有在真实 Windows 上才是绝对路径。对照组断言仅在真实 win32 下有意义。
-    const realPlatform = process.platform;
-    Object.defineProperty(process, 'platform', { value: 'win32', configurable: true });
-    const sandbox = new ExecutePwshTool('C:/shells/powershell.exe', true);
-    try {
-        for (const command of [
-            'Get-ChildItem Z:/',
-            'Get-ChildItem /D',
-            'Set-Content Z:/D/a.txt hi',
-            'Get-Content $file'
-        ]) {
-            expect(sandbox.getDeclaredPermissions({ command, timeout: 30000 })).toEqual([]);
-        }
-        if (realPlatform !== 'win32') return;
-        expect(
-            new ExecutePwshTool('C:/shells/powershell.exe').getDeclaredPermissions({
-                command: 'Get-Content D:/private/a.txt',
-                timeout: 30000
-            })
-        ).toEqual(
-            expect.arrayContaining([expect.objectContaining({ resourcePath: 'D:/private/a.txt', action: 'read' })])
-        );
-    } finally {
-        Object.defineProperty(process, 'platform', { value: realPlatform, configurable: true });
-    }
-});
-
 test.each(['win32', 'linux', 'darwin'])(
     'uses the exact selected executable on %s; sandbox only on Windows',
     async (platform) => {

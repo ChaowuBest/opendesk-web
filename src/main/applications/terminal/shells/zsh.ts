@@ -14,13 +14,11 @@ import { BaseTool, ToolResult, type ToolSystemPromptContribution } from '../../.
 import { ToolCall } from '../../../aikernel/messages.js';
 import { z } from 'zod';
 import fs from 'node:fs';
-import type { PermissionRequest } from '../../../aikernel/security/permission.js';
 import type { TaskState } from '../../../aikernel/states/tasks.js';
 import { Setting } from '../../../utils/setting.js';
-import { analyzeBashPermissions } from '../shellPermissions.js';
 import { killProcessTree } from '../background.js';
 import { zshInteractiveHasExitTrapNoise } from '../../../utils/shellExec.js';
-import { executeShellCommand, getTaskWorkspace, renderTerminalToolCall, renderTerminalToolCallCli } from './common.js';
+import { executeShellCommand, renderTerminalToolCall, renderTerminalToolCallCli } from './common.js';
 import { createTerminalSystemPromptContribution } from '../prompt.js';
 
 const ExecuteZshArgsSchema = z.object({
@@ -64,13 +62,6 @@ export class ExecuteZshTool extends BaseTool<typeof ExecuteZshArgsSchema> {
             shellPath: this.shellPath,
             sandboxed: this.sandboxed
         });
-    }
-
-    getDeclaredPermissions(args: z.output<typeof ExecuteZshArgsSchema>, taskState?: TaskState): PermissionRequest[] {
-        const command = args.command;
-        if (!command || typeof command !== 'string') return [];
-        const cwd = args.workingDirectory || getTaskWorkspace(taskState);
-        return analyzeBashPermissions(command, cwd).filter((p) => p.action !== 'execute');
     }
 
     async stop(): Promise<void> {

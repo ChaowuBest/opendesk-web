@@ -14,21 +14,13 @@ import { BaseTool, ToolResult, type ToolSystemPromptContribution } from '../../.
 import { ToolCall } from '../../../aikernel/messages.js';
 import { z } from 'zod';
 import fs from 'node:fs';
-import type { PermissionRequest } from '../../../aikernel/security/permission.js';
 import type { TaskState } from '../../../aikernel/states/tasks.js';
 import { Setting } from '../../../utils/setting.js';
-import { analyzePowerShellPermissions } from '../shellPermissions.js';
 import { killProcessTree } from '../background.js';
 import { t } from '../locale/index.js';
 import { createTerminalSystemPromptContribution } from '../prompt.js';
 import { virtualPathToHostPath } from '../sandboxes/ask-path.js';
-import {
-    executeShellCommand,
-    getTaskWorkspace,
-    parseCdAndCommand,
-    renderTerminalToolCall,
-    renderTerminalToolCallCli
-} from './common.js';
+import { executeShellCommand, parseCdAndCommand, renderTerminalToolCall, renderTerminalToolCallCli } from './common.js';
 
 const createPwshArgsSchema = (sandboxed = false) =>
     z.object({
@@ -79,15 +71,6 @@ export class ExecutePwshTool extends BaseTool<PwshArgsSchema> {
             sandboxed: this.sandboxed,
             deleteToTrash: this.deleteToTrash
         });
-    }
-
-    getDeclaredPermissions(args: z.output<PwshArgsSchema>, taskState?: TaskState): PermissionRequest[] {
-        // 强制沙箱的文件权限由实际 I/O 回传宿主路径后判定，静态分析无法解释虚拟盘符。
-        if (this.sandboxed && process.platform === 'win32') return [];
-        const command = args.command;
-        if (!command || typeof command !== 'string') return [];
-        const cwd = args.workingDirectory || getTaskWorkspace(taskState);
-        return analyzePowerShellPermissions(command, cwd).filter((p) => p.action !== 'execute');
     }
 
     async stop(): Promise<void> {
