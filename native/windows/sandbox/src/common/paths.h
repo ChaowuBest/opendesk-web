@@ -20,9 +20,9 @@ struct RootMap {
 // 归一化策略里写到的路径形态：反斜杠转正斜杠、去尾 '/'、保证以 '/' 开头。
 std::wstring normalizeVirtualPath(const std::wstring& raw);
 
-// 归一化宿主真实路径：展开相对路径(..)、去 ' \\?\'/' \\?\UNC\' 前缀、
-// 去尾点与尾空格、8.3 短名转长名（可选）。返回 false 表示路径不可用。
-// 不做磁盘 IO（除短名转换），可在任意线程调用。
+// 归一化宿主真实路径：相对路径按进程 CWD 展开为绝对路径、展开绝对路径中的
+// ..、去 ' \\?\'/' \\?\UNC\' 前缀、去尾点与尾空格、8.3 短名转长名（可选）。
+// 返回 false 表示路径不可用。不做磁盘 IO（除短名转换），可在任意线程调用。
 bool normalizeHostPath(const std::wstring& raw, std::wstring& out);
 
 // 在 roots 中找 realPrefix 最长匹配，把宿主绝对路径映射为虚拟路径。

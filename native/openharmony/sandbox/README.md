@@ -39,6 +39,12 @@ OpenDesk 中 Windows 版 [dynobox](../OpenDesk/native/windows/sandbox)（基于 
   `exec` 家族（glibc 内部会绕过 PLT 调 execve 的 `execl*` 等已单独挂钩）；
 - 路径穿越防护：`..` 在虚拟命名空间内归一化后按根相对解释；符号链接在**解析后的
   真实路径**上做策略判定，沙箱内符号链接指向沙箱外受保护路径时按解析结果拒绝；
+- **写目标父链缺失透传（四平台统一）**：写类操作（open 写模式/mkdir/rename 目标）
+  的**直接父目录当前不存在**时，该写注定失败（内核返回 ENOENT），直接透传内核
+  错误码、不触发 ask（deny 规则仍优先拦截）。典型噪音源：dbghelp/SymSrv 按模块
+  内嵌 CodeView 路径探测写入符号缓存（如 node.exe 内嵌的 `c:\ws\out\Release\node.pdb`）。
+  父目录存在时的新建照常受策略管控；测试 `wr_enoent`（t_probe）+ run_all.sh
+  regression 段固化；
 - 执行管控：拉起进程 / `dlopen` 共载库按 `execute` 类别判定；**拒绝执行 setuid/
   setgid 程序**（防止 exec 后 loader 丢弃 LD_PRELOAD 逃逸）；**解析脚本 shebang
   并对解释器做同一 execute 判定**（允许的脚本无法借 #! 引入被拒的解释器）；
@@ -402,25 +408,27 @@ tests/wsl_run.sh               # WSL 推荐：同步到 ext4 后构建+运行
 
 ---
 
-### 入库的运行时产物（`runtime/`）
+### 运行时产物（`runtime/`，构建现场生成，不入库）
 
-**HarmonyOS 的原生构建环境不易获得**，所以把开箱可用的运行时产物一并纳入版本管理：
+运行时产物**不纳入版本管理**（`runtime/` 已在 `.gitignore` 中），需要时由
+`make runtime` 在本机构建现场生成：
 
 ```
-runtime/aarch64-linux-ohos/
+runtime/<target>/
   dynobox            命令行入口（launcher）
   libdynobox.so      LD_PRELOAD 拦截层
   BUILD-INFO.txt     来源与构建信息
 ```
 
-**开箱可用**：`dynobox` 会在**自身所在目录**查找 `libdynobox.so`（见 `main.c` 的
+**产物布局自包含**：`dynobox` 会在**自身所在目录**查找 `libdynobox.so`（见 `main.c` 的
 `find_preload_lib()`），因此整个目录拷贝到任何位置都能直接运行 —— 不需要 `build/`，
 也不需要在目标机器上具备编译环境。
 
-```bash
-runtime/aarch64-linux-ohos/dynobox version
-runtime/aarch64-linux-ohos/dynobox run --policy rules.toml -- /bin/sh
-```
+沙箱变体是否可用取决于本机是否已有产物：OpenDesk 侧
+`resolveOpenHarmonySandboxExecutable()` 依次探测 `OPENDESK_DYNOBOX_BIN` →
+`/data/app/bin/dynobox`（真机壳工程部署）→ `<resourcesPath>/sandbox/dynobox-ohos`
+（打包布局）→ 仓库 `runtime/<target>/dynobox`（本地构建），全部不存在时仅注册
+普通 shell 变体。
 
 **改了源码之后必须重新生成**，否则产物与源码脱节：
 
@@ -429,8 +437,9 @@ make runtime                                    # -> runtime/aarch64-linux-ohos/
 make runtime RUNTIME_TARGET=x86_64-linux-gnu    # 其它目标
 ```
 
-`run_all.sh` 的 `== runtime artifacts ==` 一节会在**独立工作区**里验证入库产物开箱
-可用（能启动、放行允许区、拦住拒绝区）—— 产物一旦与源码脱节就会报出来。
+`run_all.sh` 的 `== runtime artifacts ==` 一节会在**独立工作区**里验证本地产物开箱
+可用（能启动、放行允许区、拦住拒绝区）—— 产物一旦与源码脱节就会报出来；本机无产物
+时该节自动跳过。
 
 **产物已瘦身并重新签名** —— 约为带调试信息版本的 35%：
 
@@ -479,8 +488,9 @@ src/
   main.c       CLI：run / endpoint / debug-rules / version，
                launcher 侧进程治理（进程组 + 看护管道 + 共享内存）
 runtime/
-  <target>/                入库的运行时候产物：dynobox + libdynobox.so + BUILD-INFO.txt
-                            （make runtime 生成；同目录布局让两者可独立部署）
+  <target>/                运行时产物（make runtime 现场生成，不入库）：
+                            dynobox + libdynobox.so + BUILD-INFO.txt
+                            （同目录布局让两者可独立部署）
 tests/
   unit_policy.c            单元测试（129 断言）
   t_probe.c                通用探针（IO/权限位/线程/进程链/网络/mmap/dlopen/回归）

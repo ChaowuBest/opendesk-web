@@ -69,17 +69,33 @@ darwinOnly('沙箱内核行为（C 探针真实进程）', () => {
     let trash = '';
     let probe = '';
     let launch: Awaited<ReturnType<typeof prepareDarwinSandbox>> = null;
+    /**
+     * 非 temp 外部根（HOME 下固定前缀）：统一策略把 POSIX temp 区（/tmp、
+     * /private/var/folders 等）读写放行（shell 管道/heredoc/编译器落盘区），
+     * 且该区文件删除不入回收站（trash-excluded 内建清单）。因此"工作区外拒绝"
+     * 与"删除入回收站"语义必须在非 temp 路径上测——os.tmpdir() 的 mktemp
+     * fixture 本身就在 temp 区，外部拒绝/回收站断言会全部反向。
+     */
+    const outsideRoot = path.join(os.homedir(), '.opendesk-sbx-kernel-outside');
     const sandboxEnv = (): Record<string, string> => ({
         OPENDESK_SANDBOX_TRASH_DIR: trash,
-        OPENDESK_SANDBOX_TRASH: '1'
+        OPENDESK_SANDBOX_TRASH: '1',
+        // 沙箱判定日志（dylib slog）：python3/回收站用例失败时从此归因。
+        // 放 /tmp（测试清理区外），失败后可直接读取。
+        OPENDESK_SANDBOX_LOG: '/tmp/darwin-sbx-debug.log'
     });
 
     test('setup: 编译探针并启动沙箱', async () => {
-        root = fs.mkdtempSync(path.join(os.tmpdir(), 'sbx-cprobe-'));
+        root = path.join(outsideRoot, 'run');
         workspace = path.join(root, 'workspace');
-        outside = path.join(root, 'outside');
-        trash = path.join(root, 'trash');
-        for (const dir of [workspace, outside, trash]) fs.mkdirSync(dir);
+        outside = path.join(outsideRoot, 'outside');
+        trash = path.join(outsideRoot, 'trash');
+        // 全部 fixture 在非 temp 区（HOME 下）：统一策略把 temp 区写放行且
+        // temp 区文件删除不入回收站（trash-excluded），workspace/trash 在
+        // temp 区会让"外部拒绝/回收站"断言全部反向。探针编译产物（root）
+        // 也在此，保证 cprobe 的执行与读写都在受控非 temp 路径上。
+        fs.rmSync(outsideRoot, { recursive: true, force: true });
+        for (const dir of [workspace, outside, trash]) fs.mkdirSync(dir, { recursive: true });
         probe = compileProbe(
             root,
             'cprobe',
@@ -198,8 +214,9 @@ int main(int argc, char **argv) {
     });
 
     test('python3 写工作区外被拦（PermissionError），写工作区放行', async () => {
-        // python3 全链路：shim 副本 → CLT 真工具 → 沙箱管控生效
-        const escaped = path.join(root, 'py-escape.txt');
+        // python3 全链路：shim 副本 → CLT 真工具 → 沙箱管控生效。
+        // 逃逸目标必须在非 temp 外部（HOME 下）：temp 区被统一策略写放行。
+        const escaped = path.join(outside, 'py-escape.txt');
         const py3 = prepareShellForSandbox('/usr/bin/python3');
         const r1 = await runSandboxed(
             launch!,
@@ -225,6 +242,23 @@ int main(int argc, char **argv) {
         expect(fs.readFileSync(inWs, 'utf8')).toBe('in-ws');
     });
 
+    test('python3 写 temp 区放行（统一策略：POSIX temp 区读写放行）', async () => {
+        // temp 区（/tmp、/private/var/folders 等）是 shell 管道/heredoc/编译器的
+        // 落盘工作区，policyTextLinux 显式写放行——语义正向固化，防止误收紧
+        //（一旦被误改成 ask/deny，jest/npm 等工具链在沙箱内会全面卡死）。
+        const py3 = prepareShellForSandbox('/usr/bin/python3');
+        const tempTarget = path.join(fs.realpathSync(os.tmpdir()), `sbx-kernel-temp-${process.pid}-${Date.now()}.txt`);
+        const r = await runSandboxed(
+            launch!,
+            py3,
+            ['-c', `open(${JSON.stringify(tempTarget)}, 'w').write('temp-ok')`],
+            sandboxEnv(),
+            60000
+        );
+        expect(r.code).toBe(0);
+        expect(fs.readFileSync(tempTarget, 'utf8')).toBe('temp-ok');
+    });
+
     test('python3 环境下删除预存在文件进回收站', async () => {
         const p = path.join(workspace, 'py-del.txt');
         fs.writeFileSync(p, 'pre-existing-for-py');
@@ -238,8 +272,12 @@ int main(int argc, char **argv) {
         );
         expect(r.code).toBe(0);
         expect(fs.existsSync(p)).toBe(false);
-        // unlink 的 rename 进废纸篓同步完成（日志 trashed 证实），无需等待
-        expect(fs.readdirSync(trash).some((n) => n.startsWith('py-del.txt'))).toBe(true);
+        // 统一回收站协议：<uuid>.back（随机 UUID 防同名覆盖 TOCTOU），
+        // original_path 记录在 summary.json 供宿主 GUI 找回
+        const trashed = fs.readdirSync(trash).find((n) => n.endsWith('.back'));
+        expect(trashed).toBeTruthy();
+        const summary = JSON.parse(fs.readFileSync(path.join(trash, 'summary.json'), 'utf8'));
+        expect(summary.some((e: { original_path: string }) => e.original_path.includes('py-del.txt'))).toBe(true);
     });
 
     test('CLT 真实工具（shim exec 的目标）进程脱离 dylib 管控是已知边界，但 shim 本身可用', async () => {
@@ -254,7 +292,7 @@ int main(int argc, char **argv) {
         expect(r.stdout).toContain('py-inline-ok');
     });
 
-    test('回收站: 同名文件删除两次产生两个独立副本（后缀唯一）', async () => {
+    test('回收站: 同名文件删除两次产生两个独立副本（UUID 命名防覆盖）', async () => {
         for (const content of ['first', 'second']) {
             const p = path.join(workspace, 'same-name.txt');
             fs.writeFileSync(p, content);
@@ -267,9 +305,13 @@ int main(int argc, char **argv) {
             );
             expect(r.code).toBe(0);
         }
-        const trashed = fs.readdirSync(trash).filter((n) => n.startsWith('same-name.txt'));
-        expect(trashed.length).toBe(2);
-        const contents = trashed.map((n) => fs.readFileSync(path.join(trash, n), 'utf8')).sort();
+        // 统一回收站协议：<uuid>.back（随机 UUID，防同名覆盖 TOCTOU），内容均可找回
+        const summary = JSON.parse(fs.readFileSync(path.join(trash, 'summary.json'), 'utf8'));
+        const entries = summary.filter((e: { original_path: string }) => e.original_path.includes('same-name.txt'));
+        expect(entries).toHaveLength(2);
+        const contents = entries
+            .map((e: { uuid: string }) => fs.readFileSync(path.join(trash, `${e.uuid}.back`), 'utf8'))
+            .sort();
         expect(contents).toEqual(['first', 'second']);
     }, 120000);
 
@@ -307,5 +349,6 @@ int main(void) {
     test('清理', async () => {
         await launch!.cleanup();
         fs.rmSync(root, { recursive: true, force: true });
+        fs.rmSync(outsideRoot, { recursive: true, force: true });
     }, 60000);
 });

@@ -15,6 +15,8 @@ namespace sbx {
 struct SandboxLaunchOptions {
     std::wstring commandLine;     // 完整子进程命令行
     std::wstring policyPath;      // TOML 策略文件
+    std::wstring logFile;         // --log-file（判定日志通道，经 DYNOBOX_LOG_FILE 注入 hook）
+    bool verbose = false;         // -v（hook 判定日志全量 vs 仅 deny/ask 之外留全量）
     bool automount = false;       // --automount（hook 内枚举盘符）
     std::wstring srcDir;          // --src（单根模式，与 automount 互斥）
     bool delToTrash = false;      // --del-to-trash（回收站）

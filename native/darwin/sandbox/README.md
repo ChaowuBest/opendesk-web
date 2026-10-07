@@ -4,6 +4,7 @@
 
 - **透明路径**：沙箱内文件系统布局与宿主完全一致，无虚拟根；
 - **策略管控**：读默认放行、任务工作区写放行、其余写按策略 ask/deny（TOML 策略与 Linux 同构，复用 `policyTextLinux`）；
+- **写目标父链缺失透传（判定层，四平台统一）**：写类操作（open 写模式/creat/fopen 写/rename/mkdir/chmod/symlink/link/mknod/setxattr——全部汇聚 `check_write_path`）目标**直接父目录当前不存在**时该写注定失败（内核 ENOENT），直接透传不触发 ask（deny 规则仍优先拦截，alias 变体参与最具体竞争）。典型：dbghelp/SymSrv 按模块内嵌 CodeView 路径（node.exe 的 `c:\ws\out\Release\node.pdb`）探测写符号缓存，不再弹审批框；
 - **匹配语义**：most-specific（四平台统一）——命中多条规则取最具体模式（剥尾
   `/**` 的前缀最长），同长 deny > ask > allow，规则顺序无关；
 - **策略引擎复用共享 core**：TOML 解析（mini_toml.c）与路径 glob 匹配由

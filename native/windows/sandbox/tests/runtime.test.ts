@@ -1734,3 +1734,121 @@ test('deleting a missing/non-visible file is a transparent no-op (no recycle-bin
     }
 });
 
+test('writes into a missing parent chain are transparent (host PATH_NOT_FOUND, no ask)', { skip: !windows }, async () => {
+    // 回归：符号引擎/构建工具对"目标路径的父目录链不存在"的写试探（如 node.exe 内嵌
+    // CodeView 记录的 c:\ws\out\Release\node.pdb —— 机器上根本不存在 C:\ws）必须透传
+    // 真实 API 返回宿主一致的 PATH_NOT_FOUND，而不是触发 ask 弹窗。之前每次这类探测
+    // 都会弹"编辑文件 C:/ws/out/Release/node.pdb"，因为 write 规则命中 ask 而父链缺失
+    // 的写注定失败（真实 CreateFileW 直接返回 ERROR_PATH_NOT_FOUND）。
+    // 语义与 sandboxCheckNotExistRead/NotExistDelete 同哲学：注定失败的操作不透传
+    // 会把无害探测变成弹窗噪音；deny 规则仍优先拦截（防 deny 区存在性探测泄露）。
+    const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'opendesk-sandbox-missingparent-'));
+    // 构造一条父目录链完全缺失的目标（类似 C:\ws\out\Release\node.pdb 的形态）
+    const target = path.join(directory, 'no-such-parent', 'deeper', 'probe.txt');
+    const asked = new Map<string, number>();
+    const server = createServer((req, res) => {
+        let body = '';
+        req.on('data', (c) => (body += c));
+        req.on('end', () => {
+            const askedPath = String((JSON.parse(body || '{}') || {}).path || '');
+            asked.set(askedPath, (asked.get(askedPath) || 0) + 1);
+            res.setHeader('Content-Type', 'application/json');
+            res.end(JSON.stringify({ decision: 'deny' }));
+        });
+    });
+    server.listen(0, '127.0.0.1');
+    await once(server, 'listening');
+    try {
+        const port = (server.address() as { port: number }).port;
+        const policy = path.join(directory, 'policy.toml');
+        fs.writeFileSync(
+            policy,
+            withDriveRoots(
+                `version = 1\ndefault = "deny"\n[ask]\nendpoint = "http://127.0.0.1:${port}/decide"\ntimeout_ms = 3000\ncache_ttl_seconds = 0\n` +
+                    `[[rules]]\npath = "/**"\naccess = "read"\nperm = "allow"\n` +
+                    `[[rules]]\npath = "/**"\naccess = "execute"\nperm = "allow"\n` +
+                    `[[rules]]\npath = "/**"\naccess = "write"\nperm = "ask"\n`
+            )
+        );
+        const script = path.join(directory, 'probe.cjs');
+        fs.writeFileSync(
+            script,
+            "const fs = require('fs');\n" +
+            "let code = 'NONE';\n" +
+            "try { fs.writeFileSync(process.argv[2], 'x'); } catch (e) { code = e.code || String(e.errno || ''); }\n" +
+            "console.log('WRITE_CODE=' + code);\n"
+        );
+        const result = await run(executable, [
+            'run',
+            '--policy',
+            policy,
+            '--',
+            process.execPath,
+            script,
+            target
+        ]);
+        assert.equal(result.code, 0, result.stdout + result.stderr);
+        // 关键断言 1：写试探返回宿主一致的 ENOENT（Windows 上父链缺失的
+        // ERROR_PATH_NOT_FOUND 被 libuv 映射为 ENOENT），而不是 EACCES。
+        assert.match(result.stdout, /WRITE_CODE=ENOENT/);
+        // 关键断言 2：ask 端点对该目标路径零问询（write ask 规则不应因注定失败的
+        // 写被触发——与"读不存在路径不弹 ask"同一哲学）。
+        const probeAsks = [...asked.keys()].filter((p) => p.toLowerCase().includes('no-such-parent')).length;
+        assert.equal(probeAsks, 0, `missing-parent write must not ask (asks=${JSON.stringify([...asked.keys()])})`);
+        assert(!fs.existsSync(target), 'missing-parent write must not create anything');
+    } finally {
+        server.close();
+    }
+});
+
+test('policy decisions are written back to the sandbox log file (POLICY lines)', { skip: !windows }, async () => {
+    // 回归：沙箱日志此前退化为只有"策略: N 条规则"与"[RUN] 子进程退出码"两行的 stub，
+    // 逐条访问判定（ALLOW/DENY/ASK）没有落盘，事故后无法归因（如 C:/ws/out/Release/node.pdb
+    // 弹窗就查不到是哪个进程、哪次访问触发的）。恢复：hook 侧每次判定按
+    // `[POLICY] <access> <vpath> -> <decision> (rule#N)` 写入 --log-file。
+    const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'opendesk-sandbox-policylog-'));
+    try {
+        const policy = path.join(directory, 'policy.toml');
+        const logFile = path.join(directory, 'sandbox.log');
+        fs.writeFileSync(
+            policy,
+            withDriveRoots(
+                `version = 1\ndefault = "allow"\n[[rules]]\npath = "/**"\naccess = "read"\nperm = "allow"\n` +
+                    `[[rules]]\npath = "/**"\naccess = "execute"\nperm = "allow"\n` +
+                    `[[rules]]\npath = "/**"\naccess = "write"\nperm = "deny"\n`
+            )
+        );
+        const script = path.join(directory, 'probe.cjs');
+        const target = path.join(directory, 'denied.txt');
+        fs.writeFileSync(
+            script,
+            "const fs = require('fs');\n" +
+            "let code = 'NONE';\n" +
+            "try { fs.writeFileSync(process.argv[2], 'x'); } catch (e) { code = e.code || ''; }\n" +
+            "console.log('WRITE_CODE=' + code);\n"
+        );
+        const result = await run(executable, [
+            'run',
+            '--log-file',
+            logFile,
+            '--policy',
+            policy,
+            '--',
+            process.execPath,
+            script,
+            target
+        ]);
+        assert.equal(result.code, 0, result.stdout + result.stderr);
+        assert.match(result.stdout, /WRITE_CODE=EACCES|WRITE_CODE=EPERM/);
+        // 日志文件必须包含逐条策略判定（写 deny 命中 deny 规则），格式 [POLICY] write ... -> deny
+        assert(fs.existsSync(logFile), 'log file must be created');
+        const log = fs.readFileSync(logFile, 'utf8');
+        assert.match(log, /\[POLICY\]/, 'log must contain POLICY decision lines');
+        assert.match(log, /denied\.txt/, 'denied write path must be recorded');
+        assert.match(log, /-> deny|-> DENY/, 'denied write must be marked as deny');
+    } finally {
+        fs.rmSync(directory, { recursive: true, force: true });
+    }
+});
+
+

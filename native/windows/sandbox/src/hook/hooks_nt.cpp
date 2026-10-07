@@ -202,6 +202,17 @@ NTSTATUS NTAPI Hook_NtCreateFile(PHANDLE fileHandle, ACCESS_MASK desiredAccess,
                                          createDisposition, createOptions, eaBuffer, eaLength);
             }
         }
+        // 写类操作父目录链缺失 → 透传真实 NtCreateFile（宿主返回 STATUS_OBJECT_PATH_NOT_FOUND），
+        // 不触发 ask。与 CreateFileW 路径同语义（符号引擎的符号缓存探测噪音）。
+        if (categorizeNtCreateAccess(desiredAccess, createDisposition) == AccessClass::Write) {
+            DWORD perr = ERROR_SUCCESS;
+            if (sandboxCheckWriteParentMissing(winPath, perr)) {
+                if (perr != ERROR_SUCCESS) return ntStatusForWinError(perr);
+                return Real_NtCreateFile(fileHandle, desiredAccess, objectAttributes, ioStatusBlock,
+                                         allocationSize, fileAttributes, shareAccess,
+                                         createDisposition, createOptions, eaBuffer, eaLength);
+            }
+        }
         DWORD err = ERROR_SUCCESS;
         if (!sandboxCheckPath(winPath, categorizeNtCreateAccess(desiredAccess, createDisposition), err)) {
             return ntStatusForWinError(err);

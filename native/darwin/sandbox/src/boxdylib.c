@@ -1977,6 +1977,43 @@ static int check_write_path(const char *pathname, const char *fn)
         errno = EACCES;
         return -1;
     }
+    /*
+     * 写类操作父目录链缺失 → 该写注定失败（内核返回 ENOENT）：透传不触发 ask。
+     * 与 Windows sandboxCheckWriteParentMissing / Linux write_parent_missing 同构
+     * 实现——dbghelp/SymSrv 按模块内嵌 CodeView 路径（node.exe 的
+     * c:\ws\out\Release\node.pdb 等）探测并写入符号缓存，这类路径在多数机器上
+     * 根本不存在，此前每次探测都弹写审批框。deny 规则仍优先拦截。
+     */
+    {
+        char parent[PATH_MAX];
+        const char *slash = strrchr(norm, '/');
+        if (slash && slash != norm && (size_t)(slash - norm) < sizeof(parent)) {
+            memcpy(parent, norm, (size_t)(slash - norm));
+            parent[slash - norm] = '\0';
+            struct stat pst;
+            if (stat(parent, &pst) != 0 && errno == ENOENT) {
+                /* deny 规则仍优先拦截（防 deny 区存在性探测泄露），alias 变体
+                 * 同理参与"最具体"竞争；命中 allow/ask/未命中一律透传：父链缺失
+                 * 的写注定 ENOENT，弹审批是纯噪音。 */
+                struct PolicyHit hit = policy_lookup_detailed(norm, ACC_WRITE);
+                char alias[PATH_MAX];
+                if (path_alias_variant(norm, alias, sizeof(alias))) {
+                    struct PolicyHit ah = policy_lookup_detailed(alias, ACC_WRITE);
+                    if (ah.perm >= 0 &&
+                        (hit.perm < 0 || ah.base_len > hit.base_len ||
+                         (ah.base_len == hit.base_len && ah.perm < hit.perm)))
+                        hit = ah;
+                }
+                if (hit.perm == PERM_DENY_box) {
+                    slog("%s denied (missing parent, deny rule): %s", fn, norm);
+                    errno = EACCES;
+                    return EACCES;
+                }
+                slog("%s pass-through (parent missing -> ENOENT): %s", fn, norm);
+                return 0;   /* 放行：内核对缺失父链的写返回 ENOENT */
+            }
+        }
+    }
     int rc = policy_check(norm, ACC_WRITE);
     if (rc != 0) {
         slog("%s denied: %s", fn, norm);

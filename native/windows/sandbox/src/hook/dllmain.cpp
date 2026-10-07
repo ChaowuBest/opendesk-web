@@ -213,7 +213,14 @@ bool sandboxCheckPath(const std::wstring& hostPath, AccessClass access, DWORD& w
     const char* kind = access == AccessClass::Read ? kAccessRead
                        : access == AccessClass::Write ? kAccessWrite
                        : kAccessExecute;
-    if (g_policy.check(vpath, kind, nullptr)) return true;
+    // 逐条判定落盘（[POLICY] 通道）：记录访问类别、虚拟路径与决策来源
+    // （rule#N allow / rule#N deny / rule#N+grant / rule#N+ask(allow) / default:deny）。
+    // 事故后据此归因"哪个 pid、哪个路径、哪条规则、放行还是拒绝"。
+    std::string why;
+    bool allowed = g_policy.check(vpath, kind, &why);
+    Log::policy(L"pid=%lu %-6hs %ls -> %ls (%hs)", GetCurrentProcessId(), kind,
+                vpath.c_str(), allowed ? L"ALLOW" : L"DENY", why.c_str());
+    if (allowed) return true;
     winErr = ERROR_ACCESS_DENIED;
     return false;
 }
@@ -316,6 +323,53 @@ bool sandboxCheckNotExistRead(const std::wstring& hostPath, DWORD& winErr)
     return sandboxCheckPathDenyOnly(hostPath, AccessClass::Read, winErr);
 }
 
+// 写类操作目标父链缺失的透传判定：返回 true 表示"父目录链不存在，该写注定失败，
+// 应透传真实 API"。
+//
+// 典型触发：符号引擎（dbghelp/SymSrv）在进程内解析模块的调试符号路径——node.exe
+// 的 PE CodeView 记录内嵌官方构建机路径 `c:\ws\out\Release\node.pdb`，加载 node
+// 的任何工具链进程都会按该路径及 `<cwd>\node.pdb`、`exe\node.pdb`、
+// `symbols\exe\node.pdb` 顺序探测并尝试写入符号缓存。这些路径在绝大多数机器上
+// 根本不存在，写入注定返回 ERROR_PATH_NOT_FOUND/ERROR_FILE_NOT_FOUND。write
+// 规则命中 ask 时，此前每次探测都会弹"编辑文件"授权框——即典型策略噪声
+// （真实事故：任务运行中弹窗请求编辑 C:/ws/out/Release/node.pdb，206s 后自动拒绝）。
+//
+// 判定方式：只查询目标路径的**直接父目录**属性，不存在即命中。仅在父目录属性
+// 查询明确返回 FILE_NOT_FOUND / PATH_NOT_FOUND 时透传（权限等其他失败不扩大豁免，
+// 走正常判定）。注意目标文件自身不存在不算——那是"新建"，父目录存在时创建是合法
+// 写，必须正常判定。
+//
+// deny 规则仍优先拦截（防 deny 区存在性探测/枚举逃逸，sandboxCheckPathDenyOnly
+// 兜底）；父链缺失路径的 allow/ask 判定一律放行并让真实 API 产生权威错误码。
+bool sandboxCheckWriteParentMissing(const std::wstring& hostPath, DWORD& winErr)
+{
+    winErr = ERROR_SUCCESS;
+    if (HookScope::active) return false;
+    if (isSpecialDevicePath(hostPath)) return false;
+
+    // 剥掉末段文件名得到直接父目录（"C:\foo\bar.txt" -> "C:\foo"）。
+    std::wstring p = hostPath;
+    while (p.size() > 1 && (p.back() == L'\\' || p.back() == L'/')) p.pop_back();
+    size_t sep = p.find_last_of(L'\\');
+    if (sep == p.size() - 1) sep = p.find_last_of(L'/');
+    if (sep == std::wstring::npos || sep == 0) return false;   // 无父目录分量（相对名/盘符根）
+    // 根目录（如 "C:"）本身不存在的情形交给正常判定（少见且 GetFileAttributes 语义不同）
+    if (sep == 2 && p[1] == L':') return false;
+    p.resize(sep);
+    if (p.empty()) return false;
+
+    WIN32_FILE_ATTRIBUTE_DATA fad;
+    if (GetFileAttributesExW(p.c_str(), GetFileExInfoStandard, &fad)) {
+        return false;   // 父目录存在：创建/写入是合法操作，走正常判定
+    }
+    DWORD err = GetLastError();
+    if (err != ERROR_FILE_NOT_FOUND && err != ERROR_PATH_NOT_FOUND) {
+        return false;   // 查询失败（权限等）：不扩大豁免，走正常判定
+    }
+    // 父链缺失：deny 规则仍优先（拒绝），否则放行让真实 API 返回 PATH_NOT_FOUND。
+    return sandboxCheckPathDenyOnly(hostPath, AccessClass::Write, winErr);
+}
+
 // -- 初始化：加载环境策略并安装 Detours ---------------------------------------
 
 static std::wstring envOrEmpty(const wchar_t* name)
@@ -332,6 +386,13 @@ static void loadEnvironmentPolicy()
 {
     std::wstring policyPath = envOrEmpty(L"DYNOBOX_POLICY");
     if (policyPath.empty()) return;
+
+    // 判定日志通道（runner 经 DYNOBOX_LOG_FILE 传入与 --log-file 同一路径）：
+    // hook 子进程内的每次策略判定都写回该文件——恢复逐条 POLICY 记录
+    // （此前日志退化为仅"策略: N 条规则"+退出码的 stub，事故无法归因）。
+    std::wstring logFile = envOrEmpty(L"DYNOBOX_LOG_FILE");
+    if (!logFile.empty()) Log::setFile(logFile);
+    if (envOrEmpty(L"DYNOBOX_VERBOSE") == L"1") Log::setVerbose(true);
 
     g_policy = Policy::loadFromFile(policyPath);
 

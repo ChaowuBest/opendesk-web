@@ -358,10 +358,13 @@ function policyLinuxTail(
             ? [`[[rules]]\npath = ${quote(`${home}/.cache/opendesk-sandbox/**`)}\naccess = "write"\nperm = "allow"`]
             : []),
         // macOS 系统 Python 字节码缓存（com.apple.python）——不放行则每次 import
-        // django 等大框架都重新编译字节码，migrate/runserver 会慢到卡死
+        // django 等大框架都重新编译字节码，migrate/runserver 会慢到卡死。
+        // read 也要放行：解释器启动即探测该目录下 CLT 标准库的 .pyc（如 io.cpython-39.pyc），
+        // read 被拦会让 python3 -c 直接挂（比 write 缺失更早触发）。
         ...(home
             ? [
-                  `[[rules]]\npath = ${quote(`${home}/Library/Caches/com.apple.python/**`)}\naccess = "write"\nperm = "allow"`
+                  `[[rules]]\npath = ${quote(`${home}/Library/Caches/com.apple.python/**`)}\naccess = "write"\nperm = "allow"`,
+                  `[[rules]]\npath = ${quote(`${home}/Library/Caches/com.apple.python/**`)}\naccess = "read"\nperm = "allow"`
               ]
             : []),
         // 统一回收站目录写保护（对齐 Windows 不放行回收站、OH 原生 trash-protected
@@ -651,7 +654,13 @@ const LINUX_SYSTEM_READ_PREFIXES = [
     '/run',
     '/sys',
     '/proc',
-    '/data/service'
+    '/data/service',
+    // macOS：CommandLineTools 运行时（python3 等系统工具的标准库/框架装在
+    // /Library/Developer/CommandLineTools 下——CLT python3 启动即读
+    // .../Python3.framework/Versions/3.9/lib/python3.9/io.py，不放行 read
+    // 则解释器 import io 直接 EACCES 挂死）。非 macOS 平台该前缀不存在，
+    // 规则不命中任何路径，无副作用。
+    '/Library/Developer/CommandLineTools'
 ];
 
 /**

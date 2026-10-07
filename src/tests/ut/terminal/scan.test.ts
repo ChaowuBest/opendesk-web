@@ -9,6 +9,8 @@ jest.unstable_mockModule('../../../main/utils/shellExec.js', () => ({
     findOpenHarmonyBash: () => paths.get('bash') ?? null
 }));
 const { scanSupportedShells, selectSupportedShell } = await import('../../../main/applications/terminal/scan.js');
+const { resolveOpenHarmonySandboxExecutable } =
+    await import('../../../main/applications/terminal/sandboxes/resolve-ohos.js');
 
 const fakePlatform = (name: string): AbstractPlatform => ({ getName: () => name }) as unknown as AbstractPlatform;
 
@@ -91,7 +93,7 @@ const linuxSandboxAvailable = (() => {
     }
 );
 
-test('OpenHarmony exposes shells and their sandbox variants (runtime ships with repo), keeps the tablet gate', () => {
+test('OpenHarmony exposes shells and their sandbox variants (gated on local runtime build), keeps the tablet gate', () => {
     const state: any = {
         variant: 'pc',
         commands: { zsh: '/usr/bin/zsh', bash: '/data/service/hnp/bin/bash' },
@@ -99,20 +101,26 @@ test('OpenHarmony exposes shells and their sandbox variants (runtime ships with 
         status: 'available',
         missing: []
     };
-    // repo 携带 runtime/aarch64-linux-ohos 产物（git 管理），且 openharmony 平台
-    // 已接入动态沙箱：zsh/bash 各注册普通与沙箱变体（与 linux 分支一致）
+    // 沙箱变体是否注册取决于本机是否已有 runtime/aarch64-linux-ohos 产物：
+    // 产物不入库，由 `make runtime` 现场构建。这里用与 scan.ts 的
+    // sandboxVariantsAvailable 完全相同的解析（OPENDESK_DYNOBOX_BIN →
+    // /data/app/bin/dynobox → resources/sandbox → 仓库 runtime）做双态断言，
+    // 保证 CI/新 clone（无产物）与本地开发机（已构建）都成立。
+    const hasSandbox = resolveOpenHarmonySandboxExecutable() !== null;
+    const variants = (kind: 'zsh' | 'bash', p: string) =>
+        hasSandbox
+            ? [
+                  { kind, path: p, sandboxed: false },
+                  { kind, path: p, sandboxed: true }
+              ]
+            : [{ kind, path: p, sandboxed: false }];
     expect(scanSupportedShells('openharmony', state)).toEqual([
-        { kind: 'zsh', path: '/usr/bin/zsh', sandboxed: false },
-        { kind: 'zsh', path: '/usr/bin/zsh', sandboxed: true },
-        { kind: 'bash', path: '/data/service/hnp/bin/bash', sandboxed: false },
-        { kind: 'bash', path: '/data/service/hnp/bin/bash', sandboxed: true }
+        ...variants('zsh', '/usr/bin/zsh'),
+        ...variants('bash', '/data/service/hnp/bin/bash')
     ]);
     expect(scanSupportedShells('openharmony', { ...state, variant: 'tablet' })).toEqual([]);
     paths.set('bash', '/data/service/hnp/bin/bash');
-    expect(scanSupportedShells('openharmony', null)).toEqual([
-        { kind: 'bash', path: '/data/service/hnp/bin/bash', sandboxed: false },
-        { kind: 'bash', path: '/data/service/hnp/bin/bash', sandboxed: true }
-    ]);
+    expect(scanSupportedShells('openharmony', null)).toEqual(variants('bash', '/data/service/hnp/bin/bash'));
 });
 
 test('selection matches path and sandbox together, and falls back to the first available shell', () => {

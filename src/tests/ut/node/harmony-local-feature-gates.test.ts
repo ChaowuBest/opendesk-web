@@ -44,7 +44,7 @@ const ZSH_PC_STATE: HarmonyLocalRuntimeState = {
     status: 'incomplete'
 };
 
-/** repo 是否携带 OpenHarmony 沙箱运行时产物（决定沙箱变体是否注册） */
+/** 本机是否已有 OpenHarmony 沙箱运行时产物（make runtime 现场生成、不入库；决定沙箱变体是否注册） */
 function ohRuntimePresent(): boolean {
     const dev = path.join(
         process.env.INIT_CWD || process.cwd(),
@@ -61,7 +61,7 @@ function ohRuntimePresent(): boolean {
 test('terminal inventory includes verified Harmony PC shells and keeps the tablet gate', () => {
     assert.deepEqual(scanSupportedShells('openharmony', TABLET_STATE), []);
     assert.deepEqual(scanSupportedShells('openharmony', SHELL_MISSING_PC_STATE), []);
-    // 沙箱变体是否注册取决于 repo 是否携带 runtime/aarch64-linux-ohos 产物
+    // 沙箱变体是否注册取决于本机是否已有 runtime/aarch64-linux-ohos 产物（不入库，现场构建）
     const hasSandbox = ohRuntimePresent();
     const bashOnly = scanSupportedShells('openharmony', INCOMPLETE_PC_STATE);
     assert.deepEqual(

@@ -109,6 +109,16 @@ int main(int argc, char **argv)
     }
     if (!strcmp(op, "wr"))            return do_write(argv[2], argv[3], O_WRONLY | O_CREAT | O_TRUNC) ? fail("wr", argv[2]) : 0;
     if (!strcmp(op, "wr_fail"))       return do_write(argv[2], "x", O_WRONLY | O_CREAT | O_TRUNC) == 0 ? (printf("PROBE-FAIL wr succeeded\n"), 1) : 0;
+    /* 写目标父链缺失 → 注定 ENOENT（不弹 ask、不拦截，deny 规则除外）：
+     * 期望 errno==ENOENT。若沙箱把它变成 EACCES（deny 误杀）或 ask 超时挂起，
+     * 探针都会报出。对应 Windows C:\ws\out\Release\node.pdb 事故（dbghelp 符号
+     * 缓存探测，此前每次探测都弹"编辑文件"授权框）。 */
+    if (!strcmp(op, "wr_enoent")) {
+        int fd = open(argv[2], O_WRONLY | O_CREAT | O_TRUNC, 0644);
+        if (fd >= 0) { printf("PROBE-FAIL wr_enoent succeeded\n"); return 1; }
+        if (errno != ENOENT) return fail("wr_enoent wrong errno", strerror(errno));
+        return 0;
+    }
     if (!strcmp(op, "app"))           return do_write(argv[2], argv[3], O_WRONLY | O_CREAT | O_APPEND) ? fail("app", argv[2]) : 0;
     if (!strcmp(op, "rm"))            return unlink(argv[2]) ? fail("rm", argv[2]) : 0;
     if (!strcmp(op, "rm_fail"))       return unlink(argv[2]) == 0 ? (printf("PROBE-FAIL rm succeeded\n"), 1) : 0;

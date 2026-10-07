@@ -103,6 +103,12 @@ static std::wstring buildEnvironment(const SandboxLaunchOptions& opts)
 
     set(L"DYNOBOX_SANDBOX", L"1");
     set(L"DYNOBOX_POLICY", opts.policyPath);
+    // 判定日志通道：把 --log-file 路径与 -v 开关注入子进程，hook 侧 DllMain 据此
+    // 打开同一日志文件并把每次策略判定（[POLICY] 行）写回——管理进程与整棵沙箱树
+    // 的判定记录汇聚到同一文件，事故后可归因（此前 hook 判定日志只进 stderr，
+    // 不落盘，日志退化成只有策略行+退出码的 stub）。
+    if (!opts.logFile.empty()) set(L"DYNOBOX_LOG_FILE", opts.logFile);
+    if (opts.verbose) set(L"DYNOBOX_VERBOSE", L"1");
     // 沙箱会话开始时刻（FILETIME 十进制）：hook 据此判断"会话内创建"的文件，
     // 删除时视为自发清理（不 ask、不进回收站）
     {

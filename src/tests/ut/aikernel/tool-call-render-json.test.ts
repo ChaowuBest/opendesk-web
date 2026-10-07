@@ -11,10 +11,12 @@ describe('ToolCall GUI render payload', () => {
         call.status = 'success';
         call.rendered = '<details class="terminal-tool">terminal result</details>';
 
+        // 无 tool 实例（未解析）时推送协议名作为显示名
         expect(call.toRenderJSON()).toEqual({
             index: 0,
             id: 'call-1',
             tool_name: 'terminal-executeZsh',
+            display_name: 'terminal-executeZsh',
             status: 'success',
             rendered: '<details class="terminal-tool">terminal result</details>'
         });
@@ -31,6 +33,7 @@ describe('ToolCall GUI render payload', () => {
             index: 0,
             id: 'call-legacy',
             tool_name: 'Legacy',
+            display_name: 'Legacy',
             status: 'pending',
             rendered: undefined
         });

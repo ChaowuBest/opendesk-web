@@ -42,6 +42,7 @@ struct CliOptions {
     std::wstring upstream;
     std::wstring askToken;
     std::wstring mount;
+    std::wstring logFile;
     bool automount = false;
     bool delToTrash = false;
     std::wstring trashDir;       // --trash-dir（OpenDesk 统一回收站目录）
@@ -107,7 +108,7 @@ static bool parseRunArgs(const std::vector<std::wstring>& args, CliOptions& opts
         else if (a == L"--upstream") { if (!next(opts.upstream)) return false; }
         else if (a == L"--token") { if (!next(opts.askToken)) return false; }
         else if (a == L"--mount") { if (!next(opts.mount)) return false; }
-        else if (a == L"--log-file") { std::wstring v; if (!next(v)) return false; Log::setFile(v); }
+        else if (a == L"--log-file") { std::wstring v; if (!next(v)) return false; Log::setFile(v); opts.logFile = v; }
         else if (a == L"--env") {
             std::wstring kv;
             if (!next(kv)) return false;
@@ -235,6 +236,8 @@ int wmain(int argc, wchar_t** argv)
             SandboxLaunchOptions launch;
             launch.commandLine = childCommand;
             launch.policyPath = opts.policy;
+            launch.logFile = opts.logFile;
+            launch.verbose = Log::verbose();
             launch.automount = opts.automount;
             launch.srcDir = opts.src;
             launch.delToTrash = opts.delToTrash;
