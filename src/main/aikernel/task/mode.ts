@@ -9,7 +9,7 @@
  * See the Mulan PSL v2 for more details.
  */
 
-import type { ModeDecl } from '../agents/common.js';
+import type { AgentDecl, ModeDecl } from '../agents/common.js';
 import { AgentRegistry } from '../agents/registry.js';
 import { HarnessContext } from '../security/harness.js';
 import type { PermissionEnforcer, PermissionPromptProvider } from '../security/permission.js';
@@ -120,11 +120,69 @@ export async function replaceTaskHarnessForMode(
         task.cancelInteractionPrompts();
     }
 
-    if (taskMode.bypassPermissionChecks && ctx.permission) {
+    // 模式切换会生成新的权限引擎：让 provider 用新规则重评当前弹窗与排队中的
+    // ask 请求。重评由 provider 逐条实测，仅当新引擎将请求全部判为 allow 时才
+    // 自动放通（如 solo 的 allow ** 与 unlimited 的无条件放行），未放通的请求
+    // 保持等待，因此对所有模式切换都安全，不限于 bypass 模式。
+    if (ctx.permission) {
         try {
             await permissionPrompt.notifyPermissionRulesChanged?.(ctx.permission, [task.task_id]);
         } catch (err) {
             logger.warn(`Failed to refresh permission prompts after switching task ${task.task_id}: ${err}`);
+        }
+    }
+}
+
+/**
+ * 为任务切换工作空间：按当前模式重建权限引擎，并让 provider 用新规则重评
+ * 已经在等待中的权限请求（例如旧工作空间外的路径在新工作空间下变为 allow）。
+ * 与模式切换共用同一套重评语义，失败时保持原 harness 不变并向调用方抛出。
+ *
+ * @param resolveMode 由调用方决定该任务使用的模式（主 agent 通常跟随全局模式）
+ */
+export async function replaceTaskHarnessForWorkspace(
+    task: TaskState,
+    newWorkspace: string,
+    resolveMode: (taskAgent: AgentDecl) => ModeDecl
+): Promise<void> {
+    const taskAgent = task.getAgent();
+    const mode = resolveMode(taskAgent);
+    // 工作空间变了，即使模式没变也要重跑 onEnterMode（如 plan 模式在新空间创建 .plan 目录）
+    await mode.onEnterMode?.(newWorkspace);
+    const savedEnv = task.harnessContext.environ;
+    const savedExecutionHost = task.harnessContext.executionHost;
+    const permissionPrompt = task.harnessContext.permissionPrompt;
+    const ctx = await HarnessContext.createForMode(newWorkspace, mode);
+    ctx.environ = savedEnv;
+    ctx.executionHost = savedExecutionHost;
+    ctx.permissionPrompt = permissionPrompt;
+    await ctx.grantTaskArtifactAccess(getTaskArtifactDirectory(task.task_id, false));
+    const previousModeId = task.activeModeId;
+    const previousAllowedTools = task.allowedTools;
+    const previousDisabledTools = task.disabledTools;
+    task.activeModeId = mode.id;
+    task.allowedTools = mode.allowedTools;
+    task.disabledTools = mode.disabledTools;
+    let systemPrompt: string;
+    try {
+        systemPrompt = await task.buildSystemPrompt();
+    } catch (err) {
+        task.activeModeId = previousModeId;
+        task.allowedTools = previousAllowedTools;
+        task.disabledTools = previousDisabledTools;
+        throw err;
+    }
+    task.harnessContext = ctx;
+    task.workspace = newWorkspace;
+    task.installBuiltSystemPrompt(systemPrompt);
+    task.task_manager_state.clearLazyTaskSystemPromptRefresh(task);
+    await task.refreshBaseToolsets();
+
+    if (ctx.permission) {
+        try {
+            await permissionPrompt.notifyPermissionRulesChanged?.(ctx.permission, [task.task_id]);
+        } catch (err) {
+            logger.warn(`Failed to refresh permission prompts after switching task ${task.task_id} workspace: ${err}`);
         }
     }
 }

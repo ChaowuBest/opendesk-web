@@ -156,7 +156,7 @@ import { registerElectronAccountIntegration } from './applications/account/elect
 import { type TaskState, isTaskVisibleForDeveloperMode } from './aikernel/states/tasks.js';
 import { getLocale, t } from '../locale/index.js';
 import { getAttachmentFileSupport, UnsupportedAttachmentFileTypeError } from './aikernel/attachment-support.js';
-import { switchTaskMode } from './aikernel/task/mode.js';
+import { replaceTaskHarnessForWorkspace, switchTaskMode } from './aikernel/task/mode.js';
 import {
     expandVisualBounds,
     LINUX_WINDOW_SHADOW_MARGIN,
@@ -1487,28 +1487,16 @@ const registerTaskManagerAPIHandlers = () => {
             return { status: 'error', message: `task ${taskId} not found` };
         }
         try {
-            const taskAgent = task.getAgent();
             const mainAgent = AgentRegistry.getMainAgent();
             const mainModeId = task.activeModeId || _currentElectronModeId;
             const mainModes = mainAgent.supportedModes();
-            const mode =
-                taskAgent.agentId === mainAgent.agentId
-                    ? (mainModes.find((candidate) => candidate.id === mainModeId) ?? mainAgent.getDefaultMode())
-                    : task.getAgentMode();
-            const savedEnv = task.harnessContext.environ;
-            const savedExecutionHost = task.harnessContext.executionHost;
-            const savedPrompt = task.harnessContext.permissionPrompt;
-            const ctx = await HarnessContext.createForMode(newWorkspace, mode);
-            ctx.environ = savedEnv;
-            ctx.executionHost = savedExecutionHost;
-            ctx.permissionPrompt = savedPrompt || new ElectronPermissionPromptProvider();
-            await ctx.grantTaskArtifactAccess(getTaskArtifactDirectory(task.task_id, false));
-            task.harnessContext = ctx;
-            task.workspace = newWorkspace;
-            task.activeModeId = mode.id;
-            task.allowedTools = mode.allowedTools;
-            task.disabledTools = mode.disabledTools;
-            await task.rebuildSystemPrompt();
+            const mainMode = mainModes.find((candidate) => candidate.id === mainModeId) ?? mainAgent.getDefaultMode();
+            // lazy harness 初始化前 provider 可能为空，与切换前行为一致地兜底
+            task.harnessContext.permissionPrompt =
+                task.harnessContext.permissionPrompt || new ElectronPermissionPromptProvider();
+            await replaceTaskHarnessForWorkspace(task, newWorkspace, (taskAgent) =>
+                taskAgent.agentId === mainAgent.agentId ? mainMode : task.getAgentMode()
+            );
             task.persistLater();
             await task.refreshToolsets();
             return { status: 'ok' };

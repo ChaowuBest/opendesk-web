@@ -73,7 +73,7 @@ import { getPlatform } from '../../platforms/base.js';
 import { CliPlatform } from '../../platforms/cli.js';
 import { onWorkspaceChanged } from '../aikernel/agents_md.js';
 import { getExecutionNode } from '../applications/devicemgr/execution.js';
-import { resolveTaskMode } from '../aikernel/task/mode.js';
+import { resolveTaskMode, replaceTaskHarnessForWorkspace } from '../aikernel/task/mode.js';
 import { syncPluginTuiCommands } from '../applications/pluginmgr/index.js';
 import { getConfiguredOutputDisplayLevel, persistOutputDisplayLevel, type OutputDisplayLevel } from './display.js';
 
@@ -2118,7 +2118,10 @@ export class OpenDeskTUI {
      * 通过 lazy initializer 以当前 mode 创建 harness。
      */
     private async syncAllTaskHarnesses(mode: ModeDecl = this._activeMode): Promise<boolean> {
-        const changedProviders = new Map<PermissionPromptProvider, PermissionEnforcer>();
+        const changedProviders = new Map<
+            PermissionPromptProvider,
+            Array<{ enforcer: PermissionEnforcer; taskIds: Set<string> }>
+        >();
         const prepared: Array<{
             task: TaskState;
             context: HarnessContext;
@@ -2205,15 +2208,35 @@ export class OpenDeskTUI {
                 child.allowedTools = taskMode.allowedTools;
                 child.disabledTools = taskMode.disabledTools;
             }
-            if (taskMode.bypassPermissionChecks && savedPrompt?.notifyPermissionRulesChanged && context.permission) {
-                changedProviders.set(savedPrompt, context.permission);
+            if (savedPrompt && context.permission) {
+                // 模式切换会生成新的权限引擎：按任务范围通知 provider 重评当前
+                // 弹窗与排队中的 ask 请求。provider 逐条用新引擎实测，仅全部
+                // allow 才自动放通，因此对变宽/变窄的切换都安全。
+                // 不同任务即使共享 provider 也持有各自的 enforcer 实例
+                // （规则依赖 workspace），必须按 enforcer 分组重评。
+                let groups = changedProviders.get(savedPrompt);
+                if (!groups) {
+                    groups = [];
+                    changedProviders.set(savedPrompt, groups);
+                }
+                let group = groups.find((candidate) => candidate.enforcer === context.permission);
+                if (!group) {
+                    group = { enforcer: context.permission, taskIds: new Set<string>() };
+                    groups.push(group);
+                }
+                group.taskIds.add(task.task_id);
+                for (const child of inheritedChildren) {
+                    group.taskIds.add(child.task_id);
+                }
             }
         }
-        for (const [provider, enforcer] of changedProviders) {
-            try {
-                await provider.notifyPermissionRulesChanged?.(enforcer);
-            } catch (err) {
-                logger.warn(`Failed to refresh permission prompts for mode ${mode.id}: ${err}`);
+        for (const [promptProvider, groups] of changedProviders) {
+            for (const { enforcer, taskIds } of groups) {
+                try {
+                    await promptProvider.notifyPermissionRulesChanged?.(enforcer, [...taskIds]);
+                } catch (err) {
+                    logger.warn(`Failed to refresh permission prompts for mode ${mode.id}: ${err}`);
+                }
             }
         }
         this.taskManagerState.pruneLazyHarnessBaseEnforcers();
@@ -2245,25 +2268,15 @@ export class OpenDeskTUI {
             if (this.activeTaskId) {
                 const activeTask = this.taskManagerState.getTask(this.activeTaskId);
                 if (activeTask) {
-                    activeTask.workspace = newWorkspace;
-                    const taskAgent = activeTask.getAgent();
-                    const mode =
-                        taskAgent.agentId === this.agentDecl.agentId ? this._activeMode : activeTask.getAgentMode();
-                    const savedEnv = activeTask.harnessContext.environ;
-                    const savedPrompt = activeTask.harnessContext.permissionPrompt;
                     try {
-                        const ctx = await HarnessContext.createForMode(newWorkspace, mode);
-                        ctx.environ = savedEnv;
-                        ctx.permissionPrompt = savedPrompt;
-                        await ctx.grantTaskArtifactAccess(getTaskArtifactDirectory(activeTask.task_id, false));
-                        activeTask.harnessContext = ctx;
+                        await replaceTaskHarnessForWorkspace(activeTask, newWorkspace, () =>
+                            activeTask.getAgent().agentId === this.agentDecl.agentId
+                                ? this._activeMode
+                                : activeTask.getAgentMode()
+                        );
                     } catch (err) {
                         logger.warn(`Failed to sync task harness for new workspace: ${err}`);
-                        activeTask.harnessContext.workspace = newWorkspace;
                     }
-                    activeTask.activeModeId = mode.id;
-                    activeTask.allowedTools = mode.allowedTools;
-                    activeTask.disabledTools = mode.disabledTools;
                     activeTask.persistLater();
                     await activeTask.refreshToolsets();
                 }
