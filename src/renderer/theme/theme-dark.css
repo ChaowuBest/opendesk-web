@@ -872,13 +872,7 @@ html[data-theme='dark'] #app-root task-view .subtask-pool-card .pool-task-list {
     background: var(--od-bg-elevated) !important;
 }
 
-html[data-theme='dark'] #app-root task-view permission-prompt [id*='-panel'],
-html[data-theme='dark'] #app-root task-view ask-user-prompt [id*='-panel'],
-html[data-theme='dark'] #app-root task-view exit-plan-mode-prompt [id*='-panel'] {
-    background: var(--od-bg-elevated) !important;
-    border-color: var(--od-border-strong) !important;
-    background-image: none !important;
-}
+/* 提示面板深色模式由 theme.css 的 --panel-*-bg/border/divider token 驱动，无需外部覆盖 */
 
 /* recommendation-panel 深色模式由组件内 CSS 变量切换处理，无需外部覆盖 */
 

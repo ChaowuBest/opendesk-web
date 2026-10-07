@@ -164,10 +164,10 @@ class ExitPlanModePrompt extends HTMLElement {
         this.innerHTML = `
             <div id="exit-plan-panel"
                  class="mb-2 rounded-xl border shadow-sm
-                        bg-[var(--chat-amber-soft)] border-[color-mix(in_srgb,var(--chat-amber)_35%,transparent)]
+                        bg-[var(--panel-amber-bg)] border-[var(--panel-amber-border)]
                         transition-all duration-200 translate-y-4 opacity-0">
                 <!-- 标题栏 -->
-                <div class="flex items-center gap-2 px-4 py-2.5 border-b border-[color-mix(in_srgb,var(--chat-amber)_16%,transparent)]">
+                <div class="flex items-center gap-2 px-4 py-2.5 border-b border-[var(--panel-amber-divider)]">
                     <span class="inline-flex items-center justify-center w-6 h-6 rounded-lg bg-[color-mix(in_srgb,var(--chat-amber)_16%,transparent)] text-[var(--chat-amber)]">
                         <i class="fa-solid fa-clipboard-check text-[12px]"></i>
                     </span>

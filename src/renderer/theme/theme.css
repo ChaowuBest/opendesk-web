@@ -47,6 +47,15 @@ html:not([data-theme]) {
     --chat-bubble-hover-bg: #f4f3f1;
     --chat-bubble-hover-border: #df4436;
     --chat-bubble-code-bg: rgba(0, 0, 0, 0.06);
+
+    /* 提示面板（permission/exitPlan/askUser）底色：浅色沿用旧版 Tailwind 渐变观感
+       （amber-50/amber-200/amber-100、blue-50/blue-200/blue-100 原值） */
+    --panel-amber-bg: linear-gradient(to bottom, rgba(255, 251, 235, 0.8), #ffffff);
+    --panel-amber-border: #fde68a;
+    --panel-amber-divider: #fef3c7;
+    --panel-blue-bg: linear-gradient(to bottom, rgba(239, 246, 255, 0.8), #ffffff);
+    --panel-blue-border: #bfdbfe;
+    --panel-blue-divider: #dbeafe;
 }
 
 html[data-theme='dark'] {
@@ -90,6 +99,14 @@ html[data-theme='dark'] {
     --chat-bubble-hover-bg: rgba(255, 255, 255, 0.08);
     --chat-bubble-hover-border: #4a4642;
     --chat-bubble-code-bg: rgba(255, 255, 255, 0.1);
+
+    /* 提示面板底色：深色保持旧版观感（深底 + 低透明度色晕，theme-dark.css 原本就是这么画的） */
+    --panel-amber-bg: linear-gradient(to bottom, rgba(251, 191, 36, 0.12), rgba(37, 37, 38, 0.95));
+    --panel-amber-border: rgba(251, 191, 36, 0.3);
+    --panel-amber-divider: rgba(251, 191, 36, 0.16);
+    --panel-blue-bg: linear-gradient(to bottom, rgba(96, 165, 250, 0.12), rgba(37, 37, 38, 0.95));
+    --panel-blue-border: rgba(96, 165, 250, 0.3);
+    --panel-blue-divider: rgba(96, 165, 250, 0.16);
 }
 
 /* 子应用 guest（application.html）：禁止 Chromium 随 nativeTheme 强制反色，外观仍由 data-theme 驱动 */
