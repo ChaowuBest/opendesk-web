@@ -17,6 +17,8 @@ import type {
 } from '../../../../main/aikernel/states/tasks';
 import { Setting } from '../../../../main/utils/setting';
 import { setRuntimeLocale } from '../../../../locale/index';
+import { BaseTool } from '../../../../main/aikernel/tool';
+import { z } from 'zod';
 import chalk from 'chalk';
 import stripAnsi from 'strip-ansi';
 
@@ -52,6 +54,24 @@ function createAttentionToolPart(id: number, customOutput = 'SCAN QR CODE'): Too
 function createNamedToolPart(id: number, toolName: string): ToolCallMessagePart {
     const part = createToolPart(id, `src/${id}.ts`);
     part.toolcalls[0].tool_name = toolName;
+    // 模拟真实注册表解析：挂上带双语显示名的 BaseTool，使 getResolvedToolDisplayName 可用
+    part.toolcalls[0].setTool(
+        new BaseTool(
+            toolName.includes('-') ? toolName.slice(toolName.indexOf('-') + 1) : toolName,
+            'test tool',
+            z.object({})
+        )
+    );
+    return part;
+}
+
+/** 为工具调用挂载带指定双语显示名的 BaseTool（模拟注册表解析后的状态）。 */
+function withDisplayName(part: ToolCallMessagePart, zh: string, en: string): ToolCallMessagePart {
+    const toolName = part.toolcalls[0].tool_name;
+    const bareName = toolName.includes('-') ? toolName.slice(toolName.indexOf('-') + 1) : toolName;
+    part.toolcalls[0].setTool(
+        new BaseTool(bareName, 'test tool', z.object({}), undefined, { 'zh-CN': zh, 'en-US': en })
+    );
     return part;
 }
 
@@ -343,7 +363,7 @@ describe('TaskView chunk handling', () => {
         });
 
         const output = stripAnsi(taskView.render(100).join('\n'));
-        expect(output).toContain('Running filemgr-readFile…');
+        expect(output).toContain('Running filemgr-readFile');
         expect(output.match(/[✣✤✥✦]/g)).toHaveLength(1);
         expect(output).not.toContain('1 tool');
         expect(output).not.toContain('private reasoning');
@@ -355,9 +375,8 @@ describe('TaskView chunk handling', () => {
         const taskView = new TaskView({ requestRender: jest.fn() } as any);
         taskView.setOutputDisplayLevel('minimal');
         taskView.startStreaming();
-        const toolPart = createNamedToolPart(1, 'search-webFetch');
+        const toolPart = withDisplayName(createNamedToolPart(1, 'search-webFetch'), '网页获取', 'Web Fetch');
         toolPart.toolcalls[0].status = 'running';
-        toolPart.toolcalls[0].display_name_key = 'search.webfetch.name';
 
         await taskView.handleChunkUpdate({
             type: 'assistant',
@@ -368,7 +387,7 @@ describe('TaskView chunk handling', () => {
             last_part: toolPart
         });
 
-        expect(stripAnsi(taskView.render(100).join('\n'))).toContain('正在执行 网页获取…');
+        expect(stripAnsi(taskView.render(100).join('\n'))).toContain('正在执行 网页获取');
     });
 
     test('minimal mode distinguishes live reasoning from waiting for a response', async () => {
@@ -397,6 +416,131 @@ describe('TaskView chunk handling', () => {
         expect(output).toContain('正在思考…');
         expect(output).not.toContain('正在生成回复…');
         expect(output).not.toContain('0 个工具');
+    });
+
+    test('minimal running tool status reports the completed tool call count', async () => {
+        setRuntimeLocale('zh-CN');
+        const taskView = new TaskView({ requestRender: jest.fn() } as any);
+        taskView.setOutputDisplayLevel('minimal');
+        taskView.startStreaming();
+
+        const donePart = withDisplayName(createNamedToolPart(0, 'filemgr-grepFiles'), '内容搜索', 'Grep');
+        donePart.toolcalls[0].status = 'success';
+        await taskView.handleChunkUpdate({
+            type: 'assistant',
+            task_id: 'task_1',
+            task_status: 'running',
+            message_id: 'message_1',
+            last_part_index: 0,
+            last_part: donePart
+        });
+
+        const runningPart = withDisplayName(createNamedToolPart(1, 'filemgr-readFile'), '读取文件', 'Read File');
+        runningPart.toolcalls[0].status = 'running';
+        await taskView.handleChunkUpdate({
+            type: 'assistant',
+            task_id: 'task_1',
+            task_status: 'running',
+            message_id: 'message_1',
+            last_part_index: 1,
+            last_part: runningPart
+        });
+
+        const output = stripAnsi(taskView.render(100).join('\n'));
+        expect(output).toContain('正在执行 读取文件 · 已调用 1 个工具');
+    });
+
+    test('minimal reasoning status lists completed tools while thinking', async () => {
+        setRuntimeLocale('zh-CN');
+        const taskView = new TaskView({ requestRender: jest.fn() } as any);
+        taskView.setOutputDisplayLevel('minimal');
+        taskView.startStreaming();
+
+        const donePart = withDisplayName(createNamedToolPart(0, 'filemgr-grepFiles'), '内容搜索', 'Grep');
+        donePart.toolcalls[0].status = 'success';
+        await taskView.handleChunkUpdate({
+            type: 'assistant',
+            task_id: 'task_1',
+            task_status: 'running',
+            message_id: 'message_1',
+            last_part_index: 0,
+            last_part: donePart
+        });
+
+        await taskView.handleChunkUpdate({
+            type: 'assistant',
+            task_id: 'task_1',
+            task_status: 'running',
+            message_id: 'message_1',
+            last_part_index: 1,
+            last_part: new ReasoningMessagePart('private reasoning', 'reasoning_content')
+        });
+
+        const output = stripAnsi(taskView.render(100).join('\n'));
+        expect(output).toContain('正在思考… · 已调用 内容搜索 等 1 个工具');
+    });
+
+    test('minimal running tool status counts only the current block after body text', async () => {
+        setRuntimeLocale('zh-CN');
+        const taskView = new TaskView({ requestRender: jest.fn() } as any);
+        taskView.setOutputDisplayLevel('minimal');
+        taskView.startStreaming();
+
+        const earlierPart = withDisplayName(createNamedToolPart(0, 'filemgr-grepFiles'), '内容搜索', 'Grep');
+        earlierPart.toolcalls[0].status = 'success';
+        await taskView.handleChunkUpdate({
+            type: 'assistant',
+            task_id: 'task_1',
+            task_status: 'running',
+            message_id: 'message_1',
+            last_part_index: 0,
+            last_part: earlierPart
+        });
+        const earlierPart2 = withDisplayName(createNamedToolPart(1, 'filemgr-globFiles'), '模式匹配', 'Glob');
+        earlierPart2.toolcalls[0].status = 'success';
+        await taskView.handleChunkUpdate({
+            type: 'assistant',
+            task_id: 'task_1',
+            task_status: 'running',
+            message_id: 'message_1',
+            last_part_index: 1,
+            last_part: earlierPart2
+        });
+        await taskView.handleChunkUpdate({
+            type: 'assistant',
+            task_id: 'task_1',
+            task_status: 'running',
+            message_id: 'message_1',
+            last_part_index: 2,
+            last_part: new TextMessagePart('第一部分完成。', 'rendered')
+        });
+
+        const currentDone = withDisplayName(createNamedToolPart(3, 'filemgr-extractText'), '提取文本', 'Extract Text');
+        currentDone.toolcalls[0].status = 'success';
+        await taskView.handleChunkUpdate({
+            type: 'assistant',
+            task_id: 'task_1',
+            task_status: 'running',
+            message_id: 'message_1',
+            last_part_index: 3,
+            last_part: currentDone
+        });
+        const runningPart = withDisplayName(createNamedToolPart(4, 'filemgr-readFile'), '读取文件', 'Read File');
+        runningPart.toolcalls[0].status = 'running';
+        await taskView.handleChunkUpdate({
+            type: 'assistant',
+            task_id: 'task_1',
+            task_status: 'running',
+            message_id: 'message_1',
+            last_part_index: 4,
+            last_part: runningPart
+        });
+
+        const output = stripAnsi(taskView.render(100).join('\n'));
+        expect(output).toContain('正在执行 读取文件 · 已调用 1 个工具');
+        // 当前块只统计 1 个，不能累计上一块的 2 个
+        expect(output).not.toContain('已调用 3 个工具');
+        expect(output).not.toContain('正在执行 读取文件 · 已调用 2 个工具');
     });
 
     test('minimal mode keeps a running tool visible when it requires user attention', async () => {
@@ -441,13 +585,13 @@ describe('TaskView chunk handling', () => {
             last_part: createRunningToolPart(1, 'src/one.ts')
         });
 
-        expect(stripAnsi(taskView.render(100).join('\n'))).toContain('✣ Running filemgr-readFile…');
+        expect(stripAnsi(taskView.render(100).join('\n'))).toContain('✣ Running filemgr-readFile');
 
         now.mockReturnValue(300);
         taskView.requestStreamRender();
 
         expect(tui.requestRender).toHaveBeenCalledTimes(1);
-        expect(stripAnsi(taskView.render(100).join('\n'))).toContain('✤ Running filemgr-readFile…');
+        expect(stripAnsi(taskView.render(100).join('\n'))).toContain('✤ Running filemgr-readFile');
     });
 
     test('minimal mode renders a live assistant error with a red failed terminal status', async () => {
@@ -760,12 +904,11 @@ describe('TaskView chunk handling', () => {
         taskView.setOutputDisplayLevel('minimal');
         taskView.startStreaming();
         const toolGroup = new ToolCallMessagePart();
-        const readFile = createNamedToolPart(1, 'filemgr-readFile').toolcalls[0];
-        readFile.display_name_key = 'filemgr.readFile.name';
-        const grepFiles = createNamedToolPart(2, 'filemgr-grepFiles').toolcalls[0];
-        grepFiles.display_name_key = 'filemgr.grep.name';
-        const addMemory = createNamedToolPart(3, 'memory-addMemory').toolcalls[0];
-        addMemory.display_name_key = 'tools.memory.add.name';
+        const readFile = withDisplayName(createNamedToolPart(1, 'filemgr-readFile'), '读取文件', 'Read File')
+            .toolcalls[0];
+        const grepFiles = withDisplayName(createNamedToolPart(2, 'filemgr-grepFiles'), '内容搜索', 'Grep').toolcalls[0];
+        const addMemory = withDisplayName(createNamedToolPart(3, 'memory-addMemory'), '添加记忆', 'Add Memory')
+            .toolcalls[0];
         toolGroup.toolcalls.push(readFile, grepFiles, addMemory);
         const parts = [
             new ReasoningMessagePart('private reasoning', 'reasoning_content'),

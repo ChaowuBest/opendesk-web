@@ -43,7 +43,9 @@ export class ExecuteBashTool extends BaseTool<typeof ExecuteBashArgsSchema> {
         super(
             'executeBash',
             '该工具可以执行Bash终端命令, 并且默认已经将标准错误流和标准输出流合并, 无需额外配置 2>&1。不要用 || true、; true、| head 等兜底后缀或管道吞掉退出码；让命令以真实退出码结束，系统依赖退出码判定命令成败',
-            ExecuteBashArgsSchema
+            ExecuteBashArgsSchema,
+            undefined,
+            { 'zh-CN': '执行 Bash 命令', 'en-US': 'Run Bash Command' }
         );
 
         this.setUniversalExecutor(this.executeCommand.bind(this));

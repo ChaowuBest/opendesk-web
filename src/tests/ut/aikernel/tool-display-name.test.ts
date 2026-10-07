@@ -1,5 +1,4 @@
 import { z } from 'zod';
-import { resolveToolDisplayName } from '../../../common/tool-display-name.js';
 import { ToolCall } from '../../../main/aikernel/messages.js';
 import { BaseTool, BaseToolset } from '../../../main/aikernel/tool.js';
 import { DefaultToolCallView } from '../../../main/tui/components/toolcall.js';
@@ -13,22 +12,22 @@ describe('tool display names', () => {
     beforeAll(() => setRuntimeLocale('zh-CN'));
     afterAll(() => setRuntimeLocale(null));
 
-    test('uses an existing localized title in GUI and TUI default renderers', async () => {
-        const tool = new BaseTool('globFiles', 'Find files', z.object({}), 'filemgr.glob.name');
-        const call = new ToolCall(0, 'call-1', 'globFiles', '{}');
+    test('resolves the self-described bilingual name per locale in renderers', async () => {
+        const tool = new BaseTool('readFile', 'desc', z.object({}), undefined, {
+            'zh-CN': '读取文件',
+            'en-US': 'Read File'
+        });
+        const call = new ToolCall(0, 'call-1', 'readFile', '{}');
         call.setTool(tool);
 
-        expect(call.display_name_key).toBe('filemgr.glob.name');
-        expect(call.toRenderJSON()).toMatchObject({
-            tool_name: 'globFiles',
-            display_name_key: 'filemgr.glob.name'
-        });
-        expect(await call.render()).toContain('模式匹配');
-        expect(stripAnsi(new DefaultToolCallView(call).render(80).join('\n'))).toContain('模式匹配');
+        expect(tool.getResolvedDisplayName('zh-CN')).toBe('读取文件');
+        expect(tool.getResolvedDisplayName('en-US')).toBe('Read File');
+        expect(await call.render()).toContain('读取文件');
+        expect(stripAnsi(new DefaultToolCallView(call).render(80).join('\n'))).toContain('读取文件');
     });
 
     test('keeps custom tool rendering authoritative', async () => {
-        const tool = new BaseTool('custom-tool', 'Custom tool', z.object({}), 'filemgr.glob.name');
+        const tool = new BaseTool('custom-tool', 'Custom tool', z.object({}), undefined, '自定义');
         tool.renderToolCall = async () => '<div>Custom title</div>';
         const call = new ToolCall(0, 'call-2', 'custom-tool', '{}');
         call.setTool(tool);
@@ -36,20 +35,74 @@ describe('tool display names', () => {
         expect(await call.render()).toBe('<div>Custom title</div>');
     });
 
-    test('applies an existing title when the tool is registered', async () => {
-        const tool = new BaseTool('addMemory', 'Add memory', z.object({}));
-        new BaseToolset('memory').addTool(tool);
-        const call = new ToolCall(0, 'call-memory', 'addMemory', '{}');
-        call.setTool(tool);
-
-        expect(call.display_name_key).toBe('tools.memory.add.name');
-        expect(await call.render()).toContain('添加记忆');
-        expect(stripAnsi(new DefaultToolCallView(call).render(80).join('\n'))).toContain('添加记忆');
+    test('falls back to the protocol name when the tool has no display name', () => {
+        const tool = new BaseTool('bareTool', 'desc', z.object({}));
+        expect(tool.getResolvedDisplayName('zh-CN')).toBe('bareTool');
     });
 
-    test('keeps the mainline protocol name when no existing title is available', () => {
-        expect(resolveToolDisplayName('plugin-opaqueOperation', undefined, (key) => key)).toBe(
-            'plugin-opaqueOperation'
-        );
+    test('falls back to an explicit legacy display-name key only when provided', () => {
+        const tool = new BaseTool('globFiles', 'desc', z.object({}), 'filemgr.glob.name');
+        expect(tool.getResolvedDisplayName('zh-CN')).toBe('模式匹配');
+        expect(tool.getResolvedDisplayName('en-US')).toBe('Glob');
+    });
+
+    test('registration builds a bilingual display name from an explicit locale key', () => {
+        const tool = new BaseTool('globFiles', 'desc', z.object({}), 'filemgr.glob.name');
+        new BaseToolset('filemgr').addTool(tool);
+
+        expect(tool.getDisplayName()).toEqual({ 'zh-CN': '模式匹配', 'en-US': 'Glob' });
+        expect(tool.getResolvedDisplayName('zh-CN')).toBe('模式匹配');
+        expect(tool.getResolvedDisplayName('en-US')).toBe('Glob');
+    });
+
+    test('registration keeps an explicitly declared display name', () => {
+        const tool = new BaseTool('addMemory', 'desc', z.object({}), undefined, {
+            'zh-CN': '写入记忆',
+            'en-US': 'Store Memory'
+        });
+        new BaseToolset('memory').addTool(tool);
+
+        expect(tool.getResolvedDisplayName('zh-CN')).toBe('写入记忆');
+        expect(tool.getResolvedDisplayName('en-US')).toBe('Store Memory');
+    });
+});
+
+describe('ToolCall render-data contract', () => {
+    beforeAll(() => setRuntimeLocale('zh-CN'));
+    afterAll(() => setRuntimeLocale(null));
+
+    test('toRenderJSON pushes the current-locale display name and never persists it', () => {
+        const tool = new BaseTool('readFile', 'desc', z.object({}), undefined, {
+            'zh-CN': '读取文件',
+            'en-US': 'Read File'
+        });
+        const call = new ToolCall(0, 'call-1', 'readFile', '{}');
+        call.setTool(tool);
+
+        const renderJson = call.toRenderJSON() as Record<string, unknown>;
+        expect(renderJson['display_name']).toBe('读取文件');
+
+        // 序列化（持久化）数据只含 identifier，不含显示名
+        const persisted = call.toJSON() as Record<string, unknown>;
+        expect(persisted['display_name']).toBeUndefined();
+        expect(persisted['display_name_key']).toBeUndefined();
+        expect(persisted['tool_name']).toBe('readFile');
+
+        // 渲染数据随当前语言实时变化
+        expect(tool.getResolvedDisplayName('en-US')).toBe('Read File');
+    });
+
+    test('an orphan tool call without a tool instance falls back to the protocol name', () => {
+        const call = new ToolCall(0, 'call-2', 'plugin-opaqueOperation', '{}');
+        expect((call.toRenderJSON() as Record<string, unknown>)['display_name']).toBe('plugin-opaqueOperation');
+    });
+
+    test('tool serialization keeps the display name for cross-boundary tool definitions', () => {
+        const tool = new BaseTool('readFile', 'desc', z.object({}), undefined, {
+            'zh-CN': '读取文件',
+            'en-US': 'Read File'
+        });
+        const restored = BaseTool.fromJSON(tool.toJSON());
+        expect(restored.getResolvedDisplayName('en-US')).toBe('Read File');
     });
 });

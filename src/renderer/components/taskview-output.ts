@@ -16,6 +16,8 @@ export type GuiReasonDisplayMode = 'inline' | 'bubble';
 export interface GuiToolCall {
     tool_name?: string;
     display_name_key?: string;
+    /** 工具自描述的显示名（string 或按语言映射），解析优先级高于 display_name_key。 */
+    display_name?: string | Record<string, string>;
     requires_user_attention?: boolean;
 }
 

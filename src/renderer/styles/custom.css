@@ -3824,7 +3824,13 @@ html[data-theme='dark'] .od-process-detail::-webkit-scrollbar-thumb {
     display: flex;
     align-items: center;
     height: 22px;
-    animation: od-status-roll-in 180ms ease-out;
+    will-change: transform, opacity;
+    animation: od-status-page-in 220ms cubic-bezier(0.22, 0.61, 0.36, 1);
+}
+
+/* 文案未变化时的静态行：抑制动画重播，避免每帧闪烁与不必要的合成开销 */
+.od-running-status-line--static {
+    animation: none;
 }
 
 .od-running-status-line > span {
@@ -3834,10 +3840,10 @@ html[data-theme='dark'] .od-process-detail::-webkit-scrollbar-thumb {
     white-space: nowrap;
 }
 
-@keyframes od-status-roll-in {
+@keyframes od-status-page-in {
     from {
         opacity: 0;
-        transform: translateY(5px);
+        transform: translateY(100%);
     }
     to {
         opacity: 1;

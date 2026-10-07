@@ -127,7 +127,9 @@ export class ListPluginsTool extends BaseTool<typeof ListPluginsArgsSchema> {
         super(
             'listPlugins',
             'List discovered OpenDesk plugins with their source, version, enabled state and runtime status.',
-            ListPluginsArgsSchema
+            ListPluginsArgsSchema,
+            undefined,
+            { 'zh-CN': '插件列表', 'en-US': 'List Plugins' }
         );
         this.setExecutor(this.list.bind(this));
     }
@@ -154,7 +156,9 @@ export class GetPluginDetailsTool extends BaseTool<typeof GetPluginDetailsArgsSc
         super(
             'getPluginDetails',
             'Get one OpenDesk plugin including its manifest, Skills, MCP servers, capabilities and verification state.',
-            GetPluginDetailsArgsSchema
+            GetPluginDetailsArgsSchema,
+            undefined,
+            { 'zh-CN': '插件详情', 'en-US': 'Plugin Details' }
         );
         this.setExecutor(this.get.bind(this));
     }
@@ -183,7 +187,9 @@ export class InstallPluginTool extends BaseTool<typeof InstallPluginArgsSchema> 
         super(
             'installPlugin',
             'Install an OpenDesk plugin into the plugins directory from a local directory, TGZ, URL or npm package spec.',
-            InstallPluginArgsSchema
+            InstallPluginArgsSchema,
+            undefined,
+            { 'zh-CN': '安装插件', 'en-US': 'Install Plugin' }
         );
         this.serialExecution = true;
         this.setExecutor(this.install.bind(this));
@@ -210,7 +216,9 @@ export class UninstallPluginTool extends BaseTool<typeof UninstallPluginArgsSche
         super(
             'uninstallPlugin',
             'Uninstall an OpenDesk plugin by ID. Builtin and external plugins cannot be uninstalled.',
-            UninstallPluginArgsSchema
+            UninstallPluginArgsSchema,
+            undefined,
+            { 'zh-CN': '卸载插件', 'en-US': 'Uninstall Plugin' }
         );
         this.serialExecution = true;
         this.setExecutor(this.uninstall.bind(this));
@@ -232,7 +240,16 @@ const SetPluginEnabledArgsSchema = z.object({
 
 export class SetPluginEnabledTool extends BaseTool<typeof SetPluginEnabledArgsSchema> {
     constructor(private readonly pluginApp: PluginManagementApplication) {
-        super('setPluginEnabled', 'Enable or disable a discovered OpenDesk plugin.', SetPluginEnabledArgsSchema);
+        super(
+            'setPluginEnabled',
+            'Enable or disable a discovered OpenDesk plugin.',
+            SetPluginEnabledArgsSchema,
+            undefined,
+            {
+                'zh-CN': '启用/停用插件',
+                'en-US': 'Enable Plugin'
+            }
+        );
         this.serialExecution = true;
         this.setExecutor(this.setEnabled.bind(this));
     }
@@ -258,7 +275,9 @@ export class ReloadPluginsTool extends BaseTool<typeof ReloadPluginsArgsSchema> 
         super(
             'reloadPlugins',
             'Rediscover and reload all OpenDesk plugins, including external and runtime plugin directories.',
-            ReloadPluginsArgsSchema
+            ReloadPluginsArgsSchema,
+            undefined,
+            { 'zh-CN': '重载插件', 'en-US': 'Reload Plugins' }
         );
         this.serialExecution = true;
         this.setExecutor(this.reload.bind(this));

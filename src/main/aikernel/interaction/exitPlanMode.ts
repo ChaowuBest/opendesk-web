@@ -74,7 +74,9 @@ export class ExitPlanModeTool extends InteractiveTool<typeof ExitPlanModeArgsSch
             '提交计划供用户审批并退出 Plan Mode。调用时必须传入 planFilePath 参数指向之前写入的计划文件。' +
                 '系统将向用户展示该文件内容，用户可以选择切换到 Standard 模式（需确认操作）或 Solo 模式（全自动）来执行计划，' +
                 '也可以选择继续编辑计划。此工具仅在 Plan Mode 中可用。',
-            ExitPlanModeArgsSchema
+            ExitPlanModeArgsSchema,
+            undefined,
+            { 'zh-CN': '退出规划模式', 'en-US': 'Exit Plan Mode' }
         );
         this.setUniversalExecutor(this.handleExecute.bind(this));
     }

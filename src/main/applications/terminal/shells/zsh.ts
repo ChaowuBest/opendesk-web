@@ -49,7 +49,9 @@ export class ExecuteZshTool extends BaseTool<typeof ExecuteZshArgsSchema> {
         super(
             'executeZsh',
             '该工具可以执行Zsh终端命令, 并且默认已经将标准错误流和标准输出流合并, 无需额外配置 2>&1。不要用 || true、; true、| head 等兜底后缀或管道吞掉退出码；让命令以真实退出码结束，系统依赖退出码判定命令成败',
-            ExecuteZshArgsSchema
+            ExecuteZshArgsSchema,
+            undefined,
+            { 'zh-CN': '执行 Zsh 命令', 'en-US': 'Run Zsh Command' }
         );
 
         this.interactive = interactive;

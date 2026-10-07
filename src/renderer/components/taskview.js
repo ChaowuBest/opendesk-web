@@ -28,7 +28,6 @@ import {
     untrackPreviewerContainers
 } from './previewer.ts';
 import { escapeHtml } from '../../common/utils/escape.js';
-import { resolveToolDisplayName } from '../../common/tool-display-name.js';
 import { getSafeWebUrl } from '../../common/web-link.js';
 import { normalizeDriveRootPath } from '../../common/utils/path.js';
 import { createRendererTranslator } from '../locale.ts';
@@ -1195,7 +1194,9 @@ class TaskView extends HTMLElement {
     }
 
     static _toolDisplayName(tool) {
-        return resolveToolDisplayName(tool?.tool_name, tool?.display_name_key, taskViewT);
+        // 后端 toRenderJSON 实时推送当前语言下的显示名；旧数据无该字段时回退协议名
+        const name = typeof tool?.display_name === 'string' ? tool.display_name.trim() : '';
+        return name || tool?.tool_name || '';
     }
 
     static _compactProcessPhrase(value, maxLength = 18) {
@@ -1250,6 +1251,34 @@ class TaskView extends HTMLElement {
             summary = combine();
         }
         return TaskView._truncateProcessSummary(summary);
+    }
+
+    /**
+     * 统计当前连续工具调用块中已完成的工具调用（status 非 pending/running），
+     * 供运行中的思考/调用状态块展示"已调用 N 个工具"。
+     * 块边界：倒序扫描，遇到可见正文（text/error）即停止——更早的工具属于上一块，不计入；
+     * reasoning 属于当前块，不作为边界。
+     * @returns {{ count: number, names: string[] }} count 为调用次数，names 为去重压缩后的显示名
+     */
+    static _collectDoneToolStats(parts) {
+        let count = 0;
+        const names = new Set();
+        for (let index = (parts || []).length - 1; index >= 0; index -= 1) {
+            const part = parts[index];
+            if (!part) continue;
+            if (part.type === 'tool_call') {
+                for (const tc of part.toolcalls || []) {
+                    if (tc.status === 'pending' || tc.status === 'running') continue;
+                    count += 1;
+                    const name = TaskView._toolDisplayName(tc);
+                    if (name) names.add(TaskView._compactProcessPhrase(name, 12));
+                }
+                continue;
+            }
+            if (part.type === 'reasoning') continue;
+            if (String(part.rendered ?? part.text ?? '').trim()) break;
+        }
+        return { count, names: Array.from(names).slice(0, 2) };
     }
 
     _captureProcessDisclosureState(root) {
@@ -1341,6 +1370,9 @@ class TaskView extends HTMLElement {
     }
 
     _renderRunningStatus(item, messageId, options = {}) {
+        if (!this._lastRunningStatusTextByMessage) {
+            this._lastRunningStatusTextByMessage = new Map();
+        }
         let icon = '';
         let iconStyle = '';
         let iconStateClass = ' is-thinking';
@@ -1357,6 +1389,31 @@ class TaskView extends HTMLElement {
             iconStateClass = '';
             action = taskViewT('renderer.taskview.output.status.working');
         }
+        // 运行中的思考/调用块追加已完成的工具调用统计，随流式快照持续更新
+        const doneStats = options.doneStats || { count: 0, names: [] };
+        if (doneStats.count > 0) {
+            if (item.kind === 'tool') {
+                action += ` · ${taskViewT('renderer.taskview.output.status.doneCount', {
+                    count: doneStats.count
+                })}`;
+            } else if (item.kind === 'reasoning' || item.kind === undefined) {
+                const listed = doneStats.names
+                    .slice(0, 2)
+                    .join(taskViewT('renderer.taskview.output.processSummary.listSeparator'));
+                action += listed
+                    ? ` · ${taskViewT('renderer.taskview.output.status.doneCountWithTools', {
+                          tools: listed,
+                          count: doneStats.count
+                      })}`
+                    : ` · ${taskViewT('renderer.taskview.output.status.doneCount', {
+                          count: doneStats.count
+                      })}`;
+            }
+        }
+        // 文本未变化时不重播翻页动画，避免每帧闪烁与不必要的合成开销
+        const lastText = this._lastRunningStatusTextByMessage.get(messageId);
+        this._lastRunningStatusTextByMessage.set(messageId, action);
+        const lineAnimClass = lastText === action ? ' od-running-status-line--static' : '';
         const expandable = guiOutputMode === 'minimal' && options.isRunning === true;
         const expanded = expandable && this._assistantRunningDetails.get(messageId) === true;
         const tag = expandable ? 'button' : 'div';
@@ -1366,7 +1423,7 @@ class TaskView extends HTMLElement {
                 ${expandable ? `data-message-id="${escapeHtml(messageId)}" aria-expanded="${expanded}" aria-controls="od-${escapeHtml(messageId)}-running-details"` : ''}>
                 <span class="od-running-status-icon${iconStateClass}">${renderedIcon}</span>
                 <span class="od-running-status-viewport">
-                    <span class="od-running-status-line">
+                    <span class="od-running-status-line${lineAnimClass}">
                         <span>${escapeHtml(action)}</span>
                     </span>
                 </span>
@@ -1378,6 +1435,7 @@ class TaskView extends HTMLElement {
         const messageId = String(options.messageId || 'assistant');
         const showRunningDetails =
             options.showRunningDetails === true || this._assistantRunningDetails.get(messageId) === true;
+        const doneStats = TaskView._collectDoneToolStats(normalizedParts);
         const items = buildAssistantOutputItems(normalizedParts, {
             isRunning: Boolean(options.isRunning)
         });
@@ -1401,7 +1459,8 @@ class TaskView extends HTMLElement {
             }
             if (item.type === 'status') {
                 return this._renderRunningStatus(item, messageId, {
-                    isRunning: Boolean(options.isRunning)
+                    isRunning: Boolean(options.isRunning),
+                    doneStats
                 });
             }
             if (item.type === 'final') {

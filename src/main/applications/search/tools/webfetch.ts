@@ -78,7 +78,9 @@ export class WebFetchTool extends BaseTool<typeof WebFetchArgsSchema> {
         super(
             'webFetch',
             '从指定URL获取网页内容，并将其转换为结构化的Markdown格式返回。适用于阅读网页文章、文档、博客等场景',
-            WebFetchArgsSchema
+            WebFetchArgsSchema,
+            undefined,
+            { 'zh-CN': '网页获取', 'en-US': 'Web Fetch' }
         );
 
         this.turndownService = this.createTurndownService();

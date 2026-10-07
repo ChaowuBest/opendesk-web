@@ -25,7 +25,9 @@ export class AddSkillFromDirectoryTool extends BaseTool<typeof AddSkillFromDirec
         super(
             'addSkillFromDirectory',
             '从本地目录添加一个Skill。目录必须包含SKILL.md文件。添加成功后需要刷新才能生效。',
-            AddSkillFromDirectoryArgsSchema
+            AddSkillFromDirectoryArgsSchema,
+            undefined,
+            { 'zh-CN': '从目录添加技能', 'en-US': 'Add Skill From Directory' }
         );
         this.skillApp = skillApp;
         this.executor = this.add.bind(this);
@@ -48,7 +50,9 @@ export class AddSkillFromUrlTool extends BaseTool<typeof AddSkillFromUrlArgsSche
         super(
             'addSkillFromUrl',
             '从URL下载并添加一个Skill。URL指向的文件可以是.zip等压缩包格式。添加成功后需要刷新才能生效。',
-            AddSkillFromUrlArgsSchema
+            AddSkillFromUrlArgsSchema,
+            undefined,
+            { 'zh-CN': '从 URL 添加技能', 'en-US': 'Add Skill From URL' }
         );
         this.skillApp = skillApp;
         this.executor = this.add.bind(this);
@@ -71,7 +75,9 @@ export class SearchSkillFromRegistryTool extends BaseTool<typeof SearchSkillFrom
         super(
             'searchSkillFromRegistry',
             '按技能名称关键字从所有Skill Registry中搜索可安装技能，返回技能全名、安装量和Registry名称等信息。',
-            SearchSkillFromRegistryArgsSchema
+            SearchSkillFromRegistryArgsSchema,
+            undefined,
+            { 'zh-CN': '搜索技能注册表', 'en-US': 'Search Skill Registry' }
         );
         this.skillApp = skillApp;
         this.executor = this.search.bind(this);
@@ -96,7 +102,9 @@ export class AddSkillFromRegistryTool extends BaseTool<typeof AddSkillFromRegist
         super(
             'addSkillFromRegistry',
             '指定技能名称和Registry名称，从该Registry安装一个Skill。添加成功后需要刷新才能生效。',
-            AddSkillFromRegistryArgsSchema
+            AddSkillFromRegistryArgsSchema,
+            undefined,
+            { 'zh-CN': '从注册表安装技能', 'en-US': 'Install Skill From Registry' }
         );
         this.skillApp = skillApp;
         this.executor = this.add.bind(this);
@@ -114,7 +122,16 @@ export class ListSkillsTool extends BaseTool<typeof ListSkillsArgsSchema> {
     private skillApp: any;
 
     constructor(skillApp: any) {
-        super('listSkills', '列出所有已安装的Skills及其详细信息，包括名称、描述、许可证等', ListSkillsArgsSchema);
+        super(
+            'listSkills',
+            '列出所有已安装的Skills及其详细信息，包括名称、描述、许可证等',
+            ListSkillsArgsSchema,
+            undefined,
+            {
+                'zh-CN': '技能列表',
+                'en-US': 'List Skills'
+            }
+        );
         this.skillApp = skillApp;
         this.executor = this.list.bind(this);
     }
@@ -137,7 +154,10 @@ export class DeleteSkillsTool extends BaseTool<typeof DeleteSkillsArgsSchema> {
     private skillApp: any;
 
     constructor(skillApp: any) {
-        super('deleteSkills', '批量删除指定的Skill。删除后需要刷新才能生效。', DeleteSkillsArgsSchema);
+        super('deleteSkills', '批量删除指定的Skill。删除后需要刷新才能生效。', DeleteSkillsArgsSchema, undefined, {
+            'zh-CN': '卸载技能',
+            'en-US': 'Uninstall Skills'
+        });
         this.skillApp = skillApp;
         this.executor = this.delete.bind(this);
     }
@@ -170,7 +190,9 @@ export class RefreshSkillsTool extends BaseTool<typeof RefreshSkillsArgsSchema> 
         super(
             'refreshSkills',
             '刷新所有Skills，重新加载并注册到AI内核。在添加或删除Skill后调用此工具。',
-            RefreshSkillsArgsSchema
+            RefreshSkillsArgsSchema,
+            undefined,
+            { 'zh-CN': '刷新技能', 'en-US': 'Refresh Skills' }
         );
         this.skillApp = skillApp;
         this.executor = this.refresh.bind(this);
@@ -188,7 +210,10 @@ export class GetSkillsDirectoryTool extends BaseTool<typeof GetSkillsDirectoryAr
     private skillApp: any;
 
     constructor(skillApp: any) {
-        super('getSkillsDirectory', '获取当前Skills的存储目录路径', GetSkillsDirectoryArgsSchema);
+        super('getSkillsDirectory', '获取当前Skills的存储目录路径', GetSkillsDirectoryArgsSchema, undefined, {
+            'zh-CN': '技能目录',
+            'en-US': 'Skills Directory'
+        });
         this.skillApp = skillApp;
         this.executor = this.get.bind(this);
     }

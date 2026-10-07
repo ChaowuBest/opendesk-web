@@ -58,7 +58,9 @@ export class ExecutePwshTool extends BaseTool<PwshArgsSchema> {
         super(
             'executePwsh',
             t(sandboxed ? 'sandbox.description' : 'pwsh.description'),
-            createPwshArgsSchema(sandboxed)
+            createPwshArgsSchema(sandboxed),
+            undefined,
+            { 'zh-CN': '执行 PowerShell 命令', 'en-US': 'Run PowerShell Command' }
         );
         this.serialExecution = sandboxed;
         this.setUniversalExecutor(this.executeCommand.bind(this));

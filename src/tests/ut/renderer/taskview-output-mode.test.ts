@@ -565,7 +565,7 @@ describe('task-view GUI output modes', () => {
         expect(view.querySelector('.od-final-result')).toBeNull();
         expect(view.querySelector('.od-running-status')?.textContent).not.toContain('总耗时');
         expect(view.querySelector('.od-running-status-time')).toBeNull();
-        expect(view.querySelector('.od-running-status')?.textContent).toContain('正在调用 Tool10…');
+        expect(view.querySelector('.od-running-status')?.textContent).toContain('正在调用 Tool10');
         expect(view.querySelector('.od-running-status')?.textContent).not.toContain('echo 10');
 
         const runningStatus = view.querySelector('.od-running-status') as HTMLElement;
@@ -643,7 +643,7 @@ describe('task-view GUI output modes', () => {
         expect(view.querySelector('[data-running-output-toggle]')?.getAttribute('aria-expanded')).toBe('false');
         const flow = view.querySelector('.od-assistant-output-flow') as HTMLElement;
         expect(flow.lastElementChild?.classList.contains('od-running-status')).toBe(true);
-        expect(flow.lastElementChild?.textContent).toContain('正在调用 Tool20…');
+        expect(flow.lastElementChild?.textContent).toContain('正在调用 Tool20');
     });
 
     test('minimal running output stays collapsed while a tool call is still streaming its arguments', () => {
@@ -699,13 +699,13 @@ describe('task-view GUI output modes', () => {
         expect(view.textContent).not.toContain('正在思考…');
     });
 
-    test('running tool status uses the localized tool name without exposing parameters', () => {
+    test('running tool status uses the pushed display name without exposing parameters', () => {
         const view = createView();
         const fileTool = toolPart(1, 1);
         fileTool.toolcalls[0] = {
             ...fileTool.toolcalls[0],
             tool_name: 'filemgr-readFile',
-            display_name_key: 'filemgr.readFile.name'
+            display_name: '读取文件'
         };
         view.innerHTML = view._renderAssistantOutputHtml([fileTool], {
             isRunning: true,
@@ -713,7 +713,7 @@ describe('task-view GUI output modes', () => {
         });
 
         const status = view.querySelector('.od-running-status')?.textContent || '';
-        expect(status).toContain('正在调用 读取文件…');
+        expect(status).toContain('正在调用 读取文件');
         expect(status).not.toContain('package.json');
     });
 
@@ -763,17 +763,17 @@ describe('task-view GUI output modes', () => {
             {
                 ...fileTools.toolcalls[0],
                 tool_name: 'filemgr-readFile',
-                display_name_key: 'filemgr.readFile.name'
+                display_name: '读取文件'
             },
             {
                 ...fileTools.toolcalls[1],
                 tool_name: 'filemgr-readFile',
-                display_name_key: 'filemgr.readFile.name'
+                display_name: '读取文件'
             },
             {
                 ...fileTools.toolcalls[2],
                 tool_name: 'filemgr-grepFiles',
-                display_name_key: 'filemgr.grep.name'
+                display_name: '内容搜索'
             }
         ];
         view.innerHTML = view._renderAssistantOutputHtml(
@@ -796,19 +796,19 @@ describe('task-view GUI output modes', () => {
         expect(summary).not.toContain('分析项目结构');
     });
 
-    test('process labels translate protocol names with existing user-facing titles', () => {
+    test('process labels use the pushed display names', () => {
         const view = createView();
         const tools = toolPart(1, 2);
         tools.toolcalls = [
             {
                 ...tools.toolcalls[0],
                 tool_name: 'filemgr-globFiles',
-                display_name_key: 'filemgr.glob.name'
+                display_name: '模式匹配'
             },
             {
                 ...tools.toolcalls[1],
                 tool_name: 'memory-addMemory',
-                display_name_key: 'tools.memory.add.name'
+                display_name: '添加记忆'
             }
         ];
         view.innerHTML = view._renderAssistantOutputHtml([{ type: 'reasoning', rendered: '分析请求。' }, tools], {
@@ -818,6 +818,176 @@ describe('task-view GUI output modes', () => {
 
         const summary = view.querySelector('.od-process-summary-text')?.textContent || '';
         expect(summary).toBe('深度思考 · 调用了模式匹配、添加记忆等 2个工具');
+    });
+
+    test('process labels fall back to protocol names when no display name is pushed', () => {
+        const view = createView();
+        const tools = toolPart(1, 2);
+        tools.toolcalls = [
+            {
+                ...tools.toolcalls[0],
+                tool_name: 'filemgr-globFiles'
+            },
+            {
+                ...tools.toolcalls[1],
+                tool_name: 'memory-addMemory'
+            }
+        ];
+        view.innerHTML = view._renderAssistantOutputHtml([{ type: 'reasoning', rendered: '分析请求。' }, tools], {
+            isRunning: false,
+            messageId: 'message-self-described-display-name'
+        });
+
+        const summary = view.querySelector('.od-process-summary-text')?.textContent || '';
+        expect(summary).toBe('深度思考 · 调用了filemgr-glo…等 2个工具');
+    });
+
+    test('running tool status uses the self-described literal display name', () => {
+        const view = createView();
+        const fileTool = toolPart(1, 1);
+        fileTool.toolcalls[0] = {
+            ...fileTool.toolcalls[0],
+            tool_name: 'filemgr-readFile',
+            display_name: '读取文件'
+        };
+        view.innerHTML = view._renderAssistantOutputHtml([fileTool], {
+            isRunning: true,
+            messageId: 'message-running-self-described-tool'
+        });
+
+        const status = view.querySelector('.od-running-status')?.textContent || '';
+        expect(status).toContain('正在调用 读取文件');
+    });
+
+    test('running tool status shows the count of completed tool calls', () => {
+        const view = createView();
+        const doneTools = toolPart(1, 2);
+        doneTools.toolcalls = [
+            {
+                ...doneTools.toolcalls[0],
+                tool_name: 'filemgr-grepFiles',
+                display_name: '内容搜索',
+                status: 'success'
+            },
+            {
+                ...doneTools.toolcalls[1],
+                tool_name: 'filemgr-globFiles',
+                display_name: '模式匹配',
+                status: 'error'
+            }
+        ];
+        const runningTool = toolPart(3, 1);
+        runningTool.toolcalls[0] = {
+            ...runningTool.toolcalls[0],
+            tool_name: 'filemgr-readFile',
+            display_name: '读取文件',
+            status: 'running'
+        };
+        view.innerHTML = view._renderAssistantOutputHtml([doneTools, runningTool], {
+            isRunning: true,
+            messageId: 'message-running-tool-with-done-count'
+        });
+
+        const status = view.querySelector('.od-running-status')?.textContent || '';
+        expect(status).toContain('正在调用 读取文件');
+        expect(status).toContain('已调用 2 个工具');
+    });
+
+    test('running thinking status shows completed tool names and count', () => {
+        const view = createView();
+        const doneTools = toolPart(1, 2);
+        doneTools.toolcalls = [
+            {
+                ...doneTools.toolcalls[0],
+                tool_name: 'filemgr-grepFiles',
+                display_name: '内容搜索',
+                status: 'success'
+            },
+            {
+                ...doneTools.toolcalls[1],
+                tool_name: 'filemgr-globFiles',
+                display_name: '模式匹配',
+                status: 'success'
+            }
+        ];
+        const reasoning = { type: 'reasoning', rendered: '分析请求。' };
+        view.innerHTML = view._renderAssistantOutputHtml([doneTools, reasoning], {
+            isRunning: true,
+            messageId: 'message-running-thinking-with-done-count'
+        });
+
+        const status = view.querySelector('.od-running-status')?.textContent || '';
+        expect(status).toContain('正在思考…');
+        expect(status).toContain('已调用 内容搜索、模式匹配 等 2 个工具');
+    });
+
+    test('running status without any completed tool call keeps the plain action', () => {
+        const view = createView();
+        const reasoning = { type: 'reasoning', rendered: '分析请求。' };
+        view.innerHTML = view._renderAssistantOutputHtml([reasoning], {
+            isRunning: true,
+            messageId: 'message-running-no-done-tools'
+        });
+
+        const status = view.querySelector('.od-running-status')?.textContent?.replace(/\s+/g, ' ').trim() || '';
+        expect(status).toBe('正在思考…');
+    });
+
+    test('running tool status counts only the current tool block after a body boundary', () => {
+        const view = createView();
+        const earlierDone = toolPart(1, 2);
+        earlierDone.toolcalls = [
+            {
+                ...earlierDone.toolcalls[0],
+                tool_name: 'filemgr-grepFiles',
+                display_name: '内容搜索',
+                status: 'success'
+            },
+            {
+                ...earlierDone.toolcalls[1],
+                tool_name: 'filemgr-globFiles',
+                display_name: '模式匹配',
+                status: 'success'
+            }
+        ];
+        const body = { type: 'text', text: '第一部分完成。' };
+        const currentDone = toolPart(3, 1);
+        currentDone.toolcalls[0] = {
+            ...currentDone.toolcalls[0],
+            tool_name: 'filemgr-extractText',
+            display_name: '提取文本',
+            status: 'success'
+        };
+        const runningTool = toolPart(4, 1);
+        runningTool.toolcalls[0] = {
+            ...runningTool.toolcalls[0],
+            tool_name: 'filemgr-readFile',
+            display_name: '读取文件',
+            status: 'running'
+        };
+        view.innerHTML = view._renderAssistantOutputHtml([earlierDone, body, currentDone, runningTool], {
+            isRunning: true,
+            messageId: 'message-running-block-count'
+        });
+
+        const status = view.querySelector('.od-running-status')?.textContent || '';
+        expect(status).toContain('正在调用 读取文件');
+        expect(status).toContain('已调用 1 个工具');
+        expect(status).not.toContain('内容搜索');
+        expect(status).not.toContain('模式匹配');
+    });
+
+    test('repeated rendering with unchanged text suppresses the page-in animation class', () => {
+        const view = createView();
+        const reasoning = { type: 'reasoning', rendered: '分析请求。' };
+        const options = { isRunning: true, messageId: 'message-anim-suppression' };
+        view.innerHTML = view._renderAssistantOutputHtml([reasoning], options);
+        const firstLine = view.querySelector('.od-running-status-line');
+        expect(firstLine?.classList.contains('od-running-status-line--static')).toBe(false);
+
+        view.innerHTML = view._renderAssistantOutputHtml([reasoning], options);
+        const secondLine = view.querySelector('.od-running-status-line');
+        expect(secondLine?.classList.contains('od-running-status-line--static')).toBe(true);
     });
 
     test('a failed child tool does not replace the process summary icon', () => {
@@ -1093,7 +1263,7 @@ describe('task-view GUI output modes', () => {
         expect(view.querySelector('[data-running-output-toggle]')?.getAttribute('aria-expanded')).toBe('false');
         const flow = view.querySelector('.od-assistant-output-flow') as HTMLElement;
         expect(flow.lastElementChild?.classList.contains('od-running-status')).toBe(true);
-        expect(flow.lastElementChild?.textContent).toContain('正在调用 Tool1…');
+        expect(flow.lastElementChild?.textContent).toContain('正在调用 Tool1');
     });
 
     test('streaming text snapshots render safe Markdown in one stable part without rebuilding the assistant output', () => {

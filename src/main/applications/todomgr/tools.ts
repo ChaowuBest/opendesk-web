@@ -46,7 +46,9 @@ export class GetCurrentTimeTool extends BaseTool<typeof GetCurrentTimeArgsSchema
         super(
             'getCurrentTime',
             '获取当前精确的日期和时间。返回包含 UTC 时间、本地时间和时区信息',
-            GetCurrentTimeArgsSchema
+            GetCurrentTimeArgsSchema,
+            undefined,
+            { 'zh-CN': '当前时间', 'en-US': 'Current Time' }
         );
         this.setExecutor(this.handleExecute.bind(this));
     }
@@ -332,7 +334,9 @@ export class TodoWriteTool extends BaseTool<typeof TodoWriteArgsSchema> {
         super(
             'TodoWrite',
             '管理任务级待办事项。每次调用传入完整的待办列表来替换当前所有待办。任务级待办仅在当前任务会话中有效，严格按列表顺序执行',
-            TodoWriteArgsSchema
+            TodoWriteArgsSchema,
+            undefined,
+            { 'zh-CN': '任务规划', 'en-US': 'Plan Tasks' }
         );
         this.todoMgrApp = todoMgrApp;
         this.setExecutor(this.handleExecute.bind(this));
@@ -346,6 +350,16 @@ export class TodoWriteTool extends BaseTool<typeof TodoWriteArgsSchema> {
         setTaskTodos(taskId, todos);
     }
 
+    /**
+     * 根据传入列表判断动作语义：全部待办项都带 id（即更新已有待办）视为"更新"，
+     * 存在无 id 的新待办项或空列表视为"创建/规划"。用于微调渲染标题。
+     */
+    private getTodoWriteActionTitle(todos: any[]): string {
+        return todos.length > 0 && todos.every((t) => t?.id != null)
+            ? t('tool.todoWrite.cardTitle.update')
+            : t('tool.todoWrite.cardTitle.create');
+    }
+
     renderToolCall(toolcall: ToolCall): Promise<string | undefined> {
         // 聊天界面仅展示一行简洁摘要，风格与 filemgr 的 readFile / writeFile 一致；
         // 完整的待办清单会展示在右侧"任务计划"面板中。
@@ -354,7 +368,7 @@ export class TodoWriteTool extends BaseTool<typeof TodoWriteArgsSchema> {
         const total = todos.length;
         const enabled = todos.filter((t: any) => t.enabled !== false).length;
 
-        let title = t('tool.todoWrite.cardTitle');
+        let title = this.getTodoWriteActionTitle(todos);
         let detail = '';
         if (total > 0) {
             if (enabled === 0) {
@@ -399,7 +413,7 @@ export class TodoWriteTool extends BaseTool<typeof TodoWriteArgsSchema> {
         }
 
         // 否则显示简洁摘要
-        let summary = t('tool.todoWrite.cliSummary', { total });
+        let summary = `${this.getTodoWriteActionTitle(todos)} · ${t('tool.todoWrite.cliSummary', { total })}`;
         if (total > 0) {
             if (enabled > 0) summary += ` · ${t('tool.todoWrite.cliEnabled', { count: enabled })}`;
             if (disabled > 0) summary += ` · ${t('tool.todoWrite.cliDisabled', { count: disabled })}`;
@@ -561,7 +575,9 @@ export class AddGlobalTodoTool extends BaseTool<typeof AddGlobalTodoArgsSchema> 
         super(
             'addGlobalTodo',
             '添加全局待办事项，跨所有任务持久保存。可选配置触发器实现自动执行：event(事件触发)、scheduled(定时一次性)、cron(crontab重复)。可通过 workspace 指定触发任务的工作空间，通过 deliver 指定最终回复发送到哪个渠道联系人。注意：content 是发送给 Agent 执行的详细指令，Agent 有能力调用工具访问文件、执行命令等，因此具体需求应明确写在 content 中。',
-            AddGlobalTodoArgsSchema
+            AddGlobalTodoArgsSchema,
+            undefined,
+            { 'zh-CN': '添加全局待办', 'en-US': 'Add Global Todo' }
         );
         this.todoMgrApp = todoMgrApp;
         this.setExecutor(this.handleExecute.bind(this));
@@ -669,7 +685,9 @@ export class UpdateGlobalTodoTool extends BaseTool<typeof UpdateGlobalTodoArgsSc
         super(
             'updateGlobalTodo',
             '更新全局待办事项的标题、内容、启用状态、触发器、工作空间或回复投递目标。设 removeTrigger/removeDeliver/removeWorkspace 为 true 可移除对应配置。**注意**: 1. 设置 scheduled 触发器时，triggerAt 必须使用 UTC 时间（如 "2026-03-01T01:00:00Z"）；2. content 是发送给 Agent 执行的详细指令，Agent 有能力调用工具访问文件、执行命令等。',
-            UpdateGlobalTodoArgsSchema
+            UpdateGlobalTodoArgsSchema,
+            undefined,
+            { 'zh-CN': '更新全局待办', 'en-US': 'Update Global Todo' }
         );
         this.todoMgrApp = todoMgrApp;
         this.setExecutor(this.handleExecute.bind(this));
@@ -759,7 +777,9 @@ export class ListGlobalTodoDeliverTargetsTool extends BaseTool<typeof ListGlobal
         super(
             'listGlobalTodoDeliverTargets',
             '列出自动化任务可用的渠道投递目标。创建或更新全局待办时，可将返回的 deliver 对象传给 addGlobalTodo/updateGlobalTodo。',
-            ListGlobalTodoDeliverTargetsArgsSchema
+            ListGlobalTodoDeliverTargetsArgsSchema,
+            undefined,
+            { 'zh-CN': '待办触发目标', 'en-US': 'Todo Targets' }
         );
         this.todoMgrApp = todoMgrApp;
         this.setExecutor(this.handleExecute.bind(this));
@@ -812,7 +832,16 @@ export class ListGlobalTodosTool extends BaseTool<typeof ListGlobalTodosArgsSche
     private todoMgrApp: TodoMgrApplication;
 
     constructor(todoMgrApp: TodoMgrApplication) {
-        super('listGlobalTodos', '列出所有全局待办事项，支持按启用状态、分类和优先级筛选。', ListGlobalTodosArgsSchema);
+        super(
+            'listGlobalTodos',
+            '列出所有全局待办事项，支持按启用状态、分类和优先级筛选。',
+            ListGlobalTodosArgsSchema,
+            undefined,
+            {
+                'zh-CN': '全局待办列表',
+                'en-US': 'List Global Todos'
+            }
+        );
         this.todoMgrApp = todoMgrApp;
         this.setExecutor(this.handleExecute.bind(this));
     }
@@ -879,7 +908,10 @@ export class DeleteGlobalTodoTool extends BaseTool<typeof DeleteGlobalTodoArgsSc
     private todoMgrApp: TodoMgrApplication;
 
     constructor(todoMgrApp: TodoMgrApplication) {
-        super('deleteGlobalTodo', '删除指定的全局待办事项。', DeleteGlobalTodoArgsSchema);
+        super('deleteGlobalTodo', '删除指定的全局待办事项。', DeleteGlobalTodoArgsSchema, undefined, {
+            'zh-CN': '删除全局待办',
+            'en-US': 'Delete Global Todo'
+        });
         this.todoMgrApp = todoMgrApp;
         this.setExecutor(this.handleExecute.bind(this));
     }
@@ -925,7 +957,9 @@ export class GetSupportedEventsTool extends BaseTool<typeof GetSupportedEventsAr
         super(
             'getSupportedEvents',
             '获取所有应用已注册的事件清单。返回一个列表，包含每个应用声明的事件名称和描述，用于创建事件触发型待办事项时选择合适的触发事件。',
-            GetSupportedEventsArgsSchema
+            GetSupportedEventsArgsSchema,
+            undefined,
+            { 'zh-CN': '支持的事件', 'en-US': 'Supported Events' }
         );
         this.setExecutor(this.handleExecute.bind(this));
         this.todoMgrApp = todoMgrApp;

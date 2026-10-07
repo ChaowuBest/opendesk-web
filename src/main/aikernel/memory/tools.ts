@@ -54,7 +54,9 @@ class AddMemoryTool extends BaseTool<typeof AddMemoryArgsSchema> {
         super(
             ADD_MEMORY_TOOL_NAME,
             '创建一条关键事实记忆片段并保存到 memory.json。只保存长期关键事实；用户身份、个人偏好、沟通风格和长期协作偏好应写入 user.md，而不是 memory.json。每条记忆应尽量原子化，不要承载多件独立事情。',
-            AddMemoryArgsSchema
+            AddMemoryArgsSchema,
+            undefined,
+            { 'zh-CN': '添加记忆', 'en-US': 'Add Memory' }
         );
         this.setExecutor(this.handleExecute.bind(this));
     }
@@ -136,7 +138,9 @@ class RemoveMemoryTool extends BaseTool<typeof RemoveMemoryArgsSchema> {
         super(
             REMOVE_MEMORY_TOOL_NAME,
             '根据 UID 删除一条关键事实记忆片段。只会修改 memory.json。',
-            RemoveMemoryArgsSchema
+            RemoveMemoryArgsSchema,
+            undefined,
+            { 'zh-CN': '删除记忆', 'en-US': 'Remove Memory' }
         );
         this.setExecutor(this.handleExecute.bind(this));
     }
@@ -203,7 +207,9 @@ class SearchMemoryTool extends BaseTool<typeof SearchMemoryArgsSchema> {
         super(
             SEARCH_MEMORY_TOOL_NAME,
             '按关键词搜索全局和工作区关键事实记忆。返回 JSON 列表，仅包含匹配记忆的 uid 和 title。',
-            SearchMemoryArgsSchema
+            SearchMemoryArgsSchema,
+            undefined,
+            { 'zh-CN': '搜索记忆', 'en-US': 'Search Memory' }
         );
         this.setExecutor(this.handleExecute.bind(this));
     }
@@ -288,7 +294,9 @@ class GetMemoryTool extends BaseTool<typeof GetMemoryArgsSchema> {
             options.maintenance
                 ? '根据 UID 获取一条关键事实记忆的全文。记忆维护任务读取不增加热度。'
                 : '根据 UID 获取一条关键事实记忆的全文。读取成功时该记忆热度会加 1。',
-            GetMemoryArgsSchema
+            GetMemoryArgsSchema,
+            undefined,
+            { 'zh-CN': '读取记忆', 'en-US': 'Read Memory' }
         );
         this.maintenance = options.maintenance === true;
         this.setExecutor(this.handleExecute.bind(this));
@@ -397,7 +405,9 @@ class UpdateMemoryTool extends BaseTool<typeof UpdateMemoryArgsSchema> {
         super(
             UPDATE_MEMORY_TOOL_NAME,
             '原地更新一条关键事实记忆的标题和内容，保持 uid、heat 和创建时间不变。仅用于同一事实发生变化（过时、纠错、补充细节、被新决策取代）；需要拆分、合并或更换为不同事实时应使用 removeMemory 和 addMemory。',
-            UpdateMemoryArgsSchema
+            UpdateMemoryArgsSchema,
+            undefined,
+            { 'zh-CN': '更新记忆', 'en-US': 'Update Memory' }
         );
         this.setExecutor(this.handleExecute.bind(this));
     }

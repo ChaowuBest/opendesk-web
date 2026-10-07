@@ -65,7 +65,9 @@ export class BingSearchTool extends BaseTool<typeof BingSearchArgsSchema> {
         super(
             'bingSearch',
             '使用Bing搜索引擎搜索网页信息，返回搜索结果的标题、URL和摘要。无需API密钥，适合作为后备搜索方案',
-            BingSearchArgsSchema
+            BingSearchArgsSchema,
+            undefined,
+            { 'zh-CN': '搜索 (Bing)', 'en-US': 'Search (Bing)' }
         );
         this.bingLang = bingLang;
         this.setExecutor(this.search.bind(this));
