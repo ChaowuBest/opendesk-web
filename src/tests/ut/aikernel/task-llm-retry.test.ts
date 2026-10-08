@@ -22,8 +22,7 @@ import {
     type TaskUpdateRetryChunk
 } from '../../../main/aikernel/states/tasks.js';
 import { Setting, setCustomOpendeskDirectory } from '../../../main/utils/setting.js';
-import { ModelRequestError } from '../../../main/utils/model-request-error.js';
-import { t } from '../../../locale/index.js';
+import { ModelRequestError, normalizeModelRequestError } from '../../../main/utils/model-request-error.js';
 import { AbstractPlatform, setPlatform } from '../../../platforms/base.js';
 
 // 沙箱化运行（dynobox 卷）下 IO 放大 ~5x，本文件的异步用例（重试延迟、流回退等）
@@ -72,8 +71,9 @@ function toolCallResponse(index: number, prefix = 'request'): AssistantResponse 
     return new AssistantResponse(message, 'tool_calls');
 }
 
-function configureSetting(autoRetry: boolean): void {
+function configureSetting(autoRetry: boolean, locale: 'zh-CN' | 'en-US' = 'zh-CN'): void {
     Setting.updateInstanceData({
+        locale,
         default_model: 'mock-model',
         providers: [
             {
@@ -106,8 +106,11 @@ function configureSetting(autoRetry: boolean): void {
     });
 }
 
-function createRunningTask(autoRetry: boolean): { task: TaskState; chunks: TaskUpdateChunk[] } {
-    configureSetting(autoRetry);
+function createRunningTask(
+    autoRetry: boolean,
+    locale: 'zh-CN' | 'en-US' = 'zh-CN'
+): { task: TaskState; chunks: TaskUpdateChunk[] } {
+    configureSetting(autoRetry, locale);
 
     const manager = new TaskManagerState();
     manager.save = jest.fn();
@@ -220,10 +223,98 @@ describe('task LLM auto retry', () => {
 
         expect(retryChunks(chunks)).toHaveLength(0);
         const assistant = task.chat_context.lastMessage() as AssistantMessage;
-        const errors = assistant.content.filter((part) => part.type === 'error');
-        expect(errors).toHaveLength(1);
-        expect(errors[0].title).toBe('Stream Completion Failed');
+        expect(assistant.content.filter((part) => part.type === 'error')).toHaveLength(1);
+        expect(assistant.content.some((part) => part.type === 'error' && part.title === '生成回复失败')).toBe(true);
         expect(chunks.some((chunk) => chunk.type === 'assistant' && chunk.last_part.type === 'error')).toBe(true);
+    });
+
+    test('preserves the legacy English fallback error title', async () => {
+        const { task } = createRunningTask(false, 'en-US');
+
+        jest.spyOn(LLM, 'streamComplete').mockImplementation(async function* () {
+            yield* [] as AssistantResponse[];
+            throw new Error('bad gateway');
+        });
+
+        await task.processCompletion();
+
+        const assistant = task.chat_context.lastMessage() as AssistantMessage;
+        expect(
+            assistant.content.some((part) => part.type === 'error' && part.title === 'Stream Completion Failed')
+        ).toBe(true);
+    });
+
+    test('uses the model service title for a retryable provider response when auto retry is disabled', async () => {
+        const { task } = createRunningTask(false);
+
+        jest.spyOn(LLM, 'streamComplete').mockImplementation(async function* () {
+            const response = AssistantResponse.richError('Stream Completion Failed', 'service unavailable');
+            response.request_error = new ModelRequestError({
+                provider: 'openai',
+                message: 'service unavailable',
+                status: 503,
+                type: 'service_unavailable_error'
+            });
+            yield response;
+        });
+
+        await task.processCompletion();
+
+        const assistant = task.chat_context.lastMessage() as AssistantMessage;
+        expect(assistant.content.some((part) => part.type === 'error' && part.title === '模型服务错误')).toBe(true);
+    });
+
+    test('uses the network connection title for a wrapped SDK connection error', async () => {
+        const { task } = createRunningTask(false);
+        const connectionError = new Error('Connection error.');
+        connectionError.name = 'APIConnectionError';
+
+        jest.spyOn(LLM, 'streamComplete').mockImplementation(async function* () {
+            yield* [] as AssistantResponse[];
+            throw new ModelRequestError(
+                {
+                    provider: 'openai',
+                    message: 'Connection error.'
+                },
+                { cause: connectionError }
+            );
+        });
+
+        await task.processCompletion();
+
+        const assistant = task.chat_context.lastMessage() as AssistantMessage;
+        expect(assistant.content.some((part) => part.type === 'error' && part.title === '网络连接错误')).toBe(true);
+    });
+
+    test('preserves the localized adapter message for a structured request error', async () => {
+        const { task } = createRunningTask(false);
+        const timeoutError = new Error('Stream idle timeout: no data received for 5000ms');
+        timeoutError.name = 'StreamIdleTimeoutError';
+
+        jest.spyOn(LLM, 'streamComplete').mockImplementation(async function* () {
+            const response = AssistantResponse.richError(
+                'Stream Completion Failed',
+                '模型流响应空闲超时：5000 毫秒内未收到数据'
+            );
+            response.request_error = normalizeModelRequestError(
+                timeoutError,
+                'openai',
+                '模型流响应空闲超时：5000 毫秒内未收到数据'
+            );
+            yield response;
+        });
+
+        await task.processCompletion();
+
+        const assistant = task.chat_context.lastMessage() as AssistantMessage;
+        expect(
+            assistant.content.some(
+                (part) =>
+                    part.type === 'error' &&
+                    part.title === '网络连接错误' &&
+                    part.message === '模型流响应空闲超时：5000 毫秒内未收到数据'
+            )
+        ).toBe(true);
     });
 
     test('does not retry a known non-retryable model error when auto retry is enabled', async () => {
@@ -247,12 +338,26 @@ describe('task LLM auto retry', () => {
         expect(requestCount).toBe(1);
         expect(retryChunks(chunks)).toHaveLength(0);
         const assistant = task.chat_context.lastMessage() as AssistantMessage;
-        const errors = assistant.content.filter((part) => part.type === 'error');
-        expect(errors).toHaveLength(1);
-        expect(errors[0].title).toBe(t('error.model.service_response_title'));
+        expect(assistant.content.filter((part) => part.type === 'error')).toHaveLength(1);
+        expect(assistant.content.some((part) => part.type === 'error' && part.title === '模型服务错误')).toBe(true);
         expect(assistant.content.some((part) => part.type === 'error' && part.message.includes('credit balance'))).toBe(
             true
         );
+    });
+
+    test('uses the fallback title when a local error only resembles a non-retryable model error', async () => {
+        const { task, chunks } = createRunningTask(true);
+
+        jest.spyOn(LLM, 'streamComplete').mockImplementation(async function* () {
+            yield* [] as AssistantResponse[];
+            throw new Error('credit balance exhausted');
+        });
+
+        await task.processCompletion();
+
+        expect(retryChunks(chunks)).toHaveLength(0);
+        const assistant = task.chat_context.lastMessage() as AssistantMessage;
+        expect(assistant.content.some((part) => part.type === 'error' && part.title === '生成回复失败')).toBe(true);
     });
 
     test('stops and clears retry feedback when a transient failure becomes non-retryable', async () => {
@@ -286,6 +391,40 @@ describe('task LLM auto retry', () => {
         expect(retryChunks(chunks).some((chunk) => chunk.status === 'cleared' && chunk.attempt === 1)).toBe(true);
         const assistant = task.chat_context.lastMessage() as AssistantMessage;
         expect(assistant.content.some((part) => part.type === 'error' && part.message.includes('quota'))).toBe(true);
+    });
+
+    test('does not retry before the provider Retry-After delay', async () => {
+        const { task, chunks } = createRunningTask(true);
+        let requestCount = 0;
+
+        jest.spyOn(LLM, 'streamComplete').mockImplementation(async function* () {
+            requestCount++;
+            if (requestCount === 1) {
+                const response = AssistantResponse.richError('Stream Completion Failed', 'rate limit exceeded');
+                response.request_error = new ModelRequestError({
+                    provider: 'anthropic',
+                    message: 'rate limit exceeded',
+                    status: 429,
+                    type: 'rate_limit_error',
+                    retryAfterMs: 120_000
+                });
+                yield response;
+                return;
+            }
+            yield textResponse('final answer', 'stop');
+        });
+
+        const completion = task.processCompletion();
+        await waitForCondition(() =>
+            retryChunks(chunks).some((chunk) => chunk.status === 'scheduled' && chunk.attempt === 1)
+        );
+
+        expect(retryChunks(chunks).find((chunk) => chunk.attempt === 1)?.delay_ms).toBe(120_000);
+        await jest.advanceTimersByTimeAsync(119_999);
+        expect(requestCount).toBe(1);
+        await jest.advanceTimersByTimeAsync(1);
+        await completion;
+        expect(requestCount).toBe(2);
     });
 
     test('does not count tool calls completed before the current completion request', async () => {

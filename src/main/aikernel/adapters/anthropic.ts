@@ -848,14 +848,18 @@ export class AnthropicAdapter {
             if (RateLimitDetector.isRateLimitError(err)) {
                 logger.warn('Rate limit error during Anthropic stream reading', String(err));
             }
-            const response = AssistantResponse.richError(
-                'Stream Completion Failed',
+            const errorMessage =
                 err instanceof StreamIdleTimeoutError
                     ? t('error.model.stream_idle_timeout', { timeoutMs: err.timeoutMs })
-                    : String(err),
+                    : String(err);
+            const response = AssistantResponse.richError(
+                'Stream Completion Failed',
+                errorMessage,
                 JSON.stringify(anthropicMessages, undefined, 2)
             );
-            response.request_error = normalizeModelRequestError(err, 'anthropic');
+            const displayMessage =
+                response.content.content.find((part) => part.type === 'error')?.message ?? errorMessage;
+            response.request_error = normalizeModelRequestError(err, 'anthropic', displayMessage);
             yield response;
         }
     }

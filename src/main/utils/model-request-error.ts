@@ -28,8 +28,8 @@ export interface ModelRequestErrorMetadata {
 export class ModelRequestError extends Error {
     readonly metadata: ModelRequestErrorMetadata;
 
-    constructor(metadata: ModelRequestErrorMetadata, options?: ErrorOptions) {
-        super(metadata.message, options);
+    constructor(metadata: ModelRequestErrorMetadata, options?: ErrorOptions & { displayMessage?: string }) {
+        super(options?.displayMessage ?? metadata.message, options);
         this.name = 'ModelRequestError';
         this.metadata = metadata;
     }
@@ -78,6 +78,29 @@ const NON_RETRYABLE_TYPES = new Set([
 const RETRYABLE_CODES = new Set(['slow_down', 'rate_limit_exceeded', 'server_is_overloaded']);
 const RETRYABLE_TYPES = new Set(['api_error', 'timeout_error', 'overloaded_error', 'service_unavailable_error']);
 const NON_RETRYABLE_DETAILS_CODES = new Set(['enforced_spend_limit_reached']);
+const NON_RETRYABLE_ERROR_NAMES = new Set(['APIUserAbortError', 'AbortError']);
+const NON_RETRYABLE_NETWORK_ERROR_CODES = new Set([
+    'ERR_TLS_CERT_ALTNAME_INVALID',
+    'DEPTH_ZERO_SELF_SIGNED_CERT',
+    'UNABLE_TO_VERIFY_LEAF_SIGNATURE',
+    'CERT_HAS_EXPIRED'
+]);
+const NETWORK_ERROR_NAMES = new Set(['APIConnectionError', 'APIConnectionTimeoutError', 'StreamIdleTimeoutError']);
+const NETWORK_ERROR_CODES = new Set([
+    'ECONNRESET',
+    'ECONNREFUSED',
+    'ECONNABORTED',
+    'ETIMEDOUT',
+    'EAI_AGAIN',
+    'ENOTFOUND',
+    'ENETUNREACH',
+    'EHOSTUNREACH',
+    'ENETDOWN',
+    'EPIPE',
+    'UND_ERR_CONNECT_TIMEOUT',
+    'UND_ERR_HEADERS_TIMEOUT',
+    'UND_ERR_SOCKET'
+]);
 
 function asRecord(value: unknown): Record<string, unknown> | undefined {
     return value !== null && typeof value === 'object' && !Array.isArray(value)
@@ -173,9 +196,15 @@ export function parseModelErrorResponse(options: ParseModelErrorResponseOptions)
     });
 }
 
-export function normalizeModelRequestError(error: unknown, provider?: ModelProviderProtocol): ModelRequestError {
+export function normalizeModelRequestError(
+    error: unknown,
+    provider?: ModelProviderProtocol,
+    displayMessage?: string
+): ModelRequestError {
     if (error instanceof ModelRequestError) {
-        return error;
+        return displayMessage === undefined
+            ? error
+            : new ModelRequestError(error.metadata, { cause: error, displayMessage });
     }
 
     const candidate = asRecord(error);
@@ -201,8 +230,14 @@ export function normalizeModelRequestError(error: unknown, provider?: ModelProvi
             retryAfterMs: parseRetryAfterMs(headers),
             shouldRetry: parseShouldRetry(headers)
         },
-        error instanceof Error ? { cause: error } : undefined
+        error instanceof Error || displayMessage !== undefined
+            ? { ...(error instanceof Error ? { cause: error } : {}), displayMessage }
+            : undefined
     );
+}
+
+export function getModelRequestRetryAfterMs(error: unknown): number | undefined {
+    return error instanceof ModelRequestError ? error.metadata.retryAfterMs : undefined;
 }
 
 function hasKnownNonRetryableMessage(message: string): boolean {
@@ -214,18 +249,68 @@ function hasKnownNonRetryableMessage(message: string): boolean {
     ].some((pattern) => pattern.test(message));
 }
 
-function isNetworkOrTimeoutError(error: unknown, message: string): boolean {
-    const name = error instanceof Error ? error.name : '';
-    if (name === 'APIConnectionError' || name === 'APIConnectionTimeoutError' || name === 'StreamIdleTimeoutError') {
-        return true;
+function errorChainSome(error: unknown, predicate: (candidate: unknown) => boolean): boolean {
+    const seen = new Set<unknown>();
+    let current: unknown = error;
+
+    for (let depth = 0; current !== undefined && current !== null && depth < 8; depth++) {
+        if (seen.has(current)) break;
+        seen.add(current);
+
+        if (predicate(current)) return true;
+        current = asRecord(current)?.cause;
     }
-    return /\b(ECONNRESET|ECONNREFUSED|ETIMEDOUT|EAI_AGAIN|ENETUNREACH)\b/i.test(message);
+
+    return false;
+}
+
+function hasErrorName(error: unknown, names: ReadonlySet<string>): boolean {
+    return errorChainSome(error, (current) => {
+        const candidate = asRecord(current);
+        const name = current instanceof Error ? current.name : nonEmptyString(candidate?.name);
+        return name !== undefined && names.has(name);
+    });
+}
+
+function hasErrorCode(error: unknown, codes: ReadonlySet<string>): boolean {
+    return errorChainSome(error, (current) => {
+        const code = nonEmptyString(asRecord(current)?.code)?.toUpperCase();
+        return code !== undefined && codes.has(code);
+    });
+}
+
+export function isNetworkConnectionError(error: unknown): boolean {
+    return errorChainSome(error, (current) => {
+        const candidate = asRecord(current);
+
+        const name = current instanceof Error ? current.name : nonEmptyString(candidate?.name);
+        const code = nonEmptyString(candidate?.code)?.toUpperCase();
+        const message =
+            current instanceof Error
+                ? current.message
+                : typeof current === 'string'
+                  ? current
+                  : (nonEmptyString(candidate?.message) ?? '');
+
+        return (
+            (name !== undefined && NETWORK_ERROR_NAMES.has(name)) ||
+            (code !== undefined &&
+                (NETWORK_ERROR_CODES.has(code) ||
+                    NON_RETRYABLE_NETWORK_ERROR_CODES.has(code) ||
+                    code.startsWith('ERR_TLS_'))) ||
+            /\b(?:ECONNRESET|ECONNREFUSED|ECONNABORTED|ETIMEDOUT|EAI_AGAIN|ENOTFOUND|ENETUNREACH|EHOSTUNREACH|ENETDOWN|EPIPE)\b/i.test(
+                message
+            ) ||
+            /\b(?:fetch failed|socket hang up|getaddrinfo|network (?:connection )?error|connection (?:error|refused|reset|timed out)|stream idle timeout)\b/i.test(
+                message
+            )
+        );
+    });
 }
 
 export function classifyModelRequestError(error: unknown): ModelErrorDisposition {
     const normalized = normalizeModelRequestError(error);
     const metadata = normalized.metadata;
-    const originalName = error instanceof Error ? error.name : '';
     const code = normalizeIdentifier(metadata.code);
     const type = normalizeIdentifier(metadata.type);
     const detailsCode = normalizeIdentifier(metadata.detailsCode);
@@ -233,12 +318,13 @@ export function classifyModelRequestError(error: unknown): ModelErrorDisposition
     if (
         (code !== undefined && NON_RETRYABLE_CODES.has(code)) ||
         (detailsCode !== undefined && NON_RETRYABLE_DETAILS_CODES.has(detailsCode)) ||
-        hasKnownNonRetryableMessage(metadata.message)
+        hasKnownNonRetryableMessage(metadata.message) ||
+        hasErrorCode(error, NON_RETRYABLE_NETWORK_ERROR_CODES)
     ) {
         return 'non_retryable';
     }
 
-    if (metadata.shouldRetry === false || originalName === 'APIUserAbortError' || originalName === 'AbortError') {
+    if (metadata.shouldRetry === false || hasErrorName(error, NON_RETRYABLE_ERROR_NAMES)) {
         return 'non_retryable';
     }
 
@@ -274,7 +360,7 @@ export function classifyModelRequestError(error: unknown): ModelErrorDisposition
     if (status !== undefined && status >= 500) {
         return 'retryable';
     }
-    if (isNetworkOrTimeoutError(error, metadata.message)) {
+    if (isNetworkConnectionError(error)) {
         return 'retryable';
     }
     return 'unknown';

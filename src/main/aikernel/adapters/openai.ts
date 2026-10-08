@@ -594,14 +594,18 @@ export class OpenAIAdapter {
             if (RateLimitDetector.isRateLimitError(err)) {
                 logger.warn('Rate limit error during stream reading, will be caught by outer retry logic', String(err));
             }
-            const response = AssistantResponse.richError(
-                'Stream Completion Failed',
+            const errorMessage =
                 err instanceof StreamIdleTimeoutError
                     ? t('error.model.stream_idle_timeout', { timeoutMs: err.timeoutMs })
-                    : String(err),
+                    : String(err);
+            const response = AssistantResponse.richError(
+                'Stream Completion Failed',
+                errorMessage,
                 JSON.stringify(messages, undefined, 2)
             );
-            response.request_error = normalizeModelRequestError(err, 'openai');
+            const displayMessage =
+                response.content.content.find((part) => part.type === 'error')?.message ?? errorMessage;
+            response.request_error = normalizeModelRequestError(err, 'openai', displayMessage);
             yield response;
         }
     }

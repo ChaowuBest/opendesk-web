@@ -48,7 +48,12 @@ import {
 } from './types.js';
 import type { ReasoningEffort } from '../types/reasoning.js';
 import { AgentExecutionInstrumentationRegistry } from '../../telemetry/agent-execution.js';
-import { classifyModelRequestError, isModelServiceResponseError } from '../../utils/model-request-error.js';
+import {
+    classifyModelRequestError,
+    getModelRequestRetryAfterMs,
+    isModelServiceResponseError,
+    isNetworkConnectionError
+} from '../../utils/model-request-error.js';
 import { t } from '../../../locale/index.js';
 
 function getAssistantResponseError(response: AssistantResponse): Error | undefined {
@@ -799,15 +804,17 @@ export async function processTaskCompletion(
                     }
                     if (!isCurrentTurn()) return false;
                     const errorTitle = isModelServiceResponseError(err)
-                        ? t('error.model.service_response_title')
-                        : 'Stream Completion Failed';
+                        ? t('error.completion.model_service')
+                        : isNetworkConnectionError(err)
+                          ? t('error.completion.network_connection')
+                          : t('error.completion.response_generation_failed');
                     assistant_message.appendError(errorTitle, errorToMessage(err));
                     await task.sendSubscriptionFeedback();
                     break;
                 }
 
                 retryAttempt++;
-                const delayMs = getLLMRetryDelayMs(retryAttempt);
+                const delayMs = Math.max(getLLMRetryDelayMs(retryAttempt), getModelRequestRetryAfterMs(err) ?? 0);
                 const nextRetryAt = Date.now() + delayMs;
                 const errorMessage = errorToMessage(err);
                 lastRetryState = {

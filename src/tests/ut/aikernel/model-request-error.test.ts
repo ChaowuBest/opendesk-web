@@ -1,6 +1,7 @@
 import {
     ModelRequestError,
     classifyModelRequestError,
+    isNetworkConnectionError,
     isModelServiceResponseError,
     normalizeModelRequestError,
     parseModelErrorResponse
@@ -120,6 +121,85 @@ describe('model request error classification', () => {
 
         expect(isModelServiceResponseError(serviceResponse)).toBe(true);
         expect(isModelServiceResponseError(transportError)).toBe(false);
+    });
+
+    test('only marks structured provider response errors as model service errors', () => {
+        const providerResponse = new ModelRequestError({
+            provider: 'openai',
+            message: 'invalid key',
+            status: 401,
+            code: 'invalid_api_key'
+        });
+        const localAdapterError = new ModelRequestError({
+            provider: 'openai',
+            message: 'credit balance exhausted'
+        });
+
+        expect(isModelServiceResponseError(providerResponse)).toBe(true);
+        expect(isModelServiceResponseError(localAdapterError)).toBe(false);
+        expect(isModelServiceResponseError(new Error('credit balance exhausted'))).toBe(false);
+    });
+
+    test('recognizes direct and wrapped network connection errors', () => {
+        const connectionError = new Error('Connection error.');
+        connectionError.name = 'APIConnectionError';
+        const wrapped = new ModelRequestError(
+            {
+                provider: 'openai',
+                message: 'Connection error.'
+            },
+            { cause: connectionError }
+        );
+        const systemError = Object.assign(new Error('fetch failed'), { code: 'ENOTFOUND' });
+
+        expect(isNetworkConnectionError(connectionError)).toBe(true);
+        expect(isNetworkConnectionError(wrapped)).toBe(true);
+        expect(isNetworkConnectionError(systemError)).toBe(true);
+        expect(isNetworkConnectionError(new Error('local state is invalid'))).toBe(false);
+        expect(classifyModelRequestError(wrapped)).toBe('retryable');
+    });
+
+    test('treats TLS certificate validation failures as non-retryable network errors', () => {
+        const tlsError = Object.assign(new Error('certificate has expired'), { code: 'CERT_HAS_EXPIRED' });
+        const wrapped = normalizeModelRequestError(tlsError, 'openai');
+
+        expect(isNetworkConnectionError(wrapped)).toBe(true);
+        expect(classifyModelRequestError(wrapped)).toBe('non_retryable');
+    });
+
+    test('recognizes abort errors after adapters wrap them', () => {
+        const abortError = new Error('Request was aborted.');
+        abortError.name = 'APIUserAbortError';
+
+        expect(classifyModelRequestError(normalizeModelRequestError(abortError, 'openai'))).toBe('non_retryable');
+    });
+
+    test('keeps provider metadata while exposing a localized display message', () => {
+        const timeoutError = new Error('Stream idle timeout: no data received for 5000ms');
+        timeoutError.name = 'StreamIdleTimeoutError';
+
+        const normalized = normalizeModelRequestError(
+            timeoutError,
+            'openai',
+            '模型流响应空闲超时：5000 毫秒内未收到数据'
+        );
+
+        expect(normalized.message).toBe('模型流响应空闲超时：5000 毫秒内未收到数据');
+        expect(normalized.metadata.message).toBe('Stream idle timeout: no data received for 5000ms');
+        expect(classifyModelRequestError(normalized)).toBe('retryable');
+    });
+
+    test('uses ModelRequestError retry metadata in the rate limit backoff', () => {
+        const error = new ModelRequestError({
+            provider: 'anthropic',
+            status: 429,
+            type: 'rate_limit_error',
+            message: 'rate limit exceeded',
+            retryAfterMs: 12_000
+        });
+
+        expect(RateLimitDetector.isRateLimitError(error)).toBe(true);
+        expect(RateLimitDetector.extractRetryAfterSeconds(error)).toBe(12);
     });
 
     test('honors retry headers without overriding known permanent codes', () => {

@@ -1875,8 +1875,10 @@ export const zhCn: Record<string, string> = {
     'error.model.default_reranker_missing': '默认重排序模型未配置',
     'error.model.invalid_embedding_response': '嵌入模型返回格式无效：期望 ${shape}',
     'error.model.stream_idle_timeout': '模型流响应空闲超时：${timeoutMs} 毫秒内未收到数据',
-    'error.model.service_response_title': '模型服务错误',
     'error.model.chat_alias_not_found': "对话模型别名 '${alias}' 不存在",
+    'error.completion.model_service': '模型服务错误',
+    'error.completion.network_connection': '网络连接错误',
+    'error.completion.response_generation_failed': '生成回复失败',
 
     // Renderer - File Manager
     'renderer.filemgr.title': '智能文件系统',
