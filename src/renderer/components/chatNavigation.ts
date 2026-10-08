@@ -134,6 +134,7 @@ export class ChatNavigation {
     private buttons: HTMLButtonElement[] = [];
     private hovered = -1;
     private active = -1;
+    private visible = new Set<number>();
     private timer: ReturnType<typeof setTimeout> | undefined;
     private pending?: 'preview' | 'position' | 'content';
     private anchors: { index: number; element: HTMLElement }[] = [];
@@ -296,7 +297,8 @@ export class ChatNavigation {
     };
 
     private updateActive(): void {
-        const top = this.history.getBoundingClientRect().top + 40;
+        const viewport = this.history.getBoundingClientRect();
+        const top = viewport.top;
         // Message anchors remain in document order. Search current layout rather than
         // reading every message rectangle on each scroll or streamed token.
         let low = 0;
@@ -306,7 +308,16 @@ export class ChatNavigation {
             if (this.anchors[middle].element.getBoundingClientRect().top <= top) low = middle + 1;
             else high = middle;
         }
-        const active = this.anchors[Math.max(0, low - 1)]?.index ?? -1;
+        const first = Math.max(0, low - 1);
+        this.visible.clear();
+        // A turn includes its reply, up to the next user message. The first visible
+        // turn can therefore start above the viewport while its reply is still visible.
+        for (let i = first; i < this.anchors.length; i++) {
+            const anchor = this.anchors[i];
+            if (anchor.element.getBoundingClientRect().top >= viewport.bottom) break;
+            this.visible.add(anchor.index);
+        }
+        const active = this.anchors[first]?.index ?? -1;
         const activeChanged = this.active !== active;
         this.active = active;
         const hasFocus = this.rail.contains(document.activeElement);
@@ -326,13 +337,17 @@ export class ChatNavigation {
     private paintTicks(): void {
         this.buttons.forEach((button, i) => {
             const distance = Math.abs(i - this.hovered);
-            const width = this.hovered >= 0 ? Math.max(6, 26 - distance * 6) : i === this.active ? 16 : 6;
+            const width = this.hovered >= 0 ? Math.max(6, 26 - distance * 6) : 6;
             const scale = String(width / 26);
             if (button.style.getPropertyValue('--tick-scale') !== scale) {
                 button.style.setProperty('--tick-scale', scale);
             }
             if (button.classList.contains('is-previewed') !== (i === this.hovered)) {
                 button.classList.toggle('is-previewed', i === this.hovered);
+            }
+            const active = this.hovered < 0 ? this.visible.has(i) : i === this.active;
+            if (button.classList.contains('is-active') !== active) {
+                button.classList.toggle('is-active', active);
             }
         });
     }

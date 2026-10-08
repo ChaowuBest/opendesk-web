@@ -66,9 +66,9 @@
     pointer-events: none;
 }
 
-.od-chat-nav-stop[aria-current='location'] span {
+.od-chat-nav-stop.is-active span {
     background: var(--od-text);
-    opacity: 0.9;
+    opacity: 0.78;
 }
 
 .od-chat-nav-stop.is-previewed span,
