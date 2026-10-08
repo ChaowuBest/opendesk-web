@@ -351,6 +351,21 @@ function policyLinuxTail(
                   (dir) => `[[rules]]\npath = ${quote(`${home}/${dir}/**`)}\naccess = "read"\nperm = "deny"`
               )
             : []),
+        // darwin exec 重签缓存读写放行：darwin 动态沙箱 exec 平台二进制（/usr/bin/grep
+        // 等）时 dylib 复制+ad-hoc 重签到 ~/Library/Caches/com.opendesk.sandbox/exec，
+        // dyld 随后加载副本本体与 Info.plist——无 read 规则时 standard 命中 /** read
+        // ask，每次 exec 都弹"奇怪的 cache 读"审批。写同样放行：目录是框架自身的
+        // exec 重签缓存（SHA-256 内容寻址，条目名与源二进制哈希强绑定），沙箱内
+        // 篡改副本只会让自身 exec 的重签链路失效，不影响宿主（宿主启动 shell 由
+        // TS 侧 prepareShellForSandbox 独立重签）。Linux/OHOS 家目录无此路径，规则
+        // 不命中，无副作用。readonly 同样保留：副本读被 deny 时 dyld 加载失败，
+        // readonly 连基础命令都执行不了。
+        ...(home
+            ? [
+                  `[[rules]]\npath = ${quote(`${home}/Library/Caches/com.opendesk.sandbox/**`)}\naccess = "read"\nperm = "allow"`,
+                  `[[rules]]\npath = ${quote(`${home}/Library/Caches/com.opendesk.sandbox/**`)}\naccess = "write"\nperm = "allow"`
+              ]
+            : []),
         // 工具链缓存目录写入放行（linux-sandbox/openHarmony-sandbox 的 env
         // 重定向：CARGO_HOME/npm_config_cache/GOCACHE 等指向
         // ~/.cache/opendesk-sandbox/...）
@@ -655,12 +670,19 @@ const LINUX_SYSTEM_READ_PREFIXES = [
     '/sys',
     '/proc',
     '/data/service',
+    // macOS 系统运行时（/system 是 OpenHarmony 布局，macOS 为大写 /System——
+    // 大小写敏感匹配，缺大写形态则 LaunchServices 初始化读
+    // /System/Library/Frameworks/.../Info.plist 逐次弹 ask）
+    '/System',
     // macOS：CommandLineTools 运行时（python3 等系统工具的标准库/框架装在
     // /Library/Developer/CommandLineTools 下——CLT python3 启动即读
     // .../Python3.framework/Versions/3.9/lib/python3.9/io.py，不放行 read
-    // 则解释器 import io 直接 EACCES 挂死）。非 macOS 平台该前缀不存在，
-    // 规则不命中任何路径，无副作用。
-    '/Library/Developer/CommandLineTools'
+    // 则解释器 import io 直接 EACCES 挂死）。/Library 整树 read：os_log 初始化
+    // 读 /Library/Preferences/Logging/com.apple.diagnosticd.filter.plist 等系统
+    // 偏好，逐次弹 ask。Linux/OHOS 无这些前缀，规则不命中，无副作用。
+    '/Library',
+    // macOS：node ICU 初始化读 /var/db/timezone/icutz/icutz44l.dat（tzdata 运行时）
+    '/var/db/timezone'
 ];
 
 /**

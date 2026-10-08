@@ -100,6 +100,14 @@ describe('node app 策略', () => {
         const npmrc = rules.find((r) => r.pathPattern.endsWith('.npmrc'));
         expect(npmrc?.effect).toBe('ask');
     });
+    test('npm 调试日志目录写放行（每次 npm/npx 执行都写 _logs/*.log，回归：standard 沙箱逐次写 ask）', () => {
+        // 实测：沙箱内 npx jest 一次即对 ~/.npm/_logs/<时间戳>-debug-0.log 触发写 ask
+        //（cache_ttl=0 不缓存，每次 npm 执行必弹）。日志为框架诊断产物，放行写。
+        const rules = createNodePolicyRules(HOME_UNIX);
+        const writes = rules.filter((r) => r.action === 'write' && r.effect === 'allow').map((r) => r.pathPattern);
+        expect(writes).toContain(`${HOME_UNIX}/.npm/_logs/**`);
+        expect(writes).toContain(`${HOME_UNIX}/AppData/Local/npm-cache/_logs/**`);
+    });
 });
 
 describe('nvm app 策略', () => {
