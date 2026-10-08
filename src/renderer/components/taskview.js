@@ -73,8 +73,8 @@ const FORK_ICON_SVG =
     '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="18" r="3"/><circle cx="6" cy="6" r="3"/><circle cx="18" cy="6" r="3"/><path d="M18 9v2c0 .6-.4 1-1 1H7c-.6 0-1-.4-1-1V9"/><path d="M12 12v3"/></svg>';
 const EDIT_ICON_SVG =
     '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>';
-const REWIND_ICON_SVG =
-    '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 14 4 9 9 4"/><path d="M20 20v-7a4 4 0 0 0-4-4H4"/></svg>';
+const RESEND_ICON_SVG =
+    '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m22 2-7 20-4-9-9-4Z"/><path d="M22 2 11 13"/></svg>';
 const CTX_FONT_ICON_SVG =
     '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="4 7 4 4 20 4 20 7"/><line x1="9" y1="20" x2="15" y2="20"/><line x1="12" y1="4" x2="12" y2="20"/></svg>';
 const CTX_SELECT_ALL_ICON_SVG =
@@ -741,9 +741,13 @@ class TaskView extends HTMLElement {
         } else {
             const editLabel = taskViewT('renderer.taskview.action.edit');
             const resubmitLabel = taskViewT('renderer.taskview.action.resubmit');
+            const resendLabel = taskViewT('renderer.taskview.action.resend');
+            const resubmitHint = escapeHtml(taskViewT('renderer.taskview.menu.continueHint'));
+            const resendHint = escapeHtml(taskViewT('renderer.taskview.menu.resendHint'));
             const editBtn = `<button class="od-msg-action-btn" type="button" data-action="edit" data-message-id="${escapedId}">${EDIT_ICON_SVG}<span class="od-msg-action-label">${editLabel}</span></button>`;
-            const resubmitBtn = `<button class="od-msg-action-btn" type="button" data-action="resubmit" data-message-id="${escapedId}">${REGENERATE_ICON_SVG}<span class="od-msg-action-label">${resubmitLabel}</span></button>`;
-            menuHtml = `${copyBtn}${editBtn}${resubmitBtn}`;
+            const resubmitBtn = `<button class="od-msg-action-btn" type="button" data-action="resubmit" data-message-id="${escapedId}" title="${resubmitHint}">${REGENERATE_ICON_SVG}<span class="od-msg-action-label">${resubmitLabel}</span></button>`;
+            const resendBtn = `<button class="od-msg-action-btn" type="button" data-action="resend" data-message-id="${escapedId}" title="${resendHint}">${RESEND_ICON_SVG}<span class="od-msg-action-label">${resendLabel}</span></button>`;
+            menuHtml = `${copyBtn}${editBtn}${resubmitBtn}${resendBtn}`;
         }
         return `<div class="od-msg-meta-row">${timeHtml}<div class="od-msg-hover-menu">${menuHtml}</div></div>`;
     }
@@ -4990,6 +4994,8 @@ class TaskView extends HTMLElement {
             this._handleEditUserMessage(messageId);
         } else if (action === 'resubmit') {
             this._handleResubmitUserMessage(messageId);
+        } else if (action === 'resend') {
+            this._handleResendUserMessage(messageId);
         }
     }
 
@@ -5191,6 +5197,40 @@ class TaskView extends HTMLElement {
             await this.reload();
         } catch (err) {
             console.error('Failed to resubmit user message:', err);
+            window.notificationAPI?.sendNotification?.(
+                'error',
+                taskViewT('renderer.taskview.menu.operationTitle'),
+                taskViewT('renderer.taskview.menu.operationFailed'),
+                err?.message || String(err)
+            );
+        }
+    }
+
+    async _handleResendUserMessage(messageId) {
+        if (!this.task_id) return;
+        try {
+            const task = await window.taskManagerAPI.getFullTask(this.task_id);
+            const message = task?.chat_context?.messages?.find(
+                (item) => item.role === 'user' && item.message_id === messageId
+            );
+            if (!message) {
+                throw new Error(taskViewT('renderer.taskview.menu.messageUnavailable'));
+            }
+            const content = message.content || [];
+            await window.taskManagerAPI.submitMessage(this.task_id, {
+                message:
+                    message.rawText ||
+                    content
+                        .filter((part) => part.type === 'text')
+                        .map((part) => part.text)
+                        .join('\n'),
+                attachedImages: content.filter((part) => part.type === 'image_url').map((part) => part.image_url.url),
+                attachedFilePaths: content.filter((part) => part.type === 'file').map((part) => part.path)
+            });
+            await this.reload();
+            this.forceScrollToEnd();
+        } catch (err) {
+            console.error('Failed to resend user message:', err);
             window.notificationAPI?.sendNotification?.(
                 'error',
                 taskViewT('renderer.taskview.menu.operationTitle'),
@@ -6223,6 +6263,11 @@ class TaskView extends HTMLElement {
         const taskView = bubble.closest('task-view');
         const messageId = messageContainer?.dataset?.messageId || '';
         const canRewind = !!taskView?.task_id && !!messageId && !!window.taskManagerAPI?.rewindToUserMessage;
+        const canResend =
+            !!taskView?.task_id &&
+            !!messageId &&
+            !!window.taskManagerAPI?.getFullTask &&
+            !!window.taskManagerAPI?.submitMessage;
         const dark =
             taskView?.dataset?.theme === 'dark' ||
             document.documentElement.dataset.theme === 'dark' ||
@@ -6243,14 +6288,8 @@ class TaskView extends HTMLElement {
                 id: 'edit',
                 icon: EDIT_ICON_SVG,
                 label: taskViewT('renderer.taskview.menu.edit'),
+                hint: taskViewT('renderer.taskview.menu.editHint'),
                 separatorBefore: true,
-                disabled: !canRewind
-            },
-            {
-                id: 'rewind',
-                icon: REWIND_ICON_SVG,
-                label: taskViewT('renderer.taskview.menu.rewindToHere'),
-                hint: taskViewT('renderer.taskview.menu.rewindHint'),
                 disabled: !canRewind
             },
             {
@@ -6259,6 +6298,13 @@ class TaskView extends HTMLElement {
                 label: taskViewT('renderer.taskview.menu.continueFromHere'),
                 hint: taskViewT('renderer.taskview.menu.continueHint'),
                 disabled: !canRewind
+            },
+            {
+                id: 'resend',
+                icon: RESEND_ICON_SVG,
+                label: taskViewT('renderer.taskview.action.resend'),
+                hint: taskViewT('renderer.taskview.menu.resendHint'),
+                disabled: !canResend
             }
         ];
 
@@ -6322,45 +6368,20 @@ class TaskView extends HTMLElement {
             TaskView._dismissUserMsgContextMenu();
         });
 
-        const runRewindAction = async (resubmit) => {
-            TaskView._dismissUserMsgContextMenu();
-            if (!taskView?.task_id || !messageId) return;
-            try {
-                const result = await window.taskManagerAPI.rewindToUserMessage(taskView.task_id, messageId, {
-                    resubmit
-                });
-                // preload 层已解包 result.data，所以 result 直接就是 { removedCount, resubmitted, userMessageText }
-                const userMessageText = !resubmit ? result?.userMessageText : null;
-                await taskView.reload();
-                if (userMessageText) {
-                    const inputWidget = taskView.querySelector(`#task-${taskView.task_id}-input`);
-                    if (inputWidget?.setText) {
-                        inputWidget.setText(userMessageText);
-                    }
-                }
-            } catch (err) {
-                console.error('Failed to rewind task message:', err);
-                window.notificationAPI?.sendNotification?.(
-                    'error',
-                    taskViewT('renderer.taskview.menu.operationTitle'),
-                    taskViewT('renderer.taskview.menu.operationFailed'),
-                    err?.message || String(err)
-                );
-            }
-        };
-
         menu.querySelector('[data-action="edit"]')?.addEventListener('click', () => {
             TaskView._dismissUserMsgContextMenu();
             if (!taskView || !messageId) return;
             taskView._handleEditUserMessage(messageId);
         });
 
-        menu.querySelector('[data-action="rewind"]')?.addEventListener('click', () => {
-            runRewindAction(false);
+        menu.querySelector('[data-action="continue-from"]')?.addEventListener('click', () => {
+            TaskView._dismissUserMsgContextMenu();
+            taskView?._handleResubmitUserMessage(messageId);
         });
 
-        menu.querySelector('[data-action="continue-from"]')?.addEventListener('click', () => {
-            runRewindAction(true);
+        menu.querySelector('[data-action="resend"]')?.addEventListener('click', () => {
+            TaskView._dismissUserMsgContextMenu();
+            taskView?._handleResendUserMessage(messageId);
         });
 
         setTimeout(() => {
