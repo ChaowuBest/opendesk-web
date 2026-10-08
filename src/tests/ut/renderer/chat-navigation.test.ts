@@ -119,9 +119,10 @@ describe('conversation quick navigation', () => {
         expect(readHistoryRect).not.toHaveBeenCalled();
     });
 
-    test('locates the active turn in a thousand-message view with logarithmic layout reads', () => {
+    test('marks all visible turns with bounded layout reads and equal idle tick widths', () => {
         jest.useFakeTimers({ legacyFakeTimers: true });
         const { host, history, nav } = createNavigation();
+        history.getBoundingClientRect = () => ({ top: 0, bottom: 300 }) as DOMRect;
         let scrollTop = 0;
         const readRect = jest.fn((index: number) => ({ top: index * 100 - scrollTop }) as DOMRect);
         const stops = Array.from({ length: 1000 }, (_, i) => {
@@ -134,11 +135,23 @@ describe('conversation quick navigation', () => {
         });
         nav.setStops(stops);
         readRect.mockClear();
-        scrollTop = 70000;
+        scrollTop = 70050;
         history.dispatchEvent(new window.Event('scroll'));
         jest.advanceTimersByTime(80);
-        expect(readRect.mock.calls.length).toBeLessThanOrEqual(11);
+        expect(readRect.mock.calls.length).toBeLessThanOrEqual(16);
         expect(host.querySelectorAll('.od-chat-nav-stop')[700].getAttribute('aria-current')).toBe('location');
+        expect(
+            Array.from(
+                host.querySelectorAll<HTMLElement>('.od-chat-nav-stop.is-active'),
+                (button) => button.dataset.messageId
+            )
+        ).toEqual(['u700', 'u701', 'u702', 'u703']);
+        const buttons = host.querySelectorAll<HTMLElement>('.od-chat-nav-stop');
+        expect(new Set(Array.from(buttons, (button) => button.style.getPropertyValue('--tick-scale'))).size).toBe(1);
+        buttons[701].dispatchEvent(new window.Event('pointerover', { bubbles: true }));
+        expect(buttons[701].style.getPropertyValue('--tick-scale')).toBe('1');
+        host.querySelector('.od-chat-nav-rail')!.dispatchEvent(new window.Event('pointerleave'));
+        expect(host.querySelectorAll('.od-chat-nav-stop.is-active')).toHaveLength(4);
     });
 
     test('updates and appends preserve the hovered button; removal and empty history clear navigation', () => {
