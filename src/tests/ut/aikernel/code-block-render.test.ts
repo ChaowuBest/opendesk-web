@@ -31,6 +31,19 @@ describe('代码块渲染（pre/code + CSS 计数器行号）', () => {
         expect(html).toContain('hljs-');
     });
 
+    test('跨行注释的每个代码行都包含闭合的高亮标签', async () => {
+        const html = await renderCodeBlock('/**\n * comment\n */\nconst value = 1;', 'typescript');
+        const expectedCommentLines = [
+            '<span class="code-line font-mono"><span class="hljs-comment">/**</span></span>',
+            '<span class="code-line font-mono"><span class="hljs-comment"> * comment</span></span>',
+            '<span class="code-line font-mono"><span class="hljs-comment"> */</span></span>'
+        ];
+
+        for (const line of expectedCommentLines) {
+            expect(html).toContain(line);
+        }
+    });
+
     test('空行渲染为占位空格，保持行框高度', async () => {
         const html = await renderCodeBlock('first\n\nthird', 'plaintext');
         const lineSpans = html.match(/<span class="code-line font-mono">[^<]*<\/span>/g) || [];
