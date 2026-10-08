@@ -18,7 +18,7 @@ import { t } from '../../../locale/index.js';
 import { statusDisplay, truncText } from '../../tui/components/toolcall';
 import { truncateToWidth } from '@earendil-works/pi-tui';
 import { z } from 'zod';
-import { detectEncoding, decodeBuffer, encodingDisplayName, HEAD_BYTES } from '../terminal/encoding.js';
+import { detectEncoding, decodeBuffer, encodingDisplayName } from '../terminal/encoding.js';
 import type { PermissionRequest } from '../../aikernel/security/permission';
 import type { TaskState } from '../../aikernel/states/tasks';
 import { Setting } from '../../utils/setting.js';
@@ -1004,16 +1004,11 @@ export class ReadFileTool extends BaseTool<typeof readFileSchema> {
                 });
             }
 
-            const headLen = Math.min(size, HEAD_BYTES);
-            const headBuf = Buffer.alloc(headLen);
-            const fd = await fs.promises.open(filePath, 'r');
-            try {
-                await fd.read(headBuf, 0, headLen, 0);
-            } finally {
-                await fd.close();
-            }
+            const rawBuf = await fs.promises.readFile(filePath);
 
-            const { encoding, bomOffset } = detectEncoding(headBuf);
+            // 编码检测用全文：头部以 ASCII 为主的多字节文件（生成代码 + 中文注释的 GBK 文件、
+            // 中文在文件尾部的 UTF-8 源码）仅凭头部无法判别，全文校验才能给出确定结论
+            const { encoding, bomOffset } = detectEncoding(rawBuf);
             const isMultiByteUnicode =
                 encoding === 'utf16le' || encoding === 'utf16be' || encoding === 'utf-32le' || encoding === 'utf-32be';
 
@@ -1029,12 +1024,11 @@ export class ReadFileTool extends BaseTool<typeof readFileSchema> {
                     throw new Error(`此文件不是纯文本（检测为 ${type.mime}），readFile 无法打开非文本文件`);
                 }
 
-                if (!type && hasBinaryContent(headBuf)) {
+                if (!type && hasBinaryContent(rawBuf)) {
                     throw new Error(`此文件不是纯文本（检测为二进制），readFile 无法打开非文本文件`);
                 }
             }
 
-            const rawBuf = await fs.promises.readFile(filePath);
             const fullContent = decodeBuffer(rawBuf, encoding, bomOffset);
             const allLines = fullContent.split(/\r?\n/);
             const totalLines = allLines.length;

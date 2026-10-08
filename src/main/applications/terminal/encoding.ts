@@ -47,8 +47,72 @@ function isDecodable(encoding: string): boolean {
 }
 
 /**
- * 根据文件头 Buffer 检测编码。
- * 优先级：BOM > chardet 统计检测 > UTF-8 回退
+ * 严格校验 Buffer 是否为合法 UTF-8（fatal 模式下遇到非法字节序列会抛错）。
+ * 头部被截断的多字节字符尾部允许失败（由 tailGuard 限定校验范围）。
+ */
+function isValidUtf8(buffer: Buffer): boolean {
+    // 末尾最多 3 字节可能是一个被截断的多字节字符头部，校验时排除
+    let checkLen = buffer.length;
+    for (let i = 0; i < 3 && checkLen > 0; i++) {
+        if ((buffer[checkLen - 1] & 0xc0) !== 0x80) break;
+        checkLen--;
+    }
+    if (checkLen === 0) return true;
+    try {
+        new TextDecoder('utf-8', { fatal: true }).decode(buffer.subarray(0, checkLen));
+        return true;
+    } catch {
+        return false;
+    }
+}
+
+/** 供 chardet 统计检测使用的采样窗口大小 */
+const CHARDET_SAMPLE_BYTES = HEAD_BYTES;
+/** 锚定窗口向前多带的上下文字节数，避免多字节字符被窗口起点截断 */
+const CHARDET_ANCHOR_CONTEXT_BYTES = 64;
+
+/**
+ * 在 Buffer 中找到第一个非 ASCII 字节（>=0x80）的位置。
+ * 找不到返回 -1（纯 ASCII 内容）。
+ */
+function findFirstHighByte(buffer: Buffer): number {
+    for (let i = 0; i < buffer.length; i++) {
+        if (buffer[i] >= 0x80) return i;
+    }
+    return -1;
+}
+
+/**
+ * 为 chardet 截取有判别力的采样窗口：
+ * 多字节内容紧跟在长 ASCII 头部之后时（如生成代码 + 中文注释的 GBK 文件），
+ * 从文件头开始采样只能拿到纯 ASCII，统计检测必然失真；
+ * 锚定到第一个高位字节附近采样才能命中真实编码特征。
+ */
+function extractChardetSample(buffer: Buffer): Buffer {
+    if (buffer.length <= CHARDET_SAMPLE_BYTES) {
+        return buffer;
+    }
+    const anchor = findFirstHighByte(buffer);
+    if (anchor < 0) {
+        return buffer.subarray(0, CHARDET_SAMPLE_BYTES);
+    }
+    const start = Math.max(0, anchor - CHARDET_ANCHOR_CONTEXT_BYTES);
+    return buffer.subarray(start, start + CHARDET_SAMPLE_BYTES);
+}
+
+/**
+ * 根据文件内容 Buffer 检测编码（应传入完整文件内容，而非头部片段）。
+ * 优先级：BOM > UTF-8 严格校验（全文） > chardet 统计检测（锚定窗口） > UTF-8 回退
+ *
+ * 无 BOM 时先做全文 UTF-8 严格校验：UTF-8 有确定性的字节序列规则，任何位置的非法序列
+ * 都会导致校验失败，因此通过即可断定全文是 UTF-8，避免把"头部以 ASCII 为主、中文稀疏"
+ * 的源码文件误交给 chardet——这类样本上 chardet 经常把纯 ASCII 头判成 ISO-8859-1
+ * （置信度还高于 UTF-8），导致中文字节被按单字节解码成乱码。含 NUL 字节的内容不视为
+ * UTF-8 文本（NUL 是合法 UTF-8 码点，但文本文件中不应出现，通常是 UTF-16 等宽字节编码），
+ * 交给 chardet 以保留其 UTF-16 感知能力。
+ *
+ * 校验失败说明存在非法 UTF-8 序列（GBK/Big5/Shift_JIS 等），此时用锚定窗口（第一个
+ * 高位字节附近起 8KB）交给 chardet 统计检测——窗口内多字节样本充足，统计检测可靠。
  */
 export function detectEncoding(buffer: Buffer): DetectResult {
     // UTF-32 BOM 必须在 UTF-16 之前检测（UTF-32 LE 前两字节与 UTF-16 LE BOM 相同）
@@ -69,8 +133,13 @@ export function detectEncoding(buffer: Buffer): DetectResult {
         return { encoding: 'utf16be', bomOffset: 2 };
     }
 
-    // 无 BOM：使用 chardet 统计检测
-    const results = chardet.analyse(buffer);
+    // 无 BOM：先做全文 UTF-8 严格校验（含 NUL 时不算纯文本，走 chardet）
+    if (!buffer.includes(0) && isValidUtf8(buffer)) {
+        return { encoding: 'utf8', bomOffset: 0 };
+    }
+
+    // 非 UTF-8：使用 chardet 统计检测（锚定采样窗口）
+    const results = chardet.analyse(extractChardetSample(buffer));
     if (results.length > 0) {
         const best = results[0];
         const encoding = normalizeChardetName(best.name);
