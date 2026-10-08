@@ -35,6 +35,23 @@ export class ModelRequestError extends Error {
     }
 }
 
+export function isModelServiceResponseError(error: unknown): error is ModelRequestError {
+    if (!(error instanceof ModelRequestError)) {
+        return false;
+    }
+
+    const metadata = error.metadata;
+    return (
+        metadata.status !== undefined ||
+        metadata.code !== undefined ||
+        metadata.type !== undefined ||
+        metadata.detailsCode !== undefined ||
+        metadata.requestId !== undefined ||
+        metadata.retryAfterMs !== undefined ||
+        metadata.shouldRetry !== undefined
+    );
+}
+
 const NON_RETRYABLE_CODES = new Set([
     'invalid_api_key',
     'model_not_found',
@@ -54,7 +71,8 @@ const NON_RETRYABLE_TYPES = new Set([
     'billing_error',
     'permission_error',
     'not_found_error',
-    'request_too_large'
+    'request_too_large',
+    'insufficient_quota'
 ]);
 
 const RETRYABLE_CODES = new Set(['slow_down', 'rate_limit_exceeded', 'server_is_overloaded']);
@@ -214,7 +232,6 @@ export function classifyModelRequestError(error: unknown): ModelErrorDisposition
 
     if (
         (code !== undefined && NON_RETRYABLE_CODES.has(code)) ||
-        (type !== undefined && NON_RETRYABLE_TYPES.has(type)) ||
         (detailsCode !== undefined && NON_RETRYABLE_DETAILS_CODES.has(detailsCode)) ||
         hasKnownNonRetryableMessage(metadata.message)
     ) {
@@ -224,11 +241,17 @@ export function classifyModelRequestError(error: unknown): ModelErrorDisposition
     if (metadata.shouldRetry === false || originalName === 'APIUserAbortError' || originalName === 'AbortError') {
         return 'non_retryable';
     }
+
+    if (code !== undefined && RETRYABLE_CODES.has(code)) {
+        return 'retryable';
+    }
     if (metadata.shouldRetry === true) {
         return 'retryable';
     }
-
-    if ((code !== undefined && RETRYABLE_CODES.has(code)) || (type !== undefined && RETRYABLE_TYPES.has(type))) {
+    if (type !== undefined && NON_RETRYABLE_TYPES.has(type)) {
+        return 'non_retryable';
+    }
+    if (type !== undefined && RETRYABLE_TYPES.has(type)) {
         return 'retryable';
     }
 

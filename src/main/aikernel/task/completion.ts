@@ -48,7 +48,8 @@ import {
 } from './types.js';
 import type { ReasoningEffort } from '../types/reasoning.js';
 import { AgentExecutionInstrumentationRegistry } from '../../telemetry/agent-execution.js';
-import { classifyModelRequestError } from '../../utils/model-request-error.js';
+import { classifyModelRequestError, isModelServiceResponseError } from '../../utils/model-request-error.js';
+import { t } from '../../../locale/index.js';
 
 function getAssistantResponseError(response: AssistantResponse): Error | undefined {
     if (response.finish_reason !== 'error') {
@@ -797,7 +798,10 @@ export async function processTaskCompletion(
                         );
                     }
                     if (!isCurrentTurn()) return false;
-                    assistant_message.appendError('Stream Completion Failed', errorToMessage(err));
+                    const errorTitle = isModelServiceResponseError(err)
+                        ? t('error.model.service_response_title')
+                        : 'Stream Completion Failed';
+                    assistant_message.appendError(errorTitle, errorToMessage(err));
                     await task.sendSubscriptionFeedback();
                     break;
                 }

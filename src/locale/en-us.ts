@@ -1934,6 +1934,7 @@ export const enUs: Record<string, string> = {
     'error.model.default_reranker_missing': 'Default reranker model is not configured',
     'error.model.invalid_embedding_response': 'Invalid embedding response: expected ${shape}',
     'error.model.stream_idle_timeout': 'Model stream idle timeout: no data was received for ${timeoutMs} ms',
+    'error.model.service_response_title': 'Model Service Error',
     'error.model.chat_alias_not_found': "Chat model alias '${alias}' not found",
 
     // Renderer - File Manager

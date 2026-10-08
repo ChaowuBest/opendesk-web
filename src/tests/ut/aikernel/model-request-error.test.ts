@@ -1,6 +1,8 @@
 import {
     ModelRequestError,
     classifyModelRequestError,
+    isModelServiceResponseError,
+    normalizeModelRequestError,
     parseModelErrorResponse
 } from '../../../main/utils/model-request-error.js';
 import { RateLimitDetector } from '../../../main/utils/rate-limit-retry.js';
@@ -42,6 +44,18 @@ describe('model request error classification', () => {
 
         expect(classifyModelRequestError(transient)).toBe('retryable');
         expect(classifyModelRequestError(exhausted)).toBe('non_retryable');
+    });
+
+    test('lets a known transient code override a generic invalid request type', () => {
+        const error = new ModelRequestError({
+            provider: 'openai',
+            message: 'rate limit exceeded',
+            status: 429,
+            type: 'invalid_request_error',
+            code: 'rate_limit_exceeded'
+        });
+
+        expect(classifyModelRequestError(error)).toBe('retryable');
     });
 
     test('recognizes Anthropic tier spend cap details as non-retryable', () => {
@@ -90,6 +104,22 @@ describe('model request error classification', () => {
         });
 
         expect(classifyModelRequestError(error)).toBe('unknown');
+    });
+
+    test('distinguishes model service responses from transport failures', () => {
+        const serviceResponse = parseModelErrorResponse({
+            provider: 'openai',
+            status: 500,
+            statusText: 'Internal Server Error',
+            headers: new Headers(),
+            rawText: 'upstream failed'
+        });
+        const connectionFailure = new Error('connection reset');
+        connectionFailure.name = 'APIConnectionError';
+        const transportError = normalizeModelRequestError(connectionFailure, 'openai');
+
+        expect(isModelServiceResponseError(serviceResponse)).toBe(true);
+        expect(isModelServiceResponseError(transportError)).toBe(false);
     });
 
     test('honors retry headers without overriding known permanent codes', () => {

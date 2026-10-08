@@ -23,6 +23,7 @@ import {
 } from '../../../main/aikernel/states/tasks.js';
 import { Setting, setCustomOpendeskDirectory } from '../../../main/utils/setting.js';
 import { ModelRequestError } from '../../../main/utils/model-request-error.js';
+import { t } from '../../../locale/index.js';
 import { AbstractPlatform, setPlatform } from '../../../platforms/base.js';
 
 // 沙箱化运行（dynobox 卷）下 IO 放大 ~5x，本文件的异步用例（重试延迟、流回退等）
@@ -219,7 +220,9 @@ describe('task LLM auto retry', () => {
 
         expect(retryChunks(chunks)).toHaveLength(0);
         const assistant = task.chat_context.lastMessage() as AssistantMessage;
-        expect(assistant.content.filter((part) => part.type === 'error')).toHaveLength(1);
+        const errors = assistant.content.filter((part) => part.type === 'error');
+        expect(errors).toHaveLength(1);
+        expect(errors[0].title).toBe('Stream Completion Failed');
         expect(chunks.some((chunk) => chunk.type === 'assistant' && chunk.last_part.type === 'error')).toBe(true);
     });
 
@@ -244,7 +247,9 @@ describe('task LLM auto retry', () => {
         expect(requestCount).toBe(1);
         expect(retryChunks(chunks)).toHaveLength(0);
         const assistant = task.chat_context.lastMessage() as AssistantMessage;
-        expect(assistant.content.filter((part) => part.type === 'error')).toHaveLength(1);
+        const errors = assistant.content.filter((part) => part.type === 'error');
+        expect(errors).toHaveLength(1);
+        expect(errors[0].title).toBe(t('error.model.service_response_title'));
         expect(assistant.content.some((part) => part.type === 'error' && part.message.includes('credit balance'))).toBe(
             true
         );
