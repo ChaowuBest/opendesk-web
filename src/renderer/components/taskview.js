@@ -1301,6 +1301,54 @@ class TaskView extends HTMLElement {
             const content = block.querySelector('[data-streaming-part-index]');
             TaskView.updateReasoningPreview(block, content?.textContent || '');
         });
+        this._syncRunningStatusTimeTicker();
+    }
+
+    /**
+     * 状态行"已思考 xx 秒"的秒级刷新：复用思考块的同步时机挂载一个共享 interval，
+     * 逐条静默重写时间段文本（时间每秒变化，不重播淡入）。root 断开时自动清理。
+     */
+    _syncRunningStatusTimeTicker() {
+        if (!this.isConnected) {
+            this._stopRunningStatusTimeTicker();
+            return;
+        }
+        const refresh = () => {
+            if (!this.isConnected) {
+                this._stopRunningStatusTimeTicker();
+                return;
+            }
+            this.querySelectorAll('.od-running-status[data-reasoning-status-start]').forEach((statusEl) => {
+                const messageId = statusEl.dataset.messageId;
+                const startTime = parseInt(statusEl.dataset.reasoningStatusStart || '0', 10);
+                if (!messageId || !startTime) return;
+                const timeEl = statusEl.querySelector('.od-running-status-time span');
+                if (!timeEl) return;
+                const elapsed = Math.max(0, Math.floor((Date.now() - startTime) / 1000));
+                const nextText = taskViewT('renderer.taskview.output.status.thinkingTime', {
+                    time: formatReasoningElapsedTime(elapsed)
+                });
+                if (timeEl.textContent !== nextText) {
+                    timeEl.textContent = nextText;
+                }
+            });
+        };
+        // 仅在存在思考状态行时保持 interval，思考结束/状态切换后自动停止
+        if (!this.querySelector('.od-running-status[data-reasoning-status-start]')) {
+            this._stopRunningStatusTimeTicker();
+            return;
+        }
+        if (!this._runningStatusTimeInterval) {
+            this._runningStatusTimeInterval = setInterval(refresh, 1000);
+        }
+        refresh();
+    }
+
+    _stopRunningStatusTimeTicker() {
+        if (this._runningStatusTimeInterval) {
+            clearInterval(this._runningStatusTimeInterval);
+            this._runningStatusTimeInterval = null;
+        }
     }
 
     _renderProcessEntry(entry, messageId, disclosureState, options = {}) {
@@ -1377,54 +1425,106 @@ class TaskView extends HTMLElement {
         let iconStyle = '';
         let iconStateClass = ' is-thinking';
         let iconMarkup = RUNNING_THINKING_ICON_SVG;
-        let action = taskViewT('renderer.taskview.output.status.thinking');
+        let label = taskViewT('renderer.taskview.output.status.thinkingPrefix');
+        // target 是状态里可能频繁变化的部分（当前目标名），只有它和工具计数变化时才重播淡入
+        let target = '';
+        // 思考态的起始时间按消息持久化：状态行随流式快照全量重建，起点必须跨渲染保持，
+        // 否则"已思考 xx 秒"每帧归零。切换到工具执行时清除。
+        if (!this._reasoningStatusStartByMessage) {
+            this._reasoningStatusStartByMessage = new Map();
+        }
+        let reasoningTime = '';
+        let reasoningStart = 0;
         if (item.kind === 'tool') {
-            iconStateClass = ' is-tool';
-            iconMarkup = RUNNING_TOOL_ICON_SVG;
             const name = TaskView._toolDisplayName(item.tool);
-            action = taskViewT('renderer.taskview.output.status.tool', { name });
+            if (name) {
+                iconStateClass = ' is-tool';
+                iconMarkup = RUNNING_TOOL_ICON_SVG;
+                // "正在"保持普通文本，仅目标名用 code 高亮，与思考态文案结构一致
+                label = taskViewT('renderer.taskview.output.status.toolPrefix');
+                target = `<code>${escapeHtml(name)}</code>`;
+                this._reasoningStatusStartByMessage.delete(messageId);
+            }
         } else if (item.kind === 'working') {
             icon = 'fa-spinner fa-spin';
             iconStyle = 'fa-solid';
             iconStateClass = '';
-            action = taskViewT('renderer.taskview.output.status.working');
+            label = taskViewT('renderer.taskview.output.status.working');
+            this._reasoningStatusStartByMessage.delete(messageId);
+        } else {
+            // 思考态与工具态同构：label 为动词前缀，"深度思考"作为 target 段高亮，中间以空格分隔
+            const now = Date.now();
+            let startTime = this._reasoningStatusStartByMessage.get(messageId);
+            if (!startTime) {
+                startTime = now;
+                this._reasoningStatusStartByMessage.set(messageId, startTime);
+            }
+            target = `<code>${escapeHtml(taskViewT('renderer.taskview.output.status.thinkingKeyword'))}</code>`;
+            reasoningStart = startTime;
+            reasoningTime = taskViewT('renderer.taskview.output.status.thinkingTime', {
+                time: formatReasoningElapsedTime(Math.max(0, Math.floor((now - startTime) / 1000)))
+            });
         }
         // 运行中的思考/调用块追加已完成的工具调用统计，随流式快照持续更新
         const doneStats = options.doneStats || { count: 0, names: [] };
+        let done = '';
         if (doneStats.count > 0) {
             if (item.kind === 'tool') {
-                action += ` · ${taskViewT('renderer.taskview.output.status.doneCount', {
-                    count: doneStats.count
-                })}`;
+                done = taskViewT('renderer.taskview.output.status.doneCount', { count: doneStats.count });
             } else if (item.kind === 'reasoning' || item.kind === undefined) {
                 const listed = doneStats.names
                     .slice(0, 2)
                     .join(taskViewT('renderer.taskview.output.processSummary.listSeparator'));
-                action += listed
-                    ? ` · ${taskViewT('renderer.taskview.output.status.doneCountWithTools', {
+                done = listed
+                    ? taskViewT('renderer.taskview.output.status.doneCountWithTools', {
                           tools: listed,
                           count: doneStats.count
-                      })}`
-                    : ` · ${taskViewT('renderer.taskview.output.status.doneCount', {
-                          count: doneStats.count
-                      })}`;
+                      })
+                    : taskViewT('renderer.taskview.output.status.doneCount', { count: doneStats.count });
             }
         }
-        // 文本未变化时不重播翻页动画，避免每帧闪烁与不必要的合成开销
+        // 文本未变化的分段不重播动画，避免每帧闪烁与不必要的合成开销。
+        // 首次渲染时固定 label（如"正在思考"）视为未变化直接静态呈现；
+        // 目标名/工具计数属于新出现的内容，正常淡入。
         const lastText = this._lastRunningStatusTextByMessage.get(messageId);
-        this._lastRunningStatusTextByMessage.set(messageId, action);
-        const lineAnimClass = lastText === action ? ' od-running-status-line--static' : '';
+        this._lastRunningStatusTextByMessage.set(messageId, { label, target, done, reasoningTime });
+        const lastParts = typeof lastText === 'object' && lastText !== null ? lastText : undefined;
+        const fadeClass = (value, lastValue, isLabel = false) => {
+            if (isLabel && lastParts === undefined) return ' od-running-status-fade--static';
+            return value === lastValue ? ' od-running-status-fade--static' : '';
+        };
+        const labelAnimClass = fadeClass(label, lastParts?.label, true);
+        const targetAnimClass = fadeClass(target, lastParts?.target);
+        const doneAnimClass = fadeClass(done, lastParts?.done);
+        // 时间每秒都在变：首现随段淡入，之后静默更新，不重播淡入（避免每秒闪烁）
+        const timeAnimClass =
+            lastParts === undefined
+                ? ''
+                : reasoningTime === lastParts?.reasoningTime
+                  ? ' od-running-status-fade--static'
+                  : ' od-running-status-fade--static';
         const expandable = guiOutputMode === 'minimal' && options.isRunning === true;
         const expanded = expandable && this._assistantRunningDetails.get(messageId) === true;
         const tag = expandable ? 'button' : 'div';
         const renderedIcon = iconMarkup || `<i class="${iconStyle} ${icon}" aria-hidden="true"></i>`;
+        const separator = taskViewT('renderer.taskview.output.status.separator');
+        // 纯文本分段走 escapeHtml；label/target 可能包含内联 code 高亮，需保留原始 HTML
+        const segment = (animClass, extraClass, content) =>
+            content === ''
+                ? ''
+                : `<span class="od-running-status-fade${animClass} ${extraClass}"><span>${escapeHtml(content)}</span></span>`;
+        const segmentHtml = (animClass, extraClass, content) =>
+            content === ''
+                ? ''
+                : `<span class="od-running-status-fade${animClass} ${extraClass}"><span>${content}</span></span>`;
         return `
             <${tag}${expandable ? ' type="button" data-running-output-toggle' : ''} class="od-running-status" role="status" aria-live="polite"
-                ${expandable ? `data-message-id="${escapeHtml(messageId)}" aria-expanded="${expanded}" aria-controls="od-${escapeHtml(messageId)}-running-details"` : ''}>
+                data-message-id="${escapeHtml(messageId)}"${reasoningStart ? ` data-reasoning-status-start="${reasoningStart}"` : ''}
+                ${expandable ? `aria-expanded="${expanded}" aria-controls="od-${escapeHtml(messageId)}-running-details"` : ''}>
                 <span class="od-running-status-icon${iconStateClass}">${renderedIcon}</span>
                 <span class="od-running-status-viewport">
-                    <span class="od-running-status-line${lineAnimClass}">
-                        <span>${escapeHtml(action)}</span>
+                    <span class="od-running-status-text">
+                        ${segmentHtml(labelAnimClass, 'od-running-status-label', label)}${target ? `<span class="od-running-status-separator">${escapeHtml(' ')}</span>` : ''}${segmentHtml(targetAnimClass, 'od-running-status-target', target)}${reasoningTime ? `<span class="od-running-status-separator">${escapeHtml(' ')}</span>` : ''}${segment(timeAnimClass, 'od-running-status-time', reasoningTime)}${done ? `<span class="od-running-status-separator">${escapeHtml(separator)}</span>` : ''}${segment(doneAnimClass, 'od-running-status-done', done)}
                     </span>
                 </span>
             </${tag}>`;
@@ -5623,6 +5723,9 @@ class TaskView extends HTMLElement {
         this.getHistoryContainer()
             ?.querySelectorAll('.reasoning-block-od.reasoning-active')
             .forEach((el) => TaskView.finalizeReasoningBlock(el));
+        // 状态行秒级刷新与消息内思考块计时器一并停止
+        this._stopRunningStatusTimeTicker();
+        this._reasoningStatusStartByMessage?.clear();
         this._goalController.disconnect();
         this._workspaceFocusLayout.dispose();
         this._cancelBrowserIdleTimer();

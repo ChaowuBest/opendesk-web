@@ -3778,8 +3778,8 @@ html[data-theme='dark'] .od-process-detail::-webkit-scrollbar-thumb {
     text-align: left;
 }
 
-.od-running-status:hover .od-running-status-line,
-.od-running-status:focus-visible .od-running-status-line {
+.od-running-status:hover .od-running-status-text,
+.od-running-status:focus-visible .od-running-status-text {
     color: var(--od-text);
     text-decoration: underline;
     text-decoration-color: var(--od-border-strong);
@@ -3820,34 +3820,53 @@ html[data-theme='dark'] .od-process-detail::-webkit-scrollbar-thumb {
     overflow: hidden;
 }
 
-.od-running-status-line {
+/* 状态行文本容器：分段淡入的宿主，保持行高与摘要行一致 */
+.od-running-status-text {
     display: flex;
     align-items: center;
+    min-width: 0;
     height: 22px;
-    will-change: transform, opacity;
-    animation: od-status-page-in 220ms cubic-bezier(0.22, 0.61, 0.36, 1);
 }
 
-/* 文案未变化时的静态行：抑制动画重播，避免每帧闪烁与不必要的合成开销 */
-.od-running-status-line--static {
+/* 状态行分段：仅变化的分段（目标名/工具计数）重播淡入，label 保持静止。
+   纯 opacity 动画，无位移、无重排 */
+.od-running-status-fade {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    animation: od-status-fade-in 220ms ease-in-out;
+}
+
+.od-running-status-fade--static {
     animation: none;
 }
 
-.od-running-status-line > span {
+.od-running-status-fade > span {
     min-width: 0;
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
 }
 
-@keyframes od-status-page-in {
-    from {
+.od-running-status-separator {
+    flex: none;
+    white-space: pre;
+}
+
+/* 状态行目标名（工具名/深度思考）的高亮色，取自 markdown 行内代码的前景色。
+   font-family 继承两侧文本：code 的等宽默认字形与 UI 字体基线/宽度不同，会导致对齐问题 */
+.od-running-status-target code {
+    color: var(--chat-accent);
+    font-family: inherit;
+}
+
+@keyframes od-status-fade-in {
+    0% {
         opacity: 0;
-        transform: translateY(100%);
     }
-    to {
+    100% {
         opacity: 1;
-        transform: translateY(0);
     }
 }
 
@@ -3866,7 +3885,7 @@ html[data-theme='dark'] .od-process-detail::-webkit-scrollbar-thumb {
 @media (prefers-reduced-motion: reduce) {
     .od-completed-process-chevron,
     .od-process-chevron,
-    .od-running-status-line {
+    .od-running-status-fade {
         animation: none;
         transition: none;
     }
