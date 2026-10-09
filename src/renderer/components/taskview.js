@@ -981,7 +981,45 @@ class TaskView extends HTMLElement {
             }
         }
 
-        // 全文节点（.reasoning-content）不再逐帧写入，见 finalizeReasoningBlock 的回填。
+        // 展开的全文区（详细模式 / 用户手动展开）是当前可见的思考窗口，必须随快照
+        // 推进；折叠态全文区在布局树之外（display:none），维持零写入、finalize 回填。
+        // 追加采用前缀增量：快照按累计文本推送且快照间为前缀关系，新文本与已渲染
+        // 文本一致或为其后缀延伸时只 appendData 增量，每帧成本 O(delta) 而非 O(全文)。
+        const fullContent = el.querySelector('.reasoning-content');
+        if (fullContent && el.classList.contains('reasoning-expanded')) {
+            const renderedText = fullContent.textContent || '';
+            const nextText = text || '';
+            let changed = false;
+            if (nextText.length > renderedText.length && nextText.startsWith(renderedText)) {
+                // 快照是已渲染文本的延伸：只写增量（每帧成本 O(delta) 而非 O(全文)）
+                const delta = nextText.slice(renderedText.length);
+                const textNode = fullContent.firstChild;
+                if (textNode && typeof textNode.appendData === 'function') {
+                    textNode.appendData(delta);
+                } else {
+                    fullContent.textContent = nextText;
+                }
+                changed = true;
+            } else if (renderedText !== nextText) {
+                // 快照回退/改写（如插队重发）：整段重写对齐；快照重复时两者相等，跳过写入
+                fullContent.textContent = nextText;
+                changed = true;
+            }
+            if (changed) {
+                // 与简洁模式预览相同的钉底语义：仅当用户没有向上滚离底部时跟随，
+                // 阈值与 _captureProcessScrollFollowState 的底部判定保持一致
+                const fullArea = el.querySelector('.reasoning-full-area');
+                if (
+                    fullArea &&
+                    fullArea.scrollHeight - fullArea.scrollTop - fullArea.clientHeight <=
+                        PROCESS_INNER_SCROLL_BOTTOM_THRESHOLD_PX
+                ) {
+                    fullArea.scrollTop = fullArea.scrollHeight;
+                }
+            }
+        }
+
+        // 折叠态全文节点不在流式期间写入，见 finalizeReasoningBlock 的回填。
     }
 
     /**
@@ -1186,7 +1224,9 @@ class TaskView extends HTMLElement {
                 : '';
         const fullStreamingAttribute = isStreaming ? ` data-streaming-part-index="${partIndex}"` : '';
         const wrapperExpandedClass = expanded ? ' reasoning-expanded reasoning-content-visible' : '';
-        const fullText = isStreaming ? '' : escaped;
+        // 详细模式展开的全文区是用户唯一可见的思考窗口，流式时必须直接携带
+        // 初始快照文本；折叠态仍保持空白，等 finalize 一次性回填（长历史性能优化）。
+        const fullText = isStreaming ? (expanded ? escaped : '') : escaped;
         return `
             <div class="reasoning-block-od od-inline-toolcall-container ${stateClass}${wrapperExpandedClass}"${timingAttribute}${disclosureAttribute}>
                 <div class="reasoning-header flex items-center gap-1.5 min-w-0 cursor-pointer select-none py-0.5">

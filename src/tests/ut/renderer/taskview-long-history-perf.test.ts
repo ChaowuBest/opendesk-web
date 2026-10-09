@@ -118,14 +118,23 @@ describe('task-view long-history streaming hot path', () => {
 
     function spyTextContent(node: Element): { totalWritten: () => number } {
         let total = 0;
-        let value = node.textContent ?? '';
         Object.defineProperty(node, 'textContent', {
             configurable: true,
-            get: () => value,
+            get: () => (node.firstChild ? node.firstChild.data : ''),
             set: (next: unknown) => {
                 const text = String(next);
                 total += text.length;
-                value = text;
+                // 保持原生语义：真实重建子文本节点，保证后续 appendData 增量路径可命中
+                while (node.firstChild) node.removeChild(node.firstChild);
+                if (text) {
+                    const textNode = node.ownerDocument.createTextNode(text);
+                    const originalAppendData = textNode.appendData.bind(textNode);
+                    textNode.appendData = (data: string) => {
+                        total += String(data).length;
+                        return originalAppendData(data);
+                    };
+                    node.appendChild(textNode);
+                }
             }
         });
         return { totalWritten: () => total };
@@ -192,6 +201,37 @@ describe('task-view long-history streaming hot path', () => {
             // 折叠态的 display:none 来自样式表（而非内联），锁定修复不被回退
             const css = readCustomCss();
             expect(css).toMatch(/\.reasoning-block-od \.reasoning-full-area \{[^}]*display:\s*none/s);
+        } finally {
+            TaskViewClass.finalizeReasoningBlock(el);
+            restoreRealTimerGlobals();
+        }
+    });
+
+    test('展开态全文区随流式推进且每帧只追加增量（O(delta) 而非 O(全文)）', () => {
+        jest.useFakeTimers();
+        // 展开块：详细模式默认展开，全文区可见，必须实时刷新
+        const host = document.createElement('div');
+        host.innerHTML = TaskViewClass.createReasoningPartHtml('', true, 0, null, true);
+        const el = host.firstElementChild as HTMLElement;
+        const fullNode = el.querySelector('.reasoning-content');
+        const fullSpy = spyTextContent(fullNode);
+
+        try {
+            const updates = 30;
+            const charsPerUpdate = 1000;
+            let text = '';
+            for (let i = 0; i < updates; i += 1) {
+                text += 'x'.repeat(charsPerUpdate);
+                TaskViewClass.scheduleReasoningPreviewUpdate(el, text);
+                flushRaf();
+                jest.advanceTimersByTime(TaskViewClass.REASONING_UPDATE_FALLBACK_MS + 1);
+                // 展开的全文区必须实时推进，不能空白到 finalize
+                expect(fullNode.textContent).toBe(text);
+            }
+
+            // 前缀增量追加：累计写入 ≈ 全文长度（快照首帧 O(全文) + 每帧 O(delta)），
+            // 而非每帧全量重写的 O(累计长度 × 帧数)
+            expect(fullSpy.totalWritten()).toBeLessThan(text.length * 2);
         } finally {
             TaskViewClass.finalizeReasoningBlock(el);
             restoreRealTimerGlobals();

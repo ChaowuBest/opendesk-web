@@ -728,6 +728,34 @@ describe('task-view GUI output modes', () => {
         expect(view.textContent).not.toContain('已思考');
     });
 
+    test('verbose streaming reasoning keeps the expanded full text live during streaming', () => {
+        onSettingChanged?.({ locale: 'zh-CN', gui_config: { output_mode: 'verbose', gui_reason_display: 'inline' } });
+        const view = createView();
+        view.innerHTML = view._renderAssistantOutputHtml([{ type: 'reasoning', text: '第一段思考', streaming: true }], {
+            isRunning: true,
+            messageId: 'message-verbose-reasoning-streaming'
+        });
+
+        const block = view.querySelector('.reasoning-block-od') as HTMLElement;
+        expect(block.classList).toContain('reasoning-active');
+        expect(block.classList).toContain('reasoning-expanded');
+        const fullArea = view.querySelector('.reasoning-full-area') as HTMLElement;
+        expect(fullArea).not.toBeNull();
+        const fullContent = fullArea.querySelector('.reasoning-content') as HTMLElement;
+
+        // 初始快照已携带部分文本：展开的全文区必须立即可见
+        expect(fullContent.textContent).toBe('第一段思考');
+
+        // 流式推进：与 _renderAssistantProgress 的增量补丁路径一致，
+        // 展开的全文区必须随快照刷新而不是空白到 finalize 才回填
+        TaskViewClass.updateReasoningPreview(block, '第一段思考，第二段思考');
+        expect(fullContent.textContent).toBe('第一段思考，第二段思考');
+
+        // 最终快照固化：finalize 后全文保持完整
+        TaskViewClass.finalizeReasoningBlock(block);
+        expect(fullContent.textContent).toBe('第一段思考，第二段思考');
+    });
+
     test('running tool status uses the pushed display name without exposing parameters', () => {
         const view = createView();
         const fileTool = toolPart(1, 1);
