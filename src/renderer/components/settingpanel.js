@@ -1957,7 +1957,9 @@ class SettingPanel extends HTMLElement {
             this._bindShellSettingsEvents();
         };
         this.querySelector('#task-shell-path')?.addEventListener('change', (event) => {
-            save({ shell_path: event.target.value, shell_sandboxed: false });
+            // 沙箱默认启用：切换到支持沙箱的 shell 时自动重新勾选（change 事件仅在真正切换时触发）
+            const target = this.supportedShells.find((shell) => shell.path === event.target.value && shell.sandboxed);
+            save({ shell_path: event.target.value, shell_sandboxed: Boolean(target) });
             rerender();
             this.querySelector('#task-shell-path')?.focus();
         });

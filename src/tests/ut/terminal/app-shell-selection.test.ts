@@ -75,9 +75,18 @@ test.each([{}, { shell_path: 'C:/missing.exe', shell_sandboxed: true }])(
         launches.length = 0;
         const [toolset] = await app.getToolsets();
         expect([...toolset.tools.keys()]).toEqual(['executePwsh', 'checkShellStatus']);
-        expect(launches[0]).toEqual({ name: 'executePwsh', args: [shells[0].path, false, false] });
+        // 沙箱默认启用：未选择（首次安装）或保存的路径已不可用时优先兜底到沙箱变体
+        expect(launches[0]).toEqual({ name: 'executePwsh', args: [shells[1].path, true, false] });
     }
 );
+
+test('recycle-bin preference applies when the default sandboxed shell is chosen implicitly', async () => {
+    // 首次安装（shell_path 为空）且回收站偏好为 true：隐式选中的沙箱变体也要带上该偏好
+    taskConfig = { shell_sandbox_del_to_trash: true };
+    launches.length = 0;
+    await new TerminalApplication().getToolsets();
+    expect(launches[0]).toEqual({ name: 'executePwsh', args: [shells[1].path, true, true] });
+});
 
 test('unlimited mode forces every shell to run without the sandbox and drops the recycle-bin preference', async () => {
     // 模拟 Linux/macOS/OpenHarmony 形态：bash、zsh 各有沙箱变体（LD_PRELOAD/DYLD/dynobox）
