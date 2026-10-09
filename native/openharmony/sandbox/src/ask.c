@@ -455,7 +455,16 @@ int dbox_ask(const dbox_policy_t *p, const char *vpath, int acc,
         snprintf(err, errsz, "request build failed");
         return 0;
     }
-    static _Thread_local char resp[ASK_IO_BUF];
+    /* 响应缓冲区走栈而非 _Thread_local：ask 是低频同步路径（每次都是一次完整
+     * HTTP/unix 往返），把它放进静态 TLS 会把整个进程的 tls_static_size_for_stack
+     * 抬到 64KB，而 glibc 的 allocate_stack 会把该值计入线程栈下限
+     * （nptl/allocatestack.c: size < guardsize + tls_static_size_for_stack +
+     * MINIMAL_REST_STACK → EINVAL），导致挂载本库的进程里任何 ≤64KB 栈的
+     * pthread_create 失败（Node/V8 平台线程用 32KB 栈，表现为
+     * "pthread_create: Invalid argument"）。dbox_ask 内层只用原始系统调用
+     * （raw_socket/raw_recvfrom），不递归回 interpose 层，per-call 栈缓冲
+     * 同时也是可重入的。 */
+    char resp[ASK_IO_BUF];
     int tmo = p->ask_timeout_ms > 0 ? p->ask_timeout_ms : 2000;
     if (ask_roundtrip(&ep, req, resp, sizeof resp, tmo, p->ask_token, err, errsz) != 0) {
         dbox_logf("ask transport failed: %s", err);
