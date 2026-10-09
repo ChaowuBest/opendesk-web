@@ -1,0 +1,693 @@
+/* 管理员面板：视觉语言对齐 agentoffice 页签（下划线 tab）与向导（SOFT WHITE 卡片 + 品牌红）。
+   颜色 token 集中在 .ap-root（浅色）与 :host([data-theme='dark']) .ap-root（深色），
+   由 adminpanel.ts 调 syncShadowHostTheme 同步 data-theme。 */
+
+.ap-root {
+    /* ===== Design Tokens (light) · 对齐 wizard SOFT WHITE 与聊天界面 token ===== */
+    --ap-page-bg: #f5f4f2;
+    --ap-card-bg: rgba(255, 255, 255, 0.82);
+    --ap-card-solid: #ffffff;
+    --ap-border: rgba(138, 133, 128, 0.24);
+    --ap-border-input: rgba(138, 133, 128, 0.36);
+    --ap-text: #4a4642;
+    --ap-heading: #1c1917;
+    --ap-muted: #8a8580;
+    --ap-input-bg: #fafaf9;
+    --ap-accent: #df4436;
+    --ap-accent-soft: #fdeeec;
+    --ap-accent-line: rgba(222, 68, 51, 0.12);
+    --ap-btn-primary-bg: linear-gradient(180deg, #e6512f, #d53d24);
+    --ap-btn-primary-shadow: 0 4px 14px rgba(222, 68, 51, 0.26);
+    --ap-green: #16a34a;
+    --ap-green-soft: #f0fdf4;
+    --ap-green-line: #bbf7d0;
+    --ap-amber: #b45309;
+    --ap-amber-soft: #fffbeb;
+    --ap-amber-line: #fde68a;
+    --ap-red: #dc2626;
+    --ap-red-soft: #fef2f2;
+    --ap-red-line: #fecaca;
+    --ap-blue: #2563eb;
+    --ap-blue-soft: #eff6ff;
+    --ap-blue-line: #bfdbfe;
+    --ap-card-shadow: 0 1px 2px rgba(0, 0, 0, 0.04), 0 12px 32px rgba(0, 0, 0, 0.06);
+    --ap-auth-shadow: 0 1px 2px rgba(0, 0, 0, 0.04), 0 18px 48px rgba(0, 0, 0, 0.09);
+    --ap-chart-violet: #a78bfa;
+
+    display: flex;
+    flex-direction: column;
+    width: 100%;
+    height: 100%;
+    background: var(--ap-page-bg);
+    color: var(--ap-text);
+    overflow: hidden;
+}
+
+/* ===== Design Tokens (dark) · 对齐全局 --od-* 与聊天深色 token ===== */
+:host([data-theme='dark']) .ap-root {
+    --ap-page-bg: #232120;
+    --ap-card-bg: rgba(42, 40, 38, 0.82);
+    --ap-card-solid: #2a2826;
+    --ap-border: rgba(255, 255, 255, 0.12);
+    --ap-border-input: rgba(255, 255, 255, 0.2);
+    --ap-text: #d5d1cb;
+    --ap-heading: #efedea;
+    --ap-muted: #9b968f;
+    --ap-input-bg: rgba(255, 255, 255, 0.05);
+    --ap-accent: #e8563f;
+    --ap-accent-soft: rgba(232, 86, 63, 0.16);
+    --ap-accent-line: rgba(232, 86, 63, 0.2);
+    --ap-btn-primary-bg: linear-gradient(180deg, #e6512f, #d53d24);
+    --ap-btn-primary-shadow: 0 4px 14px rgba(0, 0, 0, 0.4);
+    --ap-green: #6ee7b7;
+    --ap-green-soft: rgba(16, 185, 129, 0.12);
+    --ap-green-line: rgba(16, 185, 129, 0.3);
+    --ap-amber: #fcd34d;
+    --ap-amber-soft: rgba(251, 191, 36, 0.12);
+    --ap-amber-line: rgba(251, 191, 36, 0.3);
+    --ap-red: #fca5a5;
+    --ap-red-soft: rgba(244, 63, 94, 0.12);
+    --ap-red-line: rgba(244, 63, 94, 0.3);
+    --ap-blue: #93c5fd;
+    --ap-blue-soft: rgba(96, 165, 250, 0.12);
+    --ap-blue-line: rgba(96, 165, 250, 0.3);
+    --ap-card-shadow: 0 1px 2px rgba(0, 0, 0, 0.3), 0 8px 24px rgba(0, 0, 0, 0.4);
+    --ap-auth-shadow: 0 1px 2px rgba(0, 0, 0, 0.3), 0 18px 48px rgba(0, 0, 0, 0.5);
+    --ap-chart-violet: #c4b5fd;
+}
+
+/* 分段柱 hover 高亮在深色下用白系淡填充 */
+:host([data-theme='dark']) .trend .hit:hover {
+    fill: rgba(255, 255, 255, 0.04);
+}
+
+/* ---------- 顶部页签：下划线页签语言（参照 agentoffice .tabs） ----------
+   顶部 36px 为窗口拖拽层避让区（drag-overlay 高 32px，承载窗口控制按钮，
+   参照 mailbox/notes/agentoffice 的统一做法），页签行整体落在其下方。 */
+
+.ap-tabs {
+    display: flex;
+    align-items: flex-end;
+    justify-content: space-between;
+    padding: 36px 28px 0;
+    border-bottom: 1px solid var(--ap-border);
+    flex: none;
+}
+
+.ap-tab-group {
+    display: flex;
+    align-items: flex-end;
+    gap: 24px;
+}
+
+.ap-tab {
+    position: relative;
+    padding: 6px 1px 10px;
+    font-size: var(--fs-md, 14px);
+    color: var(--ap-muted);
+    background: none;
+    border: none;
+    cursor: pointer;
+    white-space: nowrap;
+}
+
+.ap-tab:hover {
+    color: var(--ap-text);
+}
+
+.ap-tab.active {
+    color: var(--ap-heading);
+    font-weight: 500;
+}
+
+.ap-tab.active::after {
+    content: '';
+    position: absolute;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    height: 2px;
+    background: var(--ap-accent);
+}
+
+.ap-tabs-actions {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding-bottom: 6px;
+}
+
+.ap-server {
+    max-width: 260px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    font-size: var(--fs-sm, 12px);
+    color: var(--ap-muted);
+}
+
+.ap-icon-btn {
+    width: 28px;
+    height: 28px;
+    border-radius: 8px;
+    border: 1px solid var(--ap-border);
+    background: var(--ap-card-bg);
+    color: var(--ap-muted);
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: all 0.15s;
+}
+
+.ap-icon-btn:hover {
+    background: var(--ap-card-solid);
+    color: var(--ap-heading);
+}
+
+.ap-body {
+    flex: 1;
+    min-height: 0;
+    overflow-y: auto;
+    padding: 20px 28px 28px;
+}
+
+/* ---------- 授权页：对齐 wizard SOFT WHITE 卡片语言 ---------- */
+
+.ap-auth {
+    max-width: 420px;
+    margin: max(12vh, 76px) auto 0;
+    background: var(--ap-card-solid);
+    border: 1px solid var(--ap-border);
+    border-radius: 14px;
+    box-shadow: var(--ap-auth-shadow);
+    padding: 36px 32px;
+    text-align: center;
+}
+
+.ap-auth-icon {
+    width: 64px;
+    height: 64px;
+    margin: 0 auto 16px;
+    border-radius: 50%;
+    background: var(--ap-accent-soft);
+    color: var(--ap-accent);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+
+.ap-auth h1 {
+    margin: 0 0 8px;
+    font-size: 18px;
+    font-weight: 600;
+    letter-spacing: -0.01em;
+    color: var(--ap-heading);
+}
+
+.ap-auth-hint {
+    margin: 0 0 20px;
+    font-size: 13px;
+    line-height: 1.65;
+    color: var(--ap-muted);
+    text-align: left;
+}
+
+#ap-auth-form {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+}
+
+.ap-field-label {
+    display: block;
+    font-size: 13px;
+    font-weight: 500;
+    color: var(--ap-text);
+    text-align: left;
+    margin-bottom: -6px;
+}
+
+#ap-token-input,
+#ap-server-input {
+    width: 100%;
+    box-sizing: border-box;
+    height: 36px;
+    padding: 0 12px;
+    border-radius: 9px;
+    border: 1px solid var(--ap-border-input);
+    background: var(--ap-input-bg);
+    color: var(--ap-heading);
+    font-size: 13px;
+    outline: none;
+    transition:
+        border-color 0.15s,
+        box-shadow 0.15s;
+}
+
+#ap-token-input:focus,
+#ap-server-input:focus {
+    border-color: var(--ap-accent);
+    box-shadow: 0 0 0 3px var(--ap-accent-line);
+}
+
+#ap-token-input::placeholder,
+#ap-server-input::placeholder {
+    color: var(--ap-muted);
+}
+
+.ap-auth-warn {
+    margin: 0;
+    font-size: var(--fs-sm, 12px);
+    color: var(--ap-amber);
+    background: var(--ap-amber-soft);
+    border: 1px solid var(--ap-amber-line);
+    border-radius: 9px;
+    padding: 8px 12px;
+    text-align: left;
+}
+
+.ap-auth-error {
+    margin: 0;
+    font-size: var(--fs-sm, 12px);
+    color: var(--ap-red);
+    background: var(--ap-red-soft);
+    border: 1px solid var(--ap-red-line);
+    border-radius: 9px;
+    padding: 8px 12px;
+    text-align: left;
+}
+
+/* 胶囊主按钮（对齐 wizard .wiz-btn-primary） */
+.ap-primary {
+    height: 36px;
+    padding: 0 18px;
+    border: none;
+    border-radius: 999px;
+    background: var(--ap-btn-primary-bg);
+    color: #ffffff;
+    font-size: 12.5px;
+    font-weight: 500;
+    cursor: pointer;
+    transition: all 0.15s;
+    box-shadow: var(--ap-btn-primary-shadow);
+}
+
+.ap-primary:hover:not(:disabled) {
+    filter: brightness(0.94);
+}
+
+.ap-primary:disabled {
+    opacity: 0.5;
+    cursor: default;
+}
+
+/* ---------- 活跃度 Tab ---------- */
+
+.ap-cards {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 14px;
+    margin-bottom: 18px;
+}
+
+.ap-card {
+    background: var(--ap-card-bg);
+    border: 1px solid var(--ap-border);
+    border-radius: 14px;
+    box-shadow: var(--ap-card-shadow);
+    padding: 18px 20px;
+}
+
+.ap-card-value {
+    font-size: 28px;
+    font-weight: 700;
+    color: var(--ap-heading);
+    line-height: 1.2;
+}
+
+.ap-card-label {
+    margin-top: 4px;
+    font-size: var(--fs-sm, 12px);
+    color: var(--ap-muted);
+}
+
+.ap-panel {
+    background: var(--ap-card-bg);
+    border: 1px solid var(--ap-border);
+    border-radius: 14px;
+    box-shadow: var(--ap-card-shadow);
+    padding: 18px 20px;
+}
+
+.ap-panel-header {
+    display: flex;
+    align-items: baseline;
+    gap: 10px;
+    margin-bottom: 10px;
+}
+
+.ap-panel-header h2 {
+    margin: 0;
+    font-size: 16px;
+    font-weight: 600;
+    color: var(--ap-heading);
+}
+
+.ap-loading-hint {
+    font-size: var(--fs-sm, 12px);
+    color: var(--ap-muted);
+}
+
+.trend {
+    width: 100%;
+    height: auto;
+    display: block;
+}
+
+.trend .grid {
+    stroke: var(--ap-border);
+    stroke-width: 1;
+}
+
+.trend .axis-label {
+    font-size: 11px;
+    fill: var(--ap-muted);
+}
+
+.trend .line {
+    fill: none;
+    stroke: var(--ap-accent);
+    stroke-width: 2.5;
+    stroke-linecap: round;
+}
+
+.trend .area {
+    fill: var(--ap-accent);
+    opacity: 0.08;
+}
+
+.trend .dot {
+    fill: var(--ap-card-solid);
+    stroke: var(--ap-accent);
+    stroke-width: 2;
+}
+
+/* ---------- 趋势图：分段柱 + 悬浮提示 ---------- */
+
+.trend-wrap {
+    position: relative;
+}
+
+/* 分段柱：每类一段，从基线堆叠到曲线点，低饱和不压曲线 */
+.trend .bar-seg {
+    opacity: 0.38;
+    transition: opacity 0.12s;
+}
+
+.trend .bar-seg.c0 {
+    fill: var(--ap-accent);
+}
+.trend .bar-seg.c1 {
+    fill: var(--ap-blue);
+}
+.trend .bar-seg.c2 {
+    fill: var(--ap-green);
+}
+.trend .bar-seg.c3 {
+    fill: var(--ap-chart-violet, #a78bfa);
+}
+.trend .bar-seg.c4 {
+    fill: var(--ap-amber);
+}
+.trend .bar-seg.c5 {
+    fill: var(--ap-muted);
+}
+
+/* 逐日命中区：透明，hover 时给当天一个极淡的纵向高亮 */
+.trend .hit {
+    fill: transparent;
+    cursor: pointer;
+}
+
+.trend .hit:hover {
+    fill: var(--ap-card-bg);
+}
+
+/* 悬浮窗：跟随曲线点，居中偏移，深浅两套 */
+.trend-tip {
+    position: absolute;
+    transform: translate(-50%, calc(-100% - 12px));
+    background: var(--ap-card-solid);
+    border: 1px solid var(--ap-border);
+    border-radius: 10px;
+    box-shadow: var(--ap-card-shadow);
+    padding: 8px 12px;
+    pointer-events: none;
+    opacity: 0;
+    transition: opacity 0.12s;
+    min-width: 132px;
+    z-index: 5;
+}
+
+.trend-tip.show {
+    opacity: 1;
+}
+
+.trend-tip .tip-title {
+    font-size: var(--fs-sm, 12px);
+    font-weight: 600;
+    color: var(--ap-heading);
+    margin-bottom: 4px;
+}
+
+.trend-tip .tip-row {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-size: var(--fs-sm, 12px);
+    color: var(--ap-muted);
+    line-height: 1.7;
+}
+
+.trend-tip .tip-label {
+    flex: 1;
+    white-space: nowrap;
+}
+
+.trend-tip .val {
+    color: var(--ap-heading);
+    font-weight: 600;
+    font-variant-numeric: tabular-nums;
+}
+
+.trend-tip .chip {
+    width: 8px;
+    height: 8px;
+    border-radius: 2px;
+    flex: none;
+}
+
+.trend-tip .chip.c0 {
+    background: var(--ap-accent);
+}
+.trend-tip .chip.c1 {
+    background: var(--ap-blue);
+}
+.trend-tip .chip.c2 {
+    background: var(--ap-green);
+}
+.trend-tip .chip.c3 {
+    background: var(--ap-chart-violet, #a78bfa);
+}
+.trend-tip .chip.c4 {
+    background: var(--ap-amber);
+}
+.trend-tip .chip.c5 {
+    background: var(--ap-muted);
+}
+
+/* ---------- 反馈 Tab ---------- */
+
+.ap-toolbar {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 14px;
+}
+
+.ap-filters {
+    display: flex;
+    gap: 8px;
+}
+
+.ap-filter {
+    height: 30px;
+    padding: 0 16px;
+    border-radius: 999px;
+    border: 1px solid var(--ap-border);
+    background: transparent;
+    color: var(--ap-muted);
+    font-size: var(--fs-sm, 12px);
+    cursor: pointer;
+    transition: all 0.15s;
+}
+
+.ap-filter:hover {
+    color: var(--ap-heading);
+}
+
+.ap-filter.active {
+    background: var(--ap-accent);
+    border-color: var(--ap-accent);
+    color: #ffffff;
+}
+
+.ap-feedback {
+    background: var(--ap-card-bg);
+    border: 1px solid var(--ap-border);
+    border-radius: 14px;
+    box-shadow: var(--ap-card-shadow);
+    padding: 16px 20px;
+    margin-bottom: 12px;
+}
+
+.ap-feedback-head {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    margin-bottom: 8px;
+}
+
+.ap-badge {
+    padding: 2px 10px;
+    border-radius: 999px;
+    font-size: var(--fs-sm, 12px);
+    font-weight: 600;
+}
+
+.ap-badge.feature {
+    background: var(--ap-green-soft);
+    color: var(--ap-green);
+    border: 1px solid var(--ap-green-line);
+}
+
+.ap-badge.bug {
+    background: var(--ap-amber-soft);
+    color: var(--ap-amber);
+    border: 1px solid var(--ap-amber-line);
+}
+
+.ap-feedback-time {
+    font-size: var(--fs-sm, 12px);
+    color: var(--ap-muted);
+}
+
+.ap-feedback-id {
+    margin-left: auto;
+    font-size: var(--fs-sm, 12px);
+    color: var(--ap-muted);
+    font-family: 'JetBrains Mono', 'SF Mono', monospace;
+}
+
+.ap-feedback-content {
+    margin: 0 0 8px;
+    font-size: var(--fs-md, 14px);
+    line-height: 1.65;
+    color: var(--ap-heading);
+    white-space: pre-wrap;
+    word-break: break-word;
+}
+
+.ap-feedback-meta {
+    display: flex;
+    align-items: flex-start;
+    gap: 8px;
+    margin-top: 6px;
+    font-size: var(--fs-sm, 12px);
+    color: var(--ap-muted);
+}
+
+.ap-meta-label {
+    flex: none;
+    color: var(--ap-muted);
+}
+
+.ap-attachments {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+}
+
+.ap-attachment {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    padding: 3px 10px;
+    border-radius: 999px;
+    border: 1px solid var(--ap-border);
+    background: transparent;
+    color: var(--ap-muted);
+    font-size: var(--fs-sm, 12px);
+    cursor: pointer;
+    transition: all 0.15s;
+    max-width: 240px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.ap-attachment:hover {
+    color: var(--ap-accent);
+    border-color: var(--ap-accent);
+}
+
+/* ---------- 状态与提示 ---------- */
+
+.ap-status {
+    text-align: center;
+    padding: 48px 0;
+    color: var(--ap-muted);
+    font-size: 15px;
+}
+
+.ap-status.ap-error {
+    color: var(--ap-red);
+}
+
+.ap-status-actions {
+    display: flex;
+    justify-content: center;
+}
+
+.ap-empty {
+    text-align: center;
+    padding: 40px 0;
+    color: var(--ap-muted);
+    font-size: var(--fs-md, 14px);
+}
+
+.ap-toast {
+    position: fixed;
+    left: 50%;
+    bottom: 28px;
+    transform: translate(-50%, 8px);
+    background: var(--ap-heading);
+    color: var(--ap-page-bg);
+    font-size: var(--fs-sm, 12px);
+    padding: 8px 16px;
+    border-radius: 999px;
+    opacity: 0;
+    pointer-events: none;
+    transition: all 0.2s;
+    max-width: 70vw;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    z-index: 10;
+}
+
+.ap-toast.visible {
+    opacity: 1;
+    transform: translate(-50%, 0);
+}
