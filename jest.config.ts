@@ -34,7 +34,11 @@ if (!vmModulesEnabled && invokedAsJestCli && !process.env.OPENDESK_JEST_ESM_REEX
 
 const shared: Config = {
     preset: 'ts-jest/presets/default-esm',
-    testEnvironment: 'node',
+    // 自定义环境物化并守护全局定时器绑定：Jest vm + ESM 下恢复 fake timers
+    // 可能把 setInterval/clearInterval 从全局上整个删掉（sinon uninstall 的
+    // delete 分支），导致裸标识符调用报 "is not defined" 并污染后续测试，
+    // 详见 src/tests/stable-timer-environment.js 头部说明
+    testEnvironment: '<rootDir>/src/tests/stable-timer-environment.js',
     // 每个测试文件加载前将 OpenDesk 数据目录重定向到一次性临时目录，
     // 防止测试把任务/设置/日志写进真实用户数据（详见 src/tests/test-env.ts）
     setupFiles: ['<rootDir>/src/tests/test-env.ts'],
