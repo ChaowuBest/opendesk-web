@@ -66,6 +66,10 @@ describe('git app 策略', () => {
         expect(unix).toContain(`${HOME_UNIX}/.gitconfig`);
         expect(unix).toContain(`${HOME_UNIX}/.config/git/config`);
         expect(unix).toContain(`${HOME_UNIX}/.config/git/ignore`);
+        // XDG 全局 attributes：git attributes 查找链的一环，路径常不存在
+        //（回归：standard 沙箱 git status 对不存在的 ~/.config/git/attributes
+        // 逐次弹读 ask——策略层放行后，由引擎 allow 先于隐式 ask 命中）
+        expect(unix).toContain(`${HOME_UNIX}/.config/git/attributes`);
         // 系统级配置（Linux/macOS；Windows 的 Git 安装目录由 Program Files 读放行覆盖）
         expect(unix).toContain('/etc/gitconfig');
         // 默认（无注入）用 os.homedir()

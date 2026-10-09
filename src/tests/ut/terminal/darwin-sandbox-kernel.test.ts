@@ -9,13 +9,20 @@ jest.unstable_mockModule('../../../main/applications/terminal/locale/index.js', 
     t: (key: string) => key
 }));
 
-const { prepareDarwinSandbox, prepareShellForSandbox } =
+const { prepareDarwinSandbox, prepareShellForSandbox, sandboxExecCacheDir } =
     await import('../../../main/applications/terminal/sandboxes/darwin-sandbox.js');
 
 const darwinOnly = process.platform === 'darwin' ? describe : describe.skip;
 
+// 与 e2e 相同：独立 exec 缓存目录，避免并行 jest worker 共享用户级缓存时
+// 重签 rename 与 spawn 交叉（也使白名单测试的"缓存零新增"断言免受并发污染）。
+// 必须在模块加载时设置：describe 收集阶段就会求值 sandboxExecCacheDir()，
+// beforeAll 来不及（晚于收集、早于执行，目录常量已固化旧值）。
+process.env.OPENDESK_SANDBOX_EXEC_CACHE = path.join(os.tmpdir(), `opendesk-sandbox-exec-cache-${process.pid}`);
+
 const CLANG = '/usr/bin/clang';
 const CODESIGN = '/usr/bin/codesign';
+const CLT_USR_BIN = '/Library/Developer/CommandLineTools/usr/bin';
 
 function compileProbe(dir: string, name: string, source: string): string {
     const sourcePath = path.join(dir, `${name}.c`);
@@ -77,6 +84,12 @@ darwinOnly('沙箱内核行为（C 探针真实进程）', () => {
      * fixture 本身就在 temp 区，外部拒绝/回收站断言会全部反向。
      */
     const outsideRoot = path.join(os.homedir(), '.opendesk-sbx-kernel-outside');
+    // exec 缓存目录已在模块加载时重定向（见文件顶部）
+    const execCacheDir = sandboxExecCacheDir();
+    const execCacheEntries = (): string[] => {
+        fs.mkdirSync(execCacheDir, { recursive: true });
+        return fs.readdirSync(execCacheDir);
+    };
     const sandboxEnv = (): Record<string, string> => ({
         OPENDESK_SANDBOX_TRASH_DIR: trash,
         OPENDESK_SANDBOX_TRASH: '1',
@@ -151,6 +164,12 @@ int main(int argc, char **argv) {
         printf("errno=%d\\n", errno);
         return 0;
     }
+    if (strcmp(mode, "exec") == 0) {
+        /* exec <file> [args...]：带完整参数列表 exec（argv[0]=file 惯例） */
+        execvp(argv[2], &argv[2]);
+        printf("errno=%d\\n", errno);
+        return 0;
+    }
     return 2;
 }
 `
@@ -199,6 +218,101 @@ int main(int argc, char **argv) {
         const r = await runSandboxed(launch!, probe, ['exec-enoent', 'definitely-not-exist-cmd-xyz'], sandboxEnv());
         expect(r.stdout).toContain('errno=2'); // ENOENT
     });
+
+    test('CLT 编译工具链白名单：原地 exec，不走重签副本', async () => {
+        // 白名单内（cc/clang/ld/swift 等编译/链接驱动）从 CLT 路径 exec：
+        // strip_dyld_env 豁免 → 二进制不被复制到 exec 缓存，直接原地运行
+        //（重签副本对庞大 @rpath 依赖树不稳定，且其写操作由策略另行管控）。
+        const before = execCacheEntries();
+        const r = await runSandboxed(
+            launch!,
+            probe,
+            ['exec', `${CLT_USR_BIN}/clang`, '--version'],
+            sandboxEnv(),
+            60000
+        );
+        expect(r.stdout).toContain('clang version'); // 真的跑起来了
+        expect(r.stdout).not.toContain('errno='); // exec 成功替换进程，不会回落到 errno 输出
+        // 沙箱内 exec 前后缓存目录零新增：豁免目标不产生重签副本
+        const after = execCacheEntries();
+        expect(after.filter((n) => !before.includes(n))).toEqual([]);
+    }, 60000);
+
+    test('CLT 白名单匹配版本后缀：clang++/gcc 等基名与 clang-N 通配一致放行', async () => {
+        // clang++ 同样命中白名单；真实带版本号二进制（clang-NN）CLT 内不存在，
+        // 通配匹配由 boxdylib-matching 的 C harness 单测覆盖
+        for (const tool of ['clang++', 'gcc', 'ld']) {
+            const r = await runSandboxed(
+                launch!,
+                probe,
+                ['exec', `${CLT_USR_BIN}/${tool}`, '--version'],
+                sandboxEnv(),
+                60000
+            );
+            expect(r.stdout).not.toContain('errno=');
+        }
+    }, 120000);
+
+    test('白名单外 CLT 平台二进制（clang-format）走重签副本，仍被注入管控', async () => {
+        // clang-format 是 Apple 平台二进制但不在白名单：复制+adhoc 重签后
+        // 从缓存 exec，DYLD 注入生效（与白名单的 strip 行为相反路径）。
+        // 缓存副本可能被同进程更早的运行预建（重试/超时续跑），故断言
+        // "运行后缓存中存在该 basename 的副本"而非"条目数新增"。
+        const r = await runSandboxed(
+            launch!,
+            probe,
+            ['exec', `${CLT_USR_BIN}/clang-format`, '--version'],
+            sandboxEnv(),
+            60000
+        );
+        expect(r.stdout).toContain('clang-format version');
+        expect(r.stdout).not.toContain('errno=');
+        const hasCopy = (dir: string): boolean =>
+            fs.readdirSync(dir, { withFileTypes: true }).some((e) => {
+                const p = path.join(dir, e.name);
+                return e.isDirectory() ? hasCopy(p) : e.name === 'clang-format';
+            });
+        expect(hasCopy(execCacheDir)).toBe(true);
+    }, 60000);
+
+    test('lipo 只读子命令白名单放行，变更型子命令拒绝（fail-closed）', async () => {
+        const okRead = await runSandboxed(
+            launch!,
+            probe,
+            ['exec', `${CLT_USR_BIN}/lipo`, '-archs', CLANG],
+            sandboxEnv(),
+            60000
+        );
+        expect(okRead.stdout).toContain('x86_64'); // lipo -archs 输出包含架构名
+        expect(okRead.stdout).not.toContain('errno=');
+
+        const denyWrite = await runSandboxed(
+            launch!,
+            probe,
+            ['exec', `${CLT_USR_BIN}/lipo`, '-create', CLANG, '-output', path.join(workspace, 'fat')],
+            sandboxEnv(),
+            60000
+        );
+        expect(denyWrite.stdout).toContain('errno=13'); // EACCES：变更型 lipo 拒绝
+        expect(fs.existsSync(path.join(workspace, 'fat'))).toBe(false);
+    }, 120000);
+
+    test('xcode-select shim（/usr/bin/lipo）两跳 exec：真实 lipo 命中白名单不被重签', async () => {
+        // 回归（BUG lipo SIGABRT）：构建脚本经 /usr/bin/lipo（xcode-select tool-shim）
+        // 调用。shim 自身也是平台二进制，旧逻辑将其复制重签后，运行时 shim 会
+        // exec CLT 真实 lipo，第二次 exec 再次走重签——副本平铺布局破坏
+        // @rpath/libLTO.dylib（LC_RPATH=@executable_path/../lib/）解析，
+        // dyld Library not loaded → SIGABRT，npm run build 的
+        // build-sandbox:darwin（lipo -archs 校验产物）在沙箱内必炸。
+        // 现修复：真实 lipo 命中 CLT 白名单走 strip_dyld_env 豁免，第二跳不再重签；
+        // 两跳都必须成功且 stderr 无 dyld 报错。
+        const r = await runSandboxed(launch!, probe, ['exec', '/usr/bin/lipo', '-archs', CLANG], sandboxEnv(), 60000);
+        expect(r.stdout).toContain('x86_64'); // -archs 正常输出
+        expect(r.stdout).not.toContain('errno=');
+        expect(r.stderr).not.toContain('dyld');
+        expect(r.stderr).not.toContain('Library not loaded');
+        expect(r.code).toBe(0);
+    }, 60000);
 
     test('xcode-select tool-shim（/usr/bin/python3）在沙箱内正常工作', async () => {
         // /usr/bin/python3 是 CLT tool-shim：重签副本依赖原 basename 与 CLT 依赖
