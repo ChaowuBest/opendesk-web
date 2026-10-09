@@ -279,6 +279,14 @@ function sliceReasoningPreviewTail(text) {
     return newlineIndex >= 0 ? tail.slice(newlineIndex + 1) : tail;
 }
 
+/**
+ * 终端工具卡片的开合态归一化。主进程渲染的卡片固定带 open（工具渲染层不应感知
+ * GUI 输出模式），这里在渲染前按当前模式改写：极简模式收起、详细模式展开。
+ *
+ * 只重写 class 含 terminal-tool 的 <details> 开标签，[^>]* 不会跨过标签进入 body。
+ */
+const TERMINAL_CARD_DETAILS_TAG_RE = /<details\b([^>]*\bclass="[^"]*\bterminal-tool(?=[\s"])[^"]*"[^>]*)>/g;
+
 class TaskView extends HTMLElement {
     // 全局侧边栏状态：跨任务共享
     static rightSidebarExpanded = false;
@@ -1292,6 +1300,9 @@ class TaskView extends HTMLElement {
                 block.classList.contains('reasoning-expanded') || block.classList.contains('reasoning-bubble-pinned')
             );
         });
+        root?.querySelectorAll?.('details.terminal-tool[data-terminal-card-key]').forEach((card) => {
+            state.set(card.dataset.terminalCardKey, card.open === true);
+        });
         return state;
     }
 
@@ -1351,6 +1362,35 @@ class TaskView extends HTMLElement {
         }
     }
 
+    /**
+     * 把主进程渲染的终端工具卡片 HTML 改写为当前 GUI 输出模式期望的开合态。
+     *
+     * 工具渲染层固定输出 open 的 <details>，不应感知 GUI 模式；展开态由渲染层在
+     * 这里统一归一：极简模式收起（避免展开块内层层滚动条），详细模式展开。
+     * disclosureState 里记录了用户的手动开合，优先于模式默认值，保证流式重渲染
+     * 不会把用户刚展开的卡片又折回去。
+     *
+     * 卡片按渲染位置（消息 → part → 卡序）标识并写入 data-terminal-card-key：
+     * 直接取工具 HTML 里的 id 会拿到 HTML 转义后的文本，与 DOM dataset 解码后的
+     * 值对不上；位置 key 两端同源，且同一 part 的卡片只增不改、顺序稳定。
+     */
+    static _applyTerminalCardDisclosure(html, disclosureState, messageId, partIndex) {
+        const source = String(html || '');
+        if (!source.includes('terminal-tool')) return source;
+        let cardIndex = 0;
+        return source.replace(TERMINAL_CARD_DETAILS_TAG_RE, (_match, attrs) => {
+            const key = `${messageId}-terminal-card-${partIndex}-${cardIndex}`;
+            cardIndex += 1;
+            const stored = disclosureState?.get(key);
+            const expanded = stored === undefined ? getDefaultExpanded(guiOutputMode) : stored === true;
+            // open 是布尔属性：只剥离独立成词的它，属性值里的 "open" 因两侧是引号
+            // 而不会被 (?=\s|$) 命中。
+            const cleaned = attrs.replace(/(^|\s)open(?=\s|$)/, '$1').replace(/\s+$/, '');
+            const keyAttribute = ` data-terminal-card-key="${escapeHtml(key)}"`;
+            return expanded ? `<details${cleaned}${keyAttribute} open>` : `<details${cleaned}${keyAttribute}>`;
+        });
+    }
+
     _renderProcessEntry(entry, messageId, disclosureState, options = {}) {
         if (entry.type === 'reasoning') {
             // 已完成消息（isRunning === false）中即使 part 残留 streaming 标记，也必须按
@@ -1373,7 +1413,7 @@ class TaskView extends HTMLElement {
                 disclosureKey
             );
         }
-        return String(entry.part?.rendered || '');
+        return TaskView._applyTerminalCardDisclosure(entry.part?.rendered, disclosureState, messageId, entry.partIndex);
     }
 
     _renderProcessItem(item, messageId, disclosureState, options = {}) {
@@ -1407,9 +1447,8 @@ class TaskView extends HTMLElement {
 
     _renderRunningProcessDetails(item, messageId, disclosureState) {
         const detailId = `od-${messageId}-running-details`;
-        const attentionClass = item.requiresUserAttention ? ' od-user-attention-process-detail' : '';
         return `
-            <div id="${escapeHtml(detailId)}" class="od-process-detail od-running-process-detail${attentionClass} is-open"
+            <div id="${escapeHtml(detailId)}" class="od-process-detail od-running-process-detail is-open"
                 data-output-key="${escapeHtml(item.key)}">
                 ${item.entries
                     .map((entry) => this._renderProcessEntry(entry, messageId, disclosureState, { isRunning: true }))
@@ -2488,9 +2527,8 @@ class TaskView extends HTMLElement {
 
     _getProcessScrollFollowTargets(root) {
         const targets = new Map();
-        root.querySelectorAll('.od-process-detail.is-open[id]').forEach((element) => {
-            targets.set(`process:${element.id}`, element);
-        });
+        // 过程块展开后按内容自然高度铺开、不再是滚动容器，故不再是滚动跟随目标；
+        // 其内部的思考全文区仍有自身限高，继续参与跟随。
         root.querySelectorAll('.reasoning-block-od.reasoning-expanded .reasoning-full-area').forEach((element) => {
             const key = element.dataset.reasoningScrollKey;
             if (key !== undefined) targets.set(`reasoning:${key}`, element);

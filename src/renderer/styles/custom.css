@@ -3671,13 +3671,11 @@ agent-input[hide-disclaimer] .agent-input-footer {
     transform: rotate(90deg);
 }
 
+/* 展开的过程块按内容实际高度铺开：内部终端卡片在极简模式默认收起，
+   若此处再叠一层限高滚动，会与卡片自身滚动区形成"小框套小框"的嵌套滚动条。 */
 .od-process-detail {
     display: none;
     box-sizing: border-box;
-    max-height: 280px;
-    overflow-y: auto;
-    overscroll-behavior: auto;
-    scrollbar-gutter: stable;
     margin: 0;
     padding: 2px 0 0;
     border: 0;
@@ -3687,45 +3685,6 @@ agent-input[hide-disclaimer] .agent-input-footer {
 
 .od-process-detail.is-open {
     display: block;
-}
-
-.od-user-attention-process-detail {
-    max-height: none;
-    overflow: visible;
-    scrollbar-gutter: auto;
-}
-
-.od-assistant-output-flow[data-reason-display='bubble'] .od-process-detail.is-open {
-    max-height: none;
-    overflow: visible;
-    scrollbar-gutter: auto;
-}
-
-.od-process-detail {
-    scrollbar-color: #9aa3ad transparent;
-    scrollbar-width: thin;
-}
-
-.od-process-detail::-webkit-scrollbar {
-    width: 8px;
-}
-
-.od-process-detail::-webkit-scrollbar-track {
-    background: transparent;
-}
-
-.od-process-detail::-webkit-scrollbar-thumb {
-    border: 2px solid var(--od-bg-elevated);
-    border-radius: 5px;
-    background: #9aa3ad;
-}
-
-html[data-theme='dark'] .od-process-detail {
-    scrollbar-color: rgba(255, 255, 255, 0.18) transparent;
-}
-
-html[data-theme='dark'] .od-process-detail::-webkit-scrollbar-thumb {
-    background: rgba(255, 255, 255, 0.18);
 }
 
 .od-stage-body,

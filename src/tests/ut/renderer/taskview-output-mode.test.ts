@@ -127,6 +127,24 @@ describe('task-view GUI output modes', () => {
         };
     }
 
+    /** 主进程终端卡片渲染产物：<details class="terminal-tool" ... open> 固定为展开。 */
+    function terminalCardHtml(id: string, output = 'output') {
+        return (
+            `<details data-toolcall-id="${id}" class="terminal-tool od-card-shadow" open>` +
+            `<summary class="terminal-tool-summary">${id}</summary>` +
+            `<div class="terminal-tool-scroll"><pre class="terminal-tool-output">${output}</pre></div>` +
+            `</details>`
+        );
+    }
+
+    function terminalToolPart(ids: string[]) {
+        return {
+            type: 'tool_call',
+            rendered: ids.map((id) => terminalCardHtml(id)).join(''),
+            toolcalls: ids.map((id) => ({ id, tool_name: 'bash', status: 'success' }))
+        };
+    }
+
     function transcript() {
         return [
             { type: 'reasoning', rendered: '分析现有结构' },
@@ -547,8 +565,9 @@ describe('task-view GUI output modes', () => {
             /\.reasoning-bubble\{[^}]*position:absolute;[^}]*width:600px;[^}]*max-height:300px;/
         );
         expect(taskViewStyles).toMatch(/\.reasoning-bubble\.reasoning-bubble-hidden\{[^}]*opacity:0;/);
-        expect(taskViewStyles).toMatch(
-            /\.od-assistant-output-flow\[data-reason-display='bubble'\]\.od-process-detail\.is-open\{[^}]*overflow:visible;/
+        // 过程块已不限高，bubble 浮层不再需要额外的展开态溢出覆盖。
+        expect(taskViewStyles).not.toMatch(
+            /\.od-assistant-output-flow\[data-reason-display='bubble'\]\.od-process-detail/
         );
     });
 
@@ -624,10 +643,11 @@ describe('task-view GUI output modes', () => {
         });
 
         expect(view.querySelector('.od-running-process-detail')).not.toBeNull();
-        expect(view.querySelector('.od-user-attention-process-detail .qr-code')?.textContent).toBe('SCAN QR CODE');
-        expect(taskViewStyles).toMatch(
-            /\.od-user-attention-process-detail\{[^}]*max-height:none;[^}]*overflow:visible;[^}]*scrollbar-gutter:auto;/
-        );
+        expect(view.querySelector('.od-running-process-detail .qr-code')?.textContent).toBe('SCAN QR CODE');
+        // 过程块统一按内容实际高度铺开，注意力卡片无需再单独解除限高。
+        expect(taskViewStyles).not.toMatch(/\.od-user-attention-process-detail/);
+        expect(taskViewStyles).toMatch(/\.od-process-detail\{[^}]*display:none;/);
+        expect(taskViewStyles).not.toMatch(/\.od-process-detail\{[^}]*max-height:/);
     });
 
     test('minimal running output shows completed stages before the current-operation row without expansion', () => {
@@ -1359,7 +1379,7 @@ describe('task-view GUI output modes', () => {
         );
     });
 
-    test('expanded completed process grows naturally while nested process details keep their height limit', () => {
+    test('expanded process blocks grow to their content height without an outer scroller', () => {
         expect(taskViewStyles).toMatch(
             /\.od-completed-process-detail\.is-open\{[^}]*display:block;[^}]*max-height:none;[^}]*overflow:visible;/
         );
@@ -1371,9 +1391,13 @@ describe('task-view GUI output modes', () => {
             /\.od-process-summary\{[^}]*min-height:var\(--od-process-row-min-height\);[^}]*padding:var\(--od-process-row-pad-block\)0;[^}]*border-bottom:0;[^}]*border-radius:0;/
         );
         expect(taskViewStyles).not.toContain(".od-process-summary[aria-expanded='true']{border-bottom-color:");
-        expect(taskViewStyles).toMatch(
-            /\.od-process-detail\{[^}]*max-height:280px;[^}]*overflow-y:auto;[^}]*margin:0;/
-        );
+        // 展开层不再自建滚动区：限高与滚动条样式全部下沉到卡片自身。
+        expect(taskViewStyles).toMatch(/\.od-process-detail\{[^}]*margin:0;/);
+        expect(taskViewStyles).not.toMatch(/\.od-process-detail\{[^}]*max-height:/);
+        expect(taskViewStyles).not.toMatch(/\.od-process-detail\{[^}]*overflow-y:/);
+        expect(taskViewStyles).not.toMatch(/\.od-process-detail\{[^}]*scrollbar-gutter:/);
+        expect(taskViewStyles).not.toContain('.od-process-detail::-webkit-scrollbar');
+        expect(taskViewStyles).not.toContain("html[data-theme='dark'] .od-process-detail");
     });
 
     test('GUI output does not maintain a message-level timer', () => {
@@ -1381,9 +1405,9 @@ describe('task-view GUI output modes', () => {
         expect(view._assistantRunStartedAt).toBeUndefined();
     });
 
-    test('nested process scrollers hand off wheel scrolling at their boundaries', () => {
-        expect(taskViewStyles).toMatch(/\.od-process-detail\{[^}]*overscroll-behavior:auto;/);
-        expect(taskViewStyles).not.toMatch(/\.od-process-detail\{[^}]*overscroll-behavior:contain;/);
+    test('process blocks no longer nest a scroller, so wheel gestures fall through to the chat history', () => {
+        expect(taskViewStyles).not.toMatch(/\.od-process-detail\{[^}]*overscroll-behavior:/);
+        expect(taskViewStyles).not.toMatch(/\.od-process-detail\{[^}]*overflow-y:auto;/);
     });
 
     test('running status labels exist in both locales', () => {
@@ -1751,6 +1775,95 @@ describe('task-view GUI output modes', () => {
 
         expect(processToggle.getAttribute('aria-expanded')).toBe('false');
         expect(process.querySelector('.od-process-detail')?.classList).not.toContain('is-open');
+    });
+
+    test('minimal mode collapses terminal tool cards inside an expanded process block', () => {
+        const view = createView();
+        view.innerHTML = view.renderAssistantMessage({
+            message_id: 'message-terminal-collapsed',
+            content: [terminalToolPart(['tc-1', 'tc-2']), { type: 'text', rendered: '<p>最终正文</p>' }],
+            timestamp: Date.now()
+        });
+
+        const completedToggle = view.querySelector('[data-completed-process-toggle]') as HTMLElement;
+        view._handleProcessToggleClick({ target: completedToggle, preventDefault() {}, stopPropagation() {} });
+        const processToggle = view.querySelector('[data-process-toggle]') as HTMLElement;
+        view._handleProcessToggleClick({ target: processToggle, preventDefault() {}, stopPropagation() {} });
+
+        const detail = view.querySelector('.od-process-detail') as HTMLElement;
+        expect(detail.classList).toContain('is-open');
+        const cards = detail.querySelectorAll('details.terminal-tool');
+        expect(cards).toHaveLength(2);
+        cards.forEach((card) => expect(card.hasAttribute('open')).toBe(false));
+    });
+
+    test('verbose mode keeps terminal tool cards expanded by default', () => {
+        onSettingChanged?.({ locale: 'zh-CN', gui_config: { output_mode: 'verbose' } });
+        const view = createView();
+        view.innerHTML = view._renderAssistantOutputHtml([terminalToolPart(['tc-1', 'tc-2'])], {
+            isRunning: false,
+            messageId: 'message-terminal-verbose'
+        });
+
+        const cards = view.querySelectorAll('details.terminal-tool');
+        expect(cards).toHaveLength(2);
+        cards.forEach((card) => expect(card.hasAttribute('open')).toBe(true));
+    });
+
+    test('a manually expanded terminal card survives the re-render of its message', () => {
+        const view = createView();
+        const parts = [terminalToolPart(['tc-1', 'tc-2'])];
+        const render = (disclosureState?: Map<string, boolean>) =>
+            view._renderAssistantOutputHtml(parts, {
+                isRunning: true,
+                messageId: 'message-terminal-disclosure',
+                showRunningDetails: true,
+                disclosureState
+            });
+        view.innerHTML = render();
+
+        const cards = view.querySelectorAll('details.terminal-tool');
+        expect(cards).toHaveLength(2);
+        (cards[1] as HTMLDetailsElement).open = true;
+
+        // 流式快照重渲染：用户展开的卡片保持展开，另一张仍按模式默认值收起。
+        view.innerHTML = render(view._captureProcessDisclosureState(view));
+
+        const rerendered = view.querySelectorAll('details.terminal-tool');
+        expect(rerendered).toHaveLength(2);
+        expect((rerendered[0] as HTMLDetailsElement).hasAttribute('open')).toBe(false);
+        expect((rerendered[1] as HTMLDetailsElement).hasAttribute('open')).toBe(true);
+    });
+
+    test('terminal card disclosure rewriting only touches terminal tool tags', () => {
+        const html =
+            terminalCardHtml('tc-1') +
+            '<details class="file-tool-card" open><summary>file</summary><div>body</div></details>' +
+            '<div class="text-open">open</div>';
+
+        const collapsed = TaskViewClass._applyTerminalCardDisclosure(html, undefined, 'message-x', 0);
+        expect(collapsed).toContain(
+            '<details data-toolcall-id="tc-1" class="terminal-tool od-card-shadow"' +
+                ' data-terminal-card-key="message-x-terminal-card-0-0">'
+        );
+        expect(collapsed).toContain('<details class="file-tool-card" open>');
+        expect(collapsed).toContain('<div class="text-open">open</div>');
+        expect(collapsed).not.toContain('terminal-tool od-card-shadow" open');
+    });
+
+    test('terminal card keys stay stable per part and card position', () => {
+        const html = terminalCardHtml('tc-1') + terminalCardHtml('tc-2');
+        const keys = (source: string) =>
+            Array.from(source.matchAll(/data-terminal-card-key="([^"]*)"/g)).map((match) => match[1]);
+
+        expect(keys(TaskViewClass._applyTerminalCardDisclosure(html, undefined, 'm1', 3))).toEqual([
+            'm1-terminal-card-3-0',
+            'm1-terminal-card-3-1'
+        ]);
+        // 输出内容变化后 key 不变，用户手动展开的卡片不会在流式刷新中串位。
+        expect(
+            keys(TaskViewClass._applyTerminalCardDisclosure(terminalCardHtml('tc-1', 'more'), undefined, 'm1', 3))
+        ).toEqual(['m1-terminal-card-3-0']);
     });
 
     test('completed minimal output renders a stale streaming reasoning part as completed without a live timer', () => {
