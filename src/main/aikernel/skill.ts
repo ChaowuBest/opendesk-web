@@ -384,7 +384,10 @@ const LoadSkillSchema = z.object({
 
 class LoadSkillTool extends BaseTool<typeof LoadSkillSchema> {
     constructor() {
-        super('LoadSkill', '读取指定技能(Skill)的内容', LoadSkillSchema);
+        super('LoadSkill', '读取指定技能(Skill)的内容', LoadSkillSchema, undefined, {
+            'zh-CN': '读取技能',
+            'en-US': 'Load Skill'
+        });
         this.setExecutor(this.loadSkill.bind(this));
     }
 
@@ -545,7 +548,9 @@ class CallSkillTool extends BaseTool<typeof CallSkillToolSchema> {
         super(
             'CallSkillTool',
             '调用Skill提供的内部工具, 只有先调用LoadSkillTool加载了Skill, 才能调用它的内部工具',
-            CallSkillToolSchema
+            CallSkillToolSchema,
+            undefined,
+            { 'zh-CN': '调用技能', 'en-US': 'Call Skill' }
         );
         this.setUniversalExecutor(this.callSkillToolUniversal.bind(this));
     }

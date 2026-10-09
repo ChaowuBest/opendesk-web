@@ -66,6 +66,10 @@ describe('git app 策略', () => {
         expect(unix).toContain(`${HOME_UNIX}/.gitconfig`);
         expect(unix).toContain(`${HOME_UNIX}/.config/git/config`);
         expect(unix).toContain(`${HOME_UNIX}/.config/git/ignore`);
+        // XDG 全局 attributes：git attributes 查找链的一环，路径常不存在
+        //（回归：standard 沙箱 git status 对不存在的 ~/.config/git/attributes
+        // 逐次弹读 ask——策略层放行后，由引擎 allow 先于隐式 ask 命中）
+        expect(unix).toContain(`${HOME_UNIX}/.config/git/attributes`);
         // 系统级配置（Linux/macOS；Windows 的 Git 安装目录由 Program Files 读放行覆盖）
         expect(unix).toContain('/etc/gitconfig');
         // 默认（无注入）用 os.homedir()
@@ -99,6 +103,14 @@ describe('node app 策略', () => {
         expect(allows).toContain(`${HOME_UNIX}/.harmonybrew/**`);
         const npmrc = rules.find((r) => r.pathPattern.endsWith('.npmrc'));
         expect(npmrc?.effect).toBe('ask');
+    });
+    test('npm 调试日志目录写放行（每次 npm/npx 执行都写 _logs/*.log，回归：standard 沙箱逐次写 ask）', () => {
+        // 实测：沙箱内 npx jest 一次即对 ~/.npm/_logs/<时间戳>-debug-0.log 触发写 ask
+        //（cache_ttl=0 不缓存，每次 npm 执行必弹）。日志为框架诊断产物，放行写。
+        const rules = createNodePolicyRules(HOME_UNIX);
+        const writes = rules.filter((r) => r.action === 'write' && r.effect === 'allow').map((r) => r.pathPattern);
+        expect(writes).toContain(`${HOME_UNIX}/.npm/_logs/**`);
+        expect(writes).toContain(`${HOME_UNIX}/AppData/Local/npm-cache/_logs/**`);
     });
 });
 

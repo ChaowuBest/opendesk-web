@@ -87,7 +87,9 @@ export class InstallMcpServerTool extends BaseTool<typeof InstallMcpServerArgsSc
         super(
             'installMcpServer',
             'Install a new MCP server with specified configuration. Use this when user wants to add a new MCP server.',
-            InstallMcpServerArgsSchema
+            InstallMcpServerArgsSchema,
+            undefined,
+            { 'zh-CN': '安装 MCP 服务器', 'en-US': 'Install MCP Server' }
         );
         this.mcpApp = mcpApp;
         this.setExecutor(this.install.bind(this));
@@ -195,7 +197,9 @@ export class ListMcpServersTool extends BaseTool<typeof ListMcpServersArgsSchema
         super(
             'listMcpServers',
             'List all installed MCP servers with their status and configuration',
-            ListMcpServersArgsSchema
+            ListMcpServersArgsSchema,
+            undefined,
+            { 'zh-CN': 'MCP 服务器列表', 'en-US': 'List MCP Servers' }
         );
         this.mcpApp = mcpApp;
         this.setExecutor(this.list.bind(this));
@@ -261,7 +265,9 @@ export class ListMcpRegistriesTool extends BaseTool<typeof ListMcpRegistriesArgs
         super(
             'listMcpRegistries',
             'List MCP registries available in the MCP marketplace, including registry IDs used by searchMcpRegistry.',
-            ListMcpRegistriesArgsSchema
+            ListMcpRegistriesArgsSchema,
+            undefined,
+            { 'zh-CN': '注册表列表', 'en-US': 'List Registries' }
         );
         this.mcpApp = mcpApp;
         this.setExecutor(this.list.bind(this));
@@ -288,7 +294,9 @@ export class SearchMcpRegistryTool extends BaseTool<typeof SearchMcpRegistryArgs
         super(
             'searchMcpRegistry',
             'Search an MCP registry marketplace for MCP servers. Use listMcpRegistries first if the registry ID is unknown.',
-            SearchMcpRegistryArgsSchema
+            SearchMcpRegistryArgsSchema,
+            undefined,
+            { 'zh-CN': '搜索注册表', 'en-US': 'Search Registry' }
         );
         this.mcpApp = mcpApp;
         this.setExecutor(this.search.bind(this));
@@ -318,7 +326,9 @@ export class GetMcpRegistryEntryTool extends BaseTool<typeof GetMcpRegistryEntry
         super(
             'getMcpRegistryEntry',
             'Get full details and install configuration for one MCP registry entry.',
-            GetMcpRegistryEntryArgsSchema
+            GetMcpRegistryEntryArgsSchema,
+            undefined,
+            { 'zh-CN': '注册表条目', 'en-US': 'Registry Entry' }
         );
         this.mcpApp = mcpApp;
         this.setExecutor(this.getDetail.bind(this));
@@ -366,7 +376,9 @@ export class InstallMcpServerFromRegistryTool extends BaseTool<typeof InstallMcp
         super(
             'installMcpServerFromRegistry',
             'Install an MCP server from a registry marketplace entry. Use searchMcpRegistry to find entries first.',
-            InstallMcpServerFromRegistryArgsSchema
+            InstallMcpServerFromRegistryArgsSchema,
+            undefined,
+            { 'zh-CN': '从注册表安装', 'en-US': 'Install From Registry' }
         );
         this.mcpApp = mcpApp;
         this.setExecutor(this.install.bind(this));
@@ -406,7 +418,9 @@ export class ImportMcpServersFromJsonTool extends BaseTool<typeof ImportMcpServe
         super(
             'importMcpServersFromJson',
             'Import MCP server configurations from JSON, including Claude Desktop or Cursor mcpServers config.',
-            ImportMcpServersFromJsonArgsSchema
+            ImportMcpServersFromJsonArgsSchema,
+            undefined,
+            { 'zh-CN': '导入 MCP 配置', 'en-US': 'Import MCP Servers' }
         );
         this.mcpApp = mcpApp;
         this.setExecutor(this.importJson.bind(this));
@@ -442,7 +456,9 @@ export class UpdateMcpServerTool extends BaseTool<typeof UpdateMcpServerArgsSche
         super(
             'updateMcpServer',
             'Edit an installed MCP server configuration by name or ID. Supports the same fields as the GUI editor.',
-            UpdateMcpServerArgsSchema
+            UpdateMcpServerArgsSchema,
+            undefined,
+            { 'zh-CN': '更新 MCP 服务器', 'en-US': 'Update MCP Server' }
         );
         this.mcpApp = mcpApp;
         this.setExecutor(this.update.bind(this));
@@ -510,7 +526,9 @@ export class ReconnectMcpServerTool extends BaseTool<typeof ReconnectMcpServerAr
         super(
             'reconnectMcpServer',
             'Reconnect an installed MCP server by name or ID, matching the GUI reconnect action.',
-            ReconnectMcpServerArgsSchema
+            ReconnectMcpServerArgsSchema,
+            undefined,
+            { 'zh-CN': '重连 MCP 服务器', 'en-US': 'Reconnect MCP Server' }
         );
         this.mcpApp = mcpApp;
         this.setExecutor(this.reconnect.bind(this));
@@ -541,7 +559,10 @@ export class DeleteMcpServerTool extends BaseTool<typeof DeleteMcpServerArgsSche
     private mcpApp: any;
 
     constructor(mcpApp: any) {
-        super('deleteMcpServer', 'Delete an MCP server by name or ID', DeleteMcpServerArgsSchema);
+        super('deleteMcpServer', 'Delete an MCP server by name or ID', DeleteMcpServerArgsSchema, undefined, {
+            'zh-CN': '删除 MCP 服务器',
+            'en-US': 'Delete MCP Server'
+        });
         this.mcpApp = mcpApp;
         this.setExecutor(this.delete.bind(this));
     }
@@ -606,7 +627,9 @@ export class ToggleMcpServerTool extends BaseTool<typeof ToggleMcpServerArgsSche
         super(
             'toggleMcpServer',
             'Toggle an MCP server on/off by name or ID. Set enabled=true to activate the server, enabled=false to deactivate it. The server configuration is preserved.',
-            ToggleMcpServerArgsSchema
+            ToggleMcpServerArgsSchema,
+            undefined,
+            { 'zh-CN': '启用/停用 MCP 服务器', 'en-US': 'Toggle MCP Server' }
         );
         this.mcpApp = mcpApp;
         this.setExecutor(this.toggle.bind(this));

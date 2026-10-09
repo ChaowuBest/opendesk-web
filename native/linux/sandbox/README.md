@@ -13,6 +13,10 @@ rename/chmod/execve 等），对每次访问按策略（TOML 规则，真实路�
 - **allow**：放行
 - **deny**：拒绝（errno=EACCES）
 - **ask**：向宿主决策端点发起 HTTP 询问（超时/不可达一律拒绝，fail-closed）
+- **写目标父链缺失透传（判定层，四平台统一）**：写类操作（open 写模式/mkdir/rename
+  目标）的直接父目录当前不存在时，该写注定失败（内核返回 ENOENT），直接透传内核
+  错误码、不触发 ask（deny 规则仍优先拦截）。典型噪音源：dbghelp/SymSrv 按模块
+  内嵌 CodeView 路径（如 node.exe 的 `c:\ws\out\Release\node.pdb`）探测写入符号缓存。
 
 路径语义为**身份命名空间**：沙箱内路径与宿主完全一致，无虚拟根/路径映射（与
 OpenHarmony 版一致）。系统运行时读/执行由内建 `system_read` 清单放行，写工作区

@@ -3671,13 +3671,11 @@ agent-input[hide-disclaimer] .agent-input-footer {
     transform: rotate(90deg);
 }
 
+/* 展开的过程块按内容实际高度铺开：内部终端卡片在极简模式默认收起，
+   若此处再叠一层限高滚动，会与卡片自身滚动区形成"小框套小框"的嵌套滚动条。 */
 .od-process-detail {
     display: none;
     box-sizing: border-box;
-    max-height: 280px;
-    overflow-y: auto;
-    overscroll-behavior: auto;
-    scrollbar-gutter: stable;
     margin: 0;
     padding: 2px 0 0;
     border: 0;
@@ -3687,45 +3685,6 @@ agent-input[hide-disclaimer] .agent-input-footer {
 
 .od-process-detail.is-open {
     display: block;
-}
-
-.od-user-attention-process-detail {
-    max-height: none;
-    overflow: visible;
-    scrollbar-gutter: auto;
-}
-
-.od-assistant-output-flow[data-reason-display='bubble'] .od-process-detail.is-open {
-    max-height: none;
-    overflow: visible;
-    scrollbar-gutter: auto;
-}
-
-.od-process-detail {
-    scrollbar-color: #9aa3ad transparent;
-    scrollbar-width: thin;
-}
-
-.od-process-detail::-webkit-scrollbar {
-    width: 8px;
-}
-
-.od-process-detail::-webkit-scrollbar-track {
-    background: transparent;
-}
-
-.od-process-detail::-webkit-scrollbar-thumb {
-    border: 2px solid var(--od-bg-elevated);
-    border-radius: 5px;
-    background: #9aa3ad;
-}
-
-html[data-theme='dark'] .od-process-detail {
-    scrollbar-color: rgba(255, 255, 255, 0.18) transparent;
-}
-
-html[data-theme='dark'] .od-process-detail::-webkit-scrollbar-thumb {
-    background: rgba(255, 255, 255, 0.18);
 }
 
 .od-stage-body,
@@ -3778,8 +3737,8 @@ html[data-theme='dark'] .od-process-detail::-webkit-scrollbar-thumb {
     text-align: left;
 }
 
-.od-running-status:hover .od-running-status-line,
-.od-running-status:focus-visible .od-running-status-line {
+.od-running-status:hover .od-running-status-text,
+.od-running-status:focus-visible .od-running-status-text {
     color: var(--od-text);
     text-decoration: underline;
     text-decoration-color: var(--od-border-strong);
@@ -3820,28 +3779,53 @@ html[data-theme='dark'] .od-process-detail::-webkit-scrollbar-thumb {
     overflow: hidden;
 }
 
-.od-running-status-line {
+/* 状态行文本容器：分段淡入的宿主，保持行高与摘要行一致 */
+.od-running-status-text {
     display: flex;
     align-items: center;
+    min-width: 0;
     height: 22px;
-    animation: od-status-roll-in 180ms ease-out;
 }
 
-.od-running-status-line > span {
+/* 状态行分段：仅变化的分段（目标名/工具计数）重播淡入，label 保持静止。
+   纯 opacity 动画，无位移、无重排 */
+.od-running-status-fade {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    animation: od-status-fade-in 220ms ease-in-out;
+}
+
+.od-running-status-fade--static {
+    animation: none;
+}
+
+.od-running-status-fade > span {
     min-width: 0;
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
 }
 
-@keyframes od-status-roll-in {
-    from {
+.od-running-status-separator {
+    flex: none;
+    white-space: pre;
+}
+
+/* 状态行目标名（工具名/深度思考）的高亮色，取自 markdown 行内代码的前景色。
+   font-family 继承两侧文本：code 的等宽默认字形与 UI 字体基线/宽度不同，会导致对齐问题 */
+.od-running-status-target code {
+    color: var(--chat-accent);
+    font-family: inherit;
+}
+
+@keyframes od-status-fade-in {
+    0% {
         opacity: 0;
-        transform: translateY(5px);
     }
-    to {
+    100% {
         opacity: 1;
-        transform: translateY(0);
     }
 }
 
@@ -3860,7 +3844,7 @@ html[data-theme='dark'] .od-process-detail::-webkit-scrollbar-thumb {
 @media (prefers-reduced-motion: reduce) {
     .od-completed-process-chevron,
     .od-process-chevron,
-    .od-running-status-line {
+    .od-running-status-fade {
         animation: none;
         transition: none;
     }

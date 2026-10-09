@@ -828,6 +828,98 @@ static void exec_cache_dir(char *out, size_t cap)
  */
 static char *resign_copy_for_exec_internal(const char *path);
 
+/* 读取重签副本所在目录的 .opendesk-framework-home 标记。
+ * 返回 malloc 的框架 prefix（调用方 free）；无标记/读取失败返回 NULL。 */
+static char *read_python_home_marker(const char *copy_dir)
+{
+    char marker[PATH_MAX];
+    snprintf(marker, sizeof(marker), "%s/.opendesk-framework-home", copy_dir);
+    struct stat st;
+    if (stat(marker, &st) != 0 || st.st_size <= 0) return NULL;
+    char content[PATH_MAX];
+    int mfd = open(marker, O_RDONLY | O_CLOEXEC);
+    if (mfd < 0) return NULL;
+    ssize_t n = read(mfd, content, sizeof(content) - 1);
+    close(mfd);
+    if (n <= 0) return NULL;
+    content[n] = '\0';
+    return xstrdup(content);
+}
+
+/* 在重签副本所在目录写入/清除 .opendesk-framework-home 标记。
+ * 仅当二进制属于某个 Python.framework（Apple/CLT 的 Python3.framework 或
+ * Homebrew 的 Python.framework）时写入其 Versions/<ver> prefix；其余二进制
+ * 清除历史标记。每次返回副本（含缓存命中短路）都调用，保证旧版本写入的
+ * 脏标记（曾无条件硬编码 CLT 3.9）被及时纠正。标记与副本同目录，
+ * 读取方（dirname(副本路径)）对带镜像子目录的 stub 同样成立。 */
+static void update_python_home_marker(const char *copy_dir, const char *path)
+{
+    char marker[PATH_MAX];
+    snprintf(marker, sizeof(marker), "%s/.opendesk-framework-home", copy_dir);
+    char resolved_orig_py[PATH_MAX];
+    char py_home[PATH_MAX];
+    bool found_prefix = false;
+    /* realpath 解析 symlink/hardlink（/usr/bin/python3 → CLT、
+     * /opt/homebrew/bin/python3 → Homebrew）到真实二进制，再向上定位其所属
+     * Python.framework 的 Versions/<ver> 层。stub 二进制多一层
+     * Resources/Python.app/Contents/MacOS，统一回溯到最近的 "Versions" 段。
+     * 非 Framework 布局（venv/静态安装等）不注入，让解释器自行定位 stdlib。 */
+    if (realpath(path, resolved_orig_py) != NULL) {
+        char *homebrew_pos = strstr(resolved_orig_py, "/Python.framework/");
+        char *apple_pos = strstr(resolved_orig_py, "/Python3.framework/");
+        char *framework_pos = homebrew_pos ? homebrew_pos : apple_pos;
+        if (framework_pos) {
+            const char *rel = (framework_pos == homebrew_pos) ? "/Python.framework/" : "/Python3.framework/";
+            const char *after = framework_pos + strlen(rel);
+            char *versions = strstr(after, "Versions/");
+            if (versions) {
+                char *ver = versions + strlen("Versions/");
+                char *end = strchr(ver, '/');
+                if (end && end > ver) {
+                    size_t prefix_len = (size_t)(end - resolved_orig_py);
+                    if (prefix_len < sizeof(py_home)) {
+                        memcpy(py_home, resolved_orig_py, prefix_len);
+                        py_home[prefix_len] = '\0';
+                        struct stat st2;
+                        if (stat(py_home, &st2) == 0 && S_ISDIR(st2.st_mode)) found_prefix = true;
+                    }
+                }
+            }
+        }
+    }
+    if (!found_prefix) {
+        /* 清除历史标记：旧版本曾无条件写 CLT 3.9 路径，非框架二进制不应携带 */
+        unlink(marker);
+        return;
+    }
+    size_t home_len = strlen(py_home);
+    /* 内容未变则跳过写入：缓存命中路径每次 exec 都会到这里，避免无谓 IO，
+     * 同时缩小并发 exec 一写一读的竞态窗口 */
+    char current[PATH_MAX];
+    int rfd = open(marker, O_RDONLY | O_CLOEXEC);
+    if (rfd >= 0) {
+        ssize_t n = read(rfd, current, sizeof(current) - 1);
+        close(rfd);
+        if (n == (ssize_t)home_len && memcmp(current, py_home, home_len) == 0) return;
+    }
+    /* 原子写入（tmp + rename）：并发 exec 同一二进制时，读方
+     * （read_python_home_marker）读到空/半截标记会被当成"无需注入"，
+     * framework Python 随即因定位不到 stdlib 启动失败 */
+    char tmp[PATH_MAX];
+    static _Atomic uint32_t marker_seq = 0;
+    snprintf(tmp, sizeof(tmp), "%s.tmp.%d.%u", marker, (int)getpid(),
+             atomic_fetch_add(&marker_seq, 1));
+    int mfd = open(tmp, O_WRONLY | O_CREAT | O_TRUNC | O_CLOEXEC, 0644);
+    if (mfd < 0) return;
+    ssize_t written = write(mfd, py_home, home_len);
+    close(mfd);
+    if (written == (ssize_t)home_len) {
+        if (rename(tmp, marker) != 0) unlink(tmp);
+    } else {
+        unlink(tmp);
+    }
+}
+
 static char *resign_copy_for_exec(const char *path)
 {
     internal_begin();
@@ -962,7 +1054,12 @@ static char *resign_copy_for_exec_internal(const char *path)
     if (!cached) return NULL;
     snprintf(cached, need, "%s/%s", full_dir, base);
     struct stat st;
-    if (stat(cached, &st) == 0 && st.st_size > 0) return cached;
+    if (stat(cached, &st) == 0 && st.st_size > 0) {
+        /* 缓存命中也要刷新 Python 框架标记：旧版本曾无条件写 CLT 3.9，
+         * 不刷新则脏标记永久存活（同二进制哈希的缓存长期复用） */
+        update_python_home_marker(full_dir, path);
+        return cached;
+    }
     int src = open(path, O_RDONLY | O_CLOEXEC);
     if (src < 0) {
         free(cached);
@@ -1024,47 +1121,12 @@ static char *resign_copy_for_exec_internal(const char *path)
                      * exec 时注入 env（见 prepare_exec 的 PYTHONHOME 注入） */
                     /* 标记内容 = 原始 Python prefix（stdlib 仍在原 CLT 框架树，
                      * 副本只替换二进制；PYTHONHOME 指向原 prefix 使 stdlib 可达） */
-                    char marker[PATH_MAX];
-                    snprintf(marker, sizeof(marker), "%s/.opendesk-framework-home", hash_dir);
-                    char py_home[PATH_MAX];
-                    char resolved_orig_py[PATH_MAX];
-                    bool found_prefix = false;
-                    /* 1) realpath 解析 symlink（/usr/local/bin/python3 → Frameworks 形态） */
-                    if (realpath(path, resolved_orig_py) != NULL &&
-                        strstr(resolved_orig_py, "Python3.framework") != NULL) {
-                        snprintf(py_home, sizeof(py_home), "%s", resolved_orig_py);
-                        char *sp = strrchr(py_home, '/');
-                        if (sp) *sp = '\0'; /* 去 bin */
-                        sp = strrchr(py_home, '/');
-                        if (sp) *sp = '\0'; /* 去 bin 层后到 Versions/3.9 */
-                        found_prefix = true;
-                    }
-                    /* 2) CLT shim hardlink（/usr/bin/python3 等，realpath 不走
-                     *    Frameworks）：prefix 用 xcode-select 的 CLT 框架路径 */
-                    if (!found_prefix) {
-                        char xcode_select_path[PATH_MAX];
-                        ssize_t xlen = readlink("/var/db/xcode_select_link", xcode_select_path, sizeof(xcode_select_path) - 1);
-                        if (xlen > 0) {
-                            xcode_select_path[xlen] = '\0';
-                            snprintf(py_home, sizeof(py_home),
-                                     "%s/Library/Frameworks/Python3.framework/Versions/3.9", xcode_select_path);
-                        } else {
-                            snprintf(py_home, sizeof(py_home),
-                                     "/Library/Developer/CommandLineTools/Library/Frameworks/Python3.framework/Versions/3.9");
-                        }
-                        struct stat st2;
-                        if (stat(py_home, &st2) != 0) {
-                            snprintf(py_home, sizeof(py_home),
-                                     "/Library/Developer/CommandLineTools/usr"); /* 最后兜底 */
-                        }
-                        found_prefix = true;
-                    }
-                    (void)found_prefix;
-                    int mfd = open(marker, O_WRONLY | O_CREAT | O_TRUNC | O_CLOEXEC, 0644);
-                    if (mfd >= 0) {
-                        (void)write(mfd, py_home, strlen(py_home));
-                        close(mfd);
-                    }
+                    /* Python framework 二进制（CLT/Homebrew python3）需要 PYTHONHOME 指向
+                     * 框架 Versions/<ver> 才能正确定位 stdlib 与 app stub——写标记供
+                     * exec 时注入 env（见 prepare_exec 的 PYTHONHOME 注入）。
+                     * 标记内容 = 框架 prefix（stdlib 仍在原框架树，副本只替换二进制）；
+                     * 非 Python 框架二进制清除历史标记，exec 时不注入 PYTHONHOME */
+                    update_python_home_marker(full_dir, path);
                     return cached;
                 }
                 break;
@@ -1074,6 +1136,7 @@ static char *resign_copy_for_exec_internal(const char *path)
         struct stat st;
         if (stat(cached, &st) == 0 && st.st_size > 0) {
             unlink(tmp_path);
+            update_python_home_marker(full_dir, path);
             return cached;
         }
         usleep(20000);
@@ -1977,6 +2040,43 @@ static int check_write_path(const char *pathname, const char *fn)
         errno = EACCES;
         return -1;
     }
+    /*
+     * 写类操作父目录链缺失 → 该写注定失败（内核返回 ENOENT）：透传不触发 ask。
+     * 与 Windows sandboxCheckWriteParentMissing / Linux write_parent_missing 同构
+     * 实现——dbghelp/SymSrv 按模块内嵌 CodeView 路径（node.exe 的
+     * c:\ws\out\Release\node.pdb 等）探测并写入符号缓存，这类路径在多数机器上
+     * 根本不存在，此前每次探测都弹写审批框。deny 规则仍优先拦截。
+     */
+    {
+        char parent[PATH_MAX];
+        const char *slash = strrchr(norm, '/');
+        if (slash && slash != norm && (size_t)(slash - norm) < sizeof(parent)) {
+            memcpy(parent, norm, (size_t)(slash - norm));
+            parent[slash - norm] = '\0';
+            struct stat pst;
+            if (stat(parent, &pst) != 0 && errno == ENOENT) {
+                /* deny 规则仍优先拦截（防 deny 区存在性探测泄露），alias 变体
+                 * 同理参与"最具体"竞争；命中 allow/ask/未命中一律透传：父链缺失
+                 * 的写注定 ENOENT，弹审批是纯噪音。 */
+                struct PolicyHit hit = policy_lookup_detailed(norm, ACC_WRITE);
+                char alias[PATH_MAX];
+                if (path_alias_variant(norm, alias, sizeof(alias))) {
+                    struct PolicyHit ah = policy_lookup_detailed(alias, ACC_WRITE);
+                    if (ah.perm >= 0 &&
+                        (hit.perm < 0 || ah.base_len > hit.base_len ||
+                         (ah.base_len == hit.base_len && ah.perm < hit.perm)))
+                        hit = ah;
+                }
+                if (hit.perm == PERM_DENY_box) {
+                    slog("%s denied (missing parent, deny rule): %s", fn, norm);
+                    errno = EACCES;
+                    return EACCES;
+                }
+                slog("%s pass-through (parent missing -> ENOENT): %s", fn, norm);
+                return 0;   /* 放行：内核对缺失父链的写返回 ENOENT */
+            }
+        }
+    }
     int rc = policy_check(norm, ACC_WRITE);
     if (rc != 0) {
         slog("%s denied: %s", fn, norm);
@@ -1995,6 +2095,38 @@ static int check_read_path(const char *pathname, const char *fn)
         slog("%s denied (path too deep): %s", fn, raw);
         errno = EACCES;
         return -1;
+    }
+    /*
+     * 读探测的目标不存在 → 透传（真实 open 返回 ENOENT），不判定不 ask：
+     * 读不到任何内容，只是把"不存在"结果透传给探测/容错逻辑。与 Linux
+     * preload.c 的 open 读 ENOENT 透传、Windows sandboxCheckNotExistRead 同一
+     * 哲学。实测：standard 沙箱里 git status 每次对 attributes 查找链上不存在
+     * 的 ~/.config/git/attributes、<Git 安装前缀>/share/git-core/gitattributes
+     * 做存在性探测，cache_ttl=0 不缓存，逐次弹 ask 纯属噪音。
+     * deny 规则仍优先拦截（防 deny 区存在性探测泄露），与 check_write_path
+     * 的"父链缺失透传"同构：命中 deny 按拒绝处理，命中 ask/allow/未命中一律
+     * 放行交给内核返回真实错误码。
+     */
+    {
+        struct stat st;
+        if (stat(norm, &st) != 0 && errno == ENOENT) {
+            struct PolicyHit hit = policy_lookup_detailed(norm, ACC_READ);
+            char alias[PATH_MAX];
+            if (path_alias_variant(norm, alias, sizeof(alias))) {
+                struct PolicyHit ah = policy_lookup_detailed(alias, ACC_READ);
+                if (ah.perm >= 0 &&
+                    (hit.perm < 0 || ah.base_len > hit.base_len ||
+                     (ah.base_len == hit.base_len && ah.perm < hit.perm)))
+                    hit = ah;
+            }
+            if (hit.perm == PERM_DENY_box) {
+                slog("%s denied (missing target, deny rule): %s", fn, norm);
+                errno = EACCES;
+                return EACCES;
+            }
+            slog("%s pass-through (target missing -> ENOENT): %s", fn, norm);
+            return 0;   /* 放行：真实 open 对不存在的目标返回 ENOENT */
+        }
     }
     int rc = policy_check(norm, ACC_READ);
     if (rc != 0) {
@@ -2067,6 +2199,37 @@ static bool read_shebang(const char *path, char *interp, size_t icap, char *iarg
 }
 
 /*
+ * CLT 工具链 basename 匹配：精确命中或 <基名>-<纯数字> 版本后缀命中
+ * （clang-14、gcc-12 等带版本号的别名二进制随 CLT 版本演进出现，逐个
+ * 枚举过时即失效；纯数字约束防止 clang-format/clang++ 这类连字符名
+ * 误命中）。数据类工具（git 等）刻意不在表内：它们的写必须管控。
+ */
+static bool clt_toolchain_basename(const char *name)
+{
+    static const char *const allow[] = { "cc",      "clang",   "clang++", "gcc",      "g++",
+                                         "ld",      "swift",   "swiftc",  "ar",       "ranlib",
+                                         "nm",      "strip",   "libtool", "install_name_tool",
+                                         "otool",   "codesign", "lipo",   NULL };
+    for (int i = 0; allow[i]; i++) {
+        size_t bl = strlen(allow[i]);
+        if (strncmp(name, allow[i], bl) != 0) continue;
+        if (name[bl] == '\0') return true;
+        if (name[bl] != '-') continue;
+        const char *v = name + bl + 1;
+        if (*v == '\0') continue; /* 悬空连字符（"clang-"）不视为版本后缀 */
+        bool all_digits = true;
+        for (const char *d = v; *d; d++) {
+            if (*d < '0' || *d > '9') {
+                all_digits = false;
+                break;
+            }
+        }
+        if (all_digits) return true;
+    }
+    return false;
+}
+
+/*
  * exec 前置处理：权限检查 + 平台二进制重签 + shebang 改写。
  * 返回 0 且 out_path/out_argv 就绪（调用方 exec）；非 0 表示拒绝（errno 已置）。
  * out_argv 是 malloc 的 argv 副本，调用方负责 free（exec 失败路径）。
@@ -2132,6 +2295,16 @@ static int prepare_exec(const char *path, char *const argv[], char **resolved_pa
         new_argv[o] = NULL;
         *resolved_path = xstrdup(use_interp);
         *out_argv = new_argv;
+        /* Python framework 解释器副本（CLT/Homebrew）：按标记注入 PYTHONHOME，
+         * 否则副本定位不到 stdlib 启动即崩（No module named 'encodings'）。
+         * 非 Python 框架解释器无标记，不注入 */
+        if (framework_home) {
+            char cached_dir[PATH_MAX];
+            snprintf(cached_dir, sizeof(cached_dir), "%s", use_interp);
+            char *slash = strrchr(cached_dir, '/');
+            if (slash) *slash = '\0';
+            *framework_home = read_python_home_marker(cached_dir);
+        }
         return 0;
     }
 
@@ -2145,17 +2318,31 @@ static int prepare_exec(const char *path, char *const argv[], char **resolved_pa
     {
         const char *cb = strrchr(path, '/');
         cb = cb ? cb + 1 : path;
-        static const char *const allow[] = { "cc",      "clang",   "clang++", "gcc",      "g++",
-                                             "ld",      "swift",   "swiftc",  "ar",       "ranlib",
-                                             "nm",      "strip",   "libtool", "install_name_tool",
-                                             "otool",   "codesign", "clang-14", "clang-15",
-                                             "clang-16", "clang-17", "clang-18", NULL };
-        for (int i = 0; allow[i]; i++) {
-            if (strcmp(cb, allow[i]) == 0 &&
-                strncmp(path, "/Library/Developer/CommandLineTools/", 35) == 0) {
-                if (strip_dyld_env) *strip_dyld_env = true;
-                return 0;
+        if (clt_toolchain_basename(cb) &&
+            strncmp(path, "/Library/Developer/CommandLineTools/", 36) == 0) {
+            /* lipo 只对只读信息子命令（-archs/-info/-detailed_info）豁免：
+             * 变更型子命令（-create/-thin/-replace/-remove -output）可把
+             * Mach-O 写到任意路径，豁免会静默绕过写策略与 ask 门控。
+             * 未豁免的 lipo 走重签副本路径，副本缺 @rpath/libLTO.dylib
+             * 启动即失败——沙箱内变更型 lipo 事实不可用（fail-closed，
+             * 与白名单引入前的行为一致），不会静默脱离管控执行。 */
+            if (strcmp(cb, "lipo") == 0) {
+                static const char *const readonly_verbs[] = { "-archs", "-info", "-detailed_info", NULL };
+                bool readonly_verb = false;
+                for (int v = 0; readonly_verbs[v]; v++) {
+                    if (argv[1] && strcmp(argv[1], readonly_verbs[v]) == 0) {
+                        readonly_verb = true;
+                        break;
+                    }
+                }
+                if (!readonly_verb) {
+                    slog("lipo mutating command denied in sandbox: %s", argv[1] ? argv[1] : "");
+                    errno = EACCES;
+                    return -1;
+                }
             }
+            if (strip_dyld_env) *strip_dyld_env = true;
+            return 0;
         }
     }
     /* 直接二进制：需要重签的换缓存路径 */
@@ -2171,26 +2358,9 @@ static int prepare_exec(const char *path, char *const argv[], char **resolved_pa
                 snprintf(cached_dir, sizeof(cached_dir), "%s", cached);
                 char *slash = strrchr(cached_dir, '/');
                 if (slash) *slash = '\0';
-                char marker[PATH_MAX];
-                snprintf(marker, sizeof(marker), "%s/.opendesk-framework-home", cached_dir);
-                struct stat st;
-                if (stat(marker, &st) == 0) {
-                    /* 标记内容 = 原始 Python prefix（stdlib 位置） */
-                    char content[PATH_MAX];
-                    int mfd = open(marker, O_RDONLY | O_CLOEXEC);
-                    if (mfd >= 0) {
-                        ssize_t n = read(mfd, content, sizeof(content) - 1);
-                        close(mfd);
-                        if (n > 0) {
-                            content[n] = '\0';
-                            char *home = malloc(n + 1);
-                            if (home) {
-                                memcpy(home, content, n + 1);
-                                *framework_home = home;
-                            }
-                        }
-                    }
-                }
+                /* 标记与副本同目录（update_python_home_marker 保证），内容 =
+                 * 原始框架 prefix（stdlib 位置）；无标记（非 Python 框架）不注入 */
+                *framework_home = read_python_home_marker(cached_dir);
             }
             return 0;
         }
@@ -2243,6 +2413,7 @@ static int wrap_execve(const char *path, char *const argv[], char *const envp[])
     int rc = real_execve(use, use_argv, py_env ? (char *const *)py_env : base_env);
     int saved = errno;
     free_python_home_envp(py_env);
+    free(framework_home);
     free(reinjected);
     free(stripped);
     free_exec_prep(resolved, new_argv);
@@ -2298,6 +2469,7 @@ static int wrap_execvp(const char *file, char *const argv[])
         char **py_env = framework_home ? envp_with_python_home(base_env, framework_home) : NULL;
         int rc = real_execve(use, use_argv, py_env ? (char *const *)py_env : base_env);
         free_python_home_envp(py_env);
+        free(framework_home);
         free(reinjected);
         int saved = errno;
         free_exec_prep(resolved, new_argv);
@@ -2329,6 +2501,7 @@ static int wrap_execvp(const char *file, char *const argv[])
                 char **py_env = framework_home ? envp_with_python_home(base_env, framework_home) : NULL;
                 int rc = real_execve(use, use_argv, py_env ? (char *const *)py_env : base_env);
                 free_python_home_envp(py_env);
+                free(framework_home);
                 free(reinjected);
                 free(stripped);
                 int saved = errno;
@@ -2391,6 +2564,7 @@ static int wrap_execvP(const char *file, const char *searchpath, char *const arg
     char **py_env = framework_home ? envp_with_python_home(stripped ? (char *const *)stripped : environ, framework_home) : NULL;
     int rc = real_execve(use, use_argv, py_env ? (char *const *)py_env : (stripped ? (char *const *)stripped : environ));
     free_python_home_envp(py_env);
+    free(framework_home);
     free(stripped);
     int saved = errno;
     free_exec_prep(resolved, new_argv);
@@ -2496,6 +2670,7 @@ static int wrap_posix_spawn_common(pid_t *pid, const char *path, const posix_spa
         slog("__posix_spawn failed: %s rc=%d errno=%d", use, rc, errno);
     }
     free_python_home_envp(py_env);
+    free(framework_home);
     free(reinjected);
     free(stripped);
     free_exec_prep(resolved, new_argv);

@@ -1,6 +1,8 @@
 import { readFileSync } from 'node:fs';
 import { afterEach, beforeAll, beforeEach, describe, expect, jest, test } from '@jest/globals';
 import { parseHTML } from 'linkedom';
+import { zhCn } from '../../../locale/zh-cn.js';
+import { enUs } from '../../../locale/en-us.js';
 
 const taskViewStyles = readFileSync(new URL('../../../renderer/styles/custom.css', import.meta.url), 'utf8')
     .replace(/\/\*[\s\S]*?\*\//g, '')
@@ -125,6 +127,24 @@ describe('task-view GUI output modes', () => {
         };
     }
 
+    /** 主进程终端卡片渲染产物：<details class="terminal-tool" ... open> 固定为展开。 */
+    function terminalCardHtml(id: string, output = 'output') {
+        return (
+            `<details data-toolcall-id="${id}" class="terminal-tool od-card-shadow" open>` +
+            `<summary class="terminal-tool-summary">${id}</summary>` +
+            `<div class="terminal-tool-scroll"><pre class="terminal-tool-output">${output}</pre></div>` +
+            `</details>`
+        );
+    }
+
+    function terminalToolPart(ids: string[]) {
+        return {
+            type: 'tool_call',
+            rendered: ids.map((id) => terminalCardHtml(id)).join(''),
+            toolcalls: ids.map((id) => ({ id, tool_name: 'bash', status: 'success' }))
+        };
+    }
+
     function transcript() {
         return [
             { type: 'reasoning', rendered: '分析现有结构' },
@@ -175,9 +195,9 @@ describe('task-view GUI output modes', () => {
         expect(
             Array.from(view.querySelectorAll('.od-process-summary-text')).map((element) => element.textContent)
         ).toEqual([
-            '深度思考 · 调用了Tool1、Tool2等 10个工具',
-            '深度思考 · 调用了Tool11、Tool12等 10个工具',
-            '深度思考 · 调用了Tool21、Tool22等 10个工具'
+            '深度思考，调用了Tool1、Tool2等 10个工具',
+            '深度思考，调用了Tool11、Tool12等 10个工具',
+            '深度思考，调用了Tool21、Tool22等 10个工具'
         ]);
         expect(view.textContent).not.toContain('工具调用 · 10 个工具');
         expect(view.textContent).not.toMatch(/工具调用 \d+[–-]\d+/);
@@ -288,12 +308,14 @@ describe('task-view GUI output modes', () => {
         const processSegments = view.querySelectorAll('.od-process-segment');
         expect(processSegments).toHaveLength(3);
         processSegments.forEach((segment: Element) => {
-            expect(segment.querySelector('[data-process-toggle]')?.getAttribute('aria-expanded')).toBe('true');
+            // 详细模式卡片直接铺开，与卡片内容重复的摘要折叠头不再渲染
+            expect(segment.querySelector('[data-process-toggle]')).toBeNull();
             expect(segment.querySelector('.od-process-detail')?.classList.contains('is-open')).toBe(true);
             expect(segment.querySelector('.reasoning-block-od')?.classList.contains('reasoning-expanded')).toBe(true);
             expect(segment.querySelector('.reasoning-full-area')?.textContent).not.toBe('');
         });
         expect(view.querySelectorAll('.mainline-tool-card')).toHaveLength(30);
+        expect(view.querySelectorAll('.od-process-summary')).toHaveLength(0);
         expect(view.querySelector('.od-process-tool')).toBeNull();
     });
 
@@ -309,7 +331,10 @@ describe('task-view GUI output modes', () => {
         expect(view.querySelector('.od-final-result-label')).toBeNull();
         const finalResult = view.querySelector('.od-final-result');
         expect(finalResult?.classList.contains('od-final-result-with-divider')).toBe(true);
-        expect(finalResult?.previousElementSibling?.classList.contains('od-process-segment')).toBe(true);
+        // 详细模式过程段无折叠头，最后一个子元素是铺开的 detail 层
+        expect(finalResult?.previousElementSibling?.lastElementChild?.classList.contains('od-process-detail')).toBe(
+            true
+        );
         expect(taskViewStyles).toMatch(/\.od-final-result-with-divider\{[^}]*border-top:1pxsolidvar\(--od-border\);/);
     });
 
@@ -335,9 +360,8 @@ describe('task-view GUI output modes', () => {
         expect(window.taskManagerAPI.getFullTask as jest.Mock).not.toHaveBeenCalled();
         expect(view.querySelector('#message-content-message-mode-switch')).toBe(messageContent);
         expect(view.querySelector('.od-assistant-output-flow')?.getAttribute('data-output-mode')).toBe('verbose');
-        expect(view.querySelector('.od-process-summary[data-process-toggle]')?.getAttribute('aria-expanded')).toBe(
-            'false'
-        );
+        // 切到详细模式后摘要折叠头消失，卡片直接铺开
+        expect(view.querySelector('[data-process-toggle]')).toBeNull();
 
         onSettingChanged?.({ locale: 'zh-CN', gui_config: { output_mode: 'minimal' } });
 
@@ -545,8 +569,9 @@ describe('task-view GUI output modes', () => {
             /\.reasoning-bubble\{[^}]*position:absolute;[^}]*width:600px;[^}]*max-height:300px;/
         );
         expect(taskViewStyles).toMatch(/\.reasoning-bubble\.reasoning-bubble-hidden\{[^}]*opacity:0;/);
-        expect(taskViewStyles).toMatch(
-            /\.od-assistant-output-flow\[data-reason-display='bubble'\]\.od-process-detail\.is-open\{[^}]*overflow:visible;/
+        // 过程块已不限高，bubble 浮层不再需要额外的展开态溢出覆盖。
+        expect(taskViewStyles).not.toMatch(
+            /\.od-assistant-output-flow\[data-reason-display='bubble'\]\.od-process-detail/
         );
     });
 
@@ -565,7 +590,8 @@ describe('task-view GUI output modes', () => {
         expect(view.querySelector('.od-final-result')).toBeNull();
         expect(view.querySelector('.od-running-status')?.textContent).not.toContain('总耗时');
         expect(view.querySelector('.od-running-status-time')).toBeNull();
-        expect(view.querySelector('.od-running-status')?.textContent).toContain('正在调用 Tool10…');
+        expect(view.querySelector('.od-running-status')?.textContent).toContain('正在 Tool10');
+        expect(view.querySelector('.od-running-status')?.textContent).toContain('，');
         expect(view.querySelector('.od-running-status')?.textContent).not.toContain('echo 10');
 
         const runningStatus = view.querySelector('.od-running-status') as HTMLElement;
@@ -581,7 +607,7 @@ describe('task-view GUI output modes', () => {
             'M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94L14.7 6.3z'
         );
         expect(runningStatus.querySelector('.od-running-status-icon')?.classList).toContain('is-tool');
-        expect(runningStatus.querySelector('.od-running-status-viewport .od-running-status-line')).not.toBeNull();
+        expect(runningStatus.querySelector('.od-running-status-viewport .od-running-status-text')).not.toBeNull();
         expect(runningStatus.getAttribute('aria-expanded')).toBe('false');
 
         view._handleProcessToggleClick({ target: runningStatus, preventDefault() {}, stopPropagation() {} });
@@ -621,10 +647,11 @@ describe('task-view GUI output modes', () => {
         });
 
         expect(view.querySelector('.od-running-process-detail')).not.toBeNull();
-        expect(view.querySelector('.od-user-attention-process-detail .qr-code')?.textContent).toBe('SCAN QR CODE');
-        expect(taskViewStyles).toMatch(
-            /\.od-user-attention-process-detail\{[^}]*max-height:none;[^}]*overflow:visible;[^}]*scrollbar-gutter:auto;/
-        );
+        expect(view.querySelector('.od-running-process-detail .qr-code')?.textContent).toBe('SCAN QR CODE');
+        // 过程块统一按内容实际高度铺开，注意力卡片无需再单独解除限高。
+        expect(taskViewStyles).not.toMatch(/\.od-user-attention-process-detail/);
+        expect(taskViewStyles).toMatch(/\.od-process-detail\{[^}]*display:none;/);
+        expect(taskViewStyles).not.toMatch(/\.od-process-detail\{[^}]*max-height:/);
     });
 
     test('minimal running output shows completed stages before the current-operation row without expansion', () => {
@@ -638,12 +665,12 @@ describe('task-view GUI output modes', () => {
         expect(view.querySelectorAll('.od-stage-body')).toHaveLength(1);
         expect(view.querySelector('.od-stage-body')?.textContent).toContain('第一段正文');
         expect(view.querySelector('.od-process-summary-text')?.textContent).toBe(
-            '深度思考 · 调用了Tool1、Tool2等 10个工具'
+            '深度思考，调用了Tool1、Tool2等 10个工具'
         );
         expect(view.querySelector('[data-running-output-toggle]')?.getAttribute('aria-expanded')).toBe('false');
         const flow = view.querySelector('.od-assistant-output-flow') as HTMLElement;
         expect(flow.lastElementChild?.classList.contains('od-running-status')).toBe(true);
-        expect(flow.lastElementChild?.textContent).toContain('正在调用 Tool20…');
+        expect(flow.lastElementChild?.textContent).toContain('正在 Tool20');
     });
 
     test('minimal running output stays collapsed while a tool call is still streaming its arguments', () => {
@@ -660,7 +687,8 @@ describe('task-view GUI output modes', () => {
 
         expect(view.querySelector('.od-running-process-detail')).toBeNull();
         expect(view.querySelector('[data-running-output-toggle]')?.getAttribute('aria-expanded')).toBe('false');
-        expect(view.querySelector('.od-running-status')?.textContent).toContain('正在调用');
+        expect(view.querySelector('.od-running-status')?.textContent).toContain('正在');
+        expect(view.querySelector('.od-running-status')?.textContent).not.toContain('正在调用');
     });
 
     test('minimal reasoning status hides reasoning content from the current-operation row', () => {
@@ -672,7 +700,7 @@ describe('task-view GUI output modes', () => {
         });
 
         const status = view.querySelector('.od-running-status')?.textContent || '';
-        expect(status).toContain('正在思考…');
+        expect(status).toContain('正在 深度思考');
         expect(status).not.toContain('详细思考内容');
         const icon = view.querySelector('.od-running-status-icon');
         expect(icon?.classList).toContain('is-thinking');
@@ -696,16 +724,17 @@ describe('task-view GUI output modes', () => {
 
         expect(view.querySelector('.reasoning-full-area')?.textContent).toContain('完整思考内容');
         expect(view.querySelector('.od-running-status')).toBeNull();
-        expect(view.textContent).not.toContain('正在思考…');
+        expect(view.textContent).not.toContain('正在思考');
+        expect(view.textContent).not.toContain('已思考');
     });
 
-    test('running tool status uses the localized tool name without exposing parameters', () => {
+    test('running tool status uses the pushed display name without exposing parameters', () => {
         const view = createView();
         const fileTool = toolPart(1, 1);
         fileTool.toolcalls[0] = {
             ...fileTool.toolcalls[0],
             tool_name: 'filemgr-readFile',
-            display_name_key: 'filemgr.readFile.name'
+            display_name: '读取文件'
         };
         view.innerHTML = view._renderAssistantOutputHtml([fileTool], {
             isRunning: true,
@@ -713,7 +742,7 @@ describe('task-view GUI output modes', () => {
         });
 
         const status = view.querySelector('.od-running-status')?.textContent || '';
-        expect(status).toContain('正在调用 读取文件…');
+        expect(status).toContain('正在 读取文件');
         expect(status).not.toContain('package.json');
     });
 
@@ -763,17 +792,17 @@ describe('task-view GUI output modes', () => {
             {
                 ...fileTools.toolcalls[0],
                 tool_name: 'filemgr-readFile',
-                display_name_key: 'filemgr.readFile.name'
+                display_name: '读取文件'
             },
             {
                 ...fileTools.toolcalls[1],
                 tool_name: 'filemgr-readFile',
-                display_name_key: 'filemgr.readFile.name'
+                display_name: '读取文件'
             },
             {
                 ...fileTools.toolcalls[2],
                 tool_name: 'filemgr-grepFiles',
-                display_name_key: 'filemgr.grep.name'
+                display_name: '内容搜索'
             }
         ];
         view.innerHTML = view._renderAssistantOutputHtml(
@@ -792,23 +821,23 @@ describe('task-view GUI output modes', () => {
         );
 
         const summary = view.querySelector('.od-process-summary-text')?.textContent || '';
-        expect(summary).toBe('深度思考 · 调用了读取文件、内容搜索等 3个工具');
+        expect(summary).toBe('深度思考，调用了读取文件、内容搜索等 3个工具');
         expect(summary).not.toContain('分析项目结构');
     });
 
-    test('process labels translate protocol names with existing user-facing titles', () => {
+    test('process labels use the pushed display names', () => {
         const view = createView();
         const tools = toolPart(1, 2);
         tools.toolcalls = [
             {
                 ...tools.toolcalls[0],
                 tool_name: 'filemgr-globFiles',
-                display_name_key: 'filemgr.glob.name'
+                display_name: '模式匹配'
             },
             {
                 ...tools.toolcalls[1],
                 tool_name: 'memory-addMemory',
-                display_name_key: 'tools.memory.add.name'
+                display_name: '添加记忆'
             }
         ];
         view.innerHTML = view._renderAssistantOutputHtml([{ type: 'reasoning', rendered: '分析请求。' }, tools], {
@@ -817,7 +846,423 @@ describe('task-view GUI output modes', () => {
         });
 
         const summary = view.querySelector('.od-process-summary-text')?.textContent || '';
-        expect(summary).toBe('深度思考 · 调用了模式匹配、添加记忆等 2个工具');
+        expect(summary).toBe('深度思考，调用了模式匹配、添加记忆等 2个工具');
+    });
+
+    test('process labels fall back to protocol names when no display name is pushed', () => {
+        const view = createView();
+        const tools = toolPart(1, 2);
+        tools.toolcalls = [
+            {
+                ...tools.toolcalls[0],
+                tool_name: 'filemgr-globFiles'
+            },
+            {
+                ...tools.toolcalls[1],
+                tool_name: 'memory-addMemory'
+            }
+        ];
+        view.innerHTML = view._renderAssistantOutputHtml([{ type: 'reasoning', rendered: '分析请求。' }, tools], {
+            isRunning: false,
+            messageId: 'message-self-described-display-name'
+        });
+
+        const summary = view.querySelector('.od-process-summary-text')?.textContent || '';
+        // 分隔符改为逗号后总长 39 字符仍在 40 字符预算内，无需缩短到单个名字
+        expect(summary).toBe('深度思考，调用了filemgr-glo…、memory-addM…等 2个工具');
+    });
+
+    test('running tool status uses the self-described literal display name', () => {
+        const view = createView();
+        const fileTool = toolPart(1, 1);
+        fileTool.toolcalls[0] = {
+            ...fileTool.toolcalls[0],
+            tool_name: 'filemgr-readFile',
+            display_name: '读取文件'
+        };
+        view.innerHTML = view._renderAssistantOutputHtml([fileTool], {
+            isRunning: true,
+            messageId: 'message-running-self-described-tool'
+        });
+
+        const status = view.querySelector('.od-running-status')?.textContent || '';
+        expect(status).toContain('正在 读取文件');
+    });
+
+    test('running tool status shows the count of completed tool calls', () => {
+        const view = createView();
+        const doneTools = toolPart(1, 2);
+        doneTools.toolcalls = [
+            {
+                ...doneTools.toolcalls[0],
+                tool_name: 'filemgr-grepFiles',
+                display_name: '内容搜索',
+                status: 'success'
+            },
+            {
+                ...doneTools.toolcalls[1],
+                tool_name: 'filemgr-globFiles',
+                display_name: '模式匹配',
+                status: 'error'
+            }
+        ];
+        const runningTool = toolPart(3, 1);
+        runningTool.toolcalls[0] = {
+            ...runningTool.toolcalls[0],
+            tool_name: 'filemgr-readFile',
+            display_name: '读取文件',
+            status: 'running'
+        };
+        view.innerHTML = view._renderAssistantOutputHtml([doneTools, runningTool], {
+            isRunning: true,
+            messageId: 'message-running-tool-with-done-count'
+        });
+
+        const status = view.querySelector('.od-running-status')?.textContent || '';
+        expect(status).toContain('正在 读取文件');
+        expect(status).toContain('已调用 2 个工具');
+    });
+
+    test('running thinking status shows completed tool names and count', () => {
+        const view = createView();
+        const doneTools = toolPart(1, 2);
+        doneTools.toolcalls = [
+            {
+                ...doneTools.toolcalls[0],
+                tool_name: 'filemgr-grepFiles',
+                display_name: '内容搜索',
+                status: 'success'
+            },
+            {
+                ...doneTools.toolcalls[1],
+                tool_name: 'filemgr-globFiles',
+                display_name: '模式匹配',
+                status: 'success'
+            }
+        ];
+        const reasoning = { type: 'reasoning', rendered: '分析请求。' };
+        view.innerHTML = view._renderAssistantOutputHtml([doneTools, reasoning], {
+            isRunning: true,
+            messageId: 'message-running-thinking-with-done-count'
+        });
+
+        const status = view.querySelector('.od-running-status')?.textContent || '';
+        expect(status).toContain('正在 深度思考');
+        expect(status).toContain('已调用 内容搜索、模式匹配 等 2 个工具');
+    });
+
+    test('running status without any completed tool call keeps the plain action', () => {
+        const view = createView();
+        const reasoning = { type: 'reasoning', rendered: '分析请求。' };
+        view.innerHTML = view._renderAssistantOutputHtml([reasoning], {
+            isRunning: true,
+            messageId: 'message-running-no-done-tools'
+        });
+
+        const status = view.querySelector('.od-running-status')?.textContent?.replace(/\s+/g, ' ').trim() || '';
+        expect(status).toBe('正在 深度思考 (已思考 0 秒)');
+    });
+
+    test('running tool status counts only the current tool block after a body boundary', () => {
+        const view = createView();
+        const earlierDone = toolPart(1, 2);
+        earlierDone.toolcalls = [
+            {
+                ...earlierDone.toolcalls[0],
+                tool_name: 'filemgr-grepFiles',
+                display_name: '内容搜索',
+                status: 'success'
+            },
+            {
+                ...earlierDone.toolcalls[1],
+                tool_name: 'filemgr-globFiles',
+                display_name: '模式匹配',
+                status: 'success'
+            }
+        ];
+        const body = { type: 'text', text: '第一部分完成。' };
+        const currentDone = toolPart(3, 1);
+        currentDone.toolcalls[0] = {
+            ...currentDone.toolcalls[0],
+            tool_name: 'filemgr-extractText',
+            display_name: '提取文本',
+            status: 'success'
+        };
+        const runningTool = toolPart(4, 1);
+        runningTool.toolcalls[0] = {
+            ...runningTool.toolcalls[0],
+            tool_name: 'filemgr-readFile',
+            display_name: '读取文件',
+            status: 'running'
+        };
+        view.innerHTML = view._renderAssistantOutputHtml([earlierDone, body, currentDone, runningTool], {
+            isRunning: true,
+            messageId: 'message-running-block-count'
+        });
+
+        const status = view.querySelector('.od-running-status')?.textContent || '';
+        expect(status).toContain('正在 读取文件');
+        expect(status).toContain('已调用 1 个工具');
+        expect(status).not.toContain('内容搜索');
+        expect(status).not.toContain('模式匹配');
+    });
+
+    test('status row renders label and current target as separate fade segments', () => {
+        const view = createView();
+        const doneTools = toolPart(1, 2);
+        doneTools.toolcalls = [
+            {
+                ...doneTools.toolcalls[0],
+                tool_name: 'filemgr-grepFiles',
+                display_name: '内容搜索',
+                status: 'success'
+            },
+            {
+                ...doneTools.toolcalls[1],
+                tool_name: 'filemgr-globFiles',
+                display_name: '模式匹配',
+                status: 'success'
+            }
+        ];
+        const runningTool = toolPart(3, 1);
+        runningTool.toolcalls[0] = {
+            ...runningTool.toolcalls[0],
+            tool_name: 'filemgr-readFile',
+            display_name: '读取文件',
+            status: 'running'
+        };
+        view.innerHTML = view._renderAssistantOutputHtml([doneTools, runningTool], {
+            isRunning: true,
+            messageId: 'message-status-segments'
+        });
+
+        const status = view.querySelector('.od-running-status')?.textContent?.replace(/\s+/g, ' ').trim() || '';
+        expect(status).toBe('正在 读取文件，已调用 2 个工具');
+        const label = view.querySelector('.od-running-status-label');
+        const target = view.querySelector('.od-running-status-target');
+        const done = view.querySelector('.od-running-status-done');
+        expect(label?.classList.contains('od-running-status-fade--static')).toBe(true);
+        expect(target?.classList.contains('od-running-status-fade--static')).toBe(false);
+        expect(done?.classList.contains('od-running-status-fade--static')).toBe(false);
+        // 分隔符不属于任何动画段，避免标点随文案一起淡入
+        expect(label?.textContent?.trim()).toBe('正在');
+        expect(target?.textContent?.trim()).toBe('读取文件');
+        expect(done?.textContent?.trim()).toBe('已调用 2 个工具');
+    });
+
+    test('running status highlights verb and tool name as inline code', () => {
+        const view = createView();
+        const runningTool = toolPart(1, 1);
+        runningTool.toolcalls[0] = {
+            ...runningTool.toolcalls[0],
+            tool_name: 'filemgr-readFile',
+            display_name: '读取文件',
+            status: 'running'
+        };
+        view.innerHTML = view._renderAssistantOutputHtml([runningTool], {
+            isRunning: true,
+            messageId: 'message-status-code-highlight'
+        });
+
+        // 动词"正在"保持普通文本，仅工具名包一层 code 呈现高亮
+        const label = view.querySelector('.od-running-status-label');
+        const target = view.querySelector('.od-running-status-target');
+        expect(label?.querySelector('code')).toBeNull();
+        expect(label?.textContent?.trim()).toBe('正在');
+        expect(target?.querySelector('code')?.textContent).toBe('读取文件');
+    });
+
+    test('thinking status shows verb prefix and highlighted keyword like the tool status', () => {
+        const view = createView();
+        const parts = [{ type: 'reasoning', rendered: '分析请求。' }];
+        view.innerHTML = view._renderAssistantOutputHtml(parts, {
+            isRunning: true,
+            messageId: 'message-status-code-highlight-thinking'
+        });
+
+        // 思考态与工具态同构："正在"为普通文本，"深度思考"用 code 高亮，中间以空格分隔
+        const label = view.querySelector('.od-running-status-label');
+        const target = view.querySelector('.od-running-status-target');
+        expect(label?.querySelector('code')).toBeNull();
+        expect(label?.textContent?.trim()).toBe('正在');
+        expect(target?.querySelector('code')?.textContent).toBe('深度思考');
+    });
+
+    test('thinking status appends elapsed time as plain text after the keyword', () => {
+        const view = createView();
+        const start = Date.now() - 95000; // 1 分 35 秒前开始思考
+        view._reasoningStatusStartByMessage = new Map([['message-status-thinking-time', start]]);
+        const parts = [{ type: 'reasoning', rendered: '分析请求。' }];
+        view.innerHTML = view._renderAssistantOutputHtml(parts, {
+            isRunning: true,
+            messageId: 'message-status-thinking-time'
+        });
+
+        const status = view.querySelector('.od-running-status')?.textContent || '';
+        expect(status).toContain('正在 深度思考');
+        expect(status).toContain('(已思考 1 分 35 秒)');
+        // 时间不属于高亮段：code 元素不包含时间文案
+        const codeTexts = Array.from(view.querySelectorAll('.od-running-status code'))
+            .map((el) => el.textContent)
+            .join('|');
+        expect(codeTexts).not.toContain('已思考');
+        // 时间位于独立纯文本分段
+        const time = view.querySelector('.od-running-status-time');
+        expect(time?.querySelector('code')).toBeNull();
+        expect(time?.textContent?.trim()).toBe('(已思考 1 分 35 秒)');
+    });
+
+    test('thinking status elapsed time persists across re-renders and never replays fade', () => {
+        const view = createView();
+        const messageId = 'message-status-thinking-time-persist';
+        view._reasoningStatusStartByMessage = new Map([[messageId, Date.now() - 5000]]);
+        const parts = [{ type: 'reasoning', rendered: '分析请求。' }];
+        const options = { isRunning: true, messageId };
+        view.innerHTML = view._renderAssistantOutputHtml(parts, options);
+
+        const time = view.querySelector('.od-running-status-time');
+        expect(time?.textContent?.trim()).toBe('(已思考 5 秒)');
+        // 首次渲染时间段正常淡入
+        expect(time?.classList.contains('od-running-status-fade--static')).toBe(false);
+
+        view.innerHTML = view._renderAssistantOutputHtml(parts, options);
+        const nextTime = view.querySelector('.od-running-status-time');
+        // 时间起点持久化：重渲染不重置为 0 秒
+        expect(nextTime?.textContent?.trim()).toBe('(已思考 5 秒)');
+        // 时间每秒变化，后续渲染静默更新，不重播淡入
+        expect(nextTime?.classList.contains('od-running-status-fade--static')).toBe(true);
+    });
+
+    test('switching to a tool call resets the thinking elapsed timer', () => {
+        const view = createView();
+        const messageId = 'message-status-thinking-time-reset';
+        const parts = [{ type: 'reasoning', rendered: '分析请求。' }];
+        view.innerHTML = view._renderAssistantOutputHtml(parts, { isRunning: true, messageId });
+        expect(view._reasoningStatusStartByMessage?.get(messageId)).toBeTruthy();
+
+        view.innerHTML = view._renderAssistantOutputHtml([toolPart(1, 1)], { isRunning: true, messageId });
+        expect(view._reasoningStatusStartByMessage?.has(messageId)).toBe(false);
+    });
+
+    test('running status time ticks every second while the view is connected', () => {
+        jest.useFakeTimers();
+        try {
+            const view = createView();
+            // linkedom 环境无法完整挂载视图（MutationObserver 支持不完整），
+            // 用属性覆盖模拟已连接状态，直接驱动秒级刷新逻辑
+            Object.defineProperty(view, 'isConnected', { value: true, configurable: true });
+            const messageId = 'message-status-thinking-tick';
+            view._reasoningStatusStartByMessage = new Map([[messageId, Date.now() - 3000]]);
+            view.innerHTML = view._renderAssistantOutputHtml([{ type: 'reasoning', rendered: '分析请求。' }], {
+                isRunning: true,
+                messageId
+            });
+            view._syncRunningStatusTimeTicker();
+
+            const time = view.querySelector('.od-running-status-time');
+            expect(time?.textContent?.trim()).toBe('(已思考 3 秒)');
+            jest.advanceTimersByTime(1000);
+            expect(time?.textContent?.trim()).toBe('(已思考 4 秒)');
+        } finally {
+            jest.useRealTimers();
+            for (const view of createdViews.splice(0)) {
+                view._stopRunningStatusTimeTicker();
+            }
+        }
+    });
+
+    test('status row code segments only apply the markdown inline code text color', () => {
+        const codeRule = taskViewStyles.match(/\.od-running-status-targetcode\{[^}]*\}/);
+        expect(codeRule).not.toBeNull();
+        expect(codeRule?.[0]).toContain('color:var(--chat-accent)');
+        // 对齐修复：code 继承两侧文本字体，避免等宽字形与 UI 字体的基线/宽度错位
+        expect(codeRule?.[0]).toContain('font-family:inherit');
+        // 只改字体颜色：不得引入行内代码的字号或背景
+        expect(codeRule?.[0]).not.toContain('font-size');
+        expect(codeRule?.[0]).not.toContain('background');
+    });
+
+    test('status row keeps thinking label static while only the done count fades on change', () => {
+        const view = createView();
+        const doneTools = toolPart(1, 1);
+        doneTools.toolcalls[0] = {
+            ...doneTools.toolcalls[0],
+            tool_name: 'filemgr-grepFiles',
+            display_name: '内容搜索',
+            status: 'success'
+        };
+        const options = { isRunning: true, messageId: 'message-thinking-fade' };
+        view.innerHTML = view._renderAssistantOutputHtml(
+            [doneTools, { type: 'reasoning', rendered: '分析请求。' }],
+            options
+        );
+
+        const label = view.querySelector('.od-running-status-label');
+        const done = view.querySelector('.od-running-status-done');
+        expect(label?.textContent?.trim()).toBe('正在');
+        expect(label?.classList.contains('od-running-status-fade--static')).toBe(true);
+        expect(done?.textContent?.trim()).toBe('已调用 内容搜索 等 1 个工具');
+        expect(done?.classList.contains('od-running-status-fade--static')).toBe(false);
+
+        // 计数增长：label 静止，done 段重播淡入
+        const secondTool = toolPart(2, 1);
+        secondTool.toolcalls[0] = {
+            ...secondTool.toolcalls[0],
+            tool_name: 'filemgr-globFiles',
+            display_name: '模式匹配',
+            status: 'success'
+        };
+        view.innerHTML = view._renderAssistantOutputHtml(
+            [doneTools, secondTool, { type: 'reasoning', rendered: '分析请求。' }],
+            options
+        );
+        const nextLabel = view.querySelector('.od-running-status-label');
+        const nextDone = view.querySelector('.od-running-status-done');
+        expect(nextLabel?.classList.contains('od-running-status-fade--static')).toBe(true);
+        expect(nextDone?.textContent?.trim()).toBe('已调用 模式匹配、内容搜索 等 2 个工具');
+        expect(nextDone?.classList.contains('od-running-status-fade--static')).toBe(false);
+    });
+
+    test('status row suppresses fade only when the target text is unchanged', () => {
+        const view = createView();
+        const parts = [{ type: 'reasoning', rendered: '分析请求。' }];
+        const options = { isRunning: true, messageId: 'message-target-unchanged' };
+        view.innerHTML = view._renderAssistantOutputHtml(parts, options);
+        // 思考状态与工具状态同构：label 为动词，target 为高亮关键词
+        expect(view.querySelector('.od-running-status-target')?.querySelector('code')?.textContent).toBe('深度思考');
+        expect(
+            view.querySelector('.od-running-status-label')?.classList.contains('od-running-status-fade--static')
+        ).toBe(true);
+        expect(view.querySelector('.od-running-status-done')).toBeNull();
+
+        // 同一段思考的流式快照：状态不变，label 保持静态
+        view.innerHTML = view._renderAssistantOutputHtml(parts, options);
+        expect(
+            view.querySelector('.od-running-status-label')?.classList.contains('od-running-status-fade--static')
+        ).toBe(true);
+
+        // 状态切换为工具执行：label（"正在"）文案未变化保持静止，仅 target 作为新内容淡入
+        view.innerHTML = view._renderAssistantOutputHtml([toolPart(1, 1)], options);
+        expect(
+            view.querySelector('.od-running-status-label')?.classList.contains('od-running-status-fade--static')
+        ).toBe(true);
+        expect(
+            view.querySelector('.od-running-status-target')?.classList.contains('od-running-status-fade--static')
+        ).toBe(false);
+    });
+
+    test('status fade uses a gentle opacity-only animation without vertical motion', () => {
+        expect(taskViewStyles).not.toContain('od-status-page-in');
+        expect(taskViewStyles).not.toContain('.od-running-status-line{');
+        expect(taskViewStyles).toContain('@keyframesod-status-fade-in{0%{opacity:0;}100%{opacity:1;}}');
+        expect(taskViewStyles).toMatch(
+            /\.od-running-status-fade\{[^}]*animation:od-status-fade-in220msease-in-out;[^}]*\}/
+        );
+        expect(taskViewStyles).not.toMatch(/\.od-running-status-fade\{[^}]*transform/);
+        expect(taskViewStyles).toMatch(/\.od-running-status-fade--static\{animation:none;\}/);
+        expect(taskViewStyles).toMatch(
+            /@media\(prefers-reduced-motion:reduce\)\{[^@]*\.od-running-status-fade\{animation:none;[^}]*\}/
+        );
     });
 
     test('a failed child tool does not replace the process summary icon', () => {
@@ -832,6 +1277,23 @@ describe('task-view GUI output modes', () => {
         expect(view.querySelector('.od-process-summary .lucide-lightbulb')).not.toBeNull();
         expect(view.querySelector('.od-process-summary .fa-circle-exclamation')).toBeNull();
         expect(view.querySelector('.od-process-tool-status')).toBeNull();
+    });
+
+    test('verbose running output shows tool cards without a duplicate running status row', () => {
+        onSettingChanged?.({ locale: 'zh-CN', gui_config: { output_mode: 'verbose' } });
+        const view = createView();
+        const doneTools = toolPart(1, 2);
+        const runningTool = toolPart(3, 1);
+        runningTool.toolcalls[0] = { ...runningTool.toolcalls[0], status: 'running' };
+        view.innerHTML = view._renderAssistantOutputHtml([doneTools, runningTool], {
+            isRunning: true,
+            messageId: 'message-verbose-running-tools'
+        });
+
+        // 详细模式下每个工具都有自己的卡片，"正在 xx"状态行与卡片内容重复，不再渲染
+        expect(view.querySelector('.od-running-status')).toBeNull();
+        expect(view.textContent).not.toContain('正在 Tool3');
+        expect(view.querySelectorAll('.od-process-segment')).toHaveLength(1);
     });
 
     test('process labels preserve the protocol name instead of using reasoning or parameters', () => {
@@ -859,7 +1321,7 @@ describe('task-view GUI output modes', () => {
         );
 
         const summary = view.querySelector('.od-process-summary-text')?.textContent || '';
-        expect(summary).toBe('深度思考 · 调用了webFetch等 1个工具');
+        expect(summary).toBe('深度思考，调用了webFetch等 1个工具');
         expect(summary).not.toContain('meta');
         expect(summary).not.toContain('developer.huawei.com');
     });
@@ -884,7 +1346,7 @@ describe('task-view GUI output modes', () => {
 
         const summary = view.querySelector('.od-process-summary-text')?.textContent || '';
         expect(Array.from(summary).length).toBeLessThanOrEqual(40);
-        expect(summary).toBe('深度思考 · 调用了very-long-s…等 4个工具');
+        expect(summary).toBe('深度思考，调用了very-long-s…等 4个工具');
     });
 
     test('process details reuse mainline reasoning and tool card classes', () => {
@@ -911,7 +1373,6 @@ describe('task-view GUI output modes', () => {
         );
         expect(taskViewStyles).toMatch(/\.od-running-status-icon\.is-thinking\{[^}]*color:#f59e0b;/);
         expect(taskViewStyles).toMatch(/\.od-running-status-icon\.is-tool\{[^}]*color:#f59e0b;/);
-        expect(taskViewStyles).toMatch(/\.od-running-status-line\{[^}]*display:flex;[^}]*align-items:center;/);
     });
 
     test('process summary and running status rows share one row metric', () => {
@@ -925,7 +1386,6 @@ describe('task-view GUI output modes', () => {
         );
         // 运行状态行的滚动视口高度跟随行规范收缩，保证文本垂直居中后与摘要行留白一致
         expect(taskViewStyles).toMatch(/\.od-running-status-viewport\{[^}]*height:22px;/);
-        expect(taskViewStyles).toMatch(/\.od-running-status-line\{[^}]*height:22px;/);
     });
 
     test('streaming stage body zeroes first/last child margins to match completed output spacing', () => {
@@ -941,7 +1401,7 @@ describe('task-view GUI output modes', () => {
         );
     });
 
-    test('expanded completed process grows naturally while nested process details keep their height limit', () => {
+    test('expanded process blocks grow to their content height without an outer scroller', () => {
         expect(taskViewStyles).toMatch(
             /\.od-completed-process-detail\.is-open\{[^}]*display:block;[^}]*max-height:none;[^}]*overflow:visible;/
         );
@@ -953,9 +1413,13 @@ describe('task-view GUI output modes', () => {
             /\.od-process-summary\{[^}]*min-height:var\(--od-process-row-min-height\);[^}]*padding:var\(--od-process-row-pad-block\)0;[^}]*border-bottom:0;[^}]*border-radius:0;/
         );
         expect(taskViewStyles).not.toContain(".od-process-summary[aria-expanded='true']{border-bottom-color:");
-        expect(taskViewStyles).toMatch(
-            /\.od-process-detail\{[^}]*max-height:280px;[^}]*overflow-y:auto;[^}]*margin:0;/
-        );
+        // 展开层不再自建滚动区：限高与滚动条样式全部下沉到卡片自身。
+        expect(taskViewStyles).toMatch(/\.od-process-detail\{[^}]*margin:0;/);
+        expect(taskViewStyles).not.toMatch(/\.od-process-detail\{[^}]*max-height:/);
+        expect(taskViewStyles).not.toMatch(/\.od-process-detail\{[^}]*overflow-y:/);
+        expect(taskViewStyles).not.toMatch(/\.od-process-detail\{[^}]*scrollbar-gutter:/);
+        expect(taskViewStyles).not.toContain('.od-process-detail::-webkit-scrollbar');
+        expect(taskViewStyles).not.toContain("html[data-theme='dark'] .od-process-detail");
     });
 
     test('GUI output does not maintain a message-level timer', () => {
@@ -963,9 +1427,20 @@ describe('task-view GUI output modes', () => {
         expect(view._assistantRunStartedAt).toBeUndefined();
     });
 
-    test('nested process scrollers hand off wheel scrolling at their boundaries', () => {
-        expect(taskViewStyles).toMatch(/\.od-process-detail\{[^}]*overscroll-behavior:auto;/);
-        expect(taskViewStyles).not.toMatch(/\.od-process-detail\{[^}]*overscroll-behavior:contain;/);
+    test('process blocks no longer nest a scroller, so wheel gestures fall through to the chat history', () => {
+        expect(taskViewStyles).not.toMatch(/\.od-process-detail\{[^}]*overscroll-behavior:/);
+        expect(taskViewStyles).not.toMatch(/\.od-process-detail\{[^}]*overflow-y:auto;/);
+    });
+
+    test('running status labels exist in both locales', () => {
+        expect(zhCn['renderer.taskview.output.status.thinkingPrefix']).toBe('正在');
+        expect(zhCn['renderer.taskview.output.status.thinkingKeyword']).toBe('深度思考');
+        expect(zhCn['renderer.taskview.output.status.toolPrefix']).toBe('正在');
+        expect(zhCn['renderer.taskview.output.status.tool']).toBe('${name}');
+        expect(enUs['renderer.taskview.output.status.thinkingPrefix']).toBe('Running');
+        expect(enUs['renderer.taskview.output.status.thinkingKeyword']).toBe('deep thinking');
+        expect(enUs['renderer.taskview.output.status.toolPrefix']).toBe('Running');
+        expect(enUs['renderer.taskview.output.status.tool']).toBe('${name}');
     });
 
     test('minimal running output preserves the expanded execution timeline while streaming', () => {
@@ -1093,7 +1568,7 @@ describe('task-view GUI output modes', () => {
         expect(view.querySelector('[data-running-output-toggle]')?.getAttribute('aria-expanded')).toBe('false');
         const flow = view.querySelector('.od-assistant-output-flow') as HTMLElement;
         expect(flow.lastElementChild?.classList.contains('od-running-status')).toBe(true);
-        expect(flow.lastElementChild?.textContent).toContain('正在调用 Tool1…');
+        expect(flow.lastElementChild?.textContent).toContain('正在 Tool1');
     });
 
     test('streaming text snapshots render safe Markdown in one stable part without rebuilding the assistant output', () => {
@@ -1317,11 +1792,98 @@ describe('task-view GUI output modes', () => {
         expect(process.querySelector('.reasoning-block-od')).not.toBeNull();
         expect(process.querySelectorAll('.mainline-tool-card')).toHaveLength(10);
 
-        const processToggle = process.querySelector('[data-process-toggle]') as HTMLElement;
+        // 详细模式过程段没有可折叠头，卡片始终随内容铺开展示
+        expect(process.querySelector('[data-process-toggle]')).toBeNull();
+        expect(process.querySelector('.od-process-detail')?.classList).toContain('is-open');
+    });
+
+    test('minimal mode collapses terminal tool cards inside an expanded process block', () => {
+        const view = createView();
+        view.innerHTML = view.renderAssistantMessage({
+            message_id: 'message-terminal-collapsed',
+            content: [terminalToolPart(['tc-1', 'tc-2']), { type: 'text', rendered: '<p>最终正文</p>' }],
+            timestamp: Date.now()
+        });
+
+        const completedToggle = view.querySelector('[data-completed-process-toggle]') as HTMLElement;
+        view._handleProcessToggleClick({ target: completedToggle, preventDefault() {}, stopPropagation() {} });
+        const processToggle = view.querySelector('[data-process-toggle]') as HTMLElement;
         view._handleProcessToggleClick({ target: processToggle, preventDefault() {}, stopPropagation() {} });
 
-        expect(processToggle.getAttribute('aria-expanded')).toBe('false');
-        expect(process.querySelector('.od-process-detail')?.classList).not.toContain('is-open');
+        const detail = view.querySelector('.od-process-detail') as HTMLElement;
+        expect(detail.classList).toContain('is-open');
+        const cards = detail.querySelectorAll('details.terminal-tool');
+        expect(cards).toHaveLength(2);
+        cards.forEach((card) => expect(card.hasAttribute('open')).toBe(false));
+    });
+
+    test('verbose mode keeps terminal tool cards expanded by default', () => {
+        onSettingChanged?.({ locale: 'zh-CN', gui_config: { output_mode: 'verbose' } });
+        const view = createView();
+        view.innerHTML = view._renderAssistantOutputHtml([terminalToolPart(['tc-1', 'tc-2'])], {
+            isRunning: false,
+            messageId: 'message-terminal-verbose'
+        });
+
+        const cards = view.querySelectorAll('details.terminal-tool');
+        expect(cards).toHaveLength(2);
+        cards.forEach((card) => expect(card.hasAttribute('open')).toBe(true));
+    });
+
+    test('a manually expanded terminal card survives the re-render of its message', () => {
+        const view = createView();
+        const parts = [terminalToolPart(['tc-1', 'tc-2'])];
+        const render = (disclosureState?: Map<string, boolean>) =>
+            view._renderAssistantOutputHtml(parts, {
+                isRunning: true,
+                messageId: 'message-terminal-disclosure',
+                showRunningDetails: true,
+                disclosureState
+            });
+        view.innerHTML = render();
+
+        const cards = view.querySelectorAll('details.terminal-tool');
+        expect(cards).toHaveLength(2);
+        (cards[1] as HTMLDetailsElement).open = true;
+
+        // 流式快照重渲染：用户展开的卡片保持展开，另一张仍按模式默认值收起。
+        view.innerHTML = render(view._captureProcessDisclosureState(view));
+
+        const rerendered = view.querySelectorAll('details.terminal-tool');
+        expect(rerendered).toHaveLength(2);
+        expect((rerendered[0] as HTMLDetailsElement).hasAttribute('open')).toBe(false);
+        expect((rerendered[1] as HTMLDetailsElement).hasAttribute('open')).toBe(true);
+    });
+
+    test('terminal card disclosure rewriting only touches terminal tool tags', () => {
+        const html =
+            terminalCardHtml('tc-1') +
+            '<details class="file-tool-card" open><summary>file</summary><div>body</div></details>' +
+            '<div class="text-open">open</div>';
+
+        const collapsed = TaskViewClass._applyTerminalCardDisclosure(html, undefined, 'message-x', 0);
+        expect(collapsed).toContain(
+            '<details data-toolcall-id="tc-1" class="terminal-tool od-card-shadow"' +
+                ' data-terminal-card-key="message-x-terminal-card-0-0">'
+        );
+        expect(collapsed).toContain('<details class="file-tool-card" open>');
+        expect(collapsed).toContain('<div class="text-open">open</div>');
+        expect(collapsed).not.toContain('terminal-tool od-card-shadow" open');
+    });
+
+    test('terminal card keys stay stable per part and card position', () => {
+        const html = terminalCardHtml('tc-1') + terminalCardHtml('tc-2');
+        const keys = (source: string) =>
+            Array.from(source.matchAll(/data-terminal-card-key="([^"]*)"/g)).map((match) => match[1]);
+
+        expect(keys(TaskViewClass._applyTerminalCardDisclosure(html, undefined, 'm1', 3))).toEqual([
+            'm1-terminal-card-3-0',
+            'm1-terminal-card-3-1'
+        ]);
+        // 输出内容变化后 key 不变，用户手动展开的卡片不会在流式刷新中串位。
+        expect(
+            keys(TaskViewClass._applyTerminalCardDisclosure(terminalCardHtml('tc-1', 'more'), undefined, 'm1', 3))
+        ).toEqual(['m1-terminal-card-3-0']);
     });
 
     test('completed minimal output renders a stale streaming reasoning part as completed without a live timer', () => {

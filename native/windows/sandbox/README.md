@@ -5,7 +5,7 @@
 - 任务设置保存 `task_config.shell_path` 和 `task_config.shell_sandboxed`。终端初始化探测 shell 清单，路径不可用时选择第一个；仅 Windows pwsh 提供沙箱选项，每个任务只注册选中的执行工具及 `checkShellStatus`。
 - 任务设置保存 `task_config.shell_sandbox_del_to_trash`；开启后 OpenDesk 在启动参数中追加 `--del-to-trash`。开启后沙箱内的删除经 SHFileOperation 送 Windows 回收站；回收站不可用的位置（网络路径、无回收站介质）或移动失败时保留原文件并写诊断日志，绝不静默永久删除。与 Linux/OHOS 沙箱一致：不区分"实例内新建"（Detours 实现没有 Dokan 的实例内创建跟踪）。
 - 开发运行固定使用 `native/windows/sandbox/runtime/sandbox.exe`（与 `sandbox_hook.dll` 同目录）；安装包固定使用 `resources/sandbox/sandbox.exe`。
-- OpenDesk 传入 `--log-file`，管理进程诊断信息写入 OpenDesk 日志目录的 `sandbox/dynamic-sandbox-<id>.log`。该文件是内部诊断日志，不进入终端结果；终端的 stdout、stderr、stdin 和退出码直接来自子进程。
+- OpenDesk 传入 `--log-file`，管理进程诊断信息写入 OpenDesk 日志目录的 `sandbox/dynamic-sandbox-<id>.log`。该文件是内部诊断日志，不进入终端结果；终端的 stdout、stderr、stdin 和退出码直接来自子进程。`--log-file` 路径同时经 `DYNOBOX_LOG_FILE` 注入 hook 子进程：整棵沙箱树的每次策略判定（`[POLICY] pid=N access vpath -> ALLOW|DENY (rule#N)`）都写回同一文件，事故后可归因"哪个进程、哪个路径、哪条规则、放行还是拒绝"。
 - 授权端点随进程存活；终端工具超时转入后台不会关闭端点。用户确认最多等待五分钟（ask `timeout_ms=330000`）。
 - 每次访问均查询 OpenDesk 当前权限规则，不下发原生 TTL 授权。同一命令的相同路径和操作复用单次确认结果；切换任务模式会清除此缓存。选择记住目录或操作类型时，写回任务权限引擎。
 - 沙箱子进程以**普通用户令牌**运行（Detours 强制点在 API 层，无法与 AppContainer 的内核级路径控制共存——见"安全模型"）。不再需要 `network-ensure`/`pipes-ensure`（AppContainer 网络/命名管道限制消失，相关 CLI 子命令已移除）。
@@ -331,6 +331,7 @@ node scripts/build-windows-sandbox.cjs      # x64（默认）；OPENDESK_SANDBOX
 - 未映射路径按 not-found 语义返回（PATH 探测不报错）；
 - **框架探测不打扰**：打开已存在目录（可写性检查）、"确保存在"的目录创建、属性/存在性查询（GetFileAttributes）等无副作用探测**不触发任何 ask**（连 read 也不触发），但 deny 规则仍拦截（防尾斜杠/别名逃逸）；沙箱会话内创建的文件删除同样不 ask、不进回收站；
 - **通用读探测豁免（判定层）**：read 类访问且目标**当前是已存在目录**（目录句柄打开、目录枚举、路径链逐层校验——句柄读不到文件数据）、目标**当前不存在**（ENOENT 透传：真实 API 对宿主返回 not-found，与无沙箱行为完全一致，探测/容错逻辑依赖它）、或目标由**沙箱会话内进程创建**（进程读回自己的产物，如 PowerShell `__PSScriptPolicyTest_*.ps1`，与"会话内创建文件删除=自发清理"同哲学）→ 不触发 ask；deny 规则仍优先拦截（deny 区的存在性探测不泄露），存在文件的内容读取照常受策略管控；
+- **写目标父链缺失透传（判定层，四平台统一）**：write 类访问且目标的**直接父目录当前不存在** → 该写注定失败（宿主返回 ERROR_PATH_NOT_FOUND / ENOENT），直接透传真实 API 结果，**不触发 ask**（deny 规则仍优先拦截）。典型噪音源：dbghelp/SymSrv 按模块内嵌的 CodeView 调试符号路径探测并写入符号缓存（如 node.exe 内嵌的 `c:\ws\out\Release\node.pdb`——官方构建机路径，在绝大多数机器上不存在），此前每次探测都会弹"编辑文件"授权框。父目录存在时的新建/写入不受影响，照常受策略管控（Windows：`sandboxCheckWriteParentMissing`，覆盖 CreateFileW/A 写模式、CreateDirectoryW/A、MoveFile/CopyFile 目标、NtCreateFile ntdll 层；Linux/OH：`write_parent_missing`，覆盖 open 系/mkdir/rename；macOS：`check_write_path` 统一接入）；
 - **App 专属策略（策略层，security/policies）**：常用 CLI 工具的运行时读放行定义在 `src/main/aikernel/security/policies/`（git/python/node/uv，standard 模式注入权限引擎，读写文件工具与沙箱两端生效）——git 全局配置、Python 用户站点包与 pip 缓存、npm 缓存与全局前缀、uv 缓存与工具区；`~/.git-credentials`/`~/.netrc`/`~/.npmrc` 等凭据文件 read ask 保护（standard 确认一次即可记住），沙箱导出时按 most-specific 同长 deny > ask > allow 保序；
 - 回收站不可用时保留原文件、绝不静默永久删除。
 

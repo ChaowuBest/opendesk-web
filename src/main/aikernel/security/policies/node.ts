@@ -32,6 +32,15 @@ import { homeRules } from './common.js';
 /** npm registry token（明文）：读 ask 保护。 */
 const NODE_CREDENTIAL_ASK_PATTERNS = ['{home}/.npmrc'];
 
+/**
+ * npm 调试日志目录写放行（common.ts"仅 read 放行"约束的显式例外）：
+ * npm/npx 每次执行都写 _logs/<时间戳>-debug-0.log（诊断产物，无持久化面），
+ * 不放行则 standard 沙箱每次 npm 执行都对该日志触发写 ask（实测 npx jest
+ * 一次即弹）。只放 _logs 子目录，npm 缓存主体（_cacache/_npx）的写仍由
+ * 引擎兜底 ask 管控（防缓存投毒诱导重装恶意包）。
+ */
+const NODE_LOG_WRITE_PATTERNS = ['{home}/.npm/_logs/**', '{home}/AppData/Local/npm-cache/_logs/**'];
+
 /** node/npm 运行时读放行。 */
 const NODE_RUNTIME_READ_PATTERNS = [
     // npm 缓存（_cacache/_npx/_logs/_prebuilds）
@@ -54,6 +63,8 @@ const NODE_RUNTIME_READ_PATTERNS = [
 export function createNodePolicyRules(homeDir?: string): PermissionRule[] {
     return [
         ...homeRules(NODE_CREDENTIAL_ASK_PATTERNS, 'read', 'ask', homeDir),
-        ...homeRules(NODE_RUNTIME_READ_PATTERNS, 'read', 'allow', homeDir)
+        ...homeRules(NODE_RUNTIME_READ_PATTERNS, 'read', 'allow', homeDir),
+        // npm 调试日志写放行（诊断产物例外，见 NODE_LOG_WRITE_PATTERNS 注释）
+        ...homeRules(NODE_LOG_WRITE_PATTERNS, 'write', 'allow', homeDir)
     ];
 }

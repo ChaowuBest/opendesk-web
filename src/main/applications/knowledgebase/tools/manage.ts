@@ -23,7 +23,16 @@ export class ListLibraryProvidersTool extends BaseTool<typeof ListLibraryProvide
     private app: KnowledgeBaseApplication;
 
     constructor(app: KnowledgeBaseApplication) {
-        super('listLibraryProviders', '列出所有知识库服务商及其启用状态和配置信息', ListLibraryProvidersArgsSchema);
+        super(
+            'listLibraryProviders',
+            '列出所有知识库服务商及其启用状态和配置信息',
+            ListLibraryProvidersArgsSchema,
+            undefined,
+            {
+                'zh-CN': '服务商列表',
+                'en-US': 'List Providers'
+            }
+        );
         this.app = app;
         this.setExecutor(this.list.bind(this));
     }
@@ -75,7 +84,9 @@ export class ConfigureLibraryProviderTool extends BaseTool<typeof ConfigureLibra
         super(
             'configureLibraryProvider',
             '配置知识库服务商，包括设置API密钥和启用/禁用',
-            ConfigureLibraryProviderArgsSchema
+            ConfigureLibraryProviderArgsSchema,
+            undefined,
+            { 'zh-CN': '配置服务商', 'en-US': 'Configure Provider' }
         );
         this.app = app;
         this.setExecutor(this.configure.bind(this));
@@ -129,7 +140,10 @@ export class ToggleLibraryProviderTool extends BaseTool<typeof ToggleLibraryProv
     private app: KnowledgeBaseApplication;
 
     constructor(app: KnowledgeBaseApplication) {
-        super('toggleLibraryProvider', '快速启用或禁用知识库服务商', ToggleLibraryProviderArgsSchema);
+        super('toggleLibraryProvider', '快速启用或禁用知识库服务商', ToggleLibraryProviderArgsSchema, undefined, {
+            'zh-CN': '启用/停用服务商',
+            'en-US': 'Toggle Provider'
+        });
         this.app = app;
         this.setExecutor(this.toggle.bind(this));
     }
@@ -177,7 +191,10 @@ export class CreateKnowledgeBaseTool extends BaseTool<typeof CreateKnowledgeBase
     private app: KnowledgeBaseApplication;
 
     constructor(app: KnowledgeBaseApplication) {
-        super('createKnowledgeBase', '在指定服务商下创建新的知识库', CreateKnowledgeBaseArgsSchema);
+        super('createKnowledgeBase', '在指定服务商下创建新的知识库', CreateKnowledgeBaseArgsSchema, undefined, {
+            'zh-CN': '创建知识库',
+            'en-US': 'Create Knowledge Base'
+        });
         this.app = app;
         this.setExecutor(this.create.bind(this));
     }
@@ -232,7 +249,10 @@ export class DeleteKnowledgeBaseTool extends BaseTool<typeof DeleteKnowledgeBase
     private app: KnowledgeBaseApplication;
 
     constructor(app: KnowledgeBaseApplication) {
-        super('deleteKnowledgeBase', '删除指定服务商下的知识库', DeleteKnowledgeBaseArgsSchema);
+        super('deleteKnowledgeBase', '删除指定服务商下的知识库', DeleteKnowledgeBaseArgsSchema, undefined, {
+            'zh-CN': '删除知识库',
+            'en-US': 'Delete Knowledge Base'
+        });
         this.app = app;
         this.setExecutor(this.delete.bind(this));
     }

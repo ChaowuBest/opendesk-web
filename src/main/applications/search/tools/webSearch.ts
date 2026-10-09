@@ -66,7 +66,9 @@ export class WebSearchTool extends BaseTool<typeof WebSearchArgsSchema> {
         super(
             'WebSearch',
             '使用搜索引擎搜索网页信息。返回搜索结果的标题、URL和摘要。当前使用的搜索引擎由用户配置决定。',
-            WebSearchArgsSchema
+            WebSearchArgsSchema,
+            undefined,
+            { 'zh-CN': '网页搜索', 'en-US': 'Web Search' }
         );
         this.appConfig = appConfig;
         this.channel = appConfig.getEffectiveWebSearchChannel();

@@ -117,5 +117,9 @@ describe('ask-user-prompt component', () => {
         expect(html).not.toContain('to-white');
         expect(html).toContain('var(--chat-');
         expect(html).toContain('var(--od-');
+        // 面板底色/描边走 panel 渐变 token（浅色恢复 blue-50 渐变原观感，深色为低透明度渐变）
+        expect(html).toContain('var(--panel-blue-bg)');
+        expect(html).toContain('var(--panel-blue-border)');
+        expect(html).toContain('var(--panel-blue-divider)');
     });
 });

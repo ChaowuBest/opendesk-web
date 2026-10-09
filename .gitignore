@@ -183,6 +183,12 @@ native/linux/sandbox/target/
 native/linux/sandbox/runtime/
 native/linux/sandbox/vendor/
 
+# 沙箱运行时产物一律不入库（各平台均由构建脚本现场生成）：
+# windows -> native/windows/sandbox/{dist,runtime}；darwin -> native/darwin/sandbox/runtime；
+# openharmony -> native/openharmony/sandbox/runtime；打包落盘 -> resources/sandbox
+# （forge hooks 的 stageWindows/Linux/DarwinSandboxResource 按目标架构写入）
+resources/sandbox/
+
 # 原生编译产物（散落的 .obj 等，不限于 sandbox 的 obj/ 目录）
 *.obj
 

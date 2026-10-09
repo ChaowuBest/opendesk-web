@@ -18,7 +18,7 @@ import { t } from '../../../locale/index.js';
 import { statusDisplay, truncText } from '../../tui/components/toolcall';
 import { truncateToWidth } from '@earendil-works/pi-tui';
 import { z } from 'zod';
-import { detectEncoding, decodeBuffer, encodingDisplayName, HEAD_BYTES } from '../terminal/encoding.js';
+import { detectEncoding, decodeBuffer, encodingDisplayName } from '../terminal/encoding.js';
 import type { PermissionRequest } from '../../aikernel/security/permission';
 import type { TaskState } from '../../aikernel/states/tasks';
 import { Setting } from '../../utils/setting.js';
@@ -862,7 +862,9 @@ export class ReadFileTool extends BaseTool<typeof readFileSchema> {
         super(
             'readFile',
             '读取本地文件系统中的文件。你可以使用此工具直接访问任意文件。\n\n使用方法：\n- file_path 参数支持绝对路径或相对路径\n- 默认从文件开头读取全部内容\n- 可以通过 offset（起始行号）和 limit（行数）指定读取范围，适用于大文件分段读取\n- 返回结果为 JSON 格式，内容使用 cat -n 风格的行号标注\n- 此工具只能读取文件，不能读取目录。要读取目录内容请使用 shell 工具的 ls 命令\n- 如果读取的文件存在但内容为空，你会收到空文件提示',
-            readFileSchema
+            readFileSchema,
+            undefined,
+            { 'zh-CN': '读取文件', 'en-US': 'Read File' }
         );
 
         this.setExecutor(this.executeCommand);
@@ -1002,16 +1004,11 @@ export class ReadFileTool extends BaseTool<typeof readFileSchema> {
                 });
             }
 
-            const headLen = Math.min(size, HEAD_BYTES);
-            const headBuf = Buffer.alloc(headLen);
-            const fd = await fs.promises.open(filePath, 'r');
-            try {
-                await fd.read(headBuf, 0, headLen, 0);
-            } finally {
-                await fd.close();
-            }
+            const rawBuf = await fs.promises.readFile(filePath);
 
-            const { encoding, bomOffset } = detectEncoding(headBuf);
+            // 编码检测用全文：头部以 ASCII 为主的多字节文件（生成代码 + 中文注释的 GBK 文件、
+            // 中文在文件尾部的 UTF-8 源码）仅凭头部无法判别，全文校验才能给出确定结论
+            const { encoding, bomOffset } = detectEncoding(rawBuf);
             const isMultiByteUnicode =
                 encoding === 'utf16le' || encoding === 'utf16be' || encoding === 'utf-32le' || encoding === 'utf-32be';
 
@@ -1027,12 +1024,11 @@ export class ReadFileTool extends BaseTool<typeof readFileSchema> {
                     throw new Error(`此文件不是纯文本（检测为 ${type.mime}），readFile 无法打开非文本文件`);
                 }
 
-                if (!type && hasBinaryContent(headBuf)) {
+                if (!type && hasBinaryContent(rawBuf)) {
                     throw new Error(`此文件不是纯文本（检测为二进制），readFile 无法打开非文本文件`);
                 }
             }
 
-            const rawBuf = await fs.promises.readFile(filePath);
             const fullContent = decodeBuffer(rawBuf, encoding, bomOffset);
             const allLines = fullContent.split(/\r?\n/);
             const totalLines = allLines.length;
@@ -1231,7 +1227,9 @@ export class ReadImageTool extends BaseTool<typeof readImageSchema> {
         super(
             'readImage',
             '读取本地路径或在线 URL 指向的 JPEG、PNG、WebP、BMP、GIF 或 TIFF 图片，并将图片内容返回给当前任务模型进行视觉理解。GIF 按首帧处理；当前任务模型不支持视觉输入时会返回错误。',
-            readImageSchema
+            readImageSchema,
+            undefined,
+            { 'zh-CN': '读取图片', 'en-US': 'Read Image' }
         );
         this.setUniversalExecutor(this.executeCommand);
     }
@@ -1302,7 +1300,9 @@ export class AskImageTool extends BaseTool<typeof askImageSchema> {
         super(
             'askImage',
             '使用系统设置中的默认视觉模型分析本地路径或在线 URL 指向的 JPEG、PNG、WebP、BMP、GIF 或 TIFF 图片，并直接返回该视觉模型对 question 的回答。GIF 按首帧处理。',
-            askImageSchema
+            askImageSchema,
+            undefined,
+            { 'zh-CN': '询问图片', 'en-US': 'Ask Image' }
         );
         this.setExecutor(this.executeCommand);
     }
@@ -1456,7 +1456,9 @@ export class ExtractTextTool extends BaseTool<typeof extractTextSchema> {
         super(
             'extractText',
             `将本地文件提取为纯文本读取，仅适用于读取复杂结构化文档内容，如 pdf/doc/docx/pptx/xls/xlsx/odt/odp/ods 等。纯文本文件请使用 readFile 工具读取。`,
-            extractTextSchema
+            extractTextSchema,
+            undefined,
+            { 'zh-CN': '提取文本', 'en-US': 'Extract Text' }
         );
 
         this.extractDelegate = extractDelegate;
@@ -1698,7 +1700,13 @@ function getWriteFileInfo(toolcall: ToolCall, content: string): WriteFileRenderC
 
 export class WriteFileTool extends BaseTool<typeof writeFileSchema> {
     constructor() {
-        super('writeFile', '将文件内容写入给定的文件路径中，支持覆盖模式与追加模式, 默认为覆盖模式', writeFileSchema);
+        super(
+            'writeFile',
+            '将文件内容写入给定的文件路径中，支持覆盖模式与追加模式, 默认为覆盖模式',
+            writeFileSchema,
+            undefined,
+            { 'zh-CN': '写入文件', 'en-US': 'Write File' }
+        );
 
         this.setExecutor(this.executeCommand);
         this.serialExecution = true;
@@ -1868,7 +1876,9 @@ export class EditFileTool extends BaseTool<typeof editFileSchema> {
         super(
             'editFile',
             '在现有文件中进行文本替换操作，支持字面字符串替换，可处理多次出现的替换。这是对文件进行精确、针对性修改的首选工具。创建新文件请使用 writeFile 工具',
-            editFileSchema
+            editFileSchema,
+            undefined,
+            { 'zh-CN': '编辑文件', 'en-US': 'Edit File' }
         );
 
         this.setExecutor(this.executeCommand);
@@ -2070,7 +2080,9 @@ export class SearchReplaceTool extends BaseTool<typeof searchReplaceSchema> {
         super(
             'searchReplace',
             '在指定文件中执行单次搜索和替换操作。这是对文件进行简单文本替换的便捷工具',
-            searchReplaceSchema
+            searchReplaceSchema,
+            undefined,
+            { 'zh-CN': '搜索替换', 'en-US': 'Search & Replace' }
         );
 
         this.setExecutor(this.executeCommand);
@@ -2378,7 +2390,9 @@ export class ApplyPatchTool extends BaseTool<typeof applyPatchSchema> {
         super(
             'applyPatch',
             '将 patch 补丁内容应用到代码库。支持 unified diff 格式，可以包含多个文件操作（添加、删除、更新）',
-            applyPatchSchema
+            applyPatchSchema,
+            undefined,
+            { 'zh-CN': '应用补丁', 'en-US': 'Apply Patch' }
         );
 
         this.setExecutor(this.executeCommand);
@@ -2598,7 +2612,9 @@ export class GlobFilesTool extends BaseTool<typeof globSchema> {
         super(
             'globFiles',
             '使用 glob 模式搜索文件。支持通配符如 *、**、? 等。例如：**/*.ts 搜索所有 TypeScript 文件，src/**/*.js 搜索 src 目录下所有 JS 文件。不以 **/ 开头的简单模式（如 *.ts）会自动递归搜索',
-            globSchema
+            globSchema,
+            undefined,
+            { 'zh-CN': '模式匹配', 'en-US': 'Glob' }
         );
 
         this.setExecutor(this.executeCommand);
@@ -3266,7 +3282,9 @@ export class GrepFilesTool extends BaseTool<typeof grepSchema> {
         super(
             'grepFiles',
             '在文件内容中搜索文本模式。支持正则表达式。例如：搜索 "TODO" 查找所有待办事项，搜索 "function\\s+\\w+" 查找所有函数定义',
-            grepSchema
+            grepSchema,
+            undefined,
+            { 'zh-CN': '内容搜索', 'en-US': 'Grep' }
         );
 
         this.setExecutor(this.executeCommand);
@@ -3905,7 +3923,9 @@ export class SemanticSearchTool extends BaseTool<typeof semanticSearchSchema> {
             'semanticSearch',
             '在纳入智能文件系统的目录中按语义进行模糊搜索，并返回最相关的文件片段。在搜索时给定一句话描述即可。' +
                 '不要使用大量类似的关键词，也不要一次性搜索不同的主题，搜索多个主题可以多次调用',
-            semanticSearchSchema
+            semanticSearchSchema,
+            undefined,
+            { 'zh-CN': '语义搜索', 'en-US': 'Semantic Search' }
         );
         this.searchIndexedFiles = searchIndexedFiles;
         this.setExecutor(this.executeCommand);

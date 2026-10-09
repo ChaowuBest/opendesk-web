@@ -329,6 +329,26 @@ AUDR1=$(grep -c "decide" "$AUDIT"); AUDR1=${AUDR1:-0}
 [ "$AUDR1" = "$AUDR0" ] && rc=0 || rc=1
 check "find traversal zero asks (audit)" $rc
 
+echo "== regression: write into a missing parent chain never asks (ENOENT pass-through) =="
+# 符号引擎（dbghelp/SymSrv）按模块内嵌 CodeView 路径探测并写入符号缓存
+# （Windows 侧真实事故：node.exe 的 c:\ws\out\Release\node.pdb 在多数机器上
+# 不存在，write 兜底 ask 下每次探测都弹写审批框）。父链缺失的写注定 ENOENT，
+# 必须透传内核错误码且零 ask——deny 规则仍优先（拒绝）。
+RT wr_enoent "$SRC/no-such-parent/deeper/probe.txt"  >/dev/null; check "write missing-parent -> ENOENT (no ask)" $?
+AUMP0=$(grep -c "decide" "$AUDIT" 2>/dev/null); AUMP0=${AUMP0:-0}
+RT wr_enoent "$SRC/no-such-parent/deeper/probe.txt"  >/dev/null; check "write missing-parent repeatable ENOENT" $?
+AUMP1=$(grep -c "decide" "$AUDIT"); AUMP1=${AUMP1:-0}
+[ "$AUMP1" = "$AUMP0" ] && rc=0 || rc=1
+check "write missing-parent zero asks (audit)" $rc
+# 父目录存在但文件不存在 = 正常创建（必须正常判定，不可被"缺失"逻辑误放行）：
+# 在 write 兜底 ask + endpoint deny 策略下，正常判定会走到 ask → deny（fail-closed
+# EACCES），"父链缺失透传"不能把它变成 ENOENT 放行。
+RT wr_fail "$SRC/public/mkprobe.txt"                  >/dev/null; check "create in existing parent still judged (ask->deny)" $?
+# mkdir 的父链缺失同样注定 ENOENT、不 ask
+RT mkdir "$SRC/no-such-parent/deeper" 2>/dev/null;     rc=$?
+[ "$rc" != "0" ] && rc=0 || rc=1
+check "mkdir missing-parent fails without hanging on ask" $rc
+
 echo "== ask: staging write approval =="
 TSH "$PROBE app $SRC/staging/base.txt -ap; $PROBE app $SRC/staging/base.txt -ap2" >/dev/null; check "staging write ask -> allow + grant covers appends" $?
 
@@ -697,10 +717,10 @@ check "reg: child environment intact after exec" $?
 
 # ------------------------------------------------------------------
 echo
-echo "== runtime artifacts (committed binaries) =="
-# runtime/<target>/ 下是入库的运行时产物。这里在**独立工作区**里验证它开箱
-# 可用（不依赖 build/），避免"源码改了、产物忘了重新生成"的静默腐化。
-# 生成方式：make runtime
+echo "== runtime artifacts (locally built) =="
+# runtime/<target>/ 下是本机构建的运行时产物（不入库，make runtime 现场生成）。
+# 这里在**独立工作区**里验证它开箱可用（不依赖 build/），避免"源码改了、
+# 产物忘了重新生成"的静默腐化。
 RTROOT="$ROOT/runtime"
 rt_seen=0
 for d in "$RTROOT"/*/; do
@@ -723,7 +743,7 @@ for d in "$RTROOT"/*/; do
     check "runtime($rtag): denies unpermitted read" $rc
     rm -rf "$RTW"
 done
-[ "$rt_seen" = "0" ] && echo "skip runtime artifacts (none committed)"
+[ "$rt_seen" = "0" ] && echo "skip runtime artifacts (none built locally)"
 
 echo
 echo "== boundary documentation (mechanism limits, see README) =="

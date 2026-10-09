@@ -457,7 +457,7 @@ describe('task-view 滚动锁定状态与缩放事件', () => {
         expect(taskView.auto_scrolling_to_bottom).toBe(true);
     });
 
-    test('过程区和完整思考区原本在底部时，内容增长后持续跟随尾部', () => {
+    test('展开的过程块不再限高，只有完整思考区参与底部跟随', () => {
         const taskView = createTaskView();
         taskView.setAutoScrollingToBottom(true);
         const message = document.createElement('div');
@@ -470,11 +470,10 @@ describe('task-view 滚动锁定状态与缩放事件', () => {
             </div>`;
         taskView.appendChild(message);
 
-        const process = message.querySelector('.od-process-detail') as HTMLElement;
         const reasoning = message.querySelector('.reasoning-full-area') as HTMLElement;
-        setScrollMetrics(process, 200, 500, 300);
         setScrollMetrics(reasoning, 120, 320, 200);
         const followState = taskView._captureProcessScrollFollowState(message);
+        expect([...followState.keys()]).toEqual(['reasoning:0']);
 
         message.innerHTML = `
             <div id="process-scroll-follow" class="od-process-detail is-open">
@@ -482,38 +481,40 @@ describe('task-view 滚动锁定状态与缩放事件', () => {
                     <div class="reasoning-full-area" data-reasoning-scroll-key="0"></div>
                 </div>
             </div>`;
-        const updatedProcess = message.querySelector('.od-process-detail') as HTMLElement;
         const updatedReasoning = message.querySelector('.reasoning-full-area') as HTMLElement;
-        setScrollMetrics(updatedProcess, 200, 800, 300);
         setScrollMetrics(updatedReasoning, 120, 560, 200);
 
         taskView._restoreProcessScrollFollowState(message, followState);
 
-        expect(updatedProcess.scrollTop).toBe(500);
         expect(updatedReasoning.scrollTop).toBe(360);
     });
 
-    test('内部已向上滚动或外层已解除底部锁定时，过程区不强制跟随', () => {
+    test('内部已向上滚动或外层已解除底部锁定时，思考区不强制跟随', () => {
         const taskView = createTaskView();
+        taskView.setAutoScrollingToBottom(true);
         const message = document.createElement('div');
         message.id = 'message-content-scroll-detached';
-        message.innerHTML = '<div id="process-scroll-detached" class="od-process-detail is-open"></div>';
+        message.innerHTML = `
+            <div class="od-process-detail is-open">
+                <div class="reasoning-block-od reasoning-expanded">
+                    <div class="reasoning-full-area" data-reasoning-scroll-key="0"></div>
+                </div>
+            </div>`;
         taskView.appendChild(message);
-        const process = message.querySelector('.od-process-detail') as HTMLElement;
+        const reasoning = message.querySelector('.reasoning-full-area') as HTMLElement;
 
-        taskView.setAutoScrollingToBottom(true);
-        setScrollMetrics(process, 80, 500, 300);
+        setScrollMetrics(reasoning, 80, 500, 300);
         const detachedState = taskView._captureProcessScrollFollowState(message);
-        setScrollMetrics(process, 80, 800, 300);
+        setScrollMetrics(reasoning, 80, 800, 300);
         taskView._restoreProcessScrollFollowState(message, detachedState);
-        expect(process.scrollTop).toBe(80);
+        expect(reasoning.scrollTop).toBe(80);
 
         taskView.setAutoScrollingToBottom(false);
-        setScrollMetrics(process, 500, 800, 300);
+        setScrollMetrics(reasoning, 500, 800, 300);
         const unlockedState = taskView._captureProcessScrollFollowState(message);
-        setScrollMetrics(process, 500, 1000, 300);
+        setScrollMetrics(reasoning, 500, 1000, 300);
         taskView._restoreProcessScrollFollowState(message, unlockedState);
-        expect(process.scrollTop).toBe(500);
+        expect(reasoning.scrollTop).toBe(500);
     });
 
     // ------------------------------------------------------------------

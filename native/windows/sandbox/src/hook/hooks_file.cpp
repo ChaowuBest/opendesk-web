@@ -707,6 +707,20 @@ HANDLE WINAPI Hook_CreateFileW(LPCWSTR lpFileName, DWORD dwDesiredAccess, DWORD 
         return Real_CreateFileW(lpFileName, dwDesiredAccess, dwShareMode, lpSA,
                                 dwCreationDisposition, dwFlagsAndAttributes, hTemplateFile);
     }
+    // 写类操作父目录链缺失 → 透传真实 API（宿主返回 PATH_NOT_FOUND），不触发 ask。
+    // 符号引擎/构建工具的探测（如 node.exe 内嵌 CodeView 路径 c:\ws\out\Release\node.pdb）
+    // 此前每次都会弹"编辑文件"授权框；父链缺失的写注定失败，弹窗是纯噪音。
+    if (categorizeCreateAccess(dwDesiredAccess, dwCreationDisposition) == AccessClass::Write) {
+        DWORD perr = ERROR_SUCCESS;
+        if (sandboxCheckWriteParentMissing(lpFileName, perr)) {
+            if (perr != ERROR_SUCCESS) {
+                SetLastError(perr);
+                return INVALID_HANDLE_VALUE;
+            }
+            return Real_CreateFileW(lpFileName, dwDesiredAccess, dwShareMode, lpSA,
+                                    dwCreationDisposition, dwFlagsAndAttributes, hTemplateFile);
+        }
+    }
     DWORD err = ERROR_SUCCESS;
     if (!sandboxCheckPath(lpFileName, categorizeCreateAccess(dwDesiredAccess, dwCreationDisposition), err)) {
         SetLastError(err);
@@ -747,6 +761,19 @@ HANDLE WINAPI Hook_CreateFileA(LPCSTR lpFileName, DWORD dwDesiredAccess, DWORD d
         }
         return Real_CreateFileA(lpFileName, dwDesiredAccess, dwShareMode, lpSA,
                                 dwCreationDisposition, dwFlagsAndAttributes, hTemplateFile);
+    }
+    // 写类操作父目录链缺失 → 透传真实 API（同 W 版：不触发 ask）
+    if (!wide.empty() &&
+        categorizeCreateAccess(dwDesiredAccess, dwCreationDisposition) == AccessClass::Write) {
+        DWORD perr = ERROR_SUCCESS;
+        if (sandboxCheckWriteParentMissing(wide, perr)) {
+            if (perr != ERROR_SUCCESS) {
+                SetLastError(perr);
+                return INVALID_HANDLE_VALUE;
+            }
+            return Real_CreateFileA(lpFileName, dwDesiredAccess, dwShareMode, lpSA,
+                                    dwCreationDisposition, dwFlagsAndAttributes, hTemplateFile);
+        }
     }
     if (!wide.empty() && !sandboxCheckPath(wide, categorizeCreateAccess(dwDesiredAccess, dwCreationDisposition), err)) {
         SetLastError(err);
@@ -873,6 +900,17 @@ BOOL WINAPI Hook_CreateDirectoryW(LPCWSTR lpPathName, LPSECURITY_ATTRIBUTES lpSA
             return Real_CreateDirectoryW(lpPathName, lpSA);
         }
     }
+    // 父目录链缺失的建目录注定失败（宿主返回 PATH_NOT_FOUND）：透传不 ask
+    {
+        DWORD perr = ERROR_SUCCESS;
+        if (sandboxCheckWriteParentMissing(lpPathName, perr)) {
+            if (perr != ERROR_SUCCESS) {
+                SetLastError(perr);
+                return FALSE;
+            }
+            return Real_CreateDirectoryW(lpPathName, lpSA);
+        }
+    }
     DWORD err = ERROR_SUCCESS;
     if (!sandboxCheckPath(lpPathName, AccessClass::Write, err)) {
         SetLastError(err);
@@ -897,6 +935,17 @@ BOOL WINAPI Hook_CreateDirectoryA(LPCSTR lpPathName, LPSECURITY_ATTRIBUTES lpSA)
                 return FALSE;
             }
             return Real_CreateDirectoryA(lpPathName, lpSA);
+        }
+        // 父目录链缺失的建目录注定失败：透传不 ask（同 W 版）
+        {
+            DWORD perr = ERROR_SUCCESS;
+            if (sandboxCheckWriteParentMissing(wide, perr)) {
+                if (perr != ERROR_SUCCESS) {
+                    SetLastError(perr);
+                    return FALSE;
+                }
+                return Real_CreateDirectoryA(lpPathName, lpSA);
+            }
         }
     }
     DWORD err = ERROR_SUCCESS;
@@ -1015,9 +1064,20 @@ static BOOL checkMovePaths(const std::wstring& from, const std::wstring& to)
         SetLastError(err);
         return FALSE;
     }
-    if (!to.empty() && !sandboxCheckPath(to, AccessClass::Write, err)) {
-        SetLastError(err);
-        return FALSE;
+    if (!to.empty()) {
+        // 目标父目录链缺失的改名/移动注定失败（宿主返回 PATH_NOT_FOUND）：透传不 ask
+        DWORD perr = ERROR_SUCCESS;
+        if (sandboxCheckWriteParentMissing(to, perr)) {
+            if (perr != ERROR_SUCCESS) {
+                SetLastError(perr);
+                return FALSE;
+            }
+            return TRUE;
+        }
+        if (!sandboxCheckPath(to, AccessClass::Write, err)) {
+            SetLastError(err);
+            return FALSE;
+        }
     }
     return TRUE;
 }
@@ -1062,6 +1122,17 @@ static BOOL checkCopyPaths(const std::wstring& from, const std::wstring& to)
     if (!from.empty() && !sandboxCheckPath(from, AccessClass::Read, err)) {
         SetLastError(err);
         return FALSE;
+    }
+    if (!to.empty()) {
+        // 目标父目录链缺失的复制注定失败：透传不 ask（同 Move 语义）
+        DWORD perr = ERROR_SUCCESS;
+        if (sandboxCheckWriteParentMissing(to, perr)) {
+            if (perr != ERROR_SUCCESS) {
+                SetLastError(perr);
+                return FALSE;
+            }
+            return TRUE;
+        }
     }
     if (!to.empty() && !sandboxCheckPath(to, AccessClass::Write, err)) {
         SetLastError(err);

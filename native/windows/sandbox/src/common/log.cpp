@@ -91,6 +91,40 @@ void Log::debug(const wchar_t* fmt, ...)
     write(3, L"[DBG]", buf);
 }
 
+// 策略判定日志通道：只写文件、不写 stderr、不受 verbose 约束。hook 子进程内
+// 每次访问判定都经此落盘（事故后可归因"哪个 pid、哪个路径、哪条规则、放行还是拒绝"）。
+static void stampAndEncode(const std::wstring& msg, std::string& lineUtf8)
+{
+    wchar_t timeBuf[32];
+    SYSTEMTIME st;
+    GetLocalTime(&st);
+    swprintf_s(timeBuf, L"%04d-%02d-%02d %02d:%02d:%02d.%03d",
+               st.wYear, st.wMonth, st.wDay, st.wHour, st.wMinute, st.wSecond, st.wMilliseconds);
+
+    std::wstring line = std::wstring(timeBuf) + L" " + msg + L"\r\n";
+    int n = WideCharToMultiByte(CP_UTF8, 0, line.c_str(), (int)line.size(), nullptr, 0, nullptr, nullptr);
+    lineUtf8.resize((size_t)n);
+    WideCharToMultiByte(CP_UTF8, 0, line.c_str(), (int)line.size(), &lineUtf8[0], n, nullptr, nullptr);
+}
+
+void Log::policy(const wchar_t* fmt, ...)
+{
+    va_list ap;
+    va_start(ap, fmt);
+    std::wstring buf = vformat(fmt, ap);
+    va_end(ap);
+
+    CRITICAL_SECTION& lock = lockInstance();
+    EnterCriticalSection(&lock);
+    if (s_file != INVALID_HANDLE_VALUE) {
+        std::string lineUtf8;
+        stampAndEncode(L"[POLICY] " + buf, lineUtf8);
+        DWORD written = 0;
+        WriteFile(s_file, lineUtf8.data(), (DWORD)lineUtf8.size(), &written, nullptr);
+    }
+    LeaveCriticalSection(&lock);
+}
+
 void Log::write(int level, const wchar_t* prefix, const std::wstring& msg)
 {
     wchar_t timeBuf[32];

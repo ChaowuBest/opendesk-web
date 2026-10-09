@@ -53,6 +53,15 @@ bool sandboxCheckSessionCreatedRead(const std::wstring& hostPath, DWORD& winErr)
 // deny 仍拦截）；目标存在或查询失败时返回 false（走正常 read 判定）。
 bool sandboxCheckNotExistRead(const std::wstring& hostPath, DWORD& winErr);
 
+// 写类操作目标父目录链缺失的透传判定：目标**直接父目录**当前不存在时该写注定
+// 失败（真实 API 返回 ERROR_PATH_NOT_FOUND/ERROR_FILE_NOT_FOUND），直接透传不
+// 触发 ask（deny 规则仍优先拦截）。典型：dbghelp/SymSrv 按模块内嵌的 CodeView
+// 调试符号路径（node.exe 的 c:\ws\out\Release\node.pdb 等）探测并尝试写入符号
+// 缓存——这些路径在绝大多数机器上不存在，此前每次探测都会弹"编辑文件"授权框。
+// 目标文件自身不存在不算（父目录存在时创建是合法写，正常判定）。
+// 返回 true = 父链缺失，应透传真实 API（*winErr 写判定错误码）；false = 正常判定。
+bool sandboxCheckWriteParentMissing(const std::wstring& hostPath, DWORD& winErr);
+
 // 路径特殊设备/虚设备（NUL、CON、\\.\ 设备、命名管道）不做文件系统判定。
 bool isSpecialDevicePath(const std::wstring& path);
 

@@ -334,5 +334,9 @@ describe('permission-prompt component', () => {
         }
         expect(html).toContain('var(--chat-');
         expect(html).toContain('var(--od-');
+        // 面板底色/描边走 panel 渐变 token（浅色恢复 amber-50 渐变原观感，深色为低透明度渐变）
+        expect(html).toContain('var(--panel-amber-bg)');
+        expect(html).toContain('var(--panel-amber-border)');
+        expect(html).toContain('var(--panel-amber-divider)');
     });
 });

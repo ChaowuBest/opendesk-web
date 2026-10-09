@@ -42,14 +42,23 @@ async function waitFor(predicate: () => boolean, timeoutMs = 15000): Promise<boo
 }
 
 darwinOnly('prepareDarwinSandbox 端到端（真实进程）', () => {
+    // 非 temp 外部根（HOME 下固定前缀）：统一策略把 POSIX temp 区（/tmp、
+    // /private/var/folders 等）读写放行（shell 管道/heredoc/编译器落盘区），
+    // 且该区文件删除不入回收站（trash-excluded 内建清单）。"外部拒绝/回收站"
+    // 语义必须在非 temp 路径上测；temp 放行语义另设正向断言。
+    const outsideRoot = path.join(os.homedir(), '.opendesk-sbx-e2e-outside');
+
     test('工作区写放行、工作区外写拒绝、预存在文件删除送废纸篓', async () => {
-        const root = fs.mkdtempSync(path.join(os.tmpdir(), 'sbx-darwin-e2e-'));
+        const root = path.join(outsideRoot, 'run');
         const workspace = path.join(root, 'workspace');
-        const outside = path.join(root, 'outside');
-        const trashDir = path.join(root, 'trash');
-        fs.mkdirSync(workspace);
-        fs.mkdirSync(outside);
-        fs.mkdirSync(trashDir);
+        const outside = path.join(outsideRoot, 'outside');
+        const trashDir = path.join(outsideRoot, 'trash');
+        // workspace 也必须在非 temp 区：temp 区文件删除命中 trash-exclude 内建清单
+        //（/tmp、/private/var/folders 等构建零时产物直接真删不入站），回收站断言会反向
+        fs.rmSync(outsideRoot, { recursive: true, force: true });
+        fs.mkdirSync(workspace, { recursive: true });
+        fs.mkdirSync(outside, { recursive: true });
+        fs.mkdirSync(trashDir, { recursive: true });
         const preExisting = path.join(workspace, 'pre-existing.txt');
         fs.writeFileSync(preExisting, 'old');
         const outsideTarget = path.join(outside, 'target.txt');
@@ -73,20 +82,26 @@ darwinOnly('prepareDarwinSandbox 端到端（真实进程）', () => {
             // 无 decide 端点（策略 endpoint 不可达）时：工作区放行仍然生效
             const proc = spawn(launch!.file, launch!.args, {
                 cwd: launch!.cwd,
-                env: { ...process.env, ...launch!.env, OPENDESK_SANDBOX_TRASH_DIR: trashDir }
+                env: {
+                    ...process.env,
+                    ...launch!.env,
+                    OPENDESK_SANDBOX_TRASH_DIR: trashDir,
+                    OPENDESK_SANDBOX_LOG: '/tmp/darwin-e2e-debug.log'
+                }
             });
             const code = await new Promise<number | null>((resolve) => proc.once('exit', resolve));
             expect(code).toBe(0);
             expect(await waitFor(() => fs.existsSync(path.join(workspace, 'ws-file.txt')))).toBe(true);
             expect(fs.readFileSync(path.join(workspace, 'ws-file.txt'), 'utf8')).toContain('sandbox-write');
 
-            // 第二个沙箱实例：预存在文件删除 → 废纸篓；外部写 → 拒绝
+            // 第二个沙箱实例：预存在文件删除 → 废纸篓；外部写 → 拒绝。
+            // 外部目标在非 temp 区（outsideRoot），用绝对路径访问。
             fs.writeFileSync(path.join(workspace, 'to-delete.txt'), 'bye');
             const launch2 = await prepareDarwinSandbox({
                 shellPath: '/bin/zsh',
                 shellArgs: [
                     '-c',
-                    '/bin/rm to-delete.txt; if /bin/cat ../outside/target.txt > capture.txt 2>/dev/null; then echo hack > ../outside/target.txt; fi; true'
+                    `/bin/rm to-delete.txt; if /bin/cat ${JSON.stringify(path.join(outside, 'target.txt'))} > capture.txt 2>/dev/null; then echo hack > ${JSON.stringify(path.join(outside, 'target.txt'))}; fi; true`
                 ],
                 command: 'rm/ask scenario',
                 cwd: workspace,
@@ -94,7 +109,12 @@ darwinOnly('prepareDarwinSandbox 端到端（真实进程）', () => {
             });
             const proc2 = spawn(launch2!.file, launch2!.args, {
                 cwd: launch2!.cwd,
-                env: { ...process.env, ...launch2!.env, OPENDESK_SANDBOX_TRASH_DIR: trashDir }
+                env: {
+                    ...process.env,
+                    ...launch2!.env,
+                    OPENDESK_SANDBOX_TRASH_DIR: trashDir,
+                    OPENDESK_SANDBOX_LOG: '/tmp/darwin-e2e-debug.log'
+                }
             });
             const code2 = await new Promise<number | null>((resolve) => proc2.once('exit', resolve));
             expect(code2).toBe(0);
@@ -118,15 +138,21 @@ darwinOnly('prepareDarwinSandbox 端到端（真实进程）', () => {
         } finally {
             await launch!.cleanup();
             fs.rmSync(root, { recursive: true, force: true });
+            fs.rmSync(outsideRoot, { recursive: true, force: true });
         }
     }, 60000);
 
     test('decide 端点授权后工作区外写放行', async () => {
-        const root = fs.mkdtempSync(path.join(os.tmpdir(), 'sbx-darwin-e2e-allow-'));
+        // 目标用非 temp 外部（HOME 下）：temp 区（/var/folders）存在
+        // /var ↔ /private/var 别名形态分叉，normalize 后 parent 与
+        // jest worker mkdtemp 的短形态路径在 stat 上不一致，会误触发
+        // "父链缺失透传"分支（见 boxdylib check_write_path），ask 链路测不到。
+        const root = path.join(outsideRoot, 'decide-run');
         const workspace = path.join(root, 'workspace');
-        const outside = path.join(root, 'outside');
-        fs.mkdirSync(workspace);
-        fs.mkdirSync(outside);
+        const outside = path.join(outsideRoot, 'outside');
+        fs.rmSync(outsideRoot, { recursive: true, force: true });
+        fs.mkdirSync(workspace, { recursive: true });
+        fs.mkdirSync(outside, { recursive: true });
         const outsideTarget = path.join(outside, 'allowed.txt');
         fs.writeFileSync(outsideTarget, 'before');
 
@@ -142,7 +168,7 @@ darwinOnly('prepareDarwinSandbox 端到端（真实进程）', () => {
 
         const launch = await prepareDarwinSandbox({
             shellPath: '/bin/zsh',
-            shellArgs: ['-c', 'echo approved > ../outside/allowed.txt'],
+            shellArgs: ['-c', `echo approved > ${JSON.stringify(outsideTarget)}`],
             command: 'write outside',
             cwd: workspace
         });
@@ -156,14 +182,81 @@ darwinOnly('prepareDarwinSandbox 端到端（真实进程）', () => {
         try {
             const proc = spawn(launch!.file, launch!.args, {
                 cwd: launch!.cwd,
-                env: { ...process.env, ...launch!.env }
+                env: {
+                    ...process.env,
+                    ...launch!.env,
+                    OPENDESK_SANDBOX_LOG: '/tmp/darwin-decide-debug.log'
+                }
             });
+            let stderr = '';
+            proc.stderr?.on('data', (d) => (stderr += String(d)));
             const code = await new Promise<number | null>((resolve) => proc.once('exit', resolve));
             expect(code).toBe(0);
             expect(await waitFor(() => fs.readFileSync(outsideTarget, 'utf8') === 'approved\n')).toBe(true);
+            void stderr;
         } finally {
             await launch!.cleanup();
             server.close();
+            fs.rmSync(root, { recursive: true, force: true });
+            fs.rmSync(outsideRoot, { recursive: true, force: true });
+        }
+    }, 60000);
+
+    test('写目标父链缺失时透传 ENOENT 且不触发 decide 端点', async () => {
+        // 回归：符号引擎（dbghelp/SymSrv）按模块内嵌 CodeView 路径探测/写入符号缓存
+        // （Windows 侧真实事故：node.exe 的 c:\ws\out\Release\node.pdb）。这类路径在
+        // 多数机器上根本不存在，父链缺失的写注定 ENOENT——必须透传内核错误码且**不弹
+        // 审批**（无端点时若走 ask 会 fail-closed 成 EACCES，行为与宿主不一致且弹窗噪音）。
+        const root = fs.mkdtempSync(path.join(os.tmpdir(), 'sbx-darwin-e2e-missingparent-'));
+        const workspace = path.join(root, 'workspace');
+        fs.mkdirSync(workspace);
+        const missing = path.join(workspace, 'no-such-parent', 'deeper', 'probe.pdb');
+
+        // 无端点可达 + 工作区外写兜底 ask 的策略：若父链缺失的写仍走 ask，
+        // curl 不可达 → fail-closed EACCES；正确行为是透传 ENOENT。
+        const launch = await prepareDarwinSandbox({
+            shellPath: '/bin/zsh',
+            shellArgs: ['-c', `/bin/sh -c 'echo x > "${missing}" 2>${path.join(root, 'err.txt')}' ; true`],
+            command: 'write missing-parent',
+            cwd: workspace
+        });
+        expect(launch).not.toBeNull();
+        try {
+            const proc = spawn(launch!.file, launch!.args, {
+                cwd: launch!.cwd,
+                env: { ...process.env, ...launch!.env }
+            });
+            await new Promise<number | null>((resolve) => proc.once('exit', resolve));
+            // 父链缺失的写没有创建任何东西
+            expect(fs.existsSync(missing)).toBe(false);
+            expect(fs.existsSync(path.join(workspace, 'no-such-parent'))).toBe(false);
+            // stderr 必须是内核的 ENOENT（"No such file or directory"），
+            // 而不是 ask fail-closed 的 "Operation not permitted"（EACCES）
+            const errPath = path.join(root, 'err.txt');
+            if (fs.existsSync(errPath)) {
+                const err = fs.readFileSync(errPath, 'utf8');
+                expect(err).not.toMatch(/Operation not permitted/);
+            }
+            // 父目录存在时创建仍走正常判定（工作区内写放行→创建成功）
+            const ok = path.join(workspace, 'ok.txt');
+            const launch2 = await prepareDarwinSandbox({
+                shellPath: '/bin/zsh',
+                shellArgs: ['-c', `echo ok > "${ok}"`],
+                command: 'create in existing parent',
+                cwd: workspace
+            });
+            try {
+                const proc2 = spawn(launch2!.file, launch2!.args, {
+                    cwd: launch2!.cwd,
+                    env: { ...process.env, ...launch2!.env }
+                });
+                await new Promise<number | null>((resolve) => proc2.once('exit', resolve));
+                expect(await waitFor(() => fs.existsSync(ok))).toBe(true);
+            } finally {
+                await launch2!.cleanup();
+            }
+        } finally {
+            await launch!.cleanup();
             fs.rmSync(root, { recursive: true, force: true });
         }
     }, 60000);
@@ -204,10 +297,14 @@ darwinOnly('prepareDarwinSandbox 端到端（真实进程）', () => {
         const root = fs.mkdtempSync(path.join(os.tmpdir(), 'sbx-darwin-e2e-sh-'));
         const workspace = path.join(root, 'workspace');
         fs.mkdirSync(workspace);
+        // 逃逸目标在非 temp 外部（HOME 下）：temp 区被统一策略写放行，测不出拒绝语义
+        const outsideTarget = path.join(outsideRoot, 'shebang-outside.txt');
+        fs.rmSync(outsideRoot, { recursive: true, force: true });
+        fs.mkdirSync(outsideRoot, { recursive: true });
         const script = path.join(workspace, 'run.sh');
         // 脚本里写工作区外 → 应被拒绝（解释器 /bin/bash 是平台二进制，内核 exec 会绕过
         // 注入；沙箱在 exec 脚本时改写为直接 exec 解释器并保持 DYLD 环境生效）
-        fs.writeFileSync(script, '#!/bin/bash\necho via-script > ../outside.txt\n');
+        fs.writeFileSync(script, `#!/bin/bash\necho via-script > ${JSON.stringify(outsideTarget)}\n`);
         fs.chmodSync(script, 0o755);
 
         const launch = await prepareDarwinSandbox({
@@ -224,10 +321,11 @@ darwinOnly('prepareDarwinSandbox 端到端（真实进程）', () => {
             const code = await new Promise<number | null>((resolve) => proc.once('exit', resolve));
             expect(code).toBe(0);
             // 写被拒：文件不存在（zsh 已退出，若放行则文件必然已落盘，无需等待）
-            expect(fs.existsSync(path.join(root, 'outside.txt'))).toBe(false);
+            expect(fs.existsSync(outsideTarget)).toBe(false);
         } finally {
             await launch!.cleanup();
             fs.rmSync(root, { recursive: true, force: true });
+            fs.rmSync(outsideRoot, { recursive: true, force: true });
         }
     }, 60000);
 
@@ -236,8 +334,12 @@ darwinOnly('prepareDarwinSandbox 端到端（真实进程）', () => {
         const workspace = path.join(root, 'workspace');
         fs.mkdirSync(workspace);
         // #!/bin/awk -f 形态：单参数解释器。awk 脚本写工作区外 → 拒绝
+        // （目标在非 temp 外部；temp 区写放行测不出拒绝语义）
+        const outsideTarget = path.join(outsideRoot, 'awk-out.txt');
+        fs.rmSync(outsideRoot, { recursive: true, force: true });
+        fs.mkdirSync(outsideRoot, { recursive: true });
         const script = path.join(workspace, 'run.awk');
-        fs.writeFileSync(script, '#!/usr/bin/awk -f\nBEGIN { print "awk-ran" > "../awk-out.txt" }\n');
+        fs.writeFileSync(script, `#!/usr/bin/awk -f\nBEGIN { print "awk-ran" > ${JSON.stringify(outsideTarget)} }\n`);
         fs.chmodSync(script, 0o755);
 
         const launch = await prepareDarwinSandbox({
@@ -253,10 +355,11 @@ darwinOnly('prepareDarwinSandbox 端到端（真实进程）', () => {
             });
             const code = await new Promise<number | null>((resolve) => proc.once('exit', resolve));
             expect(code).toBe(0);
-            expect(fs.existsSync(path.join(root, 'awk-out.txt'))).toBe(false);
+            expect(fs.existsSync(outsideTarget)).toBe(false);
         } finally {
             await launch!.cleanup();
             fs.rmSync(root, { recursive: true, force: true });
+            fs.rmSync(outsideRoot, { recursive: true, force: true });
         }
     }, 60000);
 
@@ -305,7 +408,18 @@ darwinOnly('prepareDarwinSandbox 端到端（真实进程）', () => {
         const root = fs.mkdtempSync(path.join(os.tmpdir(), 'sbx-darwin-e2e-alias2-'));
         const workspace = path.join(root, 'workspace');
         fs.mkdirSync(workspace);
-        const shortOutside = root.replace(/^\/private/, '') + '/outside.txt';
+        // 逃逸目标在非 temp 外部：temp 区被统一策略写放行，测不出拒绝语义；
+        // /tmp 短路径形态保留（别名归一后仍须落到非 temp 区被拒）
+        fs.rmSync(outsideRoot, { recursive: true, force: true });
+        fs.mkdirSync(outsideRoot, { recursive: true });
+        const outsideTarget = path.join(outsideRoot, 'alias-escape.txt');
+        // /tmp 是 /private/tmp 的符号链接：内核物理解析下 `/tmp/../..` 恰好抵消
+        // /private/tmp 两层，拼上绝对目标后与 outsideTarget 同指一处（HOME 下，
+        // 父目录真实存在）。别名归一一旦失效——按 /tmp 字面前缀当成 temp 区放行、
+        // 或按未解析形态误走"父链缺失透传"——写都会真实落到 outsideTarget，
+        // 下面的存在性断言才能抓到逃逸。此前写成 '/tmp/../.opendesk-sbx-e2e-outside'
+        // 物理落在 /private/ 下（root 属主），普通用户被真实权限拒绝，断言恒过。
+        const shortOutside = `/tmp/../..${outsideTarget}`;
 
         const launch = await prepareDarwinSandbox({
             shellPath: '/bin/zsh',
@@ -320,7 +434,42 @@ darwinOnly('prepareDarwinSandbox 端到端（真实进程）', () => {
             });
             const code = await new Promise<number | null>((resolve) => proc.once('exit', resolve));
             expect(code).toBe(0);
-            expect(fs.existsSync(path.join(root, 'outside.txt'))).toBe(false);
+            expect(fs.existsSync(outsideTarget)).toBe(false);
+        } finally {
+            await launch!.cleanup();
+            fs.rmSync(root, { recursive: true, force: true });
+            fs.rmSync(outsideRoot, { recursive: true, force: true });
+        }
+    }, 60000);
+
+    test('temp 区工作区外写放行（统一策略：POSIX temp 区是落盘工作区）', async () => {
+        // 语义正向固化：/tmp、/private/var/folders 等 temp 区写放行（shell 管道/
+        // heredoc/编译器/jest transform 落盘区）。一旦被误改成 ask/deny，沙箱内
+        // 工具链会全面卡死——这里固定该语义，回归立即报出。
+        const root = fs.mkdtempSync(path.join(os.tmpdir(), 'sbx-darwin-e2e-temp-'));
+        const workspace = path.join(root, 'workspace');
+        fs.mkdirSync(workspace);
+
+        const launch = await prepareDarwinSandbox({
+            shellPath: '/bin/zsh',
+            shellArgs: [
+                '-c',
+                // mktemp 目录本身就在 temp 区（os.tmpdir()）；workspace 外的
+                // 兄弟目录写必须放行
+                `echo temp-ok > ${JSON.stringify(path.join(root, 'temp-outside.txt'))}; echo "rc=$?"`
+            ],
+            command: 'temp write scenario',
+            cwd: workspace
+        });
+        try {
+            const proc = spawn(launch!.file, launch!.args, {
+                cwd: launch!.cwd,
+                env: { ...process.env, ...launch!.env }
+            });
+            const code = await new Promise<number | null>((resolve) => proc.once('exit', resolve));
+            expect(code).toBe(0);
+            expect(await waitFor(() => fs.existsSync(path.join(root, 'temp-outside.txt')))).toBe(true);
+            expect(fs.readFileSync(path.join(root, 'temp-outside.txt'), 'utf8')).toContain('temp-ok');
         } finally {
             await launch!.cleanup();
             fs.rmSync(root, { recursive: true, force: true });

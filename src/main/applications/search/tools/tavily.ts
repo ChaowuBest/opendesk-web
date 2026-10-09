@@ -59,7 +59,9 @@ export class TavilySearchTool extends BaseTool<typeof TavilySearchArgsSchema> {
         super(
             'tavilySearch',
             '使用Tavily搜索引擎搜索网页信息，专为AI设计的搜索API，返回优化过的搜索结果。支持深度搜索和答案生成功能',
-            TavilySearchArgsSchema
+            TavilySearchArgsSchema,
+            undefined,
+            { 'zh-CN': '搜索 (Tavily)', 'en-US': 'Search (Tavily)' }
         );
         this.apiKey = apiKey;
         this.setExecutor(this.search.bind(this));

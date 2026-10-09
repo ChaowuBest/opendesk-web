@@ -367,10 +367,10 @@ class AskUserPrompt extends HTMLElement {
         this.innerHTML = `
         <div id="ask-user-panel"
              class="mb-2 rounded-xl border shadow-sm
-                    bg-[var(--chat-blue-soft)] border-[color-mix(in_srgb,var(--chat-blue)_35%,transparent)]
+                    bg-[var(--panel-blue-bg)] border-[var(--panel-blue-border)]
                     transition-all duration-200 translate-y-4 opacity-0">
             <!-- 标题栏 -->
-            <div class="flex items-center gap-2 px-4 py-2.5 border-b border-[color-mix(in_srgb,var(--chat-blue)_16%,transparent)]">
+            <div class="flex items-center gap-2 px-4 py-2.5 border-b border-[var(--panel-blue-divider)]">
                 <span class="inline-flex items-center justify-center w-6 h-6 rounded-lg bg-[color-mix(in_srgb,var(--chat-blue)_16%,transparent)] text-[var(--chat-blue)]">
                     <i class="fa-solid fa-circle-question text-[12px]"></i>
                 </span>

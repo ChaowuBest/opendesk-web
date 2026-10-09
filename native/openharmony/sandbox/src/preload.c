@@ -563,7 +563,7 @@ static int gate_meta(const char *input, int nofollow_last, int acc,
                      const char *what, char **realp)
 {
     ensure_ready();
-    *realp = NULL;
+    if (realp) *realp = NULL;
     if (!g_ready || !input || !input[0]) return 1;
     gate_t g;
     if (gate_resolve(input, nofollow_last, &g) != 0) { errno = EACCES; return 0; }
@@ -585,6 +585,35 @@ static int path_not_exist(const char *p)
     if (syscall(SYS_newfstatat, AT_FDCWD_C, p, &st, 0) != 0)
         return errno == ENOENT;
     return 0;
+}
+
+/* 写类操作的父目录链缺失判定：目标路径的直接父目录不存在 → 该写注定失败
+ * （open/mkdir/link/rename 目标等返回 ENOENT），直接透传真实 API 让宿主产生
+ * 权威错误码，不触发 ask。与 path_not_exist 同一哲学（Windows
+ * sandboxCheckWriteParentMissing 的同构实现）——典型噪音源：dbghelp/SymSrv
+ * 按模块内嵌 CodeView 路径（node.exe 的 c:\ws\out\Release\node.pdb 等）探测
+ * 并尝试写入符号缓存，这些路径在多数机器上不存在。
+ *
+ * 只检查直接父目录（一次 stat）：父目录存在则更上层必然存在；父目录缺失时
+ * 操作必然 ENOENT。raw syscall 避免递归进入拦截层。返回 1 = 父链缺失。 */
+static int write_parent_missing(const char *p)
+{
+    if (!p || !p[0]) return 0;
+    /* 剥掉末段分量（最后一个 '/' 之前），得到直接父目录 */
+    char *dup = dbox_strdup(p);
+    if (!dup) return 0;
+    char *slash = strrchr(dup, '/');
+    if (!slash || slash == dup) {   /* 无父目录分量（相对单段名 / 根） */
+        dbox_free(dup);
+        return 0;
+    }
+    *slash = '\0';
+    int missing = 0;
+    struct stat st;
+    if (syscall(SYS_newfstatat, AT_FDCWD_C, dup, &st, 0) != 0)
+        missing = (errno == ENOENT);
+    dbox_free(dup);
+    return missing;
 }
 
 static void gate_free(gate_t *g)
@@ -1064,6 +1093,17 @@ int open(const char *path, int flags, ...)
         errno = e;
         return fd;
     }
+    /* 写模式（含 O_CREAT）且父目录链缺失 → 注定 ENOENT：透传真实 open 不 ask。
+     * 与 Windows sandboxCheckWriteParentMissing 同语义——dbghelp 符号缓存探测
+     * （node.exe 内嵌 CodeView 路径 c:\ws\out\Release\node.pdb 等）不再弹窗。
+     * deny 规则仍优先（gate_meta 只查 deny）；ask/allow 区路径的注定失败
+     * 写直接交给内核返回 ENOENT。父链缺失时无需 va_list 取 mode：内核必然
+     * ENOENT，直接返回与宿主一致的错误码。 */
+    if ((acc & ACC_WRITE) && dbox_path_has_content(path) && write_parent_missing(path)) {
+        if (!gate_meta(path, nofollow, ACC_WRITE, "open", NULL)) return -1;
+        errno = ENOENT;
+        return -1;
+    }
     /* 目录枚举（acc==0，O_DIRECTORY 无写位）：deny-only 判定，对齐 opendir */
     if (acc == 0) {
         if (!gate_meta(path, nofollow, ACC_READ, "open", &real)) return -1;
@@ -1109,6 +1149,12 @@ int open64(const char *path, int flags, ...)
         if (fd >= 0) fd_record(fd, path, NULL, acc);
         errno = e;
         return fd;
+    }
+    /* 写模式父链缺失 → 注定 ENOENT：透传不 ask（同 open 语义） */
+    if ((acc & ACC_WRITE) && dbox_path_has_content(path) && write_parent_missing(path)) {
+        if (!gate_meta(path, nofollow, ACC_WRITE, "open64", NULL)) return -1;
+        errno = ENOENT;
+        return -1;
     }
     /* 目录枚举（acc==0，O_DIRECTORY 无写位）：deny-only 判定，对齐 opendir */
     if (acc == 0) {
@@ -1170,6 +1216,13 @@ int openat(int dirfd, const char *path, int flags, ...)
         errno = e;
         return fd;
     }
+    /* 写模式父链缺失 → 注定 ENOENT：透传不 ask（deny 仍拦，同 open 语义） */
+    if ((acc & ACC_WRITE) && write_parent_missing(abs)) {
+        if (!gate_meta(abs, nofollow, ACC_WRITE, "openat", NULL)) { dbox_free(abs); return -1; }
+        dbox_free(abs);
+        errno = ENOENT;
+        return -1;
+    }
     /* 目录枚举（acc==0，O_DIRECTORY 无写位）：deny-only 判定，对齐 opendir */
     if (acc == 0) {
         if (!gate_meta(abs, nofollow, ACC_READ, "openat", &real)) { dbox_free(abs); return -1; }
@@ -1229,6 +1282,13 @@ int openat64(int dirfd, const char *path, int flags, ...)
         dbox_free(abs);
         errno = e;
         return fd;
+    }
+    /* 写模式父链缺失 → 注定 ENOENT：透传不 ask（同 openat 语义） */
+    if ((acc & ACC_WRITE) && write_parent_missing(abs)) {
+        if (!gate_meta(abs, nofollow, ACC_WRITE, "openat64", NULL)) { dbox_free(abs); return -1; }
+        dbox_free(abs);
+        errno = ENOENT;
+        return -1;
     }
     /* 目录枚举（acc==0，O_DIRECTORY 无写位）：deny-only 判定，对齐 opendir */
     if (acc == 0) {
@@ -2094,6 +2154,16 @@ static int gate_rename(const char *old, const char *newp,
 {
     char *oreal = NULL;
     char *nreal = NULL;
+    /* rename 目标（newp）父链缺失 → 整个改名注定 ENOENT：透传不 ask
+     * （deny 仍拦）。源（old）不存在同样是注定失败，但源与"删除不存在的文件"
+     * 同语义，交给内核 ENOENT 权威返回。透传状态用 real=NULL 表达（与
+     * gate1 的"未做路径翻译"一致），调用方交给内核拿 ENOENT。 */
+    if (dbox_path_has_content(newp) && write_parent_missing(newp)) {
+        if (!gate_meta(newp, 1, ACC_WRITE, "rename", NULL)) return 0;
+        if (oreal_out) *oreal_out = NULL; else dbox_free(oreal);
+        if (nreal_out) *nreal_out = NULL; else dbox_free(nreal);
+        return 1;   /* 放行：内核对缺失父链的 rename 返回 ENOENT */
+    }
     if (!gate1(old, 1, ACC_WRITE, "rename", &oreal)) return 0;
     if (!gate1(newp, 1, ACC_WRITE, "rename", &nreal)) {
         dbox_free(oreal);
@@ -2155,6 +2225,13 @@ int renameat2(int oldfd, const char *old, int newfd, const char *newp,
 int mkdir(const char *path, mode_t mode)
 {
     char *real = NULL;
+    /* 父目录链缺失的建目录（mkdir -p 的父级不存在时，单级 mkdir 注定 ENOENT）：
+     * 透传不 ask；deny 仍拦。mkdir -p 的多级创建逐级走此处，探测父链是常态。 */
+    if (dbox_path_has_content(path) && write_parent_missing(path)) {
+        if (!gate_meta(path, 0, ACC_WRITE, "mkdir", NULL)) return -1;
+        errno = ENOENT;
+        return -1;
+    }
     if (!gate1(path, 0, ACC_WRITE, "mkdir", &real)) return -1;
     const char *p = xpath(path, real);
     int r = real_mkdir(p, mode);
@@ -2171,6 +2248,13 @@ int mkdirat(int dirfd, const char *path, mode_t mode)
         return real_mkdirat(dirfd, path, mode);
     char *abs = at_abs(dirfd, path);
     if (!abs) { errno = EBADF; return -1; }
+    /* 父链缺失的建目录注定 ENOENT：透传不 ask（同 mkdir 语义） */
+    if (write_parent_missing(abs)) {
+        if (!gate_meta(abs, 0, ACC_WRITE, "mkdirat", NULL)) { dbox_free(abs); return -1; }
+        dbox_free(abs);
+        errno = ENOENT;
+        return -1;
+    }
     char *real = NULL;
     if (!gate1(abs, 0, ACC_WRITE, "mkdirat", &real)) { dbox_free(abs); return -1; }
     int r = XPAT_EXEC(real_mkdirat, dirfd, path, real, mode);

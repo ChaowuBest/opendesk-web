@@ -25,8 +25,14 @@ public:
     static void error(const wchar_t* fmt, ...);
     static void debug(const wchar_t* fmt, ...);   // 仅 verbose
 
+    // 策略判定日志：与 info 一样写入 --log-file（不写 stderr——子进程 stderr
+    // 透传给终端结果，判定日志是诊断信息，不应污染命令输出），且不受 verbose
+    // 开关影响（恢复逐条 POLICY 记录的独立通道）。hook 与 manager 共用。
+    static void policy(const wchar_t* fmt, ...);
+
 private:
     static void write(int level, const wchar_t* prefix, const std::wstring& msg);
+    static void writeToFileOnly(const wchar_t* prefix, const std::wstring& msg);
     static CRITICAL_SECTION s_lock;
     static HANDLE s_file;
     static bool g_verbose;

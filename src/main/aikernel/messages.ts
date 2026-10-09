@@ -20,8 +20,8 @@ import path from 'path';
 import fs from 'fs';
 import { fileLinkExtension, getRenderWorkspace } from '../utils/marked-file-link.js';
 import { cjkAutolinkFix } from '../../common/markdown/cjk-autolink-fix.js';
-import { resolveToolDisplayName } from '../../common/tool-display-name.js';
-import { t } from '../../locale/index.js';
+import type { SupportedLocale } from '../../common/locale.js';
+import { t, getLocale } from '../../locale/index.js';
 import type {
     BaseAssistantMessage,
     ChatContextSnapshot,
@@ -393,7 +393,6 @@ export class ToolCall implements BaseChatToolCall {
     index: number;
     id: string;
     tool_name: string;
-    display_name_key?: string;
     args_string: string;
     args_object: any = {};
     status: 'pending' | 'running' | 'success' | 'error' = 'pending';
@@ -480,14 +479,15 @@ export class ToolCall implements BaseChatToolCall {
         return rest;
     }
 
-    /** 仅包含前端渲染所需的字段，排除 args_string / result 等大字段 */
+    /** 仅包含前端渲染所需的字段，排除 args_string / result 等大字段。
+     * 工具显示名在此实时从当前工具注册表解析（identifier 不落显示名，历史消息渲染时跟随当前注册与语言）。 */
     toRenderJSON(): object {
         const requiresUserAttention = this.requiresUserAttention();
         return {
             index: this.index,
             id: this.id,
             tool_name: this.tool_name,
-            ...(this.display_name_key ? { display_name_key: this.display_name_key } : {}),
+            display_name: this.getResolvedToolDisplayName(),
             status: this.status,
             rendered: this.rendered,
             ...(requiresUserAttention ? { requires_user_attention: true } : {})
@@ -657,7 +657,14 @@ export class ToolCall implements BaseChatToolCall {
 
     setTool(tool: BaseTool<any>) {
         this.tool = tool;
-        this.display_name_key = tool.displayNameKey;
+    }
+
+    /** 解析工具的用户可见名称：优先使用工具实例（含自描述双语名），无实例（历史消息/孤儿调用）回退协议名。 */
+    getResolvedToolDisplayName(): string {
+        if (this.tool !== undefined && typeof (this.tool as any).getResolvedDisplayName === 'function') {
+            return (this.tool as BaseTool<any>).getResolvedDisplayName(getLocale() as SupportedLocale);
+        }
+        return this.tool_name;
     }
 
     requiresUserAttention(): boolean {
@@ -707,7 +714,7 @@ export class ToolCall implements BaseChatToolCall {
                 ? '<span class="inline-block w-1.5 h-1.5 rounded-full bg-blue-500 animate-pulse"></span>'
                 : '';
 
-        const displayName = resolveToolDisplayName(this.tool_name, this.display_name_key, t);
+        const displayName = this.getResolvedToolDisplayName();
 
         return `<div class="od-inline-toolcall-container">
             <div class="flex items-center gap-1.5 min-w-0">
@@ -722,7 +729,7 @@ export class ToolCall implements BaseChatToolCall {
     private renderError(): string {
         const errId = `tc-err-${this.id.replace(/[^a-zA-Z0-9_-]/g, '_')}`;
         const errText = (this.result || '').replace(/</g, '&lt;').replace(/>/g, '&gt;');
-        const displayName = resolveToolDisplayName(this.tool_name, this.display_name_key, t);
+        const displayName = this.getResolvedToolDisplayName();
         return `<div class="od-inline-toolcall-container">
             <div class="flex flex-col min-w-0">
                 <input type="checkbox" id="${errId}" class="peer hidden">

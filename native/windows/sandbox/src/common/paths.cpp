@@ -77,9 +77,29 @@ bool normalizeHostPath(const std::wstring& raw, std::wstring& out)
     }
     if (p.empty()) return false;
 
-    // 含 `.`/`..` 分量的路径（无论相对还是绝对）经 GetFullPathNameW 展开，
-    // 解析 `..` 并结合进程 cwd；无可疑段时不调用（热路径零开销）。
-    if (hasDotSegment(p)) {
+    // 相对路径必须先按进程 CWD 展开为绝对路径：CreateFileW("Makefile")、
+    // FindFirstFile("dir\\*") 等裸相对形式（cmd/nmake 等工具常量见）不含
+    // 点分量，若无条件展开逻辑漏掉它们，vpath 映射会按相对文本匹配绝对
+    // root 前缀而失败，真实存在的文件被误判 not-found（实测 nmake U1052）。
+    // GetFullPathNameW 对绝对路径是纯文本归一化（合法输入零副作用），
+    // 因此对非绝对形式一律展开，不依赖 hasDotSegment 的快速判断。
+    // 绝对 = 盘符根（C:\，注意 C:foo 是盘符相对路径，解析到该盘的当前目录）
+    // 或 UNC（\\\\）；盘符相对同样需要展开（GetFullPathNameW 按该盘当前
+    // 目录解析，与 Win32 语义一致）。
+    const bool absolute =
+        (p.size() >= 3 && iswalpha(p[0]) && p[1] == L':' && (p[2] == L'\\' || p[2] == L'/')) ||
+        (p.size() >= 2 && p[0] == L'\\' && p[1] == L'\\');
+    if (!absolute) {
+        DWORD need = GetFullPathNameW(p.c_str(), 0, nullptr, nullptr);
+        if (need == 0) return false;
+        std::wstring buf(need, L'\0');
+        if (GetFullPathNameW(p.c_str(), need, &buf[0], nullptr) == 0) return false;
+        buf.resize(wcslen(buf.c_str()));
+        p = std::move(buf);
+    } else if (hasDotSegment(p)) {
+        // 绝对路径中的 `.`/`..` 也要展开，否则 hook 判定基于未规范化 vpath，
+        // deny 规则可被 `..` 别名绕过（GetFileAttributesW 等不经 NtCreateFile
+        // 二次判定的 API 直接泄露 deny 目录）。
         DWORD need = GetFullPathNameW(p.c_str(), 0, nullptr, nullptr);
         if (need == 0) return false;
         std::wstring buf(need, L'\0');

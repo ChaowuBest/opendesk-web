@@ -4,6 +4,8 @@
 
 - **透明路径**：沙箱内文件系统布局与宿主完全一致，无虚拟根；
 - **策略管控**：读默认放行、任务工作区写放行、其余写按策略 ask/deny（TOML 策略与 Linux 同构，复用 `policyTextLinux`）；
+- **写目标父链缺失透传（判定层，四平台统一）**：写类操作（open 写模式/creat/fopen 写/rename/mkdir/chmod/symlink/link/mknod/setxattr——全部汇聚 `check_write_path`）目标**直接父目录当前不存在**时该写注定失败（内核 ENOENT），直接透传不触发 ask（deny 规则仍优先拦截，alias 变体参与最具体竞争）。典型：dbghelp/SymSrv 按模块内嵌 CodeView 路径（node.exe 的 `c:\ws\out\Release\node.pdb`）探测写符号缓存，不再弹审批框；
+- **读目标缺失透传（判定层，与 Linux/Windows 读 ENOENT 豁免同语义）**：纯读操作（open 读模式/openat 读/fopen 读——汇聚 `check_read_path`）目标当前不存在时读不到任何内容，直接透传不判定不 ask（deny 规则仍优先拦截防 deny 区存在性探测泄露，alias 变体参与最具体竞争）。典型：git status 每次对 attributes 查找链上不存在的 `~/.config/git/attributes`、`<Git 安装前缀>/share/git-core/gitattributes` 做存在性探测，cache_ttl=0 不缓存，此前逐次弹读审批框；
 - **匹配语义**：most-specific（四平台统一）——命中多条规则取最具体模式（剥尾
   `/**` 的前缀最长），同长 deny > ask > allow，规则顺序无关；
 - **策略引擎复用共享 core**：TOML 解析（mini_toml.c）与路径 glob 匹配由
@@ -56,6 +58,25 @@ dyld 对不同二进制的插入行为：
 进程：`execve`/`execvp`/`execvP`/`posix_spawn`/`posix_spawnp`（exec 系经 `__execve`/`__posix_spawn` 直通内核——interpose 环境下 `dlsym(RTLD_NEXT)` 会解析回替换函数自身，不可用）。
 
 沙箱自身 IO（日志、签名缓存、ask 的 curl、codesign）经线程局部深度计数豁免策略检查，防递归。
+
+## CLT 编译工具链白名单
+
+`prepare_exec` 对位于 `/Library/Developer/CommandLineTools/` 下、basename 命中编译/链接驱动
+清单（`cc`/`clang`/`clang++`/`gcc`/`g++`/`ld`/`swift`/`swiftc`/`ar`/`ranlib`/`nm`/`strip`/
+`libtool`/`install_name_tool`/`otool`/`codesign`/`lipo`）的 exec 走**豁免路径**：不复制重签、
+剥离 `DYLD_INSERT_LIBRARIES` 原地运行（这类二进制依赖树庞大，重签副本在编译子进程链上实测
+hang；其写操作几乎总落在工作区/工具链缓存，policy 已放行。**git 等数据类工具刻意不在清单**，
+写必须管控）。匹配语义：
+
+- 基名**精确匹配**或 **`<基名>-<纯数字>` 版本后缀匹配**（`clang-14`/`gcc-12` 等版本别名
+  随 CLT 版本演进出现，逐个枚举会过时；纯数字约束保证 `clang-format`/`clang++` 等
+  连字符名不会误命中）；
+- `lipo` 只豁免只读子命令（`-archs`/`-info`/`-detailed_info`）；变更型子命令
+  （`-create`/`-thin` 等 `-output` 形态）直接拒绝（fail-closed）。
+
+豁免前 `policy_check(ACC_EXEC)` 已完成，豁免的只是「重签+注入」机制，不绕过执行权限管控。
+匹配函数（`clt_toolchain_basename`）的单测见 `src/tests/ut/node/boxdylib-matching.test.ts`
+（C harness）与 `src/tests/ut/terminal/darwin-sandbox-kernel.test.ts`（真进程）。
 
 ## xcode-select tool-shim 特殊处理
 

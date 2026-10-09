@@ -48,7 +48,9 @@ export class CheckShellStatusTool extends BaseTool<CheckShellStatusArgsSchema> {
         super(
             'checkShellStatus',
             terminalT('status.description', { max: String(MAX_STATUS_WAIT_MS) }),
-            createCheckShellStatusArgsSchema()
+            createCheckShellStatusArgsSchema(),
+            undefined,
+            { 'zh-CN': '检查命令执行状态', 'en-US': 'Check Shell Status' }
         );
         this.serialExecution = sandboxed;
 

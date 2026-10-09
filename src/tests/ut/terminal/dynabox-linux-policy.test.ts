@@ -93,6 +93,20 @@ describe('policyTextLinux', () => {
             expect(text).toContain(`path = "${prefix}"\naccess = "read"\nperm = "allow"`);
         }
     });
+    test('macOS 系统运行时读前缀（回归：npx 每次执行都弹 /System /Library /var/db/timezone 读 ask）', () => {
+        // darwin 真实事故：npm/npx 执行时 LaunchServices 初始化读
+        // /System/Library/Frameworks/.../LaunchServices.framework/Resources/Info.plist、
+        // os_log 读 /Library/Preferences/Logging/com.apple.diagnosticd.filter.plist、
+        // node ICU 初始化读 /var/db/timezone/icutz/icutz44l.dat——均落到外读 ask。
+        // 根因有二：清单只有小写 /system（OHOS 布局），macOS 为大写 /System，大小写
+        // 敏感匹配永不命中；/Library 仅含 CommandLineTools 子前缀、/var/db/timezone 缺失。
+        // Linux/OHOS 无这些路径，规则闲置无害。
+        const text = policyTextLinux('http://127.0.0.1:1/decide', 't', '/home/tester/work');
+        for (const prefix of ['/System', '/Library', '/var/db/timezone']) {
+            expect(text).toContain(`path = "${prefix}/**"\naccess = "read"\nperm = "allow"`);
+            expect(text).toContain(`path = "${prefix}"\naccess = "read"\nperm = "allow"`);
+        }
+    });
     test('stat 家族由 native deny-only 承载：策略不再包含 stat 驱动的补丁规则（PATH 展开/祖先目录/静态 selinux）', () => {
         // stat/access/readlink/opendir 等元数据读在 native preload 层统一为
         // deny-only（不参与 allow/ask），见 preload.c 的 gate_meta_read——bash
@@ -167,6 +181,33 @@ describe('policyTextLinux', () => {
     test('工具链缓存目录（~/.cache/opendesk-sandbox）写入放行（与 linux-sandbox env 重定向一致）', () => {
         const text = policyTextLinux('http://127.0.0.1:1/decide', 't', '/home/tester/work', undefined, '/home/tester');
         expect(text).toContain('path = "/home/tester/.cache/opendesk-sandbox/**"\naccess = "write"\nperm = "allow"');
+    });
+    test('darwin exec 重签缓存（~/Library/Caches/com.opendesk.sandbox）读写放行', () => {
+        // 回归：darwin 沙箱内 exec 平台二进制时 dylib 复制+ad-hoc 重签到该目录，
+        // dyld 随后加载副本本体与 Info.plist；策略无规则时命中 /** read ask，
+        // standard 下 grep|head 这类平台二进制链每次 exec 都弹"奇怪的 cache 读"审批。
+        // 读写都放行：该目录是 OpenDesk 框架自身的 exec 重签缓存（SHA-256 内容寻址，
+        // 命名与源二进制强绑定），沙箱内篡改副本只会让自身 exec 的重签链路失效，
+        // 不影响宿主（宿主启动 shell 用 TS 侧 prepareShellForSandbox 独立重签）。
+        const text = policyTextLinux('http://127.0.0.1:1/decide', 't', '/home/tester/work', undefined, '/Users/tester');
+        expect(text).toContain(
+            'path = "/Users/tester/Library/Caches/com.opendesk.sandbox/**"\naccess = "read"\nperm = "allow"'
+        );
+        expect(text).toContain(
+            'path = "/Users/tester/Library/Caches/com.opendesk.sandbox/**"\naccess = "write"\nperm = "allow"'
+        );
+    });
+    test('readonly 模式下 exec 重签缓存读仍放行（全盘 read deny 会令平台二进制 exec 起不来）', () => {
+        // 重签副本是系统二进制的运行时替身（等效 /usr/bin 读需求）：副本读被
+        // deny 时 dyld 加载失败，readonly 下连基础命令都无法执行
+        const rules = [
+            { resourceType: 'file', action: 'read', pathPattern: '/home/tester/work/**', effect: 'allow' },
+            { resourceType: 'file', action: 'write', pathPattern: '**', effect: 'deny' }
+        ] as any[];
+        const text = policyTextLinux('http://127.0.0.1:1/decide', 't', '/home/tester/work', rules, '/Users/tester');
+        expect(text).toContain(
+            'path = "/Users/tester/Library/Caches/com.opendesk.sandbox/**"\naccess = "read"\nperm = "allow"'
+        );
     });
     test('.gitconfig 写放行规则完整（回归：曾含字面 ... 且缺 access/perm 导致策略解析失败）', () => {
         const text = policyTextLinux('http://127.0.0.1:1/decide', 't', '/home/tester/work', undefined, '/home/tester');

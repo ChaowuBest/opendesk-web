@@ -32,11 +32,14 @@ import { homeRules } from './common.js';
 /** git 凭据文件：读一律 ask（凭据保护，永不放行）。 */
 const GIT_CREDENTIAL_ASK_PATTERNS = ['{home}/.git-credentials', '{home}/.netrc'];
 
-/** git 运行时读放行：全局配置与全局 ignore（低敏高频）。 */
+/** git 运行时读放行：全局配置与全局 ignore/attributes（低敏高频）。 */
 const GIT_RUNTIME_READ_PATTERNS = [
     '{home}/.gitconfig',
     '{home}/.config/git/config',
     '{home}/.config/git/ignore',
+    // XDG 全局 attributes：attributes 查找链的一环，路径常不存在（与 config/ignore
+    // 同属 git 全局配置链；沙箱 git status 每次探测，缺规则会落隐式 read ask）
+    '{home}/.config/git/attributes',
     // 系统级配置：Linux/macOS /etc/gitconfig（Windows 的 <Git>/etc/gitconfig 在
     // Program Files 系统读放行内，沙箱虚拟路径 /C/Program Files/** 已覆盖）
     '/etc/gitconfig'

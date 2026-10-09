@@ -9,17 +9,12 @@
  * See the Mulan PSL v2 for more details.
  */
 
-/** Resolves an existing localized title and otherwise preserves the protocol name used by mainline. */
-export function resolveToolDisplayName(
-    toolName: unknown,
-    displayNameKey: unknown,
-    translate: (key: string) => string
-): string {
-    const key = typeof displayNameKey === 'string' ? displayNameKey.trim() : '';
-    if (key) {
-        const translated = translate(key);
-        if (translated && translated !== key) return translated;
-    }
-    const protocolName = typeof toolName === 'string' ? toolName.trim() : '';
-    return protocolName || translate('renderer.taskview.output.tool');
-}
+/**
+ * 工具的用户可见显示名：
+ * - string：所有语言使用同一名称；
+ * - Record<string, string>：按语言代码（如 'zh-CN' / 'en-US'）映射的多语言名称。
+ *
+ * 显示名由 BaseTool 自描述，仅在渲染边界（toRenderJSON / TUI / 内联 HTML）实时解析为当前语言的
+ * 字符串后推送给前端；identifier（tool_name）是持久化真源，显示名不落盘。
+ */
+export type ToolDisplayName = string | Record<string, string>;

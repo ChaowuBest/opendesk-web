@@ -65,7 +65,9 @@ export class DuckDuckGoSearchTool extends BaseTool<typeof DuckDuckGoSearchArgsSc
         super(
             'duckduckgoSearch',
             '使用DuckDuckGo搜索引擎搜索网页信息，返回搜索结果的标题、URL和摘要。无需API密钥，注重隐私保护，适合作为后备搜索方案',
-            DuckDuckGoSearchArgsSchema
+            DuckDuckGoSearchArgsSchema,
+            undefined,
+            { 'zh-CN': '搜索 (DuckDuckGo)', 'en-US': 'Search (DuckDuckGo)' }
         );
 
         this.setExecutor(this.search.bind(this));

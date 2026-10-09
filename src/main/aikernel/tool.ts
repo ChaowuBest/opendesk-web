@@ -15,56 +15,14 @@ import type { TaskState } from './states/tasks';
 import type { PermissionRequest } from './security/permission';
 import { zhCn } from '../../locale/zh-cn.js';
 import { enUs } from '../../locale/en-us.js';
-import { resolvePreferredLocale } from '../../common/locale.js';
+import { resolvePreferredLocale, type SupportedLocale } from '../../common/locale.js';
+import type { ToolDisplayName } from '../../common/tool-display-name.js';
 import type { ToolResultWriter } from './types/index.js';
 
 const validationTranslations: Record<string, Record<string, string>> = {
     'zh-CN': zhCn,
     'en-US': enUs
 };
-
-const toolDisplayNamePrefixes: Record<string, readonly string[]> = {
-    filemgr: ['filemgr'],
-    interaction: ['tools'],
-    memory: ['tools.memory'],
-    planning: ['tools'],
-    search: ['search'],
-    'task-info': ['tools'],
-    user_portrait: ['tools.memory']
-};
-
-const toolDisplayNameAliases: Record<string, string> = {
-    'knowledgebase-operate:askKnowledgeBase': 'search.kb.ask.name',
-    'knowledgebase-operate:retrieveFromKnowledgeBase': 'search.kb.retrieve.name',
-    'mailbox:searchEmails': 'search.email.name'
-};
-
-function hasToolDisplayName(key: string): boolean {
-    return Boolean(validationTranslations['zh-CN'][key] && validationTranslations['en-US'][key]);
-}
-
-function resolveExistingToolDisplayNameKey(toolsetName: string, toolName: string): string | undefined {
-    const alias = toolDisplayNameAliases[toolsetName + ':' + toolName];
-    if (alias && hasToolDisplayName(alias)) return alias;
-
-    const prefixes = toolDisplayNamePrefixes[toolsetName] ?? [];
-    const stems = new Set([toolName, toolName.charAt(0).toLowerCase() + toolName.slice(1), toolName.toLowerCase()]);
-    for (const suffix of ['Files', 'Memory', 'Search']) {
-        if (toolName.endsWith(suffix) && toolName.length > suffix.length) {
-            const stem = toolName.slice(0, -suffix.length);
-            stems.add(stem);
-            stems.add(stem.charAt(0).toLowerCase() + stem.slice(1));
-        }
-    }
-
-    for (const prefix of prefixes) {
-        for (const stem of stems) {
-            const key = prefix + '.' + stem + '.name';
-            if (hasToolDisplayName(key)) return key;
-        }
-    }
-    return undefined;
-}
 
 function getToolValidationLocale(): string {
     const navigatorLanguages =
@@ -84,6 +42,23 @@ function translateToolValidation(key: string, params?: Record<string, string | n
         }
     }
     return text;
+}
+
+/** 按指定语言翻译工具显示名词条；词条缺失时回退 zh-CN，再回退 key 本身。 */
+function translateToolDisplayNameKey(key: string, locale: SupportedLocale): string {
+    return validationTranslations[locale]?.[key] ?? validationTranslations['zh-CN']?.[key] ?? key;
+}
+
+/**
+ * 从已存在的 locale 词条构建双语显示名。
+ * 仅当 zh-CN / en-US 词条都存在时返回 Record，否则返回 undefined（避免单语名被误用为双语）。
+ */
+function buildDisplayNameFromKey(key: string | undefined): ToolDisplayName | undefined {
+    if (!key) return undefined;
+    const zh = validationTranslations['zh-CN']?.[key];
+    const en = validationTranslations['en-US']?.[key];
+    if (zh && en) return { 'zh-CN': zh, 'en-US': en };
+    return undefined;
 }
 
 function formatToolValidationError(error: z.ZodError, args?: unknown): string {
@@ -242,6 +217,11 @@ export class BaseTool<T extends z.ZodType> {
     name: string;
     /** Locale key for the tool's canonical user-facing name. */
     displayNameKey?: string;
+    /**
+     * 工具的用户可见显示名：单语言字符串，或按语言代码（'zh-CN' / 'en-US'）映射的多语言名称。
+     * 未显式声明时由 getDisplayName() 回退为协议名，getResolvedDisplayName() 会继续兼容 displayNameKey 词条。
+     */
+    displayName?: ToolDisplayName;
     description: string;
     params: T;
     /**
@@ -267,12 +247,52 @@ export class BaseTool<T extends z.ZodType> {
     private jsonSchemaCache?: Record<string, any>;
     private jsonSchemaCacheSource?: z.ZodType;
 
-    constructor(name: string, description: string, params: T, displayNameKey?: string) {
+    constructor(name: string, description: string, params: T, displayNameKey?: string, displayName?: ToolDisplayName) {
         this.name = name;
         this.displayNameKey = displayNameKey;
+        this.displayName = displayName;
         this.description = description;
         this.params = params;
         this.executor = undefined;
+    }
+
+    /**
+     * 获取工具自描述的显示名：单语言字符串或按语言映射的多语言名称。
+     * 未显式声明时回退为协议名（tool.name），保证任何工具都有可展示的名称。
+     */
+    getDisplayName(): ToolDisplayName {
+        if (this.displayName !== undefined) return this.displayName;
+        return this.name;
+    }
+
+    /**
+     * 按指定语言解析工具的用户可见名称：
+     * 显式 displayName（string / Record）优先，其次兼容旧的 displayNameKey 词条，最后回退协议名。
+     * main 侧渲染路径（如 ToolCall.getResolvedToolDisplayName）会显式传入当前运行语言；
+     * 缺省时按环境检测（navigator/Intl），以便 renderer 侧复用本方法时不引入 main 进程依赖。
+     *
+     * @param locale 目标语言（'zh-CN' / 'en-US'）
+     */
+    getResolvedDisplayName(locale?: SupportedLocale): string {
+        const resolvedLocale: SupportedLocale = locale ?? getToolValidationLocale();
+        if (typeof this.displayName === 'string') {
+            const literal = this.displayName.trim();
+            if (literal) return literal;
+        } else if (this.displayName !== null && typeof this.displayName === 'object') {
+            const map = this.displayName;
+            for (const candidate of [resolvedLocale, 'zh-CN', 'en-US']) {
+                const value = map[candidate];
+                if (typeof value === 'string' && value.trim()) return value.trim();
+            }
+            const first = Object.values(map)[0];
+            if (typeof first === 'string' && first.trim()) return first.trim();
+        }
+        const key = typeof this.displayNameKey === 'string' ? this.displayNameKey.trim() : '';
+        if (key) {
+            const translated = translateToolDisplayNameKey(key, resolvedLocale);
+            if (translated && translated !== key) return translated;
+        }
+        return this.name;
     }
 
     /**
@@ -294,6 +314,7 @@ export class BaseTool<T extends z.ZodType> {
         return {
             name: this.name,
             displayNameKey: this.displayNameKey,
+            displayName: this.displayName,
             description: this.description,
             params: this.getJsonSchema(),
             agentIds: this.agentIds
@@ -305,7 +326,8 @@ export class BaseTool<T extends z.ZodType> {
             jsonObject['name'],
             jsonObject['description'],
             z.fromJSONSchema(jsonObject['params']),
-            jsonObject['displayNameKey']
+            jsonObject['displayNameKey'],
+            jsonObject['displayName']
         );
         tool.agentIds = Array.isArray(jsonObject['agentIds']) ? jsonObject['agentIds'] : undefined;
         return tool;
@@ -490,7 +512,9 @@ export class BaseToolset<T extends BaseTool<any> = BaseTool<any>> {
      * Add a tool to the toolset
      */
     addTool(tool: T) {
-        tool.displayNameKey ??= resolveExistingToolDisplayNameKey(this.name, tool.name);
+        // 显式 displayName 优先；仅当工具声明了 displayNameKey 而未声明显示名时，
+        // 从该双语词条构建（兼容插件等动态工具传入 locale key 的场景）。
+        tool.displayName ??= buildDisplayNameFromKey(tool.displayNameKey);
         this.tools.set(tool.name, tool);
     }
 

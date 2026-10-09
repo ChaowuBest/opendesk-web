@@ -28,7 +28,6 @@ import {
     untrackPreviewerContainers
 } from './previewer.ts';
 import { escapeHtml } from '../../common/utils/escape.js';
-import { resolveToolDisplayName } from '../../common/tool-display-name.js';
 import { getSafeWebUrl } from '../../common/web-link.js';
 import { normalizeDriveRootPath } from '../../common/utils/path.js';
 import { createRendererTranslator } from '../locale.ts';
@@ -279,6 +278,14 @@ function sliceReasoningPreviewTail(text) {
     const newlineIndex = tail.indexOf('\n');
     return newlineIndex >= 0 ? tail.slice(newlineIndex + 1) : tail;
 }
+
+/**
+ * 终端工具卡片的开合态归一化。主进程渲染的卡片固定带 open（工具渲染层不应感知
+ * GUI 输出模式），这里在渲染前按当前模式改写：极简模式收起、详细模式展开。
+ *
+ * 只重写 class 含 terminal-tool 的 <details> 开标签，[^>]* 不会跨过标签进入 body。
+ */
+const TERMINAL_CARD_DETAILS_TAG_RE = /<details\b([^>]*\bclass="[^"]*\bterminal-tool(?=[\s"])[^"]*"[^>]*)>/g;
 
 class TaskView extends HTMLElement {
     // 全局侧边栏状态：跨任务共享
@@ -1199,7 +1206,9 @@ class TaskView extends HTMLElement {
     }
 
     static _toolDisplayName(tool) {
-        return resolveToolDisplayName(tool?.tool_name, tool?.display_name_key, taskViewT);
+        // 后端 toRenderJSON 实时推送当前语言下的显示名；旧数据无该字段时回退协议名
+        const name = typeof tool?.display_name === 'string' ? tool.display_name.trim() : '';
+        return name || tool?.tool_name || '';
     }
 
     static _compactProcessPhrase(value, maxLength = 18) {
@@ -1256,6 +1265,34 @@ class TaskView extends HTMLElement {
         return TaskView._truncateProcessSummary(summary);
     }
 
+    /**
+     * 统计当前连续工具调用块中已完成的工具调用（status 非 pending/running），
+     * 供运行中的思考/调用状态块展示"已调用 N 个工具"。
+     * 块边界：倒序扫描，遇到可见正文（text/error）即停止——更早的工具属于上一块，不计入；
+     * reasoning 属于当前块，不作为边界。
+     * @returns {{ count: number, names: string[] }} count 为调用次数，names 为去重压缩后的显示名
+     */
+    static _collectDoneToolStats(parts) {
+        let count = 0;
+        const names = new Set();
+        for (let index = (parts || []).length - 1; index >= 0; index -= 1) {
+            const part = parts[index];
+            if (!part) continue;
+            if (part.type === 'tool_call') {
+                for (const tc of part.toolcalls || []) {
+                    if (tc.status === 'pending' || tc.status === 'running') continue;
+                    count += 1;
+                    const name = TaskView._toolDisplayName(tc);
+                    if (name) names.add(TaskView._compactProcessPhrase(name, 12));
+                }
+                continue;
+            }
+            if (part.type === 'reasoning') continue;
+            if (String(part.rendered ?? part.text ?? '').trim()) break;
+        }
+        return { count, names: Array.from(names).slice(0, 2) };
+    }
+
     _captureProcessDisclosureState(root) {
         const state = new Map();
         root?.querySelectorAll?.('[data-disclosure-key]').forEach((toggle) => {
@@ -1267,6 +1304,9 @@ class TaskView extends HTMLElement {
                 block.classList.contains('reasoning-expanded') || block.classList.contains('reasoning-bubble-pinned')
             );
         });
+        root?.querySelectorAll?.('details.terminal-tool[data-terminal-card-key]').forEach((card) => {
+            state.set(card.dataset.terminalCardKey, card.open === true);
+        });
         return state;
     }
 
@@ -1275,6 +1315,83 @@ class TaskView extends HTMLElement {
         root?.querySelectorAll?.('.reasoning-block-od.reasoning-active').forEach((block) => {
             const content = block.querySelector('[data-streaming-part-index]');
             TaskView.updateReasoningPreview(block, content?.textContent || '');
+        });
+        this._syncRunningStatusTimeTicker();
+    }
+
+    /**
+     * 状态行"已思考 xx 秒"的秒级刷新：复用思考块的同步时机挂载一个共享 interval，
+     * 逐条静默重写时间段文本（时间每秒变化，不重播淡入）。root 断开时自动清理。
+     */
+    _syncRunningStatusTimeTicker() {
+        if (!this.isConnected) {
+            this._stopRunningStatusTimeTicker();
+            return;
+        }
+        const refresh = () => {
+            if (!this.isConnected) {
+                this._stopRunningStatusTimeTicker();
+                return;
+            }
+            this.querySelectorAll('.od-running-status[data-reasoning-status-start]').forEach((statusEl) => {
+                const messageId = statusEl.dataset.messageId;
+                const startTime = parseInt(statusEl.dataset.reasoningStatusStart || '0', 10);
+                if (!messageId || !startTime) return;
+                const timeEl = statusEl.querySelector('.od-running-status-time span');
+                if (!timeEl) return;
+                const elapsed = Math.max(0, Math.floor((Date.now() - startTime) / 1000));
+                const nextText = taskViewT('renderer.taskview.output.status.thinkingTime', {
+                    time: formatReasoningElapsedTime(elapsed)
+                });
+                if (timeEl.textContent !== nextText) {
+                    timeEl.textContent = nextText;
+                }
+            });
+        };
+        // 仅在存在思考状态行时保持 interval，思考结束/状态切换后自动停止
+        if (!this.querySelector('.od-running-status[data-reasoning-status-start]')) {
+            this._stopRunningStatusTimeTicker();
+            return;
+        }
+        if (!this._runningStatusTimeInterval) {
+            this._runningStatusTimeInterval = setInterval(refresh, 1000);
+        }
+        refresh();
+    }
+
+    _stopRunningStatusTimeTicker() {
+        if (this._runningStatusTimeInterval) {
+            clearInterval(this._runningStatusTimeInterval);
+            this._runningStatusTimeInterval = null;
+        }
+    }
+
+    /**
+     * 把主进程渲染的终端工具卡片 HTML 改写为当前 GUI 输出模式期望的开合态。
+     *
+     * 工具渲染层固定输出 open 的 <details>，不应感知 GUI 模式；展开态由渲染层在
+     * 这里统一归一：极简模式收起（避免展开块内层层滚动条），详细模式展开。
+     * disclosureState 里记录了用户的手动开合，优先于模式默认值，保证流式重渲染
+     * 不会把用户刚展开的卡片又折回去。
+     *
+     * 卡片按渲染位置（消息 → part → 卡序）标识并写入 data-terminal-card-key：
+     * 直接取工具 HTML 里的 id 会拿到 HTML 转义后的文本，与 DOM dataset 解码后的
+     * 值对不上；位置 key 两端同源，且同一 part 的卡片只增不改、顺序稳定。
+     */
+    static _applyTerminalCardDisclosure(html, disclosureState, messageId, partIndex) {
+        const source = String(html || '');
+        if (!source.includes('terminal-tool')) return source;
+        let cardIndex = 0;
+        return source.replace(TERMINAL_CARD_DETAILS_TAG_RE, (_match, attrs) => {
+            const key = `${messageId}-terminal-card-${partIndex}-${cardIndex}`;
+            cardIndex += 1;
+            const stored = disclosureState?.get(key);
+            const expanded = stored === undefined ? getDefaultExpanded(guiOutputMode) : stored === true;
+            // open 是布尔属性：只剥离独立成词的它，属性值里的 "open" 因两侧是引号
+            // 而不会被 (?=\s|$) 命中。
+            const cleaned = attrs.replace(/(^|\s)open(?=\s|$)/, '$1').replace(/\s+$/, '');
+            const keyAttribute = ` data-terminal-card-key="${escapeHtml(key)}"`;
+            return expanded ? `<details${cleaned}${keyAttribute} open>` : `<details${cleaned}${keyAttribute}>`;
         });
     }
 
@@ -1300,7 +1417,7 @@ class TaskView extends HTMLElement {
                 disclosureKey
             );
         }
-        return String(entry.part?.rendered || '');
+        return TaskView._applyTerminalCardDisclosure(entry.part?.rendered, disclosureState, messageId, entry.partIndex);
     }
 
     _renderProcessItem(item, messageId, disclosureState, options = {}) {
@@ -1308,6 +1425,18 @@ class TaskView extends HTMLElement {
         const stored = disclosureState?.get(processKey);
         const expanded =
             options.forceExpanded === true || (stored === undefined ? getDefaultExpanded(guiOutputMode) : stored);
+        // 详细模式下卡片全部铺开展示，摘要行与之重复，不再渲染可折叠头；
+        // 简洁模式保留摘要行以承载"一块过程的折叠/展开"入口。
+        if (guiOutputMode === 'verbose') {
+            return `
+            <section class="od-process-segment is-expanded" data-output-key="${escapeHtml(item.key)}">
+                <div class="od-process-detail is-open">
+                    ${item.entries
+                        .map((entry) => this._renderProcessEntry(entry, messageId, disclosureState, options))
+                        .join('')}
+                </div>
+            </section>`;
+        }
         const detailId = `od-${this.widget_id}-${processKey}-detail`;
         const summary = TaskView._processSummary(item);
         return `
@@ -1334,9 +1463,8 @@ class TaskView extends HTMLElement {
 
     _renderRunningProcessDetails(item, messageId, disclosureState) {
         const detailId = `od-${messageId}-running-details`;
-        const attentionClass = item.requiresUserAttention ? ' od-user-attention-process-detail' : '';
         return `
-            <div id="${escapeHtml(detailId)}" class="od-process-detail od-running-process-detail${attentionClass} is-open"
+            <div id="${escapeHtml(detailId)}" class="od-process-detail od-running-process-detail is-open"
                 data-output-key="${escapeHtml(item.key)}">
                 ${item.entries
                     .map((entry) => this._renderProcessEntry(entry, messageId, disclosureState, { isRunning: true }))
@@ -1345,33 +1473,114 @@ class TaskView extends HTMLElement {
     }
 
     _renderRunningStatus(item, messageId, options = {}) {
+        if (!this._lastRunningStatusTextByMessage) {
+            this._lastRunningStatusTextByMessage = new Map();
+        }
         let icon = '';
         let iconStyle = '';
         let iconStateClass = ' is-thinking';
         let iconMarkup = RUNNING_THINKING_ICON_SVG;
-        let action = taskViewT('renderer.taskview.output.status.thinking');
+        let label = taskViewT('renderer.taskview.output.status.thinkingPrefix');
+        // target 是状态里可能频繁变化的部分（当前目标名），只有它和工具计数变化时才重播淡入
+        let target = '';
+        // 思考态的起始时间按消息持久化：状态行随流式快照全量重建，起点必须跨渲染保持，
+        // 否则"已思考 xx 秒"每帧归零。切换到工具执行时清除。
+        if (!this._reasoningStatusStartByMessage) {
+            this._reasoningStatusStartByMessage = new Map();
+        }
+        let reasoningTime = '';
+        let reasoningStart = 0;
         if (item.kind === 'tool') {
-            iconStateClass = ' is-tool';
-            iconMarkup = RUNNING_TOOL_ICON_SVG;
             const name = TaskView._toolDisplayName(item.tool);
-            action = taskViewT('renderer.taskview.output.status.tool', { name });
+            if (name) {
+                iconStateClass = ' is-tool';
+                iconMarkup = RUNNING_TOOL_ICON_SVG;
+                // "正在"保持普通文本，仅目标名用 code 高亮，与思考态文案结构一致
+                label = taskViewT('renderer.taskview.output.status.toolPrefix');
+                target = `<code>${escapeHtml(name)}</code>`;
+                this._reasoningStatusStartByMessage.delete(messageId);
+            }
         } else if (item.kind === 'working') {
             icon = 'fa-spinner fa-spin';
             iconStyle = 'fa-solid';
             iconStateClass = '';
-            action = taskViewT('renderer.taskview.output.status.working');
+            label = taskViewT('renderer.taskview.output.status.working');
+            this._reasoningStatusStartByMessage.delete(messageId);
+        } else {
+            // 思考态与工具态同构：label 为动词前缀，"深度思考"作为 target 段高亮，中间以空格分隔
+            const now = Date.now();
+            let startTime = this._reasoningStatusStartByMessage.get(messageId);
+            if (!startTime) {
+                startTime = now;
+                this._reasoningStatusStartByMessage.set(messageId, startTime);
+            }
+            target = `<code>${escapeHtml(taskViewT('renderer.taskview.output.status.thinkingKeyword'))}</code>`;
+            reasoningStart = startTime;
+            reasoningTime = taskViewT('renderer.taskview.output.status.thinkingTime', {
+                time: formatReasoningElapsedTime(Math.max(0, Math.floor((now - startTime) / 1000)))
+            });
         }
-        const expandable = guiOutputMode === 'minimal' && options.isRunning === true;
+        // 运行中的思考/调用块追加已完成的工具调用统计，随流式快照持续更新
+        const doneStats = options.doneStats || { count: 0, names: [] };
+        let done = '';
+        if (doneStats.count > 0) {
+            if (item.kind === 'tool') {
+                done = taskViewT('renderer.taskview.output.status.doneCount', { count: doneStats.count });
+            } else if (item.kind === 'reasoning' || item.kind === undefined) {
+                const listed = doneStats.names
+                    .slice(0, 2)
+                    .join(taskViewT('renderer.taskview.output.processSummary.listSeparator'));
+                done = listed
+                    ? taskViewT('renderer.taskview.output.status.doneCountWithTools', {
+                          tools: listed,
+                          count: doneStats.count
+                      })
+                    : taskViewT('renderer.taskview.output.status.doneCount', { count: doneStats.count });
+            }
+        }
+        // 文本未变化的分段不重播动画，避免每帧闪烁与不必要的合成开销。
+        // 首次渲染时固定 label（如"正在思考"）视为未变化直接静态呈现；
+        // 目标名/工具计数属于新出现的内容，正常淡入。
+        const lastText = this._lastRunningStatusTextByMessage.get(messageId);
+        this._lastRunningStatusTextByMessage.set(messageId, { label, target, done, reasoningTime });
+        const lastParts = typeof lastText === 'object' && lastText !== null ? lastText : undefined;
+        const fadeClass = (value, lastValue, isLabel = false) => {
+            if (isLabel && lastParts === undefined) return ' od-running-status-fade--static';
+            return value === lastValue ? ' od-running-status-fade--static' : '';
+        };
+        const labelAnimClass = fadeClass(label, lastParts?.label, true);
+        const targetAnimClass = fadeClass(target, lastParts?.target);
+        const doneAnimClass = fadeClass(done, lastParts?.done);
+        // 时间每秒都在变：首现随段淡入，之后静默更新，不重播淡入（避免每秒闪烁）
+        const timeAnimClass =
+            lastParts === undefined
+                ? ''
+                : reasoningTime === lastParts?.reasoningTime
+                  ? ' od-running-status-fade--static'
+                  : ' od-running-status-fade--static';
+        // 状态行仅在极简模式渲染（详细模式由卡片自述状态），点击可展开运行详情
+        const expandable = options.isRunning === true;
         const expanded = expandable && this._assistantRunningDetails.get(messageId) === true;
         const tag = expandable ? 'button' : 'div';
         const renderedIcon = iconMarkup || `<i class="${iconStyle} ${icon}" aria-hidden="true"></i>`;
+        const separator = taskViewT('renderer.taskview.output.status.separator');
+        // 纯文本分段走 escapeHtml；label/target 可能包含内联 code 高亮，需保留原始 HTML
+        const segment = (animClass, extraClass, content) =>
+            content === ''
+                ? ''
+                : `<span class="od-running-status-fade${animClass} ${extraClass}"><span>${escapeHtml(content)}</span></span>`;
+        const segmentHtml = (animClass, extraClass, content) =>
+            content === ''
+                ? ''
+                : `<span class="od-running-status-fade${animClass} ${extraClass}"><span>${content}</span></span>`;
         return `
             <${tag}${expandable ? ' type="button" data-running-output-toggle' : ''} class="od-running-status" role="status" aria-live="polite"
-                ${expandable ? `data-message-id="${escapeHtml(messageId)}" aria-expanded="${expanded}" aria-controls="od-${escapeHtml(messageId)}-running-details"` : ''}>
+                data-message-id="${escapeHtml(messageId)}"${reasoningStart ? ` data-reasoning-status-start="${reasoningStart}"` : ''}
+                ${expandable ? `aria-expanded="${expanded}" aria-controls="od-${escapeHtml(messageId)}-running-details"` : ''}>
                 <span class="od-running-status-icon${iconStateClass}">${renderedIcon}</span>
                 <span class="od-running-status-viewport">
-                    <span class="od-running-status-line">
-                        <span>${escapeHtml(action)}</span>
+                    <span class="od-running-status-text">
+                        ${segmentHtml(labelAnimClass, 'od-running-status-label', label)}${target ? `<span class="od-running-status-separator">${escapeHtml(' ')}</span>` : ''}${segmentHtml(targetAnimClass, 'od-running-status-target', target)}${reasoningTime ? `<span class="od-running-status-separator">${escapeHtml(' ')}</span>` : ''}${segment(timeAnimClass, 'od-running-status-time', reasoningTime)}${done ? `<span class="od-running-status-separator">${escapeHtml(separator)}</span>` : ''}${segment(doneAnimClass, 'od-running-status-done', done)}
                     </span>
                 </span>
             </${tag}>`;
@@ -1382,6 +1591,7 @@ class TaskView extends HTMLElement {
         const messageId = String(options.messageId || 'assistant');
         const showRunningDetails =
             options.showRunningDetails === true || this._assistantRunningDetails.get(messageId) === true;
+        const doneStats = TaskView._collectDoneToolStats(normalizedParts);
         const items = buildAssistantOutputItems(normalizedParts, {
             isRunning: Boolean(options.isRunning)
         });
@@ -1405,7 +1615,8 @@ class TaskView extends HTMLElement {
             }
             if (item.type === 'status') {
                 return this._renderRunningStatus(item, messageId, {
-                    isRunning: Boolean(options.isRunning)
+                    isRunning: Boolean(options.isRunning),
+                    doneStats
                 });
             }
             if (item.type === 'final') {
@@ -1455,7 +1666,6 @@ class TaskView extends HTMLElement {
             html = visibleItems
                 .map((item, index) => {
                     const runningProcessDetails =
-                        guiOutputMode === 'minimal' &&
                         options.isRunning &&
                         item.type === 'process' &&
                         (item.requiresUserAttention === true ||
@@ -2333,9 +2543,8 @@ class TaskView extends HTMLElement {
 
     _getProcessScrollFollowTargets(root) {
         const targets = new Map();
-        root.querySelectorAll('.od-process-detail.is-open[id]').forEach((element) => {
-            targets.set(`process:${element.id}`, element);
-        });
+        // 过程块展开后按内容自然高度铺开、不再是滚动容器，故不再是滚动跟随目标；
+        // 其内部的思考全文区仍有自身限高，继续参与跟随。
         root.querySelectorAll('.reasoning-block-od.reasoning-expanded .reasoning-full-area').forEach((element) => {
             const key = element.dataset.reasoningScrollKey;
             if (key !== undefined) targets.set(`reasoning:${key}`, element);
@@ -5604,6 +5813,9 @@ class TaskView extends HTMLElement {
         this.getHistoryContainer()
             ?.querySelectorAll('.reasoning-block-od.reasoning-active')
             .forEach((el) => TaskView.finalizeReasoningBlock(el));
+        // 状态行秒级刷新与消息内思考块计时器一并停止
+        this._stopRunningStatusTimeTicker();
+        this._reasoningStatusStartByMessage?.clear();
         this._goalController.disconnect();
         this._workspaceFocusLayout.dispose();
         this._cancelBrowserIdleTimer();
