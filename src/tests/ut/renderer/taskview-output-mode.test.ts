@@ -308,12 +308,14 @@ describe('task-view GUI output modes', () => {
         const processSegments = view.querySelectorAll('.od-process-segment');
         expect(processSegments).toHaveLength(3);
         processSegments.forEach((segment: Element) => {
-            expect(segment.querySelector('[data-process-toggle]')?.getAttribute('aria-expanded')).toBe('true');
+            // 详细模式卡片直接铺开，与卡片内容重复的摘要折叠头不再渲染
+            expect(segment.querySelector('[data-process-toggle]')).toBeNull();
             expect(segment.querySelector('.od-process-detail')?.classList.contains('is-open')).toBe(true);
             expect(segment.querySelector('.reasoning-block-od')?.classList.contains('reasoning-expanded')).toBe(true);
             expect(segment.querySelector('.reasoning-full-area')?.textContent).not.toBe('');
         });
         expect(view.querySelectorAll('.mainline-tool-card')).toHaveLength(30);
+        expect(view.querySelectorAll('.od-process-summary')).toHaveLength(0);
         expect(view.querySelector('.od-process-tool')).toBeNull();
     });
 
@@ -329,7 +331,10 @@ describe('task-view GUI output modes', () => {
         expect(view.querySelector('.od-final-result-label')).toBeNull();
         const finalResult = view.querySelector('.od-final-result');
         expect(finalResult?.classList.contains('od-final-result-with-divider')).toBe(true);
-        expect(finalResult?.previousElementSibling?.classList.contains('od-process-segment')).toBe(true);
+        // 详细模式过程段无折叠头，最后一个子元素是铺开的 detail 层
+        expect(finalResult?.previousElementSibling?.lastElementChild?.classList.contains('od-process-detail')).toBe(
+            true
+        );
         expect(taskViewStyles).toMatch(/\.od-final-result-with-divider\{[^}]*border-top:1pxsolidvar\(--od-border\);/);
     });
 
@@ -355,9 +360,8 @@ describe('task-view GUI output modes', () => {
         expect(window.taskManagerAPI.getFullTask as jest.Mock).not.toHaveBeenCalled();
         expect(view.querySelector('#message-content-message-mode-switch')).toBe(messageContent);
         expect(view.querySelector('.od-assistant-output-flow')?.getAttribute('data-output-mode')).toBe('verbose');
-        expect(view.querySelector('.od-process-summary[data-process-toggle]')?.getAttribute('aria-expanded')).toBe(
-            'false'
-        );
+        // 切到详细模式后摘要折叠头消失，卡片直接铺开
+        expect(view.querySelector('[data-process-toggle]')).toBeNull();
 
         onSettingChanged?.({ locale: 'zh-CN', gui_config: { output_mode: 'minimal' } });
 
@@ -721,6 +725,7 @@ describe('task-view GUI output modes', () => {
         expect(view.querySelector('.reasoning-full-area')?.textContent).toContain('完整思考内容');
         expect(view.querySelector('.od-running-status')).toBeNull();
         expect(view.textContent).not.toContain('正在思考');
+        expect(view.textContent).not.toContain('已思考');
     });
 
     test('running tool status uses the pushed display name without exposing parameters', () => {
@@ -1274,6 +1279,23 @@ describe('task-view GUI output modes', () => {
         expect(view.querySelector('.od-process-tool-status')).toBeNull();
     });
 
+    test('verbose running output shows tool cards without a duplicate running status row', () => {
+        onSettingChanged?.({ locale: 'zh-CN', gui_config: { output_mode: 'verbose' } });
+        const view = createView();
+        const doneTools = toolPart(1, 2);
+        const runningTool = toolPart(3, 1);
+        runningTool.toolcalls[0] = { ...runningTool.toolcalls[0], status: 'running' };
+        view.innerHTML = view._renderAssistantOutputHtml([doneTools, runningTool], {
+            isRunning: true,
+            messageId: 'message-verbose-running-tools'
+        });
+
+        // 详细模式下每个工具都有自己的卡片，"正在 xx"状态行与卡片内容重复，不再渲染
+        expect(view.querySelector('.od-running-status')).toBeNull();
+        expect(view.textContent).not.toContain('正在 Tool3');
+        expect(view.querySelectorAll('.od-process-segment')).toHaveLength(1);
+    });
+
     test('process labels preserve the protocol name instead of using reasoning or parameters', () => {
         const view = createView();
         const browserTool = toolPart(1, 1);
@@ -1770,11 +1792,9 @@ describe('task-view GUI output modes', () => {
         expect(process.querySelector('.reasoning-block-od')).not.toBeNull();
         expect(process.querySelectorAll('.mainline-tool-card')).toHaveLength(10);
 
-        const processToggle = process.querySelector('[data-process-toggle]') as HTMLElement;
-        view._handleProcessToggleClick({ target: processToggle, preventDefault() {}, stopPropagation() {} });
-
-        expect(processToggle.getAttribute('aria-expanded')).toBe('false');
-        expect(process.querySelector('.od-process-detail')?.classList).not.toContain('is-open');
+        // 详细模式过程段没有可折叠头，卡片始终随内容铺开展示
+        expect(process.querySelector('[data-process-toggle]')).toBeNull();
+        expect(process.querySelector('.od-process-detail')?.classList).toContain('is-open');
     });
 
     test('minimal mode collapses terminal tool cards inside an expanded process block', () => {

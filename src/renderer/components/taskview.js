@@ -1421,6 +1421,18 @@ class TaskView extends HTMLElement {
         const stored = disclosureState?.get(processKey);
         const expanded =
             options.forceExpanded === true || (stored === undefined ? getDefaultExpanded(guiOutputMode) : stored);
+        // 详细模式下卡片全部铺开展示，摘要行与之重复，不再渲染可折叠头；
+        // 简洁模式保留摘要行以承载"一块过程的折叠/展开"入口。
+        if (guiOutputMode === 'verbose') {
+            return `
+            <section class="od-process-segment is-expanded" data-output-key="${escapeHtml(item.key)}">
+                <div class="od-process-detail is-open">
+                    ${item.entries
+                        .map((entry) => this._renderProcessEntry(entry, messageId, disclosureState, options))
+                        .join('')}
+                </div>
+            </section>`;
+        }
         const detailId = `od-${this.widget_id}-${processKey}-detail`;
         const summary = TaskView._processSummary(item);
         return `
@@ -1542,7 +1554,8 @@ class TaskView extends HTMLElement {
                 : reasoningTime === lastParts?.reasoningTime
                   ? ' od-running-status-fade--static'
                   : ' od-running-status-fade--static';
-        const expandable = guiOutputMode === 'minimal' && options.isRunning === true;
+        // 状态行仅在极简模式渲染（详细模式由卡片自述状态），点击可展开运行详情
+        const expandable = options.isRunning === true;
         const expanded = expandable && this._assistantRunningDetails.get(messageId) === true;
         const tag = expandable ? 'button' : 'div';
         const renderedIcon = iconMarkup || `<i class="${iconStyle} ${icon}" aria-hidden="true"></i>`;
@@ -1649,7 +1662,6 @@ class TaskView extends HTMLElement {
             html = visibleItems
                 .map((item, index) => {
                     const runningProcessDetails =
-                        guiOutputMode === 'minimal' &&
                         options.isRunning &&
                         item.type === 'process' &&
                         (item.requiresUserAttention === true ||

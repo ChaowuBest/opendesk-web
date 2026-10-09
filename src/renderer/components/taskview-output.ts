@@ -187,6 +187,9 @@ export function getVisibleAssistantOutputItems(
     }
 ): GuiVisibleAssistantOutputItem[] {
     if (!options.isRunning) return items;
+    // 详细模式下每个思考/工具块都直接展示自身卡片，运行中再追加状态行
+    // 会与卡片内容重复（如"正在 搜索记忆"出现在搜索记忆卡片下方）。
+    if (options.mode === 'verbose') return items;
 
     const parts =
         options.parts ??
@@ -198,8 +201,7 @@ export function getVisibleAssistantOutputItems(
         });
     const status = buildRunningStatus(parts);
     if (!status) return items;
-    if (options.mode === 'verbose' && status.kind === 'reasoning') return items;
-    if (options.mode === 'minimal' && !options.showRunningDetails) {
+    if (!options.showRunningDetails) {
         const activeProcess = items.at(-1);
         if (activeProcess?.type === 'process' && activeProcess.requiresUserAttention) {
             const attentionEntries = activeProcess.entries.filter(
@@ -230,11 +232,11 @@ export function getVisibleAssistantOutputItems(
         if (hasInlineToolBoundary) return [...committedItems, lastItem];
         return [...committedItems, status];
     }
-    if (options.mode === 'minimal') {
+    if (options.showRunningDetails) {
         if (items.at(-1)?.type === 'process') {
             return [...items.slice(0, -1), status, items[items.length - 1]];
         }
         return [...items, status];
     }
-    return [...items, status];
+    return [...committedItems, status];
 }
