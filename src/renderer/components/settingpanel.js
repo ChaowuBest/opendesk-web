@@ -10,6 +10,7 @@
  */
 
 import { createRendererTranslator } from '../locale.ts';
+import { createModelSelect } from '../utils/model-select.js';
 import { selectSupportedShell } from '../../common/shells.js';
 import { REASONING_EFFORT_LEVELS } from '../../common/reasoning-effort.ts';
 import { ACP_AGENT_PRESETS, createAcpAgentPresetDraft } from '../../common/acp/agentPresets.ts';
@@ -91,9 +92,11 @@ textarea.od-sp-fi { resize: vertical; min-height: 80px; font-family: 'SF Mono', 
 .od-sp-agent-preset-notice { align-items: flex-start; background: rgba(184,117,3,0.08); border: 1px solid rgba(184,117,3,0.24); border-radius: 8px; color: var(--mc-ink2); display: flex; font-size: 11.5px; gap: 8px; line-height: 1.5; margin-bottom: 14px; padding: 10px 12px; }
 .od-sp-agent-preset-notice i { color: #B87503; margin-top: 2px; }
 .od-sp-combo { position: relative; }
-.od-sp-model-dropdown { position: absolute; z-index: 10; left: 0; right: 0; top: 100%; margin-top: 4px; background: var(--mc-card-bg); border: 1px solid var(--mc-line); border-radius: 8px; box-shadow: 0 4px 16px rgba(0,0,0,0.08); max-height: 180px; overflow-y: auto; }
-.od-sp-model-option { padding: 7px 12px; font-size: 12px; cursor: pointer; color: var(--mc-ink); transition: background 0.1s; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.od-sp-model-option:hover { background: var(--mc-hover); }
+.od-sp-model-loading { position: absolute; right: 12px; top: 50%; transform: translateY(-50%); color: var(--mc-ink3); }
+.od-sp-model-loading[hidden], .od-sp-model-error[hidden] { display: none; }
+.od-sp-model-error { color: var(--mc-red); font-size: 11.5px; margin: 5px 0 0; }
+.od-sp-combo select[aria-busy="true"] { background-image: none; }
+.od-sp-combo select:disabled { opacity: 0.65; cursor: default; }
 .od-sp-header-item { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; }
 .od-sp-header-item input { flex: 1; }
 .od-sp-header-remove { width: 28px; height: 28px; display: flex; align-items: center; justify-content: center; border: none; background: transparent; color: var(--mc-ink3); cursor: pointer; border-radius: 6px; transition: color 0.15s, background 0.15s; flex-shrink: 0; }
@@ -4268,9 +4271,12 @@ class SettingPanel extends HTMLElement {
                     <div class="od-sp-fg">
                         <label class="od-sp-fl">${this.escapeHtml(this._t('config.model.field.model_name'))}</label>
                         <div class="od-sp-combo" id="model-name-combo">
-                            <input id="model-name-input" type="text" value="${this.escapeHtml(model.model_name)}" autocomplete="off" class="od-sp-fi" placeholder="${this.escapeHtml(this._t('config.model.field.model_name.placeholder'))}">
-                            <div id="model-name-dropdown" class="hidden od-sp-model-dropdown"></div>
+                            <select id="model-name-input" class="od-sp-fi" disabled aria-describedby="model-name-error" aria-label="${this.escapeHtml(this._t('config.model.field.model_name'))}">
+                                <option value="">${this.escapeHtml(this._t('config.model.discovery.providerFirst'))}</option>
+                            </select>
+                            <span id="model-name-loading" class="od-sp-model-loading" hidden role="status"><i class="fas fa-spinner fa-spin" aria-hidden="true"></i></span>
                         </div>
+                        <p id="model-name-error" class="od-sp-model-error" role="alert" hidden></p>
                     </div>
                     <div class="chat-model-field od-sp-fg">
                         <label class="od-sp-fl">${this.escapeHtml(this._t('config.model.field.reasoning_effort'))}</label>
@@ -4372,15 +4378,12 @@ class SettingPanel extends HTMLElement {
             this.saveModel();
         });
 
-        // 模型名称 combo 下拉逻辑
-        this._modelNameList = [];
+        // 模型选择：提供方确定后加载列表。
         const nameInput = this.querySelector('#model-name-input');
-        const dropdown = this.querySelector('#model-name-dropdown');
         const providerSelect = this.querySelector('#model-provider-input');
         const modelTypeSelect = this.querySelector('#model-type-input');
 
         // 模型名变化时，实时估算上下文大小并更新 placeholder
-        let _estimateTimer = null;
         const contextLengthInput = this.querySelector('#model-context-length-input');
         const updateContextPlaceholder = async (modelName) => {
             if (!contextLengthInput) return;
@@ -4423,21 +4426,11 @@ class SettingPanel extends HTMLElement {
                 maxOutputTokensInput.placeholder = this._t('config.model.field.max_output_tokens.placeholder');
             }
         };
-        nameInput?.addEventListener('input', () => {
-            clearTimeout(_estimateTimer);
-            _estimateTimer = setTimeout(() => {
-                updateContextPlaceholder(nameInput.value);
-                updateMaxOutputTokensPlaceholder(nameInput.value);
-                this.refreshEffortOptions(nameInput.value, this.querySelector('#model-effort-input'));
-            }, 250);
-        });
-        // 初始加载时立即估算
-        if (nameInput?.value?.trim()) {
+        nameInput?.addEventListener('change', () => {
             updateContextPlaceholder(nameInput.value);
             updateMaxOutputTokensPlaceholder(nameInput.value);
             this.refreshEffortOptions(nameInput.value, this.querySelector('#model-effort-input'));
-        }
-
+        });
         const syncModelTypeFields = () => {
             const isEmbedding = modelTypeSelect?.value === 'embedding';
             this.querySelectorAll('.chat-model-field').forEach((field) => {
@@ -4453,77 +4446,41 @@ class SettingPanel extends HTMLElement {
         modelTypeSelect?.addEventListener('change', syncModelTypeFields);
         syncModelTypeFields();
 
-        const renderDropdownItems = (filter) => {
-            const keyword = (filter || '').toLowerCase();
-            const filtered = keyword
-                ? this._modelNameList.filter((n) => n.toLowerCase().includes(keyword))
-                : this._modelNameList;
-            if (filtered.length === 0) {
-                dropdown.classList.add('hidden');
-                return;
-            }
-            dropdown.innerHTML = filtered
-                .map(
-                    (n) =>
-                        `<div class="model-name-option od-sp-model-option" data-value="${this.escapeHtml(n)}">${this.escapeHtml(n)}</div>`
-                )
-                .join('');
-            dropdown.classList.remove('hidden');
-            dropdown.querySelectorAll('.model-name-option').forEach((opt) => {
-                opt.addEventListener('mousedown', (e) => {
-                    e.preventDefault();
-                    nameInput.value = opt.dataset.value;
-                    dropdown.classList.add('hidden');
-                    updateContextPlaceholder(nameInput.value);
-                    this.refreshEffortOptions(nameInput.value, this.querySelector('#model-effort-input'));
-                });
-            });
-        };
-
-        const fetchModelsForProvider = async (providerName) => {
-            this._modelNameList = [];
-            dropdown.classList.add('hidden');
-            if (!providerName) return;
+        const modelSelect = createModelSelect({
+            select: nameInput,
+            loading: this.querySelector('#model-name-loading'),
+            error: this.querySelector('#model-name-error'),
+            t: (key, params) => this._t(key, params)
+        });
+        const fetchModelsForProvider = (providerName, selected = '') => {
+            modelSelect.reset();
             const provider = this.currentData?.providers?.find((p) => p.name === providerName);
-            if (!provider || !provider.base_url) return;
-            try {
-                const models = await window.settingAPI.fetchProviderModels({
-                    base_url: provider.base_url,
-                    api_key: provider.api_key || '',
-                    provider_type: provider.provider_type === 'anthropic' ? 'anthropic' : 'openai',
-                    no_proxy: !!provider.no_proxy,
-                    no_ssl: !!provider.no_ssl
-                });
-                if (Array.isArray(models) && models.length > 0) {
-                    this._modelNameList = models;
-                }
-            } catch {
-                // 获取失败时静默处理，用户仍可手动输入
-            }
+            if (!provider) return;
+            void modelSelect.load(
+                () =>
+                    window.settingAPI.fetchProviderModels({
+                        base_url: provider.base_url,
+                        api_key: provider.api_key || '',
+                        provider_type: provider.provider_type === 'anthropic' ? 'anthropic' : 'openai',
+                        no_proxy: !!provider.no_proxy,
+                        no_ssl: !!provider.no_ssl
+                    }),
+                selected
+            );
         };
-
-        nameInput.addEventListener('focus', () => {
-            if (this._modelNameList.length > 0) {
-                renderDropdownItems(nameInput.value);
-            }
-        });
-        nameInput.addEventListener('input', () => {
-            if (this._modelNameList.length > 0) {
-                renderDropdownItems(nameInput.value);
-            }
-        });
-        nameInput.addEventListener('blur', () => {
-            // 延迟隐藏以允许 mousedown 事件触发
-            setTimeout(() => dropdown.classList.add('hidden'), 150);
-        });
-
         providerSelect.addEventListener('change', () => {
             fetchModelsForProvider(providerSelect.value);
+            updateContextPlaceholder('');
+            updateMaxOutputTokensPlaceholder('');
+            this.refreshEffortOptions('', this.querySelector('#model-effort-input'));
         });
 
-        // 初始加载：如果已有选中的提供方，尝试获取模型列表
+        // 初始加载时立即估算，保留已保存的模型名称；切换提供方时不能沿用旧提供方的名称。
         if (providerSelect.value) {
-            fetchModelsForProvider(providerSelect.value);
+            fetchModelsForProvider(providerSelect.value, model.model_name);
+            updateContextPlaceholder(model.model_name);
+            updateMaxOutputTokensPlaceholder(model.model_name);
+            this.refreshEffortOptions(model.model_name, this.querySelector('#model-effort-input'));
         }
     }
 
@@ -4681,6 +4638,21 @@ class SettingPanel extends HTMLElement {
             this.showFieldError(
                 this.querySelector('#model-timeout-input'),
                 this._t('config.model.validation.timeout_invalid')
+            );
+            return;
+        }
+
+        if (!provider_name) {
+            this.showFieldError(
+                this.querySelector('#model-provider-input'),
+                this._t('config.model.validation.provider_required')
+            );
+            return;
+        }
+        if (!model_name) {
+            this.showFieldError(
+                this.querySelector('#model-name-input'),
+                this._t('config.model.validation.model_name_required')
             );
             return;
         }

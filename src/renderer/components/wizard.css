@@ -588,3 +588,51 @@ setup-wizard .wizard-footer {
 setup-wizard .wizard-footer #wizard-next-btn {
     margin-left: auto;
 }
+
+setup-wizard .wizard-model-select {
+    position: relative;
+}
+setup-wizard .wizard-model-loading {
+    position: absolute;
+    right: 16px;
+    top: 50%;
+    transform: translateY(-50%);
+}
+setup-wizard .wizard-model-loading[hidden],
+setup-wizard .wizard-model-error[hidden] {
+    display: none;
+}
+setup-wizard .wizard-model-select select[aria-busy='true'] {
+    background-image: none;
+}
+setup-wizard .wizard-model-select select:disabled {
+    cursor: default;
+    opacity: 0.65;
+}
+setup-wizard .wizard-model-error {
+    color: #e74c3c;
+    font-size: 13px;
+    margin: 8px 0 0;
+}
+setup-wizard .wizard-model-fetch-row {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+}
+setup-wizard .wizard-model-fetch-row .wizard-model-select {
+    flex: 1;
+    min-width: 0;
+}
+setup-wizard .wizard-model-fetch-row button {
+    flex-shrink: 0;
+    white-space: nowrap;
+}
+@media (max-width: 600px) {
+    setup-wizard .wizard-model-fetch-row {
+        gap: 8px;
+    }
+    setup-wizard .wizard-model-fetch-row button {
+        padding-right: 12px;
+        padding-left: 12px;
+    }
+}
