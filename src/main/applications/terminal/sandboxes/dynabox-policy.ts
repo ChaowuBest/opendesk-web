@@ -401,6 +401,15 @@ function policyLinuxTail(
         ...(home
             ? [`[[rules]]\npath = ${quote(`${home}/.cache/opendesk-sandbox/**`)}\naccess = "write"\nperm = "allow"`]
             : []),
+        // Python 解释器字节码缓存写放行（对齐 Windows systemWritePaths 的
+        // /C/**/__pycache__/**）：import 时原子写 __pycache__/*.pyc.<随机数>
+        // 临时文件再 rename（解释器在 Python 安装目录/venv 下生成），内容仅为
+        // 字节码缓存，放行写入免去每次 spawn python 子进程都触发 ask。全盘
+        // 通配覆盖系统 Python（/usr/lib）、/data/app 工具链 bundle 与虚拟环境。
+        // readonly 模式不导出：全盘 write deny 下 deny 无害（Python 静默忽略
+        // 写失败仅重编译），不架空 readonly 写保护承诺（Windows 有 OS ACL
+        // 兜底系统组件自更新写入，LD_PRELOAD 身份命名空间无此兜底）。
+        ...(readonlyMode ? [] : [`[[rules]]\npath = ${quote('/**/__pycache__/**')}\naccess = "write"\nperm = "allow"`]),
         // macOS 系统 Python 字节码缓存（com.apple.python）——不放行则每次 import
         // django 等大框架都重新编译字节码，migrate/runserver 会慢到卡死。
         // read 也要放行：解释器启动即探测该目录下 CLT 标准库的 .pyc（如 io.cpython-39.pyc），

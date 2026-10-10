@@ -233,6 +233,22 @@ describe('policyTextLinux', () => {
         const text = policyTextLinux('http://127.0.0.1:1/decide', 't', '/home/tester/work', undefined, '/home/tester');
         expect(text).toContain('path = "/home/tester/.cache/opendesk-sandbox/**"\naccess = "write"\nperm = "allow"');
     });
+    test('Python 字节码缓存目录（__pycache__）写放行（对齐 Windows /C/**/__pycache__/**）', () => {
+        const text = policyTextLinux('http://127.0.0.1:1/decide', 't', '/home/tester/work');
+        expect(text).toContain('path = "/**/__pycache__/**"\naccess = "write"\nperm = "allow"');
+        // 放行规则须早于兜底 write ask 命中（first-match 语义）
+        expect(text.indexOf('/**/__pycache__/**')).toBeLessThan(
+            text.indexOf('path = "/**"\naccess = "write"\nperm = "ask"')
+        );
+    });
+    test('readonly 模式不导出 __pycache__ 写放行（全盘 write deny 下 deny 无害，不架空写保护）', () => {
+        const rules = [
+            { resourceType: 'file', action: 'read', pathPattern: '/home/tester/work/**', effect: 'allow' },
+            { resourceType: 'file', action: 'write', pathPattern: '**', effect: 'deny' }
+        ] as any[];
+        const text = policyTextLinux('http://127.0.0.1:1/decide', 't', '/home/tester/work', rules);
+        expect(text).not.toContain('path = "/**/__pycache__/**"\naccess = "write"\nperm = "allow"');
+    });
     test('darwin exec 重签缓存（~/Library/Caches/com.opendesk.sandbox）读写放行', () => {
         // 回归：darwin 沙箱内 exec 平台二进制时 dylib 复制+ad-hoc 重签到该目录，
         // dyld 随后加载副本本体与 Info.plist；策略无规则时命中 /** read ask，

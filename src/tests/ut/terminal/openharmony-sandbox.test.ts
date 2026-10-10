@@ -39,6 +39,17 @@ describe('policyTextOpenHarmony', () => {
         expect(text).toContain('path = "/data/home/.npm/**"\naccess = "write"\nperm = "allow"');
     });
 
+    test('Python 字节码缓存目录（__pycache__）写放行（对齐 Windows /C/**/__pycache__/**）', () => {
+        // /data/app/python.org/.../encodings/_pycache__/*.pyc 等在 Python 安装
+        // 目录下生成：全盘通配放行写入，免去每次 import 都触发写 ask 弹窗
+        const text = policyTextOpenHarmony('e', 't', '/data/home/work');
+        expect(text).toContain('path = "/**/__pycache__/**"\naccess = "write"\nperm = "allow"');
+        // 放行规则须早于兜底 write ask 命中（first-match 语义）
+        expect(text.indexOf('/**/__pycache__/**')).toBeLessThan(
+            text.indexOf('path = "/**"\naccess = "write"\nperm = "ask"')
+        );
+    });
+
     test('权限规则按真实路径导出、deny 优先于 allow', () => {
         const rules = [
             { resourceType: 'file', action: 'read', pathPattern: '/data/home/work/**', effect: 'allow' },
