@@ -13,6 +13,7 @@ import { definePlugin } from '@bitclub.ai/opendesk-plugin-sdk';
 import { configureCommonEnvironment, injectBashEnv, injectZshEnv } from './environment.mjs';
 import { setupRecovery } from './recovery.mjs';
 import { setupSkillFallback } from './skill-fallback.mjs';
+import { setupDependencyQuery } from './dependency-query.mjs';
 
 export default definePlugin({
     id: 'hm-compat',
@@ -22,6 +23,9 @@ export default definePlugin({
 
         // HarmonyOS skill fallback 经验记录 hook 与工具注册
         setupSkillFallback(context);
+
+        // HarmonyOS 依赖支持情况查询工具（mcp服务）
+        setupDependencyQuery(context);
 
         // openharmony平板不添加命令行执行工具，不执行运行环境配置
         if (process.env.OPENDESK_HARMONY_BUILD_VARIANT === 'tablet') {
