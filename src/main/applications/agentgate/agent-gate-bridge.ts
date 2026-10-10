@@ -50,6 +50,27 @@ function getExtensionsDir(): string {
     return dir;
 }
 
+/**
+ * 把 app.asar 内的路径映射为 Node 子进程可用的真实路径（app.asar.unpacked）。
+ *
+ * asar 内的路径对 Electron 的 fs 是透明的（existsSync 返回 true），但一旦交给
+ * libuv 或系统 node 就会失败——app.asar 在真实文件系统上只是个普通文件：
+ *   - spawn 的 cwd 指进去 → ENOTDIR（agent-gate / agent-moss 全部起不来）
+ *   - 系统 node require 它 → Cannot find module（better-sqlite3 ABI 探测被误判为不兼容）
+ * 故凡是最终要落到子进程手里的路径（bundlePath、better-sqlite3 目录）都必须基于
+ * app.asar.unpacked，其解包规则见 forge.config.cjs 的 packagerConfig.asar.unpack。
+ *
+ * 未解包（映射目标不存在）时原样返回，交回调用方原有的报错分支，不静默改写。
+ *
+ * 注意分隔符后的可选结尾：getProjectRoot() 传进来的是根目录本身（...\app.asar，
+ * 无尾部分隔符），只匹配「asar 内部路径」的正则会漏掉这种情况，故用 ([/\\]|$)。
+ * 这样也天然放过 app.asar.backup 这类同名前缀目录（后缀是 . 而非分隔符）。
+ */
+function toSubprocessRunnableRoot(target: string): string {
+    const unpacked = target.replace(/([/\\])app\.asar([/\\]|$)/, '$1app.asar.unpacked$2');
+    return unpacked !== target && fs.existsSync(unpacked) ? unpacked : target;
+}
+
 interface ServiceState {
     process: ChildProcess | null;
     restartCount: number;
@@ -174,6 +195,11 @@ class AgentGateBridge {
      * 解析应用根目录（node_modules 所在位置）。
      * 打包环境下 app.getAppPath() 返回 app 资源目录；
      * CLI 模式下回退到 process.cwd()（项目根目录）。
+     *
+     * 本方法只返回「子进程可用」的根目录：打包版映射到 app.asar.unpacked 而非
+     * app.asar，否则下游 resolveBundle/_findSqliteDirs 产出的路径交给 node 子进程
+     * 会 ENOTDIR（详见 toSubprocessRunnableRoot）。三个调用点都只用于 node_modules
+     * 查找，故统一在此映射。
      */
     private getProjectRoot(): string {
         // 1. Electron 打包环境：app.getAppPath() 返回 app 资源目录
@@ -181,7 +207,7 @@ class AgentGateBridge {
             const { app } = electron();
             const appPath = app?.getAppPath?.();
             if (appPath) {
-                const resolved = path.resolve(appPath);
+                const resolved = toSubprocessRunnableRoot(path.resolve(appPath));
                 if (fs.existsSync(path.join(resolved, 'node_modules'))) {
                     return resolved;
                 }
@@ -192,7 +218,7 @@ class AgentGateBridge {
         // 2. import.meta.dirname 回退：编译产物位于 dist/main/ 下，
         //    上溯 1 级即 app 根目录（打包和 CLI 开发模式均适用）
         try {
-            const rootFromDirname = path.resolve(import.meta.dirname, '..');
+            const rootFromDirname = toSubprocessRunnableRoot(path.resolve(import.meta.dirname, '..'));
             if (fs.existsSync(path.join(rootFromDirname, 'node_modules'))) {
                 return rootFromDirname;
             }
@@ -303,9 +329,13 @@ class AgentGateBridge {
         if ((process.platform as string) === 'openharmony') {
             return false;
         }
-        // 文件都不在，肯定不兼容
-        const bindingPath = path.join(sqliteDir, 'build', 'Release', 'better_sqlite3.node');
-        if (!fs.existsSync(bindingPath)) {
+        // 两个 binding 落点都没有，才判定为缺失；只要有一个就走下面的真实 require 探测。
+        // 不能只认 build/Release/：better-sqlite3 13.x 改用 prebuilds/（N-API 预编译二进制，
+        // 不按 node ABI 分版本），只认旧路径会让探测在 prebuilds 场景下必然误判，每次启动
+        // 都触发一次注定失败的原生编译（本地约 14 秒；内网机器无网络/工具链，耗时更久）。
+        const hasPrebuild = fs.existsSync(path.join(sqliteDir, 'prebuilds'));
+        const hasGypBuild = fs.existsSync(path.join(sqliteDir, 'build', 'Release', 'better_sqlite3.node'));
+        if (!hasPrebuild && !hasGypBuild) {
             return false;
         }
         const nodeCmd = this.resolveNodeCommand();
@@ -314,10 +344,16 @@ class AgentGateBridge {
             return true;
         }
         // 子进程内尝试加载 binding 并开关 :memory: db
-        // 注意：better-sqlite3 用 bindings 库按 NODE_MODULE_VERSION 解析，ABI 不匹配会抛
-        // ERR_DLOPEN_FAILED，被我们 catch 后 exit 1
+        // 注意：better-sqlite3 按 NODE_MODULE_VERSION 解析 binding，ABI 不匹配会抛
+        // ERR_DLOPEN_FAILED，被我们 catch 后 exit 1。此处不判断 binding 具体落在
+        // prebuilds 还是 build/Release——require 包目录时由 better-sqlite3 自己解析，
+        // 真加载成功才算兼容。
+        //
+        // sqliteDir 经 argv 传入，**不要**拼进脚本字符串：Windows 路径含反斜杠，
+        // 嵌进单引号 JS 字面量会被转义吃掉（C:\Users → C:Users），探测必然失败，
+        // 表现为每次启动都误判"ABI 不兼容"并触发一次多余的原生编译。
         const probeScript = `try {
-            const D = require('${sqliteDir.replace(/'/g, "\\'")}');
+            const D = require(process.argv[1]);
             const db = new D(':memory:');
             db.exec('CREATE TABLE t(x INTEGER)');
             db.close();
@@ -328,7 +364,7 @@ class AgentGateBridge {
         }`;
         return new Promise((resolve) => {
             try {
-                const child = spawn(nodeCmd.nodePath, ['-e', probeScript], {
+                const child = spawn(nodeCmd.nodePath, ['-e', probeScript, sqliteDir], {
                     env: { ...process.env, ...nodeCmd.env },
                     stdio: ['ignore', 'pipe', 'pipe']
                 });

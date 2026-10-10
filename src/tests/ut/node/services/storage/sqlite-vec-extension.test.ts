@@ -59,8 +59,12 @@ test('loads the resolved development extension into the supplied database', () =
 });
 
 test('Forge unpack rule extracts each sqlite-vec platform library', async () => {
-    const config = fs.readFileSync(new URL('../../../../../../forge.config.cjs', import.meta.url), 'utf8');
-    const unpack = config.match(/unpack: '([^']+)'/)?.[1];
+    // unpack 规则由 agent-runtime-unpack.cjs 按依赖闭包计算得出，不再是配置里的字面量，
+    // 故直接 require 配置取值，而不是用正则去解析源码文本。
+    const forgeConfig = createRequire(import.meta.url)('../../../../../../forge.config.cjs') as {
+        packagerConfig: { asar: { unpack: string } };
+    };
+    const unpack = forgeConfig.packagerConfig.asar.unpack;
     assert.ok(unpack);
     const root = fs.mkdtempSync(path.join(os.tmpdir(), 'sqlite-vec-unpack-'));
     try {
