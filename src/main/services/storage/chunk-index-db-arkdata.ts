@@ -17,7 +17,7 @@ import type {
     ArkDataRow,
     ArkDataValueType
 } from '../../../platforms/bridges/common.js';
-import { getArkdataDatabaseKit } from './arkdata-bridge.js';
+import { ArkDataStoreSession, getArkdataDatabaseKit } from './arkdata-bridge.js';
 import { logger } from '../../utils/logger.js';
 import { pickArkdataVectorOperator, simFromArkdataDistance } from './arkdata-vector-metric.js';
 import { createArkDataStoreId, toArkDataDbPath } from './arkdata-path.js';
@@ -53,9 +53,10 @@ export async function probeChunkIndexStoreArkdata(dbPath: string): Promise<BaseI
     const formalDbPath = toArkDataDbPath(dbPath);
     const storeId = createArkDataStoreId('arkdata-chunk', formalDbPath);
     const dbKit = getArkdataDatabaseKit();
+    const session = new ArkDataStoreSession(dbKit, storeId, { path: formalDbPath, vector: true }, true);
     logger.info(`[arkdata-probe] chunk start logicalDbPath=${dbPath} formalDbPath=${formalDbPath} storeId=${storeId}`);
     try {
-        await dbKit.openStore(storeId, { path: formalDbPath, vector: true });
+        await session.open();
         try {
             await dbKit.querySqlShort(storeId, 'SELECT item_id FROM chunk_index LIMIT 1');
             logger.info(`[arkdata-probe] chunk exists storeId=${storeId}`);
@@ -72,8 +73,8 @@ export async function probeChunkIndexStoreArkdata(dbPath: string): Promise<BaseI
         logger.warn(`[arkdata-probe] chunk open_failed storeId=${storeId}`, arkDataProbeError(error));
         return 'open_failed';
     } finally {
-        await dbKit
-            .closeStore(storeId)
+        await session
+            .close()
             .catch((error) =>
                 logger.warn(`[arkdata-probe] chunk close failed storeId=${storeId}`, arkDataProbeError(error))
             );
@@ -84,13 +85,14 @@ export async function dropChunkIndexStoreArkdata(dbPath: string): Promise<void> 
     const formalDbPath = toArkDataDbPath(dbPath);
     const storeId = createArkDataStoreId('arkdata-chunk', formalDbPath);
     const dbKit = getArkdataDatabaseKit();
-    await dbKit.openStore(storeId, { path: formalDbPath, vector: true });
+    const session = new ArkDataStoreSession(dbKit, storeId, { path: formalDbPath, vector: true }, true);
     try {
+        await session.open();
         await dbKit.execSql(storeId, 'DROP TABLE IF EXISTS chunk_index');
         await dbKit.execSql(storeId, 'DROP TABLE IF EXISTS __schema_meta_safe');
     } finally {
-        await dbKit
-            .closeStore(storeId)
+        await session
+            .close()
             .catch((error) =>
                 logger.warn(`[arkdata-drop] chunk close failed storeId=${storeId}`, arkDataProbeError(error))
             );
@@ -107,6 +109,10 @@ export class ChunkIndexDBArkdata implements IChunkIndexDB {
 
     private dbKit: DatabaseKit | null = null;
     private isInitialized = false;
+    private initializationPromise: Promise<void> | null = null;
+    private closingPromise: Promise<void> | null = null;
+    private storeSession: ArkDataStoreSession | null = null;
+    private initializationGeneration = 0;
 
     constructor(dbPath: string, dimension: number = 1024) {
         this.dbPath = toArkDataDbPath(dbPath);
@@ -114,11 +120,62 @@ export class ChunkIndexDBArkdata implements IChunkIndexDB {
         this.storeId = createArkDataStoreId('arkdata-chunk', this.dbPath);
     }
 
-    private async ensureInitialized(): Promise<void> {
+    private async ensureInitialized(initializeTables = true): Promise<void> {
+        if (this.closingPromise) await this.closingPromise;
         if (this.isInitialized) return;
-        this.dbKit = getArkdataDatabaseKit();
-        await this.dbKit.openStore(this.storeId, { path: this.dbPath, vector: true });
-        await this.dbKit.execSql(
+        const generation = this.initializationGeneration;
+        const initialization = this.initializationPromise ?? this.initializeStore(generation, initializeTables);
+        this.initializationPromise = initialization;
+        try {
+            await initialization;
+            this.assertInitializationActive(generation);
+        } finally {
+            if (this.initializationPromise === initialization) this.initializationPromise = null;
+        }
+    }
+
+    private async initializeStore(generation: number, initializeTables: boolean): Promise<void> {
+        try {
+            if (this.storeSession?.needsReplacement()) await this.releaseStoreReference();
+            if (!this.storeSession) {
+                this.dbKit = getArkdataDatabaseKit();
+                // Retain the acquisition identity before awaiting a possibly late result.
+                this.storeSession = new ArkDataStoreSession(this.dbKit, this.storeId, {
+                    path: this.dbPath,
+                    vector: true
+                });
+            }
+            await this.storeSession.open();
+            this.assertInitializationActive(generation);
+            if (initializeTables) await this.initializeTable();
+            this.assertInitializationActive(generation);
+            this.isInitialized = initializeTables;
+        } catch (error) {
+            if (this.storeSession) {
+                await this.releaseStoreReference().catch((e) => logger.warn('closeStore failed', e));
+            } else {
+                this.dbKit = null;
+            }
+            throw error;
+        }
+    }
+
+    private assertInitializationActive(generation: number): void {
+        if (generation !== this.initializationGeneration) {
+            throw new Error('ChunkIndexDBArkdata closed during initialization');
+        }
+    }
+
+    private async releaseStoreReference(): Promise<void> {
+        if (!this.storeSession) return;
+        await this.storeSession.close();
+        this.storeSession = null;
+        this.dbKit = null;
+    }
+
+    private async initializeTable(): Promise<void> {
+        const dbKit = this.kit();
+        await dbKit.execSql(
             this.storeId,
             `CREATE TABLE IF NOT EXISTS ${this.tableName} (
                 chunk_pk   TEXT PRIMARY KEY,
@@ -128,18 +185,14 @@ export class ChunkIndexDBArkdata implements IChunkIndexDB {
                 repr       floatvector(${this.dimension})
             )`
         );
-        await this.dbKit.execSql(
-            this.storeId,
-            `CREATE INDEX IF NOT EXISTS idx_chunk_item_id ON ${this.tableName}(item_id)`
-        );
-        await this.dbKit.execSql(
+        await dbKit.execSql(this.storeId, `CREATE INDEX IF NOT EXISTS idx_chunk_item_id ON ${this.tableName}(item_id)`);
+        await dbKit.execSql(
             this.storeId,
             `CREATE TABLE IF NOT EXISTS ${this.schemaMetaTableName} (
                 meta_name  TEXT PRIMARY KEY,
                 meta_value TEXT NOT NULL
             )`
         );
-        this.isInitialized = true;
     }
 
     private kit(): DatabaseKit {
@@ -296,10 +349,11 @@ export class ChunkIndexDBArkdata implements IChunkIndexDB {
     }
 
     async dropStorage(): Promise<void> {
-        await this.ensureInitialized();
+        // Deletion must not create schema or read a potentially incompatible dimension.
+        await this.ensureInitialized(false);
         await this.kit().execSql(this.storeId, `DROP TABLE IF EXISTS ${this.tableName}`);
         await this.kit().execSql(this.storeId, `DROP TABLE IF EXISTS ${this.schemaMetaTableName}`);
-        this.close();
+        await this.close();
     }
 
     async count(): Promise<number> {
@@ -308,12 +362,25 @@ export class ChunkIndexDBArkdata implements IChunkIndexDB {
         return Number(rows[0]?.count ?? 0);
     }
 
-    close(): void {
-        if (this.dbKit) {
-            void this.dbKit.closeStore(this.storeId).catch((e) => logger.warn('closeStore failed', e));
-        }
-        this.dbKit = null;
+    close(): Promise<void> {
+        if (this.closingPromise) return this.closingPromise;
+        this.initializationGeneration++;
         this.isInitialized = false;
+        const initialization = this.initializationPromise;
+        if (!initialization && !this.storeSession) {
+            this.dbKit = null;
+            return Promise.resolve();
+        }
+        // Let an in-flight open finish before releasing this object's reference.
+        const closing = (async () => {
+            if (initialization) await initialization.catch(() => {});
+            await this.releaseStoreReference();
+        })().finally(() => {
+            this.isInitialized = false;
+            if (this.closingPromise === closing) this.closingPromise = null;
+        });
+        this.closingPromise = closing;
+        return closing;
     }
 
     getDimension(): number {

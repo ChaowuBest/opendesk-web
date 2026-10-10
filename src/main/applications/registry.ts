@@ -9,6 +9,7 @@
  * See the Mulan PSL v2 for more details.
  */
 
+import { serializeAppError } from '../../../packages/app-sdk/src/index.js';
 import { BaseToolset } from '../aikernel/tool.js';
 import type { TaskState } from '../aikernel/states/tasks.js';
 import { BaseApplication } from './base';
@@ -609,7 +610,7 @@ function spawnGlobalWorker(runtimeOptions: WorkerRuntimeOptions) {
                                 type: 'response',
                                 id: requestId,
                                 status: 'error',
-                                message: error?.message || String(error)
+                                ...serializeAppError(error)
                             });
                         }
                     })();

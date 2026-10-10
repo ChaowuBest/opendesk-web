@@ -581,7 +581,7 @@ async function testBaseStorageProbeIndexers() {
             ChunkIndexer: 'exists'
         });
     } finally {
-        storage.close();
+        await storage.close();
         fs.rmSync(dir, { recursive: true, force: true });
     }
     console.log('  ✅ testBaseStorageProbeIndexers');
@@ -1177,7 +1177,7 @@ async function testDropIndexersDeletesOwnedFilesAndSidecars() {
     const chunkDb = path.join(dir, 'chunk-index.db');
 
     await storage.dropIndexers(['VectorIndexer', 'ChunkIndexer']);
-    storage.close();
+    await storage.close();
 
     assert.equal(fs.existsSync(vectorDb), false, 'VectorIndexer DB file must be removed');
     assert.equal(fs.existsSync(chunkDb), false, 'ChunkIndexer DB file must be removed');
@@ -1199,7 +1199,7 @@ async function testDropIndexersNoopAndPostDropCloseAreSafe() {
 
     await storage.dropIndexers([]);
     await storage.dropIndexers(['BaseIndexer']);
-    storage.close();
+    await storage.close();
 
     assert.equal(fs.existsSync(path.join(dir, 'base-index.db')), false, 'BaseIndexer DB file must be removed');
     fs.rmSync(dir, { recursive: true, force: true });
@@ -1230,7 +1230,7 @@ async function testDropIndexersPartialFailurePoisonsStorage() {
         /partially-dropped state/
     );
 
-    storage.close();
+    await storage.close();
     fs.rmSync(dir, { recursive: true, force: true });
     console.log('  ✅ testDropIndexersPartialFailurePoisonsStorage');
 }

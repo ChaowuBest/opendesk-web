@@ -67,17 +67,7 @@ export function initializeAppWorkers() {
         const { bundleName, requestId, methodName, args, stream } = message;
 
         if (message.type === 'response') {
-            const pending = BaseWorker.pendingAppRequests.get(message.id);
-            if (!pending) {
-                return;
-            }
-            clearTimeout(pending.timer);
-            BaseWorker.pendingAppRequests.delete(message.id);
-            if (message.status === 'ok') {
-                pending.resolve(message.data);
-            } else {
-                pending.reject(new Error(message.message || 'unknown callAppWithResponse error'));
-            }
+            BaseWorker.handleAppResponse(message);
             return;
         }
 

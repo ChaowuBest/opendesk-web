@@ -58,6 +58,7 @@ function buildMatchQuery(tokens: string[]): string {
 }
 
 export class BM25IndexDBWasm implements IBM25IndexDB {
+    private closed = false;
     private db: InstanceType<(typeof sqlite3Wasm)['Database']>;
     private readonly dbPath: string;
     private readonly schema: ColumnSchema;
@@ -286,7 +287,9 @@ export class BM25IndexDBWasm implements IBM25IndexDB {
     }
 
     close(): void {
+        if (this.closed) return;
         this.db.close();
+        this.closed = true;
     }
 
     async dropStorage(): Promise<void> {

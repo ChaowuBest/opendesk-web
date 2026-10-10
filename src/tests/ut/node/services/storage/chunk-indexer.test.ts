@@ -140,7 +140,7 @@ async function testInsertSearchAndEdgeCases(): Promise<void> {
     // Item without chunks — no error
     await storage.insert([{ item_id: 'doc-empty', item_type: 'file', filename: 'empty.txt', chunk_text: null }]);
 
-    storage.close();
+    await storage.close();
     cleanup(dir);
     console.log('[testInsertSearchAndEdgeCases] PASS');
 }
@@ -159,7 +159,7 @@ async function testStatusClearAndConflictingDims(): Promise<void> {
     await storage.clear();
     assert.equal((await storage.getStatus()).ChunkIndexer.size, 0);
 
-    storage.close();
+    await storage.close();
     cleanup(dir);
 
     // Conflicting dims should throw at construction
@@ -184,7 +184,7 @@ async function testDeleteCleansChunks(): Promise<void> {
 
     assert.equal(extractSearchItems(await storage.search(chunkSearch(0))).length, 0);
 
-    storage.close();
+    await storage.close();
     cleanup(dir);
     console.log('[testDeleteCleansChunks] PASS');
 }
@@ -200,7 +200,7 @@ async function testUpdateFullReplace(): Promise<void> {
     const newR = extractSearchItems(await storage.search(chunkSearch(2, 0.5)));
     assert(newR.length > 0 && newR[0].chunk_text === '新C');
 
-    storage.close();
+    await storage.close();
     cleanup(dir);
     console.log('[testUpdateFullReplace] PASS');
 }
@@ -235,7 +235,7 @@ async function testBaseIndexerFilterInSearch(): Promise<void> {
     assert(!ids.includes('mail-1'));
     assert(ids.includes('doc-file'));
 
-    storage.close();
+    await storage.close();
     cleanup(dir);
     console.log('[testBaseIndexerFilterInSearch] PASS');
 }
@@ -250,7 +250,7 @@ async function testChunkScoreNotDeduped(): Promise<void> {
     assert.equal(r.length, 3, 'All 3 chunks should appear');
     assert(r.every((x) => x.item.item_id === 'doc-1'));
 
-    storage.close();
+    await storage.close();
     cleanup(dir);
     console.log('[testChunkScoreNotDeduped] PASS');
 }
@@ -269,7 +269,7 @@ async function testForbiddenMixThrows(): Promise<void> {
         (e: any) => e.message.includes('BM25Indexer')
     );
 
-    storage.close();
+    await storage.close();
     cleanup(dir);
     console.log('[testForbiddenMixThrows] PASS');
 }
@@ -294,7 +294,7 @@ async function testInsertMissingFieldThrows(): Promise<void> {
         (e: any) => e.message.includes("missing 'text'")
     );
 
-    storage.close();
+    await storage.close();
     cleanup(dir);
     console.log('[testInsertMissingFieldThrows] PASS');
 }
@@ -519,7 +519,7 @@ async function testNativeScopedChunkUsesExactCandidateTopK(): Promise<void> {
     });
     assert.equal(result.items.length, 1);
     assert.notEqual(result.items[0].item.item_id, 'outside');
-    storage.close();
+    await storage.close();
     cleanup(dir);
 }
 
@@ -597,7 +597,7 @@ async function testArkDataScopedChunkBatchesGloballyAndFailsWholeTarget(): Promi
         await assert.rejects(() => storage.searchScope(request), /ark chunk batch failed/);
         assert.equal(searchCalls, 2);
     } finally {
-        storage.close();
+        await storage.close();
         setArkdataDatabaseKit(previousKit);
         if (platformDescriptor) Object.defineProperty(process, 'platform', platformDescriptor);
         if (previousArkData === undefined) delete process.env.ARKDATA_AVAILABLE;

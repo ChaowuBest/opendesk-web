@@ -170,11 +170,15 @@ export interface ArkDataTxHandle {
 }
 
 export interface ArkDataOpenStoreOptions {
+    /** Stable identity of one acquisition; reuse it when a response times out. */
+    sessionId?: string;
     path?: string;
     vector?: boolean;
 }
 
 export interface ArkDataCloseStoreOptions {
+    /** Release the matching acquisition, never a later holder of the same store. */
+    sessionId?: string;
     force?: boolean;
 }
 

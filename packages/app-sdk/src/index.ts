@@ -70,6 +70,28 @@ export function getOpenDeskAppHost(): OpenDeskAppHost | undefined {
     return host;
 }
 
+/** Clone-safe diagnostic metadata for worker RPC; these are protocol fields. */
+export function serializeAppError(error: unknown): {
+    message: string;
+    code?: string;
+    category?: string;
+    details?: unknown;
+} {
+    const value = error as { message?: string; code?: string; category?: string; details?: unknown } | null;
+    let details: unknown;
+    try {
+        details = structuredClone(value?.details);
+    } catch {
+        /* Diagnostics must not break error delivery. */
+    }
+    return {
+        message: value?.message || String(error),
+        code: typeof value?.code === 'string' ? value.code : undefined,
+        category: typeof value?.category === 'string' ? value.category : undefined,
+        details
+    };
+}
+
 export class BaseWorker {
     static pendingAppRequests: Map<
         string,
@@ -79,6 +101,31 @@ export class BaseWorker {
             timer: NodeJS.Timeout;
         }
     > = new Map();
+
+    /** Settle the original RPC only; late responses after timeout are ignored. */
+    static handleAppResponse(message: {
+        id: string;
+        status: string;
+        data?: unknown;
+        message?: string;
+        code?: string;
+        category?: string;
+        details?: unknown;
+    }): void {
+        const pending = this.pendingAppRequests.get(message.id);
+        if (!pending) return;
+        clearTimeout(pending.timer);
+        this.pendingAppRequests.delete(message.id);
+        if (message.status === 'ok') pending.resolve(message.data);
+        else
+            pending.reject(
+                Object.assign(new Error(message.message || 'unknown callAppWithResponse error'), {
+                    code: message.code,
+                    category: message.category,
+                    details: message.details
+                })
+            );
+    }
 
     bundleName: string;
     config: object;
@@ -139,7 +186,12 @@ export class BaseWorker {
         const promise = new Promise<R>((resolve, reject) => {
             const timer = setTimeout(() => {
                 BaseWorker.pendingAppRequests.delete(requestId);
-                reject(new Error(`callAppWithResponse ${methodName} timed out after ${timeoutMs}ms`));
+                reject(
+                    Object.assign(new Error(`callAppWithResponse ${methodName} timed out after ${timeoutMs}ms`), {
+                        code: 'rpc_timeout',
+                        category: 'bridge'
+                    })
+                );
             }, timeoutMs);
             BaseWorker.pendingAppRequests.set(requestId, { resolve, reject, timer });
         });

@@ -1,4 +1,5 @@
 import { jest } from '@jest/globals';
+import { serializeAppError } from '../../../../packages/app-sdk/src/index.js';
 
 // ── 可变状态 ────────────────────────────────────────────────
 
@@ -125,6 +126,7 @@ jest.unstable_mockModule('../../../../packages/app-sdk/src/index.js', () => ({
         sendEventToSubscribers() {}
     },
     BaseWorker: class {},
+    serializeAppError,
     setOpenDeskAppHost: jest.fn()
 }));
 

@@ -36,6 +36,12 @@ export async function createVectorIndexDB(dbPath: string, dimension: number = 10
     );
 }
 
+/** Raw ArkData deletion needs a retained connection; file backends delete without opening a DB. */
+export async function createVectorIndexDBForDrop(dbPath: string, dimension: number): Promise<IVectorIndexDB | null> {
+    if (!shouldUseArkData()) return null;
+    return createVectorIndexDB(dbPath, dimension);
+}
+
 export async function probeVectorIndexStore(dbPath: string): Promise<BaseIndexStoreProbeResult> {
     if (shouldUseArkData()) {
         const { probeVectorIndexStoreArkdata } = await import('./vector-index-db-arkdata.js');

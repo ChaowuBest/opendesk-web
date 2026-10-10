@@ -40,15 +40,16 @@
  *    - 向量查询使用 VectorOperator + vectorQuery 参数
  */
 
+import { retryArkdataStoreReleases } from './arkdata-bridge.js';
 import type { BaseCountGroup } from './grouped-count.js';
 import path from 'path';
 import { Indexer } from './indexer.js';
 import { BM25Indexer } from './bm25-indexer.js';
+import type { IVectorIndexDB } from './vector-indexer.js';
 import { VectorIndexer } from './vector-indexer.js';
 import { TagIndexer } from './tag-indexer.js';
 import { BaseIndexer, type BaseIndexStoreProbeResult } from './base-indexer.js';
-import { ChunkIndexer } from './chunk-indexer.js';
-import type { ChunkSearchResult } from './chunk-indexer.js';
+import { ChunkIndexer, type ChunkSearchResult, type IChunkIndexDB } from './chunk-indexer.js';
 
 const DELETE_BATCH_SIZE = 500;
 export const ARKDATA_SCOPED_SEARCH_BATCH_SIZE = 5000;
@@ -424,9 +425,7 @@ function validateScopedSearchRequest(request: ScopedSearchRequest): void {
                 condition.indexer !== 'BaseIndexer'
         )
     ) {
-        throw new ScopedSearchValidationError(
-            'Scoped search preconditions must contain BaseIndexer conditions only'
-        );
+        throw new ScopedSearchValidationError('Scoped search preconditions must contain BaseIndexer conditions only');
     }
     const target = request.targetCondition;
     if (!target || typeof target !== 'object' || Array.isArray(target)) {
@@ -494,6 +493,9 @@ export class BaseStorage {
     private schema: ColumnSchema;
     private dbBasePath: string;
     private droppedInPartialFailure = false;
+    private closeRequested = false;
+    private initializationPromise: Promise<void> | null = null;
+    private closingPromise: Promise<void> | null = null;
 
     constructor(name: string, schema: ColumnSchema, dbBasePath?: string) {
         // 验证 schema
@@ -538,29 +540,51 @@ export class BaseStorage {
      */
     async initialize(): Promise<void> {
         this.ensureUsable();
+        if (this.initializationPromise) return this.initializationPromise;
+        const initialization = this.initializeIndexers().finally(() => {
+            if (this.initializationPromise === initialization) this.initializationPromise = null;
+        });
+        this.initializationPromise = initialization;
+        return initialization;
+    }
+
+    private async initializeIndexers(): Promise<void> {
         // VectorIndexer first (may throw DimMismatchError — caller decides whether to wipe and reinit)
         try {
-            if (this.vectorIndexer) await this.vectorIndexer.initialize();
-            await this.baseIndexer.initialize();
-            if (this.bm25Indexer) await this.bm25Indexer.initialize();
-            if (this.tagIndexer) await this.tagIndexer.initialize();
-            if (this.chunkIndexer) await this.chunkIndexer.initialize();
-        } catch (error) {
+            // close() may complete while one initializer awaits. Never acquire
+            // subsequent stores after the owning storage has been closed.
             for (const indexer of [
-                this.chunkIndexer,
-                this.tagIndexer,
-                this.bm25Indexer,
+                this.vectorIndexer,
                 this.baseIndexer,
-                this.vectorIndexer
+                this.bm25Indexer,
+                this.tagIndexer,
+                this.chunkIndexer
             ]) {
-                try {
-                    indexer?.close();
-                } catch {
-                    // Continue cleanup without masking the original initialization error.
-                }
+                this.ensureUsable();
+                if (indexer) await indexer.initialize();
             }
+            this.ensureUsable();
+        } catch (error) {
+            // Await every release without masking the initialization error. Failed
+            // indexers retain their holders so the caller can retry storage.close().
+            await Promise.allSettled(
+                [this.chunkIndexer, this.tagIndexer, this.bm25Indexer, this.baseIndexer, this.vectorIndexer].map(
+                    async (indexer) => indexer?.close()
+                )
+            );
             throw error;
         }
+    }
+
+    /** Actual opened backends, including independent factory fallbacks.
+     * Callers own cache/index compatibility decisions; storage owns selection.
+     */
+    getSemanticBackends(): { vector: IVectorIndexDB['backend'] | null; chunk: IChunkIndexDB['backend'] | null } {
+        this.ensureUsable();
+        return {
+            vector: this.vectorIndexer?.getBackend() ?? null,
+            chunk: this.chunkIndexer?.getBackend() ?? null
+        };
     }
 
     async probeBaseIndexStore(): Promise<BaseIndexStoreProbeResult> {
@@ -703,10 +727,7 @@ export class BaseStorage {
         if (typeof targetIndexer.getBackend !== 'function') {
             throw new Error(`${request.targetCondition.indexer} backend capability is missing`);
         }
-        const backend = validateSemanticIndexBackend(
-            targetIndexer.getBackend(),
-            request.targetCondition.indexer
-        );
+        const backend = validateSemanticIndexBackend(targetIndexer.getBackend(), request.targetCondition.indexer);
         const requestedK = request.targetCondition.vectorQuery?.topK ?? 10;
         const batchSize = backend === 'arkdata' ? ARKDATA_SCOPED_SEARCH_BATCH_SIZE : candidateItems.length;
         const batches =
@@ -924,14 +945,38 @@ export class BaseStorage {
     }
 
     /**
-     * 关闭所有 indexer
+     * 关闭所有 indexer。调用方必须等待成功后才能丢弃实例；失败时保留
+     * 此实例并重试 close()。开始关闭后不再接受新的数据库操作。
      */
-    close(): void {
-        this.baseIndexer.close();
-        this.bm25Indexer?.close();
-        this.vectorIndexer?.close();
-        this.tagIndexer?.close();
-        this.chunkIndexer?.close();
+    close(): Promise<void> {
+        if (this.closingPromise) return this.closingPromise;
+        this.closeRequested = true;
+        const initialization = this.initializationPromise;
+        const closing = (async () => {
+            // A factory may not have assigned its DB yet. The owning storage
+            // cannot finish close while that acquisition is still in flight.
+            if (initialization) await initialization.catch(() => {});
+            const results = await Promise.allSettled(
+                [this.baseIndexer, this.bm25Indexer, this.vectorIndexer, this.tagIndexer, this.chunkIndexer].map(
+                    async (indexer) => indexer?.close()
+                )
+            );
+            // Probes/raw drops have no indexer holder. Their temporary owners
+            // belong to these stores and must participate in the same close contract.
+            const temporary = await Promise.allSettled([
+                retryArkdataStoreReleases(
+                    ['base-index.db', 'vector-index.db', 'chunk-index.db'].map((file) =>
+                        path.join(this.dbBasePath, file)
+                    )
+                )
+            ]);
+            const failure = [...results, ...temporary].find((result) => result.status === 'rejected');
+            if (failure?.status === 'rejected') throw failure.reason;
+        })().finally(() => {
+            if (this.closingPromise === closing) this.closingPromise = null;
+        });
+        this.closingPromise = closing;
+        return closing;
     }
 
     /**
@@ -984,6 +1029,7 @@ export class BaseStorage {
     }
 
     private ensureUsable(): void {
+        if (this.closeRequested) throw new Error('BaseStorage is closing or closed. Construct a new BaseStorage.');
         if (this.droppedInPartialFailure) {
             throw new Error('BaseStorage is in a partially-dropped state. Construct a new BaseStorage.');
         }

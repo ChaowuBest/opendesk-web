@@ -44,7 +44,7 @@ export interface IBM25IndexDB {
     update(records: BM25Record[]): Promise<void>;
     existingItemIds(ids: string[]): Promise<Set<string>>;
     deleteByKeys(keys: Array<{ item_id: string; item_type: string }>): Promise<void>;
-    close(): void;
+    close(): void | Promise<void>;
     dropStorage(): Promise<void>;
     clear(): Promise<void>;
     count(): Promise<number>;
@@ -61,6 +61,7 @@ export class BM25Indexer extends Indexer {
     private readonly defaultTopK: number;
     private readonly schema: ColumnSchema;
     private isDropped = false;
+    private closingPromise: Promise<void> | null = null;
 
     constructor(schema: ColumnSchema, dbPath: string, defaultTopK = 10) {
         super();
@@ -243,22 +244,28 @@ export class BM25Indexer extends Indexer {
         if (records.length > 0) await db.insert(records);
     }
 
-    close(): void {
-        this.db?.close();
-        this.db = null;
+    close(): Promise<void> {
+        if (this.closingPromise) return this.closingPromise;
+        const db = this.db;
+        if (!db) return Promise.resolve();
+        const closing = Promise.resolve()
+            .then(() => db.close())
+            .then(() => {
+                if (this.db === db) this.db = null;
+            })
+            .finally(() => {
+                if (this.closingPromise === closing) this.closingPromise = null;
+            });
+        this.closingPromise = closing;
+        return closing;
     }
 
     async dropStorage(): Promise<void> {
         const db = this.ensureDB();
-        try {
-            await db.dropStorage();
-        } finally {
-            try {
-                db.close();
-            } catch {}
-            this.db = null;
-            this.isDropped = true;
-        }
+        await db.dropStorage();
+        await db.close();
+        if (this.db === db) this.db = null;
+        this.isDropped = true;
     }
 
     async clear(): Promise<void> {

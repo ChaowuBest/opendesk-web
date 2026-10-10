@@ -115,9 +115,9 @@ export abstract class Indexer {
     abstract upsert(items: Item[]): Promise<void>;
 
     /**
-     * 关闭/清理索引器
+     * 关闭/清理索引器。调用方必须等待完成；失败时保留实例并重试关闭。
      */
-    abstract close(): void;
+    abstract close(): void | Promise<void>;
 
     /**
      * 清空该索引的所有数据

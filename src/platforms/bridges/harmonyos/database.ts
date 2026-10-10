@@ -144,14 +144,42 @@ function resolveOpenStoreReadyOpId(start: OpenStoreStartEnvelope, storeId: strin
     );
 }
 
-async function pollReady<T = any>(readyName: string, opId: string, onTick?: (env: any) => void): Promise<T> {
+async function pollReady<T = any>(
+    readyName: string,
+    opId: string,
+    onTick?: (env: any) => void,
+    lifecycle?: StoreOperation
+): Promise<T> {
     let delay = POLL_INITIAL_MS;
     const startedAt = Date.now();
     for (;;) {
-        const env = await callArkRaw(readyName, [opId]);
+        let env: any;
+        try {
+            env = await callArkRaw(readyName, [opId]);
+            if (
+                lifecycle &&
+                (env.error?.code === 'op_not_found' || !['pending', 'success', 'error', 'failed'].includes(env.state))
+            ) {
+                throw new Error('ArkData operation outcome is unavailable');
+            }
+        } catch (error) {
+            if (!lifecycle) throw error;
+            const unresolved = new ArkDataBridgeError(
+                'operation_unresolved',
+                'bridge',
+                `${readyName} result is unavailable`,
+                { readyName, opId },
+                error
+            );
+            for (const waiter of lifecycle.waiters) waiter.reject(unresolved);
+            // Accepted Start requests are idempotent at ArkTS, including after
+            // Ready TTL eviction. Replay recovers the original terminal snapshot.
+            const replay = await lifecycle.recover?.();
+            env = replay?.settled ? replay : replay?.reused ? { state: 'success' } : { state: 'pending' };
+        }
         onTick?.(env);
         if (env.state === 'pending') {
-            if (Date.now() - startedAt > POLL_TIMEOUT_MS) {
+            if (!lifecycle && Date.now() - startedAt > POLL_TIMEOUT_MS) {
                 throw new ArkDataBridgeError(
                     'operation_timeout',
                     'bridge',
@@ -159,7 +187,13 @@ async function pollReady<T = any>(readyName: string, opId: string, onTick?: (env
                     { readyName, opId, timeoutMs: POLL_TIMEOUT_MS }
                 );
             }
-            await new Promise((resolve) => setTimeout(resolve, delay));
+            await new Promise<void>((resolve) => {
+                const timer = setTimeout(resolve, delay);
+                if (lifecycle) {
+                    lifecycle.timer = timer;
+                    if (lifecycle.waiters.size === 0) timer.unref();
+                }
+            });
             delay = Math.min(delay * 2, POLL_MAX_MS);
             continue;
         }
@@ -171,12 +205,164 @@ async function pollReady<T = any>(readyName: string, opId: string, onTick?: (env
     }
 }
 
+// Timeouts end a caller's wait, not the accepted SDK operation. Keep polling
+// immediately, including after all callers leave, before ArkTS terminal-op GC.
+// Terminal session outcomes remain cached so a late retry cannot affect a new store.
+type StoreWaiter = { startedAt: number; reject: (error: unknown) => void };
+type StoreOperation = {
+    promise: Promise<void>;
+    waiters: Set<StoreWaiter>;
+    ticks: Set<() => void>;
+    done: boolean;
+    error?: unknown;
+    timer?: NodeJS.Timeout;
+    recover?: () => Promise<any>;
+};
+type StoreSession = {
+    storeId: string;
+    identity: string;
+    opening: StoreOperation;
+    closing?: StoreOperation;
+    acquired: boolean;
+    released: boolean;
+    closeAttempt: number;
+};
+
+function operationTimeout(): ArkDataBridgeError {
+    return new ArkDataBridgeError(
+        'operation_timeout',
+        'bridge',
+        `ArkData store operation timed out after ${POLL_TIMEOUT_MS}ms`,
+        { timeoutMs: POLL_TIMEOUT_MS }
+    );
+}
+
+function startStoreOperation(run: (operation: StoreOperation) => Promise<void>): StoreOperation {
+    const operation: StoreOperation = { promise: Promise.resolve(), waiters: new Set(), ticks: new Set(), done: false };
+    // Defer start until the record and its first waiter exist, including reused opens.
+    operation.promise = Promise.resolve()
+        .then(() => run(operation))
+        .then(
+            () => {
+                operation.done = true;
+            },
+            (error) => {
+                operation.done = true;
+                operation.error = error;
+                throw error;
+            }
+        );
+    // Detached operations still settle and remain observable on retry.
+    void operation.promise.catch(() => {});
+    return operation;
+}
+
+function checkStoreWaiters(operation: StoreOperation): void {
+    for (const tick of operation.ticks) tick();
+    for (const waiter of operation.waiters) {
+        if (Date.now() - waiter.startedAt > POLL_TIMEOUT_MS) waiter.reject(operationTimeout());
+    }
+}
+
+function waitStoreOperation(operation: StoreOperation): Promise<void> {
+    if (operation.done) return operation.error ? Promise.reject(operation.error) : Promise.resolve();
+    return new Promise<void>((resolve, reject) => {
+        const waiter: StoreWaiter = { startedAt: Date.now(), reject };
+        const timer = setTimeout(() => waiter.reject(operationTimeout()), POLL_TIMEOUT_MS);
+        operation.waiters.add(waiter);
+        operation.timer?.ref();
+        const finish = () => {
+            clearTimeout(timer);
+            operation.waiters.delete(waiter);
+            if (operation.waiters.size === 0) operation.timer?.unref();
+        };
+        operation.promise.then(resolve, reject);
+        // Rejection from either clock path removes only this observer.
+        waiter.reject = (error) => {
+            finish();
+            reject(error);
+        };
+        operation.promise.then(finish, finish);
+    });
+}
+
+async function runStoreRequest(
+    operation: StoreOperation,
+    startName: string,
+    readyName: string,
+    args: string[],
+    storeId: string
+): Promise<void> {
+    const recover = async (): Promise<any> => {
+        let delay = POLL_INITIAL_MS;
+        for (;;) {
+            let start: any;
+            try {
+                start = await callArkRaw(startName, args);
+                if (
+                    !start ||
+                    typeof start.ok !== 'boolean' ||
+                    (start.reused !== undefined && typeof start.reused !== 'boolean') ||
+                    (start.settled !== undefined && typeof start.settled !== 'boolean') ||
+                    (start.ok && start.settled === true && !['success', 'error', 'failed'].includes(start.state)) ||
+                    (start.ok &&
+                        start.settled !== true &&
+                        start.reused !== true &&
+                        (typeof start.opId !== 'string' || start.opId.length === 0))
+                ) {
+                    throw new ArkDataBridgeError('operation_unresolved', 'bridge', 'Invalid store Start response');
+                }
+            } catch (error) {
+                const unresolved =
+                    error instanceof ArkDataBridgeError
+                        ? error
+                        : new ArkDataBridgeError(
+                              'operation_unresolved',
+                              'bridge',
+                              'Store Start result is unavailable',
+                              { storeId },
+                              error
+                          );
+                for (const waiter of operation.waiters) waiter.reject(unresolved);
+                checkStoreWaiters(operation);
+                await new Promise<void>((resolve) => {
+                    operation.timer = setTimeout(resolve, delay);
+                    if (operation.waiters.size === 0) operation.timer.unref();
+                });
+                delay = Math.min(delay * 2, POLL_MAX_MS);
+                continue;
+            }
+            if (!start.ok) {
+                const code = start.error?.code ?? 'unknown_error';
+                throw new ArkDataBridgeError(
+                    code,
+                    categoryOf(code),
+                    start.error?.message ?? code,
+                    start.error?.details
+                );
+            }
+            return start;
+        }
+    };
+    operation.recover = recover;
+    const start = await recover();
+    if (start.settled === true) {
+        if (start.state !== 'success') {
+            const code = start.error?.code ?? 'unknown_error';
+            throw new ArkDataBridgeError(code, categoryOf(code), start.error?.message ?? code, start.error?.details);
+        }
+        return;
+    }
+    if (start.reused === true) return;
+    await pollReady(readyName, start.opId, () => checkStoreWaiters(operation), operation);
+}
+
 function stringifyParams(params: ArkDataValueType[]): string {
     return JSON.stringify(params);
 }
 
 function optionsJson(opts?: ArkDataOpenStoreOptions): string {
-    return opts ? JSON.stringify({ vector: opts.vector === true }) : '';
+    return opts ? JSON.stringify({ vector: opts.vector === true, sessionId: opts.sessionId }) : '';
 }
 
 function safeJson(value: unknown): string {
@@ -229,11 +415,14 @@ export function arkDataStoreName(storeId: string, path?: string): string {
 }
 
 export class HarmonyOSDatabaseKit implements DatabaseKit {
+    private readonly storeSessions = new Map<string, StoreSession>();
     async available(): Promise<boolean> {
         if (!hasArkTSAdapter()) return false;
         try {
-            await callArkEnvelope(EtsBridgeMethods.ARKDATA_PING, ['probe']);
-            return true;
+            const capabilities = await callArkEnvelope(EtsBridgeMethods.ARKDATA_PING, ['probe']);
+            // Older adapters remain usable by legacy callers, but cannot safely
+            // serve the session contract. Factory selection then keeps using WASM.
+            return capabilities.storeSessionProtocol === 1;
         } catch {
             return false;
         }
@@ -271,21 +460,113 @@ export class HarmonyOSDatabaseKit implements DatabaseKit {
     }
 
     async openStore(storeId: string, opts?: ArkDataOpenStoreOptions): Promise<void> {
-        await waitPendingStoreClose(storeId);
-        const start = await callArkEnvelope<OpenStoreStartEnvelope>(EtsBridgeMethods.ARKDATA_OPEN_STORE_START, [
-            storeId,
-            arkDataStoreName(storeId, opts?.path),
-            optionsJson(opts)
-        ]);
-        const opId = resolveOpenStoreReadyOpId(start, storeId);
-        if (opId === null) return;
-        await pollReady(EtsBridgeMethods.ARKDATA_OPEN_STORE_READY, opId);
+        if (!opts?.sessionId) {
+            await waitPendingStoreClose(storeId);
+            const start = await callArkEnvelope<OpenStoreStartEnvelope>(EtsBridgeMethods.ARKDATA_OPEN_STORE_START, [
+                storeId,
+                arkDataStoreName(storeId, opts?.path),
+                optionsJson(opts)
+            ]);
+            const opId = resolveOpenStoreReadyOpId(start, storeId);
+            if (opId !== null) await pollReady(EtsBridgeMethods.ARKDATA_OPEN_STORE_READY, opId);
+            return;
+        }
+        const identity = JSON.stringify([storeId, opts.path ?? '', opts.vector === true]);
+        let session = this.storeSessions.get(opts.sessionId);
+        if (session?.closing && !session.closing.done) {
+            throw new ArkDataBridgeError('store_closing', 'required', 'Store session release is still pending');
+        }
+        if (session && (session.identity !== identity || session.released)) {
+            throw new ArkDataBridgeError('store_id_conflict', 'required', 'Store session identity is no longer open');
+        }
+        if (!session) {
+            const record = { storeId, identity, acquired: false, released: false, closeAttempt: 0 } as StoreSession;
+            // Capture predecessors before publishing this session's own close;
+            // otherwise an early release could make open wait for itself.
+            const predecessor = pendingStoreCloses.get(storeId);
+            record.opening = startStoreOperation(async (operation) => {
+                await predecessor?.catch(() => {});
+                await runStoreRequest(
+                    operation,
+                    EtsBridgeMethods.ARKDATA_OPEN_STORE_START,
+                    EtsBridgeMethods.ARKDATA_OPEN_STORE_READY,
+                    [storeId, arkDataStoreName(storeId, opts.path), optionsJson(opts)],
+                    storeId
+                );
+                record.acquired = true;
+            });
+            this.storeSessions.set(opts.sessionId, record);
+            session = record;
+        }
+        await waitStoreOperation(session.opening);
     }
 
     async closeStore(storeId: string, opts?: ArkDataCloseStoreOptions): Promise<void> {
+        if (opts?.sessionId && !opts.force) {
+            const session = this.storeSessions.get(opts.sessionId);
+            if (!session) {
+                // RPC responses are unordered: cancellation may arrive before the
+                // original open request. Retire its identity without acquiring.
+                this.storeSessions.set(opts.sessionId, {
+                    storeId,
+                    identity: '',
+                    acquired: false,
+                    released: true,
+                    closeAttempt: 0,
+                    opening: { promise: Promise.resolve(), waiters: new Set(), ticks: new Set(), done: true }
+                });
+                return;
+            }
+            if (session.storeId !== storeId) {
+                throw new ArkDataBridgeError('store_id_conflict', 'required', 'Store session belongs to another store');
+            }
+            if (session.released) return;
+            // A definitive SDK failure is retryable. A pending close must keep its
+            // original opId even when its caller or worker RPC has timed out.
+            if (!session.closing || (session.closing.done && session.closing.error)) {
+                const requestJson = JSON.stringify({
+                    sessionId: opts.sessionId,
+                    requestId: `${opts.sessionId}:${++session.closeAttempt}`
+                });
+                const closing = startStoreOperation(async (operation) => {
+                    await session.opening.promise.catch(() => {});
+                    if (session.acquired) {
+                        await runStoreRequest(
+                            operation,
+                            EtsBridgeMethods.ARKDATA_CLOSE_STORE_START,
+                            EtsBridgeMethods.ARKDATA_CLOSE_STORE_READY,
+                            [storeId, requestJson],
+                            storeId
+                        );
+                    }
+                    session.acquired = false;
+                    session.released = true;
+                });
+                session.closing = closing;
+                // Waiters of a close deferred behind an open need the same clock
+                // boundary as the open's observers; the SDK operation continues.
+                const observer = () => checkStoreWaiters(closing);
+                session.opening.ticks.add(observer);
+                closing.promise.then(
+                    () => session.opening.ticks.delete(observer),
+                    () => session.opening.ticks.delete(observer)
+                );
+                trackPendingStoreClose(storeId, closing.promise);
+            }
+            await waitStoreOperation(session.closing);
+            return;
+        }
         const closePromise = this.closeStoreInternal(storeId, opts);
         trackPendingStoreClose(storeId, closePromise);
         await closePromise;
+        if (opts?.force) {
+            for (const session of this.storeSessions.values()) {
+                if (session.storeId === storeId) {
+                    session.released = true;
+                    session.acquired = false;
+                }
+            }
+        }
     }
 
     private async closeStoreInternal(storeId: string, opts?: ArkDataCloseStoreOptions): Promise<void> {

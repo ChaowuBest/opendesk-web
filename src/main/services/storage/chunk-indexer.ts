@@ -31,7 +31,12 @@ import {
     SemanticWriteAvailability
 } from './abstract-storage.js';
 import type { BaseIndexStoreProbeResult } from './base-indexer.js';
-import { createChunkIndexDB, dropChunkIndexStore, probeChunkIndexStore } from './chunk-index-db-factory.js';
+import {
+    createChunkIndexDB,
+    createChunkIndexDBForDrop,
+    dropChunkIndexStore,
+    probeChunkIndexStore
+} from './chunk-index-db-factory.js';
 import { randomUUID } from 'crypto';
 
 // ── Chunk 存储记录 ─────────────────────────────────────────────────
@@ -86,7 +91,7 @@ export interface IChunkIndexDB {
     ): Promise<ChunkSearchResult[]>;
     clear(): Promise<number>;
     count(): Promise<number>;
-    close(): void;
+    close(): void | Promise<void>;
     dropStorage(): Promise<void>;
     getDimension(): number;
     getStoredDim(): Promise<number | null>;
@@ -113,6 +118,7 @@ export class ChunkIndexer extends Indexer {
     private readonly dimension: number;
     private readonly schema: ColumnSchema;
     private isDropped = false;
+    private closingPromise: Promise<void> | null = null;
 
     constructor(schema: ColumnSchema, dbPath: string, options?: Record<string, any>) {
         super();
@@ -298,27 +304,46 @@ export class ChunkIndexer extends Indexer {
         throw new Error('ChunkIndexer does not support search(). Use BaseStorage.search() with chunk conditions.');
     }
 
-    close(): void {
-        this.db?.close();
-        this.db = null;
+    close(): Promise<void> {
+        if (this.closingPromise) return this.closingPromise;
+        const db = this.db;
+        if (!db) return Promise.resolve();
+        // Keep the holder reachable until its reference has actually been released.
+        const closing = (async () => {
+            await db.close();
+            if (this.db === db) this.db = null;
+        })().finally(() => {
+            if (this.closingPromise === closing) this.closingPromise = null;
+        });
+        this.closingPromise = closing;
+        return closing;
     }
 
     async dropStorage(): Promise<void> {
         if (this.isDropped) return;
+        if (!this.db) this.db = await createChunkIndexDBForDrop(this._dbPath, this.dimension);
         const db = this.db;
+        let failure: unknown;
+        let failed = false;
         try {
             if (db) {
                 await db.dropStorage();
             } else {
                 await dropChunkIndexStore(this._dbPath);
             }
-        } finally {
-            try {
-                db?.close();
-            } catch {}
-            this.db = null;
-            this.isDropped = true;
+        } catch (error) {
+            failure = error;
+            failed = true;
         }
+
+        this.isDropped = true;
+        try {
+            await this.close();
+        } catch (error) {
+            if (!failed) failure = error;
+            failed = true;
+        }
+        if (failed) throw failure;
     }
 
     async clear(): Promise<void> {
