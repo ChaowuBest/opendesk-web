@@ -329,9 +329,13 @@ class AgentGateBridge {
         if ((process.platform as string) === 'openharmony') {
             return false;
         }
-        // 文件都不在，肯定不兼容
-        const bindingPath = path.join(sqliteDir, 'build', 'Release', 'better_sqlite3.node');
-        if (!fs.existsSync(bindingPath)) {
+        // 两个 binding 落点都没有，才判定为缺失；只要有一个就走下面的真实 require 探测。
+        // 不能只认 build/Release/：better-sqlite3 13.x 改用 prebuilds/（N-API 预编译二进制，
+        // 不按 node ABI 分版本），只认旧路径会让探测在 prebuilds 场景下必然误判，每次启动
+        // 都触发一次注定失败的原生编译（本地约 14 秒；内网机器无网络/工具链，耗时更久）。
+        const hasPrebuild = fs.existsSync(path.join(sqliteDir, 'prebuilds'));
+        const hasGypBuild = fs.existsSync(path.join(sqliteDir, 'build', 'Release', 'better_sqlite3.node'));
+        if (!hasPrebuild && !hasGypBuild) {
             return false;
         }
         const nodeCmd = this.resolveNodeCommand();
@@ -340,8 +344,10 @@ class AgentGateBridge {
             return true;
         }
         // 子进程内尝试加载 binding 并开关 :memory: db
-        // 注意：better-sqlite3 用 bindings 库按 NODE_MODULE_VERSION 解析，ABI 不匹配会抛
-        // ERR_DLOPEN_FAILED，被我们 catch 后 exit 1
+        // 注意：better-sqlite3 按 NODE_MODULE_VERSION 解析 binding，ABI 不匹配会抛
+        // ERR_DLOPEN_FAILED，被我们 catch 后 exit 1。此处不判断 binding 具体落在
+        // prebuilds 还是 build/Release——require 包目录时由 better-sqlite3 自己解析，
+        // 真加载成功才算兼容。
         //
         // sqliteDir 经 argv 传入，**不要**拼进脚本字符串：Windows 路径含反斜杠，
         // 嵌进单引号 JS 字面量会被转义吃掉（C:\Users → C:Users），探测必然失败，
