@@ -27,6 +27,15 @@ static void expect_match(const char *name, bool expected) {
     }
 }
 
+static void expect_write_semantics(const char *desc, int flags, bool expected) {
+    bool got = open_has_write_semantics(flags);
+    if (got != expected) {
+        printf("FAIL open_has_write_semantics(%s): expected %s, got %s\n",
+               desc, expected ? "write" : "read", got ? "write" : "read");
+        g_failures++;
+    }
+}
+
 int main(void) {
     /* 精确命中：表内基名 */
     expect_match("cc", true);
@@ -74,10 +83,28 @@ int main(void) {
     expect_match("cc-Compiler", false);   /* 非纯数字后缀 */
     expect_match("", false);
 
+    /* O_RDWR 无截断/创建/追加标志：探测性 open 按 read 判定（node-gyp 对
+     * python 二进制等工具链的可写性检查即此形态；真实写入由 fd_write_verdict
+     * 按路径 ACC_WRITE 兜底拦截，open 放行不授予写权限） */
+    expect_write_semantics("O_RDWR", O_RDWR, false);
+    expect_write_semantics("O_RDWR|O_CLOEXEC", O_RDWR | O_CLOEXEC, false);
+    /* 带写意图的标志仍判写：截断/创建/追加必然是写操作 */
+    expect_write_semantics("O_RDWR|O_TRUNC", O_RDWR | O_TRUNC, true);
+    expect_write_semantics("O_RDWR|O_CREAT", O_RDWR | O_CREAT, true);
+    expect_write_semantics("O_RDWR|O_APPEND", O_RDWR | O_APPEND, true);
+    /* O_WRONLY 一律判写 */
+    expect_write_semantics("O_WRONLY", O_WRONLY, true);
+    expect_write_semantics("O_WRONLY|O_TRUNC", O_WRONLY | O_TRUNC, true);
+    /* O_RDONLY 判读（不带写标志）；带 O_TRUNC/O_APPEND 仍判写 */
+    expect_write_semantics("O_RDONLY", O_RDONLY, false);
+    expect_write_semantics("O_RDONLY|O_TRUNC", O_RDONLY | O_TRUNC, true);
+    expect_write_semantics("0", 0, false);
+
     if (g_failures > 0) {
         printf("%d assertion(s) failed\n", g_failures);
         return 1;
     }
     printf("clt_toolchain_basename: all assertions passed\n");
+    printf("open_has_write_semantics: all assertions passed\n");
     return 0;
 }

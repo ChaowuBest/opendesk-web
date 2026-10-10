@@ -2023,6 +2023,11 @@ static bool is_sandboxed(void)
 static bool open_has_write_semantics(int flags)
 {
     int acc = flags & O_ACCMODE;
+    /* O_RDWR 仅探测、不带截断/创建/追加标志：按 read 判定。工具链（node-gyp
+     * 对 python 二进制等）常以 O_RDWR 打开检查可写性却从不写入；按写判定会让
+     * standard 下每次探测都弹 write ask。真正的写入仍由 wrap_write/wrap_pwrite
+     * 的 fd_write_verdict 按路径 ACC_WRITE 兜底拦截——open 放行不授予写权限。 */
+    if (acc == O_RDWR && (flags & (O_TRUNC | O_CREAT | O_APPEND)) == 0) return false;
     if (acc == O_WRONLY || acc == O_RDWR) return true;
     if (flags & (O_TRUNC | O_CREAT | O_APPEND)) return true;
     return false;
