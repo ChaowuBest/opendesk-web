@@ -150,6 +150,7 @@ import {
     fetchContextSizeFromAPI
 } from './utils/model-context.js';
 import { fetchModelUrl } from './utils/model-network.js';
+import { fetchProviderModelNames } from './utils/provider-models.js';
 import { LLM } from './aikernel/llm.js';
 import { BrowserManager, setCDPLogger, setSnapshotPrefixProvider } from '../common/embedBrowserUse/main';
 import { openDeskScriptGenerators } from './applications/browser/utils.js';
@@ -2534,50 +2535,22 @@ const registerSettingAPIHandlers = () => {
             }
         }
     );
-    const joinProviderModelsPath = (baseUrl: string, providerType: string | undefined): string => {
-        const trimmed = baseUrl.replace(/\/+$/, '');
-        if (providerType === 'anthropic' && !trimmed.endsWith('/v1')) {
-            return `${trimmed}/v1/models`;
-        }
-        return `${trimmed}/models`;
-    };
-
     ipcMain.handle(
         'setting:fetchProviderModels',
         async (_event, { base_url, api_key, provider_type, no_proxy, no_ssl }) => {
             return TelemetryOperationRegistry.aroundOperation(new TelemetryOperation('llm.list_models'), async () => {
                 try {
-                    const headers: Record<string, string> = {
-                        Authorization: `Bearer ${api_key}`,
-                        'Content-Type': 'application/json'
-                    };
-                    if (provider_type === 'anthropic') {
-                        headers['x-api-key'] = api_key;
-                        headers['anthropic-version'] = '2023-06-01';
-                    }
-                    const resp = await fetchModelUrl(
-                        { base_url, no_proxy: !!no_proxy, no_ssl: !!no_ssl },
-                        joinProviderModelsPath(base_url, provider_type),
-                        {
-                            headers,
-                            signal: AbortSignal.timeout(8000)
-                        }
+                    const names = await fetchProviderModelNames(
+                        { base_url, api_key, provider_type, no_proxy: !!no_proxy, no_ssl: !!no_ssl },
+                        fetchModelUrl
                     );
-                    if (!resp.ok) {
-                        return { status: 'ok', data: [] };
-                    }
-                    const body = await resp.json();
-                    const models: any[] = body.data ?? body;
-                    if (!Array.isArray(models) || models.length > 20) {
-                        return { status: 'ok', data: [] };
-                    }
-                    const names = models
-                        .map((m: any) => m.id || m.name || '')
-                        .filter((n: string) => n.length > 0)
-                        .sort();
                     return { status: 'ok', data: names };
-                } catch {
-                    return { status: 'ok', data: [] };
+                } catch (error: unknown) {
+                    const message =
+                        error instanceof Error && /^MODEL_LIST_(HTTP_\d+|INVALID)$/.test(error.message)
+                            ? error.message
+                            : 'MODEL_LIST_FAILED';
+                    return { status: 'error', message };
                 }
             });
         }

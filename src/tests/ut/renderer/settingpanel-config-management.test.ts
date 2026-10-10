@@ -1,5 +1,6 @@
 import { beforeAll, beforeEach, describe, expect, jest, test } from '@jest/globals';
 import { parseHTML } from 'linkedom';
+import { choose, mockModelAPI, settle } from './helpers/model-form.js';
 
 describe('setting-panel config management', () => {
     beforeAll(async () => {
@@ -28,6 +29,7 @@ describe('setting-panel config management', () => {
     beforeEach(() => {
         document.body.innerHTML = '';
         delete window.showSaveFilePicker;
+        window.settingAPI = mockModelAPI() as any;
         window.notificationAPI = {
             sendNotification: jest.fn(async () => undefined)
         };
@@ -50,6 +52,13 @@ describe('setting-panel config management', () => {
             { value: '127.0.0.1', label: '127.0.0.1（仅本机）' }
         ];
         return panel;
+    }
+
+    async function selectModel(panel: any) {
+        const provider = panel.querySelector('#model-provider-input');
+        choose(provider, Array.from(provider.options).find((option: any) => option.value)!.value);
+        await settle();
+        choose(panel.querySelector('#model-name-input'), 'gpt-4o');
     }
 
     test('renders config management directly after environment variables', () => {
@@ -629,7 +638,6 @@ describe('setting-panel config management', () => {
         panel.render();
         panel.showModelEditModal(-1);
         (panel.querySelector('#model-alias-input') as HTMLInputElement).value = 'my-model';
-        (panel.querySelector('#model-name-input') as HTMLInputElement).value = 'gpt-4o';
         (panel.querySelector('#model-max-output-tokens-input') as HTMLInputElement).value = value;
         panel.saveImmediately = jest.fn(async () => undefined);
 
@@ -668,6 +676,8 @@ describe('setting-panel config management', () => {
         panel.currentData.models = [{ alias: 'm1', provider_name: 'p1', model_name: 'gpt-4o', model_type: 'chat' }];
         panel.render();
         panel.showModelEditModal(0);
+        await new Promise((resolve) => setTimeout(resolve, 0));
+        expect(panel.querySelector('#model-name-input').value).toBe('gpt-4o');
         const select = panel.querySelector('#model-vision-input') as HTMLSelectElement;
         const target = Array.from(select.options).find((option) => option.value === raw) as HTMLOptionElement;
         if (target) {
@@ -719,7 +729,7 @@ describe('setting-panel config management', () => {
         panel.render();
         panel.showModelEditModal(-1);
         (panel.querySelector('#model-alias-input') as HTMLInputElement).value = 'my-model';
-        (panel.querySelector('#model-name-input') as HTMLInputElement).value = 'gpt-4o';
+        await selectModel(panel);
         (panel.querySelector('#model-context-length-input') as HTMLInputElement).value = '128k';
         (panel.querySelector('#model-max-output-tokens-input') as HTMLInputElement).value = '256K';
         panel.closeModal = jest.fn();
@@ -749,13 +759,13 @@ describe('setting-panel config management', () => {
 
         panel.showModelEditModal(-1);
         (panel.querySelector('#model-alias-input') as HTMLInputElement).value = 'timeout-model';
-        (panel.querySelector('#model-name-input') as HTMLInputElement).value = 'gpt-4o';
+        await selectModel(panel);
         (panel.querySelector('#model-timeout-input') as HTMLInputElement).value = '120';
         await panel.saveModel();
 
         panel.showModelEditModal(-1);
         (panel.querySelector('#model-alias-input') as HTMLInputElement).value = 'default-timeout-model';
-        (panel.querySelector('#model-name-input') as HTMLInputElement).value = 'gpt-4o';
+        await selectModel(panel);
         (panel.querySelector('#model-timeout-input') as HTMLInputElement).value = '';
         await panel.saveModel();
 
@@ -768,7 +778,6 @@ describe('setting-panel config management', () => {
         panel.render();
         panel.showModelEditModal(-1);
         (panel.querySelector('#model-alias-input') as HTMLInputElement).value = 'timeout-model';
-        (panel.querySelector('#model-name-input') as HTMLInputElement).value = 'gpt-4o';
         (panel.querySelector('#model-timeout-input') as HTMLInputElement).value = value;
 
         await panel.saveModel();
@@ -784,7 +793,6 @@ describe('setting-panel config management', () => {
         panel.render();
         panel.showModelEditModal(-1);
         (panel.querySelector('#model-alias-input') as HTMLInputElement).value = 'my-model';
-        (panel.querySelector('#model-name-input') as HTMLInputElement).value = 'gpt-4o';
         (panel.querySelector('#model-context-length-input') as HTMLInputElement).value = '12x';
 
         await panel.saveModel();
@@ -816,7 +824,6 @@ describe('setting-panel config management', () => {
         panel.render();
         panel.showModelEditModal(-1);
         (panel.querySelector('#model-alias-input') as HTMLInputElement).value = 'my-model';
-        (panel.querySelector('#model-name-input') as HTMLInputElement).value = 'gpt-4o';
 
         await panel.verifyAndSaveModel();
 
@@ -951,7 +958,6 @@ describe('setting-panel config management', () => {
         const panel = createPanel();
         panel.render();
         panel.showModelEditModal(-1);
-        (panel.querySelector('#model-name-input') as HTMLInputElement).value = 'gpt-4o';
 
         await panel.saveModel();
         expect(panel.querySelector('.od-sp-field-error')).not.toBeNull();
@@ -976,7 +982,7 @@ describe('setting-panel config management', () => {
 
         // 补全字段后再次保存应清除错误并成功
         (panel.querySelector('#model-alias-input') as HTMLInputElement).value = 'my-model';
-        (panel.querySelector('#model-name-input') as HTMLInputElement).value = 'gpt-4o';
+        await selectModel(panel);
         panel.closeModal = jest.fn();
         panel.refreshVisionSupport = jest.fn(async () => undefined);
         panel.refreshModelsSection = jest.fn();
@@ -988,5 +994,67 @@ describe('setting-panel config management', () => {
         expect(panel.querySelector('.od-sp-field-error')).toBeNull();
         expect(panel.currentData.models).toHaveLength(1);
         expect(panel.scheduleSave).toHaveBeenCalledTimes(1);
+    });
+
+    function panelForm(index = -1) {
+        const panel = createPanel();
+        panel.currentData.providers = [
+            { name: 'a', base_url: 'https://a.test/v1', api_key: 'a-key' },
+            { name: 'b', base_url: 'https://b.test/v1', api_key: 'b-key', provider_type: 'anthropic', no_ssl: true }
+        ];
+        panel.currentData.models = [{ alias: 'saved', model_name: 'saved-name', provider_name: 'a' }];
+        panel.render();
+        panel.showModelEditModal(index);
+        return panel;
+    }
+
+    test('settings requires a provider and automatically loads models on provider changes', async () => {
+        const panel = panelForm();
+        const select = panel.querySelector('#model-name-input');
+        expect(select.disabled).toBe(true);
+        expect((window as any).settingAPI.fetchProviderModels).not.toHaveBeenCalled();
+        choose(panel.querySelector('#model-provider-input'), 'a');
+        await settle();
+        expect(select.disabled).toBe(false);
+        choose(select, 'gpt-4o-mini');
+        await settle();
+        expect((window as any).settingAPI.estimateMaxOutputTokens).toHaveBeenCalledWith('gpt-4o-mini');
+        choose(panel.querySelector('#model-provider-input'), 'b');
+        expect(select.value).not.toBe('gpt-4o-mini');
+        await settle();
+        expect((window as any).settingAPI.fetchProviderModels).toHaveBeenLastCalledWith(
+            expect.objectContaining({
+                api_key: 'b-key',
+                provider_type: 'anthropic',
+                no_ssl: true
+            })
+        );
+    });
+
+    test('save only rejects missing provider and models while loading or after discovery fails', async () => {
+        const panel = panelForm();
+        panel.querySelector('#model-alias-input').value = 'new-model';
+        panel.scheduleSave = jest.fn();
+        await panel.saveModel();
+        (window as any).settingAPI.fetchProviderModels.mockRejectedValueOnce(new Error('timeout'));
+        choose(panel.querySelector('#model-provider-input'), 'a');
+        await panel.saveModel();
+        await settle();
+        await panel.saveModel();
+        expect(panel.scheduleSave).not.toHaveBeenCalled();
+        expect(panel.currentData.models).toHaveLength(1);
+        expect(panel.querySelector('#model-name-error').hidden).toBe(false);
+    });
+
+    test('editing preserves the configured name on failed discovery but clears it when switching providers', async () => {
+        (window as any).settingAPI.fetchProviderModels.mockRejectedValueOnce(new Error('timeout'));
+        const panel = panelForm(0);
+        await settle();
+        expect(panel.querySelector('#model-name-input').value).toBe('saved-name');
+        expect(panel.querySelector('#model-name-error').hidden).toBe(false);
+        choose(panel.querySelector('#model-provider-input'), 'b');
+        await settle();
+        expect(panel.querySelector('#model-name-input').querySelector('option[value="saved-name"]')).toBeNull();
+        expect(panel.querySelector('#model-name-error').hidden).toBe(true);
     });
 });

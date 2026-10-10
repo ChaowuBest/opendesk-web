@@ -10,6 +10,7 @@
  */
 
 import './wizard.css';
+import { createModelSelect } from '../utils/model-select.js';
 import { createRendererTranslator } from '../locale.ts';
 import { isAccountFeatureEnabled } from '../utils/account-feature-visibility.ts';
 import { resolveWizardStep2View } from '../utils/wizard-flow.ts';
@@ -67,6 +68,13 @@ declare global {
     interface Window {
         settingAPI: {
             getProviderTemplates(): Promise<ProviderTemplate[]>;
+            fetchProviderModels(params: {
+                base_url: string;
+                api_key: string;
+                provider_type?: 'openai' | 'anthropic';
+                no_proxy?: boolean;
+                no_ssl?: boolean;
+            }): Promise<string[]>;
             loadSettingObject(): Promise<SettingData>;
             saveSettingObject(data: SettingData): Promise<void>;
             verifyModel(params: {
@@ -374,18 +382,12 @@ class SetupWizard extends HTMLElement {
                     <option value="__custom__">自定义</option>
                 </select>
             </div>
-            <div class="f-row f-grid2">
-                <div>
-                    <label class="f-label">协议类型</label>
-                    <select id="wizard-provider-type" class="f-ctl f-select">
-                        <option value="openai">OpenAI</option>
-                        <option value="anthropic">Anthropic</option>
-                    </select>
-                </div>
-                <div>
-                    <label class="f-label">模型名称</label>
-                    <input id="wizard-model-name" type="text" class="f-ctl" placeholder="例如: gpt-4o, deepseek-chat">
-                </div>
+            <div class="f-row">
+                <label class="f-label">协议类型</label>
+                <select id="wizard-provider-type" class="f-ctl f-select">
+                    <option value="openai">OpenAI</option>
+                    <option value="anthropic">Anthropic</option>
+                </select>
             </div>
             <div class="f-row">
                 <label class="f-label">API 地址 (Base URL)</label>
@@ -409,6 +411,19 @@ class SetupWizard extends HTMLElement {
                     <input id="wizard-no-ssl" type="checkbox">
                     <span>跳过 SSL 证书校验</span>
                 </label>
+            </div>
+            <div class="f-row">
+                <label class="f-label">${this._escapeHtml(this.t('config.model.field.model_name'))}</label>
+                <div class="wizard-model-fetch-row">
+                    <div class="wizard-model-select">
+                        <select id="wizard-model-name" class="f-ctl f-select" disabled aria-describedby="wizard-model-error" aria-label="${this._escapeHtml(this.t('config.model.field.model_name'))}">
+                            <option value="">${this._escapeHtml(this.t('config.model.discovery.providerFirst'))}</option>
+                        </select>
+                        <span id="wizard-model-loading" class="wizard-model-loading" hidden role="status"><i class="fas fa-spinner fa-spin" aria-hidden="true"></i></span>
+                    </div>
+                    <button id="wizard-fetch-models" class="wiz-btn wiz-btn-secondary" type="button" disabled>${this._escapeHtml(this.t('config.model.discovery.fetch'))}</button>
+                </div>
+                <p id="wizard-model-error" class="wizard-model-error" role="alert" hidden></p>
             </div>
             <div id="wizard-verify-result" class="verify-result hidden"></div>
             <div class="f-actions">
@@ -706,7 +721,65 @@ class SetupWizard extends HTMLElement {
         const verifyBtn = this.querySelector<HTMLButtonElement>('#wizard-verify-btn');
         const saveBtn = this.querySelector<HTMLButtonElement>('#wizard-save-btn');
 
-        if (!providerSelect || !baseUrlInput) return;
+        const modelSelect = this.querySelector<HTMLSelectElement>('#wizard-model-name');
+        const loading = this.querySelector<HTMLElement>('#wizard-model-loading');
+        const error = this.querySelector<HTMLElement>('#wizard-model-error');
+        const fetchBtn = this.querySelector<HTMLButtonElement>('#wizard-fetch-models');
+        if (!providerSelect || !baseUrlInput || !modelSelect || !loading || !error || !fetchBtn) return;
+
+        const models = createModelSelect({ select: modelSelect, loading, error, t: this.t });
+        let fetchGeneration = 0;
+        const clearVerifyResult = () => {
+            const result = this.querySelector<HTMLElement>('#wizard-verify-result');
+            if (result) {
+                result.className = 'verify-result hidden';
+                result.textContent = '';
+            }
+        };
+        modelSelect.addEventListener('change', clearVerifyResult);
+        const updateFetchButton = () => {
+            fetchBtn.disabled = !providerSelect.value || !baseUrlInput.value.trim();
+        };
+        const resetModels = () => {
+            fetchGeneration++;
+            clearVerifyResult();
+            models.reset(
+                providerSelect.value ? 'config.model.discovery.ready' : 'config.model.discovery.providerFirst'
+            );
+            fetchBtn.textContent = this.t('config.model.discovery.fetch');
+            updateFetchButton();
+        };
+        const fetchModels = async () => {
+            if (!providerSelect.value || !baseUrlInput.value.trim()) return;
+            const request = ++fetchGeneration;
+            fetchBtn.disabled = true;
+            fetchBtn.textContent = this.t('config.model.discovery.loading');
+            await models.load(() =>
+                window.settingAPI.fetchProviderModels({
+                    base_url: baseUrlInput.value.trim(),
+                    api_key: this.querySelector<HTMLInputElement>('#wizard-api-key')?.value || '',
+                    provider_type: providerTypeSelect?.value === 'anthropic' ? 'anthropic' : 'openai',
+                    no_proxy: !!this.querySelector<HTMLInputElement>('#wizard-no-proxy')?.checked,
+                    no_ssl: !!this.querySelector<HTMLInputElement>('#wizard-no-ssl')?.checked
+                })
+            );
+            if (request === fetchGeneration) {
+                fetchBtn.textContent = this.t('config.model.discovery.fetch');
+                updateFetchButton();
+            }
+        };
+        fetchBtn.addEventListener('click', () => void fetchModels());
+        for (const input of [baseUrlInput, this.querySelector<HTMLInputElement>('#wizard-api-key')]) {
+            input?.addEventListener('input', resetModels);
+            input?.addEventListener('change', resetModels);
+        }
+        for (const input of [
+            providerTypeSelect,
+            this.querySelector('#wizard-no-proxy'),
+            this.querySelector('#wizard-no-ssl')
+        ]) {
+            input?.addEventListener('change', resetModels);
+        }
 
         providerSelect.addEventListener('change', () => {
             const selected = providerSelect.options[providerSelect.selectedIndex];
@@ -727,6 +800,7 @@ class SetupWizard extends HTMLElement {
                     providerTypeSelect.value = 'openai';
                 }
             }
+            resetModels();
         });
 
         toggleKeyBtn?.addEventListener('click', () => {
@@ -749,7 +823,7 @@ class SetupWizard extends HTMLElement {
 
     private async _handleSaveOnly(): Promise<void> {
         const baseUrl = this.querySelector<HTMLInputElement>('#wizard-base-url')?.value?.trim();
-        const modelName = this.querySelector<HTMLInputElement>('#wizard-model-name')?.value?.trim();
+        const modelName = this.querySelector<HTMLSelectElement>('#wizard-model-name')?.value?.trim();
         const resultDiv = this.querySelector<HTMLElement>('#wizard-verify-result');
 
         if (!baseUrl) {
@@ -757,7 +831,7 @@ class SetupWizard extends HTMLElement {
             return;
         }
         if (!modelName) {
-            this._showResult(resultDiv, 'error', '请填写模型名称');
+            this._showResult(resultDiv, 'error', this.t('config.model.validation.model_name_required'));
             return;
         }
 
@@ -775,7 +849,7 @@ class SetupWizard extends HTMLElement {
             this.querySelector<HTMLSelectElement>('#wizard-provider-type')?.value === 'anthropic'
                 ? 'anthropic'
                 : 'openai';
-        const modelName = this.querySelector<HTMLInputElement>('#wizard-model-name')?.value?.trim();
+        const modelName = this.querySelector<HTMLSelectElement>('#wizard-model-name')?.value?.trim();
         if (!modelName) return;
         const noProxy = this.querySelector<HTMLInputElement>('#wizard-no-proxy')?.checked || false;
         const noSSL = this.querySelector<HTMLInputElement>('#wizard-no-ssl')?.checked || false;
@@ -833,7 +907,7 @@ class SetupWizard extends HTMLElement {
             this.querySelector<HTMLSelectElement>('#wizard-provider-type')?.value === 'anthropic'
                 ? 'anthropic'
                 : 'openai';
-        const modelName = this.querySelector<HTMLInputElement>('#wizard-model-name')?.value?.trim();
+        const modelName = this.querySelector<HTMLSelectElement>('#wizard-model-name')?.value?.trim();
         const noProxy = this.querySelector<HTMLInputElement>('#wizard-no-proxy')?.checked || false;
         const noSSL = this.querySelector<HTMLInputElement>('#wizard-no-ssl')?.checked || false;
         const resultDiv = this.querySelector<HTMLElement>('#wizard-verify-result');
@@ -844,7 +918,7 @@ class SetupWizard extends HTMLElement {
             return;
         }
         if (!modelName) {
-            this._showResult(resultDiv, 'error', '请填写模型名称');
+            this._showResult(resultDiv, 'error', this.t('config.model.validation.model_name_required'));
             return;
         }
 

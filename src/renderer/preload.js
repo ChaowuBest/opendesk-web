@@ -1307,7 +1307,7 @@ if (shouldExposeMainWindowAPIs()) {
                 no_ssl
             });
             if (result.status !== 'ok') {
-                return [];
+                throw new Error(result.message);
             }
             return result.data;
         },
