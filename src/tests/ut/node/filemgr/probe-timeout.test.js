@@ -108,11 +108,19 @@ test('initialization and platform snapshot remain available while probe is pendi
 test('probe timeout still resolves into base-only mode', async (context) => {
     setModel(context, 120);
     context.mock.timers.enable({ apis: ['setTimeout'] });
-    const storage = Object.assign(Object.create(FSStorage.prototype), {
+    let resolveProbeStarted;
+    const probeStarted = new Promise((resolve) => {
+        resolveProbeStarted = resolve;
+    });
+    const storage = Object.assign(new FSStorage(profile), {
+        storage: { close() {} },
         mode: 'base-only',
         scannerState: {},
         refreshLatestSetting() {},
-        _probeCallOnce: () => new Promise(() => {}),
+        _probeCallOnce() {
+            resolveProbeStarted();
+            return new Promise(() => {});
+        },
         async _setProbeError(code) {
             this.scannerState.probe_error = { code };
         },
@@ -121,6 +129,7 @@ test('probe timeout still resolves into base-only mode', async (context) => {
         }
     });
     const result = storage.syncEmbeddingMode('test', { probeRetries: 0 });
+    await probeStarted;
     context.mock.timers.tick(120000);
     await result;
     assert.equal(storage.mode, 'base-only');

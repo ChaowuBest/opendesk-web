@@ -64,10 +64,13 @@ function logScopedSearchDiagnostics(route, scope, result) {
     );
 }
 
-export function buildIndexedFilePreconditions({ scope, requireEmbedded }) {
+export function buildIndexedFilePreconditions({ scope, requireEmbedded, embeddingGeneration }) {
     return [
         { indexer: 'BaseIndexer', field: 'type', operator: '=', value: 'file' },
         ...(requireEmbedded ? [{ indexer: 'BaseIndexer', field: 'embedded', operator: '=', value: 1 }] : []),
+        ...(requireEmbedded && embeddingGeneration !== undefined
+            ? [{ indexer: 'BaseIndexer', field: 'embedding_generation', operator: '=', value: embeddingGeneration }]
+            : []),
         { indexer: 'BaseIndexer', field: 'ref_count', operator: '>', value: 0 },
         ...(scope
             ? [
@@ -280,7 +283,8 @@ function makeSchema(dim, { mode = 'full' } = {}) {
         chunk_text: { type: 'TEXT', nullable: true },
         root_refs: { type: 'TEXT', nullable: false, defaultValue: '[]' },
         ref_count: { type: 'INTEGER', nullable: false, defaultValue: 0 },
-        embedded: { type: 'INTEGER', nullable: false, defaultValue: 0 }
+        embedded: { type: 'INTEGER', nullable: false, defaultValue: 0 },
+        embedding_generation: { type: 'INTEGER', nullable: false, defaultValue: 0 }
     };
 
     if (mode === 'base-only') {
@@ -300,9 +304,12 @@ function makeSchema(dim, { mode = 'full' } = {}) {
 function defaultScannerState() {
     return {
         version: 1,
+        embedding_generation: 0,
+        semantic_reset_pending: false,
         vec_dim: null,
         embedding_model: null,
         vector_backend: null,
+        chunk_backend: null,
         last_embedding_task_at: null,
         chunk_level: null,
         embedding_request_dim: null,
@@ -491,6 +498,9 @@ class FSStorage {
     constructor(appDataDirectory) {
         /** @type {BaseStorage | null} */
         this.storage = null;
+        // Storage.close() may reject without releasing its connection. Keep every
+        // failed holder (including temporary candidates) reachable until retry succeeds.
+        this._pendingStorageClosures = new Set();
         this._appDataDirectory = appDataDirectory;
         this._storageDir = path.join(appDataDirectory, 'storage');
         this._stateWriteChain = Promise.resolve();
@@ -501,6 +511,39 @@ class FSStorage {
         this.deferredReason = null;
         this._perRootCountsCache = new Map();
         this._perRootCountsCacheGeneration = 0;
+    }
+
+    async _closeBaseStorage(storage) {
+        if (!storage) return;
+        this._pendingStorageClosures.add(storage);
+        // Ownership stays in the pending set; a closing holder is no longer
+        // available for FileMgr queries or the already-full fast path.
+        if (this.storage === storage) this.storage = null;
+        // The generic storage contract requires awaiting release before discarding
+        // a holder. Retry once for a transient failure; retain it on repeated failure.
+        try {
+            await storage.close?.();
+        } catch {
+            await storage.close?.();
+        }
+        this._pendingStorageClosures.delete(storage);
+    }
+
+    async _retryStorageClosures() {
+        let failure = null;
+        for (const storage of this._pendingStorageClosures) {
+            try {
+                await this._closeBaseStorage(storage);
+            } catch (error) {
+                failure ??= error;
+            }
+        }
+        if (failure) throw failure;
+    }
+
+    async close() {
+        if (this.storage) this._pendingStorageClosures.add(this.storage);
+        await this._retryStorageClosures();
     }
 
     get _scannerStatePath() {
@@ -526,6 +569,22 @@ class FSStorage {
             const parsed = JSON.parse(raw);
             if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
                 const state = { ...defaultScannerState(), ...parsed };
+                // Older failed rebuilds have no completion marker. Conservatively
+                // finish their semantic cleanup before reusing the stored model.
+                if (parsed.semantic_reset_pending === undefined) {
+                    state.semantic_reset_pending =
+                        parsed.last_rebuild_event?.status === 'failed' &&
+                        ['vector', 'full'].includes(parsed.last_rebuild_event?.type);
+                }
+                // Old state used one backend for both semantic stores. Preserve
+                // that meaning; newly opened storage records each actual fallback.
+                if (parsed.chunk_backend === undefined) state.chunk_backend = state.vector_backend;
+                if (state.chunk_backend !== null && typeof state.chunk_backend !== 'string') {
+                    throw new Error('invalid chunk_backend field');
+                }
+                if (typeof state.semantic_reset_pending !== 'boolean') {
+                    throw new Error('invalid semantic_reset_pending field');
+                }
                 if (state.probe_error === null && parsed.probe_permanent_error) {
                     state.probe_error = {
                         code: 'embedding_config_error',
@@ -537,6 +596,9 @@ class FSStorage {
                 // roots must be a plain object (spec §3.2)
                 if (typeof state.roots !== 'object' || state.roots === null || Array.isArray(state.roots)) {
                     throw new Error('invalid roots field');
+                }
+                if (!Number.isSafeInteger(state.embedding_generation) || state.embedding_generation < 0) {
+                    throw new Error('invalid embedding_generation field');
                 }
                 if (state.vec_dim !== null && typeof state.vec_dim !== 'number') {
                     throw new Error('invalid vec_dim field');
@@ -741,7 +803,7 @@ class FSStorage {
         const normalizedRoot = normalizeRootPath(root);
         const prefix = normalizedRoot === '/' ? '/' : `${normalizedRoot}/`;
         const groups = await this.storage.countGrouped(
-            ['root_refs', 'embedded'],
+            ['root_refs', 'embedded', 'embedding_generation'],
             [
                 { indexer: 'BaseIndexer', field: 'type', operator: '=', value: 'file' },
                 { indexer: 'BaseIndexer', field: 'item_id', operator: '>=', value: prefix },
@@ -756,9 +818,12 @@ class FSStorage {
         for (const { values, count } of groups) {
             if (!this._rootRefsIncludeRoot(values.root_refs, root)) continue;
             totalFiles += count;
-            if (this.mode !== 'base-only' && (values.embedded === 1 || values.embedded === true)) {
+            const currentGeneration =
+                !this.scannerState.semantic_reset_pending &&
+                (values.embedding_generation ?? 0) === (this.scannerState.embedding_generation ?? 0);
+            if (this.mode !== 'base-only' && currentGeneration && (values.embedded === 1 || values.embedded === true)) {
                 embeddedCount += count;
-            } else if (this.mode !== 'base-only' && values.embedded === -2) {
+            } else if (this.mode !== 'base-only' && currentGeneration && values.embedded === -2) {
                 failedCount += count;
             }
         }
@@ -1122,6 +1187,7 @@ class FSStorage {
     // ── Initialization ──────────────────────────────────────────────
 
     async initialize({ syncEmbedding = true } = {}) {
+        await this._retryStorageClosures();
         fs.mkdirSync(this._appDataDirectory, { recursive: true });
         this._cleanupLegacyFiles();
         this._loadScannerState();
@@ -1140,15 +1206,13 @@ class FSStorage {
             this.mode = 'base-only';
         } catch (err) {
             logger.warn(`[filemgr] base storage init failed: ${err.message}`);
-            try {
-                this.storage?.close?.();
-            } catch {}
-            this.storage = null;
+            await this._closeBaseStorage(this.storage);
             await this.rebuildAll('base_init_failed');
             return;
         }
 
         await this._migrateRefCount();
+        await this._reconcileEmbeddingGeneration(this.storage);
         if (syncEmbedding) {
             await this.syncEmbeddingMode('initialize');
         }
@@ -1163,17 +1227,21 @@ class FSStorage {
         const baseProbe = await baseOnlyStorage.probeBaseIndexStore();
         logger.info(`[filemgr] readonly probe base result=${baseProbe}`);
         if (baseProbe === 'missing') {
+            await this._closeBaseStorage(baseOnlyStorage);
             this.storage = null;
             this.deferredReason = 'missing_base_index';
             return;
         }
         if (baseProbe === 'open_failed') {
+            await this._closeBaseStorage(baseOnlyStorage);
             this.storage = null;
             this.deferredReason = 'open_failed';
             return;
         }
 
-        const hasEmbeddingState = Boolean(this.scannerState.embedding_model && this.scannerState.vec_dim);
+        const hasEmbeddingState = Boolean(
+            this.scannerState.embedding_model && this.scannerState.vec_dim && !this.scannerState.semantic_reset_pending
+        );
         let mode = 'base-only';
         let storage = baseOnlyStorage;
 
@@ -1199,10 +1267,25 @@ class FSStorage {
 
         try {
             await storage.initialize();
+            if (mode === 'full') {
+                const actual = storage.getSemanticBackends();
+                const recorded = this.scannerState.vector_backend;
+                const recordedChunk = this.scannerState.chunk_backend ?? recorded;
+                if (recorded && (actual.vector !== recorded || actual.chunk !== recordedChunk)) {
+                    // Readonly may inspect base rows, but cannot mark a different
+                    // semantic store compatible or perform business invalidation.
+                    await this._closeBaseStorage(storage);
+                    storage = new BaseStorage('filemgr', makeSchema(dim, { mode: 'base-only' }), this._storageDir);
+                    mode = 'base-only';
+                    await storage.initialize();
+                }
+            }
             this.storage = storage;
             this.mode = mode;
             logger.info(`[filemgr] readonly initialized mode=${mode}`);
         } catch (error) {
+            // Initialization can retain a reference after failed cleanup as well.
+            await this._closeBaseStorage(storage);
             this.storage = null;
             this.deferredReason = 'open_failed';
             logger.warn(`[filemgr] readonly initialize failed mode=${mode}: ${error?.message ?? String(error)}`);
@@ -1227,6 +1310,9 @@ class FSStorage {
      * @param {string} reason
      */
     async syncEmbeddingMode(reason, options = {}) {
+        // A persisted model/generation describes the target, not a live connection.
+        // Finish failed releases before deciding that the current mode can be reused.
+        await this._retryStorageClosures();
         this.refreshLatestSetting();
 
         // Step 1: no embedding model configured
@@ -1239,15 +1325,22 @@ class FSStorage {
             return;
         }
 
-        const currentBackend = shouldUseArkData() ? 'arkdata' : shouldUseWasm() ? 'wasm' : 'native';
+        const openedBackends = this.mode === 'full' ? this.storage?.getSemanticBackends?.() : null;
+        // Platform preference is provisional until factories finish opening.
+        const currentBackend =
+            openedBackends?.vector ?? (shouldUseArkData() ? 'arkdata' : shouldUseWasm() ? 'wasm' : 'native');
+        const currentChunkBackend = openedBackends?.chunk ?? currentBackend;
 
         // Step 2: fast no-op — already full and state matches current setting (incl. vector backend)
         if (
+            this.storage &&
             this.mode === 'full' &&
+            !this.scannerState.semantic_reset_pending &&
             this.scannerState.embedding_model === currentModelName &&
             this.scannerState.vec_dim !== null &&
             this.scannerState.chunk_level === CHUNK_LEVEL &&
             this.scannerState.vector_backend === currentBackend &&
+            (this.scannerState.chunk_backend ?? this.scannerState.vector_backend) === currentChunkBackend &&
             (!this._isOpenHarmony() || this.scannerState._requestDimResolved === true)
         ) {
             return;
@@ -1287,18 +1380,21 @@ class FSStorage {
             effectiveStateBackend !== null &&
             this.scannerState.embedding_model === probe.model_name &&
             this.scannerState.vec_dim === probe.dim &&
-            this.scannerState.chunk_level === CHUNK_LEVEL &&
-            effectiveStateBackend === currentBackend;
+            this.scannerState.chunk_level === CHUNK_LEVEL;
 
         if (stateConsistent) {
             if (!hasBackendInfo) {
-                this.scannerState.vector_backend = currentBackend;
+                this.scannerState.vector_backend = effectiveStateBackend;
+                this.scannerState.chunk_backend = effectiveStateBackend;
                 await this.saveScannerState();
             }
             // 3b: state matches probe — try to reuse existing vector/chunk data
             try {
                 await this._openFull(probe.dim);
             } catch (err) {
+                // A resumed reset already owns its generation; preserve its failure
+                // and completion marker instead of starting another invalidation.
+                if (this.scannerState.semantic_reset_pending) throw err;
                 logger.warn(`[filemgr] syncEmbeddingMode: open full failed (${err.message}), resetting`);
                 await this._resetVectorChunk('open_full_failed', { dim: probe.dim, mode: 'full' });
             }
@@ -1310,11 +1406,14 @@ class FSStorage {
             this.scannerState.vec_dim = probe.dim;
             this.scannerState.embedding_model = probe.model_name;
             this.scannerState.chunk_level = CHUNK_LEVEL;
-            this.scannerState.vector_backend = currentBackend;
+            // No prior model metadata: record actual backends only after factories open.
+            this.scannerState.vector_backend = null;
+            this.scannerState.chunk_backend = null;
             await this.saveScannerState();
             try {
                 await this._openFull(probe.dim);
             } catch (err) {
+                if (this.scannerState.semantic_reset_pending) throw err;
                 logger.warn(
                     `[filemgr] syncEmbeddingMode: open full failed after state missing (${err.message}), resetting`
                 );
@@ -1330,12 +1429,17 @@ class FSStorage {
             logger.info(
                 `[filemgr] syncEmbeddingMode: state inconsistent (stored: dim=${this.scannerState.vec_dim}, model=${this.scannerState.embedding_model}, backend=${effectiveStateBackend}; probe: dim=${probe.dim}, model=${probe.model_name}, backend=${currentBackend}), reason=${reasonCode}, resetting`
             );
-            this.scannerState.vec_dim = probe.dim;
-            this.scannerState.embedding_model = probe.model_name;
-            this.scannerState.chunk_level = CHUNK_LEVEL;
-            this.scannerState.vector_backend = currentBackend;
-            await this.saveScannerState();
-            await this._resetVectorChunk(reasonCode, { dim: probe.dim, mode: 'full' });
+            await this._resetVectorChunk(reasonCode, {
+                dim: probe.dim,
+                mode: 'full',
+                embeddingState: {
+                    vec_dim: probe.dim,
+                    embedding_model: probe.model_name,
+                    chunk_level: CHUNK_LEVEL,
+                    vector_backend: currentBackend,
+                    chunk_backend: currentChunkBackend
+                }
+            });
         }
 
         if (this.mode === 'full' && !this.scannerState.embedded_migrated) {
@@ -1358,18 +1462,23 @@ class FSStorage {
      * @param {string} reason
      */
     async _demoteToBaseOnly(reason) {
-        if (this.mode === 'base-only') return;
+        await this._retryStorageClosures();
+        if (this.mode === 'base-only' && this.storage) return;
 
         logger.info(`[filemgr] _demoteToBaseOnly: ${reason}`);
         const dim = this.scannerState.vec_dim ?? 1024;
         const newStorage = new BaseStorage('filemgr', makeSchema(dim, { mode: 'base-only' }), this._storageDir);
-        await newStorage.initialize();
-
-        const old = this.storage;
-        this.storage = newStorage;
         try {
-            old?.close?.();
-        } catch {}
+            await newStorage.initialize();
+            await this._closeBaseStorage(this.storage);
+        } catch (error) {
+            await this._closeBaseStorage(newStorage).catch((cleanupError) => {
+                logger.warn(`[filemgr] close candidate storage failed: ${cleanupError.message}`);
+            });
+            throw error;
+        }
+
+        this.storage = newStorage;
         this.mode = 'base-only';
         this._clearPerRootCountsCacheForModeTransition();
     }
@@ -1381,19 +1490,99 @@ class FSStorage {
      * @param {number} dim
      */
     async _openFull(dim) {
-        if (this.mode === 'full') return;
+        await this._retryStorageClosures();
+        // Persisted model metadata is a target until both semantic stores have
+        // been reset. FileMgr must complete this business step before reuse.
+        if (this.scannerState.semantic_reset_pending) {
+            // Rebuild reasons reach the status UI, so preserve the original reason.
+            const reason =
+                this.scannerState.last_rebuild_event?.status === 'failed'
+                    ? (this.scannerState.last_rebuild_event.reason ?? 'embedding_config_changed')
+                    : 'embedding_config_changed';
+            await this._resetVectorChunk(reason, { dim, mode: 'full', resume: true });
+            return;
+        }
+        if (this.mode === 'full' && this.storage) return;
 
         logger.info(`[filemgr] _openFull: dim=${dim}`);
         const newStorage = new BaseStorage('filemgr', makeSchema(dim, { mode: 'full' }), this._storageDir);
-        await newStorage.initialize();
-
-        const old = this.storage;
-        this.storage = newStorage;
         try {
-            old?.close?.();
-        } catch {}
+            await newStorage.initialize();
+            const actual = newStorage.getSemanticBackends();
+            const expectedChunk = this.scannerState.chunk_backend ?? this.scannerState.vector_backend;
+            if (this.scannerState.vector_backend === null) {
+                await this._writeScannerStateSnapshot(
+                    { ...this.scannerState, vector_backend: actual.vector, chunk_backend: actual.chunk },
+                    () => {
+                        this.scannerState.vector_backend = actual.vector;
+                        this.scannerState.chunk_backend = actual.chunk;
+                    }
+                );
+            } else if (actual.vector !== this.scannerState.vector_backend || actual.chunk !== expectedChunk) {
+                await this._closeBaseStorage(newStorage);
+                await this._resetVectorChunk('vector_backend_changed', {
+                    dim,
+                    mode: 'full',
+                    embeddingState: { vector_backend: actual.vector, chunk_backend: actual.chunk }
+                });
+                return;
+            }
+            await this._reconcileEmbeddingGeneration(newStorage);
+            await this._closeBaseStorage(this.storage);
+        } catch (error) {
+            await this._closeBaseStorage(newStorage).catch((cleanupError) => {
+                logger.warn(`[filemgr] close candidate storage failed: ${cleanupError.message}`);
+            });
+            throw error;
+        }
+
+        this.storage = newStorage;
         this.mode = 'full';
         this._clearPerRootCountsCacheForModeTransition();
+    }
+
+    async _advanceEmbeddingGeneration(embeddingState = {}) {
+        const generation = (this.scannerState.embedding_generation ?? 0) + 1;
+        if (!Number.isSafeInteger(generation)) throw new Error('embedding_generation overflow');
+        const nextState = {
+            ...this.scannerState,
+            ...embeddingState,
+            embedding_generation: generation,
+            semantic_reset_pending: true
+        };
+        // Persist invalidation and the new model together before deleting any vectors.
+        await this._writeScannerStateSnapshot(nextState, () => {
+            Object.assign(this.scannerState, embeddingState, {
+                embedding_generation: generation,
+                semantic_reset_pending: true
+            });
+            this._clearPerRootCountsCache();
+        });
+    }
+
+    async _reconcileEmbeddingGeneration(storage) {
+        const generation = this.scannerState.embedding_generation ?? 0;
+        // Each backend repairs only its own base rows when it becomes available.
+        // Updating the generation removes each batch from this query, so no offset is needed.
+        while (true) {
+            const { items } = await storage.search(
+                [
+                    { indexer: 'BaseIndexer', field: 'type', operator: '=', value: 'file' },
+                    { indexer: 'BaseIndexer', field: 'embedding_generation', operator: '!=', value: generation }
+                ],
+                { limit: 500 }
+            );
+            if (items.length === 0) return;
+            await storage.update(
+                items.map(({ item }) => ({
+                    item_id: item.item_id,
+                    item_type: item.item_type,
+                    embedded: 0,
+                    embedding_generation: generation
+                })),
+                { indexers: ['BaseIndexer'] }
+            );
+        }
     }
 
     _cleanupLegacyFiles() {
@@ -1415,7 +1604,9 @@ class FSStorage {
      * Runs once on first startup after the `embedded` column is introduced.
      */
     async _migrateEmbeddedFlag() {
-        const vectored = await this.storage.searchVectorMeta([]);
+        // Legacy backfill is valid only before the first semantic invalidation.
+        const vectored =
+            (this.scannerState.embedding_generation ?? 0) === 0 ? await this.storage.searchVectorMeta([]) : [];
         if (vectored.length > 0) {
             const CHUNK = 500;
             let total = 0;
@@ -1479,6 +1670,8 @@ class FSStorage {
         logger.warn(`[filemgr] rebuildAll: ${reason}`);
         let failure = null;
         try {
+            await this._retryStorageClosures();
+            await this._advanceEmbeddingGeneration();
             const indexersToDrop = ['BaseIndexer'];
             if (this.mode === 'full') {
                 indexersToDrop.push('VectorIndexer', 'ChunkIndexer');
@@ -1486,24 +1679,24 @@ class FSStorage {
             try {
                 await this.storage?.dropIndexers(indexersToDrop);
             } catch (err) {
-                try {
-                    this.storage?.close?.();
-                } catch {}
-                this.storage = null;
+                await this._closeBaseStorage(this.storage).catch((cleanupError) => {
+                    logger.warn(`[filemgr] close dropped storage failed: ${cleanupError.message}`);
+                });
                 throw err;
             }
-            try {
-                this.storage?.close?.();
-            } catch {}
+            await this._closeBaseStorage(this.storage);
 
             try {
                 this.storage = new BaseStorage('filemgr', makeSchema(1024, { mode: 'base-only' }), this._storageDir);
                 await this.storage.initialize();
             } catch (err) {
-                this.storage = null;
+                await this._closeBaseStorage(this.storage).catch((cleanupError) => {
+                    logger.warn(`[filemgr] close rebuilt storage failed: ${cleanupError.message}`);
+                });
                 this.scannerState.vec_dim = null;
                 this.scannerState.embedding_model = null;
                 this.scannerState.vector_backend = null;
+                this.scannerState.chunk_backend = null;
                 await this.saveScannerState().catch(() => {});
                 err._postSwap = true;
                 throw err;
@@ -1519,6 +1712,7 @@ class FSStorage {
             this.scannerState.embedding_model = null;
             this.scannerState.chunk_level = null;
             this.scannerState.vector_backend = null;
+            this.scannerState.chunk_backend = null;
             this.scannerState.embedded_migrated = false;
             this.scannerState._migratedRefCount = false;
             this.scannerState.last_embedding_task_at = null;
@@ -1614,7 +1808,8 @@ class FSStorage {
                     chunk_text: null,
                     root_refs: this._serializeRootRefs(rootRefs),
                     ref_count: this._refCountForRootRefs(rootRefs),
-                    embedded: 0
+                    embedded: 0,
+                    embedding_generation: this.scannerState.embedding_generation ?? 0
                 };
             });
             try {
@@ -1745,7 +1940,8 @@ class FSStorage {
                     modified: toStorageTimestamp(stat.mtimeMs),
                     size: stat.size,
                     accessed: toStorageTimestamp(stat.atimeMs),
-                    embedded: 1
+                    embedded: 1,
+                    embedding_generation: this.scannerState.embedding_generation ?? 0
                 }
             ],
             { indexers: ['BaseIndexer'] }
@@ -1765,7 +1961,7 @@ class FSStorage {
         isScanPending,
         { activeRoots = [], currentWorkspace = null, limit = QUERY_LIMIT } = {}
     ) {
-        if (this.mode !== 'full') return 0;
+        if (this.mode !== 'full' || this.scannerState.semantic_reset_pending) return 0;
 
         let totalProcessed = 0;
         let consecutiveFailures = 0;
@@ -1779,9 +1975,19 @@ class FSStorage {
             return items.map((r) => r.item).filter((r) => !skippedFiles.has(r.item_id));
         };
         const markEmbeddingFailed = async (file, embeddedState = -1) => {
-            await this.storage.update([{ item_id: file.item_id, item_type: 'file', embedded: embeddedState }], {
-                indexers: ['BaseIndexer']
-            });
+            await this.storage.update(
+                [
+                    {
+                        item_id: file.item_id,
+                        item_type: 'file',
+                        embedded: embeddedState,
+                        embedding_generation: this.scannerState.embedding_generation ?? 0
+                    }
+                ],
+                {
+                    indexers: ['BaseIndexer']
+                }
+            );
         };
 
         while (true) {
@@ -1845,6 +2051,32 @@ class FSStorage {
 
     // ── Search APIs ─────────────────────────────────────────────────
 
+    // A query embedding and its results belong to one FileMgr model generation.
+    // Network and SQL awaits may overlap a reset; common storage has no model semantics.
+    getSemanticSearchContext() {
+        if (this.isDeferred() || this.mode !== 'full' || this.scannerState.semantic_reset_pending) return null;
+        const state = this.scannerState;
+        try {
+            if (this._currentModelName() !== state.embedding_model) return null;
+        } catch {
+            return null;
+        }
+        return {
+            storage: this.storage,
+            generation: state.embedding_generation ?? 0,
+            model: state.embedding_model,
+            dim: state.vec_dim,
+            chunkLevel: state.chunk_level,
+            vectorBackend: state.vector_backend,
+            chunkBackend: state.chunk_backend
+        };
+    }
+
+    isSemanticSearchContextCurrent(context) {
+        const current = this.getSemanticSearchContext();
+        return !!context && !!current && Object.keys(current).every((key) => current[key] === context[key]);
+    }
+
     /**
      * @param {string} query
      * @param {{ topK?: number }} [opts]
@@ -1855,7 +2087,7 @@ class FSStorage {
             return this._wrapResult(query, [], 0, null);
         }
 
-        if (this.isDeferred()) {
+        if (this.isDeferred() || this.scannerState.semantic_reset_pending) {
             return this._wrapResult(query, [], 0, WARNINGS.DEFERRED, CODES.INDEX_NOT_READY);
         }
 
@@ -1863,14 +2095,20 @@ class FSStorage {
             return this._wrapBaseOnlySemanticResult(query);
         }
 
+        const context = this.getSemanticSearchContext();
+        const interrupted = () => this._wrapResult(query, [], 0, WARNINGS.DEFERRED, CODES.INDEX_NOT_READY);
+        if (!context) return interrupted();
         let queryEmbedding;
         try {
             // Short retry for transient 429s; user-waiting path so cap small.
             queryEmbedding = await withRateLimitRetry(() => LLM.embed(query, this._dimParam()), { maxRetries: 2 });
         } catch (err) {
+            if (!this.isSemanticSearchContextCurrent(context)) return interrupted();
             logger.warn(`[filemgr] searchFileByName embed failed: ${err.message}`);
             return this._wrapResult(query, [], 0, WARNINGS.EMBED_API_DOWN, CODES.EMBED_API_DOWN);
         }
+
+        if (!this.isSemanticSearchContextCurrent(context)) return interrupted();
 
         const conditions = [
             {
@@ -1880,17 +2118,28 @@ class FSStorage {
                 value: queryEmbedding,
                 vectorQuery: { topK, metric: 'cosine' }
             },
-            ...buildIndexedFilePreconditions({ scope, requireEmbedded: true })
+            ...buildIndexedFilePreconditions({
+                scope,
+                requireEmbedded: true,
+                embeddingGeneration: context.generation
+            })
         ];
         const collectDiagnostics = scope && scopedSearchDiagnosticsEnabled();
-        const result = scope
-            ? await this.storage.searchScope(
-                  { preconditions: conditions.slice(1), targetCondition: conditions[0] },
-                  {
-                      collectDiagnostics
-                  }
-              )
-            : await this.storage.search(conditions);
+        let result;
+        try {
+            result = scope
+                ? await this.storage.searchScope(
+                      { preconditions: conditions.slice(1), targetCondition: conditions[0] },
+                      {
+                          collectDiagnostics
+                      }
+                  )
+                : await this.storage.search(conditions);
+        } catch (error) {
+            if (!this.isSemanticSearchContextCurrent(context)) return interrupted();
+            throw error;
+        }
+        if (!this.isSemanticSearchContextCurrent(context)) return interrupted();
         logScopedSearchDiagnostics('name_semantic', scope, result);
 
         let items = result.items.map((it) => ({
@@ -1908,6 +2157,7 @@ class FSStorage {
             logger.warn(`[filemgr] searchFileByName rerank failed: ${err.message}`);
         }
 
+        if (!this.isSemanticSearchContextCurrent(context)) return interrupted();
         return this._wrapResult(query, items, result.totalCount);
     }
 
@@ -1925,7 +2175,7 @@ class FSStorage {
             return this._wrapResult(query, [], 0, null);
         }
 
-        if (this.isDeferred()) {
+        if (this.isDeferred() || this.scannerState.semantic_reset_pending) {
             return this._wrapResult(query, [], 0, WARNINGS.DEFERRED, CODES.INDEX_NOT_READY);
         }
 
@@ -1933,14 +2183,20 @@ class FSStorage {
             return this._wrapBaseOnlySemanticResult(query);
         }
 
+        const context = this.getSemanticSearchContext();
+        const interrupted = () => this._wrapResult(query, [], 0, WARNINGS.DEFERRED, CODES.INDEX_NOT_READY);
+        if (!context) return interrupted();
         let queryEmbedding;
         try {
             // Short retry for transient 429s; user-waiting path so cap small.
             queryEmbedding = await withRateLimitRetry(() => LLM.embed(query, this._dimParam()), { maxRetries: 2 });
         } catch (err) {
+            if (!this.isSemanticSearchContextCurrent(context)) return interrupted();
             logger.warn(`[filemgr] searchIndexedChunks embed failed: ${err.message}`);
             return this._wrapResult(query, [], 0, WARNINGS.EMBED_API_DOWN, CODES.EMBED_API_DOWN);
         }
+
+        if (!this.isSemanticSearchContextCurrent(context)) return interrupted();
 
         const conditions = [
             {
@@ -1950,17 +2206,28 @@ class FSStorage {
                 value: queryEmbedding,
                 vectorQuery: { topK: normalizedTopK, metric: 'cosine' }
             },
-            ...buildIndexedFilePreconditions({ scope, requireEmbedded: true })
+            ...buildIndexedFilePreconditions({
+                scope,
+                requireEmbedded: true,
+                embeddingGeneration: context.generation
+            })
         ];
         const collectDiagnostics = scope && scopedSearchDiagnosticsEnabled();
-        const result = scope
-            ? await this.storage.searchScope(
-                  { preconditions: conditions.slice(1), targetCondition: conditions[0] },
-                  {
-                      collectDiagnostics
-                  }
-              )
-            : await this.storage.search(conditions);
+        let result;
+        try {
+            result = scope
+                ? await this.storage.searchScope(
+                      { preconditions: conditions.slice(1), targetCondition: conditions[0] },
+                      {
+                          collectDiagnostics
+                      }
+                  )
+                : await this.storage.search(conditions);
+        } catch (error) {
+            if (!this.isSemanticSearchContextCurrent(context)) return interrupted();
+            throw error;
+        }
+        if (!this.isSemanticSearchContextCurrent(context)) return interrupted();
         logScopedSearchDiagnostics('content_semantic', scope, result);
         let items = result.items.slice(0, normalizedTopK).map((it) => ({
             chunk: { id: it.chunk_id, text: it.chunk_text },
@@ -1980,6 +2247,7 @@ class FSStorage {
         } catch (err) {
             logger.warn(`[filemgr] searchIndexedChunks rerank failed: ${err.message}`);
         }
+        if (!this.isSemanticSearchContextCurrent(context)) return interrupted();
         return this._wrapResult(query, items, items.length);
     }
 
@@ -2210,17 +2478,19 @@ class FSStorage {
      * owns cleanup for everything it created, including sqlite files, WAL/SHM,
      * HNSW sidecars, ArkData tables/stores, and schema metadata.
      *
-     * Caller MUST update scannerState (vec_dim / embedding_model / chunk_level) BEFORE calling
-     * if those are changing, since this method does not touch scannerState. dim/mode are passed
-     * explicitly to avoid relying on stale state mid-transition.
+     * Pass changed model configuration in embeddingState so it is persisted atomically
+     * with its generation before cleanup. dim/mode are passed explicitly to avoid
+     * relying on stale state mid-transition.
      */
-    async _resetVectorChunk(reason, { dim, mode }) {
+    async _resetVectorChunk(reason, { dim, mode, embeddingState = {}, resume = false }) {
         let failure = null;
         let nextStorage = null;
         try {
             if (typeof dim !== 'number' || (mode !== 'full' && mode !== 'base-only')) {
                 throw new Error(`_resetVectorChunk: dim and mode are required (got dim=${dim}, mode=${mode})`);
             }
+            await this._retryStorageClosures();
+            if (!resume) await this._advanceEmbeddingGeneration(embeddingState);
             logger.warn(`[filemgr] _resetVectorChunk: ${reason} (dim=${dim}, mode=${mode})`);
             if (mode === 'full') {
                 const dropStorage =
@@ -2230,19 +2500,19 @@ class FSStorage {
                 const usingCurrentStorage = dropStorage === this.storage;
                 try {
                     await dropStorage.dropIndexers(['VectorIndexer', 'ChunkIndexer']);
+                    // A dropped holder is no longer a usable full storage, even if
+                    // constructing its replacement later fails.
+                    if (usingCurrentStorage) await this._closeBaseStorage(dropStorage);
                 } catch (err) {
                     if (usingCurrentStorage) {
-                        try {
-                            dropStorage?.close?.();
-                        } catch {}
-                        this.storage = null;
+                        await this._closeBaseStorage(dropStorage).catch((cleanupError) => {
+                            logger.warn(`[filemgr] close dropped storage failed: ${cleanupError.message}`);
+                        });
                     }
                     throw err;
                 } finally {
                     if (!usingCurrentStorage) {
-                        try {
-                            dropStorage?.close?.();
-                        } catch {}
+                        await this._closeBaseStorage(dropStorage);
                     }
                 }
             }
@@ -2253,23 +2523,42 @@ class FSStorage {
                 { indexer: 'BaseIndexer', field: 'type', operator: '=', value: 'file' }
             ]);
             await nextStorage.upsert(
-                fileItems.map((r) => ({ ...r.item, embedded: 0 })),
+                fileItems.map((r) => ({
+                    ...r.item,
+                    embedded: 0,
+                    embedding_generation: this.scannerState.embedding_generation ?? 0
+                })),
                 { indexers: ['BaseIndexer'] }
             );
 
-            const oldStorage = this.storage;
+            await this._closeBaseStorage(this.storage);
+            if (mode === 'full') {
+                // Commit completion only after both drops, base reconciliation and
+                // release succeed. A failed write leaves the reset safe to replay.
+                const actual = nextStorage.getSemanticBackends();
+                const completed = {
+                    ...this.scannerState,
+                    vector_backend: actual.vector,
+                    chunk_backend: actual.chunk,
+                    semantic_reset_pending: false
+                };
+                await this._writeScannerStateSnapshot(completed, () => {
+                    Object.assign(this.scannerState, {
+                        vector_backend: actual.vector,
+                        chunk_backend: actual.chunk,
+                        semantic_reset_pending: false
+                    });
+                });
+            }
             this.storage = nextStorage;
             nextStorage = null;
-            try {
-                oldStorage?.close?.();
-            } catch {}
             this.mode = mode;
             this._clearPerRootCountsCache();
         } catch (err) {
             failure = err;
-            try {
-                nextStorage?.close?.();
-            } catch {}
+            await this._closeBaseStorage(nextStorage).catch((cleanupError) => {
+                logger.warn(`[filemgr] close candidate storage failed: ${cleanupError.message}`);
+            });
             throw err;
         } finally {
             this.scannerState.last_rebuild_event = {
@@ -2289,14 +2578,23 @@ class FSStorage {
     async getGlobalFileCounts() {
         if (!this.storage) return null;
         const groups = await this.storage.countGrouped(
-            ['embedded'],
+            ['embedded', 'embedding_generation'],
             [
                 { indexer: 'BaseIndexer', field: 'type', operator: '=', value: 'file' },
                 { indexer: 'BaseIndexer', field: 'ref_count', operator: '>', value: 0 }
             ]
         );
         const total = groups.reduce((sum, group) => sum + group.count, 0);
-        const embedded = groups.reduce((sum, group) => sum + (group.values.embedded === 1 ? group.count : 0), 0);
+        const embedded = groups.reduce(
+            (sum, group) =>
+                sum +
+                (!this.scannerState.semantic_reset_pending &&
+                group.values.embedded === 1 &&
+                (group.values.embedding_generation ?? 0) === (this.scannerState.embedding_generation ?? 0)
+                    ? group.count
+                    : 0),
+            0
+        );
 
         return { total_files: total, embedded_count: embedded, pending_count: total - embedded };
     }

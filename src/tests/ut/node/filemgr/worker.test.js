@@ -172,6 +172,9 @@ if (!OPENROUTER_API_KEY) {
     const filter = process.env.TEST_FILTER;
     if (filter) {
         const filteredTests = [
+            testEmbeddingQueueOnlySchedulesInFullMode,
+            testEmbeddingQueueFailureIsHandled,
+            testEmbeddingQueueYieldsToPendingConfigChange,
             testProbeErrorAlertsUseStableCodes,
             testTask7ScanLockCreatesDirectoryAndFinalizeReleases,
             testGetFileSystemStatusSkipsStorageSnapshotBeforeReady,
@@ -2507,6 +2510,7 @@ async function testEmbeddingQueueOnlySchedulesInFullMode() {
     let worker;
     try {
         worker = new FileManagerWorker('com.test.filemgr', appDir);
+        worker.config = { entries: [makeEntry(appDir)] };
         worker.storage = { mode: 'base-only' };
         worker._enqueueEmbeddingQueue();
         assert.equal(worker._embeddingQueueScheduled, false);
@@ -2528,7 +2532,10 @@ async function testEmbeddingQueueOnlySchedulesInFullMode() {
         assert.equal(worker._embeddingQueueScheduled, false);
         assert.equal(worker._embeddingQueueActive, false);
     } finally {
-        if (worker) await worker.finalize();
+        if (worker) {
+            worker.taskQueue.start();
+            await worker.finalize();
+        }
         cleanup(appDir);
     }
     console.log('  ✅ testEmbeddingQueueOnlySchedulesInFullMode');
@@ -2540,6 +2547,7 @@ async function testEmbeddingQueueFailureIsHandled() {
     let worker;
     try {
         worker = new FileManagerWorker('com.test.filemgr', appDir);
+        worker.config = { entries: [makeEntry(appDir)] };
         worker.callApp = () => {};
         worker.storage = {
             mode: 'full',
@@ -2583,6 +2591,7 @@ async function testEmbeddingQueueYieldsToPendingConfigChange() {
     let worker;
     try {
         worker = new FileManagerWorker('com.test.filemgr', appDir);
+        worker.config = { entries: [makeEntry(appDir)] };
         let processedCount = 0;
         let shouldYieldAfterConfigApplied = null;
         worker.storage = {
@@ -3301,6 +3310,7 @@ async function testEmbeddingPendingControlLifecycle() {
                 last_file_count: 0
             },
             requestImmediateScan: () => {
+                assert.equal(worker._pendingEmbeddingConfigChange, false);
                 scanRequests++;
             },
             isRunning: () => true,
@@ -3350,6 +3360,15 @@ async function testEmbeddingPendingControlLifecycle() {
         worker.status = 'error';
         await worker.embeddingConfigChanged();
         assert.equal(worker._pendingEmbeddingConfigChange, false);
+
+        worker.status = 'running';
+        worker.storage.syncEmbeddingModeForStartup = async () => {
+            throw new Error('fixture embedding sync failure');
+        };
+        const scansBeforeFailure = scanRequests;
+        await assert.rejects(worker.embeddingConfigChanged(), /fixture embedding sync failure/);
+        assert.equal(worker._pendingEmbeddingConfigChange, false);
+        assert.equal(scanRequests, scansBeforeFailure);
 
         worker._readonlyMode = true;
         worker.status = 'running';
@@ -5079,6 +5098,9 @@ async function testEmbeddingConfigChangedKeepsPausedOnlyRowsPending() {
         await worker.initialize();
         await worker.taskQueue.onIdle();
         assert.equal((await worker.setSourcePaused({ root: pausedRoot, paused: true })).status, 'ok');
+        // Pause also schedules the remaining root. Finish its base-only sync
+        // before installing the full-mode fixture for the next config change.
+        await worker.taskQueue.onIdle();
 
         worker.storage.mode = 'full';
         worker.storage.syncEmbeddingModeForStartup = async () => {};

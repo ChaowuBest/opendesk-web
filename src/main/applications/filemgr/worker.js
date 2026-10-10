@@ -258,6 +258,10 @@ class FSScanner {
             void this._workerRef?._emitStatusChanged('mode');
         }
 
+        // Reinitialization reloads scanner_state for all roots. Rebind before
+        // every scan so another scanner's recovery cannot leave this checkpoint stale.
+        this.state = this.storage.scannerState.roots[this.root] ?? this.state;
+
         // 3. Main scan loop
         const deep = this._getScanDepth();
         const isFullScan = deep === undefined;
@@ -614,14 +618,12 @@ class FileManagerWorker extends BaseWorker {
         this.scanners.clear();
     }
 
-    _closeStorage() {
-        try {
-            this.storage?.storage?.close?.();
-        } catch (error) {
-            logger.warn(`[filemgr] close storage failed: ${error.message}`);
-        } finally {
-            this.storage = null;
-        }
+    async _closeStorage() {
+        // FSStorage owns current and failed temporary holders. Await their release
+        // before discarding it or releasing the scan lock; failure keeps it retryable.
+        if (this.storage?.close) await this.storage.close();
+        else await this.storage?.storage?.close?.();
+        this.storage = null;
     }
 
     async _releaseScanLockIfHeld(context) {
@@ -635,7 +637,7 @@ class FileManagerWorker extends BaseWorker {
 
     async _teardownRuntime(context) {
         await this._stopScanners();
-        this._closeStorage();
+        await this._closeStorage();
         await this._releaseScanLockIfHeld(context);
         this._readonlyMode = false;
         this._setStatus('idle', context);
@@ -781,7 +783,9 @@ class FileManagerWorker extends BaseWorker {
             }
         }).catch(async (error) => {
             this._initializing = false;
-            await this._teardownRuntime('after initialize error');
+            await this._teardownRuntime('after initialize error').catch((cleanupError) => {
+                logger.warn(`[filemgr] initialize cleanup failed: ${cleanupError.message}`);
+            });
             this._initError = error;
             logger.error(`[filemgr] initialize error: ${error.message}`, error);
             this._setStatus('error', 'init-failed');
@@ -794,6 +798,7 @@ class FileManagerWorker extends BaseWorker {
             await this._teardownRuntime('on finalize');
         }).catch((error) => {
             logger.error(`[filemgr] finalize error: ${error.message}`, error);
+            throw error;
         });
     }
 
@@ -1078,6 +1083,8 @@ class FileManagerWorker extends BaseWorker {
                     void this._emitStatusChanged('mode');
                 }
 
+                // Scanners reject pending controls, so release this change's guard before scheduling.
+                clearPendingEmbeddingConfig();
                 for (const scanner of this.scanners.values()) {
                     scanner.requestImmediateScan?.(this.taskQueue);
                 }
@@ -1539,7 +1546,9 @@ class FileManagerWorker extends BaseWorker {
 
     async _runNameSemanticRoute(context) {
         try {
-            const result = await this.storage.searchFileByName(context.query, {
+            const owner = context.semanticOwner ?? this.storage;
+            if (!owner || owner.isDeferred()) return { route: 'name_semantic', success: false, results: [] };
+            const result = await owner.searchFileByName(context.query, {
                 topK: Math.min(context.topK * 2, 200),
                 scope: context.scope
             });
@@ -1552,7 +1561,9 @@ class FileManagerWorker extends BaseWorker {
 
     async _runContentSemanticRoute(context) {
         try {
-            const result = await this.storage.searchIndexedChunks(context.query, {
+            const owner = context.semanticOwner ?? this.storage;
+            if (!owner || owner.isDeferred()) return { route: 'content_semantic', success: false, results: [] };
+            const result = await owner.searchIndexedChunks(context.query, {
                 topK: Math.min(context.topK * 3, 5000),
                 scope: context.scope
             });
@@ -1570,6 +1581,46 @@ class FileManagerWorker extends BaseWorker {
     }
 
     async _finalizeIndexedSearch(context, outcomes, initialWarning, initialCode) {
+        const currentOutcomes = () =>
+            outcomes.map((outcome) => {
+                if (outcome.route === 'keyword') return outcome;
+                if (
+                    this.storage &&
+                    this.storage === context.semanticOwner &&
+                    !this.storage.isDeferred() &&
+                    (!context.semanticGuarded || this.storage.isSemanticSearchContextCurrent(context.semanticContext))
+                )
+                    return outcome;
+                return { ...outcome, success: false, results: [] };
+            });
+        const merge = (routes) => {
+            const byRoute = Object.fromEntries(routes.map((outcome) => [outcome.route, outcome.results]));
+            return mergeSearchRoutes({
+                keyword: byRoute.keyword ?? [],
+                nameSemantic: byRoute.name_semantic ?? [],
+                contentSemantic: byRoute.content_semantic ?? []
+            });
+        };
+        // Finalize may clear the owner during any search await. Plain metadata
+        // captured before release remains usable for keyword policy checks.
+        const unavailableRoots = () =>
+            this.storage && !this.storage.isDeferred()
+                ? (this.storage.scannerState?.unavailable_roots ?? context.unavailableRoots ?? {})
+                : (context.unavailableRoots ?? {});
+        const merged = merge(currentOutcomes());
+        const filtered = await filterIndexedResults(merged, {
+            entries: this._getVisibleConfigEntries(),
+            unavailableRoots: unavailableRoots(),
+            scope: context.requestedScope,
+            currentWorkspace: this._currentWorkspace,
+            statFile: (filePath) => this._statFileForSearch(filePath),
+            concurrency: 16
+        });
+        // A reset can also finish during final filesystem checks. Re-merge only
+        // current routes so stale snippets/scores disappear from keyword matches.
+        outcomes = currentOutcomes();
+        const keptPaths = new Set(filtered.map((item) => item.path));
+        const currentFiltered = merge(outcomes).filter((item) => keptPaths.has(item.path));
         const failed = outcomes.filter((outcome) => !outcome.success);
         const succeeded = outcomes.filter((outcome) => outcome.success);
         if (failed.length > 0 && succeeded.length === 0) {
@@ -1582,22 +1633,8 @@ class FileManagerWorker extends BaseWorker {
             warning = keywordFailed ? WARNINGS.SEARCH_PARTIAL : WARNINGS.SEMANTIC_PARTIAL;
             code = keywordFailed ? CODES.SEARCH_PARTIAL : CODES.SEMANTIC_PARTIAL;
         }
-        const byRoute = Object.fromEntries(outcomes.map((outcome) => [outcome.route, outcome.results]));
-        const merged = mergeSearchRoutes({
-            keyword: byRoute.keyword ?? [],
-            nameSemantic: byRoute.name_semantic ?? [],
-            contentSemantic: byRoute.content_semantic ?? []
-        });
-        const filtered = await filterIndexedResults(merged, {
-            entries: this._getVisibleConfigEntries(),
-            unavailableRoots: this.storage.scannerState?.unavailable_roots ?? {},
-            scope: context.requestedScope,
-            currentWorkspace: this._currentWorkspace,
-            statFile: (filePath) => this._statFileForSearch(filePath),
-            concurrency: 16
-        });
         const latestEntries = this._getVisibleConfigEntries();
-        const latestUnavailableRoots = this.storage.scannerState?.unavailable_roots ?? {};
+        const latestUnavailableRoots = unavailableRoots();
         try {
             resolveFilemgrSearchScopeForEntries(context.requestedScope, {
                 entries: latestEntries,
@@ -1609,7 +1646,7 @@ class FileManagerWorker extends BaseWorker {
             }
             throw error;
         }
-        const finalFiltered = filterIndexedResultsByPolicy(filtered, {
+        const finalFiltered = filterIndexedResultsByPolicy(currentFiltered, {
             entries: latestEntries,
             unavailableRoots: latestUnavailableRoots,
             scope: context.requestedScope
@@ -1653,24 +1690,33 @@ class FileManagerWorker extends BaseWorker {
         const earlyResult = this._checkIndexedSearchPreconditions(context);
         if (earlyResult) return earlyResult;
 
+        context = { ...context, unavailableRoots: { ...this.storage?.scannerState?.unavailable_roots } };
         const outcomes = [];
         if (context.routes.keyword) outcomes.push(await this._runKeywordRoute(context));
+        // Keyword awaits may promote base-only storage. Fix the model context
+        // at the first semantic route, then keep it through all routes/stat checks.
+        context = {
+            ...context,
+            semanticOwner: this.storage,
+            semanticGuarded: typeof this.storage?.getSemanticSearchContext === 'function',
+            semanticContext: this.storage?.getSemanticSearchContext?.()
+        };
         let warning;
         let code;
         if (context.routes.needsSemantic) {
-            if (this.storage.mode === 'full') {
+            if (this.storage?.mode === 'full') {
                 if (context.routes.nameSemantic) outcomes.push(await this._runNameSemanticRoute(context));
                 if (context.routes.contentSemantic) outcomes.push(await this._runContentSemanticRoute(context));
             } else {
-                warning = WARNINGS.NO_EMBEDDING_MODEL;
-                code = CODES.EMBED_UNAVAILABLE;
+                warning = this.storage ? WARNINGS.NO_EMBEDDING_MODEL : WARNINGS.DEFERRED;
+                code = this.storage ? CODES.EMBED_UNAVAILABLE : CODES.INDEX_NOT_READY;
             }
         }
 
         try {
             resolveFilemgrSearchScopeForEntries(context.requestedScope, {
                 entries: this._getVisibleConfigEntries(),
-                unavailableRoots: this.storage?.scannerState?.unavailable_roots ?? {}
+                unavailableRoots: this.storage?.scannerState?.unavailable_roots ?? context.unavailableRoots ?? {}
             });
         } catch (error) {
             if (error instanceof InvalidFilemgrSearchScopeError) {
