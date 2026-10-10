@@ -20,6 +20,7 @@ import path from 'path';
 import fs from 'fs';
 import { fileLinkExtension, getRenderWorkspace } from '../utils/marked-file-link.js';
 import { cjkAutolinkFix } from '../../common/markdown/cjk-autolink-fix.js';
+import { doubleTildeStrikethrough } from '../../common/markdown/double-tilde-strikethrough.js';
 import type { SupportedLocale } from '../../common/locale.js';
 import { t, getLocale } from '../../locale/index.js';
 import type {
@@ -255,6 +256,7 @@ marked.use({
 
 marked.use(fileLinkExtension);
 marked.use(cjkAutolinkFix);
+marked.use(doubleTildeStrikethrough);
 
 /**
  * This is NOT an OpenAI message part, but a message part for our own message system.
