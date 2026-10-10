@@ -40,6 +40,7 @@
  *    - 向量查询使用 VectorOperator + vectorQuery 参数
  */
 
+import type { BaseCountGroup } from './grouped-count.js';
 import path from 'path';
 import { Indexer } from './indexer.js';
 import { BM25Indexer } from './bm25-indexer.js';
@@ -614,6 +615,11 @@ export class BaseStorage {
         const results = await Promise.allSettled(operations.map((op) => Promise.resolve().then(op)));
         const firstRejected = results.find((r): r is PromiseRejectedResult => r.status === 'rejected');
         if (firstRejected) throw firstRejected.reason;
+    }
+
+    async countGrouped(fields: string[], conditions: FilterCondition[]): Promise<BaseCountGroup[]> {
+        this.ensureUsable();
+        return this.baseIndexer.countGrouped(fields, conditions);
     }
 
     /**

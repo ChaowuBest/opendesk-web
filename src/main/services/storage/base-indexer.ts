@@ -10,6 +10,7 @@
  */
 
 import path from 'path';
+import type { BaseCountGroup } from './grouped-count.js';
 import { Indexer, IndexerSearchOptions as BaseIndexerSearchOptions, IndexerSearchResult } from './indexer.js';
 import { createBaseIndexDB, probeBaseIndexStore } from './base-index-db-factory.js';
 import {
@@ -68,6 +69,7 @@ export interface IBaseIndexDB {
         options?: Omit<BaseQueryOptions, 'conditions'>
     ): Promise<Record<string, any>[]>;
     count(conditions?: BaseQueryCondition[]): Promise<number>;
+    countGrouped(fields: string[], conditions?: BaseQueryCondition[]): Promise<BaseCountGroup[]>;
     exists(itemId: string): Promise<boolean>;
     clear(): Promise<number>;
     transaction<T>(fn: () => Promise<T>): Promise<T>;
@@ -261,6 +263,16 @@ export class BaseIndexer extends Indexer {
         const totalCount = await this.ensureDB().count(queryConditions);
 
         return { items, totalCount };
+    }
+
+    async countGrouped(fields: string[], conditions: FilterCondition[]): Promise<BaseCountGroup[]> {
+        if (conditions.some((condition) => condition.indexer !== 'BaseIndexer')) {
+            throw new Error('Grouped counts only support BaseIndexer conditions');
+        }
+        return this.ensureDB().countGrouped(
+            fields,
+            conditions.map((condition) => this.toQueryCondition(condition))
+        );
     }
 
     async count(conditions: FilterCondition[]): Promise<number> {

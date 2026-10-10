@@ -9,7 +9,9 @@
  * See the Mulan PSL v2 for more details.
  */
 
+import type { BaseCountGroup } from './grouped-count.js';
 import { createHash } from 'node:crypto';
+import { setImmediate as yieldToWorker } from 'node:timers/promises';
 import { ColumnSchema, validateColumnSchema, type ColumnConstraint } from './abstract-storage.js';
 import type {
     BaseIndexStoreProbeResult,
@@ -34,10 +36,7 @@ import {
     arkDataNonNegativeIntegerLiteral,
     normalizeArkDataResultLimit
 } from './arkdata-result-limit.js';
-import {
-    normalizePathDescendantOrSelfValues,
-    pathDescendantOrSelfSqlValues
-} from './path-scope.js';
+import { normalizePathDescendantOrSelfValues, pathDescendantOrSelfSqlValues } from './path-scope.js';
 
 const ARKDATA_SELECT_PAGE_ROWS = ARKDATA_MAX_RESULT_ROWS;
 
@@ -757,6 +756,49 @@ export class BaseIndexDBArkdata implements IBaseIndexDB {
         options?: Omit<BaseQueryOptions, 'conditions'>
     ): Promise<Record<string, any>[]> {
         return await this.findAll({ ...options, conditions });
+    }
+
+    async countGrouped(fields: string[], conditions: BaseQueryCondition[] = []): Promise<BaseCountGroup[]> {
+        await this.ensureInitialized();
+        if (fields.length === 0 || new Set(fields).size !== fields.length) {
+            throw new Error('Grouped counts require distinct fields');
+        }
+        for (const field of fields) {
+            this.validateField(field);
+            if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(field)) throw new Error(`Invalid group field: ${field}`);
+        }
+        const { whereClause, params } =
+            conditions.length > 0 ? this.buildWhereClause(conditions) : { whereClause: '', params: [] };
+        // The device vector store rejects the quoted/aliased group-field form used by SQLite.
+        // Keep schema-validated fields bare and only alias the aggregate, without name collisions.
+        const names = new Set(fields.map((field) => field.toLowerCase()));
+        let countAlias = 'group_count';
+        for (let suffix = 1; names.has(countAlias); suffix++) countAlias = `group_count_${suffix}`;
+        const columns = fields.join(', ');
+        const sql = `SELECT ${columns}, COUNT(*) AS ${countAlias} FROM ${this.tableName}${whereClause ? ` WHERE ${whereClause}` : ''} GROUP BY ${columns} ORDER BY ${columns}`;
+        const groups: BaseCountGroup[] = [];
+        // Page groups, not source records: common counts fit in a single bridge response.
+        for (let offset = 0; ; offset += ARKDATA_SELECT_PAGE_ROWS) {
+            const page = await this.queryAllSql(`${sql} LIMIT ${ARKDATA_SELECT_PAGE_ROWS} OFFSET ${offset}`, params);
+            for (const row of page) {
+                const rawCount = row[countAlias];
+                const count = Number(rawCount);
+                if (
+                    (typeof rawCount !== 'number' && typeof rawCount !== 'string') ||
+                    !Number.isSafeInteger(count) ||
+                    count <= 0
+                ) {
+                    throw new Error('Invalid grouped count returned by ArkData');
+                }
+                if (fields.some((field) => !Object.hasOwn(row, field))) {
+                    throw new Error('Missing group field in ArkData result');
+                }
+                groups.push({ values: Object.fromEntries(fields.map((field) => [field, row[field]])), count });
+            }
+            if (page.length < ARKDATA_SELECT_PAGE_ROWS) break;
+            await yieldToWorker();
+        }
+        return groups;
     }
 
     async count(conditions?: BaseQueryCondition[]): Promise<number> {

@@ -17,6 +17,7 @@
  * async methods to match the existing indexer contract.
  */
 
+import { groupedCountSql, decodeCountGroups, type BaseCountGroup } from './grouped-count.js';
 import fs from 'fs';
 import path from 'path';
 import { createRequire } from 'module';
@@ -442,6 +443,14 @@ export class BaseIndexDBWasm implements IBaseIndexDB {
         options?: Omit<BaseQueryOptions, 'conditions'>
     ): Promise<Record<string, any>[]> {
         return this.findAll({ ...options, conditions });
+    }
+
+    async countGrouped(fields: string[], conditions: BaseQueryCondition[] = []): Promise<BaseCountGroup[]> {
+        const { whereClause, params } =
+            conditions.length > 0 ? this.buildWhereClause(conditions) : { whereClause: '', params: [] };
+        const sql = groupedCountSql(fields, this.validFields, whereClause);
+        const rows = this.db.all(sql, params);
+        return decodeCountGroups(fields, rows);
     }
 
     async count(conditions?: BaseQueryCondition[]): Promise<number> {

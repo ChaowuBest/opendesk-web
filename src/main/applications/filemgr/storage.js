@@ -694,30 +694,6 @@ class FSStorage {
         return this._parseRootRefs(rawRefs).some((ref) => this._canonicalRootRef(ref) === canonicalRoot);
     }
 
-    _countPerRootItemsFromSearchResult(root, items) {
-        let totalFiles = 0;
-        let embeddedCount = 0;
-        let failedCount = 0;
-
-        for (const it of items) {
-            const item = it.item;
-            if (!this._rootRefsIncludeRoot(item.root_refs, root)) continue;
-            totalFiles++;
-            if (this.mode !== 'base-only' && (item.embedded === 1 || item.embedded === true)) {
-                embeddedCount++;
-            } else if (this.mode !== 'base-only' && item.embedded === -2) {
-                failedCount++;
-            }
-        }
-
-        return {
-            total_files: totalFiles,
-            embedded_count: embeddedCount,
-            pending_count: Math.max(0, totalFiles - embeddedCount - failedCount),
-            failed_count: failedCount
-        };
-    }
-
     _getFreshCachedPerRootCount(root) {
         const entry = this._perRootCountsCache?.get(root);
         if (!entry?.counts) return null;
@@ -761,6 +737,39 @@ class FSStorage {
         };
     }
 
+    async _aggregatePerRootCounts(root) {
+        const normalizedRoot = normalizeRootPath(root);
+        const prefix = normalizedRoot === '/' ? '/' : `${normalizedRoot}/`;
+        const groups = await this.storage.countGrouped(
+            ['root_refs', 'embedded'],
+            [
+                { indexer: 'BaseIndexer', field: 'type', operator: '=', value: 'file' },
+                { indexer: 'BaseIndexer', field: 'item_id', operator: '>=', value: prefix },
+                { indexer: 'BaseIndexer', field: 'item_id', operator: '<', value: nextLexicographicPrefix(prefix) }
+            ]
+        );
+        // Keep the existing root-ref normalization and membership rules, but apply
+        // them once per distinct group rather than materializing every file.
+        let totalFiles = 0;
+        let embeddedCount = 0;
+        let failedCount = 0;
+        for (const { values, count } of groups) {
+            if (!this._rootRefsIncludeRoot(values.root_refs, root)) continue;
+            totalFiles += count;
+            if (this.mode !== 'base-only' && (values.embedded === 1 || values.embedded === true)) {
+                embeddedCount += count;
+            } else if (this.mode !== 'base-only' && values.embedded === -2) {
+                failedCount += count;
+            }
+        }
+        return {
+            total_files: totalFiles,
+            embedded_count: embeddedCount,
+            pending_count: Math.max(0, totalFiles - embeddedCount - failedCount),
+            failed_count: failedCount
+        };
+    }
+
     async _getHarmonyPerRootCount(root) {
         const fresh = this._getFreshCachedPerRootCount(root);
         if (fresh) return fresh;
@@ -779,8 +788,7 @@ class FSStorage {
         }
 
         const refresh = (async () => {
-            const result = await this._searchItemsUnderRoot(root);
-            const counts = this._countPerRootItemsFromSearchResult(root, result.items);
+            const counts = await this._aggregatePerRootCounts(root);
             if ((this._perRootCountsCacheGeneration ?? 0) === generation) {
                 this._setCachedPerRootCount(root, counts);
             }
@@ -2164,8 +2172,7 @@ class FSStorage {
                 continue;
             }
 
-            const result = await this._searchItemsUnderRoot(root);
-            const rootCounts = this._countPerRootItemsFromSearchResult(root, result.items);
+            const rootCounts = await this._aggregatePerRootCounts(root);
 
             counts.set(root, {
                 ...rootCounts,
@@ -2278,26 +2285,29 @@ class FSStorage {
 
     // ── Status ───────────────────────────────────────────────────────
 
+    // Reserved for an explicit global-count consumer; normal status refreshes do not call this.
+    async getGlobalFileCounts() {
+        if (!this.storage) return null;
+        const groups = await this.storage.countGrouped(
+            ['embedded'],
+            [
+                { indexer: 'BaseIndexer', field: 'type', operator: '=', value: 'file' },
+                { indexer: 'BaseIndexer', field: 'ref_count', operator: '>', value: 0 }
+            ]
+        );
+        const total = groups.reduce((sum, group) => sum + group.count, 0);
+        const embedded = groups.reduce((sum, group) => sum + (group.values.embedded === 1 ? group.count : 0), 0);
+
+        return { total_files: total, embedded_count: embedded, pending_count: total - embedded };
+    }
+
     async getStatus() {
         if (!this.storage) return null;
         const status = await this.storage.getStatus();
         const semanticWriteState = this.mode === 'full' ? await this._getSemanticWriteState() : null;
 
-        const { totalCount: total } = await this.storage.search([
-            { indexer: 'BaseIndexer', field: 'type', operator: '=', value: 'file' },
-            { indexer: 'BaseIndexer', field: 'ref_count', operator: '>', value: 0 }
-        ]);
-        const { totalCount: embedded } = await this.storage.search([
-            { indexer: 'BaseIndexer', field: 'type', operator: '=', value: 'file' },
-            { indexer: 'BaseIndexer', field: 'embedded', operator: '=', value: 1 },
-            { indexer: 'BaseIndexer', field: 'ref_count', operator: '>', value: 0 }
-        ]);
-
         return {
             mode: this.mode,
-            total_files: total,
-            embedded_count: embedded,
-            pending_count: total - embedded,
             last_embedding_task_at: this.scannerState.last_embedding_task_at,
             db_size: status.BaseIndexer?.size ?? 0,
             vecdb_size: status.VectorIndexer?.size ?? 0,

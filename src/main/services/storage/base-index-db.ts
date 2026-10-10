@@ -16,6 +16,7 @@
  * 支持动态查询条件：'=', '!=', '>', '<', '>=', '<=', 'like', 'in', 'between'
  */
 
+import { groupedCountSql, decodeCountGroups, type BaseCountGroup } from './grouped-count.js';
 import type DatabaseType from 'better-sqlite3';
 import { createRequire } from 'module';
 import path from 'path';
@@ -454,6 +455,14 @@ export class BaseIndexDB implements IBaseIndexDB {
     /**
      * 统计记录数
      */
+    async countGrouped(fields: string[], conditions: BaseQueryCondition[] = []): Promise<BaseCountGroup[]> {
+        const { whereClause, params } =
+            conditions.length > 0 ? this.buildWhereClause(conditions) : { whereClause: '', params: [] };
+        const sql = groupedCountSql(fields, this.validFields, whereClause);
+        const rows = this.db.prepare(sql).all(...params) as Record<string, unknown>[];
+        return decodeCountGroups(fields, rows);
+    }
+
     async count(conditions?: BaseQueryCondition[]): Promise<number> {
         let sql = `SELECT COUNT(*) as count FROM ${this.tableName}`;
         const params: any[] = [];

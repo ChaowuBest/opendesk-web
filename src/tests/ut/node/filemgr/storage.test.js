@@ -169,6 +169,9 @@ if (!OPENROUTER_API_KEY) {
     const filter = process.env.TEST_FILTER;
     if (filter) {
         const filteredTests = [
+            testGetStatusReportsMetadata,
+            testRefCountZeroHiddenFromSearchQueueAndStats,
+            testCarveOutKeepsIntermediateRowInvisibleUntilChildScan,
             testInitializeSyncEmbeddingGate,
             testProbeEmbeddingBudgetOptions,
             testScannerStateMigratesLegacyProbeError,
@@ -816,7 +819,7 @@ async function testRefCountZeroHiddenFromSearchQueueAndStats() {
             'vector content search should hide ref_count=0 rows'
         );
 
-        const stats = await fss.getStatus();
+        const stats = await fss.getGlobalFileCounts();
         assert.equal(stats.total_files, 1);
         assert.equal(stats.embedded_count, 1);
         assert.equal(stats.pending_count, 0);
@@ -1040,7 +1043,7 @@ async function testCarveOutKeepsIntermediateRowInvisibleUntilChildScan() {
         assertRefsAndCount(row, []);
         assert.equal(row.embedded, 1, 'carve-out intermediate row should preserve embedded=1 to avoid duplicate work');
 
-        let stats = await fss.getStatus();
+        let stats = await fss.getGlobalFileCounts();
         assert.equal(stats.total_files, 0);
         assert.equal(stats.embedded_count, 0);
         assert.equal(stats.pending_count, 0);
@@ -1052,7 +1055,7 @@ async function testCarveOutKeepsIntermediateRowInvisibleUntilChildScan() {
         assertRefsAndCount(row, [childRoot]);
         assert.equal(row.embedded, 1, 'child scan should adopt the row without resetting embedded');
 
-        stats = await fss.getStatus();
+        stats = await fss.getGlobalFileCounts();
         assert.equal(stats.total_files, 1);
         assert.equal(stats.embedded_count, 1);
         assert.equal(stats.pending_count, 0);
@@ -1206,6 +1209,10 @@ async function testPerRootCountsUseRootRefsForOverlappingRoots() {
         }
     };
 
+    fss.storage.countGrouped = async (_fields, conditions) => {
+        const result = await fss.storage.search(conditions);
+        return result.items.map(({ item }) => ({ values: item, count: 1 }));
+    };
     const counts = await fss.getPerRootCounts(['/Documents']);
     assert.equal(counts.get('/Documents').total_files, 1);
     assert.equal(counts.get('/Documents').embedded_count, 0);
@@ -1238,6 +1245,10 @@ async function testPerRootCountsNormalizeRootRefsBeforeCompare() {
         }
     };
 
+    fss.storage.countGrouped = async (_fields, conditions) => {
+        const result = await fss.storage.search(conditions);
+        return result.items.map(({ item }) => ({ values: item, count: 1 }));
+    };
     const counts = await fss.getPerRootCounts(['/Documents']);
     assert.deepEqual(counts.get('/Documents'), {
         total_files: 1,
@@ -1274,6 +1285,10 @@ async function testPerRootCountsNormalizeWindowsSeparatorsBeforeCompare() {
         }
     };
 
+    fss.storage.countGrouped = async (_fields, conditions) => {
+        const result = await fss.storage.search(conditions);
+        return result.items.map(({ item }) => ({ values: item, count: 1 }));
+    };
     const counts = await fss.getPerRootCounts(['C:/Users/Stella/Docs']);
     assert.deepEqual(counts.get('C:/Users/Stella/Docs'), {
         total_files: 1,
@@ -1312,6 +1327,10 @@ async function testHarmonyPerRootCountsUseFreshCache() {
                     ]
                 };
             }
+        };
+        fss.storage.countGrouped = async (_fields, conditions) => {
+            const result = await fss.storage.search(conditions);
+            return result.items.map(({ item }) => ({ values: item, count: 1 }));
         };
 
         const first = await fss.getPerRootCounts(['/Documents']);
@@ -1379,6 +1398,10 @@ async function testHarmonyPerRootCountsReturnStaleWhileRefreshInFlight() {
                 };
             }
         };
+        fss.storage.countGrouped = async (_fields, conditions) => {
+            const result = await fss.storage.search(conditions);
+            return result.items.map(({ item }) => ({ values: item, count: 1 }));
+        };
 
         const timeout = Symbol('timeout');
         let result;
@@ -1423,6 +1446,10 @@ async function testHarmonyPerRootCountsFallbackToScannerStateOnError() {
             async search() {
                 throw new Error('synthetic status count failure');
             }
+        };
+        fss.storage.countGrouped = async (_fields, conditions) => {
+            const result = await fss.storage.search(conditions);
+            return result.items.map(({ item }) => ({ values: item, count: 1 }));
         };
 
         const counts = await fss.getPerRootCounts(['/Documents']);
@@ -1506,6 +1533,10 @@ async function testHarmonyPerRootCountsClearInvalidatesInFlightRefresh() {
                     ]
                 };
             }
+        };
+        fss.storage.countGrouped = async (_fields, conditions) => {
+            const result = await fss.storage.search(conditions);
+            return result.items.map(({ item }) => ({ values: item, count: 1 }));
         };
 
         const counts = await fss.getPerRootCounts(['/Documents']);
@@ -4339,10 +4370,10 @@ async function testProcessEmbeddingQueueSkipsResetApiFailureStreak() {
     console.log('  ✅ testProcessEmbeddingQueueSkipsResetApiFailureStreak');
 }
 
-// ── Test 11 (Task 11): getStatus reports mode and counts ─────────────
+// ── Test 11 (Task 11): getStatus reports metadata without global counts ─────────────
 
-async function testGetStatusReportsModeAndCounts() {
-    console.log('  testGetStatusReportsModeAndCounts...');
+async function testGetStatusReportsMetadata() {
+    console.log('  testGetStatusReportsMetadata...');
     const dir = tmpDir('status');
     try {
         const fss = await createFSStorage(dir);
@@ -4350,14 +4381,14 @@ async function testGetStatusReportsModeAndCounts() {
         fs.writeFileSync(file, 'x');
         await fss.saveFiles([makeFileEntry(file)], dir);
         const s = await fss.getStatus();
-        assert.equal(s.mode, 'full');
-        assert.equal(s.embedded_count, 0);
-        assert.equal(s.pending_count, 1);
+        assert.equal(s.mode, OPENROUTER_API_KEY ? 'full' : 'base-only');
+        assert.equal('embedded_count' in s, false);
+        assert.equal('pending_count' in s, false);
         assert.equal(s.last_embedding_task_at, null);
     } finally {
         cleanup(dir);
     }
-    console.log('  ✅ testGetStatusReportsModeAndCounts');
+    console.log('  ✅ testGetStatusReportsMetadata');
 }
 
 // ── Test: searchFileByName filters embedded=0 rows ───────────────────
@@ -4506,7 +4537,7 @@ async function main() {
         testInitializeReadonlyMissingBaseIndexDoesNotWriteState,
         testInitializeReadonlyUsesStorageProbeInsteadOfHardcodedBasePath,
         testInitializeReadonlyOpensExistingBaseIndex,
-        testGetStatusReportsModeAndCounts,
+        testGetStatusReportsMetadata,
         testSearchFilterEmbeddedOneExcludesPending
     ];
 
