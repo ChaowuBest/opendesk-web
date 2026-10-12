@@ -215,6 +215,36 @@ function isFencedCodeComplete(raw: string): boolean {
     return closing.test(lastLine);
 }
 
+// Keep each rendered code line structurally independent when a highlight span crosses a newline.
+function splitHighlightedLines(highlighted: string): string[] {
+    const lines = [''];
+    const openSpans: string[] = [];
+    const tokenPattern = /<span\b[^>]*>|<\/span>|\r\n|\r|\n/g;
+    let cursor = 0;
+
+    for (const match of highlighted.matchAll(tokenPattern)) {
+        const token = match[0];
+        const tokenIndex = match.index;
+        lines[lines.length - 1] += highlighted.slice(cursor, tokenIndex);
+
+        if (token === '\n' || token === '\r' || token === '\r\n') {
+            lines[lines.length - 1] += '</span>'.repeat(openSpans.length);
+            lines.push(openSpans.join(''));
+        } else if (token === '</span>') {
+            lines[lines.length - 1] += token;
+            openSpans.pop();
+        } else {
+            lines[lines.length - 1] += token;
+            openSpans.push(token);
+        }
+
+        cursor = tokenIndex + token.length;
+    }
+
+    lines[lines.length - 1] += highlighted.slice(cursor);
+    return lines;
+}
+
 marked.use({
     renderer: {
         code({ text, lang, raw }: { text: string; lang?: string; raw: string; escaped?: boolean }): string {
@@ -234,10 +264,15 @@ marked.use({
                 ? LANG_DISPLAY_NAMES[lang.toLowerCase()] || lang.charAt(0).toUpperCase() + lang.slice(1)
                 : '';
             const headerHtml = `<div class="code-block-header"><span class="code-block-lang">${displayLang}</span></div>`;
-            const lines = highlighted.split('\n');
+            const lines = splitHighlightedLines(highlighted);
             if (lines.length > 0 && lines[lines.length - 1] === '') lines.pop();
 
-            const codeLines = lines.map((line) => `<span class="code-line font-mono">${line || ' '}</span>`).join('');
+            const codeLines = lines
+                .map((line) => {
+                    const hasText = line.replace(/<\/?span\b[^>]*>/g, '') !== '';
+                    return `<span class="code-line font-mono">${hasText ? line : ' '}</span>`;
+                })
+                .join('');
             const langLower = lang?.toLowerCase() || '';
             const previewAttrs = PREVIEWABLE_LANGS.has(langLower)
                 ? ` data-previewable="true" data-preview-lang="${langLower}" data-raw-code="${Buffer.from(text).toString('base64')}"`
