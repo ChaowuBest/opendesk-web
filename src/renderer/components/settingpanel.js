@@ -92,11 +92,17 @@ textarea.od-sp-fi { resize: vertical; min-height: 80px; font-family: 'SF Mono', 
 .od-sp-agent-preset-notice { align-items: flex-start; background: rgba(184,117,3,0.08); border: 1px solid rgba(184,117,3,0.24); border-radius: 8px; color: var(--mc-ink2); display: flex; font-size: 11.5px; gap: 8px; line-height: 1.5; margin-bottom: 14px; padding: 10px 12px; }
 .od-sp-agent-preset-notice i { color: #B87503; margin-top: 2px; }
 .od-sp-combo { position: relative; }
-.od-sp-model-loading { position: absolute; right: 12px; top: 50%; transform: translateY(-50%); color: var(--mc-ink3); }
+.od-sp-model-loading { position: absolute; right: 40px; top: 50%; transform: translateY(-50%); color: var(--mc-ink3); }
 .od-sp-model-loading[hidden], .od-sp-model-error[hidden] { display: none; }
 .od-sp-model-error { color: var(--mc-red); font-size: 11.5px; margin: 5px 0 0; }
-.od-sp-combo select[aria-busy="true"] { background-image: none; }
-.od-sp-combo select:disabled { opacity: 0.65; cursor: default; }
+.od-sp-combo input { padding-right: 48px; }
+.od-sp-combo .model-suggestions-toggle { position: absolute; right: 8px; top: 50%; transform: translateY(-50%); width: 28px; height: 28px; border: none; background: transparent; color: inherit; cursor: pointer; }
+.od-sp-combo .model-suggestions-toggle:disabled { opacity: 0.4; cursor: default; }
+.od-sp-combo .model-suggestions { position: absolute; z-index: 5; top: 100%; left: 0; right: 0; max-height: 220px; overflow-y: auto; padding: 4px; border: 1px solid var(--mc-line); border-radius: 8px; background: var(--mc-card-bg); box-shadow: 0 8px 24px #0003; }
+.od-sp-combo .model-suggestions[hidden] { display: none; }
+.od-sp-combo .model-suggestions button { display: block; width: 100%; padding: 8px 12px; border: none; background: transparent; color: inherit; font: inherit; text-align: left; overflow-wrap: anywhere; cursor: pointer; }
+.od-sp-combo .model-suggestions button:hover, .od-sp-combo .model-suggestions button[aria-selected="true"] { background: var(--mc-hover); }
+.od-sp-combo input:disabled { opacity: 0.65; cursor: default; }
 .od-sp-header-item { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; }
 .od-sp-header-item input { flex: 1; }
 .od-sp-header-remove { width: 28px; height: 28px; display: flex; align-items: center; justify-content: center; border: none; background: transparent; color: var(--mc-ink3); cursor: pointer; border-radius: 6px; transition: color 0.15s, background 0.15s; flex-shrink: 0; }
@@ -4271,9 +4277,9 @@ class SettingPanel extends HTMLElement {
                     <div class="od-sp-fg">
                         <label class="od-sp-fl">${this.escapeHtml(this._t('config.model.field.model_name'))}</label>
                         <div class="od-sp-combo" id="model-name-combo">
-                            <select id="model-name-input" class="od-sp-fi" disabled aria-describedby="model-name-error" aria-label="${this.escapeHtml(this._t('config.model.field.model_name'))}">
-                                <option value="">${this.escapeHtml(this._t('config.model.discovery.providerFirst'))}</option>
-                            </select>
+                            <input id="model-name-input" type="text" role="combobox" aria-autocomplete="list" aria-expanded="false" aria-controls="model-name-suggestions" class="od-sp-fi" disabled autocomplete="off" aria-describedby="model-name-error" aria-label="${this.escapeHtml(this._t('config.model.field.model_name'))}">
+                            <button id="model-name-input-toggle" class="model-suggestions-toggle" type="button" tabindex="-1" disabled aria-label="${this.escapeHtml(this._t('config.model.discovery.showSuggestions'))}"><i class="fas fa-chevron-down" aria-hidden="true"></i></button>
+                            <div id="model-name-suggestions" class="model-suggestions" role="listbox" hidden></div>
                             <span id="model-name-loading" class="od-sp-model-loading" hidden role="status"><i class="fas fa-spinner fa-spin" aria-hidden="true"></i></span>
                         </div>
                         <p id="model-name-error" class="od-sp-model-error" role="alert" hidden></p>
@@ -4447,25 +4453,28 @@ class SettingPanel extends HTMLElement {
         syncModelTypeFields();
 
         const modelSelect = createModelSelect({
-            select: nameInput,
+            input: nameInput,
+            suggestions: this.querySelector('#model-name-suggestions'),
+            toggle: this.querySelector('#model-name-input-toggle'),
             loading: this.querySelector('#model-name-loading'),
             error: this.querySelector('#model-name-error'),
             t: (key, params) => this._t(key, params)
         });
+        modelSelect.reset('config.model.discovery.providerFirst');
         const fetchModelsForProvider = (providerName, selected = '') => {
-            modelSelect.reset();
             const provider = this.currentData?.providers?.find((p) => p.name === providerName);
+            modelSelect.reset(provider ? 'config.model.discovery.select' : 'config.model.discovery.providerFirst');
+            nameInput.value = selected;
+            nameInput.disabled = !provider;
             if (!provider) return;
-            void modelSelect.load(
-                () =>
-                    window.settingAPI.fetchProviderModels({
-                        base_url: provider.base_url,
-                        api_key: provider.api_key || '',
-                        provider_type: provider.provider_type === 'anthropic' ? 'anthropic' : 'openai',
-                        no_proxy: !!provider.no_proxy,
-                        no_ssl: !!provider.no_ssl
-                    }),
-                selected
+            void modelSelect.load(() =>
+                window.settingAPI.fetchProviderModels({
+                    base_url: provider.base_url,
+                    api_key: provider.api_key || '',
+                    provider_type: provider.provider_type === 'anthropic' ? 'anthropic' : 'openai',
+                    no_proxy: !!provider.no_proxy,
+                    no_ssl: !!provider.no_ssl
+                })
             );
         };
         providerSelect.addEventListener('change', () => {
@@ -5221,6 +5230,8 @@ class SettingPanel extends HTMLElement {
         }
         this._modalEscHandler = (e) => {
             if (e.key === 'Escape') {
+                // Let an expanded model combobox consume Escape before dismissing the form.
+                if (e.target?.closest?.('input[role="combobox"][aria-expanded="true"]')) return;
                 e.preventDefault();
                 e.stopPropagation();
                 this.closeModal();

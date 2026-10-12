@@ -34,7 +34,9 @@ export async function fetchProviderModelNames(config: ProviderModelConfig, fetch
     const response = await fetch(config, url, { headers, signal: AbortSignal.timeout(8000) });
     // Stable internal error codes are translated by the renderer; never expose response bodies or credentials.
     if (!response.ok) throw new Error(`MODEL_LIST_HTTP_${response.status}`);
-    const body = await response.json();
+    const body = await response.json().catch(() => {
+        throw new Error('MODEL_LIST_INVALID');
+    });
     const models = body?.data ?? body;
     if (!Array.isArray(models)) throw new Error('MODEL_LIST_INVALID');
     const names = models

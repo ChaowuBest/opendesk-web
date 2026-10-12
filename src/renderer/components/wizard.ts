@@ -416,9 +416,9 @@ class SetupWizard extends HTMLElement {
                 <label class="f-label">${this._escapeHtml(this.t('config.model.field.model_name'))}</label>
                 <div class="wizard-model-fetch-row">
                     <div class="wizard-model-select">
-                        <select id="wizard-model-name" class="f-ctl f-select" disabled aria-describedby="wizard-model-error" aria-label="${this._escapeHtml(this.t('config.model.field.model_name'))}">
-                            <option value="">${this._escapeHtml(this.t('config.model.discovery.providerFirst'))}</option>
-                        </select>
+                        <input id="wizard-model-name" type="text" role="combobox" aria-autocomplete="list" aria-expanded="false" aria-controls="wizard-model-suggestions" class="f-ctl" disabled autocomplete="off" aria-describedby="wizard-model-error" aria-label="${this._escapeHtml(this.t('config.model.field.model_name'))}">
+                        <button id="wizard-model-name-toggle" class="model-suggestions-toggle" type="button" tabindex="-1" disabled aria-label="${this._escapeHtml(this.t('config.model.discovery.showSuggestions'))}"><i class="fas fa-chevron-down" aria-hidden="true"></i></button>
+                        <div id="wizard-model-suggestions" class="model-suggestions" role="listbox" hidden></div>
                         <span id="wizard-model-loading" class="wizard-model-loading" hidden role="status"><i class="fas fa-spinner fa-spin" aria-hidden="true"></i></span>
                     </div>
                     <button id="wizard-fetch-models" class="wiz-btn wiz-btn-secondary" type="button" disabled>${this._escapeHtml(this.t('config.model.discovery.fetch'))}</button>
@@ -721,13 +721,21 @@ class SetupWizard extends HTMLElement {
         const verifyBtn = this.querySelector<HTMLButtonElement>('#wizard-verify-btn');
         const saveBtn = this.querySelector<HTMLButtonElement>('#wizard-save-btn');
 
-        const modelSelect = this.querySelector<HTMLSelectElement>('#wizard-model-name');
+        const modelSelect = this.querySelector<HTMLInputElement>('#wizard-model-name');
         const loading = this.querySelector<HTMLElement>('#wizard-model-loading');
         const error = this.querySelector<HTMLElement>('#wizard-model-error');
         const fetchBtn = this.querySelector<HTMLButtonElement>('#wizard-fetch-models');
         if (!providerSelect || !baseUrlInput || !modelSelect || !loading || !error || !fetchBtn) return;
 
-        const models = createModelSelect({ select: modelSelect, loading, error, t: this.t });
+        const models = createModelSelect({
+            input: modelSelect,
+            suggestions: this.querySelector<HTMLElement>('#wizard-model-suggestions')!,
+            toggle: this.querySelector<HTMLButtonElement>('#wizard-model-name-toggle')!,
+            loading,
+            error,
+            t: this.t
+        });
+        models.reset('config.model.discovery.providerFirst');
         let fetchGeneration = 0;
         const clearVerifyResult = () => {
             const result = this.querySelector<HTMLElement>('#wizard-verify-result');
@@ -736,6 +744,7 @@ class SetupWizard extends HTMLElement {
                 result.textContent = '';
             }
         };
+        modelSelect.addEventListener('input', clearVerifyResult);
         modelSelect.addEventListener('change', clearVerifyResult);
         const updateFetchButton = () => {
             fetchBtn.disabled = !providerSelect.value || !baseUrlInput.value.trim();
@@ -744,8 +753,9 @@ class SetupWizard extends HTMLElement {
             fetchGeneration++;
             clearVerifyResult();
             models.reset(
-                providerSelect.value ? 'config.model.discovery.ready' : 'config.model.discovery.providerFirst'
+                providerSelect.value ? 'config.model.discovery.select' : 'config.model.discovery.providerFirst'
             );
+            modelSelect.disabled = !providerSelect.value;
             fetchBtn.textContent = this.t('config.model.discovery.fetch');
             updateFetchButton();
         };
@@ -800,6 +810,7 @@ class SetupWizard extends HTMLElement {
                     providerTypeSelect.value = 'openai';
                 }
             }
+            modelSelect.value = '';
             resetModels();
         });
 
@@ -823,7 +834,7 @@ class SetupWizard extends HTMLElement {
 
     private async _handleSaveOnly(): Promise<void> {
         const baseUrl = this.querySelector<HTMLInputElement>('#wizard-base-url')?.value?.trim();
-        const modelName = this.querySelector<HTMLSelectElement>('#wizard-model-name')?.value?.trim();
+        const modelName = this.querySelector<HTMLInputElement>('#wizard-model-name')?.value?.trim();
         const resultDiv = this.querySelector<HTMLElement>('#wizard-verify-result');
 
         if (!baseUrl) {
@@ -849,7 +860,7 @@ class SetupWizard extends HTMLElement {
             this.querySelector<HTMLSelectElement>('#wizard-provider-type')?.value === 'anthropic'
                 ? 'anthropic'
                 : 'openai';
-        const modelName = this.querySelector<HTMLSelectElement>('#wizard-model-name')?.value?.trim();
+        const modelName = this.querySelector<HTMLInputElement>('#wizard-model-name')?.value?.trim();
         if (!modelName) return;
         const noProxy = this.querySelector<HTMLInputElement>('#wizard-no-proxy')?.checked || false;
         const noSSL = this.querySelector<HTMLInputElement>('#wizard-no-ssl')?.checked || false;
@@ -907,7 +918,7 @@ class SetupWizard extends HTMLElement {
             this.querySelector<HTMLSelectElement>('#wizard-provider-type')?.value === 'anthropic'
                 ? 'anthropic'
                 : 'openai';
-        const modelName = this.querySelector<HTMLSelectElement>('#wizard-model-name')?.value?.trim();
+        const modelName = this.querySelector<HTMLInputElement>('#wizard-model-name')?.value?.trim();
         const noProxy = this.querySelector<HTMLInputElement>('#wizard-no-proxy')?.checked || false;
         const noSSL = this.querySelector<HTMLInputElement>('#wizard-no-ssl')?.checked || false;
         const resultDiv = this.querySelector<HTMLElement>('#wizard-verify-result');
