@@ -126,6 +126,8 @@ describe('setup wizard flow', () => {
     describe('model discovery', () => {
         beforeEach(() => {
             (window as any).settingAPI = mockModelAPI();
+            (window as any).globalControlAPI = {};
+            (globalThis as any).accountAPI = { configure: async () => undefined };
         });
 
         function wizardForm() {
@@ -141,6 +143,7 @@ describe('setup wizard flow', () => {
             const select = wizard.querySelector('#wizard-model-name');
             const fetch = wizard.querySelector('#wizard-fetch-models');
             choose(wizard.querySelector('#wizard-provider-select'), 'preset');
+            choose(select, 'unlisted-model');
             for (const [id, value] of [
                 ['wizard-api-key', 'key'],
                 ['wizard-base-url', 'https://updated.test/v1']
@@ -162,6 +165,7 @@ describe('setup wizard flow', () => {
             expect(fetch.disabled).toBe(true);
             await settle();
             expect((window as any).settingAPI.fetchProviderModels).toHaveBeenCalledTimes(1);
+            expect(select.value).toBe('unlisted-model');
             expect((window as any).settingAPI.fetchProviderModels).toHaveBeenCalledWith({
                 base_url: 'https://updated.test/v1',
                 api_key: 'key',
@@ -173,11 +177,11 @@ describe('setup wizard flow', () => {
             choose(wizard.querySelector('#wizard-provider-select'), '__custom__');
             await settle();
             expect((window as any).settingAPI.fetchProviderModels).toHaveBeenCalledTimes(1);
-            expect(select.disabled).toBe(true);
-            expect(select.querySelector('option[value="gpt-4o"]')).toBeNull();
+            expect(select.disabled).toBe(false);
+            expect(select.value).toBe('');
         });
 
-        test('wizard recovers from discovery and validation errors after choosing a model', async () => {
+        test('wizard accepts a manually entered model after discovery fails', async () => {
             const wizard = wizardForm();
             choose(wizard.querySelector('#wizard-provider-select'), '__custom__');
             const url = wizard.querySelector('#wizard-base-url');
@@ -188,15 +192,18 @@ describe('setup wizard flow', () => {
             await settle();
             const error = wizard.querySelector('#wizard-model-error');
             expect(error.hidden).toBe(false);
-            expect(error.textContent).toContain('API key');
+            expect(error.textContent).toContain('may not provide');
+            expect(error.textContent).toContain('401');
             await wizard._handleSaveOnly();
             const result = wizard.querySelector('#wizard-verify-result');
             expect(result.classList.contains('hidden')).toBe(false);
-            wizard.querySelector('#wizard-fetch-models').click();
-            await settle();
-            choose(wizard.querySelector('#wizard-model-name'), 'gpt-4o');
-            expect(error.hidden).toBe(true);
+            choose(wizard.querySelector('#wizard-model-name'), 'manual-model');
             expect(result.classList.contains('hidden')).toBe(true);
+            const saved = { providers: [], models: [] };
+            (window as any).settingAPI.loadSettingObject = async () => saved;
+            (window as any).settingAPI.saveSettingObject = async () => undefined;
+            await wizard._handleSaveOnly();
+            expect(saved.models).toEqual([expect.objectContaining({ model_name: 'manual-model' })]);
         });
     });
 });

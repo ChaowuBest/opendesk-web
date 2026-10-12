@@ -1029,9 +1029,19 @@ describe('setting-panel config management', () => {
                 no_ssl: true
             })
         );
+        choose(select, 'gpt-4o');
+        const escape = new Event('keydown', { cancelable: true });
+        Object.assign(escape, { key: 'Escape' });
+        const modalEscape = { key: 'Escape', target: select, preventDefault: jest.fn(), stopPropagation: jest.fn() };
+        panel._modalEscHandler(modalEscape);
+        expect(panel._modalOverlay).not.toBeNull();
+        select.dispatchEvent(escape);
+        expect(panel.querySelector('#model-name-suggestions').hidden).toBe(true);
+        panel._modalEscHandler(modalEscape);
+        expect(panel._modalOverlay).toBeNull();
     });
 
-    test('save only rejects missing provider and models while loading or after discovery fails', async () => {
+    test('save requires a provider and a name but accepts manual names after discovery fails', async () => {
         const panel = panelForm();
         panel.querySelector('#model-alias-input').value = 'new-model';
         panel.scheduleSave = jest.fn();
@@ -1044,6 +1054,15 @@ describe('setting-panel config management', () => {
         expect(panel.scheduleSave).not.toHaveBeenCalled();
         expect(panel.currentData.models).toHaveLength(1);
         expect(panel.querySelector('#model-name-error').hidden).toBe(false);
+        expect(panel.querySelector('#model-name-input').disabled).toBe(false);
+        choose(panel.querySelector('#model-name-input'), 'manual-model');
+        panel.closeModal = jest.fn();
+        panel.refreshVisionSupport = jest.fn(async () => undefined);
+        panel.refreshModelsSection = jest.fn();
+        panel.refreshDefaultModelsSection = jest.fn();
+        await panel.saveModel();
+        expect(panel.scheduleSave).toHaveBeenCalledTimes(1);
+        expect(panel.currentData.models).toContainEqual(expect.objectContaining({ model_name: 'manual-model' }));
     });
 
     test('editing preserves the configured name on failed discovery but clears it when switching providers', async () => {
@@ -1054,7 +1073,7 @@ describe('setting-panel config management', () => {
         expect(panel.querySelector('#model-name-error').hidden).toBe(false);
         choose(panel.querySelector('#model-provider-input'), 'b');
         await settle();
-        expect(panel.querySelector('#model-name-input').querySelector('option[value="saved-name"]')).toBeNull();
+        expect(panel.querySelector('#model-name-input').value).toBe('');
         expect(panel.querySelector('#model-name-error').hidden).toBe(true);
     });
 });

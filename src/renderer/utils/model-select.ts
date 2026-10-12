@@ -9,32 +9,107 @@
  * See the Mulan PSL v2 for more details.
  */
 
+export const MODEL_SELECT_CSS = `
+.model-combo .model-suggestions-toggle { position: absolute; right: 8px; top: 50%; transform: translateY(-50%); width: 28px; height: 28px; border: none; background: transparent; color: inherit; cursor: pointer; }
+.model-combo .model-suggestions-toggle:disabled { opacity: 0.4; cursor: default; }
+.model-combo .model-suggestions { position: absolute; z-index: 5; top: 100%; left: 0; right: 0; max-height: 220px; overflow-y: auto; padding: 4px; border: 1px solid var(--model-list-line); border-radius: 8px; background: var(--model-list-bg); box-shadow: 0 8px 24px #0003; }
+.model-combo .model-suggestions[hidden] { display: none; }
+.model-combo .model-suggestions button { display: block; width: 100%; padding: 8px 12px; border: none; background: transparent; color: inherit; font: inherit; text-align: left; overflow-wrap: anywhere; cursor: pointer; }
+.model-combo .model-suggestions button:hover, .model-combo .model-suggestions button[aria-selected="true"] { background: var(--model-list-hover); }
+`;
+
 interface ModelSelectOptions {
-    select: HTMLSelectElement;
+    input: HTMLInputElement;
+    suggestions: HTMLElement;
+    toggle: HTMLButtonElement;
     loading: HTMLElement;
     error: HTMLElement;
     t: (key: string, params?: Record<string, string | number>) => string;
 }
 
-export function createModelSelect({ select, loading, error, t }: ModelSelectOptions) {
+export function createModelSelect({ input, suggestions, toggle, loading, error, t }: ModelSelectOptions) {
     let generation = 0;
-    const render = (names: string[], selected = '', placeholder = 'config.model.discovery.select') => {
-        select.replaceChildren();
-        const addOption = (value: string, label: string) => {
-            const option = select.ownerDocument.createElement('option');
-            option.value = value;
-            option.textContent = label;
-            option.selected = value === selected;
-            select.appendChild(option);
-        };
-        addOption('', t(placeholder));
-        for (const name of names) addOption(name, name);
-        select.disabled = names.length === 0;
+    let names: string[] = [];
+    let active = -1;
+    const close = () => {
+        suggestions.hidden = true;
+        input.setAttribute('aria-expanded', 'false');
+        input.removeAttribute('aria-activedescendant');
+        active = -1;
     };
-    const reset = (placeholder = 'config.model.discovery.providerFirst') => {
+    const choose = (name: string) => {
+        input.value = name;
+        const EventClass = input.ownerDocument.defaultView!.Event;
+        input.dispatchEvent(new EventClass('input', { bubbles: true }));
+        input.dispatchEvent(new EventClass('change', { bubbles: true }));
+        close();
+    };
+    const show = (all = false) => {
+        close();
+        suggestions.replaceChildren();
+        const query = all ? '' : input.value.trim().toLowerCase();
+        for (const name of names.filter((name) => name.toLowerCase().includes(query))) {
+            const option = input.ownerDocument.createElement('button');
+            option.type = 'button';
+            option.value = name;
+            option.textContent = name;
+            option.tabIndex = -1;
+            option.id = `${suggestions.id}-${suggestions.children.length}`;
+            option.setAttribute('role', 'option');
+            option.setAttribute('aria-selected', 'false');
+            // Keep input focus until the click chooses an option, rather than closing on blur.
+            option.addEventListener('mousedown', (event) => event.preventDefault());
+            option.addEventListener('click', () => choose(name));
+            suggestions.appendChild(option);
+        }
+        suggestions.hidden = suggestions.children.length === 0;
+        input.setAttribute('aria-expanded', String(!suggestions.hidden));
+    };
+    input.addEventListener('input', () => show());
+    input.addEventListener('focus', () => show());
+    input.addEventListener('click', () => show());
+    input.addEventListener('blur', close);
+    toggle.addEventListener('mousedown', (event) => event.preventDefault());
+    toggle.addEventListener('click', () => {
+        const wasOpen = !suggestions.hidden;
+        input.focus();
+        if (wasOpen) close();
+        else show(true);
+    });
+    input.addEventListener('keydown', (event) => {
+        if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
+            if (suggestions.hidden) show();
+            const options = Array.from(suggestions.children) as HTMLButtonElement[];
+            if (!options.length) return;
+            event.preventDefault();
+            event.stopPropagation();
+            active =
+                active < 0
+                    ? event.key === 'ArrowDown'
+                        ? 0
+                        : options.length - 1
+                    : (active + (event.key === 'ArrowDown' ? 1 : -1) + options.length) % options.length;
+            options.forEach((option, index) => option.setAttribute('aria-selected', String(index === active)));
+            input.setAttribute('aria-activedescendant', options[active].id);
+            options[active].scrollIntoView?.({ block: 'nearest' });
+        } else if (event.key === 'Enter' && !suggestions.hidden && active >= 0) {
+            event.preventDefault();
+            event.stopPropagation();
+            choose((suggestions.children[active] as HTMLButtonElement).value);
+        } else if (event.key === 'Escape' && !suggestions.hidden) {
+            event.preventDefault();
+            event.stopPropagation();
+            close();
+        }
+    });
+    const reset = (placeholder = 'config.model.discovery.select') => {
         generation++;
-        render([], '', placeholder);
-        select.setAttribute('aria-busy', 'false');
+        names = [];
+        suggestions.replaceChildren();
+        toggle.disabled = true;
+        close();
+        input.placeholder = t(placeholder);
+        input.setAttribute('aria-busy', 'false');
         loading.hidden = true;
         error.hidden = true;
         error.textContent = '';
@@ -42,43 +117,33 @@ export function createModelSelect({ select, loading, error, t }: ModelSelectOpti
     reset();
     return {
         reset,
-        async load(fetchNames: () => Promise<string[]>, selected = ''): Promise<void> {
-            const request = ++generation;
-            render([], '', 'config.model.discovery.loading');
-            select.setAttribute('aria-busy', 'true');
+        async load(fetchNames: () => Promise<string[]>): Promise<void> {
+            reset();
+            const request = generation;
+            input.setAttribute('aria-busy', 'true');
             loading.hidden = false;
-            error.hidden = true;
-            error.textContent = '';
             try {
                 const result = await fetchNames();
                 if (request !== generation) return;
-                const names = [...new Set(result)].sort();
+                names = [...new Set(result)].sort();
                 if (names.length === 0) throw new Error('MODEL_LIST_EMPTY');
-                // Keep the saved name when editing providers that no longer advertise an existing model.
-                if (selected && !names.includes(selected)) names.unshift(selected);
-                render(names, selected);
+                // Discovery only supplies suggestions; it must never replace a user's draft or saved name.
+                toggle.disabled = false;
+                if (input.ownerDocument.activeElement === input) show();
             } catch (cause) {
                 if (request !== generation) return;
-                render(selected ? [selected] : [], selected);
                 const message = cause instanceof Error ? cause.message : '';
-                const status = message.match(/MODEL_LIST_HTTP_(\d+)/)?.[1];
+                const status = message.match(/^MODEL_LIST_HTTP_(\d+)$/)?.[1];
+                // Local request errors and nonstandard responses cannot reliably identify the cause.
                 error.textContent = t(
-                    status === '401' || status === '403'
-                        ? 'config.model.discovery.unauthorized'
-                        : status
-                          ? 'config.model.discovery.httpError'
-                          : message === 'MODEL_LIST_EMPTY'
-                            ? 'config.model.discovery.empty'
-                            : message === 'MODEL_LIST_INVALID'
-                              ? 'config.model.discovery.invalid'
-                              : 'config.model.discovery.failed',
+                    status ? 'config.model.discovery.httpError' : 'config.model.discovery.serverError',
                     status ? { status } : undefined
                 );
                 error.hidden = false;
             } finally {
                 if (request === generation) {
                     loading.hidden = true;
-                    select.setAttribute('aria-busy', 'false');
+                    input.setAttribute('aria-busy', 'false');
                 }
             }
         }

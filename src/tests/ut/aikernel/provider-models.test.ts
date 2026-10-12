@@ -31,6 +31,9 @@ test('propagates HTTP, invalid response, and network failures instead of returni
     await expect(fetchProviderModelNames(provider, async () => new Response('{"error":"bad"}'))).rejects.toThrow(
         'MODEL_LIST_INVALID'
     );
+    await expect(fetchProviderModelNames(provider, async () => new Response('<html>not JSON</html>'))).rejects.toThrow(
+        'MODEL_LIST_INVALID'
+    );
     await expect(
         fetchProviderModelNames(provider, async () => {
             throw new Error('timeout');

@@ -591,10 +591,13 @@ setup-wizard .wizard-footer #wizard-next-btn {
 
 setup-wizard .wizard-model-select {
     position: relative;
+    --model-list-line: var(--wiz-input-line);
+    --model-list-bg: var(--wiz-input-bg);
+    --model-list-hover: var(--wiz-sel-bg);
 }
 setup-wizard .wizard-model-loading {
     position: absolute;
-    right: 16px;
+    right: 44px;
     top: 50%;
     transform: translateY(-50%);
 }
@@ -602,10 +605,10 @@ setup-wizard .wizard-model-loading[hidden],
 setup-wizard .wizard-model-error[hidden] {
     display: none;
 }
-setup-wizard .wizard-model-select select[aria-busy='true'] {
-    background-image: none;
+setup-wizard .wizard-model-select input {
+    padding-right: 52px;
 }
-setup-wizard .wizard-model-select select:disabled {
+setup-wizard .wizard-model-select input:disabled {
     cursor: default;
     opacity: 0.65;
 }

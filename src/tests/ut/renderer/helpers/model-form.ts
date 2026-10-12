@@ -10,7 +10,13 @@ export function mockModelAPI() {
 }
 
 // linkedom does not maintain selectedIndex when selecting an option.
-export function choose(select: HTMLSelectElement, value: string) {
+export function choose(select: HTMLSelectElement | HTMLInputElement, value: string) {
+    if (!('options' in select)) {
+        select.value = value;
+        select.dispatchEvent(new Event('input'));
+        select.dispatchEvent(new Event('change'));
+        return;
+    }
     const option = Array.from(select.options).find((option) => option.value === value);
     if (!option) throw new Error(`Missing test option: ${value}`);
     for (const item of select.options) item.removeAttribute('selected');
