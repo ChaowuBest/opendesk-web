@@ -462,6 +462,12 @@ export async function prepareDarwinSandbox(options: {
             OPENDESK_SANDBOX_POLICY: policyPath,
             OPENDESK_SANDBOX_LOG: logPath,
             OPENDESK_SANDBOX_TRASH_DIR: trashDir,
+            // Python 字节码缓存重定向（与 Linux/OHOS 同语义）：3.8+ 的 import
+            // 写 __pycache__ 到镜像树，落点在 ~/.cache/opendesk-sandbox/pycache
+            //（读已由 node app 策略 {home}/.cache/opendesk-sandbox/** read allow
+            // 覆盖；写入由 dynabox-policy 的 ~/.cache/opendesk-sandbox/** write
+            // allow 覆盖）。旧版 Python（<3.8）回退 /**/__pycache__/** 兜底规则。
+            PYTHONPYCACHEPREFIX: `${process.env.HOME || ''}/.cache/opendesk-sandbox/pycache`,
             // 排除清单：命中目录前缀的删除真删不入站（构建零时产物零噪音）
             ...(options.trashExcludeDirs && options.trashExcludeDirs.length > 0
                 ? { OPENDESK_SANDBOX_TRASH_EXCLUDE: options.trashExcludeDirs.join(':') }

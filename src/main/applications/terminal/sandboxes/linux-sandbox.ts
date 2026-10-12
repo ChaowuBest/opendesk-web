@@ -282,7 +282,12 @@ export async function prepareLinuxSandbox(options: {
             npm_config_cache: `${process.env.HOME || ''}/.cache/opendesk-sandbox/npm`,
             GOCACHE: `${process.env.HOME || ''}/.cache/opendesk-sandbox/go`,
             GOPATH: `${process.env.HOME || ''}/.cache/opendesk-sandbox/gopath`,
-            XDG_CACHE_HOME: `${process.env.HOME || ''}/.cache/opendesk-sandbox/xdg`
+            XDG_CACHE_HOME: `${process.env.HOME || ''}/.cache/opendesk-sandbox/xdg`,
+            // Python 字节码缓存重定向：3.8+ 的 import 写 __pycache__ 到镜像树
+            //（源码目录零落盘），落点在 ~/.cache/opendesk-sandbox/pycache（读已由
+            // node app 策略 {home}/.cache/opendesk-sandbox/** read allow 覆盖）。
+            // 旧版 Python（<3.8）不认此变量，回退 /**/__pycache__/** 兜底规则。
+            PYTHONPYCACHEPREFIX: `${process.env.HOME || ''}/.cache/opendesk-sandbox/pycache`
         },
         attach: (proc) => {
             const finish = () => {

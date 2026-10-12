@@ -75,6 +75,8 @@ darwinOnly('prepareDarwinSandbox 端到端（真实进程）', () => {
         expect(launch!.env!.DYLD_INSERT_LIBRARIES).toContain('dynobox-darwin.dylib');
         expect(launch!.env!.OPENDESK_SANDBOX_POLICY).toBeTruthy();
         expect(launch!.env!.OPENDESK_SANDBOX_TRASH).toBe('1');
+        // Python 字节码缓存镜像树（3.8+ 的 __pycache__ 写入重定向到沙箱允许目录）
+        expect(launch!.env!.PYTHONPYCACHEPREFIX).toBe(`${process.env.HOME || ''}/.cache/opendesk-sandbox/pycache`);
         // shell 必须被重签（/bin/zsh 是平台二进制）
         expect(launch!.file).not.toBe('/bin/zsh');
 
