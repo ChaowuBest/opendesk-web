@@ -4,6 +4,7 @@ import {
     permissionRulesForSandboxLinux,
     policyTextLinux
 } from '../../../main/applications/terminal/sandboxes/dynabox-policy.js';
+import { createNodePolicyRules } from '../../../main/aikernel/security/policies/node.js';
 
 describe('hostPatternToVirtualLinux', () => {
     test('透明路径恒等（保留宿主真实路径）', () => {
@@ -253,13 +254,10 @@ describe('policyTextLinux', () => {
         expect(text).toContain('path = "/**"\naccess = "read"\nperm = "deny"');
         expect(text).toContain('path = "/home/tester/usr/local/**"\naccess = "read"\nperm = "allow"');
     });
-    test('Python 字节码缓存目录（__pycache__）写放行（对齐 Windows /C/**/__pycache__/**）', () => {
-        const text = policyTextLinux('http://127.0.0.1:1/decide', 't', '/home/tester/work');
-        expect(text).toContain('path = "/**/__pycache__/**"\naccess = "write"\nperm = "allow"');
-        // 放行规则须早于兜底 write ask 命中（first-match 语义）
-        expect(text.indexOf('/**/__pycache__/**')).toBeLessThan(
-            text.indexOf('path = "/**"\naccess = "write"\nperm = "ask"')
-        );
+    test('Python 字节码缓存不得通过全盘 __pycache__ 通配规则写入', () => {
+        const text = policyTextLinux('http://127.0.0.1:1/decide', 't', '/home/tester/work', undefined, '/home/tester');
+        expect(text).not.toContain('path = "/**/__pycache__/**"\naccess = "write"\nperm = "allow"');
+        expect(text).toContain('path = "/home/tester/.cache/opendesk-sandbox/**"\naccess = "write"\nperm = "allow"');
     });
     test('readonly 模式不导出 __pycache__ 写放行（全盘 write deny 下 deny 无害，不架空写保护）', () => {
         const rules = [
@@ -284,18 +282,15 @@ describe('policyTextLinux', () => {
             'path = "/Users/tester/Library/Caches/com.opendesk.sandbox/**"\naccess = "write"\nperm = "allow"'
         );
     });
-    test('darwin 工具链缓存整树（~/Library/Caches/**）读写放行（node-gyp/electron/pip 等）', () => {
-        // 回归：npm install 编译原生模块（node-screenshots 等）时 node-gyp 读写
-        // ~/Library/Caches/node-gyp/26.3.0/installVersion、python 运行时等工具链
-        // 缓存路径；策略无规则时命中 /** read/write ask，standard 下每次编译都弹窗。
-        // ~/Library/Caches 是 macOS 可再生缓存目录（系统随时可清理、不含凭据），
-        // 与 exec 重签缓存（com.opendesk.sandbox）同哲学，整树读写放行免去逐次 ask。
-        // Linux/OHOS 家目录无此路径，规则不命中，无副作用。
+    test('darwin 不放行整个 ~/Library/Caches，仅保留明确的专用缓存目录', () => {
         const text = policyTextLinux('http://127.0.0.1:1/decide', 't', '/home/tester/work', undefined, '/Users/tester');
-        expect(text).toContain('path = "/Users/tester/Library/Caches/**"\naccess = "read"\nperm = "allow"');
-        expect(text).toContain('path = "/Users/tester/Library/Caches/**"\naccess = "write"\nperm = "allow"');
-        // 回收站不在缓存树内，写保护不受影响
-        expect(text).not.toContain('"/Users/tester/.Trash/**"');
+        expect(text).not.toContain('path = "/Users/tester/Library/Caches/**"');
+        expect(text).toContain(
+            'path = "/Users/tester/Library/Caches/com.opendesk.sandbox/**"\naccess = "write"\nperm = "allow"'
+        );
+        expect(text).toContain(
+            'path = "/Users/tester/Library/Caches/com.apple.python/**"\naccess = "write"\nperm = "allow"'
+        );
     });
     test('readonly 模式下 exec 重签缓存读仍放行（全盘 read deny 会令平台二进制 exec 起不来）', () => {
         // 重签副本是系统二进制的运行时替身（等效 /usr/bin 读需求）：副本读被
@@ -349,5 +344,24 @@ describe('policyTextLinux', () => {
         expect(text).toContain('path = "/**"\naccess = "read"\nperm = "ask"');
         expect(text).toContain('path = "/**"\naccess = "write"\nperm = "ask"');
         expect(text).toContain('path = "/**"\naccess = "execute"\nperm = "allow"');
+    });
+    test('家目录 .npmrc 固定导出读写 ask；宿主 npm 缓存只读', () => {
+        const home = '/home/tester';
+        const rules = createNodePolicyRules(home);
+        const text = policyTextLinux('http://127.0.0.1:1/decide', 't', `${home}/work`, rules, home);
+        expect(text).toContain(`path = "${home}/.npmrc"\naccess = "read"\nperm = "ask"`);
+        expect(text).toContain(`path = "${home}/.npmrc"\naccess = "write"\nperm = "ask"`);
+        expect(text).not.toContain(`path = "${home}/.npmrc"\naccess = "read"\nperm = "allow"`);
+        expect(text).not.toContain(`path = "${home}/.npmrc"\naccess = "write"\nperm = "allow"`);
+        // 宿主 npm 缓存只允许读取；写入必须使用重定向后的
+        // ~/.cache/opendesk-sandbox/npm，避免投毒宿主 ~/.npm。
+        expect(text).toContain(`path = "${home}/.npm/**"\naccess = "read"\nperm = "allow"`);
+        expect(text).not.toContain(`path = "${home}/.npm/**"\naccess = "write"\nperm = "allow"`);
+        expect(text).toContain(`path = "${home}/.cache/opendesk-sandbox/**"\naccess = "write"\nperm = "allow"`);
+    });
+    test('未传权限规则时不在终端层硬编码 npm 路径', () => {
+        const text = policyTextLinux('http://127.0.0.1:1/decide', 't', '/home/tester/work', undefined, '/home/tester');
+        expect(text).not.toContain('path = "/home/tester/.npmrc"');
+        expect(text).not.toContain('path = "/home/tester/.npm/**"');
     });
 });

@@ -2,6 +2,7 @@ import { setRuntimeLocale } from '../../../locale/index.js';
 import {
     mapHostPathToSandboxRoot,
     sandboxRunArgs,
+    sandboxToolCacheEnv,
     withSandboxWorkingDirectory
 } from '../../../main/applications/terminal/sandboxes/dynabox.js';
 
@@ -74,12 +75,14 @@ describe('sandboxRunArgs', () => {
             ...base,
             envExtra: {
                 npm_config_cache: 'C:/Users/x/.cache/opendesk-sandbox/npm',
+                PYTHONPYCACHEPREFIX: 'C:/Users/x/.cache/opendesk-sandbox/pycache',
                 NODE_OPTIONS: '--preserve-symlinks'
             }
         });
         expect(args).toContain('--env');
-        expect(args.filter((arg) => arg === '--env')).toHaveLength(2);
+        expect(args.filter((arg) => arg === '--env')).toHaveLength(3);
         expect(args).toContain('npm_config_cache=C:/Users/x/.cache/opendesk-sandbox/npm');
+        expect(args).toContain('PYTHONPYCACHEPREFIX=C:/Users/x/.cache/opendesk-sandbox/pycache');
         expect(args).toContain('NODE_OPTIONS=--preserve-symlinks');
         // --env 参数对必须在 -- 分隔符之前
         const dashIdx = args.indexOf('--');
@@ -89,6 +92,19 @@ describe('sandboxRunArgs', () => {
 
     test('envExtra 缺省时不产生 --env 参数', () => {
         expect(sandboxRunArgs(base)).not.toContain('--env');
+    });
+});
+
+describe('sandboxToolCacheEnv', () => {
+    test('Windows 工具缓存与 Python 字节码重定向到 OpenDesk 专用目录', () => {
+        expect(sandboxToolCacheEnv('C:\\Users\\tester')).toEqual({
+            npm_config_cache: 'C:/Users/tester/.cache/opendesk-sandbox/npm',
+            PYTHONPYCACHEPREFIX: 'C:/Users/tester/.cache/opendesk-sandbox/pycache'
+        });
+    });
+
+    test('USERPROFILE 缺失时不注入无效路径', () => {
+        expect(sandboxToolCacheEnv()).toEqual({});
     });
 });
 

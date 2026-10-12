@@ -127,10 +127,6 @@ export function policyText(
         // PowerShell 启动配置数据（框架静默写；家目录根/Roaming 根不放通——
         // 写探测由 hook 按"目录写探测"降级为 read，见 hooks_file.cpp）
         '/C/Users/*/AppData/Local/Microsoft/Windows/PowerShell/**',
-        // Python 解释器字节码缓存：import 时原子写 __pycache__/*.pyc.<随机数> 临时
-        // 文件再 rename（解释器在宿主 Python 安装目录下生成），内容仅为字节码缓存，
-        // 放行写入免去每次 spawn python 子进程都触发 ask
-        '/C/**/__pycache__/**',
         // Windows App Installer（winget 等组件）诊断日志目录：组件启动时静默写入，
         // 与 catroot/Caches 同类，放通不产生安全面（仅日志落盘）
         '/C/Users/*/AppData/Local/Packages/*/LocalState/DiagOutputDir/**',
@@ -345,21 +341,6 @@ function policyLinuxTail(
         ...permissionRulesForSandboxLinux(rules),
         // git 全局身份配置允许写（沙箱内 git commit 常用；凭据文件在敏感清单中已 deny）
         ...(home ? [`[[rules]]\npath = ${quote(`${home}/.gitconfig`)}\naccess = "write"\nperm = "allow"`] : []),
-        // npm 用户配置与缓存目录读写放行：npm install/run 每次执行都读家目录
-        // .npmrc（registry/代理配置）并读写 ~/.npm 缓存（_cacache/_logs/_locks，
-        // 鸿蒙家目录为 /storage/Users/currentUser），不放行会落兜底 read/write
-        // ask，每条 npm 命令都弹（实测 mac 弹 ~/.npmrc 与 ~/.npm/_cacache/tmp/*）。
-        // 写对齐 .gitconfig（npm config set / login 落盘）。与 .gitconfig 同属
-        // 用户级工具配置，token 类凭据的安全语义由敏感清单（SENSITIVE_HOME_DIRS）
-        // 统一收窄（.npmrc 中的 token 与 .gitconfig 同理属工具必需读取）。
-        ...(home
-            ? [
-                  `[[rules]]\npath = ${quote(`${home}/.npmrc`)}\naccess = "read"\nperm = "allow"`,
-                  `[[rules]]\npath = ${quote(`${home}/.npmrc`)}\naccess = "write"\nperm = "allow"`,
-                  `[[rules]]\npath = ${quote(`${home}/.npm/**`)}\naccess = "read"\nperm = "allow"`,
-                  `[[rules]]\npath = ${quote(`${home}/.npm/**`)}\naccess = "write"\nperm = "allow"`
-              ]
-            : []),
         // 家目录工具链安装根（<home>/usr/local）读取放行：鸿蒙 PC 上 python/node
         // 等工具链装在用户目录（/storage/Users/currentUser/usr/local/...），
         // node-gyp 探测 Python 读 pyvenv.cfg、解释器启动读 python3._pth 与标准库
@@ -389,35 +370,12 @@ function policyLinuxTail(
                   `[[rules]]\npath = ${quote(`${home}/Library/Caches/com.opendesk.sandbox/**`)}\naccess = "write"\nperm = "allow"`
               ]
             : []),
-        // macOS 工具链缓存整树（~/Library/Caches/**）读写放行：npm install 编译原生
-        // 模块（node-screenshots 等）时 node-gyp 读写 ~/Library/Caches/node-gyp/.../
-        // installVersion、python 运行时探测自缓存等工具链路径，standard 下逐次命中
-        // /** read/write ask 弹窗。~/Library/Caches 是 macOS 语义上的可再生缓存目录
-        //（系统随时可清理、不含凭据，凭据在 keychain/Application Support），整树读写
-        // 放行与 exec 重签缓存（com.opendesk.sandbox）同哲学，免去编译链逐次 ask。
-        // 放行早于 /** ask 兜底（more-specific）；不影响回收站写保护（~/.Trash 不在
-        // 缓存树内）。Linux/OHOS 家目录无此路径，规则不命中，无副作用。
-        ...(home
-            ? [
-                  `[[rules]]\npath = ${quote(`${home}/Library/Caches/**`)}\naccess = "read"\nperm = "allow"`,
-                  `[[rules]]\npath = ${quote(`${home}/Library/Caches/**`)}\naccess = "write"\nperm = "allow"`
-              ]
-            : []),
         // 工具链缓存目录写入放行（linux-sandbox/openHarmony-sandbox 的 env
         // 重定向：CARGO_HOME/npm_config_cache/GOCACHE 等指向
         // ~/.cache/opendesk-sandbox/...）
         ...(home
             ? [`[[rules]]\npath = ${quote(`${home}/.cache/opendesk-sandbox/**`)}\naccess = "write"\nperm = "allow"`]
             : []),
-        // Python 解释器字节码缓存写放行（对齐 Windows systemWritePaths 的
-        // /C/**/__pycache__/**）：import 时原子写 __pycache__/*.pyc.<随机数>
-        // 临时文件再 rename（解释器在 Python 安装目录/venv 下生成），内容仅为
-        // 字节码缓存，放行写入免去每次 spawn python 子进程都触发 ask。全盘
-        // 通配覆盖系统 Python（/usr/lib）、/data/app 工具链 bundle 与虚拟环境。
-        // readonly 模式不导出：全盘 write deny 下 deny 无害（Python 静默忽略
-        // 写失败仅重编译），不架空 readonly 写保护承诺（Windows 有 OS ACL
-        // 兜底系统组件自更新写入，LD_PRELOAD 身份命名空间无此兜底）。
-        ...(readonlyMode ? [] : [`[[rules]]\npath = ${quote('/**/__pycache__/**')}\naccess = "write"\nperm = "allow"`]),
         // macOS 系统 Python 字节码缓存（com.apple.python）——不放行则每次 import
         // django 等大框架都重新编译字节码，migrate/runserver 会慢到卡死。
         // read 也要放行：解释器启动即探测该目录下 CLT 标准库的 .pyc（如 io.cpython-39.pyc），

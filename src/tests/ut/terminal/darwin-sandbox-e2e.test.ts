@@ -48,6 +48,32 @@ darwinOnly('prepareDarwinSandbox 端到端（真实进程）', () => {
     // 语义必须在非 temp 路径上测；temp 放行语义另设正向断言。
     const outsideRoot = path.join(os.homedir(), '.opendesk-sbx-e2e-outside');
 
+    test('工具链缓存重定向到 OpenDesk 沙箱专用目录', async () => {
+        const workspace = fs.mkdtempSync(path.join(os.tmpdir(), 'sbx-darwin-npm-cache-'));
+        const launch = await prepareDarwinSandbox({
+            shellPath: '/bin/zsh',
+            shellArgs: ['-c', 'true'],
+            command: 'true',
+            cwd: workspace
+        });
+        try {
+            expect(launch!.env!.npm_config_cache).toBe(`${process.env.HOME || ''}/.cache/opendesk-sandbox/npm`);
+            expect(launch!.env!.npm_config_devdir).toBe(`${process.env.HOME || ''}/.cache/opendesk-sandbox/node-gyp`);
+            expect(launch!.env!.npm_package_config_node_gyp_devdir).toBe(
+                `${process.env.HOME || ''}/.cache/opendesk-sandbox/node-gyp`
+            );
+            expect(launch!.env!.PIP_CACHE_DIR).toBe(`${process.env.HOME || ''}/.cache/opendesk-sandbox/pip`);
+            expect(launch!.env!.ELECTRON_CACHE).toBe(`${process.env.HOME || ''}/.cache/opendesk-sandbox/electron`);
+            expect(launch!.env!.ELECTRON_BUILDER_CACHE).toBe(
+                `${process.env.HOME || ''}/.cache/opendesk-sandbox/electron-builder`
+            );
+            expect(launch!.env!.XDG_CACHE_HOME).toBe(`${process.env.HOME || ''}/.cache/opendesk-sandbox/xdg`);
+        } finally {
+            await launch!.cleanup();
+            fs.rmSync(workspace, { recursive: true, force: true });
+        }
+    });
+
     test('工作区写放行、工作区外写拒绝、预存在文件删除送废纸篓', async () => {
         const root = path.join(outsideRoot, 'run');
         const workspace = path.join(root, 'workspace');

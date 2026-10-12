@@ -1,5 +1,6 @@
 import { describe, expect, test } from '@jest/globals';
 import { policyTextOpenHarmony } from '../../../main/applications/terminal/sandboxes/dynabox-policy.js';
+import { createNodePolicyRules } from '../../../main/aikernel/security/policies/node.js';
 
 describe('policyTextOpenHarmony', () => {
     test('不含 [[roots]]（OH 版 native 会拒绝 roots），含 [ask] 与 token', () => {
@@ -28,26 +29,31 @@ describe('policyTextOpenHarmony', () => {
         expect(text).toContain('path = "/data/home/.cache/opendesk-sandbox/**"\naccess = "write"\nperm = "allow"');
     });
 
-    test('家目录 npm 配置 .npmrc 与缓存 .npm/** 读写放行（npm 命令不弹 ask）', () => {
-        const text = policyTextOpenHarmony('e', 't', '/data/home/work', undefined, '/data/home');
-        expect(text).toContain('path = "/data/home/.npmrc"\naccess = "read"\nperm = "allow"');
-        expect(text).toContain('path = "/data/home/.npmrc"\naccess = "write"\nperm = "allow"');
+    test('家目录 npm 配置与宿主缓存只读，缓存写入使用重定向目录', () => {
+        const text = policyTextOpenHarmony(
+            'e',
+            't',
+            '/data/home/work',
+            createNodePolicyRules('/data/home'),
+            '/data/home'
+        );
+        // .npmrc 读写一律 ask，不按内容或文件存在性放通。
+        expect(text).toContain('path = "/data/home/.npmrc"\naccess = "read"\nperm = "ask"');
+        expect(text).toContain('path = "/data/home/.npmrc"\naccess = "write"\nperm = "ask"');
+        expect(text).not.toContain('path = "/data/home/.npmrc"\naccess = "read"\nperm = "allow"');
+        expect(text).not.toContain('path = "/data/home/.npmrc"\naccess = "write"\nperm = "allow"');
         // npm 缓存目录（_cacache/_logs/_locks）：npm install 下载/解压包写
         // ~/.npm/_cacache/tmp/* 临时文件，只放行 .npmrc 仍会落兜底 ask（回归：
         // mac 实测弹 ~/.npm/_cacache/tmp/<uuid> 读取）
         expect(text).toContain('path = "/data/home/.npm/**"\naccess = "read"\nperm = "allow"');
-        expect(text).toContain('path = "/data/home/.npm/**"\naccess = "write"\nperm = "allow"');
+        expect(text).not.toContain('path = "/data/home/.npm/**"\naccess = "write"\nperm = "allow"');
+        expect(text).toContain('path = "/data/home/.cache/opendesk-sandbox/**"\naccess = "write"\nperm = "allow"');
     });
 
-    test('Python 字节码缓存目录（__pycache__）写放行（对齐 Windows /C/**/__pycache__/**）', () => {
-        // /data/app/python.org/.../encodings/_pycache__/*.pyc 等在 Python 安装
-        // 目录下生成：全盘通配放行写入，免去每次 import 都触发写 ask 弹窗
-        const text = policyTextOpenHarmony('e', 't', '/data/home/work');
-        expect(text).toContain('path = "/**/__pycache__/**"\naccess = "write"\nperm = "allow"');
-        // 放行规则须早于兜底 write ask 命中（first-match 语义）
-        expect(text.indexOf('/**/__pycache__/**')).toBeLessThan(
-            text.indexOf('path = "/**"\naccess = "write"\nperm = "ask"')
-        );
+    test('Python 字节码缓存不得通过全盘 __pycache__ 通配规则写入', () => {
+        const text = policyTextOpenHarmony('e', 't', '/data/home/work', undefined, '/data/home');
+        expect(text).not.toContain('path = "/**/__pycache__/**"\naccess = "write"\nperm = "allow"');
+        expect(text).toContain('path = "/data/home/.cache/opendesk-sandbox/**"\naccess = "write"\nperm = "allow"');
     });
 
     test('家目录工具链安装根（<home>/usr/local）读取放行（pyvenv.cfg/python3._pth/pyc 缓存不弹 ask）', () => {

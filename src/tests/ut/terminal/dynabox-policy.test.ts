@@ -4,6 +4,7 @@ import {
     hostPatternToVirtual,
     policyText
 } from '../../../main/applications/terminal/sandboxes/dynabox.js';
+import { createNodePolicyRules } from '../../../main/aikernel/security/policies/node.js';
 
 describe('expandPermissionPattern', () => {
     test('{,/**} 展开为目录本身与子树', () => {
@@ -95,6 +96,15 @@ describe('policyText', () => {
         expect(ruleBlock).toContain('perm = "allow"');
     });
 
+    test('Windows 从 Node 策略导出 .npmrc 权限，不在终端层维护平台副本', () => {
+        const home = 'C:/Users/tester';
+        const text = policyText('http://ep/decide', 't', createNodePolicyRules(home), home);
+        expect(text).toContain('path = "/C/Users/tester/.npmrc"\naccess = "read"\nperm = "ask"');
+        expect(text).toContain('path = "/C/Users/tester/.npmrc"\naccess = "write"\nperm = "ask"');
+        expect(text).not.toContain('path = "/C/Users/tester/.npmrc"\naccess = "read"\nperm = "allow"');
+        expect(text).not.toContain('path = "/C/Users/tester/.npmrc"\naccess = "write"\nperm = "allow"');
+    });
+
     test('home 提供时生成宿主 Temp 写放行规则（共享 Temp 别名落点）', () => {
         const text = policyText('http://ep/decide', 't', undefined, 'C:\\Users\\tester');
         expect(text).toContain('path = "/C/Users/tester/AppData/Local/Temp/**"');
@@ -147,9 +157,10 @@ describe('policyText', () => {
         expect(text).not.toContain('/opendesk/logs');
     });
 
-    test('Python 字节码缓存目录（__pycache__）写放行', () => {
-        const text = policyText('http://ep/decide', 't');
-        expect(text).toContain('path = "/C/**/__pycache__/**"');
+    test('Python 字节码缓存不得通过全盘 __pycache__ 通配规则写入', () => {
+        const text = policyText('http://ep/decide', 't', undefined, 'C:\\Users\\tester');
+        expect(text).not.toContain('path = "/C/**/__pycache__/**"');
+        expect(text).toContain('path = "/C/Users/tester/.cache/opendesk-sandbox/**"\naccess = "write"\nperm = "allow"');
     });
 
     test('Windows AppInstaller 诊断日志目录写放行', () => {
