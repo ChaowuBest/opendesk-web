@@ -679,6 +679,19 @@ export class AgentOfficeRepository {
         atomicWriteJson(metadataPath, metadata);
     }
 
+    deleteTaskRecord(staffId: string, taskId: string): void {
+        const tasks = this.readTasks(staffId).filter((task) => task.task_id !== taskId);
+        atomicWriteJson(path.join(this.protectedDirectory(staffId), 'tasks.json'), tasks);
+        const metadataPath = path.join(this.protectedDirectory(staffId), 'metadata.json');
+        const metadata = readJson<StaffMetadata>(metadataPath, {
+            id: staffId,
+            hired_at: new Date().toISOString(),
+            enabled: true
+        });
+        metadata.usage_summary = sumTaskUsage(tasks);
+        atomicWriteJson(metadataPath, metadata);
+    }
+
     importStaff(zipPath: string): StaffDetail {
         let zip: AdmZip;
         try {

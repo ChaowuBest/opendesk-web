@@ -81,6 +81,7 @@ function resolveThroughSymlinks(filePath: string): string {
 export async function createStaffPermissionEnforcer(options: {
     workspace: string;
     resourcesDirectory: string;
+    additionalReadDirectories?: string[];
     protectedDirectory: string;
     permission: StaffPermission;
 }): Promise<PermissionEnforcer> {
@@ -123,6 +124,14 @@ export async function createStaffPermissionEnforcer(options: {
             effect: options.permission.network_access ? 'allow' : 'deny'
         }
     ];
+    for (const directory of options.additionalReadDirectories ?? []) {
+        rules.push({
+            resourceType: 'file',
+            action: 'read',
+            pathPattern: directoryPattern(directory),
+            effect: 'allow'
+        });
+    }
     for (const directory of options.permission.directories) {
         rules.push({
             resourceType: 'file',

@@ -38,7 +38,15 @@ import {
     type StaffSkillSummary,
     type StaffUpdateInput
 } from '../common.js';
+import type {
+    AgentFlowDetail,
+    AgentFlowMessage,
+    AgentFlowMessageHistoryResult,
+    AgentFlowStatus,
+    AgentFlowSummary
+} from '../flow/common.js';
 import css from './style.css?raw';
+import type { FlowReadingView } from '../flow/reading-view.js';
 import contextMenuCss from '../../../../renderer/styles/context-menu.css?raw';
 import { renderIcon } from '../../../../renderer/components/confirmModal.ts';
 
@@ -56,9 +64,12 @@ interface ModelCatalog {
 }
 
 type AutoSaveState = 'idle' | 'saving' | 'saved' | 'invalid' | 'error';
+type AgentOfficeTab = 'office' | 'management' | 'flows';
+type FlowListStatus = AgentFlowStatus | 'all';
 
 const PORTRAIT_CANVAS_SIZE = 512;
 const PORTRAIT_MAX_FILE_BYTES = 20 * 1024 * 1024;
+const FLOW_MESSAGE_EXCERPT_MAX_CHARACTERS = 96;
 const AVATAR_GRADIENTS = ['av-g1', 'av-g2', 'av-g3', 'av-g4'] as const;
 
 export class AgentOfficeEntryWidget extends AgentOperableHTMLElement {
@@ -68,7 +79,45 @@ export class AgentOfficeEntryWidget extends AgentOperableHTMLElement {
     private selectedStaffId: string | null = null;
     private messages: StaffMessage[] = [];
     private historyCursor?: string;
-    private activeTab: 'office' | 'management' = 'office';
+    private activeTab: AgentOfficeTab = 'office';
+    private flowFeatureEnabled = false;
+    private flowEventsSubscribed = false;
+    private flows: AgentFlowSummary[] = [];
+    private selectedFlow: AgentFlowDetail | null = null;
+    private flowMessages: AgentFlowMessage[] = [];
+    private readonly flowReferencedMessages = new Map<string, AgentFlowMessage>();
+    private flowHistoryCursor?: string;
+    private flowHistoryFloor?: number;
+    private flowReadingView?: FlowReadingView;
+    private flowReadingRequest = 0;
+    private flowMessagesRequest = 0;
+    private flowOpenRequest = 0;
+    private flowReadingTimer?: ReturnType<typeof setInterval>;
+    private readonly flowDrafts = new Map<
+        string,
+        {
+            text: string;
+            attachments: { path: string; name: string }[];
+            images: { dataUrl: string; name: string }[];
+            reply?: string;
+            caret?: [number, number];
+            scroll?: number;
+            oldestSequence?: number;
+        }
+    >();
+    private flowView: 'chat' | 'settings' = 'chat';
+    private flowAttachments: { path: string; name: string }[] = [];
+    private flowImageDataUris: { dataUrl: string; name: string }[] = [];
+    private flowDraftText = '';
+    private flowReplyToMessageId?: string;
+    private flowDeleteMessageId?: string;
+    private flowPendingRequestId?: string;
+    private flowPendingPayloadKey?: string;
+    private flowPendingRequestFlowId?: string;
+    private readonly flowPendingRequests = new Map<string, string>();
+    private flowScrollToBottomOnNextRender = false;
+    private flowQuery = '';
+    private flowStatusFilter: FlowListStatus = 'active';
     private detail: StaffDetail | null = null;
     private detailSection: DetailSection = 'basic';
     private skills: StaffSkillSummary[] = [];
@@ -91,8 +140,18 @@ export class AgentOfficeEntryWidget extends AgentOperableHTMLElement {
     /** 首次 staff 数据尚未返回时为 true，office/management 空列表先渲染加载态而不是"无员工" */
     private loading = true;
     private modal:
-        'new' | 'delete' | 'portrait' | 'installed-skills' | 'batch-skills' | 'skill-url' | 'skill-detail' | null =
-        null;
+        | 'new'
+        | 'delete'
+        | 'portrait'
+        | 'installed-skills'
+        | 'batch-skills'
+        | 'skill-url'
+        | 'skill-detail'
+        | 'new-flow'
+        | 'archive-flow'
+        | 'delete-flow'
+        | 'delete-flow-message'
+        | null = null;
     private status = '';
     private previewHideTimer?: ReturnType<typeof setTimeout>;
     private portraitImage?: HTMLImageElement;
@@ -111,7 +170,34 @@ export class AgentOfficeEntryWidget extends AgentOperableHTMLElement {
     private localAddresses: Array<{ address: string; name: string }> = [];
     private localServiceRuntime: LocalServiceRuntime | null = null;
     private localServicePending = false;
-    private readonly onStaffsChanged = () => void this.refreshStaffSummaries();
+    private readonly onStaffsChanged = () => {
+        void this.refreshStaffSummaries();
+        if (this.flowFeatureEnabled) void this.reloadFlows();
+    };
+    private readonly onFlowsChanged = () => void this.reloadFlows();
+    private readonly onFlowMessagesChanged = (flowId: string) => {
+        if (this.activeTab === 'flows' && flowId === this.selectedFlow?.id) void this.loadFlowMessages();
+    };
+    private readonly onFlowReadingChanged = (flowId: string) => {
+        if (flowId === this.selectedFlow?.id) void this.loadFlowReading();
+    };
+    private readonly flowEventHandlers = [
+        ['flowsChanged', this.onFlowsChanged],
+        ['flowMessagesChanged', this.onFlowMessagesChanged],
+        ['flowReadingChanged', this.onFlowReadingChanged]
+    ] as const;
+    private subscribeFlowEvents(): void {
+        if (!this.flowFeatureEnabled || this.flowEventsSubscribed || !this.isConnected) return;
+        for (const [name, handler] of this.flowEventHandlers) window.applicationAPI.subscribe(name, handler);
+        this.flowReadingTimer = setInterval(() => void this.loadFlowReading(), 15_000);
+        this.flowEventsSubscribed = true;
+    }
+    private unsubscribeFlowEvents(): void {
+        if (!this.flowEventsSubscribed) return;
+        for (const [name, handler] of this.flowEventHandlers) window.applicationAPI.unsubscribe(name, handler);
+        if (this.flowReadingTimer) clearInterval(this.flowReadingTimer);
+        this.flowEventsSubscribed = false;
+    }
     private readonly onMessagesChanged = (staffId: string) => {
         if (staffId !== this.selectedStaffId) return;
         if (this.activeTab === 'office') void this.loadMessages();
@@ -242,12 +328,14 @@ export class AgentOfficeEntryWidget extends AgentOperableHTMLElement {
 
     connectedCallback(): void {
         if (!this.shadowRoot) this.attachShadow({ mode: 'open' });
+        if (this.selectedFlow && this.flowView === 'chat') this.flowScrollToBottomOnNextRender = true;
         syncShadowHostTheme(this);
         document.addEventListener(OPENDESK_THEME_CHANGED, this.onThemeChanged);
         window.applicationAPI.subscribe('staffsChanged', this.onStaffsChanged);
         window.applicationAPI.subscribe('messagesChanged', this.onMessagesChanged);
         window.applicationAPI.subscribe('staffTaskChanged', this.onStaffsChanged);
         window.applicationAPI.subscribe('localServiceChanged', this.onLocalServiceChanged);
+        this.subscribeFlowEvents();
         void this.initialize();
     }
 
@@ -266,6 +354,7 @@ export class AgentOfficeEntryWidget extends AgentOperableHTMLElement {
         window.applicationAPI.unsubscribe('messagesChanged', this.onMessagesChanged);
         window.applicationAPI.unsubscribe('staffTaskChanged', this.onStaffsChanged);
         window.applicationAPI.unsubscribe('localServiceChanged', this.onLocalServiceChanged);
+        this.unsubscribeFlowEvents();
     }
 
     private tr(key: string): string {
@@ -313,15 +402,23 @@ export class AgentOfficeEntryWidget extends AgentOperableHTMLElement {
 
     private async initialize(): Promise<void> {
         try {
-            [this.strings, this.locale, this.modelCatalog, this.localAddresses] = await Promise.all([
-                this.call('getLocalizedStrings'),
-                this.call('getLocale'),
-                this.call('listChatModels'),
-                this.call('listLocalAddresses')
+            const [strings, locale, modelCatalog, flowFeature, localAddresses] = await Promise.all([
+                this.call<Record<string, string>>('getLocalizedStrings'),
+                this.call<string>('getLocale'),
+                this.call<ModelCatalog>('listChatModels'),
+                this.call<{ enabled: boolean }>('getFlowFeatureState'),
+                this.call<Array<{ address: string; name: string }>>('listLocalAddresses')
             ]);
+            this.strings = strings;
+            this.locale = locale;
+            this.modelCatalog = modelCatalog;
+            this.flowFeatureEnabled = flowFeature.enabled;
+            this.subscribeFlowEvents();
+            this.localAddresses = localAddresses;
             // 本地化文案就绪后立即渲染壳（加载态），staff 数据继续异步加载
             this.render();
             await this.reloadStaffs();
+            if (this.flowFeatureEnabled) await this.reloadFlows();
         } catch (error) {
             this.loading = false;
             this.status = `${this.tr('agentoffice.loadFailed')}: ${this.errorText(error)}`;
@@ -432,7 +529,7 @@ export class AgentOfficeEntryWidget extends AgentOperableHTMLElement {
      * 等用户下一次显式操作时自然会带上新数据渲染。
      */
     private canRenderInBackground(): boolean {
-        return !this.detail && !this.modal;
+        return !this.detail && !this.modal && !(this.activeTab === 'flows' && this.selectedFlow);
     }
 
     private async refreshStaffSummaries(): Promise<void> {
@@ -462,6 +559,233 @@ export class AgentOfficeEntryWidget extends AgentOperableHTMLElement {
         }
     }
 
+    private async reloadFlows(): Promise<void> {
+        if (!this.flowFeatureEnabled) return;
+        const selectedId = this.selectedFlow?.id;
+        const previousStatus = this.selectedFlow?.status;
+        this.flows = await this.call('listFlows', { status: this.flowStatusFilter });
+        if (selectedId !== this.selectedFlow?.id) return;
+        if (this.selectedFlow) {
+            const selectedStillVisible = this.flows.some((flow) => flow.id === this.selectedFlow?.id);
+            if (selectedStillVisible || this.flowStatusFilter === 'all') {
+                const updated = await this.call<AgentFlowDetail>('getFlow', this.selectedFlow.id);
+                if (selectedId !== this.selectedFlow?.id) return;
+                this.selectedFlow = updated;
+            } else {
+                this.selectedFlow = null;
+            }
+        }
+        if (!this.selectedFlow || this.selectedFlow.status !== previousStatus) this.render();
+        else await this.loadFlowReading();
+    }
+
+    private rememberFlowDraft(): void {
+        if (!this.selectedFlow) return;
+        const input = this.shadowRoot?.querySelector<HTMLTextAreaElement>('#flow-message-input');
+        this.flowDrafts.set(this.selectedFlow.id, {
+            text: this.flowDraftText,
+            attachments: [...this.flowAttachments],
+            images: [...this.flowImageDataUris],
+            reply: this.flowReplyToMessageId,
+            caret: input ? [input.selectionStart, input.selectionEnd] : undefined,
+            scroll: this.shadowRoot?.querySelector<HTMLElement>('.flow-message-list')?.scrollTop,
+            oldestSequence: this.flowMessages[0]?.sequence
+        });
+    }
+
+    private async openFlow(flowId: string): Promise<void> {
+        this.status = '';
+        this.rememberFlowDraft();
+        const request = ++this.flowOpenRequest;
+        try {
+            const flow = await this.call<AgentFlowDetail>('getFlow', flowId);
+            if (request !== this.flowOpenRequest) return;
+            this.selectedFlow = flow;
+            const draft = this.flowDrafts.get(flowId);
+            this.flowDraftText = draft?.text ?? '';
+            this.flowAttachments = draft?.attachments ?? [];
+            this.flowImageDataUris = draft?.images ?? [];
+            this.flowReadingView = undefined;
+            this.flowHistoryFloor = draft?.oldestSequence;
+            this.flowView = 'chat';
+            this.flowMessages = [];
+            this.flowReferencedMessages.clear();
+            this.flowReplyToMessageId = draft?.reply;
+            this.flowHistoryCursor = undefined;
+            this.flowScrollToBottomOnNextRender = draft?.scroll === undefined;
+            await this.loadFlowMessages();
+            if (request !== this.flowOpenRequest) return;
+            const list = this.shadowRoot?.querySelector<HTMLElement>('.flow-message-list');
+            if (list && draft?.scroll !== undefined) list.scrollTop = draft.scroll;
+            if (draft?.caret)
+                this.shadowRoot
+                    ?.querySelector<HTMLTextAreaElement>('#flow-message-input')
+                    ?.setSelectionRange?.(...draft.caret);
+        } catch (error) {
+            this.status = `${this.tr('agentoffice.operationFailed')}: ${this.errorText(error)}`;
+            this.render();
+        }
+    }
+
+    private async loadFlowMessages(cursor?: string): Promise<void> {
+        if (!this.selectedFlow) return;
+        const flowId = this.selectedFlow.id;
+        const request = ++this.flowMessagesRequest;
+        const oldest = this.flowMessages[0]?.sequence ?? this.flowHistoryFloor;
+        let next = cursor;
+        let result: AgentFlowMessageHistoryResult;
+        let messages: AgentFlowMessage[] = [];
+        const references = new Map<string, AgentFlowMessage>();
+        do {
+            result = await this.call<AgentFlowMessageHistoryResult>('getFlowMessageHistory', flowId, {
+                limit: 50,
+                cursor: next
+            });
+            if (this.selectedFlow?.id !== flowId || request !== this.flowMessagesRequest) return;
+            messages = [...result.messages, ...messages];
+            for (const message of result.referencedMessages ?? []) references.set(message.id, message);
+            next = result.nextCursor;
+        } while (!cursor && result.hasMore && oldest !== undefined && (messages[0]?.sequence ?? Infinity) > oldest);
+        this.flowMessages = [
+            ...new Map(
+                (cursor ? [...messages, ...this.flowMessages] : messages).map((message) => [message.id, message])
+            ).values()
+        ];
+        if (!cursor) this.flowReferencedMessages.clear();
+        for (const [id, message] of references) this.flowReferencedMessages.set(id, message);
+        this.flowHistoryCursor = result.hasMore ? result.nextCursor : undefined;
+        if (this.flowView === 'chat' && !this.modal) {
+            const previousList = this.shadowRoot?.querySelector<HTMLElement>('.flow-message-list');
+            const previousHeight = previousList?.scrollHeight ?? 0;
+            const previousTop = previousList?.scrollTop ?? 0;
+            this.render();
+            const list = this.shadowRoot?.querySelector<HTMLElement>('.flow-message-list');
+            if (cursor && list) list.scrollTop = previousTop + list.scrollHeight - previousHeight;
+        }
+        await this.loadFlowReading();
+    }
+
+    private async loadFlowReading(): Promise<void> {
+        const flowId = this.selectedFlow?.id;
+        if (!flowId || this.activeTab !== 'flows') return;
+        const request = ++this.flowReadingRequest;
+        try {
+            const view = await this.call<FlowReadingView>('getFlowReadingView', flowId);
+            if (this.selectedFlow?.id !== flowId || request !== this.flowReadingRequest) return;
+            this.flowReadingView = view;
+            // Patch only receipts and scheduler information; leave the composer and unsaved forms intact.
+            this.shadowRoot?.querySelectorAll<HTMLElement>('[data-flow-receipt]').forEach((element) => {
+                element.innerHTML = this.renderFlowReceipt(element.dataset.flowReceipt!);
+            });
+            const settings = this.shadowRoot?.querySelector<HTMLElement>('[data-reading-settings]');
+            if (settings) this.updateFlowReadingSettings(settings);
+        } catch (error) {
+            if (this.selectedFlow?.id === flowId) this.showFlowOperationError(error);
+        }
+    }
+
+    private showFlowOperationError(error: unknown): void {
+        this.status = `${this.tr('agentoffice.operationFailed')}: ${this.errorText(error)}`;
+        const notice = this.shadowRoot?.querySelector<HTMLElement>('.detail-notice');
+        if (notice) {
+            notice.textContent = this.status;
+            notice.hidden = false;
+        }
+    }
+
+    private renderFlowReceipt(messageId: string): string {
+        const receipt = this.flowReadingView?.receipts[messageId];
+        if (!receipt) return `<summary>${escapeHtml(this.tr('agentoffice.flow.reading.loading'))}</summary>`;
+        return `<summary>${escapeHtml(this.formatText('agentoffice.flow.reading.count', { read: receipt.read, total: receipt.total }))}</summary><div class="flow-receipt-details"><p>${escapeHtml(this.tr('agentoffice.flow.reading.denominator'))}</p>${receipt.members
+            .map((item) => {
+                const member = this.flowReadingView!.members.find((entry) => entry.staffId === item.staffId)!;
+                return `<div>${escapeHtml(member.name ?? this.tr('agentoffice.flow.memberMissing'))} · ${escapeHtml(this.tr(`agentoffice.flow.reading.${item.status}`))}${member.availability === 'active' ? '' : ` · ${escapeHtml(this.tr(`agentoffice.flow.reading.${member.availability}`))}`}</div>`;
+            })
+            .join('')}</div>`;
+    }
+
+    private renderFlowReadingSettings(): string {
+        const view = this.flowReadingView;
+        if (!view) return escapeHtml(this.tr('agentoffice.flow.reading.loading'));
+        const editable = this.selectedFlow?.status === 'active' && !view.deleting;
+        return `<h3>${escapeHtml(this.tr('agentoffice.flow.reading.settings'))}</h3><p>${escapeHtml(this.tr(`agentoffice.flow.reading.${view.mode}`))}</p>${view.members.map((member) => `<div class="flow-reading-member"><b>${escapeHtml(member.name ?? this.tr('agentoffice.flow.memberMissing'))}</b><span>${escapeHtml(this.tr(`agentoffice.flow.reading.${member.availability}`))}</span>${editable && member.availability !== 'left' ? `<label>${escapeHtml(this.tr('agentoffice.flow.reading.period'))}<select data-flow-interval="${escapeHtml(member.staffId)}">${[5, 10, 15, 20, 30, 60].map((minutes) => `<option value="${minutes}" ${minutes === member.intervalMinutes ? 'selected' : ''}>${escapeHtml(this.formatText('agentoffice.flow.reading.minutes', { minutes }))}</option>`).join('')}</select></label>` : `<span>${escapeHtml(this.formatText('agentoffice.flow.reading.minutes', { minutes: member.intervalMinutes }))}</span>`}<span data-reading-next="${escapeHtml(member.staffId)}">${this.renderNextReading(member)}</span>${editable && member.retryBatchId ? `<button class="secondary" data-reading-retry="${escapeHtml(member.staffId)}" data-batch-id="${escapeHtml(member.retryBatchId)}">${escapeHtml(this.tr('agentoffice.flow.reading.retry'))}</button>` : ''}</div>`).join('')}<p>${escapeHtml(this.tr('agentoffice.flow.reading.retryHint'))}</p>`;
+    }
+
+    private renderNextReading(member: FlowReadingView['members'][number]): string {
+        return escapeHtml(
+            member.nextTriggerAt
+                ? this.formatText('agentoffice.flow.reading.next', {
+                      time: new Date(member.nextTriggerAt).toLocaleString(this.locale)
+                  })
+                : this.tr('agentoffice.flow.reading.noTimer')
+        );
+    }
+
+    private updateFlowReadingSettings(element: HTMLElement): void {
+        // Preserve a focused period select while refreshing clock labels. Rebuild after it loses focus.
+        if (element.contains(this.shadowRoot?.activeElement ?? null)) {
+            for (const member of this.flowReadingView?.members ?? []) {
+                const label = element.querySelector<HTMLElement>(`[data-reading-next="${member.staffId}"]`);
+                if (label) label.innerHTML = this.renderNextReading(member);
+            }
+            return;
+        }
+        element.innerHTML = this.renderFlowReadingSettings();
+        this.bindFlowReadingSettings();
+    }
+
+    private bindFlowReadingSettings(): void {
+        this.shadowRoot?.querySelectorAll<HTMLSelectElement>('[data-flow-interval]').forEach((select) =>
+            select.addEventListener('change', async () => {
+                const flowId = this.selectedFlow?.id;
+                if (!flowId) return;
+                select.disabled = true;
+                try {
+                    await this.call(
+                        'setFlowReadingInterval',
+                        flowId,
+                        select.dataset.flowInterval,
+                        Number(select.value)
+                    );
+                    await this.loadFlowReading();
+                } catch (error) {
+                    this.showFlowOperationError(error);
+                } finally {
+                    select.disabled = false;
+                }
+            })
+        );
+        this.shadowRoot?.querySelectorAll<HTMLButtonElement>('[data-reading-retry]').forEach((button) =>
+            button.addEventListener('click', async () => {
+                const flowId = this.selectedFlow?.id;
+                if (!flowId) return;
+                button.disabled = true;
+                try {
+                    const result = await this.call<{ status: string }>(
+                        'retryFlowReading',
+                        flowId,
+                        button.dataset.readingRetry,
+                        button.dataset.batchId
+                    );
+                    if (this.selectedFlow?.id !== flowId) return;
+                    if (result.status === 'busy') this.showFlowOperationError(this.tr('agentoffice.flow.reading.busy'));
+                    await this.loadFlowReading();
+                } catch (error) {
+                    this.showFlowOperationError(error);
+                } finally {
+                    button.disabled = false;
+                }
+            })
+        );
+    }
+
+    private filterFlowCards(): void {
+        const query = this.flowQuery.trim().toLocaleLowerCase();
+        this.shadowRoot?.querySelectorAll<HTMLElement>('[data-flow-detail]').forEach((element) => {
+            element.hidden = Boolean(query) && !(element.dataset.flowSearch ?? '').includes(query);
+        });
+    }
+
     private async loadMessages(cursor?: string): Promise<void> {
         if (!this.selectedStaffId) return;
         const result = await this.call<{ messages: StaffMessage[]; has_more: boolean; next_cursor?: string }>(
@@ -479,6 +803,22 @@ export class AgentOfficeEntryWidget extends AgentOperableHTMLElement {
 
     private render(): void {
         if (!this.shadowRoot) return;
+        const flowInput = this.shadowRoot.querySelector<HTMLTextAreaElement>('#flow-message-input');
+        const flowCaret =
+            flowInput && this.shadowRoot.activeElement === flowInput
+                ? { start: flowInput.selectionStart, end: flowInput.selectionEnd }
+                : undefined;
+        const currentFlowMessageList = this.shadowRoot.querySelector<HTMLElement>('.flow-message-list');
+        const flowScrollState = currentFlowMessageList
+            ? {
+                  top: currentFlowMessageList.scrollTop ?? 0,
+                  atBottom:
+                      (currentFlowMessageList.scrollHeight ?? 0) -
+                          (currentFlowMessageList.clientHeight ?? 0) -
+                          (currentFlowMessageList.scrollTop ?? 0) <=
+                      2
+              }
+            : undefined;
         this.closeSendMenu();
         // 整树重建会带走 fixed 浮层，菜单状态一并复位
         this.closeSkillAddMenu();
@@ -502,9 +842,10 @@ export class AgentOfficeEntryWidget extends AgentOperableHTMLElement {
                 <div class="tab-group">
                     ${this.tabButton('office', this.tr('agentoffice.tab.office'))}
                     ${this.tabButton('management', this.tr('agentoffice.tab.management'))}
+                    ${this.flowFeatureEnabled ? this.tabButton('flows', this.tr('agentoffice.flow.tab')) : ''}
                 </div>
             </div>
-            <div class="body">${this.activeTab === 'office' ? this.renderOffice() : this.renderManagement()}</div>
+            <div class="body">${this.renderActiveTab()}</div>
             ${this.renderModal()}
         </div>`;
         if (draft) {
@@ -523,9 +864,38 @@ export class AgentOfficeEntryWidget extends AgentOperableHTMLElement {
         const messagesBox = this.shadowRoot.querySelector<HTMLElement>('#messages');
         if (messagesBox) messagesBox.scrollTop = messagesScrollTop;
         this.bindEvents();
+        this.bindFlowReadingSettings();
+        if (flowCaret && !this.modal) {
+            const input = this.shadowRoot.querySelector<HTMLTextAreaElement>('#flow-message-input');
+            input?.focus();
+            input?.setSelectionRange(flowCaret.start, flowCaret.end);
+        }
+        const nextFlowMessageList = this.shadowRoot.querySelector<HTMLElement>('.flow-message-list');
+        if (nextFlowMessageList) {
+            const scrollToBottom = this.flowScrollToBottomOnNextRender;
+            nextFlowMessageList.scrollTop =
+                scrollToBottom || flowScrollState?.atBottom
+                    ? nextFlowMessageList.scrollHeight
+                    : (flowScrollState?.top ?? nextFlowMessageList.scrollHeight);
+            if (scrollToBottom) {
+                const flowId = this.selectedFlow?.id;
+                this.flowScrollToBottomOnNextRender = false;
+                requestAnimationFrame(() => {
+                    if (flowId !== this.selectedFlow?.id || this.flowView !== 'chat') return;
+                    const current = this.shadowRoot?.querySelector<HTMLElement>('.flow-message-list');
+                    if (current) current.scrollTop = current.scrollHeight;
+                });
+            }
+        }
     }
 
-    private tabButton(id: 'office' | 'management', label: string): string {
+    private renderActiveTab(): string {
+        if (this.activeTab === 'office') return this.renderOffice();
+        if (this.activeTab === 'management') return this.renderManagement();
+        return this.renderFlows();
+    }
+
+    private tabButton(id: AgentOfficeTab, label: string): string {
         return `<button class="tab ${this.activeTab === id ? 'active' : ''}" data-tab="${id}" aria-pressed="${this.activeTab === id}">${escapeHtml(label)}</button>`;
     }
 
@@ -640,14 +1010,12 @@ export class AgentOfficeEntryWidget extends AgentOperableHTMLElement {
     private renderMessages(staffId: string): string {
         if (this.messages.length === 0)
             return `<div class="empty">${escapeHtml(this.tr('agentoffice.noMessages'))}</div>`;
-        const staff = this.staffs.find((item) => item.id === staffId) ?? null;
-        const youLabel = this.tr('agentoffice.you');
         return `${this.historyCursor ? `<button class="load-older" data-action="older">${escapeHtml(this.tr('agentoffice.loadOlder'))}</button>` : ''}${this.messages
             .map((message) => {
                 const parts = message.content
                     .map((part) => {
                         if (part.type === 'text')
-                            return `<div class="message-bubble"><div class="message-markdown markdown-body">${renderSafeMarkdown(part.text)}</div></div>`;
+                            return `<div class="message-markdown markdown-body">${renderSafeMarkdown(part.text)}</div>`;
                         const url = `agentoffice://resource/${staffId}/${part.path}`;
                         if (part.media_type === 'image')
                             return `<div class="resource"><img src="${escapeHtml(url)}" alt="${escapeHtml(part.name)}"></div>`;
@@ -655,18 +1023,10 @@ export class AgentOfficeEntryWidget extends AgentOperableHTMLElement {
                             return `<div class="resource"><video controls src="${escapeHtml(url)}"></video></div>`;
                         if (part.media_type === 'audio')
                             return `<div class="resource"><audio controls src="${escapeHtml(url)}"></audio></div>`;
-                        return `<div class="resource"><a href="${escapeHtml(url)}" target="_blank"><i class="fa-solid fa-paperclip"></i>${escapeHtml(part.name)}</a></div>`;
+                        return `<div class="resource"><a href="${escapeHtml(url)}" target="_blank">📎 ${escapeHtml(part.name)}</a></div>`;
                     })
                     .join('');
-                // 极简会话：消息不分左右，用作者名颜色与头像区分自己（珊瑚红元信息）
-                const self = message.role === 'user';
-                const author = self ? youLabel : (staff?.name ?? '');
-                const avatar = self
-                    ? `<span class="avatar avatar-neutral message-avatar" aria-hidden="true">${escapeHtml(youLabel.slice(0, 1).toUpperCase())}</span>`
-                    : staff
-                      ? this.avatar(staff)
-                      : `<span class="avatar av-g1 message-avatar" aria-hidden="true">AI</span>`;
-                return `<article class="message ${message.role} ${message.kind === 'error' ? 'error' : ''}" data-message-id="${escapeHtml(message.id)}" data-message-task="${escapeHtml(message.task_id)}">${avatar}<div class="message-content"><div class="message-meta"><span>${escapeHtml(author)}</span><time>${escapeHtml(new Date(message.created_at).toLocaleString(this.locale))}</time></div>${parts}</div></article>`;
+                return `<div class="message ${message.role} ${message.kind === 'error' ? 'error' : ''}" data-message-id="${escapeHtml(message.id)}" data-message-task="${escapeHtml(message.task_id)}">${parts}<div class="message-meta"><span>${escapeHtml(new Date(message.created_at).toLocaleString(this.locale))}</span></div></div>`;
             })
             .join('')}`;
     }
@@ -678,6 +1038,162 @@ export class AgentOfficeEntryWidget extends AgentOperableHTMLElement {
                 ? `<div class="empty">${escapeHtml(this.loading ? this.tr('agentoffice.loading') : this.tr('agentoffice.noStaffHint'))}</div>`
                 : `<div class="grid">${this.staffs.map((staff) => `<button class="card" data-detail="${staff.id}">${this.staffCardContent(staff)}</button>`).join('')}</div>`
         }</section></div>`;
+    }
+
+    private renderFlows(): string {
+        if (this.selectedFlow) return `<div class="management management-detail">${this.renderFlowDetail()}</div>`;
+        const cards = this.flows
+            .map((flow) => {
+                const searchText = `${flow.name} ${flow.goal}`.toLocaleLowerCase();
+                const hidden = this.flowQuery.trim() && !searchText.includes(this.flowQuery.trim().toLocaleLowerCase());
+                return `<button class="card flow-card" data-flow-detail="${escapeHtml(flow.id)}" data-flow-search="${escapeHtml(searchText)}" ${hidden ? 'hidden' : ''}>
+                    <div class="flow-card-head"><div><h3>${escapeHtml(flow.name)}</h3><span class="sub">${escapeHtml(this.tr(`agentoffice.flow.status.${flow.status}`))}</span></div><span class="flow-member-count">${escapeHtml(this.formatText('agentoffice.flow.memberCount', { count: flow.memberCount }))}</span></div>
+                    <p>${escapeHtml(flow.goal)}</p>
+                    ${flow.missingMemberCount > 0 ? `<span class="flow-warning">${escapeHtml(this.formatText('agentoffice.flow.missingMemberCount', { count: flow.missingMemberCount }))}</span>` : ''}
+                </button>`;
+            })
+            .join('');
+        return `<div class="management"><section class="management-panel"><div class="toolbar flow-toolbar"><div><span class="toolbar-title">${escapeHtml(this.tr('agentoffice.flow.tab'))}</span>${this.status ? `<span class="notice">${escapeHtml(this.status)}</span>` : ''}</div><div class="toolbar-actions"><button class="primary" data-action="new-flow"><i class="fa-solid fa-plus"></i>${escapeHtml(this.tr('agentoffice.flow.new'))}</button></div></div><div class="flow-filters"><input class="search" id="flow-search" value="${escapeHtml(this.flowQuery)}" placeholder="${escapeHtml(this.tr('agentoffice.flow.search'))}"><select id="flow-status-filter" aria-label="${escapeHtml(this.tr('agentoffice.flow.filterStatus'))}">${(['active', 'paused', 'archived', 'all'] as FlowListStatus[]).map((status) => `<option value="${status}" ${this.flowStatusFilter === status ? 'selected' : ''}>${escapeHtml(this.tr(`agentoffice.flow.filter.${status}`))}</option>`).join('')}</select></div>${this.flows.length === 0 ? `<div class="empty">${escapeHtml(this.tr('agentoffice.flow.empty'))}</div>` : `<div class="grid flow-grid">${cards}</div>`}</section></div>`;
+    }
+
+    private renderFlowDetail(): string {
+        const flow = this.selectedFlow!;
+        const archived = flow.status === 'archived';
+        const viewAction =
+            this.flowView === 'chat'
+                ? `<button class="secondary flow-view-button" data-action="flow-settings" title="${escapeHtml(this.tr('agentoffice.flow.settings'))}">${renderIcon('fa-gear')}<span>${escapeHtml(this.tr('agentoffice.flow.settings'))}</span></button>`
+                : `<button class="secondary flow-view-button" data-action="flow-chat" title="${escapeHtml(this.tr('agentoffice.flow.chat'))}">${renderIcon('fa-users')}<span>${escapeHtml(this.tr('agentoffice.flow.chat'))}</span></button>`;
+        const settingsActions =
+            this.flowView === 'settings' && !archived
+                ? `<button class="danger" data-action="archive-flow">${escapeHtml(this.tr('agentoffice.flow.archive'))}</button><button class="primary" data-action="save-flow">${escapeHtml(this.tr('agentoffice.save'))}</button>`
+                : '';
+        return `<section class="detail flow-detail"><div class="detail-head"><div class="flow-detail-title"><button class="secondary icon-button" data-action="back-flow" title="${escapeHtml(this.tr('agentoffice.back'))}" aria-label="${escapeHtml(this.tr('agentoffice.back'))}"><i class="fa-solid fa-arrow-left"></i></button><div><b>${escapeHtml(flow.name)}</b><div class="sub">${escapeHtml(flow.goal)}</div></div></div><div class="toolbar-actions">${viewAction}${archived ? `<button class="danger" data-action="delete-flow">${escapeHtml(this.tr('agentoffice.flow.delete'))}</button>` : ''}${settingsActions}</div></div><p class="detail-notice" role="alert" ${this.status ? '' : 'hidden'}>${escapeHtml(this.status)}</p>${this.flowView === 'chat' ? this.renderFlowChat(flow, archived) : this.renderFlowSettings(flow, archived)}</section>`;
+    }
+
+    private renderFlowSettings(flow: AgentFlowDetail, archived: boolean): string {
+        const currentMemberIds = new Set(flow.memberIds);
+        const existingRows = this.staffs
+            .map(
+                (staff) =>
+                    `<label class="flow-member-row"><input type="checkbox" data-flow-member="${escapeHtml(staff.id)}" ${currentMemberIds.has(staff.id) ? 'checked' : ''} ${archived ? 'disabled' : ''}><span><b>${escapeHtml(staff.name)}</b><span>${escapeHtml(staff.title)}</span></span></label>`
+            )
+            .join('');
+        const missingRows = flow.members
+            .filter((member) => member.missing)
+            .map(
+                (member) =>
+                    `<label class="flow-member-row missing"><input type="checkbox" data-flow-member="${escapeHtml(member.staffId)}" checked ${archived ? 'disabled' : ''}><span><b>${escapeHtml(this.tr('agentoffice.flow.memberMissing'))}</b><span>${escapeHtml(member.staffId)}</span></span></label>`
+            )
+            .join('');
+        return `<div class="detail-content flow-detail-content"><section class="settings-section"><div class="form-grid settings-form"><div class="field"><label for="flow-name">${escapeHtml(this.tr('agentoffice.flow.name'))}</label><input id="flow-name" maxlength="100" value="${escapeHtml(flow.name)}" ${archived ? 'disabled' : ''}></div><div class="field full"><label for="flow-goal">${escapeHtml(this.tr('agentoffice.flow.goal'))}</label><textarea id="flow-goal" maxlength="4000" ${archived ? 'disabled' : ''}>${escapeHtml(flow.goal)}</textarea></div></div></section><section class="settings-section"><div class="settings-section-head"><h3 class="settings-section-title">${escapeHtml(this.tr('agentoffice.flow.members'))}</h3><span class="sub">${escapeHtml(this.formatText('agentoffice.flow.revision', { revision: flow.revision }))}</span></div><div class="flow-member-list">${missingRows}${existingRows}</div></section><section class="settings-section" data-reading-settings>${this.renderFlowReadingSettings()}</section></div>`;
+    }
+
+    private renderFlowChat(flow: AgentFlowDetail, archived: boolean): string {
+        const messages = this.flowMessages.length
+            ? this.flowMessages.map((message) => this.renderFlowMessage(flow, message)).join('')
+            : `<div class="empty flow-chat-empty">${escapeHtml(this.tr('agentoffice.flow.chatEmpty'))}</div>`;
+        const mentions = flow.members
+            .filter((member) => !member.missing)
+            .map(
+                (member) =>
+                    `<button class="flow-mention" data-flow-mention="${escapeHtml(member.staffId)}" ${member.enabled ? '' : 'disabled'}>@${escapeHtml(member.name ?? member.staffId)}</button>`
+            )
+            .join('');
+        const attachments = this.flowAttachments
+            .map(
+                (item, index) =>
+                    `<div class="composer-file-tag"><i class="fa-solid fa-paperclip"></i><span>${escapeHtml(item.name)}</span><button data-remove-flow-attachment="${index}" title="${escapeHtml(this.tr('agentoffice.close'))}"><i class="fa-solid fa-xmark"></i></button></div>`
+            )
+            .join('');
+        const images = this.flowImageDataUris.length
+            ? `<div class="composer-image-previews">${this.flowImageDataUris.map((image, index) => `<div class="composer-image-thumb"><img src="${image.dataUrl}" alt="${escapeHtml(image.name)}"><button class="composer-image-thumb-remove" data-remove-flow-image="${index}" title="${escapeHtml(this.tr('agentoffice.close'))}"><i class="fa-solid fa-xmark"></i></button></div>`).join('')}</div>`
+            : '';
+        const sendDisabled = this.busy;
+        const replyMessage = this.flowReplyToMessageId ? this.findFlowMessage(this.flowReplyToMessageId) : undefined;
+        const replyPreview = this.flowReplyToMessageId
+            ? `<div class="flow-composer-reply"><div class="flow-reply-copy">${replyMessage ? `<b>${escapeHtml(this.flowMessageSender(flow, replyMessage))}</b><span>${escapeHtml(this.flowMessageExcerpt(replyMessage))}</span>` : `<span>${escapeHtml(this.tr('agentoffice.flow.message.deletedReference'))}</span>`}</div><button class="flow-reply-close" data-action="cancel-flow-reply" title="${escapeHtml(this.tr('agentoffice.close'))}" aria-label="${escapeHtml(this.tr('agentoffice.close'))}"><i class="fa-solid fa-xmark"></i></button></div>`
+            : '';
+        const composer = archived
+            ? ''
+            : `<div class="flow-composer" id="flow-composer"><div class="composer-outer"><div class="composer-card"><div class="flow-mention-bar">${mentions}</div>${images}${replyPreview}<div class="composer-textarea-wrap"><textarea id="flow-message-input" class="composer-textarea" maxlength="100000" placeholder="${escapeHtml(this.tr('agentoffice.flow.messagePlaceholder'))}">${escapeHtml(this.flowDraftText)}</textarea></div><div class="composer-toolbar"><div class="composer-toolbar-left"><button class="composer-toolbar-control" data-action="flow-attach" title="${escapeHtml(this.tr('agentoffice.attach'))}" aria-label="${escapeHtml(this.tr('agentoffice.attach'))}"><i class="fa-solid fa-paperclip"></i></button>${attachments}</div><div class="composer-toolbar-right"><div class="composer-send-group"><button class="composer-send-btn ${sendDisabled ? 'composer-send-inactive' : 'composer-send-active'}" data-action="flow-send" title="${escapeHtml(this.tr('agentoffice.send'))}" ${sendDisabled ? 'disabled' : ''}><i class="fa-solid fa-arrow-up"></i><span>${escapeHtml(this.tr('agentoffice.send'))}</span></button><div class="composer-send-divider"></div><button class="composer-send-menu-btn ${sendDisabled ? 'composer-send-inactive' : 'composer-send-active'}" data-action="send-menu" title="${escapeHtml(this.tr('agentoffice.sendOptions'))}" aria-label="${escapeHtml(this.tr('agentoffice.sendOptions'))}" ${sendDisabled ? 'disabled' : ''}><i class="fa-solid fa-ellipsis"></i></button></div></div></div></div></div></div>`;
+        return `<div class="flow-chat"><div class="flow-message-list">${this.flowHistoryCursor ? `<button class="load-older" data-action="flow-older">${escapeHtml(this.tr('agentoffice.loadOlder'))}</button>` : ''}${messages}</div>${composer}</div>`;
+    }
+
+    private renderFlowMessage(flow: AgentFlowDetail, message: AgentFlowMessage): string {
+        const member =
+            message.sender.type === 'staff'
+                ? flow.members.find((member) => member.staffId === message.sender.id)
+                : undefined;
+        const staff =
+            message.sender.type === 'staff'
+                ? this.staffs.find((candidate) => candidate.id === message.sender.id)
+                : undefined;
+        const sender =
+            message.sender.type === 'user'
+                ? this.tr('agentoffice.flow.sender.user')
+                : message.sender.type === 'system'
+                  ? this.tr('agentoffice.flow.sender.system')
+                  : member?.name || this.tr('agentoffice.flow.memberMissing');
+        const content = message.content
+            .map((part) => {
+                if (part.type === 'text')
+                    return `<div class="message-markdown markdown-body">${renderSafeMarkdown(part.text)}</div>`;
+                const url = `agentoffice://flow-resource/${flow.id}/${part.path}`;
+                if (part.mediaType === 'image') {
+                    return `<div class="resource"><img src="${escapeHtml(url)}" alt="${escapeHtml(part.name)}"></div>`;
+                }
+                if (part.mediaType === 'video')
+                    return `<div class="resource"><video controls src="${escapeHtml(url)}"></video></div>`;
+                if (part.mediaType === 'audio')
+                    return `<div class="resource"><audio controls src="${escapeHtml(url)}"></audio></div>`;
+                return `<div class="resource"><a href="${escapeHtml(url)}" target="_blank"><i class="fa-solid fa-paperclip"></i> ${escapeHtml(part.name)}</a></div>`;
+            })
+            .join('');
+        const referenced = message.replyToMessageId ? this.findFlowMessage(message.replyToMessageId) : undefined;
+        const reply = message.replyToMessageId
+            ? `<div class="flow-message-reply">${referenced ? `<b>${escapeHtml(this.flowMessageSender(flow, referenced))}</b><span>${escapeHtml(this.flowMessageExcerpt(referenced))}</span>` : `<span>${escapeHtml(this.tr('agentoffice.flow.message.deletedReference'))}</span>`}</div>`
+            : '';
+        const role = message.sender.type === 'user' ? 'user' : 'assistant';
+        const senderLabel = message.sender.type === 'system' ? `<b>${escapeHtml(sender)}</b>` : '';
+        const avatar =
+            message.sender.type === 'staff'
+                ? `<span class="flow-message-avatar" title="${escapeHtml(sender)}" aria-label="${escapeHtml(sender)}">${staff ? this.avatar(staff) : `<span class="avatar ${AVATAR_GRADIENTS[this.avatarGradientIndex(sender)]}">${escapeHtml(member?.name?.slice(0, 1).toUpperCase() || '?')}</span>`}</span>`
+                : '';
+        const messageHtml = `<article class="message flow-message ${role} ${message.sender.type} ${message.kind === 'error' ? 'error' : ''}" data-flow-message="${escapeHtml(message.id)}">${avatar}<div class="flow-message-body">${reply}${content}</div>${message.retryable ? `<span class="flow-retryable">${escapeHtml(this.tr('agentoffice.flow.retryable'))}</span>` : ''}<div class="message-meta flow-message-meta">${senderLabel}${message.sequence ? `<span>m${message.sequence}</span>` : ''}<time>${escapeHtml(new Date(message.createdAt).toLocaleString(this.locale))}</time></div><details class="flow-reading-receipt" data-flow-receipt="${escapeHtml(message.id)}">${this.renderFlowReceipt(message.id)}</details></article>`;
+        const clientRequestId = message.clientRequestId;
+        const isSending =
+            message.sender.type === 'user' &&
+            clientRequestId !== undefined &&
+            this.flowPendingRequests.get(clientRequestId) === flow.id;
+        if (!isSending) return messageHtml;
+        const status = `<div class="flow-send-progress attached" data-flow-send-pending role="status" aria-live="polite"><span class="flow-send-spinner" aria-hidden="true"></span><span>${escapeHtml(this.tr('agentoffice.flow.sending'))}</span></div>`;
+        return `<div class="flow-message-row user" data-flow-message-row="${escapeHtml(message.id)}">${status}${messageHtml}</div>`;
+    }
+
+    private findFlowMessage(messageId: string): AgentFlowMessage | undefined {
+        return (
+            this.flowMessages.find((message) => message.id === messageId) ?? this.flowReferencedMessages.get(messageId)
+        );
+    }
+
+    private flowMessageSender(flow: AgentFlowDetail, message: AgentFlowMessage): string {
+        if (message.sender.type === 'user') return this.tr('agentoffice.flow.sender.user');
+        if (message.sender.type === 'system') return this.tr('agentoffice.flow.sender.system');
+        return (
+            flow.members.find((member) => member.staffId === message.sender.id)?.name ??
+            this.tr('agentoffice.flow.memberMissing')
+        );
+    }
+
+    private flowMessageExcerpt(message: AgentFlowMessage): string {
+        const excerpt = message.content
+            .map((part) => (part.type === 'text' ? part.text : part.name))
+            .join(' ')
+            .replace(/\s+/g, ' ')
+            .trim();
+        const characters = Array.from(excerpt);
+        if (characters.length <= FLOW_MESSAGE_EXCERPT_MAX_CHARACTERS) return excerpt;
+        return `${characters.slice(0, FLOW_MESSAGE_EXCERPT_MAX_CHARACTERS).join('')}…`;
     }
 
     private staffCardContent(staff: StaffListItem): string {
@@ -1002,6 +1518,24 @@ export class AgentOfficeEntryWidget extends AgentOperableHTMLElement {
     }
 
     private renderModal(): string {
+        if (this.modal === 'new-flow') {
+            const memberRows = this.staffs
+                .map(
+                    (staff) =>
+                        `<label class="flow-member-row"><input type="checkbox" data-new-flow-member="${escapeHtml(staff.id)}"><span><b>${escapeHtml(staff.name)}</b><span>${escapeHtml(staff.title)}</span></span></label>`
+                )
+                .join('');
+            return `<div class="modal-backdrop"><div class="modal" role="dialog" aria-modal="true" aria-labelledby="new-flow-title"><div class="modal-head info"><div class="modal-icon">${renderIcon('fa-layer-group')}</div><div class="modal-head-text"><h3 id="new-flow-title">${escapeHtml(this.tr('agentoffice.flow.new'))}</h3><p class="sub">${escapeHtml(this.tr('agentoffice.flow.newHint'))}</p></div><button class="modal-close" data-action="close-modal" aria-label="${escapeHtml(this.tr('agentoffice.cancel'))}"><i class="fa-solid fa-xmark"></i></button></div><div class="modal-body"><div class="modal-error" id="new-flow-error" role="alert"></div><div class="modal-form"><div class="field" data-new-flow-field="name"><label for="new-flow-name">${escapeHtml(this.tr('agentoffice.flow.name'))}</label><input id="new-flow-name" maxlength="100" autocomplete="off"></div><div class="field" data-new-flow-field="goal"><label for="new-flow-goal">${escapeHtml(this.tr('agentoffice.flow.goal'))}</label><textarea id="new-flow-goal" maxlength="4000"></textarea></div><div class="field" data-new-flow-field="members"><label>${escapeHtml(this.tr('agentoffice.flow.members'))}</label><div class="flow-member-list">${memberRows}</div></div></div></div><div class="modal-footer"><button class="secondary" data-action="close-modal">${escapeHtml(this.tr('agentoffice.cancel'))}</button><button class="primary" data-action="create-flow">${escapeHtml(this.tr('agentoffice.save'))}</button></div></div></div>`;
+        }
+        if (this.modal === 'archive-flow' && this.selectedFlow) {
+            return `<div class="modal-backdrop"><div class="modal" role="dialog" aria-modal="true" aria-labelledby="archive-flow-title"><div class="modal-head danger"><div class="modal-icon">${renderIcon('fa-inbox')}</div><div class="modal-head-text"><h3 id="archive-flow-title">${escapeHtml(this.tr('agentoffice.flow.archive'))}</h3></div><button class="modal-close" data-action="close-modal" aria-label="${escapeHtml(this.tr('agentoffice.cancel'))}"><i class="fa-solid fa-xmark"></i></button></div><div class="modal-body"><p>${escapeHtml(this.tr('agentoffice.flow.archiveWarning'))}</p></div><div class="modal-footer"><button class="secondary" data-action="close-modal">${escapeHtml(this.tr('agentoffice.cancel'))}</button><button class="danger" data-action="confirm-archive-flow">${escapeHtml(this.tr('agentoffice.flow.archive'))}</button></div></div></div>`;
+        }
+        if (this.modal === 'delete-flow' && this.selectedFlow) {
+            return `<div class="modal-backdrop"><div class="modal" role="dialog" aria-modal="true" aria-labelledby="delete-flow-title"><div class="modal-head danger"><div class="modal-icon">${renderIcon('fa-trash-can')}</div><div class="modal-head-text"><h3 id="delete-flow-title">${escapeHtml(this.tr('agentoffice.flow.delete'))}</h3></div><button class="modal-close" data-action="close-modal" aria-label="${escapeHtml(this.tr('agentoffice.cancel'))}"><i class="fa-solid fa-xmark"></i></button></div><div class="modal-body"><p>${escapeHtml(this.tr('agentoffice.flow.deleteWarning'))}</p></div><div class="modal-footer"><button class="secondary" data-action="close-modal">${escapeHtml(this.tr('agentoffice.cancel'))}</button><button class="danger" data-action="confirm-delete-flow">${escapeHtml(this.tr('agentoffice.flow.delete'))}</button></div></div></div>`;
+        }
+        if (this.modal === 'delete-flow-message' && this.flowDeleteMessageId) {
+            return `<div class="modal-backdrop"><div class="modal" role="dialog" aria-modal="true" aria-labelledby="delete-flow-message-title"><div class="modal-head danger"><div class="modal-icon">${renderIcon('fa-trash-can')}</div><div class="modal-head-text"><h3 id="delete-flow-message-title">${escapeHtml(this.tr('agentoffice.flow.message.delete'))}</h3></div><button class="modal-close" data-action="close-modal" aria-label="${escapeHtml(this.tr('agentoffice.cancel'))}"><i class="fa-solid fa-xmark"></i></button></div><div class="modal-body"><p>${escapeHtml(this.tr('agentoffice.flow.message.deleteWarning'))}</p></div><div class="modal-footer"><button class="secondary" data-action="close-modal">${escapeHtml(this.tr('agentoffice.cancel'))}</button><button class="danger" data-action="confirm-delete-flow-message">${escapeHtml(this.tr('agentoffice.flow.message.delete'))}</button></div></div></div>`;
+        }
         if (this.modal === 'new') {
             const required = `<span class="required-mark" aria-hidden="true">*</span>`;
             const error = escapeHtml(this.tr('agentoffice.fieldRequired'));
@@ -1123,13 +1657,159 @@ export class AgentOfficeEntryWidget extends AgentOperableHTMLElement {
         this.shadowRoot?.querySelectorAll<HTMLElement>('[data-tab]').forEach((element) =>
             element.addEventListener('click', () => {
                 void this.flushAutoSave();
-                this.activeTab = element.dataset.tab as 'office' | 'management';
+                this.rememberFlowDraft();
+                ++this.flowOpenRequest;
+                this.activeTab = element.dataset.tab as AgentOfficeTab;
                 this.detail = null;
+                this.selectedFlow = null;
                 this.status = '';
                 this.closeSkillAddMenu();
+                if (this.activeTab === 'flows') void this.reloadFlows();
+                else this.render();
+            })
+        );
+        this.shadowRoot?.querySelectorAll<HTMLElement>('[data-flow-detail]').forEach((element) =>
+            element.addEventListener('click', () => {
+                void this.openFlow(element.dataset.flowDetail!);
+            })
+        );
+        this.shadowRoot?.querySelector<HTMLInputElement>('#flow-search')?.addEventListener('input', (event) => {
+            this.flowQuery = (event.target as HTMLInputElement).value;
+            this.filterFlowCards();
+        });
+        this.shadowRoot
+            ?.querySelector<HTMLSelectElement>('#flow-status-filter')
+            ?.addEventListener('change', (event) => {
+                this.flowStatusFilter = (event.target as HTMLSelectElement).value as FlowListStatus;
+                this.selectedFlow = null;
+                void this.reloadFlows();
+            });
+        this.shadowRoot?.querySelector('[data-action="new-flow"]')?.addEventListener('click', () => {
+            this.modal = 'new-flow';
+            this.render();
+        });
+        this.shadowRoot?.querySelector('[data-action="back-flow"]')?.addEventListener('click', () => {
+            this.rememberFlowDraft();
+            ++this.flowOpenRequest;
+            this.selectedFlow = null;
+            this.flowMessages = [];
+            this.flowReferencedMessages.clear();
+            this.flowHistoryCursor = undefined;
+            this.flowDraftText = '';
+            this.flowReplyToMessageId = undefined;
+            this.flowAttachments = [];
+            this.flowImageDataUris = [];
+            this.flowPendingRequestId = undefined;
+            this.flowPendingPayloadKey = undefined;
+            this.flowPendingRequestFlowId = undefined;
+            this.status = '';
+            this.render();
+        });
+        this.shadowRoot?.querySelector('[data-action="flow-settings"]')?.addEventListener('click', () => {
+            this.flowView = 'settings';
+            this.status = '';
+            this.render();
+        });
+        this.shadowRoot?.querySelector('[data-action="flow-chat"]')?.addEventListener('click', () => {
+            this.flowView = 'chat';
+            this.status = '';
+            this.flowScrollToBottomOnNextRender = true;
+            this.render();
+        });
+        this.shadowRoot?.querySelectorAll<HTMLElement>('[data-flow-mention]').forEach((element) =>
+            element.addEventListener('click', () => {
+                const member = this.selectedFlow?.members.find(
+                    (candidate) => candidate.staffId === element.dataset.flowMention
+                );
+                const input = this.shadowRoot?.querySelector<HTMLTextAreaElement>('#flow-message-input');
+                if (!member?.name || !input) return;
+                const mention = `@${member.name} `;
+                input.value = `${input.value}${input.value && !input.value.endsWith(' ') ? ' ' : ''}${mention}`;
+                this.flowDraftText = input.value;
+                input.focus();
+            })
+        );
+        this.shadowRoot
+            ?.querySelector<HTMLTextAreaElement>('#flow-message-input')
+            ?.addEventListener('input', (event) => {
+                this.flowDraftText = (event.target as HTMLTextAreaElement).value;
+            });
+        this.shadowRoot
+            ?.querySelector<HTMLTextAreaElement>('#flow-message-input')
+            ?.addEventListener('keydown', (event) => {
+                if (event.isComposing || event.key !== 'Enter' || event.shiftKey) return;
+                if (this.ctrlEnterSend && !event.ctrlKey) return;
+                event.preventDefault();
+                void this.sendCurrentFlowMessage();
+            });
+        this.shadowRoot?.querySelector('[data-action="flow-send"]')?.addEventListener('click', () => {
+            void this.sendCurrentFlowMessage();
+        });
+        this.shadowRoot?.querySelector('[data-action="flow-attach"]')?.addEventListener('click', () => {
+            void this.pickFlowAttachments();
+        });
+        this.shadowRoot?.querySelector('[data-action="flow-older"]')?.addEventListener('click', () => {
+            void this.loadFlowMessages(this.flowHistoryCursor);
+        });
+        this.shadowRoot?.querySelectorAll<HTMLElement>('.flow-message[data-flow-message]').forEach((element) =>
+            element.addEventListener('contextmenu', (event) => {
+                event.preventDefault();
+                event.stopPropagation();
+                this.showFlowMessageContextMenu(event.clientX, event.clientY, element.dataset.flowMessage!);
+            })
+        );
+        this.shadowRoot?.querySelector('[data-action="cancel-flow-reply"]')?.addEventListener('click', () => {
+            this.flowReplyToMessageId = undefined;
+            this.render();
+            this.shadowRoot?.querySelector<HTMLTextAreaElement>('#flow-message-input')?.focus();
+        });
+        this.shadowRoot?.querySelectorAll<HTMLElement>('[data-remove-flow-attachment]').forEach((element) =>
+            element.addEventListener('click', () => {
+                this.flowAttachments.splice(Number(element.dataset.removeFlowAttachment), 1);
                 this.render();
             })
         );
+        this.shadowRoot?.querySelectorAll<HTMLElement>('[data-remove-flow-image]').forEach((element) =>
+            element.addEventListener('click', () => {
+                this.flowImageDataUris.splice(Number(element.dataset.removeFlowImage), 1);
+                this.render();
+            })
+        );
+        const flowComposer = this.shadowRoot?.querySelector<HTMLElement>('#flow-composer');
+        flowComposer?.addEventListener('dragover', (event) => {
+            event.preventDefault();
+            flowComposer.classList.add('drag-over');
+        });
+        flowComposer?.addEventListener('dragleave', () => flowComposer.classList.remove('drag-over'));
+        flowComposer?.addEventListener('drop', (event) => void this.handleFlowComposerDrop(event));
+        this.shadowRoot
+            ?.querySelector<HTMLTextAreaElement>('#flow-message-input')
+            ?.addEventListener('paste', (event) => {
+                this.handleFlowComposerPaste(event);
+            });
+        this.shadowRoot
+            ?.querySelector('[data-action="create-flow"]')
+            ?.addEventListener('click', () => void this.createFlow());
+        this.shadowRoot
+            ?.querySelector('[data-action="save-flow"]')
+            ?.addEventListener('click', () => this.runOperation(() => this.saveFlow()));
+        this.shadowRoot?.querySelector('[data-action="delete-flow"]')?.addEventListener('click', () => {
+            this.modal = 'delete-flow';
+            this.render();
+        });
+        this.shadowRoot?.querySelector('[data-action="confirm-delete-flow"]')?.addEventListener('click', () => {
+            this.runOperation(() => this.deleteFlow());
+        });
+        this.shadowRoot?.querySelector('[data-action="archive-flow"]')?.addEventListener('click', () => {
+            this.modal = 'archive-flow';
+            this.render();
+        });
+        this.shadowRoot
+            ?.querySelector('[data-action="confirm-archive-flow"]')
+            ?.addEventListener('click', () => this.runOperation(() => this.archiveFlow()));
+        this.shadowRoot
+            ?.querySelector('[data-action="confirm-delete-flow-message"]')
+            ?.addEventListener('click', () => void this.deleteSelectedFlowMessage());
         this.shadowRoot?.querySelectorAll<HTMLElement>('[data-staff]').forEach((element) =>
             element.addEventListener('click', () => {
                 this.selectedStaffId = element.dataset.staff!;
@@ -1513,6 +2193,37 @@ export class AgentOfficeEntryWidget extends AgentOperableHTMLElement {
         this.runOperation(() => this.openDetail(staffId));
     }
 
+    private showFlowMessageContextMenu(x: number, y: number, messageId: string): void {
+        this.dismissMessageContextMenu();
+        const message = this.findFlowMessage(messageId);
+        if (!message || !this.shadowRoot) return;
+        const menu = document.createElement('div');
+        menu.className = 'ctx-menu' + (this.dataset.theme === 'dark' ? ' ctx-menu-dark' : '');
+        menu.innerHTML = `<button class="ctx-item" data-flow-message-menu="quote"><span class="ctx-icon-sm"><i class="fa-solid fa-reply"></i></span><span class="ctx-label">${escapeHtml(this.tr('agentoffice.flow.message.quote'))}</span></button><div class="ctx-divider"></div><button class="ctx-item danger" data-flow-message-menu="delete"><span class="ctx-icon-sm"><i class="fa-solid fa-trash-can"></i></span><span class="ctx-label">${escapeHtml(this.tr('agentoffice.flow.message.delete'))}</span></button>`;
+        menu.style.left = `${x}px`;
+        menu.style.top = `${y}px`;
+        this.shadowRoot.querySelector('.root')?.appendChild(menu);
+        requestAnimationFrame(() => {
+            const margin = 12;
+            const rect = menu.getBoundingClientRect();
+            menu.style.left = `${Math.min(Math.max(margin, x), Math.max(margin, window.innerWidth - rect.width - margin))}px`;
+            menu.style.top = `${Math.min(Math.max(margin, y), Math.max(margin, window.innerHeight - rect.height - margin))}px`;
+        });
+        menu.querySelector('[data-flow-message-menu="quote"]')?.addEventListener('click', () => {
+            this.flowReplyToMessageId = message.id;
+            this.dismissMessageContextMenu();
+            this.render();
+            this.shadowRoot?.querySelector<HTMLTextAreaElement>('#flow-message-input')?.focus();
+        });
+        menu.querySelector('[data-flow-message-menu="delete"]')?.addEventListener('click', () => {
+            this.flowDeleteMessageId = message.id;
+            this.modal = 'delete-flow-message';
+            this.dismissMessageContextMenu();
+            this.render();
+        });
+        setTimeout(() => window.addEventListener('mousedown', this.dismissMessageContextMenu), 0);
+    }
+
     private showMessageContextMenu(x: number, y: number, element: HTMLElement): void {
         this.dismissMessageContextMenu();
         const message = this.messages.find((item) => item.id === element.dataset.messageId);
@@ -1814,6 +2525,220 @@ export class AgentOfficeEntryWidget extends AgentOperableHTMLElement {
         window.removeEventListener('keydown', this.closeSendMenuOnKeydown);
     }
 
+    private async createFlow(): Promise<void> {
+        const nameInput = this.shadowRoot?.querySelector<HTMLInputElement>('#new-flow-name');
+        const goalInput = this.shadowRoot?.querySelector<HTMLTextAreaElement>('#new-flow-goal');
+        const memberIds = [...(this.shadowRoot?.querySelectorAll<HTMLInputElement>('[data-new-flow-member]') ?? [])]
+            .filter((input) => input.checked)
+            .map((input) => input.dataset.newFlowMember!);
+        const error = this.shadowRoot?.querySelector<HTMLElement>('#new-flow-error');
+        if (!nameInput?.value.trim() || !goalInput?.value.trim() || memberIds.length === 0) {
+            if (error) error.textContent = this.tr('agentoffice.flow.required');
+            return;
+        }
+        try {
+            await this.call('createFlow', {
+                name: nameInput.value.trim(),
+                goal: goalInput.value.trim(),
+                memberIds
+            });
+            this.modal = null;
+            this.status = '';
+            await this.reloadFlows();
+        } catch (caught) {
+            if (error) error.textContent = `${this.tr('agentoffice.operationFailed')}: ${this.errorText(caught)}`;
+        }
+    }
+
+    private async sendCurrentFlowMessage(): Promise<void> {
+        if (!this.selectedFlow || this.busy || this.selectedFlow.status === 'archived') return;
+        const input = this.shadowRoot?.querySelector<HTMLTextAreaElement>('#flow-message-input');
+        const text = input?.value.trim();
+        if (!text && this.flowAttachments.length === 0 && this.flowImageDataUris.length === 0) return;
+        const submittedText = text ?? '';
+        const submittedAttachments = this.flowAttachments.map((attachment) => ({ ...attachment }));
+        const submittedImages = this.flowImageDataUris.map((image) => ({ ...image }));
+        const submittedReplyToMessageId = this.flowReplyToMessageId;
+        const payloadKey = JSON.stringify({
+            text: submittedText,
+            attachments: submittedAttachments,
+            imageDataUris: submittedImages.map((image) => image.dataUrl),
+            replyToMessageId: submittedReplyToMessageId
+        });
+        const flowId = this.selectedFlow.id;
+        const retryRequestId = this.flowPendingRequestId;
+        const requestId =
+            retryRequestId &&
+            this.flowPendingRequestFlowId === flowId &&
+            this.flowPendingPayloadKey === payloadKey &&
+            !this.flowPendingRequests.has(retryRequestId)
+                ? retryRequestId
+                : crypto.randomUUID();
+        this.flowPendingRequests.set(requestId, flowId);
+        this.flowDraftText = '';
+        this.flowAttachments = [];
+        this.flowImageDataUris = [];
+        this.status = '';
+        this.flowScrollToBottomOnNextRender = true;
+        this.render();
+        try {
+            await this.call('sendFlowMessage', flowId, {
+                clientRequestId: requestId,
+                text: submittedText || undefined,
+                attachments: submittedAttachments,
+                imageDataUris: submittedImages.map((image) => image.dataUrl),
+                replyToMessageId: submittedReplyToMessageId
+            });
+            if (this.flowReplyToMessageId === submittedReplyToMessageId) this.flowReplyToMessageId = undefined;
+            if (this.flowPendingRequestId === requestId) {
+                this.flowPendingRequestId = undefined;
+                this.flowPendingPayloadKey = undefined;
+                this.flowPendingRequestFlowId = undefined;
+            }
+            if (this.selectedFlow?.id === flowId) await this.loadFlowMessages();
+        } catch (error) {
+            this.status = this.errorText(error);
+            this.flowPendingRequestId = requestId;
+            this.flowPendingPayloadKey = payloadKey;
+            this.flowPendingRequestFlowId = flowId;
+            if (
+                this.selectedFlow?.id === flowId &&
+                !this.flowDraftText &&
+                this.flowAttachments.length === 0 &&
+                this.flowImageDataUris.length === 0
+            ) {
+                this.flowDraftText = submittedText;
+                this.flowAttachments = submittedAttachments;
+                this.flowImageDataUris = submittedImages;
+            }
+        } finally {
+            this.flowPendingRequests.delete(requestId);
+            this.render();
+        }
+    }
+
+    private async deleteSelectedFlowMessage(): Promise<void> {
+        const flowId = this.selectedFlow?.id;
+        const messageId = this.flowDeleteMessageId;
+        if (!flowId || !messageId) return;
+        try {
+            await this.call('deleteFlowMessage', flowId, messageId);
+            if (this.flowReplyToMessageId === messageId) this.flowReplyToMessageId = undefined;
+            this.modal = null;
+            this.flowDeleteMessageId = undefined;
+            this.status = '';
+            if (this.selectedFlow?.id === flowId) await this.loadFlowMessages();
+        } catch (error) {
+            this.status = this.errorText(error);
+            this.modal = null;
+            this.flowDeleteMessageId = undefined;
+            this.render();
+        }
+    }
+
+    private async pickFlowAttachments(): Promise<void> {
+        const paths = (await (window as any).fsAPI.selectFile()) as string[];
+        this.flowAttachments.push(
+            ...paths.map((filePath) => ({ path: filePath, name: filePath.split(/[\\/]/).pop() || filePath }))
+        );
+        this.render();
+    }
+
+    private async handleFlowComposerDrop(event: DragEvent): Promise<void> {
+        event.preventDefault();
+        const composer = this.shadowRoot?.querySelector<HTMLElement>('#flow-composer');
+        composer?.classList.remove('drag-over');
+        const files = event.dataTransfer?.files;
+        if (!files) return;
+        const fsAPI = (window as any).fsAPI;
+        for (const file of files) {
+            if (file.type.startsWith('image/')) {
+                const reader = new FileReader();
+                reader.onload = () => {
+                    this.flowImageDataUris.push({ dataUrl: String(reader.result), name: file.name || 'image' });
+                    this.render();
+                };
+                reader.readAsDataURL(file);
+                continue;
+            }
+            const filePath = fsAPI?.getFilePath?.(file);
+            if (filePath) {
+                this.flowAttachments.push({
+                    path: filePath,
+                    name: file.name || filePath.split(/[\\/]/).pop() || filePath
+                });
+            }
+        }
+        this.render();
+    }
+
+    private handleFlowComposerPaste(event: ClipboardEvent): void {
+        for (const item of event.clipboardData?.items ?? []) {
+            if (!item.type.startsWith('image/')) continue;
+            const file = item.getAsFile();
+            if (!file) continue;
+            event.preventDefault();
+            const reader = new FileReader();
+            reader.onload = () => {
+                this.flowImageDataUris.push({ dataUrl: String(reader.result), name: file.name || 'pasted-image' });
+                this.render();
+            };
+            reader.readAsDataURL(file);
+        }
+    }
+
+    private async saveFlow(): Promise<void> {
+        if (!this.selectedFlow || this.selectedFlow.status === 'archived') return;
+        const name = this.shadowRoot?.querySelector<HTMLInputElement>('#flow-name')?.value.trim() ?? '';
+        const goal = this.shadowRoot?.querySelector<HTMLTextAreaElement>('#flow-goal')?.value.trim() ?? '';
+        const memberIds = [...(this.shadowRoot?.querySelectorAll<HTMLInputElement>('[data-flow-member]') ?? [])]
+            .filter((input) => input.checked)
+            .map((input) => input.dataset.flowMember!);
+        if (!name || !goal || memberIds.length === 0) throw new Error(this.tr('agentoffice.flow.required'));
+
+        let current = this.selectedFlow;
+        if (name !== current.name || goal !== current.goal) {
+            current = await this.call('updateFlow', current.id, current.revision, { name, goal });
+        }
+        if (
+            memberIds.length !== current.memberIds.length ||
+            memberIds.some((memberId, index) => memberId !== current.memberIds[index])
+        ) {
+            current = await this.call('setFlowMembers', current.id, current.revision, memberIds);
+        }
+        this.selectedFlow = await this.call('getFlow', current.id);
+        this.flows = await this.call('listFlows', { status: this.flowStatusFilter });
+        this.status = this.tr('agentoffice.flow.saved');
+        this.render();
+    }
+
+    private async deleteFlow(): Promise<void> {
+        if (!this.selectedFlow || this.selectedFlow.status !== 'archived') return;
+        const flow = this.selectedFlow;
+        this.modal = null;
+        this.render();
+        await this.call('deleteFlow', flow.id, flow.revision);
+        this.flowDrafts.delete(flow.id);
+        this.selectedFlow = null;
+        this.flowMessages = [];
+        this.flowReferencedMessages.clear();
+        this.flowReplyToMessageId = undefined;
+        this.flowDraftText = '';
+        this.flowAttachments = [];
+        this.flowImageDataUris = [];
+        this.status = '';
+        await this.reloadFlows();
+    }
+
+    private async archiveFlow(): Promise<void> {
+        if (!this.selectedFlow) return;
+        await this.call('archiveFlow', this.selectedFlow.id, this.selectedFlow.revision);
+        this.modal = null;
+        this.selectedFlow = null;
+        this.status = '';
+        await this.reloadFlows();
+    }
+
     private async createStaff(): Promise<void> {
         const fields = [
             { input: '#new-name', container: '[data-new-field="name"]' },
@@ -1981,6 +2906,7 @@ export class AgentOfficeEntryWidget extends AgentOperableHTMLElement {
 
     private closeModal(): void {
         this.modal = null;
+        this.flowDeleteMessageId = undefined;
         this.selectedSkill = null;
         this.selectedInstalledSkillIds.clear();
         this.batchSkillCandidates = [];

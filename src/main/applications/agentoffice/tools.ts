@@ -16,14 +16,24 @@ import type { PermissionRequest } from '../../aikernel/security/permission.js';
 import { t } from './locale/index.js';
 import type { HistoryQuery } from './common.js';
 
-const SendReplySchema = z
-    .object({
-        text: z.string().optional().describe(t('agentoffice.tool.sendReply.textArg')),
-        files: z.array(z.string()).optional().default([]).describe(t('agentoffice.tool.sendReply.filesArg'))
-    })
-    .refine((value) => Boolean(value.text?.trim()) || value.files.length > 0, {
-        message: t('agentoffice.tool.sendReply.requiredArg')
-    });
+const createSendReplySchema = (flowReply: boolean) =>
+    z
+        .object({
+            text: z.string().optional().describe(t('agentoffice.tool.sendReply.textArg')),
+            files: z.array(z.string()).optional().default([]).describe(t('agentoffice.tool.sendReply.filesArg')),
+            ...(flowReply
+                ? {
+                      replyTo: z
+                          .string()
+                          .regex(/^m[1-9][0-9]*$/, t('agentoffice.flow.error.invalidReplyReference'))
+                          .optional()
+                          .describe(t('agentoffice.flow.tool.replyToArg'))
+                  }
+                : {})
+        })
+        .refine((value) => Boolean(value.text?.trim()) || value.files.length > 0, {
+            message: t('agentoffice.tool.sendReply.requiredArg')
+        });
 
 const GetHistoryMessagesSchema = z
     .object({
@@ -51,21 +61,38 @@ const GetHistoryMessagesSchema = z
         }
     });
 
-class SendReplyTool extends BaseTool<typeof SendReplySchema> {
+class SendReplyTool extends BaseTool<ReturnType<typeof createSendReplySchema>> {
     constructor(
-        private readonly sendReply: (text: string | undefined, files: string[], taskState?: TaskState) => Promise<void>
+        private readonly sendReply: (
+            text: string | undefined,
+            files: string[],
+            taskState?: TaskState,
+            replyTo?: string
+        ) => Promise<void>,
+        flowReply = false
     ) {
-        super('sendReply', t('agentoffice.tool.sendReply.description'), SendReplySchema, undefined, {
-            'zh-CN': '发送回复',
-            'en-US': 'Send Reply'
-        });
+        super(
+            'sendReply',
+            t(flowReply ? 'agentoffice.flow.tool.sendReplyDescription' : 'agentoffice.tool.sendReply.description'),
+            createSendReplySchema(flowReply),
+            undefined,
+            {
+                'zh-CN': '发送回复',
+                'en-US': 'Send Reply'
+            }
+        );
         this.setExecutor(async (args, taskState) => {
-            await this.sendReply(args.text, args.files, taskState);
-            return t('agentoffice.tool.sendReply.success');
+            await this.sendReply(
+                args.text,
+                args.files,
+                taskState,
+                typeof args.replyTo === 'string' ? args.replyTo : undefined
+            );
+            return t(flowReply ? 'agentoffice.flow.tool.sendReplySuccess' : 'agentoffice.tool.sendReply.success');
         });
     }
 
-    getDeclaredPermissions(args: z.output<typeof SendReplySchema>): PermissionRequest[] {
+    getDeclaredPermissions(args: z.output<ReturnType<typeof createSendReplySchema>>): PermissionRequest[] {
         return (args.files ?? []).map((filePath) => ({
             resourceType: 'file',
             action: 'read',
@@ -75,11 +102,20 @@ class SendReplyTool extends BaseTool<typeof SendReplySchema> {
 }
 
 class GetHistoryMessagesTool extends BaseTool<typeof GetHistoryMessagesSchema> {
-    constructor(private readonly getHistory: (query: HistoryQuery) => Promise<unknown>) {
-        super('getHistoryMessages', t('agentoffice.tool.getHistory.description'), GetHistoryMessagesSchema, undefined, {
-            'zh-CN': '历史消息',
-            'en-US': 'History Messages'
-        });
+    constructor(
+        private readonly getHistory: (query: HistoryQuery) => Promise<unknown>,
+        flowReply = false
+    ) {
+        super(
+            'getHistoryMessages',
+            t(flowReply ? 'agentoffice.flow.tool.historyDescription' : 'agentoffice.tool.getHistory.description'),
+            GetHistoryMessagesSchema,
+            undefined,
+            {
+                'zh-CN': '历史消息',
+                'en-US': 'History Messages'
+            }
+        );
         this.setExecutor(async (args) => {
             const cursor = args.cursor ? { cursor: args.cursor } : {};
             const query: HistoryQuery =
@@ -98,11 +134,12 @@ class GetHistoryMessagesTool extends BaseTool<typeof GetHistoryMessagesSchema> {
 }
 
 export function createAgentOfficeTaskToolset(options: {
-    sendReply: (text: string | undefined, files: string[], taskState?: TaskState) => Promise<void>;
+    sendReply: (text: string | undefined, files: string[], taskState?: TaskState, replyTo?: string) => Promise<void>;
+    flowReply?: boolean;
     getHistory: (query: HistoryQuery) => Promise<unknown>;
 }): BaseToolset {
     const toolset = new BaseToolset('agentoffice');
-    toolset.addTool(new SendReplyTool(options.sendReply));
-    toolset.addTool(new GetHistoryMessagesTool(options.getHistory));
+    toolset.addTool(new SendReplyTool(options.sendReply, options.flowReply));
+    toolset.addTool(new GetHistoryMessagesTool(options.getHistory, options.flowReply));
     return toolset;
 }
