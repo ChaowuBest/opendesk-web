@@ -16,6 +16,7 @@
  * 通过 BaseIndexer 使用。
  */
 
+import { groupedCountSql, decodeCountGroups, type BaseCountGroup } from './grouped-count.js';
 import path from 'path';
 import fs from 'fs';
 import { ColumnSchema, validateColumnSchema } from './abstract-storage.js';
@@ -406,6 +407,15 @@ export class BaseIndexDBHm implements IBaseIndexDB {
         options?: Omit<BaseQueryOptions, 'conditions'>
     ): Promise<Record<string, any>[]> {
         return this.findAll({ ...options, conditions });
+    }
+
+    async countGrouped(fields: string[], conditions: BaseQueryCondition[] = []): Promise<BaseCountGroup[]> {
+        await this.ensureInitialized();
+        const { whereClause, params } =
+            conditions.length > 0 ? this.buildWhereClause(conditions) : { whereClause: '', params: [] };
+        const sql = groupedCountSql(fields, this.validFields, whereClause);
+        const rows = await this.queryAllSql(sql, params);
+        return decodeCountGroups(fields, rows);
     }
 
     async count(conditions?: BaseQueryCondition[]): Promise<number> {

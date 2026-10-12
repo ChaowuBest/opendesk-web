@@ -27,29 +27,6 @@ function probeErrorMessage(code) {
     return code === 'dim_unsupported' ? t('filemgr.alert.dim_unsupported') : t('filemgr.alert.embedding_unavailable');
 }
 
-function formatStorageStatusBlock(storage) {
-    if (!storage) return '存储统计\n  (暂无数据)';
-    const isFull = storage.mode === 'full';
-    const modeLabel = isFull ? '完整' : '基础（向量搜索不可用）';
-    const lines = [`索引模式: ${modeLabel}`];
-
-    if (isFull) {
-        lines.push(
-            `向量嵌入: ${storage.embedded_count ?? 0} / ${storage.total_files ?? 0} 已完成（${storage.pending_count ?? 0} 待处理）`
-        );
-    } else if ((storage.embedded_count ?? 0) > 0) {
-        lines.push(`已嵌入文件: ${storage.embedded_count} 条（嵌入暂停）`);
-    }
-
-    if (storage.last_embedding_task_at) {
-        lines.push(`最近嵌入任务: ${new Date(storage.last_embedding_task_at).toLocaleString()}`);
-    }
-
-    const chunkPart = isFull ? `内容分片 ${storage.chunk_size ?? 0} 条` : '内容分片 未加载（基础模式）';
-    lines.push(`存储占用: 元数据 ${storage.db_size ?? 0} 条 | ${chunkPart}`);
-    return lines.join('\n');
-}
-
 const REBUILD_EVENT_TTL_MS = 24 * 60 * 60 * 1000;
 
 function getVisibleRebuildEvent(data) {
@@ -293,8 +270,6 @@ class FileMgrApplication extends BaseApplication {
                         `向量 ${(storageStats.vecdb_size ?? 0).toLocaleString()} | ` +
                         `分片 ${(storageStats.chunk_size ?? 0).toLocaleString()}`
                 );
-            } else if (data.storage) {
-                lines.push('', ...formatStorageStatusBlock(data.storage).split('\n'));
             }
 
             const visibleRebuildEvent = getVisibleRebuildEvent(data);
@@ -436,4 +411,4 @@ class FileMgrApplication extends BaseApplication {
     }
 }
 
-export { FileMgrApplication, formatStorageStatusBlock };
+export { FileMgrApplication };

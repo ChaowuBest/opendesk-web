@@ -60,14 +60,24 @@ export class TagIndexDB implements ITagIndexDB {
         // 创建数据库连接
         this.db = new Database(dbPath);
 
-        // 启用 WAL 模式以提高并发性能
-        this.db.pragma('journal_mode = WAL');
+        try {
+            // 启用 WAL 模式以提高并发性能
+            this.db.pragma('journal_mode = WAL');
 
-        // 设置忙等待超时（毫秒）
-        this.db.pragma('busy_timeout = 5000');
+            // 设置忙等待超时（毫秒）
+            this.db.pragma('busy_timeout = 5000');
 
-        // 初始化表结构
-        this.initializeTable();
+            // 初始化表结构
+            this.initializeTable();
+        } catch (error) {
+            // The failed constructor cannot hand its connection to the caller.
+            try {
+                this.db.close();
+            } catch {
+                /* Preserve the initialization failure. */
+            }
+            throw error;
+        }
     }
 
     /**

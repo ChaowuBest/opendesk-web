@@ -373,7 +373,7 @@ async function testVectorBaseCombo(): Promise<void> {
     );
     assert(r2.length >= 1 && r2[0].item.item_id === 'vb-2');
 
-    storage.close();
+    await storage.close();
     cleanup(dir);
     console.log('[testVectorBaseCombo] PASS');
 }
@@ -447,7 +447,7 @@ async function testBM25MultiColumn(): Promise<void> {
     );
     assert(r2.length >= 1, 'BM25 semi_text column search should return results');
 
-    storage.close();
+    await storage.close();
     cleanup(dir);
     console.log('[testBM25MultiColumn] PASS');
 }
@@ -508,7 +508,7 @@ async function testBM25VectorCombo(): Promise<void> {
     );
     assert(results.length >= 1 && results[0].item.item_id === 'vs-1');
 
-    storage.close();
+    await storage.close();
     cleanup(dir);
     console.log('[testBM25VectorCombo] PASS');
 }
@@ -569,7 +569,7 @@ async function testMultiColumnVectorUpdate(): Promise<void> {
     );
     assert(r.length >= 1 && r[0].item.item_id === 'mc-1', 'col_b should still return mc-1 after col_a update');
 
-    storage.close();
+    await storage.close();
     cleanup(dir);
     console.log('[testMultiColumnVectorUpdate] PASS');
 }
@@ -641,7 +641,7 @@ async function testBM25UpsertSiblingColumns(): Promise<void> {
     );
     assert(sibR.length >= 1 && sibR[0].item.item_id === 'bm25-sib', 'Sibling BM25 column should not be deleted');
 
-    storage.close();
+    await storage.close();
     cleanup(dir);
     console.log('[testBM25UpsertSiblingColumns] PASS');
 }
@@ -707,7 +707,7 @@ async function testVectorInsertSkipSibling(): Promise<void> {
     );
     assert.equal(rB.length, 0, 'Insert should not write sibling vector for existing item');
 
-    storage.close();
+    await storage.close();
     cleanup(dir);
     console.log('[testVectorInsertSkipSibling] PASS');
 }
@@ -733,7 +733,7 @@ async function testDimMismatchDetection(): Promise<void> {
             indexer_columns: { VectorIndexer: [{ column: 'repr', content: makeOneHotVector(0, 1024) }] }
         }
     ]);
-    s1.close();
+    await s1.close();
 
     const schema512: ColumnSchema = {
         ...schema1024,
@@ -784,7 +784,7 @@ async function testGetStatus(): Promise<void> {
     assert.equal(status.BaseIndexer.size, 1);
     assert.equal(status.VectorIndexer.size, 1);
 
-    storage.close();
+    await storage.close();
     cleanup(dir);
     console.log('[testGetStatus] PASS');
 }
@@ -1002,7 +1002,7 @@ async function testSearchVectorMetaNoConditions(): Promise<void> {
             'item_type in vector meta must equal the column name'
         );
     } finally {
-        storage.close();
+        await storage.close();
         cleanup(dir);
     }
 }
@@ -1039,7 +1039,7 @@ async function testSearchVectorMetaWithConditions(): Promise<void> {
         const empty = await storage.searchVectorMeta([{ field: 'item_id', operator: '=', value: 'nonexistent' }]);
         assert.equal(empty.length, 0, 'no match must return empty array');
     } finally {
-        storage.close();
+        await storage.close();
         cleanup(dir);
     }
 }
@@ -1052,7 +1052,7 @@ async function testSearchVectorMetaEmptyDb(): Promise<void> {
         const rows = await storage.searchVectorMeta([]);
         assert.equal(rows.length, 0, 'empty db must return empty array');
     } finally {
-        storage.close();
+        await storage.close();
         cleanup(dir);
     }
 }
@@ -1492,7 +1492,7 @@ async function testNativeScopedVectorUsesExactCandidateTopK(): Promise<void> {
         );
         assert.equal(result.items[0].item.filename, 'inside-best');
     } finally {
-        storage.close();
+        await storage.close();
         cleanup(dir);
     }
 }
@@ -1567,7 +1567,7 @@ async function testNativeScopedVectorRanksAcrossPathUnion(): Promise<void> {
             false
         );
     } finally {
-        storage.close();
+        await storage.close();
         cleanup(dir);
     }
 }
@@ -1631,7 +1631,7 @@ async function testForcedWasmScopedVectorUsesOneCompleteCandidateCall(): Promise
         assert.equal(result.diagnostics?.strategy, 'ann_overfetch_filter');
         assert(!result.items.some((hit) => hit.item.item_id === 'outside'));
     } finally {
-        storage.close();
+        await storage.close();
         cleanup(dir);
         if (platformDescriptor) Object.defineProperty(process, 'platform', platformDescriptor);
         if (previousArkData === undefined) delete process.env.ARKDATA_AVAILABLE;
@@ -1913,7 +1913,7 @@ async function runScopedSearchNativeBenchmark(): Promise<void> {
                 await runScopedSearchPerfCase(storage, fixture.totalRows, scopeRows, 'chunk');
             }
         } finally {
-            storage?.close();
+            await storage?.close();
             cleanup(dir);
         }
     }
@@ -1948,7 +1948,7 @@ async function main(): Promise<void> {
             failed++;
         }
     }
-    storage.close();
+    await storage.close();
     cleanup(sharedDir);
 
     const standaloneTests = [
@@ -2102,7 +2102,7 @@ async function testClearChunkIndexerPreservesOthers() {
         ]);
         assert(afterTag.items.length > 0, 'TagIndexer should be preserved');
 
-        storage.close();
+        await storage.close();
         console.log('  ✅ clearIndexerForItem: ChunkIndexer cleared, all others preserved');
     } finally {
         cleanup(dir);
@@ -2163,7 +2163,7 @@ async function testClearVectorIndexerPreservesOthers() {
         ]);
         assert.equal(afterBase.items.length, 1, 'BaseIndexer should be preserved');
 
-        storage.close();
+        await storage.close();
         console.log('  ✅ clearIndexerForItem: VectorIndexer cleared, others preserved');
     } finally {
         cleanup(dir);
@@ -2209,7 +2209,7 @@ async function testClearBM25IndexerPreservesOthers() {
         const afterTag = await storage.search([{ indexer: 'TagIndexer', field: 'tag', operator: '=', value: 'todo' }]);
         assert(afterTag.items.length > 0, 'TagIndexer should be preserved');
 
-        storage.close();
+        await storage.close();
         console.log('  ✅ clearIndexerForItem: BM25Indexer cleared, others preserved');
     } finally {
         cleanup(dir);
@@ -2254,7 +2254,7 @@ async function testClearTagIndexerPreservesOthers() {
         ]);
         assert(afterBM252.items.length > 0, 'BM25Indexer should be preserved');
 
-        storage.close();
+        await storage.close();
         console.log('  ✅ clearIndexerForItem: TagIndexer cleared, others preserved');
     } finally {
         cleanup(dir);
@@ -2272,7 +2272,7 @@ async function testClearIndexerNonexistentIsNoop() {
         await storage.clearIndexerForItem('nonexistent-id', 'VectorIndexer');
         await storage.clearIndexerForItem('nonexistent-id', 'TagIndexer');
 
-        storage.close();
+        await storage.close();
         console.log('  ✅ clearIndexerForItem: nonexistent itemId is no-op');
     } finally {
         cleanup(dir);
@@ -2294,7 +2294,7 @@ async function testClearBaseIndexerThrows() {
         }
         assert(threw, 'should throw when clearing BaseIndexer');
 
-        storage.close();
+        await storage.close();
         console.log('  ✅ clearIndexerForItem: BaseIndexer throws');
     } finally {
         cleanup(dir);
@@ -2324,7 +2324,7 @@ async function testClearUninitializedIndexerThrows() {
         }
         assert(threw, 'should throw when indexer not initialized');
 
-        storage.close();
+        await storage.close();
         console.log('  ✅ clearIndexerForItem: uninitialized indexer throws');
     } finally {
         cleanup(dir);

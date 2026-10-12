@@ -16,16 +16,14 @@
  * 支持动态查询条件：'=', '!=', '>', '<', '>=', '<=', 'like', 'in', 'between'
  */
 
+import { groupedCountSql, decodeCountGroups, type BaseCountGroup } from './grouped-count.js';
 import type DatabaseType from 'better-sqlite3';
 import { createRequire } from 'module';
 import path from 'path';
 import fs from 'fs';
 import { ColumnSchema, validateColumnSchema, type ColumnConstraint } from './abstract-storage.js';
 import { removeSqliteStoreFiles } from './drop-utils.js';
-import {
-    normalizePathDescendantOrSelfValues,
-    pathDescendantOrSelfSqlValues
-} from './path-scope.js';
+import { normalizePathDescendantOrSelfValues, pathDescendantOrSelfSqlValues } from './path-scope.js';
 import type {
     BaseIndexStoreProbeResult,
     BaseQueryCondition,
@@ -112,14 +110,24 @@ export class BaseIndexDB implements IBaseIndexDB {
         // 创建数据库连接
         this.db = new Database(dbPath);
 
-        // 启用 WAL 模式以提高并发性能
-        this.db.pragma('journal_mode = WAL');
+        try {
+            // 启用 WAL 模式以提高并发性能
+            this.db.pragma('journal_mode = WAL');
 
-        // 设置忙等待超时（毫秒）
-        this.db.pragma('busy_timeout = 5000');
+            // 设置忙等待超时（毫秒）
+            this.db.pragma('busy_timeout = 5000');
 
-        // 初始化表结构
-        this.initializeTable();
+            // 初始化表结构
+            this.initializeTable();
+        } catch (error) {
+            // The failed constructor cannot hand its connection to the caller.
+            try {
+                this.db.close();
+            } catch {
+                /* Preserve the initialization failure. */
+            }
+            throw error;
+        }
     }
 
     /**
@@ -454,6 +462,14 @@ export class BaseIndexDB implements IBaseIndexDB {
     /**
      * 统计记录数
      */
+    async countGrouped(fields: string[], conditions: BaseQueryCondition[] = []): Promise<BaseCountGroup[]> {
+        const { whereClause, params } =
+            conditions.length > 0 ? this.buildWhereClause(conditions) : { whereClause: '', params: [] };
+        const sql = groupedCountSql(fields, this.validFields, whereClause);
+        const rows = this.db.prepare(sql).all(...params) as Record<string, unknown>[];
+        return decodeCountGroups(fields, rows);
+    }
+
     async count(conditions?: BaseQueryCondition[]): Promise<number> {
         let sql = `SELECT COUNT(*) as count FROM ${this.tableName}`;
         const params: any[] = [];

@@ -16,6 +16,7 @@
 
 import { createRequire } from 'module';
 import { Mutex } from 'async-mutex';
+import { once } from 'node:events';
 import { ColumnSchema } from './abstract-storage.js';
 import path from 'path';
 import fs from 'fs';
@@ -47,6 +48,10 @@ function getJieba(): JiebaLike {
 
 export class BM25IndexDB implements IBM25IndexDB {
     private si: Record<string, any> | null = null;
+    private initializationPromise: Promise<void> | null = null;
+    private closingPromise: Promise<void> | null = null;
+    private initialized = false;
+    private closeRequested = false;
     private readonly dbPath: string;
     private readonly schema: ColumnSchema;
     private readonly mutex = new Mutex();
@@ -62,27 +67,70 @@ export class BM25IndexDB implements IBM25IndexDB {
     }
 
     async initialize(): Promise<void> {
-        if (this.si) return;
-
-        const dir = path.dirname(this.dbPath);
-        if (!fs.existsSync(dir)) {
-            fs.mkdirSync(dir, { recursive: true });
+        this.ensureUsable();
+        if (this.initialized) return;
+        const initialization = this.initializationPromise ?? this.initializeStores();
+        this.initializationPromise = initialization;
+        try {
+            await initialization;
+            this.ensureUsable();
+            this.initialized = true;
+        } finally {
+            if (this.initializationPromise === initialization) this.initializationPromise = null;
         }
+    }
 
+    private async initializeStores(): Promise<void> {
+        const dir = path.dirname(this.dbPath);
+        fs.mkdirSync(dir, { recursive: true });
         const si = await import('search-index');
         const SearchIndexCtor = (si as any).SearchIndex as any;
-        this.si = {};
-
+        this.si ??= {};
         for (const [columnName, indexers] of Object.entries(this.schema.needIndexers)) {
-            if (!indexers.some((b) => b.indexer === 'BM25Indexer')) continue;
-            this.si[columnName] = await new SearchIndexCtor({
-                name: `${this.dbPath}-${columnName}`
-            });
-            this.documents.set(columnName, new Map());
+            this.ensureUsable();
+            if (!indexers.some((b) => b.indexer === 'BM25Indexer') || this.documents.has(columnName)) continue;
+            let index = this.si[columnName];
+            let ready: Promise<unknown> | undefined;
+            if (!index) {
+                index = new SearchIndexCtor({ name: `${this.dbPath}-${columnName}`, skipFields: ['raw_text'] });
+                this.si[columnName] = index;
+                // Attach before awaiting: closing also waits for LevelDB setup.
+                ready = once(index.EVENTS, 'ready');
+            }
+            await Promise.all([index.VERSION_VALIDATED, index.INDEX.STORE.open(), ready]);
+            this.ensureUsable();
+            // Search and update use these caches, not search-index's token index.
+            // A failed read leaves this column eligible for initialization retry.
+            const documents = new Map<string, { item_id: string; item_type: string; text: string; tokens: string[] }>();
+            for (const { _id, _doc: doc } of await index.ALL_DOCUMENTS()) {
+                if (
+                    typeof _id !== 'string' ||
+                    typeof doc?.item_id !== 'string' ||
+                    typeof doc?.item_type !== 'string' ||
+                    typeof doc?.text !== 'string'
+                ) {
+                    throw new Error(`Invalid persisted BM25 document in column: ${columnName}`);
+                }
+                const hasRawText = typeof doc.raw_text === 'string';
+                documents.set(_id, {
+                    item_id: doc.item_id,
+                    item_type: doc.item_type,
+                    text: hasRawText ? doc.raw_text : doc.text,
+                    // Old documents only retain the already normalized tokens.
+                    // Their original punctuation/spacing cannot be reconstructed.
+                    tokens: hasRawText ? this.tokenize(doc.raw_text) : doc.text.split(' ').filter(Boolean)
+                });
+            }
+            this.documents.set(columnName, documents);
+            for (const doc of documents.values()) this.knownItemIds.add(doc.item_id);
             console.info(
                 `[BM25IndexDB] Initializing BM25 index for column: ${columnName}, dbPath: ${this.dbPath}-${columnName}`
             );
         }
+    }
+
+    private ensureUsable(): void {
+        if (this.closeRequested) throw new Error('BM25IndexDB is closing or closed');
     }
 
     tokenize(text: string): string[] {
@@ -95,6 +143,7 @@ export class BM25IndexDB implements IBM25IndexDB {
     }
 
     async search(query: string, options?: BM25SearchOptions): Promise<BM25SearchResult[]> {
+        this.ensureUsable();
         if (!this.si) return [];
         if (!options?.columnName || !(options.columnName in this.schema.needIndexers)) return [];
 
@@ -117,13 +166,14 @@ export class BM25IndexDB implements IBM25IndexDB {
                     };
                 })
                 .filter((doc) => doc.score > 0)
-                .sort((a, b) => b.score - a.score)
+                .sort((a, b) => b.score - a.score || a.item_id.localeCompare(b.item_id))
                 .slice(0, topK);
             return searchResults;
         });
     }
 
     async insert(records: BM25Record[]): Promise<void> {
+        this.ensureUsable();
         if (records.length === 0 || !this.si) return;
 
         await this.mutex.runExclusive(async () => {
@@ -142,7 +192,8 @@ export class BM25IndexDB implements IBM25IndexDB {
                     _id: record.bm25_id,
                     item_id: record.item_id,
                     item_type: record.item_type,
-                    text: this.tokenize(record.text).join(' ')
+                    text: this.tokenize(record.text).join(' '),
+                    raw_text: record.text
                 }));
                 await index.PUT(docs);
                 for (const record of list) {
@@ -156,35 +207,32 @@ export class BM25IndexDB implements IBM25IndexDB {
                 }
             }
         });
-        await this.flush();
     }
 
     async delete(itemIds: string[]): Promise<void> {
+        this.ensureUsable();
         if (itemIds.length === 0 || !this.si) return;
 
         await this.mutex.runExclusive(async () => {
-            for (const index of Object.values(this.si!)) {
-                for (const itemId of itemIds) {
-                    const results = await index.SEARCH([`item_id:${itemId}`], { PAGE: { SIZE: 100 } });
-                    if (results.RESULT && results.RESULT.length > 0) {
-                        const docIds = results.RESULT.map((r: any) => r._id);
-                        await index.DELETE(...docIds);
-                    }
+            const ids = new Set(itemIds);
+            for (const [column, index] of Object.entries(this.si!)) {
+                const documents = this.documents.get(column)!;
+                const docIds = [...documents].filter(([, doc]) => ids.has(doc.item_id)).map(([id]) => id);
+                // Exact restored identities also cover IDs containing query syntax.
+                for (let start = 0; start < docIds.length; start += 500) {
+                    const batch = docIds.slice(start, start + 500);
+                    await index.DELETE(...batch);
+                    for (const id of batch) documents.delete(id);
                 }
             }
             for (const itemId of itemIds) {
                 this.knownItemIds.delete(itemId);
-                for (const docs of this.documents.values()) {
-                    for (const [docId, doc] of docs.entries()) {
-                        if (doc.item_id === itemId) docs.delete(docId);
-                    }
-                }
             }
         });
-        await this.flush();
     }
 
     async update(records: BM25Record[]): Promise<void> {
+        this.ensureUsable();
         if (records.length === 0 || !this.si) return;
 
         await this.mutex.runExclusive(async () => {
@@ -203,7 +251,8 @@ export class BM25IndexDB implements IBM25IndexDB {
                     _id: record.bm25_id,
                     item_id: record.item_id,
                     item_type: record.item_type,
-                    text: this.tokenize(record.text).join(' ')
+                    text: this.tokenize(record.text).join(' '),
+                    raw_text: record.text
                 }));
                 await index.PUT(docs);
                 for (const record of list) {
@@ -217,22 +266,15 @@ export class BM25IndexDB implements IBM25IndexDB {
                 }
             }
         });
-        await this.flush();
-    }
-
-    private async flush(): Promise<void> {
-        if (!this.si) return;
-
-        for (const index of Object.values(this.si)) {
-            await index.FLUSH();
-        }
     }
 
     async existingItemIds(ids: string[]): Promise<Set<string>> {
+        this.ensureUsable();
         return new Set(ids.filter((id) => this.knownItemIds.has(id)));
     }
 
     async deleteByKeys(keys: Array<{ item_id: string; item_type: string }>): Promise<void> {
+        this.ensureUsable();
         if (keys.length === 0 || !this.si) return;
         await this.mutex.runExclusive(async () => {
             for (const key of keys) {
@@ -242,21 +284,38 @@ export class BM25IndexDB implements IBM25IndexDB {
                 this.documents.get(key.item_type)?.delete(`${key.item_id}_${key.item_type}`);
             }
         });
-        await this.flush();
     }
 
-    close(): void {
-        if (!this.si) return;
-
-        const si = this.si;
-        this.si = null;
-        for (const index of Object.values(si)) {
-            index.FLUSH().catch((e: any) => console.warn('[BM25IndexDB] FLUSH failed on close:', e?.message));
-        }
+    close(): Promise<void> {
+        this.closeRequested = true;
+        if (this.closingPromise) return this.closingPromise;
+        const initialization = this.initializationPromise;
+        const closing = (async () => {
+            if (initialization) await initialization.catch(() => {});
+            await this.mutex.runExclusive(async () => {
+                const entries = Object.entries(this.si ?? {});
+                const results = await Promise.allSettled(
+                    entries.map(async ([column, index]) => {
+                        // search-index FLUSH clears data; awaited writes already commit
+                        // through LevelDB. Ordinary release closes the actual store.
+                        await index.INDEX.STORE.close();
+                        if (this.si?.[column] === index) delete this.si[column];
+                    })
+                );
+                const failed = results.find((result): result is PromiseRejectedResult => result.status === 'rejected');
+                if (failed) throw failed.reason;
+                this.si = null;
+                this.initialized = false;
+            });
+        })().finally(() => {
+            if (this.closingPromise === closing) this.closingPromise = null;
+        });
+        this.closingPromise = closing;
+        return closing;
     }
 
     async dropStorage(): Promise<void> {
-        this.close();
+        await this.close();
         for (const columnName of Object.keys(this.schema.needIndexers)) {
             if (!this.schema.needIndexers[columnName].some((binding) => binding.indexer === 'BM25Indexer')) continue;
             removePathIfExists(`${this.dbPath}-${columnName}`);
@@ -267,22 +326,23 @@ export class BM25IndexDB implements IBM25IndexDB {
     }
 
     async clear(): Promise<void> {
+        this.ensureUsable();
         if (!this.si) return;
-
-        for (const index of Object.values(this.si)) {
-            await index.DELETE_ALL();
-        }
-        this.knownItemIds.clear();
-        for (const docs of this.documents.values()) docs.clear();
+        await this.mutex.runExclusive(async () => {
+            for (const index of Object.values(this.si!)) await index.DELETE_ALL();
+            this.knownItemIds.clear();
+            for (const docs of this.documents.values()) docs.clear();
+        });
     }
 
     async count(): Promise<number> {
+        this.ensureUsable();
         if (!this.si) return 0;
-        let total = 0;
-        for (const index of Object.values(this.si)) {
-            total += await (index as any).DOCUMENT_COUNT();
-        }
-        return total;
+        return this.mutex.runExclusive(async () => {
+            let total = 0;
+            for (const index of Object.values(this.si!)) total += await index.DOCUMENT_COUNT();
+            return total;
+        });
     }
 }
 

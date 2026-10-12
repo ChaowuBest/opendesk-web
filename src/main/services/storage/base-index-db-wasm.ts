@@ -17,11 +17,13 @@
  * async methods to match the existing indexer contract.
  */
 
+import { groupedCountSql, decodeCountGroups, type BaseCountGroup } from './grouped-count.js';
 import fs from 'fs';
 import path from 'path';
 import { createRequire } from 'module';
 import { ColumnSchema, validateColumnSchema, type ColumnConstraint } from './abstract-storage.js';
 import { removeSqliteStoreFiles } from './drop-utils.js';
+import { toWasmDbPath } from './wasm-path.js';
 import { normalizePathDescendantOrSelfValues, pathDescendantOrSelfSqlValues } from './path-scope.js';
 import { ensureWasmOpenableDb } from './wasm-wal-compat.js';
 import type {
@@ -59,11 +61,12 @@ const SUPPORTED_OPERATORS: BaseQueryOperator[] = [
 ];
 
 export function probeBaseIndexStoreWasm(dbPath: string): BaseIndexStoreProbeResult {
-    if (!fs.existsSync(dbPath)) return 'missing';
-    ensureWasmOpenableDb(dbPath);
+    const wasmDbPath = toWasmDbPath(dbPath);
+    if (!fs.existsSync(wasmDbPath)) return 'missing';
+    ensureWasmOpenableDb(wasmDbPath);
     let db: InstanceType<(typeof sqlite3Wasm)['Database']> | null = null;
     try {
-        db = new sqlite3Wasm.Database(dbPath);
+        db = new sqlite3Wasm.Database(wasmDbPath);
         const table = db.get("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?", ['base_index']);
         if (!table) return 'missing';
         db.all('SELECT item_id FROM base_index LIMIT 1');
@@ -81,6 +84,7 @@ function quoteString(value: string): string {
 
 export class BaseIndexDBWasm implements IBaseIndexDB {
     private db: InstanceType<(typeof sqlite3Wasm)['Database']>;
+    private closed = false;
     private readonly tableName = 'base_index';
     private isInitialized = false;
     private readonly schema: ColumnSchema;
@@ -92,20 +96,30 @@ export class BaseIndexDBWasm implements IBaseIndexDB {
         validateColumnSchema(schema);
         this.schema = schema;
         this.validFields = Object.keys(schema.columns);
-        this.dbPath = dbPath;
+        this.dbPath = toWasmDbPath(dbPath);
 
-        const dir = path.dirname(dbPath);
+        const dir = path.dirname(this.dbPath);
         if (!fs.existsSync(dir)) {
             fs.mkdirSync(dir, { recursive: true });
         }
 
-        // 既有库可能由 native better-sqlite3 以 WAL 模式创建，wasm 后端先降级 header 再打开
-        ensureWasmOpenableDb(dbPath);
+        // 打开 WASM 独立库前执行 WAL 兼容检查。
+        ensureWasmOpenableDb(this.dbPath);
 
-        this.db = new sqlite3Wasm.Database(dbPath);
-        this.db.run('PRAGMA journal_mode = WAL');
-        this.db.run('PRAGMA busy_timeout = 5000');
-        this.initializeTable();
+        this.db = new sqlite3Wasm.Database(this.dbPath);
+        try {
+            this.db.run('PRAGMA journal_mode = WAL');
+            this.db.run('PRAGMA busy_timeout = 5000');
+            this.initializeTable();
+        } catch (error) {
+            // The caller cannot close a connection from a failed constructor.
+            try {
+                this.db.close();
+            } catch {
+                // Preserve the initialization error if cleanup also fails.
+            }
+            throw error;
+        }
     }
 
     private initializeTable(): void {
@@ -444,6 +458,14 @@ export class BaseIndexDBWasm implements IBaseIndexDB {
         return this.findAll({ ...options, conditions });
     }
 
+    async countGrouped(fields: string[], conditions: BaseQueryCondition[] = []): Promise<BaseCountGroup[]> {
+        const { whereClause, params } =
+            conditions.length > 0 ? this.buildWhereClause(conditions) : { whereClause: '', params: [] };
+        const sql = groupedCountSql(fields, this.validFields, whereClause);
+        const rows = this.db.all(sql, params);
+        return decodeCountGroups(fields, rows);
+    }
+
     async count(conditions?: BaseQueryCondition[]): Promise<number> {
         let sql = `SELECT COUNT(*) as count FROM ${this.tableName}`;
         const params: any[] = [];
@@ -473,7 +495,9 @@ export class BaseIndexDBWasm implements IBaseIndexDB {
     }
 
     close(): void {
+        if (this.closed) return;
         this.db.close();
+        this.closed = true;
     }
 
     async dropStorage(): Promise<void> {

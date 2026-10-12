@@ -770,8 +770,8 @@ export class VectorIndexDBWasm implements IVectorIndexDB {
 
     close(): void {
         if (this.closed) return;
-        this.closed = true;
         this.db.close();
+        this.closed = true;
     }
 
     async dropStorage(): Promise<void> {

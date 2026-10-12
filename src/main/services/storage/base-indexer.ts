@@ -10,6 +10,7 @@
  */
 
 import path from 'path';
+import type { BaseCountGroup } from './grouped-count.js';
 import { Indexer, IndexerSearchOptions as BaseIndexerSearchOptions, IndexerSearchResult } from './indexer.js';
 import { createBaseIndexDB, probeBaseIndexStore } from './base-index-db-factory.js';
 import {
@@ -68,10 +69,11 @@ export interface IBaseIndexDB {
         options?: Omit<BaseQueryOptions, 'conditions'>
     ): Promise<Record<string, any>[]>;
     count(conditions?: BaseQueryCondition[]): Promise<number>;
+    countGrouped(fields: string[], conditions?: BaseQueryCondition[]): Promise<BaseCountGroup[]>;
     exists(itemId: string): Promise<boolean>;
     clear(): Promise<number>;
     transaction<T>(fn: () => Promise<T>): Promise<T>;
-    close(): void;
+    close(): void | Promise<void>;
     dropStorage(): Promise<void>;
     getSchema(): ColumnSchema;
     getValidFields(): string[];
@@ -113,6 +115,7 @@ export class BaseIndexer extends Indexer {
     private readonly _dbPath: string;
     private isInitialized = false;
     private isDropped = false;
+    private closingPromise: Promise<void> | null = null;
 
     constructor(schema: ColumnSchema, dbPath: string) {
         super();
@@ -263,6 +266,16 @@ export class BaseIndexer extends Indexer {
         return { items, totalCount };
     }
 
+    async countGrouped(fields: string[], conditions: FilterCondition[]): Promise<BaseCountGroup[]> {
+        if (conditions.some((condition) => condition.indexer !== 'BaseIndexer')) {
+            throw new Error('Grouped counts only support BaseIndexer conditions');
+        }
+        return this.ensureDB().countGrouped(
+            fields,
+            conditions.map((condition) => this.toQueryCondition(condition))
+        );
+    }
+
     async count(conditions: FilterCondition[]): Promise<number> {
         const queryConditions = conditions
             .filter((c) => c.indexer === 'BaseIndexer')
@@ -311,23 +324,41 @@ export class BaseIndexer extends Indexer {
     /**
      * 关闭索引器
      */
-    close(): void {
-        this.db?.close();
-        this.db = null;
+    close(): Promise<void> {
+        if (this.closingPromise) return this.closingPromise;
+        const db = this.db;
+        if (!db) return Promise.resolve();
+        // Keep the holder reachable until its reference has actually been released.
+        const closing = (async () => {
+            await db.close();
+            if (this.db === db) this.db = null;
+        })().finally(() => {
+            if (this.closingPromise === closing) this.closingPromise = null;
+        });
+        this.closingPromise = closing;
+        return closing;
     }
 
     async dropStorage(): Promise<void> {
         const db = this.ensureDB();
+        let failure: unknown;
+        let failed = false;
         try {
             await db.dropStorage();
-        } finally {
-            try {
-                db.close();
-            } catch {}
-            this.db = null;
-            this.isDropped = true;
-            this.isInitialized = false;
+        } catch (error) {
+            failure = error;
+            failed = true;
         }
+
+        this.isDropped = true;
+        this.isInitialized = false;
+        try {
+            await this.close();
+        } catch (error) {
+            if (!failed) failure = error;
+            failed = true;
+        }
+        if (failed) throw failure;
     }
 
     async clear(): Promise<void> {

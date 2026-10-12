@@ -31,7 +31,12 @@ import {
     SemanticWriteAvailability
 } from './abstract-storage.js';
 import type { BaseIndexStoreProbeResult } from './base-indexer.js';
-import { createVectorIndexDB, dropVectorIndexStore, probeVectorIndexStore } from './vector-index-db-factory.js';
+import {
+    createVectorIndexDB,
+    createVectorIndexDBForDrop,
+    dropVectorIndexStore,
+    probeVectorIndexStore
+} from './vector-index-db-factory.js';
 
 // 向量索引记录接口 - 保持语义最小化
 export interface VectorIndexRecord {
@@ -88,7 +93,7 @@ export interface IVectorIndexDB {
     clear(): Promise<number>;
     searchMeta(conditions?: VectorMetaCondition[]): Promise<Array<{ item_id: string; item_type: string }>>;
     transaction<T>(fn: () => Promise<T>): Promise<T>;
-    close(): void;
+    close(): void | Promise<void>;
     dropStorage(): Promise<void>;
     getDimension(): number;
     getStoredDim(): Promise<number | null>;
@@ -120,6 +125,7 @@ export class VectorIndexer extends Indexer {
     private readonly dimension: number;
     private schema: ColumnSchema;
     private isDropped = false;
+    private closingPromise: Promise<void> | null = null;
 
     constructor(schema: ColumnSchema, dbPath: string, options?: Record<string, any>) {
         super();
@@ -400,27 +406,46 @@ export class VectorIndexer extends Indexer {
     /**
      * 关闭索引器
      */
-    close(): void {
-        this.db?.close();
-        this.db = null;
+    close(): Promise<void> {
+        if (this.closingPromise) return this.closingPromise;
+        const db = this.db;
+        if (!db) return Promise.resolve();
+        // Keep the holder reachable until its reference has actually been released.
+        const closing = (async () => {
+            await db.close();
+            if (this.db === db) this.db = null;
+        })().finally(() => {
+            if (this.closingPromise === closing) this.closingPromise = null;
+        });
+        this.closingPromise = closing;
+        return closing;
     }
 
     async dropStorage(): Promise<void> {
         if (this.isDropped) return;
+        if (!this.db) this.db = await createVectorIndexDBForDrop(this._dbPath, this.dimension);
         const db = this.db;
+        let failure: unknown;
+        let failed = false;
         try {
             if (db) {
                 await db.dropStorage();
             } else {
                 await dropVectorIndexStore(this._dbPath);
             }
-        } finally {
-            try {
-                db?.close();
-            } catch {}
-            this.db = null;
-            this.isDropped = true;
+        } catch (error) {
+            failure = error;
+            failed = true;
         }
+
+        this.isDropped = true;
+        try {
+            await this.close();
+        } catch (error) {
+            if (!failed) failure = error;
+            failed = true;
+        }
+        if (failed) throw failure;
     }
 
     /**

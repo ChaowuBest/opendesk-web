@@ -36,6 +36,12 @@ export async function createChunkIndexDB(dbPath: string, dimension: number = 102
     );
 }
 
+/** Raw ArkData deletion needs a retained connection; file backends delete without opening a DB. */
+export async function createChunkIndexDBForDrop(dbPath: string, dimension: number): Promise<IChunkIndexDB | null> {
+    if (!shouldUseArkData()) return null;
+    return createChunkIndexDB(dbPath, dimension);
+}
+
 export async function probeChunkIndexStore(dbPath: string): Promise<BaseIndexStoreProbeResult> {
     if (shouldUseArkData()) {
         const { probeChunkIndexStoreArkdata } = await import('./chunk-index-db-arkdata.js');

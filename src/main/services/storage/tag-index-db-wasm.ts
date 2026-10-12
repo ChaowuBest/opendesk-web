@@ -99,6 +99,7 @@ function bindParams(sql: string, params: any[]): string {
 }
 
 export class TagIndexDBWasm implements ITagIndexDB {
+    private closed = false;
     private readonly db: InstanceType<(typeof sqlite3Wasm)['Database']>;
     private readonly dbPath: string;
     private readonly tableName = 'tag_index';
@@ -116,9 +117,19 @@ export class TagIndexDBWasm implements ITagIndexDB {
         ensureWasmOpenableDb(dbPath);
 
         this.db = new sqlite3Wasm.Database(dbPath);
-        this.db.run('PRAGMA journal_mode = WAL');
-        this.db.run('PRAGMA busy_timeout = 5000');
-        this.initializeTable();
+        try {
+            this.db.run('PRAGMA journal_mode = WAL');
+            this.db.run('PRAGMA busy_timeout = 5000');
+            this.initializeTable();
+        } catch (error) {
+            // The failed constructor cannot hand its connection to the caller.
+            try {
+                this.db.close();
+            } catch {
+                /* Preserve the initialization failure. */
+            }
+            throw error;
+        }
     }
 
     private initializeTable(): void {
@@ -442,7 +453,9 @@ export class TagIndexDBWasm implements ITagIndexDB {
     }
 
     close(): void {
+        if (this.closed) return;
         this.db.close();
+        this.closed = true;
     }
 
     async dropStorage(): Promise<void> {

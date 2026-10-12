@@ -12,6 +12,7 @@ import assert from 'node:assert/strict';
 import path from 'path';
 import os from 'os';
 import fs from 'fs';
+import { RAW_TEXT_MAX_FILE_SIZE } from '../../../../main/applications/filemgr/parser/extract.js';
 import {
     CONTENT_EMBED_MAX_CHARS_PER_CHUNK,
     CONTENT_EMBED_MAX_CHUNKS_PER_FILE,
@@ -169,6 +170,10 @@ if (!OPENROUTER_API_KEY) {
     const filter = process.env.TEST_FILTER;
     if (filter) {
         const filteredTests = [
+            testEmbedSingleFileOversizedContentFallsBackToFilenameOnly,
+            testGetStatusReportsMetadata,
+            testRefCountZeroHiddenFromSearchQueueAndStats,
+            testCarveOutKeepsIntermediateRowInvisibleUntilChildScan,
             testInitializeSyncEmbeddingGate,
             testProbeEmbeddingBudgetOptions,
             testScannerStateMigratesLegacyProbeError,
@@ -326,7 +331,7 @@ async function seedLegacyStorage(storageDir, items) {
     const storage = new BaseStorage('filemgr', makeLegacySchemaWithoutRefCount(), storageDir);
     await storage.initialize();
     await storage.upsert(items, { indexers: ['BaseIndexer'] });
-    storage.close();
+    await storage.close();
 }
 
 async function getBaseRow(fss, filePath) {
@@ -435,7 +440,7 @@ async function testSearchFileByName() {
 
         console.log('  ✅ testSearchFileByName');
     } finally {
-        if (fss?.storage) fss.storage.close();
+        await fss?.close();
         cleanup(testDir);
     }
 }
@@ -494,7 +499,7 @@ preconfigured for latency, throughput, and error rate monitoring.
 
         console.log('  ✅ testSearchFileByContent');
     } finally {
-        if (fss?.storage) fss.storage.close();
+        await fss?.close();
         cleanup(testDir);
     }
 }
@@ -551,7 +556,7 @@ async function testRemoveDeletedFilesMultiRoot() {
 
         console.log('  ✅ testRemoveDeletedFilesMultiRoot');
     } finally {
-        if (fss?.storage) fss.storage.close();
+        await fss?.close();
         cleanup(testDir);
     }
 }
@@ -579,7 +584,7 @@ async function testSearchItemsUnderRootUsesSubtreeBounds() {
         const itemIds = result.items.map((it) => it.item.item_id).sort();
         assert.deepEqual(itemIds, [path.join(root, 'a.md'), path.join(root, 'nested', 'b.md')].sort());
     } finally {
-        if (fss?.storage) fss.storage.close();
+        await fss?.close();
         cleanup(dir);
     }
     console.log('  ✅ testSearchItemsUnderRootUsesSubtreeBounds');
@@ -613,7 +618,7 @@ async function testRemoveRootFromItemsKeepsEmptyRefsForCoveredChildren() {
         ]);
         assert.equal(removed.items.length, 0, 'uncovered empty-ref row should be deleted');
     } finally {
-        if (fss?.storage) fss.storage.close();
+        await fss?.close();
         cleanup(dir);
     }
     console.log('  ✅ testRemoveRootFromItemsKeepsEmptyRefsForCoveredChildren');
@@ -655,7 +660,7 @@ async function testDetachRootForConfigChangeKeepsNewChildRootRows() {
         ]);
         assert.equal(deleted.items.length, 0, 'rows not covered by new roots should be deleted');
     } finally {
-        if (fss?.storage) fss.storage.close();
+        await fss?.close();
         cleanup(dir);
     }
     console.log('  ✅ testDetachRootForConfigChangeKeepsNewChildRootRows');
@@ -694,7 +699,7 @@ async function testDetachRootForConfigChangeBatchesLargeDeletes() {
         assert.equal(remaining.items.length, 0, 'large removed root rows should be deleted');
         assert.equal(fss.scannerState.roots[root], undefined);
     } finally {
-        if (fss?.storage) fss.storage.close();
+        await fss?.close();
         cleanup(dir);
     }
     console.log('  ✅ testDetachRootForConfigChangeBatchesLargeDeletes');
@@ -737,7 +742,7 @@ async function testRemoveDeletedFilesUsesActiveRootsWithoutSelfKeeping() {
         ]);
         assert.equal(selfDeleted.items.length, 0, 'scanner root must not keep its own missing rows');
     } finally {
-        if (fss?.storage) fss.storage.close();
+        await fss?.close();
         cleanup(dir);
     }
     console.log('  ✅ testRemoveDeletedFilesUsesActiveRootsWithoutSelfKeeping');
@@ -760,9 +765,18 @@ async function testRefCountZeroHiddenFromSearchQueueAndStats() {
         const hiddenPending = path.join(root, 'hidden-pending.md');
         await fss.storage.upsert(
             [
-                makeStoredFileItem(visible, [root], { embedded: 1 }),
-                makeStoredFileItem(hidden, [], { embedded: 1 }),
-                makeStoredFileItem(hiddenPending, [], { embedded: 0 })
+                makeStoredFileItem(visible, [root], {
+                    embedding_generation: fss.scannerState.embedding_generation,
+                    embedded: 1
+                }),
+                makeStoredFileItem(hidden, [], {
+                    embedding_generation: fss.scannerState.embedding_generation,
+                    embedded: 1
+                }),
+                makeStoredFileItem(hiddenPending, [], {
+                    embedding_generation: fss.scannerState.embedding_generation,
+                    embedded: 0
+                })
             ],
             { indexers: ['BaseIndexer'] }
         );
@@ -816,7 +830,7 @@ async function testRefCountZeroHiddenFromSearchQueueAndStats() {
             'vector content search should hide ref_count=0 rows'
         );
 
-        const stats = await fss.getStatus();
+        const stats = await fss.getGlobalFileCounts();
         assert.equal(stats.total_files, 1);
         assert.equal(stats.embedded_count, 1);
         assert.equal(stats.pending_count, 0);
@@ -831,7 +845,7 @@ async function testRefCountZeroHiddenFromSearchQueueAndStats() {
     } finally {
         LLM.embed = originalEmbed;
         LLM.rerank = originalRerank;
-        if (fss?.storage) fss.storage.close();
+        await fss?.close();
         cleanup(dir);
     }
     console.log('  ✅ testRefCountZeroHiddenFromSearchQueueAndStats');
@@ -849,19 +863,39 @@ async function testProcessEmbeddingQueueUsesRootAwareCandidates() {
         const docsRoot = '/docs';
         const rows = [];
         for (let i = 1; i <= 8; i++) {
-            rows.push(makeStoredFileItem(`${workspaceRoot}/file-${i}.md`, [workspaceRoot], { embedded: 0 }));
+            rows.push(
+                makeStoredFileItem(`${workspaceRoot}/file-${i}.md`, [workspaceRoot], {
+                    embedding_generation: fss.scannerState.embedding_generation,
+                    embedded: 0
+                })
+            );
         }
         for (let i = 1; i <= 8; i++) {
-            rows.push(makeStoredFileItem(`${docsRoot}/file-${i}.md`, [docsRoot], { embedded: 0 }));
+            rows.push(
+                makeStoredFileItem(`${docsRoot}/file-${i}.md`, [docsRoot], {
+                    embedding_generation: fss.scannerState.embedding_generation,
+                    embedded: 0
+                })
+            );
         }
         await fss.storage.upsert(rows, { indexers: ['BaseIndexer'] });
 
         const seen = [];
         fss.embedSingleFile = async (file) => {
             seen.push(file.item_id);
-            await fss.storage.update([{ item_id: file.item_id, item_type: 'file', embedded: 1 }], {
-                indexers: ['BaseIndexer']
-            });
+            await fss.storage.update(
+                [
+                    {
+                        item_id: file.item_id,
+                        item_type: 'file',
+                        embedded: 1,
+                        embedding_generation: fss.scannerState.embedding_generation
+                    }
+                ],
+                {
+                    indexers: ['BaseIndexer']
+                }
+            );
         };
 
         const processed = await fss.processEmbeddingQueue(() => false, {
@@ -887,7 +921,7 @@ async function testProcessEmbeddingQueueUsesRootAwareCandidates() {
         assert.equal(workspaceProcessed, 8);
         assert.equal(docsProcessed, 8);
     } finally {
-        if (fss?.storage) fss.storage.close();
+        await fss?.close();
         cleanup(dir);
     }
     console.log('  ✅ testProcessEmbeddingQueueUsesRootAwareCandidates');
@@ -903,7 +937,12 @@ async function testProcessEmbeddingQueueYieldsAtFileBoundary() {
 
         const root = '/workspace';
         await fss.storage.upsert(
-            [1, 2, 3].map((i) => makeStoredFileItem(`${root}/file-${i}.md`, [root], { embedded: 0 })),
+            [1, 2, 3].map((i) =>
+                makeStoredFileItem(`${root}/file-${i}.md`, [root], {
+                    embedding_generation: fss.scannerState.embedding_generation,
+                    embedded: 0
+                })
+            ),
             { indexers: ['BaseIndexer'] }
         );
 
@@ -911,9 +950,19 @@ async function testProcessEmbeddingQueueYieldsAtFileBoundary() {
         let scanPending = false;
         fss.embedSingleFile = async (file) => {
             seen.push(file.item_id);
-            await fss.storage.update([{ item_id: file.item_id, item_type: 'file', embedded: 1 }], {
-                indexers: ['BaseIndexer']
-            });
+            await fss.storage.update(
+                [
+                    {
+                        item_id: file.item_id,
+                        item_type: 'file',
+                        embedded: 1,
+                        embedding_generation: fss.scannerState.embedding_generation
+                    }
+                ],
+                {
+                    indexers: ['BaseIndexer']
+                }
+            );
             scanPending = true;
         };
 
@@ -925,7 +974,7 @@ async function testProcessEmbeddingQueueYieldsAtFileBoundary() {
         assert.equal(processed, 1);
         assert.equal(seen.length, 1);
     } finally {
-        if (fss?.storage) fss.storage.close();
+        await fss?.close();
         cleanup(dir);
     }
     console.log('  ✅ testProcessEmbeddingQueueYieldsAtFileBoundary');
@@ -945,18 +994,38 @@ async function testProcessEmbeddingQueueExcludesPausedOnlyOwnership() {
         const shared = `${runnableRoot}/shared.md`;
         await fss.storage.upsert(
             [
-                makeStoredFileItem(pausedOnly, [pausedRoot], { embedded: 0 }),
-                makeStoredFileItem(runnableOnly, [runnableRoot], { embedded: 0 }),
-                makeStoredFileItem(shared, [pausedRoot, runnableRoot], { embedded: 0, ref_count: 2 })
+                makeStoredFileItem(pausedOnly, [pausedRoot], {
+                    embedding_generation: fss.scannerState.embedding_generation,
+                    embedded: 0
+                }),
+                makeStoredFileItem(runnableOnly, [runnableRoot], {
+                    embedding_generation: fss.scannerState.embedding_generation,
+                    embedded: 0
+                }),
+                makeStoredFileItem(shared, [pausedRoot, runnableRoot], {
+                    embedding_generation: fss.scannerState.embedding_generation,
+                    embedded: 0,
+                    ref_count: 2
+                })
             ],
             { indexers: ['BaseIndexer'] }
         );
         const seen = [];
         fss.embedSingleFile = async (row) => {
             seen.push(row.item_id);
-            await fss.storage.update([{ item_id: row.item_id, item_type: 'file', embedded: 1 }], {
-                indexers: ['BaseIndexer']
-            });
+            await fss.storage.update(
+                [
+                    {
+                        item_id: row.item_id,
+                        item_type: 'file',
+                        embedded: 1,
+                        embedding_generation: fss.scannerState.embedding_generation
+                    }
+                ],
+                {
+                    indexers: ['BaseIndexer']
+                }
+            );
         };
 
         const processed = await fss.processEmbeddingQueue(() => false, { activeRoots: [runnableRoot] });
@@ -974,7 +1043,7 @@ async function testProcessEmbeddingQueueExcludesPausedOnlyOwnership() {
         assert.deepEqual(JSON.parse(sharedRow.items[0].item.root_refs).sort(), [pausedRoot, runnableRoot].sort());
         assert.equal(sharedRow.items[0].item.ref_count, 2);
     } finally {
-        if (fss?.storage) fss.storage.close();
+        await fss?.close();
         cleanup(dir);
     }
     console.log('  ✅ testProcessEmbeddingQueueExcludesPausedOnlyOwnership');
@@ -991,16 +1060,35 @@ async function testRootAwareCandidatesDedupMultiRootFile() {
         const root = '/workspace';
         const childRoot = '/workspace/src';
         const file = `${childRoot}/shared.md`;
-        await fss.storage.upsert([makeStoredFileItem(file, [root, childRoot], { embedded: 0, ref_count: 2 })], {
-            indexers: ['BaseIndexer']
-        });
+        await fss.storage.upsert(
+            [
+                makeStoredFileItem(file, [root, childRoot], {
+                    embedding_generation: fss.scannerState.embedding_generation,
+                    embedded: 0,
+                    ref_count: 2
+                })
+            ],
+            {
+                indexers: ['BaseIndexer']
+            }
+        );
 
         const seen = [];
         fss.embedSingleFile = async (row) => {
             seen.push(row.item_id);
-            await fss.storage.update([{ item_id: row.item_id, item_type: 'file', embedded: 1 }], {
-                indexers: ['BaseIndexer']
-            });
+            await fss.storage.update(
+                [
+                    {
+                        item_id: row.item_id,
+                        item_type: 'file',
+                        embedded: 1,
+                        embedding_generation: fss.scannerState.embedding_generation
+                    }
+                ],
+                {
+                    indexers: ['BaseIndexer']
+                }
+            );
         };
 
         const processed = await fss.processEmbeddingQueue(() => false, {
@@ -1012,7 +1100,7 @@ async function testRootAwareCandidatesDedupMultiRootFile() {
         assert.equal(processed, 1);
         assert.deepEqual(seen, [file]);
     } finally {
-        if (fss?.storage) fss.storage.close();
+        await fss?.close();
         cleanup(dir);
     }
     console.log('  ✅ testRootAwareCandidatesDedupMultiRootFile');
@@ -1033,14 +1121,24 @@ async function testCarveOutKeepsIntermediateRowInvisibleUntilChildScan() {
         fs.writeFileSync(file, '# feature');
 
         await fss.saveFiles([makeFileEntry(file)], parentRoot);
-        await fss.storage.update([{ item_id: file, item_type: 'file', embedded: 1 }], { indexers: ['BaseIndexer'] });
+        await fss.storage.update(
+            [
+                {
+                    item_id: file,
+                    item_type: 'file',
+                    embedded: 1,
+                    embedding_generation: fss.scannerState.embedding_generation
+                }
+            ],
+            { indexers: ['BaseIndexer'] }
+        );
 
         await fss.removeDeletedFiles(parentRoot, new Set(), { activeRoots: [parentRoot, childRoot] });
         let row = await getBaseRow(fss, file);
         assertRefsAndCount(row, []);
         assert.equal(row.embedded, 1, 'carve-out intermediate row should preserve embedded=1 to avoid duplicate work');
 
-        let stats = await fss.getStatus();
+        let stats = await fss.getGlobalFileCounts();
         assert.equal(stats.total_files, 0);
         assert.equal(stats.embedded_count, 0);
         assert.equal(stats.pending_count, 0);
@@ -1052,12 +1150,12 @@ async function testCarveOutKeepsIntermediateRowInvisibleUntilChildScan() {
         assertRefsAndCount(row, [childRoot]);
         assert.equal(row.embedded, 1, 'child scan should adopt the row without resetting embedded');
 
-        stats = await fss.getStatus();
+        stats = await fss.getGlobalFileCounts();
         assert.equal(stats.total_files, 1);
         assert.equal(stats.embedded_count, 1);
         assert.equal(stats.pending_count, 0);
     } finally {
-        if (fss?.storage) fss.storage.close();
+        await fss?.close();
         cleanup(dir);
     }
     console.log('  ✅ testCarveOutKeepsIntermediateRowInvisibleUntilChildScan');
@@ -1088,11 +1186,26 @@ async function testGetPerRootCountsReportsVisibleFailedUnavailableAndBaseOnly() 
 
         await fss.storage.upsert(
             [
-                makeStoredFileItem(path.join(rootA, 'embedded.md'), [rootA], { embedded: 1 }),
-                makeStoredFileItem(path.join(rootA, 'pending.md'), [rootA], { embedded: 0 }),
-                makeStoredFileItem(path.join(rootA, 'failed.md'), [rootA], { embedded: -2 }),
-                makeStoredFileItem(path.join(rootA, 'middle.md'), [], { embedded: 1 }),
-                makeStoredFileItem(path.join(rootB, 'done.md'), [rootB], { embedded: 1 })
+                makeStoredFileItem(path.join(rootA, 'embedded.md'), [rootA], {
+                    embedding_generation: fss.scannerState.embedding_generation,
+                    embedded: 1
+                }),
+                makeStoredFileItem(path.join(rootA, 'pending.md'), [rootA], {
+                    embedding_generation: fss.scannerState.embedding_generation,
+                    embedded: 0
+                }),
+                makeStoredFileItem(path.join(rootA, 'failed.md'), [rootA], {
+                    embedding_generation: fss.scannerState.embedding_generation,
+                    embedded: -2
+                }),
+                makeStoredFileItem(path.join(rootA, 'middle.md'), [], {
+                    embedding_generation: fss.scannerState.embedding_generation,
+                    embedded: 1
+                }),
+                makeStoredFileItem(path.join(rootB, 'done.md'), [rootB], {
+                    embedding_generation: fss.scannerState.embedding_generation,
+                    embedded: 1
+                })
             ],
             { indexers: ['BaseIndexer'] }
         );
@@ -1114,7 +1227,7 @@ async function testGetPerRootCountsReportsVisibleFailedUnavailableAndBaseOnly() 
             last_scan_at: 1100
         });
 
-        await fss.storage.close();
+        await fss.close();
         fss = new FSStorage(dir);
         await fss._resetVectorChunk('test-bootstrap', { dim: 1, mode: 'base-only' });
 
@@ -1139,8 +1252,14 @@ async function testGetPerRootCountsReportsVisibleFailedUnavailableAndBaseOnly() 
 
         await fss.storage.upsert(
             [
-                makeStoredFileItem(path.join(root, 'embedded-but-base-only.md'), [root], { embedded: 1 }),
-                makeStoredFileItem(path.join(root, 'pending-but-base-only.md'), [root], { embedded: 0 })
+                makeStoredFileItem(path.join(root, 'embedded-but-base-only.md'), [root], {
+                    embedding_generation: fss.scannerState.embedding_generation,
+                    embedded: 1
+                }),
+                makeStoredFileItem(path.join(root, 'pending-but-base-only.md'), [root], {
+                    embedding_generation: fss.scannerState.embedding_generation,
+                    embedded: 0
+                })
             ],
             { indexers: ['BaseIndexer'] }
         );
@@ -1161,7 +1280,7 @@ async function testGetPerRootCountsReportsVisibleFailedUnavailableAndBaseOnly() 
             last_scan_at: 2200
         });
     } finally {
-        if (fss?.storage) fss.storage.close();
+        await fss?.close();
         cleanup(dir);
     }
     console.log('  ✅ testGetPerRootCountsReportsVisibleFailedUnavailableAndBaseOnly');
@@ -1206,6 +1325,10 @@ async function testPerRootCountsUseRootRefsForOverlappingRoots() {
         }
     };
 
+    fss.storage.countGrouped = async (_fields, conditions) => {
+        const result = await fss.storage.search(conditions);
+        return result.items.map(({ item }) => ({ values: item, count: 1 }));
+    };
     const counts = await fss.getPerRootCounts(['/Documents']);
     assert.equal(counts.get('/Documents').total_files, 1);
     assert.equal(counts.get('/Documents').embedded_count, 0);
@@ -1238,6 +1361,10 @@ async function testPerRootCountsNormalizeRootRefsBeforeCompare() {
         }
     };
 
+    fss.storage.countGrouped = async (_fields, conditions) => {
+        const result = await fss.storage.search(conditions);
+        return result.items.map(({ item }) => ({ values: item, count: 1 }));
+    };
     const counts = await fss.getPerRootCounts(['/Documents']);
     assert.deepEqual(counts.get('/Documents'), {
         total_files: 1,
@@ -1274,6 +1401,10 @@ async function testPerRootCountsNormalizeWindowsSeparatorsBeforeCompare() {
         }
     };
 
+    fss.storage.countGrouped = async (_fields, conditions) => {
+        const result = await fss.storage.search(conditions);
+        return result.items.map(({ item }) => ({ values: item, count: 1 }));
+    };
     const counts = await fss.getPerRootCounts(['C:/Users/Stella/Docs']);
     assert.deepEqual(counts.get('C:/Users/Stella/Docs'), {
         total_files: 1,
@@ -1312,6 +1443,10 @@ async function testHarmonyPerRootCountsUseFreshCache() {
                     ]
                 };
             }
+        };
+        fss.storage.countGrouped = async (_fields, conditions) => {
+            const result = await fss.storage.search(conditions);
+            return result.items.map(({ item }) => ({ values: item, count: 1 }));
         };
 
         const first = await fss.getPerRootCounts(['/Documents']);
@@ -1379,6 +1514,10 @@ async function testHarmonyPerRootCountsReturnStaleWhileRefreshInFlight() {
                 };
             }
         };
+        fss.storage.countGrouped = async (_fields, conditions) => {
+            const result = await fss.storage.search(conditions);
+            return result.items.map(({ item }) => ({ values: item, count: 1 }));
+        };
 
         const timeout = Symbol('timeout');
         let result;
@@ -1423,6 +1562,10 @@ async function testHarmonyPerRootCountsFallbackToScannerStateOnError() {
             async search() {
                 throw new Error('synthetic status count failure');
             }
+        };
+        fss.storage.countGrouped = async (_fields, conditions) => {
+            const result = await fss.storage.search(conditions);
+            return result.items.map(({ item }) => ({ values: item, count: 1 }));
         };
 
         const counts = await fss.getPerRootCounts(['/Documents']);
@@ -1506,6 +1649,10 @@ async function testHarmonyPerRootCountsClearInvalidatesInFlightRefresh() {
                     ]
                 };
             }
+        };
+        fss.storage.countGrouped = async (_fields, conditions) => {
+            const result = await fss.storage.search(conditions);
+            return result.items.map(({ item }) => ({ values: item, count: 1 }));
         };
 
         const counts = await fss.getPerRootCounts(['/Documents']);
@@ -1799,18 +1946,18 @@ async function testMigrateRefCountBackfillsLegacyRowsOnce() {
         assert.equal(rowA.ref_count, 2);
         assert.equal(rowB.ref_count, 1);
         assert.equal(first.scannerState._migratedRefCount, true);
-        first.storage.close();
+        await first.close();
 
         const storage = new BaseStorage('filemgr', makeSchema(1, { mode: 'base-only' }), storageDir);
         await storage.initialize();
         await storage.update([{ item_id: fileA, item_type: 'file', ref_count: 99 }], { indexers: ['BaseIndexer'] });
-        storage.close();
+        await storage.close();
 
         const second = new FSStorage(dir);
         await second.initialize();
         rowA = await getBaseRow(second, fileA);
         assert.equal(rowA.ref_count, 99, '_migratedRefCount should skip repeat migration on second startup');
-        second.storage.close();
+        await second.close();
     } finally {
         Setting.updateInstanceData(originalSetting);
         cleanup(dir);
@@ -2554,7 +2701,17 @@ async function testResetVectorChunkPreservesBaseAndResetsEmbedded() {
             ],
             { indexers: ['VectorIndexer'] }
         );
-        await fss.storage.update([{ item_id: file, item_type: 'file', embedded: 1 }], { indexers: ['BaseIndexer'] });
+        await fss.storage.update(
+            [
+                {
+                    item_id: file,
+                    item_type: 'file',
+                    embedded: 1,
+                    embedding_generation: fss.scannerState.embedding_generation
+                }
+            ],
+            { indexers: ['BaseIndexer'] }
+        );
 
         await fss._resetVectorChunk('test', { dim: fss.scannerState.vec_dim, mode: fss.mode });
 
@@ -2624,7 +2781,7 @@ async function seedDimOneVectorAndChunkStorage(storageDir) {
         ],
         { indexers: ['BaseIndexer', 'VectorIndexer', 'ChunkIndexer'] }
     );
-    oldStorage.close();
+    await oldStorage.close();
 }
 
 // ── Test: uninitialized semantic indexers can drop old-dim storage ───
@@ -3069,7 +3226,17 @@ async function testSaveFilesModifiedChangedResetsEmbedded() {
         fs.writeFileSync(file, 'a');
         const e1 = makeFileEntry(file);
         await fss.saveFiles([e1], dir);
-        await fss.storage.update([{ item_id: file, item_type: 'file', embedded: 1 }], { indexers: ['BaseIndexer'] });
+        await fss.storage.update(
+            [
+                {
+                    item_id: file,
+                    item_type: 'file',
+                    embedded: 1,
+                    embedding_generation: fss.scannerState.embedding_generation
+                }
+            ],
+            { indexers: ['BaseIndexer'] }
+        );
         // Touch mtime
         await new Promise((r) => setTimeout(r, 10));
         fs.writeFileSync(file, 'a longer content');
@@ -3108,7 +3275,17 @@ async function testSaveFilesMaintainsRootRefsAndRefCountScenarios() {
         row = await getBaseRow(fss, shared);
         assertRefsAndCount(row, ['/rootA']);
 
-        await fss.storage.update([{ item_id: shared, item_type: 'file', embedded: 1 }], { indexers: ['BaseIndexer'] });
+        await fss.storage.update(
+            [
+                {
+                    item_id: shared,
+                    item_type: 'file',
+                    embedded: 1,
+                    embedding_generation: fss.scannerState.embedding_generation
+                }
+            ],
+            { indexers: ['BaseIndexer'] }
+        );
         await fss.saveFiles([sharedEntry], '/rootB');
         row = await getBaseRow(fss, shared);
         assertRefsAndCount(row, ['/rootA', '/rootB']);
@@ -3294,7 +3471,7 @@ async function testEmbedSingleFileOversizedContentFallsBackToFilenameOnly() {
         await fss._resetVectorChunk('test-bootstrap', { dim: 1, mode: 'full' });
         const file = path.join(dir, 'huge.js');
         fs.closeSync(fs.openSync(file, 'w'));
-        fs.truncateSync(file, 11 * 1024 * 1024);
+        fs.truncateSync(file, RAW_TEXT_MAX_FILE_SIZE + 1);
         await fss.saveFiles([makeFileEntry(file)], dir);
         const row = (
             await fss.storage.search([{ indexer: 'BaseIndexer', field: 'item_id', operator: '=', value: file }])
@@ -3629,7 +3806,17 @@ async function testInitializeDimChangeSoftResetsAndStaysFull() {
         const file = path.join(dir, 'd.md');
         fs.writeFileSync(file, 'd');
         await fss1.saveFiles([makeFileEntry(file)], dir);
-        await fss1.storage.update([{ item_id: file, item_type: 'file', embedded: 1 }], { indexers: ['BaseIndexer'] });
+        await fss1.storage.update(
+            [
+                {
+                    item_id: file,
+                    item_type: 'file',
+                    embedded: 1,
+                    embedding_generation: fss1.scannerState.embedding_generation
+                }
+            ],
+            { indexers: ['BaseIndexer'] }
+        );
         await fss1.storage.close?.();
 
         // Patch state file to look like old different dim/model
@@ -3794,6 +3981,8 @@ async function testSearchEmbedFailureReturnsEmbedApiDown() {
             }
         };
         fss.mode = 'full';
+        // This fixture represents an index ready for the configured query model.
+        fss.scannerState.embedding_model = Setting.getInstance().getDefaultEmbeddingModelInstance().model_name;
         LLM.embed = async () => {
             const err = new Error('terminated');
             err.status = 500;
@@ -3822,6 +4011,8 @@ async function testSearchSemanticRoutesExposeScores() {
     try {
         const fss = new FSStorage(dir);
         fss.mode = 'full';
+        // This fixture represents an index ready for the configured query model.
+        fss.scannerState.embedding_model = Setting.getInstance().getDefaultEmbeddingModelInstance().model_name;
         fss.storage = {
             async search(filters) {
                 const first = filters[0];
@@ -3896,7 +4087,7 @@ async function testSearchFilesByKeywordSupportsLimit() {
         assert.equal(indexedRows.length, 2);
         assert.ok(indexedRows.every((row) => row.ref_count > 0));
     } finally {
-        if (fss?.storage) fss.storage.close();
+        await fss?.close();
         cleanup(dir);
     }
     console.log('  ✅ testSearchFilesByKeywordSupportsLimit');
@@ -3914,6 +4105,8 @@ async function testScopedSearchDiagnosticsIncludeFilemgrRouteAndScope() {
         const logs = [];
         const fss = new FSStorage(dir);
         fss.mode = 'full';
+        // This fixture represents an index ready for the configured query model.
+        fss.scannerState.embedding_model = Setting.getInstance().getDefaultEmbeddingModelInstance().model_name;
         fss.storage = {
             async searchScope(request, options) {
                 calls.push({ request, options });
@@ -3988,6 +4181,8 @@ async function testSearchIndexedChunksContractAndRerankFallback() {
         ];
         const fss = new FSStorage(dir);
         fss.mode = 'full';
+        // This fixture represents an index ready for the configured query model.
+        fss.scannerState.embedding_model = Setting.getInstance().getDefaultEmbeddingModelInstance().model_name;
         fss.storage = {
             async search(conditions) {
                 calls.push(['global', conditions]);
@@ -4020,6 +4215,7 @@ async function testSearchIndexedChunksContractAndRerankFallback() {
             [
                 ['type', '=', 'file'],
                 ['embedded', '=', 1],
+                ['embedding_generation', '=', fss.scannerState.embedding_generation],
                 ['ref_count', '>', 0],
                 ['item_id', 'path_descendant_or_self', '/Docs']
             ]
@@ -4339,10 +4535,10 @@ async function testProcessEmbeddingQueueSkipsResetApiFailureStreak() {
     console.log('  ✅ testProcessEmbeddingQueueSkipsResetApiFailureStreak');
 }
 
-// ── Test 11 (Task 11): getStatus reports mode and counts ─────────────
+// ── Test 11 (Task 11): getStatus reports metadata without global counts ─────────────
 
-async function testGetStatusReportsModeAndCounts() {
-    console.log('  testGetStatusReportsModeAndCounts...');
+async function testGetStatusReportsMetadata() {
+    console.log('  testGetStatusReportsMetadata...');
     const dir = tmpDir('status');
     try {
         const fss = await createFSStorage(dir);
@@ -4350,14 +4546,14 @@ async function testGetStatusReportsModeAndCounts() {
         fs.writeFileSync(file, 'x');
         await fss.saveFiles([makeFileEntry(file)], dir);
         const s = await fss.getStatus();
-        assert.equal(s.mode, 'full');
-        assert.equal(s.embedded_count, 0);
-        assert.equal(s.pending_count, 1);
+        assert.equal(s.mode, OPENROUTER_API_KEY ? 'full' : 'base-only');
+        assert.equal('embedded_count' in s, false);
+        assert.equal('pending_count' in s, false);
         assert.equal(s.last_embedding_task_at, null);
     } finally {
         cleanup(dir);
     }
-    console.log('  ✅ testGetStatusReportsModeAndCounts');
+    console.log('  ✅ testGetStatusReportsMetadata');
 }
 
 // ── Test: searchFileByName filters embedded=0 rows ───────────────────
@@ -4506,7 +4702,7 @@ async function main() {
         testInitializeReadonlyMissingBaseIndexDoesNotWriteState,
         testInitializeReadonlyUsesStorageProbeInsteadOfHardcodedBasePath,
         testInitializeReadonlyOpensExistingBaseIndex,
-        testGetStatusReportsModeAndCounts,
+        testGetStatusReportsMetadata,
         testSearchFilterEmbeddedOneExcludesPending
     ];
 

@@ -14,7 +14,9 @@
 
 ### HarmonyOS 说明
 
-在 `process.platform === 'openharmony'` 时，所有 `create*IndexDB` 工厂函数会自动切到 WASM 实现：
+在 `process.platform === 'openharmony'` 时，平台 bridge 确认 ArkData 可用且
+`Ping.storeSessionProtocol === 1` 后，Base、Vector 和 Chunk 工厂使用 ArkData。
+旧 HAP 未提供此协议时，平台不会启用 ArkData，工厂使用 WASM：
 
 - `BaseIndexDBWasm` / `TagIndexDBWasm`
 - `BM25IndexDBWasm`（`node-sqlite3-wasm + FTS5 + jieba-wasm`）
@@ -115,6 +117,37 @@ needIndexers: {
 ```typescript
 const storage = new BaseStorage('my-storage', schema, '/path/to/data/dir');
 await storage.initialize();
+```
+
+`close()` 是异步资源释放契约：调用方必须等待成功后再丢弃实例。关闭失败时，
+实例仍持有未释放的连接，应保留它并重试 `close()`；开始关闭后不得继续查询或写入。
+初始化抛出异常后，也应等待 `close()` 完成再丢弃实例，避免遗漏失败的清理。
+
+ArkData 的打开和关闭超时表示结果未确定，不代表 SDK 已取消操作。通用资源会话在
+获取前生成 `sessionId`，打开、关闭及 worker RPC 重试沿用它。打开身份和每次关闭的
+`requestId` 传入 ArkTS 的受理边界；丢失 Start 响应时，重发相同请求只取回原结果。
+明确的 SDK 关闭失败才创建新的关闭尝试。主线程与 ArkTS 会话缓存保留终态至各自
+进程退出，覆盖普通 Ready 记录的五分钟 TTL；缓存不持有物理数据库连接。
+旧关闭重试不会减少新持有者的引用。会话字段不进入 SDK StoreConfig 或 SQL 协议。
+直接调用 DatabaseKit 的使用者也必须为一次获取配对同一 `sessionId`；
+不带会话 ID 的旧接口保留原语义，不保证超时或丢失响应后的重试幂等性。
+
+临时 probe/raw drop 的释放失败由 storage 保留，后续同库访问及 `BaseStorage.close()`
+会重试。其它数据库的使用不会被它阻塞。BM25 普通关闭等待已接受的写入及真实
+LevelDB 连接关闭；search-index 的 `FLUSH` 是清空操作，不能作为持久化或关闭。
+
+Node BM25 重开时从持久化文档恢复搜索缓存及已有 ID，保持原有评分规则；
+并列分数按 item_id 排序，避免冷启动枚举顺序影响 topK。
+新写入在分词文本之外保存原文；既有文档只有分词文本时仍可查询、更新和删除，
+但不能从分词文本还原已经丢失的大小写及空格。BaseStorage 返回的基础字段和
+元数据继续来自基础库，不会为恢复 BM25 搜索改写用户记录。
+
+初始化成功后可调用 `getSemanticBackends()` 获取 vector、chunk 的**实际**后端，
+包括各工厂独立发生的 native → WASM 降级。storage 只报告事实；模型、索引兼容性、
+业务 generation 和重置策略由使用者负责，不属于通用数据库规则。
+
+```typescript
+await storage.close(); // 失败会抛出异常，此时仍需保留 storage 以重试关闭
 ```
 
 ---
@@ -389,17 +422,13 @@ await storage.upsert([
         item_id: 'doc_001',
         item_type: 'file',
         tag: 'finance',
-        /* ... */ indexer_columns: {
-            /* ... */
-        }
+        /* ... */ indexer_columns: {/* ... */}
     },
     {
         item_id: 'doc_999',
         item_type: 'file',
         tag: 'new',
-        /* ... */ indexer_columns: {
-            /* ... */
-        }
+        /* ... */ indexer_columns: {/* ... */}
     }
 ]);
 ```
