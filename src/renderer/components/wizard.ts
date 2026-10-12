@@ -10,7 +10,7 @@
  */
 
 import './wizard.css';
-import { createModelSelect } from '../utils/model-select.js';
+import { createModelSelect, MODEL_SELECT_CSS } from '../utils/model-select.js';
 import { createRendererTranslator } from '../locale.ts';
 import { isAccountFeatureEnabled } from '../utils/account-feature-visibility.ts';
 import { resolveWizardStep2View } from '../utils/wizard-flow.ts';
@@ -370,6 +370,7 @@ class SetupWizard extends HTMLElement {
             .join('');
 
         return `
+        <style>${MODEL_SELECT_CSS}</style>
         <span class="step-tag">Step 2 · 模型配置</span>
         <h2>配置您的模型服务</h2>
         <p class="ob-desc">请选择一个模型提供方并填入对应的密钥和模型名称。</p>
@@ -415,7 +416,7 @@ class SetupWizard extends HTMLElement {
             <div class="f-row">
                 <label class="f-label">${this._escapeHtml(this.t('config.model.field.model_name'))}</label>
                 <div class="wizard-model-fetch-row">
-                    <div class="wizard-model-select">
+                    <div class="wizard-model-select model-combo">
                         <input id="wizard-model-name" type="text" role="combobox" aria-autocomplete="list" aria-expanded="false" aria-controls="wizard-model-suggestions" class="f-ctl" disabled autocomplete="off" aria-describedby="wizard-model-error" aria-label="${this._escapeHtml(this.t('config.model.field.model_name'))}">
                         <button id="wizard-model-name-toggle" class="model-suggestions-toggle" type="button" tabindex="-1" disabled aria-label="${this._escapeHtml(this.t('config.model.discovery.showSuggestions'))}"><i class="fas fa-chevron-down" aria-hidden="true"></i></button>
                         <div id="wizard-model-suggestions" class="model-suggestions" role="listbox" hidden></div>

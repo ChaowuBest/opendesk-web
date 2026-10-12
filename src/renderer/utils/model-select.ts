@@ -9,6 +9,15 @@
  * See the Mulan PSL v2 for more details.
  */
 
+export const MODEL_SELECT_CSS = `
+.model-combo .model-suggestions-toggle { position: absolute; right: 8px; top: 50%; transform: translateY(-50%); width: 28px; height: 28px; border: none; background: transparent; color: inherit; cursor: pointer; }
+.model-combo .model-suggestions-toggle:disabled { opacity: 0.4; cursor: default; }
+.model-combo .model-suggestions { position: absolute; z-index: 5; top: 100%; left: 0; right: 0; max-height: 220px; overflow-y: auto; padding: 4px; border: 1px solid var(--model-list-line); border-radius: 8px; background: var(--model-list-bg); box-shadow: 0 8px 24px #0003; }
+.model-combo .model-suggestions[hidden] { display: none; }
+.model-combo .model-suggestions button { display: block; width: 100%; padding: 8px 12px; border: none; background: transparent; color: inherit; font: inherit; text-align: left; overflow-wrap: anywhere; cursor: pointer; }
+.model-combo .model-suggestions button:hover, .model-combo .model-suggestions button[aria-selected="true"] { background: var(--model-list-hover); }
+`;
+
 interface ModelSelectOptions {
     input: HTMLInputElement;
     suggestions: HTMLElement;
@@ -113,8 +122,6 @@ export function createModelSelect({ input, suggestions, toggle, loading, error, 
             const request = generation;
             input.setAttribute('aria-busy', 'true');
             loading.hidden = false;
-            error.hidden = true;
-            error.textContent = '';
             try {
                 const result = await fetchNames();
                 if (request !== generation) return;

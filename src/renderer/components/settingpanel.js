@@ -10,7 +10,7 @@
  */
 
 import { createRendererTranslator } from '../locale.ts';
-import { createModelSelect } from '../utils/model-select.js';
+import { createModelSelect, MODEL_SELECT_CSS } from '../utils/model-select.js';
 import { selectSupportedShell } from '../../common/shells.js';
 import { REASONING_EFFORT_LEVELS } from '../../common/reasoning-effort.ts';
 import { ACP_AGENT_PRESETS, createAcpAgentPresetDraft } from '../../common/acp/agentPresets.ts';
@@ -91,17 +91,11 @@ textarea.od-sp-fi { resize: vertical; min-height: 80px; font-family: 'SF Mono', 
 .od-sp-agent-catalog-description { color: var(--mc-ink3); font-size: 12px; line-height: 1.5; margin-bottom: 14px; }
 .od-sp-agent-preset-notice { align-items: flex-start; background: rgba(184,117,3,0.08); border: 1px solid rgba(184,117,3,0.24); border-radius: 8px; color: var(--mc-ink2); display: flex; font-size: 11.5px; gap: 8px; line-height: 1.5; margin-bottom: 14px; padding: 10px 12px; }
 .od-sp-agent-preset-notice i { color: #B87503; margin-top: 2px; }
-.od-sp-combo { position: relative; }
+.od-sp-combo { position: relative; --model-list-line: var(--mc-line); --model-list-bg: var(--mc-card-bg); --model-list-hover: var(--mc-hover); }
 .od-sp-model-loading { position: absolute; right: 40px; top: 50%; transform: translateY(-50%); color: var(--mc-ink3); }
 .od-sp-model-loading[hidden], .od-sp-model-error[hidden] { display: none; }
 .od-sp-model-error { color: var(--mc-red); font-size: 11.5px; margin: 5px 0 0; }
 .od-sp-combo input { padding-right: 48px; }
-.od-sp-combo .model-suggestions-toggle { position: absolute; right: 8px; top: 50%; transform: translateY(-50%); width: 28px; height: 28px; border: none; background: transparent; color: inherit; cursor: pointer; }
-.od-sp-combo .model-suggestions-toggle:disabled { opacity: 0.4; cursor: default; }
-.od-sp-combo .model-suggestions { position: absolute; z-index: 5; top: 100%; left: 0; right: 0; max-height: 220px; overflow-y: auto; padding: 4px; border: 1px solid var(--mc-line); border-radius: 8px; background: var(--mc-card-bg); box-shadow: 0 8px 24px #0003; }
-.od-sp-combo .model-suggestions[hidden] { display: none; }
-.od-sp-combo .model-suggestions button { display: block; width: 100%; padding: 8px 12px; border: none; background: transparent; color: inherit; font: inherit; text-align: left; overflow-wrap: anywhere; cursor: pointer; }
-.od-sp-combo .model-suggestions button:hover, .od-sp-combo .model-suggestions button[aria-selected="true"] { background: var(--mc-hover); }
 .od-sp-combo input:disabled { opacity: 0.65; cursor: default; }
 .od-sp-header-item { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; }
 .od-sp-header-item input { flex: 1; }
@@ -4276,7 +4270,7 @@ class SettingPanel extends HTMLElement {
                     </div>
                     <div class="od-sp-fg">
                         <label class="od-sp-fl">${this.escapeHtml(this._t('config.model.field.model_name'))}</label>
-                        <div class="od-sp-combo" id="model-name-combo">
+                        <div class="od-sp-combo model-combo" id="model-name-combo">
                             <input id="model-name-input" type="text" role="combobox" aria-autocomplete="list" aria-expanded="false" aria-controls="model-name-suggestions" class="od-sp-fi" disabled autocomplete="off" aria-describedby="model-name-error" aria-label="${this.escapeHtml(this._t('config.model.field.model_name'))}">
                             <button id="model-name-input-toggle" class="model-suggestions-toggle" type="button" tabindex="-1" disabled aria-label="${this.escapeHtml(this._t('config.model.discovery.showSuggestions'))}"><i class="fas fa-chevron-down" aria-hidden="true"></i></button>
                             <div id="model-name-suggestions" class="model-suggestions" role="listbox" hidden></div>
@@ -5211,7 +5205,7 @@ class SettingPanel extends HTMLElement {
         if (detectDarkMode(this)) {
             overlay.classList.add('od-modal-dark');
         }
-        overlay.innerHTML = `<style>${MODAL_CSS}${SP_MODAL_EXTRA_CSS}</style>${content}`;
+        overlay.innerHTML = `<style>${MODAL_CSS}${MODEL_SELECT_CSS}${SP_MODAL_EXTRA_CSS}</style>${content}`;
 
         bindOverlayDismiss(
             overlay,

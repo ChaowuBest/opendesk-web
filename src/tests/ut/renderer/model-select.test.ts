@@ -10,64 +10,51 @@ function fixture() {
     const loading = document.querySelector('span') as HTMLElement;
     const error = document.querySelector('p') as HTMLElement;
     const control = createModelSelect({ input, suggestions, toggle, loading, error, t: (key) => key });
-    return { input, suggestions, loading, error, control };
+    const emit = (type: string, key?: string) =>
+        input.dispatchEvent(Object.assign(new document.defaultView!.Event(type, { cancelable: true }), { key }));
+    const type = (value = '') => {
+        input.value = value;
+        emit('input');
+    };
+    return { input, suggestions, loading, error, control, emit, type };
 }
 
 describe('model selection loading', () => {
     test('allows typing during discovery and renders escaped suggestions without replacing the draft', async () => {
-        const { input, suggestions, loading, error, control } = fixture();
-        let resolve!: (names: string[]) => void;
-        const request = control.load(
-            () =>
-                new Promise((done) => {
-                    resolve = done;
-                })
-        );
+        const { input, suggestions, loading, error, control, type } = fixture();
+        const pending = Promise.withResolvers<string[]>();
+        const request = control.load(() => pending.promise);
         expect(input.getAttribute('aria-busy')).toBe('true');
         expect(loading.hidden).toBe(false);
         input.value = 'unlisted-model';
-        resolve(['b', '<img src=x>', 'b', 'a']);
+        pending.resolve(['b', '<img src=x>', 'b', 'a']);
         await request;
         expect(input.disabled).toBe(false);
         expect(loading.hidden).toBe(true);
         expect(error.hidden).toBe(true);
-        input.dispatchEvent(new input.ownerDocument.defaultView!.Event('focus'));
         // An unlisted draft need not match a suggestion; clear the search without selecting one.
         expect(input.value).toBe('unlisted-model');
-        input.value = '';
-        input.dispatchEvent(new input.ownerDocument.defaultView!.Event('input'));
+        type();
         expect(
-            new Set(
-                Array.from(suggestions.querySelectorAll<HTMLButtonElement>('[role=option]')).map(
-                    (option) => option.value
-                )
-            )
-        ).toEqual(new Set(['<img src=x>', 'a', 'b']));
+            Array.from(suggestions.querySelectorAll<HTMLButtonElement>('[role=option]'), (option) => option.value)
+        ).toEqual(['<img src=x>', 'a', 'b']);
         expect(suggestions.querySelector('img')).toBeNull();
     });
 
     test('filters suggestions and accepts them by keyboard or click', async () => {
-        const { input, suggestions, control } = fixture();
+        const { input, suggestions, control, emit, type } = fixture();
         await control.load(async () => ['model-a', 'model-b']);
-        input.value = 'model-b';
-        input.dispatchEvent(new input.ownerDocument.defaultView!.Event('input'));
+        type('model-b');
         expect(suggestions.textContent).toBe('model-b');
-        const key = (value: string) => {
-            const event = new input.ownerDocument.defaultView!.Event('keydown', { cancelable: true });
-            Object.assign(event, { key: value });
-            input.dispatchEvent(event);
-        };
-        key('ArrowDown');
-        key('Enter');
+        emit('keydown', 'ArrowDown');
+        emit('keydown', 'Enter');
         expect(input.value).toBe('model-b');
         expect(suggestions.hidden).toBe(true);
-        input.value = '';
-        input.dispatchEvent(new input.ownerDocument.defaultView!.Event('input'));
-        key('ArrowUp');
-        key('Enter');
+        type();
+        emit('keydown', 'ArrowUp');
+        emit('keydown', 'Enter');
         expect(input.value).toBe('model-b');
-        input.value = '';
-        input.dispatchEvent(new input.ownerDocument.defaultView!.Event('input'));
+        type();
         (suggestions.querySelector('[role=option]') as HTMLButtonElement).click();
         expect(input.value).toBe('model-a');
         expect(suggestions.hidden).toBe(true);
@@ -83,43 +70,31 @@ describe('model selection loading', () => {
         expect(input.disabled).toBe(false);
         await control.load(async () => []);
         expect(error.textContent).toBe('config.model.discovery.serverError');
-        await control.load(async () => {
-            throw new Error('MODEL_LIST_INVALID');
-        });
-        expect(error.textContent).toBe('config.model.discovery.serverError');
-        await control.load(async () => {
-            throw new Error('untrusted server or network detail');
-        });
-        expect(error.textContent).toBe('config.model.discovery.serverError');
+        for (const message of ['MODEL_LIST_INVALID', 'untrusted server or network detail']) {
+            await control.load(async () => {
+                throw new Error(message);
+            });
+            expect(error.textContent).toBe('config.model.discovery.serverError');
+        }
         await control.load(async () => ['working']);
         expect(error.hidden).toBe(true);
         expect(input.disabled).toBe(false);
     });
 
     test('ignores stale success and failure after a provider switch or reset', async () => {
-        const { input, suggestions, error, control } = fixture();
-        let resolve!: (names: string[]) => void;
-        const old = control.load(
-            () =>
-                new Promise((done) => {
-                    resolve = done;
-                })
-        );
+        const { suggestions, error, control, emit } = fixture();
+        const stale = Promise.withResolvers<string[]>();
+        const old = control.load(() => stale.promise);
         await control.load(async () => ['new']);
-        resolve(['old']);
+        stale.resolve(['old']);
         await old;
-        input.dispatchEvent(new input.ownerDocument.defaultView!.Event('focus'));
+        emit('focus');
         expect(suggestions.textContent).toContain('new');
         expect(suggestions.textContent).not.toContain('old');
-        let reject!: (error: Error) => void;
-        const pending = control.load(
-            () =>
-                new Promise((_done, fail) => {
-                    reject = fail;
-                })
-        );
+        const failing = Promise.withResolvers<string[]>();
+        const pending = control.load(() => failing.promise);
         control.reset();
-        reject(new Error('MODEL_LIST_HTTP_500'));
+        failing.reject(new Error('MODEL_LIST_HTTP_500'));
         await pending;
         expect(error.hidden).toBe(true);
         expect(suggestions.children).toHaveLength(0);
