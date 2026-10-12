@@ -360,6 +360,14 @@ function policyLinuxTail(
                   `[[rules]]\npath = ${quote(`${home}/.npm/**`)}\naccess = "write"\nperm = "allow"`
               ]
             : []),
+        // 家目录工具链安装根（<home>/usr/local）读取放行：鸿蒙 PC 上 python/node
+        // 等工具链装在用户目录（/storage/Users/currentUser/usr/local/...），
+        // node-gyp 探测 Python 读 pyvenv.cfg、解释器启动读 python3._pth 与标准库
+        // 字节码缓存 lib/python3.x/encodings/_pycache__/*.pyc，不放行则每条
+        // npm install 命令逐次弹 read ask。只放 read：写（篡改工具链/持久化）
+        // 仍走兜底 ask/deny，与 --ro-dirs 工具链只读暴露同哲学。readonly 保留：
+        // 与系统运行时/PATH 工具链读放行同理，工具链起不来则基础命令都无法执行。
+        ...(home ? [`[[rules]]\npath = ${quote(`${home}/usr/local/**`)}\naccess = "read"\nperm = "allow"`] : []),
         // 家目录敏感路径读 deny（默认读放行，须显式收窄私密文件）
         ...(home
             ? SENSITIVE_HOME_DIRS.map(

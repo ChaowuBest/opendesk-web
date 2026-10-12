@@ -233,6 +233,26 @@ describe('policyTextLinux', () => {
         const text = policyTextLinux('http://127.0.0.1:1/decide', 't', '/home/tester/work', undefined, '/home/tester');
         expect(text).toContain('path = "/home/tester/.cache/opendesk-sandbox/**"\naccess = "write"\nperm = "allow"');
     });
+    test('家目录工具链安装根（<home>/usr/local）读取放行（pyvenv.cfg/python3._pth/pyc 缓存不弹 ask）', () => {
+        // 回归：鸿蒙 PC 上 python 等工具链装在用户目录
+        // /storage/Users/currentUser/usr/local/，node-gyp 探测读 pyvenv.cfg、
+        // 解释器启动读 python3._pth 与 encodings/_pycache__/*.pyc，不放行则
+        // 每条 npm install 命令都弹 read ask
+        const text = policyTextLinux('http://127.0.0.1:1/decide', 't', '/home/tester/work', undefined, '/home/tester');
+        expect(text).toContain('path = "/home/tester/usr/local/**"\naccess = "read"\nperm = "allow"');
+        // 只放读：不得出现该目录的 write allow（工具链目录防持久化篡改）
+        expect(text).not.toContain('path = "/home/tester/usr/local/**"\naccess = "write"\nperm = "allow"');
+    });
+    test('readonly 模式保留 <home>/usr/local 读取放行（工具链起不来则基础命令无法执行）', () => {
+        const rules = [
+            { resourceType: 'file', action: 'read', pathPattern: '/home/tester/work/**', effect: 'allow' },
+            { resourceType: 'file', action: 'write', pathPattern: '**', effect: 'deny' }
+        ] as any[];
+        const text = policyTextLinux('http://127.0.0.1:1/decide', 't', '/home/tester/work', rules, '/home/tester');
+        // readonly 下外读兜底 deny，但工具链安装根读放行保留（与系统运行时/PATH 同哲学）
+        expect(text).toContain('path = "/**"\naccess = "read"\nperm = "deny"');
+        expect(text).toContain('path = "/home/tester/usr/local/**"\naccess = "read"\nperm = "allow"');
+    });
     test('Python 字节码缓存目录（__pycache__）写放行（对齐 Windows /C/**/__pycache__/**）', () => {
         const text = policyTextLinux('http://127.0.0.1:1/decide', 't', '/home/tester/work');
         expect(text).toContain('path = "/**/__pycache__/**"\naccess = "write"\nperm = "allow"');

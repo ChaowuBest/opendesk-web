@@ -50,6 +50,19 @@ describe('policyTextOpenHarmony', () => {
         );
     });
 
+    test('家目录工具链安装根（<home>/usr/local）读取放行（pyvenv.cfg/python3._pth/pyc 缓存不弹 ask）', () => {
+        // 回归：鸿蒙 PC 上 python 等工具链装在用户目录
+        // /storage/Users/currentUser/usr/local/，node-gyp 探测读 pyvenv.cfg、
+        // 解释器启动读 python3._pth 与 encodings/_pycache__/*.pyc，不放行则
+        // 每条 npm install 命令都弹 read ask
+        const text = policyTextOpenHarmony('e', 't', '/data/home/work', undefined, '/storage/Users/currentUser');
+        expect(text).toContain('path = "/storage/Users/currentUser/usr/local/**"\naccess = "read"\nperm = "allow"');
+        // 只放读：不得出现该目录的 write allow（工具链目录防持久化篡改）
+        expect(text).not.toContain(
+            'path = "/storage/Users/currentUser/usr/local/**"\naccess = "write"\nperm = "allow"'
+        );
+    });
+
     test('权限规则按真实路径导出、deny 优先于 allow', () => {
         const rules = [
             { resourceType: 'file', action: 'read', pathPattern: '/data/home/work/**', effect: 'allow' },
