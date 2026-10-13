@@ -507,6 +507,11 @@ function policyLinuxTail(
                   // 下兜底 read ask 会挂起 300s 后 fail-closed deny，node 启动早期
                   // V8 tracing 初始化随之崩溃（darwin 实测）。只放行根目录本身
                   //（path="/" 不展开子路径），子路径仍走既有前缀规则与 ask 兜底。
+                  // 匹配语义依赖 native dbox_glob_match 的组件化 glob（policy.c）：
+                  // pattern "/" 经 comps_split 拆出 0 个组件，仅与同样 0 组件的
+                  // 路径 "/" 相等（match_list(np=0,nt=0) 成立）；"/usr" 等 1+ 组件
+                  // 路径一律不命中。故本规则不会意外放行全盘——若未来要放行根下
+                  // 子树，须显式新增 path="/**" 规则，勿改动本行语义。
                   '[[rules]]',
                   `path = ${quote('/')}`,
                   'access = "read"',
