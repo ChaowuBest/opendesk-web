@@ -86,6 +86,8 @@ describe('python app 策略', () => {
         const allows = rules.filter((r) => r.effect === 'allow').map((r) => r.pathPattern);
         expect(allows.some((p) => p.includes('/.local/lib/python'))).toBe(true);
         expect(allows.some((p) => p.includes('/AppData/Roaming/Python'))).toBe(true);
+        expect(allows.some((p) => p.includes('/.cache/opendesk-sandbox/pip'))).toBe(true);
+        expect(allows.some((p) => p.includes('/.cache/opendesk-sandbox/pycache'))).toBe(true);
         expect(allows.some((p) => p.includes('/.cache/pip'))).toBe(true);
         expect(allows.some((p) => p.includes('Library/Caches/pip'))).toBe(true);
         const pypirc = rules.find((r) => r.pathPattern.endsWith('.pypirc'));
@@ -94,15 +96,16 @@ describe('python app 策略', () => {
 });
 
 describe('node app 策略', () => {
-    test('npm 缓存/全局前缀读放行；~/.npmrc（registry token）ask 保护', () => {
+    test('npm 缓存/全局前缀读放行；~/.npmrc 读写始终 ask，绝不 allow', () => {
         const rules = createNodePolicyRules(HOME_UNIX);
         const allows = rules.filter((r) => r.effect === 'allow').map((r) => r.pathPattern);
         expect(allows).toContain(`${HOME_UNIX}/.npm/**`);
         expect(allows).toContain(`${HOME_UNIX}/.node_modules/**`);
         expect(allows).toContain(`${HOME_UNIX}/AppData/Local/npm-cache/**`);
         expect(allows).toContain(`${HOME_UNIX}/.harmonybrew/**`);
-        const npmrc = rules.find((r) => r.pathPattern.endsWith('.npmrc'));
-        expect(npmrc?.effect).toBe('ask');
+        expect(rules.find((r) => r.pathPattern.endsWith('.npmrc') && r.action === 'read')?.effect).toBe('ask');
+        expect(rules.find((r) => r.pathPattern.endsWith('.npmrc') && r.action === 'write')?.effect).toBe('ask');
+        expect(rules.some((r) => r.pathPattern.endsWith('.npmrc') && r.effect === 'allow')).toBe(false);
     });
     test('npm 调试日志目录写放行（每次 npm/npx 执行都写 _logs/*.log，回归：standard 沙箱逐次写 ask）', () => {
         // 实测：沙箱内 npx jest 一次即对 ~/.npm/_logs/<时间戳>-debug-0.log 触发写 ask

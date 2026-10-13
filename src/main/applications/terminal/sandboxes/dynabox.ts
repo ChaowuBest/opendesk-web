@@ -109,6 +109,15 @@ export function sandboxRunArgs(options: {
     ];
 }
 
+export function sandboxToolCacheEnv(userProfile?: string): Record<string, string> {
+    if (!userProfile) return {};
+    const cacheRoot = `${userProfile.replace(/\\/g, '/')}/.cache/opendesk-sandbox`;
+    return {
+        npm_config_cache: `${cacheRoot}/npm`,
+        PYTHONPYCACHEPREFIX: `${cacheRoot}/pycache`
+    };
+}
+
 export async function prepareDynamicSandbox(options: {
     shellPath: string;
     shellArgs: string[];
@@ -179,16 +188,9 @@ export async function prepareDynamicSandbox(options: {
         throw error;
     }
 
-    // 工具链缓存重定向到宿主持久目录（~/.cache/opendesk-sandbox/...）：npm 缓存
-    // 跨沙箱实例复用（首次构建才需下载）。与 linux-sandbox.ts 的
-    // CARGO_HOME/GOCACHE 同语义。
-    const cacheRoot = process.env.USERPROFILE
-        ? `${process.env.USERPROFILE.replace(/\\/g, '/')}/.cache/opendesk-sandbox`
-        : null;
-    const envExtra: Record<string, string> = {};
-    if (cacheRoot) {
-        envExtra['npm_config_cache'] = `${cacheRoot}/npm`;
-    }
+    // 工具链缓存重定向到宿主持久目录（~/.cache/opendesk-sandbox/...）。Python
+    // 字节码必须走专用目录，策略不再放行任意路径下的 __pycache__ 写入。
+    const envExtra = sandboxToolCacheEnv(process.env.USERPROFILE);
 
     const childCommand = [options.shellPath, ...childArgs].map(quoteWindowsArgument).join(' ');
     return {

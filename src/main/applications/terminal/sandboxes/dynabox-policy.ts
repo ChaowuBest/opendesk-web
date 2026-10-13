@@ -127,10 +127,6 @@ export function policyText(
         // PowerShell 启动配置数据（框架静默写；家目录根/Roaming 根不放通——
         // 写探测由 hook 按"目录写探测"降级为 read，见 hooks_file.cpp）
         '/C/Users/*/AppData/Local/Microsoft/Windows/PowerShell/**',
-        // Python 解释器字节码缓存：import 时原子写 __pycache__/*.pyc.<随机数> 临时
-        // 文件再 rename（解释器在宿主 Python 安装目录下生成），内容仅为字节码缓存，
-        // 放行写入免去每次 spawn python 子进程都触发 ask
-        '/C/**/__pycache__/**',
         // Windows App Installer（winget 等组件）诊断日志目录：组件启动时静默写入，
         // 与 catroot/Caches 同类，放通不产生安全面（仅日志落盘）
         '/C/Users/*/AppData/Local/Packages/*/LocalState/DiagOutputDir/**',
@@ -345,6 +341,14 @@ function policyLinuxTail(
         ...permissionRulesForSandboxLinux(rules),
         // git 全局身份配置允许写（沙箱内 git commit 常用；凭据文件在敏感清单中已 deny）
         ...(home ? [`[[rules]]\npath = ${quote(`${home}/.gitconfig`)}\naccess = "write"\nperm = "allow"`] : []),
+        // 家目录工具链安装根（<home>/usr/local）读取放行：鸿蒙 PC 上 python/node
+        // 等工具链装在用户目录（/storage/Users/currentUser/usr/local/...），
+        // node-gyp 探测 Python 读 pyvenv.cfg、解释器启动读 python3._pth 与标准库
+        // 字节码缓存 lib/python3.x/encodings/_pycache__/*.pyc，不放行则每条
+        // npm install 命令逐次弹 read ask。只放 read：写（篡改工具链/持久化）
+        // 仍走兜底 ask/deny，与 --ro-dirs 工具链只读暴露同哲学。readonly 保留：
+        // 与系统运行时/PATH 工具链读放行同理，工具链起不来则基础命令都无法执行。
+        ...(home ? [`[[rules]]\npath = ${quote(`${home}/usr/local/**`)}\naccess = "read"\nperm = "allow"`] : []),
         // 家目录敏感路径读 deny（默认读放行，须显式收窄私密文件）
         ...(home
             ? SENSITIVE_HOME_DIRS.map(
@@ -498,6 +502,21 @@ function policyLinuxTail(
                   ...POSIX_TEMP_DIR_PATTERNS.map(
                       (p) => `[[rules]]\npath = ${quote(p)}\naccess = "read"\nperm = "allow"`
                   ),
+                  // 根目录 "/" 目录项打开读取放行：node/OpenSSL 等运行时初始化会
+                  // open("/")（与 openssl.cnf 配置加载同批次探测），standard 模式
+                  // 下兜底 read ask 会挂起 300s 后 fail-closed deny，node 启动早期
+                  // V8 tracing 初始化随之崩溃（darwin 实测）。只放行根目录本身
+                  //（path="/" 不展开子路径），子路径仍走既有前缀规则与 ask 兜底。
+                  // 匹配语义依赖 native dbox_glob_match 的组件化 glob（policy.c）：
+                  // pattern "/" 经 comps_split 拆出 0 个组件，仅与同样 0 组件的
+                  // 路径 "/" 相等（match_list(np=0,nt=0) 成立）；"/usr" 等 1+ 组件
+                  // 路径一律不命中。故本规则不会意外放行全盘——若未来要放行根下
+                  // 子树，须显式新增 path="/**" 规则，勿改动本行语义。
+                  '[[rules]]',
+                  `path = ${quote('/')}`,
+                  'access = "read"',
+                  'perm = "allow"',
+                  '',
                   '[[rules]]',
                   'path = "/**"',
                   'access = "read"',
@@ -670,6 +689,16 @@ const LINUX_SYSTEM_READ_PREFIXES = [
     '/sys',
     '/proc',
     '/data/service',
+    // OpenHarmony：npm/node/python 等工具链以独立 bundle 应用数据形式装在
+    // /data/app 下（如 /data/app/node.org/node_v24.13.0/lib/node_modules/npm/、
+    // /data/app/python.org/python_3.12.9/...）。npm install 必读工具链自身代码，
+    // 逐 bundle 枚举会随工具链迁移频繁补洞，故放行整棵应用数据根 read。
+    // 安全依据（真机实测）：OpenDesk 是 normal_hap 域普通应用（无特权能力），
+    // dynobox 拦截层不越权 OS 的 DAC+SELinux——第三方 bundle 数据在内核层即被
+    // 隔离（shell 实测 /data/app/el2/100/<其他bundle> 全部不可见），策略放行只
+    // 消除弹窗、不扩大真实可读面。只 read：写（篡改任意应用数据）仍走兜底
+    // ask/deny。Linux/darwin 无 /data/app，规则不命中，无副作用。
+    '/data/app',
     // macOS 系统运行时（/system 是 OpenHarmony 布局，macOS 为大写 /System——
     // 大小写敏感匹配，缺大写形态则 LaunchServices 初始化读
     // /System/Library/Frameworks/.../Info.plist 逐次弹 ask）
@@ -702,6 +731,23 @@ function linuxRuntimeReadPatterns(): string[] {
         const normalized = path.posix.normalize(trimmed).replace(/\/+$/, '');
         if (!normalized || patterns.includes(normalized)) continue;
         patterns.push(normalized, `${normalized}/**`);
+        // 工具链安装根数据目录读放行：PATH 目录通常是 <prefix>/bin（或 sbin），
+        // 但 bash 等工具启动时还会读安装根的 share/（locale/terminfo/completion）
+        // 与 lib/（loadable builtins/动态库）——只放行 bin/** 会让这些数据目录
+        // 每次启动都触发 read ask（回归：鸿蒙 lycium bash 读
+        // usr/bash/arm64-v8a/share/locale/locale.alias 弹窗）。
+        // 上溯：bin/sbin/libexec 命名的目录取其父级为安装根；其他命名视为自身即
+        // 安装根（PATH 可能直接指向工具根目录）。已被系统前缀覆盖的安装根跳过，
+        // 避免冗余导出（/usr/** 已含 /usr/local/** 等）。
+        const base = path.posix.basename(normalized);
+        const prefix =
+            base === 'bin' || base === 'sbin' || base === 'libexec' ? path.posix.dirname(normalized) : normalized;
+        if (!prefix || prefix === '/') continue;
+        if (LINUX_SYSTEM_READ_PREFIXES.some((sys) => prefix === sys || prefix.startsWith(`${sys}/`))) continue;
+        for (const sub of ['share', 'lib']) {
+            const p = `${prefix}/${sub}/**`;
+            if (!patterns.includes(p)) patterns.push(p);
+        }
     }
     return patterns;
 }
@@ -735,7 +781,13 @@ export function policyTextOpenHarmony(
         writableDirs && writableDirs.length > 0
             ? writableDirs
                   .filter((dir) => dir && dir.startsWith('/'))
-                  .flatMap((dir) => [`[[rules]]\npath = ${quote(`${dir}/**`)}\naccess = "write"\nperm = "allow"`])
+                  .flatMap((dir) => [
+                      `[[rules]]\npath = ${quote(`${dir}/**`)}\naccess = "write"\nperm = "allow"`,
+                      // 读同样放行：系统 smart shell 桥接 FIFO（smartshell_fifo_<pid>）
+                      // 位于应用沙箱 cache 目录，沙箱内命令读它拿 I/O，只放行写会落到
+                      // 兜底 read ask，每条命令都弹一次（注释承诺"总是可读可写"）
+                      `[[rules]]\npath = ${quote(`${dir}/**`)}\naccess = "read"\nperm = "allow"`
+                  ])
             : [];
     return [
         'version = 1',

@@ -1351,6 +1351,13 @@ static FILE *fopen_common(FILE *(*fn)(const char *, const char *),
                           const char *path, const char *mstr, const char *what)
 {
     int w = strchr(mstr, 'w') || strchr(mstr, 'a') || strchr(mstr, '+');
+    /* 读模式且目标不存在 → 透传（真实 fopen 返回 ENOENT），对齐 open 系列的
+     * path_not_exist 语义：读不存在路径是 no-op 探测（bash 按 LOCALEDIR 读
+     * locale.alias、node 探测模块路径等），不判定不 ask。有写位（w/a/+）走
+     * 正常判定——写入语义。 */
+    if (!w && dbox_path_has_content(path) && path_not_exist(path)) {
+        return fn(path, mstr);
+    }
     char *real = NULL;
     if (!gate1(path, 0, w ? ACC_WRITE | ACC_READ : ACC_READ, what, &real))
         return NULL;
@@ -1384,6 +1391,11 @@ static FILE *freopen_common(FILE *(*fn)(const char *, const char *, FILE *),
 {
     int fd_old = f ? fileno(f) : -1;
     int w = strchr(mstr, 'w') || strchr(mstr, 'a') || strchr(mstr, '+');
+    /* 读模式且目标不存在 → 透传（真实 freopen 返回 ENOENT），对齐 fopen 的
+     * path_not_exist 语义：重开不存在的路径是 no-op 探测，不判定不 ask。 */
+    if (!w && dbox_path_has_content(path) && path_not_exist(path)) {
+        return fn(path, mstr, f);
+    }
     char *real = NULL;
     if (!gate1(path, 0, w ? ACC_WRITE | ACC_READ : ACC_READ, what, &real))
         return NULL;

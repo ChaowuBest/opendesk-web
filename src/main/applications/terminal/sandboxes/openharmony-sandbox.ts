@@ -166,7 +166,13 @@ export async function prepareOpenHarmonySandbox(options: {
             npm_config_cache: `${home}/.cache/opendesk-sandbox/npm`,
             GOCACHE: `${home}/.cache/opendesk-sandbox/go`,
             GOPATH: `${home}/.cache/opendesk-sandbox/gopath`,
-            XDG_CACHE_HOME: `${home}/.cache/opendesk-sandbox/xdg`
+            XDG_CACHE_HOME: `${home}/.cache/opendesk-sandbox/xdg`,
+            // Python 字节码缓存重定向：3.8+ 的 import 写 __pycache__ 到镜像树
+            //（/data/app/python.org 等安装目录零落盘），落点在
+            // ~/.cache/opendesk-sandbox/pycache（读已由 node app 策略
+            // {home}/.cache/opendesk-sandbox/** read allow 覆盖）。旧版 Python
+            //（<3.8）不认此变量时不落盘字节码，避免开放任意目录写权限。
+            PYTHONPYCACHEPREFIX: `${home}/.cache/opendesk-sandbox/pycache`
         },
         attach: (proc) => {
             const finish = () => {

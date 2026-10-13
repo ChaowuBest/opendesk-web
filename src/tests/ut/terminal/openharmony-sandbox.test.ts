@@ -1,5 +1,6 @@
 import { describe, expect, test } from '@jest/globals';
 import { policyTextOpenHarmony } from '../../../main/applications/terminal/sandboxes/dynabox-policy.js';
+import { createNodePolicyRules } from '../../../main/aikernel/security/policies/node.js';
 
 describe('policyTextOpenHarmony', () => {
     test('不含 [[roots]]（OH 版 native 会拒绝 roots），含 [ask] 与 token', () => {
@@ -28,6 +29,46 @@ describe('policyTextOpenHarmony', () => {
         expect(text).toContain('path = "/data/home/.cache/opendesk-sandbox/**"\naccess = "write"\nperm = "allow"');
     });
 
+    test('家目录 npm 配置与宿主缓存只读，缓存写入使用重定向目录', () => {
+        const text = policyTextOpenHarmony(
+            'e',
+            't',
+            '/data/home/work',
+            createNodePolicyRules('/data/home'),
+            '/data/home'
+        );
+        // .npmrc 读写一律 ask，不按内容或文件存在性放通。
+        expect(text).toContain('path = "/data/home/.npmrc"\naccess = "read"\nperm = "ask"');
+        expect(text).toContain('path = "/data/home/.npmrc"\naccess = "write"\nperm = "ask"');
+        expect(text).not.toContain('path = "/data/home/.npmrc"\naccess = "read"\nperm = "allow"');
+        expect(text).not.toContain('path = "/data/home/.npmrc"\naccess = "write"\nperm = "allow"');
+        // npm 缓存目录（_cacache/_logs/_locks）：npm install 下载/解压包写
+        // ~/.npm/_cacache/tmp/* 临时文件，只放行 .npmrc 仍会落兜底 ask（回归：
+        // mac 实测弹 ~/.npm/_cacache/tmp/<uuid> 读取）
+        expect(text).toContain('path = "/data/home/.npm/**"\naccess = "read"\nperm = "allow"');
+        expect(text).not.toContain('path = "/data/home/.npm/**"\naccess = "write"\nperm = "allow"');
+        expect(text).toContain('path = "/data/home/.cache/opendesk-sandbox/**"\naccess = "write"\nperm = "allow"');
+    });
+
+    test('Python 字节码缓存不得通过全盘 __pycache__ 通配规则写入', () => {
+        const text = policyTextOpenHarmony('e', 't', '/data/home/work', undefined, '/data/home');
+        expect(text).not.toContain('path = "/**/__pycache__/**"\naccess = "write"\nperm = "allow"');
+        expect(text).toContain('path = "/data/home/.cache/opendesk-sandbox/**"\naccess = "write"\nperm = "allow"');
+    });
+
+    test('家目录工具链安装根（<home>/usr/local）读取放行（pyvenv.cfg/python3._pth/pyc 缓存不弹 ask）', () => {
+        // 回归：鸿蒙 PC 上 python 等工具链装在用户目录
+        // /storage/Users/currentUser/usr/local/，node-gyp 探测读 pyvenv.cfg、
+        // 解释器启动读 python3._pth 与 encodings/_pycache__/*.pyc，不放行则
+        // 每条 npm install 命令都弹 read ask
+        const text = policyTextOpenHarmony('e', 't', '/data/home/work', undefined, '/storage/Users/currentUser');
+        expect(text).toContain('path = "/storage/Users/currentUser/usr/local/**"\naccess = "read"\nperm = "allow"');
+        // 只放读：不得出现该目录的 write allow（工具链目录防持久化篡改）
+        expect(text).not.toContain(
+            'path = "/storage/Users/currentUser/usr/local/**"\naccess = "write"\nperm = "allow"'
+        );
+    });
+
     test('权限规则按真实路径导出、deny 优先于 allow', () => {
         const rules = [
             { resourceType: 'file', action: 'read', pathPattern: '/data/home/work/**', effect: 'allow' },
@@ -45,15 +86,24 @@ describe('policyTextOpenHarmony', () => {
             '/data/storage/el2/temp',
             '/data/storage/el2/cache'
         ]);
-        const tempRule = 'path = "/data/storage/el2/temp/**"\naccess = "write"\nperm = "allow"';
-        const cacheRule = 'path = "/data/storage/el2/cache/**"\naccess = "write"\nperm = "allow"';
-        expect(text).toContain(tempRule);
-        expect(text).toContain(cacheRule);
+        const tempWrite = 'path = "/data/storage/el2/temp/**"\naccess = "write"\nperm = "allow"';
+        const cacheWrite = 'path = "/data/storage/el2/cache/**"\naccess = "write"\nperm = "allow"';
+        // 读同样放行：系统 smart shell 桥接 FIFO（smartshell_fifo_<pid>）位于应用沙箱
+        // cache 目录，沙箱内命令读它拿 I/O；只放行写会落到兜底 read ask，开启沙箱后
+        // 每条命令都弹一次权限询问（回归：README 承诺"总是可读可写"）
+        const tempRead = 'path = "/data/storage/el2/temp/**"\naccess = "read"\nperm = "allow"';
+        const cacheRead = 'path = "/data/storage/el2/cache/**"\naccess = "read"\nperm = "allow"';
+        expect(text).toContain(tempWrite);
+        expect(text).toContain(cacheWrite);
+        expect(text).toContain(tempRead);
+        expect(text).toContain(cacheRead);
         // 顺序：可写目录规则必须早于兜底 /** write ask（first-match 才生效）
         const tempIdx = text.indexOf('path = "/data/storage/el2/temp/**"');
-        const askIdx = text.indexOf('path = "/**"\naccess = "write"\nperm = "ask"');
+        const writeAskIdx = text.indexOf('path = "/**"\naccess = "write"\nperm = "ask"');
+        const readAskIdx = text.indexOf('path = "/**"\naccess = "read"\nperm = "ask"');
         expect(tempIdx).toBeGreaterThanOrEqual(0);
-        expect(askIdx).toBeGreaterThan(tempIdx);
+        expect(writeAskIdx).toBeGreaterThan(tempIdx);
+        expect(readAskIdx).toBeGreaterThan(tempIdx);
         expect(text).not.toContain('[[roots]]');
     });
 

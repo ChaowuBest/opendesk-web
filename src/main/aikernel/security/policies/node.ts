@@ -21,15 +21,16 @@
  *   - node 全局模块解析：~/.node_modules、~/.node_libraries（三平台一致，
  *     module.globalPaths 实测确认）。
  *
- * 凭据硬边界：~/.npmrc 含 registry _authToken（明文 token），读 ask 保护——
- * npm/npx 每次启动都读它，这是已知的唯一 ask 残留，属有意的凭据保护（standard
- * 模式确认一次后 rememberScope 可放行）。Windows 的用户级 .npmrc 同路径（家目录）。
+ * 凭据硬边界：~/.npmrc 含 registry _authToken（明文 token），读写一律 ask——
+ * npm/npx 每次启动都读它、npm login/publish 等也会写它，属有意的凭据保护
+ * （standard 模式确认一次后 rememberScope 可放行）。Windows 的用户级 .npmrc
+ * 同路径（家目录）。
  */
 
 import type { PermissionRule } from '../permission.js';
 import { homeRules } from './common.js';
 
-/** npm registry token（明文）：读 ask 保护。 */
+/** npm registry token（明文）：读写一律 ask，不读取内容决定放行。 */
 const NODE_CREDENTIAL_ASK_PATTERNS = ['{home}/.npmrc'];
 
 /**
@@ -63,6 +64,8 @@ const NODE_RUNTIME_READ_PATTERNS = [
 export function createNodePolicyRules(homeDir?: string): PermissionRule[] {
     return [
         ...homeRules(NODE_CREDENTIAL_ASK_PATTERNS, 'read', 'ask', homeDir),
+        // .npmrc 写入同样 ask：凭据文件防覆盖/替换（write 不读取内容放行）
+        ...homeRules(NODE_CREDENTIAL_ASK_PATTERNS, 'write', 'ask', homeDir),
         ...homeRules(NODE_RUNTIME_READ_PATTERNS, 'read', 'allow', homeDir),
         // npm 调试日志写放行（诊断产物例外，见 NODE_LOG_WRITE_PATTERNS 注释）
         ...homeRules(NODE_LOG_WRITE_PATTERNS, 'write', 'allow', homeDir)

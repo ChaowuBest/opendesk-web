@@ -4,6 +4,7 @@ import {
     permissionRulesForSandboxLinux,
     policyTextLinux
 } from '../../../main/applications/terminal/sandboxes/dynabox-policy.js';
+import { createNodePolicyRules } from '../../../main/aikernel/security/policies/node.js';
 
 describe('hostPatternToVirtualLinux', () => {
     test('透明路径恒等（保留宿主真实路径）', () => {
@@ -107,6 +108,24 @@ describe('policyTextLinux', () => {
             expect(text).toContain(`path = "${prefix}"\naccess = "read"\nperm = "allow"`);
         }
     });
+    test('OpenHarmony /data/app 应用数据根读放行（回归：鸿蒙 PC 工具链弹 ask；OS 层隔离兜底）', () => {
+        // 鸿蒙真实事故：npm install 读 npm/python 工具链自身代码（/data/app/node.org/
+        // node_v24.13.0/...、/data/app/python.org/...）逐次弹 ask。工具链以独立
+        // bundle 装在 /data/app 下，故放行整棵应用数据根 read——不再随工具链迁移
+        // 逐个枚举。
+        // 安全依据（真机实测）：OpenDesk 是 normal_hap 域普通应用（uid 20020178、
+        // CapEff=0x2a 无特权），dynobox 拦截层不越权 OS 的 DAC+SELinux；第三方
+        // bundle 数据在内核层即被隔离（shell 实测 ls /data/app/el2/100/* 全部
+        // Permission denied），策略放行只消除弹窗、不扩大真实可读面。
+        // 边界：若未来 OpenDesk 脱离 normal_hap 域升为特权应用，应重新收紧该前缀。
+        // 只放 read（工具链代码只读）；写（篡改任意应用数据）仍走兜底 ask/deny。
+        // Linux/darwin 无 /data/app，规则不命中，无副作用。
+        const text = policyTextLinux('http://127.0.0.1:1/decide', 't', '/home/tester/work');
+        expect(text).toContain('path = "/data/app/**"\naccess = "read"\nperm = "allow"');
+        expect(text).toContain('path = "/data/app"\naccess = "read"\nperm = "allow"');
+        // 只读放行：不得出现对 /data/app 的 write allow（防篡改任意应用数据）
+        expect(text).not.toContain('path = "/data/app/**"\naccess = "write"\nperm = "allow"');
+    });
     test('stat 家族由 native deny-only 承载：策略不再包含 stat 驱动的补丁规则（PATH 展开/祖先目录/静态 selinux）', () => {
         // stat/access/readlink/opendir 等元数据读在 native preload 层统一为
         // deny-only（不参与 allow/ask），见 preload.c 的 gate_meta_read——bash
@@ -178,9 +197,75 @@ describe('policyTextLinux', () => {
             }
         }
     });
+    test('PATH 工具链安装根数据目录读放行（<prefix>/share、<prefix>/lib；鸿蒙 lycium bash locale 场景）', () => {
+        // 回归：鸿蒙 PC 上 lycium 编译的 bash 装在 /home/lycium/lycium/usr/bash/arm64-v8a/，
+        // 启动读 share/locale/locale.alias 等数据文件，只放行 bin/** 会逐次触发 read ask。
+        const originalPath = process.env.PATH;
+        process.env.PATH =
+            '/home/lycium/lycium/usr/bash/arm64-v8a/bin:/usr/local/bin:/opt/homebrew/bin:/home/tester/tools';
+        try {
+            const text = policyTextLinux('http://127.0.0.1:1/decide', 't', '/home/tester/work');
+            // bin 自身仍放行
+            expect(text).toContain(
+                'path = "/home/lycium/lycium/usr/bash/arm64-v8a/bin/**"\naccess = "read"\nperm = "allow"'
+            );
+            // 安装根数据目录追加放行：share（locale/terminfo/completion 等）
+            expect(text).toContain(
+                'path = "/home/lycium/lycium/usr/bash/arm64-v8a/share/**"\naccess = "read"\nperm = "allow"'
+            );
+            // 安装根数据目录追加放行：lib（loadable builtins/运行时库）
+            expect(text).toContain(
+                'path = "/home/lycium/lycium/usr/bash/arm64-v8a/lib/**"\naccess = "read"\nperm = "allow"'
+            );
+            // 已被系统前缀（/usr、/opt）覆盖的安装根不重复导出（/usr/local、/opt/homebrew）
+            expect(text).not.toContain('path = "/usr/local/share/**"');
+            expect(text).not.toContain('path = "/opt/homebrew/share/**"');
+            // 非 bin/sbin 命名的 PATH 目录视为自身即安装根，其 share 也放行
+            expect(text).toContain('path = "/home/tester/tools/share/**"\naccess = "read"\nperm = "allow"');
+        } finally {
+            if (originalPath === undefined) {
+                delete process.env.PATH;
+            } else {
+                process.env.PATH = originalPath;
+            }
+        }
+    });
     test('工具链缓存目录（~/.cache/opendesk-sandbox）写入放行（与 linux-sandbox env 重定向一致）', () => {
         const text = policyTextLinux('http://127.0.0.1:1/decide', 't', '/home/tester/work', undefined, '/home/tester');
         expect(text).toContain('path = "/home/tester/.cache/opendesk-sandbox/**"\naccess = "write"\nperm = "allow"');
+    });
+    test('家目录工具链安装根（<home>/usr/local）读取放行（pyvenv.cfg/python3._pth/pyc 缓存不弹 ask）', () => {
+        // 回归：鸿蒙 PC 上 python 等工具链装在用户目录
+        // /storage/Users/currentUser/usr/local/，node-gyp 探测读 pyvenv.cfg、
+        // 解释器启动读 python3._pth 与 encodings/_pycache__/*.pyc，不放行则
+        // 每条 npm install 命令都弹 read ask
+        const text = policyTextLinux('http://127.0.0.1:1/decide', 't', '/home/tester/work', undefined, '/home/tester');
+        expect(text).toContain('path = "/home/tester/usr/local/**"\naccess = "read"\nperm = "allow"');
+        // 只放读：不得出现该目录的 write allow（工具链目录防持久化篡改）
+        expect(text).not.toContain('path = "/home/tester/usr/local/**"\naccess = "write"\nperm = "allow"');
+    });
+    test('readonly 模式保留 <home>/usr/local 读取放行（工具链起不来则基础命令无法执行）', () => {
+        const rules = [
+            { resourceType: 'file', action: 'read', pathPattern: '/home/tester/work/**', effect: 'allow' },
+            { resourceType: 'file', action: 'write', pathPattern: '**', effect: 'deny' }
+        ] as any[];
+        const text = policyTextLinux('http://127.0.0.1:1/decide', 't', '/home/tester/work', rules, '/home/tester');
+        // readonly 下外读兜底 deny，但工具链安装根读放行保留（与系统运行时/PATH 同哲学）
+        expect(text).toContain('path = "/**"\naccess = "read"\nperm = "deny"');
+        expect(text).toContain('path = "/home/tester/usr/local/**"\naccess = "read"\nperm = "allow"');
+    });
+    test('Python 字节码缓存不得通过全盘 __pycache__ 通配规则写入', () => {
+        const text = policyTextLinux('http://127.0.0.1:1/decide', 't', '/home/tester/work', undefined, '/home/tester');
+        expect(text).not.toContain('path = "/**/__pycache__/**"\naccess = "write"\nperm = "allow"');
+        expect(text).toContain('path = "/home/tester/.cache/opendesk-sandbox/**"\naccess = "write"\nperm = "allow"');
+    });
+    test('readonly 模式不导出 __pycache__ 写放行（全盘 write deny 下 deny 无害，不架空写保护）', () => {
+        const rules = [
+            { resourceType: 'file', action: 'read', pathPattern: '/home/tester/work/**', effect: 'allow' },
+            { resourceType: 'file', action: 'write', pathPattern: '**', effect: 'deny' }
+        ] as any[];
+        const text = policyTextLinux('http://127.0.0.1:1/decide', 't', '/home/tester/work', rules);
+        expect(text).not.toContain('path = "/**/__pycache__/**"\naccess = "write"\nperm = "allow"');
     });
     test('darwin exec 重签缓存（~/Library/Caches/com.opendesk.sandbox）读写放行', () => {
         // 回归：darwin 沙箱内 exec 平台二进制时 dylib 复制+ad-hoc 重签到该目录，
@@ -195,6 +280,16 @@ describe('policyTextLinux', () => {
         );
         expect(text).toContain(
             'path = "/Users/tester/Library/Caches/com.opendesk.sandbox/**"\naccess = "write"\nperm = "allow"'
+        );
+    });
+    test('darwin 不放行整个 ~/Library/Caches，仅保留明确的专用缓存目录', () => {
+        const text = policyTextLinux('http://127.0.0.1:1/decide', 't', '/home/tester/work', undefined, '/Users/tester');
+        expect(text).not.toContain('path = "/Users/tester/Library/Caches/**"');
+        expect(text).toContain(
+            'path = "/Users/tester/Library/Caches/com.opendesk.sandbox/**"\naccess = "write"\nperm = "allow"'
+        );
+        expect(text).toContain(
+            'path = "/Users/tester/Library/Caches/com.apple.python/**"\naccess = "write"\nperm = "allow"'
         );
     });
     test('readonly 模式下 exec 重签缓存读仍放行（全盘 read deny 会令平台二进制 exec 起不来）', () => {
@@ -234,10 +329,39 @@ describe('policyTextLinux', () => {
         expect(allowIndex).toBeGreaterThan(denyIndex);
         expect(lines).not.toContain('"execute"');
     });
+    test('根目录 "/" 目录项读放行（node/OpenSSL 启动早期 open("/") 不触发 ask 挂起）', () => {
+        // 回归：darwin 沙箱内 npm install 时 node 启动早期 OpenSSL 初始化会
+        // open("/")（与 openssl.cnf 配置加载同批次），standard 模式兜底 read ask
+        // 挂起 300s 后 fail-closed deny，node 的 V8 tracing 初始化随之崩溃。
+        const text = policyTextLinux('http://127.0.0.1:1/decide', 't', '/home/tester/work');
+        // 只放行根目录本身（path="/" 不展开子路径）
+        expect(text).toContain('path = "/"\naccess = "read"\nperm = "allow"');
+        // 兜底 ask 仍在（子路径外读照常询问）
+        expect(text).toContain('path = "/**"\naccess = "read"\nperm = "ask"');
+    });
     test('兜底规则：读询问（standard 外读确认）、写询问、执行放行', () => {
         const text = policyTextLinux('http://127.0.0.1:1/decide', 't', '/home/tester/work');
         expect(text).toContain('path = "/**"\naccess = "read"\nperm = "ask"');
         expect(text).toContain('path = "/**"\naccess = "write"\nperm = "ask"');
         expect(text).toContain('path = "/**"\naccess = "execute"\nperm = "allow"');
+    });
+    test('家目录 .npmrc 固定导出读写 ask；宿主 npm 缓存只读', () => {
+        const home = '/home/tester';
+        const rules = createNodePolicyRules(home);
+        const text = policyTextLinux('http://127.0.0.1:1/decide', 't', `${home}/work`, rules, home);
+        expect(text).toContain(`path = "${home}/.npmrc"\naccess = "read"\nperm = "ask"`);
+        expect(text).toContain(`path = "${home}/.npmrc"\naccess = "write"\nperm = "ask"`);
+        expect(text).not.toContain(`path = "${home}/.npmrc"\naccess = "read"\nperm = "allow"`);
+        expect(text).not.toContain(`path = "${home}/.npmrc"\naccess = "write"\nperm = "allow"`);
+        // 宿主 npm 缓存只允许读取；写入必须使用重定向后的
+        // ~/.cache/opendesk-sandbox/npm，避免投毒宿主 ~/.npm。
+        expect(text).toContain(`path = "${home}/.npm/**"\naccess = "read"\nperm = "allow"`);
+        expect(text).not.toContain(`path = "${home}/.npm/**"\naccess = "write"\nperm = "allow"`);
+        expect(text).toContain(`path = "${home}/.cache/opendesk-sandbox/**"\naccess = "write"\nperm = "allow"`);
+    });
+    test('未传权限规则时不在终端层硬编码 npm 路径', () => {
+        const text = policyTextLinux('http://127.0.0.1:1/decide', 't', '/home/tester/work', undefined, '/home/tester');
+        expect(text).not.toContain('path = "/home/tester/.npmrc"');
+        expect(text).not.toContain('path = "/home/tester/.npm/**"');
     });
 });

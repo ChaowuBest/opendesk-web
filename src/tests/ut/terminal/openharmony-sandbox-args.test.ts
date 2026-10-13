@@ -81,6 +81,26 @@ describe('prepareOpenHarmonySandbox 回收站参数（统一协议）', () => {
         expect(args.indexOf('--trash-dir')).toBeLessThan(args.indexOf('--'));
     });
 
+    test('工具链缓存重定向 env（npm/cargo/go/xdg + Python pycache 镜像树）', async () => {
+        const launch = await prepareOpenHarmonySandbox({
+            shellPath: '/usr/bin/zsh',
+            shellArgs: ['-c', 'pwd'],
+            command: 'pwd',
+            cwd: '/storage/Users/currentUser/workspace',
+            taskState: {
+                task_id: 'task_oh_04',
+                harnessContext: { permission: { getRules: () => undefined } },
+                getWorkspace: () => '/storage/Users/currentUser/workspace'
+            } as any
+        });
+        const env = launch!.env;
+        // 缓存重定向落点统一在 ~/.cache/opendesk-sandbox（读已由 node app 策略覆盖）
+        expect(env!.npm_config_cache).toBe('/storage/Users/currentUser/.cache/opendesk-sandbox/npm');
+        expect(env!.CARGO_HOME).toBe('/storage/Users/currentUser/.cache/opendesk-sandbox/cargo');
+        // Python 字节码缓存镜像树（3.8+ 的 __pycache__ 写入重定向到沙箱允许目录）
+        expect(env!.PYTHONPYCACHEPREFIX).toBe('/storage/Users/currentUser/.cache/opendesk-sandbox/pycache');
+    });
+
     test('仅 trashDir 无 deleteToTrash：只传 --trash-dir，无 --del-to-trash', async () => {
         const launch = await prepareOpenHarmonySandbox({
             shellPath: '/usr/bin/zsh',
