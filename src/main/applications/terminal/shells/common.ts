@@ -21,6 +21,7 @@ import { statusDisplay, truncText } from '../../../tui/components/toolcall.js';
 import fs from 'node:fs';
 import chalk from 'chalk';
 import type { TaskState } from '../../../aikernel/states/tasks.js';
+import type { PluginShellType } from '../../../../../packages/plugin-sdk/src/index.js';
 import { runPluginShellEnv } from '../../pluginmgr/runtime/hooks.js';
 import { Setting, getTaskToolResultDirectory, getTaskTrashDirectory } from '../../../utils/setting.js';
 import { installTimeoutBackgrounding, ShellTimeoutClock } from '../background.js';
@@ -204,6 +205,7 @@ export function parseCdAndCommand(command: string): { cwd?: string; command: str
  */
 export async function executeShellCommand(opts: {
     shellPath: string;
+    shellType: PluginShellType;
     shellArgs: string[];
     command: string;
     cwd?: string;
@@ -218,6 +220,7 @@ export async function executeShellCommand(opts: {
 }): Promise<void> {
     const {
         shellPath,
+        shellType,
         shellArgs,
         command,
         cwd,
@@ -238,7 +241,7 @@ export async function executeShellCommand(opts: {
     const effectiveDeleteToTrash = unlimitedMode ? false : sandboxDeleteToTrash;
 
     const baseEnv = buildChildProcessEnv(taskState?.harnessContext.environ);
-    const env = await runPluginShellEnv(taskState, { shell: shellPath, command }, baseEnv);
+    const env = await runPluginShellEnv(taskState, { shell: shellPath, shellType, command }, baseEnv);
     // 任务级统一回收站目录（<opendesk>/trash/<taskId>）：每次拉起沙箱都基于当前
     // 任务 ID 构建并传入，各平台参数格式见各 prepare*Sandbox 实现。删除送回收站
     // 的开关（sandboxDeleteToTrash）仍由设置控制，原生层仅在开启时使用该目录。

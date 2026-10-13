@@ -249,7 +249,9 @@ export interface PluginAccountDeviceCodeLoginMethod {
 }
 
 export type PluginAccountLoginMethod =
-    PluginAccountFormLoginMethod | PluginAccountBrowserLoginMethod | PluginAccountDeviceCodeLoginMethod;
+    | PluginAccountFormLoginMethod
+    | PluginAccountBrowserLoginMethod
+    | PluginAccountDeviceCodeLoginMethod;
 
 export interface PluginAccountLoginFlowRequest extends PluginAccountLoginContext {
     methodId: string;
@@ -521,6 +523,7 @@ export interface PluginHookMap {
             taskId?: string;
             workspace?: string;
             shell: string;
+            shellType: PluginShellType;
             command: string;
         };
         output: {
