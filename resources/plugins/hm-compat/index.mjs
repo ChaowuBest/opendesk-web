@@ -10,9 +10,7 @@
  */
 
 import { definePlugin } from '@bitclub.ai/opendesk-plugin-sdk';
-import { configureZshEnvironment } from './environment.mjs';
-import { setupBash } from './bootstrap/bash.mjs';
-import { isZshRunnable, runBootstrapOnce } from './bootstrap/zsh.mjs';
+import { configureCommonEnvironment, injectBashEnv, injectZshEnv } from './environment.mjs';
 import { setupRecovery } from './recovery.mjs';
 import { setupSkillFallback } from './skill-fallback.mjs';
 
@@ -29,15 +27,15 @@ export default definePlugin({
         if (process.env.OPENDESK_HARMONY_BUILD_VARIANT === 'tablet') {
             return;
         }
-        if (isZshRunnable()) {
-            configureZshEnvironment(context.configDir);
-            // fire-and-forget：安装后台执行，不阻塞插件加载链路
-            void runBootstrapOnce({ opendeskDir: context.configDir }).catch((err) => {
-                console.error('[dev-env:openharmony] bootstrap failed:', err);
-            });
-            return;
-        } else {
-            setupBash(context.configDir);
-        }
+        // bash/zsh 共用的环境变量：与 shell 类型无关，setup 时一次性写入 process.env
+        configureCommonEnvironment(context.configDir);
+        // bash/zsh 特有的环境变量：主线运行时可切换 shell，每次命令执行前按当次 shell 类型注入本次子进程 env
+        context.hooks.on('shell.env', (input, output) => {
+            if (input.shellType === 'zsh') {
+                injectZshEnv(output.env);
+            } else if (input.shellType === 'bash') {
+                injectBashEnv(output.env);
+            }
+        });
     }
 });

@@ -23,25 +23,28 @@ function prependPath(entries) {
     process.env.PATH = [...entries.filter((entry) => !existing.has(entry)), ...existing].join(':');
 }
 
-function configureCommonEnvironment() {
+/**
+ * bash/zsh 共用的环境变量：pip/npm 镜像 + cmd-pkgs 统一解释器前缀。
+ * 与 shell 类型无关，插件 setup 时一次性写入 process.env，主进程与子进程继承。
+ */
+export function configureCommonEnvironment(opendeskDir) {
     process.env.PIP_INDEX_URL = HARMONY_PIP_INDEX_URL;
     process.env.PIP_TRUSTED_HOST = HARMONY_PIP_TRUSTED_HOST;
     process.env.PIP_ONLY_BINARY = HARMONY_PIP_ONLY_BINARY;
     process.env.npm_config_registry = HARMONY_NPM_REGISTRY;
-}
-
-export function configureZshEnvironment(opendeskDir) {
-    configureCommonEnvironment();
-    prependPath([...(opendeskDir ? [`${opendeskDir}/interpreters/cmd-pkgs/bin`] : []), HARMONYBREW_BIN_DIR]);
-}
-
-export function configureBashEnvironment(opendeskDir) {
-    configureCommonEnvironment();
     prependPath(opendeskDir ? [`${opendeskDir}/interpreters/cmd-pkgs/bin`] : []);
-    const nodeOptions = new Set((process.env.NODE_OPTIONS ?? '').split(/\s+/).filter(Boolean));
-    // 鸿蒙平台：HNP node 的 V8 JIT 存在 native crash 问题，
-    // --jitless 禁用 JIT 是所有 HNP node 子进程（包括 npm、agent-gate、agent-moss）的必要保护。
-    // agent-moss 在 --jitless 下性能受限，但这是 OHOS 上唯一稳定的运行方式。
+}
+
+/** zsh 特有环境变量注入点，当前留空 */
+export function injectZshEnv(env) {}
+
+/**
+ * bash 特有环境变量，写入 shell.env 钩子的本次子进程 env：--jitless
+ * 鸿蒙平台：HNP node 的 V8 JIT 存在 native crash 问题，
+ * --jitless 禁用 JIT 是 bash 会话中 HNP node 子进程（如 npm）的必要保护。
+ */
+export function injectBashEnv(env) {
+    const nodeOptions = new Set((env.NODE_OPTIONS ?? '').split(/\s+/).filter(Boolean));
     nodeOptions.add('--jitless');
-    process.env.NODE_OPTIONS = [...nodeOptions].join(' ');
+    env.NODE_OPTIONS = [...nodeOptions].join(' ');
 }
