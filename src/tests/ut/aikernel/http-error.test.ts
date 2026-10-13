@@ -4,6 +4,7 @@ import { AnthropicAdapter } from '../../../main/aikernel/adapters/anthropic.js';
 import { AssistantResponse, ChatContext, ErrorMessagePart, UserMessage } from '../../../main/aikernel/messages.js';
 import { ModelInstance } from '../../../main/utils/setting.js';
 import { AbstractPlatform, setPlatform } from '../../../platforms/base.js';
+import { ModelRequestError, classifyModelRequestError } from '../../../main/utils/model-request-error.js';
 
 const HTML_PAGE = '<!DOCTYPE html><html><head><title>403 Forbidden</title></head><body><p>blocked</p></body></html>';
 const FLAT_JSON = JSON.stringify({ code: 'Proxy_UploadNotAllowed', message: 'blocked by a gateway or proxy' });
@@ -73,6 +74,8 @@ describe('extractErrorMessage', () => {
 /* ------------------------------------------------------------------ */
 
 class ErrorResponsePlatform extends AbstractPlatform {
+    requestCount = 0;
+
     constructor(
         private readonly status: number,
         private readonly contentType: string,
@@ -93,6 +96,7 @@ class ErrorResponsePlatform extends AbstractPlatform {
     async initPlatformHarness(): Promise<void> {}
 
     async fetch(): Promise<Response> {
+        this.requestCount++;
         return new Response(this.body, {
             status: this.status,
             statusText: this.statusText,
@@ -117,6 +121,13 @@ async function firstErrorMessage(chunks: AsyncIterable<AssistantResponse>): Prom
         if (errorPart) return errorPart.message;
     }
     return '';
+}
+
+async function firstErrorResponse(chunks: AsyncIterable<AssistantResponse>): Promise<AssistantResponse | undefined> {
+    for await (const chunk of chunks) {
+        if (chunk.finish_reason === 'error') return chunk;
+    }
+    return undefined;
 }
 
 describe('适配器错误文案', () => {
@@ -167,5 +178,68 @@ describe('适配器错误文案', () => {
 
         expect(message).toContain('request was blocked by a gateway or proxy');
         expect(message).not.toContain('<!DOCTYPE');
+    });
+
+    test('OpenAI 适配器保留永久性 429 的结构化字段且阻止 SDK 内置重试', async () => {
+        const platform = new ErrorResponsePlatform(
+            429,
+            'application/json',
+            JSON.stringify({
+                error: {
+                    type: 'insufficient_quota',
+                    code: 'credit_balance_exhausted',
+                    param: 'billing',
+                    message: 'credit balance exhausted'
+                }
+            }),
+            'Too Many Requests'
+        );
+        setPlatform(platform);
+        const adapter = new OpenAIAdapter(createModelInstance());
+
+        const response = await firstErrorResponse(adapter.streamComplete(createChatContext(), false));
+
+        expect(platform.requestCount).toBe(1);
+        expect(response?.request_error).toBeInstanceOf(ModelRequestError);
+        expect((response?.request_error as ModelRequestError).metadata).toMatchObject({
+            provider: 'openai',
+            status: 429,
+            type: 'insufficient_quota',
+            code: 'credit_balance_exhausted',
+            param: 'billing'
+        });
+        expect(classifyModelRequestError(response?.request_error)).toBe('non_retryable');
+    });
+
+    test('Anthropic 适配器保留消费上限 details 和 request_id', async () => {
+        setPlatform(
+            new ErrorResponsePlatform(
+                429,
+                'application/json',
+                JSON.stringify({
+                    type: 'error',
+                    error: {
+                        type: 'rate_limit_error',
+                        message: 'You have reached your API usage limits',
+                        details: { error_code: 'enforced_spend_limit_reached' }
+                    },
+                    request_id: 'req_spend_cap'
+                }),
+                'Too Many Requests'
+            )
+        );
+        const adapter = new AnthropicAdapter(createModelInstance());
+
+        const response = await firstErrorResponse(adapter.streamComplete(createChatContext(), false));
+
+        expect(response?.request_error).toBeInstanceOf(ModelRequestError);
+        expect((response?.request_error as ModelRequestError).metadata).toMatchObject({
+            provider: 'anthropic',
+            status: 429,
+            type: 'rate_limit_error',
+            detailsCode: 'enforced_spend_limit_reached',
+            requestId: 'req_spend_cap'
+        });
+        expect(classifyModelRequestError(response?.request_error)).toBe('non_retryable');
     });
 });

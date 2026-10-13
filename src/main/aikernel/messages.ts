@@ -2455,6 +2455,7 @@ export class AssistantResponse {
     content: AssistantMessage;
     finish_reason: 'stop' | 'error' | 'tool_calls' | null;
     usage?: Usage;
+    request_error?: Error;
 
     constructor(content: AssistantMessage, finish_reason: 'stop' | 'error' | 'tool_calls' | null = null) {
         this.content = content;

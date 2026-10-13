@@ -11,6 +11,7 @@
 
 import { APIError, RateLimitError } from 'openai';
 import { logger } from './logger.js';
+import { getModelRequestRetryAfterMs, isNonRetryableModelRequestError } from './model-request-error.js';
 
 /**
  * 限流错误检测器——通过可扩展的规则匹配各服务商的限流/配额错误。
@@ -52,6 +53,10 @@ class RateLimitDetector {
     private static readonly RATE_LIMIT_STATUS_CODES = new Set([429]);
 
     static isRateLimitError(err: unknown): boolean {
+        if (isNonRetryableModelRequestError(err)) {
+            return false;
+        }
+
         if (err instanceof RateLimitError) {
             return true;
         }
@@ -72,6 +77,11 @@ class RateLimitDetector {
      * 找不到或解析失败时返回 undefined。
      */
     static extractRetryAfterSeconds(err: unknown): number | undefined {
+        const retryAfterMs = getModelRequestRetryAfterMs(err);
+        if (retryAfterMs !== undefined) {
+            return retryAfterMs / 1000;
+        }
+
         if (!(err instanceof APIError) || !err.headers) {
             return undefined;
         }

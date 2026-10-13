@@ -1946,6 +1946,9 @@ export const enUs: Record<string, string> = {
     'error.model.invalid_embedding_response': 'Invalid embedding response: expected ${shape}',
     'error.model.stream_idle_timeout': 'Model stream idle timeout: no data was received for ${timeoutMs} ms',
     'error.model.chat_alias_not_found': "Chat model alias '${alias}' not found",
+    'error.completion.model_service': 'Model Service Error',
+    'error.completion.network_connection': 'Network Connection Error',
+    'error.completion.response_generation_failed': 'Stream Completion Failed',
 
     // Renderer - File Manager
     'renderer.filemgr.title': 'Smart File System',

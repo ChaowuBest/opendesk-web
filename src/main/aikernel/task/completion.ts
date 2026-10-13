@@ -48,10 +48,21 @@ import {
 } from './types.js';
 import type { ReasoningEffort } from '../types/reasoning.js';
 import { AgentExecutionInstrumentationRegistry } from '../../telemetry/agent-execution.js';
+import {
+    classifyModelRequestError,
+    getModelRequestRetryAfterMs,
+    isModelServiceResponseError,
+    isNetworkConnectionError
+} from '../../utils/model-request-error.js';
+import { t } from '../../../locale/index.js';
 
 function getAssistantResponseError(response: AssistantResponse): Error | undefined {
     if (response.finish_reason !== 'error') {
         return undefined;
+    }
+
+    if (response.request_error) {
+        return response.request_error;
     }
 
     const errorPart = response.content.content.find((part) => part.type === 'error');
@@ -779,8 +790,9 @@ export async function processTaskCompletion(
                     break;
                 }
 
+                const errorDisposition = classifyModelRequestError(err);
                 const autoRetry = Setting.getInstance().getData().task_config?.auto_retry !== false;
-                if (!autoRetry) {
+                if (!autoRetry || errorDisposition === 'non_retryable') {
                     if (lastRetryState) {
                         await clearLLMRetryFeedbackForTask(
                             task,
@@ -791,13 +803,18 @@ export async function processTaskCompletion(
                         );
                     }
                     if (!isCurrentTurn()) return false;
-                    assistant_message.appendError('Stream Completion Failed', errorToMessage(err));
+                    const errorTitle = isModelServiceResponseError(err)
+                        ? t('error.completion.model_service')
+                        : isNetworkConnectionError(err)
+                          ? t('error.completion.network_connection')
+                          : t('error.completion.response_generation_failed');
+                    assistant_message.appendError(errorTitle, errorToMessage(err));
                     await task.sendSubscriptionFeedback();
                     break;
                 }
 
                 retryAttempt++;
-                const delayMs = getLLMRetryDelayMs(retryAttempt);
+                const delayMs = Math.max(getLLMRetryDelayMs(retryAttempt), getModelRequestRetryAfterMs(err) ?? 0);
                 const nextRetryAt = Date.now() + delayMs;
                 const errorMessage = errorToMessage(err);
                 lastRetryState = {
