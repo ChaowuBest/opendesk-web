@@ -392,7 +392,7 @@ export class GlobPermissionEnforcer implements PermissionEnforcer {
  * - 工作空间内的敏感路径（.ssh、.gnupg 等） → ask（显式保护，覆盖 allow）
  * - 工作空间外的文件读写执行 → ask（隐式回退）
  * - OpenDesk 自带 interpreters 目录（pip-global、npm-global 等包安装位置） → allow
- * - 网络访问 → ask（隐式回退）
+ * - 网络访问 → allow
  * - 技能和插件读取 → allow
  * - 技能和插件的修改或执行 → ask（隐式回退，需用户确认）
  */
@@ -425,6 +425,10 @@ export function createDefaultPermissionRules(workspace: string, appPolicyHomeDir
         // OpenDesk 自带 interpreters 目录（pip-global、npm-global 等）读写允许，
         // 沙箱内安装包不应反复触发授权
         ...createInterpretersPermissionRules(),
+        // 网络访问放通：readImage/readFile 等工具把 http(s) URL 视为普通数据源，
+        // 逐 URL 弹确认打扰过重（与 Solo 模式语义对齐）。
+        // 显式 deny 规则仍优先于本规则，任务/插件运行时可按需收紧。
+        { resourceType: 'network', action: 'access', pathPattern: '**', effect: 'allow' },
         // 所有技能读取允许（加载、查看等），写入/执行需用户确认（隐式 ask）
         { resourceType: 'skill', action: 'read', pathPattern: '**', effect: 'allow' },
         // 插件列表和详情读取允许，安装、卸载、启停和重载需用户确认（隐式 ask）
