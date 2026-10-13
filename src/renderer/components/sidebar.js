@@ -1872,12 +1872,14 @@ class SideBar extends HTMLElement {
 
         menu.querySelector('[data-action="delete"]').addEventListener('click', async () => {
             this._dismissContextMenu();
+            const task = this.taskList.find((item) => item.task_id === taskId);
+            const taskName = SideBar.escapeHtml(task?.task_name || this._t('renderer.sidebar.unnamedTask'));
             const confirmed = await showConfirmModal({
                 icon: 'fa-trash-can',
                 iconBg: '#FEF2F2',
                 iconColor: '#DC2626',
                 title: this._t('renderer.sidebar.deleteTask'),
-                message: this._t('renderer.sidebar.deleteTaskConfirm'),
+                message: this._t('renderer.sidebar.deleteTaskConfirm', { taskName }),
                 confirmText: this._t('common.delete'),
                 cancelText: this._t('common.cancel'),
                 danger: true
@@ -2114,12 +2116,14 @@ class SideBar extends HTMLElement {
             btn.addEventListener('click', async (event) => {
                 event.stopPropagation();
                 const taskId = event.currentTarget.dataset.task_id;
+                const task = this.taskList.find((item) => item.task_id === taskId);
+                const taskName = SideBar.escapeHtml(task?.task_name || this._t('renderer.sidebar.unnamedTask'));
                 const confirmed = await showConfirmModal({
                     icon: 'fa-trash-can',
                     iconBg: '#FEF2F2',
                     iconColor: '#DC2626',
                     title: this._t('renderer.sidebar.deleteTask'),
-                    message: this._t('renderer.sidebar.deleteTaskConfirm'),
+                    message: this._t('renderer.sidebar.deleteTaskConfirm', { taskName }),
                     confirmText: this._t('common.delete'),
                     cancelText: this._t('common.cancel'),
                     danger: true

@@ -2164,7 +2164,8 @@ export const enUs: Record<string, string> = {
     'cli.feedback.success.title': 'Feedback submitted',
     'cli.feedback.success.desc': 'Thanks! We read every single one of these :)',
     'renderer.sidebar.deleteWorkspaceAllTasks': 'Delete all tasks in workspace',
-    'renderer.sidebar.deleteTaskConfirm': 'Are you sure you want to delete this task? <b>This cannot be undone.</b>',
+    'renderer.sidebar.deleteTaskConfirm':
+        'Are you sure you want to delete the task "${taskName}"? <b>This cannot be undone.</b>',
     'renderer.sidebar.deleteAllTasksConfirm':
         'Are you sure you want to delete all tasks? <b>This cannot be undone.</b>',
     'renderer.sidebar.deleteWorkspaceTasksConfirm':

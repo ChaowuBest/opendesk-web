@@ -2100,7 +2100,7 @@ export const zhCn: Record<string, string> = {
     'cli.feedback.success.title': '反馈已提交',
     'cli.feedback.success.desc': '感谢你的反馈，我们会认真查看每一条 :)',
     'renderer.sidebar.deleteWorkspaceAllTasks': '删除工作空间中所有任务',
-    'renderer.sidebar.deleteTaskConfirm': '确定要删除这个任务吗？<b>删除后无法恢复。</b>',
+    'renderer.sidebar.deleteTaskConfirm': '确定要删除任务「${taskName}」吗？<b>删除后无法恢复。</b>',
     'renderer.sidebar.deleteAllTasksConfirm': '确定要删除所有任务吗？<b>删除后无法恢复。</b>',
     'renderer.sidebar.deleteWorkspaceTasksConfirm':
         '确定要删除此工作空间下的 <b>${count}</b> 个任务吗？<br>收藏的任务不会被删除。<b>删除后无法恢复。</b>',
