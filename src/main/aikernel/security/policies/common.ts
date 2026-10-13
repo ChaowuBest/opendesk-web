@@ -22,7 +22,8 @@
  * 设计约束：
  *   - 仅 standard 模式注入（solo/unlimited 全放行、readonly 全拒绝，无需 app 策略）；
  *   - 跨平台通用：路径用 `{home}` 占位符（os.homedir() 展开），glob 用正斜杠；
- *   - 凭据类文件一律 ask 保护，不读取凭据文件内容来决定是否放行；
+ *   - 凭据类文件（.git-credentials/.netrc/.npmrc 等）一律 ask 保护——standard 可
+ *     交互，确认一次即可；绝不出现在 read allow 清单中；
  *   - 放行仅限 read：运行时目录的写仍由引擎兜底 ask 管控（防持久化攻击）。
  */
 

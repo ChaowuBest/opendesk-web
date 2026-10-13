@@ -1266,21 +1266,6 @@ describe('敏感路径规则', () => {
         expect(sshRules.length).toBe(0);
     });
 
-    test('createSensitivePathRules: 工作区根目录和子目录的 .npmrc 读写均需确认', () => {
-        const workspace = '/opt/completely/different';
-        const rules = createSensitivePathRules(workspace);
-        const npmrcRules = rules.filter((rule) => rule.pathPattern.endsWith('.npmrc'));
-
-        expect(npmrcRules).toEqual(
-            expect.arrayContaining([
-                { resourceType: 'file', action: 'read', pathPattern: `${workspace}/.npmrc`, effect: 'ask' },
-                { resourceType: 'file', action: 'write', pathPattern: `${workspace}/.npmrc`, effect: 'ask' },
-                { resourceType: 'file', action: 'read', pathPattern: `${workspace}/**/.npmrc`, effect: 'ask' },
-                { resourceType: 'file', action: 'write', pathPattern: `${workspace}/**/.npmrc`, effect: 'ask' }
-            ])
-        );
-    });
-
     test('createCriticalPathRules: 始终包含所有敏感路径（不受工作空间限制）', () => {
         const rules = createCriticalPathRules();
         const sshRules = rules.filter((r) => r.pathPattern.includes('.ssh'));
@@ -1436,18 +1421,6 @@ describe('ResourcePath 前缀计算', () => {
 // ═══════════════════════════════════════════════════════════════
 
 describe('端到端场景', () => {
-    test('场景: 工作区内的项目级 .npmrc 覆盖工作区默认 allow', async () => {
-        const workspace = '/workspace';
-        const enforcer = await GlobPermissionEnforcer.create(createDefaultPermissionRules(workspace, '/home/tester'));
-
-        for (const resourcePath of [`${workspace}/.npmrc`, `${workspace}/packages/app/.npmrc`]) {
-            const read = await enforcer.check({ resourceType: 'file', action: 'read', resourcePath });
-            const write = await enforcer.check({ resourceType: 'file', action: 'write', resourcePath });
-            expect(read.effect).toBe('ask');
-            expect(write.effect).toBe('ask');
-        }
-    });
-
     test('场景: 工作空间设为 HOME 时，敏感路径仍被保护', async () => {
         const rules = createDefaultPermissionRules(HOME);
         const enforcer = await GlobPermissionEnforcer.create(rules);

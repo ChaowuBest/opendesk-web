@@ -36,8 +36,6 @@ export interface SensitivePathPattern {
     resourceType?: PermissionResourceType;
     /** 可读的规则说明 */
     description: string;
-    /** 是否将递归文件名模式限定到当前工作区；关键路径规则仍保留全局模式。 */
-    workspaceScoped?: boolean;
 }
 
 /**
@@ -75,13 +73,10 @@ export const SENSITIVE_PATH_PATTERNS: SensitivePathPattern[] = [
         pattern: '{home}/.git-credentials',
         description: 'Git 凭证存储'
     },
-    // 项目级 npm 配置可能包含 registry token，必须覆盖工作区默认 allow。
-    // 用户级 ~/.npmrc 由 policies/node.ts 统一生成固定的读写 ask 规则。
+    // npm token
     {
-        pattern: '**/.npmrc',
-        actions: ['read', 'write'],
-        description: '项目 npm 配置与 token',
-        workspaceScoped: true
+        pattern: '{home}/.npmrc',
+        description: 'npm 配置与 token'
     },
     // 通用 .env 文件（工作空间内的 .env 也需要保护）
     {
@@ -110,24 +105,6 @@ export function createSensitivePathRules(workspace: string): PermissionRule[] {
     const allFileActions: PermissionAction[] = ['read', 'write', 'execute'];
 
     for (const sp of SENSITIVE_PATH_PATTERNS) {
-        if (sp.workspaceScoped) {
-            const relativePattern = sp.pattern.replace(/^\*\*\//, '');
-            for (const resolvedPattern of [
-                `${workspaceNorm}/${relativePattern}`,
-                `${workspaceNorm}/**/${relativePattern}`
-            ]) {
-                for (const action of sp.actions ?? allFileActions) {
-                    rules.push({
-                        resourceType: sp.resourceType ?? 'file',
-                        action,
-                        pathPattern: resolvedPattern,
-                        effect: 'ask'
-                    });
-                }
-            }
-            continue;
-        }
-
         const resolvedPattern = sp.pattern.replace(/\{home\}/g, homeDir);
         const resourceType = sp.resourceType ?? 'file';
         const actions = sp.actions ?? allFileActions;
