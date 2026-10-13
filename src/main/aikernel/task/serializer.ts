@@ -170,6 +170,7 @@ export function serializeTaskForIndex(task: TaskState): object {
  */
 export function serializeTaskForRender(task: TaskState): object {
     return {
+        compact_progress: task.compactProgress,
         task_id: task.task_id,
         task_name: task.task_name,
         task_status: task.task_status,

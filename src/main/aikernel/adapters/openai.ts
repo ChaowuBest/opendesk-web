@@ -9,6 +9,8 @@
  * See the Mulan PSL v2 for more details.
  */
 
+import { assertRequestBudget } from '../compaction/request-budget.js';
+import { type TextCompletionResult } from '../compaction/compact-error.js';
 import crypto from 'crypto';
 import { OpenAI } from 'openai';
 import {
@@ -41,6 +43,9 @@ import {
 } from './context.js';
 
 export interface OpenAIAdapterRequestOptions {
+    contextBudget?: { window: number; inputEstimate?: number; requireBelowTrigger?: boolean };
+    onBudgetValidated?: () => void;
+    signal?: AbortSignal;
     reasoningEffort?: ReasoningEffort;
     maxCompletionTokens?: number;
     extraHeaders?: Record<string, string>;
@@ -421,6 +426,73 @@ export class OpenAIAdapter {
         return response;
     }
 
+    async completeTextWithMetadata(
+        chatContext: ChatContext,
+        supportsVision = true,
+        options: AdapterMessageBuildOptions = {},
+        requestOptions?: OpenAIAdapterRequestOptions
+    ): Promise<TextCompletionResult> {
+        const messages = OpenAIAdapter.buildMessages(chatContext, supportsVision, options);
+        const output = this.requestMaxCompletionTokens(requestOptions);
+        if (requestOptions?.contextBudget) assertRequestBudget(messages, output, requestOptions.contextBudget.window);
+        const response: any = await this.client.chat.completions.create(
+            {
+                model: this.modelInstance.model_name,
+                messages: messages as OpenAI.ChatCompletionMessageParam[],
+                max_completion_tokens: output,
+                ...this.requestReasonOptions(requestOptions)
+            },
+            { ...this.requestTransportOptions(requestOptions), maxRetries: 0, signal: requestOptions?.signal }
+        );
+        // Some compatible providers return SSE even for a non-streaming request.
+        if (typeof response === 'string' && response.includes('data:')) {
+            const merged: TextCompletionResult = { text: '', reasoningLength: 0 };
+            try {
+                for (const line of response.split(/\r?\n/)) {
+                    if (!line.startsWith('data:')) continue;
+                    const data = line.slice(5).trim();
+                    if (!data || data === '[DONE]') continue;
+                    const chunk = JSON.parse(data);
+                    if (chunk.error) {
+                        merged.protocolError = 'api_error';
+                        break;
+                    }
+                    const choice = chunk.choices?.[0];
+                    const part = choice?.delta ?? choice?.message;
+                    if (part?.content != null && typeof part.content !== 'string') merged.protocolError = 'content';
+                    else merged.text += part?.content ?? '';
+                    merged.reasoningLength +=
+                        typeof part?.reasoning_content === 'string' ? part.reasoning_content.length : 0;
+                    merged.finishReason = choice?.finish_reason ?? merged.finishReason;
+                    merged.usage = OpenAIAdapter.parseUsage(chunk.usage) ?? merged.usage;
+                }
+                if (!merged.finishReason) merged.protocolError = 'incomplete_stream';
+            } catch {
+                merged.protocolError = 'invalid_sse';
+            }
+            await this.notifyUsage(requestOptions, merged.usage, 'completeText');
+            return merged;
+        }
+        const choice = response?.choices?.[0];
+        const content = choice?.message?.content;
+        const usage = OpenAIAdapter.parseUsage(response?.usage);
+        await this.notifyUsage(requestOptions, usage, 'completeText');
+        return {
+            text: typeof content === 'string' ? content : '',
+            reasoningLength:
+                typeof choice?.message?.reasoning_content === 'string' ? choice.message.reasoning_content.length : 0,
+            finishReason: choice?.finish_reason,
+            choicesCount: Array.isArray(response?.choices) ? response.choices.length : undefined,
+            usage,
+            protocolError:
+                response?.error ||
+                !Array.isArray(response?.choices) ||
+                (response.choices.length > 0 && (!choice?.message || (content != null && typeof content !== 'string')))
+                    ? 'invalid_response'
+                    : undefined
+        };
+    }
+
     async completeText(
         chatContext: ChatContext,
         supportsVision: boolean = true,
@@ -549,6 +621,14 @@ export class OpenAIAdapter {
     ): AsyncIterable<AssistantResponse> {
         const messages = OpenAIAdapter.buildMessages(chatContext, supportsVision, options);
         const toolOptions = OpenAIAdapter.buildToolOptions(chatContext);
+        if (requestOptions?.contextBudget)
+            assertRequestBudget(
+                { messages, ...toolOptions },
+                this.requestMaxCompletionTokens(requestOptions),
+                requestOptions.contextBudget.window,
+                requestOptions.contextBudget.inputEstimate,
+                requestOptions.contextBudget.requireBelowTrigger
+            );
         if (logger) {
             const hasImages = messages.some(
                 (message: any) =>
@@ -561,6 +641,7 @@ export class OpenAIAdapter {
             }
         }
 
+        requestOptions?.onBudgetValidated?.();
         try {
             let finalUsage: Usage | undefined;
             const stream = await this.runCompletionRequest(

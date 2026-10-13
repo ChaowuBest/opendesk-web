@@ -366,7 +366,7 @@ describe('context diagnostics analysis', () => {
         expect(report.contextTokenEstimate.baseUsageTokens).toBeGreaterThan(0);
         expect(report.compaction.autoCompactDecision.reservedSummaryOutput).toBe(100);
         expect(report.compaction.autoCompactDecision.buffer).toBe(250);
-        expect(report.compaction.autoCompactDecision.autoCompactThreshold).toBe(9_650);
+        expect(report.compaction.autoCompactDecision.autoCompactThreshold).toBe(8_000);
         expect(report.compaction.autoCompactDecision.effectiveWindow).toBe(9_900);
         expect(report.compaction.autoCompactDecision.windowUsageRatio).toBeDefined();
     });

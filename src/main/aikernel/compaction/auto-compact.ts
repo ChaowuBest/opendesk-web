@@ -9,11 +9,11 @@
  * See the Mulan PSL v2 for more details.
  */
 
+import { calculateCompactionBudget } from './request-budget.js';
 import { ChatContext } from '../messages.js';
 import { Setting, type ModelInstance } from '../../utils/setting.js';
 import {
     fetchContextSizeFromAPI,
-    fetchMaxOutputTokensFromAPI,
     lookupKnownContextSize,
     lookupKnownMaxOutputTokens
 } from '../../utils/model-context.js';
@@ -26,10 +26,7 @@ import {
 } from './token-estimation.js';
 
 export type AutoCompactDecisionReason =
-    | 'missing_context_tokens'
-    | 'unknown_context_window'
-    | 'below_threshold'
-    | 'at_or_above_threshold';
+    'missing_context_tokens' | 'unknown_context_window' | 'below_threshold' | 'at_or_above_threshold';
 
 export interface AutoCompactDecisionInput {
     contextWindow: number;
@@ -67,12 +64,15 @@ export interface AutoCompactDecisionOptions {
 }
 
 export const DEFAULT_AUTO_COMPACT_RESERVED_SUMMARY_OUTPUT = 16_384;
-export const DEFAULT_AUTO_COMPACT_BUFFER = 13_000;
-export const MAX_RESERVED_SUMMARY_OUTPUT = 20_000;
+export const DEFAULT_AUTO_COMPACT_BUFFER = 10_000;
+export const MAX_RESERVED_SUMMARY_OUTPUT = 16_384;
 export const DEFAULT_AUTO_COMPACT_FAILURE_THRESHOLD = 3;
 export const DEFAULT_AUTO_COMPACT_COOLDOWN_MS = 10 * 60 * 1000;
 
+export type CompactStatus = 'healthy' | 'compacting' | 'degraded' | 'circuit_open' | 'half_open';
+
 export interface AutoCompactState {
+    status?: CompactStatus;
     consecutiveFailures: number;
     lastAttemptAt?: string;
     lastFailureAt?: string;
@@ -84,6 +84,7 @@ export interface AutoCompactState {
 }
 
 export interface SerializedAutoCompactState {
+    status?: CompactStatus;
     consecutive_failures: number;
     last_attempt_at?: string;
     last_failure_at?: string;
@@ -134,6 +135,7 @@ function normalizeOptionalTimestamp(value: unknown): string | undefined {
 
 function createDefaultAutoCompactState(): AutoCompactState {
     return {
+        status: 'healthy',
         consecutiveFailures: 0,
         failureThreshold: DEFAULT_AUTO_COMPACT_FAILURE_THRESHOLD,
         cooldownMs: DEFAULT_AUTO_COMPACT_COOLDOWN_MS
@@ -147,6 +149,7 @@ function normalizeAutoCompactState(raw: unknown): AutoCompactState {
     }
 
     const candidate = raw as {
+        status?: CompactStatus;
         consecutive_failures?: unknown;
         consecutiveFailures?: unknown;
         last_attempt_at?: unknown;
@@ -173,7 +176,10 @@ function normalizeAutoCompactState(raw: unknown): AutoCompactState {
         1
     );
 
+    const failures = normalizeNonNegativeInteger(candidate.consecutive_failures ?? candidate.consecutiveFailures);
     return {
+        status:
+            candidate.status ?? (failures >= failureThreshold ? 'circuit_open' : failures > 0 ? 'degraded' : 'healthy'),
         consecutiveFailures: normalizeNonNegativeInteger(
             candidate.consecutive_failures ?? candidate.consecutiveFailures,
             defaults.consecutiveFailures
@@ -191,23 +197,6 @@ function normalizeAutoCompactState(raw: unknown): AutoCompactState {
                   ? candidate.lastFailureReason.trim()
                   : undefined
     };
-}
-
-function toDateOrUndefined(value: unknown): Date | undefined {
-    if (value instanceof Date && !Number.isNaN(value.getTime())) {
-        return value;
-    }
-    if (typeof value === 'string' && value.trim().length > 0) {
-        const parsed = new Date(value);
-        if (!Number.isNaN(parsed.getTime())) {
-            return parsed;
-        }
-    }
-    return undefined;
-}
-
-function buildCooldownUntil(now: Date, cooldownMs: number): string {
-    return new Date(now.getTime() + Math.max(Math.floor(cooldownMs), 0)).toISOString();
 }
 
 function isChatContext(value: unknown): value is ChatContext {
@@ -230,7 +219,7 @@ function buildTokenEstimateInput(
     return input;
 }
 
-async function resolveMaxOutputTokens(model?: string): Promise<number> {
+export async function resolveMaxOutputTokens(model?: string): Promise<number> {
     try {
         let modelInstance: ModelInstance | null;
         if (typeof model === 'string') {
@@ -262,10 +251,18 @@ async function resolveMaxOutputTokens(model?: string): Promise<number> {
             }
         }
 
-        return await fetchMaxOutputTokensFromAPI(modelInstance);
+        // Match the adapters' default for models with no configured/known output budget.
+        return 16384;
     } catch {
         return 0;
     }
+}
+
+export function limitSummaryOutputToModel(model: string | undefined, requested: number): number {
+    const settings = Setting.getInstance();
+    const instance = model ? settings.getModelInstance(model, 'chat') : settings.getDefaultModelInstance();
+    const supported = lookupKnownMaxOutputTokens(instance?.model_name ?? model ?? '');
+    return supported > 0 ? Math.min(requested, supported) : requested;
 }
 
 export async function resolveReservedSummaryOutput(model?: string, override?: number): Promise<number> {
@@ -273,15 +270,10 @@ export async function resolveReservedSummaryOutput(model?: string, override?: nu
         return normalizeNonNegativeNumber(override, DEFAULT_AUTO_COMPACT_RESERVED_SUMMARY_OUTPUT);
     }
 
-    const maxOutputTokens = await resolveMaxOutputTokens(model);
-    if (maxOutputTokens > 0) {
-        return Math.min(maxOutputTokens, MAX_RESERVED_SUMMARY_OUTPUT);
-    }
-
-    return DEFAULT_AUTO_COMPACT_RESERVED_SUMMARY_OUTPUT;
+    return calculateCompactionBudget(await resolveContextWindow(model)).summaryOutputTokens;
 }
 
-async function resolveContextWindow(model?: string): Promise<number> {
+export async function resolveContextWindow(model?: string): Promise<number> {
     try {
         let modelInstance: ModelInstance | null;
         if (typeof model === 'string') {
@@ -325,11 +317,14 @@ export function createAutoCompactDecision(input: AutoCompactDecisionInput): Auto
     const contextWindow = normalizeNonNegativeNumber(input.contextWindow, 0);
     const reservedSummaryOutput = normalizeNonNegativeNumber(
         input.reservedSummaryOutput,
-        DEFAULT_AUTO_COMPACT_RESERVED_SUMMARY_OUTPUT
+        Math.min(Math.floor(contextWindow * 0.15), MAX_RESERVED_SUMMARY_OUTPUT)
     );
     const effectiveWindow = Math.max(contextWindow - reservedSummaryOutput, 0);
-    const buffer = normalizeNonNegativeNumber(input.buffer ?? DEFAULT_AUTO_COMPACT_BUFFER, 0);
-    const autoCompactThreshold = Math.max(effectiveWindow - buffer, 0);
+    const buffer = normalizeNonNegativeNumber(
+        input.buffer ?? Math.min(Math.floor(contextWindow * 0.05), DEFAULT_AUTO_COMPACT_BUFFER),
+        0
+    );
+    const autoCompactThreshold = Math.floor(contextWindow * 0.8);
     const estimatedContextTokens = normalizeOptionalNonNegativeNumber(
         input.estimatedContextTokens ?? input.promptTokens
     );
@@ -400,7 +395,7 @@ export async function getAutoCompactDecision(
     model?: string,
     options: AutoCompactDecisionOptions = {}
 ): Promise<AutoCompactDecision> {
-    const tokenEstimate = estimateVisibleContextTokens(buildTokenEstimateInput(contextInput));
+    const tokenEstimate = estimateVisibleContextTokens({ ...buildTokenEstimateInput(contextInput), model });
     const contextWindow = await resolveContextWindow(model);
 
     return createAutoCompactDecision({
@@ -410,15 +405,16 @@ export async function getAutoCompactDecision(
         tailEstimatedTokens: tokenEstimate.tailEstimatedTokens,
         assistantInternalTailTokens: tokenEstimate.assistantInternalTailTokens,
         tokenEstimateSource: tokenEstimate.source,
-        reservedSummaryOutput: await resolveReservedSummaryOutput(model, options.reservedSummaryOutput),
+        reservedSummaryOutput: options.reservedSummaryOutput,
         buffer: options.buffer
     });
 }
 
 export function estimateAutoCompactContextTokens(
-    input: ChatContext | VisibleContextTokenEstimationInput
+    input: ChatContext | VisibleContextTokenEstimationInput,
+    model?: string
 ): VisibleContextTokenEstimate {
-    return estimateVisibleContextTokens(buildTokenEstimateInput(input));
+    return estimateVisibleContextTokens({ ...buildTokenEstimateInput(input), ...(model ? { model } : {}) });
 }
 
 export class AutoCompactStates {
@@ -431,12 +427,15 @@ export class AutoCompactStates {
     }
 
     static deserialize(raw: unknown): AutoCompactState {
-        return normalizeAutoCompactState(raw);
+        const state = normalizeAutoCompactState(raw);
+        if (state.status === 'compacting' || state.status === 'half_open') state.status = 'circuit_open';
+        return state;
     }
 
     static serialize(state: AutoCompactState): SerializedAutoCompactState {
         const normalized = normalizeAutoCompactState(state);
         return {
+            status: normalized.status,
             consecutive_failures: normalized.consecutiveFailures,
             last_attempt_at: normalized.lastAttemptAt,
             last_failure_at: normalized.lastFailureAt,
@@ -453,6 +452,7 @@ export class AutoCompactStates {
         const timestamp = at.toISOString();
         return {
             ...normalized,
+            status: normalized.status === 'half_open' ? 'half_open' : 'compacting',
             lastAttemptAt: timestamp
         };
     }
@@ -461,14 +461,15 @@ export class AutoCompactStates {
         const normalized = normalizeAutoCompactState(state);
         const timestamp = at.toISOString();
         const nextFailures = normalized.consecutiveFailures + 1;
-        const hasReachedThreshold = nextFailures >= normalized.failureThreshold;
+        const hasReachedThreshold = nextFailures >= normalized.failureThreshold || normalized.status === 'half_open';
 
         return {
             ...normalized,
+            status: hasReachedThreshold ? 'circuit_open' : 'degraded',
             consecutiveFailures: nextFailures,
             lastAttemptAt: timestamp,
             lastFailureAt: timestamp,
-            cooldownUntil: hasReachedThreshold ? buildCooldownUntil(at, normalized.cooldownMs) : undefined,
+            cooldownUntil: undefined,
             lastFailureReason: typeof reason === 'string' && reason.trim().length > 0 ? reason.trim() : undefined
         };
     }
@@ -477,6 +478,7 @@ export class AutoCompactStates {
         const normalized = normalizeAutoCompactState(state);
         return {
             ...normalized,
+            status: 'healthy',
             consecutiveFailures: 0,
             lastAttemptAt: at.toISOString(),
             lastSuccessAt: at.toISOString(),
@@ -485,19 +487,22 @@ export class AutoCompactStates {
         };
     }
 
-    static isCoolingDown(state: AutoCompactState, at: Date = new Date()): boolean {
-        return this.getCooldownRemainingMs(state, at) > 0;
+    static beginRecovery(state: AutoCompactState): AutoCompactState {
+        const normalized = this.clone(state);
+        return { ...normalized, status: normalized.status === 'circuit_open' ? 'half_open' : normalized.status };
     }
 
-    static getCooldownRemainingMs(state: AutoCompactState, at: Date = new Date()): number {
-        const normalized = normalizeAutoCompactState(state);
-        const cooldownUntil = toDateOrUndefined(normalized.cooldownUntil);
-        if (!cooldownUntil) {
-            return 0;
-        }
+    static canAttempt(state: AutoCompactState): boolean {
+        return this.clone(state).status !== 'circuit_open';
+    }
 
-        const remaining = cooldownUntil.getTime() - at.getTime();
-        return remaining > 0 ? remaining : 0;
+    /** Legacy API: circuit state no longer expires with wall clock time. */
+    static isCoolingDown(state: AutoCompactState, _at: Date = new Date()): boolean {
+        return !this.canAttempt(state);
+    }
+
+    static getCooldownRemainingMs(state: AutoCompactState, _at: Date = new Date()): number {
+        return this.canAttempt(state) ? 0 : Number.POSITIVE_INFINITY;
     }
 
     static hasReachedFailureThreshold(state: AutoCompactState): boolean {

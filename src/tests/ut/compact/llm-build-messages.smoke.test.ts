@@ -281,6 +281,7 @@ describe('compact smoke: OpenAIAdapter.buildMessages active context tail', () =>
         chatContext.appendMessage(bigAssistant);
 
         const runResult = await compactFullContext(chatContext, undefined, {
+            tailMessageCount: 8,
             enableAssistantRoundBoundary: true,
             boundaryId: 'boundary-build-messages-step5',
             createdAt: '2026-04-27T00:00:00.000Z',

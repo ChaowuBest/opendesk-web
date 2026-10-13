@@ -75,6 +75,7 @@ function createInspectableChatContext(): {
     const old = createAssistantWithToolResult('old', `HEAD\n${'x'.repeat(24_000)}\nTAIL`);
     const recent = createAssistantWithToolResult('recent', 'recent result should stay visible');
     recent.message.usage = new Usage(12_500, 0, 12_500);
+    recent.message.metadata = { execution: { finishAt: Date.parse('2026-05-08T00:00:00.001Z') } };
     chatContext.appendMessage(old.message);
     chatContext.appendMessage(recent.message);
 

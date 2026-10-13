@@ -15,15 +15,34 @@ import {
     UserMessage,
     isCompactBoundaryMessage,
     type CompactBoundaryTrigger,
-    type ChatContext,
+    ChatContext,
     type ChatMessage
 } from '../messages.js';
 import { LLM, type LLMRequestOptions } from '../llm.js';
-import { resolveReservedSummaryOutput } from './auto-compact.js';
+import { resolveReservedSummaryOutput, limitSummaryOutputToModel } from './auto-compact.js';
+import {
+    CompactError,
+    ContextPreparationBlockedError,
+    isContextLimitError,
+    validateCompactSummary
+} from './compact-error.js';
+import {
+    type CompactionBudget,
+    assertRequestBudget,
+    checkRequestBudget,
+    estimateRequestPayloadTokens
+} from './request-budget.js';
+import {
+    getContextTokensFromUsage,
+    estimateRoughTokensFromAssistantParts,
+    estimateRoughTokensFromChatMessage
+} from './token-estimation.js';
+import { OpenAIAdapter } from '../adapters/openai.js';
+
 import { buildActiveContextView, buildProjectedActiveContextView } from './context-view.js';
 import type { AssistantRoundRef, CompactBoundaryRef, ProjectedContextItem } from './types.js';
 
-export const DEFAULT_FULL_COMPACT_TAIL_MESSAGE_COUNT = 8;
+export const DEFAULT_FULL_COMPACT_TAIL_MESSAGE_COUNT = 3;
 export const DEFAULT_FULL_COMPACT_TAIL_ASSISTANT_TOOL_MESSAGE_COUNT = 3;
 export const DEFAULT_FULL_COMPACT_TAIL_ASSISTANT_ERROR_MESSAGE_COUNT = 1;
 export const DEFAULT_FULL_COMPACT_TAIL_PLAN_MESSAGE_COUNT = 1;
@@ -36,7 +55,9 @@ const ASSISTANT_PLAN_SIGNAL_PATTERN =
     /(?:当前计划|后续计划|下一步|待完成|进行中|计划|\btodo\b|\bnext steps?\b|\bcurrent plan\b|\bplan\b)/i;
 
 export interface FullCompactPlanOptions {
-    /** 最近要保留的非 boundary 消息数量。 */
+    /** Context window used by the token-budget tail planner. */
+    contextWindow?: number;
+    /** Legacy count-based planner override; runtime compaction uses contextWindow instead. */
     tailMessageCount?: number;
     /** 额外保护最近多少条包含工具调用的 assistant 消息。 */
     tailAssistantToolMessageCount?: number;
@@ -129,7 +150,24 @@ export interface GenerateFullCompactSummaryOptions extends FullCompactSummaryTex
 }
 
 export interface FullCompactRunOptions
-    extends FullCompactPlanOptions, GenerateFullCompactSummaryOptions, FullCompactBoundaryOptions {}
+    extends FullCompactPlanOptions, GenerateFullCompactSummaryOptions, FullCompactBoundaryOptions {
+    budget?: CompactionBudget;
+    requestedOutputTokens?: number;
+    onAttemptFailure?: (error: CompactError) => void;
+    canRetryEmpty?: () => boolean;
+    isCurrent?: () => boolean;
+    halfOpen?: boolean;
+    usageRecovery?: UsageCompactRecovery;
+}
+
+/** Shared by summary and business-request recovery, so neither loop resets the attempt limit. */
+export interface UsageCompactRecovery {
+    attempts: number;
+    plans?: FullCompactPlan[];
+    nextPlanIndex?: number;
+}
+
+export const MAX_COMPACT_RECOVERY_ATTEMPTS = 3;
 
 export interface FullCompactRunResult {
     compacted: boolean;
@@ -765,6 +803,7 @@ export function buildFullCompactPlan(
     chatContext: ChatContext,
     options: FullCompactPlanOptions = {}
 ): FullCompactPlan | undefined {
+    if (options.contextWindow !== undefined) return buildTokenBudgetCompactPlan(chatContext, options.contextWindow);
     const normalizedOptions = normalizeOptions(options);
     if (options.enableAssistantRoundBoundary) {
         const projectedActiveContext = buildProjectedActiveContextView(chatContext);
@@ -871,6 +910,187 @@ export function buildFullCompactPlan(
     };
 }
 
+function planFromProjectedBoundary(
+    active: ReturnType<typeof buildProjectedActiveContextView>,
+    index: number
+): FullCompactPlan | undefined {
+    const item = active.projectedItems[index];
+    if (!item || item.kind === 'compact_boundary') return undefined;
+    const summarize = active.projectedItems.slice(0, index);
+    if (!summarize.some((entry) => entry.kind !== 'compact_boundary')) return undefined;
+    const keep = active.projectedItems.slice(index);
+    return {
+        activeContextStartIndex: active.startIndex,
+        summarizeStartIndex: active.startIndex,
+        summarizeEndIndexExclusive: item.messageIndex,
+        physicalKeepStartIndex: item.messageIndex,
+        keepStartIndex: item.messageIndex,
+        messagesToSummarize: active.messages.slice(0, item.messageIndex - active.startIndex),
+        messagesToKeep: active.messages
+            .slice(item.messageIndex - active.startIndex)
+            .filter((message) => !isCompactBoundaryMessage(message)),
+        projectedItemsToSummarize: summarize,
+        projectedItemsToKeep: keep,
+        keepAnchor: buildRoundAwareKeepAnchor(item),
+        leadingPartialAssistant:
+            item.kind === 'assistant_round' && item.roundRef.startPartIndex > 0
+                ? { message: item.message, messageIndex: item.messageIndex, roundRef: item.roundRef }
+                : undefined,
+        summarizedStats: countProjectedItemStats(summarize),
+        keptStats: countProjectedItemStats(keep),
+        previousBoundary: active.boundary
+    };
+}
+
+export const COMPACT_TAIL_TARGET_RATIO = 0.15;
+export const COMPACT_TAIL_MAX_RATIO = 0.2;
+
+function selectTokenBudgetTailIndex(
+    active: ReturnType<typeof buildProjectedActiveContextView>,
+    contextWindow: number
+): number | undefined {
+    if (!Number.isFinite(contextWindow) || contextWindow <= 0) return undefined;
+    const items = active.projectedItems;
+    if (!items.length) return undefined;
+    const completionStart = (index: number): number => {
+        const item = items[index];
+        if (item.kind !== 'assistant_round') return index;
+        const checkpoint = item.message.usageCheckpoints?.find(
+            (entry) =>
+                entry.startPartIndex <= item.roundRef.startPartIndex &&
+                entry.endPartIndex > item.roundRef.startPartIndex
+        );
+        if (!checkpoint) return index;
+        while (index > 0) {
+            const previous = items[index - 1];
+            if (
+                previous.kind !== 'assistant_round' ||
+                previous.messageId !== item.messageId ||
+                previous.roundRef.startPartIndex < checkpoint.startPartIndex
+            )
+                break;
+            index--;
+        }
+        return index;
+    };
+    let start = items.length - 1;
+    // All content after the latest tool batch is also required, even if it exceeds 20%.
+    for (let index = start; index >= 0; index--) {
+        const item = items[index];
+        if (item.kind === 'assistant_round' && item.round.toolCallCount > 0) {
+            start = index;
+            break;
+        }
+    }
+    start = completionStart(start);
+    const tokens = (item: ProjectedContextItem) =>
+        item.kind === 'assistant_round'
+            ? estimateRoughTokensFromAssistantParts(item.round.parts)
+            : estimateRoughTokensFromChatMessage(item.message);
+    let keptTokens = items.slice(start).reduce((sum, item) => sum + tokens(item), 0);
+    while (start > 0 && keptTokens < contextWindow * COMPACT_TAIL_TARGET_RATIO) {
+        const previous = items[start - 1];
+        if (previous.kind === 'compact_boundary') break;
+        const nextStart = completionStart(start - 1);
+        const nextTokens = keptTokens + items.slice(nextStart, start).reduce((sum, item) => sum + tokens(item), 0);
+        if (nextTokens > contextWindow * COMPACT_TAIL_MAX_RATIO) break;
+        keptTokens = nextTokens;
+        start = nextStart;
+    }
+    return start;
+}
+
+/** Preserve complete contiguous rounds by token budget rather than a fixed round count. */
+export function buildTokenBudgetCompactPlan(
+    chatContext: ChatContext,
+    contextWindow: number
+): FullCompactPlan | undefined {
+    const active = buildProjectedActiveContextView(chatContext);
+    const index = selectTokenBudgetTailIndex(active, contextWindow);
+    return index === undefined ? undefined : planFromProjectedBoundary(active, index);
+}
+
+/** Keep the checkpoint's entire completion, including its later tool results, as a replayable tail. */
+export function buildUsageAnchoredCompactPlans(
+    chatContext: ChatContext,
+    budget: CompactionBudget,
+    model?: string
+): FullCompactPlan[] {
+    const active = buildProjectedActiveContextView(chatContext);
+    const idealTailIndex = selectTokenBudgetTailIndex(active, budget.contextWindow);
+    if (idealTailIndex === undefined) return [];
+    const plans: FullCompactPlan[] = [];
+    for (let index = idealTailIndex; index >= 0; index--) {
+        const item = active.projectedItems[index];
+        if (item.kind !== 'assistant_round') continue;
+        const checkpoints = item.message.usageCheckpoints;
+        const checkpoint = checkpoints?.find((entry) => entry.startPartIndex === item.roundRef.startPartIndex);
+        // Legacy messages only retain the last usage. Never associate it with an earlier round.
+        const legacy =
+            !checkpoints?.length &&
+            !active.projectedItems.slice(index + 1).some((next) => next.messageId === item.messageId);
+        if (!checkpoint && !legacy) continue;
+        if (
+            checkpoint &&
+            (checkpoint.boundaryId !== active.boundary?.message.metadata.boundary_id ||
+                (model && checkpoint.model && checkpoint.model !== model))
+        )
+            continue;
+        const usageTimestamp = item.message.metadata?.execution?.finishAt;
+        if (
+            !checkpoint &&
+            active.boundary &&
+            (usageTimestamp === undefined || usageTimestamp <= Date.parse(active.boundary.message.metadata.created_at))
+        )
+            continue;
+        const usage = getContextTokensFromUsage(checkpoint?.usage ?? item.message.usage);
+        if (usage === undefined || usage + budget.summaryOutputTokens + budget.bufferTokens > budget.contextWindow)
+            continue;
+        const plan = planFromProjectedBoundary(active, index);
+        if (plan) plans.push(plan);
+    }
+    return plans;
+}
+
+/** Prefer real checkpoints; estimated fallback boundaries only move toward a smaller prefix. */
+function buildBudgetCompactPlans(
+    chatContext: ChatContext,
+    budget: CompactionBudget,
+    model: string | undefined,
+    options: GenerateFullCompactSummaryOptions
+): FullCompactPlan[] {
+    const plans = buildUsageAnchoredCompactPlans(chatContext, budget, model);
+    const active = buildProjectedActiveContextView(chatContext);
+    const idealTailIndex = selectTokenBudgetTailIndex(active, budget.contextWindow);
+    if (idealTailIndex === undefined) return plans;
+    const earliestReal = plans.at(-1);
+    let maxLength = earliestReal ? buildFullCompactSummaryText(earliestReal, options).length : Infinity;
+    for (let index = idealTailIndex; index >= 0; index--) {
+        if (active.projectedItems[index].kind !== 'assistant_round') continue;
+        const plan = planFromProjectedBoundary(active, index);
+        if (!plan) continue;
+        const summaryText = buildFullCompactSummaryText(plan, options);
+        if (summaryText.length >= maxLength) continue;
+        const payload = { messages: [{ role: 'user', content: buildSummaryQuestionText(summaryText, options) }] };
+        if (
+            !checkRequestBudget({
+                estimatedInputTokens: estimateRequestPayloadTokens(payload),
+                requestedOutputTokens: budget.summaryOutputTokens,
+                budget
+            }).allowed
+        )
+            continue;
+        plans.push(plan);
+        maxLength = summaryText.length;
+    }
+    return plans;
+}
+
+function buildSummaryQuestionText(summaryText: string, options: GenerateFullCompactSummaryOptions): string {
+    const prompt = options.prompt ?? getFullCompactCompressionPrompt();
+    return `${prompt}\n\n---\n\n以下是需要总结的对话历史：\n\n${summaryText}`;
+}
+
 export function buildFullCompactSummaryText(
     plan: FullCompactPlan,
     options: FullCompactSummaryTextOptions = {}
@@ -904,7 +1124,12 @@ export async function generateFullCompactSummary(
 ): Promise<string> {
     const prompt = options.prompt ?? getFullCompactCompressionPrompt();
     const summaryText = buildFullCompactSummaryText(plan, options);
-    const maxCompletionTokens = options.maxCompletionTokens ?? (await resolveReservedSummaryOutput(model));
+    const requestedSummaryOutput =
+        options.maxCompletionTokens ?? (options.generateSummary ? 16384 : await resolveReservedSummaryOutput(model));
+
+    const maxCompletionTokens = options.generateSummary
+        ? requestedSummaryOutput
+        : limitSummaryOutputToModel(model, requestedSummaryOutput);
 
     if (options.generateSummary) {
         return await options.generateSummary({
@@ -918,11 +1143,15 @@ export async function generateFullCompactSummary(
     }
 
     const question = new UserMessage();
-    question.appendText(`${prompt}\n\n---\n\n以下是需要总结的对话历史：\n\n${summaryText}`);
-    return await LLM.ask(question, model, {
-        ...options.requestOptions,
-        maxCompletionTokens
-    });
+    question.appendText(buildSummaryQuestionText(summaryText, options));
+    return validateCompactSummary(
+        await LLM.askWithMetadata(question, model, {
+            ...options.requestOptions,
+            reasoningEffort: LLM.getMinimalReasoningEffort(model),
+            disableInternalRetry: true,
+            maxCompletionTokens
+        })
+    );
 }
 
 export function buildFullCompactBoundary(
@@ -979,8 +1208,6 @@ export function applyFullCompactResult(chatContext: ChatContext, result: FullCom
         throw new Error('cannot apply full compact result without kept messages');
     }
 
-    chatContext.clearCompactBoundaries();
-
     for (const message of result.plan.messagesToKeep) {
         if (!chatContext.messages.includes(message)) {
             throw new Error('cannot apply full compact result because a kept message is missing from chat context');
@@ -992,7 +1219,9 @@ export function applyFullCompactResult(chatContext: ChatContext, result: FullCom
         throw new Error('cannot apply full compact result because kept tail start is missing from chat context');
     }
 
-    chatContext.messages.splice(insertIndex, 0, result.boundary);
+    // Validate all anchors before replacing the last known-good boundary.
+    chatContext.clearCompactBoundaries();
+    chatContext.messages.splice(chatContext.messages.indexOf(keepStartMessage), 0, result.boundary);
 }
 
 export async function compactFullContext(
@@ -1002,17 +1231,103 @@ export async function compactFullContext(
 ): Promise<FullCompactRunResult> {
     chatContext.deduplicateCompactBoundaries();
 
-    const plan = buildFullCompactPlan(chatContext, options);
+    // Task compaction always supplies a budget; retain legacy planning for budget-less library callers.
+    const contextWindow = options.budget?.contextWindow ?? options.contextWindow;
+    let recovery = options.usageRecovery ?? (options.budget ? ({ attempts: 0 } as UsageCompactRecovery) : undefined);
+    if (recovery && options.budget) {
+        recovery.plans ??= buildBudgetCompactPlans(chatContext, options.budget, model, options);
+        recovery.nextPlanIndex ??= 0;
+    }
+    let plan = recovery
+        ? recovery.plans?.[recovery.nextPlanIndex ?? 0]
+        : buildFullCompactPlan(chatContext, { ...options, contextWindow });
     if (plan === undefined) {
+        if (recovery && (options.usageRecovery || buildTokenBudgetCompactPlan(chatContext, contextWindow!)))
+            throw new ContextPreparationBlockedError('no_safe_usage_boundary');
         return { compacted: false };
     }
 
-    const summary = await generateFullCompactSummary(plan, model, options);
-    if (summary.trim().length === 0) {
-        throw new Error('full compact summary is empty');
+    const snapshot = chatContext.messages.map((message) => ({ message, content: JSON.stringify(message) }));
+    const isCurrent = () =>
+        options.isCurrent?.() !== false &&
+        snapshot.length === chatContext.messages.length &&
+        snapshot.every(
+            (item, index) =>
+                item.message === chatContext.messages[index] && item.content === JSON.stringify(item.message)
+        );
+    let summary = '';
+    for (let attempt = 0; attempt < (recovery ? MAX_COMPACT_RECOVERY_ATTEMPTS : 2); attempt++) {
+        if (!isCurrent()) throw new ContextPreparationBlockedError('cancelled');
+        if (recovery) {
+            if (recovery.attempts >= MAX_COMPACT_RECOVERY_ATTEMPTS)
+                throw new ContextPreparationBlockedError('recovery_exhausted');
+            recovery.attempts++;
+        }
+        try {
+            summary = await generateFullCompactSummary(plan, model, {
+                ...options,
+                maxCompletionTokens: options.budget?.summaryOutputTokens ?? options.maxCompletionTokens,
+                requestOptions: {
+                    ...options.requestOptions,
+                    ...(options.budget ? { contextBudget: { window: options.budget.contextWindow } } : {})
+                }
+            });
+            if (!isCurrent()) throw new ContextPreparationBlockedError('cancelled');
+            if (!summary.trim()) throw new CompactError('empty_content');
+            if (recovery) recovery.nextPlanIndex = (recovery.nextPlanIndex ?? 0) + 1;
+            break;
+        } catch (error) {
+            if (
+                !isCurrent() ||
+                (error instanceof CompactError && error.code === 'cancelled') ||
+                (error instanceof Error && error.name === 'AbortError')
+            )
+                throw new ContextPreparationBlockedError('cancelled');
+            const failure =
+                error instanceof CompactError
+                    ? error
+                    : new CompactError(isContextLimitError(error) ? 'context_limit' : 'request_failed');
+            options.onAttemptFailure?.(failure);
+            if (!recovery && options.budget && isContextLimitError(error)) {
+                recovery = {
+                    attempts: attempt + 1,
+                    plans: buildBudgetCompactPlans(chatContext, options.budget, model, options),
+                    nextPlanIndex: -1
+                };
+            }
+            if (recovery && isContextLimitError(error)) {
+                if (recovery.attempts >= MAX_COMPACT_RECOVERY_ATTEMPTS)
+                    throw new ContextPreparationBlockedError('recovery_exhausted');
+                const previousLength = buildFullCompactSummaryText(plan, options).length;
+                do {
+                    recovery.nextPlanIndex = (recovery.nextPlanIndex ?? 0) + 1;
+                    plan = recovery.plans?.[recovery.nextPlanIndex];
+                } while (plan && buildFullCompactSummaryText(plan, options).length >= previousLength);
+                if (!plan) throw new ContextPreparationBlockedError('no_safe_usage_boundary');
+                continue;
+            }
+            if (!failure.retryableEmpty || attempt > 0 || options.halfOpen || options.canRetryEmpty?.() === false)
+                throw failure;
+        }
     }
 
     const result = buildFullCompactResult(plan, summary, options);
+    if (options.budget) {
+        const candidate = new ChatContext();
+        candidate.messages = [...chatContext.messages];
+        candidate.system_prompt = chatContext.system_prompt;
+        candidate.attachToolsets(...chatContext.toolsets.values());
+        applyFullCompactResult(candidate, result);
+        const payload = {
+            messages: OpenAIAdapter.buildMessages(candidate),
+            ...OpenAIAdapter.buildToolOptions(candidate)
+        };
+        const input = estimateRequestPayloadTokens(payload);
+        if (input >= options.budget.triggerTokens)
+            throw new ContextPreparationBlockedError('no_progress', input, options.budget.triggerTokens);
+        assertRequestBudget(payload, options.requestedOutputTokens ?? 2048, options.budget.contextWindow);
+    }
+    if (!isCurrent()) throw new ContextPreparationBlockedError('cancelled');
     applyFullCompactResult(chatContext, result);
 
     return {

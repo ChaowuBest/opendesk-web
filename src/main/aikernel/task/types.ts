@@ -136,6 +136,23 @@ export interface TaskUpdateUserReplaceChunk {
     timestamp?: number;
 }
 
+export interface TaskUpdateCompactChunk {
+    type: 'compact';
+    task_id: string;
+    task_status: TaskStatus;
+    phase: 'start' | 'end';
+    trigger: 'auto' | 'manual';
+    compacted?: boolean;
+    boundary?: {
+        role: 'compact_separator';
+        message_id: string;
+        trigger?: string;
+        kept_anchor_message_id?: string;
+        kept_anchor_start_part_index?: number;
+    };
+    before_message_id?: string;
+}
+
 export interface TaskUpdateRetryChunk {
     type: 'retry';
     task_id: string;
@@ -171,6 +188,7 @@ export type TaskUpdateChunk =
     | TaskUpdateUserReplaceChunk
     | TaskUpdateAssistantReplaceChunk
     | TaskUpdateRetryChunk
+    | TaskUpdateCompactChunk
     | TaskUpdateGoalEvalChunk;
 
 export const ATTEMPT_COMPLETION_TOOL_NAME = 'planning-attemptCompletion';

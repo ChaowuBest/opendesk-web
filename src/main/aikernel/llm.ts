@@ -9,6 +9,7 @@
  * See the Mulan PSL v2 for more details.
  */
 
+import type { TextCompletionResult } from './compaction/compact-error.js';
 import {
     ChatContext,
     AssistantResponse,
@@ -67,6 +68,9 @@ type ValidatorFn = (content: string) => LLMValidatorResult;
 
 /** LLM 补全请求的通用可选参数 */
 interface LLMRequestOptions {
+    contextBudget?: { window: number; inputEstimate?: number; requireBelowTrigger?: boolean };
+    onBudgetValidated?: () => void;
+    signal?: AbortSignal;
     /** 控制模型推理深度，不传则使用模型默认值 */
     reasoningEffort?: ReasoningEffort;
     /** 限制本次补全的最大输出 token 数 */
@@ -618,6 +622,40 @@ class LLM {
         return options;
     }
 
+    static async askWithMetadata(
+        question: UserMessage | string,
+        model: ModelParam = undefined,
+        requestOptions?: LLMRequestOptions
+    ): Promise<TextCompletionResult> {
+        const instance = this.__getModelInstance(model, 'chat');
+        const context = new ChatContext();
+        context.appendMessage(question instanceof UserMessage ? question : new UserMessage(question));
+        const resolved = await this.__resolvePluginRequestOptions(context, model, instance, requestOptions);
+        const result = await this.__getAdapter(instance).completeTextWithMetadata(
+            context,
+            await this.supportsVision(model),
+            {},
+            {
+                ...resolved,
+                reasoningEffort: this.getMinimalReasoningEffort(model),
+                maxCompletionTokens: requestOptions?.maxCompletionTokens,
+                contextBudget: requestOptions?.contextBudget,
+                disableInternalRetry: true
+            }
+        );
+        const message = new AssistantMessage([], { allowThinkTagParsing: true });
+        message.appendText(result.text);
+        const text = message.content
+            .map((part) => (part.type === 'text' ? part.text : ''))
+            .join('')
+            .trim();
+        return {
+            ...result,
+            text,
+            reasoningLength: result.reasoningLength + Math.max(0, result.text.length - text.length)
+        };
+    }
+
     static async ask(
         question: UserMessage | string,
         model: ModelParam = undefined,
@@ -750,6 +788,9 @@ class LLM {
             modelInstance,
             wrappedOptions
         );
+        // Plugins may change output options, but cannot remove the task's send budget.
+        pluginRequestOptions.contextBudget = requestOptions?.contextBudget;
+        pluginRequestOptions.onBudgetValidated = requestOptions?.onBudgetValidated;
         const streamGen = this.__getAdapter(modelInstance).streamComplete(
             chatContext,
             visionSupported,

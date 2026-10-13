@@ -1,3 +1,4 @@
+import { ModelInstance, Setting } from '../../../main/utils/setting.js';
 import fs from 'fs';
 import os from 'os';
 import path from 'path';
@@ -184,6 +185,16 @@ function readTraceRecords(taskId: string): CompactTraceRecord[] {
         .map((line) => JSON.parse(line) as CompactTraceRecord);
 }
 
+beforeEach(() => {
+    jest.spyOn(Setting, 'getInstance').mockReturnValue({
+        getModelInstance: () =>
+            new ModelInstance('compact-test-model', 'https://example.com', 'test-key', false, false, '', 200000),
+        getDefaultModelInstance: () =>
+            new ModelInstance('compact-test-model', 'https://example.com', 'test-key', false, false, '', 200000),
+        getData: () => ({ locale: 'en-US' })
+    } as unknown as Setting);
+});
+
 describe('compact trace artifact', () => {
     afterEach(() => {
         jest.restoreAllMocks();
@@ -194,9 +205,11 @@ describe('compact trace artifact', () => {
     test('prepareContextForModel writes compact-related trace lines to artifacts/<taskId>/compact.ndjson', async () => {
         createTempAppDirectory();
         const taskId = 'task-compact-trace-pipeline';
-        const askSpy = jest
-            .spyOn(LLM, 'ask')
-            .mockResolvedValue('<state_snapshot><overall_goal>trace</overall_goal></state_snapshot>');
+        const askSpy = jest.spyOn(LLM, 'askWithMetadata').mockResolvedValue({
+            text: '<state_snapshot><overall_goal>trace</overall_goal></state_snapshot>',
+            reasoningLength: 0,
+            finishReason: 'stop'
+        });
 
         const result = await prepareContextForModel(createCompactableChatContext(), 'demo-model', {
             taskId,
@@ -204,7 +217,7 @@ describe('compact trace artifact', () => {
             autoCompactState: AutoCompactStates.create(),
             autoCompactDecisionOverride: createAutoCompactDecision({
                 contextWindow: 1000,
-                promptTokens: 720,
+                promptTokens: 800,
                 reservedSummaryOutput: 100,
                 buffer: 180
             })
@@ -239,16 +252,16 @@ describe('compact trace artifact', () => {
 
         const completedRecord = records.find((record) => record.event === 'full_compact_completed');
         expect(completedRecord?.data).toMatchObject({
-            compactVariant: 'message_tail',
-            keepAnchorKind: 'message_start',
+            compactVariant: 'boundary_partial_assistant',
+            keepAnchorKind: 'assistant_round',
             recentUserPreserved: false
         });
         expect(completedRecord?.data?.physicalKeepStartIndex).toEqual(expect.any(Number));
 
         const anchorRecord = records.find((record) => record.event === 'keep_anchor_selected');
         expect(anchorRecord?.data).toMatchObject({
-            compactVariant: 'message_tail',
-            keepAnchorKind: 'message_start',
+            compactVariant: 'boundary_partial_assistant',
+            keepAnchorKind: 'assistant_round',
             recentUserPreserved: false
         });
     });
@@ -278,7 +291,9 @@ describe('compact trace artifact', () => {
         chatContext.appendMessage(recentUser);
         chatContext.appendMessage(bigAssistant);
 
-        const askSpy = jest.spyOn(LLM, 'ask').mockResolvedValue('full compact should not run');
+        const askSpy = jest
+            .spyOn(LLM, 'askWithMetadata')
+            .mockResolvedValue({ text: 'full compact should not run', reasoningLength: 0, finishReason: 'stop' });
 
         const result = await prepareContextForModel(chatContext, 'demo-model', {
             taskId,
@@ -287,7 +302,7 @@ describe('compact trace artifact', () => {
             autoCompactState: AutoCompactStates.create(),
             autoCompactDecisionOverride: createAutoCompactDecision({
                 contextWindow: 1000,
-                promptTokens: 720,
+                promptTokens: 800,
                 reservedSummaryOutput: 100,
                 buffer: 180
             }),

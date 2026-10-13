@@ -1610,11 +1610,20 @@ export class UserMessage implements BaseUserMessage {
 
 export type AssistantMessagePart = TextMessagePart | ReasoningMessagePart | ToolCallMessagePart | ErrorMessagePart;
 
+export interface CompletionUsageCheckpoint {
+    startPartIndex: number;
+    endPartIndex: number;
+    usage: Usage;
+    model?: string;
+    boundaryId?: string;
+}
+
 export class AssistantMessage implements BaseAssistantMessage {
     role: 'assistant' = 'assistant';
     message_id: string = crypto.randomUUID();
     content: Array<AssistantMessagePart> = [];
     usage?: Usage;
+    usageCheckpoints?: CompletionUsageCheckpoint[];
     metadata?: RuntimeMetadata;
     private _insideThinkTag: boolean = false;
     private _allowThinkTagParsing: boolean = true;
@@ -1701,6 +1710,17 @@ export class AssistantMessage implements BaseAssistantMessage {
             delete legacy.timestamp;
         }
         assistant_message.usage = Usage.fromRaw(assistant_message.usage);
+        assistant_message.usageCheckpoints = assistant_message.usageCheckpoints?.flatMap((checkpoint) => {
+            const usage = Usage.fromRaw(checkpoint.usage);
+            return usage &&
+                Number.isInteger(checkpoint.startPartIndex) &&
+                checkpoint.startPartIndex >= 0 &&
+                Number.isInteger(checkpoint.endPartIndex) &&
+                checkpoint.endPartIndex > checkpoint.startPartIndex &&
+                checkpoint.endPartIndex <= assistant_message.content.length
+                ? [{ ...checkpoint, usage }]
+                : [];
+        });
         return assistant_message;
     }
 
@@ -1774,6 +1794,7 @@ export class AssistantMessage implements BaseAssistantMessage {
     clearContent(): void {
         this.content = [];
         this.usage = undefined;
+        this.usageCheckpoints = undefined;
         this._insideThinkTag = false;
         this._allowThinkTagParsing = true;
         this._allowImplicitThinkClose = true;
@@ -1785,6 +1806,22 @@ export class AssistantMessage implements BaseAssistantMessage {
         this._allowThinkTagParsing = allowThinkTagParsing;
         this._allowImplicitThinkClose = allowThinkTagParsing;
         this._thinkRoundStartPartIndex = this.content.length;
+    }
+
+    /** Save only successful completions; tool results arrive after this usage snapshot. */
+    recordCompletionUsage(model?: string, boundaryId?: string): void {
+        if (!this.usage || this.content.length <= this._thinkRoundStartPartIndex) return;
+        this.usageCheckpoints ??= [];
+        this.usageCheckpoints = this.usageCheckpoints.filter(
+            (checkpoint) => checkpoint.startPartIndex < this._thinkRoundStartPartIndex
+        );
+        this.usageCheckpoints.push({
+            startPartIndex: this._thinkRoundStartPartIndex,
+            endPartIndex: this.content.length,
+            usage: Usage.fromRaw(this.usage)!,
+            model,
+            boundaryId
+        });
     }
 
     /**
@@ -2684,7 +2721,11 @@ export class CompactSeparatorMessage implements BaseCompactSeparatorMessage {
 
     toRenderJSON(): object {
         return {
-            role: this.role
+            role: this.role,
+            message_id: this.metadata.boundary_id,
+            trigger: this.metadata.trigger,
+            kept_anchor_message_id: this.metadata.kept_anchor_message_id,
+            kept_anchor_start_part_index: this.metadata.kept_anchor_start_part_index
         };
     }
 }

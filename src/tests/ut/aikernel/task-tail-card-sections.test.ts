@@ -202,6 +202,7 @@ describe('TaskState TailCard request projection', () => {
         const toolset = new BaseToolset('test');
         const tool = new BaseTool('inspect', 'Inspect a deterministic fixture', z.object({}));
         const task = new TaskState(manager, null);
+        jest.spyOn(task, 'ensureValidModelOrFallback').mockReturnValue('gpt-4o');
         const execute = jest.fn(async () => {
             task.setFrontendTailCardSection('knowledge-mode', 'knowledge prompt for second production');
             return 'deterministic tool result';

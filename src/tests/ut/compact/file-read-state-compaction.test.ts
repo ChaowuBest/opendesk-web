@@ -1,6 +1,8 @@
 import fs from 'fs';
 import os from 'os';
 import path from 'path';
+import { AutoCompactStates } from '../../../main/aikernel/compaction/auto-compact.js';
+import { ContextPreparationBlockedError } from '../../../main/aikernel/compaction/compact-error.js';
 import { jest } from '@jest/globals';
 import { LLM } from '../../../main/aikernel/llm';
 import { AssistantMessage, ChatContext, Usage, UserMessage } from '../../../main/aikernel/messages';
@@ -48,8 +50,8 @@ function appendAssistantMessage(chatContext: ChatContext, text: string): void {
 function createCompactableChatContext(): ChatContext {
     const chatContext = new ChatContext();
     for (let index = 1; index <= 5; index++) {
-        chatContext.appendMessage(new UserMessage('user ' + index));
-        appendAssistantMessage(chatContext, 'assistant ' + index);
+        chatContext.appendMessage(new UserMessage(('user ' + index).repeat(5000)));
+        appendAssistantMessage(chatContext, ('assistant ' + index).repeat(3000));
     }
     return chatContext;
 }
@@ -114,7 +116,9 @@ function mockSmallContextWindow(): void {
         59000
     );
 
+    model.max_output_tokens = 2048;
     jest.spyOn(Setting, 'getInstance').mockReturnValue({
+        data: { locale: 'en-US' },
         getData: () => ({
             default_model: 'compact-test-model',
             models: [
@@ -131,6 +135,7 @@ function mockSmallContextWindow(): void {
 }
 
 describe('file read state invalidation after context compaction', () => {
+    beforeEach(() => mockSmallContextWindow());
     afterEach(async () => {
         for (const manager of managers) {
             await manager.flushAllPendingSaves();
@@ -145,7 +150,11 @@ describe('file read state invalidation after context compaction', () => {
         const task = createTask();
         task.chat_context = createCompactableChatContext();
         seedReadState(task);
-        jest.spyOn(LLM, 'ask').mockResolvedValue('full compact summary');
+        jest.spyOn(LLM, 'askWithMetadata').mockResolvedValue({
+            text: 'full compact summary',
+            reasoningLength: 0,
+            finishReason: 'stop'
+        });
 
         const compacted = await task.manualCompact();
 
@@ -161,7 +170,9 @@ describe('file read state invalidation after context compaction', () => {
         task.model = 'conversation-model';
         task.chat_context = createCompactableChatContext();
         task._dirty = false;
-        const askSpy = jest.spyOn(LLM, 'ask').mockResolvedValue('full compact summary');
+        const askSpy = jest
+            .spyOn(LLM, 'askWithMetadata')
+            .mockResolvedValue({ text: 'full compact summary', reasoningLength: 0, finishReason: 'stop' });
 
         const result = await task.compactTaskContext({ model: 'summary-model' });
 
@@ -186,10 +197,12 @@ describe('file read state invalidation after context compaction', () => {
         const summaryPromise = new Promise<string>((resolve) => {
             resolveSummary = resolve;
         });
-        const askSpy = jest.spyOn(LLM, 'ask').mockReturnValue(summaryPromise);
+        const askSpy = jest
+            .spyOn(LLM, 'askWithMetadata')
+            .mockReturnValue(summaryPromise.then((text) => ({ text, reasoningLength: 0, finishReason: 'stop' })));
 
         const first = task.compactTaskContext({ model: 'summary-model' });
-        const second = task.compactTaskContext({ model: 'other-model' });
+        const second = task.compactTaskContext({ model: 'summary-model' });
         resolveSummary?.('shared compact summary');
         const [firstResult, secondResult] = await Promise.all([first, second]);
 
@@ -203,7 +216,9 @@ describe('file read state invalidation after context compaction', () => {
         const task = createTask();
         task.chat_context.appendMessage(new UserMessage('single message'));
         seedReadState(task);
-        const askSpy = jest.spyOn(LLM, 'ask').mockResolvedValue('unused summary');
+        const askSpy = jest
+            .spyOn(LLM, 'askWithMetadata')
+            .mockResolvedValue({ text: 'unused summary', reasoningLength: 0, finishReason: 'stop' });
 
         const compacted = await task.manualCompact();
 
@@ -218,7 +233,9 @@ describe('file read state invalidation after context compaction', () => {
         const task = createTask();
         task.chat_context.appendMessage(new UserMessage('single message'));
         seedReadState(task);
-        const askSpy = jest.spyOn(LLM, 'ask').mockResolvedValue('unused summary');
+        const askSpy = jest
+            .spyOn(LLM, 'askWithMetadata')
+            .mockResolvedValue({ text: 'unused summary', reasoningLength: 0, finishReason: 'stop' });
 
         const result = await task.compactTaskContext();
 
@@ -227,23 +244,167 @@ describe('file read state invalidation after context compaction', () => {
         expect(task.getFileReadState().get('C:/repo/read.txt')).toBeDefined();
     });
 
-    test('session memory compact before model completion clears task-local file read state', async () => {
+    test('usage recovery without a safe checkpoint uses an estimated summary and clears file read state', async () => {
         createTempAppDirectory();
         mockSmallContextWindow();
         const task = createTask();
         task.chat_context = createSessionMemoryCompactableChatContext();
         const lastMessage = task.chat_context.lastMessage();
         if (lastMessage instanceof AssistantMessage) {
-            lastMessage.usage = new Usage(30000, 0, 30000);
+            lastMessage.usage = new Usage(50000, 0, 50000);
         }
         seedReadState(task);
         await writeTaskSessionMemory(task.task_id, validSessionMemory());
-        const askSpy = jest.spyOn(LLM, 'ask').mockResolvedValue('full compact should not run');
+        const askSpy = jest
+            .spyOn(LLM, 'askWithMetadata')
+            .mockResolvedValue({ text: 'estimated fallback summary', reasoningLength: 0, finishReason: 'stop' });
         jest.spyOn(LLM, 'streamComplete').mockImplementation(async function* () {} as any);
 
         await task.processCompletion();
 
         expect(task.getFileReadState().size).toBe(0);
-        expect(askSpy).not.toHaveBeenCalled();
+        expect(task.chat_context.findCompactBoundary()?.message.summary).toBe('estimated fallback summary');
+        expect(askSpy).toHaveBeenCalledTimes(1);
+    });
+});
+
+describe('task compaction recovery regression', () => {
+    beforeEach(() => {
+        createTempAppDirectory();
+        mockSmallContextWindow();
+    });
+    afterEach(() => {
+        jest.restoreAllMocks();
+        cleanupTempAppDirectory();
+    });
+
+    test('empty summaries pause before the main model, persist failures and open after three attempts', async () => {
+        const task = createTask();
+        task.chat_context = createCompactableChatContext();
+        const last = task.chat_context.lastMessage() as AssistantMessage;
+        last.usage = new Usage(50000, 0, 50000);
+        (task.chat_context.messages[7] as AssistantMessage).usage = new Usage(40000, 0, 40000);
+        const ask = jest.spyOn(LLM, 'askWithMetadata').mockResolvedValue({ text: '', reasoningLength: 20 });
+        const stream = jest.spyOn(LLM, 'streamComplete').mockImplementation(async function* () {});
+        jest.spyOn(task, 'sendSubscriptionFeedback').mockResolvedValue(undefined);
+        const save = jest.spyOn(task, 'persistLater').mockImplementation(() => undefined);
+        const ids = task.chat_context.messages.map((message) => message.message_id);
+        task.task_status = 'running';
+        await task.processCompletion();
+        expect(ask).toHaveBeenCalledTimes(2);
+        expect(stream).not.toHaveBeenCalled();
+        expect(task.task_status).toBe('stopped');
+        expect(task.auto_compact_state.consecutiveFailures).toBe(2);
+        expect(save).toHaveBeenCalled();
+        expect(task.chat_context.messages.map((message) => message.message_id)).toEqual(ids);
+        await expect(task.compactTaskContext()).rejects.toMatchObject({ code: 'reasoning_only' });
+        expect(ask).toHaveBeenCalledTimes(3);
+        expect(task.auto_compact_state.status).toBe('circuit_open');
+        const restored = AutoCompactStates.deserialize(AutoCompactStates.serialize(task.auto_compact_state));
+        expect(restored.status).toBe('circuit_open');
+        await expect(task.compactTaskContext({ trigger: 'auto' })).rejects.toThrow('circuit_open');
+        expect(ask).toHaveBeenCalledTimes(3);
+        await expect(task.compactTaskContext()).rejects.toMatchObject({ code: 'reasoning_only' });
+        expect(ask).toHaveBeenCalledTimes(4);
+        expect(task.auto_compact_state.status).toBe('circuit_open');
+        ask.mockResolvedValue({ text: 'valid recovery summary', reasoningLength: 0, finishReason: 'stop' });
+        await expect(task.compactTaskContext()).resolves.toMatchObject({ compacted: true });
+        expect(task.auto_compact_state.status).toBe('healthy');
+        expect(task.auto_compact_state.consecutiveFailures).toBe(0);
+    });
+
+    test('manual and auto share one in-flight operation and apply one boundary', async () => {
+        const task = createTask();
+        const publish = jest.spyOn(task, 'publishTaskUpdate');
+        task.chat_context = createCompactableChatContext();
+        let resolve!: (value: { text: string; reasoningLength: number }) => void;
+        const pending = new Promise<{ text: string; reasoningLength: number }>((done) => {
+            resolve = done;
+        });
+        const ask = jest.spyOn(LLM, 'askWithMetadata').mockReturnValue(pending);
+        const manual = task.compactTaskContext();
+        const automatic = task.compactTaskContext({ trigger: 'auto' });
+        resolve({ text: 'one summary', reasoningLength: 0 });
+        const results = await Promise.all([manual, automatic]);
+        expect(ask).toHaveBeenCalledTimes(1);
+        expect(results[0]).toBe(results[1]);
+        expect(task.chat_context.messages.filter((message) => message.role === 'compact_separator')).toHaveLength(1);
+        const updates = publish.mock.calls.map(([update]) => update).filter((update) => update.type === 'compact');
+        expect(updates.map((update) => update.phase)).toEqual(['start', 'end']);
+        expect(updates[1]).toMatchObject({ compacted: true, trigger: 'manual' });
+        expect(task.compactProgress).toBeUndefined();
+    });
+
+    test('truncation preserves the last good boundary and does not retry', async () => {
+        const task = createTask();
+        const publish = jest.spyOn(task, 'publishTaskUpdate');
+        task.chat_context = createCompactableChatContext();
+        const ask = jest.spyOn(LLM, 'askWithMetadata').mockResolvedValue({ text: 'good summary', reasoningLength: 0 });
+        await task.compactTaskContext();
+        const boundary = task.chat_context.findCompactBoundary()?.message;
+        expect(publish).toHaveBeenCalledWith(
+            expect.objectContaining({ type: 'compact', phase: 'end', compacted: true }),
+            'context compaction'
+        );
+        for (let i = 0; i < 5; i++) {
+            task.chat_context.appendMessage(new UserMessage('more work '.repeat(4000)));
+            appendAssistantMessage(task.chat_context, 'tool work completed');
+        }
+        ask.mockResolvedValue({ text: 'cut off summary', reasoningLength: 0, finishReason: 'length' });
+        await expect(task.compactTaskContext()).rejects.toMatchObject({ code: 'output_truncated' });
+        expect(ask).toHaveBeenCalledTimes(2);
+        expect(task.chat_context.findCompactBoundary()?.message).toBe(boundary);
+        expect(task.compactProgress).toBeUndefined();
+        expect(publish).toHaveBeenLastCalledWith(
+            expect.objectContaining({ type: 'compact', phase: 'end', compacted: false }),
+            'context compaction'
+        );
+    });
+
+    test('a final adapter budget failure ends the turn instead of entering model retry', async () => {
+        const task = createTask();
+        task.chat_context = new ChatContext();
+        task.chat_context.appendMessage(new UserMessage('small request'));
+        task.chat_context.appendMessage(new AssistantMessage());
+        task.task_status = 'running';
+        jest.spyOn(task, 'sendSubscriptionFeedback').mockResolvedValue(undefined);
+        const stream = jest.spyOn(LLM, 'streamComplete').mockImplementation(async function* () {
+            yield await Promise.reject(new ContextPreparationBlockedError('context_limit'));
+        });
+        await task.processCompletion();
+        expect(stream).toHaveBeenCalledTimes(1);
+        expect(task.task_status).toBe('stopped');
+        expect(task._retryDelayPending).toBe(false);
+    });
+
+    test('nonempty but oversized summary does not replace history or clear failure state', async () => {
+        const task = createTask();
+        task.chat_context = createCompactableChatContext();
+        task.setAutoCompactState(
+            AutoCompactStates.recordFailure(AutoCompactStates.recordFailure(AutoCompactStates.create()))
+        );
+        const original = task.chat_context.messages.slice();
+        jest.spyOn(LLM, 'askWithMetadata').mockResolvedValue({
+            text: 'x'.repeat(240000),
+            reasoningLength: 0,
+            finishReason: 'stop'
+        });
+        await expect(task.compactTaskContext()).rejects.toMatchObject({ code: 'no_progress' });
+        expect(task.chat_context.messages).toEqual(original);
+        expect(task.auto_compact_state.consecutiveFailures).toBe(2);
+        expect(task.auto_compact_state.status).toBe('degraded');
+    });
+
+    test('a stale summary cannot overwrite changes made while it was pending', async () => {
+        const task = createTask();
+        task.chat_context = createCompactableChatContext();
+        jest.spyOn(LLM, 'askWithMetadata').mockImplementation(async () => {
+            task.chat_context.appendMessage(new UserMessage('new context while summarizing'));
+            return { text: 'outdated summary', reasoningLength: 0 };
+        });
+        await expect(task.compactTaskContext()).rejects.toMatchObject({ code: 'cancelled' });
+        expect(task.chat_context.findCompactBoundary()).toBeUndefined();
+        expect(task.auto_compact_state.consecutiveFailures).toBe(0);
+        expect(task.chat_context.messages).toHaveLength(11);
     });
 });

@@ -1,3 +1,4 @@
+import { ModelInstance, Setting } from '../../../main/utils/setting.js';
 import { jest } from '@jest/globals';
 import {
     FULL_COMPACT_BOUNDARY_STRATEGY,
@@ -163,8 +164,18 @@ function getVisibleAssistantRoundIndices(chatContext: ChatContext, message: Assi
         .map((item) => item.roundRef.roundIndex);
 }
 
+beforeEach(() => {
+    jest.spyOn(Setting, 'getInstance').mockReturnValue({
+        getModelInstance: () =>
+            new ModelInstance('compact-test-model', 'https://example.com', 'test-key', false, false, '', 200000),
+        getDefaultModelInstance: () =>
+            new ModelInstance('compact-test-model', 'https://example.com', 'test-key', false, false, '', 200000),
+        getData: () => ({ locale: 'en-US' })
+    } as unknown as Setting);
+});
+
 describe('full compact planning', () => {
-    test('首次 compact 会总结 active context 前缀并保留默认最近 8 条非 boundary 消息', () => {
+    test('首次 compact 会总结 active context 前缀并保留指定的最近 8 条非 boundary 消息', () => {
         const factory = createMessageFactory();
         const chatContext = new ChatContext();
 
@@ -183,7 +194,7 @@ describe('full compact planning', () => {
             factory.assistant('a6')
         ]);
 
-        const plan = buildFullCompactPlan(chatContext);
+        const plan = buildFullCompactPlan(chatContext, { tailMessageCount: 8 });
 
         expect(plan).toBeDefined();
         expect(plan!.activeContextStartIndex).toBe(0);
@@ -275,7 +286,7 @@ describe('full compact planning', () => {
             factory.assistant('a6')
         ]);
 
-        const plan = buildFullCompactPlan(chatContext);
+        const plan = buildFullCompactPlan(chatContext, { tailMessageCount: 8 });
 
         expect(plan).toBeDefined();
         expect(plan!.activeContextStartIndex).toBe(2);
@@ -314,7 +325,7 @@ describe('full compact planning', () => {
             factory.assistant('a7')
         ]);
 
-        const plan = buildFullCompactPlan(chatContext);
+        const plan = buildFullCompactPlan(chatContext, { tailMessageCount: 8 });
 
         expect(plan).toBeDefined();
         expect(plan!.keepStartIndex).toBe(2);
@@ -384,7 +395,7 @@ describe('full compact planning', () => {
 
         appendMessages(chatContext, [factory.user('u1'), factory.assistant('a1'), factory.user('u2')]);
 
-        expect(buildFullCompactPlan(chatContext)).toBeUndefined();
+        expect(buildFullCompactPlan(chatContext, { tailMessageCount: 8 })).toBeUndefined();
     });
 
     test('会去重旧 boundary，且 kept tail 不包含 compact boundary', () => {
@@ -412,7 +423,7 @@ describe('full compact planning', () => {
             factory.assistant('a6')
         ]);
 
-        const plan = buildFullCompactPlan(chatContext);
+        const plan = buildFullCompactPlan(chatContext, { tailMessageCount: 8 });
 
         expect(plan).toBeDefined();
         expect(chatContext.messages).not.toContain(obsoleteBoundary);
@@ -491,17 +502,21 @@ describe('full compact planning', () => {
         });
         expect(plan).toBeDefined();
 
-        const askSpy = jest
-            .spyOn(LLM, 'ask')
-            .mockResolvedValue('<state_snapshot><overall_goal>demo</overall_goal></state_snapshot>');
+        const askSpy = jest.spyOn(LLM, 'askWithMetadata').mockResolvedValue({
+            text: '<state_snapshot><overall_goal>demo</overall_goal></state_snapshot>',
+            reasoningLength: 0,
+            finishReason: 'stop'
+        });
 
+        jest.spyOn(LLM, 'getMinimalReasoningEffort').mockReturnValue('low');
         await expect(generateFullCompactSummary(plan!, 'anthropic/claude-4-sonnet')).resolves.toContain(
             '<state_snapshot>'
         );
         expect(askSpy).toHaveBeenCalledTimes(1);
         expect(askSpy.mock.calls[0]?.[1]).toBe('anthropic/claude-4-sonnet');
         expect(askSpy.mock.calls[0]?.[2]).toMatchObject({
-            maxCompletionTokens: 20000
+            maxCompletionTokens: 16384,
+            reasoningEffort: 'low'
         });
     });
 
@@ -532,9 +547,11 @@ describe('full compact planning', () => {
                 trace_id: 'trace-demo'
             }
         };
-        const askSpy = jest
-            .spyOn(LLM, 'ask')
-            .mockResolvedValue('<state_snapshot><overall_goal>demo</overall_goal></state_snapshot>');
+        const askSpy = jest.spyOn(LLM, 'askWithMetadata').mockResolvedValue({
+            text: '<state_snapshot><overall_goal>demo</overall_goal></state_snapshot>',
+            reasoningLength: 0,
+            finishReason: 'stop'
+        });
 
         await generateFullCompactSummary(plan!, 'demo-model', { requestOptions });
 
@@ -543,6 +560,16 @@ describe('full compact planning', () => {
             maxCompletionTokens: expect.any(Number),
             extraHeaders: requestOptions.extraHeaders
         });
+    });
+
+    test('默认保留最近三个工具轮次，可压缩单条 assistant 中较早的两个轮次', () => {
+        const context = new ChatContext();
+        context.appendMessage(new UserMessage('search'));
+        context.appendMessage(createMultiRoundAssistant('five', ['one', 'two', 'three', 'four', 'five']));
+        const plan = buildFullCompactPlan(context, { enableAssistantRoundBoundary: true });
+        expect(plan).toBeDefined();
+        expect(plan!.projectedItemsToSummarize).toHaveLength(2);
+        expect(plan!.keepAnchor?.roundRef?.roundIndex).toBe(2);
     });
 
     test('enableAssistantRoundBoundary 打开后，planner 可以在单条 assistant 内部计算 keep anchor', () => {
@@ -684,11 +711,13 @@ describe('full compact planning', () => {
         ]);
 
         const legacyPlan = buildFullCompactPlan(chatContext, {
+            tailMessageCount: 8,
             tailAssistantToolMessageCount: 0,
             tailAssistantErrorMessageCount: 0,
             tailPlanMessageCount: 0
         });
         const roundAwarePlan = buildFullCompactPlan(chatContext, {
+            tailMessageCount: 8,
             tailAssistantToolMessageCount: 0,
             tailAssistantErrorMessageCount: 0,
             tailPlanMessageCount: 0,
@@ -984,7 +1013,10 @@ describe('full compact planning', () => {
 
         appendMessages(chatContext, [factory.user('u1'), factory.assistant('a1'), factory.user('u2')]);
 
-        const runResult = await compactFullContext(chatContext, undefined, { generateSummary });
+        const runResult = await compactFullContext(chatContext, undefined, {
+            tailMessageCount: 8,
+            generateSummary
+        });
 
         expect(runResult.compacted).toBe(false);
         expect(runResult.plan).toBeUndefined();
@@ -1020,7 +1052,7 @@ describe('full compact planning', () => {
                     throw new Error('summary failed');
                 }
             })
-        ).rejects.toThrow('summary failed');
+        ).rejects.toThrow('request_failed');
 
         expect(chatContext.findCompactBoundary()).toBeUndefined();
     });
@@ -1179,6 +1211,7 @@ describe('full compact planning', () => {
         appendMessages(chatContext, [factory.user('hidden-u'), previousBoundary, bigAssistant]);
 
         const legacyPlan = buildFullCompactPlan(chatContext, {
+            tailMessageCount: 8,
             enableAssistantRoundBoundary: false
         });
         expect(legacyPlan).toBeUndefined();
@@ -1207,10 +1240,12 @@ describe('full compact planning', () => {
         appendMessages(chatContext, [factory.user('hidden-u'), previousBoundary, bigAssistant]);
 
         const roundAwarePlan = buildFullCompactPlan(chatContext, {
+            tailMessageCount: 8,
             enableAssistantRoundBoundary: true,
             minMessagesToSummarize: 12
         });
         const overThresholdPlan = buildFullCompactPlan(chatContext, {
+            tailMessageCount: 8,
             enableAssistantRoundBoundary: true,
             minMessagesToSummarize: 13
         });
@@ -1246,6 +1281,7 @@ describe('full compact planning', () => {
         expect(visibleAssistantRoundsBeforeCompact).toHaveLength(20);
 
         const roundAwarePlan = buildFullCompactPlan(chatContext, {
+            tailMessageCount: 8,
             enableAssistantRoundBoundary: true
         });
         expect(roundAwarePlan).toBeDefined();
@@ -1361,6 +1397,7 @@ describe('full compact planning', () => {
         expect(projectedView.projectedItems[0]?.kind).toBe('user_message');
 
         const roundAwarePlan = buildFullCompactPlan(chatContext, {
+            tailMessageCount: 8,
             enableAssistantRoundBoundary: true
         });
 
@@ -1417,11 +1454,13 @@ describe('full compact planning', () => {
         appendMessages(chatContext, [recentUser, bigAssistant]);
 
         const roundAwarePlan = buildFullCompactPlan(chatContext, {
+            tailMessageCount: 8,
             enableAssistantRoundBoundary: true
         });
         expect(roundAwarePlan).toBeDefined();
 
         const runResult = await compactFullContext(chatContext, undefined, {
+            tailMessageCount: 8,
             enableAssistantRoundBoundary: true,
             boundaryId: 'boundary-step5-recent-user-partial-assistant',
             createdAt: '2026-04-27T00:00:00.000Z',
@@ -1475,6 +1514,7 @@ describe('full compact planning', () => {
         appendMessages(chatContext, [recentUser, bigAssistant]);
 
         const plan = buildFullCompactPlan(chatContext, {
+            tailMessageCount: 8,
             enableAssistantRoundBoundary: true
         });
         expect(plan).toBeDefined();

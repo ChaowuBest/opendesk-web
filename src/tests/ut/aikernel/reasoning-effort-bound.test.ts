@@ -1,4 +1,5 @@
-import { afterEach, describe, expect, test } from '@jest/globals';
+import { afterEach, describe, expect, jest, test } from '@jest/globals';
+import { OpenAIAdapter } from '../../../main/aikernel/adapters/openai.js';
 import { LLM } from '../../../main/aikernel/llm.js';
 import { Setting } from '../../../main/utils/setting.js';
 
@@ -20,7 +21,27 @@ function configureModel(alias: string, modelName: string): void {
 
 describe('LLM reasoning effort bounds', () => {
     afterEach(() => {
+        jest.restoreAllMocks();
         Setting.clearCache();
+    });
+
+    test.each([
+        ['glm-5.3', 'low'],
+        ['gpt-5', 'none']
+    ])('摘要元数据请求使用 %s 支持的最低档位 %s', async (modelName, effort) => {
+        configureModel('summary-model', modelName);
+        jest.spyOn(LLM, 'supportsVision').mockResolvedValue(false);
+        const complete = jest.spyOn(OpenAIAdapter.prototype, 'completeTextWithMetadata').mockResolvedValue({
+            text: 'valid summary',
+            reasoningLength: 0,
+            finishReason: 'stop'
+        });
+        await LLM.askWithMetadata('summarize', 'summary-model', { maxCompletionTokens: 4500 });
+        expect(complete.mock.calls[0]?.[3]).toMatchObject({
+            reasoningEffort: effort,
+            maxCompletionTokens: 4500,
+            disableInternalRetry: true
+        });
     });
 
     test('glm-5.3 不支持关闭思考：最低档位为 low、最高为 max', () => {

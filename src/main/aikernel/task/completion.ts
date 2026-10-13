@@ -9,8 +9,22 @@
  * See the Mulan PSL v2 for more details.
  */
 
+import { OpenAIAdapter } from '../adapters/openai.js';
+import { ContextPreparationBlockedError, isContextLimitError } from '../compaction/compact-error.js';
+import {
+    resolveContextWindow,
+    resolveMaxOutputTokens,
+    estimateAutoCompactContextTokens
+} from '../compaction/auto-compact.js';
+import {
+    calculateCompactionBudget,
+    checkRequestBudget,
+    estimateRequestPayloadTokens
+} from '../compaction/request-budget.js';
 import { prepareContextForModel } from '../compaction/pipeline.js';
 import { estimateTextTokens } from '../compaction/token-estimation.js';
+import { type UsageCompactRecovery, MAX_COMPACT_RECOVERY_ATTEMPTS } from '../compaction/full-compact.js';
+import { buildActiveContextView } from '../compaction/context-view.js';
 import {
     describeActiveContextVariant,
     describeCompactPlanVariant,
@@ -241,6 +255,7 @@ export async function processTaskCompletion(
     const isCurrentTurn = () => task.getTurnGeneration() === myGeneration;
 
     const model = task.ensureValidModelOrFallback();
+    const usageRecovery: UsageCompactRecovery = { attempts: 0 };
     let streamOptions:
         | {
               toolResultOverrides?: Map<string, string>;
@@ -254,7 +269,18 @@ export async function processTaskCompletion(
     const evidenceCardEnabled = task.refreshEvidenceCardFeatureState();
     const evidenceCardSettings = getEvidenceCardSettings(evidenceCardEnabled);
     try {
+        const budget = calculateCompactionBudget(await resolveContextWindow(model));
+        const businessOutput = modelRequestOptions?.maxCompletionTokens ?? (await resolveMaxOutputTokens(model));
         const preparation = await prepareContextForModel(task.chat_context, model, {
+            forceCompact: !checkRequestBudget({
+                budget,
+                requestedOutputTokens: businessOutput,
+                estimatedInputTokens: estimateAutoCompactContextTokens(task.chat_context, model).estimatedContextTokens
+            }).allowed,
+            compactStateManaged: true,
+            executeCompact: async () =>
+                (await task.compactTaskContext({ trigger: 'auto', model, modelRequestOptions, usageRecovery }))
+                    .compacted,
             beforeCompact: () => {
                 logCompactInfo(task.task_id, {
                     source: 'tasks',
@@ -500,17 +526,13 @@ export async function processTaskCompletion(
         preparedContextTokens = preparation.contextTokenEstimate?.estimatedContextTokens ?? 0;
     } catch (err: unknown) {
         logger.warn(`Prepare context before completion failed: ${err instanceof Error ? err.message : err}`);
-        requestActiveContext = {
-            startIndex: 0,
-            messages: task.chat_context.messages
-        };
+        if (isCurrentTurn()) await task.pauseForContextCompaction(err);
+        return false;
     }
 
     if (!isCurrentTurn()) return false;
 
-    // TailCards 由 onTailcardGenerate 钩子生成。上下文准备成功时回调可读取压缩后的
-    // ActiveContextView；准备失败时保留旧行为，直接使用原始 chat context 回退，
-    // 不在回退点重新构建或修改 active view。
+    // TailCards use the prepared active view; preparation failures pause before reaching this point.
     requestTailText = await task.hooks.buildTailcards({
         task,
         activeContext: streamOptions?.activeContext,
@@ -592,6 +614,10 @@ export async function processTaskCompletion(
         disableInternalRetry: true
     };
     let retryAttempt = 0;
+    let receivedUsage = false;
+    let successfulRequestBoundaryId: string | undefined;
+    let requestStartUsage = assistant_message.usage;
+    let completionSucceeded = false;
     let lastRetryState:
         | {
               attempt: number;
@@ -603,6 +629,7 @@ export async function processTaskCompletion(
 
     try {
         while (task.task_status !== 'stopped' && task.getTurnGeneration() === myGeneration) {
+            requestStartUsage = assistant_message.usage;
             try {
                 const requestModel = task.ensureValidModelOrFallback();
                 const effectiveModel = requestModel || Setting.getInstance().getData().default_model || '';
@@ -616,6 +643,8 @@ export async function processTaskCompletion(
                         `autoParseThinkTags=${autoParseThinkTags}`
                 );
                 assistant_message.beginCompletionRound(autoParseThinkTags);
+                receivedUsage = false;
+                successfulRequestBoundaryId = task.chat_context.findCompactBoundary()?.message.metadata.boundary_id;
                 const requestChatContext = buildRequestChatContext(task.chat_context, {
                     activeContext: requestActiveContext,
                     ...(streamOptions ?? {}),
@@ -645,6 +674,12 @@ export async function processTaskCompletion(
                         // 作为 extraHeaders 的一部分随请求下发
                         const pluginRequestOptions: LLMRequestOptions = {
                             ...requestOptions,
+                            contextBudget: {
+                                window: await resolveContextWindow(requestModel),
+                                inputEstimate: preparedContextTokens,
+                                requireBelowTrigger: task.compactionAwaitingRequest
+                            },
+                            onBudgetValidated: () => task.confirmCompactionRequestBudget(),
                             extraHeaders: instrumentationHeaders
                                 ? { ...requestOptions.extraHeaders, ...instrumentationHeaders }
                                 : requestOptions.extraHeaders
@@ -728,6 +763,7 @@ export async function processTaskCompletion(
                             assistant_message.mergeChunk(chunk_resp.content);
                             if (chunk_resp.usage) {
                                 assistant_message.usage = chunk_resp.usage;
+                                receivedUsage = true;
                             }
                             task.applyRuntimeMetadataToAssistant(assistant_message);
 
@@ -784,8 +820,44 @@ export async function processTaskCompletion(
                     );
                 }
                 if (!isCurrentTurn()) return false;
+                completionSucceeded = task.task_status !== 'stopped';
                 break;
             } catch (err: unknown) {
+                if (isContextLimitError(err)) {
+                    if (!isCurrentTurn() || task.task_status === 'stopped') return false;
+                    assistant_message.rollbackToRoundStart();
+                    assistant_message.usage = requestStartUsage;
+                    try {
+                        if (usageRecovery.attempts >= MAX_COMPACT_RECOVERY_ATTEMPTS)
+                            throw new ContextPreparationBlockedError('recovery_exhausted');
+                        await task.compactTaskContext({ trigger: 'auto', model, modelRequestOptions, usageRecovery });
+                        if (!isCurrentTurn()) return false;
+                        requestActiveContext = buildActiveContextView(task.chat_context);
+                        streamOptions = { activeContext: requestActiveContext };
+                        preparedContextTokens = estimateRequestPayloadTokens({
+                            messages: OpenAIAdapter.buildMessages(task.chat_context, true, streamOptions),
+                            ...OpenAIAdapter.buildToolOptions(task.chat_context)
+                        });
+                        requestTailText = await task.hooks.buildTailcards({
+                            task,
+                            activeContext: requestActiveContext,
+                            chatContext: task.chat_context,
+                            model,
+                            requestType: 'streamComplete'
+                        });
+                        lastSentTextPartIndex = -1;
+                        prevMergedToolCallCount = 0;
+                        await task.sendAssistantMessageReplace(assistant_message);
+                        continue;
+                    } catch (recoveryError) {
+                        if (isCurrentTurn()) await task.pauseForContextCompaction(recoveryError);
+                        return false;
+                    }
+                }
+                if (err instanceof ContextPreparationBlockedError) {
+                    if (isCurrentTurn()) await task.pauseForContextCompaction(err);
+                    return false;
+                }
                 if (task.task_status === 'stopped' || task.getTurnGeneration() !== myGeneration) {
                     break;
                 }
@@ -831,6 +903,7 @@ export async function processTaskCompletion(
                     // 保留之前 round 已完成的文本与已执行的 tool_call（含结果），
                     // 避免模型重试时丢失已发生副作用的工具调用记录。
                     assistant_message.rollbackToRoundStart();
+                    assistant_message.usage = requestStartUsage;
                     // 重新计算 lastSentTextPartIndex：找到最后一个 text part 的索引
                     lastSentTextPartIndex = -1;
                     for (let i = assistant_message.content.length - 1; i >= 0; i--) {
@@ -890,6 +963,9 @@ export async function processTaskCompletion(
 
         // After streaming ends, finalize all reasoning timing
         assistant_message.finalizeReasoningTiming();
+        if (completionSucceeded && receivedUsage && !abortedByToolcallHook && task.task_status !== 'stopped') {
+            assistant_message.recordCompletionUsage(model, successfulRequestBoundaryId);
+        }
 
         // After streaming ends, send any remaining text part if it hasn't been sent
         const lastPart = assistant_message.content[assistant_message.content.length - 1];
@@ -933,6 +1009,7 @@ export async function processTaskCompletion(
         }
     }
 
+    // Successful usage is checked before the next request, after any new input or tool results.
     task.persistLater();
     return abortedByToolcallHook;
 }

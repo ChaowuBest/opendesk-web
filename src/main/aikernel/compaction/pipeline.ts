@@ -9,6 +9,9 @@
  * See the Mulan PSL v2 for more details.
  */
 
+import { OpenAIAdapter } from '../adapters/openai.js';
+import { estimateRequestPayloadTokens } from './request-budget.js';
+import { ContextPreparationBlockedError } from './compact-error.js';
 import { compactContext } from '../compact.js';
 import { ChatContext } from '../messages.js';
 import { logger } from '../../utils/logger.js';
@@ -336,10 +339,11 @@ export async function prepareContextForModel(
     const assistantRoundBoundaryEnabled = isAssistantRoundBoundaryEnabled(options);
 
     let lightweightResult = runLightweightPreparationLayers(chatContext, options);
-    const contextTokenEstimate = estimateAutoCompactContextTokens({
+    let contextTokenEstimate = estimateAutoCompactContextTokens({
         activeContext: lightweightResult.activeContext,
         toolResultOverrides: lightweightResult.toolResultOverrides,
-        systemPrompt: chatContext.system_prompt
+        systemPrompt: chatContext.system_prompt,
+        model
     });
     const autoCompactDecision =
         options.autoCompactDecisionOverride ??
@@ -357,7 +361,9 @@ export async function prepareContextForModel(
         : undefined;
     let autoCompactStateChanged = false;
     const cooldownRemainingMs = autoCompactState ? AutoCompactStates.getCooldownRemainingMs(autoCompactState) : 0;
-    const shouldRunCompact = autoCompactDecision.shouldCompact && cooldownRemainingMs <= 0;
+    const shouldRunCompact = autoCompactDecision.shouldCompact || options.forceCompact === true;
+    if (shouldRunCompact && cooldownRemainingMs > 0 && !options.readonlyOnly)
+        throw new ContextPreparationBlockedError('circuit_open');
     let compacted = false;
     let sessionMemoryCompacted = false;
     let sessionMemoryCompactResult: PreparedContextResult['sessionMemoryCompactResult'] = undefined;
@@ -407,7 +413,7 @@ export async function prepareContextForModel(
             }
         });
 
-        if (autoCompactState) {
+        if (autoCompactState && !options.compactStateManaged) {
             syncAutoCompactState(AutoCompactStates.recordAttempt(autoCompactState));
         }
 
@@ -485,7 +491,7 @@ export async function prepareContextForModel(
                 }
             }
         } catch (err) {
-            if (autoCompactState) {
+            if (autoCompactState && !options.compactStateManaged) {
                 syncAutoCompactState(
                     AutoCompactStates.recordFailure(
                         autoCompactState,
@@ -500,7 +506,7 @@ export async function prepareContextForModel(
         if (compactApplied) {
             compacted = true;
 
-            if (autoCompactState) {
+            if (autoCompactState && !options.compactStateManaged) {
                 syncAutoCompactState(AutoCompactStates.recordSuccess(autoCompactState));
             }
 
@@ -538,6 +544,19 @@ export async function prepareContextForModel(
         }
     }
 
+    if (compacted) {
+        const estimatedContextTokens = estimateRequestPayloadTokens({
+            messages: OpenAIAdapter.buildMessages(chatContext, true, lightweightResult),
+            ...OpenAIAdapter.buildToolOptions(chatContext)
+        });
+        contextTokenEstimate = {
+            estimatedContextTokens,
+            baseUsageTokens: 0,
+            tailEstimatedTokens: estimatedContextTokens,
+            assistantInternalTailTokens: 0,
+            source: 'rough_estimate_only'
+        };
+    }
     logMicrocompactTraceSummary(options.taskId, lightweightResult);
 
     return {

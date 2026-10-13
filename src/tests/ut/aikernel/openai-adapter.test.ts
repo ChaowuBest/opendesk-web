@@ -94,3 +94,59 @@ describe('OpenAIAdapter max_completion_tokens 优先级', () => {
         expect(createFn.mock.calls[0][0].max_completion_tokens).toBe(16384);
     });
 });
+
+describe('summary metadata and final context budget', () => {
+    test('empty choices does not trigger an implicit streaming fallback', async () => {
+        const adapter = createAdapterWithCompletionResponse({
+            choices: [],
+            usage: { prompt_tokens: 10, completion_tokens: 0 }
+        });
+        const result = await adapter.completeTextWithMetadata(
+            createChatContext(),
+            false,
+            {},
+            {
+                reasoningEffort: 'none',
+                maxCompletionTokens: 10500,
+                contextBudget: { window: 70000 }
+            }
+        );
+        expect(result.choicesCount).toBe(0);
+        const create = (adapter as any).client.chat.completions.create;
+        expect(create).toHaveBeenCalledTimes(1);
+        expect(create.mock.calls[0][0]).toMatchObject({ max_completion_tokens: 10500, thinking: { type: 'disabled' } });
+        expect(create.mock.calls[0][1]).toMatchObject({ maxRetries: 0 });
+    });
+
+    test('keeps reasoning length, termination and usage without treating reasoning as text', async () => {
+        const adapter = createAdapterWithCompletionResponse({
+            choices: [{ message: { content: null, reasoning_content: 'thinking' }, finish_reason: 'length' }],
+            usage: { prompt_tokens: 30, completion_tokens: 10 }
+        });
+        const result = await adapter.completeTextWithMetadata(createChatContext(), false);
+        expect(result).toMatchObject({ text: '', reasoningLength: 8, finishReason: 'length' });
+        expect(result.usage?.completion_tokens).toBe(10);
+    });
+
+    test('incomplete SSE cannot masquerade as a successful summary', async () => {
+        const adapter = createAdapterWithCompletionResponse('data: {"choices":[{"delta":{"content":"partial"}}]}\n');
+        expect((await adapter.completeTextWithMetadata(createChatContext(), false)).protocolError).toBe(
+            'incomplete_stream'
+        );
+    });
+
+    test('final tail text exceeding the budget prevents the HTTP request', async () => {
+        const adapter = createAdapterWithCompletionResponse({ choices: [] });
+        const stream = adapter.streamComplete(
+            createChatContext(),
+            false,
+            { requestTailText: 'large tail '.repeat(1000) },
+            {
+                maxCompletionTokens: 100,
+                contextBudget: { window: 1000 }
+            }
+        );
+        await expect(stream[Symbol.asyncIterator]().next()).rejects.toThrow('context_limit');
+        expect((adapter as any).client.chat.completions.create).not.toHaveBeenCalled();
+    });
+});

@@ -9,7 +9,8 @@ jest.unstable_mockModule('../../../platforms/base.js', () => {
         status: 200,
         json: async () => ({
             token_limits: {
-                max_output_tokens: 65536
+                max_output_tokens: 65536,
+                context_window: 200000
             }
         })
     });
@@ -31,7 +32,8 @@ beforeEach(() => {
             status: 200,
             json: async () => ({
                 token_limits: {
-                    max_output_tokens: 65536
+                    max_output_tokens: 65536,
+                    context_window: 200000
                 }
             })
         });
@@ -43,7 +45,7 @@ afterEach(() => {
 });
 
 describe('自动压缩决策', () => {
-    test('缺少 context tokens 时不触发自动压缩，并保留 Claude 风格默认阈值计算结果', async () => {
+    test('缺少 context tokens 时不触发自动压缩，并保留比例预算', async () => {
         const { createAutoCompactDecision, DEFAULT_AUTO_COMPACT_RESERVED_SUMMARY_OUTPUT, DEFAULT_AUTO_COMPACT_BUFFER } =
             await import('../../../main/aikernel/compaction/auto-compact');
 
@@ -54,12 +56,10 @@ describe('自动压缩决策', () => {
         expect(decision.shouldCompact).toBe(false);
         expect(decision.reason).toBe('missing_context_tokens');
         expect(decision.contextWindow).toBe(50000);
-        expect(decision.reservedSummaryOutput).toBe(DEFAULT_AUTO_COMPACT_RESERVED_SUMMARY_OUTPUT);
-        expect(decision.effectiveWindow).toBe(50000 - DEFAULT_AUTO_COMPACT_RESERVED_SUMMARY_OUTPUT);
-        expect(decision.buffer).toBe(DEFAULT_AUTO_COMPACT_BUFFER);
-        expect(decision.autoCompactThreshold).toBe(
-            50000 - DEFAULT_AUTO_COMPACT_RESERVED_SUMMARY_OUTPUT - DEFAULT_AUTO_COMPACT_BUFFER
-        );
+        expect(decision.reservedSummaryOutput).toBe(7500);
+        expect(decision.effectiveWindow).toBe(42500);
+        expect(decision.buffer).toBe(2500);
+        expect(decision.autoCompactThreshold).toBe(40000);
     });
 
     test('上下文窗口未知时不触发自动压缩', async () => {
@@ -79,13 +79,13 @@ describe('自动压缩决策', () => {
         expect(decision.marginTokens).toBeUndefined();
     });
 
-    test('默认固定 buffer 下，阈值以下不触发自动压缩', async () => {
+    test('比例 buffer 下，阈值以下不触发自动压缩', async () => {
         const { createAutoCompactDecision, DEFAULT_AUTO_COMPACT_BUFFER } =
             await import('../../../main/aikernel/compaction/auto-compact');
 
         const decision = createAutoCompactDecision({
             contextWindow: 100000,
-            estimatedContextTokens: 66999,
+            estimatedContextTokens: 79999,
             reservedSummaryOutput: 20000,
             baseUsageTokens: 64000,
             tailEstimatedTokens: 2000,
@@ -96,10 +96,10 @@ describe('自动压缩决策', () => {
         expect(decision.shouldCompact).toBe(false);
         expect(decision.reason).toBe('below_threshold');
         expect(decision.effectiveWindow).toBe(80000);
-        expect(decision.buffer).toBe(DEFAULT_AUTO_COMPACT_BUFFER);
-        expect(decision.autoCompactThreshold).toBe(67000);
+        expect(decision.buffer).toBe(5000);
+        expect(decision.autoCompactThreshold).toBe(80000);
         expect(decision.marginTokens).toBe(1);
-        expect(decision.windowUsageRatio).toBeCloseTo(0.66999);
+        expect(decision.windowUsageRatio).toBeCloseTo(0.79999);
         expect(decision.baseUsageTokens).toBe(64000);
         expect(decision.tailEstimatedTokens).toBe(2000);
         expect(decision.assistantInternalTailTokens).toBe(999);
@@ -111,13 +111,13 @@ describe('自动压缩决策', () => {
 
         const decision = createAutoCompactDecision({
             contextWindow: 100000,
-            estimatedContextTokens: 67000,
+            estimatedContextTokens: 80000,
             reservedSummaryOutput: 20000
         });
 
         expect(decision.shouldCompact).toBe(true);
         expect(decision.reason).toBe('at_or_above_threshold');
-        expect(decision.autoCompactThreshold).toBe(67000);
+        expect(decision.autoCompactThreshold).toBe(80000);
         expect(decision.marginTokens).toBe(0);
     });
 
@@ -126,18 +126,18 @@ describe('自动压缩决策', () => {
 
         const decision = createAutoCompactDecision({
             contextWindow: 1000,
-            estimatedContextTokens: 849,
+            estimatedContextTokens: 799,
             reservedSummaryOutput: 100,
             buffer: 50
         });
 
         expect(decision.shouldCompact).toBe(false);
         expect(decision.buffer).toBe(50);
-        expect(decision.autoCompactThreshold).toBe(850);
+        expect(decision.autoCompactThreshold).toBe(800);
         expect(decision.marginTokens).toBe(1);
     });
 
-    test('已知模型名会通过最大输出 lookup 推导 reserved summary output', async () => {
+    test('已知模型上下文按比例计算摘要预算并封顶', async () => {
         const {
             resolveReservedSummaryOutput,
             MAX_RESERVED_SUMMARY_OUTPUT,
@@ -152,7 +152,7 @@ describe('自动压缩决策', () => {
         );
     });
 
-    test('API 返回的最大输出 token 会在 reserved summary output 中被 capped 到 20k', async () => {
+    test('API 返回的上下文窗口决定摘要预留', async () => {
         // Mock Setting.getInstance
         jest.spyOn(Setting, 'getInstance').mockReturnValue({
             getModelInstance: () => new ModelInstance('custom-summary-model', 'https://example.com', 'test-key', false),
@@ -245,7 +245,7 @@ describe('自动压缩状态机', () => {
         expect(AutoCompactStates.isCoolingDown(state, at)).toBe(false);
     });
 
-    test('recordFailure 达到阈值后进入冷却期，并可计算剩余时长', async () => {
+    test('recordFailure 达到阈值后永久熔断，只有明确恢复允许一次尝试', async () => {
         const { AutoCompactStates } = await import('../../../main/aikernel/compaction/auto-compact');
 
         const at = new Date('2026-04-17T02:00:00.000Z');
@@ -258,12 +258,18 @@ describe('自动压缩状态机', () => {
         const state = AutoCompactStates.recordFailure(previous, at, 'compact failed');
 
         expect(state.consecutiveFailures).toBe(2);
-        expect(state.cooldownUntil).toBe('2026-04-17T02:01:00.000Z');
+        expect(state.cooldownUntil).toBeUndefined();
+        expect(state.status).toBe('circuit_open');
         expect(AutoCompactStates.hasReachedFailureThreshold(state)).toBe(true);
         expect(AutoCompactStates.isCoolingDown(state, at)).toBe(true);
-        expect(AutoCompactStates.getCooldownRemainingMs(state, new Date('2026-04-17T02:00:30.000Z'))).toBe(30000);
-        expect(AutoCompactStates.getCooldownRemainingMs(state, new Date('2026-04-17T02:01:01.000Z'))).toBe(0);
-        expect(AutoCompactStates.isCoolingDown(state, new Date('2026-04-17T02:01:01.000Z'))).toBe(false);
+        expect(AutoCompactStates.getCooldownRemainingMs(state, new Date('2026-04-17T02:00:30.000Z'))).toBe(
+            Number.POSITIVE_INFINITY
+        );
+        expect(AutoCompactStates.getCooldownRemainingMs(state, new Date('2026-04-17T02:01:01.000Z'))).toBe(
+            Number.POSITIVE_INFINITY
+        );
+        expect(AutoCompactStates.isCoolingDown(state, new Date('2026-04-17T02:01:01.000Z'))).toBe(true);
+        expect(AutoCompactStates.beginRecovery(state).status).toBe('half_open');
     });
 
     test('recordSuccess 会清空失败次数、冷却期和失败原因', async () => {
@@ -309,6 +315,7 @@ describe('自动压缩状态机', () => {
         const restored = AutoCompactStates.deserialize(serialized);
 
         expect(serialized).toEqual({
+            status: 'degraded',
             consecutive_failures: 2,
             last_attempt_at: '2026-04-17T02:00:00.000Z',
             last_failure_at: '2026-04-17T02:00:00.000Z',

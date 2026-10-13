@@ -20,6 +20,7 @@ import {
     type SystemMessage
 } from '../messages.js';
 import type { ActiveContextView } from './types.js';
+import { IMAGE_TOKEN_ESTIMATE } from './image-tokens.js';
 
 export type NormalizedUsage = UsageFields;
 
@@ -41,7 +42,10 @@ export interface VisibleContextTokenEstimate {
 }
 
 export interface VisibleContextTokenEstimationInput extends RoughTokenEstimationOptions {
-    activeContext?: Pick<ActiveContextView, 'messages'>;
+    /** Used only to reject usage checkpoints recorded for another model. */
+    model?: string;
+    activeContext?: Pick<ActiveContextView, 'messages'> &
+        Partial<Pick<ActiveContextView, 'boundary' | 'leadingPartialAssistant'>>;
     messages?: ReadonlyArray<ChatMessage>;
 }
 
@@ -191,8 +195,8 @@ export function estimateToolResultObjectTokens(toolCall: ToolCall): number {
         source: image.source
     }));
     // Data URLs are transported as image inputs, not tokenized as ordinary base64 text.
-    // Use a conservative per-image vision estimate while retaining the small metadata cost.
-    return estimateTextTokens(JSON.stringify(metadataOnly)) + images.length * 1_100;
+    // Retain metadata cost as well as the fixed budget for every image.
+    return estimateTextTokens(JSON.stringify(metadataOnly)) + images.length * IMAGE_TOKEN_ESTIMATE;
 }
 
 export function estimateRoughTokensFromToolCall(toolCall: ToolCall, options: RoughTokenEstimationOptions = {}): number {
@@ -245,7 +249,7 @@ export function estimateRoughTokensFromChatMessage(
                 return total + estimateTextTokens(part.path);
             }
             if (part.type === 'image_url') {
-                return total + (part.file_path ? estimateTextTokens(part.toModelText()) : 256);
+                return total + (part.file_path ? estimateTextTokens(part.toModelText()) : IMAGE_TOKEN_ESTIMATE);
             }
             return total;
         }, 0);
@@ -262,7 +266,16 @@ export function estimateAssistantPostUsageVisibleTokens(
     message: AssistantMessage,
     toolResultOverrides?: ReadonlyMap<string, string>
 ): number {
-    return message.content.reduce((total, part) => {
+    const checkpoint = message.usageCheckpoints?.at(-1);
+    const parts = checkpoint
+        ? message.content.slice(checkpoint.startPartIndex, checkpoint.endPartIndex)
+        : message.content;
+    const laterTokens = checkpoint
+        ? estimateRoughTokensFromAssistantParts(message.content.slice(checkpoint.endPartIndex), {
+              toolResultOverrides
+          })
+        : 0;
+    return parts.reduce((total, part) => {
         if (part.type !== 'tool_call') {
             return total;
         }
@@ -270,10 +283,14 @@ export function estimateAssistantPostUsageVisibleTokens(
         return (
             total +
             part.toolcalls.reduce((sum, toolCall) => {
-                return sum + estimateTextTokens(resolveVisibleToolResultContent(toolCall, toolResultOverrides));
+                return (
+                    sum +
+                    estimateTextTokens(resolveVisibleToolResultContent(toolCall, toolResultOverrides)) +
+                    (toolCall.getResultImages().length > 0 ? estimateToolResultObjectTokens(toolCall) : 0)
+                );
             }, 0)
         );
-    }, 0);
+    }, laterTokens);
 }
 
 export function estimateVisibleContextTokens(input: VisibleContextTokenEstimationInput): VisibleContextTokenEstimate {
@@ -284,6 +301,17 @@ export function estimateVisibleContextTokens(input: VisibleContextTokenEstimatio
             continue;
         }
 
+        const boundaryTime = input.activeContext?.boundary?.message.metadata.created_at;
+        const checkpoint = message.usageCheckpoints?.at(-1);
+        const usageTimestamp = message.metadata?.execution?.finishAt;
+        if (checkpoint) {
+            if (
+                checkpoint.boundaryId !== input.activeContext?.boundary?.message.metadata.boundary_id ||
+                (input.model && checkpoint.model && checkpoint.model !== input.model)
+            )
+                continue;
+        } else if (boundaryTime && (usageTimestamp === undefined || usageTimestamp <= Date.parse(boundaryTime)))
+            continue;
         const baseUsageTokens = getContextTokensFromUsage(message.usage);
         if (baseUsageTokens === undefined) {
             continue;
@@ -306,8 +334,18 @@ export function estimateVisibleContextTokens(input: VisibleContextTokenEstimatio
     }
 
     const roughEstimatedTokens =
-        messages.reduce((total, message) => total + estimateRoughTokensFromChatMessage(message, input), 0) +
-        estimateSystemPromptTokens(input.systemPrompt);
+        messages.reduce((total, message) => {
+            const leading = input.activeContext?.leadingPartialAssistant;
+            return (
+                total +
+                (leading?.message === message
+                    ? estimateRoughTokensFromAssistantParts(
+                          leading.message.content.slice(leading.roundRef.startPartIndex),
+                          input
+                      )
+                    : estimateRoughTokensFromChatMessage(message, input))
+            );
+        }, 0) + estimateSystemPromptTokens(input.systemPrompt);
     return {
         estimatedContextTokens: roughEstimatedTokens,
         baseUsageTokens: 0,

@@ -95,6 +95,82 @@ describe('task-view _scrollToUserMessage with lazy-loaded history', () => {
         };
     }
 
+    test('compact progress is temporary and success is anchored once in history', () => {
+        const taskView = document.createElement('task-view') as any;
+        const history = document.createElement('div');
+        history.innerHTML = '<div id="user-msg-kept" class="od-user-msg-container">kept</div>';
+        taskView.appendChild(history);
+        taskView.getHistoryContainer = () => history;
+        taskView.tryScrollToEnd = jest.fn();
+        taskView._historyMessages = [createUserMessage('kept', 'kept')];
+        taskView._historyRenderStartIndex = 0;
+        taskView.handleCompactProgress({ phase: 'start' });
+        taskView.handleCompactProgress({ phase: 'start' });
+        expect(history.querySelectorAll('.od-compact-progress')).toHaveLength(1);
+        expect(history.querySelector('[role="progressbar"]')).toBeNull();
+        const completed = {
+            phase: 'end',
+            compacted: true,
+            before_message_id: 'kept',
+            boundary: { role: 'compact_separator', message_id: 'boundary', trigger: 'auto' }
+        };
+        taskView.handleCompactProgress(completed);
+        taskView.handleCompactProgress(completed);
+        expect(history.querySelector('.od-compact-progress')).toBeNull();
+        expect(history.querySelectorAll('.od-compact-boundary')).toHaveLength(1);
+        expect(history.firstElementChild?.classList.contains('od-compact-boundary')).toBe(true);
+        expect(taskView._historyMessages.map((message: any) => message.message_id)).toEqual(['boundary', 'kept']);
+        taskView.handleCompactProgress({ phase: 'start' });
+        taskView.handleCompactProgress({ phase: 'end', compacted: false });
+        expect(history.querySelector('.od-compact-progress')).toBeNull();
+        expect(history.querySelectorAll('.od-compact-boundary')).toHaveLength(1);
+    });
+
+    test.each(['text', 'reasoning', 'tool_call'])(
+        'compact boundary targets a %s part and survives replacement and streaming updates',
+        (type) => {
+            const taskView = document.createElement('task-view') as any;
+            const history = document.createElement('div');
+            taskView.appendChild(history);
+            taskView.getHistoryContainer = () => history;
+            const boundary = {
+                role: 'compact_separator',
+                message_id: 'boundary',
+                trigger: 'auto',
+                kept_anchor_message_id: 'assistant',
+                kept_anchor_start_part_index: 1
+            };
+            const assistant = {
+                role: 'assistant',
+                message_id: 'assistant',
+                content: [
+                    { type: 'text', rendered: 'before' },
+                    { type, rendered: 'after', toolcalls: [] }
+                ]
+            };
+            taskView._historyMessages = [boundary, createUserMessage('user', 'request'), assistant];
+            history.innerHTML = taskView._renderHistoryRangeToHtml(0, 3);
+            const content = history.querySelector('#message-content-assistant')!;
+            expect(history.querySelectorAll('.od-compact-boundary')).toHaveLength(1);
+            expect(
+                content
+                    .querySelector('.od-compact-boundary')
+                    ?.nextElementSibling?.getAttribute('data-output-part-index')
+            ).toBe('1');
+            expect(content.querySelector('[data-output-part-index="1"]')?.textContent).toContain('after');
+            // Same placement path used after message replacement / new streaming parts.
+            content.innerHTML = taskView._renderAssistantOutputHtml(assistant.content, { messageId: 'assistant' });
+            taskView._placeAssistantCompactBoundary('assistant', content);
+            taskView._placeAssistantCompactBoundary('assistant', content);
+            expect(content.querySelectorAll('.od-compact-boundary')).toHaveLength(1);
+            expect(
+                content
+                    .querySelector('.od-compact-boundary')
+                    ?.nextElementSibling?.getAttribute('data-output-part-index')
+            ).toBe('1');
+        }
+    );
+
     function createUserMessageHtml(messageId: string, text: string): string {
         const escaped = text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/"/g, '&quot;');
         return `<div id="user-msg-${messageId}" class="od-user-msg-container" data-message-id="${messageId}">
