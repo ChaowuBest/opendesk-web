@@ -65,7 +65,11 @@ describe('OpenDesk plugin core hooks', () => {
         } as TaskState;
 
         await expect(
-            runPluginShellEnv(task, { shell: '/bin/bash', command: 'pwd' }, { EXISTING: 'yes', REMOVE_ME: 'yes' })
+            runPluginShellEnv(
+                task,
+                { shell: '/bin/bash', shellType: 'bash', command: 'pwd' },
+                { EXISTING: 'yes', REMOVE_ME: 'yes' }
+            )
         ).resolves.toEqual({
             EXISTING: 'yes',
             PLUGIN_TASK: 'task-1',
@@ -88,7 +92,7 @@ describe('OpenDesk plugin core hooks', () => {
         );
 
         await expect(
-            runPluginShellEnv(undefined, { shell: '/bin/bash', command: 'pwd' }, { EXISTING: 'yes' })
+            runPluginShellEnv(undefined, { shell: '/bin/bash', shellType: 'bash', command: 'pwd' }, { EXISTING: 'yes' })
         ).resolves.toEqual({ EXISTING: 'yes' });
     });
 });

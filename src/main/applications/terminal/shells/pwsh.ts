@@ -125,6 +125,7 @@ export class ExecutePwshTool extends BaseTool<PwshArgsSchema> {
         const dynamicSandbox = this.sandboxed && process.platform === 'win32';
         await executeShellCommand({
             shellPath: this.shellPath,
+            shellType: 'powershell',
             // Windows 沙箱子进程（AppContainer）读不到用户执行策略时按 Restricted
             // 处理，npx.ps1 等 npm shim 会被 AuthorizationManager 拦截；进程级
             // Bypass 只作用于本次工具调用，与仓库内构建脚本的用法一致。

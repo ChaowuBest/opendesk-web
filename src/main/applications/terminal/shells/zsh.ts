@@ -111,6 +111,7 @@ export class ExecuteZshTool extends BaseTool<typeof ExecuteZshArgsSchema> {
         const shellArgs = this.interactive ? ['-i', '-c', wrappedCommand] : ['-c', command];
         await executeShellCommand({
             shellPath: this.shellPath,
+            shellType: 'zsh',
             shellArgs,
             command,
             cwd,

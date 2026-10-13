@@ -343,7 +343,7 @@ export async function runPluginBeforePermissionAsk(
 
 export async function runPluginShellEnv(
     task: TaskState | undefined,
-    input: { shell: string; command: string },
+    input: { shell: string; shellType: PluginShellType; command: string },
     env: NodeJS.ProcessEnv
 ): Promise<NodeJS.ProcessEnv> {
     const output = await getPluginHost().trigger(
@@ -352,6 +352,7 @@ export async function runPluginShellEnv(
             taskId: task?.task_id,
             workspace: task?.getWorkspace() || undefined,
             shell: input.shell,
+            shellType: input.shellType,
             command: input.command
         },
         { env: { ...env } }

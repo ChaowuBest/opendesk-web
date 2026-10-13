@@ -95,6 +95,7 @@ export class ExecuteBashTool extends BaseTool<typeof ExecuteBashArgsSchema> {
 
         await executeShellCommand({
             shellPath: this.shellPath,
+            shellType: 'bash',
             shellArgs: ['-c', command],
             command,
             cwd,
