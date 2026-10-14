@@ -297,15 +297,12 @@ const TaskSettingSchema = z.object({
     termination_check: z.boolean().default(true).describe('是否自动检测并恢复异常中断的任务'),
     evidence_card: z.boolean().default(false).describe('是否启用 EvidenceCard 节省 Token 功能'),
     shell_path: z.string().default(''),
-    // 沙箱与回收站默认启用（GUI 语义）。CLI/TUI 平台不注册沙箱变体（沙箱二进制不随
-    // CLI 分发），shell 选择始终解析到普通 shell，该偏好对 CLI 执行不生效；
-    // 存量配置显式保存过 false 时仍保持关闭。
-    shell_sandboxed: z.boolean().default(true),
+    shell_sandboxed: z.boolean().default(false),
     // Windows 仅 PowerShell 提供沙箱；Linux 上 bash/zsh 提供（LD_PRELOAD 版 dynobox）。
     // 删除送回收站在所有平台沙箱生效（Windows Detours / Linux LD_PRELOAD /
     // OH dynobox / macOS DYLD），统一回收站目录 <opendesk>/trash/<taskId>
     // 由宿主每次拉起传入。
-    shell_sandbox_del_to_trash: z.boolean().default(true)
+    shell_sandbox_del_to_trash: z.boolean().default(false)
 });
 
 const NetworkConfigSchema = z.object({
@@ -506,8 +503,7 @@ function getSettingSchema(): z.ZodObject<z.ZodRawShape> {
             termination_check: true,
             evidence_card: false,
             shell_path: '',
-            shell_sandboxed: true,
-            shell_sandbox_del_to_trash: true
+            shell_sandboxed: false
         }),
         network_config: NetworkConfigSchema.describe('网络设置').default({
             no_ssl: false,

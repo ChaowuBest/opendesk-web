@@ -74,11 +74,10 @@ describe('TaskConfigPage', () => {
 
     test('task schema defaults shell selection and persists only the new shell fields', () => {
         const schema = Setting.getSettingSchema().shape.task_config;
-        // 沙箱与回收站默认启用
         expect(schema.parse({})).toMatchObject({
             shell_path: '',
-            shell_sandboxed: true,
-            shell_sandbox_del_to_trash: true
+            shell_sandboxed: false,
+            shell_sandbox_del_to_trash: false
         });
         const config = schema.parse({
             shell_path: 'C:/tools/pwsh.exe',
