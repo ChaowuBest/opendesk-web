@@ -176,6 +176,16 @@ export function setupDependencyQuery(context) {
         name: 'checkHarmonySupport',
         description: TOOL_DESCRIPTION,
         parameters: CheckHarmonySupportSchema,
-        execute: async (args) => queryDependencySupport(args.dependencies)
+        execute: async (args) => queryDependencySupport(args.dependencies),
+        render: {
+            // 插件工具需自带渲染，否则对话里只显示工具名空壳；error 返回 undefined 走统一错误渲染
+            gui: (ctx) => {
+                if (ctx.status === 'error' || typeof ctx.result !== 'string' || !ctx.result) {
+                    return undefined;
+                }
+                const summary = ctx.result.split('\n---\n')[0].trim();
+                return summary ? { type: 'text', text: summary } : undefined;
+            }
+        }
     });
 }
