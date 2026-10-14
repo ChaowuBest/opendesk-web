@@ -54,6 +54,8 @@ export const zhCn: Record<string, string> = {
     'sandbox.executableMissing.linux': '动态沙箱已启用，但未找到 dynobox。请重新构建 Linux 版本。',
     'sandbox.cwdMissing.linux': '动态沙箱需要任务工作目录作为受控路径。',
     'sandbox.cwdUnsupported.linux': '沙箱工作目录不存在或不可用：${path}',
+    'sandbox.policyTooLarge':
+        '动态沙箱策略体积超出原生上限（序列化后 ${bytes} 字节 > ${limit} 字节），已拒绝启动以避免策略失效。请减少任务中"始终允许"的路径规则，或重启应用后重试。',
     // OpenHarmony 动态沙箱（LD_PRELOAD 版 dynobox，与 Linux 共用同一份 C core）
     'sandbox.executableMissing.ohos': '动态沙箱已启用，但未找到 OpenHarmony 版 dynobox。请重新构建 OpenHarmony 版本。',
     'sandbox.trashDirUnavailable': '无法创建回收站目录 ${path}，请检查家目录写入权限或关闭回收站选项。',

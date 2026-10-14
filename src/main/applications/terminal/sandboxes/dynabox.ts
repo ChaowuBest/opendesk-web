@@ -19,6 +19,7 @@ import { t } from '../locale/index.js';
 import { virtualPathToHostPath } from './ask-path.js';
 import { createSandboxDecideEndpoint } from './sandbox-decide.js';
 import { policyText } from './dynabox-policy.js';
+import { serializePolicyForSandbox } from './policy-guard.js';
 
 export interface DynamicSandboxLaunch {
     file: string;
@@ -172,12 +173,17 @@ export async function prepareDynamicSandbox(options: {
     try {
         fs.writeFileSync(
             policyPath,
-            policyText(
-                decide.endpoint,
-                decide.token,
-                options.taskState?.harnessContext.permission?.getRules?.(),
-                process.env.USERPROFILE,
-                getOpendeskDirectory()
+            serializePolicyForSandbox(
+                policyText(
+                    decide.endpoint,
+                    decide.token,
+                    options.taskState?.harnessContext.permission?.getRules?.(),
+                    process.env.USERPROFILE,
+                    getOpendeskDirectory()
+                ),
+                // Windows 虚路径以 /<盘符>/ 开头；keepPrefixes 未命中时按"非用户目录"
+                // 处理（系统读块），仍可被裁剪
+                { keepPrefixes: options.cwd ? [mapHostPathToSandboxRoot(options.cwd) ?? ''] : [] }
             ),
             'utf8'
         );

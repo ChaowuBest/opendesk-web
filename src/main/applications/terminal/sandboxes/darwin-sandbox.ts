@@ -19,6 +19,7 @@ import type { TaskState } from '../../../aikernel/states/tasks.js';
 import { t } from '../locale/index.js';
 import { createSandboxDecideEndpoint } from './sandbox-decide.js';
 import { policyTextLinux } from './dynabox-policy.js';
+import { serializePolicyForSandbox } from './policy-guard.js';
 import type { DynamicSandboxLaunch } from './linux-sandbox.js';
 
 export type { DynamicSandboxLaunch };
@@ -412,14 +413,17 @@ export async function prepareDarwinSandbox(options: {
     try {
         fs.writeFileSync(
             policyPath,
-            policyTextLinux(
-                decide.endpoint,
-                decide.token,
-                policyWorkspace,
-                options.taskState?.harnessContext.permission?.getRules?.(),
-                process.env.HOME,
-                // 回收站写保护 deny 需要真实数据目录（debug/自定义目录布局）
-                getOpendeskDirectory()
+            serializePolicyForSandbox(
+                policyTextLinux(
+                    decide.endpoint,
+                    decide.token,
+                    policyWorkspace,
+                    options.taskState?.harnessContext.permission?.getRules?.(),
+                    process.env.HOME,
+                    // 回收站写保护 deny 需要真实数据目录（debug/自定义目录布局）
+                    getOpendeskDirectory()
+                ),
+                { keepPrefixes: [policyWorkspace] }
             ),
             'utf8'
         );

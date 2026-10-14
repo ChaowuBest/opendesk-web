@@ -333,6 +333,22 @@ export class GlobPermissionEnforcer implements PermissionEnforcer {
     }
 
     async addRule(rule: PermissionRule): Promise<void> {
+        // 幂等去重：完全相同的规则重复添加只生效一次。运行期各调用点（沙箱 ask
+        // 记住、工具授权、文件拖入自动授权等）可能在长任务中反复提交同一条规则；
+        // 无去重时规则集单调膨胀，并被沙箱策略导出（getRules → policyText*）成倍
+        // 放大，最终推高 dynobox 序列化体积触发 64KB fail-closed（命令无法执行）。
+        const rawDuplicate =
+            this.rawRules[
+                this.rawRules.findIndex(
+                    (candidate) =>
+                        candidate.resourceType === rule.resourceType &&
+                        candidate.action === rule.action &&
+                        candidate.pathPattern === rule.pathPattern &&
+                        candidate.effect === rule.effect
+                )
+            ];
+        if (rawDuplicate) return;
+
         this.rawRules.push(rule);
         const compiled = compileRule(rule);
 
