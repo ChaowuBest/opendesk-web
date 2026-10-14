@@ -47,8 +47,7 @@ let disposeAikernelHooks: (() => void)[] = [];
 
 function notifyPluginSkillsChanged(): void {
     const application = ApplicationRegistry.getApplication('skillmgr') as
-        | { notifyExternalSkillsChanged?: (bundleName: string) => void }
-        | undefined;
+        { notifyExternalSkillsChanged?: (bundleName: string) => void } | undefined;
     if (application?.notifyExternalSkillsChanged) {
         application.notifyExternalSkillsChanged(PLUGIN_SKILL_BUNDLE);
     } else {
@@ -154,7 +153,16 @@ async function initialize(): Promise<void> {
                 const input: PluginChatRequestInput = {
                     taskId: ctx.task?.task_id,
                     workspace: ctx.task?.getWorkspace() || undefined,
-                    modelAlias: ctx.model.model_name
+                    model: {
+                        modelAlias: ctx.model.model_name,
+                        modelName: ctx.model.model_name,
+                        modelType: ctx.model.getModelType(),
+                        provider: {
+                            baseUrl: ctx.model.base_url,
+                            providerType: ctx.model.getProviderType(),
+                            providerName: ctx.model.getProviderName()
+                        }
+                    }
                 };
                 ctx.options.extraHeaders = await runPluginChatHeaders(input, ctx.options.extraHeaders ?? {});
                 const pluginParams = await runPluginChatParams(input, {

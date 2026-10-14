@@ -811,7 +811,12 @@ class LLM {
             throw new Error(t('error.model.not_chat'));
         }
         await TelemetryOperationRegistry.aroundOperation(new TelemetryOperation('llm.verify'), async () => {
-            await this.__getAdapter(modelInstance).verify();
+            const pluginRequestOptions = await LLM.__resolvePluginRequestOptions(
+                new ChatContext(),
+                modelInstance,
+                modelInstance
+            );
+            await this.__getAdapter(modelInstance).verify(pluginRequestOptions.extraHeaders);
         });
     }
 

@@ -33,7 +33,7 @@ describe('OpenDesk plugin request hooks', () => {
         );
 
         const headers = await runPluginChatHeaders(
-            { taskId: 'task-1', modelAlias: 'model-1' },
+            { taskId: 'task-1', model: { modelAlias: 'model-1' } },
             { authorization: 'caller', 'x-existing': 'yes' }
         );
 
@@ -86,7 +86,7 @@ describe('OpenDesk plugin request hooks', () => {
                 id: 'request-params',
                 setup(ctx) {
                     ctx.hooks.on('chat.params', (input, output) => {
-                        if (input.modelAlias === 'reasoning-model') {
+                        if (input.model?.modelAlias === 'reasoning-model') {
                             output.reasoningEffort = 'high';
                             output.maxCompletionTokens = 4096;
                         }
@@ -98,7 +98,7 @@ describe('OpenDesk plugin request hooks', () => {
 
         await expect(
             runPluginChatParams(
-                { taskId: 'task-1', modelAlias: 'reasoning-model' },
+                { taskId: 'task-1', model: { modelAlias: 'reasoning-model' } },
                 { reasoningEffort: 'low', maxCompletionTokens: 1024 }
             )
         ).resolves.toEqual({
