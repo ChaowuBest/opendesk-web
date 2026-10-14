@@ -956,7 +956,7 @@ export const zhCn: Record<string, string> = {
     'config.model.field.context_length.placeholder': '留空则自动估算',
     'config.model.field.max_output_tokens': '最大补全长度 (留空自动估算)',
     'config.model.field.max_output_tokens.placeholder': '留空则自动估算',
-    'config.model.field.timeout': '请求超时 (留空默认 60 秒)',
+    'config.model.field.timeout': '请求超时 (留空默认 300 秒)',
     'config.model.field.timeout.placeholder': '单位为秒',
     'config.model.field.timeout_hint': '模型响应超过该时间未返回数据时视为超时，并触发自动重试',
     'config.model.field.vision': '视觉支持',

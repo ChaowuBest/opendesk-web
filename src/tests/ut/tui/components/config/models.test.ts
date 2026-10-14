@@ -308,7 +308,7 @@ describe('ModelConfigPage', () => {
             const timeoutField = getFormItems(page).find((item) => item.key === 'timeout');
             expect(timeoutField).toBeDefined();
             expect(timeoutField.visible).toBeUndefined();
-            expect(stripAnsi(page.render(100).join('\n'))).toContain('Request Timeout (leave empty for 60s)');
+            expect(stripAnsi(page.render(100).join('\n'))).toContain('Request Timeout (leave empty for 300s)');
         }
     });
 

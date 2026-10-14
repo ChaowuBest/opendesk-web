@@ -979,7 +979,7 @@ export const enUs: Record<string, string> = {
     'config.model.field.context_length.placeholder': 'Leave empty to estimate automatically',
     'config.model.field.max_output_tokens': 'Max Output Tokens (leave empty for auto)',
     'config.model.field.max_output_tokens.placeholder': 'Leave empty to estimate automatically',
-    'config.model.field.timeout': 'Request Timeout (leave empty for 60s)',
+    'config.model.field.timeout': 'Request Timeout (leave empty for 300s)',
     'config.model.field.timeout.placeholder': 'In seconds',
     'config.model.field.timeout_hint':
         'A request is treated as timed out when no data arrives within this period, which triggers an automatic retry',

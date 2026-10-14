@@ -117,7 +117,7 @@ const ModelBaseSchema = z.object({
         .int()
         .positive()
         .optional()
-        .describe('模型请求超时时间(秒，不填则默认 60 秒)，超时后进入自动重试流程')
+        .describe('模型请求超时时间(秒，不填则默认 300 秒)，超时后进入自动重试流程')
 });
 
 const ChatModelSchema = ModelBaseSchema.extend({
@@ -589,7 +589,7 @@ export class ModelInstance {
      * @param provider_type 提供商协议类型，空字符串表示 OpenAI 兼容格式
      * @param model_type 模型类型，旧配置留空时按对话模型处理
      * @param provider_name 提供商名称（如 "openrouter", "deepseek"），用于展示
-     * @param timeout 用户配置的请求超时时间（秒，>0 时覆盖系统默认 60 秒）
+     * @param timeout 用户配置的请求超时时间（秒，>0 时覆盖系统默认 300 秒）
      */
     constructor(
         model_name: string,

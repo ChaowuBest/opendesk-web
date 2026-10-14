@@ -12,7 +12,7 @@
 /**
  * 模型请求默认超时时间（秒）。用户未在模型配置中填写 timeout 时使用该值。
  */
-export const DEFAULT_MODEL_TIMEOUT_SECONDS = 60;
+export const DEFAULT_MODEL_TIMEOUT_SECONDS = 300;
 
 /**
  * 解析 token 数输入：支持纯数字（如 128000）或整数带 k/K 后缀（如 128k、256K，按 ×1000 计算）。
