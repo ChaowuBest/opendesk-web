@@ -130,19 +130,15 @@ test('selection matches path and sandbox together, and falls back to the first a
     expect(
         selectSupportedShell(shells, { shell_path: 'c:\\WINDOWS\\powershell.exe', shell_sandboxed: true }, 'win32')
     ).toEqual(shells[1]);
-    // 无显式选择（首次安装）时兜底到沙箱变体（沙箱默认启用）
-    expect(selectSupportedShell(shells, {}, 'win32')).toEqual(shells[1]);
-    // 保存的路径不可用时优先回退到沙箱变体（沙箱默认启用）
+    expect(selectSupportedShell(shells, {}, 'win32')).toEqual(shells[0]);
     expect(selectSupportedShell(shells, { shell_path: 'C:/removed.exe', shell_sandboxed: true }, 'win32')).toEqual(
-        shells[1]
+        shells[0]
     );
     // Windows 不再为 bash 注册沙箱变体（cygwin 与 detours 不兼容）：存量"bash+沙箱"
     //     配置回退到同路径的非沙箱 bash（cygwin 本就不受管控，见 README 已知限制）
     expect(selectSupportedShell(shells, { shell_path: 'C:/Git/bash.exe', shell_sandboxed: true }, 'win32')).toEqual(
         shells[2]
     );
-    // shell_path 为空（首次安装）或不可用时优先解析到沙箱变体（沙箱默认启用）
-    expect(selectSupportedShell(shells, { shell_path: '', shell_sandboxed: true }, 'win32')).toEqual(shells[1]);
     expect(selectSupportedShell([], {})).toBeNull();
 });
 
@@ -171,12 +167,10 @@ test('CLI platform does not register sandbox variants, and a saved sandboxed sel
             { kind: 'powershell', path: 'C:/Windows/powershell.exe', sandboxed: false },
             { kind: 'powershell', path: 'C:/Program Files/pwsh.exe', sandboxed: false }
         ]);
-        // 桌面端保存的 shell_sandboxed: true 在 CLI 下回退到同路径的普通 shell；
-        // CLI 无沙箱二进制，即使沙箱默认启用（GUI 语义），兜底也始终解析到普通 shell
+        // 桌面端保存的 shell_sandboxed: true 在 CLI 下回退到同路径的普通 shell
         expect(
             selectSupportedShell(shells, { shell_path: 'C:/Windows/powershell.exe', shell_sandboxed: true }, 'win32')
         ).toEqual(shells[0]);
-        expect(selectSupportedShell(shells, {}, 'win32')).toEqual(shells[0]);
     } finally {
         // 平台单例没有重置 API：恢复原有实例，原本未设置时以桌面平台占位
         setPlatform(previous ?? fakePlatform('electron'));

@@ -65,6 +65,8 @@ export const enUs: Record<string, string> = {
     'sandbox.executableMissing.linux': 'Dynamic sandbox enabled but dynobox was not found. Rebuild the Linux package.',
     'sandbox.cwdMissing.linux': 'Dynamic sandbox requires a task workspace as the controlled path.',
     'sandbox.cwdUnsupported.linux': 'Sandbox working directory is missing or unusable: ${path}',
+    'sandbox.policyTooLarge':
+        'Dynamic sandbox policy exceeds the native size limit (${bytes} bytes serialized > ${limit} bytes); refusing to launch to avoid a broken policy. Reduce the number of always-allowed path rules, or restart the app and retry.',
     'sandbox.executableMissing.ohos':
         'Dynamic sandbox enabled but the OpenHarmony dynobox was not found. Rebuild the OpenHarmony package.',
     'sandbox.trashDirUnavailable':

@@ -170,7 +170,7 @@ describe('readWithIdleTimeout', () => {
 });
 
 /* ------------------------------------------------------------------ */
-/* OpenAI adapter integration test (fake timers, default 60s timeout)  */
+/* OpenAI adapter integration test (fake timers, default 300s timeout)  */
 /* ------------------------------------------------------------------ */
 
 function createHangingAsyncIterable(): AsyncIterable<any> {
@@ -229,7 +229,7 @@ describe('OpenAI adapter stream idle timeout', () => {
 });
 
 /* ------------------------------------------------------------------ */
-/* Anthropic adapter integration test (fake timers, default 60s timeout) */
+/* Anthropic adapter integration test (fake timers, default 300s timeout) */
 /* ------------------------------------------------------------------ */
 
 class HangingStreamPlatform extends AbstractPlatform {

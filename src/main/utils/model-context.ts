@@ -461,6 +461,10 @@ const KNOWN_MODELS: Record<string, ModelInfo> = {
     'qwen3-7-plus': { contextSize: 1000000, maxOutputTokens: 64000, vision: true },
     // Qwen3.8 / Qwen3.5 系列新增，opencode.ai 数据
     'qwen3-8-max-preview': { contextSize: 1000000, maxOutputTokens: 131072, vision: true },
+    // Qwen3.8-Flash 系列（2026-08-26 发布）：开源版 Qwen3.8-Flash-Next 原生 262K 可扩展至 1M，
+    // 云服务版 qwen3.8-flash 默认 1M 上下文，多模态（图/视频输入），数据来自百炼官方文档与 HF model card
+    'qwen3-8-flash': { contextSize: 1000000, maxOutputTokens: 131072, vision: true },
+    'qwen3-8-flash-next': { contextSize: 1000000, maxOutputTokens: 131072, vision: true },
     'qwen3-5-9b': { contextSize: 262144, maxOutputTokens: 65536, vision: false },
     'qwen3-coder-30b-a3b-instruct': { contextSize: 262144, maxOutputTokens: 65536, vision: false },
     'qwq-plus': { contextSize: 131072, maxOutputTokens: 8192, vision: false },

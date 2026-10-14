@@ -33,12 +33,11 @@ function createPanel(config: Record<string, unknown> = {}) {
     return panel;
 }
 
-test('deduplicates paths and prefers the sandboxed fallback shell', () => {
+test('deduplicates paths and displays the fallback shell with an unchecked sandbox option', () => {
     const panel = createPanel({ shell_path: 'C:/removed.exe', shell_sandboxed: true });
     expect(panel.querySelectorAll('#task-shell-path option')).toHaveLength(2);
     expect(panel.querySelector('#task-shell-path').value).toBe(shells[0].path);
-    // 保存的沙箱选择不可用时优先回退到沙箱变体（沙箱默认启用）
-    expect(panel.querySelector('#task-shell-sandboxed').hasAttribute('checked')).toBe(true);
+    expect(panel.querySelector('#task-shell-sandboxed').hasAttribute('checked')).toBe(false);
     expect(panel.textContent).not.toContain('sp.task.terminal.');
     expect(panel.querySelectorAll('.sp-section')).toHaveLength(2);
     expect(panel.querySelectorAll('.sp-section > h2.sp-section-title')[0].textContent).toContain('Harness');
@@ -57,36 +56,6 @@ test('saves both path and sandbox flag, then hides sandbox when switching to bas
     expect(panel.currentData.task_config).toEqual({ shell_path: shells[2].path, shell_sandboxed: false });
     expect(panel.querySelector('#task-shell-sandboxed')).toBeNull();
     expect(panel.saveImmediately).toHaveBeenCalledTimes(2);
-});
-
-test('switching back to a sandbox-capable shell re-enables the sandbox automatically', () => {
-    // bash（无沙箱变体）：无沙箱与回收站开关，但保留此前的回收站偏好
-    const panel = createPanel({ shell_path: shells[2].path, shell_sandboxed: false, shell_sandbox_del_to_trash: true });
-    expect(panel.querySelector('#task-shell-sandboxed')).toBeNull();
-    expect(panel.querySelector('#task-shell-del-to-trash')).toBeNull();
-
-    // 切回 pwsh：沙箱自动勾选，回收站偏好恢复显示
-    const select = panel.querySelector('#task-shell-path');
-    Object.defineProperty(select, 'value', { value: shells[0].path, configurable: true });
-    select.dispatchEvent(new Event('change'));
-    expect(panel.currentData.task_config).toEqual({
-        shell_path: shells[0].path,
-        shell_sandboxed: true,
-        shell_sandbox_del_to_trash: true
-    });
-    expect(panel.querySelector('#task-shell-sandboxed').hasAttribute('checked')).toBe(true);
-    expect(panel.querySelector('#task-shell-del-to-trash').hasAttribute('checked')).toBe(true);
-
-    // shell 未变时手动关闭沙箱不会被自动打开，偏好照常保留
-    const sandbox = panel.querySelector('#task-shell-sandboxed');
-    sandbox.checked = false;
-    sandbox.dispatchEvent(new Event('change'));
-    expect(panel.currentData.task_config).toEqual({
-        shell_path: shells[0].path,
-        shell_sandboxed: false,
-        shell_sandbox_del_to_trash: true
-    });
-    expect(panel.querySelector('#task-shell-del-to-trash')).toBeNull();
 });
 
 test('macOS and Linux pwsh has no sandbox checkbox, and empty discovery disables the select', () => {

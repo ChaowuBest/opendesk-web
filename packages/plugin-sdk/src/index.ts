@@ -117,10 +117,36 @@ export type PluginFailureMode = 'open' | 'closed';
 
 export type PluginShellType = 'bash' | 'zsh' | 'powershell';
 
+/** 模型协议类型（provider 侧） */
+export type PluginModelType = 'chat' | 'embedding';
+
+/** 模型信息，供插件按模型维度做决策 */
+export interface PluginModelInfo {
+    /** 模型在本地配置中的别名 */
+    modelAlias?: string;
+    /** 模型在 provider 侧的名称 */
+    modelName?: string;
+    /** 模型类型 */
+    modelType?: PluginModelType;
+    /** 模型所属的服务商信息 */
+    provider?: PluginProviderInfo;
+}
+
+/** 模型服务商信息，供插件按网关维度做决策 */
+export interface PluginProviderInfo {
+    /** 服务商 API 端点（即模型配置的 base_url） */
+    baseUrl?: string;
+    /** 服务商协议类型 */
+    providerType?: 'openai' | 'anthropic';
+    /** 服务商名称（如 "openrouter"、"deepseek"，用于展示） */
+    providerName?: string;
+}
+
 export interface PluginChatRequestInput {
     taskId?: string;
     workspace?: string;
-    modelAlias?: string;
+    /** 本次请求使用的模型信息（含所属服务商） */
+    model?: PluginModelInfo;
 }
 
 export interface PluginChatHeadersOutput {

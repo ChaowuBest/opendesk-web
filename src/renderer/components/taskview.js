@@ -6530,6 +6530,9 @@ class TaskView extends HTMLElement {
 
         // 右键菜单：用户消息气泡 → 完整消息菜单；其他区域（assistant 消息 / 终端工具等）有选中文本 → 复制选中内容菜单
         chatHistory.addEventListener('contextmenu', (e) => {
+            // Web 链接命中时优先放行给 task-view 元素层的链接专用菜单（复制链接地址等），
+            // 避免被下方消息/选中菜单的 stopPropagation 拦截
+            if (e.target.closest('a[href]')) return;
             const bubble = e.target.closest('.od-user-msg');
             if (bubble) {
                 const container = bubble.closest('.od-user-msg-container');

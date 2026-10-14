@@ -23,6 +23,7 @@ import {
 import { t } from '../locale/index.js';
 import { createSandboxDecideEndpoint } from './sandbox-decide.js';
 import { policyTextOpenHarmony } from './dynabox-policy.js';
+import { serializePolicyForSandbox } from './policy-guard.js';
 import { detectToolchainReadOnlyDirs, type DynamicSandboxLaunch } from './linux-sandbox.js';
 import { resolveOpenHarmonySandboxExecutable, resolveOpenHarmonySandboxLibrary } from './resolve-ohos.js';
 
@@ -101,13 +102,16 @@ export async function prepareOpenHarmonySandbox(options: {
     try {
         fs.writeFileSync(
             policyPath,
-            policyTextOpenHarmony(
-                decide.endpoint,
-                decide.token,
-                workspace,
-                options.taskState?.harnessContext.permission?.getRules?.(),
-                home,
-                writableDirs
+            serializePolicyForSandbox(
+                policyTextOpenHarmony(
+                    decide.endpoint,
+                    decide.token,
+                    workspace,
+                    options.taskState?.harnessContext.permission?.getRules?.(),
+                    home,
+                    writableDirs
+                ),
+                { keepPrefixes: [workspace] }
             ),
             'utf8'
         );

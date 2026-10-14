@@ -333,6 +333,22 @@ export class GlobPermissionEnforcer implements PermissionEnforcer {
     }
 
     async addRule(rule: PermissionRule): Promise<void> {
+        // 幂等去重：完全相同的规则重复添加只生效一次。运行期各调用点（沙箱 ask
+        // 记住、工具授权、文件拖入自动授权等）可能在长任务中反复提交同一条规则；
+        // 无去重时规则集单调膨胀，并被沙箱策略导出（getRules → policyText*）成倍
+        // 放大，最终推高 dynobox 序列化体积触发 64KB fail-closed（命令无法执行）。
+        const rawDuplicate =
+            this.rawRules[
+                this.rawRules.findIndex(
+                    (candidate) =>
+                        candidate.resourceType === rule.resourceType &&
+                        candidate.action === rule.action &&
+                        candidate.pathPattern === rule.pathPattern &&
+                        candidate.effect === rule.effect
+                )
+            ];
+        if (rawDuplicate) return;
+
         this.rawRules.push(rule);
         const compiled = compileRule(rule);
 
@@ -392,7 +408,7 @@ export class GlobPermissionEnforcer implements PermissionEnforcer {
  * - 工作空间内的敏感路径（.ssh、.gnupg 等） → ask（显式保护，覆盖 allow）
  * - 工作空间外的文件读写执行 → ask（隐式回退）
  * - OpenDesk 自带 interpreters 目录（pip-global、npm-global 等包安装位置） → allow
- * - 网络访问 → ask（隐式回退）
+ * - 网络访问 → allow
  * - 技能和插件读取 → allow
  * - 技能和插件的修改或执行 → ask（隐式回退，需用户确认）
  */
@@ -425,6 +441,10 @@ export function createDefaultPermissionRules(workspace: string, appPolicyHomeDir
         // OpenDesk 自带 interpreters 目录（pip-global、npm-global 等）读写允许，
         // 沙箱内安装包不应反复触发授权
         ...createInterpretersPermissionRules(),
+        // 网络访问放通：readImage/readFile 等工具把 http(s) URL 视为普通数据源，
+        // 逐 URL 弹确认打扰过重（与 Solo 模式语义对齐）。
+        // 显式 deny 规则仍优先于本规则，任务/插件运行时可按需收紧。
+        { resourceType: 'network', action: 'access', pathPattern: '**', effect: 'allow' },
         // 所有技能读取允许（加载、查看等），写入/执行需用户确认（隐式 ask）
         { resourceType: 'skill', action: 'read', pathPattern: '**', effect: 'allow' },
         // 插件列表和详情读取允许，安装、卸载、启停和重载需用户确认（隐式 ask）

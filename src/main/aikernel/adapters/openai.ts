@@ -691,13 +691,16 @@ export class OpenAIAdapter {
         }
     }
 
-    async verify(): Promise<void> {
+    async verify(extraHeaders?: Record<string, string>): Promise<void> {
         const response = await withRateLimitRetry(() =>
-            this.client.chat.completions.create({
-                model: this.modelInstance.model_name,
-                messages: [{ role: 'user', content: 'Hi' }],
-                max_completion_tokens: 8
-            })
+            this.client.chat.completions.create(
+                {
+                    model: this.modelInstance.model_name,
+                    messages: [{ role: 'user', content: 'Hi' }],
+                    max_completion_tokens: 8
+                },
+                extraHeaders && Object.keys(extraHeaders).length > 0 ? { headers: extraHeaders } : undefined
+            )
         );
         if (!response?.choices?.[0]) {
             throw new Error('模型返回结果异常');

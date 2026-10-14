@@ -49,6 +49,15 @@ function orderedRules(rules: PermissionRule[] | undefined): PermissionRule[] {
 
 function rulesToLines(rules: PermissionRule[] | undefined, toVirtual: (expanded: string) => string | null): string[] {
     const lines: string[] = [];
+    // 同一 (path, access, perm) 的规则块只导出一次：规则集来自权限引擎快照 +
+    // 各生成器内建清单，重复块（PATH 展开撞系统前缀等）只会白白放大序列化体积，
+    // 推高 dynobox 64KB 环境变量上限的触发概率
+    const seen = new Set<string>();
+    const push = (line: string) => {
+        if (seen.has(line)) return;
+        seen.add(line);
+        lines.push(line);
+    };
     for (const rule of orderedRules(rules)) {
         if (rule.resourceType !== 'file' && rule.resourceType !== '*') continue;
         const access = rule.action === '*' ? 'all' : rule.action;
@@ -59,7 +68,7 @@ function rulesToLines(rules: PermissionRule[] | undefined, toVirtual: (expanded:
             const virtual = toVirtual(expanded);
             if (!virtual) continue;
             for (const exportedAccess of exportedAccesses) {
-                lines.push(
+                push(
                     `[[rules]]\npath = ${JSON.stringify(virtual)}\naccess = ${JSON.stringify(exportedAccess)}\nperm = ${JSON.stringify(rule.effect)}`
                 );
             }

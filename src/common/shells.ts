@@ -34,13 +34,9 @@ export function selectSupportedShell(
     const matching = selection.shell_path
         ? shells.filter((shell) => normalize(shell.path) === normalize(selection.shell_path!))
         : [];
-    // 沙箱默认启用：无匹配时优先回退到同路径/首位的沙箱变体（选中的路径没有
-    // 沙箱变体时仍回退普通 shell，如 Windows 上的 bash）
     return (
         matching.find((shell) => shell.sandboxed === (selection.shell_sandboxed === true)) ??
-        matching.find((shell) => shell.sandboxed) ??
         matching.find((shell) => !shell.sandboxed) ??
-        shells.find((shell) => shell.sandboxed) ??
         shells[0] ??
         null
     );

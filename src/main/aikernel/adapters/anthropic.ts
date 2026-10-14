@@ -914,13 +914,16 @@ export class AnthropicAdapter {
         }
     }
 
-    async verify(): Promise<void> {
+    async verify(extraHeaders?: Record<string, string>): Promise<void> {
         const response = await withRateLimitRetry(() =>
-            this.createMessage({
-                model: this.modelInstance.model_name,
-                messages: [{ role: 'user', content: 'Hi' }],
-                max_tokens: 8
-            })
+            this.createMessage(
+                {
+                    model: this.modelInstance.model_name,
+                    messages: [{ role: 'user', content: 'Hi' }],
+                    max_tokens: 8
+                },
+                extraHeaders && Object.keys(extraHeaders).length > 0 ? { extraHeaders } : undefined
+            )
         );
         if (!Array.isArray(response?.content)) {
             throw new Error('模型返回结果异常');

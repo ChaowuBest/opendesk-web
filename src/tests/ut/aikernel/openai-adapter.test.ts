@@ -150,3 +150,16 @@ describe('summary metadata and final context budget', () => {
         expect((adapter as any).client.chat.completions.create).not.toHaveBeenCalled();
     });
 });
+
+describe('OpenAIAdapter extraHeaders 透传', () => {
+    test('extraHeaders 透传到请求选项', async () => {
+        const adapter = createAdapterWithCompletionResponse(plainCompletionResponse);
+        const createFn = (adapter as any).client.chat.completions.create;
+
+        await adapter.completeText(createChatContext(), false, {}, { extraHeaders: { 'x-session': 'ses_abc' } });
+
+        expect(createFn).toHaveBeenCalledTimes(1);
+        const options = createFn.mock.calls[0][1];
+        expect(options.headers['x-session']).toBe('ses_abc');
+    });
+});

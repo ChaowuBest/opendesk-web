@@ -337,7 +337,7 @@ describe('设置 schema', () => {
         expect(setting.models[0].reasoning_effort).toBe('');
     });
 
-    test('模型 timeout 缺省时为 undefined（按默认 60 秒处理）', () => {
+    test('模型 timeout 缺省时为 undefined（按默认 300 秒处理）', () => {
         const setting = Setting.getSettingSchema().parse({
             models: [{ alias: 'chat', provider_name: 'p', model_name: 'm', model_type: 'chat' }]
         });

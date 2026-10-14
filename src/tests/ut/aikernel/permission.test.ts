@@ -713,13 +713,22 @@ describe('Standard Mode 默认权限规则', () => {
         expect(r.effect).toBe('ask');
     });
 
-    test('网络访问 → 隐式 ask', async () => {
+    test('网络访问（https 任意 URL）→ allow', async () => {
         const r = await enforcer.check({
             resourceType: 'network',
             action: 'access',
             resourcePath: 'https://api.example.com/data'
         });
-        expect(r.effect).toBe('ask');
+        expect(r.effect).toBe('allow');
+    });
+
+    test('网络访问（http 任意 URL）→ allow', async () => {
+        const r = await enforcer.check({
+            resourceType: 'network',
+            action: 'access',
+            resourcePath: 'http://img.example-cdn.com/pictures/1.png'
+        });
+        expect(r.effect).toBe('allow');
     });
 
     test('技能读取 → allow', async () => {
