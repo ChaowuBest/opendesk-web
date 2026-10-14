@@ -2804,6 +2804,7 @@ export const enUs: Record<string, string> = {
     'goal.supplement.inactive': 'Cannot add supplemental context to a goal in status ${status}.',
     'goal.supplement.images_unsupported': 'Goal supplemental context currently supports text only.',
     'goal.panel.title': 'Follow-up Goal',
+    'goal.panel.cleared_title': 'Goal cleared',
     'goal.panel.objective': 'Objective',
     'goal.panel.status': 'Status',
     'goal.panel.evidence': 'Evidence',

@@ -2721,6 +2721,7 @@ export const zhCn: Record<string, string> = {
     'goal.supplement.inactive': '无法为状态为 ${status} 的 goal 添加补充信息。',
     'goal.supplement.images_unsupported': 'Goal 补充信息当前仅支持文本。',
     'goal.panel.title': '跟进目标',
+    'goal.panel.cleared_title': '目标已清除',
     'goal.panel.objective': '目标',
     'goal.panel.status': '状态',
     'goal.panel.evidence': '证据',
