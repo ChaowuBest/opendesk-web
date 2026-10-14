@@ -44,6 +44,7 @@ test('sandbox powershell accepts stable root-relative working directories', () =
     expect(
         normalizeSandboxPwshArgs({
             command: 'Get-ChildItem .',
+            description: '列出当前目录内容',
             workingDirectory: '/D/workspace',
             timeout: 30000
         })
@@ -59,7 +60,10 @@ test.each(['win32', 'linux', 'darwin'])(
             for (const shellPath of ['C:/shells/pwsh.exe', 'C:/shells/powershell.exe']) {
                 const tool = new ExecutePwshTool(shellPath, true);
                 expect(tool.name).toBe('executePwsh');
-                await tool.executeCommand({ command: 'Get-Date', timeout: 30000 }, {} as any);
+                await tool.executeCommand(
+                    { command: 'Get-Date', description: '查看当前时间', timeout: 30000 },
+                    {} as any
+                );
                 expect(execute).toHaveBeenLastCalledWith(
                     expect.objectContaining({
                         shellPath,
@@ -89,7 +93,7 @@ test('forwards the recycle-bin preference only while the dynamic sandbox is acti
     try {
         Object.defineProperty(process, 'platform', { value: 'win32', configurable: true });
         const run = (tool: InstanceType<typeof ExecutePwshTool>) =>
-            tool.executeCommand({ command: 'Get-Date', timeout: 30000 }, {} as any);
+            tool.executeCommand({ command: 'Get-Date', description: '查看当前时间', timeout: 30000 }, {} as any);
 
         await run(new ExecutePwshTool('C:/shells/powershell.exe', true, true));
         expect(execute).toHaveBeenLastCalledWith(
