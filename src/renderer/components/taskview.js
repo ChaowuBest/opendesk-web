@@ -48,8 +48,8 @@ import {
 
 const SIDEBAR_TOGGLE_SVG =
     '<svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="3" width="12" height="10" rx="1.5"/><path d="M6.5 3v10"/></svg>';
-const EXPORT_DOWNLOAD_SVG =
-    '<svg width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"><path d="M8 3v6.5M8 9.5 5.5 7M8 9.5 10.5 7"/><path d="M3 11v1.5A1.5 1.5 0 0 0 4.5 14h7a1.5 1.5 0 0 0 1.5-1.5V11"/></svg>';
+const EXPORT_OPEN_SVG =
+    '<svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"><path d="M7.79 3H4.36A1.35 1.35 0 0 0 3 4.36v7.29A1.35 1.35 0 0 0 4.36 13h7.29A1.35 1.35 0 0 0 13 11.65V8"/><path d="M8 8 13 3"/><path d="M9.8 3H13v3.2"/></svg>';
 const EXPORT_WEBPAGE_SVG =
     '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M12 2a14.5 14.5 0 0 0 0 20 14.5 14.5 0 0 0 0-20"/><path d="M2 12h20"/></svg>';
 const EXPORT_JSON_SVG =
@@ -5247,6 +5247,8 @@ class TaskView extends HTMLElement {
             void this.exportTaskJson();
         });
 
+        this._updateExportButtonActive(true);
+
         this._exportMenuDismissHandler = (ev) => {
             if (!menu.contains(ev.target) && !anchorEl.contains(ev.target)) {
                 this._dismissExportMenu();
@@ -5261,6 +5263,14 @@ class TaskView extends HTMLElement {
             document.removeEventListener('mousedown', this._exportMenuDismissHandler);
             this._exportMenuDismissHandler = null;
         }
+        this._updateExportButtonActive(false);
+    }
+
+    /** 导出菜单打开期间保持按钮高亮（图标与文字同时点亮，鼠标移到菜单上也不熄灭） */
+    _updateExportButtonActive(isOpen) {
+        const btn = this.querySelector(`[id^="taskview-export-btn"]`);
+        if (!btn) return;
+        btn.classList.toggle('toolbar-spread-btn-on', isOpen);
     }
 
     async exportTaskJson() {
@@ -5615,7 +5625,7 @@ class TaskView extends HTMLElement {
                 [
                     {
                         id: 'taskview-export-btn',
-                        iconSvg: EXPORT_DOWNLOAD_SVG,
+                        iconSvg: EXPORT_OPEN_SVG,
                         label: taskViewT('renderer.taskview.toolbar.export'),
                         expandLabel: true,
                         action: (event) => {

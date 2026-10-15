@@ -109,7 +109,7 @@ const CHANGES_TAB: TabSpec = {
 };
 const SESSION_MEMORY_TAB: TabSpec = {
     id: 'session-memory',
-    label: '任务记忆',
+    label: '任务摘要',
     labelKey: 'renderer.taskartifacts.tab.sessionMemory',
     icon: 'fa-brain',
     dynamic: true
