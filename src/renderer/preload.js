@@ -1012,6 +1012,20 @@ function isMainFramePreload() {
     }
 }
 
+// renderer 心跳：主进程据此判断主窗口是否冻结（见 main/utils/window-recovery.ts）。
+// 仅 main frame 上报，避免 iframe preload 重复发送；主进程会过滤非主窗口的来源。
+if (isMainFramePreload()) {
+    const sendHeartbeat = () => {
+        try {
+            ipcRenderer.send('renderer:heartbeat');
+        } catch {
+            // 窗口销毁过程中 IPC 通道可能已不可用，心跳丢失由主进程超时兜底
+        }
+    };
+    sendHeartbeat();
+    setInterval(sendHeartbeat, 3000);
+}
+
 if (shouldExposeMainWindowAPIs()) {
     // Linux 阴影窗口的内容边缘 resize（见 main 进程 windows/shadow-resize.ts）
     safeExposeInMainWorld('shadowResizeAPI', {
