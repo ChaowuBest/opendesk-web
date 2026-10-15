@@ -28,7 +28,7 @@ import {
 } from './compact-error.js';
 import {
     type CompactionBudget,
-    assertRequestBudget,
+    fitRequestOutputTokens,
     checkRequestBudget,
     estimateRequestPayloadTokens
 } from './request-budget.js';
@@ -1322,10 +1322,7 @@ export async function compactFullContext(
             messages: OpenAIAdapter.buildMessages(candidate),
             ...OpenAIAdapter.buildToolOptions(candidate)
         };
-        const input = estimateRequestPayloadTokens(payload);
-        if (input >= options.budget.triggerTokens)
-            throw new ContextPreparationBlockedError('no_progress', input, options.budget.triggerTokens);
-        assertRequestBudget(payload, options.requestedOutputTokens ?? 2048, options.budget.contextWindow);
+        fitRequestOutputTokens(payload, options.requestedOutputTokens ?? 2048, options.budget.contextWindow, 0, true);
     }
     if (!isCurrent()) throw new ContextPreparationBlockedError('cancelled');
     applyFullCompactResult(chatContext, result);

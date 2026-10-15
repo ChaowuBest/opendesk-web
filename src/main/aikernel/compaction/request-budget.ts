@@ -88,3 +88,24 @@ export function assertRequestBudget(
         throw new ContextPreparationBlockedError('context_limit', estimatedInputTokens, budget.triggerTokens);
     }
 }
+
+/** Fit business output after hooks and projection; summary requests retain their fixed output budget. */
+export function fitRequestOutputTokens(
+    payload: unknown,
+    output: number,
+    window: number,
+    usageEstimate = 0,
+    requireBelowTrigger = false
+): number {
+    const budget = calculateCompactionBudget(window);
+    const estimatedInputTokens = Math.max(estimateRequestPayloadTokens(payload), usageEstimate);
+    const { allowed } = checkRequestBudget({ estimatedInputTokens, requestedOutputTokens: output, budget });
+    if (requireBelowTrigger && estimatedInputTokens >= budget.triggerTokens) {
+        throw new ContextPreparationBlockedError('no_progress', estimatedInputTokens, budget.triggerTokens);
+    }
+    const remaining = budget.contextWindow - Math.ceil(estimatedInputTokens) - budget.bufferTokens;
+    if (remaining < 1) {
+        throw new ContextPreparationBlockedError('context_limit', estimatedInputTokens, budget.triggerTokens);
+    }
+    return allowed ? Math.floor(output) : remaining;
+}
