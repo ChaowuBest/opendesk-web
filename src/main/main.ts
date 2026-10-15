@@ -333,6 +333,14 @@ if (process.platform === 'win32') {
 if (process.platform === 'linux') {
     app.commandLine.appendSwitch('enable-transparent-visuals');
 }
+// OpenHarmony 规避渲染进程沙箱崩溃（启动白屏）：
+// OHOS Electron 渲染沙箱的 seccomp 策略未放行 timerfd_create，系统图形栈 FFRT
+// 初始化（由字体枚举路径首次触发）收到 EPERM 后抛出未捕获异常，导致渲染进程
+// SIGABRT 循环崩溃、窗口白屏。待框架侧在 seccomp 策略放行 timerfd_create 后
+// 可移除此开关。
+if (process.platform === 'openharmony') {
+    app.commandLine.appendSwitch('no-sandbox');
+}
 
 const __dirname = import.meta.dirname;
 const converter = new Convert();
