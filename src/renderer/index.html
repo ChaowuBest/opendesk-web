@@ -233,7 +233,20 @@
                     title="快捷键帮助"
                     class="window-control-btn w-10 h-8 text-xs text-gray-500 hover:bg-gray-200 hover:text-gray-700 transition"
                 >
-                    <i class="fa-solid fa-keyboard"></i>
+                    <!-- 窗口控制图标：直角细线风格 SVG，线色随 currentColor（见 styles/titlebar.css） -->
+                    <svg
+                        class="window-control-icon"
+                        width="10"
+                        height="10"
+                        viewBox="0 0 20 20"
+                        fill="none"
+                        stroke="currentColor"
+                        stroke-width="2"
+                        aria-hidden="true"
+                    >
+                        <path d="M5.4 7.6a4.6 4.6 0 0 1 9.2 0c0 2-1.4 3-2.9 4-1.1.8-1.7 1.5-1.7 2.9v.4" />
+                        <rect x="9" y="16.6" width="2" height="2" fill="currentColor" stroke="none" />
+                    </svg>
                 </button>
                 <button
                     id="minimize-btn"
@@ -241,7 +254,18 @@
                     class="window-control-btn w-10 h-8 text-xs text-gray-500 hover:bg-gray-200 hover:text-gray-700 transition"
                     onclick="window.settingAPI.minimizeMainWindow()"
                 >
-                    <i class="fas fa-minus"></i>
+                    <svg
+                        class="window-control-icon"
+                        width="10"
+                        height="10"
+                        viewBox="0 0 20 20"
+                        fill="none"
+                        stroke="currentColor"
+                        stroke-width="2"
+                        aria-hidden="true"
+                    >
+                        <path d="M2 10h16" />
+                    </svg>
                 </button>
                 <button
                     id="maximize-btn"
@@ -254,7 +278,31 @@
                         })
                     "
                 >
-                    <i class="far fa-square" id="maximize-icon"></i>
+                    <svg
+                        class="window-control-icon window-control-icon-maximize"
+                        width="10"
+                        height="10"
+                        viewBox="0 0 20 20"
+                        fill="none"
+                        stroke="currentColor"
+                        stroke-width="2"
+                        aria-hidden="true"
+                    >
+                        <rect x="3" y="3" width="14" height="14" />
+                    </svg>
+                    <svg
+                        class="window-control-icon window-control-icon-restore"
+                        width="10"
+                        height="10"
+                        viewBox="0 0 20 20"
+                        fill="none"
+                        stroke="currentColor"
+                        stroke-width="2"
+                        aria-hidden="true"
+                    >
+                        <path d="M4 1h15v15" opacity="0.5" />
+                        <rect x="1" y="5" width="14" height="14" />
+                    </svg>
                 </button>
                 <button
                     id="close-drag-overlay-btn"
@@ -262,7 +310,18 @@
                     class="window-control-btn w-10 h-8 text-xs text-gray-500 hover:bg-red-500 hover:text-white transition"
                     onclick="window.settingAPI.closeMainWindow()"
                 >
-                    <i class="fas fa-times"></i>
+                    <svg
+                        class="window-control-icon"
+                        width="10"
+                        height="10"
+                        viewBox="0 0 20 20"
+                        fill="none"
+                        stroke="currentColor"
+                        stroke-width="2"
+                        aria-hidden="true"
+                    >
+                        <path d="M2 2l16 16M18 2L2 18" />
+                    </svg>
                 </button>
             </div>
         </div>
@@ -861,9 +920,10 @@
 
             async function updateMaximizeIcon() {
                 const isMaximized = await window.settingAPI.isMaximized();
-                const maximizeIcon = document.getElementById('maximize-icon');
-                if (maximizeIcon) {
-                    maximizeIcon.className = isMaximized ? 'fas fa-window-restore' : 'far fa-square';
+                const maximizeButton = document.getElementById('maximize-btn');
+                if (maximizeButton) {
+                    // 最大化态换成「双框」图标：两个 SVG 都在按钮内，由 CSS 按该状态类切换显隐
+                    maximizeButton.classList.toggle('is-maximized', isMaximized);
                 }
             }
             window.updateMaximizeIcon = updateMaximizeIcon;
