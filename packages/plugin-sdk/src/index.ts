@@ -275,9 +275,7 @@ export interface PluginAccountDeviceCodeLoginMethod {
 }
 
 export type PluginAccountLoginMethod =
-    | PluginAccountFormLoginMethod
-    | PluginAccountBrowserLoginMethod
-    | PluginAccountDeviceCodeLoginMethod;
+    PluginAccountFormLoginMethod | PluginAccountBrowserLoginMethod | PluginAccountDeviceCodeLoginMethod;
 
 export interface PluginAccountLoginFlowRequest extends PluginAccountLoginContext {
     methodId: string;
@@ -1205,6 +1203,11 @@ export interface PluginRegistryFilterDef {
     categoryValue: string;
     /** 传给服务端过滤的 tagIds（可选） */
     apiTagIds?: string[];
+    /**
+     * 仅在这些平台向 GUI 下发该筛选器；缺省（或空数组）表示所有平台可用。
+     * 用于平台专属筛选（如「鸿蒙PC兼容技能」只在 openharmony 展示）。
+     */
+    platforms?: PluginPlatform[];
 }
 
 export interface PluginRegistrySearchOptions {

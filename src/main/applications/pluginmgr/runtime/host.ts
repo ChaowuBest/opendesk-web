@@ -47,6 +47,7 @@ import {
     OPENDESK_PLUGIN_API_VERSION,
     OPENDESK_PLUGIN_CAPABILITIES,
     OPENDESK_PLUGIN_HOOK_NAMES,
+    OPENDESK_PLUGIN_PLATFORMS,
     resolvePluginDisplayName
 } from '../../../../../packages/plugin-sdk/src/index.js';
 import { comparePluginVersions } from '../discovery/manifest.js';
@@ -340,6 +341,16 @@ function validateRegistryDefinition(
                     !filter.labelOff.trim() ||
                     typeof filter.categoryValue !== 'string' ||
                     !filter.categoryValue.trim()
+                ) {
+                    throw new Error(`plugin.registry_filters_invalid:${id}`);
+                }
+                // platforms 声明用于平台专属筛选器（如鸿蒙PC兼容技能），只允许已知平台值
+                if (
+                    filter.platforms !== undefined &&
+                    (!Array.isArray(filter.platforms) ||
+                        filter.platforms.some(
+                            (platform) => !(OPENDESK_PLUGIN_PLATFORMS as readonly unknown[]).includes(platform)
+                        ))
                 ) {
                     throw new Error(`plugin.registry_filters_invalid:${id}`);
                 }

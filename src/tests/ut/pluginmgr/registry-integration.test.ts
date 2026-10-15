@@ -122,7 +122,10 @@ describe('registry capability 全链路（真实内置插件）', () => {
                 'skillhub'
             ]);
             const matrixInfo = skillInfos.find((info) => info.id === 'matrix')!;
-            expect(matrixInfo.filters.length).toBeGreaterThan(0);
+            // 鸿蒙PC 专属筛选器只在 openharmony 平台下发；其余平台为空，GUI 不渲染该开关
+            expect(matrixInfo.filters.map((filter) => filter.id)).toEqual(
+                process.platform === 'openharmony' ? ['harmony_pc'] : []
+            );
 
             // 安装路由：内置前缀仍由 skill-installer 的既有分支接管；MCP 安装 URL 支持编码 id
             expect(skillRegistryIndex.getInstallMethod('matrix:some-skill')).toBe('matrix');
