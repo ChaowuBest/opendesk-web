@@ -278,6 +278,82 @@ describe('task compaction recovery regression', () => {
         cleanupTempAppDirectory();
     });
 
+    test.each([300000, 409599])(
+        'a 384K output limit does not compact an input of %i below 80 percent',
+        async (input) => {
+            const model = Setting.getInstance().getModelInstance('compact-test-model', 'chat')!;
+            model.context_length = 512000;
+            model.max_output_tokens = 384000;
+            const task = createTask();
+            task.chat_context = new ChatContext();
+            task.chat_context.appendMessage(new UserMessage('continue working'));
+            const assistant = new AssistantMessage();
+            assistant.usage = new Usage(input, 0, input);
+            task.chat_context.appendMessage(assistant);
+            task.task_status = 'running';
+            const compact = jest.spyOn(task, 'compactTaskContext');
+            const stream = jest.spyOn(LLM, 'streamComplete').mockImplementation(async function* () {});
+
+            await task.processCompletion({ maxCompletionTokens: 384000 });
+
+            expect(compact).not.toHaveBeenCalled();
+            expect(stream).toHaveBeenCalledTimes(1);
+            expect(task.task_status).toBe('running');
+        }
+    );
+
+    test('reaching 80 percent still starts compaction with a large output limit', async () => {
+        const model = Setting.getInstance().getModelInstance('compact-test-model', 'chat')!;
+        model.context_length = 512000;
+        model.max_output_tokens = 384000;
+        const task = createTask();
+        task.chat_context.appendMessage(new UserMessage('continue working'));
+        const assistant = new AssistantMessage();
+        assistant.usage = new Usage(409600, 0, 409600);
+        task.chat_context.appendMessage(assistant);
+        task.task_status = 'running';
+        const compact = jest.spyOn(task, 'compactTaskContext');
+        jest.spyOn(LLM, 'streamComplete').mockImplementation(async function* () {});
+
+        await task.processCompletion();
+
+        expect(compact).toHaveBeenCalledTimes(1);
+    });
+
+    test('adds new tail cards to the usage-based input estimate before the final budget check', async () => {
+        const model = Setting.getInstance().getModelInstance('compact-test-model', 'chat')!;
+        model.context_length = 512000;
+        model.max_output_tokens = 384000;
+        const task = createTask();
+        task.chat_context.appendMessage(new UserMessage('continue working'));
+        const assistant = new AssistantMessage();
+        assistant.usage = new Usage(300000, 0, 300000);
+        task.chat_context.appendMessage(assistant);
+        task.task_status = 'running';
+        jest.spyOn(task.hooks, 'buildTailcards').mockResolvedValue('x'.repeat(40000));
+        const stream = jest.spyOn(LLM, 'streamComplete').mockImplementation(async function* () {});
+
+        await task.processCompletion();
+
+        expect(stream.mock.calls[0][3]?.contextBudget?.inputEstimate).toBe(310000);
+    });
+
+    test('a large normal output limit does not reject an otherwise successful compact', async () => {
+        const model = Setting.getInstance().getModelInstance('compact-test-model', 'chat')!;
+        model.max_output_tokens = 384000;
+        const task = createTask();
+        task.chat_context = createCompactableChatContext();
+        jest.spyOn(LLM, 'askWithMetadata').mockResolvedValue({
+            text: 'valid compact summary',
+            reasoningLength: 0,
+            finishReason: 'stop'
+        });
+
+        await expect(task.compactTaskContext()).resolves.toMatchObject({ compacted: true });
+        expect(task.chat_context.findCompactBoundary()?.message.summary).toBe('valid compact summary');
+        expect(task.auto_compact_state.status).toBe('healthy');
+    });
+
     test('empty summaries pause before the main model, persist failures and open after three attempts', async () => {
         const task = createTask();
         task.chat_context = createCompactableChatContext();

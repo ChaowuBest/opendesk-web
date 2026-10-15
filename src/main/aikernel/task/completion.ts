@@ -11,11 +11,7 @@
 
 import { OpenAIAdapter } from '../adapters/openai.js';
 import { ContextPreparationBlockedError, isContextLimitError } from '../compaction/compact-error.js';
-import {
-    resolveContextWindow,
-    resolveMaxOutputTokens,
-    estimateAutoCompactContextTokens
-} from '../compaction/auto-compact.js';
+import { resolveContextWindow, estimateAutoCompactContextTokens } from '../compaction/auto-compact.js';
 import {
     calculateCompactionBudget,
     checkRequestBudget,
@@ -32,11 +28,6 @@ import {
 } from '../compaction/compact-trace.js';
 import { LLM, type LLMRequestOptions } from '../llm.js';
 import { Setting } from '../../utils/setting.js';
-import {
-    lookupKnownContextSize,
-    lookupKnownMaxOutputTokens,
-    fetchContextSizeFromAPI
-} from '../../utils/model-context.js';
 import { logger } from '../../utils/logger.js';
 import {
     getEvidenceCardPreviewOptions,
@@ -263,18 +254,16 @@ export async function processTaskCompletion(
           }
         | undefined = undefined;
     let requestActiveContext: ActiveContextView | undefined;
-    let dynamicMaxCompletionTokens: number | undefined = undefined;
     let requestTailText: string | undefined = undefined;
     let preparedContextTokens = 0;
     const evidenceCardEnabled = task.refreshEvidenceCardFeatureState();
     const evidenceCardSettings = getEvidenceCardSettings(evidenceCardEnabled);
     try {
         const budget = calculateCompactionBudget(await resolveContextWindow(model));
-        const businessOutput = modelRequestOptions?.maxCompletionTokens ?? (await resolveMaxOutputTokens(model));
         const preparation = await prepareContextForModel(task.chat_context, model, {
             forceCompact: !checkRequestBudget({
                 budget,
-                requestedOutputTokens: businessOutput,
+                requestedOutputTokens: budget.summaryOutputTokens,
                 estimatedInputTokens: estimateAutoCompactContextTokens(task.chat_context, model).estimatedContextTokens
             }).allowed,
             compactStateManaged: true,
@@ -543,38 +532,6 @@ export async function processTaskCompletion(
 
     if (!isCurrentTurn()) return false;
 
-    const estimatedContextTokens = preparedContextTokens + estimateTextTokens(requestTailText);
-    if (estimatedContextTokens > 0) {
-        try {
-            let contextWindow = 0;
-            const modelInstance = model
-                ? Setting.getInstance().getModelInstance(model, 'chat')
-                : Setting.getInstance().getDefaultModelInstance();
-            if (modelInstance?.context_length && modelInstance.context_length > 0) {
-                contextWindow = modelInstance.context_length;
-            } else {
-                const modelName = modelInstance?.model_name ?? model ?? '';
-                contextWindow = lookupKnownContextSize(modelName);
-                if (contextWindow <= 0 && modelInstance) {
-                    contextWindow = await fetchContextSizeFromAPI(modelInstance);
-                }
-            }
-            if (contextWindow > 0) {
-                const remaining = contextWindow - estimatedContextTokens;
-                if (remaining > 0) {
-                    const modelName = modelInstance?.model_name ?? model ?? '';
-                    const configuredMaxOutput =
-                        modelInstance?.max_output_tokens && modelInstance.max_output_tokens > 0
-                            ? modelInstance.max_output_tokens
-                            : lookupKnownMaxOutputTokens(modelName) || 16384;
-                    dynamicMaxCompletionTokens = Math.min(remaining, configuredMaxOutput);
-                }
-            }
-        } catch {
-            // 解析失败时保持默认值
-        }
-    }
-
     task.profiler?.beginLLM(task._currentTurn);
     const benchmarkRequest = task.ensureBenchmarkUsageLedger().beginRequest({
         turn: task._currentTurn,
@@ -601,7 +558,6 @@ export async function processTaskCompletion(
         ? Setting.getInstance().getModelInstance(model, 'chat')
         : Setting.getInstance().getDefaultModelInstance();
     const requestOptions: LLMRequestOptions = {
-        maxCompletionTokens: dynamicMaxCompletionTokens,
         ...modelRequestOptions,
         reasoningEffort: resolveTurnReasoningEffort(
             modelRequestOptions?.reasoningEffort,
@@ -676,7 +632,7 @@ export async function processTaskCompletion(
                             ...requestOptions,
                             contextBudget: {
                                 window: await resolveContextWindow(requestModel),
-                                inputEstimate: preparedContextTokens,
+                                inputEstimate: preparedContextTokens + estimateTextTokens(requestTailText),
                                 requireBelowTrigger: task.compactionAwaitingRequest
                             },
                             onBudgetValidated: () => task.confirmCompactionRequestBudget(),

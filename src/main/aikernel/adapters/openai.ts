@@ -9,7 +9,7 @@
  * See the Mulan PSL v2 for more details.
  */
 
-import { assertRequestBudget } from '../compaction/request-budget.js';
+import { assertRequestBudget, fitRequestOutputTokens } from '../compaction/request-budget.js';
 import { type TextCompletionResult } from '../compaction/compact-error.js';
 import crypto from 'crypto';
 import { OpenAI } from 'openai';
@@ -621,10 +621,11 @@ export class OpenAIAdapter {
     ): AsyncIterable<AssistantResponse> {
         const messages = OpenAIAdapter.buildMessages(chatContext, supportsVision, options);
         const toolOptions = OpenAIAdapter.buildToolOptions(chatContext);
+        let maxCompletionTokens = this.requestMaxCompletionTokens(requestOptions);
         if (requestOptions?.contextBudget)
-            assertRequestBudget(
+            maxCompletionTokens = fitRequestOutputTokens(
                 { messages, ...toolOptions },
-                this.requestMaxCompletionTokens(requestOptions),
+                maxCompletionTokens,
                 requestOptions.contextBudget.window,
                 requestOptions.contextBudget.inputEstimate,
                 requestOptions.contextBudget.requireBelowTrigger
@@ -650,7 +651,7 @@ export class OpenAIAdapter {
                         {
                             model: this.modelInstance.model_name,
                             messages: messages as OpenAI.ChatCompletionMessageParam[],
-                            max_completion_tokens: this.requestMaxCompletionTokens(requestOptions),
+                            max_completion_tokens: maxCompletionTokens,
                             stream: true,
                             stream_options: { include_usage: true },
                             ...toolOptions,

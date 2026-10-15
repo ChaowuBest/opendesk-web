@@ -1,5 +1,10 @@
 import { describe, expect, test } from '@jest/globals';
-import { calculateCompactionBudget, checkRequestBudget } from '../../../main/aikernel/compaction/request-budget.js';
+import {
+    assertRequestBudget,
+    calculateCompactionBudget,
+    checkRequestBudget,
+    fitRequestOutputTokens
+} from '../../../main/aikernel/compaction/request-budget.js';
 import {
     CompactError,
     isContextLimitError,
@@ -30,6 +35,27 @@ describe('compact request safety', () => {
         );
         expect(() => checkRequestBudget({ budget, estimatedInputTokens: NaN, requestedOutputTokens: 2048 })).toThrow();
         expect(() => calculateCompactionBudget(0)).toThrow();
+    });
+
+    test('one remaining output token is usable while the safety buffer stays reserved', () => {
+        const payload = { messages: [{ role: 'user', content: 'hello' }] };
+        const output = fitRequestOutputTokens(payload, 384000, 512000, 501999);
+        expect(output).toBe(1);
+        expect(() => assertRequestBudget(payload, output, 512000, 501999)).not.toThrow();
+        expect(() => fitRequestOutputTokens(payload, 384000, 512000, 502000)).toThrow('context_limit');
+    });
+
+    test('fitting output cannot hide a compact that failed to get below 80 percent', () => {
+        expect(() => fitRequestOutputTokens({}, 384000, 512000, 409600, true)).toThrow('no_progress');
+    });
+
+    test('invalid output limits and input estimates still fail closed', () => {
+        expect(() => fitRequestOutputTokens({}, 0, 512000)).toThrow('invalid_budget');
+        expect(() => fitRequestOutputTokens({}, 384000, 512000, NaN)).toThrow('invalid_budget');
+    });
+
+    test('summary budget validation retains the requested output instead of shrinking it', () => {
+        expect(() => assertRequestBudget({}, 16384, 512000, 490000)).toThrow('context_limit');
     });
 
     test.each([

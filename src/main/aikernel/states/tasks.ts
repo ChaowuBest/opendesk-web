@@ -9,11 +9,7 @@
  * See the Mulan PSL v2 for more details.
  */
 
-import {
-    calculateCompactionBudget,
-    assertRequestBudget,
-    estimateRequestPayloadTokens
-} from '../compaction/request-budget.js';
+import { calculateCompactionBudget, fitRequestOutputTokens } from '../compaction/request-budget.js';
 import type { UsageCompactRecovery } from '../compaction/full-compact.js';
 import { CompactError, ContextPreparationBlockedError } from '../compaction/compact-error.js';
 import { OpenAIAdapter } from '../adapters/openai.js';
@@ -1683,10 +1679,7 @@ export class TaskState {
                     messages: OpenAIAdapter.buildMessages(this.chat_context),
                     ...OpenAIAdapter.buildToolOptions(this.chat_context)
                 };
-                const input = estimateRequestPayloadTokens(payload);
-                if (input >= budget.triggerTokens)
-                    throw new ContextPreparationBlockedError('no_progress', input, budget.triggerTokens);
-                assertRequestBudget(payload, output, budget.contextWindow);
+                fitRequestOutputTokens(payload, output, budget.contextWindow, 0, true);
                 if (options.trigger === 'auto') this.compactionAwaitingRequest = true;
                 else this.setAutoCompactState(AutoCompactStates.recordSuccess(this.auto_compact_state));
                 const boundary = this.chat_context.findCompactBoundary()?.message;

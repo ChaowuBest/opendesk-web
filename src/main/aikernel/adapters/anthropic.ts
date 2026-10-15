@@ -8,7 +8,7 @@
  * See the Mulan PSL v2 for more details.
  */
 
-import { assertRequestBudget } from '../compaction/request-budget.js';
+import { assertRequestBudget, fitRequestOutputTokens } from '../compaction/request-budget.js';
 import { type TextCompletionResult } from '../compaction/compact-error.js';
 import crypto from 'crypto';
 import {
@@ -866,10 +866,12 @@ export class AnthropicAdapter {
         requestOptions?: AnthropicAdapterRequestOptions
     ): AsyncIterable<AssistantResponse> {
         const anthropicMessages = AnthropicAdapter.buildMessages(chatContext, supportsVision, options);
+        const toolOptions = AnthropicAdapter.buildToolOptions(chatContext);
+        let maxCompletionTokens = this.requestMaxCompletionTokens(requestOptions);
         if (requestOptions?.contextBudget)
-            assertRequestBudget(
-                { ...anthropicMessages, ...AnthropicAdapter.buildToolOptions(chatContext) },
-                this.requestMaxCompletionTokens(requestOptions),
+            maxCompletionTokens = fitRequestOutputTokens(
+                { ...anthropicMessages, ...toolOptions },
+                maxCompletionTokens,
                 requestOptions.contextBudget.window,
                 requestOptions.contextBudget.inputEstimate,
                 requestOptions.contextBudget.requireBelowTrigger
@@ -880,11 +882,11 @@ export class AnthropicAdapter {
             for await (const response of this.streamMessages(
                 {
                     model: this.modelInstance.model_name,
-                    max_tokens: this.requestMaxCompletionTokens(requestOptions),
+                    max_tokens: maxCompletionTokens,
                     stream: true,
                     ...(anthropicMessages.system ? { system: anthropicMessages.system } : {}),
                     messages: anthropicMessages.messages,
-                    ...AnthropicAdapter.buildToolOptions(chatContext)
+                    ...toolOptions
                 },
                 requestOptions
             )) {
