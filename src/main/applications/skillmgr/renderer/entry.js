@@ -2331,6 +2331,9 @@ class SkillMgrEntryWidget extends HTMLElement {
             );
         } finally {
             this.addingFromPath = false;
+            // loadSkills 在标志复位前触发过 render，会把 disabled 状态写进 dropdown DOM，
+            // 这里复位后必须重绘，否则下拉菜单项永久置灰
+            this.render();
         }
     }
 
@@ -2358,6 +2361,8 @@ class SkillMgrEntryWidget extends HTMLElement {
             );
         } finally {
             this.addingFromZip = false;
+            // 同 onPathPicked：loadSkills 期间的 render 已把 disabled 写入 DOM，需重绘复位
+            this.render();
         }
     }
 
