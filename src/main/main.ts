@@ -61,6 +61,7 @@ import {
 import { safeSendToWebContents, safeSendToWebFrame } from './utils/electron-ipc.js';
 import { createMainWindowCloseHandler } from './utils/window-close.js';
 import { installMainWindowNavigationGuard } from './utils/main-window-navigation.js';
+import { createReloadBudget, createWindowRecoveryController } from './utils/window-recovery.js';
 import { NAV_INTERCEPT_SCRIPT } from '../renderer/webviewScripts.js';
 import { injectScriptIntoFrames } from './utils/webview-frame-inject.js';
 import { skillRegistry } from './applications/skillmgr/utils/skill-registry.js';
@@ -656,6 +657,36 @@ const DEFAULT_WINDOW_WIDTH = 1600;
 const DEFAULT_WINDOW_HEIGHT = 1080;
 const MAIN_WINDOW_SHOW_FALLBACK_DELAY_MS = 1000;
 
+/*
+ * 主窗口异常重载入口。入口页加载失败、renderer 崩溃、GPU 进程退出共享同一份重载配额，
+ * 避免它们互相触发形成重载风暴。
+ */
+const mainWindowReloadBudget = createReloadBudget();
+
+/** 重新加载主窗口入口页；返回 false 表示窗口不可用或重载配额已耗尽 */
+function reloadMainWindowEntry(reason: string): boolean {
+    if (!globalMainWindow || globalMainWindow.isDestroyed()) return false;
+    if (!mainWindowReloadBudget.tryConsume(reason)) return false;
+    logger.warn(`reloading main window entry (reason: ${reason})`);
+    if (is.dev && process.env['ELECTRON_RENDERER_URL']) {
+        void globalMainWindow.loadURL(process.env['ELECTRON_RENDERER_URL']);
+    } else {
+        void globalMainWindow.loadFile(path.join(__dirname, '..', 'renderer', 'index.html'));
+    }
+    return true;
+}
+
+const windowRecovery = createWindowRecoveryController({
+    reload: reloadMainWindowEntry,
+    // 窗口隐藏/最小化时 renderer 定时器会被节流，心跳缺失不代表冻结
+    isWindowVisible: () =>
+        !!globalMainWindow &&
+        !globalMainWindow.isDestroyed() &&
+        globalMainWindow.isVisible() &&
+        !globalMainWindow.isMinimized(),
+    log: logger
+});
+
 /**
  * 检查保存的窗口 bounds 是否在某个屏幕可见范围内（至少 100px 可见）。
  * 如果所有显示器都已断开/配置变更导致窗口完全不可见，返回 false。
@@ -928,8 +959,6 @@ const createWindow = () => {
 
     // 防御性兜底：如果主框架导航到外部 URL 后加载失败（will-navigate 拦截未生效或被绕过），
     // 自动重载应用入口页，避免用户面对灰色空白屏幕无法操作。
-    let appReloadCount = 0;
-    let appReloadResetTimer: NodeJS.Timeout | null = null;
     mainWindow.webContents.on('did-fail-load', (_event, _errorCode, _errorDescription, validatedURL, isMainFrame) => {
         if (!isMainFrame) return;
         // 只处理非内部 URL 的加载失败，避免应用自身入口页加载失败时无限重载
@@ -941,41 +970,15 @@ const createWindow = () => {
         ) {
             return;
         }
-        // 限制重载频率，防止极端情况下无限重载
-        if (appReloadCount >= 3) {
-            logger.error(`did-fail-load: reload limit reached for ${validatedURL}`);
-            return;
-        }
-        appReloadCount++;
-        if (appReloadResetTimer) clearTimeout(appReloadResetTimer);
-        appReloadResetTimer = setTimeout(() => {
-            appReloadCount = 0;
-        }, 10000);
-        logger.warn(`did-fail-load: main frame failed to load ${validatedURL}, reloading app entry`);
-        if (is.dev && process.env['ELECTRON_RENDERER_URL']) {
-            void mainWindow.loadURL(process.env['ELECTRON_RENDERER_URL']);
-        } else {
-            mainWindow.loadFile(path.join(__dirname, '..', 'renderer', 'index.html'));
+        if (!reloadMainWindowEntry(`did-fail-load ${validatedURL}`)) {
+            logger.error(`did-fail-load: skipped reloading app entry for ${validatedURL}`);
         }
     });
 
     // renderer 进程崩溃时自动重载
     mainWindow.webContents.on('render-process-gone', (_event, details) => {
         logger.error(`render-process-gone: ${details.reason}`);
-        if (appReloadCount >= 3) {
-            logger.error('render-process-gone: reload limit reached, not reloading');
-            return;
-        }
-        appReloadCount++;
-        if (appReloadResetTimer) clearTimeout(appReloadResetTimer);
-        appReloadResetTimer = setTimeout(() => {
-            appReloadCount = 0;
-        }, 10000);
-        if (is.dev && process.env['ELECTRON_RENDERER_URL']) {
-            void mainWindow.loadURL(process.env['ELECTRON_RENDERER_URL']);
-        } else {
-            mainWindow.loadFile(path.join(__dirname, '..', 'renderer', 'index.html'));
-        }
+        reloadMainWindowEntry(`render-process-gone ${details.reason}`);
     });
 
     // 窗口隐藏/最小化时通知 renderer 降低刷新率，节省 CPU 和电量
@@ -1036,6 +1039,18 @@ const registerRendererLogHandler = () => {
             default:
                 logger.info(tagged);
         }
+    });
+};
+
+// renderer 心跳上报，主进程据此判断 renderer 是否冻结（详见 window-recovery.ts）。
+// 心跳不携带内容，仅证明 renderer 主线程仍在执行 JS。
+const registerRendererHeartbeatHandler = () => {
+    ipcMain.on('renderer:heartbeat', (event) => {
+        // 所有窗口共用同一份 preload，只有主窗口的心跳参与冻结判定：
+        // 悬浮窗或应用窗口存活时不应掩盖主窗口自身的冻结。
+        if (!globalMainWindow || globalMainWindow.isDestroyed()) return;
+        if (event.sender.id !== globalMainWindow.webContents.id) return;
+        windowRecovery.onHeartbeat();
     });
 };
 
@@ -3680,6 +3695,13 @@ async function startApplication(): Promise<void> {
         suppressWmSystemMenuOnLinux(contents);
     });
 
+    // GPU 进程负责所有窗口的合成输出，它退出后既有窗口的 surface 会与合成器失联，
+    // 表现为画面冻结而主进程仍然存活。Chromium 重启 GPU 进程不会把窗口重新挂上去，
+    // 因此需要主进程主动重载主窗口（详见 window-recovery.ts）。
+    app.on('child-process-gone', (_event, details) => {
+        windowRecovery.onChildProcessGone(details);
+    });
+
     app.whenReady().then(async () => {
         let resolveRegistryWorkerReady!: () => void;
         const registryWorkerReady = new Promise<void>((resolve) => {
@@ -3728,6 +3750,7 @@ async function startApplication(): Promise<void> {
         registerApplicationRegistryHandlers(ipcMain, ensureElectronFullyLoaded);
         registerNotificationAPIHandlers();
         registerRendererLogHandler();
+        registerRendererHeartbeatHandler();
         registerThemeHandlers();
         registerEmbeddedOpenDeskOffice();
         AgentRegistry.initBuiltinAgents();
@@ -3735,6 +3758,9 @@ async function startApplication(): Promise<void> {
         registerNativeBridge();
 
         createWindow();
+
+        // 主窗口就绪后启动 renderer 冻结看门狗；GPU 崩溃恢复由上面的 child-process-gone 驱动
+        windowRecovery.start();
 
         // 启动阶段不采集遥测；主窗口显示后再初始化运行期遥测。
         void mainWindowShown.then(() => void ensureTelemetryReady());
@@ -4176,6 +4202,7 @@ async function startApplication(): Promise<void> {
     });
 
     app.on('will-quit', async () => {
+        windowRecovery.stop();
         globalShortcut.unregisterAll();
         try {
             await GlobalState.getInstance().taskManagerState.flushAllPendingSaves();

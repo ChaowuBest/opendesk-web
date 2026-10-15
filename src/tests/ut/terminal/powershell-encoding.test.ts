@@ -28,7 +28,10 @@ const { ExecutePwshTool } = await import('../../../main/applications/terminal/sh
 
 test('powershell tool injects UTF-8 defaults for Get-Content to fix ANSI mojibake', async () => {
     const tool = new ExecutePwshTool('C:/shells/powershell.exe');
-    await tool.executeCommand({ command: 'Get-Content src/a.ts', timeout: 30000 }, {} as any);
+    await tool.executeCommand(
+        { command: 'Get-Content src/a.ts', description: '读取源文件内容', timeout: 30000 },
+        {} as any
+    );
 
     const args = execute.mock.lastCall![0].shellArgs as string[];
     const sentCommand = args[args.indexOf('-Command') + 1] as string;

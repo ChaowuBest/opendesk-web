@@ -588,11 +588,25 @@ export class TaskArtifactsGoalController {
             'create-new': ' goal-action-primary',
             clear: ' goal-action-danger-ghost'
         };
-        const actions = getGoalSectionActionIds(goal.status).map((id) => ({
+        // 窄面板下按钮文案会被隐藏，只保留图标，因此每个动作都必须有对应图标
+        const actionIcons: Record<GoalActionId, string> = {
+            'edit-start': 'fa-pen',
+            pause: 'fa-pause',
+            resume: 'fa-play',
+            'create-new': 'fa-plus',
+            clear: 'fa-trash'
+        };
+        const renderActionButton = (action: { id: GoalActionId; label: string; cls: string; icon: string }) =>
+            `<button type="button" class="goal-action-btn${action.cls}" data-goal-action="${escapeHtml(action.id)}" title="${escapeHtml(action.label)}"><i class="fa-solid ${action.icon} goal-action-icon" aria-hidden="true"></i><span class="goal-action-label">${escapeHtml(action.label)}</span></button>`;
+        const actionEntries = getGoalSectionActionIds(goal.status).map((id) => ({
             id,
             label: actionLabels[id],
-            cls: actionClasses[id]
+            cls: actionClasses[id],
+            icon: actionIcons[id]
         }));
+        // 创建目标是全局动作留在头部，其余针对当前目标的动作放进目标卡片右下角
+        const headerActions = actionEntries.filter((action) => action.id === 'create-new');
+        const cardActions = actionEntries.filter((action) => action.id !== 'create-new');
         const attemptsText = typeof goal.attempts === 'number' ? String(goal.attempts) : '-';
         const disclosureState = this._getGoalDisclosureState(goal.id);
         const criteriaHtml =
@@ -676,6 +690,7 @@ export class TaskArtifactsGoalController {
                 </details>`
                 : '';
         const editUnavailableMessage = this._getGoalEditUnavailableMessage();
+        const isCleared = goal.status === 'cleared';
         const objectiveHtml = this._goalEditing
             ? `<div class="goal-objective-editor">
                 <label class="goal-form-label">${escapeHtml(this._t('goal.renderer.objective_label'))}</label>
@@ -685,32 +700,38 @@ export class TaskArtifactsGoalController {
                     <button type="button" class="goal-action-btn" data-goal-action="edit-save"${this._goalEditPending ? ' disabled' : ''}>${escapeHtml(this._t('goal.renderer.save'))}</button>
                 </div>
             </div>`
-            : `<button type="button" class="goal-objective goal-text" data-goal-action="edit-start"${editUnavailableMessage ? ' aria-disabled="true"' : ''}>${escapeHtml(goal.objective || '')}</button>`;
+            : `<button type="button" class="goal-objective goal-text${isCleared ? ' goal-objective-cleared' : ''}" data-goal-action="edit-start"${editUnavailableMessage ? ' aria-disabled="true"' : ''}>${escapeHtml(goal.objective || '')}</button>`;
         const statusLabel = this._formatGoalLabel('goal.label.status', goal.status);
         const revisionLabel = this._t('goal.label.revision', { revision: goal.revision });
         return `
         <section class="goal-section" data-goal-id="${escapeHtml(goal.id)}">
             <div class="goal-header">
                 <div class="goal-title">
-                    <span>${escapeHtml(this._t('goal.renderer.followup_title'))}</span>
-                    <span class="goal-badge goal-${escapeHtml(goal.status)}"><i></i>${escapeHtml(statusLabel)} · ${escapeHtml(revisionLabel)}</span>
+                    <span class="goal-title-text">${escapeHtml(this._t('goal.renderer.followup_title'))}</span>
+                    ${
+                        isCleared
+                            ? ''
+                            : `<span class="goal-badge goal-${escapeHtml(goal.status)}"><i></i>${escapeHtml(statusLabel)} · ${escapeHtml(revisionLabel)}</span>`
+                    }
                 </div>
-                <div class="goal-actions">
-                    ${actions
-                        .map(
-                            (action) =>
-                                `<button type="button" class="goal-action-btn${action.cls}" data-goal-action="${escapeHtml(action.id)}">${escapeHtml(action.label)}</button>`
-                        )
-                        .join('')}
-                </div>
+                ${
+                    headerActions.length > 0
+                        ? `<div class="goal-actions">${headerActions.map(renderActionButton).join('')}</div>`
+                        : ''
+                }
             </div>
             <div class="goal-card">
                 <div class="goal-card-top">
                     <i class="fa-solid fa-bullseye" aria-hidden="true"></i>
-                    <span class="goal-card-label">${escapeHtml(this._t('goal.panel.title'))}</span>
+                    <span class="goal-card-label">${escapeHtml(this._t(isCleared ? 'goal.panel.cleared_title' : 'goal.panel.title'))}</span>
                     <span class="goal-rev-chip">${escapeHtml(revisionLabel)}</span>
                 </div>
                 ${objectiveHtml}
+                ${
+                    cardActions.length > 0 && !this._goalEditing
+                        ? `<div class="goal-card-actions">${cardActions.map(renderActionButton).join('')}</div>`
+                        : ''
+                }
             </div>
             <div class="goal-meta">
                 <span class="goal-meta-key">${escapeHtml(this._t('goal.renderer.attempts'))}</span>

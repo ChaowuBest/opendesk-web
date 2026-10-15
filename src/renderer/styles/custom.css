@@ -1979,6 +1979,8 @@ html[data-theme='dark'] .sb-chat-badge {
     position: relative;
     gap: 8px !important;
     padding: 0 14px 12px;
+    /* 以自身内容宽度作为容器查询上下文，侧边栏拖窄时让导航按钮退化为纯图标 */
+    container: sb-nav / inline-size;
 }
 .sb-nav-btn {
     flex: 1;
@@ -1987,6 +1989,7 @@ html[data-theme='dark'] .sb-chat-badge {
     justify-content: center;
     gap: 5px;
     padding: 8px 0;
+    white-space: nowrap;
     background: var(--od-bg-elevated);
     border: 1px solid var(--od-border);
     border-radius: 10px;
@@ -2005,6 +2008,15 @@ html[data-theme='dark'] .sb-chat-badge {
     background: #f3f4f6;
     border-color: #c4c8d0;
     box-shadow: 0 0 0 2px rgba(0, 0, 0, 0.04);
+}
+/*
+ * 空间不足时只保留图标：单个按钮需要 图标 14 + 间距 5 + 文案（「新任务」3 个 13px 汉字 ≈ 39）= 58px，
+ * 三个按钮加两个 8px 间距共需 190px，留余量后在 196px 以下收起文案（约等于侧边栏宽 224px）。
+ */
+@container sb-nav (max-width: 196px) {
+    .sb-nav-btn > [data-sidebar-label] {
+        display: none;
+    }
 }
 
 /* ---- Sidebar final task layout ---- */
@@ -2246,6 +2258,8 @@ html[data-theme='dark'] .sb-chat-badge {
     font-weight: 400;
 }
 .sb-task-list-header {
+    --sb-header-control-height: 25px;
+
     position: relative;
     z-index: 20;
     display: flex;
@@ -2267,13 +2281,15 @@ html[data-theme='dark'] .sb-chat-badge {
     display: flex;
     align-items: center;
     justify-content: center;
-    width: 25px;
-    height: 25px;
+    box-sizing: border-box;
+    width: var(--sb-header-control-height);
+    height: var(--sb-header-control-height);
     flex: none;
     padding: 0;
     margin-right: 2px;
     color: var(--od-text-muted);
     font-size: var(--fs-sm);
+    line-height: 1;
     cursor: pointer;
     background: var(--od-bg-elevated);
     border: 1px solid var(--od-border);
@@ -2292,10 +2308,13 @@ html[data-theme='dark'] .sb-chat-badge {
 .sb-view-menu > summary {
     display: flex;
     align-items: center;
+    box-sizing: border-box;
     gap: 5px;
-    padding: 4.5px 10px;
+    height: var(--sb-header-control-height);
+    padding: 0 10px;
     color: var(--od-text-muted);
     font-size: var(--fs-xs);
+    line-height: 1;
     cursor: pointer;
     background: var(--od-bg-elevated);
     border: 1px solid var(--od-border);

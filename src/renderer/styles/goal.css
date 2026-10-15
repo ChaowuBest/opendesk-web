@@ -10,8 +10,13 @@
 }
 
 .goal-header {
+    /* 作为窄面板自适应的查询容器：侧栏拖窄时据此切换图标模式 */
+    container-type: inline-size;
+    container-name: goal-header;
     display: flex;
     align-items: center;
+    /* 空间不足时让操作区整体换到下一行，而不是与标题互相挤压重叠 */
+    flex-wrap: wrap;
     gap: 8px;
     padding: 0 4px;
 }
@@ -19,11 +24,17 @@
 .goal-title {
     display: flex;
     align-items: center;
+    flex-wrap: wrap;
     gap: 8px;
     min-width: 0;
     font-size: var(--fs-base);
     font-weight: 600;
     color: #26262b;
+}
+
+/* 标题禁止逐字断行，宽度不足时由徽章换行让位 */
+.goal-title-text {
+    white-space: nowrap;
 }
 
 .goal-badge {
@@ -38,6 +49,9 @@
     color: #6f6f74;
     background: #f5f4f1;
     white-space: nowrap;
+    max-width: 100%;
+    overflow: hidden;
+    text-overflow: ellipsis;
 }
 .goal-badge i {
     width: 5px;
@@ -75,19 +89,39 @@
 .goal-actions {
     margin-left: auto;
     display: flex;
+    align-items: center;
+    flex-wrap: wrap;
     gap: 6px;
 }
 
 .goal-action-btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 5px;
     border: none;
     background: transparent;
     color: #6f6f74;
     border-radius: 999px;
-    padding: 4px 11px;
+    padding: 6px 11px;
     font-size: var(--fs-sm);
-    line-height: 1.3;
+    /* 行盒收到 1em，half-leading 对称分配，中文文案在药丸里才真正上下居中 */
+    line-height: 1;
+    white-space: nowrap;
     cursor: pointer;
     transition: all 0.15s;
+}
+
+.goal-action-icon {
+    flex: none;
+    /* Font Awesome 字体的行盒上下不对称，直接继承按钮行高会让图标视觉偏上；
+       固定 1em 盒子并强制居中，同时比文案略小一档 */
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    height: 1em;
+    line-height: 1;
+    font-size: 0.75em;
 }
 
 .goal-action-btn:hover {
@@ -116,8 +150,22 @@
     color: #de4433;
 }
 
+/* 窄面板：文案显示不完整时收起文案，只保留图标（完整文案由按钮 title 提示） */
+@container goal-header (max-width: 260px) {
+    .goal-header .goal-action-label {
+        display: none;
+    }
+
+    .goal-header .goal-action-btn {
+        padding: 7px 10px;
+    }
+}
+
 /* ── 目标卡片 ─────────────────────────────────────────── */
 .goal-card {
+    /* 卡片内操作区据此切换图标模式 */
+    container-type: inline-size;
+    container-name: goal-card;
     background: #fff;
     border: 1px solid #e7e7e3;
     border-radius: 14px;
@@ -128,6 +176,31 @@
     display: flex;
     flex-direction: column;
     gap: 8px;
+}
+
+/* 目标动作靠卡片右下角，空间不足时整行换行而不是挤压 */
+.goal-card-actions {
+    display: flex;
+    align-items: center;
+    justify-content: flex-end;
+    flex-wrap: wrap;
+    gap: 6px;
+}
+
+/* 已清除的目标用删除线表达失效，不再依赖灰色状态标签 */
+.goal-objective-cleared {
+    text-decoration: line-through;
+    text-decoration-color: rgba(38, 38, 43, 0.4);
+}
+
+@container goal-card (max-width: 220px) {
+    .goal-card-actions .goal-action-label {
+        display: none;
+    }
+
+    .goal-card-actions .goal-action-btn {
+        padding: 7px 10px;
+    }
 }
 
 .goal-card-top {
@@ -760,6 +833,9 @@
 :host([data-theme='dark']) .goal-objective,
 :host([data-theme='dark']) .goal-text {
     color: #ababab !important;
+}
+:host([data-theme='dark']) .goal-objective-cleared {
+    text-decoration-color: rgba(228, 228, 228, 0.4);
 }
 :host([data-theme='dark']) .goal-card {
     background: #1e1e1e !important;

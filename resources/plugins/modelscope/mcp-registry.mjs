@@ -10,9 +10,14 @@
  */
 
 const BASE_URL = 'https://www.modelscope.cn';
-const MCP_AGG_ENDPOINT = `${BASE_URL}/api/v1/dolphin/agg`;
+/**
+ * MCP 列表检索接口。注意不要用 /api/v1/dolphin/agg —— 该接口是聚合（分面统计 + 各桶 top N）接口，
+ * 会忽略 PageSize / PageNumber 固定返回同一批数据，翻页时导致列表反复出现相同条目。
+ */
+const MCP_SEARCH_ENDPOINT = `${BASE_URL}/api/v1/dolphin/mcpServers`;
 const REQUEST_TIMEOUT = 30000;
 const DEFAULT_LIMIT = 20;
+const MAX_PAGE_SIZE = 60;
 
 function toText(value) {
     return typeof value === 'string' ? value : '';
@@ -159,8 +164,8 @@ export function createModelScopeMcpRegistryDefinition(registryApi) {
         }
     }
 
-    async function fetchMcpAgg(body) {
-        return registryApi.fetch(MCP_AGG_ENDPOINT, {
+    async function fetchMcpList(body) {
+        return registryApi.fetch(MCP_SEARCH_ENDPOINT, {
             method: 'PUT',
             headers: {
                 'Content-Type': 'application/json',
@@ -224,8 +229,9 @@ export function createModelScopeMcpRegistryDefinition(registryApi) {
         async search(opts = {}) {
             const { query = '', page = 1, limit = DEFAULT_LIMIT } = opts;
 
+            const pageSize = Math.max(1, Math.min(limit, MAX_PAGE_SIZE));
             const body = {
-                PageSize: Math.min(limit, 60),
+                PageSize: pageSize,
                 PageNumber: page,
                 Query: query.trim(),
                 Criterion: []
@@ -234,10 +240,10 @@ export function createModelScopeMcpRegistryDefinition(registryApi) {
             try {
                 let res;
                 try {
-                    res = await fetchMcpAgg(body);
+                    res = await fetchMcpList(body);
                 } catch {
                     await initCookies();
-                    res = await fetchMcpAgg(body);
+                    res = await fetchMcpList(body);
                 }
 
                 if (!res.ok) throw new Error(`ModelScope API 请求失败: ${res.status}`);
@@ -257,7 +263,7 @@ export function createModelScopeMcpRegistryDefinition(registryApi) {
                 return {
                     mcps,
                     total: totalCount,
-                    hasMore: page * limit < totalCount,
+                    hasMore: page * pageSize < totalCount,
                     message: mcps.length > 0 ? `显示 ${mcps.length} / ${totalCount} 个结果` : undefined
                 };
             } catch (e) {
@@ -278,7 +284,7 @@ export function createModelScopeMcpRegistryDefinition(registryApi) {
             const parsedId = splitMcpId(id);
 
             const body = {
-                PageSize: 60,
+                PageSize: MAX_PAGE_SIZE,
                 PageNumber: 1,
                 Query: parsedId.name,
                 Criterion: []
@@ -287,10 +293,10 @@ export function createModelScopeMcpRegistryDefinition(registryApi) {
             try {
                 let res;
                 try {
-                    res = await fetchMcpAgg(body);
+                    res = await fetchMcpList(body);
                 } catch {
                     await initCookies();
-                    res = await fetchMcpAgg(body);
+                    res = await fetchMcpList(body);
                 }
 
                 if (!res.ok) return null;

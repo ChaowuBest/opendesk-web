@@ -23,10 +23,7 @@ import { createTerminalSystemPromptContribution } from '../prompt.js';
 
 const ExecuteZshArgsSchema = z.object({
     command: z.string().min(1, '命令不能为空').describe('要执行的ZSH命令'),
-    description: z
-        .string()
-        .optional()
-        .describe('对该命令意图的简短描述（5-15字），用于在界面中展示，如"列出当前目录文件"'),
+    description: z.string().describe('对该命令意图的简短描述（5-15字），用于在界面中展示，如"列出当前目录文件"'),
     workingDirectory: z.string().optional().describe('执行命令的工作目录，如果不指定则使用当前目录'),
     timeout: z.number().optional().describe('命令执行超时时间（毫秒），默认 30000ms（30秒）').default(30000)
 });

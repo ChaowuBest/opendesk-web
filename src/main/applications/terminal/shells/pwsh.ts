@@ -25,7 +25,7 @@ import { executeShellCommand, parseCdAndCommand, renderTerminalToolCall, renderT
 const createPwshArgsSchema = (sandboxed = false) =>
     z.object({
         command: z.string().min(1, t('pwsh.command.empty')).describe(t('pwsh.command')),
-        description: z.string().optional().describe(t('pwsh.intent')),
+        description: z.string().describe(t('pwsh.intent')),
         workingDirectory: z
             .string()
             .optional()

@@ -22,11 +22,11 @@ const MODELSCOPE_MODULE_PATH = path.resolve(
     '../../../../resources/plugins/modelscope/mcp-registry.mjs'
 );
 
-async function loadModelScopeDefinition() {
+async function loadModelScopeDefinition(fetchImpl: typeof fetchMock = fetchMock) {
     const module = (await import(`${pathToFileURL(MODELSCOPE_MODULE_PATH).href}?t=${Date.now()}`)) as {
         createModelScopeMcpRegistryDefinition: (registryApi: { fetch: typeof fetchMock }) => any;
     };
-    return module.createModelScopeMcpRegistryDefinition({ fetch: fetchMock as unknown as typeof fetch });
+    return module.createModelScopeMcpRegistryDefinition({ fetch: fetchImpl as unknown as typeof fetch });
 }
 
 function jsonResponse(data: unknown): Response {
@@ -125,7 +125,7 @@ describe('ModelScope MCP registry', () => {
             })
         );
         expect(fetchMock).toHaveBeenCalledWith(
-            'https://www.modelscope.cn/api/v1/dolphin/agg',
+            'https://www.modelscope.cn/api/v1/dolphin/mcpServers',
             expect.objectContaining({
                 method: 'PUT',
                 body: JSON.stringify({
@@ -165,6 +165,42 @@ describe('ModelScope MCP registry', () => {
         const result = await registry.search({ page: 1, limit: 30 });
 
         expect(result.mcps.map((mcp) => mcp.id)).toEqual(['demo/top-stars', 'demo/middle-stars', 'demo/low-stars']);
+    });
+
+    test('翻页时不会重复返回同一批 MCP', async () => {
+        // 复刻 ModelScope 线上接口契约：/dolphin/agg 是聚合接口，会忽略 PageSize / PageNumber
+        // 固定返回同一批 top 数据；只有 /dolphin/mcpServers 会真正按页切片。
+        // 早期实现请求了 agg，导致市场列表翻页时反复出现相同条目。
+        const all = Array.from({ length: 45 }, (_, index) => ({
+            Name: `server-${index + 1}`,
+            Path: 'demo',
+            ChineseName: `MCP ${index + 1}`,
+            Stars: 100 - index,
+            ServerConfig: [{ mcpServers: { demo: { command: 'node', args: ['server.js'] } } }]
+        }));
+        const apiFetch = jest.fn(async (input: string, init?: any) => {
+            const request = JSON.parse(init.body);
+            const isAgg = String(input).endsWith('/api/v1/dolphin/agg');
+            const pageSize = isAgg ? 10 : request.PageSize;
+            const pageNumber = isAgg ? 1 : request.PageNumber;
+            const start = (pageNumber - 1) * pageSize;
+            const bucket = { McpServers: all.slice(start, start + pageSize), TotalCount: all.length };
+            return jsonResponse({
+                Code: 200,
+                Message: 'success',
+                Data: isAgg ? { Data: { Mcp: bucket } } : { McpServer: bucket }
+            });
+        });
+
+        const registry = await loadModelScopeDefinition(apiFetch as unknown as typeof fetchMock);
+        const firstPage = await registry.search({ page: 1, limit: 20 });
+        const secondPage = await registry.search({ page: 2, limit: 20 });
+        const thirdPage = await registry.search({ page: 3, limit: 20 });
+
+        const ids = [...firstPage.mcps, ...secondPage.mcps, ...thirdPage.mcps].map((mcp) => mcp.id);
+        expect(ids).toHaveLength(45);
+        expect(new Set(ids).size).toBe(45);
+        expect(thirdPage.hasMore).toBe(false);
     });
 
     test('getDetail selects the exact Path and Name pair for duplicate names', async () => {
