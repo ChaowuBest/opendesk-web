@@ -1216,6 +1216,15 @@ class TaskArtifacts extends HTMLElement {
     }
 
     /**
+     * 外部调用：浏览器是否有可展示的内容（存在非 about:blank 的标签页）。
+     * 只剩一个 about:blank 标签页等同于没有标签页：画中画浮窗没有内容可展示，
+     * 宿主不应把它当作"浏览器正在使用"。
+     */
+    hasBrowserContent(): boolean {
+        return !!this._browser && this._browser.hasActiveContent();
+    }
+
+    /**
      * 根据浏览器标签页状态同步 _browserVisible。
      * 当所有标签页都只有 about:blank 时，浏览器视为非活跃状态（无绿色图标/无画中画）。
      */

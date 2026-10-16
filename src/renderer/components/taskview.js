@@ -46,6 +46,11 @@ import {
     mergeGoalSummary
 } from './taskview-goal/controller.js';
 
+/** 右侧面板展开/收起动画时长（与 _expandRightSidebar / _collapseRightSidebar 的 transition 保持一致） */
+const RIGHT_SIDEBAR_TRANSITION_MS = 280;
+/** 收起后显示画中画的兜底延时：过渡事件不触发时，等动画时长 + 一点缓冲，确保布局已落定 */
+const BROWSER_PIP_SHOW_FALLBACK_MS = RIGHT_SIDEBAR_TRANSITION_MS + 60;
+
 const SIDEBAR_TOGGLE_SVG =
     '<svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="3" width="12" height="10" rx="1.5"/><path d="M6.5 3v10"/></svg>';
 const EXPORT_OPEN_SVG =
@@ -435,6 +440,8 @@ class TaskView extends HTMLElement {
         this._pendingProcessScrollFollowTargets = new Map();
         /** @type {BrowserPip | null} 浏览器画中画浮窗 */
         this._browserPip = null;
+        /** @type {number | null} 侧边栏收起后延迟显示画中画的定时器 */
+        this._browserPipShowTimer = null;
         /** @type {number | null} 浏览器空闲销毁倒计时 */
         this._browserIdleTimer = null;
         /** @type {Array<{id: string, message: string, attachedFilePaths: string[], attachedImages: string[], selectedModel?: string, reasoningEffort?: string}>} 消息队列 */
@@ -3870,6 +3877,8 @@ class TaskView extends HTMLElement {
     }
 
     _expandRightSidebar(rightSidebar, resizer) {
+        // 展开过程中取消收起时排队的画中画显示，避免浮窗在展开态弹出
+        this._cancelBrowserPipShowTimer();
         const targetWidth = this._workspaceFocusLayout.getTargetPanelWidth();
         this._restoreRightSidebarFromOffscreen(rightSidebar);
         rightSidebar.style.display = '';
@@ -3970,6 +3979,9 @@ class TaskView extends HTMLElement {
                 resizer.style.transition = '';
                 resizer.style.opacity = '';
             }
+            // 收起动画结束、聊天区宽度已稳定，此时再显示浮窗
+            this._cancelBrowserPipShowTimer();
+            this._showBrowserPipIfNeeded();
         };
         rightSidebar.addEventListener('transitionend', onEnd);
 
@@ -3979,8 +3991,30 @@ class TaskView extends HTMLElement {
         if (this._browserPip) {
             this._browserPip.resetClosed();
         }
-        // 若浏览器已被使用，显示画中画浮窗
-        this._showBrowserPipIfNeeded();
+        // 等收起动画结束、聊天区宽度稳定后再显示浮窗：
+        // 动画期间按中间态算出的位置和大小都是错的
+        this._scheduleBrowserPipShow();
+    }
+
+    /**
+     * 收起动画结束后重新显示画中画浮窗。
+     * 过渡事件不可靠（元素不可见、宽度未发生变化时不会触发），因此按动画时长兜底。
+     */
+    _scheduleBrowserPipShow() {
+        this._cancelBrowserPipShowTimer();
+        this._browserPipShowTimer = setTimeout(() => {
+            this._browserPipShowTimer = null;
+            // 动画期间又被展开：保持展开态，不弹浮窗
+            if (this._rightSidebarExpanded) return;
+            this._showBrowserPipIfNeeded();
+        }, BROWSER_PIP_SHOW_FALLBACK_MS);
+    }
+
+    _cancelBrowserPipShowTimer() {
+        if (this._browserPipShowTimer !== null) {
+            clearTimeout(this._browserPipShowTimer);
+            this._browserPipShowTimer = null;
+        }
     }
 
     _autoSwitchTabIfEmpty(_sidebar) {
@@ -3991,11 +4025,12 @@ class TaskView extends HTMLElement {
      * 初始化浏览器画中画浮窗。在 init() 渲染完成后调用。
      */
     _initBrowserPip() {
-        // 浮窗挂载在聊天历史滚动区域的外层 relative 容器内
-        const chatWrapper = this.querySelector('#taskview-chat-history')?.parentElement;
-        if (!chatWrapper) return;
+        // 浮窗挂在内容行上：默认位置要落到输入框上方，挂在聊天滚动区会被其 overflow:hidden 裁掉底部
+        const contentRow = this.querySelector(`#task-${this.task_id}-content-row`);
+        const host = contentRow || this.querySelector('#taskview-chat-history')?.parentElement;
+        if (!host) return;
 
-        this._browserPip = new BrowserPip(chatWrapper, {
+        this._browserPip = new BrowserPip(host, {
             onRestore: () => {
                 if (this._browserPip) this._browserPip.hide();
                 const sidebar = this._getRightSidebarEl();
@@ -4004,6 +4039,13 @@ class TaskView extends HTMLElement {
                 }
                 this._forceExpandRightSidebar();
                 this._updateSidebarToggleIcon(true);
+            },
+            getAnchorRect: () => {
+                const input = this.querySelector(`#task-${this.task_id}-input`);
+                const box = input?.querySelector('#agent-input-container') || input;
+                if (!box) return null;
+                const rect = box.getBoundingClientRect();
+                return { top: rect.top, right: rect.right, width: rect.width };
             },
             capturePage: async () => {
                 const sidebar = this._getRightSidebarEl();
@@ -4036,12 +4078,19 @@ class TaskView extends HTMLElement {
     }
 
     /**
-     * 若侧边栏已收起且浏览器已被使用（且浮窗未被手动关闭），则显示画中画浮窗。
+     * 若侧边栏已收起、浏览器确有可展示的内容（非空白标签页）且浮窗未被手动关闭，则显示画中画浮窗。
+     * 只剩 about:blank 标签页时（等同于没有标签页）不弹浮窗；已显示的浮窗也随之收起，
+     * 避免浮窗只显示一个空白占位。
      */
     _showBrowserPipIfNeeded() {
         const sidebar = this._getRightSidebarEl();
-        if (!sidebar || typeof sidebar.isBrowserVisible !== 'function') return;
-        if (!sidebar.isBrowserVisible()) return;
+        const hasContent = !!sidebar && typeof sidebar.hasBrowserContent === 'function' && sidebar.hasBrowserContent();
+        if (!hasContent) {
+            if (this._browserPip) {
+                this._browserPip.hide();
+            }
+            return;
+        }
 
         if (!this._browserPip) {
             this._initBrowserPip();
@@ -4097,9 +4146,11 @@ class TaskView extends HTMLElement {
     _ensureRightSidebarOpen() {
         if (!this._rightSidebarExpanded) {
             const sidebar = this._getRightSidebarEl();
-            const browserActive =
-                sidebar && typeof sidebar.isBrowserVisible === 'function' && sidebar.isBrowserVisible();
-            if (browserActive) {
+            // 只有空白标签页时等同于浏览器还没用起来：应展开侧边栏展示即将到来的内容，
+            // 而不是留在折叠状态里靠画中画显示一个空白页。
+            const browserInUse =
+                sidebar && typeof sidebar.hasBrowserContent === 'function' && sidebar.hasBrowserContent();
+            if (browserInUse) {
                 // 浏览器已激活且侧边栏收起，尝试显示画中画（用户已关闭则不弹出）
                 // 不展开侧边栏，让浏览器工具在后台继续运行
                 this._showBrowserPipIfNeeded();
@@ -5979,6 +6030,7 @@ class TaskView extends HTMLElement {
         this._goalController.disconnect();
         this._workspaceFocusLayout.dispose();
         this._cancelBrowserIdleTimer();
+        this._cancelBrowserPipShowTimer();
         if (this._browserPip) {
             this._browserPip.destroy();
             this._browserPip = null;
