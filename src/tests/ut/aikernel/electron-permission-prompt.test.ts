@@ -80,6 +80,7 @@ jest.unstable_mockModule('../../../main/utils/logger.js', () => ({
 
 const { ElectronPermissionPromptProvider } = await import('../../../main/aikernel/security/electronPrompt');
 const { MAIN_AGENT_STANDARD_MODE } = await import('../../../main/aikernel/agents/main/modes/standard.js');
+const { MAIN_AGENT_SOLO_MODE } = await import('../../../main/aikernel/agents/main/modes/solo.js');
 const { MAIN_AGENT_UNLIMITED_MODE } = await import('../../../main/aikernel/agents/main/modes/unlimited.js');
 const { GlobPermissionEnforcer } = await import('../../../main/aikernel/security/enforcer');
 const { HarnessContext } = await import('../../../main/aikernel/security/harness.js');
@@ -311,6 +312,30 @@ describe('ElectronPermissionPromptProvider queue', () => {
 
         await expect(prompt).resolves.toEqual({ decision: 'allow', rememberScope: 'none' });
         expect(task.activeModeId).toBe(MAIN_AGENT_UNLIMITED_MODE.id);
+        expect(
+            sentMessages.some(
+                (msg) => msg.channel === 'permission:dismiss' && msg.args[0] === permissionRequests()[0].requestId
+            )
+        ).toBe(true);
+    });
+
+    test('switching an Electron task from standard to solo dismisses its current permission prompt', async () => {
+        const provider = createProvider();
+        const manager = new TaskManagerState();
+        const task = new TaskState(manager);
+        task.task_id = 'task-1';
+        task.harnessContext = await HarnessContext.createForMode('/workspace', MAIN_AGENT_STANDARD_MODE);
+        task.harnessContext.permissionPrompt = provider;
+        task.activeModeId = MAIN_AGENT_STANDARD_MODE.id;
+        const prompt = provider.prompt([readRequest('/outside-workspace/secret.txt')], 'readFile', [], {
+            taskId: task.task_id,
+            taskName: 'Task 1'
+        });
+
+        await replaceTaskHarnessForMode(task, '/workspace', MAIN_AGENT_SOLO_MODE, () => provider);
+
+        await expect(prompt).resolves.toEqual({ decision: 'allow', rememberScope: 'none' });
+        expect(task.activeModeId).toBe(MAIN_AGENT_SOLO_MODE.id);
         expect(
             sentMessages.some(
                 (msg) => msg.channel === 'permission:dismiss' && msg.args[0] === permissionRequests()[0].requestId

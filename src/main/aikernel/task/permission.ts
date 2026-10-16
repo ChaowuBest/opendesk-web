@@ -210,6 +210,26 @@ export async function promptPermissionBatchForTask(
     if (pluginDecision === 'deny') {
         return { decision: 'deny', rememberScope: 'none', denyReason: 'user_denied' };
     }
+
+    // 权限检查与弹窗之间存在时间差：用户可能在检查结束后切换运行模式、写回持久规则，
+    // 并发工具调用的其余权限组也可能在模式切换之后才走到这里。此时用当前引擎复核一次，
+    // 复核范围与首次检查一致（工具调用级 + 声明权限两级），已全部放通的请求直接返回
+    // allow，避免弹出用户无法理解、也无法正确响应的过期确认框。
+    const currentEnforcer = task.harnessContext.permission;
+    if (currentEnforcer) {
+        const recheckContextual = currentEnforcer.checkToolCall
+            ? await currentEnforcer.checkToolCall({
+                  toolName,
+                  args: toolCall.args_object ?? {},
+                  workspace: task.getWorkspace()
+              })
+            : [];
+        const recheckDeclared = await currentEnforcer.checkAllDetailed(requests);
+        if ([...recheckContextual, ...recheckDeclared].every((result) => result.effect === 'allow')) {
+            return { decision: 'allow', rememberScope: 'none' };
+        }
+    }
+
     const promptProvider = task.harnessContext.permissionPrompt;
     if (!promptProvider) {
         logger.warn(`permission ask required but no prompt provider configured, defaulting to deny`);
