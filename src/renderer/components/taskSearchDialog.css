@@ -20,6 +20,8 @@
     --search-muted: #777;
     --search-hover: #f3f3f3;
     --search-border: #dedede;
+    --search-scrollbar: rgba(0, 0, 0, 0.14);
+    --search-scrollbar-hover: rgba(0, 0, 0, 0.24);
     width: min(560px, calc(100vw - 24px));
     max-width: none;
     max-height: min(560px, calc(100dvh - var(--search-top) - 24px));
@@ -46,6 +48,8 @@ html[data-theme='dark'] .od-task-search {
     --search-muted: #999;
     --search-hover: #393939;
     --search-border: #424242;
+    --search-scrollbar: rgba(255, 255, 255, 0.18);
+    --search-scrollbar-hover: rgba(255, 255, 255, 0.28);
 }
 .od-task-search-top {
     display: flex;
@@ -108,7 +112,23 @@ html[data-theme='dark'] .od-task-search {
     overflow-y: auto;
     min-height: 0;
     overscroll-behavior: contain;
-    scrollbar-width: thin;
+}
+/* 滚动条对齐 TaskView 聊天历史规格：6px 细条 + 透明轨道 + 半透明 thumb。
+   未定义时回退系统默认滚动条，深色主题下是带箭头的粗白条。
+   width 约束纵向、height 约束横向，缺一会回退到系统默认粗细。 */
+.od-task-search-scroll::-webkit-scrollbar {
+    width: 6px;
+    height: 6px;
+}
+.od-task-search-scroll::-webkit-scrollbar-track {
+    background: transparent;
+}
+.od-task-search-scroll::-webkit-scrollbar-thumb {
+    background: var(--search-scrollbar);
+    border-radius: 3px;
+}
+.od-task-search-scroll::-webkit-scrollbar-thumb:hover {
+    background: var(--search-scrollbar-hover);
 }
 .od-task-search-result {
     display: block;

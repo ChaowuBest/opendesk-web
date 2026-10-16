@@ -12,7 +12,10 @@ beforeAll(() => {
             this.setAttribute('open', '');
         },
         close() {
+            // 与真实 <dialog> 一致：仅在 open 时移除 open 属性并排队 close 事件
+            if (!this.hasAttribute('open')) return;
             this.removeAttribute('open');
+            this.dispatchEvent(new window.Event('close'));
         }
     });
 });
@@ -179,4 +182,43 @@ test('list updates cannot postpone a query and index changes refresh without pol
     dialog.hide();
     indexChanged();
     expect(search).toHaveBeenCalledTimes(2);
+});
+
+test('closes on the first Esc instead of swallowing the cancel event', () => {
+    const search = jest.fn<any>().mockResolvedValue(response('one'));
+    setup(search);
+    const element = document.querySelector('dialog')!;
+    element.dispatchEvent(new window.Event('cancel', { cancelable: true }));
+    expect(element.hasAttribute('open')).toBe(false);
+    expect(element.isConnected).toBe(false);
+});
+
+test('reopens after the dialog was closed natively without hide()', () => {
+    const search = jest.fn<any>().mockResolvedValue(response('one'));
+    setup(search);
+    const element = document.querySelector('dialog')!;
+    // 模拟 Chromium 对连续 Esc 的强制关闭：绕过 hide()，open 移除并触发 close 事件
+    element.close();
+    element.dispatchEvent(new window.Event('close'));
+    dialog.show();
+    expect(document.querySelector('dialog')?.hasAttribute('open')).toBe(true);
+    expect(document.querySelector('dialog')?.isConnected).toBe(true);
+});
+
+test('ignores backdrop clicks within the opening guard window', () => {
+    jest.useFakeTimers({ legacyFakeTimers: true });
+    const search = jest.fn<any>().mockResolvedValue(response('one'));
+    setup(search);
+    const element = document.querySelector('dialog')!;
+    const clickOutside = () => {
+        const event = new window.Event('click', { bubbles: true });
+        Object.assign(event, { clientX: 9999, clientY: 9999 });
+        element.dispatchEvent(event);
+    };
+    // 双击搜索框的第二次点击会落在刚打开浮层的遮罩上，保护期内应被忽略
+    clickOutside();
+    expect(element.hasAttribute('open')).toBe(true);
+    jest.advanceTimersByTime(400);
+    clickOutside();
+    expect(element.hasAttribute('open')).toBe(false);
 });
