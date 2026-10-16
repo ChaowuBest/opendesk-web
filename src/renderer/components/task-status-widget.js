@@ -945,6 +945,7 @@ export class TaskStatusWidget extends HTMLElement {
         /** 是否已收到首份摘要数据（在此之前展示加载视图）。 */
         this._dataReady = false;
         this._listSignature = '';
+        this._collapsedSignature = '';
         this._buildDOM();
     }
 
@@ -1515,6 +1516,15 @@ export class TaskStatusWidget extends HTMLElement {
         const tasks = this._summary.tasks || [];
         const running = tasks.filter((task) => task.task_status === 'running' || task.task_status === 'waiting').length;
         const completed = tasks.filter((task) => task.task_status === 'completed').length;
+
+        // 胶囊仅展示运行/完成计数与状态指示，不展示 token 用量等明细：
+        // 计数未变化时跳过重建，避免高频 summary 推送（如 token 用量变化）反复重建
+        // spin 元素导致转圈动画不断重启（红色弧线停在固定角度闪烁）。
+        const signature = `${running}|${completed}`;
+        if (signature === this._collapsedSignature && this._collapsedView.children.length > 0) {
+            return;
+        }
+        this._collapsedSignature = signature;
 
         this._collapsedView.textContent = '';
 
