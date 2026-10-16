@@ -165,12 +165,6 @@ export function getSidebarRunningTasks(tasks: SidebarTask[], now: Date = new Dat
     return [...runningItems, ...recentlyCompletedItems];
 }
 
-export function buildSidebarSearchResults(tasks: SidebarTask[]): SidebarTaskTreeItem[] {
-    const rootItems = buildRootItems(tasks);
-    const results = rootItems.filter((item) => item.task.task_status !== 'running');
-    return sortTreeItems(results);
-}
-
 export function buildSidebarFavoritesResults(tasks: SidebarTask[]): SidebarTaskTreeItem[] {
     const rootItems = buildRootItems(tasks);
     return sortTreeItems(rootItems);

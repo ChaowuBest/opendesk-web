@@ -20,7 +20,6 @@ import { fixedLayerOrigin, visibleViewportRect } from '../utils/window-frame.js'
 import {
     buildSidebarFavoritesResults,
     buildSidebarTaskGroups,
-    buildSidebarSearchResults,
     getSidebarRecentTasks,
     getSidebarRunningTasks,
     isSidebarTaskVisible,
@@ -28,6 +27,7 @@ import {
 } from '../sidebarTaskGroups.js';
 import { captureSidebarScrollState, restoreSidebarScrollState } from '../sidebarScrollState.js';
 import { TaskListRefreshScheduler } from './taskListRefreshScheduler.js';
+import { TaskSearchDialog } from './taskSearchDialog.js';
 
 const TASK_PAGE_SIZE = 30;
 const TASK_VIEW_STORAGE_KEY = 'opendesk-sidebar-task-view';
@@ -69,7 +69,6 @@ class SideBar extends HTMLElement {
          */
         this.currentTaskId = null;
         this.taskList = [];
-        this._searchQuery = '';
         /** 正在等待用户确认的任务 ID 集合 */
         this._waitingTaskIds = new Set();
         /** 浏览器处于活跃状态的任务 ID 集合 */
@@ -277,6 +276,8 @@ class SideBar extends HTMLElement {
     }
 
     disconnectedCallback() {
+        this._taskSearchDialog?.destroy();
+        this._taskSearchDialog = null;
         this._dismissRecentTasksMenu();
         if (this._chatBadgeTimer) {
             clearTimeout(this._chatBadgeTimer);
@@ -454,17 +455,29 @@ class SideBar extends HTMLElement {
 
         const searchInput = this.querySelector('#task-search-input');
         const searchClear = this.querySelector('#task-search-clear');
-        searchInput.addEventListener('input', () => {
-            this._searchQuery = searchInput.value.trim();
-            searchClear.style.display = this._searchQuery ? 'flex' : 'none';
-            this.reloadTaskList();
-        });
-        searchClear.addEventListener('click', () => {
-            searchInput.value = '';
-            this._searchQuery = '';
-            searchClear.style.display = 'none';
-            this.reloadTaskList();
-            searchInput.focus();
+        searchInput.readOnly = true;
+        searchInput.setAttribute('aria-haspopup', 'dialog');
+        searchClear.style.display = 'none';
+        searchInput.addEventListener('click', () => {
+            if (!this._taskSearchDialog) {
+                this._taskSearchDialog = new TaskSearchDialog({
+                    getTasks: () => this.taskList,
+                    search: (query, limit) => window.taskManagerAPI.searchTasks(query, limit),
+                    subscribe: (callback) => window.taskManagerAPI.subscribeSearchUpdates(callback),
+                    translate: (key) => this._t(key),
+                    open: async (hit) => {
+                        await window.globalControlAPI.openTask(hit.taskId);
+                        if (!hit.messageId) return;
+                        const taskView = [...document.querySelectorAll('task-view')].find(
+                            (view) => view.getAttribute('task_id') === hit.taskId
+                        );
+                        if (!taskView || !(await taskView.scrollToMessage(hit.messageId, { behavior: 'instant' }))) {
+                            throw new Error('Search message is no longer available');
+                        }
+                    }
+                });
+            }
+            this._taskSearchDialog.show();
         });
 
         const appsBtn = this.querySelector('#open-apps-btn');
@@ -1249,16 +1262,7 @@ class SideBar extends HTMLElement {
     }
 
     _getFilteredTaskList() {
-        const list = this.taskList.filter((task) => this._isTaskVisible(task));
-        if (this._searchQuery) {
-            const query = this._searchQuery.toLowerCase();
-            return list.filter((task) => {
-                const name = (task.task_name || '').toLowerCase();
-                const workspace = (task.workspace || '').toLowerCase();
-                return name.includes(query) || workspace.includes(query);
-            });
-        }
-        return list;
+        return this.taskList.filter((task) => this._isTaskVisible(task));
     }
 
     _isTaskVisible(task) {
@@ -2317,27 +2321,6 @@ class SideBar extends HTMLElement {
             <span class="sb-group-caret" aria-hidden="true">${CHEVRON_SVG}</span>`;
     }
 
-    _buildSearchResultList(items) {
-        const limit = this._groupDisplayLimits.get('search-results') ?? TASK_PAGE_SIZE;
-        const visibleItems = items.slice(0, limit);
-        const taskRows = visibleItems.map((item) => this._buildSidebarTaskRow(item)).join('');
-        const hasMore = visibleItems.length < items.length;
-        return `
-        <div class="sb-task-group is-search" data-group-id="search-results">
-            <div class="sb-task-group-body">
-                ${taskRows}
-                ${
-                    hasMore
-                        ? `<div class="sb-load-more" data-group-id="search-results">
-                               <i aria-hidden="true"></i>
-                               ${this._t('renderer.sidebar.loadMore')}
-                           </div>`
-                        : ''
-                }
-            </div>
-        </div>`;
-    }
-
     _buildFavoritesList(items) {
         const limit = this._groupDisplayLimits.get('favorites') ?? TASK_PAGE_SIZE;
         const visibleItems = items.slice(0, limit);
@@ -2587,23 +2570,16 @@ class SideBar extends HTMLElement {
         this._disconnectGroupScrollObservers();
         const filteredTasks = this._getFilteredTaskList();
         const runningTasks = getSidebarRunningTasks(filteredTasks);
-        const isSearching = Boolean(this._searchQuery);
 
         let groups;
-        let searchResults;
         let favoritesResults;
         let historyCount;
 
-        if (isSearching) {
-            searchResults = buildSidebarSearchResults(filteredTasks);
-            historyCount = searchResults.length;
-        } else if (this._favoritesView) {
-            this._groupDisplayLimits.delete('search-results');
+        if (this._favoritesView) {
             const favoritedTasks = filteredTasks.filter((t) => this._favoritedTaskIds.has(t.task_id));
             favoritesResults = buildSidebarFavoritesResults(favoritedTasks);
             historyCount = favoritesResults.length;
         } else {
-            this._groupDisplayLimits.delete('search-results');
             this._groupDisplayLimits.delete('favorites');
             groups = buildSidebarTaskGroups(filteredTasks, this._taskView);
             historyCount = groups.reduce((total, group) => total + group.items.length, 0);
@@ -2629,11 +2605,7 @@ class SideBar extends HTMLElement {
         const groupsContainer = taskListContainer.querySelector('.sb-task-groups');
         this._updateRunningZone(runningZone, runningTasks);
 
-        if (isSearching) {
-            listHeader.innerHTML = `<span>${this._t('renderer.sidebar.searchResults')} · ${historyCount}</span>`;
-            groupsContainer.className = 'sb-task-groups is-search-view';
-            groupsContainer.innerHTML = this._buildSearchResultList(searchResults);
-        } else if (this._favoritesView) {
+        if (this._favoritesView) {
             listHeader.innerHTML = `
                 <span>${this._t('renderer.sidebar.favorites')} · ${historyCount}</span>
                 <button class="sb-fav-toggle is-active" data-favorites-toggle aria-label="收藏夹">

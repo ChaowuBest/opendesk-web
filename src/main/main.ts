@@ -12,6 +12,9 @@
 declare const __BUILD_TIME__: string;
 declare const __IS_DEV__: boolean;
 
+import { TaskSearchService } from './services/task-search/service.js';
+import { TASK_SEARCH_MAX_QUERY, TASK_SEARCH_MAX_RESULTS } from '../common/task-search.js';
+
 import {
     app,
     BrowserWindow,
@@ -58,7 +61,7 @@ import {
     dropDeprecatedLogs,
     getLogFilename
 } from './utils/logger.js';
-import { safeSendToWebContents, safeSendToWebFrame } from './utils/electron-ipc.js';
+import { broadcastToAllWindows, safeSendToWebContents, safeSendToWebFrame } from './utils/electron-ipc.js';
 import { createMainWindowCloseHandler } from './utils/window-close.js';
 import { installMainWindowNavigationGuard } from './utils/main-window-navigation.js';
 import { createReloadBudget, createWindowRecoveryController } from './utils/window-recovery.js';
@@ -1274,6 +1277,59 @@ const registerUsageAPIHandlers = () => {
 const registerTaskManagerAPIHandlers = () => {
     const globalState = GlobalState.getInstance();
     registerTaskTransferHandlers(globalState.taskManagerState, () => globalMainWindow, taskTransfer);
+    const taskSearch = new TaskSearchService(
+        getTaskDirectory(),
+        path.join(getOpendeskDirectory(), 'task-search-v1.sqlite'),
+        {
+            onChange: (unavailable) => broadcastToAllWindows('taskManager:searchChanged', unavailable === true),
+            onError: (error) => logger.warn(`Task search worker failed: ${error.stack || error.message}`)
+        }
+    );
+    try {
+        taskSearch.start();
+    } catch (error) {
+        logger.warn(`Task search initialization failed: ${error}`);
+    }
+    app.once('will-quit', () => void taskSearch.dispose());
+    ipcMain.on('taskManager:refreshSearchIndex', () => {
+        try {
+            taskSearch.refresh();
+        } catch (error) {
+            logger.warn(`Task search refresh failed: ${error}`);
+        }
+    });
+    ipcMain.handle('taskManager:searchTasks', async (_event, query: unknown, limit: unknown) => {
+        if (
+            typeof query !== 'string' ||
+            query.length > TASK_SEARCH_MAX_QUERY ||
+            typeof limit !== 'number' ||
+            !Number.isInteger(limit) ||
+            limit < 1 ||
+            limit > TASK_SEARCH_MAX_RESULTS
+        ) {
+            return { status: 'error' };
+        }
+        try {
+            const data = await taskSearch.search(query, limit, _event.sender.id);
+            // Recheck live metadata without loading any task history. Deleted/internal
+            // tasks must not leak through an index that is still being refreshed.
+            const visible = new Map(
+                globalState.taskManagerState.tasks
+                    .filter((task) => task.internal !== true && Boolean(task.task_name?.trim() || task.name_pending))
+                    .map((task) => [task.task_id, task])
+            );
+            data.items = data.items
+                .filter((item) => visible.has(item.taskId))
+                .map((item) => {
+                    const task = visible.get(item.taskId)!;
+                    return { ...item, title: task.task_name || '', workspace: task.workspace || '' };
+                });
+            return { status: 'ok', data };
+        } catch (error) {
+            logger.warn(`Task search failed: ${error}`);
+            return { status: 'error' };
+        }
+    });
 
     // session memory 渲染缓存：内容未变化时直接复用上次 rendered，
     // 省去周期性轮询的重复 parse 开销。任务删除时一并清理，避免条目长期驻留。

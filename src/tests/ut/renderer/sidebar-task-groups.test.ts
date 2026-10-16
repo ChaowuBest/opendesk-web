@@ -1,6 +1,5 @@
 import {
     buildSidebarFavoritesResults,
-    buildSidebarSearchResults,
     buildSidebarTaskGroups,
     getSidebarRecentRootTasks,
     getSidebarRecentTasks,
@@ -288,53 +287,8 @@ describe('sidebar task grouping', () => {
     });
 });
 
-describe('sidebar search results', () => {
-    test('returns a flat list without grouping and excludes running tasks', () => {
-        const tasks = [
-            task('today', '2026-07-29T09:00:00'),
-            task('this-week', '2026-07-27T09:00:00'),
-            task('earlier', '2026-07-19T09:00:00'),
-            task('automatic', '2026-07-29T08:00:00', { internal: true }),
-            task('running', '2026-07-29T11:00:00', { task_status: 'running' })
-        ];
-
-        const results = buildSidebarSearchResults(tasks);
-
-        expect(results.map((item) => item.task.task_id)).toEqual(['today', 'automatic', 'this-week', 'earlier']);
-    });
-
-    test('orders results by latest activity timestamp across all categories', () => {
-        const tasks = [
-            task('old-created-recently-updated', '2026-07-19T09:00:00', {
-                updated_at: '2026-07-29T11:00:00'
-            }),
-            task('today', '2026-07-29T09:00:00'),
-            task('automatic-task', '2026-07-29T08:00:00', { internal: true })
-        ];
-
-        const results = buildSidebarSearchResults(tasks);
-
-        expect(results.map((item) => item.task.task_id)).toEqual([
-            'old-created-recently-updated',
-            'today',
-            'automatic-task'
-        ]);
-    });
-
-    test('returns empty array when all tasks are running', () => {
-        const tasks = [
-            task('running-1', '2026-07-29T10:00:00', { task_status: 'running' }),
-            task('running-2', '2026-07-29T11:00:00', { task_status: 'running' })
-        ];
-
-        const results = buildSidebarSearchResults(tasks);
-
-        expect(results).toEqual([]);
-    });
-});
-
 describe('sidebar favorites results', () => {
-    test('includes running tasks unlike search results', () => {
+    test('includes running tasks', () => {
         const tasks = [
             task('stopped', '2026-07-29T09:00:00'),
             task('running', '2026-07-29T11:00:00', { task_status: 'running' })
