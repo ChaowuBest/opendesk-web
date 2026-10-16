@@ -17,6 +17,9 @@ const STABLE_VERSION = /^(\d+)\.(\d+)\.(\d+)$/;
 const SHA256 = /^[a-f\d]{64}$/i;
 type ReleaseTrustMode = 'strict' | 'trusted-source';
 
+/** 更新包目标架构：process.arch 在 Windows 上只有 x64 / arm64 两种发布形态 */
+export type UpdaterTargetArch = 'x64' | 'arm64';
+
 function parseVersion(version: string): [number, number, number] {
     const match = STABLE_VERSION.exec(version);
     if (!match) {
@@ -39,10 +42,39 @@ function validateUrl(value: unknown): string {
     return validateUpdateUrl(value, 'Update installer URL').toString();
 }
 
+/**
+ * 官网 news 页安装包链接识别。x64 目标同时接受 x86 与 x64 标记
+ * （官网 win-x86 包实际内嵌 x64 MSI），arm64 目标只接受 arm64 标记。
+ */
+function isNativeInstallerLink(href: string, label: string, targetArch: UpdaterTargetArch): boolean {
+    if (targetArch === 'arm64') {
+        return /windows\s*arm64/i.test(label) || /win[-_]?arm64/i.test(href);
+    }
+    return /windows\s*x(86|64)/i.test(label) || /win[-_]?x(86|64)/i.test(href);
+}
+
+/** arm64 目标在 feed 未发布原生包时（如 0.3.6 及更早）回退 x86 包，保持可更新 */
+function isLegacyX86InstallerLink(href: string, label: string): boolean {
+    return /windows\s*x86/i.test(label) || /win[-_]?x86/i.test(href);
+}
+
+function selectNewsInstallerLink(
+    candidates: { href: string; label: string }[],
+    targetArch: UpdaterTargetArch
+): { href: string; label: string } | undefined {
+    const native = candidates.find((candidate) => isNativeInstallerLink(candidate.href, candidate.label, targetArch));
+    if (native) return native;
+    if (targetArch === 'arm64') {
+        return candidates.find((candidate) => isLegacyX86InstallerLink(candidate.href, candidate.label));
+    }
+    return undefined;
+}
+
 export function parseNewsReleasePage(
     html: string,
     pageUrl: string,
-    trustMode: ReleaseTrustMode = 'strict'
+    trustMode: ReleaseTrustMode = 'strict',
+    targetArch: UpdaterTargetArch = 'x64'
 ): UpdateRelease {
     const { document } = parseHTML(html);
     let latestRelease: UpdateRelease | undefined;
@@ -53,17 +85,20 @@ export function parseNewsReleasePage(
         if (!title || !version) continue;
         parseVersion(version);
 
-        const installerLink = Array.from(item.querySelectorAll('.release-downloads a')).find((candidate) => {
-            const href = candidate.getAttribute('href') || '';
-            const label = candidate.textContent || '';
-            return href.toLowerCase().endsWith('.exe') && (/windows\s*x86/i.test(label) || /win[-_]?x86/i.test(href));
-        });
-        const href = installerLink?.getAttribute('href');
+        const exeLinks = Array.from(item.querySelectorAll('.release-downloads a'))
+            .map((candidate) => ({
+                href: candidate.getAttribute('href') || '',
+                label: candidate.textContent || '',
+                checksum: candidate.getAttribute('data-sha256')?.trim().toLowerCase()
+            }))
+            .filter((candidate) => candidate.href.toLowerCase().endsWith('.exe'));
+        const installerLink = selectNewsInstallerLink(exeLinks, targetArch);
+        const href = installerLink?.href;
         if (!installerLink || !href) continue;
 
         const installerUrl = validateUrl(new URL(href, pageUrl).toString());
         const installerName = validateInstallerName(undefined, installerUrl);
-        const rawChecksum = installerLink.getAttribute('data-sha256')?.trim().toLowerCase();
+        const rawChecksum = installerLink.checksum;
         if (rawChecksum && !SHA256.test(rawChecksum) && trustMode === 'strict') {
             throw new Error('Update news page contains an invalid SHA-256 checksum');
         }
@@ -77,7 +112,7 @@ export function parseNewsReleasePage(
         if (!latestRelease || compareVersions(release.version, latestRelease.version) > 0) latestRelease = release;
     }
 
-    if (!latestRelease) throw new Error('Update news page does not contain a stable Windows x86 release');
+    if (!latestRelease) throw new Error(`Update news page does not contain a stable Windows ${targetArch} release`);
     return latestRelease;
 }
 
@@ -100,7 +135,11 @@ function checksumForAsset(notes: string | undefined, installerName: string): str
     return match?.[2].toLowerCase();
 }
 
-export function parseReleaseResponse(input: unknown, trustMode: ReleaseTrustMode = 'strict'): UpdateRelease {
+export function parseReleaseResponse(
+    input: unknown,
+    trustMode: ReleaseTrustMode = 'strict',
+    targetArch: UpdaterTargetArch = 'x64'
+): UpdateRelease {
     if (!input || typeof input !== 'object') throw new Error('Update feed returned an invalid response');
     const raw = input as Record<string, unknown>;
 
@@ -126,11 +165,17 @@ export function parseReleaseResponse(input: unknown, trustMode: ReleaseTrustMode
     const version = raw.tag_name.startsWith('v') ? raw.tag_name.slice(1) : raw.tag_name;
     parseVersion(version);
     if (!Array.isArray(raw.assets)) throw new Error('GitCode release does not contain assets');
-    const asset = raw.assets.find((candidate) => {
+    const winAssets = raw.assets.filter((candidate) => {
         if (!candidate || typeof candidate !== 'object') return false;
         const name = (candidate as Record<string, unknown>).name;
         return typeof name === 'string' && /(?:opendesk|open-desk).*win.*\.exe$/i.test(name);
-    }) as Record<string, unknown> | undefined;
+    }) as Record<string, unknown>[];
+    // 优先当前架构原生包；arm64 在老版本 feed（仅 x86 包）时回退 x86，保持可更新
+    const isArm64 = (asset: Record<string, unknown>) => /arm64/i.test(String(asset.name));
+    const asset =
+        targetArch === 'arm64'
+            ? (winAssets.find(isArm64) ?? winAssets.find((candidate) => !isArm64(candidate)))
+            : winAssets.find((candidate) => !isArm64(candidate));
     if (!asset) throw new Error('GitCode release does not contain a Windows EXE installer');
     const installerUrl = validateUrl(asset.browser_download_url);
     const installerName = validateInstallerName(asset.name, installerUrl);
@@ -149,19 +194,46 @@ export async function fetchLatestRelease(
     feedUrl: string,
     fetchImpl: typeof fetch = fetch,
     timeoutMs = 30_000,
-    trustMode: ReleaseTrustMode = 'strict'
+    trustMode: ReleaseTrustMode = 'strict',
+    targetArch: UpdaterTargetArch = 'x64'
 ): Promise<UpdateRelease> {
     const url = validateUpdateUrl(feedUrl, 'Update feed URL');
-    const response = await fetchImpl(url, {
-        headers: { accept: 'text/html, application/json', 'user-agent': 'OpenDesk-Updater' },
-        signal: AbortSignal.timeout(timeoutMs)
-    });
+    const response = await raceWithForceTimeout(
+        fetchImpl(url, {
+            headers: { accept: 'text/html, application/json', 'user-agent': 'OpenDesk-Updater' },
+            signal: AbortSignal.timeout(timeoutMs)
+        }),
+        timeoutMs
+    );
     if (!response.ok) throw new Error(`Update feed request failed with HTTP ${response.status}`);
     if (response.url) validateUpdateUrl(response.url, 'Update feed redirect');
     const body = await response.text();
     const contentType = response.headers.get('content-type')?.toLowerCase() || '';
     if (contentType.includes('text/html') || contentType.includes('application/xhtml+xml') || /^\s*</.test(body)) {
-        return parseNewsReleasePage(body, response.url || url.toString(), trustMode);
+        return parseNewsReleasePage(body, response.url || url.toString(), trustMode, targetArch);
     }
-    return parseReleaseResponse(JSON.parse(body), trustMode);
+    return parseReleaseResponse(JSON.parse(body), trustMode, targetArch);
+}
+
+/**
+ * 独立超时兜底：不依赖 fetch 实现尊重 AbortSignal。
+ * 部分 Electron 适配层（如鸿蒙）的 session.fetch 可能忽略 signal，此时
+ * 请求永不 settle，而更新协调器的单次操作锁只有 promise settle 才会释放，
+ * 一次挂起即让更新功能静默死亡。signal 生效时走正常 AbortError 路径，
+ * signal 被忽略时由本兜底在 timeoutMs 后强制 reject。
+ */
+async function raceWithForceTimeout(pending: Promise<Response>, timeoutMs: number): Promise<Response> {
+    let forceReject: ((error: Error) => void) | undefined;
+    const forced = new Promise<never>((_, reject) => {
+        forceReject = reject;
+    });
+    const timer = setTimeout(() => forceReject?.(new Error('Update feed request timed out')), timeoutMs);
+    timer.unref?.();
+    try {
+        return await Promise.race([pending, forced]);
+    } finally {
+        clearTimeout(timer);
+        // 兜底胜出时底层请求仍在途，挂一个空 catch 防止 unhandled rejection
+        pending.catch(() => {});
+    }
 }

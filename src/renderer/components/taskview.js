@@ -427,6 +427,8 @@ class TaskView extends HTMLElement {
         this._modelContextSize = 0;
         /** @type {string | null} 当前已加载上下文大小的模型别名 */
         this._contextSizeModel = null;
+        /** @type {{p: number, t: number} | null} 任务内最近一次真实 usage（输入/总计），流式估算的基线 */
+        this._contextUsageBaseline = null;
         /** @type {Map<string, HTMLElement>} 缓存活跃的 message container 元素 */
         this._messageContainerCache = new Map();
         this._assistantProgressBuffer = new AssistantProgressBuffer((progress) => {
@@ -2253,6 +2255,7 @@ class TaskView extends HTMLElement {
 
         const usageEl = message_container.querySelector('.message-usage');
         if (TaskView.hasDisplayableUsage(progress.usage)) {
+            this._rememberContextUsage(progress.usage);
             this._removeUsageOutside(message_container);
             const usageHtml = TaskView.formatUsageHtml(progress.usage, this._modelContextSize, false);
             if (usageEl) {
@@ -2534,6 +2537,9 @@ class TaskView extends HTMLElement {
         const speedInfo = this._trackOutputSpeed(progress);
         const usageEl = message_container.querySelector('.message-usage');
         const usage = TaskView.hasDisplayableUsage(progress.usage) ? progress.usage : null;
+        if (usage) {
+            this._rememberContextUsage(usage);
+        }
         if (usageEl) {
             const prevPrompt = parseInt(usageEl.dataset.promptTokens || '0', 10);
             const prevCompletion = parseInt(usageEl.dataset.completionTokens || '0', 10);
@@ -3063,6 +3069,10 @@ class TaskView extends HTMLElement {
                 }
                 return -1;
             })();
+            // 重载后先恢复流式估算的 usage 基线，再渲染消息列表
+            if (usageAssistantIdx >= 0) {
+                this._rememberContextUsage(messages[usageAssistantIdx].usage);
+            }
             const isWaitingForAssistant = TaskView.isWaitingForAssistantReply(
                 this.task_status,
                 this._currentGoal,
@@ -3222,6 +3232,13 @@ class TaskView extends HTMLElement {
         }
     }
 
+    /** 记录任务内最近一次真实 usage（输入/总计），作为后续流式估算「总计/上下文占比」的输入侧基线。 */
+    _rememberContextUsage(usage) {
+        const tokens = TaskView.getUsageDisplayTokens(usage);
+        if (tokens.totalTokens <= 0) return;
+        this._contextUsageBaseline = { p: tokens.promptTokens, t: tokens.totalTokens };
+    }
+
     _updateLastUsageRatio() {
         const lastUsage = this.getHistoryContainer().querySelector('.message-usage');
         if (!lastUsage) return;
@@ -3243,7 +3260,8 @@ class TaskView extends HTMLElement {
      * 实时统计当前流式输出的 token 速度与消息级估算 token 数。
      * 返回 null（非生成 part，如工具调用）或：
      * - speed: 当前 part 的输出速度（token/s），数据不足时为 null；
-     * - estPrompt/estCompletion/estTotal: 无真实 usage 时的临时估算值（chars/4），
+     * - estPrompt/estCompletion/estTotal: 无真实 usage 时的临时估算值
+     *   （输入侧以任务内最近一次真实 usage 为基线，输出侧按 chars/4），
      *   usage 到达后调用方直接显示真实 usage，无需估算。
      *
      * 规则：
@@ -3338,8 +3356,13 @@ class TaskView extends HTMLElement {
             estCompletion = msg.messageUsage.c + delta;
             estTotal = msg.messageUsage.t + delta;
         } else {
+            // 尚无真实 usage：以上一条消息的真实 usage（最近一次请求的输入+输出）为基线，
+            // 叠加本消息的输出估算，保证「总计/上下文占比」在流式期间不跌回 0.0%。
+            // 基线缺失（任务首轮请求）时上下文本身还很小，退化为仅输出估算。
+            const baseline = this._contextUsageBaseline;
+            estPrompt = baseline ? baseline.p : 0;
             estCompletion = Math.round(msg.messageChars / TaskView.CHARS_PER_TOKEN_ESTIMATE);
-            estTotal = estCompletion;
+            estTotal = (baseline ? baseline.t : 0) + estCompletion;
         }
         return { speed, estPrompt, estCompletion, estTotal };
     }
