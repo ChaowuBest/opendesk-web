@@ -78,6 +78,17 @@ export class GoalTaskExtension implements TaskExtension {
         };
     }
 
+    /**
+     * 释放目标状态（评估历史、事件日志等）。这些快照存于扩展实例，
+     * 不随 chat_context 清空而释放，必须在 TaskState.unload() 时显式重置；
+     * 数据已先经 serialize() 落盘，重新加载时会由 restore() 还原。
+     */
+    unload(): void {
+        this.state = undefined;
+        this.finalSnapshots = [];
+        this.eventLog = undefined;
+    }
+
     toSimplifiedJSON(): Record<string, unknown> {
         return {
             goal: GoalStates.renderSummary(this.state, undefined, {

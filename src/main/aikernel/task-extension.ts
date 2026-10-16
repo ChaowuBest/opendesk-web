@@ -58,6 +58,11 @@ export interface TaskExtension {
     onTurnSettled?(): void;
     afterTurnFinished?(): void;
     onTaskLifecycle?(event: TaskExtensionLifecycleEvent): void;
+    /**
+     * 释放扩展持有的重量级状态，供 TaskState.unload() 调用。
+     * 调用时任务数据已落盘，实现方只需清空内存中的派生/持久化快照。
+     */
+    unload?(): void;
     getSubTaskCompletionResult?(): TaskExtensionSubTaskCompletionResult | undefined;
 }
 
@@ -209,6 +214,20 @@ export class TaskExtensionManager {
 
     notifyLifecycle(event: TaskExtensionLifecycleEvent): void {
         for (const extension of this.extensions.values()) extension.onTaskLifecycle?.(event);
+    }
+
+    /**
+     * 释放扩展持有的重量级状态（TaskState.unload() 时调用）。
+     * 必须在任务数据落盘之后调用：扩展 serialize() 的输出（如 goal_state）依赖这些状态。
+     * 其中 restoredRaw 是 ensureLoaded() 时 JSON.parse 出的整份任务 JSON 副本，
+     * 与 chat_context 并列持有全部消息，不清空则 unload 无法真正释放内存。
+     */
+    unload(): void {
+        this.restoredRaw = undefined;
+        this.wasRunningAtShutdown = false;
+        for (const extension of this.extensions.values()) {
+            extension.unload?.();
+        }
     }
 
     getSubTaskCompletionResult(): TaskExtensionSubTaskCompletionResult | undefined {

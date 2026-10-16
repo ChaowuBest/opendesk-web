@@ -915,6 +915,76 @@ export class TaskState {
         this._lazyFilePath = undefined;
     }
 
+    /**
+     * 卸载任务：ensureLoaded() 的逆操作。
+     *
+     * 将重量级字段写回磁盘后清空，使任务回到轻量壳状态（_fullyLoaded=false），
+     * 下次访问时再经 ensureLoaded() 从磁盘重新加载。用于在前台关闭/驱逐任务视图时
+     * 回收 main 进程内存：长会话的 chat_context（含全部消息与工具结果）加载后常驻，
+     * 仅靠启动时的懒加载无法回收。
+     *
+     * 以下情况跳过卸载：
+     * - 任务未处于终态：running / waiting 是活跃态（waitUntilFinished、goal 调度、
+     *   子任务队列都以其为准），后台流程仍可能读写任务状态；failed 与 stopped
+     *   一样是终态，可以安全卸载；
+     * - 消息队列非空：队列仅存于内存，清空会静默丢弃待发送内容；
+     * - 存在 waitUntilFinished 等待者：清空状态会让等待方拿到空数据；
+     * - turn 收尾仍在进行（_turnRunning）：状态翻转为 stopped 后、收尾写回
+     *   （finished_at / persistLater / 订阅反馈）完成前隔着 await，此时卸载会让
+     *   收尾写回落在 lazy shell 上被丢弃，扩展 afterTurnFinished hook 也会跑在
+     *   已重置的状态上；
+     * - 会话记忆抽取 / 手动压缩等后台异步流程仍在进行：它们完成后的写回会把
+     *   lazy shell 标脏（被 saveSync 防御路径丢弃，导致结果丢失），且流程内部
+     *   访问 chat_context 会立即把刚释放的数据重新加载回来；
+     * - 已是懒加载壳：无需重复卸载。
+     *
+     * 顺序约束：必须先把未落盘的修改写回磁盘（此刻 _fullyLoaded 仍为 true），
+     * 再清空重字段，最后置 _fullyLoaded=false。否则 TaskManagerState 的落盘过滤
+     * （_dirty && _fullyLoaded）会跳过本任务，导致数据丢失。
+     *
+     * @returns 是否实际执行了卸载
+     */
+    unload(): boolean {
+        if (!this._fullyLoaded) return false;
+        if (this.task_status !== 'stopped' && this.task_status !== 'failed') return false;
+        if (this.message_queue.length > 0) return false;
+        if (this._stopResolvers.length > 0 || this._parentInterruptResolvers.length > 0) return false;
+        if (this._turnRunning) return false;
+        if (this._sessionMemoryUpdatePromise) return false;
+        if (this.compactProgress) return false;
+
+        // 1) 先落盘：此刻 _fullyLoaded 仍为 true，脏数据才会被写入。
+        if (this._dirty) {
+            this.task_manager_state.saveSync();
+        }
+
+        // 2) 生成当前元数据缓存，供卸载后 toSimplifiedJSON()/toIndexJSON() 直接返回。
+        //    必须在清空 chat_context 之前完成（completion_status 依赖消息历史）。
+        const lazySimplifiedJSON = this.toIndexJSON();
+        const taskFilePath = path.join(getTaskDirectory(), `${this.task_id}.json`);
+
+        // 3) 清理运行期资源与重量级字段。
+        this.cancelPendingTaskReview();
+        this.extensions.unload();
+        this.chat_context = new ChatContext();
+        this.file_read_state.clear();
+        this.tool_result_replacement_state = ToolResultReplacementStates.create();
+        this.auto_compact_state = AutoCompactStates.create();
+        this.microcompact_state = MicrocompactStates.create();
+        this.session_memory_state = SessionMemoryStates.create();
+        this.benchmark_usage = undefined;
+        this.evidencecard_state = createEvidenceCardState(false);
+        this.agent_system_prompt = undefined;
+        this.profiler = null;
+
+        // 4) 切回懒加载壳状态。
+        this._lazyFilePath = taskFilePath;
+        this._lazySimplifiedJSON = lazySimplifiedJSON;
+        this._fullyLoaded = false;
+        this._dirty = false;
+        return true;
+    }
+
     toSimplifiedJSON() {
         if (!this._fullyLoaded && this._lazySimplifiedJSON) {
             return this._lazySimplifiedJSON;

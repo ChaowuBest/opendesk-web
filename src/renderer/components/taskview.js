@@ -103,7 +103,12 @@ import {
     getGoalSupplementIds,
     shouldRenderGoalUserMessage
 } from '../../common/goal/user-message-display.ts';
-import { WORKSPACE_FOCUS_LAYOUT_CHANGE_EVENT, WorkspaceFocusLayoutController } from './workspaceFocusLayout.js';
+import {
+    MIN_CHAT_AREA_WIDTH,
+    RIGHT_PANEL_RESIZER_WIDTH,
+    WORKSPACE_FOCUS_LAYOUT_CHANGE_EVENT,
+    WorkspaceFocusLayoutController
+} from './workspaceFocusLayout.js';
 import { listenForAgentInputRequests } from '../input/agentInputRequest.js';
 import {
     buildAssistantOutputItems,
@@ -365,6 +370,7 @@ class TaskView extends HTMLElement {
         this._workspaceFocusLayout = new WorkspaceFocusLayoutController({
             getPanel: () => this.querySelector(`#task-${this.task_id}-artifacts`),
             getDefaultPanelWidth: () => `${this._rightSidebarWidth || DEFAULT_RIGHT_SIDEBAR_WIDTH}px`,
+            getMaxPanelWidth: () => this._getMaxRightSidebarWidth(),
             shouldSuppressAnimation: () => this._shouldSuppressIncrementalRender(),
             collapseNavigation: () => {
                 document.dispatchEvent(
@@ -3862,6 +3868,17 @@ class TaskView extends HTMLElement {
         });
     }
 
+    /**
+     * 右侧面板在保证聊天区不小于 MIN_CHAT_AREA_WIDTH 的前提下可占用的最大像素宽度。
+     * 容器尚未完成布局（宽度为 0）时返回 null，表示无法计算、不做限制。
+     */
+    _getMaxRightSidebarWidth() {
+        const container = this.querySelector(`#task-${this.task_id}-content-row`);
+        const containerWidth = container ? container.clientWidth : 0;
+        if (!containerWidth) return null;
+        return Math.max(0, containerWidth - MIN_CHAT_AREA_WIDTH - RIGHT_PANEL_RESIZER_WIDTH);
+    }
+
     _toggleRightSidebar() {
         const rightSidebar = this.querySelector(`#task-${this.task_id}-artifacts`);
         const resizer = this.querySelector(`#task-${this.task_id}-resizer`);
@@ -3950,7 +3967,12 @@ class TaskView extends HTMLElement {
         if (!this._workspaceFocusLayout.active) {
             const inlineWidth = rightSidebar.style.width.trim();
             const inlinePixelWidth = inlineWidth.endsWith('px') ? Number.parseFloat(inlineWidth) : 0;
-            this._rightSidebarWidth = inlinePixelWidth || rightSidebar.offsetWidth || DEFAULT_RIGHT_SIDEBAR_WIDTH;
+            // 展开时写入的宽度可能已被聊天区最小宽度约束收窄，此时它不代表用户选择，
+            // 不能写回 _rightSidebarWidth（否则窗口变宽后面板会停留在窄值上）。
+            const maxWidth = this._getMaxRightSidebarWidth();
+            if (maxWidth === null || inlinePixelWidth < maxWidth) {
+                this._rightSidebarWidth = inlinePixelWidth || rightSidebar.offsetWidth || DEFAULT_RIGHT_SIDEBAR_WIDTH;
+            }
         }
         rightSidebar.style.overflow = 'hidden';
         rightSidebar.style.transition =
@@ -6164,6 +6186,9 @@ class TaskView extends HTMLElement {
             return;
         }
 
+        // 初始宽度同样受聊天区最小宽度约束，避免窄窗口下首次渲染就把聊天区压到 350px 以下
+        const initialSidebarWidth = this._workspaceFocusLayout.constrainPanelWidth(`${this._rightSidebarWidth}px`);
+
         this.innerHTML = `
         <div class="bg-gray-30 h-full flex flex-col">
             <header id="taskview-toolbar" class="w-full"></header>
@@ -6233,7 +6258,7 @@ class TaskView extends HTMLElement {
                 </div>
 
                 <!-- 右侧边栏（任务产物 / 任务计划 / 变更） -->
-                <task-artifacts id="task-${this.task_id}-artifacts" task-id="${this.task_id}" style="display: ${this._rightSidebarExpanded ? '' : 'none'}; width: ${this._rightSidebarWidth}px;"></task-artifacts>
+                <task-artifacts id="task-${this.task_id}-artifacts" task-id="${this.task_id}" style="display: ${this._rightSidebarExpanded ? '' : 'none'}; width: ${initialSidebarWidth};"></task-artifacts>
             </div>
         </div>
         `;
@@ -6262,8 +6287,13 @@ class TaskView extends HTMLElement {
                 resizeRafId = null;
                 if (!isResizing || !cachedContainerRect) return;
                 const newWidth = cachedContainerRect.right - e.clientX;
-                const minWidth = 200;
-                const maxWidth = cachedContainerRect.width * 0.85;
+                // 面板上限取两个约束的较小值：容器宽度的 85%，以及为聊天区保留 MIN_CHAT_AREA_WIDTH 后的余量
+                const maxWidth = Math.min(
+                    cachedContainerRect.width * 0.85,
+                    cachedContainerRect.width - MIN_CHAT_AREA_WIDTH - RIGHT_PANEL_RESIZER_WIDTH
+                );
+                // 容器过窄时上限可能低于默认下限，此时以聊天区约束为准
+                const minWidth = Math.min(200, maxWidth);
                 if (newWidth < minWidth || newWidth > maxWidth) return;
                 rightSidebar.style.width = newWidth + 'px';
                 this._rightSidebarWidth = newWidth;

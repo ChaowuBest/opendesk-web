@@ -11,6 +11,12 @@
 
 export const WORKSPACE_FOCUS_LAYOUT_CHANGE_EVENT = 'workspace-focus-layout-change';
 
+/** 右侧面板展开时，聊天区（TaskView 主内容列）必须保留的最小可读宽度。 */
+export const MIN_CHAT_AREA_WIDTH = 350;
+
+/** 聊天区与右侧面板之间拖拽条的宽度，与 taskview 渲染模板中的 resizer 保持一致。 */
+export const RIGHT_PANEL_RESIZER_WIDTH = 4;
+
 export interface WorkspaceFocusLayoutState {
     active: boolean;
     fullscreen: boolean;
@@ -19,6 +25,8 @@ export interface WorkspaceFocusLayoutState {
 interface WorkspaceFocusLayoutControllerOptions {
     getPanel: () => HTMLElement | null;
     getDefaultPanelWidth: () => string;
+    /** 面板当前允许的最大像素宽度；返回 null 表示容器尚未完成布局，不做限制。 */
+    getMaxPanelWidth: () => number | null;
     shouldSuppressAnimation: () => boolean;
     collapseNavigation: () => void;
     isNavigationCollapsed: () => boolean;
@@ -74,7 +82,19 @@ export class WorkspaceFocusLayoutController {
     }
 
     getTargetPanelWidth(): string {
-        return this._active ? FOCUS_PANEL_WIDTH : this._options.getDefaultPanelWidth();
+        return this.constrainPanelWidth(this._active ? FOCUS_PANEL_WIDTH : this._options.getDefaultPanelWidth());
+    }
+
+    /**
+     * 把期望的面板宽度收敛到「聊天区不小于 MIN_CHAT_AREA_WIDTH」的约束内。
+     * 支持 px 与百分比两种写法；容器未完成布局或宽度无法解析时原样返回。
+     */
+    constrainPanelWidth(width: string): string {
+        const maxWidth = this._options.getMaxPanelWidth();
+        if (maxWidth === null || maxWidth <= 0) return width;
+        const desiredPx = this._resolvePanelWidthPx(width);
+        if (desiredPx === null || desiredPx <= maxWidth) return width;
+        return `${Math.floor(maxWidth)}px`;
     }
 
     dispose(): void {
@@ -84,18 +104,33 @@ export class WorkspaceFocusLayoutController {
         }
     }
 
+    private _resolvePanelWidthPx(width: string): number | null {
+        const text = String(width ?? '').trim();
+        if (!text) return null;
+        if (text.endsWith('%')) {
+            // 百分比宽度以面板所在行（content-row）的宽度为基准
+            const referenceWidth = this._options.getPanel()?.parentElement?.clientWidth ?? 0;
+            if (!referenceWidth) return null;
+            const percent = Number.parseFloat(text);
+            return Number.isFinite(percent) ? (referenceWidth * percent) / 100 : null;
+        }
+        const px = Number.parseFloat(text);
+        return Number.isFinite(px) ? px : null;
+    }
+
     private _animatePanelWidth(panel: HTMLElement, width: string): void {
         this.dispose();
+        const constrainedWidth = this.constrainPanelWidth(width);
         const reduceMotion = window.matchMedia?.('(prefers-reduced-motion: reduce)').matches === true;
         if (this._options.shouldSuppressAnimation() || reduceMotion) {
-            panel.style.width = width;
+            panel.style.width = constrainedWidth;
             panel.style.transition = '';
             return;
         }
 
         panel.style.transition = FOCUS_LAYOUT_TRANSITION;
         requestAnimationFrame(() => {
-            panel.style.width = width;
+            panel.style.width = constrainedWidth;
         });
         this._transitionTimer = window.setTimeout(() => {
             panel.style.transition = '';

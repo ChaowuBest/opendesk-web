@@ -849,6 +849,11 @@
                     delete taskViewCache[taskId];
                 }
                 delete taskViewLastAccess[taskId];
+                // 前台关闭/驱逐该任务视图后，通知 main 回收其重量级内存（chat_context 等）。
+                // 切换任务（openTask）只隐藏视图、不销毁缓存，因此不会走到这里。
+                if (window.taskManagerAPI && typeof window.taskManagerAPI.releaseTaskMemory === 'function') {
+                    void window.taskManagerAPI.releaseTaskMemory(taskId).catch(function () {});
+                }
             }
 
             /**
