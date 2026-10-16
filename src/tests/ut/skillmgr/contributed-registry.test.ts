@@ -3,6 +3,7 @@ import type { PluginSkillRegistryDefinition } from '../../../../packages/plugin-
 import {
     ContributedSkillRegistry,
     ProxySkillRegistry,
+    isFilterAvailableOnPlatform,
     serializeSkillRegistryInfo
 } from '../../../main/applications/skillmgr/registry/contributed.js';
 import { registerSkillRegistryProvider } from '../../../main/applications/skillmgr/registry/provider.js';
@@ -497,6 +498,67 @@ describe('skillmgr 贡献注册表', () => {
             guiHidden: undefined,
             supportsResolveInstall: false
         });
+    });
+
+    test('平台专属筛选器只在声明平台下发，未声明 platforms 的全平台可用', async () => {
+        const harmonyOnly = {
+            id: 'harmony_pc',
+            labelOn: '鸿蒙PC兼容技能',
+            labelOff: '所有技能',
+            categoryValue: '鸿蒙PC',
+            platforms: ['openharmony' as const]
+        };
+        const always = { id: 'always', labelOn: 'on', labelOff: 'off', categoryValue: 'all' };
+
+        expect(isFilterAvailableOnPlatform(always, 'linux')).toBe(true);
+        expect(isFilterAvailableOnPlatform(always, 'openharmony')).toBe(true);
+        expect(isFilterAvailableOnPlatform(harmonyOnly, 'openharmony')).toBe(true);
+        expect(isFilterAvailableOnPlatform(harmonyOnly, 'linux')).toBe(false);
+
+        disposers.push(
+            registerSkillRegistryProvider({
+                id: 'test',
+                getRegistries: async () => [
+                    createDefinition({
+                        id: 'platform-filters',
+                        label: 'Platform Filters',
+                        filters: [harmonyOnly, always]
+                    })
+                ]
+            })
+        );
+        await ensureSkillRegistriesSynced();
+
+        const expectedIds = process.platform === 'openharmony' ? ['harmony_pc', 'always'] : ['always'];
+        expect(getRegistry('platform-filters')!.filters.map((filter) => filter.id)).toEqual(expectedIds);
+
+        const infos = await getRegistriesInfo();
+        const registryInfo = infos.find((info) => info.id === 'platform-filters')!;
+        expect(registryInfo.filters.map((filter) => filter.id)).toEqual(expectedIds);
+
+        // 切换到鸿蒙平台：专属筛选器下发（filters 出口按当前 platform 动态裁剪）
+        const originalPlatform = Object.getOwnPropertyDescriptor(process, 'platform');
+        Object.defineProperty(process, 'platform', { value: 'openharmony', configurable: true });
+        try {
+            expect(getRegistry('platform-filters')!.filters.map((filter) => filter.id)).toEqual([
+                'harmony_pc',
+                'always'
+            ]);
+        } finally {
+            if (originalPlatform) Object.defineProperty(process, 'platform', originalPlatform);
+        }
+
+        // worker 线程侧适配器（元数据来自插件定义序列化）走同一裁剪出口
+        const proxy = new ProxySkillRegistry(
+            {
+                id: 'proxy-platform',
+                label: 'Proxy Platform',
+                filters: [harmonyOnly, always],
+                supportsResolveInstall: false
+            },
+            async () => ({ skills: [], total: 0, hasMore: false }) as never
+        );
+        expect(proxy.filters.map((filter) => filter.id)).toEqual(expectedIds);
     });
 
     test('ProxySkillRegistry 经注入的 RPC 通道回代 search 与 resolveInstall', async () => {

@@ -12,14 +12,17 @@
 /**
  * 浏览器画中画浮窗组件（Browser Picture-in-Picture）。
  *
- * 当用户隐藏右侧 task artifacts 面板、且 agent 已使用过浏览器时，
- * 以浮窗形式在消息历史区域的右上角显示浏览器当前 tab 的截图。
+ * 当用户隐藏右侧 task artifacts 面板、且浏览器确有可展示内容时，
+ * 以浮窗形式在 taskview 右下角显示浏览器当前 tab 的截图。
  *
  * - 可自由拖动，四个角可等比缩放
  * - 右上角恢复按钮（重新打开 artifacts 面板的浏览器 tab）和关闭按钮
  * - 底部状态栏显示标签页总数
  * - 仅展示，不支持操作透传
- * - 截图通过顶部对齐 + 宽度适配方式展示，保证左右内容完整
+ * - 截图区域固定为 16:9（与画中画视口一致），浮窗尺寸只由宽度决定，
+ *   截图加载或比例变化都不会让浮窗跳动
+ * - 默认位置右边缘与 agent-input 输入框对齐、下边缘贴在输入框上方；
+ *   每次 show() 都会按当前布局重新计算，保证收起面板后位置正确
  */
 
 import { createRendererTranslator } from '../locale';
@@ -33,14 +36,34 @@ const MIN_WIDTH = 200;
 const MAX_WIDTH = 560;
 const CAPTURE_INTERVAL_MS = 1000;
 const CAPTURE_TIMEOUT_MS = 8000;
+/**
+ * 显示后首帧截图前的等待时间：show() 会把 webview 视口切成固定 16:9，
+ * 立刻截图拿到的还是切换前的窄高画面（比例不对，浮窗会先"变高"再跳回），
+ * 因此等视口切换生效后再取首帧。
+ */
+const FIRST_CAPTURE_DELAY_MS = 250;
 const MARGIN = 8;
+/** 默认位置下浮窗下边缘与锚点（agent-input 输入框）顶部之间的间距 */
+const ANCHOR_GAP = 12;
 const RESIZE_HANDLE_SIZE = 12;
+
+/** 默认位置锚点的视口矩形（只取定位需要的字段） */
+export interface BrowserPipAnchorRect {
+    top: number;
+    right: number;
+    width: number;
+}
 
 export interface BrowserPipCallbacks {
     /** 恢复按钮：重新打开 artifacts 面板的浏览器 tab */
     onRestore: () => void;
     /** 浮窗显示状态变化（显示时宿主应将 webview 视口固定为 16:9，隐藏时恢复） */
     onVisibilityChanged?: (visible: boolean) => void;
+    /**
+     * 默认位置锚点（agent-input 输入框）的视口矩形：浮窗右边缘与输入框右侧对齐，
+     * 下边缘贴在输入框顶部上方。返回 null 时退化为容器右下角。
+     */
+    getAnchorRect?: () => BrowserPipAnchorRect | null;
     /** 获取截图 data URL */
     capturePage: () => Promise<string | null>;
     /** 获取标签页总数 */
@@ -56,9 +79,11 @@ type ResizeCorner = 'nw' | 'ne' | 'sw' | 'se';
 export class BrowserPip {
     private _container: HTMLElement;
     private _el: HTMLElement | null = null;
+    private _imgWrapEl: HTMLElement | null = null;
     private _imgEl: HTMLImageElement | null = null;
     private _statusEl: HTMLElement | null = null;
     private _captureTimer: number | null = null;
+    private _firstCaptureTimer: number | null = null;
     private _callbacks: BrowserPipCallbacks;
     private _visible = false;
     private _closed = false;
@@ -192,20 +217,26 @@ export class BrowserPip {
             this._onDragStart(e);
         });
 
-        // 截图区域（高度由图片撑开，无固定高度避免黑边）
+        // 截图区域：高度按 16:9 固定（与画中画视口一致），
+        // 浮窗尺寸只由宽度决定，截图加载/比例变化都不会让浮窗跳动
         const imgWrap = document.createElement('div');
         imgWrap.className = 'pip-img-wrap';
         imgWrap.style.cssText = `
             width: 100%;
+            height: ${this._imgHeight()}px;
             overflow: hidden;
             background: #111827;
             position: relative;
+            flex-shrink: 0;
         `;
+        this._imgWrapEl = imgWrap;
 
         const img = document.createElement('img');
         img.style.cssText = `
             width: 100%;
-            height: auto;
+            height: 100%;
+            object-fit: cover;
+            object-position: top center;
             display: block;
             pointer-events: none;
         `;
@@ -320,14 +351,24 @@ export class BrowserPip {
     private _applySize(): void {
         if (!this._el) return;
         this._el.style.width = `${this._width}px`;
+        if (this._imgWrapEl) {
+            this._imgWrapEl.style.height = `${this._imgHeight()}px`;
+        }
     }
 
-    // 默认位置：右上角
+    // 默认位置：右下角；有锚点（agent-input）时以锚点对齐，否则贴容器右下角
     private _positionDefault(): void {
         if (!this._el || !this._container) return;
         const rect = this._container.getBoundingClientRect();
-        this._posX = rect.width - this._width - MARGIN;
-        this._posY = MARGIN;
+        const anchor = this._callbacks.getAnchorRect?.() ?? null;
+        if (anchor && anchor.width > 0) {
+            this._posX = anchor.right - rect.left - this._width;
+            this._posY = anchor.top - rect.top - this._totalHeight() - ANCHOR_GAP;
+        } else {
+            this._posX = rect.width - this._width - MARGIN;
+            this._posY = rect.height - this._totalHeight() - MARGIN;
+        }
+        this._clampPosition();
         this._applyPosition();
     }
 
@@ -448,11 +489,19 @@ export class BrowserPip {
 
     private _startCapture(): void {
         this._stopCapture();
-        this._doCapture();
+        // 首帧等视口切换生效后再取，避免拿到切换前比例的截图
+        this._firstCaptureTimer = window.setTimeout(() => {
+            this._firstCaptureTimer = null;
+            this._doCapture();
+        }, FIRST_CAPTURE_DELAY_MS);
         this._captureTimer = window.setInterval(() => this._doCapture(), CAPTURE_INTERVAL_MS);
     }
 
     private _stopCapture(): void {
+        if (this._firstCaptureTimer !== null) {
+            window.clearTimeout(this._firstCaptureTimer);
+            this._firstCaptureTimer = null;
+        }
         if (this._captureTimer !== null) {
             window.clearInterval(this._captureTimer);
             this._captureTimer = null;
@@ -514,9 +563,10 @@ export class BrowserPip {
         if (this._visible) return;
         this._visible = true;
         this._el.style.display = 'flex';
+        // 先把视口切成固定 16:9，再排首帧截图，保证第一张截图就是最终比例
+        this._callbacks.onVisibilityChanged?.(true);
         this._positionDefault();
         this._startCapture();
-        this._callbacks.onVisibilityChanged?.(true);
     }
 
     public hide(): void {
@@ -561,6 +611,7 @@ export class BrowserPip {
         document.removeEventListener('mouseup', this._boundOnMouseUp);
         this._el?.remove();
         this._el = null;
+        this._imgWrapEl = null;
         this._imgEl = null;
         this._statusEl = null;
     }

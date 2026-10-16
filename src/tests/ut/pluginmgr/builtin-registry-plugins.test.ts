@@ -73,7 +73,8 @@ const BRAND_EXPECTATIONS = [
                         labelOn: '鸿蒙PC兼容技能',
                         labelOff: '所有技能',
                         categoryValue: '鸿蒙PC',
-                        apiTagIds: ['69cbb330d91c6e543991815d']
+                        apiTagIds: ['69cbb330d91c6e543991815d'],
+                        platforms: ['openharmony']
                     }
                 ]
             }

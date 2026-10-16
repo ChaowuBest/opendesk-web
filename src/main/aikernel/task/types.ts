@@ -14,7 +14,12 @@ import type { LLMRequestOptions } from '../llm.js';
 import type { TaskTurnInstrumentationExternalContext } from '../../telemetry/agent-execution.js';
 import type { TaskUsageSummary } from '../../telemetry/local-telemetry.js';
 
-export type TaskStatus = 'waiting' | 'running' | 'stopped';
+/**
+ * 任务状态。
+ * 注意 'failed' 不会在运行期直接赋值：仅由反序列化产生——应用退出/崩溃时
+ * 落盘的 running 任务，下次启动加载时被改写为 failed（见 serializer.applyTaskJson）。
+ */
+export type TaskStatus = 'waiting' | 'running' | 'stopped' | 'failed';
 export type TaskCompletionStatus = 'success' | 'fail' | 'ask';
 
 /**

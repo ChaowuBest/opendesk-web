@@ -89,9 +89,18 @@ export function assertRequestBudget(
     }
 }
 
+/** Provider request payload both adapters build for budget fitting: messages plus their own tool options. */
+export interface RequestBudgetPayload {
+    messages: object[];
+    system?: string;
+    tools?: object[];
+    /** OpenAI sends the tool mode as a plain string, Anthropic wraps it in an object; both only emit 'auto'. */
+    tool_choice?: 'auto' | { type: 'auto' };
+}
+
 /** Fit business output after hooks and projection; summary requests retain their fixed output budget. */
 export function fitRequestOutputTokens(
-    payload: unknown,
+    payload: RequestBudgetPayload,
     output: number,
     window: number,
     usageEstimate = 0,

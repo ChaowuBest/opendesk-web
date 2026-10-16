@@ -46,12 +46,12 @@ describe('compact request safety', () => {
     });
 
     test('fitting output cannot hide a compact that failed to get below 80 percent', () => {
-        expect(() => fitRequestOutputTokens({}, 384000, 512000, 409600, true)).toThrow('no_progress');
+        expect(() => fitRequestOutputTokens({ messages: [] }, 384000, 512000, 409600, true)).toThrow('no_progress');
     });
 
     test('invalid output limits and input estimates still fail closed', () => {
-        expect(() => fitRequestOutputTokens({}, 0, 512000)).toThrow('invalid_budget');
-        expect(() => fitRequestOutputTokens({}, 384000, 512000, NaN)).toThrow('invalid_budget');
+        expect(() => fitRequestOutputTokens({ messages: [] }, 0, 512000)).toThrow('invalid_budget');
+        expect(() => fitRequestOutputTokens({ messages: [] }, 384000, 512000, NaN)).toThrow('invalid_budget');
     });
 
     test('summary budget validation retains the requested output instead of shrinking it', () => {

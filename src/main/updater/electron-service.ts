@@ -15,6 +15,7 @@ import { spawn } from 'node:child_process';
 import { app, ipcMain } from 'electron';
 import { GlobalState } from '../aikernel/states/global.js';
 import { safeSendToWebContents } from '../utils/electron-ipc.js';
+import { getPlatform } from '../../platforms/base.js';
 import { UpdateCoordinator } from './coordinator.js';
 import {
     DEFAULT_UPDATE_FEED_URL,
@@ -23,7 +24,7 @@ import {
     resolveUpdateCacheDirectory
 } from './config.js';
 import { copyLocalInstaller, downloadInstaller } from './download.js';
-import { fetchLatestRelease } from './release-feed.js';
+import { fetchLatestRelease, type UpdaterTargetArch } from './release-feed.js';
 import { resolveUpdateRelaunchCommand } from './restart.js';
 import { reportUpdateHealthToService, submitUpdateToService } from './update-service-client.js';
 import { verifyUpdateInstaller } from './verification.js';
@@ -45,6 +46,19 @@ function getActiveTaskIds(): string[] {
 
 function updaterEnabled(): boolean {
     return process.platform === 'win32' && (app.isPackaged || process.env.OPENDESK_UPDATE_FORCE_ENABLE === '1');
+}
+
+function updaterTargetArch(): UpdaterTargetArch {
+    return process.arch === 'arm64' ? 'arm64' : 'x64';
+}
+
+/**
+ * Node 全局 fetch（undici）不读取 HTTP_PROXY/HTTPS_PROXY，也不经过 Chromium
+ * 网络栈，内网代理环境下会直连失败。updater 的所有网络请求必须走平台
+ * fetch（session.setProxy，none/system/custom 三种代理模式均已覆盖）。
+ */
+function platformProxyFetch(input: string | URL, init?: RequestInit): Promise<Response> {
+    return getPlatform().fetch(input, init);
 }
 
 export function registerElectronUpdateService(options: ElectronUpdateServiceOptions): UpdateCoordinator | undefined {
@@ -75,7 +89,14 @@ export function registerElectronUpdateService(options: ElectronUpdateServiceOpti
         currentVersion: app.getVersion(),
         stateDirectory,
         fetchRelease: async () => {
-            if (!localTestInstaller) return fetchLatestRelease(feedUrl, fetch, 30_000, UPDATE_PACKAGE_TRUST_MODE);
+            if (!localTestInstaller)
+                return fetchLatestRelease(
+                    feedUrl,
+                    platformProxyFetch,
+                    30_000,
+                    UPDATE_PACKAGE_TRUST_MODE,
+                    updaterTargetArch()
+                );
             if (!allowUnverified || !localTestVersion) {
                 throw new Error(
                     'A local update test requires OPENDESK_UPDATE_TEST_VERSION and OPENDESK_UPDATE_ALLOW_UNVERIFIED=1'
@@ -96,7 +117,8 @@ export function registerElectronUpdateService(options: ElectronUpdateServiceOpti
                       url: release.installerUrl,
                       destination,
                       expectedSize: release.size,
-                      onProgress
+                      onProgress,
+                      fetchImpl: platformProxyFetch
                   }),
         verify: (release, installerPath) =>
             verifyUpdateInstaller({

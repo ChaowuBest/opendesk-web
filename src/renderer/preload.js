@@ -109,6 +109,15 @@ function exposeTaskManagerAPI() {
                 throw new Error(result.message);
             }
         },
+        releaseTaskMemory: async (taskId) => {
+            const result = await ipcRenderer.invoke('taskManager:releaseTaskMemory', taskId);
+            if (result.status !== 'ok') {
+                // 释放失败不抛错，避免打断关闭流程
+                console.error('releasing task memory failed', result.message);
+                return;
+            }
+            return result.data;
+        },
         forkTask: async (taskId, upToMessageId) => {
             const result = await ipcRenderer.invoke('taskManager:forkTask', taskId, upToMessageId);
             if (result.status === 'ok') {

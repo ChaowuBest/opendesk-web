@@ -1528,6 +1528,26 @@ const registerTaskManagerAPIHandlers = () => {
         publishTaskTodosCleared(removedTaskIds);
         return { status: 'ok', data: taskId };
     });
+    /**
+     * 前台关闭/驱逐任务视图时，回收该任务在 main 进程中的重量级内存
+     * （chat_context、扩展快照等），使其回到懒加载壳状态，下次打开时重新加载。
+     * 仅被动响应前台请求，main 侧不做定时驱逐。
+     */
+    ipcMain.handle('taskManager:releaseTaskMemory', (_event, taskId) => {
+        if (typeof taskId !== 'string') {
+            return { status: 'error', message: 'taskId must be a string' };
+        }
+        // 用 tasks.find 而非 getTask()：getTask() 会触发 ensureLoaded()，
+        // 反而把待释放的任务数据加载回来。
+        const task = globalState.taskManagerState.tasks.find((candidate) => candidate.task_id === taskId);
+        if (!task) {
+            // 幂等：删除流程会先关闭视图（触发本 IPC）再删除任务，此时任务可能已不存在。
+            return { status: 'ok', data: { released: false } };
+        }
+        sessionMemoryRenderCache.delete(taskId);
+        const released = task.unload();
+        return { status: 'ok', data: { released } };
+    });
     ipcMain.handle('taskManager:forkTask', (event, taskId, upToMessageId?: string) => {
         const task = globalState.taskManagerState.getTask(taskId);
         if (task === undefined) {

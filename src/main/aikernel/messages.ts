@@ -22,7 +22,7 @@ import { fileLinkExtension, getRenderWorkspace } from '../utils/marked-file-link
 import { cjkAutolinkFix } from '../../common/markdown/cjk-autolink-fix.js';
 import { doubleTildeStrikethrough } from '../../common/markdown/double-tilde-strikethrough.js';
 import type { SupportedLocale } from '../../common/locale.js';
-import { t, getLocale } from '../../locale/index.js';
+import { getLocale } from '../../locale/index.js';
 import type {
     BaseAssistantMessage,
     ChatContextSnapshot,

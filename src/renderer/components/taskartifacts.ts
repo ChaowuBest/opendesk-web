@@ -109,7 +109,7 @@ const CHANGES_TAB: TabSpec = {
 };
 const SESSION_MEMORY_TAB: TabSpec = {
     id: 'session-memory',
-    label: '任务记忆',
+    label: '任务摘要',
     labelKey: 'renderer.taskartifacts.tab.sessionMemory',
     icon: 'fa-brain',
     dynamic: true
@@ -1213,6 +1213,15 @@ class TaskArtifacts extends HTMLElement {
      */
     isBrowserVisible(): boolean {
         return this._browserVisible;
+    }
+
+    /**
+     * 外部调用：浏览器是否有可展示的内容（存在非 about:blank 的标签页）。
+     * 只剩一个 about:blank 标签页等同于没有标签页：画中画浮窗没有内容可展示，
+     * 宿主不应把它当作"浏览器正在使用"。
+     */
+    hasBrowserContent(): boolean {
+        return !!this._browser && this._browser.hasActiveContent();
     }
 
     /**

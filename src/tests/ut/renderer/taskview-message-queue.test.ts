@@ -2001,6 +2001,96 @@ describe('task-view message queue', () => {
         );
     });
 
+    test('keeps the context ratio meaningful while streaming before the first real usage arrives', () => {
+        const taskView = document.createElement('task-view') as HTMLElement & {
+            task_id: string;
+            _modelContextSize: number;
+            _renderAssistantProgress: (progress: Record<string, unknown>, historyContainer: HTMLElement) => boolean;
+        };
+        taskView.task_id = 'task-1';
+        taskView._modelContextSize = 100000;
+        taskView.innerHTML = '<div id="taskview-chat-history"></div>';
+        const historyContainer = taskView.querySelector('#taskview-chat-history') as HTMLElement;
+
+        // 上一条消息的真实 usage 先落为基线（任务内最近一次请求的输入+输出）
+        expect(
+            taskView._renderAssistantProgress(
+                {
+                    task_status: 'stopped',
+                    message_id: 'assistant-1',
+                    last_part: { type: 'text', rendered: 'previous answer', text: 'previous answer' },
+                    last_part_index: 0,
+                    usage: { prompt_tokens: 11800, completion_tokens: 120, total_tokens: 11920 }
+                },
+                historyContainer
+            )
+        ).toBe(true);
+
+        // 新回合流式期间真实 usage 尚未到达：忽略输入侧基线会让「总计」只剩
+        // 本消息输出字数，上下文占比从 11.9% 跌回 0.0%
+        expect(
+            taskView._renderAssistantProgress(
+                {
+                    task_status: 'running',
+                    message_id: 'assistant-2',
+                    last_part: { type: 'text', text: 'a'.repeat(400) },
+                    last_part_index: 0
+                },
+                historyContainer
+            )
+        ).toBe(true);
+
+        expect(taskView.querySelector('#message-container-assistant-2 .usage-text')?.textContent?.trim()).toBe(
+            '已输出 100 词, 总计 12020 词, 上下文占比 12.0%'
+        );
+
+        // 真实 usage 到达后校正为真实值
+        expect(
+            taskView._renderAssistantProgress(
+                {
+                    task_status: 'running',
+                    message_id: 'assistant-2',
+                    last_part: { type: 'text', text: 'a'.repeat(400) },
+                    last_part_index: 0,
+                    usage: { prompt_tokens: 12000, completion_tokens: 130, total_tokens: 12130 }
+                },
+                historyContainer
+            )
+        ).toBe(true);
+
+        expect(taskView.querySelector('#message-container-assistant-2 .usage-text')?.textContent?.trim()).toBe(
+            '已输出 130 词, 总计 12130 词, 上下文占比 12.1%'
+        );
+    });
+
+    test('falls back to the output-only estimate when the task has no prior usage', () => {
+        const taskView = document.createElement('task-view') as HTMLElement & {
+            task_id: string;
+            _modelContextSize: number;
+            _renderAssistantProgress: (progress: Record<string, unknown>, historyContainer: HTMLElement) => boolean;
+        };
+        taskView.task_id = 'task-1';
+        taskView._modelContextSize = 100000;
+        taskView.innerHTML = '<div id="taskview-chat-history"></div>';
+        const historyContainer = taskView.querySelector('#taskview-chat-history') as HTMLElement;
+
+        expect(
+            taskView._renderAssistantProgress(
+                {
+                    task_status: 'running',
+                    message_id: 'assistant-1',
+                    last_part: { type: 'text', text: 'a'.repeat(400) },
+                    last_part_index: 0
+                },
+                historyContainer
+            )
+        ).toBe(true);
+
+        expect(taskView.querySelector('#message-container-assistant-1 .usage-text')?.textContent?.trim()).toBe(
+            '已输出 100 词, 总计 100 词, 上下文占比 0.1%'
+        );
+    });
+
     test('renders estimated usage with output speed anchored to the current streaming part', async () => {
         const taskView = document.createElement('task-view') as HTMLElement & {
             task_id: string;

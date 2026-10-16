@@ -5,6 +5,36 @@ import path from 'node:path';
 import test from 'node:test';
 import { copyLocalInstaller, downloadInstaller } from '../../../../main/updater/download.js';
 
+function sleep(ms: number): Promise<void> {
+    return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+/** 产出一个流：先推入给定 chunk，之后既不 close 也不 error（模拟传输挂起） */
+function hangingBody(chunks: Uint8Array[]): ReadableStream<Uint8Array> {
+    const queue = [...chunks];
+    return new ReadableStream({
+        start(controller) {
+            for (const chunk of queue) controller.enqueue(chunk);
+        }
+    });
+}
+
+/** 产出一个慢速但活跃的流：每个 chunk 间隔 intervalMs 后才可拉取 */
+function slowActiveBody(count: number, intervalMs: number): ReadableStream<Uint8Array> {
+    let remaining = count;
+    return new ReadableStream({
+        async pull(controller) {
+            if (remaining <= 0) {
+                controller.close();
+                return;
+            }
+            remaining -= 1;
+            await sleep(intervalMs);
+            controller.enqueue(new Uint8Array([0x61]));
+        }
+    });
+}
+
 test('downloadInstaller writes a partial file and atomically completes it', async (t) => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), 'opendesk-updater-download-'));
     t.after(() => fs.rmSync(root, { recursive: true, force: true }));
@@ -72,6 +102,40 @@ test('downloadInstaller leaves no completed installer when the transfer is trunc
         /size/
     );
     assert.equal(fs.existsSync(destination), false);
+});
+
+test('downloadInstaller aborts when the transfer stalls with no progress', async (t) => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'opendesk-updater-download-'));
+    t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+    const destination = path.join(root, 'OpenDesk-0.3.7-Setup.exe');
+
+    await assert.rejects(
+        downloadInstaller({
+            url: 'https://updates.example.test/OpenDesk-0.3.7-Setup.exe',
+            destination,
+            stallTimeoutMs: 100,
+            fetchImpl: async () => new Response(hangingBody([new Uint8Array([1, 2, 3])]))
+        }),
+        /no progress/
+    );
+    // 中止后不得留下可被误装的部分文件
+    assert.equal(fs.existsSync(destination), false);
+    assert.equal(fs.existsSync(`${destination}.partial`), false);
+});
+
+test('downloadInstaller completes slow-but-active transfers without false stall detection', async (t) => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'opendesk-updater-download-'));
+    t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+    const destination = path.join(root, 'OpenDesk-0.3.7-Setup.exe');
+
+    await downloadInstaller({
+        url: 'https://updates.example.test/OpenDesk-0.3.7-Setup.exe',
+        destination,
+        stallTimeoutMs: 250,
+        fetchImpl: async () => new Response(slowActiveBody(6, 40))
+    });
+
+    assert.equal(fs.readFileSync(destination, 'utf8'), 'aaaaaa');
 });
 
 test('copyLocalInstaller stages a local test package through a partial file', async (t) => {

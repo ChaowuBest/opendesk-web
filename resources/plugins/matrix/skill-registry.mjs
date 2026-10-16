@@ -23,7 +23,9 @@ const MATRIX_FILTERS = [
         labelOn: '鸿蒙PC兼容技能',
         labelOff: '所有技能',
         categoryValue: HARMONY_PC_CATEGORY,
-        apiTagIds: ['69cbb330d91c6e543991815d']
+        apiTagIds: ['69cbb330d91c6e543991815d'],
+        // 鸿蒙PC 兼容技能只在鸿蒙平台有意义，其他平台不下发该筛选器
+        platforms: ['openharmony']
     }
 ];
 

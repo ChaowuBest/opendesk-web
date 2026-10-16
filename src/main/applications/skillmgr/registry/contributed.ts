@@ -22,10 +22,20 @@
  */
 
 import type {
+    PluginPlatform,
     PluginRegistryFilterDef,
     PluginSkillRegistryDefinition
 } from '../../../../../packages/plugin-sdk/src/index.js';
 import { SkillRegistryBase, type RegistryFilterDef, type SearchOptions, type SearchResult } from './base.js';
+
+/**
+ * 判断筛选器是否适用于指定平台：未声明 platforms（或声明为空数组）时所有平台可用。
+ * GUI 只渲染当前平台可用的筛选器，避免出现平台专属开关（如「鸿蒙PC兼容技能」）在
+ * 无关平台上无意义的展示。
+ */
+export function isFilterAvailableOnPlatform(filter: PluginRegistryFilterDef, platform: string): boolean {
+    return !filter.platforms?.length || filter.platforms.includes(platform as PluginPlatform);
+}
 
 /** worker 线程可见的注册表元数据（可结构化克隆的纯数据） */
 export interface PluginSkillRegistryInfo {
@@ -67,8 +77,15 @@ abstract class ContributedSkillRegistryBase extends SkillRegistryBase {
 
     protected abstract get metaSlogan(): string | undefined;
 
+    /** 插件声明的原始筛选器；平台裁剪统一在 filters 出口完成 */
+    protected abstract get rawFilters(): PluginRegistryFilterDef[];
+
     override get slogan(): string {
         return this.metaSlogan ?? super.slogan;
+    }
+
+    override get filters(): RegistryFilterDef[] {
+        return this.rawFilters.filter((filter) => isFilterAvailableOnPlatform(filter, process.platform));
     }
 }
 
@@ -78,8 +95,8 @@ export class ContributedSkillRegistry extends ContributedSkillRegistryBase {
         return this.definition.slogan;
     }
 
-    override get filters(): RegistryFilterDef[] {
-        return (this.definition.filters ?? []) as RegistryFilterDef[];
+    protected override get rawFilters(): PluginRegistryFilterDef[] {
+        return this.definition.filters ?? [];
     }
 
     constructor(private readonly definition: PluginSkillRegistryDefinition) {
@@ -107,8 +124,8 @@ export class ProxySkillRegistry extends ContributedSkillRegistryBase {
         return this.info.slogan;
     }
 
-    override get filters(): RegistryFilterDef[] {
-        return (this.info.filters ?? []) as RegistryFilterDef[];
+    protected override get rawFilters(): PluginRegistryFilterDef[] {
+        return this.info.filters ?? [];
     }
 
     constructor(

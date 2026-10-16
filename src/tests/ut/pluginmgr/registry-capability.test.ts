@@ -140,6 +140,63 @@ describe('PluginHost registry capability', () => {
         expect(idEntry.diagnostics[0]?.detail).toBe('plugin.registry_id_invalid:bad id!');
     });
 
+    test('筛选项定义校验：字段缺失与未知 platforms 被拒绝，已知平台可用', async () => {
+        const host = new PluginHost();
+        const invalidFilterCases: Array<{ id: string; filters: unknown[] }> = [
+            // labelOn 空白
+            [{ id: 'f', labelOn: '  ', labelOff: 'off', categoryValue: 'cat' }],
+            // platforms 不是已知平台值（平台专属筛选器只允许 manifest 认可的平台）
+            [{ id: 'f', labelOn: 'on', labelOff: 'off', categoryValue: 'cat', platforms: ['harmonyos'] }],
+            // platforms 不是数组
+            [{ id: 'f', labelOn: 'on', labelOff: 'off', categoryValue: 'cat', platforms: 'openharmony' }]
+        ].map((filters, index) => ({ id: `registry-invalid-filters-${index}`, filters }));
+
+        for (const { id, filters } of invalidFilterCases) {
+            const entry = await host.activate(
+                definePlugin({
+                    id,
+                    capabilities: ['registry'],
+                    setup(ctx) {
+                        ctx.registry.registerSkillRegistry(
+                            createSkillRegistryDefinition({
+                                filters: filters as PluginSkillRegistryDefinition['filters']
+                            })
+                        );
+                    }
+                }),
+                { origin: `test:${id}` }
+            );
+
+            expect(entry.status).toBe('error');
+            expect(entry.diagnostics[0]?.detail).toBe('plugin.registry_filters_invalid:demo-skill-registry');
+        }
+
+        const validEntry = await host.activate(
+            definePlugin({
+                id: 'registry-valid-platform-filters',
+                capabilities: ['registry'],
+                setup(ctx) {
+                    ctx.registry.registerSkillRegistry(
+                        createSkillRegistryDefinition({
+                            filters: [
+                                {
+                                    id: 'harmony_pc',
+                                    labelOn: '鸿蒙PC兼容技能',
+                                    labelOff: '所有技能',
+                                    categoryValue: '鸿蒙PC',
+                                    platforms: ['openharmony']
+                                }
+                            ]
+                        })
+                    );
+                }
+            }),
+            { origin: 'test:registry-valid-platform-filters' }
+        );
+
+        expect(validEntry.status).toBe('active');
+    });
+
     test('MCP 注册表必须提供 getDetail（安装流程依赖）', async () => {
         const host = new PluginHost();
         const { getDetail: _getDetail, ...invalid } = createMcpRegistryDefinition();

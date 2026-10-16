@@ -367,6 +367,12 @@ elastic-toolbar-widget .toolbar-spread-btn.expand-label:hover .elastic-label {
     opacity: 1 !important;
 }
 
+/* 激活态（导出菜单打开 / 面板展开）：文字保持展开，与图标一起跟随激活色 */
+elastic-toolbar-widget .toolbar-spread-btn.expand-label.toolbar-spread-btn-on .elastic-label {
+    max-width: 56px !important;
+    opacity: 1 !important;
+}
+
 /* ===== Spread subtitle (workspace path) ===== */
 .toolbar-spread-subtitle {
     display: inline-flex;

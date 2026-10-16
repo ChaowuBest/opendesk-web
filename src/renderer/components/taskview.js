@@ -46,10 +46,15 @@ import {
     mergeGoalSummary
 } from './taskview-goal/controller.js';
 
+/** 右侧面板展开/收起动画时长（与 _expandRightSidebar / _collapseRightSidebar 的 transition 保持一致） */
+const RIGHT_SIDEBAR_TRANSITION_MS = 280;
+/** 收起后显示画中画的兜底延时：过渡事件不触发时，等动画时长 + 一点缓冲，确保布局已落定 */
+const BROWSER_PIP_SHOW_FALLBACK_MS = RIGHT_SIDEBAR_TRANSITION_MS + 60;
+
 const SIDEBAR_TOGGLE_SVG =
     '<svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="3" width="12" height="10" rx="1.5"/><path d="M6.5 3v10"/></svg>';
-const EXPORT_DOWNLOAD_SVG =
-    '<svg width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"><path d="M8 3v6.5M8 9.5 5.5 7M8 9.5 10.5 7"/><path d="M3 11v1.5A1.5 1.5 0 0 0 4.5 14h7a1.5 1.5 0 0 0 1.5-1.5V11"/></svg>';
+const EXPORT_OPEN_SVG =
+    '<svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"><path d="M7.79 3H4.36A1.35 1.35 0 0 0 3 4.36v7.29A1.35 1.35 0 0 0 4.36 13h7.29A1.35 1.35 0 0 0 13 11.65V8"/><path d="M8 8 13 3"/><path d="M9.8 3H13v3.2"/></svg>';
 const EXPORT_WEBPAGE_SVG =
     '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M12 2a14.5 14.5 0 0 0 0 20 14.5 14.5 0 0 0 0-20"/><path d="M2 12h20"/></svg>';
 const EXPORT_JSON_SVG =
@@ -98,7 +103,12 @@ import {
     getGoalSupplementIds,
     shouldRenderGoalUserMessage
 } from '../../common/goal/user-message-display.ts';
-import { WORKSPACE_FOCUS_LAYOUT_CHANGE_EVENT, WorkspaceFocusLayoutController } from './workspaceFocusLayout.js';
+import {
+    MIN_CHAT_AREA_WIDTH,
+    RIGHT_PANEL_RESIZER_WIDTH,
+    WORKSPACE_FOCUS_LAYOUT_CHANGE_EVENT,
+    WorkspaceFocusLayoutController
+} from './workspaceFocusLayout.js';
 import { listenForAgentInputRequests } from '../input/agentInputRequest.js';
 import {
     buildAssistantOutputItems,
@@ -360,6 +370,7 @@ class TaskView extends HTMLElement {
         this._workspaceFocusLayout = new WorkspaceFocusLayoutController({
             getPanel: () => this.querySelector(`#task-${this.task_id}-artifacts`),
             getDefaultPanelWidth: () => `${this._rightSidebarWidth || DEFAULT_RIGHT_SIDEBAR_WIDTH}px`,
+            getMaxPanelWidth: () => this._getMaxRightSidebarWidth(),
             shouldSuppressAnimation: () => this._shouldSuppressIncrementalRender(),
             collapseNavigation: () => {
                 document.dispatchEvent(
@@ -416,6 +427,8 @@ class TaskView extends HTMLElement {
         this._modelContextSize = 0;
         /** @type {string | null} 当前已加载上下文大小的模型别名 */
         this._contextSizeModel = null;
+        /** @type {{p: number, t: number} | null} 任务内最近一次真实 usage（输入/总计），流式估算的基线 */
+        this._contextUsageBaseline = null;
         /** @type {Map<string, HTMLElement>} 缓存活跃的 message container 元素 */
         this._messageContainerCache = new Map();
         this._assistantProgressBuffer = new AssistantProgressBuffer((progress) => {
@@ -435,6 +448,8 @@ class TaskView extends HTMLElement {
         this._pendingProcessScrollFollowTargets = new Map();
         /** @type {BrowserPip | null} 浏览器画中画浮窗 */
         this._browserPip = null;
+        /** @type {number | null} 侧边栏收起后延迟显示画中画的定时器 */
+        this._browserPipShowTimer = null;
         /** @type {number | null} 浏览器空闲销毁倒计时 */
         this._browserIdleTimer = null;
         /** @type {Array<{id: string, message: string, attachedFilePaths: string[], attachedImages: string[], selectedModel?: string, reasoningEffort?: string}>} 消息队列 */
@@ -2240,6 +2255,7 @@ class TaskView extends HTMLElement {
 
         const usageEl = message_container.querySelector('.message-usage');
         if (TaskView.hasDisplayableUsage(progress.usage)) {
+            this._rememberContextUsage(progress.usage);
             this._removeUsageOutside(message_container);
             const usageHtml = TaskView.formatUsageHtml(progress.usage, this._modelContextSize, false);
             if (usageEl) {
@@ -2521,6 +2537,9 @@ class TaskView extends HTMLElement {
         const speedInfo = this._trackOutputSpeed(progress);
         const usageEl = message_container.querySelector('.message-usage');
         const usage = TaskView.hasDisplayableUsage(progress.usage) ? progress.usage : null;
+        if (usage) {
+            this._rememberContextUsage(usage);
+        }
         if (usageEl) {
             const prevPrompt = parseInt(usageEl.dataset.promptTokens || '0', 10);
             const prevCompletion = parseInt(usageEl.dataset.completionTokens || '0', 10);
@@ -3050,6 +3069,10 @@ class TaskView extends HTMLElement {
                 }
                 return -1;
             })();
+            // 重载后先恢复流式估算的 usage 基线，再渲染消息列表
+            if (usageAssistantIdx >= 0) {
+                this._rememberContextUsage(messages[usageAssistantIdx].usage);
+            }
             const isWaitingForAssistant = TaskView.isWaitingForAssistantReply(
                 this.task_status,
                 this._currentGoal,
@@ -3209,6 +3232,13 @@ class TaskView extends HTMLElement {
         }
     }
 
+    /** 记录任务内最近一次真实 usage（输入/总计），作为后续流式估算「总计/上下文占比」的输入侧基线。 */
+    _rememberContextUsage(usage) {
+        const tokens = TaskView.getUsageDisplayTokens(usage);
+        if (tokens.totalTokens <= 0) return;
+        this._contextUsageBaseline = { p: tokens.promptTokens, t: tokens.totalTokens };
+    }
+
     _updateLastUsageRatio() {
         const lastUsage = this.getHistoryContainer().querySelector('.message-usage');
         if (!lastUsage) return;
@@ -3230,7 +3260,8 @@ class TaskView extends HTMLElement {
      * 实时统计当前流式输出的 token 速度与消息级估算 token 数。
      * 返回 null（非生成 part，如工具调用）或：
      * - speed: 当前 part 的输出速度（token/s），数据不足时为 null；
-     * - estPrompt/estCompletion/estTotal: 无真实 usage 时的临时估算值（chars/4），
+     * - estPrompt/estCompletion/estTotal: 无真实 usage 时的临时估算值
+     *   （输入侧以任务内最近一次真实 usage 为基线，输出侧按 chars/4），
      *   usage 到达后调用方直接显示真实 usage，无需估算。
      *
      * 规则：
@@ -3325,8 +3356,13 @@ class TaskView extends HTMLElement {
             estCompletion = msg.messageUsage.c + delta;
             estTotal = msg.messageUsage.t + delta;
         } else {
+            // 尚无真实 usage：以上一条消息的真实 usage（最近一次请求的输入+输出）为基线，
+            // 叠加本消息的输出估算，保证「总计/上下文占比」在流式期间不跌回 0.0%。
+            // 基线缺失（任务首轮请求）时上下文本身还很小，退化为仅输出估算。
+            const baseline = this._contextUsageBaseline;
+            estPrompt = baseline ? baseline.p : 0;
             estCompletion = Math.round(msg.messageChars / TaskView.CHARS_PER_TOKEN_ESTIMATE);
-            estTotal = estCompletion;
+            estTotal = (baseline ? baseline.t : 0) + estCompletion;
         }
         return { speed, estPrompt, estCompletion, estTotal };
     }
@@ -3855,6 +3891,17 @@ class TaskView extends HTMLElement {
         });
     }
 
+    /**
+     * 右侧面板在保证聊天区不小于 MIN_CHAT_AREA_WIDTH 的前提下可占用的最大像素宽度。
+     * 容器尚未完成布局（宽度为 0）时返回 null，表示无法计算、不做限制。
+     */
+    _getMaxRightSidebarWidth() {
+        const container = this.querySelector(`#task-${this.task_id}-content-row`);
+        const containerWidth = container ? container.clientWidth : 0;
+        if (!containerWidth) return null;
+        return Math.max(0, containerWidth - MIN_CHAT_AREA_WIDTH - RIGHT_PANEL_RESIZER_WIDTH);
+    }
+
     _toggleRightSidebar() {
         const rightSidebar = this.querySelector(`#task-${this.task_id}-artifacts`);
         const resizer = this.querySelector(`#task-${this.task_id}-resizer`);
@@ -3870,6 +3917,8 @@ class TaskView extends HTMLElement {
     }
 
     _expandRightSidebar(rightSidebar, resizer) {
+        // 展开过程中取消收起时排队的画中画显示，避免浮窗在展开态弹出
+        this._cancelBrowserPipShowTimer();
         const targetWidth = this._workspaceFocusLayout.getTargetPanelWidth();
         this._restoreRightSidebarFromOffscreen(rightSidebar);
         rightSidebar.style.display = '';
@@ -3941,7 +3990,12 @@ class TaskView extends HTMLElement {
         if (!this._workspaceFocusLayout.active) {
             const inlineWidth = rightSidebar.style.width.trim();
             const inlinePixelWidth = inlineWidth.endsWith('px') ? Number.parseFloat(inlineWidth) : 0;
-            this._rightSidebarWidth = inlinePixelWidth || rightSidebar.offsetWidth || DEFAULT_RIGHT_SIDEBAR_WIDTH;
+            // 展开时写入的宽度可能已被聊天区最小宽度约束收窄，此时它不代表用户选择，
+            // 不能写回 _rightSidebarWidth（否则窗口变宽后面板会停留在窄值上）。
+            const maxWidth = this._getMaxRightSidebarWidth();
+            if (maxWidth === null || inlinePixelWidth < maxWidth) {
+                this._rightSidebarWidth = inlinePixelWidth || rightSidebar.offsetWidth || DEFAULT_RIGHT_SIDEBAR_WIDTH;
+            }
         }
         rightSidebar.style.overflow = 'hidden';
         rightSidebar.style.transition =
@@ -3970,6 +4024,9 @@ class TaskView extends HTMLElement {
                 resizer.style.transition = '';
                 resizer.style.opacity = '';
             }
+            // 收起动画结束、聊天区宽度已稳定，此时再显示浮窗
+            this._cancelBrowserPipShowTimer();
+            this._showBrowserPipIfNeeded();
         };
         rightSidebar.addEventListener('transitionend', onEnd);
 
@@ -3979,8 +4036,30 @@ class TaskView extends HTMLElement {
         if (this._browserPip) {
             this._browserPip.resetClosed();
         }
-        // 若浏览器已被使用，显示画中画浮窗
-        this._showBrowserPipIfNeeded();
+        // 等收起动画结束、聊天区宽度稳定后再显示浮窗：
+        // 动画期间按中间态算出的位置和大小都是错的
+        this._scheduleBrowserPipShow();
+    }
+
+    /**
+     * 收起动画结束后重新显示画中画浮窗。
+     * 过渡事件不可靠（元素不可见、宽度未发生变化时不会触发），因此按动画时长兜底。
+     */
+    _scheduleBrowserPipShow() {
+        this._cancelBrowserPipShowTimer();
+        this._browserPipShowTimer = setTimeout(() => {
+            this._browserPipShowTimer = null;
+            // 动画期间又被展开：保持展开态，不弹浮窗
+            if (this._rightSidebarExpanded) return;
+            this._showBrowserPipIfNeeded();
+        }, BROWSER_PIP_SHOW_FALLBACK_MS);
+    }
+
+    _cancelBrowserPipShowTimer() {
+        if (this._browserPipShowTimer !== null) {
+            clearTimeout(this._browserPipShowTimer);
+            this._browserPipShowTimer = null;
+        }
     }
 
     _autoSwitchTabIfEmpty(_sidebar) {
@@ -3991,11 +4070,12 @@ class TaskView extends HTMLElement {
      * 初始化浏览器画中画浮窗。在 init() 渲染完成后调用。
      */
     _initBrowserPip() {
-        // 浮窗挂载在聊天历史滚动区域的外层 relative 容器内
-        const chatWrapper = this.querySelector('#taskview-chat-history')?.parentElement;
-        if (!chatWrapper) return;
+        // 浮窗挂在内容行上：默认位置要落到输入框上方，挂在聊天滚动区会被其 overflow:hidden 裁掉底部
+        const contentRow = this.querySelector(`#task-${this.task_id}-content-row`);
+        const host = contentRow || this.querySelector('#taskview-chat-history')?.parentElement;
+        if (!host) return;
 
-        this._browserPip = new BrowserPip(chatWrapper, {
+        this._browserPip = new BrowserPip(host, {
             onRestore: () => {
                 if (this._browserPip) this._browserPip.hide();
                 const sidebar = this._getRightSidebarEl();
@@ -4004,6 +4084,13 @@ class TaskView extends HTMLElement {
                 }
                 this._forceExpandRightSidebar();
                 this._updateSidebarToggleIcon(true);
+            },
+            getAnchorRect: () => {
+                const input = this.querySelector(`#task-${this.task_id}-input`);
+                const box = input?.querySelector('#agent-input-container') || input;
+                if (!box) return null;
+                const rect = box.getBoundingClientRect();
+                return { top: rect.top, right: rect.right, width: rect.width };
             },
             capturePage: async () => {
                 const sidebar = this._getRightSidebarEl();
@@ -4036,12 +4123,19 @@ class TaskView extends HTMLElement {
     }
 
     /**
-     * 若侧边栏已收起且浏览器已被使用（且浮窗未被手动关闭），则显示画中画浮窗。
+     * 若侧边栏已收起、浏览器确有可展示的内容（非空白标签页）且浮窗未被手动关闭，则显示画中画浮窗。
+     * 只剩 about:blank 标签页时（等同于没有标签页）不弹浮窗；已显示的浮窗也随之收起，
+     * 避免浮窗只显示一个空白占位。
      */
     _showBrowserPipIfNeeded() {
         const sidebar = this._getRightSidebarEl();
-        if (!sidebar || typeof sidebar.isBrowserVisible !== 'function') return;
-        if (!sidebar.isBrowserVisible()) return;
+        const hasContent = !!sidebar && typeof sidebar.hasBrowserContent === 'function' && sidebar.hasBrowserContent();
+        if (!hasContent) {
+            if (this._browserPip) {
+                this._browserPip.hide();
+            }
+            return;
+        }
 
         if (!this._browserPip) {
             this._initBrowserPip();
@@ -4097,9 +4191,11 @@ class TaskView extends HTMLElement {
     _ensureRightSidebarOpen() {
         if (!this._rightSidebarExpanded) {
             const sidebar = this._getRightSidebarEl();
-            const browserActive =
-                sidebar && typeof sidebar.isBrowserVisible === 'function' && sidebar.isBrowserVisible();
-            if (browserActive) {
+            // 只有空白标签页时等同于浏览器还没用起来：应展开侧边栏展示即将到来的内容，
+            // 而不是留在折叠状态里靠画中画显示一个空白页。
+            const browserInUse =
+                sidebar && typeof sidebar.hasBrowserContent === 'function' && sidebar.hasBrowserContent();
+            if (browserInUse) {
                 // 浏览器已激活且侧边栏收起，尝试显示画中画（用户已关闭则不弹出）
                 // 不展开侧边栏，让浏览器工具在后台继续运行
                 this._showBrowserPipIfNeeded();
@@ -5247,6 +5343,8 @@ class TaskView extends HTMLElement {
             void this.exportTaskJson();
         });
 
+        this._updateExportButtonActive(true);
+
         this._exportMenuDismissHandler = (ev) => {
             if (!menu.contains(ev.target) && !anchorEl.contains(ev.target)) {
                 this._dismissExportMenu();
@@ -5261,6 +5359,14 @@ class TaskView extends HTMLElement {
             document.removeEventListener('mousedown', this._exportMenuDismissHandler);
             this._exportMenuDismissHandler = null;
         }
+        this._updateExportButtonActive(false);
+    }
+
+    /** 导出菜单打开期间保持按钮高亮（图标与文字同时点亮，鼠标移到菜单上也不熄灭） */
+    _updateExportButtonActive(isOpen) {
+        const btn = this.querySelector(`[id^="taskview-export-btn"]`);
+        if (!btn) return;
+        btn.classList.toggle('toolbar-spread-btn-on', isOpen);
     }
 
     async exportTaskJson() {
@@ -5615,7 +5721,7 @@ class TaskView extends HTMLElement {
                 [
                     {
                         id: 'taskview-export-btn',
-                        iconSvg: EXPORT_DOWNLOAD_SVG,
+                        iconSvg: EXPORT_OPEN_SVG,
                         label: taskViewT('renderer.taskview.toolbar.export'),
                         expandLabel: true,
                         action: (event) => {
@@ -5969,6 +6075,7 @@ class TaskView extends HTMLElement {
         this._goalController.disconnect();
         this._workspaceFocusLayout.dispose();
         this._cancelBrowserIdleTimer();
+        this._cancelBrowserPipShowTimer();
         if (this._browserPip) {
             this._browserPip.destroy();
             this._browserPip = null;
@@ -6102,6 +6209,9 @@ class TaskView extends HTMLElement {
             return;
         }
 
+        // 初始宽度同样受聊天区最小宽度约束，避免窄窗口下首次渲染就把聊天区压到 350px 以下
+        const initialSidebarWidth = this._workspaceFocusLayout.constrainPanelWidth(`${this._rightSidebarWidth}px`);
+
         this.innerHTML = `
         <div class="bg-gray-30 h-full flex flex-col">
             <header id="taskview-toolbar" class="w-full"></header>
@@ -6171,7 +6281,7 @@ class TaskView extends HTMLElement {
                 </div>
 
                 <!-- 右侧边栏（任务产物 / 任务计划 / 变更） -->
-                <task-artifacts id="task-${this.task_id}-artifacts" task-id="${this.task_id}" style="display: ${this._rightSidebarExpanded ? '' : 'none'}; width: ${this._rightSidebarWidth}px;"></task-artifacts>
+                <task-artifacts id="task-${this.task_id}-artifacts" task-id="${this.task_id}" style="display: ${this._rightSidebarExpanded ? '' : 'none'}; width: ${initialSidebarWidth};"></task-artifacts>
             </div>
         </div>
         `;
@@ -6200,8 +6310,13 @@ class TaskView extends HTMLElement {
                 resizeRafId = null;
                 if (!isResizing || !cachedContainerRect) return;
                 const newWidth = cachedContainerRect.right - e.clientX;
-                const minWidth = 200;
-                const maxWidth = cachedContainerRect.width * 0.85;
+                // 面板上限取两个约束的较小值：容器宽度的 85%，以及为聊天区保留 MIN_CHAT_AREA_WIDTH 后的余量
+                const maxWidth = Math.min(
+                    cachedContainerRect.width * 0.85,
+                    cachedContainerRect.width - MIN_CHAT_AREA_WIDTH - RIGHT_PANEL_RESIZER_WIDTH
+                );
+                // 容器过窄时上限可能低于默认下限，此时以聊天区约束为准
+                const minWidth = Math.min(200, maxWidth);
                 if (newWidth < minWidth || newWidth > maxWidth) return;
                 rightSidebar.style.width = newWidth + 'px';
                 this._rightSidebarWidth = newWidth;
