@@ -71,9 +71,14 @@ export interface UsageTelemetryEvent {
 export interface UsagePeriodSummary {
     task_count: number;
     request_count: number;
+    /** 输入 tokens 总量（含命中缓存与写入缓存的部分） */
     input_tokens: number;
     output_tokens: number;
     total_tokens: number;
+    /** 输入 tokens 中命中缓存的部分 */
+    cache_read_input_tokens: number;
+    /** 输入 tokens 中未命中缓存的部分（含写入缓存的部分） */
+    cache_miss_input_tokens: number;
 }
 
 export interface UsageDailyTrendPoint {
@@ -81,6 +86,10 @@ export interface UsageDailyTrendPoint {
     input_tokens: number;
     output_tokens: number;
     total_tokens: number;
+    /** 输入中命中缓存的部分 */
+    cache_read_input_tokens: number;
+    /** 输入中未命中缓存的部分 */
+    cache_miss_input_tokens: number;
 }
 
 export interface UsageTaskRankItem {
@@ -91,6 +100,8 @@ export interface UsageTaskRankItem {
     input_tokens: number;
     output_tokens: number;
     total_tokens: number;
+    /** 输入中命中缓存的部分 */
+    cache_read_input_tokens: number;
     request_count: number;
     last_used_at: string;
 }
@@ -101,6 +112,8 @@ export interface UsageModelRankItem {
     input_tokens: number;
     output_tokens: number;
     total_tokens: number;
+    /** 输入中命中缓存的部分 */
+    cache_read_input_tokens: number;
     request_count: number;
 }
 
@@ -109,6 +122,10 @@ export interface UsageHourlyTrendPoint {
     input_tokens: number;
     output_tokens: number;
     total_tokens: number;
+    /** 输入中命中缓存的部分 */
+    cache_read_input_tokens: number;
+    /** 输入中未命中缓存的部分 */
+    cache_miss_input_tokens: number;
 }
 
 export interface UsageDashboardSummary {
@@ -151,7 +168,9 @@ function emptyPeriodSummary(): UsagePeriodSummary {
         request_count: 0,
         input_tokens: 0,
         output_tokens: 0,
-        total_tokens: 0
+        total_tokens: 0,
+        cache_read_input_tokens: 0,
+        cache_miss_input_tokens: 0
     };
 }
 
@@ -502,9 +521,25 @@ export async function readUsageEvents(): Promise<UsageTelemetryEvent[]> {
 
 function addToPeriod(period: UsagePeriodSummary, counters: TokenUsageCounters): void {
     period.request_count += 1;
-    period.input_tokens += counters.input_tokens;
+    period.input_tokens += totalInputTokens(counters);
     period.output_tokens += counters.output_tokens;
     period.total_tokens += counters.total_tokens;
+    period.cache_read_input_tokens += counters.cache_read_input_tokens;
+    period.cache_miss_input_tokens += missInputTokens(counters);
+}
+
+/**
+ * 汇总输入 tokens：usage.input_tokens 只统计未命中缓存的输入，命中与写入缓存需另行叠加。
+ */
+function totalInputTokens(counters: TokenUsageCounters): number {
+    return counters.input_tokens + counters.cache_read_input_tokens + counters.cache_creation_input_tokens;
+}
+
+/**
+ * 未命中缓存的输入 tokens：未命中输入与缓存写入共同构成输入中未被缓存命中的部分。
+ */
+function missInputTokens(counters: TokenUsageCounters): number {
+    return counters.input_tokens + counters.cache_creation_input_tokens;
 }
 
 function updateTaskFirstSeen(
@@ -598,13 +633,15 @@ export function summarizeUsageEvents(
                     input_tokens: 0,
                     output_tokens: 0,
                     total_tokens: 0,
+                    cache_read_input_tokens: 0,
                     request_count: 0,
                     last_used_at: event.timestamp
                 } satisfies UsageTaskRankItem);
             existingTask.task_name = event.task_name || existingTask.task_name;
-            existingTask.input_tokens += event.usage.input_tokens;
+            existingTask.input_tokens += totalInputTokens(event.usage);
             existingTask.output_tokens += event.usage.output_tokens;
             existingTask.total_tokens += event.usage.total_tokens;
+            existingTask.cache_read_input_tokens += event.usage.cache_read_input_tokens;
             existingTask.request_count += 1;
             if (eventDate.getTime() > new Date(existingTask.last_used_at).getTime()) {
                 existingTask.last_used_at = event.timestamp;
@@ -625,16 +662,18 @@ export function summarizeUsageEvents(
             const modelKey = event.model || 'unknown';
             const existingModel = monthModels.get(modelKey);
             if (existingModel) {
-                existingModel.input_tokens += event.usage.input_tokens;
+                existingModel.input_tokens += totalInputTokens(event.usage);
                 existingModel.output_tokens += event.usage.output_tokens;
                 existingModel.total_tokens += event.usage.total_tokens;
+                existingModel.cache_read_input_tokens += event.usage.cache_read_input_tokens;
                 existingModel.request_count += 1;
             } else {
                 monthModels.set(modelKey, {
                     model: modelKey,
-                    input_tokens: event.usage.input_tokens,
+                    input_tokens: totalInputTokens(event.usage),
                     output_tokens: event.usage.output_tokens,
                     total_tokens: event.usage.total_tokens,
+                    cache_read_input_tokens: event.usage.cache_read_input_tokens,
                     request_count: 1
                 });
             }
@@ -688,17 +727,21 @@ export function summarizeUsageEvents(
         const counters = dayTotals.get(dayKey) ?? emptyCounters();
         dailyTrend.push({
             day: dayKey,
-            input_tokens: counters.input_tokens,
+            input_tokens: totalInputTokens(counters),
             output_tokens: counters.output_tokens,
-            total_tokens: counters.total_tokens
+            total_tokens: counters.total_tokens,
+            cache_read_input_tokens: counters.cache_read_input_tokens,
+            cache_miss_input_tokens: missInputTokens(counters)
         });
     }
 
     const hourlyTrend: UsageHourlyTrendPoint[] = hourTotals.map((counters, hour) => ({
         hour: `${String(hour).padStart(2, '0')}:00`,
-        input_tokens: counters.input_tokens,
+        input_tokens: totalInputTokens(counters),
         output_tokens: counters.output_tokens,
-        total_tokens: counters.total_tokens
+        total_tokens: counters.total_tokens,
+        cache_read_input_tokens: counters.cache_read_input_tokens,
+        cache_miss_input_tokens: missInputTokens(counters)
     }));
 
     return {

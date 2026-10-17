@@ -64,6 +64,33 @@ function normalizeMaxCompletionTokens(value: number | undefined): number | undef
     return Math.floor(value);
 }
 
+function asRecord(value: unknown): Record<string, unknown> | undefined {
+    if (value !== null && typeof value === 'object' && !Array.isArray(value)) {
+        return value as Record<string, unknown>;
+    }
+    return undefined;
+}
+
+function readTokenCount(candidate: Record<string, unknown>, key: string): number | undefined {
+    const value = candidate[key];
+    if (typeof value !== 'number' || !Number.isFinite(value) || value < 0) {
+        return undefined;
+    }
+    return Math.floor(value);
+}
+
+/**
+ * 读取命中缓存的输入 tokens。
+ * DeepSeek 原生接口返回 prompt_cache_hit_tokens，OpenAI 兼容接口返回 prompt_tokens_details.cached_tokens。
+ */
+function readCacheReadInputTokens(rawUsage: Record<string, unknown>): number | undefined {
+    const details = asRecord(rawUsage['prompt_tokens_details']);
+    return (
+        readTokenCount(rawUsage, 'prompt_cache_hit_tokens') ??
+        (details ? readTokenCount(details, 'cached_tokens') : undefined)
+    );
+}
+
 function normalizedTotal(promptTokens?: number, completionTokens?: number, totalTokens?: number): number | undefined {
     if (totalTokens !== undefined) {
         return totalTokens;
@@ -321,15 +348,29 @@ export class OpenAIAdapter {
         if (!usage) {
             return undefined;
         }
+
+        const candidate = asRecord(rawUsage);
+        const cacheReadInputTokens =
+            (candidate ? readCacheReadInputTokens(candidate) : undefined) ?? usage.cache_read_input_tokens ?? 0;
+        const cacheCreationInputTokens = usage.cache_creation_input_tokens ?? 0;
+
+        // 统一语义：input_tokens 只统计未命中缓存的输入，命中与写入缓存分别通过 cache_* 字段表达。
+        // 兼容接口通常不返回 input_tokens，此处在缺少该字段时从 prompt_tokens 中扣除缓存部分。
+        const inputTokens =
+            usage.input_tokens ??
+            (usage.prompt_tokens !== undefined
+                ? Math.max(0, usage.prompt_tokens - cacheReadInputTokens - cacheCreationInputTokens)
+                : undefined);
+
         return new Usage(
             usage.prompt_tokens,
             usage.completion_tokens,
             normalizedTotal(usage.prompt_tokens, usage.completion_tokens, usage.total_tokens),
             {
-                input_tokens: usage.input_tokens,
+                input_tokens: inputTokens,
                 output_tokens: usage.output_tokens,
-                cache_creation_input_tokens: usage.cache_creation_input_tokens,
-                cache_read_input_tokens: usage.cache_read_input_tokens
+                cache_creation_input_tokens: cacheCreationInputTokens,
+                cache_read_input_tokens: cacheReadInputTokens
             }
         );
     }

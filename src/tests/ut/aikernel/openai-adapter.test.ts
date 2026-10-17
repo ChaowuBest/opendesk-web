@@ -163,3 +163,55 @@ describe('OpenAIAdapter extraHeaders 透传', () => {
         expect(options.headers['x-session']).toBe('ses_abc');
     });
 });
+
+describe('OpenAIAdapter.parseUsage 缓存用量', () => {
+    test('解析 OpenAI 风格 prompt_tokens_details.cached_tokens', () => {
+        const usage = OpenAIAdapter.parseUsage({
+            prompt_tokens: 1000,
+            completion_tokens: 20,
+            total_tokens: 1020,
+            prompt_tokens_details: { cached_tokens: 768 }
+        });
+
+        expect(usage?.prompt_tokens).toBe(1000);
+        expect(usage?.cache_read_input_tokens).toBe(768);
+        expect(usage?.input_tokens).toBe(232);
+    });
+
+    test('解析 DeepSeek 风格 prompt_cache_hit_tokens', () => {
+        const usage = OpenAIAdapter.parseUsage({
+            prompt_tokens: 1000,
+            completion_tokens: 20,
+            total_tokens: 1020,
+            prompt_cache_hit_tokens: 512,
+            prompt_cache_miss_tokens: 488
+        });
+
+        expect(usage?.cache_read_input_tokens).toBe(512);
+        expect(usage?.input_tokens).toBe(488);
+    });
+
+    test('无缓存字段时保持输入为完整 prompt tokens', () => {
+        const usage = OpenAIAdapter.parseUsage({
+            prompt_tokens: 300,
+            completion_tokens: 10,
+            total_tokens: 310
+        });
+
+        expect(usage?.cache_read_input_tokens).toBe(0);
+        expect(usage?.input_tokens).toBe(300);
+    });
+
+    test('显式提供 input_tokens 时不重复扣除缓存', () => {
+        const usage = OpenAIAdapter.parseUsage({
+            prompt_tokens: 1000,
+            completion_tokens: 20,
+            total_tokens: 1020,
+            input_tokens: 200,
+            prompt_tokens_details: { cached_tokens: 768 }
+        });
+
+        expect(usage?.cache_read_input_tokens).toBe(768);
+        expect(usage?.input_tokens).toBe(200);
+    });
+});
