@@ -126,3 +126,44 @@ export function computeDragBounds(input: WindowDragInput): WindowBounds {
         height: startBounds.height
     };
 }
+
+/** 二维坐标点（窗口内坐标或屏幕 DIP 坐标，语义由调用方指定）。 */
+export interface Point {
+    x: number;
+    y: number;
+}
+
+export interface PointerFeedInput {
+    /** 会话起始窗口 bounds（尚未应用任何位移时即窗口当时的 bounds） */
+    startBounds: WindowBounds;
+    /** 主进程当前已应用的窗口 bounds（含本会话此前的移动） */
+    appliedBounds: WindowBounds;
+    /** 按下点：renderer 窗口内坐标 */
+    startClient: Point;
+    /** 当前 pointer 位置：renderer 窗口内坐标 */
+    client: Point;
+}
+
+/**
+ * pointer 驱动会话（触摸屏/手写笔）的位移换算。
+ *
+ * 触摸不会更新系统光标位置，主进程无法用 screen.getCursorScreenPoint() 轮询；
+ * 触摸事件的 screenX/screenY 在 X11 下也不可靠（可能退化成窗口内坐标，用它做
+ * 绝对定位会形成正反馈、窗口乱跳），因此改由 renderer 上报 pointer 的窗口内
+ * 坐标。窗口内坐标随窗口自身移动而变（窗口右移 50px，同一屏幕位置的 clientX
+ * 小 50），故屏幕位移为：
+ *
+ *   d = (appliedBounds.origin + client) - (startBounds.origin + startClient)
+ *     = 已应用位移 + 指针在窗口内的位移
+ *
+ * 结果始终以会话起点为基准（非逐帧累加），事件延迟与丢帧不会累积漂移；
+ * appliedBounds 与事件采样时刻的窗口位置之差最多一帧，由调用侧的按帧合并压到
+ * 最小。
+ */
+export function computePointerFeedDelta(input: PointerFeedInput): { dx: number; dy: number } {
+    const { startBounds, appliedBounds, startClient, client } = input;
+    return {
+        dx: appliedBounds.x - startBounds.x + (client.x - startClient.x),
+        dy: appliedBounds.y - startBounds.y + (client.y - startClient.y)
+    };
+}

@@ -21,6 +21,7 @@ import { describe, it, expect } from '@jest/globals';
 import {
     LINUX_WINDOW_SHADOW_MARGIN,
     computeDragBounds,
+    computePointerFeedDelta,
     computeShadowResizeBounds,
     normalizeShadowResizeDirection,
     expandVisualBounds,
@@ -98,5 +99,72 @@ describe('computeDragBounds', () => {
             width: 1200,
             height: 800
         });
+    });
+});
+
+describe('computePointerFeedDelta', () => {
+    const START = { x: 100, y: 80, width: 1200, height: 800 };
+
+    it('整窗拖动：窗口未移动时位移即指针在窗口内的位移', () => {
+        expect(
+            computePointerFeedDelta({
+                startBounds: START,
+                appliedBounds: START,
+                startClient: { x: 300, y: 16 },
+                client: { x: 350, y: 16 }
+            })
+        ).toEqual({ dx: 50, dy: 0 });
+    });
+
+    it('整窗拖动：手指停住后 client 随窗口移动回落，位移不再增长', () => {
+        // 手指从屏幕 x=400 拖到 x=450（窗口已随之移到 x=150）后停住，
+        // 窗口内坐标回落到 300；总位移仍是手指的总位移 50
+        expect(
+            computePointerFeedDelta({
+                startBounds: START,
+                appliedBounds: { x: 150, y: 80, width: 1200, height: 800 },
+                startClient: { x: 300, y: 16 },
+                client: { x: 300, y: 16 }
+            })
+        ).toEqual({ dx: 50, dy: 0 });
+    });
+
+    it('east 边缘：origin 不动，client 位移即宽度增量且停住后不增长', () => {
+        expect(
+            computePointerFeedDelta({
+                startBounds: START,
+                appliedBounds: START,
+                startClient: { x: 1200, y: 400 },
+                client: { x: 1240, y: 400 }
+            })
+        ).toEqual({ dx: 40, dy: 0 });
+        expect(
+            computePointerFeedDelta({
+                startBounds: START,
+                appliedBounds: { x: 100, y: 80, width: 1240, height: 800 },
+                startClient: { x: 1200, y: 400 },
+                client: { x: 1240, y: 400 }
+            })
+        ).toEqual({ dx: 40, dy: 0 });
+    });
+
+    it('west 边缘：窗口左移使 client 同步补偿，位移保持为手指总位移', () => {
+        expect(
+            computePointerFeedDelta({
+                startBounds: START,
+                appliedBounds: START,
+                startClient: { x: 0, y: 400 },
+                client: { x: -60, y: 400 }
+            })
+        ).toEqual({ dx: -60, dy: 0 });
+        // 窗口已左移到 x=40，手指停在屏幕 x=40 → 窗口内坐标回到 0
+        expect(
+            computePointerFeedDelta({
+                startBounds: START,
+                appliedBounds: { x: 40, y: 80, width: 1260, height: 800 },
+                startClient: { x: 0, y: 400 },
+                client: { x: 0, y: 400 }
+            })
+        ).toEqual({ dx: -60, dy: 0 });
     });
 });

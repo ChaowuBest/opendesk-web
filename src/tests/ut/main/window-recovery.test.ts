@@ -243,3 +243,212 @@ describe('renderer freeze watchdog', () => {
         expect(reload).toHaveBeenCalledTimes(1);
     });
 });
+
+/*
+ * 探活路径：窗口被其他窗口遮挡时 Chromium 会把 renderer 定时器节流到分钟级，
+ * 此时心跳静默不代表冻结，主进程需先经 IPC 探活确认再决定是否重载。
+ */
+describe('renderer freeze watchdog with heartbeat probe', () => {
+    function setupProbedRecovery(overrides: Record<string, unknown> = {}) {
+        const clock = setupClock();
+        const log = createLogger();
+        const reload = jest.fn(() => true);
+        const probe = jest.fn();
+        let visible = true;
+        const controller = createWindowRecoveryController({
+            reload,
+            isWindowVisible: () => visible,
+            log,
+            now: clock.now,
+            requestHeartbeatProbe: probe,
+            ...overrides
+        });
+        controller.start();
+        return { clock, log, reload, probe, controller, setVisible: (value: boolean) => (visible = value) };
+    }
+
+    test('probes the renderer before reloading once heartbeats stall', () => {
+        const { clock, log, reload, probe } = setupProbedRecovery();
+
+        for (let i = 0; i < 4; i++) clock.advance(5_000);
+
+        expect(probe).toHaveBeenCalledTimes(1);
+        expect(reload).not.toHaveBeenCalled();
+        expect(log.warn).toHaveBeenCalledWith(expect.stringContaining('probing renderer before reload'));
+    });
+
+    test('skips the reload while the probed renderer keeps answering', () => {
+        const { clock, reload, probe, controller } = setupProbedRecovery();
+        probe.mockImplementation(() => controller.onHeartbeat());
+
+        for (let i = 0; i < 20; i++) clock.advance(5_000);
+
+        expect(probe.mock.calls.length).toBeGreaterThan(1);
+        expect(reload).not.toHaveBeenCalled();
+    });
+
+    test('warns once while the window stays behind other windows', () => {
+        const { clock, log, probe, controller } = setupProbedRecovery();
+        probe.mockImplementation(() => controller.onHeartbeat());
+
+        for (let i = 0; i < 20; i++) clock.advance(5_000);
+
+        // 遮挡期间每轮巡检都会探活，日志只在进入该状态时记一条
+        expect(probe.mock.calls.length).toBeGreaterThan(1);
+        expect(log.warn).toHaveBeenCalledTimes(1);
+    });
+
+    test('reloads when the probed renderer never answers', () => {
+        const { clock, log, reload } = setupProbedRecovery();
+
+        for (let i = 0; i < 8; i++) clock.advance(5_000);
+
+        expect(reload).toHaveBeenCalledTimes(1);
+        expect(log.error).toHaveBeenCalledWith(expect.stringContaining('probe timed out'));
+    });
+
+    test('re-probes after the window becomes visible instead of trusting a stale probe', () => {
+        const { clock, reload, probe, setVisible, controller } = setupProbedRecovery();
+
+        // t=20s 静默超时并发出探活
+        for (let i = 0; i < 4; i++) clock.advance(5_000);
+        expect(probe).toHaveBeenCalledTimes(1);
+
+        // 探活未及回应窗口就被隐藏：在途探活必须丢弃，但重新可见后要发起全新探活验证，
+        // 而不是沿用旧结果直接重载
+        setVisible(false);
+        clock.advance(5_000);
+        setVisible(true);
+        probe.mockImplementation(() => controller.onHeartbeat());
+        for (let i = 0; i < 2; i++) clock.advance(5_000);
+
+        expect(probe).toHaveBeenCalledTimes(2);
+        expect(reload).not.toHaveBeenCalled();
+    });
+
+    test('recovers quickly when the renderer died while the window was occluded', () => {
+        const { clock, log, reload, probe, setVisible, controller } = setupProbedRecovery();
+        probe.mockImplementation(() => controller.onHeartbeat());
+
+        // 遮挡 3 分钟，退避到 60s 档
+        for (let i = 0; i < 36; i++) clock.advance(5_000);
+        expect(reload).not.toHaveBeenCalled();
+
+        // renderer 死在遮挡期间；用户切回窗口后应立即重新探活并快速恢复，
+        // 而不是等满 60s 退避周期
+        probe.mockImplementation(() => {});
+        setVisible(false);
+        clock.advance(5_000);
+        setVisible(true);
+        for (let i = 0; i < 3; i++) clock.advance(5_000);
+
+        expect(probe).toHaveBeenCalledTimes(4);
+        expect(reload).toHaveBeenCalledTimes(1);
+        expect(log.error).toHaveBeenCalledWith(expect.stringContaining('probe timed out'));
+    });
+
+    test('ignores a probe dispatch failure without crashing', () => {
+        const { clock, log, reload, probe } = setupProbedRecovery();
+        probe.mockImplementation(() => {
+            throw new Error('channel closed');
+        });
+
+        for (let i = 0; i < 8; i++) clock.advance(5_000);
+
+        expect(log.warn).toHaveBeenCalledWith(expect.stringContaining('failed to dispatch'));
+        expect(reload).toHaveBeenCalledTimes(1);
+    });
+
+    test('reports the return to a normal heartbeat cadence after the window is unoccluded', () => {
+        const { clock, log, probe, controller } = setupProbedRecovery();
+        probe.mockImplementation(() => controller.onHeartbeat());
+
+        for (let i = 0; i < 6; i++) clock.advance(5_000);
+        clock.advance(3_000);
+        // 遮挡解除：心跳定时器恢复常态上报，不再依赖探活
+        controller.onHeartbeat();
+
+        expect(log.info).toHaveBeenCalledWith(expect.stringContaining('resumed at normal cadence'));
+    });
+
+    test('keeps the pre-probe behaviour when no probe is wired up', () => {
+        const clock = setupClock();
+        const log = createLogger();
+        const reload = jest.fn(() => true);
+        const controller = createWindowRecoveryController({
+            reload,
+            isWindowVisible: () => true,
+            log,
+            now: clock.now
+        });
+        controller.start();
+
+        clock.advance(15_001);
+
+        expect(reload).toHaveBeenCalledTimes(1);
+        expect(log.error).toHaveBeenCalledWith(expect.stringContaining('heartbeat silent'));
+    });
+
+    test('never probes while the window stays hidden', () => {
+        const { clock, reload, probe, setVisible } = setupProbedRecovery();
+        setVisible(false);
+
+        // 最小化 5 分钟：隐藏窗口本来就该省电，看门狗不应再额外唤醒 renderer
+        for (let i = 0; i < 60; i++) clock.advance(5_000);
+
+        expect(probe).not.toHaveBeenCalled();
+        expect(reload).not.toHaveBeenCalled();
+    });
+
+    test('backs off the probe cadence while the window stays occluded', () => {
+        const { clock, reload, probe, controller } = setupProbedRecovery();
+        probe.mockImplementation(() => controller.onHeartbeat());
+
+        // 持续遮挡 3 分钟：不退避会每轮巡检探活一次（约 9 次），退避后 15s→30s→60s
+        for (let i = 0; i < 36; i++) clock.advance(5_000);
+
+        expect(probe).toHaveBeenCalledTimes(3);
+        expect(reload).not.toHaveBeenCalled();
+    });
+
+    test('resets the probe backoff once the heartbeat cadence recovers', () => {
+        const { clock, probe, controller } = setupProbedRecovery();
+        probe.mockImplementation(() => controller.onHeartbeat());
+
+        for (let i = 0; i < 36; i++) clock.advance(5_000);
+        expect(probe).toHaveBeenCalledTimes(3);
+
+        // 遮挡解除：心跳回到 3s 周期，兜底状态与退避一起复位
+        probe.mockImplementation(() => {});
+        for (let i = 0; i < 2; i++) {
+            clock.advance(3_000);
+            controller.onHeartbeat();
+        }
+        for (let i = 0; i < 4; i++) clock.advance(5_000);
+
+        expect(probe).toHaveBeenCalledTimes(4);
+    });
+
+    test('paces recovery attempts once the reload budget is exhausted', () => {
+        const clock = setupClock();
+        const log = createLogger();
+        const reload = jest.fn(() => false);
+        const probe = jest.fn();
+        const controller = createWindowRecoveryController({
+            reload,
+            isWindowVisible: () => true,
+            log,
+            now: clock.now,
+            requestHeartbeatProbe: probe
+        });
+        controller.start();
+
+        // 125s 内 renderer 持续无心跳且重载配额耗尽：每轮恢复尝试由「15s 静默 + 10s 探活
+        // 超时」组成，即约 15s 一轮探活、15s 一次重载尝试，共 7 次；
+        // 而不是退回旧逻辑的每轮巡检（5s）都尝试重载
+        for (let i = 0; i < 25; i++) clock.advance(5_000);
+
+        expect(reload).toHaveBeenCalledTimes(7);
+        expect(log.error).toHaveBeenCalledWith(expect.stringContaining('budget exhausted'));
+    });
+});

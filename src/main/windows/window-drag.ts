@@ -18,14 +18,22 @@
  * `html.window-rounded .drag-overlay` 覆盖），拖动由本模块以手动会话完成；
  * Windows/macOS 仍走原生 drag region，行为不变。
  *
- * 与 shadow-resize.ts 同构：renderer 的 pointer 事件只负责发起/结束信号，
- * 本模块轮询 screen.getCursorScreenPoint() 驱动整窗移动（鼠标可能拖出窗口，
- * renderer 无法持续收到 mousemove；pointer capture 负责正常路径的 pointerup，
- * blur/closed/超时兜底结束会话）。bounds 换算见 linux-window-shadow.ts。
+ * 会话有两种驱动来源（driver）：
+ * - cursor（鼠标）：renderer 的 pointer 事件只负责发起/结束信号，本模块轮询
+ *   screen.getCursorScreenPoint() 驱动整窗移动（鼠标可能拖出窗口，renderer
+ *   无法持续收到 mousemove；pointer capture 负责正常路径的 pointerup）；
+ * - pointer（触摸屏/手写笔）：这类输入不会更新系统光标位置，轮询取到的始终是
+ *   陈旧坐标（窗口跳到错误位置后不再跟随手指），改由 renderer 在 pointermove 中
+ *   上报 pointer 的窗口内坐标，经 updateWindowDragSession 驱动。窗口内坐标随
+ *   窗口自身移动而变，换算需带上已应用位移（computePointerFeedDelta）；主进程
+ *   按帧合并更新，避免快速拖动时事件排队造成过冲后卡死。
+ *
+ * 两种来源的兜底一致：blur/closed/超时结束会话。bounds 换算见
+ * linux-window-shadow.ts。
  */
 
 import { BrowserWindow, screen } from 'electron';
-import { computeDragBounds, type WindowBounds } from './linux-window-shadow.js';
+import { computeDragBounds, computePointerFeedDelta, type Point, type WindowBounds } from './linux-window-shadow.js';
 
 const DRAG_POLL_INTERVAL_MS = 16;
 /** 安全网：异常情况下（如 pointerup 丢失）避免会话永久挂起。 */
@@ -38,9 +46,20 @@ const DRAG_SESSION_MAX_MS = 30_000;
  */
 const UNMAXIMIZE_SETTLE_MS = 60;
 
+/** 拖动会话的驱动来源，见模块注释。 */
+export type WindowDragDriver = 'cursor' | 'pointer';
+
 interface WindowDragSession {
     win: BrowserWindow;
-    pollTimer: NodeJS.Timeout;
+    driver: WindowDragDriver;
+    /** 会话起始 bounds，位移换算的基准 */
+    startBounds: WindowBounds;
+    /** cursor 驱动：会话起始光标屏幕坐标 */
+    startPoint: Point;
+    /** pointer 驱动：按下点（renderer 窗口内坐标） */
+    grabPoint: Point;
+    /** pointer 驱动不轮询 */
+    pollTimer: NodeJS.Timeout | null;
     deadlineTimer: NodeJS.Timeout;
     blurHandler: () => void;
     closedHandler: () => void;
@@ -64,11 +83,42 @@ let pendingMaximizeDragTimer: NodeJS.Timeout | null = null;
  * 下方（保持按下点相对窗口位置不变），复刻 WM 原生"最大化窗口按住标题栏拖动
  * 即还原跟随"的语义。
  */
-export function startWindowDragSession(win: BrowserWindow, grabPoint?: WindowDragGrabPoint): void {
+export function startWindowDragSession(
+    win: BrowserWindow,
+    grabPoint?: WindowDragGrabPoint,
+    driver: WindowDragDriver = 'cursor'
+): void {
     endWindowDragSession();
     if (win.isDestroyed() || win.isFullScreen()) {
         return;
     }
+    // 没有按下点就无法换算窗口内坐标，退回光标轮询路径
+    const pointerDriven = driver === 'pointer' && !!grabPoint;
+    const grab = grabPoint ?? { x: 0, y: 0 };
+
+    if (pointerDriven) {
+        if (win.isMaximized()) {
+            const normal = win.getNormalBounds();
+            win.unmaximize();
+            // 等 WM 恢复完成后回到 normal bounds 并进入会话；按下点落到手指下
+            // 由首个 pointermove 完成（见 updateWindowDragSession）
+            pendingMaximizeDragTimer = setTimeout(() => {
+                pendingMaximizeDragTimer = null;
+                if (win.isDestroyed()) {
+                    return;
+                }
+                win.setBounds(normal);
+                beginDragSession(win, normal, 'pointer', grab, grab);
+            }, UNMAXIMIZE_SETTLE_MS);
+            return;
+        }
+        // 触摸按下不做预定位：按陈旧光标定位会让窗口跳到手指之外；首个
+        // pointermove 即把按下点落到手指下（阈值位移仅数像素，无跳变感）
+        const startBounds = win.getBounds();
+        beginDragSession(win, startBounds, 'pointer', grab, grab);
+        return;
+    }
+
     const cursor = screen.getCursorScreenPoint();
 
     if (win.isMaximized()) {
@@ -89,7 +139,7 @@ export function startWindowDragSession(win: BrowserWindow, grabPoint?: WindowDra
                 height: normal.height
             };
             win.setBounds(target);
-            beginDragSession(win, win.getBounds(), screen.getCursorScreenPoint());
+            beginDragSession(win, target, 'cursor', screen.getCursorScreenPoint(), grab);
         }, UNMAXIMIZE_SETTLE_MS);
         return;
     }
@@ -106,24 +156,33 @@ export function startWindowDragSession(win: BrowserWindow, grabPoint?: WindowDra
         };
         win.setBounds(startBounds);
     }
-    beginDragSession(win, startBounds, screen.getCursorScreenPoint());
+    beginDragSession(win, startBounds, 'cursor', screen.getCursorScreenPoint(), grab);
 }
 
-function beginDragSession(win: BrowserWindow, startBounds: WindowBounds, startPoint: { x: number; y: number }): void {
-    const pollTimer = setInterval(() => {
-        if (win.isDestroyed()) {
-            endWindowDragSession();
-            return;
-        }
-        const cursorNow = screen.getCursorScreenPoint();
-        win.setBounds(
-            computeDragBounds({
-                startBounds,
-                dx: cursorNow.x - startPoint.x,
-                dy: cursorNow.y - startPoint.y
-            })
-        );
-    }, DRAG_POLL_INTERVAL_MS);
+function beginDragSession(
+    win: BrowserWindow,
+    startBounds: WindowBounds,
+    driver: WindowDragDriver,
+    startPoint: Point,
+    grabPoint: Point
+): void {
+    const pollTimer =
+        driver === 'pointer'
+            ? null
+            : setInterval(() => {
+                  if (win.isDestroyed()) {
+                      endWindowDragSession();
+                      return;
+                  }
+                  const cursorNow = screen.getCursorScreenPoint();
+                  win.setBounds(
+                      computeDragBounds({
+                          startBounds,
+                          dx: cursorNow.x - startPoint.x,
+                          dy: cursorNow.y - startPoint.y
+                      })
+                  );
+              }, DRAG_POLL_INTERVAL_MS);
 
     const blurHandler = () => endWindowDragSession();
     const closedHandler = () => endWindowDragSession();
@@ -132,7 +191,58 @@ function beginDragSession(win: BrowserWindow, startBounds: WindowBounds, startPo
 
     const deadlineTimer = setTimeout(() => endWindowDragSession(), DRAG_SESSION_MAX_MS);
 
-    activeSession = { win, pollTimer, deadlineTimer, blurHandler, closedHandler };
+    activeSession = {
+        win,
+        driver,
+        startBounds,
+        startPoint,
+        grabPoint,
+        pollTimer,
+        deadlineTimer,
+        blurHandler,
+        closedHandler
+    };
+}
+
+/** pointer 驱动：待应用的最新窗口内坐标与按帧合并定时器 */
+let pendingClient: Point | null = null;
+let coalesceTimer: NodeJS.Timeout | null = null;
+
+function applyPendingClient(): void {
+    coalesceTimer = null;
+    const client = pendingClient;
+    pendingClient = null;
+    const session = activeSession;
+    if (!session || session.driver !== 'pointer' || !client || session.win.isDestroyed()) {
+        return;
+    }
+    const { dx, dy } = computePointerFeedDelta({
+        startBounds: session.startBounds,
+        appliedBounds: session.win.getBounds(),
+        startClient: session.grabPoint,
+        client
+    });
+    session.win.setBounds(computeDragBounds({ startBounds: session.startBounds, dx, dy }));
+}
+
+/**
+ * pointer 驱动会话的坐标更新（renderer pointermove 上报的窗口内坐标）。
+ * 无会话或会话为光标驱动时忽略——鼠标路径由主进程轮询驱动。
+ *
+ * 按帧合并：触摸屏 pointermove 可达 240Hz，逐条换算会反复读到「已应用位移超前于
+ * 事件采样时刻」的 bounds 并把误差叠加进位移（快速拖动时表现为乱跳后卡住），
+ * 因此同一帧内只应用最后一个坐标。
+ */
+export function updateWindowDragSession(client: Point): void {
+    if (!activeSession || activeSession.driver !== 'pointer') {
+        return;
+    }
+    pendingClient = client;
+    if (coalesceTimer) {
+        return;
+    }
+    applyPendingClient();
+    coalesceTimer = setTimeout(applyPendingClient, DRAG_POLL_INTERVAL_MS);
 }
 
 export function endWindowDragSession(): void {
@@ -140,10 +250,17 @@ export function endWindowDragSession(): void {
         clearTimeout(pendingMaximizeDragTimer);
         pendingMaximizeDragTimer = null;
     }
+    if (coalesceTimer) {
+        clearTimeout(coalesceTimer);
+        coalesceTimer = null;
+    }
+    pendingClient = null;
     if (!activeSession) {
         return;
     }
-    clearInterval(activeSession.pollTimer);
+    if (activeSession.pollTimer) {
+        clearInterval(activeSession.pollTimer);
+    }
     clearTimeout(activeSession.deadlineTimer);
     if (!activeSession.win.isDestroyed()) {
         activeSession.win.removeListener('blur', activeSession.blurHandler);

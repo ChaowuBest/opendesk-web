@@ -175,8 +175,18 @@ import {
     normalizeShadowResizeDirection,
     shrinkWindowBounds
 } from './windows/linux-window-shadow.js';
-import { endShadowResizeSession, startShadowResizeSession } from './windows/shadow-resize.js';
-import { endWindowDragSession, startWindowDragSession } from './windows/window-drag.js';
+import {
+    endShadowResizeSession,
+    startShadowResizeSession,
+    updateShadowResizeSession,
+    type ShadowResizeDriver
+} from './windows/shadow-resize.js';
+import {
+    endWindowDragSession,
+    startWindowDragSession,
+    updateWindowDragSession,
+    type WindowDragDriver
+} from './windows/window-drag.js';
 import { attachNormalBoundsTracker } from './utils/normal-bounds-tracker.js';
 import { suppressWmSystemMenuOnLinux } from './windows/linux-context-menu.js';
 import {
@@ -679,6 +689,20 @@ function reloadMainWindowEntry(reason: string): boolean {
     return true;
 }
 
+/**
+ * 请求主窗口 renderer 立即补报一次心跳。
+ *
+ * renderer 侧心跳由定时器驱动，窗口被其他窗口遮挡或最小化时会被 Chromium 节流到分钟级，
+ * 而 IPC 消息不受节流影响、仍会即时投递到 renderer 主线程，因此可用它来二次确认
+ * 「心跳静默是后台节流还是 renderer 真冻结」（详见 utils/window-recovery.ts）。
+ */
+function probeMainWindowHeartbeat(): void {
+    if (!globalMainWindow || globalMainWindow.isDestroyed()) return;
+    const contents = globalMainWindow.webContents;
+    if (contents.isDestroyed()) return;
+    contents.send('renderer:heartbeat-probe');
+}
+
 const windowRecovery = createWindowRecoveryController({
     reload: reloadMainWindowEntry,
     // 窗口隐藏/最小化时 renderer 定时器会被节流，心跳缺失不代表冻结
@@ -687,6 +711,7 @@ const windowRecovery = createWindowRecoveryController({
         !globalMainWindow.isDestroyed() &&
         globalMainWindow.isVisible() &&
         !globalMainWindow.isMinimized(),
+    requestHeartbeatProbe: probeMainWindowHeartbeat,
     log: logger
 });
 
@@ -3274,14 +3299,19 @@ const registerScreenAPIHandlers = () => {
 };
 
 /**
- * Linux 阴影窗口的内容边缘 resize：renderer 感应条（贴内容边缘）发起/结束
- * 拖动会话，主进程轮询光标位置实时 setBounds（详见 windows/shadow-resize.ts）。
+ * Linux 阴影窗口的内容边缘 resize：renderer 感应条（贴内容边缘）发起/结束拖动
+ * 会话，鼠标由主进程轮询光标位置实时 setBounds，触摸屏/手写笔由 renderer 上报
+ * 窗口内坐标驱动（详见 windows/shadow-resize.ts）。
  */
 const registerShadowResizeHandlers = () => {
     if (process.platform !== 'linux') {
         return;
     }
-    ipcMain.on('window:shadowResizeStart', (event, direction: unknown) => {
+    // 触摸排障用：end 时输出本次会话收到的坐标更新条数，0 条说明 renderer 的
+    // pointer 事件根本没到达（被原生 resize 边框拦截或手势被浏览器接管）
+    let resizeMoveCount = 0;
+    let resizeSessionDriver: ShadowResizeDriver | null = null;
+    ipcMain.on('window:shadowResizeStart', (event, direction: unknown, options: unknown) => {
         const normalized = normalizeShadowResizeDirection(direction);
         if (normalized === null) {
             return;
@@ -3291,9 +3321,42 @@ const registerShadowResizeHandlers = () => {
             return;
         }
         const [minWidth, minHeight] = win.getMinimumSize();
-        startShadowResizeSession(win, normalized, minWidth, minHeight);
+        const o = options as { driver?: unknown; clientX?: unknown; clientY?: unknown } | null | undefined;
+        const driver: ShadowResizeDriver = o?.driver === 'pointer' ? 'pointer' : 'cursor';
+        // NaN/Infinity 会污染 bounds 换算，坐标必须是有限数值
+        const startClient =
+            typeof o?.clientX === 'number' &&
+            Number.isFinite(o.clientX) &&
+            typeof o.clientY === 'number' &&
+            Number.isFinite(o.clientY)
+                ? { x: o.clientX, y: o.clientY }
+                : undefined;
+        resizeMoveCount = 0;
+        resizeSessionDriver = driver;
+        if (driver === 'pointer') {
+            // info 级：不启用 debug 模式也能确认触摸事件是否到达 renderer
+            logger.info(
+                `[shadow-resize] pointer start direction=${normalized} startClient=${JSON.stringify(startClient ?? null)}`
+            );
+        }
+        startShadowResizeSession(win, normalized, minWidth, minHeight, driver, startClient);
+    });
+    ipcMain.on('window:shadowResizeMove', (_event, point: unknown) => {
+        const p = point as { x?: unknown; y?: unknown } | null | undefined;
+        const x = p?.x;
+        const y = p?.y;
+        if (typeof x !== 'number' || !Number.isFinite(x) || typeof y !== 'number' || !Number.isFinite(y)) {
+            return;
+        }
+        resizeMoveCount += 1;
+        updateShadowResizeSession({ x, y });
     });
     ipcMain.on('window:shadowResizeEnd', () => {
+        if (resizeSessionDriver === 'pointer') {
+            logger.info(`[shadow-resize] pointer end moves=${resizeMoveCount}`);
+        }
+        resizeMoveCount = 0;
+        resizeSessionDriver = null;
         endShadowResizeSession();
     });
     app.on('before-quit', () => {
@@ -3302,8 +3365,9 @@ const registerShadowResizeHandlers = () => {
 };
 
 /**
- * 主窗口顶部拖拽层的手动拖动（Linux only）：renderer 通知开始/结束，
- * 本进程轮询光标驱动整窗移动。背景与 bounds 换算见 windows/window-drag.ts。
+ * 主窗口顶部拖拽层的手动拖动（Linux only）：renderer 通知开始/结束，鼠标由本进程
+ * 轮询光标驱动整窗移动，触摸屏/手写笔由 renderer 上报窗口内坐标驱动。背景与
+ * bounds 换算见 windows/window-drag.ts。
  */
 const registerWindowDragHandlers = () => {
     if (process.platform !== 'linux') {
@@ -3314,9 +3378,24 @@ const registerWindowDragHandlers = () => {
         if (!win || win.isDestroyed()) {
             return;
         }
-        const p = grab as { x?: unknown; y?: unknown } | null | undefined;
-        const grabPoint = p && typeof p.x === 'number' && typeof p.y === 'number' ? { x: p.x, y: p.y } : undefined;
-        startWindowDragSession(win, grabPoint);
+        const p = grab as { x?: unknown; y?: unknown; driver?: unknown } | null | undefined;
+        const x = p?.x;
+        const y = p?.y;
+        const grabPoint =
+            typeof x === 'number' && Number.isFinite(x) && typeof y === 'number' && Number.isFinite(y)
+                ? { x, y }
+                : undefined;
+        const driver: WindowDragDriver = p?.driver === 'pointer' ? 'pointer' : 'cursor';
+        startWindowDragSession(win, grabPoint, driver);
+    });
+    ipcMain.on('window:dragMove', (_event, point: unknown) => {
+        const p = point as { x?: unknown; y?: unknown } | null | undefined;
+        const x = p?.x;
+        const y = p?.y;
+        if (typeof x !== 'number' || !Number.isFinite(x) || typeof y !== 'number' || !Number.isFinite(y)) {
+            return;
+        }
+        updateWindowDragSession({ x, y });
     });
     ipcMain.on('window:dragEnd', () => {
         endWindowDragSession();

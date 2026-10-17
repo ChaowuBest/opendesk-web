@@ -964,7 +964,8 @@
                 // Linux 上 drag region 无系统级双击最大化（仅发送 _NET_WM_MOVERESIZE
                 // 拖动请求），行为取决于窗口管理器且不稳定，这里手动监听双击。
                 // 同时拖拽层被覆盖为 no-drag（见 titlebar.css），拖动与右键也
-                // 一并手动处理：拖动通知主进程轮询光标移动窗口；右键 preventDefault
+                // 一并手动处理：拖动通知主进程移动窗口（鼠标由主进程轮询光标，
+                // 触摸屏/手写笔由本侧上报坐标）；右键 preventDefault
                 // 阻止 Chromium 默认行为（GTK 标题栏右键系统菜单已被 no-drag 消除）。
                 var dragOverlay = document.querySelector('.drag-overlay');
                 if (dragOverlay) {
@@ -982,33 +983,102 @@
                     // 拖动采用「按下记录 + 移动超阈值才启动」：单击（无位移）不触发
                     // 窗口还原/跳位，双击最大化与单击聚焦等行为不受影响；确认为拖动
                     // 后再通知主进程（携带按下点，保持按下点相对窗口位置不变）。
+                    // 驱动来源按 pointerType 分流：鼠标交给主进程轮询系统光标（手指
+                    // 拖出窗口也能跟随）；触摸屏/手写笔不会更新系统光标，轮询取到的
+                    // 始终是陈旧坐标，改由本侧 pointermove 上报窗口内坐标驱动。
                     var dragPointerState = null;
                     var DRAG_THRESHOLD = 4;
+                    // 触摸双击（双击顶部最大化）判定：Chromium 不为触摸派发 dblclick，
+                    // 只能按「两次紧凑轻点（期间未拖动）」自行识别
+                    var DOUBLE_TAP_MS = 400;
+                    var DOUBLE_TAP_SLOP = 40;
+                    var lastTapAt = 0;
+                    var lastTapX = 0;
+                    var lastTapY = 0;
+                    // pointer 驱动的坐标按帧合并上报：触摸屏 pointermove 可达 240Hz，
+                    // 逐条 IPC + setBounds 会让主进程排队积压（表现为不跟手后拖不动）
+                    var pendingDragPoint = null;
+                    var dragRafId = 0;
+                    var resetDragPoint = function () {
+                        if (dragRafId) {
+                            cancelAnimationFrame(dragRafId);
+                            dragRafId = 0;
+                        }
+                        pendingDragPoint = null;
+                    };
+                    var flushDragPoint = function () {
+                        dragRafId = 0;
+                        var point = pendingDragPoint;
+                        pendingDragPoint = null;
+                        if (point && window.windowDragAPI) {
+                            window.windowDragAPI.move(point.x, point.y);
+                        }
+                    };
                     dragOverlay.addEventListener('pointerdown', function (event) {
                         if (event.button !== 0) return;
                         if (event.target instanceof Element && event.target.closest('button')) return;
                         event.preventDefault();
+                        if (
+                            event.pointerType !== 'mouse' &&
+                            lastTapAt !== 0 &&
+                            event.timeStamp - lastTapAt < DOUBLE_TAP_MS &&
+                            Math.abs(event.clientX - lastTapX) < DOUBLE_TAP_SLOP &&
+                            Math.abs(event.clientY - lastTapY) < DOUBLE_TAP_SLOP
+                        ) {
+                            // 第二次轻点：取消待拖动状态直接最大化
+                            lastTapAt = 0;
+                            dragPointerState = null;
+                            window.settingAPI.maximizeMainWindow().then(function () {
+                                updateMaximizeIcon();
+                                if (window.updateWindowShape) window.updateWindowShape();
+                            });
+                            return;
+                        }
+                        lastTapAt = event.timeStamp;
+                        lastTapX = event.clientX;
+                        lastTapY = event.clientY;
                         try {
                             dragOverlay.setPointerCapture(event.pointerId);
                         } catch (e) {
-                            /* 捕获失败不影响拖动：移动由主进程轮询光标驱动 */
+                            /* 捕获失败不影响拖动：鼠标移动由主进程轮询光标驱动 */
                         }
-                        dragPointerState = { startX: event.clientX, startY: event.clientY, started: false };
+                        dragPointerState = {
+                            pointerId: event.pointerId,
+                            driver: event.pointerType === 'mouse' ? 'cursor' : 'pointer',
+                            startX: event.clientX,
+                            startY: event.clientY,
+                            started: false
+                        };
                     });
                     dragOverlay.addEventListener('pointermove', function (event) {
-                        if (!dragPointerState || dragPointerState.started) return;
-                        if (
-                            Math.abs(event.clientX - dragPointerState.startX) > DRAG_THRESHOLD ||
-                            Math.abs(event.clientY - dragPointerState.startY) > DRAG_THRESHOLD
-                        ) {
-                            dragPointerState.started = true;
-                            if (window.windowDragAPI) {
-                                window.windowDragAPI.start(dragPointerState.startX, dragPointerState.startY);
+                        // 多指同按：只跟随发起拖动的那根手指
+                        if (!dragPointerState || event.pointerId !== dragPointerState.pointerId) return;
+                        if (!dragPointerState.started) {
+                            if (
+                                Math.abs(event.clientX - dragPointerState.startX) > DRAG_THRESHOLD ||
+                                Math.abs(event.clientY - dragPointerState.startY) > DRAG_THRESHOLD
+                            ) {
+                                dragPointerState.started = true;
+                                if (window.windowDragAPI) {
+                                    window.windowDragAPI.start(
+                                        dragPointerState.startX,
+                                        dragPointerState.startY,
+                                        dragPointerState.driver
+                                    );
+                                }
                             }
+                            return;
                         }
+                        if (dragPointerState.driver !== 'pointer' || !window.windowDragAPI) return;
+                        // 上报窗口内坐标（触摸的 screenX 在 X11 下不可靠），主进程
+                        // 结合已应用位移换算并把按下点贴回手指下
+                        pendingDragPoint = { x: event.clientX, y: event.clientY };
+                        if (!dragRafId) dragRafId = requestAnimationFrame(flushDragPoint);
                     });
-                    var endWindowDrag = function () {
+                    var endWindowDrag = function (event) {
+                        if (dragPointerState && event.pointerId !== dragPointerState.pointerId) return;
                         if (dragPointerState && dragPointerState.started && window.windowDragAPI) {
+                            resetDragPoint();
                             window.windowDragAPI.end();
                         }
                         dragPointerState = null;

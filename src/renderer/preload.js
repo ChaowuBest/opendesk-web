@@ -13,6 +13,7 @@ import { contextBridge, ipcRenderer, webUtils, clipboard } from 'electron';
 import { defineBrowserBridge } from '../common/embedBrowserUse/preload';
 import { PermissionPendingStore } from './permissionPendingStore';
 import { createTaskListUpdateSubscription } from './taskListSubscription.js';
+import { createSettingChangedDispatcher } from './settingChangedSubscription.js';
 import {
     createHarmonyRuntimeEnvironment,
     getHarmonyBrowseRoots,
@@ -1048,15 +1049,23 @@ if (isMainFramePreload()) {
             // 窗口销毁过程中 IPC 通道可能已不可用，心跳丢失由主进程超时兜底
         }
     };
+    // 主进程探活：窗口被遮挡时心跳定时器会被节流，主进程改经 IPC 唤醒 renderer 立即补报一次；
+    // IPC 不受定时器节流影响，能回应即说明主线程未冻结（见 main/utils/window-recovery.ts）。
+    ipcRenderer.on('renderer:heartbeat-probe', sendHeartbeat);
     sendHeartbeat();
     setInterval(sendHeartbeat, 3000);
 }
 
 if (shouldExposeMainWindowAPIs()) {
-    // Linux 阴影窗口的内容边缘 resize（见 main 进程 windows/shadow-resize.ts）
+    // Linux 阴影窗口的内容边缘 resize（见 main 进程 windows/shadow-resize.ts）。
+    // options.driver='pointer'（触摸屏/手写笔）时附带按下点，主进程改用本侧
+    // move 上报的窗口内坐标驱动；鼠标不传 driver，仍由主进程轮询光标。
     safeExposeInMainWorld('shadowResizeAPI', {
-        start: (direction) => {
-            ipcRenderer.send('window:shadowResizeStart', direction);
+        start: (direction, options) => {
+            ipcRenderer.send('window:shadowResizeStart', direction, options);
+        },
+        move: (x, y) => {
+            ipcRenderer.send('window:shadowResizeMove', { x, y });
         },
         end: () => {
             ipcRenderer.send('window:shadowResizeEnd');
@@ -1065,10 +1074,15 @@ if (shouldExposeMainWindowAPIs()) {
 
     // Linux 顶部拖拽层的手动拖动（见 main 进程 windows/window-drag.ts）：
     // drag region 在 Linux 会触发 GTK 标题栏右键 WM 系统菜单，拖拽层已改为
-    // no-drag（titlebar.css），由本 API 通知主进程轮询光标驱动整窗移动。
+    // no-drag（titlebar.css）。driver='cursor'（鼠标）由主进程轮询光标驱动整窗
+    // 移动；driver='pointer'（触摸屏/手写笔）不更新系统光标，改由 move 上报
+    // 指针在窗口内的坐标（start 与 move 的坐标同一坐标系，主进程自行换算）。
     safeExposeInMainWorld('windowDragAPI', {
-        start: (grabX, grabY) => {
-            ipcRenderer.send('window:dragStart', { x: grabX, y: grabY });
+        start: (grabX, grabY, driver) => {
+            ipcRenderer.send('window:dragStart', { x: grabX, y: grabY, driver });
+        },
+        move: (x, y) => {
+            ipcRenderer.send('window:dragMove', { x, y });
         },
         end: () => {
             ipcRenderer.send('window:dragEnd');
@@ -1190,6 +1204,10 @@ if (shouldExposeMainWindowAPIs()) {
         }
     });
 
+    // setting:changed 的订阅者众多（各组件翻译器/特性开关），收敛到单个 IPC listener
+    // 分发，避免每个订阅者直接挂 ipcRenderer 触发 MaxListenersExceededWarning
+    const settingChangedDispatcher = createSettingChangedDispatcher(ipcRenderer);
+
     safeExposeInMainWorld('settingAPI', {
         registerCommandCallback: (command, callback) => {
             ipcRenderer.on(`command:${command}`, (event, ...args) => {
@@ -1221,11 +1239,7 @@ if (shouldExposeMainWindowAPIs()) {
             }
             return result.data;
         },
-        onSettingChanged: (callback) => {
-            const handler = (_event, data) => callback(data);
-            ipcRenderer.on('setting:changed', handler);
-            return () => ipcRenderer.removeListener('setting:changed', handler);
-        },
+        onSettingChanged: (callback) => settingChangedDispatcher.subscribe(callback),
         isFullscreen: async () => {
             const result = await ipcRenderer.invoke('setting:isFullscreen');
             if (result.status !== 'ok') {
