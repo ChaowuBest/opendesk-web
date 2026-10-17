@@ -21,6 +21,10 @@ const { replaceTaskHarnessForWorkspace } = await import('../../../main/aikernel/
 
 const taskAgentRef = AgentRegistry.getMainAgent();
 
+// 测试工作区根：Windows 上必须是带盘符的绝对路径（裸 /root 会被 path.resolve
+// 补成 "当前盘:/root"，与无盘符的请求路径形态不一致），POSIX 上以 / 为根
+const TEST_WORKSPACE_ROOT = process.platform === 'win32' ? 'C:/opendesk-test-ws' : '';
+
 function createRecordingProvider() {
     const responses: Array<{ enforcer: unknown; taskIds?: string[] }> = [];
     const prompts: Array<{ resourcePath: string; resolve: (value: any) => void }> = [];
@@ -44,11 +48,12 @@ beforeEach(() => {
 });
 
 describe('workspace switch re-checks queued permission prompts', () => {
-    // 权限引擎按 path.resolve 后的模式匹配请求路径：workspace 必须是绝对路径，
-    // 否则 macOS/Linux 上 path.resolve 会把它拼到 cwd 下，工作空间内路径
-    // 将全部落到隐式 ask。enforcer 是纯模式匹配，合成路径无需真实存在
-    const OLD_WORKSPACE = '/opendesk-test-old-workspace';
-    const OTHER_WORKSPACE = '/opendesk-test-other-workspace';
+    // 权限引擎按 path.resolve 后的模式匹配请求路径：workspace 必须是带盘符的
+    // 绝对路径（Windows 上 path.resolve 会给裸根路径补当前盘符，导致规则模式
+    // 与请求路径形态不一致而全部落到隐式 ask；POSIX 上也会拼到 cwd 下）。
+    // enforcer 是纯模式匹配，合成路径无需真实存在
+    const OLD_WORKSPACE = `${TEST_WORKSPACE_ROOT}/opendesk-test-old-workspace`;
+    const OTHER_WORKSPACE = `${TEST_WORKSPACE_ROOT}/opendesk-test-other-workspace`;
 
     test('replacing the harness for a new workspace notifies the provider with the task scope', async () => {
         const manager = new TaskManagerState();

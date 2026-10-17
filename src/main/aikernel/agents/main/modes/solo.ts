@@ -13,26 +13,21 @@ import type { PermissionRule, PermissionAction } from '../../../security/permiss
 import {
     createDeviceNodeRules,
     createInterpretersPermissionRules,
+    resolveSensitivePattern,
     SENSITIVE_PATH_PATTERNS
 } from '../../../../utils/permissionRules.js';
-import os from 'os';
 import type { ModeDecl } from '../../common.js';
-
-function normalizePath(p: string): string {
-    return p.replace(/\\/g, '/');
-}
 
 /**
  * 将 SENSITIVE_PATH_PATTERNS 转换为 deny 规则（而非 ask）。
  * Solo 模式下无人值守，敏感路径不能弹确认框，必须直接拒绝。
  */
 function createSensitivePathDenyRules(): PermissionRule[] {
-    const homeDir = normalizePath(os.homedir());
     const rules: PermissionRule[] = [];
     const allFileActions: PermissionAction[] = ['read', 'write', 'execute'];
 
     for (const sp of SENSITIVE_PATH_PATTERNS) {
-        const resolvedPattern = sp.pattern.replace(/\{home\}/g, homeDir);
+        const resolvedPattern = resolveSensitivePattern(sp.pattern);
         const resourceType = sp.resourceType ?? 'file';
         const actions = sp.actions ?? allFileActions;
 

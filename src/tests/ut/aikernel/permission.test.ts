@@ -1296,6 +1296,43 @@ describe('敏感路径规则', () => {
         expect(patterns).toContain('**/.env');
         expect(patterns).toContain('**/.env.*');
     });
+
+    test('SENSITIVE_PATH_PATTERNS 包含 OpenDesk 自身 setting.json（API Key 保护）', () => {
+        const patterns = SENSITIVE_PATH_PATTERNS.map((p) => p.pattern);
+        expect(patterns).toContain('{opendeskDataDir}/setting.json');
+    });
+
+    test('standard 模式：工作区恰好覆盖数据目录时 setting.json read 仍强制 ask', async () => {
+        // 回归场景：用户把默认工作空间设成应用数据目录，工作区 read allow
+        // 不得放行含模型 API Key 的 setting.json（保护规则 ask 优先于 allow）。
+        // debug 变体位于数据目录旁（<dataDir>-debug），一并覆盖
+        const { setCustomOpendeskDirectory } = await import('../../../main/utils/setting');
+        const dataDir = path.join(process.cwd(), '.tmp-sensitive-setting-test');
+        setCustomOpendeskDirectory(dataDir);
+        try {
+            const enforcer = await GlobPermissionEnforcer.create(createDefaultPermissionRules(normP(dataDir)));
+            for (const p of [normP(path.join(dataDir, 'setting.json')), `${normP(dataDir)}-debug/setting.json`]) {
+                const read = await enforcer.check({ resourceType: 'file', action: 'read', resourcePath: p });
+                expect(read.effect).toBe('ask');
+            }
+        } finally {
+            setCustomOpendeskDirectory(undefined);
+        }
+    });
+
+    test('solo 模式：setting.json 直接 deny（无人值守不弹窗）', async () => {
+        const dataDir = path.join(process.cwd(), '.tmp-sensitive-setting-test');
+        const { setCustomOpendeskDirectory } = await import('../../../main/utils/setting');
+        setCustomOpendeskDirectory(dataDir);
+        try {
+            const enforcer = await GlobPermissionEnforcer.create(createSoloModePermissionRules());
+            const p = normP(path.join(dataDir, 'setting.json'));
+            const read = await enforcer.check({ resourceType: 'file', action: 'read', resourcePath: p });
+            expect(read.effect).toBe('deny');
+        } finally {
+            setCustomOpendeskDirectory(undefined);
+        }
+    });
 });
 
 // ═══════════════════════════════════════════════════════════════
