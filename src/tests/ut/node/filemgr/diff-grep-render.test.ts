@@ -247,6 +247,160 @@ test('searchReplace diff渲染 - 对齐验证', async () => {
     }
 });
 
+// ========== Diff 卡片真实文件行号测试 ==========
+
+/**
+ * 从 diff 卡片 HTML 中提取每行的行号单元格：
+ * 返回与 <tr> 顺序一致的数组，每项为 { type, nums }（nums 为 old/new 两个行号列中出现的数字）。
+ */
+function extractDiffRows(html: string): Array<{ type: string; nums: number[] }> {
+    return html
+        .split('<tr')
+        .filter((row) => row.includes('diff-row-'))
+        .map((row) => {
+            const type = row.match(/diff-row-(add|del|ctx)/)?.[1] || '';
+            const nums = Array.from(row.matchAll(/>(\d+)<\/td>/g)).map((m) => Number(m[1]));
+            return { type, nums };
+        });
+}
+
+test('diff渲染 - editFile 行号应为文件真实行号且 old/new 双列', async () => {
+    const dir = makeTempDir();
+    try {
+        const filePath = path.join(dir, 'real_line_test.txt');
+        const lines: string[] = [];
+        for (let i = 1; i <= 20; i++) {
+            lines.push(`LINE_${String(i).padStart(2, '0')}`);
+        }
+        fs.writeFileSync(filePath, lines.join('\n'), 'utf8');
+
+        const tool = new EditFileTool();
+        const oldBlock = ['LINE_05', 'LINE_06', 'LINE_07'].join('\n');
+        const newBlock = ['LINE_05X', 'LINE_06', 'LINE_07'].join('\n');
+
+        // 执行替换时传入真实 ToolCall（与运行时一致：executor 与 renderToolCall 共享同一实例）
+        const toolcall = makeToolCall('editFile', { filePath, oldString: oldBlock, newString: newBlock }, 'success');
+        const result = await tool.executeCommand(
+            { filePath, oldString: oldBlock, newString: newBlock },
+            undefined,
+            toolcall
+        );
+        assert.match(result, /成功替换/);
+
+        // 执行器应记录起始行并在渲染时使用（冻结渲染把真实行号烙进 HTML）
+        const html = await tool.renderToolCall(toolcall);
+        assert.ok(html && html.length > 0);
+        const rows = extractDiffRows(html!);
+
+        // diff 形状：ctx(L05) del(L06行内容前先有 del L05? 依 jsdiff 顺序) —— 这里 oldBlock→newBlock
+        // 实际为：del LINE_05 / add LINE_05X / ctx LINE_06 / ctx LINE_07
+        // 期望行号（文件真实行号，old/new 双列）：
+        assert.equal(rows[0].type, 'del');
+        assert.deepEqual(rows[0].nums, [5], 'removed 行应只标 old 列且为第 5 行');
+        assert.equal(rows[1].type, 'add');
+        assert.deepEqual(rows[1].nums, [5], 'added 行应只标 new 列且为第 5 行');
+        assert.equal(rows[2].type, 'ctx');
+        assert.deepEqual(rows[2].nums, [6, 6], 'context 行 old/new 列都应为第 6 行');
+        assert.equal(rows[3].type, 'ctx');
+        assert.deepEqual(rows[3].nums, [7, 7], 'context 行 old/new 列都应为第 7 行');
+
+        // 不应再出现从 1 开始的伪行号
+        assert.doesNotMatch(html!, />1<\/td>/);
+    } finally {
+        cleanup(dir);
+    }
+});
+
+test('diff渲染 - 未经过执行器的 toolcall 回退从 1 开始（历史任务回放）', async () => {
+    const dir = makeTempDir();
+    try {
+        const filePath = path.join(dir, 'fallback_line_test.txt');
+        const lines: string[] = [];
+        for (let i = 1; i <= 20; i++) {
+            lines.push(`FBLINE_${String(i).padStart(2, '0')}`);
+        }
+        fs.writeFileSync(filePath, lines.join('\n'), 'utf8');
+
+        const tool = new EditFileTool();
+        const oldBlock = ['FBLINE_05'].join('\n');
+        const newBlock = ['FBLINE_05X'].join('\n');
+
+        // 旧任务回放：toolcall 上没有 diffStartLine
+        const toolcall = makeToolCall(
+            'editFile',
+            { filePath, oldString: oldBlock, newString: newBlock },
+            'success',
+            '成功替换 1 处'
+        );
+        const html = await tool.renderToolCall(toolcall);
+        assert.ok(html && html.length > 0);
+        const rows = extractDiffRows(html!);
+        assert.equal(rows[0].type, 'del');
+        assert.deepEqual(rows[0].nums, [1], '回退时 removed 行 old 列从 1 开始');
+        assert.equal(rows[1].type, 'add');
+        assert.deepEqual(rows[1].nums, [1], '回退时 added 行 new 列从 1 开始');
+    } finally {
+        cleanup(dir);
+    }
+});
+
+test('diff渲染 - searchReplace 行号应为文件真实行号', async () => {
+    const dir = makeTempDir();
+    try {
+        const filePath = path.join(dir, 'sr_real_line.txt');
+        const lines: string[] = [];
+        for (let i = 1; i <= 30; i++) {
+            lines.push(`SRLINE_${String(i).padStart(2, '0')}`);
+        }
+        fs.writeFileSync(filePath, lines.join('\n'), 'utf8');
+
+        const tool = new SearchReplaceTool();
+        const oldString = 'SRLINE_10';
+        const newString = 'SRLINE_10X';
+
+        const toolcall = makeToolCall('searchReplace', { filePath, oldString, newString }, 'success');
+        const result = await tool.executeCommand({ filePath, oldString, newString }, undefined, toolcall);
+        assert.match(result, /成功替换/);
+
+        const html = await tool.renderToolCall(toolcall);
+        assert.ok(html && html.length > 0);
+        const rows = extractDiffRows(html!);
+        assert.equal(rows[0].type, 'del');
+        assert.deepEqual(rows[0].nums, [10], 'searchReplace 的 removed 行应锚定到文件第 10 行');
+        assert.equal(rows[1].type, 'add');
+        assert.deepEqual(rows[1].nums, [10], 'searchReplace 的 added 行应锚定到文件第 10 行');
+    } finally {
+        cleanup(dir);
+    }
+});
+
+test('diff渲染 - CLI diff 输出 @@ 头使用文件真实行号', async () => {
+    const dir = makeTempDir();
+    try {
+        const filePath = path.join(dir, 'cli_real_line.txt');
+        const lines: string[] = [];
+        for (let i = 1; i <= 20; i++) {
+            lines.push(`CLILINE_${String(i).padStart(2, '0')}`);
+        }
+        fs.writeFileSync(filePath, lines.join('\n'), 'utf8');
+
+        const tool = new EditFileTool();
+        const oldBlock = ['CLILINE_10', 'CLILINE_11', 'CLILINE_12'].join('\n');
+        const newBlock = ['CLI_X_10', 'CLI_X_11', 'CLI_X_12'].join('\n');
+
+        const toolcall = makeToolCall('editFile', { filePath, oldString: oldBlock, newString: newBlock }, 'success');
+        await tool.executeCommand({ filePath, oldString: oldBlock, newString: newBlock }, undefined, toolcall);
+
+        const output = tool.renderToolCallCli(toolcall, 100);
+        assert.ok(output && output.length > 0);
+        const joined = stripAnsi(output!.join('\n'));
+        assert.match(joined, /@@ -10,/, 'CLI diff hunk 头应使用真实起始行号 10');
+        assert.doesNotMatch(joined, /@@ -1,/, '不应再出现从 1 开始的伪行号');
+    } finally {
+        cleanup(dir);
+    }
+});
+
 // ========== GrepFilesTool 测试 ==========
 
 test('grepFiles - 按文件分组且行号对齐', async () => {
