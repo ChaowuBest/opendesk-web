@@ -123,6 +123,10 @@ describe('task-view browser pip requires real browser content', () => {
         artifacts.suspendPreviewLayout = jest.fn();
         artifacts.keepBrowserPanelRenderable = jest.fn();
         artifacts.restoreBrowserPanelLayout = jest.fn();
+        // 展开态的侧边栏在生产中必有 inline width（_expandRightSidebar 写入）；
+        // linkedom 对未设置的 style 属性返回 undefined（浏览器返回 ''），而
+        // _collapseRightSidebar 读取 style.width.trim()，须预置以贴近真实 DOM
+        artifacts.style.width = '320px';
         const resizer = document.createElement('div');
         resizer.id = 'task-task-1-resizer';
         taskView.appendChild(artifacts);

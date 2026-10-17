@@ -40,6 +40,77 @@ export function hostPatternToVirtualLinux(pattern: string): string | null {
     return normalized.startsWith('/') ? normalized : null;
 }
 
+/** 调试实例数据目录后缀（setting.ts resolveWritableUserDataRoot 的 -debug 布局） */
+const DEBUG_DATA_DIR_SUFFIX = '-debug';
+/**
+ * 调试实例数据目录中保持 read ask 的凭据文件：setting.json 含模型 API Key、
+ * admin-token.enc 含管理令牌密文——对齐"凭据宁 ask 不 allow"原则。
+ */
+const DEBUG_CREDENTIAL_FILES = ['setting.json', 'admin-token.enc'];
+/** 主实例保持子目录粒度写放行的框架数据（setting.json 等敏感文件不暴露写） */
+const MAIN_INSTANCE_WRITE_SUBDIRS = ['logs', 'artifacts', 'tasks'];
+
+/**
+ * OpenDesk 框架数据目录（主实例 + 调试实例 <dir>-debug）的沙箱规则单一来源，
+ * 供 Windows policyText 与 Linux/OpenHarmony policyLinuxTail 共用。复用权限
+ * 引擎的 PermissionRule 形态（resourceType 固定 'file'，pathPattern 为宿主
+ * 路径 glob），两平台差异仅剩路径映射（调用方注入）与主实例写放行粒度
+ * （历史行为：Windows 子目录、Linux 整树）。
+ *
+ * 返回顺序即生效顺序（Windows 顺序首个命中、Linux/OH 同构），更具体的规则
+ * 必须先于整树通配：
+ * - 主实例 trash 写 deny（回收站是误删数据恢复区；--del-to-trash 的写入由
+ *   原生层 internal 豁免，不经策略判定，不受此 deny 影响）；
+ * - 调试实例（<dir>-debug）：trash 写 deny（回收站保护）→ 凭据文件 read ask
+ *   → 整树读写 allow（Electron Cache/Local Storage 等启动必需 IO；沙箱内
+ *   npm run start 拉起调试实例时漏放会逐次弹窗卡死无人值守场景）；
+ * - 主实例：写放行（readonly 语义由调用方整体跳过本清单承载）。
+ *
+ * dir 本身已是调试数据目录（调试实例内生成策略）时跳过调试实例规则——
+ * <dir>-debug-debug 不存在，避免导出无意义规则。
+ */
+export function opendeskDataDirRules(
+    dir: string,
+    options: { mainWriteGranularity: 'subdirs' | 'tree' }
+): PermissionRule[] {
+    const root = dir.replace(/\\/g, '/').replace(/\/+$/, '');
+    const rules: PermissionRule[] = [
+        { resourceType: 'file', action: 'write', pathPattern: `${root}/trash/**`, effect: 'deny' }
+    ];
+    if (!root.endsWith(DEBUG_DATA_DIR_SUFFIX)) {
+        const debugRoot = `${root}${DEBUG_DATA_DIR_SUFFIX}`;
+        rules.push({ resourceType: 'file', action: 'write', pathPattern: `${debugRoot}/trash/**`, effect: 'deny' });
+        for (const file of DEBUG_CREDENTIAL_FILES) {
+            rules.push({ resourceType: 'file', action: 'read', pathPattern: `${debugRoot}/${file}`, effect: 'ask' });
+        }
+        rules.push({ resourceType: 'file', action: 'write', pathPattern: `${debugRoot}/**`, effect: 'allow' });
+        rules.push({ resourceType: 'file', action: 'read', pathPattern: `${debugRoot}/**`, effect: 'allow' });
+    }
+    const mainWritePaths =
+        options.mainWriteGranularity === 'subdirs'
+            ? MAIN_INSTANCE_WRITE_SUBDIRS.map((sub) => `${root}/${sub}/**`)
+            : [`${root}/**`];
+    for (const pathPattern of mainWritePaths) {
+        rules.push({ resourceType: 'file', action: 'write', pathPattern, effect: 'allow' });
+    }
+    return rules;
+}
+
+/** 结构化框架数据目录规则 → TOML 规则行；映射失败（非盘符路径等）的规则跳过 */
+function serializeOpendeskDataDirRules(
+    rules: PermissionRule[],
+    mapPath: (hostPath: string) => string | null,
+    quote: (value: string) => string
+): string[] {
+    return rules
+        .map((rule) => ({ ...rule, pathPattern: mapPath(rule.pathPattern) }))
+        .filter((rule): rule is PermissionRule & { pathPattern: string } => rule.pathPattern !== null)
+        .map(
+            (rule) =>
+                `[[rules]]\npath = ${quote(rule.pathPattern)}\naccess = ${quote(rule.action)}\nperm = ${quote(rule.effect)}`
+        );
+}
+
 function orderedRules(rules: PermissionRule[] | undefined): PermissionRule[] {
     // GlobPermissionEnforcer evaluates deny > ask > allow regardless of insertion
     // order. Keep the same precedence in Policy's first-match table.
@@ -99,22 +170,28 @@ export function policyText(
     // 宿主用户 Temp（%TEMP%）：AppContainer 强制把沙箱内 %TEMP% 私有化，dynobox 在
     // 镜像层把私有 AC\Temp 的落点改写为宿主 Temp（跨实例共享）。此处放行写，使
     // jest transform 缓存（os.tmpdir()/jest）与 node-compile-cache 与宿主共用。
+    // read 由兜底前的豁免清单放行（node 进程启动即读 Temp 下的 V8 编译缓存、
+    // PowerShell 管道临时文件写后读回——漏放 read 会在 standard 模式逐次弹 ask）。
     const tempRoot =
         home && home.length > 0 ? hostPatternToVirtual(`${home.replace(/\\/g, '/')}/AppData/Local/Temp/**`) : null;
-    // OpenDesk 框架自身数据目录（%APPDATA%\opendesk\logs、artifacts、tasks）写放行。
-    // 沙箱内加载/运行业务源码（npm run test、脚本、任务紧凑化等）时 logger 与任务
-    // 模块会持续写入这些目录，属框架自身的合法 IO，不应反复打扰用户；与 Linux/OHOS
-    // 策略放行工作区同哲学。opendeskDataDir 为宿主 getOpendeskDirectory()；未显式
-    // 传入时按默认布局（%APPDATA%\opendesk，即 home/AppData/Roaming/opendesk）推导。
+    // OpenDesk 框架自身数据目录（%APPDATA%\opendesk）+ 调试实例数据目录
+    // （<dir>-debug，OPENDESK_DEBUG_MODE 的独立 userData）的沙箱规则单一来源
+    // 见 opendeskDataDirRules（Windows/Linux 共用）：主实例写放行维持 logs/
+    // artifacts/tasks 子目录粒度；调试实例整树放行（Cache/Local Storage 等
+    // Electron 存储铺在其根上，沙箱内 npm run start 拉起调试实例的启动必需
+    // IO，漏放会在 standard 模式逐次弹 write ask 卡死无人值守场景）。readonly
+    // 模式整体跳过（外读写全拒，弹窗无意义）。
     const opendeskRoot = opendeskDataDir
         ? opendeskDataDir.replace(/\\/g, '/')
         : home && home.length > 0
           ? `${home.replace(/\\/g, '/')}/AppData/Roaming/opendesk`
           : null;
-    const opendeskWritePaths = opendeskRoot
-        ? ['logs', 'artifacts', 'tasks']
-              .map((sub) => hostPatternToVirtual(`${opendeskRoot}/${sub}/**`))
-              .filter((p): p is string => p !== null)
+    const frameworkDataDirLines = opendeskRoot
+        ? serializeOpendeskDataDirRules(
+              opendeskDataDirRules(opendeskRoot, { mainWriteGranularity: 'subdirs' }),
+              hostPatternToVirtual,
+              quote
+          )
         : [];
     // Windows 框架/PowerShell 启动时的静默写入路径（组件存储、缓存、Recent 跳转
     // 列表等）。这些路径在普通令牌下本就写不动（OS ACL 拒绝），放通只为免去每次
@@ -170,9 +247,7 @@ export function policyText(
         // OpenDesk 框架自身数据目录（日志/任务产物/任务数据）写放行。
         // readonly 模式（全盘 write deny 用户规则在位）跳过——most-specific 下
         // 这些更具体的 allow 会架空 readonly 的写保护（与 Linux/OH 同理）。
-        ...(!isReadonlyModeRules(rules)
-            ? opendeskWritePaths.map((path) => `[[rules]]\npath = ${quote(path)}\naccess = "write"\nperm = "allow"`)
-            : []),
+        ...(!isReadonlyModeRules(rules) ? frameworkDataDirLines : []),
         // 系统维护路径写放通（见 systemWritePaths 注释；readonly 下保留——系统
         // 组件的自更新写入本就在 OS ACL 层被拒，deny 它们不增加保护只会制造
         // 噪声错误；readonly 的写保护针对用户数据区）
@@ -211,6 +286,12 @@ export function policyText(
                   ...windowsRuntimeReadPatterns(home).map(
                       (p) => `[[rules]]\npath = ${quote(p)}\naccess = "read"\nperm = "allow"`
                   ),
+                  // Temp 读放行：node 进程启动即读 Temp 下的 V8 编译缓存
+                  //（node-compile-cache），PowerShell 管道临时文件写后读回；
+                  // 漏放会命中下方 /** read ask 兜底并逐次弹窗（与 readonly 分支
+                  // 的 temp read allow、Linux 的 POSIX_TEMP_DIR_PATTERNS 双放行
+                  // 语义对齐）
+                  ...(tempRoot ? [`[[rules]]\npath = ${quote(tempRoot)}\naccess = "read"\nperm = "allow"`] : []),
                   ...POSIX_TEMP_DIR_PATTERNS.map(
                       (p) => `[[rules]]\npath = ${quote(p)}\naccess = "read"\nperm = "allow"`
                   ),
@@ -395,23 +476,20 @@ function policyLinuxTail(
                   `[[rules]]\npath = ${quote(`${home}/Library/Caches/com.apple.python/**`)}\naccess = "read"\nperm = "allow"`
               ]
             : []),
-        // 统一回收站目录写保护（对齐 Windows 不放行回收站、OH 原生 trash-protected
-        // DENY 的姿态）：回收站是误删数据的恢复区，沙箱进程可写即可清空整个回收站。
-        // --del-to-trash 的写入由 C 侧 internal 豁免（LD_PRELOAD 层自身写回收站
-        // 目录不受策略判定），不经策略判定，不受此 deny 影响
-        ...(opendeskDataDir
-            ? [
-                  `[[rules]]\npath = ${quote(`${opendeskDataDir.replace(/\/+$/, '')}/trash/**`)}\naccess = "write"\nperm = "deny"`
-              ]
-            : []),
-        // OpenDesk 自身数据目录（logs/artifacts/tasks 等框架运行期写入）写放行避免
-        // 误弹窗；未显式传入时按默认布局 ~/.opendesk 推导。
-        // readonlyMode：跳过（readonly 下框架数据目录同样不可写——模式承诺"禁止
-        // 任何写入"，most-specific 下这条规则会架空同区域的全盘 deny）。
+        // OpenDesk 自身数据目录（logs/artifacts/tasks 等框架运行期写入）+ 调试
+        // 实例数据目录（<dir>-debug）的沙箱规则：单一来源见 opendeskDataDirRules
+        // （与 Windows policyText 共用；Linux 主实例按历史行为整树写放行）。
+        // 未显式传入 opendeskDataDir 时按默认布局 ~/.opendesk 推导。
+        // readonlyMode：整体跳过（readonly 下框架数据目录同样不可写——模式承诺
+        // "禁止任何写入"，这条规则会架空同区域的全盘 deny）。
         ...(home && !readonlyMode
-            ? [
-                  `[[rules]]\npath = ${quote(`${(opendeskDataDir ?? `${home}/.opendesk`).replace(/\/+$/, '')}/**`)}\naccess = "write"\nperm = "allow"`
-              ]
+            ? serializeOpendeskDataDirRules(
+                  opendeskDataDirRules(`${(opendeskDataDir ?? `${home}/.opendesk`).replace(/\/+$/, '')}`, {
+                      mainWriteGranularity: 'tree'
+                  }),
+                  hostPatternToVirtualLinux,
+                  quote
+              )
             : []),
         // 任务工作区写入放行（早于兜底 write ask 命中）。
         // readonlyMode：用户规则含全盘 write deny（readonly 模式签名）时

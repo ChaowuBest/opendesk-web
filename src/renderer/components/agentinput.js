@@ -1870,7 +1870,8 @@ class AgentInput extends HTMLElement {
             this.modelPanelOpen = true;
             this.renderModelList();
             const btn = this.querySelector('#agent-input-model-btn');
-            if (btn) this.positionPanel(btn, panel, 240);
+            // 面板宽度自适应内容（max-content + max-width），防溢出计算用实测宽度
+            if (btn) this.positionPanel(btn, panel, panel.offsetWidth);
             const searchInput = this.querySelector('#agent-input-model-search');
             if (searchInput) {
                 searchInput.value = '';
@@ -1901,7 +1902,7 @@ class AgentInput extends HTMLElement {
             this.modePanelOpen = true;
             const btn = this.querySelector('#agent-input-mode-btn');
             // 模式面板不限制高度，让所有可选模式直接暴露（无需滚动）
-            if (btn) this.positionPanel(btn, panel, 340, 9999);
+            if (btn) this.positionPanel(btn, panel, 312, 9999);
         }
     }
 
@@ -2214,7 +2215,7 @@ class AgentInput extends HTMLElement {
 
                 const btn = this.querySelector('#agent-input-skill-btn');
                 if (btn) {
-                    this.positionPanel(btn, panel, 280, 320);
+                    this.positionPanel(btn, panel, 312, 320);
                 }
 
                 const searchInput = this.querySelector('#agent-input-skill-search');

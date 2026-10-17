@@ -650,20 +650,23 @@ html[data-theme='dark'] .ctx-menu-list::-webkit-scrollbar-thumb,
 }
 
 /* 面板宽度与 positionPanel 传参保持一致 */
+/* 模型面板自适应宽度：内容窄时收窄（下限 200px 来自 .ctx-menu），上限 312px；
+   positionPanel 由调用方实测 offsetWidth 传入，无需在此维护同步常量 */
 #agent-input-model-panel {
-    width: 240px;
+    width: max-content;
+    max-width: 312px;
 }
 #agent-input-effort-submenu {
     width: 180px;
 }
 #agent-input-mode-panel {
-    width: 340px;
+    width: 312px;
 }
 #agent-input-node-panel {
     width: 260px;
 }
 #agent-input-skill-panel {
-    width: 280px;
+    width: 312px;
 }
 #agent-input-autocomplete {
     width: 300px;

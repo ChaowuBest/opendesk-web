@@ -12,6 +12,7 @@
 const fs = require('node:fs');
 const path = require('node:path');
 const { spawnSync } = require('node:child_process');
+const { replaceLockedFile, cleanupStaleReplaced } = require('./lib/sandbox-runtime.cjs');
 
 if (process.platform !== 'win32' || process.env.OPENDESK_TARGET_PLATFORM === 'ohos') {
     process.stdout.write('[sandbox] Windows-only native build skipped on this platform.\n');
@@ -65,20 +66,23 @@ const runtimeSourceDir = path.join(sandboxRoot, 'dist', runtimeRid, 'bin');
 const runtimeDirectory = path.join(sandboxRoot, 'runtime');
 fs.mkdirSync(runtimeDirectory, { recursive: true });
 const runtimeTarget = path.join(runtimeDirectory, 'sandbox.exe');
+const runtimeHookTarget = path.join(runtimeDirectory, hookDllName[ridArch[runtimeRid]]);
 
-try {
-    fs.copyFileSync(path.join(runtimeSourceDir, 'sandbox.exe'), runtimeTarget);
-    fs.copyFileSync(
-        path.join(runtimeSourceDir, hookDllName[ridArch[runtimeRid]]),
-        path.join(runtimeDirectory, hookDllName[ridArch[runtimeRid]])
+// 先清扫上次构建遗留的 stale 旧 runtime（其进程此时已退出才轮到本次构建）
+cleanupStaleReplaced(runtimeDirectory, 'sandbox.exe', hookDllName[ridArch[runtimeRid]]);
+
+// runtime 可能正被当前沙箱进程自身映射（沙箱内 npm run start 启动调试实例的
+// 场景）：Windows 运行中映像禁止覆写但允许改名腾位，replaceLockedFile 把旧
+// 文件改名 .stale-<pid>-<n> 后落新产物；腾位失败给出与旧行为一致的提示。
+const exeReplaced = replaceLockedFile(path.join(runtimeSourceDir, 'sandbox.exe'), runtimeTarget);
+const hookReplaced = replaceLockedFile(
+    path.join(runtimeSourceDir, hookDllName[ridArch[runtimeRid]]),
+    runtimeHookTarget
+);
+if (exeReplaced || hookReplaced) {
+    process.stdout.write(
+        `[sandbox] development runtime was in use; old binary renamed aside ` +
+            `(${runtimeTarget}.stale-*) and will be cleaned up on the next build\n`
     );
-} catch (error) {
-    if (['EBUSY', 'EPERM', 'EACCES'].includes(error?.code)) {
-        throw new Error(
-            `Cannot update the development sandbox because ${runtimeTarget} is in use. ` +
-                'Stop the running sandbox process and retry the build.'
-        );
-    }
-    throw error;
 }
 process.stdout.write(`[sandbox] development runtime: ${runtimeTarget}\n`);

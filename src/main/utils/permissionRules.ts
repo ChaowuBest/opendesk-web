@@ -40,7 +40,8 @@ export interface SensitivePathPattern {
 
 /**
  * 预定义的敏感路径模式。
- * pattern 中使用 `{home}` 占位符表示用户主目录（会在生成规则时替换为实际路径）。
+ * pattern 中使用 `{home}` 占位符表示用户主目录、`{opendeskDataDir}` 表示应用数据
+ * 目录（getOpendeskDirectory()，含自定义/调试目录布局），均会在生成规则时替换为实际路径。
  */
 export const SENSITIVE_PATH_PATTERNS: SensitivePathPattern[] = [
     // SSH 密钥与配置
@@ -78,6 +79,18 @@ export const SENSITIVE_PATH_PATTERNS: SensitivePathPattern[] = [
         pattern: '{home}/.npmrc',
         description: 'npm 配置与 token'
     },
+    // OpenDesk 自身配置（模型 API Key 明文存储）。主实例与 -debug 调试实例
+    // 变体分别声明（debug 目录在数据目录之外，单一模式无法同时覆盖）。
+    // 只保护精确文件而非整个数据目录：logs/artifacts/tasks 等框架运行期目录
+    // 由各模式显式放行/沙箱策略放行，整目录收窄会破坏既有放行语义。
+    {
+        pattern: '{opendeskDataDir}/setting.json',
+        description: 'OpenDesk 配置文件（含模型 API Key）'
+    },
+    {
+        pattern: '{opendeskDataDir}-debug/setting.json',
+        description: 'OpenDesk 调试实例配置文件（含模型 API Key）'
+    },
     // 通用 .env 文件（工作空间内的 .env 也需要保护）
     {
         pattern: '**/.env',
@@ -98,14 +111,13 @@ export const SENSITIVE_PATH_PATTERNS: SensitivePathPattern[] = [
  * @param workspace 当前工作空间路径（已规范化为正斜杠）
  */
 export function createSensitivePathRules(workspace: string): PermissionRule[] {
-    const homeDir = normalizePath(os.homedir());
     const workspaceNorm = normalizePath(workspace);
     const rules: PermissionRule[] = [];
 
     const allFileActions: PermissionAction[] = ['read', 'write', 'execute'];
 
     for (const sp of SENSITIVE_PATH_PATTERNS) {
-        const resolvedPattern = sp.pattern.replace(/\{home\}/g, homeDir);
+        const resolvedPattern = resolveSensitivePattern(sp.pattern);
         const resourceType = sp.resourceType ?? 'file';
         const actions = sp.actions ?? allFileActions;
 
@@ -130,16 +142,25 @@ export function createSensitivePathRules(workspace: string): PermissionRule[] {
 }
 
 /**
+ * 展开敏感路径模式中的占位符：{home} → 用户主目录，{opendeskDataDir} →
+ * 应用数据目录。单一展开点，新增占位符只改这里（各模式消费方共用）。
+ */
+export function resolveSensitivePattern(pattern: string): string {
+    return pattern
+        .replace(/\{home\}/g, normalizePath(os.homedir()))
+        .replace(/\{opendeskDataDir\}/g, normalizePath(path.resolve(getOpendeskDirectory())));
+}
+
+/**
  * 创建始终生效的关键路径保护规则（不受工作空间限制）。
  * 用于 Solo 模式，确保 ~/.ssh 等路径在任何工作空间下都需要被拒绝。
  */
 export function createCriticalPathRules(): PermissionRule[] {
-    const homeDir = normalizePath(os.homedir());
     const rules: PermissionRule[] = [];
     const allFileActions: PermissionAction[] = ['read', 'write', 'execute'];
 
     for (const sp of SENSITIVE_PATH_PATTERNS) {
-        const resolvedPattern = sp.pattern.replace(/\{home\}/g, homeDir);
+        const resolvedPattern = resolveSensitivePattern(sp.pattern);
         const resourceType = sp.resourceType ?? 'file';
         const actions = sp.actions ?? allFileActions;
 
