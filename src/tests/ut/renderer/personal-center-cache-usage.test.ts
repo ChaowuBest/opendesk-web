@@ -3,6 +3,13 @@ import { parseHTML } from 'linkedom';
 
 /** 组件模块顶层 extends HTMLElement，必须在动态 import 前就绪（幂等） */
 function setupGlobalThis(): void {
+    // 断言文案为 zh-CN 词条；Node 的全局 navigator.language 随进程 LANG 解析
+    //（本地 zh_CN 得 zh-CN，CI 常见 en 环境得 en-US），不锁定会导致
+    // createRendererTranslator 的自动侦测翻转文案、断言在英文 CI 上挂。
+    Object.defineProperty(globalThis, 'navigator', {
+        value: { language: 'zh-CN', languages: ['zh-CN'] },
+        configurable: true
+    });
     if ((globalThis as any).HTMLElement) {
         return;
     }

@@ -39,6 +39,28 @@ function assistantWithStableToolResult(
 }
 
 describe('token estimation foundation', () => {
+    test('estimateTextTokens 对 CJK 与非 CJK 字符分别加权估算', () => {
+        // 空文本为 0
+        expect(estimateTextTokens(undefined)).toBe(0);
+        expect(estimateTextTokens('')).toBe(0);
+
+        // 纯 ASCII：约 4 字符 1 token
+        expect(estimateTextTokens('a'.repeat(400))).toBe(100);
+        expect(estimateTextTokens('a'.repeat(3))).toBe(1);
+
+        // 纯 CJK 统一表意文字：每字 0.7 token（ceil(100 * 0.7) = 70）
+        expect(estimateTextTokens('中'.repeat(100))).toBe(70);
+        // 单个汉字向上取整为 1
+        expect(estimateTextTokens('中')).toBe(1);
+
+        // CJK 标点与全角形式计入 CJK 类
+        expect(estimateTextTokens('。！')).toBe(2);
+
+        // 混合文本：CJK 与 ASCII 分别累加后取整
+        // 10 个汉字 * 0.7 + 40 个 ASCII * 0.25 = 7 + 10 = 17
+        expect(estimateTextTokens('中'.repeat(10) + 'a'.repeat(40))).toBe(17);
+    });
+
     test('normalizeUsage 与 getContextTokensFromUsage 会优先使用 expanded usage 字段', () => {
         const normalized = normalizeUsage({
             prompt_tokens: 100.8,

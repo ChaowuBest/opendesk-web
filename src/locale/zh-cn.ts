@@ -2536,6 +2536,7 @@ export const zhCn: Record<string, string> = {
     'renderer.taskview.edit.cancel': '取消',
     'renderer.taskview.usage.title': '输入: ${input}, 输出: ${output}, 总计: ${total}',
     'renderer.taskview.usage.display': '已输出 ${output} 词${speed}, 总计 ${total} 词${ratio}',
+    'renderer.taskview.usage.outputOnly': '已输出 ${output} 词',
     'renderer.taskview.usage.speed': ' (${speed} 词/秒)',
     'renderer.taskview.usage.contextRatio': ', 上下文占比 ${pct}%',
     'renderer.taskview.usage.contextRatioExceeded':

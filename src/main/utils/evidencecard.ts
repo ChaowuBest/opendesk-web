@@ -21,6 +21,7 @@ import {
     type UsageFields
 } from '../aikernel/messages.js';
 import type { ToolResultPreviewOptions } from '../aikernel/compaction/tool-results.js';
+import { estimateTextTokens } from '../aikernel/compaction/token-estimation.js';
 import type { TaskState } from '../aikernel/states/tasks.js';
 import { Setting } from './setting.js';
 
@@ -399,13 +400,6 @@ export interface EvidenceCardState {
 }
 
 export const EVIDENCECARD_STATE_VERSION = 1;
-
-function estimateTextTokens(text: string | undefined): number {
-    if (!text) {
-        return 0;
-    }
-    return Math.ceil(text.length / 4);
-}
 
 const ALLOWED_PHASES: EvidenceCardPhase[] = [
     'plan',

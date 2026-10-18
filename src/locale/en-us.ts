@@ -2611,6 +2611,7 @@ export const enUs: Record<string, string> = {
     'renderer.taskview.edit.cancel': 'Cancel',
     'renderer.taskview.usage.title': 'Input: ${input}, Output: ${output}, Total: ${total}',
     'renderer.taskview.usage.display': 'Output ${output} words${speed}, total ${total} words${ratio}',
+    'renderer.taskview.usage.outputOnly': 'Output ${output} words',
     'renderer.taskview.usage.speed': ' (${speed} token/s)',
     'renderer.taskview.usage.contextRatio': ', context ratio ${pct}%',
     'renderer.taskview.usage.contextRatioExceeded':

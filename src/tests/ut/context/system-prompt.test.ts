@@ -112,7 +112,8 @@ describe('system prompt statistics', () => {
 
         const systemPromptTokens = estimateSystemPromptTokens(systemPrompt);
         expect(systemPromptTokens).toBe(estimateTextTokens(systemPrompt!.content));
-        expect(systemPromptTokens).toBe(7_725);
+        // 哨兵基线：中文为主 + ASCII 填充在 CJK 加权口径（0.7/0.25）下的估算值
+        expect(systemPromptTokens).toBe(7_885);
 
         const messageTokens = task.chat_context.messages.reduce(
             (total, message) => total + estimateRoughTokensFromChatMessage(message),
