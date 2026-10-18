@@ -35,6 +35,7 @@ import type {
     PermissionUserResponse,
     PermissionPromptProvider,
     PermissionTaskInfo,
+    PermissionPromptContext,
     PermissionEnforcer
 } from '../../aikernel/security/permission';
 import chalk from 'chalk';
@@ -195,6 +196,8 @@ export class PermissionPromptWidget implements Component {
     private hintLine: Text;
     private taskBadge: string | null;
     private queueHint: string | null;
+    /** 被执行的命令（沙箱弹窗经 context.input.command 传入；空串表示无） */
+    private commandLine: string | null;
 
     onDone?: (response: PermissionUserResponse) => void;
 
@@ -202,7 +205,7 @@ export class PermissionPromptWidget implements Component {
         requests: PermissionRequest[],
         toolName: string,
         prefixOptions: { label: string; pattern: string }[] = [],
-        options?: { isBackground?: boolean; taskName?: string | null; queueSize?: number }
+        options?: { isBackground?: boolean; taskName?: string | null; queueSize?: number; command?: string }
     ) {
         const c = permissionColors;
 
@@ -210,6 +213,10 @@ export class PermissionPromptWidget implements Component {
         const actionLabel = getActionLabel(first.action);
         const typeLabel = getResourceTypeLabel(first.resourceType);
         const typeActionLabel = `${actionLabel}${typeLabel}`;
+
+        // 命令折叠为单行并截断，避免长命令把弹窗撑高
+        const commandRaw = (options?.command ?? '').replace(/\s*\r?\n\s*/g, ' ').trim();
+        this.commandLine = commandRaw ? (commandRaw.length > 200 ? `${commandRaw.slice(0, 199)}…` : commandRaw) : null;
 
         if (options?.isBackground) {
             const name = options.taskName || t('permission.task.unnamed');
@@ -324,6 +331,12 @@ export class PermissionPromptWidget implements Component {
                 lines.push(padBgLine(indent + wrappedLine, width, bgFn));
             }
         }
+        if (this.commandLine) {
+            const wrappedCommand = wrapTextWithAnsi(c.path(this.commandLine), pathWidth - visibleWidth(indent));
+            for (const wrappedLine of wrappedCommand) {
+                lines.push(padBgLine(indent + wrappedLine, width, bgFn));
+            }
+        }
         lines.push(emptyLine);
         lines.push(padBgLine(this.questionText, width, bgFn));
         for (const l of this.list.render(width)) {
@@ -345,6 +358,8 @@ interface QueuedPermissionRequest {
     toolName: string;
     prefixOptions: { label: string; pattern: string }[];
     taskInfo?: PermissionTaskInfo;
+    /** 弹窗附加上下文（工具调用参数，如沙箱命令的 command） */
+    context?: PermissionPromptContext;
     resolve: (response: PermissionUserResponse) => void;
     widget?: PermissionPromptWidget;
 }
@@ -391,10 +406,11 @@ export class TUIPermissionPromptProvider implements PermissionPromptProvider {
         requests: PermissionRequest[],
         toolName: string,
         prefixOptions: { label: string; pattern: string }[],
-        taskInfo?: PermissionTaskInfo
+        taskInfo?: PermissionTaskInfo,
+        context?: PermissionPromptContext
     ): Promise<PermissionUserResponse> {
         return new Promise<PermissionUserResponse>((resolve) => {
-            this.queue.push({ requests, toolName, prefixOptions, taskInfo, resolve });
+            this.queue.push({ requests, toolName, prefixOptions, taskInfo, context, resolve });
             // 标记有请求待处理，避免 taskview 在此期间渲染 tool card
             this.isPending = true;
             // 配置/overlay 模式下不入队显示，等退出后再处理
@@ -602,7 +618,11 @@ export class TUIPermissionPromptProvider implements PermissionPromptProvider {
         const widget = new PermissionPromptWidget(item.requests, item.toolName, item.prefixOptions, {
             isBackground,
             taskName: item.taskInfo?.taskName,
-            queueSize: remainingCount
+            queueSize: remainingCount,
+            command:
+                item.context?.input && typeof item.context.input.command === 'string'
+                    ? item.context.input.command
+                    : undefined
         });
         item.widget = widget;
 

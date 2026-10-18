@@ -220,7 +220,7 @@ function getRenderedUserPartSet(renderedUserParts, messageId) {
     return renderedSet;
 }
 
-function formatReasoningElapsedTime(seconds, chars = null) {
+function formatReasoningElapsedTime(seconds, tokens = null) {
     let timeStr;
     if (seconds < 60) {
         timeStr = taskViewT('reasoning.elapsed.seconds', { seconds });
@@ -229,9 +229,10 @@ function formatReasoningElapsedTime(seconds, chars = null) {
         const remainingSeconds = seconds % 60;
         timeStr = taskViewT('reasoning.elapsed.minutes', { minutes, seconds: remainingSeconds });
     }
-    if (chars != null) {
-        const tokens = Math.max(1, Math.round(chars / 3));
-        timeStr += taskViewT('reasoning.elapsed.chars', { chars: tokens });
+    if (tokens != null) {
+        // 入参已是加权估算 token（与 usage 胶囊同口径），直接展示
+        const normalized = Math.max(1, Math.round(tokens));
+        timeStr += taskViewT('reasoning.elapsed.chars', { chars: normalized });
     }
     return timeStr;
 }
@@ -486,16 +487,20 @@ class TaskView extends HTMLElement {
         this._loadingOlderHistory = false;
         /**
          * 输出速度统计 - 消息级累计状态（跨 part 保留，工具 part 不清零）：
-         * messageChars 为消息内所有生成 part 的累计字符数，用于无 usage 时按 chars/4 估算
-         * 「已输出 / 总计」；messageUsage 记录本消息最近一次真实 usage，用于估算基线。
-         * @type {{messageId: string, messageChars: number, messageUsage: {p: number, c: number, t: number} | null, messageCharsAtUsage: number} | null}
+         * messageTokens 为消息内所有生成 part 的 CJK 加权估算 token 数（浮点累计），
+         * 用于无 usage 时估算「已输出 / 总计」；messageUsage 记录本消息最近一次真实 usage，
+         * 用于估算基线；usageOffset 为 usage 首达时的 token 序列校准偏移
+         * （估算→真实切换保持连续，速度不跳变）；
+         * samples 为滑动窗口测速样本（{t, seq}，seq 为消息级累计 token 序列值）。
+         * @type {{messageId: string, messageTokens: number, messageUsage: {p: number, c: number, t: number} | null, messageTokensAtUsage: number, usageOffset: number | null, samples: Array<{t: number, seq: number}>} | null}
          */
         this._speedMessageState = null;
         /**
-         * 输出速度统计 - part 级锚点（reasoning/text），key 变化或工具 part 插入后重建：
-         * 速度只统计当前 part；partStartUsage 为 null 表示同消息非首 part 且起点无 usage，
-         * 之后 usage 首次到达时按「usage.completion - 当前 part chars/4」校正基线。
-         * @type {{key: string, startMs: number, partChars: number, partStartUsage: number | null, baseMessageChars: number} | null}
+         * 输出速度统计 - part 级锚点（reasoning/text）：仅用于维护 messageTokens 的跨 part
+         * 累计基线；scanCounted/scanTokens 为当前 part 文本的增量扫描缓存（流式快照为
+         * 全量累积，每帧只扫新增尾巴）；速度测速与锚点时间解耦（消息级滑动窗口），
+         * part 切换 / 工具插入不再造成速度断供。
+         * @type {{key: string, partTokens: number, baseMessageTokens: number, scanCounted: number, scanTokens: number} | null}
          */
         this._speedPartState = null;
     }
@@ -782,8 +787,58 @@ class TaskView extends HTMLElement {
 
     static SPINNER_SVG = `<i class="fa-solid fa-circle-notch fa-spin"></i>`;
 
-    /** 无持续 usage 时按字符数估算 token 的比例（chars / 4） */
-    static CHARS_PER_TOKEN_ESTIMATE = 4;
+    /**
+     * CJK 字符 token 权重（0.7 = 7/10），与后端 token-estimation.ts 折中口径一致
+     * （DeepSeek ≈0.6 token/字，GPT cl100k ≈1.0 token/字）。
+     */
+    static CJK_TOKEN_WEIGHT = 0.7;
+    /** 非 CJK 字符 token 权重：约 4 字符 1 token（2 的幂，整数计数乘法精确）。 */
+    static OTHER_TOKEN_WEIGHT = 0.25;
+
+    /** CJK 相关 Unicode 区段：符号标点、假名、统一表意文字及扩展 A、谚文、兼容表意、全角形式。 */
+    static CJK_CODE_POINT_RANGES = [
+        [0x3000, 0x303f],
+        [0x3040, 0x30ff],
+        [0x3400, 0x4dbf],
+        [0x4e00, 0x9fff],
+        [0xac00, 0xd7af],
+        [0xf900, 0xfaff],
+        [0xff00, 0xffef]
+    ];
+
+    static isCjkCharCode(code) {
+        const ranges = TaskView.CJK_CODE_POINT_RANGES;
+        for (let i = 0; i < ranges.length; i++) {
+            if (code < ranges[i][0]) return false;
+            if (code <= ranges[i][1]) return true;
+        }
+        return false;
+    }
+
+    /** CJK 加权文本 token 估算（全量口径，与后端 estimateTextTokens 一致；流式路径请走增量扫描）。 */
+    static estimateTextTokensWeighted(text) {
+        if (!text) return 0;
+        let cjkCount = 0;
+        let otherCount = 0;
+        for (let i = 0; i < text.length; i++) {
+            if (TaskView.isCjkCharCode(text.charCodeAt(i))) cjkCount++;
+            else otherCount++;
+        }
+        return Math.ceil(cjkCount * TaskView.CJK_TOKEN_WEIGHT + otherCount * TaskView.OTHER_TOKEN_WEIGHT);
+    }
+
+    /** 输出速度滑动窗口时长（ms）：速度代表该窗口内的最新 decode 速率 */
+    static SPEED_WINDOW_MS = 3000;
+    /** 相邻样本间隔超过该值视为 decode 断流（工具执行 / 长停顿），速度窗口从断点重算。
+     *  取值需大于慢速输出的合法 progress 间隔（思考输出可达秒级/帧），否则窗口被反复
+     *  误重置，速度永远停留在冷却期无法产出。 */
+    static SPEED_WINDOW_MAX_GAP_MS = 3000;
+    /** 速度后缀的新鲜度窗口：最新 decode 样本距今超过该值即隐藏速度（工具执行期陈旧速度不显示） */
+    static SPEED_FRESH_MS = 2000;
+    /** 窗口时间跨度不足该值时不产出速度（流式首帧冷却，避免单帧抖动） */
+    static SPEED_MIN_SPAN_MS = 500;
+    /** 滑动窗口样本数上限（防止长流式会话样本无限增长） */
+    static SPEED_WINDOW_MAX_SAMPLES = 120;
 
     static normalizeUsageToken(value) {
         return typeof value === 'number' && Number.isFinite(value) && value > 0 ? Math.floor(value) : 0;
@@ -931,7 +986,8 @@ class TaskView extends HTMLElement {
         // 残余 progress 可能晚到，若在此重新启动计时器，已 finalize 的
         // 思考块会继续计时，出现"两个思考块同时活跃同时计时"。
         if (el.classList.contains('reasoning-completed')) return;
-        el._reasoningTextLength = (text || '').length;
+        // _reasoningTextLength 存加权估算 token（与 usage 胶囊同口径），供耗时行展示
+        el._reasoningTextLength = TaskView.estimateTextTokensWeighted(text || '');
         el._reasoningFullText = text || '';
         el._reasoningFullStale = true;
 
@@ -1211,7 +1267,7 @@ class TaskView extends HTMLElement {
             : '';
         const timeText =
             !isStreaming && elapsedSeconds != null
-                ? `（${formatReasoningElapsedTime(elapsedSeconds, (rendered || '').length)}）`
+                ? `（${formatReasoningElapsedTime(elapsedSeconds, TaskView.estimateTextTokensWeighted(rendered || ''))}）`
                 : '';
         const expanded = typeof expandedOverride === 'boolean' ? expandedOverride : getDefaultExpanded(guiOutputMode);
 
@@ -1464,7 +1520,11 @@ class TaskView extends HTMLElement {
             // 每秒计时器（data-reasoning-start 被设置为当前时间），出现"早已完成的内容
             // 还在持续计时"。运行中消息（isRunning === true）才允许流式布局。
             const streaming = options.isRunning === false ? false : entry.part?.streaming === true;
-            const content = streaming ? (entry.part?.text ?? entry.part?.rendered) : entry.part?.rendered;
+            // reasoning 正文优先 content 字段（后端真实字段），text/rendered 为旧数据与
+            // 历史兼容（rendered 对 reasoning 恒等于 content 的纯文本）
+            const content = streaming
+                ? (entry.part?.content ?? entry.part?.text ?? entry.part?.rendered)
+                : entry.part?.rendered;
             const disclosureKey = `${messageId}-reasoning-${entry.partIndex}`;
             return TaskView.createReasoningPartHtml(
                 content,
@@ -2100,6 +2160,29 @@ class TaskView extends HTMLElement {
         }
 
         historyContainer.insertAdjacentHTML('beforeend', TaskView.createWaitingAssistantPlaceholderHtml());
+        // 首 token 之前的等待期（含模型思考期）同步展示上下文占用胶囊：
+        // 此阶段尚无输出词数与速度可测，先让「总计/上下文占比」持续可见；
+        // 模型开始输出后占位被移除，由首条 assistant progress 的正常胶囊接管
+        const waitingBody = historyContainer.querySelector('.waiting-usage-placeholder > .px-2');
+        if (!waitingBody) return;
+        const baseline = this._contextUsageBaseline;
+        if (baseline && baseline.t > 0) {
+            waitingBody.insertAdjacentHTML(
+                'beforeend',
+                TaskView.formatUsageHtml(
+                    { prompt_tokens: baseline.p, completion_tokens: 0, total_tokens: baseline.t },
+                    this._modelContextSize,
+                    true
+                )
+            );
+        } else {
+            // 任务首轮（无 usage 基线）：没有总计/占比可显示，但保留词数胶囊让统计持续在位
+            const outputOnlyText = escapeHtml(taskViewT('renderer.taskview.usage.outputOnly', { output: 0 }));
+            waitingBody.insertAdjacentHTML(
+                'beforeend',
+                `<span class="message-usage text-xs text-gray-400 mt-3 flex items-center gap-1" data-prompt-tokens="0" data-completion-tokens="0" data-total-tokens="0" data-streaming="true"><span class="usage-spinner">${TaskView.SPINNER_SVG}</span><span class="usage-text">${outputOnlyText}</span></span>`
+            );
+        }
     }
 
     static formatRetryStatusHtml(progress) {
@@ -2257,7 +2340,32 @@ class TaskView extends HTMLElement {
         if (TaskView.hasDisplayableUsage(progress.usage)) {
             this._rememberContextUsage(progress.usage);
             this._removeUsageOutside(message_container);
-            const usageHtml = TaskView.formatUsageHtml(progress.usage, this._modelContextSize, false);
+            // 终态 replace 重建胶囊时保留流式期间测得的 decode 速度，
+            // 避免「回合一结束速度就消失」——速度定格在最后一次窗口测速值；
+            // 词数用测速状态融合值而非 progress.usage 直读：请求开始时的
+            // prompt 检查点 usage（completion=0）会把思考期间涨起来的词数清零
+            const finalSpeed = usageEl?.dataset.speedValue ? Number(usageEl.dataset.speedValue) : null;
+            // 完成态 usage（completion>0）真实权威，直接采用；请求开始的 prompt 检查点
+            // （completion=0）只提供 prompt/total，词数用测速状态融合值，避免把思考
+            // 期间涨起来的词数清零
+            const usageTokensForReplace = TaskView.getUsageDisplayTokens(progress.usage);
+            let displayTokens;
+            if (usageTokensForReplace.completionTokens > 0) {
+                displayTokens = progress.usage;
+            } else {
+                // 测速状态必须属于本消息（_trackOutputSpeed 每条消息重建 state），
+                // 否则会把另一条消息的累计词数错误地叠到这条上
+                const stateBelongsToMessage = this._speedMessageState?.messageId === String(progress.message_id ?? '');
+                const stateTokens = stateBelongsToMessage ? this._computeDisplayTokensFromState() : null;
+                displayTokens = {
+                    prompt_tokens: usageTokensForReplace.promptTokens,
+                    completion_tokens: stateTokens ? stateTokens.completion : 0,
+                    total_tokens: stateTokens
+                        ? Math.max(usageTokensForReplace.totalTokens, stateTokens.total)
+                        : usageTokensForReplace.totalTokens
+                };
+            }
+            const usageHtml = TaskView.formatUsageHtml(displayTokens, this._modelContextSize, false, finalSpeed);
             if (usageEl) {
                 usageEl.outerHTML = usageHtml;
             } else {
@@ -2463,7 +2571,11 @@ class TaskView extends HTMLElement {
                     const text = String(parts[partIndex].text ?? parts[partIndex].rendered ?? '');
                     if (progress.last_part.type === 'reasoning') {
                         const block = target.closest('.reasoning-block-od');
-                        if (block) TaskView.scheduleReasoningPreviewUpdate(block, text);
+                        if (block) {
+                            // reasoning 正文优先 content 字段（后端真实字段），text 为旧数据兼容
+                            const reasoningText = String(parts[partIndex].content ?? text);
+                            TaskView.scheduleReasoningPreviewUpdate(block, reasoningText);
+                        }
                         const scrollingContainer = target.closest('.reasoning-bubble, .reasoning-preview-area');
                         if (scrollingContainer) scrollingContainer.scrollTop = scrollingContainer.scrollHeight;
                     } else {
@@ -2544,27 +2656,28 @@ class TaskView extends HTMLElement {
             const prevPrompt = parseInt(usageEl.dataset.promptTokens || '0', 10);
             const prevCompletion = parseInt(usageEl.dataset.completionTokens || '0', 10);
             const prevTotal = parseInt(usageEl.dataset.totalTokens || '0', 10);
-            // 优先真实 usage；无 usage 的生成 part 用估算值；工具等非生成 part 保持上一状态
-            const promptTokens = usage
-                ? TaskView.getUsageDisplayTokens(usage).promptTokens
-                : speedInfo
-                  ? speedInfo.estPrompt
-                  : prevPrompt;
-            const completionTokens = usage
-                ? TaskView.getUsageDisplayTokens(usage).completionTokens
-                : speedInfo
-                  ? speedInfo.estCompletion
-                  : prevCompletion;
-            const totalTokens = usage
-                ? TaskView.getUsageDisplayTokens(usage).totalTokens
-                : speedInfo
-                  ? speedInfo.estTotal
-                  : prevTotal;
+            // 统一采用 _trackOutputSpeed 的估算值：它已融合 usage 检查点与输出增量
+            // （provider 流中每帧带遗留 usage 时，词数仍随真实输出增长）；
+            // 工具等非生成 part（speedInfo=null）保持上一状态
+            const promptTokens = speedInfo ? (speedInfo.estPrompt ?? prevPrompt) : prevPrompt;
+            const completionTokens = speedInfo ? (speedInfo.estCompletion ?? prevCompletion) : prevCompletion;
+            const totalTokens = speedInfo ? (speedInfo.estTotal ?? prevTotal) : prevTotal;
             if (usage) {
                 this._removeUsageOutside(message_container);
             }
-            if (speedInfo && speedInfo.speed != null) {
-                usageEl.dataset.speedValue = String(speedInfo.speed);
+            // 速度新鲜度：速度值过旧（测量时点距今超过 SPEED_FRESH_MS）即清除后缀。
+            // 工具执行等无 decode 阶段不产出新测速，旧速度不再代表"当前 decode 速率"；
+            // 恢复生成后新值立即回显。新鲜期内无新值（工具帧/冷却期）保留旧值不闪烁
+            const nowMs = Date.now();
+            if (speedInfo != null) {
+                if (speedInfo.speed != null) {
+                    usageEl.dataset.speedValue = String(speedInfo.speed);
+                } else if (
+                    speedInfo.lastDecodeAtMs == null ||
+                    nowMs - speedInfo.lastDecodeAtMs > TaskView.SPEED_FRESH_MS
+                ) {
+                    delete usageEl.dataset.speedValue;
+                }
             }
             // title 只展示真实 usage，避免估算期间出现误导性 tooltip
             if (usage) {
@@ -2597,18 +2710,56 @@ class TaskView extends HTMLElement {
                     textEl.textContent = speedSuffix;
                 }
             }
-        } else if (usage || (isStreaming && speedInfo && (speedInfo.estCompletion > 0 || speedInfo.estTotal > 0))) {
+        } else if (
+            usage ||
+            (isStreaming &&
+                speedInfo &&
+                (speedInfo.estCompletion > 0 || speedInfo.estTotal > 0 || speedInfo.estPrompt > 0))
+        ) {
             this._removeUsageOutside(message_container);
-            // 无 usage 时用估算值构造展示用 usage，保证流式中「已输出/总计」始终可见
-            const displayUsage = usage ?? {
-                prompt_tokens: speedInfo.estPrompt,
-                completion_tokens: speedInfo.estCompletion,
-                total_tokens: speedInfo.estTotal
+            // 创建胶囊时同样采用估算融合值，保证与增量更新路径口径一致。
+            // 流式首帧（part 尚无文本、词数为 0 且无 usage 基线 → estPrompt=0）也会走到
+            // usage 分支之外——est 全为 0 时不建胶囊会留下「占位已移除、胶囊未创建」的
+            // 统计真空窗口，故再补一个零词兜底分支
+            const displayUsage = {
+                prompt_tokens: speedInfo ? speedInfo.estPrompt : 0,
+                completion_tokens: speedInfo ? speedInfo.estCompletion : 0,
+                total_tokens: speedInfo ? speedInfo.estTotal : 0
             };
+            // 新建胶囊同样遵守速度新鲜度：工具帧等陈旧速度不写入
+            const freshSpeed =
+                speedInfo &&
+                speedInfo.speed != null &&
+                speedInfo.lastDecodeAtMs != null &&
+                nowMs - speedInfo.lastDecodeAtMs <= TaskView.SPEED_FRESH_MS
+                    ? speedInfo.speed
+                    : null;
             message_container.insertAdjacentHTML(
                 'beforeend',
-                TaskView.formatUsageHtml(displayUsage, this._modelContextSize, isStreaming, speedInfo?.speed ?? null)
+                TaskView.formatUsageHtml(displayUsage, this._modelContextSize, isStreaming, freshSpeed)
             );
+        } else if (isStreaming && (speedInfo || this._contextUsageBaseline)) {
+            // 零词/工具首帧兜底：模型跳过文本直接调用工具时 speedInfo 为 null，
+            // 此处用 baseline（若有）建「已输出 0 词， 总计 N 词」胶囊占住统计位，
+            // 无 baseline（任务首轮）则只显示词数；后续生成帧无缝接管
+            this._removeUsageOutside(message_container);
+            const baseline = this._contextUsageBaseline;
+            if (baseline && baseline.t > 0) {
+                message_container.insertAdjacentHTML(
+                    'beforeend',
+                    TaskView.formatUsageHtml(
+                        { prompt_tokens: baseline.p, completion_tokens: 0, total_tokens: baseline.t },
+                        this._modelContextSize,
+                        true
+                    )
+                );
+            } else {
+                const outputOnlyText = escapeHtml(taskViewT('renderer.taskview.usage.outputOnly', { output: 0 }));
+                message_container.insertAdjacentHTML(
+                    'beforeend',
+                    `<span class="message-usage text-xs text-gray-400 mt-3 flex items-center gap-1" data-prompt-tokens="0" data-completion-tokens="0" data-total-tokens="0" data-streaming="true"><span class="usage-spinner">${TaskView.SPINNER_SVG}</span><span class="usage-text">${outputOnlyText}</span></span>`
+                );
+            }
         }
 
         // 任务非运行状态时（已完成），为消息追加时间戳与 hover 菜单
@@ -2969,6 +3120,12 @@ class TaskView extends HTMLElement {
     async reload() {
         const compactRevision = this._compactProgressRevision || 0;
         this._assistantProgressBuffer.clear();
+        // 丢弃上一任务/上一轮的测速状态与估算基线，避免 reload 后旧消息的
+        // 累计词数/速度样本串到新流式消息上；baseline 随后由 reload 从历史
+        // usage 重新恢复（单调门只约束同一任务内的连续流式帧）
+        this._speedMessageState = null;
+        this._speedPartState = null;
+        this._contextUsageBaseline = null;
         this._reloading = true;
         const version = ++this._reloadVersion;
         // 加载期间锁定输入框（与 finally 中的解锁成对）：
@@ -3158,6 +3315,9 @@ class TaskView extends HTMLElement {
         // 收尾时 _turnGeneration 已递增而跳过 feedback），这里兜底结束所有活跃
         // reasoning 块的计时，避免新旧思考块同时活跃同时计时。幂等，重复调用无副作用。
         this._cleanupStreamingState();
+        // 上一回合的 usage 胶囊挂在旧 assistant 消息上，新回合开始后不应继续残留
+        // （尤其模型跳过文本直接进工具调用时，旧胶囊会一直挂到新回合结束）
+        history_container.querySelectorAll('.message-usage').forEach((el) => el.remove());
         const isGoalEditReminder = isGoalEditReminderMessage(progress);
         this._consumeGoalEditReminder(progress);
         const parts = getRenderableUserParts(progress, progress.last_part ? [progress.last_part] : []);
@@ -3195,7 +3355,11 @@ class TaskView extends HTMLElement {
         }
         relocateGoalEvaluationsToMessage(history_container, progress.message_id);
         if (TaskView.canShowWaitingAssistantPlaceholder(progress.task_status, this._currentGoal)) {
-            this._showWaitingAssistantPlaceholder();
+            // force：新用户消息刚上屏时 assistant 回复必然未开始，但上一回合的输出
+            // 在 DOM 中仍位于这条新消息之前（本轮 assistant progress 尚未到达），
+            // 非 force 分支的 hasAssistantOutputAfterLatestUser 会因旧输出误判
+            // "已在回复中"而跳过占位，造成发送后无占位/胶囊的真空
+            this._showWaitingAssistantPlaceholder({ force: true });
         }
         return true;
     }
@@ -3232,10 +3396,14 @@ class TaskView extends HTMLElement {
         }
     }
 
-    /** 记录任务内最近一次真实 usage（输入/总计），作为后续流式估算「总计/上下文占比」的输入侧基线。 */
+    /** 记录任务内最近一次真实 usage（输入/总计），作为后续流式估算「总计/上下文占比」的输入侧基线。
+     *  只接受单调增长的有效值：部分 provider 流中每帧携带上一请求的遗留 usage，
+     *  若允许回退覆盖，新回合的估算基线会被旧值拖小，总计/占比出现锯齿。 */
     _rememberContextUsage(usage) {
         const tokens = TaskView.getUsageDisplayTokens(usage);
         if (tokens.totalTokens <= 0) return;
+        const current = this._contextUsageBaseline;
+        if (current && tokens.totalTokens < current.t) return;
         this._contextUsageBaseline = { p: tokens.promptTokens, t: tokens.totalTokens };
     }
 
@@ -3259,31 +3427,41 @@ class TaskView extends HTMLElement {
     /**
      * 实时统计当前流式输出的 token 速度与消息级估算 token 数。
      * 返回 null（非生成 part，如工具调用）或：
-     * - speed: 当前 part 的输出速度（token/s），数据不足时为 null；
+     * - speed: 最近滑动窗口的 decode 速度（token/s），窗口数据不足时为 null（胶囊保持上次速度）；
      * - estPrompt/estCompletion/estTotal: 无真实 usage 时的临时估算值
-     *   （输入侧以任务内最近一次真实 usage 为基线，输出侧按 chars/4），
+     *   （输入侧以任务内最近一次真实 usage 为基线，输出侧按 CJK 加权估算），
      *   usage 到达后调用方直接显示真实 usage，无需估算。
      *
      * 规则：
-     * - 速度锚定当前 message part（reasoning/text），key 变化或工具 part 插入后重新统计；
-     *   统计清零时胶囊上已显示的速度（dataset.speedValue）保持原状，直到新值产生；
-     * - 「已输出/总计」估算按消息内累计 chars/4 计算（跨 part、跨工具间隙保留），
-     *   真实 usage 到达后校正为 usage 值，并作为后续估算的基线；
-     * - 速度优先使用 usage 增量（completion_tokens 相对 part 起点基线），
-     *   无 usage 时按当前 part chars/4 估算。
+     * - 速度基于消息级 token 序列的滑动窗口（SPEED_WINDOW_MS），与 part 锚点时间解耦：
+     *   part 切换、工具插入、锚点重建都不会造成速度断供；样本间隔超过
+     *   SPEED_WINDOW_MAX_GAP_MS 视为 decode 断流，窗口从断点重算，速度始终反映最新输出；
+     * - token 序列取 max(CJK 加权估算, 真实 usage + 校准偏移)：usage 首达时校准偏移使
+     *   序列平滑切换不跳变；usage 停更时估算继续推进序列，速度不中断；
+     * - 「已输出/总计」估算按消息内累计的加权 token 计算（跨 part、跨工具间隙保留），
+     *   真实 usage 到达后校正为 usage 值，并作为后续估算的基线。
      */
     _trackOutputSpeed(progress) {
         const partType = progress?.last_part?.type;
         if (partType !== 'reasoning' && partType !== 'text') {
-            // 工具等非生成 part：速度锚点清零（显示保持原状），消息级累计保留
+            // 工具等非生成 part：chars 基线锚点清零（词数/总计保持原状），消息级累计保留。
+            // speed 之外补充 lastDecodeAtMs：工具期间不产出新测速，渲染侧按新鲜度
+            // 决定速度后缀去留（陈旧速度不再显示，避免把工具间隙前最后测速
+            // 伪装成"当前 decode 速度"挂满整个工具执行期）
             this._speedPartState = null;
-            return null;
+            const lastSample = this._speedMessageState?.samples?.at(-1);
+            // est 置 null：工具帧无输出估算，渲染侧保持上一词数/总计状态
+            return {
+                speed: null,
+                lastDecodeAtMs: lastSample?.t ?? null,
+                estPrompt: null,
+                estCompletion: null,
+                estTotal: null
+            };
         }
         const messageId = String(progress.message_id ?? '');
-        const partChars =
-            partType === 'reasoning'
-                ? String(progress.last_part.content ?? '').length
-                : String(progress.last_part.text ?? '').length;
+        const partText =
+            partType === 'reasoning' ? String(progress.last_part.content ?? '') : String(progress.last_part.text ?? '');
         const usageTokens = TaskView.getUsageDisplayTokens(progress.usage);
         const hasUsage = usageTokens.completionTokens > 0 || usageTokens.totalTokens > 0;
 
@@ -3292,66 +3470,114 @@ class TaskView extends HTMLElement {
         if (!msg || msg.messageId !== messageId) {
             msg = this._speedMessageState = {
                 messageId,
-                messageChars: 0,
+                messageTokens: 0,
                 messageUsage: null,
-                messageCharsAtUsage: 0
+                messageTokensAtUsage: 0,
+                usageOffset: null,
+                samples: []
             };
         }
 
-        // part 级锚点：key 变化（新消息 / 新 part / 工具后首个生成 part）时重建
+        // part 级锚点：key 变化（新消息 / 新 part / 工具后首个生成 part）时切换 token 基线。
+        // 同类型且文本量不小于上一锚点（流式快照为全量累积）视为同一 part 的重复锚定
+        // （如 progress 缺失 last_part_index 回退 0），继承基线与扫描缓存避免重复计入
         const key = `${messageId}:${getProgressPartIndex(progress)}:${partType}`;
         let part = this._speedPartState;
-        const isFirstPartOfMessage = msg.messageChars === 0 && msg.messageUsage === null;
         if (!part || part.key !== key) {
-            part = this._speedPartState = {
-                key,
-                startMs: Date.now(),
-                partChars,
-                // 首个 part 从消息 0 起计；非首 part 且起点无 usage 时为 null（待 usage 首达校正）
-                partStartUsage: hasUsage ? usageTokens.completionTokens : isFirstPartOfMessage ? 0 : null,
-                baseMessageChars: msg.messageChars
-            };
-        } else {
-            part.partChars = partChars;
+            const isSamePartReanchored =
+                part !== null && part.key.endsWith(`:${partType}`) && partText.length >= part.scanCounted;
+            part = this._speedPartState = isSamePartReanchored
+                ? {
+                      key,
+                      partTokens: part.partTokens,
+                      baseMessageTokens: part.baseMessageTokens,
+                      scanCounted: part.scanCounted,
+                      scanTokens: part.scanTokens
+                  }
+                : { key, partTokens: 0, baseMessageTokens: msg.messageTokens, scanCounted: 0, scanTokens: 0 };
         }
-        msg.messageChars = part.baseMessageChars + partChars;
+
+        // 增量扫描：流式快照只追加不收缩，每帧仅统计新增尾巴的加权 token；
+        // 文本变短（异常快照）时退回全量重扫
+        if (partText.length < part.scanCounted) {
+            part.scanCounted = 0;
+            part.scanTokens = 0;
+        }
+        for (let i = part.scanCounted; i < partText.length; i++) {
+            part.scanTokens += TaskView.isCjkCharCode(partText.charCodeAt(i))
+                ? TaskView.CJK_TOKEN_WEIGHT
+                : TaskView.OTHER_TOKEN_WEIGHT;
+        }
+        part.scanCounted = partText.length;
+        part.partTokens = part.scanTokens;
+        msg.messageTokens = part.baseMessageTokens + part.partTokens;
 
         if (hasUsage) {
-            if (part.partStartUsage === null) {
-                // usage 首次到达：completion 是消息级累计，扣除当前 part 的估算 token 后作为基线
-                part.partStartUsage = Math.max(
-                    0,
-                    usageTokens.completionTokens - Math.round(partChars / TaskView.CHARS_PER_TOKEN_ESTIMATE)
-                );
+            // usage 是检查点语义：仅在数值变化（新请求完成 / provider 流式推进）时
+            // 重校偏移并推进估算基线。部分 provider（volcengine 系等）流中每帧携带
+            // 上一请求的遗留 usage 且数值不变——若每帧都重置基线，delta 恒为 0，
+            // 词数会冻结在 usage 遗留值上（真实输出全靠估算增量体现）。
+            if (msg.messageUsage === null || usageTokens.completionTokens !== msg.messageUsage.c) {
+                msg.usageOffset = msg.messageTokens - usageTokens.completionTokens;
+                msg.messageTokensAtUsage = msg.messageTokens;
             }
             msg.messageUsage = {
                 p: usageTokens.promptTokens,
                 c: usageTokens.completionTokens,
                 t: usageTokens.totalTokens
             };
-            msg.messageCharsAtUsage = msg.messageChars;
         }
 
-        // 速度：elapsed < 500ms 或速度 ≤ 0 时为 null
-        const elapsedMs = Date.now() - part.startMs;
+        // token 累计序列：有 usage 时优先真实值（+ 校准偏移），否则按加权估算；
+        // 取 max 保证 usage 停更时序列仍随输出推进
+        const seq = msg.messageUsage
+            ? Math.max(msg.messageTokens, msg.messageUsage.c + msg.usageOffset)
+            : msg.messageTokens;
+
+        // 滑动窗口测速：从最新样本向前回溯，窗口超出时长或样本间隔超阈值（断流）即止。
+        // seq 为 0 的样本（part 已创建但还没有任何输出的空占位快照）不入队，
+        // 避免把首 token 时延（等待首个非空输出的时间）摊进 decode 速度
+        const now = Date.now();
+        const samples = msg.samples;
+        if (seq > 0) {
+            samples.push({ t: now, seq });
+            if (samples.length > TaskView.SPEED_WINDOW_MAX_SAMPLES) {
+                samples.splice(0, samples.length - TaskView.SPEED_WINDOW_MAX_SAMPLES);
+            }
+        }
         let speed = null;
-        if (elapsedMs >= 500) {
-            const tokens =
-                part.partStartUsage !== null && usageTokens.completionTokens > part.partStartUsage
-                    ? usageTokens.completionTokens - part.partStartUsage
-                    : partChars / TaskView.CHARS_PER_TOKEN_ESTIMATE;
-            const value = Math.round(tokens / (elapsedMs / 1000));
-            if (Number.isFinite(value) && value > 0) {
-                speed = value;
+        // lastDecodeAtMs 表达"当前速度值的测量时点"：有速度=本帧（最新窗口）；
+        // 无速度=窗口起点（有效测速缺失，如停顿后窗口重置的冷却期、样本不足），
+        // 渲染侧据此在速度值过旧时隐藏后缀，避免把陈旧测速当"当前 decode 速度"
+        let lastDecodeAtMs = now;
+        if (samples.length > 0) {
+            let start = samples.length - 1;
+            while (
+                start > 0 &&
+                now - samples[start - 1].t <= TaskView.SPEED_WINDOW_MS &&
+                samples[start].t - samples[start - 1].t <= TaskView.SPEED_WINDOW_MAX_GAP_MS
+            ) {
+                start--;
+            }
+            lastDecodeAtMs = samples[start].t;
+            const spanMs = now - samples[start].t;
+            if (spanMs >= TaskView.SPEED_MIN_SPAN_MS) {
+                const value = Math.round((seq - samples[start].seq) / (spanMs / 1000));
+                if (Number.isFinite(value) && value > 0) {
+                    speed = value;
+                    lastDecodeAtMs = now;
+                }
             }
         }
 
-        // 消息级估算（无真实 usage 时的「已输出/总计」临时值）
+        // 消息级估算：usage 检查点流（检查点值 + 之后增量）为主，
+        // 无 usage 时退化为纯估算（上一请求基线 + 本消息输出）
+        const baseline = this._contextUsageBaseline;
         let estPrompt = 0;
         let estCompletion;
         let estTotal;
         if (msg.messageUsage) {
-            const delta = Math.round((msg.messageChars - msg.messageCharsAtUsage) / TaskView.CHARS_PER_TOKEN_ESTIMATE);
+            const delta = Math.max(0, Math.round(msg.messageTokens - msg.messageTokensAtUsage));
             estPrompt = msg.messageUsage.p;
             estCompletion = msg.messageUsage.c + delta;
             estTotal = msg.messageUsage.t + delta;
@@ -3359,12 +3585,37 @@ class TaskView extends HTMLElement {
             // 尚无真实 usage：以上一条消息的真实 usage（最近一次请求的输入+输出）为基线，
             // 叠加本消息的输出估算，保证「总计/上下文占比」在流式期间不跌回 0.0%。
             // 基线缺失（任务首轮请求）时上下文本身还很小，退化为仅输出估算。
-            const baseline = this._contextUsageBaseline;
             estPrompt = baseline ? baseline.p : 0;
-            estCompletion = Math.round(msg.messageChars / TaskView.CHARS_PER_TOKEN_ESTIMATE);
+            estCompletion = Math.round(msg.messageTokens);
             estTotal = (baseline ? baseline.t : 0) + estCompletion;
         }
-        return { speed, estPrompt, estCompletion, estTotal };
+        return { speed, lastDecodeAtMs, estPrompt, estCompletion, estTotal };
+    }
+
+    /**
+     * 从消息级测速状态计算胶囊展示 token（与 _trackOutputSpeed 的估算口径一致：
+     * usage 检查点值 + 之后增量）。用于 replace 等不经流式测速的重建路径，
+     * 避免请求开始的 prompt 检查点 usage（completion=0）把已涨起来的词数清零。
+     * 返回 null 表示无测速状态可依据。
+     */
+    _computeDisplayTokensFromState() {
+        const msg = this._speedMessageState;
+        if (!msg) return null;
+        const baseline = this._contextUsageBaseline;
+        const roundedTokens = Math.round(msg.messageTokens);
+        if (msg.messageUsage) {
+            const delta = Math.max(0, Math.round(msg.messageTokens - msg.messageTokensAtUsage));
+            return {
+                prompt: msg.messageUsage.p,
+                completion: msg.messageUsage.c + delta,
+                total: msg.messageUsage.t + delta
+            };
+        }
+        return {
+            prompt: baseline ? baseline.p : 0,
+            completion: roundedTokens,
+            total: (baseline ? baseline.t : 0) + roundedTokens
+        };
     }
 
     static renderCompactBoundary(message = {}) {
@@ -3785,6 +4036,13 @@ class TaskView extends HTMLElement {
         this._syncArtifactsTaskStatus();
         this._cancelBrowserIdleTimer();
         this.updateStopButtonVisibility();
+
+        // 与手动发送路径一致：立即显示等待占位（含上下文胶囊），
+        // 消除 submitMessage 往返与首个 progress 之间的统计真空。
+        // 隐藏视图（historyContainer 为 null）下 DOM 操作无意义，跳过
+        if (this.getHistoryContainer()) {
+            this._showWaitingAssistantPlaceholder({ force: true });
+        }
 
         // 自动发出队列消息前锁定并滚动到底部，及时展示新消息
         this.forceScrollToEnd();

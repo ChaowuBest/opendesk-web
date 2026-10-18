@@ -2251,6 +2251,10 @@ export const enUs: Record<string, string> = {
     'renderer.personal.tokens': 'Tokens',
     'renderer.personal.inputTokens': 'Input',
     'renderer.personal.outputTokens': 'Output',
+    'renderer.personal.cacheHit': 'Hit',
+    'renderer.personal.cacheMiss': 'Miss',
+    'renderer.personal.cacheHitRateShort': 'Hit rate ${rate}',
+    'renderer.personal.cacheHitRate': 'Cache hit rate ${rate}',
     'renderer.personal.requests': '${count} requests',
     'renderer.personal.hourlyTrend': 'Hourly Token Trend',
     'renderer.personal.hourlyTrendSubtitle': "Today's hourly breakdown",
@@ -2607,6 +2611,7 @@ export const enUs: Record<string, string> = {
     'renderer.taskview.edit.cancel': 'Cancel',
     'renderer.taskview.usage.title': 'Input: ${input}, Output: ${output}, Total: ${total}',
     'renderer.taskview.usage.display': 'Output ${output} words${speed}, total ${total} words${ratio}',
+    'renderer.taskview.usage.outputOnly': 'Output ${output} words',
     'renderer.taskview.usage.speed': ' (${speed} token/s)',
     'renderer.taskview.usage.contextRatio': ', context ratio ${pct}%',
     'renderer.taskview.usage.contextRatioExceeded':

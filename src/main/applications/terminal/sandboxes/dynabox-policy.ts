@@ -513,6 +513,20 @@ function policyLinuxTail(
             `[[rules]]\npath = ${quote(p)}\naccess = "write"\nperm = "allow"`,
             `[[rules]]\npath = ${quote(p)}\naccess = "read"\nperm = "allow"`
         ]),
+        // /proc 进程自我管理文件写放行（非 readonly）：沙箱内工具链（JVM、部分
+        // node 原生模块、监控脚本等）启动时写自己/子进程的 oom_score_adj 调整
+        // OOM 优先级，standard 的兜底 `/** write ask` 会对每次写都弹窗（观测弹窗
+        // 路径 /proc/474177/oom_score_adj）。该写只影响进程在 OOM 时被选中的顺
+        // 序：无数据读取面、无持久化面；真实写权限仍由 OS DAC 管控（跨 uid 写
+        // 本就被内核拒绝），策略放行只消除弹窗。/proc 读已由
+        // LINUX_SYSTEM_READ_PREFIXES 与 native sys_read 放行；/proc/sys 等内核
+        // 参数不放行（系统配置篡改面），仍走兜底 ask。readonly 跳过（模式承诺
+        // 禁止任何写入）。
+        ...(!readonlyMode
+            ? ['/proc/*/oom_score_adj', '/proc/*/task/*/oom_score_adj'].map(
+                  (p) => `[[rules]]\npath = ${quote(p)}\naccess = "write"\nperm = "allow"`
+              )
+            : []),
         // readonly：工作区 write deny 重申（在 temp allow 之后）——工作区恰位于
         // 临时目录之下时（测试特例/用户把项目放进 /tmp），temp 的更宽 allow
         // 会顶掉全盘 deny；工作区前缀比 /tmp/** 更具体，写保护恢复。

@@ -339,6 +339,10 @@ h2 {
     background: #b4afa9;
 }
 
+.chart-tooltip-row .tooltip-dot.cache {
+    background: var(--pc-tooltip-muted, #9b968f);
+}
+
 .chart-tooltip-row .tooltip-label {
     color: var(--pc-tooltip-muted, #9b968f);
 }
@@ -521,6 +525,12 @@ h2 {
 
 .rank-detail-output {
     color: var(--pc-output, #1c1917);
+}
+
+.rank-detail-cache {
+    color: var(--pc-muted, #8a8580);
+    font-weight: 600;
+    cursor: default;
 }
 
 .rank-arrow {

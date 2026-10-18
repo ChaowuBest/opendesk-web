@@ -22,6 +22,7 @@ import type {
     PermissionUserResponse,
     PermissionPromptProvider,
     PermissionTaskInfo,
+    PermissionPromptContext,
     PermissionEnforcer
 } from './permission.js';
 import {
@@ -53,6 +54,8 @@ interface QueuedElectronPermissionPrompt {
     toolName: string;
     prefixOptions: { label: string; pattern: string }[];
     taskInfo?: PermissionTaskInfo;
+    /** 弹窗附加上下文（工具调用参数，如沙箱命令的 command），随 payload 下发展示 */
+    context?: PermissionPromptContext;
     deadlineMs: number;
     resolve: (response: PermissionUserResponse) => void;
     settled: boolean;
@@ -112,7 +115,8 @@ export class ElectronPermissionPromptProvider implements PermissionPromptProvide
         requests: PermissionRequest[],
         toolName: string,
         prefixOptions: { label: string; pattern: string }[],
-        taskInfo?: PermissionTaskInfo
+        taskInfo?: PermissionTaskInfo,
+        context?: PermissionPromptContext
     ): Promise<PermissionUserResponse> {
         try {
             const { BrowserWindow } = electron();
@@ -132,6 +136,7 @@ export class ElectronPermissionPromptProvider implements PermissionPromptProvide
                     toolName,
                     prefixOptions,
                     taskInfo,
+                    context,
                     deadlineMs: Date.now() + PROMPT_TIMEOUT_MS,
                     resolve,
                     settled: false
@@ -339,7 +344,9 @@ export class ElectronPermissionPromptProvider implements PermissionPromptProvide
             taskName: item.taskInfo?.taskName ?? null,
             sourceTaskId: item.taskInfo?.sourceTaskId,
             sourceTaskName: item.taskInfo?.sourceTaskName ?? null,
-            parentTaskId: item.taskInfo?.parentTaskId ?? null
+            parentTaskId: item.taskInfo?.parentTaskId ?? null,
+            // 弹窗附加上下文（如沙箱命令的 command）：renderer 据此渲染"被执行的命令"
+            input: item.context?.input ?? null
         };
 
         for (const win of BrowserWindow.getAllWindows()) {

@@ -156,6 +156,46 @@ test('summarizeUsageEvents builds period totals, daily trend, and monthly task r
     assert.equal(hourlyTotal, 210);
 });
 
+test('summarizeUsageEvents aggregates cache hit/miss tokens inside input usage', () => {
+    const cachedCounters = (input: number, output: number, read: number, creation = 0): TokenUsageCounters => ({
+        ...counters(input, output),
+        cache_read_input_tokens: read,
+        cache_creation_input_tokens: creation
+    });
+
+    const summary = summarizeUsageEvents(
+        [
+            {
+                ...event('task-a', '2026-07-09T10:00:00.000Z', 100, 50, 'A', '2026-07-09T10:00:00.000Z', 'gpt-4o'),
+                usage: cachedCounters(100, 50, 300)
+            },
+            {
+                ...event('task-b', '2026-07-09T11:00:00.000Z', 50, 10, 'B', '2026-07-09T11:00:00.000Z', 'gpt-4o'),
+                usage: cachedCounters(50, 10, 50, 10)
+            }
+        ],
+        { now: new Date('2026-07-09T12:00:00.000Z') }
+    );
+
+    // 命中缓存 300 + 50
+    assert.equal(summary.today.cache_read_input_tokens, 350);
+    // 未命中缓存 100 + (50 + 10)，其中缓存写入计入未命中
+    assert.equal(summary.today.cache_miss_input_tokens, 160);
+    // 输入总量 = 命中 + 未命中
+    assert.equal(summary.today.input_tokens, 510);
+    const lastTrendDay = summary.daily_trend.at(-1);
+    assert.equal(lastTrendDay?.cache_read_input_tokens, 350);
+    assert.equal(lastTrendDay?.cache_miss_input_tokens, 160);
+    const hourlyInputTotal = summary.hourly_trend.reduce((sum, point) => sum + point.input_tokens, 0);
+    const hourlyCacheReadTotal = summary.hourly_trend.reduce((sum, point) => sum + point.cache_read_input_tokens, 0);
+    assert.equal(hourlyInputTotal, 510);
+    assert.equal(hourlyCacheReadTotal, 350);
+    assert.equal(summary.month_top_tasks[0].task_id, 'task-a');
+    assert.equal(summary.month_top_tasks[0].input_tokens, 400);
+    assert.equal(summary.month_top_tasks[0].cache_read_input_tokens, 300);
+    assert.equal(summary.month_top_models[0].cache_read_input_tokens, 350);
+});
+
 test('cleanupOldUsageEvents deletes files older than retention period and keeps recent ones', async () => {
     const tempRoot = await mkdtemp(path.join(os.tmpdir(), 'opendesk-usage-cleanup-'));
     setCustomOpendeskDirectory(tempRoot);

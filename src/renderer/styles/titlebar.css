@@ -44,6 +44,9 @@ html.window-rounded .drag-overlay {
  */
 html.window-rounded .drag-overlay {
     -webkit-app-region: no-drag;
+    /* 触摸手势交给 pointer 事件：默认 touch-action 下浏览器会把按下拖动判定为
+     * 滚动/缩放手势并派发 pointercancel，手动拖动会话会被中途打断 */
+    touch-action: none;
 }
 
 /* 窗口控制按钮样式 */
@@ -173,71 +176,87 @@ html.window-rounded .drag-overlay .window-control-btn:last-child {
  * 最大化/全屏时边距折叠为 0，感应条必须隐藏，否则会铺满窗口拦截交互。
  */
 .od-shadow-resize-handle {
+    /* 命中厚度：默认正好铺满阴影边距环 */
+    --od-resize-hit: var(--od-window-margin, 0px);
     position: fixed;
     z-index: 9990;
+    /* 触摸手势交给 pointer 事件：默认 touch-action 下浏览器会把边缘拖动判定为
+     * 滚动/缩放手势并派发 pointercancel，resize 会话会被中途打断 */
+    touch-action: none;
+}
+
+/*
+ * 触摸屏放宽命中阈值：边距环外沿 ~8px 被原生手柄吃掉，剩下 12px 又全落在看不见
+ * 的阴影里，手指要落得很准才摸得到。首次触摸（pointerType != mouse）后由
+ * windowShadowResize.ts 给 html 挂 touch-resize-wide，感应条向内压进内容区 10px，
+ * 可命中宽度接近翻倍；代价是内容边缘 10px 内的触摸会被 resize 吃掉。鼠标用户
+ * 不挂该类，命中区不变。顶部因 .drag-overlay（z-index 更高）仍保持拖动语义。
+ */
+html.touch-resize-wide .od-shadow-resize-handle {
+    --od-resize-hit: calc(var(--od-window-margin, 0px) + 10px);
 }
 
 .od-shadow-resize-handle[data-direction='nw'] {
     left: 0;
     top: 0;
-    width: var(--od-window-margin, 0px);
-    height: var(--od-window-margin, 0px);
+    width: var(--od-resize-hit);
+    height: var(--od-resize-hit);
     cursor: nwse-resize;
 }
 
 .od-shadow-resize-handle[data-direction='ne'] {
     right: 0;
     top: 0;
-    width: var(--od-window-margin, 0px);
-    height: var(--od-window-margin, 0px);
+    width: var(--od-resize-hit);
+    height: var(--od-resize-hit);
     cursor: nesw-resize;
 }
 
 .od-shadow-resize-handle[data-direction='sw'] {
     left: 0;
     bottom: 0;
-    width: var(--od-window-margin, 0px);
-    height: var(--od-window-margin, 0px);
+    width: var(--od-resize-hit);
+    height: var(--od-resize-hit);
     cursor: nesw-resize;
 }
 
 .od-shadow-resize-handle[data-direction='se'] {
     right: 0;
     bottom: 0;
-    width: var(--od-window-margin, 0px);
-    height: var(--od-window-margin, 0px);
+    width: var(--od-resize-hit);
+    height: var(--od-resize-hit);
     cursor: nwse-resize;
 }
 
 .od-shadow-resize-handle[data-direction='n'] {
     top: 0;
-    left: var(--od-window-margin, 0px);
-    right: var(--od-window-margin, 0px);
-    height: var(--od-window-margin, 0px);
+    left: var(--od-resize-hit);
+    right: var(--od-resize-hit);
+    height: var(--od-resize-hit);
     cursor: ns-resize;
 }
 
 .od-shadow-resize-handle[data-direction='s'] {
     bottom: 0;
-    left: var(--od-window-margin, 0px);
-    right: var(--od-window-margin, 0px);
-    height: var(--od-window-margin, 0px);
+    left: var(--od-resize-hit);
+    right: var(--od-resize-hit);
+    height: var(--od-resize-hit);
     cursor: ns-resize;
 }
 
 .od-shadow-resize-handle[data-direction='w'] {
     left: 0;
-    top: var(--od-window-margin, 0px);
-    bottom: var(--od-window-margin, 0px);
-    width: var(--od-window-margin, 0px);
+    top: var(--od-resize-hit);
+    bottom: var(--od-resize-hit);
+    width: var(--od-resize-hit);
     cursor: ew-resize;
 }
 
 .od-shadow-resize-handle[data-direction='e'] {
     right: 0;
-    top: var(--od-window-margin, 0px);
-    bottom: var(--od-window-margin, 0px);
-    width: var(--od-window-margin, 0px);
+    top: var(--od-resize-hit);
+    bottom: var(--od-resize-hit);
+    width: var(--od-resize-hit);
     cursor: ew-resize;
 }
 

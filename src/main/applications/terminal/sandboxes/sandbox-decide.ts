@@ -16,8 +16,22 @@ import { applyPersistentPermissionAllowForTask } from '../../../aikernel/task/pe
 import type { TaskState } from '../../../aikernel/states/tasks.js';
 import { FileResourcePath } from '../../../aikernel/security/permission.js';
 
+/**
+ * 沙箱 ask 弹窗的来源描述：本次沙箱执行由哪个工具发起、执行的是什么命令。
+ * 权限弹窗用它把"dynamicSandbox 请求编辑文件"升级为"executeBash 请求编辑文件 +
+ * 命令内容"，让用户能判断弹窗来自哪条命令。
+ */
+export interface SandboxAskInvocation {
+    /** 发起本次沙箱命令的工具名（如 executeBash/executeZsh/executePwsh） */
+    toolName?: string;
+    /** 被执行的命令文本（展示用，过长由 UI 截断） */
+    command?: string;
+}
+
 export interface SandboxDecideEndpointOptions {
     taskState?: TaskState;
+    /** 弹窗来源描述（触发沙箱执行的工具名与被执行命令），缺省保持 dynamicSandbox */
+    invocation?: SandboxAskInvocation;
     /**
      * 沙箱触发权限管控、弹窗等待用户决策时的回调：
      * waiting=true 表示开始等待（宿主应暂停工具超时计时），
@@ -135,11 +149,17 @@ export async function createSandboxDecideEndpoint(
                 try {
                     notifyPermissionWaitChange(1);
                     const prefixes = new FileResourcePath(resourcePath).getPrefixes();
-                    const response = await provider.prompt([request], 'dynamicSandbox', prefixes, {
-                        taskId: task.task_id,
-                        taskName: task.task_name,
-                        workspace: task.getWorkspace()
-                    });
+                    const response = await provider.prompt(
+                        [request],
+                        options.invocation?.toolName || 'dynamicSandbox',
+                        prefixes,
+                        {
+                            taskId: task.task_id,
+                            taskName: task.task_name,
+                            workspace: task.getWorkspace()
+                        },
+                        options.invocation?.command ? { input: { command: options.invocation.command } } : undefined
+                    );
                     if (closed) return deny;
                     if (current !== task.harnessContext) return decideRequest(body);
                     const latest = await current.permission?.check(request);

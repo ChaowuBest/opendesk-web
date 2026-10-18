@@ -28,6 +28,7 @@ const waitFor = async (condition: () => boolean, message: string): Promise<void>
 describe('sandbox decide session-scoped allow', () => {
     let deferreds: DeferredResponse[];
     let promptCalls: number;
+    let promptArgs: Array<{ toolName: string; context: any }>;
     let checkOverride: ((path: string, action: string) => any) | null;
     let cleanups: Array<() => Promise<void>>;
 
@@ -45,9 +46,10 @@ describe('sandbox decide session-scoped allow', () => {
                     getRules: () => []
                 },
                 permissionPrompt: {
-                    prompt: async () =>
+                    prompt: async (...args: any[]) =>
                         new Promise<any>((resolve) => {
                             promptCalls += 1;
+                            promptArgs.push({ toolName: args[1], context: args[4] });
                             deferreds.push({ resolve });
                         })
                 }
@@ -59,6 +61,7 @@ describe('sandbox decide session-scoped allow', () => {
     beforeEach(() => {
         deferreds = [];
         promptCalls = 0;
+        promptArgs = [];
         checkOverride = null;
         applyPersistentAllow.mockClear();
         applyPersistentAllow.mockResolvedValue();
@@ -71,10 +74,11 @@ describe('sandbox decide session-scoped allow', () => {
         }
     });
 
-    const launchEndpoint = async (taskState: any) => {
+    const launchEndpoint = async (taskState: any, invocation?: { toolName?: string; command?: string }) => {
         const decide = await createSandboxDecideEndpoint({
             taskState,
-            pathMapper: (sandboxPath) => sandboxPath
+            pathMapper: (sandboxPath) => sandboxPath,
+            ...(invocation ? { invocation } : {})
         });
         cleanups.push(decide.cleanup);
         return decide;
@@ -291,5 +295,33 @@ describe('sandbox decide session-scoped allow', () => {
         await waitFor(() => promptCalls === 1, 'the prompt to open after resume');
         deferreds[0].resolve({ decision: 'deny', rememberScope: 'none' });
         expect(JSON.parse((await ask).body)).toEqual({ decision: 'deny' });
+    });
+
+    test('sandbox invocation is forwarded as the prompt tool name with the executed command', async () => {
+        // 弹窗展示诉求：来源显示真实工具名（executeBash），并通过 prompt context
+        // 携带被执行命令，GUI/TUI 弹窗可以渲染"哪个工具在执行什么命令"
+        const taskState = makeTaskState();
+        const decide = await launchEndpoint(taskState, { toolName: 'executeBash', command: 'npm run build' });
+
+        const ask = postDecision(decide, '/home/tester/secret.txt');
+        await waitFor(() => promptCalls === 1, 'the prompt to open');
+        deferreds[0].resolve({ decision: 'deny', rememberScope: 'none' });
+        await ask;
+
+        expect(promptArgs[0].toolName).toBe('executeBash');
+        expect(promptArgs[0].context).toEqual({ input: { command: 'npm run build' } });
+    });
+
+    test('without an invocation the legacy dynamicSandbox source name is kept and no context is passed', async () => {
+        const taskState = makeTaskState();
+        const decide = await launchEndpoint(taskState);
+
+        const ask = postDecision(decide, '/home/tester/secret.txt');
+        await waitFor(() => promptCalls === 1, 'the prompt to open');
+        deferreds[0].resolve({ decision: 'deny', rememberScope: 'none' });
+        await ask;
+
+        expect(promptArgs[0].toolName).toBe('dynamicSandbox');
+        expect(promptArgs[0].context).toBeUndefined();
     });
 });

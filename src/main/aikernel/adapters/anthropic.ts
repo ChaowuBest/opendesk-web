@@ -15,6 +15,7 @@ import {
     AssistantMessage,
     AssistantResponse,
     ChatContext,
+    SystemMessage,
     TextMessagePart,
     ToolCall,
     ToolCallMessagePart,
@@ -460,8 +461,14 @@ export class AnthropicAdapter {
         }
 
         const result: AnthropicRequestMessages = { messages };
-        if (projection.systemPrompt?.content && projection.systemPrompt.content.length > 0) {
-            result.system = projection.systemPrompt.content;
+        // system prompt 优先取 chat_context.system_prompt；缺失时回退到消息列表中的
+        // SystemMessage，与 OpenAI 适配器对齐，避免 appendMessage(SystemMessage) 的
+        // 调用方（如技能归因批处理）在 Anthropic 协议下静默丢失 system prompt
+        const fallbackSystemMessage = projection.messages.find((message) => message instanceof SystemMessage) as
+            SystemMessage | undefined;
+        const systemPrompt = projection.systemPrompt ?? fallbackSystemMessage;
+        if (systemPrompt?.content && systemPrompt.content.length > 0) {
+            result.system = systemPrompt.content;
         }
         return result;
     }

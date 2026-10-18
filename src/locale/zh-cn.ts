@@ -2184,6 +2184,10 @@ export const zhCn: Record<string, string> = {
     'renderer.personal.tokens': 'Token',
     'renderer.personal.inputTokens': '输入',
     'renderer.personal.outputTokens': '输出',
+    'renderer.personal.cacheHit': '缓存命中',
+    'renderer.personal.cacheMiss': '未命中',
+    'renderer.personal.cacheHitRateShort': '命中率 ${rate}',
+    'renderer.personal.cacheHitRate': '缓存命中率 ${rate}',
     'renderer.personal.requests': '${count} 次请求',
     'renderer.personal.hourlyTrend': '每小时 Token 趋势',
     'renderer.personal.hourlyTrendSubtitle': '今日按小时统计',
@@ -2532,6 +2536,7 @@ export const zhCn: Record<string, string> = {
     'renderer.taskview.edit.cancel': '取消',
     'renderer.taskview.usage.title': '输入: ${input}, 输出: ${output}, 总计: ${total}',
     'renderer.taskview.usage.display': '已输出 ${output} 词${speed}, 总计 ${total} 词${ratio}',
+    'renderer.taskview.usage.outputOnly': '已输出 ${output} 词',
     'renderer.taskview.usage.speed': ' (${speed} 词/秒)',
     'renderer.taskview.usage.contextRatio': ', 上下文占比 ${pct}%',
     'renderer.taskview.usage.contextRatioExceeded':

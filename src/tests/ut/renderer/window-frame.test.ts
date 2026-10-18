@@ -314,3 +314,92 @@ describe('titlebar.css corner control button radius (regression)', () => {
         expect(block![0]).toContain('border-top-right-radius: var(--od-window-radius);');
     });
 });
+
+/**
+ * 触摸屏/手写笔拖动与 resize 的驱动来源回归钉。
+ *
+ * 触摸不会更新系统光标位置，主进程轮询 screen.getCursorScreenPoint() 取到的始终是
+ * 陈旧坐标：拖动时窗口跳到错误位置后不再跟随手指，resize 位移恒为 0。renderer 必须
+ * 按 event.pointerType 分流——鼠标仍走主进程光标轮询（指针拖出窗口也能跟随），
+ * 触摸/手写笔改由 pointermove 上报窗口内坐标（driver='pointer'）驱动会话。
+ */
+describe('触摸屏拖动/resize 驱动分流 (regression)', () => {
+    const html = readFileSync(path.resolve(process.cwd(), 'src/renderer/index.html'), 'utf8');
+    const shadowResizeSource = readFileSync(
+        path.resolve(process.cwd(), 'src/renderer/components/windowShadowResize.ts'),
+        'utf8'
+    );
+    const preload = readFileSync(path.resolve(process.cwd(), 'src/renderer/preload.js'), 'utf8');
+    const mainSource = readFileSync(path.resolve(process.cwd(), 'src/main/main.ts'), 'utf8');
+    const css = readFileSync(path.resolve(process.cwd(), 'src/renderer/styles/titlebar.css'), 'utf8');
+
+    test('index.html 拖拽层按 pointerType 选择驱动来源，pointer 驱动上报窗口内坐标并按帧合并', () => {
+        const anchor = 'if (window.systemInfo && window.systemInfo.isLinux)';
+        const start = html.indexOf(anchor);
+        const end = html.indexOf('window.globalControlAPI =', start);
+        expect(start).toBeGreaterThan(-1);
+        expect(end).toBeGreaterThan(start);
+        const linuxBlock = html.slice(start, end);
+        expect(linuxBlock).toContain("event.pointerType === 'mouse' ? 'cursor' : 'pointer'");
+        expect(linuxBlock).toContain('dragPointerState.driver');
+        // 上报窗口内坐标（触摸 screenX 在 X11 下不可靠），且按 rAF 合并避免逐条
+        // IPC 压垮主进程
+        expect(linuxBlock).toContain('pendingDragPoint = { x: event.clientX, y: event.clientY };');
+        expect(linuxBlock).toContain('window.windowDragAPI.move(');
+        expect(linuxBlock).toContain('requestAnimationFrame(flushDragPoint)');
+        // 多指同按：只跟随发起拖动的那根手指
+        expect(linuxBlock).toContain('event.pointerId !== dragPointerState.pointerId');
+    });
+
+    test('触摸双击顶部触发最大化（Chromium 不为触摸派发 dblclick）', () => {
+        const anchor = 'if (window.systemInfo && window.systemInfo.isLinux)';
+        const start = html.indexOf(anchor);
+        const downStart = html.indexOf("dragOverlay.addEventListener('pointerdown'", start);
+        const downEnd = html.indexOf("dragOverlay.addEventListener('pointermove'", downStart);
+        expect(downStart).toBeGreaterThan(start);
+        expect(downEnd).toBeGreaterThan(downStart);
+        const pointerDown = html.slice(downStart, downEnd);
+        expect(pointerDown).toContain('DOUBLE_TAP_MS');
+        expect(pointerDown).toContain("event.pointerType !== 'mouse'");
+        expect(pointerDown).toContain('maximizeMainWindow()');
+    });
+
+    test('resize 感应条按 pointerType 选择驱动来源，后续事件挂在 window 上', () => {
+        expect(shadowResizeSource).toContain("event.pointerType === 'mouse' ? 'cursor' : 'pointer'");
+        expect(shadowResizeSource).toContain('shadowResizeAPI?.start(direction, {');
+        expect(shadowResizeSource).toContain('clientX: event.clientX');
+        expect(shadowResizeSource).toContain('shadowResizeAPI?.move(');
+        expect(shadowResizeSource).toContain('requestAnimationFrame(flushPendingPoint)');
+        // resize 会重排感应条，capture 目标可能失效；window 级监听保证事件连续
+        expect(shadowResizeSource).toContain("window.addEventListener('pointermove', onPointerMove)");
+        expect(shadowResizeSource).toContain('event.pointerId !== activePointer.pointerId');
+    });
+
+    test('首次触摸后放宽 resize 感应条命中区，鼠标保持原宽度', () => {
+        // renderer：非鼠标指针首次按下后挂类，挂上即注销监听
+        expect(shadowResizeSource).toContain("document.addEventListener('pointerdown', onTouchPointerDown, true)");
+        expect(shadowResizeSource).toContain("document.documentElement.classList.add('touch-resize-wide')");
+        expect(shadowResizeSource).toContain("document.removeEventListener('pointerdown', onTouchPointerDown, true)");
+        // CSS：命中厚度抽成 --od-resize-hit（默认正好铺满边距环），挂类后向内压进内容区
+        expect(css).toMatch(/\.od-shadow-resize-handle\s*\{[^}]*--od-resize-hit:\s*var\(--od-window-margin, 0px\);/);
+        expect(css).toMatch(
+            /html\.touch-resize-wide \.od-shadow-resize-handle\s*\{[^}]*--od-resize-hit:\s*calc\(var\(--od-window-margin, 0px\) \+ 10px\);/
+        );
+        // 感应条尺寸与内缩一律走 --od-resize-hit，否则放宽不生效
+        expect(css).toMatch(/data-direction='e'\]\s*\{\s*right:\s*0;[^}]*width:\s*var\(--od-resize-hit\);/);
+        expect(css).toMatch(/data-direction='n'\]\s*\{\s*top:\s*0;[^}]*height:\s*var\(--od-resize-hit\);/);
+    });
+
+    test('preload 与 main 打通 pointer 坐标上报通道', () => {
+        expect(preload).toContain("ipcRenderer.send('window:dragMove'");
+        expect(preload).toContain("ipcRenderer.send('window:shadowResizeMove'");
+        expect(mainSource).toContain("ipcMain.on('window:dragMove'");
+        expect(mainSource).toContain("ipcMain.on('window:shadowResizeMove'");
+    });
+
+    test('拖拽层与 resize 感应条禁用默认触摸手势，避免 pointercancel 中断会话', () => {
+        const blocks = css.match(/html\.window-rounded \.drag-overlay\s*\{[^}]*\}/g) ?? [];
+        expect(blocks.some((block) => /touch-action:\s*none\s*;/.test(block))).toBe(true);
+        expect(css).toMatch(/\.od-shadow-resize-handle\s*\{[^}]*touch-action:\s*none\s*;/);
+    });
+});

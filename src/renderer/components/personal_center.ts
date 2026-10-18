@@ -19,6 +19,8 @@ interface UsagePeriodSummary {
     input_tokens: number;
     output_tokens: number;
     total_tokens: number;
+    cache_read_input_tokens?: number;
+    cache_miss_input_tokens?: number;
 }
 
 interface UsageDailyTrendPoint {
@@ -26,6 +28,8 @@ interface UsageDailyTrendPoint {
     input_tokens: number;
     output_tokens: number;
     total_tokens: number;
+    cache_read_input_tokens?: number;
+    cache_miss_input_tokens?: number;
 }
 
 interface UsageHourlyTrendPoint {
@@ -33,6 +37,8 @@ interface UsageHourlyTrendPoint {
     input_tokens: number;
     output_tokens: number;
     total_tokens: number;
+    cache_read_input_tokens?: number;
+    cache_miss_input_tokens?: number;
 }
 
 interface UsageTaskRankItem {
@@ -43,6 +49,7 @@ interface UsageTaskRankItem {
     input_tokens: number;
     output_tokens: number;
     total_tokens: number;
+    cache_read_input_tokens?: number;
     request_count: number;
     last_used_at: string;
 }
@@ -53,6 +60,7 @@ interface UsageModelRankItem {
     input_tokens: number;
     output_tokens: number;
     total_tokens: number;
+    cache_read_input_tokens?: number;
     request_count: number;
 }
 
@@ -71,6 +79,8 @@ interface TrendPoint {
     input_tokens: number;
     output_tokens: number;
     total_tokens: number;
+    cache_read_input_tokens?: number;
+    cache_miss_input_tokens?: number;
 }
 
 function compactNumber(value: number): string {
@@ -84,6 +94,36 @@ function compactNumber(value: number): string {
         notation: 'compact',
         maximumFractionDigits: value < 10_000 ? 1 : 0
     }).format(Math.floor(value));
+}
+
+function formatPercent(part: number, total: number): string {
+    if (!Number.isFinite(part) || !Number.isFinite(total) || part <= 0 || total <= 0) {
+        return '0%';
+    }
+    return `${((part / total) * 100).toFixed(1)}%`;
+}
+
+/**
+ * 将趋势图 tooltip 夹取在图表容器内：默认显示在数据点上方，空间不足时翻转
+ * 到点下方，仍放不下时贴边。tooltip 一旦溢出图表容器就会让趋势面板出现
+ * 滚动条，鼠标移动过程中滚动条反复出现/消失导致布局闪烁。
+ */
+export function clampTooltipPosition(
+    pointLeft: number,
+    pointTop: number,
+    tooltipWidth: number,
+    tooltipHeight: number,
+    wrapWidth: number,
+    wrapHeight: number
+): { left: number; top: number } {
+    const margin = 4;
+    const left = Math.max(margin, Math.min(pointLeft - tooltipWidth / 2, wrapWidth - tooltipWidth - margin));
+    let top = pointTop - tooltipHeight - 10;
+    if (top < margin) {
+        top = pointTop + 14;
+    }
+    top = Math.max(margin, Math.min(top, wrapHeight - tooltipHeight - margin));
+    return { left, top };
 }
 
 function formatDayLabel(day: string): string {
@@ -231,6 +271,12 @@ class PersonalCenter extends HTMLElement {
     private renderPeriodCard(kind: 'today' | 'week', summary: UsagePeriodSummary): string {
         const title = kind === 'today' ? this.t('renderer.personal.today') : this.t('renderer.personal.week');
         const accentClass = kind === 'today' ? 'coral' : 'ink';
+        const cacheRead = summary.cache_read_input_tokens ?? 0;
+        const cacheMiss = summary.cache_miss_input_tokens ?? 0;
+        const hasCacheBreakdown = cacheRead > 0 || cacheMiss > 0;
+        const cacheBreakdown = hasCacheBreakdown
+            ? `<span class="cache-breakdown">（${escapeHtml(this.t('renderer.personal.cacheHit'))} ${escapeHtml(compactNumber(cacheRead))} / ${escapeHtml(this.t('renderer.personal.cacheHitRateShort', { rate: formatPercent(cacheRead, cacheRead + cacheMiss) }))} / ${escapeHtml(this.t('renderer.personal.cacheMiss'))} ${escapeHtml(compactNumber(cacheMiss))}）</span>`
+            : '';
         return `
             <section class="metric-card ${accentClass}">
                 <div class="metric-card-header">
@@ -248,7 +294,7 @@ class PersonalCenter extends HTMLElement {
                     </div>
                 </div>
                 <div class="metric-split">
-                    <span>${escapeHtml(this.t('renderer.personal.inputTokens'))}: ${escapeHtml(compactNumber(summary.input_tokens))}</span>
+                    <span>${escapeHtml(this.t('renderer.personal.inputTokens'))}: ${escapeHtml(compactNumber(summary.input_tokens))}${cacheBreakdown}</span>
                     <span>${escapeHtml(this.t('renderer.personal.outputTokens'))}: ${escapeHtml(compactNumber(summary.output_tokens))}</span>
                 </div>
             </section>
@@ -328,9 +374,39 @@ class PersonalCenter extends HTMLElement {
                         <span class="tooltip-label">${escapeHtml(this.t('renderer.personal.outputTokens'))}</span>
                         <span class="tooltip-val"></span>
                     </div>
+                    <div class="chart-tooltip-row chart-tooltip-cache" hidden>
+                        <span class="tooltip-dot cache"></span>
+                        <span class="tooltip-label">${escapeHtml(this.t('renderer.personal.cacheHit'))} / ${escapeHtml(this.t('renderer.personal.cacheMiss'))}</span>
+                        <span class="tooltip-val"></span>
+                    </div>
                 </div>
             </div>
         `;
+    }
+
+    /**
+     * 排行副标题：模型/供应商拼为一行，缺失段自动跳过。
+     */
+    private rankSubtitle(segments: string[]): string {
+        const parts = segments.filter((segment) => segment.length > 0);
+        if (parts.length === 0) {
+            return '';
+        }
+        return `<span class="rank-subtitle">${parts.map((part) => escapeHtml(part)).join(' · ')}</span>`;
+    }
+
+    /** 排行右侧数值区的缓存命中率行，悬停显示命中率（含小数） */
+    private rankCacheDetail(cacheRead: number, inputTokens: number): string {
+        if (cacheRead <= 0) {
+            return '';
+        }
+        const label = `${escapeHtml(this.t('renderer.personal.cacheHit'))} ${Math.round(
+            inputTokens > 0 ? (cacheRead / inputTokens) * 100 : 0
+        )}%`;
+        const title = escapeHtml(
+            this.t('renderer.personal.cacheHitRate', { rate: formatPercent(cacheRead, inputTokens) })
+        );
+        return `<span class="rank-detail-cache" title="${title}">${label}</span>`;
     }
 
     private renderRanking(tasks: UsageTaskRankItem[]): string {
@@ -344,10 +420,8 @@ class PersonalCenter extends HTMLElement {
                     .map((task, index) => {
                         const inputPct = (task.input_tokens / maxTokens) * 100;
                         const outputPct = (task.output_tokens / maxTokens) * 100;
-                        const modelInfo = task.model
-                            ? `${escapeHtml(task.model)}${task.provider ? ` · ${escapeHtml(task.provider)}` : ''}`
-                            : '';
-                        const subtitleHtml = modelInfo ? `<span class="rank-subtitle">${modelInfo}</span>` : '';
+                        const cacheRead = task.cache_read_input_tokens ?? 0;
+                        const subtitleHtml = this.rankSubtitle([task.model ?? '', task.provider ?? '']);
                         return `
                             <button class="rank-row" type="button" data-task-id="${escapeHtml(task.task_id)}" title="${escapeHtml(this.t('renderer.personal.openTask'))}">
                                 <span class="rank-index">${index + 1}</span>
@@ -363,6 +437,7 @@ class PersonalCenter extends HTMLElement {
                                     <span class="rank-detail">
                                         <span class="rank-detail-input"><span class="rank-arrow">↓</span>${escapeHtml(compactNumber(task.input_tokens))}</span>
                                         <span class="rank-detail-output"><span class="rank-arrow">↑</span>${escapeHtml(compactNumber(task.output_tokens))}</span>
+                                        ${this.rankCacheDetail(cacheRead, task.input_tokens)}
                                     </span>
                                 </span>
                             </button>
@@ -386,15 +461,14 @@ class PersonalCenter extends HTMLElement {
                         const outputPct = (model.output_tokens / maxTokens) * 100;
                         const displayName =
                             model.model === 'unknown' ? this.t('renderer.personal.unknownModel') : model.model;
-                        const providerHtml = model.provider
-                            ? `<span class="rank-subtitle">${escapeHtml(model.provider)}</span>`
-                            : '';
+                        const cacheRead = model.cache_read_input_tokens ?? 0;
+                        const subtitleHtml = this.rankSubtitle([model.provider ?? '']);
                         return `
                             <div class="rank-row rank-row-static">
                                 <span class="rank-index">${index + 1}</span>
                                 <span class="rank-main">
                                     <span class="rank-title">${escapeHtml(displayName)}</span>
-                                    ${providerHtml}
+                                    ${subtitleHtml}
                                     <span class="rank-bar">
                                         <span class="rank-bar-input" style="width:${inputPct.toFixed(1)}%"></span>
                                         <span class="rank-bar-output" style="width:${outputPct.toFixed(1)}%"></span>
@@ -404,6 +478,7 @@ class PersonalCenter extends HTMLElement {
                                     <span class="rank-detail">
                                         <span class="rank-detail-input"><span class="rank-arrow">↓</span>${escapeHtml(compactNumber(model.input_tokens))}</span>
                                         <span class="rank-detail-output"><span class="rank-arrow">↑</span>${escapeHtml(compactNumber(model.output_tokens))}</span>
+                                        ${this.rankCacheDetail(cacheRead, model.input_tokens)}
                                     </span>
                                 </span>
                             </div>
@@ -530,26 +605,36 @@ class PersonalCenter extends HTMLElement {
                 tooltip.querySelector('.chart-tooltip-output .tooltip-val')!.textContent = compactNumber(
                     p.output_tokens
                 );
+                const cacheRead = p.cache_read_input_tokens ?? 0;
+                const cacheMiss = p.cache_miss_input_tokens ?? 0;
+                const cacheRow = tooltip.querySelector<HTMLElement>('.chart-tooltip-cache')!;
+                if (cacheRead > 0 || cacheMiss > 0) {
+                    cacheRow.hidden = false;
+                    cacheRow.querySelector('.tooltip-val')!.textContent =
+                        `${compactNumber(cacheRead)} / ${compactNumber(cacheMiss)}`;
+                } else {
+                    cacheRow.hidden = true;
+                }
                 tooltip.hidden = false;
 
-                // Position tooltip relative to chart-wrap
+                // Position tooltip relative to chart-wrap. Clamp it fully inside the
+                // chart wrap (measured size, not assumptions): any overflow would make
+                // the trend panel show scrollbars and flicker the layout while moving.
                 const svgRect = svg.getBoundingClientRect();
                 const wrapRect = wrap.getBoundingClientRect();
                 const scaleX = svgRect.width / width;
                 const scaleY = svgRect.height / 170;
-                let left = svgRect.left - wrapRect.left + snapX * scaleX;
-                let top = svgRect.top - wrapRect.top + crossY * scaleY - 10;
+                const pointLeft = svgRect.left - wrapRect.left + snapX * scaleX;
+                const pointTop = svgRect.top - wrapRect.top + crossY * scaleY;
 
-                // Keep tooltip within bounds
-                if (left + 170 > wrapRect.width) {
-                    left -= 180;
-                }
-                if (left < 0) {
-                    left = 8;
-                }
-                if (top < 0) {
-                    top = svgRect.top - wrapRect.top + crossY * scaleY + 18;
-                }
+                const { left, top } = clampTooltipPosition(
+                    pointLeft,
+                    pointTop,
+                    tooltip.offsetWidth,
+                    tooltip.offsetHeight,
+                    wrapRect.width,
+                    wrapRect.height
+                );
 
                 tooltip.style.left = `${left}px`;
                 tooltip.style.top = `${top}px`;

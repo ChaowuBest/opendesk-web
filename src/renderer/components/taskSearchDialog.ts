@@ -20,6 +20,13 @@ import {
 } from '../../common/task-search.js';
 import { getTaskActivityTimestamp, type SidebarTask } from '../sidebarTaskGroups.js';
 
+/**
+ * 打开后忽略遮罩点击的保护期，需覆盖系统双击间隔：
+ * 双击搜索框时第二次点击会被 modal 拦截落在刚打开浮层的遮罩上，
+ * 不加保护会让浮层闪开即关。
+ */
+const BACKDROP_GUARD_MS = 400;
+
 interface Options {
     getTasks(): SidebarTask[];
     search(query: string, limit: number): Promise<TaskSearchResponse>;
@@ -47,6 +54,7 @@ export class TaskSearchDialog {
     private opening = false;
     private origin?: HTMLElement;
     private visible = false;
+    private openGuard?: ReturnType<typeof setTimeout>;
 
     constructor(private readonly options: Options) {
         const t = (key: string) => options.translate('renderer.taskSearch.' + key);
@@ -96,7 +104,17 @@ export class TaskSearchDialog {
             if (!this.composing) this.changed();
         });
         // No new search keyboard shortcuts in this iteration.
-        this.dialog.addEventListener('cancel', (event) => event.preventDefault());
+        // Esc 关闭浮层：cancel 是原生关闭的前置事件，这里 preventDefault 后走 hide()，
+        // 保证退订、清计时器和 DOM 移除都同步完成。
+        this.dialog.addEventListener('cancel', (event) => {
+            event.preventDefault();
+            this.hide();
+        });
+        // 兜底同步状态：原生关闭路径（如 Chromium 对连续 Esc 的强制关闭）不经过 hide()，
+        // 若不同步 visible，show() 会一直走 early-return 分支导致浮层再也打不开。
+        this.dialog.addEventListener('close', () => {
+            if (this.visible) this.hide();
+        });
         this.dialog.addEventListener('click', (event) => {
             if (event.target !== this.dialog) return;
             const rect = this.dialog.getBoundingClientRect();
@@ -105,8 +123,10 @@ export class TaskSearchDialog {
                 event.clientX > rect.right ||
                 event.clientY < rect.top ||
                 event.clientY > rect.bottom
-            )
+            ) {
+                if (this.openGuard) return;
                 this.hide();
+            }
         });
         this.list.addEventListener('click', (event) => {
             const button = (event.target as HTMLElement).closest<HTMLButtonElement>('[data-task-id]');
@@ -125,6 +145,10 @@ export class TaskSearchDialog {
         this.visible = true;
         this.unsubscribe = this.options.subscribe(this.indexChanged);
         this.dialog.showModal();
+        clearTimeout(this.openGuard);
+        this.openGuard = setTimeout(() => {
+            this.openGuard = undefined;
+        }, BACKDROP_GUARD_MS);
         this.input.focus();
         this.changed();
     }
@@ -133,6 +157,8 @@ export class TaskSearchDialog {
         this.generation++;
         clearTimeout(this.timer);
         this.timer = undefined;
+        clearTimeout(this.openGuard);
+        this.openGuard = undefined;
         this.refreshRequested = false;
         this.unsubscribe?.();
         this.unsubscribe = undefined;

@@ -2,7 +2,8 @@ import { describe, expect, test } from '@jest/globals';
 import {
     hostPatternToVirtualLinux,
     permissionRulesForSandboxLinux,
-    policyTextLinux
+    policyTextLinux,
+    policyTextOpenHarmony
 } from '../../../main/applications/terminal/sandboxes/dynabox-policy.js';
 import { createNodePolicyRules } from '../../../main/aikernel/security/policies/node.js';
 
@@ -338,6 +339,36 @@ describe('policyTextLinux', () => {
         expect(text).toContain('path = "/"\naccess = "read"\nperm = "allow"');
         // 兜底 ask 仍在（子路径外读照常询问）
         expect(text).toContain('path = "/**"\naccess = "read"\nperm = "ask"');
+    });
+    test('/proc 进程自我管理写放行：oom_score_adj（工具链 OOM 调节不弹窗），/proc/sys 仍管控', () => {
+        // 回归：沙箱内工具链（JVM/node 原生模块/监控脚本等）启动时写自己或子进程的
+        // oom_score_adj（观测弹窗路径 /proc/474177/oom_score_adj），standard 的兜底
+        // /** write ask 每次都弹窗。/proc 读已由 LINUX_SYSTEM_READ_PREFIXES 与 native
+        // sys_read 放行；写仅放行 OOM 优先级调节文件——无数据读取面、无持久化面，
+        // 真实写权限仍由 OS DAC 管控（跨 uid 写本就被内核拒绝）。
+        const text = policyTextLinux('http://127.0.0.1:1/decide', 't', '/home/tester/work');
+        expect(text).toContain('path = "/proc/*/oom_score_adj"\naccess = "write"\nperm = "allow"');
+        expect(text).toContain('path = "/proc/*/task/*/oom_score_adj"\naccess = "write"\nperm = "allow"');
+        // 内核参数（/proc/sys）不放行：写 sysctl 属系统配置篡改面，保持兜底 ask
+        expect(text).not.toContain('path = "/proc/sys');
+    });
+    test('readonly 模式不放行 oom_score_adj 写（模式承诺禁止任何写入）', () => {
+        const rules = [
+            { resourceType: 'file', action: 'read', pathPattern: '/home/tester/work/**', effect: 'allow' },
+            { resourceType: 'file', action: 'write', pathPattern: '**', effect: 'deny' }
+        ] as any[];
+        const text = policyTextLinux('http://127.0.0.1:1/decide', 't', '/home/tester/work', rules);
+        expect(text).not.toContain('path = "/proc/*/oom_score_adj"');
+    });
+    test('OpenHarmony 版共用同一尾部：oom_score_adj 写放行同样生效', () => {
+        const text = policyTextOpenHarmony(
+            'http://127.0.0.1:1/decide',
+            't',
+            '/home/tester/work',
+            undefined,
+            '/home/tester'
+        );
+        expect(text).toContain('path = "/proc/*/oom_score_adj"\naccess = "write"\nperm = "allow"');
     });
     test('兜底规则：读询问（standard 外读确认）、写询问、执行放行', () => {
         const text = policyTextLinux('http://127.0.0.1:1/decide', 't', '/home/tester/work');

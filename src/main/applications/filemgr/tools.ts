@@ -114,9 +114,11 @@ function toForwardSlash(p: string): string {
 
 /**
  * 渲染类似 git diff 格式的输出
+ * @param startLine 替换发生在原文件中的起始行号（1-based）；未提供时退化为从 1 开始的相对行号
  */
-function renderDiffOutput(oldContent: string, newContent: string, width: number): string[] {
+function renderDiffOutput(oldContent: string, newContent: string, width: number, startLine?: number): string[] {
     const diffResult = diff.diffLines(oldContent, newContent);
+    const firstLineNo = typeof startLine === 'number' && Number.isInteger(startLine) && startLine >= 1 ? startLine : 1;
 
     let addedCount = 0;
     let removedCount = 0;
@@ -133,8 +135,8 @@ function renderDiffOutput(oldContent: string, newContent: string, width: number)
     }
 
     const body: string[] = [];
-    let oldLineNum = 1;
-    let newLineNum = 1;
+    let oldLineNum = firstLineNo;
+    let newLineNum = firstLineNo;
 
     interface DiffBlock {
         oldStart: number;
@@ -558,39 +560,54 @@ function getFileExtBadge(filePath: string): string {
 }
 
 /**
+ * editFile/searchReplace 执行器记录的首处替换起始行（key 为 toolcall 对象）。
+ * 只服务于"执行完成 → 冻结渲染"这一次内存内交接：行号在冻结时直接烙进 rendered HTML
+ * 并随任务持久化，之后不再有消费者，因此不需要进入任何持久化契约。
+ */
+const replacementStartLines = new WeakMap<ToolCall, number>();
+
+/**
  * 渲染 Cursor 风格的文件编辑 diff 卡片
+ * @param startLine 替换发生在原文件中的起始行号（1-based）；未提供时退化为从 1 开始的相对行号
  */
 function renderDiffCard(
     filePath: string,
     oldStr: string,
     newStr: string,
     status: string,
-    maxLines: number = 12
+    maxLines: number = 12,
+    startLine?: number
 ): string {
     const diffResult = diff.diffLines(oldStr, newStr);
+    const firstLineNo = typeof startLine === 'number' && Number.isInteger(startLine) && startLine >= 1 ? startLine : 1;
 
     let addedCount = 0;
     let removedCount = 0;
     const diffRows: Array<{ html: string; changed: boolean }> = [];
     let totalLines = 0;
+    let oldLineNo = firstLineNo;
+    let newLineNo = firstLineNo;
 
     for (const part of diffResult) {
         const partLines = part.value.replace(/\n$/, '').split('\n');
         for (const line of partLines) {
-            const ln = totalLines + 1;
             const escaped = escapeHtml(line) || '&nbsp;';
             let lineHtml: string;
             let changed = false;
             if (part.added) {
                 addedCount++;
                 changed = true;
-                lineHtml = `<tr class="diff-row-add"><td class="diff-ln text-right px-2 py-px select-none border-r border-emerald-100 text-slate-400 w-[1px] whitespace-nowrap bg-emerald-50/60">${ln}</td><td class="diff-marker text-center px-1 py-px select-none border-r border-emerald-100 text-emerald-500 w-[1px] whitespace-nowrap bg-emerald-50">+</td><td class="diff-code whitespace-pre px-2 py-px text-emerald-800 bg-emerald-50">${escaped}</td></tr>`;
+                lineHtml = `<tr class="diff-row-add"><td class="diff-ln text-right px-2 py-px select-none border-r border-emerald-100 text-slate-400 w-[1px] whitespace-nowrap bg-emerald-50/60"></td><td class="diff-ln text-right px-2 py-px select-none border-r border-emerald-100 text-slate-400 w-[1px] whitespace-nowrap bg-emerald-50/60">${newLineNo}</td><td class="diff-marker text-center px-1 py-px select-none border-r border-emerald-100 text-emerald-500 w-[1px] whitespace-nowrap bg-emerald-50">+</td><td class="diff-code whitespace-pre px-2 py-px text-emerald-800 bg-emerald-50">${escaped}</td></tr>`;
+                newLineNo++;
             } else if (part.removed) {
                 removedCount++;
                 changed = true;
-                lineHtml = `<tr class="diff-row-del"><td class="diff-ln text-right px-2 py-px select-none border-r border-rose-100 text-slate-400 w-[1px] whitespace-nowrap bg-rose-50/60">${ln}</td><td class="diff-marker text-center px-1 py-px select-none border-r border-rose-100 text-rose-400 w-[1px] whitespace-nowrap bg-rose-50">-</td><td class="diff-code whitespace-pre px-2 py-px text-rose-800 bg-rose-50">${escaped}</td></tr>`;
+                lineHtml = `<tr class="diff-row-del"><td class="diff-ln text-right px-2 py-px select-none border-r border-rose-100 text-slate-400 w-[1px] whitespace-nowrap bg-rose-50/60">${oldLineNo}</td><td class="diff-ln text-right px-2 py-px select-none border-r border-rose-100 text-slate-400 w-[1px] whitespace-nowrap bg-rose-50/60"></td><td class="diff-marker text-center px-1 py-px select-none border-r border-rose-100 text-rose-400 w-[1px] whitespace-nowrap bg-rose-50">-</td><td class="diff-code whitespace-pre px-2 py-px text-rose-800 bg-rose-50">${escaped}</td></tr>`;
+                oldLineNo++;
             } else {
-                lineHtml = `<tr class="diff-row-ctx"><td class="diff-ln text-right px-2 py-px select-none border-r border-slate-100 text-slate-300 w-[1px] whitespace-nowrap">${ln}</td><td class="diff-marker text-center px-1 py-px select-none border-r border-slate-100 text-slate-300 w-[1px] whitespace-nowrap">&nbsp;</td><td class="diff-code whitespace-pre px-2 py-px text-slate-500">${escaped}</td></tr>`;
+                lineHtml = `<tr class="diff-row-ctx"><td class="diff-ln text-right px-2 py-px select-none border-r border-slate-100 text-slate-300 w-[1px] whitespace-nowrap">${oldLineNo}</td><td class="diff-ln text-right px-2 py-px select-none border-r border-slate-100 text-slate-300 w-[1px] whitespace-nowrap">${newLineNo}</td><td class="diff-marker text-center px-1 py-px select-none border-r border-slate-100 text-slate-300 w-[1px] whitespace-nowrap">&nbsp;</td><td class="diff-code whitespace-pre px-2 py-px text-slate-500">${escaped}</td></tr>`;
+                oldLineNo++;
+                newLineNo++;
             }
             diffRows.push({ html: lineHtml, changed });
             totalLines++;
@@ -1903,7 +1920,14 @@ export class EditFileTool extends BaseTool<typeof editFileSchema> {
             const resultStr = toolcall.result as string | undefined;
             const isError = resultStr ? resultStr.startsWith('错误:') : false;
             if ((toolcall.status === 'success' || toolcall.status === 'running') && !isError) {
-                return renderDiffCard(filePath, oldString, newString, toolcall.status);
+                return renderDiffCard(
+                    filePath,
+                    oldString,
+                    newString,
+                    toolcall.status,
+                    12,
+                    replacementStartLines.get(toolcall)
+                );
             }
         }
 
@@ -1943,7 +1967,12 @@ export class EditFileTool extends BaseTool<typeof editFileSchema> {
                 body.push(chalk.dim(`  ✅ 已完成 ${expectedReplacements} 处替换`));
 
                 if (oldString && newString !== undefined) {
-                    const diffLines = renderDiffOutput(oldString, newString, width);
+                    const diffLines = renderDiffOutput(
+                        oldString,
+                        newString,
+                        width,
+                        replacementStartLines.get(toolcall)
+                    );
                     if (diffLines.length > 0) {
                         body.push(chalk.dim('─'.repeat(Math.min(40, Math.max(4, width - 8)))));
                         body.push(...diffLines);
@@ -1960,7 +1989,11 @@ export class EditFileTool extends BaseTool<typeof editFileSchema> {
         }).render(width);
     }
 
-    async executeCommand(args: z.output<typeof editFileSchema>, taskState?: TaskState): Promise<string> {
+    async executeCommand(
+        args: z.output<typeof editFileSchema>,
+        taskState?: TaskState,
+        toolCall?: ToolCall
+    ): Promise<string> {
         const filePath = sanitizePath(args.filePath, getWorkingDirectory(taskState));
         const { oldString, newString, expectedReplacements = 1 } = args;
         const validation = validateFileWasReadForWriteIfEnabled(taskState, filePath);
@@ -2038,6 +2071,15 @@ export class EditFileTool extends BaseTool<typeof editFileSchema> {
             return `错误: 文件中只找到 ${totalOccurrences} 处匹配，但预期替换 ${expectedReplacements} 处。请检查 oldString 是否正确`;
         }
 
+        // 记录首处替换在原文件中的起始行，供冻结渲染时在 diff 卡片中显示文件真实行号
+        // （换行符归一化只替换 \r\n 为 \n，不改变行数，行号与原文件一致）
+        if (toolCall) {
+            replacementStartLines.set(
+                toolCall,
+                searchContent.slice(0, searchContent.indexOf(searchOld)).split('\n').length
+            );
+        }
+
         // 只替换前 expectedReplacements 次
         let count = 0;
         let lastIndex = 0;
@@ -2112,7 +2154,14 @@ export class SearchReplaceTool extends BaseTool<typeof searchReplaceSchema> {
             const resultStr = toolcall.result as string | undefined;
             const isError = resultStr ? resultStr.startsWith('错误:') : false;
             if (!isError) {
-                return renderDiffCard(filePath, oldString, newString, toolcall.status);
+                return renderDiffCard(
+                    filePath,
+                    oldString,
+                    newString,
+                    toolcall.status,
+                    12,
+                    replacementStartLines.get(toolcall)
+                );
             }
         }
 
@@ -2150,7 +2199,12 @@ export class SearchReplaceTool extends BaseTool<typeof searchReplaceSchema> {
                 body.push(chalk.dim('  ✅ 替换完成'));
 
                 if (oldString && newString !== undefined) {
-                    const diffLines = renderDiffOutput(oldString, newString, width);
+                    const diffLines = renderDiffOutput(
+                        oldString,
+                        newString,
+                        width,
+                        replacementStartLines.get(toolcall)
+                    );
                     if (diffLines.length > 0) {
                         body.push(chalk.dim('─'.repeat(Math.min(40, Math.max(4, width - 8)))));
                         body.push(...diffLines);
@@ -2167,7 +2221,11 @@ export class SearchReplaceTool extends BaseTool<typeof searchReplaceSchema> {
         }).render(width);
     }
 
-    async executeCommand(args: z.output<typeof searchReplaceSchema>, taskState?: TaskState): Promise<string> {
+    async executeCommand(
+        args: z.output<typeof searchReplaceSchema>,
+        taskState?: TaskState,
+        toolCall?: ToolCall
+    ): Promise<string> {
         const filePath = sanitizePath(args.filePath, getWorkingDirectory(taskState));
         const { oldString, newString } = args;
         const validation = validateFileWasReadForWriteIfEnabled(taskState, filePath);
@@ -2208,6 +2266,10 @@ export class SearchReplaceTool extends BaseTool<typeof searchReplaceSchema> {
         }
 
         const index = searchContent.indexOf(searchOld);
+        // 记录替换在原文件中的起始行，供冻结渲染时在 diff 卡片中显示文件真实行号
+        if (toolCall) {
+            replacementStartLines.set(toolCall, searchContent.slice(0, index).split('\n').length);
+        }
         let result = searchContent.slice(0, index) + searchNew + searchContent.slice(index + searchOld.length);
 
         result = trimTrailingWhitespace(result);
