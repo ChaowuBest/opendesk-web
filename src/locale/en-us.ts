@@ -2615,6 +2615,7 @@ export const enUs: Record<string, string> = {
     'renderer.taskview.usage.display': 'Output ${output} words${speed}, total ${total} words${ratio}',
     'renderer.taskview.usage.outputOnly': 'Output ${output} words',
     'renderer.taskview.usage.speed': ' (${speed} token/s)',
+    'renderer.taskview.usage.speedEstimated': ' (≈${speed} token/s)',
     'renderer.taskview.usage.contextRatio': ', context ratio ${pct}%',
     'renderer.taskview.usage.contextRatioExceeded':
         ', context ratio ${pct}% (exceeded, context window config is too small, response tokens exceed window size)',
