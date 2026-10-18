@@ -24,6 +24,11 @@
  * IPC 探活请求，要求 renderer 立即补报心跳：IPC 消息不受定时器节流影响，主线程卡死才
  * 会无回应，据此区分「后台节流」与「真冻结」。
  *
+ * 注意窗口在系统层「可见」但定时器仍被节流的场景（如 Windows 熄屏）：节流后心跳约
+ * 15~18s 一跳，静默会反复略超 15s 阈值，看似总在「刚超时」边缘。因此兜底状态不能靠
+ * 单个短间隔心跳解除（那只是探活补报后的自然节拍，不是节流解除），必须由连续两个
+ * 正常间隔的自然心跳确认；探测节拍同时在兜底状态内退避，避免整段时间反复唤醒 renderer。
+ *
  * 设计权衡——为什么保留心跳，而不是让主进程纯轮询探活：
  * 心跳是高频、被动、自动节流的活性遥测：窗口可见时 3s 一次 send-only IPC（renderer
  * 本就活跃，边际成本≈0），后台时 Chromium 自动把它降到分钟级，省电是白送的。探活则是
@@ -41,6 +46,7 @@ export interface ChildProcessGoneDetails {
 }
 
 export interface RecoveryLogger {
+    debug(message: string): void;
     info(message: string): void;
     warn(message: string): void;
     error(message: string): void;
@@ -92,6 +98,13 @@ export function createReloadBudget(options: ReloadBudgetOptions = {}): ReloadBud
  */
 const PROBE_BACKOFF_MAX_MS = 60_000;
 
+/*
+ * 判定「节流已解除」所需的连续正常间隔自然心跳次数。取 2：单个短间隔心跳可能是
+ * 探活补报打乱节拍后的自然节拍，不能证明定时器恢复常态；连续两个正常间隔（3s 周期
+ * 下需要约 6s）才能确认 renderer 回到可见态的心跳频率。
+ */
+const CADENCE_RECOVERY_STREAK = 2;
+
 export interface WindowRecoveryOptions {
     /**
      * 执行一次主窗口重载，返回 false 表示配额耗尽、实际未重载。
@@ -142,6 +155,10 @@ export function createWindowRecoveryController(options: WindowRecoveryOptions): 
     let probeStartedAt: number | null = null;
     /** 已确认处于「后台定时器被节流」状态（依赖探活兜底），用于日志只在状态切换时记录 */
     let probeAssisted = false;
+    /** 节流解除判定：最近一次自然心跳的到达时刻（为空表示尚未记录到自然心跳） */
+    let lastNaturalHeartbeatAt: number | null = null;
+    /** 连续正常间隔自然心跳的计数，达到 CADENCE_RECOVERY_STREAK 即认定节流解除 */
+    let cadenceStreak = 0;
     /** 上一轮巡检时的窗口可见性（为空表示尚未巡检过） */
     let lastVisible: boolean | null = null;
     /**
@@ -156,21 +173,37 @@ export function createWindowRecoveryController(options: WindowRecoveryOptions): 
         probeIntervalMs = heartbeatTimeoutMs;
     };
 
+    const resetCadenceTracking = () => {
+        lastNaturalHeartbeatAt = null;
+        cadenceStreak = 0;
+    };
+
     const markHeartbeat = () => {
         const at = now();
-        const gap = at - lastHeartbeatAt;
-        lastHeartbeatAt = at;
         if (probeStartedAt !== null) {
-            // 探活后 renderer 立刻补报了心跳：主线程仍在派发 IPC，先前的静默只是后台定时器被节流
+            // 探活在途时到达的心跳即探活回应（renderer 补报或恰好到来的自然心跳）：
+            // 主线程仍在派发事件，先前的静默只是后台定时器被节流；回应次数驱动探测退避翻倍
             probeStartedAt = null;
             probeIntervalMs = Math.min(probeIntervalMs * 2, PROBE_BACKOFF_MAX_MS);
+            lastHeartbeatAt = at;
+            // 回应是 IPC 唤醒的产物，不代表定时器节拍恢复，不参与「节流是否解除」的判定
             return;
         }
-        // 心跳回到正常周期说明节流已解除（窗口重新可见），退出探活兜底状态
-        if (probeAssisted && gap <= heartbeatTimeoutMs) {
+        // 自然心跳才反映定时器节拍：连续正常间隔才认定节流解除（窗口重新可见）。
+        // 单个短间隔心跳可能只是探活补报后的自然节拍——如熄屏场景下节流档位恰好
+        // 略高于阈值时，据此解除兜底会让退避归零，探测与告警退化成逐次重复刷屏
+        if (lastNaturalHeartbeatAt !== null && at - lastNaturalHeartbeatAt <= heartbeatTimeoutMs) {
+            cadenceStreak++;
+        } else {
+            cadenceStreak = 1;
+        }
+        lastNaturalHeartbeatAt = at;
+        lastHeartbeatAt = at;
+        if (probeAssisted && cadenceStreak >= CADENCE_RECOVERY_STREAK) {
             probeAssisted = false;
             resetProbeBackoff();
-            options.log.info('renderer heartbeat resumed at normal cadence');
+            resetCadenceTracking();
+            options.log.debug('renderer heartbeat resumed at normal cadence');
         }
     };
 
@@ -184,12 +217,16 @@ export function createWindowRecoveryController(options: WindowRecoveryOptions): 
         probeStartedAt = null;
         probeAssisted = false;
         resetProbeBackoff();
+        resetCadenceTracking();
     };
 
     const beginProbe = (at: number, silentFor: number) => {
         probeStartedAt = at;
-        // 遮挡期间会反复走探活路径，日志只在进入该状态时记一条，避免刷屏
-        if (!probeAssisted) {
+        if (probeAssisted) {
+            // 兜底状态内的后续探活是已确认节流状态的例行确认，降为 debug 避免刷屏；
+            // 探活节拍已由退避控制，风险已由首次 warn 完整披露
+            options.log.debug(`renderer heartbeat silent for ${silentFor}ms, probing renderer before reload`);
+        } else {
             probeAssisted = true;
             options.log.warn(`renderer heartbeat silent for ${silentFor}ms, probing renderer before reload`);
         }
@@ -260,6 +297,7 @@ export function createWindowRecoveryController(options: WindowRecoveryOptions): 
             lastHeartbeatAt = now();
             probeStartedAt = null;
             probeAssisted = false;
+            resetCadenceTracking();
             lastVisible = null;
             resetProbeBackoff();
             watchdog = setInterval(checkFreeze, heartbeatCheckMs);
