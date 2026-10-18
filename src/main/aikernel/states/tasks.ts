@@ -186,6 +186,13 @@ export class BaseTaskUpdateSubscriber {
      */
     wantsHtmlRender: boolean = false;
 
+    /**
+     * Whether this subscriber understands incremental assistant_replace chunks
+     * (unmodifiedTail omitted-prefix protocol). Only ElectronTaskUpdateSubscriber
+     * opts in; TUI/headless/ACP/opencode subscribers keep full-snapshot semantics.
+     */
+    supportsReplaceDelta: boolean = false;
+
     isAvailable() {
         return true;
     }
@@ -194,6 +201,13 @@ export class BaseTaskUpdateSubscriber {
         throw new Error('send not implemented');
     }
 }
+
+/**
+ * assistant_replace 增量发送的按订阅方跟踪状态：该订阅方上次收到的全量 replace
+ * 的消息 id 与 part 数。订阅方移除后条目随之失效（以 subscription_id 为键，泄漏
+ * 上限即订阅方生命周期，无需主动清理——订阅方集合本身随任务结束清空）。
+ */
+const replacePartCountTracker = new Map<string, { messageId: string; partCount: number }>();
 
 class CallbackTaskUpdateSubscriber extends BaseTaskUpdateSubscriber {
     callback: (chunkUpdate: TaskUpdateChunk) => void | Promise<void>;
@@ -2775,19 +2789,56 @@ export class TaskState {
         if (this.subscribers.length === 0) return;
 
         try {
+            // 全量渲染一次（ALS workspace 上下文），保证所有 part 的 rendered 缓存
+            // 对全量快照与后续增量快照都正确；增量只是发送侧的载荷裁剪。
             if (this.needsHtmlRender) {
                 await this.renderInWorkspace(() => assistantMessage.render());
             }
+            const allParts = Array.isArray(assistantMessage.content) ? [...assistantMessage.content] : [];
             const chunkUpdate: TaskUpdateAssistantReplaceChunk = {
                 type: 'assistant_replace',
                 task_id: this.task_id,
                 task_status: this.task_status,
                 message_id: assistantMessage.message_id,
-                parts: Array.isArray(assistantMessage.content) ? [...assistantMessage.content] : [],
+                parts: allParts,
                 usage: assistantMessage.usage,
                 metadata: assistantMessage.metadata
             };
-            this.publishTaskUpdate(chunkUpdate, 'assistant message replace');
+
+            // 增量优化：对支持增量的订阅方，消息只增长了尾部新 parts 且规模可观时，
+            // 只发送尾部新 parts（unmodifiedTail 指明被省略的前缀长度）。收缩/等长/
+            // 小规模追加一律走全量快照。partCount 按订阅方分别跟踪，各自独立演化。
+            // 非增长替换意味着 parts 内容可能已变化（tool result、error 追加、回滚），
+            // 用长度无法证明前缀未变，必须全量。
+            const REPLACE_DELTA_MIN_TAIL = 8;
+            for (const subscriber of this.subscribers) {
+                if (!subscriber.isAvailable()) continue;
+                const perSubscriber: TaskUpdateAssistantReplaceChunk = { ...chunkUpdate };
+                if (subscriber.supportsReplaceDelta) {
+                    const tracking = replacePartCountTracker.get(subscriber.subscription_id);
+                    const previousCount =
+                        tracking?.messageId === assistantMessage.message_id ? tracking.partCount : undefined;
+                    if (
+                        previousCount !== undefined &&
+                        allParts.length > previousCount &&
+                        allParts.length - previousCount >= REPLACE_DELTA_MIN_TAIL
+                    ) {
+                        perSubscriber.parts = allParts.slice(previousCount);
+                        perSubscriber.unmodifiedTail = previousCount;
+                    }
+                    replacePartCountTracker.set(subscriber.subscription_id, {
+                        messageId: assistantMessage.message_id,
+                        partCount: allParts.length
+                    });
+                }
+                try {
+                    subscriber.send(perSubscriber);
+                } catch (err) {
+                    logger.error(
+                        `failed to publish assistant message replace to subscriber ${subscriber.subscription_id}: ${errorToMessage(err)}`
+                    );
+                }
+            }
         } catch (err) {
             logger.error(`error sending assistant message replace for task ${this.task_id}: ${errorToMessage(err)}`);
         }

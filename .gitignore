@@ -195,3 +195,4 @@ resources/sandbox/
 # PowerShell 误重定向产物（如 `2>$` 生成的名为 `$` 的文件）与 agent 临时目录
 \$
 .agent-tmp/
+temp/

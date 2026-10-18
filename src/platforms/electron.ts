@@ -118,6 +118,7 @@ export class ElectronTaskUpdateSubscriber extends BaseTaskUpdateSubscriber {
         super();
         this.senderFrame = senderFrame;
         this.wantsHtmlRender = true;
+        this.supportsReplaceDelta = true;
     }
 
     isAvailable() {
