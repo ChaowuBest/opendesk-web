@@ -403,6 +403,8 @@ export const zhCn: Record<string, string> = {
     'plugin.settings.integrity': '完整性摘要',
     'plugin.center.description': '安装、配置和诊断 OpenDesk 插件。',
     'plugin.center.installed': '已安装',
+    'plugin.center.builtin': '内置插件',
+    'plugin.center.builtinTag': '内置',
     'plugin.center.loading': '正在加载插件…',
     'plugin.center.empty': '未发现插件。',
     'plugin.center.emptyHint': '点击右上角“+”安装插件。',

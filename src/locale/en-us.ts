@@ -415,6 +415,8 @@ export const enUs: Record<string, string> = {
     'plugin.settings.integrity': 'Integrity digest',
     'plugin.center.description': 'Install, configure, and diagnose OpenDesk plugins.',
     'plugin.center.installed': 'Installed',
+    'plugin.center.builtin': 'Built-in',
+    'plugin.center.builtinTag': 'Built-in',
     'plugin.center.loading': 'Loading plugins…',
     'plugin.center.empty': 'No plugins were discovered.',
     'plugin.center.emptyHint': 'Use the “+” button in the upper-right corner to install a plugin.',
