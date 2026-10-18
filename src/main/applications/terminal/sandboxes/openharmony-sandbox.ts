@@ -43,6 +43,8 @@ export async function prepareOpenHarmonySandbox(options: {
     command: string;
     cwd?: string;
     taskState?: TaskState;
+    /** 发起本次命令的工具名（弹窗展示来源，如 executeZsh） */
+    toolName?: string;
     /** 删除落回收站（OpenDesk 统一回收站，目录见 trashDir） */
     deleteToTrash?: boolean;
     /** 任务级统一回收站目录（<opendesk>/trash/<taskId>），每次拉起都传入 */
@@ -87,7 +89,8 @@ export async function prepareOpenHarmonySandbox(options: {
         taskState: options.taskState,
         onPermissionWaitChange: options.onPermissionWaitChange,
         // 身份命名空间：沙箱内路径即宿主路径，恒等映射（同 Linux）
-        pathMapper: (sandboxPath) => sandboxPath
+        pathMapper: (sandboxPath) => sandboxPath,
+        invocation: { toolName: options.toolName, command: options.command }
     });
     let cleanupPromise: Promise<void> | undefined;
     const cleanup = (): Promise<void> => {

@@ -103,7 +103,8 @@ export class ExecuteBashTool extends BaseTool<typeof ExecuteBashArgsSchema> {
             stopPromises: this._stopPromises,
             isKilledByStop: () => this._killedByStop,
             useDynamicSandbox: this.sandboxed,
-            sandboxDeleteToTrash: this.sandboxed && this.deleteToTrash
+            sandboxDeleteToTrash: this.sandboxed && this.deleteToTrash,
+            toolName: 'executeBash'
         });
     }
 

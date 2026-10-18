@@ -217,6 +217,8 @@ export async function executeShellCommand(opts: {
     isKilledByStop: () => boolean;
     useDynamicSandbox?: boolean;
     sandboxDeleteToTrash?: boolean;
+    /** 发起本次命令的工具名（沙箱权限弹窗展示来源，如 executeBash） */
+    toolName?: string;
 }): Promise<void> {
     const {
         shellPath,
@@ -231,7 +233,8 @@ export async function executeShellCommand(opts: {
         stopPromises,
         isKilledByStop,
         useDynamicSandbox = false,
-        sandboxDeleteToTrash = false
+        sandboxDeleteToTrash = false,
+        toolName
     } = opts;
 
     // 无限制模式强制禁用沙箱：即使工具实例早于模式切换创建（如已缓存的沙箱工具），
@@ -271,6 +274,7 @@ export async function executeShellCommand(opts: {
                   command,
                   cwd,
                   taskState,
+                  toolName,
                   deleteToTrash: effectiveDeleteToTrash,
                   trashDir: sandboxTrashDir,
                   trashExcludeDirs: sandboxTrashExcludeDirs,
@@ -286,6 +290,7 @@ export async function executeShellCommand(opts: {
                     command,
                     cwd,
                     taskState,
+                    toolName,
                     deleteToTrash: effectiveDeleteToTrash,
                     trashDir: sandboxTrashDir,
                     trashExcludeDirs: sandboxTrashExcludeDirs,
@@ -301,6 +306,7 @@ export async function executeShellCommand(opts: {
                       command,
                       cwd,
                       taskState,
+                      toolName,
                       deleteToTrash: effectiveDeleteToTrash,
                       trashDir: sandboxTrashDir,
                       trashExcludeDirs: sandboxTrashExcludeDirs,
@@ -316,6 +322,7 @@ export async function executeShellCommand(opts: {
                         command,
                         cwd,
                         taskState,
+                        toolName,
                         deleteToTrash: effectiveDeleteToTrash,
                         trashDir: sandboxTrashDir,
                         trashExcludeDirs: sandboxTrashExcludeDirs,

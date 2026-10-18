@@ -8,6 +8,7 @@ type PermissionRequestData = {
     prefixOptions: { label: string; pattern: string }[];
     timeoutSec?: number;
     taskId?: string;
+    input?: Record<string, unknown> | null;
 };
 
 type PermissionRequestCallback = (requestId: string, data: PermissionRequestData) => void;
@@ -289,6 +290,67 @@ describe('permission-prompt component', () => {
 
         const lastEvent = dispatched[dispatched.length - 1];
         expect(lastEvent).toEqual({ taskId: 'task-parent', waiting: false });
+    });
+
+    test('renders the executed command from context input for sandbox prompts', () => {
+        // 沙箱弹窗（executeBash 等）：弹窗需展示被执行的命令，用户才能判断
+        // "哪个工具在执行什么命令"触发了这次权限请求
+        const prompt = document.createElement('permission-prompt');
+        prompt.setAttribute('data-task-id', 'task-parent');
+        document.body.appendChild(prompt);
+
+        const data = buildRequest('task-parent', '/proc/474177/oom_score_adj');
+        data.requests[0].action = 'write';
+        data.toolName = 'executeBash';
+        data.input = { command: 'npm run build' };
+        for (const callback of requestCallbacks) {
+            callback('perm-cmd', data);
+        }
+
+        const spans = prompt.querySelectorAll('span[title]');
+        const commandSpan = Array.from(spans).find((span) => span.getAttribute('title') === 'npm run build');
+        expect(commandSpan).toBeDefined();
+        expect(commandSpan?.textContent).toBe('npm run build');
+    });
+
+    test('collapses multi-line commands and truncates overly long ones', () => {
+        const prompt = document.createElement('permission-prompt');
+        prompt.setAttribute('data-task-id', 'task-parent');
+        document.body.appendChild(prompt);
+
+        const longCommand = `echo start && ${'x'.repeat(300)} && echo end`;
+        const data = buildRequest('task-parent', '/tmp/first.txt');
+        data.input = { command: `line1\nline2 && ${longCommand}` };
+        for (const callback of requestCallbacks) {
+            callback('perm-long', data);
+        }
+
+        const spans = prompt.querySelectorAll('span[title]');
+        const commandSpan = Array.from(spans).find((span) =>
+            (span.getAttribute('title') ?? '').startsWith('line1 line2 && echo start')
+        );
+        expect(commandSpan).toBeDefined();
+        const title = commandSpan!.getAttribute('title') ?? '';
+        // title 为折叠后的完整命令（300+ 字符不截断 title）
+        expect(title).toContain('&& echo end');
+        // 展示文本截断到 240 字符以内并以省略号结尾
+        const text = commandSpan!.textContent ?? '';
+        expect(text.length).toBeLessThanOrEqual(240);
+        expect(text.endsWith('…')).toBe(true);
+    });
+
+    test('omits the command row when no input command is provided', () => {
+        const prompt = document.createElement('permission-prompt');
+        prompt.setAttribute('data-task-id', 'task-parent');
+        document.body.appendChild(prompt);
+
+        const data = buildRequest('task-parent', '/tmp/first.txt');
+        for (const callback of requestCallbacks) {
+            callback('plain', data);
+        }
+
+        // 非沙箱来源（readFile 等）payload 无 input：不渲染命令行
+        expect(prompt.innerHTML).not.toContain('fa-terminal');
     });
 
     test('renders theme tokens instead of light-only palette classes so dark mode adapts', () => {

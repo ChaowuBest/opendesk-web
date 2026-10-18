@@ -125,6 +125,8 @@ export async function prepareDynamicSandbox(options: {
     command: string;
     cwd?: string;
     taskState?: TaskState;
+    /** 发起本次命令的工具名（弹窗展示来源，如 executePwsh） */
+    toolName?: string;
     deleteToTrash?: boolean;
     /** 任务级统一回收站目录（<opendesk>/trash/<taskId>） */
     trashDir?: string;
@@ -158,7 +160,8 @@ export async function prepareDynamicSandbox(options: {
         taskState: options.taskState,
         onPermissionWaitChange: options.onPermissionWaitChange,
         pathMapper: virtualPathToHostPath,
-        caseInsensitivePathKey: true
+        caseInsensitivePathKey: true,
+        invocation: { toolName: options.toolName, command: options.command }
     });
     let cleanupPromise: Promise<void> | undefined;
     const cleanup = (): Promise<void> => {

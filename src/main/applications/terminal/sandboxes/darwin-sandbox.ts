@@ -359,6 +359,8 @@ export async function prepareDarwinSandbox(options: {
     command: string;
     cwd?: string;
     taskState?: TaskState;
+    /** 发起本次命令的工具名（弹窗展示来源，如 executeZsh） */
+    toolName?: string;
     /** 删除送废纸篓（OpenDesk 统一回收站，目录见 trashDir） */
     deleteToTrash?: boolean;
     /** 任务级统一回收站目录（<opendesk>/trash/<taskId>），每次拉起都传入 */
@@ -398,7 +400,8 @@ export async function prepareDarwinSandbox(options: {
         taskState: options.taskState,
         onPermissionWaitChange: options.onPermissionWaitChange,
         // 透明路径：沙箱内路径即宿主路径，恒等映射（与 Linux 一致）
-        pathMapper: (sandboxPath) => sandboxPath
+        pathMapper: (sandboxPath) => sandboxPath,
+        invocation: { toolName: options.toolName, command: options.command }
     });
     let cleanupPromise: Promise<void> | undefined;
     const cleanup = (): Promise<void> => {

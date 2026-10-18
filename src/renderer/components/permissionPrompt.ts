@@ -26,6 +26,8 @@ interface PermissionRequestData {
     sourceTaskId?: string;
     sourceTaskName?: string | null;
     parentTaskId?: string | null;
+    /** 弹窗附加上下文（如沙箱命令的 command），用于展示请求来源 */
+    input?: Record<string, unknown> | null;
 }
 
 declare global {
@@ -246,6 +248,12 @@ class PermissionPrompt extends HTMLElement {
         const shortName = getShortName(first.resourcePath, first.resourceType);
         const fullPath = requests.map((r) => r.resourcePath).join(', ');
 
+        // 被执行的命令（沙箱弹窗经 context.input.command 传入）：折叠换行为单行、
+        // 超 240 字符截断；title 悬浮查看完整命令
+        const commandRaw = typeof this._data.input?.command === 'string' ? (this._data.input.command as string) : '';
+        const commandOneLine = commandRaw.replace(/\s*\r?\n\s*/g, ' ').trim();
+        const commandShown = commandOneLine.length > 240 ? `${commandOneLine.slice(0, 239)}…` : commandOneLine;
+
         const firstPrefix = prefixOptions.length > 0 ? prefixOptions[0] : null;
 
         const restPrefixButtonsHtml = prefixOptions
@@ -291,6 +299,16 @@ class PermissionPrompt extends HTMLElement {
                 <i class="fa-solid fa-file-lines text-[10px] text-[var(--chat-ink4)] opacity-70"></i>
                 <span class="truncate" title="${escapeHtml(fullPath)}">${escapeHtml(fullPath)}</span>
             </div>
+            ${
+                commandShown
+                    ? `
+            <!-- 被执行的命令（请求来源） -->
+            <div class="px-4 py-2 text-[11px] text-[var(--chat-ink3)] font-mono flex items-center gap-1.5 border-b border-[var(--chat-line-soft)]">
+                <i class="fa-solid fa-terminal text-[10px] text-[var(--chat-ink4)] opacity-70"></i>
+                <span class="truncate" title="${escapeHtml(commandOneLine)}">${escapeHtml(commandShown)}</span>
+            </div>`
+                    : ''
+            }
 
             <!-- 操作按钮 -->
             <div class="px-4 py-3 flex flex-wrap gap-2">

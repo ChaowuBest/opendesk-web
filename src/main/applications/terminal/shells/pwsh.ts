@@ -142,7 +142,8 @@ export class ExecutePwshTool extends BaseTool<PwshArgsSchema> {
             stopPromises: this._stopPromises,
             isKilledByStop: () => this._killedByStop,
             useDynamicSandbox: dynamicSandbox,
-            sandboxDeleteToTrash: dynamicSandbox && this.deleteToTrash
+            sandboxDeleteToTrash: dynamicSandbox && this.deleteToTrash,
+            toolName: 'executePwsh'
         });
     }
 }

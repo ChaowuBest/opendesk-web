@@ -119,7 +119,8 @@ export class ExecuteZshTool extends BaseTool<typeof ExecuteZshArgsSchema> {
             stopPromises: this._stopPromises,
             isKilledByStop: () => this._killedByStop,
             useDynamicSandbox: this.sandboxed,
-            sandboxDeleteToTrash: this.sandboxed && this.deleteToTrash
+            sandboxDeleteToTrash: this.sandboxed && this.deleteToTrash,
+            toolName: 'executeZsh'
         });
     }
 
