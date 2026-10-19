@@ -27,6 +27,7 @@ import { isSkillEntryFilename, findSkillEntryFile } from '../skill-entry.js';
 import {
     getSkillStatus,
     setSkillStatus,
+    setSkillsStatus,
     getAllStatuses,
     setDefaultStatus,
     removeSkillStatus,
@@ -370,6 +371,11 @@ class SkillsWorker extends BaseWorker {
 
     setSkillStatus(skillId, enabled) {
         setSkillStatus(skillId, enabled);
+        notifyMainSync();
+    }
+
+    setSkillsStatus(skillIds, enabled) {
+        setSkillsStatus(skillIds, enabled);
         notifyMainSync();
     }
 

@@ -13,6 +13,7 @@ import { BaseTool } from '../../aikernel/tool';
 import { z } from 'zod';
 import type { PermissionRequest } from '../../aikernel/security/permission';
 import { isBlacklisted } from './blacklist.js';
+import { getSkillStatus } from './status.js';
 
 const AddSkillFromDirectoryArgsSchema = z.object({
     sourceDirectory: z.string().describe('本地目录路径，该目录必须包含SKILL.md文件')
@@ -124,7 +125,7 @@ export class ListSkillsTool extends BaseTool<typeof ListSkillsArgsSchema> {
     constructor(skillApp: any) {
         super(
             'listSkills',
-            '列出所有已安装的Skills及其详细信息，包括名称、描述、许可证等',
+            '列出所有已安装的Skills及其详细信息（含 enabled 字段标记启用状态；enabled=false 的技能已被禁用，无法被加载或调用）',
             ListSkillsArgsSchema,
             undefined,
             {
@@ -141,7 +142,11 @@ export class ListSkillsTool extends BaseTool<typeof ListSkillsArgsSchema> {
         // 过滤掉已加入黑名单的 skill：agent 不应看到恶意 skill 出现在已安装列表中，
         // 否则会顺藤摸瓜用文件工具读其源文件绕过黑名单（黑名单 filter 只守技能加载通道）。
         // skillmgr 安装的 skill id 即 frontmatter.name，黑名单 key 为 `skillmgr/${name}`。
-        const visible = skills.filter((s: any) => !isBlacklisted('skillmgr', String(s.name ?? s.id)));
+        // 补充 enabled 字段：已安装不代表可用，禁用的技能 LoadSkill/CallSkill 均会失败，
+        // agent 需要依据该状态回答技能可用性，避免把"已安装"误判为"可调用"。
+        const visible = skills
+            .filter((s: any) => !isBlacklisted('skillmgr', String(s.name ?? s.id)))
+            .map((s: any) => ({ ...s, enabled: getSkillStatus(String(s.id ?? s.name)) }));
         return JSON.stringify(visible);
     }
 }

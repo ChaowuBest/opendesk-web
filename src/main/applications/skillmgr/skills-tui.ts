@@ -30,7 +30,7 @@ import { OpenDeskTUI } from '../../tui/entry';
 import { Setting } from '../../utils/setting.js';
 import { installSkillInMain, SkillMgrApplication, type BuiltinSkillInfo } from './app.js';
 import { ApplicationRegistry } from '../registry.js';
-import { getSkillStatus, setSkillStatus } from './status.js';
+import { getSkillStatus, setSkillStatus, setSkillsStatus } from './status.js';
 import { skillRegistry } from './utils/skill-registry.js';
 import { skillInstallManager } from './utils/skill-installer.js';
 import { getTuiRegistriesInfo } from './registry/index.js';
@@ -79,6 +79,8 @@ type ViewState =
     | 'builtin-detail'
     | 'skill-content'
     | 'skill-resources'
+    | 'batch-menu'
+    | 'batch-confirm'
     | 'confirm-delete'
     | 'confirm-duplicate'
     | 'install-custom-name';
@@ -112,6 +114,8 @@ export class SkillsOverlay implements Component {
     private readonly detailMaxVisibleLines = 12;
     private pendingInstallSkill: RegistrySkill | null = null;
     private duplicateDefaultName = '';
+    private batchScope: 'installed' | 'builtin' = 'installed';
+    private pendingBatchAction: 'disable-all' | 'delete-all' | null = null;
 
     constructor(openDeskTUI: OpenDeskTUI) {
         this.openDeskTUI = openDeskTUI;
@@ -548,6 +552,10 @@ export class SkillsOverlay implements Component {
                 }
                 return { consume: true };
             }
+            if (data === 'm' || data === 'M') {
+                this.showBatchMenu('installed');
+                return { consume: true };
+            }
             return undefined;
         });
     }
@@ -623,6 +631,10 @@ export class SkillsOverlay implements Component {
                 }
                 return { consume: true };
             }
+            if (data === 'm' || data === 'M') {
+                this.showBatchMenu('builtin');
+                return { consume: true };
+            }
             return undefined;
         });
     }
@@ -665,6 +677,134 @@ export class SkillsOverlay implements Component {
         const rowIndex = this.builtinSkills.findIndex((s) => s.id === skillId);
         this.showMessage(enabled ? '技能已启用' : '技能已禁用', false, 'view-builtin');
         await this.showViewBuiltin(rowIndex >= 0 ? rowIndex : undefined);
+    }
+
+    // ── 全部操作（M 键）
+
+    /** 批量启停目标：黑名单与内置只读技能不可启停（与 GUI 全量操作同规则） */
+    private computeBatchTargets(
+        skills: Array<{ id: string; enabled: boolean; blacklisted?: boolean; readOnly?: boolean }>,
+        enable: boolean
+    ): string[] {
+        return skills.filter((s) => s.enabled !== enable && !s.blacklisted && !s.readOnly).map((s) => s.id);
+    }
+
+    private showBatchMenu(scope: 'installed' | 'builtin') {
+        this.cleanup();
+        this.state = 'batch-menu';
+        this.input = undefined;
+        this.batchScope = scope;
+        const skills = scope === 'builtin' ? this.builtinSkills : this.installedSkills;
+        const scopeLabel = scope === 'builtin' ? '内置技能' : '已安装技能';
+        this.header = new Text(chalk.bold(` 全部操作 · ${scopeLabel}（${skills.length} 个）`));
+
+        const items: Array<{ value: string; label: string }> = [
+            { value: 'all-enable', label: chalk.green('全部启用') },
+            { value: 'all-disable', label: chalk.white('全部禁用') }
+        ];
+        // 危险项仅已安装页；内置技能不可删除
+        if (scope === 'installed') {
+            items.push({ value: 'all-delete', label: chalk.red('全部删除') });
+        }
+        items.push({ value: 'cancel', label: chalk.gray('取消') });
+
+        this.list = new SelectList(items, items.length, defaultSelectListTheme);
+        this.setupListHandlers();
+        this.renderBox();
+        this.openDeskTUI.tui.setFocus(this.list);
+    }
+
+    private showBatchConfirm(action: 'disable-all' | 'delete-all') {
+        this.cleanup();
+        this.state = 'batch-confirm';
+        this.pendingBatchAction = action;
+        const skills = this.batchScope === 'builtin' ? this.builtinSkills : this.installedSkills;
+        const title =
+            action === 'delete-all'
+                ? ` 确认删除全部 ${skills.length} 个技能?`
+                : ` 确认全部禁用?（${skills.length} 个技能）`;
+        this.header = new Text(chalk.red.bold(title));
+
+        const okLabel = action === 'delete-all' ? chalk.red('全部删除') : chalk.red('全部禁用');
+        const items = [
+            { value: 'confirm', label: okLabel },
+            { value: 'cancel', label: chalk.green('取消') }
+        ];
+        this.list = new SelectList(items, items.length, defaultSelectListTheme);
+        this.setupListHandlers();
+        this.renderBox();
+        this.openDeskTUI.tui.setFocus(this.list);
+    }
+
+    private handleBatchMenuSelection(value: string) {
+        if (value === 'all-enable') {
+            this.executeBatchSetStatus(true);
+        } else if (value === 'all-disable') {
+            this.showBatchConfirm('disable-all');
+        } else if (value === 'all-delete') {
+            this.showBatchConfirm('delete-all');
+        } else {
+            this.backToBatchList();
+        }
+    }
+
+    private handleBatchConfirmSelection(value: string) {
+        const action = this.pendingBatchAction;
+        this.pendingBatchAction = null;
+        if (value === 'confirm' && action) {
+            if (action === 'disable-all') this.executeBatchSetStatus(false);
+            else this.executeBatchDelete();
+        } else {
+            this.backToBatchList();
+        }
+    }
+
+    private backToBatchList(): void | Promise<void> {
+        if (this.batchScope === 'builtin') return this.showViewBuiltin();
+        this.showViewInstalled();
+    }
+
+    private async executeBatchSetStatus(enable: boolean) {
+        const skills = this.batchScope === 'builtin' ? this.builtinSkills : this.installedSkills;
+        const ids = this.computeBatchTargets(skills, enable);
+        const skipped = skills.filter((s) => s.enabled === enable).length;
+        if (ids.length > 0) {
+            setSkillsStatus(ids, enable);
+            SkillMgrApplication.notifySkillsChanged();
+            if (this.batchScope !== 'builtin') await this.loadInstalledSkills();
+        }
+        await this.backToBatchList();
+        const actionText = enable ? '启用' : '禁用';
+        this.showMessage(
+            `已${actionText} ${ids.length} 个技能` + (skipped > 0 ? `（${skipped} 个已处于${actionText}状态）` : ''),
+            false
+        );
+    }
+
+    private async executeBatchDelete() {
+        this.setLoading(true);
+        try {
+            let deleted = 0;
+            let failed = 0;
+            for (const s of this.installedSkills) {
+                try {
+                    const result = skillInstallManager.deleteSkill(s.id);
+                    if (result.success) deleted++;
+                    else failed++;
+                } catch {
+                    failed++;
+                }
+            }
+            if (deleted > 0) SkillMgrApplication.notifySkillsChanged();
+            await this.loadInstalledSkills();
+            await this.showViewInstalled();
+            this.showMessage(
+                `已删除全部技能：成功 ${deleted} 个` + (failed > 0 ? `，失败 ${failed} 个` : ''),
+                failed > 0
+            );
+        } finally {
+            this.setLoading(false);
+        }
     }
 
     private showBuiltinSkillDetail(skill: BuiltinSkillInfo) {
@@ -1098,6 +1238,12 @@ export class SkillsOverlay implements Component {
                 case 'view-builtin':
                     this.handleBuiltinSelection(value);
                     break;
+                case 'batch-menu':
+                    this.handleBatchMenuSelection(value);
+                    break;
+                case 'batch-confirm':
+                    this.handleBatchConfirmSelection(value);
+                    break;
                 case 'skill-detail':
                     this.handleDetailSelection(value);
                     break;
@@ -1294,6 +1440,11 @@ export class SkillsOverlay implements Component {
             case 'view-installed':
             case 'view-builtin':
                 this.showMain();
+                break;
+            case 'batch-menu':
+            case 'batch-confirm':
+                this.pendingBatchAction = null;
+                this.backToBatchList();
                 break;
             case 'search-results':
                 this.showSearch();
@@ -1539,14 +1690,17 @@ export class SkillsOverlay implements Component {
             case 'install-url':
                 return '输入 zip URL  Enter 添加  Esc 返回';
             case 'view-installed':
-                return '↑↓ 选择  Enter 查看详情  Space 启用或禁用  D 删除  Esc 返回';
+                return '↑↓ 选择  Enter 查看详情  Space 启用或禁用  D 删除  M 全部操作  Esc 返回';
             case 'view-builtin':
-                return '↑↓ 选择  Enter 查看详情  Space 启用或禁用  Esc 返回';
+                return '↑↓ 选择  Enter 查看详情  Space 启用或禁用  M 全部操作  Esc 返回';
             case 'skill-detail':
                 return '←/→ 切换标签  ↑/↓ 滚动  Space/E 启用或禁用  D 删除  Esc 返回';
             case 'builtin-detail':
                 return '↑/↓ 滚动  Space/E 启用或禁用  Esc 返回';
             case 'confirm-delete':
+                return '↑↓ 选择  Enter 确认  Esc 返回';
+            case 'batch-menu':
+            case 'batch-confirm':
                 return '↑↓ 选择  Enter 确认  Esc 返回';
             case 'confirm-duplicate':
                 return '↑↓ 选择  Enter 确认  Esc 返回';

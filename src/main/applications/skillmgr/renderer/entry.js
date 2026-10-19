@@ -44,6 +44,7 @@ function getSkillsAPI() {
             window.applicationAPI.streamCall('batchImportSkills', callback, skills),
         getSkillStatus: (skillId) => window.applicationAPI.call('getSkillStatus', skillId),
         setSkillStatus: (skillId, enabled) => window.applicationAPI.call('setSkillStatus', skillId, enabled),
+        setSkillsStatus: (skillIds, enabled) => window.applicationAPI.call('setSkillsStatus', skillIds, enabled),
         removeFromBlacklist: (skillId) => window.applicationAPI.call('removeFromBlacklist', skillId),
         // 分析相关接口走主进程（callMainWorld）
         getAnalyzeStatus: () => window.applicationAPI.callMainWorld('getAnalyzeStatus'),
@@ -225,6 +226,43 @@ const STYLE = `
     background: #3b82f6;
     color: #fff;
 }
+:host([data-theme="dark"]) .more-btn {
+    background: #333;
+    border-color: rgba(255, 255, 255, 0.2);
+    color: #cccccc;
+}
+:host([data-theme="dark"]) .more-btn:hover {
+    border-color: rgba(223, 68, 54, 0.5);
+    background: rgba(223, 68, 54, 0.12);
+    color: #f87171;
+}
+:host([data-theme="dark"]) .more-badge {
+    box-shadow: 0 0 0 2px #2b2b2b;
+}
+:host([data-theme="dark"]) .batch-tray {
+    background: rgba(45, 45, 45, 0.9);
+    border-color: rgba(255, 255, 255, 0.15);
+}
+:host([data-theme="dark"]) .tray-label { color: #ccc; }
+:host([data-theme="dark"]) .tray-chip {
+    background: transparent;
+    border-color: rgba(255, 255, 255, 0.18);
+}
+:host([data-theme="dark"]) .tray-chip-name { color: #ccc; }
+:host([data-theme="dark"]) .tray-chip-x { color: rgba(255, 255, 255, 0.45); }
+:host([data-theme="dark"]) .tray-chip-x:hover { background: rgba(223, 68, 54, 0.2); color: #f87171; }
+:host([data-theme="dark"]) .tray-clear { color: rgba(255, 255, 255, 0.55); }
+:host([data-theme="dark"]) .tray-clear:hover { background: rgba(255, 255, 255, 0.08); color: #fff; }
+:host([data-theme="dark"]) .batch-box {
+    background: rgba(45, 45, 45, 0.9);
+    border-color: rgba(255, 255, 255, 0.25);
+}
+:host([data-theme="dark"]) .skill-card.sel {
+    background: rgba(223, 68, 54, 0.1);
+}
+:host([data-theme="dark"]) .batch-menu-head { color: #787878; }
+:host([data-theme="dark"]) .batch-menu-empty { color: #787878; }
+:host([data-theme="dark"]) .add-dropdown-item .icon.clear { background: rgba(255, 255, 255, 0.1); }
 :host([data-theme="dark"]) .btn {
     background: #333;
     border-color: rgba(255, 255, 255, 0.2);
@@ -256,6 +294,9 @@ const STYLE = `
 :host([data-theme="dark"]) .add-dropdown-item .icon.zip { background: rgba(232,147,90,0.18); }
 :host([data-theme="dark"]) .add-dropdown-item .icon.url,
 :host([data-theme="dark"]) .add-dropdown-item .icon.import { background: rgba(76,175,110,0.18); }
+:host([data-theme="dark"]) .add-dropdown-item .icon.enable { background: rgba(91,141,239,0.18); }
+:host([data-theme="dark"]) .add-dropdown-item .icon.disable { background: rgba(226, 162, 59, 0.18); }
+:host([data-theme="dark"]) .add-dropdown-item .icon.delete { background: rgba(223, 68, 54, 0.18); }
 :host([data-theme="dark"]) .search-clear,
 :host([data-theme="dark"]) .analyze-filter-bar .search-clear {
     background: rgba(255,255,255,0.1);
@@ -267,6 +308,7 @@ const STYLE = `
     color: #fff;
 }
 :host([data-theme="dark"]) .add-dropdown,
+:host([data-theme="dark"]) .batch-dropdown,
 :host([data-theme="dark"]) .modal-dialog,
 :host([data-theme="dark"]) .detail-dialog {
     background: #252526;
@@ -409,7 +451,9 @@ const STYLE = `
 
 /* ── Add Dropdown ── */
 .add-dropdown-anchor { position: relative; }
-.add-dropdown {
+/* .batch-dropdown（⋯ 全量操作菜单）与 .add-dropdown 共用同一 dropdown 形态 */
+.add-dropdown,
+.batch-dropdown {
     display: none; flex-direction: column;
     position: absolute; top: calc(100% + 6px); right: 0;
     width: 260px; background: #fff; border-radius: 12px;
@@ -417,7 +461,8 @@ const STYLE = `
     box-shadow: 0 8px 32px -8px rgba(0,0,0,0.14), 0 2px 8px -1px rgba(0,0,0,0.04);
     z-index: 9999; overflow: hidden; animation: dropdown-in 0.16s ease-out;
 }
-.add-dropdown.visible { display: flex; }
+.add-dropdown.visible,
+.batch-dropdown.visible { display: flex; }
 @keyframes dropdown-in {
     from { opacity: 0; transform: translateY(-4px) scale(0.98); }
     to { opacity: 1; transform: translateY(0) scale(1); }
@@ -441,10 +486,21 @@ const STYLE = `
 .add-dropdown-item .icon.zip { background: #FEF1E6; color: #E8935A; }
 .add-dropdown-item .icon.url { background: #E7F6EA; color: #4CAF6E; }
 .add-dropdown-item .icon.import { background: #E7F6EA; color: #4CAF6E; }
+.add-dropdown-item .icon.pick { background: #EBF1FB; color: #4267B2; }
+.add-dropdown-item .icon.clear { background: #F1EFEC; color: #8A8580; }
+.add-dropdown-item .icon.enable { background: #E7F5EE; color: #1F9D66; }
+.add-dropdown-item .icon.disable { background: #FDF3E3; color: #B87503; }
+.add-dropdown-item .icon.delete { background: #FDEEEC; color: #DF4436; }
 .add-dropdown-item .item-info { display: flex; flex-direction: column; gap: 1px; min-width: 0; }
 .add-dropdown-item .item-name { font-weight: 600; font-size: 13px; line-height: 1.3; color: #1d1d1f; }
 .add-dropdown-item .item-hint { font-size: 11px; color: #aaa; line-height: 1.35; }
 .add-dropdown-item.disabled { opacity: 0.5; cursor: not-allowed; }
+.add-dropdown-item.dis { opacity: 0.42; pointer-events: none; }
+.batch-menu-head {
+    font-size: 10.5px; color: #B4AFA9; letter-spacing: 0.5px;
+    padding: 7px 10px 3px; font-weight: 600;
+}
+.batch-menu-empty { font-size: 11.5px; color: #B4AFA9; line-height: 1.6; padding: 2px 10px 7px; }
 
 /* ── URL Dialog ── */
 .url-dialog-overlay {
@@ -531,6 +587,85 @@ const STYLE = `
 }
 .search-btn:hover { background: #7DB0F3; }
 .search-btn:disabled { opacity: 0.4; cursor: not-allowed; }
+/* ── 批量操作（方案A）：⋯ 溢出菜单（选择 + 批量执行）+ 已选托盘 + 卡片勾选圈 ── */
+.more-btn {
+    position: relative;
+    width: 40px; height: 40px; flex-shrink: 0; padding: 0;
+    border-radius: 10px; border: 1px solid #E7E5E2; background: #fff;
+    color: #4A4642; font-family: inherit; cursor: pointer; transition: all 0.15s;
+    display: inline-flex; align-items: center; justify-content: center;
+}
+.more-btn:hover { border-color: rgba(223,68,54,0.5); background: #FEF9F8; color: #DF4436; }
+.more-badge {
+    position: absolute; top: -6px; right: -6px;
+    min-width: 16px; height: 16px; border-radius: 9px;
+    background: #DF4436; color: #fff; font-size: 10px; font-weight: 600;
+    font-style: normal; display: flex; align-items: center; justify-content: center;
+    padding: 0 4px; box-shadow: 0 0 0 2px #f5f4f2;
+}
+.batch-dropdown-anchor { position: relative; }
+/* 已选托盘：搜索栏下方常驻展示全部已选技能（含被搜索过滤掉的），芯片可单独撤销 */
+.batch-tray {
+    display: flex; align-items: center; gap: 8px;
+    margin: -4px 0 14px; padding: 7px 8px 7px 12px;
+    background: #fff; border: 1px solid #E7E5E2; border-radius: 10px;
+    animation: dropdown-in 0.16s ease-out;
+}
+.tray-label { font-size: 12.5px; font-weight: 600; color: #4A4642; white-space: nowrap; flex-shrink: 0; }
+.tray-label b { color: #DF4436; }
+.tray-chips {
+    display: flex; gap: 6px; overflow-x: auto; flex: 1; min-width: 0;
+    padding: 1px; scrollbar-width: thin;
+}
+.tray-chip {
+    display: inline-flex; align-items: center; gap: 5px;
+    height: 24px; padding: 0 6px 0 4px;
+    border: 1px solid #E7E5E2; border-radius: 999px; background: #fff;
+    flex-shrink: 0; transition: border-color 0.12s;
+}
+.tray-chip:hover { border-color: rgba(223,68,54,0.4); }
+.tray-chip-icon {
+    width: 16px; height: 16px; border-radius: 5px;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 9px; font-weight: 700; flex-shrink: 0;
+}
+.tray-chip-name {
+    font-size: 11.5px; color: #4A4642; white-space: nowrap;
+    max-width: 140px; overflow: hidden; text-overflow: ellipsis;
+}
+.tray-chip-x {
+    width: 15px; height: 15px; border: 0; border-radius: 50%;
+    background: none; color: #B4AFA9; cursor: pointer; padding: 0; flex-shrink: 0;
+    display: inline-flex; align-items: center; justify-content: center;
+}
+.tray-chip-x:hover { background: #FDEEEC; color: #DF4436; }
+.tray-clear {
+    flex-shrink: 0; height: 24px; padding: 0 8px; border: 0; border-radius: 7px;
+    background: none; color: #8A8580; font-family: inherit; font-size: 11.5px;
+    cursor: pointer; display: inline-flex; align-items: center; gap: 3px;
+    transition: all 0.12s; white-space: nowrap;
+}
+.tray-clear:hover { background: #F0EFEC; color: #4A4642; }
+/* 卡片勾选圈：hover 浮现、选中常显 */
+.batch-check {
+    position: absolute; top: 12px; right: 12px; width: 20px; height: 20px;
+    cursor: pointer; z-index: 5;
+}
+.batch-check input { opacity: 0; width: 0; height: 0; position: absolute; }
+.batch-box {
+    width: 20px; height: 20px; border-radius: 6px; border: 1.5px solid #C9C5C0; background: #fff;
+    display: flex; align-items: center; justify-content: center;
+    opacity: 0; transform: scale(0.8); transition: all 0.15s ease;
+}
+.skill-card:hover .batch-box,
+.batch-check input:checked + .batch-box { opacity: 1; transform: scale(1); }
+.batch-box svg { opacity: 0; transform: scale(0.5); transition: all 0.12s ease; }
+.batch-check input:checked + .batch-box { background: #DF4436; border-color: #DF4436; }
+.batch-check input:checked + .batch-box svg { opacity: 1; transform: scale(1); }
+.skill-card.sel {
+    border-color: rgba(223,68,54,0.55); background: #FEF9F8;
+    box-shadow: 0 0 0 1px rgba(223,68,54,0.3);
+}
 
 /* ── Skills grid ── */
 .skills-grid {
@@ -539,6 +674,7 @@ const STYLE = `
 
 /* ── Skill card ── */
 .skill-card {
+    position: relative;
     background: #fff; border-radius: 14px; padding: 16px 18px;
     border: 1px solid rgba(0,0,0,0.05);
     box-shadow: 0 1px 2px rgba(0,0,0,0.03);
@@ -618,7 +754,7 @@ const STYLE = `
     transition: transform 0.25s ease;
 }
 .skill-toggle input:checked + .skill-toggle-slider {
-    background: #34C759;
+    background: #DF4436;
 }
 .skill-toggle input:checked + .skill-toggle-slider::after {
     transform: translateX(16px);
@@ -1542,11 +1678,15 @@ class SkillMgrEntryWidget extends HTMLElement {
         // 分析状态轮询定时器
         this._analysisPollTimer = null;
 
+        // ⋯ 全量操作下拉菜单展开态
+        this.showBatchMenu = false;
+
         this.installedState = {
             query: '',
             page: 1,
             pageSize: 30,
-            filtered: []
+            filtered: [],
+            selection: new Set()
         };
 
         this.externalState = {
@@ -1558,7 +1698,8 @@ class SkillMgrEntryWidget extends HTMLElement {
         this.builtinState = {
             query: '',
             page: 1,
-            pageSize: 30
+            pageSize: 30,
+            selection: new Set()
         };
 
         this.registryStates = {};
@@ -1589,6 +1730,13 @@ class SkillMgrEntryWidget extends HTMLElement {
                     this._updateDropdown();
                 }
             }
+            if (this.showBatchMenu) {
+                const anchor = this._getBatchPanel(this.activeTab)?.querySelector('.batch-dropdown-anchor');
+                if (anchor && !anchor.contains(e.composedPath()[0])) {
+                    this.showBatchMenu = false;
+                    this._updateBatchDropdown();
+                }
+            }
             if (this.analyzeState && this.analyzeState.activeDropdown) {
                 const anchors = this.shadowRoot.querySelectorAll('.tool-dropdown-anchor');
                 let insideAny = false;
@@ -1604,6 +1752,20 @@ class SkillMgrEntryWidget extends HTMLElement {
         this._onKeyDown = (e) => {
             if (e.key === 'Escape' && this.analyzeState?.modalVisible) {
                 this._closeAnalyzeModal();
+                return;
+            }
+            // 批量操作的 Esc 优先级：确认弹窗 > ⋯ 菜单 > 清空选择（弹窗自身挂 document.body，存在时让位）
+            if (e.key === 'Escape' && !document.querySelector('.od-confirm-modal-overlay')) {
+                if (this.showBatchMenu) {
+                    this.showBatchMenu = false;
+                    this._updateBatchDropdown();
+                    return;
+                }
+                const state = this.activeTab === 'builtin' ? this.builtinState : this.installedState;
+                if (state.selection?.size) {
+                    state.selection.clear();
+                    this.render();
+                }
             }
         };
         this._onThemeChange = (e) => {
@@ -1969,6 +2131,7 @@ class SkillMgrEntryWidget extends HTMLElement {
             if (dir) this.skillsDir = dir;
             this.installedState.query = '';
             this.installedState.page = 1;
+            this.installedState.selection.clear();
             this.externalState.query = '';
             this.externalState.page = 1;
         } catch (e) {
@@ -1993,6 +2156,7 @@ class SkillMgrEntryWidget extends HTMLElement {
         try {
             this.builtinSkills = await api.getBuiltinSkills();
             if (!Array.isArray(this.builtinSkills)) this.builtinSkills = [];
+            this.builtinState.selection.clear();
         } catch (e) {
             this.builtinError = e?.message || this._t('renderer.skill.error.load');
             this.builtinSkills = [];
@@ -2413,6 +2577,7 @@ class SkillMgrEntryWidget extends HTMLElement {
         this.render();
         try {
             await api.delete(skillId);
+            this.installedState.selection.delete(skillId);
             this._notify(
                 'info',
                 this._t('renderer.skill.delete.deleted.title'),
@@ -2467,6 +2632,238 @@ class SkillMgrEntryWidget extends HTMLElement {
                 e?.message || this._t('renderer.skill.common.unknownError')
             );
         }
+    }
+
+    /* ── 批量操作（方案A）：⋯ 菜单（批量选择 + 批量执行）+ 已选托盘 ── */
+
+    /* 批量启停目标：跳过已处于目标态的技能；黑名单与内置只读技能不可启停（与 TUI computeBatchTargets 同名同规则） */
+    computeBatchTargets(skills, enable) {
+        return skills.filter((s) => s.enabled !== enable && !s.blacklisted && !s.readOnly).map((s) => s.id);
+    }
+
+    /* 批量操作节点按面板定位：render() 会同时渲染 installed/builtin 两个面板的 DOM，
+       全局 querySelector 只能命中第一个（installed），内置页的操作会错误地更新到已安装面板 */
+    _getBatchPanel(scopeOrTab) {
+        return this.shadowRoot.querySelector(`#panel-${scopeOrTab}`);
+    }
+
+    _updateBatchDropdown() {
+        const el = this._getBatchPanel(this.activeTab)?.querySelector('.batch-dropdown');
+        if (!el) return;
+        // 菜单项随已选集合与搜索词动态变化，展开时按最新状态重建内容
+        if (this.showBatchMenu) el.innerHTML = this._batchDropdownItemsHtml(this.activeTab);
+        el.classList.toggle('visible', this.showBatchMenu);
+    }
+
+    /* 当前 tab 搜索过滤后的技能列表；全选钮与操作条计数以它为基准 */
+    _getFilteredSkills(scope) {
+        if (scope === 'builtin') {
+            const q = this.builtinState.query.trim().toLowerCase();
+            if (!q) return this.builtinSkills;
+            return this.builtinSkills.filter(
+                (s) =>
+                    (s.name || '').toLowerCase().includes(q) ||
+                    (s.id || '').toLowerCase().includes(q) ||
+                    (s.description || '').toLowerCase().includes(q) ||
+                    (s.pluginName || '').toLowerCase().includes(q) ||
+                    (s.pluginId || '').toLowerCase().includes(q) ||
+                    (s.bundleName || '').toLowerCase().includes(q)
+            );
+        }
+        const q = this.installedState.query.trim().toLowerCase();
+        if (!q) return this.skills;
+        return this.skills.filter(
+            (s) =>
+                (s.name || '').toLowerCase().includes(q) ||
+                (s.id || '').toLowerCase().includes(q) ||
+                (s.description || '').toLowerCase().includes(q)
+        );
+    }
+
+    _getSelection(scope) {
+        return scope === 'builtin' ? this.builtinState.selection : this.installedState.selection;
+    }
+
+    /* 勾选/托盘/菜单变化后的局部同步，避免整面板重渲染丢失滚动位置 */
+    _syncBatchSelectionDom(scope) {
+        const selection = this._getSelection(scope);
+        this.shadowRoot.querySelectorAll(`[data-batch-check="${scope}"]`).forEach((el) => {
+            const checked = selection.has(el.getAttribute('data-check-id'));
+            el.checked = checked;
+            el.closest('.skill-card')?.classList.toggle('sel', checked);
+        });
+        this._syncBatchTray(scope);
+        this._syncBatchBadge(scope);
+        this._syncBatchMenu(scope);
+    }
+
+    _batchBtnDis(scope, action) {
+        const selection = this._getSelection(scope);
+        const source = scope === 'builtin' ? this.builtinSkills : this.skills;
+        const selected = [...selection].map((id) => source.find((s) => s.id === id)).filter(Boolean);
+        if (selected.length === 0) return true;
+        // 智能置灰：所选全部已启用 → 批量启用置灰；全部已禁用 → 批量禁用置灰
+        return action === 'enable'
+            ? selected.every((s) => s.enabled !== false)
+            : selected.every((s) => s.enabled === false);
+    }
+
+    /* 同步已选托盘：数量为 0 时移除，否则按最新选中集合重建芯片 */
+    _syncBatchTray(scope) {
+        const panel = this._getBatchPanel(scope);
+        if (!panel) return;
+        const selection = this._getSelection(scope);
+        const searchBar = panel.querySelector('.search-bar');
+        const existing = panel.querySelector('.batch-tray');
+        if (!selection.size) {
+            existing?.remove();
+        } else if (existing) {
+            existing.outerHTML = this._renderTrayHtml(scope);
+        } else if (searchBar) {
+            searchBar.insertAdjacentHTML('afterend', this._renderTrayHtml(scope));
+        }
+    }
+
+    /* 同步 ⋯ 按钮角标（已选数） */
+    _syncBatchBadge(scope) {
+        const panel = this._getBatchPanel(scope);
+        const btn = panel?.querySelector(`.more-btn[data-more-tab="${scope}"]`);
+        if (!btn) return;
+        const n = this._getSelection(scope).size;
+        const badge = btn.querySelector('.more-badge');
+        if (n > 0) {
+            if (badge) badge.textContent = n;
+            else btn.insertAdjacentHTML('beforeend', `<i class="more-badge">${n}</i>`);
+        } else {
+            badge?.remove();
+        }
+    }
+
+    /* 菜单展开中且变化发生在当前 tab 时，重建菜单内容保持状态最新 */
+    _syncBatchMenu(scope) {
+        if (!this.showBatchMenu || this.activeTab !== scope) return;
+        const dd = this._getBatchPanel(scope)?.querySelector('.batch-dropdown');
+        if (dd) dd.innerHTML = this._batchDropdownItemsHtml(scope);
+    }
+
+    /* 选择动作：全选（无搜索）/ 选择搜索结果（累积） / 清空 */
+    _batchPickAll(scope) {
+        const selection = this._getSelection(scope);
+        const source = scope === 'builtin' ? this.builtinSkills : this.skills;
+        for (const s of source) selection.add(s.id);
+        this._syncBatchSelectionDom(scope);
+    }
+
+    _batchPickVisible(scope) {
+        const selection = this._getSelection(scope);
+        for (const s of this._getFilteredSkills(scope)) selection.add(s.id);
+        this._syncBatchSelectionDom(scope);
+    }
+
+    _batchClearSelection(scope) {
+        this._getSelection(scope).clear();
+        this._syncBatchSelectionDom(scope);
+    }
+
+    _batchDeleteSelected(scope) {
+        const selection = this._getSelection(scope);
+        const source = scope === 'builtin' ? this.builtinSkills : this.skills;
+        const ids = [...selection].filter((id) => source.some((s) => s.id === id));
+        this._deleteSkills(ids, {
+            title: this._t('renderer.skill.batch.delete.title'),
+            message: this._t('renderer.skill.batch.delete.message', { count: ids.length }),
+            confirmText: this._t('renderer.skill.batch.delete.confirm')
+        });
+    }
+
+    /* 批量启停：仅作用于已选中未处于目标态的技能；黑名单与只读技能被 computeBatchTargets 排除 */
+    async _batchSetStatus(scope, enabled) {
+        const api = getSkillsAPI();
+        if (!api?.setSkillsStatus) return;
+        const selection = this._getSelection(scope);
+        const source = scope === 'builtin' ? this.builtinSkills : this.skills;
+        const selected = [...selection].map((id) => source.find((s) => s.id === id)).filter(Boolean);
+        const ids = this.computeBatchTargets(selected, enabled);
+        if (ids.length === 0) {
+            selection.clear();
+            this.render();
+            return;
+        }
+        try {
+            await api.setSkillsStatus(ids, enabled);
+            const changed = new Set(ids);
+            for (const s of source) {
+                if (changed.has(s.id)) s.enabled = enabled;
+            }
+            selection.clear();
+            this.render();
+            this._notify(
+                'info',
+                enabled ? this._t('renderer.skill.batch.enable.done') : this._t('renderer.skill.batch.disable.done'),
+                enabled
+                    ? this._t('renderer.skill.batch.enable.summary', { count: ids.length })
+                    : this._t('renderer.skill.batch.disable.summary', { count: ids.length })
+            );
+        } catch (e) {
+            this._notify(
+                'error',
+                this._t('renderer.skill.toggle.failed'),
+                e?.message || this._t('renderer.skill.common.unknownError')
+            );
+        }
+    }
+
+    /**
+     * 批量删除技能（确认弹窗 + 进度弹窗），作用于已选集合。
+     */
+    async _deleteSkills(ids, opts) {
+        const api = getSkillsAPI();
+        if (!api?.deleteSkills) return;
+        const count = ids.length;
+        if (count === 0) return;
+
+        const confirmed = await showConfirmModal({
+            icon: 'fa-trash-can',
+            iconBg: '#FEF2F2',
+            iconColor: '#DC2626',
+            title: opts.title,
+            message: opts.message,
+            confirmText: opts.confirmText,
+            cancelText: this._t('renderer.skill.common.cancel'),
+            danger: true
+        });
+        if (!confirmed) return;
+
+        // 显示进度弹窗
+        this.deleteState = { active: true, total: count, deleted: 0, failed: 0 };
+        this._updateDeleteProgress();
+
+        try {
+            await api.deleteSkills(ids, (chunk) => {
+                if (chunk.type === 'progress') {
+                    this.deleteState.deleted = chunk.deleted;
+                    this._updateDeleteProgress();
+                }
+                if (chunk.type === 'complete') {
+                    this.deleteState.deleted = chunk.deleted;
+                    this.deleteState.failed = chunk.errors?.length || 0;
+                }
+            });
+        } catch (e) {
+            this.deleteState.failed = count;
+        }
+        this.deleteState.active = false;
+        this._updateDeleteProgress();
+
+        const deleted = this.deleteState.deleted;
+        const failed = this.deleteState.failed;
+        this._notify(
+            'info',
+            this._t('renderer.skill.deleteAll.done'),
+            this._t('renderer.skill.deleteAll.summary', { deleted: deleted }) +
+                (failed > 0 ? this._t('renderer.skill.deleteAll.failedSuffix', { count: failed }) : '')
+        );
+        await this.loadSkills();
     }
 
     async showSkillDetail(skillId) {
@@ -2827,57 +3224,6 @@ class SkillMgrEntryWidget extends HTMLElement {
                 setTimeout(() => overlay.remove(), 300);
             }
         }
-    }
-
-    async _deleteAllSkills() {
-        const api = getSkillsAPI();
-        if (!api?.deleteSkills) return;
-        const count = this.skills.length;
-        if (count === 0) return;
-
-        const confirmed = await showConfirmModal({
-            icon: 'fa-trash-can',
-            iconBg: '#FEF2F2',
-            iconColor: '#DC2626',
-            title: this._t('renderer.skill.deleteAll.title'),
-            message: this._t('renderer.skill.deleteAll.message', { count }),
-            confirmText: this._t('renderer.skill.deleteAll.confirm'),
-            cancelText: this._t('renderer.skill.common.cancel'),
-            danger: true
-        });
-        if (!confirmed) return;
-
-        // 显示进度弹窗
-        this.deleteState = { active: true, total: count, deleted: 0, failed: 0 };
-        this._updateDeleteProgress();
-
-        const ids = this.skills.map((s) => s.id);
-        try {
-            await api.deleteSkills(ids, (chunk) => {
-                if (chunk.type === 'progress') {
-                    this.deleteState.deleted = chunk.deleted;
-                    this._updateDeleteProgress();
-                }
-                if (chunk.type === 'complete') {
-                    this.deleteState.deleted = chunk.deleted;
-                    this.deleteState.failed = chunk.errors?.length || 0;
-                }
-            });
-        } catch (e) {
-            this.deleteState.failed = count;
-        }
-        this.deleteState.active = false;
-        this._updateDeleteProgress();
-
-        const deleted = this.deleteState.deleted;
-        const failed = this.deleteState.failed;
-        this._notify(
-            'info',
-            this._t('renderer.skill.deleteAll.done'),
-            this._t('renderer.skill.deleteAll.summary', { deleted: deleted }) +
-                (failed > 0 ? this._t('renderer.skill.deleteAll.failedSuffix', { count: failed }) : '')
-        );
-        await this.loadSkills();
     }
 
     // ── Batch Import ──
@@ -3484,6 +3830,177 @@ class SkillMgrEntryWidget extends HTMLElement {
         </div>`;
     }
 
+    /* ⋯ 菜单项图标：24px 网格 · 2px 描边线性风格（OpenDesk 图标规范） */
+    _batchMenuIcons() {
+        return {
+            pick: '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 11 12 14 22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/></svg>',
+            clear: '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2"/><line x1="9" y1="9" x2="15" y2="15"/><line x1="15" y1="9" x2="9" y2="15"/></svg>',
+            enable: '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18.36 6.64a9 9 0 1 1-12.73 0"/><line x1="12" y1="2" x2="12" y2="12"/></svg>',
+            disable:
+                '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="6" y="4" width="4" height="16" rx="1"/><rect x="14" y="4" width="4" height="16" rx="1"/></svg>',
+            trash: '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>'
+        };
+    }
+
+    _batchCheckHtml(scope, skill, selection) {
+        const checked = selection.has(skill.id);
+        return `<label class="batch-check" title="${this._t('renderer.skill.batch.check')}">
+                  <input type="checkbox" data-batch-check="${scope}" data-check-id="${escapeHtml(skill.id)}" ${checked ? 'checked' : ''}>
+                  <span class="batch-box"><svg width="11" height="11" viewBox="0 0 12 12"><path d="M2.5 6.5l2.4 2.4L9.5 3.6" fill="none" stroke="#fff" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"/></svg></span>
+                </label>`;
+    }
+
+    /* ⋯ 菜单内容：批量选择（全选 / 选择搜索结果 / 取消全部选择）+ 批量执行（作用于已选，智能置灰） */
+    _batchDropdownItemsHtml(scope) {
+        const isBuiltin = scope === 'builtin';
+        const t = this._t;
+        const state = isBuiltin ? this.builtinState : this.installedState;
+        const selection = state.selection;
+        const filtered = this._getFilteredSkills(scope);
+        const searching = state.query.trim().length > 0;
+        const total = (isBuiltin ? this.builtinSkills : this.skills).length;
+        const visNew = filtered.filter((s) => !selection.has(s.id)).length;
+        const icons = this._batchMenuIcons();
+
+        let pickItem;
+        if (!searching) {
+            pickItem =
+                selection.size === total
+                    ? {
+                          act: '',
+                          nm: t('renderer.skill.batch.menu.pickAll'),
+                          hint: t('renderer.skill.batch.menu.pickAllHintDone', { count: total })
+                      }
+                    : {
+                          act: 'pick-all',
+                          nm: t('renderer.skill.batch.menu.pickAll'),
+                          hint: selection.size
+                              ? t('renderer.skill.batch.menu.pickAllHintProgress', {
+                                    total,
+                                    count: selection.size,
+                                    remaining: total - selection.size
+                                })
+                              : t('renderer.skill.batch.menu.pickAllHintTotal', { count: total })
+                      };
+        } else if (!filtered.length) {
+            pickItem = {
+                act: '',
+                nm: t('renderer.skill.batch.menu.pickVisible'),
+                hint: t('renderer.skill.batch.menu.pickVisibleHintNone')
+            };
+        } else if (!visNew) {
+            pickItem = {
+                act: '',
+                nm: t('renderer.skill.batch.menu.pickVisible'),
+                hint: t('renderer.skill.batch.menu.pickVisibleHintDone', { count: filtered.length })
+            };
+        } else {
+            pickItem = {
+                act: 'pick-vis',
+                nm: t('renderer.skill.batch.menu.pickVisible'),
+                hint: t('renderer.skill.batch.menu.pickVisibleHintAdd', {
+                    count: filtered.length,
+                    added: visNew,
+                    total: selection.size + visNew
+                })
+            };
+        }
+
+        const clearItem = selection.size
+            ? `<button type="button" class="add-dropdown-item" data-batch-action="clear-sel" data-batch-scope="${scope}">
+                 <span class="icon clear">${icons.clear}</span>
+                 <span class="item-info"><span class="item-name">${t('renderer.skill.batch.menu.clear')}</span><span class="item-hint">${t('renderer.skill.batch.menu.clearHint', { count: selection.size })}</span></span>
+               </button>`
+            : '';
+
+        const execItems = selection.size
+            ? `
+            <button type="button" class="add-dropdown-item ${this._batchBtnDis(scope, 'enable') ? 'dis' : ''}" data-batch-action="enable-sel" data-batch-scope="${scope}">
+              <span class="icon enable">${icons.enable}</span>
+              <span class="item-info"><span class="item-name">${t('renderer.skill.batch.menu.enable')}</span><span class="item-hint">${t('renderer.skill.batch.menu.enableHint', { count: selection.size })}</span></span>
+            </button>
+            <button type="button" class="add-dropdown-item ${this._batchBtnDis(scope, 'disable') ? 'dis' : ''}" data-batch-action="disable-sel" data-batch-scope="${scope}">
+              <span class="icon disable">${icons.disable}</span>
+              <span class="item-info"><span class="item-name">${t('renderer.skill.batch.menu.disable')}</span><span class="item-hint">${t('renderer.skill.batch.menu.disableHint', { count: selection.size })}</span></span>
+            </button>${
+                isBuiltin
+                    ? ''
+                    : `<button type="button" class="add-dropdown-item" data-batch-action="delete-sel" data-batch-scope="${scope}">
+                        <span class="icon delete">${icons.trash}</span>
+                        <span class="item-info"><span class="item-name" style="color:#DF4436;">${t('renderer.skill.batch.menu.delete')}</span><span class="item-hint">${t('renderer.skill.batch.menu.deleteHint', { count: selection.size })}</span></span>
+                      </button>`
+            }`
+            : `<div class="batch-menu-empty">${t('renderer.skill.batch.menu.empty')}</div>`;
+
+        return `
+          <div class="add-dropdown-section">
+            <div class="batch-menu-head">${t('renderer.skill.batch.menu.headPick')}</div>
+            <button type="button" class="add-dropdown-item ${pickItem.act ? '' : 'dis'}" ${pickItem.act ? `data-batch-action="${pickItem.act}" data-batch-scope="${scope}"` : ''}>
+              <span class="icon pick">${icons.pick}</span>
+              <span class="item-info"><span class="item-name">${pickItem.nm}</span><span class="item-hint">${pickItem.hint}</span></span>
+            </button>
+            ${clearItem}
+          </div>
+          <div class="add-dropdown-section">
+            <div class="batch-menu-head">${t('renderer.skill.batch.menu.headExec')}</div>
+            ${execItems}
+          </div>`;
+    }
+
+    /* installed / builtin 两个 tab 共用的批量搜索栏：搜索框 + ⋯（角标显示已选数） */
+    _renderBatchSearchBar(scope) {
+        const isBuiltin = scope === 'builtin';
+        const state = isBuiltin ? this.builtinState : this.installedState;
+        const selection = state.selection;
+        const t = this._t;
+        const badge = selection.size > 0 ? `<i class="more-badge">${selection.size}</i>` : '';
+
+        return `
+          <div class="search-bar">
+            <div class="search-input-wrap">
+              <input type="text" class="search-input" data-search-tab="${scope}"
+                placeholder="${t(isBuiltin ? 'renderer.skill.search.placeholder.builtin' : 'renderer.skill.search.placeholder.installed')}"
+                value="${escapeHtml(state.query)}" />
+              <button type="button" class="search-clear" data-clear-tab="${scope}" title="${t('renderer.skill.common.clearSearch')}">×</button>
+            </div>
+            <button type="button" class="search-btn" data-search-btn="${scope}">${t('renderer.skill.common.search')}</button>
+            <div class="batch-dropdown-anchor">
+              <button type="button" class="more-btn" data-more-tab="${scope}" title="${t('renderer.skill.batch.more')}">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><circle cx="5" cy="12" r="1.7"/><circle cx="12" cy="12" r="1.7"/><circle cx="19" cy="12" r="1.7"/></svg>
+                ${badge}
+              </button>
+              <div class="batch-dropdown ${this.showBatchMenu ? 'visible' : ''}">${this._batchDropdownItemsHtml(scope)}</div>
+            </div>
+          </div>`;
+    }
+
+    /* 已选托盘：常驻展示全部已选技能芯片（含当前搜索看不到的），× 撤销单个、✕ 清空 */
+    _renderTrayHtml(scope) {
+        const selection = this._getSelection(scope);
+        if (!selection.size) return '';
+        const source = scope === 'builtin' ? this.builtinSkills : this.skills;
+        const t = this._t;
+        const chips = [...selection]
+            .map((id) => {
+                const s = source.find((x) => x.id === id);
+                if (!s) return '';
+                const color = this._getSkillPastel(s.name || s.id);
+                return `<span class="tray-chip" data-chip-id="${escapeHtml(id)}">
+                  <span class="tray-chip-icon" style="background:${color.bg};color:${color.text}">${this._getSkillInitial(s.name || s.id)}</span>
+                  <span class="tray-chip-name">${escapeHtml(s.name || s.id)}</span>
+                  <button type="button" class="tray-chip-x" data-tray-remove="${scope}" data-remove-id="${escapeHtml(id)}" title="${t('renderer.skill.batch.tray.remove')}"><svg width="9" height="9" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button>
+                </span>`;
+            })
+            .join('');
+        return `<div class="batch-tray" data-tray-scope="${scope}">
+          <span class="tray-label">${t('renderer.skill.batch.tray.label', { count: selection.size })}</span>
+          <div class="tray-chips">${chips}</div>
+          <button type="button" class="tray-clear" data-tray-clear="${scope}" title="${t('renderer.skill.batch.tray.clear')}">
+            <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+          </button>
+        </div>`;
+    }
+
     _renderInstalledPanel() {
         const state = this.installedState;
         if (this.loading)
@@ -3493,16 +4010,9 @@ class SkillMgrEntryWidget extends HTMLElement {
         if (this.skills.length === 0)
             return `<div class="registry-panel"><div class="empty-state"><div class="empty-icon">📦</div><div class="empty-title">${this._t('renderer.skill.empty.installed')}</div><div class="empty-hint">${this._t('renderer.skill.empty.installedHint')}</div>${this.skillsDir ? `<code class="empty-dir">${escapeHtml(this.skillsDir)}</code>` : ''}</div></div>`;
 
-        // 过滤
         const q = state.query.trim().toLowerCase();
-        const filtered = q
-            ? this.skills.filter(
-                  (s) =>
-                      (s.name || '').toLowerCase().includes(q) ||
-                      (s.id || '').toLowerCase().includes(q) ||
-                      (s.description || '').toLowerCase().includes(q)
-              )
-            : this.skills;
+        const filtered = this._getFilteredSkills('installed');
+        const selection = state.selection;
 
         const total = filtered.length;
         const visible = filtered.slice(0, state.page * state.pageSize);
@@ -3530,7 +4040,8 @@ class SkillMgrEntryWidget extends HTMLElement {
                         const blacklistHint =
                             isBlacklisted && s.blacklistEvidence ? escapeHtml(s.blacklistEvidence) : '';
                         return `
-                <div class="skill-card installed-card" data-view-skill="${escapeHtml(s.id)}" style="${borderStyle}" title="${blacklistHint}">
+                <div class="skill-card installed-card ${selection.has(s.id) ? 'sel' : ''}" data-view-skill="${escapeHtml(s.id)}" style="${borderStyle}" title="${blacklistHint}">
+                  ${this._batchCheckHtml('installed', s, selection)}
                   <div class="card-header">
                     <div class="card-icon" style="background:${color.bg};color:${color.text}">${this._getSkillInitial(s.name || s.id)}</div>
                     <div class="card-info">
@@ -3562,16 +4073,8 @@ class SkillMgrEntryWidget extends HTMLElement {
 
         return `
         <div class="registry-panel">
-          <div class="search-bar">
-            <div class="search-input-wrap">
-              <input type="text" class="search-input" data-search-tab="installed"
-                placeholder="${this._t('renderer.skill.search.placeholder.installed')}"
-                value="${escapeHtml(state.query)}" />
-              <button type="button" class="search-clear" data-clear-tab="installed" title="${this._t('renderer.skill.common.clearSearch')}">×</button>
-            </div>
-            <button type="button" class="search-btn" data-search-btn="installed">${this._t('renderer.skill.common.search')}</button>
-            <button type="button" class="btn btn-danger btn-sm" id="delete-all-btn" title="${this._t('renderer.skill.deleteAll.title')}" style="flex-shrink:0;white-space:nowrap;padding:10px 22px;border-radius:10px;border:none;background:#E06060;color:#fff;font-size:13px;font-weight:500;font-family:inherit;cursor:pointer;transition:all 0.15s;">${this._t('renderer.skill.deleteAll.confirm')}</button>
-          </div>
+          ${this._renderBatchSearchBar('installed')}
+          ${this._renderTrayHtml('installed')}
           ${contentHtml}
         </div>`;
     }
@@ -3662,17 +4165,8 @@ class SkillMgrEntryWidget extends HTMLElement {
 
         const state = this.builtinState;
         const q = state.query.trim().toLowerCase();
-        const filtered = q
-            ? this.builtinSkills.filter(
-                  (s) =>
-                      (s.name || '').toLowerCase().includes(q) ||
-                      (s.id || '').toLowerCase().includes(q) ||
-                      (s.description || '').toLowerCase().includes(q) ||
-                      (s.pluginName || '').toLowerCase().includes(q) ||
-                      (s.pluginId || '').toLowerCase().includes(q) ||
-                      (s.bundleName || '').toLowerCase().includes(q)
-              )
-            : this.builtinSkills;
+        const filtered = this._getFilteredSkills('builtin');
+        const selection = state.selection;
 
         let contentHtml;
         if (filtered.length === 0) {
@@ -3697,7 +4191,8 @@ class SkillMgrEntryWidget extends HTMLElement {
                   <span class="skill-toggle-slider"></span>
                 </label>`;
                         return `
-            <div class="skill-card builtin-card" data-builtin-skill="${escapeHtml(s.id)}">
+            <div class="skill-card builtin-card ${selection.has(s.id) ? 'sel' : ''}" data-builtin-skill="${escapeHtml(s.id)}">
+              ${s.readOnly ? '' : this._batchCheckHtml('builtin', s, selection)}
               <div class="card-header">
                 <div class="card-icon" style="background:${color.bg};color:${color.text}">${this._getSkillInitial(s.name || s.id)}</div>
                 <div class="card-info">
@@ -3717,15 +4212,8 @@ class SkillMgrEntryWidget extends HTMLElement {
 
         return `
         <div class="registry-panel">
-          <div class="search-bar">
-            <div class="search-input-wrap">
-              <input type="text" class="search-input" data-search-tab="builtin"
-                placeholder="${this._t('renderer.skill.search.placeholder.builtin')}"
-                value="${escapeHtml(state.query)}" />
-              <button type="button" class="search-clear" data-clear-tab="builtin" title="${this._t('renderer.skill.common.clearSearch')}">×</button>
-            </div>
-            <button type="button" class="search-btn" data-search-btn="builtin">${this._t('renderer.skill.common.search')}</button>
-          </div>
+          ${this._renderBatchSearchBar('builtin')}
+          ${this._renderTrayHtml('builtin')}
           ${contentHtml}
         </div>`;
     }
@@ -4403,7 +4891,58 @@ class SkillMgrEntryWidget extends HTMLElement {
         }
         $(`[data-search-btn="installed"]`)?.addEventListener('click', () => this._searchInstalled());
         $(`[data-clear-tab="installed"]`)?.addEventListener('click', () => this._clearInstalledSearch());
-        $('#delete-all-btn')?.addEventListener('click', () => this._deleteAllSkills());
+
+        // 批量操作。菜单项与托盘芯片会被 innerHTML/outerHTML 重建（状态实时刷新），
+        // 事件必须委托到稳定容器（面板根节点）而非逐项绑定，否则重建后监听丢失
+        $$('[data-more-tab]').forEach((el) => {
+            el.addEventListener('click', (e) => {
+                e.stopPropagation();
+                this.showBatchMenu = !this.showBatchMenu;
+                this._updateBatchDropdown();
+            });
+        });
+        $$('.registry-panel').forEach((panel) => {
+            if (panel._batchDelegated) return;
+            panel._batchDelegated = true;
+            panel.addEventListener('click', async (e) => {
+                const trayX = e.target.closest?.('[data-tray-remove]');
+                if (trayX) {
+                    const scope = trayX.getAttribute('data-tray-remove');
+                    this._getSelection(scope).delete(trayX.getAttribute('data-remove-id'));
+                    this._syncBatchSelectionDom(scope);
+                    return;
+                }
+                const trayClear = e.target.closest?.('[data-tray-clear]');
+                if (trayClear) {
+                    this._batchClearSelection(trayClear.getAttribute('data-tray-clear'));
+                    return;
+                }
+                const item = e.target.closest?.('[data-batch-action]');
+                if (!item) return;
+                const action = item.getAttribute('data-batch-action');
+                const scope = item.getAttribute('data-batch-scope');
+                this.showBatchMenu = false;
+                this._updateBatchDropdown();
+                if (action === 'pick-all') this._batchPickAll(scope);
+                else if (action === 'pick-vis') this._batchPickVisible(scope);
+                else if (action === 'clear-sel') this._batchClearSelection(scope);
+                else if (action === 'enable-sel') await this._batchSetStatus(scope, true);
+                else if (action === 'disable-sel') await this._batchSetStatus(scope, false);
+                else if (action === 'delete-sel') this._batchDeleteSelected(scope);
+            });
+        });
+        $$('[data-batch-check]').forEach((el) => {
+            el.addEventListener('change', () => {
+                const scope = el.getAttribute('data-batch-check');
+                const selection = this._getSelection(scope);
+                if (el.checked) selection.add(el.getAttribute('data-check-id'));
+                else selection.delete(el.getAttribute('data-check-id'));
+                el.closest('.skill-card')?.classList.toggle('sel', el.checked);
+                this._syncBatchTray(scope);
+                this._syncBatchBadge(scope);
+                this._syncBatchMenu(scope);
+            });
+        });
 
         // 外部技能面板搜索
         const externalSi = $(`[data-search-tab="external"]`);
@@ -4456,6 +4995,7 @@ class SkillMgrEntryWidget extends HTMLElement {
             el.addEventListener('click', (e) => {
                 if (e.target.closest('[data-delete]')) return;
                 if (e.target.closest('.skill-toggle')) return;
+                if (e.target.closest('.batch-check')) return;
                 this.showSkillDetail(el.getAttribute('data-view-skill'));
             });
         });
@@ -4523,6 +5063,7 @@ class SkillMgrEntryWidget extends HTMLElement {
             el.addEventListener('click', (e) => {
                 if (e.target.closest('[data-delete]')) return;
                 if (e.target.closest('.skill-toggle')) return;
+                if (e.target.closest('.batch-check')) return;
                 this.showBuiltinSkillDetail(el.getAttribute('data-builtin-skill'));
             });
         });
