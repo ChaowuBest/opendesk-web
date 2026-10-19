@@ -15,7 +15,9 @@ jest.unstable_mockModule('../../../main/utils/shellExec.js', () => ({
 }));
 jest.unstable_mockModule('../../../main/applications/terminal/background.js', () => ({
     killProcessTree: jest.fn(),
-    BackgroundProcessManager: class {}
+    BackgroundProcessManager: class {},
+    SILENT_OUTPUT_HINT_ELAPSED_MS: 5 * 60 * 1000,
+    silentBackgroundHint: (command: string) => `silent hint for ${command}`
 }));
 jest.unstable_mockModule('../../../main/utils/setting.js', () => ({
     getLogDirectory: () => '/tmp/opendesk-test/logs',

@@ -64,6 +64,30 @@ const FINISHED_ENTRY_TTL_MS = 5 * 60 * 1000;
 const PROCESS_TERMINATION_GRACE_MS = 1000;
 const PROCESS_STATUS_POLL_INTERVAL_MS = 200;
 
+/** 后台进程已运行超过该时长且零输出时，checkShellStatus 追加静默诊断提示 */
+export const SILENT_OUTPUT_HINT_ELAPSED_MS = 5 * 60 * 1000;
+
+// 识别把全部输出缓冲到命令结束才输出的管道消费端（Select-Object -Last/-First、
+// tail/head/tee 等）。这类命令在结束前对外零输出，"暂无输出"不代表卡死。
+const OUTPUT_BUFFERING_PATTERN =
+    /Select-Object\s+-\w+|Out-String|Tee-Object|Sort-Object|Measure-Object|Group-Object|\|\s*(?:tail|head|tee)\b/;
+
+export function matchesOutputBufferingPipeline(command: string): boolean {
+    return OUTPUT_BUFFERING_PATTERN.test(command);
+}
+
+/**
+ * 超时转后台 / 长时间零输出轮询时的诊断提示：区分「缓冲管道的正常静默」
+ * 与「进程真实卡死」，避免模型对同一 PID 长时间盲轮询（真实事故：构建命令
+ * 带 Select-Object -Last 缓冲，36 分钟零输出，agent 轮询 60+ 次无法决策）。
+ */
+export function silentBackgroundHint(command: string): string {
+    if (matchesOutputBufferingPipeline(command)) {
+        return '提示: 该命令包含 Select-Object -Last/-First、tail 等缓冲类管道，全部输出要等命令完全结束才会一次性输出——"(暂无输出)"不代表卡死。若命令本身较慢（如全量构建）可继续轮询等待；若等待远超预期，建议 kill=true 终止后改为分步执行、不加缓冲管道直接输出重跑。';
+    }
+    return '提示: 进程转后台至今没有任何输出。若该命令本应持续产生进度（如构建、安装），长时间零输出可能是进程真实卡死；可 kill=true 终止后分步重跑、直接观察输出定位卡点。';
+}
+
 /** 可被 abortSignal 打断的延时；返回 true 表示计时结束，false 表示已取消。 */
 function waitForDelayOrAbort(delayMs: number, abortSignal?: AbortSignal): Promise<boolean> {
     if (abortSignal?.aborted) return Promise.resolve(false);
@@ -464,8 +488,11 @@ export function installTimeoutBackgrounding(opts: {
                 `PID: ${pid}`,
                 `提示: 使用 checkShellStatus 工具并传入 pid=${pid}；waitMs 的允许范围是 0-30000 毫秒。仅在确实需要即时状态、且查询后可继续其他独立工作时使用 waitMs=0；确实需要很快再次观察进度时可用 waitMs=1000-5000；若下一步依赖完成结果，优先使用 waitMs=10000-30000。进程完成时会提前返回，无需等满 waitMs。避免对同一运行中 PID 连续零等待查询；只有判断进程卡住时才使用 kill=true。`
             ].join('\n');
-            const output = getOutput().trim() || '(暂无输出)';
-            const message = header + '\n---\n' + output;
+            const trimmedOutput = getOutput().trim();
+            const output = trimmedOutput || '(暂无输出)';
+            // 零输出转后台时说明"暂无输出"的含义：缓冲类管道属正常静默，否则提示排查方向
+            const silenceHint = trimmedOutput ? '' : `\n${silentBackgroundHint(command)}`;
+            const message = header + silenceHint + '\n---\n' + output;
             result.updateResult(formatOutput?.(message) ?? message);
             settle(true);
         });

@@ -396,4 +396,77 @@ describe('installTimeoutBackgrounding', () => {
         jest.advanceTimersByTime(1000);
         await expect(completion).resolves.toBe(true);
     });
+
+    describe('silent output hints', () => {
+        test('appends a buffered-pipeline hint when a piped command times out with no output', async () => {
+            jest.useFakeTimers();
+            const proc = Object.assign(new EventEmitter(), { pid: 424250 }) as unknown as ChildProcess;
+            const updateResult = jest.fn();
+            const completion = installTimeoutBackgrounding({
+                handle: { proc, detachListeners: jest.fn() },
+                command: 'npm run build-cli 2>&1 | Select-Object -Last 6; npm run build 2>&1 | Select-Object -Last 6',
+                startTime: Date.now(),
+                timeout: 1000,
+                getOutput: () => '',
+                result: { updateResult, updateResultObject: jest.fn() } as any,
+                isKilledByStop: () => false,
+                onFinish: jest.fn()
+            });
+
+            jest.advanceTimersByTime(1000);
+            await expect(completion).resolves.toBe(true);
+            const message = updateResult.mock.lastCall![0] as string;
+            expect(message).toContain('(暂无输出)');
+            // 缓冲类管道让输出在命令结束前完全不可见，必须向模型说明"暂无输出"≠卡死
+            expect(message).toContain('Select-Object');
+            expect(message).toContain('不代表卡死');
+            expect(message).toContain('kill=true');
+        });
+
+        test('appends a generic silence hint for non-buffering commands with no output', async () => {
+            jest.useFakeTimers();
+            const proc = Object.assign(new EventEmitter(), { pid: 424251 }) as unknown as ChildProcess;
+            const updateResult = jest.fn();
+            const completion = installTimeoutBackgrounding({
+                handle: { proc, detachListeners: jest.fn() },
+                command: 'long-running-build',
+                startTime: Date.now(),
+                timeout: 1000,
+                getOutput: () => '',
+                result: { updateResult, updateResultObject: jest.fn() } as any,
+                isKilledByStop: () => false,
+                onFinish: jest.fn()
+            });
+
+            jest.advanceTimersByTime(1000);
+            await expect(completion).resolves.toBe(true);
+            const message = updateResult.mock.lastCall![0] as string;
+            expect(message).toContain('没有任何输出');
+            expect(message).toContain('kill=true');
+            expect(message).not.toContain('不代表卡死');
+        });
+
+        test('does not append a silence hint when the command already produced output', async () => {
+            jest.useFakeTimers();
+            const proc = Object.assign(new EventEmitter(), { pid: 424252 }) as unknown as ChildProcess;
+            const updateResult = jest.fn();
+            const completion = installTimeoutBackgrounding({
+                handle: { proc, detachListeners: jest.fn() },
+                command: 'npm run build-cli 2>&1 | Select-Object -Last 6',
+                startTime: Date.now(),
+                timeout: 1000,
+                getOutput: () => 'built in 12s',
+                result: { updateResult, updateResultObject: jest.fn() } as any,
+                isKilledByStop: () => false,
+                onFinish: jest.fn()
+            });
+
+            jest.advanceTimersByTime(1000);
+            await expect(completion).resolves.toBe(true);
+            const message = updateResult.mock.lastCall![0] as string;
+            expect(message).toContain('built in 12s');
+            expect(message).not.toContain('不代表卡死');
+            expect(message).not.toContain('没有任何输出');
+        });
+    });
 });
