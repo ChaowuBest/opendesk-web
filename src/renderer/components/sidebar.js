@@ -11,7 +11,15 @@
 
 import './statustags';
 import { ElasticToolbarWidget } from './toolbar.ts';
-import { showConfirmModal, bindOverlayDismiss } from './confirmModal.ts';
+import {
+    showConfirmModal,
+    bindOverlayDismiss,
+    MODAL_CSS,
+    renderIcon,
+    CLOSE_SVG,
+    detectDarkMode,
+    MODAL_ANIM_DURATION_OUT
+} from './confirmModal.ts';
 import { showFeedbackModal } from './feedbackModal.ts';
 import { createRendererTranslator } from '../locale.ts';
 import { escapeHtml } from '../../common/utils/escape.js';
@@ -1476,110 +1484,75 @@ class SideBar extends HTMLElement {
     }
 
     _showTaskInfoModal(taskId) {
-        const ANIM_DURATION_OUT = 180;
-
+        const t = (key) => this._t(key);
         const overlay = document.createElement('div');
-        overlay.className = 'od-taskinfo-overlay';
+        overlay.className = 'od-taskinfo-overlay od-confirm-modal-overlay';
+        if (detectDarkMode()) {
+            overlay.classList.add('od-modal-dark');
+        }
         overlay.innerHTML = `
-<style>
+<style>${MODAL_CSS}
+    /* 任务信息弹窗 · 基于 MODAL_CSS 顶部色带风格扩展（设计规范见 docs/designs/modal.html） */
     .od-taskinfo-overlay {
-        position: fixed; inset: 0; z-index: 99999;
-        background: rgba(0,0,0,0.3); backdrop-filter: blur(6px);
-        display: flex; align-items: center; justify-content: center;
-        animation: od-modal-fade-in 250ms ease-out forwards;
+        /* 弹窗内显式声明 UI 字体，不依赖文档继承链 */
+        font-family: var(--font-sans, 'HarmonyOS Sans', 'PingFang SC', system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif);
+        /* 复制成功反馈色（浅/深） */
+        --ti-success: #1F9D66;
     }
-    .od-taskinfo-overlay.od-modal-leaving {
-        animation: od-modal-fade-out ${ANIM_DURATION_OUT}ms ease-in forwards;
-    }
-    .od-taskinfo-card {
-        background: #fff; border-radius: 20px;
-        box-shadow: 0 24px 80px rgba(0,0,0,0.18), 0 0 1px rgba(0,0,0,0.1);
-        width: 480px; max-width: 92vw; overflow: hidden;
-        animation: od-modal-scale-in 250ms cubic-bezier(0.23, 1, 0.32, 1) forwards;
-    }
-    .od-taskinfo-overlay.od-modal-leaving .od-taskinfo-card {
-        animation: od-modal-scale-out ${ANIM_DURATION_OUT}ms ease-in forwards;
-    }
-    .od-taskinfo-body { padding: 28px; }
-    .od-taskinfo-header {
-        display: flex; align-items: center; gap: 12px; margin-bottom: 20px;
-    }
-    .od-taskinfo-icon {
-        width: 42px; height: 42px; border-radius: 12px;
-        background: #EFF6FF; display: flex; align-items: center; justify-content: center; flex-shrink: 0;
-    }
-    .od-taskinfo-icon i { font-size: 18px; color: #2563EB; }
-    .od-taskinfo-title {
-        font-size: var(--fs-xl); font-weight: 700; color: #1d1d1f; line-height: 1.3;
-    }
-    .od-taskinfo-rows { margin-bottom: 22px; }
+    .od-taskinfo-overlay.od-modal-dark { --ti-success: #3DBF82; }
+    .od-taskinfo-overlay .od-confirm-modal-card { width: 480px; }
+    .od-taskinfo-rows { padding: 4px 0; }
     .od-taskinfo-row {
-        display: flex; align-items: center; padding: 10px 0;
-        border-bottom: 1px solid #F0F0F0;
+        display: flex; align-items: center; gap: 10px;
+        padding: 9px 0;
+        border-bottom: 1px solid var(--mc-line-soft);
     }
     .od-taskinfo-row:last-child { border-bottom: none; }
     .od-taskinfo-label {
-        font-size: var(--fs-md); font-weight: 600; color: #86868b;
-        min-width: 90px; flex-shrink: 0; text-transform: uppercase; letter-spacing: 0.5px;
+        font-size: 11.5px; font-weight: 500; color: var(--mc-ink3);
+        min-width: 76px; flex-shrink: 0;
     }
     .od-taskinfo-value {
-        font-size: var(--fs-base); color: #1d1d1f; font-family: 'JetBrains Mono', 'SF Mono', monospace;
-        flex: 1; word-break: break-all; margin-right: 6px;
+        font-size: 12.5px; color: var(--mc-ink2); line-height: 1.5;
+        /* 西文走全局等宽栈；等宽字体普遍缺中文字形，monospace 之前插入 UI 中文字体，
+           避免任务名等中文内容回退到系统默认等宽字体（Windows 下为宋体） */
+        font-family: 'Maple Mono', 'Cascadia Code', 'Fira Code', 'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, Consolas, 'HarmonyOS Sans', 'PingFang SC', 'Microsoft YaHei', monospace;
+        flex: 1; min-width: 0; word-break: break-all; margin-right: 6px;
     }
     .od-taskinfo-copy-btn {
-        width: 28px; height: 28px; border-radius: 6px; border: none;
+        width: 28px; height: 28px; border-radius: 7px; border: none; padding: 0;
         background: transparent; cursor: pointer; flex-shrink: 0;
         display: flex; align-items: center; justify-content: center;
-        color: #86868b; transition: all 0.15s;
+        color: var(--mc-ink4); transition: background 0.15s, color 0.15s;
     }
-    .od-taskinfo-copy-btn:hover { background: #F0F0F0; color: #2563EB; }
+    .od-taskinfo-copy-btn:hover { background: var(--mc-hover); color: var(--mc-ink2); }
     .od-taskinfo-copy-btn:active { transform: scale(0.92); }
-    .od-taskinfo-copy-btn i { font-size: var(--icon-lg); }
+    .od-taskinfo-copy-btn i { font-size: 13px; }
+    .od-taskinfo-copy-btn.copied i { color: var(--ti-success); }
     .od-taskinfo-loading {
-        text-align: center; padding: 32px; color: #86868b; font-size: var(--fs-lg);
+        text-align: center; padding: 28px; color: var(--mc-ink3); font-size: 12.5px;
     }
     .od-taskinfo-error {
-        text-align: center; padding: 32px; color: #DC2626; font-size: var(--fs-lg);
-    }
-    .od-taskinfo-footer {
-        display: flex; justify-content: flex-end; gap: 10px;
-        padding-top: 16px; border-top: 1px solid #F0F0F0;
-    }
-    .od-taskinfo-close-btn {
-        padding: 10px 24px; border-radius: 12px; border: none;
-        font-size: var(--fs-lg); font-weight: 600; cursor: pointer; transition: all 0.15s;
-        background: #1d1d1f; color: #fff;
-    }
-    .od-taskinfo-close-btn:hover { background: #333; }
-    .od-taskinfo-close-btn:active { transform: scale(0.97); }
-
-    @keyframes od-modal-fade-in { from { opacity: 0; } to { opacity: 1; } }
-    @keyframes od-modal-fade-out { from { opacity: 1; } to { opacity: 0; } }
-    @keyframes od-modal-scale-in {
-        from { opacity: 0; transform: scale(0.95) translateY(10px); }
-        to { opacity: 1; transform: scale(1) translateY(0); }
-    }
-    @keyframes od-modal-scale-out {
-        from { opacity: 1; transform: scale(1) translateY(0); }
-        to { opacity: 0; transform: scale(0.95) translateY(10px); }
+        text-align: center; padding: 28px; color: var(--mc-red); font-size: 12.5px;
     }
 </style>
-<div class="od-taskinfo-card">
-    <div class="od-taskinfo-body">
-        <div class="od-taskinfo-header">
-            <div class="od-taskinfo-icon">
-                <i class="fas fa-circle-info"></i>
-            </div>
-            <div class="od-taskinfo-title">任务信息</div>
+<div class="od-confirm-modal-card">
+    <div class="od-confirm-modal-banner info">
+        <div class="od-confirm-modal-icon">${renderIcon('fa-circle-info')}</div>
+        <div class="od-confirm-modal-banner-text">
+            <div class="od-confirm-modal-title">${t('renderer.sidebar.taskInfoTitle')}</div>
         </div>
+        <button class="od-confirm-modal-close" data-action="close" aria-label="${t('renderer.sidebar.taskInfoClose')}">${CLOSE_SVG}</button>
+    </div>
+    <div class="od-confirm-modal-body">
         <div class="od-taskinfo-rows">
             <div class="od-taskinfo-loading">
-                <i class="fas fa-spinner fa-spin"></i> 加载中...
+                <i class="fas fa-spinner fa-spin"></i> ${t('renderer.sidebar.taskInfoLoading')}
             </div>
         </div>
-        <div class="od-taskinfo-footer">
-            <button class="od-taskinfo-close-btn" data-action="close">关闭</button>
-        </div>
+    </div>
+    <div class="od-confirm-modal-footer">
+        <button class="od-confirm-btn od-confirm-btn-primary" data-action="close">${t('renderer.sidebar.taskInfoClose')}</button>
     </div>
 </div>`;
 
@@ -1588,7 +1561,7 @@ class SideBar extends HTMLElement {
             if (closed) return;
             closed = true;
             overlay.classList.add('od-modal-leaving');
-            setTimeout(() => overlay.remove(), ANIM_DURATION_OUT);
+            setTimeout(() => overlay.remove(), MODAL_ANIM_DURATION_OUT);
             document.removeEventListener('keydown', escHandler);
         };
 
@@ -1600,9 +1573,15 @@ class SideBar extends HTMLElement {
         };
         document.addEventListener('keydown', escHandler);
 
-        bindOverlayDismiss(overlay, close, (t) => !!(t && t.classList && t.classList.contains('od-taskinfo-overlay')));
+        bindOverlayDismiss(
+            overlay,
+            close,
+            (tgt) => !!(tgt && tgt.classList && tgt.classList.contains('od-confirm-modal-overlay'))
+        );
 
-        overlay.querySelector('[data-action="close"]').addEventListener('click', close);
+        overlay.querySelectorAll('[data-action="close"]').forEach((btn) => {
+            btn.addEventListener('click', close);
+        });
 
         document.body.appendChild(overlay);
 
@@ -1613,26 +1592,28 @@ class SideBar extends HTMLElement {
             .then((info) => {
                 if (closed) return;
                 const rows = [
-                    { label: '任务名称', value: info.task_name || '(未命名)' },
-                    { label: '任务 ID', value: info.task_id },
-                    { label: '状态', value: info.task_status },
-                    { label: '数据文件', value: info.task_json_path },
-                    { label: '模型', value: info.model || '(默认)' }
+                    {
+                        label: t('renderer.sidebar.taskInfoName'),
+                        value: info.task_name || t('renderer.sidebar.taskInfoUnnamed')
+                    },
+                    { label: t('renderer.sidebar.taskInfoId'), value: info.task_id },
+                    { label: t('renderer.sidebar.taskInfoStatus'), value: info.task_status },
+                    { label: t('renderer.sidebar.taskInfoDataFile'), value: info.task_json_path },
+                    {
+                        label: t('renderer.sidebar.taskInfoModel'),
+                        value: info.model || t('renderer.sidebar.taskInfoDefaultModel')
+                    }
                 ];
                 if (info.parent_id) {
-                    rows.splice(2, 0, { label: '父任务 ID', value: info.parent_id });
+                    rows.splice(2, 0, { label: t('renderer.sidebar.taskInfoParentId'), value: info.parent_id });
                 }
                 rowsContainer.innerHTML = rows
                     .map((row) => {
-                        const escaped = row.value
-                            .replace(/&/g, '&amp;')
-                            .replace(/</g, '&lt;')
-                            .replace(/>/g, '&gt;')
-                            .replace(/"/g, '&quot;');
+                        const escaped = escapeHtml(row.value);
                         return `<div class="od-taskinfo-row">
                     <span class="od-taskinfo-label">${row.label}</span>
                     <span class="od-taskinfo-value">${escaped}</span>
-                    <button class="od-taskinfo-copy-btn" data-copy="${escaped}" title="复制">
+                    <button class="od-taskinfo-copy-btn" data-copy="${escaped}" title="${t('renderer.sidebar.taskInfoCopy')}">
                         <i class="fa-regular fa-copy"></i>
                     </button>
                 </div>`;
@@ -1645,12 +1626,12 @@ class SideBar extends HTMLElement {
                         const text = btn.dataset.copy;
                         try {
                             await navigator.clipboard.writeText(text);
+                            btn.classList.add('copied');
                             const icon = btn.querySelector('i');
                             icon.className = 'fa-solid fa-check';
-                            icon.style.color = '#059669';
                             setTimeout(() => {
+                                btn.classList.remove('copied');
                                 icon.className = 'fa-regular fa-copy';
-                                icon.style.color = '';
                             }, 1500);
                         } catch {
                             // fallback: 选中文本让用户手动复制
@@ -1669,7 +1650,7 @@ class SideBar extends HTMLElement {
             .catch((err) => {
                 if (closed) return;
                 rowsContainer.innerHTML = `<div class="od-taskinfo-error">
-                <i class="fas fa-triangle-exclamation"></i> 加载失败：${err.message || String(err)}
+                <i class="fas fa-triangle-exclamation"></i> ${t('renderer.sidebar.taskInfoLoadFailed')}${escapeHtml(err.message || String(err))}
             </div>`;
             });
     }
