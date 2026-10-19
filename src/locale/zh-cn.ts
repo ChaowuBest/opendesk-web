@@ -2560,6 +2560,7 @@ export const zhCn: Record<string, string> = {
     'renderer.taskview.export.failed': '导出失败：${message}',
     'renderer.taskview.export.meta.model': '模型',
     'renderer.taskview.export.meta.exportedAt': '导出于 ${time}',
+    'renderer.taskview.export.meta.cacheHitRate': 'CACHE 命中率',
     'renderer.taskview.export.meta.generatedBy': '任务内容由 OpenDesk ${version} 版本生成',
     'renderer.taskview.export.themeToggle': '切换主题',
     'renderer.taskview.toolbar.export': '导出',

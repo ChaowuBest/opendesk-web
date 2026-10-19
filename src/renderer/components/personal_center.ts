@@ -11,6 +11,7 @@
 
 import { escapeHtml } from '../../common/utils/escape.js';
 import { createRendererTranslator } from '../locale.ts';
+import { formatPercent } from '../utils/format.js';
 import personalCenterCss from '../styles/personal-center.css?inline';
 
 interface UsagePeriodSummary {
@@ -94,13 +95,6 @@ function compactNumber(value: number): string {
         notation: 'compact',
         maximumFractionDigits: value < 10_000 ? 1 : 0
     }).format(Math.floor(value));
-}
-
-function formatPercent(part: number, total: number): string {
-    if (!Number.isFinite(part) || !Number.isFinite(total) || part <= 0 || total <= 0) {
-        return '0%';
-    }
-    return `${((part / total) * 100).toFixed(1)}%`;
 }
 
 /**

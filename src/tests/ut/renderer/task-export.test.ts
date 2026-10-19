@@ -649,6 +649,65 @@ describe('buildTaskExportHtml', () => {
         expect(html).toContain('总 TOKENS');
     });
 
+    test('header usage 携带 cacheHitRate 时渲染整体 cache 命中率胶囊', () => {
+        const doc = setupExportDoc([]);
+        const chatHistory = doc.querySelector('#taskview-chat-history');
+        const { html } = buildTaskExportHtml({
+            taskName: 't',
+            contentHtml: '<div class="od-user-msg">x</div>',
+            chatHistory,
+            doc,
+            reasoningCollapseLabel: '收起',
+            header: {
+                title: 't',
+                exportedAt: '导出于 x',
+                usage: { total: 45507, input: 11011, output: 1352, cacheRead: 34496, cacheMiss: 11011 },
+                labels: {
+                    model: '模型',
+                    startedAt: '',
+                    exportedAt: '导出于 x',
+                    totalTokens: '总 TOKENS',
+                    inputTokens: '上行（输入）',
+                    outputTokens: '下行（输出）',
+                    cacheHitRate: 'CACHE 命中率',
+                    toggleToLight: '切换到浅色模式',
+                    toggleToDark: '切换到深色模式'
+                }
+            }
+        });
+        expect(html).toContain('CACHE 命中率');
+        expect(html).toContain('75.8%');
+    });
+
+    test('header usage 未携带 cache 拆分时不渲染 cache 胶囊', () => {
+        const doc = setupExportDoc([]);
+        const chatHistory = doc.querySelector('#taskview-chat-history');
+        const { html } = buildTaskExportHtml({
+            taskName: 't',
+            contentHtml: '<div class="od-user-msg">x</div>',
+            chatHistory,
+            doc,
+            reasoningCollapseLabel: '收起',
+            header: {
+                title: 't',
+                exportedAt: '导出于 x',
+                usage: { total: 12345, input: 8000, output: 4345 },
+                labels: {
+                    model: '模型',
+                    startedAt: '',
+                    exportedAt: '导出于 x',
+                    totalTokens: '总 TOKENS',
+                    inputTokens: '上行（输入）',
+                    outputTokens: '下行（输出）',
+                    cacheHitRate: 'CACHE 命中率',
+                    toggleToLight: '切换到浅色模式',
+                    toggleToDark: '切换到深色模式'
+                }
+            }
+        });
+        expect(html).not.toContain('CACHE 命中率');
+    });
+
     test('包含主题切换按钮与切换脚本', () => {
         const doc = setupExportDoc([]);
         const chatHistory = doc.querySelector('#taskview-chat-history');

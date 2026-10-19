@@ -2216,6 +2216,92 @@ class TaskView extends HTMLElement {
         }
     }
 
+    /**
+     * 可见消息的历史同步：把流式/replace 得到的 assistant 消息并入 _historyMessages。
+     * 复制按钮与 HTML 导出都以 _historyMessages 为数据源，缺少同步会导致
+     * 任务结束后立即复制不到内容、导出 HTML 缺少刚完成的整轮对话。
+     */
+    _syncAssistantMessageToHistory(messageId, parts, extra = {}) {
+        if (!messageId || !Array.isArray(parts) || parts.length === 0) return;
+        const index = this._getHistoryMessageIndexById(messageId);
+        if (index >= 0) {
+            const message = this._historyMessages[index];
+            if (!message || message.role !== 'assistant') return;
+            message.content = [...parts];
+            if (extra.metadata) {
+                message.metadata = extra.metadata;
+            }
+            if (extra.usage) {
+                message.usage = extra.usage;
+            }
+            return;
+        }
+        this._navigationHistorySource = null;
+        this._historyMessages.push({
+            role: 'assistant',
+            message_id: messageId,
+            content: [...parts],
+            ...(extra.metadata ? { metadata: extra.metadata } : {}),
+            ...(extra.usage ? { usage: extra.usage } : {})
+        });
+        this._chatNavigation?.refresh();
+    }
+
+    /** 可见用户消息的历史同步：首帧 push 新消息，同消息的后续 part 帧按 partIndex 合并。 */
+    _syncUserMessageToHistory(progress, parts, partIndex) {
+        if (!progress.message_id) return;
+        let index = this._getHistoryMessageIndexById(progress.message_id);
+        if (index < 0) {
+            this._navigationHistorySource = null;
+            this._historyMessages.push({
+                role: 'user',
+                message_id: progress.message_id,
+                content: []
+            });
+            this._chatNavigation?.refresh();
+            index = this._historyMessages.length - 1;
+        }
+        const message = this._historyMessages[index];
+        if (!message || message.role !== 'user') return;
+        if (!Array.isArray(message.content)) {
+            message.content = [];
+        }
+        if (parts.length > 0) {
+            message.content[partIndex] = parts[0];
+        }
+        if (progress.rawText) {
+            message.rawText = progress.rawText;
+        }
+        if (progress.timestamp) {
+            message.timestamp = progress.timestamp;
+        }
+    }
+
+    /** 可见用户消息 replace（slash skill 替换文本）的历史同步，与 _applyHiddenUserReplaceToHistory 对齐。 */
+    _syncUserReplaceToHistory(progress) {
+        if (!progress.message_id) return;
+        let index = this._getHistoryMessageIndexById(progress.message_id);
+        if (index < 0) {
+            this._navigationHistorySource = null;
+            this._historyMessages.push({
+                role: 'user',
+                message_id: progress.message_id,
+                content: []
+            });
+            this._chatNavigation?.refresh();
+            index = this._historyMessages.length - 1;
+        }
+        const message = this._historyMessages[index];
+        if (!message || message.role !== 'user') return;
+        message.content = getRenderableUserParts(progress, progress.parts);
+        if (progress.rawText) {
+            message.rawText = progress.rawText;
+        }
+        if (progress.timestamp) {
+            message.timestamp = progress.timestamp;
+        }
+    }
+
     _removeWaitingAssistantPlaceholder() {
         const waitingPlaceholder = this.getHistoryContainer().querySelector('.waiting-usage-placeholder');
         if (waitingPlaceholder) waitingPlaceholder.remove();
@@ -2395,6 +2481,10 @@ class TaskView extends HTMLElement {
         this._rememberAssistantOutput(progress.message_id, parts, {
             isRunning,
             turnDurationMs
+        });
+        this._syncAssistantMessageToHistory(progress.message_id, parts, {
+            usage: TaskView.hasDisplayableUsage(progress.usage) ? progress.usage : undefined,
+            metadata: progress.metadata
         });
         if (!isRunning) {
             const execution = progress.metadata?.execution;
@@ -2655,6 +2745,9 @@ class TaskView extends HTMLElement {
         parts[partIndex] = treatAsStreaming ? { ...progress.last_part, streaming: true } : progress.last_part;
         this._rememberAssistantOutput(progress.message_id, parts, {
             isRunning
+        });
+        this._syncAssistantMessageToHistory(progress.message_id, parts, {
+            usage: TaskView.hasDisplayableUsage(progress.usage) ? progress.usage : undefined
         });
         let patchedStreamingPart = false;
         // 流式光标在每次快照后追加到流式容器/末块内。在下一次快照的增量渲染前先移除，
@@ -3432,6 +3525,7 @@ class TaskView extends HTMLElement {
         const partIndex = getProgressPartIndex(progress);
         if (renderedSet.has(partIndex)) return false;
         renderedSet.add(partIndex);
+        this._syncUserMessageToHistory(progress, parts, partIndex);
 
         let container = this.querySelector(`#user-msg-${progress.message_id}`);
         if (!container) {
@@ -5598,6 +5692,7 @@ class TaskView extends HTMLElement {
             totalTokens: taskViewT('renderer.taskStatusWidget.totalTokens'),
             inputTokens: taskViewT('renderer.taskStatusWidget.inputTokens'),
             outputTokens: taskViewT('renderer.taskStatusWidget.outputTokens'),
+            cacheHitRate: taskViewT('renderer.taskview.export.meta.cacheHitRate'),
             toggleToLight: taskViewT('renderer.sidebar.themeToggleToLight'),
             toggleToDark: taskViewT('renderer.sidebar.themeToggleToDark')
         };
@@ -5621,6 +5716,13 @@ class TaskView extends HTMLElement {
                     input: usage.input_tokens,
                     output: usage.output_tokens
                 };
+                // cache 命中/未命中拆分，口径对齐 local-telemetry：未命中 = 非缓存输入 + 缓存写入
+                if (typeof usage.cache_read_input_tokens === 'number' && typeof usage.input_tokens === 'number') {
+                    header.usage.cacheRead = usage.cache_read_input_tokens;
+                    header.usage.cacheMiss =
+                        usage.input_tokens +
+                        (typeof usage.cache_creation_input_tokens === 'number' ? usage.cache_creation_input_tokens : 0);
+                }
             }
         } catch (error) {
             console.warn('Failed to load task info for export header:', error);
@@ -5825,24 +5927,21 @@ class TaskView extends HTMLElement {
                     .join('\n');
             return navigator.clipboard.writeText(text);
         }
+        // 流式期间的消息可能尚未并入历史，退回 _assistantPartsByMessage 缓存（同样的 part 结构）
+        const msgIdx = this._getHistoryMessageIndexById(messageId);
+        const contentParts =
+            msgIdx >= 0 ? this._historyMessages[msgIdx]?.content : this._assistantPartsByMessage.get(messageId);
+        if (Array.isArray(contentParts)) {
+            const textParts = contentParts.filter((p) => p && p.type === 'text' && p.text);
+            const lastTextPart = textParts[textParts.length - 1];
+            if (lastTextPart) {
+                return navigator.clipboard.writeText(lastTextPart.text);
+            }
+        }
         const messageContent = this.querySelector(`#message-content-${CSS.escape(messageId)}`);
         if (messageContent) {
-            // 优先从 _historyMessages 取最后一个 text part 的原始 markdown 文本，保留代码块等格式
-            const msgIdx = this._getHistoryMessageIndexById(messageId);
-            if (msgIdx >= 0) {
-                const msg = this._historyMessages[msgIdx];
-                if (msg && Array.isArray(msg.content)) {
-                    const textParts = msg.content.filter((p) => p && p.type === 'text' && p.text);
-                    const lastTextPart = textParts[textParts.length - 1];
-                    if (lastTextPart) {
-                        return navigator.clipboard.writeText(lastTextPart.text);
-                    }
-                }
-            }
-            // fallback: 从 DOM 取 textContent
-            const textParts = Array.from(messageContent.children).filter((el) =>
-                el.classList.contains('markdown-body')
-            );
+            // fallback: 从 DOM 取 textContent（.markdown-body 可能嵌套在输出流包裹层内，需深度查找）
+            const textParts = Array.from(messageContent.querySelectorAll('.markdown-body'));
             const lastTextPart = textParts[textParts.length - 1];
             if (lastTextPart) {
                 return navigator.clipboard.writeText(lastTextPart.textContent || '');
@@ -6302,6 +6401,7 @@ class TaskView extends HTMLElement {
                             } else if (this._isHistoryMessageBeforeRenderedWindow(progress.message_id)) {
                                 this._applyHiddenUserReplaceToHistory(progress);
                             }
+                            this._syncUserReplaceToHistory(progress);
                         }
                     } else if (progress.type === 'assistant_replace') {
                         this.handleAssistantReplace(progress);

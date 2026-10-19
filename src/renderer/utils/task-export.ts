@@ -28,6 +28,7 @@
 
 import { enhanceCodeBlocks, enhanceToolPreviewCards } from '../components/previewer.ts';
 import { escapeHtml } from '../../common/utils/escape.js';
+import { formatPercent } from './format.js';
 
 export interface TaskExportHeaderInfo {
     /** 任务标题 */
@@ -40,8 +41,8 @@ export interface TaskExportHeaderInfo {
     exportedAt: string;
     /** 「任务内容由 OpenDesk ${version} 版本生成」已本地化文案（可选） */
     generatedBy?: string;
-    /** 累计 token 消耗 */
-    usage?: { total: number; input: number; output: number };
+    /** 累计 token 消耗；cacheRead/cacheMiss 为缓存命中与未命中的输入 token 数（对齐个人中心口径），两者齐备时渲染命中率胶囊 */
+    usage?: { total: number; input: number; output: number; cacheRead?: number; cacheMiss?: number };
     /** 已本地化的标签文案 */
     labels: {
         model: string;
@@ -50,6 +51,8 @@ export interface TaskExportHeaderInfo {
         totalTokens: string;
         inputTokens: string;
         outputTokens: string;
+        /** cache 命中率胶囊标签（usage.cacheHitRate 存在时使用） */
+        cacheHitRate?: string;
         /** 切换到浅色 / 深色模式的按钮文案 */
         toggleToLight: string;
         toggleToDark: string;
@@ -931,11 +934,19 @@ function buildExportHeaderHtml(header: TaskExportHeaderInfo): string {
     let usageHtml = '';
     if (header.usage) {
         const fmt = (value: number) => Number(value || 0).toLocaleString();
+        // 整体 cache 命中率：命中 /（命中 + 未命中），口径与个人中心使用统计一致
+        const { cacheRead, cacheMiss } = header.usage;
+        const hasCacheBreakdown =
+            typeof cacheRead === 'number' && typeof cacheMiss === 'number' && (cacheRead > 0 || cacheMiss > 0);
+        const cacheRateHtml =
+            hasCacheBreakdown && header.labels.cacheHitRate
+                ? `<span class="od-export-token"><span>${escapeHtml(header.labels.cacheHitRate)}</span><span class="od-export-token-value">${formatPercent(cacheRead, cacheRead + cacheMiss)}</span></span>`
+                : '';
         usageHtml = `
         <div class="od-export-header-usage">
             <span class="od-export-token"><span>${escapeHtml(header.labels.totalTokens)}</span><span class="od-export-token-value">${fmt(header.usage.total)}</span></span>
             <span class="od-export-token"><span>${escapeHtml(header.labels.inputTokens)}</span><span class="od-export-token-value">${fmt(header.usage.input)}</span></span>
-            <span class="od-export-token"><span>${escapeHtml(header.labels.outputTokens)}</span><span class="od-export-token-value">${fmt(header.usage.output)}</span></span>
+            <span class="od-export-token"><span>${escapeHtml(header.labels.outputTokens)}</span><span class="od-export-token-value">${fmt(header.usage.output)}</span></span>${cacheRateHtml}
         </div>`;
     }
 
