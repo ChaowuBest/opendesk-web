@@ -155,6 +155,9 @@ class SettingPanel extends HTMLElement {
         }
         (async () => {
             await this.loadData();
+            // loadData 期间元素可能已被移除（快速开关设置页），此时放弃渲染与订阅，
+            // 否则 onStateChanged 订阅将因 disconnectedCallback 已执行而永不退订
+            if (!this.isConnected) return;
             this.render();
             this.setUpEventListeners();
             this._updateStateUnsubscribe = window.updateAPI?.onStateChanged((state) => {
@@ -167,6 +170,12 @@ class SettingPanel extends HTMLElement {
     disconnectedCallback() {
         this._updateStateUnsubscribe?.();
         this._updateStateUnsubscribe = null;
+        this._scaleFactorChangeUnsub?.();
+        this._scaleFactorChangeUnsub = null;
+        if (this._modalEscHandler) {
+            document.removeEventListener('keydown', this._modalEscHandler, true);
+            this._modalEscHandler = null;
+        }
     }
 
     async loadData() {
@@ -3099,7 +3108,7 @@ class SettingPanel extends HTMLElement {
     renderProvidersSection() {
         const providers = this.currentData?.providers || [];
         return `
-        <section class="sp-section">
+        <section class="sp-section" id="providers-section">
             <h2 class="sp-section-title">${this._t('sp.providers.title')}<span class="sp-section-subtitle">${this._t('sp.providers.configured', { count: providers.length })}</span></h2>
             <div id="provider-list" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(300px,1fr));gap:12px">
                 ${providers.map((p, i) => this.renderProviderCard(p, i)).join('')}
@@ -3144,7 +3153,7 @@ class SettingPanel extends HTMLElement {
     renderModelsSection() {
         const models = this.currentData?.models || [];
         return `
-	        <section class="sp-section">
+	        <section class="sp-section" id="models-section">
 	            <h2 class="sp-section-title">${this.escapeHtml(this._t('config.model.title'))}<span class="sp-section-subtitle">${this.escapeHtml(this._t('config.model.configured_count', { count: models.length }))}</span></h2>
             <div id="model-list" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(300px,1fr));gap:12px">
 	                ${models.map((m, i) => this.renderModelCard(m, i)).join('')}
@@ -3242,7 +3251,7 @@ class SettingPanel extends HTMLElement {
         const visionModelOptions = this.renderModelOptions(this.getVisionModels());
 
         return `
-        <section class="sp-section">
+        <section class="sp-section" id="default-models-section">
             <h2 class="sp-section-title">${this._t('sp.defaultModels.title')}</h2>
             <p class="sp-section-desc">${this._t('sp.defaultModels.desc')}</p>
             <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(200px,1fr));gap:16px">
@@ -3291,6 +3300,8 @@ class SettingPanel extends HTMLElement {
         this._bindUpdateEvent();
         // 监听缩放系数变化（快捷键调整时同步更新输入框）
         if (window.displayAPI?.onScaleFactorChanged) {
+            // setUpEventListeners 可能被 refreshAll 多次触发，先退订旧订阅避免回调累积
+            this._scaleFactorChangeUnsub?.();
             this._scaleFactorChangeUnsub = window.displayAPI.onScaleFactorChanged(async () => {
                 if (!this.currentData?.gui_config) return;
                 // 回调收到的是 effective zoom（含平台补偿），需要读取用户设定的 scale_factor
@@ -4160,28 +4171,26 @@ class SettingPanel extends HTMLElement {
     }
 
     refreshProvidersSection() {
-        const tabModels = this.querySelector('#tab-models');
-        if (!tabModels) return;
-        const sections = tabModels.querySelectorAll('section');
-        if (sections.length >= 1) {
-            sections[0].outerHTML = this.renderProvidersSection();
-            // 重新绑定事件
-            this.querySelector('#add-provider-btn')?.addEventListener('click', () => {
-                this.showProviderTemplateModal();
+        // #tab-models 内第一个 section 是条件渲染的软件更新区块，不能按索引定位
+        const providersSection = this.querySelector('#providers-section');
+        if (!providersSection) return;
+        providersSection.outerHTML = this.renderProvidersSection();
+        // 重新绑定事件
+        this.querySelector('#add-provider-btn')?.addEventListener('click', () => {
+            this.showProviderTemplateModal();
+        });
+        this.querySelectorAll('.edit-provider-btn').forEach((btn) => {
+            btn.addEventListener('click', (e) => {
+                const index = parseInt(e.currentTarget.dataset.index);
+                this.showProviderEditModal(index);
             });
-            this.querySelectorAll('.edit-provider-btn').forEach((btn) => {
-                btn.addEventListener('click', (e) => {
-                    const index = parseInt(e.currentTarget.dataset.index);
-                    this.showProviderEditModal(index);
-                });
+        });
+        this.querySelectorAll('.delete-provider-btn').forEach((btn) => {
+            btn.addEventListener('click', (e) => {
+                const index = parseInt(e.currentTarget.dataset.index);
+                this.deleteProvider(index);
             });
-            this.querySelectorAll('.delete-provider-btn').forEach((btn) => {
-                btn.addEventListener('click', (e) => {
-                    const index = parseInt(e.currentTarget.dataset.index);
-                    this.deleteProvider(index);
-                });
-            });
-        }
+        });
     }
 
     // --- 模型管理 ---
@@ -4745,27 +4754,24 @@ class SettingPanel extends HTMLElement {
     }
 
     refreshModelsSection() {
-        const tabModels = this.querySelector('#tab-models');
-        if (!tabModels) return;
-        const sections = tabModels.querySelectorAll('section');
-        if (sections.length >= 2) {
-            sections[1].outerHTML = this.renderModelsSection();
-            this.querySelector('#add-model-btn')?.addEventListener('click', () => {
-                this.showModelEditModal(-1);
+        const modelsSection = this.querySelector('#models-section');
+        if (!modelsSection) return;
+        modelsSection.outerHTML = this.renderModelsSection();
+        this.querySelector('#add-model-btn')?.addEventListener('click', () => {
+            this.showModelEditModal(-1);
+        });
+        this.querySelectorAll('.edit-model-btn').forEach((btn) => {
+            btn.addEventListener('click', (e) => {
+                const index = parseInt(e.currentTarget.dataset.index);
+                this.showModelEditModal(index);
             });
-            this.querySelectorAll('.edit-model-btn').forEach((btn) => {
-                btn.addEventListener('click', (e) => {
-                    const index = parseInt(e.currentTarget.dataset.index);
-                    this.showModelEditModal(index);
-                });
+        });
+        this.querySelectorAll('.delete-model-btn').forEach((btn) => {
+            btn.addEventListener('click', (e) => {
+                const index = parseInt(e.currentTarget.dataset.index);
+                this.deleteModel(index);
             });
-            this.querySelectorAll('.delete-model-btn').forEach((btn) => {
-                btn.addEventListener('click', (e) => {
-                    const index = parseInt(e.currentTarget.dataset.index);
-                    this.deleteModel(index);
-                });
-            });
-        }
+        });
     }
 
     refreshAll() {
@@ -4781,8 +4787,7 @@ class SettingPanel extends HTMLElement {
         if (sections.length >= 1) {
             sections.forEach((s) => s.remove());
             tabGeneral.innerHTML = this.renderGeneralSection();
-            // 重新绑定事件
-            this._bindUpdateEvent();
+            // 重新绑定事件（#software-update-action 属于 tab-models，其绑定不受本次重建影响）
             this.querySelector('#locale-select')?.addEventListener('change', (e) => {
                 this.currentData.locale = e.target.value;
                 this._t = createRendererTranslator(this.currentData.locale === 'auto' ? 'auto' : this.currentData);
@@ -4867,27 +4872,24 @@ class SettingPanel extends HTMLElement {
     }
 
     refreshDefaultModelsSection() {
-        const tabModels = this.querySelector('#tab-models');
-        if (!tabModels) return;
-        const sections = tabModels.querySelectorAll('section');
-        if (sections.length >= 3) {
-            sections[2].outerHTML = this.renderDefaultModelsSection();
-            this.updateDefaultModelSelects();
-            const selects = [
-                'default-model-select',
-                'default-quick-model-select',
-                'default-embedding-model-select',
-                'default-reranker-model-select',
-                'default-vision-model-select'
-            ];
-            selects.forEach((id) => {
-                this.querySelector(`#${id}`)?.addEventListener('change', (e) => {
-                    const field = this.getDefaultModelFieldMap()[id];
-                    this.currentData[field] = e.target.value;
-                    this.saveImmediately();
-                });
+        const defaultModelsSection = this.querySelector('#default-models-section');
+        if (!defaultModelsSection) return;
+        defaultModelsSection.outerHTML = this.renderDefaultModelsSection();
+        this.updateDefaultModelSelects();
+        const selects = [
+            'default-model-select',
+            'default-quick-model-select',
+            'default-embedding-model-select',
+            'default-reranker-model-select',
+            'default-vision-model-select'
+        ];
+        selects.forEach((id) => {
+            this.querySelector(`#${id}`)?.addEventListener('change', (e) => {
+                const field = this.getDefaultModelFieldMap()[id];
+                this.currentData[field] = e.target.value;
+                this.saveImmediately();
             });
-        }
+        });
     }
 
     // --- QuickPass 模态框 ---
