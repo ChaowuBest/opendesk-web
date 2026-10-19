@@ -18,7 +18,7 @@ import {
     estimateRequestPayloadTokens
 } from '../compaction/request-budget.js';
 import { prepareContextForModel } from '../compaction/pipeline.js';
-import { estimateTextTokens } from '../compaction/token-estimation.js';
+import { estimateTextTokens } from '../../../utils/token-estimation.js';
 import { type UsageCompactRecovery, MAX_COMPACT_RECOVERY_ATTEMPTS } from '../compaction/full-compact.js';
 import { buildActiveContextView } from '../compaction/context-view.js';
 import {

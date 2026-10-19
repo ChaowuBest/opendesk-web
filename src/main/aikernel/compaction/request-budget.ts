@@ -10,7 +10,7 @@
  */
 
 import { ContextPreparationBlockedError } from './compact-error.js';
-import { estimateTextTokens } from './token-estimation.js';
+import { estimateTextTokens } from '../../../utils/token-estimation.js';
 import { IMAGE_TOKEN_ESTIMATE } from './image-tokens.js';
 
 export function estimateRequestPayloadTokens(payload: unknown): number {

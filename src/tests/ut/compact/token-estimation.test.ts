@@ -1,9 +1,9 @@
 import { buildActiveContextView } from '../../../main/aikernel/compaction/context-view';
 import { estimateAutoCompactContextTokens } from '../../../main/aikernel/compaction/auto-compact';
+import { estimateTextTokens } from '../../../utils/token-estimation';
 import {
     estimateAssistantPostUsageVisibleTokens,
     estimateRoughTokensFromChatMessage,
-    estimateTextTokens,
     estimateVisibleContextTokens,
     getContextTokensFromUsage,
     normalizeUsage

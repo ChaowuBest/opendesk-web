@@ -13,10 +13,10 @@ import {
     calculateCompactionBudget,
     estimateRequestPayloadTokens
 } from '../../../main/aikernel/compaction/request-budget.js';
+import { estimateTextTokens } from '../../../utils/token-estimation';
 import {
     estimateAssistantPostUsageVisibleTokens,
     estimateRoughTokensFromChatMessage,
-    estimateTextTokens,
     estimateVisibleContextTokens
 } from '../../../main/aikernel/compaction/token-estimation.js';
 import { buildActiveContextView } from '../../../main/aikernel/compaction/context-view.js';

@@ -21,7 +21,7 @@ import {
     type UsageFields
 } from '../aikernel/messages.js';
 import type { ToolResultPreviewOptions } from '../aikernel/compaction/tool-results.js';
-import { estimateTextTokens } from '../aikernel/compaction/token-estimation.js';
+import { estimateTextTokens } from '../../utils/token-estimation.js';
 import type { TaskState } from '../aikernel/states/tasks.js';
 import { Setting } from './setting.js';
 

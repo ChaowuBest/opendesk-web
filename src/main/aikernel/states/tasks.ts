@@ -13,7 +13,7 @@ import { calculateCompactionBudget, fitRequestOutputTokens } from '../compaction
 import type { UsageCompactRecovery } from '../compaction/full-compact.js';
 import { CompactError, ContextPreparationBlockedError } from '../compaction/compact-error.js';
 import { OpenAIAdapter } from '../adapters/openai.js';
-import { estimateTextTokens } from '../compaction/token-estimation.js';
+import { estimateTextTokens } from '../../../utils/token-estimation.js';
 import { t } from '../../../locale/index.js';
 import { ToolResultReplacementStates, type ToolResultReplacementState } from '../compaction/tool-results.js';
 import {

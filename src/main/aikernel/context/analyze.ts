@@ -10,11 +10,8 @@
  */
 
 import { buildVisibleAssistantRounds } from '../compaction/assistant-rounds.js';
-import {
-    estimateSystemPromptTokens,
-    estimateTextTokens,
-    estimateToolResultObjectTokens
-} from '../compaction/token-estimation.js';
+import { estimateTextTokens } from '../../../utils/token-estimation.js';
+import { estimateSystemPromptTokens, estimateToolResultObjectTokens } from '../compaction/token-estimation.js';
 import { AssistantMessage, CompactSeparatorMessage, UserMessage } from '../messages.js';
 import type { ToolCall } from '../messages.js';
 import type { BaseTool, BaseToolset } from '../tool.js';
