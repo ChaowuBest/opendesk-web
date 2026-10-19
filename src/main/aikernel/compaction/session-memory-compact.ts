@@ -27,11 +27,11 @@ import { getTaskSessionMemoryPath } from '../../utils/setting.js';
 import type { AutoCompactDecision } from './auto-compact.js';
 import { buildActiveContextView, buildProjectedActiveContextView } from './context-view.js';
 import { countFullCompactMessageStats, type FullCompactMessageStats } from './full-compact.js';
+import { estimateTextTokens } from '../../../utils/token-estimation.js';
 import {
     estimateRoughTokensFromAssistantParts,
     estimateRoughTokensFromChatMessage,
     estimateRoughTokensFromToolCall,
-    estimateTextTokens,
     estimateVisibleContextTokens
 } from './token-estimation.js';
 import type { ActiveContextView, AssistantRoundRef, CompactBoundaryRef, ProjectedContextItem } from './types.js';

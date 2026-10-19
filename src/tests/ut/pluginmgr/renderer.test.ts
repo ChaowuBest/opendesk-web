@@ -132,6 +132,30 @@ describe('plugin manager application renderer', () => {
                         },
                         skills: [],
                         mcpServers: []
+                    },
+                    {
+                        id: 'builtin-plugin',
+                        source: 'builtin',
+                        path: '/dist/plugins/builtin',
+                        removable: false,
+                        enabled: true,
+                        runtime: {
+                            id: 'builtin-plugin',
+                            displayName: 'Builtin Helper',
+                            version: '1.0.0',
+                            status: 'active',
+                            origin: '/dist/plugins/builtin',
+                            apiVersion: 1,
+                            capabilities: ['skill'],
+                            diagnostics: []
+                        },
+                        skills: [
+                            {
+                                name: 'builtin-skill',
+                                description: 'A builtin skill.'
+                            }
+                        ],
+                        mcpServers: []
                     }
                 ];
             }
@@ -164,6 +188,10 @@ describe('plugin manager application renderer', () => {
         expect(widget.shadowRoot.querySelector('local-plugin')).toBeNull();
         expect(widget.shadowRoot.querySelectorAll('[data-action="uninstall"]')).toHaveLength(3);
         expect(widget.shadowRoot.querySelector('[data-plugin-id="installed-plugin"]')).not.toBeNull();
+        expect(widget.shadowRoot.querySelector('[data-plugin-id="builtin-plugin"]')).not.toBeNull();
+        expect(
+            widget.shadowRoot.querySelector('[data-plugin-id="builtin-plugin"] [data-action="uninstall"]')
+        ).toBeNull();
     });
 
     test('renders tool and hook contributions on plugin cards and detail sections', async () => {
@@ -321,6 +349,63 @@ describe('plugin manager application renderer', () => {
         await new Promise((resolve) => setTimeout(resolve, 220));
 
         expect(callMainWorld).toHaveBeenCalledWith('uninstall', 'installed-plugin');
+    });
+
+    test('renders built-in and installed tabs with separated plugin groups', async () => {
+        const widget = await createWidget();
+
+        // 两个 tab 同时存在，内置计数 badge 为 1
+        expect(widget.shadowRoot.querySelector('[data-tab="builtin"]')).not.toBeNull();
+        expect(widget.shadowRoot.querySelector('[data-tab="installed"]')).not.toBeNull();
+        expect(widget.shadowRoot.querySelector('[data-tab="builtin"] .seg-badge')?.textContent).toBe('1');
+
+        // 默认展示已安装面板：仅 local 插件，不含内置插件
+        expect(widget.shadowRoot.querySelector('[data-panel="builtin"]')?.hasAttribute('hidden')).toBe(true);
+        const installedPanel = widget.shadowRoot.querySelector('[data-panel="installed"]');
+        expect(installedPanel?.hasAttribute('hidden')).toBe(false);
+        expect(installedPanel?.querySelector('[data-plugin-id="<local-plugin>"]')).not.toBeNull();
+        expect(installedPanel?.querySelector('[data-plugin-id="builtin-plugin"]')).toBeNull();
+
+        // 切换到内置面板：仅内置插件，卡片带"内置"标签且无卸载按钮
+        widget.shadowRoot.querySelector('[data-tab="builtin"]')?.dispatchEvent(new Event('click'));
+        expect(widget.shadowRoot.querySelector('[data-tab="builtin"]')?.classList.contains('active')).toBe(true);
+        const builtinPanel = widget.shadowRoot.querySelector('[data-panel="builtin"]');
+        expect(builtinPanel?.hasAttribute('hidden')).toBe(false);
+        expect(widget.shadowRoot.querySelector('[data-panel="installed"]')?.hasAttribute('hidden')).toBe(true);
+        expect(builtinPanel?.querySelector('[data-plugin-id="builtin-plugin"]')).not.toBeNull();
+        expect(builtinPanel?.querySelector('[data-plugin-id="<local-plugin>"]')).toBeNull();
+        const builtinCard = builtinPanel?.querySelector('[data-plugin-id="builtin-plugin"]');
+        expect(builtinCard?.innerHTML).toContain('内置');
+        expect(builtinCard?.querySelector('[data-action="uninstall"]')).toBeNull();
+
+        // 内置插件可以禁用
+        const toggle = builtinCard?.querySelector('[data-action="toggle"]');
+        toggle.checked = false;
+        toggle.dispatchEvent(new Event('change'));
+        await new Promise((resolve) => setTimeout(resolve, 0));
+        expect(callMainWorld).toHaveBeenCalledWith('setEnabled', 'builtin-plugin', false);
+    });
+
+    test('renders tab icons as inline svg and keeps inactive tabs clean in dark theme', async () => {
+        const widget = await createWidget();
+
+        // tab 图标使用线性 svg（对齐侧边栏导航按钮风格），不再使用 emoji 字符
+        for (const tab of ['installed', 'builtin']) {
+            const button = widget.shadowRoot.querySelector(`[data-tab="${tab}"]`);
+            expect(button?.querySelector('svg')).not.toBeNull();
+            expect(button?.textContent).not.toContain('📦');
+            expect(button?.textContent).not.toContain('🧩');
+        }
+
+        // 深色主题下全局 button 背景规则不得污染 seg-item，否则未激活 tab 会出现第二块高亮
+        const styles = widget.shadowRoot.querySelector('style')?.textContent ?? '';
+        const darkRule = styles.match(/:host\(\[data-theme="dark"\]\) \.seg-item\s*\{([^}]*)\}/)?.[1] ?? '';
+        expect(darkRule).toMatch(/background:\s*transparent/);
+        expect(darkRule).toMatch(/border:\s*0/);
+
+        // svg 必须块级显示：inline svg 坐在文字基线上会带 descender 空隙，导致图标相对文字偏上
+        const segIconRule = styles.match(/\.seg-icon svg\s*\{([^}]*)\}/)?.[1] ?? '';
+        expect(segIconRule).toMatch(/display:\s*block/);
     });
 
     test('renders only the installed page with skill-style add actions', async () => {

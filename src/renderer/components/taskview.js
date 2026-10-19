@@ -833,8 +833,6 @@ class TaskView extends HTMLElement {
      *  取值需大于慢速输出的合法 progress 间隔（思考输出可达秒级/帧），否则窗口被反复
      *  误重置，速度永远停留在冷却期无法产出。 */
     static SPEED_WINDOW_MAX_GAP_MS = 3000;
-    /** 速度后缀的新鲜度窗口：最新 decode 样本距今超过该值即隐藏速度（工具执行期陈旧速度不显示） */
-    static SPEED_FRESH_MS = 2000;
     /** 窗口时间跨度不足该值时不产出速度（流式首帧冷却，避免单帧抖动） */
     static SPEED_MIN_SPAN_MS = 500;
     /** 滑动窗口样本数上限（防止长流式会话样本无限增长） */
@@ -951,7 +949,7 @@ class TaskView extends HTMLElement {
         return taskViewT('renderer.taskview.usage.contextRatio', { pct: pctNum.toFixed(1) });
     }
 
-    static formatUsageHtml(usage, contextSize, isStreaming = false, speed = null) {
+    static formatUsageHtml(usage, contextSize, isStreaming = false, speed = null, speedEstimated = false) {
         if (!TaskView.hasDisplayableUsage(usage)) return '';
         const { promptTokens, completionTokens, totalTokens } = TaskView.getUsageDisplayTokens(usage);
         const titleParts = taskViewT('renderer.taskview.usage.title', {
@@ -959,10 +957,10 @@ class TaskView extends HTMLElement {
             output: completionTokens,
             total: totalTokens
         });
-        const speedSuffix = speed != null ? taskViewT('renderer.taskview.usage.speed', { speed }) : '';
+        const speedSuffix = TaskView.formatSpeedSuffix(speed, speedEstimated);
         const displayText = TaskView.formatUsageDisplayText(completionTokens, totalTokens, contextSize, speedSuffix);
         const spinnerDisplay = isStreaming ? '' : 'display:none;';
-        return `<span class="message-usage text-xs text-gray-400 mt-3 flex items-center gap-1" title="${titleParts}" data-prompt-tokens="${promptTokens}" data-completion-tokens="${completionTokens}" data-total-tokens="${totalTokens}" data-streaming="${isStreaming}" data-speed-value="${speed ?? ''}"><span class="usage-spinner" style="${spinnerDisplay}">${TaskView.SPINNER_SVG}</span><span class="usage-text">${displayText}</span></span>`;
+        return `<span class="message-usage text-xs text-gray-400 mt-3 flex items-center gap-1" title="${titleParts}" data-prompt-tokens="${promptTokens}" data-completion-tokens="${completionTokens}" data-total-tokens="${totalTokens}" data-streaming="${isStreaming}" data-speed-value="${speed ?? ''}" data-speed-estimated="${speedEstimated ? 'true' : 'false'}"><span class="usage-spinner" style="${spinnerDisplay}">${TaskView.SPINNER_SVG}</span><span class="usage-text">${displayText}</span></span>`;
     }
 
     /** 组装 usage 胶囊的展示文本（已输出词数 + 速度内联 + 总计 + 上下文占比）。 */
@@ -974,6 +972,36 @@ class TaskView extends HTMLElement {
             ratio: ratioText,
             speed: speedText
         });
+    }
+
+    /**
+     * 速度后缀文案：estimated 为 true 时加 ≈ 前缀（速度来自 CJK 加权估算序列，
+     * 非 usage 检查点推进的精确值），与真实 usage 驱动的速度区分口径。
+     */
+    static formatSpeedSuffix(speed, estimated = false) {
+        if (speed == null || speed === '') return '';
+        return taskViewT(
+            estimated === true ? 'renderer.taskview.usage.speedEstimated' : 'renderer.taskview.usage.speed',
+            { speed }
+        );
+    }
+
+    /**
+     * 实例级最近测速缓存（task_id → 最近一次窗口测速）。仅存内存，实例关闭即消失：
+     * 任务切换 / reload 重建 DOM 后，历史渲染与流式恢复路径据此回读最近 decode 数据，
+     * 让速度信息在实例存续期内持续可见。
+     * @type {Map<string, {speed: number, estimated: boolean, messageId: string}>}
+     */
+    static RECENT_SPEED_BY_TASK = new Map();
+
+    static rememberRecentSpeed(taskId, entry) {
+        if (!taskId || !entry || typeof entry.speed !== 'number') return;
+        TaskView.RECENT_SPEED_BY_TASK.set(taskId, entry);
+    }
+
+    static getRecentSpeed(taskId) {
+        if (!taskId) return null;
+        return TaskView.RECENT_SPEED_BY_TASK.get(taskId) ?? null;
     }
 
     /**
@@ -1828,6 +1856,41 @@ class TaskView extends HTMLElement {
             getAssistantTurnEndTimestamp(assistant_message),
             assistant_message.message_id
         );
+        if (isLast && usageHtml) {
+            // reload / 任务切回的历史重建：把实例级缓存的最近测速回填到胶囊上，
+            // 速度信息在实例存续期内跨任务切换可见（不持久化，实例关闭即消失）。
+            // 只在缓存归属本消息时回填，避免旧消息的张冠李戴
+            const temp = document.createElement('template');
+            temp.innerHTML = usageHtml.trim();
+            const capsule = temp.content.querySelector('.message-usage');
+            const cached = TaskView.getRecentSpeed(this.task_id);
+            if (capsule && cached && cached.messageId === String(assistant_message.message_id ?? '')) {
+                capsule.dataset.speedValue = String(cached.speed);
+                capsule.dataset.speedEstimated = cached.estimated === true ? 'true' : 'false';
+                const textEl = capsule.querySelector('.usage-text');
+                if (textEl) {
+                    const completionTokens = parseInt(capsule.dataset.completionTokens || '0', 10);
+                    const totalTokens = parseInt(capsule.dataset.totalTokens || '0', 10);
+                    textEl.textContent = TaskView.formatUsageDisplayText(
+                        completionTokens,
+                        totalTokens,
+                        this._modelContextSize,
+                        TaskView.formatSpeedSuffix(cached.speed, cached.estimated === true)
+                    );
+                }
+                return `
+        <div class="od-assistant-msg-container flex items-start">
+            <div id='message-container-${assistant_message.message_id}' class="px-2 bg-transparent w-full">
+                <div id='message-content-${assistant_message.message_id}'>
+                    ${content}
+                </div>
+                ${metaRowHtml}
+                ${temp.content.firstElementChild.outerHTML}
+            </div>
+        </div>
+        `;
+            }
+        }
         const html = `
         <div class="od-assistant-msg-container flex items-start">
             <div id='message-container-${assistant_message.message_id}' class="px-2 bg-transparent w-full">
@@ -2129,11 +2192,22 @@ class TaskView extends HTMLElement {
     _applyHiddenAssistantReplaceToHistory(progress) {
         this._navigationHistorySource = null;
         this._chatNavigation?.refresh();
-        const index = this._getHistoryMessageIndexById(progress.message_id);
-        if (index < 0) return;
-        const message = this._historyMessages[index];
+        // 增量 replace 的隐藏历史路径：被省略的前缀以 _historyMessages 中该消息的
+        // 现有 content 为真源回填（隐藏消息不经过 _assistantPartsByMessage 缓存）；
+        // 历史中无该消息或前缀长度不足时按纯尾部覆盖（后续全量快照兜底纠正）。
+        let parts = Array.isArray(progress.parts) ? progress.parts : [];
+        if (typeof progress.unmodifiedTail === 'number' && progress.unmodifiedTail > 0) {
+            const index = this._getHistoryMessageIndexById(progress.message_id);
+            const cachedParts = index >= 0 ? this._historyMessages[index]?.content : null;
+            if (Array.isArray(cachedParts) && cachedParts.length >= progress.unmodifiedTail) {
+                parts = [...cachedParts.slice(0, progress.unmodifiedTail), ...parts];
+            }
+        }
+        const messageIndex = this._getHistoryMessageIndexById(progress.message_id);
+        if (messageIndex < 0) return;
+        const message = this._historyMessages[messageIndex];
         if (!message || message.role !== 'assistant') return;
-        message.content = Array.isArray(progress.parts) ? progress.parts : [];
+        message.content = parts;
         if (progress.metadata) {
             message.metadata = progress.metadata;
         }
@@ -2258,6 +2332,18 @@ class TaskView extends HTMLElement {
     }
 
     handleAssistantReplace(progress) {
+        // 增量 replace：parts 只携带尾部 N 个新 parts，省略的前缀从本地缓存回填
+        // （unmodifiedTail 指明被省略的前缀长度）。缓存缺失时按纯尾部渲染——
+        // 宁可短暂显示不完整也不能捏造不存在的旧内容，后续全量快照会自然纠正。
+        if (typeof progress.unmodifiedTail === 'number' && progress.unmodifiedTail > 0) {
+            const cachedParts = this._assistantPartsByMessage.get(progress.message_id) || [];
+            if (cachedParts.length >= progress.unmodifiedTail) {
+                progress = {
+                    ...progress,
+                    parts: [...cachedParts.slice(0, progress.unmodifiedTail), ...progress.parts]
+                };
+            }
+        }
         const previousRenderState = this._assistantRenderStateByMessage.get(progress.message_id);
         if (previousRenderState?.isRunning === false && progress.task_status === 'running') {
             return;
@@ -2342,9 +2428,21 @@ class TaskView extends HTMLElement {
             this._removeUsageOutside(message_container);
             // 终态 replace 重建胶囊时保留流式期间测得的 decode 速度，
             // 避免「回合一结束速度就消失」——速度定格在最后一次窗口测速值；
+            // DOM 胶囊缺失（如 reload 后重建）时回读实例级最近测速缓存；
             // 词数用测速状态融合值而非 progress.usage 直读：请求开始时的
             // prompt 检查点 usage（completion=0）会把思考期间涨起来的词数清零
-            const finalSpeed = usageEl?.dataset.speedValue ? Number(usageEl.dataset.speedValue) : null;
+            const cachedSpeed = TaskView.getRecentSpeed(this.task_id);
+            const cachedBelongsToMessage = cachedSpeed?.messageId === String(progress.message_id ?? '');
+            const finalSpeed = usageEl?.dataset.speedValue
+                ? Number(usageEl.dataset.speedValue)
+                : cachedBelongsToMessage
+                  ? cachedSpeed.speed
+                  : null;
+            const finalSpeedEstimated = usageEl?.dataset.speedValue
+                ? usageEl.dataset.speedEstimated === 'true'
+                : cachedBelongsToMessage
+                  ? cachedSpeed.estimated === true
+                  : false;
             // 完成态 usage（completion>0）真实权威，直接采用；请求开始的 prompt 检查点
             // （completion=0）只提供 prompt/total，词数用测速状态融合值，避免把思考
             // 期间涨起来的词数清零
@@ -2365,7 +2463,13 @@ class TaskView extends HTMLElement {
                         : usageTokensForReplace.totalTokens
                 };
             }
-            const usageHtml = TaskView.formatUsageHtml(displayTokens, this._modelContextSize, false, finalSpeed);
+            const usageHtml = TaskView.formatUsageHtml(
+                displayTokens,
+                this._modelContextSize,
+                false,
+                finalSpeed,
+                finalSpeedEstimated
+            );
             if (usageEl) {
                 usageEl.outerHTML = usageHtml;
             } else {
@@ -2665,19 +2769,11 @@ class TaskView extends HTMLElement {
             if (usage) {
                 this._removeUsageOutside(message_container);
             }
-            // 速度新鲜度：速度值过旧（测量时点距今超过 SPEED_FRESH_MS）即清除后缀。
-            // 工具执行等无 decode 阶段不产出新测速，旧速度不再代表"当前 decode 速率"；
-            // 恢复生成后新值立即回显。新鲜期内无新值（工具帧/冷却期）保留旧值不闪烁
-            const nowMs = Date.now();
-            if (speedInfo != null) {
-                if (speedInfo.speed != null) {
-                    usageEl.dataset.speedValue = String(speedInfo.speed);
-                } else if (
-                    speedInfo.lastDecodeAtMs == null ||
-                    nowMs - speedInfo.lastDecodeAtMs > TaskView.SPEED_FRESH_MS
-                ) {
-                    delete usageEl.dataset.speedValue;
-                }
+            // 速度展示：工具帧/冷却期等无新测速时保留最近速度（含估算口径标记），
+            // 实例存续期内不隐藏——旧值仍代表该任务的最近 decode 速率
+            if (speedInfo != null && speedInfo.speed != null) {
+                usageEl.dataset.speedValue = String(speedInfo.speed);
+                usageEl.dataset.speedEstimated = speedInfo.speedEstimated === true ? 'true' : 'false';
             }
             // title 只展示真实 usage，避免估算期间出现误导性 tooltip
             if (usage) {
@@ -2698,7 +2794,8 @@ class TaskView extends HTMLElement {
             const textEl = usageEl.querySelector('.usage-text');
             if (textEl) {
                 const speedValue = usageEl.dataset.speedValue || '';
-                const speedSuffix = speedValue ? taskViewT('renderer.taskview.usage.speed', { speed: speedValue }) : '';
+                const speedEstimated = usageEl.dataset.speedEstimated === 'true';
+                const speedSuffix = TaskView.formatSpeedSuffix(speedValue, speedEstimated);
                 if (completionTokens > 0 || totalTokens > 0) {
                     textEl.textContent = TaskView.formatUsageDisplayText(
                         completionTokens,
@@ -2726,17 +2823,16 @@ class TaskView extends HTMLElement {
                 completion_tokens: speedInfo ? speedInfo.estCompletion : 0,
                 total_tokens: speedInfo ? speedInfo.estTotal : 0
             };
-            // 新建胶囊同样遵守速度新鲜度：工具帧等陈旧速度不写入
-            const freshSpeed =
-                speedInfo &&
-                speedInfo.speed != null &&
-                speedInfo.lastDecodeAtMs != null &&
-                nowMs - speedInfo.lastDecodeAtMs <= TaskView.SPEED_FRESH_MS
-                    ? speedInfo.speed
-                    : null;
+            const freshSpeed = speedInfo && speedInfo.speed != null ? speedInfo.speed : null;
             message_container.insertAdjacentHTML(
                 'beforeend',
-                TaskView.formatUsageHtml(displayUsage, this._modelContextSize, isStreaming, freshSpeed)
+                TaskView.formatUsageHtml(
+                    displayUsage,
+                    this._modelContextSize,
+                    isStreaming,
+                    freshSpeed,
+                    speedInfo?.speedEstimated === true
+                )
             );
         } else if (isStreaming && (speedInfo || this._contextUsageBaseline)) {
             // 零词/工具首帧兜底：模型跳过文本直接调用工具时 speedInfo 为 null，
@@ -3445,23 +3541,26 @@ class TaskView extends HTMLElement {
         const partType = progress?.last_part?.type;
         if (partType !== 'reasoning' && partType !== 'text') {
             // 工具等非生成 part：chars 基线锚点清零（词数/总计保持原状），消息级累计保留。
-            // speed 之外补充 lastDecodeAtMs：工具期间不产出新测速，渲染侧按新鲜度
-            // 决定速度后缀去留（陈旧速度不再显示，避免把工具间隙前最后测速
-            // 伪装成"当前 decode 速度"挂满整个工具执行期）
+            // 速度返回实例级缓存的最近测速值（用户要求工具执行期持续可见最近 decode 数据）
             this._speedPartState = null;
-            const lastSample = this._speedMessageState?.samples?.at(-1);
+            const cached = TaskView.getRecentSpeed(this.task_id);
             // est 置 null：工具帧无输出估算，渲染侧保持上一词数/总计状态
             return {
-                speed: null,
-                lastDecodeAtMs: lastSample?.t ?? null,
+                speed: cached?.speed ?? null,
+                speedEstimated: cached != null,
                 estPrompt: null,
                 estCompletion: null,
                 estTotal: null
             };
         }
         const messageId = String(progress.message_id ?? '');
+        // 流式 DTO 中思考文本在 text 字段（serializeStreamingAssistantPart 删除 rendered 后
+        // 以 text 承载 content 拷贝，ReasoningMessagePart.toRenderJSON 不含 content 字段）；
+        // content ?? text 与渲染层其余读取点口径一致
         const partText =
-            partType === 'reasoning' ? String(progress.last_part.content ?? '') : String(progress.last_part.text ?? '');
+            partType === 'reasoning'
+                ? String(progress.last_part.content ?? progress.last_part.text ?? '')
+                : String(progress.last_part.text ?? '');
         const usageTokens = TaskView.getUsageDisplayTokens(progress.usage);
         const hasUsage = usageTokens.completionTokens > 0 || usageTokens.totalTokens > 0;
 
@@ -3529,7 +3628,10 @@ class TaskView extends HTMLElement {
         }
 
         // token 累计序列：有 usage 时优先真实值（+ 校准偏移），否则按加权估算；
-        // 取 max 保证 usage 停更时序列仍随输出推进
+        // 取 max 保证 usage 停更时序列仍随输出推进。
+        // 注：usageOffset 校准使 c + offset === messageTokens 恒成立，序列实际始终
+        // 由 CJK 加权估算驱动（token 级真实值 provider 不逐帧提供），因此测速口径为估算，
+        // 渲染侧统一加 ≈ 标记
         const seq = msg.messageUsage
             ? Math.max(msg.messageTokens, msg.messageUsage.c + msg.usageOffset)
             : msg.messageTokens;
@@ -3546,10 +3648,6 @@ class TaskView extends HTMLElement {
             }
         }
         let speed = null;
-        // lastDecodeAtMs 表达"当前速度值的测量时点"：有速度=本帧（最新窗口）；
-        // 无速度=窗口起点（有效测速缺失，如停顿后窗口重置的冷却期、样本不足），
-        // 渲染侧据此在速度值过旧时隐藏后缀，避免把陈旧测速当"当前 decode 速度"
-        let lastDecodeAtMs = now;
         if (samples.length > 0) {
             let start = samples.length - 1;
             while (
@@ -3559,13 +3657,11 @@ class TaskView extends HTMLElement {
             ) {
                 start--;
             }
-            lastDecodeAtMs = samples[start].t;
             const spanMs = now - samples[start].t;
             if (spanMs >= TaskView.SPEED_MIN_SPAN_MS) {
                 const value = Math.round((seq - samples[start].seq) / (spanMs / 1000));
                 if (Number.isFinite(value) && value > 0) {
                     speed = value;
-                    lastDecodeAtMs = now;
                 }
             }
         }
@@ -3589,7 +3685,9 @@ class TaskView extends HTMLElement {
             estCompletion = Math.round(msg.messageTokens);
             estTotal = (baseline ? baseline.t : 0) + estCompletion;
         }
-        return { speed, lastDecodeAtMs, estPrompt, estCompletion, estTotal };
+        // 写入实例级缓存：任务切换 / reload 重建后最近测速仍可回读（实例存续期内不持久化）
+        TaskView.rememberRecentSpeed(this.task_id, { speed, estimated: true, messageId });
+        return { speed, speedEstimated: speed != null, estPrompt, estCompletion, estTotal };
     }
 
     /**

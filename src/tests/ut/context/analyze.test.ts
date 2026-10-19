@@ -7,7 +7,8 @@ import { createAutoCompactDecision } from '../../../main/aikernel/compaction/aut
 import { buildProjectedActiveContextView } from '../../../main/aikernel/compaction/context-view';
 import { buildAssistantRounds } from '../../../main/aikernel/compaction/assistant-rounds';
 import { ToolResultReplacementStates } from '../../../main/aikernel/compaction/tool-results';
-import { estimateSystemPromptTokens, estimateTextTokens } from '../../../main/aikernel/compaction/token-estimation';
+import { estimateSystemPromptTokens } from '../../../main/aikernel/compaction/token-estimation';
+import { estimateTextTokens } from '../../../utils/token-estimation';
 import { analyzeContextDiagnostics } from '../../../main/aikernel/context/analyze';
 import { inspectContextForDiagnostics } from '../../../main/aikernel/context/inspect';
 import {

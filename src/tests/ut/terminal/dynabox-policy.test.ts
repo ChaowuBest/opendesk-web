@@ -4,6 +4,7 @@ import {
     hostPatternToVirtual,
     policyText
 } from '../../../main/applications/terminal/sandboxes/dynabox.js';
+import { policyTextLinux } from '../../../main/applications/terminal/sandboxes/dynabox-policy.js';
 import { createNodePolicyRules } from '../../../main/aikernel/security/policies/node.js';
 
 describe('expandPermissionPattern', () => {
@@ -219,6 +220,46 @@ describe('policyText', () => {
         const fallbackAskAt = text.indexOf('access = "write"\nperm = "ask"');
         expect(text.indexOf('CryptnetUrlCache')).toBeLessThan(fallbackAskAt);
         expect(text.indexOf('/AppData/LocalLow/Temp/**')).toBeLessThan(fallbackAskAt);
+    });
+
+    test('Windows Shell desktop.ini 全卷读放行（回归：standard 模式 jest worker 逐个弹 desktop.ini ask）', () => {
+        // 复现自 task_mvdeo8ba：沙箱内 jest worker（Windows Shell 组件初始化）
+        // 启动时逐个读取已知文件夹（Desktop/Documents/...）与 Program Files 等
+        // 任意位置的 desktop.ini（一次 jest 运行 22 个 worker 累计 646 次），
+        // 不在运行时读放行清单内时逐次命中 /** read ask 弹窗。这是 Windows
+        // Shell 的进程启动/文件夹浏览固定行为，按语义类别整类放行；写仍由兜底
+        // ask 管控（desktop.ini 可劫持文件夹视图，不允许静默写入）。
+        const text = policyText('http://ep/decide', 't', undefined, 'C:\\Users\\tester');
+        const at = text.indexOf('path = "/**/desktop.ini"');
+        expect(at).toBeGreaterThanOrEqual(0);
+        expect(text.slice(at - 40, at + 120)).toContain('access = "read"');
+        expect(text.slice(at - 40, at + 120)).toContain('perm = "allow"');
+        // 放行须早于 /** read ask 兜底块（文本内首个 read ask 是调试实例
+        // 凭据规则，不能用 indexOf('perm = "ask"') 当锚点）
+        const fallbackReadAskAt = text.indexOf('path = "/**"\naccess = "read"');
+        expect(fallbackReadAskAt).toBeGreaterThan(0);
+        expect(at).toBeLessThan(fallbackReadAskAt);
+        // 不逐文件夹/用户名硬编码枚举
+        expect(text).not.toContain('/Users/*/Desktop/desktop.ini');
+        // home 缺失时同样生成（desktop.ini 放行不依赖 home 推导）
+        expect(policyText('http://ep/decide', 't')).toContain('path = "/**/desktop.ini"');
+        // 仅 Windows 生成：Linux/OH 策略无此规则（desktop.ini 是 Windows Shell 特有）
+        const linuxText = policyTextLinux('http://ep/decide', 't', '/work', undefined, '/home/tester');
+        expect(linuxText).not.toContain('desktop.ini');
+    });
+
+    test('用户显式 deny 优先于 desktop.ini 全卷读放行（原生 first-match：deny/ask 规则先于运行时放行导出）', () => {
+        // 运行时放行不能吞掉用户对特定目录的显式拒绝：用户 deny 规则经
+        // orderedRules（deny > ask > allow）排序后先导出，原生 first-match
+        // 命中即停（原生 sandbox.exe debug-rules 实测 /C/keys/** deny 下
+        // /C/keys/desktop.ini 仍 deny）。此处固化"deny 规则块在 desktop.ini
+        // 放行块之前导出"的文本顺序前提。
+        const rules = [{ resourceType: 'file', action: 'read', pathPattern: 'C:/keys/**', effect: 'deny' }] as any[];
+        const text = policyText('http://ep/decide', 't', rules, 'C:\\Users\\tester');
+        const denyAt = text.indexOf('path = "/C/keys/**"');
+        const iniAt = text.indexOf('path = "/**/desktop.ini"');
+        expect(denyAt).toBeGreaterThanOrEqual(0);
+        expect(iniAt).toBeGreaterThan(denyAt);
     });
 
     test('git 运行时读放行与凭据规则已迁移至 security/policies（策略文本由引擎规则导出）', () => {

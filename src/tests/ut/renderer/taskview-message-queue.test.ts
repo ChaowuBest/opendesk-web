@@ -2141,9 +2141,9 @@ describe('task-view message queue', () => {
                 historyContainer
             )
         ).toBe(true);
-        // 滑动窗口速度：序列 10 → 100，跨度 1s → (100-10)/1 = 90 token/s
+        // 滑动窗口速度：序列 10 → 100，跨度 1s → (100-10)/1 = 90 token/s（加权估算口径带 ≈）
         expect(taskView.querySelector('#message-container-assistant-speed .usage-text')?.textContent?.trim()).toBe(
-            '已输出 100 词 (90 词/秒), 总计 100 词'
+            '已输出 100 词 (≈90 词/秒), 总计 100 词'
         );
 
         // 工具 part 插入：不产生样本，胶囊上已显示的内容保持原状
@@ -2161,7 +2161,7 @@ describe('task-view message queue', () => {
         expect(taskView._speedPartState).toBeNull();
         expect(taskView._speedMessageState?.messageTokens).toBe(100);
         expect(taskView.querySelector('#message-container-assistant-speed .usage-text')?.textContent?.trim()).toBe(
-            '已输出 100 词 (90 词/秒), 总计 100 词'
+            '已输出 100 词 (≈90 词/秒), 总计 100 词'
         );
 
         // 下一个生成 part：与 part 锚点解耦，样本连续，速度立即反映含新 part 的最新窗口
@@ -2179,11 +2179,11 @@ describe('task-view message queue', () => {
         expect(taskView._speedPartState?.key).toBe('assistant-speed:2:text');
         // messageChars = 400 + 200 = 600 → 序列 150；窗口 10 → 150 / 1s = 140 token/s
         expect(taskView.querySelector('#message-container-assistant-speed .usage-text')?.textContent?.trim()).toBe(
-            '已输出 150 词 (140 词/秒), 总计 150 词'
+            '已输出 150 词 (≈140 词/秒), 总计 150 词'
         );
 
         // usage 到达后校正为真实值；校准偏移使 token 序列平滑切换（est 150 → usage 90 + offset 60），
-        // 速度继续按窗口增量计算：(150-10)/2s = 70 token/s
+        // 速度继续按窗口增量计算：(150-10)/2s = 70 token/s（窗口含早期估算样本仍带 ≈）
         now = baseTime + 2000;
         expect(
             taskView._renderAssistantProgress(
@@ -2198,12 +2198,11 @@ describe('task-view message queue', () => {
             )
         ).toBe(true);
         const usageEl = taskView.querySelector('#message-container-assistant-speed .usage-text');
-        expect(usageEl?.textContent?.trim()).toBe('已输出 90 词 (70 词/秒), 总计 100 词');
+        expect(usageEl?.textContent?.trim()).toBe('已输出 90 词 (≈70 词/秒), 总计 100 词');
         expect(usageEl?.closest('.message-usage')?.getAttribute('data-speed-value')).toBe('70');
 
-        // 长停顿（间隔 > 新鲜度窗口）后恢复输出：速度窗口从断点重算（GAP 重置），
-        // 重算首帧跨度不足无速度——恢复过渡期内旧速度短暂保留（lastDecodeAtMs=断点），
-        // 词数按 usage 基线 + 加权增量继续估算
+        // 长停顿（间隔 > 窗口 GAP）后恢复输出：速度窗口从断点重算（GAP 重置），
+        // 重算首帧跨度不足无新速度——过渡期保留最近速度，词数按 usage 基线 + 加权增量继续估算
         now = baseTime + 6000;
         expect(
             taskView._renderAssistantProgress(
@@ -2218,7 +2217,7 @@ describe('task-view message queue', () => {
             )
         ).toBe(true);
         expect(taskView.querySelector('#message-container-assistant-speed .usage-text')?.textContent?.trim()).toBe(
-            '已输出 90 词 (70 词/秒), 总计 100 词'
+            '已输出 90 词 (≈70 词/秒), 总计 100 词'
         );
 
         now = baseTime + 7000;
@@ -2235,7 +2234,7 @@ describe('task-view message queue', () => {
         ).toBe(true);
         // 窗口重置后从断点起算：序列 150 → 200 / 1s = 50 token/s；delta = (800-600)/4 = 50
         expect(taskView.querySelector('#message-container-assistant-speed .usage-text')?.textContent?.trim()).toBe(
-            '已输出 140 词 (50 词/秒), 总计 150 词'
+            '已输出 140 词 (≈50 词/秒), 总计 150 词'
         );
 
         dateNow.mockRestore();
@@ -2281,7 +2280,7 @@ describe('task-view message queue', () => {
             )
         ).toBe(true);
         expect(taskView.querySelector('#message-container-assistant-flicker .usage-text')?.textContent?.trim()).toBe(
-            '已输出 100 词 (90 词/秒), 总计 100 词'
+            '已输出 100 词 (≈90 词/秒), 总计 100 词'
         );
         expect(taskView._speedMessageState?.messageTokens).toBe(100);
 
@@ -2334,9 +2333,9 @@ describe('task-view message queue', () => {
                 historyContainer
             )
         ).toBe(true);
-        // 窗口速度：(170-38)/1s = 132 token/s
+        // 窗口速度：(170-38)/1s = 132 token/s（估算口径带 ≈）
         expect(taskView.querySelector('#message-container-assistant-cjk .usage-text')?.textContent?.trim()).toBe(
-            '已输出 170 词 (132 词/秒), 总计 170 词'
+            '已输出 170 词 (≈132 词/秒), 总计 170 词'
         );
 
         // 增量扫描结果与一次性全量加权口径完全一致
@@ -2408,7 +2407,7 @@ describe('task-view message queue', () => {
             )
         ).toBe(true);
         expect(taskView.querySelector('#message-container-assistant-ttft .usage-text')?.textContent?.trim()).toBe(
-            '已输出 200 词 (167 词/秒), 总计 200 词'
+            '已输出 200 词 (≈167 词/秒), 总计 200 词'
         );
 
         dateNow.mockRestore();
@@ -2458,7 +2457,145 @@ describe('task-view message queue', () => {
             )
         ).toBe(true);
         expect(taskView.querySelector('#message-container-assistant-reasoning .usage-text')?.textContent?.trim()).toBe(
-            '已输出 140 词 (112 词/秒), 总计 140 词'
+            '已输出 140 词 (≈112 词/秒), 总计 140 词'
+        );
+
+        dateNow.mockRestore();
+    });
+
+    test('capsule creation path with context baseline shows decode speed on later frames', async () => {
+        const taskView = document.createElement('task-view') as HTMLElement & {
+            task_id: string;
+            _contextUsageBaseline: { p: number; t: number } | null;
+            _modelContextSize: number;
+            _renderAssistantProgress: (progress: Record<string, unknown>, historyContainer: HTMLElement) => boolean;
+        };
+        taskView.task_id = 'task-1';
+        taskView.innerHTML = '<div id="taskview-chat-history"></div>';
+        const historyContainer = taskView.querySelector('#taskview-chat-history') as HTMLElement;
+        // 已有上下文基线的会话中段回合：流式首帧 usageEl 为 null，走胶囊创建分支
+        taskView._contextUsageBaseline = { p: 230000, t: 237000 };
+        taskView._modelContextSize = 1000000;
+
+        const baseTime = Date.now();
+        const dateNow = jest.spyOn(Date, 'now');
+        let now = baseTime;
+        dateNow.mockImplementation(() => now);
+
+        // 首帧：40 个汉字 → 28 token，胶囊创建，无基线外速度（窗口不足 500ms 正常）
+        expect(
+            taskView._renderAssistantProgress(
+                {
+                    task_status: 'running',
+                    message_id: 'assistant-baseline',
+                    last_part: { type: 'reasoning', content: '思'.repeat(40) },
+                    last_part_index: 0
+                },
+                historyContainer
+            )
+        ).toBe(true);
+        expect(taskView.querySelector('#message-container-assistant-baseline .usage-text')?.textContent?.trim()).toBe(
+            '已输出 28 词, 总计 237028 词, 上下文占比 23.7%'
+        );
+
+        // 1 秒后帧：速度出现（(140-28)/1s = 112 词/秒），总计随输出推进
+        now = baseTime + 1000;
+        expect(
+            taskView._renderAssistantProgress(
+                {
+                    task_status: 'running',
+                    message_id: 'assistant-baseline',
+                    last_part: { type: 'reasoning', content: '思'.repeat(200) },
+                    last_part_index: 0
+                },
+                historyContainer
+            )
+        ).toBe(true);
+        expect(taskView.querySelector('#message-container-assistant-baseline .usage-text')?.textContent?.trim()).toBe(
+            '已输出 140 词 (≈112 词/秒), 总计 237140 词, 上下文占比 23.7%'
+        );
+
+        // 流式中 DOM 重建（reload / 视图切回）：胶囊消失但测速样本保留。
+        // 下一帧带着新鲜速度走进「胶囊创建」分支，此前该分支引用了只在
+        // if (usageEl) 分支声明的 nowMs，必然抛 ReferenceError 导致胶囊
+        // 永远建不出来且每帧渲染中断
+        taskView.querySelector('#message-container-assistant-baseline .message-usage')?.remove();
+        now = baseTime + 1500;
+        expect(
+            taskView._renderAssistantProgress(
+                {
+                    task_status: 'running',
+                    message_id: 'assistant-baseline',
+                    last_part: { type: 'reasoning', content: '思'.repeat(300) },
+                    last_part_index: 0
+                },
+                historyContainer
+            )
+        ).toBe(true);
+        // 滑动窗口回溯到首帧（间隔均在阈值内）：(210-28)/1.5s = 121 词/秒
+        expect(taskView.querySelector('#message-container-assistant-baseline .usage-text')?.textContent?.trim()).toBe(
+            '已输出 210 词 (≈121 词/秒), 总计 237210 词, 上下文占比 23.7%'
+        );
+
+        dateNow.mockRestore();
+    });
+
+    test('reasoning streaming from real DTO shape keeps speed and word count alive with text-only usage', async () => {
+        const taskView = document.createElement('task-view') as HTMLElement & {
+            task_id: string;
+            _modelContextSize: number;
+            _renderAssistantProgress: (progress: Record<string, unknown>, historyContainer: HTMLElement) => boolean;
+        };
+        taskView.task_id = 'task-1';
+        taskView.innerHTML = '<div id="taskview-chat-history"></div>';
+        taskView._modelContextSize = 1000000;
+        const historyContainer = taskView.querySelector('#taskview-chat-history') as HTMLElement;
+
+        const baseTime = Date.now();
+        const dateNow = jest.spyOn(Date, 'now');
+        let now = baseTime;
+        dateNow.mockImplementation(() => now);
+
+        // 真实流式 DTO：serializeStreamingAssistantPart 删除 rendered，思考文本在 text 字段
+        //（ReasoningMessagePart.toRenderJSON 不含 content）；GLM 系 usage 的 completion_tokens
+        // 只统计可见文本、不含 reasoning，且流中每帧携带
+        const glmUsage = { prompt_tokens: 102995, completion_tokens: 30, total_tokens: 103025 };
+
+        // 首帧：40 个汉字思考 → 加权 28 token；usage 检查点 completion=30（仅 text 口径）
+        expect(
+            taskView._renderAssistantProgress(
+                {
+                    task_status: 'running',
+                    streaming: true,
+                    message_id: 'assistant-glm',
+                    last_part_index: 0,
+                    last_part: { type: 'reasoning', contentLength: 40, elapsedSeconds: 0, text: '思'.repeat(40) },
+                    usage: { ...glmUsage }
+                },
+                historyContainer
+            )
+        ).toBe(true);
+
+        // 1 秒后：思考增长到 200 字（140 token），usage 数值不变（completion 仍只含 text=30）
+        now = baseTime + 1000;
+        expect(
+            taskView._renderAssistantProgress(
+                {
+                    task_status: 'running',
+                    streaming: true,
+                    message_id: 'assistant-glm',
+                    last_part_index: 0,
+                    last_part: { type: 'reasoning', contentLength: 200, elapsedSeconds: 1, text: '思'.repeat(200) },
+                    usage: { ...glmUsage }
+                },
+                historyContainer
+            )
+        ).toBe(true);
+
+        // 速度来自估算序列增量：(140-28)/1s = 112 词/秒（≈ 估算口径）；
+        // 词数 = usage 检查点 30 + 思考增量 112 = 142（而非冻结在 30）
+        expect(taskView.querySelector('#message-container-assistant-glm .usage-text')?.textContent?.trim()).toBe(
+            '已输出 142 词 (≈112 词/秒), 总计 103137 词, 上下文占比 10.3%'
         );
 
         dateNow.mockRestore();
@@ -2508,7 +2645,7 @@ describe('task-view message queue', () => {
             usage: { prompt_tokens: 10, completion_tokens: 100, total_tokens: 110 }
         });
         const capsule = taskView.querySelector('#message-container-assistant-final .usage-text');
-        expect(capsule?.textContent?.trim()).toBe('已输出 100 词 (90 词/秒), 总计 110 词');
+        expect(capsule?.textContent?.trim()).toBe('已输出 100 词 (≈90 词/秒), 总计 110 词');
 
         dateNow.mockRestore();
     });
@@ -2662,14 +2799,15 @@ describe('task-view message queue', () => {
         expect(sendFrame(1200)).toBe(true);
         const textAt = () =>
             taskView.querySelector('#message-container-assistant-stale-usage .usage-text')?.textContent?.trim();
+        // 窗口含全部样本：500-100 / 2.4s = 167（增量全部为加权估算 → ≈）
         const first = textAt();
         // 1200 chars → 300 tokens；检查点基线 100 → delta = 200 → 词数 = 258
-        expect(first).toBe('已输出 258 词 (167 词/秒), 总计 200258 词');
+        expect(first).toBe('已输出 258 词 (≈167 词/秒), 总计 200258 词');
 
-        // 继续输出而 usage 仍不变：词数继续增长（窗口含全部样本：500-100 / 2.4s = 167）
+        // 继续输出而 usage 仍不变：词数继续增长
         now += 1000;
         expect(sendFrame(2000)).toBe(true);
-        expect(textAt()).toBe('已输出 458 词 (167 词/秒), 总计 200458 词');
+        expect(textAt()).toBe('已输出 458 词 (≈167 词/秒), 总计 200458 词');
 
         // usage 推进（新检查点 c=700）：词数直接采用新值，序列校准保持速度连续
         now += 1000;
@@ -2880,7 +3018,7 @@ describe('task-view message queue', () => {
         expect(capsule?.getAttribute('data-streaming')).toBe('true');
     });
 
-    test('hides the stale speed suffix while a tool runs and restores it when decoding resumes', async () => {
+    test('keeps the last speed visible while a tool runs and restores fresh decoding when it resumes', async () => {
         const taskView = document.createElement('task-view') as HTMLElement & {
             task_id: string;
             _renderAssistantProgress: (progress: Record<string, unknown>, historyContainer: HTMLElement) => boolean;
@@ -2896,7 +3034,7 @@ describe('task-view message queue', () => {
         const capsuleText = () =>
             taskView.querySelector('#message-container-assistant-stale-speed .usage-text')?.textContent?.trim();
 
-        // 生成帧：测得速度 90
+        // 生成帧：测得速度 90（全部增量来自加权估算 → ≈ 标记）
         taskView._renderAssistantProgress(
             {
                 task_status: 'running',
@@ -2916,7 +3054,7 @@ describe('task-view message queue', () => {
             },
             historyContainer
         );
-        expect(capsuleText()).toBe('已输出 100 词 (90 词/秒), 总计 100 词');
+        expect(capsuleText()).toBe('已输出 100 词 (≈90 词/秒), 总计 100 词');
 
         // 进入工具：300ms 内速度保持（part 间隙不闪烁）
         now = baseTime + 1300;
@@ -2929,9 +3067,9 @@ describe('task-view message queue', () => {
             },
             historyContainer
         );
-        expect(capsuleText()).toBe('已输出 100 词 (90 词/秒), 总计 100 词');
+        expect(capsuleText()).toBe('已输出 100 词 (≈90 词/秒), 总计 100 词');
 
-        // 工具长时间执行：速度样本过期（>2s），后缀隐藏，词数/总计保留
+        // 工具长时间执行：速度后缀持续保留（实例存续期内最近 decode 数据不隐藏）
         now = baseTime + 5000;
         taskView._renderAssistantProgress(
             {
@@ -2942,7 +3080,7 @@ describe('task-view message queue', () => {
             },
             historyContainer
         );
-        expect(capsuleText()).toBe('已输出 100 词, 总计 100 词');
+        expect(capsuleText()).toBe('已输出 100 词 (≈90 词/秒), 总计 100 词');
 
         // 恢复生成：窗口从断点重算，速度立即回来
         now = baseTime + 5500;
@@ -2968,7 +3106,93 @@ describe('task-view message queue', () => {
         const resumed = capsuleText();
         expect(resumed).toContain('词/秒');
         // 词数 = part0 的 100 + 恢复帧 part2 的 350 = 450；窗口 [200@5500, 350@6000] 半秒 → 300 词/秒
-        expect(resumed).toBe('已输出 450 词 (300 词/秒), 总计 450 词');
+        expect(resumed).toBe('已输出 450 词 (≈300 词/秒), 总计 450 词');
+
+        dateNow.mockRestore();
+    });
+
+    test('reload restores the last decode speed from the instance cache after task switching', async () => {
+        const taskView = document.createElement('task-view') as HTMLElement & {
+            task_id: string;
+            _renderAssistantProgress: (progress: Record<string, unknown>, historyContainer: HTMLElement) => boolean;
+            handleAssistantReplace: (progress: Record<string, unknown>) => void;
+            renderAssistantMessage: (message: Record<string, unknown>, isLast?: boolean) => string;
+            reload: () => Promise<void>;
+        };
+        taskView.task_id = 'task-cache';
+        taskView.innerHTML = '<div id="taskview-chat-history"></div>';
+        const historyContainer = taskView.querySelector('#taskview-chat-history') as HTMLElement;
+
+        const baseTime = Date.now();
+        const dateNow = jest.spyOn(Date, 'now');
+        let now = baseTime;
+        dateNow.mockImplementation(() => now);
+
+        // 速度序列由 CJK 加权估算驱动：60 → 150 token / 1s = 90 词/秒（估算口径带 ≈）
+        taskView._renderAssistantProgress(
+            {
+                task_status: 'running',
+                message_id: 'assistant-precise',
+                last_part: { type: 'text', text: 'a'.repeat(240) },
+                last_part_index: 0,
+                usage: { prompt_tokens: 1000, completion_tokens: 60, total_tokens: 1060 }
+            },
+            historyContainer
+        );
+        now = baseTime + 1000;
+        taskView._renderAssistantProgress(
+            {
+                task_status: 'running',
+                message_id: 'assistant-precise',
+                last_part: { type: 'text', text: 'a'.repeat(600) },
+                last_part_index: 0,
+                usage: { prompt_tokens: 1000, completion_tokens: 150, total_tokens: 1150 }
+            },
+            historyContainer
+        );
+        expect(taskView.querySelector('#message-container-assistant-precise .usage-text')?.textContent?.trim()).toBe(
+            '已输出 150 词 (≈90 词/秒), 总计 1150 词'
+        );
+
+        // 终态 replace 重建：速度从 DOM 回读保留
+        taskView.handleAssistantReplace({
+            task_status: 'completed',
+            message_id: 'assistant-precise',
+            parts: [{ type: 'text', text: 'a'.repeat(600), rendered: '<p>answer</p>' }],
+            usage: { prompt_tokens: 1000, completion_tokens: 150, total_tokens: 1150 }
+        });
+        expect(taskView.querySelector('#message-container-assistant-precise .usage-text')?.textContent?.trim()).toBe(
+            '已输出 150 词 (≈90 词/秒), 总计 1150 词'
+        );
+
+        // 模拟任务切走再切回（reload 历史重建）：实例级缓存回填最近测速
+        window.taskManagerAPI = {
+            ...(window.taskManagerAPI ?? {}),
+            getFullTask: jest.fn(async () => ({
+                task_status: 'stopped',
+                chat_context: {
+                    messages: [
+                        {
+                            role: 'assistant',
+                            message_id: 'assistant-precise',
+                            content: [{ type: 'text', rendered: 'answer' }],
+                            usage: { prompt_tokens: 1000, completion_tokens: 150, total_tokens: 1150 }
+                        }
+                    ]
+                },
+                model: 'model-a'
+            })),
+            getModelContextSize: jest.fn(async () => 0)
+        };
+        await taskView.reload();
+        expect(taskView.querySelector('#message-container-assistant-precise .usage-text')?.textContent?.trim()).toBe(
+            '已输出 150 词 (≈90 词/秒), 总计 1150 词'
+        );
+        expect(
+            taskView
+                .querySelector('#message-container-assistant-precise .message-usage')
+                ?.getAttribute('data-speed-value')
+        ).toBe('90');
 
         dateNow.mockRestore();
     });

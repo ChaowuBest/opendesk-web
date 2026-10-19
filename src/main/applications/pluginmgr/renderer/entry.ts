@@ -165,7 +165,9 @@ button, input { font: inherit; }
     background: #fff;
     box-shadow: 0 1px 3px rgba(0, 0, 0, .06), 0 .5px 1px rgba(0, 0, 0, .03);
 }
-.seg-icon { font-size: 13px; }
+.seg-icon { display: inline-flex; font-size: 13px; }
+/* 块级显示消除 inline svg 的基线 descender 空隙，保证图标与文字垂直居中对齐 */
+.seg-icon svg { display: block; }
 .seg-badge {
     padding: 1px 7px;
     color: #5b8def;
@@ -459,6 +461,17 @@ button:hover { background: #f4f5f7; }
 .contribution-pill.browser { color: #c05a8a; background: #fbeaf2; }
 .card-footer { display: flex; min-width: 0; align-items: center; justify-content: space-between; gap: 10px; margin-top: auto; padding-top: 2px; }
 .card-footer button { padding: 5px 12px; border-radius: 14px; font-size: 12px; font-weight: 600; }
+.builtin-tag {
+    margin-right: auto;
+    padding: 3px 9px;
+    color: #8a6d1f;
+    background: #fdf6e3;
+    border: 1px solid rgba(196, 154, 42, .25);
+    border-radius: 12px;
+    font-size: 11px;
+    font-weight: 550;
+}
+.card-footer .plugin-toggle { margin-left: auto; }
 .plugin-toggle {
     position: relative;
     width: 40px;
@@ -498,8 +511,9 @@ button:hover { background: #f4f5f7; }
 :host([data-theme="dark"]) { color: #ddd; background: #1e1e1e; color-scheme: dark; }
 :host([data-theme="dark"]) .header-area { background: rgba(37, 37, 38, .95); border-color: rgba(255, 255, 255, .1); }
 :host([data-theme="dark"]) .seg-control { background: #333; }
-:host([data-theme="dark"]) .seg-item { color: rgba(255, 255, 255, .58); }
-:host([data-theme="dark"]) .seg-item.active { color: #fff; background: #252526; box-shadow: none; }
+/* 全局深色 button 背景会污染 seg-item，这里显式还原：非激活 tab 必须保持透明底、无边框 */
+:host([data-theme="dark"]) .seg-item { color: rgba(255, 255, 255, .58); background: transparent; border: 0; }
+:host([data-theme="dark"]) .seg-item.active { color: #fff; background: #252526; border: 0; box-shadow: none; }
 :host([data-theme="dark"]) .action-btn, :host([data-theme="dark"]) button,
 :host([data-theme="dark"]) .card, :host([data-theme="dark"]) .add-dropdown,
 :host([data-theme="dark"]) .modal-dialog {
@@ -533,6 +547,7 @@ button:hover { background: #f4f5f7; }
 :host([data-theme="dark"]) .item-hint { color: #858990; }
 :host([data-theme="dark"]) .contribution-pill.agent { color: #8bc2f2; background: rgba(47, 127, 191, .22); }
 :host([data-theme="dark"]) .contribution-pill.browser { color: #efa6c6; background: rgba(192, 90, 138, .22); }
+:host([data-theme="dark"]) .builtin-tag { color: #d9b96a; background: rgba(196, 154, 42, .14); border-color: rgba(196, 154, 42, .3); }
 :host([data-theme="dark"]) .empty {
     color: #a4a7ad;
     background: #242426;
@@ -556,6 +571,8 @@ export class PluginMgrEntryWidget extends HTMLElement {
     private loading = true;
     private busy = false;
     private addMenuOpen = false;
+    /** 当前展示的 tab：内置插件与用户已安装插件分组展示 */
+    private activeTab: 'builtin' | 'installed' = 'installed';
     private installDialogMode?: InstallDialogMode;
     private installSpec = '';
     private installProgress?: InstallProgressState;
@@ -829,6 +846,7 @@ export class PluginMgrEntryWidget extends HTMLElement {
                 )
                 .join('')}
             <div class="card-footer">
+                ${entry.source === 'builtin' ? `<span class="builtin-tag">${escapeHtml(this.t('plugin.center.builtinTag'))}</span>` : ''}
                 <label class="plugin-toggle" title="${escapeHtml(
                     this.t(entry.enabled ? 'plugin.center.disable' : 'plugin.center.enable')
                 )}">
@@ -1073,18 +1091,20 @@ export class PluginMgrEntryWidget extends HTMLElement {
         this.renderAgentsList(entry, name, status, capabilities);
     }
 
-    private renderInstalledPanel(): string {
+    private renderInstalledPanel(entries: PluginListEntry[]): string {
         if (this.loading) {
             return `<section class="installed-panel"><div class="empty">${escapeHtml(this.t('plugin.center.loading'))}</div></section>`;
         }
-        if (this.entries.length === 0) {
+        if (entries.length === 0) {
+            const emptyKey = this.activeTab === 'builtin' ? 'plugin.center.builtinEmpty' : 'plugin.center.empty';
+            const hintKey = this.activeTab === 'builtin' ? 'plugin.center.builtinEmptyHint' : 'plugin.center.emptyHint';
             return `<section class="installed-panel"><div class="empty">
                 <div class="empty-icon">📦</div>
-                <div class="empty-title">${escapeHtml(this.t('plugin.center.empty'))}</div>
-                <div class="empty-hint">${escapeHtml(this.t('plugin.center.emptyHint'))}</div>
+                <div class="empty-title">${escapeHtml(this.t(emptyKey))}</div>
+                <div class="empty-hint">${escapeHtml(this.t(hintKey))}</div>
             </div></section>`;
         }
-        return `<section class="installed-panel"><div class="grid">${this.entries.map((entry) => this.renderCard(entry)).join('')}</div></section>`;
+        return `<section class="installed-panel"><div class="grid">${entries.map((entry) => this.renderCard(entry)).join('')}</div></section>`;
     }
 
     private renderInstallProgress(): string {
@@ -1135,16 +1155,21 @@ export class PluginMgrEntryWidget extends HTMLElement {
                 document.documentElement.dataset.theme ||
                 this.closest('[data-theme]')?.getAttribute('data-theme')
         );
-        const installedCount = this.entries.length;
+        const builtinEntries = this.entries.filter((entry) => entry.source === 'builtin');
+        const installedEntries = this.entries.filter((entry) => entry.source !== 'builtin');
         this.shadowRoot!.innerHTML = `<style>${STYLE}</style>
             <div class="shell">
                 <header class="header-area">
                     <div class="header-title">${escapeHtml(this.t('plugin.app.name'))}</div>
                     <div class="seg-row">
                         <div class="seg-control">
-                            <button type="button" class="seg-item active" data-tab="installed">
-                                <span class="seg-icon">📦</span>${escapeHtml(this.t('plugin.center.installed'))}
-                                ${installedCount ? `<span class="seg-badge">${installedCount}</span>` : ''}
+                            <button type="button" class="seg-item ${this.activeTab === 'installed' ? 'active' : ''}" data-tab="installed">
+                                <span class="seg-icon"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 8 12 3 3 8v8l9 5 9-5z"/><path d="m3 8 9 5 9-5"/><path d="M12 13v8"/></svg></span>${escapeHtml(this.t('plugin.center.installed'))}
+                                ${installedEntries.length ? `<span class="seg-badge">${installedEntries.length}</span>` : ''}
+                            </button>
+                            <button type="button" class="seg-item ${this.activeTab === 'builtin' ? 'active' : ''}" data-tab="builtin">
+                                <span class="seg-icon"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l1.9 5.8a2 2 0 0 0 1.3 1.3L21 12l-5.8 1.9a2 2 0 0 0-1.3 1.3L12 21l-1.9-5.8a2 2 0 0 0-1.3-1.3L3 12l5.8-1.9a2 2 0 0 0 1.3-1.3L12 3Z"/></svg></span>${escapeHtml(this.t('plugin.center.builtin'))}
+                                ${builtinEntries.length ? `<span class="seg-badge">${builtinEntries.length}</span>` : ''}
                             </button>
                         </div>
                         <div class="header-actions">
@@ -1180,7 +1205,8 @@ export class PluginMgrEntryWidget extends HTMLElement {
                 </header>
                 ${this.notice ? `<div class="notice ${this.notice.error ? 'error' : ''}">${escapeHtml(this.notice.text)}</div>` : ''}
                 <div class="content">
-                    <div class="tab-panel" data-panel="installed">${this.renderInstalledPanel()}</div>
+                    <div class="tab-panel" data-panel="installed" ${this.activeTab === 'installed' ? '' : 'hidden'}>${this.renderInstalledPanel(installedEntries)}</div>
+                    <div class="tab-panel" data-panel="builtin" ${this.activeTab === 'builtin' ? '' : 'hidden'}>${this.renderInstalledPanel(builtinEntries)}</div>
                 </div>
                 ${this.renderInstallDialog()}
                 ${this.renderInstallProgress()}
@@ -1222,6 +1248,15 @@ export class PluginMgrEntryWidget extends HTMLElement {
     }
 
     private bindEvents(): void {
+        this.shadowRoot?.querySelectorAll<HTMLElement>('[data-tab]').forEach((tab) => {
+            tab.addEventListener('click', () => {
+                const target = tab.dataset.tab;
+                if (target !== 'builtin' && target !== 'installed') return;
+                if (this.activeTab === target) return;
+                this.activeTab = target;
+                this.render();
+            });
+        });
         this.shadowRoot?.querySelector('[data-action="add"]')?.addEventListener('click', (event) => {
             event.stopPropagation();
             this.addMenuOpen = !this.addMenuOpen;

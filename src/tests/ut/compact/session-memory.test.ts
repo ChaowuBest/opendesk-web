@@ -20,7 +20,7 @@ import {
     validateSessionMemoryMarkdown,
     writeTaskSessionMemory
 } from '../../../main/aikernel/compaction/session-memory-compact';
-import { estimateTextTokens } from '../../../main/aikernel/compaction/token-estimation';
+import { estimateTextTokens } from '../../../utils/token-estimation';
 import { buildActiveContextView } from '../../../main/aikernel/compaction/context-view';
 import { getTaskSessionMemoryPath, setCustomOpendeskDirectory } from '../../../main/utils/setting';
 import {

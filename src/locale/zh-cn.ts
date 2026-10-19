@@ -403,6 +403,8 @@ export const zhCn: Record<string, string> = {
     'plugin.settings.integrity': '完整性摘要',
     'plugin.center.description': '安装、配置和诊断 OpenDesk 插件。',
     'plugin.center.installed': '已安装',
+    'plugin.center.builtin': '内置插件',
+    'plugin.center.builtinTag': '内置',
     'plugin.center.loading': '正在加载插件…',
     'plugin.center.empty': '未发现插件。',
     'plugin.center.emptyHint': '点击右上角“+”安装插件。',
@@ -2538,6 +2540,7 @@ export const zhCn: Record<string, string> = {
     'renderer.taskview.usage.display': '已输出 ${output} 词${speed}, 总计 ${total} 词${ratio}',
     'renderer.taskview.usage.outputOnly': '已输出 ${output} 词',
     'renderer.taskview.usage.speed': ' (${speed} 词/秒)',
+    'renderer.taskview.usage.speedEstimated': ' (≈${speed} 词/秒)',
     'renderer.taskview.usage.contextRatio': ', 上下文占比 ${pct}%',
     'renderer.taskview.usage.contextRatioExceeded':
         ', 上下文占比 ${pct}%（已超限，当前上下文窗口配置偏小，回复 token 数超出窗口大小）',

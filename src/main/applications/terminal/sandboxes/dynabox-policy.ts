@@ -360,6 +360,18 @@ function windowsRuntimeReadPatterns(home?: string): string[] {
             if (virtual) patterns.push(virtual, `${virtual}/**`);
         }
     }
+    // Windows Shell 的 desktop.ini（文件夹视图元数据：图标/InfoTip/本地化
+    // 名映射）读放行：进程内 Shell 组件初始化与文件对话框浏览时会探测任意
+    // 位置的 desktop.ini（实测 jest worker 一次运行 22 个 worker 读已知文件
+    // 夹 646 次，还含 Program Files 等非家目录位置），不放行则 standard 模式
+    // 逐次命中 /** read ask 弹窗。按语义类别整类放行（`**` 匹配 0+ 组件，
+    // 卷根到任意深度、任意盘符），不逐文件夹枚举。仅 read：desktop.ini 可
+    // 劫持文件夹视图，写仍由兜底 ask 管控。用户显式 deny/ask 规则经
+    // orderedRules 排序后先行导出、first-match 命中即停，优先级不受影响
+    // （原生实测 deny 目录下的 desktop.ini 仍 deny）。desktop.ini 是 Windows
+    // Shell 特有文件，Linux/OH 策略不生成（本函数仅 Windows policyText 调用）。
+    // 不依赖 home 推导，无条件生成。
+    patterns.push('/**/desktop.ini');
     // PATH 展开：命令的 PATH 搜索逐目录 stat（观测证实每目录一次读 ask），
     // 目录本身与子树都放行（stat 命中目录本身，读文件命中子树）。
     for (const dir of (process.env.PATH || '').split(';')) {

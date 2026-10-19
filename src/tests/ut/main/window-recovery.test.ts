@@ -18,7 +18,7 @@ function setupClock() {
 }
 
 function createLogger() {
-    return { info: jest.fn(), warn: jest.fn(), error: jest.fn() };
+    return { debug: jest.fn(), info: jest.fn(), warn: jest.fn(), error: jest.fn() };
 }
 
 function gpuDetails(overrides: Partial<ChildProcessGoneDetails> = {}): ChildProcessGoneDetails {
@@ -296,6 +296,8 @@ describe('renderer freeze watchdog with heartbeat probe', () => {
         // 遮挡期间每轮巡检都会探活，日志只在进入该状态时记一条
         expect(probe.mock.calls.length).toBeGreaterThan(1);
         expect(log.warn).toHaveBeenCalledTimes(1);
+        // 兜底状态内的后续探活降级为 debug，不再逐条刷 warn
+        expect(log.debug).toHaveBeenCalledTimes(1);
     });
 
     test('reloads when the probed renderer never answers', () => {
@@ -359,7 +361,7 @@ describe('renderer freeze watchdog with heartbeat probe', () => {
         expect(reload).toHaveBeenCalledTimes(1);
     });
 
-    test('reports the return to a normal heartbeat cadence after the window is unoccluded', () => {
+    test('reports the return to a normal heartbeat cadence at debug level after the window is unoccluded', () => {
         const { clock, log, probe, controller } = setupProbedRecovery();
         probe.mockImplementation(() => controller.onHeartbeat());
 
@@ -367,8 +369,12 @@ describe('renderer freeze watchdog with heartbeat probe', () => {
         clock.advance(3_000);
         // 遮挡解除：心跳定时器恢复常态上报，不再依赖探活
         controller.onHeartbeat();
+        clock.advance(3_000);
+        controller.onHeartbeat();
 
-        expect(log.info).toHaveBeenCalledWith(expect.stringContaining('resumed at normal cadence'));
+        // 需要连续两个正常间隔自然心跳才确认节流解除；恢复日志降级为 debug
+        expect(log.debug).toHaveBeenCalledWith(expect.stringContaining('resumed at normal cadence'));
+        expect(log.info).not.toHaveBeenCalledWith(expect.stringContaining('resumed at normal cadence'));
     });
 
     test('keeps the pre-probe behaviour when no probe is wired up', () => {
@@ -411,22 +417,85 @@ describe('renderer freeze watchdog with heartbeat probe', () => {
         expect(reload).not.toHaveBeenCalled();
     });
 
-    test('resets the probe backoff once the heartbeat cadence recovers', () => {
-        const { clock, probe, controller } = setupProbedRecovery();
+    test('keeps the probe backoff while a throttled natural heartbeat follows a probe reply', () => {
+        const { clock, log, reload, probe, controller } = setupProbedRecovery();
         probe.mockImplementation(() => controller.onHeartbeat());
 
+        // t=15s 首次探活并得到回应（warn），t=55s 第二次探活并得到回应（debug，退避档位 30s）
+        for (let i = 0; i < 11; i++) clock.advance(5_000);
+        expect(probe).toHaveBeenCalledTimes(2);
+        expect(log.warn).toHaveBeenCalledTimes(1);
+        expect(log.debug).toHaveBeenCalledTimes(1);
+
+        // 模拟熄屏节流：t≈62s 出现一次自然心跳，随后定时器又被节流到约 16s 一跳。
+        // 旧逻辑会把它误判为「节流已解除」→ 退避归零 → 之后每轮静默超时都重新 warn 刷屏；
+        // 新逻辑要求连续两个正常间隔自然心跳才解除，单次短间隔不得复位退避
+        clock.advance(12_000);
+        controller.onHeartbeat();
+        for (let i = 0; i < 6; i++) clock.advance(5_000);
+
+        // 退避档位保持 60s：自然心跳后的静默最长约 30s，不再触发新探活，也不重载
+        expect(probe).toHaveBeenCalledTimes(2);
+        expect(log.warn).toHaveBeenCalledTimes(1);
+        expect(log.debug).toHaveBeenCalledTimes(1);
+        expect(reload).not.toHaveBeenCalled();
+    });
+
+    test('exits the probe-assisted state after two consecutive natural heartbeats', () => {
+        const { clock, log, probe, controller } = setupProbedRecovery();
+        probe.mockImplementation(() => controller.onHeartbeat());
+        for (let i = 0; i < 4; i++) clock.advance(5_000);
+        expect(probe).toHaveBeenCalledTimes(1);
+
+        // 遮挡解除：两个连续正常间隔（3s 周期）的自然心跳才确认节流解除
+        clock.advance(3_000);
+        controller.onHeartbeat();
+        expect(log.debug).not.toHaveBeenCalledWith(expect.stringContaining('resumed at normal cadence'));
+        clock.advance(3_000);
+        controller.onHeartbeat();
+
+        expect(log.debug).toHaveBeenCalledWith(expect.stringContaining('resumed at normal cadence'));
+    });
+
+    test('ignores a natural heartbeat following a probe reply when the window stays occluded', () => {
+        const { clock, log, reload, probe, controller } = setupProbedRecovery();
+        probe.mockImplementation(() => controller.onHeartbeat());
+        for (let i = 0; i < 11; i++) clock.advance(5_000);
+        expect(probe).toHaveBeenCalledTimes(2);
+
+        // 探活回应后的自然心跳不参与节流解除判定：探活会打乱定时器节拍，
+        // 单个短间隔心跳可能是补报后的自然节拍而非节流解除
+        clock.advance(2_000);
+        controller.onHeartbeat();
+
+        expect(log.debug).not.toHaveBeenCalledWith(expect.stringContaining('resumed at normal cadence'));
+        expect(reload).not.toHaveBeenCalled();
+    });
+
+    test('re-arms the probe cycle after the heartbeat cadence truly recovers', () => {
+        const { clock, log, reload, probe, controller } = setupProbedRecovery();
+        probe.mockImplementation(() => controller.onHeartbeat());
+
+        // 持续遮挡 3 分钟：退避档位走到 60s，共探活 3 次
         for (let i = 0; i < 36; i++) clock.advance(5_000);
         expect(probe).toHaveBeenCalledTimes(3);
 
-        // 遮挡解除：心跳回到 3s 周期，兜底状态与退避一起复位
+        // 遮挡解除：两个连续正常间隔的自然心跳确认节流恢复，兜底状态与退避一起复位
         probe.mockImplementation(() => {});
-        for (let i = 0; i < 2; i++) {
-            clock.advance(3_000);
-            controller.onHeartbeat();
-        }
-        for (let i = 0; i < 4; i++) clock.advance(5_000);
+        clock.advance(3_000);
+        controller.onHeartbeat();
+        clock.advance(3_000);
+        controller.onHeartbeat();
+        expect(log.debug).toHaveBeenCalledWith(expect.stringContaining('resumed at normal cadence'));
+
+        // 此后 renderer 重新卡死：按初始阈值重新进入探活流程（新一轮 warn），
+        // 探活无人回应后按配额重载
+        for (let i = 0; i < 6; i++) clock.advance(5_000);
 
         expect(probe).toHaveBeenCalledTimes(4);
+        expect(log.warn).toHaveBeenCalledTimes(2);
+        expect(reload).toHaveBeenCalledTimes(1);
+        expect(log.error).toHaveBeenCalledWith(expect.stringContaining('probe timed out'));
     });
 
     test('paces recovery attempts once the reload budget is exhausted', () => {

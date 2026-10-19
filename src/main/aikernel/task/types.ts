@@ -125,6 +125,12 @@ export interface TaskUpdateAssistantReplaceChunk {
     task_status: TaskStatus;
     message_id: string;
     parts: AssistantMessagePart[];
+    /**
+     * 增量 replace：parts 仅携带消息尾部 N 个 part，之前的 parts 自上一次发给
+     * 该订阅方的 replace 后未变化，由消费方用本地缓存回填。省略时为全量快照
+     * （旧语义）。仅发给声明 supportsReplaceDelta 的订阅方。
+     */
+    unmodifiedTail?: number;
     usage?: Usage;
     metadata?: RuntimeMetadata;
 }

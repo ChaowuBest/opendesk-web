@@ -17,6 +17,7 @@ import { AgentGateBridge } from './agent-gate-bridge';
 import { AgentGateEventsCache, type AgentGateEvent } from './events-cache';
 import { attributeBatchInterceptions, confidenceWeight, sortByConfidenceDesc } from './skillAttribution.js';
 import { readInterceptionRecords } from '../skillmgr/blacklist.js';
+import { getLocale as getEffectiveLocale } from '../../../locale/index.js';
 import { GlobalHooks } from '../../aikernel/hooks.js';
 import type { TaskState } from '../../aikernel/states/tasks.js';
 import { Setting } from '../../utils/setting';
@@ -832,15 +833,9 @@ class AgentGateApplication extends BaseApplication {
         });
     }
 
-    /** 获取当前界面语言，供 renderer 使用 */
+    /** 获取当前界面语言，供 renderer 使用（auto 时与主界面共用同一套系统语言检测链路） */
     getLocale(): string {
-        const data = Setting.getInstance().getData() as any;
-        const saved = data?.locale || 'auto';
-        if (saved === 'auto') {
-            const lang = Intl.DateTimeFormat().resolvedOptions().locale;
-            return lang.startsWith('zh') ? 'zh-CN' : 'en-US';
-        }
-        return saved;
+        return getEffectiveLocale();
     }
 }
 

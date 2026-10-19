@@ -198,6 +198,9 @@ jest.unstable_mockModule('../../../main/utils/setting.js', () => {
     class Setting {
         static getInstance() {
             return {
+                get data() {
+                    return settingData;
+                },
                 getData: () => settingData,
                 setData: (d: any) => {
                     Object.assign(settingData, d);
@@ -218,6 +221,7 @@ jest.unstable_mockModule('../../../main/utils/setting.js', () => {
 
 const { AgentGateApplication } = await import('../../../main/applications/agentgate/app');
 const { Setting } = await import('../../../main/utils/setting.js');
+const { setRuntimePreferredSystemLanguages } = await import('../../../locale/index.js');
 
 // ── 辅助 ────────────────────────────────────────────────────
 
@@ -346,5 +350,44 @@ describe('AgentGateApplication 启停逻辑', () => {
         expect(bridgeState.running).toBe(false);
         expect(bridgeState.startCalls).toBe(0);
         expect(bridgeState.updateConfigCalls).toBe(0);
+    });
+});
+
+describe('AgentGateApplication.getLocale', () => {
+    let app: InstanceType<typeof AgentGateApplication>;
+
+    beforeEach(() => {
+        app = new AgentGateApplication();
+    });
+
+    afterEach(() => {
+        setRuntimePreferredSystemLanguages(null);
+        jest.restoreAllMocks();
+    });
+
+    test('locale=auto 时走统一系统语言检测链路，不依赖 Intl 默认值', () => {
+        Setting.updateInstanceData({ locale: 'auto' });
+        // 模拟鸿蒙 PC 等平台上 ICU 无法解析跟随系统语言、Intl 返回默认 en-US 的场景
+        jest.spyOn(Intl, 'DateTimeFormat').mockImplementation(
+            () => ({ resolvedOptions: () => ({ locale: 'en-US' }) }) as unknown as Intl.DateTimeFormat
+        );
+        setRuntimePreferredSystemLanguages(['zh-CN']);
+
+        expect(app.getLocale()).toBe('zh-CN');
+    });
+
+    test('locale=auto 且系统语言为英文时返回 en-US', () => {
+        Setting.updateInstanceData({ locale: 'auto' });
+        setRuntimePreferredSystemLanguages(['en-US']);
+
+        expect(app.getLocale()).toBe('en-US');
+    });
+
+    test('locale 显式设置时直接使用设置值且不触发系统检测', () => {
+        Setting.updateInstanceData({ locale: 'zh-CN' });
+        const intlSpy = jest.spyOn(Intl, 'DateTimeFormat');
+
+        expect(app.getLocale()).toBe('zh-CN');
+        expect(intlSpy).not.toHaveBeenCalled();
     });
 });

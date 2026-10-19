@@ -4,12 +4,12 @@ import path from 'path';
 import { fileURLToPath } from 'url';
 import { estimateAutoCompactContextTokens } from '../../../main/aikernel/compaction/auto-compact';
 import { buildActiveContextView } from '../../../main/aikernel/compaction/context-view';
+import { estimateTextTokens } from '../../../utils/token-estimation';
 import {
     estimateAssistantPostUsageVisibleTokens,
     estimateRoughTokensFromChatMessage,
     estimateVisibleContextTokens,
-    estimateSystemPromptTokens,
-    estimateTextTokens
+    estimateSystemPromptTokens
 } from '../../../main/aikernel/compaction/token-estimation';
 import {
     AssistantMessage,
