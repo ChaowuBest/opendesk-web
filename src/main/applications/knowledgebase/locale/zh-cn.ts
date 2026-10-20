@@ -10,5 +10,7 @@
  */
 
 export const zhCn: Record<string, string> = {
-    'app.name': '知识库'
+    'app.name': '知识库',
+    'kb.retrieve.name': '知识库检索',
+    'kb.ask.name': '知识库问答'
 };

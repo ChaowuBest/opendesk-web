@@ -21,7 +21,9 @@ const WEB_CHANNELS = [
     { id: 'tavily', name: 'Tavily', needsApiKey: true },
     { id: 'brave', name: 'Brave', needsApiKey: true },
     { id: 'bocha', name: '博查', needsApiKey: true },
-    { id: 'exa', name: 'Exa', needsApiKey: true }
+    { id: 'exa', name: 'Exa', needsApiKey: true },
+    { id: 'deepseek', name: 'DeepSeek', needsApiKey: true },
+    { id: 'doubao', name: '豆包', needsApiKey: true }
 ];
 
 const ACADEMIC_CHANNELS = [

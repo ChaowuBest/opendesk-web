@@ -23,9 +23,12 @@ import { TavilySearchTool } from './tavily';
 import { BochaSearchTool } from './bocha';
 import { ExaSearchTool } from './exa';
 import { BaiduSearchTool } from './baidu';
+import { DeepSeekSearchTool } from './deepseek';
+import { DoubaoSearchTool } from './doubao';
 
 /** 所有 Web 搜索渠道的标识 */
-export type WebSearchChannel = 'tavily' | 'bing' | 'duckduckgo' | 'brave' | 'bocha' | 'exa' | 'baidu';
+export type WebSearchChannel =
+    'tavily' | 'bing' | 'duckduckgo' | 'brave' | 'bocha' | 'exa' | 'baidu' | 'deepseek' | 'doubao';
 
 /** 渠道元信息 */
 export interface WebChannelMeta {
@@ -42,7 +45,9 @@ export const WEB_CHANNELS: WebChannelMeta[] = [
     { id: 'tavily', name: 'Tavily', description: '专为AI设计的搜索引擎', needsApiKey: true },
     { id: 'brave', name: 'Brave', description: '隐私优先的搜索引擎', needsApiKey: true },
     { id: 'bocha', name: '博查', description: '专为AI设计的中文搜索引擎', needsApiKey: true },
-    { id: 'exa', name: 'Exa', description: 'AI驱动的搜索引擎', needsApiKey: true }
+    { id: 'exa', name: 'Exa', description: 'AI驱动的搜索引擎', needsApiKey: true },
+    { id: 'deepseek', name: 'DeepSeek', description: 'DeepSeek自研搜索引擎', needsApiKey: true },
+    { id: 'doubao', name: '豆包', description: '字节跳动豆包搜索引擎', needsApiKey: true }
 ];
 
 const WebSearchArgsSchema = z.object({
@@ -92,6 +97,10 @@ export class WebSearchTool extends BaseTool<typeof WebSearchArgsSchema> {
                 return new ExaSearchTool(this.appConfig.getChannelApiKey('exa'));
             case 'baidu':
                 return new BaiduSearchTool();
+            case 'deepseek':
+                return new DeepSeekSearchTool(this.appConfig.getChannelApiKey('deepseek'));
+            case 'doubao':
+                return new DoubaoSearchTool(this.appConfig.getChannelApiKey('doubao'));
             default:
                 return new BingSearchTool(this.appConfig.getBingLang());
         }
