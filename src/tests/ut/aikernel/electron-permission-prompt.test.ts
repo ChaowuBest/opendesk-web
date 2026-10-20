@@ -106,8 +106,8 @@ const { logger } = await import('../../../main/utils/logger.js');
 
 const providers: InstanceType<typeof ElectronPermissionPromptProvider>[] = [];
 
-function createProvider(): InstanceType<typeof ElectronPermissionPromptProvider> {
-    const provider = new ElectronPermissionPromptProvider();
+function createProvider(channel?: any): InstanceType<typeof ElectronPermissionPromptProvider> {
+    const provider = new ElectronPermissionPromptProvider(channel);
     providers.push(provider);
     return provider;
 }
@@ -143,6 +143,69 @@ beforeEach(() => {
 });
 
 describe('ElectronPermissionPromptProvider queue', () => {
+    test.each(['local', 'mobile'] as const)('%s answer wins once and cannot settle the next prompt', async (source) => {
+        const deliveries: Array<{ answer: (response: any) => boolean; close: ReturnType<typeof jest.fn> }> = [];
+        const provider = createProvider({
+            subscribeEndpointReady: () => () => undefined,
+            publishPermission(_request: unknown, answer: (response: any) => boolean) {
+                const delivery = { answer, close: jest.fn() };
+                deliveries.push(delivery);
+                return { delivered: true, close: delivery.close };
+            }
+        });
+        const info = { taskId: 'root', sourceTaskId: 'child' };
+        const first = provider.prompt([readRequest('/tmp/first.txt')], 'readFile', [], info);
+        const second = provider.prompt([writeRequest('/tmp/second.txt')], 'writeFile', [], info);
+        const firstId = permissionRequests()[0].requestId;
+        const allow = { decision: 'allow', rememberScope: 'none' };
+        if (source === 'local') respond(firstId, allow);
+        else expect(deliveries[0].answer(allow)).toBe(true);
+        await expect(first).resolves.toEqual(allow);
+        expect(permissionRequests()).toHaveLength(2);
+        expect(deliveries[0].answer({ decision: 'deny', rememberScope: 'none' })).toBe(false);
+        respond(firstId, { decision: 'deny', rememberScope: 'none' });
+        expect(deliveries[1].close).not.toHaveBeenCalled();
+        expect(deliveries[1].answer(allow)).toBe(true);
+        await expect(second).resolves.toEqual(allow);
+        if (source === 'local') expect(deliveries[0].close).toHaveBeenCalledWith('superseded');
+    });
+
+    test.each(['allow', 'ask', 'deny'] as const)(
+        'mobile persistent grant respects the updated %s rule',
+        async (effect) => {
+            jest.useFakeTimers();
+            const deliveries: Array<(response: any) => boolean> = [];
+            const provider = createProvider({
+                subscribeEndpointReady: () => () => undefined,
+                publishPermission(_request: unknown, answer: (response: any) => boolean) {
+                    deliveries.push(answer);
+                    return { delivered: true, close: jest.fn() };
+                }
+            });
+            const info = { taskId: 'root', sourceTaskId: 'child' };
+            const first = provider.prompt([readRequest('/tmp/a.txt')], 'readFile', [], info);
+            const second = provider.prompt([readRequest('/tmp/.env')], 'readFile', [], info);
+            expect(
+                deliveries[0]({ decision: 'allow', rememberScope: 'prefix', selectedPrefixPattern: '/tmp/**' })
+            ).toBe(true);
+            await first;
+            const enforcer = await GlobPermissionEnforcer.create([
+                { resourceType: 'file', action: 'read', pathPattern: '**/.env', effect },
+                { resourceType: 'file', action: 'read', pathPattern: '/tmp/**', effect: 'allow' }
+            ]);
+            await provider.notifyPermissionRulesChanged(enforcer);
+            jest.advanceTimersByTime(0);
+            if (effect === 'allow') {
+                await expect(second).resolves.toMatchObject({ decision: 'allow' });
+                expect(deliveries).toHaveLength(1);
+            } else {
+                expect(deliveries).toHaveLength(2);
+                expect(deliveries[1]({ decision: 'deny', rememberScope: 'none' })).toBe(true);
+                await expect(second).resolves.toMatchObject({ decision: 'deny' });
+            }
+        }
+    );
+
     afterEach(() => {
         for (const provider of providers.splice(0)) {
             provider.dispose();
@@ -152,6 +215,66 @@ describe('ElectronPermissionPromptProvider queue', () => {
 
     test('logger is mocked so the import chain never activates a real file transport', () => {
         expect(jest.isMockFunction(logger.info)).toBe(true);
+    });
+
+    test('publishes all actual permission choices without internal prompt context', async () => {
+        const closes: string[] = [];
+        const channel: any = {
+            permission: undefined,
+            subscribeEndpointReady: () => () => undefined,
+            publishPermission(request: unknown, answer: (response: unknown) => boolean) {
+                channel.permission = { request, answer };
+                return { delivered: true, close: (status: string) => closes.push(status) };
+            }
+        };
+        const provider = createProvider(channel);
+        const result = provider.prompt(
+            [readRequest('/tmp/a.txt')],
+            'shell',
+            [
+                { label: '/tmp/a.txt', pattern: '/tmp/a.txt' },
+                { label: '/tmp/', pattern: '/tmp/**' }
+            ],
+            { taskId: 'root', taskName: 'Root', sourceTaskId: 'child' },
+            {
+                toolCallId: 'internal-tool-call',
+                messageId: 'internal-message',
+                input: { token: 'secret' }
+            }
+        );
+        expect(channel.permission.request.options.map((option: any) => option.kind)).toEqual([
+            'allowOnce',
+            'allowAlwaysPrefix',
+            'allowAlwaysPrefix',
+            'allowAlwaysType',
+            'rejectOnce'
+        ]);
+        expect(JSON.stringify(channel.permission.request)).not.toContain('internal-tool-call');
+        expect(JSON.stringify(channel.permission.request)).not.toContain('internal-message');
+        expect(JSON.stringify(channel.permission.request)).not.toContain('secret');
+        expect(channel.permission.answer(channel.permission.request.options[1].response)).toBe(true);
+        await expect(result).resolves.toEqual(channel.permission.request.options[1].response);
+        expect(closes).toEqual([]);
+    });
+
+    test('waits for Mobile when no Electron window is available', async () => {
+        browserWindows = [];
+        const channel: any = {
+            permission: undefined,
+            subscribeEndpointReady: () => () => undefined,
+            publishPermission(request: unknown, answer: (response: unknown) => boolean) {
+                channel.permission = { request, answer };
+                return { delivered: true, close: jest.fn() };
+            }
+        };
+        const provider = createProvider(channel);
+        const result = provider.prompt([readRequest('/tmp/a.txt')], 'shell', [], {
+            taskId: 'root',
+            taskName: 'Root',
+            sourceTaskId: 'child'
+        });
+        expect(channel.permission.answer({ decision: 'allow', rememberScope: 'none' })).toBe(true);
+        await expect(result).resolves.toEqual({ decision: 'allow', rememberScope: 'none' });
     });
 
     test('shows one prompt at a time and advances after one-time allow', async () => {

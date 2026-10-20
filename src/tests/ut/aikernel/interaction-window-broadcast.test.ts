@@ -45,6 +45,30 @@ jest.unstable_mockModule('../../../utils/electron.js', () => ({
 const { ElectronAskUserProvider } = await import('../../../main/aikernel/interaction/electronAskUser.js');
 const { ElectronExitPlanModeProvider } = await import('../../../main/aikernel/interaction/electronExitPlanMode.js');
 
+function fakeDeliveryChannel() {
+    const closes: string[] = [];
+    const channel: any = {
+        ask: undefined,
+        exit: undefined,
+        subscribeEndpointReady: () => () => undefined,
+        publishAskUser(request: unknown, answer: (response: unknown) => boolean) {
+            channel.ask = { request, answer };
+            return {
+                delivered: true,
+                close: (status: string) => closes.push(status)
+            };
+        },
+        publishExitPlanMode(request: unknown, answer: (response: unknown) => boolean) {
+            channel.exit = { request, answer };
+            return {
+                delivered: true,
+                close: (status: string) => closes.push(status)
+            };
+        }
+    };
+    return { channel, closes };
+}
+
 const askRequest = {
     requestId: 'ask-1',
     questions: [
@@ -166,6 +190,38 @@ describe('ElectronAskUserProvider 多窗口广播', () => {
         }
         await expect(p1).resolves.toMatchObject({ answers: { '0': ['A'] } });
     });
+
+    it('无窗口但 Mobile 已投递时等待 Mobile 回答', async () => {
+        widgetWindow = null;
+        mainWindow = null;
+        const remote = fakeDeliveryChannel();
+        provider = new ElectronAskUserProvider(remote.channel);
+        const pending = provider.prompt(askRequest);
+        expect(remote.channel.ask.answer({ answers: { 0: ['A'] } })).toBe(true);
+        await expect(pending).resolves.toEqual({ answers: { 0: ['A'] } });
+    });
+
+    it('本地先答后 Mobile 迟答失败并收到 superseded', async () => {
+        const remote = fakeDeliveryChannel();
+        provider = new ElectronAskUserProvider(remote.channel);
+        const pending = provider.prompt(askRequest);
+        takeHandler('askUser:response')(null, 'ask-1', { answers: { 0: ['A'] } });
+        await expect(pending).resolves.toEqual({ answers: { 0: ['A'] }, cancelled: false });
+        expect(remote.channel.ask.answer({ answers: { 0: ['B'] } })).toBe(false);
+        expect(remote.closes).toEqual(['superseded']);
+    });
+
+    it('Mobile 先答后 dismiss renderer 并拒绝迟到本地回答', async () => {
+        const remote = fakeDeliveryChannel();
+        provider = new ElectronAskUserProvider(remote.channel);
+        const pending = provider.prompt(askRequest);
+        const local = takeHandler('askUser:response');
+        expect(remote.channel.ask.answer({ answers: { 0: ['B'] } })).toBe(true);
+        local(null, 'ask-1', { answers: { 0: ['A'] } });
+        await expect(pending).resolves.toEqual({ answers: { 0: ['B'] } });
+        expect(widgetSend).toHaveBeenCalledWith('askUser:dismiss', 'ask-1');
+        expect(remote.closes).toEqual([]);
+    });
 });
 
 describe('ElectronExitPlanModeProvider 多窗口广播', () => {
@@ -206,5 +262,40 @@ describe('ElectronExitPlanModeProvider 多窗口广播', () => {
 
         expect(widgetSend).toHaveBeenCalledWith('exitPlanMode:dismiss', expect.any(String));
         expect(mainSend).toHaveBeenCalledWith('exitPlanMode:dismiss', expect.any(String));
+    });
+
+    it('在异步 Mode switch 前锁定 Mobile winner', async () => {
+        const remote = fakeDeliveryChannel();
+        provider = new ElectronExitPlanModeProvider(remote.channel);
+        let release!: () => void;
+        const gate = new Promise<void>((resolve) => {
+            release = resolve;
+        });
+        const modeSwitcher = jest.fn(async () => gate);
+        provider.setModeSwitcher(modeSwitcher);
+        const pending = provider.promptAndSwitch('# plan', '/tmp/.plan/plan.md', 'task-1', 'Task', {
+            planRelativePath: '.plan/plan.md'
+        });
+        const requestId = remote.channel.exit.request.requestId as string;
+        const local = takeHandler('exitPlanMode:response');
+        expect(remote.channel.exit.answer({ action: 'execute-standard' })).toBe(true);
+        local(null, requestId, { action: 'continue-editing' });
+        expect(modeSwitcher).toHaveBeenCalledTimes(1);
+        release();
+        await expect(pending).resolves.toEqual({ action: 'execute-standard' });
+    });
+
+    it('Mode switch 失败时安全降级且不重新开放败方', async () => {
+        const remote = fakeDeliveryChannel();
+        provider = new ElectronExitPlanModeProvider(remote.channel);
+        provider.setModeSwitcher(async () => {
+            throw new Error('switch failed');
+        });
+        const pending = provider.promptAndSwitch('# plan', '/tmp/.plan/plan.md', 'task-1', 'Task', {
+            planRelativePath: '.plan/plan.md'
+        });
+        expect(remote.channel.exit.answer({ action: 'execute-standard' })).toBe(true);
+        expect(remote.channel.exit.answer({ action: 'continue-editing' })).toBe(false);
+        await expect(pending).resolves.toEqual({ action: 'continue-editing' });
     });
 });

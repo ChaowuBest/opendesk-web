@@ -33,7 +33,14 @@ import type {
     AskUserResponse,
     AskUserProvider,
     AskUserQuestion
-} from '../../aikernel/interaction/tools';
+} from '../../aikernel/interaction/contracts.js';
+import type {
+    InteractionDeliveryChannel,
+    InteractionDeliveryHandle,
+    InteractionRemoteSettlement
+} from '../../aikernel/interaction/delivery.js';
+import { RemoteFinishBarrier } from '../../aikernel/interaction/remote-finish-barrier.js';
+import { takeItem } from './interactionLatch.js';
 import chalk from 'chalk';
 
 // ─── 配色 ─────────────────────────────────────────────────────────────────────
@@ -341,6 +348,13 @@ function padBgLine(line: string, width: number, bgFn: (s: string) => string): st
 interface QueuedAskRequest {
     request: AskUserRequest;
     resolve: (response: AskUserResponse) => void;
+    settled: boolean;
+    delivery?: InteractionDeliveryHandle;
+    /** Endpoint generation this request was published to, so a re-offer never repeats. */
+    deliveredGeneration?: number;
+    answers: Record<number, string[]>;
+    questionIndex: number;
+    nextQuestionTimer?: ReturnType<typeof setTimeout>;
 }
 
 /**
@@ -353,16 +367,22 @@ interface QueuedAskRequest {
  */
 export class TUIAskUserProvider implements AskUserProvider {
     private openDeskTUI: OpenDeskTUI;
+    private readonly remoteFinish = new RemoteFinishBarrier();
     private queue: QueuedAskRequest[] = [];
     /** 弹窗是否正在显示（widget 已显示且用户未完成交互） */
     private isShowing = false;
     /** 阻塞状态下请求已入队但未处理 */
     private isPending = false;
-    /** 当前显示中的请求的 resolve（用于 cancelCurrent 主动取消） */
-    private _activeResolve: ((response: AskUserResponse) => void) | null = null;
+    private current: QueuedAskRequest | null = null;
 
-    constructor(openDeskTUI: OpenDeskTUI) {
+    constructor(
+        openDeskTUI: OpenDeskTUI,
+        private readonly deliveryChannel?: InteractionDeliveryChannel
+    ) {
         this.openDeskTUI = openDeskTUI;
+        // One Provider per TUI instance, so this subscription lives as long as the host and needs no
+        // per-request scoping (unlike the Electron Providers, which are created per Task).
+        deliveryChannel?.subscribeEndpointReady((generation) => this.reofferCurrentToMobile(generation));
     }
 
     isPrompting(): boolean {
@@ -373,24 +393,18 @@ export class TUIAskUserProvider implements AskUserProvider {
     cancelCurrent(): void {
         // 清空排队中的请求，resolve 为 cancelled
         for (const item of this.queue.splice(0)) {
-            item.resolve({ answers: {}, cancelled: true });
+            if (takeItem(item)) item.resolve({ answers: {}, cancelled: true });
         }
         this.isPending = false;
         // 关闭当前显示中的 widget 并 resolve 当前请求
-        if (this.isShowing && this._activeResolve) {
-            const resolve = this._activeResolve;
-            this._activeResolve = null;
-            this.openDeskTUI.inputArea.hidePromptWidget();
-            this.isShowing = false;
-            resolve({ answers: {}, cancelled: true });
-            this.openDeskTUI.focusInputAreaIfAvailable();
-            this.openDeskTUI.tui.requestRender();
+        if (this.current) {
+            this.settleCurrent(this.current, { answers: {}, cancelled: true }, 'cancel');
         }
     }
 
     async prompt(request: AskUserRequest): Promise<AskUserResponse> {
         return new Promise<AskUserResponse>((resolve) => {
-            this.queue.push({ request, resolve });
+            this.queue.push({ request, resolve, settled: false, answers: {}, questionIndex: 0 });
             // 标记有请求待处理，避免 taskview 在此期间渲染 tool card
             this.isPending = true;
             // 配置/overlay 模式下不入队显示，等退出后再处理
@@ -411,6 +425,8 @@ export class TUIAskUserProvider implements AskUserProvider {
 
     private processQueue(): void {
         if (this.isShowing || this.queue.length === 0) return;
+        // Every advance entry point waits out a closing remote delivery, not just the deferred one.
+        if (this.remoteFinish.blocked) return;
 
         // 阻塞状态下不弹窗，等待退出后再处理
         if (this.openDeskTUI.isInputBlocked()) {
@@ -420,45 +436,45 @@ export class TUIAskUserProvider implements AskUserProvider {
         this.isShowing = true;
         this.isPending = false;
         const item = this.queue.shift()!;
-        this._activeResolve = item.resolve;
-        this.promptSequential(item.request, item.resolve);
+        this.current = item;
+        this.publishAskUserToMobile(item);
+        this.promptSequential(item);
     }
 
     /**
      * 顺序展示所有问题，收集答案后 resolve。
      */
-    private async promptSequential(
-        request: AskUserRequest,
-        resolve: (response: AskUserResponse) => void
-    ): Promise<void> {
-        const answers: Record<number, string[]> = {};
-        const { questions } = request;
+    private promptSequential(item: QueuedAskRequest): void {
+        const { questions } = item.request;
 
         const askQuestion = (index: number): void => {
+            if (this.current !== item || item.settled) return;
+            item.questionIndex = index;
             if (index >= questions.length) {
-                // 所有问题已回答
-                this.finishPrompt(resolve, { answers });
+                this.settleCurrent(item, { answers: item.answers }, 'local');
                 return;
             }
 
             const q = questions[index];
-            const widget = new AskUserWidget(q, index, questions.length, request.taskName);
+            const widget = new AskUserWidget(q, index, questions.length, item.request.taskName);
 
             widget.setRenderCallback(() => {
                 this.openDeskTUI.tui.requestRender();
             });
 
             widget.onDone = (selected) => {
-                answers[index] = selected;
+                if (this.current !== item || item.settled) return;
+                item.answers[index] = selected;
                 this.openDeskTUI.inputArea.hidePromptWidget(widget);
-                // 短暂延迟后显示下一题，避免闪烁
-                setTimeout(() => {
+                item.nextQuestionTimer = setTimeout(() => {
+                    item.nextQuestionTimer = undefined;
+                    if (this.current !== item || item.settled) return;
                     askQuestion(index + 1);
                 }, 50);
             };
 
             widget.onCancel = () => {
-                this.finishPrompt(resolve, { answers, cancelled: true });
+                this.settleCurrent(item, { answers: item.answers, cancelled: true }, 'cancel');
             };
 
             this.openDeskTUI.inputArea.showPromptWidget(widget);
@@ -469,17 +485,69 @@ export class TUIAskUserProvider implements AskUserProvider {
         askQuestion(0);
     }
 
-    private finishPrompt(resolve: (response: AskUserResponse) => void, response: AskUserResponse): void {
-        this.openDeskTUI.inputArea.hidePromptWidget();
-        this.isShowing = false;
-        this._activeResolve = null;
-        resolve(response);
+    /**
+     * Re-offers the question still being waited on to a newly ready endpoint. This Provider owns the
+     * queue, the settle gate and the lifetime; nothing is revived and no answer is replayed.
+     */
+    private reofferCurrentToMobile(generation: number): void {
+        const item = this.current;
+        if (!item || item.settled) return;
+        if (item.deliveredGeneration === generation) return;
+        this.publishAskUserToMobile(item);
+    }
 
-        if (this.queue.length > 0) {
-            this.processQueue();
+    private publishAskUserToMobile(item: QueuedAskRequest): void {
+        const sourceTaskId = item.request.taskId;
+        if (typeof sourceTaskId !== 'string' || sourceTaskId.trim().length === 0 || sourceTaskId === 'unknown') return;
+        const delivery = this.deliveryChannel?.publishAskUser(
+            {
+                type: 'askUser',
+                requestId: item.request.requestId,
+                sourceTaskId,
+                ...(item.request.taskName === null ? {} : { taskName: item.request.taskName }),
+                request: item.request
+            },
+            (response, settlement) => this.settleCurrent(item, response, 'mobile', settlement)
+        );
+        // A failed re-offer must keep the handle from the delivery that is still open.
+        if (!delivery) return;
+        item.delivery = delivery;
+        item.deliveredGeneration = this.deliveryChannel?.endpointGeneration;
+    }
+
+    private settleCurrent(
+        item: QueuedAskRequest,
+        response: AskUserResponse,
+        source: 'local' | 'mobile' | 'cancel',
+        settlement?: InteractionRemoteSettlement
+    ): boolean {
+        if (this.current !== item || !takeItem(item)) return false;
+        if (item.nextQuestionTimer) clearTimeout(item.nextQuestionTimer);
+        item.nextQuestionTimer = undefined;
+        this.openDeskTUI.inputArea.hidePromptWidget();
+        this.current = null;
+        this.isShowing = false;
+        if (source === 'local') item.delivery?.close('superseded');
+        if (source === 'cancel') item.delivery?.close('cancelled');
+        item.resolve(response);
+        const advance = (): void => {
+            if (this.queue.length > 0) {
+                this.processQueue();
+            } else {
+                this.openDeskTUI.focusInputAreaIfAvailable();
+            }
+            this.openDeskTUI.tui.requestRender();
+        };
+        // A remote answer must release the remote exit before the next item is published.
+        if (settlement) {
+            const release = this.remoteFinish.hold();
+            settlement.afterRemoteClose(() => {
+                release();
+                advance();
+            });
         } else {
-            this.openDeskTUI.focusInputAreaIfAvailable();
+            advance();
         }
-        this.openDeskTUI.tui.requestRender();
+        return true;
     }
 }

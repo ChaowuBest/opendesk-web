@@ -23,12 +23,19 @@
  * 静态 import 导致 electron 模块不可用而崩溃（尤其在 OpenHarmony 平台）。
  */
 
-import type { ExitPlanModeProvider, ExitPlanModeResponse, ExitPlanModeAction } from './exitPlanMode.js';
+import type {
+    ExitPlanModeAction,
+    ExitPlanModeProvider,
+    ExitPlanModeRemoteContext,
+    ExitPlanModeResponse
+} from './contracts.js';
+import type { InteractionDeliveryChannel, InteractionDeliveryHandle, InteractionRemoteSettlement } from './delivery.js';
 import { logger } from '../../utils/logger.js';
 import { broadcastToAllWindows } from '../../utils/electron-ipc.js';
 import { showTaskNotification, clearPendingOpenTasks } from '../../utils/system-notification.js';
 import { electron } from '../../../utils/electron.js';
 import { t } from '../../../locale/index.js';
+import { RemoteFinishBarrier } from './remote-finish-barrier.js';
 
 interface PendingRequest {
     requestId: string;
@@ -38,11 +45,22 @@ interface PendingRequest {
 
 interface PendingPrompt extends PendingRequest {
     taskId: string;
+    /** Remote delivery inputs kept so a re-offer reuses the original request verbatim. */
+    remote?: { sourceTaskId: string; taskName?: string; planRelativePath: string };
+    /** Original expiry, so a re-offer never extends the request. */
+    deadlineMs: number;
     resolve: (response: ExitPlanModeResponse) => void;
     timer: ReturnType<typeof setTimeout> | null;
     handler: ((event: unknown, respRequestId: string, respData: unknown) => void) | null;
     settled: boolean;
+    delivery?: InteractionDeliveryHandle;
+    /** Endpoint generation this request was published to, so a re-offer never repeats. */
+    deliveredGeneration?: number;
+    /** True once a local window was actually asked, so the phone is not the only answer path. */
+    localPrompted?: boolean;
 }
+
+const EXIT_PLAN_MODE_TIMEOUT_MS = 600_000;
 
 let _ipcHandleRegistered = false;
 // 按 taskId 维护当前活跃的审批请求，供 renderer 通过 exitPlanMode:getPending 恢复面板。
@@ -51,9 +69,77 @@ const _pendingByTaskId = new Map<string, PendingPrompt>();
 export class ElectronExitPlanModeProvider implements ExitPlanModeProvider {
     private modeSwitcher: ((modeId: string) => Promise<void>) | null = null;
     private pending: PendingPrompt | null = null;
+    private readonly remoteFinish = new RemoteFinishBarrier();
+    private readyUnsubscribe?: () => void;
 
-    constructor() {
+    constructor(private readonly deliveryChannel?: InteractionDeliveryChannel) {
         this.ensureIpcHandle();
+    }
+
+    /**
+     * Listens only while an approval is outstanding. This Provider is created per Task and never
+     * disposed, so a constructor-long subscription would retain one closure per Task.
+     */
+    private watchEndpointReady(): void {
+        this.readyUnsubscribe ??= this.deliveryChannel?.subscribeEndpointReady(() =>
+            this.offerPendingToCurrentEndpoint()
+        );
+    }
+
+    private unwatchEndpointReady(): void {
+        this.readyUnsubscribe?.();
+        this.readyUnsubscribe = undefined;
+    }
+
+    /**
+     * Offers the outstanding approval to the endpoint registered right now, if that endpoint has not
+     * received it yet. Two moments need this: a newly ready endpoint after the phone reconnected, and
+     * the instant a previous delivery released the remote exit — the caller is the queue here, so a
+     * follow-up approval issued while the previous one was still closing found the exit busy and was
+     * never delivered. The pending entry, its settle gate and its original deadline stay here;
+     * nothing is revived and no answer is replayed.
+     */
+    private offerPendingToCurrentEndpoint(): void {
+        const pending = this.pending;
+        if (!pending || pending.settled || !pending.remote) return;
+        const generation = this.deliveryChannel?.endpointGeneration;
+        if (generation === undefined || pending.deliveredGeneration === generation) return;
+        if (pending.deadlineMs - Date.now() <= 0) return;
+        this.publishToMobile(pending);
+    }
+
+    /**
+     * Gives up only when nothing can answer any more. A follow-up approval issued while the previous
+     * delivery was still closing has no delivery yet purely because the exit was busy: settling it
+     * here would continue-edit an approval the phone is about to receive.
+     */
+    private settleIfUnanswerable(pending: PendingPrompt): void {
+        if (pending.settled || pending.delivery || pending.localPrompted) return;
+        if (this.remoteFinish.blocked) return;
+        logger.warn('ElectronExitPlanModeProvider: no window or mobile endpoint available, returning continue-editing');
+        this.settle(pending, { action: 'continue-editing' }, 'fallback');
+    }
+
+    private publishToMobile(pending: PendingPrompt): boolean {
+        const remote = pending.remote;
+        if (!remote) return false;
+        const delivery = this.deliveryChannel?.publishExitPlanMode(
+            {
+                type: 'exitPlanMode',
+                requestId: pending.requestId,
+                sourceTaskId: remote.sourceTaskId,
+                ...(remote.taskName === undefined ? {} : { taskName: remote.taskName }),
+                expiresAt: pending.deadlineMs,
+                planContent: pending.planContent,
+                planRelativePath: remote.planRelativePath
+            },
+            (response, settlement) => this.settle(pending, response, 'mobile', settlement)
+        );
+        // A failed re-offer must keep the handle from the delivery that is still open.
+        if (!delivery) return false;
+        pending.delivery = delivery;
+        pending.deliveredGeneration = this.deliveryChannel?.endpointGeneration;
+        return true;
     }
 
     setModeSwitcher(fn: (modeId: string) => Promise<void>): void {
@@ -62,21 +148,27 @@ export class ElectronExitPlanModeProvider implements ExitPlanModeProvider {
 
     cancelCurrent(): void {
         if (!this.pending) return;
-        this.settle(this.pending, { action: 'continue-editing' }, true);
+        this.settle(this.pending, { action: 'continue-editing' }, 'cancel');
     }
 
     /**
      * 结束一次审批请求：清理定时器与监听器、注销注册表条目并 resolve。
      * 使用 removeListener（而非 removeAllListeners）保证并发的多个任务互不影响。
      */
-    private settle(pending: PendingPrompt, response: ExitPlanModeResponse, dismiss: boolean): void {
-        if (pending.settled) return;
+    private settle(
+        pending: PendingPrompt,
+        response: ExitPlanModeResponse,
+        source: 'local' | 'mobile' | 'timeout' | 'cancel' | 'fallback',
+        settlement?: InteractionRemoteSettlement
+    ): boolean {
+        if (pending.settled) return false;
         pending.settled = true;
         // 已审批或已超时，通知的待打开记录一并作废，避免之后聚焦窗口时误跳
         clearPendingOpenTasks(pending.taskId);
         if (pending.timer) clearTimeout(pending.timer);
         if (this.pending === pending) {
             this.pending = null;
+            this.unwatchEndpointReady();
         }
         if (_pendingByTaskId.get(pending.taskId) === pending) {
             _pendingByTaskId.delete(pending.taskId);
@@ -86,13 +178,43 @@ export class ElectronExitPlanModeProvider implements ExitPlanModeProvider {
             if (pending.handler) {
                 ipcMain.removeListener('exitPlanMode:response', pending.handler);
             }
-            if (dismiss) {
+            if (source !== 'local') {
                 broadcastToAllWindows('exitPlanMode:dismiss', pending.requestId);
             }
         } catch (err) {
             logger.warn(`ElectronExitPlanModeProvider.settle failed: ${err}`);
         }
-        pending.resolve(response);
+        if (source === 'local' || source === 'fallback') pending.delivery?.close('superseded');
+        if (source === 'timeout') pending.delivery?.close('timeout');
+        if (source === 'cancel') pending.delivery?.close('cancelled');
+        // Registered synchronously: resolving below lets the caller ask again straight away, while
+        // this delivery still holds the exit. The endpoint runs it immediately if already free.
+        if (settlement) {
+            const release = this.remoteFinish.hold();
+            settlement.afterRemoteClose(() => {
+                release();
+                this.offerPendingToCurrentEndpoint();
+                if (this.pending) this.settleIfUnanswerable(this.pending);
+            });
+        }
+        this.resolveAfterModeSwitch(pending, response);
+        return true;
+    }
+
+    private resolveAfterModeSwitch(pending: PendingPrompt, response: ExitPlanModeResponse): void {
+        void (async () => {
+            try {
+                if (response.action === 'execute-standard' && this.modeSwitcher) {
+                    await this.modeSwitcher('standard');
+                } else if (response.action === 'execute-solo' && this.modeSwitcher) {
+                    await this.modeSwitcher('solo');
+                }
+                pending.resolve(response);
+            } catch (error) {
+                logger.warn(`ElectronExitPlanModeProvider mode switch failed: ${error}`);
+                pending.resolve({ action: 'continue-editing' });
+            }
+        })();
     }
 
     private ensureIpcHandle(): void {
@@ -118,33 +240,33 @@ export class ElectronExitPlanModeProvider implements ExitPlanModeProvider {
         planContent: string,
         planFilePath: string,
         taskId?: string,
-        _taskName?: string
+        taskName?: string,
+        remoteContext?: ExitPlanModeRemoteContext
     ): Promise<ExitPlanModeResponse> {
         try {
             this.ensureIpcHandle();
 
             const { BrowserWindow, ipcMain } = electron();
 
-            if (!BrowserWindow.getAllWindows().some((w) => !w.isDestroyed())) {
-                logger.warn('ElectronExitPlanModeProvider: no window available, returning continue-editing');
-                return { action: 'continue-editing' };
+            const hasWindow = BrowserWindow.getAllWindows().some((w) => !w.isDestroyed());
+            if (hasWindow) {
+                showTaskNotification({
+                    title: t('notification.exitPlanMode.title'),
+                    body: t('notification.exitPlanMode.body'),
+                    taskId
+                });
             }
-
-            showTaskNotification({
-                title: t('notification.exitPlanMode.title'),
-                body: t('notification.exitPlanMode.body'),
-                taskId
-            });
 
             const requestId = `exitPlan-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
             const pendingTaskId = taskId || requestId;
 
-            const response = await new Promise<ExitPlanModeResponse>((resolve) => {
+            return await new Promise<ExitPlanModeResponse>((resolve) => {
                 const pending: PendingPrompt = {
                     requestId,
                     planContent,
                     planFilePath,
                     taskId: pendingTaskId,
+                    deadlineMs: Date.now() + EXIT_PLAN_MODE_TIMEOUT_MS,
                     resolve,
                     timer: null,
                     handler: null,
@@ -154,15 +276,15 @@ export class ElectronExitPlanModeProvider implements ExitPlanModeProvider {
                 const timer = setTimeout(() => {
                     if (pending.settled) return;
                     logger.warn(`ExitPlanMode prompt timed out for request ${requestId}`);
-                    this.settle(pending, { action: 'continue-editing' }, true);
-                }, 600_000); // 10 分钟
+                    this.settle(pending, { action: 'continue-editing' }, 'timeout');
+                }, EXIT_PLAN_MODE_TIMEOUT_MS);
 
                 const handler = (_event: unknown, respRequestId: string, respData: unknown) => {
                     if (respRequestId !== requestId) return;
                     if (pending.settled) return;
                     const action = ((respData as { action?: string })?.action ??
                         'continue-editing') as ExitPlanModeAction;
-                    this.settle(pending, { action }, false);
+                    this.settle(pending, { action }, 'local');
                 };
 
                 pending.timer = timer;
@@ -170,21 +292,34 @@ export class ElectronExitPlanModeProvider implements ExitPlanModeProvider {
                 this.pending = pending;
                 _pendingByTaskId.set(pendingTaskId, pending);
 
-                ipcMain.on('exitPlanMode:response', handler);
+                if (
+                    typeof taskId === 'string' &&
+                    taskId.trim().length > 0 &&
+                    taskId !== 'unknown' &&
+                    typeof remoteContext?.planRelativePath === 'string' &&
+                    remoteContext.planRelativePath.trim().length > 0
+                ) {
+                    pending.remote = {
+                        sourceTaskId: taskId,
+                        ...(taskName === undefined ? {} : { taskName }),
+                        planRelativePath: remoteContext.planRelativePath
+                    };
+                    // Watch before publishing: a phone that connects later must still receive this approval.
+                    this.watchEndpointReady();
+                    this.publishToMobile(pending);
+                }
 
-                broadcastToAllWindows('exitPlanMode:request', requestId, {
-                    planContent,
-                    planFilePath
-                });
+                if (hasWindow) {
+                    pending.localPrompted = true;
+                    ipcMain.on('exitPlanMode:response', handler);
+                    broadcastToAllWindows('exitPlanMode:request', requestId, {
+                        planContent,
+                        planFilePath
+                    });
+                } else {
+                    this.settleIfUnanswerable(pending);
+                }
             });
-
-            if (response.action === 'execute-standard' && this.modeSwitcher) {
-                await this.modeSwitcher('standard');
-            } else if (response.action === 'execute-solo' && this.modeSwitcher) {
-                await this.modeSwitcher('solo');
-            }
-
-            return response;
         } catch (err) {
             logger.warn(`ElectronExitPlanModeProvider failed: ${err}`);
             return { action: 'continue-editing' };

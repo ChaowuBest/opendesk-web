@@ -6,6 +6,10 @@
 
 import { describe, it } from 'node:test';
 import assert from 'node:assert';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+import type { ExitPlanModeProvider } from '../../../main/aikernel/interaction/contracts.js';
 
 // 延迟加载，因为模块顶层有副作用
 const { AskUserTool } = await import('../../../main/aikernel/interaction/tools.js');
@@ -52,6 +56,53 @@ describe('交互工具 isAvailable', () => {
     });
 
     describe('ExitPlanModeTool', () => {
+        it('exposes only the contained plan relative path to a remote provider', async (t) => {
+            const workspace = fs.mkdtempSync(path.join(os.tmpdir(), 'opendesk-exit-plan-'));
+            t.after(() => fs.rmSync(workspace, { recursive: true, force: true }));
+            fs.mkdirSync(path.join(workspace, '.plan', 'nested'), { recursive: true });
+            fs.writeFileSync(path.join(workspace, '.plan', 'nested', 'ship.md'), '# Ship\nDo the work', 'utf8');
+            const calls: Parameters<ExitPlanModeProvider['promptAndSwitch']>[] = [];
+            const provider: ExitPlanModeProvider = {
+                promptAndSwitch: async (...args) => {
+                    calls.push(args);
+                    return { action: 'continue-editing' };
+                }
+            };
+            const tool = new ExitPlanModeTool();
+            tool.setProvider(provider);
+            const result = await tool.execute({ planFilePath: '.plan/nested/ship.md' }, undefined, {
+                task_id: 'child',
+                task_name: 'Task',
+                harnessContext: { workspace }
+            } as any);
+            assert.equal(result.status, 'success');
+            assert.deepEqual(calls[0]?.[4], { planRelativePath: '.plan/nested/ship.md' });
+            assert.equal(JSON.stringify(calls[0]?.[4]).includes(workspace), false);
+            assert.match(result.result ?? '', /continue-editing/);
+        });
+
+        it('preserves the existing rejection for an empty workspace or escaped plan', async (t) => {
+            const workspace = fs.mkdtempSync(path.join(os.tmpdir(), 'opendesk-exit-plan-'));
+            t.after(() => fs.rmSync(workspace, { recursive: true, force: true }));
+            let providerCalls = 0;
+            const tool = new ExitPlanModeTool();
+            tool.setProvider({
+                async promptAndSwitch() {
+                    providerCalls += 1;
+                    return { action: 'continue-editing' };
+                }
+            });
+            const empty = await tool.execute({ planFilePath: '.plan/a.md' }, undefined, {
+                harnessContext: { workspace: '' }
+            } as any);
+            const escaped = await tool.execute({ planFilePath: '../secret.md' }, undefined, {
+                harnessContext: { workspace }
+            } as any);
+            assert.equal(empty.status, 'error');
+            assert.equal(escaped.status, 'error');
+            assert.equal(providerCalls, 0);
+        });
+
         it('主 agent + plan 模式 → true', () => {
             const tool = new ExitPlanModeTool();
             assert.equal(

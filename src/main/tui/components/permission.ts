@@ -38,6 +38,14 @@ import type {
     PermissionPromptContext,
     PermissionEnforcer
 } from '../../aikernel/security/permission';
+import { createPermissionDeliveryOptions } from '../../aikernel/security/permission-delivery-options.js';
+import { RemoteFinishBarrier } from '../../aikernel/interaction/remote-finish-barrier.js';
+import type {
+    InteractionDeliveryChannel,
+    InteractionDeliveryHandle,
+    InteractionRemoteSettlement
+} from '../../aikernel/interaction/delivery.js';
+import { takeItem } from './interactionLatch.js';
 import chalk from 'chalk';
 import { logger } from '../../utils/logger.js';
 import { t } from '../../../locale/index.js';
@@ -354,6 +362,7 @@ export class PermissionPromptWidget implements Component {
 }
 
 interface QueuedPermissionRequest {
+    requestId: string;
     requests: PermissionRequest[];
     toolName: string;
     prefixOptions: { label: string; pattern: string }[];
@@ -362,6 +371,10 @@ interface QueuedPermissionRequest {
     context?: PermissionPromptContext;
     resolve: (response: PermissionUserResponse) => void;
     widget?: PermissionPromptWidget;
+    settled: boolean;
+    delivery?: InteractionDeliveryHandle;
+    /** Endpoint generation this request was published to, so a re-offer never repeats. */
+    deliveredGeneration?: number;
 }
 
 /**
@@ -397,9 +410,16 @@ export class TUIPermissionPromptProvider implements PermissionPromptProvider {
     /** 阻塞状态下请求已入队但未处理 */
     private isPending = false;
     private grantedPermissions: GrantedPermission[] = [];
+    private readonly remoteFinish = new RemoteFinishBarrier();
 
-    constructor(openDeskTUI: OpenDeskTUI) {
+    constructor(
+        openDeskTUI: OpenDeskTUI,
+        private readonly deliveryChannel?: InteractionDeliveryChannel
+    ) {
         this.openDeskTUI = openDeskTUI;
+        // One Provider per TUI instance, so this subscription lives as long as the host and needs no
+        // per-request scoping (unlike the Electron Providers, which are created per Task).
+        deliveryChannel?.subscribeEndpointReady((generation) => this.reofferCurrentToMobile(generation));
     }
 
     async prompt(
@@ -410,7 +430,16 @@ export class TUIPermissionPromptProvider implements PermissionPromptProvider {
         context?: PermissionPromptContext
     ): Promise<PermissionUserResponse> {
         return new Promise<PermissionUserResponse>((resolve) => {
-            this.queue.push({ requests, toolName, prefixOptions, taskInfo, context, resolve });
+            this.queue.push({
+                requestId: `perm-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+                requests,
+                toolName,
+                prefixOptions,
+                taskInfo,
+                context,
+                resolve,
+                settled: false
+            });
             // 标记有请求待处理，避免 taskview 在此期间渲染 tool card
             this.isPending = true;
             // 配置/overlay 模式下不入队显示，等退出后再处理
@@ -436,21 +465,23 @@ export class TUIPermissionPromptProvider implements PermissionPromptProvider {
 
         this.queue = this.queue.filter((item) => {
             if (!this.matchesTask(item, ids)) return true;
-            item.resolve({ decision: 'deny', rememberScope: 'none', denyReason: 'task_stopped' });
+            this.settlePermissionItem(
+                item,
+                { decision: 'deny', rememberScope: 'none', denyReason: 'task_stopped' },
+                'cancel'
+            );
             cancelledAny = true;
             return false;
         });
 
         if (this.current && this.matchesTask(this.current, ids)) {
             const current = this.current;
-            const restored = this.closePermissionWidget(current);
-            this.current = null;
-            this.isShowing = false;
-            current.resolve({ decision: 'deny', rememberScope: 'none', denyReason: 'task_stopped' });
+            this.settlePermissionItem(
+                current,
+                { decision: 'deny', rememberScope: 'none', denyReason: 'task_stopped' },
+                'cancel'
+            );
             cancelledAny = true;
-            this.openDeskTUI.focusAfterInputPromptClose(restored);
-            this.processQueue();
-            this.openDeskTUI.tui.requestRender();
         } else if (cancelledAny) {
             if (this.queue.length === 0) {
                 this.isPending = false;
@@ -489,7 +520,7 @@ export class TUIPermissionPromptProvider implements PermissionPromptProvider {
                         const index = this.queue.indexOf(item);
                         if (index >= 0) {
                             this.queue.splice(index, 1);
-                            item.resolve({ decision: 'allow', rememberScope: 'none' });
+                            this.settlePermissionItem(item, { decision: 'allow', rememberScope: 'none' }, 'rule');
                         }
                     }
                 } catch (err) {
@@ -513,12 +544,7 @@ export class TUIPermissionPromptProvider implements PermissionPromptProvider {
 
     private resolveCurrentAfterRuleChange(item: QueuedPermissionRequest): boolean {
         if (this.current !== item) return false;
-        const restored = this.closePermissionWidget(item);
-        this.current = null;
-        this.isShowing = false;
-        item.resolve({ decision: 'allow', rememberScope: 'none' });
-        this.openDeskTUI.focusAfterInputPromptClose(restored);
-        return true;
+        return this.settlePermissionItem(item, { decision: 'allow', rememberScope: 'none' }, 'rule');
     }
 
     private closePermissionWidget(item: QueuedPermissionRequest): Component | null {
@@ -586,6 +612,8 @@ export class TUIPermissionPromptProvider implements PermissionPromptProvider {
 
     private processQueue(): void {
         if (this.isShowing || this.queue.length === 0) return;
+        // Every advance entry point waits out a closing remote delivery, not just the deferred one.
+        if (this.remoteFinish.blocked) return;
 
         // 阻塞状态下不弹窗，等待退出后再处理
         if (this.openDeskTUI.isInputBlocked()) {
@@ -597,7 +625,7 @@ export class TUIPermissionPromptProvider implements PermissionPromptProvider {
             const autoResponse = this.tryAutoResolve(this.queue[0]);
             if (!autoResponse) break;
             const autoItem = this.queue.shift()!;
-            autoItem.resolve(autoResponse);
+            if (takeItem(autoItem)) autoItem.resolve(autoResponse);
         }
 
         if (this.queue.length === 0) {
@@ -611,6 +639,7 @@ export class TUIPermissionPromptProvider implements PermissionPromptProvider {
         this.isPending = false;
         const item = this.queue.shift()!;
         this.current = item;
+        this.publishPermissionToMobile(item);
         const remainingCount = this.queue.length;
 
         const isBackground = item.taskInfo ? item.taskInfo.taskId !== this.openDeskTUI.activeTaskId : false;
@@ -627,22 +656,86 @@ export class TUIPermissionPromptProvider implements PermissionPromptProvider {
         item.widget = widget;
 
         widget.onDone = (response) => {
-            const restored = this.closePermissionWidget(item);
-            this.isShowing = false;
-            this.current = null;
-            this.recordGrant(item, response);
-            item.resolve(response);
-            this.openDeskTUI.focusAfterInputPromptClose(restored);
-
-            if (this.queue.length > 0) {
-                this.processQueue();
-            }
-            this.openDeskTUI.tui.requestRender();
+            this.settlePermissionItem(item, response, 'local');
         };
 
         this.openDeskTUI.inputArea.showPromptWidget(widget);
         this.openDeskTUI.tui.setFocus(widget.getSelectList());
         this.openDeskTUI.tui.requestRender();
+    }
+
+    /**
+     * Re-offers the request still being waited on to a newly ready endpoint. This Provider owns the
+     * queue, the settle gate and the lifetime; nothing is revived and no answer is replayed.
+     */
+    private reofferCurrentToMobile(generation: number): void {
+        const item = this.current;
+        if (!item || item.settled) return;
+        if (item.deliveredGeneration === generation) return;
+        this.publishPermissionToMobile(item);
+    }
+
+    private publishPermissionToMobile(item: QueuedPermissionRequest): void {
+        const sourceTaskId = item.taskInfo?.sourceTaskId;
+        if (typeof sourceTaskId !== 'string' || sourceTaskId.trim().length === 0) return;
+        const options = createPermissionDeliveryOptions(item.toolName, item.prefixOptions);
+        const delivery = this.deliveryChannel?.publishPermission(
+            {
+                type: 'permission',
+                requestId: item.requestId,
+                sourceTaskId,
+                ...(item.taskInfo?.sourceTaskName ? { taskName: item.taskInfo.sourceTaskName } : {}),
+                toolName: item.toolName,
+                resources: item.requests.map((request) => request.resourcePath),
+                options
+            },
+            (response, settlement) => this.settlePermissionItem(item, response, 'mobile', settlement)
+        );
+        // A failed re-offer must keep the handle from the delivery that is still open.
+        if (!delivery) return;
+        item.delivery = delivery;
+        item.deliveredGeneration = this.deliveryChannel?.endpointGeneration;
+    }
+
+    private settlePermissionItem(
+        item: QueuedPermissionRequest,
+        response: PermissionUserResponse,
+        source: 'local' | 'mobile' | 'rule' | 'cancel',
+        settlement?: InteractionRemoteSettlement
+    ): boolean {
+        if (!takeItem(item)) return false;
+        const active = this.current === item;
+        let restored: Component | null = null;
+        if (active) {
+            restored = this.closePermissionWidget(item);
+            this.current = null;
+            this.isShowing = false;
+        }
+        if (source === 'local') {
+            this.recordGrant(item, response);
+            item.delivery?.close('superseded');
+        }
+        if (source === 'rule') item.delivery?.close('resolved');
+        if (source === 'cancel') item.delivery?.close('cancelled');
+        item.resolve(response);
+        if (active) {
+            this.openDeskTUI.focusAfterInputPromptClose(restored);
+            const advance = (): void => {
+                this.processQueue();
+                this.openDeskTUI.tui.requestRender();
+            };
+            // A remote answer must release the remote exit before the next item is published.
+            if (settlement) {
+                const release = this.remoteFinish.hold();
+                settlement.afterRemoteClose(() => {
+                    release();
+                    advance();
+                });
+            } else {
+                advance();
+            }
+        }
+        return true;
     }
 
     private matchesTask(item: QueuedPermissionRequest, taskIds: Set<string>): boolean {

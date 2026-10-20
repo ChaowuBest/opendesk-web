@@ -33,6 +33,7 @@ import { getHarmonyOSSystemProxy } from './bridges/harmonyos/proxy.js';
 import { Setting } from '../main/utils/setting.js';
 import type { PlatformFetchOptions, PlatformNetworkConfig } from './base.js';
 import type { InteractiveToolset } from '../main/aikernel/tool.js';
+import type { InteractionDeliveryChannel } from '../main/aikernel/interaction/delivery.js';
 import crypto from 'crypto';
 import path from 'path';
 import { SlidesApplication } from '../main/applications/slides/app.js';
@@ -163,6 +164,7 @@ export class ElectronPlatform extends WorkerPlatform {
      * undefined
      */
     electronApp: Electron.App | undefined;
+    private interactionDeliveryChannel?: InteractionDeliveryChannel;
 
     constructor(electronApp: Electron.App | undefined = undefined) {
         super();
@@ -202,6 +204,14 @@ export class ElectronPlatform extends WorkerPlatform {
             custom_proxy_addr: nc.custom_proxy_addr,
             no_proxy: nc.no_proxy
         };
+    }
+
+    setInteractionDeliveryChannel(channel: InteractionDeliveryChannel): void {
+        this.interactionDeliveryChannel = channel;
+    }
+
+    createPermissionPromptProvider(): ElectronPermissionPromptProvider {
+        return new ElectronPermissionPromptProvider(this.interactionDeliveryChannel);
     }
 
     getApplicationClasses() {
@@ -305,15 +315,15 @@ export class ElectronPlatform extends WorkerPlatform {
     }
 
     async initPlatformHarness(task: TaskState): Promise<void> {
-        task.harnessContext.permissionPrompt = new ElectronPermissionPromptProvider();
+        task.harnessContext.permissionPrompt = this.createPermissionPromptProvider();
         task.interactionToolset = this.createInteractionToolset(task);
     }
 
     createInteractionToolset(task: TaskState): InteractiveToolset {
-        const askUserProvider = new ElectronAskUserProvider();
-        const exitPlanModeProvider = new ElectronExitPlanModeProvider();
+        const askUserProvider = new ElectronAskUserProvider(this.interactionDeliveryChannel);
+        const exitPlanModeProvider = new ElectronExitPlanModeProvider(this.interactionDeliveryChannel);
         exitPlanModeProvider.setModeSwitcher(async (targetModeId: string) => {
-            const switched = await switchTaskMode(task, targetModeId, () => new ElectronPermissionPromptProvider());
+            const switched = await switchTaskMode(task, targetModeId, () => this.createPermissionPromptProvider());
             if (!switched) return;
             // 通知 renderer 更新该任务的模式显示（模式按钮/下拉）
             const { BrowserWindow } = electron();

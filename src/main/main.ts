@@ -107,7 +107,6 @@ import { exportLogEntries } from './utils/export-log.js';
 import { createLocalExportDestinationHost } from './utils/export-local-destination.js';
 import { getMainThemeService, registerThemeHandlers } from '../renderer/theme/main-theme-service.js';
 import { AgentRegistry } from './aikernel/agents/registry.js';
-import { ElectronPermissionPromptProvider } from './aikernel/security/electronPrompt.js';
 import { ElectronExitPlanModeProvider } from './aikernel/interaction/electronExitPlanMode.js';
 import {
     activateOpenDeskOfficeContents,
@@ -378,7 +377,8 @@ import { initializeHarmonyLocalRuntimeState } from '../platforms/bridges/harmony
 declare const FSService: any;
 declare const recallApplication: any;
 
-setPlatform(new ElectronPlatform(app));
+const electronPlatform = new ElectronPlatform(app);
+setPlatform(electronPlatform);
 useConsoleTransport();
 initializeHarmonyRuntimeEnvironment();
 initializeHarmonyLocalRuntimeState();
@@ -1381,7 +1381,9 @@ const registerModeAPIHandlers = () => {
                 return { status: 'error', message: `task ${taskId} not found` };
             }
 
-            const switched = await switchTaskMode(task, modeId, () => new ElectronPermissionPromptProvider());
+            const switched = await switchTaskMode(task, modeId, () =>
+                electronPlatform.createPermissionPromptProvider()
+            );
             if (!switched) {
                 return { status: 'error', message: `unknown mode: ${modeId}` };
             }
@@ -1664,7 +1666,7 @@ const registerTaskManagerAPIHandlers = () => {
                 return _currentElectronModeId;
             },
             defaultExecutionNodeId: globalState.getDefaultExecutionNodeId(),
-            permissionPromptFactory: () => new ElectronPermissionPromptProvider(),
+            permissionPromptFactory: () => electronPlatform.createPermissionPromptProvider(),
             createInteractionToolset: (task) => getPlatform().createInteractionToolset(task)
         });
     });
@@ -1744,7 +1746,7 @@ const registerTaskManagerAPIHandlers = () => {
         try {
             await updateTaskWorkspace(task, newWorkspace, {
                 currentModeId: _currentElectronModeId,
-                permissionPromptFactory: () => new ElectronPermissionPromptProvider()
+                permissionPromptFactory: () => electronPlatform.createPermissionPromptProvider()
             });
             return { status: 'ok' };
         } catch (err: any) {
@@ -3721,10 +3723,8 @@ async function startApplication(): Promise<void> {
             // 旧方案在启动时遍历所有 task 创建 HarnessContext（含 GlobPermissionEnforcer），
             // 每个 enforcer 编译 ~17 条 picomatch 规则（~70KB），814 个 task ≈ 56 MB。
             // 新方案：按 workspace 创建共享 enforcer，task 被实际访问时才注入 harness。
-            await GlobalState.getInstance().taskManagerState.setupLazyHarnessInit(
-                defaultMode,
-                startupWorkspace,
-                () => new ElectronPermissionPromptProvider()
+            await GlobalState.getInstance().taskManagerState.setupLazyHarnessInit(defaultMode, startupWorkspace, () =>
+                electronPlatform.createPermissionPromptProvider()
             );
         })();
 
