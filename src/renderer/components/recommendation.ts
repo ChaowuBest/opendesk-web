@@ -12,6 +12,7 @@
 import { parse as parseYaml } from 'yaml';
 import recommendationYaml from '../../../resources/main/applications/recommendation.yaml?raw';
 import recommendationCss from '../styles/recommendation.css?raw';
+import { CHEVRON_RIGHT_SVG } from '../../common/ui-icons.js';
 import { resolveRendererLocale, createRendererTranslator } from '../locale.js';
 
 let t = createRendererTranslator();
@@ -270,7 +271,7 @@ class RecommendationPanel extends HTMLElement {
                 .map(
                     (item) => `
                 <button type="button" class="rec-row" data-item-id="${this._escapeAttr(item.id)}" title="${this._escapeAttr(item.prompt)}">
-                    <span class="rec-row-arrow">›</span>
+                    <span class="rec-row-arrow">${CHEVRON_RIGHT_SVG}</span>
                     <span class="rec-row-text">${this._escapeHtml(item.prompt)}</span>
                     <span class="rec-row-hint">${t('renderer.recommendation.fillInput')}</span>
                 </button>

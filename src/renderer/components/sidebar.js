@@ -23,6 +23,7 @@ import {
 import { showFeedbackModal } from './feedbackModal.ts';
 import { createRendererTranslator } from '../locale.ts';
 import { escapeHtml } from '../../common/utils/escape.js';
+import { CHEVRON_DOWN_SVG, CHEVRON_RIGHT_SVG } from '../../common/ui-icons.js';
 import { isApplicationVisibleInMenu } from '../utils/application-visibility.ts';
 import { fixedLayerOrigin, visibleViewportRect } from '../utils/window-frame.js';
 import {
@@ -1803,7 +1804,7 @@ class SideBar extends HTMLElement {
                         `${sep}<div class="ctx-submenu-wrap">` +
                         `<button class="${itemCls}" data-action="${item.id}" data-submenu="1">` +
                         `<span class="ctx-icon-sm"><i class="${item.icon}"></i></span><span class="ctx-label">${item.label}</span>` +
-                        '<span class="ctx-arrow">▶</span></button>' +
+                        `<span class="ctx-arrow">${CHEVRON_RIGHT_SVG}</span></button>` +
                         `<div class="ctx-submenu">` +
                         `<button class="ctx-item" data-action="trigger-task-review">` +
                         `<span class="ctx-icon-sm"><i class="fa-solid fa-clipboard-check"></i></span><span class="ctx-label">${this._t('renderer.developer.triggerTaskReview')}</span></button>` +
@@ -2597,7 +2598,7 @@ class SideBar extends HTMLElement {
                         ${this._t(
                             viewIsTime ? 'renderer.sidebar.viewByTimeShort' : 'renderer.sidebar.viewByWorkspaceShort'
                         )}
-                        <span class="sb-view-menu-caret" aria-hidden="true">▾</span>
+                        <span class="sb-view-menu-caret" aria-hidden="true">${CHEVRON_DOWN_SVG}</span>
                     </summary>
                     <div class="sb-view-menu-popover">
                         <button class="${viewIsTime ? 'is-current' : ''}" data-task-view="time">
@@ -2623,7 +2624,7 @@ class SideBar extends HTMLElement {
                         ${this._t(
                             viewIsTime ? 'renderer.sidebar.viewByTimeShort' : 'renderer.sidebar.viewByWorkspaceShort'
                         )}
-                        <span class="sb-view-menu-caret" aria-hidden="true">▾</span>
+                        <span class="sb-view-menu-caret" aria-hidden="true">${CHEVRON_DOWN_SVG}</span>
                     </summary>
                     <div class="sb-view-menu-popover">
                         <button class="${viewIsTime ? 'is-current' : ''}" data-task-view="time">
