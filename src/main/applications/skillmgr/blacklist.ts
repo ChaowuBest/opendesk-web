@@ -26,6 +26,23 @@ type Blacklist = Record<string, BlacklistEntry>;
 
 const BLACKLIST_FILENAME = 'blacklist.json';
 
+/** 文件不存在时缓存条目的 mtime 占位值 */
+const MTIME_NOT_EXIST = -1;
+
+interface BlacklistCache {
+    /** 缓存对应的文件路径：数据目录可在运行期切换（CLI --config-directory 等），路径变化即失效 */
+    path: string;
+    data: Blacklist;
+    mtimeMs: number;
+}
+
+/**
+ * blacklist.json 为低频变更配置，但黑名单 filter 会对每个 skill 高频求值
+ * （如 getUserInvocableSkills 遍历技能列表），故按 mtime 缓存读取结果：
+ * 未变更时仅一次 statSync，写入路径直更缓存避免回读。
+ */
+let blacklistCache: BlacklistCache | null = null;
+
 function getBlacklistFilePath(): string {
     const skillsDir = skillRegistry.getSkillsDirectory();
     return path.join(path.dirname(skillsDir), BLACKLIST_FILENAME);
@@ -34,14 +51,21 @@ function getBlacklistFilePath(): string {
 function readBlacklist(): Blacklist {
     const filePath = getBlacklistFilePath();
     try {
-        if (fs.existsSync(filePath)) {
-            const raw = fs.readFileSync(filePath, 'utf8');
-            return JSON.parse(raw);
+        const stat = fs.statSync(filePath);
+        if (blacklistCache && blacklistCache.path === filePath && blacklistCache.mtimeMs === stat.mtimeMs) {
+            return blacklistCache.data;
         }
+        const data = JSON.parse(fs.readFileSync(filePath, 'utf8'));
+        blacklistCache = { path: filePath, data, mtimeMs: stat.mtimeMs };
+        return data;
     } catch {
-        // 文件损坏则重建
+        // 文件不存在或损坏均按空黑名单处理（与既有行为一致），并缓存避免反复读失败文件
+        if (blacklistCache && blacklistCache.path === filePath && blacklistCache.mtimeMs === MTIME_NOT_EXIST) {
+            return blacklistCache.data;
+        }
+        blacklistCache = { path: filePath, data: {}, mtimeMs: MTIME_NOT_EXIST };
+        return blacklistCache.data;
     }
-    return {};
 }
 
 function writeBlacklist(blacklist: Blacklist): void {
@@ -51,6 +75,12 @@ function writeBlacklist(blacklist: Blacklist): void {
         fs.mkdirSync(dir, { recursive: true });
     }
     fs.writeFileSync(filePath, JSON.stringify(blacklist, null, 2), 'utf8');
+    // 写后以写出的数据直更缓存，mtime 取真实值，保证后续读取不回读也不拿过期数据
+    try {
+        blacklistCache = { path: filePath, data: blacklist, mtimeMs: fs.statSync(filePath).mtimeMs };
+    } catch {
+        blacklistCache = null;
+    }
 }
 
 /**
@@ -106,7 +136,8 @@ export function addToBlacklist(bundleName: string, skillName: string, reason: st
         return;
     }
     const key = `${bundleName}/${skillName}`;
-    const blacklist = readBlacklist();
+    // 基于拷贝修改：写入失败时不得污染缓存，保持缓存与磁盘内容一致
+    const blacklist = { ...readBlacklist() };
     blacklist[key] = {
         reason,
         blockedAt: new Date().toISOString(),
@@ -121,17 +152,18 @@ export function addToBlacklist(bundleName: string, skillName: string, reason: st
 export function removeFromBlacklist(bundleName: string, skillName: string): void {
     const key = `${bundleName}/${skillName}`;
     const blacklist = readBlacklist();
-    if (key in blacklist) {
-        delete blacklist[key];
-        writeBlacklist(blacklist);
-    }
+    if (!(key in blacklist)) return;
+    // 基于拷贝修改：写入失败时不得污染缓存，保持缓存与磁盘内容一致
+    const next = { ...blacklist };
+    delete next[key];
+    writeBlacklist(next);
 }
 
 /**
  * 获取所有黑名单记录
  */
 export function getAllBlacklisted(): Blacklist {
-    return readBlacklist();
+    return { ...readBlacklist() };
 }
 
 /**

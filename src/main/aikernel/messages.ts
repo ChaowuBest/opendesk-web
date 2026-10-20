@@ -1101,6 +1101,8 @@ export class TextMessagePart implements BaseTextMessagePart {
     type: 'text' = 'text';
     text: string;
     rendered?: string;
+    /** rendered 落盘时的渲染 workspace 标记（可枚举、随任务 JSON 持久化）；与内存侧 _renderedWorkspace 同步维护 */
+    renderedWorkspace?: string | null;
     /** 标记 rendered 是否已冻结（流式结束后冻结，避免重复渲染） */
     private _frozen!: boolean;
     /** 计算当前 rendered 缓存时使用的渲染 workspace（非枚举，不持久化）。
@@ -1122,7 +1124,15 @@ export class TextMessagePart implements BaseTextMessagePart {
         Object.setPrototypeOf(text_message_part_obj, TextMessagePart.prototype);
         const part = text_message_part_obj as TextMessagePart;
         Object.defineProperty(part, '_frozen', { value: false, writable: true, enumerable: false });
-        Object.defineProperty(part, '_renderedWorkspace', { value: undefined, writable: true, enumerable: false });
+        // 恢复落盘的渲染 workspace 标记：仅当 rendered 与标记成对存在（新数据）时恢复复用资格；
+        // 老数据无标记保持 undefined，行为与旧版一致（恢复后必重渲染）
+        const persistedWorkspace =
+            part.rendered !== undefined && part.renderedWorkspace !== undefined ? part.renderedWorkspace : undefined;
+        Object.defineProperty(part, '_renderedWorkspace', {
+            value: persistedWorkspace,
+            writable: true,
+            enumerable: false
+        });
         return part;
     }
 
@@ -1130,6 +1140,7 @@ export class TextMessagePart implements BaseTextMessagePart {
     invalidateRender(): void {
         if (!this._frozen) {
             this.rendered = undefined;
+            this.renderedWorkspace = undefined;
         }
     }
 
@@ -1145,6 +1156,7 @@ export class TextMessagePart implements BaseTextMessagePart {
         }
         this.rendered = await marked.parse(this.text);
         this._renderedWorkspace = workspace;
+        this.renderedWorkspace = workspace;
         return this.rendered;
     }
 

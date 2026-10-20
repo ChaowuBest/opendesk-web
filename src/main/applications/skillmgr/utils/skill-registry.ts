@@ -466,10 +466,12 @@ export class SkillRegistry {
 
     listSkills(): Array<Record<string, unknown>> {
         if (this.skillsCache.size === 0) this.loadAll();
+        // 目录路径循环外取一次：getSkillsDirectory 含 existsSync 探测，逐 skill 调用会造成无谓 IO
+        const skillsDir = this.getSkillsDirectory();
         const list = Array.from(this.skillsCache.entries()).map(([id, s]) => {
             let addedAt = 0;
             try {
-                const dirPath = s.skillDir || path.join(this.getSkillsDirectory(), id);
+                const dirPath = s.skillDir || path.join(skillsDir, id);
                 if (fs.existsSync(dirPath)) {
                     const stat = fs.statSync(dirPath);
                     addedAt = (stat.birthtimeMs != null ? stat.birthtimeMs : stat.mtimeMs) || 0;
