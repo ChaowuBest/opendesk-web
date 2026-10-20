@@ -2689,6 +2689,36 @@ describe('task-view message queue', () => {
         expect(firstTurnCapsule?.getAttribute('data-streaming')).toBe('true');
     });
 
+    test('showing the waiting placeholder removes the stale capsule on previous messages', () => {
+        const taskView = document.createElement('task-view') as HTMLElement & {
+            task_id: string;
+            _contextUsageBaseline: { p: number; t: number } | null;
+            _modelContextSize: number;
+            _showWaitingAssistantPlaceholder: (options?: { force?: boolean }) => void;
+        };
+        taskView.task_id = 'task-1';
+        taskView.innerHTML = `
+            <div id="taskview-chat-history">
+                <div class="od-assistant-msg-container" id="message-container-assistant-prev">
+                    <span class="message-usage" data-streaming="false">
+                        <span class="usage-spinner" style="display:none;"></span>
+                        <span class="usage-text">已输出 100 词, 总计 500 词</span>
+                    </span>
+                </div>
+            </div>
+        `;
+        taskView._contextUsageBaseline = { p: 100, t: 500 };
+        taskView._modelContextSize = 10000;
+
+        // 追加对话：submitMessage 先显示占位胶囊，用户消息 progress 到达前的
+        // 窗口内上一回合的旧胶囊仍挂在消息上，必须立即移除避免双胶囊并存
+        taskView._showWaitingAssistantPlaceholder({ force: true });
+
+        expect(taskView.querySelector('#message-container-assistant-prev .message-usage')).toBeNull();
+        expect(taskView.querySelectorAll('.message-usage')).toHaveLength(1);
+        expect(taskView.querySelector('.waiting-usage-placeholder .message-usage')).not.toBeNull();
+    });
+
     test('decode speed keeps updating across a tool roundtrip with per-request usage', async () => {
         const taskView = document.createElement('task-view') as HTMLElement & {
             task_id: string;

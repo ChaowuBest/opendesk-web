@@ -2316,10 +2316,16 @@ class TaskView extends HTMLElement {
         }
         if (existingPlaceholder) {
             historyContainer.appendChild(existingPlaceholder);
+            // 追加对话窗口内旧回合胶囊可能仍挂在上一条消息上，复用占位符时一并清理
+            this._removeUsageOutside(existingPlaceholder);
             return;
         }
 
         historyContainer.insertAdjacentHTML('beforeend', TaskView.createWaitingAssistantPlaceholderHtml());
+        // submitMessage / 队列消息自动发送会在旧回合胶囊仍挂在上一条消息上时先显示
+        // 占位胶囊，用户消息 progress 到达前的窗口内会出现两个胶囊；按「仅保留
+        // 最新一条胶囊」的既有规则立即清理占位符之外的旧胶囊
+        this._removeUsageOutside(historyContainer.querySelector('.waiting-usage-placeholder'));
         // 首 token 之前的等待期（含模型思考期）同步展示上下文占用胶囊：
         // 此阶段尚无输出词数与速度可测，先让「总计/上下文占比」持续可见；
         // 模型开始输出后占位被移除，由首条 assistant progress 的正常胶囊接管
