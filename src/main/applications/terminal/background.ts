@@ -57,6 +57,8 @@ interface BackgroundProcessEntry {
     exitCode: number | null;
     finished: boolean;
     finishedAt?: number;
+    /** checkShellStatus 轮询限流状态：上次放行查询的时间、输出快照与连续拒绝计数 */
+    pollState?: { lastAt: number; lastOutput: string; blockedCount: number };
 }
 
 // 已完成的进程条目最多保留 5 分钟，防止无限增长
@@ -66,6 +68,25 @@ const PROCESS_STATUS_POLL_INTERVAL_MS = 200;
 
 /** 后台进程已运行超过该时长且零输出时，checkShellStatus 追加静默诊断提示 */
 export const SILENT_OUTPUT_HINT_ELAPSED_MS = 5 * 60 * 1000;
+
+/**
+ * 状态查询限流的冷却基准与上限：对"输出无变化"的运行中进程，重复
+ * checkShellStatus 查询按连续拒绝次数从基准指数升级到上限。
+ */
+export const STATUS_POLL_COOLDOWN_BASE_MS = 90 * 1000;
+export const STATUS_POLL_COOLDOWN_MAX_MS = 15 * 60 * 1000;
+
+/** beginStatusPoll 的闸门决策结果 */
+export interface StatusPollGate {
+    /** 是否放行本次查询 */
+    allowed: boolean;
+    /** 当前冷却窗口；被拒绝时为下一次可查询需等待的窗口 */
+    cooldownMs: number;
+    /** 连续被拒绝次数（放行查询清零） */
+    blockedCount: number;
+    /** 距上次放行查询经过的毫秒数 */
+    sinceLastPollMs: number;
+}
 
 // 识别把全部输出缓冲到命令结束才输出的管道消费端（Select-Object -Last/-First、
 // tail/head/tee 等）。这类命令在结束前对外零输出，"暂无输出"不代表卡死。
@@ -78,14 +99,15 @@ export function matchesOutputBufferingPipeline(command: string): boolean {
 
 /**
  * 超时转后台 / 长时间零输出轮询时的诊断提示：区分「缓冲管道的正常静默」
- * 与「进程真实卡死」，避免模型对同一 PID 长时间盲轮询（真实事故：构建命令
- * 带 Select-Object -Last 缓冲，36 分钟零输出，agent 轮询 60+ 次无法决策）。
+ * 与「进程真实卡死」，并一律引导到可见性替代方案而非继续轮询（真实事故：
+ * 构建命令带 Select-Object -Last 缓冲，36 分钟零输出，agent 轮询 60+ 次无法
+ * 决策，最终用户只能手动关闭沙箱）。
  */
 export function silentBackgroundHint(command: string): string {
     if (matchesOutputBufferingPipeline(command)) {
-        return '提示: 该命令包含 Select-Object -Last/-First、tail 等缓冲类管道，全部输出要等命令完全结束才会一次性输出——"(暂无输出)"不代表卡死。若命令本身较慢（如全量构建）可继续轮询等待；若等待远超预期，建议 kill=true 终止后改为分步执行、不加缓冲管道直接输出重跑。';
+        return '提示: 该命令包含 Select-Object -Last/-First、tail 等缓冲类管道，全部输出要等命令完全结束才会一次性输出，结束前无法观察进度。若需要实时进度，建议 kill=true 终止后去掉缓冲管道直接输出重跑（超长输出由宿主自动截断并保存完整日志）；若确认命令本身耗时可静默等待，不要频繁轮询。';
     }
-    return '提示: 进程转后台至今没有任何输出。若该命令本应持续产生进度（如构建、安装），长时间零输出可能是进程真实卡死；可 kill=true 终止后分步重跑、直接观察输出定位卡点。';
+    return '提示: 进程转后台至今没有任何输出。若该命令本应持续产生进度（如构建、安装），可能是进程真实卡死：建议 kill=true 终止后分步重跑、直接观察输出定位卡点；不要频繁轮询。';
 }
 
 /** 可被 abortSignal 打断的延时；返回 true 表示计时结束，false 表示已取消。 */
@@ -194,6 +216,43 @@ export class BackgroundProcessManager {
             elapsedMs: Date.now() - entry.startTime,
             command: entry.command
         };
+    }
+
+    /**
+     * checkShellStatus 查询闸门：对"输出无变化"的运行中进程做冷却限流。
+     *
+     * 零输出的长时间后台进程（如缓冲管道包裹的构建）曾导致模型以 30s waitMs
+     * 盲轮询十几分钟、任务体感卡死，用户只能手动关闭沙箱。此处做确定性拦截：
+     * 输出无变化时按连续拒绝次数从基准指数升级冷却（放行查询清零）；输出有
+     * 新增（健康构建的进度轮询）、进程已完成或 kill 操作不受限。
+     */
+    beginStatusPoll(pid: number): StatusPollGate {
+        const idle: StatusPollGate = { allowed: true, cooldownMs: 0, blockedCount: 0, sinceLastPollMs: 0 };
+        const entry = this.entries.get(pid);
+        if (!entry || entry.finished || !entry.pollState) return idle;
+        const output = entry.output.getText();
+        if (output !== entry.pollState.lastOutput) return idle;
+        const sinceLastPollMs = Date.now() - entry.pollState.lastAt;
+        const cooldownFor = (blocked: number) =>
+            Math.min(STATUS_POLL_COOLDOWN_BASE_MS * 2 ** blocked, STATUS_POLL_COOLDOWN_MAX_MS);
+        const cooldownMs = cooldownFor(entry.pollState.blockedCount);
+        if (sinceLastPollMs < cooldownMs) {
+            entry.pollState.blockedCount += 1;
+            return {
+                allowed: false,
+                cooldownMs: cooldownFor(entry.pollState.blockedCount),
+                blockedCount: entry.pollState.blockedCount,
+                sinceLastPollMs
+            };
+        }
+        return { allowed: true, cooldownMs, blockedCount: entry.pollState.blockedCount, sinceLastPollMs };
+    }
+
+    /** 记录一次放行的查询（时间戳与输出快照），并把连续拒绝计数清零；未知/已完成 PID 为空操作 */
+    completeStatusPoll(pid: number): void {
+        const entry = this.entries.get(pid);
+        if (!entry || entry.finished) return;
+        entry.pollState = { lastAt: Date.now(), lastOutput: entry.output.getText(), blockedCount: 0 };
     }
 
     killProcess(pid: number): boolean {

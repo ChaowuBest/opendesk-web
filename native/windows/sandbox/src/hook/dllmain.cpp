@@ -524,6 +524,12 @@ extern "C" BOOL APIENTRY DllMain(HMODULE hModule, DWORD reason, LPVOID lpReserve
         try {
             sbx::loadEnvironmentPolicy();
             sbx::installHooks();
+            // 进程级 attach 记录：给日志建立 pid→exe 映射（[POLICY] 行只有 pid，
+            // 冻结/事故归因时需要知道每个 pid 是哪个程序、何时被注入）
+            wchar_t self[MAX_PATH];
+            DWORD n = GetModuleFileNameW(nullptr, self, MAX_PATH);
+            sbx::Log::info(L"[HOOK] 已附加: pid=%lu exe=%ls", GetCurrentProcessId(),
+                           n > 0 && n < MAX_PATH ? self : L"?");
         } catch (const std::exception& e) {
             // 策略加载失败 = fail-closed：不安装 hook（进程仍可运行但无管控）。
             // 异常原文透出（stderr + 调试器），便于定位（core 桥接层的解析错误

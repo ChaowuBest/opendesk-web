@@ -8,7 +8,14 @@
 
 #include <vector>
 
+#include "log.h"
+
 namespace sbx {
+
+// 注入耗时超过该值视为异常并落日志：正常注入 ~百毫秒级；偏长说明远程
+// LoadLibraryW（loader lock 竞争/目标初始化慢）阻塞了发起方进程的
+// CreateProcess 调用链——这是"整棵沙箱树无文件操作暂停"类事故的关键观测点。
+static const long long kSlowInjectWarnMs = 2000;
 
 bool injectHookDll(HANDLE hProcess, const std::wstring& dllPath)
 {
@@ -50,6 +57,7 @@ bool injectHookDll(HANDLE hProcess, const std::wstring& dllPath)
         return false;
     }
 
+    const long long startTick = (long long)GetTickCount64();
     HANDLE thread = CreateRemoteThread(hProcess, nullptr, 0,
                                        (LPTHREAD_START_ROUTINE)loadLibraryW,
                                        remote, 0, nullptr);
@@ -60,6 +68,7 @@ bool injectHookDll(HANDLE hProcess, const std::wstring& dllPath)
     // LoadLibrary 期间 DllMain 会安装 Detours hook；注入线程结束后
     // 进程再 resume，保证任何后续 API 调用都走已就绪的 hook。
     DWORD waitResult = WaitForSingleObject(thread, 60000);
+    const long long elapsedMs = (long long)GetTickCount64() - startTick;
     if (waitResult == WAIT_OBJECT_0) {
         // 远程线程的退出码即 LoadLibraryW 的返回值（模块句柄）；为 0 表示
         // DLL 加载失败（路径/依赖缺失）——此时 hook 并未安装，必须让调用方
@@ -71,6 +80,17 @@ bool injectHookDll(HANDLE hProcess, const std::wstring& dllPath)
             SetLastError(ERROR_MOD_NOT_FOUND);
             return false;
         }
+        // 成功但耗时偏长：不影响结果，但为"进程树暂停"类事故留下观测痕迹
+        if (elapsedMs >= kSlowInjectWarnMs) {
+            Log::warn(L"[HOOK] 注入耗时偏长: %lldms（目标 pid=%lu），发起方 CreateProcess 期间被阻塞",
+                      elapsedMs, GetProcessId(hProcess));
+        }
+    } else if (waitResult == WAIT_TIMEOUT) {
+        // 等待超时：注入线程仍在目标进程内运行（结果未知），显式标记错误码，
+        // 让调用方的"后代注入失败(%lu)"带上可读的 1460 而非陈旧的错误值
+        Log::warn(L"[HOOK] 注入等待超时: %lldms（目标 pid=%lu），注入线程仍滞留目标进程",
+                  elapsedMs, GetProcessId(hProcess));
+        SetLastError(ERROR_TIMEOUT);
     }
     CloseHandle(thread);
     VirtualFreeEx(hProcess, remote, 0, MEM_RELEASE);

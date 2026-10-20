@@ -16,16 +16,17 @@ export const zhCn: Record<string, string> = {
     'pwsh.description':
         '使用选定的 powershell 执行命令。超过超时时间的命令会转入后台，可通过 checkShellStatus 查看执行状态。',
     'pwsh.command.empty': '命令不能为空',
-    'pwsh.command': '要执行的 powershell 命令',
+    'pwsh.command':
+        '要执行的 powershell 命令。不要用 Select-Object -Last 等缓冲管道截取长输出：输出会等到命令结束才可见；超长输出由宿主自动截断并保存完整日志，直接输出即可',
     'pwsh.intent': '对命令意图的简短描述，用于在界面中展示，例如“检查 powershell 版本”',
     'pwsh.cwd': '执行命令的工作目录，默认使用任务工作区',
     'pwsh.cwd.sandbox': '沙箱内工作目录，使用宿主真实路径（C:...）；默认任务工作区',
     'pwsh.timeout': '命令执行超时时间（毫秒），默认 30000（30 秒）',
     'checkShellStatus.name': '检查Shell状态',
     'status.description':
-        '查看 executeBash、executePwsh 或 executeZsh 启动的后台进程当前的执行状态、返回码和输出内容。可通过 kill 参数终止进程。省略 waitMs 或设为 0 时立即返回；若下一步依赖该进程完成，请按预计剩余时间传入正数 waitMs 进行有限等待（范围 0-${max} 毫秒），进程完成时会提前返回。',
+        '查看 executeBash、executePwsh 或 executeZsh 启动的后台进程当前的执行状态、返回码和输出内容。可通过 kill 参数终止进程。省略 waitMs 或设为 0 时立即返回；若下一步依赖该进程完成，请按预计剩余时间传入正数 waitMs 进行有限等待（范围 0-${max} 毫秒），进程完成时会提前返回。对输出无变化的运行中进程，重复查询会被限流冷却。',
     'status.waitMs':
-        '可选的有限等待时间（毫秒），范围 0-${max}，默认 0（立即查询）。仅在确实需要即时状态、且查询后可继续其他独立工作时使用 0；确实需要很快再次观察进度时可用 1000-5000；下一步依赖完成结果时优先使用 10000-30000。进程完成时会提前返回，无需等满 waitMs。避免对同一运行中 PID 连续使用 0。',
+        '可选的有限等待时间（毫秒），范围 0-${max}，默认 0（立即查询）。仅在确实需要即时状态、且查询后可继续其他独立工作时使用 0；确实需要很快再次观察进度时可用 1000-5000；下一步依赖完成结果时优先使用 10000-30000。进程完成时会提前返回，无需等满 waitMs。避免对同一运行中 PID 连续使用 0；对输出无变化的运行中进程重复查询会被限流冷却。',
     'shell.sandboxTag': '沙箱',
     'prompt.title': '# 终端执行环境',
     'prompt.active': '- 当前终端：${shell} (`${path}`)',
