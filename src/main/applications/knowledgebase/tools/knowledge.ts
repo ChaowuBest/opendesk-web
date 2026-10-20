@@ -14,7 +14,7 @@ import { ToolCall } from '../../../aikernel/messages';
 import { Card } from '../../../tui/components/card';
 import { statusDisplay, truncText } from '../../../tui/components/toolcall';
 import { escapeHtml } from '../../../../common/utils/escape.js';
-import { t } from '../../../../locale/index.js';
+import { t } from '../locale/index.js';
 import { type KnowledgeBaseApplication } from '../app';
 import chalk from 'chalk';
 import { z } from 'zod';
@@ -212,7 +212,7 @@ export class RetrieveFromKnowledgeBaseTool extends BaseTool<typeof RetrieveFromK
         return `<div class="od-inline-toolcall-container">
             <div class="flex items-center gap-1.5 min-w-0">
                 <i class="fas fa-book-open shrink-0 text-slate-400 text-xs"></i>
-                <span class="shrink-0 text-slate-500 text-xs">${escapeHtml(t('search.kb.retrieve.name'))}</span>
+                <span class="shrink-0 text-slate-500 text-xs">${escapeHtml(t('kb.retrieve.name'))}</span>
                 ${statusIcon}
                 ${detailHtml}
             </div>
@@ -293,7 +293,7 @@ export class AskKnowledgeBaseTool extends BaseTool<typeof AskKnowledgeBaseArgsSc
         return `<div class="od-inline-toolcall-container">
             <div class="flex items-center gap-1.5 min-w-0">
                 <i class="fas fa-comments shrink-0 text-slate-400 text-xs"></i>
-                <span class="shrink-0 text-slate-500 text-xs">${escapeHtml(t('search.kb.ask.name'))}</span>
+                <span class="shrink-0 text-slate-500 text-xs">${escapeHtml(t('kb.ask.name'))}</span>
                 ${statusIcon}
                 ${detailHtml}
             </div>

@@ -92,7 +92,7 @@ export function renderGoalEvalProgressHtml(progress, selectorId, translate) {
 
     const metaHtml =
         metaItems.length > 0
-            ? `<span class="od-goal-eval-meta" style="margin-left:auto;font-size:10px;color:${colors.metaColor};font-family:'JetBrains Mono','SF Mono',Menlo,Consolas,monospace;white-space:nowrap;">${escapeHtml(metaItems.join(' · '))}</span>`
+            ? `<span class="od-goal-eval-meta" style="margin-left:auto;font-size:10px;color:${colors.metaColor};white-space:nowrap;">${escapeHtml(metaItems.join(' · '))}</span>`
             : '';
     const messageHtml = message
         ? `<div class="od-goal-eval-message" style="font-size:11px;color:${colors.textColor};line-height:1.6;">${escapeHtml(message)}</div>`

@@ -10,5 +10,7 @@
  */
 
 export const enUs: Record<string, string> = {
-    'app.name': 'Knowledge Base'
+    'app.name': 'Knowledge Base',
+    'kb.retrieve.name': 'KB Retrieve',
+    'kb.ask.name': 'KB Q&A'
 };

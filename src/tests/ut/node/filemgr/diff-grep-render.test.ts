@@ -1101,3 +1101,77 @@ test('grepFiles - 目录扫描最多同时读取四个文件', async () => {
         cleanup(dir);
     }
 });
+
+test('grepFiles - UTF-8 头部探测边界截断多字节字符时不误判为 gb18030', async () => {
+    const dir = makeTempDir();
+    try {
+        // detectFileEncoding 读 64KB 头部做 UTF-8 校验。
+        // 让 64KB 边界恰好切在多字节字符中间，且前面紧邻其他多字节字符，
+        // 使"去掉尾部 3 字节重试"后残留的仍是不完整序列——此时必须仍判为 UTF-8，
+        // 否则整个文件按 gb18030 解码，中文注释全部变成乱码且无法匹配中文 pattern
+        const pad = Buffer.alloc(64 * 1024 - 4, 0x61); // 'a' * 65532
+
+        // 尾部 = CC 80 E6 95：3 字节 '数' 截断在前 2 字节，去掉 3 字节后残留 'a'*65532 + CC 仍不完整
+        const cjkFile = path.join(dir, 'truncated_cjk.txt');
+        fs.writeFileSync(
+            cjkFile,
+            Buffer.concat([
+                pad,
+                Buffer.from([0xcc, 0x80]),
+                Buffer.from([0xe6, 0x95, 0xb0]),
+                Buffer.from('\n边界标记行\n', 'utf8')
+            ])
+        );
+
+        // 尾部 = F0 9F 98：4 字节 emoji 截断在前 3 字节，去掉 3 字节后残留 'a'*65532 + F0 仍不完整
+        const emojiFile = path.join(dir, 'truncated_emoji.txt');
+        fs.writeFileSync(
+            emojiFile,
+            Buffer.concat([pad, Buffer.from([0xf0, 0x9f, 0x98, 0x80]), Buffer.from('\n表情边界标记行\n', 'utf8')])
+        );
+
+        const tool = new GrepFilesTool();
+        const result = await tool.executeCommand({
+            pattern: '边界标记',
+            path: dir,
+            ignoreCase: false,
+            contextLines: 0,
+            maxResults: 20
+        });
+
+        assert.match(result, /在 2 个文件中找到 2 处匹配/);
+        assert.match(result, /边界标记行/);
+        assert.match(result, /表情边界标记行/);
+        // 不应出现 UTF-8 字节被按 GBK 解读的乱码特征字
+        assert.doesNotMatch(result, /[鏁鍦鍙涓嬫枃]/);
+    } finally {
+        cleanup(dir);
+    }
+});
+
+test('grepFiles - 非法 UTF-8 的 GBK 文件仍回退 gb18030 解码', async () => {
+    const dir = makeTempDir();
+    try {
+        // '汉' 的 GBK 编码为 BA BA（continuation 字节开头，非法 UTF-8），应回退 gb18030 正确解码
+        const gbkFile = path.join(dir, 'gbk_cjk.txt');
+        fs.writeFileSync(
+            gbkFile,
+            Buffer.concat([Buffer.from('GBK_MARKER\n'), Buffer.from([0xba, 0xba]), Buffer.from('\n')])
+        );
+
+        const tool = new GrepFilesTool();
+        const result = await tool.executeCommand({
+            pattern: '汉',
+            path: dir,
+            ignoreCase: false,
+            contextLines: 0,
+            maxResults: 20
+        });
+
+        assert.match(result, /在 1 个文件中找到 1 处匹配/);
+        // 匹配行内容应是 gb18030 解码后的'汉'，而非 U+FFFD 替换符
+        assert.match(result, /汉/);
+    } finally {
+        cleanup(dir);
+    }
+});

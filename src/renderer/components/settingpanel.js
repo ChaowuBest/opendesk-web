@@ -10,6 +10,7 @@
  */
 
 import { createRendererTranslator } from '../locale.ts';
+import { createTranslatorForSearch } from '../../main/applications/search/locale/renderer.ts';
 import { createModelSelect, MODEL_SELECT_CSS } from '../utils/model-select.js';
 import { selectSupportedShell } from '../../common/shells.js';
 import { REASONING_EFFORT_LEVELS } from '../../common/reasoning-effort.ts';
@@ -1991,6 +1992,7 @@ class SettingPanel extends HTMLElement {
     }
 
     renderSearchSection() {
+        const searchT = createTranslatorForSearch(this.currentData);
         const searchConfig = this._getSearchConfig();
         const channels = searchConfig.channels || {};
         const defaultWeb = searchConfig.defaultWebSearch || 'bing';
@@ -2004,25 +2006,37 @@ class SettingPanel extends HTMLElement {
             {
                 id: 'duckduckgo',
                 name: 'DuckDuckGo',
-                desc: this._t('sp.search.channel.duckduckgo.desc'),
+                desc: searchT('sp.search.channel.duckduckgo.desc'),
                 needsKey: false
             },
-            { id: 'bing', name: 'Bing', desc: this._t('sp.search.channel.bing.desc'), needsKey: false },
+            { id: 'bing', name: 'Bing', desc: searchT('sp.search.channel.bing.desc'), needsKey: false },
             {
                 id: 'baidu',
-                name: this._t('sp.search.channel.baidu.name'),
-                desc: this._t('sp.search.channel.baidu.desc'),
+                name: searchT('sp.search.channel.baidu.name'),
+                desc: searchT('sp.search.channel.baidu.desc'),
                 needsKey: false
             },
-            { id: 'tavily', name: 'Tavily', desc: this._t('sp.search.channel.tavily.desc'), needsKey: true },
-            { id: 'brave', name: 'Brave', desc: this._t('sp.search.channel.brave.desc'), needsKey: true },
+            { id: 'tavily', name: 'Tavily', desc: searchT('sp.search.channel.tavily.desc'), needsKey: true },
+            { id: 'brave', name: 'Brave', desc: searchT('sp.search.channel.brave.desc'), needsKey: true },
             {
                 id: 'bocha',
-                name: this._t('sp.search.channel.bocha.name'),
-                desc: this._t('sp.search.channel.bocha.desc'),
+                name: searchT('sp.search.channel.bocha.name'),
+                desc: searchT('sp.search.channel.bocha.desc'),
                 needsKey: true
             },
-            { id: 'exa', name: 'Exa', desc: this._t('sp.search.channel.exa.desc'), needsKey: true }
+            { id: 'exa', name: 'Exa', desc: searchT('sp.search.channel.exa.desc'), needsKey: true },
+            {
+                id: 'deepseek',
+                name: 'DeepSeek',
+                desc: searchT('sp.search.channel.deepseek.desc'),
+                needsKey: true
+            },
+            {
+                id: 'doubao',
+                name: searchT('sp.search.channel.doubao.name'),
+                desc: searchT('sp.search.channel.doubao.desc'),
+                needsKey: true
+            }
         ];
 
         const webChannelCards = webChannels
@@ -2033,15 +2047,15 @@ class SettingPanel extends HTMLElement {
                 const canSelect = !ch.needsKey || hasKey;
                 const statusColor = canSelect ? (isDefault ? 'text-emerald-600' : 'text-gray-400') : 'text-orange-400';
                 const statusText = isDefault
-                    ? this._t('sp.search.status.default')
+                    ? searchT('sp.search.status.default')
                     : canSelect
-                      ? this._t('sp.search.status.available')
-                      : this._t('sp.search.status.needsKey');
+                      ? searchT('sp.search.status.available')
+                      : searchT('sp.search.status.needsKey');
                 const borderColor = isDefault ? 'border-emerald-200/60' : '';
                 const bgColor = isDefault ? 'bg-emerald-50/30' : '';
 
                 return `
-            <div class="sp-card" style="${isDefault ? 'border-color:var(--sp-color-primary);background:var(--sp-color-primary-bg)' : ''}">
+            <div class="sp-card" style="display:flex;flex-direction:column;${isDefault ? 'border-color:var(--sp-color-primary);background:var(--sp-color-primary-bg)' : ''}">
                 <div class="flex items-start justify-between">
                     <div class="flex-1 min-w-0">
                         <div class="flex items-center gap-2">
@@ -2053,7 +2067,7 @@ class SettingPanel extends HTMLElement {
                     ${
                         canSelect && !isDefault
                             ? `
-                    <button class="search-set-default-btn sp-btn sp-btn-sm sp-btn-secondary" data-channel="${ch.id}" data-type="web">${this._t('sp.search.setDefault')}</button>
+                    <button class="search-set-default-btn sp-btn sp-btn-sm sp-btn-secondary" data-channel="${ch.id}" data-type="web">${searchT('sp.search.setDefault')}</button>
                     `
                             : ''
                     }
@@ -2061,9 +2075,9 @@ class SettingPanel extends HTMLElement {
                 ${
                     ch.needsKey
                         ? `
-                <div style="margin-top:12px;display:flex;align-items:center;gap:8px">
+                <div style="margin-top:auto;padding-top:12px;display:flex;align-items:center;gap:8px">
                     <input type="password" class="search-api-key-input sp-form-input" style="flex:1;padding:6px 10px;font-size:13px" value="${this.escapeHtml(apiKey)}" placeholder="API Key" data-channel="${ch.id}">
-                    <button class="search-set-key-btn sp-btn sp-btn-sm sp-btn-primary" data-channel="${ch.id}">${this._t('sp.search.save')}</button>
+                    <button class="search-set-key-btn sp-btn sp-btn-sm sp-btn-primary" data-channel="${ch.id}">${searchT('sp.search.save')}</button>
                 </div>
                 `
                         : ''
@@ -2071,11 +2085,11 @@ class SettingPanel extends HTMLElement {
                 ${
                     ch.id === 'bing'
                         ? `
-                <div style="margin-top:12px;display:flex;align-items:center;gap:8px">
-                    <label style="font-size:13px;color:var(--sp-color-text-secondary);flex-shrink:0">${this._t('sp.search.region')}</label>
+                <div style="margin-top:auto;padding-top:12px;display:flex;align-items:center;gap:8px">
+                    <label style="font-size:13px;color:var(--sp-color-text-secondary);flex-shrink:0">${searchT('sp.search.region')}</label>
                     <select class="bing-lang-select sp-form-input" style="flex:1;padding:6px 10px;font-size:13px">
-                        <option value="zh" ${bingLang === 'zh' ? 'selected' : ''}>${this._t('sp.search.region.cn')}</option>
-                        <option value="en" ${bingLang === 'en' ? 'selected' : ''}>${this._t('sp.search.region.global')}</option>
+                        <option value="zh" ${bingLang === 'zh' ? 'selected' : ''}>${searchT('sp.search.region.cn')}</option>
+                        <option value="en" ${bingLang === 'en' ? 'selected' : ''}>${searchT('sp.search.region.global')}</option>
                     </select>
                 </div>
                 `
@@ -2087,8 +2101,8 @@ class SettingPanel extends HTMLElement {
             .join('');
 
         const academicChannels = [
-            { id: 'arxiv', name: 'arXiv', desc: this._t('sp.search.channel.arxiv.desc') },
-            { id: 'dblp', name: 'DBLP', desc: this._t('sp.search.channel.dblp.desc') }
+            { id: 'arxiv', name: 'arXiv', desc: searchT('sp.search.channel.arxiv.desc') },
+            { id: 'dblp', name: 'DBLP', desc: searchT('sp.search.channel.dblp.desc') }
         ];
         const academicChannelCards = academicChannels
             .map((ch) => {
@@ -2099,14 +2113,14 @@ class SettingPanel extends HTMLElement {
                     <div>
                         <div class="flex items-center gap-2">
                             <h3 style="font-size:14px;font-weight:600;color:var(--sp-color-text)">${ch.name}</h3>
-                            <span class="sp-tag ${isDefault ? 'sp-tag-success' : 'sp-tag-neutral'}">${isDefault ? this._t('sp.search.status.default') : this._t('sp.search.status.available')}</span>
+                            <span class="sp-tag ${isDefault ? 'sp-tag-success' : 'sp-tag-neutral'}">${isDefault ? searchT('sp.search.status.default') : searchT('sp.search.status.available')}</span>
                         </div>
                         <p style="font-size:13px;color:var(--sp-color-text-secondary);margin-top:2px">${ch.desc}</p>
                     </div>
                     ${
                         !isDefault
                             ? `
-                    <button class="search-set-default-btn sp-btn sp-btn-sm sp-btn-secondary" data-channel="${ch.id}" data-type="academic">${this._t('sp.search.setDefault')}</button>
+                    <button class="search-set-default-btn sp-btn sp-btn-sm sp-btn-secondary" data-channel="${ch.id}" data-type="academic">${searchT('sp.search.setDefault')}</button>
                     `
                             : ''
                     }
@@ -2120,30 +2134,30 @@ class SettingPanel extends HTMLElement {
         <!-- 网页搜索引擎 -->
         <section class="sp-section">
             <div style="display:flex;align-items:center;gap:8px;margin-bottom:16px">
-                <h2 class="sp-section-title" style="margin-bottom:0">${this._t('sp.search.webTitle')}</h2>
-                <span class="sp-section-subtitle">${this._t('sp.search.webSubtitle')}</span>
+                <h2 class="sp-section-title" style="margin-bottom:0">${searchT('sp.search.webTitle')}</h2>
+                <span class="sp-section-subtitle">${searchT('sp.search.webSubtitle')}</span>
                 <label class="search-toggle-label sp-toggle-switch" data-type="web" style="margin-left:auto">
                     <input type="checkbox" class="search-toggle-checkbox" ${webSearchEnabled ? 'checked' : ''}>
                     <span class="sp-toggle-track"></span>
                 </label>
             </div>
             <div class="${webSearchEnabled ? '' : 'hidden'}">
-                <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(320px,1fr));gap:12px">
+                <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(250px,1fr));gap:12px">
                     ${webChannelCards}
                 </div>
                 <p style="font-size:13px;color:var(--sp-color-text-secondary);margin-top:12px;display:flex;align-items:center;gap:4px">
                     <i class="fas fa-info-circle"></i>
-                    ${this._t('sp.search.webHint')}
+                    ${searchT('sp.search.webHint')}
                 </p>
             </div>
-            ${!webSearchEnabled ? `<p class="sp-form-hint" style="margin-top:12px;display:flex;align-items:center;gap:4px"><i class="fas fa-info-circle"></i>${this._t('sp.search.webDisabled')}</p>` : ''}
+            ${!webSearchEnabled ? `<p class="sp-form-hint" style="margin-top:12px;display:flex;align-items:center;gap:4px"><i class="fas fa-info-circle"></i>${searchT('sp.search.webDisabled')}</p>` : ''}
         </section>
 
         <!-- 学术搜索引擎 -->
         <section class="sp-section">
             <div style="display:flex;align-items:center;gap:8px;margin-bottom:16px">
-                <h2 class="sp-section-title" style="margin-bottom:0">${this._t('sp.search.academicTitle')}</h2>
-                <span class="sp-section-subtitle">${this._t('sp.search.academicSubtitle')}</span>
+                <h2 class="sp-section-title" style="margin-bottom:0">${searchT('sp.search.academicTitle')}</h2>
+                <span class="sp-section-subtitle">${searchT('sp.search.academicSubtitle')}</span>
                 <label class="search-toggle-label sp-toggle-switch" data-type="academic" style="margin-left:auto">
                     <input type="checkbox" class="search-toggle-checkbox" ${academicSearchEnabled ? 'checked' : ''}>
                     <span class="sp-toggle-track"></span>
@@ -2154,7 +2168,7 @@ class SettingPanel extends HTMLElement {
                     ${academicChannelCards}
                 </div>
             </div>
-            ${!academicSearchEnabled ? `<p class="sp-form-hint" style="margin-top:12px;display:flex;align-items:center;gap:4px"><i class="fas fa-info-circle"></i>${this._t('sp.search.academicDisabled')}</p>` : ''}
+            ${!academicSearchEnabled ? `<p class="sp-form-hint" style="margin-top:12px;display:flex;align-items:center;gap:4px"><i class="fas fa-info-circle"></i>${searchT('sp.search.academicDisabled')}</p>` : ''}
         </section>
         `;
     }

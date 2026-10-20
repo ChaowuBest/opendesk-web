@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { test, after } from 'node:test';
 import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 import { Setting, setCustomOpendeskDirectory } from '../../../../main/utils/setting.js';
 import { LLM } from '../../../../main/aikernel/llm.js';
@@ -8,7 +9,7 @@ import { LLM } from '../../../../main/aikernel/llm.js';
 const { BaseStorage } = await import('../../../../main/services/storage/abstract-storage.js');
 const { FSStorage, makeSchema } = await import('../../../../main/applications/filemgr/storage.js');
 const { default: FileManagerWorker } = await import('../../../../main/applications/filemgr/worker.js');
-const profile = fs.mkdtempSync('/private/tmp/filemgr-search-transition-');
+const profile = fs.mkdtempSync(path.join(os.tmpdir(), 'filemgr-search-transition-'));
 setCustomOpendeskDirectory(profile);
 after(() => fs.rmSync(profile, { recursive: true, force: true }));
 const deferred = () => {
@@ -58,10 +59,11 @@ for (const route of ['name', 'content'])
                 embedded_migrated: true,
                 _migratedRefCount: true
             });
-            const root = path.join(directory, 'files');
+            // 对齐产品路径约定：item_id 来自 fast-glob、root 经 renderer normalizePath，Windows 上均为正斜杠
+            const root = path.join(directory, 'files').replace(/\\/g, '/');
             fs.mkdirSync(root);
-            const oldFile = path.join(root, 'old-a.md'),
-                newFile = path.join(root, 'current-b.md');
+            const oldFile = `${root}/old-a.md`,
+                newFile = `${root}/current-b.md`;
             fs.writeFileSync(oldFile, 'old model A text');
             fs.writeFileSync(newFile, 'current model B text');
             const row = (file: string, id: string, text: string, generation: number) => ({
@@ -151,10 +153,10 @@ for (const stage of [
 ])
     test(`production aggregate: transition during ${stage} discards obsolete semantic routes and preserves keyword`, async (t) => {
         const directory = fs.mkdtempSync(path.join(profile, stage + '-')),
-            root = path.join(directory, 'files');
+            root = path.join(directory, 'files').replace(/\\/g, '/');
         fs.mkdirSync(root);
-        const oldFile = path.join(root, 'old-a.md'),
-            keywordFile = path.join(root, 'query-keyword.md');
+        const oldFile = `${root}/old-a.md`,
+            keywordFile = `${root}/query-keyword.md`;
         fs.writeFileSync(oldFile, 'obsolete model A');
         fs.writeFileSync(keywordFile, 'keyword file');
         const entered = deferred(),

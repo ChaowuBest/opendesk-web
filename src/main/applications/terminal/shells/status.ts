@@ -17,7 +17,12 @@ import chalk from 'chalk';
 import { Card } from '../../../tui/components/card.js';
 import { statusDisplay } from '../../../tui/components/toolcall.js';
 import { z } from 'zod';
-import { BackgroundProcessManager, type BackgroundProcessStatus } from '../background.js';
+import {
+    BackgroundProcessManager,
+    SILENT_OUTPUT_HINT_ELAPSED_MS,
+    silentBackgroundHint,
+    type BackgroundProcessStatus
+} from '../background.js';
 import { t as terminalT } from '../locale/index.js';
 import type { TaskState } from '../../../aikernel/states/tasks.js';
 import type { SupportedShellKind } from '../../../../common/shells.js';
@@ -112,6 +117,10 @@ export class CheckShellStatusTool extends BaseTool<CheckShellStatusArgsSchema> {
                 `命令: ${status.command}`,
                 `已运行: ${elapsedSec}s`,
                 '提示: waitMs 的单位是毫秒。仅在确实需要即时状态、且查询后可继续其他独立工作时使用 waitMs=0；确实需要很快再次观察进度时可用 waitMs=1000-5000；若下一步依赖完成结果，优先使用 waitMs=10000-30000。进程完成时会提前返回，无需等满 waitMs。避免对同一运行中 PID 连续零等待查询；只有判断进程卡住时才使用 kill=true。',
+                // 长时间运行且零输出：区分缓冲管道的正常静默与真实卡死，给出决策指引
+                ...(!output && status.elapsedMs >= SILENT_OUTPUT_HINT_ELAPSED_MS
+                    ? [silentBackgroundHint(status.command)]
+                    : []),
                 '---',
                 output || '(暂无输出)'
             ];

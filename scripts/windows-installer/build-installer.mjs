@@ -28,7 +28,8 @@ const csharpCompiler = process.env.CSC_PATH || 'C:\\Windows\\Microsoft.NET\\Fram
 const bootstrapperResourcesDirectory = path.join(projectRoot, 'resources', 'package', 'bootstrapper');
 const iconPath = path.join(projectRoot, 'resources', 'package', 'icons', 'icon_round.ico');
 const serviceBuilderPath = path.join(projectRoot, 'scripts', 'windows-update-service', 'build-service.mjs');
-// The current WiX v3 MSI templates remain x64.
+// MSI 平台跟随 OPENDESK_WIX_ARCH：x64 链路产出的 MSI 由 SetMsiTemplate 追加 ARM64 平台，
+// arm64 链路产出单平台 ARM64 MSI（x64 机器安装会在 BA 架构检查处被拒绝）。
 const targetWindowsArch = process.env.OPENDESK_WIX_ARCH || 'x64';
 if (targetWindowsArch !== 'x64' && targetWindowsArch !== 'arm64') {
     throw new Error(`Unsupported OPENDESK_WIX_ARCH: ${targetWindowsArch}`);
@@ -113,11 +114,11 @@ async function verifyPackagedAppDirectory(appDirectory, expectedVersion) {
     }
 }
 
-function wixProduct({ id, name, version, body, featureRefs, packageCode }) {
+function wixProduct({ id, name, version, body, featureRefs, packageCode, windowsPlatform, installerVersion }) {
     return `<?xml version="1.0" encoding="utf-8"?>
 <Wix xmlns="http://schemas.microsoft.com/wix/2006/wi" xmlns:util="http://schemas.microsoft.com/wix/UtilExtension">
   <Product Id="${id}" UpgradeCode="{0E0C2E6A-34E1-4DA7-919D-A5BE5EF4C045}" Name="${name}" Version="${version}" Manufacturer="OpenDesk Team, Openharmony" Language="1033" Codepage="65001">
-    <Package${packageCode ? ` Id="${packageCode}"` : ''} InstallerVersion="405" Compressed="yes" InstallScope="perMachine" Platform="x64" />
+    <Package${packageCode ? ` Id="${packageCode}"` : ''} InstallerVersion="${installerVersion}" Compressed="yes" InstallScope="perMachine" Platform="${windowsPlatform}" />
     <Media Id="1" Cabinet="product.cab" EmbedCab="yes" CompressionLevel="high" />
     <Property Id="ARPSYSTEMCOMPONENT" Value="1" />
     <Property Id="APPLICATIONROOTDIRECTORY" Secure="yes" />
@@ -195,13 +196,26 @@ function platformSource({ launcherPath, servicePath }) {
         packageCode: productCode('platform-package:4'),
         body,
         featureRefs:
-            '      <ComponentRef Id="StableLauncher" />\n      <ComponentRef Id="OpenDeskShortcut" />\n      <ComponentRef Id="OpenDeskUpdateServiceComponent" />\n      <ComponentRef Id="OpenDeskUpdateDataDirectoryComponent" />\n      <ComponentRef Id="LegacyShortcutCleanup" />'
+            '      <ComponentRef Id="StableLauncher" />\n      <ComponentRef Id="OpenDeskShortcut" />\n      <ComponentRef Id="OpenDeskUpdateServiceComponent" />\n      <ComponentRef Id="OpenDeskUpdateDataDirectoryComponent" />\n      <ComponentRef Id="LegacyShortcutCleanup" />',
+        windowsPlatform: targetWindowsArch,
+        installerVersion: targetWindowsArch === 'arm64' ? '500' : '405'
     });
 }
 
 function versionSource(version) {
     const directoryId = `APP_${version.replaceAll('.', '_')}`;
-    const body = `    <Directory Id="TARGETDIR" Name="SourceDir">
+    const body = `    <!-- 同 ProductCode 重装（BA 把计划动作升级为 Repair）时 burn 会自动附加
+         REINSTALL=ALL REINSTALLMODE=cmuse：cmuse 不含 a/o，同版本不同构建的文件不会被
+         覆盖，且引擎附加的命令行属性会覆盖 Property 表默认值。这里用 Type 51 SetProperty
+         在 AppSearch 之后改写 REINSTALLMODE：v=重缓存新源包，a=覆盖全部文件（不依赖文件
+         版本号比较），ums=注册表与快捷方式一并重做。首次安装/卸载时 REINSTALL 未设置，
+         REINSTALLMODE 被 Windows Installer 忽略，CA 改写无副作用。 -->
+    <Property Id="REINSTALLMODE" Value="vamus" />
+    <CustomAction Id="SetOpenDeskReinstallMode" Property="REINSTALLMODE" Value="vamus" Execute="immediate" Return="check" />
+    <InstallExecuteSequence>
+      <Custom Action="SetOpenDeskReinstallMode" After="AppSearch" />
+    </InstallExecuteSequence>
+    <Directory Id="TARGETDIR" Name="SourceDir">
       <Directory Id="ProgramFiles64Folder"><Directory Id="APPLICATIONROOTDIRECTORY" Name="opendesk"><Directory Id="${directoryId}" Name="app-${version}" /></Directory></Directory>
     </Directory>
     <DirectoryRef Id="APPLICATIONROOTDIRECTORY">
@@ -219,7 +233,9 @@ function versionSource(version) {
             name: `OpenDesk ${version} (silent-update prototype)`,
             version,
             body,
-            featureRefs: '      <ComponentRef Id="BundleRegistration" />\n      <ComponentGroupRef Id="AppPayload" />'
+            featureRefs: '      <ComponentRef Id="BundleRegistration" />\n      <ComponentGroupRef Id="AppPayload" />',
+            windowsPlatform: targetWindowsArch,
+            installerVersion: targetWindowsArch === 'arm64' ? '500' : '405'
         })
     };
 }
@@ -236,8 +252,10 @@ function bundleSource({ version, platformMsi, versionMsi, cleanupExecutable, leg
       <Payload SourceFile="${xml(path.join(bootstrapperResourcesDirectory, 'background.png'))}" Name="background.png" />
       <Payload SourceFile="${xml(iconPath)}" Name="opendesk.ico" />
       <Payload SourceFile="${xml(path.join(bootstrapperResourcesDirectory, 'zh-cn.wxl'))}" Name="zh-cn.wxl" />
+      <Payload SourceFile="${xml(path.join(bootstrapperResourcesDirectory, 'en-us.wxl'))}" Name="en-us.wxl" />
     </BootstrapperApplicationRef>
     <Variable Name="OpenDeskDisplayVersion" Type="string" Value="${version}" />
+    <Variable Name="OpenDeskTargetArch" Type="string" Value="${targetWindowsArch}" />
     <Variable Name="InstallFolder" Type="string" Value="[ProgramFiles64Folder]opendesk" bal:Overridable="yes" />
     <Variable Name="RequiredInstallSize" Type="numeric" Value="0" bal:Overridable="no" />
     <Variable Name="CreateDesktopShortcut" Type="numeric" Value="1" bal:Overridable="yes" />
@@ -276,7 +294,7 @@ function compileMsi(sourcePath, harvestPath, outputPath, sourceDirectory) {
     const light = path.join(wixDirectory, 'light.exe');
     run(
         candle,
-        ['-nologo', '-arch', 'x64', '-ext', 'WixUtilExtension', '-out', `${sourcePath}.wixobj`, sourcePath],
+        ['-nologo', '-arch', targetWindowsArch, '-ext', 'WixUtilExtension', '-out', `${sourcePath}.wixobj`, sourcePath],
         projectRoot
     );
     run(
@@ -284,7 +302,7 @@ function compileMsi(sourcePath, harvestPath, outputPath, sourceDirectory) {
         [
             '-nologo',
             '-arch',
-            'x64',
+            targetWindowsArch,
             '-ext',
             'WixUtilExtension',
             `-dSourceDir=${sourceDirectory}`,
@@ -342,6 +360,7 @@ function buildVersionMsi({ version, appDirectory, outputDirectory }) {
         appDirectory
     );
     compileMsi(sourcePath, harvestPath, msiPath, appDirectory);
+    run(setMsiTemplateExecutable, [msiPath, msiTemplate], projectRoot);
     return msiPath;
 }
 
@@ -396,6 +415,22 @@ run(
     ],
     projectRoot
 );
+const setMsiTemplateExecutable = path.join(outputDirectory, 'SetMsiTemplate.exe');
+run(
+    csharpCompiler,
+    [
+        '/nologo',
+        '/target:exe',
+        '/optimize+',
+        `/out:${setMsiTemplateExecutable}`,
+        path.join(projectRoot, 'resources', 'package', 'windows-installer', 'SetMsiTemplate.cs')
+    ],
+    projectRoot
+);
+// Windows Installer 只处理 Template 平台列表包含目标系统平台的 MSI（否则报 1633）。
+// x64 包必须同时声明 ARM64 平台：ARM64 Windows 靠兼容层模拟运行 x64 应用，安装必须放行；
+// ARM64 包保持单平台 Template，天然被 x64/x86 机器拒绝（arm64 安装包不能装在 x64 上）。
+const msiTemplate = targetWindowsArch === 'x64' ? 'x64,ARM64;1033' : 'ARM64;1033';
 const bootstrapperAssemblyPath = path.join(outputDirectory, 'OpenDesk.Bootstrapper.dll');
 run(
     csharpCompiler,
@@ -421,7 +456,16 @@ const platformMsiPath = path.join(outputDirectory, 'OpenDesk-platform.msi');
 fs.writeFileSync(platformSourcePath, platformSource({ launcherPath, servicePath }));
 run(
     path.join(wixDirectory, 'candle.exe'),
-    ['-nologo', '-arch', 'x64', '-ext', 'WixUtilExtension', '-out', `${platformSourcePath}.wixobj`, platformSourcePath],
+    [
+        '-nologo',
+        '-arch',
+        targetWindowsArch,
+        '-ext',
+        'WixUtilExtension',
+        '-out',
+        `${platformSourcePath}.wixobj`,
+        platformSourcePath
+    ],
     projectRoot
 );
 run(
@@ -429,6 +473,7 @@ run(
     ['-nologo', '-ext', 'WixUtilExtension', '-out', platformMsiPath, `${platformSourcePath}.wixobj`],
     projectRoot
 );
+run(setMsiTemplateExecutable, [platformMsiPath, msiTemplate], projectRoot);
 
 function buildBundle({ version, versionMsiPath }) {
     const sourcePath = path.join(outputDirectory, `OpenDesk-${version}-Setup.wxs`);

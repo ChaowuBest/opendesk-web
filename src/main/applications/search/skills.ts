@@ -23,7 +23,7 @@ description: 介绍搜索工具的管理：配置API密钥、启用/禁用工具
 
 系统提供两个统一的搜索工具给AI模型使用：
 
-1. **WebSearch** - 统一网页搜索，底层可使用多种搜索引擎（DuckDuckGo、Bing、百度、Tavily、Brave、博查、Exa）
+1. **WebSearch** - 统一网页搜索，底层可使用多种搜索引擎（DuckDuckGo、Bing、百度、Tavily、Brave、博查、Exa、DeepSeek、豆包）
 2. **AcademicSearch** - 统一学术搜索，底层使用 arXiv、DBLP
 
 ## 可用搜索引擎
@@ -37,6 +37,8 @@ description: 介绍搜索工具的管理：配置API密钥、启用/禁用工具
 5. **Brave** - 隐私优先的搜索引擎，需要API密钥
 6. **博查 (Bocha)** - 专为AI设计的中文搜索引擎，需要API密钥
 7. **Exa** - AI驱动的搜索引擎，需要API密钥
+8. **DeepSeek** - DeepSeek自研搜索引擎，需要API密钥
+9. **豆包 (Doubao)** - 字节跳动豆包搜索引擎，需要API密钥
 
 ### 学术搜索引擎
 
@@ -45,7 +47,7 @@ description: 介绍搜索工具的管理：配置API密钥、启用/禁用工具
 
 ## 配置说明
 
-对于需要API密钥的搜索渠道（如Tavily、Brave、博查、Exa），你需要先配置相应的API密钥才能将该渠道设为默认搜索引擎。
+对于需要API密钥的搜索渠道（如Tavily、Brave、博查、Exa、DeepSeek、豆包），你需要先配置相应的API密钥才能将该渠道设为默认搜索引擎。
 如果用户没有给你API密钥，你需要向用户询问，请他们把密钥告诉你，否则无法正确配置。
 
 设置默认网页搜索引擎后，所有 WebSearch 调用都会使用该渠道。

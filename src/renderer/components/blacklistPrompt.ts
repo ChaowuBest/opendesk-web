@@ -9,6 +9,7 @@
  */
 
 import { MODAL_CSS, MODAL_ANIM_DURATION_OUT, detectDarkMode, bindOverlayDismiss } from './confirmModal.ts';
+import { CHEVRON_RIGHT_SVG } from '../../common/ui-icons.js';
 
 interface BlacklistSkillItem {
     bundleName: string;
@@ -69,6 +70,8 @@ const BLACKLIST_EXTRA_CSS = `
     user-select: none; margin-top: 8px; padding-top: 8px;
     border-top: 1px solid var(--mc-line-soft);
 }
+.od-bl-arrow { display: inline-block; transition: transform 0.15s; }
+.od-bl-arrow.expanded { transform: rotate(90deg); }
 .od-bl-detail-content { margin-top: 6px; display: none; }
 .od-bl-detail-content.show { display: block; }
 .od-bl-intercept-item {
@@ -110,7 +113,7 @@ export function showBlacklistPrompt(data: BlacklistPromptData): void {
                 intercepts.length > 0
                     ? `
             <div class="od-bl-detail-toggle" data-detail="${detailId}" data-arrow="${arrowId}">
-                <span id="${arrowId}">▸</span> 查看 ${intercepts.length} 条拦截详情
+                <span id="${arrowId}" class="od-bl-arrow">${CHEVRON_RIGHT_SVG}</span> 查看 ${intercepts.length} 条拦截详情
             </div>
             <div class="od-bl-detail-content" id="${detailId}">
                 ${intercepts
@@ -198,10 +201,10 @@ export function showBlacklistPrompt(data: BlacklistPromptData): void {
             const arrow = overlay.querySelector(`#${arrowId}`);
             if (detail?.classList.contains('show')) {
                 detail.classList.remove('show');
-                if (arrow) arrow.textContent = '▸';
+                arrow?.classList.remove('expanded');
             } else {
                 detail?.classList.add('show');
-                if (arrow) arrow.textContent = '▾';
+                arrow?.classList.add('expanded');
             }
         });
     });

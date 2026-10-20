@@ -71,6 +71,7 @@ function getSkillsAPI() {
 }
 
 import { escapeHtml } from '../../../../common/utils/escape.js';
+import { CHEVRON_RIGHT_SVG } from '../../../../common/ui-icons.js';
 import { mergeRegistryTabState } from './registry-tabs.js';
 import { Marked, Renderer } from 'marked';
 import markdownCSS from '../../../../renderer/styles/print-markdown.css?inline';
@@ -736,7 +737,7 @@ const STYLE = `
     cursor: pointer; font-family: inherit; transition: all 0.12s;
 }
 .detail-tool-params-toggle:hover { background: #F0F0F0; color: #333; }
-.detail-tool-params-toggle .toggle-icon { font-size: 8px; transition: transform 0.15s; display: inline-block; }
+.detail-tool-params-toggle .toggle-icon { font-size: 10px; transition: transform 0.15s; display: inline-block; }
 .detail-tool-params-toggle.expanded .toggle-icon { transform: rotate(90deg); }
 .detail-tool-params {
     margin-top: 10px; border-radius: 8px; overflow: hidden;
@@ -2538,7 +2539,7 @@ class SkillMgrEntryWidget extends HTMLElement {
                     ${
                         t.params && t.params.length > 0
                             ? `<button type="button" class="detail-tool-params-toggle" data-tool-toggle="${i}">
-                            <span class="toggle-icon">▶</span> ${this._t('renderer.skill.detail.params', { count: t.params.length })}
+                            <span class="toggle-icon">${CHEVRON_RIGHT_SVG}</span> ${this._t('renderer.skill.detail.params', { count: t.params.length })}
                            </button>
                            <div class="detail-tool-params" data-tool-params="${i}" style="display:none">
                              <div class="detail-tool-params-header">
@@ -5858,7 +5859,7 @@ class SkillMgrEntryWidget extends HTMLElement {
             html += `
             <div class="accordion-item">
                 <div class="accordion-header" data-accordion-toggle="${escapeHtml(String(tc.index))}">
-                    <span class="accordion-arrow" style="${isExpanded ? 'transform:rotate(90deg)' : ''}">▶</span>
+                    <span class="accordion-arrow" style="${isExpanded ? 'transform:rotate(90deg)' : ''}">${CHEVRON_RIGHT_SVG}</span>
                     <span class="accordion-index">#${tc.index}</span>
                     <span class="accordion-title">${escapeHtml(tc.title)}</span>
                     <span class="analyze-modal-testcase-status status-${tc.status}">${statusLabels[tc.status] || tc.status}</span>

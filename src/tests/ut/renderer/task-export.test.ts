@@ -649,6 +649,65 @@ describe('buildTaskExportHtml', () => {
         expect(html).toContain('总 TOKENS');
     });
 
+    test('header usage 携带 cacheHitRate 时渲染整体 cache 命中率胶囊', () => {
+        const doc = setupExportDoc([]);
+        const chatHistory = doc.querySelector('#taskview-chat-history');
+        const { html } = buildTaskExportHtml({
+            taskName: 't',
+            contentHtml: '<div class="od-user-msg">x</div>',
+            chatHistory,
+            doc,
+            reasoningCollapseLabel: '收起',
+            header: {
+                title: 't',
+                exportedAt: '导出于 x',
+                usage: { total: 45507, input: 11011, output: 1352, cacheRead: 34496, cacheMiss: 11011 },
+                labels: {
+                    model: '模型',
+                    startedAt: '',
+                    exportedAt: '导出于 x',
+                    totalTokens: '总 TOKENS',
+                    inputTokens: '上行（输入）',
+                    outputTokens: '下行（输出）',
+                    cacheHitRate: 'CACHE 命中率',
+                    toggleToLight: '切换到浅色模式',
+                    toggleToDark: '切换到深色模式'
+                }
+            }
+        });
+        expect(html).toContain('CACHE 命中率');
+        expect(html).toContain('75.8%');
+    });
+
+    test('header usage 未携带 cache 拆分时不渲染 cache 胶囊', () => {
+        const doc = setupExportDoc([]);
+        const chatHistory = doc.querySelector('#taskview-chat-history');
+        const { html } = buildTaskExportHtml({
+            taskName: 't',
+            contentHtml: '<div class="od-user-msg">x</div>',
+            chatHistory,
+            doc,
+            reasoningCollapseLabel: '收起',
+            header: {
+                title: 't',
+                exportedAt: '导出于 x',
+                usage: { total: 12345, input: 8000, output: 4345 },
+                labels: {
+                    model: '模型',
+                    startedAt: '',
+                    exportedAt: '导出于 x',
+                    totalTokens: '总 TOKENS',
+                    inputTokens: '上行（输入）',
+                    outputTokens: '下行（输出）',
+                    cacheHitRate: 'CACHE 命中率',
+                    toggleToLight: '切换到浅色模式',
+                    toggleToDark: '切换到深色模式'
+                }
+            }
+        });
+        expect(html).not.toContain('CACHE 命中率');
+    });
+
     test('包含主题切换按钮与切换脚本', () => {
         const doc = setupExportDoc([]);
         const chatHistory = doc.querySelector('#taskview-chat-history');
@@ -678,6 +737,37 @@ describe('buildTaskExportHtml', () => {
         expect(html).toContain('"切换到深色模式"');
         expect(html).toContain("setAttribute('data-theme', theme)");
         expect(html).toContain('od-export-theme-toggle');
+    });
+
+    test('包含「查看过程」/过程段的展开态 CSS 与点击委托脚本', () => {
+        const doc = setupExportDoc([]);
+        const chatHistory = doc.querySelector('#taskview-chat-history');
+        const { html } = buildTaskExportHtml({
+            taskName: 't',
+            contentHtml: `
+                <section class="od-completed-process">
+                    <button type="button" class="od-completed-process-summary" data-completed-process-toggle aria-expanded="false"><span>查看过程</span></button>
+                    <div class="od-completed-process-detail">
+                        <div class="od-process-segment">
+                            <button type="button" class="od-process-summary" data-process-toggle aria-expanded="false"><span class="od-process-chevron"></span></button>
+                            <div class="od-process-detail"></div>
+                        </div>
+                    </div>
+                </section>`,
+            chatHistory,
+            doc,
+            reasoningCollapseLabel: '收起'
+        });
+        // 展开态规则在导出时刻不命中任何元素，抽取阶段拿不到，必须由导出模板自带
+        expect(html).toContain('.od-completed-process-detail.is-open');
+        expect(html).toContain('.od-process-detail.is-open');
+        expect(html).toContain('.od-completed-process.is-expanded .od-completed-process-chevron');
+        expect(html).toContain("[aria-expanded='true'] > .od-process-chevron");
+        // 点击事件委托需覆盖 completed-process 与 process-segment 两个分支
+        expect(html).toContain("closest('[data-completed-process-toggle]')");
+        expect(html).toContain("closest('[data-process-toggle]')");
+        expect(html).toContain("classList.toggle('is-open'");
+        expect(html).toContain("classList.toggle('is-expanded'");
     });
 
     test('未传 header 时不渲染 header 与切换按钮', () => {

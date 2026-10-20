@@ -10,6 +10,7 @@
  */
 
 import { escapeHtml as escapeHtmlFn } from '../../../../common/utils/escape.js';
+import { CHEVRON_RIGHT_SVG, CHEVRON_UP_SVG } from '../../../../common/ui-icons.js';
 import { A2UIToHTMLConverter } from '../../../services/a2ui/a2ui-to-html.js';
 import { isJSON, jsonToHTML } from '../../../services/a2ui/json-to-html.js';
 
@@ -1402,9 +1403,9 @@ class A2AEntryWidget extends HTMLElement {
                 })
                 .join('');
 
-            // 使用主题样式构建完整的列表
+            // 使用主题样式构建完整的列表；展开/收起方向由 .agents-expand-icon 的 rotate 表达
             const isExpanded = this.agentsListExpanded;
-            const expandIcon = isExpanded ? '▼' : '▶';
+            const expandIcon = CHEVRON_RIGHT_SVG;
 
             const additionalStyles = `
                 <style>
@@ -1493,7 +1494,7 @@ class A2AEntryWidget extends HTMLElement {
                                 </div>
                                 <div class="agents-collapse-button">
                                     <button class="${buttonClasses}" style="${buttonStyles}" data-action="toggle-agents-list">
-                                        <span style="margin-right: 4px;">▲</span>
+                                        <span style="margin-right: 4px;">${CHEVRON_UP_SVG}</span>
                                         收起列表
                                     </button>
                                 </div>

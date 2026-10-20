@@ -987,6 +987,10 @@ export class SkillRegistry {
 
     providers: Map<string, SkillProvider> = new Map();
 
+    /** per-provider getSkills 结果缓存：provider 重建技能对象成本高（parseMd/new Toolset/new Tool×N），
+     *  技能列表变更统一经 clearCache 失效，provider 注册变化时按 bundle 失效 */
+    private providerSkillsCache: Map<string, Promise<Skill[]>> = new Map();
+
     /** Skill 缓存，用于同步获取已加载的 Skill */
     private skillCache: Map<string, Map<string, Skill>> = new Map();
 
@@ -1009,6 +1013,8 @@ export class SkillRegistry {
     }
 
     registerSkillProvider(bundleName: string, provider: SkillProvider) {
+        // 同名覆盖（如 Staff agent 重建后 reassert）时丢弃旧 provider 的缓存结果
+        this.providerSkillsCache.delete(bundleName);
         this.providers.set(bundleName, provider);
     }
 
@@ -1057,16 +1063,33 @@ export class SkillRegistry {
     clearCache(bundleName?: string): void {
         if (bundleName) {
             this.skillCache.delete(bundleName);
+            this.providerSkillsCache.delete(bundleName);
         } else {
             this.skillCache.clear();
+            this.providerSkillsCache.clear();
         }
+    }
+
+    /**
+     * 获取 provider 的技能列表（带缓存）。失败结果不缓存，下次调用重试。
+     */
+    private loadProviderSkills(bundleName: string, provider: SkillProvider): Promise<Skill[]> {
+        let cached = this.providerSkillsCache.get(bundleName);
+        if (!cached) {
+            cached = provider.getSkills().catch((err) => {
+                this.providerSkillsCache.delete(bundleName);
+                throw err;
+            });
+            this.providerSkillsCache.set(bundleName, cached);
+        }
+        return cached;
     }
 
     async getAvailableSkills(agentId?: string): Promise<Map<string, Skill[]>> {
         const result: Map<string, Skill[]> = new Map();
         for (const [bundleName, provider] of this.providers) {
             try {
-                const allSkills = await provider.getSkills();
+                const allSkills = await this.loadProviderSkills(bundleName, provider);
                 // 缓存全部技能（包括禁用的，确保 LoadSkill/CallSkill 可查找）
                 for (const skill of allSkills) {
                     this.cacheSkill(bundleName, skill);
@@ -1091,7 +1114,7 @@ export class SkillRegistry {
         const result: Map<string, Skill[]> = new Map();
         for (const [bundleName, provider] of this.providers) {
             try {
-                const skills = await provider.getSkills();
+                const skills = await this.loadProviderSkills(bundleName, provider);
                 result.set(bundleName, skills);
             } catch (err) {
                 logger.error(`获取技能失败: ${err}`);
@@ -1104,7 +1127,7 @@ export class SkillRegistry {
         const shouldExposeSkill = createSkillFrontmatterExposureMatcher(exposure);
         let result = '<available_skills>\n';
         for (const [bundleName, provider] of this.providers) {
-            const skills = await provider.getSkills();
+            const skills = await this.loadProviderSkills(bundleName, provider);
             for (const skill of skills) {
                 // disable-model-invocation=true 的 Skill 不向 LLM 暴露描述
                 if (!skill.isModelInvocable) continue;
@@ -1131,7 +1154,7 @@ export class SkillRegistry {
         const result: { bundleName: string; skill: Skill }[] = [];
         for (const [bundleName, provider] of this.providers) {
             try {
-                const skills = await provider.getSkills();
+                const skills = await this.loadProviderSkills(bundleName, provider);
                 for (const skill of skills) {
                     if (
                         skill.isUserInvocable &&
@@ -1155,7 +1178,7 @@ export class SkillRegistry {
         const result: { bundleName: string; skill: Skill }[] = [];
         for (const [bundleName, provider] of this.providers) {
             try {
-                const skills = await provider.getSkills();
+                const skills = await this.loadProviderSkills(bundleName, provider);
                 for (const skill of skills) {
                     if (
                         this.isSkillEnabled(bundleName, skill.frontmatter.name) &&
@@ -1188,7 +1211,7 @@ export class SkillRegistry {
             return undefined;
         }
 
-        const skills = await provider.getSkills();
+        const skills = await this.loadProviderSkills(bundleName, provider);
         const skill = skills.find((skill) => skill.frontmatter.name === skillName);
         if (skill) {
             // 缓存找到的 Skill

@@ -40,6 +40,16 @@ const ExaChannelConfig = z.object({
     api_key: z.string().default('').describe('Exa API密钥')
 });
 
+/** DeepSeek 渠道配置 */
+const DeepSeekChannelConfig = z.object({
+    api_key: z.string().default('').describe('DeepSeek API密钥')
+});
+
+/** 豆包 渠道配置 */
+const DoubaoChannelConfig = z.object({
+    api_key: z.string().default('').describe('豆包搜索API密钥')
+});
+
 /** Bing 渠道配置 */
 const BingChannelConfig = z.object({
     lang: z.enum(['zh', 'en']).default('zh').describe('Bing搜索语言模式：zh=国内版，en=全球版')
@@ -58,11 +68,13 @@ const SearchApplicationConfigSchema = z.object({
             brave: BraveChannelConfig.optional(),
             bocha: BochaChannelConfig.optional(),
             exa: ExaChannelConfig.optional(),
+            deepseek: DeepSeekChannelConfig.optional(),
+            doubao: DoubaoChannelConfig.optional(),
             bing: BingChannelConfig.optional()
         })
         .optional(),
     defaultWebSearch: z
-        .enum(['tavily', 'bing', 'duckduckgo', 'brave', 'bocha', 'exa', 'baidu'])
+        .enum(['tavily', 'bing', 'duckduckgo', 'brave', 'bocha', 'exa', 'baidu', 'deepseek', 'doubao'])
         .default('bing')
         .describe('当前默认网页搜索引擎'),
     defaultAcademicSearch: z.enum(['arxiv', 'dblp']).default('arxiv').describe('当前默认学术搜索引擎'),

@@ -35,6 +35,11 @@ namespace OpenDesk.Installer
         private const string LegacyMsiUpgradeCode = "{017F8634-A16C-4194-8C94-D9A3F1319D13}";
         private const uint ErrorSuccess = 0;
         private const int ErrorFailNoActionReboot = unchecked((int)0x8007015E);
+        // Windows Installer 平台不匹配错误码：架构检查失败时以它作为 bundle 退出码，
+        // 与 msiexec 直接安装错平台 MSI 的表现保持一致。
+        private const int ErrorInstallPlatformUnsupported = 1633;
+        // 安装器 UI 语言。Run 之前由 DetectLocalizationCulture 决定，欢迎页可切换。
+        private string localizationCulture = DetectLocalizationCulture();
         private InstallerForm form;
         private PackageState packageState = PackageState.Unknown;
         private LaunchAction activeAction = LaunchAction.Unknown;
@@ -47,16 +52,12 @@ namespace OpenDesk.Installer
         private string lastError;
         private string activeInstallFolder;
         private System.Threading.ManualResetEvent headlessCompletion;
-        private readonly HashSet<string> sameVersionRelatedBundleIds = new HashSet<string>(
-            StringComparer.OrdinalIgnoreCase
-        );
         private readonly Dictionary<string, PackageState> detectedPackageStates = new Dictionary<string, PackageState>(
             StringComparer.OrdinalIgnoreCase
         );
 
         public OpenDeskBootstrapperApplication()
-        {
-            DetectRelatedBundle += OnDetectRelatedBundle;
+        {            DetectRelatedBundle += OnDetectRelatedBundle;
             PlanRelatedBundle += OnPlanRelatedBundle;
             DetectRelatedMsiPackage += OnDetectRelatedMsiPackage;
             DetectPackageComplete += OnDetectPackageComplete;
@@ -104,6 +105,60 @@ namespace OpenDesk.Installer
             get { return elevationRequested; }
         }
 
+        /// <summary>
+        /// 当前安装器 UI 语言（zh-cn / en-us）。欢迎页的语言切换按钮会改写它。
+        /// </summary>
+        public string LocalizationCulture
+        {
+            get { return localizationCulture; }
+        }
+
+        /// <summary>
+        /// 决定安装器 UI 语言：
+        /// 1. OPENDESK_INSTALLER_LANG 环境变量（zh-cn / en-us）显式指定，供调试与 CI 使用；
+        /// 2. 否则跟随当前用户的 UI 语言（CurrentUICulture），中文一律进 zh-cn，其余进 en-us。
+        /// </summary>
+        private static string DetectLocalizationCulture()
+        {
+            string forced = Environment.GetEnvironmentVariable("OPENDESK_INSTALLER_LANG");
+            if (string.Equals(forced, "zh-cn", StringComparison.OrdinalIgnoreCase))
+            {
+                return "zh-cn";
+            }
+            if (string.Equals(forced, "en-us", StringComparison.OrdinalIgnoreCase))
+            {
+                return "en-us";
+            }
+
+            try
+            {
+                string uiCulture = System.Globalization.CultureInfo.CurrentUICulture.Name;
+                if (!string.IsNullOrEmpty(uiCulture) && uiCulture.StartsWith("zh", StringComparison.OrdinalIgnoreCase))
+                {
+                    return "zh-cn";
+                }
+            }
+            catch
+            {
+                // 读不到用户 UI 语言时按英文兜底。
+            }
+            return "en-us";
+        }
+
+        /// <summary>按当前语言构造本地化表（从 bundle payload 读取对应的 .wxl）。</summary>
+        internal Localizer CreateLocalizer()
+        {
+            return new Localizer(GetPayloadPath(localizationCulture + ".wxl"));
+        }
+
+        /// <summary>在 zh-cn 与 en-us 之间切换安装器 UI 语言（欢迎页的语言按钮触发）。</summary>
+        public void SwitchLanguage()
+        {
+            localizationCulture = string.Equals(localizationCulture, "zh-cn", StringComparison.Ordinal)
+                ? "en-us"
+                : "zh-cn";
+        }
+
         protected override void Run()
         {
             if (RunsWithoutUserInteraction)
@@ -115,7 +170,7 @@ namespace OpenDesk.Installer
             Application.EnableVisualStyles();
             Application.SetCompatibleTextRenderingDefault(false);
 
-            form = new InstallerForm(this, new Localizer(GetPayloadPath("zh-cn.wxl")));
+            form = new InstallerForm(this, CreateLocalizer());
             form.Shown += delegate
             {
                 Engine.Detect(form.Handle);
@@ -366,7 +421,19 @@ namespace OpenDesk.Installer
             {
                 IgnorePackageDependencies();
             }
-            Engine.Plan(action);
+            // 同版本重装（例如开发构建覆盖同版本号的正式构建）：版本 MSI 的 ProductCode
+            // 按版本号派生，与已注册产品完全相同，Burn 的安装计划会把 Present 的版本 MSI
+            // 判为 no-op，新 payload 无法落盘、安装却报告成功。把计划动作升级为 Repair：
+            // 引擎对 Repair 动作自动附加 REINSTALL=ALL，配合版本 MSI Property 表默认的
+            // REINSTALLMODE=vamus 重新缓存新包并覆盖全部文件。跨版本升级与静默更新不受
+            // 影响（新版本 ProductCode 不同，检测为 Absent 走正常安装）；CleanupOldVersions
+            // 维护动作仍保持版本 MSI Present，不会重铺运行中的版本。
+            LaunchAction planAction = action;
+            if (action == LaunchAction.Install && !CleanupOldVersions() && IsSameVersionReinstall())
+            {
+                planAction = LaunchAction.Repair;
+            }
+            Engine.Plan(planAction);
         }
 
         private bool IsManualInteractiveInstall(LaunchAction action)
@@ -534,14 +601,18 @@ namespace OpenDesk.Installer
                     e.State = RequestState.Repair;
                     return;
                 }
-
-                if (activeAction == LaunchAction.Repair && !cleanupOldVersions)
-                {
-                    // 用户明确选择完整修复时才重新执行已安装的平台和版本 MSI。
-                    e.State = RequestState.Repair;
-                }
             }
 #endif
+        }
+
+        /// <summary>
+        /// 本次安装是否为"同版本重装"：版本 MSI 的 ProductCode 按版本号派生，重新安装
+        /// 同一版本号（例如开发构建覆盖同版本号的正式构建）时它已注册为 Present。
+        /// </summary>
+        private bool IsSameVersionReinstall()
+        {
+            PackageState state;
+            return detectedPackageStates.TryGetValue(PackageId, out state) && state == PackageState.Present;
         }
 
         private bool CleanupOldVersions()
@@ -1011,6 +1082,11 @@ namespace OpenDesk.Installer
                 return;
             }
 
+            if (EnforceCompatibleArchitecture())
+            {
+                return;
+            }
+
 #if SILENT_UPDATE_PROTOTYPE
             string legacyProductCode = FindLegacyMsiProductCode();
             if (Command.Relation == RelationType.None && !string.IsNullOrWhiteSpace(legacyProductCode))
@@ -1055,6 +1131,77 @@ namespace OpenDesk.Installer
                     StartAction(action);
                 }
             });
+        }
+
+        /// <summary>
+        /// 安装包架构与目标机器不匹配时立即终止（Detect 之后、Plan 之前调用）。
+        ///
+        /// 期望的兼容矩阵跟随 Windows 的应用兼容层：
+        /// - x64 安装包：可装 x64 与 ARM64 机器（ARM64 Windows 兼容层可模拟运行 x64 应用）；
+        /// - ARM64 安装包：只能装 ARM64 机器，在 x64/x86 机器上必须直接拒绝；
+        /// - 32 位 x86 机器：x64/ARM64 应用都跑不起来，同样拒绝。
+        ///
+        /// 作为 related bundle 被父安装器调起（Relation != None）时只执行父引擎安排的
+        /// 卸载/清理，跳过本检查，避免升级链被拦断。读取不到 OpenDeskTargetArch
+        /// （旧版 bundle 没有该变量）时也放行，保持历史行为。
+        /// </summary>
+        /// <returns>true 表示已决定终止，调用方不应再继续 Plan/Apply。</returns>
+        private bool EnforceCompatibleArchitecture()
+        {
+            if (Command.Relation != RelationType.None)
+            {
+                return false;
+            }
+
+            string targetArch;
+            try
+            {
+                targetArch = Engine.StringVariables["OpenDeskTargetArch"];
+            }
+            catch
+            {
+                return false;
+            }
+            if (string.IsNullOrWhiteSpace(targetArch))
+            {
+                return false;
+            }
+
+            string machineArch = NativeMethods.GetNativeMachineArchitecture();
+            bool compatible =
+                string.Equals(machineArch, "ARM64", StringComparison.OrdinalIgnoreCase) ||
+                (
+                    string.Equals(targetArch, "x64", StringComparison.OrdinalIgnoreCase) &&
+                    !string.Equals(machineArch, "x86", StringComparison.OrdinalIgnoreCase)
+                );
+            if (compatible)
+            {
+                return false;
+            }
+
+            Engine.Log(
+                LogLevel.Error,
+                string.Format(
+                    "OpenDesk: installer arch {0} is not compatible with machine arch {1}",
+                    targetArch,
+                    machineArch
+                )
+            );
+            exitCode = ErrorInstallPlatformUnsupported;
+            if (RunsWithoutUserInteraction)
+            {
+                CompleteHeadless();
+                return true;
+            }
+
+            Post(delegate
+            {
+                form.ShowIncompatibleArchitecture(targetArch, machineArch);
+                // 窗口初始 Opacity=0 且不在任务栏，必须 Reveal 才可见；
+                // 错误页无后续流程，用户看完点关闭即以 1633 退出。
+                form.Reveal();
+            });
+            return true;
         }
 
         private void OnPlanComplete(object sender, PlanCompleteEventArgs e)
@@ -1233,10 +1380,11 @@ namespace OpenDesk.Installer
         private static readonly Font ButtonFont = new Font("Microsoft YaHei UI", 14F, FontStyle.Bold, GraphicsUnit.Pixel);
 
         private readonly OpenDeskBootstrapperApplication application;
-        private readonly Localizer localizer;
+        private Localizer localizer;
         private readonly Panel rightBody;
         private readonly Panel footer;
         private readonly Label[] stepLabels = new Label[3];
+        private Label brandCopyLabel;
         private ProgressBar progressBar;
         private Label progressStatus;
         private Label progressPercent;
@@ -1666,6 +1814,51 @@ namespace OpenDesk.Installer
             });
         }
 
+        /// <summary>
+        /// 架构不匹配的独立错误页：文案明确指出包的目标架构与当前设备架构，
+        /// 引导用户去下载与设备匹配的安装包，而不是只给一个错误码。
+        /// </summary>
+        public void ShowIncompatibleArchitecture(string targetArch, string machineArch)
+        {
+            busy = false;
+            RenderPage(delegate
+            {
+                SetActiveStep(-1);
+                AddLabel(
+                    rightBody,
+                    "IncompatibleArchHeader",
+                    T("IncompatibleArchHeader"),
+                    46,
+                    110,
+                    540,
+                    58,
+                    HeadingFont,
+                    Color.FromArgb(178, 59, 49)
+                );
+                string message = string.Format(
+                    T("IncompatibleArchMessage"),
+                    DescribePackageArch(targetArch),
+                    DescribeMachineArch(machineArch)
+                );
+                AddLabel(rightBody, "IncompatibleArchMessage", message, 46, 190, 540, 90, BodyFont, MutedColor);
+                AddFooterButton("IncompatibleArchCloseButton", T("FailureCloseButton"), 470, Close);
+            });
+        }
+
+        private static string DescribePackageArch(string targetArch)
+        {
+            return string.Equals(targetArch, "arm64", StringComparison.OrdinalIgnoreCase) ? "ARM64" : "x64";
+        }
+
+        private static string DescribeMachineArch(string machineArch)
+        {
+            if (string.Equals(machineArch, "ARM64", StringComparison.OrdinalIgnoreCase))
+            {
+                return "ARM64";
+            }
+            return string.Equals(machineArch, "AMD64", StringComparison.OrdinalIgnoreCase) ? "x64" : "x86";
+        }
+
         private void ShowWelcome(bool enabled)
         {
             busy = false;
@@ -1695,19 +1888,27 @@ namespace OpenDesk.Installer
                 );
                 installLocationLabel.AutoEllipsis = true;
 
-                AddFooterButton("ExitInstallerButton", T("InstallCloseButton"), 38, Close);
-                installOptionsButton = AddFooterButton(
-                    "InstallOptionsButton",
-                    T("InstallOptionsButton"),
-                    336,
-                    ShowOptions
-                );
+                // footer 四按钮等间距布局（左右边距 38，间距 16）：主操作在最左、退出在最右。
+                // 语言切换按钮固定显示目标语言名（来自各语言表的 LanguageSwitchLabel），
+                // 点击后替换本地化表并重绘欢迎页；仅首屏提供，进入安装/维护页后不再变更。
                 startInstallButton = AddFooterButton(
                     "StartInstallButton",
                     T(installButtonId),
-                    470,
+                    38,
                     StartInstallFromWelcome
                 );
+                installOptionsButton = AddFooterButton(
+                    "InstallOptionsButton",
+                    T("InstallOptionsButton"),
+                    182,
+                    ShowOptions
+                );
+                AddFooterButton("LanguageSwitchButton", GetLanguageSwitchText(), 326, delegate
+                {
+                    application.SwitchLanguage();
+                    ApplyLanguage(application.CreateLocalizer());
+                });
+                AddFooterButton("ExitInstallerButton", T("InstallCloseButton"), 470, Close);
                 installOptionsButton.Enabled = enabled;
                 startInstallButton.Enabled = enabled;
             });
@@ -1874,10 +2075,39 @@ namespace OpenDesk.Installer
         {
             AddLabel(this, "BrandName", "OpenDesk", 40, 36, 180, 38, BrandFont, Color.White);
             AddLabel(this, "BrandTagline", "AI WORKSTATION", 40, 73, 180, 22, SmallFont, Color.FromArgb(153, 148, 134));
-            AddLabel(this, "BrandCopy", T("BrandCopy"), 40, 138, 200, 88, BodyFont, SidebarText);
+            brandCopyLabel = AddLabel(this, "BrandCopy", T("BrandCopy"), 40, 138, 200, 88, BodyFont, SidebarText);
             stepLabels[0] = AddLabel(this, "StepPrepare", "01  " + T("StepPrepare"), 40, 275, 200, 28, LabelFont, SidebarText);
             stepLabels[1] = AddLabel(this, "StepInstall", "02  " + T("StepInstall"), 40, 323, 200, 28, BodyFont, Color.FromArgb(153, 148, 134));
             stepLabels[2] = AddLabel(this, "StepComplete", "03  " + T("StepComplete"), 40, 371, 200, 28, BodyFont, Color.FromArgb(153, 148, 134));
+        }
+
+        /// <summary>
+        /// 语言切换后的应用入口：替换本地化表、刷新侧栏静态文案，并原子重绘当前页。
+        /// 仅欢迎页提供切换入口，此时页面空闲，无与进行中操作并发的问题。
+        /// </summary>
+        public void ApplyLanguage(Localizer newLocalizer)
+        {
+            localizer = newLocalizer;
+            UpdateSidebarTexts();
+            ShowWelcome(true);
+        }
+
+        /// <summary>刷新侧栏上跟随语言变化的文案（品牌标语与步骤标签）。</summary>
+        private void UpdateSidebarTexts()
+        {
+            if (brandCopyLabel != null)
+            {
+                brandCopyLabel.Text = T("BrandCopy");
+            }
+            stepLabels[0].Text = "01  " + T("StepPrepare");
+            stepLabels[1].Text = "02  " + T("StepInstall");
+            stepLabels[2].Text = "03  " + T("StepComplete");
+        }
+
+        /// <summary>语言切换按钮的文本：展示切换后的目标语言名（不随本地化函数翻译）。</summary>
+        private string GetLanguageSwitchText()
+        {
+            return T("LanguageSwitchLabel");
         }
 
         private void AddFeatureRow(int y, string number, string title, string description)
@@ -2239,6 +2469,70 @@ namespace OpenDesk.Installer
             {
                 CloseHandle(handle);
             }
+        }
+
+        private const ushort ImageFileMachineAmd64 = 0x8664;
+        private const ushort ImageFileMachineArm64 = 0xAA64;
+        private const ushort ImageFileMachineI386 = 0x014C;
+
+        [DllImport("kernel32.dll", SetLastError = true)]
+        private static extern bool IsWow64Process2(
+            IntPtr process,
+            out ushort processMachine,
+            out ushort nativeMachine
+        );
+
+        /// <summary>
+        /// 探测真实机器架构，返回 AMD64 / ARM64 / x86。
+        ///
+        /// BA 恒为 32 位进程，直接读 PROCESSOR_ARCHITECTURE 拿到的永远是模拟层视图
+        /// （任何 64 位机器上都是 x86），必须用 IsWow64Process2 取 nativeMachine。
+        /// 该导出在 Windows 10 1511 之前的系统不存在，此时退回环境变量兜底。
+        /// </summary>
+        public static string GetNativeMachineArchitecture()
+        {
+            try
+            {
+                ushort processMachine;
+                ushort nativeMachine;
+                if (IsWow64Process2(new IntPtr(-1), out processMachine, out nativeMachine))
+                {
+                    if (nativeMachine == ImageFileMachineArm64)
+                    {
+                        return "ARM64";
+                    }
+                    if (nativeMachine == ImageFileMachineAmd64)
+                    {
+                        return "AMD64";
+                    }
+                    if (nativeMachine == ImageFileMachineI386)
+                    {
+                        return "x86";
+                    }
+                }
+            }
+            catch
+            {
+                // IsWow64Process2 不可用（极旧系统），走环境变量兜底。
+            }
+
+            string architecture = Environment.GetEnvironmentVariable("PROCESSOR_ARCHITEW6432");
+            if (string.IsNullOrEmpty(architecture))
+            {
+                architecture = Environment.GetEnvironmentVariable("PROCESSOR_ARCHITECTURE");
+            }
+            if (string.Equals(architecture, "ARM64", StringComparison.OrdinalIgnoreCase))
+            {
+                return "ARM64";
+            }
+            if (
+                string.Equals(architecture, "AMD64", StringComparison.OrdinalIgnoreCase) ||
+                string.Equals(architecture, "x64", StringComparison.OrdinalIgnoreCase)
+            )
+            {
+                return "AMD64";
+            }
+            return "x86";
         }
 
         public static void SetRedraw(Control control, bool enabled)

@@ -7,7 +7,9 @@ jest.unstable_mockModule('../../../main/applications/terminal/background.js', ()
         static getInstance() {
             return { getStatus };
         }
-    }
+    },
+    SILENT_OUTPUT_HINT_ELAPSED_MS: 5 * 60 * 1000,
+    silentBackgroundHint: (command: string) => `silent hint for ${command}`
 }));
 jest.unstable_mockModule('../../../main/applications/terminal/locale/index.js', () => ({
     t: (key: string) => enUs[key] ?? key

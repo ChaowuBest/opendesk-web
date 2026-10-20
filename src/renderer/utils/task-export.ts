@@ -28,6 +28,7 @@
 
 import { enhanceCodeBlocks, enhanceToolPreviewCards } from '../components/previewer.ts';
 import { escapeHtml } from '../../common/utils/escape.js';
+import { formatPercent } from './format.js';
 
 export interface TaskExportHeaderInfo {
     /** 任务标题 */
@@ -40,8 +41,8 @@ export interface TaskExportHeaderInfo {
     exportedAt: string;
     /** 「任务内容由 OpenDesk ${version} 版本生成」已本地化文案（可选） */
     generatedBy?: string;
-    /** 累计 token 消耗 */
-    usage?: { total: number; input: number; output: number };
+    /** 累计 token 消耗；cacheRead/cacheMiss 为缓存命中与未命中的输入 token 数（对齐个人中心口径），两者齐备时渲染命中率胶囊 */
+    usage?: { total: number; input: number; output: number; cacheRead?: number; cacheMiss?: number };
     /** 已本地化的标签文案 */
     labels: {
         model: string;
@@ -50,6 +51,8 @@ export interface TaskExportHeaderInfo {
         totalTokens: string;
         inputTokens: string;
         outputTokens: string;
+        /** cache 命中率胶囊标签（usage.cacheHitRate 存在时使用） */
+        cacheHitRate?: string;
         /** 切换到浅色 / 深色模式的按钮文案 */
         toggleToLight: string;
         toggleToDark: string;
@@ -94,9 +97,10 @@ const CLEANUP_SELECTORS = [
 
 /**
  * 导出页内联脚本：复刻 GUI 中思考块的折叠/展开交互（点击 header、
- * bubble 模式的悬停显示），为序列化出的预览 iframe 自适应高度
- * （GUI 中由 iframe load 回调完成，静态页需要自己补上），并提供
- * 深色/浅色主题切换（记忆在 localStorage，打开时恢复）。
+ * bubble 模式的悬停显示）、「查看过程」/过程段的展开收起
+ * （对应 GUI 的 _handleProcessToggleClick），为序列化出的预览 iframe
+ * 自适应高度（GUI 中由 iframe load 回调完成，静态页需要自己补上），
+ * 并提供深色/浅色主题切换（记忆在 localStorage，打开时恢复）。
  */
 function buildExportScript(reasoningCollapseLabel: string, header?: TaskExportHeaderInfo): string {
     const collapseLabel = JSON.stringify(reasoningCollapseLabel);
@@ -121,6 +125,29 @@ function buildExportScript(reasoningCollapseLabel: string, header?: TaskExportHe
         wrapper.classList.toggle('reasoning-content-visible', isExpanded);
         var toggle = wrapper.querySelector('.reasoning-toggle');
         if (toggle) toggle.textContent = isExpanded ? collapseLabel : '';
+    });
+    document.addEventListener('click', function (e) {
+        var completedToggle = e.target.closest('[data-completed-process-toggle]');
+        if (completedToggle) {
+            var process = completedToggle.closest('.od-completed-process');
+            if (!process) return;
+            var expanded = completedToggle.getAttribute('aria-expanded') !== 'true';
+            completedToggle.setAttribute('aria-expanded', String(expanded));
+            process.classList.toggle('is-expanded', expanded);
+            var detail = process.querySelector(':scope > .od-completed-process-detail');
+            if (detail) detail.classList.toggle('is-open', expanded);
+            return;
+        }
+        var processToggle = e.target.closest('[data-process-toggle]');
+        if (processToggle) {
+            var segment = processToggle.closest('.od-process-segment');
+            if (!segment) return;
+            var segmentExpanded = processToggle.getAttribute('aria-expanded') !== 'true';
+            processToggle.setAttribute('aria-expanded', String(segmentExpanded));
+            segment.classList.toggle('is-expanded', segmentExpanded);
+            var segmentDetail = segment.querySelector(':scope > .od-process-detail');
+            if (segmentDetail) segmentDetail.classList.toggle('is-open', segmentExpanded);
+        }
     });
     document.addEventListener('mouseover', function (e) {
         var header = e.target.closest('.reasoning-block-od.reasoning-completed .reasoning-header');
@@ -796,10 +823,11 @@ ${faCdnLoader}
 
 /**
  * 导出页自有样式：header（任务标题/时间/token 消耗/模型）、主题切换按钮，
- * 以及思考块的展开态样式。展开态（reasoning-expanded / reasoning-content-visible）
- * 在导出时刻没有任何元素携带这些类，对应的 custom.css 规则不会被抽取命中，
- * 这里必须随文档自带（取值与 custom.css 保持一致，主题色差异由
- * theme-dark.css 经 #app-root 作用域规则补齐）。
+ * 以及思考块/「查看过程」/过程段的展开态样式。展开态（reasoning-expanded /
+ * reasoning-content-visible、is-open / is-expanded / aria-expanded）在导出时刻
+ * 没有任何元素携带，对应的 custom.css 规则不会被抽取命中，这里必须随文档自带
+ * （取值与 custom.css 保持一致，主题色差异由 theme-dark.css 经 #app-root
+ * 作用域规则补齐）。
  */
 const EXPORT_EXTRA_STYLES = `
 .od-export-header {
@@ -889,6 +917,30 @@ const EXPORT_EXTRA_STYLES = `
 .reasoning-block-od .reasoning-full-area,
 .reasoning-block-od .reasoning-preview-area {
     transition: none !important;
+}
+/* 「查看过程」与过程段的展开态（对应 custom.css 的 is-open / is-expanded /
+   aria-expanded 规则）：导出时刻没有任何元素携带这些状态，抽取不会命中，
+   必须随文档自带（取值与 custom.css 保持一致） */
+.od-completed-process.is-expanded .od-completed-process-chevron {
+    transform: rotate(90deg);
+}
+.od-completed-process-detail.is-open {
+    display: block;
+    max-height: none;
+    overflow: visible;
+}
+.od-process-summary:hover .od-process-action,
+.od-process-summary:focus-visible .od-process-action {
+    color: var(--chat-green);
+}
+[aria-expanded='true'] > .od-process-chevron {
+    transform: rotate(90deg);
+}
+.od-process-summary[aria-expanded='true'] .od-process-chevron {
+    transform: rotate(90deg);
+}
+.od-process-detail.is-open {
+    display: block;
 }`;
 
 /**
@@ -931,11 +983,19 @@ function buildExportHeaderHtml(header: TaskExportHeaderInfo): string {
     let usageHtml = '';
     if (header.usage) {
         const fmt = (value: number) => Number(value || 0).toLocaleString();
+        // 整体 cache 命中率：命中 /（命中 + 未命中），口径与个人中心使用统计一致
+        const { cacheRead, cacheMiss } = header.usage;
+        const hasCacheBreakdown =
+            typeof cacheRead === 'number' && typeof cacheMiss === 'number' && (cacheRead > 0 || cacheMiss > 0);
+        const cacheRateHtml =
+            hasCacheBreakdown && header.labels.cacheHitRate
+                ? `<span class="od-export-token"><span>${escapeHtml(header.labels.cacheHitRate)}</span><span class="od-export-token-value">${formatPercent(cacheRead, cacheRead + cacheMiss)}</span></span>`
+                : '';
         usageHtml = `
         <div class="od-export-header-usage">
             <span class="od-export-token"><span>${escapeHtml(header.labels.totalTokens)}</span><span class="od-export-token-value">${fmt(header.usage.total)}</span></span>
             <span class="od-export-token"><span>${escapeHtml(header.labels.inputTokens)}</span><span class="od-export-token-value">${fmt(header.usage.input)}</span></span>
-            <span class="od-export-token"><span>${escapeHtml(header.labels.outputTokens)}</span><span class="od-export-token-value">${fmt(header.usage.output)}</span></span>
+            <span class="od-export-token"><span>${escapeHtml(header.labels.outputTokens)}</span><span class="od-export-token-value">${fmt(header.usage.output)}</span></span>${cacheRateHtml}
         </div>`;
     }
 

@@ -23,7 +23,7 @@ const ConfigureSearchToolArgsSchema = z.object({
     channel: z
         .string()
         .describe(
-            '搜索渠道ID，如 "tavily", "brave", "bocha", "exa"（用于设置API密钥），或 "defaultWebSearch" / "defaultAcademicSearch"（用于切换默认渠道），或 "webSearchEnabled" / "academicSearchEnabled"（用于开关搜索工具）'
+            '搜索渠道ID，如 "tavily", "brave", "bocha", "exa", "deepseek", "doubao"（用于设置API密钥），或 "defaultWebSearch" / "defaultAcademicSearch"（用于切换默认渠道），或 "webSearchEnabled" / "academicSearchEnabled"（用于开关搜索工具）'
         ),
     api_key: z.string().optional().describe('API密钥，适用于需要API的搜索渠道'),
     value: z.string().optional().describe('设置默认渠道时的渠道ID值，或设置开关时的 "true"/"false"')
@@ -35,7 +35,7 @@ export class ConfigureSearchTool extends BaseTool<typeof ConfigureSearchToolArgs
     constructor(searchApp: SearchApplication) {
         super(
             'configureSearchTool',
-            '配置搜索工具，包括设置渠道API密钥和切换默认搜索引擎。使用此工具来配置Tavily、Brave、博查、Exa等需要API的渠道，或切换默认网页搜索/学术搜索引擎。',
+            '配置搜索工具，包括设置渠道API密钥和切换默认搜索引擎。使用此工具来配置Tavily、Brave、博查、Exa、DeepSeek、豆包等需要API的渠道，或切换默认网页搜索/学术搜索引擎。',
             ConfigureSearchToolArgsSchema,
             undefined,
             { 'zh-CN': '配置搜索工具', 'en-US': 'Configure Search Tool' }

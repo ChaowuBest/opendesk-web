@@ -14,7 +14,7 @@ import { ToolCall } from '../../../aikernel/messages';
 import { Card } from '../../../tui/components/card';
 import { statusDisplay, truncText } from '../../../tui/components/toolcall';
 import { renderSearchToolCall, extractResultCount } from './render';
-import { t } from '../../../../locale/index.js';
+import { t } from '../locale/index.js';
 import chalk from 'chalk';
 import { z } from 'zod';
 import { getPlatform } from '../../../../platforms/base.js';

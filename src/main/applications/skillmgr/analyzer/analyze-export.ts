@@ -9,6 +9,8 @@
  * See the Mulan PSL v2 for more details.
  */
 
+import { CHEVRON_RIGHT_SVG } from '../../../../common/ui-icons.js';
+
 export interface AnalyzeSkillExport {
     skill: {
         id: string;
@@ -283,7 +285,7 @@ function showErrorModal(sid){var sr=results[sid];if(!sr||!sr.error)return;var sk
 
 function showTestCasesModal(sid){var sr=results[sid];if(!sr||!sr.testCases)return;var tcs=sr.testCases,sk=allSkills.find(function(s){return s.id===sid}),sn=(sk&&sk.name)||sid,h='<div class="analyze-modal-section"><div class="analyze-modal-section-title">'+escHtml(sn)+' 的测试用例（共 '+tcs.length+' 条）</div>';
 tcs.forEach(function(tc){var ph=renderMarkdown(tc.prompt),eh=renderMarkdown(tc.expectedResult),ah=tc.actualResult?renderMarkdown(tc.actualResult):'',errh=tc.error?renderMarkdown(tc.error):'',frc=tc.failureReasonCategory,frl=frc?(TEST_FAILURE_REASON_CATEGORY_LABELS[frc]||frc):'',frh=frl?'<div class="testcase-failure-category"><span class="testcase-failure-category-label">失败分类</span><span class="testcase-failure-category-chip">'+escHtml(frl)+'</span></div>':'',fdh=(errh||frh)?'<div class="accordion-field accordion-field-error"><span class="label">错误</span>'+frh+(errh?'<div class="accordion-markdown">'+errh+'</div>':'')+'</div>':'';
-h+='<div class="accordion-item"><div class="accordion-header" data-accordion-toggle="'+escHtml(String(tc.index))+'"><span class="accordion-arrow">▶</span><span class="accordion-index">#'+tc.index+'</span><span class="accordion-title">'+escHtml(tc.title)+'</span><span class="analyze-modal-testcase-status status-'+tc.status+'">'+(STATUS_LABELS[tc.status]||tc.status)+'</span></div><div class="accordion-body" data-accordion-body="'+escHtml(String(tc.index))+'" style="display:none"><div class="accordion-field"><span class="label">测试 Prompt</span><div class="accordion-markdown">'+ph+'</div></div><div class="accordion-field"><span class="label">预期结果</span><div class="accordion-markdown">'+eh+'</div></div>'+(ah?'<div class="accordion-field"><span class="label">实际结果</span><div class="accordion-markdown">'+ah+'</div></div>':'')+fdh+'</div></div>'})
+h+='<div class="accordion-item"><div class="accordion-header" data-accordion-toggle="'+escHtml(String(tc.index))+'"><span class="accordion-arrow">${CHEVRON_RIGHT_SVG}</span><span class="accordion-index">#'+tc.index+'</span><span class="accordion-title">'+escHtml(tc.title)+'</span><span class="analyze-modal-testcase-status status-'+tc.status+'">'+(STATUS_LABELS[tc.status]||tc.status)+'</span></div><div class="accordion-body" data-accordion-body="'+escHtml(String(tc.index))+'" style="display:none"><div class="accordion-field"><span class="label">测试 Prompt</span><div class="accordion-markdown">'+ph+'</div></div><div class="accordion-field"><span class="label">预期结果</span><div class="accordion-markdown">'+eh+'</div></div>'+(ah?'<div class="accordion-field"><span class="label">实际结果</span><div class="accordion-markdown">'+ah+'</div></div>':'')+fdh+'</div></div>'})
 h+='</div>';openModal('测试用例',h)}
 
 var detailOverlay=document.getElementById('detailOverlay'),detailBody=document.getElementById('detailBody');
@@ -343,8 +345,7 @@ function cleanAnalysisReport(report: Record<string, unknown> | undefined): void 
     const skill = report.skill as Record<string, unknown> | undefined;
     if (skill?.path) skill.path = '[omitted]';
     const classification = report.classification as
-        | (Record<string, unknown> & { installAttempts?: Array<Record<string, unknown>> })
-        | undefined;
+        (Record<string, unknown> & { installAttempts?: Array<Record<string, unknown>> }) | undefined;
     if (classification?.installAttempts) {
         for (const attempt of classification.installAttempts) {
             if (attempt.source) attempt.source = '[omitted]';

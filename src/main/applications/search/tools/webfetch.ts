@@ -15,7 +15,7 @@ import { Card } from '../../../tui/components/card';
 import { statusDisplay, truncText } from '../../../tui/components/toolcall';
 import { renderSearchToolCall } from './render';
 import { escapeHtml } from '../../../../common/utils/escape.js';
-import { t } from '../../../../locale/index.js';
+import { t } from '../locale/index.js';
 import chalk from 'chalk';
 import { z } from 'zod';
 import { getPlatform } from '../../../../platforms/base.js';
