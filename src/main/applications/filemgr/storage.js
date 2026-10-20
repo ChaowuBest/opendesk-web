@@ -120,8 +120,11 @@ function toStorageTimestamp(value) {
 }
 
 function normalizeRootPath(value) {
-    if (value === '/') return value;
-    return String(value).replace(/\/+$/, '');
+    // 统一为正斜杠：Windows 上 item_id 来自 fast-glob（正斜杠），而 root 可能来自
+    // os.homedir() 等反斜杠来源，前缀区间查询必须与 item_id 同向才能命中
+    const normalized = String(value).replace(/\\/g, '/').replace(/\/+/g, '/');
+    if (normalized === '/') return normalized;
+    return normalized.replace(/\/+$/, '');
 }
 
 function isSameOrAncestor(ancestor, itemPath) {
@@ -745,9 +748,7 @@ class FSStorage {
 
     _canonicalRootRef(value) {
         if (typeof value !== 'string' || value.length === 0) return '';
-        const normalized = value.replace(/\\/g, '/').replace(/\/+/g, '/');
-        if (normalized === '/') return normalized;
-        return normalized.replace(/\/+$/, '');
+        return normalizeRootPath(value);
     }
 
     _rootRefsIncludeRoot(rawRefs, root) {

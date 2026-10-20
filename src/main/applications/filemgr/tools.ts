@@ -3142,8 +3142,8 @@ function truncateMatchWindow(line: string, maxColumns: number, matchColumns: num
 
 /**
  * 嗅探文件编码：BOM 优先（UTF-16LE/BE、UTF-8）；
- * 无 BOM 时试解码为 UTF-8（尾部多字节字符被截断造成的失败会去掉尾部后重试），
- * 失败则回退 gb18030（Windows 中文环境常见的 ANSI 编码超集）。
+ * 无 BOM 时用 stream 模式试解码 UTF-8 头部（读取边界截断的尾部多字节字符会缓存而不报错，
+ * 只有内容中间存在非法序列才判定失败），失败则回退 gb18030（Windows 中文环境常见的 ANSI 编码超集）。
  */
 async function detectFileEncoding(filePath: string): Promise<string> {
     const fd = await fs.promises.open(filePath, 'r');
@@ -3161,25 +3161,18 @@ async function detectFileEncoding(filePath: string): Promise<string> {
         }
 
         // 无 BOM：取 64KB 头部做 UTF-8 合法性试解码。
-        // 最后一字节可能是被截断的多字节字符前缀，去掉尾部重试一次防止误判。
+        // stream 模式下尾部被读取边界截断的多字节字符前缀会缓存而非报错，
+        // 避免边界恰好切在多字节字符中间时把 UTF-8 误判为 gb18030
         const probe = Buffer.alloc(64 * 1024);
         const probeRead = await fd.read(probe, 0, probe.length, 0);
-        const isProbablyUtf8 = (data: Buffer): boolean => {
+        if (probeRead.bytesRead > 0) {
             try {
-                new TextDecoder('utf-8', { fatal: true }).decode(data);
-                return true;
-            } catch {
-                return false;
-            }
-        };
-        if (probeRead.bytesRead > 0 && isProbablyUtf8(probe.subarray(0, probeRead.bytesRead))) {
-            return 'utf-8';
-        }
-        if (probeRead.bytesRead > 3) {
-            // 去掉尾部 3 字节（多字节字符被读取边界截断的场景）后重试
-            const trimmed = probe.subarray(0, probeRead.bytesRead - 3);
-            if (isProbablyUtf8(trimmed)) {
+                new TextDecoder('utf-8', { fatal: true }).decode(probe.subarray(0, probeRead.bytesRead), {
+                    stream: true
+                });
                 return 'utf-8';
+            } catch {
+                // 存在非法 UTF-8 序列（GBK/Big5/Shift_JIS 等），回退 gb18030
             }
         }
         return 'gb18030';

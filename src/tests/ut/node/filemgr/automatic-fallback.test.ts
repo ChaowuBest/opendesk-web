@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { test, after } from 'node:test';
 import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 import { createRequire } from 'node:module';
 import { Setting, setCustomOpendeskDirectory } from '../../../../main/utils/setting.js';
@@ -9,7 +10,7 @@ import { LLM } from '../../../../main/aikernel/llm.js';
 const { FSStorage, makeSchema } = await import('../../../../main/applications/filemgr/storage.js');
 const SQLite = createRequire(import.meta.url)('better-sqlite3');
 new SQLite(':memory:').close();
-const profile = fs.mkdtempSync('/private/tmp/filemgr-auto-fallback-');
+const profile = fs.mkdtempSync(path.join(os.tmpdir(), 'filemgr-auto-fallback-'));
 setCustomOpendeskDirectory(profile);
 after(() => fs.rmSync(profile, { recursive: true, force: true }));
 const close = async (owner: any) => {
@@ -26,9 +27,10 @@ for (const scenario of ['control', 'fallback-missing', 'fallback-return', 'chunk
         t.mock.method(LLM, 'batchEmbed', async (texts: string[]) => texts.map(() => [1, 0]));
         t.mock.method(LLM, 'rerank', async (_q: string, items: any[]) => items);
         const directory = fs.mkdtempSync(path.join(profile, scenario + '-'));
-        const root = path.join(directory, 'files');
+        // 对齐产品路径约定：item_id 来自 fast-glob、root 经 renderer normalizePath，Windows 上均为正斜杠
+        const root = path.join(directory, 'files').replace(/\\/g, '/');
         fs.mkdirSync(root);
-        const file = path.join(root, 'document.md');
+        const file = `${root}/document.md`;
         fs.writeFileSync(file, '# Current B\n\nCurrent text from model B.');
         const owners: any[] = [];
         const probe = async () => ({ ok: true, model_name: model, dim: 2, requestDim: undefined });
