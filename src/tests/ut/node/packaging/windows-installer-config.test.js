@@ -469,10 +469,11 @@ test('builds a custom bootstrapper that passes location and shortcut choices to 
     // 也不要改写 bundle 引擎的清单为 requireAdministrator：insignia 往返会破坏 bundle 结构
     assert.doesNotMatch(buildScript, /insignia|-outputresource|requireAdministrator/);
     // 清理 stale 注册键发生在 Install 与 Repair 两条路径上（修复同样要求应用列表只剩当前实例）；
-    // 仅用户直接发起的卸载（RelationType.None）才忽略依赖登记，related bundle 卸载不能忽略
+    // 仅用户直接发起的卸载（RelationType.None）才忽略依赖登记，related bundle 卸载不能忽略；
+    // Plan 动作在尾部可能被升级为 Repair（同版本重装场景，见 StartAction 的 planAction 逻辑）
     assert.match(
         bootstrapper,
-        /form\.ShowProgress\(action\);[\s\S]*?if \(action == LaunchAction\.Install \|\| action == LaunchAction\.Repair\)\s*\{\s*CleanupStaleInstallations\(\);\s*\}[\s\S]*?if \(action == LaunchAction\.Uninstall && Command\.Relation == RelationType\.None\)\s*\{\s*IgnorePackageDependencies\(\);\s*\}[\s\S]*?Engine\.Plan\(action\);/
+        /form\.ShowProgress\(action\);[\s\S]*?if \(action == LaunchAction\.Install \|\| action == LaunchAction\.Repair\)\s*\{\s*CleanupStaleInstallations\(\);\s*\}[\s\S]*?if \(action == LaunchAction\.Uninstall && Command\.Relation == RelationType\.None\)\s*\{\s*IgnorePackageDependencies\(\);\s*\}[\s\S]*?Engine\.Plan\(planAction\);/
     );
     // 卸载时忽略 MSI 的 dependency provider：历史重复安装的 bundle 会在 provider 下残留
     // dependent，引擎因此跳过 MSI 卸载（日志 w327 found dependents + execute: None），
@@ -594,7 +595,7 @@ test('builds a custom bootstrapper that passes location and shortcut choices to 
     );
     assert.match(
         bootstrapper,
-        /StartAction\(LaunchAction action\)[\s\S]*?EnsureOpenDeskIsNotRunning\(\)[\s\S]*?Engine\.Plan\(action\)/
+        /StartAction\(LaunchAction action\)[\s\S]*?EnsureOpenDeskIsNotRunning\(\)[\s\S]*?Engine\.Plan\(planAction\)/
     );
     assert.doesNotMatch(bootstrapper, /UnsafeLegacy|GetSavedLayoutVersion|ShowLegacyInstallBlocked/);
     assert.match(
@@ -658,6 +659,28 @@ test('builds a custom bootstrapper that passes location and shortcut choices to 
     assert.match(localization, /<String Id="OpenDeskRunningMessage">[^<]+<\/String>/);
     assert.match(localization, /<String Id="UpgradeHeader">更新 OpenDesk<\/String>/);
     assert.match(localization, /<String Id="UpgradeInstallButton">开始更新<\/String>/);
+    assert.match(localization, /<String Id="IncompatibleArchHeader">[^<]+<\/String>/);
+    assert.match(localization, /<String Id="IncompatibleArchMessage">[^<]*\{0\}[^<]*\{1\}[^<]*<\/String>/);
+    // 双语支持：bundle 必须同时携带中英文语言表，且两份资源的 String Id 集合完全一致
+    // （BA 的 Localizer 对缺失 id 回退为 id 本身，任何一侧缺译都会让切换后界面露 key）。
+    const zhWxl = fs.readFileSync(path.join(bootstrapperResources, 'zh-cn.wxl'), 'utf8');
+    const enWxl = fs.readFileSync(path.join(bootstrapperResources, 'en-us.wxl'), 'utf8');
+    const collectStringIds = (source) =>
+        new Set(Array.from(source.matchAll(/<String Id="([^"]+)">/g), (match) => match[1]));
+    const zhIds = collectStringIds(zhWxl);
+    const enIds = collectStringIds(enWxl);
+    assert.deepEqual(
+        [...zhIds].filter((id) => !enIds.has(id)),
+        [],
+        'zh-cn.wxl 中存在 en-us.wxl 缺失的文案 id'
+    );
+    assert.deepEqual(
+        [...enIds].filter((id) => !zhIds.has(id)),
+        [],
+        'en-us.wxl 中存在 zh-cn.wxl 缺失的文案 id'
+    );
+    assert.match(enWxl, /<String Id="LanguageSwitchLabel">中文<\/String>/);
+    assert.match(zhWxl, /<String Id="LanguageSwitchLabel">English<\/String>/);
     assert.match(localization, /<String Id="InstallEyebrow">版本 \[OpenDeskDisplayVersion\] · Windows x64<\/String>/);
     assert.match(
         localization,
@@ -681,7 +704,7 @@ test('renders every bootstrapper page transition atomically', () => {
     assert.match(bootstrapper, /class BufferedPanel : Panel/);
     assert.match(bootstrapper, /OptimizedDoubleBuffer/);
     assert.match(bootstrapper, /WM_SETREDRAW/);
-    assert.equal((bootstrapper.match(/RenderPage\(delegate/g) || []).length, 8);
+    assert.equal((bootstrapper.match(/RenderPage\(delegate/g) || []).length, 9);
     assert.match(bootstrapper, /Opacity = 0D/);
     assert.match(bootstrapper, /ShowDetected[\s\S]*?Opacity = 1D/);
     assert.doesNotMatch(bootstrapper, /rightBody\.BackColor = Color\.Transparent/);

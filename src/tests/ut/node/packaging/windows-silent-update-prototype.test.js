@@ -32,6 +32,8 @@ test('builds current-version-only update installers while preserving the release
     assert.match(builder, /OpenDesk\.Bootstrapper\.dll/);
     assert.match(builder, /background\.png/);
     assert.match(builder, /opendesk\.ico/);
+    assert.match(builder, /Name="zh-cn\.wxl"/);
+    assert.match(builder, /Name="en-us\.wxl"/);
     assert.match(builder, /OpenDeskDisplayVersion/);
     assert.match(builder, /OPENDESK_DISPLAY_VERSION/);
     assert.match(builder, /Name="BundleVersion" Value="\[OPENDESK_DISPLAY_VERSION\]"/);
@@ -42,13 +44,33 @@ test('builds current-version-only update installers while preserving the release
     assert.match(builder, /packageCode: productCode\('platform-package:4'\)/);
     assert.match(
         builder,
-        /function wixProduct\(\{ id, name, version, body, featureRefs, packageCode \}\)[\s\S]*<Package\$\{packageCode \? ` Id="\$\{packageCode\}"` : ''\}/
+        /function wixProduct\(\{ id, name, version, body, featureRefs, packageCode, windowsPlatform, installerVersion \}\)[\s\S]*<Package\$\{packageCode \? ` Id="\$\{packageCode\}"` : ''\}/
     );
     assert.match(builder, /productCode\('platform:4:launcher'\)/);
     assert.match(builder, /productCode\('platform:4:shortcut'\)/);
     assert.match(builder, /productCode\('platform:4:legacy-shortcut-cleanup'\)/);
     assert.match(builder, /productCode\(`active:3:\$\{version\}`\)/);
     assert.match(builder, /productCode\(`version:3:\$\{version\}`\)/);
+    // MSI 平台标记必须参数化：x64 链路写 x64 并由 SetMsiTemplate 追加 ARM64 平台，
+    // arm64 链路写 arm64（Template 单平台，天然拒绝 x64 机器安装）。
+    assert.match(
+        builder,
+        /function wixProduct\(\{ id, name, version, body, featureRefs, packageCode, windowsPlatform, installerVersion \}\)[\s\S]*<Package\$\{packageCode \? ` Id="\$\{packageCode\}"` : ''\}/
+    );
+    assert.match(builder, /InstallerVersion="\$\{installerVersion\}"/);
+    assert.match(builder, /Platform="\$\{windowsPlatform\}"/);
+    assert.match(builder, /installerVersion: targetWindowsArch === 'arm64' \? '500' : '405'/);
+    assert.match(builder, /SetMsiTemplate/);
+    assert.match(builder, /'x64,ARM64;1033'/);
+    assert.match(builder, /<Variable Name="OpenDeskTargetArch" Type="string" Value="\$\{targetWindowsArch\}" \/>/);
+    // 同版本重装：BA 把计划动作升级为 Repair，burn 自动附加 REINSTALL=ALL +
+    // REINSTALLMODE=cmuse；版本 MSI 内的 SetProperty CA 在 AppSearch 后把
+    // REINSTALLMODE 改写为 vamus（v 重缓存新源包 + a 覆盖全部文件），完成覆盖重铺
+    assert.match(builder, /<Property Id="REINSTALLMODE" Value="vamus" \/>/);
+    assert.match(
+        builder,
+        /<CustomAction Id="SetOpenDeskReinstallMode" Property="REINSTALLMODE" Value="vamus" Execute="immediate" Return="check" \/>[\s\S]*?<InstallExecuteSequence>\s*<Custom Action="SetOpenDeskReinstallMode" After="AppSearch" \/>/
+    );
     assert.match(builder, /Directory Id="ProgramMenuFolder"/);
     assert.match(builder, /Root="HKCU"[\s\S]*Name="ShortcutInstalled"/);
     assert.match(builder, /RemoveMisplacedShortcut/);
@@ -147,10 +169,9 @@ test('keeps silent service updates running while manual Setup upgrades close and
         bootstrapper,
         /OnPlanPackageBegin[\s\S]*activeAction == LaunchAction\.Install && e\.PackageId == PlatformPackageId[\s\S]*RequestState\.Repair/
     );
-    assert.match(
-        bootstrapper,
-        /OnPlanPackageBegin[\s\S]*activeAction == LaunchAction\.Repair && !cleanupOldVersions[\s\S]*RequestState\.Repair/
-    );
+    // 修复/同版本重装时版本 MSI 的 Repair 计划由引擎对 LaunchAction.Repair 的默认行为给出，
+    // BA 只负责把同版本重装的计划动作升级为 Repair（见 StartAction 的 planAction 逻辑），
+    // REINSTALL=ALL 与 REINSTALLMODE=vamus 分别由 burn 与版本 MSI 内的 SetProperty CA 提供。
     assert.match(
         bootstrapper,
         /OnPlanPackageBegin[\s\S]*cleanupOldVersions[\s\S]*state == PackageState\.Present[\s\S]*RequestState\.Present/
@@ -169,10 +190,57 @@ test('keeps silent service updates running while manual Setup upgrades close and
         bootstrapper,
         /OnDetectComplete[\s\S]*string legacyProductCode = FindLegacyMsiProductCode\(\)[\s\S]*relatedMsiUpgradeDetected = true[\s\S]*RestoreRelatedMsiInstallFolder\(legacyProductCode\)[\s\S]*ShowDetected/
     );
+    // 同版本重装：BA 把计划动作升级为 Repair，burn 自动附加 REINSTALL=ALL + REINSTALLMODE=cmuse，
+    // 版本 MSI 内的 SetProperty CA 把 REINSTALLMODE 改写为 vamus 完成覆盖重铺
+    assert.match(
+        bootstrapper,
+        /LaunchAction planAction = action;[\s\S]*IsSameVersionReinstall\(\)[\s\S]*planAction = LaunchAction\.Repair[\s\S]*Engine\.Plan\(planAction\)/
+    );
+    assert.match(
+        bootstrapper,
+        /IsSameVersionReinstall\(\)[\s\S]*detectedPackageStates\.TryGetValue\(PackageId, out state\) && state == PackageState\.Present/
+    );
     assert.match(
         bootstrapper,
         /FindRelatedMsiInstallFolder[\s\S]*productCode \+ "\.msq"[\s\S]*RegistryView\.Registry32[\s\S]*key\.GetValue\("InstallPath"\)/
     );
+    // 架构兼容检查：x64 包可装 ARM64（Windows 兼容层）与 x64 机器，arm64 包只能装 ARM64 机器
+    assert.match(bootstrapper, /ErrorInstallPlatformUnsupported = 1633/);
+    assert.match(bootstrapper, /IsWow64Process2/);
+    assert.match(
+        bootstrapper,
+        /EnforceCompatibleArchitecture\(\)[\s\S]*Command\.Relation != RelationType\.None[\s\S]*return false/
+    );
+    assert.match(bootstrapper, /OnDetectComplete[\s\S]*EnforceCompatibleArchitecture\(\)[\s\S]*return;/);
+    assert.match(bootstrapper, /ShowIncompatibleArchitecture/);
+    // 架构错误页必须 Reveal：窗口初始 Opacity=0 且不在任务栏，不 Reveal 用户看不到页面
+    assert.match(bootstrapper, /ShowIncompatibleArchitecture\(targetArch, machineArch\);[\s\S]*form\.Reveal\(\);/);
+    // 双语支持：启动时按用户 UI 语言选择 wxl（可被 OPENDESK_INSTALLER_LANG 强制），
+    // 欢迎页语言按钮经 SwitchLanguage + ApplyLanguage 原子重绘
+    assert.match(
+        bootstrapper,
+        /DetectLocalizationCulture\(\)[\s\S]*OPENDESK_INSTALLER_LANG[\s\S]*CurrentUICulture[\s\S]*StartsWith\("zh"/
+    );
+    assert.match(
+        bootstrapper,
+        /CreateLocalizer\(\)\s*\{\s*return new Localizer\(GetPayloadPath\(localizationCulture \+ "\.wxl"\)\)/
+    );
+    assert.match(
+        bootstrapper,
+        /SwitchLanguage\(\)\s*\{[\s\S]*localizationCulture = string\.Equals\(localizationCulture, "zh-cn", StringComparison\.Ordinal\)\s*\?\s*"en-us"\s*:\s*"zh-cn";/
+    );
+    assert.match(
+        bootstrapper,
+        /ApplyLanguage\(Localizer newLocalizer\)[\s\S]*localizer = newLocalizer;[\s\S]*UpdateSidebarTexts\(\);[\s\S]*ShowWelcome\(true\);/
+    );
+    // footer 四按钮等间距（38/182/326/470）：开始安装 → 安装选项 → 切换语言 → 退出安装
+    assert.match(bootstrapper, /LanguageSwitchButton", GetLanguageSwitchText\(\), 326/);
+    assert.match(
+        bootstrapper,
+        /startInstallButton = AddFooterButton\(\s*"StartInstallButton",[\s\S]*?38,[\s\S]*?StartInstallFromWelcome[\s\S]*?InstallOptionsButton",[\s\S]*?182,[\s\S]*?LanguageSwitchButton", GetLanguageSwitchText\(\), 326[\s\S]*?InstallCloseButton"\), 470, Close/
+    );
+    assert.match(bootstrapper, /private Localizer localizer;/);
+    assert.match(bootstrapper, /new InstallerForm\(this, CreateLocalizer\(\)\)/);
 });
 
 test('bundle cleanup only accepts the declared OpenDesk Bundle family', () => {

@@ -114,6 +114,8 @@ See the Mulan PSL v2 for more details.
     <String Id="FailureRestartButton">立即重启</String>
     <String Id="FailureCloseButton">关闭</String>
     <String Id="FailureMessage">安装程序未能完成操作。错误代码：{0}</String>
+    <String Id="IncompatibleArchHeader">无法在这台设备上安装</String>
+    <String Id="IncompatibleArchMessage">此安装包适用于 {0} 设备，当前设备是 {1}。请下载与设备架构匹配的 OpenDesk 安装包后重试。</String>
     <String Id="CancelConfirmTitle">取消安装</String>
     <String Id="CancelConfirmMessage">确定要取消当前操作吗？</String>
     <String Id="FilesInUseHeader">OpenDesk 正在运行</String>
@@ -128,4 +130,5 @@ See the Mulan PSL v2 for more details.
     <String Id="ConfirmCancelMessage">确定要取消当前操作吗？</String>
     <String Id="ExecuteUpgradeRelatedBundleMessage">正在处理旧版本</String>
     <String Id="ErrorFailNoActionReboot">Windows 需要重新启动，当前操作未执行。</String>
+    <String Id="LanguageSwitchLabel">English</String>
 </WixLocalization>

@@ -19,10 +19,6 @@
  * - PATH 含 WiX Toolset v3.14 bin（maker-wix 查找 candle.exe/light.exe）
  * - PATH 含 dotnet 或设置 DOTNET_EXE（build-sandbox:windows 编译沙箱）
  * - NODE_OPTIONS 由仓库 .npmrc 的 node-options 自动注入（Rollup 压缩大 chunk 需要 8GB 堆）
- *
- * 为什么必须走 arm64 专属链路：x64 Dokan 内核驱动在 ARM64 Windows 上无法加载
- * （ERROR_DRIVER_BLOCKED），bundle 里的 Dokan_x64.msi 会导致安装以 0x80070643 失败，
- * 因此 Dokan 驱动必须换成 win-arm64 的 DokanSetup.msi。
  */
 
 import { spawnSync } from 'node:child_process';

@@ -1,0 +1,134 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+Copyright (c) 2026 The OpenDesk Team
+OpenDesk is licensed under Mulan PSL v2.
+You can use this software according to the terms and conditions of the Mulan PSL v2.
+You may obtain a copy of Mulan PSL v2 at: http://license.coscl.org.cn/MulanPSL2
+THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND,
+EITHER EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT,
+MERCHANTABILITY OR FIT FOR A PARTICULAR PURPOSE.
+See the Mulan PSL v2 for more details.
+-->
+<WixLocalization Culture="en-us" Language="1033" xmlns="http://schemas.microsoft.com/wix/2006/localization">
+    <String Id="Caption">OpenDesk Installer</String>
+    <String Id="Title">OpenDesk</String>
+    <String Id="BrandCopy">Bring your AI workstation to the desktop, where models, files and automation tasks work together in one space.</String>
+    <String Id="StepPrepare">Prepare</String>
+    <String Id="StepInstall">Installing</String>
+    <String Id="StepComplete">Done</String>
+    <String Id="InstallEyebrow">Version [OpenDeskDisplayVersion] · Windows x64</String>
+    <String Id="InstallHeader">Welcome to OpenDesk Setup</String>
+    <String Id="InstallMessage">Setup will install OpenDesk on this computer. You can pick any local drive under Install options.</String>
+    <String Id="UpgradeHeader">Update OpenDesk</String>
+    <String Id="UpgradeMessage">An older version was detected. Setup will keep your current install location and shortcut preferences and complete the update.</String>
+    <String Id="InstallVersion">OpenDesk [OpenDeskDisplayVersion] · Windows x64</String>
+    <String Id="InstallLocationPreview">You can view or change the install path under Install options.</String>
+    <String Id="SelectedInstallLocation">Install location: {0}</String>
+    <String Id="FeatureNumber1">01</String>
+    <String Id="FeatureNumber2">02</String>
+    <String Id="FeatureNumber3">03</String>
+    <String Id="FeatureWorkspaceTitle">Unified workspace</String>
+    <String Id="FeatureWorkspaceText">Manage chats, files and smart tools in one place</String>
+    <String Id="FeatureLocalTitle">Local first</String>
+    <String Id="FeatureLocalText">Your data stays on your device and workspace</String>
+    <String Id="FeatureExtendTitle">Flexible extensions</String>
+    <String Id="FeatureExtendText">Connect models, MCP services and automation flows</String>
+    <String Id="InstallLicenseLinkText"></String>
+    <String Id="InstallAcceptCheckbox"></String>
+    <String Id="InstallOptionsButton">Install options</String>
+    <String Id="InstallInstallButton">Install</String>
+    <String Id="UpgradeInstallButton">Update</String>
+    <String Id="InstallCloseButton">Exit setup</String>
+    <String Id="OptionsEyebrow">Install options</String>
+    <String Id="OptionsHeader">Choose install location</String>
+    <String Id="OptionsMessage">Type or browse a folder. Fixed disks, removable drives and other writable volumes are supported.</String>
+    <String Id="OptionsLocationLabel">Install location:</String>
+    <String Id="OptionsDriveHint">For example: E:\OpenDesk. The drive and directory permissions are verified by Windows Installer before installation.</String>
+    <String Id="FolderBrowseDescription">Select the OpenDesk installation folder</String>
+    <String Id="CreateDesktopShortcut">Create desktop shortcut</String>
+    <String Id="CreateStartMenuShortcut">Create Start Menu shortcut</String>
+    <String Id="ShortcutOptionsHint">Your shortcut choices are remembered for future upgrades.</String>
+    <String Id="InvalidInstallPathTitle">Cannot use this install location</String>
+    <String Id="InvalidInstallPathMessage">Enter a full local folder path and make sure the drive is mounted.</String>
+    <String Id="OpenDeskRunningTitle">OpenDesk is running</String>
+    <String Id="OpenDeskRunningMessage">Please close the running OpenDesk first, then click Retry to continue.&#xA;&#xA;Install directory: {0}</String>
+    <String Id="InsufficientSpaceHeader">Not enough disk space</String>
+    <String Id="InsufficientSpaceMessage">The selected drive does not have enough free space for the installation. About {0} is required, only {1} is available.</String>
+    <String Id="InsufficientSpaceHint">Pick another drive under Install options (for example D:\, E:\) or free up space on this drive, then retry.</String>
+    <String Id="InsufficientSpaceBackButton">Back</String>
+    <String Id="RestartRequiredHeader">Restart required</String>
+    <String Id="RestartRequiredCompletedMessage">The operation finished, but Windows must restart to finish cleaning up files. Restart before running OpenDesk or the installer again.</String>
+    <String Id="RestartRequiredPendingMessage">Windows still has OpenDesk files pending processing, so this operation was not executed. Restart first, then run the installer again.</String>
+    <String Id="RestartRequiredCloseButton">Close</String>
+    <String Id="OptionsBrowseButton">Browse...</String>
+    <String Id="OptionsOkButton">Save options</String>
+    <String Id="OptionsCancelButton">Back</String>
+    <String Id="ProgressHeader">Installing OpenDesk</String>
+    <String Id="ProgressRepairHeader">Repairing OpenDesk</String>
+    <String Id="ProgressUninstallHeader">Uninstalling OpenDesk</String>
+    <String Id="ProgressMessage">Writing application files and registering Windows Installer information. Please keep the installer running.</String>
+    <String Id="ProgressRepairMessage">Verifying and repairing application files. Please keep the installer running.</String>
+    <String Id="ProgressUninstallMessage">Removing application files and Windows Installer information. Please keep the installer running.</String>
+    <String Id="ProgressLabel">Progress</String>
+    <String Id="ProgressPreparing">Preparing...</String>
+    <String Id="ProgressRepairPreparing">Preparing repair...</String>
+    <String Id="ProgressUninstallPreparing">Preparing uninstall...</String>
+    <String Id="ProgressCaching">Verifying and caching installation files...</String>
+    <String Id="ProgressRepairCaching">Verifying application files...</String>
+    <String Id="ProgressInstalling">Writing application files...</String>
+    <String Id="ProgressRepairing">Repairing application files...</String>
+    <String Id="ProgressUninstalling">Removing application files...</String>
+    <String Id="ProgressFinishing">Finishing Windows Installer registration...</String>
+    <String Id="ProgressRepairFinishing">Finishing repair...</String>
+    <String Id="ProgressUninstallFinishing">Finishing uninstall...</String>
+    <String Id="ProgressCleaningOldBundles">Cleaning up previous installations...</String>
+    <String Id="ProgressCanceling">Cancelling safely...</String>
+    <String Id="ProgressRepairCanceling">Cancelling repair...</String>
+    <String Id="ProgressUninstallCanceling">Cancelling uninstall...</String>
+    <String Id="OverallProgressPackageText">Preparing...</String>
+    <String Id="ProgressCancelButton">Cancel install</String>
+    <String Id="ProgressRepairCancelButton">Cancel repair</String>
+    <String Id="ProgressUninstallCancelButton">Cancel uninstall</String>
+    <String Id="ModifyHeader">Maintain OpenDesk</String>
+    <String Id="ModifyMessage">You can repair the current installation or remove OpenDesk from this computer.</String>
+    <String Id="ModifyRepairButton">Repair</String>
+    <String Id="ModifyUninstallButton">Uninstall</String>
+    <String Id="ModifyCloseButton">Close</String>
+    <String Id="ModifyRepairDescription">Re-verify and repair OpenDesk application files.</String>
+    <String Id="ModifyUninstallDescription">Remove OpenDesk and its installation info from this computer.</String>
+    <String Id="SuccessHeader">All done</String>
+    <String Id="SuccessInstallHeader">OpenDesk is ready</String>
+    <String Id="SuccessRepairHeader">OpenDesk was repaired</String>
+    <String Id="SuccessUninstallHeader">OpenDesk was uninstalled</String>
+    <String Id="SuccessMessage">Setup finished all operations.</String>
+    <String Id="SuccessLaunchButton">Launch OpenDesk</String>
+    <String Id="SuccessRestartText">Windows must be restarted to finish the operation.</String>
+    <String Id="SuccessRestartButton">Restart now</String>
+    <String Id="SuccessCloseButton">Finish</String>
+    <String Id="FailureHeader">Operation did not complete</String>
+    <String Id="FailureInstallHeader">Install did not complete</String>
+    <String Id="FailureUninstallHeader">Uninstall did not complete</String>
+    <String Id="FailureRepairHeader">Repair did not complete</String>
+    <String Id="FailureHyperlinkLogText">The installer ran into a problem. Check the &lt;a href="#"&gt;installation log&lt;/a&gt; for details.</String>
+    <String Id="FailureRestartText">Windows must be restarted to complete the rollback.</String>
+    <String Id="FailureRestartButton">Restart now</String>
+    <String Id="FailureCloseButton">Close</String>
+    <String Id="FailureMessage">Setup failed to complete the operation. Error code: {0}</String>
+    <String Id="IncompatibleArchHeader">Cannot install on this device</String>
+    <String Id="IncompatibleArchMessage">This installer is for {0} devices, but this device is {1}. Please download the OpenDesk installer that matches your device architecture and try again.</String>
+    <String Id="CancelConfirmTitle">Cancel installation</String>
+    <String Id="CancelConfirmMessage">Are you sure you want to cancel the current operation?</String>
+    <String Id="FilesInUseHeader">OpenDesk is running</String>
+    <String Id="FilesInUseLabel">The following programs are using files that need to be updated:</String>
+    <String Id="FilesInUseCloseRadioButton">Close these programs and try to reopen them after installation.</String>
+    <String Id="FilesInUseDontCloseRadioButton">Do not close them. Restart Windows later.</String>
+    <String Id="FilesInUseOkButton">Continue</String>
+    <String Id="FilesInUseCancelButton">Cancel</String>
+    <String Id="HelpHeader">Installer help</String>
+    <String Id="HelpText">/install Install OpenDesk&#xA;/repair Repair the installation&#xA;/uninstall Uninstall OpenDesk&#xA;/quiet Run silently&#xA;/log &lt;path&gt; Specify a log file</String>
+    <String Id="HelpCloseButton">Close</String>
+    <String Id="ConfirmCancelMessage">Are you sure you want to cancel the current operation?</String>
+    <String Id="ExecuteUpgradeRelatedBundleMessage">Processing previous version</String>
+    <String Id="ErrorFailNoActionReboot">Windows needs a restart. The current operation was not executed.</String>
+    <String Id="LanguageSwitchLabel">中文</String>
+</WixLocalization>
