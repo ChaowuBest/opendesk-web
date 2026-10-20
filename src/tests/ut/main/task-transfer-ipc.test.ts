@@ -6,6 +6,7 @@ import path from 'node:path';
 const handlers = new Map<string, (...args: any[]) => Promise<any>>();
 const chooseFile = jest.fn<any>();
 const importTasks = jest.fn<any>();
+const warn = jest.fn();
 const currentWorkspace = jest.fn(() => '/default');
 jest.unstable_mockModule('electron', () => ({
     dialog: { showOpenDialog: chooseFile },
@@ -15,7 +16,7 @@ jest.unstable_mockModule('../../../main/utils/setting.js', () => ({
     Setting: { getInstance: () => ({ getEffectiveWorkspace: currentWorkspace }) }
 }));
 jest.unstable_mockModule('../../../locale/index.js', () => ({ t: (key: string) => key }));
-jest.unstable_mockModule('../../../main/utils/logger.js', () => ({ logger: { warn: jest.fn() } }));
+jest.unstable_mockModule('../../../main/utils/logger.js', () => ({ logger: { warn } }));
 
 describe('task transfer workspace IPC', () => {
     let register: any;
@@ -29,6 +30,8 @@ describe('task transfer workspace IPC', () => {
     });
     beforeEach(async () => {
         handlers.clear();
+        chooseFile.mockClear();
+        warn.mockClear();
         directory = fs.mkdtempSync(path.join(os.tmpdir(), 'od-transfer-ipc-'));
         const source = path.join(directory, 'source.json');
         fs.writeFileSync(
@@ -53,6 +56,35 @@ describe('task transfer workspace IPC', () => {
         expect(importTasks).toHaveBeenCalledWith(expect.any(Array), ['source'], manager, directory);
         expect((await invoke('importTaskBundle', token, ['source'], directory)).status).toBe('error');
         expect(importTasks).toHaveBeenCalledTimes(1);
+    });
+
+    test('keeps Windows diagnostics in logs and returns only the friendly import message', async () => {
+        const { TaskTransferError } = await import('../../../main/utils/task-bundle.js');
+        const cause = Object.assign(new Error('access denied'), { code: 'EPERM', syscall: 'rename' });
+        importTasks.mockRejectedValue(
+            new TaskTransferError('writeFailed', cause, 'writeIndex', 'C:\\data\\tasks\\task_list.json')
+        );
+        const result = await invoke('importTaskBundle', token, ['source'], directory);
+        expect(result.status).toBe('error');
+        expect(result.message).toBe('taskTransfer.error.importWriteFailed');
+        const diagnostic = warn.mock.calls.flat().join('\n');
+        expect(diagnostic).toContain('EPERM');
+        expect(diagnostic).toContain('rename');
+        expect(diagnostic).toContain('access denied');
+        expect(diagnostic).toContain('C:\\data\\tasks\\task_list.json');
+        expect(diagnostic).toContain('taskTransfer.stage.writeIndex');
+    });
+
+    test('retains the preview after a failed commit and consumes it after a successful retry', async () => {
+        importTasks.mockRejectedValueOnce(new Error('temporary failure'));
+        expect(await invoke('importTaskBundle', token, ['source'], directory)).toEqual({
+            status: 'error',
+            message: 'taskTransfer.error.importWriteFailed'
+        });
+        expect((await invoke('importTaskBundle', token, ['source'], directory)).status).toBe('ok');
+        expect(importTasks).toHaveBeenCalledTimes(2);
+        expect((await invoke('importTaskBundle', token, ['source'], directory)).status).toBe('error');
+        expect(chooseFile).toHaveBeenCalledTimes(1);
     });
 
     test('rejects invalid directories without consuming the preview, allowing a corrected selection', async () => {

@@ -32,6 +32,15 @@ export const enUs: Record<string, string> = {
         'Unable to read or save passwords. Check your system keychain, or reset saved passwords and autofill data in browser settings.',
 
     // Task transfer
+    'taskTransfer.diagnostic.stage': 'Failed stage',
+    'taskTransfer.diagnostic.path': 'File path',
+    'taskTransfer.stage.readImportFile': 'Read import file',
+    'taskTransfer.stage.prepareTasks': 'Prepare task data',
+    'taskTransfer.stage.flushPending': 'Flush pending tasks',
+    'taskTransfer.stage.taskDirectory': 'Access task directory',
+    'taskTransfer.stage.serializeTask': 'Serialize task',
+    'taskTransfer.stage.writeTask': 'Write task file',
+    'taskTransfer.stage.writeIndex': 'Save task index',
     'taskTransfer.title': 'Task data',
     'taskTransfer.import': 'Import tasks',
     'taskTransfer.export': 'Export tasks',
@@ -67,6 +76,8 @@ export const enUs: Record<string, string> = {
     'taskTransfer.error.tooLarge':
         'Bundle limit exceeded: 1,000 tasks, 16 MB per task, 128 MB uncompressed, 64 MB file size.',
     'taskTransfer.error.writeFailed': 'Could not read or write task files. Check permissions and available disk space.',
+    'taskTransfer.error.importWriteFailed':
+        'Could not save the imported tasks right now. Please try again later. Your selections have been kept.',
     'taskTransfer.error.expired':
         'The import preview expired or another operation is running. Close this dialog and choose the file again.',
 

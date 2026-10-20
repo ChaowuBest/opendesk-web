@@ -148,6 +148,178 @@ describe('task transfer persistence', () => {
         expect(TaskManagerState.load()!.tasks.map((task) => task.task_id)).toEqual([existing.task_id]);
     });
 
+    test('silently retries a temporary index rename conflict using the same task IDs', async () => {
+        const { destination, entries } = await prepare();
+        const rename = fs.renameSync;
+        let failures = 0;
+        const taskFiles: string[] = [];
+        const open = fs.openSync;
+        jest.spyOn(fs, 'openSync').mockImplementation((...args: Parameters<typeof fs.openSync>) => {
+            if (args[1] === 'wx') taskFiles.push(String(args[0]));
+            return open(...args);
+        });
+        jest.spyOn(fs, 'renameSync').mockImplementation((from, to) => {
+            if (String(to).endsWith('task_list.json') && failures++ === 0) {
+                throw Object.assign(new Error('temporarily locked'), { code: 'EPERM', syscall: 'rename' });
+            }
+            return rename(from, to);
+        });
+        const notify = jest.spyOn(destination, 'publishTaskListUpdate');
+        expect(await importTaskEntries(entries, ['parent', 'child'], destination, '/new/work')).toBe(2);
+        expect(taskFiles).toHaveLength(4);
+        expect(taskFiles.slice(0, 2)).toEqual(taskFiles.slice(2));
+        expect(TaskManagerState.load()!.tasks).toHaveLength(2);
+        expect(notify).toHaveBeenCalledTimes(1);
+        expect(fs.readdirSync(path.join(directory, 'tasks')).filter((file) => file.endsWith('.tmp'))).toEqual([]);
+    });
+
+    test('does not retry when the failed batch cannot be fully rolled back', async () => {
+        const { destination, entries } = await prepare();
+        const rename = fs.renameSync;
+        const unlink = fs.unlinkSync;
+        const cause = Object.assign(new Error('index locked'), { code: 'EPERM', syscall: 'rename' });
+        let indexAttempts = 0;
+        jest.spyOn(fs, 'renameSync').mockImplementation((from, to) => {
+            if (String(to).endsWith('task_list.json')) {
+                indexAttempts++;
+                throw cause;
+            }
+            return rename(from, to);
+        });
+        jest.spyOn(fs, 'unlinkSync').mockImplementation((file) => {
+            if (String(file).endsWith('.json')) throw new Error('rollback blocked');
+            return unlink(file);
+        });
+        await expect(importTaskEntries(entries, ['parent'], destination, '/new/work')).rejects.toMatchObject({
+            cause,
+            retryable: false
+        });
+        expect(indexAttempts).toBe(1);
+        expect(destination.tasks).toEqual([]);
+    });
+
+    test('silently recovers when a pending index save fails before import starts', async () => {
+        const { destination, entries } = await prepare();
+        const existing = new TaskState(destination);
+        existing.task_name = 'existing';
+        existing._dirty = true;
+        destination.tasks.push(existing);
+        const rename = fs.promises.rename;
+        let release!: () => void;
+        const blocked = new Promise<void>((resolve) => {
+            release = resolve;
+        });
+        let entered!: () => void;
+        const waiting = new Promise<void>((resolve) => {
+            entered = resolve;
+        });
+        let failFirst = true;
+        const cause = Object.assign(new Error('temporarily locked pending index'), {
+            code: 'EPERM',
+            syscall: 'rename'
+        });
+        jest.spyOn(fs.promises, 'rename').mockImplementation(async (from, to) => {
+            if (failFirst && String(to).endsWith('task_list.json')) {
+                failFirst = false;
+                entered();
+                await blocked;
+                // The async writer retries; keeping this path blocked exhausts that writer's own retry budget.
+                throw cause;
+            }
+            if (String(to).endsWith('task_list.json')) throw cause;
+            return rename(from, to);
+        });
+        const background = destination.flushAllPendingSaves().catch(() => {});
+        await waiting;
+        const importing = importTaskEntries(entries, ['parent'], destination, '/new/work');
+        release();
+        await background;
+        expect(await importing).toBe(1);
+        expect(TaskManagerState.load()!.tasks.map((task) => task.task_name)).toEqual(['existing', 'parent']);
+    });
+
+    test('stops retrying a persistent index lock and rolls back the batch', async () => {
+        const { destination, entries } = await prepare();
+        const rename = fs.renameSync;
+        let failures = 0;
+        const cause = Object.assign(new Error('still locked'), { code: 'EPERM', syscall: 'rename' });
+        jest.spyOn(fs, 'renameSync').mockImplementation((from, to) => {
+            if (String(to).endsWith('task_list.json')) {
+                failures++;
+                throw cause;
+            }
+            return rename(from, to);
+        });
+        await expect(importTaskEntries(entries, ['parent'], destination, '/new/work')).rejects.toMatchObject({
+            stage: 'writeIndex',
+            cause
+        });
+        expect(failures).toBeGreaterThan(1);
+        expect(failures).toBeLessThanOrEqual(8);
+        expect(destination.tasks).toEqual([]);
+        expect(fs.readdirSync(path.join(directory, 'tasks'))).toEqual([]);
+    });
+
+    test('does not report a committed batch as failed when list notification throws', async () => {
+        const { destination, entries } = await prepare();
+        jest.spyOn(destination, 'publishTaskListUpdate').mockImplementation(() => {
+            throw new Error('subscriber failure');
+        });
+        expect(await importTaskEntries(entries, ['parent'], destination, '/new/work')).toBe(1);
+        expect(TaskManagerState.load()!.tasks).toHaveLength(1);
+    });
+
+    test('retries the same snapshot after an index failure without leaving duplicate tasks', async () => {
+        const { destination, entries } = await prepare();
+        const rename = fs.renameSync;
+        let failOnce = true;
+        jest.spyOn(fs, 'renameSync').mockImplementation((from, to) => {
+            if (failOnce && String(to).endsWith('task_list.json')) {
+                failOnce = false;
+                throw Object.assign(new Error('temporarily locked'), { code: 'EPERM' });
+            }
+            return rename(from, to);
+        });
+        await expect(importTaskEntries(entries, ['parent'], destination, '/new/work')).rejects.toThrow('writeFailed');
+        expect(await importTaskEntries(entries, ['parent'], destination, '/new/work')).toBe(1);
+        expect(TaskManagerState.load()!.tasks).toHaveLength(1);
+    });
+
+    test.each(['serializeTask', 'writeTask', 'writeIndex'] as const)(
+        'preserves the original cause and phase for %s failures',
+        async (stage) => {
+            const { destination, entries } = await prepare();
+            const original = Object.assign(new Error('diagnostic failure'), {
+                code: stage === 'serializeTask' ? undefined : 'EACCES',
+                syscall: stage === 'writeIndex' ? 'rename' : 'open'
+            });
+            if (stage === 'serializeTask') {
+                jest.spyOn(TaskState.prototype, 'toJSON').mockImplementation(() => {
+                    throw original;
+                });
+            } else if (stage === 'writeTask') {
+                const open = fs.openSync;
+                jest.spyOn(fs, 'openSync').mockImplementation((...args: Parameters<typeof fs.openSync>) => {
+                    if (args[1] === 'wx') throw original;
+                    return open(...args);
+                });
+            } else {
+                const rename = fs.renameSync;
+                jest.spyOn(fs, 'renameSync').mockImplementation((from, to) => {
+                    if (String(to).endsWith('task_list.json')) throw original;
+                    return rename(from, to);
+                });
+            }
+            await expect(importTaskEntries(entries, ['parent'], destination, '/new/work')).rejects.toMatchObject({
+                message: 'writeFailed',
+                stage,
+                cause: original,
+                filePath: expect.stringContaining(stage === 'writeIndex' ? 'task_list.json' : '.json')
+            });
+            expect(destination.tasks).toEqual([]);
+        }
+    );
+
     test('a corrupt lazy task cannot be exported as a successful empty backup', async () => {
         const manager = source();
         manager.tasks.forEach((task) => {

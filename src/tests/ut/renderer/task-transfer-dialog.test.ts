@@ -56,6 +56,26 @@ describe('task transfer dialog', () => {
         dialog.close();
     });
 
+    test('keeps selections and allows immediate retry after an import failure', async () => {
+        window.taskManagerAPI.importTaskBundle.mockRejectedValue(
+            new Error('暂时无法保存导入的任务，请稍后重试。已保留你的选择。')
+        );
+        const dialog = await open();
+        await dialog.submit();
+        expect(document.querySelector('[data-transfer-status]')!.textContent).toBe(
+            '暂时无法保存导入的任务，请稍后重试。已保留你的选择。'
+        );
+        expect([...dialog.selected]).toEqual(['one', 'two']);
+        expect(dialog.workspace).toBe('/current');
+        expect(document.querySelector('[data-transfer-submit]')!.hasAttribute('hidden')).toBe(false);
+        window.taskManagerAPI.importTaskBundle.mockResolvedValue(2);
+        await dialog.submit();
+        expect(window.taskManagerAPI.importTaskBundle).toHaveBeenCalledTimes(2);
+        expect(window.taskManagerAPI.importTaskBundle).toHaveBeenLastCalledWith('preview', ['one', 'two'], '/current');
+        expect(document.querySelector('[data-transfer-status]')!.textContent).toContain('已导入 2');
+        dialog.close();
+    });
+
     test('opens one file picker before the modal and leaves no modal when canceled', async () => {
         let finish: (value: null) => void;
         window.taskManagerAPI.previewTaskImport.mockImplementation(
