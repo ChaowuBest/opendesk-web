@@ -255,7 +255,7 @@ function ensureWidgetWindow(): BrowserWindow | null {
         fullscreenable: false,
         alwaysOnTop: true,
         skipTaskbar: true,
-        hasShadow: true,
+        hasShadow: !isCollapsed,
         roundedCorners: true,
         transparent: true,
         backgroundColor: '#00000000',
@@ -584,6 +584,7 @@ function setWidgetCollapsed(collapsed: boolean): void {
     if (!widgetWindow || widgetWindow.isDestroyed()) {
         return;
     }
+    widgetWindow.setHasShadow(!collapsed);
     const bounds = widgetWindow.getBounds();
     // 按显示位置锚定：展开/收起保持对应的角不变。
     const widgetWidth = collapsed ? WIDGET_COLLAPSED_WIDTH : WIDGET_WIDTH;
