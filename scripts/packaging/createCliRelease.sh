@@ -175,6 +175,8 @@ mkdir -p "$RELEASE_DIR"
 
 echo "Copying built CLI files..."
 cp dist/cli/opendesk "$RELEASE_DIR/opendesk"
+cp dist/cli/THIRD_PARTY_NOTICES.txt "$RELEASE_DIR/THIRD_PARTY_NOTICES.txt"
+cp dist/cli/webrtc-runtime-manifest.json "$RELEASE_DIR/webrtc-runtime-manifest.json"
 
 # Builtin plugins are required at runtime: the CLI locates them by walking up
 # from the bundle to the package root and reading dist/plugins (see
