@@ -24,7 +24,9 @@ test('builds current-version-only update installers while preserving the release
     assert.match(releaseBuilder, /'--version',\s*version/);
     assert.match(releaseBuilder, /'--app-dir',\s*packagedAppDirectory/);
     assert.match(releaseBuilder, /opendesk-win-x86-\$\{version\}\.exe/);
-    assert.doesNotMatch(builder, /<MajorUpgrade/);
+    // 版本 MSI 的同版本移除使用手写 UpgradeVersion（WiX v3 的 MajorUpgrade 不支持 Range），
+    // 双边界锁定当前版本，不得放开范围（否则跨版本升级会移除运行中的旧版本目录，破坏多版本共存）
+    assert.doesNotMatch(builder, /AllowDowngrades/);
     assert.match(builder, /ARPSYSTEMCOMPONENT/);
     assert.doesNotMatch(builder, /DokanMsi|DokanSetup|dokan2\.dll/);
     assert.doesNotMatch(builder, /MsiPackage Id="OpenDesk(?:Platform|Msi)"[^>]*Permanent="yes"/);
@@ -50,7 +52,7 @@ test('builds current-version-only update installers while preserving the release
     assert.match(builder, /productCode\('platform:4:shortcut'\)/);
     assert.match(builder, /productCode\('platform:4:legacy-shortcut-cleanup'\)/);
     assert.match(builder, /productCode\(`active:3:\$\{version\}`\)/);
-    assert.match(builder, /productCode\(`version:3:\$\{version\}`\)/);
+    // 版本 MSI 的 ProductId 已改为随机（id: '*'），不再由版本号派生
     // MSI 平台标记必须参数化：x64 链路写 x64 并由 SetMsiTemplate 追加 ARM64 平台，
     // arm64 链路写 arm64（Template 单平台，天然拒绝 x64 机器安装）。
     assert.match(
@@ -63,14 +65,16 @@ test('builds current-version-only update installers while preserving the release
     assert.match(builder, /SetMsiTemplate/);
     assert.match(builder, /'x64,ARM64;1033'/);
     assert.match(builder, /<Variable Name="OpenDeskTargetArch" Type="string" Value="\$\{targetWindowsArch\}" \/>/);
-    // 同版本重装：BA 把计划动作升级为 Repair，burn 自动附加 REINSTALL=ALL +
-    // REINSTALLMODE=cmuse；版本 MSI 内的 SetProperty CA 在 AppSearch 后把
-    // REINSTALLMODE 改写为 vamus（v 重缓存新源包 + a 覆盖全部文件），完成覆盖重铺
-    assert.match(builder, /<Property Id="REINSTALLMODE" Value="vamus" \/>/);
+    // 同版本覆盖：版本 MSI 的 ProductId 每次构建随机（id: '*'），UpgradeVersion 以双边界
+    // 锁定当前版本 + REP（RemoveExistingProducts）只移除同版本旧产品（0.3.8 等旧版本目录
+    // 保留），安装为全新安装语义，不依赖 repair / re-cache / SecureRepair 机制
+    // （同事实机 0x80070666=1638 即 repair 语义失效所致）
+    assert.match(builder, /id: '\*',/);
     assert.match(
         builder,
-        /<CustomAction Id="SetOpenDeskReinstallMode" Property="REINSTALLMODE" Value="vamus" Execute="immediate" Return="check" \/>[\s\S]*?<InstallExecuteSequence>\s*<Custom Action="SetOpenDeskReinstallMode" After="AppSearch" \/>/
+        /<Upgrade Id="\{0E0C2E6A-34E1-4DA7-919D-A5BE5EF4C045\}">\s*<UpgradeVersion Minimum="\$\{version\}" IncludeMinimum="yes" Maximum="\$\{version\}" IncludeMaximum="yes" Property="OPENDESK_SAMEVERSION_OLD" \/>\s*<\/Upgrade>\s*<InstallExecuteSequence>\s*<RemoveExistingProducts After="InstallValidate" \/>\s*<\/InstallExecuteSequence>/
     );
+    assert.doesNotMatch(builder, /<MajorUpgrade|SetOpenDeskReinstallMode|REINSTALLMODE|MsiProperty Name="REINSTALL"/);
     assert.match(builder, /Directory Id="ProgramMenuFolder"/);
     assert.match(builder, /Root="HKCU"[\s\S]*Name="ShortcutInstalled"/);
     assert.match(builder, /RemoveMisplacedShortcut/);
@@ -169,9 +173,8 @@ test('keeps silent service updates running while manual Setup upgrades close and
         bootstrapper,
         /OnPlanPackageBegin[\s\S]*activeAction == LaunchAction\.Install && e\.PackageId == PlatformPackageId[\s\S]*RequestState\.Repair/
     );
-    // 修复/同版本重装时版本 MSI 的 Repair 计划由引擎对 LaunchAction.Repair 的默认行为给出，
-    // BA 只负责把同版本重装的计划动作升级为 Repair（见 StartAction 的 planAction 逻辑），
-    // REINSTALL=ALL 与 REINSTALLMODE=vamus 分别由 burn 与版本 MSI 内的 SetProperty CA 提供。
+    // 同版本覆盖由版本 MSI 的 MajorUpgrade 处理，BA 仅在维护动作（CleanupOldVersions）时
+    // 显式保持版本 MSI Present，其余场景交由引擎默认计划
     assert.match(
         bootstrapper,
         /OnPlanPackageBegin[\s\S]*cleanupOldVersions[\s\S]*state == PackageState\.Present[\s\S]*RequestState\.Present/
@@ -190,15 +193,11 @@ test('keeps silent service updates running while manual Setup upgrades close and
         bootstrapper,
         /OnDetectComplete[\s\S]*string legacyProductCode = FindLegacyMsiProductCode\(\)[\s\S]*relatedMsiUpgradeDetected = true[\s\S]*RestoreRelatedMsiInstallFolder\(legacyProductCode\)[\s\S]*ShowDetected/
     );
-    // 同版本重装：BA 把计划动作升级为 Repair，burn 自动附加 REINSTALL=ALL + REINSTALLMODE=cmuse，
-    // 版本 MSI 内的 SetProperty CA 把 REINSTALLMODE 改写为 vamus 完成覆盖重铺
+    // 同版本覆盖由版本 MSI 的 MajorUpgrade(AllowSameVersionUpgrades) 处理，BA 不干预计划动作
+    assert.doesNotMatch(bootstrapper, /IsSameVersionReinstall|planAction|OpenDeskReinstall/);
     assert.match(
         bootstrapper,
-        /LaunchAction planAction = action;[\s\S]*IsSameVersionReinstall\(\)[\s\S]*planAction = LaunchAction\.Repair[\s\S]*Engine\.Plan\(planAction\)/
-    );
-    assert.match(
-        bootstrapper,
-        /IsSameVersionReinstall\(\)[\s\S]*detectedPackageStates\.TryGetValue\(PackageId, out state\) && state == PackageState\.Present/
+        /FindRelatedMsiInstallFolder[\s\S]*productCode \+ "\.msq"[\s\S]*RegistryView\.Registry32[\s\S]*key\.GetValue\("InstallPath"\)/
     );
     assert.match(
         bootstrapper,
@@ -231,7 +230,16 @@ test('keeps silent service updates running while manual Setup upgrades close and
     );
     assert.match(
         bootstrapper,
-        /ApplyLanguage\(Localizer newLocalizer\)[\s\S]*localizer = newLocalizer;[\s\S]*UpdateSidebarTexts\(\);[\s\S]*ShowWelcome\(true\);/
+        /ApplyLanguage\(Localizer newLocalizer, MethodInvoker redrawPage\)[\s\S]*localizer = newLocalizer;[\s\S]*UpdateSidebarTexts\(\);[\s\S]*redrawPage\(\);/
+    );
+    // 欢迎页与维护页都提供语言切换（各自重绘当前页），按钮位于切换语言位（x=326）
+    assert.match(
+        bootstrapper,
+        /ShowWelcome\(bool enabled\)[\s\S]*LanguageSwitchButton", GetLanguageSwitchText\(\), 326[\s\S]*ApplyLanguage\(application\.CreateLocalizer\(\), delegate \{ ShowWelcome\(true\); \}\)/
+    );
+    assert.match(
+        bootstrapper,
+        /ShowMaintenance\(\)[\s\S]*RepairButton", T\("ModifyRepairButton"\), 38[\s\S]*UninstallButton", T\("ModifyUninstallButton"\), 182[\s\S]*LanguageSwitchButton", GetLanguageSwitchText\(\), 326[\s\S]*ApplyLanguage\(application\.CreateLocalizer\(\), ShowMaintenance\)[\s\S]*ModifyCloseButton", T\("ModifyCloseButton"\), 470, Close/
     );
     // footer 四按钮等间距（38/182/326/470）：开始安装 → 安装选项 → 切换语言 → 退出安装
     assert.match(bootstrapper, /LanguageSwitchButton", GetLanguageSwitchText\(\), 326/);

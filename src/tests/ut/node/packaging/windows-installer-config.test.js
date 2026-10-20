@@ -470,10 +470,10 @@ test('builds a custom bootstrapper that passes location and shortcut choices to 
     assert.doesNotMatch(buildScript, /insignia|-outputresource|requireAdministrator/);
     // 清理 stale 注册键发生在 Install 与 Repair 两条路径上（修复同样要求应用列表只剩当前实例）；
     // 仅用户直接发起的卸载（RelationType.None）才忽略依赖登记，related bundle 卸载不能忽略；
-    // Plan 动作在尾部可能被升级为 Repair（同版本重装场景，见 StartAction 的 planAction 逻辑）
+    // 同版本覆盖由版本 MSI 的 MajorUpgrade 处理，BA 直接按原始动作 Plan
     assert.match(
         bootstrapper,
-        /form\.ShowProgress\(action\);[\s\S]*?if \(action == LaunchAction\.Install \|\| action == LaunchAction\.Repair\)\s*\{\s*CleanupStaleInstallations\(\);\s*\}[\s\S]*?if \(action == LaunchAction\.Uninstall && Command\.Relation == RelationType\.None\)\s*\{\s*IgnorePackageDependencies\(\);\s*\}[\s\S]*?Engine\.Plan\(planAction\);/
+        /form\.ShowProgress\(action\);[\s\S]*?if \(action == LaunchAction\.Install \|\| action == LaunchAction\.Repair\)\s*\{\s*CleanupStaleInstallations\(\);\s*\}[\s\S]*?if \(action == LaunchAction\.Uninstall && Command\.Relation == RelationType\.None\)\s*\{\s*IgnorePackageDependencies\(\);\s*\}[\s\S]*?Engine\.Plan\(action\);/
     );
     // 卸载时忽略 MSI 的 dependency provider：历史重复安装的 bundle 会在 provider 下残留
     // dependent，引擎因此跳过 MSI 卸载（日志 w327 found dependents + execute: None），
@@ -595,7 +595,7 @@ test('builds a custom bootstrapper that passes location and shortcut choices to 
     );
     assert.match(
         bootstrapper,
-        /StartAction\(LaunchAction action\)[\s\S]*?EnsureOpenDeskIsNotRunning\(\)[\s\S]*?Engine\.Plan\(planAction\)/
+        /StartAction\(LaunchAction action\)[\s\S]*?EnsureOpenDeskIsNotRunning\(\)[\s\S]*?Engine\.Plan\(action\)/
     );
     assert.doesNotMatch(bootstrapper, /UnsafeLegacy|GetSavedLayoutVersion|ShowLegacyInstallBlocked/);
     assert.match(
