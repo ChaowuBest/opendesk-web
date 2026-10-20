@@ -204,16 +204,19 @@ function platformSource({ launcherPath, servicePath }) {
 
 function versionSource(version) {
     const directoryId = `APP_${version.replaceAll('.', '_')}`;
-    const body = `    <!-- 同 ProductCode 重装（BA 把计划动作升级为 Repair）时 burn 会自动附加
-         REINSTALL=ALL REINSTALLMODE=cmuse：cmuse 不含 a/o，同版本不同构建的文件不会被
-         覆盖，且引擎附加的命令行属性会覆盖 Property 表默认值。这里用 Type 51 SetProperty
-         在 AppSearch 之后改写 REINSTALLMODE：v=重缓存新源包，a=覆盖全部文件（不依赖文件
-         版本号比较），ums=注册表与快捷方式一并重做。首次安装/卸载时 REINSTALL 未设置，
-         REINSTALLMODE 被 Windows Installer 忽略，CA 改写无副作用。 -->
-    <Property Id="REINSTALLMODE" Value="vamus" />
-    <CustomAction Id="SetOpenDeskReinstallMode" Property="REINSTALLMODE" Value="vamus" Execute="immediate" Return="check" />
+    const body = `    <!-- 同版本覆盖安装采用 major-upgrade 语义：版本 MSI 的 ProductId 每次构建随机
+         （Id="*"），同版本不同构建互为独立产品。UpgradeVersion 以 Include 双边界锁定当前
+         版本，REP（RemoveExistingProducts，InstallValidate 后执行）只移除同版本旧产品：
+         0.3.8 等更低版本的目录（多版本共存 + 健康上报后清理）不受影响。安装路径为全新
+         安装语义，不依赖 repair / re-cache / SecureRepair 等机制（同事实机 0x80070666=1638
+         即旧方案 repair 语义失效所致）。重跑同一个 exe 时 ProductId 未变，引擎按
+         maintenance no-op 处理，无副作用。UpgradeVersion 的 Property 仅作检测标记，
+         移除动作由 REP 依据 Upgrade 表执行。 -->
+    <Upgrade Id="{0E0C2E6A-34E1-4DA7-919D-A5BE5EF4C045}">
+      <UpgradeVersion Minimum="${version}" IncludeMinimum="yes" Maximum="${version}" IncludeMaximum="yes" Property="OPENDESK_SAMEVERSION_OLD" />
+    </Upgrade>
     <InstallExecuteSequence>
-      <Custom Action="SetOpenDeskReinstallMode" After="AppSearch" />
+      <RemoveExistingProducts After="InstallValidate" />
     </InstallExecuteSequence>
     <Directory Id="TARGETDIR" Name="SourceDir">
       <Directory Id="ProgramFiles64Folder"><Directory Id="APPLICATIONROOTDIRECTORY" Name="opendesk"><Directory Id="${directoryId}" Name="app-${version}" /></Directory></Directory>
@@ -229,7 +232,8 @@ function versionSource(version) {
     return {
         directoryId,
         source: wixProduct({
-            id: productCode(`version:3:${version}`),
+            // ProductId 每次构建随机（同版本不同构建互为独立产品，MajorUpgrade 负责移除旧的）
+            id: '*',
             name: `OpenDesk ${version} (silent-update prototype)`,
             version,
             body,

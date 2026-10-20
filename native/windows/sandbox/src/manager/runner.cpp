@@ -224,6 +224,7 @@ int runSandbox(const SandboxLaunchOptions& opts)
     // 注入流程需要 CREATE_SUSPENDED（等待注入完成再 resume）；cygwin 目标不注入
     // 时直接创建（不挂起），避免任何启动时序差异。
     const DWORD createFlags = (injectHook ? CREATE_SUSPENDED : 0) | CREATE_UNICODE_ENVIRONMENT;
+    const long long spawnStartTick = (long long)GetTickCount64();
     created = CreateProcessW(nullptr, cmdBuf.data(), nullptr, nullptr, FALSE,
                              createFlags,
                              envBuf.data(), nullptr, &si, &pi);
@@ -255,10 +256,19 @@ int runSandbox(const SandboxLaunchOptions& opts)
     }
 
     ResumeThread(pi.hThread);
+    // 子进程生命周期起点落日志：与 hook 侧 [HOOK] 已附加行、后代注入耗时行
+    // 互相印证，冻结事故可从日志还原"哪个 pid 何时被创建、注入花了多久"
+    Log::info(L"[RUN] 子进程已启动: pid=%lu（创建+注入耗时 %lldms, cmd=%ls）",
+              pi.dwProcessId, (long long)GetTickCount64() - spawnStartTick,
+              cmdLine.c_str());
 
     // 父进程监护：父进程（OpenDesk 主进程）先退出时终止子进程——Job 句柄随
     // 本进程退出关闭（KILL_ON_JOB_CLOSE）后整棵沙箱树被系统杀死。防止 OpenDesk
     // 退出/崩溃后留下继续运行的孤儿沙箱。父句柄拿不到时退化为"只等子进程"（旧行为）。
+    // 等待循环每 30s 醒来打一条心跳：心跳持续而 [POLICY]/派生日志停摆 => 子进程
+    // 侧被阻塞或挂起；心跳同样停摆 => 整棵树（含管理进程）被外部暂停。这是
+    // "无文件操作冻结"类事故唯一的带外观测点。
+    const long long runStartTick = (long long)GetTickCount64();
     HANDLE parent = nullptr;
     DWORD parentPid = getParentProcessId();
     if (parentPid != 0 && parentPid != GetCurrentProcessId()) {
@@ -266,22 +276,28 @@ int runSandbox(const SandboxLaunchOptions& opts)
     }
 
     DWORD exitCode = 0;
-    if (parent) {
+    {
         HANDLE waits[2] = { pi.hProcess, parent };
-        DWORD wait = WaitForMultipleObjects(2, waits, FALSE, INFINITE);
-        if (wait == WAIT_OBJECT_0 + 1) {
-            // 父先退出：终止子进程，Job 关闭后全树随之结束
-            Log::warn(L"[RUN] 父进程（pid=%lu）先退出，终止沙箱树避免孤儿进程", parentPid);
-            TerminateProcess(pi.hProcess, 1);
-            WaitForSingleObject(pi.hProcess, 5000);
+        const DWORD count = parent ? 2u : 1u;
+        while (true) {
+            DWORD wait = WaitForMultipleObjects(count, waits, FALSE, 30000);
+            if (wait == WAIT_TIMEOUT) {
+                Log::info(L"[RUN] 心跳: 已运行 %llds，子进程仍在运行",
+                          ((long long)GetTickCount64() - runStartTick) / 1000);
+                continue;
+            }
+            if (parent && wait == WAIT_OBJECT_0 + 1) {
+                // 父先退出：终止子进程，Job 关闭后全树随之结束
+                Log::warn(L"[RUN] 父进程（pid=%lu）先退出，终止沙箱树避免孤儿进程", parentPid);
+                TerminateProcess(pi.hProcess, 1);
+                WaitForSingleObject(pi.hProcess, 5000);
+                GetExitCodeProcess(pi.hProcess, &exitCode);
+                break;
+            }
             GetExitCodeProcess(pi.hProcess, &exitCode);
-        } else {
-            GetExitCodeProcess(pi.hProcess, &exitCode);
+            break;
         }
-        CloseHandle(parent);
-    } else {
-        WaitForSingleObject(pi.hProcess, INFINITE);
-        GetExitCodeProcess(pi.hProcess, &exitCode);
+        if (parent) CloseHandle(parent);
     }
 
     Log::info(L"[RUN] 子进程退出码: %lu", exitCode);

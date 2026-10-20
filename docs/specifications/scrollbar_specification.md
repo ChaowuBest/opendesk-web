@@ -160,6 +160,8 @@ html[data-theme='dark'] .compact-scroll::-webkit-scrollbar-thumb:hover {
 | `.subtask-group-scroll`              | 二级 | 3px  | `#e5e7eb`          | `rgba(255,255,255,0.18)` | 2px  |
 | `.sb-app-popover-visible`            | 二级 | 4px  | `#d1d5db`          | —                        | 2px  |
 | `.code-block-body`                   | 二级 | 4px  | `#d1d5db`          | `rgba(255,255,255,0.18)` | 2px  |
+| `.compact-scroll`（可复用工具类）    | 二级 | 4px  | `#d1d5db`          | `rgba(255,255,255,0.18)` | 2px  |
+| `.od-sp-scroll`（设置面板系列弹窗）  | 二级 | 4px  | `#d1d5db`          | `rgba(255,255,255,0.18)` | 2px  |
 | `.pt-content`（记忆面板-画像内容区） | 一级 | 8px  | `rgba(0,0,0,0.12)` | `rgba(255,255,255,0.18)` | 8px  |
 | `.facts-body`（记忆面板-事实时间线） | 一级 | 8px  | `rgba(0,0,0,0.12)` | `rgba(255,255,255,0.18)` | 8px  |
 | `.ed-area`（记忆面板-编辑框）        | 二级 | 8px  | `#d1d5db`          | `rgba(255,255,255,0.18)` | 4px  |

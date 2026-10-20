@@ -4,9 +4,17 @@ import type { ChildProcess } from 'child_process';
 import type { TaskState } from '../../../main/aikernel/states/tasks.js';
 import {
     BackgroundProcessManager,
-    type BackgroundProcessStatus
+    type BackgroundProcessStatus,
+    type StatusPollGate
 } from '../../../main/applications/terminal/background.js';
 import { CheckShellStatusTool, MAX_STATUS_WAIT_MS } from '../../../main/applications/terminal/shells/status.js';
+
+const allowedGate: StatusPollGate = {
+    allowed: true,
+    cooldownMs: 0,
+    blockedCount: 0,
+    sinceLastPollMs: 0
+};
 
 const runningStatus: BackgroundProcessStatus = {
     found: true,
@@ -35,10 +43,13 @@ function mockManager(statuses: BackgroundProcessStatus[]) {
     const manager = {
         getStatus,
         waitForFinish: jest.fn<(pid: number, waitMs: number, signal?: AbortSignal) => Promise<boolean>>(),
-        killProcess: jest.fn<(pid: number) => boolean>()
+        killProcess: jest.fn<(pid: number) => boolean>(),
+        beginStatusPoll: jest.fn<(pid: number) => StatusPollGate>(),
+        completeStatusPoll: jest.fn<(pid: number) => void>()
     };
     manager.waitForFinish.mockResolvedValue(false);
     manager.killProcess.mockReturnValue(true);
+    manager.beginStatusPoll.mockReturnValue(allowedGate);
     jest.spyOn(BackgroundProcessManager, 'getInstance').mockReturnValue(manager as unknown as BackgroundProcessManager);
     return manager;
 }
@@ -157,5 +168,91 @@ describe('CheckShellStatusTool waitMs', () => {
 
         expect(stopped.status).toBe('error');
         expect(stopped.result).toContain('任务已停止');
+    });
+});
+
+describe('CheckShellStatusTool poll throttle', () => {
+    test('rejects a throttled poll before waiting and records nothing', async () => {
+        const tool = new CheckShellStatusTool('powershell', false);
+        const manager = mockManager([runningStatus]);
+        manager.beginStatusPoll.mockReturnValue({
+            allowed: false,
+            cooldownMs: 180_000,
+            blockedCount: 2,
+            sinceLastPollMs: 60_000
+        });
+
+        const throttled = await tool.execute({ pid: 42, kill: false, waitMs: MAX_STATUS_WAIT_MS });
+
+        expect(throttled.status).toBe('error');
+        expect(throttled.result).toContain('限流');
+        expect(throttled.result).toContain('kill=true');
+        expect(manager.waitForFinish).not.toHaveBeenCalled();
+        expect(manager.completeStatusPoll).not.toHaveBeenCalled();
+    });
+
+    test('kill bypasses the throttle entirely', async () => {
+        const tool = new CheckShellStatusTool('powershell', false);
+        const manager = mockManager([runningStatus]);
+        manager.beginStatusPoll.mockReturnValue({
+            allowed: false,
+            cooldownMs: 180_000,
+            blockedCount: 3,
+            sinceLastPollMs: 5_000
+        });
+
+        const killed = await tool.execute({ pid: 42, kill: true });
+
+        expect(killed.status).toBe('success');
+        expect(manager.beginStatusPoll).not.toHaveBeenCalled();
+        expect(manager.killProcess).toHaveBeenCalledWith(42);
+    });
+
+    test('records an allowed poll after the status refresh', async () => {
+        const tool = new CheckShellStatusTool('powershell', false);
+        const manager = mockManager([runningStatus]);
+
+        const result = await tool.execute({ pid: 42, kill: false, waitMs: 0 });
+
+        expect(result.status).toBe('success');
+        expect(manager.beginStatusPoll).toHaveBeenCalledWith(42);
+        expect(manager.completeStatusPoll).toHaveBeenCalledWith(42);
+    });
+
+    test('does not record a poll when the pid is unknown', async () => {
+        const tool = new CheckShellStatusTool('powershell', false);
+        const manager = mockManager([{ ...runningStatus, found: false }]);
+
+        const result = await tool.execute({ pid: 42, kill: false, waitMs: 0 });
+
+        expect(result.result).toContain('未找到');
+        expect(manager.completeStatusPoll).not.toHaveBeenCalled();
+    });
+
+    test('rejects the second unchanged poll of a silent process with a real manager', async () => {
+        jest.useFakeTimers();
+        jest.setSystemTime(0);
+        const manager = new BackgroundProcessManager();
+        jest.spyOn(BackgroundProcessManager, 'getInstance').mockReturnValue(manager);
+        const proc = new EventEmitter() as ChildProcess;
+        Object.defineProperty(proc, 'pid', { value: 72001 });
+        manager.register(proc, 'long-job', '', Date.now());
+
+        const tool = new CheckShellStatusTool('powershell', false);
+        const first = await tool.execute({ pid: 72001, kill: false, waitMs: 0 });
+        expect(first.status).toBe('success');
+        expect(first.result).toContain('进程状态: 仍在执行中');
+
+        jest.setSystemTime(30_000);
+        const second = await tool.execute({ pid: 72001, kill: false, waitMs: 0 });
+        expect(second.status).toBe('error');
+        expect(second.result).toContain('限流');
+
+        // 进程完成后查询放行
+        jest.setSystemTime(60_000);
+        proc.emit('close', 0);
+        const third = await tool.execute({ pid: 72001, kill: false, waitMs: 0 });
+        expect(third.status).toBe('success');
+        expect(third.result).toContain('进程状态: 已完成');
     });
 });

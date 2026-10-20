@@ -62,7 +62,7 @@ describe('CheckShellStatusTool silent output hints', () => {
         expect(message).toContain('仍在执行中');
         expect(message).toContain('(暂无输出)');
         expect(message).toContain('Select-Object');
-        expect(message).toContain('不代表卡死');
+        expect(message).toContain('结束前无法观察进度');
     });
 
     test('appends a generic silence hint after long silence on a non-buffering command', async () => {
@@ -71,7 +71,7 @@ describe('CheckShellStatusTool silent output hints', () => {
         const message = await runCheck(777002);
         expect(message).toContain('没有任何输出');
         expect(message).toContain('kill=true');
-        expect(message).not.toContain('不代表卡死');
+        expect(message).not.toContain('结束前无法观察进度');
     });
 
     test('no hint while the process is younger than the silence threshold', async () => {
@@ -80,7 +80,7 @@ describe('CheckShellStatusTool silent output hints', () => {
         const message = await runCheck(777003);
         expect(message).toContain('仍在执行中');
         expect(message).not.toContain('没有任何输出');
-        expect(message).not.toContain('不代表卡死');
+        expect(message).not.toContain('结束前无法观察进度');
     });
 
     test('no hint when the backgrounded process already produced output', async () => {
@@ -93,7 +93,7 @@ describe('CheckShellStatusTool silent output hints', () => {
 
         const message = await runCheck(777004);
         expect(message).toContain('built in 12s');
-        expect(message).not.toContain('不代表卡死');
+        expect(message).not.toContain('结束前无法观察进度');
         expect(message).not.toContain('没有任何输出');
     });
 });

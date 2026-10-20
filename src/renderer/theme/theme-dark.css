@@ -2375,6 +2375,16 @@ html[data-theme='dark'] #wizard-verify-result::-webkit-scrollbar-thumb:hover {
     background: rgba(255, 255, 255, 0.28) !important;
 }
 
+/* 二级 Compact 滚动条深色模式（可复用工具类 + 设置面板弹窗滚动容器） */
+html[data-theme='dark'] .compact-scroll::-webkit-scrollbar-thumb,
+html[data-theme='dark'] .od-sp-scroll::-webkit-scrollbar-thumb {
+    background: rgba(255, 255, 255, 0.18) !important;
+}
+html[data-theme='dark'] .compact-scroll::-webkit-scrollbar-thumb:hover,
+html[data-theme='dark'] .od-sp-scroll::-webkit-scrollbar-thumb:hover {
+    background: rgba(255, 255, 255, 0.28) !important;
+}
+
 /* 主内容区（设置面板等）滚动条 */
 html[data-theme='dark'] #rightPanel::-webkit-scrollbar-thumb {
     background: rgba(255, 255, 255, 0.18) !important;

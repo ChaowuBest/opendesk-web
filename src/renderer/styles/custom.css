@@ -1628,6 +1628,37 @@ mailbox-entry-widget #email-body-content {
     background: rgba(0, 0, 0, 0.22);
 }
 
+/* 二级 Compact 滚动条（规范见 docs/specifications/scrollbar_specification.md）：
+   面板/弹窗等紧凑滚动容器的可复用工具类 */
+.compact-scroll::-webkit-scrollbar {
+    width: 4px;
+}
+.compact-scroll::-webkit-scrollbar-track {
+    background: transparent;
+}
+.compact-scroll::-webkit-scrollbar-thumb {
+    background: #d1d5db;
+    border-radius: 2px;
+}
+.compact-scroll::-webkit-scrollbar-thumb:hover {
+    background: #9ca3af;
+}
+
+/* 设置面板系列弹窗滚动容器（od-confirm-modal-body.od-sp-scroll）纳入同一规格 */
+.od-sp-scroll::-webkit-scrollbar {
+    width: 4px;
+}
+.od-sp-scroll::-webkit-scrollbar-track {
+    background: transparent;
+}
+.od-sp-scroll::-webkit-scrollbar-thumb {
+    background: #d1d5db;
+    border-radius: 2px;
+}
+.od-sp-scroll::-webkit-scrollbar-thumb:hover {
+    background: #9ca3af;
+}
+
 /* =========================================
    Sidebar search bar
    ========================================= */

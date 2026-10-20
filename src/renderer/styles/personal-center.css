@@ -200,6 +200,8 @@ h1 {
     justify-content: space-between;
     gap: 12px;
     margin-bottom: 10px;
+    /* 固定内容块不参与 flex 收缩，避免空间不足时被压扁、内容溢出面板 */
+    flex-shrink: 0;
 }
 
 h2 {
@@ -364,6 +366,7 @@ h2 {
 .chart-divider {
     margin: 14px 0 10px;
     border-top: 1px solid var(--pc-border, rgba(231, 229, 226, 0.86));
+    flex-shrink: 0;
 }
 
 .legend {
@@ -372,6 +375,7 @@ h2 {
     margin-top: 10px;
     color: var(--pc-muted, #8a8580);
     font-size: var(--fs-md);
+    flex-shrink: 0;
 }
 
 .legend span {
@@ -408,6 +412,9 @@ h2 {
 .rank-row {
     min-width: 0;
     min-height: 52px;
+    /* 行高始终由内容撑开，超出部分交给 .rank-list 滚动；
+       否则 flex 收缩会把行压扁，背景色块与内容大小错位 */
+    flex-shrink: 0;
     display: grid;
     grid-template-columns: 28px minmax(0, 1fr) minmax(70px, auto);
     align-items: center;

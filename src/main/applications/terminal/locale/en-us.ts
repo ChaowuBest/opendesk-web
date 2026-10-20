@@ -16,16 +16,17 @@ export const enUs: Record<string, string> = {
     'pwsh.description':
         'Execute commands using the selected powershell. Commands that exceed the timeout continue in the background; use checkShellStatus to inspect them.',
     'pwsh.command.empty': 'Command cannot be empty',
-    'pwsh.command': 'The powershell command to execute',
+    'pwsh.command':
+        'The powershell command to execute. Do not truncate long output with buffering pipelines like Select-Object -Last: the output stays invisible until the command ends; the host truncates oversized output automatically, so just emit it directly',
     'pwsh.intent': 'A short description of the command intent for display, such as "Check powershell version"',
     'pwsh.cwd': 'Working directory; defaults to the task workspace',
     'pwsh.cwd.sandbox': 'Sandbox working directory as a host real path (C:...); defaults to the task workspace',
     'pwsh.timeout': 'Execution timeout in milliseconds; defaults to 30000 (30 seconds)',
     'checkShellStatus.name': 'Check Shell Status',
     'status.description':
-        'Check the current status, exit code and output of a background process started by executeBash, executePwsh or executeZsh. Use kill to terminate it. Omitting waitMs or setting it to 0 returns immediately; when the next step depends on the process finishing, pass a positive waitMs bounded to 0-${max} ms and it returns early once the process completes.',
+        'Check the current status, exit code and output of a background process started by executeBash, executePwsh or executeZsh. Use kill to terminate it. Omitting waitMs or setting it to 0 returns immediately; when the next step depends on the process finishing, pass a positive waitMs bounded to 0-${max} ms and it returns early once the process completes. Repeated checks of a running process whose output never changes are throttled with a cooldown.',
     'status.waitMs':
-        'Optional bounded wait in milliseconds, 0-${max}, default 0 (immediate). Use 0 only when you need the current status and have other independent work; use 1000-5000 to observe progress again soon; prefer 10000-30000 when the next step depends on completion. Returns early once the process completes, so it never has to consume the full waitMs. Avoid consecutive zero-wait checks of the same running PID.',
+        'Optional bounded wait in milliseconds, 0-${max}, default 0 (immediate). Use 0 only when you need the current status and have other independent work; use 1000-5000 to observe progress again soon; prefer 10000-30000 when the next step depends on completion. Returns early once the process completes, so it never has to consume the full waitMs. Avoid consecutive zero-wait checks of the same running PID; repeated checks with unchanged output are throttled with a cooldown.',
     'shell.sandboxTag': 'Sandbox',
     'prompt.title': '# Terminal execution environment',
     'prompt.active': '- Active terminal: ${shell} (`${path}`)',

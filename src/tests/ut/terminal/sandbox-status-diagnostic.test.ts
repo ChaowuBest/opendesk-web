@@ -5,7 +5,11 @@ const getStatus = jest.fn();
 jest.unstable_mockModule('../../../main/applications/terminal/background.js', () => ({
     BackgroundProcessManager: class {
         static getInstance() {
-            return { getStatus };
+            return {
+                getStatus,
+                beginStatusPoll: () => ({ allowed: true, cooldownMs: 0, blockedCount: 0, sinceLastPollMs: 0 }),
+                completeStatusPoll: () => undefined
+            };
         }
     },
     SILENT_OUTPUT_HINT_ELAPSED_MS: 5 * 60 * 1000,

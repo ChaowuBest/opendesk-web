@@ -417,9 +417,9 @@ describe('installTimeoutBackgrounding', () => {
             await expect(completion).resolves.toBe(true);
             const message = updateResult.mock.lastCall![0] as string;
             expect(message).toContain('(暂无输出)');
-            // 缓冲类管道让输出在命令结束前完全不可见，必须向模型说明"暂无输出"≠卡死
+            // 缓冲类管道让输出在命令结束前完全不可见，必须向模型说明并给出可见性替代方案
             expect(message).toContain('Select-Object');
-            expect(message).toContain('不代表卡死');
+            expect(message).toContain('结束前无法观察进度');
             expect(message).toContain('kill=true');
         });
 
@@ -468,5 +468,105 @@ describe('installTimeoutBackgrounding', () => {
             expect(message).not.toContain('不代表卡死');
             expect(message).not.toContain('没有任何输出');
         });
+    });
+});
+
+describe('BackgroundProcessManager status poll gate', () => {
+    afterEach(() => {
+        jest.useRealTimers();
+    });
+
+    function registerPollProc(manager: InstanceType<typeof BackgroundProcessManager>, pid: number): ChildProcess {
+        const proc = Object.assign(new EventEmitter(), {
+            pid,
+            stdout: new EventEmitter(),
+            stderr: new EventEmitter()
+        }) as unknown as ChildProcess;
+        manager.register(proc, 'long-job', '', Date.now());
+        return proc;
+    }
+
+    test('allows the first poll, blocks unchanged-output polls within the cooldown, and escalates on retries', () => {
+        jest.useFakeTimers();
+        jest.setSystemTime(0);
+        const manager = new BackgroundProcessManager();
+        registerPollProc(manager, 71001);
+
+        // 首次查询始终放行
+        expect(manager.beginStatusPoll(71001).allowed).toBe(true);
+        manager.completeStatusPoll(71001);
+
+        // 60s 后再次查询，输出仍无变化：落在 90s 冷却窗口内，拒绝
+        jest.setSystemTime(60_000);
+        const first = manager.beginStatusPoll(71001);
+        expect(first.allowed).toBe(false);
+        expect(first.blockedCount).toBe(1);
+
+        // 连续重试继续升级冷却；被拒绝的查询不移动冷却基准（以 0 时刻起算）
+        jest.setSystemTime(70_000);
+        const second = manager.beginStatusPoll(71001);
+        expect(second.allowed).toBe(false);
+        expect(second.blockedCount).toBe(2);
+        expect(second.sinceLastPollMs).toBe(70_000);
+
+        // 两次拒绝后冷却 360s，等过窗口后放行
+        jest.setSystemTime(70_000 + 360_000);
+        expect(manager.beginStatusPoll(71001).allowed).toBe(true);
+        manager.completeStatusPoll(71001);
+
+        // 放行的查询清零连续拒绝计数，冷却回到基准 90s
+        jest.setSystemTime(70_000 + 360_000 + 60_000);
+        const after = manager.beginStatusPoll(71001);
+        expect(after.allowed).toBe(false);
+        expect(after.blockedCount).toBe(1);
+    });
+
+    test('allows polling immediately when the output changed', () => {
+        jest.useFakeTimers();
+        jest.setSystemTime(0);
+        const manager = new BackgroundProcessManager();
+        const proc = registerPollProc(manager, 71002);
+
+        expect(manager.beginStatusPoll(71002).allowed).toBe(true);
+        manager.completeStatusPoll(71002);
+
+        // 输出有新增：不受冷却限制（健康构建的进度轮询永远放行）
+        jest.setSystemTime(10_000);
+        proc.stdout!.emit('data', Buffer.from('progress line\n'));
+        expect(manager.beginStatusPoll(71002).allowed).toBe(true);
+    });
+
+    test('bypasses the gate for finished processes and unknown pids', () => {
+        jest.useFakeTimers();
+        jest.setSystemTime(0);
+        const manager = new BackgroundProcessManager();
+        const proc = registerPollProc(manager, 71003);
+
+        expect(manager.beginStatusPoll(71003).allowed).toBe(true);
+        manager.completeStatusPoll(71003);
+
+        jest.setSystemTime(5_000);
+        proc.emit('close', 0);
+        expect(manager.beginStatusPoll(71003).allowed).toBe(true);
+        expect(manager.beginStatusPoll(999999).allowed).toBe(true);
+    });
+
+    test('completeStatusPoll is a safe no-op for unknown pids and finished entries', () => {
+        jest.useFakeTimers();
+        jest.setSystemTime(0);
+        const manager = new BackgroundProcessManager();
+        const proc = registerPollProc(manager, 71004);
+
+        // 未经 begin 的直接记录也要落快照，供下一次闸门比较
+        manager.completeStatusPoll(71004);
+        expect(() => manager.completeStatusPoll(719999)).not.toThrow();
+
+        jest.setSystemTime(200_000);
+        expect(manager.beginStatusPoll(71004).allowed).toBe(true);
+
+        jest.setSystemTime(201_000);
+        proc.emit('exit', 0);
+        manager.completeStatusPoll(71004);
+        expect(manager.beginStatusPoll(71004).allowed).toBe(true);
     });
 });

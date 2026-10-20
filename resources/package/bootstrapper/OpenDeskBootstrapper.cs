@@ -421,19 +421,10 @@ namespace OpenDesk.Installer
             {
                 IgnorePackageDependencies();
             }
-            // 同版本重装（例如开发构建覆盖同版本号的正式构建）：版本 MSI 的 ProductCode
-            // 按版本号派生，与已注册产品完全相同，Burn 的安装计划会把 Present 的版本 MSI
-            // 判为 no-op，新 payload 无法落盘、安装却报告成功。把计划动作升级为 Repair：
-            // 引擎对 Repair 动作自动附加 REINSTALL=ALL，配合版本 MSI Property 表默认的
-            // REINSTALLMODE=vamus 重新缓存新包并覆盖全部文件。跨版本升级与静默更新不受
-            // 影响（新版本 ProductCode 不同，检测为 Absent 走正常安装）；CleanupOldVersions
-            // 维护动作仍保持版本 MSI Present，不会重铺运行中的版本。
-            LaunchAction planAction = action;
-            if (action == LaunchAction.Install && !CleanupOldVersions() && IsSameVersionReinstall())
-            {
-                planAction = LaunchAction.Repair;
-            }
-            Engine.Plan(planAction);
+            // 同版本覆盖安装（开发构建覆盖同版本号的正式构建）由版本 MSI 内的
+            // MajorUpgrade(AllowSameVersionUpgrades) 处理：每次构建的 ProductId 随机，
+            // 引擎按全新安装执行并在 InstallValidate 后移除同版本旧产品，BA 无需干预。
+            Engine.Plan(action);
         }
 
         private bool IsManualInteractiveInstall(LaunchAction action)
@@ -603,16 +594,6 @@ namespace OpenDesk.Installer
                 }
             }
 #endif
-        }
-
-        /// <summary>
-        /// 本次安装是否为"同版本重装"：版本 MSI 的 ProductCode 按版本号派生，重新安装
-        /// 同一版本号（例如开发构建覆盖同版本号的正式构建）时它已注册为 Present。
-        /// </summary>
-        private bool IsSameVersionReinstall()
-        {
-            PackageState state;
-            return detectedPackageStates.TryGetValue(PackageId, out state) && state == PackageState.Present;
         }
 
         private bool CleanupOldVersions()
@@ -1906,7 +1887,7 @@ namespace OpenDesk.Installer
                 AddFooterButton("LanguageSwitchButton", GetLanguageSwitchText(), 326, delegate
                 {
                     application.SwitchLanguage();
-                    ApplyLanguage(application.CreateLocalizer());
+                    ApplyLanguage(application.CreateLocalizer(), delegate { ShowWelcome(true); });
                 });
                 AddFooterButton("ExitInstallerButton", T("InstallCloseButton"), 470, Close);
                 installOptionsButton.Enabled = enabled;
@@ -2000,9 +1981,15 @@ namespace OpenDesk.Installer
                 AddLabel(rightBody, "ModifyMessage", T("ModifyMessage"), 46, 150, 540, 48, BodyFont, MutedColor);
                 AddFeatureRow(236, "01", T("ModifyRepairButton"), T("ModifyRepairDescription"));
                 AddFeatureRow(324, "02", T("ModifyUninstallButton"), T("ModifyUninstallDescription"));
-                AddFooterButton("ModifyCloseButton", T("ModifyCloseButton"), 202, Close);
-                AddFooterButton("RepairButton", T("ModifyRepairButton"), 336, application.Repair);
-                AddFooterButton("UninstallButton", T("ModifyUninstallButton"), 470, application.Uninstall);
+                // footer 与欢迎页同一模式：主操作居左、切换语言倒数第二、关闭最右，等间距
+                AddFooterButton("RepairButton", T("ModifyRepairButton"), 38, application.Repair);
+                AddFooterButton("UninstallButton", T("ModifyUninstallButton"), 182, application.Uninstall);
+                AddFooterButton("LanguageSwitchButton", GetLanguageSwitchText(), 326, delegate
+                {
+                    application.SwitchLanguage();
+                    ApplyLanguage(application.CreateLocalizer(), ShowMaintenance);
+                });
+                AddFooterButton("ModifyCloseButton", T("ModifyCloseButton"), 470, Close);
             });
         }
 
@@ -2083,13 +2070,13 @@ namespace OpenDesk.Installer
 
         /// <summary>
         /// 语言切换后的应用入口：替换本地化表、刷新侧栏静态文案，并原子重绘当前页。
-        /// 仅欢迎页提供切换入口，此时页面空闲，无与进行中操作并发的问题。
+        /// 仅欢迎页与维护页提供切换入口，此时页面空闲，无与进行中操作并发的问题。
         /// </summary>
-        public void ApplyLanguage(Localizer newLocalizer)
+        public void ApplyLanguage(Localizer newLocalizer, MethodInvoker redrawPage)
         {
             localizer = newLocalizer;
             UpdateSidebarTexts();
-            ShowWelcome(true);
+            redrawPage();
         }
 
         /// <summary>刷新侧栏上跟随语言变化的文案（品牌标语与步骤标签）。</summary>

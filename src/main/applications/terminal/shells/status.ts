@@ -21,7 +21,8 @@ import {
     BackgroundProcessManager,
     SILENT_OUTPUT_HINT_ELAPSED_MS,
     silentBackgroundHint,
-    type BackgroundProcessStatus
+    type BackgroundProcessStatus,
+    type StatusPollGate
 } from '../background.js';
 import { t as terminalT } from '../locale/index.js';
 import type { TaskState } from '../../../aikernel/states/tasks.js';
@@ -30,6 +31,21 @@ import { appendSandboxPathDiagnostic } from '../sandboxes/path-diagnostic.js';
 
 /** checkShellStatus 允许请求的最大等待时间（毫秒）。参数 schema 与工具描述都引用此常量。 */
 export const MAX_STATUS_WAIT_MS = 30 * 1000;
+
+/**
+ * 限流拒绝时的错误文案：说明拒绝原因并给出两条明确出路（kill 重跑获得可见
+ * 输出 / 转做其他工作后再查），避免模型对同一 PID 陷入 30s 盲轮询循环。
+ */
+function formatThrottledPoll(pid: number, gate: StatusPollGate): string {
+    const sinceLastSec = Math.max(0, Math.round(gate.sinceLastPollMs / 1000));
+    const cooldownSec = Math.max(1, Math.round(gate.cooldownMs / 1000));
+    return [
+        `本次查询被限流: PID ${pid} 的进程自上次查询（${sinceLastSec}s 前）以来输出没有任何变化，距上次查询不足冷却期（${cooldownSec}s），已连续拒绝 ${gate.blockedCount} 次。`,
+        '不要立即重试本查询。请选择:',
+        '1. 需要实时进度或怀疑命令异常: 用 kill=true 终止后修改命令重跑——去掉 Select-Object -Last、tail 等缓冲管道直接输出（超长输出由宿主自动截断并保存完整日志）;',
+        `2. 命令确需长时间静默运行: 先执行其他独立工作，至少 ${cooldownSec}s 后再查询。`
+    ].join('\n');
+}
 
 const createCheckShellStatusArgsSchema = () =>
     z.object({
@@ -81,6 +97,12 @@ export class CheckShellStatusTool extends BaseTool<CheckShellStatusArgsSchema> {
             if (abortSignal?.aborted) throw new Error('任务已停止');
         }
 
+        // 零输出盲轮询限流：输出无变化的重复查询直接拒绝（进程已完成/kill 不受限）
+        if (!kill) {
+            const gate = mgr.beginStatusPoll(pid);
+            if (!gate.allowed) throw new Error(formatThrottledPoll(pid, gate));
+        }
+
         let status: BackgroundProcessStatus = mgr.getStatus(pid);
 
         if (!kill && status.found && !status.finished && waitMs > 0) {
@@ -88,6 +110,9 @@ export class CheckShellStatusTool extends BaseTool<CheckShellStatusArgsSchema> {
             if (abortSignal?.aborted) throw new Error('任务已停止');
             status = mgr.getStatus(pid);
         }
+
+        // 放行的查询在状态刷新后落快照（含等待期间的新增输出），未知/已完成 PID 为空操作
+        if (!kill && status.found) mgr.completeStatusPoll(pid);
 
         if (!status.found) {
             result.updateResult(
@@ -116,7 +141,7 @@ export class CheckShellStatusTool extends BaseTool<CheckShellStatusArgsSchema> {
                 `PID: ${pid}`,
                 `命令: ${status.command}`,
                 `已运行: ${elapsedSec}s`,
-                '提示: waitMs 的单位是毫秒。仅在确实需要即时状态、且查询后可继续其他独立工作时使用 waitMs=0；确实需要很快再次观察进度时可用 waitMs=1000-5000；若下一步依赖完成结果，优先使用 waitMs=10000-30000。进程完成时会提前返回，无需等满 waitMs。避免对同一运行中 PID 连续零等待查询；只有判断进程卡住时才使用 kill=true。',
+                '提示: waitMs 的单位是毫秒。仅在确实需要即时状态、且查询后可继续其他独立工作时使用 waitMs=0；确实需要很快再次观察进度时可用 waitMs=1000-5000；若下一步依赖完成结果，优先使用 waitMs=10000-30000。进程完成时会提前返回，无需等满 waitMs。避免对同一运行中 PID 连续零等待查询；只有判断进程卡住时才使用 kill=true。对输出无变化的运行中进程重复查询会被限流冷却。',
                 // 长时间运行且零输出：区分缓冲管道的正常静默与真实卡死，给出决策指引
                 ...(!output && status.elapsedMs >= SILENT_OUTPUT_HINT_ELAPSED_MS
                     ? [silentBackgroundHint(status.command)]
