@@ -241,6 +241,17 @@ export interface PluginAccountSession {
     user: PluginAccountUser;
 }
 
+/**
+ * 账号凭据快照：会话字段加上访问令牌。
+ *
+ * 仅供宿主主进程内需要服务端鉴权的能力（如设备登记、协调信令）使用，
+ * 不随 `getSession()` 返回、不经 IPC 下发 renderer。
+ */
+export interface PluginAccountCredential extends PluginAccountSession {
+    accessToken: string;
+    tokenType: string;
+}
+
 export interface PluginAccountLoginContext {
     kind: PluginAccountKind;
     baseUrl: string;
@@ -315,6 +326,11 @@ export interface PluginAccountBackend {
     updateDisplayName(displayName: string): Promise<PluginAccountUser>;
     refreshToken(): Promise<PluginAccountSession>;
     logout(): Promise<void>;
+    /**
+     * 可选：返回当前账号凭据，供宿主主进程内需要服务端鉴权的能力使用。
+     * 未实现该方法的后端不支持这类宿主能力，宿主按“无凭据”处理，不降级为匿名访问。
+     */
+    getCredential?(): PluginAccountCredential | null;
 }
 
 export interface PluginAccountSecretStore {

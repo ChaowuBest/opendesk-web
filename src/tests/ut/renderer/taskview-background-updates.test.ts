@@ -91,7 +91,8 @@ describe('task-view 窗口隐藏期间的任务更新处理', () => {
             class extends HTMLElement {
                 availableModels: unknown[] = [];
                 setDisabled() {}
-                setModel() {}
+                selectedModel = '';
+                setModel(alias: string) { this.selectedModel = alias; }
                 setReasoningEffort() {}
                 setStopMode() {}
                 setSlashCommandContext() {}
@@ -168,6 +169,97 @@ describe('task-view 窗口隐藏期间的任务更新处理', () => {
         Object.defineProperty(document, 'visibilityState', { value: 'visible', configurable: true });
         document.dispatchEvent(new window.Event('visibilitychange'));
     }
+
+    test('任务列表同步当前输入框的模型和推理强度，保留草稿并继续更新任务名称', async () => {
+        const { taskView } = await createConnectedTaskView();
+        const input = taskView.querySelector('agent-input');
+        const draft = document.createElement('textarea');
+        draft.value = '未发送的草稿';
+        input.appendChild(draft);
+        const onChange = jest.fn();
+        input.addEventListener('model-changed', onChange);
+        input.selectedModel = 'alpha';
+        input.availableModels = [{ alias: 'beta', reasoning_effort: 'low' }];
+        input.setModel = jest.fn((alias: string) => {
+            // 与 agent-input 一致，找不到别名时保留默认模型。
+            input.selectedModel = input.availableModels.some((model: { alias: string }) => model.alias === alias)
+                ? alias : 'beta';
+        });
+        input.setReasoningEffort = jest.fn();
+        taskView._refreshModelContextSize = jest.fn(async () => {});
+        taskView._updateLastUsageRatio = jest.fn();
+        const update = async (entry: object) => {
+            document.dispatchEvent(new CustomEvent('task-list-updated', {
+                detail: [{ task_id: taskView.task_id, ...entry }]
+            }));
+            await Promise.resolve();
+        };
+        try {
+            await update({ modelConfiguration: { model: 'beta', reasoningEffort: 'max' } });
+            expect(input.setModel).toHaveBeenLastCalledWith('beta');
+            expect(input.setReasoningEffort).toHaveBeenLastCalledWith('max');
+            expect(taskView._refreshModelContextSize).toHaveBeenCalledWith('beta');
+            await update({ modelConfiguration: { model: 'beta' } });
+            expect(input.setReasoningEffort).toHaveBeenLastCalledWith('low');
+            await update({ modelConfiguration: { model: 'beta', reasoningEffort: '' } });
+            expect(input.setReasoningEffort).toHaveBeenLastCalledWith('');
+            await update({ modelConfiguration: { model: 'unavailable' } });
+            expect(input.selectedModel).toBe('beta');
+            expect(input.setReasoningEffort).toHaveBeenLastCalledWith('low');
+            expect(taskView._refreshModelContextSize).toHaveBeenCalledTimes(1);
+            expect(taskView._updateLastUsageRatio).toHaveBeenCalledTimes(1);
+            expect(draft.value).toBe('未发送的草稿');
+            expect(onChange).not.toHaveBeenCalled();
+            input.setModel.mockClear();
+            await update({ task_name: '新标题' });
+            expect(taskView._taskName).toBe('新标题');
+            expect(input.setModel).not.toHaveBeenCalled();
+            input.remove();
+            await update({ task_name: '无输入框', modelConfiguration: { model: 'alpha' } });
+            expect(taskView._taskName).toBe('无输入框');
+        } finally {
+            taskView.disconnectedCallback();
+        }
+    });
+
+    test.each(['resolve', 'reject'])('切回已缓存的模型后忽略迟到的容量响应（%s）', async (outcome) => {
+        const { taskView } = await createConnectedTaskView();
+        try {
+            const input = taskView.querySelector('agent-input');
+            input.selectedModel = 'A';
+            taskView._contextSizeModel = 'A';
+            taskView._modelContextSize = 100_000;
+            const usage = document.createElement('div');
+            usage.className = 'message-usage';
+            usage.dataset.totalTokens = '10000';
+            usage.innerHTML = '<span class="usage-text"></span>';
+            taskView.getHistoryContainer().prepend(usage);
+            taskView._updateLastUsageRatio();
+            expect(usage.textContent).toContain('10.0%');
+
+            let finish!: () => void;
+            const query = jest.fn(() => new Promise<number>((resolve, reject) => {
+                finish = () => outcome === 'resolve' ? resolve(20_000) : reject(new Error('late failure'));
+            }));
+            window.taskManagerAPI.getModelContextSize = query;
+            const update = (model: string, reasoningEffort?: string) => document.dispatchEvent(
+                new CustomEvent('task-list-updated', {
+                    detail: [{ task_id: taskView.task_id, modelConfiguration: { model, reasoningEffort } }]
+                })
+            );
+            update('B');
+            update('A');
+            update('A', 'high');
+            finish();
+            await new Promise(resolve => setTimeout(resolve, 0));
+            expect(query.mock.calls).toEqual([['B']]);
+            expect(input.selectedModel).toBe('A');
+            expect(usage.textContent).toContain('10.0%');
+            expect([taskView._contextSizeModel, taskView._modelContextSize]).toEqual(['A', 100_000]);
+        } finally {
+            taskView.disconnectedCallback();
+        }
+    });
 
     test('复现：窗口最小化但视图活跃时，更新不再走渲染路径', async () => {
         const { taskView, handleTaskUpdate, renderAssistantProgress } = await createConnectedTaskView();

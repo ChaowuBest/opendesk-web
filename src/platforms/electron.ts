@@ -36,6 +36,7 @@ import type { InteractiveToolset } from '../main/aikernel/tool.js';
 import type { InteractionDeliveryChannel } from '../main/aikernel/interaction/delivery.js';
 import crypto from 'crypto';
 import path from 'path';
+import { MobileAccessApplication } from '../main/applications/mobileaccess/app.js';
 import { SlidesApplication } from '../main/applications/slides/app.js';
 import { configureSlidesCapabilityProvider } from '../main/applications/slides/provider.js';
 import {
@@ -215,7 +216,7 @@ export class ElectronPlatform extends WorkerPlatform {
     }
 
     getApplicationClasses() {
-        return [...getGuiApplicationClasses(), SlidesApplication];
+        return [...getGuiApplicationClasses(), SlidesApplication, MobileAccessApplication];
     }
 
     async fetch(input: string | URL, init?: RequestInit, options?: PlatformFetchOptions): Promise<Response> {

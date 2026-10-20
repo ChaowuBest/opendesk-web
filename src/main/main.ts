@@ -221,6 +221,8 @@ import {
     setMainWindowHidden,
     setMainWindowFocused
 } from './windows/task-status-widget-window.js';
+import { mobileInteractionRuntime, type MobileAccessApplication } from './applications/mobileaccess/app.js';
+import { createMobileQuitBarrier, startElectronMobileAccess } from './applications/mobileaccess/electron.js';
 import { registerElectronUpdateService } from './updater/electron-service.js';
 
 let telemetryModulePromise: Promise<typeof import('./telemetry/index.js')> | undefined;
@@ -3459,8 +3461,14 @@ async function startApplication(): Promise<void> {
     initializeRegistry();
     initializeRegistryProtocols();
 
+    const mobileAccess = ApplicationRegistry.getApplication('mobileaccess') as MobileAccessApplication;
+    const deferQuitForMobileAccess = createMobileQuitBarrier(() => mobileAccess.beforeExit(), () => app.quit());
     app.on('before-quit', (event) => {
         if (officeQuitApproved) {
+            if (deferQuitForMobileAccess()) {
+                event.preventDefault();
+                return;
+            }
             isAppQuitting = true;
             void disposePluginHost();
             return;
@@ -3592,6 +3600,8 @@ async function startApplication(): Promise<void> {
 
         // BrowserWindow 已开始加载；同步恢复任务状态时 renderer 进程可以并行解析页面。
         GlobalState.initialize();
+        const { deliveryChannel } = mobileAccess[mobileInteractionRuntime];
+        electronPlatform.setInteractionDeliveryChannel(deliveryChannel);
         registerTaskManagerAPIHandlers();
         registerElectronUpdateService({
             getMainWindow: () => globalMainWindow,
@@ -3738,6 +3748,7 @@ async function startApplication(): Promise<void> {
 
         // 鸿蒙平台：启动时校验华为账号登录，未登录则阻塞直到登录成功或退出
         await ensureHuaweiAuthOnStartup();
+        startElectronMobileAccess(mobileAccess, () => globalMainWindow, ensureElectronFullyLoaded);
 
         // 系统电源状态监听：休眠/锁屏时通知 renderer 暂停非必要渲染
         powerMonitor.on('suspend', () => {

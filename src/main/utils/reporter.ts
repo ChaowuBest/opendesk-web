@@ -50,21 +50,78 @@ export interface ReporterOptions {
 }
 
 /**
- * 读取设备标识 identity/deviceid.txt；不存在或为空时写入一个新的 random uuid。
+ * 读取既有身份，首次创建通过完整临时文件的不覆盖原子发布收敛并发调用。
  */
 export function getOrCreateDeviceId(baseDir: string = getOpendeskDirectory()): string {
     const identityDir = path.join(baseDir, 'identity');
     const deviceIdFile = path.join(identityDir, 'deviceid.txt');
-    if (fs.existsSync(deviceIdFile)) {
-        const existing = fs.readFileSync(deviceIdFile, 'utf8').trim();
-        if (existing) {
-            return existing;
-        }
+    const readIdentity = () => fs.readFileSync(deviceIdFile, 'utf8').trim();
+    let missing = false;
+    try {
+        const existing = readIdentity();
+        if (existing) return existing;
+    } catch (error) {
+        if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
+        missing = true;
     }
     const deviceId = randomUUID();
     fs.mkdirSync(identityDir, { recursive: true });
-    fs.writeFileSync(deviceIdFile, deviceId, { encoding: 'utf8' });
-    return deviceId;
+    const temporary = path.join(identityDir, `.deviceid-${randomUUID()}.data`);
+    let retainedPayload = false;
+    try {
+        fs.writeFileSync(temporary, deviceId, { encoding: 'utf8', flag: 'wx', mode: 0o600 });
+        try {
+            // hard link publishes a fully closed file without replacing another winner.
+            try {
+                if (missing) fs.linkSync(temporary, deviceIdFile);
+            } catch (error) {
+                const code = (error as NodeJS.ErrnoException).code;
+                if (!['EPERM', 'ENOTSUP', 'EOPNOTSUPP', 'ENOSYS'].includes(code ?? '')) throw error;
+                // HiShell's document mount rejects hard links. A relative symbolic link
+                // also publishes without replacing a winner; its complete payload must stay.
+                try {
+                    fs.symlinkSync(path.basename(temporary), deviceIdFile, 'file');
+                    retainedPayload = true;
+                } catch (publicationError) {
+                    try {
+                        retainedPayload = fs.readlinkSync(deviceIdFile) === path.basename(temporary);
+                    } catch (readlinkError) {
+                        // An uncertain readback must not remove a potentially published payload.
+                        const readlinkCode = (readlinkError as NodeJS.ErrnoException).code;
+                        retainedPayload = !['ENOENT', 'EINVAL'].includes(readlinkCode ?? '');
+                    }
+                    throw publicationError;
+                }
+            }
+        } catch (error) {
+            if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error;
+        }
+        const published = readIdentity();
+        if (published) return published;
+        // 以 O_APPEND 记录候选值。所有修复者都使用第一条完整记录，即使写回前被暂停也相同。
+        const proposals = deviceIdFile + '.repair';
+        fs.appendFileSync(proposals, `\n${deviceId}\n`, { mode: 0o600 });
+        let records = '';
+        try {
+            records = fs.readFileSync(proposals, 'utf8');
+        } catch (error) {
+            // 其他进程只会在有效 ID 已经落盘后清除记录。
+            if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
+        }
+        // 必须先读候选记录，再检查正式文件：晚到进程可能是在上一轮记录清除后才追加的。
+        let restored = readIdentity();
+        if (!restored) {
+            const winner = records.match(/^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/m)?.[0];
+            if (!winner) throw new Error('device_identity_invalid');
+            fs.writeFileSync(temporary, winner);
+            fs.renameSync(temporary, fs.realpathSync(deviceIdFile));
+            restored = winner;
+        }
+        fs.rmSync(proposals, { force: true });
+        return restored;
+    } finally {
+        if (!retainedPayload) fs.rmSync(temporary, { force: true });
+    }
 }
 
 /**

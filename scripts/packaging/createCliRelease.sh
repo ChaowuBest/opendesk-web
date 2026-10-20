@@ -223,6 +223,8 @@ else
 fi
 VERSION=$(grep '"version"' package.json | head -1 | sed 's/.*"version": *"\([^"]*\)".*/\1/')
 PI_TUI_VERSION=$(node -p "require('./package.json').dependencies['@earendil-works/pi-tui']")
+# The copied account plugin loads this package at runtime outside the CLI bundle.
+SERVER_SDK_VERSION=$(node -e "process.stdout.write(require('./package.json').dependencies['@bitclub.ai/opendesk-server-sdk'])")
 
 cat > "$RELEASE_DIR/package.json" << EOF
 {
@@ -244,6 +246,7 @@ cat > "$RELEASE_DIR/package.json" << EOF
   },
   "dependencies": {
     "@earendil-works/pi-tui": "${PI_TUI_VERSION}",
+    "@bitclub.ai/opendesk-server-sdk": "$SERVER_SDK_VERSION",
     "hnsw": "^1.1.1",
     "node-sqlite3-wasm": "^0.8.55",
     "number-to-alphabet": "^1.0.0",

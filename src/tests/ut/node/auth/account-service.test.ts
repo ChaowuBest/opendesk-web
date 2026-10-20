@@ -215,3 +215,214 @@ test('a disposed backend stops answering and a replacement backend takes over', 
     assert.equal(first.initializeCalls, 1);
     assert.equal(second.initializeCalls, 1);
 });
+
+function createCredentialBackend(overrides: { id?: string; kinds?: readonly ('personal' | 'enterprise')[] } = {}) {
+    const id = overrides.id ?? 'test-backend';
+    const state = {
+        session: {
+            backendId: id,
+            kind: 'personal' as const,
+            baseUrl: 'https://personal.example.com/api/v1',
+            user: { id: 'u-1', username: 'alice' }
+        },
+        accessToken: 'token-1',
+        tokenType: 'bearer',
+        loggedIn: true
+    };
+    const backend: PluginAccountBackend & { state: typeof state } = {
+        id,
+        kinds: overrides.kinds ?? ['personal', 'enterprise'],
+        state,
+        initialize: () => undefined,
+        getSession: () => (state.loggedIn ? state.session : null),
+        getCredential: () =>
+            state.loggedIn
+                ? { ...state.session, accessToken: state.accessToken, tokenType: state.tokenType }
+                : null,
+        getUserInfo: async () => state.session.user,
+        getLoginMethods: async () => [],
+        createLoginFlow: async () => ({
+            getState: () => ({ status: 'ready' }) as const,
+            submit: async () => {
+                state.loggedIn = true;
+                return { status: 'completed' as const, session: state.session };
+            },
+            cancel: async () => undefined
+        }),
+        updateDisplayName: async (displayName) => ({ ...state.session.user, display_name: displayName }),
+        refreshToken: async () => {
+            state.accessToken = 'token-2';
+            return state.session;
+        },
+        logout: async () => {
+            state.loggedIn = false;
+        }
+    };
+    return backend;
+}
+
+function createService(backend: PluginAccountBackend | undefined | (() => PluginAccountBackend | undefined)) {
+    const resolve = typeof backend === 'function' ? backend : () => backend;
+    const changes: import('../../../../main/applications/account/types.js').AccountChange[] = [];
+    const service = new AccountService({
+        getBaseUrl: () => 'https://personal.example.com/api/v1',
+        getBackend: () => resolve()
+    });
+    const unsubscribe = service.subscribe((change) => changes.push(change));
+    return { service, changes, unsubscribe };
+}
+
+test('the credential carries the access token that the public session withholds', () => {
+    const backend = createCredentialBackend();
+    const { service } = createService(backend);
+
+    const credential = service.getCredential();
+    const session = service.getSession();
+
+    assert.equal(credential?.accessToken, 'token-1');
+    assert.equal(credential?.tokenType, 'bearer');
+    assert.equal(credential?.baseUrl, 'https://personal.example.com/api/v1');
+    assert.equal((session as Record<string, unknown> | null)?.accessToken, undefined);
+    assert.equal((session as Record<string, unknown> | null)?.tokenType, undefined);
+});
+
+test('no registered backend and an unsupported backend both read as no credential', () => {
+    const { service: withoutBackend } = createService(undefined);
+    assert.equal(withoutBackend.getCredential(), null);
+
+    const legacy = createCredentialBackend();
+    delete (legacy as { getCredential?: unknown }).getCredential;
+    const { service: unsupported } = createService(legacy);
+    assert.equal(unsupported.getCredential(), null);
+});
+
+test('a completed login publishes exactly one committed change', async () => {
+    const backend = createCredentialBackend();
+    backend.state.loggedIn = false;
+    const { service, changes } = createService(backend);
+
+    assert.equal(service.getCredential(), null);
+    const started = await service.startLogin('personal', 'password');
+    await service.submitLogin(started.flowId, { username: 'alice', password: 'secret' });
+
+    assert.deepEqual(
+        changes.map((change) => change.kind),
+        ['committed']
+    );
+    assert.equal(changes[0].credential.accessToken, 'token-1');
+});
+
+test('a same-account refresh publishes token-updated without stopping or recommitting', async () => {
+    const backend = createCredentialBackend();
+    const { service, changes } = createService(backend);
+
+    service.getCredential();
+    await service.refreshToken();
+
+    assert.deepEqual(
+        changes.map((change) => change.kind),
+        ['committed', 'token-updated']
+    );
+    assert.equal(changes[1].credential.accessToken, 'token-2');
+});
+
+test('logout publishes stopped carrying the credential that was still valid', async () => {
+    const backend = createCredentialBackend();
+    const { service, changes } = createService(backend);
+
+    service.getCredential();
+    await service.logout();
+
+    assert.deepEqual(
+        changes.map((change) => change.kind),
+        ['committed', 'stopped']
+    );
+    assert.equal(changes[1].credential.accessToken, 'token-1');
+    assert.equal(service.getCredential(), null);
+});
+
+test('switching to another account stops the old credential before committing the new one', () => {
+    const backend = createCredentialBackend();
+    const { service, changes } = createService(backend);
+
+    service.getCredential();
+    backend.state.session = { ...backend.state.session, user: { id: 'u-2', username: 'bob' } };
+    backend.state.accessToken = 'token-b';
+    service.getCredential();
+
+    assert.deepEqual(
+        changes.map((change) => change.kind),
+        ['committed', 'stopped', 'committed']
+    );
+    assert.equal(changes[1].credential.user.id, 'u-1');
+    assert.equal(changes[1].credential.accessToken, 'token-1');
+    assert.equal(changes[2].credential.user.id, 'u-2');
+});
+
+test('a reloaded backend recommits and an unregistered backend stops the credential', () => {
+    const first = createCredentialBackend();
+    const second = createCredentialBackend();
+    second.state.accessToken = 'token-reloaded';
+    let current: PluginAccountBackend | undefined = first;
+    const { service, changes } = createService(() => current);
+
+    service.init();
+    current = second;
+    service.init();
+    current = undefined;
+    service.init();
+
+    assert.deepEqual(
+        changes.map((change) => change.kind),
+        ['committed', 'token-updated', 'stopped']
+    );
+    assert.equal(changes[1].credential.accessToken, 'token-reloaded');
+    assert.equal(changes[2].credential.accessToken, 'token-reloaded');
+});
+
+test('a throwing subscriber cannot break account state or later subscribers', async () => {
+    const backend = createCredentialBackend();
+    const service = new AccountService({
+        getBaseUrl: () => 'https://personal.example.com/api/v1',
+        getBackend: () => backend
+    });
+    const seen: string[] = [];
+    service.subscribe(() => {
+        throw new Error('observer failure');
+    });
+    service.subscribe((change) => seen.push(change.kind));
+
+    service.getCredential();
+    await service.refreshToken();
+
+    assert.deepEqual(seen, ['committed', 'token-updated']);
+    assert.equal(service.getCredential()?.accessToken, 'token-2');
+});
+
+test('an unsubscribed listener stops receiving credential changes', async () => {
+    const backend = createCredentialBackend();
+    const { service, changes, unsubscribe } = createService(backend);
+
+    service.getCredential();
+    unsubscribe();
+    await service.refreshToken();
+
+    assert.deepEqual(
+        changes.map((change) => change.kind),
+        ['committed']
+    );
+});
+
+test('a malformed backend credential is reported as no credential rather than propagated', async () => {
+    const backend = createCredentialBackend();
+    const { service, changes } = createService(backend);
+
+    service.getCredential();
+    backend.getCredential = () => ({ ...backend.state.session, accessToken: '', tokenType: 'bearer' });
+    await service.refreshToken();
+
+    assert.deepEqual(
+        changes.map((change) => change.kind),
+        ['committed', 'stopped']
+    );
+});

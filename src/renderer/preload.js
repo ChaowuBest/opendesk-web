@@ -16,6 +16,7 @@ import { createTaskListUpdateSubscription } from './taskListSubscription.js';
 import { createSettingChangedDispatcher } from './settingChangedSubscription.js';
 import { createIpcChannelDispatcher } from './ipcChannelDispatcher.js';
 import { createAgentGateFloatingApi } from './agentGateFloatingApi.js';
+import { installMobileAccessPreload } from '../main/applications/mobileaccess/preload.js';
 import {
     createHarmonyRuntimeEnvironment,
     getHarmonyBrowseRoots,
@@ -2385,3 +2386,5 @@ if (shouldExposeMainWindowAPIs()) {
         window.dispatchEvent(new CustomEvent('openDesk:visibilityChanged', { detail: visible }));
     });
 }
+
+installMobileAccessPreload(ipcRenderer, process.isMainFrame ?? isMainFramePreload(), isApplicationFrameDocument());

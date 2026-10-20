@@ -10,6 +10,7 @@
  */
 
 import type {
+    PluginAccountCredential,
     PluginAccountKind,
     PluginAccountSession,
     PluginAccountUser
@@ -34,6 +35,21 @@ export type AccountUser = PluginAccountUser;
 
 /** 当前账号会话。 */
 export type AccountSession = PluginAccountSession;
+
+/**
+ * 账号凭据快照：会话字段加上访问令牌，仅在主进程内流转。
+ * 由账号后端提供，不随 `getSession()` 返回，也不经 IPC 下发 renderer。
+ */
+export type AccountCredential = PluginAccountCredential;
+export type AccountCredentialSnapshot = Readonly<AccountCredential>;
+
+/**
+ * 账号凭据变化。stopped 携带失效前的旧凭据，便于消费方用它完成收尾请求。
+ */
+export type AccountChange =
+    | { kind: 'stopped'; credential: AccountCredentialSnapshot }
+    | { kind: 'committed'; credential: AccountCredentialSnapshot }
+    | { kind: 'token-updated'; credential: AccountCredentialSnapshot };
 
 export interface AccountConfig {
     mode: AccountMode;

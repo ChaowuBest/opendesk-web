@@ -70,6 +70,12 @@ export interface SubmitUserMessageOptions {
      * 内部/自动化流程（子任务、agentoffice、headless、channel 等）应保持默认 false。
      */
     interactive?: boolean;
+    /**
+     * 用户消息加入会话历史后，调用这个回调，把这条消息的 ID 告诉调用方。
+     * 此时任务还没向界面推送这条消息。如果消息没有加入历史，就不会调用。
+     * 即使回调抛错，任务也会继续处理这条消息。
+     */
+    onUserMessageCommitted?: (messageId: string) => void;
 }
 
 export interface ProcessTaskTurnOptions {

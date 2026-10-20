@@ -2227,6 +2227,11 @@ export class TaskState {
         }
 
         this.chat_context.appendMessage(user_message);
+        try {
+            options.onUserMessageCommitted?.(user_message.message_id);
+        } catch {
+            // A delivery observer cannot interrupt a committed user turn.
+        }
         for (let i = 0; i < user_message.content.length; i++) {
             if (!isCurrent()) return { status: 'ok' };
             await this.sendSubscriptionFeedback(i);
@@ -2657,9 +2662,12 @@ export class TaskState {
                     return callback?.(chunkUpdate);
                 } finally {
                     // 携带 finalized 标记的是消息级定型快照，不代表任务停止；
-                    // 此处只对真实的状态迁移（task_status=stopped 且非定型快照）唤醒等待者
+                    // 正常结束或失败的任务都需要唤醒等待者。
                     const isFinalizedSnapshot = 'finalized' in chunkUpdate && chunkUpdate.finalized === true;
-                    if (chunkUpdate.task_status === 'stopped' && !isFinalizedSnapshot) {
+                    if (
+                        !isFinalizedSnapshot &&
+                        (chunkUpdate.task_status === 'stopped' || chunkUpdate.task_status === 'failed')
+                    ) {
                         settle();
                     }
                 }

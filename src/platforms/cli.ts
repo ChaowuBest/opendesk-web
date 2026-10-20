@@ -25,6 +25,7 @@ import { promisify } from 'util';
 
 const execFileAsync = promisify(execFile);
 
+import { MobileAccessApplication } from '../main/applications/mobileaccess/app.js';
 import { MailboxApplication } from '../main/applications/mailbox/app.js';
 import { FileMgrApplication } from '../main/applications/filemgr/app.js';
 import { CalendarApplication } from '../main/applications/calendar/app.js';
@@ -172,6 +173,7 @@ export class CliPlatform extends AbstractPlatform {
     // 的完整构造签名过窄。
     getApplicationClasses(): ApplicationClass[] {
         return [
+            MobileAccessApplication,
             MailboxApplication,
             FileMgrApplication,
             CalendarApplication,

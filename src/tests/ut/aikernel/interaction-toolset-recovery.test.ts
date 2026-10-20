@@ -418,6 +418,9 @@ describe('Electron interaction delivery composition', () => {
 
         expect(mainSource.match(/new ElectronPermissionPromptProvider/g) ?? []).toHaveLength(0);
         expect(platformSource.match(/new ElectronPermissionPromptProvider/g) ?? []).toHaveLength(1);
+        expect(mainSource).toContain(
+            'electronPlatform.setInteractionDeliveryChannel(deliveryChannel)'
+        );
         expect(platformSource).toContain('new ElectronAskUserProvider(this.interactionDeliveryChannel)');
         expect(platformSource).toContain('new ElectronExitPlanModeProvider(this.interactionDeliveryChannel)');
         expect(platformSource).toContain('new ElectronPermissionPromptProvider(this.interactionDeliveryChannel)');

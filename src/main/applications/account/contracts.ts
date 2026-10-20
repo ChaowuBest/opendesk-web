@@ -11,6 +11,7 @@
 
 import type {
     PluginAccountBackend,
+    PluginAccountCredential,
     PluginAccountLoginFlowState,
     PluginAccountLoginMethod,
     PluginAccountSession,
@@ -79,6 +80,18 @@ export function normalizeAccountSession(value: unknown, backend: PluginAccountBa
         baseUrl,
         user: normalizeAccountUser(value.user)
     };
+}
+
+/**
+ * 归一化账号凭据：在会话字段基础上要求非空 accessToken/tokenType。
+ * 凭据只在主进程内流转，因此与会话共用同一套后端身份校验。
+ */
+export function normalizeAccountCredential(value: unknown, backend: PluginAccountBackend): PluginAccountCredential {
+    if (!isRecord(value)) throw new Error('account:credential_invalid');
+    const accessToken = requiredString(value.accessToken);
+    const tokenType = requiredString(value.tokenType);
+    if (!accessToken || !tokenType) throw new Error('account:credential_invalid');
+    return { ...normalizeAccountSession(value, backend), accessToken, tokenType };
 }
 
 export function normalizeAccountLoginMethods(value: unknown): readonly PluginAccountLoginMethod[] {

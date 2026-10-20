@@ -1,0 +1,876 @@
+{
+  "fixture_revision": 1,
+  "version": 1,
+  "synthetic": true,
+  "note": "维护源为 PC src/tests/ut/node/remote-access/fixtures/n3-channel-v1.json；Mobile 持相同副本。与 N2 remote-network-v1.json 分开，不改其 revision。",
+  "limits": {
+    "message_bytes": 67108864,
+    "frame_bytes": 262144,
+    "send_window_bytes": 4194304,
+    "peer_data_bytes": 4194304,
+    "peer_data_frames": 64,
+    "control_bytes": 131072,
+    "control_frames": 128,
+    "control_frame_bytes": 1024,
+    "raw_bridge_bytes": 4325376,
+    "raw_bridge_frames": 192,
+    "max_safe_integer": 9007199254740991
+  },
+  "data_header_bytes": {
+    "min": {
+      "id": 1,
+      "total": 1,
+      "offset": 0,
+      "bytes": 60
+    },
+    "max": {
+      "id": 9007199254740991,
+      "total": 67108864,
+      "offset": 67108863,
+      "bytes": 89
+    },
+    "max_total_first_block": {
+      "id": 1,
+      "total": 67108864,
+      "offset": 0,
+      "bytes": 67
+    }
+  },
+  "control_frames": [
+    {
+      "name": "probe_min",
+      "frame": {
+        "n3": 1,
+        "type": "probe",
+        "id": 1
+      },
+      "serialized": "{\"n3\":1,\"type\":\"probe\",\"id\":1}",
+      "bytes": 30
+    },
+    {
+      "name": "probe_max",
+      "frame": {
+        "n3": 1,
+        "type": "probe",
+        "id": 9007199254740991
+      },
+      "serialized": "{\"n3\":1,\"type\":\"probe\",\"id\":9007199254740991}",
+      "bytes": 45
+    },
+    {
+      "name": "reply_min",
+      "frame": {
+        "n3": 1,
+        "type": "reply",
+        "id": 1
+      },
+      "serialized": "{\"n3\":1,\"type\":\"reply\",\"id\":1}",
+      "bytes": 30
+    },
+    {
+      "name": "reply_max",
+      "frame": {
+        "n3": 1,
+        "type": "reply",
+        "id": 9007199254740991
+      },
+      "serialized": "{\"n3\":1,\"type\":\"reply\",\"id\":9007199254740991}",
+      "bytes": 45
+    },
+    {
+      "name": "consumed_min",
+      "frame": {
+        "n3": 1,
+        "type": "consumed",
+        "seq": 1
+      },
+      "serialized": "{\"n3\":1,\"type\":\"consumed\",\"seq\":1}",
+      "bytes": 34
+    },
+    {
+      "name": "consumed_max",
+      "frame": {
+        "n3": 1,
+        "type": "consumed",
+        "seq": 9007199254740991
+      },
+      "serialized": "{\"n3\":1,\"type\":\"consumed\",\"seq\":9007199254740991}",
+      "bytes": 49
+    }
+  ],
+  "chunking": [
+    {
+      "name": "single_block_ascii",
+      "note": "一条消息一块；最常见路径",
+      "message": "hello",
+      "message_bytes": 5,
+      "message_code_points": 5,
+      "frame_cap": 262144,
+      "id": 1,
+      "splits_code_point": false,
+      "blocks": [
+        {
+          "frame": {
+            "n3": 1,
+            "type": "data",
+            "id": 1,
+            "total": 5,
+            "offset": 0,
+            "data": "aGVsbG8="
+          },
+          "serialized": "{\"n3\":1,\"type\":\"data\",\"id\":1,\"total\":5,\"offset\":0,\"data\":\"aGVsbG8=\"}",
+          "bytes": 68,
+          "raw_bytes": 5,
+          "standalone_decodable": true
+        }
+      ]
+    },
+    {
+      "name": "empty_is_invalid_guard",
+      "note": "total 最小合法值 1",
+      "message": "x",
+      "message_bytes": 1,
+      "message_code_points": 1,
+      "frame_cap": 262144,
+      "id": 1,
+      "splits_code_point": false,
+      "blocks": [
+        {
+          "frame": {
+            "n3": 1,
+            "type": "data",
+            "id": 1,
+            "total": 1,
+            "offset": 0,
+            "data": "eA=="
+          },
+          "serialized": "{\"n3\":1,\"type\":\"data\",\"id\":1,\"total\":1,\"offset\":0,\"data\":\"eA==\"}",
+          "bytes": 64,
+          "raw_bytes": 1,
+          "standalone_decodable": true
+        }
+      ]
+    },
+    {
+      "name": "chinese_across_blocks",
+      "note": "前导 1 字节 ASCII 使 12 字节的满块与 3 字节汉字错位，汉字必然被切开",
+      "message": "a中文消息跨越多个分片边界的测试向量",
+      "message_bytes": 52,
+      "message_code_points": 18,
+      "frame_cap": 80,
+      "id": 1,
+      "splits_code_point": true,
+      "blocks": [
+        {
+          "frame": {
+            "n3": 1,
+            "type": "data",
+            "id": 1,
+            "total": 52,
+            "offset": 0,
+            "data": "YeS4reaWh+a2iOaB"
+          },
+          "serialized": "{\"n3\":1,\"type\":\"data\",\"id\":1,\"total\":52,\"offset\":0,\"data\":\"YeS4reaWh+a2iOaB\"}",
+          "bytes": 77,
+          "raw_bytes": 12,
+          "standalone_decodable": false
+        },
+        {
+          "frame": {
+            "n3": 1,
+            "type": "data",
+            "id": 1,
+            "total": 52,
+            "offset": 12,
+            "data": "r+i3qOi2iuWkmuS4"
+          },
+          "serialized": "{\"n3\":1,\"type\":\"data\",\"id\":1,\"total\":52,\"offset\":12,\"data\":\"r+i3qOi2iuWkmuS4\"}",
+          "bytes": 78,
+          "raw_bytes": 12,
+          "standalone_decodable": false
+        },
+        {
+          "frame": {
+            "n3": 1,
+            "type": "data",
+            "id": 1,
+            "total": 52,
+            "offset": 24,
+            "data": "quWIhueJh+i+ueeV"
+          },
+          "serialized": "{\"n3\":1,\"type\":\"data\",\"id\":1,\"total\":52,\"offset\":24,\"data\":\"quWIhueJh+i+ueeV\"}",
+          "bytes": 78,
+          "raw_bytes": 12,
+          "standalone_decodable": false
+        },
+        {
+          "frame": {
+            "n3": 1,
+            "type": "data",
+            "id": 1,
+            "total": 52,
+            "offset": 36,
+            "data": "jOeahOa1i+ivleWQ"
+          },
+          "serialized": "{\"n3\":1,\"type\":\"data\",\"id\":1,\"total\":52,\"offset\":36,\"data\":\"jOeahOa1i+ivleWQ\"}",
+          "bytes": 78,
+          "raw_bytes": 12,
+          "standalone_decodable": false
+        },
+        {
+          "frame": {
+            "n3": 1,
+            "type": "data",
+            "id": 1,
+            "total": 52,
+            "offset": 48,
+            "data": "kemHjw=="
+          },
+          "serialized": "{\"n3\":1,\"type\":\"data\",\"id\":1,\"total\":52,\"offset\":48,\"data\":\"kemHjw==\"}",
+          "bytes": 70,
+          "raw_bytes": 4,
+          "standalone_decodable": false
+        }
+      ]
+    },
+    {
+      "name": "emoji_across_blocks",
+      "note": "含 ZWJ 序列的 4 字节码点与组合字符跨块",
+      "message": "ab👩‍💻🚀✅ mixed 中文 and ASCII 👨‍👩‍👧‍👦",
+      "message_bytes": 69,
+      "message_code_points": 34,
+      "frame_cap": 80,
+      "id": 2,
+      "splits_code_point": true,
+      "blocks": [
+        {
+          "frame": {
+            "n3": 1,
+            "type": "data",
+            "id": 2,
+            "total": 69,
+            "offset": 0,
+            "data": "YWLwn5Gp4oCN8J+S"
+          },
+          "serialized": "{\"n3\":1,\"type\":\"data\",\"id\":2,\"total\":69,\"offset\":0,\"data\":\"YWLwn5Gp4oCN8J+S\"}",
+          "bytes": 77,
+          "raw_bytes": 12,
+          "standalone_decodable": false
+        },
+        {
+          "frame": {
+            "n3": 1,
+            "type": "data",
+            "id": 2,
+            "total": 69,
+            "offset": 12,
+            "data": "u/CfmoDinIUgbWl4"
+          },
+          "serialized": "{\"n3\":1,\"type\":\"data\",\"id\":2,\"total\":69,\"offset\":12,\"data\":\"u/CfmoDinIUgbWl4\"}",
+          "bytes": 78,
+          "raw_bytes": 12,
+          "standalone_decodable": false
+        },
+        {
+          "frame": {
+            "n3": 1,
+            "type": "data",
+            "id": 2,
+            "total": 69,
+            "offset": 24,
+            "data": "ZWQg5Lit5paHIGFu"
+          },
+          "serialized": "{\"n3\":1,\"type\":\"data\",\"id\":2,\"total\":69,\"offset\":24,\"data\":\"ZWQg5Lit5paHIGFu\"}",
+          "bytes": 78,
+          "raw_bytes": 12,
+          "standalone_decodable": true
+        },
+        {
+          "frame": {
+            "n3": 1,
+            "type": "data",
+            "id": 2,
+            "total": 69,
+            "offset": 36,
+            "data": "ZCBBU0NJSSDwn5Go"
+          },
+          "serialized": "{\"n3\":1,\"type\":\"data\",\"id\":2,\"total\":69,\"offset\":36,\"data\":\"ZCBBU0NJSSDwn5Go\"}",
+          "bytes": 78,
+          "raw_bytes": 12,
+          "standalone_decodable": true
+        },
+        {
+          "frame": {
+            "n3": 1,
+            "type": "data",
+            "id": 2,
+            "total": 69,
+            "offset": 48,
+            "data": "4oCN8J+RqeKAjfCf"
+          },
+          "serialized": "{\"n3\":1,\"type\":\"data\",\"id\":2,\"total\":69,\"offset\":48,\"data\":\"4oCN8J+RqeKAjfCf\"}",
+          "bytes": 78,
+          "raw_bytes": 12,
+          "standalone_decodable": false
+        },
+        {
+          "frame": {
+            "n3": 1,
+            "type": "data",
+            "id": 2,
+            "total": 69,
+            "offset": 60,
+            "data": "kafigI3wn5Gm"
+          },
+          "serialized": "{\"n3\":1,\"type\":\"data\",\"id\":2,\"total\":69,\"offset\":60,\"data\":\"kafigI3wn5Gm\"}",
+          "bytes": 74,
+          "raw_bytes": 9,
+          "standalone_decodable": false
+        }
+      ]
+    },
+    {
+      "name": "exact_multiple_of_three",
+      "note": "原始字节数为 3 的倍数，Base64 无填充",
+      "message": "abcdefghijklmnopqr",
+      "message_bytes": 18,
+      "message_code_points": 18,
+      "frame_cap": 80,
+      "id": 3,
+      "splits_code_point": false,
+      "blocks": [
+        {
+          "frame": {
+            "n3": 1,
+            "type": "data",
+            "id": 3,
+            "total": 18,
+            "offset": 0,
+            "data": "YWJjZGVmZ2hpamts"
+          },
+          "serialized": "{\"n3\":1,\"type\":\"data\",\"id\":3,\"total\":18,\"offset\":0,\"data\":\"YWJjZGVmZ2hpamts\"}",
+          "bytes": 77,
+          "raw_bytes": 12,
+          "standalone_decodable": true
+        },
+        {
+          "frame": {
+            "n3": 1,
+            "type": "data",
+            "id": 3,
+            "total": 18,
+            "offset": 12,
+            "data": "bW5vcHFy"
+          },
+          "serialized": "{\"n3\":1,\"type\":\"data\",\"id\":3,\"total\":18,\"offset\":12,\"data\":\"bW5vcHFy\"}",
+          "bytes": 70,
+          "raw_bytes": 6,
+          "standalone_decodable": true
+        }
+      ]
+    },
+    {
+      "name": "one_over_multiple",
+      "note": "余 1 字节，Base64 双 = 填充",
+      "message": "abcdefghijklmnopqrs",
+      "message_bytes": 19,
+      "message_code_points": 19,
+      "frame_cap": 80,
+      "id": 4,
+      "splits_code_point": false,
+      "blocks": [
+        {
+          "frame": {
+            "n3": 1,
+            "type": "data",
+            "id": 4,
+            "total": 19,
+            "offset": 0,
+            "data": "YWJjZGVmZ2hpamts"
+          },
+          "serialized": "{\"n3\":1,\"type\":\"data\",\"id\":4,\"total\":19,\"offset\":0,\"data\":\"YWJjZGVmZ2hpamts\"}",
+          "bytes": 77,
+          "raw_bytes": 12,
+          "standalone_decodable": true
+        },
+        {
+          "frame": {
+            "n3": 1,
+            "type": "data",
+            "id": 4,
+            "total": 19,
+            "offset": 12,
+            "data": "bW5vcHFycw=="
+          },
+          "serialized": "{\"n3\":1,\"type\":\"data\",\"id\":4,\"total\":19,\"offset\":12,\"data\":\"bW5vcHFycw==\"}",
+          "bytes": 74,
+          "raw_bytes": 7,
+          "standalone_decodable": true
+        }
+      ]
+    },
+    {
+      "name": "two_over_multiple",
+      "note": "余 2 字节，Base64 单 = 填充",
+      "message": "abcdefghijklmnopqrst",
+      "message_bytes": 20,
+      "message_code_points": 20,
+      "frame_cap": 80,
+      "id": 5,
+      "splits_code_point": false,
+      "blocks": [
+        {
+          "frame": {
+            "n3": 1,
+            "type": "data",
+            "id": 5,
+            "total": 20,
+            "offset": 0,
+            "data": "YWJjZGVmZ2hpamts"
+          },
+          "serialized": "{\"n3\":1,\"type\":\"data\",\"id\":5,\"total\":20,\"offset\":0,\"data\":\"YWJjZGVmZ2hpamts\"}",
+          "bytes": 77,
+          "raw_bytes": 12,
+          "standalone_decodable": true
+        },
+        {
+          "frame": {
+            "n3": 1,
+            "type": "data",
+            "id": 5,
+            "total": 20,
+            "offset": 12,
+            "data": "bW5vcHFyc3Q="
+          },
+          "serialized": "{\"n3\":1,\"type\":\"data\",\"id\":5,\"total\":20,\"offset\":12,\"data\":\"bW5vcHFyc3Q=\"}",
+          "bytes": 74,
+          "raw_bytes": 8,
+          "standalone_decodable": true
+        }
+      ]
+    },
+    {
+      "name": "tail_shorter_than_cap",
+      "note": "末块短于满块，b64Len = 4*ceil(raw/3)",
+      "message": "0123456789012345678901234567890123",
+      "message_bytes": 34,
+      "message_code_points": 34,
+      "frame_cap": 80,
+      "id": 6,
+      "splits_code_point": false,
+      "blocks": [
+        {
+          "frame": {
+            "n3": 1,
+            "type": "data",
+            "id": 6,
+            "total": 34,
+            "offset": 0,
+            "data": "MDEyMzQ1Njc4OTAx"
+          },
+          "serialized": "{\"n3\":1,\"type\":\"data\",\"id\":6,\"total\":34,\"offset\":0,\"data\":\"MDEyMzQ1Njc4OTAx\"}",
+          "bytes": 77,
+          "raw_bytes": 12,
+          "standalone_decodable": true
+        },
+        {
+          "frame": {
+            "n3": 1,
+            "type": "data",
+            "id": 6,
+            "total": 34,
+            "offset": 12,
+            "data": "MjM0NTY3ODkwMTIz"
+          },
+          "serialized": "{\"n3\":1,\"type\":\"data\",\"id\":6,\"total\":34,\"offset\":12,\"data\":\"MjM0NTY3ODkwMTIz\"}",
+          "bytes": 78,
+          "raw_bytes": 12,
+          "standalone_decodable": true
+        },
+        {
+          "frame": {
+            "n3": 1,
+            "type": "data",
+            "id": 6,
+            "total": 34,
+            "offset": 24,
+            "data": "NDU2Nzg5MDEyMw=="
+          },
+          "serialized": "{\"n3\":1,\"type\":\"data\",\"id\":6,\"total\":34,\"offset\":24,\"data\":\"NDU2Nzg5MDEyMw==\"}",
+          "bytes": 78,
+          "raw_bytes": 10,
+          "standalone_decodable": true
+        }
+      ]
+    }
+  ],
+  "sequencing": [
+    {
+      "name": "wrong_first_offset",
+      "note": "新消息的首块 offset 必须为 0",
+      "frames": [
+        {
+          "n3": 1,
+          "type": "data",
+          "id": 1,
+          "total": 10,
+          "offset": 3,
+          "data": "YWJj"
+        }
+      ],
+      "reject_at": 0,
+      "reason": "invalid_frame"
+    },
+    {
+      "name": "skipped_message_id",
+      "note": "id 必须是期望的下一序号",
+      "frames": [
+        {
+          "n3": 1,
+          "type": "data",
+          "id": 2,
+          "total": 5,
+          "offset": 0,
+          "data": "aGVsbG8="
+        }
+      ],
+      "reject_at": 0,
+      "reason": "invalid_frame"
+    },
+    {
+      "name": "offset_gap",
+      "note": "后续块 offset 必须精确等于已收字节数",
+      "frames": [
+        {
+          "n3": 1,
+          "type": "data",
+          "id": 1,
+          "total": 10,
+          "offset": 0,
+          "data": "YWJj"
+        },
+        {
+          "n3": 1,
+          "type": "data",
+          "id": 1,
+          "total": 10,
+          "offset": 4,
+          "data": "ZWZn"
+        }
+      ],
+      "reject_at": 1,
+      "reason": "invalid_frame"
+    },
+    {
+      "name": "duplicate_block",
+      "note": "重复数据片不接受",
+      "frames": [
+        {
+          "n3": 1,
+          "type": "data",
+          "id": 1,
+          "total": 10,
+          "offset": 0,
+          "data": "YWJj"
+        },
+        {
+          "n3": 1,
+          "type": "data",
+          "id": 1,
+          "total": 10,
+          "offset": 0,
+          "data": "YWJj"
+        }
+      ],
+      "reject_at": 1,
+      "reason": "invalid_frame"
+    },
+    {
+      "name": "total_changed_mid_message",
+      "note": "后续块 total 必须与当前重组一致",
+      "frames": [
+        {
+          "n3": 1,
+          "type": "data",
+          "id": 1,
+          "total": 10,
+          "offset": 0,
+          "data": "YWJj"
+        },
+        {
+          "n3": 1,
+          "type": "data",
+          "id": 1,
+          "total": 11,
+          "offset": 3,
+          "data": "ZGVm"
+        }
+      ],
+      "reject_at": 1,
+      "reason": "invalid_frame"
+    },
+    {
+      "name": "interleaved_other_message",
+      "note": "不接受混入另一条消息的分片",
+      "frames": [
+        {
+          "n3": 1,
+          "type": "data",
+          "id": 1,
+          "total": 10,
+          "offset": 0,
+          "data": "YWJj"
+        },
+        {
+          "n3": 1,
+          "type": "data",
+          "id": 2,
+          "total": 5,
+          "offset": 0,
+          "data": "aGVsbG8="
+        }
+      ],
+      "reject_at": 1,
+      "reason": "invalid_frame"
+    },
+    {
+      "name": "exceeds_declared_total",
+      "note": "解码后不得超过剩余总长",
+      "frames": [
+        {
+          "n3": 1,
+          "type": "data",
+          "id": 1,
+          "total": 4,
+          "offset": 0,
+          "data": "YWJjZGVm"
+        }
+      ],
+      "reject_at": 0,
+      "reason": "invalid_frame"
+    },
+    {
+      "name": "invalid_utf8_on_completion",
+      "note": "精确收齐但整体不是合法 UTF-8",
+      "frames": [
+        {
+          "n3": 1,
+          "type": "data",
+          "id": 1,
+          "total": 2,
+          "offset": 0,
+          "data": "wyg="
+        }
+      ],
+      "reject_at": 0,
+      "reason": "invalid_frame"
+    },
+    {
+      "name": "control_interleaved_with_data",
+      "note": "控制帧可穿插在尚未提交的块之间，不打断重组",
+      "frames": [
+        {
+          "n3": 1,
+          "type": "data",
+          "id": 1,
+          "total": 6,
+          "offset": 0,
+          "data": "YWJj"
+        },
+        {
+          "n3": 1,
+          "type": "probe",
+          "id": 1
+        },
+        {
+          "n3": 1,
+          "type": "consumed",
+          "seq": 1
+        },
+        {
+          "n3": 1,
+          "type": "data",
+          "id": 1,
+          "total": 6,
+          "offset": 3,
+          "data": "ZGVm"
+        }
+      ],
+      "reject_at": null,
+      "delivers": "abcdef"
+    },
+    {
+      "name": "two_messages_sequential",
+      "note": "期望接收序号只在完整消息交付后才递增",
+      "frames": [
+        {
+          "n3": 1,
+          "type": "data",
+          "id": 1,
+          "total": 3,
+          "offset": 0,
+          "data": "YWJj"
+        },
+        {
+          "n3": 1,
+          "type": "data",
+          "id": 2,
+          "total": 3,
+          "offset": 0,
+          "data": "ZGVm"
+        }
+      ],
+      "reject_at": null,
+      "delivers_all": [
+        "abc",
+        "def"
+      ]
+    }
+  ],
+  "invalid_frames": [
+    {
+      "name": "unknown_version",
+      "raw": "{\"n3\":2,\"type\":\"data\",\"id\":1,\"total\":5,\"offset\":0,\"data\":\"aGVsbG8=\"}",
+      "reason": "invalid_frame",
+      "stage": "decode"
+    },
+    {
+      "name": "missing_n3",
+      "raw": "{\"type\":\"data\",\"id\":1,\"total\":5,\"offset\":0,\"data\":\"aGVsbG8=\"}",
+      "reason": "invalid_frame",
+      "stage": "decode"
+    },
+    {
+      "name": "extra_field",
+      "raw": "{\"n3\":1,\"type\":\"data\",\"id\":1,\"total\":5,\"offset\":0,\"data\":\"aGVsbG8=\",\"x\":1}",
+      "reason": "invalid_frame",
+      "stage": "decode"
+    },
+    {
+      "name": "unknown_type",
+      "raw": "{\"n3\":1,\"type\":\"ping\",\"id\":1}",
+      "reason": "invalid_frame",
+      "stage": "decode"
+    },
+    {
+      "name": "data_missing_field",
+      "raw": "{\"n3\":1,\"type\":\"data\",\"id\":1,\"total\":5,\"offset\":0}",
+      "reason": "invalid_frame",
+      "stage": "decode"
+    },
+    {
+      "name": "id_zero",
+      "raw": "{\"n3\":1,\"type\":\"data\",\"id\":0,\"total\":5,\"offset\":0,\"data\":\"aGVsbG8=\"}",
+      "reason": "invalid_frame",
+      "stage": "decode"
+    },
+    {
+      "name": "id_negative",
+      "raw": "{\"n3\":1,\"type\":\"data\",\"id\":-1,\"total\":5,\"offset\":0,\"data\":\"aGVsbG8=\"}",
+      "reason": "invalid_frame",
+      "stage": "decode"
+    },
+    {
+      "name": "id_fractional",
+      "raw": "{\"n3\":1,\"type\":\"data\",\"id\":1.5,\"total\":5,\"offset\":0,\"data\":\"aGVsbG8=\"}",
+      "reason": "invalid_frame",
+      "stage": "decode"
+    },
+    {
+      "name": "id_unsafe",
+      "raw": "{\"n3\":1,\"type\":\"data\",\"id\":9007199254740992,\"total\":5,\"offset\":0,\"data\":\"aGVsbG8=\"}",
+      "reason": "invalid_frame",
+      "stage": "decode"
+    },
+    {
+      "name": "id_string",
+      "raw": "{\"n3\":1,\"type\":\"data\",\"id\":\"1\",\"total\":5,\"offset\":0,\"data\":\"aGVsbG8=\"}",
+      "reason": "invalid_frame",
+      "stage": "decode"
+    },
+    {
+      "name": "id_boolean",
+      "raw": "{\"n3\":1,\"type\":\"data\",\"id\":true,\"total\":5,\"offset\":0,\"data\":\"aGVsbG8=\"}",
+      "reason": "invalid_frame",
+      "stage": "decode"
+    },
+    {
+      "name": "offset_negative",
+      "raw": "{\"n3\":1,\"type\":\"data\",\"id\":1,\"total\":5,\"offset\":-1,\"data\":\"aGVsbG8=\"}",
+      "reason": "invalid_frame",
+      "stage": "decode"
+    },
+    {
+      "name": "total_zero",
+      "raw": "{\"n3\":1,\"type\":\"data\",\"id\":1,\"total\":0,\"offset\":0,\"data\":\"aGVsbG8=\"}",
+      "reason": "invalid_frame",
+      "stage": "decode"
+    },
+    {
+      "name": "total_over_limit",
+      "raw": "{\"n3\":1,\"type\":\"data\",\"id\":1,\"total\":67108865,\"offset\":0,\"data\":\"aGVsbG8=\"}",
+      "reason": "message_too_large",
+      "stage": "semantic"
+    },
+    {
+      "name": "data_empty",
+      "raw": "{\"n3\":1,\"type\":\"data\",\"id\":1,\"total\":5,\"offset\":0,\"data\":\"\"}",
+      "reason": "invalid_frame",
+      "stage": "decode"
+    },
+    {
+      "name": "data_not_multiple_of_four",
+      "raw": "{\"n3\":1,\"type\":\"data\",\"id\":1,\"total\":5,\"offset\":0,\"data\":\"aGVsbG8\"}",
+      "reason": "invalid_frame",
+      "stage": "decode"
+    },
+    {
+      "name": "data_url_safe_alphabet",
+      "raw": "{\"n3\":1,\"type\":\"data\",\"id\":1,\"total\":3,\"offset\":0,\"data\":\"-_8=\"}",
+      "reason": "invalid_frame",
+      "stage": "decode"
+    },
+    {
+      "name": "data_non_canonical_padding_bits",
+      "raw": "{\"n3\":1,\"type\":\"data\",\"id\":1,\"total\":1,\"offset\":0,\"data\":\"AB==\"}",
+      "reason": "invalid_frame",
+      "stage": "semantic"
+    },
+    {
+      "name": "data_whitespace",
+      "raw": "{\"n3\":1,\"type\":\"data\",\"id\":1,\"total\":5,\"offset\":0,\"data\":\"aGVs bG8=\"}",
+      "reason": "invalid_frame",
+      "stage": "decode"
+    },
+    {
+      "name": "probe_extra_field",
+      "raw": "{\"n3\":1,\"type\":\"probe\",\"id\":1,\"seq\":1}",
+      "reason": "invalid_frame",
+      "stage": "decode"
+    },
+    {
+      "name": "consumed_wrong_key",
+      "raw": "{\"n3\":1,\"type\":\"consumed\",\"id\":1}",
+      "reason": "invalid_frame",
+      "stage": "decode"
+    },
+    {
+      "name": "consumed_seq_zero",
+      "raw": "{\"n3\":1,\"type\":\"consumed\",\"seq\":0}",
+      "reason": "invalid_frame",
+      "stage": "decode"
+    },
+    {
+      "name": "not_an_object",
+      "raw": "[1,2,3]",
+      "reason": "invalid_frame",
+      "stage": "decode"
+    },
+    {
+      "name": "malformed_json",
+      "raw": "{\"n3\":1,",
+      "reason": "invalid_frame",
+      "stage": "decode"
+    }
+  ]
+}

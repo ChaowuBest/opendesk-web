@@ -54,6 +54,8 @@ import { registerQuickpassCommand } from './tui/subcommands/quickpass.js';
 import { registerServeCommand } from './tui/subcommands/serve.js';
 import { registerAccountCommand } from './tui/subcommands/account.js';
 import { setRuntimeLocale, t } from '../locale/index.js';
+import { mobileInteractionRuntime, type MobileAccessApplication } from './applications/mobileaccess/app.js';
+import { startTuiMobileAccess } from './applications/mobileaccess/tui.js';
 import type { BaseApplication } from './applications/base.js';
 
 import { registerGoalHooks } from './aikernel/goal/hooks.js';
@@ -66,6 +68,8 @@ import process from 'process';
 import path from 'path';
 import fs from 'fs';
 
+let mobileAccess: MobileAccessApplication | undefined;
+const closeApplications = async () => mobileAccess?.beforeExit();
 // 获取日志文件路径用于提示用户
 function getLogPathHint(): string {
     try {
@@ -536,7 +540,8 @@ async function main(args: CommandLineArgs) {
             new PluginToolsetProvider()
         );
 
-        const tui = new OpenDeskTUI(args);
+        mobileAccess = ApplicationRegistry.getApplication('mobileaccess') as MobileAccessApplication;
+        const tui = new OpenDeskTUI(args, mobileAccess[mobileInteractionRuntime].deliveryChannel, closeApplications);
         tui.start();
         await new Promise<void>((resolve) => setImmediate(resolve));
         await initTelemetry();
@@ -547,6 +552,8 @@ async function main(args: CommandLineArgs) {
             args.workspace,
             () => tui.permissionPromptProvider
         );
+
+        startTuiMobileAccess(mobileAccess, tui, args);
 
         // Initialize channelmgr after registry is ready
         ApplicationRegistry.onReady(async () => {
@@ -647,8 +654,13 @@ process.on('beforeExit', () => {
 
 // SIGTERM / SIGINT 下也需要刷新 span（beforeExit 不会在强制终止时触发）
 for (const signal of ['SIGTERM', 'SIGINT'] as const) {
-    process.on(signal, () => {
-        doGracefulTelemetryShutdown().then(() => process.exit(0));
+    process.on(signal, async () => {
+        try {
+            await closeApplications();
+        } finally {
+            await doGracefulTelemetryShutdown();
+        }
+        process.exit(0);
     });
 }
 
