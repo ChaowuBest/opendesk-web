@@ -9,7 +9,8 @@
  * - 条目: <button class="ctx-item">[<span class="ctx-icon-sm"><i class="fa-solid fa-xxx"></i></span>]<span class="ctx-label">..</span>[<span class="ctx-shortcut">..</span>]</button>
  * - 分隔: <div class="ctx-divider"></div>
  * - 危险: .ctx-item.danger / 禁用: .ctx-item.disabled / 强调: .ctx-item.favorite
- * - 子菜单: .ctx-submenu-wrap > .ctx-item + .ctx-submenu（hover 展开）
+ * - 子菜单: .ctx-submenu-wrap > .ctx-item + .ctx-submenu（hover 展开；触摸/点击
+ *   切换 .is-submenu-open 显式展开）
  * - 暗色: 跟随 html[data-theme='dark']；局部暗色场景给容器附加 .ctx-menu-dark
  */
 
@@ -233,7 +234,9 @@ html[data-theme='dark'],
     animation: ctx-fade-in 0.18s ease-out;
 }
 .ctx-submenu-wrap:hover > .ctx-submenu,
-.ctx-submenu-wrap:focus-within > .ctx-submenu {
+.ctx-submenu-wrap:focus-within > .ctx-submenu,
+/* 触摸/点击显式展开（触摸不产生 :hover，:focus-within 在触摸点击后也不可靠） */
+.ctx-submenu-wrap.is-submenu-open > .ctx-submenu {
     display: block;
 }
 /* 悬停桥：子菜单通过 left: calc(100% + 4px) 与父项之间留有 4px 视觉空隙，

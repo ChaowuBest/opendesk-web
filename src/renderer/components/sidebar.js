@@ -1939,6 +1939,15 @@ class SideBar extends HTMLElement {
             this._showTaskInfoModal(taskId);
         });
 
+        // 子菜单（如"开发者"）：触摸/点击显式展开——桌面 Chromium 触摸不产生
+        // :hover，:focus-within 也不可靠；click 冒泡还可能被上层关闭逻辑误吞。
+        // 用 class 切换 + 阻断冒泡，保证触摸与鼠标行为一致（再次点击收起）。
+        const submenuBtn = menu.querySelector('[data-submenu="1"]');
+        submenuBtn?.addEventListener('click', (event) => {
+            event.stopPropagation();
+            submenuBtn.parentElement?.classList.toggle('is-submenu-open');
+        });
+
         const dismissHandler = (e) => {
             if (!menu.contains(e.target)) {
                 this._dismissContextMenu();

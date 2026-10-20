@@ -27,7 +27,8 @@ import {
     screen,
     session,
     powerMonitor,
-    powerSaveBlocker
+    powerSaveBlocker,
+    clipboard
 } from 'electron';
 import type { WebContents } from 'electron';
 import { installBrowserCredentials } from './services/browser-credentials/manager.js';
@@ -189,6 +190,7 @@ import {
 } from './windows/window-drag.js';
 import { attachNormalBoundsTracker } from './utils/normal-bounds-tracker.js';
 import { suppressWmSystemMenuOnLinux } from './windows/linux-context-menu.js';
+import { installTouchLongPress } from './windows/touch-long-press.js';
 import {
     initTaskStatusWidget,
     installTransparentBackgroundReassert,
@@ -958,19 +960,11 @@ const createWindow = () => {
             });
     };
 
-    // 可编辑区域恢复 Electron 默认右键菜单（剪切/复制/粘贴/全选），非编辑区域由
-    // 全局 web-contents-created 钩子统一 preventDefault（Linux 下阻止 WM 系统菜单）。
-    // label 使用 t() 以跟随 OpenDesk 语言设置；role 保留以维持系统原生快捷键和启用/禁用逻辑。
-    mainWindow.webContents.on('context-menu', (_event, params) => {
-        if (!params.isEditable) return;
-        Menu.buildFromTemplate([
-            { role: 'cut', label: t('contextmenu.cut') },
-            { role: 'copy', label: t('contextmenu.copy') },
-            { role: 'paste', label: t('contextmenu.paste') },
-            { type: 'separator' },
-            { role: 'selectAll', label: t('contextmenu.selectAll') }
-        ]).popup();
-    });
+    // 可编辑区域的右键菜单（剪切/复制/粘贴/全选）由渲染层自绘菜单接管：
+    // 主世界注入脚本统一处理真实右键与触摸长按的合成事件，菜单位置、主题与
+    // 语言都可控（原生菜单只能弹在系统光标处，触摸长按时位置不可控）。
+    // 此处不再弹原生编辑菜单；非编辑区域仍由全局 web-contents-created 钩子
+    // 统一 preventDefault（Linux 下阻止 WM 系统菜单）。
 
     // 全屏状态下按 ESC 退出全屏（主窗口直接获焦时）
     mainWindow.webContents.on('before-input-event', (event, input) => {
@@ -3848,6 +3842,8 @@ async function startApplication(): Promise<void> {
     // 的剪切/复制/粘贴菜单由各级 handler 按需弹出，不受影响）。
     app.on('web-contents-created', (_event, contents) => {
         suppressWmSystemMenuOnLinux(contents);
+        // 触摸屏长按 → 右键：对所有窗口与 webview guest 注入长按检测脚本
+        installTouchLongPress(contents);
     });
 
     // GPU 进程负责所有窗口的合成输出，它退出后既有窗口的 surface 会与合成器失联，
@@ -4158,6 +4154,20 @@ async function startApplication(): Promise<void> {
         });
         ipcMain.handle('app:quit', async () => {
             app.quit();
+        });
+
+        // 剪贴板：渲染器默认沙箱化，preload 无法使用 electron clipboard 模块，
+        // 由主进程代执行（自绘编辑菜单的复制/粘贴、工作空间路径复制等）
+        ipcMain.handle('clipboard:writeText', (_event, text: unknown) => {
+            if (typeof text !== 'string') return;
+            clipboard.writeText(text);
+        });
+        ipcMain.handle('clipboard:readText', () => {
+            try {
+                return clipboard.readText();
+            } catch {
+                return '';
+            }
         });
 
         // 在新窗口中打开应用

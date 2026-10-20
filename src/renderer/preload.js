@@ -9,7 +9,7 @@
  * See the Mulan PSL v2 for more details.
  */
 
-import { contextBridge, ipcRenderer, webUtils, clipboard } from 'electron';
+import { contextBridge, ipcRenderer, webUtils } from 'electron';
 import { defineBrowserBridge } from '../common/embedBrowserUse/preload';
 import { PermissionPendingStore } from './permissionPendingStore';
 import { createTaskListUpdateSubscription } from './taskListSubscription.js';
@@ -1018,6 +1018,47 @@ exposeThemeAPI();
 exposeOpenDeskAppAPI();
 exposeNativeBridgeAPI();
 
+// 触摸长按编辑菜单：标记宿主支持自绘编辑菜单（脚本据此接管编辑区右键），
+// 并提供剪贴板桥。仅 OpenDesk 自家窗口安装；浏览器 webview（webviewPreload）
+// 不带这些能力，网页不得经伪造事件读剪贴板。
+// 剪贴板经主进程执行：渲染器默认沙箱化，preload 的 electron 模块不含 clipboard。
+// preload 在 document-start 运行，documentElement 可能尚未创建，需等文档就绪再标记。
+function markEditMenuHost() {
+    try {
+        if (document.documentElement) {
+            document.documentElement.setAttribute('data-od-lp-edit-menu', '1');
+            return true;
+        }
+    } catch {
+        /* 忽略 */
+    }
+    return false;
+}
+if (!markEditMenuHost()) {
+    document.addEventListener('DOMContentLoaded', markEditMenuHost, { once: true });
+    window.addEventListener('load', markEditMenuHost, { once: true });
+}
+window.addEventListener('od-clipboard-write', (event) => {
+    const text = event?.detail?.text;
+    if (typeof text !== 'string' || !text) return;
+    ipcRenderer.invoke('clipboard:writeText', text).catch(() => {
+        /* 剪贴板不可用时静默 */
+    });
+});
+window.addEventListener('od-clipboard-read', (event) => {
+    const requestId = event?.detail?.requestId;
+    if (typeof requestId !== 'number') return;
+    ipcRenderer
+        .invoke('clipboard:readText')
+        .then((text) => {
+            window.dispatchEvent(new CustomEvent('od-clipboard-read-result', { detail: { requestId, text } }));
+        })
+        .catch(() => {
+            // 剪贴板不可用时回填空文本，粘贴流程正常收尾
+            window.dispatchEvent(new CustomEvent('od-clipboard-read-result', { detail: { requestId, text: '' } }));
+        });
+});
+
 // 通用窗口控制 API（主窗口和应用窗口均可使用）
 safeExposeInMainWorld('windowControlAPI', {
     close: () => ipcRenderer.invoke('window:close'),
@@ -1543,7 +1584,7 @@ if (shouldExposeMainWindowAPIs()) {
             if (result.status !== 'ok') {
                 throw new Error(result.message);
             }
-            clipboard.writeText(result.data);
+            await ipcRenderer.invoke('clipboard:writeText', result.data);
         },
         setWorkspaceDirectory: async (dirPath) => {
             const result = await ipcRenderer.invoke('workspace:setWorkspaceDirectory', dirPath);
