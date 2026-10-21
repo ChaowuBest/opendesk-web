@@ -19,9 +19,11 @@ import { ToolResultReplacementStates, type ToolResultReplacementState } from '..
 import {
     resolveContextWindow,
     resolveMaxOutputTokens,
+    limitSummaryOutputToModel,
     AutoCompactStates,
     type AutoCompactState
 } from '../compaction/auto-compact.js';
+import { ModelContextBudgets } from '../compaction/model-context-budget.js';
 import { MicrocompactStates, type MicrocompactState } from '../compaction/microcompact-state.js';
 import {
     SessionMemoryStates,
@@ -1728,7 +1730,15 @@ export class TaskState {
             const generation = this.getTurnGeneration();
             const isCurrent = () =>
                 this.getTurnGeneration() === generation && !this._pluginAbortController.signal.aborted;
-            const budget = calculateCompactionBudget(await resolveContextWindow(model));
+            const instance = model
+                ? Setting.getInstance().getModelInstance(model, 'chat')
+                : Setting.getInstance().getDefaultModelInstance();
+            const contextWindow =
+                (await resolveContextWindow(model)) ||
+                (instance ? ModelContextBudgets.getLastSuccessfulTokens(instance) : undefined);
+            if (!contextWindow) throw new ContextPreparationBlockedError('unknown_context_window');
+            const budget = calculateCompactionBudget(contextWindow);
+            budget.summaryOutputTokens = limitSummaryOutputToModel(model, budget.summaryOutputTokens);
             const output = options.modelRequestOptions?.maxCompletionTokens ?? (await resolveMaxOutputTokens(model));
             this.setAutoCompactState(AutoCompactStates.recordAttempt(this.auto_compact_state));
             this.compactProgress = {

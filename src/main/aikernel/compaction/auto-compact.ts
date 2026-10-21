@@ -18,6 +18,7 @@ import {
     lookupKnownMaxOutputTokens
 } from '../../utils/model-context.js';
 import { buildActiveContextView } from './context-view.js';
+import { ModelContextBudgets } from './model-context-budget.js';
 import {
     estimateVisibleContextTokens,
     type TokenEstimateSource,
@@ -261,7 +262,7 @@ export async function resolveMaxOutputTokens(model?: string): Promise<number> {
 export function limitSummaryOutputToModel(model: string | undefined, requested: number): number {
     const settings = Setting.getInstance();
     const instance = model ? settings.getModelInstance(model, 'chat') : settings.getDefaultModelInstance();
-    const supported = lookupKnownMaxOutputTokens(instance?.model_name ?? model ?? '');
+    const supported = instance?.max_output_tokens ?? lookupKnownMaxOutputTokens(instance?.model_name ?? model ?? '');
     return supported > 0 ? Math.min(requested, supported) : requested;
 }
 
@@ -270,7 +271,13 @@ export async function resolveReservedSummaryOutput(model?: string, override?: nu
         return normalizeNonNegativeNumber(override, DEFAULT_AUTO_COMPACT_RESERVED_SUMMARY_OUTPUT);
     }
 
-    return calculateCompactionBudget(await resolveContextWindow(model)).summaryOutputTokens;
+    const window = await resolveContextWindow(model);
+    return limitSummaryOutputToModel(
+        model,
+        window > 0
+            ? calculateCompactionBudget(window).summaryOutputTokens
+            : DEFAULT_AUTO_COMPACT_RESERVED_SUMMARY_OUTPUT
+    );
 }
 
 export async function resolveContextWindow(model?: string): Promise<number> {
@@ -291,6 +298,9 @@ export async function resolveContextWindow(model?: string): Promise<number> {
         if (modelInstance.context_length && modelInstance.context_length > 0) {
             return modelInstance.context_length;
         }
+
+        const learnedWindow = ModelContextBudgets.getLearnedWindow(modelInstance);
+        if (learnedWindow !== undefined) return learnedWindow;
 
         const knownSize = lookupKnownContextSize(modelInstance.model_name);
         if (knownSize > 0) {

@@ -12,6 +12,7 @@
 import { OpenAIAdapter } from '../adapters/openai.js';
 import { ContextPreparationBlockedError, isContextLimitError } from '../compaction/compact-error.js';
 import { resolveContextWindow, estimateAutoCompactContextTokens } from '../compaction/auto-compact.js';
+import { ModelContextBudgets } from '../compaction/model-context-budget.js';
 import {
     calculateCompactionBudget,
     checkRequestBudget,
@@ -27,7 +28,7 @@ import {
     logCompactInfo
 } from '../compaction/compact-trace.js';
 import { LLM, type LLMRequestOptions } from '../llm.js';
-import { Setting } from '../../utils/setting.js';
+import { Setting, type ModelInstance } from '../../utils/setting.js';
 import { logger } from '../../utils/logger.js';
 import {
     getEvidenceCardPreviewOptions,
@@ -269,13 +270,17 @@ export async function processTaskCompletion(
     const evidenceCardEnabled = task.refreshEvidenceCardFeatureState();
     const evidenceCardSettings = getEvidenceCardSettings(evidenceCardEnabled);
     try {
-        const budget = calculateCompactionBudget(await resolveContextWindow(model));
+        const contextWindow = await resolveContextWindow(model);
+        const budget = contextWindow > 0 ? calculateCompactionBudget(contextWindow) : undefined;
         const preparation = await prepareContextForModel(task.chat_context, model, {
-            forceCompact: !checkRequestBudget({
-                budget,
-                requestedOutputTokens: budget.summaryOutputTokens,
-                estimatedInputTokens: estimateAutoCompactContextTokens(task.chat_context, model).estimatedContextTokens
-            }).allowed,
+            forceCompact:
+                budget !== undefined &&
+                !checkRequestBudget({
+                    budget,
+                    requestedOutputTokens: budget.summaryOutputTokens,
+                    estimatedInputTokens: estimateAutoCompactContextTokens(task.chat_context, model)
+                        .estimatedContextTokens
+                }).allowed,
             compactStateManaged: true,
             executeCompact: async () =>
                 (await task.compactTaskContext({ trigger: 'auto', model, modelRequestOptions, usageRecovery }))
@@ -583,6 +588,9 @@ export async function processTaskCompletion(
     let receivedUsage = false;
     let successfulRequestBoundaryId: string | undefined;
     let requestStartUsage = assistant_message.usage;
+    let requestModel = model;
+    let requestModelInstance: ModelInstance | null = null;
+    let requestContextWindow = 0;
     let completionSucceeded = false;
     let lastRetryState:
         | {
@@ -597,9 +605,10 @@ export async function processTaskCompletion(
         while (task.task_status !== 'stopped' && task.getTurnGeneration() === myGeneration) {
             requestStartUsage = assistant_message.usage;
             try {
-                const requestModel = task.ensureValidModelOrFallback();
+                requestModel = task.ensureValidModelOrFallback();
                 const effectiveModel = requestModel || Setting.getInstance().getData().default_model || '';
                 const modelInstance = Setting.getInstance().getModelInstance(effectiveModel, 'chat');
+                requestModelInstance = modelInstance;
                 const autoParseThinkTags = modelInstance?.auto_parse_think_tags ?? false;
                 logger.info(
                     `task ${task.task_id}: beginCompletionRound ` +
@@ -638,13 +647,17 @@ export async function processTaskCompletion(
                     async (instrumentationHeaders) => {
                         // 宿主观测（如 Langfuse）的 headers 在请求钩子（LLM 层）之前合并，
                         // 作为 extraHeaders 的一部分随请求下发
+                        requestContextWindow = await resolveContextWindow(requestModel);
                         const pluginRequestOptions: LLMRequestOptions = {
                             ...requestOptions,
-                            contextBudget: {
-                                window: await resolveContextWindow(requestModel),
-                                inputEstimate: preparedContextTokens + estimateTextTokens(requestTailText),
-                                requireBelowTrigger: task.compactionAwaitingRequest
-                            },
+                            contextBudget:
+                                requestContextWindow > 0
+                                    ? {
+                                          window: requestContextWindow,
+                                          inputEstimate: preparedContextTokens + estimateTextTokens(requestTailText),
+                                          requireBelowTrigger: task.compactionAwaitingRequest
+                                      }
+                                    : undefined,
                             onBudgetValidated: () => task.confirmCompactionRequestBudget(),
                             extraHeaders: instrumentationHeaders
                                 ? { ...requestOptions.extraHeaders, ...instrumentationHeaders }
@@ -794,9 +807,41 @@ export async function processTaskCompletion(
                     assistant_message.rollbackToRoundStart();
                     assistant_message.usage = requestStartUsage;
                     try {
+                        if (
+                            requestModelInstance &&
+                            (requestContextWindow === 0 ||
+                                ModelContextBudgets.getLearnedWindow(requestModelInstance) !== undefined)
+                        ) {
+                            const learnedWindow = ModelContextBudgets.learnFromOverflow(requestModelInstance, err);
+                            if (learnedWindow !== undefined && learnedWindow !== requestContextWindow) {
+                                logCompactInfo(task.task_id, {
+                                    source: 'tasks',
+                                    event: 'context_budget_learned',
+                                    message: `[Compact] learned runtime context budget: window=${learnedWindow}`,
+                                    data: { contextWindow: learnedWindow, previousContextWindow: requestContextWindow }
+                                });
+                            }
+                            if (requestContextWindow === 0 && learnedWindow === undefined)
+                                throw new ContextPreparationBlockedError('unknown_context_window');
+                            // A first request may exceed the window solely because of its output reservation.
+                            if (
+                                requestContextWindow === 0 &&
+                                learnedWindow &&
+                                preparedContextTokens + estimateTextTokens(requestTailText) < learnedWindow * 0.8
+                            ) {
+                                lastSentTextPartIndex = -1;
+                                prevMergedToolCallCount = 0;
+                                continue;
+                            }
+                        }
                         if (usageRecovery.attempts >= MAX_COMPACT_RECOVERY_ATTEMPTS)
                             throw new ContextPreparationBlockedError('recovery_exhausted');
-                        await task.compactTaskContext({ trigger: 'auto', model, modelRequestOptions, usageRecovery });
+                        await task.compactTaskContext({
+                            trigger: 'auto',
+                            model: requestModel,
+                            modelRequestOptions,
+                            usageRecovery
+                        });
                         if (!isCurrentTurn()) return false;
                         requestActiveContext = buildActiveContextView(task.chat_context);
                         streamOptions = { activeContext: requestActiveContext };
@@ -808,7 +853,7 @@ export async function processTaskCompletion(
                             task,
                             activeContext: requestActiveContext,
                             chatContext: task.chat_context,
-                            model,
+                            model: requestModel,
                             requestType: 'streamComplete'
                         });
                         lastSentTextPartIndex = -1;
@@ -930,7 +975,8 @@ export async function processTaskCompletion(
         // After streaming ends, finalize all reasoning timing
         assistant_message.finalizeReasoningTiming();
         if (completionSucceeded && receivedUsage && !abortedByToolcallHook && task.task_status !== 'stopped') {
-            assistant_message.recordCompletionUsage(model, successfulRequestBoundaryId);
+            assistant_message.recordCompletionUsage(requestModel, successfulRequestBoundaryId);
+            if (requestModelInstance) ModelContextBudgets.recordSuccess(requestModelInstance, assistant_message.usage);
         }
 
         // After streaming ends, send any remaining text part if it hasn't been sent

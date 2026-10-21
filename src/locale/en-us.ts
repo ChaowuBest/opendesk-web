@@ -91,6 +91,8 @@ export const enUs: Record<string, string> = {
     'compact.reason.protocol_error': 'Invalid model response format',
     'compact.reason.context_limit': 'The request exceeds the configured context budget',
     'compact.reason.invalid_budget': 'Invalid context window or token estimate',
+    'compact.reason.unknown_context_window':
+        'No context window size or successful request usage is available. Please configure the model context length',
     'compact.reason.request_failed': 'The summary request failed',
     'compact.reason.no_progress': 'Compaction did not reduce context to a safe size',
     'compact.reason.no_safe_usage_boundary': 'No compaction boundary fits the budget using recorded usage or estimates',
