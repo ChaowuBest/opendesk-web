@@ -33,20 +33,21 @@ import {
 } from 'node:timers';
 import { logger } from '../../utils/logger.js';
 import { safeSendToWebContents } from '../../utils/electron-ipc.js';
+import { showTaskNotification, clearPendingOpenTasks } from '../../utils/system-notification.js';
 import { electron } from '../../../utils/electron.js';
+import { t } from '../../../locale/index.js';
 
-const ACTION_LABELS: Record<string, string> = {
-    read: '读取',
-    write: '编辑',
-    execute: '执行',
-    access: '访问'
-};
+function getActionLabel(action: string): string {
+    const key = `permission.action.${action}`;
+    const result = t(key);
+    return result === key ? action : result;
+}
 
-const RESOURCE_TYPE_LABELS: Record<string, string> = {
-    file: '文件',
-    network: '网络',
-    skill: '技能'
-};
+function getResourceTypeLabel(resourceType: string): string {
+    const key = `permission.resource.${resourceType}`;
+    const result = t(key);
+    return result === key ? resourceType : result;
+}
 
 interface QueuedElectronPermissionPrompt {
     requestId: string;
@@ -251,9 +252,9 @@ export class ElectronPermissionPromptProvider implements PermissionPromptProvide
     }
 
     private showCurrent(item: QueuedElectronPermissionPrompt, remainingMs: number): void {
-        const { BrowserWindow, ipcMain, Notification } = electron();
-        const focusedWindow = BrowserWindow.getAllWindows().find((w) => !w.isDestroyed()) || null;
-        if (!focusedWindow) {
+        const { BrowserWindow, ipcMain } = electron();
+        // 没有任何窗口时 renderer 无法展示弹窗，直接拒绝；通知的唤起目标由 system-notification 解析主窗口
+        if (!BrowserWindow.getAllWindows().some((w) => !w.isDestroyed())) {
             this.current = null;
             this.settleItem(item, { decision: 'deny', rememberScope: 'none', denyReason: 'no_prompt_provider' });
             this.processQueue();
@@ -261,23 +262,18 @@ export class ElectronPermissionPromptProvider implements PermissionPromptProvide
         }
 
         const first = item.requests[0];
-        const actionLabel = ACTION_LABELS[first.action] || first.action;
-        const typeLabel = RESOURCE_TYPE_LABELS[first.resourceType] || first.resourceType;
+        const actionLabel = getActionLabel(first.action);
+        const typeLabel = getResourceTypeLabel(first.resourceType);
 
-        if (Notification.isSupported()) {
-            const notification = new Notification({
-                title: 'OpenDesk - 权限确认',
-                body: `${item.toolName} 请求${actionLabel}${typeLabel}，请在应用内确认`,
-                silent: false
-            });
-            notification.show();
-            notification.on('click', () => {
-                if (focusedWindow && !focusedWindow.isDestroyed()) {
-                    focusedWindow.show();
-                    focusedWindow.focus();
-                }
-            });
-        }
+        showTaskNotification({
+            title: t('notification.permission.title'),
+            body: t('notification.permission.body', {
+                toolName: item.toolName,
+                action: actionLabel,
+                type: typeLabel
+            }),
+            taskId: item.taskInfo?.taskId
+        });
 
         item.timeoutTimer = safeSetTimeout(() => {
             if (this.current !== item || item.settled) return;
@@ -383,6 +379,9 @@ export class ElectronPermissionPromptProvider implements PermissionPromptProvide
     private settleItem(item: QueuedElectronPermissionPrompt, response: PermissionUserResponse): void {
         if (item.settled) return;
         item.settled = true;
+        // 请求已结算（应答 / 超时 / 任务停止），通知的待打开记录必须一并作废：
+        // 用户多半是在应用内直接应答的，留着会让之后任意一次窗口聚焦把他跳回这个任务。
+        clearPendingOpenTasks(item.taskInfo?.taskId);
         item.resolve(response);
     }
 

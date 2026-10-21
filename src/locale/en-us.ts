@@ -1356,6 +1356,14 @@ export const enUs: Record<string, string> = {
     'permission.truncate.prefix': 'Always allow ',
     'permission.truncate.suffix': ' for ',
 
+    // System Notification
+    'notification.permission.title': 'OpenDesk - Permission Request',
+    'notification.permission.body': '${toolName} requests ${action} ${type}, click to open the task',
+    'notification.askUser.title': 'OpenDesk - Input Needed',
+    'notification.askUser.body': 'Click to open the task and answer',
+    'notification.exitPlanMode.title': 'OpenDesk - Plan Approval',
+    'notification.exitPlanMode.body': 'Click to open the task and approve the plan',
+
     // Shortcuts
     'shortcut.switch_mode': 'Switch Mode',
     'shortcut.output_display': 'Switch Output Display',
