@@ -6,6 +6,8 @@ import path from 'node:path';
 import FileManagerWorker from '../../../../main/applications/filemgr/worker.js';
 import { FSStorage } from '../../../../main/applications/filemgr/storage.js';
 import { scanPath } from './fixture-paths.js';
+import { fixture as recoveryFixture, clone, deferred } from './recovery-fixture.js';
+import { resolveFilemgrSearchScopeForEntries } from '../../../../main/applications/filemgr/search/indexed.js';
 
 test('fixture paths match Windows scanner separators without rewriting POSIX backslash filenames', () => {
     assert.equal(scanPath('C:\\fixture\\bad/file.txt', 'win32'), 'C:/fixture/bad/file.txt');
@@ -44,21 +46,24 @@ test('Windows fixture IDs reach the real storage cleanup query while source refe
 });
 
 async function fixture(t, files = ['bad/old.txt', 'good/live.txt', 'bad-backup/live.txt']) {
-    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'filemgr-errors-'));
-    t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+    const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'filemgr-errors-'));
+    const root = path.join(directory, 'files');
+    const stateDirectory = path.join(directory, 'state');
+    fs.mkdirSync(root);
+    fs.mkdirSync(stateDirectory);
+    t.after(() => fs.rmSync(directory, { recursive: true, force: true }));
     for (const file of files) {
         fs.mkdirSync(path.dirname(path.join(root, file)), { recursive: true });
         fs.writeFileSync(path.join(root, file), file);
     }
     const state = { last_full_scan: 0, last_scan_at: null, total_files: 81, last_file_count: 81 };
     const rows = new Map();
-    const storage = Object.create(FSStorage.prototype);
+    const storage = new FSStorage(stateDirectory);
     Object.assign(storage, {
         mode: 'base-only',
         scannerState: { roots: { [root]: state }, unavailable_roots: {} },
         isDeferred: () => false,
         syncEmbeddingMode: async () => {},
-        saveScannerState: async () => {},
         saveFiles: async (files, source) => {
             for (const file of files)
                 rows.set(file.path, {
@@ -297,6 +302,130 @@ test('root read failure preserves unavailable identity, prior references and che
     assert.equal(state.last_full_scan, 0);
     assert.equal(state.total_files, 81);
     assert.deepEqual(storage.scannerState.unavailable_roots[root], { last_count: 81 });
+    const disk = JSON.parse(fs.readFileSync(storage._scannerStatePath, 'utf8'));
+    assert.deepEqual(disk.unavailable_roots[root], { last_count: 81 });
+});
+
+for (const marked of [false, true])
+    test(`offline root ${marked ? 'keeps its existing marker' : 'becomes unavailable'} until a readable full scan`, async (t) => {
+        const files = Array.from({ length: 60 }, (_, i) => `f${i}.txt`);
+        const f = await recoveryFixture(t, ['A'], { files });
+        const [root] = f.roots;
+        f.add(root, 'f0.txt', [root, '/other']);
+        const before = clone(f.storage.scannerState.roots[root]);
+        const rows = clone([...f.rows]);
+        if (marked) {
+            f.storage.scannerState.unavailable_roots[root] = { since: 123, last_count: 60 };
+            await f.storage.saveScannerState();
+        }
+        fs.rmSync(root, { recursive: true });
+        const scanner = f.worker.scanners.get(root);
+        scanner.requestImmediateScan();
+        await f.worker.taskQueue.onIdle();
+        const marker = f.storage.scannerState.unavailable_roots[root];
+        assert.ok(marker);
+        if (marked) assert.deepEqual(marker, { since: 123, last_count: 60 });
+        assert.deepEqual(f.disk().unavailable_roots[root], marker);
+        assert.deepEqual(f.storage.scannerState.roots[root], before);
+        assert.deepEqual([...f.rows], rows);
+        assert.equal((await f.worker.getFileSystemStatus()).sources[0].state, 'unavailable');
+        const scope = () =>
+            resolveFilemgrSearchScopeForEntries(
+                { type: 'path', path: root },
+                {
+                    entries: f.worker.config.entries,
+                    unavailableRoots: f.storage.scannerState.unavailable_roots
+                }
+            );
+        assert.throws(scope);
+        scanner.requestImmediateScan();
+        await f.worker.taskQueue.onIdle();
+        assert.deepEqual(f.disk().unavailable_roots[root], marker);
+        fs.mkdirSync(root);
+        for (const file of files) fs.writeFileSync(path.join(root, file), 'recovered');
+        scanner.requestImmediateScan();
+        await f.worker.taskQueue.onIdle();
+        assert.equal(f.storage.scannerState.unavailable_roots[root], undefined);
+        assert.equal(f.disk().unavailable_roots[root], undefined);
+        assert.equal((await f.worker.getFileSystemStatus()).sources[0].state, 'completed');
+        assert.doesNotThrow(scope);
+        assert.equal(f.rows.size, 60);
+    });
+
+test('root permission failure marks a small source unavailable without changing the empty-scan threshold', async (t) => {
+    const f = await recoveryFixture(t, ['A']);
+    const [root] = f.roots;
+    inject(t, fs, 'readdir', () => (_dir, _opts, cb) => cb(ioError('EACCES', root)));
+    f.worker.scanners.get(root).requestImmediateScan();
+    await f.worker.taskQueue.onIdle();
+    assert.equal(f.disk().unavailable_roots[root].last_count, 1);
+    assert.equal((await f.worker.getFileSystemStatus()).sources[0].state, 'unavailable');
+    assert.equal(f.rows.size, 1);
+});
+
+test('a missing root is unavailable even when glob tasks start below it', async (t) => {
+    const f = await recoveryFixture(t, ['A'], { files: ['sub/file.txt'] });
+    const [root] = f.roots;
+    const config = f.config([root]);
+    config.entries[0].include_patterns = ['sub/*'];
+    await f.worker.applicationConfigChanged(config);
+    await f.worker.taskQueue.onIdle();
+    fs.rmSync(root, { recursive: true });
+    f.worker.scanners.get(root).requestImmediateScan();
+    await f.worker.taskQueue.onIdle();
+    assert.ok(f.disk().unavailable_roots[root]);
+    assert.equal((await f.worker.getFileSystemStatus()).sources[0].state, 'unavailable');
+    assert.equal(f.rows.size, 1);
+});
+
+test('a missing glob base alone preserves its records without marking a readable root unavailable', async (t) => {
+    const { root, scanner, storage, rows, addRow, state } = await fixture(t, ['sub/file.txt']);
+    scanner.entry.include_patterns = ['sub/*'];
+    const id = addRow('sub/file.txt', [root, '/other']);
+    fs.rmSync(path.join(root, 'sub'), { recursive: true });
+    await scanner.scan();
+    assert.equal(storage.scannerState.unavailable_roots[root], undefined);
+    assert.deepEqual(JSON.parse(rows.get(id).root_refs), [root, '/other']);
+    assert.ok(state.last_full_scan > 0);
+});
+
+test('a readable recovered root clears unavailable even while one child remains unreadable', async (t) => {
+    const { root, scanner, storage, state, rows, addRow } = await fixture(t);
+    const protectedId = addRow('bad/deleted.txt', [root, '/other']);
+    storage.scannerState.unavailable_roots[root] = { since: 123, last_count: 81 };
+    await storage.saveScannerState();
+    inject(t, fs, 'readdir', (original) => (directory, options, callback) => {
+        if (scanPath(directory) === scanPath(path.join(root, 'bad'))) callback(ioError('EACCES', directory));
+        else original(directory, options, callback);
+    });
+    await scanner.scan();
+    assert.deepEqual(JSON.parse(rows.get(protectedId).root_refs), [root, '/other']);
+    assert.ok(rows.has(scanPath(path.join(root, 'good/live.txt'))));
+    assert.equal(storage.scannerState.unavailable_roots[root], undefined);
+    assert.equal(JSON.parse(fs.readFileSync(storage._scannerStatePath, 'utf8')).unavailable_roots[root], undefined);
+    assert.ok(state.last_full_scan > 0);
+    scanner._counter = 1;
+    assert.equal(scanner._getScanDepth(), 4);
+});
+
+test('stop during the fallback root read leaves markers and checkpoints untouched', async (t) => {
+    const { root, scanner, storage, state } = await fixture(t, []);
+    scanner.entry.include_patterns = ['missing/*'];
+    const entered = deferred(t),
+        gate = deferred(t);
+    t.mock.method(fs.promises, 'readdir', async () => {
+        entered.resolve();
+        await gate.promise;
+        throw ioError('ENOENT', root);
+    });
+    const scanning = scanner.scan();
+    await entered.promise;
+    await scanner.stop();
+    gate.resolve();
+    await scanning;
+    assert.equal(state.last_full_scan, 0);
+    assert.equal(state.last_scan_at, null);
+    assert.equal(storage.scannerState.unavailable_roots[root], undefined);
 });
 
 test('normal empty source still uses the existing >50 protection; small empty sources clean normally', async (t) => {

@@ -1963,6 +1963,8 @@ export const enUs: Record<string, string> = {
     'renderer.filemgr.selection.toast.add': 'Added to AI understanding scope ',
     'renderer.filemgr.selection.toast.exclude': 'Ignored this folder ',
     'renderer.filemgr.selection.toast.restore': 'Added back to AI understanding scope ',
+    'renderer.filemgr.source.metadataWritePending':
+        'Some file scan results previously failed to save; awaiting a later scan to confirm recovery.',
     'renderer.filemgr.source.unavailable': 'Path unavailable',
     'renderer.filemgr.source.unavailableWithCount': 'Path unavailable · Previously ${count} files',
     'renderer.filemgr.source.scan.withCounts': 'Scanning · ${embedded} / ${total} files',

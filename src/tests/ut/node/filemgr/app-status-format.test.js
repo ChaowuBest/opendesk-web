@@ -416,5 +416,46 @@ await testSlashShowsLocalizedPausedSource();
 await testSlashStatusLabels();
 await testSlashAlertMessages();
 await testSearchIndexedFilesForwardsOptionsAndUnwraps();
+for (const mode of ['base-only', 'full'])
+    for (const total of [0, 3]) {
+        const page = await runSlashStatus(
+            makeStatusData({
+                mode,
+                sources: [
+                    { root: '/metadata-pending', state: 'completed', total_files: total, metadata_write_pending: true }
+                ]
+            })
+        );
+        assert.ok(page.text.includes('此前部分文件的扫描结果保存失败，等待后续扫描确认恢复。'));
+        assert.equal(page.text.includes('已完成 ·'), false);
+    }
+for (const paused of [false, true]) {
+    const page = await runSlashStatus(
+        makeStatusData({
+            sources: [
+                {
+                    root: '/metadata-pending',
+                    state: 'unavailable',
+                    paused,
+                    total_files: 3,
+                    metadata_write_pending: true
+                }
+            ]
+        })
+    );
+    assert.ok(page.text.includes(paused ? '已暂停' : '路径不可访问'));
+    assert.equal(page.text.includes('此前部分文件的扫描结果保存失败'), false);
+}
+ApplicationRegistry.callWorker = originalCallWorker;
+setRuntimeLocale('en-US');
+const metadataEnglish = await runSlashStatus(
+    makeStatusData({ sources: [{ root: '/metadata-pending', state: 'completed', metadata_write_pending: true }] })
+);
+assert.ok(
+    metadataEnglish.text.includes(
+        'Some file scan results previously failed to save; awaiting a later scan to confirm recovery.'
+    )
+);
+setRuntimeLocale('zh-CN');
 ApplicationRegistry.callWorker = originalCallWorker;
 console.log('✅ app-status-format tests passed');

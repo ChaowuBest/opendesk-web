@@ -1903,6 +1903,7 @@ export const zhCn: Record<string, string> = {
     'renderer.filemgr.selection.toast.add': '已加入 AI 理解范围',
     'renderer.filemgr.selection.toast.exclude': '已忽略这个文件夹',
     'renderer.filemgr.selection.toast.restore': '已重新加入 AI 理解范围',
+    'renderer.filemgr.source.metadataWritePending': '此前部分文件的扫描结果保存失败，等待后续扫描确认恢复。',
     'renderer.filemgr.source.unavailable': '路径不可访问',
     'renderer.filemgr.source.unavailableWithCount': '路径不可访问 · 上次 ${count} 文件',
     'renderer.filemgr.source.scan.withCounts': '扫描中 · ${embedded} / ${total} 文件',

@@ -24,6 +24,7 @@ const MINI_RING_CIRCUMFERENCE = 37.7;
 const SKELETON_CARD_COUNT = 3;
 export const WORKSPACE_SOURCE_PROTECTED_MESSAGE = '当前工作空间不能在这里移除。请回到主页面切换工作空间。';
 const SOURCE_CONTROL_FALLBACKS = {
+    'renderer.filemgr.source.metadataWritePending': '此前部分文件的扫描结果保存失败，等待后续扫描确认恢复。',
     'renderer.filemgr.source.unavailable': '路径不可访问',
     'renderer.filemgr.source.unavailableWithCount': '路径不可访问 · 上次 ${count} 文件',
     'renderer.filemgr.source.empty': '未发现可扫描文件',
@@ -182,6 +183,7 @@ function normalizeSource(source, entry, data, index) {
         path,
         index,
         hasBackend: Boolean(source),
+        metadataWritePending: source?.metadata_write_pending === true,
         totalFiles: toNumber(source?.total_files ?? source?.totalFiles, null),
         embeddedCount: toNumber(source?.embedded_count ?? source?.embeddedCount, null),
         failedCount: toNumber(source?.failed_count ?? source?.failedCount, null),
@@ -207,12 +209,19 @@ function getDisplayState(source) {
     if (!source.hasBackend) return 'unknown';
     if (source.paused) return 'paused';
     if (source.unavailableInfo) return 'unavailable';
+    if (source.metadataWritePending) return 'pending';
     if (source.isRunning) return 'scanning';
     return ['pending', 'scanning', 'completed', 'unavailable'].includes(source.state) ? source.state : 'unknown';
 }
 
 function getProgress(source, displayState) {
-    if (!source.hasBackend || source.totalFiles === null || displayState === 'unknown') return null;
+    if (
+        !source.hasBackend ||
+        (source.metadataWritePending && displayState !== 'paused' && displayState !== 'unavailable') ||
+        source.totalFiles === null ||
+        displayState === 'unknown'
+    )
+        return null;
     if (displayState === 'completed') return 100;
     if (displayState !== 'scanning' || source.totalFiles <= 0) return 0;
     if (source.embeddedCount === null) return null;
@@ -239,6 +248,7 @@ function getStatusText(source, displayState, mode, options) {
             { count }
         );
     }
+    if (source.metadataWritePending) return sourceControlText(options, 'renderer.filemgr.source.metadataWritePending');
     if (displayState === 'completed' && source.totalFiles === 0)
         return sourceControlText(options, 'renderer.filemgr.source.empty');
     const countText =
@@ -1045,7 +1055,8 @@ function createIconBox(doc, source, displayState) {
     return iconBox;
 }
 
-function createDeleteButton(doc, source, options) {
+function createDeleteButton(doc, getSource, options) {
+    const source = getSource();
     const removeText = sourceControlText(options, 'renderer.filemgr.source.remove');
     const button = doc.createElement('button');
     button.type = 'button';
@@ -1057,6 +1068,9 @@ function createDeleteButton(doc, source, options) {
     button.disabled = options.pendingByRoot?.has(source.path) === true;
     button.addEventListener('click', (event) => {
         event.stopPropagation();
+        const source = getSource();
+        if (!source || button.disabled || options.pendingByRoot?.has(source.path)) return;
+        options.sourceMenuPortal.closeFor(button.closest('.filemgr-source-menu-portal'), { restoreFocus: true });
         if (source.workspace) {
             const protectedPayload = {
                 root: source.path,
@@ -1105,41 +1119,64 @@ function createDeleteButton(doc, source, options) {
     return button;
 }
 
-function createSourceControlButton(doc, source, options) {
-    const rootIsPending = options.pendingByRoot?.has(source.path) === true;
-    const action = source.paused ? 'resume' : 'pause';
+function updateAttribute(node, name, value) {
+    if (value === null) {
+        if (node.hasAttribute(name)) node.removeAttribute(name);
+    } else if (node.getAttribute(name) !== String(value)) {
+        node.setAttribute(name, String(value));
+    }
+}
+
+function updateText(node, text) {
+    if (node.textContent !== text) node.textContent = text;
+}
+
+function updateData(node, key, value) {
+    if (value === null) {
+        if (node.dataset[key] !== undefined) delete node.dataset[key];
+    } else if (node.dataset[key] !== String(value)) node.dataset[key] = String(value);
+}
+
+function placeBefore(parent, node, next = null) {
+    if (node.parentNode !== parent || node.nextSibling !== next) parent.insertBefore(node, next);
+}
+
+function updateSourceControlButton(button, source, options) {
+    const rootIsPending = options.pendingByRoot.has(source.path);
     const actionText = sourceControlText(
         options,
         source.paused ? 'renderer.filemgr.source.resume' : 'renderer.filemgr.source.pause'
     );
+    updateAttribute(
+        button,
+        'class',
+        source.paused ? 'source-control-btn source-resume-btn' : 'source-control-btn source-menu-item'
+    );
+    updateAttribute(button, 'role', source.paused ? null : 'menuitem');
+    updateData(button, 'action', source.paused ? 'resume' : 'pause');
+    const disabled = !source.hasBackend || rootIsPending || options.workerStatus !== 'running';
+    if (button.disabled !== disabled) button.disabled = disabled;
+    updateAttribute(button, 'aria-busy', String(rootIsPending));
+    updateAttribute(button, 'aria-label', actionText);
+    updateAttribute(button, 'title', actionText);
+    updateAttribute(button.firstChild, 'class', rootIsPending ? 'source-control-spinner' : 'source-control-icon');
+    updateText(button.lastChild, actionText);
+}
+
+function createSourceControlButton(doc, getSource, options) {
     const button = doc.createElement('button');
     button.type = 'button';
-    button.className = source.paused ? 'source-control-btn source-resume-btn' : 'source-control-btn source-menu-item';
-    if (!source.paused) {
-        button.setAttribute('role', 'menuitem');
-    }
-    button.dataset.action = action;
-    button.disabled = !source.hasBackend || rootIsPending || options.workerStatus !== 'running';
-    button.setAttribute('aria-busy', rootIsPending ? 'true' : 'false');
-    button.setAttribute('aria-label', actionText);
-    button.title = actionText;
-    if (rootIsPending) {
-        const spinner = doc.createElement('span');
-        spinner.className = 'source-control-spinner';
-        spinner.setAttribute('aria-hidden', 'true');
-        button.appendChild(spinner);
-    } else {
-        const icon = doc.createElement('span');
-        icon.className = 'source-control-icon';
-        icon.setAttribute('aria-hidden', 'true');
-        button.appendChild(icon);
-    }
+    const icon = doc.createElement('span');
+    icon.setAttribute('aria-hidden', 'true');
     const label = doc.createElement('span');
     label.className = 'source-control-label';
-    label.textContent = actionText;
-    button.appendChild(label);
+    button.append(icon, label);
+    updateSourceControlButton(button, getSource(), options);
     button.addEventListener('click', (event) => {
         event.stopPropagation();
+        const source = getSource();
+        if (!source || button.disabled) return;
+        options.sourceMenuPortal.closeFor(button.closest('.filemgr-source-menu-portal'), { restoreFocus: true });
         options.onRequestSourceControl?.(source, !source.paused);
     });
     return button;
@@ -1169,8 +1206,10 @@ function createSourceMenuPortal(doc) {
         const maxLeft = Math.max(viewportInset, viewportWidth - menuRect.width - viewportInset);
         const left = Math.min(Math.max(viewportInset, preferredLeft), maxLeft);
 
-        menu.style.top = `${Math.round(top)}px`;
-        menu.style.left = `${Math.round(left)}px`;
+        const topValue = `${Math.round(top)}px`;
+        const leftValue = `${Math.round(left)}px`;
+        if (menu.style.top !== topValue) menu.style.top = topValue;
+        if (menu.style.left !== leftValue) menu.style.left = leftValue;
     };
 
     const close = ({ restoreFocus = false } = {}) => {
@@ -1223,7 +1262,12 @@ function createSourceMenuPortal(doc) {
     return {
         open,
         close,
+        closeFor(menu, options) {
+            if (activeMenu?.menu === menu) close(options);
+        },
+        refresh: positionMenu,
         deferClose(menu, trigger) {
+            if (activeMenu?.menu !== menu) return;
             if (focusTimer !== null) clearTimeout(focusTimer);
             focusTimer = setTimeout(() => {
                 focusTimer = null;
@@ -1240,7 +1284,8 @@ function createSourceMenuPortal(doc) {
     };
 }
 
-function createSourceActionsMenu(doc, source, options) {
+function createSourceActionsMenu(doc, getSource, options) {
+    const source = getSource();
     const actions = doc.createElement('div');
     actions.className = 'source-actions';
 
@@ -1263,16 +1308,15 @@ function createSourceActionsMenu(doc, source, options) {
     menu.setAttribute('role', 'menu');
     menu.hidden = true;
 
-    if (source.hasBackend && !source.paused) {
-        menu.appendChild(createSourceControlButton(doc, source, options));
-    }
-    menu.appendChild(createDeleteButton(doc, source, options));
+    const remove = createDeleteButton(doc, getSource, options);
+    menu.appendChild(remove);
 
     trigger.addEventListener('click', (event) => {
         event.stopPropagation();
-        options.sourceMenuPortal?.open({ actions, menu, trigger });
+        if (getSource()) options.sourceMenuPortal?.open({ actions, menu, trigger });
     });
     trigger.addEventListener('keydown', (event) => {
+        if (!getSource()) return;
         if (event.key === 'ArrowDown') {
             event.preventDefault();
             options.sourceMenuPortal?.open({ actions, menu, trigger, focusFirst: true });
@@ -1281,15 +1325,6 @@ function createSourceActionsMenu(doc, source, options) {
             options.sourceMenuPortal?.close({ restoreFocus: true });
         }
     });
-    menu.addEventListener(
-        'click',
-        (event) => {
-            if (event.target.closest?.('.source-menu-item')) {
-                options.sourceMenuPortal?.close();
-            }
-        },
-        true
-    );
     menu.addEventListener('keydown', (event) => {
         if (event.key !== 'Escape') return;
         event.preventDefault();
@@ -1302,7 +1337,7 @@ function createSourceActionsMenu(doc, source, options) {
     });
 
     actions.append(trigger, menu);
-    return actions;
+    return { element: actions, trigger, menu, remove };
 }
 
 function createFileAlert(doc, source) {
@@ -1316,94 +1351,188 @@ function createFileAlert(doc, source) {
     return alert;
 }
 
-function appendStatusIcon(doc, row, source, displayState) {
-    if (displayState === 'unavailable') {
-        const warning = doc.createElement('span');
-        warning.className = 'fs-warning-icon';
-        warning.setAttribute('aria-hidden', 'true');
-        row.appendChild(warning);
-        return;
-    }
-
-    const progress = getProgress(source, displayState);
-    if (progress !== null) row.appendChild(createMiniRing(doc, progress));
-}
-
-function createSourceCard(doc, source, mode, options) {
-    const displayState = getDisplayState(source, mode);
-    const statusText = getStatusText(source, displayState, mode, options);
-    const rootIsPending = options.pendingByRoot?.has(source.path) === true;
+function createSourceCard(doc, initialSource, mode, options) {
+    let source = initialSource;
+    const getSource = () => source;
     const card = doc.createElement('article');
-    card.className = [
-        'fs-source-card',
-        source.workspace ? 'workspace' : 'normal',
-        displayState,
-        displayState === 'completed' ? 'scan-done' : '',
-        mode === 'base-only' ? 'base-only' : ''
-    ]
-        .filter(Boolean)
-        .join(' ');
     card.dataset.sourceId = String(source.id);
-    card.dataset.state = displayState;
-    const progress = getProgress(source, displayState);
-    if (progress !== null) card.dataset.progress = String(progress);
-    card.setAttribute('aria-busy', rootIsPending ? 'true' : 'false');
-
+    const iconBox = createIconBox(doc, source, getDisplayState(source));
     const info = doc.createElement('div');
     info.className = 'info';
-
     const row1 = doc.createElement('div');
     row1.className = 'row1';
-
     const path = doc.createElement('span');
     path.className = 'path';
     path.textContent = formatDisplayPath(source.path);
     path.title = source.path || '未命名数据源';
-
-    row1.appendChild(path);
-    const fileAlert = createFileAlert(doc, source);
-    if (fileAlert) {
-        row1.appendChild(fileAlert);
-    }
-    row1.appendChild(createSourceActionsMenu(doc, source, options));
-
+    const actions = createSourceActionsMenu(doc, getSource, options);
+    row1.append(path, actions.element);
     const row3 = doc.createElement('div');
     row3.className = 'row3';
-    row3.title = statusText;
-    appendStatusIcon(doc, row3, source, displayState);
-
     const status = doc.createElement('span');
-    status.className =
-        displayState === 'pending' || displayState === 'unavailable' ? 'status-text' : 'status-text status-accent';
-    status.textContent = statusText;
-    status.title = statusText;
-
-    row3.appendChild(status);
-    if (source.hasBackend && source.paused) {
-        row3.appendChild(createSourceControlButton(doc, source, options));
-    }
-    if (source.lastScanAt) {
-        const timeTag = doc.createElement('span');
-        timeTag.className = 'time-tag';
-        timeTag.textContent = formatLastScan(source.lastScanAt);
-        timeTag.title = timeTag.textContent;
-        row3.appendChild(timeTag);
-    }
+    row3.append(status);
     info.append(row1, row3);
-    const controlError = options.errorByRoot?.get(source.path);
-    if (controlError) {
-        const error = doc.createElement('div');
-        error.className = 'fs-source-control-error';
-        error.setAttribute('role', 'alert');
-        error.textContent = sourceControlText(
-            options,
-            SOURCE_CONTROL_ERROR_KEYS[controlError.code] ?? SOURCE_CONTROL_ERROR_KEYS.generic
-        );
-        info.appendChild(error);
-    }
-    card.append(createIconBox(doc, source, displayState), info);
+    card.append(iconBox, info);
+    let fileAlert = null;
+    let statusIcon = null;
+    let control = null;
+    let timeTag = null;
+    let error = null;
 
-    return card;
+    const update = (nextSource, nextMode, workerStatus, translator = options.t) => {
+        const rootIsPending = options.pendingByRoot.has(nextSource.path);
+        // Capability changes can invalidate a focused operation. Ordinary scan
+        // progress leaves both the menu and its focused item in place.
+        if (
+            source.paused !== nextSource.paused ||
+            source.workspace !== nextSource.workspace ||
+            source.hasBackend !== nextSource.hasBackend ||
+            options.workerStatus !== workerStatus ||
+            (card.getAttribute('aria-busy') === 'false' && rootIsPending)
+        ) {
+            options.sourceMenuPortal.closeFor(actions.menu, { restoreFocus: true });
+        }
+        source = nextSource;
+        options.workerStatus = workerStatus;
+        options.t = translator;
+        const displayState = getDisplayState(source);
+        const statusText = getStatusText(source, displayState, nextMode, options);
+        const progress = getProgress(source, displayState);
+        updateAttribute(
+            card,
+            'class',
+            [
+                'fs-source-card',
+                source.workspace ? 'workspace' : 'normal',
+                displayState,
+                displayState === 'completed' ? 'scan-done' : '',
+                nextMode === 'base-only' ? 'base-only' : ''
+            ]
+                .filter(Boolean)
+                .join(' ')
+        );
+        updateData(card, 'state', displayState);
+        updateData(card, 'progress', progress);
+        updateAttribute(card, 'aria-busy', String(rootIsPending));
+        updateAttribute(
+            iconBox.firstChild,
+            'class',
+            source.workspace && displayState !== 'unavailable' ? 'workspace-shape' : 'folder-shape'
+        );
+        const warning = iconBox.querySelector('.warning-corner');
+        if (displayState === 'unavailable' && !warning) {
+            const corner = doc.createElement('span');
+            corner.className = 'warning-corner';
+            iconBox.append(corner);
+        } else if (displayState !== 'unavailable') warning?.remove();
+
+        if (source.failedCount > 0) {
+            if (!fileAlert) {
+                fileAlert = createFileAlert(doc, source);
+                row1.insertBefore(fileAlert, actions.element);
+            }
+            updateText(fileAlert, String(source.failedCount));
+            updateAttribute(
+                fileAlert,
+                'title',
+                `${source.failedCount} 个文件太大或格式不适合智能理解，仍可通过文件名找到。`
+            );
+            updateAttribute(fileAlert, 'aria-label', `${source.failedCount} 个文件无法理解`);
+        } else if (fileAlert) {
+            fileAlert.remove();
+            fileAlert = null;
+        }
+        const moreText = sourceControlText(options, 'renderer.filemgr.source.moreActions');
+        updateAttribute(actions.trigger, 'title', moreText);
+        updateAttribute(actions.trigger, 'aria-label', `${moreText}: ${source.path}`);
+        const removeText = sourceControlText(options, 'renderer.filemgr.source.remove');
+        updateAttribute(actions.remove, 'title', removeText);
+        updateAttribute(actions.remove, 'aria-label', `${removeText}: ${source.path}`);
+        updateText(actions.remove, removeText);
+        if (actions.remove.disabled !== rootIsPending) actions.remove.disabled = rootIsPending;
+
+        const iconClass =
+            displayState === 'unavailable' ? 'fs-warning-icon' : progress !== null ? 'fs-mini-ring' : null;
+        if (statusIcon && (!iconClass || !statusIcon.classList.contains(iconClass))) {
+            statusIcon.remove();
+            statusIcon = null;
+        }
+        if (iconClass && !statusIcon) {
+            statusIcon =
+                progress !== null && displayState !== 'unavailable'
+                    ? createMiniRing(doc, progress)
+                    : doc.createElement('span');
+            if (iconClass === 'fs-warning-icon') {
+                statusIcon.className = iconClass;
+                statusIcon.setAttribute('aria-hidden', 'true');
+            }
+            row3.insertBefore(statusIcon, status);
+        }
+        if (iconClass === 'fs-mini-ring') {
+            const fill = statusIcon.lastChild;
+            const offset = String(MINI_RING_CIRCUMFERENCE * (1 - progress / 100));
+            if (fill.style.strokeDashoffset !== offset) fill.style.strokeDashoffset = offset;
+        }
+        updateAttribute(row3, 'title', statusText);
+        updateAttribute(
+            status,
+            'class',
+            displayState === 'pending' || displayState === 'unavailable' ? 'status-text' : 'status-text status-accent'
+        );
+        updateText(status, statusText);
+        updateAttribute(status, 'title', statusText);
+        if (source.lastScanAt) {
+            if (!timeTag) {
+                timeTag = doc.createElement('span');
+                timeTag.className = 'time-tag';
+                row3.append(timeTag);
+            }
+            const lastScan = formatLastScan(source.lastScanAt);
+            updateText(timeTag, lastScan);
+            updateAttribute(timeTag, 'title', lastScan);
+        } else if (timeTag) {
+            timeTag.remove();
+            timeTag = null;
+        }
+        if (source.hasBackend) {
+            if (!control) control = createSourceControlButton(doc, getSource, options);
+            updateSourceControlButton(control, source, options);
+            if (source.paused) placeBefore(row3, control, timeTag);
+            else placeBefore(actions.menu, control, actions.remove);
+        } else control?.remove();
+        const controlError = options.errorByRoot.get(source.path);
+        if (controlError) {
+            if (!error) {
+                error = doc.createElement('div');
+                error.className = 'fs-source-control-error';
+                error.setAttribute('role', 'alert');
+                info.append(error);
+            }
+            updateText(
+                error,
+                sourceControlText(
+                    options,
+                    SOURCE_CONTROL_ERROR_KEYS[controlError.code] ?? SOURCE_CONTROL_ERROR_KEYS.generic
+                )
+            );
+        } else if (error) {
+            error.remove();
+            error = null;
+        }
+    };
+    update(source, mode, options.workerStatus);
+    return {
+        element: card,
+        get source() {
+            return source;
+        },
+        update,
+        destroy() {
+            options.sourceMenuPortal.closeFor(actions.menu);
+            source = null;
+            card.remove();
+        }
+    };
 }
 
 function createEmptyCard(doc) {
@@ -1443,22 +1572,53 @@ function createSkeletonCard(doc) {
 }
 
 function renderCards(refs, doc, options) {
-    const data = getSnapshotData(getSnapshot());
+    const snapshot = getSnapshot();
+    const data = getSnapshotData(snapshot);
     const status = getStatus(data);
     const mode = getMode(data);
     const sources = getSortedSources(data);
-    refs.grid.classList.toggle('fs-error-layer', status === 'error');
-    refs.grid.replaceChildren();
-    if ((getSnapshot() == null || status === 'initializing') && sources.length === 0) {
-        for (let i = 0; i < SKELETON_CARD_COUNT; i++) refs.grid.appendChild(createSkeletonCard(doc));
-    } else if (sources.length === 0) {
-        refs.grid.appendChild(createEmptyCard(doc));
-    } else {
-        for (const source of sources) {
-            refs.grid.appendChild(createSourceCard(doc, source, mode, { ...options, workerStatus: status }));
+    const isError = status === 'error';
+    if (refs.grid.classList.contains('fs-error-layer') !== isError)
+        refs.grid.classList.toggle('fs-error-layer', isError);
+    const roots = new Set(sources.map((source) => source.path));
+    for (const [root, card] of refs.cards) {
+        if (!roots.has(root)) {
+            card.destroy();
+            refs.cards.delete(root);
         }
     }
-
+    const placeholder = sources.length ? null : snapshot == null || status === 'initializing' ? 'skeleton' : 'empty';
+    if (placeholder !== refs.placeholder) {
+        for (const node of refs.placeholders) node.remove();
+        refs.placeholders = [];
+        refs.placeholder = placeholder;
+        if (placeholder === 'skeleton') {
+            for (let i = 0; i < SKELETON_CARD_COUNT; i++) refs.placeholders.push(createSkeletonCard(doc));
+        } else if (placeholder === 'empty') refs.placeholders.push(createEmptyCard(doc));
+        refs.grid.append(...refs.placeholders);
+    }
+    let cursor = refs.grid.firstChild;
+    for (const source of sources) {
+        let card = refs.cards.get(source.path);
+        if (!card) {
+            card = createSourceCard(doc, source, mode, { ...options, workerStatus: status });
+            refs.cards.set(source.path, card);
+        } else card.update(source, mode, status, options.t);
+        if (card.element !== cursor) {
+            const focused = doc.activeElement;
+            refs.grid.insertBefore(card.element, cursor);
+            // Moving a card can blur its focused descendant in native DOM.
+            if (
+                focused?.isConnected &&
+                card.element.contains(focused) &&
+                doc.activeElement !== focused &&
+                !focused.disabled
+            )
+                focused.focus();
+        }
+        cursor = card.element.nextSibling;
+    }
+    options.sourceMenuPortal.refresh();
     if (!refs.hasAnimated) {
         refs.grid.classList.add('fs-anim', 'fs-anim-delay-1');
         refs.hasAnimated = true;
@@ -1477,6 +1637,9 @@ function buildSourcesDom(doc) {
     return {
         element,
         grid,
+        cards: new Map(),
+        placeholder: null,
+        placeholders: [],
         hasAnimated: false
     };
 }
@@ -1492,7 +1655,15 @@ export function createSources(options = {}) {
     let disposed = false;
     const requestSourceControl = async (source, paused) => {
         const root = source.path;
-        if (disposed || !source.hasBackend || !root || pendingByRoot.has(root)) return;
+        const current = refs.cards.get(root)?.source;
+        if (
+            disposed ||
+            !current?.hasBackend ||
+            getStatus(getSnapshotData(getSnapshot())) !== 'running' ||
+            !root ||
+            pendingByRoot.has(root)
+        )
+            return;
         pendingByRoot.set(root, paused);
         errorByRoot.delete(root);
         render();
@@ -1514,7 +1685,6 @@ export function createSources(options = {}) {
     };
     function render() {
         if (disposed) return;
-        sourceMenuPortal.close();
         renderCards(refs, doc, renderOptions);
     }
 
@@ -1534,6 +1704,8 @@ export function createSources(options = {}) {
         },
         destroy() {
             disposed = true;
+            for (const card of refs.cards.values()) card.destroy();
+            refs.cards.clear();
             unsubscribe();
             for (const unsub of unsubscribes) unsub();
             sourceMenuPortal.destroy();

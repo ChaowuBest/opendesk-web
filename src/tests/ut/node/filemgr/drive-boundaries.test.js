@@ -18,6 +18,7 @@ import {
 import { applyClick } from '../../../../main/applications/filemgr/renderer/tree/checkbox.js';
 import { listDirectory } from '../../../../main/applications/filemgr/renderer/adapter.js';
 import { setPlatform, __resetForTesting } from '../../../../main/applications/filemgr/renderer/state.js';
+import { withMemoryStateWriter } from './recovery-fixture.js';
 
 async function withPlatform(platform, run) {
     const descriptor = Object.getOwnPropertyDescriptor(process, 'platform');
@@ -39,7 +40,7 @@ function workerFor(roots) {
     worker._pendingEmbeddingConfigChange = false;
     worker._embeddingQueueActive = worker._embeddingQueueScheduled = false;
     worker.taskQueue = { add: () => Promise.resolve() };
-    worker.storage = {
+    worker.storage = withMemoryStateWriter({
         mode: 'base-only',
         scannerState: {
             roots: Object.fromEntries(roots.map((root) => [root, { last_full_scan: 0 }])),
@@ -50,7 +51,7 @@ function workerFor(roots) {
         saveScannerState: async () => {},
         saveFiles: async () => ({ saved: 1, failed: 0 }),
         removeDeletedFiles: async () => {}
-    };
+    });
     return worker;
 }
 
@@ -258,7 +259,7 @@ test('workspace matching prefers exact source identity and uses effective/runnab
         assert.equal(worker.storage.scannerState.roots['D:'], originalState);
         assert.equal(originalState.paused, true);
         assert.deepEqual(Object.keys(worker.storage.scannerState.roots), ['D:']);
-        assert.equal(requested, 1);
+        assert.equal(requested, 0, 'readonly workspace matching must not schedule a write scan');
         worker.storage.mode = 'full';
         let priority;
         worker.storage.processEmbeddingQueue = async (_yield, opts) => {

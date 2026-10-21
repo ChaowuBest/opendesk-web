@@ -90,6 +90,75 @@ test('source card renders compact base-only status without badges or duplicate f
     sources.destroy();
 });
 
+test('C109 metadata failure occupies only the existing status row and never changes normal-source presentation', () => {
+    for (const mode of ['base-only', 'full'])
+        for (const total of [0, 3]) {
+            const { document } = parseHTML('<html><head></head><body></body></html>');
+            setSnapshot({
+                status: 'running',
+                mode,
+                sources: [
+                    { root: '/failed', state: 'completed', total_files: total, metadata_write_pending: true },
+                    { root: '/healthy', state: 'completed', total_files: 3 }
+                ]
+            });
+            const sources = createSources({ document, t: createRendererTranslator('zh-CN') });
+            document.body.append(sources.element);
+            const failed = document.querySelector('[data-source-id="/failed"]');
+            const healthy = document.querySelector('[data-source-id="/healthy"]');
+            assert.equal(
+                failed.querySelector('.status-text').textContent,
+                '此前部分文件的扫描结果保存失败，等待后续扫描确认恢复。'
+            );
+            assert.equal(failed.querySelector('.info').children.length, 2);
+            assert.equal(failed.querySelector('.fs-mini-ring'), null);
+            assert.doesNotMatch(failed.textContent, /已完成|未发现可扫描文件|100%|仍有.*未写入/);
+            assert.equal(
+                healthy.querySelector('.status-text').textContent,
+                mode === 'full' ? '已完成 · 3 文件' : '基础索引 · 3 文件'
+            );
+            assert.ok(healthy.querySelector('.fs-mini-ring'));
+            assert.equal(healthy.querySelector('.info').children.length, 2);
+            const oldHtml = healthy.outerHTML;
+            setSnapshot({
+                status: 'running',
+                mode,
+                sources: [{ root: '/healthy', state: 'completed', total_files: 3, metadata_write_pending: false }]
+            });
+            assert.equal(document.querySelector('[data-source-id="/healthy"]').outerHTML, oldHtml);
+            sources.destroy();
+        }
+});
+
+test('C109 metadata display respects pause/unavailability, locale, missing counts and the current selection', () => {
+    const { document } = parseHTML('<html><head></head><body></body></html>');
+    setSnapshot({
+        status: 'running',
+        mode: 'full',
+        sources: [
+            { root: '/paused', state: 'completed', paused: true, total_files: 3, metadata_write_pending: true },
+            { root: '/unavailable', state: 'unavailable', total_files: 3, metadata_write_pending: true },
+            { root: '/missing-count', state: 'completed', metadata_write_pending: true }
+        ]
+    });
+    const sources = createSources({ document, t: createRendererTranslator('en-US') });
+    document.body.append(sources.element);
+    assert.match(document.querySelector('[data-source-id="/paused"] .status-text').textContent, /^Paused/);
+    assert.match(
+        document.querySelector('[data-source-id="/unavailable"] .status-text').textContent,
+        /^Path unavailable/
+    );
+    const missing = document.querySelector('[data-source-id="/missing-count"]');
+    assert.match(missing.textContent, /Some file scan results previously failed to save/);
+    assert.doesNotMatch(missing.textContent, /0 files|100|Completed/);
+    setEntries([{ root: '/placeholder' }]);
+    setBackendSnapshot({ status: 'running', sources: [{ root: '/missing-count', metadata_write_pending: true }] });
+    assert.equal(document.querySelector('[data-source-id="/missing-count"]'), null);
+    assert.match(document.querySelector('[data-source-id="/placeholder"]').textContent, /Waiting to scan/);
+    assert.equal(document.querySelector('.source-control-btn'), null);
+    sources.destroy();
+});
+
 test('source card shows file-level understanding failure alert', () => {
     const { document } = parseHTML('<!doctype html><html><head></head><body></body></html>');
     setSnapshot({

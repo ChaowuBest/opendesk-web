@@ -672,6 +672,10 @@ class FSStorage {
                     if (typeof val.paused !== 'boolean') {
                         throw new Error(`invalid root paused: ${key}`);
                     }
+                    if (val.metadata_write_pending !== undefined && typeof val.metadata_write_pending !== 'boolean') {
+                        logger.warn(`[filemgr] invalid metadata_write_pending for ${key}; using false`);
+                        val.metadata_write_pending = false;
+                    }
                 }
                 this.scannerState = state;
                 return;
@@ -723,6 +727,24 @@ class FSStorage {
         };
         await this._writeScannerStateSnapshot(nextState, () => {
             rootState.paused = paused;
+        });
+    }
+
+    async commitRootScanState(root, changes, { clearUnavailable = false } = {}) {
+        const rootState = this.scannerState.roots[root];
+        if (!rootState) throw new Error(`unknown scanner root: ${root}`);
+        const unavailable = { ...this.scannerState.unavailable_roots };
+        if (clearUnavailable) delete unavailable[root];
+        const snapshot = {
+            ...this.scannerState,
+            roots: { ...this.scannerState.roots, [root]: { ...rootState, ...changes } },
+            unavailable_roots: unavailable
+        };
+        await this._writeScannerStateSnapshot(snapshot, () => {
+            Object.assign(rootState, changes);
+            if (clearUnavailable && this.scannerState.unavailable_roots)
+                delete this.scannerState.unavailable_roots[root];
+            this._clearPerRootCountsCache(root);
         });
     }
 
@@ -2390,15 +2412,42 @@ class FSStorage {
 
     async detachRootForConfigChange(removedRoot, newEntries) {
         const newRoots = (newEntries ?? []).map((entry) => entry.root);
-        const { deleted, detached } = await this._removeRootFromItems(removedRoot, undefined, {
-            deleteEmptyRefs: true,
-            keepEmptyRefsIf: (itemPath) => newRoots.some((root) => isSameOrAncestor(root, itemPath))
+        try {
+            const result = await this._removeRootFromItems(removedRoot, undefined, {
+                deleteEmptyRefs: true,
+                keepEmptyRefsIf: (itemPath) => newRoots.some((root) => isSameOrAncestor(root, itemPath))
+            });
+            const roots = { ...this.scannerState.roots };
+            const unavailable = { ...this.scannerState.unavailable_roots };
+            delete roots[removedRoot];
+            delete unavailable[removedRoot];
+            await this._writeScannerStateSnapshot(
+                { ...this.scannerState, roots, unavailable_roots: unavailable },
+                () => {
+                    delete this.scannerState.roots[removedRoot];
+                    if (this.scannerState.unavailable_roots) delete this.scannerState.unavailable_roots[removedRoot];
+                }
+            );
+            logger.info(
+                `[filemgr] detachRootForConfigChange ${removedRoot}: delete=${result.deleted}, detach=${result.detached}`
+            );
+            return result;
+        } finally {
+            this._clearPerRootCountsCache();
+        }
+    }
+
+    async pruneUnownedUnavailableRoots(entries) {
+        const configured = new Set(entries.map((entry) => entry.root));
+        const removed = Object.keys(this.scannerState.unavailable_roots ?? {}).filter(
+            (root) => !configured.has(root) && !this.scannerState.roots[root]
+        );
+        if (removed.length === 0) return;
+        const unavailable = { ...this.scannerState.unavailable_roots };
+        for (const root of removed) delete unavailable[root];
+        await this._writeScannerStateSnapshot({ ...this.scannerState, unavailable_roots: unavailable }, () => {
+            for (const root of removed) delete this.scannerState.unavailable_roots[root];
         });
-        this._clearPerRootCountsCache();
-        delete this.scannerState.roots[removedRoot];
-        await this.saveScannerState();
-        logger.info(`[filemgr] detachRootForConfigChange ${removedRoot}: delete=${deleted}, detach=${detached}`);
-        return { deleted, detached };
     }
 
     /**
@@ -2409,31 +2458,37 @@ class FSStorage {
     async removeDeletedFiles(scannerRoot, scannedPaths, { activeRoots = [], failedDirectories = new Set() } = {}) {
         const isProtected = failedDirectoryMatcher(failedDirectories);
         const otherRoots = activeRoots.filter((root) => root !== scannerRoot);
-        const { deleted, detached } = await this._removeRootFromItems(
-            scannerRoot,
-            (itemId) => !scannedPaths.has(itemId) && !isProtected(itemId),
-            {
-                deleteEmptyRefs: true,
-                keepEmptyRefsIf: (itemPath) => otherRoots.some((root) => isSameOrAncestor(root, itemPath))
-            }
-        );
-        this._clearPerRootCountsCache(scannerRoot);
-        logger.info(`[filemgr] root ${scannerRoot}: delete=${deleted}, detach=${detached}`);
+        try {
+            const { deleted, detached } = await this._removeRootFromItems(
+                scannerRoot,
+                (itemId) => !scannedPaths.has(itemId) && !isProtected(itemId),
+                {
+                    deleteEmptyRefs: true,
+                    keepEmptyRefsIf: (itemPath) => otherRoots.some((root) => isSameOrAncestor(root, itemPath))
+                }
+            );
+            logger.info(`[filemgr] root ${scannerRoot}: delete=${deleted}, detach=${detached}`);
+        } finally {
+            this._clearPerRootCountsCache(scannerRoot);
+        }
     }
 
     async removeOrphanedItems() {
         if (this.isDeferred()) return { deleted: 0 };
+        try {
+            const result = await this.storage.search([
+                { indexer: 'BaseIndexer', field: 'type', operator: '=', value: 'file' }
+            ]);
+            const toDelete = result.items
+                .filter((it) => this._parseRootRefs(it.item.root_refs).length === 0 || it.item.ref_count === 0)
+                .map((it) => it.item.item_id);
 
-        const result = await this.storage.search([
-            { indexer: 'BaseIndexer', field: 'type', operator: '=', value: 'file' }
-        ]);
-        const toDelete = result.items
-            .filter((it) => this._parseRootRefs(it.item.root_refs).length === 0 || it.item.ref_count === 0)
-            .map((it) => it.item.item_id);
-
-        if (toDelete.length > 0) await this.storage.delete(toDelete);
-        logger.info(`[filemgr] removeOrphanedItems: delete=${toDelete.length}`);
-        return { deleted: toDelete.length };
+            if (toDelete.length > 0) await this.storage.delete(toDelete);
+            logger.info(`[filemgr] removeOrphanedItems: delete=${toDelete.length}`);
+            return { deleted: toDelete.length };
+        } finally {
+            this._clearPerRootCountsCache();
+        }
     }
 
     async getPerRootCounts(roots) {
