@@ -21,17 +21,22 @@
  */
 
 import net from 'net';
+import tls from 'tls';
 import { getPlatform } from '../../../../platforms/base.js';
 import { getEffectiveSystemProxy } from '../../../../main/utils/proxy-env.js';
 import { isHostInNoProxyList } from '../../../../main/utils/proxy.js';
 import { logger } from '../../../../main/utils/logger.js';
 
-/** key = `${host}:${port}`，value = 隧道本地端口（listen 结果） */
-const tunnelPorts = new Map();
+/** key = `${host}:${port}`，value = 当前代理配置对应的隧道 */
+const tunnelEntries = new Map();
 /** 进行中的隧道创建，避免并发重复建监听 */
 const pendingTunnels = new Map();
-/** 已启动的监听，供退出/测试时统一关闭 */
+/** 已启动的监听，供退出/配置变更时统一关闭 */
 const tunnelServers = new Set();
+/** 每个监听上仍处于活动状态的本地/代理连接 */
+const serverConnections = new Map();
+/** 目标当前期望使用的代理签名，用于丢弃配置切换期间完成的旧监听 */
+const desiredTunnelSignatures = new Map();
 
 const CONNECT_TIMEOUT_MS = 15000;
 /** 代理配置缓存：解析 system 代理要 fork scutil/reg，避免每次建连都执行 */
@@ -129,55 +134,112 @@ export function parseProxyUrl(rawUrl) {
 
     const protocol = url.protocol.replace(':', '').toLowerCase();
     let kind;
-    if (protocol === 'socks5' || protocol === 'socks5h' || protocol === 'socks' || protocol === 'socks4') {
-        if (protocol === 'socks4') return null;
+    if (protocol === 'socks5' || protocol === 'socks5h' || protocol === 'socks') {
         kind = 'socks5';
-    } else if (protocol === 'http' || protocol === 'https') {
+    } else if (protocol === 'http') {
         kind = 'http';
+    } else if (protocol === 'https') {
+        kind = 'https';
     } else {
         return null;
     }
 
-    const port = Number(url.port) || (kind === 'socks5' ? 1080 : 8080);
-    if (!url.hostname || !port) return null;
+    // https 代理需要先和代理本身建立 TLS，默认端口也跟着变。
+    const defaultPort = kind === 'socks5' ? 1080 : kind === 'https' ? 443 : 8080;
+    const port = Number(url.port) || defaultPort;
+    if (!url.hostname || !Number.isInteger(port) || port < 1 || port > 65535) return null;
 
-    return {
-        kind,
-        host: url.hostname.replace(/^\[|\]$/g, ''),
-        port,
-        username: url.username ? decodeURIComponent(url.username) : '',
-        password: url.password ? decodeURIComponent(url.password) : ''
-    };
+    try {
+        return {
+            kind,
+            host: url.hostname.replace(/^\[|\]$/g, ''),
+            port,
+            username: url.username ? decodeURIComponent(url.username) : '',
+            password: url.password ? decodeURIComponent(url.password) : ''
+        };
+    } catch {
+        // 非法百分号编码（如 %ZZ）会让 decodeURIComponent 抛错，按无效代理处理
+        return null;
+    }
+}
+
+/** 目标服务器的 CONNECT authority，IPv6 需要保留方括号。 */
+function formatTargetAuthority(host, port) {
+    const normalizedHost = String(host).replace(/^\[|\]$/g, '');
+    return `${normalizedHost.includes(':') ? `[${normalizedHost}]` : normalizedHost}:${port}`;
+}
+
+function tunnelKey(host, port) {
+    return JSON.stringify([host, port]);
+}
+
+function proxySignature(proxy) {
+    return JSON.stringify([proxy.kind, proxy.host, proxy.port, proxy.username, proxy.password]);
+}
+
+function closeTunnelServer(server) {
+    const connections = serverConnections.get(server);
+    if (connections) {
+        for (const connection of connections) {
+            connection.destroy(new Error('mailbox tunnel closed'));
+        }
+        connections.clear();
+        serverConnections.delete(server);
+    }
+    tunnelServers.delete(server);
+    try {
+        if (server.listening) server.close();
+    } catch {
+        /* best-effort */
+    }
 }
 
 /** 起一个本地监听，把每个进来的连接经代理转发到 targetHost:targetPort。 */
 function createTunnelServer(proxy, targetHost, targetPort) {
+    const connections = new Set();
     const server = net.createServer((client) => {
-        let upstream = null;
+        const connection = {
+            client,
+            upstream: null,
+            closed: false,
+            controller: new AbortController(),
+            destroy: null
+        };
         const destroyBoth = (err) => {
+            if (connection.closed) return;
+            connection.closed = true;
+            connection.controller.abort();
+            connections.delete(connection);
             if (err) logger.debug(`mailbox tunnel closed (${targetHost}:${targetPort}): ${err.message}`);
             client.destroy();
-            upstream?.destroy();
+            connection.upstream?.destroy();
         };
+        connection.destroy = destroyBoth;
+        connections.add(connection);
 
-        client.on('error', destroyBoth);
+        client.once('error', destroyBoth);
+        client.once('close', () => destroyBoth());
         client.setTimeout(CONNECT_TIMEOUT_MS, () => destroyBoth(new Error('tunnel client idle timeout')));
-
-        const onEstablished = (socket) => {
-            upstream = socket;
-            socket.setTimeout(0);
-            socket.on('error', destroyBoth);
-            client.setTimeout(0);
-            socket.pipe(client);
-            client.pipe(socket);
-        };
 
         const pending =
             proxy.kind === 'socks5'
-                ? openSocks5Tunnel(proxy, targetHost, targetPort)
-                : openHttpConnectTunnel(proxy, targetHost, targetPort);
-        pending.then(onEstablished, destroyBoth);
+                ? openSocks5Tunnel(proxy, targetHost, targetPort, connection.controller.signal)
+                : openHttpConnectTunnel(proxy, targetHost, targetPort, connection.controller.signal);
+        pending.then((socket) => {
+            if (connection.closed) {
+                socket.destroy();
+                return;
+            }
+            connection.upstream = socket;
+            socket.setTimeout(0);
+            socket.once('error', destroyBoth);
+            socket.once('close', () => destroyBoth());
+            client.setTimeout(0);
+            socket.pipe(client);
+            client.pipe(socket);
+        }, destroyBoth);
     });
+    serverConnections.set(server, connections);
 
     return new Promise((resolve, reject) => {
         server.once('error', reject);
@@ -189,45 +251,64 @@ function createTunnelServer(proxy, targetHost, targetPort) {
 }
 
 /** HTTP(S) 代理：标准 CONNECT 隧道，支持 Basic 认证。 */
-function openHttpConnectTunnel(proxy, targetHost, targetPort) {
+function openHttpConnectTunnel(proxy, targetHost, targetPort, signal) {
     return new Promise((resolve, reject) => {
-        const socket = net.connect(proxy.port, proxy.host);
-        const timer = setTimeout(() => {
-            socket.destroy();
-            reject(new Error(`proxy CONNECT timeout (${proxy.host}:${proxy.port})`));
-        }, CONNECT_TIMEOUT_MS);
-
-        const lines = [`CONNECT ${targetHost}:${targetPort} HTTP/1.1`, `Host: ${targetHost}:${targetPort}`];
+        const socket =
+            proxy.kind === 'https'
+                ? tls.connect({
+                      host: proxy.host,
+                      port: proxy.port,
+                      servername: net.isIP(proxy.host) ? undefined : proxy.host
+                  })
+                : net.connect(proxy.port, proxy.host);
+        const authority = formatTargetAuthority(targetHost, targetPort);
+        const lines = [`CONNECT ${authority} HTTP/1.1`, `Host: ${authority}`];
         if (proxy.username || proxy.password) {
             const token = Buffer.from(`${proxy.username}:${proxy.password}`).toString('base64');
             lines.push(`Proxy-Authorization: Basic ${token}`);
         }
         const request = lines.join('\r\n') + '\r\n\r\n';
-
         let buffer = Buffer.alloc(0);
-        const onError = (err) => {
+        let settled = false;
+        const timer = setTimeout(
+            () => fail(new Error(`proxy CONNECT timeout (${proxy.host}:${proxy.port})`)),
+            CONNECT_TIMEOUT_MS
+        );
+        const onAbort = () => fail(new Error('proxy CONNECT aborted'));
+        const onError = (err) => fail(new Error(`proxy connect failed: ${err.message}`));
+        const onClose = () => fail(new Error('proxy closed the connection during CONNECT'));
+        const cleanup = () => {
             clearTimeout(timer);
-            socket.destroy();
-            reject(new Error(`proxy connect failed: ${err.message}`));
+            signal?.removeEventListener('abort', onAbort);
+            socket.removeListener('data', onData);
+            socket.removeListener('close', onClose);
         };
-
+        const fail = (err) => {
+            if (settled) return;
+            settled = true;
+            cleanup();
+            socket.destroy();
+            reject(err);
+        };
+        const onReady = () => {
+            if (!settled) socket.write(request);
+        };
         const onData = (chunk) => {
             buffer = Buffer.concat([buffer, chunk]);
             const marker = buffer.indexOf('\r\n\r\n');
             if (marker === -1) {
-                if (buffer.length > 16384) onError(new Error('proxy response too large'));
+                if (buffer.length > 16384) fail(new Error('proxy response too large'));
                 return;
             }
             const head = buffer.subarray(0, marker).toString('latin1');
             const rest = buffer.subarray(marker + 4);
-            socket.removeListener('data', onData);
-            socket.removeListener('error', onError);
-            clearTimeout(timer);
+            settled = true;
+            cleanup();
 
             const statusLine = head.split('\r\n')[0] || '';
             if (!/^HTTP\/1\.[01] 2\d\d/.test(statusLine)) {
                 socket.destroy();
-                reject(new Error(`proxy refused CONNECT ${targetHost}:${targetPort}: ${statusLine}`));
+                reject(new Error(`proxy refused CONNECT ${authority}: ${statusLine}`));
                 return;
             }
             if (rest.length > 0) socket.unshift(rest);
@@ -235,8 +316,16 @@ function openHttpConnectTunnel(proxy, targetHost, targetPort) {
         };
 
         socket.on('error', onError);
+        socket.once('close', onClose);
         socket.on('data', onData);
-        socket.once('connect', () => socket.write(request));
+        signal?.addEventListener('abort', onAbort, { once: true });
+        if (signal?.aborted) {
+            onAbort();
+        } else if (proxy.kind === 'https') {
+            socket.once('secureConnect', onReady);
+        } else {
+            socket.once('connect', onReady);
+        }
     });
 }
 
@@ -279,56 +368,108 @@ function readExactly(socket, state, length) {
 }
 
 /** SOCKS5 代理：握手 + CONNECT 命令（支持无认证与用户名密码认证）。 */
-async function openSocks5Tunnel(proxy, targetHost, targetPort) {
+async function openSocks5Tunnel(proxy, targetHost, targetPort, signal) {
     const socket = net.connect(proxy.port, proxy.host);
     const state = { buffer: Buffer.alloc(0) };
+    const onAbort = () => socket.destroy(new Error('socks5 tunnel aborted'));
+    signal?.addEventListener('abort', onAbort, { once: true });
 
     try {
         await new Promise((resolve, reject) => {
-            const timer = setTimeout(() => {
+            let settled = false;
+            const timer = setTimeout(
+                () => fail(new Error(`socks5 connect timeout (${proxy.host}:${proxy.port})`)),
+                CONNECT_TIMEOUT_MS
+            );
+            const cleanup = () => {
+                clearTimeout(timer);
+                socket.removeListener('connect', onConnect);
+                socket.removeListener('error', onError);
+                socket.removeListener('close', onClose);
+            };
+            const fail = (err) => {
+                if (settled) return;
+                settled = true;
+                cleanup();
                 socket.destroy();
-                reject(new Error(`socks5 connect timeout (${proxy.host}:${proxy.port})`));
-            }, CONNECT_TIMEOUT_MS);
-            socket.once('connect', () => {
-                clearTimeout(timer);
-                resolve();
-            });
-            socket.once('error', (err) => {
-                clearTimeout(timer);
                 reject(err);
-            });
+            };
+            const onConnect = () => {
+                if (settled) return;
+                settled = true;
+                cleanup();
+                resolve();
+            };
+            const onError = (err) => fail(err);
+            const onClose = () => fail(new Error('proxy closed before SOCKS5 connect'));
+            socket.once('connect', onConnect);
+            socket.once('error', onError);
+            socket.once('close', onClose);
         });
 
-        const useAuth = Boolean(proxy.username || proxy.password);
-        socket.write(Buffer.from(useAuth ? [0x05, 0x02, 0x00, 0x02] : [0x05, 0x01, 0x00]));
-        const methodReply = await readExactly(socket, state, 2);
-        if (methodReply[0] !== 0x05) throw new Error('socks5: invalid version in method reply');
-        const method = methodReply[1];
-        if (method === 0x02) {
+        const handshakeTimer = setTimeout(
+            () => socket.destroy(new Error('socks5 handshake timeout')),
+            CONNECT_TIMEOUT_MS
+        );
+        try {
+            const useAuth = Boolean(proxy.username || proxy.password);
             const user = Buffer.from(proxy.username, 'utf8');
             const pass = Buffer.from(proxy.password, 'utf8');
-            socket.write(Buffer.concat([Buffer.from([0x01, user.length]), user, Buffer.from([pass.length]), pass]));
-            const authReply = await readExactly(socket, state, 2);
-            if (authReply[1] !== 0x00) throw new Error('socks5: authentication failed');
-        } else if (method !== 0x00) {
-            throw new Error(`socks5: unsupported auth method ${method}`);
-        }
+            if (user.length > 255 || pass.length > 255) {
+                throw new Error('socks5: username or password is too long');
+            }
+            socket.write(Buffer.from(useAuth ? [0x05, 0x02, 0x00, 0x02] : [0x05, 0x01, 0x00]));
+            const methodReply = await readExactly(socket, state, 2);
+            if (methodReply[0] !== 0x05) throw new Error('socks5: invalid version in method reply');
+            const method = methodReply[1];
+            if (method === 0x02) {
+                socket.write(Buffer.concat([Buffer.from([0x01, user.length]), user, Buffer.from([pass.length]), pass]));
+                const authReply = await readExactly(socket, state, 2);
+                if (authReply[1] !== 0x00) throw new Error('socks5: authentication failed');
+            } else if (method !== 0x00) {
+                throw new Error(`socks5: unsupported auth method ${method}`);
+            }
 
-        const hostBuffer = Buffer.from(targetHost, 'utf8');
-        const portBuffer = Buffer.alloc(2);
-        portBuffer.writeUInt16BE(targetPort, 0);
-        socket.write(Buffer.concat([Buffer.from([0x05, 0x01, 0x00, 0x03, hostBuffer.length]), hostBuffer, portBuffer]));
+            const normalizedTargetHost = String(targetHost).replace(/^\[|\]$/g, '');
+            const targetIpVersion = net.isIP(normalizedTargetHost);
+            const hostBuffer = Buffer.from(normalizedTargetHost, 'utf8');
+            if (!targetIpVersion && hostBuffer.length > 255) throw new Error('socks5: target host is too long');
+            if (!Number.isInteger(targetPort) || targetPort < 1 || targetPort > 65535) {
+                throw new Error('socks5: invalid target port');
+            }
+            const portBuffer = Buffer.alloc(2);
+            portBuffer.writeUInt16BE(targetPort, 0);
+            const address =
+                targetIpVersion === 4
+                    ? Buffer.concat([Buffer.from([0x01]), Buffer.from(normalizedTargetHost.split('.').map(Number))])
+                    : targetIpVersion === 6
+                      ? Buffer.concat([
+                            Buffer.from([0x04]),
+                            Buffer.from(
+                                normalizedTargetHost
+                                    .replace(/:/g, '')
+                                    .match(/.{1,2}/g)
+                                    .map((part) => parseInt(part, 16))
+                            )
+                        ])
+                      : Buffer.concat([Buffer.from([0x03, hostBuffer.length]), hostBuffer]);
+            socket.write(Buffer.concat([Buffer.from([0x05, 0x01, 0x00]), address, portBuffer]));
 
-        const head = await readExactly(socket, state, 4);
-        if (head[0] !== 0x05) throw new Error('socks5: invalid version in connect reply');
-        if (head[1] !== 0x00) throw new Error(`socks5: connect failed with code ${head[1]}`);
-        const addressType = head[3];
-        const addressLength = addressType === 0x01 ? 4 : addressType === 0x04 ? 16 : 0x01;
-        if (addressType === 0x03) {
-            const lengthByte = await readExactly(socket, state, 1);
-            await readExactly(socket, state, lengthByte[0] + 2);
-        } else {
-            await readExactly(socket, state, addressLength + 2);
+            const head = await readExactly(socket, state, 4);
+            if (head[0] !== 0x05) throw new Error('socks5: invalid version in connect reply');
+            if (head[1] !== 0x00) throw new Error(`socks5: connect failed with code ${head[1]}`);
+            const addressType = head[3];
+            if (![0x01, 0x03, 0x04].includes(addressType)) {
+                throw new Error(`socks5: unsupported reply address type ${addressType}`);
+            }
+            if (addressType === 0x03) {
+                const lengthByte = await readExactly(socket, state, 1);
+                await readExactly(socket, state, lengthByte[0] + 2);
+            } else {
+                await readExactly(socket, state, (addressType === 0x01 ? 4 : 16) + 2);
+            }
+        } finally {
+            clearTimeout(handshakeTimer);
         }
 
         if (state.buffer.length > 0) socket.unshift(state.buffer);
@@ -336,6 +477,8 @@ async function openSocks5Tunnel(proxy, targetHost, targetPort) {
     } catch (err) {
         socket.destroy();
         throw new Error(`socks5 tunnel failed: ${err.message}`);
+    } finally {
+        signal?.removeEventListener('abort', onAbort);
     }
 }
 
@@ -351,7 +494,11 @@ export async function resolveMailEndpoint(host, port) {
     if (!host || !port) return null;
 
     const proxyConfig = await resolveMailProxyConfig();
-    if (!proxyConfig) return null;
+    if (!proxyConfig) {
+        // 代理被关闭后不再保留任何隧道，避免下次开启时复用旧代理
+        closeMailTunnels();
+        return null;
+    }
     if (isHostInNoProxyList(host, port, proxyConfig.noProxy)) return null;
 
     const proxy = parseProxyUrl(proxyConfig.url);
@@ -360,50 +507,72 @@ export async function resolveMailEndpoint(host, port) {
         return null;
     }
 
-    const key = `${host}:${port}`;
-    const cached = tunnelPorts.get(key);
-    if (cached !== undefined) {
-        return { host: '127.0.0.1', port: cached, servername: host };
+    const key = tunnelKey(host, port);
+    const signature = proxySignature(proxy);
+    desiredTunnelSignatures.set(key, signature);
+
+    const entry = tunnelEntries.get(key);
+    if (entry && entry.signature === signature) {
+        return { host: '127.0.0.1', port: entry.port, servername: host };
+    }
+    if (entry) {
+        // 代理配置已变化：旧监听仍闭包持有旧代理，必须立即停用
+        tunnelEntries.delete(key);
+        closeTunnelServer(entry.server);
+    }
+    // 其余目标上由旧代理建立的隧道也一并淘汰，避免同一时刻存在两套代理
+    for (const [otherKey, otherEntry] of tunnelEntries) {
+        if (otherEntry.signature !== signature) {
+            tunnelEntries.delete(otherKey);
+            closeTunnelServer(otherEntry.server);
+        }
     }
 
-    let pending = pendingTunnels.get(key);
+    const pendingKey = `${key}|${signature}`;
+    let pending = pendingTunnels.get(pendingKey);
     if (!pending) {
-        pending = createTunnelServer(proxy, host, port).then((server) => {
-            const actualPort = server.address().port;
-            tunnelPorts.set(key, actualPort);
-            tunnelServers.add(server);
-            pendingTunnels.delete(key);
-            server.on('error', (err) => {
-                logger.warn(`mailbox tunnel server error (${key}): ${err.message}`);
-                tunnelPorts.delete(key);
-                tunnelServers.delete(server);
+        pending = createTunnelServer(proxy, host, port)
+            .then((server) => {
+                const actualPort = server.address().port;
+                // 创建期间代理配置又变了：丢弃这次结果，避免把旧代理监听写回缓存
+                if (desiredTunnelSignatures.get(key) !== signature) {
+                    closeTunnelServer(server);
+                    throw new Error('proxy configuration changed while creating tunnel');
+                }
+                tunnelServers.add(server);
+                server.on('error', (err) => {
+                    logger.warn(`mailbox tunnel server error (${host}:${port}): ${err.message}`);
+                    if (tunnelEntries.get(key)?.server === server) tunnelEntries.delete(key);
+                    closeTunnelServer(server);
+                });
+                tunnelEntries.set(key, { signature, port: actualPort, server });
+                logger.info(
+                    `mailbox: ${host}:${port} now connects via ${proxy.kind} proxy ${proxy.host}:${proxy.port}`
+                );
+                return actualPort;
+            })
+            .finally(() => {
+                pendingTunnels.delete(pendingKey);
             });
-            logger.info(`mailbox: ${key} now connects via ${proxy.kind} proxy ${proxy.host}:${proxy.port}`);
-            return actualPort;
-        });
-        pendingTunnels.set(key, pending);
+        pendingTunnels.set(pendingKey, pending);
     }
 
     try {
         const actualPort = await pending;
         return { host: '127.0.0.1', port: actualPort, servername: host };
     } catch (err) {
-        pendingTunnels.delete(key);
-        logger.warn(`mailbox: failed to create proxy tunnel for ${key}: ${err.message}`);
+        logger.warn(`mailbox: failed to create proxy tunnel for ${host}:${port}: ${err.message}`);
         return null;
     }
 }
 
-/** 进程/线程退出前关闭所有隧道监听，主要供测试使用。 */
+/** 关闭所有隧道监听及其活动连接，主要供测试与代理关闭时使用。 */
 export function closeMailTunnels() {
-    tunnelPorts.clear();
+    tunnelEntries.clear();
+    desiredTunnelSignatures.clear();
     pendingTunnels.clear();
-    for (const server of tunnelServers) {
-        try {
-            server.close();
-        } catch {
-            /* best-effort */
-        }
+    for (const server of [...tunnelServers]) {
+        closeTunnelServer(server);
     }
     tunnelServers.clear();
 }

@@ -387,7 +387,7 @@ class EmailContentHelper {
     }
 }
 
-class POP3EmailClient extends EmailContentHelper {
+export class POP3EmailClient extends EmailContentHelper {
     constructor(usr, pwd, tls, host, port) {
         super();
         this.usr = usr;
@@ -408,7 +408,7 @@ class POP3EmailClient extends EmailContentHelper {
             tls: this.tls
         };
         if (endpoint) {
-            options.tlsOptions = { servername: endpoint.servername, rejectUnauthorized: false };
+            options.tlsOptions = { servername: endpoint.servername };
         }
         return new Pop3Command(options);
     }
@@ -1880,13 +1880,6 @@ class MailboxWorker extends BaseWorker {
         const { username, password, inbox } = profile;
         if (!inbox?.pop3) return 0;
 
-        const pop3 = new Pop3Command({
-            user: username,
-            password: password,
-            host: inbox.pop3.host,
-            port: inbox.pop3.port,
-            tls: inbox.pop3.tls
-        });
         const maxRetries = 3;
         const operationTimeout = 30000; // 单个操作超时30秒
         const overallTimeout = 300000; // 整体超时5分钟
@@ -1896,7 +1889,17 @@ class MailboxWorker extends BaseWorker {
         const syncPromise = (async () => {
             // 重试机制：对于网络错误、超时等概率性问题进行重试
             for (let attempt = 0; attempt < maxRetries; attempt++) {
+                let pop3 = null;
                 try {
+                    // 每次重试都重新解析代理端点并建立连接，避免复用已损坏的 socket。
+                    const pop3Client = new POP3EmailClient(
+                        username,
+                        password,
+                        inbox.pop3.tls,
+                        inbox.pop3.host,
+                        inbox.pop3.port
+                    );
+                    pop3 = await pop3Client.pop3();
                     // 为UIDL操作添加超时
                     const allList = await withTimeout(pop3.UIDL(), operationTimeout, 'UIDL');
                     // 1. 构建服务器 UID 集合

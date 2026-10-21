@@ -104,9 +104,11 @@ function createReader(socket) {
     };
 }
 
-/** 最小 HTTP CONNECT 代理，转发到真实目标。 */
+/** 最小 HTTP CONNECT 代理，转发到真实目标，并统计收到的隧道连接数。 */
 async function startHttpProxy() {
+    const stats = { connections: 0 };
     const server = net.createServer((client) => {
+        stats.connections += 1;
         const reader = createReader(client);
         client.on('error', () => undefined);
         reader.readUntil('\r\n\r\n').then((head) => {
@@ -124,7 +126,37 @@ async function startHttpProxy() {
         });
     });
     await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
-    return { port: server.address().port, close: () => server.close() };
+    return { port: server.address().port, stats, close: () => server.close() };
+}
+
+/** 只收 CONNECT 但永不响应的代理，用于模拟挂起的代理和验证连接清理。 */
+async function startStallingHttpProxy() {
+    const sockets = new Set();
+    const server = net.createServer((client) => {
+        sockets.add(client);
+        client.on('error', () => undefined);
+        client.on('close', () => sockets.delete(client));
+        client.on('data', () => undefined);
+    });
+    await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
+    return {
+        port: server.address().port,
+        get activeConnections() {
+            return sockets.size;
+        },
+        close() {
+            for (const socket of sockets) socket.destroy();
+            server.close();
+        }
+    };
+}
+
+async function waitFor(predicate, message) {
+    const deadline = Date.now() + 3000;
+    while (!predicate()) {
+        if (Date.now() > deadline) throw new Error(message);
+        await new Promise((resolve) => setTimeout(resolve, 10));
+    }
 }
 
 /** 最小 SOCKS5 代理（无认证），转发到真实目标。 */
@@ -250,7 +282,7 @@ test('resolveMailEndpoint tunnels SMTP through a SOCKS5 proxy', async () => {
     }
 });
 
-test('resolveMailEndpoint falls back to direct connection when the proxy is unreachable', async () => {
+test('unreachable proxy keeps the tunnel endpoint and fails the connection instead of going direct', async () => {
     useNetworkConfig(baseConfig({ use_proxy: 'custom', custom_proxy_addr: 'http://127.0.0.1:9' }));
 
     const target = await startTargetServer('DIRECT');
@@ -261,5 +293,68 @@ test('resolveMailEndpoint falls back to direct connection when the proxy is unre
     } finally {
         closeMailTunnels();
         target.close();
+    }
+});
+
+test('parseProxyUrl keeps https proxies distinct and tolerates malformed credentials', () => {
+    assert.deepEqual(parseProxyUrl('https://proxy.example'), {
+        kind: 'https',
+        host: 'proxy.example',
+        port: 443,
+        username: '',
+        password: ''
+    });
+    assert.equal(parseProxyUrl('https://proxy.example:8443').kind, 'https');
+    // 非法百分号编码不应该抛异常，按无效代理处理
+    assert.equal(parseProxyUrl('http://user:%ZZ@proxy.example:8080'), null);
+});
+
+test('resolveMailEndpoint rebuilds the tunnel when the configured proxy changes', async () => {
+    const target = await startTargetServer('SWITCH');
+    const proxyA = await startHttpProxy();
+    const proxyB = await startHttpProxy();
+    const config = baseConfig({ use_proxy: 'custom', custom_proxy_addr: `http://127.0.0.1:${proxyA.port}` });
+    useNetworkConfig(config);
+
+    try {
+        const first = await resolveMailEndpoint('127.0.0.1', target.port);
+        assert.equal(await readBannerViaEndpoint(first), 'SWITCH');
+        assert.equal(proxyA.stats.connections, 1);
+
+        config.custom_proxy_addr = `http://127.0.0.1:${proxyB.port}`;
+        const second = await resolveMailEndpoint('127.0.0.1', target.port);
+        assert.notEqual(second.port, first.port, '切换代理后必须换用新的隧道端口');
+        assert.equal(await readBannerViaEndpoint(second), 'SWITCH');
+        assert.equal(proxyB.stats.connections, 1, '新连接必须经新代理转发');
+        assert.equal(proxyA.stats.connections, 1, '旧代理不应再收到新连接');
+
+        // 旧监听必须被关闭，避免继续经旧代理转发
+        await assert.rejects(async () => readBannerViaEndpoint(first), 'old tunnel should be closed');
+    } finally {
+        closeMailTunnels();
+        proxyA.close();
+        proxyB.close();
+        target.close();
+    }
+});
+
+test('client disconnect during CONNECT handshake releases the proxy socket', async () => {
+    const proxy = await startStallingHttpProxy();
+    useNetworkConfig(baseConfig({ use_proxy: 'custom', custom_proxy_addr: `http://127.0.0.1:${proxy.port}` }));
+
+    try {
+        const endpoint = await resolveMailEndpoint('mail.example.test', 993);
+        const socket = net.connect(endpoint.port, endpoint.host);
+        try {
+            await new Promise((resolve) => socket.once('connect', resolve));
+            await waitFor(() => proxy.activeConnections === 1, 'proxy should see the tunnel connection');
+            socket.destroy();
+            await waitFor(() => proxy.activeConnections === 0, 'proxy socket must be released after client disconnect');
+        } finally {
+            socket.destroy();
+        }
+    } finally {
+        closeMailTunnels();
+        proxy.close();
     }
 });
