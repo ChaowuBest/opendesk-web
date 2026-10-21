@@ -12,9 +12,18 @@ import { createTouchLongPressController, TOUCH_LONG_PRESS_SCRIPT } from '../../.
  * - 单指按下起 120ms 判定期（期间抬起视为单击，无任何视觉）；之后在触摸点显示
  *   圆环进度动画，计时从显示时从 0 起算（550ms）；
  * - 进度满后保持满环（就绪态），等用户松开手指才触发右键；就绪后移动超容差、
- *   多指、touchcancel 仍会取消；
+ *   多指、touchcancel 仍会取消；touchcancel 一律取消（手势被接管后收不到
+ *   touchend，「松开才触发」无从满足），绝不在手指未松开时弹菜单；
+ * - 圆环出现起 html 挂 od-lp-holding 整体禁用文本选择（规避 Chromium 触摸长按
+ *   选词手势在 ~500ms 接管触摸），结束/取消时移除；编辑区触发时在触摸点补选词
+ *   （caretRangeFromPoint + selection.modify），供自绘菜单的剪切/复制使用；
+ * - 手势期间（含拖拽表面宽限期）触摸来源的原生 contextmenu（sourceCapabilities
+ *   .firesTouchEvents=true，Chromium 长按派发）一律吞掉；松开时脚本派发的合成
+ *   contextmenu 无该标记，是菜单的唯一来源；真实鼠标右键不受影响；
  * - 触发时清除触摸选词产生的选区，并在命中元素上派发合成 contextmenu（局部
  *   坐标，自绘菜单位置天然精确）；
+ * - 拖拽/缩放表面（祖先带 data-od-no-longpress：窗口边缘感应条、分栏分割线、
+ *   桌面卡片/悬浮窗拖拽条与缩放手柄）按下即跳过长按手势：无圆环、无触发；
  * - 命中编辑区且宿主标记 data-od-lp-edit-menu（OpenDesk 自家 frame）时，弹出
  *   脚本内自绘的剪切/复制/粘贴/全选菜单：位置即触摸点；复制/剪切经桥
  *   CustomEvent('od-clipboard-write') 写剪贴板，粘贴经 CustomEvent
@@ -187,12 +196,16 @@ describe('触摸长按右键：手势状态机', () => {
         const contextEvents = recordedEvents(win, 'contextmenu');
         doc.dispatchEvent(press(100, 100));
         jest.advanceTimersByTime(130);
+        // 圆环出现即挂 hold 类（禁用文本选择）
+        expect(doc.documentElement.classList.contains('od-lp-holding')).toBe(true);
         doc.dispatchEvent(move(150, 100));
 
         // 取消走快速淡出而非瞬间消失，避免视觉闪烁
         const indicator = doc.getElementById('od-longpress-indicator');
         expect(indicator).toBeTruthy();
         expect(indicator.classList.contains('cancelling')).toBe(true);
+        // 取消时解除禁选
+        expect(doc.documentElement.classList.contains('od-lp-holding')).toBe(false);
 
         jest.advanceTimersByTime(1000);
         doc.dispatchEvent(lift(150, 100));
@@ -259,7 +272,7 @@ describe('触摸长按右键：手势状态机', () => {
         expect(contextEvents[0].clientY).toBe(110);
     });
 
-    test('editable 上长按同样显示圆环进度，菜单由 Chromium 的 contextmenu 弹出并收掉圆环', () => {
+    test('手势期间吞掉触摸来源的原生 contextmenu（Chromium 长按），不弹菜单', () => {
         doc.documentElement.setAttribute('lang', 'zh-CN');
         doc.documentElement.setAttribute('data-od-lp-edit-menu', '1');
         createTouchLongPressController();
@@ -269,28 +282,16 @@ describe('触摸长按右键：手势状态机', () => {
         doc.elementFromPoint = () => textarea;
 
         doc.dispatchEvent(press(150, 120));
+        jest.advanceTimersByTime(300);
 
-        // 判定期内不显示
-        expect(doc.getElementById('od-longpress-indicator')).toBeNull();
-        // 圆环与其它区域一致地出现
-        jest.advanceTimersByTime(120);
-        const indicator = doc.getElementById('od-longpress-indicator');
-        expect(indicator).toBeTruthy();
-        expect(indicator.classList.contains('visible')).toBe(true);
-
-        // 进度满（ready）：此时不会由脚本派发合成 contextmenu，等 Chromium
-        // 选词后派发的真实 contextmenu
-        const contextEvents = recordedEvents(win, 'contextmenu');
-        jest.advanceTimersByTime(550);
-        expect(contextEvents).toHaveLength(0);
-
-        // Chromium 原生长按派发真实 contextmenu → 自绘菜单弹出，圆环扩散收掉
-        dispatchContextMenu(150, 120, textarea);
-        expect(doc.getElementById('od-edit-menu')).toBeTruthy();
-        expect(doc.getElementById('od-longpress-indicator').classList.contains('fired')).toBe(true);
+        // Chromium 原生长按派发的真实 contextmenu：带触摸 sourceCapabilities 标记
+        const native = dispatchTouchContextMenu(150, 120, textarea);
+        expect(native.defaultPrevented).toBe(true);
+        expect((native as any).stopPropagationCalls).toBe(1);
+        expect(doc.getElementById('od-edit-menu')).toBeNull();
     });
 
-    test('touchcancel（无移动，Chromium 文本选择手势接管）立即完成并弹出菜单', () => {
+    test('可编辑区满环松开触发：hold 期挂 od-lp-holding，触发时在触摸点补选词', () => {
         doc.documentElement.setAttribute('lang', 'zh-CN');
         doc.documentElement.setAttribute('data-od-lp-edit-menu', '1');
         createTouchLongPressController();
@@ -299,19 +300,61 @@ describe('触摸长按右键：手势状态机', () => {
         doc.body.appendChild(textarea);
         doc.elementFromPoint = () => textarea;
 
+        // 选词链路 stub：caretRangeFromPoint 返回命中位置，selection 记录调用
+        const selectionCalls: string[] = [];
+        Object.defineProperty(win, 'getSelection', {
+            value: () => ({
+                setBaseAndExtent: () => selectionCalls.push('setBaseAndExtent'),
+                modify: () => selectionCalls.push('modify'),
+                removeAllRanges: () => {}
+            }),
+            configurable: true
+        });
+        (doc as any).caretRangeFromPoint = (x: number, y: number) => ({ startContainer: { x, y }, startOffset: 3 });
+
         doc.dispatchEvent(press(150, 120));
         jest.advanceTimersByTime(120);
-        // Chromium 开始文本选择手势时派发 touchcancel（无移动）
+        // 圆环出现即禁用文本选择（规避 Chromium 触摸选词手势接管）
+        expect(doc.documentElement.classList.contains('od-lp-holding')).toBe(true);
+
+        jest.advanceTimersByTime(550);
+        doc.dispatchEvent(lift(150, 120));
+
+        // 结束后解除禁选；触发时在触摸点补选词（定位后向前后扩到词边界）
+        expect(doc.documentElement.classList.contains('od-lp-holding')).toBe(false);
+        expect(selectionCalls[0]).toBe('setBaseAndExtent');
+        expect(selectionCalls.slice(1)).toEqual(['modify', 'modify']);
+        // 合成 contextmenu 弹出自绘编辑菜单
+        expect(doc.getElementById('od-edit-menu')).toBeTruthy();
+    });
+
+    test('touchcancel（无移动，手势被接管）不触发菜单：只有松开手指才触发', () => {
+        doc.documentElement.setAttribute('lang', 'zh-CN');
+        doc.documentElement.setAttribute('data-od-lp-edit-menu', '1');
+        createTouchLongPressController();
+
+        const textarea = doc.createElement('textarea');
+        doc.body.appendChild(textarea);
+        doc.elementFromPoint = () => textarea;
+
+        const contextEvents = recordedEvents(win, 'contextmenu');
+        doc.dispatchEvent(press(150, 120));
+        jest.advanceTimersByTime(670);
+        // Chromium/系统手势接管派发 touchcancel（此后收不到 touchend）
         doc.dispatchEvent(touch('touchcancel', [], [{ identifier: 1, clientX: 150, clientY: 120 }]));
 
-        // 长按成立：圆环扩散收掉，合成 contextmenu 弹出自绘编辑菜单
+        // 手指未松开不得弹出任何菜单
+        expect(contextEvents).toHaveLength(0);
+        expect(doc.getElementById('od-edit-menu')).toBeNull();
+        // 圆环按取消收尾，不进入触发态；禁选同步解除
         const indicator = doc.getElementById('od-longpress-indicator');
         expect(indicator).toBeTruthy();
-        expect(indicator.classList.contains('fired')).toBe(true);
-        expect(doc.getElementById('od-edit-menu')).toBeTruthy();
+        expect(indicator.classList.contains('fired')).toBe(false);
+        expect(indicator.classList.contains('cancelling')).toBe(true);
+        expect(doc.documentElement.classList.contains('od-lp-holding')).toBe(false);
     });
 
-    test('markdown 预览等可选文本区：选中文字后长按（无移动）也能弹出编辑菜单', () => {
+    test('markdown 预览等只读文本区：满环松开后按既有选区弹出编辑菜单（剪切/粘贴置灰）', () => {
         doc.documentElement.setAttribute('lang', 'zh-CN');
         doc.documentElement.setAttribute('data-od-lp-edit-menu', '1');
         createTouchLongPressController();
@@ -327,8 +370,8 @@ describe('触摸长按右键：手势状态机', () => {
         });
 
         doc.dispatchEvent(press(300, 400));
-        jest.advanceTimersByTime(120);
-        doc.dispatchEvent(touch('touchcancel', [], [{ identifier: 1, clientX: 300, clientY: 400 }]));
+        jest.advanceTimersByTime(670);
+        doc.dispatchEvent(lift(300, 400));
 
         const menu = doc.getElementById('od-edit-menu');
         expect(menu).toBeTruthy();
@@ -349,7 +392,7 @@ describe('触摸长按右键：手势状态机', () => {
 
         doc.dispatchEvent(press(100, 100));
         jest.advanceTimersByTime(130);
-        // 小位移（未超取消容差但已构成移动意图）→ 滚动接管
+        // 小位移（未超取消容差）即构成移动意图 → 滚动接管
         doc.dispatchEvent(move(112, 100));
         doc.dispatchEvent(touch('touchcancel', [], [{ identifier: 1, clientX: 112, clientY: 100 }]));
         const indicator = doc.getElementById('od-longpress-indicator');
@@ -358,6 +401,45 @@ describe('触摸长按右键：手势状态机', () => {
         jest.advanceTimersByTime(1000);
         expect(doc.getElementById('od-longpress-indicator')).toBeNull();
         expect(doc.getElementById('od-edit-menu')).toBeNull();
+    });
+
+    test('拖拽/缩放表面（data-od-no-longpress）：不显示圆环、不挂 hold 类、不触发右键', () => {
+        doc.documentElement.setAttribute('data-od-lp-edit-menu', '1');
+        createTouchLongPressController();
+
+        const handle = doc.createElement('div');
+        handle.setAttribute('data-od-no-longpress', '1');
+        doc.body.appendChild(handle);
+
+        const contextEvents = recordedEvents(win, 'contextmenu');
+        // 触摸事件派发到标记元素：真实触摸的 target 即命中元素
+        handle.dispatchEvent(press(20, 20));
+        jest.advanceTimersByTime(700);
+
+        expect(doc.getElementById('od-longpress-indicator')).toBeNull();
+        expect(doc.documentElement.classList.contains('od-lp-holding')).toBe(false);
+        handle.dispatchEvent(lift(20, 20));
+        expect(contextEvents).toHaveLength(0);
+    });
+
+    test('标记表面宽限期内吞掉触摸来源的原生 contextmenu，宽限期外恢复放行', () => {
+        doc.documentElement.setAttribute('data-od-lp-edit-menu', '1');
+        createTouchLongPressController();
+
+        const handle = doc.createElement('div');
+        handle.setAttribute('data-od-no-longpress', '1');
+        doc.body.appendChild(handle);
+
+        handle.dispatchEvent(press(20, 20));
+        jest.advanceTimersByTime(600);
+        // 手指仍按在缩放手柄上，Chromium 长按派发原生 contextmenu：吞掉
+        const native = dispatchTouchContextMenu(20, 20, handle);
+        expect(native.defaultPrevented).toBe(true);
+
+        // 宽限期（1500ms）过后不再吞（此时不可能仍是长按手势）
+        jest.advanceTimersByTime(1600);
+        const late = dispatchTouchContextMenu(20, 20, handle);
+        expect(late.defaultPrevented).toBe(false);
     });
 
     test('真实 contextmenu（Chromium 原生长按/鼠标右键）在编辑区弹出自绘菜单', () => {
@@ -383,6 +465,22 @@ describe('触摸长按右键：手势状态机', () => {
         const event = new win.MouseEvent('contextmenu', { bubbles: true, cancelable: true });
         Object.assign(event, { clientX: x, clientY: y });
         target.dispatchEvent(event);
+        return event;
+    }
+
+    // 带触摸 sourceCapabilities 标记的原生 contextmenu（Chromium 触摸长按派发），
+    // 并记录 stopPropagation 调用次数（linkedom 无法从外部断言冒泡阻断）
+    function dispatchTouchContextMenu(x: number, y: number, target: any): any {
+        const event = new win.MouseEvent('contextmenu', { bubbles: true, cancelable: true });
+        Object.assign(event, { clientX: x, clientY: y, sourceCapabilities: { firesTouchEvents: true } });
+        const originalStop = event.stopPropagation.bind(event);
+        let stopCalls = 0;
+        event.stopPropagation = () => {
+            stopCalls += 1;
+            originalStop();
+        };
+        target.dispatchEvent(event);
+        (event as any).stopPropagationCalls = stopCalls;
         return event;
     }
 
@@ -971,5 +1069,24 @@ describe('触摸长按右键：全局接线', () => {
         expect(sidebarSource).toContain("classList.toggle('is-submenu-open')");
         const css = read('src/renderer/styles/context-menu.css');
         expect(css).toContain('.ctx-submenu-wrap.is-submenu-open > .ctx-submenu');
+    });
+
+    test('拖拽/缩放表面统一标记 data-od-no-longpress（触摸长按脚本按下即跳过）', () => {
+        // 窗口边缘缩放感应条（Linux 阴影窗口）
+        const shadowResize = read('src/renderer/components/windowShadowResize.ts');
+        expect(shadowResize).toContain('dataset.odNoLongpress');
+
+        // 沉浸桌面：卡片拖拽区/缩放手柄、悬浮窗标题栏/缩放手柄
+        const desktop = read('src/renderer/components/desktop/immersiveDesktop.ts');
+        const marks = desktop.match(/data-od-no-longpress="1"/g) || [];
+        expect(marks.length).toBeGreaterThanOrEqual(4);
+
+        // 分栏分割线（Shadow DOM 内，脚本经 composedPath 扫描命中）
+        expect(read('src/renderer/components/splitter.js')).toContain('data-od-no-longpress');
+
+        // 注入脚本按标记跳过手势，并带 hold 期禁选样式
+        expect(TOUCH_LONG_PRESS_SCRIPT).toContain('data-od-no-longpress');
+        expect(TOUCH_LONG_PRESS_SCRIPT).toContain('od-lp-holding');
+        expect(TOUCH_LONG_PRESS_SCRIPT).toContain('-webkit-user-select: none');
     });
 });

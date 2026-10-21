@@ -1,3 +1,4 @@
+import fs from 'fs';
 import { beforeAll, beforeEach, describe, expect, jest, test } from '@jest/globals';
 import { parseHTML } from 'linkedom';
 
@@ -188,29 +189,118 @@ describe('AgentInput skill hover preview card', () => {
         expect(card.getAttribute('role')).toBe('tooltip');
     });
 
-    test('mouseleave 移除预览卡', async () => {
+    test('mouseleave 后延迟收起预览卡（给指针留出移动到卡片的时间）', async () => {
+        jest.useFakeTimers();
+        try {
+            const input = new AgentInput();
+            await openPanel(input);
+
+            const items = input.querySelectorAll('#agent-input-skill-list .ctx-item-rich');
+            const item = [...items].find((el: HTMLElement) => el.dataset.skillName === 'long-skill');
+
+            (item as HTMLElement).getBoundingClientRect = () => ({
+                left: 300,
+                top: 200,
+                right: 500,
+                bottom: 230,
+                width: 200,
+                height: 30,
+                x: 300,
+                y: 200,
+                toJSON: () => {}
+            });
+            Object.defineProperty(window, 'innerWidth', { value: 1200, configurable: true });
+            item.dispatchEvent(new window.Event('mouseenter', { bubbles: true }));
+            expect(document.querySelector('#agent-input-skill-preview')).not.toBeNull();
+
+            item.dispatchEvent(new window.Event('mouseleave', { bubbles: true }));
+            expect(document.querySelector('#agent-input-skill-preview')).not.toBeNull();
+
+            jest.advanceTimersByTime(500);
+            expect(document.querySelector('#agent-input-skill-preview')).toBeNull();
+        } finally {
+            jest.useRealTimers();
+        }
+    });
+
+    test('指针停在预览卡上时保持技能菜单和预览卡可见', async () => {
+        jest.useFakeTimers();
+        try {
+            const input = new AgentInput();
+            await openPanel(input);
+
+            const item = [...input.querySelectorAll('#agent-input-skill-list .ctx-item-rich')].find(
+                (el: HTMLElement) => el.dataset.skillName === 'explore'
+            );
+            (item as HTMLElement).getBoundingClientRect = () => ({
+                left: 300,
+                top: 200,
+                right: 500,
+                bottom: 230,
+                width: 200,
+                height: 30,
+                x: 300,
+                y: 200,
+                toJSON: () => {}
+            });
+            Object.defineProperty(window, 'innerWidth', { value: 1200, configurable: true });
+
+            item.dispatchEvent(new window.Event('mouseenter', { bubbles: true }));
+            const card = document.querySelector('#agent-input-skill-preview');
+            expect(card).not.toBeNull();
+
+            // 指针离开列表项、进入预览卡（真实鼠标会先离开项再进入卡片）
+            item.dispatchEvent(new window.Event('mouseleave', { bubbles: true }));
+            card.dispatchEvent(new window.Event('mouseenter', { bubbles: true }));
+            jest.advanceTimersByTime(2000);
+
+            expect(document.querySelector('#agent-input-skill-preview')).not.toBeNull();
+            const panel = input.querySelector('#agent-input-skill-panel');
+            expect(panel.classList.contains('ctx-menu-visible')).toBe(true);
+            expect(input.skillPanelOpen).toBe(true);
+
+            // 指针离开预览卡后收起卡片，技能菜单本身仍保持打开
+            card.dispatchEvent(new window.Event('mouseleave', { bubbles: true }));
+            jest.advanceTimersByTime(500);
+            expect(document.querySelector('#agent-input-skill-preview')).toBeNull();
+            expect(input.skillPanelOpen).toBe(true);
+        } finally {
+            jest.useRealTimers();
+        }
+    });
+
+    test('预览卡接收指针事件并携带滚动条样式钩子', async () => {
         const input = new AgentInput();
         await openPanel(input);
 
-        const items = input.querySelectorAll('#agent-input-skill-list .ctx-item-rich');
-        const item = [...items].find((el: HTMLElement) => el.dataset.skillName === 'long-skill');
-
-        (item as HTMLElement).getBoundingClientRect = () => ({
-            left: 300,
-            top: 200,
-            right: 500,
-            bottom: 230,
-            width: 200,
-            height: 30,
-            x: 300,
-            y: 200,
-            toJSON: () => {}
-        });
+        const item = input.querySelector('#agent-input-skill-list .ctx-item-rich');
+        item.getBoundingClientRect = () => ({ left: 300, top: 200, right: 500, bottom: 230, width: 200, height: 30 });
         Object.defineProperty(window, 'innerWidth', { value: 1200, configurable: true });
         item.dispatchEvent(new window.Event('mouseenter', { bubbles: true }));
-        expect(document.querySelector('#agent-input-skill-preview')).not.toBeNull();
 
-        item.dispatchEvent(new window.Event('mouseleave', { bubbles: true }));
+        const card = document.querySelector('#agent-input-skill-preview') as HTMLElement;
+        expect(card).not.toBeNull();
+        expect(card.style.pointerEvents).toBe('auto');
+        expect(card.classList.contains('ctx-preview-card')).toBe(true);
+    });
+
+    test('点击预览卡不会关闭技能菜单，点击面板外仍会关闭', async () => {
+        const input = new AgentInput();
+        await openPanel(input);
+
+        const item = input.querySelector('#agent-input-skill-list .ctx-item-rich');
+        item.getBoundingClientRect = () => ({ left: 300, top: 200, right: 500, bottom: 230, width: 200, height: 30 });
+        Object.defineProperty(window, 'innerWidth', { value: 1200, configurable: true });
+        item.dispatchEvent(new window.Event('mouseenter', { bubbles: true }));
+
+        const card = document.querySelector('#agent-input-skill-preview') as HTMLElement;
+        expect(card).not.toBeNull();
+        card.dispatchEvent(new window.Event('click', { bubbles: true }));
+        expect(input.skillPanelOpen).toBe(true);
+        expect(input.querySelector('#agent-input-skill-panel').classList.contains('ctx-menu-visible')).toBe(true);
+
+        document.body.dispatchEvent(new window.Event('click', { bubbles: true }));
+        expect(input.skillPanelOpen).toBe(false);
         expect(document.querySelector('#agent-input-skill-preview')).toBeNull();
     });
 
@@ -264,5 +354,44 @@ describe('AgentInput skill hover preview card', () => {
 
         const cards = document.querySelectorAll('#agent-input-skill-preview');
         expect(cards.length).toBe(1);
+    });
+
+    describe('预览卡滚动条样式', () => {
+        const readCss = (relative: string) =>
+            fs.readFileSync(new URL(relative, import.meta.url), 'utf8').replace(/\s+/g, '');
+        const ruleBody = (css: string, selector: string) => {
+            const escaped = selector.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+            return css.match(new RegExp(`${escaped}\\{([^}]*)\\}`))?.[1] ?? '';
+        };
+
+        const menus = readCss('../../../renderer/styles/context-menu.css');
+        const custom = readCss('../../../renderer/styles/custom.css');
+        const dark = readCss('../../../renderer/theme/theme-dark.css');
+
+        test('浅色模式与侧边栏任务列表使用同一套滚动条参数', () => {
+            expect(ruleBody(menus, '.ctx-preview-card::-webkit-scrollbar')).toBe('width:4px;');
+            expect(ruleBody(menus, '.ctx-preview-card::-webkit-scrollbar-track')).toBe('background:transparent;');
+            expect(ruleBody(menus, '.ctx-preview-card::-webkit-scrollbar-thumb')).toBe(
+                ruleBody(custom, '#task-list-container::-webkit-scrollbar-thumb')
+            );
+            expect(ruleBody(menus, '.ctx-preview-card::-webkit-scrollbar-thumb:hover')).toBe(
+                ruleBody(custom, '#task-list-container::-webkit-scrollbar-thumb:hover')
+            );
+        });
+
+        test('深色模式与侧边栏任务列表使用同一套半透明白色 thumb', () => {
+            expect(dark).toContain(
+                "html[data-theme='dark'].ctx-preview-card::-webkit-scrollbar-thumb{background:rgba(255,255,255,0.18)!important;}"
+            );
+            expect(dark).toContain(
+                "html[data-theme='dark']#task-list-container::-webkit-scrollbar-thumb{background:rgba(255,255,255,0.18)!important;}"
+            );
+            expect(dark).toContain(
+                "html[data-theme='dark'].ctx-preview-card::-webkit-scrollbar-thumb:hover{background:rgba(255,255,255,0.28)!important;}"
+            );
+            expect(dark).toContain(
+                "html[data-theme='dark']#task-list-container::-webkit-scrollbar-thumb:hover{background:rgba(255,255,255,0.28)!important;}"
+            );
+        });
     });
 });

@@ -602,6 +602,12 @@ static int write_parent_missing(const char *p)
     /* 剥掉末段分量（最后一个 '/' 之前），得到直接父目录 */
     char *dup = dbox_strdup(p);
     if (!dup) return 0;
+    /* 末尾 '/' 是路径分隔符而非分量，内核接受尾斜杠（mkdir("a/b/") 等同
+     * "a/b"）。不先剥掉的话下方 strrchr 会把目标自身当成父目录，"父目录
+     * 存在、目标不存在"的普通创建会被误判成父链缺失并直接返回 ENOENT，
+     * 例如 git init 的 mkdir(".git/hooks/")。 */
+    size_t len = strlen(dup);
+    while (len > 1 && dup[len - 1] == '/') dup[--len] = '\0';
     char *slash = strrchr(dup, '/');
     if (!slash || slash == dup) {   /* 无父目录分量（相对单段名 / 根） */
         dbox_free(dup);

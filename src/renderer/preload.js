@@ -1999,6 +1999,13 @@ if (shouldExposeMainWindowAPIs()) {
 
     const harmonyRuntime = resolveRendererHarmonyRuntime();
 
+    // 主窗口创建时通过 additionalArguments 带来的有效 zoom factor（含平台补偿）。
+    // renderer 的 CSS 长度是 CSS 像素，需按它反算窗口阴影边距等要与 main 侧 DIP
+    // 对齐的尺寸；首帧前必须同步可得，运行时变更以 display:scaleFactorChanged 为准。
+    const zoomArg = process.argv.find((item) => item.startsWith('--opendesk-zoom='));
+    const zoomArgValue = zoomArg ? Number(zoomArg.split('=')[1]) : 1;
+    const initialZoomFactor = Number.isFinite(zoomArgValue) && zoomArgValue > 0 ? zoomArgValue : 1;
+
     // 暴露系统平台信息，用于 magic pointer、路径选择等功能的平台适配
     safeExposeInMainWorld('systemInfo', {
         platform: process.platform,
@@ -2006,6 +2013,7 @@ if (shouldExposeMainWindowAPIs()) {
         isWindows: process.platform === 'win32',
         isLinux: process.platform === 'linux',
         isOpenHarmony: process.platform === 'openharmony',
+        initialZoomFactor,
         homePath: harmonyRuntime
             ? getHarmonyHomeDirectory(harmonyRuntime)
             : process.env.USERPROFILE || process.env.HOME || process.env.USER_DATA_PATH || '',

@@ -759,6 +759,10 @@ const createWindow = () => {
     // #app-root 内缩同样距离并绘制 box-shadow（titlebar.css 的 --od-window-margin）。
     // 非 Linux 平台 margin 为 0，bounds 换算恒等，既有行为不变。
     const shadowMargin = process.platform === 'linux' ? LINUX_WINDOW_SHADOW_MARGIN : 0;
+    // renderer 侧的 CSS 长度是 CSS 像素，需按有效 zoom 反算才能与上面的 DIP 边距
+    // 对齐；zoom 在窗口创建时已确定，用 additionalArguments 同步带给 preload，
+    // 避免 renderer 首帧前还要等一次 IPC 才能算对边距
+    const windowZoom = computeEffectiveZoom();
     // 尝试恢复上次保存的窗口尺寸与位置，无效或未保存时回退默认尺寸居中
     let savedBounds: { x: number; y: number; width: number; height: number; is_maximized?: boolean } | null = null;
     let windowX: number | undefined;
@@ -827,7 +831,8 @@ const createWindow = () => {
             webviewTag: true,
             allowRunningInsecureContent: true,
             backgroundThrottling: true, // 窗口失焦时降低渲染频率（省电）
-            preload: path.join(__dirname, '..', 'preload', 'index.js')
+            preload: path.join(__dirname, '..', 'preload', 'index.js'),
+            additionalArguments: [`--opendesk-zoom=${windowZoom}`]
         }
     });
 

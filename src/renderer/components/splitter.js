@@ -129,7 +129,8 @@ class SplitterWidget extends HTMLElement {
         </style>
         <slot id="leftPanel" name="left" style="display: flex; flex-direction: column; width: ${initialWidth}px; height: 100%; flex-shrink: 0; min-height: 0; overflow: visible;"></slot>
 
-        <div id="resizer" class="resizer">
+        <!-- data-od-no-longpress：拖拽分割线不参与触摸长按手势（不显示进度圆环） -->
+        <div id="resizer" class="resizer" data-od-no-longpress="1">
             <div class="resizer-center">
                 <div class="resizer-indicator"></div>
             </div>

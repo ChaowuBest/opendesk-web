@@ -755,7 +755,7 @@ export class ImmersiveDesktop extends HTMLElement {
         element.dataset.cardId = card.id;
         element.style.setProperty('--od-i', String(this._cardSeq++));
         element.innerHTML = `
-            <div class="od-card-drag-zone" data-card-drag="${safeText(card.id)}"></div>
+            <div class="od-card-drag-zone" data-card-drag="${safeText(card.id)}" data-od-no-longpress="1"></div>
             <header class="od-card-header">
                 <div class="od-card-pill">
                     <span class="od-card-title" title="${safeText(card.prompt)}">${safeText(card.prompt || this.t('renderer.desktop.card.untitled'))}</span>
@@ -782,7 +782,10 @@ export class ImmersiveDesktop extends HTMLElement {
 
     private renderCardResizeHandles(): string {
         const dirs: ResizeDir[] = ['n', 's', 'e', 'w', 'ne', 'nw', 'se', 'sw'];
-        return dirs.map((dir) => `<div class="od-card-resize-handle" data-dir="${dir}"></div>`).join('');
+        // data-od-no-longpress：触摸长按脚本按下即跳过，不显示进度圆环
+        return dirs
+            .map((dir) => `<div class="od-card-resize-handle" data-dir="${dir}" data-od-no-longpress="1"></div>`)
+            .join('');
     }
 
     private renderCardContent(cardElement: HTMLElement, card: SmartCard): void {
@@ -1655,7 +1658,7 @@ export class ImmersiveDesktop extends HTMLElement {
         element.className = 'od-floating-window od-window-enter';
         element.dataset.desktopWindowId = input.id;
         element.innerHTML = `
-            <header class="od-floating-window-titlebar" data-window-drag="${safeText(input.id)}">
+            <header class="od-floating-window-titlebar" data-window-drag="${safeText(input.id)}" data-od-no-longpress="1">
                 <div class="od-floating-window-title">
                     ${
                         input.iconUrl
@@ -1700,7 +1703,10 @@ export class ImmersiveDesktop extends HTMLElement {
 
     private renderWindowResizeHandles(): string {
         const dirs: ResizeDir[] = ['n', 'e', 'w', 's', 'ne', 'nw', 'se', 'sw'];
-        return dirs.map((dir) => `<div class="od-window-resize-handle" data-dir="${dir}"></div>`).join('');
+        // data-od-no-longpress：触摸长按脚本按下即跳过，不显示进度圆环
+        return dirs
+            .map((dir) => `<div class="od-window-resize-handle" data-dir="${dir}" data-od-no-longpress="1"></div>`)
+            .join('');
     }
 
     private attachWindow(desktopWindow: DesktopWindow): void {

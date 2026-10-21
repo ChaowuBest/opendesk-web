@@ -30,10 +30,20 @@
  *
  * 两种来源的兜底一致：blur/closed/超时结束会话。bounds 换算见
  * linux-window-shadow.ts。
+ *
+ * renderer 上报的窗口内坐标是 CSS 像素（主窗口按缩放偏好设置了
+ * webContents.setZoomFactor），会话入口统一换算成 DIP 后再参与 bounds 计算；
+ * 混用两种单位会让按下点把窗口拽偏（zoom<1 时整窗向左上跳，见 clientCssToDip）。
  */
 
 import { BrowserWindow, screen } from 'electron';
-import { computeDragBounds, computePointerFeedDelta, type Point, type WindowBounds } from './linux-window-shadow.js';
+import {
+    clientCssToDip,
+    computeDragBounds,
+    computePointerFeedDelta,
+    type Point,
+    type WindowBounds
+} from './linux-window-shadow.js';
 
 const DRAG_POLL_INTERVAL_MS = 16;
 /** 安全网：异常情况下（如 pointerup 丢失）避免会话永久挂起。 */
@@ -56,7 +66,7 @@ interface WindowDragSession {
     startBounds: WindowBounds;
     /** cursor 驱动：会话起始光标屏幕坐标 */
     startPoint: Point;
-    /** pointer 驱动：按下点（renderer 窗口内坐标） */
+    /** pointer 驱动：按下点（renderer 窗口内坐标，已换算为 DIP） */
     grabPoint: Point;
     /** pointer 驱动不轮询 */
     pollTimer: NodeJS.Timeout | null;
@@ -65,7 +75,10 @@ interface WindowDragSession {
     closedHandler: () => void;
 }
 
-/** 鼠标按下点在窗口内的坐标（renderer 的 event.clientX/Y，Electron 视口原点即窗口原点）。 */
+/**
+ * 鼠标按下点在窗口内的坐标（renderer 的 event.clientX/Y，Electron 视口原点即窗口原点）。
+ * 单位为 CSS 像素，会话入口按 zoom factor 换算为 DIP。
+ */
 export interface WindowDragGrabPoint {
     x: number;
     y: number;
@@ -94,7 +107,9 @@ export function startWindowDragSession(
     }
     // 没有按下点就无法换算窗口内坐标，退回光标轮询路径
     const pointerDriven = driver === 'pointer' && !!grabPoint;
-    const grab = grabPoint ?? { x: 0, y: 0 };
+    const hasGrabPoint = !!grabPoint;
+    // 按下点是 renderer 上报的 CSS 像素坐标，换算成 DIP 后才能与光标、bounds 同系定位
+    const grab = grabPoint ? clientCssToDip(grabPoint, win.webContents.getZoomFactor()) : { x: 0, y: 0 };
 
     if (pointerDriven) {
         if (win.isMaximized()) {
@@ -133,8 +148,8 @@ export function startWindowDragSession(
                 return;
             }
             const target: WindowBounds = {
-                x: grabPoint ? cursor.x - grabPoint.x : normal.x,
-                y: grabPoint ? cursor.y - grabPoint.y : normal.y,
+                x: hasGrabPoint ? cursor.x - grab.x : normal.x,
+                y: hasGrabPoint ? cursor.y - grab.y : normal.y,
                 width: normal.width,
                 height: normal.height
             };
@@ -145,12 +160,12 @@ export function startWindowDragSession(
     }
 
     let startBounds = win.getBounds();
-    if (grabPoint) {
+    if (hasGrabPoint) {
         // 按下点以窗口内坐标给出（视口原点 = 窗口原点）：新位置让该点保持在
         // 当前指针下，即窗口不因按下而跳动（换算正确时新位置 = 原位置）
         startBounds = {
-            x: cursor.x - grabPoint.x,
-            y: cursor.y - grabPoint.y,
+            x: cursor.x - grab.x,
+            y: cursor.y - grab.y,
             width: startBounds.width,
             height: startBounds.height
         };
@@ -226,7 +241,7 @@ function applyPendingClient(): void {
 }
 
 /**
- * pointer 驱动会话的坐标更新（renderer pointermove 上报的窗口内坐标）。
+ * pointer 驱动会话的坐标更新（renderer pointermove 上报的窗口内坐标，CSS 像素）。
  * 无会话或会话为光标驱动时忽略——鼠标路径由主进程轮询驱动。
  *
  * 按帧合并：触摸屏 pointermove 可达 240Hz，逐条换算会反复读到「已应用位移超前于
@@ -237,7 +252,8 @@ export function updateWindowDragSession(client: Point): void {
     if (!activeSession || activeSession.driver !== 'pointer') {
         return;
     }
-    pendingClient = client;
+    // 上报的窗口内坐标是 CSS 像素，与按下点同系换算为 DIP 后再参与位移计算
+    pendingClient = clientCssToDip(client, activeSession.win.webContents.getZoomFactor());
     if (coalesceTimer) {
         return;
     }

@@ -167,3 +167,16 @@ export function computePointerFeedDelta(input: PointerFeedInput): { dx: number; 
         dy: appliedBounds.y - startBounds.y + (client.y - startClient.y)
     };
 }
+
+/**
+ * renderer 上报的窗口内坐标（CSS 像素）换算为 DIP。
+ *
+ * 主窗口按缩放偏好（gui_config.scale_factor）调用 webContents.setZoomFactor，
+ * renderer 的 event.clientX/Y 因此是 CSS 像素；而窗口 bounds 与
+ * screen.getCursorScreenPoint() 都是 DIP。拖动/resize 会话直接混用两者会让窗口
+ * 位置按 client*(1-zoom) 偏移（zoom<1 时按下点越靠右整窗越向左跳），位移也会按
+ * zoom 比例失真。会话入口统一用本函数换算，内部只处理 DIP。
+ */
+export function clientCssToDip(client: Point, zoomFactor: number): Point {
+    return { x: client.x * zoomFactor, y: client.y * zoomFactor };
+}

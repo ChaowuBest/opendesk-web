@@ -5,6 +5,9 @@
  * 光标位置，必须由 renderer 上报的窗口内坐标驱动——否则会话会把窗口跳到陈旧光标
  * 位置，之后位移恒为 0，表现为"按住顶部拖动无法正确调整窗口位置"。
  * 本文件用假窗口验证两条路径的 bounds 变化。
+ *
+ * renderer 上报的窗口内坐标是 CSS 像素（受 webContents zoom factor 影响，即
+ * gui_config.scale_factor 缩放偏好），bounds 与系统光标是 DIP，会话入口需换算。
  */
 
 import { afterEach, beforeEach, describe, expect, it, jest } from '@jest/globals';
@@ -33,11 +36,13 @@ class FakeWindow {
     maximized = false;
     fullScreen = false;
     setBoundsCalls: Bounds[] = [];
+    readonly webContents: { getZoomFactor(): number };
     private listeners = new Map<string, Array<() => void>>();
 
-    constructor(bounds: Bounds) {
+    constructor(bounds: Bounds, zoomFactor = 1) {
         this.bounds = { ...bounds };
         this.normalBounds = { ...bounds };
+        this.webContents = { getZoomFactor: () => zoomFactor };
     }
 
     isDestroyed(): boolean {
@@ -221,5 +226,64 @@ describe('cursor 驱动（鼠标，回归）', () => {
         jest.advanceTimersByTime(100);
 
         expect(win.bounds).toEqual(placed);
+    });
+});
+
+/**
+ * 缩放偏好（gui_config.scale_factor → webContents.setZoomFactor）下的坐标换算。
+ *
+ * renderer 的 event.clientX/Y 是 CSS 像素，主进程的 bounds 与
+ * screen.getCursorScreenPoint() 是 DIP。按下点不换算时，窗口位置按
+ * client*(1-zoom) 偏左（zoom<1），表现为"指针落到顶部拖拽层稍微一动整窗向左跳"，
+ * 且按下点越靠右跳得越多；pointer 驱动的位移同样按 zoom 比例失真（不跟手）。
+ */
+describe('页面 zoom factor ≠ 1（缩放偏好）', () => {
+    // 0.5 可被二进制精确表示，断言不受浮点噪声影响
+    const ZOOM = 0.5;
+
+    it('cursor：按下点换算后窗口不跳位，轮询位移仍按 DIP 计', () => {
+        // 窗口 x=100，按下点 client 300 CSS = 窗口内 150 DIP → 光标在 250
+        getCursorScreenPoint.mockReturnValue({ x: 250, y: 88 });
+        const win = new FakeWindow(START, ZOOM);
+
+        startWindowDragSession(win as never, { x: 300, y: 16 });
+        expect(win.setBoundsCalls[0]).toEqual(START);
+
+        getCursorScreenPoint.mockReturnValue({ x: 270, y: 88 });
+        jest.advanceTimersByTime(16);
+        expect(win.bounds).toEqual({ x: 120, y: 80, width: 1200, height: 800 });
+    });
+
+    it('cursor：最大化还原后按下点落在光标下（不额外跳位）', () => {
+        const win = new FakeWindow(START, ZOOM);
+        win.maximized = true;
+        win.normalBounds = { x: 200, y: 100, width: 1000, height: 700 };
+        // 按下点 client 400 CSS = 200 DIP，光标 400 → 还原后的窗口 x 仍是 200
+        getCursorScreenPoint.mockReturnValue({ x: 400, y: 108 });
+
+        startWindowDragSession(win as never, { x: 400, y: 16 });
+        jest.advanceTimersByTime(60);
+        expect(win.bounds).toEqual({ x: 200, y: 100, width: 1000, height: 700 });
+    });
+
+    it('pointer：窗口内坐标位移按 zoom 折算成 DIP 位移', () => {
+        const win = new FakeWindow(START, ZOOM);
+        startWindowDragSession(win as never, { x: 300, y: 16 }, 'pointer');
+
+        // 手指在窗口内右移 50 CSS = 25 DIP → 窗口右移 25（与手指屏幕位移一致）
+        updateWindowDragSession({ x: 350, y: 16 });
+        expect(win.bounds).toEqual({ x: 125, y: 80, width: 1200, height: 800 });
+    });
+
+    it('cursor：真实配置 scale_factor=0.8 时按下点不再把窗口拽向左', () => {
+        // 窗口 x=100，按下点 client 500 CSS = 400 DIP → 光标在 500；
+        // 未换算时新位置 = 500 - 500 = 0，整窗向左跳 100
+        getCursorScreenPoint.mockReturnValue({ x: 500, y: 92.8 });
+        const win = new FakeWindow(START, 0.8);
+
+        startWindowDragSession(win as never, { x: 500, y: 16 });
+
+        expect(win.bounds.x).toBeCloseTo(100, 6);
+        expect(win.bounds.y).toBeCloseTo(80, 6);
     });
 });

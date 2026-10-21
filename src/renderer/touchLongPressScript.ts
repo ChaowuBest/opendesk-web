@@ -24,10 +24,14 @@
  *    配色对齐 taskview markdown 行内代码：底环 var(--chat-accent-soft)、
  *    进度环与中心点 var(--chat-accent)，深浅色主题自动跟随。
  * 2. 进度满后保持满环（就绪态），等用户松开手指才触发右键，位置为最新手指
- *    位置；就绪后移动超容差 / 多指 / touchcancel 仍会取消。触发时清除触摸
- *    选词产生的选区，并在命中元素上派发合成 contextmenu——这是菜单的唯一
- *    位置来源（局部坐标天然精确，不依赖合成输入事件与原生菜单 API 的平台
- *    坐标语义）。
+ *    位置；就绪后移动超容差 / 多指 / touchcancel 仍会取消。菜单严格由「松开
+ *    手指」承担：圆环出现起整个文档禁用文本选择（html.od-lp-holding）——
+ *    Chromium 的触摸长按选词手势会在按住 ~500ms 时接管触摸（派发 touchcancel
+ *    且此后不再有 touchend），禁选后手势可完整走到松开；编辑区在触发时于触摸
+ *    点手工补选词（caretRangeFromPoint + selection.modify），供自绘菜单的
+ *    剪切/复制使用。手势期间 Chromium 触摸长按自身派发的原生 contextmenu
+ *    （带触摸 sourceCapabilities 标记）一律吞掉，避免任何菜单在手指未松开时
+ *    弹出；松开时本脚本派发的合成 contextmenu 无该标记，是菜单的唯一来源。
  * 3. 编辑区（input / textarea / contenteditable）右键菜单在脚本内自绘：
  *    剪切/复制/粘贴/全选，视觉对齐公共 ctx-menu（同一套 --ctx-* 变量，
  *    深浅色主题自动切换）。真实鼠标右键与触摸长按的合成事件统一走该菜单
@@ -40,6 +44,9 @@
  *    'od-clipboard-read' + 'od-clipboard-read-result'），不把剪贴板暴露给网页。
  * 4. 触发后 Chromium 会补发模拟的 mousedown/mouseup/click 序列，
  *    在 window 捕获阶段拦截一轮，防止误触发按钮或刚弹出的菜单被"点击"掉。
+ * 5. 拖拽/缩放表面（祖先带 data-od-no-longpress：窗口边缘感应条、分栏分割线、
+ *    桌面卡片/悬浮窗的拖拽条与缩放手柄）按下即进入按住拖动，不构成右键长按：
+ *    不显示圆环、不触发菜单，其触摸来源的原生 contextmenu 也在宽限期内吞掉。
  *
  * createTouchLongPressController 必须保持完全自包含（只引用全局与字面量）：
  * 它会被 toString() 序列化成 TOUCH_LONG_PRESS_SCRIPT 注入主世界，单测则直接调用。
@@ -53,12 +60,18 @@ export function createTouchLongPressController(): void {
     const LONG_PRESS_MS = 550;
     const SHOW_DELAY_MS = 120;
     const CANCEL_SLOP_PX = 36;
-    // 移动意图阈值：超过即视为用户在做滚动/拖拽而非长按（用于区分 touchcancel）
-    const MOVE_INTENT_SLOP_PX = 8;
     const CANCEL_FADE_MS = 120;
     const SUPPRESS_MOUSE_MS = 150;
     const INDICATOR_ID = 'od-longpress-indicator';
     const STYLE_ID = 'od-longpress-style';
+    // 长按保持期间挂在 html 上的类：整体禁用文本选择，规避 Chromium 长按选词
+    // 手势接管触摸（touchcancel）导致「松开才触发」无从谈起
+    const HOLD_CLASS = 'od-lp-holding';
+    // 拖拽/缩放表面标记：按下不参与长按手势（窗口边缘、分割线、桌面卡片手柄等）
+    const NO_LONGPRESS_ATTR = 'data-od-no-longpress';
+    // 标记表面松开前不会进入本脚本手势，Chromium 仍可能派发触摸长按原生
+    // contextmenu：以最后一次标记表面触摸为锚吞掉宽限期内的触摸来源事件
+    const TOUCH_CM_GRACE_MS = 1500;
     const EDIT_MENU_HOST_ATTR = 'data-od-lp-edit-menu';
     const EDIT_MENU_ID = 'od-edit-menu';
     const CLIP_WRITE_EVENT = 'od-clipboard-write';
@@ -122,6 +135,13 @@ export function createTouchLongPressController(): void {
         '@keyframes od-lp-fired {',
         '    from { transform: scale(1); opacity: 1; }',
         '    to { transform: scale(1.35); opacity: 0; }',
+        '}',
+        // 长按保持期间整体禁用文本选择（含伪元素），防止 Chromium 在按住 ~500ms
+        // 时进入触摸选词手势接管触摸（touchcancel 后收不到 touchend）
+        'html.' + HOLD_CLASS + ', html.' + HOLD_CLASS + ' *,',
+        'html.' + HOLD_CLASS + ' *::before, html.' + HOLD_CLASS + ' *::after {',
+        '    -webkit-user-select: none !important;',
+        '    user-select: none !important;',
         '}'
     ].join('\n');
 
@@ -271,6 +291,85 @@ export function createTouchLongPressController(): void {
             }
         } catch {
             /* 页面可能未就绪 */
+        }
+    }
+
+    // 长按保持期的文本选择禁用开关：圆环出现时开启，结束/取消时关闭
+    function setHolding(on: boolean): void {
+        try {
+            if (on) {
+                document.documentElement.classList.add(HOLD_CLASS);
+            } else {
+                document.documentElement.classList.remove(HOLD_CLASS);
+            }
+        } catch {
+            /* 文档未就绪时无手势可言 */
+        }
+    }
+
+    // 触摸派生的原生事件标记（Chromium 扩展）：触摸长按触发的原生 contextmenu
+    // 带 firesTouchEvents=true；本脚本松开时合成的 contextmenu 与真实鼠标右键没有
+    function isTouchDerivedEvent(event: any): boolean {
+        try {
+            const caps = event.sourceCapabilities;
+            return !!caps && caps.firesTouchEvents === true;
+        } catch {
+            return false;
+        }
+    }
+
+    // 拖拽/缩放表面（祖先带 data-od-no-longpress）：按下即进入按住拖动，
+    // 不构成右键长按。经 composedPath 扫描以覆盖 Shadow DOM 内的元素
+    function isNoLongpressSurface(event: any): boolean {
+        const selector = '[' + NO_LONGPRESS_ATTR + ']';
+        const path = pathOf(event);
+        for (let i = 0; i < path.length; i++) {
+            const el = path[i];
+            if (el && el.nodeType === 1 && typeof el.matches === 'function' && el.matches(selector)) {
+                return true;
+            }
+        }
+        try {
+            const target = event.target;
+            if (target && typeof target.closest === 'function' && target.closest(selector)) {
+                return true;
+            }
+        } catch {
+            /* 忽略 */
+        }
+        return false;
+    }
+
+    // hold 期间禁用了 Chromium 的触摸选词，编辑区在触发时于触摸点手工补选词，
+    // 供自绘菜单的剪切/复制使用（caretRangeFromPoint 失效时不影响弹菜单）
+    function selectWordAt(x: number, y: number): void {
+        try {
+            const selection = window.getSelection();
+            if (!selection || typeof selection.setBaseAndExtent !== 'function') return;
+            const docAny = document as any;
+            let node: any = null;
+            let offset = 0;
+            if (typeof docAny.caretRangeFromPoint === 'function') {
+                const range = docAny.caretRangeFromPoint(x, y);
+                if (range) {
+                    node = range.startContainer;
+                    offset = range.startOffset;
+                }
+            } else if (typeof docAny.caretPositionFromPoint === 'function') {
+                const pos = docAny.caretPositionFromPoint(x, y);
+                if (pos && pos.offsetNode) {
+                    node = pos.offsetNode;
+                    offset = pos.offset;
+                }
+            }
+            if (!node) return;
+            selection.setBaseAndExtent(node, offset, node, offset);
+            if (typeof selection.modify === 'function') {
+                selection.modify('extend', 'backward', 'word');
+                selection.modify('extend', 'forward', 'word');
+            }
+        } catch {
+            /* 选词失败不影响菜单弹出 */
         }
     }
 
@@ -696,7 +795,20 @@ export function createTouchLongPressController(): void {
         }
     }
 
+    // 最后一次发生在标记表面（拖拽/缩放）上的触摸时间戳：这些表面不进入本脚本
+    // 手势，但 Chromium 的触摸长按原生 contextmenu 仍可能到达，按宽限期吞掉
+    let lastMarkedTouchAt = 0;
+
     function onDocumentContextMenu(event: any): void {
+        // Chromium 自带触摸长按手势：按住 ~500ms 起会派发触摸来源的原生
+        // contextmenu（随后才松手）。菜单只应「松开手指」触发，手势进行中
+        // （含标记表面的宽限期）一律吞掉触摸来源的原生 contextmenu；松开时
+        // 本脚本合成的 contextmenu 无触摸标记，是菜单的唯一来源。
+        if (isTouchDerivedEvent(event) && (active || Date.now() - lastMarkedTouchAt < TOUCH_CM_GRACE_MS)) {
+            if (typeof event.preventDefault === 'function') event.preventDefault();
+            if (typeof event.stopPropagation === 'function') event.stopPropagation();
+            return;
+        }
         // 真实右键与触摸长按的合成事件统一走自绘菜单。用 composedPath 取真实
         // 目标：fileExplorer 等组件的预览/编辑器在 open Shadow DOM 内，document
         // 收到的事件 target 已被重定向为 shadow host，且 shadow 内选区
@@ -804,7 +916,6 @@ export function createTouchLongPressController(): void {
         showTimer: any;
         timer: any;
         ready: boolean;
-        moved: boolean;
     } | null = null;
 
     function clearShowTimer(state: NonNullable<typeof active>): void {
@@ -852,6 +963,7 @@ export function createTouchLongPressController(): void {
                 active.timer = null;
             }
         }
+        setHolding(false);
         fadeOutIndicator();
     }
 
@@ -862,10 +974,12 @@ export function createTouchLongPressController(): void {
         if (!event.touches || event.touches.length !== 1) return;
         const touch = event.changedTouches && event.changedTouches[0];
         if (!touch) return;
-        // 可编辑元素/可选文本区的长按：Chromium 会在按住 ~500ms 后进入文本
-        // 选择手势并派发 touchcancel（此时不会再有 touchend）。圆环进度照常
-        // 显示，touchcancel 时按移动意图判定为长按成立（无移动）或滚动接管
-        // （有移动），见 onTouchEnd。
+        // 拖拽/缩放表面（窗口边缘、分割线、桌面卡片手柄等）按下即进入按住拖动，
+        // 不显示圆环也不触发菜单；记录锚点供原生 contextmenu 宽限期判定
+        if (isNoLongpressSurface(event)) {
+            lastMarkedTouchAt = Date.now();
+            return;
+        }
         active = {
             touchId: touch.identifier,
             startX: touch.clientX,
@@ -874,8 +988,7 @@ export function createTouchLongPressController(): void {
             curY: touch.clientY,
             showTimer: null,
             timer: null,
-            ready: false,
-            moved: false
+            ready: false
         };
         // 按下不立即显示指示器（多数触摸是单击），延迟 120ms 后出现；
         // 触发计时从圆环显示时从 0 起算，进度环与定时严格同步。
@@ -884,6 +997,9 @@ export function createTouchLongPressController(): void {
             if (active === state) {
                 state.showTimer = null;
                 showIndicator(state.curX, state.curY);
+                // 圆环出现即禁用文本选择：规避 Chromium 触摸长按在 ~500ms 时
+                // 进入选词手势接管触摸（touchcancel 后收不到 touchend）
+                setHolding(true);
                 state.timer = setTimeout(onProgressDone, LONG_PRESS_MS);
                 // 长按候选态通知：Chromium 对可编辑元素的触摸长按会派发真实
                 // contextmenu（随后弹主进程原生菜单，弹在系统光标位置）；主进程
@@ -905,10 +1021,6 @@ export function createTouchLongPressController(): void {
         const dx = touch.clientX - active.startX;
         const dy = touch.clientY - active.startY;
         const distSq = dx * dx + dy * dy;
-        // 有移动意图（滚动/拖拽）：记录，供 touchcancel 时区分「文本选择手势接管」
-        if (distSq > MOVE_INTENT_SLOP_PX * MOVE_INTENT_SLOP_PX) {
-            active.moved = true;
-        }
         // 位移超过约手指半径视为拖动/滚动意图；容差内的移动跟随手指（就绪态同样有效）
         if (distSq > CANCEL_SLOP_PX * CANCEL_SLOP_PX) {
             cancelPress();
@@ -931,29 +1043,24 @@ export function createTouchLongPressController(): void {
             state.timer = null;
         }
         active = null;
+        setHolding(false);
         if (event.type === 'touchcancel') {
-            // Chromium 手势接管：无移动意图 = 文本选择手势（可编辑元素或可选文本区
-            // 长按），视为长按成立，立即完成并弹菜单（此后不会再有 touchend）；
-            // 有移动意图 = 滚动接管，正常取消。
-            if (!state.moved) {
-                completeIndicator();
-                const target = elementAt(state.curX, state.curY);
-                if (!isEditableElement(target)) clearPageSelection();
-                triggerRightClick(state.curX, state.curY);
-                armClickSuppress();
-                return;
-            }
+            // 手势被系统/Chromium 接管（滚动等）：此后收不到 touchend，无法满足
+            // 「松开手指才触发」，一律取消（选词接管已被 hold 期禁用文本选择规避）
             fadeOutIndicator();
             return;
         }
-        const wasReady = state.ready;
-        if (wasReady) {
+        if (state.ready) {
             // 进度已满，等手指松开才触发右键；位置为最新手指位置。
-            // 编辑区保留 Chromium 触摸长按产生的选词（自绘菜单的复制/剪切据此
-            // 工作），非编辑区清掉杂散选区。
+            // 编辑区在触摸点补选词（自绘菜单的复制/剪切据此工作，Chromium 选词
+            // 已被 hold 期禁用），非编辑区清掉杂散选区。
             completeIndicator();
             const target = elementAt(state.curX, state.curY);
-            if (!isEditableElement(target)) clearPageSelection();
+            if (isEditableElement(target)) {
+                selectWordAt(state.curX, state.curY);
+            } else {
+                clearPageSelection();
+            }
             triggerRightClick(state.curX, state.curY);
             armClickSuppress();
         } else {
