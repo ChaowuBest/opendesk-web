@@ -160,6 +160,23 @@ test('provides a one-command ARM64 installer pipeline pinned to the arm64 toolch
     assert.match(script, /build-wix-bootstrapper\.mjs/);
 });
 
+test('writes a dual-platform MSI template so the x86 burn engine can install on ARM64', () => {
+    const installerBuilder = fs.readFileSync(
+        path.join(projectRoot, 'scripts', 'windows-installer', 'build-installer.mjs'),
+        'utf8'
+    );
+
+    // WiX v3 的 Burn 引擎恒为 x86 进程：ARM64 Windows 上该安装上下文经 WOW64 报告的
+    // "原生处理器类型"是 AMD64，Template 只写 ARM64 的 MSI 会被 msiexec 以 1633 拒绝
+    // （0x80070661）。x64/arm64 两条链路必须统一使用双平台 Template 列表；
+    // "arm64 包不能装 x64"的语义由 BA 的 EnforceCompatibleArchitecture 在 Detect
+    // 阶段拦截（早于 msiexec），与 Template 无关。
+    assert.match(installerBuilder, /const msiTemplate = 'x64,ARM64;1033';/);
+    // 不允许按链路回退到 ARM64 单平台 Template（否则 arm64 包在 ARM64 机器上 1633）
+    assert.doesNotMatch(installerBuilder, /msiTemplate\s*=[^;]*\?/);
+    assert.doesNotMatch(installerBuilder, /'ARM64;1033'/);
+});
+
 test('keeps versioned application directories without recursively purging the selected root', async () => {
     const config = getWixConfig();
     const creator = {
