@@ -3,6 +3,7 @@
  * OpenDesk is licensed under Mulan PSL v2.
  */
 
+import { OVERLAY_CSS } from '../../../../common/overlay-styles.js';
 import { renderIcon } from '../../../../renderer/components/confirmModal';
 
 import { syncShadowHostTheme } from '../../../../renderer/theme/theme-shadow-overrides.ts';
@@ -78,6 +79,7 @@ function formatUserError(error) {
 }
 
 const STYLE = `
+${OVERLAY_CSS}
 :host {
     display: flex;
     flex-direction: column;
@@ -304,7 +306,7 @@ const STYLE = `
 .version-item.current { border-color: #bcd7ff; background: #f4f8ff; }
 .version-name { font-weight: 700; font-size: 12px; }
 .version-meta { color: #999; font-size: 11px; margin-top: 3px; }
-.modal-overlay { display: none; position: fixed; inset: 0; z-index: 200; background: rgba(0,0,0,.3); align-items: center; justify-content: center; backdrop-filter: blur(6px); }
+.modal-overlay { display: none; position: fixed; inset: 0; z-index: 200; align-items: center; justify-content: center; }
 .modal-overlay.visible { display: flex; }
 .modal { width: 460px; max-width: calc(100vw - 32px); background: #fff; border-radius: 16px; padding: 0; box-shadow: 0 24px 80px rgba(0,0,0,.2); overflow: hidden; }
 .modal-banner {
@@ -405,10 +407,6 @@ const STYLE = `
     border-color: var(--od-border-strong, rgba(255,255,255,0.2));
     color: var(--od-text, #e4e4e4);
     box-shadow: 0 16px 60px rgba(0,0,0,0.45);
-}
-:host-context(html[data-theme='dark']) .modal-overlay,
-:host([data-theme='dark']) .modal-overlay {
-    background: rgba(0,0,0,0.45);
 }
 :host-context(html[data-theme='dark']) .modal-banner,
 :host([data-theme='dark']) .modal-banner {
@@ -965,7 +963,7 @@ class AppMgrEntryWidget extends HTMLElement {
 
     renderCreateDialog() {
         return `
-            <div class="modal-overlay ${this.createDialogVisible ? 'visible' : ''}">
+            <div class="modal-overlay od-overlay ${this.createDialogVisible ? 'visible' : ''}">
                 <div class="modal">
                     <div class="modal-banner">
                         <div class="modal-banner-icon">${renderIcon('fa-plus')}</div>

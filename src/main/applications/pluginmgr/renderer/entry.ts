@@ -9,6 +9,7 @@
  * See the Mulan PSL v2 for more details.
  */
 
+import { OVERLAY_CSS } from '../../../../common/overlay-styles.js';
 import { escapeHtml } from '../../../../common/utils/escape.js';
 import { isSupportedLocale } from '../../../../common/locale.js';
 import { createRendererTranslator, resolveRendererLocale } from '../../../../renderer/locale.js';
@@ -109,6 +110,7 @@ interface PluginFileSystemAPI {
 }
 
 const STYLE = `
+${OVERLAY_CSS}
 :host {
     display: block;
     height: 100%;
@@ -267,8 +269,6 @@ button, input { font: inherit; }
     z-index: 30;
     align-items: center;
     justify-content: center;
-    background: rgba(0, 0, 0, .18);
-    backdrop-filter: blur(6px);
     animation: fade-in .15s ease;
 }
 .modal-overlay.visible { display: flex; }
@@ -1126,12 +1126,12 @@ export class PluginMgrEntryWidget extends HTMLElement {
 
     private renderInstallDialog(): string {
         const mode = this.installDialogMode;
-        if (!mode) return '<div class="modal-overlay" data-install-dialog></div>';
+        if (!mode) return '<div class="modal-overlay od-overlay" data-install-dialog></div>';
         const titleKey = mode === 'npm' ? 'plugin.center.installNpmTitle' : 'plugin.center.installUrlTitle';
         const hintKey = mode === 'npm' ? 'plugin.center.installNpmHint' : 'plugin.center.installUrlHint';
         const placeholderKey =
             mode === 'npm' ? 'plugin.center.installNpmPlaceholder' : 'plugin.center.installUrlPlaceholder';
-        return `<div class="modal-overlay visible" data-install-dialog>
+        return `<div class="modal-overlay od-overlay visible" data-install-dialog>
             <form class="modal-dialog" data-install-form>
                 <h3>${escapeHtml(this.t(titleKey))}</h3>
                 <div class="hint">${escapeHtml(this.t(hintKey))}</div>

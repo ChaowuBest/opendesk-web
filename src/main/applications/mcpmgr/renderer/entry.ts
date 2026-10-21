@@ -9,6 +9,7 @@
  * See the Mulan PSL v2 for more details.
  */
 
+import { OVERLAY_CSS } from '../../../../common/overlay-styles.js';
 import { AgentOperableHTMLElement, RendererTool, RendererToolset } from '../../widget_utils.js';
 import { z } from 'zod';
 import { escapeHtml } from '../../../../common/utils/escape.js';
@@ -115,6 +116,7 @@ const PASTEL_COLORS = [
 ];
 
 const STYLE = `
+${OVERLAY_CSS}
 :host {
     display: flex; flex-direction: column; height: 100%;
     font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Display', 'SF Pro Text', 'PingFang SC', 'Microsoft YaHei', 'Helvetica Neue', sans-serif;
@@ -326,9 +328,9 @@ button, input, textarea { font: inherit; }
 .scroll-sentinel { height: 1px; }
 
 .detail-overlay {
-    display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.3);
+    display: none; position: fixed; inset: 0;
     z-index: 10000; align-items: center; justify-content: center;
-    backdrop-filter: blur(6px); animation: fade-in 0.15s ease;
+    animation: fade-in 0.15s ease;
 }
 .detail-overlay.visible { display: flex; }
 @keyframes fade-in { from { opacity: 0; } to { opacity: 1; } }
@@ -534,9 +536,6 @@ button, input, textarea { font: inherit; }
     background: rgba(96,165,250,0.2);
     border-color: #60a5fa;
     color: #93c5fd;
-}
-:host([data-theme="dark"]) .detail-overlay {
-    background: rgba(0,0,0,0.45);
 }
 :host([data-theme="dark"]) .detail-header.info {
     background: rgba(122,162,232,0.16);
@@ -1423,7 +1422,7 @@ class McpMgrEntryWidget extends AgentOperableHTMLElement {
     }) {
         this.removeDetailDialog();
         const overlay = document.createElement('div');
-        overlay.className = 'detail-overlay visible';
+        overlay.className = 'detail-overlay od-overlay visible';
         overlay.id = 'detail-overlay';
         overlay.innerHTML = `
         <div class="detail-dialog">

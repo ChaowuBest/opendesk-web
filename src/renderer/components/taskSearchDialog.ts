@@ -9,6 +9,7 @@
  * See the Mulan PSL v2 for more details.
  */
 
+import { ensureOverlayStyles } from './overlay.js';
 import './taskSearchDialog.css';
 import {
     normalizeSearchText,
@@ -58,7 +59,8 @@ export class TaskSearchDialog {
 
     constructor(private readonly options: Options) {
         const t = (key: string) => options.translate('renderer.taskSearch.' + key);
-        this.dialog.className = 'od-task-search';
+        ensureOverlayStyles();
+        this.dialog.className = 'od-task-search od-overlay';
         this.dialog.setAttribute('aria-label', t('title'));
         this.dialog.innerHTML = `
             <div class="od-task-search-top">

@@ -13,6 +13,7 @@
  *  CONSTANTS
  * ═══════════════════════════════════════════════════ */
 
+import { OVERLAY_CSS } from '../../../../common/overlay-styles.js';
 import { createTranslatorForCalendar } from '../locale/renderer.js';
 import { resolveRendererLocale } from '../../../../renderer/locale.js';
 
@@ -42,6 +43,7 @@ const HOUR_HEIGHT = 60;
  * ═══════════════════════════════════════════════════ */
 
 const CALENDAR_CSS = `
+${OVERLAY_CSS}
 /* ---- Root ---- */
 .cal-root {
     font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Display', 'SF Pro Text', 'Segoe UI', system-ui, sans-serif;
@@ -263,7 +265,6 @@ const CALENDAR_CSS = `
 
 /* ---- Modal ---- */
 .cal-modal-bg {
-    background: rgba(0,0,0,0.3); backdrop-filter: blur(6px);
     display: flex; align-items: center; justify-content: center;
     animation: cal-fade 0.2s ease-out;
 }
@@ -715,9 +716,6 @@ const CALENDAR_CSS = `
 }
 [data-theme="dark"] .cal-ctx-sep {
     background: rgba(255,255,255,0.08);
-}
-[data-theme="dark"] .cal-modal-bg {
-    background: rgba(0,0,0,0.45);
 }
 [data-theme="dark"] .cal-modal-card {
     background: #2A2826;
@@ -2008,7 +2006,7 @@ class CalendarEntryWidget extends HTMLElement {
         ).join('');
 
         modal.innerHTML = `
-        <div class="cal-modal-bg fixed inset-0" id="cal-modal-bg">
+        <div class="cal-modal-bg od-overlay fixed inset-0" id="cal-modal-bg">
             <div class="cal-modal-card">
                 <div class="cal-modal-banner cal-modal-banner-info">
                     <div class="cal-modal-banner-icon">
@@ -2452,7 +2450,7 @@ class CalendarEntryWidget extends HTMLElement {
         };
 
         modal.innerHTML = `
-        <div class="cal-modal-bg fixed inset-0" id="cal-modal-bg">
+        <div class="cal-modal-bg od-overlay fixed inset-0" id="cal-modal-bg">
             <div class="cal-modal-card" style="width:400px;">
                 <div class="cal-modal-banner cal-modal-banner-info">
                     <div class="cal-modal-banner-icon">
