@@ -28,8 +28,8 @@ const csharpCompiler = process.env.CSC_PATH || 'C:\\Windows\\Microsoft.NET\\Fram
 const bootstrapperResourcesDirectory = path.join(projectRoot, 'resources', 'package', 'bootstrapper');
 const iconPath = path.join(projectRoot, 'resources', 'package', 'icons', 'icon_round.ico');
 const serviceBuilderPath = path.join(projectRoot, 'scripts', 'windows-update-service', 'build-service.mjs');
-// MSI 平台跟随 OPENDESK_WIX_ARCH：x64 链路产出的 MSI 由 SetMsiTemplate 追加 ARM64 平台，
-// arm64 链路产出单平台 ARM64 MSI（x64 机器安装会在 BA 架构检查处被拒绝）。
+// MSI 平台跟随 OPENDESK_WIX_ARCH：决定 candle -arch / Package Platform / InstallerVersion；
+// Template 平台列表对 x64/arm64 链路统一写 'x64,ARM64;1033'（原因见下方 msiTemplate 处注释）。
 const targetWindowsArch = process.env.OPENDESK_WIX_ARCH || 'x64';
 if (targetWindowsArch !== 'x64' && targetWindowsArch !== 'arm64') {
     throw new Error(`Unsupported OPENDESK_WIX_ARCH: ${targetWindowsArch}`);
@@ -431,10 +431,14 @@ run(
     ],
     projectRoot
 );
-// Windows Installer 只处理 Template 平台列表包含目标系统平台的 MSI（否则报 1633）。
-// x64 包必须同时声明 ARM64 平台：ARM64 Windows 靠兼容层模拟运行 x64 应用，安装必须放行；
-// ARM64 包保持单平台 Template，天然被 x64/x86 机器拒绝（arm64 安装包不能装在 x64 上）。
-const msiTemplate = targetWindowsArch === 'x64' ? 'x64,ARM64;1033' : 'ARM64;1033';
+// Windows Installer 只安装 Template 平台列表包含目标系统平台的 MSI（否则报 1633）。
+// WiX v3 的 Burn 引擎恒为 x86 进程（BA 亦为 /platform:x86），在 ARM64 Windows 上，
+// 该安装上下文经 WOW64 报告的"原生处理器类型"是 AMD64：实测 Template 只写 ARM64 的
+// MSI 会被 msiexec 以 1633 拒绝（全新安装被拒、维护模式不校验），必须同时声明
+// x64 + ARM64 双平台（微软文档亦要求"用启动程序安装 64 位包时启动程序须为 64 位"，
+// WiX v3 无法满足）。x64 机器安装 arm64 包由 BA 的 EnforceCompatibleArchitecture
+// 在 Detect 阶段（早于 msiexec）拦截，双平台列表不影响"arm64 包不能装 x64"的语义。
+const msiTemplate = 'x64,ARM64;1033';
 const bootstrapperAssemblyPath = path.join(outputDirectory, 'OpenDesk.Bootstrapper.dll');
 run(
     csharpCompiler,

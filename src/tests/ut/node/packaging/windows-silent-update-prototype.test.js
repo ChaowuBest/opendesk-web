@@ -53,8 +53,9 @@ test('builds current-version-only update installers while preserving the release
     assert.match(builder, /productCode\('platform:4:legacy-shortcut-cleanup'\)/);
     assert.match(builder, /productCode\(`active:3:\$\{version\}`\)/);
     // 版本 MSI 的 ProductId 已改为随机（id: '*'），不再由版本号派生
-    // MSI 平台标记必须参数化：x64 链路写 x64 并由 SetMsiTemplate 追加 ARM64 平台，
-    // arm64 链路写 arm64（Template 单平台，天然拒绝 x64 机器安装）。
+    // MSI 平台标记必须参数化：x64/arm64 链路写各自 Package Platform，Template 平台
+    // 列表统一为 'x64,ARM64;1033'（x86 burn 引擎在 ARM64 Windows 上必须同时声明
+    // x64 才能通过 msiexec 平台校验；x64 机器装 arm64 包由 BA 架构检查拦截）。
     assert.match(
         builder,
         /function wixProduct\(\{ id, name, version, body, featureRefs, packageCode, windowsPlatform, installerVersion \}\)[\s\S]*<Package\$\{packageCode \? ` Id="\$\{packageCode\}"` : ''\}/
