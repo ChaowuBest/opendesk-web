@@ -4301,8 +4301,7 @@ async function testSetSourcePausedYieldsScannerWithinCandidateBoundary() {
         });
         const pauseResult = await pausePromise;
 
-        assert.ok(updateChecks >= 500);
-        assert.ok(updateChecks <= 520);
+        assert.equal(updateChecks, 250, 'pause intent stops consumption at the next candidate');
         assert.equal(saveFilesCalls, 0);
         assert.equal(saveScannerStateCalls, 0);
         assert.equal(pauseResult.status, 'ok');

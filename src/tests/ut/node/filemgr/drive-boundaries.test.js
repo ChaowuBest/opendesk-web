@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import fastGlob from 'fast-glob';
+import fs from 'node:fs';
 import { parseHTML } from 'linkedom';
 import { FileTreeChecks } from '../../../../main/applications/filemgr/renderer/tree/fileTreeChecks.js';
 import { Readable } from 'node:stream';
@@ -55,6 +56,16 @@ function workerFor(roots) {
 
 test('scanner resolves only Windows drive roots and keeps source/state/storage identity', async () => {
     const originalStream = fastGlob.stream;
+    const originalLstat = fs.lstat;
+    fs.lstat = (_path, callback) =>
+        callback(null, {
+            size: 1,
+            mtimeMs: 1,
+            birthtimeMs: 1,
+            atimeMs: 1,
+            isDirectory: () => false,
+            isFile: () => true
+        });
     try {
         for (const platform of ['win32', 'darwin']) {
             await withPlatform(platform, async () => {
@@ -97,6 +108,7 @@ test('scanner resolves only Windows drive roots and keeps source/state/storage i
         }
     } finally {
         fastGlob.stream = originalStream;
+        fs.lstat = originalLstat;
     }
 });
 

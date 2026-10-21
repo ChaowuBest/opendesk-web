@@ -136,6 +136,26 @@ function isSameOrAncestor(ancestor, itemPath) {
     return normalizedItem === normalizedAncestor || normalizedItem.startsWith(`${normalizedAncestor}/`);
 }
 
+function failedDirectoryMatcher(directories) {
+    const pathAPI = process.platform === 'win32' ? path.win32 : path.posix;
+    const comparisonPath = (value) => {
+        const normalized = pathAPI.normalize(resolveDriveRootPath(value, process.platform));
+        if (normalized === pathAPI.parse(normalized).root) return normalized;
+        return normalized.replace(process.platform === 'win32' ? /[/\\]+$/ : /\/+$/, '');
+    };
+    const failed = new Set([...directories].map(comparisonPath));
+    return (itemPath) => {
+        if (failed.size === 0) return false;
+        let parent = comparisonPath(itemPath);
+        while (true) {
+            if (failed.has(parent)) return true;
+            const next = pathAPI.dirname(parent);
+            if (next === parent) return false;
+            parent = next;
+        }
+    };
+}
+
 function nextLexicographicPrefix(value) {
     if (!value) return '\uffff';
     const lastIndex = value.length - 1;
@@ -2384,13 +2404,14 @@ class FSStorage {
     /**
      * @param {string} scannerRoot
      * @param {Set<string>} scannedPaths
-     * @param {{ activeRoots?: string[] }} [options]
+     * @param {{ activeRoots?: string[], failedDirectories?: Set<string> }} [options]
      */
-    async removeDeletedFiles(scannerRoot, scannedPaths, { activeRoots = [] } = {}) {
+    async removeDeletedFiles(scannerRoot, scannedPaths, { activeRoots = [], failedDirectories = new Set() } = {}) {
+        const isProtected = failedDirectoryMatcher(failedDirectories);
         const otherRoots = activeRoots.filter((root) => root !== scannerRoot);
         const { deleted, detached } = await this._removeRootFromItems(
             scannerRoot,
-            (itemId) => !scannedPaths.has(itemId),
+            (itemId) => !scannedPaths.has(itemId) && !isProtected(itemId),
             {
                 deleteEmptyRefs: true,
                 keepEmptyRefsIf: (itemPath) => otherRoots.some((root) => isSameOrAncestor(root, itemPath))

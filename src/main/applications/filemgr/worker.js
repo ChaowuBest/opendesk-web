@@ -65,6 +65,195 @@ import { extractText as extractFileTextFromParser } from './parser/extract.js';
 import { FSEntrySchema } from './setting.js';
 import { resolveDriveRootPath } from './utils.js';
 
+export const FILE_ATTRIBUTE_CONCURRENCY = 64;
+export const DIRECTORY_READ_CONCURRENCY = 8;
+export const SCAN_READ_AHEAD_LIMIT = 256;
+
+const EXPECTED_READ_ERRORS = new Set([
+    'EACCES',
+    'EPERM',
+    'ENOENT',
+    'ENOTDIR',
+    'EIO',
+    'EBUSY',
+    'ESTALE',
+    'EMFILE',
+    'ENFILE',
+    'ELOOP',
+    'ENODEV',
+    'ENAMETOOLONG'
+]);
+
+// Limits apply across all glob tasks in this scan. A readdir batch, fast-glob's
+// traversal state and the scanner's scannedPaths still have their own memory cost.
+export function createFileScan(
+    patterns,
+    options,
+    { shouldStop = () => false, onReadError = () => {}, filesystem = fs } = {}
+) {
+    let closed = false;
+    let fatalError = null;
+    let activeDirectories = 0;
+    const waitingDirectories = new Set();
+    const directoryTasks = new Set();
+    const pending = [];
+    let currentAttributeTask = null;
+    const cancelled = Object.assign(new Error('FileMgr enumeration stopped'), { code: 'ECANCELED' });
+
+    function close() {
+        if (closed) return;
+        closed = true;
+        // Waking on close is required even when the consumer never resumes.
+        for (const start of [...waitingDirectories]) start();
+        stream?.destroy();
+    }
+
+    function interrupted() {
+        if (shouldStop()) close();
+        return closed;
+    }
+
+    function report(error, operation, target) {
+        if (!EXPECTED_READ_ERRORS.has(error?.code)) {
+            fatalError ??= error;
+            close();
+            return;
+        }
+        try {
+            onReadError({ operation, path: String(target), code: error.code });
+        } catch (error) {
+            fatalError ??= error;
+            close();
+        }
+    }
+
+    function wakeReaders() {
+        if (waitingDirectories.size === 0 || activeDirectories >= DIRECTORY_READ_CONCURRENCY) return;
+        if (interrupted()) return;
+        if ((stream?.readableLength ?? 0) >= SCAN_READ_AHEAD_LIMIT) return;
+        for (const start of waitingDirectories) {
+            if (activeDirectories >= DIRECTORY_READ_CONCURRENCY) break;
+            start();
+        }
+    }
+
+    function readdir(directory, settings, callback) {
+        let settle;
+        const task = new Promise((resolve) => {
+            settle = resolve;
+        });
+        directoryTasks.add(task);
+        const complete = (error, entries) => {
+            try {
+                if (!interrupted() && error) report(error, 'readdir', directory);
+                // error.path can name an unknown-type child. The attempted directory
+                // is the only safe protection boundary for a failed Dirent batch.
+                callback(closed ? cancelled : error, closed ? undefined : entries);
+            } catch (error) {
+                fatalError ??= error;
+                close();
+            } finally {
+                directoryTasks.delete(task);
+                settle();
+                wakeReaders();
+            }
+        };
+        const start = () => {
+            if (
+                !closed &&
+                (activeDirectories >= DIRECTORY_READ_CONCURRENCY ||
+                    (stream?.readableLength ?? 0) >= SCAN_READ_AHEAD_LIMIT)
+            )
+                return;
+            waitingDirectories.delete(start);
+            if (interrupted()) {
+                // fast-glob releases the next queued directory inside this callback.
+                // Keep cancellation asynchronous, like real readdir, and tracked by drain.
+                queueMicrotask(() => complete(cancelled));
+                return;
+            }
+            activeDirectories++;
+            const done = (error, entries) => {
+                activeDirectories--;
+                complete(error, entries);
+            };
+            try {
+                filesystem.readdir(directory, settings, done);
+            } catch (error) {
+                done(error);
+            }
+        };
+        waitingDirectories.add(start);
+        start();
+    }
+
+    const stream = fastGlob.stream(patterns, {
+        ...options,
+        stats: false,
+        objectMode: true,
+        concurrency: DIRECTORY_READ_CONCURRENCY,
+        fs: { readdir }
+    });
+    // A stream error can arrive while the consumer is writing a batch.
+    stream.on('error', (error) => {
+        fatalError ??= error;
+        close();
+    });
+
+    function readAttributes(entry) {
+        return new Promise((resolve) => {
+            const done = (error, stats) => {
+                if (error && !closed) report(error, 'lstat', entry.path);
+                entry.stats = error ? null : stats;
+                resolve(entry);
+            };
+            try {
+                filesystem.lstat(entry.path, done);
+            } catch (error) {
+                done(error);
+            }
+        });
+    }
+
+    async function drain() {
+        await Promise.allSettled([currentAttributeTask, ...pending]);
+        // Completing a directory may expose another queued cancellation. A single
+        // snapshot would return before those callbacks have settled.
+        while (directoryTasks.size > 0) await Promise.allSettled([...directoryTasks]);
+    }
+
+    async function* files() {
+        try {
+            for await (const entry of stream) {
+                if (fatalError) throw fatalError;
+                if (interrupted()) break;
+                pending.push(readAttributes(entry));
+                if (pending.length >= FILE_ATTRIBUTE_CONCURRENCY) {
+                    // Yield the task directly: the async generator awaits it once.
+                    currentAttributeTask = pending.shift();
+                    yield currentAttributeTask;
+                    currentAttributeTask = null;
+                    wakeReaders();
+                }
+            }
+            while (pending.length > 0 && !interrupted() && !fatalError) {
+                currentAttributeTask = pending.shift();
+                yield currentAttributeTask;
+                currentAttributeTask = null;
+            }
+            if (fatalError) throw fatalError;
+        } catch (error) {
+            if (fatalError) throw fatalError;
+            if (!shouldStop()) throw error;
+        } finally {
+            close();
+            await drain();
+        }
+    }
+
+    return { files: files(), close, drain };
+}
+
 const MAX_RECENT_FAILURES = 20;
 
 const FILEMGR_SCANNING_ENABLED = true;
@@ -111,6 +300,7 @@ class FSScanner {
         this._shouldYield = shouldYield ?? (() => false);
         this._taskQueue = null;
         this._scanTask = null;
+        this._scanReader = null;
         this._scanQueued = false;
         /** @type {Array<{path: string, error: string}>} */
         this._recentFailures = [];
@@ -197,6 +387,7 @@ class FSScanner {
 
     async stop() {
         this._stopped = true;
+        this._scanReader?.close();
         this._scanQueued = false;
         if (this._scheduledTimeout) {
             clearTimeout(this._scheduledTimeout);
@@ -241,20 +432,20 @@ class FSScanner {
     }
 
     async scan() {
-        if (this._shouldYield()) return;
+        if (this._stopped || this._shouldYield()) return;
 
         // 1. Check deferred state
         if (this.storage.isDeferred()) {
             await this.storage.initialize();
-            if (this._shouldYield()) return;
+            if (this._stopped || this._shouldYield()) return;
             if (this.storage.isDeferred()) return;
         }
-        if (this._shouldYield()) return;
+        if (this._stopped || this._shouldYield()) return;
 
         // 2. Sync embedding mode (handles model changes, additions, removals)
         const previousMode = this.storage.mode;
         await this.storage.syncEmbeddingMode('scan');
-        if (this._shouldYield()) return;
+        if (this._stopped || this._shouldYield()) return;
         if (this.storage.mode !== previousMode) {
             void this._workerRef?._emitStatusChanged('mode');
         }
@@ -268,103 +459,159 @@ class FSScanner {
         const isFullScan = deep === undefined;
         const lastScanningTime = this.state.last_full_scan;
 
-        const stream = fastGlob.stream(this.entry.include_patterns, {
-            cwd: resolveDriveRootPath(this.root, process.platform),
-            deep: deep,
-            dot: false,
-            stats: true,
-            objectMode: true,
-            suppressErrors: true,
-            followSymbolicLinks: false,
-            absolute: true,
-            caseSensitiveMatch: false,
-            ignore: this.entry.exclude_patterns
-        });
+        const failedDirectories = new Set();
+        const readErrors = { readdir: 0, lstat: 0 };
+        let errorSamples = 0;
+        const reader = createFileScan(
+            this.entry.include_patterns,
+            {
+                cwd: resolveDriveRootPath(this.root, process.platform),
+                deep: deep,
+                dot: false,
+                objectMode: true,
+                suppressErrors: true,
+                followSymbolicLinks: false,
+                absolute: true,
+                caseSensitiveMatch: false,
+                ignore: this.entry.exclude_patterns
+            },
+            {
+                shouldStop: () => this._stopped || this._shouldYield(),
+                onReadError: ({ operation, path, code }) => {
+                    readErrors[operation]++;
+                    if (operation === 'readdir') failedDirectories.add(path);
+                    if (errorSamples++ < MAX_RECENT_FAILURES) {
+                        logger.warn(`[filemgr] ${operation} ${path}: ${code}`);
+                    }
+                }
+            }
+        );
+        this._scanReader = reader;
 
         let batch = [];
         let totalFiles = 0;
         let savedCount = 0;
         let failedCount = 0;
         const BATCH_SIZE = 500;
-        let visited = 0;
         const scannedPaths = isFullScan ? new Set() : null;
 
         // Clear recent failures at start of every scan, not just full scans (spec §11.3)
         this._recentFailures = [];
 
-        for await (const entry of stream) {
-            if (this._stopped) break;
-            visited++;
-            totalFiles++;
-            if (scannedPaths) scannedPaths.add(entry.path);
-            if (isFullScan || this._isFileUpdated(entry, lastScanningTime)) {
-                batch.push(this._convertToFileEntry(entry));
+        try {
+            for await (const entry of reader.files) {
+                if (this._stopped || this._shouldYield()) return;
+                totalFiles++;
+                if (scannedPaths) scannedPaths.add(entry.path);
+                if (entry.stats?.isFile() && (isFullScan || this._isFileUpdated(entry, lastScanningTime))) {
+                    batch.push(this._convertToFileEntry(entry));
+                }
+                if (batch.length >= BATCH_SIZE) {
+                    const result = await this.storage.saveFiles(batch, this.root);
+                    savedCount += result.saved;
+                    failedCount += result.failed;
+                    this._collectFailures(result.failures);
+                    batch = [];
+                    if (this._stopped || this._shouldYield()) {
+                        logger.info(`[filemgr] scan ${this.root}: yielding after batch`);
+                        return;
+                    }
+                }
             }
-            if (visited % BATCH_SIZE === 0 && this._shouldYield()) {
-                logger.info(`[filemgr] scan ${this.root}: yielding during glob`);
-                return;
-            }
-            if (batch.length >= BATCH_SIZE) {
+            if (this._stopped || this._shouldYield()) return;
+            if (batch.length > 0) {
                 const result = await this.storage.saveFiles(batch, this.root);
                 savedCount += result.saved;
                 failedCount += result.failed;
                 this._collectFailures(result.failures);
-                batch = [];
-                if (this._shouldYield()) {
-                    logger.info(`[filemgr] scan ${this.root}: yielding after batch`);
+                if (this._stopped || this._shouldYield()) {
+                    logger.info(`[filemgr] scan ${this.root}: yielding after final batch`);
                     return;
                 }
             }
-        }
-        if (batch.length > 0) {
-            const result = await this.storage.saveFiles(batch, this.root);
-            savedCount += result.saved;
-            failedCount += result.failed;
-            this._collectFailures(result.failures);
-            if (this._shouldYield()) {
-                logger.info(`[filemgr] scan ${this.root}: yielding after final batch`);
-                return;
-            }
-        }
-        if (this._shouldYield()) return;
+            if (this._stopped || this._shouldYield()) return;
 
-        // 5. Full scan: delete detection
-        if (isFullScan && scannedPaths) {
-            if (scannedPaths.size === 0) {
-                const lastCount = this.state.last_file_count ?? 0;
-                if (lastCount > UNAVAILABLE_THRESHOLD) {
-                    this.storage.scannerState.unavailable_roots[this.root] = {
-                        since: Date.now(),
-                        last_count: lastCount
-                    };
-                    await this.storage.saveScannerState();
-                    this.storage.onStateChanged?.();
-                    return;
+            // A failed source root is unavailable, even below the empty-scan threshold.
+            // Compare I/O paths without changing the root used by state and references.
+            const rootPath = resolveDriveRootPath(this.root, process.platform);
+            let rootReadFailed = [...failedDirectories].some((directory) => path.relative(rootPath, directory) === '');
+            if (
+                !rootReadFailed &&
+                totalFiles === 0 &&
+                (failedDirectories.size > 0 || this.storage.scannerState.unavailable_roots[this.root])
+            ) {
+                // Glob bases can start below root. Probe only this ambiguous failure case,
+                // so a missing child is not confused with an offline source.
+                try {
+                    await fs.promises.readdir(rootPath);
+                } catch (error) {
+                    if (!EXPECTED_READ_ERRORS.has(error.code)) throw error;
+                    rootReadFailed = true;
+                }
+                if (this._stopped || this._shouldYield()) return;
+            }
+            if (rootReadFailed) {
+                this.storage.scannerState.unavailable_roots[this.root] ??= {
+                    since: Date.now(),
+                    last_count: this.state.last_file_count ?? 0
+                };
+                await this.storage.saveScannerState();
+                this.storage.onStateChanged?.();
+                return true;
+            }
+
+            // 5. Full scan: delete detection
+            if (isFullScan && scannedPaths) {
+                if (scannedPaths.size === 0 && failedDirectories.size === 0) {
+                    const lastCount = this.state.last_file_count ?? 0;
+                    if (lastCount > UNAVAILABLE_THRESHOLD) {
+                        this.storage.scannerState.unavailable_roots[this.root] = {
+                            since: Date.now(),
+                            last_count: lastCount
+                        };
+                        await this.storage.saveScannerState();
+                        this.storage.onStateChanged?.();
+                        return;
+                    }
+                }
+                await this.storage.removeDeletedFiles(this.root, scannedPaths, {
+                    activeRoots: this._getActiveRoots(),
+                    failedDirectories
+                });
+            }
+            if (this._stopped || this._shouldYield()) return;
+
+            // 6. Full scan: unconditional checkpoint
+            const scanCompletedAt = Date.now();
+            this.state.last_scan_at = scanCompletedAt;
+            if (isFullScan) {
+                this.state.last_full_scan = scanCompletedAt;
+                delete this.storage.scannerState.unavailable_roots[this.root];
+                if (failedDirectories.size === 0) {
+                    this.state.total_files = totalFiles;
+                    this.state.last_file_count = scannedPaths.size;
                 }
             }
-            delete this.storage.scannerState.unavailable_roots[this.root];
-            await this.storage.removeDeletedFiles(this.root, scannedPaths, {
-                activeRoots: this._getActiveRoots()
-            });
+            await this.storage.saveScannerState();
+
+            logger.info(
+                `[filemgr] scan ${this.root}: depth=${deep ?? 'full'}, ` +
+                    `total=${totalFiles}, saved=${savedCount}, failed=${failedCount}`
+            );
+
+            this._workerRef?._enqueueEmbeddingQueue();
+        } finally {
+            reader.close();
+            // Also drain when consumer code (conversion/save/cleanup) throws.
+            await reader.files.return();
+            await reader.drain();
+            if (this._scanReader === reader) this._scanReader = null;
+            if (errorSamples > 0) {
+                logger.warn(
+                    `[filemgr] read errors ${this.root}: readdir=${readErrors.readdir}, lstat=${readErrors.lstat}, omitted=${Math.max(0, errorSamples - MAX_RECENT_FAILURES)}`
+                );
+            }
         }
-        if (this._shouldYield()) return;
-
-        // 6. Full scan: unconditional checkpoint
-        const scanCompletedAt = Date.now();
-        this.state.last_scan_at = scanCompletedAt;
-        if (isFullScan) {
-            this.state.last_full_scan = scanCompletedAt;
-            this.state.total_files = totalFiles;
-            this.state.last_file_count = scannedPaths.size;
-        }
-        await this.storage.saveScannerState();
-
-        logger.info(
-            `[filemgr] scan ${this.root}: depth=${deep ?? 'full'}, ` +
-                `total=${totalFiles}, saved=${savedCount}, failed=${failedCount}`
-        );
-
-        this._workerRef?._enqueueEmbeddingQueue();
     }
 
     /**
