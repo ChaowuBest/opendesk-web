@@ -233,7 +233,7 @@ cat > "$RELEASE_DIR/package.json" << EOF
   "type": "module",
   "main": "./opendesk",
   "bin": {
-    "opendesk": "./opendesk"
+    "opendesk": "opendesk"
   },
   "scripts": {
     "preinstall": "node preinstall.cjs"
