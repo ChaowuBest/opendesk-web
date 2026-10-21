@@ -9,13 +9,31 @@
  * See the Mulan PSL v2 for more details.
  */
 
-import { getSnapshot, subscribeSnapshot } from './state.js';
+import {
+    getSnapshot,
+    getEntries,
+    getDefaultWorkspace,
+    subscribeEntries,
+    subscribeDefaultWorkspace,
+    subscribeSnapshot
+} from './state.js';
+import { normalizePath } from './tree/utils.js';
 
 const SOURCES_STYLE_ID = 'filemgr-sources-styles';
 const MINI_RING_CIRCUMFERENCE = 37.7;
 const SKELETON_CARD_COUNT = 3;
 export const WORKSPACE_SOURCE_PROTECTED_MESSAGE = '当前工作空间不能在这里移除。请回到主页面切换工作空间。';
 const SOURCE_CONTROL_FALLBACKS = {
+    'renderer.filemgr.source.unavailable': '路径不可访问',
+    'renderer.filemgr.source.unavailableWithCount': '路径不可访问 · 上次 ${count} 文件',
+    'renderer.filemgr.source.empty': '未发现可扫描文件',
+    'renderer.filemgr.source.fileCount': ' · ${count} 文件',
+    'renderer.filemgr.source.scan.withCounts': '扫描中 · ${embedded} / ${total} 文件',
+    'renderer.filemgr.source.scan.pending': '等待扫描',
+    'renderer.filemgr.source.scan.scanning': '扫描中',
+    'renderer.filemgr.source.scan.completed': '已完成',
+    'renderer.filemgr.source.scan.unknown': '暂无扫描信息',
+    'renderer.filemgr.mode.baseOnly': '基础索引',
     'renderer.filemgr.source.pause': 'Pause scanning',
     'renderer.filemgr.source.resume': 'Continue scanning',
     'renderer.filemgr.source.moreActions': 'More actions',
@@ -61,29 +79,9 @@ function getSnapshotData(snapshot) {
 }
 
 function toNumber(value, fallback = 0) {
+    if (value == null || value === '') return fallback;
     const numberValue = Number(value);
     return Number.isFinite(numberValue) ? numberValue : fallback;
-}
-
-function isWorkspaceSource(source, data) {
-    const path = getSourcePath(source);
-    const type = source?.type ?? source?.kind ?? source?.entry?.type ?? source?.entry?.kind;
-    const workspacePath = data.workspace ?? data.default_workspace ?? data.storage?.workspace ?? null;
-
-    return (
-        type === 'workspace' ||
-        source?.workspace === true ||
-        source?.isWorkspace === true ||
-        source?.is_workspace === true ||
-        source?.entry?.workspace === true ||
-        source?.entry?.is_workspace === true ||
-        source?.entry?.scope === 'workspace' ||
-        (workspacePath && path === workspacePath)
-    );
-}
-
-function getSourcePath(source) {
-    return source?.path ?? source?.root ?? source?.entry?.root ?? source?.entry?.path ?? source?.name ?? '';
 }
 
 const MAX_FULL_PATH_LENGTH = 28;
@@ -171,44 +169,25 @@ function getUnavailableInfo(source, data, path) {
                 unavailableRoot?.lastCount ??
                 source?.total_files ??
                 source?.totalFiles,
-            0
+            null
         )
     };
 }
 
-function normalizeSource(source, data, index) {
-    const path = getSourcePath(source);
-    const totalFiles = toNumber(
-        source?.total_files ?? source?.totalFiles ?? source?.total ?? source?.file_count ?? source?.fileCount,
-        0
-    );
-    const embeddedCount = toNumber(
-        source?.embedded_count ??
-            source?.embeddedCount ??
-            source?.embedded ??
-            source?.indexed_files ??
-            source?.indexedFiles,
-        0
-    );
-    const failedCount = toNumber(
-        source?.failed_count ?? source?.failedCount ?? source?.failed_files ?? source?.failedFiles,
-        0
-    );
-    const lastScanAt =
-        source?.last_scan_at ?? source?.lastScanAt ?? source?.last_full_scan ?? source?.lastFullScan ?? null;
-    const unavailableInfo = getUnavailableInfo(source, data, path);
-
+function normalizeSource(source, entry, data, index) {
+    const path = entry.root;
     return {
-        raw: source,
-        id: source?.id ?? path ?? `source-${index}`,
+        raw: source ?? null,
+        id: path,
         path,
         index,
-        totalFiles,
-        embeddedCount,
-        failedCount,
-        lastScanAt,
-        unavailableInfo,
-        workspace: isWorkspaceSource(source, data),
+        hasBackend: Boolean(source),
+        totalFiles: toNumber(source?.total_files ?? source?.totalFiles, null),
+        embeddedCount: toNumber(source?.embedded_count ?? source?.embeddedCount, null),
+        failedCount: toNumber(source?.failed_count ?? source?.failedCount, null),
+        lastScanAt: source?.last_scan_at ?? source?.lastScanAt ?? source?.last_full_scan ?? null,
+        unavailableInfo: source ? getUnavailableInfo(source, data, path) : null,
+        workspace: Boolean(getDefaultWorkspace()) && normalizePath(path) === normalizePath(getDefaultWorkspace()),
         paused: source?.paused === true,
         state: source?.state ?? source?.status ?? null,
         isRunning: source?.isRunning === true
@@ -216,88 +195,67 @@ function normalizeSource(source, data, index) {
 }
 
 function getSortedSources(data) {
-    return getSourceArray(data)
-        .map((source, index) => normalizeSource(source, data, index))
-        .sort((a, b) => {
-            if (a.workspace !== b.workspace) {
-                return a.workspace ? -1 : 1;
-            }
-
-            return a.index - b.index;
-        });
+    const backend = new Map(
+        getSourceArray(data).map((source) => [source?.root ?? source?.path ?? source?.entry?.root, source])
+    );
+    return getEntries()
+        .map((entry, index) => normalizeSource(backend.get(entry.root), entry, data, index))
+        .sort((a, b) => Number(b.workspace) - Number(a.workspace) || a.index - b.index);
 }
 
-function getDisplayState(source, mode) {
-    if (source.paused) {
-        return 'paused';
-    }
-    if (source.unavailableInfo) {
-        return 'unavailable';
-    }
-
-    if (source.isRunning) {
-        return 'scanning';
-    }
-
-    if (source.totalFiles === 0 && source.lastScanAt) {
-        return 'completed';
-    }
-
-    if (mode === 'base-only') {
-        if (source.totalFiles === 0) {
-            return 'pending';
-        }
-
-        return source.lastScanAt ? 'completed' : 'pending';
-    }
-
-    if (['pending', 'scanning', 'completed', 'unavailable'].includes(source.state)) {
-        return source.state;
-    }
-
-    return source.lastScanAt || source.totalFiles > 0 ? 'completed' : 'pending';
+function getDisplayState(source) {
+    if (!source.hasBackend) return 'unknown';
+    if (source.paused) return 'paused';
+    if (source.unavailableInfo) return 'unavailable';
+    if (source.isRunning) return 'scanning';
+    return ['pending', 'scanning', 'completed', 'unavailable'].includes(source.state) ? source.state : 'unknown';
 }
 
 function getProgress(source, displayState) {
-    if (displayState === 'completed') {
-        return 100;
-    }
-
-    if (displayState !== 'scanning' || source.totalFiles <= 0) {
-        return 0;
-    }
-
+    if (!source.hasBackend || source.totalFiles === null || displayState === 'unknown') return null;
+    if (displayState === 'completed') return 100;
+    if (displayState !== 'scanning' || source.totalFiles <= 0) return 0;
+    if (source.embeddedCount === null) return null;
     return Math.max(0, Math.min(100, Math.round((source.embeddedCount / source.totalFiles) * 100)));
 }
 
 function getStatusText(source, displayState, mode, options) {
+    if (!source.hasBackend) return sourceControlText(options, 'renderer.filemgr.source.scan.pending');
     const pendingPaused = options.pendingByRoot?.get(source.path);
     if (pendingPaused === true) return sourceControlText(options, 'renderer.filemgr.source.pausing');
     if (pendingPaused === false) return sourceControlText(options, 'renderer.filemgr.source.resuming');
     if (displayState === 'paused') {
-        return sourceControlText(options, 'renderer.filemgr.source.pausedWithCount', { count: source.totalFiles });
+        return sourceControlText(
+            options,
+            source.totalFiles === null ? 'renderer.filemgr.source.paused' : 'renderer.filemgr.source.pausedWithCount',
+            { count: source.totalFiles }
+        );
     }
     if (displayState === 'unavailable') {
-        return `路径不可访问 · 上次 ${source.unavailableInfo?.lastCount ?? source.totalFiles} 文件`;
+        const count = source.unavailableInfo?.lastCount ?? source.totalFiles;
+        return sourceControlText(
+            options,
+            count === null ? 'renderer.filemgr.source.unavailable' : 'renderer.filemgr.source.unavailableWithCount',
+            { count }
+        );
     }
-
-    if (displayState === 'completed' && source.totalFiles === 0) {
-        return '未发现可扫描文件';
-    }
-
-    if (mode === 'base-only') {
-        return `基础索引 · ${source.totalFiles} 文件`;
-    }
-
-    if (displayState === 'pending') {
-        return '等待扫描';
-    }
-
-    if (displayState === 'scanning') {
-        return `扫描中 · ${source.embeddedCount} / ${source.totalFiles} 文件`;
-    }
-
-    return `已完成 · ${source.totalFiles} 文件`;
+    if (displayState === 'completed' && source.totalFiles === 0)
+        return sourceControlText(options, 'renderer.filemgr.source.empty');
+    const countText =
+        source.totalFiles === null
+            ? ''
+            : sourceControlText(options, 'renderer.filemgr.source.fileCount', { count: source.totalFiles });
+    if (mode === 'base-only') return sourceControlText(options, 'renderer.filemgr.mode.baseOnly') + countText;
+    if (displayState === 'pending') return sourceControlText(options, 'renderer.filemgr.source.scan.pending');
+    if (displayState === 'scanning' && source.embeddedCount !== null && source.totalFiles !== null)
+        return sourceControlText(options, 'renderer.filemgr.source.scan.withCounts', {
+            embedded: source.embeddedCount,
+            total: source.totalFiles
+        });
+    return (
+        sourceControlText(options, `renderer.filemgr.source.scan.${displayState}`) +
+        (displayState === 'completed' ? countText : '')
+    );
 }
 
 function injectStyles(doc) {
@@ -1156,14 +1114,12 @@ function createSourceControlButton(doc, source, options) {
     );
     const button = doc.createElement('button');
     button.type = 'button';
-    button.className = source.paused
-        ? 'source-control-btn source-resume-btn'
-        : 'source-control-btn source-menu-item';
+    button.className = source.paused ? 'source-control-btn source-resume-btn' : 'source-control-btn source-menu-item';
     if (!source.paused) {
         button.setAttribute('role', 'menuitem');
     }
     button.dataset.action = action;
-    button.disabled = rootIsPending || options.workerStatus !== 'running';
+    button.disabled = !source.hasBackend || rootIsPending || options.workerStatus !== 'running';
     button.setAttribute('aria-busy', rootIsPending ? 'true' : 'false');
     button.setAttribute('aria-label', actionText);
     button.title = actionText;
@@ -1192,6 +1148,7 @@ function createSourceControlButton(doc, source, options) {
 function createSourceMenuPortal(doc) {
     const view = doc.defaultView;
     let activeMenu = null;
+    let focusTimer = null;
 
     const positionMenu = () => {
         if (!activeMenu) return;
@@ -1205,8 +1162,7 @@ function createSourceMenuPortal(doc) {
         const fitsBelow = triggerRect.bottom + gap + menuRect.height <= viewportHeight - viewportInset;
         const fitsAbove = triggerRect.top - gap - menuRect.height >= viewportInset;
         const placement = !fitsBelow && fitsAbove ? 'top' : 'bottom';
-        const preferredTop =
-            placement === 'top' ? triggerRect.top - menuRect.height - gap : triggerRect.bottom + gap;
+        const preferredTop = placement === 'top' ? triggerRect.top - menuRect.height - gap : triggerRect.bottom + gap;
         const maxTop = Math.max(viewportInset, viewportHeight - menuRect.height - viewportInset);
         const top = Math.min(Math.max(viewportInset, preferredTop), maxTop);
         const preferredLeft = triggerRect.right - menuRect.width;
@@ -1218,6 +1174,10 @@ function createSourceMenuPortal(doc) {
     };
 
     const close = ({ restoreFocus = false } = {}) => {
+        if (focusTimer !== null) {
+            clearTimeout(focusTimer);
+            focusTimer = null;
+        }
         if (!activeMenu) return;
         const { actions, menu, trigger } = activeMenu;
         activeMenu = null;
@@ -1263,6 +1223,14 @@ function createSourceMenuPortal(doc) {
     return {
         open,
         close,
+        deferClose(menu, trigger) {
+            if (focusTimer !== null) clearTimeout(focusTimer);
+            focusTimer = setTimeout(() => {
+                focusTimer = null;
+                if (activeMenu?.menu === menu && !menu.contains(doc.activeElement) && doc.activeElement !== trigger)
+                    close();
+            }, 0);
+        },
         destroy() {
             close();
             doc.removeEventListener('pointerdown', closeOnOutsidePointer);
@@ -1295,7 +1263,7 @@ function createSourceActionsMenu(doc, source, options) {
     menu.setAttribute('role', 'menu');
     menu.hidden = true;
 
-    if (!source.paused) {
+    if (source.hasBackend && !source.paused) {
         menu.appendChild(createSourceControlButton(doc, source, options));
     }
     menu.appendChild(createDeleteButton(doc, source, options));
@@ -1330,12 +1298,7 @@ function createSourceActionsMenu(doc, source, options) {
     menu.addEventListener('focusout', (event) => {
         const relatedTarget = event.relatedTarget;
         if (relatedTarget && (menu.contains(relatedTarget) || trigger.contains(relatedTarget))) return;
-        const setTimeout = doc.defaultView?.setTimeout ?? globalThis.setTimeout;
-        setTimeout(() => {
-            if (!menu.contains(doc.activeElement) && doc.activeElement !== trigger) {
-                options.sourceMenuPortal?.close();
-            }
-        }, 0);
+        options.sourceMenuPortal?.deferClose(menu, trigger);
     });
 
     actions.append(trigger, menu);
@@ -1362,7 +1325,8 @@ function appendStatusIcon(doc, row, source, displayState) {
         return;
     }
 
-    row.appendChild(createMiniRing(doc, getProgress(source, displayState)));
+    const progress = getProgress(source, displayState);
+    if (progress !== null) row.appendChild(createMiniRing(doc, progress));
 }
 
 function createSourceCard(doc, source, mode, options) {
@@ -1381,7 +1345,8 @@ function createSourceCard(doc, source, mode, options) {
         .join(' ');
     card.dataset.sourceId = String(source.id);
     card.dataset.state = displayState;
-    card.dataset.progress = String(getProgress(source, displayState));
+    const progress = getProgress(source, displayState);
+    if (progress !== null) card.dataset.progress = String(progress);
     card.setAttribute('aria-busy', rootIsPending ? 'true' : 'false');
 
     const info = doc.createElement('div');
@@ -1414,7 +1379,7 @@ function createSourceCard(doc, source, mode, options) {
     status.title = statusText;
 
     row3.appendChild(status);
-    if (source.paused) {
+    if (source.hasBackend && source.paused) {
         row3.appendChild(createSourceControlButton(doc, source, options));
     }
     if (source.lastScanAt) {
@@ -1464,19 +1429,15 @@ function createSkeletonCard(doc) {
     const card = doc.createElement('article');
     card.className = 'fs-source-card skeleton';
     card.setAttribute('aria-hidden', 'true');
-
     const icon = doc.createElement('span');
     icon.className = 'icon-box';
-
     const info = doc.createElement('div');
     info.className = 'info';
-
     for (const className of ['path-line', 'meta-line', 'status-line']) {
         const line = doc.createElement('span');
         line.className = `fs-skeleton-line ${className}`;
         info.appendChild(line);
     }
-
     card.append(icon, info);
     return card;
 }
@@ -1485,32 +1446,16 @@ function renderCards(refs, doc, options) {
     const data = getSnapshotData(getSnapshot());
     const status = getStatus(data);
     const mode = getMode(data);
-    const currentSources = getSortedSources(data);
-    let sources = currentSources;
-    let renderMode = mode;
-
-    if (status !== 'error' && status !== 'initializing') {
-        refs.lastSuccessfulSnapshot = {
-            sources: currentSources,
-            mode
-        };
-    } else if (sources.length === 0 && refs.lastSuccessfulSnapshot) {
-        sources = refs.lastSuccessfulSnapshot.sources;
-        renderMode = mode ?? refs.lastSuccessfulSnapshot.mode;
-    }
-
+    const sources = getSortedSources(data);
     refs.grid.classList.toggle('fs-error-layer', status === 'error');
     refs.grid.replaceChildren();
-
-    if (status === 'initializing' && sources.length === 0) {
-        for (let i = 0; i < SKELETON_CARD_COUNT; i++) {
-            refs.grid.appendChild(createSkeletonCard(doc));
-        }
+    if ((getSnapshot() == null || status === 'initializing') && sources.length === 0) {
+        for (let i = 0; i < SKELETON_CARD_COUNT; i++) refs.grid.appendChild(createSkeletonCard(doc));
     } else if (sources.length === 0) {
         refs.grid.appendChild(createEmptyCard(doc));
     } else {
         for (const source of sources) {
-            refs.grid.appendChild(createSourceCard(doc, source, renderMode, { ...options, workerStatus: status }));
+            refs.grid.appendChild(createSourceCard(doc, source, mode, { ...options, workerStatus: status }));
         }
     }
 
@@ -1532,8 +1477,7 @@ function buildSourcesDom(doc) {
     return {
         element,
         grid,
-        hasAnimated: false,
-        lastSuccessfulSnapshot: null
+        hasAnimated: false
     };
 }
 
@@ -1545,16 +1489,17 @@ export function createSources(options = {}) {
     const sourceMenuPortal = createSourceMenuPortal(doc);
     const pendingByRoot = new Map();
     const errorByRoot = new Map();
+    let disposed = false;
     const requestSourceControl = async (source, paused) => {
         const root = source.path;
-        if (!root || pendingByRoot.has(root)) return;
+        if (disposed || !source.hasBackend || !root || pendingByRoot.has(root)) return;
         pendingByRoot.set(root, paused);
         errorByRoot.delete(root);
         render();
         try {
             await options.onSetSourcePaused?.({ root, paused });
         } catch (error) {
-            errorByRoot.set(root, { code: error?.code ?? 'generic' });
+            if (!disposed) errorByRoot.set(root, { code: error?.code ?? 'generic' });
         } finally {
             pendingByRoot.delete(root);
             render();
@@ -1568,12 +1513,14 @@ export function createSources(options = {}) {
         onRequestSourceControl: requestSourceControl
     };
     function render() {
+        if (disposed) return;
         sourceMenuPortal.close();
         renderCards(refs, doc, renderOptions);
     }
 
     render();
 
+    const unsubscribes = [subscribeEntries(render), subscribeDefaultWorkspace(render)];
     const unsubscribe = subscribeSnapshot(() => {
         errorByRoot.clear();
         render();
@@ -1586,7 +1533,9 @@ export function createSources(options = {}) {
             render();
         },
         destroy() {
+            disposed = true;
             unsubscribe();
+            for (const unsub of unsubscribes) unsub();
             sourceMenuPortal.destroy();
             refs.element.remove();
         }

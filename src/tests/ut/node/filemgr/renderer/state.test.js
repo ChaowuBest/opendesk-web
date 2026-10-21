@@ -1,81 +1,29 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import {
-    clearPendingCommit,
+    __resetForTesting,
     getDefaultWorkspace,
     getEntries,
+    getPlatform,
+    getSystemHomePath,
     setDefaultWorkspace,
     setEntries,
-    setPendingCommit,
-    setSnapshot,
-    subscribeEntries,
     syncStateFromSnapshot
 } from '../../../../../main/applications/filemgr/renderer/state.js';
 
-function resetState() {
-    clearPendingCommit();
-    setSnapshot(null);
-    setEntries([]);
-    setDefaultWorkspace('');
-}
-
-test.beforeEach(resetState);
-test.afterEach(resetState);
-
-test('syncStateFromSnapshot updates entries and default workspace from worker snapshot', () => {
-    setEntries([{ root: '/old-workspace', include_patterns: ['**/*.md'], exclude_patterns: [] }]);
-    setDefaultWorkspace('/old-workspace');
-    let entriesNotifications = 0;
-    const unsubscribe = subscribeEntries(() => {
-        entriesNotifications++;
+test.afterEach(__resetForTesting);
+test('snapshot contributes platform metadata without changing settings selection', () => {
+    setEntries([{ root: '/draft' }]);
+    setDefaultWorkspace('/settings');
+    syncStateFromSnapshot({
+        platform: 'darwin',
+        is_openharmony: false,
+        home_path: '/home',
+        default_workspace: '/stale',
+        sources: [{ root: '/stale' }]
     });
-
-    try {
-        const result = syncStateFromSnapshot({
-            status: 'running',
-            default_workspace: '/new-workspace',
-            sources: [
-                {
-                    root: '/new-workspace',
-                    entry: {
-                        root: '/new-workspace',
-                        include_patterns: ['**/*'],
-                        exclude_patterns: ['**/.git/**']
-                    }
-                },
-                {
-                    root: '/docs'
-                }
-            ]
-        });
-
-        assert.equal(result.entriesUpdated, true);
-        assert.equal(result.defaultWorkspaceUpdated, true);
-        assert.deepEqual(
-            getEntries().map((entry) => entry.root),
-            ['/new-workspace', '/docs']
-        );
-        assert.deepEqual(getEntries()[0].include_patterns, ['**/*']);
-        assert.equal(getDefaultWorkspace(), '/new-workspace');
-        assert.equal(entriesNotifications, 1);
-    } finally {
-        unsubscribe();
-    }
-});
-
-test('syncStateFromSnapshot preserves pending entries while updating default workspace', () => {
-    setEntries([{ root: '/old-workspace' }]);
-    setDefaultWorkspace('/old-workspace');
-    setPendingCommit([{ root: '/pending-choice' }]);
-
-    const result = syncStateFromSnapshot({
-        status: 'running',
-        default_workspace: '/new-workspace',
-        sources: [{ root: '/new-workspace', entry: { root: '/new-workspace' } }]
-    });
-
-    assert.equal(result.entriesUpdated, false);
-    assert.equal(result.entriesSkippedBecausePending, true);
-    assert.deepEqual(getEntries(), [{ root: '/old-workspace' }]);
-    assert.equal(getDefaultWorkspace(), '/new-workspace');
+    assert.deepEqual(getEntries(), [{ root: '/draft' }]);
+    assert.equal(getDefaultWorkspace(), '/settings');
+    assert.equal(getPlatform(), 'darwin');
+    assert.equal(getSystemHomePath(), '/home');
 });

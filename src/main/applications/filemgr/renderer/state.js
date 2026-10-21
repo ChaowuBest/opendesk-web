@@ -9,7 +9,7 @@
  * See the Mulan PSL v2 for more details.
  */
 
-export const COMMIT_DEBOUNCE_MS = 10_000;
+export const COMMIT_DEBOUNCE_MS = 3_000;
 
 let snapshot = null;
 let entries = [];
@@ -17,11 +17,14 @@ let defaultWorkspace = '';
 let isOpenHarmony = false;
 let platform = '';
 let systemHomePath = '';
-let pendingNextEntries = null;
-let pendingCommitToken = 0;
-
-export let debounceTimer = null;
-export let _undoSnapshot = null;
+let savedEntries = null;
+let editToken = 0;
+let dueAt = null;
+let timer = null;
+let undo = null;
+let page = null;
+let inFlight = null;
+export const selectionSubscribers = new Set();
 
 export const snapshotSubscribers = new Set();
 export const entriesSubscribers = new Set();
@@ -144,225 +147,313 @@ export function subscribeSystemHomePath(cb) {
     };
 }
 
-export function setDebounceTimer(nextTimer) {
-    debounceTimer = nextTimer;
+function clone(value) {
+    return JSON.parse(JSON.stringify(value));
 }
 
-export function clearDebounceTimer() {
-    if (debounceTimer) {
-        clearTimeout(debounceTimer);
-        debounceTimer = null;
-    }
+export function entriesEqual(a, b) {
+    if (a === b) return true;
+    if (!a || !b || typeof a !== 'object' || typeof b !== 'object') return false;
+    if (Array.isArray(a) !== Array.isArray(b)) return false;
+    const keys = Object.keys(a);
+    return (
+        keys.length === Object.keys(b).length &&
+        keys.every((key) => Object.prototype.hasOwnProperty.call(b, key) && entriesEqual(a[key], b[key]))
+    );
 }
 
-export function clearPendingCommit(token) {
-    if (token !== undefined && token !== pendingCommitToken) {
-        return null;
-    }
-
-    clearDebounceTimer();
-    pendingNextEntries = null;
-    if (token === undefined) {
-        pendingCommitToken++;
-    }
-
-    return pendingCommitToken;
+export function getSavedEntries() {
+    return savedEntries;
 }
 
-export function setPendingCommit(nextEntries) {
-    pendingCommitToken++;
-    pendingNextEntries = cloneEntries(nextEntries);
-
-    return pendingCommitToken;
+export function getUndo() {
+    return undo && undo.token === editToken && Date.now() < undo.expiresAt ? undo : null;
 }
 
-export function getPendingCommit() {
-    if (!pendingNextEntries) {
-        return null;
-    }
-
+export function getSelectionStatus() {
     return {
-        entries: cloneEntries(pendingNextEntries),
-        token: pendingCommitToken
+        editToken,
+        dueAt,
+        undo: getUndo(),
+        submitting: Boolean(inFlight && inFlight.page === page),
+        unsaved: savedEntries === null || !entriesEqual(entries, savedEntries)
     };
 }
 
-export function getPendingCommitToken() {
-    return pendingCommitToken;
+export function subscribeSelection(cb) {
+    selectionSubscribers.add(cb);
+    return () => selectionSubscribers.delete(cb);
 }
 
-function cloneEntries(nextEntries) {
-    return JSON.parse(JSON.stringify(nextEntries));
+function changed() {
+    notify(selectionSubscribers, getSelectionStatus());
 }
 
-function getSnapshotData(nextSnapshot) {
-    return nextSnapshot?.data ?? nextSnapshot;
+function clearTimer() {
+    if (timer !== null) clearTimeout(timer);
+    timer = null;
 }
 
-function entryFromSource(source) {
-    const entry = source?.entry && typeof source.entry === 'object' ? source.entry : null;
-    const root = entry?.root ?? source?.root ?? source?.path ?? null;
-    if (typeof root !== 'string' || root.length === 0) {
-        return null;
+export function hasLocalSelection() {
+    return (
+        savedEntries === null ||
+        !entriesEqual(entries, savedEntries) ||
+        dueAt !== null ||
+        Boolean(getUndo()) ||
+        Boolean(inFlight && inFlight.page === page)
+    );
+}
+
+function acceptSettings(settings) {
+    savedEntries = clone(settings?.applications?.filemgr?.entries ?? []);
+    setDefaultWorkspace(settings?.default_workspace ?? '');
+    setEntries(clone(savedEntries));
+    changed();
+}
+
+export function beginSelectionSession(options) {
+    closeSelectionSession(page);
+    page = { ...options, initialized: false, reading: null, needsRead: false, notice: 0 };
+    savedEntries = null;
+    setEntries([]);
+    setDefaultWorkspace('');
+    setSnapshot(null);
+    return page;
+}
+
+export function closeSelectionSession(owner) {
+    if (!owner || page !== owner) return;
+    page = null;
+    clearTimer();
+    dueAt = null;
+    undo = null;
+    changed();
+}
+
+export function isSelectionSession(owner) {
+    return page === owner;
+}
+
+async function readSettings(owner, initial) {
+    const guard = { editToken, baseline: savedEntries, notice: owner.notice };
+    const handle = {};
+    owner.reading = handle;
+    owner.needsRead = false;
+    try {
+        const settings = await owner.load();
+        if (page !== owner) return null;
+        if (
+            guard.notice !== owner.notice ||
+            guard.editToken !== editToken ||
+            (!initial && (guard.baseline !== savedEntries || hasLocalSelection()))
+        ) {
+            owner.needsRead = true;
+            return null;
+        }
+        acceptSettings(settings);
+        owner.initialized = true;
+        return settings;
+    } finally {
+        if (owner.reading === handle) owner.reading = null;
     }
-
-    return entry ? cloneEntries([{ ...entry, root }])[0] : { root };
 }
 
-export function entriesFromSnapshot(nextSnapshot) {
-    const data = getSnapshotData(nextSnapshot);
-    if (!Array.isArray(data?.sources)) {
-        return null;
+export async function initializeSelectionSession(owner) {
+    // A closed page's issued request remains the read barrier for an immediate reopen.
+    if (inFlight) await inFlight.promise;
+    while (page === owner && !owner.initialized) {
+        const settings = await readSettings(owner, true);
+        if (settings) return settings;
     }
-
-    return data.sources.map(entryFromSource).filter(Boolean);
+    return null;
 }
 
-function defaultWorkspaceFromSnapshot(nextSnapshot) {
-    const data = getSnapshotData(nextSnapshot);
-    if (typeof data?.default_workspace === 'string') {
-        return data.default_workspace;
+function checkSettings(owner = page) {
+    if (!owner || page !== owner || !owner.initialized || owner.reading || !owner.needsRead || hasLocalSelection())
+        return;
+    void readSettings(owner, false)
+        .catch((error) => {
+            if (page === owner) owner.onFeedback?.('readFailed');
+            console.warn('[filemgr] settings refresh failed', error);
+        })
+        .finally(() => {
+            if (page === owner) checkSettings(owner);
+        });
+}
+
+export function requestSettingsSync(owner) {
+    if (page !== owner) return;
+    owner.notice++;
+    owner.needsRead = true;
+    checkSettings(owner);
+}
+
+function armCommit() {
+    clearTimer();
+    if (!page?.initialized || dueAt === null) return;
+    const owner = page;
+    const wait = dueAt - Date.now();
+    if (wait > 0) {
+        timer = setTimeout(() => {
+            timer = null;
+            if (page === owner) pumpCommit();
+        }, wait);
+    } else {
+        pumpCommit();
     }
-
-    const workspaceSource = Array.isArray(data?.sources)
-        ? data.sources.find((source) => source?.is_workspace === true)
-        : null;
-    return workspaceSource ? (getSourceRoot(workspaceSource) ?? '') : '';
 }
 
-function isOpenHarmonyFromSnapshot(nextSnapshot) {
-    const data = getSnapshotData(nextSnapshot);
-    return Boolean(data?.is_openharmony);
+export function editEntries(nextEntries, { undoable = false, immediate = false } = {}) {
+    if (!page?.initialized) return false;
+    const previous = clone(entries);
+    editToken++;
+    undo = undoable ? { entries: previous, token: editToken, expiresAt: Date.now() + COMMIT_DEBOUNCE_MS } : null;
+    dueAt = Date.now() + (immediate ? 0 : COMMIT_DEBOUNCE_MS);
+    setEntries(clone(nextEntries));
+    changed();
+    armCommit();
+    return true;
 }
 
-function platformFromSnapshot(nextSnapshot) {
-    const data = getSnapshotData(nextSnapshot);
-    return typeof data?.platform === 'string' ? data.platform : '';
+export function rollbackUndo(token = getUndo()?.token) {
+    const operation = getUndo();
+    if (!operation || token !== operation.token) return null;
+    undo = null;
+    editToken++;
+    const restored = clone(operation.entries);
+    setEntries(restored);
+    dueAt =
+        !inFlight && savedEntries !== null && entriesEqual(entries, savedEntries)
+            ? null
+            : Date.now() + COMMIT_DEBOUNCE_MS;
+    changed();
+    armCommit();
+    checkSettings();
+    return restored;
 }
 
-function systemHomePathFromSnapshot(nextSnapshot) {
-    const data = getSnapshotData(nextSnapshot);
-    return typeof data?.home_path === 'string' ? data.home_path : '';
+function pumpCommit() {
+    if (!page?.initialized || dueAt === null) return;
+    if (undo && !getUndo()) undo = null;
+    if (inFlight) {
+        changed();
+        return;
+    }
+    if (savedEntries !== null && entriesEqual(entries, savedEntries) && !getUndo()) {
+        dueAt = null;
+        clearTimer();
+        changed();
+        checkSettings();
+        return;
+    }
+    if (Date.now() < dueAt) {
+        armCommit();
+        return;
+    }
+    const request = { entries: clone(entries), token: editToken, page, promise: null };
+    dueAt = null;
+    clearTimer();
+    if (undo?.token === request.token) undo = null;
+    inFlight = request;
+    // Install the slot before invoking any IPC or subscriber callback.
+    request.promise = Promise.resolve()
+        .then(() => settleRequest(request))
+        .catch((error) => {
+            console.warn('[filemgr] selection settlement failed', error);
+        })
+        .finally(() => {
+            if (inFlight === request) inFlight = null;
+            if (page === request.page) {
+                changed();
+                pumpCommit();
+                checkSettings();
+            }
+        });
+    changed();
+}
+
+async function settleRequest(request) {
+    const owner = request.page;
+    let result;
+    try {
+        result = await owner.save(request.entries);
+    } catch (error) {
+        console.warn('[filemgr] selection save failed', error);
+        if (page !== owner) return;
+        if (error?.saveAttempted) {
+            try {
+                const notice = owner.notice;
+                const settings = await owner.load();
+                if (page !== owner) return;
+                if (owner.notice === notice) owner.needsRead = false;
+                savedEntries = clone(settings?.applications?.filemgr?.entries ?? []);
+                setDefaultWorkspace(settings?.default_workspace ?? '');
+                if (editToken === request.token) {
+                    setEntries(clone(savedEntries));
+                    owner.onFeedback?.('unknownReloaded');
+                }
+            } catch (readError) {
+                if (page === owner) savedEntries = null;
+                console.warn('[filemgr] unknown save reread failed', readError);
+                if (page === owner && editToken === request.token) owner.onFeedback?.('unknownFailed');
+            }
+        } else if (editToken === request.token) {
+            owner.onFeedback?.('saveFailed');
+        }
+        if (page === owner) changed();
+        return;
+    }
+    let feedbackToken;
+    if (page === owner) {
+        const effective = result.settings;
+        savedEntries = clone(effective.applications.filemgr.entries);
+        setDefaultWorkspace(effective.default_workspace ?? '');
+        if (entriesEqual(entries, request.entries) && !getUndo()) {
+            setEntries(clone(savedEntries));
+            dueAt = null;
+            clearTimer();
+            feedbackToken = editToken;
+        }
+        changed();
+    }
+    const reconciliation = await result.reconciliation;
+    if (page === owner && editToken === feedbackToken && entriesEqual(entries, savedEntries) && !getUndo()) {
+        owner.onFeedback?.(reconciliation.ok ? 'saved' : 'reconcileFailed');
+    }
+}
+
+export async function commitEntriesNow(nextEntries) {
+    const owner = page;
+    if (!editEntries(nextEntries, { immediate: true })) return null;
+    while (inFlight && page === owner) await inFlight.promise;
+    return page === owner ? getEntries() : null;
 }
 
 export function syncStateFromSnapshot(nextSnapshot) {
-    setIsOpenHarmony(isOpenHarmonyFromSnapshot(nextSnapshot));
-    setPlatform(platformFromSnapshot(nextSnapshot));
-    setSystemHomePath(systemHomePathFromSnapshot(nextSnapshot));
-
-    const nextDefaultWorkspace = defaultWorkspaceFromSnapshot(nextSnapshot);
-    const defaultWorkspaceUpdated = nextDefaultWorkspace !== defaultWorkspace;
-    if (defaultWorkspaceUpdated) {
-        setDefaultWorkspace(nextDefaultWorkspace);
-    }
-
-    const nextEntries = entriesFromSnapshot(nextSnapshot);
-    const pendingCommit = getPendingCommit();
-    let entriesUpdated = false;
-    let entriesSkippedBecausePending = false;
-
-    if (Array.isArray(nextEntries)) {
-        if (pendingCommit) {
-            entriesSkippedBecausePending = true;
-        } else if (JSON.stringify(nextEntries) !== JSON.stringify(entries)) {
-            setEntries(nextEntries);
-            entriesUpdated = true;
-        }
-    }
-
-    return {
-        entriesUpdated,
-        entriesSkippedBecausePending,
-        defaultWorkspaceUpdated
-    };
-}
-
-function getSourceRoot(source) {
-    return source?.root ?? source?.path ?? source?.entry?.root ?? source?.entry?.path ?? null;
-}
-
-function createPendingSource(entry) {
-    return {
-        root: entry.root,
-        path: entry.root,
-        state: 'pending',
-        total_files: 0,
-        embedded_count: 0,
-        pending_count: 0,
-        last_scan_at: null
-    };
-}
-
-export function applyOptimisticSnapshotUpdate(nextEntries) {
-    const currentSnapshot = snapshot;
-    const data = currentSnapshot?.data ?? currentSnapshot;
-    const currentSources = Array.isArray(data?.sources) ? data.sources : [];
-    const sourceRoots = new Set(currentSources.map(getSourceRoot).filter(Boolean));
-    const newSources = nextEntries
-        .filter((entry) => entry?.root && !sourceRoots.has(entry.root))
-        .map(createPendingSource);
-
-    if (newSources.length === 0) {
-        return;
-    }
-
-    const nextData = {
-        ...(data ?? {}),
-        sources: [...currentSources, ...newSources]
-    };
-
-    if (currentSnapshot && Object.prototype.hasOwnProperty.call(currentSnapshot, 'data')) {
-        setSnapshot({
-            ...currentSnapshot,
-            data: nextData
-        });
-        return;
-    }
-
-    setSnapshot(nextData);
-}
-
-export function setUndoSnapshot(nextEntries) {
-    _undoSnapshot = cloneEntries(nextEntries);
-}
-
-export function clearUndoSnapshot() {
-    invalidateUndo();
-}
-
-export function invalidateUndo() {
-    _undoSnapshot = null;
-}
-
-export function rollbackUndo() {
-    if (!_undoSnapshot) {
-        return null;
-    }
-
-    const restoredEntries = cloneEntries(_undoSnapshot);
-    setEntries(restoredEntries);
-    clearPendingCommit();
-    invalidateUndo();
-
-    return restoredEntries;
+    const data = nextSnapshot?.data ?? nextSnapshot;
+    setIsOpenHarmony(Boolean(data?.is_openharmony));
+    setPlatform(typeof data?.platform === 'string' ? data.platform : '');
+    setSystemHomePath(typeof data?.home_path === 'string' ? data.home_path : '');
 }
 
 export function __resetForTesting() {
+    closeSelectionSession(page);
     snapshot = null;
     entries = [];
+    savedEntries = null;
+    editToken = 0;
     defaultWorkspace = '';
     isOpenHarmony = false;
     platform = '';
     systemHomePath = '';
-    pendingNextEntries = null;
-    pendingCommitToken = 0;
-    clearDebounceTimer();
-    _undoSnapshot = null;
-
-    snapshotSubscribers.clear();
-    entriesSubscribers.clear();
-    defaultWorkspaceSubscribers.clear();
-    isOpenHarmonySubscribers.clear();
-    platformSubscribers.clear();
-    systemHomePathSubscribers.clear();
+    for (const subscribers of [
+        snapshotSubscribers,
+        entriesSubscribers,
+        defaultWorkspaceSubscribers,
+        isOpenHarmonySubscribers,
+        platformSubscribers,
+        systemHomePathSubscribers,
+        selectionSubscribers
+    ])
+        subscribers.clear();
 }

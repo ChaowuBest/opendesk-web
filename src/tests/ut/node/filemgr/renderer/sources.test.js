@@ -7,8 +7,26 @@ import {
     formatDisplayPath,
     formatLastScan
 } from '../../../../../main/applications/filemgr/renderer/sources.js';
-import { setSnapshot } from '../../../../../main/applications/filemgr/renderer/state.js';
+import {
+    __resetForTesting,
+    setEntries,
+    setDefaultWorkspace,
+    setSnapshot as setBackendSnapshot
+} from '../../../../../main/applications/filemgr/renderer/state.js';
 import { createRendererTranslator } from '../../../../../renderer/locale.ts';
+
+test.beforeEach(__resetForTesting);
+test.afterEach(__resetForTesting);
+// Arrange the settings selection independently from the backend status fixture.
+function setSnapshot(snapshot) {
+    setEntries((snapshot.sources ?? []).map((source) => source.entry ?? { root: source.root }));
+    setDefaultWorkspace(
+        snapshot.default_workspace ??
+            snapshot.sources?.find((source) => source.is_workspace || source.workspace)?.root ??
+            ''
+    );
+    setBackendSnapshot(snapshot);
+}
 
 test('formatLastScan only shows just now for scans within one minute', (t) => {
     const now = 1_700_000_000_000;

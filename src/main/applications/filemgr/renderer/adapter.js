@@ -85,15 +85,13 @@ export function subscribeStatus(cb) {
     };
 }
 
-export async function loadEntries() {
+export async function loadFileMgrSettings() {
     const settings = await getSettingAPI().loadSettingObject();
-    const entries = settings?.applications?.filemgr?.entries;
-    return Array.isArray(entries) ? entries : [];
-}
-
-export async function loadDefaultWorkspace() {
-    const settings = await getSettingAPI().loadSettingObject();
-    return settings?.default_workspace ?? null;
+    if (!settings || typeof settings !== 'object') throw new Error('FileMgr settings response is unavailable.');
+    const configuredEntries = settings.applications?.filemgr?.entries;
+    if (configuredEntries !== undefined && !Array.isArray(configuredEntries))
+        throw new Error('FileMgr settings entries are invalid.');
+    return settings;
 }
 
 export async function saveEntries(nextEntries) {
@@ -106,24 +104,39 @@ export async function saveEntries(nextEntries) {
         entries: Array.isArray(nextEntries) ? nextEntries : []
     };
 
-    await settingAPI.saveSettingObject({
-        ...settings,
-        applications: {
-            ...applications,
-            filemgr: nextFilemgrConfig
+    let effective;
+    try {
+        effective = await settingAPI.saveSettingObject({
+            ...settings,
+            applications: {
+                ...applications,
+                filemgr: nextFilemgrConfig
+            }
+        });
+        if (!Array.isArray(effective?.applications?.filemgr?.entries)) {
+            throw new Error('FileMgr save returned no effective configuration.');
         }
-    });
+    } catch (cause) {
+        const error = new Error('FileMgr save result is unknown.', { cause });
+        error.saveAttempted = true;
+        throw error;
+    }
 
     const applicationAPI = getApplicationAPI();
-    if (applicationAPI?.call) {
-        try {
-            void Promise.resolve(applicationAPI.call('reconcileConfig', nextFilemgrConfig)).catch((err) => {
-                console.warn('[filemgr] reconcile config failed', err);
-            });
-        } catch (err) {
-            console.warn('[filemgr] reconcile config failed', err);
-        }
-    }
+    const reconciliation = Promise.resolve()
+        .then(() => {
+            if (!applicationAPI?.call) throw new Error('FileMgr applicationAPI is unavailable.');
+            return applicationAPI.call('reconcileConfig', effective.applications.filemgr);
+        })
+        .then((result) => {
+            if (result?.status === 'error') throw new Error(result.message || 'FileMgr reconcile failed.');
+            return { ok: true };
+        })
+        .catch((error) => {
+            console.warn('[filemgr] reconcile config failed', error);
+            return { ok: false };
+        });
+    return { settings: effective, reconciliation };
 }
 
 export async function listDirectory(path, opts) {

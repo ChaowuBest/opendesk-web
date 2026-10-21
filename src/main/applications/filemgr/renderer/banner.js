@@ -471,7 +471,7 @@ function injectStyles(doc) {
 }
 
 function getStatusPillModel(snapshot, t) {
-    const status = getStatus(snapshot);
+    const status = snapshot == null ? 'initializing' : getStatus(snapshot);
     const mode = getMode(snapshot);
     const statusModel = STATUS_MODEL[status];
     const modeLabel = MODE_LABEL[mode] ? translate(t, MODE_LABEL[mode]) : null;
