@@ -74,7 +74,7 @@ export interface GlobalTodoStorage {
 // TodoWrite 工具的待办参数
 export interface TodoWriteTodoParam {
     id?: string; // 可选，更新时使用
-    title: string; // 待办标题（简短描述，用于列表展示）
+    title?: string; // 可选，待办标题；缺省时由 handleExecute 用 content 兜底
     content: string; // 待办内容（详细描述，发送给 Agent 执行。Agent 有能力调用工具访问文件、执行命令等，因此具体需求应明确写在 content 中）
     status: TodoStatus;
 }

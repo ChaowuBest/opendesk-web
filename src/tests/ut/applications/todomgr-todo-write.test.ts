@@ -1,6 +1,7 @@
 import { TodoWriteTool } from '../../../main/applications/todomgr/tools.js';
 import { ToolCall } from '../../../main/aikernel/messages.js';
 import { setRuntimeLocale } from '../../../locale/index.js';
+import { deleteTaskTodos, getTaskTodosForDisplay } from '../../../main/aikernel/todos/task-todos.js';
 
 function makeCall(todos: Array<Record<string, unknown>>): ToolCall {
     const call = new ToolCall(0, 'call-todo', 'TodoWrite', JSON.stringify({ todos }));
@@ -47,5 +48,47 @@ describe('TodoWriteTool display name and rendering', () => {
             80
         );
         expect(updateRows?.[0]).toContain('更新任务规划');
+    });
+});
+
+describe('TodoWriteTool title fallback', () => {
+    beforeAll(() => setRuntimeLocale('zh-CN'));
+    afterAll(() => setRuntimeLocale(null));
+
+    const tool = new TodoWriteTool({ emitEvent: async () => {} } as any);
+    const TASK_ID = 'task-title-fallback';
+
+    afterEach(() => deleteTaskTodos(TASK_ID));
+
+    test('title defaults to content when omitted', async () => {
+        await tool.execute(
+            { todos: [{ content: '查看 0.3.8 release note 风格', status: 'in_progress' }] } as any,
+            undefined,
+            {
+                task_id: TASK_ID
+            } as any
+        );
+
+        const todos = getTaskTodosForDisplay(TASK_ID);
+        expect(todos).toHaveLength(1);
+        expect(todos[0].title).toBe('查看 0.3.8 release note 风格');
+        expect(todos[0].content).toBe('查看 0.3.8 release note 风格');
+    });
+
+    test('explicit title is kept and fallback caps title at 200 chars', async () => {
+        await tool.execute(
+            {
+                todos: [
+                    { title: '明确标题', content: '详细内容', status: 'pending' },
+                    { content: '长'.repeat(300), status: 'pending' }
+                ]
+            } as any,
+            undefined,
+            { task_id: TASK_ID } as any
+        );
+
+        const todos = getTaskTodosForDisplay(TASK_ID);
+        expect(todos[0].title).toBe('明确标题');
+        expect(todos[1].title).toBe('长'.repeat(200));
     });
 });

@@ -314,7 +314,7 @@ function renderTodoCardHtml(actionLabel: string, args: any, toolcall: ToolCall):
 
 const TodoWriteTodoSchema = z.object({
     id: z.string().optional().describe('待办项ID，更新或删除时必填'),
-    title: z.string().describe('待办标题（简短描述，用于列表展示）'),
+    title: z.string().optional().describe('待办标题（简短描述，用于列表展示）。可省略，省略时自动取 content 作为标题'),
     content: z
         .string()
         .describe(
@@ -482,6 +482,9 @@ export class TodoWriteTool extends BaseTool<typeof TodoWriteArgsSchema> {
         currentTodos = todos.map((todoParam) => {
             const existingTodo = todoParam.id ? currentTodos.find((t) => t.id === todoParam.id) : undefined;
 
+            // title 缺省时用 content 兜底，保证任务计划面板始终有展示文本
+            const title = (todoParam.title || todoParam.content).slice(0, 200);
+
             // started_at：首次进入 in_progress 或 completed 时记录一次，后续保持不变。
             // 这样已完成项能回溯到"最早启动时间"，进行中项也有稳定的计时起点。
             let started_at = existingTodo?.started_at;
@@ -495,7 +498,7 @@ export class TodoWriteTool extends BaseTool<typeof TodoWriteArgsSchema> {
             return {
                 id: todoParam.id || `task_todo_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
                 task_id: taskId,
-                title: todoParam.title,
+                title,
                 content: todoParam.content,
                 status: todoParam.status,
                 created_at: existingTodo?.created_at || nowIso,
