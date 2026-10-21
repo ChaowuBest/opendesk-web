@@ -10,6 +10,7 @@
  */
 
 import path from 'path';
+import { resolveDriveRootPath } from '../utils.js';
 import picomatch from 'picomatch';
 import { normalizePathDescendantOrSelfValue } from '../../../services/storage/path-scope.js';
 
@@ -131,7 +132,7 @@ function normalizedConfiguredEntries(entries) {
     return (entries ?? [])
         .map((entry) => {
             try {
-                return { entry, root: normalizeOneScopePath(entry?.root) };
+                return { entry, root: normalizeOneScopePath(resolveDriveRootPath(entry?.root, process.platform)) };
             } catch {
                 return null;
             }
@@ -142,7 +143,7 @@ function normalizedConfiguredEntries(entries) {
 function normalizedUnavailableRoots(unavailableRoots) {
     return Object.keys(unavailableRoots ?? {}).flatMap((root) => {
         try {
-            return [normalizeOneScopePath(root)];
+            return [normalizeOneScopePath(resolveDriveRootPath(root, process.platform))];
         } catch {
             return [];
         }

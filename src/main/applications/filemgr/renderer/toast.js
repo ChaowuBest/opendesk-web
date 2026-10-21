@@ -9,19 +9,20 @@
  * See the Mulan PSL v2 for more details.
  */
 
-import { invalidateUndo, rollbackUndo } from './state.js';
+import { getUndo, rollbackUndo, subscribeSelection } from './state.js';
+import { createRendererTranslator } from '../../../../renderer/locale.ts';
 
 const STYLE_ID = 'filemgr-toast-style';
 const INFO_DURATION_MS = 3_000;
-const UNDO_DURATION_MS = 10_000;
+const UNDO_DURATION_MS = 3_000;
 const MAX_NAME_LENGTH = 28;
 
-const TOAST_MESSAGES = {
-    'add-entry': '已加入 AI 理解范围',
-    exclude: '已忽略这个文件夹',
-    restore: '已重新加入 AI 理解范围',
-    'carve-out': '已重新加入 AI 理解范围',
-    consolidate: '已加入 AI 理解范围'
+const TOAST_MESSAGE_KEYS = {
+    'add-entry': 'add',
+    exclude: 'exclude',
+    restore: 'restore',
+    'carve-out': 'restore',
+    consolidate: 'add'
 };
 
 function ensureStyles() {
@@ -129,13 +130,13 @@ function getToastAction(payload) {
     return 'add-entry';
 }
 
-function getToastText(payload) {
+function getToastText(payload, t) {
     const action = getToastAction(payload);
-    const prefix = TOAST_MESSAGES[action] ?? TOAST_MESSAGES['add-entry'];
+    const prefix = t(`renderer.filemgr.selection.toast.${TOAST_MESSAGE_KEYS[action] ?? 'add'}`);
     return `${prefix}${quotedName(payload?.path)}`;
 }
 
-function getVariantOptions(payload) {
+function getVariantOptions(payload, t) {
     if (payload?.variant) {
         return payload;
     }
@@ -144,14 +145,14 @@ function getVariantOptions(payload) {
     if (toastType === 'undo') {
         return {
             variant: 'undo',
-            text: getToastText(payload),
+            text: getToastText(payload, t),
             durationMs: UNDO_DURATION_MS
         };
     }
 
     return {
         variant: 'info',
-        text: getToastText(payload),
+        text: getToastText(payload, t),
         durationMs: INFO_DURATION_MS
     };
 }
@@ -192,6 +193,8 @@ export function createToast(options = {}) {
     const container = options.container ?? document.body;
     let timer = null;
     let currentVariant = null;
+    let undoToken = null;
+    let t = options.t ?? createRendererTranslator();
 
     container.appendChild(parts.element);
 
@@ -209,13 +212,9 @@ export function createToast(options = {}) {
     }
 
     function show(rawPayload) {
-        const payload = getVariantOptions(rawPayload);
+        const payload = getVariantOptions(rawPayload, t);
         const variant = payload.variant;
         clearTimer();
-
-        if (variant !== 'undo' && variant !== 'undo-success') {
-            invalidateUndo();
-        }
 
         currentVariant = variant;
         parts.text.textContent = payload.text;
@@ -223,16 +222,22 @@ export function createToast(options = {}) {
             variant === 'undo-success'
                 ? 'fas fa-info-circle fs-toast__icon is-info'
                 : 'fas fa-circle-check fs-toast__icon';
-        parts.undoButton.hidden = variant !== 'undo';
+        undoToken = variant === 'undo' ? getUndo()?.token : null;
+        parts.undoButton.textContent = t('renderer.filemgr.selection.undo');
+        parts.undoButton.hidden = undoToken == null;
         parts.element.classList.add('show');
 
-        timer = setTimeout(hide, payload.durationMs ?? INFO_DURATION_MS);
+        const duration =
+            variant === 'undo'
+                ? Math.max(0, (getUndo()?.expiresAt ?? Date.now()) - Date.now())
+                : (payload.durationMs ?? INFO_DURATION_MS);
+        timer = setTimeout(hide, duration);
     }
 
     function showUndoSuccess() {
         show({
             variant: 'undo-success',
-            text: '已撤销',
+            text: t('renderer.filemgr.selection.undone'),
             durationMs: INFO_DURATION_MS
         });
     }
@@ -242,7 +247,7 @@ export function createToast(options = {}) {
             return;
         }
 
-        const restoredEntries = rollbackUndo();
+        const restoredEntries = rollbackUndo(undoToken);
         hide();
 
         if (restoredEntries) {
@@ -250,17 +255,25 @@ export function createToast(options = {}) {
             options.onRollback?.(restoredEntries);
         }
 
-        showUndoSuccess();
+        if (restoredEntries) showUndoSuccess();
     });
 
+    const unsubscribe = subscribeSelection(() => {
+        if (currentVariant === 'undo' && getUndo()?.token !== undoToken) hide();
+    });
     return {
         element: parts.element,
+        setTranslator(translator) {
+            t = translator;
+            parts.undoButton.textContent = t('renderer.filemgr.selection.undo');
+        },
         show,
         showFromPayload(payload) {
             show(payload);
         },
         hide,
         destroy() {
+            unsubscribe();
             hide();
             parts.element.remove();
         }

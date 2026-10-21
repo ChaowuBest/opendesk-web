@@ -13,8 +13,8 @@ import { AgentOperableHTMLElement } from '../../widget_utils.js';
 import {
     forceRefreshScan,
     getFileSystemStatus,
-    loadDefaultWorkspace,
-    loadEntries,
+    loadFileMgrSettings,
+    saveEntries,
     openSettings,
     resetFileSystemStorage,
     setSourcePaused,
@@ -25,15 +25,21 @@ import { createBanner } from './banner.js';
 import { showDeleteRootModal, showProtectedWorkspaceModal, showResetModal } from './modal.js';
 import { createSources } from './sources.js';
 import {
-    clearPendingCommit,
+    beginSelectionSession,
+    closeSelectionSession,
+    entriesEqual,
+    getDefaultWorkspace,
     getEntries,
-    getSnapshot,
-    setEntries,
+    getSavedEntries,
+    initializeSelectionSession,
+    isSelectionSession,
+    requestSettingsSync,
     setSnapshot,
     syncStateFromSnapshot
 } from './state.js';
 import { createToast } from './toast.js';
 import { createFileTree } from './tree.js';
+import { normalizePath } from './tree/utils.js';
 import { createRendererTranslator } from '../../../../renderer/locale.ts';
 
 const ENTRY_STYLE_ID = 'filemgr-entry-styles';
@@ -48,16 +54,6 @@ function getTopWindow() {
 
 function getSettingAPI() {
     return globalThis.window?.settingAPI ?? getTopWindow()?.settingAPI;
-}
-
-async function loadRendererLocaleSource() {
-    try {
-        const api = getSettingAPI();
-        const settings = await api?.loadSettingObject?.();
-        return settings;
-    } catch {
-        return undefined;
-    }
 }
 
 function ensureStyles(doc) {
@@ -168,14 +164,6 @@ function basename(path) {
     return parts.at(-1) || normalizedPath || path;
 }
 
-function getSnapshotData(snapshot) {
-    return snapshot?.data ?? snapshot;
-}
-
-function sourceRoot(source) {
-    return source?.root ?? source?.path ?? source?.entry?.root ?? source?.entry?.path ?? null;
-}
-
 class FileMgrEntryWidget extends AgentOperableHTMLElement {
     constructor() {
         super();
@@ -187,6 +175,7 @@ class FileMgrEntryWidget extends AgentOperableHTMLElement {
         this._toast = null;
         this._t = createRendererTranslator();
         this._settingUnsubscribe = null;
+        this._selectionOwner = null;
     }
 
     connectedCallback() {
@@ -207,52 +196,26 @@ class FileMgrEntryWidget extends AgentOperableHTMLElement {
         ensureStyles(doc);
         this._renderShell();
 
+        this._snapshotSignature = null;
+        const owner = beginSelectionSession({
+            load: loadFileMgrSettings,
+            save: saveEntries,
+            onFeedback: (kind) => {
+                if (kind === 'saved') return;
+                if (this.isConnected && token === this._lifecycleToken) {
+                    this._toast?.show({ variant: 'info', text: this._t(`renderer.filemgr.selection.${kind}`) });
+                }
+            }
+        });
+        this._selectionOwner = owner;
+        let localeChanged = false;
+        this._subscribeSettingChanges(token, owner, () => {
+            localeChanged = true;
+        });
         try {
-            const [entriesResult, workspaceResult, localeResult] = await Promise.allSettled([
-                loadEntries(),
-                loadDefaultWorkspace(),
-                loadRendererLocaleSource()
-            ]);
-            if (!this.isConnected || token !== this._lifecycleToken) {
-                return;
-            }
-            if (localeResult.status === 'fulfilled') {
-                this._t = createRendererTranslator(localeResult.value);
-            }
-            this._subscribeLocaleChanges(token);
-
-            const safeEntries =
-                entriesResult.status === 'fulfilled' && Array.isArray(entriesResult.value) ? entriesResult.value : [];
-            if (entriesResult.status === 'rejected') {
-                console.warn('[filemgr] loadEntries failed; falling back to empty entries', entriesResult.reason);
-            }
-
-            const defaultWorkspace = workspaceResult.status === 'fulfilled' ? (workspaceResult.value ?? null) : null;
-            if (workspaceResult.status === 'rejected') {
-                console.warn('[filemgr] loadDefaultWorkspace failed; falling back to null', workspaceResult.reason);
-            }
-
-            setEntries(safeEntries);
-            this._setSnapshotDirect({
-                status: 'initializing',
-                mode: null,
-                default_workspace: defaultWorkspace,
-                alerts: safeEntries.length === 0 ? [{ code: 'no_roots' }] : [],
-                sources: safeEntries.map((entry) => ({
-                    root: entry.root,
-                    entry,
-                    state: 'pending',
-                    total_files: 0,
-                    embedded_count: 0,
-                    pending_count: 0,
-                    failed_count: 0,
-                    last_scan_at: null
-                })),
-                totals: null,
-                storage_stats: null,
-                storage: null,
-                readonly: false
-            });
+            const settings = await initializeSelectionSession(owner);
+            if (!settings || !this.isConnected || token !== this._lifecycleToken) return;
+            if (!localeChanged) this._t = createRendererTranslator(settings);
 
             this._mountExperience(doc);
             this._subscribeStatus(token);
@@ -269,7 +232,7 @@ class FileMgrEntryWidget extends AgentOperableHTMLElement {
         this.innerHTML = `
 <div class="fs-window">
     <div class="fs-page">
-        <div class="fs-loading">加载智能文件系统...</div>
+        <div class="fs-loading">${this._t('renderer.filemgr.selection.loading')}</div>
     </div>
 </div>`;
     }
@@ -342,7 +305,7 @@ class FileMgrEntryWidget extends AgentOperableHTMLElement {
 
         this._treeView = createFileTree(treeMount, {
             onShowModal: (payload) => {
-                void this._showDeleteRootModal(payload.path, payload);
+                void this._showDeleteRootModal(payload.path);
             },
             onToast: (payload) => {
                 this._toast?.showFromPayload(payload);
@@ -359,6 +322,7 @@ class FileMgrEntryWidget extends AgentOperableHTMLElement {
         lower.insertBefore(actions.element, treeWrapper);
 
         this._toast = createToast({
+            t: this._t,
             tree: this._treeView
         });
 
@@ -366,12 +330,13 @@ class FileMgrEntryWidget extends AgentOperableHTMLElement {
     }
 
     async _setSourcePaused(request) {
+        const token = this._lifecycleToken;
         try {
             const snapshot = await setSourcePaused(request);
-            if (this.isConnected) this._setSnapshotDirect(snapshot);
+            if (this.isConnected && token === this._lifecycleToken) this._setSnapshotDirect(snapshot);
             return snapshot;
         } catch (error) {
-            if (error?.snapshot && this.isConnected) {
+            if (error?.snapshot && this.isConnected && token === this._lifecycleToken) {
                 this._setSnapshotDirect(error.snapshot);
             }
             throw error;
@@ -406,62 +371,31 @@ class FileMgrEntryWidget extends AgentOperableHTMLElement {
         setSnapshot(nextSnapshot);
     }
 
-    _removeSnapshotSource(root) {
-        const normalizedRoot = root;
-        const snapshot = getSnapshot();
-        const data = getSnapshotData(snapshot);
-        if (!data || !Array.isArray(data.sources)) {
-            return;
-        }
-
-        const nextSources = data.sources.filter((source) => sourceRoot(source) !== normalizedRoot);
-        if (nextSources.length === data.sources.length) {
-            return;
-        }
-
-        const nextData = {
-            ...data,
-            sources: nextSources
-        };
-
-        if (snapshot && Object.prototype.hasOwnProperty.call(snapshot, 'data')) {
-            this._setSnapshotDirect({
-                ...snapshot,
-                data: nextData
-            });
-            return;
-        }
-
-        this._setSnapshotDirect(nextData);
-    }
-
-    async _showDeleteRootModal(root, payload = null) {
-        if (!root) {
-            return false;
-        }
-        if (payload?.result?.action === 'protectedWorkspace' || root === (await loadDefaultWorkspace())) {
-            return this._showProtectedWorkspaceModal();
-        }
-
+    async _showDeleteRootModal(root) {
+        const token = this._lifecycleToken;
+        const owner = this._selectionOwner;
+        if (!root || !isSelectionSession(owner)) return false;
+        const protectedRoot = () =>
+            Boolean(getDefaultWorkspace()) && normalizePath(root) === normalizePath(getDefaultWorkspace());
+        if (protectedRoot()) return this._showProtectedWorkspaceModal();
+        const entries = getEntries();
+        const target =
+            entries.find((entry) => entry.root === root) ??
+            entries.find((entry) => normalizePath(entry.root) === normalizePath(root));
+        if (!target) return false;
+        // Resolve tree/display paths once; confirmation must retain this raw source identity.
+        const targetRoot = target.root;
         return showDeleteRootModal({
             rootName: basename(root),
             mountTarget: this,
             t: this._t,
             onConfirm: async () => {
-                const nextEntries = Array.isArray(payload?.result?.nextEntries)
-                    ? payload.result.nextEntries
-                    : getEntries().filter((entry) => entry.root !== root);
-
-                setEntries(nextEntries);
-                this._removeSnapshotSource(root);
-
-                if (typeof payload?.commitNow === 'function') {
-                    await payload.commitNow(nextEntries);
-                } else {
-                    await this._treeView?.commitNow(nextEntries);
-                }
-
-                this._treeView?.refreshCheckboxes();
+                if (!this.isConnected || token !== this._lifecycleToken || !isSelectionSession(owner)) return false;
+                if (protectedRoot()) return this._showProtectedWorkspaceModal();
+                const current = getEntries();
+                if (!current.some((entry) => entry.root === targetRoot)) return false;
+                await this._treeView?.commitNow(current.filter((entry) => entry.root !== targetRoot));
+                if (this.isConnected && token === this._lifecycleToken) this._treeView?.refreshCheckboxes();
                 return true;
             }
         });
@@ -474,9 +408,10 @@ class FileMgrEntryWidget extends AgentOperableHTMLElement {
     }
 
     async _showResetModal() {
+        const token = this._lifecycleToken;
         return showResetModal({
             mountTarget: this,
-            onConfirm: () => resetFileSystemStorage()
+            onConfirm: () => (this.isConnected && token === this._lifecycleToken ? resetFileSystemStorage() : false)
         });
     }
 
@@ -486,23 +421,26 @@ class FileMgrEntryWidget extends AgentOperableHTMLElement {
         this.innerHTML = `
 <div class="fs-window">
     <div class="fs-page">
-        <div class="fs-error">智能文件系统加载失败，请稍后重试。</div>
+        <div class="fs-error">${this._t('renderer.filemgr.selection.loadError')}</div>
     </div>
 </div>`;
     }
 
-    _subscribeLocaleChanges(token) {
-        if (this._settingUnsubscribe) {
-            return;
-        }
+    _subscribeSettingChanges(token, owner, onLocale) {
         const api = getSettingAPI();
         this._settingUnsubscribe = api?.onSettingChanged?.((setting) => {
-            if (!this.isConnected || token !== this._lifecycleToken) {
-                return;
-            }
+            if (!this.isConnected || token !== this._lifecycleToken) return;
+            onLocale();
             this._t = createRendererTranslator(setting);
-            for (const component of this._components) {
-                component.setTranslator?.(this._t);
+            for (const component of this._components) component.setTranslator?.(this._t);
+            const config = setting?.applications?.filemgr;
+            const hasWorkspace = Object.prototype.hasOwnProperty.call(setting ?? {}, 'default_workspace');
+            if (
+                (owner.reading && (config || hasWorkspace)) ||
+                (config && !entriesEqual(config.entries ?? [], getSavedEntries())) ||
+                (hasWorkspace && (setting.default_workspace ?? '') !== getDefaultWorkspace())
+            ) {
+                requestSettingsSync(owner);
             }
         });
     }
@@ -526,7 +464,8 @@ class FileMgrEntryWidget extends AgentOperableHTMLElement {
         this._unsubscribeStatus = null;
         this._settingUnsubscribe?.();
         this._settingUnsubscribe = null;
-        clearPendingCommit();
+        closeSelectionSession(this._selectionOwner);
+        this._selectionOwner = null;
 
         for (const component of [...this._components].reverse()) {
             component.destroy?.();

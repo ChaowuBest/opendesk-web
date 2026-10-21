@@ -17,6 +17,7 @@ import { CODES, FSStorage, WARNINGS } from '../../../../main/applications/filemg
 import FileManagerWorker from '../../../../main/applications/filemgr/worker.js';
 import { saveEntries } from '../../../../main/applications/filemgr/renderer/adapter.js';
 import { FSEntrySchema } from '../../../../main/applications/filemgr/setting.js';
+import { withMemoryStateWriter } from './recovery-fixture.js';
 
 // ── Constants & Helpers ─────────────────────────────────────────────
 
@@ -868,11 +869,11 @@ async function testProbeErrorAlertsUseStableCodes() {
     const appDir = tmpDir('probe-error-alerts');
     const worker = new FileManagerWorker('com.test.filemgr', appDir);
     try {
-        worker.storage = {
+        worker.storage = withMemoryStateWriter({
             scannerState: {
                 probe_error: { code: 'dim_unsupported', ts: Date.now() }
             }
-        };
+        });
         assert.deepEqual(worker._buildAlerts('running', 'base-only'), [{ code: 'dim_unsupported' }]);
 
         worker.storage.scannerState.probe_error = { code: 'embedding_config_error', ts: Date.now() };
@@ -892,7 +893,7 @@ async function testGetFileSystemStatusSkipsStorageSnapshotBeforeReady() {
         let getStatusCalls = 0;
         worker.status = 'initializing';
         worker._lastConfig = makeConfig(scanDir);
-        worker.storage = {
+        worker.storage = withMemoryStateWriter({
             mode: 'base-only',
             scannerState: {
                 roots: {},
@@ -907,7 +908,7 @@ async function testGetFileSystemStatusSkipsStorageSnapshotBeforeReady() {
             },
             isDeferred: () => false,
             deferredReason: null
-        };
+        });
 
         const status = await worker.getFileSystemStatus();
 
@@ -932,11 +933,11 @@ async function testEmptyScannedSourceStateIsCompleted() {
     const appDir = tmpDir('empty-source-state');
     const worker = new FileManagerWorker('com.test.filemgr', appDir);
     try {
-        worker.storage = {
+        worker.storage = withMemoryStateWriter({
             scannerState: {
                 unavailable_roots: {}
             }
-        };
+        });
 
         assert.equal(
             worker._deriveSourceState(
@@ -1314,13 +1315,13 @@ async function testTask5SearchWrappersNormalizeAndShortCircuit() {
         assert.equal(missing.code, CODES.INDEX_NOT_READY);
 
         const calls = [];
-        worker.storage = {
+        worker.storage = withMemoryStateWriter({
             async searchFileByName(query, options) {
                 calls.push({ method: 'name', query, options });
                 return { query, results: [], totalHits: 0 };
             },
             isDeferred: () => false
-        };
+        });
 
         const blankName = await worker.searchFileByName('   ', 10);
         assert.deepEqual(blankName, { query: '   ', results: [], totalHits: 0 });
@@ -1343,7 +1344,7 @@ function makeSearchWorker() {
     worker._lastConfig = worker.config;
     worker.status = 'running';
     worker._currentWorkspace = '/workspace';
-    worker.storage = {
+    worker.storage = withMemoryStateWriter({
         mode: 'base-only',
         scannerState: { unavailable_roots: {}, roots: {}, probe_error: null, last_rebuild_event: null },
         isDeferred: () => false,
@@ -1354,7 +1355,7 @@ function makeSearchWorker() {
         searchIndexedChunks: async () => {
             throw new Error('semantic should not run');
         }
-    };
+    });
     worker._statFileForSearch = async () => ({ isFile: () => true });
     return worker;
 }
@@ -1719,7 +1720,7 @@ function makeMultiPathSearchWorker({ entries, pausedRoots = [], unavailableRoots
     worker._getVisibleConfigEntries = FileManagerWorker.prototype._getVisibleConfigEntries;
     worker._currentWorkspace = null;
     worker._statFileForSearch = async () => ({ isFile: () => true });
-    worker.storage = {
+    worker.storage = withMemoryStateWriter({
         mode: 'full',
         isDeferred: () => false,
         scannerState: {
@@ -1740,7 +1741,7 @@ function makeMultiPathSearchWorker({ entries, pausedRoots = [], unavailableRoots
             calls.push(['content', options]);
             return { results: [] };
         }
-    };
+    });
     return { worker, calls };
 }
 
@@ -2008,7 +2009,7 @@ async function testTask5StartScannersDedupesRoots() {
                 queuedScans++;
             }
         };
-        worker.storage = {
+        worker.storage = withMemoryStateWriter({
             scannerState: {
                 roots: {
                     [scanDir]: {
@@ -2018,7 +2019,7 @@ async function testTask5StartScannersDedupesRoots() {
                     }
                 }
             }
-        };
+        });
 
         await worker._startScanners([
             { root: scanDir, include_patterns: ['**/*.md'], exclude_patterns: [] },
@@ -2051,7 +2052,7 @@ async function testResetFileSystemStorageUsesManualResetReason() {
     const worker = new FileManagerWorker('com.test.filemgr', appDir);
     try {
         let reason = null;
-        worker.storage = {};
+        worker.storage = withMemoryStateWriter({});
         worker._rebuildAndRestart = async (value) => {
             reason = value;
         };
@@ -2201,7 +2202,7 @@ async function testTask7ReadonlyResetAndRebuildAreGuarded() {
     try {
         let queued = false;
         worker._readonlyMode = true;
-        worker.storage = {};
+        worker.storage = withMemoryStateWriter({});
         worker.runSequentially = () => {
             queued = true;
             return Promise.resolve();
@@ -2445,7 +2446,7 @@ async function testTask15StatusPushLayers() {
             'status tick should not publish after storage is cleared'
         );
 
-        worker.storage = {
+        worker.storage = withMemoryStateWriter({
             mode: 'base-only',
             scannerState: {
                 last_embedding_task_at: null,
@@ -2458,7 +2459,7 @@ async function testTask15StatusPushLayers() {
             isDeferred: () => false,
             deferredReason: null,
             storage: { close: () => {} }
-        };
+        });
         worker._startStatusTick(5);
         await new Promise((r) => setTimeout(r, 20));
         worker._clearStatusTick();
@@ -2484,13 +2485,13 @@ async function testScannerIntervalUsesWorkspaceAndEmbeddingState() {
         worker._lastConfig = worker.config;
         worker._currentWorkspace = '/workspace';
 
-        worker.storage = { mode: 'base-only' };
+        worker.storage = withMemoryStateWriter({ mode: 'base-only' });
         assert.equal(worker._getScanIntervalForRoot('/workspace'), 60 * 1000);
         worker._embeddingQueueScheduled = true;
         assert.equal(worker._getScanIntervalForRoot('/workspace'), 60 * 1000);
         assert.equal(worker._getScanIntervalForRoot('/docs'), 5 * 60 * 1000);
 
-        worker.storage = { mode: 'full' };
+        worker.storage = withMemoryStateWriter({ mode: 'full' });
         worker._embeddingQueueScheduled = true;
         assert.equal(worker._getScanIntervalForRoot('/workspace'), 180 * 1000);
         worker._embeddingQueueScheduled = false;
@@ -2511,18 +2512,18 @@ async function testEmbeddingQueueOnlySchedulesInFullMode() {
     try {
         worker = new FileManagerWorker('com.test.filemgr', appDir);
         worker.config = { entries: [makeEntry(appDir)] };
-        worker.storage = { mode: 'base-only' };
+        worker.storage = withMemoryStateWriter({ mode: 'base-only' });
         worker._enqueueEmbeddingQueue();
         assert.equal(worker._embeddingQueueScheduled, false);
 
         let processed = false;
-        worker.storage = {
+        worker.storage = withMemoryStateWriter({
             mode: 'full',
             processEmbeddingQueue: async () => {
                 processed = true;
                 return 0;
             }
-        };
+        });
         worker.taskQueue.pause();
         worker._enqueueEmbeddingQueue();
         assert.equal(worker._embeddingQueueScheduled, true);
@@ -2549,12 +2550,12 @@ async function testEmbeddingQueueFailureIsHandled() {
         worker = new FileManagerWorker('com.test.filemgr', appDir);
         worker.config = { entries: [makeEntry(appDir)] };
         worker.callApp = () => {};
-        worker.storage = {
+        worker.storage = withMemoryStateWriter({
             mode: 'full',
             processEmbeddingQueue: async () => {
                 throw new Error('embedding queue boom');
             }
-        };
+        });
 
         worker._enqueueEmbeddingQueue();
         await worker.taskQueue.onIdle();
@@ -2564,13 +2565,13 @@ async function testEmbeddingQueueFailureIsHandled() {
         assert.equal(worker._embeddingQueueActive, false);
 
         let processedAfterFailure = false;
-        worker.storage = {
+        worker.storage = withMemoryStateWriter({
             mode: 'full',
             processEmbeddingQueue: async () => {
                 processedAfterFailure = true;
                 return 0;
             }
-        };
+        });
 
         worker._enqueueEmbeddingQueue();
         await worker.taskQueue.onIdle();
@@ -2594,14 +2595,14 @@ async function testEmbeddingQueueYieldsToPendingConfigChange() {
         worker.config = { entries: [makeEntry(appDir)] };
         let processedCount = 0;
         let shouldYieldAfterConfigApplied = null;
-        worker.storage = {
+        worker.storage = withMemoryStateWriter({
             mode: 'full',
             processEmbeddingQueue: async (shouldYield) => {
                 processedCount++;
                 shouldYieldAfterConfigApplied = shouldYield();
                 return 0;
             }
-        };
+        });
         worker._scanPending = false;
         worker._pendingConfigChange = { entries: [makeEntry('/new-root')] };
 
@@ -2641,7 +2642,7 @@ async function testScanYieldsToPendingConfigChangeBeforeNextBatch() {
         worker.status = 'running';
 
         let saveCalls = 0;
-        worker.storage = {
+        worker.storage = withMemoryStateWriter({
             mode: 'base-only',
             scannerState: {
                 roots: {
@@ -2674,7 +2675,7 @@ async function testScanYieldsToPendingConfigChangeBeforeNextBatch() {
                 delete worker.storage.scannerState.roots[root];
             },
             removeOrphanedItems: async () => ({ deleted: 0 })
-        };
+        });
 
         await worker._startScanners(initialConfig.entries);
         await worker.taskQueue.onIdle();
@@ -2721,7 +2722,7 @@ async function testIncrementalScanYieldsDuringGlobWhenNoFilesChanged() {
         worker.config = initialConfig;
         worker._lastConfig = initialConfig;
         worker.status = 'running';
-        worker.storage = {
+        worker.storage = withMemoryStateWriter({
             mode: 'base-only',
             scannerState: {
                 roots: {
@@ -2745,7 +2746,7 @@ async function testIncrementalScanYieldsDuringGlobWhenNoFilesChanged() {
                 return { saved: 0, failed: 0, failures: [] };
             },
             removeDeletedFiles: async () => {}
-        };
+        });
         worker._enqueueEmbeddingQueue = () => {
             enqueueEmbeddingCalls++;
         };
@@ -2804,7 +2805,7 @@ async function testFullScanYieldsAfterRemoveDeletedFilesBeforeCheckpoint() {
         worker.config = initialConfig;
         worker._lastConfig = initialConfig;
         worker.status = 'running';
-        worker.storage = {
+        worker.storage = withMemoryStateWriter({
             mode: 'base-only',
             scannerState: {
                 roots: {
@@ -2825,7 +2826,7 @@ async function testFullScanYieldsAfterRemoveDeletedFilesBeforeCheckpoint() {
             removeDeletedFiles: async () => {
                 worker._pendingWorkspaceChange = '/next-workspace';
             }
-        };
+        });
         worker._enqueueEmbeddingQueue = () => {
             enqueueEmbeddingCalls++;
         };
@@ -2856,7 +2857,7 @@ async function testStatusUsesPendingConfigWhenConfigChangeQueued() {
         worker.config = { entries: [] };
         worker._lastConfig = { entries: [makeEntry('/old-root')] };
         worker._pendingConfigChange = { entries: [] };
-        worker.storage = {
+        worker.storage = withMemoryStateWriter({
             mode: 'base-only',
             scannerState: {
                 roots: {},
@@ -2881,7 +2882,7 @@ async function testStatusUsesPendingConfigWhenConfigChangeQueued() {
                 ),
             isDeferred: () => false,
             deferredReason: null
-        };
+        });
 
         const status = await worker.getFileSystemStatus();
 
@@ -2905,7 +2906,7 @@ async function testConfigChangeKeepsPendingConfigVisibleUntilLastConfigUpdates()
         worker.status = 'running';
         worker.config = oldConfig;
         worker._lastConfig = oldConfig;
-        worker.storage = {
+        worker.storage = withMemoryStateWriter({
             mode: 'base-only',
             scannerState: {
                 roots: {},
@@ -2934,7 +2935,7 @@ async function testConfigChangeKeepsPendingConfigVisibleUntilLastConfigUpdates()
                 ),
             isDeferred: () => false,
             deferredReason: null
-        };
+        });
         worker._restartScanners = async () => {
             statusDuringRestart = await worker.getFileSystemStatus();
         };
@@ -3142,9 +3143,9 @@ async function testSourceConfigPendingDoesNotLeakOnEarlyReturn() {
         assert.equal(worker._pendingConfigChange, null);
 
         worker.status = 'error';
-        worker.storage = {
+        worker.storage = withMemoryStateWriter({
             mode: 'base-only'
-        };
+        });
         await worker.applicationConfigChanged({ entries: [makeEntry('/error-root')] });
         assert.equal(worker._pendingConfigChange, null);
 
@@ -3156,13 +3157,13 @@ async function testSourceConfigPendingDoesNotLeakOnEarlyReturn() {
                     release = resolve;
                 })
         );
-        worker.storage = {
+        worker.storage = withMemoryStateWriter({
             mode: 'base-only',
             scannerState: { roots: {} },
             syncEmbeddingModeForStartup: async () => {},
             saveScannerState: async () => {},
             storage: { close() {} }
-        };
+        });
         worker._detachRemovedRoots = async () => new Set();
         worker._restartScanners = async () => {};
         worker._enqueueEmbeddingQueue = () => {};
@@ -3191,7 +3192,7 @@ async function testWorkspacePendingControlLifecycle() {
     try {
         worker = new FileManagerWorker('com.test.filemgr', appDir);
         worker.status = 'running';
-        worker.storage = {
+        worker.storage = withMemoryStateWriter({
             mode: 'base-only',
             scannerState: {
                 roots: {
@@ -3214,7 +3215,7 @@ async function testWorkspacePendingControlLifecycle() {
             getPerRootCounts: async () => new Map(),
             isDeferred: () => false,
             deferredReason: null
-        };
+        });
 
         let release;
         const blocker = worker.runSequentially(
@@ -3227,7 +3228,7 @@ async function testWorkspacePendingControlLifecycle() {
         const first = worker.workspaceChanged('/first-workspace');
         const second = worker.workspaceChanged('/second-workspace');
 
-        assert.equal(worker._pendingWorkspaceChange, '/second-workspace');
+        assert.equal(worker._pendingWorkspaceChange?.workspace, '/second-workspace');
         assert.equal(worker._hasPendingControlChange(), true);
         assert.equal(worker._shouldYieldEmbeddingQueue(), true);
 
@@ -3282,10 +3283,11 @@ async function testEmbeddingPendingControlLifecycle() {
     let worker;
     try {
         worker = new FileManagerWorker('com.test.filemgr', appDir);
+        worker.config = worker._lastConfig = worker._normalizeConfig({ entries: [makeEntry('/scan-root')] });
         worker.status = 'running';
         let syncCalls = 0;
         let scanRequests = 0;
-        worker.storage = {
+        worker.storage = withMemoryStateWriter({
             mode: 'base-only',
             scannerState: {
                 roots: {},
@@ -3301,7 +3303,7 @@ async function testEmbeddingPendingControlLifecycle() {
             getPerRootCounts: async () => new Map(),
             isDeferred: () => false,
             deferredReason: null
-        };
+        });
         worker.scanners.set('/scan-root', {
             state: {
                 last_full_scan: 0,
@@ -3343,7 +3345,7 @@ async function testEmbeddingPendingControlLifecycle() {
         await worker.embeddingConfigChanged();
         assert.equal(worker._pendingEmbeddingConfigChange, false);
 
-        worker.storage = {
+        worker.storage = withMemoryStateWriter({
             syncEmbeddingModeForStartup: async () => {},
             scannerState: {
                 roots: {},
@@ -3356,7 +3358,7 @@ async function testEmbeddingPendingControlLifecycle() {
             getPerRootCounts: async () => new Map(),
             isDeferred: () => false,
             deferredReason: null
-        };
+        });
         worker.status = 'error';
         await worker.embeddingConfigChanged();
         assert.equal(worker._pendingEmbeddingConfigChange, false);
@@ -3390,7 +3392,7 @@ async function testSkippedScanTaskDoesNotLeaveScanPending() {
         worker.status = 'running';
         worker.config = { entries: [makeEntry('/scan-root')] };
         worker._lastConfig = worker.config;
-        worker.storage = {
+        worker.storage = withMemoryStateWriter({
             mode: 'base-only',
             scannerState: {
                 roots: {
@@ -3408,7 +3410,7 @@ async function testSkippedScanTaskDoesNotLeaveScanPending() {
             saveFiles: async () => ({ saved: 0, failed: 0, failures: [] }),
             saveScannerState: async () => {},
             removeDeletedFiles: async () => {}
-        };
+        });
 
         await worker._startScanners(worker.config.entries);
         const scanner = worker.scanners.get('/scan-root');
@@ -3450,13 +3452,13 @@ async function testEmbeddingQueueDoesNotStartDuringPendingControlChange() {
             worker._pendingConfigChange = null;
             worker._pendingWorkspaceChange = null;
             worker._pendingEmbeddingConfigChange = false;
-            worker.storage = {
+            worker.storage = withMemoryStateWriter({
                 mode: 'full',
                 processEmbeddingQueue: async () => {
                     processed = true;
                     return 0;
                 }
-            };
+            });
             markPending();
 
             worker._enqueueEmbeddingQueue();
@@ -3483,7 +3485,7 @@ async function testWorkspaceChangedForExistingEntryForcesFullScanAndImmediateSca
         worker.config = config;
         worker._lastConfig = config;
         worker.status = 'running';
-        worker.storage = {
+        worker.storage = withMemoryStateWriter({
             mode: 'base-only',
             scannerState: {
                 roots: {
@@ -3522,7 +3524,7 @@ async function testWorkspaceChangedForExistingEntryForcesFullScanAndImmediateSca
                 ),
             isDeferred: () => false,
             deferredReason: null
-        };
+        });
 
         let restartCalled = false;
         worker._restartScanners = async () => {
@@ -3597,7 +3599,7 @@ async function testApplicationConfigChangedPassesActiveRootsToEmbeddingQueue() {
         });
 
         let queueOptions = null;
-        worker.storage = {
+        worker.storage = withMemoryStateWriter({
             mode: 'full',
             scannerState: {
                 roots: {},
@@ -3618,7 +3620,7 @@ async function testApplicationConfigChangedPassesActiveRootsToEmbeddingQueue() {
             getPerRootCounts: async () => new Map(),
             isDeferred: () => false,
             deferredReason: null
-        };
+        });
         worker._restartScanners = async () => {};
 
         await worker.applicationConfigChanged(config);
@@ -3777,7 +3779,7 @@ async function testTask16ConfigChangeDedup() {
         worker = new FileManagerWorker('com.test.filemgr', appDir);
         worker.config = { entries: [makeEntry('/old')] };
         worker._lastConfig = worker.config;
-        worker.storage = {
+        worker.storage = withMemoryStateWriter({
             mode: 'base-only',
             scannerState: { roots: {} },
             detachRootForConfigChange: async () => {},
@@ -3785,7 +3787,7 @@ async function testTask16ConfigChangeDedup() {
             syncEmbeddingMode: async () => {},
             syncEmbeddingModeForStartup: async () => {},
             processEmbeddingQueue: async () => 0
-        };
+        });
         worker._restartScanners = async () => {
             restartedWith.push(worker.config.entries.map((entry) => entry.root).join(','));
         };
@@ -3821,7 +3823,7 @@ async function testConfigChangeDuringInitializeDoesNotDropRemovedRoots() {
         const detachedRoots = [];
         worker.config = oldConfig;
         worker._lastConfig = oldConfig;
-        worker.storage = {
+        worker.storage = withMemoryStateWriter({
             mode: 'base-only',
             scannerState: { roots: {} },
             detachRootForConfigChange: async (root) => {
@@ -3831,7 +3833,7 @@ async function testConfigChangeDuringInitializeDoesNotDropRemovedRoots() {
             saveScannerState: async () => {},
             syncEmbeddingMode: async () => {},
             syncEmbeddingModeForStartup: async () => {}
-        };
+        });
         worker._restartScanners = async () => {};
         worker._enqueueEmbeddingQueue = () => {};
 
@@ -3914,7 +3916,7 @@ async function testInitializeClearsEquivalentPendingConfigBeforeStartingScanners
         worker._pendingConfigChange = equivalentPendingConfig;
         worker._initSeq = 2;
         worker.status = 'initializing';
-        worker.storage = {
+        worker.storage = withMemoryStateWriter({
             mode: 'base-only',
             scannerState: {
                 roots: {},
@@ -3926,7 +3928,7 @@ async function testInitializeClearsEquivalentPendingConfigBeforeStartingScanners
                 throw new Error('no roots should be detached for equivalent startup config');
             },
             isDeferred: () => false
-        };
+        });
 
         const originalAdd = worker.taskQueue.add.bind(worker.taskQueue);
         let queuedScans = 0;
@@ -3963,7 +3965,7 @@ async function testApplicationConfigChangedSyncsModeBeforeRestartingScanners() {
         worker._readonlyMode = false;
         worker._lastConfig = { entries: [makeEntry('/old-root')] };
         worker._emitStatusChanged = async () => {};
-        worker.storage = {
+        worker.storage = withMemoryStateWriter({
             mode: 'base-only',
             scannerState: { roots: {} },
             syncEmbeddingModeForStartup: async () => {
@@ -3974,7 +3976,7 @@ async function testApplicationConfigChangedSyncsModeBeforeRestartingScanners() {
             },
             saveScannerState: async () => {},
             storage: { close() {} }
-        };
+        });
         worker._detachRemovedRoots = async () => {
             order.push('detach');
             return new Set(['/old-root']);
@@ -4057,7 +4059,7 @@ async function testSetSourcePausedStopsScannerPersistsAndReturnsSnapshot() {
         worker._lastConfig = worker.config;
         worker.status = 'running';
         let persisted = null;
-        worker.storage = {
+        worker.storage = withMemoryStateWriter({
             mode: 'base-only',
             scannerState: {
                 roots: { [root]: rootState },
@@ -4095,7 +4097,7 @@ async function testSetSourcePausedStopsScannerPersistsAndReturnsSnapshot() {
                 ]),
             isDeferred: () => false,
             deferredReason: null
-        };
+        });
         let stopped = false;
         worker.scanners.set(root, {
             entry,
@@ -4142,7 +4144,7 @@ async function testSetSourcePausedResumeStartsScannerBeforeSuccess() {
         worker._lastConfig = worker.config;
         worker.status = 'running';
         let persisted = null;
-        worker.storage = {
+        worker.storage = withMemoryStateWriter({
             mode: 'base-only',
             scannerState: {
                 roots: { [root]: rootState },
@@ -4184,7 +4186,7 @@ async function testSetSourcePausedResumeStartsScannerBeforeSuccess() {
                     ]
                 ]),
             deferredReason: null
-        };
+        });
 
         const result = await worker.setSourcePaused({ root, paused: false });
 
@@ -4222,7 +4224,7 @@ async function testSetSourcePausedYieldsScannerWithinCandidateBoundary() {
         worker.config = { entries: [] };
         worker._lastConfig = worker.config;
         worker.status = 'running';
-        worker.storage = {
+        worker.storage = withMemoryStateWriter({
             mode: 'base-only',
             scannerState: {
                 roots: {},
@@ -4273,7 +4275,7 @@ async function testSetSourcePausedYieldsScannerWithinCandidateBoundary() {
                     ]
                 ]),
             deferredReason: null
-        };
+        });
 
         await worker.applicationConfigChanged({ entries: [entry] });
         const scanner = worker.scanners.get(scanDir);
@@ -4301,8 +4303,7 @@ async function testSetSourcePausedYieldsScannerWithinCandidateBoundary() {
         });
         const pauseResult = await pausePromise;
 
-        assert.ok(updateChecks >= 500);
-        assert.ok(updateChecks <= 520);
+        assert.equal(updateChecks, 250, 'pause intent stops consumption at the next candidate');
         assert.equal(saveFilesCalls, 0);
         assert.equal(saveScannerStateCalls, 0);
         assert.equal(pauseResult.status, 'ok');
@@ -4340,7 +4341,7 @@ async function testSetSourcePausedFinishesCurrentSaveBatchOnly() {
         worker.config = { entries: [] };
         worker._lastConfig = worker.config;
         worker.status = 'running';
-        worker.storage = {
+        worker.storage = withMemoryStateWriter({
             mode: 'base-only',
             scannerState: {
                 roots: {},
@@ -4391,7 +4392,7 @@ async function testSetSourcePausedFinishesCurrentSaveBatchOnly() {
                     ]
                 ]),
             deferredReason: null
-        };
+        });
 
         await worker.applicationConfigChanged({ entries: [entry] });
         await firstBatchStarted;
@@ -4518,7 +4519,7 @@ async function testPausedRootStaysStoppedAcrossConfigRestart() {
         worker.config = config;
         worker._lastConfig = config;
         worker.status = 'running';
-        worker.storage = {
+        worker.storage = withMemoryStateWriter({
             mode: 'base-only',
             scannerState: {
                 roots,
@@ -4535,7 +4536,7 @@ async function testPausedRootStaysStoppedAcrossConfigRestart() {
             detachRootForConfigChange: async () => {},
             removeOrphanedItems: async () => ({ deleted: 0 }),
             isDeferred: () => false
-        };
+        });
 
         await worker.applicationConfigChanged(config);
 

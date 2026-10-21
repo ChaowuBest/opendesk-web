@@ -18,7 +18,7 @@ function setModel(context, timeout) {
 
 for (const [configured, expected] of [
     [120, 120000],
-    [undefined, 60000]
+    [undefined, 300000]
 ]) {
     test(`probe inherits model timeout: ${configured ?? 'default'}`, async (context) => {
         setModel(context, configured);

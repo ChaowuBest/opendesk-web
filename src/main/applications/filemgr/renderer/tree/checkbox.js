@@ -26,7 +26,6 @@ import {
 function cloneEntry(entry) {
     return {
         ...entry,
-        root: normalizePath(entry.root),
         exclude_patterns: Array.isArray(entry.exclude_patterns) ? [...entry.exclude_patterns] : []
     };
 }

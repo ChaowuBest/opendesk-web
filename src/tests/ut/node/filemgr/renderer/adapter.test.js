@@ -2,14 +2,13 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { parseHTML } from 'linkedom';
 import {
-    loadDefaultWorkspace,
-    loadEntries,
+    loadFileMgrSettings,
     saveEntries,
     setSourcePaused,
     subscribeStatus
 } from '../../../../../main/applications/filemgr/renderer/adapter.js';
 import {
-    clearPendingCommit,
+    __resetForTesting,
     getEntries,
     setDefaultWorkspace,
     setEntries,
@@ -19,7 +18,7 @@ import {
 const mountedWidgets = new Set();
 
 function resetState() {
-    clearPendingCommit();
+    __resetForTesting();
     setSnapshot(null);
     setEntries([]);
     setDefaultWorkspace('');
@@ -95,12 +94,12 @@ test('settings adapter tolerates missing filemgr settings', async () => {
             }),
             saveSettingObject: async (next) => {
                 saved.push(next);
+                return next;
             }
         }
     };
 
-    assert.deepEqual(await loadEntries(), []);
-    assert.equal(await loadDefaultWorkspace(), null);
+    assert.deepEqual((await loadFileMgrSettings()).applications.other, { enabled: true });
 
     await saveEntries(undefined);
     assert.deepEqual(saved.at(-1), {
@@ -485,7 +484,7 @@ test('filemgr entry settles transport failure and recovers from subscribed statu
     assert.equal(widget.querySelector('.fs-source-control-error'), null);
 });
 
-test('filemgr entry falls back to snapshot-derived entries when settings load fails', async () => {
+test('filemgr entry keeps initialization disabled when settings load fails', async () => {
     const { window } = parseHTML('<!doctype html><html><head></head><body></body></html>');
     globalThis.window = window;
     globalThis.document = window.document;
@@ -547,18 +546,15 @@ test('filemgr entry falls back to snapshot-derived entries when settings load fa
         mountedWidgets.add(widget);
         await new Promise((resolve) => setTimeout(resolve, 0));
 
-        assert.equal(widget.querySelector('.fs-error'), null);
-        assert.deepEqual(
-            getEntries().map((entry) => entry.root),
-            ['/workspace']
-        );
-        assert.equal(widget.querySelector('.status-text')?.textContent, '已完成 · 42 文件');
+        assert.ok(widget.querySelector('.fs-error'));
+        assert.deepEqual(getEntries(), []);
+        assert.equal(widget.querySelector('.fs-tree-wrapper'), null);
     } finally {
         console.warn = warn;
     }
 });
 
-test('filemgr entry shows initializing label when both status and settings fail', async () => {
+test('filemgr entry shows loading error when settings fail without inventing a baseline', async () => {
     const { window } = parseHTML('<!doctype html><html><head></head><body></body></html>');
     globalThis.window = window;
     globalThis.document = window.document;
@@ -606,9 +602,7 @@ test('filemgr entry shows initializing label when both status and settings fail'
         mountedWidgets.add(widget);
         await new Promise((resolve) => setTimeout(resolve, 0));
 
-        assert.equal(widget.querySelector('.fs-error'), null);
-        assert.ok(widget.querySelector('.fs-window'));
-        assert.ok(widget.textContent.includes('正在启动'));
+        assert.ok(widget.querySelector('.fs-error'));
         assert.deepEqual(getEntries(), []);
     } finally {
         console.warn = warn;

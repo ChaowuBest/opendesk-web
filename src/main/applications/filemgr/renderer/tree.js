@@ -9,23 +9,14 @@
  * See the Mulan PSL v2 for more details.
  */
 
-import { listDirectory, listDrives, loadDefaultWorkspace, saveEntries } from './adapter.js';
+import { listDirectory, listDrives } from './adapter.js';
 import {
     COMMIT_DEBOUNCE_MS,
-    applyOptimisticSnapshotUpdate,
-    clearPendingCommit,
-    clearDebounceTimer,
+    commitEntriesNow,
+    editEntries,
     getDefaultWorkspace,
     getEntries,
-    getPendingCommit,
-    getPendingCommitToken,
     getSnapshot,
-    invalidateUndo,
-    setDefaultWorkspace,
-    setEntries,
-    setDebounceTimer,
-    setPendingCommit,
-    setUndoSnapshot,
     subscribeEntries,
     subscribeSnapshot
 } from './state.js';
@@ -156,85 +147,19 @@ function notifyHook(callback, payload) {
     callback(payload);
 }
 
-function scheduleEntriesCommit(nextEntries) {
-    clearDebounceTimer();
-    const token = setPendingCommit(nextEntries);
-    setDebounceTimer(
-        setTimeout(() => {
-            void commitEntriesNow(undefined, token);
-        }, COMMIT_DEBOUNCE_MS)
-    );
-}
-
-async function commitEntriesNow(nextEntries, token) {
-    let entriesToSave = nextEntries;
-    let commitToken = token;
-    if (!Array.isArray(entriesToSave)) {
-        const pendingCommit = getPendingCommit();
-        entriesToSave = pendingCommit?.entries;
-        commitToken = pendingCommit?.token;
-    }
-
-    if (!Array.isArray(entriesToSave)) {
-        return null;
-    }
-
-    const consumedToken = clearPendingCommit(commitToken);
-    if (consumedToken === null) {
-        return null;
-    }
-
-    await saveEntries(entriesToSave);
-    if (getPendingCommitToken() === consumedToken) {
-        invalidateUndo();
-        applyOptimisticSnapshotUpdate(entriesToSave);
-    }
-
-    return entriesToSave;
-}
-
-async function commitEntriesImmediately(nextEntries) {
-    if (!Array.isArray(nextEntries)) {
-        return null;
-    }
-
-    const commitToken = clearPendingCommit();
-    await saveEntries(nextEntries);
-    if (getPendingCommitToken() === commitToken) {
-        invalidateUndo();
-        applyOptimisticSnapshotUpdate(nextEntries);
-    }
-
-    return nextEntries;
-}
-
 function createPlaceholderHooks(options) {
-    function commitImmediate(nextEntries) {
-        if (Array.isArray(nextEntries)) {
-            setEntries(nextEntries);
-        }
-
-        return commitEntriesImmediately(nextEntries);
-    }
-
     return {
         commit(payload) {
             const nextEntries = payload.result?.nextEntries;
             if (Array.isArray(nextEntries)) {
-                const previousEntries = getEntries();
-                invalidateUndo();
-                if (payload.result?.toast === 'undo') {
-                    setUndoSnapshot(previousEntries);
-                }
-                setEntries(nextEntries);
-                scheduleEntriesCommit(nextEntries);
+                editEntries(nextEntries, { undoable: payload.result?.toast === 'undo' });
             }
 
             notifyHook(options?.onCommit, payload);
             notifyHook(options?.onDebounce, { ...payload, delayMs: COMMIT_DEBOUNCE_MS });
         },
         modal(payload) {
-            notifyHook(options?.onShowModal, { ...payload, commitNow: commitImmediate });
+            notifyHook(options?.onShowModal, { ...payload, commitNow: commitEntriesNow });
         },
         toast(payload) {
             notifyHook(options?.onToast, payload);
@@ -298,6 +223,7 @@ export function createFileTree(container, options = {}) {
         overlay.remove();
     }
 
+    let disposed = false;
     let initialRootRendered = false;
     let initialRootInFlight = false;
     let unsubscribePlatformSnapshot = null;
@@ -333,7 +259,7 @@ export function createFileTree(container, options = {}) {
     });
 
     async function renderInitialRoot(defaultWorkspace) {
-        if (initialRootRendered || initialRootInFlight) return;
+        if (disposed || initialRootRendered || initialRootInFlight) return;
         initialRootInFlight = true;
         try {
             const home = getHomeRoot(defaultWorkspace);
@@ -346,6 +272,7 @@ export function createFileTree(container, options = {}) {
                 await setRoot(home);
             }
 
+            if (disposed) return;
             initialRootRendered = true;
             clearOverlayTimer();
             if (unsubscribePlatformSnapshot) {
@@ -360,13 +287,13 @@ export function createFileTree(container, options = {}) {
     }
 
     function handleLateRenderError(err) {
+        if (disposed) return;
         setOverlayText('文件管理服务初始化失败，请稍后重试', { error: true });
         notifyHook(options.onError, err);
     }
 
     async function initializeRoot() {
-        const defaultWorkspace = normalizePath(await loadDefaultWorkspace());
-        setDefaultWorkspace(defaultWorkspace);
+        const defaultWorkspace = normalizePath(getDefaultWorkspace());
 
         if (snapshotHasPlatform(getSnapshot())) {
             await renderInitialRoot(defaultWorkspace);
@@ -380,7 +307,7 @@ export function createFileTree(container, options = {}) {
 
         const timeoutMs = typeof options.overlayTimeoutMs === 'number' ? options.overlayTimeoutMs : 5000;
         overlayTimer = setTimeout(() => {
-            if (initialRootRendered || initialRootInFlight) return;
+            if (disposed || initialRootRendered || initialRootInFlight) return;
             setOverlayText('文件管理服务未响应，请稍后重试', { error: true });
         }, timeoutMs);
 
@@ -501,10 +428,7 @@ export function createFileTree(container, options = {}) {
         return getNavigationState();
     }
 
-    const ready = initializeRoot().catch((err) => {
-        notifyHook(options.onError, err);
-        throw err;
-    });
+    const ready = initializeRoot().catch(handleLateRenderError);
 
     return {
         element,
@@ -519,12 +443,14 @@ export function createFileTree(container, options = {}) {
         setRootEntryAndExpandTo,
         setRootEntry,
         commitNow(nextEntries) {
-            return commitEntriesImmediately(nextEntries);
+            return commitEntriesNow(nextEntries);
         },
         get selectedPath() {
             return tree.selectedPath;
         },
         destroy() {
+            disposed = true;
+            resolveFirstRender();
             unsubscribeEntries();
             unsubscribeSnapshot();
             if (unsubscribePlatformSnapshot) {

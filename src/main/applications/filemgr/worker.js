@@ -63,6 +63,196 @@ import {
 } from './search/indexed.js';
 import { extractText as extractFileTextFromParser } from './parser/extract.js';
 import { FSEntrySchema } from './setting.js';
+import { resolveDriveRootPath } from './utils.js';
+
+export const FILE_ATTRIBUTE_CONCURRENCY = 64;
+export const DIRECTORY_READ_CONCURRENCY = 8;
+export const SCAN_READ_AHEAD_LIMIT = 256;
+
+const EXPECTED_READ_ERRORS = new Set([
+    'EACCES',
+    'EPERM',
+    'ENOENT',
+    'ENOTDIR',
+    'EIO',
+    'EBUSY',
+    'ESTALE',
+    'EMFILE',
+    'ENFILE',
+    'ELOOP',
+    'ENODEV',
+    'ENAMETOOLONG'
+]);
+
+// Limits apply across all glob tasks in this scan. A readdir batch, fast-glob's
+// traversal state and the scanner's scannedPaths still have their own memory cost.
+export function createFileScan(
+    patterns,
+    options,
+    { shouldStop = () => false, onReadError = () => {}, filesystem = fs } = {}
+) {
+    let closed = false;
+    let fatalError = null;
+    let activeDirectories = 0;
+    const waitingDirectories = new Set();
+    const directoryTasks = new Set();
+    const pending = [];
+    let currentAttributeTask = null;
+    const cancelled = Object.assign(new Error('FileMgr enumeration stopped'), { code: 'ECANCELED' });
+
+    function close() {
+        if (closed) return;
+        closed = true;
+        // Waking on close is required even when the consumer never resumes.
+        for (const start of [...waitingDirectories]) start();
+        stream?.destroy();
+    }
+
+    function interrupted() {
+        if (shouldStop()) close();
+        return closed;
+    }
+
+    function report(error, operation, target) {
+        if (!EXPECTED_READ_ERRORS.has(error?.code)) {
+            fatalError ??= error;
+            close();
+            return;
+        }
+        try {
+            onReadError({ operation, path: String(target), code: error.code });
+        } catch (error) {
+            fatalError ??= error;
+            close();
+        }
+    }
+
+    function wakeReaders() {
+        if (waitingDirectories.size === 0 || activeDirectories >= DIRECTORY_READ_CONCURRENCY) return;
+        if (interrupted()) return;
+        if ((stream?.readableLength ?? 0) >= SCAN_READ_AHEAD_LIMIT) return;
+        for (const start of waitingDirectories) {
+            if (activeDirectories >= DIRECTORY_READ_CONCURRENCY) break;
+            start();
+        }
+    }
+
+    function readdir(directory, settings, callback) {
+        let settle;
+        const task = new Promise((resolve) => {
+            settle = resolve;
+        });
+        directoryTasks.add(task);
+        const complete = (error, entries) => {
+            try {
+                if (!interrupted() && error) report(error, 'readdir', directory);
+                // error.path can name an unknown-type child. The attempted directory
+                // is the only safe protection boundary for a failed Dirent batch.
+                callback(closed ? cancelled : error, closed ? undefined : entries);
+            } catch (error) {
+                fatalError ??= error;
+                close();
+            } finally {
+                directoryTasks.delete(task);
+                settle();
+                wakeReaders();
+            }
+        };
+        const start = () => {
+            if (
+                !closed &&
+                (activeDirectories >= DIRECTORY_READ_CONCURRENCY ||
+                    (stream?.readableLength ?? 0) >= SCAN_READ_AHEAD_LIMIT)
+            )
+                return;
+            waitingDirectories.delete(start);
+            if (interrupted()) {
+                // fast-glob releases the next queued directory inside this callback.
+                // Keep cancellation asynchronous, like real readdir, and tracked by drain.
+                queueMicrotask(() => complete(cancelled));
+                return;
+            }
+            activeDirectories++;
+            const done = (error, entries) => {
+                activeDirectories--;
+                complete(error, entries);
+            };
+            try {
+                filesystem.readdir(directory, settings, done);
+            } catch (error) {
+                done(error);
+            }
+        };
+        waitingDirectories.add(start);
+        start();
+    }
+
+    const stream = fastGlob.stream(patterns, {
+        ...options,
+        stats: false,
+        objectMode: true,
+        concurrency: DIRECTORY_READ_CONCURRENCY,
+        fs: { readdir }
+    });
+    // A stream error can arrive while the consumer is writing a batch.
+    stream.on('error', (error) => {
+        fatalError ??= error;
+        close();
+    });
+
+    function readAttributes(entry) {
+        return new Promise((resolve) => {
+            const done = (error, stats) => {
+                if (error && !closed) report(error, 'lstat', entry.path);
+                entry.stats = error ? null : stats;
+                resolve(entry);
+            };
+            try {
+                filesystem.lstat(entry.path, done);
+            } catch (error) {
+                done(error);
+            }
+        });
+    }
+
+    async function drain() {
+        await Promise.allSettled([currentAttributeTask, ...pending]);
+        // Completing a directory may expose another queued cancellation. A single
+        // snapshot would return before those callbacks have settled.
+        while (directoryTasks.size > 0) await Promise.allSettled([...directoryTasks]);
+    }
+
+    async function* files() {
+        try {
+            for await (const entry of stream) {
+                if (fatalError) throw fatalError;
+                if (interrupted()) break;
+                pending.push(readAttributes(entry));
+                if (pending.length >= FILE_ATTRIBUTE_CONCURRENCY) {
+                    // Yield the task directly: the async generator awaits it once.
+                    currentAttributeTask = pending.shift();
+                    yield currentAttributeTask;
+                    currentAttributeTask = null;
+                    wakeReaders();
+                }
+            }
+            while (pending.length > 0 && !interrupted() && !fatalError) {
+                currentAttributeTask = pending.shift();
+                yield currentAttributeTask;
+                currentAttributeTask = null;
+            }
+            if (fatalError) throw fatalError;
+        } catch (error) {
+            if (fatalError) throw fatalError;
+            if (!shouldStop()) throw error;
+        } finally {
+            close();
+            await drain();
+        }
+    }
+
+    return { files: files(), close, drain };
+}
 
 const MAX_RECENT_FAILURES = 20;
 
@@ -110,6 +300,7 @@ class FSScanner {
         this._shouldYield = shouldYield ?? (() => false);
         this._taskQueue = null;
         this._scanTask = null;
+        this._scanReader = null;
         this._scanQueued = false;
         /** @type {Array<{path: string, error: string}>} */
         this._recentFailures = [];
@@ -121,11 +312,15 @@ class FSScanner {
 
     _queueScanTask(taskQueue, { allowPendingControl = false } = {}) {
         if (!taskQueue || !this._scanTask || (!allowPendingControl && this._shouldYield())) {
-            if (this._workerRef) this._workerRef._scanPending = false;
+            if (this._workerRef)
+                this._workerRef._scanPending = [...(this._workerRef.scanners?.values() ?? [])].some(
+                    (scanner) => scanner._scanQueued
+                );
             return false;
         }
         if (this._scanQueued) return true;
         this._scanQueued = true;
+        if (this._workerRef) this._workerRef._scanPending = true;
         const queued = taskQueue.add(this._scanTask);
         queued?.catch?.((err) => {
             this._scanQueued = false;
@@ -145,13 +340,21 @@ class FSScanner {
 
         this._scanTask = async () => {
             this._scanQueued = false;
+            if (this._workerRef)
+                this._workerRef._scanPending = [...(this._workerRef.scanners?.values() ?? [])].some(
+                    (scanner) => scanner._scanQueued
+                );
             if (this._stopped) return;
+            if (this._scheduledTimeout !== null) {
+                clearTimeout(this._scheduledTimeout);
+                this._scheduledTimeout = null;
+            }
 
-            // Clear the pending flag now that the scan task is running
-            if (this._workerRef) this._workerRef._scanPending = false;
+            // The pending flag now describes only scans still waiting for this serial slot.
 
+            let completed = false;
             try {
-                await this.scan();
+                completed = (await this.scan()) === true;
             } catch (err) {
                 if (err instanceof RebuildRequiredError && this._onRebuildRequired) {
                     // Don't await — _rebuildAndRestart queues on the same taskQueue
@@ -170,36 +373,42 @@ class FSScanner {
 
             if (this._stopped) return;
 
-            this._counter++;
+            if (this._counter !== 0 || completed) this._counter++;
             this._scheduledTimeout = setTimeout(() => {
                 this._scheduledTimeout = null;
                 if (!this._stopped) {
-                    if (this._queueScanTask(taskQueue) && this._workerRef) this._workerRef._scanPending = true;
+                    this._queueScanTask(taskQueue);
                 }
             }, this._getScanInterval(this.root));
         };
 
-        this._queueScanTask(taskQueue, { allowPendingControl });
+        return this._queueScanTask(taskQueue, { allowPendingControl });
     }
 
     requestImmediateScan(taskQueue = this._taskQueue, { allowPendingControl = false } = {}) {
-        if (this._stopped) return;
-        if (!taskQueue || !this._scanTask) return;
+        if (this._stopped || !taskQueue || !this._scanTask) return false;
         if (this._scheduledTimeout) {
             clearTimeout(this._scheduledTimeout);
             this._scheduledTimeout = null;
         }
-        if (this._queueScanTask(taskQueue, { allowPendingControl }) && this._workerRef) {
-            this._workerRef._scanPending = true;
-        }
+        const queued = this._queueScanTask(taskQueue, { allowPendingControl });
+        return queued;
     }
 
     async stop() {
         this._stopped = true;
-        this._scanQueued = false;
-        if (this._scheduledTimeout) {
-            clearTimeout(this._scheduledTimeout);
-            this._scheduledTimeout = null;
+        try {
+            this._scanReader?.close();
+        } finally {
+            this._scanQueued = false;
+            if (this._workerRef)
+                this._workerRef._scanPending = [...(this._workerRef.scanners?.values() ?? [])].some(
+                    (scanner) => scanner._scanQueued
+                );
+            if (this._scheduledTimeout) {
+                clearTimeout(this._scheduledTimeout);
+                this._scheduledTimeout = null;
+            }
         }
     }
 
@@ -240,20 +449,20 @@ class FSScanner {
     }
 
     async scan() {
-        if (this._shouldYield()) return;
+        if (this._stopped || this._shouldYield()) return;
 
         // 1. Check deferred state
         if (this.storage.isDeferred()) {
             await this.storage.initialize();
-            if (this._shouldYield()) return;
+            if (this._stopped || this._shouldYield()) return;
             if (this.storage.isDeferred()) return;
         }
-        if (this._shouldYield()) return;
+        if (this._stopped || this._shouldYield()) return;
 
         // 2. Sync embedding mode (handles model changes, additions, removals)
         const previousMode = this.storage.mode;
         await this.storage.syncEmbeddingMode('scan');
-        if (this._shouldYield()) return;
+        if (this._stopped || this._shouldYield()) return;
         if (this.storage.mode !== previousMode) {
             void this._workerRef?._emitStatusChanged('mode');
         }
@@ -267,103 +476,210 @@ class FSScanner {
         const isFullScan = deep === undefined;
         const lastScanningTime = this.state.last_full_scan;
 
-        const stream = fastGlob.stream(this.entry.include_patterns, {
-            cwd: this.root,
-            deep: deep,
-            dot: false,
-            stats: true,
-            objectMode: true,
-            suppressErrors: true,
-            followSymbolicLinks: false,
-            absolute: true,
-            caseSensitiveMatch: false,
-            ignore: this.entry.exclude_patterns
-        });
+        const failedDirectories = new Set();
+        const readErrors = { readdir: 0, lstat: 0 };
+        let errorSamples = 0;
+        const reader = createFileScan(
+            this.entry.include_patterns,
+            {
+                cwd: resolveDriveRootPath(this.root, process.platform),
+                deep: deep,
+                dot: false,
+                objectMode: true,
+                suppressErrors: true,
+                followSymbolicLinks: false,
+                absolute: true,
+                caseSensitiveMatch: false,
+                ignore: this.entry.exclude_patterns
+            },
+            {
+                shouldStop: () => this._stopped || this._shouldYield(),
+                onReadError: ({ operation, path, code }) => {
+                    readErrors[operation]++;
+                    if (operation === 'readdir') failedDirectories.add(path);
+                    if (errorSamples++ < MAX_RECENT_FAILURES) {
+                        logger.warn(`[filemgr] ${operation} ${path}: ${code}`);
+                    }
+                }
+            }
+        );
+        this._scanReader = reader;
 
         let batch = [];
         let totalFiles = 0;
         let savedCount = 0;
         let failedCount = 0;
         const BATCH_SIZE = 500;
-        let visited = 0;
         const scannedPaths = isFullScan ? new Set() : null;
+        let metadataWriteFailed = false;
+        let diagnosticAttempted = false;
+        let scanError = null;
+        const saveBatch = async (files) => {
+            try {
+                const result = await this.storage.saveFiles(files, this.root);
+                if (result.failed > 0) {
+                    metadataWriteFailed = true;
+                    this.state.metadata_write_pending = true;
+                }
+                return result;
+            } catch (error) {
+                metadataWriteFailed = true;
+                this.state.metadata_write_pending = true;
+                throw error;
+            }
+        };
+
+        const cleanupReader = async () => {
+            let cleanupError = null;
+            try {
+                reader.close();
+            } catch (error) {
+                cleanupError = error;
+            }
+            // Drain every in-flight read even when another cleanup step rejects.
+            try {
+                await reader.files.return();
+            } catch (error) {
+                cleanupError ??= error;
+            }
+            try {
+                await reader.drain();
+            } catch (error) {
+                cleanupError ??= error;
+            }
+            if (this._scanReader === reader) this._scanReader = null;
+            if (metadataWriteFailed && !diagnosticAttempted) {
+                diagnosticAttempted = true;
+                await this.storage.saveScannerState().catch((error) => {
+                    logger.warn(`[filemgr] metadata failure diagnostic ${this.root}: ${error.message}`, error);
+                });
+            }
+            if (errorSamples > 0) {
+                logger.warn(
+                    `[filemgr] read errors ${this.root}: readdir=${readErrors.readdir}, lstat=${readErrors.lstat}, omitted=${Math.max(0, errorSamples - MAX_RECENT_FAILURES)}`
+                );
+            }
+            if (cleanupError) {
+                if (scanError)
+                    logger.warn(`[filemgr] scan cleanup ${this.root}: ${cleanupError.message}`, cleanupError);
+                else throw cleanupError;
+            }
+        };
 
         // Clear recent failures at start of every scan, not just full scans (spec §11.3)
         this._recentFailures = [];
 
-        for await (const entry of stream) {
-            if (this._stopped) break;
-            visited++;
-            totalFiles++;
-            if (scannedPaths) scannedPaths.add(entry.path);
-            if (isFullScan || this._isFileUpdated(entry, lastScanningTime)) {
-                batch.push(this._convertToFileEntry(entry));
+        try {
+            for await (const entry of reader.files) {
+                if (this._stopped || this._shouldYield()) return;
+                totalFiles++;
+                if (scannedPaths) scannedPaths.add(entry.path);
+                if (entry.stats?.isFile() && (isFullScan || this._isFileUpdated(entry, lastScanningTime))) {
+                    batch.push(this._convertToFileEntry(entry));
+                }
+                if (batch.length >= BATCH_SIZE) {
+                    const result = await saveBatch(batch);
+                    savedCount += result.saved;
+                    failedCount += result.failed;
+                    this._collectFailures(result.failures);
+                    batch = [];
+                    if (this._stopped || this._shouldYield()) {
+                        logger.info(`[filemgr] scan ${this.root}: yielding after batch`);
+                        return;
+                    }
+                }
             }
-            if (visited % BATCH_SIZE === 0 && this._shouldYield()) {
-                logger.info(`[filemgr] scan ${this.root}: yielding during glob`);
-                return;
-            }
-            if (batch.length >= BATCH_SIZE) {
-                const result = await this.storage.saveFiles(batch, this.root);
+            if (this._stopped || this._shouldYield()) return;
+            if (batch.length > 0) {
+                const result = await saveBatch(batch);
                 savedCount += result.saved;
                 failedCount += result.failed;
                 this._collectFailures(result.failures);
-                batch = [];
-                if (this._shouldYield()) {
-                    logger.info(`[filemgr] scan ${this.root}: yielding after batch`);
+                if (this._stopped || this._shouldYield()) {
+                    logger.info(`[filemgr] scan ${this.root}: yielding after final batch`);
                     return;
                 }
             }
-        }
-        if (batch.length > 0) {
-            const result = await this.storage.saveFiles(batch, this.root);
-            savedCount += result.saved;
-            failedCount += result.failed;
-            this._collectFailures(result.failures);
-            if (this._shouldYield()) {
-                logger.info(`[filemgr] scan ${this.root}: yielding after final batch`);
-                return;
-            }
-        }
-        if (this._shouldYield()) return;
+            if (this._stopped || this._shouldYield()) return;
 
-        // 5. Full scan: delete detection
-        if (isFullScan && scannedPaths) {
-            if (scannedPaths.size === 0) {
-                const lastCount = this.state.last_file_count ?? 0;
-                if (lastCount > UNAVAILABLE_THRESHOLD) {
-                    this.storage.scannerState.unavailable_roots[this.root] = {
-                        since: Date.now(),
-                        last_count: lastCount
-                    };
-                    await this.storage.saveScannerState();
-                    this.storage.onStateChanged?.();
-                    return;
+            // A failed source root is unavailable, even below the empty-scan threshold.
+            // Compare I/O paths without changing the root used by state and references.
+            const rootPath = resolveDriveRootPath(this.root, process.platform);
+            let rootReadFailed = [...failedDirectories].some((directory) => path.relative(rootPath, directory) === '');
+            if (
+                !rootReadFailed &&
+                totalFiles === 0 &&
+                (failedDirectories.size > 0 || this.storage.scannerState.unavailable_roots[this.root])
+            ) {
+                // Glob bases can start below root. Probe only this ambiguous failure case,
+                // so a missing child is not confused with an offline source.
+                try {
+                    await fs.promises.readdir(rootPath);
+                } catch (error) {
+                    if (!EXPECTED_READ_ERRORS.has(error.code)) throw error;
+                    rootReadFailed = true;
+                }
+                if (this._stopped || this._shouldYield()) return;
+            }
+            if (rootReadFailed) {
+                this.storage.scannerState.unavailable_roots[this.root] ??= {
+                    since: Date.now(),
+                    last_count: this.state.last_file_count ?? 0
+                };
+                await this.storage.saveScannerState();
+                this.storage.onStateChanged?.();
+                return true;
+            }
+
+            // 5. Full scan: delete detection
+            if (isFullScan && scannedPaths) {
+                if (scannedPaths.size === 0 && failedDirectories.size === 0) {
+                    const lastCount = this.state.last_file_count ?? 0;
+                    if (lastCount > UNAVAILABLE_THRESHOLD) {
+                        this.storage.scannerState.unavailable_roots[this.root] = {
+                            since: Date.now(),
+                            last_count: lastCount
+                        };
+                        await this.storage.saveScannerState();
+                        this.storage.onStateChanged?.();
+                        return true;
+                    }
+                }
+                await this.storage.removeDeletedFiles(this.root, scannedPaths, {
+                    activeRoots: this._getActiveRoots(),
+                    failedDirectories
+                });
+            }
+            if (this._stopped || this._shouldYield()) return;
+
+            // Commit a completed attempt atomically; failed metadata writes retain its full baseline.
+            const scanCompletedAt = Date.now();
+            const changes = { last_scan_at: scanCompletedAt };
+            if (isFullScan) {
+                if (!metadataWriteFailed) changes.last_full_scan = scanCompletedAt;
+                if (!metadataWriteFailed && readErrors.readdir === 0 && readErrors.lstat === 0)
+                    changes.metadata_write_pending = false;
+                if (failedDirectories.size === 0) {
+                    changes.total_files = totalFiles;
+                    changes.last_file_count = scannedPaths.size;
                 }
             }
-            delete this.storage.scannerState.unavailable_roots[this.root];
-            await this.storage.removeDeletedFiles(this.root, scannedPaths, {
-                activeRoots: this._getActiveRoots()
-            });
+            diagnosticAttempted = metadataWriteFailed;
+            await this.storage.commitRootScanState(this.root, changes, { clearUnavailable: isFullScan });
+
+            logger.info(
+                `[filemgr] scan ${this.root}: depth=${deep ?? 'full'}, ` +
+                    `total=${totalFiles}, saved=${savedCount}, failed=${failedCount}`
+            );
+
+            this._workerRef?._enqueueEmbeddingQueue();
+            return true;
+        } catch (error) {
+            scanError = error;
+            throw error;
+        } finally {
+            await cleanupReader();
         }
-        if (this._shouldYield()) return;
-
-        // 6. Full scan: unconditional checkpoint
-        const scanCompletedAt = Date.now();
-        this.state.last_scan_at = scanCompletedAt;
-        if (isFullScan) {
-            this.state.last_full_scan = scanCompletedAt;
-            this.state.total_files = totalFiles;
-            this.state.last_file_count = scannedPaths.size;
-        }
-        await this.storage.saveScannerState();
-
-        logger.info(
-            `[filemgr] scan ${this.root}: depth=${deep ?? 'full'}, ` +
-                `total=${totalFiles}, saved=${savedCount}, failed=${failedCount}`
-        );
-
-        this._workerRef?._enqueueEmbeddingQueue();
     }
 
     /**
@@ -404,6 +720,7 @@ class FileManagerWorker extends BaseWorker {
         this._statusPushHooksAttached = false;
         this._statusTickHandle = null;
         this._pendingConfigChange = null;
+        this._configChangeOperation = null;
         this._pendingWorkspaceChange = null;
         this._pendingEmbeddingConfigChange = false;
         this._pendingEmbeddingConfigChangeToken = 0;
@@ -464,7 +781,15 @@ class FileManagerWorker extends BaseWorker {
     }
 
     _getVisibleConfigEntries() {
+        if (this._readonlyMode) return this.config?.entries ?? [];
         return this._pendingConfigChange?.entries ?? this._lastConfig?.entries ?? this.config?.entries ?? [];
+    }
+
+    _findWorkspaceRoot(workspace, roots = this._getActiveRoots()) {
+        if (roots.includes(workspace)) return workspace;
+        if (typeof workspace !== 'string') return null;
+        const workspacePath = resolveDriveRootPath(workspace, process.platform);
+        return roots.find((root) => resolveDriveRootPath(root, process.platform) === workspacePath) ?? null;
     }
 
     _isEmbeddingBusy() {
@@ -473,7 +798,7 @@ class FileManagerWorker extends BaseWorker {
     }
 
     _getScanIntervalForRoot(root) {
-        if (root !== this._currentWorkspace) return NORMAL_SCAN_INTERVAL_MS;
+        if (root !== this._findWorkspaceRoot(this._currentWorkspace)) return NORMAL_SCAN_INTERVAL_MS;
         return this._isEmbeddingBusy() ? WORKSPACE_SCAN_INTERVAL_WHILE_EMBEDDING_MS : WORKSPACE_SCAN_INTERVAL_MS;
     }
 
@@ -501,7 +826,7 @@ class FileManagerWorker extends BaseWorker {
                     if (this.storage !== storage || runnableRoots.length === 0) return 0;
                     return await storage.processEmbeddingQueue(() => this._shouldYieldEmbeddingQueue(), {
                         activeRoots: runnableRoots,
-                        currentWorkspace: runnableRoots.includes(this._currentWorkspace) ? this._currentWorkspace : null
+                        currentWorkspace: this._findWorkspaceRoot(this._currentWorkspace, runnableRoots)
                     });
                 } finally {
                     this._embeddingQueueActive = false;
@@ -644,15 +969,19 @@ class FileManagerWorker extends BaseWorker {
     }
 
     _scheduleInitializeContinuation(seq, reason, pendingControl = {}) {
-        void this.runSequentially(async () => {
+        const configOperation = this._configChangeOperation;
+        const completion = this.runSequentially(async () => {
             await this._continueInitializeAfterProbe(seq, reason, pendingControl);
-        }).catch((error) => {
+        });
+        void completion.catch((error) => {
             if (seq !== this._initSeq) return;
             this._initializing = false;
             this._initError = error;
             logger.error(`[filemgr] initialize continuation queue error: ${error.message}`, error);
             this._setStatus('error', 'init-continuation-failed');
         });
+        if (seq === this._initSeq && configOperation && configOperation.config === this.config)
+            this._trackConfigChange(configOperation.config, completion);
     }
 
     async _continueInitializeAfterProbe(seq, reason, pendingControl = {}) {
@@ -662,80 +991,23 @@ class FileManagerWorker extends BaseWorker {
             );
         }
         this._probeContinuationSeq = seq;
-        const clearPendingEmbeddingConfig = () => {
-            if (pendingControl.embeddingConfigToken === this._pendingEmbeddingConfigChangeToken) {
-                this._pendingEmbeddingConfigChange = false;
-            }
-        };
         try {
-            const storage = this.storage;
-            if (!storage || seq !== this._initSeq || this._readonlyMode) {
-                clearPendingEmbeddingConfig();
-                return;
-            }
-            clearPendingEmbeddingConfig();
-
-            const previousMode = storage.mode;
-            await storage.syncEmbeddingModeForStartup(reason);
-            if (!this.storage || this.storage !== storage || seq !== this._initSeq || this._readonlyMode) return;
-            if (storage.mode !== previousMode) {
-                void this._emitStatusChanged('mode');
-            }
-
-            const filesystems = this.config?.entries;
-            await this._detachRemovedRoots(this._lastConfig, this.config);
-            if (seq !== this._initSeq) return;
-
-            await this._reconcileScannerStateRoots(filesystems ?? []);
-            if (seq !== this._initSeq) return;
-
-            if (!filesystems || filesystems.length === 0) {
-                this._setStatus('idle', 'no-roots');
-                this._lastConfig = this.config;
-                if (this._isSameConfig(this._pendingConfigChange, this.config)) {
-                    this._pendingConfigChange = null;
-                }
-                return;
-            }
-
-            for (const fsEntry of filesystems) {
-                if (!storage.scannerState.roots[fsEntry.root]) {
-                    storage.scannerState.roots[fsEntry.root] = {
-                        last_full_scan: 0,
-                        last_scan_at: null,
-                        total_files: 0,
-                        last_file_count: 0,
-                        paused: false
-                    };
-                }
-            }
-            await storage.saveScannerState();
-            if (seq !== this._initSeq) return;
-
-            this._lastConfig = this.config;
-            if (this._isSameConfig(this._pendingConfigChange, this.config)) {
-                this._pendingConfigChange = null;
-            }
-
-            await this._startScanners(filesystems);
-            if (seq !== this._initSeq) return;
-
-            this._setStatus('running', 'initialized');
+            if (!this.storage || seq !== this._initSeq || this._readonlyMode) return;
+            await this._finishConfigChange(seq, reason);
         } catch (error) {
-            if (this._isSameConfig(this._pendingConfigChange, this.config)) {
-                this._pendingConfigChange = null;
-            }
             if (seq !== this._initSeq) return;
-            this._initError = error;
             logger.error(`[filemgr] initialize continuation error: ${error.message}`, error);
-            this._setStatus('error', 'init-continuation-failed');
+            if (this.status === 'initializing') {
+                this._initError = error;
+                this._setStatus('error', 'init-continuation-failed');
+            }
         } finally {
             if (seq === this._initSeq) {
                 this._initializing = false;
+                if (pendingControl.embeddingConfigToken === this._pendingEmbeddingConfigChangeToken)
+                    this._pendingEmbeddingConfigChange = false;
             }
-            if (this._probeContinuationSeq === seq) {
-                this._probeContinuationSeq = null;
-            }
+            if (this._probeContinuationSeq === seq) this._probeContinuationSeq = null;
         }
     }
 
@@ -771,7 +1043,7 @@ class FileManagerWorker extends BaseWorker {
                 this._readonlyMode = false;
                 const seq = this._nextInitSeq();
                 await this.storage.initialize({ syncEmbedding: false });
-                this._lastConfig = this.config;
+                this._lastConfig = null;
                 void this._emitStatusChanged('storage-initialized');
 
                 continuationScheduled = true;
@@ -805,7 +1077,7 @@ class FileManagerWorker extends BaseWorker {
     /**
      * @param {object[]} filesystems
      */
-    async _startScanners(filesystems) {
+    async _startScanners(filesystems, { isCurrent = () => true } = {}) {
         if (!FILEMGR_SCANNING_ENABLED) {
             logger.info('[filemgr] scanning disabled — skip starting scanners');
             return;
@@ -820,7 +1092,8 @@ class FileManagerWorker extends BaseWorker {
             return true;
         });
         for (const fsEntry of deduped) {
-            await this._startScanner(fsEntry, deduped);
+            if (!isCurrent()) return;
+            await this._startScanner(fsEntry, deduped, { allowPendingControl: true });
         }
     }
 
@@ -836,7 +1109,8 @@ class FileManagerWorker extends BaseWorker {
             return null;
         }
         if (existing?.isRunning()) {
-            existing.requestImmediateScan(this.taskQueue, { allowPendingControl });
+            if (!existing.requestImmediateScan(this.taskQueue, { allowPendingControl }))
+                throw new Error(`scanner did not accept work for ${root}`);
             return existing;
         }
         if (existing) {
@@ -846,14 +1120,14 @@ class FileManagerWorker extends BaseWorker {
         const scanner = new FSScanner(fsEntry, this.storage, root, state, {
             onRebuildRequired: (reason) => this._rebuildAndRestart(reason),
             workerRef: this,
-            getActiveRoots: () => (this._lastConfig?.entries ?? filesystems).map((entry) => entry.root),
+            getActiveRoots: () => this._getActiveRoots(),
             getScanInterval: (scannerRoot) => this._getScanIntervalForRoot(scannerRoot),
             shouldYield: () => this._hasPendingControlChange()
         });
         this.scanners.set(root, scanner);
         try {
-            await scanner.start(this.taskQueue, { allowPendingControl });
-            if (!scanner.isRunning()) throw new Error(`scanner did not start for ${root}`);
+            if (!(await scanner.start(this.taskQueue, { allowPendingControl })))
+                throw new Error(`scanner did not accept work for ${root}`);
             return scanner;
         } catch (error) {
             await scanner.stop().catch(() => {});
@@ -872,12 +1146,13 @@ class FileManagerWorker extends BaseWorker {
         this._enqueueEmbeddingQueue({ allowPendingControl });
     }
 
-    async _restartScanners() {
+    async _restartScanners({ isCurrent = () => true } = {}) {
         this._setStatus('initializing', 'restart-scanners');
         for (const scanner of this.scanners.values()) {
             await scanner.stop().catch((err) => {
                 logger.error(`[filemgr] stop scanner failed: ${err.message}`);
             });
+            if (!isCurrent()) return;
         }
         this.scanners.clear();
 
@@ -888,7 +1163,8 @@ class FileManagerWorker extends BaseWorker {
             return;
         }
 
-        await this._startScanners(filesystems);
+        await this._startScanners(filesystems, { isCurrent });
+        if (!isCurrent()) return;
         this._setStatus('running', 'scanners-restarted');
     }
 
@@ -924,11 +1200,11 @@ class FileManagerWorker extends BaseWorker {
                 this.scanners.clear();
 
                 // 2. Rebuild storage (build-then-swap)
-                let rebuildOk = true;
+                let rebuildError = null;
                 try {
                     await this.storage.rebuildAll(reason);
                 } catch (err) {
-                    rebuildOk = false;
+                    rebuildError = err;
                     if (err._postSwap) {
                         // Catastrophic: old storage already deleted, new init failed.
                         // storage is null. Scanners will see deferred state.
@@ -940,16 +1216,32 @@ class FileManagerWorker extends BaseWorker {
                 }
 
                 // 3. Restart scanners regardless — step 1 already stopped them
-                await this._restartScanners();
+                try {
+                    await this._restartScanners();
+                } catch (recoveryError) {
+                    if (rebuildError) {
+                        logger.error(
+                            `[filemgr] scanner recovery after rebuild failed: ${recoveryError.message}`,
+                            recoveryError
+                        );
+                    }
+                    throw rebuildError ?? recoveryError;
+                }
 
-                if (rebuildOk) {
+                if (!rebuildError) {
                     logger.info(`[filemgr] rebuild succeeded, scanners restarted`);
                 } else if (!this.storage.isDeferred()) {
                     logger.warn(`[filemgr] scanners restarted with old storage; ` + `next scan may re-trigger rebuild`);
                 } else {
                     logger.error(`[filemgr] scanners restarted in deferred state; ` + `will retry on next scan cycle`);
                 }
+                if (rebuildError) throw rebuildError;
             } finally {
+                if (this.status === 'initializing')
+                    this._setStatus(
+                        [...this.scanners.values()].some((scanner) => scanner.isRunning()) ? 'running' : 'idle',
+                        'rebuild-settled'
+                    );
                 this._rebuildQueued = false;
                 this._currentRebuildPromise = null;
             }
@@ -957,8 +1249,22 @@ class FileManagerWorker extends BaseWorker {
         return this._currentRebuildPromise;
     }
 
+    _trackConfigChange(config, promise) {
+        const operation = { config, promise };
+        this._configChangeOperation = operation;
+        const release = () => {
+            if (this._configChangeOperation === operation) this._configChangeOperation = null;
+        };
+        void promise.then(release, release);
+        return operation;
+    }
+
     async applicationConfigChanged(config) {
         const normalizedConfig = this._normalizeConfig(config);
+        return this._trackConfigChange(normalizedConfig, this._applyConfigChange(normalizedConfig)).promise;
+    }
+
+    async _applyConfigChange(normalizedConfig) {
         await super.applicationConfigChanged(normalizedConfig);
 
         this._currentWorkspace = Setting.getInstance().getData()?.default_workspace ?? null;
@@ -982,69 +1288,153 @@ class FileManagerWorker extends BaseWorker {
 
         await this.runSequentially(async () => {
             if (seq !== this._initSeq || this._pendingConfigChange !== myConfig) return;
-            let configApplied = false;
-            try {
-                const storage = this.storage;
-                if (!storage) return;
+            await this._finishConfigChange(seq, 'filemgr config changed');
+        });
+    }
 
-                const previousMode = storage.mode;
-                await storage.syncEmbeddingModeForStartup('filemgr config changed');
-                if (seq !== this._initSeq || this.storage !== storage) return;
-                if (storage.mode !== previousMode) {
-                    void this._emitStatusChanged('mode');
+    async _finishConfigChange(seq, reason) {
+        const storage = this.storage;
+        const currentConfig = this.config;
+        const target = this._normalizeConfig(currentConfig);
+        const pendingConfig = this._pendingConfigChange;
+        const embeddingToken = this._pendingEmbeddingConfigChange ? this._pendingEmbeddingConfigChangeToken : null;
+        const isCurrent = () =>
+            seq === this._initSeq && this.storage === storage && this.config === currentConfig && !this._readonlyMode;
+        const release = () => {
+            if (!isCurrent()) return;
+            if (this._pendingConfigChange === pendingConfig) this._pendingConfigChange = null;
+            if (embeddingToken !== null && embeddingToken === this._pendingEmbeddingConfigChangeToken)
+                this._pendingEmbeddingConfigChange = false;
+        };
+        if (!storage || !isCurrent()) return;
+        const previousConfig = this._lastConfig;
+        const oldRoots = new Set([
+            ...(previousConfig?.entries ?? []).map((entry) => entry.root),
+            ...this.scanners.keys(),
+            ...Object.keys(storage.scannerState.roots)
+        ]);
+        const allowed = new Map(target.entries.map((entry) => [entry.root, entry]));
+        const healthy = [];
+        this._lastConfig = null;
+        let modeReady = false;
+        try {
+            for (const [root, scanner] of this.scanners) {
+                if (allowed.has(root) && JSON.stringify(scanner.entry) === JSON.stringify(allowed.get(root))) {
+                    if (scanner.isRunning()) healthy.push(root);
+                    continue;
                 }
-
-                const oldConfig = this._lastConfig;
-                const oldRoots = await this._detachRemovedRoots(oldConfig, normalizedConfig);
-                if (seq !== this._initSeq || this.storage !== storage) return;
-
-                const newRoots = new Set((normalizedConfig.entries ?? []).map((e) => e.root));
-
-                for (const added of newRoots) {
-                    if (!oldRoots.has(added)) {
-                        storage.scannerState.roots[added] = {
-                            last_full_scan: 0,
-                            last_scan_at: null,
-                            total_files: 0,
-                            last_file_count: 0,
-                            paused: false
-                        };
+                await scanner
+                    .stop()
+                    .catch((error) => logger.error(`[filemgr] stop scanner ${root}: ${error.message}`, error));
+                if (this.scanners.get(root) === scanner) this.scanners.delete(root);
+                if (!isCurrent()) return;
+            }
+            const previousMode = storage.mode;
+            await storage.syncEmbeddingModeForStartup(reason);
+            if (!isCurrent()) return;
+            modeReady = true;
+            // Startup has no running scanners yet; persisted configured roots still provide recovery ownership.
+            if (this._initializing)
+                for (const root of allowed.keys())
+                    if (storage.scannerState.roots[root] && !healthy.includes(root)) healthy.push(root);
+            if (storage.mode !== previousMode) void this._emitStatusChanged('mode');
+            await this._detachRemovedRoots(previousConfig, target, { storage, isCurrent, roots: oldRoots });
+            if (!isCurrent()) return;
+            const missing = {};
+            for (const root of allowed.keys())
+                if (!storage.scannerState.roots[root])
+                    missing[root] = {
+                        last_full_scan: 0,
+                        last_scan_at: null,
+                        total_files: 0,
+                        last_file_count: 0,
+                        paused: false
+                    };
+            if (Object.keys(missing).length > 0) {
+                await storage._writeScannerStateSnapshot(
+                    { ...storage.scannerState, roots: { ...storage.scannerState.roots, ...missing } },
+                    () => {
+                        Object.assign(storage.scannerState.roots, missing);
+                    }
+                );
+                if (!isCurrent()) return;
+            }
+            await storage.pruneUnownedUnavailableRoots(target.entries);
+            if (!isCurrent()) return;
+            release();
+            await this._restartScanners({ isCurrent });
+            if (!isCurrent()) return;
+            this._lastConfig = target;
+            this._enqueueEmbeddingQueue();
+        } catch (error) {
+            if (isCurrent()) {
+                release();
+                for (const root of healthy) {
+                    if (!isCurrent()) break;
+                    if (!storage.scannerState.roots[root]?.paused) {
+                        try {
+                            await this._startScanner(allowed.get(root), target.entries, { allowPendingControl: true });
+                        } catch (recoveryError) {
+                            logger.error(
+                                `[filemgr] healthy scanner recovery ${root}: ${recoveryError.message}`,
+                                recoveryError
+                            );
+                        }
                     }
                 }
-                await storage.saveScannerState();
-                if (seq !== this._initSeq || this.storage !== storage) return;
-
-                this._lastConfig = normalizedConfig;
-                configApplied = true;
-                if (this._pendingConfigChange === myConfig) {
-                    this._pendingConfigChange = null;
-                }
-
-                await this._restartScanners();
-                if (seq !== this._initSeq || this.storage !== storage) return;
-
-                this._enqueueEmbeddingQueue();
-            } finally {
-                if (this._pendingConfigChange === myConfig && (configApplied || this.config === myConfig)) {
-                    this._pendingConfigChange = null;
-                }
+                if (isCurrent() && modeReady)
+                    this._setStatus(
+                        [...this.scanners.values()].some((scanner) => scanner.isRunning()) ? 'running' : 'idle',
+                        'config-failed'
+                    );
             }
-        });
+            throw error;
+        } finally {
+            release();
+        }
     }
 
     async reconcileConfig(config) {
         const latestConfig = this._normalizeConfig(config);
-
-        if (this._isSameConfig(this._lastConfig, latestConfig)) {
-            return { status: 'ok', reconciled: false };
+        let operation = this._configChangeOperation;
+        let reconciled = false;
+        if (!operation || operation.config !== this.config || !this._isSameConfig(operation.config, latestConfig)) {
+            if (
+                !operation &&
+                !this._pendingConfigChange &&
+                this._isSameConfig(this._lastConfig, latestConfig) &&
+                this._isSameConfig(this.config, latestConfig)
+            ) {
+                return { status: 'ok', reconciled: false };
+            }
+            operation = this._trackConfigChange(latestConfig, this._applyConfigChange(latestConfig));
+            reconciled = true;
         }
 
-        if (this._pendingConfigChange && this._isSameConfig(this._pendingConfigChange, latestConfig)) {
-            return { status: 'ok', reconciled: false };
+        const requestedConfig = operation.config;
+        // Observe outside the serial queue. Initialization/embedding may take over the
+        // same config object; an equal but newer config (including ABA) is a different operation.
+        for (;;) {
+            let failure;
+            try {
+                await operation.promise;
+            } catch (error) {
+                failure = error;
+            }
+            const successor = this._configChangeOperation;
+            if (successor && successor !== operation && successor.config === requestedConfig) {
+                operation = successor;
+                continue;
+            }
+            if (failure) throw failure;
+            if (
+                this.config !== requestedConfig ||
+                (!this._readonlyMode && !this._isSameConfig(this._lastConfig, requestedConfig))
+            ) {
+                return { status: 'error', message: 'FileMgr configuration was superseded or could not be applied.' };
+            }
+            return { status: 'ok', reconciled };
         }
-
-        await this.applicationConfigChanged(latestConfig);
-        return { status: 'ok', reconciled: true };
     }
 
     async embeddingConfigChanged() {
@@ -1052,6 +1442,7 @@ class FileManagerWorker extends BaseWorker {
         if (this._readonlyMode) return { status: 'ok', data: await this.getFileSystemStatus() };
 
         const seq = this._nextInitSeq();
+        const configOperation = this._configChangeOperation;
         const token = ++this._pendingEmbeddingConfigChangeToken;
         this._pendingEmbeddingConfigChange = true;
         const clearPendingEmbeddingConfig = () => {
@@ -1070,42 +1461,48 @@ class FileManagerWorker extends BaseWorker {
             return { status: 'ok', data: await this.getFileSystemStatus() };
         }
 
-        await this.runSequentially(async () => {
+        const completion = this.runSequentially(async () => {
             if (seq !== this._initSeq || token !== this._pendingEmbeddingConfigChangeToken) return;
             try {
+                const target = this.config;
+                if (this._pendingConfigChange || !this._isSameConfig(this._lastConfig, target)) {
+                    await this._finishConfigChange(seq, 'embedding config changed');
+                    return;
+                }
                 const storage = this.storage;
                 if (!storage) return;
-
                 const previousMode = storage.mode;
                 await storage.syncEmbeddingModeForStartup('embedding config changed');
                 if (seq !== this._initSeq || this.storage !== storage) return;
-                if (storage.mode !== previousMode) {
-                    void this._emitStatusChanged('mode');
-                }
-
-                // Scanners reject pending controls, so release this change's guard before scheduling.
+                if (storage.mode !== previousMode) void this._emitStatusChanged('mode');
                 clearPendingEmbeddingConfig();
-                for (const scanner of this.scanners.values()) {
-                    scanner.requestImmediateScan?.(this.taskQueue);
-                }
+                for (const scanner of this.scanners.values())
+                    scanner.requestImmediateScan?.(this.taskQueue, { allowPendingControl: true });
             } finally {
-                clearPendingEmbeddingConfig();
+                if (seq === this._initSeq) clearPendingEmbeddingConfig();
             }
         });
+        if (configOperation && configOperation.config === this.config)
+            this._trackConfigChange(configOperation.config, completion);
+        await completion;
 
         return { status: 'ok', data: await this.getFileSystemStatus() };
     }
 
-    async _detachRemovedRoots(oldConfig, config) {
-        const oldRoots = new Set((oldConfig?.entries ?? []).map((e) => e.root));
-        const newRoots = new Set((config?.entries ?? []).map((e) => e.root));
-
+    async _detachRemovedRoots(oldConfig, config, { storage = this.storage, isCurrent = () => true, roots } = {}) {
+        const oldRoots =
+            roots ??
+            new Set([
+                ...(oldConfig?.entries ?? []).map((entry) => entry.root),
+                ...this.scanners.keys(),
+                ...Object.keys(storage?.scannerState?.roots ?? {})
+            ]);
+        const newRoots = new Set((config?.entries ?? []).map((entry) => entry.root));
         for (const removed of oldRoots) {
-            if (!newRoots.has(removed)) {
-                await this.storage.detachRootForConfigChange(removed, config?.entries ?? []);
-            }
+            if (!isCurrent()) return oldRoots;
+            if (!newRoots.has(removed)) await storage.detachRootForConfigChange(removed, config?.entries ?? []);
+            if (!isCurrent()) return oldRoots;
         }
-
         return oldRoots;
     }
 
@@ -1169,9 +1566,21 @@ class FileManagerWorker extends BaseWorker {
         return [];
     }
 
+    _getEffectiveUnavailableRoots() {
+        const unavailable = this.storage?.scannerState?.unavailable_roots ?? {};
+        if (!this._readonlyMode) return unavailable;
+        const configured = new Set(this._getVisibleConfigEntries().map((entry) => entry.root));
+        return Object.fromEntries(
+            Object.entries(unavailable).filter(
+                ([root]) => configured.has(root) || this.storage?.scannerState?.roots?.[root]
+            )
+        );
+    }
+
     _deriveSourceState(root, counts, mode) {
         if (this.storage?.scannerState?.roots?.[root]?.paused === true) return 'paused';
-        if (this.storage?.scannerState.unavailable_roots?.[root]) return 'unavailable';
+        if (this._getEffectiveUnavailableRoots()[root]) return 'unavailable';
+        if (this.storage?.scannerState?.roots?.[root]?.metadata_write_pending === true) return 'pending';
         if (counts.total_files === 0) return counts.last_scan_at === null ? 'pending' : 'completed';
         if (mode === 'full') return counts.pending_count > 0 ? 'scanning' : 'completed';
         if (mode === 'base-only') return counts.last_scan_at === null ? 'pending' : 'completed';
@@ -1189,6 +1598,10 @@ class FileManagerWorker extends BaseWorker {
     _buildLightweightStatusSnapshot({ status, platform, isOpenHarmony, homePath }) {
         const entries = this._getVisibleConfigEntries();
         const defaultWorkspace = this._getDefaultWorkspace();
+        const workspaceRoot = this._findWorkspaceRoot(
+            defaultWorkspace,
+            entries.map((entry) => entry.root)
+        );
         const sources = entries.map((entry) => {
             const rootState = this.storage?.scannerState?.roots?.[entry.root];
             const paused = rootState?.paused === true;
@@ -1196,17 +1609,14 @@ class FileManagerWorker extends BaseWorker {
                 root: entry.root,
                 entry,
                 paused,
-                state: paused
-                    ? 'paused'
-                    : this.storage?.scannerState?.unavailable_roots?.[entry.root]
-                      ? 'unavailable'
-                      : 'pending',
+                metadata_write_pending: rootState?.metadata_write_pending === true,
+                state: paused ? 'paused' : this._getEffectiveUnavailableRoots()[entry.root] ? 'unavailable' : 'pending',
                 last_scan_at: rootState?.last_scan_at ?? null,
                 total_files: rootState?.total_files ?? 0,
                 embedded_count: 0,
                 pending_count: 0,
                 failed_count: rootState?.last_failed_count ?? 0,
-                is_workspace: entry.root === defaultWorkspace
+                is_workspace: entry.root === workspaceRoot
             };
         });
 
@@ -1224,7 +1634,7 @@ class FileManagerWorker extends BaseWorker {
             isDeferred: this.storage?.isDeferred?.() ?? false,
             deferredReason: this.storage?.deferredReason ?? null,
             probe_error: this.storage?.scannerState?.probe_error ?? null,
-            unavailable_roots: this.storage?.scannerState?.unavailable_roots ?? {},
+            unavailable_roots: this._getEffectiveUnavailableRoots(),
             readonly: this._readonlyMode ?? false,
             platform,
             is_openharmony: isOpenHarmony,
@@ -1257,6 +1667,10 @@ class FileManagerWorker extends BaseWorker {
         const roots = entries.map((entry) => entry.root);
         const perRootCounts = await this.storage.getPerRootCounts(roots);
         const defaultWorkspace = this._getDefaultWorkspace();
+        const workspaceRoot = this._findWorkspaceRoot(
+            defaultWorkspace,
+            entries.map((entry) => entry.root)
+        );
         const scannerList = [...this.scanners.values()].map((scanner) => ({
             entry: scanner.entry,
             root: scanner.root,
@@ -1279,13 +1693,14 @@ class FileManagerWorker extends BaseWorker {
                 root: entry.root,
                 entry,
                 paused: rootState?.paused === true,
+                metadata_write_pending: rootState?.metadata_write_pending === true,
                 state: this._deriveSourceState(entry.root, counts, mode),
                 last_scan_at: counts.last_scan_at,
                 total_files: counts.total_files,
                 embedded_count: counts.embedded_count,
                 pending_count: counts.pending_count,
                 failed_count: counts.failed_count ?? 0,
-                is_workspace: entry.root === defaultWorkspace
+                is_workspace: entry.root === workspaceRoot
             };
         });
 
@@ -1321,7 +1736,7 @@ class FileManagerWorker extends BaseWorker {
             isDeferred: this.storage.isDeferred(),
             deferredReason: this.storage.deferredReason ?? null,
             probe_error: this.storage.scannerState.probe_error,
-            unavailable_roots: this.storage.scannerState.unavailable_roots,
+            unavailable_roots: this._getEffectiveUnavailableRoots(),
             readonly: this._readonlyMode ?? false,
             platform,
             is_openharmony: isOpenHarmony,
@@ -1470,7 +1885,7 @@ class FileManagerWorker extends BaseWorker {
 
     async workspaceChanged(defaultWorkspace) {
         if (typeof defaultWorkspace === 'string') {
-            const pendingWorkspace = defaultWorkspace;
+            const pendingWorkspace = { workspace: defaultWorkspace };
             this._pendingWorkspaceChange = pendingWorkspace;
             await this.runSequentially(async () => {
                 if (this._pendingWorkspaceChange !== pendingWorkspace) return;
@@ -1483,9 +1898,10 @@ class FileManagerWorker extends BaseWorker {
                         logger.warn(`[filemgr] failed to update default workspace marker: ${error?.message ?? error}`);
                     }
 
-                    if (this.storage?.scannerState?.roots) {
-                        if (!this.storage.scannerState.roots[defaultWorkspace]) {
-                            this.storage.scannerState.roots[defaultWorkspace] = {
+                    const workspaceRoot = this._findWorkspaceRoot(defaultWorkspace) ?? defaultWorkspace;
+                    if (!this._readonlyMode && this.storage?.scannerState?.roots) {
+                        if (!this.storage.scannerState.roots[workspaceRoot]) {
+                            this.storage.scannerState.roots[workspaceRoot] = {
                                 last_full_scan: 0,
                                 last_scan_at: null,
                                 total_files: 0,
@@ -1493,10 +1909,14 @@ class FileManagerWorker extends BaseWorker {
                                 paused: false
                             };
                         } else {
-                            this.storage.scannerState.roots[defaultWorkspace].last_full_scan = 0;
+                            this.storage.scannerState.roots[workspaceRoot].last_full_scan = 0;
                         }
                         await this.storage.saveScannerState?.();
-                        this.scanners.get(defaultWorkspace)?.requestImmediateScan?.(this.taskQueue);
+                        if (this._pendingWorkspaceChange !== pendingWorkspace) return;
+                        this._pendingWorkspaceChange = null;
+                        this.scanners
+                            .get(workspaceRoot)
+                            ?.requestImmediateScan?.(this.taskQueue, { allowPendingControl: true });
                     }
                 } finally {
                     if (this._pendingWorkspaceChange === pendingWorkspace) {
@@ -1605,7 +2025,7 @@ class FileManagerWorker extends BaseWorker {
         // captured before release remains usable for keyword policy checks.
         const unavailableRoots = () =>
             this.storage && !this.storage.isDeferred()
-                ? (this.storage.scannerState?.unavailable_roots ?? context.unavailableRoots ?? {})
+                ? this._getEffectiveUnavailableRoots()
                 : (context.unavailableRoots ?? {});
         const merged = merge(currentOutcomes());
         const filtered = await filterIndexedResults(merged, {
@@ -1672,7 +2092,7 @@ class FileManagerWorker extends BaseWorker {
         try {
             const resolution = resolveFilemgrSearchScopeForEntries(context.scope, {
                 entries: this._getVisibleConfigEntries(),
-                unavailableRoots: this.storage?.scannerState?.unavailable_roots ?? {}
+                unavailableRoots: this._getEffectiveUnavailableRoots()
             });
             context = {
                 ...context,
@@ -1690,7 +2110,7 @@ class FileManagerWorker extends BaseWorker {
         const earlyResult = this._checkIndexedSearchPreconditions(context);
         if (earlyResult) return earlyResult;
 
-        context = { ...context, unavailableRoots: { ...this.storage?.scannerState?.unavailable_roots } };
+        context = { ...context, unavailableRoots: { ...this._getEffectiveUnavailableRoots() } };
         const outcomes = [];
         if (context.routes.keyword) outcomes.push(await this._runKeywordRoute(context));
         // Keyword awaits may promote base-only storage. Fix the model context
@@ -1716,7 +2136,7 @@ class FileManagerWorker extends BaseWorker {
         try {
             resolveFilemgrSearchScopeForEntries(context.requestedScope, {
                 entries: this._getVisibleConfigEntries(),
-                unavailableRoots: this.storage?.scannerState?.unavailable_roots ?? context.unavailableRoots ?? {}
+                unavailableRoots: this._getEffectiveUnavailableRoots()
             });
         } catch (error) {
             if (error instanceof InvalidFilemgrSearchScopeError) {
