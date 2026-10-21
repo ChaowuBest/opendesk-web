@@ -37,6 +37,8 @@ addGlobalTodo 还支持以下可选配置：
 
 - workspace：触发后创建任务时使用的工作空间绝对路径；不指定则使用当前默认工作空间。
 - deliver：触发任务完成后最终回复的投递目标，格式为 \`{"type":"channel","channel":"渠道ID","accountId":"账号ID","recipientId":"接收方ID"}\`；不指定时，如果当前任务本身来自消息渠道，会继承当前会话作为投递目标。
+- model：触发任务使用的已配置聊天模型 alias；不指定则在触发时使用全局默认模型。
+- reasoningEffort：推理档位，可选 \`\`, \`none\`, \`low\`, \`medium\`, \`high\`, \`max\`；不指定或为空字符串时使用模型默认档位。
 
 ### 在创建全局待办事项时应遵循以下规则
 
@@ -46,7 +48,7 @@ addGlobalTodo 还支持以下可选配置：
 ### updateGlobalTodo 更新全局待办待办事项
 
 指定一个已有的全局待办事项ID，更新其信息，包括修改标题，内容，启用状态等。
-updateGlobalTodo 也可以更新 workspace 和 deliver；使用 removeWorkspace/removeDeliver 可以移除对应配置。
+updateGlobalTodo 也可以更新 workspace、model、reasoningEffort 和 deliver；使用 removeWorkspace/removeModel/removeDeliver 可以移除对应配置。
 
 ### listGlobalTodoDeliverTargets 列出可用投递目标
 

@@ -115,6 +115,8 @@ test('TodoMgrWorker passes workspace config to triggered automation task', async
         assert.equal(calls[0][0], 'triggerTodoTask');
         assert.equal(calls[0][1], todo.id);
         assert.deepEqual(calls[0][6], workspace);
+        assert.equal(calls[0][7], undefined);
+        assert.equal(calls[0][8], undefined);
     } finally {
         fs.rmSync(appDirectory, { recursive: true, force: true });
     }

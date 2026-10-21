@@ -11,6 +11,7 @@
 
 import type { TodoStatus, TaskTodo } from '../../aikernel/todos/task-todos.js';
 export type { TodoStatus, TaskTodo };
+import type { ReasoningEffort } from '../../aikernel/types/reasoning.js';
 
 // 优先级类型
 export type TodoPriority = 'low' | 'medium' | 'high';
@@ -56,6 +57,10 @@ export interface GlobalTodo {
     deliver?: Participant | null;
     /** 自动化任务启动时使用的工作空间配置。未设置时使用当前全局工作空间 */
     workspace?: TodoWorkspaceConfig;
+    /** 自动化任务使用的聊天模型别名。未设置时触发时使用全局默认模型 */
+    model?: string;
+    /** 自动化任务使用的推理档位。空字符串或未设置时使用模型默认档位 */
+    reasoningEffort?: ReasoningEffort;
     /** 是否启用，默认 true。禁用后不会按触发器自动执行，但仍可手动触发；一次性任务执行后自动设为 false */
     enabled?: boolean;
     last_triggered_at?: string; // 上次触发时间

@@ -16,6 +16,9 @@ import { showConfirmModal } from '../../../../renderer/components/confirmModal.j
 import { createRendererTranslator, resolveRendererLocale } from '../../../../renderer/locale.js';
 import { createTranslatorForTodoMgr } from '../locale/renderer.js';
 import type { TodoTemplate } from '../templates.js';
+import { REASONING_EFFORT_UI_OPTIONS, type ReasoningEffort } from '../../../../common/reasoning-effort.js';
+import { getEffortIconSVG, getModelIconTile } from '../../../../renderer/utils/model-picker-icons.js';
+import { fixedLayerOrigin, visibleViewportRect } from '../../../../renderer/utils/window-frame.js';
 
 type Translator = ReturnType<typeof createTranslatorForTodoMgr>;
 
@@ -32,6 +35,8 @@ interface GlobalTodo {
     trigger?: { type: string; triggerAt?: string; cronExpression?: string; bundleName?: string; eventName?: string };
     deliver?: { type?: 'channel'; channel: string; accountId: string; recipientId: string };
     workspace?: TodoWorkspaceConfig;
+    model?: string;
+    reasoningEffort?: ReasoningEffort;
     enabled?: boolean;
     last_triggered_at?: string;
     created_at: string;
@@ -46,6 +51,13 @@ interface AppEvent {
     appName: string;
     eventName: string;
     eventDescription: string;
+}
+
+interface ChatModelSummary {
+    alias: string;
+    provider_name: string;
+    model_name: string;
+    vision?: boolean;
 }
 
 type TriggerType = 'scheduled' | 'cron' | 'event';
@@ -607,6 +619,102 @@ html[data-theme='dark'] .tm-root {
     resize: vertical;
     min-height: 80px;
     line-height: 1.55;
+}
+.tm-model-picker {
+    position: relative;
+}
+.tm-model-trigger {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    width: 100%;
+    min-height: 38px;
+    padding: 9px 12px;
+    border: 1.5px solid #E5E5EA;
+    border-radius: 10px;
+    color: #1d1d1f;
+    background: #fff;
+    font: inherit;
+    font-size: var(--fs-base);
+    text-align: left;
+    cursor: pointer;
+    transition: border-color 0.15s, box-shadow 0.15s;
+}
+.tm-model-trigger:hover,
+.tm-model-trigger[aria-expanded='true'] {
+    border-color: #3B82F6;
+}
+.tm-model-trigger[aria-expanded='true'] {
+    box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.1);
+}
+.tm-model-trigger-summary {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    min-width: 0;
+}
+.tm-model-trigger-name {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+.tm-model-trigger-summary > svg { flex: none; }
+.tm-model-trigger-chevron {
+    flex-shrink: 0;
+    margin-left: 10px;
+    color: var(--tm-text-muted);
+}
+.tm-model-menu.ctx-menu,
+.tm-model-effort-menu.ctx-menu { box-sizing: border-box; }
+.tm-model-menu.ctx-menu {
+    width: max-content;
+    max-width: min(312px, calc(100vw - 16px));
+}
+.tm-model-menu .tm-model-list { max-height: 260px; }
+.tm-model-menu .ctx-label .ctx-badge { margin-left: 4px; }
+.tm-model-effort-menu.ctx-menu { width: 180px; min-width: 0; }
+.tm-model-effort-menu::before {
+    position: absolute;
+    top: 0;
+    right: 100%;
+    width: 8px;
+    height: 100%;
+    content: '';
+}
+.tm-model-effort-menu.opens-left::before { right: auto; left: 100%; }
+.tm-model-trigger .agent-icon-tile,
+.tm-model-menu .agent-icon-tile {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 22px;
+    height: 22px;
+    border-radius: 6px;
+    color: var(--ctx-ink2, #4a4642);
+    background: var(--ctx-hover, #f0efec);
+    flex: none;
+}
+.tm-model-trigger .model-vision,
+.tm-model-menu .model-vision {
+    color: var(--ctx-blue, #4267b2);
+    background: var(--ctx-blue-soft, #ebf1fb);
+}
+.tm-model-trigger .agent-icon-tile svg,
+.tm-model-menu .agent-icon-tile svg { display: block; }
+.tm-model-menu .ctx-item:focus-visible,
+.tm-model-effort-menu .ctx-item:focus-visible {
+    outline: 2px solid var(--tm-accent);
+    outline-offset: -2px;
+}
+.tm-model-effort-note {
+    margin-top: 5px;
+    color: var(--tm-text-muted);
+    font-size: var(--fs-sm);
+}
+html[data-theme='dark'] .tm-model-trigger {
+    color: var(--tm-text);
+    background: var(--tm-surface);
+    border-color: var(--tm-border-strong);
 }
 
 /* ---- Cron builder ---- */
@@ -1284,6 +1392,11 @@ class TodoMgrEntryWidget extends AgentOperableHTMLElement {
 
     private _cachedEvents: AppEvent[] | null = null;
     private _templates: TodoTemplate[] = [];
+    private _chatModels: ChatModelSummary[] = [];
+    private _defaultModelAlias = '';
+    private _modelEffortSupport: Record<string, string[]> = {};
+    private _modelVisionSupport: Record<string, boolean> = {};
+    private _modelPickerCleanup: (() => void) | null = null;
 
     private _dtYear = 0;
     private _dtMonth = 0;
@@ -1332,6 +1445,7 @@ class TodoMgrEntryWidget extends AgentOperableHTMLElement {
     }
 
     disconnectedCallback() {
+        this._modelPickerCleanup?.();
         if (this._onGlobalTodosUpdated) {
             window.applicationAPI.unsubscribe('globalTodosUpdated');
             this._onGlobalTodosUpdated = null;
@@ -1765,6 +1879,7 @@ class TodoMgrEntryWidget extends AgentOperableHTMLElement {
     }
 
     private _closeDetail() {
+        this._modelPickerCleanup?.();
         this.selectedTodoId = null;
         this.isEditing = false;
         this.isAddingNew = false;
@@ -1798,6 +1913,7 @@ class TodoMgrEntryWidget extends AgentOperableHTMLElement {
      * ═══════════════════════════ */
 
     private _renderDetail(todo: GlobalTodo) {
+        this._modelPickerCleanup?.();
         const t = this._t;
         const scroll = this.querySelector('#tm-detail-scroll') as HTMLElement;
         const footer = this.querySelector('#tm-detail-footer') as HTMLElement;
@@ -1874,6 +1990,9 @@ class TodoMgrEntryWidget extends AgentOperableHTMLElement {
                     <span class="tm-detail-attr-label">${escapeHtml(t('renderer.todo.detail.attr.workspace'))}</span>
                     <span class="tm-detail-attr-value">${escapeHtml(getTodoWorkspaceSummary(todo.workspace, t))}</span>
 
+                    <span class="tm-detail-attr-label">${escapeHtml(t('renderer.todo.detail.attr.model'))}</span>
+                    <span class="tm-detail-attr-value">${escapeHtml(this._getModelLabel(todo.model || ''))} · ${escapeHtml(this._getReasoningEffortLabel(todo.reasoningEffort || ''))}</span>
+
                     <span class="tm-detail-attr-label">${escapeHtml(t('renderer.todo.detail.attr.createdAt'))}</span>
                     <span class="tm-detail-attr-value">${formatDate(todo.created_at, t)}</span>
 
@@ -1919,6 +2038,7 @@ class TodoMgrEntryWidget extends AgentOperableHTMLElement {
      * ═══════════════════════════ */
 
     private async _enterEditMode(todo: GlobalTodo | null, addType?: TriggerType) {
+        this._modelPickerCleanup?.();
         const isTemplatePreFill = todo?.id === '__tpl__';
         this.isEditing = true;
         if (!isTemplatePreFill) {
@@ -1944,7 +2064,7 @@ class TodoMgrEntryWidget extends AgentOperableHTMLElement {
         const content = !todo ? '' : todo.content;
         const isEnabled = !todo ? true : todo.enabled !== false;
         const triggerType = !todo ? addType || 'scheduled' : todo.trigger?.type || addType || 'scheduled';
-        const recentWorkspaces = await this._loadRecentWorkspaces();
+        const [recentWorkspaces] = await Promise.all([this._loadRecentWorkspaces(), this._loadChatModels()]);
         const workspaceOptionsHtml = this._renderWorkspaceOptions(todo?.workspace, recentWorkspaces);
         const workspaceHint = getWorkspaceDisplayName(todo?.workspace, t);
 
@@ -1987,6 +2107,7 @@ class TodoMgrEntryWidget extends AgentOperableHTMLElement {
                 </select>
                 <div id="tm-edit-workspace-hint" style="font-size: var(--fs-sm);color:var(--text-tertiary,#888);margin-top:4px;">${escapeHtml(workspaceHint)}</div>
             </div>
+            ${this._renderModelPicker(todo)}
             <div class="tm-edit-field">
                 <label class="tm-edit-label">${escapeHtml(t('renderer.todo.edit.labelDeliver'))}</label>
                 <select class="tm-edit-select" id="tm-edit-deliver-target">
@@ -1999,6 +2120,7 @@ class TodoMgrEntryWidget extends AgentOperableHTMLElement {
         this._renderTriggerFields(triggerType, todo);
         this._loadDeliverTargets(todo);
         this._bindWorkspaceSelect();
+        this._bindModelPicker(todo);
         this._bindEnabledCheckbox();
 
         footer.style.display = 'flex';
@@ -2058,6 +2180,359 @@ class TodoMgrEntryWidget extends AgentOperableHTMLElement {
         } catch {
             return [];
         }
+    }
+
+    private async _loadChatModels(): Promise<void> {
+        try {
+            let catalog: any;
+            try {
+                catalog = await window.applicationAPI.callMainWorld('getChatModelsForUI');
+            } catch {
+                const setting = await (window as any).settingAPI?.loadSettingObject?.();
+                const rawModels = [...(setting?.models || []), ...(setting?.builtin_models || [])];
+                catalog = {
+                    default_model: setting?.default_model || '',
+                    models: rawModels
+                        .filter((model: any) => model?.model_type !== 'embedding' && typeof model?.alias === 'string')
+                        .map((model: any) => ({
+                            alias: model.alias,
+                            provider_name: model.provider_name || '',
+                            model_name: model.model_name || model.alias,
+                            vision: model.vision
+                        }))
+                };
+            }
+
+            const seen = new Set<string>();
+            this._chatModels = (Array.isArray(catalog?.models) ? catalog.models : [])
+                .filter((model: any) => typeof model?.alias === 'string' && model.alias.length > 0)
+                .filter((model: any) => {
+                    if (seen.has(model.alias)) return false;
+                    seen.add(model.alias);
+                    return true;
+                })
+                .map((model: any) => ({
+                    alias: model.alias,
+                    provider_name: typeof model.provider_name === 'string' ? model.provider_name : '',
+                    model_name:
+                        typeof model.model_name === 'string' && model.model_name ? model.model_name : model.alias,
+                    vision: typeof model.vision === 'boolean' ? model.vision : undefined
+                }));
+            this._defaultModelAlias = typeof catalog?.default_model === 'string' ? catalog.default_model : '';
+
+            const settingApi = (window as any).settingAPI;
+            const [efforts, vision] = await Promise.all([
+                settingApi?.checkReasoningEfforts?.(this._chatModels).catch(() => ({})) ?? {},
+                settingApi?.checkVisionSupport?.(this._chatModels).catch(() => ({})) ?? {}
+            ]);
+            this._modelEffortSupport = efforts || {};
+            this._modelVisionSupport = vision || {};
+        } catch {
+            this._chatModels = [];
+            this._defaultModelAlias = '';
+            this._modelEffortSupport = {};
+            this._modelVisionSupport = {};
+        }
+    }
+
+    private _getModelByAlias(alias: string): ChatModelSummary | undefined {
+        return this._chatModels.find((model) => model.alias === alias);
+    }
+
+    private _getSupportedEffortValues(modelAlias: string): string[] {
+        const allValues = REASONING_EFFORT_UI_OPTIONS.map((option) => option.value);
+        const supported = this._modelEffortSupport[modelAlias];
+        if (!Array.isArray(supported) || supported.length === 0) return allValues;
+        return allValues.filter((value) => supported.includes(value));
+    }
+
+    private _getReasoningEffortLabel(value: string): string {
+        return this._t(`renderer.todo.model.reasoning.${value || 'default'}`);
+    }
+
+    private _getModelLabel(alias: string): string {
+        if (!alias) return this._t('renderer.todo.model.globalDefault');
+        return this._getModelByAlias(alias)?.alias || alias;
+    }
+
+    private _getModelDetail(alias: string): string {
+        if (!alias) {
+            return this._defaultModelAlias
+                ? this._t('renderer.todo.model.currentDefault', { alias: this._defaultModelAlias })
+                : this._t('renderer.todo.model.noDefault');
+        }
+        const model = this._getModelByAlias(alias);
+        if (!model) return this._t('renderer.todo.model.unavailable');
+        return [model.provider_name, model.model_name].filter(Boolean).join(' / ');
+    }
+
+    private _renderModelPicker(todo: GlobalTodo | null): string {
+        const model = todo?.model || '';
+        const effort = todo?.reasoningEffort || '';
+        return `<div class="tm-edit-field">
+            <label class="tm-edit-label" id="tm-edit-model-label">${escapeHtml(this._t('renderer.todo.edit.labelModel'))}</label>
+            <div class="tm-model-picker" id="tm-edit-model-picker" data-selected-model="${escapeHtml(model)}" data-selected-effort="${escapeHtml(effort)}">
+                <button class="tm-model-trigger" id="tm-edit-model-trigger" type="button" aria-haspopup="dialog" aria-labelledby="tm-edit-model-label tm-edit-model-summary" aria-expanded="false" aria-controls="tm-edit-model-popover">
+                    <span class="tm-model-trigger-summary" id="tm-edit-model-summary">${this._renderModelSummary(model, effort)}</span>
+                    <span class="tm-model-trigger-chevron"><i class="fas fa-chevron-down" aria-hidden="true"></i></span>
+                </button>
+                <div class="ctx-menu ctx-menu-hidden tm-model-menu" id="tm-edit-model-popover" role="dialog" aria-label="${escapeHtml(this._t('renderer.todo.model.selectTitle'))}" hidden>
+                    <div class="ctx-search">
+                        <i class="fas fa-search" aria-hidden="true"></i>
+                        <input type="search" id="tm-edit-model-search" placeholder="${escapeHtml(this._t('renderer.todo.model.search'))}" aria-label="${escapeHtml(this._t('renderer.todo.model.search'))}" autocomplete="off" />
+                    </div>
+                    <div class="ctx-menu-list tm-model-list" id="tm-edit-model-list"></div>
+                </div>
+                <div class="ctx-menu ctx-menu-hidden tm-model-effort-menu" id="tm-edit-model-effort-submenu" role="menu" aria-label="${escapeHtml(this._t('renderer.todo.model.reasoningTitle'))}" hidden>
+                    <button class="ctx-item ctx-menu-hidden" id="tm-edit-model-back" type="button" hidden><i class="fas fa-chevron-left" aria-hidden="true"></i><span class="ctx-label">${escapeHtml(this._t('renderer.todo.model.back'))}</span></button>
+                    <div class="ctx-menu-list" id="tm-edit-model-effort-list"></div>
+                </div>
+            </div>
+            <div class="tm-model-effort-note">${escapeHtml(this._t('renderer.todo.model.hint'))}</div>
+        </div>`;
+    }
+
+    private _renderModelSummary(model: string, effort: string): string {
+        const hasVision = this._modelVisionSupport[model || this._defaultModelAlias] === true;
+        return `${getModelIconTile(hasVision)}<span aria-hidden="true">${getEffortIconSVG(effort)}</span>
+            <span class="tm-model-trigger-name">${escapeHtml(this._getModelLabel(model))} · ${escapeHtml(this._getReasoningEffortLabel(effort))}</span>`;
+    }
+
+    private _bindModelPicker(todo: GlobalTodo | null): void {
+        this._modelPickerCleanup?.();
+        const picker = this.querySelector<HTMLElement>('#tm-edit-model-picker');
+        const trigger = this.querySelector<HTMLButtonElement>('#tm-edit-model-trigger');
+        const menu = this.querySelector<HTMLElement>('#tm-edit-model-popover');
+        const submenu = this.querySelector<HTMLElement>('#tm-edit-model-effort-submenu');
+        const modelList = this.querySelector<HTMLElement>('#tm-edit-model-list');
+        const effortList = this.querySelector<HTMLElement>('#tm-edit-model-effort-list');
+        const search = this.querySelector<HTMLInputElement>('#tm-edit-model-search');
+        const summary = this.querySelector<HTMLElement>('#tm-edit-model-summary');
+        const back = this.querySelector<HTMLButtonElement>('#tm-edit-model-back');
+        if (!picker || !trigger || !menu || !submenu || !modelList || !effortList || !search || !summary || !back)
+            return;
+
+        let selectedModel = todo?.model || '';
+        let selectedEffort = todo?.reasoningEffort || '';
+        let previewModel = selectedModel;
+        let previewItem: HTMLButtonElement | null = null;
+        let open = false;
+        let menuRect: DOMRect | null = null;
+        let compact = false;
+        const setVisible = (element: HTMLElement, visible: boolean) => {
+            element.hidden = !visible;
+            element.classList.toggle('ctx-menu-hidden', !visible);
+        };
+        const close = (restoreFocus = false) => {
+            open = false;
+            trigger.setAttribute('aria-expanded', 'false');
+            setVisible(menu, false);
+            setVisible(submenu, false);
+            modelList.querySelectorAll('.hovered').forEach((item) => item.classList.remove('hovered'));
+            previewItem = null;
+            if (restoreFocus) trigger.focus();
+        };
+        const clamp = (value: number, min: number, max: number) => Math.max(min, Math.min(value, max));
+        const positionSubmenu = () => {
+            if (!open || !previewItem || submenu.hidden) return;
+            const view = visibleViewportRect();
+            const rect = menuRect || menu.getBoundingClientRect();
+            const itemRect = previewItem.getBoundingClientRect();
+            const origin = fixedLayerOrigin(submenu);
+            const width = Math.min(compact ? 280 : 180, view.right - view.left - 16);
+            submenu.style.width = `${width}px`;
+            submenu.style.maxHeight = `${Math.max(0, view.bottom - view.top - 16)}px`;
+            const height = submenu.getBoundingClientRect().height;
+            const opensLeft = rect.right + width + 4 > view.right - 8 && rect.left - width - 4 >= view.left + 8;
+            let left = compact ? rect.left : opensLeft ? rect.left - width - 4 : rect.right + 4;
+            left = clamp(left, view.left + 8, view.right - width - 8);
+            const top = clamp(compact ? rect.top : itemRect.top, view.top + 8, view.bottom - height - 8);
+            submenu.classList.toggle('opens-left', opensLeft);
+            submenu.style.left = `${left - origin.x}px`;
+            submenu.style.top = `${top - origin.y}px`;
+        };
+        const positionMenu = () => {
+            if (!open) return;
+            const view = visibleViewportRect();
+            const rect = trigger.getBoundingClientRect();
+            const origin = fixedLayerOrigin(menu);
+            const availableWidth = Math.max(0, view.right - view.left - 16);
+            menu.style.minWidth = `${Math.min(200, availableWidth)}px`;
+            menu.style.maxWidth = `${Math.min(312, availableWidth)}px`;
+            const above = Math.max(0, rect.top - view.top - 8);
+            const below = Math.max(0, view.bottom - rect.bottom - 8);
+            const placeAbove = above > below && below < 320;
+            menu.style.maxHeight = `${Math.max(0, (placeAbove ? above : below) - 4)}px`;
+            const size = menu.getBoundingClientRect();
+            const left = clamp(rect.left, view.left + 8, view.right - size.width - 8);
+            const top = placeAbove ? rect.top - size.height - 4 : rect.bottom + 4;
+            menu.style.left = `${left - origin.x}px`;
+            menu.style.top = `${clamp(top, view.top + 8, view.bottom - size.height - 8) - origin.y}px`;
+            menuRect = menu.getBoundingClientRect();
+            compact = menuRect.right + 184 > view.right - 8 && menuRect.left - 184 < view.left + 8;
+            positionSubmenu();
+        };
+        const showEfforts = (alias: string, item: HTMLButtonElement) => {
+            previewModel = alias;
+            previewItem = item;
+            modelList.querySelectorAll<HTMLButtonElement>('[data-model-alias]').forEach((candidate) => {
+                const active = candidate === item;
+                candidate.classList.toggle('hovered', active);
+                candidate.setAttribute('aria-expanded', String(active));
+            });
+            const supported = this._getSupportedEffortValues(alias || this._defaultModelAlias);
+            effortList.innerHTML = REASONING_EFFORT_UI_OPTIONS.filter((option) => supported.includes(option.value))
+                .map((option) => {
+                    const checked = alias === selectedModel && option.value === selectedEffort;
+                    return `<button class="ctx-item${checked ? ' active' : ''}" type="button" role="menuitemradio" aria-checked="${checked}" data-effort-value="${escapeHtml(option.value)}">
+                        ${getEffortIconSVG(option.value)}
+                        <span class="ctx-label">${escapeHtml(this._getReasoningEffortLabel(option.value))}</span>
+                        ${checked ? '<span class="ctx-item-check"><i class="fas fa-check" aria-hidden="true"></i></span>' : ''}
+                    </button>`;
+                })
+                .join('');
+            setVisible(submenu, open);
+            setVisible(back, compact);
+            setVisible(menu, !compact);
+            positionSubmenu();
+        };
+        const renderModels = () => {
+            const models = [{ alias: '', provider_name: '', model_name: this._defaultModelAlias }, ...this._chatModels];
+            if (selectedModel && !this._getModelByAlias(selectedModel)) {
+                models.push({ alias: selectedModel, provider_name: '', model_name: '' });
+            }
+            const query = search.value.trim().toLowerCase();
+            const matches = models.filter((model) =>
+                [this._getModelLabel(model.alias), model.model_name, model.provider_name]
+                    .join(' ')
+                    .toLowerCase()
+                    .includes(query)
+            );
+            modelList.innerHTML =
+                matches
+                    .map((model) => {
+                        const active = model.alias === selectedModel;
+                        const hasVision = this._modelVisionSupport[model.alias || this._defaultModelAlias] === true;
+                        return `<button class="ctx-item tm-model-picker-option${active ? ' active' : ''}" type="button" data-model-alias="${escapeHtml(model.alias)}" aria-haspopup="menu" aria-expanded="false" aria-controls="tm-edit-model-effort-submenu" title="${escapeHtml(this._getModelDetail(model.alias))}">
+                    ${getModelIconTile(hasVision)}
+                    <span class="ctx-label">${escapeHtml(this._getModelLabel(model.alias))}${hasVision ? `<span class="ctx-badge blue">${escapeHtml(this._t('renderer.todo.model.vision'))}</span>` : ''}</span>
+                    ${active ? '<span class="ctx-item-check"><i class="fas fa-check" aria-hidden="true"></i></span>' : ''}
+                    <span class="ctx-arrow"><i class="fas fa-chevron-right" aria-hidden="true"></i></span>
+                </button>`;
+                    })
+                    .join('') ||
+                `<div class="ctx-empty" role="status">${escapeHtml(this._t('renderer.todo.model.noResults'))}</div>`;
+            previewItem = null;
+            setVisible(submenu, false);
+            modelList.querySelectorAll<HTMLButtonElement>('[data-model-alias]').forEach((item) => {
+                const preview = () => showEfforts(item.dataset.modelAlias || '', item);
+                // On narrow windows, hover must not put an effort under the pointer before the click.
+                item.addEventListener('mouseenter', () => {
+                    if (!compact) preview();
+                });
+                item.addEventListener('focus', () => {
+                    if (!compact) preview();
+                });
+                item.addEventListener('click', preview);
+            });
+        };
+        const commitEffort = (event: Event) => {
+            const item = (event.target as Element).closest<HTMLElement>('[data-effort-value]');
+            if (!item || !effortList.contains(item)) return;
+            selectedModel = previewModel;
+            selectedEffort = item.dataset.effortValue || '';
+            picker.dataset.selectedModel = selectedModel;
+            picker.dataset.selectedEffort = selectedEffort;
+            summary.innerHTML = this._renderModelSummary(selectedModel, selectedEffort);
+            close(true);
+        };
+        const toggle = () => {
+            if (open) {
+                close();
+                return;
+            }
+            open = true;
+            trigger.setAttribute('aria-expanded', 'true');
+            search.value = '';
+            renderModels();
+            setVisible(menu, true);
+            positionMenu();
+            search.focus();
+        };
+        const filter = () => {
+            renderModels();
+            positionMenu();
+        };
+        const outsideClick = (event: Event) => {
+            if (open && !picker.contains(event.target as Node)) close();
+        };
+        const keydown = (event: KeyboardEvent) => {
+            if (!open) return;
+            const target = event.target as HTMLElement;
+            if (!picker.contains(target)) return;
+            if (event.key === 'Escape') {
+                event.preventDefault();
+                event.stopPropagation();
+                close(true);
+            } else if (event.key === 'ArrowRight' && modelList.contains(target)) {
+                event.preventDefault();
+                showEfforts(target.dataset.modelAlias || '', target as HTMLButtonElement);
+                effortList.querySelector<HTMLButtonElement>('button')?.focus();
+            } else if (event.key === 'ArrowLeft' && effortList.contains(target)) {
+                event.preventDefault();
+                setVisible(menu, true);
+                if (compact) setVisible(submenu, false);
+                previewItem?.focus();
+            } else if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
+                const inEfforts = effortList.contains(target);
+                const list = inEfforts ? effortList : modelList;
+                const items = Array.from(list.querySelectorAll<HTMLButtonElement>('button'));
+                if (items.length === 0) return;
+                event.preventDefault();
+                const index = items.indexOf(target as HTMLButtonElement);
+                const next =
+                    index < 0
+                        ? event.key === 'ArrowDown'
+                            ? 0
+                            : items.length - 1
+                        : (index + (event.key === 'ArrowDown' ? 1 : -1) + items.length) % items.length;
+                items[next].focus();
+            } else if (event.key === 'Tab') {
+                close();
+            }
+        };
+        const scroll = (event: Event) => {
+            if (open && !menu.contains(event.target as Node) && !submenu.contains(event.target as Node)) close();
+            else positionSubmenu();
+        };
+        const goBack = () => {
+            setVisible(submenu, false);
+            setVisible(menu, true);
+            positionMenu();
+            previewItem?.focus();
+        };
+        const resize = () => close();
+        trigger.addEventListener('click', toggle);
+        back.addEventListener('click', goBack);
+        search.addEventListener('input', filter);
+        effortList.addEventListener('click', commitEffort);
+        document.addEventListener('click', outsideClick, true);
+        document.addEventListener('keydown', keydown);
+        document.addEventListener('scroll', scroll, true);
+        window.addEventListener('resize', resize);
+        renderModels();
+        this._modelPickerCleanup = () => {
+            close();
+            trigger.removeEventListener('click', toggle);
+            back.removeEventListener('click', goBack);
+            search.removeEventListener('input', filter);
+            effortList.removeEventListener('click', commitEffort);
+            document.removeEventListener('click', outsideClick, true);
+            document.removeEventListener('keydown', keydown);
+            document.removeEventListener('scroll', scroll, true);
+            window.removeEventListener('resize', resize);
+            this._modelPickerCleanup = null;
+        };
     }
 
     private _renderWorkspaceOptions(workspace: TodoWorkspaceConfig | undefined, recentWorkspaces: string[]): string {
@@ -2833,6 +3308,9 @@ class TodoMgrEntryWidget extends AgentOperableHTMLElement {
         const workspaceValue =
             (this.querySelector('#tm-edit-workspace') as HTMLSelectElement)?.value || WORKSPACE_SELECT_DEFAULT;
         const workspace = parseTodoWorkspaceSelectValue(workspaceValue) || null;
+        const modelPicker = this.querySelector('#tm-edit-model-picker') as HTMLElement | null;
+        const selectedModel = modelPicker?.dataset.selectedModel || '';
+        const selectedReasoningEffort = (modelPicker?.dataset.selectedEffort || '') as ReasoningEffort;
 
         try {
             const saveBtn = this.querySelector('#tm-edit-save') as HTMLButtonElement;
@@ -2850,6 +3328,11 @@ class TodoMgrEntryWidget extends AgentOperableHTMLElement {
             updatePayload.deliver = deliver || null;
             // 工作空间：null 表示不指定，运行时使用当前全局工作空间
             updatePayload.workspace = workspace;
+            // 模型：removeModel=true 表示恢复为触发时的全局默认模型。
+            updatePayload.removeModel = !selectedModel;
+            if (selectedModel) updatePayload.model = selectedModel;
+            // 空字符串表示使用选定模型的默认推理档位。
+            updatePayload.reasoningEffort = selectedReasoningEffort;
 
             if (existingTodo) {
                 await window.applicationAPI.call('updateGlobalTodo', existingTodo.id, updatePayload);
@@ -2862,7 +3345,9 @@ class TodoMgrEntryWidget extends AgentOperableHTMLElement {
                     undefined,
                     trigger,
                     deliver,
-                    workspace
+                    workspace,
+                    selectedModel || undefined,
+                    selectedReasoningEffort
                 );
             }
 

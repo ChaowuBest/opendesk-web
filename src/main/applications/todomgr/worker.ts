@@ -15,6 +15,7 @@ import { Cron } from 'croner';
 import path from 'path';
 import fs from 'fs';
 import type { GlobalTodo, GlobalTodoStorage, TodoTrigger, TodoWorkspaceConfig } from './common';
+import type { ReasoningEffort } from '../../aikernel/types/reasoning.js';
 import type { Participant } from '../../plugins/types';
 import type { Cron as CronerJob } from 'croner';
 
@@ -116,7 +117,9 @@ export default class TodoMgrWorker extends BaseWorker {
         category?: string,
         trigger?: TodoTrigger,
         deliver?: Participant,
-        workspace?: TodoWorkspaceConfig | null
+        workspace?: TodoWorkspaceConfig | null,
+        model?: string,
+        reasoningEffort?: ReasoningEffort
     ): Promise<GlobalTodo> {
         const todo: GlobalTodo = {
             id: `todo_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
@@ -128,6 +131,8 @@ export default class TodoMgrWorker extends BaseWorker {
             deliver,
             // GlobalTodo.workspace 为可选字段；入参允许显式 null（表示"未设置"），此处归一成 undefined
             workspace: workspace ?? undefined,
+            ...(model ? { model } : {}),
+            ...(reasoningEffort !== undefined ? { reasoningEffort } : {}),
             enabled: true,
             created_at: new Date().toISOString(),
             updated_at: new Date().toISOString()
@@ -148,12 +153,17 @@ export default class TodoMgrWorker extends BaseWorker {
 
     async updateGlobalTodo(
         id: string,
-        updates: Partial<GlobalTodo> & { removeTrigger?: boolean; removeDeliver?: boolean; removeWorkspace?: boolean }
+        updates: Partial<GlobalTodo> & {
+            removeTrigger?: boolean;
+            removeDeliver?: boolean;
+            removeWorkspace?: boolean;
+            removeModel?: boolean;
+        }
     ): Promise<GlobalTodo> {
         const idx = this.globalTodos.findIndex((t) => t.id === id);
         if (idx === -1) throw new Error(`GlobalTodo not found: ${id}`);
 
-        const { removeTrigger, removeDeliver, removeWorkspace, ...rawUpdates } = updates;
+        const { removeTrigger, removeDeliver, removeWorkspace, removeModel, ...rawUpdates } = updates;
         const clearWorkspace = rawUpdates.workspace === null;
         // 忽略 undefined 字段，避免 partial update 意外覆盖已有 trigger/deliver 等属性
         const todoUpdates: Partial<GlobalTodo> = {};
@@ -187,6 +197,9 @@ export default class TodoMgrWorker extends BaseWorker {
         }
         if (removeWorkspace || clearWorkspace) {
             delete this.globalTodos[idx].workspace;
+        }
+        if (removeModel) {
+            delete this.globalTodos[idx].model;
         }
 
         // 检测触发器是否发生了变更
@@ -474,7 +487,17 @@ export default class TodoMgrWorker extends BaseWorker {
         todo.updated_at = new Date().toISOString();
         await this.saveGlobalTodos();
 
-        this.callApp('triggerTodoTask', todo.id, todo.title, todo.content, todo.trigger, todo.deliver, todo.workspace);
+        this.callApp(
+            'triggerTodoTask',
+            todo.id,
+            todo.title,
+            todo.content,
+            todo.trigger,
+            todo.deliver,
+            todo.workspace,
+            todo.model,
+            todo.reasoningEffort
+        );
     }
 
     /**
@@ -483,6 +506,16 @@ export default class TodoMgrWorker extends BaseWorker {
     private async fireTriggerWithoutSave(todo: GlobalTodo): Promise<void> {
         logger.info(`[todomgr] 触发待办: ${todo.id} - ${todo.title}`);
 
-        this.callApp('triggerTodoTask', todo.id, todo.title, todo.content, todo.trigger, todo.deliver, todo.workspace);
+        this.callApp(
+            'triggerTodoTask',
+            todo.id,
+            todo.title,
+            todo.content,
+            todo.trigger,
+            todo.deliver,
+            todo.workspace,
+            todo.model,
+            todo.reasoningEffort
+        );
     }
 }

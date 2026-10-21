@@ -24,6 +24,7 @@ import chalk from 'chalk';
 import path from 'path';
 import type { Participant } from '../../plugins/types';
 import type { TodoWorkspaceConfig } from './common.js';
+import { REASONING_EFFORT_VALUES } from '../../aikernel/types/reasoning.js';
 
 const GetCurrentTimeArgsSchema = z.object({});
 
@@ -567,7 +568,12 @@ const AddGlobalTodoArgsSchema = z.object({
     deliver: ChannelDeliverSchema.optional().describe(
         '任务完成后的回复投递目标。指定后，触发任务的最终回复会发送到该渠道联系人；不指定时，如果当前任务来自渠道会自动继承当前会话。'
     ),
-    workspace: z.string().optional().describe('触发后创建任务时使用的工作空间绝对路径；不指定则使用当前默认工作空间。')
+    workspace: z.string().optional().describe('触发后创建任务时使用的工作空间绝对路径；不指定则使用当前默认工作空间。'),
+    model: z.string().min(1).optional().describe('触发任务使用的聊天模型 alias；不指定则使用触发时的全局默认模型。'),
+    reasoningEffort: z
+        .enum(REASONING_EFFORT_VALUES)
+        .optional()
+        .describe('推理档位；空字符串或不指定表示使用所选模型的默认档位。')
 });
 
 export class AddGlobalTodoTool extends BaseTool<typeof AddGlobalTodoArgsSchema> {
@@ -656,7 +662,9 @@ export class AddGlobalTodoTool extends BaseTool<typeof AddGlobalTodoArgsSchema> 
             args.category,
             normalizedTrigger,
             deliver,
-            workspace
+            workspace,
+            args.model,
+            args.reasoningEffort
         );
         const todo = result?.data ?? result;
         return JSON.stringify({ success: true, id: todo.id, todo });
@@ -677,7 +685,13 @@ const UpdateGlobalTodoArgsSchema = z.object({
     deliver: ChannelDeliverSchema.optional().describe('新的回复投递目标；指定后任务最终回复会发送到该渠道联系人'),
     removeDeliver: z.boolean().optional().describe('设为 true 时移除当前回复投递目标'),
     workspace: z.string().optional().describe('新的触发任务工作空间绝对路径'),
-    removeWorkspace: z.boolean().optional().describe('设为 true 时移除当前工作空间配置，恢复使用默认工作空间')
+    removeWorkspace: z.boolean().optional().describe('设为 true 时移除当前工作空间配置，恢复使用默认工作空间'),
+    model: z.string().min(1).optional().describe('新的聊天模型 alias；不指定则保持原配置。'),
+    removeModel: z.boolean().optional().describe('设为 true 时移除当前模型配置，恢复使用全局默认模型。'),
+    reasoningEffort: z
+        .enum(REASONING_EFFORT_VALUES)
+        .optional()
+        .describe('新的推理档位；空字符串表示使用所选模型的默认档位。')
 });
 
 export class UpdateGlobalTodoTool extends BaseTool<typeof UpdateGlobalTodoArgsSchema> {
@@ -737,7 +751,17 @@ export class UpdateGlobalTodoTool extends BaseTool<typeof UpdateGlobalTodoArgsSc
         args: z.output<typeof UpdateGlobalTodoArgsSchema>,
         taskState?: TaskState
     ): Promise<string> {
-        const { trigger, removeTrigger, deliver, removeDeliver, workspace, removeWorkspace, ...rest } = args;
+        const {
+            trigger,
+            removeTrigger,
+            deliver,
+            removeDeliver,
+            workspace,
+            removeWorkspace,
+            model,
+            removeModel,
+            ...rest
+        } = args;
         const updateArgs: Record<string, unknown> = { ...rest };
 
         if (removeTrigger) {
@@ -755,6 +779,11 @@ export class UpdateGlobalTodoTool extends BaseTool<typeof UpdateGlobalTodoArgsSc
             updateArgs.removeWorkspace = true;
         } else if (workspace !== undefined) {
             updateArgs.workspace = normalizeWorkspaceField(workspace);
+        }
+        if (removeModel) {
+            updateArgs.removeModel = true;
+        } else if (model !== undefined) {
+            updateArgs.model = model;
         }
         if (trigger !== undefined) {
             const normalizedTrigger = validateAndNormalizeTrigger(trigger);
