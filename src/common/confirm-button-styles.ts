@@ -20,8 +20,6 @@ export const CONFIRM_LIGHT_TOKENS = `
     --mc-ink4: #B4AFA9;
     --mc-line: #E7E5E2;
     --mc-line-soft: #EFEEEA;
-    --mc-overlay-bg: rgba(0,0,0,0.3);
-    --mc-overlay-blur: blur(6px);
     --mc-accent: #DF4436;
     --mc-accent-hover: #E8563F;
     --mc-red: #DC2626;
@@ -39,8 +37,6 @@ export const CONFIRM_DARK_TOKENS = `
     --mc-ink4: #6F6A63;
     --mc-line: #3B3835;
     --mc-line-soft: #33302D;
-    --mc-overlay-bg: rgba(0,0,0,0.45);
-    --mc-overlay-blur: blur(8px);
     --mc-accent: #E8563F;
     --mc-accent-hover: #ED6B56;
     --mc-red: #E85A5A;

@@ -9,6 +9,7 @@
  * See the Mulan PSL v2 for more details.
  */
 
+import { OVERLAY_CSS } from '../../../common/overlay-styles.js';
 import { escapeHtml } from '../../../common/utils/escape.js';
 import { bindOverlayDismiss } from '../confirmModal.ts';
 
@@ -70,10 +71,11 @@ export interface SkillDetailCardModel {
 }
 
 const STYLE = `
+${OVERLAY_CSS}
 :host { position:relative; z-index:10000; font-family:-apple-system,BlinkMacSystemFont,'SF Pro Display','SF Pro Text','PingFang SC','Microsoft YaHei','Helvetica Neue',sans-serif; color:#1d1d1f; }
 * { box-sizing:border-box; }
 button { font:inherit; }
-.detail-overlay { position:fixed; inset:0; display:flex; align-items:center; justify-content:center; padding:20px; background:rgba(0,0,0,.3); backdrop-filter:blur(6px); animation:fade-in .15s ease; }
+.detail-overlay { position:fixed; inset:0; display:flex; align-items:center; justify-content:center; padding:20px; animation:fade-in .15s ease; }
 .detail-dialog { width:680px; max-width:94%; max-height:80vh; overflow:hidden; display:flex; flex-direction:column; border:1px solid rgba(0,0,0,.05); border-radius:16px; background:#fff; box-shadow:0 24px 80px -16px rgba(0,0,0,.22); animation:dialog-in .2s ease-out; }
 .detail-header { display:flex; align-items:center; gap:12px; padding:16px 24px; border-bottom:1px solid #f0f0f0; }
 .detail-header.info { background:#EBF1FB; }
@@ -104,7 +106,6 @@ button { font:inherit; }
 .detail-tools-list { display:flex; flex-direction:column; gap:8px; }.detail-tool-item { padding:12px 14px; border:1px solid #f0f0f0; border-radius:10px; background:#fafafa; }.detail-tool-header { margin-bottom:8px; }.detail-tool-name { margin-bottom:3px; color:#1d1d1f; font-size: var(--fs-base); font-weight:600; }.detail-tool-desc { color:#777; font-size: var(--fs-md); line-height:1.5; }.detail-tool-no-params { margin-top:4px; color:#bbb; font-size: var(--fs-sm); }.detail-tool-params-toggle { display:inline-flex; align-items:center; gap:5px; padding:4px 10px; border:1px solid rgba(0,0,0,.06); border-radius:6px; background:#fff; color:#555; font:inherit; font-size: var(--fs-sm); font-weight:500; cursor:pointer; }.detail-tool-params-toggle:hover { background:#f0f0f0; color:#333; }.toggle-icon { display:inline-block; font-size: var(--icon-xs); transition:transform .15s; }.detail-tool-params-toggle.expanded .toggle-icon { transform:rotate(90deg); }.detail-tool-params { margin-top:10px; overflow:hidden; border:1px solid #f0f0f0; border-radius:8px; }.detail-tool-params-header,.detail-tool-param { display:grid; grid-template-columns:1fr .7fr .5fr 1.5fr; gap:8px; padding:6px 12px; }.detail-tool-params-header { background:#f5f5f5; color:#999; font-size: var(--fs-xs); font-weight:600; letter-spacing:.03em; text-transform:uppercase; }.detail-tool-param { border-top:1px solid #f5f5f5; font-size: var(--fs-sm); }.param-name { color:#333; font-family:'SF Mono','Cascadia Code',monospace; font-weight:500; }
 .detail-body::-webkit-scrollbar,.detail-body-content::-webkit-scrollbar { width:4px; height:4px; }.detail-body::-webkit-scrollbar-track,.detail-body-content::-webkit-scrollbar-track { background:transparent; }.detail-body::-webkit-scrollbar-thumb,.detail-body-content::-webkit-scrollbar-thumb { border-radius:2px; background:#d1d5db; }
 :host([data-theme='dark']),:host-context([data-theme='dark']) { color:#ccc; color-scheme:dark; }
-:host([data-theme='dark']) .detail-overlay,:host-context([data-theme='dark']) .detail-overlay { background:rgba(0,0,0,.45); }
 :host([data-theme='dark']) .detail-dialog,:host-context([data-theme='dark']) .detail-dialog { border-color:rgba(255,255,255,.2); background:#2A2826; color:#ccc; }
 :host([data-theme='dark']) .detail-header.info,:host-context([data-theme='dark']) .detail-header.info { background:rgba(122,162,232,0.16); }
 :host([data-theme='dark']) .detail-icon,:host-context([data-theme='dark']) .detail-icon { box-shadow:0 1px 3px rgba(0,0,0,0.3); }
@@ -195,7 +196,7 @@ export class SkillDetailCard extends HTMLElement {
     }
 
     private buildSkeleton(): void {
-        this.shadowRoot.innerHTML = `<style>${STYLE}</style><div class="detail-overlay"><div class="detail-dialog" role="dialog" aria-modal="true" aria-labelledby="shared-skill-detail-title"><div class="detail-header info"><button type="button" class="detail-back" hidden>${BACK_ARROW_SVG}</button><div class="detail-icon"></div><div class="detail-header-info"><div class="detail-name" id="shared-skill-detail-title"></div><div class="detail-id"></div><span class="header-extra"></span></div><button type="button" class="detail-close">${CLOSE_SVG}</button></div><div class="detail-body"></div><div class="detail-footer" hidden></div></div></div>`;
+        this.shadowRoot.innerHTML = `<style>${STYLE}</style><div class="detail-overlay od-overlay"><div class="detail-dialog" role="dialog" aria-modal="true" aria-labelledby="shared-skill-detail-title"><div class="detail-header info"><button type="button" class="detail-back" hidden>${BACK_ARROW_SVG}</button><div class="detail-icon"></div><div class="detail-header-info"><div class="detail-name" id="shared-skill-detail-title"></div><div class="detail-id"></div><span class="header-extra"></span></div><button type="button" class="detail-close">${CLOSE_SVG}</button></div><div class="detail-body"></div><div class="detail-footer" hidden></div></div></div>`;
 
         const overlay = this.shadowRoot.querySelector('.detail-overlay');
         if (overlay) {

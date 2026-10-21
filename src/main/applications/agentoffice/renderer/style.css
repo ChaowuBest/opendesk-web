@@ -2462,9 +2462,7 @@ p {
     position: fixed;
     inset: 0;
     z-index: 30;
-    background: rgba(23, 20, 17, 0.4);
-    backdrop-filter: blur(3px);
-    -webkit-backdrop-filter: blur(3px);
+
     display: grid;
     place-items: center;
     padding: 20px;

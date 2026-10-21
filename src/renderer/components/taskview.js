@@ -9,6 +9,7 @@
  * See the Mulan PSL v2 for more details.
  */
 
+import { ensureOverlayStyles } from './overlay.js';
 import { ElasticToolbarWidget } from './toolbar.ts';
 import { morphDomChildren } from '../utils/dom-morph.js';
 import { updateStreamingText } from '../utils/streaming-text.js';
@@ -5214,8 +5215,9 @@ class TaskView extends HTMLElement {
             document.body.dataset.theme === 'dark';
 
         const overlay = document.createElement('div');
+        ensureOverlayStyles();
         overlay.id = 'od-file-missing-modal';
-        overlay.className = 'fixed inset-0 z-[9999] flex items-center justify-center bg-black/40';
+        overlay.className = 'od-overlay fixed inset-0 z-[9999] flex items-center justify-center';
         overlay.innerHTML = `
             <div class="${dark ? 'bg-[#26262a] text-gray-100 ring-white/10' : 'bg-white text-gray-800 ring-black/10'} max-w-[460px] w-[88%] rounded-2xl p-5 shadow-2xl ring-1 flex flex-col gap-3">
                 <div class="flex items-center gap-2">

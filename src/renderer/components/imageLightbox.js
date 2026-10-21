@@ -3,6 +3,8 @@
  * OpenDesk is licensed under Mulan PSL v2.
  */
 
+import { ensureOverlayStyles } from './overlay.js';
+
 const LIGHTBOX_ID = 'od-image-lightbox';
 
 let _escHandler = null;
@@ -15,9 +17,10 @@ export function showImageLightbox(src) {
     if (!src) return;
     dismissImageLightbox();
 
+    ensureOverlayStyles();
     const overlay = document.createElement('div');
     overlay.id = LIGHTBOX_ID;
-    overlay.className = 'agent-input-lightbox-overlay';
+    overlay.className = 'agent-input-lightbox-overlay od-overlay';
     overlay.innerHTML = `<img src="${src}" class="agent-input-lightbox-img" />`;
     overlay.addEventListener('click', dismissImageLightbox);
 

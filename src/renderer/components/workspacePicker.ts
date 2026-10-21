@@ -9,6 +9,7 @@
  * See the Mulan PSL v2 for more details.
  */
 
+import { OVERLAY_CSS } from '../../common/overlay-styles.js';
 import { FileSelector } from './fileSelector.ts';
 import { showConfirmModal, renderIcon, detectDarkMode, bindOverlayDismiss } from './confirmModal.ts';
 import { escapeHtml } from '../../common/utils/escape.js';
@@ -66,9 +67,9 @@ export function showWorkspacePicker(options: WorkspacePickerOptions = {}): Promi
         let dirSelector: FileSelector | null = null;
 
         const overlay = document.createElement('div');
-        overlay.className = 'od-ws-picker-overlay';
+        overlay.className = 'od-ws-picker-overlay od-overlay';
         if (detectDarkMode()) {
-            overlay.classList.add('od-ws-dark');
+            overlay.classList.add('od-ws-dark', 'od-modal-dark');
         }
 
         const close = (result: string | null) => {
@@ -123,14 +124,11 @@ export function showWorkspacePicker(options: WorkspacePickerOptions = {}): Promi
         function renderOverlay() {
             overlay.innerHTML = `
 <style>
+${OVERLAY_CSS}
     .od-ws-picker-overlay {
         position: fixed; inset: 0; z-index: 99999;
-        background: rgba(0,0,0,0.3);
         display: flex; align-items: center; justify-content: center;
         animation: od-ws-fade-in ${ANIM_DURATION_IN}ms ease-out forwards;
-    }
-    .od-ws-picker-overlay.od-ws-dark {
-        background: rgba(0,0,0,0.45);
     }
     .od-ws-picker-overlay.od-ws-leaving {
         animation: od-ws-fade-out ${ANIM_DURATION_OUT}ms ease-in forwards;

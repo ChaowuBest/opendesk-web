@@ -9,6 +9,7 @@
  * See the Mulan PSL v2 for more details.
  */
 
+import { ensureOverlayStyles } from './overlay.js';
 import { guiShortcutManager } from './shortcutManager.ts';
 
 class ShortcutHelpPanel extends HTMLElement {
@@ -29,6 +30,7 @@ class ShortcutHelpPanel extends HTMLElement {
     }
 
     show() {
+        ensureOverlayStyles();
         if (this._visible) return;
         this._visible = true;
         this.style.display = '';
@@ -105,7 +107,7 @@ class ShortcutHelpPanel extends HTMLElement {
         };
 
         this.innerHTML = `
-        <div class="shortcut-help-backdrop"></div>
+        <div class="shortcut-help-backdrop od-overlay"></div>
         <div class="shortcut-help-panel">
             <div class="shortcut-help-header">
                 <h2 class="shortcut-help-title">

@@ -3,6 +3,7 @@
  * OpenDesk is licensed under Mulan PSL v2.
  */
 
+import { OVERLAY_CSS } from '../../../../common/overlay-styles.js';
 import { showConfirmModal, renderIcon, bindOverlayDismiss } from '../../../../renderer/components/confirmModal';
 import { resolveRendererLocale } from '../../../../renderer/locale.js';
 import { createTranslatorForSkillMgr } from '../locale/renderer.js';
@@ -118,6 +119,7 @@ const REGISTRY_TABS = [
 ];
 
 const STYLE = `
+${OVERLAY_CSS}
 :host {
     display: flex; flex-direction: column; height: 100%;
     font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Display', 'SF Pro Text', 'PingFang SC', 'Microsoft YaHei', 'Helvetica Neue', sans-serif;
@@ -318,7 +320,6 @@ const STYLE = `
     background: #252526;
     border-top-color: rgba(255, 255, 255, 0.12);
 }
-:host([data-theme="dark"]) .url-dialog-overlay,
 :host([data-theme="dark"]) .detail-overlay {
     background: rgba(0, 0, 0, 0.55);
 }
@@ -450,9 +451,9 @@ const STYLE = `
 /* ── URL Dialog ── */
 .url-dialog-overlay {
     display: none; position: fixed; inset: 0;
-    background: rgba(0,0,0,0.18); z-index: 10000;
+    z-index: 10000;
     align-items: center; justify-content: center;
-    backdrop-filter: blur(6px); animation: fade-in 0.15s ease;
+    animation: fade-in 0.15s ease;
 }
 .url-dialog-overlay.visible { display: flex; }
 @keyframes fade-in { from { opacity: 0; } to { opacity: 1; } }
@@ -773,9 +774,9 @@ const STYLE = `
 
 /* ── Batch Import Modal ── */
 .batch-import-overlay {
-    display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.3);
+    display: none; position: fixed; inset: 0;
     z-index: 10001; align-items: center; justify-content: center;
-    backdrop-filter: blur(6px); animation: fade-in 0.25s ease;
+    animation: fade-in 0.25s ease;
 }
 .batch-import-overlay.visible { display: flex; }
 .batch-import-dialog {
@@ -1139,9 +1140,9 @@ const STYLE = `
     /* ── Analyze modal ── */
     .analyze-modal-overlay {
         display: none; position: fixed; inset: 0;
-        background: rgba(0,0,0,0.3); z-index: 10001;
+        z-index: 10001;
         align-items: center; justify-content: center;
-        backdrop-filter: blur(6px); animation: fade-in 0.15s ease;
+        animation: fade-in 0.15s ease;
     }
     .analyze-modal-overlay.visible { display: flex; }
     .analyze-modal-dialog {
@@ -1225,7 +1226,6 @@ const STYLE = `
     }
 
     /* ── Analyze modal dark mode ── */
-    :host([data-theme="dark"]) .analyze-modal-overlay { background: rgba(0,0,0,0.45); }
     :host([data-theme="dark"]) .analyze-modal-dialog { background: #2A2826; }
     :host([data-theme="dark"]) .analyze-modal-header.info { background: rgba(122,162,232,0.16); }
     :host([data-theme="dark"]) .analyze-modal-banner-icon { background: #7AA2E8; }
@@ -4155,7 +4155,7 @@ class SkillMgrEntryWidget extends HTMLElement {
             </div>
         </div>
         <div class="content">${panelsHtml}</div>
-        <div class="url-dialog-overlay" id="url-dialog-overlay">
+        <div class="url-dialog-overlay od-overlay" id="url-dialog-overlay">
             <div class="modal-dialog">
                 <h3>${this._t('renderer.skill.url.title')}</h3>
                 <div class="hint">${this._t('renderer.skill.url.hint')}</div>
@@ -4166,13 +4166,13 @@ class SkillMgrEntryWidget extends HTMLElement {
                 </div>
             </div>
         </div>
-        <div class="batch-import-overlay" id="batch-import-overlay">
+        <div class="batch-import-overlay od-overlay" id="batch-import-overlay">
             ${this._renderBatchImportDialog()}
         </div>
-        <div class="batch-import-overlay" id="meta-import-overlay">
+        <div class="batch-import-overlay od-overlay" id="meta-import-overlay">
             ${this._renderMetaImportDialog()}
         </div>
-        <div class="analyze-modal-overlay ${this.analyzeState.modalVisible ? 'visible' : ''}" id="analyze-modal-overlay">
+        <div class="analyze-modal-overlay od-overlay ${this.analyzeState.modalVisible ? 'visible' : ''}" id="analyze-modal-overlay">
             <div class="analyze-modal-dialog ${this.analyzeState._modalType === 'testReport' ? TEST_RESULTS_REPORT_MODAL_CLASS : ''}">
                 <div class="analyze-modal-header info">
                     <div class="analyze-modal-banner-icon">${renderIcon('fa-flask')}</div>

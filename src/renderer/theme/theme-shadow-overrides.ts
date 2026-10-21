@@ -176,10 +176,6 @@ const SKILLMGR_DARK_CSS = `
     background: #252526 !important;
     border-top-color: rgba(255, 255, 255, 0.12) !important;
 }
-.url-dialog-overlay,
-.detail-overlay {
-    background: rgba(0, 0, 0, 0.55) !important;
-}
 .tab-panel::-webkit-scrollbar-thumb {
     background: rgba(255, 255, 255, 0.18) !important;
 }
