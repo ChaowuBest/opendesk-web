@@ -214,6 +214,7 @@ export class TodoMgrApplication extends BaseApplication {
                 logger.warn(`触发器任务 ${todoId} 指定模型不可用，回退到当前全局默认模型: ${model}`);
             }
             const task = await taskManager.dispatchPromptToAgent(mainAgent, undefined, prompt, {
+                taskName: todoTitle.trim() ? todoTitle : undefined,
                 workspace: resolvedWorkspace,
                 origin,
                 model: modelIsValid ? model : undefined,

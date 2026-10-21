@@ -723,7 +723,7 @@ export class TaskManagerState {
     /** Create a task from user request. */
     createTask(model?: string, options: { internal?: boolean; taskName?: string } = {}): TaskState {
         const task = new TaskState(this);
-        task.name_pending = true;
+        task.name_pending = options.taskName === undefined;
         if (model) {
             if (Setting.getInstance().getModelInstance(model, 'chat')) {
                 task.model = model;
@@ -789,6 +789,7 @@ export class TaskManagerState {
             origin?: Participant;
             model?: string;
             reasoningEffort?: ReasoningEffort;
+            taskName?: string;
         }
     ): Promise<TaskState> {
         let agentDecl: AgentDecl;
@@ -810,7 +811,7 @@ export class TaskManagerState {
         const workspace = options?.workspace || getPlatform().getEffectiveWorkspace();
 
         // 创建任务
-        const task = this.createTask(options?.model);
+        const task = this.createTask(options?.model, { taskName: options?.taskName });
         if (options?.reasoningEffort !== undefined) {
             task.reasoningEffort = options.reasoningEffort;
         }
