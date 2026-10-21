@@ -20,7 +20,7 @@
         }
     },
     "bin": {
-        "opendesk-app-sdk": "./dist/pack.js"
+        "opendesk-app-sdk": "dist/pack.js"
     },
     "scripts": {
         "build": "tsc -p tsconfig.json",
