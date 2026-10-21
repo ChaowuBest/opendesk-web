@@ -20,6 +20,9 @@ type ArkTSReturnType = 'void' | 'string' | 'number' | 'boolean' | 'string[]' | '
 /** ArkTS EtsBridge 绑定名（与 web_engine JsBinding 一致） */
 export const EtsBridgeMethods = {
     PING: 'EtsBridge.OpenDeskPing',
+    STARTUP_STATUS_START: 'EtsBridge.OpenDeskStartupStatusStart',
+    STARTUP_SETTINGS_START: 'EtsBridge.OpenDeskStartupSettingsStart',
+    STARTUP_RESULT_PEEK: 'EtsBridge.OpenDeskStartupResultPeek',
     GET_SYSTEM_DARK_MODE: 'EtsBridge.OpenDeskGetSystemDarkMode',
     GET_SYSTEM_LANGUAGE: 'EtsBridge.OpenDeskGetSystemLanguage',
     SPEECH_INIT: 'EtsBridge.OpenDeskSpeechInit',

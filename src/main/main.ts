@@ -12,6 +12,8 @@
 declare const __BUILD_TIME__: string;
 declare const __IS_DEV__: boolean;
 
+import { LaunchAtLogin } from './utils/launch-at-login.js';
+import { createHarmonyLaunchAtLoginProvider } from '../platforms/bridges/harmonyos/launch-at-login.js';
 import { TaskSearchService } from './services/task-search/service.js';
 import { TASK_SEARCH_MAX_QUERY, TASK_SEARCH_MAX_RESULTS } from '../common/task-search.js';
 
@@ -2454,6 +2456,13 @@ const registerSettingAPIHandlers = () => {
             return { status: 'error', message: error.message };
         }
     });
+    const launchAtLogin = new LaunchAtLogin(app, {
+        debug: isOpendeskDebugMode(),
+        harmony: (process.platform as string) === 'openharmony' ? createHarmonyLaunchAtLoginProvider() : undefined
+    });
+    ipcMain.handle('setting:getLaunchAtLogin', () => launchAtLogin.getState());
+    ipcMain.handle('setting:openStartupSettings', () => launchAtLogin.openSettings());
+    ipcMain.handle('setting:setLaunchAtLogin', (_event, enabled: boolean) => launchAtLogin.setEnabled(enabled));
     ipcMain.handle('setting:listShells', () => scanSupportedShells());
     ipcMain.handle('setting:loadSettingObject', () => {
         return { status: 'ok', data: withResolvedLocale(Setting.getInstance().getData()) };

@@ -1,0 +1,247 @@
+diff --git a/ohos_hap/web_engine/src/main/ets/adapter/EtsBridgeAdapter.ets b/ohos_hap/web_engine/src/main/ets/adapter/EtsBridgeAdapter.ets
+index 7bc4e03..579a658 100644
+--- a/ohos_hap/web_engine/src/main/ets/adapter/EtsBridgeAdapter.ets
++++ b/ohos_hap/web_engine/src/main/ets/adapter/EtsBridgeAdapter.ets
+@@ -34,6 +34,7 @@ import { ContextAdapter } from './ContextAdapter';
+ import { NativeThemeAdapter } from './NativeThemeAdapter';
+ import { SystemPreferenceAdapter } from './SystemPreferenceAdapter';
+ import { OpenDeskSpeechEngine, SpeechResultCallback } from './OpenDeskSpeechEngine';
++import { OpenDeskStartupManager } from './OpenDeskStartupManager';
+ import { AppWindowAdapter } from './AppWindowAdapter';
+ import type { ILoginInfo, WindowBound } from '../interface/CommonInterface';
+
+@@ -46,6 +47,7 @@ const SESSION_KEY_LOGIN: string = 'login_info';
+
+ @injectable()
+ export class EtsBridgeAdapter extends BaseAdapter {
++    private startupManager: OpenDeskStartupManager;
+     private ctxAdapter: ContextAdapter;
+     private themeAdapter: NativeThemeAdapter;
+     private prefAdapter: SystemPreferenceAdapter;
+@@ -69,6 +71,7 @@ export class EtsBridgeAdapter extends BaseAdapter {
+         this.themeAdapter = themeAdapter;
+         this.prefAdapter = prefAdapter;
+         this.appWindowAdapter = appWindowAdapter;
++        this.startupManager = new OpenDeskStartupManager(() => this.resolveUiAbilityContext());
+     }
+
+     private resolveUiAbilityContext(): common.UIAbilityContext | undefined {
+@@ -679,4 +682,16 @@ export class EtsBridgeAdapter extends BaseAdapter {
+         }
+         return this.proxyResultJson || JSON.stringify({ host: '', port: 0, exclusionList: [] });
+     }
++    opendesk_startup_status_start(): number {
++        return this.startupManager.getStatusStart();
++    }
++
++    opendesk_startup_settings_start(): number {
++        return this.startupManager.openSettingsStart();
++    }
++
++    opendesk_startup_result_peek(requestId: number): string {
++        return this.startupManager.peek(requestId);
++    }
++
+ }
+diff --git a/ohos_hap/web_engine/src/main/ets/jsbindings/EtsBridgeAdapterBind.ets b/ohos_hap/web_engine/src/main/ets/jsbindings/EtsBridgeAdapterBind.ets
+index e138e03..ada6569 100644
+--- a/ohos_hap/web_engine/src/main/ets/jsbindings/EtsBridgeAdapterBind.ets
++++ b/ohos_hap/web_engine/src/main/ets/jsbindings/EtsBridgeAdapterBind.ets
+@@ -31,6 +31,18 @@ function implEtsBridgeAdapter(): EtsBridgeAdapter {
+     return Inject.getOrCreate(EtsBridgeAdapter);
+ }
+
++function opendesk_startup_status_start(): number {
++    return implEtsBridgeAdapter().opendesk_startup_status_start();
++}
++
++function opendesk_startup_settings_start(): number {
++    return implEtsBridgeAdapter().opendesk_startup_settings_start();
++}
++
++function opendesk_startup_result_peek(requestId: number): string {
++    return implEtsBridgeAdapter().opendesk_startup_result_peek(requestId);
++}
++
+ // ============================================================
+ // Section 1: No parameters + various return types
+ // ============================================================
+@@ -317,6 +329,9 @@ export class EtsBridgeAdapterBind {
+   }
+
+   static bind() {
++    JsBindingUtils.bindFunction("EtsBridge.OpenDeskStartupStatusStart", opendesk_startup_status_start);
++    JsBindingUtils.bindFunction("EtsBridge.OpenDeskStartupSettingsStart", opendesk_startup_settings_start);
++    JsBindingUtils.bindFunction("EtsBridge.OpenDeskStartupResultPeek", opendesk_startup_result_peek);
+     // Section 8: Business bridge methods
+     JsBindingUtils.bindFunction("EtsBridge.OpenDeskPing", opendesk_ping);
+     JsBindingUtils.bindFunction("EtsBridge.OpenDeskGetSystemDarkMode", opendesk_getSystemDarkMode);
+diff --git a/ohos_hap/web_engine/src/main/ets/adapter/OpenDeskStartupManager.ets b/ohos_hap/web_engine/src/main/ets/adapter/OpenDeskStartupManager.ets
+new file mode 100644
+index 0000000..5356b39
+--- /dev/null
++++ b/ohos_hap/web_engine/src/main/ets/adapter/OpenDeskStartupManager.ets
+@@ -0,0 +1,93 @@
++/**
++ * Copyright (c) 2026 The OpenDesk Team
++ * OpenDesk is licensed under Mulan PSL v2.
++ * You can use this software according to the terms and conditions of the Mulan PSL v2.
++ * You may obtain a copy of Mulan PSL v2 at: http://license.coscl.org.cn/MulanPSL2
++ * THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND,
++ * EITHER EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT,
++ * MERCHANTABILITY OR FIT FOR A PARTICULAR PURPOSE.
++ * See the Mulan PSL v2 for more details.
++ */
++
++import { autoStartupManager, common } from '@kit.AbilityKit';
++import { BusinessError } from '@kit.BasicServicesKit';
++import deviceInfo from '@ohos.deviceInfo';
++
++/** Ordinary apps query their own status; only the user changes the system startup list. */
++export class OpenDeskStartupManager {
++    private nextRequestId: number = 0;
++    private results: Map<number, string> = new Map<number, string>();
++    private expiryTimers: Map<number, number> = new Map<number, number>();
++
++    private resolveContext: () => common.UIAbilityContext | undefined;
++
++    constructor(resolveContext: () => common.UIAbilityContext | undefined) {
++        this.resolveContext = resolveContext;
++    }
++
++    private begin(): number {
++        const id = ++this.nextRequestId;
++        this.results.set(id, '{"status":"pending"}');
++        this.expiryTimers.set(id, setTimeout(() => {
++            this.results.delete(id);
++            this.expiryTimers.delete(id);
++        }, 30000));
++        return id;
++    }
++
++    private finish(id: number, result: string): void {
++        if (this.results.has(id)) this.results.set(id, result);
++    }
++
++    private fail(id: number, error: BusinessError): void {
++        const code = error?.code ?? 16000050;
++        this.finish(id, JSON.stringify({ status: code === 801 ? 'unsupported' : 'error', code: code }));
++    }
++
++    getStatusStart(): number {
++        const id = this.begin();
++        if (deviceInfo.sdkApiVersion < 21) {
++            this.finish(id, '{"status":"unsupported"}');
++            return id;
++        }
++        try {
++            autoStartupManager.getAutoStartupStatusForSelf().then((enabled: boolean) => {
++                this.finish(id, JSON.stringify({ status: 'ok', enabled: enabled }));
++            }).catch((error: BusinessError) => this.fail(id, error));
++        } catch (error) {
++            this.fail(id, error as BusinessError);
++        }
++        return id;
++    }
++
++    openSettingsStart(): number {
++        const id = this.begin();
++        const context = this.resolveContext();
++        if (!context) {
++            this.finish(id, '{"status":"error","code":16000050}');
++            return id;
++        }
++        try {
++            context.startAbility({
++                bundleName: 'com.huawei.hmos.settings',
++                abilityName: 'com.huawei.hmos.settings.MainAbility'
++            }).then(() => this.finish(id, '{"status":"ok"}'))
++                .catch((error: BusinessError) => this.fail(id, error));
++        } catch (error) {
++            this.fail(id, error as BusinessError);
++        }
++        return id;
++    }
++
++    peek(id: number): string {
++        const result = this.results.get(id);
++        if (result === undefined) return '{"status":"error","code":16000050}';
++        if (result !== '{"status":"pending"}') {
++            this.results.delete(id);
++            const timer = this.expiryTimers.get(id);
++            if (timer !== undefined) clearTimeout(timer);
++            this.expiryTimers.delete(id);
++        }
++        return result;
++    }
++}
+diff --git a/ohos_hap/tests/opendesk-startup.test.cjs b/ohos_hap/tests/opendesk-startup.test.cjs
+new file mode 100644
+index 0000000..f69e8fa
+--- /dev/null
++++ b/ohos_hap/tests/opendesk-startup.test.cjs
+@@ -0,0 +1,64 @@
++const { test } = require('node:test');
++const assert = require('node:assert/strict');
++const fs = require('node:fs');
++const path = require('node:path');
++const vm = require('node:vm');
++const ts = require('typescript');
++const sourcePath = path.join(__dirname, '../web_engine/src/main/ets/adapter/OpenDeskStartupManager.ets');
++function setup(query = async () => true, api = 26) {
++    const requests = [];
++    const auto = { getAutoStartupStatusForSelf: query };
++    const source = fs.readFileSync(sourcePath, 'utf8');
++    const output = ts.transpileModule(source, { compilerOptions: { module: ts.ModuleKind.CommonJS, esModuleInterop: true, target: ts.ScriptTarget.ES2022 } }).outputText;
++    const exports = {};
++    const timers = new Map();
++    let next = 0;
++    vm.runInNewContext(output, { exports, require(name) {
++        if (name === '@kit.AbilityKit') return { autoStartupManager: auto };
++        if (name === '@ohos.deviceInfo') return { sdkApiVersion: api };
++        throw new Error(name);
++    }, setTimeout(fn) { timers.set(++next, fn); return next; }, clearTimeout(id) { timers.delete(id); } });
++    return { service: new exports.OpenDeskStartupManager(() => ({ startAbility: async want => { requests.push(want); } })), requests, timers };
++}
++async function settle() { await new Promise(resolve => setImmediate(resolve)); }
++test('reads system status and consumes completed results once', async () => {
++    const { service, timers } = setup();
++    const id = service.getStatusStart();
++    assert.equal(JSON.parse(service.peek(id)).status, 'pending');
++    await settle();
++    assert.deepEqual(JSON.parse(service.peek(id)), { status: 'ok', enabled: true });
++    assert.equal(JSON.parse(service.peek(id)).status, 'error');
++    assert.equal(timers.size, 0);
++});
++test('isolates overlapping query results by request id', async () => {
++    const resolvers = [];
++    const { service } = setup(() => new Promise(resolve => resolvers.push(resolve)));
++    const a = service.getStatusStart(), b = service.getStatusStart();
++    resolvers[1](true); resolvers[0](false);
++    await settle();
++    assert.equal(JSON.parse(service.peek(a)).enabled, false);
++    assert.equal(JSON.parse(service.peek(b)).enabled, true);
++});
++test('returns unsupported on older SDKs and preserves native errors', async () => {
++    const old = setup(() => { throw Error('must not be called'); }, 20);
++    assert.equal(JSON.parse(old.service.peek(old.service.getStatusStart())).status, 'unsupported');
++    const failed = setup(async () => { throw { code: 16000050 }; });
++    const id = failed.service.getStatusStart(); await settle();
++    assert.deepEqual(JSON.parse(failed.service.peek(id)), { status: 'error', code: 16000050 });
++});
++test('opens only the exported settings ability and never changes a startup list', async () => {
++    const { service, requests } = setup();
++    const id = service.openSettingsStart(); await settle();
++    assert.equal(JSON.parse(service.peek(id)).status, 'ok');
++    assert.equal(requests.length, 1);
++    assert.equal(requests[0].bundleName, 'com.huawei.hmos.settings');
++    assert.equal(requests[0].abilityName, 'com.huawei.hmos.settings.MainAbility');
++});
++test('expires abandoned requests and does not resurrect late responses', async () => {
++    let resolve;
++    const { service, timers } = setup(() => new Promise(r => { resolve = r; }));
++    const id = service.getStatusStart();
++    for (const expire of timers.values()) expire();
++    resolve(true); await settle();
++    assert.equal(JSON.parse(service.peek(id)).status, 'error');
++});

@@ -143,6 +143,7 @@ class SettingPanel extends HTMLElement {
         this._activeTab = 'models';
         this._environEntries = [];
         this.gatewayHostOptions = [];
+        this.launchAtLoginState = { supported: false, enabled: false };
         this.supportedShells = [];
         this.visionSupportMap = {};
         this._hasRendered = false;
@@ -169,6 +170,7 @@ class SettingPanel extends HTMLElement {
     }
 
     disconnectedCallback() {
+        this._clearStartupListeners();
         this._updateStateUnsubscribe?.();
         this._updateStateUnsubscribe = null;
         this._scaleFactorChangeUnsub?.();
@@ -2257,6 +2259,8 @@ class SettingPanel extends HTMLElement {
 
     renderGeneralSection() {
         const currentLocale = this.currentData?.locale || 'auto';
+        const harmonyStartup =
+            window.systemInfo?.isOpenHarmony === true || this.launchAtLoginState?.mode === 'system-settings';
         const fontPreset = this.currentData?.gui_config?.font_preset || 'default';
         const themePreference = this.currentData?.gui_config?.theme_preference || 'system';
         const scaleFactor = this.currentData?.gui_config?.scale_factor ?? 1;
@@ -2306,6 +2310,30 @@ class SettingPanel extends HTMLElement {
 
         // “开发与调试”必须保持为通用设置的最后一个分区；以后新增的通用设置项应放在它前面。
         return `
+        <section class="sp-section">
+            <h2 class="sp-section-title">${this._t('sp.general.startup')}</h2>
+            <div class="sp-section-card">
+            <div class="sp-toggle-row" style="padding:0">
+                <div class="sp-toggle-info">
+                    <label class="sp-toggle-label" ${harmonyStartup ? '' : 'for="launch-at-login"'}>${this._t('sp.general.launchAtLogin')}</label>
+                    <div id="launch-at-login-status" class="sp-toggle-desc" role="status">${this._t(harmonyStartup ? 'sp.general.launchAtLogin.harmony.desc' : 'sp.general.launchAtLogin.desc')}</div>
+                </div>
+                ${
+                    harmonyStartup
+                        ? `
+                <span id="launch-at-login-state" class="sp-tag sp-tag-neutral" aria-live="polite">${this._t('sp.general.launchAtLogin.unknown')}</span>
+                <button id="launch-at-login-manage" type="button" class="sp-btn sp-btn-secondary" disabled>${this._t('sp.general.launchAtLogin.manage')}</button>
+                `
+                        : `
+                <label class="sp-toggle-switch">
+                    <input id="launch-at-login" type="checkbox" ${this.launchAtLoginState?.enabled ? 'checked' : ''} ${this.launchAtLoginState?.supported ? '' : 'disabled'}>
+                    <span class="sp-toggle-track"></span>
+                </label>
+                `
+                }
+            </div>
+            </div>
+        </section>
         <section class="sp-section">
             <h2 class="sp-section-title">${this._t('sp.general.display')}</h2>
             <div class="sp-section-card">
@@ -2673,6 +2701,108 @@ class SettingPanel extends HTMLElement {
             </div>
         </section>
         `;
+    }
+
+    _clearStartupListeners() {
+        if (this._startupFocusHandler) {
+            window.removeEventListener('focus', this._startupFocusHandler);
+            document.removeEventListener('visibilitychange', this._startupFocusHandler);
+            this._startupFocusHandler = null;
+        }
+        this._startupBinding = null;
+    }
+
+    _bindLaunchAtLoginEvents() {
+        this._clearStartupListeners();
+        const input = this.querySelector('#launch-at-login');
+        const manage = this.querySelector('#launch-at-login-manage');
+        const badge = this.querySelector('#launch-at-login-state');
+        const status = this.querySelector('#launch-at-login-status');
+        if ((!input && !manage) || !status) return;
+        const binding = {};
+        this._startupBinding = binding;
+        let refreshVersion = 0;
+        let busy = false;
+        const current = () => this._startupBinding === binding;
+        const apply = (state) => {
+            if (!current()) return;
+            this.launchAtLoginState = state;
+            if (input) {
+                input.checked = state.enabled;
+                input.disabled = !state.supported;
+            }
+            if (manage) manage.disabled = state.reason === 'development';
+            if (badge)
+                badge.textContent = this._t(
+                    !state.supported
+                        ? 'sp.general.launchAtLogin.unknown'
+                        : state.enabled
+                          ? 'sp.general.launchAtLogin.on'
+                          : 'sp.general.launchAtLogin.off'
+                );
+            status.textContent = this._t(
+                state.supported || state.reason === 'development'
+                    ? manage
+                        ? 'sp.general.launchAtLogin.harmony.desc'
+                        : 'sp.general.launchAtLogin.desc'
+                    : 'sp.general.launchAtLogin.unsupported'
+            );
+        };
+        const refresh = async () => {
+            if (busy || !window.settingAPI?.getLaunchAtLogin) return;
+            const version = ++refreshVersion;
+            if (input) input.disabled = true;
+            try {
+                const state = await window.settingAPI.getLaunchAtLogin();
+                if (current() && version === refreshVersion) apply(state);
+            } catch {
+                if (!current() || version !== refreshVersion) return;
+                if (badge) badge.textContent = this._t('sp.general.launchAtLogin.unknown');
+                if (manage) manage.disabled = false;
+                status.textContent = this._t('sp.general.launchAtLogin.error');
+            }
+        };
+        if (input) input.disabled = true;
+        void refresh();
+        input?.addEventListener('change', async () => {
+            if (input.disabled) return;
+            const requested = input.checked;
+            busy = true;
+            input.disabled = true;
+            ++refreshVersion;
+            try {
+                const state = await window.settingAPI.setLaunchAtLogin(requested);
+                apply(state);
+                if (current() && state.enabled !== requested)
+                    status.textContent = this._t('sp.general.launchAtLogin.systemBlocked');
+            } catch {
+                apply(this.launchAtLoginState);
+                if (current()) status.textContent = this._t('sp.general.launchAtLogin.error');
+            } finally {
+                busy = false;
+            }
+        });
+        manage?.addEventListener('click', async () => {
+            if (manage.disabled) return;
+            busy = true;
+            manage.disabled = true;
+            ++refreshVersion;
+            try {
+                await window.settingAPI.openStartupSettings();
+            } catch {
+                if (current()) status.textContent = this._t('sp.general.launchAtLogin.settingsError');
+            } finally {
+                busy = false;
+                if (current()) manage.disabled = this.launchAtLoginState.reason === 'development';
+            }
+        });
+        if (manage) {
+            this._startupFocusHandler = () => {
+                if (document.visibilityState !== 'hidden') void refresh();
+            };
+            window.addEventListener('focus', this._startupFocusHandler);
+            document.addEventListener('visibilitychange', this._startupFocusHandler);
+        }
     }
 
     _bindDebugModeEvents() {
@@ -3533,6 +3663,7 @@ class SettingPanel extends HTMLElement {
             this.saveImmediately();
         });
 
+        this._bindLaunchAtLoginEvents();
         this._bindDebugModeEvents();
 
         this._bindTelemetryEvents();
@@ -4872,6 +5003,7 @@ class SettingPanel extends HTMLElement {
                 this.currentData.gui_config.floating_window_position = e.target.value;
                 this.saveImmediately();
             });
+            this._bindLaunchAtLoginEvents();
             this._bindDebugModeEvents();
 
             this._bindTelemetryEvents();
