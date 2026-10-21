@@ -556,6 +556,22 @@ html[data-theme='dark'] .ctx-menu-list::-webkit-scrollbar-thumb,
     background: rgba(255, 255, 255, 0.18);
 }
 
+/* 悬停预览卡（技能/补全简介）：与侧边栏任务列表 #task-list-container 同一套滚动条视觉，
+   避免深色模式下落到浏览器默认的浅色滚动条（深色覆盖见 theme-dark.css） */
+.ctx-preview-card::-webkit-scrollbar {
+    width: 4px;
+}
+.ctx-preview-card::-webkit-scrollbar-track {
+    background: transparent;
+}
+.ctx-preview-card::-webkit-scrollbar-thumb {
+    background: rgba(0, 0, 0, 0.12);
+    border-radius: 4px;
+}
+.ctx-preview-card::-webkit-scrollbar-thumb:hover {
+    background: rgba(0, 0, 0, 0.22);
+}
+
 /* 空状态 */
 .ctx-empty {
     padding: 16px 12px;

@@ -29,6 +29,9 @@ import { clearTaskDraft, loadTaskDraft, saveTaskDraft } from '../utils/task-draf
 /** 草稿持久化的防抖间隔：输入停顿后落盘，避免每次按键同步写 localStorage */
 const TASK_DRAFT_SAVE_DEBOUNCE_MS = 500;
 
+/** 技能预览卡收起延迟：留出指针从列表项跨越间隙移动到预览卡的时间 */
+const SKILL_PREVIEW_HIDE_DELAY_MS = 140;
+
 const fallbackSupportedFileExtensions = [
     'doc',
     'docx',
@@ -283,6 +286,8 @@ class AgentInput extends HTMLElement {
         this.knownUnsupportedFileExtensions = [];
         this._attachmentSupportPromise = null;
         this._docClickBound = false;
+        /** @type {ReturnType<typeof setTimeout> | null} 技能预览卡的延迟收起定时器 */
+        this._skillPreviewHideTimer = null;
         /** @type {{ value: string, label: string, description: string, icon: string, iconClass: string }[]} */
         this.autocompleteItems = [];
         this.autocompleteSelectedIndex = 0;
@@ -2286,7 +2291,8 @@ class AgentInput extends HTMLElement {
             const skillData = this.availableSkills.find((s) => s.name === skillName);
             if (skillData) {
                 item.addEventListener('mouseenter', () => this._showSkillPreviewCard(item, skillData));
-                item.addEventListener('mouseleave', () => this._hideSkillPreviewCard());
+                // 延迟收起：给指针留出从列表项移动到预览卡的时间，卡片自身 hover 会取消这次收起
+                item.addEventListener('mouseleave', () => this._scheduleHideSkillPreviewCard());
             }
         });
     }
@@ -2294,20 +2300,48 @@ class AgentInput extends HTMLElement {
     _showSkillPreviewCard(item, skillData) {
         this._hideSkillPreviewCard();
         const color = getSkillPastel(skillData.name);
-        this._skillPreviewCard = this._createPreviewCard(item, {
-            id: 'agent-input-skill-preview',
-            label: skillData.name,
-            subtitle: skillData.bundleName,
-            description: skillData.description,
-            iconHtml: escapeHtml(getSkillInitial(skillData.name)),
-            iconBg: color.bg,
-            iconText: color.text
-        });
+        const card = this._createPreviewCard(
+            item,
+            {
+                id: 'agent-input-skill-preview',
+                label: skillData.name,
+                subtitle: skillData.bundleName,
+                description: skillData.description,
+                iconHtml: escapeHtml(getSkillInitial(skillData.name)),
+                iconBg: color.bg,
+                iconText: color.text
+            },
+            { interactive: true }
+        );
+        // 预览卡可交互：指针停在卡片上时保持展示，移出后延迟收起
+        card.addEventListener('mouseenter', () => this._cancelSkillPreviewHide());
+        card.addEventListener('mouseleave', () => this._scheduleHideSkillPreviewCard());
+        this._skillPreviewCard = card;
     }
 
-    _createPreviewCard(item, { id, label, subtitle, description, iconHtml, iconBg, iconText }) {
+    _scheduleHideSkillPreviewCard() {
+        this._cancelSkillPreviewHide();
+        this._skillPreviewHideTimer = setTimeout(() => {
+            this._skillPreviewHideTimer = null;
+            this._hideSkillPreviewCard();
+        }, SKILL_PREVIEW_HIDE_DELAY_MS);
+    }
+
+    _cancelSkillPreviewHide() {
+        if (this._skillPreviewHideTimer) {
+            clearTimeout(this._skillPreviewHideTimer);
+            this._skillPreviewHideTimer = null;
+        }
+    }
+
+    _createPreviewCard(
+        item,
+        { id, label, subtitle, description, iconHtml, iconBg, iconText },
+        { interactive = false } = {}
+    ) {
         const card = document.createElement('div');
         card.id = id;
+        card.className = 'ctx-preview-card';
         card.setAttribute('role', 'tooltip');
         card.innerHTML = `
             <div style="display:flex;align-items:center;gap:10px;margin-bottom:8px;">
@@ -2331,7 +2365,7 @@ class AgentInput extends HTMLElement {
             minWidth: '220px',
             maxHeight: '260px',
             overflowY: 'auto',
-            pointerEvents: 'none',
+            pointerEvents: interactive ? 'auto' : 'none',
             transition: 'opacity 0.12s ease'
         });
         document.body.appendChild(card);
@@ -2358,6 +2392,7 @@ class AgentInput extends HTMLElement {
     }
 
     _hideSkillPreviewCard() {
+        this._cancelSkillPreviewHide();
         if (this._skillPreviewCard) {
             this._skillPreviewCard.remove();
             this._skillPreviewCard = null;
@@ -3096,11 +3131,18 @@ class AgentInput extends HTMLElement {
                         this.closeNodePanel();
                     }
                 }
-                // 关闭技能面板
+                // 关闭技能面板（预览卡挂在 body 上，点击它不算面板外点击）
                 if (this.skillPanelOpen) {
                     const panel = this.querySelector('#agent-input-skill-panel');
                     const btn = this.querySelector('#agent-input-skill-btn');
-                    if (panel && !panel.contains(e.target) && e.target !== btn && !btn?.contains(e.target)) {
+                    const clickedPreview = this._skillPreviewCard?.contains(e.target);
+                    if (
+                        panel &&
+                        !panel.contains(e.target) &&
+                        !clickedPreview &&
+                        e.target !== btn &&
+                        !btn?.contains(e.target)
+                    ) {
                         this.toggleSkillPanel(true);
                     }
                 }

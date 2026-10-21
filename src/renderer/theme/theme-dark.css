@@ -2365,6 +2365,14 @@ html[data-theme='dark'] #task-list-container::-webkit-scrollbar-thumb:hover {
     background: rgba(255, 255, 255, 0.28) !important;
 }
 
+/* AgentInput 悬停预览卡（技能/补全简介）：与侧边栏任务列表同色，结构样式见 context-menu.css */
+html[data-theme='dark'] .ctx-preview-card::-webkit-scrollbar-thumb {
+    background: rgba(255, 255, 255, 0.18) !important;
+}
+html[data-theme='dark'] .ctx-preview-card::-webkit-scrollbar-thumb:hover {
+    background: rgba(255, 255, 255, 0.28) !important;
+}
+
 /* 模型验证结果滚动条 */
 html[data-theme='dark'] #model-verify-result::-webkit-scrollbar-thumb,
 html[data-theme='dark'] #wizard-verify-result::-webkit-scrollbar-thumb {
