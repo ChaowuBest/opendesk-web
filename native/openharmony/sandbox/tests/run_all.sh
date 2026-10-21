@@ -160,6 +160,11 @@ T mv_fail "$SRC/public/mvdst.txt" "$SRC/vault/escaped.txt" >/dev/null; check "re
 T mkdir "$SRC/public/dir1"                              >/dev/null; check "mkdir allow" $?
 T mkdir_fail "$SRC/vault/dir2"                          >/dev/null; check "mkdir deny" $?
 T rmdir "$SRC/public/dir1"                              >/dev/null; check "rmdir allow" $?
+# 尾斜杠：内核接受 mkdir("a/b/")，"父链缺失透传"不能把目标自身当成父目录
+# （git init 用 mkdir(".git/hooks/")，误判曾让它整条失败）
+T mkdir "$SRC/public/dir-trail/"                        >/dev/null; check "mkdir allow (trailing slash)" $?
+T rmdir "$SRC/public/dir-trail"                         >/dev/null; check "rmdir trailing-slash dir" $?
+T mkdir_fail "$SRC/vault/dir-trail/"                    >/dev/null; check "mkdir deny (trailing slash)" $?
 T chmod_ok "$SRC/public/w1.txt"                         >/dev/null; check "chmod allow" $?
 T chmod_fail "$SRC/vault/secret.txt"                    >/dev/null; check "chmod deny" $?
 
@@ -348,6 +353,10 @@ RT wr_fail "$SRC/public/mkprobe.txt"                  >/dev/null; check "create 
 RT mkdir "$SRC/no-such-parent/deeper" 2>/dev/null;     rc=$?
 [ "$rc" != "0" ] && rc=0 || rc=1
 check "mkdir missing-parent fails without hanging on ask" $rc
+# 尾斜杠变体同样必须判为父链缺失（不得因先剥末段而把目标自身当父目录后放行）
+RT mkdir "$SRC/no-such-parent/deeper/" 2>/dev/null;    rc=$?
+[ "$rc" != "0" ] && rc=0 || rc=1
+check "mkdir missing-parent (trailing slash) fails without ask" $rc
 
 echo "== ask: staging write approval =="
 TSH "$PROBE app $SRC/staging/base.txt -ap; $PROBE app $SRC/staging/base.txt -ap2" >/dev/null; check "staging write ask -> allow + grant covers appends" $?
