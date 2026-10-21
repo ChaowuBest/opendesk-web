@@ -17,6 +17,7 @@ import {
     saveAttachmentFile as copyAttachmentFile,
     saveAllAttachmentFiles as copyAllAttachmentFiles
 } from './attachment-files.js';
+import { resolveMailEndpoint } from './proxy-tunnel.js';
 
 import Pop3Command from 'node-pop3';
 import Imap from 'node-imap';
@@ -396,18 +397,24 @@ class POP3EmailClient extends EmailContentHelper {
         this.port = port;
     }
 
-    pop3() {
-        return new Pop3Command({
+    async pop3() {
+        // 配置了代理时改连本地隧道端口，TLS servername 保持真实域名
+        const endpoint = await resolveMailEndpoint(this.host, this.port);
+        const options = {
             user: this.usr,
             password: this.pwd,
-            host: this.host,
-            port: this.port,
+            host: endpoint ? endpoint.host : this.host,
+            port: endpoint ? endpoint.port : this.port,
             tls: this.tls
-        });
+        };
+        if (endpoint) {
+            options.tlsOptions = { servername: endpoint.servername, rejectUnauthorized: false };
+        }
+        return new Pop3Command(options);
     }
 
     async getEmail(uid, attachmentDirectory) {
-        const pop3 = this.pop3();
+        const pop3 = await this.pop3();
         const operationTimeout = 60000; // 单个操作超时60秒（获取完整邮件可能需要更长时间）
         try {
             // 为UIDL操作添加超时
@@ -620,16 +627,20 @@ class IMAPEmailClient extends EmailContentHelper {
             .trim();
     }
 
-    createImap() {
+    async createImap() {
+        // 配置了代理时改连本地隧道端口，TLS servername 保持真实域名
+        const endpoint = await resolveMailEndpoint(this.host, this.port);
+        const tlsOptions = { rejectUnauthorized: false };
+        if (endpoint) {
+            tlsOptions.servername = endpoint.servername;
+        }
         return new Imap({
             user: this.usr,
             password: this.pwd,
-            host: this.host,
-            port: this.port,
+            host: endpoint ? endpoint.host : this.host,
+            port: endpoint ? endpoint.port : this.port,
             tls: this.tls,
-            tlsOptions: {
-                rejectUnauthorized: false
-            }
+            tlsOptions: tlsOptions
         });
     }
 
@@ -827,7 +838,7 @@ class IMAPEmailClient extends EmailContentHelper {
         let shouldClose = false;
         try {
             if (!localImap) {
-                localImap = this.createImap();
+                localImap = await this.createImap();
                 await withTimeout(
                     this.connect(localImap, 'IMAP connect (resolve boxes)'),
                     30000,
@@ -1022,7 +1033,7 @@ class IMAPEmailClient extends EmailContentHelper {
             for (let attempt = 0; attempt < maxRetries; attempt++) {
                 let imap = null;
                 try {
-                    imap = this.createImap();
+                    imap = await this.createImap();
                     await withTimeout(this.connect(imap, 'IMAP connect'), 30000, 'IMAP connect');
                     const boxMap = await this.resolveBoxMap(cache, imap, true);
 
@@ -1076,7 +1087,7 @@ class IMAPEmailClient extends EmailContentHelper {
 
     async updateSeen(imapBox, imapUid, seen) {
         if (!imapBox || !imapUid) return;
-        const imap = this.createImap();
+        const imap = await this.createImap();
         try {
             await withTimeout(this.connect(imap, 'IMAP connect (flags)'), 30000, 'IMAP connect (flags)');
             await withTimeout(this.openBox(imap, imapBox, false), 30000, `IMAP open ${imapBox}`);
@@ -1100,7 +1111,7 @@ class IMAPEmailClient extends EmailContentHelper {
             return false;
         }
         const safeFlags = Array.isArray(flags) ? flags.filter(Boolean) : flags ? [flags] : [];
-        const imap = this.createImap();
+        const imap = await this.createImap();
         try {
             await withTimeout(this.connect(imap, 'IMAP connect (append)'), 30000, 'IMAP connect (append)');
             try {
@@ -1154,7 +1165,7 @@ class IMAPEmailClient extends EmailContentHelper {
         if (!imapBox || !imapUid) return false;
         const normalizedBox = IMAPEmailClient.normalizeMailboxName(imapBox);
         const normalizedTrash = IMAPEmailClient.normalizeMailboxName(trashBox);
-        const imap = this.createImap();
+        const imap = await this.createImap();
         try {
             await withTimeout(this.connect(imap, 'IMAP connect (delete)'), 30000, 'IMAP connect (delete)');
             await withTimeout(this.openBox(imap, normalizedBox, false), 30000, `IMAP open ${normalizedBox}`);
@@ -1186,7 +1197,7 @@ class IMAPEmailClient extends EmailContentHelper {
     }
 
     async getEmail(localUid, imapBox, imapUid, attachmentDirectory) {
-        const imap = this.createImap();
+        const imap = await this.createImap();
         const operationTimeout = 120000;
         try {
             await withTimeout(this.connect(imap, 'IMAP connect'), 30000, 'IMAP connect');
@@ -1268,9 +1279,10 @@ class SmtpEmailClient {
     }
 
     async sendMailWithOptions(mailOptions) {
-        const transport = nodemailer.createTransport({
-            host: this.host,
-            port: this.port,
+        const endpoint = await resolveMailEndpoint(this.host, this.port);
+        const transportOptions = {
+            host: endpoint ? endpoint.host : this.host,
+            port: endpoint ? endpoint.port : this.port,
             secure: this.secure,
             auth: {
                 user: this.user,
@@ -1282,7 +1294,12 @@ class SmtpEmailClient {
             // 增加连接和发送超时设置
             connectionTimeout: 5 * 60 * 1000, // 5分钟
             socketTimeout: 5 * 60 * 1000 // 5分钟
-        });
+        };
+        if (endpoint) {
+            // 隧道端口在本机，SNI 必须显式指回真实邮件服务器
+            transportOptions.servername = endpoint.servername;
+        }
+        const transport = nodemailer.createTransport(transportOptions);
 
         try {
             await transport.sendMail(mailOptions);
@@ -2198,7 +2215,7 @@ class MailboxWorker extends BaseWorker {
         if (protocol === 'imap' && imap) {
             try {
                 const imapClient = new IMAPEmailClient(username, password, imap.tls, imap.host, imap.port);
-                const imapConn = imapClient.createImap();
+                const imapConn = await imapClient.createImap();
                 await withTimeout(imapClient.connect(imapConn, 'IMAP verify'), 30000, 'IMAP verify');
                 await imapClient.end(imapConn);
                 results.inbox = { status: 'success', protocol: 'imap' };
@@ -2208,7 +2225,7 @@ class MailboxWorker extends BaseWorker {
         } else if (protocol === 'pop3' && pop3) {
             try {
                 const pop3Client = new POP3EmailClient(username, password, pop3.tls, pop3.host, pop3.port);
-                const pop3Conn = pop3Client.pop3();
+                const pop3Conn = await pop3Client.pop3();
                 await withTimeout(pop3Conn._connect(), 15000, 'POP3 verify');
                 await withTimeout(pop3Conn.QUIT(), 10000, 'POP3 QUIT');
                 results.inbox = { status: 'success', protocol: 'pop3' };
@@ -2219,10 +2236,12 @@ class MailboxWorker extends BaseWorker {
 
         if (smtp) {
             try {
+                const endpoint = await resolveMailEndpoint(smtp.host, smtp.port);
                 const transporter = nodemailer.createTransport({
-                    host: smtp.host,
-                    port: smtp.port,
+                    host: endpoint ? endpoint.host : smtp.host,
+                    port: endpoint ? endpoint.port : smtp.port,
                     secure: smtp.tls && smtp.port === 465,
+                    servername: endpoint ? endpoint.servername : undefined,
                     auth: { user: username, pass: password },
                     tls: { rejectUnauthorized: false },
                     connectionTimeout: 15000,

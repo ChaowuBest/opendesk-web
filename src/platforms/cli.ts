@@ -18,7 +18,7 @@ import { createInteractionToolset } from '../main/aikernel/interaction/tools.js'
 import type { ExitPlanModeProvider } from '../main/aikernel/interaction/exitPlanMode.js';
 import type { InteractiveToolset } from '../main/aikernel/tool.js';
 import { fetchWithResolvedProxy } from './proxy-fetch.js';
-import type { PlatformFetchOptions } from './base.js';
+import type { PlatformFetchOptions, PlatformNetworkConfig } from './base.js';
 import { Setting } from '../main/utils/setting.js';
 import { exec } from 'child_process';
 import { promisify } from 'util';
@@ -50,6 +50,16 @@ export class CliPlatform extends AbstractPlatform {
 
     getName(): string {
         return 'cli';
+    }
+
+    getNetworkConfig(): PlatformNetworkConfig {
+        const nc = Setting.getInstance().getData().network_config;
+        return {
+            no_ssl: nc.no_ssl,
+            use_proxy: nc.use_proxy,
+            custom_proxy_addr: nc.custom_proxy_addr,
+            no_proxy: nc.no_proxy
+        };
     }
 
     getEffectiveWorkspace(): string {

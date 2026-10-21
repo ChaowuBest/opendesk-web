@@ -17,7 +17,7 @@
  * 支持流式响应（SSE 等长连接）。
  */
 
-import { AbstractPlatform, type PlatformFetchOptions } from './base.js';
+import { AbstractPlatform, type PlatformFetchOptions, type PlatformNetworkConfig } from './base.js';
 import { Setting } from '../main/utils/setting.js';
 import type { TaskState } from '../main/aikernel/states/tasks.js';
 import { parentPort, workerData } from 'worker_threads';
@@ -49,12 +49,7 @@ initAgentGateHook();
 
 let shellRequestCounter = 0;
 
-interface WorkerNetworkConfig {
-    no_ssl: boolean;
-    use_proxy: 'system' | 'custom' | 'none';
-    custom_proxy_addr: string;
-    no_proxy: string;
-}
+type WorkerNetworkConfig = PlatformNetworkConfig;
 
 function headersToRecord(headers: HeadersInit | undefined): Record<string, string> {
     if (!headers) return {};
@@ -118,6 +113,12 @@ export class WorkerPlatform extends AbstractPlatform {
             delete process.env.no_proxy;
         }
     }
+
+    /** 返回当前线程内的网络代理配置快照（随主进程下发实时更新）。 */
+    getNetworkConfig(): PlatformNetworkConfig {
+        return { ...this.networkConfig };
+    }
+
     getName(): string {
         return 'worker';
     }

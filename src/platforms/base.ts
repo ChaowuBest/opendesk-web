@@ -14,6 +14,17 @@ import type { TaskState } from '../main/aikernel/states/tasks.js';
 import type { InteractiveToolset } from '../main/aikernel/tool.js';
 import type { NativeBridge } from './native/constants.js';
 
+/**
+ * 当前生效的网络代理配置，与 Setting 中的 network_config 字段对齐。
+ * 供无法直接访问 Setting 的调用方（如 worker 线程内的邮件客户端）读取代理设置。
+ */
+export interface PlatformNetworkConfig {
+    no_ssl: boolean;
+    use_proxy: 'system' | 'custom' | 'none';
+    custom_proxy_addr: string;
+    no_proxy: string;
+}
+
 export interface PlatformFetchOptions {
     /** Prefer proxy settings inherited from the process environment for this request. */
     forceEnvironmentProxy?: boolean;
@@ -29,6 +40,15 @@ export abstract class AbstractPlatform {
     }
 
     abstract getEffectiveWorkspace(): string;
+
+    /**
+     * 返回当前生效的网络代理配置。
+     * 默认返回 null 表示平台未提供（调用方可退回环境变量代理约定）：
+     * Electron / CLI 从 Setting 读取，Worker 返回其线程内的配置快照。
+     */
+    getNetworkConfig(): PlatformNetworkConfig | null {
+        return null;
+    }
 
     /**
      * 为任务注入平台相关的提供者（权限确认 UI、交互工具集等）。

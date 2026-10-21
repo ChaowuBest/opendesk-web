@@ -66,6 +66,28 @@ export function isLoopbackUrl(urlStr: string): boolean {
 }
 
 /**
+ * 判断 host:port 是否命中指定的 NO_PROXY 列表。
+ * 与 isHostInNoProxy 使用同一套匹配规则，便于调用方直接传入设置里的 no_proxy。
+ */
+export function isHostInNoProxyList(hostname: string, port: string | number, noProxy: string): boolean {
+    if (!noProxy) return false;
+    const normalizedHost = normalizeHostname(hostname);
+    const normalizedPort = String(port ?? '');
+    const patterns = noProxy
+        .split(',')
+        .map((p) => p.trim())
+        .filter(Boolean);
+
+    return patterns.some((pattern) => {
+        const parsed = parseNoProxyPattern(pattern);
+        if (parsed.port !== undefined && parsed.port !== normalizedPort) {
+            return false;
+        }
+        return hostnameMatchesNoProxyPattern(normalizedHost, parsed.host);
+    });
+}
+
+/**
  * 检查目标 URL 的 hostname 是否匹配 NO_PROXY / no_proxy 环境变量。
  * 支持精确域名、.example.com 后缀匹配、host:port、IPv6 [host]:port、* 通配。
  */
@@ -80,20 +102,7 @@ export function isHostInNoProxy(urlStr: string): boolean {
         return false;
     }
 
-    const hostname = normalizeHostname(url.hostname);
-    const port = url.port;
-    const patterns = noProxy
-        .split(',')
-        .map((p) => p.trim())
-        .filter(Boolean);
-
-    return patterns.some((pattern) => {
-        const parsed = parseNoProxyPattern(pattern);
-        if (parsed.port !== undefined && parsed.port !== port) {
-            return false;
-        }
-        return hostnameMatchesNoProxyPattern(hostname, parsed.host);
-    });
+    return isHostInNoProxyList(url.hostname, url.port, noProxy);
 }
 
 /**
