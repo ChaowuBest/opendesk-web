@@ -27,8 +27,14 @@ import { AgentRegistry } from '../agents/registry.js';
 import type { AgentDecl, ModeDecl } from '../agents/common.js';
 import type { Participant } from '../../plugins/types.js';
 import { TaskState } from '../states/tasks.js';
+import { TaskTransferError, type TaskTransferStage } from '../../utils/task-transfer-error.js';
 import { atomicWriteFile, atomicWriteFileSync } from '../../utils/temp.js';
 import { deserializeTaskFromIndex, indexEntryHasMetadata, normalizeTaskIndexEntry } from './serializer.js';
+
+function isTransientIndexRenameError(error: unknown): boolean {
+    const fileError = error as NodeJS.ErrnoException;
+    return fileError?.syscall === 'rename' && ['EPERM', 'EACCES', 'EBUSY'].includes(fileError.code ?? '');
+}
 
 export class BaseTaskManagerUpdateSubscriber {
     subscription_id: string = crypto.randomUUID();
@@ -369,6 +375,7 @@ export class TaskManagerState {
 
     private _saveTimer?: ReturnType<typeof setTimeout>;
     private _lastWritePromise: Promise<void> = Promise.resolve();
+    private readonly _pendingWrites = new Set<Promise<void>>();
     private _savePendingAfterTimer: boolean = false;
     private static SAVE_THROTTLE_MS = 2000;
 
@@ -413,7 +420,17 @@ export class TaskManagerState {
         }, TaskManagerState.SAVE_THROTTLE_MS);
     }
 
-    private async _writeAll(scheduledTaskDirectory?: string): Promise<void> {
+    private _writeAll(scheduledTaskDirectory?: string): Promise<void> {
+        const write = this._performWriteAll(scheduledTaskDirectory);
+        this._pendingWrites.add(write);
+        const finished = () => {
+            this._pendingWrites.delete(write);
+        };
+        void write.then(finished, finished);
+        return write;
+    }
+
+    private async _performWriteAll(scheduledTaskDirectory?: string): Promise<void> {
         // 未传入调度时快照的目录（如 flushAllPendingSaves 直接落盘）时按当前目录解析
         const taskDirectory = scheduledTaskDirectory ?? getTaskDirectory();
         const taskListFile = path.join(taskDirectory, 'task_list.json');
@@ -625,10 +642,35 @@ export class TaskManagerState {
         let pendingWrite: Promise<void>;
         do {
             pendingWrite = this._lastWritePromise;
-            await this.flushAllPendingSaves();
-        } while (pendingWrite !== this._lastWritePromise);
-        const directory = getTaskDirectory();
+            try {
+                // A newer timer can replace _lastWritePromise, and explicit flushes
+                // start writes directly. Drain every active write before importing.
+                while (this._pendingWrites.size) {
+                    const results = await Promise.allSettled([...this._pendingWrites]);
+                    const failed = results.find((result) => result.status === 'rejected');
+                    if (failed?.status === 'rejected') throw failed.reason;
+                }
+                await this.flushAllPendingSaves();
+            } catch (error) {
+                // No imported files exist yet, so an index conflict here is safe to retry.
+                throw new TaskTransferError(
+                    'writeFailed',
+                    error,
+                    'flushPending',
+                    undefined,
+                    isTransientIndexRenameError(error)
+                );
+            }
+        } while (pendingWrite !== this._lastWritePromise || this._pendingWrites.size > 0);
+        let directory: string;
+        try {
+            directory = getTaskDirectory();
+        } catch (error) {
+            throw new TaskTransferError('writeFailed', error, 'taskDirectory');
+        }
         const created: string[] = [];
+        let stage: TaskTransferStage = 'serializeTask';
+        let filePath: string | undefined;
         try {
             const ids = new Set(this.tasks.map((task) => task.task_id));
             for (const task of imported) {
@@ -636,29 +678,43 @@ export class TaskManagerState {
                     throw new Error('duplicate import ID');
                 ids.add(task.task_id);
                 const file = path.join(directory, `${task.task_id}.json`);
+                filePath = file;
+                stage = 'serializeTask';
+                const content = JSON.stringify(task.toJSON(), null, 4);
+                stage = 'writeTask';
                 const fd = fs.openSync(file, 'wx');
                 created.push(file);
                 try {
-                    fs.writeFileSync(fd, JSON.stringify(task.toJSON(), null, 4), 'utf8');
+                    fs.writeFileSync(fd, content, 'utf8');
                 } finally {
                     fs.closeSync(fd);
                 }
             }
             this.tasks.push(...imported);
+            stage = 'writeIndex';
+            filePath = path.join(directory, 'task_list.json');
             this.saveTaskListSync();
         } catch (error) {
             this.tasks = this.tasks.filter((task) => !imported.includes(task));
+            let rollbackComplete = true;
             for (const file of created) {
                 try {
                     fs.unlinkSync(file);
                 } catch (cleanupError) {
+                    rollbackComplete = false;
                     logger.error('Failed to clean up imported task', cleanupError);
                 }
             }
-            throw error;
+            const retryable = rollbackComplete && stage === 'writeIndex' && isTransientIndexRenameError(error);
+            throw new TaskTransferError('writeFailed', error, stage, filePath, retryable);
         }
         for (const task of imported) task._dirty = false;
-        this.publishTaskListUpdate();
+        // Persistence succeeded: a notification failure must not invite a duplicate import.
+        try {
+            this.publishTaskListUpdate();
+        } catch (error) {
+            logger.error('Failed to publish imported tasks after commit', error);
+        }
     }
 
     /** Create a task from user request. */

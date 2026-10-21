@@ -45,13 +45,21 @@ export async function importTaskEntries(
             tasks.push(deserializeTaskData(json, manager));
             await setImmediate();
         }
-    } catch {
-        throw new TaskTransferError('invalidTask');
+    } catch (error) {
+        throw new TaskTransferError('invalidTask', error, 'prepareTasks');
     }
-    try {
-        await manager.commitImportedTasks(tasks);
-    } catch {
-        throw new TaskTransferError('writeFailed');
+    const maxAttempts = 6;
+    for (let attempt = 0; attempt < maxAttempts; attempt++) {
+        try {
+            await manager.commitImportedTasks(tasks);
+            break;
+        } catch (error) {
+            if (!(error instanceof TaskTransferError)) throw new TaskTransferError('writeFailed', error);
+            if (!error.retryable || attempt === maxAttempts - 1) throw error;
+            // The failed attempt has fully rolled back. Reuse the prepared IDs and
+            // yield between attempts so the UI and other task updates can continue.
+            await new Promise<void>((resolve) => setTimeout(resolve, Math.min(50 * 2 ** attempt, 400)));
+        }
     }
     return tasks.length;
 }

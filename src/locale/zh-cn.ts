@@ -30,6 +30,15 @@ export const zhCn: Record<string, string> = {
     'credentials.failed': '无法读取或保存密码。请检查系统钥匙串；如需重置，可在浏览器设置中清除密码与自动填充数据。',
 
     // Task transfer
+    'taskTransfer.diagnostic.stage': '失败阶段',
+    'taskTransfer.diagnostic.path': '文件路径',
+    'taskTransfer.stage.readImportFile': '读取任务文件',
+    'taskTransfer.stage.prepareTasks': '准备任务数据',
+    'taskTransfer.stage.flushPending': '保存待处理任务',
+    'taskTransfer.stage.taskDirectory': '访问任务目录',
+    'taskTransfer.stage.serializeTask': '序列化任务',
+    'taskTransfer.stage.writeTask': '写入任务文件',
+    'taskTransfer.stage.writeIndex': '保存任务索引',
     'taskTransfer.title': '任务数据',
     'taskTransfer.import': '导入任务',
     'taskTransfer.export': '批量导出',
@@ -63,6 +72,7 @@ export const zhCn: Record<string, string> = {
     'taskTransfer.error.unsupportedVersion': '任务包版本较新，请升级 OpenDesk 后重试。',
     'taskTransfer.error.tooLarge': '任务包超过限制：最多 1000 个任务，单任务 16 MB，解压总量 128 MB，文件 64 MB。',
     'taskTransfer.error.writeFailed': '读写任务文件失败，请检查文件权限和磁盘空间。',
+    'taskTransfer.error.importWriteFailed': '暂时无法保存导入的任务，请稍后重试。已保留你的选择。',
     'taskTransfer.error.expired': '导入预览已过期或另一个操作正在进行，请关闭后重新选择文件。',
 
     'compact.paused.title': '上下文压缩已暂停',

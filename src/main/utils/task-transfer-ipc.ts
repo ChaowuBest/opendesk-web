@@ -41,9 +41,20 @@ export function registerTaskTransferHandlers(
                 busy = true;
                 return { status: 'ok', data: await action(...args) };
             } catch (error) {
-                logger.warn(`Task transfer ${name} failed`, error);
                 const code = error instanceof TaskTransferError ? error.code : 'writeFailed';
-                return { status: 'error', message: t(`taskTransfer.error.${code}`) };
+                const diagnostic = formatDiagnostic(error, name);
+                const cause = error instanceof Error ? error.cause : undefined;
+                logger.warn(
+                    `Task transfer ${name} failed: ${diagnostic || String(error)}\n${cause instanceof Error ? cause.stack : error instanceof Error ? error.stack : ''}`
+                );
+                return {
+                    status: 'error',
+                    message: t(
+                        name === 'importTaskBundle' && code === 'writeFailed'
+                            ? 'taskTransfer.error.importWriteFailed'
+                            : `taskTransfer.error.${code}`
+                    )
+                };
             } finally {
                 busy = false;
             }
@@ -83,8 +94,17 @@ export function registerTaskTransferHandlers(
         )
             throw new TaskTransferError('invalidWorkspace');
         const prepared = preview;
-        discard();
-        return importTaskEntries(prepared.entries, selectedIds, manager, workspace);
+        clearTimeout(expiry);
+        try {
+            const count = await importTaskEntries(prepared.entries, selectedIds, manager, workspace);
+            discard();
+            return count;
+        } catch (error) {
+            // Keep the same snapshot and selections available for a corrected retry.
+            expiry = setTimeout(discard, 10 * 60 * 1000);
+            expiry.unref();
+            throw error;
+        }
     });
     handle('exportTaskBundle', async (selectedIds: unknown) => {
         if (!Array.isArray(selectedIds) || !selectedIds.length || selectedIds.some((id) => typeof id !== 'string'))
@@ -98,4 +118,20 @@ export function registerTaskTransferHandlers(
         const count = await exportTaskBundle(manager, selectedIds, selected.filePath);
         return { count, filePath: selected.filePath };
     });
+}
+
+function formatDiagnostic(error: unknown, operation: string): string {
+    const transfer = error instanceof TaskTransferError ? error : undefined;
+    if (transfer && transfer.cause === undefined) return '';
+    const stage = transfer?.stage ?? (operation === 'previewTaskImport' ? 'readImportFile' : undefined);
+    const lines: string[] = [];
+    if (stage) lines.push(`${t('taskTransfer.diagnostic.stage')}: ${t(`taskTransfer.stage.${stage}`)}`);
+    let current: unknown = transfer?.cause ?? error;
+    for (let depth = 0; depth < 5 && current !== undefined; depth++) {
+        const detail = current as NodeJS.ErrnoException & { cause?: unknown };
+        lines.push([detail?.code, detail?.syscall, detail?.message ?? String(current)].filter(Boolean).join(' | '));
+        current = detail?.cause;
+    }
+    if (transfer?.filePath) lines.push(`${t('taskTransfer.diagnostic.path')}: ${transfer.filePath}`);
+    return lines.join('\n');
 }

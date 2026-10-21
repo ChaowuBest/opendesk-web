@@ -17,20 +17,9 @@ import { setImmediate } from 'node:timers/promises';
 import AdmZip from 'adm-zip';
 import { buildAtomicWriteTmpPath } from './temp.js';
 
-// These codes are protocol values; the GUI translates them at the presentation boundary.
-export type TaskTransferErrorCode =
-    | 'invalidBundle'
-    | 'invalidTask'
-    | 'unsupportedVersion'
-    | 'tooLarge'
-    | 'writeFailed'
-    | 'expired'
-    | 'invalidWorkspace';
-export class TaskTransferError extends Error {
-    constructor(readonly code: TaskTransferErrorCode) {
-        super(code);
-    }
-}
+import { TaskTransferError } from './task-transfer-error.js';
+export { TaskTransferError, type TaskTransferErrorCode } from './task-transfer-error.js';
+
 export type TaskJson = Record<string, any>;
 export interface TaskImportEntry {
     id: string;
