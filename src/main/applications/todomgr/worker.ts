@@ -18,6 +18,18 @@ import type { GlobalTodo, GlobalTodoStorage, TodoTrigger, TodoWorkspaceConfig } 
 import type { ReasoningEffort } from '../../aikernel/types/reasoning.js';
 import type { Participant } from '../../plugins/types';
 import type { Cron as CronerJob } from 'croner';
+import { getSystemTimezone, isValidTimezone } from '../../../common/utils/timezone.js';
+import { t } from './locale/index.js';
+
+function validateTriggerTimezone(trigger?: TodoTrigger): void {
+    if (
+        (trigger?.type === 'cron' || trigger?.type === 'scheduled') &&
+        trigger.timezone !== undefined &&
+        !isValidTimezone(trigger.timezone)
+    ) {
+        throw new Error(t('error.timezoneInvalid', { timezone: String(trigger.timezone) }));
+    }
+}
 
 type GlobalTodoUpdatePayload = Omit<Partial<GlobalTodo>, 'workspace' | 'deliver'> & {
     removeTrigger?: boolean;
@@ -121,13 +133,18 @@ export default class TodoMgrWorker extends BaseWorker {
         model?: string,
         reasoningEffort?: ReasoningEffort
     ): Promise<GlobalTodo> {
+        validateTriggerTimezone(trigger);
+        const normalizedTrigger =
+            (trigger?.type === 'cron' || trigger?.type === 'scheduled') && trigger.timezone === undefined
+                ? { ...trigger, timezone: getSystemTimezone() }
+                : trigger;
         const todo: GlobalTodo = {
             id: `todo_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
             title,
             content,
             priority,
             category,
-            trigger,
+            trigger: normalizedTrigger,
             deliver,
             // GlobalTodo.workspace 为可选字段；入参允许显式 null（表示"未设置"），此处归一成 undefined
             workspace: workspace ?? undefined,
@@ -176,6 +193,7 @@ export default class TodoMgrWorker extends BaseWorker {
 
         const oldTrigger = this.globalTodos[idx].trigger;
         const oldLastTriggered = this.globalTodos[idx].last_triggered_at;
+        if (!removeTrigger) validateTriggerTimezone(todoUpdates.trigger);
 
         logger.info(
             `[todomgr] updateGlobalTodo [${id}]: keys=${Object.keys(todoUpdates).join(',')}, hasTrigger=${'trigger' in todoUpdates}, removeTrigger=${removeTrigger}`
@@ -215,7 +233,7 @@ export default class TodoMgrWorker extends BaseWorker {
                     case 'scheduled':
                         return t.triggerAt || '';
                     case 'cron':
-                        return t.cronExpression || '';
+                        return JSON.stringify([t.cronExpression || '', t.timezone ?? 'UTC']);
                     case 'event':
                         return `${t.bundleName || ''}:${t.eventName || ''}`;
                     default:
@@ -354,7 +372,7 @@ export default class TodoMgrWorker extends BaseWorker {
             const cronExpression = todo.trigger.cronExpression;
             logger.info(`[todomgr] 启动 cron 任务 [${todo.id}]: ${cronExpression} - ${todo.content}`);
 
-            const job = new Cron(cronExpression, { timezone: 'UTC' }, async () => {
+            const job = new Cron(cronExpression, { timezone: todo.trigger.timezone ?? 'UTC' }, async () => {
                 logger.info(`[todomgr] cron 触发 [${todo.id}]: ${todo.content}`);
 
                 // 重新获取最新的 todo 状态

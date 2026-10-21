@@ -16,6 +16,7 @@
 
 import { t } from './locale/index.js';
 import { describeCron, type CronDescribeLabels } from '../../utils/cron.js';
+import { formatDateTimeInTimezone, getSystemTimezone } from '../../../common/utils/timezone.js';
 
 /** describeCron 的多语言文案，词条随当前 locale 动态解析 */
 function cronLabels(): CronDescribeLabels {
@@ -35,9 +36,14 @@ export function buildTriggerInfo(trigger: any): string {
     if (trigger?.type === 'event') {
         return t('trigger.info.event', { bundle: trigger.bundleName, event: trigger.eventName });
     } else if (trigger?.type === 'scheduled') {
-        return t('trigger.info.scheduled');
+        if (!trigger.triggerAt) return t('trigger.info.scheduled');
+        const timezone = trigger.timezone ?? getSystemTimezone();
+        const time = formatDateTimeInTimezone(trigger.triggerAt, timezone);
+        return `${t('trigger.info.scheduled').trimEnd()} ${time} (${timezone})`;
     } else if (trigger?.type === 'cron') {
-        return t('trigger.info.cron', { cron: describeCron(trigger.cronExpression, cronLabels()) });
+        return t('trigger.info.cron', {
+            cron: describeCron(trigger.cronExpression, cronLabels(), trigger.timezone ?? 'UTC')
+        });
     }
     return '';
 }

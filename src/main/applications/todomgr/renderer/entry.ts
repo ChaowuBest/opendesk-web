@@ -19,6 +19,13 @@ import type { TodoTemplate } from '../templates.js';
 import { REASONING_EFFORT_UI_OPTIONS, type ReasoningEffort } from '../../../../common/reasoning-effort.js';
 import { getEffortIconSVG, getModelIconTile } from '../../../../renderer/utils/model-picker-icons.js';
 import { fixedLayerOrigin, visibleViewportRect } from '../../../../renderer/utils/window-frame.js';
+import {
+    datetimeLocalToISOString,
+    formatDatetimeLocal,
+    getSystemTimezone,
+    isValidTimezone
+} from '../../../../common/utils/timezone.js';
+import { describeCron } from '../../../utils/cron.js';
 
 type Translator = ReturnType<typeof createTranslatorForTodoMgr>;
 
@@ -32,7 +39,14 @@ interface GlobalTodo {
     content: string;
     priority: string;
     category?: string;
-    trigger?: { type: string; triggerAt?: string; cronExpression?: string; bundleName?: string; eventName?: string };
+    trigger?: {
+        type: string;
+        triggerAt?: string;
+        cronExpression?: string;
+        timezone?: string;
+        bundleName?: string;
+        eventName?: string;
+    };
     deliver?: { type?: 'channel'; channel: string; accountId: string; recipientId: string };
     workspace?: TodoWorkspaceConfig;
     model?: string;
@@ -587,6 +601,11 @@ html[data-theme='dark'] .tm-root {
 .tm-edit-field {
     margin-bottom: 14px;
 }
+.tm-edit-error {
+    margin-bottom: 14px;
+    color: var(--od-error, #DC2626);
+    font-size: var(--fs-base);
+}
 .tm-edit-label {
     display: block;
     font-size: var(--fs-md);
@@ -1088,210 +1107,46 @@ function parseTodoWorkspaceSelectValue(value: string): TodoWorkspaceConfig | und
     return undefined;
 }
 
-/**
- * 将 UTC cron 表达式转换为本地时间描述。
- * 所有 cron 表达式存储时使用 UTC，此函数负责转成本地时间来展示。
- */
-function describeCronLocal(expr: string, t: Translator): string {
-    const fields = expr.trim().split(/\s+/);
-    if (fields.length !== 5) return expr;
-    const [minute, hour, dom, month, dow] = fields;
-    const parts: string[] = [];
-
-    const offsetMin = -new Date().getTimezoneOffset();
-    const hourIsNum = /^\d+$/.test(hour);
-    const minIsNum = /^\d+$/.test(minute);
-
-    let displayH = hour;
-    let displayM = minute;
-    let dayShift = 0;
-
-    if (hourIsNum && minIsNum) {
-        let lm = parseInt(minute, 10) + (offsetMin % 60);
-        let lh = parseInt(hour, 10) + Math.floor(offsetMin / 60);
-        if (lm >= 60) {
-            lh++;
-            lm -= 60;
-        }
-        if (lm < 0) {
-            lh--;
-            lm += 60;
-        }
-        if (lh >= 24) {
-            lh -= 24;
-            dayShift = 1;
-        }
-        if (lh < 0) {
-            lh += 24;
-            dayShift = -1;
-        }
-        displayH = String(lh);
-        displayM = String(lm).padStart(2, '0');
-    } else if (hourIsNum) {
-        let lh = parseInt(hour, 10) + Math.floor(offsetMin / 60);
-        if (lh >= 24) {
-            lh -= 24;
-            dayShift = 1;
-        }
-        if (lh < 0) {
-            lh += 24;
-            dayShift = -1;
-        }
-        displayH = String(lh);
-    } else if (minIsNum) {
-        let lm = parseInt(minute, 10) + (offsetMin % 60);
-        if (lm >= 60) {
-            lm -= 60;
-        }
-        if (lm < 0) {
-            lm += 60;
-        }
-        displayM = String(lm).padStart(2, '0');
-    }
-
-    if (dow !== '*') {
-        if (/^[\d,]+$/.test(dow)) {
-            const days = dow.split(',').map((d) => {
-                let v = parseInt(d.trim(), 10);
-                if (dayShift) v = (((v + dayShift) % 7) + 7) % 7;
-                return t(`date.dow.${v}`) || v;
-            });
-            parts.push(days.length === 1 ? t('renderer.todo.cron.desc.everyDow', { days: days[0] }) : days.join('/'));
-        } else {
-            parts.push(t('renderer.todo.cron.desc.dowRaw', { dow }));
-        }
-    }
-    if (dom !== '*') parts.push(t('renderer.todo.cron.desc.monthlyDom', { day: dom }));
-    if (month !== '*') parts.push(t('renderer.todo.cron.desc.month', { month }));
-    if (displayH !== '*' && displayM !== '*') parts.push(`${displayH}:${displayM}`);
-    else if (displayH !== '*') parts.push(t('renderer.todo.cron.desc.hourOnly', { hour: displayH }));
-    else if (displayM !== '*') parts.push(t('renderer.todo.cron.desc.minuteOnly', { minute: displayM }));
-    else parts.push(t('renderer.todo.cron.desc.everyMinute'));
-    return parts.join(' ');
-}
-
-/**
- * 将本地时间的 cron 表达式转为 UTC 存储。
- * 仅转换纯数字的 hour/minute 字段，其他表达式（如 * / 范围等）保持原样。
- */
-function convertCronLocalToUTC(expr: string): string {
-    const fields = expr.trim().split(/\s+/);
-    if (fields.length !== 5) return expr;
-    const [minute, hour, dom, month, dow] = fields;
-
-    const hourIsNum = /^\d+$/.test(hour);
-    const minIsNum = /^\d+$/.test(minute);
-    if (!hourIsNum && !minIsNum) return expr;
-
-    const offsetMin = -new Date().getTimezoneOffset();
-    let utcM = minIsNum ? parseInt(minute, 10) - (offsetMin % 60) : NaN;
-    let utcH = hourIsNum ? parseInt(hour, 10) - Math.floor(offsetMin / 60) : NaN;
-    let dayShift = 0;
-
-    if (minIsNum) {
-        if (utcM < 0) {
-            if (hourIsNum) utcH--;
-            utcM += 60;
-        }
-        if (utcM >= 60) {
-            if (hourIsNum) utcH++;
-            utcM -= 60;
-        }
-    }
-    if (hourIsNum) {
-        if (utcH < 0) {
-            utcH += 24;
-            dayShift = -1;
-        }
-        if (utcH >= 24) {
-            utcH -= 24;
-            dayShift = 1;
-        }
-    }
-
-    const newMin = minIsNum ? String(utcM) : minute;
-    const newHour = hourIsNum ? String(utcH) : hour;
-
-    let newDow = dow;
-    if (dayShift && dow !== '*' && /^[\d,]+$/.test(dow)) {
-        newDow = dow
-            .split(',')
-            .map((d) => {
-                const v = parseInt(d.trim(), 10);
-                return (((v + dayShift) % 7) + 7) % 7;
-            })
-            .sort((a, b) => a - b)
-            .join(',');
-    }
-
-    return `${newMin} ${newHour} ${dom} ${month} ${newDow}`;
-}
-
-/**
- * 将 UTC 存储的 cron 表达式转回本地时间，供编辑时显示。
- * 逻辑与 convertCronLocalToUTC 方向相反。
- */
-function convertCronUTCToLocal(expr: string): string {
-    const fields = expr.trim().split(/\s+/);
-    if (fields.length !== 5) return expr;
-    const [minute, hour, dom, month, dow] = fields;
-
-    const hourIsNum = /^\d+$/.test(hour);
-    const minIsNum = /^\d+$/.test(minute);
-    if (!hourIsNum && !minIsNum) return expr;
-
-    const offsetMin = -new Date().getTimezoneOffset();
-    let lm = minIsNum ? parseInt(minute, 10) + (offsetMin % 60) : NaN;
-    let lh = hourIsNum ? parseInt(hour, 10) + Math.floor(offsetMin / 60) : NaN;
-    let dayShift = 0;
-
-    if (minIsNum) {
-        if (lm >= 60) {
-            if (hourIsNum) lh++;
-            lm -= 60;
-        }
-        if (lm < 0) {
-            if (hourIsNum) lh--;
-            lm += 60;
-        }
-    }
-    if (hourIsNum) {
-        if (lh >= 24) {
-            lh -= 24;
-            dayShift = 1;
-        }
-        if (lh < 0) {
-            lh += 24;
-            dayShift = -1;
-        }
-    }
-
-    const newMin = minIsNum ? String(lm) : minute;
-    const newHour = hourIsNum ? String(lh) : hour;
-
-    let newDow = dow;
-    if (dayShift && dow !== '*' && /^[\d,]+$/.test(dow)) {
-        newDow = dow
-            .split(',')
-            .map((d) => {
-                const v = parseInt(d.trim(), 10);
-                return (((v + dayShift) % 7) + 7) % 7;
-            })
-            .sort((a, b) => a - b)
-            .join(',');
-    }
-
-    return `${newMin} ${newHour} ${dom} ${month} ${newDow}`;
+/** Describe the fields in their scheduling timezone without shifting calendar dates. */
+function describeZonedCron(expr: string, t: Translator, timezone: string): string {
+    return describeCron(
+        expr,
+        {
+            dowNames: Array.from({ length: 7 }, (_, i) => t(`cron.desc.dowNames.${i}`)),
+            everyDowTemplate: t('cron.desc.everyDow'),
+            dowTemplate: t('cron.desc.dow'),
+            monthlyDomTemplate: t('cron.desc.monthlyDom'),
+            monthTemplate: t('cron.desc.month'),
+            hourTemplate: t('cron.desc.hourOnly'),
+            minuteTemplate: t('cron.desc.minuteOnly'),
+            everyMinute: t('cron.desc.everyMinute')
+        },
+        timezone
+    );
 }
 
 function getTriggerSummary(todo: GlobalTodo, t: Translator): string {
     if (!todo.trigger) return t('trigger.summary.manual');
     switch (todo.trigger.type) {
-        case 'scheduled':
-            return todo.trigger.triggerAt ? formatDate(todo.trigger.triggerAt, t) : t('trigger.summary.scheduled');
+        case 'scheduled': {
+            if (!todo.trigger.triggerAt) return t('trigger.summary.scheduled');
+            const timezone = todo.trigger.timezone || getSystemTimezone();
+            try {
+                const [date, time] = formatDatetimeLocal(todo.trigger.triggerAt, timezone).split('T');
+                const [, month, day] = date.split('-').map(Number);
+                return `${t('date.format.monthDayTime', {
+                    month,
+                    monthName: t(`date.month.${month}`),
+                    day,
+                    time
+                })} (${timezone})`;
+            } catch {
+                return todo.trigger.triggerAt;
+            }
+        }
         case 'cron':
             return todo.trigger.cronExpression
-                ? describeCronLocal(todo.trigger.cronExpression, t)
+                ? describeZonedCron(todo.trigger.cronExpression, t, todo.trigger.timezone || 'UTC')
                 : t('trigger.summary.cron');
         case 'event':
             return `${todo.trigger.bundleName || ''}:${todo.trigger.eventName || ''}`;
@@ -1300,9 +1155,7 @@ function getTriggerSummary(todo: GlobalTodo, t: Translator): string {
     }
 }
 
-/**
- * Build a cron expression from structured selections (local time → UTC)
- */
+/** Build cron fields as wall-clock values in the selected timezone. */
 function buildCronFromUI(
     mode: string,
     hour: number,
@@ -1311,38 +1164,13 @@ function buildCronFromUI(
     dom: string,
     monthVal: string
 ): string {
-    const offsetMin = -new Date().getTimezoneOffset();
-    let utcM = minute - (offsetMin % 60);
-    let utcH = hour - Math.floor(offsetMin / 60);
-    let dayShift = 0;
-    if (utcM < 0) {
-        utcH--;
-        utcM += 60;
-    }
-    if (utcM >= 60) {
-        utcH++;
-        utcM -= 60;
-    }
-    if (utcH < 0) {
-        utcH += 24;
-        dayShift = -1;
-    }
-    if (utcH >= 24) {
-        utcH -= 24;
-        dayShift = 1;
-    }
-
-    let cronDow = '*';
-    if (mode === 'weekly' && selectedDows.length > 0 && selectedDows.length < 7) {
-        cronDow = selectedDows
-            .map((d) => (((d + dayShift) % 7) + 7) % 7)
-            .sort((a, b) => a - b)
-            .join(',');
-    }
+    const cronDow =
+        mode === 'weekly' && selectedDows.length > 0 && selectedDows.length < 7
+            ? [...selectedDows].sort((a, b) => a - b).join(',')
+            : '*';
     const cronDom = mode === 'monthly' && dom !== '*' ? dom : '*';
     const cronMonth = monthVal !== '*' ? monthVal : '*';
-
-    return `${utcM} ${utcH} ${cronDom} ${cronMonth} ${cronDow}`;
+    return `${minute} ${hour} ${cronDom} ${cronMonth} ${cronDow}`;
 }
 
 function normalizeGlobalTodosPayload(payload: unknown): GlobalTodo[] {
@@ -1406,6 +1234,8 @@ class TodoMgrEntryWidget extends AgentOperableHTMLElement {
     private _dtViewYear = 0;
     private _dtViewMonth = 0;
     private _dtPanelOpen = false;
+    private _editTimezone = getSystemTimezone();
+    private _dtOriginal: { local: string; timezone: string; triggerAt: string } | null = null;
 
     async connectedCallback() {
         this._injectCSS();
@@ -1778,7 +1608,7 @@ class TodoMgrEntryWidget extends AgentOperableHTMLElement {
             const dows = tpl.defaultDows ?? [];
             const dom = '1';
             const cronExpr = buildCronFromUI(tpl.defaultCronMode, localH, localM, dows, dom, '*');
-            prefilledTodo.trigger = { type: 'cron', cronExpression: cronExpr };
+            prefilledTodo.trigger = { type: 'cron', cronExpression: cronExpr, timezone: getSystemTimezone() };
         } else if (tpl.triggerType === 'event') {
             prefilledTodo.trigger = {
                 type: 'event',
@@ -1788,7 +1618,7 @@ class TodoMgrEntryWidget extends AgentOperableHTMLElement {
         } else if (tpl.triggerType === 'scheduled') {
             const now = new Date();
             now.setHours(now.getHours() + 1, 0, 0, 0);
-            prefilledTodo.trigger = { type: 'scheduled', triggerAt: now.toISOString() };
+            prefilledTodo.trigger = { type: 'scheduled', triggerAt: now.toISOString(), timezone: getSystemTimezone() };
         }
 
         // 使用预填充的 todo 来填充表单字段，但标记为新增模式
@@ -1962,7 +1792,7 @@ class TodoMgrEntryWidget extends AgentOperableHTMLElement {
                         todo.trigger?.type === 'cron' && todo.trigger.cronExpression
                             ? `
                     <span class="tm-detail-attr-label">${escapeHtml(t('renderer.todo.detail.attr.cronExpression'))}</span>
-                    <span class="tm-detail-attr-value" style="font-family:'Maple Mono','Cascadia Code','SF Mono',monospace;font-size: var(--fs-md);">${escapeHtml(todo.trigger.cronExpression)}</span>
+                    <span class="tm-detail-attr-value" style="font-family:'Maple Mono','Cascadia Code','SF Mono',monospace;font-size: var(--fs-md);">${escapeHtml(todo.trigger.cronExpression)} (${escapeHtml(todo.trigger.timezone || 'UTC')})</span>
                     `
                             : ''
                     }
@@ -2064,6 +1894,7 @@ class TodoMgrEntryWidget extends AgentOperableHTMLElement {
         const content = !todo ? '' : todo.content;
         const isEnabled = !todo ? true : todo.enabled !== false;
         const triggerType = !todo ? addType || 'scheduled' : todo.trigger?.type || addType || 'scheduled';
+        this._editTimezone = todo?.trigger?.timezone || (todo?.trigger?.type === 'cron' ? 'UTC' : getSystemTimezone());
         const [recentWorkspaces] = await Promise.all([this._loadRecentWorkspaces(), this._loadChatModels()]);
         const workspaceOptionsHtml = this._renderWorkspaceOptions(todo?.workspace, recentWorkspaces);
         const workspaceHint = getWorkspaceDisplayName(todo?.workspace, t);
@@ -2099,6 +1930,12 @@ class TodoMgrEntryWidget extends AgentOperableHTMLElement {
                     <option value="event"${triggerType === 'event' ? ' selected' : ''}>${escapeHtml(t('renderer.todo.edit.triggerType.event'))}</option>
                 </select>
             </div>
+            <div class="tm-edit-field" id="tm-edit-timezone-field"${triggerType === 'event' ? ' hidden' : ''}>
+                <label class="tm-edit-label" for="tm-edit-timezone">${escapeHtml(t('renderer.todo.timezone.label'))}</label>
+                <select class="tm-edit-select" id="tm-edit-timezone">${this._renderTimezoneOptions()}</select>
+                <div class="tm-model-effort-note">${escapeHtml(t('renderer.todo.timezone.hint'))}</div>
+            </div>
+            <div id="tm-edit-error" class="tm-edit-error" role="alert" hidden></div>
             <div id="tm-trigger-fields"></div>
             <div class="tm-edit-field">
                 <label class="tm-edit-label">${escapeHtml(t('renderer.todo.edit.labelWorkspace'))}</label>
@@ -2144,8 +1981,37 @@ class TodoMgrEntryWidget extends AgentOperableHTMLElement {
 
         this.querySelector('#tm-edit-trigger-type')?.addEventListener('change', (e) => {
             const sel = (e.target as HTMLSelectElement).value;
+            const timezoneField = this.querySelector<HTMLElement>('#tm-edit-timezone-field');
+            if (timezoneField) timezoneField.hidden = sel === 'event';
             this._renderTriggerFields(sel, null);
         });
+        this.querySelector('#tm-edit-timezone')?.addEventListener('change', (event) => {
+            this._editTimezone = (event.target as HTMLSelectElement).value;
+            this._showEditError('');
+            if (this.querySelector('#tm-cron-preview')) this._updateCronPreview();
+            if (this.querySelector('#tm-dt-display-text')) this._updateDtDisplay();
+        });
+    }
+
+    private _renderTimezoneOptions(): string {
+        const systemTimezone = getSystemTimezone();
+        const values = typeof Intl.supportedValuesOf === 'function' ? Intl.supportedValuesOf('timeZone') : [];
+        const zones = new Set(['UTC', systemTimezone, this._editTimezone, ...values]);
+        return Array.from(zones)
+            .map((timezone) => {
+                let label =
+                    timezone === 'Asia/Shanghai' ? this._t('renderer.todo.timezone.beijing', { timezone }) : timezone;
+                if (timezone === systemTimezone) label = this._t('renderer.todo.timezone.system', { timezone: label });
+                return `<option value="${escapeHtml(timezone)}"${timezone === this._editTimezone ? ' selected' : ''}>${escapeHtml(label)}</option>`;
+            })
+            .join('');
+    }
+
+    private _showEditError(message: string): void {
+        const error = this.querySelector<HTMLElement>('#tm-edit-error');
+        if (!error) return;
+        error.textContent = message;
+        error.hidden = !message;
     }
 
     private _renderTriggerFields(type: string, existingTodo: GlobalTodo | null) {
@@ -2695,29 +2561,21 @@ class TodoMgrEntryWidget extends AgentOperableHTMLElement {
      * ═══════════════════════════ */
 
     private _renderDateTimePicker(container: HTMLElement, existingTodo: GlobalTodo | null) {
-        const now = new Date();
-        if (existingTodo?.trigger?.type === 'scheduled' && existingTodo.trigger.triggerAt) {
-            try {
-                const d = new Date(existingTodo.trigger.triggerAt);
-                this._dtYear = d.getFullYear();
-                this._dtMonth = d.getMonth() + 1;
-                this._dtDay = d.getDate();
-                this._dtHour = d.getHours();
-                this._dtMinute = d.getMinutes();
-            } catch {
-                this._dtYear = now.getFullYear();
-                this._dtMonth = now.getMonth() + 1;
-                this._dtDay = now.getDate();
-                this._dtHour = now.getHours();
-                this._dtMinute = 0;
-            }
-        } else {
-            this._dtYear = now.getFullYear();
-            this._dtMonth = now.getMonth() + 1;
-            this._dtDay = now.getDate();
-            this._dtHour = now.getHours();
-            this._dtMinute = 0;
+        const originalTriggerAt =
+            existingTodo?.trigger?.type === 'scheduled' ? existingTodo.trigger.triggerAt : undefined;
+        let local: string;
+        try {
+            local = formatDatetimeLocal(originalTriggerAt || new Date().toISOString(), this._editTimezone);
+        } catch {
+            local = formatDatetimeLocal(new Date().toISOString(), getSystemTimezone());
         }
+        const [date, time] = local.split('T');
+        [this._dtYear, this._dtMonth, this._dtDay] = date.split('-').map(Number);
+        [this._dtHour, this._dtMinute] = time.split(':').map(Number);
+        if (!originalTriggerAt) this._dtMinute = 0;
+        this._dtOriginal = originalTriggerAt
+            ? { local, timezone: this._editTimezone, triggerAt: originalTriggerAt }
+            : null;
         this._dtViewYear = this._dtYear;
         this._dtViewMonth = this._dtMonth;
         this._dtPanelOpen = true;
@@ -2779,13 +2637,9 @@ class TodoMgrEntryWidget extends AgentOperableHTMLElement {
         hourSel.innerHTML = hourHtml;
 
         let minHtml = '';
-        for (let m = 0; m < 60; m += 5) {
+        for (let m = 0; m < 60; m++) {
             const sel = m === this._dtMinute ? ' selected' : '';
             minHtml += `<option value="${m}"${sel}>${String(m).padStart(2, '0')}</option>`;
-        }
-        const minuteRounded = Math.round(this._dtMinute / 5) * 5;
-        if (minuteRounded !== this._dtMinute) {
-            this._dtMinute = minuteRounded >= 60 ? 55 : minuteRounded;
         }
         minSel.innerHTML = minHtml;
     }
@@ -2806,10 +2660,10 @@ class TodoMgrEntryWidget extends AgentOperableHTMLElement {
         let startWeekday = firstDay.getDay();
         if (startWeekday === 0) startWeekday = 7;
 
-        const today = new Date();
-        const todayY = today.getFullYear();
-        const todayM = today.getMonth() + 1;
-        const todayD = today.getDate();
+        const [todayY, todayM, todayD] = formatDatetimeLocal(new Date().toISOString(), this._editTimezone)
+            .split('T')[0]
+            .split('-')
+            .map(Number);
 
         let html = '';
         const prevLast = new Date(this._dtViewYear, this._dtViewMonth - 1, 0).getDate();
@@ -2846,6 +2700,7 @@ class TodoMgrEntryWidget extends AgentOperableHTMLElement {
                 day: this._dtDay,
                 time: `${pad(this._dtHour)}:${pad(this._dtMinute)}`
             });
+            text.textContent += ` (${this._editTimezone})`;
             text.classList.remove('tm-dt-placeholder');
         } else {
             text.textContent = this._t('renderer.todo.datetime.placeholder');
@@ -2916,10 +2771,13 @@ class TodoMgrEntryWidget extends AgentOperableHTMLElement {
         });
 
         todayBtn?.addEventListener('click', () => {
-            const now = new Date();
-            this._dtYear = now.getFullYear();
-            this._dtMonth = now.getMonth() + 1;
-            this._dtDay = now.getDate();
+            [this._dtYear, this._dtMonth, this._dtDay] = formatDatetimeLocal(
+                new Date().toISOString(),
+                this._editTimezone
+            )
+                .split('T')[0]
+                .split('-')
+                .map(Number);
             this._dtViewYear = this._dtYear;
             this._dtViewMonth = this._dtMonth;
             this._renderCalendar();
@@ -2966,7 +2824,7 @@ class TodoMgrEntryWidget extends AgentOperableHTMLElement {
             selectedDows = parsed.selectedDows;
             dom = parsed.dom;
             if (mode === 'custom') {
-                customCron = convertCronUTCToLocal(existingTodo.trigger.cronExpression);
+                customCron = existingTodo.trigger.cronExpression;
             }
         }
 
@@ -2975,9 +2833,10 @@ class TodoMgrEntryWidget extends AgentOperableHTMLElement {
             { length: 24 },
             (_, i) => `<option value="${i}"${i === hour ? ' selected' : ''}>${String(i).padStart(2, '0')}</option>`
         ).join('');
-        const minOptions = [0, 5, 10, 15, 20, 25, 30, 35, 40, 45, 50, 55]
-            .map((m) => `<option value="${m}"${m === minute ? ' selected' : ''}>${String(m).padStart(2, '0')}</option>`)
-            .join('');
+        const minOptions = Array.from(
+            { length: 60 },
+            (_, m) => `<option value="${m}"${m === minute ? ' selected' : ''}>${String(m).padStart(2, '0')}</option>`
+        ).join('');
         const domOptions = Array.from(
             { length: 31 },
             (_, i) =>
@@ -3056,27 +2915,11 @@ class TodoMgrEntryWidget extends AgentOperableHTMLElement {
             return { mode: 'custom', hour: 9, minute: 0, selectedDows: [], dom: '1' };
         }
 
-        const offsetMin = -new Date().getTimezoneOffset();
-        let lm = parseInt(cronMin, 10) + (offsetMin % 60);
-        let lh = parseInt(cronHour, 10) + Math.floor(offsetMin / 60);
-        let dayShift = 0;
-        if (lm >= 60) {
-            lh++;
-            lm -= 60;
+        const lh = parseInt(cronHour, 10);
+        const lm = parseInt(cronMin, 10);
+        if (cronDom !== '*' && cronDow !== '*') {
+            return { mode: 'custom', hour: lh, minute: lm, selectedDows: [], dom: cronDom };
         }
-        if (lm < 0) {
-            lh--;
-            lm += 60;
-        }
-        if (lh >= 24) {
-            lh -= 24;
-            dayShift = 1;
-        }
-        if (lh < 0) {
-            lh += 24;
-            dayShift = -1;
-        }
-
         let mode = 'daily';
         let selectedDows = [1, 2, 3, 4, 5];
         let dom = '1';
@@ -3089,7 +2932,7 @@ class TodoMgrEntryWidget extends AgentOperableHTMLElement {
             mode = 'weekly';
             selectedDows = cronDow.split(',').map((d) => {
                 const v = parseInt(d.trim(), 10);
-                return (((v + dayShift) % 7) + 7) % 7;
+                return v % 7;
             });
         } else if (cronDom !== '*') {
             if (!isSimpleNum(cronDom)) {
@@ -3137,7 +2980,7 @@ class TodoMgrEntryWidget extends AgentOperableHTMLElement {
         const mode = (this.querySelector('#tm-cron-mode') as HTMLSelectElement)?.value || 'daily';
         if (mode === 'custom') {
             const raw = (this.querySelector('#tm-cron-custom-input') as HTMLInputElement)?.value?.trim() || '';
-            return convertCronLocalToUTC(raw);
+            return raw;
         }
         const hour = parseInt((this.querySelector('#tm-cron-hour') as HTMLSelectElement)?.value || '9');
         const minute = parseInt((this.querySelector('#tm-cron-minute') as HTMLSelectElement)?.value || '0');
@@ -3171,12 +3014,12 @@ class TodoMgrEntryWidget extends AgentOperableHTMLElement {
             if (customInput) customInput.classList.remove('tm-input-error');
             previewEl.style.color = '';
         }
-        const localDesc = describeCronLocal(cron, this._t);
+        const localDesc = describeZonedCron(cron, this._t, this._editTimezone);
         if (mode === 'custom') {
             const rawInput = (this.querySelector('#tm-cron-custom-input') as HTMLInputElement)?.value?.trim() || '';
             previewEl.textContent = `${localDesc}（${rawInput}）`;
         } else {
-            previewEl.textContent = `${localDesc}（${convertCronUTCToLocal(cron)}）`;
+            previewEl.textContent = `${localDesc}（${cron}）`;
         }
     }
 
@@ -3272,17 +3115,36 @@ class TodoMgrEntryWidget extends AgentOperableHTMLElement {
         }
 
         let trigger: any = null;
+        this._showEditError('');
+        if (triggerType !== 'event' && !isValidTimezone(this._editTimezone)) {
+            this._showEditError(this._t('error.timezoneInvalid', { timezone: this._editTimezone }));
+            return;
+        }
         switch (triggerType) {
             case 'scheduled': {
                 if (this._dtYear && this._dtMonth && this._dtDay) {
-                    const d = new Date(this._dtYear, this._dtMonth - 1, this._dtDay, this._dtHour, this._dtMinute);
-                    trigger = { type: 'scheduled', triggerAt: d.toISOString() };
+                    const pad = (value: number) => String(value).padStart(2, '0');
+                    const local = `${String(this._dtYear).padStart(4, '0')}-${pad(this._dtMonth)}-${pad(this._dtDay)}T${pad(this._dtHour)}:${pad(this._dtMinute)}`;
+                    const original = this._dtOriginal;
+                    try {
+                        // Keep seconds and the original DST overlap occurrence when the date/time was not edited.
+                        const triggerAt =
+                            original?.local === local && original.timezone === this._editTimezone
+                                ? original.triggerAt
+                                : datetimeLocalToISOString(local, this._editTimezone);
+                        trigger = { type: 'scheduled', triggerAt, timezone: this._editTimezone };
+                    } catch {
+                        this._showEditError(
+                            this._t('renderer.todo.timezone.nonexistent', { timezone: this._editTimezone })
+                        );
+                        return;
+                    }
                 }
                 break;
             }
             case 'cron': {
                 const cronVal = this._getCronFromUI();
-                if (cronVal) trigger = { type: 'cron', cronExpression: cronVal };
+                if (cronVal) trigger = { type: 'cron', cronExpression: cronVal, timezone: this._editTimezone };
                 break;
             }
             case 'event': {

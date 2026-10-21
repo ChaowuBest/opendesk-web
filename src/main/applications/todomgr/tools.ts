@@ -25,6 +25,7 @@ import path from 'path';
 import type { Participant } from '../../plugins/types';
 import type { TodoWorkspaceConfig } from './common.js';
 import { REASONING_EFFORT_VALUES } from '../../aikernel/types/reasoning.js';
+import { formatDateTimeInTimezone, getSystemTimezone, isValidTimezone } from '../../../common/utils/timezone.js';
 
 const GetCurrentTimeArgsSchema = z.object({});
 
@@ -46,7 +47,7 @@ export class GetCurrentTimeTool extends BaseTool<typeof GetCurrentTimeArgsSchema
     constructor() {
         super(
             'getCurrentTime',
-            '获取当前精确的日期和时间。返回包含 UTC 时间、本地时间和时区信息',
+            '获取当前精确的日期和时间，返回 UTC 绝对时间、本地时间、系统 IANA 时区和 UTC 偏移。创建 scheduled 触发器时使用 UTC triggerAt；创建 cron 触发器时按目标 IANA timezone 的当地时间填写表达式。',
             GetCurrentTimeArgsSchema,
             undefined,
             { 'zh-CN': '当前时间', 'en-US': 'Current Time' }
@@ -94,7 +95,7 @@ export class GetCurrentTimeTool extends BaseTool<typeof GetCurrentTimeArgsSchema
         return [
             `- **${t('tool.getCurrentTime.labelUtc')}**: ${iso}`,
             `- **${t('tool.getCurrentTime.labelLocal')}**: ${locale}`,
-            `- **${t('tool.getCurrentTime.labelTimezone')}**: ${timezone}`,
+            `- **${t('tool.getCurrentTime.labelTimezone')}**: ${getSystemTimezone()} (${timezone})`,
             `- **${t('tool.getCurrentTime.labelTimestamp')}**: ${now.getTime()}`
         ].join('\n');
     }
@@ -108,20 +109,34 @@ const EventTriggerSchema = z.object({
     eventName: z.string().describe('事件名称，如 "newEmailCountsUpdated"')
 });
 
+const TimezoneSchema = z
+    .string()
+    .refine(isValidTimezone, {
+        error: (issue) => t('error.timezoneInvalid', { timezone: String(issue.input) })
+    })
+    .optional()
+    .describe(
+        'IANA 时区，如 "Asia/Shanghai"、"America/New_York"；新建时默认使用系统时区，更新时应保留原时区，旧 cron 未指定时保持 UTC；scheduled 中仅用于展示'
+    );
+
 const ScheduledTriggerSchema = z.object({
     type: z.literal('scheduled'),
     triggerAt: z
         .string()
         .describe(
             '任务触发时间，必须使用UTC时间（ISO8601格式，以Z结尾），请先调用getCurrentTime工具获取当前UTC时间为基准进行计算'
-        )
+        ),
+    timezone: TimezoneSchema
 });
 
 const CronTriggerSchema = z.object({
     type: z.literal('cron'),
     cronExpression: z
         .string()
-        .describe('crontab 表达式: "分 时 日 月 周"，如 "0 9 * * 1-5" 表示工作日每天9点, "*/30 * * * *" 表示每30分钟')
+        .describe(
+            'crontab 表达式: "分 时 日 月 周"，按 timezone 指定时区的当地时间解释。如 "0 9 * * 1-5" 表示工作日每天9点，勿将指定时区的时间再次换算为 UTC；新建时未指定 timezone 默认使用系统时区'
+        ),
+    timezone: TimezoneSchema
 });
 
 const TriggerSchema = z.discriminatedUnion('type', [EventTriggerSchema, ScheduledTriggerSchema, CronTriggerSchema]);
@@ -217,15 +232,17 @@ function validateAndNormalizeTrigger(trigger: unknown): z.output<typeof TriggerS
     return result.data;
 }
 
-function formatTriggerDisplay(trigger: any): string {
+function formatTriggerDisplay(trigger: any, cronTimezoneFallback = 'UTC'): string {
     if (!trigger) return '';
     switch (trigger.type) {
         case 'event':
             return `📡 ${trigger.bundleName}:${trigger.eventName}`;
-        case 'scheduled':
-            return `⏱ ${new Date(trigger.triggerAt).toLocaleString()}`;
+        case 'scheduled': {
+            const timezone = trigger.timezone ?? getSystemTimezone();
+            return `⏱ ${formatDateTimeInTimezone(trigger.triggerAt, timezone)} (${timezone})`;
+        }
         case 'cron':
-            return `🔁 ${describeCron(trigger.cronExpression, cronLabels())}`;
+            return `🔁 ${describeCron(trigger.cronExpression, cronLabels(), trigger.timezone ?? cronTimezoneFallback)}`;
         default:
             return '';
     }
@@ -249,7 +266,7 @@ function getStatusBadge(isEnabled: boolean): { color: string; bg: string; label:
     return { ...style, label: t(isEnabled ? 'status.enabled' : 'status.disabled') };
 }
 
-function renderTodoCardHtml(actionLabel: string, args: any, toolcall: ToolCall): string {
+function renderTodoCardHtml(actionLabel: string, args: any, toolcall: ToolCall, cronTimezoneFallback = 'UTC'): string {
     const title = args?.['title'] || '';
     const content = args?.['content'] || '';
     const trigger = args?.['trigger'];
@@ -258,7 +275,7 @@ function renderTodoCardHtml(actionLabel: string, args: any, toolcall: ToolCall):
     const triggerType = trigger?.type || 'scheduled';
     const tCfg = TRIGGER_ICON_CONFIG[triggerType] || TRIGGER_ICON_CONFIG.scheduled;
     const sCfg = getStatusBadge(isEnabled);
-    const triggerDesc = formatTriggerDisplay(trigger);
+    const triggerDesc = formatTriggerDisplay(trigger, cronTimezoneFallback);
 
     const isRunning = toolcall.status === 'running';
     const isSuccess = toolcall.status === 'success';
@@ -563,7 +580,7 @@ const AddGlobalTodoArgsSchema = z.object({
         .describe('优先级（保留字段，暂无实际语义）'),
     category: z.string().optional().describe('分类标签（保留字段，暂无实际语义）'),
     trigger: TriggerSchema.optional().describe(
-        '触发器配置。event: 事件触发; scheduled: 定时一次性触发 (**必须使用 UTC 时间**); cron: crontab 重复触发。不指定则为手动模式。'
+        '触发器配置。event: 事件触发；scheduled: 定时一次性触发（triggerAt 必须为 UTC 绝对时间，timezone 仅用于展示）；cron: 按 timezone 的当地时间重复触发。新建时 timezone 未指定则使用系统时区。不指定 trigger 则为手动模式。'
     ),
     deliver: ChannelDeliverSchema.optional().describe(
         '任务完成后的回复投递目标。指定后，触发任务的最终回复会发送到该渠道联系人；不指定时，如果当前任务来自渠道会自动继承当前会话。'
@@ -592,7 +609,9 @@ export class AddGlobalTodoTool extends BaseTool<typeof AddGlobalTodoArgsSchema> 
     }
 
     renderToolCall(toolcall: ToolCall): Promise<string | undefined> {
-        return Promise.resolve(renderTodoCardHtml(t('tool.card.add'), toolcall.args_object, toolcall));
+        return Promise.resolve(
+            renderTodoCardHtml(t('tool.card.add'), toolcall.args_object, toolcall, getSystemTimezone())
+        );
     }
 
     renderToolCallCli(toolcall: ToolCall, width: number): string[] | undefined {
@@ -610,7 +629,10 @@ export class AddGlobalTodoTool extends BaseTool<typeof AddGlobalTodoArgsSchema> 
                 body.push(chalk.dim(t('tool.cli.label.content')) + truncText(String(content), width - 20));
             }
             if (trigger) {
-                body.push(chalk.dim(t('tool.cli.label.trigger')) + chalk.cyan(formatTriggerDisplay(trigger)));
+                body.push(
+                    chalk.dim(t('tool.cli.label.trigger')) +
+                        chalk.cyan(formatTriggerDisplay(trigger, getSystemTimezone()))
+                );
             }
         }
 
@@ -700,7 +722,7 @@ export class UpdateGlobalTodoTool extends BaseTool<typeof UpdateGlobalTodoArgsSc
     constructor(todoMgrApp: TodoMgrApplication) {
         super(
             'updateGlobalTodo',
-            '更新全局待办事项的标题、内容、启用状态、触发器、工作空间或回复投递目标。设 removeTrigger/removeDeliver/removeWorkspace 为 true 可移除对应配置。**注意**: 1. 设置 scheduled 触发器时，triggerAt 必须使用 UTC 时间（如 "2026-03-01T01:00:00Z"）；2. content 是发送给 Agent 执行的详细指令，Agent 有能力调用工具访问文件、执行命令等。',
+            '更新全局待办事项的标题、内容、启用状态、触发器、工作空间或回复投递目标。设 removeTrigger/removeDeliver/removeWorkspace 为 true 可移除对应配置。**注意**: 1. scheduled.triggerAt 必须为 UTC 绝对时间（如 "2026-03-01T01:00:00Z"），timezone 仅用于展示；2. cron 表达式使用 timezone 指定时区的当地时间，timezone 未指定时为 UTC；3. content 是发送给 Agent 执行的详细指令，Agent 有能力调用工具访问文件、执行命令等。',
             UpdateGlobalTodoArgsSchema,
             undefined,
             { 'zh-CN': '更新全局待办', 'en-US': 'Update Global Todo' }

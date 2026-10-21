@@ -169,31 +169,36 @@ function fillTemplate(template: string, params: Record<string, string | number>)
 }
 
 /**
- * 格式化 cron 表达式为人类可读描述（自动将 UTC 时间转换为本地时间显示）
+ * 格式化 cron 表达式为人类可读描述；指定时区时直接展示该时区的字段，
+ * 未指定时区时保留将 UTC 时间转换为系统本地时间的历史行为。
  * @param labels 可选的多语言文案；不传时使用中文默认文案（TUI dashboard 等沿用）
+ * @param timezone cron 字段所属的 IANA 时区
  */
-export function describeCron(cronExpression: string, labels?: CronDescribeLabels): string {
+export function describeCron(cronExpression: string, labels?: CronDescribeLabels, timezone?: string): string {
     const l = labels ?? DEFAULT_CRON_LABELS;
     const fields = cronExpression.trim().split(/\s+/);
     if (fields.length !== 5) return cronExpression;
 
     const [minute, hour, dom, month, dow] = fields;
-    const { localMinute, localHour, localDow, converted } = convertCronFieldsToLocal(minute, hour, dow);
+    const { localMinute, localHour, localDow, converted } = timezone
+        ? { localMinute: minute, localHour: hour, localDow: dow, converted: false }
+        : convertCronFieldsToLocal(minute, hour, dow);
     const parts: string[] = [];
 
     if (localDow !== '*') {
-        if (localDow.includes('-')) {
+        const dayName = (day: string | number) => l.dowNames[Number(day) % 7] || String(day);
+        if (/^[0-7]-[0-7]$/.test(localDow)) {
             const [s, e] = localDow.split('-').map(Number);
-            const from = fillTemplate(l.dowTemplate, { day: l.dowNames[s] || s });
-            const to = fillTemplate(l.dowTemplate, { day: l.dowNames[e] || e });
+            const from = fillTemplate(l.dowTemplate, { day: dayName(s) });
+            const to = fillTemplate(l.dowTemplate, { day: dayName(e) });
             parts.push(`${from}-${to}`);
-        } else if (localDow.includes(',')) {
-            const days = localDow
-                .split(',')
-                .map((d) => fillTemplate(l.dowTemplate, { day: l.dowNames[parseInt(d)] || d }));
+        } else if (/^[0-7](,[0-7])+$/.test(localDow)) {
+            const days = localDow.split(',').map((day) => fillTemplate(l.dowTemplate, { day: dayName(day) }));
             parts.push(days.join('/'));
+        } else if (/^[0-7]$/.test(localDow)) {
+            parts.push(fillTemplate(l.everyDowTemplate, { day: dayName(localDow) }));
         } else {
-            parts.push(fillTemplate(l.everyDowTemplate, { day: l.dowNames[parseInt(localDow)] || localDow }));
+            parts.push(localDow);
         }
     }
 
@@ -208,7 +213,10 @@ export function describeCron(cronExpression: string, labels?: CronDescribeLabels
         parts.push(fillTemplate(l.minuteTemplate, { minute: localMinute }));
     }
 
-    if (!converted && (hour !== '*' || minute !== '*')) {
+    if (timezone) {
+        if (parts.length === 0) parts.push(l.everyMinute);
+        parts.push(`(${timezone})`);
+    } else if (!converted && (hour !== '*' || minute !== '*')) {
         parts.push('(UTC)');
     }
 

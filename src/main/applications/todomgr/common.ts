@@ -33,11 +33,15 @@ export interface ScheduledTriggerConfig {
      * 例如：当地时间 2026-03-01 09:00 (UTC+8) 应存储为 "2026-03-01T01:00:00Z"
      */
     triggerAt: string;
+    /** 输入和展示时间使用的 IANA 时区，新建默认使用系统时区；triggerAt 始终保存 UTC 绝对时间 */
+    timezone?: string;
 }
 
 export interface CronTriggerConfig {
     type: 'cron';
     cronExpression: string; // crontab 表达式: "分 时 日 月 周"
+    /** cron 字段所属的 IANA 时区，新建默认使用系统时区；旧数据未设置时沿用 UTC 语义 */
+    timezone?: string;
 }
 
 export type TodoTrigger = EventTriggerConfig | ScheduledTriggerConfig | CronTriggerConfig;

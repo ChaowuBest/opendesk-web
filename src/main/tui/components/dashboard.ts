@@ -24,6 +24,7 @@ import type { TaskState } from '../../aikernel/states/tasks.js';
 import { describeCron } from '../../utils/cron';
 import type { ChannelRuntimeState } from '../../applications/channelmgr/app.js';
 import { t } from '../../../locale/index.js';
+import { formatDateTimeInTimezone, getSystemTimezone } from '../../../common/utils/timezone.js';
 
 const HIDDEN_DASHBOARD_STATUS_BUNDLES = new Set(['channelmgr', 'todomgr', 'filemgr']);
 
@@ -432,11 +433,17 @@ class DashboardRenderer implements Component {
                 case 'event':
                     triggerTag = C.neon('📡 ') + C.dim(`${todo.trigger.bundleName}:${todo.trigger.eventName}`);
                     break;
-                case 'scheduled':
-                    triggerTag = C.amber('⏱  ') + C.dim(new Date(todo.trigger.triggerAt).toLocaleString());
+                case 'scheduled': {
+                    const timezone = todo.trigger.timezone ?? getSystemTimezone();
+                    triggerTag =
+                        C.amber('⏱  ') +
+                        C.dim(`${formatDateTimeInTimezone(todo.trigger.triggerAt, timezone)} (${timezone})`);
                     break;
+                }
                 case 'cron':
-                    triggerTag = C.glow('⟳  ') + C.dim(describeCron(todo.trigger.cronExpression));
+                    triggerTag =
+                        C.glow('⟳  ') +
+                        C.dim(describeCron(todo.trigger.cronExpression, undefined, todo.trigger.timezone ?? 'UTC'));
                     break;
             }
         }

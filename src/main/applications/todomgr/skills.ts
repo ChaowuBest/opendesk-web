@@ -39,6 +39,7 @@ addGlobalTodo 还支持以下可选配置：
 - deliver：触发任务完成后最终回复的投递目标，格式为 \`{"type":"channel","channel":"渠道ID","accountId":"账号ID","recipientId":"接收方ID"}\`；不指定时，如果当前任务本身来自消息渠道，会继承当前会话作为投递目标。
 - model：触发任务使用的已配置聊天模型 alias；不指定则在触发时使用全局默认模型。
 - reasoningEffort：推理档位，可选 \`\`, \`none\`, \`low\`, \`medium\`, \`high\`, \`max\`；不指定或为空字符串时使用模型默认档位。
+- trigger.timezone：scheduled 和 cron 触发器的 IANA 时区，如 \`Asia/Shanghai\`、\`America/New_York\`；新建时未指定则保存当前系统时区。cron 按该时区的当地时间执行并自动跟随夏令时；scheduled 的 triggerAt 始终是 UTC 绝对时间，timezone 仅决定展示时区。
 
 ### 在创建全局待办事项时应遵循以下规则
 
@@ -80,11 +81,11 @@ Agent：我来帮你添加一个全局待办。首先获取当前时间来确定
 用户：明天上午9点提醒我开会
 
 Agent：我来帮你创建一个定时提醒。首先获取当前 UTC 时间...
-[调用 getCurrentTime 工具，假设当前 UTC 时间为 2026-02-28T10:00:00Z]
+[调用 getCurrentTime 工具，假设当前 UTC 时间为 2026-02-28T10:00:00Z，系统时区为 Asia/Shanghai]
 [调用 addGlobalTodo 工具]
 - title: "开会提醒"
 - content: "参加会议"
-- trigger: {"type": "scheduled", "triggerAt": "2026-03-01T01:00:00Z"}
+- trigger: {"type": "scheduled", "triggerAt": "2026-03-01T01:00:00Z", "timezone": "Asia/Shanghai"}
   （注：北京时间上午9点 = UTC时间凌晨1点）
 - workspace: "/path/to/workspace"（可选）
 - deliver: {"type":"channel","channel":"feishu","accountId":"default","recipientId":"oc_xxx"}（可选）
@@ -99,8 +100,8 @@ Agent：我来创建一个周期性提醒...
 [调用 addGlobalTodo 工具]
 - title: "写日报"
 - content: "撰写今日工作日报，总结完成事项和明日计划"
-- trigger: {"type": "cron", "cronExpression": "0 1 * * 1-5"}
-  （注：UTC 1:00 = 北京时间 9:00，工作日触发）
+- trigger: {"type": "cron", "cronExpression": "0 9 * * 1-5", "timezone": "Asia/Shanghai"}
+  （注：按 Asia/Shanghai 的当地时间 9:00 在工作日触发，不需要再换算为 UTC）
 \`\`\`
 
 ### 示例4：查看和管理待办
@@ -121,9 +122,10 @@ Agent：好的，我来更新这个待办的启用状态...
 
 1. **时间格式**：所有 scheduled 触发器的时间必须使用 **UTC 时间**（ISO 8601 格式，以 Z 结尾）。例如：
    - 北京时间 2026-03-01 09:00 (UTC+8) → UTC 时间 \`2026-03-01T01:00:00Z\`
-   - 使用 \`getCurrentTime\` 工具获取当前 UTC 时间作为计算基准
+   - 使用 \`getCurrentTime\` 工具获取当前 UTC 时间和系统 IANA 时区作为计算基准
+   - trigger.timezone 只决定 scheduled 计划的展示时区，不会改变 triggerAt 对应的绝对执行时刻
 
-2. **cron 表达式**：使用标准 5 字段格式 "分 时 日 月 周"，时间为 UTC 时间
+2. **cron 表达式**：使用标准 5 字段格式 "分 时 日 月 周"，按 trigger.timezone 指定的 IANA 时区当地时间解释，并自动适应夏令时。例如纽约每天 9 点应使用 \`{"type":"cron","cronExpression":"0 9 * * *","timezone":"America/New_York"}\`，不要将 9 点预先换算成 UTC。新建时未指定 timezone 默认使用当前系统时区；未指定 timezone 的旧计划继续按 UTC 执行，更新已有计划时应保留它的时区和执行语义。
 
 3. **一次性任务的自动禁用**：scheduled 和 event 类型的待办在触发执行后会自动设为 enabled=false（未启用），如需再次执行需重新启用
 

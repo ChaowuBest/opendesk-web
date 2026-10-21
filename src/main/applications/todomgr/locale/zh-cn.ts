@@ -109,6 +109,13 @@ export const zhCn: Record<string, string> = {
     'renderer.todo.edit.saving': '保存中...',
     'renderer.todo.edit.retry': '重试',
 
+    // ========== Renderer：时区 ==========
+    'renderer.todo.timezone.label': '时区',
+    'renderer.todo.timezone.hint': '按所选时区的当地时间执行。新任务默认使用系统时区。',
+    'renderer.todo.timezone.beijing': '${timezone}（北京时间）',
+    'renderer.todo.timezone.system': '${timezone} · 系统时区',
+    'renderer.todo.timezone.nonexistent': '输入的日期或时间在 ${timezone} 中不存在，请选择其他时间。',
+
     // ========== Renderer：模型选择 ==========
     'renderer.todo.model.globalDefault': '跟随全局默认模型',
     'renderer.todo.model.currentDefault': '当前默认：${alias}',
@@ -250,6 +257,7 @@ export const zhCn: Record<string, string> = {
         '事件参数形如 { taskId, todos }，todos 为最新的任务级待办列表',
 
     // ========== 工具校验错误 ==========
+    'error.timezoneInvalid': '时区无效：${timezone}。请使用有效的 IANA 时区，例如 Asia/Shanghai。',
     'error.workspaceEmpty': 'workspace 不能为空；如不需要指定工作空间，请省略该字段',
     'error.workspaceNotAbsolute': 'workspace 必须是绝对路径，当前值："${workspace}"',
     'error.triggerInvalid':

@@ -109,6 +109,15 @@ export const enUs: Record<string, string> = {
     'renderer.todo.edit.saving': 'Saving...',
     'renderer.todo.edit.retry': 'Retry',
 
+    // ========== Renderer: timezone ==========
+    'renderer.todo.timezone.label': 'Timezone',
+    'renderer.todo.timezone.hint':
+        'Runs at local time in the selected timezone. New tasks default to the system timezone.',
+    'renderer.todo.timezone.beijing': '${timezone} (Beijing time)',
+    'renderer.todo.timezone.system': '${timezone} · System timezone',
+    'renderer.todo.timezone.nonexistent':
+        'The entered date or time does not exist in ${timezone}. Choose another time.',
+
     // ========== Renderer: model picker ==========
     'renderer.todo.model.globalDefault': 'Follow global default model',
     'renderer.todo.model.currentDefault': 'Current default: ${alias}',
@@ -251,6 +260,7 @@ export const enUs: Record<string, string> = {
         'Args: { taskId, todos }, where todos is the latest task-level todo list',
 
     // ========== 工具校验错误 ==========
+    'error.timezoneInvalid': 'Invalid timezone: ${timezone}. Use a valid IANA timezone, for example Asia/Shanghai.',
     'error.workspaceEmpty': 'workspace cannot be empty; omit the field if no workspace is needed',
     'error.workspaceNotAbsolute': 'workspace must be an absolute path, got: "${workspace}"',
     'error.triggerInvalid':
