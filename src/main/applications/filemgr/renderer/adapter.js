@@ -9,6 +9,9 @@
  * See the Mulan PSL v2 for more details.
  */
 
+import { resolveDriveRootPath } from '../utils.js';
+import { getPlatform } from './state.js';
+
 function getTopWindow() {
     try {
         return globalThis.window?.top ?? null;
@@ -124,7 +127,11 @@ export async function saveEntries(nextEntries) {
 }
 
 export async function listDirectory(path, opts) {
-    return getWorkspaceAPI().listDirectory(path, { includeFiles: false, ...opts });
+    const platform = getPlatform();
+    if (!platform && typeof path === 'string' && /^[A-Za-z]:[/\\]?$/.test(path)) {
+        throw new Error('FileMgr platform is not ready for drive-root directory access.');
+    }
+    return getWorkspaceAPI().listDirectory(resolveDriveRootPath(path, platform), { includeFiles: false, ...opts });
 }
 
 export async function listDrives() {

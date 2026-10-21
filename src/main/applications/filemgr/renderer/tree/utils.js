@@ -53,6 +53,7 @@ export function directoriesOnly(entries) {
     return entries.filter((entry) => entry?.isDirectory || entry?.isDrive);
 }
 
+// Comparison keys may contain bare drive roots; resolve them at filesystem boundaries.
 export function normalizePath(path) {
     if (typeof path !== 'string') {
         return '';

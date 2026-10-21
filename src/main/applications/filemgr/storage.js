@@ -9,6 +9,7 @@
  * See the Mulan PSL v2 for more details.
  */
 
+import { resolveDriveRootPath } from './utils.js';
 import { getOpendeskDirectory, Setting } from '../../utils/setting.js';
 import { z } from 'zod';
 import { logger } from '../../utils/logger.js';
@@ -120,6 +121,7 @@ function toStorageTimestamp(value) {
 }
 
 function normalizeRootPath(value) {
+    value = resolveDriveRootPath(value, process.platform);
     // 统一为正斜杠：Windows 上 item_id 来自 fast-glob（正斜杠），而 root 可能来自
     // os.homedir() 等反斜杠来源，前缀区间查询必须与 item_id 同向才能命中
     const normalized = String(value).replace(/\\/g, '/').replace(/\/+/g, '/');

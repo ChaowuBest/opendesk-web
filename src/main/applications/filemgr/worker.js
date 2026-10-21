@@ -63,6 +63,7 @@ import {
 } from './search/indexed.js';
 import { extractText as extractFileTextFromParser } from './parser/extract.js';
 import { FSEntrySchema } from './setting.js';
+import { resolveDriveRootPath } from './utils.js';
 
 const MAX_RECENT_FAILURES = 20;
 
@@ -268,7 +269,7 @@ class FSScanner {
         const lastScanningTime = this.state.last_full_scan;
 
         const stream = fastGlob.stream(this.entry.include_patterns, {
-            cwd: this.root,
+            cwd: resolveDriveRootPath(this.root, process.platform),
             deep: deep,
             dot: false,
             stats: true,
@@ -467,13 +468,20 @@ class FileManagerWorker extends BaseWorker {
         return this._pendingConfigChange?.entries ?? this._lastConfig?.entries ?? this.config?.entries ?? [];
     }
 
+    _findWorkspaceRoot(workspace, roots = this._getActiveRoots()) {
+        if (roots.includes(workspace)) return workspace;
+        if (typeof workspace !== 'string') return null;
+        const workspacePath = resolveDriveRootPath(workspace, process.platform);
+        return roots.find((root) => resolveDriveRootPath(root, process.platform) === workspacePath) ?? null;
+    }
+
     _isEmbeddingBusy() {
         if (this.storage?.mode !== 'full') return false;
         return this._embeddingQueueActive || this._embeddingQueueScheduled;
     }
 
     _getScanIntervalForRoot(root) {
-        if (root !== this._currentWorkspace) return NORMAL_SCAN_INTERVAL_MS;
+        if (root !== this._findWorkspaceRoot(this._currentWorkspace)) return NORMAL_SCAN_INTERVAL_MS;
         return this._isEmbeddingBusy() ? WORKSPACE_SCAN_INTERVAL_WHILE_EMBEDDING_MS : WORKSPACE_SCAN_INTERVAL_MS;
     }
 
@@ -501,7 +509,7 @@ class FileManagerWorker extends BaseWorker {
                     if (this.storage !== storage || runnableRoots.length === 0) return 0;
                     return await storage.processEmbeddingQueue(() => this._shouldYieldEmbeddingQueue(), {
                         activeRoots: runnableRoots,
-                        currentWorkspace: runnableRoots.includes(this._currentWorkspace) ? this._currentWorkspace : null
+                        currentWorkspace: this._findWorkspaceRoot(this._currentWorkspace, runnableRoots)
                     });
                 } finally {
                     this._embeddingQueueActive = false;
@@ -1189,6 +1197,10 @@ class FileManagerWorker extends BaseWorker {
     _buildLightweightStatusSnapshot({ status, platform, isOpenHarmony, homePath }) {
         const entries = this._getVisibleConfigEntries();
         const defaultWorkspace = this._getDefaultWorkspace();
+        const workspaceRoot = this._findWorkspaceRoot(
+            defaultWorkspace,
+            entries.map((entry) => entry.root)
+        );
         const sources = entries.map((entry) => {
             const rootState = this.storage?.scannerState?.roots?.[entry.root];
             const paused = rootState?.paused === true;
@@ -1206,7 +1218,7 @@ class FileManagerWorker extends BaseWorker {
                 embedded_count: 0,
                 pending_count: 0,
                 failed_count: rootState?.last_failed_count ?? 0,
-                is_workspace: entry.root === defaultWorkspace
+                is_workspace: entry.root === workspaceRoot
             };
         });
 
@@ -1257,6 +1269,10 @@ class FileManagerWorker extends BaseWorker {
         const roots = entries.map((entry) => entry.root);
         const perRootCounts = await this.storage.getPerRootCounts(roots);
         const defaultWorkspace = this._getDefaultWorkspace();
+        const workspaceRoot = this._findWorkspaceRoot(
+            defaultWorkspace,
+            entries.map((entry) => entry.root)
+        );
         const scannerList = [...this.scanners.values()].map((scanner) => ({
             entry: scanner.entry,
             root: scanner.root,
@@ -1285,7 +1301,7 @@ class FileManagerWorker extends BaseWorker {
                 embedded_count: counts.embedded_count,
                 pending_count: counts.pending_count,
                 failed_count: counts.failed_count ?? 0,
-                is_workspace: entry.root === defaultWorkspace
+                is_workspace: entry.root === workspaceRoot
             };
         });
 
@@ -1483,9 +1499,10 @@ class FileManagerWorker extends BaseWorker {
                         logger.warn(`[filemgr] failed to update default workspace marker: ${error?.message ?? error}`);
                     }
 
+                    const workspaceRoot = this._findWorkspaceRoot(defaultWorkspace) ?? defaultWorkspace;
                     if (this.storage?.scannerState?.roots) {
-                        if (!this.storage.scannerState.roots[defaultWorkspace]) {
-                            this.storage.scannerState.roots[defaultWorkspace] = {
+                        if (!this.storage.scannerState.roots[workspaceRoot]) {
+                            this.storage.scannerState.roots[workspaceRoot] = {
                                 last_full_scan: 0,
                                 last_scan_at: null,
                                 total_files: 0,
@@ -1493,10 +1510,10 @@ class FileManagerWorker extends BaseWorker {
                                 paused: false
                             };
                         } else {
-                            this.storage.scannerState.roots[defaultWorkspace].last_full_scan = 0;
+                            this.storage.scannerState.roots[workspaceRoot].last_full_scan = 0;
                         }
                         await this.storage.saveScannerState?.();
-                        this.scanners.get(defaultWorkspace)?.requestImmediateScan?.(this.taskQueue);
+                        this.scanners.get(workspaceRoot)?.requestImmediateScan?.(this.taskQueue);
                     }
                 } finally {
                     if (this._pendingWorkspaceChange === pendingWorkspace) {
