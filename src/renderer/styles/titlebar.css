@@ -104,6 +104,12 @@ html.window-rounded {
     --od-window-zoom: 1;
     --od-window-margin: calc(20px / var(--od-window-zoom));
     --od-window-radius: 14px;
+    /* 挂在 body 下的全屏遮罩（确认框、lightbox、搜索面板伴生遮罩等）以 body 为
+       包含块，而 body 铺满整个窗口矩形。遮罩必须内缩到 #app-root 的内容矩形并
+       跟随其圆角，否则会把四周透明阴影边距涂黑、四角画成直角（遮罩超出窗口外框）。
+       最大化/全屏时下面两个变量随 margin/radius 折叠为 0，遮罩自动铺满窗口。 */
+    --od-overlay-inset: var(--od-window-margin);
+    --od-overlay-radius: var(--od-window-radius);
 }
 
 html.window-rounded,

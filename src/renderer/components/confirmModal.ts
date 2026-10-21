@@ -279,7 +279,11 @@ export function detectDarkMode(mountTarget: HTMLElement = document.body): boolea
 export const MODAL_CSS = `
 ${OVERLAY_CSS}
 .od-confirm-modal-overlay {
-    position: fixed; inset: 0; z-index: 99999;
+    /* 与 .od-overlay-root 同规则：Linux 自绘圆角窗口下内缩到内容矩形并跟随圆角。
+       部分调用点（设置面板 / 侧栏任务信息 / 反馈弹窗）直接创建该 class，
+       定位必须在此自足，不能只依赖 .od-overlay-root。 */
+    position: fixed; inset: var(--od-overlay-inset, 0px);
+    border-radius: var(--od-overlay-radius, 0px); z-index: 99999;
     display: flex; align-items: center; justify-content: center;
     animation: od-modal-fade-in ${ANIM_DURATION_IN}ms ease-out forwards;
 ${CONFIRM_LIGHT_TOKENS}
@@ -494,11 +498,12 @@ export function showConfirmModal(options: ConfirmModalOptions): Promise<boolean>
                </div>`
             : '';
 
-        const localOverlay = options.target
-            ? createOverlay({ target: options.target, className: 'od-confirm-modal-overlay' })
-            : undefined;
-        const overlay = localOverlay?.element ?? document.createElement('div');
-        overlay.classList.add('od-confirm-modal-overlay');
+        const overlayHandle = createOverlay({
+            target: options.target,
+            mountTarget,
+            className: 'od-confirm-modal-overlay'
+        });
+        const overlay = overlayHandle.element;
         if (!animate) {
             overlay.classList.add('od-modal-no-animation');
         }
@@ -528,7 +533,7 @@ export function showConfirmModal(options: ConfirmModalOptions): Promise<boolean>
             if (resolved) return;
             resolved = true;
             const finish = () => {
-                localOverlay ? localOverlay.dispose() : overlay.remove();
+                overlayHandle.dispose();
                 resolve(result);
             };
             if (animate) {
@@ -602,7 +607,6 @@ export function showConfirmModal(options: ConfirmModalOptions): Promise<boolean>
             setTimeout(() => challengeInput.focus(), animate ? ANIM_DURATION_IN : 0);
         }
 
-        if (!localOverlay) mountTarget.appendChild(overlay);
         if (autoFocusConfirm) {
             confirmBtn.focus();
         }
@@ -697,11 +701,12 @@ export function showCloseDialog(options: CloseDialogOptions): Promise<CloseDialo
             mountTarget = document.body
         } = options;
 
-        const localOverlay = options.target
-            ? createOverlay({ target: options.target, className: 'od-confirm-modal-overlay' })
-            : undefined;
-        const overlay = localOverlay?.element ?? document.createElement('div');
-        overlay.classList.add('od-confirm-modal-overlay');
+        const overlayHandle = createOverlay({
+            target: options.target,
+            mountTarget,
+            className: 'od-confirm-modal-overlay'
+        });
+        const overlay = overlayHandle.element;
         if (detectDarkMode(options.target ?? mountTarget)) {
             overlay.classList.add('od-modal-dark');
         }
@@ -754,7 +759,7 @@ export function showCloseDialog(options: CloseDialogOptions): Promise<CloseDialo
             resolved = true;
             overlay.classList.add('od-modal-leaving');
             setTimeout(() => {
-                localOverlay ? localOverlay.dispose() : overlay.remove();
+                overlayHandle.dispose();
                 resolve(result);
             }, ANIM_DURATION_OUT);
             document.removeEventListener('keydown', escHandler);
@@ -790,7 +795,5 @@ export function showCloseDialog(options: CloseDialogOptions): Promise<CloseDialo
         overlay
             .querySelector('[data-action="quit"]')!
             .addEventListener('click', () => finish({ action: 'quit', dontAsk: getDontAsk() }));
-
-        if (!localOverlay) mountTarget.appendChild(overlay);
     });
 }

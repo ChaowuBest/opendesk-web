@@ -14,6 +14,8 @@ test('defaults to the viewport and shares one stylesheet per root', () => {
     const second = createOverlay();
     expect(first.element.parentNode).toBe(document.body);
     expect(first.element.classList.contains('od-overlay')).toBe(true);
+    expect(first.element.classList.contains('od-overlay-root')).toBe(true);
+    expect(first.element.classList.contains('od-overlay-local')).toBe(false);
     expect(document.querySelectorAll('style[data-od-overlay-style]')).toHaveLength(1);
     first.dispose();
     second.dispose();

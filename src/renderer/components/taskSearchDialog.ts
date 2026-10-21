@@ -9,7 +9,7 @@
  * See the Mulan PSL v2 for more details.
  */
 
-import { ensureOverlayStyles } from './overlay.js';
+import { createOverlay, ensureOverlayStyles } from './overlay.js';
 import './taskSearchDialog.css';
 import {
     normalizeSearchText,
@@ -56,6 +56,11 @@ export class TaskSearchDialog {
     private origin?: HTMLElement;
     private visible = false;
     private openGuard?: ReturnType<typeof setTimeout>;
+    /**
+     * 伴生遮罩：原生 dialog 的 ::backdrop 恒铺满视口，Linux 自绘圆角窗口下会盖住
+     * 四周透明阴影边距（遮罩超出窗口外框），故暗色与模糊由它承担并内缩到内容矩形。
+     */
+    private scrim?: { dispose(): void };
 
     constructor(private readonly options: Options) {
         const t = (key: string) => options.translate('renderer.taskSearch.' + key);
@@ -143,6 +148,7 @@ export class TaskSearchDialog {
             return;
         }
         this.origin = document.activeElement instanceof HTMLElement ? document.activeElement : undefined;
+        this.scrim = createOverlay();
         document.body.append(this.dialog);
         this.visible = true;
         this.unsubscribe = this.options.subscribe(this.indexChanged);
@@ -166,6 +172,8 @@ export class TaskSearchDialog {
         this.unsubscribe = undefined;
         this.dialog.close();
         this.dialog.remove();
+        this.scrim?.dispose();
+        this.scrim = undefined;
         this.origin?.focus();
     }
     destroy(): void {
