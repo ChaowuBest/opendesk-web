@@ -4,6 +4,9 @@
  * 鼠标（cursor）由主进程轮询系统光标驱动；触摸屏/手写笔（pointer）不会更新系统
  * 光标位置，轮询取到的位移恒为 0，表现为"无法通过触摸调整窗口大小"。pointer
  * 会话改由 renderer 上报的窗口内坐标驱动，本文件用假窗口验证两条路径。
+ *
+ * renderer 上报的窗口内坐标是 CSS 像素（受 webContents zoom factor 影响），
+ * bounds 与系统光标是 DIP，会话入口需换算，否则缩放偏好下 resize 比例失真。
  */
 
 import { afterEach, beforeEach, describe, expect, it, jest } from '@jest/globals';
@@ -31,10 +34,12 @@ class FakeWindow {
     maximized = false;
     fullScreen = false;
     setBoundsCalls: Bounds[] = [];
+    readonly webContents: { getZoomFactor(): number };
     private listeners = new Map<string, Array<() => void>>();
 
-    constructor(bounds: Bounds) {
+    constructor(bounds: Bounds, zoomFactor = 1) {
         this.bounds = { ...bounds };
+        this.webContents = { getZoomFactor: () => zoomFactor };
     }
 
     isDestroyed(): boolean {
@@ -189,5 +194,35 @@ describe('cursor 驱动（鼠标，回归）', () => {
         jest.advanceTimersByTime(16);
 
         expect(win.bounds).toEqual(START);
+    });
+});
+
+/**
+ * 缩放偏好（gui_config.scale_factor → webContents.setZoomFactor）下的坐标换算：
+ * pointer 上报的窗口内坐标是 CSS 像素，不折算成 DIP 时 resize 尺寸按 zoom 比例失真；
+ * cursor 路径两端都是 DIP 屏幕坐标，本就不受影响，一并钉住。
+ */
+describe('页面 zoom factor ≠ 1（缩放偏好）', () => {
+    // 0.5 可被二进制精确表示，断言不受浮点噪声影响
+    const ZOOM = 0.5;
+
+    it('pointer：窗口内坐标位移按 zoom 折算成 DIP 位移', () => {
+        const win = new FakeWindow(START, ZOOM);
+        startShadowResizeSession(win as never, 'e', MIN_W, MIN_H, 'pointer', { x: 1200, y: 400 });
+
+        // 手指在窗口内右移 40 CSS = 20 DIP → 窗口加宽 20
+        updateShadowResizeSession({ x: 1240, y: 400 });
+        expect(win.bounds).toEqual({ x: 100, y: 80, width: 1220, height: 800 });
+    });
+
+    it('cursor：位移取系统光标 DIP 差，不受 zoom 影响', () => {
+        getCursorScreenPoint.mockReturnValue({ x: 1300, y: 480 });
+        const win = new FakeWindow(START, ZOOM);
+
+        startShadowResizeSession(win as never, 'e', MIN_W, MIN_H);
+        getCursorScreenPoint.mockReturnValue({ x: 1340, y: 480 });
+        jest.advanceTimersByTime(16);
+
+        expect(win.bounds).toEqual({ x: 100, y: 80, width: 1240, height: 800 });
     });
 });

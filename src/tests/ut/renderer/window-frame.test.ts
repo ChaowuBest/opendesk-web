@@ -403,3 +403,46 @@ describe('触摸屏拖动/resize 驱动分流 (regression)', () => {
         expect(css).toMatch(/\.od-shadow-resize-handle\s*\{[^}]*touch-action:\s*none\s*;/);
     });
 });
+
+/**
+ * 阴影边距在缩放偏好下的单位回归钉。
+ *
+ * main 侧按 DIP 扩展窗口矩形（LINUX_WINDOW_SHADOW_MARGIN = 20），而 CSS 长度是
+ * CSS 像素：主窗口按 gui_config.scale_factor 设置 webContents.setZoomFactor 后
+ * 1 CSS px ≠ 1 DIP，内容内缩 20 CSS px 只有 20*zoom DIP，窗口矩形四周会多出
+ * 20*(1-zoom) 的透明边（阴影被裁、窗口边缘外出现看不见的可点击区）。
+ * 因此 --od-window-margin 必须按 zoom factor 反算；zoom 初值需在首帧前同步拿到
+ * （additionalArguments → preload → 早期脚本），运行时变更走 display:scaleFactorChanged。
+ */
+describe('阴影边距的 zoom 单位换算 (regression)', () => {
+    const css = readFileSync(path.resolve(process.cwd(), 'src/renderer/styles/titlebar.css'), 'utf8');
+    const html = readFileSync(path.resolve(process.cwd(), 'src/renderer/index.html'), 'utf8');
+    const preload = readFileSync(path.resolve(process.cwd(), 'src/renderer/preload.js'), 'utf8');
+    const mainSource = readFileSync(path.resolve(process.cwd(), 'src/main/main.ts'), 'utf8');
+
+    test('window-rounded 的阴影边距按 zoom factor 反算，不再写死 20px', () => {
+        const block = css.match(/html\.window-rounded\s*\{[^}]*\}/);
+        expect(block).toBeTruthy();
+        expect(block![0]).toContain('--od-window-zoom: 1;');
+        expect(block![0]).toMatch(/--od-window-margin:\s*calc\(20px\s*\/\s*var\(--od-window-zoom\)\);/);
+    });
+
+    test('最大化/全屏仍把边距直接折叠为 0（不走 calc）', () => {
+        expect(css).toMatch(/--od-window-margin:\s*0\s*;/);
+    });
+
+    test('main 用 additionalArguments 把有效 zoom 同步传给 preload', () => {
+        expect(mainSource).toMatch(/additionalArguments:\s*\[`--opendesk-zoom=\$\{/);
+    });
+
+    test('preload 暴露 initialZoomFactor 供首帧前同步读取', () => {
+        expect(preload).toContain('--opendesk-zoom=');
+        expect(preload).toContain('initialZoomFactor');
+    });
+
+    test('index.html 首帧前写入 --od-window-zoom，并跟随运行时缩放变更', () => {
+        expect(html).toContain('window.systemInfo.initialZoomFactor');
+        expect(html).toContain("setProperty('--od-window-zoom'");
+        expect(html).toContain('onScaleFactorChanged');
+    });
+});

@@ -27,10 +27,15 @@
  *
  * pointer capture 负责正常路径的 pointerup，失焦/销毁/超时兜底结束会话。
  * bounds 换算纯函数见 linux-window-shadow.ts。
+ *
+ * renderer 上报的窗口内坐标是 CSS 像素（主窗口按缩放偏好设置了
+ * webContents.setZoomFactor），会话入口统一换算成 DIP 后再参与 bounds 计算，
+ * 否则缩放偏好下 resize 位移会按 zoom 比例失真（见 clientCssToDip）。
  */
 
 import { BrowserWindow, screen } from 'electron';
 import {
+    clientCssToDip,
     computePointerFeedDelta,
     computeShadowResizeBounds,
     type Point,
@@ -52,7 +57,7 @@ interface ShadowResizeSession {
     startBounds: WindowBounds;
     /** cursor 驱动：会话起始光标屏幕坐标 */
     startPoint: Point;
-    /** pointer 驱动：按下点（renderer 窗口内坐标） */
+    /** pointer 驱动：按下点（renderer 窗口内坐标，已换算为 DIP） */
     startClient: Point;
     minWidth: number;
     minHeight: number;
@@ -88,7 +93,8 @@ export function startShadowResizeSession(
     // 没有按下点窗口内坐标就无法换算位移，退回光标轮询路径
     const pointerDriven = driver === 'pointer' && !!startClient;
     const startBounds = win.getBounds();
-    const client = startClient ?? { x: 0, y: 0 };
+    // 按下点是 renderer 上报的 CSS 像素坐标，换算成 DIP 后才能与 bounds 同系计算
+    const client = startClient ? clientCssToDip(startClient, win.webContents.getZoomFactor()) : { x: 0, y: 0 };
     const startPoint = pointerDriven ? client : screen.getCursorScreenPoint();
 
     const pollTimer = pointerDriven
@@ -165,7 +171,7 @@ function applyPendingClient(): void {
 }
 
 /**
- * pointer 驱动会话的坐标更新（renderer pointermove 上报的窗口内坐标）。
+ * pointer 驱动会话的坐标更新（renderer pointermove 上报的窗口内坐标，CSS 像素）。
  * 无会话或会话为光标驱动时忽略——鼠标路径由主进程轮询驱动。
  *
  * 按帧合并：触摸屏 pointermove 可达 240Hz，逐条换算会反复读到「已应用位移超前于
@@ -176,7 +182,8 @@ export function updateShadowResizeSession(client: Point): void {
     if (!activeSession || activeSession.driver !== 'pointer') {
         return;
     }
-    pendingClient = client;
+    // 上报的窗口内坐标是 CSS 像素，与按下点同系换算为 DIP 后再参与位移计算
+    pendingClient = clientCssToDip(client, activeSession.win.webContents.getZoomFactor());
     if (coalesceTimer) {
         return;
     }

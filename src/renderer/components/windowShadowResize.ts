@@ -119,6 +119,9 @@ export function installShadowResizeHandles(): void {
         const handle = document.createElement('div');
         handle.className = 'od-shadow-resize-handle';
         handle.dataset.direction = direction;
+        // 标记为拖拽表面：触摸长按脚本（touchLongPressScript）按下即跳过，
+        // 不显示进度圆环也不触发右键
+        handle.dataset.odNoLongpress = '1';
         handle.addEventListener('pointerdown', (event) => {
             if (event.button !== 0) {
                 return;

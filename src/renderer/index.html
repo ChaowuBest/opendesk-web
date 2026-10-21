@@ -16,6 +16,12 @@
                 // Linux 无边框窗口由页面自绘圆角，需在首帧前挂类避免闪现方形窗口
                 if (window.systemInfo && window.systemInfo.isLinux) {
                     document.documentElement.classList.add('window-rounded');
+                    // 阴影边距（CSS 像素）要按 zoom factor 反算才能对齐 main 侧的
+                    // DIP 边距，首帧前同步写入，避免边距先按未缩放值渲染再跳一下
+                    var windowZoom = window.systemInfo.initialZoomFactor;
+                    if (windowZoom && windowZoom !== 1) {
+                        document.documentElement.style.setProperty('--od-window-zoom', String(windowZoom));
+                    }
                 }
             })();
         </script>
@@ -961,6 +967,12 @@
                 window.updateWindowShape = updateWindowShape;
                 window.addEventListener('resize', updateWindowShape);
                 updateWindowShape();
+                // 缩放偏好变更时 main 重设 zoom factor 并推送新值，阴影边距随之反算
+                if (window.displayAPI && typeof window.displayAPI.onScaleFactorChanged === 'function') {
+                    window.displayAPI.onScaleFactorChanged(function (factor) {
+                        document.documentElement.style.setProperty('--od-window-zoom', String(factor || 1));
+                    });
+                }
                 // Linux 上 drag region 无系统级双击最大化（仅发送 _NET_WM_MOVERESIZE
                 // 拖动请求），行为取决于窗口管理器且不稳定，这里手动监听双击。
                 // 同时拖拽层被覆盖为 no-drag（见 titlebar.css），拖动与右键也

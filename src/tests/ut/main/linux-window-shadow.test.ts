@@ -20,6 +20,7 @@ import { describe, it, expect } from '@jest/globals';
 
 import {
     LINUX_WINDOW_SHADOW_MARGIN,
+    clientCssToDip,
     computeDragBounds,
     computePointerFeedDelta,
     computeShadowResizeBounds,
@@ -166,5 +167,26 @@ describe('computePointerFeedDelta', () => {
                 client: { x: 0, y: 400 }
             })
         ).toEqual({ dx: -60, dy: 0 });
+    });
+});
+
+/**
+ * renderer 窗口内坐标（CSS 像素）→ DIP。
+ *
+ * 主窗口按缩放偏好调用 webContents.setZoomFactor，renderer 的 event.clientX/Y
+ * 因此是 CSS 像素；窗口 bounds 与 screen.getCursorScreenPoint() 都是 DIP。
+ * 拖动/resize 会话把两者混用会让窗口位置按 client*(1-zoom) 偏移。
+ */
+describe('clientCssToDip', () => {
+    it('zoom=1（未设置缩放偏好）时恒等', () => {
+        expect(clientCssToDip({ x: 300, y: 16 }, 1)).toEqual({ x: 300, y: 16 });
+    });
+
+    it('zoom<1：CSS 像素折算为更小的 DIP（0.8 时 500 CSS = 400 DIP）', () => {
+        expect(clientCssToDip({ x: 500, y: 20 }, 0.8)).toEqual({ x: 400, y: 16 });
+    });
+
+    it('zoom>1：CSS 像素折算为更大的 DIP', () => {
+        expect(clientCssToDip({ x: 100, y: 50 }, 1.5)).toEqual({ x: 150, y: 75 });
     });
 });
