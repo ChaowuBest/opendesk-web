@@ -96,6 +96,10 @@ class CalendarApplication extends BaseApplication {
         ];
     }
 
+    async getSupportedEvents() {
+        return [{ eventName: 'calendarItemsChanged', eventDescription: t('appEvent.calendarItemsChanged') }];
+    }
+
     async getSkills() {
         const skill = Skill.parseMd(CALENDAR_SKILL);
         const toolset = new BaseToolset('calendar');

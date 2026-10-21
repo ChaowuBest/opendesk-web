@@ -12,6 +12,8 @@
 export const zhCn: Record<string, string> = {
     'app.name': '日历',
 
+    'appEvent.calendarItemsChanged': '日程发生变化',
+
     // CLI
     'cli.command.open.description': '打开日历',
 

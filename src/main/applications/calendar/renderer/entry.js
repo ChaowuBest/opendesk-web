@@ -1007,6 +1007,9 @@ class CalendarEntryWidget extends HTMLElement {
         this._t = createTranslatorForCalendar();
         this._locale = undefined;
         this._settingUnsubscribe = null;
+        this._calendarEventsSubscription = null;
+        this._calendarEventsCleanup = Promise.resolve();
+        this._calendarEventsGeneration = 0;
         this.currentDate = new Date();
         this.viewMode = 'month';
         this.selectedEvent = null;
@@ -1029,6 +1032,7 @@ class CalendarEntryWidget extends HTMLElement {
         this._initDrag();
         this._render();
         this._bindCore();
+        if (!(await this._subscribeCalendarChanges())) return;
         this._refreshAll();
         this._nowTimer = setInterval(() => this._updateNowIndicator(), 60000);
     }
@@ -1037,7 +1041,32 @@ class CalendarEntryWidget extends HTMLElement {
         if (this._nowTimer) clearInterval(this._nowTimer);
         this._settingUnsubscribe?.();
         this._settingUnsubscribe = null;
+        this._calendarEventsGeneration++;
+        const subscription = this._calendarEventsSubscription;
+        this._calendarEventsSubscription = null;
+        if (subscription) {
+            this._calendarEventsCleanup = subscription
+                .then(() => window.applicationAPI.unsubscribe('calendarItemsChanged'))
+                .catch((err) => console.error('Failed to unsubscribe from calendar changes:', err));
+        }
         this._dragCleanup();
+    }
+
+    async _subscribeCalendarChanges() {
+        const generation = ++this._calendarEventsGeneration;
+        // Finish the previous subscription's cleanup before reconnecting: unsubscribe removes all listeners for the event.
+        await this._calendarEventsCleanup;
+        if (!this.isConnected || generation !== this._calendarEventsGeneration) return false;
+        const subscription = window.applicationAPI.subscribe('calendarItemsChanged', () => {
+            if (this.isConnected) this._refreshAll();
+        });
+        this._calendarEventsSubscription = subscription;
+        try {
+            await subscription;
+        } catch (err) {
+            console.error('Failed to subscribe to calendar changes:', err);
+        }
+        return this.isConnected && generation === this._calendarEventsGeneration;
     }
 
     _applyLocaleSetting(setting) {
@@ -1147,6 +1176,7 @@ class CalendarEntryWidget extends HTMLElement {
 
     async _refreshAll() {
         await this._loadEvents();
+        if (this.selectedEvent) this.selectedEvent = this._findEvent(this.selectedEvent.uid) || null;
         this._renderLeftHeader();
         this._renderMiniCalendar();
         this._renderToolbar();

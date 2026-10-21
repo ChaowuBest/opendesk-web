@@ -130,7 +130,9 @@ class CalendarWorker extends BaseWorker {
         }
         await this.db.update({ uid }, { $set: updateData });
         const updated = await this.db.findOne({ uid });
-        return CalendarItemSchema.parse(updated);
+        const item = CalendarItemSchema.parse(updated);
+        await this.emitEvent('calendarItemsChanged');
+        return item;
     }
 
     /**
@@ -155,6 +157,7 @@ class CalendarWorker extends BaseWorker {
         });
         await this.db.insert(doc);
         logger.info(`added calendar item: ${doc.uid} - ${doc.subject}`);
+        await this.emitEvent('calendarItemsChanged');
         return doc;
     }
 
@@ -168,6 +171,7 @@ class CalendarWorker extends BaseWorker {
             throw new Error(`未找到 uid 为 "${uid}" 的日程项`);
         }
         logger.info(`deleted calendar item: ${uid}`);
+        await this.emitEvent('calendarItemsChanged');
         return { deleted: true, uid };
     }
 

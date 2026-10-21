@@ -12,6 +12,8 @@
 export const enUs: Record<string, string> = {
     'app.name': 'Calendar',
 
+    'appEvent.calendarItemsChanged': 'Calendar items changed',
+
     // CLI
     'cli.command.open.description': 'Open Calendar',
 
