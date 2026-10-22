@@ -68,15 +68,9 @@ node-screenshots依赖库的鸿蒙化适配
 该能力需要同时更新 OpenDesk 业务代码及 **OpenDesk-ohos 鸿蒙壳工程**。只替换 `dist`
 不会注册新的 ArkTS 绑定，旧壳不能提供状态查询和系统设置入口。
 
-壳工程补丁：[openharmony-startup.patch](patches/openharmony-startup.patch)，基于
-OpenDesk-ohos `86cadd11fdd3da3103c647f7b67d8dc06cf62969` 生成。包含原生适配器、三个 AKI 绑定及逻辑测试。
-在壳工程根目录检查并应用：
-
-```bash
-git apply --check /path/to/OpenDesk/docs/platforms/patches/openharmony-startup.patch
-git apply /path/to/OpenDesk/docs/platforms/patches/openharmony-startup.patch
-NODE_PATH=/path/to/OpenDesk/node_modules node --test ohos_hap/tests/opendesk-startup.test.cjs
-```
+配套壳改动由 [OpenDesk-ohos PR #48](https://gitcode.com/openharmony-robot/OpenDesk-ohos/merge_requests/48)
+维护，功能提交为 `8a598b20204cc1ea201278c1f27e2adc3bfa0d96`。构建时需使用包含该提交的壳版本，
+其中包含原生适配器、三个 AKI 绑定及逻辑测试；业务仓不再保存壳源码补丁副本。
 
 同步当前 OpenDesk 构建产物后，使用壳工程既有构建和签名流程生成新的 HAP。
 
