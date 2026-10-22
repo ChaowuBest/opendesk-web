@@ -9,11 +9,52 @@
  * See the Mulan PSL v2 for more details.
  */
 
-import { escapeHtml } from '../../common/utils/escape.js';
-import { createRendererTranslator } from '../locale.ts';
-import { OPENDESK_THEME_CHANGED } from '../theme/theme-iframe-bridge.ts';
-import { syncShadowHostTheme } from '../theme/theme-shadow-overrides.ts';
-import adminPanelCss from '../styles/admin-panel.css?inline';
+import { escapeHtml } from '../../../../common/utils/escape.js';
+import { createRendererTranslator } from '../../../../renderer/locale.js';
+import { OPENDESK_THEME_CHANGED } from '../../../../renderer/theme/theme-iframe-bridge.js';
+import { syncShadowHostTheme } from '../../../../renderer/theme/theme-shadow-overrides.js';
+import adminPanelCss from './admin-panel.css?inline';
+
+/**
+ * 管理后台数据接口。原先由 preload 以 window.adminAPI 暴露全局 IPC，
+ * 改为应用后统一经 applicationAPI.callMainWorld 走 adminconsole 应用的方法，
+ * 应用方法返回 { status, code, data, message }，这里还原成抛错语义供 UI 使用。
+ */
+interface AdminApi {
+    getServerUrl(): Promise<string>;
+    loadToken(serverUrl: string): Promise<{ token: string | null; canPersist: boolean }>;
+    verifyToken(serverUrl: string, token: string): Promise<true>;
+    clearToken(): Promise<true>;
+    getDailyStats(days: number): Promise<unknown>;
+    getSummaryStats(): Promise<unknown>;
+    getFeedbackList(limit: number): Promise<unknown>;
+    downloadAttachment(attachmentId: number, filename: string): Promise<{ canceled?: boolean; filePath?: string }>;
+}
+
+function unwrapAdminResult(result: any): any {
+    if (result && result.status !== 'ok') {
+        const error: any = new Error(result.message ?? 'admin request failed');
+        error.code = result.code;
+        throw error;
+    }
+    return result?.data;
+}
+
+function createAdminApi(): AdminApi | null {
+    const call = (window as any).applicationAPI?.callMainWorld;
+    if (typeof call !== 'function') return null;
+    return {
+        getServerUrl: async () => unwrapAdminResult(await call('getServerUrl')),
+        loadToken: async (serverUrl) => unwrapAdminResult(await call('loadToken', serverUrl)),
+        verifyToken: async (serverUrl, token) => (unwrapAdminResult(await call('verifyToken', serverUrl, token)), true),
+        clearToken: async () => (unwrapAdminResult(await call('clearToken')), true),
+        getDailyStats: async (days) => unwrapAdminResult(await call('getDailyStats', days)),
+        getSummaryStats: async () => unwrapAdminResult(await call('getSummaryStats')),
+        getFeedbackList: async (limit) => unwrapAdminResult(await call('getFeedbackList', limit)),
+        downloadAttachment: async (attachmentId, filename) =>
+            unwrapAdminResult(await call('downloadAttachment', attachmentId, filename))
+    };
+}
 
 /** 生产服务默认地址（授权页服务器输入框的占位提示） */
 const DEFAULT_ADMIN_SERVER_URL = 'https://opendesk.matrix.openharmony.cn';
@@ -106,7 +147,7 @@ function smoothPath(points: { x: number; y: number }[]): string {
     return path;
 }
 
-class AdminPanel extends HTMLElement {
+export class AdminConsoleEntryWidget extends HTMLElement {
     private readonly root: ShadowRoot;
     private activeTab: 'activity' | 'feedback' = 'activity';
     private serverUrl = '';
@@ -163,7 +204,7 @@ class AdminPanel extends HTMLElement {
         } catch {
             // 读取设置失败时沿用默认翻译
         }
-        const adminApi = (window as any).adminAPI;
+        const adminApi = createAdminApi();
         if (!adminApi) {
             this.render();
             return;
@@ -186,7 +227,7 @@ class AdminPanel extends HTMLElement {
     }
 
     private async verifyToken(token: string): Promise<void> {
-        const adminApi = (window as any).adminAPI;
+        const adminApi = createAdminApi();
         if (!adminApi) return;
         this.authBusy = true;
         this.authError = null;
@@ -208,7 +249,7 @@ class AdminPanel extends HTMLElement {
     }
 
     private async logout(): Promise<void> {
-        const adminApi = (window as any).adminAPI;
+        const adminApi = createAdminApi();
         if (!adminApi) return;
         try {
             await adminApi.clearToken();
@@ -233,7 +274,7 @@ class AdminPanel extends HTMLElement {
     }
 
     private async loadActivity(): Promise<void> {
-        const adminApi = (window as any).adminAPI;
+        const adminApi = createAdminApi();
         if (!adminApi) return;
         this.activityLoading = true;
         this.activityError = null;
@@ -255,7 +296,7 @@ class AdminPanel extends HTMLElement {
     }
 
     private async loadFeedback(): Promise<void> {
-        const adminApi = (window as any).adminAPI;
+        const adminApi = createAdminApi();
         if (!adminApi) return;
         this.feedbackLoading = true;
         this.feedbackError = null;
@@ -275,7 +316,7 @@ class AdminPanel extends HTMLElement {
     }
 
     private async downloadAttachment(attachmentId: number, filename: string): Promise<void> {
-        const adminApi = (window as any).adminAPI;
+        const adminApi = createAdminApi();
         if (!adminApi?.downloadAttachment) return;
         try {
             const result = await adminApi.downloadAttachment(attachmentId, filename);
@@ -472,7 +513,7 @@ class AdminPanel extends HTMLElement {
     };
 
     private typeColorSlot(type: string): number {
-        const known = AdminPanel.TYPE_COLOR_SLOTS[type];
+        const known = AdminConsoleEntryWidget.TYPE_COLOR_SLOTS[type];
         if (known !== undefined) return known;
         let hash = 0;
         for (let i = 0; i < type.length; i++) hash = (hash * 31 + type.charCodeAt(i)) >>> 0;
@@ -659,4 +700,4 @@ const AP_ICONS = {
         '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m21.44 11.05-9.19 9.19a6 6 0 0 1-8.49-8.49l8.57-8.57A4 4 0 1 1 18 8.84l-8.59 8.57a2 2 0 0 1-2.83-2.83l8.49-8.48"/></svg>'
 };
 
-customElements.define('admin-panel', AdminPanel);
+customElements.define('adminconsole-entry-widget', AdminConsoleEntryWidget);

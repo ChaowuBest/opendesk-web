@@ -38,6 +38,7 @@ import { BuiltinApplication } from '../main/applications/builtin/app.js';
 import { NotesApplication } from '../main/applications/notes/app.js';
 import { AppMgrApplication } from '../main/applications/appmgr/app.js';
 import { AgentGateApplication } from '../main/applications/agentgate/app.js';
+import { AdminConsoleApplication } from '../main/applications/adminconsole/app.js';
 import { AgentOfficeApplication } from '../main/applications/agentoffice/app.js';
 import { AcpMgrApplication } from '../main/applications/acpmgr/app.js';
 import { initAgentGateHook } from '../main/applications/agentgate/hook.js';
@@ -372,6 +373,7 @@ export class WorkerPlatform extends AbstractPlatform {
             DeviceMgrApplication,
             BuiltinApplication,
             AgentGateApplication,
+            AdminConsoleApplication,
             AgentOfficeApplication,
             WorkflowMgrApplication
         ];

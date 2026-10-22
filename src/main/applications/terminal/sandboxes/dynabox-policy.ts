@@ -43,10 +43,16 @@ export function hostPatternToVirtualLinux(pattern: string): string | null {
 /** 调试实例数据目录后缀（setting.ts resolveWritableUserDataRoot 的 -debug 布局） */
 const DEBUG_DATA_DIR_SUFFIX = '-debug';
 /**
- * 调试实例数据目录中保持 read ask 的凭据文件：setting.json 含模型 API Key、
- * admin-token.enc 含管理令牌密文——对齐"凭据宁 ask 不 allow"原则。
+ * OpenDesk 数据目录（主实例与调试实例共用）中保持 read ask 的凭据 pattern：
+ * setting.json 含模型 API Key，.enc 后缀是各应用经 safeStorage 加密的凭据落盘文件
+ * （apps/adminconsole 下的 admin-token.enc、顶层的 browser-credentials.enc 等）——
+ * 对齐 policies/common.ts"凭据宁 ask 不 allow"原则。
+ *
+ * .enc 用通配而非文件名清单：新增应用凭据不会静默落进调试实例的整树 read allow。
+ * 单段通配与跨段通配双写，是因为沙箱原生层与 picomatch 对 `**` 是否匹配零段目录
+ * 语义不一致，双写消除歧义（picomatch 侧冗余无害）。
  */
-const DEBUG_CREDENTIAL_FILES = ['setting.json', 'admin-token.enc'];
+const CREDENTIAL_PATTERNS = ['setting.json', '*.enc', '**/*.enc'];
 /** 主实例保持子目录粒度写放行的框架数据（setting.json 等敏感文件不暴露写） */
 const MAIN_INSTANCE_WRITE_SUBDIRS = ['logs', 'artifacts', 'tasks'];
 
@@ -61,7 +67,8 @@ const MAIN_INSTANCE_WRITE_SUBDIRS = ['logs', 'artifacts', 'tasks'];
  * 必须先于整树通配：
  * - 主实例 trash 写 deny（回收站是误删数据恢复区；--del-to-trash 的写入由
  *   原生层 internal 豁免，不经策略判定，不受此 deny 影响）；
- * - 调试实例（<dir>-debug）：trash 写 deny（回收站保护）→ 凭据文件 read ask
+ * - 主实例与调试实例：凭据（setting.json / *.enc）read ask 先于其余放行规则；
+ * - 调试实例（<dir>-debug）：trash 写 deny（回收站保护）→ 凭据 read ask
  *   → 整树读写 allow（Electron Cache/Local Storage 等启动必需 IO；沙箱内
  *   npm run start 拉起调试实例时漏放会逐次弹窗卡死无人值守场景）；
  * - 主实例：写放行（readonly 语义由调用方整体跳过本清单承载）。
@@ -77,11 +84,16 @@ export function opendeskDataDirRules(
     const rules: PermissionRule[] = [
         { resourceType: 'file', action: 'write', pathPattern: `${root}/trash/**`, effect: 'deny' }
     ];
+    // 主实例 read 本由"工作区外 read ask"兜底，这里显式 ask 是防御性的：一旦日后
+    // 主实例 read 像调试实例那样整树放宽，凭据不会被顺带放通。
+    for (const pattern of CREDENTIAL_PATTERNS) {
+        rules.push({ resourceType: 'file', action: 'read', pathPattern: `${root}/${pattern}`, effect: 'ask' });
+    }
     if (!root.endsWith(DEBUG_DATA_DIR_SUFFIX)) {
         const debugRoot = `${root}${DEBUG_DATA_DIR_SUFFIX}`;
         rules.push({ resourceType: 'file', action: 'write', pathPattern: `${debugRoot}/trash/**`, effect: 'deny' });
-        for (const file of DEBUG_CREDENTIAL_FILES) {
-            rules.push({ resourceType: 'file', action: 'read', pathPattern: `${debugRoot}/${file}`, effect: 'ask' });
+        for (const pattern of CREDENTIAL_PATTERNS) {
+            rules.push({ resourceType: 'file', action: 'read', pathPattern: `${debugRoot}/${pattern}`, effect: 'ask' });
         }
         rules.push({ resourceType: 'file', action: 'write', pathPattern: `${debugRoot}/**`, effect: 'allow' });
         rules.push({ resourceType: 'file', action: 'read', pathPattern: `${debugRoot}/**`, effect: 'allow' });
