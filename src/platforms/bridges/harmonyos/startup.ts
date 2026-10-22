@@ -18,11 +18,14 @@ interface StartupResult {
     code?: number;
 }
 
+const RESULT_POLL_DELAYS_MS = [50, 100, 200, 500] as const;
+
 async function runOperation(method: string): Promise<StartupResult> {
     if (!hasArkTSAdapter()) throw new Error('Harmony startup bridge is unavailable');
     const requestId = await callArkTS<number>(method, 'number');
     if (!Number.isSafeInteger(requestId) || requestId < 1) throw new Error('Invalid Harmony startup request');
     const deadline = Date.now() + 5_000;
+    let delayIndex = 0;
     // The shell starts the OS operation once; peek only retrieves that request's pending/completed result.
     while (Date.now() < deadline) {
         const raw = await callArkTS<string>(EtsBridgeMethods.STARTUP_RESULT_PEEK, 'string', [requestId]);
@@ -30,7 +33,11 @@ async function runOperation(method: string): Promise<StartupResult> {
         if (result?.status === 'ok' || result?.status === 'unsupported') return result;
         if (result?.status !== 'pending')
             throw new Error(`Harmony startup request failed: ${result?.code ?? 'invalid response'}`);
-        await new Promise((resolve) => setTimeout(resolve, 50));
+        const remaining = deadline - Date.now();
+        if (remaining <= 0) break;
+        const delay = Math.min(RESULT_POLL_DELAYS_MS[delayIndex], remaining);
+        delayIndex = Math.min(delayIndex + 1, RESULT_POLL_DELAYS_MS.length - 1);
+        await new Promise((resolve) => setTimeout(resolve, delay));
     }
     throw new Error('Harmony startup request timed out');
 }

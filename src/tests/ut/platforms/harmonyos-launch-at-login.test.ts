@@ -72,10 +72,64 @@ test('pending status polls the same request without restarting the OS query', as
         .mockResolvedValueOnce('{"status":"pending"}')
         .mockResolvedValueOnce('{"status":"ok","enabled":true}');
     const state = new HarmonyOSStartupKit().getState();
-    await jest.advanceTimersByTimeAsync(100);
+    await jest.advanceTimersByTimeAsync(150);
     expect((await state).enabled).toBe(true);
     expect(call.mock.calls.filter(([method]) => method === 'EtsBridge.OpenDeskStartupStatusStart')).toHaveLength(1);
     const peeks = call.mock.calls.filter(([method]) => method === 'EtsBridge.OpenDeskStartupResultPeek');
     expect(peeks).toHaveLength(3);
     expect(peeks.every(([, type, args]) => type === 'string' && args[0] === 41)).toBe(true);
+});
+
+test.each(['status', 'settings'])(
+    'backs off %s result reads and stops exactly at the five-second deadline',
+    async (operation) => {
+        jest.useFakeTimers();
+        const started = Date.now();
+        const peekTimes: number[] = [];
+        call.mockImplementation(async (method: string) => {
+            if (method === 'EtsBridge.OpenDeskStartupResultPeek') {
+                peekTimes.push(Date.now() - started);
+                return '{"status":"pending"}';
+            }
+            return 41;
+        });
+        const kit = new HarmonyOSStartupKit();
+        const result = operation === 'status' ? kit.getState() : kit.delegateSetting();
+        let finished = false;
+        void result.then(
+            () => {
+                finished = true;
+            },
+            () => {
+                finished = true;
+            }
+        );
+        const assertion = expect(result).rejects.toThrow('timed out');
+        const expected = [0, 50, 150, 350, 850, 1350, 1850, 2350, 2850, 3350, 3850, 4350, 4850];
+        await jest.advanceTimersByTimeAsync(0);
+        expect(peekTimes).toEqual([0]);
+        for (let i = 1; i < expected.length; i++) {
+            await jest.advanceTimersByTimeAsync(expected[i] - expected[i - 1] - 1);
+            expect(peekTimes).toHaveLength(i);
+            await jest.advanceTimersByTimeAsync(1);
+            expect(peekTimes).toEqual(expected.slice(0, i + 1));
+        }
+        await jest.advanceTimersByTimeAsync(149);
+        expect(finished).toBe(false);
+        await jest.advanceTimersByTimeAsync(1);
+        await assertion;
+        expect(peekTimes).toEqual(expected);
+        expect(jest.getTimerCount()).toBe(0);
+        const start =
+            operation === 'status' ? 'EtsBridge.OpenDeskStartupStatusStart' : 'EtsBridge.OpenDeskStartupSettingsStart';
+        expect(call.mock.calls.filter(([method]) => method === start)).toHaveLength(1);
+    }
+);
+
+test('immediate results need no delay or further result reads', async () => {
+    jest.useFakeTimers();
+    call.mockResolvedValueOnce(41).mockResolvedValueOnce('{"status":"ok","enabled":true}');
+    expect((await new HarmonyOSStartupKit().getState()).enabled).toBe(true);
+    expect(call).toHaveBeenCalledTimes(2);
+    expect(jest.getTimerCount()).toBe(0);
 });
