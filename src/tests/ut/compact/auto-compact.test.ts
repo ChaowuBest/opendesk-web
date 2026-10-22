@@ -245,7 +245,7 @@ describe('自动压缩状态机', () => {
         expect(AutoCompactStates.isCoolingDown(state, at)).toBe(false);
     });
 
-    test('recordFailure 达到阈值后永久熔断，只有明确恢复允许一次尝试', async () => {
+    test('recordFailure 达到阈值后进入熔断冷却，冷却期内禁止尝试，冷却结束后自动放行', async () => {
         const { AutoCompactStates } = await import('../../../main/aikernel/compaction/auto-compact');
 
         const at = new Date('2026-04-17T02:00:00.000Z');
@@ -258,18 +258,60 @@ describe('自动压缩状态机', () => {
         const state = AutoCompactStates.recordFailure(previous, at, 'compact failed');
 
         expect(state.consecutiveFailures).toBe(2);
-        expect(state.cooldownUntil).toBeUndefined();
         expect(state.status).toBe('circuit_open');
+        expect(state.cooldownUntil).toBe('2026-04-17T02:01:00.000Z');
         expect(AutoCompactStates.hasReachedFailureThreshold(state)).toBe(true);
         expect(AutoCompactStates.isCoolingDown(state, at)).toBe(true);
-        expect(AutoCompactStates.getCooldownRemainingMs(state, new Date('2026-04-17T02:00:30.000Z'))).toBe(
-            Number.POSITIVE_INFINITY
-        );
-        expect(AutoCompactStates.getCooldownRemainingMs(state, new Date('2026-04-17T02:01:01.000Z'))).toBe(
-            Number.POSITIVE_INFINITY
-        );
-        expect(AutoCompactStates.isCoolingDown(state, new Date('2026-04-17T02:01:01.000Z'))).toBe(true);
+        expect(AutoCompactStates.canAttempt(state, new Date('2026-04-17T02:00:30.000Z'))).toBe(false);
+        expect(AutoCompactStates.getCooldownRemainingMs(state, new Date('2026-04-17T02:00:30.000Z'))).toBe(30000);
+        expect(AutoCompactStates.isCoolingDown(state, new Date('2026-04-17T02:01:01.000Z'))).toBe(false);
+        expect(AutoCompactStates.canAttempt(state, new Date('2026-04-17T02:01:01.000Z'))).toBe(true);
+        expect(AutoCompactStates.getCooldownRemainingMs(state, new Date('2026-04-17T02:01:01.000Z'))).toBe(0);
         expect(AutoCompactStates.beginRecovery(state).status).toBe('half_open');
+    });
+
+    test('recordFailure 半开态失败未达阈值时退回 degraded，不再一票判死', async () => {
+        const { AutoCompactStates } = await import('../../../main/aikernel/compaction/auto-compact');
+
+        const at = new Date('2026-04-17T02:00:00.000Z');
+        const halfOpen = AutoCompactStates.deserialize({
+            status: 'half_open',
+            consecutive_failures: 1,
+            failure_threshold: 3,
+            cooldown_ms: 60000
+        });
+
+        const state = AutoCompactStates.recordFailure(halfOpen, at, 'network timeout');
+
+        expect(state.consecutiveFailures).toBe(2);
+        expect(state.status).toBe('degraded');
+        expect(state.cooldownUntil).toBeUndefined();
+        expect(AutoCompactStates.canAttempt(state, at)).toBe(true);
+    });
+
+    test('deserialize 保留 half_open，compacting 按失败次数还原', async () => {
+        const { AutoCompactStates } = await import('../../../main/aikernel/compaction/auto-compact');
+
+        const halfOpen = AutoCompactStates.deserialize({
+            status: 'half_open',
+            consecutive_failures: 3,
+            failure_threshold: 3
+        });
+        expect(halfOpen.status).toBe('half_open');
+
+        const compactingBelowThreshold = AutoCompactStates.deserialize({
+            status: 'compacting',
+            consecutive_failures: 1,
+            failure_threshold: 3
+        });
+        expect(compactingBelowThreshold.status).toBe('degraded');
+
+        const compactingAtThreshold = AutoCompactStates.deserialize({
+            status: 'compacting',
+            consecutive_failures: 3,
+            failure_threshold: 3
+        });
+        expect(compactingAtThreshold.status).toBe('circuit_open');
     });
 
     test('recordSuccess 会清空失败次数、冷却期和失败原因', async () => {

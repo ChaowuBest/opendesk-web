@@ -15,6 +15,7 @@ import {
     buildProjectedActiveContextView
 } from '../../../main/aikernel/compaction/context-view';
 import { compactContext } from '../../../main/aikernel/compact';
+import { CompactError } from '../../../main/aikernel/compaction/compact-error';
 import { OpenAIAdapter } from '../../../main/aikernel/adapters/openai';
 import { LLM } from '../../../main/aikernel/llm';
 import {
@@ -1028,6 +1029,7 @@ describe('full compact planning', () => {
     test('compactContext 会传播 summary 失败，供 pipeline 记录失败状态', async () => {
         const factory = createMessageFactory();
         const chatContext = new ChatContext();
+        let calls = 0;
 
         appendMessages(chatContext, [
             factory.user('u1'),
@@ -1048,13 +1050,89 @@ describe('full compact planning', () => {
                 tailAssistantToolMessageCount: 0,
                 tailAssistantErrorMessageCount: 0,
                 tailPlanMessageCount: 0,
+                summaryRetryDelayMs: () => 0,
                 generateSummary: async () => {
+                    calls++;
                     throw new Error('summary failed');
                 }
             })
         ).rejects.toThrow('request_failed');
 
+        expect(calls).toBe(4);
         expect(chatContext.findCompactBoundary()).toBeUndefined();
+    });
+
+    test('摘要请求遇到可重试网络错误会退避重试，重试成功后整体压缩成功', async () => {
+        const factory = createMessageFactory();
+        const chatContext = new ChatContext();
+        let calls = 0;
+
+        appendMessages(chatContext, [
+            factory.user('u1'),
+            factory.assistant('a1'),
+            factory.user('u2'),
+            factory.assistant('a2'),
+            factory.user('u3'),
+            factory.assistant('a3'),
+            factory.user('u4'),
+            factory.assistant('a4'),
+            factory.user('u5'),
+            factory.assistant('a5')
+        ]);
+
+        const runResult = await compactFullContext(chatContext, undefined, {
+            tailMessageCount: 2,
+            tailAssistantToolMessageCount: 0,
+            tailAssistantErrorMessageCount: 0,
+            tailPlanMessageCount: 0,
+            boundaryId: 'boundary-transport-retry',
+            createdAt: '2026-04-20T08:00:00.000Z',
+            summaryRetryDelayMs: () => 0,
+            generateSummary: async () => {
+                calls++;
+                if (calls === 1) throw new Error('fetch failed: socket hang up');
+                return 'recovered summary';
+            }
+        });
+
+        expect(runResult.compacted).toBe(true);
+        expect(runResult.summary).toBe('recovered summary');
+        expect(calls).toBe(2);
+    });
+
+    test('CompactError 语义错误不触发传输层重试', async () => {
+        const factory = createMessageFactory();
+        const chatContext = new ChatContext();
+        let calls = 0;
+
+        appendMessages(chatContext, [
+            factory.user('u1'),
+            factory.assistant('a1'),
+            factory.user('u2'),
+            factory.assistant('a2'),
+            factory.user('u3'),
+            factory.assistant('a3'),
+            factory.user('u4'),
+            factory.assistant('a4'),
+            factory.user('u5'),
+            factory.assistant('a5')
+        ]);
+
+        await expect(
+            compactFullContext(chatContext, undefined, {
+                tailMessageCount: 2,
+                tailAssistantToolMessageCount: 0,
+                tailAssistantErrorMessageCount: 0,
+                tailPlanMessageCount: 0,
+                summaryRetryDelayMs: () => 0,
+                generateSummary: async () => {
+                    calls++;
+                    throw new CompactError('protocol_error');
+                }
+            })
+        ).rejects.toThrow('protocol_error');
+
+        expect(calls).toBe(1);
     });
 
     test('连续 compact 会把旧 boundary summary 纳入新 summary 输入，并继续保护最新 kept tail', async () => {

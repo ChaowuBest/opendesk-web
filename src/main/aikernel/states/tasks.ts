@@ -1699,10 +1699,7 @@ export class TaskState {
                     } else {
                         this.setAutoCompactState({
                             ...state,
-                            status:
-                                previous.status === 'half_open' || state.status === 'circuit_open'
-                                    ? 'circuit_open'
-                                    : 'degraded',
+                            status: state.status === 'circuit_open' ? 'circuit_open' : 'degraded',
                             lastFailureReason: error instanceof CompactError ? error.code : 'request_failed'
                         });
                     }

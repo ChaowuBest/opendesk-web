@@ -41,6 +41,8 @@ import { OpenAIAdapter } from '../adapters/openai.js';
 
 import { buildActiveContextView, buildProjectedActiveContextView } from './context-view.js';
 import type { AssistantRoundRef, CompactBoundaryRef, ProjectedContextItem } from './types.js';
+import { getLLMRetryDelayMs } from '../task/types.js';
+import { classifyModelRequestError } from '../../utils/model-request-error.js';
 
 export const DEFAULT_FULL_COMPACT_TAIL_MESSAGE_COUNT = 3;
 export const DEFAULT_FULL_COMPACT_TAIL_ASSISTANT_TOOL_MESSAGE_COUNT = 3;
@@ -158,6 +160,8 @@ export interface FullCompactRunOptions
     isCurrent?: () => boolean;
     halfOpen?: boolean;
     usageRecovery?: UsageCompactRecovery;
+    /** 摘要请求传输层重试的退避延迟（毫秒），默认对齐普通 LLM 请求；测试可注入零延迟。 */
+    summaryRetryDelayMs?: (attempt: number) => number;
 }
 
 /** Shared by summary and business-request recovery, so neither loop resets the attempt limit. */
@@ -168,6 +172,9 @@ export interface UsageCompactRecovery {
 }
 
 export const MAX_COMPACT_RECOVERY_ATTEMPTS = 3;
+
+/** 摘要请求传输层重试上限：与普通 LLM 请求的指数退避对齐，不占用 plan 切换预算。 */
+const MAX_SUMMARY_TRANSPORT_RETRIES = 3;
 
 export interface FullCompactRunResult {
     compacted: boolean;
@@ -1224,6 +1231,61 @@ export function applyFullCompactResult(chatContext: ChatContext, result: FullCom
     chatContext.messages.splice(chatContext.messages.indexOf(keepStartMessage), 0, result.boundary);
 }
 
+function isTransportRetryableSummaryError(error: unknown): boolean {
+    if (error instanceof CompactError) return false;
+    if (isContextLimitError(error)) return false;
+    return classifyModelRequestError(error) !== 'non_retryable';
+}
+
+function createSummaryRetryAbortError(): Error {
+    const error = new Error('summary retry aborted');
+    error.name = 'AbortError';
+    return error;
+}
+
+function sleepForSummaryRetry(ms: number, signal?: AbortSignal): Promise<void> {
+    return new Promise((resolve, reject) => {
+        if (signal?.aborted) {
+            reject(createSummaryRetryAbortError());
+            return;
+        }
+        let timer: ReturnType<typeof setTimeout> | undefined;
+        const onAbort = () => {
+            if (timer !== undefined) clearTimeout(timer);
+            reject(createSummaryRetryAbortError());
+        };
+        timer = setTimeout(() => {
+            signal?.removeEventListener('abort', onAbort);
+            resolve();
+        }, ms);
+        signal?.addEventListener('abort', onAbort, { once: true });
+    });
+}
+
+/**
+ * 为摘要请求叠加传输层退避重试：网络抖动 / 限流 / 5xx 按 getLLMRetryDelayMs 指数退避重试，
+ * 与普通 LLM 请求的处置对齐；CompactError 语义错误与 context_limit 仍走原有换 plan 逻辑。
+ */
+async function generateFullCompactSummaryWithTransportRetry(
+    plan: FullCompactPlan,
+    model: string | undefined,
+    options: GenerateFullCompactSummaryOptions,
+    isCurrent: () => boolean,
+    retryDelayMs: (attempt: number) => number
+): Promise<string> {
+    for (let attempt = 0; ; attempt++) {
+        try {
+            return await generateFullCompactSummary(plan, model, options);
+        } catch (error) {
+            if (error instanceof Error && error.name === 'AbortError') throw error;
+            if (!isCurrent()) throw error;
+            if (attempt >= MAX_SUMMARY_TRANSPORT_RETRIES) throw error;
+            if (!isTransportRetryableSummaryError(error)) throw error;
+            await sleepForSummaryRetry(retryDelayMs(attempt + 1), options.requestOptions?.signal);
+        }
+    }
+}
+
 export async function compactFullContext(
     chatContext: ChatContext,
     model?: string,
@@ -1264,14 +1326,20 @@ export async function compactFullContext(
             recovery.attempts++;
         }
         try {
-            summary = await generateFullCompactSummary(plan, model, {
-                ...options,
-                maxCompletionTokens: options.budget?.summaryOutputTokens ?? options.maxCompletionTokens,
-                requestOptions: {
-                    ...options.requestOptions,
-                    ...(options.budget ? { contextBudget: { window: options.budget.contextWindow } } : {})
-                }
-            });
+            summary = await generateFullCompactSummaryWithTransportRetry(
+                plan,
+                model,
+                {
+                    ...options,
+                    maxCompletionTokens: options.budget?.summaryOutputTokens ?? options.maxCompletionTokens,
+                    requestOptions: {
+                        ...options.requestOptions,
+                        ...(options.budget ? { contextBudget: { window: options.budget.contextWindow } } : {})
+                    }
+                },
+                isCurrent,
+                options.summaryRetryDelayMs ?? getLLMRetryDelayMs
+            );
             if (!isCurrent()) throw new ContextPreparationBlockedError('cancelled');
             if (!summary.trim()) throw new CompactError('empty_content');
             if (recovery) recovery.nextPlanIndex = (recovery.nextPlanIndex ?? 0) + 1;
