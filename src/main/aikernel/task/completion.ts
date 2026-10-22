@@ -282,9 +282,16 @@ export async function processTaskCompletion(
                         .estimatedContextTokens
                 }).allowed,
             compactStateManaged: true,
-            executeCompact: async () =>
-                (await task.compactTaskContext({ trigger: 'auto', model, modelRequestOptions, usageRecovery }))
-                    .compacted,
+            executeCompact: async (toolResultOverrides) =>
+                (
+                    await task.compactTaskContext({
+                        trigger: 'auto',
+                        model,
+                        modelRequestOptions,
+                        usageRecovery,
+                        toolResultOverrides
+                    })
+                ).compacted,
             beforeCompact: () => {
                 logCompactInfo(task.task_id, {
                     source: 'tasks',
@@ -840,11 +847,12 @@ export async function processTaskCompletion(
                             trigger: 'auto',
                             model: requestModel,
                             modelRequestOptions,
-                            usageRecovery
+                            usageRecovery,
+                            toolResultOverrides: streamOptions?.toolResultOverrides
                         });
                         if (!isCurrentTurn()) return false;
                         requestActiveContext = buildActiveContextView(task.chat_context);
-                        streamOptions = { activeContext: requestActiveContext };
+                        streamOptions = { ...streamOptions, activeContext: requestActiveContext };
                         preparedContextTokens = estimateRequestPayloadTokens({
                             messages: OpenAIAdapter.buildMessages(task.chat_context, true, streamOptions),
                             ...OpenAIAdapter.buildToolOptions(task.chat_context)

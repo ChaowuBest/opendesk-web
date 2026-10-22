@@ -40,6 +40,7 @@ import {
     estimateRoughTokensFromChatMessage
 } from './token-estimation.js';
 import { OpenAIAdapter } from '../adapters/openai.js';
+import { resolveToolResultReplacement, resolveVisibleToolResultContent } from './tool-result-content.js';
 
 import { buildActiveContextView, buildProjectedActiveContextView } from './context-view.js';
 import type { AssistantRoundRef, CompactBoundaryRef, ProjectedContextItem } from './types.js';
@@ -59,6 +60,7 @@ const ASSISTANT_PLAN_SIGNAL_PATTERN =
     /(?:当前计划|后续计划|下一步|待完成|进行中|计划|\btodo\b|\bnext steps?\b|\bcurrent plan\b|\bplan\b)/i;
 
 export interface FullCompactPlanOptions {
+    toolResultOverrides?: Map<string, string>;
     /** Context window used by the token-budget tail planner. */
     contextWindow?: number;
     /** Legacy count-based planner override; runtime compaction uses contextWindow instead. */
@@ -121,7 +123,11 @@ export interface FullCompactLeadingPartialAssistant {
 export interface FullCompactSummaryTextOptions {
     toolArgsPreviewChars?: number;
     toolResultPreviewChars?: number;
+    toolResultOverrides?: Map<string, string>;
 }
+
+type NormalizedFullCompactSummaryTextOptions = Required<Omit<FullCompactSummaryTextOptions, 'toolResultOverrides'>> &
+    Pick<FullCompactSummaryTextOptions, 'toolResultOverrides'>;
 
 export interface FullCompactBoundaryOptions {
     trigger?: CompactBoundaryTrigger;
@@ -300,14 +306,14 @@ function serializeUserMessageForSummary(message: UserMessage): string {
 
 function serializeAssistantMessageForSummary(
     message: AssistantMessage,
-    options: Required<FullCompactSummaryTextOptions>
+    options: NormalizedFullCompactSummaryTextOptions
 ): string[] {
     return serializeAssistantPartsForSummary(message.content, options);
 }
 
 function serializeAssistantPartsForSummary(
     partsToSerialize: ReadonlyArray<AssistantMessage['content'][number]>,
-    options: Required<FullCompactSummaryTextOptions>
+    options: NormalizedFullCompactSummaryTextOptions
 ): string[] {
     const parts: string[] = [];
 
@@ -322,8 +328,15 @@ function serializeAssistantPartsForSummary(
             for (const toolCall of part.toolcalls) {
                 const argsSnippet =
                     truncateForSummaryText(toolCall.args_string, options.toolArgsPreviewChars) || 'none';
+                const visibleResult = resolveVisibleToolResultContent(toolCall, options.toolResultOverrides);
+                // Replacement previews already have a bounded size. Keep their artifact paths intact.
+                const replaced =
+                    toolCall.hasLegacyCompressId() ||
+                    resolveToolResultReplacement(toolCall, options.toolResultOverrides) !== undefined;
                 const resultSnippet =
-                    truncateForSummaryText(toolCall.result, options.toolResultPreviewChars) || 'no result';
+                    (replaced
+                        ? visibleResult
+                        : truncateForSummaryText(visibleResult, options.toolResultPreviewChars)) || 'no result';
                 parts.push(
                     `[Tool Call: ${toolCall.tool_name}] Args: ${argsSnippet} -> ` +
                         `Result(${toolCall.status}): ${resultSnippet}`
@@ -335,7 +348,7 @@ function serializeAssistantPartsForSummary(
     return parts;
 }
 
-function serializeMessageForSummary(message: ChatMessage, options: Required<FullCompactSummaryTextOptions>): string[] {
+function serializeMessageForSummary(message: ChatMessage, options: NormalizedFullCompactSummaryTextOptions): string[] {
     if (isCompactBoundaryMessage(message)) {
         return [`[Previous Compact Summary]:\n${message.summary}`];
     }
@@ -353,7 +366,7 @@ function serializeMessageForSummary(message: ChatMessage, options: Required<Full
 
 function serializeProjectedItemForSummary(
     item: ProjectedContextItem,
-    options: Required<FullCompactSummaryTextOptions>
+    options: NormalizedFullCompactSummaryTextOptions
 ): string[] {
     if (item.kind === 'compact_boundary') {
         return [`[Previous Compact Summary]:\n${item.message.summary}`];
@@ -804,7 +817,8 @@ export function buildFullCompactPlan(
     chatContext: ChatContext,
     options: FullCompactPlanOptions = {}
 ): FullCompactPlan | undefined {
-    if (options.contextWindow !== undefined) return buildTokenBudgetCompactPlan(chatContext, options.contextWindow);
+    if (options.contextWindow !== undefined)
+        return buildTokenBudgetCompactPlan(chatContext, options.contextWindow, options.toolResultOverrides);
     const normalizedOptions = normalizeOptions(options);
     if (options.enableAssistantRoundBoundary) {
         const projectedActiveContext = buildProjectedActiveContextView(chatContext);
@@ -948,7 +962,8 @@ export const COMPACT_TAIL_MAX_RATIO = 0.2;
 
 function selectTokenBudgetTailIndex(
     active: ReturnType<typeof buildProjectedActiveContextView>,
-    contextWindow: number
+    contextWindow: number,
+    toolResultOverrides?: Map<string, string>
 ): number | undefined {
     if (!Number.isFinite(contextWindow) || contextWindow <= 0) return undefined;
     const items = active.projectedItems;
@@ -986,8 +1001,8 @@ function selectTokenBudgetTailIndex(
     start = completionStart(start);
     const tokens = (item: ProjectedContextItem) =>
         item.kind === 'assistant_round'
-            ? estimateRoughTokensFromAssistantParts(item.round.parts)
-            : estimateRoughTokensFromChatMessage(item.message);
+            ? estimateRoughTokensFromAssistantParts(item.round.parts, { toolResultOverrides })
+            : estimateRoughTokensFromChatMessage(item.message, { toolResultOverrides });
     let keptTokens = items.slice(start).reduce((sum, item) => sum + tokens(item), 0);
     while (start > 0 && keptTokens < contextWindow * COMPACT_TAIL_TARGET_RATIO) {
         const previous = items[start - 1];
@@ -1004,10 +1019,11 @@ function selectTokenBudgetTailIndex(
 /** Preserve complete contiguous rounds by token budget rather than a fixed round count. */
 export function buildTokenBudgetCompactPlan(
     chatContext: ChatContext,
-    contextWindow: number
+    contextWindow: number,
+    toolResultOverrides?: Map<string, string>
 ): FullCompactPlan | undefined {
     const active = buildProjectedActiveContextView(chatContext);
-    const index = selectTokenBudgetTailIndex(active, contextWindow);
+    const index = selectTokenBudgetTailIndex(active, contextWindow, toolResultOverrides);
     return index === undefined ? undefined : planFromProjectedBoundary(active, index);
 }
 
@@ -1015,10 +1031,11 @@ export function buildTokenBudgetCompactPlan(
 export function buildUsageAnchoredCompactPlans(
     chatContext: ChatContext,
     budget: CompactionBudget,
-    model?: string
+    model?: string,
+    toolResultOverrides?: Map<string, string>
 ): FullCompactPlan[] {
     const active = buildProjectedActiveContextView(chatContext);
-    const idealTailIndex = selectTokenBudgetTailIndex(active, budget.contextWindow);
+    const idealTailIndex = selectTokenBudgetTailIndex(active, budget.contextWindow, toolResultOverrides);
     if (idealTailIndex === undefined) return [];
     const plans: FullCompactPlan[] = [];
     for (let index = idealTailIndex; index >= 0; index--) {
@@ -1060,9 +1077,9 @@ function buildBudgetCompactPlans(
     model: string | undefined,
     options: GenerateFullCompactSummaryOptions
 ): FullCompactPlan[] {
-    const plans = buildUsageAnchoredCompactPlans(chatContext, budget, model);
+    const plans = buildUsageAnchoredCompactPlans(chatContext, budget, model, options.toolResultOverrides);
     const active = buildProjectedActiveContextView(chatContext);
-    const idealTailIndex = selectTokenBudgetTailIndex(active, budget.contextWindow);
+    const idealTailIndex = selectTokenBudgetTailIndex(active, budget.contextWindow, options.toolResultOverrides);
     if (idealTailIndex === undefined) return plans;
     const earliestReal = plans.at(-1);
     let maxLength = earliestReal ? buildFullCompactSummaryText(earliestReal, options).length : Infinity;
@@ -1096,9 +1113,10 @@ export function buildFullCompactSummaryText(
     plan: FullCompactPlan,
     options: FullCompactSummaryTextOptions = {}
 ): string {
-    const normalizedOptions: Required<FullCompactSummaryTextOptions> = {
+    const normalizedOptions: NormalizedFullCompactSummaryTextOptions = {
         toolArgsPreviewChars: normalizeSummaryPreviewChars(options.toolArgsPreviewChars),
-        toolResultPreviewChars: normalizeSummaryPreviewChars(options.toolResultPreviewChars)
+        toolResultPreviewChars: normalizeSummaryPreviewChars(options.toolResultPreviewChars),
+        toolResultOverrides: options.toolResultOverrides
     };
 
     const scopeLine = buildFullCompactSummaryScopeLine(plan);
@@ -1298,7 +1316,11 @@ export async function compactFullContext(
         ? recovery.plans?.[recovery.nextPlanIndex ?? 0]
         : buildFullCompactPlan(chatContext, { ...options, contextWindow });
     if (plan === undefined) {
-        if (recovery && (options.usageRecovery || buildTokenBudgetCompactPlan(chatContext, contextWindow!)))
+        if (
+            recovery &&
+            (options.usageRecovery ||
+                buildTokenBudgetCompactPlan(chatContext, contextWindow!, options.toolResultOverrides))
+        )
             throw new ContextPreparationBlockedError('no_safe_usage_boundary');
         return { compacted: false };
     }
@@ -1381,7 +1403,9 @@ export async function compactFullContext(
         candidate.attachToolsets(...chatContext.toolsets.values());
         applyFullCompactResult(candidate, result);
         const payload = {
-            messages: OpenAIAdapter.buildMessages(candidate),
+            messages: OpenAIAdapter.buildMessages(candidate, true, {
+                toolResultOverrides: options.toolResultOverrides
+            }),
             ...OpenAIAdapter.buildToolOptions(candidate)
         };
         fitRequestOutputTokens(payload, options.requestedOutputTokens ?? 2048, options.budget.contextWindow, 0, true);

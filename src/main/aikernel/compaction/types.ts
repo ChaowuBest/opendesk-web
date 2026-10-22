@@ -129,7 +129,7 @@ export interface PrepareContextOptions {
     compactStateManaged?: boolean;
     readonlyOnly?: boolean;
     beforeCompact?: () => void;
-    executeCompact?: () => Promise<boolean | void> | boolean | void;
+    executeCompact?: (toolResultOverrides: Map<string, string>) => Promise<boolean | void> | boolean | void;
     enableToolResultBudget?: boolean;
     enableMicrocompact?: boolean;
     /** Defaults to true; set false to roll back pipeline compaction to message-granularity boundaries. */

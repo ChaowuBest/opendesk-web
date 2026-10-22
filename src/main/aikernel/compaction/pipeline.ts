@@ -421,7 +421,7 @@ export async function prepareContextForModel(
         try {
             options.beforeCompact?.();
             if (options.executeCompact) {
-                const executeResult = await options.executeCompact();
+                const executeResult = await options.executeCompact(lightweightResult.toolResultOverrides);
                 compactApplied = executeResult !== false;
             } else {
                 compactApplied = false;
@@ -486,6 +486,7 @@ export async function prepareContextForModel(
                         trigger: 'auto',
                         taskId: options.taskId,
                         enableAssistantRoundBoundary: assistantRoundBoundaryEnabled,
+                        toolResultOverrides: lightweightResult.toolResultOverrides,
                         requestOptions: options.requestOptions
                     });
                 }

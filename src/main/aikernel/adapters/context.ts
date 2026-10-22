@@ -19,6 +19,7 @@ import {
 } from '../messages.js';
 import { buildActiveContextView } from '../compaction/context-view.js';
 import type { ActiveContextView, AssistantRoundRef } from '../compaction/types.js';
+import { resolveToolResultReplacement, resolveVisibleToolResultContent } from '../compaction/tool-result-content.js';
 
 export interface AdapterMessageBuildOptions {
     activeContext?: ActiveContextView;
@@ -87,10 +88,10 @@ export function buildRequestChatContext(
         for (const part of message.content) {
             if (part?.type !== 'tool_call' || !Array.isArray(part.toolcalls)) continue;
             for (const toolCall of part.toolcalls) {
-                const resultId = toolCall?.result_storage?.result_id;
-                const override = typeof resultId === 'string' ? options.toolResultOverrides?.get(resultId) : undefined;
-                if (typeof override === 'string' && override.length > 0) {
+                const override = resolveToolResultReplacement(toolCall, options.toolResultOverrides);
+                if (override !== undefined) {
                     toolCall.result = override;
+                    toolCall.result_storage.replacement_text = override;
                 }
             }
         }
@@ -171,25 +172,5 @@ export function buildToolDefinitions(chatContext: ChatContext): AdapterToolDefin
 }
 
 export function buildToolResultContent(toolcall: ToolCall, toolResultOverrides?: Map<string, string>): string {
-    if (toolcall.hasLegacyCompressId()) {
-        return toolcall.getLegacyCompressedResultText();
-    }
-
-    const resultId = toolcall.result_storage?.result_id;
-    if (resultId) {
-        const overrideContent = toolResultOverrides?.get(resultId);
-        if (typeof overrideContent === 'string' && overrideContent.length > 0) {
-            return overrideContent;
-        }
-    }
-
-    if (toolcall.status === 'error') {
-        return `Toolcall failed: ${toolcall.result ?? ''}`;
-    }
-
-    if (toolcall.status === 'success') {
-        return toolcall.result ?? '工具调用成功完成';
-    }
-
-    return 'Toolcall failed: unfinished tool call';
+    return resolveVisibleToolResultContent(toolcall, toolResultOverrides) ?? 'Toolcall failed: unfinished tool call';
 }

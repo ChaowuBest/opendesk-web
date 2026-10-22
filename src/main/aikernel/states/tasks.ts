@@ -180,6 +180,7 @@ export interface TaskCompactOptions {
     model?: string;
     modelRequestOptions?: TaskModelRequestOptions;
     usageRecovery?: UsageCompactRecovery;
+    toolResultOverrides?: Map<string, string>;
 }
 
 export interface TaskCompactResult {
@@ -1740,6 +1741,13 @@ export class TaskState {
             const budget = calculateCompactionBudget(contextWindow);
             budget.summaryOutputTokens = limitSummaryOutputToModel(model, budget.summaryOutputTokens);
             const output = options.modelRequestOptions?.maxCompletionTokens ?? (await resolveMaxOutputTokens(model));
+            const toolResultOverrides = new Map(
+                Array.from(this.getSynchronizedToolResultReplacementState().replacements, ([id, record]) => [
+                    id,
+                    record.replacement_text
+                ])
+            );
+            for (const [id, replacement] of options.toolResultOverrides ?? []) toolResultOverrides.set(id, replacement);
             this.setAutoCompactState(AutoCompactStates.recordAttempt(this.auto_compact_state));
             this.compactProgress = {
                 type: 'compact',
@@ -1757,6 +1765,7 @@ export class TaskState {
                     budget,
                     requestedOutputTokens: output,
                     usageRecovery,
+                    toolResultOverrides,
                     requestOptions: {
                         ...this.withUsageTelemetry(options.modelRequestOptions),
                         signal: this._pluginAbortController.signal
@@ -1773,8 +1782,11 @@ export class TaskState {
                 if (!compacted) {
                     if (
                         options.trigger !== 'auto' &&
-                        estimateTextTokens(JSON.stringify(OpenAIAdapter.buildMessages(this.chat_context))) <
-                            budget.triggerTokens
+                        estimateTextTokens(
+                            JSON.stringify(
+                                OpenAIAdapter.buildMessages(this.chat_context, true, { toolResultOverrides })
+                            )
+                        ) < budget.triggerTokens
                     ) {
                         this.setAutoCompactState({
                             ...previous,
@@ -1785,7 +1797,7 @@ export class TaskState {
                     throw new ContextPreparationBlockedError('no_progress');
                 }
                 const payload = {
-                    messages: OpenAIAdapter.buildMessages(this.chat_context),
+                    messages: OpenAIAdapter.buildMessages(this.chat_context, true, { toolResultOverrides }),
                     ...OpenAIAdapter.buildToolOptions(this.chat_context)
                 };
                 fitRequestOutputTokens(payload, output, budget.contextWindow, 0, true);

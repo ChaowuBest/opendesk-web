@@ -12,6 +12,8 @@ import {
     AssistantMessage,
     AssistantResponse,
     ChatContext,
+    ToolCall,
+    ToolCallMessagePart,
     Usage,
     UserMessage
 } from '../../../main/aikernel/messages.js';
@@ -225,40 +227,68 @@ describe('unknown context windows', () => {
         expect(send.mock.calls[0][3]?.contextBudget).toBeUndefined();
     });
 
-    test('actual summary recovery uses the learned 15 percent budget and preserves the recent user request', async () => {
-        const task = createTask();
-        const assistant = task.chat_context.lastMessage() as AssistantMessage;
-        for (const [index, tokens] of [5000, 10000, 18000, 30000].entries()) {
-            assistant.beginCompletionRound(false);
-            assistant.appendText(`completed ${index} ` + 'history '.repeat(1800));
-            assistant.usage = new Usage(tokens - 100, 100, tokens);
-            assistant.recordCompletionUsage('local');
+    test.each([true, false])(
+        'actual summary recovery keeps replacements through summary and retry (persisted=%s)',
+        async (persisted) => {
+            const task = createTask();
+            const assistant = task.chat_context.lastMessage() as AssistantMessage;
+            const calls: ToolCall[] = [];
+            for (const [index, tokens] of [5000, 10000, 18000, 30000].entries()) {
+                assistant.beginCompletionRound(false);
+                assistant.appendText(`completed ${index} ` + 'history '.repeat(1800));
+                const call = new ToolCall(index, `web-${index}`, 'web_search', '{}');
+                call.status = 'success';
+                call.result = `RAW_WEB_RESULT_${index} ` + 'x'.repeat(100000);
+                const replacement = `网页摘要 ${index}\n完整输出已保存至: C:/test/artifacts/web-${index}.txt`;
+                call.setResultStorage({
+                    result_id: `web-result-${index}`,
+                    ...(persisted ? { replacement_text: replacement } : {})
+                });
+                task.tool_result_replacement_state.replacements.set(call.result_storage!.result_id, {
+                    result_id: call.result_storage!.result_id,
+                    replacement_text: replacement
+                });
+                const part = new ToolCallMessagePart();
+                part.push(call);
+                assistant.appendToolCallPart(part);
+                calls.push(call);
+                assistant.usage = new Usage(tokens - 100, 100, tokens);
+                assistant.recordCompletionUsage('local');
+            }
+            const instance = Setting.getInstance().getModelInstance('local', 'chat')!;
+            ModelContextBudgets.recordSuccess(instance, assistant.usage);
+            task.chat_context.appendMessage(new UserMessage('latest user request'));
+            task.chat_context.appendMessage(new AssistantMessage());
+            const ask = jest.spyOn(LLM, 'askWithMetadata').mockResolvedValue({
+                text: 'saved older history',
+                reasoningLength: 0,
+                finishReason: 'stop'
+            });
+            let requests = 0;
+            const stream = jest.spyOn(LLM, 'streamComplete').mockImplementation(async function* () {
+                if (++requests === 1) throw overflow();
+                yield response(2000);
+            });
+
+            await task.processCompletion();
+
+            expect(requests).toBe(2);
+            expect(ask).toHaveBeenCalledTimes(1);
+            expect(ask.mock.calls[0][2]?.maxCompletionTokens).toBe(4500);
+            expect(ask.mock.calls[0][2]?.contextBudget?.window).toBe(30000);
+            expect(task.chat_context.findCompactBoundary()?.message.summary).toBe('saved older history');
+            expect(JSON.stringify(ask.mock.calls[0][0]).includes('C:/test/artifacts/web-')).toBe(true);
+            expect(JSON.stringify(ask.mock.calls[0][0]).includes('RAW_WEB_RESULT')).toBe(false);
+            for (const [context] of stream.mock.calls) {
+                const payload = JSON.stringify(OpenAIAdapter.buildMessages(context));
+                expect(payload.includes('C:/test/artifacts/web-')).toBe(true);
+                expect(payload.includes('RAW_WEB_RESULT')).toBe(false);
+            }
+            expect(calls.every((call) => call.result?.includes('RAW_WEB_RESULT'))).toBe(true);
+            expect(JSON.stringify(stream.mock.calls[1][0].messages)).toContain('latest user request');
+            expect(task.task_status).toBe('running');
         }
-        const instance = Setting.getInstance().getModelInstance('local', 'chat')!;
-        ModelContextBudgets.recordSuccess(instance, assistant.usage);
-        task.chat_context.appendMessage(new UserMessage('latest user request'));
-        task.chat_context.appendMessage(new AssistantMessage());
-        const ask = jest.spyOn(LLM, 'askWithMetadata').mockResolvedValue({
-            text: 'saved older history',
-            reasoningLength: 0,
-            finishReason: 'stop'
-        });
-        let requests = 0;
-        const stream = jest.spyOn(LLM, 'streamComplete').mockImplementation(async function* () {
-            if (++requests === 1) throw overflow();
-            yield response(2000);
-        });
-
-        await task.processCompletion();
-
-        expect(requests).toBe(2);
-        expect(ask).toHaveBeenCalledTimes(1);
-        expect(ask.mock.calls[0][2]?.maxCompletionTokens).toBe(4500);
-        expect(ask.mock.calls[0][2]?.contextBudget?.window).toBe(30000);
-        expect(task.chat_context.findCompactBoundary()?.message.summary).toBe('saved older history');
-        expect(JSON.stringify(stream.mock.calls[1][0].messages)).toContain('latest user request');
-        expect(task.task_status).toBe('running');
-    });
+    );
 
     test('local provider context size rejection learns the window, summarizes history and retries', async () => {
         const task = createTask();
@@ -311,6 +341,46 @@ describe('unknown context windows', () => {
         expect(JSON.stringify(stream.mock.calls[1][0].messages)).toContain('continue the latest user request');
         expect(task.task_status).toBe('running');
     });
+
+    test.each(['manual', 'auto'] as const)(
+        '%s task compaction carries request-local replacements through final validation',
+        async (trigger) => {
+            configureModel(10000, 512);
+            const task = createTask();
+            const overrides = new Map<string, string>();
+            const calls: ToolCall[] = [];
+            for (let index = 0; index < 5; index++) {
+                const assistant = new AssistantMessage();
+                assistant.appendText('completed work '.repeat(300));
+                const call = new ToolCall(index, `tool-${index}`, 'web_search', '{}');
+                call.status = 'success';
+                call.result = 'RAW_TOOL_RESULT ' + 'x'.repeat(100000);
+                call.setResultStorage({ result_id: `result-${index}` });
+                overrides.set(
+                    call.result_storage!.result_id,
+                    `short result; read C:/test/artifacts/result-${index}.txt`
+                );
+                const part = new ToolCallMessagePart();
+                part.push(call);
+                assistant.appendToolCallPart(part);
+                task.chat_context.appendMessage(assistant);
+                calls.push(call);
+            }
+            const ask = jest.spyOn(LLM, 'askWithMetadata').mockResolvedValue({
+                text: 'saved history',
+                reasoningLength: 0,
+                finishReason: 'stop'
+            });
+
+            await expect(task.compactTaskContext({ trigger, toolResultOverrides: overrides })).resolves.toMatchObject({
+                compacted: true
+            });
+
+            expect(JSON.stringify(ask.mock.calls[0][0]).includes('C:/test/artifacts/result-')).toBe(true);
+            expect(JSON.stringify(ask.mock.calls[0][0]).includes('RAW_TOOL_RESULT')).toBe(false);
+            expect(calls.every((call) => call.result?.includes('RAW_TOOL_RESULT'))).toBe(true);
+        }
+    );
 
     test('manual summary requests respect the configured output cap for unknown model names', async () => {
         configureModel(32768, 1024);
