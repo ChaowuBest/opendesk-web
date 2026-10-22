@@ -34,8 +34,10 @@ interface EffectiveSystemProxy {
  *
  * 动态 import 避免在非鸿蒙平台拖入 electron 依赖链（arkts.ts 顶层 import
  * systemPreferences from 'electron'），shellExec 静态 import 本模块时不受影响。
+ *
+ * 导出给需要自行建连的模块（邮件隧道）在 use_proxy=system 时复用。
  */
-async function getEffectiveSystemProxy(): Promise<EffectiveSystemProxy | null> {
+export async function getEffectiveSystemProxy(): Promise<EffectiveSystemProxy | null> {
     if ((process.platform as string) === 'openharmony') {
         return getHarmonySystemProxy();
     }

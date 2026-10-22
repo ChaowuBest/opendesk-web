@@ -30,7 +30,7 @@ import { safeSendToWebContents, safeSendToWebFrame } from '../main/utils/electro
 import { isHostInNoProxy } from '../main/utils/proxy.js';
 import { getHarmonyOSSystemProxy } from './bridges/harmonyos/proxy.js';
 import { Setting } from '../main/utils/setting.js';
-import type { PlatformFetchOptions } from './base.js';
+import type { PlatformFetchOptions, PlatformNetworkConfig } from './base.js';
 import type { InteractiveToolset } from '../main/aikernel/tool.js';
 import crypto from 'crypto';
 import path from 'path';
@@ -175,6 +175,20 @@ export class ElectronPlatform extends WorkerPlatform {
 
     getName(): string {
         return 'electron';
+    }
+
+    /**
+     * Electron 主进程直接读 Setting：WorkerPlatform 的实现返回的是 workerData 快照，
+     * 在主线程里为空，不能代表用户当前配置。
+     */
+    getNetworkConfig(): PlatformNetworkConfig {
+        const nc = Setting.getInstance().getData().network_config;
+        return {
+            no_ssl: nc.no_ssl,
+            use_proxy: nc.use_proxy,
+            custom_proxy_addr: nc.custom_proxy_addr,
+            no_proxy: nc.no_proxy
+        };
     }
 
     getApplicationClasses() {
