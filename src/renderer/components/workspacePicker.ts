@@ -126,7 +126,11 @@ export function showWorkspacePicker(options: WorkspacePickerOptions = {}): Promi
 <style>
 ${OVERLAY_CSS}
     .od-ws-picker-overlay {
-        position: fixed; inset: 0; z-index: 99999;
+        /* 遮罩以 body 为包含块（body 铺满整个窗口矩形），Linux 自绘圆角窗口下
+           必须内缩到内容矩形并跟随圆角，否则四周透明阴影边距会被涂黑。
+           变量由 titlebar.css 在 window-rounded 下赋值，其余平台退化为 0。 */
+        position: fixed; inset: var(--od-overlay-inset, 0px);
+        border-radius: var(--od-overlay-radius, 0px); z-index: 99999;
         display: flex; align-items: center; justify-content: center;
         animation: od-ws-fade-in ${ANIM_DURATION_IN}ms ease-out forwards;
     }

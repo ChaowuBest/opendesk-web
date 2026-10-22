@@ -1324,6 +1324,14 @@ export const zhCn: Record<string, string> = {
     'permission.truncate.prefix': '始终允许 ',
     'permission.truncate.suffix': ' 的',
 
+    // System Notification
+    'notification.permission.title': 'OpenDesk - 权限确认',
+    'notification.permission.body': '${toolName} 请求${action}${type}，点击打开任务确认',
+    'notification.askUser.title': 'OpenDesk - 需要您的输入',
+    'notification.askUser.body': '点击打开任务回答问题',
+    'notification.exitPlanMode.title': 'OpenDesk - 计划审批',
+    'notification.exitPlanMode.body': '点击打开任务审批实施计划',
+
     // Shortcuts
     'shortcut.switch_mode': '模式切换',
     'shortcut.output_display': '输出显示切换',

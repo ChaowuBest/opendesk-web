@@ -22,17 +22,19 @@ export function ensureOverlayStyles(root: Document | ShadowRoot = document): voi
 export interface OverlayOptions {
     /** The non-scrolling panel shell to cover. Omit to cover the window. */
     target?: HTMLElement;
+    /** Where to attach a window-level overlay. Defaults to document.body. */
+    mountTarget?: HTMLElement;
     className?: string;
 }
 
 const containers = new WeakMap<HTMLElement, { count: number; position: string; priority: string; changed: boolean }>();
 
 /** Positioning only: the caller owns content, dismissal and focus behavior. */
-export function createOverlay({ target, className = '' }: OverlayOptions = {}): {
+export function createOverlay({ target, mountTarget, className = '' }: OverlayOptions = {}): {
     element: HTMLDivElement;
     dispose(): void;
 } {
-    const parent = target ?? document.body;
+    const parent = target ?? mountTarget ?? document.body;
     const root = parent.getRootNode() as Document | ShadowRoot;
     ensureOverlayStyles(root);
     const element = parent.ownerDocument.createElement('div');

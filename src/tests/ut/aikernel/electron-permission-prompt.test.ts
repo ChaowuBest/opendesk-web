@@ -66,6 +66,22 @@ jest.unstable_mockModule('../../../utils/electron.js', () => ({
     })
 }));
 
+// 系统通知的点击跳转行为由 system-notification 单独覆盖，这里只断言权限弹窗推送了
+// 正确的任务标识，保证点击系统通知能回到发起请求的任务
+const systemNotifications: Array<{ title: string; body: string; taskId?: string | null }> = [];
+// 请求结算后必须作废该任务的待打开记录，否则用户之后聚焦窗口会被误跳回已处理完的任务
+const clearedPendingTaskIds: Array<string | null | undefined> = [];
+
+jest.unstable_mockModule('../../../main/utils/system-notification.js', () => ({
+    registerNotificationMainWindowResolver: jest.fn(),
+    showTaskNotification: (options: { title: string; body: string; taskId?: string | null }) => {
+        systemNotifications.push(options);
+    },
+    clearPendingOpenTasks: (taskId?: string | null) => {
+        clearedPendingTaskIds.push(taskId);
+    }
+}));
+
 // 测试链路（replaceTaskHarnessForMode → buildSystemPrompt → SkillRegistry →
 // SoulRegistry）会连带真实加载 logger 并触发文件 transport 懒激活，依赖
 // Node 全局定时器；按项目惯例整体 mock logger，避免测试触碰真实日志落盘
@@ -120,6 +136,8 @@ beforeEach(() => {
     ipcHandlers.clear();
     sentMessages.length = 0;
     secondarySentMessages.length = 0;
+    systemNotifications.length = 0;
+    clearedPendingTaskIds.length = 0;
     browserWindows = [focusedWindow];
     jest.clearAllMocks();
 });
@@ -563,5 +581,35 @@ describe('ElectronPermissionPromptProvider queue', () => {
 
         respond(permissionRequests()[1].requestId, { decision: 'deny', rememberScope: 'none' });
         await expect(second).resolves.toMatchObject({ decision: 'deny', rememberScope: 'none' });
+    });
+
+    test('pushes a system notification carrying the task id for click-through', async () => {
+        const provider = createProvider();
+        const prompt = provider.prompt([writeRequest('/tmp/a.txt')], 'writeFile', [], {
+            taskId: 'task-77',
+            taskName: 'Task 77'
+        });
+
+        expect(systemNotifications).toHaveLength(1);
+        expect(systemNotifications[0].taskId).toBe('task-77');
+        expect(systemNotifications[0].body).toContain('writeFile');
+
+        respond(permissionRequests()[0].requestId, { decision: 'deny', rememberScope: 'none' });
+        await expect(prompt).resolves.toMatchObject({ decision: 'deny' });
+    });
+
+    test('voids the pending open-task record once the prompt is answered', async () => {
+        // 用户没点通知、直接在应用内应答时，待打开记录必须作废：
+        // 否则之后任意一次主窗口聚焦都会把他强制跳回这个已经处理完的任务。
+        const provider = createProvider();
+        const prompt = provider.prompt([writeRequest('/tmp/a.txt')], 'writeFile', [], {
+            taskId: 'task-77',
+            taskName: 'Task 77'
+        });
+
+        respond(permissionRequests()[0].requestId, { decision: 'allow', rememberScope: 'none' });
+        await expect(prompt).resolves.toMatchObject({ decision: 'allow' });
+
+        expect(clearedPendingTaskIds).toContain('task-77');
     });
 });

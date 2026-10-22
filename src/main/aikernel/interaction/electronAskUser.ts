@@ -19,10 +19,14 @@
 import type { AskUserRequest, AskUserResponse, AskUserProvider } from './tools.js';
 import { logger } from '../../utils/logger.js';
 import { broadcastToAllWindows } from '../../utils/electron-ipc.js';
+import { showTaskNotification, clearPendingOpenTasks } from '../../utils/system-notification.js';
 import { electron } from '../../../utils/electron.js';
+import { t } from '../../../locale/index.js';
 
 interface PendingPrompt {
     requestId: string;
+    /** 请求所属任务，结算时用于作废通知的待打开记录 */
+    taskId?: string | null;
     resolve: (response: AskUserResponse) => void;
     timer: ReturnType<typeof setTimeout> | null;
     handler: ((event: unknown, respRequestId: string, response: unknown) => void) | null;
@@ -57,6 +61,8 @@ export class ElectronAskUserProvider implements AskUserProvider {
     private settle(pending: PendingPrompt, response: AskUserResponse, dismiss: boolean): void {
         if (pending.settled) return;
         pending.settled = true;
+        // 已应答或已超时，通知的待打开记录一并作废，避免之后聚焦窗口时误跳
+        clearPendingOpenTasks(pending.taskId);
         if (pending.timer) clearTimeout(pending.timer);
         const index = this.pendingPrompts.indexOf(pending);
         if (index >= 0) {
@@ -79,33 +85,22 @@ export class ElectronAskUserProvider implements AskUserProvider {
 
     async prompt(request: AskUserRequest): Promise<AskUserResponse> {
         try {
-            const { BrowserWindow, ipcMain, Notification } = electron();
-            const windows = BrowserWindow.getAllWindows().filter((w) => !w.isDestroyed());
-            if (windows.length === 0) {
+            const { BrowserWindow, ipcMain } = electron();
+            if (!BrowserWindow.getAllWindows().some((w) => !w.isDestroyed())) {
                 logger.warn('ElectronAskUserProvider: no window available, returning cancelled');
                 return { answers: {}, cancelled: true };
             }
-            // 仅用于系统通知点击时聚焦窗口，面板请求本身走广播
-            const win = windows[0];
 
-            if (Notification.isSupported()) {
-                const notification = new Notification({
-                    title: 'OpenDesk - 需要您的输入',
-                    body: request.questions[0]?.question ?? '请在应用内回答问题',
-                    silent: false
-                });
-                notification.show();
-                notification.on('click', () => {
-                    if (!win.isDestroyed()) {
-                        win.show();
-                        win.focus();
-                    }
-                });
-            }
+            showTaskNotification({
+                title: t('notification.askUser.title'),
+                body: request.questions[0]?.question ?? t('notification.askUser.body'),
+                taskId: request.taskId
+            });
 
             return new Promise<AskUserResponse>((resolve) => {
                 const pending: PendingPrompt = {
                     requestId: request.requestId,
+                    taskId: request.taskId,
                     resolve,
                     timer: null,
                     handler: null,

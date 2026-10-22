@@ -26,7 +26,9 @@
 import type { ExitPlanModeProvider, ExitPlanModeResponse, ExitPlanModeAction } from './exitPlanMode.js';
 import { logger } from '../../utils/logger.js';
 import { broadcastToAllWindows } from '../../utils/electron-ipc.js';
+import { showTaskNotification, clearPendingOpenTasks } from '../../utils/system-notification.js';
 import { electron } from '../../../utils/electron.js';
+import { t } from '../../../locale/index.js';
 
 interface PendingRequest {
     requestId: string;
@@ -70,6 +72,8 @@ export class ElectronExitPlanModeProvider implements ExitPlanModeProvider {
     private settle(pending: PendingPrompt, response: ExitPlanModeResponse, dismiss: boolean): void {
         if (pending.settled) return;
         pending.settled = true;
+        // 已审批或已超时，通知的待打开记录一并作废，避免之后聚焦窗口时误跳
+        clearPendingOpenTasks(pending.taskId);
         if (pending.timer) clearTimeout(pending.timer);
         if (this.pending === pending) {
             this.pending = null;
@@ -119,30 +123,18 @@ export class ElectronExitPlanModeProvider implements ExitPlanModeProvider {
         try {
             this.ensureIpcHandle();
 
-            const { BrowserWindow, ipcMain, Notification } = electron();
+            const { BrowserWindow, ipcMain } = electron();
 
-            const windows = BrowserWindow.getAllWindows().filter((w) => !w.isDestroyed());
-            if (windows.length === 0) {
+            if (!BrowserWindow.getAllWindows().some((w) => !w.isDestroyed())) {
                 logger.warn('ElectronExitPlanModeProvider: no window available, returning continue-editing');
                 return { action: 'continue-editing' };
             }
-            // 仅用于系统通知点击时聚焦窗口，面板请求本身走广播
-            const win = windows[0];
 
-            if (Notification.isSupported()) {
-                const notification = new Notification({
-                    title: 'OpenDesk - 计划审批',
-                    body: '请在应用内审批实施计划',
-                    silent: false
-                });
-                notification.show();
-                notification.on('click', () => {
-                    if (!win.isDestroyed()) {
-                        win.show();
-                        win.focus();
-                    }
-                });
-            }
+            showTaskNotification({
+                title: t('notification.exitPlanMode.title'),
+                body: t('notification.exitPlanMode.body'),
+                taskId
+            });
 
             const requestId = `exitPlan-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
             const pendingTaskId = taskId || requestId;

@@ -64,6 +64,7 @@ import {
 } from './utils/logger.js';
 import { broadcastToAllWindows, safeSendToWebContents, safeSendToWebFrame } from './utils/electron-ipc.js';
 import { createMainWindowCloseHandler } from './utils/window-close.js';
+import { registerNotificationMainWindowResolver } from './utils/system-notification.js';
 import { installMainWindowNavigationGuard } from './utils/main-window-navigation.js';
 import { createReloadBudget, createWindowRecoveryController } from './utils/window-recovery.js';
 import { NAV_INTERCEPT_SCRIPT } from '../renderer/webviewScripts.js';
@@ -1038,6 +1039,9 @@ const createWindow = () => {
     });
 
     globalMainWindow = mainWindow;
+    // 系统通知（权限确认 / AskUser / 计划审批）点击后要唤起主窗口并打开对应任务，
+    // 主窗口句柄在此统一注入，避免各 provider 用 getAllWindows() 顺序猜主窗口
+    registerNotificationMainWindowResolver(() => globalMainWindow);
     attachOpenDeskOfficeWindow(mainWindow);
     BrowserManager.setMainWindow(mainWindow);
 };

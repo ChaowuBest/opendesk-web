@@ -1034,7 +1034,9 @@ pre.terminal-tool-output {
    ========================================= */
 .shortcut-help-backdrop {
     position: fixed;
-    inset: 0;
+    /* Linux 自绘圆角窗口下内缩到内容矩形并跟随圆角，见 titlebar.css 的 --od-overlay-inset */
+    inset: var(--od-overlay-inset, 0px);
+    border-radius: var(--od-overlay-radius, 0px);
     z-index: 10000;
     opacity: 0;
     transition: opacity 0.2s ease;
@@ -3466,7 +3468,9 @@ agent-input[hide-disclaimer] .agent-input-footer {
    ========================================= */
 .agent-input-lightbox-overlay {
     position: fixed;
-    inset: 0;
+    /* Linux 自绘圆角窗口下内缩到内容矩形并跟随圆角，见 titlebar.css 的 --od-overlay-inset */
+    inset: var(--od-overlay-inset, 0px);
+    border-radius: var(--od-overlay-radius, 0px);
     z-index: 99999;
     display: flex;
     align-items: center;
