@@ -23,6 +23,7 @@ async function runOperation(method: string): Promise<StartupResult> {
     const requestId = await callArkTS<number>(method, 'number');
     if (!Number.isSafeInteger(requestId) || requestId < 1) throw new Error('Invalid Harmony startup request');
     const deadline = Date.now() + 5_000;
+    // The shell starts the OS operation once; peek only retrieves that request's pending/completed result.
     while (Date.now() < deadline) {
         const raw = await callArkTS<string>(EtsBridgeMethods.STARTUP_RESULT_PEEK, 'string', [requestId]);
         const result = JSON.parse(raw) as StartupResult | null;

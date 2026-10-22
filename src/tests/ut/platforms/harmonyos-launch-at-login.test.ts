@@ -64,3 +64,18 @@ test('rejects an older host without the new bindings', async () => {
     call.mockResolvedValueOnce(undefined);
     await expect(new HarmonyOSStartupKit().getState()).rejects.toThrow('Invalid Harmony startup request');
 });
+
+test('pending status polls the same request without restarting the OS query', async () => {
+    jest.useFakeTimers();
+    call.mockResolvedValueOnce(41)
+        .mockResolvedValueOnce('{"status":"pending"}')
+        .mockResolvedValueOnce('{"status":"pending"}')
+        .mockResolvedValueOnce('{"status":"ok","enabled":true}');
+    const state = new HarmonyOSStartupKit().getState();
+    await jest.advanceTimersByTimeAsync(100);
+    expect((await state).enabled).toBe(true);
+    expect(call.mock.calls.filter(([method]) => method === 'EtsBridge.OpenDeskStartupStatusStart')).toHaveLength(1);
+    const peeks = call.mock.calls.filter(([method]) => method === 'EtsBridge.OpenDeskStartupResultPeek');
+    expect(peeks).toHaveLength(3);
+    expect(peeks.every(([, type, args]) => type === 'string' && args[0] === 41)).toBe(true);
+});
