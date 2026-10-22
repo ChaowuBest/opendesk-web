@@ -260,6 +260,58 @@ describe('unknown context windows', () => {
         expect(task.task_status).toBe('running');
     });
 
+    test('local provider context size rejection learns the window, summarizes history and retries', async () => {
+        const task = createTask();
+        const assistant = task.chat_context.lastMessage() as AssistantMessage;
+        for (const [index, tokens] of [27088, 30109, 31866, 46845, 47177, 49600, 52370, 55426, 59897].entries()) {
+            assistant.beginCompletionRound(false);
+            assistant.appendText(`completed ${index} ` + 'history '.repeat(1800));
+            assistant.usage = new Usage(tokens - 100, 100, tokens);
+            assistant.recordCompletionUsage('local');
+        }
+        const stream = jest.spyOn(LLM, 'streamComplete').mockImplementation(async function* () {
+            const result = response(65536);
+            result.usage = Object.assign(new Usage(64039, 1497, 65536), {
+                input_tokens: 9461,
+                cache_creation_input_tokens: 0,
+                cache_read_input_tokens: 54578
+            });
+            yield result;
+        });
+        await task.processCompletion();
+        expect(await resolveContextWindow('local')).toBe(0);
+
+        task.chat_context.appendMessage(new UserMessage('continue the latest user request'));
+        task.chat_context.appendMessage(new AssistantMessage());
+        const ask = jest.spyOn(LLM, 'askWithMetadata').mockResolvedValue({
+            text: 'saved older history',
+            reasoningLength: 0,
+            finishReason: 'stop'
+        });
+        let requests = 0;
+        stream.mockClear().mockImplementation(async function* () {
+            if (++requests === 1)
+                throw new ModelRequestError({
+                    status: 400,
+                    message:
+                        'request (65583 tokens) exceeds the available context size (65536 tokens), try increasing it'
+                });
+            yield response(2000);
+        });
+
+        await task.processCompletion();
+
+        expect(await resolveContextWindow('local')).toBe(65536);
+        expect(requests).toBe(2);
+        expect(ask).toHaveBeenCalledTimes(1);
+        expect(ask.mock.calls[0][2]?.maxCompletionTokens).toBe(9830);
+        expect(ask.mock.calls[0][2]?.contextBudget?.window).toBe(65536);
+        expect(task.chat_context.findCompactBoundary()?.message.summary).toBe('saved older history');
+        expect(stream.mock.calls[1][3]?.contextBudget?.window).toBe(65536);
+        expect(JSON.stringify(stream.mock.calls[1][0].messages)).toContain('continue the latest user request');
+        expect(task.task_status).toBe('running');
+    });
+
     test('manual summary requests respect the configured output cap for unknown model names', async () => {
         configureModel(32768, 1024);
         const task = createTask();

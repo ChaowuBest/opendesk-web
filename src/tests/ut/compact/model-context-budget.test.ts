@@ -127,6 +127,17 @@ describe('runtime model context evidence', () => {
         ).toBe(32768);
     });
 
+    test('learns a local provider context size without a structured error code', () => {
+        const instance = model();
+        ModelContextBudgets.recordSuccess(instance, { total_tokens: 59897 });
+        const error = new ModelRequestError({
+            status: 400,
+            message: 'request (65583 tokens) exceeds the available context size (65536 tokens), try increasing it'
+        });
+
+        expect(ModelContextBudgets.learnFromOverflow(instance, error)).toBe(65536);
+    });
+
     test('changing the endpoint, model, provider or credentials isolates evidence', () => {
         const instance = model();
         ModelContextBudgets.recordSuccess(instance, { total_tokens: 30000 });
@@ -180,11 +191,26 @@ describe('runtime model context evidence', () => {
 
 describe('provider context limits', () => {
     test.each([
+        new Error('400 request (65583 tokens) exceeds the available context size (65536 tokens), try increasing it'),
+        new ModelRequestError(
+            {
+                status: 400,
+                message: 'request (65,583 tokens) exceeds the available context size (65,536 tokens), try increasing it'
+            },
+            { displayMessage: 'Model service rejected the request' }
+        )
+    ])('extracts the available context size rather than the rejected request size: %s', (error) => {
+        expect(extractContextWindowFromError(error)).toBe(65536);
+    });
+
+    test.each([
         ["This model's maximum context length is 32768 tokens. However, you requested 40000 tokens.", 32768],
         ['maximum context length is 32,768 tokens', 32768],
         ['prompt is too long: 35000 tokens > 32768 maximum', 32768],
         ['context length exceeded; max_model_len: 32768', 32768],
         ['context length exceeded; prompt contains 40000 tokens', undefined],
+        ['request (65583 tokens) exceeds the available context size', undefined],
+        ['request (65583 tokens) exceeds the available context size (0 tokens)', undefined],
         ['maximum context length exceeded', undefined],
         ['maximum context length is 0 tokens', undefined],
         ['maximum context length is 99999999999999999999999999999 tokens', undefined]

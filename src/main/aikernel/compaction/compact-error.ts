@@ -70,8 +70,10 @@ export function isContextLimitError(error: unknown): boolean {
         metadata?.message,
         error instanceof Error ? error.message : String(error)
     ].join(' ');
-    return /context[_ -]?(?:length|window|limit).*?(?:exceed|maximum|limit|token)|maximum context length|prompt[_ -](?:is[_ -])?too[_ -]long|context_length_exceeded/i.test(
-        message
+    return (
+        /context[_ -]?(?:length|window|limit).*?(?:exceed|maximum|limit|token)|maximum context length|prompt[_ -](?:is[_ -])?too[_ -]long|context_length_exceeded/i.test(
+            message
+        ) || /\bexceeds?\s+(?:the\s+)?available\s+context\s+size\b/i.test(message)
     );
 }
 
@@ -90,6 +92,7 @@ export function extractContextWindowFromError(error: unknown): number | undefine
         .filter((value) => typeof value === 'string')
         .join(' ');
     const patterns = [
+        /available\s+context\s+size\s*\(\s*([\d,]+)\s*tokens?\s*\)/i,
         /maximum context (?:length|window)(?:\s+(?:is|of))?\s*[:=]?\s*([\d,]+)\s*(?:tokens)?/i,
         /(?:max_model_len|maximum model length)\s*(?:is|of|[:=])\s*([\d,]+)/i,
         /prompt is too long:\s*[\d,]+\s*tokens?\s*>\s*([\d,]+)\s*(?:maximum|tokens?)/i
