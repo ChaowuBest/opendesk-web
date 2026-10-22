@@ -96,6 +96,17 @@ export function setSkillStatus(skillId: string, enabled: boolean): void {
 }
 
 /**
+ * 批量设置多个技能的启用状态（一次读写 status.json）
+ */
+export function setSkillsStatus(skillIds: string[], enabled: boolean): void {
+    const status = readStatus();
+    for (const skillId of skillIds) {
+        status[skillId] = enabled;
+    }
+    writeStatus(status);
+}
+
+/**
  * 获取所有状态记录
  */
 export function getAllStatuses(): Record<string, boolean> {

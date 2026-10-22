@@ -74,6 +74,33 @@ export interface SkillInstallResult {
     error?: string;
 }
 
+/**
+ * 技能中心「内置技能」Tab 的条目契约（桌面端渲染层与 CLI TUI 共用）。
+ * 与 getBuiltinSkills 返回的数组元素结构一致。
+ */
+export interface BuiltinSkillInfo {
+    id: string;
+    name: string;
+    description: string;
+    bundleName: string;
+    pluginId?: string;
+    pluginName?: string;
+    tools: Array<{
+        name: string;
+        description: string;
+        params: Array<{ name: string; type: string; description: string; required: boolean }>;
+    }>;
+    directory?: string;
+    license?: string;
+    compatibility?: string;
+    readOnly: boolean;
+    enabled: boolean;
+    blacklisted: boolean;
+    blacklistEvidence: string;
+    blacklistReason: string;
+    blockedAt: string;
+}
+
 export async function installSkillInMain<T extends SkillInstallResult>(
     context: PluginSkillInstallContext,
     install: () => Promise<T>
@@ -610,26 +637,10 @@ export class SkillMgrApplication extends BaseApplication {
      * 获取所有系统内置技能，供技能中心的"内置技能"Tab 使用。
      * 对于 skillmgr bundle，排除用户安装的技能和 manage-skills。
      */
-    async getBuiltinSkills() {
+    async getBuiltinSkills(): Promise<BuiltinSkillInfo[]> {
         const registry = AISkillRegistry.getInstance();
         const allSkills = await registry.getAllSkillsRaw();
-        const result: Array<{
-            id: string;
-            name: string;
-            description: string;
-            bundleName: string;
-            pluginId?: string;
-            pluginName?: string;
-            tools: Array<{
-                name: string;
-                description: string;
-                params: Array<{ name: string; type: string; description: string; required: boolean }>;
-            }>;
-            directory?: string;
-            license?: string;
-            compatibility?: string;
-            readOnly: boolean;
-        }> = [];
+        const result: BuiltinSkillInfo[] = [];
         for (const [bundleName, skills] of allSkills) {
             for (const skill of skills) {
                 if (bundleName === 'skillmgr') continue;

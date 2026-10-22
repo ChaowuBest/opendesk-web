@@ -66,9 +66,11 @@ describe('skillmgr locale', () => {
     });
 
     test('renderer translator resolves locale from setting and interpolates params', () => {
-        expect(createTranslatorForSkillMgr({ locale: 'zh-CN' })('renderer.skill.deleteAll.title')).toBe('删除所有技能');
-        expect(createTranslatorForSkillMgr({ locale: 'en-US' })('renderer.skill.deleteAll.title')).toBe(
-            'Delete All Skills'
+        expect(createTranslatorForSkillMgr({ locale: 'zh-CN' })('renderer.skill.batch.delete.title')).toBe(
+            '批量删除技能'
+        );
+        expect(createTranslatorForSkillMgr({ locale: 'en-US' })('renderer.skill.batch.delete.title')).toBe(
+            'Batch Delete Skills'
         );
         expect(
             createTranslatorForSkillMgr({ locale: 'zh-CN' })('renderer.skill.delete.confirm', { id: 'demo' })

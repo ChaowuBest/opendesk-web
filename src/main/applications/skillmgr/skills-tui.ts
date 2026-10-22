@@ -17,6 +17,7 @@ import {
     Input,
     Key,
     matchesKey,
+    isKeyRelease,
     Markdown,
     visibleWidth,
     wrapTextWithAnsi,
@@ -27,8 +28,9 @@ import { defaultSelectListTheme, defaultMarkdownTheme } from '../../tui/theme';
 import { SelectTable, type SelectRow } from '../../tui/components/selecttable';
 import { OpenDeskTUI } from '../../tui/entry';
 import { Setting } from '../../utils/setting.js';
-import { installSkillInMain, SkillMgrApplication } from './app.js';
-import { getSkillStatus, setSkillStatus } from './status.js';
+import { installSkillInMain, SkillMgrApplication, type BuiltinSkillInfo } from './app.js';
+import { ApplicationRegistry } from '../registry.js';
+import { getSkillStatus, setSkillStatus, setSkillsStatus } from './status.js';
 import { skillRegistry } from './utils/skill-registry.js';
 import { skillInstallManager } from './utils/skill-installer.js';
 import { getTuiRegistriesInfo } from './registry/index.js';
@@ -72,9 +74,13 @@ type ViewState =
     | 'install-zip'
     | 'install-url'
     | 'view-installed'
+    | 'view-builtin'
     | 'skill-detail'
+    | 'builtin-detail'
     | 'skill-content'
     | 'skill-resources'
+    | 'batch-menu'
+    | 'batch-confirm'
     | 'confirm-delete'
     | 'confirm-duplicate'
     | 'install-custom-name';
@@ -89,6 +95,8 @@ export class SkillsOverlay implements Component {
     private input?: Input;
     private state: ViewState = 'main';
     private installedSkills: any[] = [];
+    private builtinSkills: BuiltinSkillInfo[] = [];
+    private currentBuiltinDetail: BuiltinSkillInfo | null = null;
     private searchResults: RegistrySkill[] = [];
     private selectedInputValue = '';
     private selectedRegistry = 'skill0';
@@ -106,6 +114,8 @@ export class SkillsOverlay implements Component {
     private readonly detailMaxVisibleLines = 12;
     private pendingInstallSkill: RegistrySkill | null = null;
     private duplicateDefaultName = '';
+    private batchScope: 'installed' | 'builtin' = 'installed';
+    private pendingBatchAction: 'disable-all' | 'delete-all' | null = null;
 
     constructor(openDeskTUI: OpenDeskTUI) {
         this.openDeskTUI = openDeskTUI;
@@ -166,7 +176,8 @@ export class SkillsOverlay implements Component {
             { value: 'install-local', label: chalk.green('📁 从本地目录添加') },
             { value: 'install-zip', label: chalk.green('📦 从本地 zip 添加') },
             { value: 'install-url', label: chalk.blue('🌐 从 zip URL 添加') },
-            { value: 'view-installed', label: chalk.white('📋 查看已安装技能') }
+            { value: 'view-installed', label: chalk.white('📋 查看已安装技能') },
+            { value: 'view-builtin', label: chalk.white('🧩 查看内置技能') }
         ];
 
         this.list = new SelectList(items, items.length, defaultSelectListTheme);
@@ -454,31 +465,39 @@ export class SkillsOverlay implements Component {
         }
     }
 
-    private showViewInstalled() {
+    /** 已安装/内置技能列表共用的三列表格（状态/名称/描述），空列表退化为单项返回提示 */
+    private buildSkillTable(
+        skills: Array<{ id: string; enabled: boolean; name?: string; description?: string }>,
+        emptyText: string,
+        preserveSelectedIndex?: number
+    ): SelectList | SelectTable {
+        if (skills.length === 0) {
+            return new SelectList([{ value: 'back', label: chalk.gray(emptyText) }], 1, defaultSelectListTheme);
+        }
+        const rows: SelectRow[] = skills.map((skill) => ({
+            value: skill.id,
+            labels: [
+                skill.enabled ? chalk.green('● 已启用') : chalk.gray('○ 已禁用'),
+                this.normalizeInlineText(skill.name || '未命名技能'),
+                this.normalizeInlineText(skill.description || '无描述')
+            ]
+        }));
+        const table = new SelectTable(rows, Math.min(rows.length, 10), defaultSelectListTheme);
+        table.setColumnStrechFactors([0, 0, 1]);
+        table.setAlignments(['left', 'left', 'left']);
+        if (preserveSelectedIndex !== undefined) {
+            // 启停切换后的重载保留选中行，避免光标跳回首行导致下一次空格落在错误技能上
+            table.innerList.setSelectedIndex(preserveSelectedIndex);
+        }
+        return table;
+    }
+
+    private showViewInstalled(preserveSelectedIndex?: number) {
         this.cleanup();
         this.state = 'view-installed';
         this.input = undefined;
         this.header = new Text(chalk.bold(' 已安装技能'));
-
-        if (this.installedSkills.length === 0) {
-            const items = [{ value: 'back', label: chalk.gray('暂无已安装技能，按 Enter 返回') }];
-            this.list = new SelectList(items, 1, defaultSelectListTheme);
-        } else {
-            const rows: SelectRow[] = this.installedSkills.map((skill: any) => {
-                const enabled = skill.enabled !== false;
-                const status = enabled ? chalk.green('● 已启用') : chalk.gray('○ 已禁用');
-                const name = this.normalizeInlineText(skill.name || '未命名技能');
-                const desc = this.normalizeInlineText(skill.description || '无描述');
-                return {
-                    value: skill.id,
-                    labels: [status, name, desc]
-                };
-            });
-            const table = new SelectTable(rows, Math.min(rows.length, 10), defaultSelectListTheme);
-            table.setColumnStrechFactors([0, 0, 1]);
-            table.setAlignments(['left', 'left', 'left']);
-            this.list = table;
-        }
+        this.list = this.buildSkillTable(this.installedSkills, '暂无已安装技能，按 Enter 返回', preserveSelectedIndex);
 
         this.setupListHandlers();
         this.setupInstalledListShortcuts();
@@ -508,6 +527,8 @@ export class SkillsOverlay implements Component {
     private setupInstalledListShortcuts() {
         this.removeInputListener = this.openDeskTUI.tui.addInputListener((data: string) => {
             if (this.state !== 'view-installed') return undefined;
+            // 忽略 key release：Kitty 键盘协议下一次按键产生 press+release 两条事件，不过滤会重复触发（Space 启停净效果为零）
+            if (isKeyRelease(data)) return { consume: true };
             if (matchesKey(data, Key.space)) {
                 const skillId = this.getSelectedListValue();
                 if (skillId && skillId !== 'back') {
@@ -531,6 +552,10 @@ export class SkillsOverlay implements Component {
                 }
                 return { consume: true };
             }
+            if (data === 'm' || data === 'M') {
+                this.showBatchMenu('installed');
+                return { consume: true };
+            }
             return undefined;
         });
     }
@@ -551,7 +576,341 @@ export class SkillsOverlay implements Component {
         }
 
         this.showMessage(enabled ? '技能已启用' : '技能已禁用', false, 'view-installed');
+        const rowIndex = this.installedSkills.findIndex((s: any) => s.id === skillId);
+        this.showViewInstalled(rowIndex >= 0 ? rowIndex : undefined);
+    }
+
+    // ── 内置技能（与桌面端技能中心「内置技能」Tab 同源：SkillMgrApplication.getBuiltinSkills） ──
+
+    private async showViewBuiltin(preserveSelectedIndex?: number) {
+        this.cleanup();
+        this.state = 'view-builtin';
+        this.input = undefined;
+        this.header = new Text(chalk.bold(' 内置技能'));
+
+        const loadVersion = ++this.registryLoadVersion;
+        this.list = new SelectList(
+            [{ value: 'loading', label: t('renderer.skill.common.loading') }],
+            1,
+            defaultSelectListTheme
+        );
+        this.setupListHandlers();
+        this.setLoading(true);
+        this.openDeskTUI.tui.setFocus(this.list);
+        try {
+            const app = ApplicationRegistry.getApplication('skillmgr') as SkillMgrApplication;
+            this.builtinSkills = await app.getBuiltinSkills();
+        } catch {
+            // 对齐 showSelectRegistry 的失败处理：回主菜单并报错，而非伪装成"暂无内置技能"
+            if (!this.visible || this.state !== 'view-builtin' || loadVersion !== this.registryLoadVersion) return;
+            this.showMain();
+            this.showMessage('加载内置技能失败', true);
+            return;
+        }
+        if (!this.visible || this.state !== 'view-builtin' || loadVersion !== this.registryLoadVersion) return;
+        this.setLoading(false);
+
+        this.list = this.buildSkillTable(this.builtinSkills, '暂无内置技能，按 Enter 返回', preserveSelectedIndex);
+
+        this.setupListHandlers();
+        this.setupBuiltinListShortcuts();
+        this.renderBox();
+        this.openDeskTUI.tui.setFocus(this.list);
+    }
+
+    private setupBuiltinListShortcuts() {
+        this.removeInputListener = this.openDeskTUI.tui.addInputListener((data: string) => {
+            if (this.state !== 'view-builtin') return undefined;
+            if (isKeyRelease(data)) return { consume: true };
+            if (matchesKey(data, Key.space)) {
+                const skillId = this.getSelectedListValue();
+                if (skillId && skillId !== 'back') {
+                    this.toggleBuiltinSkillStatus(skillId).catch((err) => {
+                        this.showMessage(err?.message || '切换失败', true);
+                    });
+                }
+                return { consume: true };
+            }
+            if (data === 'm' || data === 'M') {
+                this.showBatchMenu('builtin');
+                return { consume: true };
+            }
+            return undefined;
+        });
+    }
+
+    private handleBuiltinSelection(skillId: string) {
+        if (skillId === 'back') {
+            this.showMain();
+            return;
+        }
+
+        const skill = this.builtinSkills.find((s) => s.id === skillId);
+        if (!skill) return;
+
+        this.showBuiltinSkillDetail(skill);
+    }
+
+    private async toggleBuiltinSkillStatus(skillId: string) {
+        const skill = this.builtinSkills.find((s) => s.id === skillId);
+        if (!skill) return;
+
+        if (skill.readOnly) {
+            this.showMessage('该技能由插件托管，不支持启停切换', true);
+            return;
+        }
+        if (skill.blacklisted) {
+            this.showMessage('该技能已被加入黑名单，无法启用', true);
+            return;
+        }
+
+        const enabled = !getSkillStatus(skillId);
+        setSkillStatus(skillId, enabled);
+        SkillMgrApplication.notifySkillsChanged();
+
+        if (this.currentBuiltinDetail?.id === skillId) {
+            // 详情页内切换：原位刷新状态
+            this.renderBox();
+            return;
+        }
+
+        const rowIndex = this.builtinSkills.findIndex((s) => s.id === skillId);
+        this.showMessage(enabled ? '技能已启用' : '技能已禁用', false, 'view-builtin');
+        await this.showViewBuiltin(rowIndex >= 0 ? rowIndex : undefined);
+    }
+
+    // ── 全部操作（M 键）
+
+    /** 批量启停目标：黑名单与内置只读技能不可启停（与 GUI 全量操作同规则） */
+    private computeBatchTargets(
+        skills: Array<{ id: string; enabled: boolean; blacklisted?: boolean; readOnly?: boolean }>,
+        enable: boolean
+    ): string[] {
+        return skills.filter((s) => s.enabled !== enable && !s.blacklisted && !s.readOnly).map((s) => s.id);
+    }
+
+    private showBatchMenu(scope: 'installed' | 'builtin') {
+        this.cleanup();
+        this.state = 'batch-menu';
+        this.input = undefined;
+        this.batchScope = scope;
+        const skills = scope === 'builtin' ? this.builtinSkills : this.installedSkills;
+        const scopeLabel = scope === 'builtin' ? '内置技能' : '已安装技能';
+        this.header = new Text(chalk.bold(` 全部操作 · ${scopeLabel}（${skills.length} 个）`));
+
+        const items: Array<{ value: string; label: string }> = [
+            { value: 'all-enable', label: chalk.green('全部启用') },
+            { value: 'all-disable', label: chalk.white('全部禁用') }
+        ];
+        // 危险项仅已安装页；内置技能不可删除
+        if (scope === 'installed') {
+            items.push({ value: 'all-delete', label: chalk.red('全部删除') });
+        }
+        items.push({ value: 'cancel', label: chalk.gray('取消') });
+
+        this.list = new SelectList(items, items.length, defaultSelectListTheme);
+        this.setupListHandlers();
+        this.renderBox();
+        this.openDeskTUI.tui.setFocus(this.list);
+    }
+
+    private showBatchConfirm(action: 'disable-all' | 'delete-all') {
+        this.cleanup();
+        this.state = 'batch-confirm';
+        this.pendingBatchAction = action;
+        const skills = this.batchScope === 'builtin' ? this.builtinSkills : this.installedSkills;
+        const title =
+            action === 'delete-all'
+                ? ` 确认删除全部 ${skills.length} 个技能?`
+                : ` 确认全部禁用?（${skills.length} 个技能）`;
+        this.header = new Text(chalk.red.bold(title));
+
+        const okLabel = action === 'delete-all' ? chalk.red('全部删除') : chalk.red('全部禁用');
+        const items = [
+            { value: 'confirm', label: okLabel },
+            { value: 'cancel', label: chalk.green('取消') }
+        ];
+        this.list = new SelectList(items, items.length, defaultSelectListTheme);
+        this.setupListHandlers();
+        this.renderBox();
+        this.openDeskTUI.tui.setFocus(this.list);
+    }
+
+    private handleBatchMenuSelection(value: string) {
+        if (value === 'all-enable') {
+            this.executeBatchSetStatus(true);
+        } else if (value === 'all-disable') {
+            this.showBatchConfirm('disable-all');
+        } else if (value === 'all-delete') {
+            this.showBatchConfirm('delete-all');
+        } else {
+            this.backToBatchList();
+        }
+    }
+
+    private handleBatchConfirmSelection(value: string) {
+        const action = this.pendingBatchAction;
+        this.pendingBatchAction = null;
+        if (value === 'confirm' && action) {
+            if (action === 'disable-all') this.executeBatchSetStatus(false);
+            else this.executeBatchDelete();
+        } else {
+            this.backToBatchList();
+        }
+    }
+
+    private backToBatchList(): void | Promise<void> {
+        if (this.batchScope === 'builtin') return this.showViewBuiltin();
         this.showViewInstalled();
+    }
+
+    private async executeBatchSetStatus(enable: boolean) {
+        const skills = this.batchScope === 'builtin' ? this.builtinSkills : this.installedSkills;
+        const ids = this.computeBatchTargets(skills, enable);
+        const skipped = skills.filter((s) => s.enabled === enable).length;
+        if (ids.length > 0) {
+            setSkillsStatus(ids, enable);
+            SkillMgrApplication.notifySkillsChanged();
+            if (this.batchScope !== 'builtin') await this.loadInstalledSkills();
+        }
+        await this.backToBatchList();
+        const actionText = enable ? '启用' : '禁用';
+        this.showMessage(
+            `已${actionText} ${ids.length} 个技能` + (skipped > 0 ? `（${skipped} 个已处于${actionText}状态）` : ''),
+            false
+        );
+    }
+
+    private async executeBatchDelete() {
+        this.setLoading(true);
+        try {
+            let deleted = 0;
+            let failed = 0;
+            for (const s of this.installedSkills) {
+                try {
+                    const result = skillInstallManager.deleteSkill(s.id);
+                    if (result.success) deleted++;
+                    else failed++;
+                } catch {
+                    failed++;
+                }
+            }
+            if (deleted > 0) SkillMgrApplication.notifySkillsChanged();
+            await this.loadInstalledSkills();
+            await this.showViewInstalled();
+            this.showMessage(
+                `已删除全部技能：成功 ${deleted} 个` + (failed > 0 ? `，失败 ${failed} 个` : ''),
+                failed > 0
+            );
+        } finally {
+            this.setLoading(false);
+        }
+    }
+
+    private showBuiltinSkillDetail(skill: BuiltinSkillInfo) {
+        this.cleanup();
+        this.state = 'builtin-detail';
+        this.list = undefined;
+        this.input = undefined;
+        this.currentBuiltinDetail = skill;
+        this.contentScrollOffset = 0;
+        this.header = new Text(chalk.bold(` 技能详情: ${skill.name}`));
+
+        this.renderBox();
+
+        this.removeInputListener = this.openDeskTUI.tui.addInputListener((data: string) => {
+            if (this.state !== 'builtin-detail' || !this.currentBuiltinDetail) return undefined;
+            if (isKeyRelease(data)) return { consume: true };
+            if (matchesKey(data, Key.escape)) {
+                this.currentBuiltinDetail = null;
+                this.showViewBuiltin();
+                return { consume: true };
+            }
+            if (matchesKey(data, Key.up) || data === 'k') {
+                if (this.contentScrollOffset > 0) {
+                    this.contentScrollOffset--;
+                    this.renderBox();
+                }
+                return { consume: true };
+            }
+            if (matchesKey(data, Key.down) || data === 'j') {
+                const terminalWidth = this.openDeskTUI.tui.terminal.columns;
+                const overlayWidth = Math.max(40, terminalWidth - 2);
+                const contentWidth = overlayWidth - 4;
+                const contentLines = this.formatBuiltinDetailContent(this.currentBuiltinDetail, contentWidth);
+                const maxOffset = Math.max(0, contentLines.length - this.detailMaxVisibleLines);
+                if (this.contentScrollOffset < maxOffset) {
+                    this.contentScrollOffset++;
+                    this.renderBox();
+                }
+                return { consume: true };
+            }
+            if (matchesKey(data, Key.space) || data === 'e' || data === 'E') {
+                this.toggleBuiltinSkillStatus(this.currentBuiltinDetail.id).catch((err) => {
+                    this.showMessage(err?.message || '切换失败', true);
+                });
+                return { consume: true };
+            }
+            return undefined;
+        });
+    }
+
+    private formatBuiltinDetailContent(detail: BuiltinSkillInfo, contentWidth: number): string[] {
+        const lines: string[] = [];
+        const indent = '  ';
+        const wrapLine = (text: string, maxLen: number): string[] => wrapTextWithAnsi(text, maxLen);
+
+        lines.push(chalk.cyan('基本信息'));
+        lines.push(`${indent}${chalk.bold('名称')}: ${detail.name}`);
+        lines.push(`${indent}${chalk.bold('ID')}: ${detail.id}`);
+        const source = detail.pluginName ? `${detail.pluginName} (${detail.bundleName})` : detail.bundleName;
+        lines.push(`${indent}${chalk.bold('来源')}: ${source}`);
+        const status = detail.blacklisted
+            ? chalk.red('已拉黑')
+            : getSkillStatus(detail.id)
+              ? chalk.green('已启用')
+              : chalk.gray('已禁用');
+        lines.push(`${indent}${chalk.bold('状态')}: ${status}`);
+        lines.push(`${indent}${chalk.bold('描述')}:`);
+        for (const dl of wrapLine(detail.description || '无描述', contentWidth - 4)) {
+            lines.push(`${indent}${indent}${dl}`);
+        }
+        if (detail.license) {
+            lines.push(`${indent}${chalk.bold('许可证')}: ${detail.license}`);
+        }
+        if (detail.compatibility) {
+            lines.push(`${indent}${chalk.bold('兼容性')}: ${detail.compatibility}`);
+        }
+        if (detail.directory) {
+            const dirText = truncateToWidth(detail.directory, contentWidth - 8, '...', false);
+            lines.push(`${indent}${chalk.bold('目录')}: ${chalk.dim(dirText)}`);
+        }
+
+        if (detail.tools.length > 0) {
+            lines.push('');
+            lines.push(chalk.cyan(`自带工具 (${detail.tools.length})`));
+            for (const tool of detail.tools) {
+                lines.push(`${indent}🔧 ${tool.name}`);
+                for (const dl of wrapLine(tool.description || '', contentWidth - 8)) {
+                    lines.push(`${indent}${indent}${chalk.dim(dl)}`);
+                }
+                if (tool.params.length === 0) {
+                    lines.push(`${indent}${indent}${chalk.dim('无参数')}`);
+                }
+                for (const param of tool.params) {
+                    const required = param.required ? chalk.yellow('必填') : chalk.dim('可选');
+                    const paramText = `${param.name}: ${param.type} ${required}`;
+                    lines.push(`${indent}${indent}· ${truncateToWidth(paramText, contentWidth - 10, '...', false)}`);
+                }
+                lines.push('');
+            }
+            lines.pop();
+        } else {
+            lines.push('');
+            lines.push(chalk.dim(`${indent}该技能不携带工具`));
+        }
+
+        return this.compactEmptyLines(lines, 1);
     }
 
     private renderSkillDetail() {
@@ -571,6 +930,7 @@ export class SkillsOverlay implements Component {
         this.renderBox();
 
         this.removeInputListener = this.openDeskTUI.tui.addInputListener((data: string) => {
+            if (isKeyRelease(data)) return { consume: true };
             if (matchesKey(data, Key.escape)) {
                 this.currentSkillDetail = null;
                 this.showViewInstalled();
@@ -875,6 +1235,15 @@ export class SkillsOverlay implements Component {
                 case 'view-installed':
                     this.handleInstalledSelection(value);
                     break;
+                case 'view-builtin':
+                    this.handleBuiltinSelection(value);
+                    break;
+                case 'batch-menu':
+                    this.handleBatchMenuSelection(value);
+                    break;
+                case 'batch-confirm':
+                    this.handleBatchConfirmSelection(value);
+                    break;
                 case 'skill-detail':
                     this.handleDetailSelection(value);
                     break;
@@ -967,6 +1336,9 @@ export class SkillsOverlay implements Component {
             case 'view-installed':
                 this.showViewInstalled();
                 break;
+            case 'view-builtin':
+                this.showViewBuiltin();
+                break;
         }
     }
 
@@ -1043,6 +1415,7 @@ export class SkillsOverlay implements Component {
         if (!this.input) return;
 
         this.removeInputListener = this.openDeskTUI.tui.addInputListener((data: string) => {
+            if (isKeyRelease(data)) return { consume: true };
             if (matchesKey(data, Key.escape)) {
                 if (this.state === 'main') {
                     this.close();
@@ -1065,7 +1438,13 @@ export class SkillsOverlay implements Component {
             case 'install-zip':
             case 'install-url':
             case 'view-installed':
+            case 'view-builtin':
                 this.showMain();
+                break;
+            case 'batch-menu':
+            case 'batch-confirm':
+                this.pendingBatchAction = null;
+                this.backToBatchList();
                 break;
             case 'search-results':
                 this.showSearch();
@@ -1073,6 +1452,10 @@ export class SkillsOverlay implements Component {
             case 'skill-detail':
                 this.currentSkillDetail = null;
                 this.showViewInstalled();
+                break;
+            case 'builtin-detail':
+                this.currentBuiltinDetail = null;
+                this.showViewBuiltin();
                 break;
             case 'confirm-delete':
                 this.renderSkillDetail();
@@ -1113,6 +1496,13 @@ export class SkillsOverlay implements Component {
         if (this.state === 'skill-detail' && this.currentSkillDetail) {
             this.box.addChild(new Text(chalk.dim('  ←/→ 切换标签  ↑/↓ 滚动  Space/E 启用或禁用  D 删除  Esc 返回')));
             this.renderDetailContent();
+            this.openDeskTUI.tui.requestRender();
+            return;
+        }
+
+        if (this.state === 'builtin-detail' && this.currentBuiltinDetail) {
+            this.box.addChild(new Text(chalk.dim('  ↑/↓ 滚动  Space/E 启用或禁用  Esc 返回')));
+            this.renderBuiltinDetailContent();
             this.openDeskTUI.tui.requestRender();
             return;
         }
@@ -1171,6 +1561,11 @@ export class SkillsOverlay implements Component {
         this.box.addChild(new Text(chalk.dim(`  ${'─'.repeat(dividerLen)}`)));
 
         const contentLines = this.formatSkillDetailContent(detail, contentWidth);
+        this.renderScrollableLines(contentLines, overlayWidth);
+    }
+
+    /** 滚动窗口渲染：裁剪可见行 + 底色铺满 + 行号提示，由已安装/内置两类技能详情页共用 */
+    private renderScrollableLines(contentLines: string[], overlayWidth: number) {
         const maxOffset = Math.max(0, contentLines.length - this.detailMaxVisibleLines);
         if (this.contentScrollOffset > maxOffset) {
             this.contentScrollOffset = maxOffset;
@@ -1192,6 +1587,18 @@ export class SkillsOverlay implements Component {
             const scrollInfo = `  [行 ${this.contentScrollOffset + 1}-${Math.min(this.contentScrollOffset + this.detailMaxVisibleLines, contentLines.length)} / ${contentLines.length}]`;
             this.box.addChild(new Text(chalk.dim(scrollInfo)));
         }
+    }
+
+    private renderBuiltinDetailContent() {
+        if (!this.currentBuiltinDetail) return;
+
+        const detail = this.currentBuiltinDetail;
+        const terminalWidth = this.openDeskTUI.tui.terminal.columns;
+        const overlayWidth = Math.max(40, terminalWidth - 2);
+        const contentWidth = overlayWidth - 4;
+
+        const contentLines = this.formatBuiltinDetailContent(detail, contentWidth);
+        this.renderScrollableLines(contentLines, overlayWidth);
     }
 
     private padLineToWidth(line: string, width: number): string {
@@ -1283,10 +1690,17 @@ export class SkillsOverlay implements Component {
             case 'install-url':
                 return '输入 zip URL  Enter 添加  Esc 返回';
             case 'view-installed':
-                return '↑↓ 选择  Enter 查看详情  Space 启用或禁用  D 删除  Esc 返回';
+                return '↑↓ 选择  Enter 查看详情  Space 启用或禁用  D 删除  M 全部操作  Esc 返回';
+            case 'view-builtin':
+                return '↑↓ 选择  Enter 查看详情  Space 启用或禁用  M 全部操作  Esc 返回';
             case 'skill-detail':
                 return '←/→ 切换标签  ↑/↓ 滚动  Space/E 启用或禁用  D 删除  Esc 返回';
+            case 'builtin-detail':
+                return '↑/↓ 滚动  Space/E 启用或禁用  Esc 返回';
             case 'confirm-delete':
+                return '↑↓ 选择  Enter 确认  Esc 返回';
+            case 'batch-menu':
+            case 'batch-confirm':
                 return '↑↓ 选择  Enter 确认  Esc 返回';
             case 'confirm-duplicate':
                 return '↑↓ 选择  Enter 确认  Esc 返回';

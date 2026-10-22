@@ -5,6 +5,8 @@ import path from 'node:path';
 import { skillRegistry } from '../../../main/applications/skillmgr/utils/skill-registry';
 import { skillInstallManager } from '../../../main/applications/skillmgr/utils/skill-installer';
 import { allRegistries } from '../../../main/applications/skillmgr/registry';
+import { ListSkillsTool } from '../../../main/applications/skillmgr/tools';
+import { setSkillStatus } from '../../../main/applications/skillmgr/status';
 import type {
     RegistrySkill,
     SearchOptions,
@@ -381,5 +383,33 @@ describe('skillmgr registry tools helpers', () => {
         expect(result.error).toContain('匹配到多个技能');
         expect(result.candidates?.map((skill) => skill.fullName)).toEqual(['matrix/Alpha Tool', 'matrix/Alpha Helper']);
         expect(install).not.toHaveBeenCalled();
+    });
+
+    test('listSkills tool marks disabled skills with enabled=false', async () => {
+        const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'opendesk-list-skills-'));
+        tempDirs.push(tempDir);
+        // status.json / blacklist.json 均从 getSkillsDirectory() 的父目录解析，
+        // 重定向配置目录避免测试读写真实的用户技能状态
+        const originalEnv = process.env.OPENDESK_CONFIG_DIRECTORY;
+        process.env.OPENDESK_CONFIG_DIRECTORY = tempDir;
+
+        try {
+            const tool = new ListSkillsTool({
+                listSkills: () => [
+                    { id: 'enabled-skill', name: 'enabled-skill', description: 'a' },
+                    { id: 'disabled-skill', name: 'disabled-skill', description: 'b' }
+                ]
+            });
+            setSkillStatus('disabled-skill', false);
+
+            const result = await tool.execute({}, undefined);
+            expect(result.status).toBe('success');
+            const skills = JSON.parse(String(result.result));
+            const enabledById = Object.fromEntries(skills.map((s: any) => [s.id, s.enabled]));
+            expect(enabledById).toEqual({ 'enabled-skill': true, 'disabled-skill': false });
+        } finally {
+            if (originalEnv === undefined) delete process.env.OPENDESK_CONFIG_DIRECTORY;
+            else process.env.OPENDESK_CONFIG_DIRECTORY = originalEnv;
+        }
     });
 });

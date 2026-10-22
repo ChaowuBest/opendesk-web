@@ -155,7 +155,7 @@ describe('builtin bundled skills', () => {
         );
     });
 
-    test('BuiltinApplication exposes bundled skills as read-only Skill objects', async () => {
+    test('BuiltinApplication exposes bundled skills as toggleable Skill objects', async () => {
         const root = pushTempDir(makeTempDir('builtin-skills-app'));
         const suffix = path.basename(root).slice(-6).toLowerCase();
         const builtinName = `app-builtin-skill-${suffix}`;
@@ -169,7 +169,9 @@ describe('builtin bundled skills', () => {
 
         const bundled = skills.find((skill) => skill.frontmatter.name === builtinName);
         expect(bundled).toBeDefined();
-        expect(bundled?.readOnly).toBe(true);
+        // readOnly 技能在技能中心不渲染启用开关（该分支为插件贡献技能保留）；
+        // 内置技能的约定是「可禁用、不可删除」，必须保持可切换
+        expect(bundled?.readOnly).toBe(false);
         expect(bundled?.directory).toBe(path.join(path.resolve(root), builtinName));
         expect(bundled?.body).toContain(`# ${builtinName}`);
         // builtin 应用从同一目录加载，但 skillmgr 注册表中不应出现重复条目
@@ -235,7 +237,8 @@ describe('builtin bundled skills', () => {
 
         const visualizer = skills.find((skill) => skill.frontmatter.name === 'analysis-result-visualizer');
         expect(visualizer).toBeDefined();
-        expect(visualizer?.readOnly).toBe(true);
+        // 迁移自硬编码实现时误设 readOnly 导致技能中心失去启用开关，回归校验保持可切换
+        expect(visualizer?.readOnly).toBe(false);
         expect(visualizer?.directory).toBe(path.join(path.resolve(repoSkillsDir), 'analysis-result-visualizer'));
         expect(visualizer?.body).toContain('# 分析结果可视化');
         expect(visualizer?.body).toContain('Visualizer Core Design System');
