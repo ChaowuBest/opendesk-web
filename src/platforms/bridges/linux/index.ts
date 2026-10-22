@@ -9,12 +9,9 @@
  * See the Mulan PSL v2 for more details.
  */
 
-import { app } from 'electron';
-import { NaiveNativeBridge, guardStartupKit, type NativeBridge, type NativeBridgeOptions } from '../common.js';
+import { NaiveNativeBridge, guardStartupKit, type NativeBridge } from '../common.js';
 import { LinuxStartupKit } from './startup.js';
 
-export function getNativeBridge(options: NativeBridgeOptions = {}): NativeBridge {
-    return new NaiveNativeBridge(
-        guardStartupKit(new LinuxStartupKit(), 'toggle', options.debug === true || !app.isPackaged)
-    );
+export function getNativeBridge(): NativeBridge {
+    return new NaiveNativeBridge(guardStartupKit(new LinuxStartupKit(), 'toggle'));
 }

@@ -141,13 +141,13 @@ test('read failure keeps the switch disabled and reports a localized error', asy
     expect(p.querySelector('#launch-at-login-status').textContent).toContain('Unable');
 });
 
-test('development instances keep the normal description without the installation notice', async () => {
+test('supported instances remain interactive without an installation notice', async () => {
     nativeStartup({
-        getLaunchAtLogin: async () => ({ supported: false, enabled: false, reason: 'development' })
+        getLaunchAtLogin: async () => ({ supported: true, enabled: false })
     });
     const p = panel();
     await new Promise((resolve) => setTimeout(resolve, 0));
-    expect(p.querySelector('#launch-at-login').disabled).toBe(true);
+    expect(p.querySelector('#launch-at-login').disabled).toBe(false);
     expect(p.querySelector('#launch-at-login-status').textContent).toBe(
         'Automatically open OpenDesk when you sign in to your computer.'
     );

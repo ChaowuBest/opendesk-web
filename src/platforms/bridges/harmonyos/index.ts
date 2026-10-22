@@ -11,14 +11,7 @@
 
 /** Harmony native capabilities are registered by the shared bridges/main entrypoint. */
 
-import {
-    NativeBridge,
-    SpeechKit,
-    NaiveNativeBridge,
-    guardStartupKit,
-    type NativeBridgeOptions,
-    NaiveOcrKit
-} from '../common.js';
+import { NativeBridge, SpeechKit, NaiveNativeBridge, guardStartupKit, NaiveOcrKit } from '../common.js';
 import type { DatabaseKit, HuaweiAccountKit } from '../common.js';
 import { hasArkTSAdapter } from './arkts.js';
 import { HarmonyOSDatabaseKit } from './database.js';
@@ -27,8 +20,8 @@ import { HarmonyOSHuaweiAccountKit } from './account.js';
 import { HarmonyOSStartupKit } from './startup.js';
 
 class HarmonyOSNativeBridge extends NaiveNativeBridge {
-    constructor(options: NativeBridgeOptions = {}) {
-        super(guardStartupKit(new HarmonyOSStartupKit(), 'system-settings', options.debug === true));
+    constructor() {
+        super(guardStartupKit(new HarmonyOSStartupKit(), 'system-settings'));
     }
 
     _speechKit = new HarmonyOSSpeechKit();
@@ -61,9 +54,9 @@ class HarmonyOSNativeBridge extends NaiveNativeBridge {
     }
 }
 
-export function getNativeBridge(options: NativeBridgeOptions = {}): NativeBridge | null {
+export function getNativeBridge(): NativeBridge | null {
     if (hasArkTSAdapter()) {
-        return new HarmonyOSNativeBridge(options);
+        return new HarmonyOSNativeBridge();
     }
     return null;
 }

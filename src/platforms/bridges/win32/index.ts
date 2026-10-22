@@ -10,11 +10,9 @@
  */
 
 import { app } from 'electron';
-import { NaiveNativeBridge, guardStartupKit, type NativeBridge, type NativeBridgeOptions } from '../common.js';
+import { NaiveNativeBridge, guardStartupKit, type NativeBridge } from '../common.js';
 import { WindowsStartupKit } from './startup.js';
 
-export function getNativeBridge(options: NativeBridgeOptions = {}): NativeBridge {
-    return new NaiveNativeBridge(
-        guardStartupKit(new WindowsStartupKit(app), 'toggle', options.debug === true || !app.isPackaged)
-    );
+export function getNativeBridge(): NativeBridge {
+    return new NaiveNativeBridge(guardStartupKit(new WindowsStartupKit(app), 'toggle'));
 }

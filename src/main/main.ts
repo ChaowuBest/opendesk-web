@@ -3906,7 +3906,7 @@ async function startApplication(): Promise<void> {
         registerEmbeddedOpenDeskOffice();
         AgentRegistry.initBuiltinAgents();
         registerModeAPIHandlers();
-        registerNativeBridge({ debug: isOpendeskDebugMode() });
+        registerNativeBridge();
 
         createWindow();
 

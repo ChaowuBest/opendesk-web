@@ -54,7 +54,7 @@ export interface StartupState {
     /** null means the operating system's current state could not be determined. */
     enabled: boolean | null;
     mode: StartupMode;
-    reason?: 'development' | 'unsupported' | 'unavailable';
+    reason?: 'unsupported' | 'unavailable';
 }
 
 /** Startup is owned by the OS; delegating a change does not prove it took effect. */
@@ -62,10 +62,6 @@ export interface StartupKit {
     /** Toggle-capable platforms require a boolean; system settings platforms accept no argument. */
     delegateSetting(enabled?: boolean): Promise<void>;
     getState(): Promise<StartupState>;
-}
-
-export interface NativeBridgeOptions {
-    debug?: boolean;
 }
 
 export class NaiveStartupKit implements StartupKit {
@@ -79,10 +75,9 @@ export class NaiveStartupKit implements StartupKit {
 }
 
 /** Keep capability metadata available even when a native status query fails. */
-export function guardStartupKit(kit: StartupKit, mode: StartupMode, development: boolean): StartupKit {
+export function guardStartupKit(kit: StartupKit, mode: StartupMode): StartupKit {
     return {
         async getState() {
-            if (development) return { supported: false, enabled: null, mode, reason: 'development' };
             try {
                 return await kit.getState();
             } catch (error) {
@@ -91,7 +86,6 @@ export function guardStartupKit(kit: StartupKit, mode: StartupMode, development:
             }
         },
         async delegateSetting(enabled) {
-            if (development) throw new Error('Startup is unavailable in development instances');
             if (mode === 'toggle' ? typeof enabled !== 'boolean' : enabled !== undefined) {
                 throw new TypeError('Invalid startup delegation argument');
             }

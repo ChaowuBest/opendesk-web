@@ -38,6 +38,7 @@ let registerNativeBridge: typeof import('../../../platforms/bridges/main.js').re
 let NativeBridgeProxy: typeof import('../../../platforms/bridges/renderer.js').NativeBridgeProxy;
 const originalPlatform = Object.getOwnPropertyDescriptor(process, 'platform')!;
 const originalConfigHome = process.env.XDG_CONFIG_HOME;
+const originalDebugMode = process.env.OPENDESK_DEBUG_MODE;
 const configHome = mkdtempSync(path.join(tmpdir(), 'opendesk-startup-bridge-'));
 beforeAll(async () => {
     ({ registerNativeBridge } = await import('../../../platforms/bridges/main.js'));
@@ -52,12 +53,15 @@ beforeAll(async () => {
 });
 beforeEach(() => {
     app.isPackaged = true;
+    delete process.env.OPENDESK_DEBUG_MODE;
     jest.clearAllMocks();
 });
 afterAll(() => {
     Object.defineProperty(process, 'platform', originalPlatform);
     if (originalConfigHome === undefined) delete process.env.XDG_CONFIG_HOME;
     else process.env.XDG_CONFIG_HOME = originalConfigHome;
+    if (originalDebugMode === undefined) delete process.env.OPENDESK_DEBUG_MODE;
+    else process.env.OPENDESK_DEBUG_MODE = originalDebugMode;
     delete (globalThis as any).window;
     rmSync(configHome, { recursive: true, force: true });
 });
@@ -88,27 +92,37 @@ test.each(['darwin', 'win32', 'linux', 'openharmony'])(
 );
 
 test.each(['darwin', 'win32', 'linux', 'openharmony'])(
-    '%s debug instances cannot change OS startup settings',
+    '%s debug instances can query and delegate real startup APIs',
     async (platform) => {
         Object.defineProperty(process, 'platform', { value: platform });
-        registerNativeBridge({ debug: true });
+        process.env.OPENDESK_DEBUG_MODE = '1';
+        registerNativeBridge();
         const kit = await new NativeBridgeProxy().getStartupKit();
-        expect(await kit.getState()).toMatchObject({ supported: false, enabled: null, reason: 'development' });
-        await expect(kit.delegateSetting(platform === 'openharmony' ? undefined : true)).rejects.toThrow();
-        expect(app.getLoginItemSettings).not.toHaveBeenCalled();
-        expect(app.setLoginItemSettings).not.toHaveBeenCalled();
-        expect(arktsCall).not.toHaveBeenCalled();
+        expect((await kit.getState()).supported).toBe(true);
+        await kit.delegateSetting(platform === 'openharmony' ? undefined : false);
+        if (platform === 'openharmony') expect(arktsCall).toHaveBeenCalledWith('settings', 'number');
+        else if (platform !== 'linux')
+            expect(app.setLoginItemSettings).toHaveBeenCalledWith({
+                openAtLogin: false,
+                ...(platform === 'win32' ? { path: process.execPath, args: [] } : {})
+            });
     }
 );
 
-test.each(['darwin', 'win32', 'linux', 'openharmony'])('%s keeps its correct installation guard', async (platform) => {
-    Object.defineProperty(process, 'platform', { value: platform });
-    app.isPackaged = false;
-    registerNativeBridge();
-    const kit = await new NativeBridgeProxy().getStartupKit();
-    // Harmony HAP directory resources report unpackaged even after a real installation.
-    expect((await kit.getState()).supported).toBe(platform === 'openharmony');
-});
+test.each(['darwin', 'win32', 'linux', 'openharmony'])(
+    '%s unpackaged debug instances reach native startup APIs',
+    async (platform) => {
+        Object.defineProperty(process, 'platform', { value: platform });
+        app.isPackaged = false;
+        process.env.OPENDESK_DEBUG_MODE = 'true';
+        registerNativeBridge();
+        const kit = await new NativeBridgeProxy().getStartupKit();
+        expect((await kit.getState()).supported).toBe(true);
+        await kit.delegateSetting(platform === 'openharmony' ? undefined : false);
+        if (platform === 'openharmony') expect(arktsCall).toHaveBeenCalledWith('settings', 'number');
+        else if (platform !== 'linux') expect(app.setLoginItemSettings).toHaveBeenCalledTimes(1);
+    }
+);
 
 test('invalid IPC arguments never reach the operating system', async () => {
     Object.defineProperty(process, 'platform', { value: 'win32' });

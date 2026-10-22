@@ -53,7 +53,7 @@ describe('launch at login', () => {
     });
     test('rejects non-boolean IPC input and propagates native failures', async () => {
         const { app, service: raw } = setup();
-        const service = guardStartupKit(raw, 'toggle', false);
+        const service = guardStartupKit(raw, 'toggle');
         await expect(service.delegateSetting('false' as any)).rejects.toThrow();
         expect(app.setLoginItemSettings).not.toHaveBeenCalled();
         app.setLoginItemSettings.mockImplementation(() => {
@@ -61,18 +61,7 @@ describe('launch at login', () => {
         });
         await expect(service.delegateSetting(true)).rejects.toThrow('denied');
     });
-    test('development guard never touches OS settings; unknown hosts stay unsupported', async () => {
-        const { app, service: raw } = setup();
-        const service = guardStartupKit(raw, 'toggle', true);
-        expect(await service.getState()).toEqual({
-            supported: false,
-            enabled: null,
-            mode: 'toggle',
-            reason: 'development'
-        });
-        await expect(service.delegateSetting(true)).rejects.toThrow();
-        expect(app.getLoginItemSettings).not.toHaveBeenCalled();
-        expect(app.setLoginItemSettings).not.toHaveBeenCalled();
+    test('unknown hosts stay unsupported', async () => {
         expect((await new NaiveStartupKit().getState()).supported).toBe(false);
         await expect(new NaiveStartupKit().delegateSetting(true)).rejects.toThrow();
     });
@@ -85,8 +74,7 @@ describe('launch at login', () => {
                 },
                 delegateSetting
             },
-            'system-settings',
-            false
+            'system-settings'
         );
         expect(await service.getState()).toEqual({
             supported: true,

@@ -14,7 +14,6 @@ import {
     SpeechKit,
     NaiveNativeBridge,
     guardStartupKit,
-    type NativeBridgeOptions,
     NaiveOcrKit,
     NaiveHuaweiAccountKit
 } from '../common.js';
@@ -24,8 +23,8 @@ import { DarwinStartupKit } from './startup.js';
 import { app } from 'electron';
 
 class DarwinNativeBridge extends NaiveNativeBridge {
-    constructor(options: NativeBridgeOptions = {}) {
-        super(guardStartupKit(new DarwinStartupKit(app), 'toggle', options.debug === true || !app.isPackaged));
+    constructor() {
+        super(guardStartupKit(new DarwinStartupKit(app), 'toggle'));
     }
 
     _speechKit = new DarwinSpeechKit();
@@ -53,9 +52,9 @@ class DarwinNativeBridge extends NaiveNativeBridge {
     }
 }
 
-export function getNativeBridge(options: NativeBridgeOptions = {}): NativeBridge | null {
+export function getNativeBridge(): NativeBridge | null {
     if (process.platform === 'darwin') {
-        return new DarwinNativeBridge(options);
+        return new DarwinNativeBridge();
     }
     return null;
 }

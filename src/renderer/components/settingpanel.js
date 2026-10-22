@@ -2734,7 +2734,7 @@ class SettingPanel extends HTMLElement {
             input.checked = state.enabled === true;
             input.disabled =
                 busy || !!inFlight || !state.supported || typeof state.enabled !== 'boolean' || systemSettings;
-            manage.disabled = busy || state.reason === 'development';
+            manage.disabled = busy;
             badge.textContent = this._t(
                 !state.supported || state.enabled === null
                     ? 'sp.general.launchAtLogin.unknown'
@@ -2746,7 +2746,7 @@ class SettingPanel extends HTMLElement {
                 message ||
                     (state.reason === 'unavailable'
                         ? 'sp.general.launchAtLogin.error'
-                        : state.supported || state.reason === 'development'
+                        : state.supported
                           ? systemSettings
                               ? 'sp.general.launchAtLogin.harmony.desc'
                               : 'sp.general.launchAtLogin.desc'

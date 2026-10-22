@@ -36,9 +36,7 @@ describe('renderer fully-loaded guards', () => {
 
         expect(startupSource.indexOf('AgentRegistry.initBuiltinAgents();')).toBeLessThan(createWindowIndex);
         expect(startupSource.indexOf('registerModeAPIHandlers();')).toBeLessThan(createWindowIndex);
-        const registerNativeBridgeIndex = startupSource.indexOf(
-            'registerNativeBridge({ debug: isOpendeskDebugMode() });'
-        );
+        const registerNativeBridgeIndex = startupSource.indexOf('registerNativeBridge();');
         expect(registerNativeBridgeIndex).toBeGreaterThanOrEqual(0);
         expect(registerNativeBridgeIndex).toBeLessThan(createWindowIndex);
     });
