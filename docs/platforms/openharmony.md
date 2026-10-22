@@ -59,6 +59,8 @@ node-screenshots依赖库的鸿蒙化适配
 
 ## 7. HM PC 开机自启动
 
+业务侧统一使用 NativeBridge 的两个自启动能力，边界见 [自启动 bridge 说明](../specifications/startup_bridge.md)。
+
 普通应用通过公开的 `autoStartupManager.getAutoStartupStatusForSelf()` 查询自身状态（API 21+）。
 修改自启动名单的接口属于系统接口，OpenDesk 不申请 `MANAGE_APP_BOOT` 或企业设备管理权限。
 因此 HM PC 的「通用设置 → 启动」显示系统状态和「前往系统设置」按钮，由用户在
@@ -71,6 +73,9 @@ node-screenshots依赖库的鸿蒙化适配
 配套壳改动由 [OpenDesk-ohos PR #48](https://gitcode.com/openharmony-robot/OpenDesk-ohos/merge_requests/48)
 维护，功能提交为 `8a598b20204cc1ea201278c1f27e2adc3bfa0d96`。构建时需使用包含该提交的壳版本，
 其中包含原生适配器、三个 AKI 绑定及逻辑测试；业务仓不再保存壳源码补丁副本。
+
+精准跳转「应用启动管理」的壳改动见 [OpenDesk-ohos PR #51](https://gitcode.com/openharmony-robot/OpenDesk-ohos/merge_requests/51)，
+通过设置 Ability 的 `uri: 'pc_app_setup_settings'` 实现，业务侧不保存该系统路由。
 
 同步当前 OpenDesk 构建产物后，使用壳工程既有构建和签名流程生成新的 HAP。
 

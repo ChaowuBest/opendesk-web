@@ -9,6 +9,7 @@
  * See the Mulan PSL v2 for more details.
  */
 
+import { NativeBridgeProxy } from '../../platforms/bridges/renderer.js';
 import { createRendererTranslator } from '../locale.ts';
 import { createTranslatorForSearch } from '../../main/applications/search/locale/renderer.ts';
 import { createModelSelect, MODEL_SELECT_CSS } from '../utils/model-select.js';
@@ -143,7 +144,7 @@ class SettingPanel extends HTMLElement {
         this._activeTab = 'models';
         this._environEntries = [];
         this.gatewayHostOptions = [];
-        this.launchAtLoginState = { supported: false, enabled: false };
+        this.launchAtLoginState = { supported: false, enabled: null };
         this.supportedShells = [];
         this.visionSupportMap = {};
         this._hasRendered = false;
@@ -2259,8 +2260,7 @@ class SettingPanel extends HTMLElement {
 
     renderGeneralSection() {
         const currentLocale = this.currentData?.locale || 'auto';
-        const harmonyStartup =
-            window.systemInfo?.isOpenHarmony === true || this.launchAtLoginState?.mode === 'system-settings';
+        const systemStartupSettings = this.launchAtLoginState?.mode === 'system-settings';
         const fontPreset = this.currentData?.gui_config?.font_preset || 'default';
         const themePreference = this.currentData?.gui_config?.theme_preference || 'system';
         const scaleFactor = this.currentData?.gui_config?.scale_factor ?? 1;
@@ -2315,22 +2315,15 @@ class SettingPanel extends HTMLElement {
             <div class="sp-section-card">
             <div class="sp-toggle-row" style="padding:0">
                 <div class="sp-toggle-info">
-                    <label class="sp-toggle-label" ${harmonyStartup ? '' : 'for="launch-at-login"'}>${this._t('sp.general.launchAtLogin')}</label>
-                    <div id="launch-at-login-status" class="sp-toggle-desc" role="status">${this._t(harmonyStartup ? 'sp.general.launchAtLogin.harmony.desc' : 'sp.general.launchAtLogin.desc')}</div>
+                    <label id="launch-at-login-label" class="sp-toggle-label" ${systemStartupSettings ? '' : 'for="launch-at-login"'}>${this._t('sp.general.launchAtLogin')}</label>
+                    <div id="launch-at-login-status" class="sp-toggle-desc" role="status">${this._t(systemStartupSettings ? 'sp.general.launchAtLogin.harmony.desc' : 'sp.general.launchAtLogin.desc')}</div>
                 </div>
-                ${
-                    harmonyStartup
-                        ? `
-                <span id="launch-at-login-state" class="sp-tag sp-tag-neutral" aria-live="polite">${this._t('sp.general.launchAtLogin.unknown')}</span>
-                <button id="launch-at-login-manage" type="button" class="sp-btn sp-btn-secondary" disabled>${this._t('sp.general.launchAtLogin.manage')}</button>
-                `
-                        : `
-                <label class="sp-toggle-switch">
-                    <input id="launch-at-login" type="checkbox" ${this.launchAtLoginState?.enabled ? 'checked' : ''} ${this.launchAtLoginState?.supported ? '' : 'disabled'}>
+                <span id="launch-at-login-state" class="sp-tag sp-tag-neutral" aria-live="polite" style="display:${systemStartupSettings ? '' : 'none'}">${this._t('sp.general.launchAtLogin.unknown')}</span>
+                <button id="launch-at-login-manage" type="button" class="sp-btn sp-btn-secondary" style="display:${systemStartupSettings ? '' : 'none'}" disabled>${this._t('sp.general.launchAtLogin.manage')}</button>
+                <label id="launch-at-login-toggle" class="sp-toggle-switch" style="display:${this.launchAtLoginState?.mode === 'toggle' ? '' : 'none'}">
+                    <input id="launch-at-login" type="checkbox" aria-labelledby="launch-at-login-label" ${this.launchAtLoginState?.enabled ? 'checked' : ''} disabled>
                     <span class="sp-toggle-track"></span>
                 </label>
-                `
-                }
             </div>
             </div>
         </section>
@@ -2715,10 +2708,12 @@ class SettingPanel extends HTMLElement {
     _bindLaunchAtLoginEvents() {
         this._clearStartupListeners();
         const input = this.querySelector('#launch-at-login');
+        const toggle = this.querySelector('#launch-at-login-toggle');
         const manage = this.querySelector('#launch-at-login-manage');
         const badge = this.querySelector('#launch-at-login-state');
         const status = this.querySelector('#launch-at-login-status');
-        if ((!input && !manage) || !status) return;
+        if (!input || !manage || !status) return;
+        const kit = new NativeBridgeProxy().getStartupKit();
         const binding = {};
         this._startupBinding = binding;
         let refreshVersion = 0;
@@ -2727,68 +2722,78 @@ class SettingPanel extends HTMLElement {
         const apply = (state) => {
             if (!current()) return;
             this.launchAtLoginState = state;
-            if (input) {
-                input.checked = state.enabled;
-                input.disabled = !state.supported;
-            }
-            if (manage) manage.disabled = state.reason === 'development';
-            if (badge)
-                badge.textContent = this._t(
-                    !state.supported
-                        ? 'sp.general.launchAtLogin.unknown'
-                        : state.enabled
-                          ? 'sp.general.launchAtLogin.on'
-                          : 'sp.general.launchAtLogin.off'
-                );
+            const systemSettings = state.mode === 'system-settings';
+            toggle.style.display = state.mode === 'toggle' ? '' : 'none';
+            manage.style.display = badge.style.display = systemSettings ? '' : 'none';
+            const label = this.querySelector('#launch-at-login-label');
+            if (label) label.htmlFor = systemSettings ? '' : 'launch-at-login';
+            input.checked = state.enabled === true;
+            input.disabled = !state.supported || typeof state.enabled !== 'boolean' || systemSettings;
+            manage.disabled = state.reason === 'development';
+            badge.textContent = this._t(
+                !state.supported || state.enabled === null
+                    ? 'sp.general.launchAtLogin.unknown'
+                    : state.enabled
+                      ? 'sp.general.launchAtLogin.on'
+                      : 'sp.general.launchAtLogin.off'
+            );
             status.textContent = this._t(
-                state.supported || state.reason === 'development'
-                    ? manage
-                        ? 'sp.general.launchAtLogin.harmony.desc'
-                        : 'sp.general.launchAtLogin.desc'
-                    : 'sp.general.launchAtLogin.unsupported'
+                state.reason === 'unavailable'
+                    ? 'sp.general.launchAtLogin.error'
+                    : state.supported || state.reason === 'development'
+                      ? systemSettings
+                          ? 'sp.general.launchAtLogin.harmony.desc'
+                          : 'sp.general.launchAtLogin.desc'
+                      : 'sp.general.launchAtLogin.unsupported'
             );
         };
         const refresh = async () => {
-            if (busy || !window.settingAPI?.getLaunchAtLogin) return;
+            if (busy) return;
             const version = ++refreshVersion;
-            if (input) input.disabled = true;
+            input.disabled = true;
             try {
-                const state = await window.settingAPI.getLaunchAtLogin();
+                const state = await (await kit).getState();
                 if (current() && version === refreshVersion) apply(state);
             } catch {
                 if (!current() || version !== refreshVersion) return;
-                if (badge) badge.textContent = this._t('sp.general.launchAtLogin.unknown');
-                if (manage) manage.disabled = false;
-                status.textContent = this._t('sp.general.launchAtLogin.error');
+                apply({ ...this.launchAtLoginState, enabled: null, reason: 'unavailable' });
             }
         };
-        if (input) input.disabled = true;
+        input.disabled = true;
         void refresh();
-        input?.addEventListener('change', async () => {
-            if (input.disabled) return;
+        input.addEventListener('change', async () => {
+            if (busy || input.disabled) return;
             const requested = input.checked;
+            let delegated = false;
             busy = true;
             input.disabled = true;
             ++refreshVersion;
             try {
-                const state = await window.settingAPI.setLaunchAtLogin(requested);
+                const startup = await kit;
+                await startup.delegateSetting(requested);
+                delegated = true;
+                const state = await startup.getState();
                 apply(state);
-                if (current() && state.enabled !== requested)
+                if (current() && typeof state.enabled === 'boolean' && state.enabled !== requested)
                     status.textContent = this._t('sp.general.launchAtLogin.systemBlocked');
             } catch {
-                apply(this.launchAtLoginState);
+                apply(
+                    delegated
+                        ? { ...this.launchAtLoginState, enabled: null, reason: 'unavailable' }
+                        : this.launchAtLoginState
+                );
                 if (current()) status.textContent = this._t('sp.general.launchAtLogin.error');
             } finally {
                 busy = false;
             }
         });
-        manage?.addEventListener('click', async () => {
-            if (manage.disabled) return;
+        manage.addEventListener('click', async () => {
+            if (busy || manage.disabled) return;
             busy = true;
             manage.disabled = true;
             ++refreshVersion;
             try {
-                await window.settingAPI.openStartupSettings();
+                await (await kit).delegateSetting();
             } catch {
                 if (current()) status.textContent = this._t('sp.general.launchAtLogin.settingsError');
             } finally {
@@ -2796,13 +2801,11 @@ class SettingPanel extends HTMLElement {
                 if (current()) manage.disabled = this.launchAtLoginState.reason === 'development';
             }
         });
-        if (manage) {
-            this._startupFocusHandler = () => {
-                if (document.visibilityState !== 'hidden') void refresh();
-            };
-            window.addEventListener('focus', this._startupFocusHandler);
-            document.addEventListener('visibilitychange', this._startupFocusHandler);
-        }
+        this._startupFocusHandler = () => {
+            if (document.visibilityState !== 'hidden') void refresh();
+        };
+        window.addEventListener('focus', this._startupFocusHandler);
+        document.addEventListener('visibilitychange', this._startupFocusHandler);
     }
 
     _bindDebugModeEvents() {

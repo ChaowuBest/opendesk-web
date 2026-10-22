@@ -9,14 +9,12 @@
  * See the Mulan PSL v2 for more details.
  */
 
-export interface LaunchAtLoginState {
-    supported: boolean;
-    enabled: boolean;
-    reason?: 'development' | 'unsupported';
-    mode?: 'system-settings';
-}
+import { app } from 'electron';
+import { NaiveNativeBridge, guardStartupKit, type NativeBridge, type NativeBridgeOptions } from '../common.js';
+import { LinuxStartupKit } from './startup.js';
 
-export interface SystemStartupSettingsProvider {
-    getState(): Promise<LaunchAtLoginState>;
-    openSettings(): Promise<void>;
+export function getNativeBridge(options: NativeBridgeOptions = {}): NativeBridge {
+    return new NaiveNativeBridge(
+        guardStartupKit(new LinuxStartupKit(), 'toggle', options.debug === true || !app.isPackaged)
+    );
 }

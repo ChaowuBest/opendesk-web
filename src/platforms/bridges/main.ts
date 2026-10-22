@@ -9,18 +9,28 @@
  * See the Mulan PSL v2 for more details.
  */
 
-import { NativeBridge, NaiveNativeBridge } from './common';
+import { NativeBridge, NaiveNativeBridge, type NativeBridgeOptions } from './common.js';
 import { logger } from '../../main/utils/logger.js';
 import { ipcMain } from 'electron';
 import { getNativeBridge as getOpenHarmonyNativeBridge } from './harmonyos/index.js';
 import { getNativeBridge as getDarwinNativeBridge } from './darwin/index.js';
 
+import { getNativeBridge as getWindowsNativeBridge } from './win32/index.js';
+import { getNativeBridge as getLinuxNativeBridge } from './linux/index.js';
+
 let registeredBridge: NativeBridge = new NaiveNativeBridge();
 
-function initializeNativeBridge(): void {
+function initializeNativeBridge(options: NativeBridgeOptions): void {
+    registeredBridge = new NaiveNativeBridge();
     switch (process.platform as string) {
+        case 'win32':
+            registeredBridge = getWindowsNativeBridge(options);
+            break;
+        case 'linux':
+            registeredBridge = getLinuxNativeBridge(options);
+            break;
         case 'darwin': {
-            const darwinBridge = getDarwinNativeBridge();
+            const darwinBridge = getDarwinNativeBridge(options);
             if (darwinBridge) {
                 registeredBridge = darwinBridge;
                 logger.info('darwin native bridge initialized');
@@ -28,7 +38,7 @@ function initializeNativeBridge(): void {
             break;
         }
         case 'openharmony': {
-            const bridge = getOpenHarmonyNativeBridge();
+            const bridge = getOpenHarmonyNativeBridge(options);
             if (bridge) {
                 registeredBridge = bridge;
                 logger.info('openHarmony native bridge initialized');
@@ -38,9 +48,9 @@ function initializeNativeBridge(): void {
     }
 }
 
-export function registerNativeBridge(): void {
+export function registerNativeBridge(options: NativeBridgeOptions = {}): void {
     logger.info('registering native bridge');
-    initializeNativeBridge();
+    initializeNativeBridge(options);
 
     ipcMain.handle('native:call', async (event, method, ...args) => {
         logger.info(`native bridge call: ${method}(${args.map((arg) => JSON.stringify(arg)).join(', ')})`);
@@ -51,6 +61,12 @@ export function registerNativeBridge(): void {
                 break;
             case 'getVariant':
                 data = await registeredBridge.getVariant();
+                break;
+            case 'startupKit:getState':
+                data = await registeredBridge.getStartupKit().then((kit) => kit.getState());
+                break;
+            case 'startupKit:delegateSetting':
+                data = await registeredBridge.getStartupKit().then((kit) => kit.delegateSetting(args[0]));
                 break;
             case 'speechKit:available':
                 data = await registeredBridge.getSpeechKit().then((speechKit) => speechKit.available());

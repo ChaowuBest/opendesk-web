@@ -11,9 +11,9 @@ jest.unstable_mockModule('../../../platforms/bridges/harmonyos/arkts.js', () => 
         STARTUP_RESULT_PEEK: 'EtsBridge.OpenDeskStartupResultPeek'
     }
 }));
-let createHarmonyLaunchAtLoginProvider: typeof import('../../../platforms/bridges/harmonyos/launch-at-login.js').createHarmonyLaunchAtLoginProvider;
+let HarmonyOSStartupKit: typeof import('../../../platforms/bridges/harmonyos/startup.js').HarmonyOSStartupKit;
 beforeAll(async () => {
-    ({ createHarmonyLaunchAtLoginProvider } = await import('../../../platforms/bridges/harmonyos/launch-at-login.js'));
+    ({ HarmonyOSStartupKit } = await import('../../../platforms/bridges/harmonyos/startup.js'));
 });
 beforeEach(() => {
     call.mockReset();
@@ -23,7 +23,7 @@ afterEach(() => jest.useRealTimers());
 
 test('reads real native status through start/peek and preserves request IDs', async () => {
     call.mockResolvedValueOnce(41).mockResolvedValueOnce(JSON.stringify({ status: 'ok', enabled: true }));
-    expect(await createHarmonyLaunchAtLoginProvider().getState()).toEqual({
+    expect(await new HarmonyOSStartupKit().getState()).toEqual({
         supported: true,
         enabled: true,
         mode: 'system-settings'
@@ -33,28 +33,28 @@ test('reads real native status through start/peek and preserves request IDs', as
 });
 test('opens the native settings UI without reporting startup as enabled', async () => {
     call.mockResolvedValueOnce(42).mockResolvedValueOnce(JSON.stringify({ status: 'ok' }));
-    expect(await createHarmonyLaunchAtLoginProvider().openSettings()).toBeUndefined();
+    expect(await new HarmonyOSStartupKit().delegateSetting()).toBeUndefined();
     expect(call).toHaveBeenNthCalledWith(1, 'EtsBridge.OpenDeskStartupSettingsStart', 'number');
 });
 test('unavailable bridges and unsupported SDKs never claim startup support', async () => {
     available.mockReturnValue(false);
-    expect((await createHarmonyLaunchAtLoginProvider().getState()).supported).toBe(false);
+    expect((await new HarmonyOSStartupKit().getState()).supported).toBe(false);
     expect(call).not.toHaveBeenCalled();
     available.mockReturnValue(true);
     call.mockResolvedValueOnce(2).mockResolvedValueOnce('{"status":"unsupported"}');
-    expect((await createHarmonyLaunchAtLoginProvider().getState()).supported).toBe(false);
+    expect((await new HarmonyOSStartupKit().getState()).supported).toBe(false);
 });
 test.each(['{}', '{"status":"ok","enabled":"false"}', '{"status":"error","code":201}', 'invalid json'])(
     'rejects invalid or failed native status instead of fabricating an off value: %s',
     async (result) => {
         call.mockResolvedValueOnce(1).mockResolvedValueOnce(result);
-        await expect(createHarmonyLaunchAtLoginProvider().getState()).rejects.toThrow();
+        await expect(new HarmonyOSStartupKit().getState()).rejects.toThrow();
     }
 );
 test('bounds pending native operations', async () => {
     jest.useFakeTimers();
     call.mockResolvedValueOnce(1).mockResolvedValue('{"status":"pending"}');
-    const result = createHarmonyLaunchAtLoginProvider().getState();
+    const result = new HarmonyOSStartupKit().getState();
     const assertion = expect(result).rejects.toThrow(/timed out/);
     await jest.advanceTimersByTimeAsync(6000);
     await assertion;
@@ -62,5 +62,5 @@ test('bounds pending native operations', async () => {
 
 test('rejects an older host without the new bindings', async () => {
     call.mockResolvedValueOnce(undefined);
-    await expect(createHarmonyLaunchAtLoginProvider().getState()).rejects.toThrow('Invalid Harmony startup request');
+    await expect(new HarmonyOSStartupKit().getState()).rejects.toThrow('Invalid Harmony startup request');
 });

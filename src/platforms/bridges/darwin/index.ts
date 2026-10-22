@@ -9,11 +9,25 @@
  * See the Mulan PSL v2 for more details.
  */
 
-import { NativeBridge, SpeechKit, NaiveOcrKit, NaiveHuaweiAccountKit } from '../common.js';
+import {
+    NativeBridge,
+    SpeechKit,
+    NaiveNativeBridge,
+    guardStartupKit,
+    type NativeBridgeOptions,
+    NaiveOcrKit,
+    NaiveHuaweiAccountKit
+} from '../common.js';
 import type { HuaweiAccountKit } from '../common.js';
 import { DarwinSpeechKit } from './speech.js';
+import { DarwinStartupKit } from './startup.js';
+import { app } from 'electron';
 
-class DarwinNativeBridge implements NativeBridge {
+class DarwinNativeBridge extends NaiveNativeBridge {
+    constructor(options: NativeBridgeOptions = {}) {
+        super(guardStartupKit(new DarwinStartupKit(app), 'toggle', options.debug === true || !app.isPackaged));
+    }
+
     _speechKit = new DarwinSpeechKit();
     _ocrKit = new NaiveOcrKit();
     _huaweiAccountKit = new NaiveHuaweiAccountKit();
@@ -39,9 +53,9 @@ class DarwinNativeBridge implements NativeBridge {
     }
 }
 
-export function getNativeBridge(): NativeBridge | null {
+export function getNativeBridge(options: NativeBridgeOptions = {}): NativeBridge | null {
     if (process.platform === 'darwin') {
-        return new DarwinNativeBridge();
+        return new DarwinNativeBridge(options);
     }
     return null;
 }

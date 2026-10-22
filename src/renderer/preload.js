@@ -1263,9 +1263,6 @@ if (shouldExposeMainWindowAPIs()) {
             }
             return result.data;
         },
-        getLaunchAtLogin: () => ipcRenderer.invoke('setting:getLaunchAtLogin'),
-        openStartupSettings: () => ipcRenderer.invoke('setting:openStartupSettings'),
-        setLaunchAtLogin: (enabled) => ipcRenderer.invoke('setting:setLaunchAtLogin', enabled),
         listShells: () => ipcRenderer.invoke('setting:listShells'),
         loadSettingObject: async () => {
             const result = await ipcRenderer.invoke('setting:loadSettingObject');

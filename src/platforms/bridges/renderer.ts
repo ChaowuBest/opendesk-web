@@ -25,8 +25,10 @@ import {
     type NativeBridge,
     type OcrKit,
     type PeekResult,
-    type SpeechKit
-} from './common';
+    type SpeechKit,
+    type StartupKit,
+    type StartupState
+} from './common.js';
 
 class SpeechKitProxy implements SpeechKit {
     async available(): Promise<boolean> {
@@ -177,7 +179,21 @@ class DatabaseKitProxy implements DatabaseKit {
     }
 }
 
+class StartupKitProxy implements StartupKit {
+    async getState(): Promise<StartupState> {
+        return window.native.call('startupKit:getState');
+    }
+
+    async delegateSetting(enabled?: boolean): Promise<void> {
+        return window.native.call('startupKit:delegateSetting', enabled);
+    }
+}
+
 export class NativeBridgeProxy implements NativeBridge {
+    async getStartupKit(): Promise<StartupKit> {
+        return new StartupKitProxy();
+    }
+
     async getPlatform(): Promise<string> {
         return window.native.call('getPlatform');
     }

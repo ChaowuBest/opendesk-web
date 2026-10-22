@@ -9,7 +9,7 @@
  * See the Mulan PSL v2 for more details.
  */
 
-import type { LaunchAtLoginState, SystemStartupSettingsProvider } from '../../../common/launch-at-login.js';
+import type { StartupKit, StartupState } from '../common.js';
 import { callArkTS, EtsBridgeMethods, hasArkTSAdapter } from './arkts.js';
 
 interface StartupResult {
@@ -34,24 +34,23 @@ async function runOperation(method: string): Promise<StartupResult> {
     throw new Error('Harmony startup request timed out');
 }
 
-export function createHarmonyLaunchAtLoginProvider(): SystemStartupSettingsProvider {
-    return {
-        async getState(): Promise<LaunchAtLoginState> {
-            const unavailable: LaunchAtLoginState = {
-                supported: false,
-                enabled: false,
-                reason: 'unsupported',
-                mode: 'system-settings'
-            };
-            if (!hasArkTSAdapter()) return unavailable;
-            const result = await runOperation(EtsBridgeMethods.STARTUP_STATUS_START);
-            if (result.status === 'unsupported') return unavailable;
-            if (typeof result.enabled !== 'boolean') throw new Error('Invalid Harmony startup status');
-            return { supported: true, enabled: result.enabled, mode: 'system-settings' };
-        },
-        async openSettings(): Promise<void> {
-            const result = await runOperation(EtsBridgeMethods.STARTUP_SETTINGS_START);
-            if (result.status !== 'ok') throw new Error('Harmony startup settings are unavailable');
-        }
-    };
+export class HarmonyOSStartupKit implements StartupKit {
+    async getState(): Promise<StartupState> {
+        const unavailable: StartupState = {
+            supported: false,
+            enabled: null,
+            reason: 'unsupported',
+            mode: 'system-settings'
+        };
+        if (!hasArkTSAdapter()) return unavailable;
+        const result = await runOperation(EtsBridgeMethods.STARTUP_STATUS_START);
+        if (result.status === 'unsupported') return unavailable;
+        if (typeof result.enabled !== 'boolean') throw new Error('Invalid Harmony startup status');
+        return { supported: true, enabled: result.enabled, mode: 'system-settings' };
+    }
+    async delegateSetting(enabled?: boolean): Promise<void> {
+        if (enabled !== undefined) throw new TypeError('Startup is managed in system settings');
+        const result = await runOperation(EtsBridgeMethods.STARTUP_SETTINGS_START);
+        if (result.status !== 'ok') throw new Error('Harmony startup settings are unavailable');
+    }
 }

@@ -1,4 +1,4 @@
-import { beforeAll, expect, jest, test } from '@jest/globals';
+import { afterEach, beforeAll, expect, jest, test } from '@jest/globals';
 import { parseHTML } from 'linkedom';
 
 beforeAll(async () => {
@@ -13,10 +13,34 @@ beforeAll(async () => {
     Object.defineProperty(globalThis, 'navigator', { value: { language: 'en-US' }, configurable: true });
     await import('../../../renderer/components/settingpanel.js');
 });
+const panels: any[] = [];
+afterEach(() => {
+    panels.splice(0).forEach((p) => p.disconnectedCallback());
+    delete (window as any).native;
+});
+function nativeStartup(handlers: {
+    getLaunchAtLogin: () => any;
+    setLaunchAtLogin?: (enabled: boolean) => any;
+    openStartupSettings?: () => any;
+}) {
+    (window as any).native = {
+        call: jest.fn(async (method: string, ...args: any[]) => {
+            if (method === 'startupKit:getState') {
+                const state = await handlers.getLaunchAtLogin();
+                return { mode: 'toggle', ...state };
+            }
+            if (method === 'startupKit:delegateSetting') {
+                return args[0] === undefined ? handlers.openStartupSettings?.() : handlers.setLaunchAtLogin?.(args[0]);
+            }
+            throw new Error('Unexpected native method: ' + method);
+        })
+    };
+}
 function panel(state = { supported: true, enabled: false }) {
     const p = document.createElement('setting-panel') as any;
     p.currentData = {};
-    p.launchAtLoginState = state;
+    p.launchAtLoginState = { mode: 'toggle', ...state };
+    panels.push(p);
     p.innerHTML = p.renderGeneralSection();
     p._bindLaunchAtLoginEvents();
     return p;
@@ -29,7 +53,7 @@ test('general settings renders a localized system startup switch', () => {
     expect(panel({ supported: false, enabled: false }).querySelector('#launch-at-login').disabled).toBe(true);
 });
 test('loads actual state whenever startup controls are bound', async () => {
-    (window as any).settingAPI = { getLaunchAtLogin: jest.fn(async () => ({ supported: true, enabled: true })) };
+    nativeStartup({ getLaunchAtLogin: jest.fn(async () => ({ supported: true, enabled: true })) });
     const p = panel();
     await new Promise((resolve) => setTimeout(resolve, 0));
     expect(p.querySelector('#launch-at-login').checked).toBe(true);
@@ -42,16 +66,18 @@ test('saves through system API, blocks concurrent changes, and rolls back on fai
                 reject = r;
             })
     );
-    (window as any).settingAPI = {
+    nativeStartup({
         getLaunchAtLogin: async () => ({ supported: true, enabled: false }),
         setLaunchAtLogin
-    };
+    });
     const p = panel();
     await new Promise((resolve) => setTimeout(resolve, 0));
     const input = p.querySelector('#launch-at-login');
     input.checked = true;
     input.dispatchEvent(new Event('change'));
     expect(input.disabled).toBe(true);
+    await Promise.resolve();
+    await Promise.resolve();
     expect(setLaunchAtLogin).toHaveBeenCalledWith(true);
     reject!(new Error('denied'));
     await new Promise((resolve) => setTimeout(resolve, 0));
@@ -60,10 +86,10 @@ test('saves through system API, blocks concurrent changes, and rolls back on fai
     expect(p.querySelector('#launch-at-login-status').textContent).toContain('Unable');
 });
 test('shows system refusal instead of claiming a successful enable', async () => {
-    (window as any).settingAPI = {
+    nativeStartup({
         getLaunchAtLogin: async () => ({ supported: true, enabled: false }),
         setLaunchAtLogin: async () => ({ supported: true, enabled: false })
-    };
+    });
     const p = panel();
     await new Promise((resolve) => setTimeout(resolve, 0));
     const input = p.querySelector('#launch-at-login');
@@ -74,12 +100,15 @@ test('shows system refusal instead of claiming a successful enable', async () =>
     expect(p.querySelector('#launch-at-login-status').textContent).toContain('system');
 });
 
-test('successful changes use the returned system state without saving the shared config', async () => {
-    const setLaunchAtLogin = jest.fn(async (enabled: boolean) => ({ supported: true, enabled }));
-    (window as any).settingAPI = {
-        getLaunchAtLogin: async () => ({ supported: true, enabled: false }),
+test('successful changes read the actual system state without saving the shared config', async () => {
+    let systemEnabled = false;
+    const setLaunchAtLogin = jest.fn(async (enabled: boolean) => {
+        systemEnabled = enabled;
+    });
+    nativeStartup({
+        getLaunchAtLogin: async () => ({ supported: true, enabled: systemEnabled }),
         setLaunchAtLogin
-    };
+    });
     const p = panel();
     p.saveImmediately = jest.fn();
     await new Promise((resolve) => setTimeout(resolve, 0));
@@ -94,11 +123,11 @@ test('successful changes use the returned system state without saving the shared
 });
 
 test('read failure keeps the switch disabled and reports a localized error', async () => {
-    (window as any).settingAPI = {
+    nativeStartup({
         getLaunchAtLogin: async () => {
             throw new Error('denied');
         }
-    };
+    });
     const p = panel();
     await new Promise((resolve) => setTimeout(resolve, 0));
     expect(p.querySelector('#launch-at-login').disabled).toBe(true);
@@ -106,9 +135,9 @@ test('read failure keeps the switch disabled and reports a localized error', asy
 });
 
 test('development instances keep the normal description without the installation notice', async () => {
-    (window as any).settingAPI = {
+    nativeStartup({
         getLaunchAtLogin: async () => ({ supported: false, enabled: false, reason: 'development' })
-    };
+    });
     const p = panel();
     await new Promise((resolve) => setTimeout(resolve, 0));
     expect(p.querySelector('#launch-at-login').disabled).toBe(true);
@@ -119,18 +148,17 @@ test('development instances keep the normal description without the installation
 });
 
 test('Harmony renders system management, opens settings, and refreshes status on return', async () => {
-    (window as any).systemInfo = { isOpenHarmony: true };
     let enabled = false;
     const openStartupSettings = jest.fn(async () => undefined);
     const setLaunchAtLogin = jest.fn();
-    (window as any).settingAPI = {
+    nativeStartup({
         getLaunchAtLogin: async () => ({ supported: true, enabled, mode: 'system-settings' }),
         openStartupSettings,
         setLaunchAtLogin
-    };
+    });
     const p = panel();
     await new Promise((resolve) => setTimeout(resolve, 0));
-    expect(p.querySelector('#launch-at-login')).toBeNull();
+    expect(p.querySelector('#launch-at-login-toggle').style.display).toBe('none');
     expect(p.querySelector('#launch-at-login-state').textContent).toBe('Off');
     p.querySelector('#launch-at-login-manage').click();
     await new Promise((resolve) => setTimeout(resolve, 0));
@@ -141,17 +169,15 @@ test('Harmony renders system management, opens settings, and refreshes status on
     await new Promise((resolve) => setTimeout(resolve, 0));
     expect(p.querySelector('#launch-at-login-state').textContent).toBe('On');
     p.disconnectedCallback();
-    delete (window as any).systemInfo;
 });
 
 test('Harmony settings failure is visible and does not turn startup on', async () => {
-    (window as any).systemInfo = { isOpenHarmony: true };
-    (window as any).settingAPI = {
+    nativeStartup({
         getLaunchAtLogin: async () => ({ supported: true, enabled: false, mode: 'system-settings' }),
         openStartupSettings: async () => {
             throw new Error('cannot open');
         }
-    };
+    });
     const p = panel();
     await new Promise((resolve) => setTimeout(resolve, 0));
     p.querySelector('#launch-at-login-manage').click();
@@ -160,11 +186,9 @@ test('Harmony settings failure is visible and does not turn startup on', async (
     expect(p.querySelector('#launch-at-login-status').textContent).toContain('Unable to open');
     expect(p.querySelector('#launch-at-login-manage').disabled).toBe(false);
     p.disconnectedCallback();
-    delete (window as any).systemInfo;
 });
 
 test('Harmony ignores older refresh responses and removes focus listeners when disconnected', async () => {
-    (window as any).systemInfo = { isOpenHarmony: true };
     let resolveOld: (value: unknown) => void;
     const getLaunchAtLogin = jest
         .fn<any>()
@@ -176,7 +200,7 @@ test('Harmony ignores older refresh responses and removes focus listeners when d
                 })
         )
         .mockResolvedValue({ supported: true, enabled: true, mode: 'system-settings' });
-    (window as any).settingAPI = { getLaunchAtLogin };
+    nativeStartup({ getLaunchAtLogin });
     const p = panel();
     await new Promise((resolve) => setTimeout(resolve, 0));
     window.dispatchEvent(new Event('focus'));
@@ -189,17 +213,19 @@ test('Harmony ignores older refresh responses and removes focus listeners when d
     window.dispatchEvent(new Event('focus'));
     await new Promise((resolve) => setTimeout(resolve, 0));
     expect(getLaunchAtLogin).toHaveBeenCalledTimes(3);
-    delete (window as any).systemInfo;
 });
 
 test('Harmony read failure stays unknown but still allows opening system settings', async () => {
-    (window as any).systemInfo = { isOpenHarmony: true };
-    (window as any).settingAPI = {
-        getLaunchAtLogin: async () => {
-            throw new Error('old host');
-        },
-        openStartupSettings: jest.fn(async () => undefined)
-    };
+    const openStartupSettings = jest.fn(async () => undefined);
+    nativeStartup({
+        getLaunchAtLogin: async () => ({
+            supported: true,
+            enabled: null,
+            mode: 'system-settings',
+            reason: 'unavailable'
+        }),
+        openStartupSettings
+    });
     const p = panel();
     await new Promise((resolve) => setTimeout(resolve, 0));
     expect(p.querySelector('#launch-at-login-state').textContent).toBe('Status unknown');
@@ -207,13 +233,11 @@ test('Harmony read failure stays unknown but still allows opening system setting
     expect(p.querySelector('#launch-at-login-status').textContent).toContain('Unable');
     p.querySelector('#launch-at-login-manage').click();
     await new Promise((resolve) => setTimeout(resolve, 0));
-    expect((window as any).settingAPI.openStartupSettings).toHaveBeenCalledTimes(1);
+    expect(openStartupSettings).toHaveBeenCalledTimes(1);
     p.disconnectedCallback();
-    delete (window as any).systemInfo;
 });
 
 test('Harmony focus refresh does not swallow a click while status is pending', async () => {
-    (window as any).systemInfo = { isOpenHarmony: true };
     let resolveRefresh: (value: unknown) => void;
     const getLaunchAtLogin = jest
         .fn<any>()
@@ -225,7 +249,7 @@ test('Harmony focus refresh does not swallow a click while status is pending', a
                 })
         );
     const openStartupSettings = jest.fn(async () => undefined);
-    (window as any).settingAPI = { getLaunchAtLogin, openStartupSettings };
+    nativeStartup({ getLaunchAtLogin, openStartupSettings });
     const p = panel();
     await new Promise((resolve) => setTimeout(resolve, 0));
     window.dispatchEvent(new Event('focus'));
@@ -236,5 +260,41 @@ test('Harmony focus refresh does not swallow a click while status is pending', a
     resolveRefresh!({ supported: true, enabled: false, mode: 'system-settings' });
     await new Promise((resolve) => setTimeout(resolve, 0));
     p.disconnectedCallback();
-    delete (window as any).systemInfo;
+});
+
+test('transport failure after delegation becomes unknown instead of restoring a stale system state', async () => {
+    const getLaunchAtLogin = jest
+        .fn<any>()
+        .mockResolvedValueOnce({ supported: true, enabled: false })
+        .mockRejectedValueOnce(new Error('disconnected'));
+    nativeStartup({ getLaunchAtLogin, setLaunchAtLogin: async () => undefined });
+    const p = panel();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    const input = p.querySelector('#launch-at-login');
+    input.checked = true;
+    input.dispatchEvent(new Event('change'));
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(p.launchAtLoginState.enabled).toBeNull();
+    expect(input.disabled).toBe(true);
+    expect(p.querySelector('#launch-at-login-status').textContent).toContain('Unable');
+});
+
+test('unsupported native status queries do not block independent system settings delegation', async () => {
+    const openStartupSettings = jest.fn(async () => undefined);
+    nativeStartup({
+        getLaunchAtLogin: async () => ({
+            supported: false,
+            enabled: null,
+            mode: 'system-settings',
+            reason: 'unsupported'
+        }),
+        openStartupSettings
+    });
+    const p = panel();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(p.querySelector('#launch-at-login-state').textContent).toBe('Status unknown');
+    expect(p.querySelector('#launch-at-login-manage').disabled).toBe(false);
+    p.querySelector('#launch-at-login-manage').click();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(openStartupSettings).toHaveBeenCalledTimes(1);
 });
