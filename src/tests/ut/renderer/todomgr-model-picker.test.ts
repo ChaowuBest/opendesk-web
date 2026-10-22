@@ -92,6 +92,41 @@ describe('automation task cascading model picker', () => {
             .map((option: any) => option.dataset.modelAlias);
     }
 
+    test.each(['deepseek', ''])('default effort only displays the model information for alias "%s"', (alias) => {
+        const widget = widgetFor(alias, '');
+        widget._modelVisionSupport = { deepseek: true, 'fast-model': true };
+        element(widget, '#tm-edit-model-summary').innerHTML = widget._renderModelSummary(alias, '');
+        const summary = element(widget, '#tm-edit-model-summary');
+        expect(summary.textContent.trim()).toBe(alias || '跟随全局默认模型');
+        expect(summary.querySelector('.agent-effort-icon')).toBeNull();
+        expect(summary.querySelectorAll('svg')).toHaveLength(1);
+        expect(summary.querySelector('.agent-icon-tile.model-vision')).not.toBeNull();
+    });
+
+    test('switching to default effort removes its icon while explicit none keeps its own icon', () => {
+        const widget = widgetFor();
+        open(widget);
+        preview(widget, 'deepseek', 'click');
+        const defaultOption = element(widget, '#tm-edit-model-effort-list [data-effort-value=""]');
+        expect(defaultOption.textContent).toContain('默认');
+        expect(defaultOption.querySelector('svg')).not.toBeNull();
+        defaultOption.click();
+
+        const summary = element(widget, '#tm-edit-model-summary');
+        expect(summary.textContent.trim()).toBe('deepseek');
+        expect(summary.querySelector('.agent-effort-icon')).toBeNull();
+        expect(summary.querySelectorAll('svg')).toHaveLength(1);
+        expect(element(widget, '#tm-edit-model-picker').dataset.selectedEffort).toBe('');
+
+        open(widget);
+        preview(widget, 'deepseek', 'click');
+        element(widget, '#tm-edit-model-effort-list [data-effort-value="none"]').click();
+        expect(summary.textContent.trim()).toBe('deepseek');
+        expect(summary.querySelector('.agent-effort-icon svg')).not.toBeNull();
+        expect(summary.querySelectorAll('svg')).toHaveLength(2);
+        expect(element(widget, '#tm-edit-model-picker').dataset.selectedEffort).toBe('none');
+    });
+
     test('search filters model aliases and underlying model names case-insensitively', () => {
         const widget = widgetFor();
         open(widget);
@@ -131,8 +166,8 @@ describe('automation task cascading model picker', () => {
         expect(picker.dataset.selectedEffort).toBe('low');
         expect(element(widget, '#tm-edit-model-popover').hidden).toBe(true);
         expect(element(widget, '#tm-edit-model-trigger').getAttribute('aria-expanded')).toBe('false');
-        expect(element(widget, '.tm-model-trigger-summary').textContent).toContain('fast-model');
-        expect(element(widget, '.tm-model-trigger-summary').textContent).toContain('简洁推理');
+        expect(element(widget, '.tm-model-trigger-summary').textContent.trim()).toBe('fast-model');
+        expect(element(widget, '.tm-model-trigger-summary .agent-effort-icon svg')).not.toBeNull();
         expect(widget.querySelector('#tm-edit-model-done')).toBeNull();
     });
 

@@ -25,7 +25,9 @@ import {
     getSystemTimezone,
     isValidTimezone
 } from '../../../../common/utils/timezone.js';
-import { describeCron } from '../../../utils/cron.js';
+import type { TodoRecurrence } from '../../../../common/utils/todo-recurrence.js';
+import { describeLegacyRecurrence, describeTodoRecurrence } from '../recurrence-description.js';
+import { TimeSchedulePicker, TIME_SCHEDULE_CSS } from './time-schedule-picker.js';
 
 type Translator = ReturnType<typeof createTranslatorForTodoMgr>;
 
@@ -43,6 +45,7 @@ interface GlobalTodo {
         type: string;
         triggerAt?: string;
         cronExpression?: string;
+        recurrence?: TodoRecurrence;
         timezone?: string;
         bundleName?: string;
         eventName?: string;
@@ -82,6 +85,7 @@ type CardExpandedState = TriggerType | null;
  * ═══════════════════════════════════════════════════ */
 
 const TODOMGR_CSS = `
+${TIME_SCHEDULE_CSS}
 /* ---- Root ---- */
 :root { --fs-2xs: 9px; --fs-xs: 10px; --fs-sm: 11px; --fs-md: 12px; --fs-base: 13px; --fs-lg: 14px; --fs-xl: 16px; --icon-xs: 8px; --icon-sm: 10px; --icon-md: 12px; --icon-lg: 13px; }
 .tm-root {
@@ -677,7 +681,8 @@ html[data-theme='dark'] .tm-root {
     text-overflow: ellipsis;
     white-space: nowrap;
 }
-.tm-model-trigger-summary > svg { flex: none; }
+.tm-model-trigger-summary .agent-effort-icon { display: inline-flex; align-items: center; flex: none; }
+.tm-model-trigger-summary .agent-effort-icon svg { display: block; }
 .tm-model-trigger-chevron {
     flex-shrink: 0;
     margin-left: 10px;
@@ -1107,24 +1112,6 @@ function parseTodoWorkspaceSelectValue(value: string): TodoWorkspaceConfig | und
     return undefined;
 }
 
-/** Describe the fields in their scheduling timezone without shifting calendar dates. */
-function describeZonedCron(expr: string, t: Translator, timezone: string): string {
-    return describeCron(
-        expr,
-        {
-            dowNames: Array.from({ length: 7 }, (_, i) => t(`cron.desc.dowNames.${i}`)),
-            everyDowTemplate: t('cron.desc.everyDow'),
-            dowTemplate: t('cron.desc.dow'),
-            monthlyDomTemplate: t('cron.desc.monthlyDom'),
-            monthTemplate: t('cron.desc.month'),
-            hourTemplate: t('cron.desc.hourOnly'),
-            minuteTemplate: t('cron.desc.minuteOnly'),
-            everyMinute: t('cron.desc.everyMinute')
-        },
-        timezone
-    );
-}
-
 function getTriggerSummary(todo: GlobalTodo, t: Translator): string {
     if (!todo.trigger) return t('trigger.summary.manual');
     switch (todo.trigger.type) {
@@ -1145,9 +1132,11 @@ function getTriggerSummary(todo: GlobalTodo, t: Translator): string {
             }
         }
         case 'cron':
-            return todo.trigger.cronExpression
-                ? describeZonedCron(todo.trigger.cronExpression, t, todo.trigger.timezone || 'UTC')
-                : t('trigger.summary.cron');
+            return todo.trigger.recurrence
+                ? describeTodoRecurrence(todo.trigger.recurrence, t, todo.trigger.timezone || 'UTC')
+                : todo.trigger.cronExpression
+                  ? describeLegacyRecurrence(todo.trigger.cronExpression, t, todo.trigger.timezone || 'UTC')
+                  : t('trigger.summary.cron');
         case 'event':
             return `${todo.trigger.bundleName || ''}:${todo.trigger.eventName || ''}`;
         default:
@@ -1235,6 +1224,8 @@ class TodoMgrEntryWidget extends AgentOperableHTMLElement {
     private _dtViewMonth = 0;
     private _dtPanelOpen = false;
     private _editTimezone = getSystemTimezone();
+    private _timeSchedulePicker: TimeSchedulePicker | null = null;
+    private _initialTimePeriod: 'once' | 'daily' = 'once';
     private _dtOriginal: { local: string; timezone: string; triggerAt: string } | null = null;
 
     async connectedCallback() {
@@ -1275,6 +1266,7 @@ class TodoMgrEntryWidget extends AgentOperableHTMLElement {
     }
 
     disconnectedCallback() {
+        this._timeSchedulePicker?.destroy();
         this._modelPickerCleanup?.();
         if (this._onGlobalTodosUpdated) {
             window.applicationAPI.unsubscribe('globalTodosUpdated');
@@ -1709,6 +1701,7 @@ class TodoMgrEntryWidget extends AgentOperableHTMLElement {
     }
 
     private _closeDetail() {
+        this._timeSchedulePicker?.destroy();
         this._modelPickerCleanup?.();
         this.selectedTodoId = null;
         this.isEditing = false;
@@ -1743,6 +1736,7 @@ class TodoMgrEntryWidget extends AgentOperableHTMLElement {
      * ═══════════════════════════ */
 
     private _renderDetail(todo: GlobalTodo) {
+        this._timeSchedulePicker?.destroy();
         this._modelPickerCleanup?.();
         const t = this._t;
         const scroll = this.querySelector('#tm-detail-scroll') as HTMLElement;
@@ -1787,15 +1781,6 @@ class TodoMgrEntryWidget extends AgentOperableHTMLElement {
 
                     <span class="tm-detail-attr-label">${escapeHtml(t('renderer.todo.detail.attr.triggerType'))}</span>
                     <span class="tm-detail-attr-value">${escapeHtml(getTriggerSummary(todo, t))}</span>
-
-                    ${
-                        todo.trigger?.type === 'cron' && todo.trigger.cronExpression
-                            ? `
-                    <span class="tm-detail-attr-label">${escapeHtml(t('renderer.todo.detail.attr.cronExpression'))}</span>
-                    <span class="tm-detail-attr-value" style="font-family:'Maple Mono','Cascadia Code','SF Mono',monospace;font-size: var(--fs-md);">${escapeHtml(todo.trigger.cronExpression)} (${escapeHtml(todo.trigger.timezone || 'UTC')})</span>
-                    `
-                            : ''
-                    }
 
                     ${
                         todo.trigger?.type === 'event'
@@ -1868,6 +1853,7 @@ class TodoMgrEntryWidget extends AgentOperableHTMLElement {
      * ═══════════════════════════ */
 
     private async _enterEditMode(todo: GlobalTodo | null, addType?: TriggerType) {
+        this._timeSchedulePicker?.destroy();
         this._modelPickerCleanup?.();
         const isTemplatePreFill = todo?.id === '__tpl__';
         this.isEditing = true;
@@ -1893,7 +1879,9 @@ class TodoMgrEntryWidget extends AgentOperableHTMLElement {
         const title = !todo ? '' : todo.title;
         const content = !todo ? '' : todo.content;
         const isEnabled = !todo ? true : todo.enabled !== false;
-        const triggerType = !todo ? addType || 'scheduled' : todo.trigger?.type || addType || 'scheduled';
+        const requestedType = !todo ? addType || 'scheduled' : todo.trigger?.type || addType || 'scheduled';
+        const triggerType = requestedType === 'event' ? 'event' : 'scheduled';
+        this._initialTimePeriod = requestedType === 'cron' ? 'daily' : 'once';
         this._editTimezone = todo?.trigger?.timezone || (todo?.trigger?.type === 'cron' ? 'UTC' : getSystemTimezone());
         const [recentWorkspaces] = await Promise.all([this._loadRecentWorkspaces(), this._loadChatModels()]);
         const workspaceOptionsHtml = this._renderWorkspaceOptions(todo?.workspace, recentWorkspaces);
@@ -1926,7 +1914,6 @@ class TodoMgrEntryWidget extends AgentOperableHTMLElement {
                 <label class="tm-edit-label">${escapeHtml(t('renderer.todo.edit.labelTriggerType'))}</label>
                 <select class="tm-edit-select" id="tm-edit-trigger-type">
                     <option value="scheduled"${triggerType === 'scheduled' ? ' selected' : ''}>${escapeHtml(t('renderer.todo.edit.triggerType.scheduled'))}</option>
-                    <option value="cron"${triggerType === 'cron' ? ' selected' : ''}>${escapeHtml(t('renderer.todo.edit.triggerType.cron'))}</option>
                     <option value="event"${triggerType === 'event' ? ' selected' : ''}>${escapeHtml(t('renderer.todo.edit.triggerType.event'))}</option>
                 </select>
             </div>
@@ -2019,15 +2006,14 @@ class TodoMgrEntryWidget extends AgentOperableHTMLElement {
         if (!container) return;
 
         switch (type) {
-            case 'scheduled': {
-                this._renderDateTimePicker(container, existingTodo);
-                break;
-            }
+            case 'scheduled':
             case 'cron': {
                 this._renderCronBuilder(container, existingTodo);
                 break;
             }
             case 'event': {
+                this._timeSchedulePicker?.destroy();
+                this._timeSchedulePicker = null;
                 this._renderEventSelector(container, existingTodo);
                 break;
             }
@@ -2160,8 +2146,11 @@ class TodoMgrEntryWidget extends AgentOperableHTMLElement {
 
     private _renderModelSummary(model: string, effort: string): string {
         const hasVision = this._modelVisionSupport[model || this._defaultModelAlias] === true;
-        return `${getModelIconTile(hasVision)}<span aria-hidden="true">${getEffortIconSVG(effort)}</span>
-            <span class="tm-model-trigger-name">${escapeHtml(this._getModelLabel(model))} · ${escapeHtml(this._getReasoningEffortLabel(effort))}</span>`;
+        const effortIcon = effort
+            ? `<span class="agent-effort-icon" title="${escapeHtml(this._getReasoningEffortLabel(effort))}" aria-hidden="true">${getEffortIconSVG(effort)}</span>`
+            : '';
+        return `${getModelIconTile(hasVision)}${effortIcon}
+            <span class="tm-model-trigger-name">${escapeHtml(this._getModelLabel(model))}</span>`;
     }
 
     private _bindModelPicker(todo: GlobalTodo | null): void {
@@ -2809,218 +2798,19 @@ class TodoMgrEntryWidget extends AgentOperableHTMLElement {
      * ═══════════════════════════ */
 
     private _renderCronBuilder(container: HTMLElement, existingTodo: GlobalTodo | null) {
-        let mode = 'daily';
-        let hour = 9;
-        let minute = 0;
-        let selectedDows = [1, 2, 3, 4, 5]; // Mon-Fri
-        let dom = '1';
-        let customCron = '';
-
-        if (existingTodo?.trigger?.type === 'cron' && existingTodo.trigger.cronExpression) {
-            const parsed = this._parseCronForUI(existingTodo.trigger.cronExpression);
-            mode = parsed.mode;
-            hour = parsed.hour;
-            minute = parsed.minute;
-            selectedDows = parsed.selectedDows;
-            dom = parsed.dom;
-            if (mode === 'custom') {
-                customCron = existingTodo.trigger.cronExpression;
-            }
-        }
-
-        const t = this._t;
-        const hourOptions = Array.from(
-            { length: 24 },
-            (_, i) => `<option value="${i}"${i === hour ? ' selected' : ''}>${String(i).padStart(2, '0')}</option>`
-        ).join('');
-        const minOptions = Array.from(
-            { length: 60 },
-            (_, m) => `<option value="${m}"${m === minute ? ' selected' : ''}>${String(m).padStart(2, '0')}</option>`
-        ).join('');
-        const domOptions = Array.from(
-            { length: 31 },
-            (_, i) =>
-                `<option value="${i + 1}"${String(i + 1) === dom ? ' selected' : ''}>${escapeHtml(t('renderer.todo.cron.domOption', { day: i + 1 }))}</option>`
-        ).join('');
-
-        const isCustom = mode === 'custom';
-
-        container.innerHTML = `
-        <div class="tm-edit-field">
-            <label class="tm-edit-label">${escapeHtml(t('renderer.todo.cron.repeatFrequency'))}</label>
-            <div class="tm-cron-row">
-                <select class="tm-cron-select" id="tm-cron-mode" style="flex:1;">
-                    <option value="daily"${mode === 'daily' ? ' selected' : ''}>${escapeHtml(t('renderer.todo.cron.mode.daily'))}</option>
-                    <option value="weekly"${mode === 'weekly' ? ' selected' : ''}>${escapeHtml(t('renderer.todo.cron.mode.weekly'))}</option>
-                    <option value="monthly"${mode === 'monthly' ? ' selected' : ''}>${escapeHtml(t('renderer.todo.cron.mode.monthly'))}</option>
-                    <option value="custom"${isCustom ? ' selected' : ''}>${escapeHtml(t('renderer.todo.cron.mode.custom'))}</option>
-                </select>
-            </div>
-
-            <div id="tm-cron-dow-area" style="${mode === 'weekly' ? '' : 'display:none;'}">
-                <label class="tm-edit-label" style="margin-top:8px;">${escapeHtml(t('renderer.todo.cron.selectDays'))}</label>
-                <div class="tm-cron-dow-grid" id="tm-cron-dow-grid">
-                    ${Array.from({ length: 7 }, (_, i) => `<button type="button" class="tm-cron-dow-btn${selectedDows.includes(i) ? ' active' : ''}" data-dow="${i}">${escapeHtml(this._t(`renderer.todo.datetime.weekday.${i === 0 ? 7 : i}`))}</button>`).join('')}
-                </div>
-            </div>
-
-            <div id="tm-cron-dom-area" style="${mode === 'monthly' ? '' : 'display:none;'}">
-                <label class="tm-edit-label" style="margin-top:8px;">${escapeHtml(t('renderer.todo.cron.selectDays'))}</label>
-                <div class="tm-cron-row">
-                    <select class="tm-cron-select" id="tm-cron-dom">${domOptions}</select>
-                </div>
-            </div>
-
-            <div id="tm-cron-time-area" style="${isCustom ? 'display:none;' : ''}">
-                <label class="tm-edit-label" style="margin-top:10px;">${escapeHtml(t('renderer.todo.cron.executeTime'))}</label>
-                <div class="tm-cron-row">
-                    <select class="tm-cron-select" id="tm-cron-hour">${hourOptions}</select>
-                    <span style="color:#8E8E93;">:</span>
-                    <select class="tm-cron-select" id="tm-cron-minute">${minOptions}</select>
-                </div>
-            </div>
-
-            <div id="tm-cron-custom-area" class="tm-cron-custom-area" style="${isCustom ? '' : 'display:none;'}">
-                <label class="tm-edit-label" style="margin-top:8px;">${escapeHtml(t('renderer.todo.cron.expressionLabel'))}</label>
-                <input type="text" class="tm-cron-custom-input" id="tm-cron-custom-input"
-                    value="${escapeHtml(customCron)}"
-                    placeholder="${escapeHtml(t('renderer.todo.cron.customPlaceholder'))}">
-                <a class="tm-cron-help-link" href="https://support.huaweicloud.com/usermanual-coc/coc_um_05_03_03.html" target="_blank" rel="noopener">
-                    <i class="fas fa-circle-question" style="font-size: var(--fs-sm);"></i>
-                    ${escapeHtml(t('renderer.todo.cron.helpText'))}
-                </a>
-            </div>
-
-            <div class="tm-cron-preview" id="tm-cron-preview"></div>
-        </div>`;
-
-        this._updateCronPreview();
-        this._bindCronEvents();
-    }
-
-    private _parseCronForUI(expr: string): {
-        mode: string;
-        hour: number;
-        minute: number;
-        selectedDows: number[];
-        dom: string;
-    } {
-        const fields = expr.trim().split(/\s+/);
-        if (fields.length !== 5) return { mode: 'custom', hour: 9, minute: 0, selectedDows: [1, 2, 3, 4, 5], dom: '1' };
-        const [cronMin, cronHour, cronDom, cronMonth, cronDow] = fields;
-
-        // 包含 / - L 或月份字段非 * 的表达式无法用简单 UI 表达，归为自定义
-        const isSimpleNum = (s: string) => /^\d+$/.test(s);
-        if (!isSimpleNum(cronMin) || !isSimpleNum(cronHour) || cronMonth !== '*') {
-            return { mode: 'custom', hour: 9, minute: 0, selectedDows: [], dom: '1' };
-        }
-
-        const lh = parseInt(cronHour, 10);
-        const lm = parseInt(cronMin, 10);
-        if (cronDom !== '*' && cronDow !== '*') {
-            return { mode: 'custom', hour: lh, minute: lm, selectedDows: [], dom: cronDom };
-        }
-        let mode = 'daily';
-        let selectedDows = [1, 2, 3, 4, 5];
-        let dom = '1';
-
-        if (cronDow !== '*') {
-            // 星期字段含非数字/逗号字符 (如 1-5) → 自定义
-            if (!/^[\d,]+$/.test(cronDow)) {
-                return { mode: 'custom', hour: lh, minute: lm, selectedDows: [], dom: '1' };
-            }
-            mode = 'weekly';
-            selectedDows = cronDow.split(',').map((d) => {
-                const v = parseInt(d.trim(), 10);
-                return v % 7;
-            });
-        } else if (cronDom !== '*') {
-            if (!isSimpleNum(cronDom)) {
-                return { mode: 'custom', hour: lh, minute: lm, selectedDows: [], dom: '1' };
-            }
-            mode = 'monthly';
-            dom = cronDom;
-        }
-
-        return { mode, hour: isNaN(lh) ? 9 : lh, minute: isNaN(lm) ? 0 : lm, selectedDows, dom };
-    }
-
-    private _bindCronEvents() {
-        const modeEl = this.querySelector('#tm-cron-mode') as HTMLSelectElement;
-        const dowGrid = this.querySelector('#tm-cron-dow-grid') as HTMLElement;
-
-        modeEl?.addEventListener('change', () => {
-            const mode = modeEl.value;
-            const dowArea = this.querySelector('#tm-cron-dow-area') as HTMLElement;
-            const domArea = this.querySelector('#tm-cron-dom-area') as HTMLElement;
-            const timeArea = this.querySelector('#tm-cron-time-area') as HTMLElement;
-            const customArea = this.querySelector('#tm-cron-custom-area') as HTMLElement;
-            if (dowArea) dowArea.style.display = mode === 'weekly' ? '' : 'none';
-            if (domArea) domArea.style.display = mode === 'monthly' ? '' : 'none';
-            if (timeArea) timeArea.style.display = mode === 'custom' ? 'none' : '';
-            if (customArea) customArea.style.display = mode === 'custom' ? '' : 'none';
-            this._updateCronPreview();
-        });
-
-        dowGrid?.addEventListener('click', (e) => {
-            const btn = (e.target as HTMLElement).closest('.tm-cron-dow-btn') as HTMLElement;
-            if (!btn) return;
-            btn.classList.toggle('active');
-            this._updateCronPreview();
-        });
-
-        for (const id of ['#tm-cron-hour', '#tm-cron-minute', '#tm-cron-dom']) {
-            this.querySelector(id)?.addEventListener('change', () => this._updateCronPreview());
-        }
-
-        this.querySelector('#tm-cron-custom-input')?.addEventListener('input', () => this._updateCronPreview());
-    }
-
-    private _getCronFromUI(): string {
-        const mode = (this.querySelector('#tm-cron-mode') as HTMLSelectElement)?.value || 'daily';
-        if (mode === 'custom') {
-            const raw = (this.querySelector('#tm-cron-custom-input') as HTMLInputElement)?.value?.trim() || '';
-            return raw;
-        }
-        const hour = parseInt((this.querySelector('#tm-cron-hour') as HTMLSelectElement)?.value || '9');
-        const minute = parseInt((this.querySelector('#tm-cron-minute') as HTMLSelectElement)?.value || '0');
-        const dom = (this.querySelector('#tm-cron-dom') as HTMLSelectElement)?.value || '1';
-        const dowBtns = this.querySelectorAll('#tm-cron-dow-grid .tm-cron-dow-btn.active');
-        const selectedDows = Array.from(dowBtns).map((b) => parseInt((b as HTMLElement).dataset.dow || '0'));
-        return buildCronFromUI(mode, hour, minute, selectedDows, dom, '*');
+        this._timeSchedulePicker?.destroy();
+        this._timeSchedulePicker = new TimeSchedulePicker(
+            container,
+            this._t,
+            () => this._editTimezone,
+            (slot) => this._renderDateTimePicker(slot, existingTodo),
+            existingTodo?.trigger,
+            this._initialTimePeriod
+        );
     }
 
     private _updateCronPreview() {
-        const previewEl = this.querySelector('#tm-cron-preview') as HTMLElement;
-        if (!previewEl) return;
-        const cron = this._getCronFromUI();
-        const mode = (this.querySelector('#tm-cron-mode') as HTMLSelectElement)?.value || 'daily';
-        const customInput = this.querySelector('#tm-cron-custom-input') as HTMLInputElement;
-
-        if (mode === 'custom') {
-            if (!cron) {
-                previewEl.textContent = this._t('renderer.todo.cron.previewEmpty');
-                previewEl.style.color = '#8E8E93';
-                if (customInput) customInput.classList.remove('tm-input-error');
-                return;
-            }
-            const fields = cron.split(/\s+/);
-            if (fields.length !== 5) {
-                previewEl.textContent = this._t('renderer.todo.cron.previewInvalid');
-                previewEl.style.color = '#FF3B30';
-                if (customInput) customInput.classList.add('tm-input-error');
-                return;
-            }
-            if (customInput) customInput.classList.remove('tm-input-error');
-            previewEl.style.color = '';
-        }
-        const localDesc = describeZonedCron(cron, this._t, this._editTimezone);
-        if (mode === 'custom') {
-            const rawInput = (this.querySelector('#tm-cron-custom-input') as HTMLInputElement)?.value?.trim() || '';
-            previewEl.textContent = `${localDesc}（${rawInput}）`;
-        } else {
-            previewEl.textContent = `${localDesc}（${cron}）`;
-        }
+        this._timeSchedulePicker?.refreshPreview();
     }
 
     /* ═══════════════════════════
@@ -3121,7 +2911,19 @@ class TodoMgrEntryWidget extends AgentOperableHTMLElement {
             return;
         }
         switch (triggerType) {
-            case 'scheduled': {
+            case 'scheduled':
+            case 'cron': {
+                if (this._timeSchedulePicker && !this._timeSchedulePicker.isOnce()) {
+                    try {
+                        trigger = this._timeSchedulePicker.getTrigger();
+                    } catch (error) {
+                        this._showEditError(
+                            error instanceof Error ? error.message : this._t('error.recurrenceInvalid')
+                        );
+                        return;
+                    }
+                    break;
+                }
                 if (this._dtYear && this._dtMonth && this._dtDay) {
                     const pad = (value: number) => String(value).padStart(2, '0');
                     const local = `${String(this._dtYear).padStart(4, '0')}-${pad(this._dtMonth)}-${pad(this._dtDay)}T${pad(this._dtHour)}:${pad(this._dtMinute)}`;
@@ -3140,11 +2942,6 @@ class TodoMgrEntryWidget extends AgentOperableHTMLElement {
                         return;
                     }
                 }
-                break;
-            }
-            case 'cron': {
-                const cronVal = this._getCronFromUI();
-                if (cronVal) trigger = { type: 'cron', cronExpression: cronVal, timezone: this._editTimezone };
                 break;
             }
             case 'event': {

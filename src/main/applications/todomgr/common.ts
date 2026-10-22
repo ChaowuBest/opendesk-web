@@ -12,6 +12,7 @@
 import type { TodoStatus, TaskTodo } from '../../aikernel/todos/task-todos.js';
 export type { TodoStatus, TaskTodo };
 import type { ReasoningEffort } from '../../aikernel/types/reasoning.js';
+import type { TodoRecurrence } from '../../../common/utils/todo-recurrence.js';
 
 // 优先级类型
 export type TodoPriority = 'low' | 'medium' | 'high';
@@ -42,6 +43,8 @@ export interface CronTriggerConfig {
     cronExpression: string; // crontab 表达式: "分 时 日 月 周"
     /** cron 字段所属的 IANA 时区，新建默认使用系统时区；旧数据未设置时沿用 UTC 语义 */
     timezone?: string;
+    /** 可视化周期/间隔规则。存在时由规则执行，cronExpression 仅作兼容字段。 */
+    recurrence?: TodoRecurrence;
 }
 
 export type TodoTrigger = EventTriggerConfig | ScheduledTriggerConfig | CronTriggerConfig;

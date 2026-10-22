@@ -14,7 +14,7 @@ export const MANAGE_GLOBAL_TODOS_SKILL = `
 name: manage-global-todos
 description:
     介绍全局待办事项的管理，包括添加、删除、更新、查询等操作。
-    全局待办事项支持通过定时触发、周期触发（类似crontab）以及通过各个应用（如邮件、日历等）发送的事件进行触发。
+    全局待办事项支持单次、周期和间隔执行，以及通过各个应用（如邮件、日历等）发送的事件进行触发。
 ---
 
 # 全局待办事项管理
@@ -30,7 +30,7 @@ description:
 在本Skill的内置工具中我们提供了 addGlobalTodo 工具来添加全局待办事项。全局待办事项当前支持三种触发方式：
 
 1. 定时任务：设置一个固定的时间执行一次；
-2. 周期型任务：通过给定Crontab风格的周期表达式来定期执行任务；
+2. 重复任务：通过 recurrence 设置每天、每周、双周、每月、每年，或在指定星期每隔 N 小时执行；
 3. 事件触发型任务：在指定的事件发生时执行，这些事件通常都是由其他应用提供的；
 
 addGlobalTodo 还支持以下可选配置：
@@ -39,7 +39,8 @@ addGlobalTodo 还支持以下可选配置：
 - deliver：触发任务完成后最终回复的投递目标，格式为 \`{"type":"channel","channel":"渠道ID","accountId":"账号ID","recipientId":"接收方ID"}\`；不指定时，如果当前任务本身来自消息渠道，会继承当前会话作为投递目标。
 - model：触发任务使用的已配置聊天模型 alias；不指定则在触发时使用全局默认模型。
 - reasoningEffort：推理档位，可选 \`\`, \`none\`, \`low\`, \`medium\`, \`high\`, \`max\`；不指定或为空字符串时使用模型默认档位。
-- trigger.timezone：scheduled 和 cron 触发器的 IANA 时区，如 \`Asia/Shanghai\`、\`America/New_York\`；新建时未指定则保存当前系统时区。cron 按该时区的当地时间执行并自动跟随夏令时；scheduled 的 triggerAt 始终是 UTC 绝对时间，timezone 仅决定展示时区。
+- trigger.recurrence：重复任务的结构化频率。type 仍为 cron，但新任务省略 cronExpression；工具会填充内部唤醒规则。只向用户显示自然语言频率，不展示内部表达式。
+- trigger.timezone：scheduled 和 cron 触发器的 IANA 时区，如 \`Asia/Shanghai\`、\`America/New_York\`；新建时未指定则保存当前系统时区。recurrence 的周期 time 按该时区的当地时间执行并自动跟随夏令时；间隔按真实小时持续计时，星期按该时区筛选；scheduled 的 triggerAt 始终是 UTC 绝对时间，timezone 仅决定展示时区。
 
 ### 在创建全局待办事项时应遵循以下规则
 
@@ -94,14 +95,14 @@ Agent：我来帮你创建一个定时提醒。首先获取当前 UTC 时间...
 ### 示例3：创建周期性待办
 
 \`\`\`
-用户：每个工作日早上提醒我写日报
+用户：每周一至周五早上 9 点提醒我写日报
 
 Agent：我来创建一个周期性提醒...
 [调用 addGlobalTodo 工具]
 - title: "写日报"
 - content: "撰写今日工作日报，总结完成事项和明日计划"
-- trigger: {"type": "cron", "cronExpression": "0 9 * * 1-5", "timezone": "Asia/Shanghai"}
-  （注：按 Asia/Shanghai 的当地时间 9:00 在工作日触发，不需要再换算为 UTC）
+- trigger: {"type": "cron", "recurrence": {"mode":"weekly","time":"09:00","weekdays":[1,2,3,4,5]}, "timezone": "Asia/Shanghai"}
+  （注：按 Asia/Shanghai 的当地时间 9:00，在周一至周五触发；不含节假日、调休判断，也不需要再换算为 UTC）
 \`\`\`
 
 ### 示例4：查看和管理待办
@@ -125,7 +126,17 @@ Agent：好的，我来更新这个待办的启用状态...
    - 使用 \`getCurrentTime\` 工具获取当前 UTC 时间和系统 IANA 时区作为计算基准
    - trigger.timezone 只决定 scheduled 计划的展示时区，不会改变 triggerAt 对应的绝对执行时刻
 
-2. **cron 表达式**：使用标准 5 字段格式 "分 时 日 月 周"，按 trigger.timezone 指定的 IANA 时区当地时间解释，并自动适应夏令时。例如纽约每天 9 点应使用 \`{"type":"cron","cronExpression":"0 9 * * *","timezone":"America/New_York"}\`，不要将 9 点预先换算成 UTC。新建时未指定 timezone 默认使用当前系统时区；未指定 timezone 的旧计划继续按 UTC 执行，更新已有计划时应保留它的时区和执行语义。
+2. **重复任务频率**：优先使用 trigger.recurrence，支持以下模式；周期 time 为当地 HH:mm，不要预先换算为 UTC。
+   - daily：time。
+   - weekly：time 和 weekdays（0=周日，1=周一，6=周六，非空）。
+   - biweekly：time、weekdays、anchorDate（YYYY-MM-DD），anchorDate 所在当地周一至周日为首个执行周，之后每隔一周执行。
+   - monthly：time 和 days（非空日期数组，每项 1..31），每个所选日期执行一次；无该日的月份跳过。
+   - yearly：time、months（非空月份数组，每项 1..12）和 days，在每个所选月份的每个所选日期执行；无该日的月份跳过，2 月 29 日仅闰年执行。所有月份和日期的组合均不存在时无效。
+   - 旧计划的单个 day、month 仍兼容；新建计划使用 days、months。数组字段存在时优先于相应旧字段，空数组无效，不回退到旧字段。
+   - interval：intervalHours（1..8760 正整数）、weekdays、anchorAt（精确到整分钟的 UTC ISO 时间）。从 anchorAt 连续累计真实小时，仅在选中的当地星期执行，跨午夜、跳过星期后都不重新计算间隔，也不补跑。
+   例：纽约每天 9 点用 \`{"type":"cron","recurrence":{"mode":"daily","time":"09:00"},"timezone":"America/New_York"}\`。周一至周五每隔 5 小时用 \`{"type":"cron","recurrence":{"mode":"interval","intervalHours":5,"weekdays":[1,2,3,4,5],"anchorAt":"2026-10-19T01:00:00Z"},"timezone":"Asia/Shanghai"}\`。
+   每月 1 日、15 日 9 点用 \`{"type":"cron","recurrence":{"mode":"monthly","time":"09:00","days":[1,15]},"timezone":"Asia/Shanghai"}\`。每年三月、六月的 1 日和 15 日 9 点用 \`{"type":"cron","recurrence":{"mode":"yearly","time":"09:00","months":[3,6],"days":[1,15]},"timezone":"Asia/Shanghai"}\`，每年共执行 4 次。
+   新建时未指定 timezone 默认使用系统时区；未指定 timezone 的旧计划继续按 UTC 执行。已有 cronExpression 仅作兼容，修改其他信息时保留它的表达式和时区；对用户用自然语言说明频率，不输出内部表达式。
 
 3. **一次性任务的自动禁用**：scheduled 和 event 类型的待办在触发执行后会自动设为 enabled=false（未启用），如需再次执行需重新启用
 

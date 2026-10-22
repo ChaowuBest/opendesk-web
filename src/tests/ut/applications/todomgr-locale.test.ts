@@ -28,6 +28,52 @@ describe('todomgr locale', () => {
         expect(keyDiff(todoZhCn, todoEnUs)).toEqual([]);
     });
 
+    test('period and interval editor copy is available in both languages', () => {
+        for (const dictionary of [todoZhCn, todoEnUs]) {
+            for (const suffix of [
+                'label',
+                'periodTab',
+                'intervalTab',
+                'period.once',
+                'period.daily',
+                'period.weekly',
+                'period.biweekly',
+                'period.monthly',
+                'period.yearly',
+                'weekdays',
+                'everyWeek',
+                'every',
+                'intervalSuffix',
+                'hours',
+                'selectDays',
+                'back',
+                'backMonths',
+                'removeDay',
+                'selectDates',
+                'selectMonths',
+                'removeDate',
+                'removeMonth',
+                'selectAllDates',
+                'selectAllMonths',
+                'anchorWeek',
+                'anchorWeekHint',
+                'month',
+                'day',
+                'time',
+                'legacy',
+                'legacyHint',
+                'replaceLegacy',
+                'invalid',
+                'missingDate',
+                'openOptions',
+                'selectAll'
+            ]) {
+                expect(dictionary[`renderer.todo.frequency.${suffix}`]).toEqual(expect.any(String));
+            }
+            expect(dictionary['error.recurrenceInvalid']).toEqual(expect.any(String));
+        }
+    });
+
     test('app name is 自动化任务 in zh-CN and Automation in en-US (no Crontab)', () => {
         expect(todoZhCn['app.name']).toBe('自动化任务');
         expect(todoEnUs['app.name']).toBe('Automation');
@@ -133,7 +179,10 @@ describe('todomgr locale', () => {
         const sources = [
             '../../../main/applications/todomgr/tools.ts',
             '../../../main/applications/todomgr/app.ts',
-            '../../../main/applications/todomgr/renderer/entry.ts'
+            '../../../main/applications/todomgr/recurrence-description.ts',
+            '../../../main/applications/todomgr/trigger.ts',
+            '../../../main/applications/todomgr/renderer/entry.ts',
+            '../../../main/applications/todomgr/renderer/time-schedule-picker.ts'
         ];
         const knownKeys = new Set([...Object.keys(todoZhCn), ...Object.keys(appZhCn)]);
         const callPattern = /(?<![\w$])(?:_t|t)\(\s*'([^']+)'\s*[,)]/g;

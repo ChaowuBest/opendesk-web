@@ -15,22 +15,8 @@
  */
 
 import { t } from './locale/index.js';
-import { describeCron, type CronDescribeLabels } from '../../utils/cron.js';
+import { describeLegacyRecurrence, describeTodoRecurrence } from './recurrence-description.js';
 import { formatDateTimeInTimezone, getSystemTimezone } from '../../../common/utils/timezone.js';
-
-/** describeCron 的多语言文案，词条随当前 locale 动态解析 */
-function cronLabels(): CronDescribeLabels {
-    return {
-        dowNames: Array.from({ length: 7 }, (_, i) => t(`cron.desc.dowNames.${i}`)),
-        everyDowTemplate: t('cron.desc.everyDow'),
-        dowTemplate: t('cron.desc.dow'),
-        monthlyDomTemplate: t('cron.desc.monthlyDom'),
-        monthTemplate: t('cron.desc.month'),
-        hourTemplate: t('cron.desc.hourOnly'),
-        minuteTemplate: t('cron.desc.minuteOnly'),
-        everyMinute: t('cron.desc.everyMinute')
-    };
-}
 
 export function buildTriggerInfo(trigger: any): string {
     if (trigger?.type === 'event') {
@@ -41,8 +27,11 @@ export function buildTriggerInfo(trigger: any): string {
         const time = formatDateTimeInTimezone(trigger.triggerAt, timezone);
         return `${t('trigger.info.scheduled').trimEnd()} ${time} (${timezone})`;
     } else if (trigger?.type === 'cron') {
+        const timezone = trigger.timezone ?? 'UTC';
         return t('trigger.info.cron', {
-            cron: describeCron(trigger.cronExpression, cronLabels(), trigger.timezone ?? 'UTC')
+            cron: trigger.recurrence
+                ? describeTodoRecurrence(trigger.recurrence, t, timezone)
+                : describeLegacyRecurrence(trigger.cronExpression, t, timezone)
         });
     }
     return '';

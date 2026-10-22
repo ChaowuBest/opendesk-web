@@ -19,6 +19,11 @@ import type { ReasoningEffort } from '../../aikernel/types/reasoning.js';
 import type { Participant } from '../../plugins/types';
 import type { Cron as CronerJob } from 'croner';
 import { getSystemTimezone, isValidTimezone } from '../../../common/utils/timezone.js';
+import {
+    getNextTodoRecurrenceRuns,
+    getTodoRecurrenceError,
+    matchesTodoRecurrence
+} from '../../../common/utils/todo-recurrence.js';
 import { t } from './locale/index.js';
 
 function validateTriggerTimezone(trigger?: TodoTrigger): void {
@@ -28,6 +33,16 @@ function validateTriggerTimezone(trigger?: TodoTrigger): void {
         !isValidTimezone(trigger.timezone)
     ) {
         throw new Error(t('error.timezoneInvalid', { timezone: String(trigger.timezone) }));
+    }
+}
+
+function validateTriggerRecurrence(trigger?: TodoTrigger): void {
+    if (trigger?.type !== 'cron' || trigger.recurrence === undefined) return;
+    if (
+        getTodoRecurrenceError(trigger.recurrence) ||
+        getNextTodoRecurrenceRuns(trigger.recurrence, trigger.timezone ?? 'UTC', 1).length === 0
+    ) {
+        throw new Error(t('error.recurrenceInvalid'));
     }
 }
 
@@ -138,6 +153,7 @@ export default class TodoMgrWorker extends BaseWorker {
             (trigger?.type === 'cron' || trigger?.type === 'scheduled') && trigger.timezone === undefined
                 ? { ...trigger, timezone: getSystemTimezone() }
                 : trigger;
+        validateTriggerRecurrence(normalizedTrigger);
         const todo: GlobalTodo = {
             id: `todo_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
             title,
@@ -193,7 +209,10 @@ export default class TodoMgrWorker extends BaseWorker {
 
         const oldTrigger = this.globalTodos[idx].trigger;
         const oldLastTriggered = this.globalTodos[idx].last_triggered_at;
-        if (!removeTrigger) validateTriggerTimezone(todoUpdates.trigger);
+        if (!removeTrigger) {
+            validateTriggerTimezone(todoUpdates.trigger);
+            validateTriggerRecurrence(todoUpdates.trigger);
+        }
 
         logger.info(
             `[todomgr] updateGlobalTodo [${id}]: keys=${Object.keys(todoUpdates).join(',')}, hasTrigger=${'trigger' in todoUpdates}, removeTrigger=${removeTrigger}`
@@ -233,7 +252,7 @@ export default class TodoMgrWorker extends BaseWorker {
                     case 'scheduled':
                         return t.triggerAt || '';
                     case 'cron':
-                        return JSON.stringify([t.cronExpression || '', t.timezone ?? 'UTC']);
+                        return JSON.stringify([t.cronExpression || '', t.timezone ?? 'UTC', t.recurrence]);
                     case 'event':
                         return `${t.bundleName || ''}:${t.eventName || ''}`;
                     default:
@@ -369,30 +388,56 @@ export default class TodoMgrWorker extends BaseWorker {
         this.stopCronJob(todo.id);
 
         try {
-            const cronExpression = todo.trigger.cronExpression;
+            const recurrence = todo.trigger.recurrence;
+            if (recurrence !== undefined && getTodoRecurrenceError(recurrence)) {
+                logger.error(`[todomgr] 无效周期规则 [${todo.id}]，跳过启动`);
+                return;
+            }
+            // Calendar rules and elapsed intervals share a UTC minute wake;
+            // selected timezone and cadence are checked before any state write.
+            const cronExpression = recurrence ? '* * * * *' : todo.trigger.cronExpression;
             logger.info(`[todomgr] 启动 cron 任务 [${todo.id}]: ${cronExpression} - ${todo.content}`);
 
-            const job = new Cron(cronExpression, { timezone: todo.trigger.timezone ?? 'UTC' }, async () => {
-                logger.info(`[todomgr] cron 触发 [${todo.id}]: ${todo.content}`);
+            const job = new Cron(
+                cronExpression,
+                { timezone: recurrence ? 'UTC' : (todo.trigger.timezone ?? 'UTC') },
+                async () => {
+                    // 重新获取最新的 todo 状态
+                    const currentTodo = this.globalTodos.find((t) => t.id === todo.id);
+                    if (!currentTodo) {
+                        logger.info(`[todomgr] todo [${todo.id}] 不存在，跳过触发`);
+                        return;
+                    }
+                    if (currentTodo.enabled === false) {
+                        logger.info(`[todomgr] todo [${todo.id}] 已禁用，跳过触发`);
+                        return;
+                    }
+                    const now = new Date();
+                    if (currentTodo.trigger?.type !== 'cron') return;
+                    if (currentTodo.trigger.recurrence !== undefined) {
+                        if (
+                            !matchesTodoRecurrence(
+                                currentTodo.trigger.recurrence,
+                                now,
+                                currentTodo.trigger.timezone ?? 'UTC'
+                            )
+                        )
+                            return;
+                        const currentMinute = Math.floor(now.getTime() / 60_000) * 60_000;
+                        // A duplicate wake or a clock rewind must not replay a saved run.
+                        if (currentTodo.last_triggered_at && Date.parse(currentTodo.last_triggered_at) >= currentMinute)
+                            return;
+                    }
+                    logger.info(`[todomgr] cron 触发 [${todo.id}]: ${currentTodo.content}`);
+                    // 更新触发时间
+                    currentTodo.last_triggered_at = now.toISOString();
+                    currentTodo.updated_at = now.toISOString();
+                    await this.saveGlobalTodos();
 
-                // 重新获取最新的 todo 状态
-                const currentTodo = this.globalTodos.find((t) => t.id === todo.id);
-                if (!currentTodo) {
-                    logger.info(`[todomgr] todo [${todo.id}] 不存在，跳过触发`);
-                    return;
+                    // 触发任务
+                    await this.fireTriggerWithoutSave(currentTodo);
                 }
-                if (currentTodo.enabled === false) {
-                    logger.info(`[todomgr] todo [${todo.id}] 已禁用，跳过触发`);
-                    return;
-                }
-                // 更新触发时间
-                currentTodo.last_triggered_at = new Date().toISOString();
-                currentTodo.updated_at = new Date().toISOString();
-                await this.saveGlobalTodos();
-
-                // 触发任务
-                await this.fireTriggerWithoutSave(currentTodo);
-            });
+            );
 
             this.cronJobs.set(todo.id, job);
             logger.info(`[todomgr] cron 任务已启动 [${todo.id}]`);

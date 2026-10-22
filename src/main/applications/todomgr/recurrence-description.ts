@@ -1,0 +1,127 @@
+/**
+ * Copyright (c) 2026 The OpenDesk Team
+ * OpenDesk is licensed under Mulan PSL v2.
+ * You can use this software according to the terms and conditions of the Mulan PSL v2.
+ * You may obtain a copy of Mulan PSL v2 at: http://license.coscl.org.cn/MulanPSL2
+ * THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND,
+ * EITHER EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT,
+ * MERCHANTABILITY OR FIT FOR A PARTICULAR PURPOSE.
+ * See the Mulan PSL v2 for more details.
+ */
+
+import {
+    getTodoRecurrenceDays,
+    getTodoRecurrenceError,
+    getTodoRecurrenceMonths,
+    type TodoRecurrence
+} from '../../../common/utils/todo-recurrence.js';
+import { formatDatetimeLocal } from '../../../common/utils/timezone.js';
+
+type Translator = (key: string, params?: Record<string, string | number>) => string;
+
+function describeDays(days: number[], t: Translator): string {
+    return [...new Set(days)]
+        .sort((a, b) => ((a + 6) % 7) - ((b + 6) % 7))
+        .map((day) => t(`date.dow.${day}`))
+        .join(t('recurrence.desc.separator'));
+}
+
+export function describeTodoRecurrence(recurrence: TodoRecurrence, t: Translator, timezone: string): string {
+    if (getTodoRecurrenceError(recurrence)) return `${t('renderer.todo.frequency.legacy')} (${timezone})`;
+    const params: Record<string, string | number> = { time: recurrence.time ?? '' };
+    switch (recurrence.mode) {
+        case 'weekly':
+        case 'biweekly':
+            params.days = describeDays(recurrence.weekdays!, t);
+            params.anchorDate = recurrence.anchorDate ?? '';
+            break;
+        case 'monthly':
+            params.day = getTodoRecurrenceDays(recurrence)[0];
+            params.days = getTodoRecurrenceDays(recurrence).join(t('recurrence.desc.separator'));
+            break;
+        case 'yearly':
+            params.day = getTodoRecurrenceDays(recurrence)[0];
+            params.month = t(`date.month.${getTodoRecurrenceMonths(recurrence)[0]}`);
+            params.days = getTodoRecurrenceDays(recurrence).join(t('recurrence.desc.separator'));
+            params.months = getTodoRecurrenceMonths(recurrence)
+                .map((month) => t(`date.month.${month}`))
+                .join(t('recurrence.desc.separator'));
+            break;
+        case 'interval':
+            params.days = describeDays(recurrence.weekdays!, t);
+            params.hours = recurrence.intervalHours!;
+            params.start = formatDatetimeLocal(recurrence.anchorAt!, timezone).replace('T', ' ');
+            break;
+    }
+    const multiple =
+        (recurrence.mode === 'monthly' || recurrence.mode === 'yearly') &&
+        (getTodoRecurrenceDays(recurrence).length > 1 ||
+            (recurrence.mode === 'yearly' && getTodoRecurrenceMonths(recurrence).length > 1));
+    return `${t(`recurrence.desc.${recurrence.mode}${multiple ? 'Multiple' : ''}`, params)} (${timezone})`;
+}
+
+function numberField(value: string, min: number, max: number): number | null {
+    if (!/^\d+$/.test(value)) return null;
+    const number = Number(value);
+    return Number.isInteger(number) && number >= min && number <= max ? number : null;
+}
+
+function parseWeekdays(value: string): number[] | null {
+    const days: number[] = [];
+    for (const part of value.split(',')) {
+        const range = part.split('-');
+        if (range.length > 2) return null;
+        const start = numberField(range[0], 0, 7);
+        const end = range.length === 2 ? numberField(range[1], 0, 7) : start;
+        if (start === null || end === null || start > end) return null;
+        for (let day = start; day <= end; day++) days.push(day % 7);
+    }
+    return days.length ? days : null;
+}
+
+function parseCalendarNumbers(value: string, min: number, max: number): number[] | null {
+    const numbers = value.split(',').map((part) => numberField(part, min, max));
+    return numbers.every((number) => number !== null) ? (numbers as number[]) : null;
+}
+
+/** Only describe unambiguous simple legacy rules; keep other stored rules opaque. */
+export function describeLegacyRecurrence(expression: string, t: Translator, timezone: string): string {
+    const fallback = `${t('renderer.todo.frequency.legacy')} (${timezone})`;
+    if (typeof expression !== 'string') return fallback;
+    const fields = expression.trim().split(/\s+/);
+    if (fields.length !== 5) return fallback;
+    const [minute, hour, day, month, weekday] = fields;
+    if (fields.every((field) => field === '*')) return `${t('recurrence.desc.everyMinute')} (${timezone})`;
+    if (day === '*' && month === '*' && weekday === '*') {
+        const minuteStep = /^\*\/(\d+)$/.exec(minute);
+        if (hour === '*' && minuteStep && numberField(minuteStep[1], 1, 59) !== null) {
+            return `${t('recurrence.desc.everyMinutes', { minutes: Number(minuteStep[1]) })} (${timezone})`;
+        }
+        const fixedMinute = numberField(minute, 0, 59);
+        const hourStep = /^\*\/(\d+)$/.exec(hour);
+        if (fixedMinute !== null && hour === '*') {
+            return `${t('recurrence.desc.hourly', { minute: fixedMinute })} (${timezone})`;
+        }
+        if (fixedMinute !== null && hourStep && numberField(hourStep[1], 1, 23) !== null) {
+            return `${t('recurrence.desc.everyHours', { hours: Number(hourStep[1]), minute: fixedMinute })} (${timezone})`;
+        }
+    }
+    const fixedMinute = numberField(minute, 0, 59);
+    const fixedHour = numberField(hour, 0, 23);
+    if (fixedMinute === null || fixedHour === null) return fallback;
+    const time = `${String(fixedHour).padStart(2, '0')}:${String(fixedMinute).padStart(2, '0')}`;
+    if (day === '*' && month === '*') {
+        if (weekday === '*') return describeTodoRecurrence({ mode: 'daily', time }, t, timezone);
+        const weekdays = parseWeekdays(weekday);
+        if (weekdays) return describeTodoRecurrence({ mode: 'weekly', time, weekdays }, t, timezone);
+    }
+    const dates = parseCalendarNumbers(day, 1, 31);
+    if (weekday === '*' && dates !== null) {
+        if (month === '*') return describeTodoRecurrence({ mode: 'monthly', time, days: dates }, t, timezone);
+        const months = parseCalendarNumbers(month, 1, 12);
+        if (months !== null) {
+            return describeTodoRecurrence({ mode: 'yearly', time, days: dates, months }, t, timezone);
+        }
+    }
+    return fallback;
+}

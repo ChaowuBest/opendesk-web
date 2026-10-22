@@ -19,7 +19,8 @@ import type { TaskState } from '../../aikernel/states/tasks';
 import { escapeHtml } from '../../../common/utils/escape.js';
 import { t } from './locale/index.js';
 import { type TodoMgrApplication } from './app';
-import { describeCron, type CronDescribeLabels } from '../../utils/cron';
+import { describeLegacyRecurrence, describeTodoRecurrence } from './recurrence-description.js';
+import { getTodoRecurrenceError } from '../../../common/utils/todo-recurrence.js';
 import chalk from 'chalk';
 import path from 'path';
 import type { Participant } from '../../plugins/types';
@@ -29,25 +30,11 @@ import { formatDateTimeInTimezone, getSystemTimezone, isValidTimezone } from '..
 
 const GetCurrentTimeArgsSchema = z.object({});
 
-/** describeCron 的多语言文案，词条随当前 locale 动态解析 */
-function cronLabels(): CronDescribeLabels {
-    return {
-        dowNames: Array.from({ length: 7 }, (_, i) => t(`cron.desc.dowNames.${i}`)),
-        everyDowTemplate: t('cron.desc.everyDow'),
-        dowTemplate: t('cron.desc.dow'),
-        monthlyDomTemplate: t('cron.desc.monthlyDom'),
-        monthTemplate: t('cron.desc.month'),
-        hourTemplate: t('cron.desc.hourOnly'),
-        minuteTemplate: t('cron.desc.minuteOnly'),
-        everyMinute: t('cron.desc.everyMinute')
-    };
-}
-
 export class GetCurrentTimeTool extends BaseTool<typeof GetCurrentTimeArgsSchema> {
     constructor() {
         super(
             'getCurrentTime',
-            '获取当前精确的日期和时间，返回 UTC 绝对时间、本地时间、系统 IANA 时区和 UTC 偏移。创建 scheduled 触发器时使用 UTC triggerAt；创建 cron 触发器时按目标 IANA timezone 的当地时间填写表达式。',
+            '获取当前精确的日期和时间，返回 UTC 绝对时间、本地时间、系统 IANA 时区和 UTC 偏移。创建 scheduled 触发器时使用 UTC triggerAt；重复任务使用 recurrence，周期 time 按目标 IANA timezone 的当地时间填写，间隔 anchorAt 使用 UTC。',
             GetCurrentTimeArgsSchema,
             undefined,
             { 'zh-CN': '当前时间', 'en-US': 'Current Time' }
@@ -129,15 +116,57 @@ const ScheduledTriggerSchema = z.object({
     timezone: TimezoneSchema
 });
 
-const CronTriggerSchema = z.object({
-    type: z.literal('cron'),
-    cronExpression: z
-        .string()
-        .describe(
-            'crontab 表达式: "分 时 日 月 周"，按 timezone 指定时区的当地时间解释。如 "0 9 * * 1-5" 表示工作日每天9点，勿将指定时区的时间再次换算为 UTC；新建时未指定 timezone 默认使用系统时区'
-        ),
-    timezone: TimezoneSchema
-});
+const RecurrenceSchema = z
+    .object({
+        mode: z.enum(['daily', 'weekly', 'biweekly', 'monthly', 'yearly', 'interval']),
+        time: z.string().optional().describe('周期模式的当地执行时间 HH:mm；interval 不填写'),
+        weekdays: z
+            .array(z.number().int().min(0).max(6))
+            .optional()
+            .describe('weekly、biweekly、interval 必填非空星期数组，0=周日，1=周一，6=周六'),
+        days: z
+            .array(z.number().int().min(1).max(31))
+            .min(1)
+            .optional()
+            .describe('monthly、yearly 的非空日期数组，1..31；优先于旧 day 字段，没有所选日期的月份跳过'),
+        months: z
+            .array(z.number().int().min(1).max(12))
+            .min(1)
+            .optional()
+            .describe('yearly 的非空月份数组，1..12；每个所选月份的每个所选日期都执行，优先于旧 month 字段'),
+        day: z.number().int().optional().describe('兼容旧 monthly、yearly 计划的单个日期；新计划使用 days'),
+        month: z.number().int().optional().describe('兼容旧 yearly 计划的单个月份；新计划使用 months'),
+        anchorDate: z.string().optional().describe('biweekly 必填 YYYY-MM-DD，该日期所在的当地周一至周日为首个执行周'),
+        anchorAt: z
+            .string()
+            .optional()
+            .describe(
+                'interval 必填 UTC ISO 时间，必须精确到整分钟；从此时刻连续累计真实小时，仅在所选当地星期执行，不按天重新起算'
+            ),
+        intervalHours: z.number().int().optional().describe('interval 必填正整数小时数，最大 8760')
+    })
+    .strict()
+    .refine((value) => getTodoRecurrenceError(value) === null, { error: () => t('error.recurrenceInvalid') });
+
+const CronTriggerSchema = z
+    .object({
+        type: z.literal('cron'),
+        cronExpression: z
+            .string()
+            .optional()
+            .describe(
+                '仅用于兼容已有计划的内部 5 字段表达式。新建重复任务请使用 recurrence 并省略此字段；recurrence 存在时会自动填充内部唤醒规则，不要向用户展示表达式。'
+            ),
+        timezone: TimezoneSchema,
+        recurrence: RecurrenceSchema.optional().describe(
+            '可视化周期或间隔计划；每天/每周/双周/每月/每年，或按指定星期每隔 N 个真实小时执行'
+        )
+    })
+    .superRefine((value, context) => {
+        if (!value.recurrence && !value.cronExpression?.trim()) {
+            context.addIssue({ code: 'custom', message: t('error.recurrenceInvalid') });
+        }
+    });
 
 const TriggerSchema = z.discriminatedUnion('type', [EventTriggerSchema, ScheduledTriggerSchema, CronTriggerSchema]);
 
@@ -229,6 +258,9 @@ function validateAndNormalizeTrigger(trigger: unknown): z.output<typeof TriggerS
         );
     }
 
+    if (result.data.type === 'cron' && result.data.recurrence) {
+        return { ...result.data, cronExpression: '* * * * *' };
+    }
     return result.data;
 }
 
@@ -241,8 +273,10 @@ function formatTriggerDisplay(trigger: any, cronTimezoneFallback = 'UTC'): strin
             const timezone = trigger.timezone ?? getSystemTimezone();
             return `⏱ ${formatDateTimeInTimezone(trigger.triggerAt, timezone)} (${timezone})`;
         }
-        case 'cron':
-            return `🔁 ${describeCron(trigger.cronExpression, cronLabels(), trigger.timezone ?? cronTimezoneFallback)}`;
+        case 'cron': {
+            const timezone = trigger.timezone ?? cronTimezoneFallback;
+            return `🔁 ${trigger.recurrence ? describeTodoRecurrence(trigger.recurrence, t, timezone) : describeLegacyRecurrence(trigger.cronExpression, t, timezone)}`;
+        }
         default:
             return '';
     }
@@ -580,7 +614,7 @@ const AddGlobalTodoArgsSchema = z.object({
         .describe('优先级（保留字段，暂无实际语义）'),
     category: z.string().optional().describe('分类标签（保留字段，暂无实际语义）'),
     trigger: TriggerSchema.optional().describe(
-        '触发器配置。event: 事件触发；scheduled: 定时一次性触发（triggerAt 必须为 UTC 绝对时间，timezone 仅用于展示）；cron: 按 timezone 的当地时间重复触发。新建时 timezone 未指定则使用系统时区。不指定 trigger 则为手动模式。'
+        '触发器配置。event: 事件触发；scheduled: 定时一次性触发（triggerAt 必须为 UTC 绝对时间，timezone 仅用于展示）；cron: 使用 recurrence 设置重复任务，周期 time 为当地时间，间隔从 UTC anchorAt 连续计时。新建时 timezone 未指定则使用系统时区。不指定 trigger 则为手动模式。'
     ),
     deliver: ChannelDeliverSchema.optional().describe(
         '任务完成后的回复投递目标。指定后，触发任务的最终回复会发送到该渠道联系人；不指定时，如果当前任务来自渠道会自动继承当前会话。'
@@ -599,7 +633,7 @@ export class AddGlobalTodoTool extends BaseTool<typeof AddGlobalTodoArgsSchema> 
     constructor(todoMgrApp: TodoMgrApplication) {
         super(
             'addGlobalTodo',
-            '添加全局待办事项，跨所有任务持久保存。可选配置触发器实现自动执行：event(事件触发)、scheduled(定时一次性)、cron(crontab重复)。可通过 workspace 指定触发任务的工作空间，通过 deliver 指定最终回复发送到哪个渠道联系人。注意：content 是发送给 Agent 执行的详细指令，Agent 有能力调用工具访问文件、执行命令等，因此具体需求应明确写在 content 中。',
+            '添加全局待办事项，跨所有任务持久保存。可选配置触发器实现自动执行：event(事件触发)、scheduled(单次)、cron(用 recurrence 设置周期或间隔)。向用户用自然语言说明执行频率，不展示内部表达式。可通过 workspace 指定触发任务的工作空间，通过 deliver 指定最终回复发送到哪个渠道联系人。注意：content 是发送给 Agent 执行的详细指令，Agent 有能力调用工具访问文件、执行命令等，因此具体需求应明确写在 content 中。',
             AddGlobalTodoArgsSchema,
             undefined,
             { 'zh-CN': '添加全局待办', 'en-US': 'Add Global Todo' }
@@ -722,7 +756,7 @@ export class UpdateGlobalTodoTool extends BaseTool<typeof UpdateGlobalTodoArgsSc
     constructor(todoMgrApp: TodoMgrApplication) {
         super(
             'updateGlobalTodo',
-            '更新全局待办事项的标题、内容、启用状态、触发器、工作空间或回复投递目标。设 removeTrigger/removeDeliver/removeWorkspace 为 true 可移除对应配置。**注意**: 1. scheduled.triggerAt 必须为 UTC 绝对时间（如 "2026-03-01T01:00:00Z"），timezone 仅用于展示；2. cron 表达式使用 timezone 指定时区的当地时间，timezone 未指定时为 UTC；3. content 是发送给 Agent 执行的详细指令，Agent 有能力调用工具访问文件、执行命令等。',
+            '更新全局待办事项的标题、内容、启用状态、触发器、工作空间或回复投递目标。设 removeTrigger/removeDeliver/removeWorkspace 为 true 可移除对应配置。注意：scheduled.triggerAt 是 UTC 绝对时间，timezone 仅用于展示；重复任务通过 recurrence 更新频率，周期 time 是所选时区当地时间，间隔按 anchorAt 连续累计真实小时并筛选星期；修改其他信息时保留原频率和时区。向用户使用自然语言说明频率，不展示内部表达式。content 是发送给 Agent 执行的详细指令。',
             UpdateGlobalTodoArgsSchema,
             undefined,
             { 'zh-CN': '更新全局待办', 'en-US': 'Update Global Todo' }
