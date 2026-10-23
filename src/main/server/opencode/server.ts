@@ -12,7 +12,7 @@
 import { Hono } from 'hono';
 import { serve as honoServe } from '@hono/node-server';
 import { GlobalRoutes } from './routes/global.js';
-import { SessionRoutes, getServerDefaultModel, setServerDefaultModel } from './routes/session.js';
+import { SessionRoutes, getServerDefaultModel, setServerDefaultModel, disposeTaskNameSyncSubscriber, registerTaskNameSyncSubscriber } from './routes/session.js';
 import { ConfigRoutes } from './routes/config.js';
 import { ProviderRoutes } from './routes/provider.js';
 import { EventRoutes } from './routes/event.js';
@@ -97,6 +97,7 @@ export async function listen(opts: ServerOptions): Promise<ServerListener> {
                     port: opts.port
                 },
                 (info) => {
+                    registerTaskNameSyncSubscriber();
                     const url = new URL(`http://${opts.hostname}:${info.port}`);
                     resolve({
                         hostname: opts.hostname,
@@ -107,6 +108,7 @@ export async function listen(opts: ServerOptions): Promise<ServerListener> {
                             if (model && setting.getModelInstance(model, 'chat')) {
                                 setting.setData({ ...setting.getData(), default_model: model });
                             }
+                            disposeTaskNameSyncSubscriber();
                             ServerPermissionBroker.getInstance().dispose();
                             ServerQuestionBroker.getInstance().dispose();
                             EventBus.dispose();
