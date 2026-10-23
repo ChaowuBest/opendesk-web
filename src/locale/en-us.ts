@@ -1277,6 +1277,7 @@ export const enUs: Record<string, string> = {
     'toolcall.status.success': 'Done',
     'toolcall.status.interrupted': 'Interrupted',
     'toolcall.status.error': 'Failed',
+    'toolcall.name.unknown': 'unnamed tool',
     'tool.validation.invalidArgs': 'Invalid tool arguments: ${details}',
     'tool.validation.receivedArgs': 'received fields: ${fields}',
     'tool.validation.reason.invalid_type': 'wrong type or missing required field',

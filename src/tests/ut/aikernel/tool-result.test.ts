@@ -399,6 +399,89 @@ describe('AssistantMessage tool call streaming', () => {
         });
     });
 
+    test('merges argument-only deltas that carry neither id nor index into the pending call', () => {
+        const message = new AssistantMessage();
+
+        // 部分 OpenAI 兼容网关的流式分片只在首片带 index/id/name，
+        // 后续参数续传既没有 id 也没有 index。无名分片不可能是一个新的工具调用，
+        // 必须续传到当前调用，否则会凭空生成一个 tool_name 为空的调用。
+        message.mergeChunk(
+            parseDelta({
+                tool_calls: [
+                    {
+                        index: 0,
+                        id: 'call_no_index',
+                        function: { name: 'readFile', arguments: '{"file_path":' }
+                    }
+                ]
+            })
+        );
+        message.mergeChunk(
+            parseDelta({
+                tool_calls: [{ function: { arguments: '"/tmp/a.md"}' } }]
+            })
+        );
+
+        const part = message.content[0] as ToolCallMessagePart;
+        expect(part.toolcalls).toHaveLength(1);
+        expect(part.toolcalls[0].tool_name).toBe('readFile');
+        expect(part.toolcalls[0].id).toBe('call_no_index');
+        expect(JSON.parse(part.toolcalls[0].args_string)).toEqual({ file_path: '/tmp/a.md' });
+    });
+
+    test('does not merge a nameless chunk that carries a new index slot', () => {
+        const message = new AssistantMessage();
+
+        // 并行工具调用：第二个调用的参数分片已经到达但 name 尚未到达。
+        // index=1 明确指向新槽位，绝不能并进 index=0 的调用。
+        message.mergeChunk(
+            parseDelta({
+                tool_calls: [
+                    { index: 0, id: 'call_a', function: { name: 'readFile', arguments: '{"file_path":"/a"}' } }
+                ]
+            })
+        );
+        message.mergeChunk(
+            parseDelta({
+                tool_calls: [{ index: 1, function: { arguments: '{"command":"pwd"}' } }]
+            })
+        );
+        message.mergeChunk(
+            parseDelta({
+                tool_calls: [{ index: 1, id: 'call_b', function: { name: 'executeBash' } }]
+            })
+        );
+
+        const part = message.content[0] as ToolCallMessagePart;
+        expect(part.toolcalls).toHaveLength(2);
+        expect(part.toolcalls[0].tool_name).toBe('readFile');
+        expect(JSON.parse(part.toolcalls[0].args_string)).toEqual({ file_path: '/a' });
+        expect(part.toolcalls[1].tool_name).toBe('executeBash');
+        expect(part.toolcalls[1].id).toBe('call_b');
+        expect(JSON.parse(part.toolcalls[1].args_string)).toEqual({ command: 'pwd' });
+    });
+
+    test('does not merge an unknown-name chunk that carries a new id', () => {
+        const message = new AssistantMessage();
+
+        // Anthropic 适配器在缺 name 时会写入 'unknown' 占位，并始终带 id。
+        // 这种分片必须按新调用处理，不能被并进上一个调用。
+        message.mergeChunk(
+            parseDelta({
+                tool_calls: [{ index: 0, id: 'toolu_0', function: { name: 'readFile', arguments: '{}' } }]
+            })
+        );
+        message.mergeChunk(
+            parseDelta({
+                tool_calls: [{ index: 1, id: 'toolu_1', function: { name: 'unknown', arguments: '{}' } }]
+            })
+        );
+
+        const part = message.content[0] as ToolCallMessagePart;
+        expect(part.toolcalls).toHaveLength(2);
+        expect(part.toolcalls[1].id).toBe('toolu_1');
+    });
+
     test('does not merge a new tool call across non-empty text', () => {
         const message = new AssistantMessage();
 

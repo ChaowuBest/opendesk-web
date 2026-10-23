@@ -56,6 +56,15 @@ function createAttentionToolPart(id: number, customOutput = 'SCAN QR CODE'): Too
     return part;
 }
 
+/** 模拟提供商 tool_calls 分片缺失 function.name 的情况：ToolCall.tool_name 为 undefined。 */
+function createNamelessToolPart(id: number, status: 'running' | 'success' = 'success'): ToolCallMessagePart {
+    const part = new ToolCallMessagePart();
+    const toolCall = new ToolCall(id, `tool-${id}`, undefined as any, '{}');
+    toolCall.status = status;
+    part.toolcalls.push(toolCall);
+    return part;
+}
+
 function createNamedToolPart(id: number, toolName: string): ToolCallMessagePart {
     const part = createToolPart(id, `src/${id}.ts`);
     part.toolcalls[0].tool_name = toolName;
@@ -1000,6 +1009,57 @@ describe('TaskView chunk handling', () => {
         });
         const output = stripAnsi(taskView.render(100).join('\n'));
         expect(output).toContain('Used plugin-opaq… in 1 tool call');
+    });
+
+    test('minimal tool summary tolerates a tool call without a resolved name', async () => {
+        const taskView = new TaskView({ requestRender: jest.fn() } as any);
+        taskView.setOutputDisplayLevel('minimal');
+        taskView.startStreaming();
+
+        await taskView.handleChunkUpdate({
+            type: 'assistant',
+            task_id: 'task_1',
+            task_status: 'running',
+            message_id: 'message_1',
+            last_part_index: 0,
+            last_part: createNamelessToolPart(0)
+        });
+        await taskView.handleChunkUpdate({
+            type: 'assistant',
+            task_id: 'task_1',
+            task_status: 'running',
+            message_id: 'message_1',
+            last_part_index: 1,
+            last_part: new TextMessagePart('Done')
+        });
+
+        // 渲染路径上的任何异常都会被 CLI 的 uncaughtException 处理器升级为 FATAL 退出
+        expect(() => taskView.render(100)).not.toThrow();
+        const output = stripAnsi(taskView.render(100).join('\n'));
+        expect(output).toContain('Done');
+        expect(output).not.toContain('undefined');
+        // 空名必须落到本地化占位文案，而不是把空串/null 漏到终端
+        expect(output).toContain('unnamed tool');
+    });
+
+    test('minimal running status tolerates a tool call without a resolved name', async () => {
+        const taskView = new TaskView({ requestRender: jest.fn() } as any);
+        taskView.setOutputDisplayLevel('minimal');
+        taskView.startStreaming();
+
+        await taskView.handleChunkUpdate({
+            type: 'assistant',
+            task_id: 'task_1',
+            task_status: 'running',
+            message_id: 'message_1',
+            last_part_index: 0,
+            last_part: createNamelessToolPart(0, 'running')
+        });
+
+        expect(() => taskView.render(100)).not.toThrow();
+        const output = stripAnsi(taskView.render(100).join('\n'));
+        expect(output).toContain('Running unnamed tool');
+        expect(output).not.toContain('undefined');
     });
 
     test('minimal tool summaries freeze each tool group duration independently', async () => {
