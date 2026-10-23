@@ -21,13 +21,18 @@ export interface TodoRecurrence {
     months?: number[];
     anchorDate?: string;
     anchorAt?: string;
+    intervalValue?: number;
+    intervalUnit?: IntervalUnit;
     intervalHours?: number;
 }
+
+export type IntervalUnit = 'hour' | 'day' | 'week' | 'month' | 'year';
 
 const DAY = 86_400_000;
 const HOUR = 3_600_000;
 const MINUTE = 60_000;
 const MODES = ['daily', 'weekly', 'biweekly', 'monthly', 'yearly', 'interval'];
+const INTERVAL_UNITS: IntervalUnit[] = ['hour', 'day', 'week', 'month', 'year'];
 const TIME = /^(?:[01]\d|2[0-3]):[0-5]\d$/;
 const formatters = new Map<string, Intl.DateTimeFormat>();
 
@@ -58,12 +63,58 @@ function validSelection(values: unknown, min: number, max: number): boolean {
     return Array.isArray(values) && values.length > 0 && [...values].every((value) => integer(value, min, max));
 }
 
+function intervalError(rule: TodoRecurrence): string | null {
+    const structured = structuredInterval(rule);
+    const calendar = structured && rule.time !== undefined;
+    if (structured) {
+        if (!integer(rule.intervalValue, 1, 10000) || !INTERVAL_UNITS.includes(rule.intervalUnit!))
+            return 'Invalid interval value';
+        if (rule.intervalHours !== undefined) return 'Legacy interval fields cannot be combined';
+    } else if (!integer(rule.intervalHours, 1, 8760)) return 'Invalid interval hours';
+    if (
+        typeof rule.anchorAt !== 'string' ||
+        !/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(?::00(?:\.000)?)?Z$/.test(rule.anchorAt) ||
+        !Number.isFinite(Date.parse(rule.anchorAt)) ||
+        new Date(rule.anchorAt).toISOString().slice(0, 16) !== rule.anchorAt.slice(0, 16)
+    )
+        return 'Invalid interval anchor';
+    if (rule.anchorDate !== undefined) return 'Calendar anchor requires biweekly mode';
+    if (calendar) {
+        if (rule.intervalUnit === 'hour') return 'Wall-clock time is not supported for hourly intervals';
+        if (typeof rule.time !== 'string' || !TIME.test(rule.time)) return 'Invalid execution time';
+        if (rule.intervalUnit === 'week') {
+            if (!validSelection(rule.weekdays, 0, 6)) return 'Invalid weekdays';
+        } else if (rule.weekdays !== undefined) return 'Weekdays require weekly interval mode';
+        if (rule.intervalUnit === 'month' || rule.intervalUnit === 'year') {
+            if (!validSelection(rule.days, 1, 31)) return 'Invalid month day';
+        } else if (rule.days !== undefined) return 'Month days require monthly or yearly interval mode';
+        if (rule.intervalUnit === 'year') {
+            if (!validSelection(rule.months, 1, 12)) return 'Invalid month';
+            if (!hasPossibleDate(getTodoRecurrenceMonths(rule), getTodoRecurrenceDays(rule)))
+                return 'This date never occurs';
+        } else if (rule.months !== undefined) return 'Months require yearly interval mode';
+    } else {
+        if (rule.time !== undefined) return 'Wall-clock time requires calendar interval mode';
+        if ((!structured || rule.weekdays !== undefined) && !validSelection(rule.weekdays, 0, 6))
+            return 'Invalid weekdays';
+        if (rule.days !== undefined || rule.months !== undefined)
+            return 'Date selections require calendar interval mode';
+    }
+    if (rule.day !== undefined || rule.month !== undefined) return 'Date scalars require monthly or yearly mode';
+    return null;
+}
+
+function hasPossibleDate(months: number[], days: number[]): boolean {
+    return months.some((month) => days.some((day) => day <= new Date(Date.UTC(2000, month, 0)).getUTCDate()));
+}
+
 /** Internal validation details; callers display their localized schedule error. */
 export function getTodoRecurrenceError(value: unknown): string | null {
     if (!value || typeof value !== 'object' || Array.isArray(value)) return 'Invalid recurrence';
     const rule = value as TodoRecurrence;
     if (!MODES.includes(rule.mode)) return 'Invalid recurrence mode';
-    const weekly = ['weekly', 'biweekly', 'interval'].includes(rule.mode);
+    if (rule.mode === 'interval') return intervalError(rule);
+    const weekly = ['weekly', 'biweekly'].includes(rule.mode);
     if (weekly) {
         if (
             !Array.isArray(rule.weekdays) ||
@@ -73,21 +124,14 @@ export function getTodoRecurrenceError(value: unknown): string | null {
             return 'Invalid weekdays';
         }
     } else if (rule.weekdays !== undefined) return 'Weekdays are not supported for this mode';
-    if (rule.mode === 'interval') {
-        if (!integer(rule.intervalHours, 1, 8760)) return 'Invalid interval hours';
-        if (
-            typeof rule.anchorAt !== 'string' ||
-            !/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(?::00(?:\.000)?)?Z$/.test(rule.anchorAt) ||
-            !Number.isFinite(Date.parse(rule.anchorAt)) ||
-            new Date(rule.anchorAt).toISOString().slice(0, 16) !== rule.anchorAt.slice(0, 16)
-        )
-            return 'Invalid interval anchor';
-        if (rule.time !== undefined) return 'Wall-clock time is not supported for intervals';
-    } else {
-        if (typeof rule.time !== 'string' || !TIME.test(rule.time)) return 'Invalid execution time';
-        if (rule.intervalHours !== undefined || rule.anchorAt !== undefined)
-            return 'Interval fields require interval mode';
-    }
+    if (typeof rule.time !== 'string' || !TIME.test(rule.time)) return 'Invalid execution time';
+    if (
+        rule.intervalHours !== undefined ||
+        rule.intervalValue !== undefined ||
+        rule.intervalUnit !== undefined ||
+        rule.anchorAt !== undefined
+    )
+        return 'Interval fields require interval mode';
     if (rule.mode === 'monthly' || rule.mode === 'yearly') {
         if (rule.days !== undefined ? !validSelection(rule.days, 1, 31) : !integer(rule.day, 1, 31))
             return 'Invalid month day';
@@ -95,12 +139,7 @@ export function getTodoRecurrenceError(value: unknown): string | null {
     if (rule.mode === 'yearly') {
         if (rule.months !== undefined ? !validSelection(rule.months, 1, 12) : !integer(rule.month, 1, 12))
             return 'Invalid month';
-        const days = getTodoRecurrenceDays(rule);
-        if (
-            !getTodoRecurrenceMonths(rule).some((month) =>
-                days.some((day) => day <= new Date(Date.UTC(2000, month, 0)).getUTCDate())
-            )
-        )
+        if (!hasPossibleDate(getTodoRecurrenceMonths(rule), getTodoRecurrenceDays(rule)))
             return 'This date never occurs';
     } else if (rule.month !== undefined || rule.months !== undefined) return 'Month requires yearly mode';
     if (rule.mode === 'biweekly') {
@@ -129,7 +168,13 @@ function formatter(timezone: string): Intl.DateTimeFormat {
     return result;
 }
 
-function localParts(date: Date, format: Intl.DateTimeFormat): { date: string; time: string; day: number } {
+interface LocalParts {
+    date: string;
+    time: string;
+    day: number;
+}
+
+function localParts(date: Date, format: Intl.DateTimeFormat): LocalParts {
     const parts = Object.fromEntries(format.formatToParts(date).map(({ type, value }) => [type, value]));
     const dateString = `${parts.year.padStart(4, '0')}-${parts.month}-${parts.day}`;
     return {
@@ -166,18 +211,139 @@ function calendarDayMatches(rule: TodoRecurrence, day: number): boolean {
     }
 }
 
+function structuredInterval(rule: TodoRecurrence): boolean {
+    return rule.intervalUnit !== undefined || rule.intervalValue !== undefined;
+}
+
+function intervalUnitAndValue(rule: TodoRecurrence): { unit: IntervalUnit; value: number } {
+    return structuredInterval(rule)
+        ? { unit: rule.intervalUnit!, value: rule.intervalValue! }
+        : { unit: 'hour', value: rule.intervalHours! };
+}
+
+function intervalWeekdayMatches(rule: TodoRecurrence, day: number): boolean {
+    return rule.weekdays === undefined || rule.weekdays.includes(new Date(day * DAY).getUTCDay());
+}
+
+function localIntervalIndex(
+    anchorDay: number,
+    currentDay: number,
+    anchorDate: string,
+    currentDate: string,
+    unit: IntervalUnit
+): number {
+    if (unit === 'day' || unit === 'week') return currentDay - anchorDay;
+    const anchor = new Date(`${anchorDate}T00:00:00Z`);
+    const current = new Date(`${currentDate}T00:00:00Z`);
+    if (unit === 'month')
+        return (current.getUTCFullYear() - anchor.getUTCFullYear()) * 12 + current.getUTCMonth() - anchor.getUTCMonth();
+    return current.getUTCFullYear() - anchor.getUTCFullYear();
+}
+
+function localIntervalCandidate(
+    anchor: { date: string; time: string },
+    index: number,
+    unit: IntervalUnit,
+    value: number,
+    timezone: string
+): Date | undefined {
+    if (unit === 'hour') return new Date(Date.parse(`${anchor.date}T${anchor.time}:00Z`) + index * value * HOUR);
+    const local = new Date(`${anchor.date}T${anchor.time}:00Z`);
+    const anchorDay = local.getUTCDate();
+    const anchorMonth = local.getUTCMonth();
+    if (unit === 'day') local.setUTCDate(local.getUTCDate() + index * value);
+    else if (unit === 'week') local.setUTCDate(local.getUTCDate() + index * value * 7);
+    else if (unit === 'month') local.setUTCMonth(local.getUTCMonth() + index * value);
+    else local.setUTCFullYear(local.getUTCFullYear() + index * value);
+    if (
+        (unit === 'month' || unit === 'year') &&
+        (local.getUTCDate() !== anchorDay || (unit === 'year' && local.getUTCMonth() !== anchorMonth))
+    )
+        return undefined;
+    const date = local.toISOString().slice(0, 10);
+    try {
+        return new Date(datetimeLocalToISOString(`${date}T${anchor.time}`, timezone));
+    } catch {
+        return undefined;
+    }
+}
+
+function calendarIntervalDifference(anchor: LocalParts, current: LocalParts, unit: IntervalUnit): number {
+    return unit === 'week'
+        ? (monday(current.day) - monday(anchor.day)) / 7
+        : localIntervalIndex(anchor.day, current.day, anchor.date, current.date, unit);
+}
+
+function calendarIntervalDayMatches(rule: TodoRecurrence, anchor: LocalParts, current: LocalParts): boolean {
+    const difference = calendarIntervalDifference(anchor, current, rule.intervalUnit!);
+    if (difference < 0 || difference % rule.intervalValue! !== 0) return false;
+    const date = new Date(current.day * DAY);
+    if (rule.intervalUnit === 'week') return rule.weekdays!.includes(date.getUTCDay());
+    if (rule.intervalUnit === 'month') return getTodoRecurrenceDays(rule).includes(date.getUTCDate());
+    if (rule.intervalUnit === 'year')
+        return (
+            getTodoRecurrenceMonths(rule).includes(date.getUTCMonth() + 1) &&
+            getTodoRecurrenceDays(rule).includes(date.getUTCDate())
+        );
+    return true;
+}
+
+function calendarIntervalDays(rule: TodoRecurrence, anchor: LocalParts, index: number): Date[] {
+    const { unit, value } = intervalUnitAndValue(rule);
+    const date = new Date(`${anchor.date}T00:00:00Z`);
+    if (unit === 'day') return [new Date((anchor.day + index * value) * DAY)];
+    if (unit === 'week') {
+        const firstDay = monday(anchor.day) + index * value * 7;
+        return selectedNumbers(rule.weekdays, undefined)
+            .map((weekday) => new Date((firstDay + ((weekday + 6) % 7)) * DAY))
+            .sort((a, b) => a.getTime() - b.getTime());
+    }
+    if (unit === 'month') date.setUTCMonth(date.getUTCMonth() + index * value, 1);
+    else date.setUTCFullYear(date.getUTCFullYear() + index * value, 0, 1);
+    if (!Number.isFinite(date.getTime()) || date.getUTCFullYear() > 9999) return [];
+    const months = unit === 'year' ? getTodoRecurrenceMonths(rule) : [date.getUTCMonth() + 1];
+    const candidates: Date[] = [];
+    for (const month of months) {
+        for (const day of getTodoRecurrenceDays(rule)) {
+            const candidate = new Date(date);
+            candidate.setUTCMonth(month - 1, day);
+            if (candidate.getUTCMonth() === month - 1 && candidate.getUTCDate() === day) candidates.push(candidate);
+        }
+    }
+    return candidates;
+}
+
 export function matchesTodoRecurrence(rule: TodoRecurrence, date: Date, timezone: string): boolean {
     if (getTodoRecurrenceError(rule) || !Number.isFinite(date.getTime())) return false;
     try {
         const parts = localParts(date, formatter(timezone));
         const minute = Math.floor(date.getTime() / MINUTE) * MINUTE;
         if (rule.mode === 'interval') {
-            const elapsed = minute - Date.parse(rule.anchorAt!);
-            return (
-                elapsed >= 0 &&
-                elapsed % (rule.intervalHours! * HOUR) === 0 &&
-                rule.weekdays!.includes(new Date(parts.day * DAY).getUTCDay())
-            );
+            if (!structuredInterval(rule)) {
+                const elapsed = minute - Date.parse(rule.anchorAt!);
+                return (
+                    elapsed >= 0 &&
+                    elapsed % (rule.intervalHours! * HOUR) === 0 &&
+                    intervalWeekdayMatches(rule, parts.day)
+                );
+            }
+            const { unit, value } = intervalUnitAndValue(rule);
+            const anchor = localParts(new Date(rule.anchorAt!), formatter(timezone));
+            if (minute < Date.parse(rule.anchorAt!)) return false;
+            if (rule.time !== undefined) {
+                if (parts.time !== rule.time || !calendarIntervalDayMatches(rule, anchor, parts)) return false;
+                return Date.parse(datetimeLocalToISOString(`${parts.date}T${rule.time}`, timezone)) === minute;
+            }
+            if (!intervalWeekdayMatches(rule, parts.day)) return false;
+            if (unit === 'hour') {
+                const elapsed = minute - Date.parse(rule.anchorAt!);
+                return elapsed >= 0 && elapsed % (value * HOUR) === 0;
+            }
+            if (parts.time !== anchor.time) return false;
+            const difference = localIntervalIndex(anchor.day, parts.day, anchor.date, parts.date, unit);
+            const step = unit === 'week' ? value * 7 : value;
+            if (difference < 0 || difference % step !== 0) return false;
+            return localIntervalCandidate(anchor, difference / step, unit, value, timezone)?.getTime() === minute;
         }
         if (parts.time !== rule.time || !calendarDayMatches(rule, parts.day)) return false;
         // A calendar time runs once when a daylight-saving transition repeats it.
@@ -208,7 +374,46 @@ export function getNextTodoRecurrenceRuns(
         const runs: Date[] = [];
         if (rule.mode === 'interval') {
             const anchor = Date.parse(rule.anchorAt!);
-            const step = rule.intervalHours! * HOUR;
+            const { unit, value } = intervalUnitAndValue(rule);
+            if (rule.time !== undefined) {
+                const anchorLocal = localParts(new Date(anchor), format);
+                const difference = calendarIntervalDifference(anchorLocal, start, unit);
+                const first = Math.max(0, Math.floor(difference / value));
+                // Gregorian month/date combinations repeat after 4,800 months.
+                // Bound impossible interval phases while iterating periods, not minutes.
+                for (let index = first; index < first + 4800 && runs.length < count; index++) {
+                    for (const candidateDay of calendarIntervalDays(rule, anchorLocal, index)) {
+                        if (runs.length >= count) break;
+                        try {
+                            const candidate = new Date(
+                                datetimeLocalToISOString(
+                                    `${candidateDay.toISOString().slice(0, 10)}T${rule.time}`,
+                                    timezone
+                                )
+                            );
+                            if (candidate.getTime() >= anchor && candidate.getTime() > after.getTime())
+                                runs.push(candidate);
+                        } catch {
+                            // Missing calendar dates and wall times have no execution.
+                        }
+                    }
+                }
+                return runs;
+            }
+            if (structuredInterval(rule) && unit !== 'hour') {
+                const anchorLocal = localParts(new Date(anchor), format);
+                const difference = localIntervalIndex(anchorLocal.day, start.day, anchorLocal.date, start.date, unit);
+                const step = unit === 'week' ? value * 7 : value;
+                const first = Math.max(0, Math.floor(difference / step));
+                for (let index = first; index < first + 1000 && runs.length < count; index++) {
+                    const candidate = localIntervalCandidate(anchorLocal, index, unit, value, timezone);
+                    if (!candidate || candidate.getTime() < anchor || candidate.getTime() <= after.getTime()) continue;
+                    const local = localParts(candidate, format);
+                    if (intervalWeekdayMatches(rule, local.day)) runs.push(candidate);
+                }
+                return runs;
+            }
+            const step = value * HOUR;
             const first = Math.max(0, Math.floor((after.getTime() - anchor) / step) + 1);
             // Gregorian dates repeat every 400 years. This also bounds an interval
             // whose UTC cadence can never land on any selected local weekday.
@@ -218,7 +423,7 @@ export function getNextTodoRecurrenceRuns(
                 const candidate = new Date(anchor + index * step);
                 if (!Number.isFinite(candidate.getTime())) break;
                 const local = localParts(candidate, format);
-                if (rule.weekdays!.includes(new Date(local.day * DAY).getUTCDay())) runs.push(candidate);
+                if (intervalWeekdayMatches(rule, local.day)) runs.push(candidate);
             }
             return runs;
         }

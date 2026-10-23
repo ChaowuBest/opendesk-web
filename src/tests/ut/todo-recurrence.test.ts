@@ -239,6 +239,266 @@ describe('calendar and elapsed-hour todo recurrence', () => {
         ]);
     });
 
+    test.each([
+        ['hour', '2026-10-20T10:00:00.000Z'],
+        ['day', '2026-10-21T09:00:00.000Z'],
+        ['week', '2026-10-27T09:00:00.000Z'],
+        ['month', '2026-11-20T09:00:00.000Z'],
+        ['year', '2027-10-20T09:00:00.000Z']
+    ])('structured intervals support %s calendar units', (unit, expected) => {
+        const rule: TodoRecurrence = {
+            mode: 'interval',
+            intervalValue: 1,
+            intervalUnit: unit as TodoRecurrence['intervalUnit'],
+            anchorAt: '2026-10-20T09:00:00Z'
+        };
+        expect(getTodoRecurrenceError(rule)).toBeNull();
+        expect(next(rule, 'UTC', '2026-10-20T09:01:00Z', 1)).toEqual([expected]);
+        expect(matchesTodoRecurrence(rule, new Date(expected), 'UTC')).toBe(true);
+    });
+
+    test('structured day intervals follow local calendar time across DST', () => {
+        const rule: TodoRecurrence = {
+            mode: 'interval',
+            intervalValue: 1,
+            intervalUnit: 'day',
+            anchorAt: '2026-03-07T14:00:00Z'
+        };
+        expect(next(rule, 'America/New_York', '2026-03-07T13:00:00Z', 2)).toEqual([
+            '2026-03-07T14:00:00.000Z',
+            '2026-03-08T13:00:00.000Z'
+        ]);
+    });
+
+    test('calendar day intervals use the chosen time, skip DST gaps, and never run before the anchor', () => {
+        const rule: TodoRecurrence = {
+            mode: 'interval',
+            intervalValue: 1,
+            intervalUnit: 'day',
+            anchorAt: '2026-03-07T08:00:00Z',
+            time: '02:30'
+        };
+        expect(getTodoRecurrenceError(rule)).toBeNull();
+        expect(next(rule, 'America/New_York', '2026-03-06T00:00:00Z')).toEqual([
+            '2026-03-09T06:30:00.000Z',
+            '2026-03-10T06:30:00.000Z',
+            '2026-03-11T06:30:00.000Z'
+        ]);
+        expect(matchesTodoRecurrence(rule, new Date('2026-03-07T07:30:00Z'), 'America/New_York')).toBe(false);
+        expect(matchesTodoRecurrence(rule, new Date('2026-03-09T06:30:42Z'), 'America/New_York')).toBe(true);
+    });
+
+    test('two-week intervals allow several weekdays in the anchored Monday-based calendar week', () => {
+        const rule: TodoRecurrence = {
+            mode: 'interval',
+            intervalValue: 2,
+            intervalUnit: 'week',
+            anchorAt: '2026-12-31T12:00:00Z',
+            time: '09:15',
+            weekdays: [5, 1, 5]
+        };
+        expect(getTodoRecurrenceError(rule)).toBeNull();
+        expect(next(rule, 'UTC', '2026-12-01T00:00:00Z', 5)).toEqual([
+            '2027-01-01T09:15:00.000Z',
+            '2027-01-11T09:15:00.000Z',
+            '2027-01-15T09:15:00.000Z',
+            '2027-01-25T09:15:00.000Z',
+            '2027-01-29T09:15:00.000Z'
+        ]);
+        expect(matchesTodoRecurrence(rule, new Date('2027-01-08T09:15:00Z'), 'UTC')).toBe(false);
+        expect(matchesTodoRecurrence(rule, new Date('2027-01-11T09:15:59Z'), 'UTC')).toBe(true);
+    });
+
+    test('two-month intervals use selected dates without rolling nonexistent dates into the next month', () => {
+        const rule: TodoRecurrence = {
+            mode: 'interval',
+            intervalValue: 2,
+            intervalUnit: 'month',
+            anchorAt: '2026-02-05T12:00:00Z',
+            time: '09:00',
+            days: [31, 15, 31]
+        };
+        expect(getTodoRecurrenceError(rule)).toBeNull();
+        expect(next(rule, 'UTC', '2026-02-01T00:00:00Z', 5)).toEqual([
+            '2026-02-15T09:00:00.000Z',
+            '2026-04-15T09:00:00.000Z',
+            '2026-06-15T09:00:00.000Z',
+            '2026-08-15T09:00:00.000Z',
+            '2026-08-31T09:00:00.000Z'
+        ]);
+        expect(matchesTodoRecurrence(rule, new Date('2026-03-15T09:00:00Z'), 'UTC')).toBe(false);
+        expect(matchesTodoRecurrence(rule, new Date('2026-08-31T09:00:00Z'), 'UTC')).toBe(true);
+        expect(matchesTodoRecurrence(rule, new Date('2026-08-30T09:00:00Z'), 'UTC')).toBe(false);
+    });
+
+    test('weekly interval phase follows local calendar weeks across a DST transition', () => {
+        const rule: TodoRecurrence = {
+            mode: 'interval',
+            intervalValue: 2,
+            intervalUnit: 'week',
+            anchorAt: '2026-03-02T15:00:00Z',
+            time: '09:00',
+            weekdays: [1, 5]
+        };
+        expect(next(rule, 'America/New_York', '2026-03-02T15:00:00Z', 4)).toEqual([
+            '2026-03-06T14:00:00.000Z',
+            '2026-03-16T13:00:00.000Z',
+            '2026-03-20T13:00:00.000Z',
+            '2026-03-30T13:00:00.000Z'
+        ]);
+        expect(matchesTodoRecurrence(rule, new Date('2026-03-16T13:00:00Z'), 'America/New_York')).toBe(true);
+        expect(matchesTodoRecurrence(rule, new Date('2026-03-09T13:00:00Z'), 'America/New_York')).toBe(false);
+    });
+
+    test('an impossible month phase stays empty without converting every date or minute', () => {
+        const rule: TodoRecurrence = {
+            mode: 'interval',
+            intervalValue: 12,
+            intervalUnit: 'month',
+            anchorAt: '2026-02-01T00:00:00Z',
+            time: '09:00',
+            days: [31]
+        };
+        const format = jest.spyOn(Intl.DateTimeFormat.prototype, 'formatToParts');
+        try {
+            expect(getTodoRecurrenceError(rule)).toBeNull();
+            expect(next(rule, 'UTC', '2026-01-01T00:00:00Z')).toEqual([]);
+            expect(format.mock.calls.length).toBeLessThan(10);
+        } finally {
+            format.mockRestore();
+        }
+    });
+
+    test('year intervals support multiple months and dates, including leap years and century exceptions', () => {
+        const rule: TodoRecurrence = {
+            mode: 'interval',
+            intervalValue: 4,
+            intervalUnit: 'year',
+            anchorAt: '2096-02-29T10:00:00Z',
+            time: '09:00',
+            months: [6, 2, 2],
+            days: [31, 29, 29]
+        };
+        expect(getTodoRecurrenceError(rule)).toBeNull();
+        expect(next(rule, 'UTC', '2096-02-01T00:00:00Z', 5)).toEqual([
+            '2096-06-29T09:00:00.000Z',
+            '2100-06-29T09:00:00.000Z',
+            '2104-02-29T09:00:00.000Z',
+            '2104-06-29T09:00:00.000Z',
+            '2108-02-29T09:00:00.000Z'
+        ]);
+        expect(matchesTodoRecurrence(rule, new Date('2104-02-29T09:00:00Z'), 'UTC')).toBe(true);
+        expect(matchesTodoRecurrence(rule, new Date('2105-06-29T09:00:00Z'), 'UTC')).toBe(false);
+    });
+
+    test.each([
+        ['America/New_York', '2026-11-01T05:30:00Z', '2026-11-01T06:30:00Z', '01:30'],
+        ['Australia/Lord_Howe', '2026-04-04T14:45:00Z', '2026-04-04T15:15:00Z', '01:45']
+    ])('calendar intervals run only at the earliest repeated wall time in %s', (zone, first, repeated, time) => {
+        const rule: TodoRecurrence = {
+            mode: 'interval',
+            intervalValue: 1,
+            intervalUnit: 'day',
+            anchorAt: '2026-01-01T00:00:00Z',
+            time
+        };
+        expect(matchesTodoRecurrence(rule, new Date(first), zone)).toBe(true);
+        expect(matchesTodoRecurrence(rule, new Date(repeated), zone)).toBe(false);
+        expect(next(rule, zone, first, 1)).not.toContain(new Date(repeated).toISOString());
+    });
+
+    test('calendar interval candidate generation is bounded by periods and agrees with matching', () => {
+        const rule: TodoRecurrence = {
+            mode: 'interval',
+            intervalValue: 4,
+            intervalUnit: 'year',
+            anchorAt: '2096-02-29T10:00:00Z',
+            time: '09:00',
+            months: [2],
+            days: [29]
+        };
+        const format = jest.spyOn(Intl.DateTimeFormat.prototype, 'formatToParts');
+        try {
+            const runs = next(rule, 'UTC', '2096-02-29T10:00:00Z', 2);
+            expect(runs).toEqual(['2104-02-29T09:00:00.000Z', '2108-02-29T09:00:00.000Z']);
+            for (const run of runs) expect(matchesTodoRecurrence(rule, new Date(run), 'UTC')).toBe(true);
+            expect(format.mock.calls.length).toBeLessThan(100);
+        } finally {
+            format.mockRestore();
+        }
+    });
+
+    test.each([
+        ['month', '2026-11-20T09:00:00Z', '2026-11-21T09:00:00Z'],
+        ['year', '2027-10-20T09:00:00Z', '2027-10-21T09:00:00Z'],
+        ['year', '2027-10-20T09:00:00Z', '2027-11-20T09:00:00Z']
+    ])('legacy structured %s intervals retain the anchored calendar date', (unit, matching, other) => {
+        const rule: TodoRecurrence = {
+            mode: 'interval',
+            intervalValue: 1,
+            intervalUnit: unit as TodoRecurrence['intervalUnit'],
+            anchorAt: '2026-10-20T09:00:00Z',
+            weekdays: [0, 1, 2, 3, 4, 5, 6]
+        };
+        expect(matchesTodoRecurrence(rule, new Date(matching), 'UTC')).toBe(true);
+        expect(matchesTodoRecurrence(rule, new Date(other), 'UTC')).toBe(false);
+        expect(next(rule, 'UTC', '2026-10-20T09:01:00Z', 1)).toEqual([new Date(matching).toISOString()]);
+    });
+
+    test('legacy structured month intervals skip missing anchor dates and retain weekday restrictions', () => {
+        const rule: TodoRecurrence = {
+            mode: 'interval',
+            intervalValue: 1,
+            intervalUnit: 'month',
+            anchorAt: '2026-01-31T09:00:00Z',
+            weekdays: [1, 2, 3, 4, 5, 6]
+        };
+        expect(next(rule, 'UTC', '2026-01-31T10:00:00Z')).toEqual([
+            '2026-03-31T09:00:00.000Z',
+            '2026-07-31T09:00:00.000Z',
+            '2026-08-31T09:00:00.000Z'
+        ]);
+        expect(matchesTodoRecurrence(rule, new Date('2026-03-31T09:00:00Z'), 'UTC')).toBe(true);
+        expect(matchesTodoRecurrence(rule, new Date('2026-05-31T09:00:00Z'), 'UTC')).toBe(false);
+    });
+
+    test('a legacy anchor in the repeated local hour cannot preview a time before its anchor', () => {
+        const rule: TodoRecurrence = {
+            mode: 'interval',
+            intervalValue: 1,
+            intervalUnit: 'day',
+            anchorAt: '2026-11-01T06:30:00Z'
+        };
+        expect(next(rule, 'America/New_York', '2026-11-01T04:00:00Z', 1)).toEqual(['2026-11-02T06:30:00.000Z']);
+        expect(matchesTodoRecurrence(rule, new Date('2026-11-01T05:30:00Z'), 'America/New_York')).toBe(false);
+    });
+
+    test.each([
+        { intervalUnit: 'hour', time: '09:00' },
+        { intervalUnit: 'day', time: '24:00' },
+        { intervalUnit: 'day', time: '09:00', weekdays: [1] },
+        { intervalUnit: 'day', time: '09:00', days: [1] },
+        { intervalUnit: 'week', time: '09:00' },
+        { intervalUnit: 'week', time: '09:00', weekdays: [] },
+        { intervalUnit: 'week', time: '09:00', weekdays: [7] },
+        { intervalUnit: 'week', time: '09:00', weekdays: [1], days: [1] },
+        { intervalUnit: 'month', time: '09:00' },
+        { intervalUnit: 'month', time: '09:00', days: [] },
+        { intervalUnit: 'month', time: '09:00', days: [1], months: [1] },
+        { intervalUnit: 'year', time: '09:00', days: [1] },
+        { intervalUnit: 'year', time: '09:00', months: [1], days: [] },
+        { intervalUnit: 'year', time: '09:00', months: [2], days: [30] },
+        { intervalUnit: 'year', time: '09:00', months: [13], days: [1] },
+        { intervalUnit: 'year', time: '09:00', months: [1], days: [32] },
+        { intervalUnit: 'month', days: [1] },
+        { intervalUnit: 'year', months: [1], days: [1] }
+    ])('rejects invalid calendar interval fields: %j', (fields) => {
+        const rule = { mode: 'interval', intervalValue: 1, anchorAt: '2026-01-01T00:00:00Z', ...fields };
+        expect(getTodoRecurrenceError(rule)).not.toBeNull();
+        expect(matchesTodoRecurrence(rule as TodoRecurrence, new Date('2026-01-01T09:00:00Z'), 'UTC')).toBe(false);
+        expect(next(rule as TodoRecurrence, 'UTC', '2026-01-01T00:00:00Z')).toEqual([]);
+    });
+
     test('interval weekday restrictions use the selected timezone', () => {
         const rule: TodoRecurrence = {
             mode: 'interval',

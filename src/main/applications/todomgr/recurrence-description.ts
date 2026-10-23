@@ -29,6 +29,7 @@ function describeDays(days: number[], t: Translator): string {
 export function describeTodoRecurrence(recurrence: TodoRecurrence, t: Translator, timezone: string): string {
     if (getTodoRecurrenceError(recurrence)) return `${t('renderer.todo.frequency.legacy')} (${timezone})`;
     const params: Record<string, string | number> = { time: recurrence.time ?? '' };
+    let description = `recurrence.desc.${recurrence.mode}`;
     switch (recurrence.mode) {
         case 'weekly':
         case 'biweekly':
@@ -48,16 +49,38 @@ export function describeTodoRecurrence(recurrence: TodoRecurrence, t: Translator
                 .join(t('recurrence.desc.separator'));
             break;
         case 'interval':
-            params.days = describeDays(recurrence.weekdays!, t);
-            params.hours = recurrence.intervalHours!;
+            params.days = recurrence.weekdays ? describeDays(recurrence.weekdays, t) : '';
+            params.value = recurrence.intervalValue ?? recurrence.intervalHours!;
+            params.unit = t(`renderer.todo.frequency.intervalUnit.${recurrence.intervalUnit ?? 'hour'}`);
             params.start = formatDatetimeLocal(recurrence.anchorAt!, timezone).replace('T', ' ');
+            if (recurrence.time !== undefined) {
+                switch (recurrence.intervalUnit) {
+                    case 'day':
+                        description = 'recurrence.desc.intervalDaily';
+                        break;
+                    case 'week':
+                        description = 'recurrence.desc.intervalWeekly';
+                        break;
+                    case 'month':
+                        description = 'recurrence.desc.intervalMonthly';
+                        params.days = getTodoRecurrenceDays(recurrence).join(t('recurrence.desc.separator'));
+                        break;
+                    case 'year':
+                        description = 'recurrence.desc.intervalYearly';
+                        params.days = getTodoRecurrenceDays(recurrence).join(t('recurrence.desc.separator'));
+                        params.months = getTodoRecurrenceMonths(recurrence)
+                            .map((month) => t(`date.month.${month}`))
+                            .join(t('recurrence.desc.separator'));
+                        break;
+                }
+            }
             break;
     }
     const multiple =
         (recurrence.mode === 'monthly' || recurrence.mode === 'yearly') &&
         (getTodoRecurrenceDays(recurrence).length > 1 ||
             (recurrence.mode === 'yearly' && getTodoRecurrenceMonths(recurrence).length > 1));
-    return `${t(`recurrence.desc.${recurrence.mode}${multiple ? 'Multiple' : ''}`, params)} (${timezone})`;
+    return `${t(`${description}${multiple ? 'Multiple' : ''}`, params)} (${timezone})`;
 }
 
 function numberField(value: string, min: number, max: number): number | null {

@@ -84,6 +84,11 @@ type CardExpandedState = TriggerType | null;
  *  CSS
  * ═══════════════════════════════════════════════════ */
 
+// Match the conversation input's minimum, absolute cap and visible-height budget.
+const CONTENT_MIN_HEIGHT = 56;
+const CONTENT_MAX_HEIGHT = 240;
+const CONTENT_HEIGHT_RATIO = 0.5;
+
 const TODOMGR_CSS = `
 ${TIME_SCHEDULE_CSS}
 /* ---- Root ---- */
@@ -639,8 +644,10 @@ html[data-theme='dark'] .tm-root {
     box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.1);
 }
 .tm-edit-textarea {
-    resize: vertical;
-    min-height: 80px;
+    resize: none;
+    min-height: ${CONTENT_MIN_HEIGHT}px;
+    max-height: ${CONTENT_MAX_HEIGHT}px;
+    overflow-y: auto;
     line-height: 1.55;
 }
 .tm-model-picker {
@@ -1214,6 +1221,7 @@ class TodoMgrEntryWidget extends AgentOperableHTMLElement {
     private _modelEffortSupport: Record<string, string[]> = {};
     private _modelVisionSupport: Record<string, boolean> = {};
     private _modelPickerCleanup: (() => void) | null = null;
+    private _contentResizeCleanup: (() => void) | null = null;
 
     private _dtYear = 0;
     private _dtMonth = 0;
@@ -1266,6 +1274,7 @@ class TodoMgrEntryWidget extends AgentOperableHTMLElement {
     }
 
     disconnectedCallback() {
+        this._contentResizeCleanup?.();
         this._timeSchedulePicker?.destroy();
         this._modelPickerCleanup?.();
         if (this._onGlobalTodosUpdated) {
@@ -1701,6 +1710,7 @@ class TodoMgrEntryWidget extends AgentOperableHTMLElement {
     }
 
     private _closeDetail() {
+        this._contentResizeCleanup?.();
         this._timeSchedulePicker?.destroy();
         this._modelPickerCleanup?.();
         this.selectedTodoId = null;
@@ -1736,6 +1746,7 @@ class TodoMgrEntryWidget extends AgentOperableHTMLElement {
      * ═══════════════════════════ */
 
     private _renderDetail(todo: GlobalTodo) {
+        this._contentResizeCleanup?.();
         this._timeSchedulePicker?.destroy();
         this._modelPickerCleanup?.();
         const t = this._t;
@@ -1853,6 +1864,7 @@ class TodoMgrEntryWidget extends AgentOperableHTMLElement {
      * ═══════════════════════════ */
 
     private async _enterEditMode(todo: GlobalTodo | null, addType?: TriggerType) {
+        this._contentResizeCleanup?.();
         this._timeSchedulePicker?.destroy();
         this._modelPickerCleanup?.();
         const isTemplatePreFill = todo?.id === '__tpl__';
@@ -1901,7 +1913,7 @@ class TodoMgrEntryWidget extends AgentOperableHTMLElement {
             </div>
             <div class="tm-edit-field">
                 <label class="tm-edit-label">${escapeHtml(t('renderer.todo.edit.labelContent'))}</label>
-                <textarea class="tm-edit-textarea" id="tm-edit-content" rows="4" placeholder="${escapeHtml(t('renderer.todo.edit.placeholderContent'))}">${escapeHtml(content)}</textarea>
+                <textarea class="tm-edit-textarea" id="tm-edit-content" rows="1" placeholder="${escapeHtml(t('renderer.todo.edit.placeholderContent'))}">${escapeHtml(content)}</textarea>
             </div>
             <div class="tm-edit-field">
                 <label class="tm-edit-label">${escapeHtml(t('renderer.todo.edit.labelStatus'))}</label>
@@ -1975,9 +1987,58 @@ class TodoMgrEntryWidget extends AgentOperableHTMLElement {
         this.querySelector('#tm-edit-timezone')?.addEventListener('change', (event) => {
             this._editTimezone = (event.target as HTMLSelectElement).value;
             this._showEditError('');
+            this._timeSchedulePicker?.clearValidationError();
             if (this.querySelector('#tm-cron-preview')) this._updateCronPreview();
             if (this.querySelector('#tm-dt-display-text')) this._updateDtDisplay();
         });
+        this._bindContentAutoResize();
+    }
+
+    private _bindContentAutoResize(): void {
+        this._contentResizeCleanup?.();
+        const textarea = this.querySelector<HTMLTextAreaElement>('#tm-edit-content');
+        const frame = this.querySelector<HTMLElement>('#tm-detail-scroll');
+        const field = textarea?.closest<HTMLElement>('.tm-edit-field');
+        if (!textarea || !frame || !field) return;
+
+        let active = true;
+        const resize = () => {
+            if (!active) return;
+            const budget = frame.clientHeight;
+            const maxHeight =
+                budget > 0
+                    ? Math.max(
+                          CONTENT_MIN_HEIGHT,
+                          Math.min(CONTENT_MAX_HEIGHT, Math.floor(budget * CONTENT_HEIGHT_RATIO))
+                      )
+                    : CONTENT_MAX_HEIGHT;
+            const borders = Math.max(0, (textarea.offsetHeight || 0) - (textarea.clientHeight || 0));
+            const oldMinHeight = field.style.minHeight;
+            // Keep the form's scroll position stable while measuring a temporarily collapsed textarea.
+            field.style.minHeight = `${field.offsetHeight || 0}px`;
+            try {
+                textarea.style.maxHeight = `${maxHeight}px`;
+                textarea.style.height = 'auto';
+                const contentHeight = (textarea.scrollHeight || 0) + borders;
+                textarea.style.height = `${Math.max(CONTENT_MIN_HEIGHT, Math.min(contentHeight, maxHeight))}px`;
+            } finally {
+                field.style.minHeight = oldMinHeight;
+            }
+        };
+
+        textarea.addEventListener('input', resize);
+        // The scroll viewport has a fixed flex height; observing it also catches width changes and reflow.
+        const observer = typeof ResizeObserver === 'function' ? new ResizeObserver(resize) : null;
+        observer?.observe(frame);
+        if (!observer) window.addEventListener('resize', resize);
+        this._contentResizeCleanup = () => {
+            active = false;
+            observer?.disconnect();
+            textarea.removeEventListener('input', resize);
+            window.removeEventListener('resize', resize);
+            this._contentResizeCleanup = null;
+        };
+        resize();
     }
 
     private _renderTimezoneOptions(): string {
@@ -2917,9 +2978,10 @@ class TodoMgrEntryWidget extends AgentOperableHTMLElement {
                     try {
                         trigger = this._timeSchedulePicker.getTrigger();
                     } catch (error) {
-                        this._showEditError(
-                            error instanceof Error ? error.message : this._t('error.recurrenceInvalid')
-                        );
+                        if (!this._timeSchedulePicker.hasValidationError())
+                            this._showEditError(
+                                error instanceof Error ? error.message : this._t('error.recurrenceInvalid')
+                            );
                         return;
                     }
                     break;

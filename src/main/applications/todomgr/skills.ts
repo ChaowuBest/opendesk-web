@@ -30,7 +30,7 @@ description:
 在本Skill的内置工具中我们提供了 addGlobalTodo 工具来添加全局待办事项。全局待办事项当前支持三种触发方式：
 
 1. 定时任务：设置一个固定的时间执行一次；
-2. 重复任务：通过 recurrence 设置每天、每周、双周、每月、每年，或在指定星期每隔 N 小时执行；
+2. 重复任务：通过 recurrence 设置每天、每周、双周、每月、每年，或每隔 N 小时、天、周、月、年执行；
 3. 事件触发型任务：在指定的事件发生时执行，这些事件通常都是由其他应用提供的；
 
 addGlobalTodo 还支持以下可选配置：
@@ -40,7 +40,7 @@ addGlobalTodo 还支持以下可选配置：
 - model：触发任务使用的已配置聊天模型 alias；不指定则在触发时使用全局默认模型。
 - reasoningEffort：推理档位，可选 \`\`, \`none\`, \`low\`, \`medium\`, \`high\`, \`max\`；不指定或为空字符串时使用模型默认档位。
 - trigger.recurrence：重复任务的结构化频率。type 仍为 cron，但新任务省略 cronExpression；工具会填充内部唤醒规则。只向用户显示自然语言频率，不展示内部表达式。
-- trigger.timezone：scheduled 和 cron 触发器的 IANA 时区，如 \`Asia/Shanghai\`、\`America/New_York\`；新建时未指定则保存当前系统时区。recurrence 的周期 time 按该时区的当地时间执行并自动跟随夏令时；间隔按真实小时持续计时，星期按该时区筛选；scheduled 的 triggerAt 始终是 UTC 绝对时间，timezone 仅决定展示时区。
+- trigger.timezone：scheduled 和 cron 触发器的 IANA 时区，如 \`Asia/Shanghai\`、\`America/New_York\`；新建时未指定则保存当前系统时区。recurrence 的 time 按该时区的当地时间执行并自动跟随夏令时；hour 间隔按真实小时持续计时，day、week、month、year 间隔按当地日历时间执行；scheduled 的 triggerAt 始终是 UTC 绝对时间，timezone 仅决定展示时区。
 
 ### 在创建全局待办事项时应遵循以下规则
 
@@ -133,9 +133,11 @@ Agent：好的，我来更新这个待办的启用状态...
    - monthly：time 和 days（非空日期数组，每项 1..31），每个所选日期执行一次；无该日的月份跳过。
    - yearly：time、months（非空月份数组，每项 1..12）和 days，在每个所选月份的每个所选日期执行；无该日的月份跳过，2 月 29 日仅闰年执行。所有月份和日期的组合均不存在时无效。
    - 旧计划的单个 day、month 仍兼容；新建计划使用 days、months。数组字段存在时优先于相应旧字段，空数组无效，不回退到旧字段。
-   - interval：intervalHours（1..8760 正整数）、weekdays、anchorAt（精确到整分钟的 UTC ISO 时间）。从 anchorAt 连续累计真实小时，仅在选中的当地星期执行，跨午夜、跳过星期后都不重新计算间隔，也不补跑。
-   例：纽约每天 9 点用 \`{"type":"cron","recurrence":{"mode":"daily","time":"09:00"},"timezone":"America/New_York"}\`。周一至周五每隔 5 小时用 \`{"type":"cron","recurrence":{"mode":"interval","intervalHours":5,"weekdays":[1,2,3,4,5],"anchorAt":"2026-10-19T01:00:00Z"},"timezone":"Asia/Shanghai"}\`。
+   - interval：intervalValue（正整数）、intervalUnit（hour、day、week、month、year）和 anchorAt（精确到整分钟的 UTC ISO 时间）。hour 按真实小时累计，不填写 time 或日期选择。新建 day 间隔还需 time；week 还需 time 和非空 weekdays；month 还需 time 和非空 days；year 还需 time、非空 months 和 days。星期、日期、月份都支持多选。
+   - 带 time 的日历间隔以 anchorAt 所在当地日、周（周一起始）、月、年为首个执行周期，之后每隔 intervalValue 个日历单位执行所选日期和时间；首个周期只执行不早于 anchorAt 的时刻，不补跑之前的时刻。无所选日期的月份跳过；夏令时不存在的当地时间跳过，重复的当地时间只执行第一次。旧 intervalHours 以及未设置 time 的旧 intervalValue/intervalUnit 计划保持原有执行规则，不要为了修改其他字段而重写。
+   例：纽约每天 9 点用 \`{"type":"cron","recurrence":{"mode":"daily","time":"09:00"},"timezone":"America/New_York"}\`。每隔 5 小时用 \`{"type":"cron","recurrence":{"mode":"interval","intervalValue":5,"intervalUnit":"hour","anchorAt":"2026-10-23T02:15:00Z"},"timezone":"Asia/Shanghai"}\`。
    每月 1 日、15 日 9 点用 \`{"type":"cron","recurrence":{"mode":"monthly","time":"09:00","days":[1,15]},"timezone":"Asia/Shanghai"}\`。每年三月、六月的 1 日和 15 日 9 点用 \`{"type":"cron","recurrence":{"mode":"yearly","time":"09:00","months":[3,6],"days":[1,15]},"timezone":"Asia/Shanghai"}\`，每年共执行 4 次。
+   每隔 2 周的周一、周三 9:30 用 \`{"type":"cron","recurrence":{"mode":"interval","intervalValue":2,"intervalUnit":"week","weekdays":[1,3],"time":"09:30","anchorAt":"2026-10-23T02:15:00Z"},"timezone":"Asia/Shanghai"}\`。每隔 3 个月的 1 日、15 日 18:00 用 \`{"type":"cron","recurrence":{"mode":"interval","intervalValue":3,"intervalUnit":"month","days":[1,15],"time":"18:00","anchorAt":"2026-10-23T02:15:00Z"},"timezone":"Asia/Shanghai"}\`。每隔 2 年三月、六月的 1 日 8:00 用 \`{"type":"cron","recurrence":{"mode":"interval","intervalValue":2,"intervalUnit":"year","months":[3,6],"days":[1],"time":"08:00","anchorAt":"2026-10-23T02:15:00Z"},"timezone":"Asia/Shanghai"}\`。
    新建时未指定 timezone 默认使用系统时区；未指定 timezone 的旧计划继续按 UTC 执行。已有 cronExpression 仅作兼容，修改其他信息时保留它的表达式和时区；对用户用自然语言说明频率，不输出内部表达式。
 
 3. **一次性任务的自动禁用**：scheduled 和 event 类型的待办在触发执行后会自动设为 enabled=false（未启用），如需再次执行需重新启用

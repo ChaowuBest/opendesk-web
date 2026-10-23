@@ -20,7 +20,7 @@ import { escapeHtml } from '../../../common/utils/escape.js';
 import { t } from './locale/index.js';
 import { type TodoMgrApplication } from './app';
 import { describeLegacyRecurrence, describeTodoRecurrence } from './recurrence-description.js';
-import { getTodoRecurrenceError } from '../../../common/utils/todo-recurrence.js';
+import { getRecurrenceValidationMessage } from './recurrence-validation.js';
 import chalk from 'chalk';
 import path from 'path';
 import type { Participant } from '../../plugins/types';
@@ -119,21 +119,30 @@ const ScheduledTriggerSchema = z.object({
 const RecurrenceSchema = z
     .object({
         mode: z.enum(['daily', 'weekly', 'biweekly', 'monthly', 'yearly', 'interval']),
-        time: z.string().optional().describe('周期模式的当地执行时间 HH:mm；interval 不填写'),
+        time: z
+            .string()
+            .optional()
+            .describe('当地执行时间 HH:mm；周期模式及新建 day、week、month、year 间隔必填，hour 间隔不填写'),
         weekdays: z
             .array(z.number().int().min(0).max(6))
             .optional()
-            .describe('weekly、biweekly、interval 必填非空星期数组，0=周日，1=周一，6=周六'),
+            .describe(
+                'weekly、biweekly 及带 time 的 week 间隔必填非空星期数组，0=周日，1=周一，6=周六；旧间隔计划的星期筛选仅作兼容'
+            ),
         days: z
             .array(z.number().int().min(1).max(31))
             .min(1)
             .optional()
-            .describe('monthly、yearly 的非空日期数组，1..31；优先于旧 day 字段，没有所选日期的月份跳过'),
+            .describe(
+                'monthly、yearly 及带 time 的 month、year 间隔必填非空日期数组，1..31；优先于旧 day 字段，没有所选日期的月份跳过'
+            ),
         months: z
             .array(z.number().int().min(1).max(12))
             .min(1)
             .optional()
-            .describe('yearly 的非空月份数组，1..12；每个所选月份的每个所选日期都执行，优先于旧 month 字段'),
+            .describe(
+                'yearly 及带 time 的 year 间隔必填非空月份数组，1..12；每个所选月份的每个所选日期都执行，优先于旧 month 字段'
+            ),
         day: z.number().int().optional().describe('兼容旧 monthly、yearly 计划的单个日期；新计划使用 days'),
         month: z.number().int().optional().describe('兼容旧 yearly 计划的单个月份；新计划使用 months'),
         anchorDate: z.string().optional().describe('biweekly 必填 YYYY-MM-DD，该日期所在的当地周一至周日为首个执行周'),
@@ -141,12 +150,24 @@ const RecurrenceSchema = z
             .string()
             .optional()
             .describe(
-                'interval 必填 UTC ISO 时间，必须精确到整分钟；从此时刻连续累计真实小时，仅在所选当地星期执行，不按天重新起算'
+                'interval 必填 UTC ISO 时间，必须精确到整分钟。hour 从此时刻累计真实小时；带 time 的 day、week、month、year 以此刻所在当地日、周（周一起始）、月、年为首个周期，仅执行不早于此刻的所选当地日期和时间'
             ),
-        intervalHours: z.number().int().optional().describe('interval 必填正整数小时数，最大 8760')
+        intervalValue: z.number().int().min(1).max(10000).optional().describe('interval 的正整数间隔值'),
+        intervalUnit: z
+            .enum(['hour', 'day', 'week', 'month', 'year'])
+            .optional()
+            .describe('interval 的单位：小时、天、周、月或年'),
+        intervalHours: z
+            .number()
+            .int()
+            .optional()
+            .describe('仅兼容旧 interval 计划的正整数小时数，最大 8760；新计划使用 intervalValue 和 intervalUnit')
     })
     .strict()
-    .refine((value) => getTodoRecurrenceError(value) === null, { error: () => t('error.recurrenceInvalid') });
+    .superRefine((value, context) => {
+        const message = getRecurrenceValidationMessage(value, t);
+        if (message) context.addIssue({ code: 'custom', message });
+    });
 
 const CronTriggerSchema = z
     .object({
@@ -159,7 +180,7 @@ const CronTriggerSchema = z
             ),
         timezone: TimezoneSchema,
         recurrence: RecurrenceSchema.optional().describe(
-            '可视化周期或间隔计划；每天/每周/双周/每月/每年，或按指定星期每隔 N 个真实小时执行'
+            '可视化周期或间隔计划：每天/每周/双周/每月/每年，或每隔 N 小时、天、周、月、年；按天及更长单位的新间隔需指定当地日期和时间'
         )
     })
     .superRefine((value, context) => {
@@ -614,7 +635,7 @@ const AddGlobalTodoArgsSchema = z.object({
         .describe('优先级（保留字段，暂无实际语义）'),
     category: z.string().optional().describe('分类标签（保留字段，暂无实际语义）'),
     trigger: TriggerSchema.optional().describe(
-        '触发器配置。event: 事件触发；scheduled: 定时一次性触发（triggerAt 必须为 UTC 绝对时间，timezone 仅用于展示）；cron: 使用 recurrence 设置重复任务，周期 time 为当地时间，间隔从 UTC anchorAt 连续计时。新建时 timezone 未指定则使用系统时区。不指定 trigger 则为手动模式。'
+        '触发器配置。event: 事件触发；scheduled: 定时一次性触发（triggerAt 必须为 UTC 绝对时间，timezone 仅用于展示）；cron: 使用 recurrence 设置重复任务，time 为当地时间。hour 间隔从 UTC anchorAt 累计真实小时；新 day/week/month/year 间隔指定 time 及对应星期/日期/月份。新建时 timezone 未指定则使用系统时区。不指定 trigger 则为手动模式。'
     ),
     deliver: ChannelDeliverSchema.optional().describe(
         '任务完成后的回复投递目标。指定后，触发任务的最终回复会发送到该渠道联系人；不指定时，如果当前任务来自渠道会自动继承当前会话。'
@@ -756,7 +777,7 @@ export class UpdateGlobalTodoTool extends BaseTool<typeof UpdateGlobalTodoArgsSc
     constructor(todoMgrApp: TodoMgrApplication) {
         super(
             'updateGlobalTodo',
-            '更新全局待办事项的标题、内容、启用状态、触发器、工作空间或回复投递目标。设 removeTrigger/removeDeliver/removeWorkspace 为 true 可移除对应配置。注意：scheduled.triggerAt 是 UTC 绝对时间，timezone 仅用于展示；重复任务通过 recurrence 更新频率，周期 time 是所选时区当地时间，间隔按 anchorAt 连续累计真实小时并筛选星期；修改其他信息时保留原频率和时区。向用户使用自然语言说明频率，不展示内部表达式。content 是发送给 Agent 执行的详细指令。',
+            '更新全局待办事项的标题、内容、启用状态、触发器、工作空间或回复投递目标。设 removeTrigger/removeDeliver/removeWorkspace 为 true 可移除对应配置。注意：scheduled.triggerAt 是 UTC 绝对时间，timezone 仅用于展示；重复任务通过 recurrence 更新频率，time 是所选时区当地时间。hour 间隔累计真实小时，新 day/week/month/year 间隔通过 time 及星期/日期/月份指定当地执行时间；修改其他信息时保留原频率和时区。向用户使用自然语言说明频率，不展示内部表达式。content 是发送给 Agent 执行的详细指令。',
             UpdateGlobalTodoArgsSchema,
             undefined,
             { 'zh-CN': '更新全局待办', 'en-US': 'Update Global Todo' }

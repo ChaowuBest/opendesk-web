@@ -51,7 +51,7 @@ describe('automation period and interval picker', () => {
         (window as any).applicationAPI = { call, callMainWorld: jest.fn(async () => []) };
     });
 
-    async function editor(trigger?: any): Promise<{ widget: any; plan: any }> {
+    async function editor(trigger?: any, locale = 'en-US'): Promise<{ widget: any; plan: any }> {
         const plan = trigger
             ? {
                   id: 'plan-1',
@@ -65,7 +65,7 @@ describe('automation period and interval picker', () => {
               }
             : null;
         const widget = new Widget() as any;
-        widget._applyLocaleSetting({ locale: 'en-US' });
+        widget._applyLocaleSetting({ locale });
         widget._cachedEvents = [];
         widget.globalTodos = plan ? [plan] : [];
         widget.render();
@@ -152,10 +152,11 @@ describe('automation period and interval picker', () => {
         selectCalendar(widget, kind as 'dates' | 'months', Number(value));
         expect(periods.hidden).toBe(false);
         expect(menu.hidden).toBe(false);
+        if (mode === 'yearly') selectCalendar(widget, 'dates', 1);
         await widget._saveEdit(null);
         expect(createdTrigger().recurrence).toMatchObject({
             mode,
-            [kind === 'dates' ? 'days' : 'months']: [1, Number(value)]
+            [kind === 'dates' ? 'days' : 'months']: [Number(value)]
         });
     });
 
@@ -179,7 +180,7 @@ describe('automation period and interval picker', () => {
         expect(months.hidden).toBe(true);
         expect(dates.hidden).toBe(false);
         await widget._saveEdit(null);
-        expect(createdTrigger().recurrence).toMatchObject({ mode: 'yearly', months: [1, 6], days: [1, 15] });
+        expect(createdTrigger().recurrence).toMatchObject({ mode: 'yearly', months: [6], days: [15] });
     });
 
     test('selecting yearly months also opens dates without interrupting either multiselect', async () => {
@@ -200,7 +201,7 @@ describe('automation period and interval picker', () => {
         expect(dates.scrollTop).toBe(100);
         expect(focusDate).not.toHaveBeenCalled();
         await widget._saveEdit(null);
-        expect(createdTrigger().recurrence).toMatchObject({ mode: 'yearly', months: [1, 2, 6], days: [1, 15] });
+        expect(createdTrigger().recurrence).toMatchObject({ mode: 'yearly', months: [2, 6], days: [15] });
     });
 
     test('yearly dates also open from the separate month field and can return to a standalone date picker', async () => {
@@ -234,10 +235,10 @@ describe('automation period and interval picker', () => {
         all.dispatchEvent(new Event('change', { bubbles: true }));
         expect(dates.hidden).toBe(true);
         expect(widget.querySelector('#tm-frequency-months-options').hidden).toBe(false);
-        expect(widget.querySelector('#tm-edit-error').hidden).toBe(true);
+        expect(widget.querySelector('#tm-frequency-validation-error').hidden).toBe(true);
         await widget._saveEdit(null);
         expect(createdTrigger()).toBeUndefined();
-        expect(widget.querySelector('#tm-edit-error').hidden).toBe(false);
+        expect(widget.querySelector('#tm-frequency-validation-error').hidden).toBe(false);
     });
 
     test('yearly keyboard navigation returns from dates to months before returning to frequency', async () => {
@@ -248,7 +249,7 @@ describe('automation period and interval picker', () => {
             choosePeriod(widget, 'yearly');
             selectCalendar(widget, 'months', 2);
             const month = widget.querySelector('#tm-frequency-months-options [data-calendar-value="2"]');
-            const date = widget.querySelector('#tm-frequency-dates-options [data-calendar-value="1"]');
+            const date = widget.querySelector('#tm-frequency-dates-options [data-calendar-select-all="dates"]');
             const key = (target: HTMLElement, value: string) => {
                 const event = new Event('keydown', { bubbles: true });
                 Object.defineProperty(event, 'key', { value });
@@ -322,9 +323,9 @@ describe('automation period and interval picker', () => {
     );
 
     test.each([
-        ['weekly', '#tm-frequency-period-day-options', '[data-weekday="1"]'],
-        ['monthly', '#tm-frequency-dates-options', '[data-calendar-value="1"]'],
-        ['yearly', '#tm-frequency-months-options', '[data-calendar-value="1"]']
+        ['weekly', '#tm-frequency-period-day-options', '[data-select-all="period"]'],
+        ['monthly', '#tm-frequency-dates-options', '[data-calendar-select-all="dates"]'],
+        ['yearly', '#tm-frequency-months-options', '[data-calendar-select-all="months"]']
     ])('%s submenu supports entering, returning, and dismissing with the keyboard', async (mode, menuId, selected) => {
         const { widget } = await editor();
         widget.connectedCallback = () => undefined;
@@ -442,13 +443,37 @@ describe('automation period and interval picker', () => {
     ])('persists the %s period', async (mode, recurrence) => {
         const { widget } = await editor();
         choosePeriod(widget, mode as string);
+        if (mode === 'weekly') for (const day of [1, 2, 3, 4, 5]) selectWeekday(widget, 'period', day, true);
+        if (mode === 'monthly') selectCalendar(widget, 'dates', 1, true);
+        if (mode === 'yearly') {
+            selectCalendar(widget, 'months', 1, true);
+            selectCalendar(widget, 'dates', 1, true);
+        }
         await widget._saveEdit(null);
         expect(createdTrigger()).toMatchObject({ type: 'cron', recurrence });
+    });
+
+    test('does not prefill weekday, date, or month selections for a new recurring task', async () => {
+        const { widget } = await editor();
+        for (const [mode, selector] of [
+            ['weekly', '#tm-frequency-period-day-options'],
+            ['monthly', '#tm-frequency-dates-options'],
+            ['yearly', '#tm-frequency-months-options']
+        ]) {
+            choosePeriod(widget, mode);
+            const menu = widget.querySelector(selector);
+            expect(menu.querySelectorAll('input:checked')).toHaveLength(0);
+            expect(menu.querySelector('[data-select-all], [data-calendar-select-all]').checked).toBe(false);
+            widget.querySelector('#tm-frequency-period-trigger').click();
+        }
+        widget.querySelector('#tm-frequency-interval-tab').click();
+        expect(widget.querySelectorAll('#tm-frequency-interval-day-options input:checked')).toHaveLength(0);
     });
 
     test('stores the biweekly calendar anchor and selected weekdays', async () => {
         const { widget } = await editor();
         choosePeriod(widget, 'biweekly');
+        for (const day of [1, 2, 3, 4, 5]) selectWeekday(widget, 'period', day, true);
         change(widget, '#tm-frequency-anchor-week', '2026-10-19');
         await widget._saveEdit(null);
         expect(createdTrigger().recurrence).toEqual({
@@ -459,16 +484,15 @@ describe('automation period and interval picker', () => {
         });
     });
 
-    test('interval checkbox selection persists the chosen weekdays and hourly interval', async () => {
+    test('interval selection persists the chosen value and hourly unit', async () => {
         const { widget } = await editor();
         widget.querySelector('#tm-frequency-interval-tab').click();
-        selectWeekday(widget, 'interval', 0, false);
         change(widget, '#tm-frequency-hours', '5');
         await widget._saveEdit(null);
         expect(createdTrigger().recurrence).toMatchObject({
             mode: 'interval',
-            intervalHours: 5,
-            weekdays: [1, 2, 3, 4, 5, 6]
+            intervalValue: 5,
+            intervalUnit: 'hour'
         });
         expect(createdTrigger().recurrence.anchorAt).toMatch(/T\d{2}:\d{2}:00\.000Z$/);
     });
@@ -487,13 +511,352 @@ describe('automation period and interval picker', () => {
         expect(widget.querySelector('#tm-frequency-hours').value).toBe('3');
     });
 
-    test('rejects an interval without weekdays before saving', async () => {
+    test('allows an interval without weekday restrictions', async () => {
         const { widget } = await editor();
         widget.querySelector('#tm-frequency-interval-tab').click();
-        for (let day = 0; day < 7; day++) selectWeekday(widget, 'interval', day, false);
+        await widget._saveEdit(null);
+        expect(createdTrigger().recurrence).toMatchObject({
+            mode: 'interval',
+            intervalValue: 1,
+            intervalUnit: 'hour'
+        });
+        expect(createdTrigger().recurrence.weekdays).toBeUndefined();
+    });
+
+    test.each([
+        ['weekly', '请选择执行星期。', '#tm-frequency-period-weekdays', '[data-days-toggle="period"]'],
+        ['biweekly', '请选择执行星期。', '#tm-frequency-period-weekdays', '[data-days-toggle="period"]'],
+        ['monthly', '请选择日期。', '#tm-frequency-day-field', '#tm-frequency-day'],
+        ['yearly', '请选择月份。', '#tm-frequency-month-field', '#tm-frequency-month']
+    ])('saving an incomplete %s task only identifies the missing field', async (mode, message, field, control) => {
+        const { widget } = await editor(undefined, 'zh-CN');
+        choosePeriod(widget, mode);
+        expect(widget.querySelector('#tm-frequency-validation-error').hidden).toBe(true);
         await widget._saveEdit(null);
         expect(createdTrigger()).toBeUndefined();
-        expect(widget.querySelector('#tm-edit-error').hidden).toBe(false);
+        expect(widget.querySelector('#tm-frequency-validation-error').textContent).toBe(message);
+        expect(widget.querySelector('#tm-frequency-validation-error').parentElement).toBe(widget.querySelector(field));
+        expect(widget.querySelector(control).getAttribute('aria-invalid')).toBe('true');
+        expect(widget.querySelector(control).getAttribute('aria-describedby')).toContain(
+            'tm-frequency-validation-error'
+        );
+        expect(widget.querySelector('#tm-edit-error').hidden).toBe(true);
+    });
+
+    test('clears inline feedback when the user changes the highlighted selection', async () => {
+        const { widget } = await editor(undefined, 'zh-CN');
+        choosePeriod(widget, 'weekly');
+        await widget._saveEdit(null);
+        const control = widget.querySelector('[data-days-toggle="period"]');
+        const error = widget.querySelector('#tm-frequency-validation-error');
+        expect(error.hidden).toBe(false);
+        control.click();
+        expect(error.hidden).toBe(false);
+        selectWeekday(widget, 'period', 1, true);
+        expect(error.hidden).toBe(true);
+        expect(control.hasAttribute('aria-invalid')).toBe(false);
+        expect(control.hasAttribute('aria-describedby')).toBe(false);
+        expect(widget.querySelector('#tm-edit-error').hidden).toBe(true);
+        await widget._saveEdit(null);
+        expect(createdTrigger().recurrence.weekdays).toEqual([1]);
+    });
+
+    test('changing the scheduling timezone clears old inline feedback until saving again', async () => {
+        const { widget } = await editor(undefined, 'zh-CN');
+        choosePeriod(widget, 'weekly');
+        await widget._saveEdit(null);
+        const control = widget.querySelector('[data-days-toggle="period"]');
+        const error = widget.querySelector('#tm-frequency-validation-error');
+        expect(error.hidden).toBe(false);
+        change(widget, '#tm-edit-timezone', 'UTC');
+        expect(error.hidden).toBe(true);
+        expect(control.hasAttribute('aria-invalid')).toBe(false);
+        await widget._saveEdit(null);
+        expect(error.hidden).toBe(false);
+        expect(error.textContent).toBe('请选择执行星期。');
+    });
+
+    test.each([
+        ['week', '请选择执行星期。'],
+        ['month', '请选择日期。'],
+        ['year', '请选择月份。']
+    ])('saving an incomplete %s interval only identifies its missing field', async (unit, message) => {
+        const { widget } = await editor(undefined, 'zh-CN');
+        widget.querySelector('#tm-frequency-interval-tab').click();
+        change(widget, '#tm-frequency-interval-unit', unit);
+        await widget._saveEdit(null);
+        expect(createdTrigger()).toBeUndefined();
+        expect(widget.querySelector('#tm-frequency-validation-error').textContent).toBe(message);
+        const field =
+            unit === 'week'
+                ? '#tm-frequency-period-weekdays'
+                : unit === 'month'
+                  ? '#tm-frequency-day-field'
+                  : '#tm-frequency-month-field';
+        expect(widget.querySelector('#tm-frequency-validation-error').parentElement).toBe(widget.querySelector(field));
+    });
+
+    test('yearly validation follows the missing fields as they are completed', async () => {
+        const { widget } = await editor(undefined, 'zh-CN');
+        choosePeriod(widget, 'yearly');
+        await widget._saveEdit(null);
+        expect(widget.querySelector('#tm-frequency-validation-error').textContent).toBe('请选择月份。');
+        selectCalendar(widget, 'months', 2);
+        await widget._saveEdit(null);
+        expect(widget.querySelector('#tm-frequency-validation-error').textContent).toBe('请选择日期。');
+        selectCalendar(widget, 'dates', 30);
+        await widget._saveEdit(null);
+        expect(widget.querySelector('#tm-frequency-validation-error').textContent).toBe(
+            '所选月份没有该日期，请重新选择日期。'
+        );
+        selectCalendar(widget, 'dates', 30, false);
+        selectCalendar(widget, 'dates', 29);
+        await widget._saveEdit(null);
+        expect(createdTrigger().recurrence).toMatchObject({ mode: 'yearly', months: [2], days: [29] });
+    });
+
+    test('an invalid interval value gets a short value-specific message', async () => {
+        const { widget } = await editor(undefined, 'zh-CN');
+        widget.querySelector('#tm-frequency-interval-tab').click();
+        change(widget, '#tm-frequency-hours', '0');
+        await widget._saveEdit(null);
+        const message = widget.querySelector('#tm-frequency-validation-error').textContent;
+        expect(createdTrigger()).toBeUndefined();
+        expect(message).toMatch(/1.*10000/);
+        expect(message.length).toBeLessThan(45);
+        expect(message).not.toMatch(/星期|月份|日期|时间/);
+        expect(
+            widget
+                .querySelector('#tm-frequency-validation-error')
+                .parentElement.classList.contains('tm-frequency-interval-line')
+        ).toBe(true);
+        expect(widget.querySelector('#tm-frequency-hours').getAttribute('aria-invalid')).toBe('true');
+        const input = widget.querySelector('#tm-frequency-hours');
+        input.value = '2';
+        input.dispatchEvent(new Event('input', { bubbles: true }));
+        expect(widget.querySelector('#tm-frequency-validation-error').hidden).toBe(true);
+        expect(input.hasAttribute('aria-invalid')).toBe(false);
+    });
+
+    test.each(['hour', 'day', 'week', 'month', 'year'])('persists an interval in %s units', async (unit) => {
+        const { widget } = await editor();
+        widget.querySelector('#tm-frequency-interval-tab').click();
+        change(widget, '#tm-frequency-hours', '2');
+        change(widget, '#tm-frequency-interval-unit', unit);
+        if (unit !== 'hour') {
+            change(widget, '#tm-cron-hour', '17');
+            change(widget, '#tm-cron-minute', '35');
+        }
+        if (unit === 'week') {
+            selectWeekday(widget, 'period', 1, true);
+            selectWeekday(widget, 'period', 4, true);
+        }
+        if (unit === 'month' || unit === 'year') {
+            selectCalendar(widget, 'dates', 5);
+            selectCalendar(widget, 'dates', 29);
+        }
+        if (unit === 'year') {
+            selectCalendar(widget, 'months', 2);
+            selectCalendar(widget, 'months', 6);
+        }
+        await widget._saveEdit(null);
+        expect(createdTrigger().recurrence).toMatchObject({
+            mode: 'interval',
+            intervalValue: 2,
+            intervalUnit: unit
+        });
+        const recurrence = createdTrigger().recurrence;
+        if (unit !== 'hour') expect(recurrence.time).toBe('17:35');
+        else expect(recurrence.time).toBeUndefined();
+        if (unit === 'week') expect(recurrence.weekdays).toEqual([1, 4]);
+        else expect(recurrence.weekdays).toBeUndefined();
+        if (unit === 'month' || unit === 'year') expect(recurrence.days).toEqual([5, 29]);
+        else expect(recurrence.days).toBeUndefined();
+        if (unit === 'year') expect(recurrence.months).toEqual([2, 6]);
+        else expect(recurrence.months).toBeUndefined();
+    });
+
+    test.each(['hour', 'day', 'week', 'month', 'year'])(
+        'shows the execution details appropriate for %s intervals',
+        async (unit) => {
+            const { widget } = await editor();
+            widget.querySelector('#tm-frequency-interval-tab').click();
+            change(widget, '#tm-frequency-interval-unit', unit);
+            const panel = widget.querySelector('#tm-frequency-interval-panel');
+            const details = widget.querySelector('#tm-frequency-calendar-fields');
+            expect(panel.contains(details)).toBe(true);
+            expect(details.hidden).toBe(unit === 'hour');
+            expect(widget.querySelector('#tm-frequency-time-field').hidden).toBe(unit === 'hour');
+            expect(widget.querySelector('#tm-frequency-period-weekdays').hidden).toBe(unit !== 'week');
+            expect(widget.querySelector('#tm-frequency-day-field').hidden).toBe(!['month', 'year'].includes(unit));
+            expect(widget.querySelector('#tm-frequency-month-field').hidden).toBe(unit !== 'year');
+        }
+    );
+
+    test('changing interval units retains the chosen dates, months, and time draft', async () => {
+        const { widget } = await editor();
+        widget.querySelector('#tm-frequency-interval-tab').click();
+        change(widget, '#tm-frequency-interval-unit', 'month');
+        selectCalendar(widget, 'dates', 5);
+        selectCalendar(widget, 'dates', 15);
+        change(widget, '#tm-cron-hour', '10');
+        change(widget, '#tm-cron-minute', '20');
+        change(widget, '#tm-frequency-interval-unit', 'year');
+        widget.querySelector('#tm-frequency-month').click();
+        selectCalendar(widget, 'months', 3);
+        selectCalendar(widget, 'months', 9);
+        expect(widget.querySelector('#tm-frequency-dates-options').hidden).toBe(false);
+        change(widget, '#tm-frequency-interval-unit', 'hour');
+        expect(widget.querySelector('#tm-frequency-dates-options').hidden).toBe(true);
+        change(widget, '#tm-frequency-interval-unit', 'year');
+        expect(widget.querySelector('#tm-cron-hour').value).toBe('10');
+        expect(widget.querySelector('#tm-cron-minute').value).toBe('20');
+        await widget._saveEdit(null);
+        expect(createdTrigger().recurrence).toMatchObject({
+            mode: 'interval',
+            intervalUnit: 'year',
+            time: '10:20',
+            months: [3, 9],
+            days: [5, 15]
+        });
+    });
+
+    test.each(['day', 'week', 'month', 'year'])(
+        'preserves old %s intervals until their execution details are edited',
+        async (unit) => {
+            const trigger = {
+                type: 'cron',
+                cronExpression: '* * * * *',
+                timezone: 'Asia/Shanghai',
+                recurrence: {
+                    mode: 'interval',
+                    intervalValue: 2,
+                    intervalUnit: unit,
+                    anchorAt: '2026-10-20T01:37:00.000Z'
+                }
+            };
+            const { widget, plan } = await editor(trigger);
+            expect(widget.querySelector('#tm-cron-hour').value).toBe('9');
+            expect(widget.querySelector('#tm-cron-minute').value).toBe('37');
+            if (unit === 'week')
+                expect(widget.querySelector('[data-day-scope="period"][data-weekday="2"]').checked).toBe(true);
+            if (unit === 'month' || unit === 'year')
+                expect(widget.querySelector('#tm-frequency-dates-options [data-calendar-value="20"]').checked).toBe(
+                    true
+                );
+            if (unit === 'year')
+                expect(widget.querySelector('#tm-frequency-months-options [data-calendar-value="10"]').checked).toBe(
+                    true
+                );
+            await widget._saveEdit(plan);
+            expect(call.mock.calls.find((args: any[]) => args[0] === 'updateGlobalTodo')?.[2].trigger).toEqual(trigger);
+        }
+    );
+
+    test('editing an old interval clock keeps its calendar anchor and explicit day selection', async () => {
+        const trigger = {
+            type: 'cron',
+            cronExpression: '* * * * *',
+            timezone: 'Asia/Shanghai',
+            recurrence: {
+                mode: 'interval',
+                intervalValue: 2,
+                intervalUnit: 'week',
+                anchorAt: '2026-10-20T01:37:00.000Z'
+            }
+        };
+        const { widget, plan } = await editor(trigger);
+        change(widget, '#tm-cron-minute', '38');
+        await widget._saveEdit(plan);
+        const recurrence = (call.mock.calls.find((args: any[]) => args[0] === 'updateGlobalTodo')?.[2] as any)?.trigger
+            .recurrence;
+        expect(recurrence).toEqual({
+            mode: 'interval',
+            intervalValue: 2,
+            intervalUnit: 'week',
+            anchorAt: trigger.recurrence.anchorAt,
+            time: '09:38',
+            weekdays: [2]
+        });
+    });
+
+    test('changing an old calendar interval timezone saves the displayed local execution time', async () => {
+        const trigger = {
+            type: 'cron',
+            cronExpression: '* * * * *',
+            timezone: 'Asia/Shanghai',
+            recurrence: {
+                mode: 'interval',
+                intervalValue: 2,
+                intervalUnit: 'day',
+                anchorAt: '2026-10-20T01:37:00.000Z'
+            }
+        };
+        const { widget, plan } = await editor(trigger);
+        change(widget, '#tm-edit-timezone', 'UTC');
+        expect(widget.querySelector('#tm-cron-hour').value).toBe('9');
+        expect(widget.querySelector('#tm-cron-minute').value).toBe('37');
+        await widget._saveEdit(plan);
+        const saved = (call.mock.calls.find((args: any[]) => args[0] === 'updateGlobalTodo')?.[2] as any)?.trigger;
+        expect(saved).toMatchObject({
+            timezone: 'UTC',
+            recurrence: {
+                mode: 'interval',
+                intervalValue: 2,
+                intervalUnit: 'day',
+                time: '09:37',
+                anchorAt: trigger.recurrence.anchorAt
+            }
+        });
+    });
+
+    test('restores the selected execution details of an existing yearly interval', async () => {
+        const trigger = {
+            type: 'cron',
+            cronExpression: '* * * * *',
+            timezone: 'UTC',
+            recurrence: {
+                mode: 'interval',
+                intervalValue: 3,
+                intervalUnit: 'year',
+                anchorAt: '2026-01-01T00:00:00Z',
+                time: '12:17',
+                months: [2, 6],
+                days: [5, 29]
+            }
+        };
+        const { widget, plan } = await editor(trigger);
+        expect(widget.querySelector('#tm-cron-hour').value).toBe('12');
+        expect(widget.querySelector('#tm-cron-minute').value).toBe('17');
+        expect(
+            [...widget.querySelectorAll('#tm-frequency-months-options [data-calendar-value]:checked')].map(
+                (input: any) => Number(input.dataset.calendarValue)
+            )
+        ).toEqual([2, 6]);
+        expect(
+            [...widget.querySelectorAll('#tm-frequency-dates-options [data-calendar-value]:checked')].map(
+                (input: any) => Number(input.dataset.calendarValue)
+            )
+        ).toEqual([5, 29]);
+        await widget._saveEdit(plan);
+        expect(call.mock.calls.find((args: any[]) => args[0] === 'updateGlobalTodo')?.[2].trigger).toEqual(trigger);
+    });
+
+    test('new recurring modes start without preselected calendar values', async () => {
+        const { widget } = await editor();
+        choosePeriod(widget, 'weekly');
+        expect(widget.querySelectorAll('#tm-frequency-period-day-options input[data-weekday]:checked')).toHaveLength(0);
+        choosePeriod(widget, 'monthly');
+        expect(widget.querySelectorAll('#tm-frequency-dates-options input[data-calendar-value]:checked')).toHaveLength(
+            0
+        );
+        choosePeriod(widget, 'yearly');
+        expect(widget.querySelectorAll('#tm-frequency-months-options input[data-calendar-value]:checked')).toHaveLength(
+            0
+        );
+        expect(widget.querySelectorAll('#tm-frequency-dates-options input[data-calendar-value]:checked')).toHaveLength(
+            0
+        );
     });
 
     test.each(['weekly', 'biweekly', 'monthly', 'yearly', 'interval'])(
@@ -503,24 +866,27 @@ describe('automation period and interval picker', () => {
             if (mode === 'interval') widget.querySelector('#tm-frequency-interval-tab').click();
             else choosePeriod(widget, mode);
             const preview = widget.querySelector('#tm-cron-preview');
-            expect(preview.hidden).toBe(false);
+            if (mode === 'interval') change(widget, '#tm-frequency-hours', '0');
+            expect(preview.hidden).toBe(true);
             if (mode === 'monthly') selectCalendar(widget, 'dates', 1, false);
             else if (mode === 'yearly') selectCalendar(widget, 'months', 1, false);
-            else {
-                for (let day = 0; day < 7; day++)
-                    selectWeekday(widget, mode === 'interval' ? 'interval' : 'period', day, false);
+            else if (mode !== 'interval') {
+                for (let day = 0; day < 7; day++) selectWeekday(widget, 'period', day, false);
             }
 
             expect(preview.hidden).toBe(true);
             expect(preview.textContent).toBe('');
-            expect(widget.querySelector('#tm-edit-error').hidden).toBe(true);
+            expect(widget.querySelector('#tm-frequency-validation-error').hidden).toBe(true);
             await widget._saveEdit(null);
             expect(createdTrigger()).toBeUndefined();
-            expect(widget.querySelector('#tm-edit-error').hidden).toBe(false);
+            expect(widget.querySelector('#tm-frequency-validation-error').hidden).toBe(false);
 
             if (mode === 'monthly') selectCalendar(widget, 'dates', 1);
-            else if (mode === 'yearly') selectCalendar(widget, 'months', 1);
-            else selectWeekday(widget, mode === 'interval' ? 'interval' : 'period', 1, true);
+            else if (mode === 'yearly') {
+                selectCalendar(widget, 'months', 1);
+                selectCalendar(widget, 'dates', 1);
+            } else if (mode === 'interval') change(widget, '#tm-frequency-hours', '1');
+            else selectWeekday(widget, 'period', 1, true);
             expect(preview.hidden).toBe(false);
             expect(preview.textContent).not.toBe('');
             await widget._saveEdit(null);
@@ -607,8 +973,8 @@ describe('automation period and interval picker', () => {
         expect(createdTrigger().recurrence).toEqual({
             mode: 'yearly',
             time: '09:00',
-            months: [1, 6, 12],
-            days: [1, 15]
+            months: [6, 12],
+            days: [15]
         });
     });
 
@@ -662,7 +1028,7 @@ describe('automation period and interval picker', () => {
         selectCalendar(widget, 'dates', 1, false);
         await widget._saveEdit(null);
         expect(createdTrigger()).toBeUndefined();
-        expect(widget.querySelector('#tm-edit-error').hidden).toBe(false);
+        expect(widget.querySelector('#tm-frequency-validation-error').hidden).toBe(false);
     });
 
     test('requires at least one month for a yearly rule', async () => {
@@ -671,7 +1037,7 @@ describe('automation period and interval picker', () => {
         selectCalendar(widget, 'months', 1, false);
         await widget._saveEdit(null);
         expect(createdTrigger()).toBeUndefined();
-        expect(widget.querySelector('#tm-edit-error').hidden).toBe(false);
+        expect(widget.querySelector('#tm-frequency-validation-error').hidden).toBe(false);
     });
 
     test.each([
@@ -699,7 +1065,7 @@ describe('automation period and interval picker', () => {
         choosePeriod(widget, 'monthly');
         widget.querySelector('#tm-frequency-day').click();
         let selectAll = widget.querySelector('[data-calendar-select-all="dates"]');
-        expect(selectAll.indeterminate).toBe(true);
+        expect(selectAll.indeterminate).toBe(false);
         selectAll.checked = true;
         selectAll.dispatchEvent(new Event('change', { bubbles: true }));
         selectAll = widget.querySelector('[data-calendar-select-all="dates"]');
@@ -710,7 +1076,7 @@ describe('automation period and interval picker', () => {
         selectAll.dispatchEvent(new Event('change', { bubbles: true }));
         await widget._saveEdit(null);
         expect(createdTrigger()).toBeUndefined();
-        expect(widget.querySelector('#tm-edit-error').hidden).toBe(false);
+        expect(widget.querySelector('#tm-frequency-validation-error').hidden).toBe(false);
     });
 
     test('selected values update in the collapsed bar after checkbox changes', async () => {
@@ -721,19 +1087,12 @@ describe('automation period and interval picker', () => {
         expect(widget.querySelector('#tm-frequency-month').textContent).toContain('Jun');
         expect(widget.querySelector('#tm-frequency-day').textContent).toContain('15');
         await widget._saveEdit(null);
-        expect(createdTrigger().recurrence).toMatchObject({ months: [1, 6], days: [1, 15] });
+        expect(createdTrigger().recurrence).toMatchObject({ months: [6], days: [15] });
     });
 
     test.each([
         ['yearly', '[data-calendar-select-all="months"]', '#tm-frequency-month', '#tm-frequency-months-options', 12],
-        ['weekly', '[data-select-all="period"]', '[data-days-toggle="period"]', '#tm-frequency-period-day-options', 7],
-        [
-            'interval',
-            '[data-select-all="interval"]',
-            '[data-days-toggle="interval"]',
-            '#tm-frequency-interval-day-options',
-            7
-        ]
+        ['weekly', '[data-select-all="period"]', '[data-days-toggle="period"]', '#tm-frequency-period-day-options', 7]
     ])('synchronizes all checkbox states for %s', async (mode, allSelector, triggerSelector, menuSelector, count) => {
         const { widget } = await editor();
         if (mode === 'interval') widget.querySelector('#tm-frequency-interval-tab').click();

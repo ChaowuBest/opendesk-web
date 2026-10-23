@@ -5,6 +5,7 @@ import path from 'path';
 import TodoMgrWorker from '../../../main/applications/todomgr/worker.js';
 import type { CronTriggerConfig } from '../../../main/applications/todomgr/common.js';
 import type { TodoRecurrence } from '../../../common/utils/todo-recurrence.js';
+import { setRuntimeLocale } from '../../../locale/index.js';
 
 describe('visual todo recurrence worker scheduling', () => {
     let worker: TodoMgrWorker;
@@ -28,6 +29,32 @@ describe('visual todo recurrence worker scheduling', () => {
         jest.restoreAllMocks();
         jest.useRealTimers();
         fs.rmSync(dir, { recursive: true, force: true });
+    });
+
+    test.each([
+        [{ mode: 'weekly', time: '09:00', weekdays: [] }, '请选择执行星期。'],
+        [
+            {
+                mode: 'interval',
+                intervalValue: 4,
+                intervalUnit: 'year',
+                anchorAt: '2026-01-01T00:00:00Z',
+                time: '09:00',
+                months: [2],
+                days: [29]
+            },
+            '按当前设置无法安排执行时间，请调整日期或间隔。'
+        ]
+    ])('rejects a schedule with a specific correction before saving: %j', async (recurrence, message) => {
+        setRuntimeLocale('zh-CN');
+        try {
+            await expect(
+                worker.addGlobalTodo('Invalid', 'Run', 'medium', undefined, trigger(recurrence as TodoRecurrence))
+            ).rejects.toThrow(String(message));
+            expect(fs.existsSync(path.join(dir, 'global_todos.json'))).toBe(false);
+        } finally {
+            setRuntimeLocale(null);
+        }
     });
 
     test('minute wakes only persist and dispatch on the selected local execution time, with model routing intact', async () => {

@@ -25,6 +25,7 @@ import {
     matchesTodoRecurrence
 } from '../../../common/utils/todo-recurrence.js';
 import { t } from './locale/index.js';
+import { getRecurrenceValidationMessage } from './recurrence-validation.js';
 
 function validateTriggerTimezone(trigger?: TodoTrigger): void {
     if (
@@ -38,12 +39,10 @@ function validateTriggerTimezone(trigger?: TodoTrigger): void {
 
 function validateTriggerRecurrence(trigger?: TodoTrigger): void {
     if (trigger?.type !== 'cron' || trigger.recurrence === undefined) return;
-    if (
-        getTodoRecurrenceError(trigger.recurrence) ||
-        getNextTodoRecurrenceRuns(trigger.recurrence, trigger.timezone ?? 'UTC', 1).length === 0
-    ) {
-        throw new Error(t('error.recurrenceInvalid'));
-    }
+    const message = getRecurrenceValidationMessage(trigger.recurrence, t);
+    if (message) throw new Error(message);
+    if (getNextTodoRecurrenceRuns(trigger.recurrence, trigger.timezone ?? 'UTC', 1).length === 0)
+        throw new Error(t('error.recurrenceNoNext'));
 }
 
 type GlobalTodoUpdatePayload = Omit<Partial<GlobalTodo>, 'workspace' | 'deliver'> & {

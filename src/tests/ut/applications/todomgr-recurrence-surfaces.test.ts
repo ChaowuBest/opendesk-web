@@ -12,6 +12,28 @@ import type { TodoRecurrence } from '../../../common/utils/todo-recurrence.js';
 describe('automation frequency descriptions and tool input', () => {
     afterEach(() => setRuntimeLocale(null));
 
+    test.each([AddGlobalTodoTool, UpdateGlobalTodoTool])(
+        'tools identify the missing weekday instead of listing schedule rules: %p',
+        async (Tool) => {
+            setRuntimeLocale('zh-CN');
+            const callWorker = jest.fn(async () => ({ id: 'id-1' }));
+            const tool = new Tool({ callWorker } as any);
+            await expect(
+                (tool as any).handleExecute({
+                    id: 'id-1',
+                    title: 'Run',
+                    content: 'Run',
+                    trigger: {
+                        type: 'cron',
+                        recurrence: { mode: 'weekly', time: '09:00', weekdays: [] },
+                        timezone: 'UTC'
+                    }
+                })
+            ).rejects.toThrow('请选择执行星期。');
+            expect(callWorker).not.toHaveBeenCalled();
+        }
+    );
+
     test.each(['zh-CN', 'en-US'] as const)('describes the supported periods and intervals in %s', (locale) => {
         const t = createTranslatorForTodoMgr({ locale });
         const rules: TodoRecurrence[] = [
@@ -65,6 +87,116 @@ describe('automation frequency descriptions and tool input', () => {
         );
     });
 
+    test.each(['zh-CN', 'en-US'] as const)('describes explicit calendar intervals in %s', (locale) => {
+        const t = createTranslatorForTodoMgr({ locale });
+        const anchorAt = '2026-10-23T02:15:00Z';
+        const cases: Array<[TodoRecurrence, string[]]> = [
+            [
+                { mode: 'interval', intervalValue: 2, intervalUnit: 'day', time: '09:30', anchorAt },
+                [locale === 'zh-CN' ? '每隔 2 天 09:30' : 'Every 2 day(s) at 09:30']
+            ],
+            [
+                { mode: 'interval', intervalValue: 3, intervalUnit: 'week', weekdays: [3, 1], time: '14:45', anchorAt },
+                [locale === 'zh-CN' ? '每隔 3 周' : 'Every 3 week(s)', t('date.dow.1'), t('date.dow.3'), '14:45']
+            ],
+            [
+                { mode: 'interval', intervalValue: 4, intervalUnit: 'month', days: [15, 1], time: '18:20', anchorAt },
+                [
+                    locale === 'zh-CN' ? '每隔 4 个月' : 'Every 4 month(s)',
+                    `1${t('recurrence.desc.separator')}15`,
+                    '18:20'
+                ]
+            ],
+            [
+                {
+                    mode: 'interval',
+                    intervalValue: 2,
+                    intervalUnit: 'year',
+                    months: [6, 3],
+                    days: [15, 1],
+                    time: '08:05',
+                    anchorAt
+                },
+                [
+                    locale === 'zh-CN' ? '每隔 2 年' : 'Every 2 year(s)',
+                    `${t('date.month.3')}${t('recurrence.desc.separator')}${t('date.month.6')}`,
+                    `1${t('recurrence.desc.separator')}15`,
+                    '08:05'
+                ]
+            ]
+        ];
+        for (const [rule, expected] of cases) {
+            const description = describeTodoRecurrence(rule, t, 'Asia/Shanghai');
+            for (const text of expected) expect(description).toContain(text);
+            expect(description).toContain('2026-10-23 10:15');
+            expect(description).toContain('(Asia/Shanghai)');
+            expect(description).not.toMatch(/\$\{|recurrence\.desc\.|Saved advanced|已保存的高级/);
+        }
+    });
+
+    test.each(['zh-CN', 'en-US'] as const)(
+        'preserves older interval descriptions without explicit time in %s',
+        (locale) => {
+            const t = createTranslatorForTodoMgr({ locale });
+            for (const intervalUnit of ['hour', 'day', 'week', 'month', 'year'] as const) {
+                const description = describeTodoRecurrence(
+                    { mode: 'interval', intervalValue: 2, intervalUnit, anchorAt: '2026-10-23T02:15:00Z' },
+                    t,
+                    'Asia/Shanghai'
+                );
+                expect(description).toBe(
+                    `${t('recurrence.desc.interval', {
+                        days: '',
+                        value: 2,
+                        unit: t(`renderer.todo.frequency.intervalUnit.${intervalUnit}`),
+                        start: '2026-10-23 10:15'
+                    })} (Asia/Shanghai)`
+                );
+            }
+        }
+    );
+
+    test.each([AddGlobalTodoTool, UpdateGlobalTodoTool])(
+        'tools serialize explicit calendar interval time and selections: %p',
+        async (Tool) => {
+            const callWorker = jest.fn(async () => ({ id: 'id-1' }));
+            const tool = new Tool({ callWorker } as any);
+            const anchorAt = '2026-10-23T02:15:00Z';
+            for (const recurrence of [
+                { mode: 'interval', intervalValue: 2, intervalUnit: 'day', time: '09:30', anchorAt },
+                { mode: 'interval', intervalValue: 3, intervalUnit: 'week', time: '14:45', weekdays: [1, 3], anchorAt },
+                { mode: 'interval', intervalValue: 4, intervalUnit: 'month', time: '18:20', days: [1, 15], anchorAt },
+                {
+                    mode: 'interval',
+                    intervalValue: 2,
+                    intervalUnit: 'year',
+                    time: '08:05',
+                    months: [3, 6],
+                    days: [1, 15],
+                    anchorAt
+                }
+            ]) {
+                await (tool as any).handleExecute({
+                    id: 'id-1',
+                    title: 'Run',
+                    content: 'Run',
+                    trigger: { type: 'cron', recurrence, timezone: 'Asia/Shanghai' }
+                });
+                const calls = callWorker.mock.calls;
+                const trigger =
+                    Tool === AddGlobalTodoTool
+                        ? calls[calls.length - 1][5]
+                        : (calls[calls.length - 1][2] as any).trigger;
+                expect(trigger).toEqual({
+                    type: 'cron',
+                    recurrence,
+                    timezone: 'Asia/Shanghai',
+                    cronExpression: '* * * * *'
+                });
+            }
+        }
+    );
+
     test.each([AddGlobalTodoTool, UpdateGlobalTodoTool])(
         'tools retain multi-date and multi-month arrays without stripping them: %p',
         async (Tool) => {
@@ -101,6 +233,7 @@ describe('automation frequency descriptions and tool input', () => {
             const tool = new Tool({ callWorker } as any);
             const jsonSchema = tool.getJsonSchema();
             expect(JSON.stringify(jsonSchema)).toContain('intervalHours');
+            expect(JSON.stringify(jsonSchema)).toContain('intervalUnit');
             const recurrence = { mode: 'biweekly', time: '09:00', weekdays: [1, 3], anchorDate: '2026-10-19' };
             await (tool as any).handleExecute({
                 id: 'id-1',
@@ -134,7 +267,78 @@ describe('automation frequency descriptions and tool input', () => {
                 { mode: 'yearly', time: '09:00', months: [], month: 3, days: [1] },
                 { mode: 'yearly', time: '09:00', months: [2, 4], days: [31] },
                 { mode: 'yearly', time: '09:00', months: [0, 3], days: [1] },
-                { mode: 'daily', time: '09:00', days: [1] }
+                { mode: 'daily', time: '09:00', days: [1] },
+                {
+                    mode: 'interval',
+                    intervalValue: 1,
+                    intervalUnit: 'hour',
+                    time: '09:00',
+                    anchorAt: '2026-10-23T02:15:00Z'
+                },
+                {
+                    mode: 'interval',
+                    intervalValue: 2,
+                    intervalUnit: 'day',
+                    time: '25:00',
+                    anchorAt: '2026-10-23T02:15:00Z'
+                },
+                {
+                    mode: 'interval',
+                    intervalValue: 2,
+                    intervalUnit: 'day',
+                    time: '09:00',
+                    weekdays: [1],
+                    anchorAt: '2026-10-23T02:15:00Z'
+                },
+                {
+                    mode: 'interval',
+                    intervalValue: 2,
+                    intervalUnit: 'week',
+                    time: '09:00',
+                    weekdays: [],
+                    anchorAt: '2026-10-23T02:15:00Z'
+                },
+                {
+                    mode: 'interval',
+                    intervalValue: 2,
+                    intervalUnit: 'week',
+                    time: '09:00',
+                    anchorAt: '2026-10-23T02:15:00Z'
+                },
+                {
+                    mode: 'interval',
+                    intervalValue: 3,
+                    intervalUnit: 'month',
+                    time: '09:00',
+                    days: [],
+                    anchorAt: '2026-10-23T02:15:00Z'
+                },
+                {
+                    mode: 'interval',
+                    intervalValue: 3,
+                    intervalUnit: 'month',
+                    time: '09:00',
+                    days: [1, 32],
+                    anchorAt: '2026-10-23T02:15:00Z'
+                },
+                {
+                    mode: 'interval',
+                    intervalValue: 2,
+                    intervalUnit: 'year',
+                    time: '09:00',
+                    months: [2],
+                    days: [30],
+                    anchorAt: '2026-10-23T02:15:00Z'
+                },
+                {
+                    mode: 'interval',
+                    intervalValue: 2,
+                    intervalUnit: 'year',
+                    time: '09:00',
+                    months: [],
+                    days: [1],
+                    anchorAt: '2026-10-23T02:15:00Z'
+                }
             ]) {
                 await expect(
                     (tool as any).handleExecute({
@@ -155,7 +359,51 @@ describe('automation frequency descriptions and tool input', () => {
     test.each([
         [{ mode: 'daily', time: '09:00' }, '每天 09:00'],
         [{ mode: 'monthly', time: '09:00', days: [1, 15] }, '每月 1、15 日 09:00'],
-        [{ mode: 'yearly', time: '09:00', months: [3, 6], days: [1, 15] }, '每年 3月、6月的 1、15 日 09:00']
+        [{ mode: 'yearly', time: '09:00', months: [3, 6], days: [1, 15] }, '每年 3月、6月的 1、15 日 09:00'],
+        [
+            {
+                mode: 'interval',
+                intervalValue: 2,
+                intervalUnit: 'day',
+                time: '09:30',
+                anchorAt: '2026-10-23T02:15:00Z'
+            },
+            '每隔 2 天 09:30'
+        ],
+        [
+            {
+                mode: 'interval',
+                intervalValue: 2,
+                intervalUnit: 'week',
+                time: '09:30',
+                weekdays: [1, 3],
+                anchorAt: '2026-10-23T02:15:00Z'
+            },
+            '每隔 2 周的周一、周三 09:30'
+        ],
+        [
+            {
+                mode: 'interval',
+                intervalValue: 3,
+                intervalUnit: 'month',
+                time: '18:20',
+                days: [1, 15],
+                anchorAt: '2026-10-23T02:15:00Z'
+            },
+            '每隔 3 个月的 1、15 日 18:20'
+        ],
+        [
+            {
+                mode: 'interval',
+                intervalValue: 2,
+                intervalUnit: 'year',
+                time: '08:05',
+                months: [3, 6],
+                days: [1, 15],
+                anchorAt: '2026-10-23T02:15:00Z'
+            },
+            '每隔 2 年，3月、6月的 1、15 日 08:05'
+        ]
     ])('tool cards and execution context show all selected dates: %p', async (recurrence, expected) => {
         setRuntimeLocale('zh-CN');
         const trigger = {
