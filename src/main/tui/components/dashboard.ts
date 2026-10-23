@@ -21,11 +21,10 @@ import { Setting, type SettingData, getShortcuts } from '../../utils/setting.js'
 import { SlashCommandRegistry } from '../commands/index.js';
 import type { GlobalTodo } from '../../applications/todomgr/common';
 import type { TaskState } from '../../aikernel/states/tasks.js';
-import { describeLegacyRecurrence, describeTodoRecurrence } from '../../applications/todomgr/recurrence-description.js';
-import { t as todoT } from '../../applications/todomgr/locale/index.js';
+import { describeLegacyRecurrence, describeTodoRecurrence } from '../../../common/utils/recurrence-description.js';
 import type { ChannelRuntimeState } from '../../applications/channelmgr/app.js';
-import { t } from '../../../locale/index.js';
 import { formatDateTimeInTimezone, getSystemTimezone } from '../../../common/utils/timezone.js';
+import { t } from '../../../locale/index.js';
 
 const HIDDEN_DASHBOARD_STATUS_BUNDLES = new Set(['channelmgr', 'todomgr', 'filemgr']);
 
@@ -284,7 +283,7 @@ class DashboardRenderer implements Component {
         const cells = [
             (totalUnread > 0 ? C.amber('📬') : C.ghost('📭')) + C.dim(' MAIL ') + C.bright(String(totalUnread)),
             C.neon('▣') + C.dim(' TODOS ') + C.bright(String(activeTodos)),
-            C.neon('⟳') + C.dim(` ${todoT('trigger.summary.cron')} `) + C.bright(String(cronTodos)),
+            C.neon('⟳') + C.dim(` ${t('recurrence.summary.cron')} `) + C.bright(String(cronTodos)),
             C.neon('⚡') + C.dim(' EVENT ') + C.bright(String(eventTodos)),
             (runningTasks > 0 ? C.glow('●') : C.ghost('●')) +
                 C.dim(' TASKS ') +
@@ -446,10 +445,15 @@ class DashboardRenderer implements Component {
                         C.glow('⟳  ') +
                         C.dim(
                             todo.trigger.recurrence
-                                ? describeTodoRecurrence(todo.trigger.recurrence, todoT, todo.trigger.timezone ?? 'UTC')
+                                ? describeTodoRecurrence(
+                                      todo.trigger.recurrence,
+                                      t,
+                                      todo.trigger.timezone ?? 'UTC',
+                                      false
+                                  )
                                 : describeLegacyRecurrence(
                                       todo.trigger.cronExpression,
-                                      todoT,
+                                      t,
                                       todo.trigger.timezone ?? 'UTC'
                                   )
                         );

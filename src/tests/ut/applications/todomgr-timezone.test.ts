@@ -102,6 +102,84 @@ describe('automation task timezones', () => {
         expect(todo.trigger).not.toHaveProperty('timezone');
     });
 
+    test('updating cron time without a timezone retains the existing wall-clock zone', async () => {
+        const todo = await worker.addGlobalTodo('Morning', 'Run', 'medium', undefined, {
+            type: 'cron',
+            cronExpression: '0 9 * * *',
+            timezone: 'Asia/Shanghai'
+        });
+        const trigger: TodoTrigger = { type: 'cron', cronExpression: '0 10 * * *' };
+
+        const updated = await worker.updateGlobalTodo(todo.id, { trigger });
+
+        expect(updated.trigger).toEqual({ ...trigger, timezone: 'Asia/Shanghai' });
+        expect(trigger).not.toHaveProperty('timezone');
+        expect(nextRun(todo.id)).toBe('2026-03-08T02:00:00.000Z');
+    });
+
+    test('the update tool changes daily frequency while preserving the stored timezone', async () => {
+        const todo = await worker.addGlobalTodo('Morning', 'Run', 'medium', undefined, {
+            type: 'cron',
+            cronExpression: '* * * * *',
+            recurrence: { mode: 'daily', time: '09:00' },
+            timezone: 'Asia/Shanghai'
+        });
+        const tool = new UpdateGlobalTodoTool({
+            callWorker: async (
+                method: string,
+                id: string,
+                updates: Parameters<TodoMgrWorker['updateGlobalTodo']>[1]
+            ) => {
+                expect(method).toBe('updateGlobalTodo');
+                return worker.updateGlobalTodo(id, updates);
+            }
+        } as any);
+
+        await (tool as any).handleExecute({
+            id: todo.id,
+            trigger: { type: 'cron', recurrence: { mode: 'daily', time: '10:00' } }
+        });
+
+        const updated = await worker.getGlobalTodoById(todo.id);
+        expect(updated?.trigger).toMatchObject({
+            timezone: 'Asia/Shanghai',
+            recurrence: { mode: 'daily', time: '10:00' }
+        });
+        const callApp = jest.spyOn(worker as any, 'callApp').mockImplementation(() => {});
+        jest.setSystemTime(new Date('2026-03-08T01:00:00Z'));
+        await (worker as any).cronJobs.get(todo.id).trigger();
+        expect(callApp).not.toHaveBeenCalled();
+        jest.setSystemTime(new Date('2026-03-08T02:00:00Z'));
+        await (worker as any).cronJobs.get(todo.id).trigger();
+        expect(callApp).toHaveBeenCalledTimes(1);
+        expect((await worker.getGlobalTodoById(todo.id))?.last_triggered_at).toBe('2026-03-08T02:00:00.000Z');
+    });
+
+    test.each(['manual', 'event'] as const)(
+        'adding a cron trigger to an existing %s task defaults to the system timezone',
+        async (source) => {
+            const resolvedOptions = new Intl.DateTimeFormat().resolvedOptions();
+            jest.spyOn(Intl.DateTimeFormat.prototype, 'resolvedOptions').mockReturnValue({
+                ...resolvedOptions,
+                timeZone: 'Asia/Shanghai'
+            });
+            const todo = await worker.addGlobalTodo(
+                'Morning',
+                'Run',
+                'medium',
+                undefined,
+                source === 'event' ? { type: 'event', bundleName: 'mailbox', eventName: 'updated' } : undefined
+            );
+
+            const updated = await worker.updateGlobalTodo(todo.id, {
+                trigger: { type: 'cron', cronExpression: '0 9 * * *' }
+            });
+
+            expect(updated.trigger).toMatchObject({ timezone: 'Asia/Shanghai' });
+            expect(nextRun(todo.id)).toBe('2026-03-08T01:00:00.000Z');
+        }
+    );
+
     test('loading and updating a legacy cron without timezone preserves UTC scheduling', async () => {
         const todo = {
             id: 'legacy-cron',
@@ -120,10 +198,10 @@ describe('automation task timezones', () => {
         expect(nextRun(todo.id)).toBe('2026-03-08T09:00:00.000Z');
         const updated = await worker.updateGlobalTodo(todo.id, {
             title: 'Updated',
-            trigger: { type: 'cron', cronExpression: '0 9 * * *' }
+            trigger: { type: 'cron', cronExpression: '0 10 * * *' }
         });
         expect(updated.trigger).not.toHaveProperty('timezone');
-        expect(nextRun(todo.id)).toBe('2026-03-08T09:00:00.000Z');
+        expect(nextRun(todo.id)).toBe('2026-03-08T10:00:00.000Z');
     });
 
     test('changing only cron timezone restarts its schedule and clears the previous trigger marker', async () => {
@@ -163,28 +241,36 @@ describe('automation task timezones', () => {
         }
     );
 
-    test('one-shot timezone metadata never changes the absolute execution instant or rearms a completed task', async () => {
-        const todo = await worker.addGlobalTodo('Once', 'Run', 'medium', undefined, {
-            type: 'scheduled',
-            triggerAt: '2026-03-07T14:00:00Z',
-            timezone: 'Asia/Shanghai'
-        } as TodoTrigger);
-        const callApp = jest.spyOn(worker as any, 'callApp').mockImplementation(() => {});
-        await (worker as any).checkScheduledTriggers();
-
-        const updated = await worker.updateGlobalTodo(todo.id, {
-            trigger: {
+    test.each(['America/New_York', undefined])(
+        'one-shot timezone update %s preserves the instant and completion state',
+        async (timezone) => {
+            const todo = await worker.addGlobalTodo('Once', 'Run', 'medium', undefined, {
                 type: 'scheduled',
                 triggerAt: '2026-03-07T14:00:00Z',
-                timezone: 'America/New_York'
-            } as TodoTrigger
-        });
-        await jest.advanceTimersByTimeAsync(500);
+                timezone: 'Asia/Shanghai'
+            } as TodoTrigger);
+            const callApp = jest.spyOn(worker as any, 'callApp').mockImplementation(() => {});
+            await (worker as any).checkScheduledTriggers();
 
-        expect(updated.enabled).toBe(false);
-        expect(updated.completed_at).toBe('2026-03-07T15:00:00.000Z');
-        expect(callApp).toHaveBeenCalledTimes(1);
-    });
+            const updated = await worker.updateGlobalTodo(todo.id, {
+                trigger: {
+                    type: 'scheduled',
+                    triggerAt: '2026-03-07T14:00:00Z',
+                    ...(timezone !== undefined ? { timezone } : {})
+                } as TodoTrigger
+            });
+            await jest.advanceTimersByTimeAsync(500);
+
+            expect(updated.enabled).toBe(false);
+            expect(updated.completed_at).toBe('2026-03-07T15:00:00.000Z');
+            expect(updated.trigger).toEqual({
+                type: 'scheduled',
+                triggerAt: '2026-03-07T14:00:00Z',
+                timezone: timezone ?? 'Asia/Shanghai'
+            });
+            expect(callApp).toHaveBeenCalledTimes(1);
+        }
+    );
 
     test.each([AddGlobalTodoTool, UpdateGlobalTodoTool])(
         'tool boundary preserves and validates timezone: %p',

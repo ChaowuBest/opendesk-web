@@ -19,6 +19,19 @@ export type TodoPriority = 'low' | 'medium' | 'high';
 
 import type { Participant } from '../../plugins/types.js';
 
+export interface TodoChatModelSummary {
+    alias: string;
+    provider_name: string;
+    model_name: string;
+    vision: boolean;
+    reasoningEfforts: ReasoningEffort[];
+}
+
+export interface TodoChatModelCatalog {
+    default_model: string;
+    models: TodoChatModelSummary[];
+}
+
 // ========== 触发器类型定义 ==========
 
 export interface EventTriggerConfig {

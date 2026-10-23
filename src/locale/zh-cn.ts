@@ -9,6 +9,8 @@
  * See the Mulan PSL v2 for more details.
  */
 
+import { recurrenceZhCn } from '../common/locale/recurrence.js';
+
 export const zhCn: Record<string, string> = {
     'credentials.oldPassword': '旧密码',
     'credentials.clear': '清除密码',
@@ -3115,5 +3117,7 @@ export const zhCn: Record<string, string> = {
     'main.desktop.card.invalidInput': '卡片生成参数无效',
     'main.desktop.card.promptRequired': '卡片生成缺少关注内容',
     'main.desktop.card.noHtml': 'Agent 未生成有效的卡片 HTML',
-    'main.desktop.card.timeout': '卡片生成超时（3 分钟），模型可能不可用，请稍后右键卡片重试'
+    'main.desktop.card.timeout': '卡片生成超时（3 分钟），模型可能不可用，请稍后右键卡片重试',
+
+    ...recurrenceZhCn
 };

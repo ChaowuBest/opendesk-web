@@ -9,6 +9,8 @@
  * See the Mulan PSL v2 for more details.
  */
 
+import { recurrenceEnUs } from '../common/locale/recurrence.js';
+
 export const enUs: Record<string, string> = {
     'credentials.oldPassword': 'Old password',
     'credentials.clear': 'Clear passwords',
@@ -3219,5 +3221,7 @@ export const enUs: Record<string, string> = {
     'main.desktop.card.promptRequired': 'Card generation requires focus content',
     'main.desktop.card.noHtml': 'The Agent did not generate valid card HTML',
     'main.desktop.card.timeout':
-        'Card generation timed out (3 minutes). The model may be unavailable — right-click the card to retry later.'
+        'Card generation timed out (3 minutes). The model may be unavailable — right-click the card to retry later.',
+
+    ...recurrenceEnUs
 };

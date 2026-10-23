@@ -113,17 +113,19 @@ describe('visual todo recurrence worker scheduling', () => {
     test.each([
         {
             recurrence: { mode: 'monthly', time: '09:00', days: [25, 23, 23] } as TodoRecurrence,
+            intermediate: undefined,
             excluded: '2026-10-24T01:00:00Z',
             next: '2026-10-25T01:00:00Z'
         },
         {
             recurrence: { mode: 'yearly', time: '09:00', months: [12, 10, 10], days: [25, 23, 23] } as TodoRecurrence,
+            intermediate: '2026-10-25T01:00:00Z',
             excluded: '2026-11-23T01:00:00Z',
             next: '2026-12-23T01:00:00Z'
         }
     ])(
         'multiple calendar selections survive reload and control actual callbacks: $recurrence.mode',
-        async ({ recurrence, excluded, next }) => {
+        async ({ recurrence, intermediate, excluded, next }) => {
             const selectedTrigger = trigger(recurrence);
             const todo = await worker.addGlobalTodo('Multiple dates', 'Run', 'medium', undefined, selectedTrigger);
             const stored = JSON.parse(fs.readFileSync(path.join(dir, 'global_todos.json'), 'utf8'));
@@ -137,12 +139,19 @@ describe('visual todo recurrence worker scheduling', () => {
             await job(todo.id).trigger();
             await job(todo.id).trigger();
             expect(callApp).toHaveBeenCalledTimes(1);
+            let expectedExecutions = 1;
+            if (intermediate) {
+                jest.setSystemTime(new Date(intermediate));
+                await job(todo.id).trigger();
+                expectedExecutions++;
+                expect(callApp).toHaveBeenCalledTimes(expectedExecutions);
+            }
             jest.setSystemTime(new Date(excluded));
             await job(todo.id).trigger();
-            expect(callApp).toHaveBeenCalledTimes(1);
+            expect(callApp).toHaveBeenCalledTimes(expectedExecutions);
             jest.setSystemTime(new Date(next));
             await job(todo.id).trigger();
-            expect(callApp).toHaveBeenCalledTimes(2);
+            expect(callApp).toHaveBeenCalledTimes(expectedExecutions + 1);
         }
     );
 
@@ -158,7 +167,7 @@ describe('visual todo recurrence worker scheduling', () => {
         expect(job(todo.id)).toBeUndefined();
     });
 
-    test('new recurrence timezone defaults to the system while updates without timezone retain legacy UTC semantics', async () => {
+    test('new recurrence timezone defaults to the system and survives updates that omit timezone', async () => {
         const resolvedOptions = new Intl.DateTimeFormat().resolvedOptions();
         jest.spyOn(Intl.DateTimeFormat.prototype, 'resolvedOptions').mockReturnValue({
             ...resolvedOptions,
@@ -168,11 +177,11 @@ describe('visual todo recurrence worker scheduling', () => {
         const todo = await worker.addGlobalTodo('Daily', 'Run', 'medium', undefined, withoutZone);
         expect((todo.trigger as CronTriggerConfig).timezone).toBe('Asia/Shanghai');
         const updated = await worker.updateGlobalTodo(todo.id, { trigger: withoutZone });
-        expect(updated.trigger).not.toHaveProperty('timezone');
+        expect((updated.trigger as CronTriggerConfig).timezone).toBe('Asia/Shanghai');
         const callApp = jest.spyOn(worker as any, 'callApp').mockImplementation(() => {});
         jest.setSystemTime(new Date('2026-10-22T01:00:00Z'));
         await job(todo.id).trigger();
-        expect(callApp).not.toHaveBeenCalled();
+        expect(callApp).toHaveBeenCalledTimes(1);
         jest.setSystemTime(new Date('2026-10-22T09:00:00Z'));
         await job(todo.id).trigger();
         expect(callApp).toHaveBeenCalledTimes(1);
@@ -208,6 +217,47 @@ describe('visual todo recurrence worker scheduling', () => {
         jest.setSystemTime(new Date('2026-10-22T02:00:00Z'));
         await job(todo.id).trigger();
         expect(callApp).toHaveBeenCalledTimes(1);
+    });
+
+    test('equivalent recurrence updates preserve the marker and running job', async () => {
+        const monthly = trigger({ mode: 'monthly', time: '09:00', days: [23, 25] });
+        const todo = await worker.addGlobalTodo('Monthly', 'Run', 'medium', undefined, monthly);
+        await worker.updateGlobalTodo(todo.id, { last_triggered_at: '2026-10-22T01:00:00Z' });
+        const runningJob = job(todo.id);
+        const startSpy = jest.spyOn(worker as any, 'startCronJob');
+
+        const updated = await worker.updateGlobalTodo(todo.id, {
+            trigger: trigger({ mode: 'monthly', time: '09:00', days: [25, 23, 23] })
+        });
+
+        expect(updated.last_triggered_at).toBe('2026-10-22T01:00:00Z');
+        expect(startSpy).not.toHaveBeenCalled();
+        expect(job(todo.id)).toBe(runningJob);
+    });
+
+    test('equivalent recurrence updates ignore object property order', async () => {
+        const todo = await worker.addGlobalTodo('Daily', 'Run', 'medium', undefined, trigger());
+        await worker.updateGlobalTodo(todo.id, { last_triggered_at: '2026-10-22T01:00:00Z' });
+        const runningJob = job(todo.id);
+        const startSpy = jest.spyOn(worker as any, 'startCronJob');
+
+        const reordered: TodoRecurrence = { time: '09:00', mode: 'daily' };
+        const updated = await worker.updateGlobalTodo(todo.id, { trigger: trigger(reordered) });
+
+        expect(updated.last_triggered_at).toBe('2026-10-22T01:00:00Z');
+        expect(startSpy).not.toHaveBeenCalled();
+        expect(job(todo.id)).toBe(runningJob);
+    });
+
+    test('editing content does not restart an unchanged cron schedule', async () => {
+        const todo = await worker.addGlobalTodo('Daily', 'Run', 'medium', undefined, trigger());
+        const runningJob = job(todo.id);
+        const startSpy = jest.spyOn(worker as any, 'startCronJob');
+
+        await worker.updateGlobalTodo(todo.id, { content: 'Updated run instructions' });
+
+        expect(startSpy).not.toHaveBeenCalled();
+        expect(job(todo.id)).toBe(runningJob);
     });
 
     test('calendar overlap runs once while elapsed-hour intervals can run twice', async () => {

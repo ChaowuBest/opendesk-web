@@ -6,7 +6,13 @@ import type { Participant } from '../../../main/plugins/types.js';
 import type { TodoTrigger } from '../../../main/applications/todomgr/common.js';
 
 const mainAgent = { name: 'main' };
-const getModelInstance = jest.fn((alias: string) => (alias === 'reasoning-pro' ? {} : undefined));
+const getModelInstance = jest.fn((alias: string) => {
+    if (alias === 'reasoning-pro') return { model_name: 'gpt-5' };
+    if (alias === 'unknown-reasoning') return { model_name: 'vendor/custom-chat' };
+    if (alias === 'unsupported-reasoning') return { model_name: 'gpt-5' };
+    return undefined;
+});
+const getDefaultModelInstance = jest.fn(() => ({ model_name: 'gpt-5' }));
 const registerTaskForParticipant = jest.fn();
 const markSkipUserEcho = jest.fn();
 const channelManager = {
@@ -15,6 +21,7 @@ const channelManager = {
 };
 const dispatchPromptToAgent = jest.fn<(...args: any[]) => Promise<any>>();
 
+jest.unstable_mockModule('../../../main/utils/model-network.js', () => ({ fetchModelUrl: jest.fn() }));
 jest.unstable_mockModule('../../../main/aikernel/states/global.js', () => ({
     GlobalState: { getInstance: () => ({ taskManagerState: { dispatchPromptToAgent } }) }
 }));
@@ -28,6 +35,7 @@ jest.unstable_mockModule('../../../main/utils/setting.js', () => ({
     Setting: {
         getInstance: () => ({
             getModelInstance,
+            getDefaultModelInstance,
             getEffectiveWorkspace: () => '/default-workspace'
         })
     },
@@ -213,6 +221,60 @@ describe('TodoMgr execution conversation names', () => {
 
         expect(dispatchPromptToAgent.mock.calls[0][3]).toMatchObject({
             taskName: '日报',
+            model: undefined,
+            reasoningEffort: undefined
+        });
+    });
+
+    test('an unsupported reasoning effort falls back to the selected model default', async () => {
+        await application.triggerTodoTask(
+            'todo-unsupported-reasoning',
+            '日报',
+            '生成报告',
+            undefined,
+            undefined,
+            undefined,
+            'unsupported-reasoning',
+            'max'
+        );
+
+        expect(dispatchPromptToAgent.mock.calls[0][3]).toMatchObject({
+            model: 'unsupported-reasoning',
+            reasoningEffort: undefined
+        });
+    });
+
+    test('an unknown model keeps the requested reasoning effort for compatibility', async () => {
+        await application.triggerTodoTask(
+            'todo-unknown-reasoning',
+            '日报',
+            '生成报告',
+            undefined,
+            undefined,
+            undefined,
+            'unknown-reasoning',
+            'max'
+        );
+
+        expect(dispatchPromptToAgent.mock.calls[0][3]).toMatchObject({
+            model: 'unknown-reasoning',
+            reasoningEffort: 'max'
+        });
+    });
+
+    test('validates the reasoning effort against the current default model when no model is selected', async () => {
+        await application.triggerTodoTask(
+            'todo-default-unsupported-reasoning',
+            '日报',
+            '生成报告',
+            undefined,
+            undefined,
+            undefined,
+            undefined,
+            'max'
+        );
+
+        expect(dispatchPromptToAgent.mock.calls[0][3]).toMatchObject({
             model: undefined,
             reasoningEffort: undefined
         });

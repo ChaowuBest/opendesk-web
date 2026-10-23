@@ -24,7 +24,8 @@ function loadHandler(channel: string, task: object) {
                 refreshLazyTaskSystemPrompt: async () => undefined
             }
         },
-        Setting: { getInstance: () => ({ getModelInstance: () => ({}) }) }
+        Setting: { getInstance: () => ({ getModelInstance: () => ({}) }) },
+        isReasoningEffortSupported: () => true
     });
     return handle.mock.calls[0][1] as (...args: unknown[]) => Promise<unknown>;
 }

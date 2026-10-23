@@ -14,8 +14,8 @@ import {
     getTodoRecurrenceError,
     getTodoRecurrenceMonths,
     type TodoRecurrence
-} from '../../../common/utils/todo-recurrence.js';
-import { formatDatetimeLocal } from '../../../common/utils/timezone.js';
+} from './todo-recurrence.js';
+import { formatDatetimeLocal } from './timezone.js';
 
 type Translator = (key: string, params?: Record<string, string | number>) => string;
 
@@ -26,8 +26,14 @@ function describeDays(days: number[], t: Translator): string {
         .join(t('recurrence.desc.separator'));
 }
 
-export function describeTodoRecurrence(recurrence: TodoRecurrence, t: Translator, timezone: string): string {
-    if (getTodoRecurrenceError(recurrence)) return `${t('renderer.todo.frequency.legacy')} (${timezone})`;
+export function describeTodoRecurrence(
+    recurrence: TodoRecurrence,
+    t: Translator,
+    timezone: string,
+    showTimezone = true
+): string {
+    if (getTodoRecurrenceError(recurrence))
+        return `${t('common.recurrence.legacy')}${showTimezone ? ` (${timezone})` : ''}`;
     const params: Record<string, string | number> = { time: recurrence.time ?? '' };
     let description = `recurrence.desc.${recurrence.mode}`;
     switch (recurrence.mode) {
@@ -51,7 +57,9 @@ export function describeTodoRecurrence(recurrence: TodoRecurrence, t: Translator
         case 'interval':
             params.days = recurrence.weekdays ? describeDays(recurrence.weekdays, t) : '';
             params.value = recurrence.intervalValue ?? recurrence.intervalHours!;
-            params.unit = t(`renderer.todo.frequency.intervalUnit.${recurrence.intervalUnit ?? 'hour'}`);
+            // Keep this shared description independent from TodoMgr's renderer dictionary.
+            // The TUI passes the core translator, which does not include renderer.todo.* keys.
+            params.unit = t(`recurrence.desc.intervalUnit.${recurrence.intervalUnit ?? 'hour'}`);
             params.start = formatDatetimeLocal(recurrence.anchorAt!, timezone).replace('T', ' ');
             if (recurrence.time !== undefined) {
                 switch (recurrence.intervalUnit) {
@@ -80,7 +88,8 @@ export function describeTodoRecurrence(recurrence: TodoRecurrence, t: Translator
         (recurrence.mode === 'monthly' || recurrence.mode === 'yearly') &&
         (getTodoRecurrenceDays(recurrence).length > 1 ||
             (recurrence.mode === 'yearly' && getTodoRecurrenceMonths(recurrence).length > 1));
-    return `${t(`${description}${multiple ? 'Multiple' : ''}`, params)} (${timezone})`;
+    const text = t(`${description}${multiple ? 'Multiple' : ''}`, params);
+    return showTimezone ? `${text} (${timezone})` : text;
 }
 
 function numberField(value: string, min: number, max: number): number | null {
@@ -109,7 +118,7 @@ function parseCalendarNumbers(value: string, min: number, max: number): number[]
 
 /** Only describe unambiguous simple legacy rules; keep other stored rules opaque. */
 export function describeLegacyRecurrence(expression: string, t: Translator, timezone: string): string {
-    const fallback = `${t('renderer.todo.frequency.legacy')} (${timezone})`;
+    const fallback = `${t('common.recurrence.legacy')} (${timezone})`;
     if (typeof expression !== 'string') return fallback;
     const fields = expression.trim().split(/\s+/);
     if (fields.length !== 5) return fallback;

@@ -18,8 +18,9 @@ import {
     getTodoRecurrenceMonths,
     type TodoRecurrence
 } from '../../../../common/utils/todo-recurrence.js';
-import { describeLegacyRecurrence, describeTodoRecurrence } from '../recurrence-description.js';
+import { describeLegacyRecurrence, describeTodoRecurrence } from '../../../../common/utils/recurrence-description.js';
 import { getRecurrenceValidationIssue, type RecurrenceValidationField } from '../recurrence-validation.js';
+import { fixedLayerOrigin, visibleViewportRect } from '../../../../renderer/utils/window-frame.js';
 
 type Translate = (key: string, params?: Record<string, string | number>) => string;
 type Period = 'once' | 'daily' | 'weekly' | 'biweekly' | 'monthly' | 'yearly' | 'legacy';
@@ -111,6 +112,9 @@ export class TimeSchedulePicker {
     private onceRendered = false;
     private signature = '';
     private originalRecurrence?: TodoRecurrence;
+    private executionTimeEdited = false;
+    private calendarSelectionEdited = false;
+    private weekdaysEdited = false;
     private menuTrigger: HTMLElement | null = null;
     private periodSubmenuTrigger: HTMLElement | null = null;
     private periodSubmenu: HTMLElement | null = null;
@@ -159,10 +163,11 @@ export class TimeSchedulePicker {
             period: new Set(
                 recurrence?.mode === 'weekly' || recurrence?.mode === 'biweekly'
                     ? recurrence.weekdays
-                    : calendarInterval && recurrence.intervalUnit === 'week'
-                      ? oldCalendarInterval
-                          ? [intervalDate!.getUTCDay()]
-                          : recurrence.weekdays
+                    : recurrence?.mode === 'interval'
+                      ? (recurrence.weekdays ??
+                        (calendarInterval && recurrence.intervalUnit === 'week' && oldCalendarInterval
+                            ? [intervalDate!.getUTCDay()]
+                            : []))
                       : []
             ),
             interval: new Set(recurrence?.mode === 'interval' ? recurrence.weekdays : [])
@@ -442,20 +447,28 @@ export class TimeSchedulePicker {
         const back = menu.querySelector<HTMLElement>('[data-period-back]')!;
         const rect = trigger.getBoundingClientRect();
         const parentRect = parent.getBoundingClientRect();
-        const viewport = this.root.ownerDocument.defaultView!;
-        const width = Math.min(220, viewport.innerWidth - 24);
+        const viewport = visibleViewportRect();
+        const origin = fixedLayerOrigin(menu);
+        const availableWidth = Math.max(0, viewport.right - viewport.left - 24);
+        const width = Math.min(220, availableWidth);
         const right = parentRect.right + 6;
         const left = parentRect.left - width - 6;
-        const fitsRight = right + width <= viewport.innerWidth - 12;
-        const compact = !fitsRight && left < 12;
-        const height = Math.min(320, viewport.innerHeight - 24);
+        const fitsRight = right + width <= viewport.right - 12;
+        const compact = !fitsRight && left < viewport.left + 12;
+        const height = Math.min(320, Math.max(0, viewport.bottom - viewport.top - 24));
         menu.hidden = false;
         back.hidden = !compact;
-        menu.style.width = `${compact ? Math.min(parentRect.width, viewport.innerWidth - 24) : width}px`;
+        const menuWidth = compact ? Math.min(parentRect.width, availableWidth) : width;
+        menu.style.width = `${menuWidth}px`;
         menu.style.maxHeight = `${height}px`;
-        menu.style.left = `${compact ? Math.max(12, Math.min(parentRect.left, viewport.innerWidth - parseFloat(menu.style.width) - 12)) : fitsRight ? right : left}px`;
+        const menuLeft = compact
+            ? Math.max(viewport.left + 12, Math.min(parentRect.left, viewport.right - menuWidth - 12))
+            : fitsRight
+              ? right
+              : left;
+        menu.style.left = `${menuLeft - origin.x}px`;
         const menuHeight = Math.min(menu.scrollHeight || height, height);
-        menu.style.top = `${Math.max(12, Math.min(compact ? parentRect.top : rect.top, viewport.innerHeight - menuHeight - 12))}px`;
+        menu.style.top = `${Math.max(viewport.top + 12, Math.min(compact ? parentRect.top : rect.top, viewport.bottom - menuHeight - 12)) - origin.y}px`;
         this.periodSubmenuTrigger = trigger;
         this.periodSubmenu = menu;
         trigger.setAttribute('aria-expanded', 'true');
@@ -490,18 +503,20 @@ export class TimeSchedulePicker {
             const parent = this.root.querySelector<HTMLElement>('#tm-frequency-period-options')!;
             const parentRect = parent.hidden ? null : parent.getBoundingClientRect();
             const rect = months.getBoundingClientRect();
-            const viewport = this.root.ownerDocument.defaultView!;
-            const width = Math.min(220, viewport.innerWidth - 24);
+            const viewport = visibleViewportRect();
+            const origin = fixedLayerOrigin(menu);
+            const availableWidth = Math.max(0, viewport.right - viewport.left - 24);
+            const width = Math.min(220, availableWidth);
             const available = (left: number) =>
-                left >= 12 &&
-                left + width <= viewport.innerWidth - 12 &&
+                left >= viewport.left + 12 &&
+                left + width <= viewport.right - 12 &&
                 (!parentRect || left + width <= parentRect.left || left >= parentRect.right);
             const right = rect.right + 6;
             const left = rect.left - width - 6;
             const fitsRight = available(right);
             const compact = !fitsRight && !available(left);
             focusBack = compact;
-            const height = Math.min(320, viewport.innerHeight - 24);
+            const height = Math.min(320, Math.max(0, viewport.bottom - viewport.top - 24));
             menu.hidden = false;
             menu.classList.add('tm-frequency-year-dates');
             const back = menu.querySelector<HTMLElement>('[data-period-back]')!;
@@ -509,11 +524,17 @@ export class TimeSchedulePicker {
             back.querySelector<HTMLElement>('[data-back-label]')!.textContent = this.t(
                 'renderer.todo.frequency.backMonths'
             );
-            menu.style.width = `${compact ? Math.min(rect.width, viewport.innerWidth - 24) : width}px`;
+            const menuWidth = compact ? Math.min(rect.width, availableWidth) : width;
+            menu.style.width = `${menuWidth}px`;
             menu.style.maxHeight = `${height}px`;
-            menu.style.left = `${compact ? Math.max(12, Math.min(rect.left, viewport.innerWidth - parseFloat(menu.style.width) - 12)) : fitsRight ? right : left}px`;
+            const menuLeft = compact
+                ? Math.max(viewport.left + 12, Math.min(rect.left, viewport.right - menuWidth - 12))
+                : fitsRight
+                  ? right
+                  : left;
+            menu.style.left = `${menuLeft - origin.x}px`;
             const menuHeight = Math.min(menu.scrollHeight || height, height);
-            menu.style.top = `${Math.max(12, Math.min(rect.top, viewport.innerHeight - menuHeight - 12))}px`;
+            menu.style.top = `${Math.max(viewport.top + 12, Math.min(rect.top, viewport.bottom - menuHeight - 12)) - origin.y}px`;
         }
         if (focusBack) menu.querySelector<HTMLElement>('[data-period-back]')!.focus();
         else if (focus)
@@ -530,15 +551,17 @@ export class TimeSchedulePicker {
         this.menuTrigger = trigger;
         trigger.setAttribute('aria-expanded', 'true');
         const rect = trigger.getBoundingClientRect();
-        const viewport = this.root.ownerDocument.defaultView!;
-        const height = Math.min(320, Math.max(120, viewport.innerHeight - 24));
-        const width = Math.min(Math.max(rect.width, 190), viewport.innerWidth - 24);
+        const viewport = visibleViewportRect();
+        const origin = fixedLayerOrigin(menu);
+        const height = Math.min(320, Math.max(0, viewport.bottom - viewport.top - 24));
+        const width = Math.min(Math.max(rect.width, 190), Math.max(0, viewport.right - viewport.left - 24));
         menu.style.width = `${width}px`;
         menu.style.maxHeight = `${height}px`;
-        menu.style.left = `${Math.max(12, Math.min(rect.left, viewport.innerWidth - width - 12))}px`;
-        const below = viewport.innerHeight - rect.bottom - 12;
+        menu.style.left = `${Math.max(viewport.left + 12, Math.min(rect.left, viewport.right - width - 12)) - origin.x}px`;
+        const below = viewport.bottom - rect.bottom - 12;
         const menuHeight = Math.min(menu.scrollHeight || height, height);
-        menu.style.top = `${below >= menuHeight ? rect.bottom + 6 : Math.max(12, rect.top - menuHeight - 6)}px`;
+        const top = below >= menuHeight ? rect.bottom + 6 : rect.top - menuHeight - 6;
+        menu.style.top = `${Math.max(viewport.top + 12, Math.min(top, viewport.bottom - menuHeight - 12)) - origin.y}px`;
     }
 
     private onClick(event: Event): void {
@@ -588,11 +611,13 @@ export class TimeSchedulePicker {
     private onChange(event: Event): void {
         this.clearValidationError();
         const input = event.target as HTMLInputElement;
+        if (input.id === 'tm-cron-hour' || input.id === 'tm-cron-minute') this.executionTimeEdited = true;
         if (input.id === 'tm-frequency-interval-unit') {
             this.closeMenus();
             this.updateVisibility();
         }
         if (input.dataset.calendarValue !== undefined || input.dataset.calendarSelectAll) {
+            this.calendarSelectionEdited = true;
             const kind = (input.dataset.calendarKind ?? input.dataset.calendarSelectAll) as CalendarKind;
             if (input.dataset.calendarSelectAll) {
                 this.calendar[kind] = new Set(
@@ -610,6 +635,7 @@ export class TimeSchedulePicker {
             }
         }
         if (input.dataset.weekday !== undefined || input.dataset.selectAll) {
+            if ((input.dataset.dayScope ?? input.dataset.selectAll) === 'period') this.weekdaysEdited = true;
             const scope = (input.dataset.dayScope ?? input.dataset.selectAll) as DayScope;
             if (input.dataset.selectAll) this.days[scope] = new Set(input.checked ? [0, 1, 2, 3, 4, 5, 6] : []);
             else {
@@ -681,25 +707,39 @@ export class TimeSchedulePicker {
                 unit === 'hour' &&
                 value === this.originalRecurrence.intervalHours;
             const time = `${this.value('#tm-cron-hour').padStart(2, '0')}:${this.value('#tm-cron-minute').padStart(2, '0')}`;
-            return legacy
-                ? {
-                      mode: 'interval',
-                      intervalHours: value,
-                      anchorAt: this.anchorAt,
-                      weekdays: [...this.days.interval].sort()
-                  }
-                : {
-                      mode: 'interval',
-                      intervalValue: value,
-                      intervalUnit: unit,
-                      anchorAt: this.anchorAt,
-                      ...(unit !== 'hour' ? { time } : {}),
-                      ...(unit === 'week' ? { weekdays: [...this.days.period].sort() } : {}),
-                      ...(unit === 'month' || unit === 'year'
-                          ? { days: [...this.calendar.dates].sort((a, b) => a - b) }
-                          : {}),
-                      ...(unit === 'year' ? { months: [...this.calendar.months].sort((a, b) => a - b) } : {})
-                  };
+            if (legacy)
+                return {
+                    mode: 'interval',
+                    intervalHours: value,
+                    anchorAt: this.anchorAt,
+                    weekdays: [...this.days.interval].sort()
+                };
+
+            const originalElapsedInterval =
+                this.originalRecurrence?.mode === 'interval' &&
+                this.originalRecurrence.intervalUnit !== undefined &&
+                this.originalRecurrence.time === undefined;
+            const preserveElapsedInterval =
+                originalElapsedInterval && !this.executionTimeEdited && !this.calendarSelectionEdited;
+            const recurrence: TodoRecurrence = {
+                mode: 'interval',
+                intervalValue: value,
+                intervalUnit: unit,
+                anchorAt: this.anchorAt
+            };
+            if (unit !== 'hour' && !preserveElapsedInterval) recurrence.time = time;
+
+            if (preserveElapsedInterval) {
+                if (this.originalRecurrence?.weekdays !== undefined || this.weekdaysEdited)
+                    recurrence.weekdays = [...this.days.period].sort();
+            } else if (unit === 'week') {
+                recurrence.weekdays = [...this.days.period].sort();
+            }
+            if (!preserveElapsedInterval && (unit === 'month' || unit === 'year'))
+                recurrence.days = [...this.calendar.dates].sort((a, b) => a - b);
+            if (!preserveElapsedInterval && unit === 'year')
+                recurrence.months = [...this.calendar.months].sort((a, b) => a - b);
+            return recurrence;
         }
         if (this.period === 'once' || this.period === 'legacy') return;
         const time = `${this.value('#tm-cron-hour').padStart(2, '0')}:${this.value('#tm-cron-minute').padStart(2, '0')}`;

@@ -780,7 +780,7 @@ describe('automation period and interval picker', () => {
         });
     });
 
-    test('changing an old calendar interval timezone saves the displayed local execution time', async () => {
+    test('changing an old elapsed interval timezone keeps its elapsed execution rule', async () => {
         const trigger = {
             type: 'cron',
             cronExpression: '* * * * *',
@@ -804,9 +804,61 @@ describe('automation period and interval picker', () => {
                 mode: 'interval',
                 intervalValue: 2,
                 intervalUnit: 'day',
-                time: '09:37',
                 anchorAt: trigger.recurrence.anchorAt
             }
+        });
+        expect(saved.recurrence.time).toBeUndefined();
+    });
+
+    test('changing an old elapsed interval value preserves explicit weekday filters', async () => {
+        const trigger = {
+            type: 'cron',
+            cronExpression: '* * * * *',
+            timezone: 'UTC',
+            recurrence: {
+                mode: 'interval',
+                intervalValue: 2,
+                intervalUnit: 'week',
+                weekdays: [1, 3],
+                anchorAt: '2026-10-19T01:37:00.000Z'
+            }
+        };
+        const { widget, plan } = await editor(trigger);
+        change(widget, '#tm-frequency-hours', '3');
+        await widget._saveEdit(plan);
+        const saved = (call.mock.calls.find((args: any[]) => args[0] === 'updateGlobalTodo')?.[2] as any)?.trigger;
+        expect(saved.recurrence).toEqual({
+            mode: 'interval',
+            intervalValue: 3,
+            intervalUnit: 'week',
+            weekdays: [1, 3],
+            anchorAt: trigger.recurrence.anchorAt
+        });
+    });
+
+    test('preserves structured hourly interval weekday filters when editing its value', async () => {
+        const trigger = {
+            type: 'cron',
+            cronExpression: '* * * * *',
+            timezone: 'UTC',
+            recurrence: {
+                mode: 'interval',
+                intervalValue: 5,
+                intervalUnit: 'hour',
+                weekdays: [1, 3],
+                anchorAt: '2026-10-19T01:37:00.000Z'
+            }
+        };
+        const { widget, plan } = await editor(trigger);
+        change(widget, '#tm-frequency-hours', '6');
+        await widget._saveEdit(plan);
+        const saved = (call.mock.calls.find((args: any[]) => args[0] === 'updateGlobalTodo')?.[2] as any)?.trigger;
+        expect(saved.recurrence).toEqual({
+            mode: 'interval',
+            intervalValue: 6,
+            intervalUnit: 'hour',
+            weekdays: [1, 3],
+            anchorAt: trigger.recurrence.anchorAt
         });
     });
 

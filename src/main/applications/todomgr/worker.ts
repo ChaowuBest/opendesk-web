@@ -45,6 +45,59 @@ function validateTriggerRecurrence(trigger?: TodoTrigger): void {
         throw new Error(t('error.recurrenceNoNext'));
 }
 
+/**
+ * Return a deterministic representation of a trigger's scheduling fields.
+ * Recurrence selections are sets, so their order (or duplicate values) does not
+ * change the schedule. Other object keys are sorted recursively to avoid
+ * resetting a running job when an equivalent object was serialized differently.
+ */
+function stableScheduleString(value: unknown): string {
+    if (Array.isArray(value)) return `[${value.map((item) => stableScheduleString(item)).join(',')}]`;
+    if (value && typeof value === 'object') {
+        const entries = Object.entries(value as Record<string, unknown>)
+            .filter(([, entry]) => entry !== undefined)
+            .sort(([left], [right]) => left.localeCompare(right));
+        return `{${entries.map(([key, entry]) => `${JSON.stringify(key)}:${stableScheduleString(entry)}`).join(',')}}`;
+    }
+    return JSON.stringify(value);
+}
+
+function normalizeRecurrenceForComparison(recurrence: unknown): unknown {
+    if (!recurrence || typeof recurrence !== 'object' || Array.isArray(recurrence)) return recurrence;
+    const normalized = { ...(recurrence as Record<string, unknown>) };
+    for (const key of ['weekdays', 'days', 'months']) {
+        const values = normalized[key];
+        if (Array.isArray(values))
+            normalized[key] = [...new Set(values)].sort((left, right) => Number(left) - Number(right));
+    }
+    return normalized;
+}
+
+function getTriggerScheduleConfig(trigger?: TodoTrigger): string {
+    if (!trigger) return '';
+    switch (trigger.type) {
+        case 'scheduled':
+            // `timezone` is display-only for one-shot UTC timestamps.
+            return stableScheduleString({ triggerAt: trigger.triggerAt || '' });
+        case 'cron':
+            return stableScheduleString(
+                trigger.recurrence !== undefined
+                    ? {
+                          timezone: trigger.timezone ?? 'UTC',
+                          recurrence: normalizeRecurrenceForComparison(trigger.recurrence)
+                      }
+                    : {
+                          cronExpression: (trigger.cronExpression || '').trim().replace(/\s+/g, ' '),
+                          timezone: trigger.timezone ?? 'UTC'
+                      }
+            );
+        case 'event':
+            return stableScheduleString({ bundleName: trigger.bundleName || '', eventName: trigger.eventName || '' });
+        default:
+            return '';
+    }
+}
+
 type GlobalTodoUpdatePayload = Omit<Partial<GlobalTodo>, 'workspace' | 'deliver'> & {
     removeTrigger?: boolean;
     deliver?: Participant | null;
@@ -207,8 +260,16 @@ export default class TodoMgrWorker extends BaseWorker {
         }
 
         const oldTrigger = this.globalTodos[idx].trigger;
-        const oldLastTriggered = this.globalTodos[idx].last_triggered_at;
+        const oldEnabled = this.globalTodos[idx].enabled;
         if (!removeTrigger) {
+            const trigger = todoUpdates.trigger;
+            if ((trigger?.type === 'cron' || trigger?.type === 'scheduled') && trigger.timezone === undefined) {
+                const timezone =
+                    oldTrigger?.type === 'cron' || oldTrigger?.type === 'scheduled'
+                        ? oldTrigger.timezone
+                        : getSystemTimezone();
+                if (timezone !== undefined) todoUpdates.trigger = { ...trigger, timezone };
+            }
             validateTriggerTimezone(todoUpdates.trigger);
             validateTriggerRecurrence(todoUpdates.trigger);
         }
@@ -238,32 +299,21 @@ export default class TodoMgrWorker extends BaseWorker {
             delete this.globalTodos[idx].model;
         }
 
-        // 检测触发器是否发生了变更
-        const triggerChanged = 'trigger' in todoUpdates && !removeTrigger;
-        if (triggerChanged) {
-            const newTriggerObj = this.globalTodos[idx].trigger;
-            const oldType = oldTrigger?.type;
-            const newType = newTriggerObj?.type;
-
-            const getTriggerConfig = (t: any): string => {
-                if (!t) return '';
-                switch (t.type) {
-                    case 'scheduled':
-                        return t.triggerAt || '';
-                    case 'cron':
-                        return JSON.stringify([t.cronExpression || '', t.timezone ?? 'UTC', t.recurrence]);
-                    case 'event':
-                        return `${t.bundleName || ''}:${t.eventName || ''}`;
-                    default:
-                        return '';
-                }
-            };
-            const oldConfig = getTriggerConfig(oldTrigger);
-            const newConfig = getTriggerConfig(newTriggerObj);
-
-            if (oldType !== newType || oldConfig !== newConfig) {
+        // 检测触发器是否发生了变更。等价的 recurrence 选择（例如数组重排）不应
+        // 清除执行标记，也不应重启 Croner 作业。
+        const triggerUpdated = 'trigger' in todoUpdates && !removeTrigger;
+        const oldType = oldTrigger?.type;
+        const newTrigger = this.globalTodos[idx].trigger;
+        const newType = newTrigger?.type;
+        const oldScheduleConfig = getTriggerScheduleConfig(oldTrigger);
+        const newScheduleConfig = getTriggerScheduleConfig(newTrigger);
+        const triggerScheduleChanged = oldType !== newType || oldScheduleConfig !== newScheduleConfig;
+        const enabledChanged =
+            'enabled' in todoUpdates && (oldEnabled !== false) !== (this.globalTodos[idx].enabled !== false);
+        if (triggerUpdated) {
+            if (triggerScheduleChanged) {
                 logger.info(
-                    `[todomgr] 触发器已变更 [${id}]: ${oldType}(${oldConfig}) -> ${newType}(${newConfig}), 重置触发状态`
+                    `[todomgr] 触发器已变更 [${id}]: ${oldType}(${oldScheduleConfig}) -> ${newType}(${newScheduleConfig}), 重置触发状态`
                 );
                 delete this.globalTodos[idx].last_triggered_at;
                 delete this.globalTodos[idx].completed_at;
@@ -272,15 +322,13 @@ export default class TodoMgrWorker extends BaseWorker {
                     this.globalTodos[idx].enabled = true;
                 }
             } else {
-                logger.info(`[todomgr] 触发器配置未变 [${id}]: ${newType}(${newConfig})`);
+                logger.info(`[todomgr] 触发器配置未变 [${id}]: ${newType}(${newScheduleConfig})`);
             }
         }
 
         await this.saveGlobalTodos();
 
         // 处理触发器变更
-        const newTrigger = this.globalTodos[idx].trigger;
-
         // 如果移除了触发器或触发器类型改变，停止旧的 cron 任务
         if (oldTrigger?.type === 'cron' && oldTrigger.type !== newTrigger?.type) {
             this.stopCronJob(id);
@@ -290,13 +338,13 @@ export default class TodoMgrWorker extends BaseWorker {
         if (newTrigger?.type === 'cron') {
             if (this.globalTodos[idx].enabled === false) {
                 this.stopCronJob(id);
-            } else {
+            } else if (triggerScheduleChanged || enabledChanged) {
                 this.startCronJob(this.globalTodos[idx]);
             }
         }
 
         // 触发器变更后，如果是 scheduled 类型，立即检查一次以确保新的时间生效
-        if (triggerChanged && newTrigger?.type === 'scheduled') {
+        if (triggerUpdated && triggerScheduleChanged && newTrigger?.type === 'scheduled') {
             const todo = this.globalTodos[idx];
             logger.info(
                 `[todomgr] scheduled 触发器变更后立即检查 [${id}]: status=${todo.completed_at ? 'completed' : 'pending'}, last_triggered=${todo.last_triggered_at}, triggerAt=${(todo.trigger as any)?.triggerAt}`
@@ -392,6 +440,10 @@ export default class TodoMgrWorker extends BaseWorker {
                 logger.error(`[todomgr] 无效周期规则 [${todo.id}]，跳过启动`);
                 return;
             }
+            // Retain the intended run across delayed wakes; a resumed job coalesces missed runs into one.
+            let nextRecurrenceRun = recurrence
+                ? getNextTodoRecurrenceRuns(recurrence, todo.trigger.timezone ?? 'UTC', 1)[0]
+                : undefined;
             // Calendar rules and elapsed intervals share a UTC minute wake;
             // selected timezone and cadence are checked before any state write.
             const cronExpression = recurrence ? '* * * * *' : todo.trigger.cronExpression;
@@ -414,7 +466,17 @@ export default class TodoMgrWorker extends BaseWorker {
                     const now = new Date();
                     if (currentTodo.trigger?.type !== 'cron') return;
                     if (currentTodo.trigger.recurrence !== undefined) {
+                        const due = nextRecurrenceRun !== undefined && nextRecurrenceRun.getTime() <= now.getTime();
+                        if (due) {
+                            nextRecurrenceRun = getNextTodoRecurrenceRuns(
+                                currentTodo.trigger.recurrence,
+                                currentTodo.trigger.timezone ?? 'UTC',
+                                1,
+                                now
+                            )[0];
+                        }
                         if (
+                            !due &&
                             !matchesTodoRecurrence(
                                 currentTodo.trigger.recurrence,
                                 now,

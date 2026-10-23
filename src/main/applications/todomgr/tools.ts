@@ -19,7 +19,7 @@ import type { TaskState } from '../../aikernel/states/tasks';
 import { escapeHtml } from '../../../common/utils/escape.js';
 import { t } from './locale/index.js';
 import { type TodoMgrApplication } from './app';
-import { describeLegacyRecurrence, describeTodoRecurrence } from './recurrence-description.js';
+import { describeLegacyRecurrence, describeTodoRecurrence } from '../../../common/utils/recurrence-description.js';
 import { getRecurrenceValidationMessage } from './recurrence-validation.js';
 import chalk from 'chalk';
 import path from 'path';

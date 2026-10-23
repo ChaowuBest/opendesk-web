@@ -1,4 +1,4 @@
-import { afterEach, beforeAll, describe, expect, jest, test } from '@jest/globals';
+import { afterEach, beforeAll, beforeEach, describe, expect, jest, test } from '@jest/globals';
 import { parseHTML } from 'linkedom';
 
 describe('automation task cascading model picker', () => {
@@ -34,6 +34,11 @@ describe('automation task cascading model picker', () => {
         WidgetClass = window.customElements.get('todomgr-entry-widget')!;
     });
 
+    beforeEach(() => {
+        delete (window as any).applicationAPI;
+        delete (window as any).settingAPI;
+    });
+
     afterEach(() => {
         for (const widget of widgets.splice(0)) {
             widget.disconnectedCallback();
@@ -46,16 +51,29 @@ describe('automation task cascading model picker', () => {
         const widget = new WidgetClass() as any;
         widget._applyLocaleSetting({ locale: 'zh-CN' });
         widget._chatModels = [
-            { alias: 'deepseek', provider_name: 'DeepSeek', model_name: 'deepseek-chat' },
-            { alias: 'fast-model', provider_name: 'OpenAI', model_name: 'gpt-fast' },
-            { alias: 'all-efforts', provider_name: 'OpenAI', model_name: 'gpt-reasoning' }
+            {
+                alias: 'deepseek',
+                provider_name: 'DeepSeek',
+                model_name: 'deepseek-chat',
+                vision: false,
+                reasoningEfforts: ['', 'none', 'low', 'high']
+            },
+            {
+                alias: 'fast-model',
+                provider_name: 'OpenAI',
+                model_name: 'gpt-fast',
+                vision: false,
+                reasoningEfforts: ['', 'none', 'low']
+            },
+            {
+                alias: 'all-efforts',
+                provider_name: 'OpenAI',
+                model_name: 'gpt-reasoning',
+                vision: false,
+                reasoningEfforts: ['', 'none', 'low', 'medium', 'high', 'max']
+            }
         ];
         widget._defaultModelAlias = 'fast-model';
-        widget._modelEffortSupport = {
-            deepseek: ['', 'none', 'low', 'high'],
-            'fast-model': ['', 'none', 'low'],
-            'all-efforts': ['', 'none', 'low', 'medium', 'high', 'max']
-        };
         const plan = { model, reasoningEffort };
         widget.innerHTML = `${widget._renderModelPicker(plan)}<button id="outside-picker">Outside</button>`;
         widget._bindModelPicker(plan);
@@ -92,9 +110,108 @@ describe('automation task cascading model picker', () => {
             .map((option: any) => option.dataset.modelAlias);
     }
 
+    function renderPicker(widget: any, model = '', reasoningEffort = '') {
+        const plan = { model, reasoningEffort };
+        widget.innerHTML = `${widget._renderModelPicker(plan)}<button id="outside-picker">Outside</button>`;
+        widget._bindModelPicker(plan);
+    }
+
+    test('one model catalog request provides default-model vision and supported efforts', async () => {
+        const widget = widgetFor('', '');
+        const catalog = {
+            default_model: 'catalog-model',
+            models: [
+                {
+                    alias: 'catalog-model',
+                    provider_name: 'Catalog Provider',
+                    model_name: 'catalog-reasoning',
+                    vision: true,
+                    reasoningEfforts: ['', 'low']
+                }
+            ]
+        };
+        const callMainWorld = jest.fn(async () => catalog);
+        const loadSettingObject = jest.fn(async () => ({}));
+        const checkReasoningEfforts = jest.fn(async () => ({}));
+        const checkVisionSupport = jest.fn(async () => ({}));
+        (window as any).applicationAPI = { callMainWorld };
+        (window as any).settingAPI = { loadSettingObject, checkReasoningEfforts, checkVisionSupport };
+
+        await widget._loadChatModels();
+        renderPicker(widget);
+        open(widget);
+        preview(widget, '', 'click');
+
+        expect(effortValues(widget)).toEqual(['', 'low']);
+        expect(element(widget, '#tm-edit-model-summary .agent-icon-tile.model-vision')).not.toBeNull();
+        expect(element(widget, '[data-model-alias="catalog-model"] .model-vision')).not.toBeNull();
+        expect(callMainWorld).toHaveBeenCalledTimes(1);
+        expect(callMainWorld).toHaveBeenCalledWith('getChatModelsForUI');
+        expect(loadSettingObject).not.toHaveBeenCalled();
+        expect(checkReasoningEfforts).not.toHaveBeenCalled();
+        expect(checkVisionSupport).not.toHaveBeenCalled();
+    });
+
+    test('catalog failure clears stale models and never falls back to full settings or capability requests', async () => {
+        const widget = widgetFor();
+        widget._chatModels.find((model: any) => model.alias === 'fast-model').vision = true;
+        const callMainWorld = jest.fn(async () => {
+            throw new Error('Catalog unavailable');
+        });
+        const loadSettingObject = jest.fn(async () => ({
+            default_model: 'fallback-model',
+            models: [{ alias: 'fallback-model', provider_name: 'Fallback', model_name: 'fallback-chat' }]
+        }));
+        const checkReasoningEfforts = jest.fn(async () => ({}));
+        const checkVisionSupport = jest.fn(async () => ({}));
+        (window as any).applicationAPI = { callMainWorld };
+        (window as any).settingAPI = { loadSettingObject, checkReasoningEfforts, checkVisionSupport };
+
+        await widget._loadChatModels();
+        renderPicker(widget);
+        open(widget);
+
+        expect(visibleModelAliases(widget)).toEqual(['']);
+        expect(widget._getModelDetail('')).toBe('当前未配置默认模型');
+        expect(widget.querySelector('#tm-edit-model-summary .model-vision')).toBeNull();
+        expect(callMainWorld).toHaveBeenCalledTimes(1);
+        expect(loadSettingObject).not.toHaveBeenCalled();
+        expect(checkReasoningEfforts).not.toHaveBeenCalled();
+        expect(checkVisionSupport).not.toHaveBeenCalled();
+    });
+
+    test('loading reduced model capabilities preserves a saved unsupported max effort until selection changes', async () => {
+        const widget = widgetFor('deepseek', 'max');
+        (window as any).applicationAPI = {
+            callMainWorld: jest.fn(async () => ({
+                default_model: 'deepseek',
+                models: [
+                    {
+                        alias: 'deepseek',
+                        provider_name: 'DeepSeek',
+                        model_name: 'deepseek-chat',
+                        vision: false,
+                        reasoningEfforts: ['', 'low']
+                    }
+                ]
+            }))
+        };
+
+        await widget._loadChatModels();
+        renderPicker(widget, 'deepseek', 'max');
+        open(widget);
+        preview(widget, 'deepseek', 'click');
+
+        expect(effortValues(widget)).toEqual(['', 'low']);
+        expect(element(widget, '#tm-edit-model-picker').dataset.selectedEffort).toBe('max');
+        element(widget, '#outside-picker').click();
+        expect(element(widget, '#tm-edit-model-picker').dataset.selectedEffort).toBe('max');
+        expect(element(widget, '#tm-edit-model-summary .agent-effort-icon').title).toBe('推理最大化');
+    });
+
     test.each(['deepseek', ''])('default effort only displays the model information for alias "%s"', (alias) => {
         const widget = widgetFor(alias, '');
-        widget._modelVisionSupport = { deepseek: true, 'fast-model': true };
+        for (const model of widget._chatModels) model.vision = true;
         element(widget, '#tm-edit-model-summary').innerHTML = widget._renderModelSummary(alias, '');
         const summary = element(widget, '#tm-edit-model-summary');
         expect(summary.textContent.trim()).toBe(alias || '跟随全局默认模型');
@@ -301,7 +418,10 @@ describe('automation task cascading model picker', () => {
         });
     });
 
-    test('saving the editor sends the model and effort chosen together in the submenu', async () => {
+    test.each([
+        ['commits the submenu selection', 'high', 'fast-model', 'low'],
+        ['preserves a saved unsupported max effort', 'max', 'deepseek', 'max']
+    ])('saving the editor %s', async (_description, savedEffort, expectedModel, expectedEffort) => {
         const widget = widgetFor();
         const plan = {
             id: 'model-plan',
@@ -311,19 +431,19 @@ describe('automation task cascading model picker', () => {
             enabled: true,
             trigger: { type: 'cron', cronExpression: '0 9 * * *' },
             model: 'deepseek',
-            reasoningEffort: 'high',
+            reasoningEffort: savedEffort,
             created_at: '2026-01-01T00:00:00Z',
             updated_at: '2026-01-01T00:00:00Z'
         };
         const catalog = { models: widget._chatModels, default_model: widget._defaultModelAlias };
-        const support = widget._modelEffortSupport;
         const call = jest.fn(async (method: unknown) => (method === 'listGlobalTodos' ? [] : undefined));
         (window as any).applicationAPI = {
             call,
             callMainWorld: jest.fn(async (method: unknown) => (method === 'getChatModelsForUI' ? catalog : []))
         };
         (window as any).settingAPI = {
-            checkReasoningEfforts: jest.fn(async () => support)
+            checkReasoningEfforts: jest.fn(),
+            checkVisionSupport: jest.fn()
         };
         widget._cachedEvents = [];
         widget.globalTodos = [plan];
@@ -332,13 +452,19 @@ describe('automation task cascading model picker', () => {
         await widget._enterEditMode(plan);
         open(widget);
         preview(widget, 'fast-model', 'click');
-        element(widget, '#tm-edit-model-effort-list [data-effort-value="low"]').click();
+        if (expectedModel === 'fast-model') {
+            element(widget, '#tm-edit-model-effort-list [data-effort-value="low"]').click();
+        } else {
+            element(widget, '#tm-edit-model-trigger').click();
+        }
         await widget._saveEdit(plan);
 
         expect(call).toHaveBeenCalledWith(
             'updateGlobalTodo',
             plan.id,
-            expect.objectContaining({ model: 'fast-model', reasoningEffort: 'low', removeModel: false })
+            expect.objectContaining({ model: expectedModel, reasoningEffort: expectedEffort, removeModel: false })
         );
+        expect((window as any).settingAPI.checkReasoningEfforts).not.toHaveBeenCalled();
+        expect((window as any).settingAPI.checkVisionSupport).not.toHaveBeenCalled();
     });
 });

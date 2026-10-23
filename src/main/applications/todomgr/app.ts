@@ -34,9 +34,14 @@ import { buildTriggerMessage } from './trigger.js';
 import { resolveTodoWorkspace } from './workspace.js';
 import { logger } from '../../utils/logger.js';
 import { Setting } from '../../utils/setting.js';
+import {
+    isReasoningEffortSupported,
+    resolveModelReasoningEfforts,
+    resolveModelVisionSupport
+} from '../../utils/model-context.js';
 import chalk from 'chalk';
 import type { Participant } from '../../plugins/types.js';
-import type { TodoWorkspaceConfig } from './common.js';
+import type { TodoChatModelCatalog, TodoWorkspaceConfig } from './common.js';
 import type { ReasoningEffort } from '../../aikernel/types/reasoning.js';
 
 export class TodoMgrApplication extends BaseApplication {
@@ -154,27 +159,23 @@ export class TodoMgrApplication extends BaseApplication {
     /**
      * 供编辑页使用：返回不包含凭据的聊天模型目录。
      */
-    getChatModelsForUI(): {
-        default_model: string;
-        models: { alias: string; provider_name: string; model_name: string; vision?: boolean }[];
-    } {
+    getChatModelsForUI(): TodoChatModelCatalog {
         const data = Setting.getInstance().getData();
         const seen = new Set<string>();
-        const models: { alias: string; provider_name: string; model_name: string; vision?: boolean }[] = [];
+        const catalog: TodoChatModelCatalog = { default_model: data.default_model || '', models: [] };
         for (const model of [...(data.models || []), ...(data.builtin_models || [])]) {
             if (model.model_type === 'embedding' || !model.alias || seen.has(model.alias)) continue;
             seen.add(model.alias);
-            models.push({
+            const modelName = model.model_name || model.alias;
+            catalog.models.push({
                 alias: model.alias,
                 provider_name: model.provider_name || '',
-                model_name: model.model_name || model.alias,
-                vision: model.vision
+                model_name: modelName,
+                vision: resolveModelVisionSupport({ model_name: modelName, vision: model.vision }) ?? false,
+                reasoningEfforts: resolveModelReasoningEfforts({ model_name: modelName })
             });
         }
-        return {
-            default_model: data.default_model || '',
-            models
-        };
+        return catalog;
     }
 
     /**
@@ -209,16 +210,34 @@ export class TodoMgrApplication extends BaseApplication {
             // 有 deliver 时使用 deliver 作为 origin，投递回复到对应 channel
             const origin = deliver || ({ type: 'automation' } as any);
             const mainAgent = AgentRegistry.getMainAgent();
-            const modelIsValid = !model || !!Setting.getInstance().getModelInstance(model, 'chat');
+            const setting = Setting.getInstance();
+            // Resolve the concrete model once so the alias check and reasoning capability
+            // check use the same snapshot (the settings can be changed while a trigger runs).
+            const modelInstance = model
+                ? setting.getModelInstance(model, 'chat')
+                : (setting.getDefaultModelInstance?.() ?? null);
+            const modelIsValid = !model || !!modelInstance;
             if (model && !modelIsValid) {
                 logger.warn(`触发器任务 ${todoId} 指定模型不可用，回退到当前全局默认模型: ${model}`);
+            }
+            let effectiveReasoningEffort = modelIsValid ? reasoningEffort : undefined;
+            if (
+                modelIsValid &&
+                modelInstance?.model_name &&
+                reasoningEffort !== undefined &&
+                !isReasoningEffortSupported(modelInstance.model_name, reasoningEffort)
+            ) {
+                logger.warn(
+                    `触发器任务 ${todoId} 指定模型 ${modelInstance.model_name} 不支持推理档位 ${reasoningEffort}，回退到模型默认档位`
+                );
+                effectiveReasoningEffort = undefined;
             }
             const task = await taskManager.dispatchPromptToAgent(mainAgent, undefined, prompt, {
                 taskName: todoTitle.trim() ? todoTitle : undefined,
                 workspace: resolvedWorkspace,
                 origin,
                 model: modelIsValid ? model : undefined,
-                reasoningEffort: modelIsValid ? reasoningEffort : undefined
+                reasoningEffort: effectiveReasoningEffort
             });
 
             if (deliver) {

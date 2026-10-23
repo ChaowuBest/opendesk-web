@@ -26,8 +26,9 @@ import {
     isValidTimezone
 } from '../../../../common/utils/timezone.js';
 import type { TodoRecurrence } from '../../../../common/utils/todo-recurrence.js';
-import { describeLegacyRecurrence, describeTodoRecurrence } from '../recurrence-description.js';
+import { describeLegacyRecurrence, describeTodoRecurrence } from '../../../../common/utils/recurrence-description.js';
 import { TimeSchedulePicker, TIME_SCHEDULE_CSS } from './time-schedule-picker.js';
+import type { TodoChatModelCatalog, TodoChatModelSummary } from '../common.js';
 
 type Translator = ReturnType<typeof createTranslatorForTodoMgr>;
 
@@ -68,13 +69,6 @@ interface AppEvent {
     appName: string;
     eventName: string;
     eventDescription: string;
-}
-
-interface ChatModelSummary {
-    alias: string;
-    provider_name: string;
-    model_name: string;
-    vision?: boolean;
 }
 
 type TriggerType = 'scheduled' | 'cron' | 'event';
@@ -756,13 +750,6 @@ html[data-theme='dark'] .tm-model-trigger {
     margin-bottom: 8px;
     flex-wrap: wrap;
 }
-.tm-cron-row label {
-    font-size: var(--fs-md);
-    color: #3C3C43;
-    font-weight: 500;
-    white-space: nowrap;
-    min-width: 45px;
-}
 .tm-cron-select {
     padding: 6px 10px;
     border: 1.5px solid #E5E5EA;
@@ -784,63 +771,6 @@ html[data-theme='dark'] .tm-model-trigger {
     color: #3C3C43;
     font-family: 'Maple Mono', 'Cascadia Code', 'SF Mono', monospace;
 }
-.tm-cron-dow-grid {
-    display: flex;
-    gap: 4px;
-    flex-wrap: wrap;
-}
-.tm-cron-dow-btn {
-    width: 32px;
-    height: 28px;
-    border-radius: 7px;
-    border: 1.5px solid #E5E5EA;
-    background: #fff;
-    color: #3C3C43;
-    font-size: var(--fs-md);
-    font-weight: 500;
-    cursor: pointer;
-    transition: all 0.15s;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-}
-.tm-cron-dow-btn:hover { border-color: #3B82F6; }
-.tm-cron-dow-btn.active {
-    background: #3B82F6;
-    color: #fff;
-    border-color: #3B82F6;
-}
-.tm-cron-custom-area {
-    margin-top: 8px;
-}
-.tm-cron-custom-input {
-    width: 100%;
-    padding: 7px 10px;
-    border: 1.5px solid #E5E5EA;
-    border-radius: 8px;
-    font-size: var(--fs-md);
-    font-family: 'Maple Mono', 'SF Mono', 'Menlo', 'Consolas', monospace;
-    color: #1d1d1f;
-    background: #fff;
-    outline: none;
-    box-sizing: border-box;
-    transition: border-color 0.15s;
-}
-.tm-cron-custom-input:focus { border-color: #3B82F6; }
-.tm-cron-custom-input.tm-input-error { border-color: #FF3B30; }
-.tm-cron-help-link {
-    display: inline-flex;
-    align-items: center;
-    gap: 3px;
-    font-size: var(--fs-sm);
-    color: #8E8E93;
-    margin-top: 6px;
-    text-decoration: none;
-    cursor: pointer;
-    transition: color 0.15s;
-}
-.tm-cron-help-link:hover { color: #3B82F6; }
-
 /* ---- Status indicator ---- */
 .tm-status-dot {
     width: 7px;
@@ -1216,10 +1146,8 @@ class TodoMgrEntryWidget extends AgentOperableHTMLElement {
 
     private _cachedEvents: AppEvent[] | null = null;
     private _templates: TodoTemplate[] = [];
-    private _chatModels: ChatModelSummary[] = [];
+    private _chatModels: TodoChatModelSummary[] = [];
     private _defaultModelAlias = '';
-    private _modelEffortSupport: Record<string, string[]> = {};
-    private _modelVisionSupport: Record<string, boolean> = {};
     private _modelPickerCleanup: (() => void) | null = null;
     private _contentResizeCleanup: (() => void) | null = null;
 
@@ -2097,64 +2025,22 @@ class TodoMgrEntryWidget extends AgentOperableHTMLElement {
 
     private async _loadChatModels(): Promise<void> {
         try {
-            let catalog: any;
-            try {
-                catalog = await window.applicationAPI.callMainWorld('getChatModelsForUI');
-            } catch {
-                const setting = await (window as any).settingAPI?.loadSettingObject?.();
-                const rawModels = [...(setting?.models || []), ...(setting?.builtin_models || [])];
-                catalog = {
-                    default_model: setting?.default_model || '',
-                    models: rawModels
-                        .filter((model: any) => model?.model_type !== 'embedding' && typeof model?.alias === 'string')
-                        .map((model: any) => ({
-                            alias: model.alias,
-                            provider_name: model.provider_name || '',
-                            model_name: model.model_name || model.alias,
-                            vision: model.vision
-                        }))
-                };
-            }
-
-            const seen = new Set<string>();
-            this._chatModels = (Array.isArray(catalog?.models) ? catalog.models : [])
-                .filter((model: any) => typeof model?.alias === 'string' && model.alias.length > 0)
-                .filter((model: any) => {
-                    if (seen.has(model.alias)) return false;
-                    seen.add(model.alias);
-                    return true;
-                })
-                .map((model: any) => ({
-                    alias: model.alias,
-                    provider_name: typeof model.provider_name === 'string' ? model.provider_name : '',
-                    model_name:
-                        typeof model.model_name === 'string' && model.model_name ? model.model_name : model.alias,
-                    vision: typeof model.vision === 'boolean' ? model.vision : undefined
-                }));
-            this._defaultModelAlias = typeof catalog?.default_model === 'string' ? catalog.default_model : '';
-
-            const settingApi = (window as any).settingAPI;
-            const [efforts, vision] = await Promise.all([
-                settingApi?.checkReasoningEfforts?.(this._chatModels).catch(() => ({})) ?? {},
-                settingApi?.checkVisionSupport?.(this._chatModels).catch(() => ({})) ?? {}
-            ]);
-            this._modelEffortSupport = efforts || {};
-            this._modelVisionSupport = vision || {};
+            const catalog: TodoChatModelCatalog = await window.applicationAPI.callMainWorld('getChatModelsForUI');
+            this._chatModels = catalog.models ?? [];
+            this._defaultModelAlias = catalog.default_model ?? '';
         } catch {
             this._chatModels = [];
             this._defaultModelAlias = '';
-            this._modelEffortSupport = {};
-            this._modelVisionSupport = {};
         }
     }
 
-    private _getModelByAlias(alias: string): ChatModelSummary | undefined {
+    private _getModelByAlias(alias: string): TodoChatModelSummary | undefined {
         return this._chatModels.find((model) => model.alias === alias);
     }
 
     private _getSupportedEffortValues(modelAlias: string): string[] {
         const allValues = REASONING_EFFORT_UI_OPTIONS.map((option) => option.value);
-        const supported = this._modelEffortSupport[modelAlias];
+        const supported = this._getModelByAlias(modelAlias)?.reasoningEfforts;
         if (!Array.isArray(supported) || supported.length === 0) return allValues;
         return allValues.filter((value) => supported.includes(value));
     }
@@ -2206,7 +2092,7 @@ class TodoMgrEntryWidget extends AgentOperableHTMLElement {
     }
 
     private _renderModelSummary(model: string, effort: string): string {
-        const hasVision = this._modelVisionSupport[model || this._defaultModelAlias] === true;
+        const hasVision = this._getModelByAlias(model || this._defaultModelAlias)?.vision === true;
         const effortIcon = effort
             ? `<span class="agent-effort-icon" title="${escapeHtml(this._getReasoningEffortLabel(effort))}" aria-hidden="true">${getEffortIconSVG(effort)}</span>`
             : '';
@@ -2328,7 +2214,8 @@ class TodoMgrEntryWidget extends AgentOperableHTMLElement {
                 matches
                     .map((model) => {
                         const active = model.alias === selectedModel;
-                        const hasVision = this._modelVisionSupport[model.alias || this._defaultModelAlias] === true;
+                        const hasVision =
+                            this._getModelByAlias(model.alias || this._defaultModelAlias)?.vision === true;
                         return `<button class="ctx-item tm-model-picker-option${active ? ' active' : ''}" type="button" data-model-alias="${escapeHtml(model.alias)}" aria-haspopup="menu" aria-expanded="false" aria-controls="tm-edit-model-effort-submenu" title="${escapeHtml(this._getModelDetail(model.alias))}">
                     ${getModelIconTile(hasVision)}
                     <span class="ctx-label">${escapeHtml(this._getModelLabel(model.alias))}${hasVision ? `<span class="ctx-badge blue">${escapeHtml(this._t('renderer.todo.model.vision'))}</span>` : ''}</span>

@@ -11,7 +11,6 @@ import { zhCn as appZhCn } from '../../../locale/zh-cn.js';
 import { enUs as appEnUs } from '../../../locale/en-us.js';
 import { setRuntimeLocale } from '../../../locale/index.js';
 import { resolveRendererLocale } from '../../../renderer/locale.js';
-import { describeCron } from '../../../main/utils/cron.js';
 
 function keyDiff(a: Record<string, string>, b: Record<string, string>): string[] {
     const missingInB = Object.keys(a).filter((k) => !(k in b));
@@ -116,9 +115,6 @@ describe('todomgr locale', () => {
         expect(
             createTranslatorForTodoMgr({ locale: 'zh-CN' })('renderer.todo.delete.message', { title: 'X' })
         ).toContain('<b>X</b>');
-        expect(createTranslatorForTodoMgr({ locale: 'en-US' })('renderer.todo.cron.desc.monthlyDom', { day: 1 })).toBe(
-            'day 1 of month'
-        );
     });
 
     test('setting:changed payloads resolve to the same locale the widget rendered with', () => {
@@ -187,7 +183,7 @@ describe('todomgr locale', () => {
         const sources = [
             '../../../main/applications/todomgr/tools.ts',
             '../../../main/applications/todomgr/app.ts',
-            '../../../main/applications/todomgr/recurrence-description.ts',
+            '../../../common/utils/recurrence-description.ts',
             '../../../main/applications/todomgr/recurrence-validation.ts',
             '../../../main/applications/todomgr/trigger.ts',
             '../../../main/applications/todomgr/renderer/entry.ts',
@@ -227,30 +223,6 @@ describe('todomgr locale', () => {
                 expect(text).not.toContain('${');
             }
         }
-    });
-
-    test('describeCron weekly description keeps the 周 prefix in zh and works with en labels', () => {
-        // 回归：zh 模板曾为 '每${day}'，与裸星期名（'一'）拼出 '每一'；应为 '每周一'。
-        // 注意区分两个 everyDow 词条：renderer 版（renderer.todo.cron.desc.everyDow）
-        // 接收的 days 已含 '周' 前缀；主进程版（cron.desc.everyDow）接收裸名，模板自带 '周'。
-        expect(todoZhCn['cron.desc.everyDow']).toBe('每周${day}');
-        expect(todoZhCn['renderer.todo.cron.desc.everyDow']).toBe('每${days}');
-        expect(todoEnUs['cron.desc.everyDow']).toBe('Every ${day}');
-
-        // dow 可能因 UTC→本地换算跨日偏移，但单值星期恒为单值，只断言前缀形态
-        expect(describeCron('0 9 * * 1')).toMatch(/^每周[日一二三四五六]/);
-
-        const enLabels = {
-            dowNames: Array.from({ length: 7 }, (_, i) => todoEnUs[`cron.desc.dowNames.${i}`]),
-            everyDowTemplate: todoEnUs['cron.desc.everyDow'],
-            dowTemplate: todoEnUs['cron.desc.dow'],
-            monthlyDomTemplate: todoEnUs['cron.desc.monthlyDom'],
-            monthTemplate: todoEnUs['cron.desc.month'],
-            hourTemplate: todoEnUs['cron.desc.hourOnly'],
-            minuteTemplate: todoEnUs['cron.desc.minuteOnly'],
-            everyMinute: todoEnUs['cron.desc.everyMinute']
-        };
-        expect(describeCron('0 9 * * 1', enLabels)).toMatch(/^Every (Sun|Mon|Tue|Wed|Thu|Fri|Sat)/);
     });
 
     test('agent instruct follows the active locale (task system prompt language)', () => {

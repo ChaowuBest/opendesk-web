@@ -1,12 +1,9 @@
 import { jest } from '@jest/globals';
-import {
-    describeLegacyRecurrence,
-    describeTodoRecurrence
-} from '../../../main/applications/todomgr/recurrence-description.js';
+import { describeLegacyRecurrence, describeTodoRecurrence } from '../../../common/utils/recurrence-description.js';
 import { createTranslatorForTodoMgr } from '../../../main/applications/todomgr/locale/renderer.js';
 import { AddGlobalTodoTool, UpdateGlobalTodoTool } from '../../../main/applications/todomgr/tools.js';
 import { buildTriggerInfo } from '../../../main/applications/todomgr/trigger.js';
-import { setRuntimeLocale } from '../../../locale/index.js';
+import { setRuntimeLocale, t as coreT } from '../../../locale/index.js';
 import type { TodoRecurrence } from '../../../common/utils/todo-recurrence.js';
 
 describe('automation frequency descriptions and tool input', () => {
@@ -155,6 +152,19 @@ describe('automation frequency descriptions and tool input', () => {
             }
         }
     );
+
+    test.each(['zh-CN', 'en-US'] as const)('describes older intervals with the core translator in %s', (locale) => {
+        setRuntimeLocale(locale);
+        for (const intervalUnit of ['hour', 'day', 'week', 'month', 'year'] as const) {
+            const description = describeTodoRecurrence(
+                { mode: 'interval', intervalValue: 2, intervalUnit, anchorAt: '2026-10-23T02:15:00Z' },
+                coreT,
+                'Asia/Shanghai'
+            );
+            expect(description).toContain(coreT(`recurrence.desc.intervalUnit.${intervalUnit}`));
+            expect(description).not.toMatch(/\$\{|recurrence\.desc\./);
+        }
+    });
 
     test.each([AddGlobalTodoTool, UpdateGlobalTodoTool])(
         'tools serialize explicit calendar interval time and selections: %p',
