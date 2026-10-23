@@ -3,6 +3,8 @@ import {
     ADMIN_STATS_SERVER_URL,
     ADMIN_STATS_SERVER_URL_ENV,
     adminApiFetch,
+    fetchAdminFeedbackDetail,
+    fetchAdminFeedbackList,
     resolveAdminStatsServerUrl
 } from '../../../main/utils/admin-stats.js';
 
@@ -62,5 +64,37 @@ describe('adminApiFetch', () => {
             status: 0,
             message: 'ECONNREFUSED'
         });
+    });
+});
+
+describe('feedback list pagination and detail', () => {
+    const token = 'secret-token';
+    const server = 'https://stats.example';
+
+    function recordingFetch() {
+        const urls: string[] = [];
+        const fetchImpl = async (input: string | URL) => {
+            urls.push(String(input));
+            return new Response(JSON.stringify({ ok: true, items: [] }), { status: 200 });
+        };
+        return { urls, fetchImpl };
+    }
+
+    test('list builds type and offset query params', async () => {
+        const { urls, fetchImpl } = recordingFetch();
+        await fetchAdminFeedbackList(token, 20, server, { fetchImpl }, { type: 'bug', offset: 40 });
+        expect(urls[0]).toBe(`${server}/api/feedback/list?limit=20&type=bug&offset=40`);
+    });
+
+    test('list omits type and offset when not provided', async () => {
+        const { urls, fetchImpl } = recordingFetch();
+        await fetchAdminFeedbackList(token, 50, server, { fetchImpl });
+        expect(urls[0]).toBe(`${server}/api/feedback/list?limit=50`);
+    });
+
+    test('detail hits the detail endpoint by id', async () => {
+        const { urls, fetchImpl } = recordingFetch();
+        await fetchAdminFeedbackDetail(token, 7, server, { fetchImpl });
+        expect(urls[0]).toBe(`${server}/api/feedback/detail/7`);
     });
 });

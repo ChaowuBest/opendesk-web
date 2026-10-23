@@ -13,16 +13,29 @@ import path from 'node:path';
 import fsPromises from 'node:fs/promises';
 import { createRequire } from 'node:module';
 import { BaseApplication } from '../base.js';
+import { BaseToolset } from '../../aikernel/tool';
+import { Skill, SkillRegistry } from '../../aikernel/skill.js';
 import { getPlatform } from '../../../platforms/base.js';
 import { logger } from '../../utils/logger.js';
 import {
     fetchAdminDailyStats,
+    fetchAdminFeedbackDetail,
     fetchAdminFeedbackList,
     fetchAdminSummaryStats,
-    resolveAdminStatsServerUrl
+    resolveAdminStatsServerUrl,
+    type AdminFeedbackDetail,
+    type AdminFeedbackList
 } from '../../utils/admin-stats.js';
 import { AdminTokenStore } from '../../utils/admin-token.js';
 import { t } from './locale/index.js';
+import {
+    DownloadAttachmentTool,
+    GetBugDetailsTool,
+    GetRequirementDetailsTool,
+    ListRecentBugsTool,
+    ListRecentRequirementsTool
+} from './tools.js';
+import { ADMIN_CONSOLE_SKILL } from './skills.js';
 
 const require = createRequire(import.meta.url);
 
@@ -143,6 +156,7 @@ export class AdminConsoleApplication extends BaseApplication {
             } catch (persistError: any) {
                 logger.warn('persisting admin token failed', persistError);
             }
+            this.notifySkillRegistryChanged();
             return { status: 'ok' };
         } catch (error: any) {
             const status = error && typeof error === 'object' && 'status' in error ? error.status : 0;
@@ -159,6 +173,7 @@ export class AdminConsoleApplication extends BaseApplication {
             const store = this.getTokenStore();
             store.clear();
             store.clearSession();
+            this.notifySkillRegistryChanged();
             return { status: 'ok' };
         } catch (error: any) {
             logger.error('clearing admin token failed', error);
@@ -179,7 +194,7 @@ export class AdminConsoleApplication extends BaseApplication {
             if (error && typeof error === 'object' && 'status' in error) {
                 return {
                     status: 'error',
-                    code: error.status === 401 ? 'unauthorized' : 'server_error',
+                    code: error.status === 401 ? 'unauthorized' : error.status === 404 ? 'not_found' : 'server_error',
                     message: error.message
                 };
             }
@@ -204,6 +219,77 @@ export class AdminConsoleApplication extends BaseApplication {
         return this.withAdminApi((serverUrl, token) =>
             fetchAdminFeedbackList(token, limit, serverUrl, { fetchImpl: this.fetchImpl })
         );
+    }
+
+    /**
+     * 需求（feature）/ 缺陷（bug）分页列表：类型过滤与分页均由服务端完成，
+     * total 为过滤后的总条数，客户端翻页用 offset += limit 直到取满 total。
+     */
+    async listFeedbackByType(type: 'feature' | 'bug', limit: number, offset = 0): Promise<AdminResult> {
+        const count = Math.max(1, Math.min(Math.trunc(Number(limit)) || 20, 100));
+        const page = Math.max(0, Math.trunc(Number(offset)) || 0);
+        const result = await this.withAdminApi((serverUrl, token) =>
+            fetchAdminFeedbackList(token, count, serverUrl, { fetchImpl: this.fetchImpl }, { type, offset: page })
+        );
+        if (result.status !== 'ok') return result;
+        const data = result.data as AdminFeedbackList;
+        // 旧版服务端会忽略 type 参数返回混合类型，客户端兜底过滤保证结果始终与 type 一致
+        const items = (data.items ?? []).filter((item) => item.type === type);
+        return {
+            status: 'ok',
+            data: { type, count: items.length, total: data.total ?? items.length, offset: page, items }
+        };
+    }
+
+    /** 按 id 查询单条反馈详情：走服务端 detail 接口，不受列表分页范围限制 */
+    async getFeedbackDetail(type: 'feature' | 'bug', id: number): Promise<AdminResult> {
+        const result = await this.withAdminApi((serverUrl, token) =>
+            fetchAdminFeedbackDetail(token, id, serverUrl, { fetchImpl: this.fetchImpl })
+        );
+        if (result.status !== 'ok') return result;
+        const item = (result.data as AdminFeedbackDetail).item;
+        if (item.type !== type) {
+            return {
+                status: 'error',
+                code: 'type_mismatch',
+                message: `feedback #${id} is type '${item.type}', not '${type}'`
+            };
+        }
+        return { status: 'ok', data: item };
+    }
+
+    /** /admin 技能捆绑的工具集，agent 加载技能后才暴露给模型 */
+    private buildAgentToolset(): BaseToolset {
+        const toolset = new BaseToolset('adminconsole');
+        toolset.addTools(
+            new ListRecentRequirementsTool(this),
+            new GetRequirementDetailsTool(this),
+            new ListRecentBugsTool(this),
+            new GetBugDetailsTool(this),
+            new DownloadAttachmentTool(this)
+        );
+        return toolset;
+    }
+
+    /**
+     * 仅在登录态（最近一次授权服务器存在合法 admin token，令牌在 verifyToken 时已校验通过）时
+     * 注册 /admin 技能，未授权时不注册，避免 agent 触发必然 unauthorized 的调用。
+     * 授权状态变化时需调用 notifySkillRegistryChanged 失效技能列表缓存。
+     */
+    async getSkills(): Promise<Skill[]> {
+        if (!this.currentToken(this.currentServer())) return [];
+        const skill = Skill.parseMd(ADMIN_CONSOLE_SKILL);
+        skill.toolsets = [this.buildAgentToolset()];
+        return [skill];
+    }
+
+    /** 授权状态变化后失效技能注册表缓存，使 /admin 技能立即可见或消失 */
+    private notifySkillRegistryChanged(): void {
+        try {
+            SkillRegistry.getInstance().clearCache(this.bundleName);
+        } catch (error: any) {
+            logger.warn('clearing adminconsole skill cache failed', error);
+        }
     }
 
     /** 附件含敏感数据且下载地址需要令牌，故由 main 携带令牌下载后经系统保存对话框落盘，
@@ -242,6 +328,37 @@ export class AdminConsoleApplication extends BaseApplication {
             return { status: 'ok', data: { canceled: false, filePath: result.filePath } };
         } catch (error: any) {
             logger.error('downloading admin attachment failed', error);
+            return { status: 'error', message: error.message };
+        }
+    }
+
+    /**
+     * agent 工具的下载通道：直接落盘到调用方给定的绝对路径（写权限由工具权限审批把关），
+     * 与面向 renderer 面板的 downloadAttachment（交互式保存对话框）区分开。
+     */
+    async downloadAttachmentToFile(attachmentId: number, destPath: string): Promise<AdminResult> {
+        try {
+            const serverUrl = this.currentServer();
+            const token = this.currentToken(serverUrl);
+            if (!token) return { status: 'error', code: 'unauthorized', message: 'admin token is not authorized' };
+            const id = Number(attachmentId);
+            if (!Number.isInteger(id) || id <= 0) return { status: 'error', message: 'invalid attachment id' };
+            if (!destPath) return { status: 'error', message: 'dest path is required' };
+            const url = `${serverUrl.replace(/\/+$/, '')}/api/feedback/attachment/${id}`;
+            const response = await this.fetchImpl(url, {
+                method: 'GET',
+                headers: { Authorization: `Bearer ${token}` }
+            });
+            if (!response.ok) return { status: 'error', message: `HTTP ${response.status}` };
+            const buffer = Buffer.from(await response.arrayBuffer());
+            await fsPromises.mkdir(path.dirname(destPath), { recursive: true });
+            await fsPromises.writeFile(destPath, buffer);
+            return {
+                status: 'ok',
+                data: { filePath: destPath, size: buffer.length, contentType: response.headers.get('content-type') }
+            };
+        } catch (error: any) {
+            logger.error('downloading admin attachment to file failed', error);
             return { status: 'error', message: error.message };
         }
     }

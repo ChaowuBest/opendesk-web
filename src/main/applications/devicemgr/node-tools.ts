@@ -22,7 +22,8 @@ import { escapeHtml } from '../../../common/utils/escape.js';
 import { Card } from '../../tui/components/card.js';
 import { statusDisplay, truncText } from '../../tui/components/toolcall.js';
 import { Setting } from '../../utils/setting.js';
-import { getHomeDir, getTempDir } from '../../utils/temp.js';
+import { getTempDir } from '../../utils/temp.js';
+import { sanitizeLocalPath } from '../../utils/path.js';
 import type { DeviceMgrApplication } from './app.js';
 import type { NodeInvokeResult } from './common.js';
 import {
@@ -132,27 +133,6 @@ function payloadToText(payload: unknown): string {
 
 function getWorkingDirectory(taskState?: TaskState): string {
     return taskState?.getWorkspace() || Setting.getInstance().getEffectiveWorkspace();
-}
-
-function sanitizeLocalPath(inputPath: string | undefined, basePath?: string): string {
-    if (!inputPath || typeof inputPath !== 'string') return '';
-
-    let p = inputPath
-        .replace(/\x08/g, '\\b')
-        .replace(/\x09/g, '\\t')
-        .replace(/\x0A/g, '\\n')
-        .replace(/\x0C/g, '\\f')
-        .replace(/\x0D/g, '\\r');
-
-    if (p === '~' || p.startsWith('~/') || p.startsWith('~\\')) {
-        p = getHomeDir() + p.slice(1);
-    }
-    if (process.platform === 'win32') {
-        p = p.replace(/^\/([a-zA-Z])\//, (_, letter: string) => `${letter.toUpperCase()}:/`);
-    }
-
-    p = basePath ? path.resolve(basePath, p) : path.resolve(p);
-    return p.replace(/\\/g, '/').replace(/(?<!:)\/{2,}/g, '/');
 }
 
 function normalizeBase64ForCompare(value: string): string {

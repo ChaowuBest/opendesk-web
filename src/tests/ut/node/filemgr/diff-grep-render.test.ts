@@ -1175,3 +1175,52 @@ test('grepFiles - 非法 UTF-8 的 GBK 文件仍回退 gb18030 解码', async ()
         cleanup(dir);
     }
 });
+
+// ========== sanitizePath 改名遗漏回归测试 ==========
+// getDeclaredPermissions 与 executeCommand 曾引用已删除的 sanitizePath，
+// 导致 AI 调用 grepFiles 时抛 ReferenceError 使整个任务 turn 中断
+
+test('grepFiles - getDeclaredPermissions 不带 path 时返回 workspace 权限且不抛错', () => {
+    const dir = makeTempDir();
+    try {
+        const tool = new GrepFilesTool();
+        const mockTaskState = { getWorkspace: () => dir } as any;
+
+        // 不带 path：此前在此处抛 ReferenceError: sanitizePath is not defined
+        const perms = tool.getDeclaredPermissions({ pattern: 'X' } as any, mockTaskState);
+        assert.equal(perms.length, 1);
+        assert.equal(perms[0].resourceType, 'file');
+        assert.equal(perms[0].action, 'read');
+        assert.equal(perms[0].resourcePath, dir.replace(/\\/g, '/') + '/');
+
+        // 带 path：相对路径应基于 workspace 解析
+        const subDir = path.join(dir, 'sub');
+        fs.mkdirSync(subDir, { recursive: true });
+        const permsWithSub = tool.getDeclaredPermissions({ pattern: 'X', path: 'sub' } as any, mockTaskState);
+        assert.equal(permsWithSub.length, 1);
+        assert.equal(permsWithSub[0].resourcePath, subDir.replace(/\\/g, '/') + '/');
+    } finally {
+        cleanup(dir);
+    }
+});
+
+test('grepFiles - 不带 path 时基于 workspace 搜索且不返回搜索失败', async () => {
+    const dir = makeTempDir();
+    try {
+        fs.writeFileSync(path.join(dir, 'ws_marker.txt'), 'WORKSPACE_MARKER hit\n', 'utf8');
+
+        const tool = new GrepFilesTool();
+        const mockTaskState = { getWorkspace: () => dir } as any;
+
+        const result = await tool.executeCommand(
+            { pattern: 'WORKSPACE_MARKER', contextLines: 0, maxResults: 20 } as any,
+            mockTaskState
+        );
+
+        assert.match(result, /在 1 个文件中找到 1 处匹配/);
+        assert.match(result, /ws_marker\.txt/);
+        assert.doesNotMatch(result, /搜索失败/);
+    } finally {
+        cleanup(dir);
+    }
+});

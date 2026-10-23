@@ -22,8 +22,8 @@ import { detectEncoding, decodeBuffer, encodingDisplayName } from '../terminal/e
 import type { PermissionRequest } from '../../aikernel/security/permission';
 import type { TaskState } from '../../aikernel/states/tasks';
 import { Setting } from '../../utils/setting.js';
-import { getTempDir, getHomeDir } from '../../utils/temp.js';
-import { cleanPathInput } from '../../../utils/path.js';
+import { getTempDir } from '../../utils/temp.js';
+import { sanitizeLocalPath } from '../../utils/path.js';
 import { EXTRACT_TEXT_SUPPORTED_EXTENSIONS, isExtractTextSupported } from './parser/extract.js';
 import { ImageSourceError, isOnlineImageSource, loadImageSource } from './image.js';
 import { FILEMGR_SEARCH_MAX_PATHS } from './search/indexed.js';
@@ -49,58 +49,6 @@ export type FileReadValidationResult =
 
 function getWorkingDirectory(taskState?: TaskState): string {
     return taskState?.getWorkspace() || Setting.getInstance().getEffectiveWorkspace();
-}
-
-// ==================== 路径处理 ====================
-
-/**
- * 修复被 JSON 转义序列污染的 Windows 路径。
- * AI 模型在 JSON 中输出 Windows 路径时，\t \n \b \f \r 会被 JSON.parse 解释为
- * 控制字符（tab、换行、退格、换页、回车），导致路径损坏。
- * 此函数将这些控制字符还原为对应的反斜杠字母组合，然后统一使用正斜杠。
- */
-/**
- * 将 MSYS2/Git Bash 风格的路径（如 /c/Projects/...）转换为 Windows 原生路径（如 C:/Projects/...）。
- *
- * 在 Git Bash (MSYS2) 环境下，process.cwd() 返回 /c/Projects/... 形式的路径。
- * Node.js 的 path.resolve() 在 Windows 上会将 /c/Projects/... 解释为相对于当前驱动器
- * 根目录的路径，产生 C:\c\Projects\...（双重前缀），因此需要先转换。
- */
-function fromMsysPath(p: string): string {
-    if (process.platform !== 'win32') return p;
-    // 匹配 /c/、/d/ 等单字母驱动器前缀（MSYS2 风格）
-    return p.replace(/^\/([a-zA-Z])\//, (_, letter) => `${letter.toUpperCase()}:/`);
-}
-
-function sanitizePath(inputPath: string, basePath?: string): string {
-    if (!inputPath || typeof inputPath !== 'string') return '';
-
-    // 清理不可见的 Unicode 字符和首尾空白，避免 path.resolve 误判绝对路径为相对路径
-    let p = cleanPathInput(inputPath)
-        .replace(/\x08/g, '\\b')
-        .replace(/\x09/g, '\\t')
-        .replace(/\x0A/g, '\\n')
-        .replace(/\x0C/g, '\\f')
-        .replace(/\x0D/g, '\\r');
-
-    // 展开 ~ 为用户主目录
-    if (p === '~' || p.startsWith('~/') || p.startsWith('~\\')) {
-        p = getHomeDir() + p.slice(1);
-    }
-
-    // 将 MSYS2/Git Bash 风格路径转换为 Windows 原生路径，避免 path.resolve 产生双重前缀
-    p = fromMsysPath(p);
-
-    // 将相对路径解析为绝对路径，确保权限检查时能与工作空间规则正确匹配
-    p = basePath ? path.resolve(basePath, p) : path.resolve(p);
-
-    // 统一使用正斜杠（Node.js 在 Windows 上也接受正斜杠）
-    p = p.replace(/\\/g, '/');
-
-    // 清理连续多个斜杠（保留 UNC 路径 // 和协议前缀 ://）
-    p = p.replace(/(?<!:)\/{2,}/g, '/');
-
-    return p;
 }
 
 /**
@@ -889,7 +837,7 @@ export class ReadFileTool extends BaseTool<typeof readFileSchema> {
 
     getDeclaredPermissions(args: z.output<typeof readFileSchema>, taskState?: TaskState): PermissionRequest[] {
         const basePath = getWorkingDirectory(taskState);
-        const p = sanitizePath(args.file_path || '', basePath);
+        const p = sanitizeLocalPath(args.file_path || '', basePath);
         if (!p) return [];
         return [{ resourceType: 'file' as const, action: 'read' as const, resourcePath: p }];
     }
@@ -986,7 +934,7 @@ export class ReadFileTool extends BaseTool<typeof readFileSchema> {
 
     async executeCommand(args: z.output<typeof readFileSchema>, taskState?: TaskState): Promise<string> {
         const basePath = getWorkingDirectory(taskState);
-        const filePath = sanitizePath(args.file_path || '', basePath);
+        const filePath = sanitizeLocalPath(args.file_path || '', basePath);
         const { offset, limit } = args;
         const startLine = offset != null ? Math.max(1, offset) : 1;
 
@@ -1136,7 +1084,7 @@ function normalizeImageSource(source: string, taskState?: TaskState): string {
     if (/^[a-z][a-z\d+.-]*:/i.test(value) && !/^[a-z]:[\\/]/i.test(value)) {
         return value;
     }
-    return sanitizePath(value, getWorkingDirectory(taskState));
+    return sanitizeLocalPath(value, getWorkingDirectory(taskState));
 }
 
 function imageSourcePermission(source: string, taskState?: TaskState): PermissionRequest[] {
@@ -1484,7 +1432,7 @@ export class ExtractTextTool extends BaseTool<typeof extractTextSchema> {
 
     getDeclaredPermissions(args: z.output<typeof extractTextSchema>, taskState?: TaskState): PermissionRequest[] {
         const basePath = getWorkingDirectory(taskState);
-        const p = sanitizePath(args.file_path || '', basePath);
+        const p = sanitizeLocalPath(args.file_path || '', basePath);
         if (!p) return [];
         return [{ resourceType: 'file' as const, action: 'read' as const, resourcePath: p }];
     }
@@ -1571,7 +1519,7 @@ export class ExtractTextTool extends BaseTool<typeof extractTextSchema> {
 
     async executeCommand(args: z.output<typeof extractTextSchema>, taskState?: TaskState): Promise<string> {
         const basePath = getWorkingDirectory(taskState);
-        const filePath = sanitizePath(args.file_path || '', basePath);
+        const filePath = sanitizeLocalPath(args.file_path || '', basePath);
 
         if (!filePath) {
             throw new Error(t('filemgr.extractText.error.pathRequired'));
@@ -1730,7 +1678,7 @@ export class WriteFileTool extends BaseTool<typeof writeFileSchema> {
     }
 
     getDeclaredPermissions(args: z.output<typeof writeFileSchema>, taskState?: TaskState): PermissionRequest[] {
-        const p = sanitizePath(args.path, getWorkingDirectory(taskState));
+        const p = sanitizeLocalPath(args.path, getWorkingDirectory(taskState));
         if (!p) return [];
         return [{ resourceType: 'file', action: 'write', resourcePath: p }];
     }
@@ -1829,7 +1777,7 @@ export class WriteFileTool extends BaseTool<typeof writeFileSchema> {
     }
 
     async executeCommand(args: z.output<typeof writeFileSchema>, taskState?: TaskState): Promise<string> {
-        const filePath = sanitizePath(args.path, getWorkingDirectory(taskState));
+        const filePath = sanitizeLocalPath(args.path, getWorkingDirectory(taskState));
         const validation = validateFileWasReadForWriteIfEnabled(taskState, filePath);
         if (!validation.ok) {
             return validation.message;
@@ -1903,7 +1851,7 @@ export class EditFileTool extends BaseTool<typeof editFileSchema> {
     }
 
     getDeclaredPermissions(args: z.output<typeof editFileSchema>, taskState?: TaskState): PermissionRequest[] {
-        const p = sanitizePath(args.filePath, getWorkingDirectory(taskState));
+        const p = sanitizeLocalPath(args.filePath, getWorkingDirectory(taskState));
         if (!p) return [];
         return [
             { resourceType: 'file', action: 'read', resourcePath: p },
@@ -1994,7 +1942,7 @@ export class EditFileTool extends BaseTool<typeof editFileSchema> {
         taskState?: TaskState,
         toolCall?: ToolCall
     ): Promise<string> {
-        const filePath = sanitizePath(args.filePath, getWorkingDirectory(taskState));
+        const filePath = sanitizeLocalPath(args.filePath, getWorkingDirectory(taskState));
         const { oldString, newString, expectedReplacements = 1 } = args;
         const validation = validateFileWasReadForWriteIfEnabled(taskState, filePath);
         if (!validation.ok) {
@@ -2132,7 +2080,7 @@ export class SearchReplaceTool extends BaseTool<typeof searchReplaceSchema> {
     }
 
     getDeclaredPermissions(args: z.output<typeof searchReplaceSchema>, taskState?: TaskState): PermissionRequest[] {
-        const p = sanitizePath(args.filePath, getWorkingDirectory(taskState));
+        const p = sanitizeLocalPath(args.filePath, getWorkingDirectory(taskState));
         if (!p) return [];
         return [
             { resourceType: 'file', action: 'read', resourcePath: p },
@@ -2226,7 +2174,7 @@ export class SearchReplaceTool extends BaseTool<typeof searchReplaceSchema> {
         taskState?: TaskState,
         toolCall?: ToolCall
     ): Promise<string> {
-        const filePath = sanitizePath(args.filePath, getWorkingDirectory(taskState));
+        const filePath = sanitizeLocalPath(args.filePath, getWorkingDirectory(taskState));
         const { oldString, newString } = args;
         const validation = validateFileWasReadForWriteIfEnabled(taskState, filePath);
         if (!validation.ok) {
@@ -2467,7 +2415,7 @@ export class ApplyPatchTool extends BaseTool<typeof applyPatchSchema> {
         const permissions: PermissionRequest[] = [];
         const seen = new Set<string>();
         for (const op of ops) {
-            const p = sanitizePath(op.path, basePath);
+            const p = sanitizeLocalPath(op.path, basePath);
             if (!p) continue;
             if (op.type === 'update' || op.type === 'delete') {
                 const readKey = `read:${p}`;
@@ -2593,7 +2541,7 @@ export class ApplyPatchTool extends BaseTool<typeof applyPatchSchema> {
         const results: string[] = [];
 
         for (const op of operations) {
-            op.path = sanitizePath(op.path, basePath);
+            op.path = sanitizeLocalPath(op.path, basePath);
             try {
                 if (op.type === 'create') {
                     const dir = path.dirname(op.path);
@@ -2684,7 +2632,7 @@ export class GlobFilesTool extends BaseTool<typeof globSchema> {
 
     getDeclaredPermissions(args: z.output<typeof globSchema>, taskState?: TaskState): PermissionRequest[] {
         const basePath = getWorkingDirectory(taskState);
-        const searchPath = args.path ? sanitizePath(args.path, basePath) : sanitizePath(basePath);
+        const searchPath = args.path ? sanitizeLocalPath(args.path, basePath) : sanitizeLocalPath(basePath);
         if (!searchPath) return [];
         return [
             {
@@ -2776,7 +2724,7 @@ export class GlobFilesTool extends BaseTool<typeof globSchema> {
         }
 
         if (searchPath) {
-            searchPath = sanitizePath(searchPath, workingDir);
+            searchPath = sanitizeLocalPath(searchPath, workingDir);
         }
 
         // 自动为非递归模式添加 **/ 前缀
@@ -3347,7 +3295,7 @@ export class GrepFilesTool extends BaseTool<typeof grepSchema> {
 
     getDeclaredPermissions(args: z.output<typeof grepSchema>, taskState?: TaskState): PermissionRequest[] {
         const basePath = getWorkingDirectory(taskState);
-        const searchPath = args.path ? sanitizePath(args.path, basePath) : sanitizePath(basePath);
+        const searchPath = args.path ? sanitizeLocalPath(args.path, basePath) : sanitizeLocalPath(basePath);
         if (!searchPath) return [];
         return [
             {
@@ -3503,7 +3451,7 @@ export class GrepFilesTool extends BaseTool<typeof grepSchema> {
                 }
             }
 
-            const basePath = searchPath ? sanitizePath(searchPath, workingDir) : workingDir;
+            const basePath = searchPath ? sanitizeLocalPath(searchPath, workingDir) : workingDir;
             const globPattern = this.normalizeFilePattern(filePattern);
 
             const matches: GrepMatch[] = [];
