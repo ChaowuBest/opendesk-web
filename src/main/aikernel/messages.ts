@@ -22,7 +22,7 @@ import { fileLinkExtension, getRenderWorkspace } from '../utils/marked-file-link
 import { cjkAutolinkFix } from '../../common/markdown/cjk-autolink-fix.js';
 import { doubleTildeStrikethrough } from '../../common/markdown/double-tilde-strikethrough.js';
 import type { SupportedLocale } from '../../common/locale.js';
-import { getLocale } from '../../locale/index.js';
+import { getLocale, t } from '../../locale/index.js';
 import type {
     BaseAssistantMessage,
     ChatContextSnapshot,
@@ -696,12 +696,18 @@ export class ToolCall implements BaseChatToolCall {
         this.tool = tool;
     }
 
-    /** 解析工具的用户可见名称：优先使用工具实例（含自描述双语名），无实例（历史消息/孤儿调用）回退协议名。 */
+    /**
+     * 解析工具的用户可见名称：优先使用工具实例（含自描述双语名），无实例（历史消息/孤儿调用）回退协议名。
+     * 各层都解析不出非空名称时兜底到本地化占位文案——方法签名承诺返回 string，
+     * 若透传 undefined/null，渲染层的字符串处理（split/截断）会抛未捕获异常并导致 CLI FATAL 退出。
+     */
     getResolvedToolDisplayName(): string {
         if (this.tool !== undefined && typeof (this.tool as any).getResolvedDisplayName === 'function') {
-            return (this.tool as BaseTool<any>).getResolvedDisplayName(getLocale() as SupportedLocale);
+            const resolved = (this.tool as BaseTool<any>).getResolvedDisplayName(getLocale() as SupportedLocale);
+            if (typeof resolved === 'string' && resolved.trim().length > 0) return resolved;
         }
-        return this.tool_name;
+        if (typeof this.tool_name === 'string' && this.tool_name.trim().length > 0) return this.tool_name;
+        return t('toolcall.name.unknown');
     }
 
     requiresUserAttention(): boolean {
@@ -820,6 +826,11 @@ export class ToolCallMessagePart implements BaseToolCallMessagePart {
     push(toolcall: ToolCall) {
         const hasValidId = typeof toolcall.id === 'string' && toolcall.id.trim().length > 0;
         const hasValidIndex = typeof toolcall.index === 'number' && Number.isInteger(toolcall.index);
+        /** 新工具调用必须先声明 name；无名分片在语义上只能是已有调用的参数续传。 */
+        const hasDeclaredName =
+            typeof toolcall.tool_name === 'string' &&
+            toolcall.tool_name.trim().length > 0 &&
+            toolcall.tool_name !== 'unknown';
         let target = hasValidId ? this.toolcalls.find((tc) => tc.id === toolcall.id) : undefined;
         if (target === undefined && hasValidIndex) {
             for (let i = this.toolcalls.length - 1; i >= 0; i--) {
@@ -835,6 +846,12 @@ export class ToolCallMessagePart implements BaseToolCallMessagePart {
                 }
             }
         }
+        // 无 id、无 index、无 name 的分片只能是最新调用的参数续传：部分 OpenAI 兼容网关
+        // 只在首片带 index/id，续传参数分片三者皆无。若在此新建调用，会凭空产生一个
+        // tool_name 为空（且参数被劈开）的孤儿调用，进而让渲染层拿到 undefined 名称。
+        if (target === undefined && !hasValidId && !hasValidIndex && !hasDeclaredName && this.toolcalls.length > 0) {
+            target = this.toolcalls[this.toolcalls.length - 1];
+        }
         if (target === undefined) {
             this.toolcalls.push(toolcall);
         } else {
@@ -846,7 +863,7 @@ export class ToolCallMessagePart implements BaseToolCallMessagePart {
             if (hasValidId) {
                 target.id = toolcall.id;
             }
-            if (toolcall.tool_name && toolcall.tool_name !== 'unknown') {
+            if (hasDeclaredName) {
                 target.tool_name = toolcall.tool_name;
             }
         }

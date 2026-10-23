@@ -97,6 +97,21 @@ describe('ToolCall render-data contract', () => {
         expect((call.toRenderJSON() as Record<string, unknown>)['display_name']).toBe('plugin-opaqueOperation');
     });
 
+    test('never returns a non-string when the provider omits the tool name', () => {
+        // 分片工具调用可能缺 function.name；旧实现会透传 undefined，
+        // 导致渲染层 undefined.split 抛出未捕获异常并让 CLI 直接退出。
+        const call = new ToolCall(0, 'call-nameless', undefined as any, '{}');
+        expect(call.getResolvedToolDisplayName()).toBe('未命名工具');
+        expect((call.toRenderJSON() as Record<string, unknown>)['display_name']).toBe('未命名工具');
+    });
+
+    test('ignores a tool instance that resolves to an empty display name', () => {
+        const tool = new BaseTool('', 'desc', z.object({}), undefined, '   ');
+        const call = new ToolCall(0, 'call-blank-name', 'readFile', '{}');
+        call.setTool(tool);
+        expect(call.getResolvedToolDisplayName()).toBe('readFile');
+    });
+
     test('tool serialization keeps the display name for cross-boundary tool definitions', () => {
         const tool = new BaseTool('readFile', 'desc', z.object({}), undefined, {
             'zh-CN': '读取文件',

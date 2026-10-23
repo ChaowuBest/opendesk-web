@@ -1,7 +1,10 @@
 import { jest } from '@jest/globals';
-import { TUI, type Terminal } from '@earendil-works/pi-tui';
+import chalk from 'chalk';
+import { TUI, visibleWidth, type Terminal } from '@earendil-works/pi-tui';
 import { AgentInputArea, TaskStatusBar } from '../../../../main/tui/components/input';
 import { setRuntimeLocale } from '../../../../locale/index';
+
+const initialChalkLevel = chalk.level;
 
 function stripAnsi(value: string): string {
     return value.replace(/\x1b\[[0-9;]*m/g, '');
@@ -38,10 +41,12 @@ class TestTerminal implements Terminal {
 describe('TaskStatusBar', () => {
     beforeEach(() => {
         setRuntimeLocale('en-US');
+        chalk.level = 3;
     });
 
     afterEach(() => {
         setRuntimeLocale(null);
+        chalk.level = initialChalkLevel;
     });
 
     test('does not render the removed Ctrl+G shortcut hint', () => {
@@ -83,6 +88,50 @@ describe('TaskStatusBar', () => {
         statusBar.update({ outputDisplayLevel: 'verbose' });
 
         expect(stripAnsi(statusBar.render(120).join('\n'))).toContain('详细显示');
+    });
+
+    test('keeps the status bar background across the full width when the terminal is narrow', () => {
+        const statusBar = new TaskStatusBar();
+        statusBar.update({
+            elapsedMs: 4_152_000,
+            totalTokens: 476_682,
+            contextSize: 1_000_000,
+            modelName: 'deepseek-v4-pro',
+            modeDisplay: '⚡ Efficiency',
+            outputDisplayLevel: 'minimal',
+            workspace: '/storage/Users/currentUser/very-long-workspace-name',
+            taskName: 'Ollama hinter 端侧推理'
+        });
+
+        const width = 80;
+        const lines = statusBar.render(width);
+
+        expect(lines).toHaveLength(1);
+        // truncateToWidth 会插入 \x1b[0m 硬重置，导致后半段背景色丢失
+        expect(lines[0]).not.toContain('\x1b[0m');
+        // 状态栏必须铺满整行，背景才能覆盖到最右侧
+        expect(visibleWidth(lines[0])).toBe(width);
+        expect(stripAnsi(lines[0])).toContain('端侧推理');
+    });
+
+    test('pads the status bar to the full width when the terminal is extremely narrow', () => {
+        const statusBar = new TaskStatusBar();
+        statusBar.update({
+            elapsedMs: 4_152_000,
+            totalTokens: 476_682,
+            contextSize: 1_000_000,
+            modelName: 'deepseek-v4-pro',
+            modeDisplay: '⚡ Efficiency',
+            outputDisplayLevel: 'minimal',
+            workspace: '/storage/Users/currentUser',
+            taskName: '一个非常非常长的任务名称'
+        });
+
+        for (const width of [12, 20, 33]) {
+            const lines = statusBar.render(width);
+            expect(lines[0]).not.toContain('\x1b[0m');
+            expect(visibleWidth(lines[0])).toBe(width);
+        }
     });
 
     test('does not add vertical padding around the regular editor', () => {

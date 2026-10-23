@@ -23,7 +23,9 @@ export function truncText(str: string, maxWidth: number): string {
     return truncateToWidth(str, maxWidth, '…');
 }
 
-/** Resolve a tool-call status string into a styled CardStatus */
+/**
+ * Resolve a tool-call status string into a styled CardStatus
+ */
 export function statusDisplay(status: string): CardStatus {
     switch (status) {
         case 'pending':

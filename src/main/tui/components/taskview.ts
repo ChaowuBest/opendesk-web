@@ -664,7 +664,7 @@ function collectDoneToolStats(
             for (const toolCall of part.getToolCalls()) {
                 if (toolCall.status === 'pending' || toolCall.status === 'running') continue;
                 count += 1;
-                const name = compactMinimalToolName(toolCall.getResolvedToolDisplayName());
+                const name = compactMinimalToolName(getMinimalToolDisplayName(toolCall));
                 if (name) names.add(name);
             }
             continue;

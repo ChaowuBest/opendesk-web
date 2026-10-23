@@ -1245,6 +1245,7 @@ export const zhCn: Record<string, string> = {
     'toolcall.status.success': '完成',
     'toolcall.status.interrupted': '中断',
     'toolcall.status.error': '失败',
+    'toolcall.name.unknown': '未命名工具',
     'tool.validation.invalidArgs': '工具参数无效: ${details}',
     'tool.validation.receivedArgs': '收到字段: ${fields}',
     'tool.validation.reason.invalid_type': '类型不正确或缺少必要字段',

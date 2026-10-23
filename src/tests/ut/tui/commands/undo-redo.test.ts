@@ -100,6 +100,26 @@ describe('/undo and /redo commands', () => {
         expect(getUndoableUserMessages(task).map((entry) => entry.message)).toEqual([visible]);
     });
 
+    test('undo picker keeps every message preview when one message is extremely long', () => {
+        const { tui, task } = createTui();
+        addRound(task, 'first message');
+        addRound(task, `long message ${'x'.repeat(400)}`);
+        addRound(task, 'last message');
+
+        const overlay = new UndoOverlay(tui, task);
+        overlay.render(120);
+
+        const labels = (overlay as any).table.innerRows.map((row: any) => row.label);
+        expect(labels).toHaveLength(3);
+        for (const [index, label] of labels.entries()) {
+            // 每一行都必须带上内容列，而不是只剩序号
+            expect(label.replace(/\s+$/, '').length).toBeGreaterThan(2 + index.toString().length);
+        }
+        expect(labels[0]).toContain('first message');
+        expect(labels[2]).toContain('last message');
+        expect(labels[1]).toContain('long message');
+    });
+
     test('rewinding from the picker stores a redo snapshot and restores the selected message to input', async () => {
         const { tui, task } = createTui();
         addRound(task, 'first');
