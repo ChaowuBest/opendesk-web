@@ -59,6 +59,51 @@ export interface TaskStatusBarData {
     workspace?: string;
 }
 
+const statusBarSegmenter = new Intl.Segmenter(undefined, { granularity: 'grapheme' });
+
+/**
+ * 从左侧按可见宽度截断 ANSI 文本，超出部分用省略号代替。
+ *
+ * 这里刻意不用 pi-tui 的 `truncateToWidth`：它在截断处插入 `\x1b[0m` 硬重置，
+ * 会把外层 `chalk.bgHex(...)` 的背景色清掉，表现为窄终端下状态栏右侧背景消失。
+ * 本实现只保留原始 ANSI 颜色序列，不输出任何重置码。
+ */
+function clipAnsiToWidth(text: string, maxWidth: number, ellipsis: string): string {
+    if (maxWidth <= 0) return '';
+    if (visibleWidth(text) <= maxWidth) return text;
+
+    const ellipsisWidth = visibleWidth(ellipsis);
+    const withEllipsis = ellipsisWidth > 0 && ellipsisWidth < maxWidth;
+    const limit = withEllipsis ? maxWidth - ellipsisWidth : maxWidth;
+    const tail = withEllipsis ? ellipsis : '';
+
+    let result = '';
+    let width = 0;
+    let index = 0;
+    while (index < text.length && width < limit) {
+        if (text.charCodeAt(index) === 0x1b) {
+            const sgr = /^\x1b\[[0-9;]*m/.exec(text.slice(index));
+            if (sgr) {
+                result += sgr[0];
+                index += sgr[0].length;
+                continue;
+            }
+        }
+        let end = index;
+        while (end < text.length && text.charCodeAt(end) !== 0x1b) end++;
+        for (const { segment } of statusBarSegmenter.segment(text.slice(index, end))) {
+            const segmentWidth = visibleWidth(segment);
+            if (width + segmentWidth > limit) {
+                return result + tail;
+            }
+            result += segment;
+            width += segmentWidth;
+        }
+        index = end;
+    }
+    return result + tail;
+}
+
 /**
  * 任务级状态栏（TaskStatusBar）：灰色背景，仅显示当前任务相关的信息——
  * 执行计时、token 用量、上下文占比、当前模型。
@@ -234,37 +279,27 @@ export class TaskStatusBar implements Component {
         }
         // 任务名称区域最大宽度限制，比原来的快捷键提示稍宽
         const TASK_NAME_MAX = 36;
-        let displayName = rightText;
-        if (visibleWidth(rightText) > TASK_NAME_MAX) {
-            displayName = truncateToWidth(rightText, TASK_NAME_MAX - 1) + '…';
-        }
-        const rightHint = chalk.hex(colors.fgDim)(` ${displayName} `);
+        const dimEllipsis = chalk.hex(colors.fgDim)('…');
+        const displayName = clipAnsiToWidth(rightText, TASK_NAME_MAX, dimEllipsis);
+        let finalRight = chalk.hex(colors.fgDim)(` ${displayName} `);
+        let rightW = visibleWidth(finalRight);
 
-        let leftW = visibleWidth(leftContent);
-        let rightW = visibleWidth(rightHint);
-        let finalRight = rightHint;
-
-        // 当终端极窄时，右侧提示也需要截断
-        if (rightW > width - 2) {
-            finalRight = truncateToWidth(rightHint, Math.max(0, width - 2));
+        // 当终端极窄时，右侧任务名也需要截断
+        if (rightW > width) {
+            finalRight = clipAnsiToWidth(finalRight, width, dimEllipsis);
             rightW = visibleWidth(finalRight);
         }
 
-        const totalNeeded = leftW + 1 + rightW;
+        // 左侧内容优先截断，并为左右之间保留至少 1 列间隔。
+        // 这里必须避免使用会插入 \x1b[0m 的裸 truncateToWidth，
+        // 否则右侧区域会丢失状态栏背景色。
+        const maxLeftW = Math.max(0, width - rightW - 1);
+        const finalLeft = clipAnsiToWidth(leftContent, maxLeftW, dimEllipsis);
+        const leftW = visibleWidth(finalLeft);
 
-        let finalLeft = leftContent;
-        if (totalNeeded > width) {
-            const maxLeftW = Math.max(0, width - rightW - 2);
-            finalLeft = truncateToWidth(leftContent, maxLeftW);
-            leftW = visibleWidth(finalLeft);
-        }
-
-        const gap = Math.max(1, width - leftW - rightW);
-        const line = truncateToWidth(
-            chalk.bgHex(colors.bg)(
-                chalk.hex(colors.fg)(finalLeft) + ' '.repeat(gap) + chalk.hex(colors.fg)(finalRight)
-            ),
-            width
+        const gap = Math.max(0, width - leftW - rightW);
+        const line = chalk.bgHex(colors.bg)(
+            chalk.hex(colors.fg)(finalLeft) + ' '.repeat(gap) + chalk.hex(colors.fg)(finalRight)
         );
         this.cachedOutput = [line];
         this.invalidated = false;
