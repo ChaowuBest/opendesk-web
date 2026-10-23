@@ -112,6 +112,9 @@ export const enUs: Record<string, string> = {
     'cli.screenshot.running': '⏳ Capturing...',
     'cli.screenshot.saved': '  ✓ Saved: ',
     'cli.screenshot.badDataUri': 'Screenshot returned a non-image data URI: ${uri}',
+    'cli.download.cardTitle': 'Download File',
+    'cli.download.running': '⏳ Downloading...',
+    'cli.download.success': '✓ Download complete',
     'cli.wait.cardTitle': 'Wait for Condition',
     'cli.wait.running': '⏳ Waiting...',
     'cli.wait.success': '✓ Condition met',
@@ -122,6 +125,11 @@ export const enUs: Record<string, string> = {
     'cli.deleteHistory.unlimited': 'Any',
     'error.deleteHistoryNoFilter': 'At least one filter is required (startTime/endTime or domains)',
     'error.mainWindowUnavailable': 'Main window unavailable; cannot manage browser history',
+    'error.downloadInvalidUrl': 'Invalid download URL (http/https only): ${url}',
+    'error.downloadPathRequired': 'Download path must be a full file path (not a directory) and cannot be empty',
+    'error.downloadPathIsDirectory': 'Download path already exists and is a directory: ${path}',
+    'error.downloadHttpStatus':
+        'Download failed: server returned HTTP ${status} (${url}). The URL may require a browser login; sign in via the browser and retry',
 
     // ========== Renderer：工具栏 / 菜单 ==========
     'renderer.browser.tab.new': 'New Tab',

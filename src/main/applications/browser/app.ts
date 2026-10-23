@@ -40,6 +40,7 @@ import {
     BrowserTriggerTool,
     BrowserTabsTool,
     BrowserScreenshotTool,
+    BrowserDownloadTool,
     BrowserWaitForTool,
     BrowserDropHistoryTool
 } from './tools';
@@ -624,6 +625,7 @@ class BrowserApplication extends BaseApplication {
             new BrowserTriggerTool(this),
             new BrowserTabsTool(this),
             new BrowserScreenshotTool(this),
+            new BrowserDownloadTool(this),
             new BrowserWaitForTool(this)
         ]) {
             toolset.addTool(this._withAutomatedDownloads(tool));

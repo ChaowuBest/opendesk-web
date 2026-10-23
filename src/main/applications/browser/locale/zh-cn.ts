@@ -112,6 +112,9 @@ export const zhCn: Record<string, string> = {
     'cli.screenshot.running': '⏳ 正在截图…',
     'cli.screenshot.saved': '  ✓ 已保存: ',
     'cli.screenshot.badDataUri': '截图返回了非图片的 data URI: ${uri}',
+    'cli.download.cardTitle': '下载文件',
+    'cli.download.running': '⏳ 正在下载…',
+    'cli.download.success': '✓ 下载完成',
     'cli.wait.cardTitle': '等待条件',
     'cli.wait.running': '⏳ 等待中…',
     'cli.wait.success': '✓ 条件满足',
@@ -122,6 +125,11 @@ export const zhCn: Record<string, string> = {
     'cli.deleteHistory.unlimited': '不限',
     'error.deleteHistoryNoFilter': '至少需要指定一个筛选条件（startTime/endTime 或 domains）',
     'error.mainWindowUnavailable': '主窗口不可用，无法操作浏览器历史记录',
+    'error.downloadInvalidUrl': '无效的下载地址（仅支持 http/https）: ${url}',
+    'error.downloadPathRequired': '下载目标 path 必须是包含文件名的完整路径，不能是目录或为空',
+    'error.downloadPathIsDirectory': '下载目标 path 已存在且是目录: ${path}',
+    'error.downloadHttpStatus':
+        '下载失败：服务器返回 HTTP ${status}（${url}）。该地址可能需要浏览器登录态，请先在浏览器中登录后重试',
 
     // ========== Renderer：工具栏 / 菜单 ==========
     'renderer.browser.tab.new': '新标签页',
