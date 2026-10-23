@@ -9,26 +9,21 @@
  * See the Mulan PSL v2 for more details.
  */
 
-/**
- * 原生桥主进程侧：按系统平台解析出 NativeBridge 实现，并注册到渲染进程的 IPC。
- *
- * 架构：
- *   渲染进程(speech.js) --window.opendeskNative--> preload(expose.ts)
- *     --ipc opendesk:*--> 主进程(本文件) --> 当前平台 NativeBridge 实现 --> 系统原生能力
- *
- * 接入新平台：实现一个 NativeBridge 并在 resolveNativeBridge() 中按 process.platform 返回。
- * 本文件依赖 electron 主进程 API（ipcMain / systemPreferences），仅可在主进程导入；
- * 渲染进程请用 ./speech.js，preload 请用 ./expose.js。
- */
+/** Harmony native capabilities are registered by the shared bridges/main entrypoint. */
 
-import { NativeBridge, SpeechKit, NaiveOcrKit } from '../common.js';
+import { NativeBridge, SpeechKit, NaiveNativeBridge, guardStartupKit, NaiveOcrKit } from '../common.js';
 import type { DatabaseKit, HuaweiAccountKit } from '../common.js';
 import { hasArkTSAdapter } from './arkts.js';
 import { HarmonyOSDatabaseKit } from './database.js';
 import { HarmonyOSSpeechKit } from './speech.js';
 import { HarmonyOSHuaweiAccountKit } from './account.js';
+import { HarmonyOSStartupKit } from './startup.js';
 
-class HarmonyOSNativeBridge implements NativeBridge {
+class HarmonyOSNativeBridge extends NaiveNativeBridge {
+    constructor() {
+        super(guardStartupKit(new HarmonyOSStartupKit(), 'system-settings'));
+    }
+
     _speechKit = new HarmonyOSSpeechKit();
     _ocrKit = new NaiveOcrKit();
     _databaseKit = new HarmonyOSDatabaseKit();

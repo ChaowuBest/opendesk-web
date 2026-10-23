@@ -1720,6 +1720,21 @@ export const enUs: Record<string, string> = {
     'sp.agents.test.failed': 'Connection failed: ${message}',
     'sp.agents.delete.title': 'Delete ACP Agent',
     'sp.agents.delete.message': 'Delete “${name}”? Local records in existing tasks will not be removed.',
+    'sp.general.startup': 'Startup',
+    'sp.general.launchAtLogin': 'Start OpenDesk at login',
+    'sp.general.launchAtLogin.desc': 'Automatically open OpenDesk when you sign in to your computer.',
+    'sp.general.launchAtLogin.harmony.desc':
+        'Add or remove OpenDesk in System Settings → Apps & services → App startup management.',
+    'sp.general.launchAtLogin.manage': 'Open System Settings',
+    'sp.general.launchAtLogin.on': 'On',
+    'sp.general.launchAtLogin.off': 'Off',
+    'sp.general.launchAtLogin.unknown': 'Status unknown',
+    'sp.general.launchAtLogin.settingsError':
+        'Unable to open System Settings. Go to Apps & services → App startup management manually.',
+    'sp.general.launchAtLogin.unsupported': 'Startup settings are unavailable on this system.',
+    'sp.general.launchAtLogin.error': 'Unable to read or change startup settings. Please try again.',
+    'sp.general.launchAtLogin.systemBlocked':
+        'The system did not apply this change. Check startup permissions in system settings.',
     'sp.general.display': 'Interface',
     'sp.general.language': 'Language',
     'sp.general.language.system': 'System',

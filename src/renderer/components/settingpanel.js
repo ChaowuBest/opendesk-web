@@ -9,6 +9,7 @@
  * See the Mulan PSL v2 for more details.
  */
 
+import { NativeBridgeProxy } from '../../platforms/bridges/renderer.js';
 import { createRendererTranslator } from '../locale.ts';
 import { createTranslatorForSearch } from '../../main/applications/search/locale/renderer.ts';
 import { createModelSelect, MODEL_SELECT_CSS } from '../utils/model-select.js';
@@ -143,6 +144,7 @@ class SettingPanel extends HTMLElement {
         this._activeTab = 'models';
         this._environEntries = [];
         this.gatewayHostOptions = [];
+        this.launchAtLoginState = { supported: false, enabled: null };
         this.supportedShells = [];
         this.visionSupportMap = {};
         this._hasRendered = false;
@@ -169,6 +171,7 @@ class SettingPanel extends HTMLElement {
     }
 
     disconnectedCallback() {
+        this._clearStartupListeners();
         this._updateStateUnsubscribe?.();
         this._updateStateUnsubscribe = null;
         this._scaleFactorChangeUnsub?.();
@@ -1006,6 +1009,7 @@ class SettingPanel extends HTMLElement {
             const el = this.querySelector(`#tab-${id}`);
             if (el) el.classList.toggle('hidden', id !== tab);
         }
+        this._startupController?.setGeneralVisible(tab === 'general');
     }
 
     renderWizardSection() {
@@ -2257,6 +2261,7 @@ class SettingPanel extends HTMLElement {
 
     renderGeneralSection() {
         const currentLocale = this.currentData?.locale || 'auto';
+        const systemStartupSettings = this.launchAtLoginState?.mode === 'system-settings';
         const fontPreset = this.currentData?.gui_config?.font_preset || 'default';
         const themePreference = this.currentData?.gui_config?.theme_preference || 'system';
         const scaleFactor = this.currentData?.gui_config?.scale_factor ?? 1;
@@ -2306,6 +2311,23 @@ class SettingPanel extends HTMLElement {
 
         // “开发与调试”必须保持为通用设置的最后一个分区；以后新增的通用设置项应放在它前面。
         return `
+        <section class="sp-section">
+            <h2 class="sp-section-title">${this._t('sp.general.startup')}</h2>
+            <div class="sp-section-card">
+            <div class="sp-toggle-row" style="padding:0">
+                <div class="sp-toggle-info">
+                    <label id="launch-at-login-label" class="sp-toggle-label" ${systemStartupSettings ? '' : 'for="launch-at-login"'}>${this._t('sp.general.launchAtLogin')}</label>
+                    <div id="launch-at-login-status" class="sp-toggle-desc" role="status">${this._t(systemStartupSettings ? 'sp.general.launchAtLogin.harmony.desc' : 'sp.general.launchAtLogin.desc')}</div>
+                </div>
+                <span id="launch-at-login-state" class="sp-tag sp-tag-neutral" aria-live="polite" style="display:${systemStartupSettings ? '' : 'none'}">${this._t('sp.general.launchAtLogin.unknown')}</span>
+                <button id="launch-at-login-manage" type="button" class="sp-btn sp-btn-secondary" style="display:${systemStartupSettings ? '' : 'none'}" disabled>${this._t('sp.general.launchAtLogin.manage')}</button>
+                <label id="launch-at-login-toggle" class="sp-toggle-switch" style="display:${this.launchAtLoginState?.mode === 'toggle' ? '' : 'none'}">
+                    <input id="launch-at-login" type="checkbox" aria-labelledby="launch-at-login-label" ${this.launchAtLoginState?.enabled ? 'checked' : ''} disabled>
+                    <span class="sp-toggle-track"></span>
+                </label>
+            </div>
+            </div>
+        </section>
         <section class="sp-section">
             <h2 class="sp-section-title">${this._t('sp.general.display')}</h2>
             <div class="sp-section-card">
@@ -2673,6 +2695,200 @@ class SettingPanel extends HTMLElement {
             </div>
         </section>
         `;
+    }
+
+    _clearStartupListeners() {
+        this._startupController?.dispose();
+        this._startupController = null;
+    }
+
+    _createStartupController() {
+        const kit = new NativeBridgeProxy().getStartupKit();
+        let generalActive = false;
+        let disposed = false;
+        let busy = false;
+        let inFlight = null;
+        let pendingRead = false;
+        let generation = 0;
+        let settingsTrip = null;
+        let message = null;
+        const visible = () =>
+            !disposed &&
+            generalActive &&
+            this.isConnected &&
+            document.visibilityState !== 'hidden' &&
+            !this.closest('.hidden, [hidden]') &&
+            (this.checkVisibility?.() ?? true);
+        const render = () => {
+            if (disposed) return;
+            const state = this.launchAtLoginState;
+            const input = this.querySelector('#launch-at-login');
+            const manage = this.querySelector('#launch-at-login-manage');
+            const badge = this.querySelector('#launch-at-login-state');
+            const status = this.querySelector('#launch-at-login-status');
+            if (!input || !manage || !status) return;
+            const systemSettings = state.mode === 'system-settings';
+            this.querySelector('#launch-at-login-toggle').style.display = state.mode === 'toggle' ? '' : 'none';
+            manage.style.display = badge.style.display = systemSettings ? '' : 'none';
+            this.querySelector('#launch-at-login-label').htmlFor = systemSettings ? '' : 'launch-at-login';
+            input.checked = state.enabled === true;
+            input.disabled =
+                busy || !!inFlight || !state.supported || typeof state.enabled !== 'boolean' || systemSettings;
+            manage.disabled = busy;
+            badge.textContent = this._t(
+                !state.supported || state.enabled === null
+                    ? 'sp.general.launchAtLogin.unknown'
+                    : state.enabled
+                      ? 'sp.general.launchAtLogin.on'
+                      : 'sp.general.launchAtLogin.off'
+            );
+            status.textContent = this._t(
+                message ||
+                    (state.reason === 'unavailable'
+                        ? 'sp.general.launchAtLogin.error'
+                        : state.supported
+                          ? systemSettings
+                              ? 'sp.general.launchAtLogin.harmony.desc'
+                              : 'sp.general.launchAtLogin.desc'
+                          : 'sp.general.launchAtLogin.unsupported')
+            );
+        };
+        const drain = () => {
+            if (!pendingRead || busy || inFlight || !visible()) return;
+            pendingRead = false;
+            void read();
+        };
+        const read = () => {
+            const version = generation;
+            message = null;
+            inFlight = (async () => {
+                try {
+                    const state = await (await kit).getState();
+                    if (disposed || version !== generation) return;
+                    this.launchAtLoginState = state;
+                    return state;
+                } catch {
+                    if (disposed || version !== generation) return;
+                    this.launchAtLoginState = { ...this.launchAtLoginState, enabled: null, reason: 'unavailable' };
+                } finally {
+                    inFlight = null;
+                    render();
+                    drain();
+                }
+            })();
+            render();
+            return inFlight;
+        };
+        const refresh = () => {
+            pendingRead = true;
+            drain();
+        };
+        // One delegated settings trip consumes one return, even if both DOM events arrive.
+        const consumeReturn = () => {
+            if (!settingsTrip?.succeeded || !settingsTrip.returned || busy || !visible()) return;
+            settingsTrip = null;
+            refresh();
+        };
+        const away = () => {
+            if (settingsTrip) {
+                settingsTrip.away = true;
+                settingsTrip.returned = false;
+            }
+        };
+        const returned = () => {
+            if (settingsTrip?.away) settingsTrip.returned = true;
+            consumeReturn();
+            drain();
+        };
+        const visibilityChanged = () => {
+            if (document.visibilityState === 'hidden') away();
+            else returned();
+        };
+        window.addEventListener('blur', away);
+        window.addEventListener('focus', returned);
+        document.addEventListener('visibilitychange', visibilityChanged);
+        return {
+            render,
+            setGeneralVisible(active) {
+                if (disposed || active === generalActive) return;
+                generalActive = active;
+                ++generation;
+                pendingRead = false;
+                if (active) {
+                    settingsTrip = null;
+                    refresh();
+                }
+            },
+            async toggle(enabled) {
+                if (disposed || busy || inFlight) return;
+                busy = true;
+                ++generation;
+                message = null;
+                render();
+                try {
+                    const startup = await kit;
+                    await startup.delegateSetting(enabled);
+                    if (disposed) return;
+                    // This read also satisfies an entry queued while the setting was changing.
+                    pendingRead = false;
+                    const state = await read();
+                    if (state && typeof state.enabled === 'boolean' && state.enabled !== enabled)
+                        message = 'sp.general.launchAtLogin.systemBlocked';
+                } catch {
+                    message = 'sp.general.launchAtLogin.error';
+                } finally {
+                    busy = false;
+                    render();
+                    drain();
+                }
+            },
+            async openSettings() {
+                if (disposed || busy) return;
+                const trip = { succeeded: false, away: false, returned: false };
+                settingsTrip = trip;
+                busy = true;
+                ++generation;
+                message = null;
+                render();
+                try {
+                    await (await kit).delegateSetting();
+                    trip.succeeded = true;
+                } catch {
+                    if (settingsTrip === trip) settingsTrip = null;
+                    message = 'sp.general.launchAtLogin.settingsError';
+                } finally {
+                    busy = false;
+                    render();
+                    consumeReturn();
+                    drain();
+                }
+            },
+            dispose() {
+                disposed = true;
+                ++generation;
+                pendingRead = false;
+                settingsTrip = null;
+                window.removeEventListener('blur', away);
+                window.removeEventListener('focus', returned);
+                document.removeEventListener('visibilitychange', visibilityChanged);
+            }
+        };
+    }
+
+    _bindLaunchAtLoginEvents() {
+        const input = this.querySelector('#launch-at-login');
+        const manage = this.querySelector('#launch-at-login-manage');
+        if (!input || !manage) return;
+        this._startupController ??= this._createStartupController();
+        const controller = this._startupController;
+        input.addEventListener('change', () => {
+            if (!input.disabled) void controller.toggle(input.checked);
+        });
+        manage.addEventListener('click', () => {
+            if (!manage.disabled) void controller.openSettings();
+        });
+        controller.render();
+        controller.setGeneralVisible(this._activeTab === 'general');
     }
 
     _bindDebugModeEvents() {
@@ -3533,6 +3749,7 @@ class SettingPanel extends HTMLElement {
             this.saveImmediately();
         });
 
+        this._bindLaunchAtLoginEvents();
         this._bindDebugModeEvents();
 
         this._bindTelemetryEvents();
@@ -4872,6 +5089,7 @@ class SettingPanel extends HTMLElement {
                 this.currentData.gui_config.floating_window_position = e.target.value;
                 this.saveImmediately();
             });
+            this._bindLaunchAtLoginEvents();
             this._bindDebugModeEvents();
 
             this._bindTelemetryEvents();

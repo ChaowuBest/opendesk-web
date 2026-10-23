@@ -46,6 +46,54 @@ export interface HuaweiAccountKit {
     closeLogin(): Promise<void>;
 }
 
+export type StartupMode = 'toggle' | 'system-settings';
+
+export interface StartupState {
+    /** Status-query support; system settings delegation can remain available independently. */
+    supported: boolean;
+    /** null means the operating system's current state could not be determined. */
+    enabled: boolean | null;
+    mode: StartupMode;
+    reason?: 'unsupported' | 'unavailable';
+}
+
+/** Startup is owned by the OS; delegating a change does not prove it took effect. */
+export interface StartupKit {
+    /** Toggle-capable platforms require a boolean; system settings platforms accept no argument. */
+    delegateSetting(enabled?: boolean): Promise<void>;
+    getState(): Promise<StartupState>;
+}
+
+export class NaiveStartupKit implements StartupKit {
+    async getState(): Promise<StartupState> {
+        return { supported: false, enabled: null, mode: 'toggle', reason: 'unsupported' };
+    }
+
+    async delegateSetting(_enabled?: boolean): Promise<void> {
+        throw new Error('Startup is unavailable');
+    }
+}
+
+/** Keep capability metadata available even when a native status query fails. */
+export function guardStartupKit(kit: StartupKit, mode: StartupMode): StartupKit {
+    return {
+        async getState() {
+            try {
+                return await kit.getState();
+            } catch (error) {
+                console.error('Failed to read native startup state', error);
+                return { supported: true, enabled: null, mode, reason: 'unavailable' };
+            }
+        },
+        async delegateSetting(enabled) {
+            if (mode === 'toggle' ? typeof enabled !== 'boolean' : enabled !== undefined) {
+                throw new TypeError('Invalid startup delegation argument');
+            }
+            await kit.delegateSetting(enabled);
+        }
+    };
+}
+
 /**
  * 原生平台功能桥接的接口定义。这个桥接设计用于封装不同操作系统和硬件平台的差异。
  */
@@ -62,6 +110,7 @@ export interface NativeBridge {
      */
     getVariant(): Promise<string>;
 
+    getStartupKit(): Promise<StartupKit>;
     getSpeechKit(): Promise<SpeechKit>;
     getOcrKit(): Promise<OcrKit>;
     getDatabaseKit(): Promise<DatabaseKit>;
@@ -127,6 +176,12 @@ export class NaiveHuaweiAccountKit implements HuaweiAccountKit {
 }
 
 export class NaiveNativeBridge implements NativeBridge {
+    constructor(private readonly startupKit: StartupKit = new NaiveStartupKit()) {}
+
+    async getStartupKit(): Promise<StartupKit> {
+        return this.startupKit;
+    }
+
     _speechKit: SpeechKit = new NaiveSpeechKit();
     _ocrKit: OcrKit = new NaiveOcrKit();
     _databaseKit: DatabaseKit = new NaiveDatabaseKit();

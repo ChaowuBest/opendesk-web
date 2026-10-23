@@ -9,16 +9,26 @@
  * See the Mulan PSL v2 for more details.
  */
 
-import { NativeBridge, NaiveNativeBridge } from './common';
+import { NativeBridge, NaiveNativeBridge } from './common.js';
 import { logger } from '../../main/utils/logger.js';
 import { ipcMain } from 'electron';
 import { getNativeBridge as getOpenHarmonyNativeBridge } from './harmonyos/index.js';
 import { getNativeBridge as getDarwinNativeBridge } from './darwin/index.js';
 
+import { getNativeBridge as getWindowsNativeBridge } from './win32/index.js';
+import { getNativeBridge as getLinuxNativeBridge } from './linux/index.js';
+
 let registeredBridge: NativeBridge = new NaiveNativeBridge();
 
 function initializeNativeBridge(): void {
+    registeredBridge = new NaiveNativeBridge();
     switch (process.platform as string) {
+        case 'win32':
+            registeredBridge = getWindowsNativeBridge();
+            break;
+        case 'linux':
+            registeredBridge = getLinuxNativeBridge();
+            break;
         case 'darwin': {
             const darwinBridge = getDarwinNativeBridge();
             if (darwinBridge) {
@@ -51,6 +61,12 @@ export function registerNativeBridge(): void {
                 break;
             case 'getVariant':
                 data = await registeredBridge.getVariant();
+                break;
+            case 'startupKit:getState':
+                data = await registeredBridge.getStartupKit().then((kit) => kit.getState());
+                break;
+            case 'startupKit:delegateSetting':
+                data = await registeredBridge.getStartupKit().then((kit) => kit.delegateSetting(args[0]));
                 break;
             case 'speechKit:available':
                 data = await registeredBridge.getSpeechKit().then((speechKit) => speechKit.available());
