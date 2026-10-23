@@ -40,6 +40,60 @@ function sanitizeText(text: string): string {
     return clean.trim();
 }
 
+/**
+ * 按 stretchFactor 把可用宽度分配给可截断的列，每列上限为自身自然内容宽度。
+ * 命中自然宽度的列会被固化，释放出来的预算继续在其余列之间按比例分配，
+ * 保证最终分配的总宽度不会超过 budget。
+ */
+function distributeColumnWidths(
+    budget: number,
+    cols: number[],
+    stretchFactors: number[],
+    naturalWidths: number[]
+): Map<number, number> {
+    const result = new Map<number, number>();
+    let active = [...cols];
+    let pool = budget;
+
+    while (active.length > 0) {
+        const totalFactor = active.reduce((sum, col) => sum + stretchFactors[col], 0);
+        if (totalFactor <= 0) {
+            for (const col of active) result.set(col, 1);
+            break;
+        }
+
+        const perFactor = pool / totalFactor;
+        const saturated = active.filter((col) => perFactor * stretchFactors[col] >= naturalWidths[col]);
+
+        if (saturated.length === 0) {
+            // 没有列达到自然宽度：按比例分配，余数补给最后一列
+            let left = pool;
+            active.forEach((col, index) => {
+                const width =
+                    index === active.length - 1 ? left : Math.max(1, Math.floor(perFactor * stretchFactors[col]));
+                result.set(col, Math.max(1, width));
+                left -= width;
+            });
+            break;
+        }
+
+        for (const col of saturated) {
+            result.set(col, naturalWidths[col]);
+            pool -= naturalWidths[col];
+        }
+        active = active.filter((col) => !saturated.includes(col));
+
+        if (active.length === 0) break;
+        if (pool <= 0) {
+            // 预算已被饱和列吃光，剩下的列只保留 1 列宽兜底
+            for (const col of active) result.set(col, 1);
+            break;
+        }
+    }
+
+    return result;
+}
+
 export interface SelectRow {
     /** 每列的显示标签 */
     labels: string[];
@@ -52,6 +106,9 @@ export interface SelectRow {
 interface InnerSelectRow extends SelectRow, SelectItem {}
 
 type Alignment = 'left' | 'right' | 'center';
+
+/** 可截断列在"是否需要隐藏该列"判断中的最小可读宽度 */
+const MIN_STRETCH_COLUMN_WIDTH = 3;
 
 export class SelectTable implements Component {
     /**
@@ -107,11 +164,20 @@ export class SelectTable implements Component {
         this.innerList.invalidate();
     }
 
+    /**
+     * 重新计算列宽并格式化每行数据。
+     *
+     * 关键点：内容列超宽时必须"截断"，而不是让整列消失。原实现用每列内容的
+     * 最大宽度参与"是否放得下"的判断，只要一条内容特别长（例如 /undo 里某条
+     * 用户消息是一整段没有换行的长文本，或 /goal 投影出来的长目标），按内容
+     * 宽度铺开的布局就会把右侧整列挤掉，选择器最后只剩序号列 —— 用户看到的
+     * 就是"所有消息全是空的"。
+     */
     reloadInnerList(width: number) {
         const numCols = this.stretchFactors.length;
 
-        // 1. 计算每列的最大宽度
-        const colMaxWidths: number[] = [];
+        // 1. 按内容测量每列的自然宽度
+        const naturalColWidths: number[] = [];
         for (let col = 0; col < numCols; col++) {
             let maxWidth = 0;
             for (const row of this.innerRows) {
@@ -120,82 +186,68 @@ export class SelectTable implements Component {
                     maxWidth = Math.max(maxWidth, visibleWidth(cleanValue));
                 }
             }
-            colMaxWidths.push(maxWidth);
+            naturalColWidths.push(maxWidth);
         }
 
-        // 2. 从右到左逐列隐藏，直到剩余列能放下
-        // 列优先级从左到右递减：左边列更重要，宽度不足时优先隐藏右边列
         const totalAvailable = width - 5; // 预留箭头位置
 
-        let visibleCols: number[] = Array.from({ length: numCols }, (_, i) => i);
-        for (let col = numCols - 1; col >= 1; col--) {
-            const sep = this.columnSeparator.length * Math.max(0, visibleCols.length - 1);
-            const totalWidth = visibleCols.reduce((sum, c) => sum + colMaxWidths[c], 0) + sep;
-            if (totalWidth <= totalAvailable) break;
+        // 2. 决定可见列：可拉伸列允许被截断，计算占位时只按最小可读宽度计；
+        //    只有连"固定列 + 每个可拉伸列的最小宽度"都放不下时才从右向左隐藏列，
+        //    避免出现每列只剩一个省略号、全是噪声的排版。
+        const visibleCols: number[] = Array.from({ length: numCols }, (_, i) => i);
+        const measureMinimumWidth = () => {
+            let total = this.columnSeparator.length * Math.max(0, visibleCols.length - 1);
+            for (const col of visibleCols) {
+                total +=
+                    this.stretchFactors[col] === 0
+                        ? naturalColWidths[col]
+                        : Math.min(naturalColWidths[col], MIN_STRETCH_COLUMN_WIDTH);
+            }
+            return total;
+        };
+        while (visibleCols.length > 1 && measureMinimumWidth() > totalAvailable) {
             // 放不下，移除最右边的可见列
             visibleCols.pop();
         }
 
-        // 至少保留第一列
-        if (visibleCols.length === 0) {
-            visibleCols = [0];
-        }
-
-        // 3. 计算可见列中固定列和可拉伸列的宽度分配
-        let fixedWidth = 0;
-        let totalStretchFactor = 0;
-        for (const col of visibleCols) {
-            if (this.stretchFactors[col] === 0) {
-                fixedWidth += colMaxWidths[col];
-            } else {
-                totalStretchFactor += this.stretchFactors[col];
-            }
-        }
-
         const sepForVisible = this.columnSeparator.length * Math.max(0, visibleCols.length - 1);
-        const availableAfterSep = totalAvailable - sepForVisible;
+        const availableForCols = Math.max(1, totalAvailable - sepForVisible);
 
-        if (fixedWidth > availableAfterSep) {
-            // 固定列超出可用宽度，按比例缩减
-            const ratio = availableAfterSep / fixedWidth;
-            for (let i = 0; i < visibleCols.length; i++) {
-                const col = visibleCols[i];
-                if (this.stretchFactors[col] === 0) {
-                    colMaxWidths[col] = Math.max(1, Math.floor(colMaxWidths[col] * ratio));
-                }
+        // 3. 分配宽度：固定列优先取自然宽度，剩余空间按 stretchFactor 分给可截断列
+        const colWidths: number[] = Array(numCols).fill(0);
+        const fixedCols = visibleCols.filter((col) => this.stretchFactors[col] === 0);
+        const stretchCols = visibleCols.filter((col) => this.stretchFactors[col] !== 0);
+        const fixedWidth = fixedCols.reduce((sum, col) => sum + naturalColWidths[col], 0);
+        const stretchBudget = Math.max(0, availableForCols - fixedWidth);
+
+        if (fixedWidth > availableForCols) {
+            // 连固定列都放不下：按比例压缩固定列，可截断列只保留最小宽度兜底
+            const ratio = availableForCols / Math.max(1, fixedWidth);
+            for (const col of fixedCols) {
+                colWidths[col] = Math.max(1, Math.floor(naturalColWidths[col] * ratio));
             }
-            fixedWidth = availableAfterSep;
-        }
-
-        const availableForStretch = availableAfterSep - fixedWidth;
-
-        // 4. 计算每列的最终宽度
-        const colWidths: number[] = [];
-        for (let col = 0; col < numCols; col++) {
-            if (!visibleCols.includes(col)) {
-                colWidths.push(0);
-                continue;
+            for (const col of stretchCols) {
+                colWidths[col] = Math.min(naturalColWidths[col], MIN_STRETCH_COLUMN_WIDTH);
             }
-            if (this.stretchFactors[col] === 0) {
-                colWidths.push(colMaxWidths[col]);
-            } else {
-                if (totalStretchFactor > 0 && availableForStretch > 0) {
-                    const stretchWidth = Math.floor(
-                        (availableForStretch * this.stretchFactors[col]) / totalStretchFactor
-                    );
-                    colWidths.push(Math.max(1, stretchWidth));
-                } else {
-                    colWidths.push(1);
-                }
+        } else {
+            for (const col of fixedCols) {
+                colWidths[col] = naturalColWidths[col];
+            }
+            const distributed = distributeColumnWidths(
+                stretchBudget,
+                stretchCols,
+                this.stretchFactors,
+                naturalColWidths
+            );
+            for (const col of stretchCols) {
+                colWidths[col] = distributed.get(col) ?? 1;
             }
         }
 
-        // 5. 格式化每行数据并更新innerRows
+        // 4. 格式化每行数据并更新innerRows
         for (const row of this.innerRows) {
             const formattedValues: string[] = [];
-            for (let col = 0; col < numCols; col++) {
-                if (!visibleCols.includes(col)) continue;
-
+            for (const col of visibleCols) {
                 const value = sanitizeText(row.labels[col] ?? '');
                 const colWidth = colWidths[col];
                 const valueWidth = visibleWidth(value);
