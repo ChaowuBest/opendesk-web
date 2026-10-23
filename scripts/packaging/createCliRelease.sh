@@ -222,6 +222,7 @@ else
   echo "Step 3: Creating package.json..."
 fi
 VERSION=$(grep '"version"' package.json | head -1 | sed 's/.*"version": *"\([^"]*\)".*/\1/')
+PI_TUI_VERSION=$(node -p "require('./package.json').dependencies['@earendil-works/pi-tui']")
 
 cat > "$RELEASE_DIR/package.json" << EOF
 {
@@ -242,6 +243,7 @@ cat > "$RELEASE_DIR/package.json" << EOF
     "node": ">=22.19.0"
   },
   "dependencies": {
+    "@earendil-works/pi-tui": "${PI_TUI_VERSION}",
     "hnsw": "^1.1.1",
     "node-sqlite3-wasm": "^0.8.55",
     "number-to-alphabet": "^1.0.0",

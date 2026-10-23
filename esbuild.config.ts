@@ -81,6 +81,7 @@ const prodConfig: esbuild.BuildOptions = {
     sourcemap: false,
     banner: { js: BANNER },
     external: [
+        '@earendil-works/pi-tui',
         'node-screenshots',
         'vectra',
         'number-to-alphabet',
@@ -106,6 +107,7 @@ const debugConfig: esbuild.BuildOptions = {
     sourcesContent: true,
     banner: { js: BANNER },
     external: [
+        '@earendil-works/pi-tui',
         'node-screenshots',
         'vectra',
         'number-to-alphabet',
