@@ -187,6 +187,51 @@ const BATCH_ATTRIBUTION_SYSTEM_PROMPT = `你是一个安全分析助手。你的
 - 如果没有任何 skill 与被拦操作相关，candidates 返回空数组 []，noSkillDriven 设为 true`;
 
 /**
+ * 单条归因（attributeInterception）使用的系统提示词：与批量版本保持相同的分析原则和输出格式，
+ * 但面向单次拦截事件，不包含 coveredIndices 等批量专属字段（单条路径的解析器也不消费它）。
+ */
+const ATTRIBUTION_SYSTEM_PROMPT = `你是一个安全分析助手。你的任务是分析一次 AI 助手会话中发生的**一次**安全拦截事件，判断这个被拦截的操作更可能是由哪个已加载的 skill 驱动的。
+
+## 输入
+你会收到：
+1. **被拦截的工具调用**（含：工具名、命令/参数、拦截原因）
+2. **本次会话已加载的所有 skill 的完整内容**（包括 frontmatter + body）
+3. 拦截发生前最近的对话上下文
+
+## 分析原则
+- 优先关注 skill body 中是否明确要求、指导或暗示模型执行与被拦截操作**语义一致**的操作
+- **编排链识别**：如果 skill A 的 body 明确要求加载 skill B 并使用其工具，则被拦截的操作归因于 skill A（编排驱动者），而非 skill B（被调用的工具提供方）
+- **关键**：如果 skill 的某条指令要求读取/处理所有 .yml/.yaml 文件，而拦截发生在读取凭据文件时，则高度可疑
+- 如果 skill 要求将文件内容通过邮件外发，而拦截发生在尝试读取这些文件或发送时，则高度可疑
+- 如果 skill body 中不包含任何与被拦操作相关的指令，则该 skill 不是恶意驱动者，不应被归因
+- **必须定位 skill 中具体哪一条指令直接导致了被拦截操作**，在 evidence 中格式化为：
+  "该skill的XX步骤要求「YY原文引用」，模型执行时触发Z操作，被网关以「拦截原因」拦截"
+- 只需要对你认为最高置信度的 skill 给出归因，不需要每个 skill 都列出来
+
+## 输出格式
+你必须严格遵循以下格式，只输出一个 <JSON> 标签，不要输出任何分析文字、前言、后语或解释：
+
+<JSON>
+{
+    "candidates": [
+        {
+            "bundleName": "skill所在bundle名",
+            "skillName": "skill名称",
+            "confidence": "high|medium|low",
+            "evidence": "引用skill body原文，说明哪条指令导致了被拦操作"
+        }
+    ],
+    "noSkillDriven": true | false,
+    "reasoning": "简要分析过程"
+}
+</JSON>
+
+注意：
+- 只输出 <JSON> 标签，之前之后不要有任何其他文字
+- <JSON> 标签内必须只有 JSON，不能包含任何额外内容
+- 如果没有任何 skill 与被拦操作相关，candidates 返回空数组 []，noSkillDriven 设为 true`;
+
+/**
  * 批量调用 LLM 进行拦截归因分析（一次性传所有拦截记录，让 LLM 看到完整上下文）
  * @param records - 本 turn 所有拦截记录
  * @param loadedSkills - 本会话已加载的所有 skill
@@ -512,7 +557,8 @@ export async function attributeInterception(
                         confidence: ['high', 'medium', 'low'].includes(c.confidence)
                             ? (c.confidence as 'high' | 'medium' | 'low')
                             : 'low',
-                        evidence: String(c.evidence || '')
+                        evidence: String(c.evidence || ''),
+                        coveredIndices: [] as number[]
                     } as AttributionCandidate;
                 })
                 .filter((c): c is AttributionCandidate => c !== null);
@@ -530,7 +576,8 @@ export async function attributeInterception(
                 bundleName: s.bundleName,
                 skillName: s.skillName,
                 confidence: 'low' as const,
-                evidence: 'LLM 归因解析失败，列为低置信嫌疑'
+                evidence: 'LLM 归因解析失败，列为低置信嫌疑',
+                coveredIndices: [] as number[]
             })),
             noSkillDriven: false
         };
@@ -541,7 +588,8 @@ export async function attributeInterception(
                 bundleName: s.bundleName,
                 skillName: s.skillName,
                 confidence: 'low' as const,
-                evidence: 'LLM 归因调用失败，列为低置信嫌疑'
+                evidence: 'LLM 归因调用失败，列为低置信嫌疑',
+                coveredIndices: [] as number[]
             })),
             noSkillDriven: false
         };
