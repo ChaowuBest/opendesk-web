@@ -60,6 +60,14 @@ int dbox_raw_fcntl(int fd, int cmd, long arg);
  * 守卫）；Windows 用 WSAPoll。 */
 int dbox_raw_poll(struct pollfd *fds, unsigned long nfds, int timeout_ms);
 
+/* -- memory map（shm attach 专用） ----------------------------------------- */
+
+/* PROT_READ|PROT_WRITE 的 MAP_SHARED 匿名/文件映射，语义与 libc mmap
+ * 一致（失败返回 MAP_FAILED + errno）。shm attach 发生在本库构造函数
+ * 期间，必须绕过自身 interposed mmap（BUG-021：ctor 期钩子重入）。 */
+void *dbox_raw_mmap_rw_shared(int fd, size_t len);
+int dbox_raw_munmap(void *addr, size_t len);
+
 #ifdef __cplusplus
 }
 #endif

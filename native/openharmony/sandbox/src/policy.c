@@ -573,10 +573,12 @@ int dbox_shared_create(void)
 int dbox_shared_attach(int fd)
 {
     if (fd < 0 || g_shm) return -1;
-    dbox_shm_t *s = mmap(NULL, sizeof(dbox_shm_t), PROT_READ | PROT_WRITE,
-                         MAP_SHARED, fd, 0);
+    /* raw mmap：本函数在本库构造函数期间被调用（init_from_env），libc
+     * mmap 会被 PIE 宿主（Electron 等）的分配器 shim interpose，触发
+     * 钩子重入（BUG-021）。rawio 提供绕钩子的平台原语。 */
+    dbox_shm_t *s = dbox_raw_mmap_rw_shared(fd, sizeof(dbox_shm_t));
     if (s == MAP_FAILED) return -1;
-    if (s->magic != DBOX_SHM_MAGIC) { munmap(s, sizeof *s); return -1; }
+    if (s->magic != DBOX_SHM_MAGIC) { dbox_raw_munmap(s, sizeof *s); return -1; }
     g_shm = s;
     return 0;
 }

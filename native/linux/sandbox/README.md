@@ -112,6 +112,22 @@ Windows/Linux/macOS 各平台协议完全一致。宿主侧读取/搜索/找回�
 - 进程内直接 `syscall()`、已打开 fd 的后续操作不在拦截范围（与 OH/macOS 同源，见
   OpenHarmony bugs.md 的 BUG-017 能力边界说明）。
 - 策略按调用时路径判定，不解析符号链接。
+- **BUG-021 allocator bootstrap guard**：PIE 宿主（Electron/Chromium）会
+  interpose malloc 族并配套惰性初始化的自旋锁，其符号优先级高于一切共享库
+  （PIE 可执行文件在全局查找 scope 最前）。本库构造函数（`constructor(150)`）
+  期间任何 malloc 重入都可能死锁宿主 shim 的自旋锁 → 进程以 100% CPU 静默
+  空转（无日志、无崩溃、端口不监听）。防御措施：
+  - 本库全部堆分配经 `dbox_malloc/realloc/free` 直连 `__libc_malloc`
+    （`RTLD_NEXT` 解析，见 `util.c` 的 allocator bootstrap guard 注释）；
+  - glibc 已知缺失符号（`faccessat2`）不在构造函数期 `dlsym`（其失败会走
+    ld.so 异常路径的 malloc），改为首次调用时 lazy 解析；
+  - watchdog 线程（`pthread_create`）延迟到首次策略判定（`ensure_late_init`）；
+  - 本库自身 I/O（日志、shm attach、poll）一律走 rawio 裸 syscall。
+  可观测性：ctor 期钩子重入会向 stderr 输出一次
+  `dynobox: WARNING reentrant hook call from <addr> …`（`info symbol <addr>`
+  可定位钩子）；沙箱日志含 `sandbox active` / `late init` / `watchdog armed`
+  里程碑。若进程静默空转且无上述日志，先用 gdb 确认是否卡在自旋
+  （`lock cmpxchg` 向后跳）再排查宿主。
 
 ## 源码复用关系
 

@@ -12,6 +12,7 @@
 #include <errno.h>
 #include <sys/stat.h>
 #ifndef _WIN32
+#include <dlfcn.h>
 #include <sys/socket.h>
 #include <sys/un.h>
 #endif
@@ -30,6 +31,70 @@
 #endif
 #endif
 
+#ifndef _WIN32
+/* ------------------------------------------------------------------ */
+/* allocator bootstrap guard                                           */
+/*                                                                     */
+/* 宿主应用（Electron/Chromium 最典型）会 interpose malloc 族并配套     */
+/* 惰性初始化的自旋锁。PIE 可执行文件的符号在全局查找 scope 中优先于    */
+/* 一切共享库，因此本库乃至 libc 内部的 malloc 都会绑定到宿主 shim。    */
+/* 本库构造函数（constructor(150)）运行时 shim 可能尚未初始化；此间     */
+/* 任何一次 malloc 重入（dlsym 失败异常路径、pthread_create、tzset     */
+/* 首调等）都可能进入 shim 的未就绪状态 → 自旋锁自我死锁 → 进程以      */
+/* 100% CPU 静默空转（无日志、无崩溃、端口不监听）。                    */
+/*                                                                     */
+/* 解法：本库全部堆分配直连 libc 真身 __libc_malloc（glibc 导出该符号），*/
+/* 用 RTLD_NEXT 解析函数指针直调——不依赖全局符号绑定，永远不会进入      */
+/* 宿主 shim，任何初始化时序下都安全。glibc 下 dlsym 必然成功（不产生   */
+/* ld.so 异常路径的 malloc）；musl 无 __libc_malloc，回退 RTLD_NEXT 的  */
+/* malloc（musl 生态无分配器 shim 宿主，语义等价）。函数指针为进程级    */
+/* 常量；并发首次解析各自 dlsym 得到同一地址，幂等无害。                 */
+/* ------------------------------------------------------------------ */
+
+static void *(*g_libc_malloc)(size_t);
+static void *(*g_libc_realloc)(void *, size_t);
+static void (*g_libc_free)(void *);
+
+static void resolve_libc_allocators(void)
+{
+    if (g_libc_malloc) return;
+    g_libc_malloc = (void *(*)(size_t))dlsym(RTLD_NEXT, "__libc_malloc");
+    g_libc_realloc = (void *(*)(void *, size_t))dlsym(RTLD_NEXT, "__libc_realloc");
+    g_libc_free = (void (*)(void *))dlsym(RTLD_NEXT, "__libc_free");
+    if (!g_libc_malloc) {
+        /* musl：无 __libc_* 符号，回退 RTLD_NEXT 的标准名。 */
+        g_libc_malloc = (void *(*)(size_t))dlsym(RTLD_NEXT, "malloc");
+        g_libc_realloc = (void *(*)(void *, size_t))dlsym(RTLD_NEXT, "realloc");
+        g_libc_free = (void (*)(void *))dlsym(RTLD_NEXT, "free");
+    }
+}
+
+void *dbox_malloc(size_t n)
+{
+    resolve_libc_allocators();
+    void *p = g_libc_malloc(n ? n : 1);
+    if (!p) abort();
+    return p;
+}
+
+void *dbox_realloc(void *p, size_t n)
+{
+    resolve_libc_allocators();
+    void *q = g_libc_realloc(p, n ? n : 1);
+    if (!q) abort();
+    return q;
+}
+
+void dbox_free(void *p)
+{
+    if (!p) return;                       /* free(NULL) 语义 */
+    resolve_libc_allocators();
+    g_libc_free(p);
+}
+
+#else
+/* Windows：Detours hook 体系由宿主进程加载器管理，无 PIE 符号优先级
+ * 问题，直接用 CRT 分配（与既有实现一致）。 */
 void *dbox_malloc(size_t n)
 {
     void *p = malloc(n ? n : 1);
@@ -45,6 +110,7 @@ void *dbox_realloc(void *p, size_t n)
 }
 
 void dbox_free(void *p) { free(p); }
+#endif
 
 char *dbox_strdup(const char *s)
 {

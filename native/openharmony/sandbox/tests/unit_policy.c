@@ -626,6 +626,81 @@ static void test_acc_from_open_flags(void)
           "acc: dir+creat is write");
 }
 
+/* ------------------------------------------------------------------ */
+/* BUG-021 bootstrap allocator guard                                   */
+
+/* dbox_malloc/free 直连 __libc_malloc：验证分配/释放往返、NULL free
+ * 安全性，以及跨 realloc 的内容保持。这些调用发生在测试进程（非沙箱
+ * 注入环境），与 preload 内路径相同——返回的指针必须可用且与系统
+ * malloc 语义一致。 */
+static void test_bootstrap_allocator(void)
+{
+    void *p = dbox_malloc(128);
+    CHECK(p != NULL, "bootstrap: dbox_malloc returns ptr");
+    memset(p, 0xAB, 128);
+    void *q = dbox_realloc(p, 256);
+    CHECK(q != NULL, "bootstrap: dbox_realloc grows");
+    unsigned char *b = q;
+    int intact = 1;
+    for (int i = 0; i < 128; i++) if (b[i] != 0xAB) { intact = 0; break; }
+    CHECK(intact, "bootstrap: realloc preserves content");
+    dbox_free(q);
+    dbox_free(NULL);   /* free(NULL) must be a no-op */
+    CHECK(1, "bootstrap: free(NULL) no-op");
+
+    /* strdup/strndup/normpath 等上层 helper 全部经由 dbox_malloc，
+     * 抽查一个确认分配器切换后仍正常。 */
+    char *s = dbox_strdup("hello");
+    CHECK(s && strcmp(s, "hello") == 0, "bootstrap: strdup via guard");
+    dbox_free(s);
+}
+
+/* ------------------------------------------------------------------ */
+/* log 时间戳的 civil-from-days 算法（log.c dbox_logf 内联实现）         */
+/* BUG-021 修复把 localtime_r 换成纯算术 UTC 分解，这里对锚点日期复核    */
+/* 算法正确性（算法实现与 log.c 保持逐字同步，改一处必须同步另一处）。   */
+static void log_civil_from_days(long days, long *Y, long *M, long *D)
+{
+    long z = days + 719468;
+    long era = (z >= 0 ? z : z - 146096) / 146097;
+    long doe = z - era * 146097;
+    long yoe = (doe - doe / 1460 + doe / 36524 - doe / 146096) / 365;
+    long y = yoe + era * 400;
+    long doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    long mp = (5 * doy + 2) / 153;
+    long d = doy - (153 * mp + 2) / 5 + 1;
+    long m = mp < 10 ? mp + 3 : mp - 9;
+    y += (m <= 2);
+    *Y = y; *M = m; *D = d;
+}
+
+static void test_log_timestamp_civil(void)
+{
+    struct { long days; long y, m, d; const char *name; } cases[] = {
+        { 0,      1970, 1,  1,  "epoch" },
+        { 1,      1970, 1,  2,  "epoch+1" },
+        { 31,     1970, 2,  1,  "feb" },
+        { 365,    1971, 1,  1,  "year boundary" },
+        { 11016,  2000, 2,  29, "leap day" },
+        { 11017,  2000, 3,  1,  "leap day +1" },
+        { 19723,  2024, 1,  1,  "recent year" },
+        { -1,     1969, 12, 31, "pre-epoch" },
+        { -719468, 0,  3,  1,  "z == 0 (0000-03-01, Hinnant epoch)" },
+    };
+    for (size_t i = 0; i < sizeof cases / sizeof cases[0]; i++) {
+        long Y, M, D;
+        log_civil_from_days(cases[i].days, &Y, &M, &D);
+        char name[64];
+        snprintf(name, sizeof name, "log civil: %s", cases[i].name);
+        CHECK(Y == cases[i].y && M == cases[i].m && D == cases[i].d, name);
+    }
+    /* 秒内分解：sod 拆 时:分:秒 */
+    long sec = 23 * 3600 + 59 * 60 + 58;
+    int sod = (int)(sec % 86400);
+    CHECK(sod / 3600 == 23 && (sod / 60) % 60 == 59 && sod % 60 == 58,
+          "log civil: time-of-day split");
+}
+
 int main(void)
 {
     test_normpath();
@@ -645,6 +720,8 @@ int main(void)
     test_trash_worth_keeping();
     test_trash_excluded();
     test_acc_from_open_flags();
+    test_bootstrap_allocator();
+    test_log_timestamp_civil();
     printf("\n%d checks, %d failed\n", g_total, g_failed);
     return g_failed ? 1 : 0;
 }
