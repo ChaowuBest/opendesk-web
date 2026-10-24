@@ -54,6 +54,7 @@ import { runWithRenderWorkspace } from '../../utils/marked-file-link.js';
 import { logCompactInfo } from '../compaction/compact-trace.js';
 import type { MicrocompactTaskRole } from '../compaction/types.js';
 import { compactContext } from '../compact.js';
+import { truncateTaskName } from '../../utils/task-name.js';
 import { BaseTool, BaseToolset, InteractiveToolset } from '../tool.js';
 import { collectToolSystemPromptContributions } from '../tool-system-prompt.js';
 import { LLM } from '../llm.js';
@@ -2064,8 +2065,8 @@ export class TaskState {
                     this.task_manager_state.publishTaskListUpdate();
                 });
             } else {
-                // 关闭自动生成时，使用用户 prompt 作为任务名（截断到 30 字符）
-                this.task_name = message.length > 30 ? message.substring(0, 30) + '...' : message;
+                // 关闭自动生成时，使用用户 prompt 作为任务名
+                this.task_name = truncateTaskName(message);
                 this.persistLater();
                 this.task_manager_state.publishTaskListUpdate();
             }
@@ -2585,9 +2586,9 @@ export class TaskState {
             if (generatedName) {
                 this.task_name = generatedName;
             } else {
-                // 解析失败时回退为用户消息前 10 个字符。
-                // 按 Unicode 码点截断，避免把汉字/emoji 的代理对截半产生乱码
-                const fallbackName = Array.from(user_message).slice(0, 10).join('').trim();
+                // 解析失败时回退为用户消息截断到统一长度的任务名。
+                // truncateTaskName 按 Unicode 码点截断，避免把 emoji 的代理对截半产生乱码
+                const fallbackName = truncateTaskName(user_message);
                 if (fallbackName) {
                     this.task_name = fallbackName;
                 }

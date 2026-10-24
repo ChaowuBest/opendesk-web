@@ -10,6 +10,7 @@
  */
 
 import type { TaskState } from '../states/tasks.js';
+import { truncateTaskName } from '../../utils/task-name.js';
 import { getGoalElapsedMs } from '../../../common/goal/format.js';
 import type { GoalCommandSnapshotLike, GoalEditConflict, GoalEditIfMatch } from '../../../common/goal/command.js';
 import { Setting } from '../../utils/setting.js';
@@ -77,11 +78,6 @@ function getGoalEditConflict(goal: GoalState | undefined, expected: GoalEditIfMa
 function shouldDeriveTaskNameFromGoal(task: TaskState): boolean {
     const name = task.task_name?.trim();
     return !name || name === '未命名任务' || name === 'Unnamed Task';
-}
-
-function deriveTaskNameFromGoalObjective(objective: string): string {
-    const compact = objective.replace(/\s+/g, ' ').trim();
-    return compact.length > 60 ? `${compact.slice(0, 57).trimEnd()}...` : compact;
 }
 
 function appendEvent(
@@ -316,7 +312,7 @@ export class GoalController {
             // 开启自动命名时再异步由 LLM 基于 objective 生成正式任务名，
             // 与普通消息路径（submitUserMessage -> generateTaskName）保持一致，
             // 避免"/goal 开场"的任务名永远停留在 goal 原文
-            task.task_name = deriveTaskNameFromGoalObjective(objective);
+            task.task_name = truncateTaskName(objective);
             task.name_pending = false;
             if (Setting.getInstance().getData().task_config?.generate_taskname !== false) {
                 void task.generateTaskName(objective).then(() => {

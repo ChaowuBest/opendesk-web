@@ -4,11 +4,15 @@ import fs from 'fs';
 import os from 'os';
 import path from 'path';
 
-// updater 仅在 win32 启用（electron-service.ts updaterEnabled），测试进程模拟 Windows
+// updater 仅在 win32 启用（electron-service.ts updaterEnabled），测试进程模拟 Windows；
+// arch 也一并固定，否则安装包架构断言在 x64/arm64 宿主机上结果不同
 const realPlatform = process.platform;
+const realArch = process.arch;
 Object.defineProperty(process, 'platform', { value: 'win32' });
+Object.defineProperty(process, 'arch', { value: 'x64' });
 afterAll(() => {
     Object.defineProperty(process, 'platform', { value: realPlatform });
+    Object.defineProperty(process, 'arch', { value: realArch });
 });
 
 const installerBytes = new Uint8Array([0x4d, 0x5a, 0x90, 0x00, 0x03, 0x00, 0x00, 0x00, 0x04, 0x00, 0x00, 0x00]);
