@@ -68,6 +68,16 @@ describe('embedBrowserUse/main', () => {
             expect(() => BrowserManager.removeController('nonexistent')).not.toThrow();
         });
 
+        it('should remove all controllers (app exit / test cleanup)', () => {
+            BrowserManager.getOrCreateController('test-1', null);
+            BrowserManager.getOrCreateController('test-2', null);
+
+            BrowserManager.removeAllControllers();
+
+            expect(BrowserManager.getController('test-1')).toBeUndefined();
+            expect(BrowserManager.getController('test-2')).toBeUndefined();
+        });
+
         it('should set main window on all controllers', () => {
             const ctrl1 = BrowserManager.getOrCreateController('test-1', null);
             const ctrl2 = BrowserManager.getOrCreateController('test-2', null);
