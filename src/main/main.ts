@@ -140,7 +140,7 @@ import { GoalController } from './aikernel/goal/controller.js';
 import { GoalService } from './aikernel/goal/service.js';
 import type { GoalCommandResult } from './aikernel/goal/state.js';
 import { parseGoalEditIfMatch } from '../common/goal/command.js';
-import { marked } from './aikernel/messages.js';
+import { parseMarkdownSafe } from './aikernel/messages.js';
 import {
     lookupKnownContextSize,
     lookupKnownMaxOutputTokens,
@@ -2071,7 +2071,7 @@ const registerTaskManagerAPIHandlers = () => {
             if (cached && cached.content === content) {
                 return { status: 'ok', data: { raw: content, rendered: cached.rendered } };
             }
-            const rendered = await marked.parse(content);
+            const rendered = await parseMarkdownSafe(content);
             sessionMemoryRenderCache.set(taskId, { content, rendered });
             return { status: 'ok', data: { raw: content, rendered } };
         } catch {

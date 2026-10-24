@@ -10,7 +10,7 @@
  */
 
 import { BaseTool, BaseToolset, ToolResult } from '../../aikernel/tool';
-import { ToolCall, UserMessage, marked } from '../../aikernel/messages';
+import { ToolCall, UserMessage, parseMarkdownSafe } from '../../aikernel/messages';
 import { LLM } from '../../aikernel/llm.js';
 import { escapeHtml } from '../../../common/utils/escape.js';
 import { Card } from '../../tui/components/card';
@@ -3953,7 +3953,7 @@ export class SemanticSearchTool extends BaseTool<typeof semanticSearchSchema> {
             if (count > 0) {
                 summary += ` · ${count} ${t('filemgr.semanticSearch.result.countSuffix')}`;
             }
-            const rendered = await marked.parse(escapeHtmlForMarkdown(String(toolcall.result)));
+            const rendered = await parseMarkdownSafe(escapeHtmlForMarkdown(String(toolcall.result)));
             body = `<div class="px-4 py-2.5 text-xs text-gray-700 leading-relaxed markdown-body max-h-[260px] overflow-y-auto">${rendered}</div>`;
         } else if (toolcall.status === 'error') {
             body = `<div class="px-4 py-2.5 text-xs text-red-600">${escapeHtml(String(toolcall.result ?? ''))}</div>`;
