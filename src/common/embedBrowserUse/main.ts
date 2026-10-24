@@ -2528,6 +2528,13 @@ export class BrowserManager {
         }
     }
 
+    /** Remove and dispose all controllers (app exit / bulk cleanup). */
+    static removeAllControllers(): void {
+        for (const id of Array.from(BrowserManager._controllers.keys())) {
+            BrowserManager.removeController(id);
+        }
+    }
+
     /** Get the shared browser session. */
     static get browserSession(): Electron.Session | null {
         return BrowserManager._browserSession;
@@ -2750,36 +2757,42 @@ export class BrowserManager {
                     return { status: 'error', message: 'WebContents not found or destroyed' };
                 }
                 const sessionMgr = new CDPSessionManager();
-                const session = await sessionMgr.getSession(webContentsId);
-                const snapshot: PageSnapshot = await captureSnapshot(session);
-                const content = renderSnapshotText(snapshot, {
-                    prefixLines: await collectSnapshotPrefix(snapshot, session)
-                });
+                try {
+                    const session = await sessionMgr.getSession(webContentsId);
+                    const snapshot: PageSnapshot = await captureSnapshot(session);
+                    const content = renderSnapshotText(snapshot, {
+                        prefixLines: await collectSnapshotPrefix(snapshot, session)
+                    });
 
-                const win =
-                    BrowserWindow.getFocusedWindow() ??
-                    BrowserWindow.getAllWindows().find((w) => !w.isDestroyed()) ??
-                    null;
-                const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
-                const dialogOptions = {
-                    title: '保存 Snapshot',
-                    defaultPath: `snapshot-${timestamp}.txt`,
-                    filters: [
-                        { name: 'Text Files', extensions: ['txt'] },
-                        { name: 'All Files', extensions: ['*'] }
-                    ]
-                };
-                const saveResult = win
-                    ? await dialog.showSaveDialog(win, dialogOptions)
-                    : await dialog.showSaveDialog(dialogOptions);
+                    const win =
+                        BrowserWindow.getFocusedWindow() ??
+                        BrowserWindow.getAllWindows().find((w) => !w.isDestroyed()) ??
+                        null;
+                    const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
+                    const dialogOptions = {
+                        title: '保存 Snapshot',
+                        defaultPath: `snapshot-${timestamp}.txt`,
+                        filters: [
+                            { name: 'Text Files', extensions: ['txt'] },
+                            { name: 'All Files', extensions: ['*'] }
+                        ]
+                    };
+                    const saveResult = win
+                        ? await dialog.showSaveDialog(win, dialogOptions)
+                        : await dialog.showSaveDialog(dialogOptions);
 
-                if (saveResult.canceled || !saveResult.filePath) {
-                    return { status: 'ok', data: { canceled: true, filePath: null } };
+                    if (saveResult.canceled || !saveResult.filePath) {
+                        return { status: 'ok', data: { canceled: true, filePath: null } };
+                    }
+
+                    const fs = await import('node:fs/promises');
+                    await fs.writeFile(saveResult.filePath, content, 'utf8');
+                    return { status: 'ok', data: { canceled: false, filePath: saveResult.filePath } };
+                } finally {
+                    // 一次性会话：快照与导出完成后立即释放 debugger，避免 CDP
+                    // 会话与 listener 在页面存活期间持续残留。
+                    sessionMgr.disposeAll();
                 }
-
-                const fs = await import('node:fs/promises');
-                await fs.writeFile(saveResult.filePath, content, 'utf8');
-                return { status: 'ok', data: { canceled: false, filePath: saveResult.filePath } };
             } catch (err) {
                 return { status: 'error', message: String(err) };
             }

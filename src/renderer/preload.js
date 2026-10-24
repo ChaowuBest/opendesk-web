@@ -890,12 +890,16 @@ function exposeApplicationAPI() {
                 throw new Error(result.message);
             }
 
-            return new Promise((resolve, _reject) => {
-                const listener = (event, chunk) => {
+            return new Promise((resolve, reject) => {
+                const listener = (event, chunk, error) => {
                     if (chunk === undefined) {
                         console.info('stream complete', result.requestId);
                         ipcRenderer.off(`applicationRegistry:streamChunk:${result.requestId}`, listener);
-                        resolve();
+                        if (error) {
+                            reject(new Error(error));
+                        } else {
+                            resolve();
+                        }
                     } else {
                         try {
                             callback(chunk);
@@ -925,12 +929,16 @@ function exposeApplicationAPI() {
                 throw new Error(result.message);
             }
 
-            return new Promise((resolve, _reject) => {
-                const listener = (event, chunk) => {
+            return new Promise((resolve, reject) => {
+                const listener = (event, chunk, error) => {
                     if (chunk === undefined) {
                         console.info('stream complete', result.requestId);
                         ipcRenderer.off(`applicationRegistry:streamChunk:${result.requestId}`, listener);
-                        resolve();
+                        if (error) {
+                            reject(new Error(error));
+                        } else {
+                            resolve();
+                        }
                     } else {
                         try {
                             callback(chunk);
@@ -1888,11 +1896,15 @@ if (shouldExposeMainWindowAPIs()) {
                 throw new Error(result.message);
             }
 
-            return new Promise((resolve) => {
-                const listener = (_event, chunk) => {
+            return new Promise((resolve, reject) => {
+                const listener = (_event, chunk, error) => {
                     if (chunk === undefined) {
                         ipcRenderer.off(`applicationRegistry:streamChunk:${result.requestId}`, listener);
-                        resolve();
+                        if (error) {
+                            reject(new Error(error));
+                        } else {
+                            resolve();
+                        }
                     } else {
                         try {
                             callback(chunk);
@@ -1917,11 +1929,15 @@ if (shouldExposeMainWindowAPIs()) {
                 throw new Error(result.message);
             }
 
-            return new Promise((resolve) => {
-                const listener = (_event, chunk) => {
+            return new Promise((resolve, reject) => {
+                const listener = (_event, chunk, error) => {
                     if (chunk === undefined) {
                         ipcRenderer.off(`applicationRegistry:streamChunk:${result.requestId}`, listener);
-                        resolve();
+                        if (error) {
+                            reject(new Error(error));
+                        } else {
+                            resolve();
+                        }
                     } else {
                         try {
                             callback(chunk);

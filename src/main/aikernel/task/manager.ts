@@ -30,6 +30,7 @@ import { TaskState } from '../states/tasks.js';
 import { TaskTransferError, type TaskTransferStage } from '../../utils/task-transfer-error.js';
 import { atomicWriteFile, atomicWriteFileSync } from '../../utils/temp.js';
 import { deserializeTaskFromIndex, indexEntryHasMetadata, normalizeTaskIndexEntry } from './serializer.js';
+import { BrowserManager } from '../../../common/embedBrowserUse/main.js';
 
 function isTransientIndexRenameError(error: unknown): boolean {
     const fileError = error as NodeJS.ErrnoException;
@@ -879,6 +880,7 @@ export class TaskManagerState {
 
         this.tasks = this.tasks.filter((candidate) => candidate.task_id !== taskId);
         this.publishTaskListUpdate();
+        BrowserManager.removeController(taskId);
         // 损坏任务的 .json 文件仍保留在磁盘上（供 /recover 恢复），因此本次合并必须
         // 显式排除它；其他进程写入的有效任务条目仍应保留。
         this.saveSync({ excludedTaskIds: new Set([taskId]) });
@@ -901,6 +903,8 @@ export class TaskManagerState {
 
         task.cleanup();
         deleteTaskTodos(taskId);
+        // 释放该任务的 BrowserController，避免 CDP 会话与 debugger listener 残留到进程结束
+        BrowserManager.removeController(taskId);
         removedIds.add(taskId);
     }
 
@@ -918,6 +922,7 @@ export class TaskManagerState {
             }
             task.cleanup();
             deleteTaskTodos(task.task_id);
+            BrowserManager.removeController(task.task_id);
         }
         this.tasks = [];
         this.publishTaskListUpdate();

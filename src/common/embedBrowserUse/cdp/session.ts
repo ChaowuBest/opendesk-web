@@ -410,7 +410,14 @@ export class CDPSession {
      */
     dispose(): void {
         this._disposed = true;
-        this._unbindNativeListeners();
+        // 清理路径（destroyed 兜底、removeController）可能作用于已销毁的
+        // webContents；dispose 必须保证完整执行、绝不抛出，否则会打断
+        // removeController → 任务删除的调用链。
+        try {
+            this._unbindNativeListeners();
+        } catch {
+            // webContents 已销毁时原生属性访问可能抛出，忽略即可
+        }
         if (this._attached && !this._wc.isDestroyed()) {
             try {
                 this._wc.debugger.detach();
@@ -483,6 +490,17 @@ export class CDPSessionManager {
         }
 
         const session = await CDPSession.create(wc);
+        // 兜底清理：webContents 销毁（webview 移除、任务删除、窗口关闭、renderer
+        // 重载）时立即释放对应 CDP 会话并移出缓存。否则持有已销毁 webContents
+        // 引用与 debugger listener 的会话会永久留在 Map 中，随任务反复
+        // 创建/销毁而单调增长。
+        wc.once('destroyed', () => {
+            session.dispose();
+            // 身份校验：session 被替换（不健康重建）后，旧监听器不得驱逐新 session
+            if (this._sessions.get(webContentsId) === session) {
+                this._sessions.delete(webContentsId);
+            }
+        });
         this._sessions.set(webContentsId, session);
         return session;
     }

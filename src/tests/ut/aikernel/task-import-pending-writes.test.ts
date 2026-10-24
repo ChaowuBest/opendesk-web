@@ -78,7 +78,12 @@ describe('import waits for all in-progress saves', () => {
                 importing = manager.commitImportedTasks([imported]).then(() => {
                     completed = true;
                 });
-                await setImmediate();
+                // release 未释放时，正确实现被在途写入硬阻塞、不可能完成，
+                // 多轮泵送不会误报；而未等待旧写入的错误实现必然在此期间完成。
+                // 单次 setImmediate 依赖调度时机，在慢速 CI 上可能漏检。
+                for (let i = 0; i < 20; i++) {
+                    await setImmediate();
+                }
                 expect(completed).toBe(false);
                 release.resolve();
                 await Promise.all([background, importing]);

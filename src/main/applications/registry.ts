@@ -82,7 +82,7 @@ export class ApplicationRegistry {
             reject: (reason?: any) => void;
         }
     > = new Map();
-    static pendingStreamRequests: Map<string, (chunk: any) => void> = new Map();
+    static pendingStreamRequests: Map<string, (chunk: any, error?: string) => void> = new Map();
     static activeFetchReaders: Map<string, ReadableStreamDefaultReader<Uint8Array>> = new Map();
     static globalWorker: Worker | null = null;
     private static applicationListChangedCallbacks: Array<() => void> = [];
@@ -534,263 +534,7 @@ function spawnGlobalWorker(runtimeOptions: WorkerRuntimeOptions) {
     });
 
     ApplicationRegistry.globalWorker.on('message', (event) => {
-        // 处理来自 worker 的日志消息
-        switch (event.type) {
-            case 'response': {
-                const pending = ApplicationRegistry.pendingRequests.get(event.id);
-                if (pending) {
-                    ApplicationRegistry.pendingRequests.delete(event.id);
-                    if (event.status === 'ok') {
-                        pending.resolve(event.data);
-                    } else {
-                        pending.reject(new Error(event.message || 'unknown error'));
-                    }
-                }
-                break;
-            }
-            case 'response_chunk': {
-                const callback = ApplicationRegistry.pendingStreamRequests.get(event.id);
-                if (callback) {
-                    callback(event.chunk);
-                }
-                break;
-            }
-            case 'response_complete': {
-                const callback = ApplicationRegistry.pendingStreamRequests.get(event.id);
-                if (callback) {
-                    callback(undefined);
-                    ApplicationRegistry.pendingStreamRequests.delete(event.id);
-                    break;
-                }
-                break;
-            }
-            case 'notification': {
-                const { type, source, title, message } = event.payload;
-                NotificationManager.getInstance().sendNotification(type, source, title, message);
-                break;
-            }
-            case 'log': {
-                const msg = event.message + '\n';
-                LogStream.getStream().write(msg);
-                addCliLogLine(event.message);
-                break;
-            }
-            case 'emitEvent': {
-                const { bundleName, eventName, args } = event;
-                ApplicationRegistry.handleWorkerEmitEvent(bundleName, eventName, args);
-                break;
-            }
-            case 'callApp': {
-                const { bundleName: appBundle, requestId, methodName, args: callArgs } = event;
-                if (requestId) {
-                    (async () => {
-                        try {
-                            let data: unknown;
-                            if (methodName === 'databaseKitCall') {
-                                const [databaseKitMethod, ...databaseKitArgs] = callArgs || [];
-                                if (!DATABASE_KIT_METHODS.has(databaseKitMethod)) {
-                                    throw new Error(`databaseKitCall method not allowed: ${databaseKitMethod}`);
-                                }
-                                const { resolveNativeBridge } = await import('../../platforms/bridges/main.js');
-                                const kit = await resolveNativeBridge().getDatabaseKit();
-                                data = await (kit as any)[databaseKitMethod](...databaseKitArgs);
-                            } else {
-                                const app = ApplicationRegistry.getApplication(appBundle);
-                                if (!app || typeof (app as any)[methodName] !== 'function') {
-                                    throw new Error(
-                                        `callApp: method ${methodName} not found on application ${appBundle}`
-                                    );
-                                }
-                                data = await (app as any)[methodName](...(callArgs || []));
-                            }
-                            worker.postMessage({ type: 'response', id: requestId, status: 'ok', data });
-                        } catch (error: any) {
-                            logger.error(`callApp ${appBundle}.${methodName} failed:`, error);
-                            worker.postMessage({
-                                type: 'response',
-                                id: requestId,
-                                status: 'error',
-                                ...serializeAppError(error)
-                            });
-                        }
-                    })();
-                    break;
-                }
-                const app = ApplicationRegistry.getApplication(appBundle);
-                if (app && typeof (app as any)[methodName] === 'function') {
-                    Promise.resolve((app as any)[methodName](...(callArgs || []))).catch((err: any) =>
-                        logger.error(`callApp ${appBundle}.${methodName} failed:`, err)
-                    );
-                } else {
-                    logger.warn(`callApp: method ${methodName} not found on application ${appBundle}`);
-                }
-                break;
-            }
-            case 'triggerTodoTask': {
-                // 兼容旧消息格式：转发到 TodoMgrApplication.triggerTodoTask
-                const { todoId, todoTitle, todoContent, trigger, deliver, workspace } = event;
-                logger.info(`收到触发器任务请求: todo=${todoId}`);
-                const todoApp = ApplicationRegistry.getApplication('todomgr');
-                if (todoApp && typeof (todoApp as any).triggerTodoTask === 'function') {
-                    (todoApp as any)
-                        .triggerTodoTask(todoId, todoTitle, todoContent, trigger, deliver, workspace)
-                        .catch((err: any) => logger.error(`triggerTodoTask failed:`, err));
-                }
-                break;
-            }
-            case 'emailListUpdated': {
-                const application = ApplicationRegistry.getApplication(event.bundleName);
-                if (
-                    application &&
-                    'onEmailListUpdated' in application &&
-                    typeof (application as any).onEmailListUpdated === 'function'
-                ) {
-                    (application as any).onEmailListUpdated();
-                }
-                break;
-            }
-            case 'skillsRegistryChanged': {
-                const skillApp = ApplicationRegistry.getApplication('skillmgr');
-                if (skillApp && typeof (skillApp as any).refresh === 'function') {
-                    (skillApp as any).refresh();
-                }
-                break;
-            }
-            case '__fetch_request': {
-                const { id, url, init: fetchInit, options: fetchOptions } = event;
-                (async () => {
-                    let headersSent = false;
-                    try {
-                        const opts: RequestInit = {};
-                        const platformOptions: PlatformFetchOptions | undefined = fetchOptions
-                            ? {
-                                  forceEnvironmentProxy: !!fetchOptions.forceEnvironmentProxy,
-                                  bypassProxy: !!fetchOptions.bypassProxy,
-                                  skipTlsVerification: !!fetchOptions.skipTlsVerification
-                              }
-                            : undefined;
-                        if (fetchInit) {
-                            if (fetchInit.method) opts.method = fetchInit.method;
-                            if (fetchInit.headers) opts.headers = fetchInit.headers;
-                            if (fetchInit.body !== undefined) {
-                                opts.body = fetchInit.body;
-                            } else if (fetchInit.bodyBuffer) {
-                                opts.body = Buffer.from(fetchInit.bodyBuffer, 'base64');
-                            }
-                            if (fetchInit.redirect) opts.redirect = fetchInit.redirect;
-                        }
-                        const response = await getPlatform().fetch(url, opts, platformOptions);
-
-                        // ① 立即发送 headers
-                        const headers: Record<string, string> = {};
-                        response.headers.forEach((v, k) => {
-                            headers[k] = v;
-                        });
-                        worker.postMessage({
-                            type: '__fetch_response_headers',
-                            id,
-                            status: 'ok',
-                            statusCode: response.status,
-                            statusText: response.statusText,
-                            headers
-                        });
-                        headersSent = true;
-
-                        // ② 流式发送 body
-                        if (response.body) {
-                            const reader = response.body.getReader();
-                            ApplicationRegistry.activeFetchReaders.set(id, reader);
-                            try {
-                                while (true) {
-                                    const { done, value } = await reader.read();
-                                    if (done) break;
-                                    worker.postMessage({
-                                        type: '__fetch_response_chunk',
-                                        id,
-                                        chunk: Buffer.from(value.buffer, value.byteOffset, value.byteLength).toString(
-                                            'base64'
-                                        )
-                                    });
-                                }
-                            } finally {
-                                reader.releaseLock();
-                                ApplicationRegistry.activeFetchReaders.delete(id);
-                            }
-                        }
-
-                        // ③ 发送结束信号
-                        worker.postMessage({
-                            type: '__fetch_response_end',
-                            id
-                        });
-                    } catch (err: any) {
-                        if (!headersSent) {
-                            worker.postMessage({
-                                type: '__fetch_response_headers',
-                                id,
-                                status: 'error',
-                                message: err.message || String(err)
-                            });
-                        }
-                        ApplicationRegistry.activeFetchReaders.delete(id);
-                        worker.postMessage({
-                            type: '__fetch_response_end',
-                            id,
-                            error: err.message || String(err)
-                        });
-                    }
-                })();
-                break;
-            }
-            case '__fetch_abort': {
-                const { id } = event;
-                const reader = ApplicationRegistry.activeFetchReaders.get(id);
-                if (reader) {
-                    reader.cancel().catch(() => {
-                        // ignore
-                    });
-                    ApplicationRegistry.activeFetchReaders.delete(id);
-                }
-                break;
-            }
-            case '__shell_request': {
-                const { id, method, filePath } = event;
-                (async () => {
-                    try {
-                        const platform = getPlatform();
-                        switch (method) {
-                            case 'openPath':
-                                await platform.openPath(filePath);
-                                break;
-                            case 'openExternal':
-                                await platform.openExternal(filePath);
-                                break;
-                            case 'trashItem':
-                                await platform.trashItem(filePath);
-                                break;
-                            case 'showItemInFolder':
-                                await platform.showItemInFolder(filePath);
-                                break;
-                            default:
-                                throw new Error(`Unknown shell method: ${method}`);
-                        }
-                        worker.postMessage({ type: '__shell_response', id, status: 'ok' });
-                    } catch (err: any) {
-                        worker.postMessage({
-                            type: '__shell_response',
-                            id,
-                            status: 'error',
-                            message: err.message || String(err)
-                        });
-                    }
-                })();
-                break;
-            }
-            default: {
-                console.info(event);
-                break;
-            }
-        }
+        dispatchWorkerMessage(event, worker);
     });
 
     // 网络配置变更时同步到 Worker，确保代理/SSL 设置在 Worker 中实时生效
@@ -811,6 +555,279 @@ function spawnGlobalWorker(runtimeOptions: WorkerRuntimeOptions) {
                 });
             }
         });
+    }
+}
+
+/**
+ * 处理来自全局 Worker 线程的单条消息帧。
+ * 拆分为独立函数，便于对帧分流与流请求终止逻辑进行单元测试。
+ */
+export function dispatchWorkerMessage(event: any, worker: Worker): void {
+    // 处理来自 worker 的日志消息
+    switch (event.type) {
+        case 'response': {
+            const pending = ApplicationRegistry.pendingRequests.get(event.id);
+            if (pending) {
+                ApplicationRegistry.pendingRequests.delete(event.id);
+                if (event.status === 'ok') {
+                    pending.resolve(event.data);
+                } else {
+                    pending.reject(new Error(event.message || 'unknown error'));
+                }
+                break;
+            }
+            // 防御：流式请求的 id 收到普通 response 帧（例如异常路径或旧版 worker）时，
+            // 也必须终止流请求，否则 pendingStreamRequests 与 renderer 侧 listener 会泄漏
+            const streamCallback = ApplicationRegistry.pendingStreamRequests.get(event.id);
+            if (streamCallback) {
+                ApplicationRegistry.pendingStreamRequests.delete(event.id);
+                streamCallback(undefined, event.status === 'error' ? event.message : undefined);
+            }
+            break;
+        }
+        case 'response_chunk': {
+            const callback = ApplicationRegistry.pendingStreamRequests.get(event.id);
+            if (callback) {
+                callback(event.chunk);
+            }
+            break;
+        }
+        case 'response_complete': {
+            const callback = ApplicationRegistry.pendingStreamRequests.get(event.id);
+            if (callback) {
+                ApplicationRegistry.pendingStreamRequests.delete(event.id);
+                if (event.status === 'error') {
+                    callback(undefined, event.message);
+                } else {
+                    callback(undefined);
+                }
+            }
+            break;
+        }
+        case 'notification': {
+            const { type, source, title, message } = event.payload;
+            NotificationManager.getInstance().sendNotification(type, source, title, message);
+            break;
+        }
+        case 'log': {
+            const msg = event.message + '\n';
+            LogStream.getStream().write(msg);
+            addCliLogLine(event.message);
+            break;
+        }
+        case 'emitEvent': {
+            const { bundleName, eventName, args } = event;
+            ApplicationRegistry.handleWorkerEmitEvent(bundleName, eventName, args);
+            break;
+        }
+        case 'callApp': {
+            const { bundleName: appBundle, requestId, methodName, args: callArgs } = event;
+            if (requestId) {
+                (async () => {
+                    try {
+                        let data: unknown;
+                        if (methodName === 'databaseKitCall') {
+                            const [databaseKitMethod, ...databaseKitArgs] = callArgs || [];
+                            if (!DATABASE_KIT_METHODS.has(databaseKitMethod)) {
+                                throw new Error(`databaseKitCall method not allowed: ${databaseKitMethod}`);
+                            }
+                            const { resolveNativeBridge } = await import('../../platforms/bridges/main.js');
+                            const kit = await resolveNativeBridge().getDatabaseKit();
+                            data = await (kit as any)[databaseKitMethod](...databaseKitArgs);
+                        } else {
+                            const app = ApplicationRegistry.getApplication(appBundle);
+                            if (!app || typeof (app as any)[methodName] !== 'function') {
+                                throw new Error(`callApp: method ${methodName} not found on application ${appBundle}`);
+                            }
+                            data = await (app as any)[methodName](...(callArgs || []));
+                        }
+                        worker.postMessage({ type: 'response', id: requestId, status: 'ok', data });
+                    } catch (error: any) {
+                        logger.error(`callApp ${appBundle}.${methodName} failed:`, error);
+                        worker.postMessage({
+                            type: 'response',
+                            id: requestId,
+                            status: 'error',
+                            ...serializeAppError(error)
+                        });
+                    }
+                })();
+                break;
+            }
+            const app = ApplicationRegistry.getApplication(appBundle);
+            if (app && typeof (app as any)[methodName] === 'function') {
+                Promise.resolve((app as any)[methodName](...(callArgs || []))).catch((err: any) =>
+                    logger.error(`callApp ${appBundle}.${methodName} failed:`, err)
+                );
+            } else {
+                logger.warn(`callApp: method ${methodName} not found on application ${appBundle}`);
+            }
+            break;
+        }
+        case 'triggerTodoTask': {
+            // 兼容旧消息格式：转发到 TodoMgrApplication.triggerTodoTask
+            const { todoId, todoTitle, todoContent, trigger, deliver, workspace } = event;
+            logger.info(`收到触发器任务请求: todo=${todoId}`);
+            const todoApp = ApplicationRegistry.getApplication('todomgr');
+            if (todoApp && typeof (todoApp as any).triggerTodoTask === 'function') {
+                (todoApp as any)
+                    .triggerTodoTask(todoId, todoTitle, todoContent, trigger, deliver, workspace)
+                    .catch((err: any) => logger.error(`triggerTodoTask failed:`, err));
+            }
+            break;
+        }
+        case 'emailListUpdated': {
+            const application = ApplicationRegistry.getApplication(event.bundleName);
+            if (
+                application &&
+                'onEmailListUpdated' in application &&
+                typeof (application as any).onEmailListUpdated === 'function'
+            ) {
+                (application as any).onEmailListUpdated();
+            }
+            break;
+        }
+        case 'skillsRegistryChanged': {
+            const skillApp = ApplicationRegistry.getApplication('skillmgr');
+            if (skillApp) {
+                (skillApp as any).refresh();
+            }
+            break;
+        }
+        case '__fetch_request': {
+            const { id, url, init: fetchInit, options: fetchOptions } = event;
+            (async () => {
+                let headersSent = false;
+                try {
+                    const opts: RequestInit = {};
+                    const platformOptions: PlatformFetchOptions | undefined = fetchOptions
+                        ? {
+                              forceEnvironmentProxy: !!fetchOptions.forceEnvironmentProxy,
+                              bypassProxy: !!fetchOptions.bypassProxy,
+                              skipTlsVerification: !!fetchOptions.skipTlsVerification
+                          }
+                        : undefined;
+                    if (fetchInit) {
+                        if (fetchInit.method) opts.method = fetchInit.method;
+                        if (fetchInit.headers) opts.headers = fetchInit.headers;
+                        if (fetchInit.body !== undefined) {
+                            opts.body = fetchInit.body;
+                        } else if (fetchInit.bodyBuffer) {
+                            opts.body = Buffer.from(fetchInit.bodyBuffer, 'base64');
+                        }
+                        if (fetchInit.redirect) opts.redirect = fetchInit.redirect;
+                    }
+                    const response = await getPlatform().fetch(url, opts, platformOptions);
+
+                    // ① 立即发送 headers
+                    const headers: Record<string, string> = {};
+                    response.headers.forEach((v, k) => {
+                        headers[k] = v;
+                    });
+                    worker.postMessage({
+                        type: '__fetch_response_headers',
+                        id,
+                        status: 'ok',
+                        statusCode: response.status,
+                        statusText: response.statusText,
+                        headers
+                    });
+                    headersSent = true;
+
+                    // ② 流式发送 body
+                    if (response.body) {
+                        const reader = response.body.getReader();
+                        ApplicationRegistry.activeFetchReaders.set(id, reader);
+                        try {
+                            while (true) {
+                                const { done, value } = await reader.read();
+                                if (done) break;
+                                worker.postMessage({
+                                    type: '__fetch_response_chunk',
+                                    id,
+                                    chunk: Buffer.from(value.buffer, value.byteOffset, value.byteLength).toString(
+                                        'base64'
+                                    )
+                                });
+                            }
+                        } finally {
+                            reader.releaseLock();
+                            ApplicationRegistry.activeFetchReaders.delete(id);
+                        }
+                    }
+
+                    // ③ 发送结束信号
+                    worker.postMessage({
+                        type: '__fetch_response_end',
+                        id
+                    });
+                } catch (err: any) {
+                    if (!headersSent) {
+                        worker.postMessage({
+                            type: '__fetch_response_headers',
+                            id,
+                            status: 'error',
+                            message: err.message || String(err)
+                        });
+                    }
+                    ApplicationRegistry.activeFetchReaders.delete(id);
+                    worker.postMessage({
+                        type: '__fetch_response_end',
+                        id,
+                        error: err.message || String(err)
+                    });
+                }
+            })();
+            break;
+        }
+        case '__fetch_abort': {
+            const { id } = event;
+            const reader = ApplicationRegistry.activeFetchReaders.get(id);
+            if (reader) {
+                reader.cancel().catch(() => {
+                    // ignore
+                });
+                ApplicationRegistry.activeFetchReaders.delete(id);
+            }
+            break;
+        }
+        case '__shell_request': {
+            const { id, method, filePath } = event;
+            (async () => {
+                try {
+                    const platform = getPlatform();
+                    switch (method) {
+                        case 'openPath':
+                            await platform.openPath(filePath);
+                            break;
+                        case 'openExternal':
+                            await platform.openExternal(filePath);
+                            break;
+                        case 'trashItem':
+                            await platform.trashItem(filePath);
+                            break;
+                        case 'showItemInFolder':
+                            await platform.showItemInFolder(filePath);
+                            break;
+                        default:
+                            throw new Error(`Unknown shell method: ${method}`);
+                    }
+                    worker.postMessage({ type: '__shell_response', id, status: 'ok' });
+                } catch (err: any) {
+                    worker.postMessage({
+                        type: '__shell_response',
+                        id,
+                        status: 'error',
+                        message: err.message || String(err)
+                    });
+                }
+            })();
+            break;
+        }
+        default: {
+            console.info(event);
+            break;
+        }
     }
 }
 

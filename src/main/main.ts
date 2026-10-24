@@ -1319,6 +1319,8 @@ const registerTaskManagerAPIHandlers = () => {
         logger.warn(`Task search initialization failed: ${error}`);
     }
     app.once('will-quit', () => void taskSearch.dispose());
+    // 退出前释放所有 BrowserController（CDP 会话与 debugger listener），确保干净卸载
+    app.once('will-quit', () => BrowserManager.removeAllControllers());
     ipcMain.on('taskManager:refreshSearchIndex', () => {
         try {
             taskSearch.refresh();

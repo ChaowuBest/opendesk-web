@@ -384,14 +384,18 @@ class A2AEntryWidget extends HTMLElement {
         if (!this.conversationId) await this.createConversation();
 
         const messageData = { text: text, attachments: [], targetAgentId: targetAgentId };
-        window.applicationAPI.streamCall(
-            'sendChatMessage',
-            (chunk) => {
-                const assistantMessageId = `msg_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
-            },
-            this.conversationId,
-            messageData
-        );
+        window.applicationAPI
+            .streamCall(
+                'sendChatMessage',
+                (chunk) => {
+                    const assistantMessageId = `msg_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+                },
+                this.conversationId,
+                messageData
+            )
+            .catch((error) => {
+                console.error('sendChatMessage stream failed:', error);
+            });
         this.isSending = true;
         if (!isSystemAction) {
         } else {
@@ -426,12 +430,18 @@ class A2AEntryWidget extends HTMLElement {
         this.updateMessages();
 
         try {
-            window.applicationAPI.streamCall(
-                'sendChatMessage',
-                (chunk) => this.handleStreamChunk(chunk, assistantMessageId),
-                this.conversationId,
-                messageData
-            );
+            window.applicationAPI
+                .streamCall(
+                    'sendChatMessage',
+                    (chunk) => this.handleStreamChunk(chunk, assistantMessageId),
+                    this.conversationId,
+                    messageData
+                )
+                .catch((error) => {
+                    console.error('sendChatMessage stream failed:', error);
+                    // 桥接层错误不会产出 stream_error chunk，这里合成一块以便 UI 复用同一错误展示路径
+                    this.handleStreamChunk({ type: 'stream_error', error: error.message }, assistantMessageId);
+                });
         } catch (e) {
             /*...*/
         } finally {
@@ -566,15 +576,21 @@ class A2AEntryWidget extends HTMLElement {
 
             try {
                 // 发送消息并获取 requestId
-                window.applicationAPI.streamCall(
-                    'sendChatMessage',
-                    (chunk) => {
-                        // console.info('received', chunk);
-                        this.handleStreamChunk(chunk, assistantMessageId);
-                    },
-                    this.conversationId,
-                    messageData
-                );
+                window.applicationAPI
+                    .streamCall(
+                        'sendChatMessage',
+                        (chunk) => {
+                            // console.info('received', chunk);
+                            this.handleStreamChunk(chunk, assistantMessageId);
+                        },
+                        this.conversationId,
+                        messageData
+                    )
+                    .catch((error) => {
+                        console.error('发送消息失败:', error);
+                        // 桥接层错误不会产出 stream_error chunk，这里合成一块以便 UI 复用同一错误展示路径
+                        this.handleStreamChunk({ type: 'stream_error', error: error.message }, assistantMessageId);
+                    });
             } catch (error) {
                 console.error('发送消息失败:', error);
                 // 移除占位的 AI 响应
