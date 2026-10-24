@@ -6165,7 +6165,9 @@ class TaskView extends HTMLElement {
     connectedCallback() {
         const connectionEpoch = ++this._connectionEpoch;
         const task_id = this.getAttribute('task_id');
-        if (task_id === null) {
+        // setAttribute 会把 undefined 序列化成字符串 "undefined"，仅判 null 挡不住，
+        // 这类视图初始化必然报 "task undefined not found"
+        if (task_id === null || !task_id || task_id === 'undefined') {
             throw new Error('task_id is required');
         }
         this.task_id = task_id;
