@@ -267,7 +267,7 @@ class HomePage extends HTMLElement {
                 selectedExecutionNodeId: event.detail.selectedExecutionNodeId ?? null
             });
             await window.taskManagerAPI.submitMessage(task, event.detail);
-            window.globalControlAPI.openTask(task.task_id);
+            window.globalControlAPI.openTask(task);
         });
         agentInput.addEventListener('contentChanged', (event) => {
             if (!this.__searchMode) return;

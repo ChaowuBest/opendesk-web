@@ -95,6 +95,6 @@ export default tseslint.config(
         }
     },
     {
-        ignores: ['dist/', 'out/', 'node_modules/', 'native/', '**/*.d.ts']
+        ignores: ['dist/', 'out/', 'node_modules/', 'native/', '**/*.d.ts', '.agent-tmp/']
     }
 );

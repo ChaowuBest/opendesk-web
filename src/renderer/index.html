@@ -686,6 +686,13 @@
             // 左侧边栏展开只改变导航可见性，保留各任务的预览内容和布局。
 
             async function openTask(taskId) {
+                // 单一入口防御：拦截非法 taskId（典型如调用方误传 undefined，
+                // setAttribute 后会变成字符串 "undefined"，导致 getFullTask 报
+                // "task undefined not found" 并卡在加载占位白屏）。统一回退主页语义。
+                if (taskId !== null && (typeof taskId !== 'string' || !taskId || taskId === 'undefined')) {
+                    console.error('openTask: invalid taskId:', taskId);
+                    taskId = null;
+                }
                 ensureSlots();
                 var loadingEl = null;
                 if (taskId !== null) {
@@ -759,7 +766,10 @@
                         });
                         // 切回缓存视图时，调用 reload() 补齐后台运行期间跳过的更新
                         if (!isNewTaskView) {
-                            tv.reload();
+                            // reload 失败（如任务刚被清理）不应产生未捕获 rejection
+                            tv.reload().catch(function (err) {
+                                console.error('Failed to reload task view for ' + taskId + ':', err);
+                            });
                         }
                         if (taskViewCache[taskId].syncRightSidebarState) {
                             taskViewCache[taskId].syncRightSidebarState();
