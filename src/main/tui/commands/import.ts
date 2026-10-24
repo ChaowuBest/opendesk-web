@@ -57,7 +57,9 @@ export function registerImportCommand(tui: OpenDeskTUI): void {
                 info.show();
                 return;
             }
-            const jsonPath = path.resolve(expandPath(jsonPathRaw));
+            // 拖拽文件到终端时路径会被成对引号包裹（如 "path"），剥除后再解析
+            const jsonPathUnquoted = jsonPathRaw.replace(/^"(.*)"$/, '$1').replace(/^'(.*)'$/, '$1');
+            const jsonPath = path.resolve(expandPath(jsonPathUnquoted));
             if (!fs.existsSync(jsonPath)) {
                 const info = new InfoOverlay(tui, {
                     title: t('import.fail'),

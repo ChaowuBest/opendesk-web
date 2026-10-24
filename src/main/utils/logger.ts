@@ -95,18 +95,52 @@ function formatLogEntry(entry: LogEntry): string {
 }
 
 class LogStream extends Writable {
+    /**
+     * 内存缓冲上限。主进程每条日志都会进入 content/entries 缓冲区（供设置页日志
+     * 查看器与导出使用），若无上限，长跑场景（如 LLM Raw 响应高频日志）会无界
+     * 累积直至 V8 堆耗尽（OOM）。超过上限后丢弃最旧日志，只保留最近窗口。
+     */
+    static readonly maxEntries = 2000;
+    static readonly maxContentBytes = 2 * 1024 * 1024;
+    static readonly maxLineLength = 16 * 1024;
+    private static readonly truncatedSuffix = '…[truncated]';
+
     content: string = '';
     entries: LogEntry[] = [];
     static globalStream: LogStream | null = null;
 
     _write(chunk: string, encoding: string, callback: () => void) {
-        this.content += chunk;
         const raw = typeof chunk === 'string' ? chunk : chunk.toString();
-        const lines = raw.split('\n').filter((l: string) => l.trim().length > 0);
+        // 单条超长日志截断，防止一次性写入撑大缓冲区
+        const capped =
+            raw.length > LogStream.maxLineLength
+                ? raw.slice(0, LogStream.maxLineLength - LogStream.truncatedSuffix.length) +
+                  LogStream.truncatedSuffix +
+                  '\n'
+                : raw;
+        this.content += capped;
+        const lines = capped.split('\n').filter((l: string) => l.trim().length > 0);
         for (const line of lines) {
             this.entries.push(parseLogLine(line));
         }
+        this.trim();
         callback();
+    }
+
+    /**
+     * 丢弃最旧日志：entries 按条数、content 按字节各自收敛到上限内。
+     * 采用高水位淘汰——触发上限后一次性裁剪到上限的一半，避免逐行
+     * slice 带来的大字符串反复拷贝。
+     */
+    private trim(): void {
+        if (this.entries.length > LogStream.maxEntries) {
+            this.entries = this.entries.slice(this.entries.length - LogStream.maxEntries / 2);
+        }
+        if (this.content.length > LogStream.maxContentBytes) {
+            const keepFrom = Math.max(0, this.content.length - LogStream.maxContentBytes / 2);
+            const newline = this.content.indexOf('\n', keepFrom);
+            this.content = newline >= 0 ? this.content.slice(newline + 1) : '';
+        }
     }
 
     getContent(): string {

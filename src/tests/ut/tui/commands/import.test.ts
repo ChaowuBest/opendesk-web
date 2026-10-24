@@ -18,6 +18,66 @@ afterEach(() => {
     setCustomOpendeskDirectory(undefined);
 });
 
+async function setupImportCommand(): Promise<{
+    manager: TaskManagerState;
+    importCommand: { execute: (args: string) => Promise<void> };
+    switchToTask: any;
+    taskPath: string;
+}> {
+    tempDirectory = fs.mkdtempSync(path.join(os.tmpdir(), 'opendesk-import-task-'));
+    setCustomOpendeskDirectory(tempDirectory);
+    const taskPath = path.join(tempDirectory, 'task.json');
+    fs.writeFileSync(
+        taskPath,
+        JSON.stringify({
+            task_id: 'exported-task',
+            task_name: 'Exported task',
+            task_status: 'waiting',
+            agentId: null,
+            custom_system_prompt: 'custom prompt',
+            chat_context: {
+                system_prompt: { role: 'system', content: 'custom prompt' },
+                messages: []
+            },
+            workspace: '/workspace/imported',
+            created_at: new Date().toISOString()
+        })
+    );
+
+    const mode: ModeDecl = {
+        id: 'test',
+        name: 'Test',
+        description: 'Test mode',
+        icon: '',
+        color: '',
+        permissionFactory: () => []
+    };
+    const manager = new TaskManagerState();
+    await manager.setupLazyHarnessInit(mode, '/workspace/default', () => ({
+        prompt: async () => ({ decision: 'deny', rememberScope: 'none' })
+    }));
+    jest.spyOn(manager, 'save').mockImplementation(() => undefined);
+    jest.spyOn(manager, 'publishTaskListUpdate').mockImplementation(() => undefined);
+
+    let importCommand: { execute: (args: string) => Promise<void> } | undefined;
+    const switchToTask = jest.fn(async () => undefined);
+    registerImportCommand({
+        workspace: '/workspace/default',
+        taskManagerState: manager,
+        switchToTask,
+        commandRegistry: {
+            register: (command: { name: string; execute: (args: string) => Promise<void> }) => {
+                if (command.name === 'import') importCommand = command;
+            }
+        }
+    } as any);
+
+    if (!importCommand) {
+        throw new Error('import command not registered');
+    }
+    return { manager, importCommand, switchToTask, taskPath };
+}
+
 describe('/import task path expansion', () => {
     test('expandPath should expand ~/ prefix', () => {
         const input = '~/Projects/task.json';
@@ -45,62 +105,36 @@ describe('/import task path expansion', () => {
 
 describe('/import task lifecycle', () => {
     test('initializes the imported task harness only when switching to it', async () => {
-        tempDirectory = fs.mkdtempSync(path.join(os.tmpdir(), 'opendesk-import-task-'));
-        setCustomOpendeskDirectory(tempDirectory);
-        const taskPath = path.join(tempDirectory, 'task.json');
-        fs.writeFileSync(
-            taskPath,
-            JSON.stringify({
-                task_id: 'exported-task',
-                task_name: 'Exported task',
-                task_status: 'waiting',
-                agentId: null,
-                custom_system_prompt: 'custom prompt',
-                chat_context: {
-                    system_prompt: { role: 'system', content: 'custom prompt' },
-                    messages: []
-                },
-                workspace: '/workspace/imported',
-                created_at: new Date().toISOString()
-            })
-        );
-
-        const mode: ModeDecl = {
-            id: 'test',
-            name: 'Test',
-            description: 'Test mode',
-            icon: '',
-            color: '',
-            permissionFactory: () => []
-        };
-        const manager = new TaskManagerState();
-        await manager.setupLazyHarnessInit(mode, '/workspace/default', () => ({
-            prompt: async () => ({ decision: 'deny', rememberScope: 'none' })
-        }));
-        jest.spyOn(manager, 'save').mockImplementation(() => undefined);
-        jest.spyOn(manager, 'publishTaskListUpdate').mockImplementation(() => undefined);
-
-        let importCommand: { execute: (args: string) => Promise<void> } | undefined;
-        const switchToTask = jest.fn(async () => undefined);
-        registerImportCommand({
-            workspace: '/workspace/default',
-            taskManagerState: manager,
-            switchToTask,
-            commandRegistry: {
-                register: (command: { name: string; execute: (args: string) => Promise<void> }) => {
-                    if (command.name === 'import') importCommand = command;
-                }
-            }
-        } as any);
-
-        expect(importCommand).toBeDefined();
-        await importCommand!.execute(`task ${taskPath}`);
+        const { manager, importCommand, switchToTask, taskPath } = await setupImportCommand();
+        await importCommand.execute(`task ${taskPath}`);
 
         expect(switchToTask).toHaveBeenCalledTimes(1);
         const importedTask = switchToTask.mock.calls[0][0];
         expect(importedTask.harnessContext.workspace).toBe('/workspace/imported');
         expect(importedTask.harnessContext.permission).toBeDefined();
         expect(importedTask.chat_context.system_prompt?.content).toBe('custom prompt');
+        manager.disposeLazyHarnessInit();
+    });
+});
+
+describe('/import task quoted path (issue #209: drag & drop wraps path in quotes)', () => {
+    test('imports a task whose path is wrapped in double quotes', async () => {
+        const { manager, importCommand, switchToTask, taskPath } = await setupImportCommand();
+        await importCommand.execute(`task "${taskPath}"`);
+
+        expect(switchToTask).toHaveBeenCalledTimes(1);
+        const importedTask = switchToTask.mock.calls[0][0];
+        expect(importedTask.task_id).toBeDefined();
+        expect(importedTask.harnessContext.workspace).toBe('/workspace/imported');
+        manager.disposeLazyHarnessInit();
+    });
+
+    test('imports a task whose path is wrapped in single quotes', async () => {
+        const { manager, importCommand, switchToTask, taskPath } = await setupImportCommand();
+        await importCommand.execute(`task '${taskPath}'`);
+
+        expect(switchToTask).toHaveBeenCalledTimes(1);
+        expect(switchToTask.mock.calls[0][0].task_id).toBeDefined();
         manager.disposeLazyHarnessInit();
     });
 });

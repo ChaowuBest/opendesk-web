@@ -2848,6 +2848,39 @@ export class TaskState {
         return sendRetryFeedbackForTask(this, update);
     }
 
+    /**
+     * 推送一条 assistant 消息的「终态渲染快照」（issue #332）。
+     *
+     * hook 拒绝后的重试会丢弃当前 assistant 消息并新建空消息重跑，若不补发快照，
+     * 被打断的消息将永远停留在流式原始态：主进程从未执行最终 markdown+KaTeX
+     * 渲染（流式期间的增量快照有意跳过渲染），前端会看到 `$...$` 等 LaTeX 源码，
+     * 思考块也停在"思考中"。快照的 task_status 用 stopped 仅表示"本条消息已定型"，
+     * 任务整体状态仍由 turn 循环正常流转，不影响后续重跑轮次。
+     */
+    private async sendFinalizedAssistantSnapshot(message: AssistantMessage): Promise<void> {
+        this.retainAvailableTaskUpdateSubscribers('assistant final snapshot');
+        if (this.subscribers.length === 0) return;
+        try {
+            if (this.needsHtmlRender) {
+                await this.renderInWorkspace(() => message.render());
+            }
+            this.publishTaskUpdate(
+                {
+                    type: 'assistant_replace',
+                    task_id: this.task_id,
+                    task_status: 'stopped',
+                    message_id: message.message_id,
+                    parts: Array.isArray(message.content) ? [...message.content] : [],
+                    usage: message.usage,
+                    metadata: message.metadata
+                },
+                'assistant final snapshot'
+            );
+        } catch (err) {
+            logger.error(`error sending assistant final snapshot for task ${this.task_id}: ${errorToMessage(err)}`);
+        }
+    }
+
     async buildToolsets(): Promise<BaseToolset[]> {
         // 交互工具集仅在当前 turn 由用户交互发起时挂载。
         let interactionToolset = this._currentTurnInteractive ? this.interactionToolset : null;
@@ -3387,6 +3420,12 @@ export class TaskState {
                                 logger.info(
                                     `task ${this.task_id}: hook rejected (attempt ${hookRejectCount}), backing off ${backoffMs}ms before retry`
                                 );
+                                // 重跑会丢弃当前 assistant 消息，先补发终态渲染快照，
+                                // 让被打断的长消息完成最终 markdown+KaTeX 渲染（issue #332）
+                                const rejectedLastMessage = this.chat_context.lastMessage();
+                                if (rejectedLastMessage instanceof AssistantMessage) {
+                                    await this.sendFinalizedAssistantSnapshot(rejectedLastMessage);
+                                }
                                 await new Promise((resolve) => setTimeout(resolve, backoffMs));
                                 if (this._turnGeneration !== myGeneration) return;
                                 const materializedExtensionEventsAfterBackoff =

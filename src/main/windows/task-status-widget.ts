@@ -313,6 +313,76 @@ export function pruneStaleWaitingTaskIds(
     return Array.from(waitingTaskIds).filter((taskId) => activeIds.has(taskId));
 }
 
+/** 悬浮窗显示位置（与设置 gui_config.floating_window_position 对齐）。 */
+export type FloatingWindowPosition = 'top-left' | 'top-right' | 'bottom-left' | 'bottom-right';
+
+/** 浮窗过渡的输入参数。 */
+export interface WidgetTransitionParams {
+    /** 设置中的初始角（锚定语义依据）。 */
+    position: FloatingWindowPosition;
+    /** 过渡前窗口的实际 bounds（可能已被用户拖拽到任意位置）。 */
+    currentBounds: { x: number; y: number; width: number; height: number };
+    /** true = 展开→收起；false = 收起→展开。 */
+    toCollapsed: boolean;
+    collapsedSize: { width: number; height: number };
+    expandedSize: { width: number; height: number };
+    /** 当前屏幕工作区（排除任务栏等系统区域）。 */
+    workArea: { x: number; y: number; width: number; height: number };
+}
+
+/**
+ * 计算浮窗展开/收起的目标 bounds（纯函数，不依赖 Electron）。
+ *
+ * 锚定规则：按设置中的初始角保持对应的角不动——右下角锚定时展开向左上扩展、
+ * 收起向右下收拢，其余三角同理。
+ *
+ * 结果钳制到工作区内：不依赖 getBounds() 读回值与 setBounds() 写入值严格一致
+ * （Windows 上该窗口组合存在异步/取整偏差，见 electron/electron 的 pending
+ * bounds 处理），也不假设用户未把胶囊拖到边缘——即使锚定计算的结果越界，也
+ * 保证过渡后的窗口完整可见，避免出现胶囊在屏幕右缘/底缘时展开窗口被推出
+ * 屏幕外的错位（issue #335）。
+ */
+export function computeWidgetTransitionBounds(params: WidgetTransitionParams): {
+    x: number;
+    y: number;
+    width: number;
+    height: number;
+} {
+    const { position, currentBounds, toCollapsed, collapsedSize, expandedSize, workArea } = params;
+    const target = toCollapsed ? collapsedSize : expandedSize;
+    let x: number;
+    let y: number;
+    switch (position) {
+        case 'top-left':
+            // 左上角锚定：展开向右下扩展，收起向左上收拢。
+            x = currentBounds.x;
+            y = currentBounds.y;
+            break;
+        case 'top-right':
+            // 右上角锚定：展开向左下扩展，收起向右上收拢。
+            x = currentBounds.x + currentBounds.width - target.width;
+            y = currentBounds.y;
+            break;
+        case 'bottom-left':
+            // 左下角锚定：展开向右上扩展，收起向左下收拢。
+            x = currentBounds.x;
+            y = currentBounds.y + currentBounds.height - target.height;
+            break;
+        case 'bottom-right':
+        default:
+            // 右下角锚定：展开向左上扩展，收起向右下收拢。
+            x = currentBounds.x + currentBounds.width - target.width;
+            y = currentBounds.y + currentBounds.height - target.height;
+            break;
+    }
+    // 钳制到工作区内（目标尺寸可能大于工作区时钳到工作区原点）。
+    const maxX = workArea.x + Math.max(0, workArea.width - target.width);
+    const maxY = workArea.y + Math.max(0, workArea.height - target.height);
+    x = Math.min(Math.max(x, workArea.x), maxX);
+    y = Math.min(Math.max(y, workArea.y), maxY);
+    return { x: Math.round(x), y: Math.round(y), width: target.width, height: target.height };
+}
+
 function readTokenCount(value: unknown): number | undefined {
     return typeof value === 'number' && Number.isFinite(value) && value >= 0 ? Math.floor(value) : undefined;
 }

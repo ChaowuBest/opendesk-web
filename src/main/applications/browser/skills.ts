@@ -281,6 +281,27 @@ CallSkillTool({
 })
 \`\`\`
 
+## 下载文件
+
+使用 **download** 将远端 URL 的文件直接保存到本地磁盘：
+- \`url\`：要下载的文件地址（http/https）
+- \`path\`：保存目标路径，**必须是包含文件名的完整路径**，不能是目录（如 \`/tmp/data/report.zip\`）
+- 请求经由浏览器共享会话发出，**自动携带登录 Cookie**（包括 HttpOnly），适合下载需要登录态的站点附件
+- 父目录不存在会自动创建；非 2xx 响应会直接报错并附状态码（401/403 时先引导用户在浏览器中登录，再重试）
+- 调用前会像 writeFile 一样声明目标路径的文件写权限
+
+**当需要下载文件（附件、安装包、图片、压缩包等）时，优先使用 download 而不是 shell 的 curl/wget**：页面内 fetch/XHR 会被站点 CSP 拦截，点击下载链接可能触发导航而非落盘，download 是唯一可靠途径。
+
+示例：
+\`\`\`
+CallSkillTool({
+  "bundleName": "browser",
+  "skillName": "use-browser",
+  "toolName": "download",
+  "toolArgs": { "url": "https://example.com/files/report.zip", "path": "/tmp/report.zip" }
+})
+\`\`\`
+
 ## 执行脚本
 
 使用 **evaluate** 在当前页面执行任意 JavaScript 表达式并返回结果。

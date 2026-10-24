@@ -1250,6 +1250,106 @@ export class BrowserScreenshotTool extends BaseTool<typeof BrowserScreenshotArgs
     }
 }
 
+// ========== download ==========
+
+const BrowserDownloadArgsSchema = z.object({
+    url: z.string().describe('要下载的远端文件 URL（http/https）'),
+    path: z.string().describe('保存目标路径，必须是包含文件名的完整路径，不能是目录')
+});
+
+export class BrowserDownloadTool extends BaseTool<typeof BrowserDownloadArgsSchema> {
+    private browserApp: BrowserApplication;
+
+    constructor(browserApp: BrowserApplication) {
+        super(
+            'download',
+            '将远端 URL 的文件下载并保存到本地指定路径。经由浏览器共享会话发起请求，自动携带登录 Cookie（包括 HttpOnly），可用于下载需要登录态的站点附件。path 必须是包含文件名的完整路径。',
+            BrowserDownloadArgsSchema,
+            undefined,
+            { 'zh-CN': '下载文件', 'en-US': 'Download File' }
+        );
+        this.browserApp = browserApp;
+        this.setExecutor(this.handleExecute.bind(this));
+    }
+
+    getDeclaredPermissions(
+        args: z.output<typeof BrowserDownloadArgsSchema>,
+        taskState?: TaskState
+    ): PermissionRequest[] {
+        const target = sanitizeUploadPath(args.path, getWorkingDirectory(taskState));
+        if (!target) return [];
+        return [{ resourceType: 'file', action: 'write', resourcePath: target }];
+    }
+
+    renderToolCallCli(toolcall: ToolCall, width: number): string[] | undefined {
+        const args = toolcall.args_object as any;
+        const body: string[] = [];
+        if (args?.url) body.push(chalk.dim(t('cli.label.url')) + chalk.cyan(truncText(String(args.url), width - 14)));
+        if (args?.path)
+            body.push(chalk.dim(t('cli.label.file')) + chalk.yellow(truncText(String(args.path), width - 14)));
+        if (toolcall.status === 'running') body.push(chalk.dim(t('cli.download.running')));
+        else if (toolcall.status === 'success') body.push(chalk.dim(t('cli.download.success')));
+        else if (toolcall.status === 'error' && toolcall.result)
+            body.push(chalk.redBright('  ' + truncText(String(toolcall.result), width - 10)));
+        return new Card({
+            icon: '📥',
+            title: t('cli.download.cardTitle'),
+            status: statusDisplay(toolcall.status),
+            body
+        }).render(width);
+    }
+
+    private async handleExecute(
+        args: z.output<typeof BrowserDownloadArgsSchema>,
+        taskState?: TaskState
+    ): Promise<string> {
+        // 仅允许 http/https，禁止 file: 等协议
+        let parsedUrl: URL;
+        try {
+            parsedUrl = new URL(args.url);
+        } catch {
+            return fail(t('error.downloadInvalidUrl', { url: args.url }));
+        }
+        if (parsedUrl.protocol !== 'http:' && parsedUrl.protocol !== 'https:') {
+            return fail(t('error.downloadInvalidUrl', { url: args.url }));
+        }
+
+        const targetPath = sanitizeUploadPath(args.path, getWorkingDirectory(taskState));
+        if (!targetPath || targetPath.endsWith('/') || targetPath.endsWith('\\')) {
+            return fail(t('error.downloadPathRequired'));
+        }
+        const stat = await fs.stat(targetPath).catch(() => null);
+        if (stat?.isDirectory()) {
+            return fail(t('error.downloadPathIsDirectory', { path: targetPath }));
+        }
+
+        // 经浏览器共享 session（persist:opendesk-browser）发起请求：
+        // 自动带上该 session 的全部 cookies（含 HttpOnly 登录态），与 webview 内请求等效
+        const session = BrowserManager.browserSession;
+        if (!session) return fail(t('error.sessionNotInitialized'));
+
+        let response: Response;
+        try {
+            response = await session.fetch(args.url);
+        } catch (err: any) {
+            return fail(err?.message || String(err));
+        }
+
+        if (!response.ok) {
+            return fail(t('error.downloadHttpStatus', { status: response.status, url: args.url }));
+        }
+
+        try {
+            const buffer = Buffer.from(await response.arrayBuffer());
+            await fs.mkdir(path.dirname(targetPath), { recursive: true });
+            await fs.writeFile(targetPath, buffer);
+            return ok({ path: targetPath, size: buffer.length, url: args.url });
+        } catch (err: any) {
+            return fail(err?.message || String(err));
+        }
+    }
+}
+
 // ========== waitFor ==========
 
 const BrowserWaitForArgsSchema = z.object({

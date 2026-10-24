@@ -18,11 +18,13 @@ import { safeSendToWebContents } from '../utils/electron-ipc.js';
 import {
     buildTaskStatusSummary,
     computeTriggerActive,
+    computeWidgetTransitionBounds,
     isWidgetTriggerEffective,
     mergeTaskLiveUsage,
     pruneStaleWaitingTaskIds,
     updateTaskSnapshot,
     type FloatingWindowMode,
+    type FloatingWindowPosition,
     type TaskStatusListEntry,
     type TaskStatusWidgetSummary,
     type TaskStatusWidgetTask,
@@ -51,8 +53,12 @@ const WIDGET_MARGIN = 28;
 /** 浮窗专用 session partition，用于把页面缩放状态与主窗口隔离。 */
 const WIDGET_PARTITION = 'task-status-widget';
 
-/** 悬浮窗显示位置（与设置 gui_config.floating_window_position 对齐）。 */
-type FloatingWindowPosition = 'top-left' | 'top-right' | 'bottom-left' | 'bottom-right';
+/**
+ * 程序化 setBounds 目标与系统实际落点的容差（DIP）。Windows 上该窗口组合
+ * （transparent + frameless + resizable:false）的位置落点存在 DPI 取整偏差，
+ * moved 事件中按容差区分「程序化移动」与「用户拖拽」，避免误记录 sessionPosition。
+ */
+const PROGRAMMATIC_MOVE_TOLERANCE = 2;
 
 export interface TaskStatusWidgetHost {
     getPreloadPath(): string;
@@ -292,7 +298,11 @@ function ensureWidgetWindow(): BrowserWindow | null {
     // 会先写入 lastProgrammaticOrigin，moved 事件中通过位置比对区分并跳过。
     win.on('moved', () => {
         const bounds = win.getBounds();
-        if (lastProgrammaticOrigin && bounds.x === lastProgrammaticOrigin.x && bounds.y === lastProgrammaticOrigin.y) {
+        if (
+            lastProgrammaticOrigin &&
+            Math.abs(bounds.x - lastProgrammaticOrigin.x) <= PROGRAMMATIC_MOVE_TOLERANCE &&
+            Math.abs(bounds.y - lastProgrammaticOrigin.y) <= PROGRAMMATIC_MOVE_TOLERANCE
+        ) {
             lastProgrammaticOrigin = null;
             return;
         }
@@ -432,6 +442,54 @@ function applyWidgetBounds(win: BrowserWindow, bounds: { x: number; y: number; w
     win.setBounds(bounds);
     // 尺寸变化是透明背景丢失的触发点之一，变完立即修复。
     reassertTransparentBackground(win);
+    scheduleBoundsReassert(win, bounds);
+}
+
+/**
+ * Windows 上该窗口组合（transparent + frameless + resizable:false）的 setBounds
+ * 存在落点与目标不一致的情况：位置应用存在 DPI 取整偏差，且在胶囊 drag region
+ * 触发的系统移动循环中调用 setBounds 时变更会进入 pending 队列、于移动循环结束
+ * 时才落地，可能被系统按循环起点推算的最终位置覆盖——表现为展开后窗口停在胶囊
+ * 位置（尺寸已生效、位置未生效），即 issue #335 的「向右下角展开」。延迟读回实际
+ * bounds，偏差超过容差时按目标重设一次（模式与 reassertTransparentBackground 的
+ * 延迟补刀一致），不递归重试。
+ */
+function scheduleBoundsReassert(
+    win: BrowserWindow,
+    target: { x: number; y: number; width: number; height: number }
+): void {
+    if (process.platform !== 'win32') {
+        return;
+    }
+    const taggedWin = win as BrowserWindow & { __boundsReassertTimer?: NodeJS.Timeout };
+    if (taggedWin.__boundsReassertTimer) {
+        clearTimeout(taggedWin.__boundsReassertTimer);
+    }
+    taggedWin.__boundsReassertTimer = setTimeout(() => {
+        taggedWin.__boundsReassertTimer = undefined;
+        if (win.isDestroyed()) {
+            return;
+        }
+        const actual = win.getBounds();
+        if (
+            Math.abs(actual.x - target.x) <= PROGRAMMATIC_MOVE_TOLERANCE &&
+            Math.abs(actual.y - target.y) <= PROGRAMMATIC_MOVE_TOLERANCE &&
+            actual.width === target.width &&
+            actual.height === target.height
+        ) {
+            return;
+        }
+        logger.warn(
+            `task status widget bounds drifted after setBounds (actual ${actual.x},${actual.y} ${actual.width}x${actual.height}, ` +
+                `target ${target.x},${target.y} ${target.width}x${target.height}), reapplying`
+        );
+        lastProgrammaticOrigin = { x: target.x, y: target.y };
+        try {
+            win.setBounds(target);
+        } catch (err) {
+            logger.warn(`failed to reassert widget bounds: ${errorToMessage(err)}`);
+        }
+    }, 120);
 }
 
 function positionWidget(win: BrowserWindow): void {
@@ -586,36 +644,20 @@ function setWidgetCollapsed(collapsed: boolean): void {
     }
     widgetWindow.setHasShadow(!collapsed);
     const bounds = widgetWindow.getBounds();
-    // 按显示位置锚定：展开/收起保持对应的角不变。
-    const widgetWidth = collapsed ? WIDGET_COLLAPSED_WIDTH : WIDGET_WIDTH;
-    const widgetHeight = collapsed ? WIDGET_COLLAPSED_HEIGHT : WIDGET_HEIGHT;
-    let x = bounds.x;
-    let y = bounds.y;
-    switch (getFloatingWindowPosition()) {
-        case 'top-left':
-            // 左上角锚定：展开向右下扩展，收起向左上收拢。
-            break;
-        case 'top-right':
-            // 右上角锚定：展开向左下扩展，收起向右上收拢。
-            x = bounds.x + bounds.width - widgetWidth;
-            break;
-        case 'bottom-left':
-            // 左下角锚定：展开向右上扩展，收起向左下收拢。
-            y = bounds.y + bounds.height - widgetHeight;
-            break;
-        case 'bottom-right':
-        default:
-            // 右下角锚定：展开向左上扩展，收起向右下收拢。
-            x = bounds.x + bounds.width - widgetWidth;
-            y = bounds.y + bounds.height - widgetHeight;
-            break;
-    }
-    applyWidgetBounds(widgetWindow, {
-        x,
-        y,
-        width: widgetWidth,
-        height: widgetHeight
+    // 按显示位置锚定计算目标 bounds，并钳制到屏幕工作区内：不假设 getBounds()
+    // 读回值与上一次 setBounds 写入值严格一致（Windows 上存在 DPI 取整与异步
+    // 落点偏差），也不假设胶囊未被拖到屏幕边缘——即使越界也保证展开后完整可见，
+    // 避免展开窗口被推出屏幕外的错位（issue #335）。
+    const display = screen.getDisplayMatching(bounds);
+    const next = computeWidgetTransitionBounds({
+        position: getFloatingWindowPosition(),
+        currentBounds: bounds,
+        toCollapsed: collapsed,
+        collapsedSize: { width: WIDGET_COLLAPSED_WIDTH, height: WIDGET_COLLAPSED_HEIGHT },
+        expandedSize: { width: WIDGET_WIDTH, height: WIDGET_HEIGHT },
+        workArea: display.workArea
     });
+    applyWidgetBounds(widgetWindow, next);
 }
 
 function handleTaskListChanged(list: TaskStatusListEntry[]): void {
