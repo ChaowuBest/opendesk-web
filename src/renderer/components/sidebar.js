@@ -202,8 +202,7 @@ class SideBar extends HTMLElement {
 
         // 当打开其他应用时，清除任务高亮
         document.addEventListener('application-opened', () => {
-            this.currentTaskId = null;
-            this._updateTaskHighlight();
+            this._updateTaskHighlight(false);
         });
 
         if (window.applicationRegistryAPI?.onApplicationListChanged) {
@@ -454,9 +453,8 @@ class SideBar extends HTMLElement {
             }
         });
         this.querySelector('#create-task-btn').addEventListener('click', () => {
-            this.currentTaskId = null;
             window.globalControlAPI.openHomePage();
-            this._updateTaskHighlight();
+            this._updateTaskHighlight(null);
         });
         this.querySelector('#open-skills-btn').addEventListener('click', () => {
             window.globalControlAPI.openApplication('skillmgr');
@@ -890,8 +888,8 @@ class SideBar extends HTMLElement {
         });
 
         this.querySelector('#sb-collapsed-new-task')?.addEventListener('click', () => {
-            this.currentTaskId = null;
             window.globalControlAPI.openHomePage();
+            this._updateTaskHighlight(false);
         });
 
         this.querySelector('#sb-collapsed-chat')?.addEventListener('click', (e) => {
@@ -1086,8 +1084,7 @@ class SideBar extends HTMLElement {
             item.addEventListener('click', () => {
                 const taskId = item.dataset.taskId;
                 window.globalControlAPI.openTask(taskId);
-                this.currentTaskId = taskId;
-                this._updateTaskHighlight();
+                this._updateTaskHighlight(taskId);
                 this._dismissRecentTasksMenu();
             });
         });
@@ -1353,9 +1350,20 @@ class SideBar extends HTMLElement {
         return `<span class="goal-terminal-tag inline-flex items-center px-2 py-1 rounded fs-xs leading-none font-medium whitespace-nowrap border ${cls} flex-shrink-0">${label}</span>`;
     }
 
-    _updateTaskHighlight() {
+    /**
+     * 同步侧边栏任务高亮。
+     * 这是任务高亮的唯一入口：既兼容历史调用 `_updateTaskHighlight()`（同步当前实例状态），
+     * 也支持统一由 openTask 传入 taskId 并通过 revealCurrentTask 展开分组、滚动到可见。
+     * @param {string | number | null} [taskId] 省略时沿用 this.currentTaskId
+     * @param {{ revealCurrentTask?: boolean }} [options]
+     * @returns {boolean | undefined} reveal 时表示任务是否在任务列表中，否则 undefined
+     */
+    _updateTaskHighlight(taskId, options) {
+        if (taskId !== undefined) {
+            this.currentTaskId = taskId;
+        }
         const container = this.querySelector('#task-list-container');
-        if (!container) return;
+        if (!container) return false;
 
         container.querySelectorAll('.sb-task-row, .sb-running-subtask-row').forEach((item) => {
             item.classList.toggle('is-current', item.dataset.task_id === this.currentTaskId);
@@ -1364,6 +1372,101 @@ class SideBar extends HTMLElement {
             const taskId = card.querySelector('.sb-running-header')?.dataset.task_id;
             card.classList.toggle('is-current', taskId === this.currentTaskId);
         });
+        if (!options?.revealCurrentTask) return undefined;
+        return this._revealCurrentTask(container);
+    }
+
+    /**
+     * 保证当前任务在任务列表中可见：
+     * 1. 优先找运行区中的当前任务（运行区始终渲染，最多需要滚动）；
+     * 2. 否则定位分组中的任务行：分组折叠时立即展开（手风琴式，一次只展开一组）；
+     *    行不在 DOM（分页之外）时按需扩充分页展示数量并重渲染列表，滚动需等重渲染的
+     *    滚动位置恢复（RAF）之后执行，否则会被覆盖；
+     * 3. 行不在可视区时滚动到最近边缘。
+     * @param {HTMLElement} container
+     * @returns {boolean} 当前任务是否在任务列表中
+     */
+    _revealCurrentTask(container) {
+        const taskId = this.currentTaskId;
+        if (taskId === null || taskId === undefined) return false;
+        const escapedTaskId =
+            typeof CSS !== 'undefined' && typeof CSS.escape === 'function'
+                ? CSS.escape(String(taskId))
+                : String(taskId);
+        const findRow = () =>
+            container.querySelector(`.sb-running-header[data-task_id="${escapedTaskId}"]`) ||
+            container.querySelector(`.sb-task-row[data-task_id="${escapedTaskId}"]`);
+
+        const applyReveal = (row) => {
+            if (!row.closest('.sb-running-list')) {
+                const group = row.closest('.sb-task-group');
+                if (group && group.tagName === 'DETAILS' && !group.open) {
+                    // 先瞬时收起当前展开的组（不重放动画），再展开目标组；
+                    // 若走 _closeTaskGroup 的动画回调重开目标组，会重播展开动画造成闪烁
+                    const currentlyOpen = [...container.querySelectorAll('.sb-task-group[open]')].find(
+                        (item) => item !== group
+                    );
+                    if (currentlyOpen) {
+                        currentlyOpen.classList.remove('is-opening', 'is-closing');
+                        currentlyOpen.removeAttribute('open');
+                    }
+                    this._openTaskGroup(group);
+                }
+            }
+            // block: 'nearest' 对已在可视区内的元素是无操作，
+            // 并会同时校正 .sb-task-group-body / .sb-running-list 等内层滚动容器的位置
+            row.scrollIntoView?.({ block: 'nearest' });
+        };
+
+        let row = findRow();
+        if (row) {
+            applyReveal(row);
+            return true;
+        }
+        if (!this._ensureTaskRowRendered(taskId)) return false;
+        row = findRow();
+        if (!row) return false;
+        // reloadTaskList 会先同步恢复、再经 RAF 二次恢复旧的滚动位置，
+        // 因此滚动到目标任务必须排在其后，否则会被旧位置覆盖
+        if (typeof requestAnimationFrame === 'function') {
+            requestAnimationFrame(() => applyReveal(row));
+        } else {
+            applyReveal(row);
+        }
+        return true;
+    }
+
+    /**
+     * 当前任务行不在 DOM 中（位于分页之外）时，定位其所属分组并扩充该组的分页展示数量，
+     * 随后重渲染任务列表。会同时把 _openTaskGroupId 指向目标分组，让重渲染后目标组保持展开。
+     * @param {string} taskId
+     * @returns {boolean} 任务是否存在于当前任务列表口径内
+     */
+    _ensureTaskRowRendered(taskId) {
+        const filteredTasks = this._getFilteredTaskList();
+        let groupId = 'favorites';
+        let items;
+        if (this._favoritesView) {
+            const favoritedTasks = filteredTasks.filter((t) => this._favoritedTaskIds.has(t.task_id));
+            items = buildSidebarFavoritesResults(favoritedTasks);
+        } else {
+            const group = buildSidebarTaskGroups(filteredTasks, this._taskView).find((candidate) =>
+                candidate.items.some((item) => item.task.task_id === taskId)
+            );
+            if (!group) return false;
+            groupId = group.id;
+            items = group.items;
+        }
+        const index = items.findIndex((item) => item.task.task_id === taskId);
+        if (index < 0) return false;
+        const limit = this._groupDisplayLimits.get(groupId) ?? TASK_PAGE_SIZE;
+        if (index >= limit) {
+            // 按整页扩充，避免目标行恰好压在分页边界上
+            this._groupDisplayLimits.set(groupId, (Math.floor(index / TASK_PAGE_SIZE) + 1) * TASK_PAGE_SIZE);
+        }
+        this._openTaskGroupId = groupId;
+        this.reloadTaskList();
+        return true;
     }
 
     _dismissContextMenu() {
@@ -1849,7 +1952,7 @@ class SideBar extends HTMLElement {
             try {
                 const forkedTaskId = await window.taskManagerAPI.forkTask(taskId);
                 window.globalControlAPI.openTask(forkedTaskId);
-                this.currentTaskId = forkedTaskId;
+                this._updateTaskHighlight(forkedTaskId);
                 this.reloadTaskList();
             } catch (error) {
                 console.error('Failed to fork task:', error);
@@ -1896,7 +1999,7 @@ class SideBar extends HTMLElement {
             if (!confirmed) return;
             window.globalControlAPI.clearAllTaskViewCache();
             window.globalControlAPI.openHomePage();
-            this.currentTaskId = null;
+            this._updateTaskHighlight(false);
             await window.taskManagerAPI.clearAllTasks();
             this.reloadTaskList();
         });
@@ -2021,7 +2124,7 @@ class SideBar extends HTMLElement {
                     await window.taskManagerAPI.updateTaskWorkspace(taskId, workspacePath);
                 }
                 window.globalControlAPI.openTask(taskId);
-                this.currentTaskId = taskId;
+                this._updateTaskHighlight(taskId);
                 this.reloadTaskList();
             } catch (error) {
                 console.error('Failed to create task in workspace:', error);
@@ -2082,7 +2185,7 @@ class SideBar extends HTMLElement {
         }
         if (needOpenHome) {
             window.globalControlAPI.openTask(null);
-            this.currentTaskId = null;
+            this._updateTaskHighlight(null);
         }
         this.reloadTaskList();
     }
@@ -2094,8 +2197,7 @@ class SideBar extends HTMLElement {
             item.addEventListener('click', (event) => {
                 const taskId = event.currentTarget.dataset.task_id;
                 window.globalControlAPI.openTask(taskId);
-                this.currentTaskId = taskId;
-                this._updateTaskHighlight();
+                this._updateTaskHighlight(taskId);
             });
             item.addEventListener('contextmenu', (event) => {
                 event.preventDefault();
@@ -2370,7 +2472,7 @@ class SideBar extends HTMLElement {
 
     _openTaskGroup(details) {
         if (!details.isConnected) return;
-        details.open = true;
+        details.setAttribute('open', '');
         details.classList.remove('is-closing');
         details.classList.add('is-opening');
         this._openTaskGroupId = details.dataset.groupId;

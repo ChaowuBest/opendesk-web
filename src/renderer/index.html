@@ -784,12 +784,14 @@
                     loadingEl.addEventListener('transitionend', __cleanup, { once: true });
                     setTimeout(__cleanup, 400);
                 }
-                // 同步侧边栏活跃任务高亮
+                // 统一同步侧边栏活跃任务高亮（所有打开任务的入口都经由 openTask）；
+                // revealCurrentTask 会让侧边栏自动展开任务所在分组并滚动到可见，
+                // 避免任务在折叠分组或列表深处时用户找不到高亮任务
                 var sidebar = document.getElementById('main-sidebar');
                 if (sidebar) {
                     sidebar.currentTaskId = taskId;
                     if (typeof sidebar._updateTaskHighlight === 'function') {
-                        sidebar._updateTaskHighlight();
+                        sidebar._updateTaskHighlight(taskId, { revealCurrentTask: taskId !== null });
                     }
                 }
                 // 打开任务后立即按 LRU 上限修剪，让驻留数量限制即时生效
