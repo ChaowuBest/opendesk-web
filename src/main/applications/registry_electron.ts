@@ -216,8 +216,8 @@ export function registerApplicationRegistryHandlers(
         }
 
         try {
-            const callback = (chunk) => {
-                event.senderFrame?.send?.(`applicationRegistry:streamChunk:${requestId}`, chunk);
+            const callback = (chunk: any, error?: string) => {
+                event.senderFrame?.send?.(`applicationRegistry:streamChunk:${requestId}`, chunk, error);
             };
             ApplicationRegistry.pendingStreamRequests.set(requestId, callback);
 
@@ -249,8 +249,8 @@ export function registerApplicationRegistryHandlers(
             };
         }
 
-        const send = (chunk: any) => {
-            event.senderFrame?.send?.(`applicationRegistry:streamChunk:${requestId}`, chunk);
+        const send = (chunk: any, error?: string) => {
+            event.senderFrame?.send?.(`applicationRegistry:streamChunk:${requestId}`, chunk, error);
         };
 
         (async () => {
@@ -261,7 +261,7 @@ export function registerApplicationRegistryHandlers(
                 send(undefined);
             } catch (error) {
                 logger.error(`streamCallMainWorld ${bundleName}.${methodName} error: ${error}`);
-                send(undefined);
+                send(undefined, error.message);
             }
         })();
 

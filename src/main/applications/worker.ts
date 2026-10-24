@@ -63,78 +63,111 @@ export function initializeAppWorkers() {
         workerInitPromises.set(name, initPromise);
     }
 
-    parentPort?.on('message', async (message) => {
-        const { bundleName, requestId, methodName, args, stream } = message;
+    parentPort?.on('message', (message) => {
+        handleWorkerRequest(message, appWorkers, workerInitPromises, (frame) => parentPort?.postMessage(frame));
+    });
 
-        if (message.type === 'response') {
-            BaseWorker.handleAppResponse(message);
-            return;
+    logger.info('worker initialized successfully');
+}
+
+/**
+ * 处理主进程转发来的单条请求消息。
+ * appWorkers / workerInitPromises / postMessage 均由调用方注入，便于单元测试；
+ * 生产环境下 postMessage 绑定 parentPort.postMessage。
+ */
+export async function handleWorkerRequest(
+    message: {
+        type?: string;
+        bundleName?: string;
+        requestId?: string;
+        methodName?: string;
+        args?: any[];
+        stream?: boolean;
+    },
+    appWorkers: Map<string, BaseWorker>,
+    workerInitPromises: Map<string, Promise<void>>,
+    postMessage: (frame: object) => void
+): Promise<void> {
+    const { bundleName, requestId, methodName, args, stream } = message;
+
+    if (message.type === 'response') {
+        BaseWorker.handleAppResponse(message);
+        return;
+    }
+
+    // 忽略非业务消息（如 __fetch_response 等由其他模块处理的消息）
+    if (!bundleName) {
+        return;
+    }
+
+    // 处理全局设置更新消息
+    if (methodName === '__updateGlobalSetting') {
+        const newSettingData = args[0];
+        if (args.length > 1) {
+            setRuntimePreferredSystemLanguages(args[1]);
         }
+        logger.info('received global setting update');
+        Setting.updateInstanceData(newSettingData);
+        postMessage({ type: 'response', id: requestId, status: 'ok', data: null });
+        return;
+    }
 
-        // 忽略非业务消息（如 __fetch_response 等由其他模块处理的消息）
-        if (!bundleName) {
-            return;
-        }
+    const appWorker = appWorkers.get(bundleName);
 
-        // 处理全局设置更新消息
-        if (methodName === '__updateGlobalSetting') {
-            const newSettingData = args[0];
-            if (args.length > 1) {
-                setRuntimePreferredSystemLanguages(args[1]);
+    if (appWorker) {
+        try {
+            // 等待worker初始化完成
+            const initPromise = workerInitPromises.get(bundleName);
+            if (initPromise) {
+                await initPromise;
             }
-            logger.info('received global setting update');
-            Setting.updateInstanceData(newSettingData);
-            parentPort?.postMessage({ type: 'response', id: requestId, status: 'ok', data: null });
-            return;
-        }
 
-        const appWorker = appWorkers.get(bundleName);
-
-        if (appWorker) {
-            try {
-                // 等待worker初始化完成
-                const initPromise = workerInitPromises.get(bundleName);
-                if (initPromise) {
-                    await initPromise;
-                }
-
-                if (stream) {
-                    for await (const chunk of appWorker.handleStreamMessage(methodName, ...args)) {
-                        parentPort?.postMessage({
-                            type: 'response_chunk',
-                            id: requestId,
-                            chunk: chunk
-                        });
-                    }
-                    parentPort?.postMessage({ type: 'response_complete', id: requestId });
-                } else {
-                    const result = await appWorker.handleMessage(methodName, ...args);
-                    parentPort?.postMessage({
-                        type: 'response',
+            if (stream) {
+                for await (const chunk of appWorker.handleStreamMessage(methodName, ...args)) {
+                    postMessage({
+                        type: 'response_chunk',
                         id: requestId,
-                        status: 'ok',
-                        data: result
+                        chunk: chunk
                     });
                 }
-            } catch (error) {
-                logger.error(`error calling worker ${bundleName} method ${methodName}: ${error}`);
-                parentPort?.postMessage({
+                postMessage({ type: 'response_complete', id: requestId });
+            } else {
+                const result = await appWorker.handleMessage(methodName, ...args);
+                postMessage({
+                    type: 'response',
+                    id: requestId,
+                    status: 'ok',
+                    data: result
+                });
+            }
+        } catch (error) {
+            logger.error(`error calling worker ${bundleName} method ${methodName}: ${error}`);
+            if (stream) {
+                // 流式请求失败时必须补发 response_complete 终帧：主进程收到普通 response
+                // 只查 pendingRequests，不会清理 pendingStreamRequests，renderer 侧的
+                // listener 与 streamCall() Promise 也会因此永不 settle（issue #125）
+                postMessage({
+                    type: 'response_complete',
+                    id: requestId,
+                    status: 'error',
+                    message: error instanceof Error ? error.message : String(error)
+                });
+            } else {
+                postMessage({
                     type: 'response',
                     id: requestId,
                     status: 'error',
                     message: error.message
                 });
             }
-        } else {
-            logger.error(`worker ${bundleName} not found`);
-            parentPort?.postMessage({
-                type: 'response',
-                id: requestId,
-                status: 'error',
-                message: `worker ${bundleName} not found`
-            });
         }
-    });
-
-    logger.info('worker initialized successfully');
+    } else {
+        logger.error(`worker ${bundleName} not found`);
+        postMessage({
+            type: 'response',
+            id: requestId,
+            status: 'error',
+            message: `worker ${bundleName} not found`
+        });
+    }
 }
