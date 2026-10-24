@@ -273,7 +273,9 @@ export class EmbeddedBrowser extends BrowserInstance {
             }
             .bw-tabbar-inner {
                 display: flex; align-items: center;
-                flex: 1; min-width: 0;
+                /* flex: 0 1 auto：标签未满时收缩为内容宽度，让加号紧跟最后一个标签；
+                   满溢时被压到可用宽度上限触发横向滚动，加号锁定在最右侧 */
+                flex: 0 1 auto; min-width: 0;
                 overflow-x: auto;
                 overflow-y: hidden;
                 scrollbar-width: none;
