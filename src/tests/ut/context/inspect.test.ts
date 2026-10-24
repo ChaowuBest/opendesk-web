@@ -7,7 +7,7 @@ import { buildActiveContextView } from '../../../main/aikernel/compaction/contex
 import { MicrocompactStates } from '../../../main/aikernel/compaction/microcompact-state';
 import { ToolResultReplacementStates } from '../../../main/aikernel/compaction/tool-results';
 import { estimateVisibleContextTokens } from '../../../main/aikernel/compaction/token-estimation';
-import { inspectContextForDiagnostics } from '../../../main/aikernel/context/inspect';
+import { cloneChatContext, inspectContextForDiagnostics } from '../../../main/aikernel/context/inspect';
 import {
     AssistantMessage,
     ChatContext,
@@ -18,6 +18,7 @@ import {
     Usage,
     UserMessage
 } from '../../../main/aikernel/messages';
+import { BaseToolset, type BaseTool } from '../../../main/aikernel/tool';
 import { setCustomOpendeskDirectory } from '../../../main/utils/setting';
 
 let tempRootDir: string | undefined;
@@ -177,5 +178,37 @@ describe('context inspection', () => {
         });
 
         expect(result.contextTokenEstimate).toMatchObject(expectedTokens);
+    });
+});
+
+describe('cloneChatContext', () => {
+    test('preserves toolsets from the original chat context', () => {
+        const chatContext = new ChatContext();
+        chatContext.system_prompt = new SystemMessage('system prompt');
+        chatContext.appendMessage(new UserMessage('hello'));
+
+        const toolset = new BaseToolset('filemgr');
+        toolset.tools.set('readFile', {
+            name: 'readFile',
+            description: 'read a file',
+            getJsonSchema: () => ({ type: 'object' })
+        } as unknown as BaseTool<any>);
+        chatContext.attachToolsets(toolset);
+
+        const cloned = cloneChatContext(chatContext);
+
+        expect(cloned.toolsets.size).toBe(1);
+        expect(cloned.toolsets.get('filemgr')).toBe(toolset);
+        expect(cloned.getTools().get('filemgr-readFile')).toBeDefined();
+
+        // Map 本身是浅拷贝：克隆体上的增删不影响原始上下文
+        cloned.toolsets.set('extra', new BaseToolset('extra'));
+        expect(chatContext.toolsets.size).toBe(1);
+
+        // messages / system_prompt 仍为深拷贝
+        expect(cloned.messages[0]).not.toBe(chatContext.messages[0]);
+        expect(cloned.system_prompt).not.toBe(chatContext.system_prompt);
+        expect(cloned.messages).toHaveLength(1);
+        expect(cloned.system_prompt?.content).toBe('system prompt');
     });
 });

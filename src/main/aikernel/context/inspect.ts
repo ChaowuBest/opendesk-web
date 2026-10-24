@@ -17,8 +17,16 @@ import { ToolResultReplacementStates, type ToolResultReplacementState } from '..
 import { SessionMemoryStates, type SessionMemoryState } from '../compaction/session-memory-compact.js';
 import type { ContextInspectOptions, ContextInspectResult } from './types.js';
 
-function cloneChatContext(chatContext: ChatContext): ChatContext {
-    return ChatContext.assign(JSON.parse(JSON.stringify(chatContext.toJSON())));
+/**
+ * 克隆 ChatContext 供只读诊断使用。
+ *
+ * toolsets 是运行时对象，无法经 toJSON()/assign() 序列化恢复，
+ * 这里在 JSON 深拷贝后浅拷贝 Map 共享 toolset 引用，克隆体上的增删不影响原始上下文。
+ */
+export function cloneChatContext(chatContext: ChatContext): ChatContext {
+    const cloned = ChatContext.assign(JSON.parse(JSON.stringify(chatContext.toJSON())));
+    cloned.toolsets = new Map(chatContext.toolsets);
+    return cloned;
 }
 
 function cloneAutoCompactState(state: AutoCompactState | undefined): AutoCompactState | undefined {
