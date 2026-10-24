@@ -1429,11 +1429,12 @@ class SideBar extends HTMLElement {
                 }
             },
             {
-                id: 'admin-panel',
+                id: 'adminconsole',
                 icon: svgIcon('<path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/>'),
                 label: this._t('renderer.toolbar.admin'),
                 action: () => {
-                    window.globalControlAPI.openAdminPanel();
+                    // 管理后台是 showIcon=false 的应用：不进应用列表，只从调试菜单进入
+                    window.globalControlAPI.openApplication('adminconsole');
                 }
             }
         ];

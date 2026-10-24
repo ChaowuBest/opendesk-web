@@ -53,6 +53,7 @@ export const enUs: Record<string, string> = {
     'renderer.note.pin.pinned': 'Pinned',
     'renderer.note.pin.unpinned': 'Pin',
     'renderer.note.delete': 'Delete',
+    'renderer.note.rename': 'Rename',
     'renderer.note.title.placeholder': 'Note title',
     'renderer.note.tag.add': 'Tags',
 

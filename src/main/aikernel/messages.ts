@@ -21,6 +21,7 @@ import fs from 'fs';
 import { fileLinkExtension, getRenderWorkspace } from '../utils/marked-file-link.js';
 import { cjkAutolinkFix } from '../../common/markdown/cjk-autolink-fix.js';
 import { doubleTildeStrikethrough } from '../../common/markdown/double-tilde-strikethrough.js';
+import { renderCodeBlockHtml } from '../../common/markdown/code-block-render.js';
 import type { SupportedLocale } from '../../common/locale.js';
 import { getLocale } from '../../locale/index.js';
 import type {
@@ -139,66 +140,8 @@ marked.use(
 
 const DANGEROUS_HTML_RE = /<\s*\/?\s*(style|script|link|meta|iframe|object|embed|applet|form|base)\b[^>]*>/gi;
 
-const LANG_DISPLAY_NAMES: Record<string, string> = {
-    js: 'JavaScript',
-    javascript: 'JavaScript',
-    ts: 'TypeScript',
-    typescript: 'TypeScript',
-    py: 'Python',
-    python: 'Python',
-    rb: 'Ruby',
-    ruby: 'Ruby',
-    java: 'Java',
-    cpp: 'C++',
-    c: 'C',
-    cs: 'C#',
-    csharp: 'C#',
-    go: 'Go',
-    rust: 'Rust',
-    rs: 'Rust',
-    swift: 'Swift',
-    kt: 'Kotlin',
-    kotlin: 'Kotlin',
-    php: 'PHP',
-    sql: 'SQL',
-    html: 'HTML',
-    css: 'CSS',
-    scss: 'SCSS',
-    less: 'LESS',
-    json: 'JSON',
-    yaml: 'YAML',
-    yml: 'YAML',
-    xml: 'XML',
-    toml: 'TOML',
-    sh: 'Shell',
-    bash: 'Bash',
-    zsh: 'Zsh',
-    powershell: 'PowerShell',
-    ps1: 'PowerShell',
-    md: 'Markdown',
-    markdown: 'Markdown',
-    tex: 'LaTeX',
-    latex: 'LaTeX',
-    dockerfile: 'Dockerfile',
-    makefile: 'Makefile',
-    cmake: 'CMake',
-    r: 'R',
-    lua: 'Lua',
-    perl: 'Perl',
-    scala: 'Scala',
-    elixir: 'Elixir',
-    dart: 'Dart',
-    vue: 'Vue',
-    svelte: 'Svelte',
-    jsx: 'JSX',
-    tsx: 'TSX',
-    graphql: 'GraphQL',
-    proto: 'Protobuf',
-    ini: 'INI',
-    plaintext: 'Text',
-    svg: 'SVG',
-    htm: 'HTML'
-};
+// 围栏语言标识 -> header 显示名映射已抽至 src/common/markdown/code-block-render.ts，
+// 供 taskview 与笔记编辑器共用；预览语言集合见下方 PREVIEWABLE_LANGS。
 
 /** Languages whose code blocks support live preview in the renderer */
 const PREVIEWABLE_LANGS = new Set(['html', 'htm', 'svg']);
@@ -216,34 +159,7 @@ function isFencedCodeComplete(raw: string): boolean {
 }
 
 // Keep each rendered code line structurally independent when a highlight span crosses a newline.
-function splitHighlightedLines(highlighted: string): string[] {
-    const lines = [''];
-    const openSpans: string[] = [];
-    const tokenPattern = /<span\b[^>]*>|<\/span>|\r\n|\r|\n/g;
-    let cursor = 0;
-
-    for (const match of highlighted.matchAll(tokenPattern)) {
-        const token = match[0];
-        const tokenIndex = match.index;
-        lines[lines.length - 1] += highlighted.slice(cursor, tokenIndex);
-
-        if (token === '\n' || token === '\r' || token === '\r\n') {
-            lines[lines.length - 1] += '</span>'.repeat(openSpans.length);
-            lines.push(openSpans.join(''));
-        } else if (token === '</span>') {
-            lines[lines.length - 1] += token;
-            openSpans.pop();
-        } else {
-            lines[lines.length - 1] += token;
-            openSpans.push(token);
-        }
-
-        cursor = tokenIndex + token.length;
-    }
-
-    lines[lines.length - 1] += highlighted.slice(cursor);
-    return lines;
-}
+// 实现已抽至 src/common/markdown/code-block-render.ts 的 splitHighlightedLines。
 
 marked.use({
     renderer: {
@@ -257,27 +173,15 @@ marked.use({
             }
             // 围栏/缩进代码块一律保持代码块渲染，不做文件路径解析
             // （胶囊只来自显式的 [...]() 链接，见 marked-file-link.ts）。
-            const langClass = lang ? `hljs language-${lang}` : 'hljs';
             const language = lang && hljs.getLanguage(lang) ? lang : 'plaintext';
             const highlighted = hljs.highlight(text, { language }).value;
-            const displayLang = lang
-                ? LANG_DISPLAY_NAMES[lang.toLowerCase()] || lang.charAt(0).toUpperCase() + lang.slice(1)
-                : '';
-            const headerHtml = `<div class="code-block-header"><span class="code-block-lang">${displayLang}</span></div>`;
-            const lines = splitHighlightedLines(highlighted);
-            if (lines.length > 0 && lines[lines.length - 1] === '') lines.pop();
-
-            const codeLines = lines
-                .map((line) => {
-                    const hasText = line.replace(/<\/?span\b[^>]*>/g, '') !== '';
-                    return `<span class="code-line font-mono">${hasText ? line : ' '}</span>`;
-                })
-                .join('');
-            const langLower = lang?.toLowerCase() || '';
-            const previewAttrs = PREVIEWABLE_LANGS.has(langLower)
-                ? ` data-previewable="true" data-preview-lang="${langLower}" data-raw-code="${Buffer.from(text).toString('base64')}"`
-                : '';
-            return `<div class="code-block-wrapper"${previewAttrs}>${headerHtml}<div class="code-block-body ${langClass}"><pre class="code-block-pre font-mono"><code class="code-lines">${codeLines}</code></pre></div></div>`;
+            // 结构/显示名与笔记编辑器共用同一外观契约（code-block-render.ts），
+            // taskview 额外携带实时预览属性
+            return renderCodeBlockHtml(highlighted, {
+                lang,
+                withHeader: true,
+                preview: { langs: PREVIEWABLE_LANGS, rawCode: text }
+            });
         }
     },
     hooks: {

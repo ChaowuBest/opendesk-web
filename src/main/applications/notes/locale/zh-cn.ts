@@ -52,6 +52,7 @@ export const zhCn: Record<string, string> = {
     'renderer.note.pin.pinned': '已置顶',
     'renderer.note.pin.unpinned': '置顶',
     'renderer.note.delete': '删除',
+    'renderer.note.rename': '重命名',
     'renderer.note.title.placeholder': '笔记标题',
     'renderer.note.tag.add': '标签',
 
