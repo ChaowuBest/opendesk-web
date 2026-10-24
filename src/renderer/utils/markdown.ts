@@ -10,6 +10,7 @@
  */
 
 import { Marked, Renderer, type Tokens } from 'marked';
+import markedKatex from 'marked-katex-extension';
 import { escapeHtml } from '../../common/utils/escape.js';
 import { cjkAutolinkFix } from '../../common/markdown/cjk-autolink-fix.js';
 import { doubleTildeStrikethrough } from '../../common/markdown/double-tilde-strikethrough.js';
@@ -39,6 +40,14 @@ renderer.image = function ({ href, title, text }: Tokens.Image): string {
 const safeMarked = new Marked({ renderer, gfm: true, breaks: true });
 safeMarked.use(cjkAutolinkFix);
 safeMarked.use(doubleTildeStrikethrough);
+// 流式期间的兜底渲染也要能出公式（issue #332）：配置与主进程 messages.ts 一致
+safeMarked.use(
+    markedKatex({
+        throwOnError: false,
+        displayMode: true,
+        nonStandard: true
+    })
+);
 
 function safeMarkdownUrl(value: string, image: boolean): string | null {
     const trimmed = value.trim();

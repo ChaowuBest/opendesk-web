@@ -18,28 +18,48 @@ import type { AssistantMessagePart } from './messages';
 const TERMINATION_SYSTEM_PROMPT = `你是一个专业的对话终止状态判断助手。用户会给你一段对话内容，包含原始的用户问题和AI回答的最后一部分。
 你需要判断这个对话的终止状态，只能输出以下三个词之一: finished, interrupted, question。
 
-判断标准:
+## 判断标准
 
-interrupted — 满足以下任一条件即判定为 interrupted:
+**interrupted** — 满足以下任一条件即判定为 interrupted:
 - 回复中列出了多个步骤/计划，但明显只完成了部分;
 - 回复以一个动作的开头结束（如"首先搜索...""让我先..."），没有给出该动作的结果;
 - 回复看起来像是被截断的，缺少结论或总结。
 
-question — 满足以下任一条件即判定为 question:
+**question** — 满足以下任一条件即判定为 question:
 - 回复中包含向用户提出的问题(如"请问...""你希望...""能否提供..."等疑问句);
 - 回复明确表示需要用户提供更多信息才能继续；
 - 已经基本完成了用户的任务，但是需要用户确认或补充新的信息或者给出建议等;
 
-finished — 仅当以下条件都满足时才判定为 finished:
+**finished** — 仅当以下条件都满足时才判定为 finished:
 - 回复已经完整回答了用户的问题，或者已经完成了用户请求的任务;
 - 回复中没有未完成的后续步骤;
 - 回复中没有向用户提出需要回答的问题;
+
+## 输出格式
 
 请只输出一个词: finished、interrupted 或 question。不要输出任何解释或其他内容。`;
 
 type TerminationState = 'finished' | 'interrupted' | 'question';
 
 const TERMINATION_CHECK_TIMEOUT_MS = 8_000;
+
+/**
+ * 送入 judge 模型的回复窗口上限（issue #332）。
+ * 5 万+字符的长推导整段塞进判定 prompt 既浪费 token，也更容易因
+ * "结尾看起来没写完"被误判为 interrupted；判定只需要开头语境 + 结尾状态。
+ */
+const TERMINATION_CHECK_MAX_CHARS = 4_000;
+const TERMINATION_CHECK_HEAD_CHARS = 1_000;
+const TERMINATION_CHECK_TAIL_CHARS = 3_000;
+
+/** 超长回复按「前 1000 + 省略标记 + 末尾 3000」截断，兼顾开头上下文与结尾完整性判断 */
+function truncateForTerminationCheck(text: string): string {
+    if (text.length <= TERMINATION_CHECK_MAX_CHARS) {
+        return text;
+    }
+    const omitted = text.length - TERMINATION_CHECK_HEAD_CHARS - TERMINATION_CHECK_TAIL_CHARS;
+    return `${text.slice(0, TERMINATION_CHECK_HEAD_CHARS)}\n[……中间省略 ${omitted} 字符……]\n${text.slice(-TERMINATION_CHECK_TAIL_CHARS)}`;
+}
 
 export function fastInterruptionCheck(lastTextResponse: string): 'interrupted' | null {
     // 常见中英文标点，用于拆分子句
@@ -84,7 +104,7 @@ export async function checkTerminationFromMessages(
 
     let userMessage = TERMINATION_SYSTEM_PROMPT + '\n\n';
     userMessage += `用户的原始问题为: ${userQuestion}\n`;
-    userMessage += `你的回答的最后一部分为: ${lastTextResponse}\n\n请你判断对话的状态。`;
+    userMessage += `你的回答的最后一部分为: ${truncateForTerminationCheck(lastTextResponse)}\n\n请你判断对话的状态。`;
 
     logger.debug(`termination check LLM input prepared (${userMessage.length} chars, user content omitted)`);
 
