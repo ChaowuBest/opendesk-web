@@ -2,12 +2,12 @@
     "schemaVersion": 1,
     "format": "opendesk-builtin-plugin-zip-v1",
     "pluginId": "opendesk-wps-slides",
-    "pluginVersion": "1.0.0",
+    "pluginVersion": "1.0.1-hide-recovery",
     "projectRepository": "https://gitcode.com/IntelliOS/opendesk-wps-skill",
     "generatorSchemaVersion": 1,
     "archive": "opendesk-wps-slides.zip",
-    "archiveSha256": "27fe220b4b330d5307268b081dce373e7d1482d1de62bbc492f2b6c8fe93123d",
-    "archiveBytes": 798156,
-    "treeSha256": "9003cdc623a58934a5a14c02178203d9562353a64e286937ab0bf2a394ee16f0",
-    "releaseManifestSha256": "c59f6baeb76ddfcebf0b902d9caeff65eddcf3e3f17cf0c3c637a29f9ddce0c3"
+    "archiveSha256": "909147049bf3e853468c83ab7a38860ae4d3e1628ca978ada1d1ff09f9d2889c",
+    "archiveBytes": 1012980,
+    "treeSha256": "9eb5a2b235785cc1ce89063c402dc7fb183903e9cea208900db8b3747dbc89c7",
+    "releaseManifestSha256": "c15f9fdda8c2cb955ce909e67d4268380611c1ce2167ca8a9dec1e181fb04456"
 }
