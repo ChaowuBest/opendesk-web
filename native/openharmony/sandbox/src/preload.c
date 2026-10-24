@@ -263,9 +263,12 @@ static void resolve_all(void)
     RESOLVE(stat); RESOLVE64(stat64); RESOLVE(lstat); RESOLVE64(lstat64);
     RESOLVE(fstatat); RESOLVE64(fstatat64); RESOLVE(statx);
     RESOLVE(access); RESOLVE(faccessat);
-#ifdef DBOX_EXTRA_HOOKS
-    RESOLVE(faccessat2);
-#endif
+    /* faccessat2 不在此处 RESOLVE：glibc 2.39（Ubuntu 24.04）等不导出该
+     * 符号，构造函数期的 dlsym 必然失败并走 ld.so 异常路径
+     * （_dl_exception_create_format）→ malloc → PIE 宿主（Electron 等）
+     * 分配器 shim 未就绪 → 自旋锁死锁（BUG-021）。改为首次调用时 lazy
+     * 解析（见 faccessat2 钩子），彼时 CRT 已就绪、异常路径的 malloc
+     * 安全。 */
     RESOLVE(readlink); RESOLVE(readlinkat); RESOLVE(realpath);
     RESOLVE(statfs); RESOLVE64(statfs64); RESOLVE(statvfs); RESOLVE64(statvfs64);
     RESOLVE(opendir);
@@ -439,13 +442,71 @@ static void dbox_init_once(void)
     dbox_preload_ctor_body();
 }
 
+/* ------------------------------------------------------------------ */
+/* BUG-021 late init + reentry sentry                                  */
+/* 宿主（Electron/Chromium 等 PIE 可执行文件）导出 malloc 族并配套惰性  */
+/* 初始化的分配器 shim，其符号优先级高于一切共享库。构造函数期间任何    */
+/* malloc 重入都可能死锁 shim 的自旋锁（详见 util.c）。本库把           */
+/* pthread_create（watchdog）等非必需初始化推迟到"首次钩子调用"——      */
+/* 彼时进程 CRT 与宿主分配器必然就绪。                                  */
+/* g_late_done 置位后不再做任何事；dbox_late_init 从多个钩子入口调用，  */
+/* 用 g_once 保证只跑一次。                                            */
+static pthread_once_t g_late_once = PTHREAD_ONCE_INIT;
+static volatile int g_late_done = 0;
+
+static void start_watch(void);   /* defined below (watchdog section) */
+
+static void dbox_late_init(void)
+{
+    g_late_done = 1;
+    dbox_logf("late init: watchdog arm (watch_fd=%d)", g_watch_fd);
+    start_watch();
+}
+
+static inline void ensure_late_init(void)
+{
+    if (__builtin_expect(!g_late_done, 0))
+        pthread_once(&g_late_once, dbox_late_init);
+}
+
+/* 重入哨兵：构造函数体执行期间（g_ctor_running），任何钩子入口被再次
+ * 进入都意味着"某个第三方 ctor 在我们的 ctor 内触发了 interposed 调用"
+ * ——这正是 BUG-021 死锁的前兆。写入 stderr 一次（原始 write，无分配），
+ * 让"静默空转"至少留下一条可见线索。返回地址供 addr2line 定位具体钩子
+ * （gdb: info symbol <addr>）。g_ready 置位后哨兵失效。 */
+static volatile int g_ctor_running = 0;
+static volatile int g_ctor_reentry_reported = 0;
+
+static void report_ctor_reentry(const void *retaddr)
+{
+    if (g_ctor_reentry_reported) return;
+    g_ctor_reentry_reported = 1;
+    char buf[256];
+    /* 只取 RA(0)（本函数的直接调用者，恒有效）。多级
+     * __builtin_return_address 在钩子被内联/尾调用优化后帧链不完整，
+     * 取 RA(1) 会读无效栈 → SIGSEGV（修复期间实测），不得使用。 */
+    int n = snprintf(buf, sizeof buf,
+                     "dynobox: WARNING reentrant hook call from %p during "
+                     "library constructor (BUG-021 risk: host allocator shim "
+                     "may deadlock); pid %ld\n",
+                     retaddr, (long)getpid());
+    if (n > 0) {
+        ssize_t r = syscall(SYS_write, 2, buf, (size_t)n);
+        (void)r;
+    }
+}
+
 /* Lazy init: other libraries' constructors (e.g. libselinux) may call
  * interposed symbols BEFORE our own constructor runs, so every hook goes
- * through here first. */
+ * through here first. BUG-021 哨兵在此统一检查：ctor 体执行期间（第三
+ * 方 ctor 在我们的 ctor 内触发 interposed 调用）输出一次告警，返回地址
+ * 定位调用钩子。 */
 static inline void ensure_ready(void)
 {
     if (__builtin_expect(!g_once_started, 0))
         pthread_once(&g_once, dbox_init_once);
+    if (__builtin_expect(g_ctor_running && !g_ready, 0))
+        report_ctor_reentry(__builtin_return_address(0));
 }
 
 /* ------------------------------------------------------------------ */
@@ -563,6 +624,7 @@ static int gate_meta(const char *input, int nofollow_last, int acc,
                      const char *what, char **realp)
 {
     ensure_ready();
+    ensure_late_init();
     if (realp) *realp = NULL;
     if (!g_ready || !input || !input[0]) return 1;
     gate_t g;
@@ -636,6 +698,7 @@ static int gate1x(const char *input, int nofollow_last, int acc,
                   const char *what, int allow_system, char **realp)
 {
     ensure_ready();
+    ensure_late_init();
     *realp = NULL;
     /* A NULL or empty path cannot be attributed (open(""), access(NULL),
      * AT_EMPTY_PATH-style calls): hand it to the kernel, which produces the
@@ -930,6 +993,8 @@ static void start_watch(void)
      * applies, so the fail-safe degrades rather than firing spuriously. */
     if (g_watch_fd < 0) return;
     if (syscall(SYS_fcntl, g_watch_fd, F_GETFD) == -1) return;
+    if (dbox_log_path())
+        dbox_logf("watchdog armed (watch_fd=%d)", g_watch_fd);
     pthread_t t;
     pthread_attr_t a;
     pthread_attr_init(&a);
@@ -937,6 +1002,8 @@ static void start_watch(void)
     pthread_attr_setstacksize(&a, 256 * 1024);
     if (pthread_create(&t, &a, watch_thread, NULL) != 0) {
         /* watchdog unavailable: the launcher's group kill still applies */
+        if (dbox_log_path())
+            dbox_logf("watchdog pthread_create failed (errno=%d)", errno);
     }
     pthread_attr_destroy(&a);
 }
@@ -996,7 +1063,10 @@ static void init_from_env(void)
     const char *wf = getenv("DYNOBOX_WATCH_FD");
     if (wf && wf[0]) {
         g_watch_fd = atoi(wf);
-        if (g_watch_fd >= 0) start_watch();
+        /* BUG-021：watchdog 线程不在此启动。pthread_create 内部分配
+         * （stack cache 等）在 PIE 宿主分配器 shim 未就绪期同样触发
+         * malloc 重入死锁。改由首次钩子调用（ensure_ready 后的
+         * dbox_late_init）启动，彼时 CRT 已完全就绪。 */
     }
     const char *shmenv = getenv("DYNOBOX_SHM_FD");
     if (shmenv && shmenv[0]) {
@@ -1036,7 +1106,9 @@ static void init_from_env(void)
             snprintf(g_trash_exclude + off, sizeof g_trash_exclude - off, ":%s", user_exclude);
     }
 
+    /* g_ready 置位即哨兵窗口关闭：此后钩子重入是运行期正常路径。 */
     g_ready = 1;
+    g_ctor_running = 0;
     dbox_logf("sandbox active (pid %ld, cwd %s, %d rules)",
               (long)getpid(), g_ctx.rpwd, g_ctx.pol.nrules);
 }
@@ -1049,6 +1121,10 @@ static void dbox_preload_ctor(void)
 
 static void dbox_preload_ctor_body(void)
 {
+    /* 哨兵窗口：从 ctor 体开始到 g_ready 置位，任何钩子重入都上报。
+     * dbox_logf 等本库内部函数经由 rawio 直连，不会经过 interposed
+     * 入口，不会误报。 */
+    g_ctor_running = 1;
     Dl_info info;
     if (dladdr((void *)&dbox_preload_ctor_body, &info) && info.dli_fname) {
         if (info.dli_fname[0] == '/') {
@@ -1077,6 +1153,7 @@ static void dbox_preload_ctor_body(void)
     resolve_all();
     pthread_atfork(atfork_prepare, atfork_parent, atfork_child);
     init_from_env();
+    g_ctor_running = 0;
 }
 
 /* ------------------------------------------------------------------ */
@@ -1569,7 +1646,13 @@ int faccessat(int dirfd, const char *path, int mode, int flags)
 #ifdef DBOX_EXTRA_HOOKS
 int faccessat2(int dirfd, const char *path, int mode, int flags)
 {
-    if (!real_faccessat2) return faccessat(dirfd, path, mode, flags);
+    if (!real_faccessat2) {
+        /* BUG-021：构造函数期不解析（见 resolve_all 注释）。此处 CRT 已
+         * 就绪，dlsym 失败路径的 ld.so 异常 malloc 安全。解析结果进程内
+         * 常量，并发重复解析幂等。 */
+        real_faccessat2 = (__typeof__(real_faccessat2))dlsym(RTLD_NEXT, "faccessat2");
+        if (!real_faccessat2) return faccessat(dirfd, path, mode, flags);
+    }
     if (!g_ready || !dbox_path_has_content(path))
         return real_faccessat2(dirfd, path, mode, flags);
     char *abs = at_abs(dirfd, path);

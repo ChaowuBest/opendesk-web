@@ -1209,17 +1209,6 @@
                     currentNonAppContent = 'personal-center';
                     showNonApp();
                 },
-                openAdminPanel: function () {
-                    ensureSlots();
-                    closeAllEditorOverlays();
-                    hideAllNonAppChildren();
-                    clearNonTaskContent();
-                    var el = document.createElement('admin-panel');
-                    el.style.cssText = 'width:100%;height:100%;display:block;';
-                    nonAppSlot.appendChild(el);
-                    currentNonAppContent = 'admin-panel';
-                    showNonApp();
-                },
                 openMemory: function () {
                     ensureSlots();
                     closeAllEditorOverlays();

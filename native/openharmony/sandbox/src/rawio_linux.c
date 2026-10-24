@@ -9,6 +9,7 @@
 #include <fcntl.h>
 #include <errno.h>
 #include <sys/syscall.h>
+#include <sys/mman.h>
 #include <unistd.h>
 
 /* Linux syscall 编号在新架构（aarch64 等）上可能没有部分 *at 变体，
@@ -93,4 +94,17 @@ int dbox_raw_poll(struct pollfd *fds, unsigned long nfds, int timeout_ms)
                            (long)(timeout_ms % 1000) * 1000000L };
     return (int)syscall(SYS_ppoll, fds, nfds, &ts, 0, 0);
 #endif
+}
+
+/* -- memory map ------------------------------------------------------------ */
+
+void *dbox_raw_mmap_rw_shared(int fd, size_t len)
+{
+    return (void *)syscall(SYS_mmap, NULL, len, PROT_READ | PROT_WRITE,
+                           MAP_SHARED, fd, 0);
+}
+
+int dbox_raw_munmap(void *addr, size_t len)
+{
+    return (int)syscall(SYS_munmap, addr, len);
 }

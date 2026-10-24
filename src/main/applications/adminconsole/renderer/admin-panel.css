@@ -1,6 +1,6 @@
 /* 管理员面板：视觉语言对齐 agentoffice 页签（下划线 tab）与向导（SOFT WHITE 卡片 + 品牌红）。
    颜色 token 集中在 .ap-root（浅色）与 :host([data-theme='dark']) .ap-root（深色），
-   由 adminpanel.ts 调 syncShadowHostTheme 同步 data-theme。 */
+   由 entry.ts 调 syncShadowHostTheme 同步 data-theme。 */
 
 .ap-root {
     /* ===== Design Tokens (light) · 对齐 wizard SOFT WHITE 与聊天界面 token ===== */

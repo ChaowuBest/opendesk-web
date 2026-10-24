@@ -61,6 +61,22 @@ export interface AdminFeedbackItem {
 export interface AdminFeedbackList {
     ok: true;
     items: AdminFeedbackItem[];
+    /** 按 type 过滤后的总条数（供分页翻页） */
+    total?: number;
+    limit?: number;
+    offset?: number;
+}
+
+export interface AdminFeedbackDetail {
+    ok: true;
+    item: AdminFeedbackItem;
+}
+
+export interface AdminFeedbackListOptions {
+    /** 按类型过滤（feature=需求 / bug=缺陷），不传返回全部 */
+    type?: 'feature' | 'bug';
+    /** 分页偏移，默认 0 */
+    offset?: number;
 }
 
 export type AdminApiError = { status: number; message: string };
@@ -111,11 +127,26 @@ export async function fetchAdminFeedbackList(
     token: AdminToken,
     limit: number,
     serverUrl: string,
-    deps: AdminFetchDeps
+    deps: AdminFetchDeps,
+    options?: AdminFeedbackListOptions
 ): Promise<AdminFeedbackList> {
     const count = Math.min(Math.max(Number(limit) || 50, 1), 200);
+    const params = new URLSearchParams({ limit: String(count) });
+    if (options?.type) params.set('type', options.type);
+    if (options?.offset) params.set('offset', String(Math.max(0, Math.trunc(options.offset))));
     const base = resolveAdminStatsServerUrl({ [ADMIN_STATS_SERVER_URL_ENV]: serverUrl });
-    return (await adminApiFetch(`${base}/api/feedback/list?limit=${count}`, token, deps)) as AdminFeedbackList;
+    return (await adminApiFetch(`${base}/api/feedback/list?${params.toString()}`, token, deps)) as AdminFeedbackList;
+}
+
+/** 按 id 查询单条反馈详情（服务端 detail 接口，不受列表分页范围限制） */
+export async function fetchAdminFeedbackDetail(
+    token: AdminToken,
+    id: number,
+    serverUrl: string,
+    deps: AdminFetchDeps
+): Promise<AdminFeedbackDetail> {
+    const base = resolveAdminStatsServerUrl({ [ADMIN_STATS_SERVER_URL_ENV]: serverUrl });
+    return (await adminApiFetch(`${base}/api/feedback/detail/${id}`, token, deps)) as AdminFeedbackDetail;
 }
 
 /** /api/stats 汇总：累计/近 1 天/近 7 天去重设备数 */

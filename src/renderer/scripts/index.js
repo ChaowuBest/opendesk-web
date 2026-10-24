@@ -25,7 +25,6 @@ import '../components/setting.js';
 import '../components/settingpanel.js';
 import '../components/memory_panel.ts';
 import '../components/personal_center.ts';
-import '../components/adminpanel.ts';
 import '../components/accountpanel.ts';
 import '../components/logview.js';
 import '../components/recommendation.ts';

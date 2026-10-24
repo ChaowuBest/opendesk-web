@@ -11,6 +11,7 @@
 
 import { RendererToolset, RendererTool, AgentOperableHTMLElement } from '../../widget_utils.js';
 import { showConfirmModal } from '../../../../renderer/components/confirmModal.ts';
+import { TOUCH_LONG_PRESS_SCRIPT } from '../../../../renderer/touchLongPressScript.ts';
 import { resolveRendererLocale } from '../../../../renderer/locale.js';
 import { createTranslatorForNotes } from '../locale/renderer.js';
 import { z } from 'zod';
@@ -34,6 +35,16 @@ import 'tinymce/skins/ui/oxide/skin.css';
 import contentCss from 'tinymce/skins/content/default/content.css?inline';
 import contentUiCss from 'tinymce/skins/ui/oxide/content.css?inline';
 import 'tinymce-i18n/langs7/zh_CN.js';
+
+// 笔记代码块语法高亮（与 taskview 同源，按需注册语言子集）
+import hljs from '../../../../renderer/utils/highlight-registry.js';
+import {
+    LANG_DISPLAY_NAMES,
+    renderCodeBlockHtml,
+    renderCodeLineHtml,
+    renderCodeLineInnerHtml,
+    splitHighlightedLines
+} from '../../../../common/markdown/code-block-render.js';
 
 const NOTE_PAGE_SIZE = 30;
 
@@ -199,11 +210,23 @@ const NOTES_CSS = `
 }
 
 /* ---- Fixed toolbar ---- */
+.notes-editor-shell {
+    flex: 1; min-height: 0;
+    display: flex; flex-direction: column;
+    margin: 8px 24px 24px;
+    border-radius: 14px;
+    overflow: hidden;
+    background: var(--notes-shell-bg, #fff);
+    box-shadow: 0 0 0 1px var(--notes-shell-border, #F0F0F2);
+}
 .notes-fixed-toolbar {
     display: flex; align-items: center; gap: 2px;
-    padding: 6px 0; border-bottom: 1px solid #F0F0F0;
-    background: #FAFAFA; flex-shrink: 0;
-    margin: 0 24px;
+    padding: 6px 10px; border-bottom: 1px solid var(--notes-shell-border, #F0F0F0);
+    background: var(--notes-toolbar-bg, #FAFAFA); flex-shrink: 0;
+}
+.notes-editor-body {
+    flex: 1; min-height: 0;
+    background: var(--notes-shell-bg, #fff);
 }
 .notes-ftb-fixed-btn {
     display: flex; align-items: center; justify-content: center; gap: 3px;
@@ -304,11 +327,9 @@ const NOTES_CSS = `
     font-size: 12px; color: #8E8E93; cursor: pointer; transition: all 0.15s;
 }
 .notes-add-tag-btn:hover { border-color: #FFA726; color: #FFA726; background: #FFF8E1; }
-.notes-editor-body {
-    flex: 1; min-height: 0; padding: 0 24px;
-}
 .notes-editor-body .tox-tinymce {
     border: none !important;
+    border-radius: 0 !important;
 }
 .notes-editor-body .tox .tox-edit-area__iframe {
     background: transparent !important;
@@ -593,6 +614,16 @@ const NOTES_CSS = `
     transition: all 0.15s; margin-top: 8px;
 }
 .notes-empty-recycle-btn:hover { background: #F5F5F7; color: #FF3B30; border-color: #FF3B30; }
+
+/* ---- 深色主题（html[data-theme] 由应用框架同步到 iframe 文档）---- */
+html[data-theme='dark'] {
+    --notes-shell-bg: #1e1e1e;
+    --notes-shell-border: rgba(255, 255, 255, 0.10);
+    --notes-toolbar-bg: #232326;
+}
+html[data-theme='dark'] .notes-fixed-toolbar {
+    border-bottom-color: rgba(255, 255, 255, 0.08);
+}
 `;
 
 class NotesEntryWidget extends AgentOperableHTMLElement {
@@ -630,6 +661,7 @@ class NotesEntryWidget extends AgentOperableHTMLElement {
         this._originalNoteTitle = '';
         this._originalNoteContent = '';
         this._themeObserver = null;
+        this._clipboardRequestId = 0;
     }
 
     async connectedCallback() {
@@ -665,6 +697,13 @@ class NotesEntryWidget extends AgentOperableHTMLElement {
             this._themeObserver.disconnect();
             this._themeObserver = null;
         }
+        if (this._codeHighlightTimer) {
+            clearTimeout(this._codeHighlightTimer);
+            this._codeHighlightTimer = null;
+        }
+        // 右键菜单不随笔记关闭自动消失（挂在本 widget 上），需显式清理
+        this._dismissEditorContextMenu();
+        this._dismissNoteContextMenu();
         if (window.tinymce) tinymce.remove('#notes-editor');
         if (this._onNotesChanged) {
             window.applicationAPI.unsubscribe('notesChanged', this._onNotesChanged);
@@ -984,6 +1023,11 @@ class NotesEntryWidget extends AgentOperableHTMLElement {
                         <span class="notes-item-time">${this._formatRelativeTime(note.updatedAt)}</span>
                     </div>`;
                 div.addEventListener('click', () => this._openNote(note.id));
+                div.addEventListener('contextmenu', (e) => {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    this._showNoteContextMenu(e.clientX, e.clientY, note);
+                });
                 frag.appendChild(div);
             }
         }
@@ -1038,6 +1082,272 @@ class NotesEntryWidget extends AgentOperableHTMLElement {
 
     // ─── 卡片网格视图 ───
 
+    // ─── 笔记条目右键菜单 ───
+
+    /** 笔记条目右键菜单（重命名 / 删除），样式复用全局 ctx-menu 组件 */
+    _showNoteContextMenu(x, y, note) {
+        this._dismissNoteContextMenu();
+        this._dismissEditorContextMenu(); // 与编辑区右键菜单互斥
+
+        const menu = document.createElement('div');
+        menu.id = 'note-context-menu';
+        menu.className = 'ctx-menu';
+        menu.style.minWidth = '160px';
+        menu.innerHTML = `
+            <button class="ctx-item" data-action="rename">
+                <span class="ctx-icon-sm"><i class="fa-solid fa-pen"></i></span>
+                <span class="ctx-label">${this._t('renderer.note.rename')}</span>
+            </button>
+            <div class="ctx-divider"></div>
+            <button class="ctx-item danger" data-action="delete">
+                <span class="ctx-icon-sm"><i class="fa-regular fa-trash-can"></i></span>
+                <span class="ctx-label">${this._t('renderer.note.delete')}</span>
+            </button>`;
+
+        this.appendChild(menu);
+        // notes 应用 iframe 无 fixed 包含块建立者，fixed 以 iframe 视口为原点
+        menu.style.left = `${x}px`;
+        menu.style.top = `${y}px`;
+
+        requestAnimationFrame(() => {
+            const rect = menu.getBoundingClientRect();
+            const vw = this.ownerDocument.documentElement.clientWidth;
+            const vh = this.ownerDocument.documentElement.clientHeight;
+            if (rect.right > vw - 8) menu.style.left = `${vw - rect.width - 8}px`;
+            if (rect.bottom > vh - 8) menu.style.top = `${vh - rect.height - 8}px`;
+        });
+
+        // 阻止菜单项 mousedown 抢焦点（重命名依赖打开后聚焦标题输入框）
+        menu.querySelectorAll('[data-action]').forEach((btn) => {
+            btn.addEventListener('pointerdown', (e) => e.preventDefault());
+            btn.addEventListener('mousedown', (e) => e.preventDefault());
+        });
+        menu.querySelector('[data-action="rename"]').addEventListener('click', () => {
+            this._dismissNoteContextMenu();
+            this._startInlineRename(note);
+        });
+
+        menu.querySelector('[data-action="delete"]').addEventListener('click', () => {
+            this._dismissNoteContextMenu();
+            this._deleteNoteFromList(note);
+        });
+
+        const dismissHandler = (e) => {
+            if (!menu.contains(e.target)) {
+                this._dismissNoteContextMenu();
+                this.ownerDocument.removeEventListener('mousedown', dismissHandler, true);
+            }
+        };
+        setTimeout(() => this.ownerDocument.addEventListener('mousedown', dismissHandler, true), 0);
+    }
+
+    _dismissNoteContextMenu() {
+        this.querySelector('#note-context-menu')?.remove();
+    }
+
+    // ─── 编辑区自定义右键菜单 ───
+
+    /** 剪贴板读取：优先 navigator.clipboard.readText（编辑器聚焦时 Chromium
+     *  允许读取，notes iframe 实测可用）；不可用时回退事件桥 */
+    _readClipboardText() {
+        const w = this.ownerDocument.defaultView;
+        if (w.navigator.clipboard?.readText) {
+            return w.navigator.clipboard
+                .readText()
+                .then((text) => (typeof text === 'string' ? text : ''))
+                .catch(() => this._readClipboardTextViaBridge());
+        }
+        return this._readClipboardTextViaBridge();
+    }
+
+    /** 事件桥回退路径（preload od-clipboard-read） */
+    _readClipboardTextViaBridge() {
+        const w = this.ownerDocument.defaultView;
+        if (w.childFrameClipboard?.readText) {
+            return w.childFrameClipboard
+                .readText()
+                .then((text) => (typeof text === 'string' ? text : ''))
+                .catch(() => '');
+        }
+        return new Promise((resolve) => {
+            const requestId = ++this._clipboardRequestId;
+            const onResult = (event) => {
+                const detail = event?.detail;
+                if (!detail || detail.requestId !== requestId) return;
+                w.removeEventListener('od-clipboard-read-result', onResult);
+                resolve(typeof detail.text === 'string' ? detail.text : '');
+            };
+            w.addEventListener('od-clipboard-read-result', onResult);
+            w.dispatchEvent(new CustomEvent('od-clipboard-read', { detail: { requestId } }));
+            // 桥不可用兜底：超时返回空串，粘贴流程正常收尾
+            setTimeout(() => {
+                w.removeEventListener('od-clipboard-read-result', onResult);
+                resolve('');
+            }, 1500);
+        });
+    }
+
+    /** 剪贴板写入：优先 contextBridge API，回退事件桥 */
+    _writeClipboardText(text) {
+        const w = this.ownerDocument.defaultView;
+        if (w.childFrameClipboard?.writeText) {
+            w.childFrameClipboard.writeText(text).catch(() => {});
+            return;
+        }
+        w.dispatchEvent(new CustomEvent('od-clipboard-write', { detail: { text } }));
+    }
+
+    /**
+     * 编辑区右键菜单：剪切/复制/粘贴/粘贴为纯文本/全选。
+     * 覆盖 TinyMCE iframe 文档的原生 contextmenu。
+     */
+    _showEditorContextMenu(x, y, editor) {
+        this._dismissEditorContextMenu();
+        this._dismissNoteContextMenu(); // 与列表右键菜单互斥
+
+        const hasSelection = editor.selection.getContent({ format: 'text' }).length > 0;
+        const menu = document.createElement('div');
+        menu.id = 'notes-editor-context-menu';
+        menu.className = 'ctx-menu';
+        menu.style.minWidth = '170px';
+        const item = (action, icon, label, disabled = false) =>
+            `<button class="ctx-item${disabled ? ' disabled' : ''}" data-action="${action}">` +
+            `<span class="ctx-icon-sm"><i class="fa-solid ${icon}"></i></span>` +
+            `<span class="ctx-label">${this._t(label)}</span></button>`;
+        menu.innerHTML =
+            item('cut', 'fa-scissors', 'renderer.note.menu.cut', !hasSelection) +
+            item('copy', 'fa-copy', 'renderer.note.menu.copy', !hasSelection) +
+            item('paste', 'fa-clipboard', 'renderer.note.menu.paste') +
+            item('paste-plain', 'fa-clipboard-list', 'renderer.note.menu.pastePlain') +
+            '<div class="ctx-divider"></div>' +
+            item('selectall', 'fa-object-group', 'renderer.note.menu.selectAll');
+
+        this.appendChild(menu);
+        menu.style.left = `${x}px`;
+        menu.style.top = `${y}px`;
+        requestAnimationFrame(() => {
+            const rect = menu.getBoundingClientRect();
+            const vw = this.ownerDocument.documentElement.clientWidth;
+            const vh = this.ownerDocument.documentElement.clientHeight;
+            if (rect.right > vw - 8) menu.style.left = `${Math.max(8, vw - rect.width - 8)}px`;
+            if (rect.bottom > vh - 8) menu.style.top = `${Math.max(8, vh - rect.height - 8)}px`;
+        });
+
+        const exec = async (action) => {
+            this._dismissEditorContextMenu();
+            editor.focus();
+            switch (action) {
+                case 'cut': {
+                    const text = editor.selection.getContent({ format: 'text' });
+                    if (text) {
+                        this._writeClipboardText(text);
+                        // TinyMCE 原生剪切等价：删除选区
+                        editor.execCommand('Delete');
+                    }
+                    break;
+                }
+                case 'copy': {
+                    const text = editor.selection.getContent({ format: 'text' });
+                    if (text) this._writeClipboardText(text);
+                    break;
+                }
+                case 'paste': {
+                    // 剪贴板是完整 markdown 围栏 → 直接转代码块（与原生 paste 同语义）；
+                    // 普通文本走 editor.insertContent（TinyMCE 官方插入管线，处理
+                    // 选区恢复/undo/input 事件，多行按 forced_root_block 生成块级结构）。
+                    // 不用 execCommand('insertText')——它透传原生 document.execCommand，
+                    // 跨 iframe 焦点恢复抖动时会静默失败。
+                    const text = await this._readClipboardText();
+                    if (text) {
+                        if (editor.selection.getContent({ format: 'text' })) editor.execCommand('Delete');
+                        const fence = this._parseCodeFence(text);
+                        if (fence) {
+                            this._insertFencedCodeBlock(editor, fence.lang, fence.code);
+                        } else {
+                            editor.insertContent(this._escapeHtml(text).replace(/\r\n/g, '\n').replace(/\n/g, '<br>'));
+                        }
+                    }
+                    break;
+                }
+                case 'paste-plain': {
+                    const text = await this._readClipboardText();
+                    if (text) {
+                        if (editor.selection.getContent({ format: 'text' })) editor.execCommand('Delete');
+                        // 纯文本路径：转义后原样插入（换行转 <br>），不做围栏转换
+                        editor.insertContent(this._escapeHtml(text).replace(/\r\n/g, '\n').replace(/\n/g, '<br>'));
+                    }
+                    break;
+                }
+                case 'selectall':
+                    editor.execCommand('SelectAll');
+                    break;
+            }
+        };
+
+        menu.querySelectorAll('[data-action]').forEach((btn) => {
+            // 阻止焦点转移：mousedown 把焦点抢到按钮上会让 TinyMCE iframe
+            // 失焦丢选区，随后的 insertText/execCommand 全部落空
+            btn.addEventListener('pointerdown', (e) => e.preventDefault());
+            btn.addEventListener('mousedown', (e) => e.preventDefault());
+            btn.addEventListener('click', () => {
+                if (btn.classList.contains('disabled')) return;
+                exec(btn.dataset.action);
+            });
+        });
+
+        const dismissHandler = (e) => {
+            if (!menu.contains(e.target)) {
+                this._dismissEditorContextMenu();
+                // 点击可能发生在 TinyMCE iframe 内（不冒泡到应用文档），
+                // 两层文档都要摘掉监听
+                this.ownerDocument.removeEventListener('mousedown', dismissHandler, true);
+                const edoc = editor.getDoc();
+                edoc?.removeEventListener('mousedown', dismissHandler, true);
+            }
+        };
+        // 右键若发生在编辑 iframe 内，后续 mousedown 也在 iframe 文档里
+        // （iframe 间不冒泡），两份监听都挂
+        setTimeout(() => {
+            this.ownerDocument.addEventListener('mousedown', dismissHandler, true);
+            editor.getDoc()?.addEventListener('mousedown', dismissHandler, true);
+        }, 0);
+    }
+
+    _dismissEditorContextMenu() {
+        this.querySelector('#notes-editor-context-menu')?.remove();
+    }
+
+    /** 列表内重命名：打开笔记后聚焦标题输入框并全选 */
+    async _startInlineRename(note) {
+        await this._openNote(note.id);
+        const titleInput = this.querySelector('#notes-title-input');
+        if (!titleInput) return;
+        titleInput.focus();
+        titleInput.select();
+    }
+
+    /** 列表/卡片上的删除：带确认弹窗（与编辑器删除按钮同一套确认与刷新） */
+    async _deleteNoteFromList(note) {
+        const confirmed = await showConfirmModal({
+            icon: 'fa-trash-can',
+            iconBg: '#FEF2F2',
+            iconColor: '#FF3B30',
+            title: this._t('renderer.note.note.delete.confirm.title'),
+            message: this._t('renderer.note.note.delete.confirm.message'),
+            confirmText: this._t('renderer.note.common.delete'),
+            danger: true
+        });
+        if (!confirmed) return;
+        if (this.currentNoteId === note.id) {
+            // 当前正打开的笔记：走编辑器删除路径（清编辑器状态）
+            await this._confirmDeleteNote();
+            return;
+        }
+        await window.applicationAPI.call('deleteNote', note.id);
+        await this._refreshNotes();
+        await this._refreshDeletedNotes();
+    }
+
     _renderCardGrid() {
         const main = this.querySelector('#notes-main');
         if (!main) return;
@@ -1082,6 +1392,12 @@ class NotesEntryWidget extends AgentOperableHTMLElement {
 
         main.querySelectorAll('.notes-card').forEach((card) => {
             card.addEventListener('click', () => this._openNote(card.dataset.noteId));
+            card.addEventListener('contextmenu', (e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                const note = this.notes.find((n) => n.id === card.dataset.noteId);
+                if (note) this._showNoteContextMenu(e.clientX, e.clientY, note);
+            });
         });
     }
 
@@ -1172,9 +1488,11 @@ class NotesEntryWidget extends AgentOperableHTMLElement {
                     </button>
                 </div>
             </div>
-            <div id="notes-fixed-toolbar" class="notes-fixed-toolbar"></div>
-            <div class="notes-editor-body flex-1 min-h-0" style="padding:0 24px;">
-                <textarea id="notes-editor">${this._escapeHtml(this.currentNoteContent)}</textarea>
+            <div class="notes-editor-shell">
+                <div id="notes-fixed-toolbar" class="notes-fixed-toolbar"></div>
+                <div class="notes-editor-body">
+                    <textarea id="notes-editor">${this._escapeHtml(this.currentNoteContent)}</textarea>
+                </div>
             </div>
         </div>`;
 
@@ -1232,16 +1550,55 @@ class NotesEntryWidget extends AgentOperableHTMLElement {
             license_key: 'gpl',
             highlight_on_focus: false,
             toolbar: false,
+            // 禁用链接快捷工具条（选中/触摸长按链接文字时弹出的「链接... Ctrl+K」），
+            // 避免与自定义右键菜单在触摸长按场景同时弹出
+            link_context_toolbar: false,
+            // 禁用 TinyMCE 内置右键菜单（link 插件注册的 contextmenu 项：
+            // 光标落在 <a> 内时右键会弹「链接... Ctrl+K」菜单，与自定义
+            // 右键菜单叠加）——编辑区右键完全由自定义菜单接管
+            contextmenu: false,
             plugins: ['advlist', 'autolink', 'lists', 'link', 'image', 'charmap', 'code', 'table', 'wordcount'],
             setup: (editor) => {
-                editor.on('selectionchange', () => this._onEditorSelectionChange(editor));
-                editor.on('input', () => this._scheduleAutoSave());
+                editor.on('selectionchange', () => {
+                    this._onEditorSelectionChange(editor);
+                    // 光标离开的代码块在此补上完整高亮（编辑中不动 DOM）
+                    this._scheduleCodeBlockHighlight(editor);
+                });
+                editor.on('input', () => {
+                    this._scheduleAutoSave();
+                });
+                // 粘贴完整 markdown 围栏文本（```lang\n...\n```）时自动转为代码块；
+                // 只拦截原生粘贴，「粘贴为纯文本」走 insertText 不经过这里
+                editor.on('paste', (e) => {
+                    this._handleCodeFencePaste(editor, e);
+                });
+                // 编辑区自定义右键菜单（剪切/复制/粘贴/粘贴为纯文本/全选）
+                editor.on('contextmenu', (e) => {
+                    e.preventDefault();
+                    // e.clientX/Y 是 TinyMCE iframe 内坐标；菜单挂在外层应用文档，
+                    // fixed 以外层视口为原点——需加 iframe 偏移换算
+                    const iframe = editor.iframeElement;
+                    const offset = iframe ? iframe.getBoundingClientRect() : { left: 0, top: 0 };
+                    this._showEditorContextMenu(offset.left + e.clientX, offset.top + e.clientY, editor);
+                });
                 editor.on('change', () => this._scheduleAutoSave());
                 editor.on('keydown', (e) => {
                     if (e.key === 'Escape') this._hideFloatingToolbar();
-                    // 分割线自动补全：输入 --- 后按回车，转换为 <hr>
+                    // 代码块内方向键：首行↑/末行↓离开代码块（浏览器在此结构下
+                    // 算不出跨块视觉位置，会弹回原位）
+                    if ((e.key === 'ArrowUp' || e.key === 'ArrowDown') && !e.isComposing && !e.shiftKey) {
+                        this._handleCodeBlockArrowKeys(editor, e);
+                    }
+                    // 代码块内行尾/空行 Delete：合并行（空行可被删除）
+                    if (e.key === 'Delete' && !e.isComposing) {
+                        this._handleCodeBlockDelete(editor, e);
+                    }
+                    // 代码块内回车自行处理（拆分 code-line 行），避免 TinyMCE 默认行为破坏行号结构
                     if (e.key === 'Enter' && !e.isComposing) {
-                        this._handleHorizontalRuleShortcut(editor, e);
+                        if (!this._handleCodeBlockEnter(editor, e)) {
+                            this._handleHorizontalRuleShortcut(editor, e);
+                            this._handleCodeBlockShortcut(editor, e);
+                        }
                     }
                 });
                 editor.on('mousedown', () => {
@@ -1251,6 +1608,32 @@ class NotesEntryWidget extends AgentOperableHTMLElement {
             },
             init_instance_callback: (editor) => {
                 this._resolveEditor(editor);
+                this._applyCodeBlockStyles(editor);
+                // 既有内容里的代码块（重开笔记）：挂上语言编辑能力
+                editor.dom.select('.code-block-wrapper').forEach((block) => {
+                    this._makeCodeLangEditable(block, editor);
+                });
+                // 触摸长按手势脚本：主进程注入只覆盖 dom-ready/navigate 时点，
+                // TinyMCE iframe 是之后动态创建的，脚本不会自动到达——
+                // 在这里补注入，保证长按进度环与手势行为和外部区域一致。
+                // 注入前先移除 preload 打的编辑菜单宿主标记：本 iframe 的
+                // 右键/长按菜单由上方自定义菜单接管，脚本自带的编辑菜单
+                // 若不禁会和它叠加成双菜单（脚本手势、进度环不受标记影响）。
+                // 用 <script> 元素注入：脚本在 iframe 文档上下文执行，
+                // 其内部 window/document 自然解析到 iframe。
+                try {
+                    const tdoc = editor.getDoc();
+                    if (tdoc && !tdoc.getElementById('od-longpress-injected')) {
+                        const scriptEl = tdoc.createElement('script');
+                        scriptEl.id = 'od-longpress-injected';
+                        scriptEl.textContent =
+                            "try { document.documentElement.removeAttribute('data-od-lp-edit-menu'); } catch {}";
+                        scriptEl.textContent += TOUCH_LONG_PRESS_SCRIPT;
+                        tdoc.head.appendChild(scriptEl);
+                    }
+                } catch {
+                    /* 注入失败不影响编辑功能 */
+                }
                 this._renderFixedToolbar(editor);
             }
         });
@@ -1390,6 +1773,9 @@ class NotesEntryWidget extends AgentOperableHTMLElement {
         <button class="notes-ftb-fixed-btn" data-action="h2" data-hide-priority="4" title="${this._t('renderer.note.heading2')}" style="font-weight:700;">H2</button>
         <button class="notes-ftb-fixed-btn" data-action="h3" data-hide-priority="4" title="${this._t('renderer.note.heading3')}" style="font-weight:600;">H3</button>
         <button class="notes-ftb-fixed-btn" data-action="p" data-hide-priority="4" title="${this._t('renderer.note.body')}" style="font-size:11px;">${this._t('renderer.note.body')}</button>
+        <button class="notes-ftb-fixed-btn" data-action="codeblock" data-hide-priority="4" title="${this._t('renderer.note.codeblock')}">
+            <i class="fa-solid fa-code"></i>
+        </button>
         <div class="notes-ftb-fixed-sep" data-hide-priority="3"></div>
         <button class="notes-ftb-fixed-btn" data-action="bullist" data-hide-priority="3" title="${this._t('renderer.note.list.bullet')}">
             <i class="fa-solid fa-list-ul"></i>
@@ -1465,6 +1851,9 @@ class NotesEntryWidget extends AgentOperableHTMLElement {
                         break;
                     case 'p':
                         editor.execCommand('formatBlock', false, 'p');
+                        break;
+                    case 'codeblock':
+                        this._insertCodeBlockAfterCaret(editor, 'python');
                         break;
                     case 'bullist':
                         editor.execCommand('InsertUnorderedList');
@@ -1723,6 +2112,8 @@ class NotesEntryWidget extends AgentOperableHTMLElement {
                 bq.style.borderColor = colors.blockquoteBorder;
                 bq.style.color = colors.blockquoteText;
             });
+            // 更新代码块配色（样式表整体按主题重建）
+            this._applyCodeBlockStyles(editor);
         });
     }
 
@@ -1753,6 +2144,1069 @@ class NotesEntryWidget extends AgentOperableHTMLElement {
                 editor.selection.setCursorLocation(p, 0);
             });
         }
+    }
+
+    // ─── 代码块自动补全 ───
+
+    /** 段落为 ``` 或 ```lang 时按回车，转换为带行号/圆角外框/语法高亮的代码块（外观同 taskview） */
+    _handleCodeBlockShortcut(editor, e) {
+        // 若光标已在代码块内，回车应保持编辑器默认换行行为
+        if (this._findCodeBlockAncestor(editor)) return;
+
+        const node = editor.selection.getNode();
+        if (!node || node.nodeName === 'HR') return;
+
+        const text = (node.textContent || '').trim();
+        // ``` 或 ```lang（lang 不含空白与反引号；以空格开头视为普通文本）
+        const match = /^```([^\s`]*)$/.exec(text);
+        if (!match) return;
+
+        // 先检查前面是否有未闭合的围栏文本（如粘贴的 ```c\nint main() {\n}）：
+        // 有则把它闭环为代码块，而不是开新的空块
+        const unclosed = this._findUnclosedFence(editor, node);
+        if (unclosed) {
+            e.preventDefault();
+            this._closeUnclosedFence(editor, unclosed, match[1] || null, node);
+            return;
+        }
+
+        e.preventDefault();
+        this._insertCodeBlock(editor, node, match[1] || null);
+    }
+
+    /** 元素文本按行拆（br → \n；nbsp 归一；剥掉 TinyMCE 插入的 BOM/零宽标记） */
+    _elementTextLines(editor, el) {
+        const withBreaks = el.innerHTML.replace(/<br\s*\/?>/gi, '\n').replace(/<[^>]+>/g, '');
+        const div = editor.dom.create('div');
+        div.innerHTML = withBreaks;
+        return (div.textContent || '')
+            .replace(/[\uFEFF\u200B\u200C\u200D]/g, '')
+            .replace(/\u00a0/g, ' ')
+            .split('\n')
+            .map((l) => l.trimEnd());
+    }
+
+    /**
+     * 从 fenceLine 段落向上扫描（最多 50 个元素），寻找未闭合的围栏起始元素。
+     * 兼容两种结构：扁平段落（每段一行）与单元素内 <br> 分隔的多行（粘贴产物）。
+     * 返回 { fenceNode, lang, bodyNodes, code }；无则返回 null。
+     * code 为完整代码体（已剥掉起始围栏行与中间闭合行）。
+     */
+    _findUnclosedFence(editor, fenceLine) {
+        const body = editor.getBody();
+        const all = Array.from(body.children);
+        const fenceIdx = all.indexOf(fenceLine);
+        if (fenceIdx <= 0) return null;
+        // 向上找第一个"以围栏行开头"的元素（最多回看 50 个）
+        let startIdx = -1;
+        let startFence = null;
+        for (let i = fenceIdx - 1; i >= 0 && i >= fenceIdx - 50; i--) {
+            const el = all[i];
+            if (el.classList?.contains('code-block-wrapper')) break; // 围栏不跨已有代码块
+            const lines = this._elementTextLines(editor, el);
+            const m = /^(```|~~~)([^\s`]*)\s*$/.exec(lines[0] || '');
+            if (m) {
+                startIdx = i;
+                startFence = { lang: m[2] || '', lines };
+                break;
+            }
+        }
+        if (startIdx < 0) return null;
+
+        // 收集代码体：起始元素的围栏行之后，到当前段之前的所有行；
+        // 遇到独立闭合行（``` / ~~~）即认为已闭合：不算未闭合
+        const bodyNodes = all.slice(startIdx + 1, fenceIdx);
+        const codeLines = startFence.lines.slice(1);
+        for (const el of bodyNodes) {
+            for (const l of this._elementTextLines(editor, el)) {
+                if (/^(```|~~~)\s*$/.test(l)) return null; // 已闭合
+                codeLines.push(l);
+            }
+        }
+
+        return {
+            fenceNode: all[startIdx],
+            lang: startFence.lang,
+            bodyNodes,
+            code: codeLines.length ? codeLines.join('\n') : ' '
+        };
+    }
+    /**
+     * 闭环未闭合围栏：起始元素 + 中间元素 + 当前 ``` 行，整体替换为一个代码块。
+     * 用户在当前行敲的 lang（match[1]）优先于起始行的 lang（起始行通常也有）。
+     */
+    _closeUnclosedFence(editor, unclosed, currentLang, fenceLine) {
+        const lang = currentLang || unclosed.lang || '';
+        // 再剥一次零宽字符：TinyMCE insertContent 会在内容里插入 \uFEFF
+        // caret 标记，残留进 code 会让 hljs 高亮错位、caret 视觉计算异常
+        // （回车光标不动 / 方向键失灵的直接根源）
+        const code = unclosed.code.replace(/[\uFEFF\u200B\u200C\u200D]/g, '');
+
+        // 从起始段落到当前段落全部移除，替换为代码块
+        // 注意：anchor 必须在 remove 之前取——节点 remove 后
+        // previousSibling 会变为 null（真实 Chromium 语义），
+        // 后取会导致代码块总是被插到笔记最顶部
+        const anchor = unclosed.fenceNode.previousSibling;
+        editor.undoManager.transact(() => {
+            for (const el of unclosed.bodyNodes) el.remove();
+            unclosed.fenceNode.remove();
+            fenceLine.remove();
+
+            const langValid = lang && hljs.getLanguage(lang);
+            const language = langValid ? lang : 'plaintext';
+            const highlighted = langValid ? hljs.highlight(code, { language }).value : this._escapeHtml(code);
+            const html = renderCodeBlockHtml(highlighted, { lang: lang || '', withHeader: !!lang });
+
+            const wrap = editor.dom.create('div', { class: 'code-block-wrapper' });
+            wrap.innerHTML = html;
+            const block = wrap.firstElementChild;
+            if (!block) return;
+            if (lang) block.dataset.lang = lang;
+
+            // 插到原起始段落的位置（anchor 已在 remove 前取好）
+            const body = editor.getBody();
+            if (anchor) editor.dom.insertAfter(block, anchor);
+            else body.insertBefore(block, body.firstChild);
+
+            const p = editor.dom.create('p');
+            p.innerHTML = '<br data-mce-bogus="1">';
+            editor.dom.insertAfter(p, block);
+
+            const firstLine = block.querySelector('.code-block-body .code-lines .code-line');
+            if (firstLine && firstLine.firstChild) {
+                editor.selection.setCursorLocation(firstLine.firstChild, 0);
+            } else {
+                editor.selection.setCursorLocation(p, 0);
+            }
+            this._stripZeroWidthInBlock(block);
+            if (lang) this._makeCodeLangEditable(block, editor);
+        });
+        this._scheduleAutoSave();
+    }
+
+    /** 向上查找光标所在的代码块容器（选区悬空时回退到 body 级最近代码块） */
+    _findCodeBlockAncestor(editor) {
+        let cur = editor.selection.getNode();
+        if (cur && !cur.isConnected) {
+            // 选区悬空：从 DOM 上的最后一个代码块兜底（自愈后再走正常路径）
+            const blocks = editor.dom.select('.code-block-wrapper');
+            return blocks.length ? blocks[blocks.length - 1] : null;
+        }
+        while (cur && cur.nodeName !== 'BODY') {
+            if (cur.classList?.contains('code-block-wrapper')) return cur;
+            cur = cur.parentNode;
+            if (cur && cur.nodeType === 11) cur = null; // DocumentFragment：跳到外层
+        }
+        return null;
+    }
+
+    /**
+     * 把当前段落替换为代码块：结构/类名与 taskview 完全一致
+     * （行号由 CSS counter 生成，高亮与 taskview 同源），并在其后留一个空段落。
+     */
+    _insertCodeBlock(editor, sourceNode, lang) {
+        // 用占位空格保证空代码块也渲染出一行 code-line，光标有落点
+        const highlighted = ' ';
+        const html = renderCodeBlockHtml(highlighted, { lang: lang || '', withHeader: !!lang });
+
+        let insertedBlock = null;
+        editor.undoManager.transact(() => {
+            const wrap = editor.dom.create('div', { class: 'code-block-wrapper' });
+            wrap.innerHTML = html;
+            const block = wrap.firstElementChild;
+            if (!block) return;
+            if (lang) block.dataset.lang = lang;
+            editor.dom.insertAfter(block, sourceNode);
+            sourceNode.remove();
+            insertedBlock = block;
+
+            const body = block.querySelector('.code-block-body .code-lines');
+            const p = editor.dom.create('p');
+            p.innerHTML = '<br data-mce-bogus="1">';
+            editor.dom.insertAfter(p, block);
+            if (body) {
+                // 光标落首行内部文本节点（元素边界点会被 TinyMCE 归一化挪走）
+                const firstLine = body.firstElementChild;
+                if (firstLine && firstLine.firstChild) {
+                    editor.selection.setCursorLocation(firstLine.firstChild, 0);
+                } else {
+                    editor.selection.setCursorLocation(p, 0);
+                }
+            } else {
+                editor.selection.setCursorLocation(p, 0);
+            }
+        });
+        if (lang && insertedBlock) this._makeCodeLangEditable(insertedBlock, editor);
+        this._scheduleAutoSave();
+    }
+
+    /** 工具栏插入：当前段落保留，在其后插入默认语言代码块 */
+    _insertCodeBlockAfterCaret(editor, lang) {
+        const node = editor.selection.getNode();
+        if (!node) return;
+        // 光标在代码块内时按钮无意义：直接把光标留在块内
+        if (this._findCodeBlockAncestor(editor)) return;
+
+        // 空段落就地转换（与 ``` 快捷键一致体验）；非空段落保留原文，块插在其后
+        const isEmptyPara = node.nodeName === 'P' && (node.textContent || '').trim() === '';
+        if (isEmptyPara) {
+            this._insertCodeBlock(editor, node, lang);
+            return;
+        }
+
+        const highlighted = ' ';
+        const html = renderCodeBlockHtml(highlighted, { lang, withHeader: true });
+
+        let insertedBlock = null;
+        editor.undoManager.transact(() => {
+            const wrap = editor.dom.create('div', { class: 'code-block-wrapper' });
+            wrap.innerHTML = html;
+            const block = wrap.firstElementChild;
+            if (!block) return;
+            block.dataset.lang = lang;
+            editor.dom.insertAfter(block, node);
+            insertedBlock = block;
+
+            const p = editor.dom.create('p');
+            p.innerHTML = '<br data-mce-bogus="1">';
+            editor.dom.insertAfter(p, block);
+
+            const firstLine = block.querySelector('.code-block-body .code-lines .code-line');
+            if (firstLine && firstLine.firstChild) {
+                editor.selection.setCursorLocation(firstLine.firstChild, 0);
+            } else {
+                editor.selection.setCursorLocation(p, 0);
+            }
+        });
+        if (insertedBlock) this._makeCodeLangEditable(insertedBlock, editor);
+        this._scheduleAutoSave();
+    }
+
+    /**
+     * 让代码块 header 的语言标签可编辑：
+     * 点击进入输入态，回车/失焦提交，Esc 取消。
+     * 提交后更新 data-lang 与 language-* 类，整块按新语言重新高亮。
+     */
+    _makeCodeLangEditable(block, editor) {
+        const langEl = block.querySelector('.code-block-header .code-block-lang');
+        if (!langEl || langEl.dataset.langEditable) return;
+        langEl.dataset.langEditable = '1';
+        langEl.style.cursor = 'text';
+        langEl.title = this._t('renderer.note.codeblock.langHint');
+
+        const commit = (rawValue) => {
+            const newLang = rawValue.trim().toLowerCase();
+            const oldLang = this._getCodeBlockLang(block);
+            if (!newLang || newLang === oldLang || !hljs.getLanguage(newLang)) {
+                // 非法/未变：恢复显示名
+                langEl.textContent = oldLang
+                    ? LANG_DISPLAY_NAMES[oldLang] || oldLang.charAt(0).toUpperCase() + oldLang.slice(1)
+                    : '';
+                return;
+            }
+            block.dataset.lang = newLang;
+            const bodyDiv = block.querySelector('.code-block-body');
+            if (bodyDiv) {
+                bodyDiv.className = bodyDiv.className.replace(/\blanguage-[\w+-]+\b/, `language-${newLang}`);
+                if (!/\blanguage-/.test(bodyDiv.className)) bodyDiv.className += ` language-${newLang}`;
+            }
+            langEl.textContent = LANG_DISPLAY_NAMES[newLang] || newLang.charAt(0).toUpperCase() + newLang.slice(1);
+            // 整块按新语言重高亮（此时光标在 header input 里，不在代码行上，替换安全）
+            this._refreshCodeBlockHighlightForce(block, editor);
+            this._scheduleAutoSave();
+        };
+
+        langEl.addEventListener('click', (e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            if (langEl.querySelector('input')) return;
+            const current = this._getCodeBlockLang(block);
+            const doc = editor.getDoc();
+            const input = doc.createElement('input');
+            input.value = current;
+            input.placeholder = this._t('renderer.note.codeblock.langHint');
+            input.style.cssText = [
+                'font: inherit',
+                'font-size: 11px',
+                'width: 90px',
+                'border: none',
+                'outline: none',
+                'background: transparent',
+                'color: inherit',
+                'padding: 0'
+            ].join(';');
+            langEl.textContent = '';
+            langEl.appendChild(input);
+            input.focus?.();
+            input.select?.();
+
+            const done = (cancel) => {
+                const value = input.value;
+                input.remove();
+                if (cancel) {
+                    // 取消：恢复旧显示名
+                    const oldLang = this._getCodeBlockLang(block);
+                    langEl.textContent = oldLang
+                        ? LANG_DISPLAY_NAMES[oldLang] || oldLang.charAt(0).toUpperCase() + oldLang.slice(1)
+                        : '';
+                    return;
+                }
+                commit(value);
+            };
+            input.addEventListener('keydown', (ev) => {
+                ev.stopPropagation(); // 防止编辑器快捷键（回车拆行等）截获
+                if (ev.key === 'Enter') {
+                    ev.preventDefault();
+                    done(false);
+                } else if (ev.key === 'Escape') {
+                    ev.preventDefault();
+                    done(true);
+                }
+            });
+            input.addEventListener('blur', () => done(false));
+            input.addEventListener('click', (ev) => ev.stopPropagation());
+        });
+    }
+
+    /** 深浅色主题的代码块配色（取值与 taskview 的 --chat-* 品牌暖色系一致） */
+    _getCodeBlockThemeColors() {
+        const isDark = document.documentElement.dataset.theme === 'dark';
+        return {
+            isDark,
+            frameBg: isDark ? '#1f1d1b' : '#f7f6f4',
+            headerBg: isDark ? '#22201e' : '#fafafa',
+            lineSoft: isDark ? '#33302d' : '#f0efec',
+            ink2: isDark ? '#d5d1cb' : '#4a4642',
+            ink3: isDark ? '#9b968f' : '#8a8580',
+            ink4: isDark ? '#6f6a63' : '#b4afa9',
+            accent: isDark ? '#e8563f' : '#df4436',
+            green: isDark ? '#3dbf82' : '#1f9d66',
+            blue: isDark ? '#7aa2e8' : '#4267b2',
+            amber: isDark ? '#e2a23b' : '#b87503',
+            // 自绘按行选区高亮色（行级整行覆盖，不透明）
+            selectionBg: isDark ? '#39435a' : '#d4e0f4'
+        };
+    }
+
+    /**
+     * Maple Mono @font-face 定义：TinyMCE iframe 是独立文档，解析不到
+     * 主文档 fonts.css 里的字体名，必须自带 @font-face。
+     * 字体 URL 基于主文档 baseURI 计算为绝对地址（dev 为 http 静态服务、
+     * 生产为 file:// 相对目录），避免相对路径在 iframe 内解析失败。
+     */
+    _getMonoFontFaceCss() {
+        if (this._monoFontFaceCss) return this._monoFontFaceCss;
+        const variants = [
+            ['normal', 'normal', 'MapleMono-Regular.ttf.woff2'],
+            ['italic', 'normal', 'MapleMono-Italic.ttf.woff2'],
+            ['normal', 'bold', 'MapleMono-Bold.ttf.woff2'],
+            ['italic', 'bold', 'MapleMono-BoldItalic.ttf.woff2']
+        ];
+        this._monoFontFaceCss = variants
+            .map(([style, weight, file]) => {
+                const url = new URL(`fonts/maplemono/${file}`, document.baseURI).href;
+                return (
+                    `@font-face { font-family: 'Maple Mono'; font-style: ${style}; font-weight: ${weight}; ` +
+                    `src: url('${url}') format('woff2'); font-display: swap; }`
+                );
+            })
+            .join('\n');
+        return this._monoFontFaceCss;
+    }
+
+    /** 把代码块样式写入 TinyMCE iframe 文档，并按当前主题上色（主题切换时重复调用即可刷新） */
+    _applyCodeBlockStyles(editor) {
+        const doc = editor.getDoc();
+        if (!doc) return;
+        doc.getElementById('notes-code-block-style')?.remove();
+        // iframe 文档声明 color-scheme，让原生 UI（选区高亮等）跟随主题，
+        // 否则深色模式下 Chromium 用浅色默认选区色画出大块蓝色选区
+        doc.documentElement.style.colorScheme = this._getCodeBlockThemeColors().isDark ? 'dark' : 'light';
+        const c = this._getCodeBlockThemeColors();
+        const monoStack =
+            "'Maple Mono', 'Cascadia Code', 'Fira Code', 'JetBrains Mono', 'Consolas', 'Monaco', monospace";
+        const style = doc.createElement('style');
+        style.id = 'notes-code-block-style';
+        style.textContent = `
+            ${this._getMonoFontFaceCss()}
+            /* 覆盖 TinyMCE 自带 content.css 的行内 code 灰底/等宽规则（会打到 code.code-lines 上） */
+            .code-block-wrapper code {
+                background: transparent;
+                border-radius: 0;
+                padding: 0;
+                text-shadow: none;
+                font-size: inherit;
+                font-family: ${monoStack};
+                color: inherit;
+            }
+            /* 关键修复：跨行选择时 TinyMCE 给边界元素打 data-mce-selected="inline-boundary"，
+               oxide 皮肤为此画 #b4d7ff 蓝底（就是代码块"整块变蓝"的元凶）。
+               把它压回代码区底色，选区视觉由文字上的原生 ::selection 呈现。 */
+            .mce-content-body [data-mce-selected='inline-boundary'] {
+                background: ${c.frameBg} !important;
+            }
+            .code-block-wrapper {
+                border: 1px solid ${c.lineSoft};
+                border-radius: 8px;
+                overflow: hidden;
+                margin: 0.6em 0;
+                width: 100%;
+                box-sizing: border-box;
+            }
+            .code-block-header {
+                display: flex;
+                align-items: center;
+                gap: 6px;
+                padding: 0.35em 0.75em;
+                background: ${c.headerBg};
+                border-bottom: 1px solid ${c.lineSoft};
+            }
+            .code-block-lang {
+                font-size: 11px;
+                font-weight: 600;
+                color: ${c.ink3};
+                user-select: none;
+            }
+            .code-block-body {
+                overflow-x: auto;
+                background: ${c.frameBg};
+                color: ${c.ink2};
+                font-size: 13px;
+                line-height: 1.55;
+                font-family: ${monoStack};
+            }
+            .code-block-pre {
+                display: block;
+                margin: 0;
+                padding: 0;
+                border: none;
+                background: transparent;
+                font-size: inherit;
+                line-height: inherit;
+                font-family: inherit;
+            }
+            .code-lines {
+                display: block;
+                margin: 0;
+                padding: 0.5em 0;
+                counter-reset: codeln;
+                white-space: pre;
+                font-size: inherit;
+                line-height: inherit;
+                font-family: inherit;
+            }
+            .code-line {
+                display: block;
+                position: relative;
+                counter-increment: codeln;
+                margin: 0;
+                padding: 0 0.8em 0 3.4em;
+                white-space: pre;
+                font-family: inherit;
+                min-height: 1.55em;
+            }
+            .code-line::before {
+                content: counter(codeln);
+                position: absolute;
+                left: 0;
+                top: 0;
+                height: 100%;
+                width: 3.4em;
+                padding: 0 0.6em;
+                box-sizing: border-box;
+                text-align: right;
+                user-select: none;
+                color: ${c.ink4};
+                background: ${c.headerBg};
+                border-right: 1px solid ${c.lineSoft};
+            }
+            .code-block-body .hljs-keyword, .code-block-body .hljs-selector-tag,
+            .code-block-body .hljs-doctag, .code-block-body .hljs-tag {
+                color: ${c.accent}; font-weight: 500;
+            }
+            .code-block-body .hljs-string, .code-block-body .hljs-regexp,
+            .code-block-body .hljs-attr { color: ${c.green}; }
+            .code-block-body .hljs-number, .code-block-body .hljs-literal,
+            .code-block-body .hljs-type { color: ${c.blue}; }
+            .code-block-body .hljs-title, .code-block-body .hljs-function .hljs-title,
+            .code-block-body .hljs-section, .code-block-body .hljs-attribute,
+            .code-block-body .hljs-name, .code-block-body .hljs-built_in { color: ${c.amber}; }
+            .code-block-body .hljs-comment, .code-block-body .hljs-quote {
+                color: ${c.ink4}; font-style: italic;
+            }
+            .code-block-body .hljs-meta { color: ${c.ink3}; }
+            .code-block-body .hljs-variable, .code-block-body .hljs-params { color: ${c.ink2}; }
+        `;
+        doc.head.appendChild(style);
+    }
+
+    /**
+     * 代码块内方向键：
+     * - 末行行尾按 ↓：光标移到代码块后的相邻段落
+     * - 首行行首按 ↑：光标移到代码块前的相邻段落
+     * 浏览器在 display:block 行结构里算不出跨块移动，默认会弹回原位。
+     * @returns true 表示已处理
+     */
+    _handleCodeBlockArrowKeys(editor, e) {
+        const block = this._findCodeBlockAncestor(editor);
+        if (!block) return false;
+        const line = this._getSelectedCodeLine(editor);
+        if (!line) {
+            // 选区锚点不在任何行内（浏览器在方向键失败后的重映射状态）：
+            // 视为用户在块底部按回车，退出代码块到下方新段落
+            e.preventDefault();
+            const p = editor.dom.create('p');
+            p.innerHTML = '<br data-mce-bogus="1">';
+            editor.dom.insertAfter(p, block);
+            editor.selection.setCursorLocation(p, 0);
+            this._scheduleAutoSave();
+            return true;
+        }
+
+        const lines = Array.from(block.querySelectorAll('.code-line'));
+        const lineIndex = lines.indexOf(line);
+        const rng = editor.selection.getRng();
+        const lineText = this._getCodeLineText(line);
+        const caretOffset = this._caretTextOffset(line, rng);
+
+        // 块内跨行移动：display:block 的 span 行结构下浏览器算不出
+        // 跨行 caret 视觉位置（会弹回原地），全部接管为逻辑行移动
+        if (e.key === 'ArrowDown' && lineIndex < lines.length - 1) {
+            e.preventDefault();
+            const target = lines[lineIndex + 1];
+            const targetLen = this._getCodeLineText(target).length;
+            this._setCaretInLine(editor, target, Math.min(caretOffset, targetLen));
+            return true;
+        }
+
+        if (e.key === 'ArrowUp' && lineIndex > 0) {
+            e.preventDefault();
+            const target = lines[lineIndex - 1];
+            const targetLen = this._getCodeLineText(target).length;
+            this._setCaretInLine(editor, target, Math.min(caretOffset, targetLen));
+            return true;
+        }
+
+        if (e.key === 'ArrowDown' && lineIndex === lines.length - 1) {
+            // 末行：只要已在行尾（或末行是空行）就向下离开
+            const atEnd = caretOffset >= lineText.length || lineText.trim().length === 0;
+            if (!atEnd) return false;
+            e.preventDefault();
+            const next = this._findAdjacentBlockElement(editor, block, 'next');
+            if (next) {
+                this._setCaretAtElementStart(editor, next);
+            } else {
+                // 块后没有段落：补一个
+                const p = editor.dom.create('p');
+                p.innerHTML = '<br data-mce-bogus="1">';
+                editor.dom.insertAfter(p, block);
+                editor.selection.setCursorLocation(p, 0);
+            }
+            return true;
+        }
+
+        if (e.key === 'ArrowUp' && lineIndex === 0) {
+            const atStart = caretOffset === 0;
+            if (!atStart) return false;
+            e.preventDefault();
+            const prev = this._findAdjacentBlockElement(editor, block, 'prev');
+            if (prev) {
+                // 移到前一个元素的文本末尾
+                this._setCaretAtElementEnd(editor, prev);
+            }
+            return true;
+        }
+        return false;
+    }
+
+    /** 把光标放到元素的文本开头（优先文本节点，避免元素边界） */
+    _setCaretAtElementStart(editor, el) {
+        const firstText = this._findFirstTextNode(el);
+        if (firstText) {
+            editor.selection.setCursorLocation(firstText.node, firstText.offset);
+        } else {
+            editor.selection.setCursorLocation(el, 0);
+        }
+    }
+
+    /** 找元素内第一个文本节点（返回其引用；起始 offset 恒为 0） */
+    _findFirstTextNode(el) {
+        const walk = (node) => {
+            for (const child of Array.from(node.childNodes)) {
+                if (child.nodeType === 3 && child.textContent.length > 0) {
+                    return { node: child, offset: 0 };
+                }
+                const deep = walk(child);
+                if (deep) return deep;
+            }
+            return null;
+        };
+        return walk(el);
+    }
+
+    /** 找代码块前/后相邻的块级元素 */
+    _findAdjacentBlockElement(editor, block, direction) {
+        const body = editor.getBody();
+        let cur = direction === 'next' ? block.nextElementSibling : block.previousElementSibling;
+        while (cur && cur !== body) {
+            if (!cur.classList?.contains('code-block-wrapper')) return cur;
+            cur = direction === 'next' ? cur.nextElementSibling : cur.previousElementSibling;
+        }
+        return null;
+    }
+
+    /** 把光标放到元素文本末尾（优先文本节点，避免元素边界） */
+    _setCaretAtElementEnd(editor, el) {
+        const lastText = this._findLastTextNode(el);
+        if (lastText) {
+            editor.selection.setCursorLocation(lastText.node, lastText.offset);
+        } else {
+            // 空元素（无文本）：光标落元素起点，由 TinyMCE 自行归一化
+            editor.selection.setCursorLocation(el, 0);
+        }
+    }
+
+    /** 找元素内最后一个文本节点及其长度 */
+    _findLastTextNode(el) {
+        const walk = (node) => {
+            for (let i = node.childNodes.length - 1; i >= 0; i--) {
+                const child = node.childNodes[i];
+                if (child.nodeType === 3 && child.textContent.length > 0) {
+                    return { node: child, offset: child.textContent.length };
+                }
+                const deep = walk(child);
+                if (deep) return deep;
+            }
+            return null;
+        };
+        return walk(el);
+    }
+
+    /**
+     * 代码块内按回车：在光标处把当前 code-line 拆成两行（保持行号结构）。
+     * 当前行为空且是最后一行时，回车退出代码块，在下方开新段落。
+     * @returns true 表示已处理（阻止默认回车）
+     */
+    _handleCodeBlockEnter(editor, e) {
+        const block = this._findCodeBlockAncestor(editor);
+        if (!block) return false;
+
+        // 选区悬空自愈：重高亮刚重建 DOM 后选区锚点可能已脱离文档树，
+        // 此时 TinyMCE 的默认回车会基于坏选区在原位后插行（光标不动的 bug）
+        const rng = editor.selection.getRng();
+        if (rng.startContainer && !rng.startContainer.isConnected) {
+            const lines = block.querySelectorAll('.code-line');
+            const fallback = lines[lines.length - 1];
+            if (!fallback) return false;
+            this._setCaretInLine(editor, fallback, 0);
+        }
+
+        const line = this._getSelectedCodeLine(editor);
+        if (!line) return false;
+
+        e.preventDefault();
+        const lineIndex = Array.from(block.querySelectorAll('.code-line')).indexOf(line);
+        editor.undoManager.transact(() => {
+            // 回车永远拆行（主流编辑器语义）；退出代码块用 ↓ 方向键或 Escape
+            const newLine = this._splitCodeLineAtCaret(editor, line);
+            // 光标必须落到新行内部的文本节点上：空元素边界点会被 TinyMCE
+            // 选区归一化挪回上一行行尾，导致后续回车不断在行尾后插行
+            this._setCaretInLine(editor, newLine, 0);
+        });
+        // 硬校验：transact/选区归一化后光标必须仍在新行（拆分前的 line 的下一行）。
+        // 任何一环（TinyMCE 选区 normalize、浏览器选区重映射）把光标挪走
+        // 都会重现"光标不动、行往下堆"的 bug——这里强制拉回。
+        const linesNow = Array.from(block.querySelectorAll('.code-line'));
+        const expectedNewLine = linesNow[lineIndex + 1];
+        if (expectedNewLine && this._getSelectedCodeLine(editor) !== expectedNewLine) {
+            this._setCaretInLine(editor, expectedNewLine, 0);
+        }
+        this._scheduleAutoSave();
+        return true;
+    }
+
+    /**
+     * 代码块内 Delete 键：
+     * - 行尾按 Delete：下一行合并到当前行（保留当前行高亮壳，吃进下一行内容）
+     * - 空行按 Delete：删除本行，光标到上一行行尾
+     * @returns true 表示已处理
+     */
+    _handleCodeBlockDelete(editor, e) {
+        const block = this._findCodeBlockAncestor(editor);
+        if (!block) return false;
+        const line = this._getSelectedCodeLine(editor);
+        if (!line) return false;
+
+        const rng = editor.selection.getRng();
+        const lineText = this._getCodeLineText(line);
+        const caretOffset = this._caretTextOffset(line, rng);
+        const lines = Array.from(block.querySelectorAll('.code-line'));
+        const lineIndex = lines.indexOf(line);
+        // 空行（占位空格）无论光标位置都按行级 Delete 处理
+        const isEmptyLine = lineText.trim().length === 0;
+        const atLineEnd = caretOffset >= lineText.length;
+        if (!isEmptyLine && !atLineEnd) return false; // 行中 Delete：浏览器默认删字符即可
+        if (!isEmptyLine && lineIndex >= lines.length - 1) return false; // 末行行尾：无下一行可吞，走默认
+
+        e.preventDefault();
+        editor.undoManager.transact(() => {
+            if (isEmptyLine && lineIndex > 0) {
+                // 空行 Delete：删掉本行，光标到上一行行尾
+                const prev = lines[lineIndex - 1];
+                line.remove();
+                this._setCaretAtLineEnd(editor, prev);
+            } else if (!isEmptyLine) {
+                // 行尾 Delete：下一行内容并入当前行，删除下一行，光标停在合并点
+                const next = lines[lineIndex + 1];
+                const nextChildren = Array.from(next.childNodes);
+                nextChildren.forEach((child) => line.appendChild(child));
+                next.remove();
+                this._setCaretInLine(editor, line, caretOffset);
+            }
+            // 空行且是首行（lineIndex 0）：没有上一行可退，仅清空占位保持原状
+        });
+        this._scheduleAutoSave();
+        return true;
+    }
+
+    /** 把光标放到 line 的文本末尾（复用行尾文本节点，无文本时补空格占位） */
+    _setCaretAtLineEnd(editor, line) {
+        const lastText = this._findLastTextNode(line);
+        if (lastText) {
+            editor.selection.setCursorLocation(lastText.node, lastText.offset);
+        } else {
+            const doc = editor.getDoc();
+            const tail = doc.createTextNode(' ');
+            line.appendChild(tail);
+            editor.selection.setCursorLocation(tail, 1);
+        }
+    }
+
+    // ─── 粘贴围栏转代码块 ───
+
+    /**
+     * 匹配完整 markdown 围栏：```lang\n...\n``` 或 ~~~（允许首行 ``` 前有换行外的空白）。
+     * 返回 { lang, code }；非围栏返回 null。无语言（裸 ```）也接受（lang 为 ''）。
+     */
+    _parseCodeFence(text) {
+        if (typeof text !== 'string') return null;
+        const m = /^(\s*)(`{3,}|~{3,})([^\n`]*)\n([\s\S]*?)\n?\2\s*$/.exec(text);
+        if (!m) return null;
+        // 开头反引号行之后必须有内容（或允许空体——空也转，用户就是想要个块）
+        const lang = m[3].trim().split(/\s+/)[0].toLowerCase();
+        const code = m[4];
+        if (lang && /[`~]/.test(lang)) return null; // 语言位混入围栏字符：不是合法围栏
+        return { lang, code };
+    }
+
+    /** 原生粘贴拦截：完整围栏文本转代码块，其余放行 */
+    _handleCodeFencePaste(editor, e) {
+        // 已经在代码块内粘贴：不转换（用户在补代码内容）
+        if (this._findCodeBlockAncestor(editor)) return;
+        const text = e.clipboardData?.getData?.('text/plain');
+        const fence = this._parseCodeFence(text);
+        if (!fence) return;
+
+        e.preventDefault();
+        this._insertFencedCodeBlock(editor, fence.lang, fence.code);
+    }
+
+    /** 把围栏内容转为代码块插入光标处（当前段落非空时保留，块插在其后） */
+    _insertFencedCodeBlock(editor, lang, code) {
+        const node = editor.selection.getNode();
+        if (!node) return;
+        const langValid = lang && hljs.getLanguage(lang);
+        const language = langValid ? lang : 'plaintext';
+        // 剥零宽字符（TinyMCE caret 标记可能混入剪贴板文本）
+        const plain = (code.length ? code : ' ').replace(/[\uFEFF\u200B\u200C\u200D]/g, '') || ' ';
+        const highlighted = langValid ? hljs.highlight(plain, { language }).value : this._escapeHtml(plain);
+        const html = renderCodeBlockHtml(highlighted, { lang: lang || '', withHeader: !!lang });
+
+        editor.undoManager.transact(() => {
+            const wrap = editor.dom.create('div', { class: 'code-block-wrapper' });
+            wrap.innerHTML = html;
+            const block = wrap.firstElementChild;
+            if (!block) return;
+            if (lang) block.dataset.lang = lang;
+
+            const isEmptyPara = node.nodeName === 'P' && (node.textContent || '').trim() === '';
+            if (isEmptyPara) {
+                // 空段落就地替换
+                editor.dom.insertAfter(block, node);
+                node.remove();
+            } else {
+                // 非空段落：块插在其后
+                editor.dom.insertAfter(block, node);
+            }
+
+            const p = editor.dom.create('p');
+            p.innerHTML = '<br data-mce-bogus="1">';
+            editor.dom.insertAfter(p, block);
+
+            const firstLine = block.querySelector('.code-block-body .code-lines .code-line');
+            if (firstLine && firstLine.firstChild) {
+                editor.selection.setCursorLocation(firstLine.firstChild, 0);
+            } else {
+                editor.selection.setCursorLocation(p, 0);
+            }
+            this._stripZeroWidthInBlock(block);
+            if (lang) this._makeCodeLangEditable(block, editor);
+        });
+        this._scheduleAutoSave();
+    }
+
+    /** 光标所在的 code-line 元素（从 Range startContainer 向上查找） */
+    _getSelectedCodeLine(editor) {
+        let cur = editor.selection.getRng().startContainer;
+        if (cur && cur.nodeType === 3) cur = cur.parentNode;
+        while (cur && cur.nodeName !== 'BODY') {
+            if (cur.classList?.contains('code-line')) return cur;
+            if (cur.classList?.contains('code-block-wrapper')) break;
+            cur = cur.parentNode;
+        }
+        return null;
+    }
+
+    /** code-line 的纯文本（忽略行内 span，nbsp 归一为空格，剥零宽字符） */
+    _getCodeLineText(line) {
+        if (!line) return '';
+        return (line.textContent || '').replace(/[\uFEFF\u200B\u200C\u200D]/g, '').replace(/\u00a0/g, ' ');
+    }
+
+    /**
+     * DOM 级自愈：移除代码块所有行文本里的零宽字符（\uFEFF 等）。
+     * TinyMCE 的 caret 标记（\uFEFF）可能在插入/编辑时混进行文本，
+     * 残留会导致 hljs 高亮错位与 caret 视觉计算异常（回车/方向键失灵）。
+     * 直接对 DOM 文本节点操作，不依赖上游剥离是否生效。
+     */
+    _stripZeroWidthInBlock(block) {
+        const doc = this.ownerDocument;
+        // NodeFilter.SHOW_TEXT === 4（linkedom 等简化 DOM 无 NodeFilter 全局）
+        const SHOW_TEXT = doc.defaultView?.NodeFilter?.SHOW_TEXT ?? 4;
+        const walker = doc.createTreeWalker(block, SHOW_TEXT);
+        const targets = [];
+        while (walker.nextNode()) {
+            const node = walker.currentNode;
+            if (node.textContent && /[\uFEFF\u200B\u200C\u200D]/.test(node.textContent)) {
+                targets.push(node);
+            }
+        }
+        for (const node of targets) {
+            node.textContent = node.textContent.replace(/[\uFEFF\u200B\u200C\u200D]/g, '');
+        }
+    }
+
+    // ─── 代码块语法高亮 ───
+
+    /** 节流 150ms 后刷新所有无光标代码块的高亮（selectionchange 触发） */
+    _scheduleCodeBlockHighlight(editor) {
+        if (this._codeHighlightTimer) clearTimeout(this._codeHighlightTimer);
+        this._codeHighlightTimer = setTimeout(() => {
+            this._codeHighlightTimer = null;
+            this._refreshCodeBlockHighlight(editor);
+        }, 150);
+    }
+
+    /** 光标离开代码块后对无光标的代码块做整体重新高亮 */
+    _refreshCodeBlockHighlight(editor) {
+        const blocks = editor.dom.select('.code-block-wrapper');
+        for (const block of blocks) {
+            // 常驻自愈：TinyMCE 会在空 inline 元素的 caret 处插入 \uFEFF
+            // caret 标记，残留破坏高亮与光标行为——每次刷新顺手清除
+            this._stripZeroWidthInBlock(block);
+            // 只刷新光标不在其中的块：编辑中的块不动 DOM（选区安全），
+            // 离开后由本函数补上完整高亮
+            const caretLine = this._getSelectedCodeLine(editor);
+            if (caretLine && block.contains(caretLine)) continue;
+            this._refreshCodeBlockHighlightIn(block, editor);
+        }
+    }
+
+    /** 强制整块重新高亮（语言变更后调用；调用方须保证光标不在代码行上） */
+    _refreshCodeBlockHighlightForce(block, editor) {
+        // 语言标签编辑态光标在 header input 里，不在代码行上，替换安全
+        this._refreshCodeBlockHighlightIn(block, editor);
+    }
+
+    /** 对单个代码块整体重新高亮（调用方须保证光标不在此块内） */
+    _refreshCodeBlockHighlightIn(block, editor) {
+        const lang = this._getCodeBlockLang(block);
+        if (!lang || !hljs.getLanguage(lang)) return;
+
+        const body = block.querySelector('.code-block-body .code-lines');
+        if (!body) return;
+
+        const plain = this._getCodeBlockPlainText(block);
+        const html = hljs.highlight(plain, { language: lang }).value;
+        const lines = splitHighlightedLines(html);
+        if (lines.length > 0 && lines[lines.length - 1] === '') lines.pop();
+
+        const children = Array.from(body.children);
+        let dirty = false;
+        for (let i = 0; i < children.length && i < lines.length; i++) {
+            const inner = renderCodeLineInnerHtml(lines[i]);
+            if (children[i].innerHTML !== inner) {
+                children[i].innerHTML = inner;
+                dirty = true;
+            }
+        }
+        // DOM 行数多于高亮输出（用户删行后）：移除尾部多余行；不足则补
+        for (let i = children.length - 1; i >= lines.length; i--) {
+            children[i].remove();
+            dirty = true;
+        }
+        for (let i = children.length; i < lines.length; i++) {
+            const holder = editor.dom.create('div');
+            holder.innerHTML = renderCodeLineHtml(lines[i]);
+            const fresh = holder.firstElementChild;
+            if (fresh) {
+                body.appendChild(fresh);
+                dirty = true;
+            }
+        }
+        if (dirty) this._scheduleAutoSave();
+    }
+
+    /** 代码块语言：优先 data-lang，回退 body 类名 language-*（防笔记重开后属性被剥离） */
+    _getCodeBlockLang(block) {
+        const direct = (block.dataset.lang || '').toLowerCase();
+        if (direct) return direct;
+        const body = block.querySelector('.code-block-body');
+        const m = /\blanguage-([\w+-]+)\b/.exec(body?.className || '');
+        return m ? m[1].toLowerCase() : '';
+    }
+
+    /** 整个代码块的纯文本（行以 \n 连接；空行补占位空格，与渲染约定对齐） */
+    _getCodeBlockPlainText(block) {
+        return Array.from(block.querySelectorAll('.code-line'))
+            .map((l) => {
+                const text = (l.textContent || '').replace(/\u00a0/g, ' ');
+                // 空行的 DOM textContent 为空，但渲染约定是占位空格；
+                // 不补齐会让高亮输出的行数少于 DOM 行数，导致尾行漏更新
+                return text.length === 0 ? ' ' : text;
+            })
+            .join('\n');
+    }
+
+    /** 光标在 line 内的文本偏移（跨 span 边界时按拼接文本累计） */
+    _caretTextOffset(line, rng) {
+        const container = rng.startContainer;
+        if (container.nodeType === 3) {
+            let offset = 0;
+            let found = false;
+            const walk = (node) => {
+                if (found) return;
+                for (const child of Array.from(node.childNodes)) {
+                    if (child === container) {
+                        offset += rng.startOffset;
+                        found = true;
+                        return;
+                    }
+                    if (child.nodeType === 3) offset += child.textContent.length;
+                    walk(child);
+                    if (found) return;
+                }
+            };
+            walk(line);
+            return offset;
+        }
+        // 元素容器：偏移即前若干子节点的文本长度
+        let offset = 0;
+        for (let i = 0; i < rng.startOffset && i < container.childNodes.length; i++) {
+            offset += container.childNodes[i].textContent.length;
+        }
+        return offset;
+    }
+
+    /** 把光标放到 line 内的指定文本偏移处（跨 span 定位；行首空文本节点优先承接 offset 0） */
+    _setCaretInLine(editor, line, textOffset) {
+        const find = (node, remaining) => {
+            for (const child of Array.from(node.childNodes)) {
+                const len = child.textContent.length;
+                if (child.nodeType === 3 && remaining <= len) {
+                    return { node: child, offset: remaining };
+                }
+                if (remaining <= len) {
+                    const deep = find(child, remaining);
+                    if (deep) return deep;
+                }
+                remaining -= len;
+            }
+            return null;
+        };
+        const hit = find(line, textOffset);
+        if (hit) {
+            editor.selection.setCursorLocation(hit.node, hit.offset);
+        } else {
+            // 找不到落点（空行/超出行尾）：补空格占位，光标放占位内
+            // （offset 0 在空格前=行首；超行尾时在空格后=行尾）
+            const doc = editor.getDoc();
+            const tail = doc.createTextNode(' ');
+            line.appendChild(tail);
+            editor.selection.setCursorLocation(tail, Math.min(textOffset, 1));
+        }
+    }
+
+    /**
+     * 以纯 DOM 操作在光标处拆分 code-line（不依赖 Range 剪切 API）：
+     * 光标后的文本与节点移入克隆出的新 code-line，行内高亮 span 壳按原层级重建，
+     * 返回新 code-line 元素。
+     */
+    _splitCodeLineAtCaret(editor, line) {
+        const doc = editor.getDoc();
+        const rng = editor.selection.getRng();
+        const container = rng.startContainer;
+        const offset = rng.startOffset;
+        const newLine = line.cloneNode(false);
+
+        // container 与 line 之间的元素祖先（外层在前）；若 container 本身是元素也纳入
+        const chain = [];
+        if (container !== line && container.nodeType !== 3) chain.push(container);
+        for (let n = container.parentNode; n && n !== line; n = n.parentNode) {
+            chain.unshift(n);
+        }
+
+        // 在 newLine 内按原层级重建祖先壳，deepest 为最内层挂载点
+        const shells = [];
+        let deepest = newLine;
+        for (const el of chain) {
+            const shell = el.cloneNode(false);
+            deepest.appendChild(shell);
+            shells.push(shell);
+            deepest = shell;
+        }
+
+        if (container.nodeType === 3) {
+            // 拆分光标所在文本节点，尾部文本与后续兄弟移入最深壳
+            const tail = container.textContent.slice(offset);
+            container.textContent = container.textContent.slice(0, offset);
+            if (tail) deepest.appendChild(doc.createTextNode(tail));
+            for (let s = container.nextSibling; s;) {
+                const next = s.nextSibling;
+                deepest.appendChild(s);
+                s = next;
+            }
+        } else {
+            // 光标位于元素子节点之间：offset 之后的子节点移入最深壳
+            for (let kid = container.childNodes[offset] || null; kid;) {
+                const next = kid.nextSibling;
+                deepest.appendChild(kid);
+                kid = next;
+            }
+        }
+
+        // 逐层上移：每层元素在其父层中排在其后的兄弟，移入对应外层壳（最外层即 newLine）
+        for (let i = chain.length - 1; i >= 0; i--) {
+            const outer = i === 0 ? newLine : shells[i - 1];
+            for (let s = chain[i].nextSibling; s;) {
+                const next = s.nextSibling;
+                outer.appendChild(s);
+                s = next;
+            }
+        }
+
+        line.after(newLine);
+        return newLine;
     }
 
     // ─── 浮动工具栏 ───

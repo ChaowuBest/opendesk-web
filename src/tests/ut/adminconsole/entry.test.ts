@@ -35,11 +35,11 @@ describe('admin panel rendering', () => {
             });
         }
 
-        const module = await import('../../../renderer/components/adminpanel.js');
-        WidgetClass = module.AdminPanel ?? (window.customElements as any).get('admin-panel');
+        const module = await import('../../../main/applications/adminconsole/renderer/entry.js');
+        WidgetClass = module.AdminConsoleEntryWidget ?? (window.customElements as any).get('adminconsole-entry-widget');
         if (!WidgetClass) {
             // customElements.define 未暴露类时通过构造探测
-            WidgetClass = (window.customElements as any).get('admin-panel');
+            WidgetClass = (window.customElements as any).get('adminconsole-entry-widget');
         }
     });
 
@@ -89,11 +89,36 @@ describe('admin panel rendering', () => {
             })),
             downloadAttachment: jest.fn(async () => ({ canceled: false, filePath: '/tmp/log.txt' }))
         };
-        (window as any).adminAPI = adminApi;
+        // 应用化后 UI 只经 applicationAPI.callMainWorld 访问 main 侧方法，
+        // 这里模拟其 { status, data } / { status, code, message } 返回协议
+        (window as any).applicationAPI = {
+            callMainWorld: jest.fn(async (methodName: string, ...args: any[]) => {
+                const impl = adminApi[methodName];
+                if (typeof impl !== 'function') {
+                    return { status: 'error', message: `method ${methodName} not found` };
+                }
+                try {
+                    return { status: 'ok', data: await impl(...args) };
+                } catch (error: any) {
+                    return { status: 'error', code: error.code, message: error.message };
+                }
+            })
+        };
         (window as any).settingAPI = {
             loadSettingObject: jest.fn(async () => ({}))
         };
     });
+
+    /**
+     * 逐轮让出微任务直到条件成立。callMainWorld 适配层比直连 IPC 多一层 await，
+     * 固定轮数的 await 会随实现层数漂移，这里按条件等待。
+     */
+    async function waitFor(predicate: () => boolean, rounds = 100): Promise<void> {
+        for (let i = 0; i < rounds; i++) {
+            if (predicate()) return;
+            await Promise.resolve();
+        }
+    }
 
     function strings(widget: any): Record<string, string> {
         return {
@@ -201,7 +226,7 @@ describe('admin panel rendering', () => {
         const widget = createWidget();
         document.body.appendChild(widget);
         // initialize 与 loadActivity 的完整微任务链
-        for (let i = 0; i < 10; i++) await Promise.resolve();
+        await waitFor(() => widget.shadowRoot.querySelectorAll('.bar-seg').length > 0);
         // 每天都有分段柱（pc/phone 等类型分段 rect）
         const segments = widget.shadowRoot.querySelectorAll('.bar-seg');
         expect(segments.length).toBeGreaterThan(0);
@@ -252,13 +277,8 @@ describe('admin panel rendering', () => {
         adminApi.loadToken.mockResolvedValue({ token: 'stored-token', canPersist: true });
         const widget = createWidget();
         document.body.appendChild(widget);
-        await Promise.resolve();
-        await Promise.resolve();
         // 等待异步数据加载完成
-        await Promise.resolve();
-        await Promise.resolve();
-        await Promise.resolve();
-        await Promise.resolve();
+        await waitFor(() => widget.shadowRoot.querySelectorAll('.ap-card').length > 0);
         expect(widget.authorized).toBe(true);
         expect(adminApi.getDailyStats).toHaveBeenCalledWith(7);
         expect(adminApi.getSummaryStats).toHaveBeenCalled();
@@ -272,13 +292,9 @@ describe('admin panel rendering', () => {
         adminApi.loadToken.mockResolvedValue({ token: 'stored-token', canPersist: true });
         const widget = createWidget();
         document.body.appendChild(widget);
-        await Promise.resolve();
+        // 在 initialize 读取到令牌前切到反馈页，令首次加载走 loadFeedback
         widget.activeTab = 'feedback';
-        widget.render();
-        await Promise.resolve();
-        await Promise.resolve();
-        await Promise.resolve();
-        await Promise.resolve();
+        await waitFor(() => widget.shadowRoot.querySelectorAll('.ap-feedback').length > 0);
         expect(adminApi.getFeedbackList).toHaveBeenCalled();
         expect(widget.shadowRoot.querySelectorAll('.ap-feedback').length).toBe(2);
         widget.shadowRoot.querySelector('[data-filter="bug"]').dispatchEvent(new window.Event('click'));
