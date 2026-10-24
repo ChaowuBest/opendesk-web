@@ -3,6 +3,7 @@ import {
     computeSubtaskProgress,
     computeTodoProgress,
     computeTriggerActive,
+    computeWidgetTransitionBounds,
     isActiveTask,
     isInternalTask,
     isWidgetTriggerEffective,
@@ -615,6 +616,161 @@ describe('task-status-widget 纯逻辑', () => {
             });
             merged = mergeTaskLiveUsage(summary, current, tracked);
             expect(merged.usage).toEqual({ total_tokens: 720, input_tokens: 300, output_tokens: 420 });
+        });
+    });
+
+    describe('computeWidgetTransitionBounds', () => {
+        // 屏幕工作区：原点 (0, 0)，尺寸 1920x1040（底部任务栏占 40px 的典型 Windows 布局）。
+        const workArea = { x: 0, y: 0, width: 1920, height: 1040 };
+        const expanded = { width: 340, height: 215 };
+        const collapsed = { width: 240, height: 44 };
+        const margin = 28;
+        type Corner = 'top-left' | 'top-right' | 'bottom-left' | 'bottom-right';
+
+        /** 计算某个尺寸的窗口贴在指定角（留 margin）时的位置。 */
+        const cornerPos = (corner: Corner, size: { width: number; height: number }) => ({
+            x: corner.endsWith('left') ? workArea.x + margin : workArea.x + workArea.width - margin - size.width,
+            y: corner.startsWith('top') ? workArea.y + margin : workArea.y + workArea.height - margin - size.height,
+            width: size.width,
+            height: size.height
+        });
+        /** 胶囊（已贴角）展开为目标角上的完整浮窗。 */
+        const expandAt = (corner: Corner) =>
+            computeWidgetTransitionBounds({
+                position: corner,
+                currentBounds: cornerPos(corner, collapsed),
+                toCollapsed: false,
+                collapsedSize: collapsed,
+                expandedSize: expanded,
+                workArea
+            });
+        /** 完整浮窗（已贴角）收起为目标角上的胶囊。 */
+        const collapseAt = (corner: Corner) =>
+            computeWidgetTransitionBounds({
+                position: corner,
+                currentBounds: cornerPos(corner, expanded),
+                toCollapsed: true,
+                collapsedSize: collapsed,
+                expandedSize: expanded,
+                workArea
+            });
+
+        test('右下角锚定：胶囊展开时左上角向左上移动，右下角保持贴角', () => {
+            const b = expandAt('bottom-right');
+            expect(b).toEqual(cornerPos('bottom-right', expanded));
+        });
+
+        test('右下角锚定：展开态收起时右下角向右下收拢，回到贴角位置', () => {
+            const b = collapseAt('bottom-right');
+            expect(b).toEqual(cornerPos('bottom-right', collapsed));
+        });
+
+        test('左下角锚定：水平贴左、垂直贴底展开', () => {
+            const b = expandAt('bottom-left');
+            expect(b).toEqual(cornerPos('bottom-left', expanded));
+        });
+
+        test('右上角锚定：水平贴右、垂直贴顶展开', () => {
+            const b = expandAt('top-right');
+            expect(b).toEqual(cornerPos('top-right', expanded));
+        });
+
+        test('左上角锚定：贴左上展开，收起回到贴左上', () => {
+            expect(expandAt('top-left')).toEqual(cornerPos('top-left', expanded));
+            expect(collapseAt('top-left')).toEqual(cornerPos('top-left', collapsed));
+        });
+
+        test('四个角展开→收起闭环：收起位置与贴角胶囊初始位置一致', () => {
+            for (const corner of ['top-left', 'top-right', 'bottom-left', 'bottom-right'] as const) {
+                const expandedBounds = expandAt(corner);
+                const collapsedAgain = computeWidgetTransitionBounds({
+                    position: corner,
+                    currentBounds: expandedBounds,
+                    toCollapsed: true,
+                    collapsedSize: collapsed,
+                    expandedSize: expanded,
+                    workArea
+                });
+                expect(collapsedAgain).toEqual(cornerPos(corner, collapsed));
+            }
+        });
+
+        test('右侧越界钳制：胶囊贴近屏幕右缘时，展开仍完整落在工作区内', () => {
+            // 模拟 issue #335 场景：胶囊被拖到右缘（x + width = 1920），展开若保持
+            // 左上角不动会向右溢出屏幕 100px；钳制后必须完整可见。
+            const b = computeWidgetTransitionBounds({
+                position: 'bottom-right',
+                currentBounds: { x: 1920 - collapsed.width, y: 500, width: collapsed.width, height: collapsed.height },
+                toCollapsed: false,
+                collapsedSize: collapsed,
+                expandedSize: expanded,
+                workArea
+            });
+            expect(b.x).toBe(1920 - expanded.width);
+            expect(b.y).toBe(500 + collapsed.height - expanded.height);
+            expect(b.x + b.width).toBeLessThanOrEqual(1920);
+        });
+
+        test('底部越界钳制：胶囊位于工作区底缘时，展开完整落在工作区内', () => {
+            const b = computeWidgetTransitionBounds({
+                position: 'bottom-right',
+                currentBounds: {
+                    x: 1000,
+                    y: 1040 - collapsed.height,
+                    width: collapsed.width,
+                    height: collapsed.height
+                },
+                toCollapsed: false,
+                collapsedSize: collapsed,
+                expandedSize: expanded,
+                workArea
+            });
+            expect(b.y).toBe(1040 - expanded.height);
+            expect(b.y + b.height).toBeLessThanOrEqual(1040);
+        });
+
+        test('左侧越界钳制：右下角锚定的胶囊被拖到屏幕左缘，展开不越出左边界', () => {
+            const b = computeWidgetTransitionBounds({
+                position: 'bottom-right',
+                currentBounds: { x: 10, y: 500, width: collapsed.width, height: collapsed.height },
+                toCollapsed: false,
+                collapsedSize: collapsed,
+                expandedSize: expanded,
+                workArea
+            });
+            expect(b.x).toBe(0);
+            expect(b.x).toBeGreaterThanOrEqual(workArea.x);
+        });
+
+        test('顶部越界钳制：右下角锚定的胶囊贴近屏幕顶缘，展开不越出上边界', () => {
+            const b = computeWidgetTransitionBounds({
+                position: 'bottom-right',
+                currentBounds: { x: 500, y: 5, width: collapsed.width, height: collapsed.height },
+                toCollapsed: false,
+                collapsedSize: collapsed,
+                expandedSize: expanded,
+                workArea
+            });
+            expect(b.y).toBe(0);
+        });
+
+        test('未拖拽的贴角胶囊：展开位置与初始展开角位置一致（issue #335 回归）', () => {
+            const b = expandAt('bottom-right');
+            expect(b.x).toBe(1920 - margin - expanded.width);
+            expect(b.y).toBe(1040 - margin - expanded.height);
+        });
+
+        test('越界与钳制同时生效时结果不超出工作区', () => {
+            const b = computeWidgetTransitionBounds({
+                position: 'bottom-right',
+                currentBounds: { x: -50, y: 2000, width: collapsed.width, height: collapsed.height },
+                toCollapsed: false,
+                collapsedSize: collapsed,
+                expandedSize: expanded,
+                workArea
+            });
+            expect(b.x).toBeGreaterThanOrEqual(workArea.x);
+            expect(b.y + b.height).toBeLessThanOrEqual(workArea.y + workArea.height);
         });
     });
 });
