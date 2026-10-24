@@ -21,6 +21,7 @@ import { AssistantMessage, type TextMessagePart } from '../../../aikernel/messag
 import type { PermissionAction, PermissionResourceType } from '../../../aikernel/security/permission.js';
 import { escapeGlobLiteralPath } from '../../../aikernel/security/permission.js';
 import type { TaskState } from '../../../aikernel/states/tasks.js';
+import { truncateTaskName } from '../../../utils/task-name.js';
 import { t } from '../../../../locale/index.js';
 import { logger } from '../../../utils/logger.js';
 import { AcpAgentDecl } from '../agent.js';
@@ -210,7 +211,7 @@ export class AcpTaskExtension implements TaskExtension {
         this.task.task_manager_state.moveTaskToEnd(this.task);
         if (this.task.task_name === null) {
             this.task.name_pending = false;
-            this.task.task_name = message.length > 30 ? `${message.substring(0, 30)}...` : message;
+            this.task.task_name = truncateTaskName(message);
         }
         this.task.persistLater();
         this.task.task_manager_state.publishTaskListUpdate();

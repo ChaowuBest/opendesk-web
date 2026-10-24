@@ -30,6 +30,9 @@ import { getGoalElapsedMs } from '../../../common/goal/format.js';
 
 let tempRootDir: string | undefined;
 
+// 检测被截半的孤立代理项（乱码）：高代理后无低代理，或低代理前无高代理
+const LONE_SURROGATE = /[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/u;
+
 const realTimerGlobals = {
     setTimeout: globalThis.setTimeout,
     clearTimeout: globalThis.clearTimeout,
@@ -2286,10 +2289,10 @@ describe('goal controller and scheduler', () => {
         const task = createTask();
         const ask = jest.spyOn(LLM, 'ask').mockResolvedValue('<taskname>ship fix</taskname>');
 
-        GoalController.create(task, { objective: 'ship the goal sidebar timeline fix', source: 'gui' });
+        GoalController.create(task, { objective: 'ship the goal sidebar fix', source: 'gui' });
 
         // objective 派生名先作为同步占位，保证任务列表立即可见
-        expect(task.task_name).toBe('ship the goal sidebar timeline fix');
+        expect(task.task_name).toBe('ship the goal sidebar fix');
 
         await new Promise<void>((resolve) => setImmediate(resolve));
 
@@ -2318,16 +2321,30 @@ describe('goal controller and scheduler', () => {
         task.name_pending = true;
         const ask = jest.spyOn(LLM, 'ask').mockResolvedValue('<taskname>修复导出</taskname>');
 
-        GoalController.create(task, { objective: '修复导出 PDF 的乱码问题', source: 'gui' });
+        const objective = '修复导出 PDF 的乱码问题并核对字体回退逻辑与临时文件清理路径';
+        GoalController.create(task, { objective, source: 'gui' });
 
         expect(task.name_pending).toBe(false);
-        expect(task.task_name).toBe('修复导出 PDF 的乱码问题');
+        expect(task.task_name).toBe(Array.from(objective).slice(0, 30).join('') + '...');
         // 自动命名以 goal objective 作为输入
-        expect(ask.mock.calls[0]?.[0]).toContain('修复导出 PDF 的乱码问题');
+        expect(ask.mock.calls[0]?.[0]).toContain(objective);
 
         await new Promise<void>((resolve) => setImmediate(resolve));
 
         expect(task.task_name).toBe('修复导出');
+    });
+
+    test('goal 派生占位名按码点截断，emoji 不被截半', async () => {
+        const task = createTask();
+        jest.spyOn(LLM, 'ask').mockResolvedValue('<taskname>ship fix</taskname>');
+
+        // 第 30 个 UTF-16 code unit 恰好落在 emoji 代理对的高位上，
+        // 若按 code unit 截断会产生孤立高代理（乱码）
+        const objective = 'A'.repeat(29) + '🌏分析导出 PDF 乱码';
+        GoalController.create(task, { objective, source: 'gui' });
+
+        expect(task.task_name).toBe('A'.repeat(29) + '🌏...');
+        expect(task.task_name!.match(LONE_SURROGATE)).toBeNull();
     });
 
     test('goal creation keeps the derived name when auto task naming is disabled', async () => {
