@@ -90,6 +90,13 @@ export const zhCn: Record<string, string> = {
     'renderer.note.link': '链接',
     'renderer.note.image': '图片',
     'renderer.note.code': '源代码',
+    'renderer.note.codeblock': '代码块',
+    'renderer.note.codeblock.langHint': '语言（如 python）',
+    'renderer.note.menu.cut': '剪切',
+    'renderer.note.menu.copy': '复制',
+    'renderer.note.menu.paste': '粘贴',
+    'renderer.note.menu.pastePlain': '粘贴为纯文本',
+    'renderer.note.menu.selectAll': '全选',
     'renderer.note.style.menu': '样式',
 
     // ========== Renderer：AI 润色 ==========

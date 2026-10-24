@@ -340,7 +340,7 @@ describe('笔记代码块快捷转换（``` + 回车）', () => {
         expect(cursorOffset).toBe(0);
     });
 
-    test('代码块内最后一行为空时回车退出代码块', () => {
+    test('末行空行回车：继续拆行（连续空行），不再触发退出', () => {
         const { editor, body } = env;
         body.innerHTML =
             '<div class="code-block-wrapper"><div class="code-block-body hljs">' +
@@ -359,9 +359,111 @@ describe('笔记代码块快捷转换（``` + 回车）', () => {
         const handled = widget._handleCodeBlockEnter(editor, e);
 
         expect(handled).toBe(true);
-        // 代码块后新增空段落
-        const after = block.nextElementSibling;
-        expect(after?.tagName).toBe('P');
+        // 拆行语义：行数 +1（3 行），块后没有插入退出段落
+        expect(block.querySelectorAll('.code-line').length).toBe(3);
+        expect(block.nextElementSibling?.tagName).not.toBe('P');
+        // 光标在新行（第 3 行）的文本节点内
+        const [node] = editor.selection.setCursorLocation.mock.calls.at(-1);
+        expect(node.nodeType).toBe(3);
+    });
+
+    test('空行按 Delete：删除本行，光标到上一行行尾', () => {
+        const { editor, body } = env;
+        body.innerHTML =
+            '<div class="code-block-wrapper"><div class="code-block-body hljs">' +
+            '<pre class="code-block-pre font-mono"><code class="code-lines">' +
+            '<span class="code-line font-mono">code</span>' +
+            '<span class="code-line font-mono"> </span>' +
+            '<span class="code-line font-mono">next</span>' +
+            '</code></pre></div></div>';
+        const block = body.querySelector('.code-block-wrapper');
+        const emptyLine = block.querySelectorAll('.code-line')[1];
+
+        const rng = caretRange(emptyLine.firstChild, 0);
+        editor.selection.getRng = () => rng;
+        editor.selection.getNode = () => emptyLine;
+
+        const e = arrowEvent('Delete');
+        const handled = widget._handleCodeBlockDelete(editor, e);
+
+        expect(handled).toBe(true);
+        expect(e.preventDefault).toHaveBeenCalled();
+        const lines = block.querySelectorAll('.code-line');
+        expect(lines.length).toBe(2);
+        expect(lines[0].textContent).toBe('code');
+        expect(lines[1].textContent).toBe('next');
+        // 光标在上一行行尾（文本节点内）
+        const [node, offset] = editor.selection.setCursorLocation.mock.calls.at(-1);
+        expect(node.nodeType).toBe(3);
+        expect(lines[0].contains(node)).toBe(true);
+        expect(offset).toBe(4);
+    });
+
+    test('行尾按 Delete：下一行内容并入当前行，光标停在合并点', () => {
+        const { editor, body } = env;
+        body.innerHTML =
+            '<div class="code-block-wrapper"><div class="code-block-body hljs">' +
+            '<pre class="code-block-pre font-mono"><code class="code-lines">' +
+            '<span class="code-line font-mono">first</span>' +
+            '<span class="code-line font-mono">second</span>' +
+            '</code></pre></div></div>';
+        const block = body.querySelector('.code-block-wrapper');
+        const firstLine = block.querySelectorAll('.code-line')[0];
+
+        const rng = caretRange(firstLine.firstChild, 5);
+        editor.selection.getRng = () => rng;
+        editor.selection.getNode = () => firstLine;
+
+        const e = arrowEvent('Delete');
+        const handled = widget._handleCodeBlockDelete(editor, e);
+
+        expect(handled).toBe(true);
+        const lines = block.querySelectorAll('.code-line');
+        expect(lines.length).toBe(1);
+        expect(lines[0].textContent).toBe('firstsecond');
+        // 光标在合并点（原 first 行尾 offset 5）
+        const [node, offset] = editor.selection.setCursorLocation.mock.calls.at(-1);
+        expect(lines[0].contains(node)).toBe(true);
+        expect(offset).toBe(5);
+    });
+
+    test('末行行尾 Delete：不拦截（无下一行可吞）', () => {
+        const { editor, body } = env;
+        body.innerHTML =
+            '<div class="code-block-wrapper"><div class="code-block-body hljs">' +
+            '<pre class="code-block-pre font-mono"><code class="code-lines">' +
+            '<span class="code-line font-mono">only</span>' +
+            '</code></pre></div></div>';
+        const block = body.querySelector('.code-block-wrapper');
+        const line = block.querySelector('.code-line');
+
+        const rng = caretRange(line.firstChild, 4);
+        editor.selection.getRng = () => rng;
+        editor.selection.getNode = () => line;
+
+        const e = arrowEvent('Delete');
+        expect(widget._handleCodeBlockDelete(editor, e)).toBe(false);
+        expect(e.preventDefault).not.toHaveBeenCalled();
+    });
+
+    test('行中 Delete：不拦截（浏览器默认删字符）', () => {
+        const { editor, body } = env;
+        body.innerHTML =
+            '<div class="code-block-wrapper"><div class="code-block-body hljs">' +
+            '<pre class="code-block-pre font-mono"><code class="code-lines">' +
+            '<span class="code-line font-mono">abcd</span>' +
+            '<span class="code-line font-mono">efgh</span>' +
+            '</code></pre></div></div>';
+        const block = body.querySelector('.code-block-wrapper');
+        const firstLine = block.querySelector('.code-line');
+
+        const rng = caretRange(firstLine.firstChild, 2);
+        editor.selection.getRng = () => rng;
+        editor.selection.getNode = () => firstLine;
+
+        const e = arrowEvent('Delete');
+        expect(widget._handleCodeBlockDelete(editor, e)).toBe(false);
+        expect(e.preventDefault).not.toHaveBeenCalled();
     });
 
     test('代码块外回车不走 _handleCodeBlockEnter（返回 false，交给其他快捷逻辑）', () => {
@@ -506,8 +608,11 @@ describe('笔记代码块快捷转换（``` + 回车）', () => {
 
         expect(handled).toBe(true);
         expect(e.preventDefault).toHaveBeenCalled();
-        const [node] = editor.selection.setCursorLocation.mock.calls.at(-1);
-        expect(node.id).toBe('after');
+        // 落点为后一元素的文本节点开头（元素边界点会被归一化挪走）
+        const [node, offset] = editor.selection.setCursorLocation.mock.calls.at(-1);
+        expect(node.nodeType).toBe(3);
+        expect(node.textContent).toBe('next');
+        expect(offset).toBe(0);
     });
 
     test('末行行尾按 ↓ 且块后无段落时自动补空段落', () => {
@@ -532,7 +637,55 @@ describe('笔记代码块快捷转换（``` + 回车）', () => {
         expect(node).toBe(after);
     });
 
-    test('非首末行或非边界位置不拦截方向键', () => {
+    test('块内跨行移动：第 1 行行尾按 ↓ 光标到第 2 行（相同偏移 clamp 到行尾）', () => {
+        const { editor, body } = env;
+        body.innerHTML =
+            '<div class="code-block-wrapper" data-lang="c"><div class="code-block-body hljs language-c">' +
+            '<pre class="code-block-pre font-mono"><code class="code-lines">' +
+            '<span class="code-line font-mono">int main() {</span>' +
+            '<span class="code-line font-mono"> }</span>' +
+            '</code></pre></div></div>';
+        const block = body.querySelector('.code-block-wrapper');
+        const firstLine = block.querySelectorAll('.code-line')[0];
+        editor.selection.getNode = () => firstLine;
+        editor.selection.getRng = () => caretRange(firstLine.firstChild, 12); // 行尾
+
+        const e = arrowEvent('ArrowDown');
+        const handled = widget._handleCodeBlockArrowKeys(editor, e);
+
+        expect(handled).toBe(true);
+        expect(e.preventDefault).toHaveBeenCalled();
+        const [node, offset] = editor.selection.setCursorLocation.mock.calls.at(-1);
+        const secondLine = block.querySelectorAll('.code-line')[1];
+        expect(secondLine.contains(node.nodeType === 3 ? node : node)).toBe(true);
+        // 偏移 clamp：原偏移 12 > 第 2 行长度 2 → 落在第 2 行行尾
+        expect(offset).toBe(2);
+    });
+
+    test('块内跨行移动：第 2 行行首按 ↑ 光标到第 1 行同偏移', () => {
+        const { editor, body } = env;
+        body.innerHTML =
+            '<div class="code-block-wrapper" data-lang="c"><div class="code-block-body hljs language-c">' +
+            '<pre class="code-block-pre font-mono"><code class="code-lines">' +
+            '<span class="code-line font-mono">int main() {</span>' +
+            '<span class="code-line font-mono">return 0;</span>' +
+            '</code></pre></div></div>';
+        const block = body.querySelector('.code-block-wrapper');
+        const secondLine = block.querySelectorAll('.code-line')[1];
+        editor.selection.getNode = () => secondLine;
+        editor.selection.getRng = () => caretRange(secondLine.firstChild, 2);
+
+        const e = arrowEvent('ArrowUp');
+        const handled = widget._handleCodeBlockArrowKeys(editor, e);
+
+        expect(handled).toBe(true);
+        const [node, offset] = editor.selection.setCursorLocation.mock.calls.at(-1);
+        const firstLine = block.querySelectorAll('.code-line')[0];
+        expect(firstLine.contains(node.nodeType === 3 ? node : node)).toBe(true);
+        expect(offset).toBe(2);
+    });
+
+    test('末行（非行尾）按 ↓ 不拦截（浏览器默认行为在行内移动）', () => {
         const { editor, body } = env;
         body.innerHTML =
             '<div class="code-block-wrapper" data-lang="c"><div class="code-block-body hljs language-c">' +
@@ -541,9 +694,9 @@ describe('笔记代码块快捷转换（``` + 回车）', () => {
             '<span class="code-line font-mono">l2</span>' +
             '</code></pre></div></div>';
         const block = body.querySelector('.code-block-wrapper');
-        const firstLine = block.querySelectorAll('.code-line')[0];
-        editor.selection.getNode = () => firstLine;
-        editor.selection.getRng = () => caretRange(firstLine.firstChild, 0);
+        const secondLine = block.querySelectorAll('.code-line')[1];
+        editor.selection.getNode = () => secondLine;
+        editor.selection.getRng = () => caretRange(secondLine.firstChild, 1);
 
         const e = arrowEvent('ArrowDown');
         expect(widget._handleCodeBlockArrowKeys(editor, e)).toBe(false);
@@ -579,5 +732,280 @@ describe('笔记代码块快捷转换（``` + 回车）', () => {
             '</code></pre></div></div>';
         const block = body.querySelector('.code-block-wrapper');
         expect(widget._getCodeBlockPlainText(block)).toBe('int a;\n ');
+    });
+
+    // ─── 工具栏插入代码块 ───
+
+    test('工具栏插入：非空段落保留，代码块插在其后，光标落块内', () => {
+        const { editor, body, sourceNode } = env;
+        sourceNode.textContent = '这是一段文字';
+
+        widget._insertCodeBlockAfterCaret(editor, 'python');
+
+        const children = [...body.children].filter((el) => (el.id !== 'src' ? true : true));
+        const wrapper = body.querySelector('.code-block-wrapper');
+        expect(wrapper).toBeTruthy();
+        expect(wrapper.dataset.lang).toBe('python');
+        // 原段落保留
+        expect(sourceNode.textContent).toBe('这是一段文字');
+        expect(sourceNode.isConnected).toBe(true);
+        // 块后有新空段落
+        expect(wrapper.nextElementSibling?.tagName).toBe('P');
+        // 光标落块内首行文本节点
+        const [node] = editor.selection.setCursorLocation.mock.calls.at(-1);
+        expect(node.nodeType).toBe(3);
+        expect(wrapper.contains(node)).toBe(true);
+    });
+
+    test('工具栏插入：空段落就地转换（替换语义）', () => {
+        const { editor, body, sourceNode } = env;
+        sourceNode.textContent = '   ';
+
+        widget._insertCodeBlockAfterCaret(editor, 'python');
+
+        const wrapper = body.querySelector('.code-block-wrapper');
+        expect(wrapper).toBeTruthy();
+        expect(wrapper.dataset.lang).toBe('python');
+        // 空段落被替换
+        expect(sourceNode.isConnected).toBe(false);
+    });
+
+    test('工具栏插入默认 python：header 显示 Python，body 带 language-python', () => {
+        const { editor, body } = env;
+        widget._insertCodeBlockAfterCaret(editor, 'python');
+
+        const wrapper = body.querySelector('.code-block-wrapper');
+        expect(wrapper.querySelector('.code-block-lang')?.textContent).toBe('Python');
+        expect(wrapper.querySelector('.code-block-body')?.className).toContain('language-python');
+    });
+
+    // ─── 语言标签编辑 ───
+
+    function makeEditableBlock(lang) {
+        const { editor, body } = env;
+        body.innerHTML =
+            `<div class="code-block-wrapper" data-lang="${lang}">` +
+            `<div class="code-block-header"><span class="code-block-lang">${lang}</span></div>` +
+            `<div class="code-block-body hljs language-${lang}">` +
+            '<pre class="code-block-pre font-mono"><code class="code-lines">' +
+            '<span class="code-line font-mono">x = 1</span>' +
+            '</code></pre></div></div>';
+        const block = body.querySelector('.code-block-wrapper');
+        widget._makeCodeLangEditable(block, editor);
+        return { block, editor, body };
+    }
+
+    test('语言标签可编辑：点击出现 input，提交合法语言后 data-lang/类名/显示名全更新', () => {
+        const { block, editor, body } = makeEditableBlock('python');
+        const langEl = block.querySelector('.code-block-lang');
+
+        // 模拟点击进入编辑态
+        langEl.dispatchEvent(new (langEl.ownerDocument.defaultView.Event || Event)('click', { bubbles: true }));
+        const input = langEl.querySelector('input');
+        expect(input).toBeTruthy();
+        expect(input.value).toBe('python');
+
+        // 输入新语言并回车提交
+        input.value = 'javascript';
+        const keyEv = new (langEl.ownerDocument.defaultView.Event || Event)('keydown', {
+            bubbles: true,
+            cancelable: true
+        });
+        Object.defineProperty(keyEv, 'key', { value: 'Enter' });
+        input.dispatchEvent(keyEv);
+
+        expect(langEl.querySelector('input')).toBeNull();
+        expect(block.dataset.lang).toBe('javascript');
+        expect(block.querySelector('.code-block-body').className).toContain('language-javascript');
+        expect(langEl.textContent).toBe('JavaScript');
+        // 整块已按新语言重高亮（x = 1 在 js 里 x 无 keyword，但 1 是 number）
+        expect(block.querySelectorAll('[class*="hljs-"]').length).toBeGreaterThan(0);
+    });
+
+    test('语言标签提交非法语言：保持原语言不变', () => {
+        const { block } = makeEditableBlock('python');
+        const langEl = block.querySelector('.code-block-lang');
+
+        langEl.dispatchEvent(new (langEl.ownerDocument.defaultView.Event || Event)('click', { bubbles: true }));
+        const input = langEl.querySelector('input');
+        input.value = 'notalanguage';
+        const keyEv = new (langEl.ownerDocument.defaultView.Event || Event)('keydown', {
+            bubbles: true,
+            cancelable: true
+        });
+        Object.defineProperty(keyEv, 'key', { value: 'Enter' });
+        input.dispatchEvent(keyEv);
+
+        expect(block.dataset.lang).toBe('python');
+        expect(block.querySelector('.code-block-body').className).toContain('language-python');
+        expect(langEl.textContent).toBe('Python');
+    });
+
+    test('语言标签 Esc 取消：恢复旧显示名不改语言', () => {
+        const { block } = makeEditableBlock('python');
+        const langEl = block.querySelector('.code-block-lang');
+
+        langEl.dispatchEvent(new (langEl.ownerDocument.defaultView.Event || Event)('click', { bubbles: true }));
+        const input = langEl.querySelector('input');
+        input.value = 'javascript';
+        const keyEv = new (langEl.ownerDocument.defaultView.Event || Event)('keydown', {
+            bubbles: true,
+            cancelable: true
+        });
+        Object.defineProperty(keyEv, 'key', { value: 'Escape' });
+        input.dispatchEvent(keyEv);
+
+        expect(block.dataset.lang).toBe('python');
+        expect(langEl.textContent).toBe('Python'); // 取消后显示名按 LANG_DISPLAY_NAMES 规整
+        expect(langEl.querySelector('input')).toBeNull();
+    });
+
+    test('重开笔记场景：_makeCodeLangEditable 幂等（重复调用不重复绑定）', () => {
+        const { block } = makeEditableBlock('python');
+        const langEl = block.querySelector('.code-block-lang');
+        expect(langEl.dataset.langEditable).toBe('1');
+
+        // 再次调用（如编辑器重初始化遍历）
+        widget._makeCodeLangEditable(block, env.editor);
+        // 进入编辑态
+        langEl.dispatchEvent(new (langEl.ownerDocument.defaultView.Event || Event)('click', { bubbles: true }));
+        // 只有一个 input（没有重复绑定导致的双 input）
+        expect(langEl.querySelectorAll('input').length).toBe(1);
+    });
+
+    // ─── 未闭合围栏闭环 ───
+
+    test('粘贴未闭合围栏（单 p 内 br 结构）后敲 ``` 回车：闭环为代码块', () => {
+        const { editor, body } = env;
+        // 模拟 insertContent 粘贴产物：单个 p 内 <br> 分隔
+        body.innerHTML = '<p>```c<br>int main() {<br>}</p><p>```</p>';
+        const fenceLine = [...body.querySelectorAll('p')].at(-1);
+        editor.selection.getNode = () => fenceLine;
+
+        const e = enterEvent();
+        widget._handleCodeBlockShortcut(editor, e);
+
+        expect(e.preventDefault).toHaveBeenCalled();
+        const wrappers = body.querySelectorAll('.code-block-wrapper');
+        expect(wrappers.length).toBe(1);
+        const wrapper = wrappers[0];
+        expect(wrapper.dataset.lang).toBe('c');
+        expect(wrapper.querySelector('.code-block-lang')?.textContent).toBe('C');
+        const lines = wrapper.querySelectorAll('.code-line');
+        expect(lines.length).toBe(2);
+        expect(lines[0].textContent).toBe('int main() {');
+        expect(lines[1].textContent).toBe('}');
+        // 原两段文本都被替换，只剩块后空段落
+        expect(body.querySelectorAll('p').length).toBe(1);
+        const [node] = editor.selection.setCursorLocation.mock.calls.at(-1);
+        expect(wrapper.contains(node)).toBe(true);
+    });
+
+    test('扁平段落结构的未闭合围栏同样闭环', () => {
+        const { editor, body } = env;
+        body.innerHTML = '<p>```c</p><p>int main() {</p><p>}</p><p>```</p>';
+        const fenceLine = [...body.querySelectorAll('p')].at(-1);
+        editor.selection.getNode = () => fenceLine;
+
+        const e = enterEvent();
+        widget._handleCodeBlockShortcut(editor, e);
+
+        const wrapper = body.querySelector('.code-block-wrapper');
+        expect(wrapper).toBeTruthy();
+        expect(wrapper.dataset.lang).toBe('c');
+        const lines = wrapper.querySelectorAll('.code-line');
+        expect(lines.length).toBe(2);
+        expect(lines[0].textContent).toBe('int main() {');
+    });
+
+    test('围栏前有其他段落时：闭环块插在原围栏位置（不跳到笔记顶部）', () => {
+        const { editor, body } = env;
+        // anchor 取自 remove 之前的兄弟——围栏前有一段正文
+        body.innerHTML = '<p>前置说明文字</p><p>```c</p><p>int a;</p><p>```</p>';
+        const fenceLine = [...body.querySelectorAll('p')].at(-1);
+        editor.selection.getNode = () => fenceLine;
+
+        const e = enterEvent();
+        widget._handleCodeBlockShortcut(editor, e);
+
+        const wrapper = body.querySelector('.code-block-wrapper');
+        expect(wrapper).toBeTruthy();
+        // 代码块紧跟在"前置说明文字"之后，而不是 body 首位
+        expect(wrapper.previousSibling?.textContent).toBe('前置说明文字');
+        expect(body.firstElementChild?.textContent).toBe('前置说明文字');
+    });
+
+    test('粘贴产物首行的 TinyMCE BOM 标记被剥除（闭环块内无 BOM 残留）', () => {
+        const { editor, body } = env;
+        // TinyMCE insertContent 会在内容首部插 \uFEFF caret 标记
+        body.innerHTML = '<p>\uFEFF```c<br>int main() {<br>}</p><p>```</p>';
+        const fenceLine = [...body.querySelectorAll('p')].at(-1);
+        editor.selection.getNode = () => fenceLine;
+
+        const e = enterEvent();
+        widget._handleCodeBlockShortcut(editor, e);
+
+        const wrapper = body.querySelector('.code-block-wrapper');
+        expect(wrapper).toBeTruthy();
+        expect(wrapper.dataset.lang).toBe('c');
+        const lines = wrapper.querySelectorAll('.code-line');
+        // BOM 剥除后 "int main() {" 正常成行且能被 hljs 命中关键字
+        expect(lines[0].textContent).toBe('int main() {');
+        expect(lines[0].textContent.charCodeAt(0)).not.toBe(0xfeff);
+        expect(wrapper.querySelectorAll('[class*="hljs-"]').length).toBeGreaterThan(0);
+    });
+
+    test('中间已有闭合围栏行时不误闭环（正常围栏文本已完整）', () => {
+        const { editor, body } = env;
+        body.innerHTML = '<p>```c</p><p>int a;</p><p>```</p><p>```</p>';
+        const fenceLine = [...body.querySelectorAll('p')].at(-1);
+        editor.selection.getNode = () => fenceLine;
+
+        const e = enterEvent();
+        widget._handleCodeBlockShortcut(editor, e);
+
+        // 前面的围栏已闭合 → 走开新块逻辑
+        expect(e.preventDefault).toHaveBeenCalled();
+        expect(body.querySelectorAll('.code-block-wrapper').length).toBe(1);
+        // 新块内的代码体只有占位（开新块），且原文本段落保留
+        const textPs = [...body.querySelectorAll('p')].filter((p) => p.textContent !== '');
+        expect(textPs.length).toBe(2); // ```c 行与 int a; 行
+    });
+
+    test('前面没有围栏起始行时不开环（正常开新块）', () => {
+        const { editor, body } = env;
+        body.innerHTML = '<p>```</p>';
+        const fenceLine = body.querySelector('p');
+        editor.selection.getNode = () => fenceLine;
+
+        const e = enterEvent();
+        widget._handleCodeBlockShortcut(editor, e);
+
+        expect(e.preventDefault).toHaveBeenCalled();
+        const wrapper = body.querySelector('.code-block-wrapper');
+        expect(wrapper).toBeTruthy();
+        expect(wrapper.dataset.lang).toBeUndefined(); // 裸 ``` 无语言
+        expect(wrapper.querySelectorAll('.code-line').length).toBe(1);
+    });
+
+    test('遇到已有代码块时停止向前扫描（围栏不跨块）', () => {
+        const { editor, body } = env;
+        body.innerHTML =
+            '<p>```c</p>' +
+            '<div class="code-block-wrapper"><div class="code-block-body hljs language-c">' +
+            '<pre class="code-block-pre font-mono"><code class="code-lines">' +
+            '<span class="code-line font-mono">x</span>' +
+            '</code></pre></div></div>' +
+            '<p>int main() {</p><p>}</p><p>```</p>';
+        const ps = [...body.querySelectorAll('p')];
+        const fenceLine = ps.at(-1);
+        editor.selection.getNode = () => fenceLine;
+
+        const e = enterEvent();
+        widget._handleCodeBlockShortcut(editor, e);
+
+        // 扫描遇到已有代码块 break → 无未闭合围栏 → 正常开新块
+        const wrappers = body.querySelectorAll('.code-block-wrapper');
+        expect(wrappers.length).toBe(2);
     });
 });

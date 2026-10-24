@@ -91,6 +91,13 @@ export const enUs: Record<string, string> = {
     'renderer.note.link': 'Link',
     'renderer.note.image': 'Image',
     'renderer.note.code': 'Source code',
+    'renderer.note.codeblock': 'Code block',
+    'renderer.note.codeblock.langHint': 'Language (e.g. python)',
+    'renderer.note.menu.cut': 'Cut',
+    'renderer.note.menu.copy': 'Copy',
+    'renderer.note.menu.paste': 'Paste',
+    'renderer.note.menu.pastePlain': 'Paste as plain text',
+    'renderer.note.menu.selectAll': 'Select all',
     'renderer.note.style.menu': 'Styles',
 
     // ========== Renderer：AI 润色 ==========

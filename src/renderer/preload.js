@@ -33,6 +33,71 @@ function resolveRendererHarmonyRuntime() {
     }
 }
 
+// 剪贴板桥与编辑菜单宿主标记：放在【所有 expose 之前】独立注册。
+// 后续 exposeXXX 任何一处抛异常都会中断 preload 顶层执行，
+// 若剪贴板桥排在它们后面，子 frame（如笔记应用的编辑 iframe）就会
+// 失去剪贴板能力（自绘菜单的粘贴无反应）。提前注册 + 独立 try-catch
+// 保证这两个基础能力不受其他 expose 的影响。
+function setupClipboardBridgeEarly() {
+    try {
+        safeExposeInMainWorld('childFrameClipboard', {
+            readText: () => ipcRenderer.invoke('clipboard:readText'),
+            writeText: (text) => {
+                if (typeof text !== 'string') return Promise.resolve();
+                return ipcRenderer.invoke('clipboard:writeText', text);
+            }
+        });
+    } catch (err) {
+        console.warn('[Preload] childFrameClipboard expose failed:', err);
+    }
+    try {
+        const markEditMenuHost = () => {
+            try {
+                if (document.documentElement) {
+                    document.documentElement.setAttribute('data-od-lp-edit-menu', '1');
+                    return true;
+                }
+            } catch {
+                /* 忽略 */
+            }
+            return false;
+        };
+        if (!markEditMenuHost()) {
+            document.addEventListener('DOMContentLoaded', markEditMenuHost, { once: true });
+            window.addEventListener('load', markEditMenuHost, { once: true });
+        }
+    } catch (err) {
+        console.warn('[Preload] edit menu host mark failed:', err);
+    }
+    try {
+        window.addEventListener('od-clipboard-write', (event) => {
+            const text = event?.detail?.text;
+            if (typeof text !== 'string' || !text) return;
+            ipcRenderer.invoke('clipboard:writeText', text).catch(() => {
+                /* 剪贴板不可用时静默 */
+            });
+        });
+        window.addEventListener('od-clipboard-read', (event) => {
+            const requestId = event?.detail?.requestId;
+            if (typeof requestId !== 'number') return;
+            ipcRenderer
+                .invoke('clipboard:readText')
+                .then((text) => {
+                    window.dispatchEvent(new CustomEvent('od-clipboard-read-result', { detail: { requestId, text } }));
+                })
+                .catch(() => {
+                    // 剪贴板不可用时回填空文本，粘贴流程正常收尾
+                    window.dispatchEvent(
+                        new CustomEvent('od-clipboard-read-result', { detail: { requestId, text: '' } })
+                    );
+                });
+        });
+    } catch (err) {
+        console.warn('[Preload] clipboard event bridge failed:', err);
+    }
+}
+setupClipboardBridgeEarly();
+
 /**
  * 避免主 frame 上 registerPreloadScript + webPreferences.preload 重复 expose 导致整页 API 失效。
  * @returns {boolean} 当前 preload 是否实际完成了暴露。
@@ -1018,46 +1083,8 @@ exposeThemeAPI();
 exposeOpenDeskAppAPI();
 exposeNativeBridgeAPI();
 
-// 触摸长按编辑菜单：标记宿主支持自绘编辑菜单（脚本据此接管编辑区右键），
-// 并提供剪贴板桥。仅 OpenDesk 自家窗口安装；浏览器 webview（webviewPreload）
-// 不带这些能力，网页不得经伪造事件读剪贴板。
-// 剪贴板经主进程执行：渲染器默认沙箱化，preload 的 electron 模块不含 clipboard。
-// preload 在 document-start 运行，documentElement 可能尚未创建，需等文档就绪再标记。
-function markEditMenuHost() {
-    try {
-        if (document.documentElement) {
-            document.documentElement.setAttribute('data-od-lp-edit-menu', '1');
-            return true;
-        }
-    } catch {
-        /* 忽略 */
-    }
-    return false;
-}
-if (!markEditMenuHost()) {
-    document.addEventListener('DOMContentLoaded', markEditMenuHost, { once: true });
-    window.addEventListener('load', markEditMenuHost, { once: true });
-}
-window.addEventListener('od-clipboard-write', (event) => {
-    const text = event?.detail?.text;
-    if (typeof text !== 'string' || !text) return;
-    ipcRenderer.invoke('clipboard:writeText', text).catch(() => {
-        /* 剪贴板不可用时静默 */
-    });
-});
-window.addEventListener('od-clipboard-read', (event) => {
-    const requestId = event?.detail?.requestId;
-    if (typeof requestId !== 'number') return;
-    ipcRenderer
-        .invoke('clipboard:readText')
-        .then((text) => {
-            window.dispatchEvent(new CustomEvent('od-clipboard-read-result', { detail: { requestId, text } }));
-        })
-        .catch(() => {
-            // 剪贴板不可用时回填空文本，粘贴流程正常收尾
-            window.dispatchEvent(new CustomEvent('od-clipboard-read-result', { detail: { requestId, text: '' } }));
-        });
-});
+// 剪贴板桥与编辑菜单宿主标记已提前至 preload 顶部注册（setupClipboardBridgeEarly）：
+// 后续 exposeXXX 抛异常时不再影响这两个基础能力。
 
 // 通用窗口控制 API（主窗口和应用窗口均可使用）
 safeExposeInMainWorld('windowControlAPI', {
