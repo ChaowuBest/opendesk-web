@@ -383,6 +383,47 @@ export function computeWidgetTransitionBounds(params: WidgetTransitionParams): {
     return { x: Math.round(x), y: Math.round(y), width: target.width, height: target.height };
 }
 
+/** 「窗口管理器把窗口复位到程序化移动前位置」的判定输入。 */
+export interface WidgetBoundsRestoredParams {
+    /** 上一次程序化 setBounds 的目标 bounds。 */
+    target: { x: number; y: number; width: number; height: number };
+    /** 上一次程序化 setBounds 之前的窗口左上角（即移动前原点）。 */
+    originBeforeMove: { x: number; y: number };
+    /** 读回的实际 bounds。 */
+    actual: { x: number; y: number; width: number; height: number };
+    /** 位置容差（DIP），用于吸收 DPI 取整偏差。 */
+    tolerance: number;
+    /**
+     * 当前屏幕工作区。窗口管理器落点时会把窗口约束回工作区内，缺省表示不约束。
+     */
+    workArea?: { x: number; y: number; width: number; height: number };
+}
+
+/**
+ * 判断实际 bounds 是否呈现「尺寸已按目标生效、位置却被放回程序化移动前」的特征。
+ *
+ * 这是窗口管理器交互式移动循环收尾时按「按下时的抓取点」重新落点造成的复位：移动循环
+ * 活跃期间程序化 setBounds 的尺寸变更会保留、位置变更被复位。落点可能是程序化移动前的
+ * 原点本身，也可能是「原点 + 新尺寸」被约束回工作区后的位置（实测 Cinnamon 的 Muffin
+ * 会夹到工作区内），两者都算复位；位置仍是目标位置（正常落地）或已被挪到别处（用户主动
+ * 移动窗口）都不算。
+ */
+export function isWidgetBoundsRestoredToOrigin(params: WidgetBoundsRestoredParams): boolean {
+    const { target, originBeforeMove, actual, tolerance, workArea } = params;
+    const near = (a: number, b: number) => Math.abs(a - b) <= tolerance;
+    const sizeKept = actual.width === target.width && actual.height === target.height;
+    const drifted = !near(actual.x, target.x) || !near(actual.y, target.y);
+    const clampedX = workArea
+        ? Math.min(Math.max(originBeforeMove.x, workArea.x), workArea.x + Math.max(0, workArea.width - target.width))
+        : originBeforeMove.x;
+    const clampedY = workArea
+        ? Math.min(Math.max(originBeforeMove.y, workArea.y), workArea.y + Math.max(0, workArea.height - target.height))
+        : originBeforeMove.y;
+    const backToOrigin = near(actual.x, originBeforeMove.x) && near(actual.y, originBeforeMove.y);
+    const backToClampedOrigin = near(actual.x, clampedX) && near(actual.y, clampedY);
+    return sizeKept && drifted && (backToOrigin || backToClampedOrigin);
+}
+
 function readTokenCount(value: unknown): number | undefined {
     return typeof value === 'number' && Number.isFinite(value) && value >= 0 ? Math.floor(value) : undefined;
 }

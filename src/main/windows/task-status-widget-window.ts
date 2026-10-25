@@ -16,9 +16,16 @@ import { BaseTaskUpdateSubscriber } from '../aikernel/states/tasks.js';
 import { logger } from '../utils/logger.js';
 import { safeSendToWebContents } from '../utils/electron-ipc.js';
 import {
+    endWindowDragSession,
+    startWindowDragSession,
+    updateWindowDragSession,
+    type WindowDragDriver
+} from './window-drag.js';
+import {
     buildTaskStatusSummary,
     computeTriggerActive,
     computeWidgetTransitionBounds,
+    isWidgetBoundsRestoredToOrigin,
     isWidgetTriggerEffective,
     mergeTaskLiveUsage,
     pruneStaleWaitingTaskIds,
@@ -60,6 +67,15 @@ const WIDGET_PARTITION = 'task-status-widget';
  */
 const PROGRAMMATIC_MOVE_TOLERANCE = 2;
 
+/**
+ * Linux 上等待窗口管理器移动循环结束的防抖时长（毫秒）：每次落点被复位都会重新计时，
+ * 循环不再产生复位后的该时长内即认为可以安全重设目标位置。
+ */
+const LINUX_BOUNDS_REASSERT_SETTLE_MS = 120;
+
+/** Linux 上等待窗口管理器移动循环结束后重设落点的防抖定时器。 */
+let linuxBoundsReassertTimer: ReturnType<typeof setTimeout> | null = null;
+
 export interface TaskStatusWidgetHost {
     getPreloadPath(): string;
     getMainWindow(): BrowserWindow | null;
@@ -98,8 +114,10 @@ let lastMode: FloatingWindowMode = undefined;
  * null 表示本次会话尚未拖拽过，使用设置中的初始角。
  */
 let sessionPosition: { x: number; y: number } | null = null;
-/** 上次程序化 setBounds 的目标左上角，用于在 moved 事件中区分用户拖拽与程序化移动。 */
-let lastProgrammaticOrigin: { x: number; y: number } | null = null;
+/** 上次程序化 setBounds 的目标 bounds，用于在 moved 事件中区分用户拖拽与程序化移动。 */
+let lastProgrammaticBounds: { x: number; y: number; width: number; height: number } | null = null;
+/** 上次程序化 setBounds 之前的窗口左上角（移动前原点），用于识别窗口管理器的落点复位。 */
+let lastProgrammaticPreOrigin: { x: number; y: number } | null = null;
 /**
  * 用户通过关闭菜单设置的抑制状态：
  * - dismissed：本次触发周期内不再显示（主窗口回到前台后自动恢复）；
@@ -295,20 +313,27 @@ function ensureWidgetWindow(): BrowserWindow | null {
     });
 
     // 记录用户拖拽后的位置（仅本次会话内保持，不落盘）。程序化 setBounds 的目标位置
-    // 会先写入 lastProgrammaticOrigin，moved 事件中通过位置比对区分并跳过。
+    // 会先写入 lastProgrammaticBounds，moved 事件中通过位置比对区分并跳过。
     win.on('moved', () => {
         const bounds = win.getBounds();
         if (
-            lastProgrammaticOrigin &&
-            Math.abs(bounds.x - lastProgrammaticOrigin.x) <= PROGRAMMATIC_MOVE_TOLERANCE &&
-            Math.abs(bounds.y - lastProgrammaticOrigin.y) <= PROGRAMMATIC_MOVE_TOLERANCE
+            lastProgrammaticBounds &&
+            Math.abs(bounds.x - lastProgrammaticBounds.x) <= PROGRAMMATIC_MOVE_TOLERANCE &&
+            Math.abs(bounds.y - lastProgrammaticBounds.y) <= PROGRAMMATIC_MOVE_TOLERANCE
         ) {
-            lastProgrammaticOrigin = null;
+            lastProgrammaticBounds = null;
+            lastProgrammaticPreOrigin = null;
             return;
         }
-        lastProgrammaticOrigin = null;
+        lastProgrammaticBounds = null;
+        lastProgrammaticPreOrigin = null;
         sessionPosition = { x: bounds.x, y: bounds.y };
     });
+
+    // Linux（X11）上 moved 事件不会触发，程序化落点被窗口管理器复位只能靠 move 事件发现。
+    if (process.platform === 'linux') {
+        win.on('move', () => handleLinuxBoundsRestore(win));
+    }
 
     host.loadWidgetPage(win);
     widgetWindow = win;
@@ -438,7 +463,9 @@ export function installTransparentBackgroundReassert(win: BrowserWindow, isTrans
 
 /** 设置窗口 bounds，并把目标位置记为程序化移动（供 moved 事件区分用户拖拽）。 */
 function applyWidgetBounds(win: BrowserWindow, bounds: { x: number; y: number; width: number; height: number }): void {
-    lastProgrammaticOrigin = { x: bounds.x, y: bounds.y };
+    const previous = win.getBounds();
+    lastProgrammaticBounds = bounds;
+    lastProgrammaticPreOrigin = { x: previous.x, y: previous.y };
     win.setBounds(bounds);
     // 尺寸变化是透明背景丢失的触发点之一，变完立即修复。
     reassertTransparentBackground(win);
@@ -483,13 +510,110 @@ function scheduleBoundsReassert(
             `task status widget bounds drifted after setBounds (actual ${actual.x},${actual.y} ${actual.width}x${actual.height}, ` +
                 `target ${target.x},${target.y} ${target.width}x${target.height}), reapplying`
         );
-        lastProgrammaticOrigin = { x: target.x, y: target.y };
+        lastProgrammaticBounds = target;
         try {
             win.setBounds(target);
         } catch (err) {
             logger.warn(`failed to reassert widget bounds: ${errorToMessage(err)}`);
         }
     }, 120);
+}
+
+/**
+ * Linux（X11）上程序化落点被窗口管理器复位的兜底修复。
+ *
+ * Linux 上浮窗已不使用 `-webkit-app-region: drag`（改由渲染层手动拖拽），正常展开/收起不再
+ * 触发窗口管理器的交互式移动循环。这里兜的是残余路径：用户用 WM 快捷键（Super/Alt+拖窗口）
+ * 移动浮窗的同时浮窗发生形态变化——移动循环活跃期间任何位置变更都会被「按按下时的抓取点
+ * 落点」的逻辑覆盖（尺寸变更保留），卡片因此停在错误位置。与 issue #335 在 Windows 上
+ * 「尺寸已生效、位置未生效」同源，但这里无法靠一次延迟重设解决：循环没结束时重设同样会被
+ * 覆盖。改为每次检测到复位都重新武装定时器（复位本身会再发一次 move，据此自收敛），循环结束
+ * 后不再出现复位的，那一次定时器才把目标位置真正落地。
+ */
+function linuxBoundsRestored(win: BrowserWindow): boolean {
+    const target = lastProgrammaticBounds;
+    const originBeforeMove = lastProgrammaticPreOrigin;
+    if (!target || !originBeforeMove) {
+        return false;
+    }
+    const actual = win.getBounds();
+    return isWidgetBoundsRestoredToOrigin({
+        target,
+        originBeforeMove,
+        actual,
+        tolerance: PROGRAMMATIC_MOVE_TOLERANCE,
+        workArea: screen.getDisplayMatching(actual).workArea
+    });
+}
+
+function handleLinuxBoundsRestore(win: BrowserWindow): void {
+    if (!linuxBoundsRestored(win)) {
+        return;
+    }
+    if (linuxBoundsReassertTimer) {
+        clearTimeout(linuxBoundsReassertTimer);
+    }
+    linuxBoundsReassertTimer = setTimeout(() => {
+        linuxBoundsReassertTimer = null;
+        const target = lastProgrammaticBounds;
+        // 期间用户已把窗口挪到别处（不再回到移动前原点）时不再抢位置。
+        if (!target || win.isDestroyed() || !linuxBoundsRestored(win)) {
+            return;
+        }
+        const actual = win.getBounds();
+        logger.warn(
+            `task status widget bounds restored by window manager after setBounds (actual ${actual.x},${actual.y} ` +
+                `${actual.width}x${actual.height}, target ${target.x},${target.y} ` +
+                `${target.width}x${target.height}), reapplying`
+        );
+        try {
+            win.setBounds(target);
+        } catch (err) {
+            logger.warn(`failed to reassert widget bounds after window manager restore: ${errorToMessage(err)}`);
+        }
+    }, LINUX_BOUNDS_REASSERT_SETTLE_MS);
+}
+
+/**
+ * 渲染层手动拖拽（Linux）：与主窗口顶部拖拽层共用 window-drag 会话。鼠标由主进程轮询
+ * 系统光标驱动（指针拖出浮窗也能跟随），触摸屏/手写笔由渲染层上报窗口内坐标驱动。
+ */
+function beginManualDrag(grab: unknown, driver: unknown): void {
+    if (!widgetWindow || widgetWindow.isDestroyed()) {
+        return;
+    }
+    // 用户主动移动窗口：此前的程序化落点判定作废，否则兜底重设会和拖拽抢位置。
+    lastProgrammaticBounds = null;
+    lastProgrammaticPreOrigin = null;
+    const point = grab as { x?: unknown; y?: unknown } | null | undefined;
+    const grabPoint =
+        typeof point?.x === 'number' &&
+        Number.isFinite(point.x) &&
+        typeof point?.y === 'number' &&
+        Number.isFinite(point.y)
+            ? { x: point.x, y: point.y }
+            : undefined;
+    const dragDriver: WindowDragDriver = driver === 'pointer' ? 'pointer' : 'cursor';
+    startWindowDragSession(widgetWindow, grabPoint, dragDriver);
+}
+
+function moveManualDrag(point: unknown): void {
+    const p = point as { x?: unknown; y?: unknown } | null | undefined;
+    if (typeof p?.x !== 'number' || !Number.isFinite(p.x) || typeof p?.y !== 'number' || !Number.isFinite(p.y)) {
+        return;
+    }
+    updateWindowDragSession({ x: p.x, y: p.y });
+}
+
+function endManualDrag(): void {
+    endWindowDragSession();
+    if (!widgetWindow || widgetWindow.isDestroyed()) {
+        return;
+    }
+    // Linux 上 moved 事件不会触发，拖拽后的位置只能在这里记入会话位置，
+    // 否则浮窗下次显示时会回到设置里的角位。
+    const bounds = widgetWindow.getBounds();
+    sessionPosition = { x: bounds.x, y: bounds.y };
 }
 
 function positionWidget(win: BrowserWindow): void {
@@ -747,6 +871,22 @@ export function initTaskStatusWidget(nextHost: TaskStatusWidgetHost): void {
     ipcMain.on('taskStatusWidget:notifyWaiting', (_event, taskId: unknown, waiting: unknown) => {
         notifyTaskWaitingForInput(typeof taskId === 'string' ? taskId : '', waiting === true);
     });
+
+    // 渲染层手动拖拽（Linux）：Linux 上浮窗不用 -webkit-app-region: drag，避免窗口管理器
+    // 的交互式移动循环复位程序化落点，改由渲染层把位移换算成窗口位移。
+    // 与主窗口 registerWindowDragHandlers 一致，非 Linux 直接不注册：渲染层本就不会发，
+    // 注册着只是给将来的误调用留一条真的去轮询光标移窗的路径。
+    if (process.platform === 'linux') {
+        ipcMain.on('taskStatusWidget:dragStart', (_event, grab: unknown, driver: unknown) => {
+            beginManualDrag(grab, driver);
+        });
+        ipcMain.on('taskStatusWidget:dragMove', (_event, point: unknown) => {
+            moveManualDrag(point);
+        });
+        ipcMain.on('taskStatusWidget:dragEnd', () => {
+            endManualDrag();
+        });
+    }
 
     // 用当前任务列表初始化状态（避免依赖首次 publish 时机）。
     handleTaskListChanged(host.getTaskList());

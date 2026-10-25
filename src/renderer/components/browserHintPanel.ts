@@ -180,6 +180,9 @@ export function createBrowserHintPanel(options: {
                 border-bottom: 1px solid var(--bhp-header-border);
                 position: sticky;
                 top: 0;
+                /* 列表项是 position: relative 且 DOM 顺序在 header 之后，
+                   缺省 z-index 会让滚动上来的条目绘制在 header 之上、文字互相叠印 */
+                z-index: 1;
                 background: var(--bhp-card-bg);
             }
             .bhp-section {

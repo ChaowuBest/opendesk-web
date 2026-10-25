@@ -1804,6 +1804,7 @@ if (shouldExposeMainWindowAPIs()) {
 
     // 任务状态浮窗 API：主窗口不在前台时右上角常驻小窗（胶囊/卡片）使用。
     safeExposeInMainWorld('taskStatusWidgetAPI', {
+        platform: process.platform,
         getSummary: () => ipcRenderer.invoke('taskStatusWidget:getSummary'),
         restoreMainWindow: () => ipcRenderer.invoke('taskStatusWidget:restoreMainWindow'),
         setCollapsed: (collapsed) => ipcRenderer.invoke('taskStatusWidget:setCollapsed', collapsed),
@@ -1815,6 +1816,15 @@ if (shouldExposeMainWindowAPIs()) {
         // 关闭菜单 · 永久：renderer 确认后保存关闭设置。
         closePermanently: () => ipcRenderer.invoke('taskStatusWidget:closePermanently'),
         notifyWaitingForInput: (taskId, waiting) => ipcRenderer.send('taskStatusWidget:notifyWaiting', taskId, waiting),
+        // Linux 手动拖拽：与主窗口 windowDragAPI 同一套驱动约定——鼠标由主进程轮询光标，
+        // 触摸屏/手写笔上报窗口内坐标（见 main 进程 windows/window-drag.ts）。
+        dragStart: (grabX, grabY, driver) => {
+            ipcRenderer.send('taskStatusWidget:dragStart', { x: grabX, y: grabY }, driver);
+        },
+        dragMove: (x, y) => {
+            ipcRenderer.send('taskStatusWidget:dragMove', { x, y });
+        },
+        dragEnd: () => ipcRenderer.send('taskStatusWidget:dragEnd'),
         onSummaryUpdate: (callback) => {
             const listener = (_event, summary) => callback(summary);
             ipcRenderer.on('taskStatusWidget:summaryUpdate', listener);
