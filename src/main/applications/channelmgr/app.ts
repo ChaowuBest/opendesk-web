@@ -1510,20 +1510,55 @@ export class ChannelMgrApplication extends BaseApplication {
 
     private reloadPromise?: Promise<void>;
 
+    /** 重载进行中又有调用到达时置位：本轮结束后补跑一轮（并发调用合并到同一轮补跑） */
+    private reloadFollowUpQueued = false;
+
     /**
      * 热重载所有消息渠道插件：停止旧插件 → 清除模块缓存 → 重新加载 → 启动新插件。
      * 安装、卸载、启停、修改配置后自动调用，无需重启 OpenDesk。
-     * 内部有互斥保护，并发调用会等待前一次完成后再执行。
+     * 并发语义：doReloadChannels 任意时刻至多执行一轮；重载进行中到达的调用
+     * 合并为紧随其后的一轮补跑（而非各自再跑一轮），且每个调用方返回前都有一轮
+     * 在其调用发起之后开始并完成，保证其先落盘的变更已被应用。
      */
     async reloadChannels(): Promise<void> {
-        if (this.reloadPromise) {
+        if (!this.reloadPromise) {
+            // 空闲：本轮在本次调用之后开始，必然能看到调用方刚做的变更
+            await this.startReloadRound();
+            return;
+        }
+        // 进行中的一轮可能在本调用之前就已开始、读不到调用方的变更，
+        // 排队一轮补跑；并发到达的多个等待者共享同一轮补跑
+        this.reloadFollowUpQueued = true;
+        await this.reloadPromise;
+        // 当前轮结束时若已排队补跑，会先于等待者恢复在其 finally 中同步开启
+        // 下一轮并写回 reloadPromise，因此循环等待直至本次调用之后的轮次完成
+        while (this.reloadPromise) {
             await this.reloadPromise;
         }
-        this.reloadPromise = this.doReloadChannels();
+    }
+
+    private startReloadRound(): Promise<void> {
+        const round = this.runReloadRound();
+        // 补跑轮可能已无等待者（例如前一轮失败导致调用方提前退出），
+        // 预挂一个 catch 防止其失败演变为 unhandled rejection
+        round.catch(() => {});
+        this.reloadPromise = round;
+        return round;
+    }
+
+    private async runReloadRound(): Promise<void> {
+        // 先让出一个微任务再开始本轮工作：保证 startReloadRound 已把本轮写入
+        // reloadPromise。否则 doReloadChannels 同步前缀里若（被插件回调等）同步
+        // 重入 reloadChannels，会看到空字段而并发开启第二轮
+        await Promise.resolve();
         try {
-            await this.reloadPromise;
+            await this.doReloadChannels();
         } finally {
             this.reloadPromise = undefined;
+            if (this.reloadFollowUpQueued) {
+                this.reloadFollowUpQueued = false;
+                this.startReloadRound();
+            }
         }
     }
 
