@@ -462,6 +462,17 @@ const WIDGET_CSS = `
     -webkit-app-region: drag;
 }
 
+/* Linux：浮窗整体不作为窗口拖拽区，改由渲染层手动移动窗口。原生 drag 会让窗口管理器
+   进入交互式移动循环，循环期间任何位置变更都会被复位到按下时的抓取点（见构造函数说明）。 */
+:host(.os-linux) .collapsed-view,
+:host(.os-linux) .lst-head,
+:host(.os-linux) .dt-head {
+    -webkit-app-region: no-drag;
+    /* 触摸手势交给 pointer 事件：默认 touch-action 下浏览器会把按下拖动判定为滚动/缩放
+       手势并派发 pointercancel，手动拖拽会中途断掉（拖一点就拖不动） */
+    touch-action: none;
+}
+
 .collapsed-summary {
     flex: 1;
     min-width: 0;
@@ -923,6 +934,103 @@ function systemTheme() {
     }
 }
 
+/** 手动拖拽判定为「拖拽而非点击」的位移阈值（CSS 像素），与主窗口顶部拖拽层一致。 */
+const MANUAL_DRAG_THRESHOLD = 4;
+
+/**
+ * 给元素挂上「按住拖动窗口 / 未拖动则视为点击」的手动拖拽，替代原生 -webkit-app-region: drag。
+ *
+ * 驱动约定与主窗口顶部拖拽层（index.html）同一套：鼠标交给主进程轮询系统光标驱动，指针
+ * 拖出浮窗也能跟随；触摸屏/手写笔不会更新系统光标，且 X11 下 pointer 的 screenX 不可靠，
+ * 改由这里上报 pointer 的窗口内坐标（clientX/Y），由主进程结合已应用位移换算。上报按帧
+ * 合并——触摸屏 pointermove 可达 240Hz，逐条 IPC 会让主进程排队积压，表现为不跟手后拖不动。
+ * 位移超过阈值才算拖拽，否则按点击处理（onActivate，例如展开胶囊）。
+ */
+function attachManualDrag(el, onActivate) {
+    let state = null;
+    let pendingPoint = null;
+    let rafId = 0;
+
+    const resetPoint = () => {
+        if (rafId) {
+            cancelAnimationFrame(rafId);
+            rafId = 0;
+        }
+        pendingPoint = null;
+    };
+    const flushPoint = () => {
+        rafId = 0;
+        const point = pendingPoint;
+        pendingPoint = null;
+        if (point) {
+            window.taskStatusWidgetAPI?.dragMove?.(point.x, point.y);
+        }
+    };
+
+    el.addEventListener('pointerdown', (event) => {
+        if (event.button !== 0) {
+            return;
+        }
+        // 标题栏上的按钮（关闭菜单 / 返回等）保持点击语义，不参与拖拽。
+        if (event.target instanceof Element && event.target.closest('button')) {
+            return;
+        }
+        event.preventDefault();
+        try {
+            el.setPointerCapture(event.pointerId);
+        } catch {
+            // 捕获失败不影响拖动：鼠标移动由主进程轮询光标驱动
+        }
+        state = {
+            pointerId: event.pointerId,
+            driver: event.pointerType === 'mouse' ? 'cursor' : 'pointer',
+            startX: event.clientX,
+            startY: event.clientY,
+            started: false
+        };
+    });
+
+    el.addEventListener('pointermove', (event) => {
+        // 多指同按：只跟随发起拖拽的那根手指
+        if (!state || event.pointerId !== state.pointerId) {
+            return;
+        }
+        if (!state.started) {
+            if (
+                Math.abs(event.clientX - state.startX) > MANUAL_DRAG_THRESHOLD ||
+                Math.abs(event.clientY - state.startY) > MANUAL_DRAG_THRESHOLD
+            ) {
+                state.started = true;
+                window.taskStatusWidgetAPI?.dragStart?.(state.startX, state.startY, state.driver);
+            }
+            return;
+        }
+        if (state.driver !== 'pointer') {
+            return;
+        }
+        pendingPoint = { x: event.clientX, y: event.clientY };
+        if (!rafId) {
+            rafId = requestAnimationFrame(flushPoint);
+        }
+    });
+
+    const finish = (event, cancelled) => {
+        if (!state || event.pointerId !== state.pointerId) {
+            return;
+        }
+        const started = state.started;
+        state = null;
+        resetPoint();
+        if (started) {
+            window.taskStatusWidgetAPI?.dragEnd?.();
+        } else if (!cancelled && onActivate) {
+            onActivate();
+        }
+    };
+    el.addEventListener('pointerup', (event) => finish(event, false));
+    el.addEventListener('pointercancel', (event) => finish(event, true));
+}
+
 export class TaskStatusWidget extends HTMLElement {
     constructor() {
         super();
@@ -946,6 +1054,11 @@ export class TaskStatusWidget extends HTMLElement {
         this._dataReady = false;
         this._listSignature = '';
         this._collapsedSignature = '';
+        // Linux 上浮窗不用原生 drag 区（窗口管理器的移动循环会复位程序化落点），改走手动拖拽。
+        this._linuxDrag = window.taskStatusWidgetAPI?.platform === 'linux';
+        if (this._linuxDrag) {
+            this.classList.add('os-linux');
+        }
         this._buildDOM();
     }
 
@@ -1124,11 +1237,16 @@ export class TaskStatusWidget extends HTMLElement {
     _buildCollapsedView() {
         const view = document.createElement('div');
         view.className = 'collapsed-view';
-        // 胶囊是 drag region（可拖动），drag 会吞掉 click；用 mousedown 展开，
-        // 保证在窗口已持有焦点时（例如 card 模式手动收起后）点击也能展开。
-        view.addEventListener('mousedown', () => {
-            this._expand();
-        });
+        if (this._linuxDrag) {
+            // 未拖动时按点击处理展开；拖动则移动窗口（原生 drag 会吞掉 click，故原先靠 mousedown）。
+            attachManualDrag(view, () => this._expand());
+        } else {
+            // 胶囊是 drag region（可拖动），drag 会吞掉 click；用 mousedown 展开，
+            // 保证在窗口已持有焦点时（例如 card 模式手动收起后）点击也能展开。
+            view.addEventListener('mousedown', () => {
+                this._expand();
+            });
+        }
         return view;
     }
 
@@ -1139,6 +1257,9 @@ export class TaskStatusWidget extends HTMLElement {
         // 头部
         const head = document.createElement('div');
         head.className = 'lst-head';
+        if (this._linuxDrag) {
+            attachManualDrag(head);
+        }
 
         this._logo = document.createElement('img');
         this._logo.className = 'app-logo';
@@ -1207,6 +1328,9 @@ export class TaskStatusWidget extends HTMLElement {
         // 头部（返回 + 标题 + 状态点）
         this._detailHead = document.createElement('div');
         this._detailHead.className = 'dt-head';
+        if (this._linuxDrag) {
+            attachManualDrag(this._detailHead);
+        }
 
         const backBtn = document.createElement('button');
         backBtn.className = 'icon-btn ghost';
@@ -1278,6 +1402,11 @@ export class TaskStatusWidget extends HTMLElement {
     }
 
     _onWindowFocus = () => {
+        // Linux 上展开改由胶囊点击驱动：按下胶囊时窗口先拿到焦点，若在这里展开，
+        // 「拖胶囊」就会变成「拖已经展开的卡片」。
+        if (this._linuxDrag) {
+            return;
+        }
         if (this._collapsed) {
             this._expand();
         }

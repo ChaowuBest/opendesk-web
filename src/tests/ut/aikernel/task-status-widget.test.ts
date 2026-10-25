@@ -6,6 +6,7 @@ import {
     computeWidgetTransitionBounds,
     isActiveTask,
     isInternalTask,
+    isWidgetBoundsRestoredToOrigin,
     isWidgetTriggerEffective,
     mergeTaskLiveUsage,
     normalizeTaskUsageWidget,
@@ -771,6 +772,121 @@ describe('task-status-widget 纯逻辑', () => {
             });
             expect(b.x).toBeGreaterThanOrEqual(workArea.x);
             expect(b.y + b.height).toBeLessThanOrEqual(workArea.y + workArea.height);
+        });
+    });
+
+    describe('isWidgetBoundsRestoredToOrigin', () => {
+        const tolerance = 2;
+        // 右下角贴角胶囊（工作区 1280x760、margin 28 的实测布局）与其锚定展开目标。
+        const pill = { x: 1012, y: 688, width: 240, height: 44 };
+        const expandedTarget = { x: 912, y: 517, width: 340, height: 215 };
+
+        test('右下角胶囊展开被窗口管理器复位到胶囊左上角：判定为复位（向右下展开 bug 回归）', () => {
+            expect(
+                isWidgetBoundsRestoredToOrigin({
+                    target: expandedTarget,
+                    originBeforeMove: { x: pill.x, y: pill.y },
+                    // 尺寸已按目标生效，位置却回到按下胶囊时的左上角（卡片向右下伸出屏幕）
+                    actual: { x: pill.x, y: pill.y, width: expandedTarget.width, height: expandedTarget.height },
+                    tolerance
+                })
+            ).toBe(true);
+        });
+
+        test('展开位置正常落地：不判定为复位', () => {
+            expect(
+                isWidgetBoundsRestoredToOrigin({
+                    target: expandedTarget,
+                    originBeforeMove: { x: pill.x, y: pill.y },
+                    actual: expandedTarget,
+                    tolerance
+                })
+            ).toBe(false);
+        });
+
+        test('目标位置未变（左上角锚定展开）：不判定为复位', () => {
+            expect(
+                isWidgetBoundsRestoredToOrigin({
+                    target: pill,
+                    originBeforeMove: { x: pill.x, y: pill.y },
+                    actual: pill,
+                    tolerance
+                })
+            ).toBe(false);
+        });
+
+        test('用户把窗口拖到别处：不判定为复位，不与拖拽抢位置', () => {
+            expect(
+                isWidgetBoundsRestoredToOrigin({
+                    target: expandedTarget,
+                    originBeforeMove: { x: pill.x, y: pill.y },
+                    actual: { x: 400, y: 300, width: expandedTarget.width, height: expandedTarget.height },
+                    tolerance
+                })
+            ).toBe(false);
+        });
+
+        test('尺寸未随目标生效：不判定为复位（交由通用漂移重设处理）', () => {
+            expect(
+                isWidgetBoundsRestoredToOrigin({
+                    target: expandedTarget,
+                    originBeforeMove: { x: pill.x, y: pill.y },
+                    actual: pill,
+                    tolerance
+                })
+            ).toBe(false);
+        });
+
+        test('容差内的 DPI 取整偏差：不判定为复位', () => {
+            expect(
+                isWidgetBoundsRestoredToOrigin({
+                    target: { ...expandedTarget, x: expandedTarget.x + 1 },
+                    originBeforeMove: { x: pill.x, y: pill.y },
+                    actual: { ...expandedTarget, x: expandedTarget.x },
+                    tolerance
+                })
+            ).toBe(false);
+        });
+
+        test('收起被复位到展开前的左上角：判定为复位', () => {
+            expect(
+                isWidgetBoundsRestoredToOrigin({
+                    target: pill,
+                    originBeforeMove: { x: expandedTarget.x, y: expandedTarget.y },
+                    actual: { x: expandedTarget.x, y: expandedTarget.y, width: pill.width, height: pill.height },
+                    tolerance
+                })
+            ).toBe(true);
+        });
+
+        test('复位落点被窗口管理器夹回工作区内：判定为复位（实测 Muffin）', () => {
+            // 工作区 1280x760，胶囊贴在留边 28 的右下角；展开目标向左上让出尺寸差。
+            const workArea = { x: 0, y: 0, width: 1280, height: 760 };
+            const pillAtCorner = { x: 1012, y: 688, width: 240, height: 44 };
+            const target = { x: 912, y: 517, width: 340, height: 215 };
+            expect(
+                isWidgetBoundsRestoredToOrigin({
+                    target,
+                    originBeforeMove: { x: pillAtCorner.x, y: pillAtCorner.y },
+                    // 落点 = 胶囊左上角 + 展开尺寸后被夹回工作区：(1280-340, 760-215)
+                    actual: { x: 940, y: 545, width: 340, height: 215 },
+                    tolerance,
+                    workArea
+                })
+            ).toBe(true);
+        });
+
+        test('提供工作区时，拖到工作区内其他位置仍不判定为复位', () => {
+            const workArea = { x: 0, y: 0, width: 1280, height: 760 };
+            expect(
+                isWidgetBoundsRestoredToOrigin({
+                    target: expandedTarget,
+                    originBeforeMove: { x: pill.x, y: pill.y },
+                    actual: { x: 600, y: 400, width: expandedTarget.width, height: expandedTarget.height },
+                    tolerance,
+                    workArea
+                })
+            ).toBe(false);
         });
     });
 });
