@@ -253,6 +253,11 @@ function formatBullets(items: Array<string | string[]>): string[] {
 }
 
 export class MainAgentDecl extends AgentDecl {
+    // 内置 Agent 仅由 AgentRegistry.initBuiltinAgents 创建，公开构造器限于注册流程使用
+    public constructor() {
+        super();
+    }
+
     readonly agentName = 'main';
     readonly dispatchable = false;
     readonly agentType: AgentType = 'builtin';

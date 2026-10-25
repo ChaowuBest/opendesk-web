@@ -101,9 +101,10 @@ import {
     serializeTaskForRender,
     deserializeTask,
     loadFullTaskData,
-    forkTask
+    forkTask,
+    type SimplifiedTaskSnapshot
 } from '../task/serializer.js';
-import { getTaskChangesFromTask } from '../task/changes.js';
+import { getTaskChangesFromTask, type TaskChangesResult } from '../task/changes.js';
 import {
     buildToolsetsForTask,
     ensureToolsResolvedForTask,
@@ -146,10 +147,19 @@ export type {
     TaskUpdateChunk
 } from '../task/types.js';
 import type {
+    InterruptRunningTurnOptions,
+    ProcessTaskTurnOptions,
+    StartInternalTurnOptions,
     SubmitUserMessageOptions,
     TailCardSectionEntry,
-    TaskUsageSnapshot,
-    TaskUpdateCompactChunk
+    TaskCompletionStatus,
+    TaskRuntimeInterrupt,
+    TaskUpdateAssistantReplaceChunk,
+    TaskUpdateChunk,
+    TaskUpdateCompactChunk,
+    TaskUpdateRetryChunk,
+    TaskUpdateUserReplaceChunk,
+    TaskUsageSnapshot
 } from '../task/types.js';
 import {
     ATTEMPT_COMPLETION_TOOL_NAME,
@@ -288,7 +298,7 @@ export class TaskState {
      */
     _fullyLoaded: boolean = true;
     _lazyFilePath?: string;
-    _lazySimplifiedJSON?: object;
+    _lazySimplifiedJSON?: SimplifiedTaskSnapshot;
     /** 防止 ensureLoaded() 递归：applyTaskJson 中会访问 chat_context，此时 _fullyLoaded 尚为 false */
     private _loading: boolean = false;
     /** 任务数据文件已损坏（缺失或无法解析）。ensureLoaded() 降级时标记为 true。 */
@@ -1000,16 +1010,16 @@ export class TaskState {
         return true;
     }
 
-    toSimplifiedJSON() {
+    toSimplifiedJSON(): SimplifiedTaskSnapshot {
         if (!this._fullyLoaded && this._lazySimplifiedJSON) {
             return this._lazySimplifiedJSON;
         }
         return serializeTaskSimplified(this);
     }
 
-    toIndexJSON() {
+    toIndexJSON(): SimplifiedTaskSnapshot {
         if (!this._fullyLoaded && this._lazySimplifiedJSON) {
-            return normalizeTaskIndexEntry(this._lazySimplifiedJSON as Record<string, unknown>);
+            return normalizeTaskIndexEntry(this._lazySimplifiedJSON);
         }
         return serializeTaskForIndex(this);
     }
@@ -2727,7 +2737,9 @@ export class TaskState {
                     return;
                 }
                 if (this.needsHtmlRender && !streaming) {
-                    await this.renderInWorkspace(() => last_part.render());
+                    await this.renderInWorkspace(async () => {
+                        await last_part.render();
+                    });
                 }
                 chunkUpdate = {
                     type: 'assistant',
@@ -2994,7 +3006,7 @@ export class TaskState {
             const hookModifiedArgs = tool_call.args_object !== args;
 
             const validation = tool.validateArgs(tool_call.args_object ?? args);
-            if (!validation.success) {
+            if (validation.success === false) {
                 logger.error(`tool ${tool_call.tool_name} validation failed: ${validation.error}`);
                 tool_call.args_object = tool_call.args_object ?? args;
                 tool_call.status = 'error';
@@ -3154,7 +3166,10 @@ export class TaskState {
         for (const { tool_call, partIndex } of pendingCalls) {
             if (this.extensions.beforeToolCall(tool_call)) {
                 permissionResults.set(tool_call, true);
-                if (this.needsHtmlRender) await this.renderInWorkspace(() => tool_call.render());
+                if (this.needsHtmlRender)
+                    await this.renderInWorkspace(async () => {
+                        await tool_call.render();
+                    });
                 await this.sendSubscriptionFeedback(partIndex);
                 continue;
             }
@@ -3181,12 +3196,18 @@ export class TaskState {
             try {
                 const alreadyDenied = permissionResults.get(tool_call);
                 if (alreadyDenied) {
-                    if (this.needsHtmlRender) await this.renderInWorkspace(() => tool_call.render());
+                    if (this.needsHtmlRender)
+                        await this.renderInWorkspace(async () => {
+                            await tool_call.render();
+                        });
                     await this.sendSubscriptionFeedback(partIndex);
                     return;
                 }
                 await this.processToolCall(tool_call, true);
-                if (this.needsHtmlRender) await this.renderInWorkspace(() => tool_call.render());
+                if (this.needsHtmlRender)
+                    await this.renderInWorkspace(async () => {
+                        await tool_call.render();
+                    });
                 await this.sendSubscriptionFeedback(partIndex);
             } catch (err) {
                 logger.error(
@@ -3195,7 +3216,10 @@ export class TaskState {
                 tool_call.status = 'error';
                 tool_call.result = `工具执行异常: ${(err as Error)?.message || String(err)}`;
                 try {
-                    if (this.needsHtmlRender) await this.renderInWorkspace(() => tool_call.render());
+                    if (this.needsHtmlRender)
+                        await this.renderInWorkspace(async () => {
+                            await tool_call.render();
+                        });
                     await this.sendSubscriptionFeedback(partIndex);
                 } catch (renderErr) {
                     logger.error(

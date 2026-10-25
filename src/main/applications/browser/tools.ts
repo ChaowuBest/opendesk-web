@@ -711,7 +711,8 @@ export class BrowserPressKeyTool extends BaseTool<typeof BrowserPressKeyArgsSche
 
 const BrowserSelectOptionArgsSchema = z.object({
     target: z.string().describe('select 元素的 ref（如 e3）或 CSS 选择器'),
-    values: z.array(z.string()).describe('要选择的 option value 值列表')
+    values: z.array(z.string()).describe('要选择的 option value 值列表'),
+    snapshot: z.boolean().default(false).describe('操作完成后是否自动获取页面快照，默认 false')
 });
 
 export class BrowserSelectOptionTool extends BaseTool<typeof BrowserSelectOptionArgsSchema> {
@@ -1116,7 +1117,8 @@ const BrowserTabsArgsSchema = z.object({
         .default('list')
         .describe('操作类型：list=列出标签页，new=新建标签页，close=关闭标签页，switch=切换标签页'),
     tabId: z.number().int().optional().describe('标签页 ID（close / switch 时需要）'),
-    url: z.string().optional().describe('新标签页的 URL（action=new 时使用）')
+    url: z.string().optional().describe('新标签页的 URL（action=new 时使用）'),
+    snapshot: z.boolean().default(false).describe('操作完成后是否自动获取页面快照，默认 false')
 });
 
 export class BrowserTabsTool extends BaseTool<typeof BrowserTabsArgsSchema> {

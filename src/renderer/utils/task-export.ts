@@ -598,6 +598,8 @@ function selectorHitsRaw(selectorText: string, ctx: SelectorMatchContext): boole
 
 interface SelectorMatchContext {
     doc: Document;
+    /** 预筛索引：class/id/tag → 是否已出现在文档中 */
+    keyIndex: SelectorKeyIndex;
     /** GUI 中真实的 task-view 元素（含聊天历史子树） */
     liveRoot: Element | null;
     /** 游离的导出渲染树根（带 #taskview-chat-history 同款 id/class） */

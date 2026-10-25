@@ -778,7 +778,7 @@ export function parseAuthoredOutput(value: WorkflowJSONValue): ParsedAuthoredOut
     if (phases !== undefined && !Array.isArray(phases)) {
         throw new Error('Workflow 创建结果必须包含字符串类型的 name、description 和 script。');
     }
-    const parsedPhases = phases?.map((phase) => {
+    const parsedPhases = (phases as Array<{ name?: unknown; description?: unknown }> | undefined)?.map((phase) => {
         if (!phase || typeof phase !== 'object' || Array.isArray(phase) || typeof phase.name !== 'string') {
             throw new Error('Workflow 创建结果必须包含字符串类型的 name、description 和 script。');
         }
@@ -800,7 +800,7 @@ export function parseAuthoredOutput(value: WorkflowJSONValue): ParsedAuthoredOut
             inputSchema
         },
         ...(value.launchInput === undefined ? {} : { launchInput: value.launchInput })
-    };
+    } as { definition: WorkflowDefinitionInput; launchInput?: WorkflowJSONValue };
 }
 
 function collectUnsupportedLaunchInputValues(input: WorkflowJSONValue, hostTask: TaskState): string[] {

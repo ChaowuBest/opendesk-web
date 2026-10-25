@@ -91,6 +91,7 @@ export interface AcpTaskRuntimeDependencies {
     createConnection?: AcpConnectionFactory;
     resolveMcpServers?(profile: AcpAgentProfile): Promise<McpServer[]>;
     sleep?(milliseconds: number): Promise<void>;
+    scheduleIdleTimer?(milliseconds: number, callback: () => void): () => void;
     log?: {
         info(message: string): unknown;
         warn(message: string): unknown;
@@ -157,6 +158,8 @@ export class AcpTaskRuntime implements AcpClientHandlers {
     private readonly artifactDirectory: (taskId: string) => string;
     private readonly resolveMcpServers: (profile: AcpAgentProfile) => Promise<McpServer[]>;
     private readonly sleep: (milliseconds: number) => Promise<void>;
+    private readonly scheduleIdleTimer: NonNullable<AcpTaskRuntimeDependencies['scheduleIdleTimer']>;
+    private cancelIdleTimer?: () => void;
     private readonly log: NonNullable<AcpTaskRuntimeDependencies['log']>;
     private handle?: AcpConnectionHandle;
     private connection?: AcpClientConnection;
@@ -252,7 +255,7 @@ export class AcpTaskRuntime implements AcpClientHandlers {
             this.record('outbound', 'session/prompt', { sessionId, prompt, promptId });
             try {
                 const response = await withAcpTimeout(
-                    connection.prompt({ sessionId, prompt }),
+                    Promise.resolve(connection.prompt({ sessionId, prompt })),
                     this.profile.timeouts.promptMs,
                     t('acpmgr.error.promptTimeout', { milliseconds: this.profile.timeouts.promptMs })
                 );
@@ -274,7 +277,10 @@ export class AcpTaskRuntime implements AcpClientHandlers {
             } catch (error) {
                 if (error instanceof AcpTimeoutError) {
                     this.record('outbound', 'session/cancel', { sessionId, reason: 'prompt_timeout' });
-                    await Promise.race([connection.cancel({ sessionId }).catch(() => undefined), this.sleep(1_000)]);
+                    await Promise.race([
+                        Promise.resolve(connection.cancel({ sessionId })).catch(() => undefined),
+                        this.sleep(1_000)
+                    ]);
                 }
                 this.record('lifecycle', 'prompt/uncertain', {
                     promptId,
@@ -440,7 +446,7 @@ export class AcpTaskRuntime implements AcpClientHandlers {
                         mcpServers
                     });
                     this.record('inbound', 'session/load/result', response);
-                    this.sessionConfigOptions = response?.configOptions ?? undefined;
+                    this.sessionConfigOptions = response ? (response.configOptions ?? undefined) : undefined;
                 } finally {
                     this.replaying = false;
                 }
@@ -463,7 +469,7 @@ export class AcpTaskRuntime implements AcpClientHandlers {
                         mcpServers
                     });
                     this.record('inbound', 'session/load/result', response);
-                    this.sessionConfigOptions = response?.configOptions ?? undefined;
+                    this.sessionConfigOptions = response ? (response.configOptions ?? undefined) : undefined;
                 } finally {
                     this.replaying = false;
                 }
@@ -506,11 +512,13 @@ export class AcpTaskRuntime implements AcpClientHandlers {
                     clientCapabilities
                 });
                 const response = await withAcpTimeout(
-                    this.connection.initialize({
-                        protocolVersion: this.profile.protocolVersion,
-                        clientCapabilities,
-                        clientInfo: { name: 'OpenDesk', version: '0.3.4' }
-                    }),
+                    Promise.resolve(
+                        this.connection.initialize({
+                            protocolVersion: this.profile.protocolVersion,
+                            clientCapabilities,
+                            clientInfo: { name: 'OpenDesk', version: '0.3.4' }
+                        })
+                    ),
                     this.profile.timeouts.connectMs,
                     t('acpmgr.error.connectTimeout', { milliseconds: this.profile.timeouts.connectMs })
                 );
@@ -692,7 +700,7 @@ export class AcpTaskRuntime implements AcpClientHandlers {
         }
         this.record('outbound', 'authenticate', { methodId });
         await withAcpTimeout(
-            this.requireConnection().authenticate({ methodId }),
+            Promise.resolve(this.requireConnection().authenticate({ methodId })),
             this.profile.timeouts.connectMs,
             t('acpmgr.error.connectTimeout', { milliseconds: this.profile.timeouts.connectMs })
         );

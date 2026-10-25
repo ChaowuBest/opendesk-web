@@ -21,6 +21,7 @@ import type { ReasoningEffort } from '../../utils/setting.js';
 import { AgentRegistry } from '../agents/registry.js';
 import { TaskState } from '../states/tasks.js';
 import type { TaskManagerState } from './manager.js';
+import type { TaskCompletionStatus, TaskStatus } from './types.js';
 import { logger } from '../../utils/logger.js';
 import { normalizeEvidenceCardState } from '../../utils/evidencecard.js';
 
@@ -113,10 +114,31 @@ export function serializeTask(task: TaskState): object {
 }
 
 /**
+ * serializeTaskSimplified / TaskState.toSimplifiedJSON() 的输出形状（任务列表展示、
+ * task_list.json 索引与回收站清理等消费方共用）。extensions.toSimplifiedJSON() 会
+ * 追加自由字段，因此保留索引签名；未在此声明的字段一律按 unknown 消费。
+ */
+export interface SimplifiedTaskSnapshot {
+    task_id: string;
+    parent_id?: string;
+    task_name?: string;
+    task_status: TaskStatus;
+    completion_status?: TaskCompletionStatus;
+    internal?: boolean;
+    name_pending?: boolean;
+    created_at: string;
+    started_at?: string;
+    finished_at?: string;
+    updated_at?: string;
+    total_elapsed_ms?: number;
+    [key: string]: unknown;
+}
+
+/**
  * 序列化 TaskState 为简化 JSON 对象（用于任务列表显示）。
  * 之前是 TaskState.toSimplifiedJSON()。
  */
-export function serializeTaskSimplified(task: TaskState): object {
+export function serializeTaskSimplified(task: TaskState): SimplifiedTaskSnapshot {
     return {
         task_id: task.task_id,
         parent_id: task.parent_id,
@@ -147,21 +169,23 @@ export function serializeTaskSimplified(task: TaskState): object {
  * Renderer 需要完整 goal 摘要来实时刷新详情面板；冷启动索引只需要 status
  * 来渲染任务列表中的终态标签，避免把 objective、criteria、evaluation 等重复写入 task_list.json。
  */
-export function normalizeTaskIndexEntry(entry: Record<string, unknown>): object {
+export function normalizeTaskIndexEntry(entry: Record<string, unknown>): SimplifiedTaskSnapshot {
     const { goal, ...metadata } = entry;
+    // 磁盘索引条目在此边界收敛回快照形状（条目源自 serializeTaskForIndex 的输出）
+    const base = metadata as SimplifiedTaskSnapshot;
     if (goal === null || typeof goal !== 'object' || Array.isArray(goal)) {
-        return metadata;
+        return base;
     }
 
     const status = (goal as Record<string, unknown>).status;
-    return typeof status === 'string' ? { ...metadata, goal: { status } } : metadata;
+    return typeof status === 'string' ? { ...base, goal: { status } } : base;
 }
 
 /**
  * 序列化 TaskState 为 task_list.json 使用的轻量索引对象。
  */
-export function serializeTaskForIndex(task: TaskState): object {
-    return normalizeTaskIndexEntry(serializeTaskSimplified(task) as Record<string, unknown>);
+export function serializeTaskForIndex(task: TaskState): SimplifiedTaskSnapshot {
+    return normalizeTaskIndexEntry(serializeTaskSimplified(task));
 }
 
 /**
@@ -354,7 +378,7 @@ export function deserializeTaskFromIndex(
     // 但侧边栏仅用 task_status 判断运行中/已停止，无需 completion_status；
     // 任务详情面板打开时走 getTask()→ensureLoaded()，toSimplifiedJSON 会动态重新计算所有字段。
     task._lazyFilePath = taskFilePath;
-    task._lazySimplifiedJSON = { ...indexEntry, task_status: task.task_status };
+    task._lazySimplifiedJSON = { ...indexEntry, task_status: task.task_status } as SimplifiedTaskSnapshot;
     task._fullyLoaded = false;
     task._dirty = false;
     return task;
@@ -382,7 +406,7 @@ export function forkTask(task: TaskState, upToMessageId?: string): TaskState {
     // Truncate messages if upToMessageId is specified (fork from a specific point)
     if (upToMessageId) {
         const messages = forkedTask.chat_context.messages;
-        const idx = messages.findIndex((m) => m.message_id === upToMessageId);
+        const idx = messages.findIndex((m) => 'message_id' in m && m.message_id === upToMessageId);
         if (idx >= 0) {
             messages.splice(idx + 1);
         }

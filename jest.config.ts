@@ -42,6 +42,8 @@ const shared: Config = {
     // 每个测试文件加载前将 OpenDesk 数据目录重定向到一次性临时目录，
     // 防止测试把任务/设置/日志写进真实用户数据（详见 src/tests/test-env.ts）
     setupFiles: ['<rootDir>/src/tests/test-env.ts'],
+    // 过滤与被测行为无关的已知 console 噪音（如 KaTeX quirks mode 警告）
+    setupFilesAfterEnv: ['<rootDir>/src/tests/console-noise-filter.ts'],
     extensionsToTreatAsEsm: ['.ts'],
     moduleNameMapper: {
         // ?inline / ?raw 后缀（如 ace.css?inline）与裸 .css 一样映射为占位样式文本

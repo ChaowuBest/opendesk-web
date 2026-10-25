@@ -80,7 +80,7 @@ export function probeBaseIndexStoreNative(dbPath: string): BaseIndexStoreProbeRe
  * 支持动态 Schema：根据传入的 ColumnSchema 动态创建表结构
  */
 export class BaseIndexDB implements IBaseIndexDB {
-    private db: Database.Database;
+    private db: DatabaseType.Database;
     private readonly tableName = 'base_index';
     private isInitialized = false;
     private schema: ColumnSchema;

@@ -20,7 +20,7 @@
         "preview:win32": "npm run build && chcp 65001 && electron-vite preview --skipBuild",
         "preview:darwin": "npm run build && npm run build-sandbox:darwin && node scripts/build-darwin-speech-helper.cjs && electron-vite preview --skipBuild",
         "preview:linux": "npm run build && electron-vite preview --skipBuild -- --no-sandbox",
-        "build": "run-script-os",
+        "build": "npm run typecheck && run-script-os",
         "build:win32": "npm run build:plugins && npm run build-sandbox:windows && electron-vite build",
         "build:default": "npm run build:plugins && npm run build-sandbox:windows && npm run build-sandbox:linux && npm run build-sandbox:darwin && electron-vite build",
         "build-sandbox:windows": "node scripts/build-windows-sandbox.cjs",
@@ -42,13 +42,13 @@
         "make:linux": "npm run build && electron-forge make --platform=linux",
         "make:rpm": "npm run build && electron-forge make --platform=linux --targets=@electron-forge/maker-rpm",
         "make:deb": "npm run build && electron-forge make --platform=linux --targets=@electron-forge/maker-deb",
-        "build-cli": "npm run build:plugins && tsx esbuild.config.ts",
+        "build-cli": "npm run typecheck && npm run build:plugins && tsx esbuild.config.ts",
         "build-cli-bun": "npm run build:plugins && bun build --compile --minify-whitespace --sourcemap src/main/cli.ts --outfile dist/cli/opendesk-bun --external node-screenshots --external esbuild",
         "cli": "npm run build-cli && node --no-warnings --enable-source-maps dist/cli/opendesk-debug",
         "postinstall": "node scripts/setup-native-modules.cjs",
-        "test": "node --experimental-vm-modules node_modules/jest/bin/jest.js",
-        "test:unit": "node --experimental-vm-modules node_modules/jest/bin/jest.js --selectProjects unit",
-        "test:search": "node --experimental-vm-modules node_modules/jest/bin/jest.js --selectProjects search",
+        "test": "node --experimental-vm-modules --disable-warning=ExperimentalWarning node_modules/jest/bin/jest.js",
+        "test:unit": "node --experimental-vm-modules --disable-warning=ExperimentalWarning node_modules/jest/bin/jest.js --selectProjects unit",
+        "test:search": "node --experimental-vm-modules --disable-warning=ExperimentalWarning node_modules/jest/bin/jest.js --selectProjects search",
         "test:node": "tsx --test --import ./src/tests/test-env.ts \"src/tests/ut/node/**/*.test.js\" \"src/tests/ut/node/**/*.test.ts\"",
         "test:workflow": "tsx --test --import ./src/tests/test-env.ts \"src/tests/ut/node/workflow/**/*.test.ts\"",
         "test:acp": "node scripts/acp-smoke-test.mjs",
@@ -60,7 +60,8 @@
         "check:docs": "tsx scripts/docs-freshness/docs-freshness.ts",
         "changelog": "node scripts/collect-changelog.js",
         "version": "node scripts/sync-version.mjs",
-        "prepare": "husky"
+        "prepare": "husky",
+        "typecheck": "node scripts/run-typecheck.cjs"
     },
     "lint-staged": {
         "*.{js,ts,mjs,cjs,jsx,tsx}": [
@@ -132,6 +133,7 @@
         "ts-jest": "^29.4.9",
         "ts-node": "^10.9.2",
         "tsx": "^4.21.0",
+        "typescript": "6.0.3",
         "typescript-eslint": "^8.57.2",
         "vite": "^7.3.1"
     },

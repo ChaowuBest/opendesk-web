@@ -432,7 +432,7 @@ export function installTransparentBackgroundReassert(win: BrowserWindow, isTrans
         return;
     }
     for (const event of TRANSPARENT_REASSERT_EVENTS) {
-        win.on(event, () => reassertTransparentBackground(win));
+        (win.on as (event: string, listener: () => void) => void)(event, () => reassertTransparentBackground(win));
     }
 }
 

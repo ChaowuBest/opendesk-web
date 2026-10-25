@@ -55,7 +55,8 @@ export interface ConfirmModalOptions {
     /** challenge 模式下的提示文本，${code} 会被替换为验证码 */
     challengeHint?: string;
     /** 挂载目标（默认 document.body，可传 shadowRoot 中的元素） */
-    mountTarget?: HTMLElement;
+    /** 挂载容器：页面弹窗传 HTMLElement，自定义元素内传其 shadowRoot */
+    mountTarget?: HTMLElement | ShadowRoot;
     /** Cover this non-scrolling panel shell instead of the window. */
     target?: HTMLElement;
     /** 是否允许按回车默认触发"确认"（默认 false，仅个别弹窗显式开启） */
@@ -259,7 +260,7 @@ export function renderIcon(iconName: string): string {
 /**
  * 检测当前是否为深色模式（兼容 document 和 Shadow DOM 上下文）。
  */
-export function detectDarkMode(mountTarget: HTMLElement = document.body): boolean {
+export function detectDarkMode(mountTarget: HTMLElement | ShadowRoot = document.body): boolean {
     if (document.documentElement.getAttribute('data-theme') === 'dark') return true;
     const root = mountTarget.getRootNode();
     // Use duck-typing instead of `instanceof ShadowRoot` for environments where ShadowRoot is not defined
@@ -268,7 +269,7 @@ export function detectDarkMode(mountTarget: HTMLElement = document.body): boolea
         if (host?.getAttribute('data-theme') === 'dark') return true;
         if (host?.closest?.('[data-theme="dark"]')) return true;
     }
-    if (mountTarget.closest?.('[data-theme="dark"]')) return true;
+    if ((mountTarget as HTMLElement).closest?.('[data-theme="dark"]')) return true;
     return false;
 }
 
@@ -500,7 +501,7 @@ export function showConfirmModal(options: ConfirmModalOptions): Promise<boolean>
 
         const overlayHandle = createOverlay({
             target: options.target,
-            mountTarget,
+            mountTarget: mountTarget as HTMLElement,
             className: 'od-confirm-modal-overlay'
         });
         const overlay = overlayHandle.element;

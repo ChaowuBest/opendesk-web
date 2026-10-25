@@ -45,6 +45,13 @@ interface ConfiguredCommandParser extends ConfiguredCommandArguments {
     readOutput(): string;
 }
 
+/** args 为函数即 structured 定义；联合上直接 === undefined 判断无法可靠窄化跨泛型变体 */
+function isStructuredCommandDefinition(
+    definition: PluginCommandDefinition
+): definition is PluginStructuredCommandDefinition {
+    return typeof definition.args === 'function';
+}
+
 const configuredArguments = new WeakMap<PluginStructuredCommandDefinition, ConfiguredCommandArguments>();
 
 export function createPluginCommandInvocationFromText(raw: string): PluginCommandInvocation {
@@ -55,12 +62,12 @@ export function createPluginCommandInvocationFromText(raw: string): PluginComman
 }
 
 export function preparePluginCommandDefinition(definition: PluginCommandDefinition): void {
-    if (definition.args === undefined) return;
+    if (!isStructuredCommandDefinition(definition)) return;
     configuredArguments.set(definition, configureArguments(definition.args));
 }
 
 export function pluginCommandAcceptsArgs(definition: PluginCommandDefinition): boolean {
-    if (definition.args === undefined) return true;
+    if (!isStructuredCommandDefinition(definition)) return true;
     const configured = getConfiguredArguments(definition);
     return configured.arguments.length > 0 || configured.options.length > 0;
 }
@@ -69,7 +76,7 @@ export function parsePluginCommandArguments(
     definition: PluginCommandDefinition,
     invocation: PluginCommandInvocation
 ): PluginCommandArgumentParseResult {
-    if (definition.args === undefined) return { status: 'parsed', args: invocation.raw };
+    if (!isStructuredCommandDefinition(definition)) return { status: 'parsed', args: invocation.raw };
 
     const configured = getConfiguredArguments(definition);
     let argv: readonly string[];

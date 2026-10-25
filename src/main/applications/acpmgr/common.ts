@@ -140,6 +140,8 @@ const AgentSessionCwdSchema = z
         }
     });
 
+export type AcpClientExecutionOutput = Extract<z.output<typeof AcpExecutionSchema>, { location: 'client' }>;
+
 export const AcpExecutionSchema = z.discriminatedUnion('location', [
     z.object({ location: z.literal('agent'), workspace: AgentWorkspaceSchema }),
     z.object({
@@ -218,11 +220,13 @@ export const AcpAgentProfileSchema = z
         execution:
             profile.execution ??
             (profile.transport.type === 'stdio'
-                ? ({
+                ? // satisfies 只做类型校验、不改变运行时对象（不加 undefined 键，保持 deepEqual 契约），
+                  // 同时让 output 联合的 client 变体带可选 agentSessionCwd，收窄后可安全访问
+                  ({
                       location: 'client',
                       workspace: { strategy: 'task' },
                       compatibility: 'preferred'
-                  } as const)
+                  } satisfies AcpClientExecutionOutput)
                 : ({ location: 'agent', workspace: { strategy: 'legacy' } } as const))
     }));
 

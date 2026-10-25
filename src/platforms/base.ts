@@ -12,7 +12,7 @@
 import { BaseApplication } from '../main/applications/base';
 import type { TaskState } from '../main/aikernel/states/tasks.js';
 import type { InteractiveToolset } from '../main/aikernel/tool.js';
-import type { NativeBridge } from './native/constants.js';
+import type { NativeBridge } from './bridges/common.js';
 
 /**
  * 当前生效的网络代理配置，与 Setting 中的 network_config 字段对齐。

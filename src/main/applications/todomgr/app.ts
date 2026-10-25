@@ -109,7 +109,7 @@ export class TodoMgrApplication extends BaseApplication {
         const result: { bundleName: string; appName: string; eventName: string; eventDescription: string }[] = [];
         for (const [bundleName, events] of eventsMap) {
             const app = ApplicationRegistry.getApplication(bundleName);
-            const appName = app?.name || bundleName;
+            const appName = app?.getName() || bundleName;
             for (const event of events) {
                 result.push({
                     bundleName,

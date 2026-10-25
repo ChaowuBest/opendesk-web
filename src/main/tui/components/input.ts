@@ -57,6 +57,8 @@ export interface TaskStatusBarData {
     taskName?: string | null;
     /** 当前工作空间路径 */
     workspace?: string;
+    /** 渠道连接状态（如 IM 通道在线/离线），供状态栏聚合展示 */
+    channelStates?: Array<{ label: string; online: boolean }>;
 }
 
 const statusBarSegmenter = new Intl.Segmenter(undefined, { granularity: 'grapheme' });
@@ -786,6 +788,8 @@ export class AgentInputArea implements Component {
     private hintText: Text = new Text('');
 
     private messageQueue: string[] = [];
+    /** bindToTaskQueue/unbindTaskQueue 记录的当前绑定任务 ID */
+    private currentTaskId?: string;
     private submitCallback?: (text: string) => void;
     private commandRegistry?: SlashCommandRegistry;
     private onQueueChange?: (queue: string[]) => void;

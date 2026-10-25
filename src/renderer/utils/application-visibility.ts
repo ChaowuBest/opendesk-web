@@ -15,8 +15,15 @@ export interface ApplicationMenuItem {
     isExperimental?: boolean;
 }
 
+/**
+ * 与主进程 Setting 的 debug.experimental_features schema 对齐（按 renderer 消费面裁剪），
+ * 各开关都可能缺省。
+ */
 export interface ExperimentalFeatureSettings {
     applications?: Record<string, boolean>;
+    account?: boolean;
+    magic_pointer?: boolean;
+    immersive_desktop?: boolean;
 }
 
 export function isExperimentalApplicationEnabled(

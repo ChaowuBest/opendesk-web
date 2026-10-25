@@ -103,6 +103,26 @@ describe('attributeInterception', () => {
         expect(result.noSkillDriven).toBe(true);
         expect(result.candidates).toHaveLength(0);
     });
+
+    it('归因系统提示通过 ChatContext.system_prompt 注入而非消息数组强转', async () => {
+        completeMock.mockResolvedValueOnce(llmJsonResponse('{"candidates":[],"noSkillDriven":true,"reasoning":"r"}'));
+
+        await attributeInterception(
+            'ShellTool',
+            'ls -la',
+            '命中目录列举规则',
+            [{ bundleName: 'b1', skillName: 'evil-skill' }],
+            makeTask()
+        );
+
+        const context = completeMock.mock.calls[0][0];
+        expect(context.system_prompt).toBeDefined();
+        expect(context.system_prompt.role).toBe('system');
+        expect(context.system_prompt.content).toContain('归因');
+        // 消息列表只应承载用户 prompt，系统提示不得混入其中
+        expect(context.messages).toHaveLength(1);
+        expect(context.messages[0].role).toBe('user');
+    });
 });
 
 describe('attributeBatchInterceptions', () => {

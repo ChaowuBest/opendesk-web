@@ -715,8 +715,8 @@ export class ChannelMgrApplication extends BaseApplication {
     /** 校验模型是否为当前已配置的 chat 模型。 */
     private isValidChatModel(model: string): boolean {
         try {
-            const data = Setting.getInstance().getData() || {};
-            const models = data.models;
+            const data = Setting.getInstance().getData();
+            const models = data?.models;
             if (!Array.isArray(models)) return false;
             return models.some((m: any) => m?.model_type === 'chat' && m?.alias === model);
         } catch {
@@ -770,8 +770,8 @@ export class ChannelMgrApplication extends BaseApplication {
     getAvailableModels(): { models: string[]; defaultModel: string } {
         try {
             const setting = Setting.getInstance();
-            const data = setting.getData() || {};
-            const rawModels = data.models as unknown as any[] | undefined;
+            const data = setting.getData();
+            const rawModels = data?.models as unknown as any[] | undefined;
             // 合并内置虚拟模型（如账号内置模型 opendesk/auto，登录后可用）
             const builtinAliases = (setting.getData().builtin_models ?? []).map((m) => m.alias);
             const models = [...(rawModels || []), ...builtinAliases.map((alias) => ({ alias, model_type: 'chat' }))]
@@ -780,7 +780,7 @@ export class ChannelMgrApplication extends BaseApplication {
                 .filter((alias: unknown): alias is string => typeof alias === 'string' && alias.length > 0);
             return {
                 models,
-                defaultModel: typeof data.default_model === 'string' ? data.default_model : ''
+                defaultModel: typeof data?.default_model === 'string' ? data.default_model : ''
             };
         } catch {
             return { models: [], defaultModel: '' };
@@ -1359,8 +1359,8 @@ export class ChannelMgrApplication extends BaseApplication {
                 const openId = pollRes.user_info?.open_id || '';
 
                 // 保存凭证到配置
-                const currentConfig = this.getConfig() || {};
-                const feishuConfig = currentConfig['feishu'] || {};
+                const currentConfig = (this.getConfig() || {}) as Record<string, unknown>;
+                const feishuConfig = (currentConfig['feishu'] || {}) as Record<string, unknown>;
                 const accounts = feishuConfig['accounts'] || {};
                 accounts[accountId] = { appId, appSecret, enabled: true };
 

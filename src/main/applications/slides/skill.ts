@@ -171,7 +171,7 @@ export function buildSlidesSkill(
         if (!taskId) throw new Error(t('error.taskContextRequired'));
         return JSON.stringify(await openPresentation(taskId, filePath));
     });
-    openPresentationTool.serialExecution = true;
+    (openPresentationTool as BaseTool<typeof OpenPresentationSchema>).serialExecution = true;
 
     const listActions = new BaseTool(
         'list_actions',
@@ -222,7 +222,7 @@ export function buildSlidesSkill(
     ).setExecutor(async ({ name, input }, taskState) => {
         const action = getAction(name);
         const validatedInput = action.validator.validateArgs(input);
-        if (!validatedInput.success) throw new Error(validatedInput.error);
+        if (validatedInput.success === false) throw new Error(validatedInput.error);
         const taskId = taskState?.task_id;
         if (!taskId) throw new Error(t('error.taskContextRequired'));
         const result = await executeCapability(
@@ -233,9 +233,14 @@ export function buildSlidesSkill(
         if (result.isError) throw new Error(result.output || result.summary);
         return result.output;
     });
-    executeAction.serialExecution = true;
+    (executeAction as BaseTool<any>).serialExecution = true;
 
-    toolset.addTools(openPresentationTool, listActions, getActionDefinition, executeAction);
+    toolset.addTools(
+        openPresentationTool as BaseTool<typeof OpenPresentationSchema>,
+        listActions as BaseTool<any>,
+        getActionDefinition as BaseTool<any>,
+        executeAction as BaseTool<any>
+    );
 
     skill.toolsets = [toolset];
     return skill;

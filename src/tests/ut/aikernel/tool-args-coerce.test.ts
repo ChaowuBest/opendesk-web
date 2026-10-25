@@ -10,6 +10,7 @@
  * - 非对象参数原样返回
  */
 
+import { jest } from '@jest/globals';
 import { BaseTool } from '../../../main/aikernel/tool';
 import { z } from 'zod';
 
@@ -29,6 +30,15 @@ function makeTool(): BaseTool<typeof testSchema> {
 }
 
 describe('BaseTool.validateArgs 标量类型强制转换', () => {
+    // 发生强转时 validateArgs 会打 warn 提示，这正是被测的预期路径，静默即可
+    beforeEach(() => {
+        jest.spyOn(console, 'warn').mockImplementation(() => {});
+    });
+
+    afterEach(() => {
+        jest.restoreAllMocks();
+    });
+
     it('字符串 "false" 的 isAsync 被转换为 boolean false', () => {
         const tool = makeTool();
         const result = tool.validateArgs({

@@ -445,7 +445,7 @@ export type AccountConfig = z.infer<typeof AccountConfigSchema>;
 
 let ApplicationConfigSchema: z.ZodObject<z.ZodRawShape> = z.object({});
 
-function getSettingSchema(): z.ZodObject<z.ZodRawShape> {
+function getSettingSchema() {
     return z.object({
         locale: z
             .enum(['auto', 'zh-CN', 'en-US'])
@@ -463,7 +463,8 @@ function getSettingSchema(): z.ZodObject<z.ZodRawShape> {
         default_workspace: z.string().describe('默认工作空间目录路径(为空时使用临时工作空间)').default(''),
         debug: DebugModeSchema.describe('开发与调试设置').default({
             developer_mode: false,
-            log_raw_llm_request: false
+            log_raw_llm_request: false,
+            debug_log: false
         }),
         telemetry: TelemetrySchema,
         providers: z.array(ProviderSchema).describe('可用AI模型提供商').default([]),
@@ -474,6 +475,7 @@ function getSettingSchema(): z.ZodObject<z.ZodRawShape> {
             scale_factor: 1,
             font_preset: 'default',
             ctrl_enter_send: false,
+            recent_workspaces: [],
             window_bounds: null,
             floating_window_position: 'bottom-right',
             sidebar_width: 320,
@@ -503,7 +505,8 @@ function getSettingSchema(): z.ZodObject<z.ZodRawShape> {
             termination_check: true,
             evidence_card: false,
             shell_path: '',
-            shell_sandboxed: false
+            shell_sandboxed: false,
+            shell_sandbox_del_to_trash: false
         }),
         network_config: NetworkConfigSchema.describe('网络设置').default({
             no_ssl: false,
@@ -1262,7 +1265,7 @@ export function resolveTrashRootDirectory(opendeskDir: string, home: string | un
     // 分隔符按目标平台显式选择（win32 反斜杠、其余 POSIX 正斜杠），不随运行
     // 宿主的 path 模块漂移：同一输入在任何宿主上产出一致，单测可 mock 平台
     // 跨宿主断言（真实宿主上与 path.join 的结果逐字节相同）。
-    if (process.platform === 'openharmony') {
+    if ((process.platform as string) === 'openharmony') {
         if (home) return path.posix.join(home, '.opendesk-trash');
     }
     if (process.platform === 'win32') {
@@ -1391,13 +1394,6 @@ export {
     DebugModeSchema,
     type ReasoningEffort,
     type ModelType,
-    type Model,
-    type ChatModel,
-    type EmbeddingModel,
     type ProviderType,
-    type NormalizedProviderType,
-    type SettingData,
-    type DebugModeConfig,
-    type BuiltinModelProvider,
-    type BuiltinModelFetch
+    type NormalizedProviderType
 };

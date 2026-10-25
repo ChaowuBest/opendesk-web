@@ -15,6 +15,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { BrowserManager } from '../../../common/embedBrowserUse/main.js';
 import { BrowserDownloadTool } from '../../../main/applications/browser/tools.js';
+import { normalizePath } from '../../../utils/path.js';
 
 /** 构造可反复读取的 Response 替身（body 读取一次后真实 Response 会失效） */
 function fakeResponse(body: Buffer, init: { status: number; contentType?: string }) {
@@ -75,7 +76,8 @@ describe('browser download 工具', () => {
 
         const parsed = JSON.parse(output);
         expect(parsed.success).toBe(true);
-        expect(parsed.path).toBe(path.resolve(target));
+        // 实现统一以正斜杠形式返回路径，与 path.resolve 的平台差异无关
+        expect(parsed.path).toBe(normalizePath(path.resolve(target)));
         expect(parsed.size).toBe(content.length);
         // 目录不存在时自动创建
         expect(fs.existsSync(target)).toBe(true);
@@ -153,7 +155,7 @@ describe('browser download 工具', () => {
         expect(perms[0]).toEqual({
             resourceType: 'file',
             action: 'write',
-            resourcePath: path.resolve(target)
+            resourcePath: normalizePath(path.resolve(target))
         });
     });
 });

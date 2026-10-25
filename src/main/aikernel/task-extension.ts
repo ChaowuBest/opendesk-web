@@ -24,12 +24,9 @@ export interface TaskExtensionCheckpointOptions {
     includeSupplements?: boolean;
 }
 
-export interface TaskExtensionInputResult {
-    status: 'ok' | 'error';
-    supplementId?: string;
-    messageKey?: string;
-    messageArgs?: Record<string, unknown>;
-}
+export type TaskExtensionInputResult =
+    | { status: 'ok'; supplementId?: string }
+    | { status: 'error'; messageKey: string; messageArgs?: Record<string, unknown> };
 
 export interface TaskExtensionSubTaskCompletionResult {
     success: boolean;

@@ -5,6 +5,7 @@ import {
 } from '../../../main/server/opencode/routes/session.js';
 import { GlobalState } from '../../../main/aikernel/states/global.js';
 import { EventBus } from '../../../main/server/opencode/event-bus.js';
+import { normalizeWorkspace } from '../../../main/server/opencode/workspace.js';
 
 jest.mock('../../../main/server/opencode/mcp.js', () => ({
     ensureMcpWorkspace: jest.fn(async () => undefined)
@@ -87,7 +88,8 @@ describe('TaskNameSyncSubscriber', () => {
         expect(events).toHaveLength(1);
         expect(events[0]).toMatchObject({
             type: 'session.updated',
-            directory: workspace,
+            // 发布前会经过 normalizeWorkspace 规范化（Windows 上 /tmp 会解析为盘符路径）
+            directory: normalizeWorkspace(workspace),
             properties: {
                 sessionID: 'ses_name',
                 info: expect.objectContaining({ id: 'ses_name', title: '修复登录bug' })

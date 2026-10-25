@@ -49,7 +49,8 @@ export class PluginConfigPage implements Component {
     private getApplication(): PluginMgrApplication {
         const application = ApplicationRegistry.getApplication('pluginmgr');
         if (!application) throw new Error('pluginmgr application is not registered');
-        return application as PluginMgrApplication;
+        // 注册表返回基类引用，这里按 bundleName 约定还原为具体应用类型
+        return application as unknown as PluginMgrApplication;
     }
 
     private showLoading(): void {

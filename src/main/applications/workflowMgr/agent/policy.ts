@@ -26,7 +26,7 @@ const WORKFLOW_AGENT_DISABLED_TOOLS = [
     'executeNodeShell'
 ] as const;
 
-const WORKFLOW_AGENT_DISABLED_TOOL_NAMES = new Set(WORKFLOW_AGENT_DISABLED_TOOLS);
+const WORKFLOW_AGENT_DISABLED_TOOL_NAMES = new Set<string>(WORKFLOW_AGENT_DISABLED_TOOLS);
 
 export function isWorkflowAgentToolAllowed(toolName: string): boolean {
     return !WORKFLOW_AGENT_DISABLED_TOOL_NAMES.has(toolName);

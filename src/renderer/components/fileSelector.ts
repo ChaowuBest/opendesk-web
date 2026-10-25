@@ -36,7 +36,10 @@ export interface FSEntry {
 
 export interface FileSelectorOptions {
     /** 获取指定目录下的条目列表 */
-    listDirectory: (dirPath: string, opts?: { includeFiles?: boolean; extensions?: string[] }) => Promise<FSEntry[]>;
+    listDirectory: (
+        dirPath: string,
+        opts?: { includeFiles?: boolean; extensions?: string[]; showHidden?: boolean }
+    ) => Promise<FSEntry[]>;
     /** 当用户选中某个条目时回调 */
     onSelect?: (path: string | null) => void;
     /** 浏览器区域高度（CSS 值），默认 '260px' */

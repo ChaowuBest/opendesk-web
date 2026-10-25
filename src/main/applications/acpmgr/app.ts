@@ -88,7 +88,7 @@ export class AcpMgrApplication extends BaseApplication {
     }
 
     async getSupportedEvents(): Promise<EventDecl[]> {
-        return [{ eventName: 'agentsUpdated', description: 'ACP agent profiles changed' }];
+        return [{ eventName: 'agentsUpdated', eventDescription: 'ACP agent profiles changed' }];
     }
 
     onConfigChanged(): void {
@@ -182,19 +182,21 @@ export class AcpMgrApplication extends BaseApplication {
         let initializeResponse: Awaited<ReturnType<typeof handle.connection.initialize>> | undefined;
         try {
             initializeResponse = await withAcpTimeout(
-                handle.connection.initialize({
-                    protocolVersion: profile.protocolVersion,
-                    clientCapabilities:
-                        profile.protocolVersion === 1
-                            ? {
-                                  session: { configOptions: { boolean: {} } },
-                                  ...(resolvedWorkspace.executionLocation === 'client'
-                                      ? { fs: { readTextFile: true, writeTextFile: true }, terminal: true }
-                                      : {})
-                              }
-                            : {},
-                    clientInfo: { name: 'OpenDesk', version: '0.3.4' }
-                }),
+                Promise.resolve(
+                    handle.connection.initialize({
+                        protocolVersion: profile.protocolVersion,
+                        clientCapabilities:
+                            profile.protocolVersion === 1
+                                ? {
+                                      session: { configOptions: { boolean: {} } },
+                                      ...(resolvedWorkspace.executionLocation === 'client'
+                                          ? { fs: { readTextFile: true, writeTextFile: true }, terminal: true }
+                                          : {})
+                                  }
+                                : {},
+                        clientInfo: { name: 'OpenDesk', version: '0.3.4' }
+                    })
+                ),
                 profile.timeouts.connectMs,
                 t('acpmgr.error.connectTimeout', { milliseconds: profile.timeouts.connectMs })
             );
@@ -214,7 +216,7 @@ export class AcpMgrApplication extends BaseApplication {
                 const type = authMethodType(method);
                 if (type !== 'agent') throw new Error(t('acpmgr.error.authMethodInteractiveUnsupported', { type }));
                 await withAcpTimeout(
-                    handle.connection.authenticate({ methodId: profile.session.authMethodId }),
+                    Promise.resolve(handle.connection.authenticate({ methodId: profile.session.authMethodId })),
                     profile.timeouts.connectMs,
                     t('acpmgr.error.connectTimeout', { milliseconds: profile.timeouts.connectMs })
                 );
@@ -223,10 +225,12 @@ export class AcpMgrApplication extends BaseApplication {
             let sessionResponse: Awaited<ReturnType<typeof handle.connection.newSession>>;
             try {
                 sessionResponse = await withAcpTimeout(
-                    handle.connection.newSession({
-                        cwd: resolvedWorkspace.sessionCwd,
-                        mcpServers
-                    }),
+                    Promise.resolve(
+                        handle.connection.newSession({
+                            cwd: resolvedWorkspace.sessionCwd,
+                            mcpServers
+                        })
+                    ),
                     profile.timeouts.connectMs,
                     t('acpmgr.error.connectTimeout', { milliseconds: profile.timeouts.connectMs })
                 );
@@ -261,7 +265,9 @@ export class AcpMgrApplication extends BaseApplication {
                 profile.protocolVersion === 2 || !!initializeResponse?.agentCapabilities?.sessionCapabilities?.close;
             const cleanupResults =
                 sessionId && supportsClose && handle.connection.closeSession
-                    ? await Promise.allSettled([handle.connection.closeSession({ sessionId }).then(() => undefined)])
+                    ? await Promise.allSettled([
+                          Promise.resolve(handle.connection.closeSession({ sessionId })).then(() => undefined)
+                      ])
                     : [];
             cleanupResults.push(
                 ...(await Promise.allSettled([

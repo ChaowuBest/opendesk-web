@@ -157,13 +157,13 @@ export class UpdateCoordinator {
         if (!this.pendingRecord || this.state.status !== 'ready') return false;
         if (this.operation) {
             await this.operation;
-            return this.state.status === 'installed';
+            return (this.state as UpdateState).status === 'installed';
         }
         this.operation = this.submitRecord(this.pendingRecord).finally(() => {
             this.operation = undefined;
         });
         await this.operation;
-        return this.state.status === 'installed';
+        return (this.state as UpdateState).status === 'installed';
     }
 
     private async submitRecord(record: ReadyUpdateRecord): Promise<UpdateState> {

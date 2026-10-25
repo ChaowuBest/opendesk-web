@@ -218,7 +218,9 @@ export class HeadlessRunner {
             if (chunkUpdate.type === 'user') {
                 // 内部消息（如 hook reject），不输出
                 if (chunkUpdate.internal) return;
-                this.printUserMessage(chunkUpdate.last_part?.text ?? '');
+                // last_part 可能是 image/file 类型，仅文本 part 含 text
+                const lastPart = chunkUpdate.last_part;
+                this.printUserMessage(lastPart?.type === 'text' ? lastPart.text : '');
                 return;
             }
 

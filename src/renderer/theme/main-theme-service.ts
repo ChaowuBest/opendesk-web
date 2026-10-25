@@ -32,7 +32,10 @@ const THEME_CHANNEL = 'theme:changed';
 
 function isOhosPlatform(): boolean {
     return (
-        process.platform === 'openharmony' || process.env.OPENDESK_PLATFORM === 'ohos' || detectPlatform() === 'ohos'
+        // 鸿蒙 Node 移植的 process.platform 为 'openharmony'，不在 Node 官方类型联合里
+        (process.platform as string) === 'openharmony' ||
+        process.env.OPENDESK_PLATFORM === 'ohos' ||
+        detectPlatform() === 'ohos'
     );
 }
 

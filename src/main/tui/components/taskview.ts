@@ -992,9 +992,16 @@ export class AssistantMessageView implements Component {
         isReasoning: boolean,
         width: number
     ): string {
-        const activeToolCall = parts
-            .flatMap((part) => (part instanceof ToolCallMessagePartView ? part.getToolCalls() : []))
-            .findLast((toolCall) => toolCall.status === 'pending' || toolCall.status === 'running');
+        // 等价于 findLast（需要 lib es2023），这里手动倒序查找最后一个进行中的工具调用
+        const toolCalls = parts.flatMap((part) => (part instanceof ToolCallMessagePartView ? part.getToolCalls() : []));
+        let activeToolCall: ToolCall | undefined;
+        for (let i = toolCalls.length - 1; i >= 0; i -= 1) {
+            const toolCall = toolCalls[i];
+            if (toolCall.status === 'pending' || toolCall.status === 'running') {
+                activeToolCall = toolCall;
+                break;
+            }
+        }
         const doneStats = collectDoneToolStats(parts);
         const action = getMinimalRunningAction(activeToolCall, isReasoning, doneStats);
         return truncateToWidth(`${getMinimalRunningIcon()} ${action}`, width, '', true);
@@ -1903,7 +1910,7 @@ export class TaskView implements Component {
                         internalBoundary.metadata.trigger
                     );
                 }
-                view.throttleMsProvider = () => this.getMdRenderThrottleMs();
+                // 自适应节流已上移到 TaskView 层（renderIntervalMs），不再注入 per-view throttleMsProvider
                 this.messageIdToAssistantView.set(msg.message_id, view);
                 const content = Array.isArray(msg.content) ? msg.content : [];
                 for (let i = 0; i < content.length; i++) {

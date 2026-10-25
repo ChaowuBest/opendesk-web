@@ -312,16 +312,20 @@ class TrashFloatingWindow extends HTMLElement {
         this._renderTaskInfo();
     }
 
-    private _buildSearchOptions(offset: number): Record<string, unknown> {
+    private _buildSearchOptions(offset: number): Parameters<typeof window.trashAPI.search>[0] {
         const keyword = this._keyword.trim();
-        const options: Record<string, unknown> = { offset, limit: PAGE_SIZE };
+        const options = {
+            offset,
+            limit: PAGE_SIZE,
+            scope: 'global' as 'task' | 'global',
+            taskId: undefined as string | undefined,
+            keyword: undefined as string | undefined
+        };
         // 范围由勾选项决定（任务级/全局），关键字在所选范围内过滤：
         // 勾选"仅该任务"时即在任务回收站内按关键字搜索，取消勾选才是全局搜索
         if (this._isTaskScope) {
             options.scope = 'task';
             options.taskId = this._taskId;
-        } else {
-            options.scope = 'global';
         }
         if (keyword) {
             options.keyword = keyword;

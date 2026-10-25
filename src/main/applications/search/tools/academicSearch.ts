@@ -146,7 +146,7 @@ export class AcademicSearchTool extends BaseTool<typeof AcademicSearchArgsSchema
         }
 
         // 由于 Facade 和引擎基类使用相同的 Schema，参数可直接透传
-        const delegateArgs: Record<string, any> = {
+        const delegateArgs = {
             query,
             count: args.count,
             start: args.start,

@@ -28,6 +28,38 @@ declare module '*.jsonl?raw' {
 }
 
 declare global {
+    /**
+     * loadSettingObject / saveSettingObject / onSettingChanged 共用的持久化设置对象形状。
+     * renderer 只声明实际消费的字段（其余仍可经 Record 索引访问），嵌套形状与主进程
+     * Setting schema 对齐；所有字段都可能缺省（旧配置未写过时），调用方需按默认值兜底。
+     */
+    interface LoadedSettingObject extends Record<string, unknown> {
+        locale?: string;
+        resolved_locale?: string;
+        default_model?: string;
+        gui_config?: {
+            font_preset?: string;
+        };
+        debug?: {
+            experimental_features?: import('./utils/application-visibility.js').ExperimentalFeatureSettings;
+        };
+        providers?: Array<{
+            name: string;
+            provider_type?: 'openai' | 'anthropic';
+            base_url: string;
+            api_key: string;
+            no_proxy?: boolean;
+            no_ssl?: boolean;
+        }>;
+        models?: Array<{
+            alias: string;
+            provider_name?: string;
+            model_name: string;
+            model_type?: 'chat' | 'embedding';
+            reasoning_effort?: string;
+        }>;
+    }
+
     interface Window {
         officeHostAPI: {
             prepare: (kind: 'slides' | 'word' | 'sheets') => Promise<boolean>;
@@ -69,16 +101,133 @@ declare global {
         };
         settingAPI: {
             listShells: () => Promise<import('../common/shells.js').SupportedShell[]>;
-            loadSettingObject: () => Promise<Record<string, unknown> & { locale?: string; resolved_locale?: string }>;
-            saveSettingObject: (
-                settingObject: unknown
-            ) => Promise<(Record<string, unknown> & { locale?: string; resolved_locale?: string }) | undefined>;
-            onSettingChanged?: (
-                callback: (
-                    settingObject: Record<string, unknown> & { locale?: string; resolved_locale?: string }
-                ) => void
-            ) => () => void;
+            loadSettingObject: () => Promise<LoadedSettingObject>;
+            saveSettingObject: (settingObject: unknown) => Promise<LoadedSettingObject | undefined>;
+            onSettingChanged?: (callback: (settingObject: LoadedSettingObject) => void) => () => void;
+            submitFeedback: (submission: unknown) => Promise<any>;
+            getProviderTemplates: () => Promise<
+                Array<{ name: string; displayName: string; base_url: string; provider_type?: 'openai' | 'anthropic' }>
+            >;
+            fetchProviderModels: (params: {
+                base_url: string;
+                api_key: string;
+                provider_type?: 'openai' | 'anthropic';
+                no_proxy?: boolean;
+                no_ssl?: boolean;
+            }) => Promise<string[]>;
+            verifyModel: (params: {
+                base_url: string;
+                api_key: string;
+                provider_type?: 'openai' | 'anthropic';
+                model_name: string;
+                model_type?: 'chat' | 'embedding';
+                custom_headers?: Record<string, string>;
+                no_proxy?: boolean;
+                no_ssl?: boolean;
+            }) => Promise<boolean>;
         };
+        native?: {
+            call: (method: string, ...args: unknown[]) => Promise<any>;
+        };
+        taskManagerAPI: {
+            createTask: (options?: unknown) => Promise<any>;
+            removeTask: (taskId: string) => Promise<any>;
+            releaseTaskMemory: (taskId: string) => Promise<any>;
+            forkTask: (taskId: string, upToMessageId?: string) => Promise<any>;
+            compactTask: (taskId: string) => Promise<any>;
+            renameTask: (taskId: string, newName: string) => Promise<any>;
+            submitMessage: (taskId: string, request: unknown) => Promise<any>;
+            attachToolset: (
+                taskId: string,
+                toolset: unknown,
+                callback?: (toolName: string, args: unknown) => unknown
+            ) => Promise<any>;
+            setSystemPrompt: (taskId: string, prompt: unknown) => Promise<any>;
+            getTaskList: () => Promise<any[]>;
+            getFullTask: (taskId: string) => Promise<any>;
+            subscribeTaskUpdate: (taskId: string, callback: (progress: unknown) => void) => Promise<any>;
+            unsubscribeTaskUpdate: (taskId: string, callback: (progress: unknown) => void) => Promise<any>;
+        };
+        applicationAPI: {
+            setApplicationBundleName: (bundleName: string) => Promise<void>;
+            call: (methodName: string, ...args: unknown[]) => Promise<any>;
+            callMainWorld: (methodName: string, ...args: unknown[]) => Promise<any>;
+            streamCall: (methodName: string, callback: (chunk: unknown) => void, ...args: unknown[]) => Promise<void>;
+            streamCallMainWorld: (
+                methodName: string,
+                callback: (chunk: unknown) => void,
+                ...args: unknown[]
+            ) => Promise<void>;
+            subscribe: (eventName: string, callback: (...args: unknown[]) => void) => Promise<void>;
+            unsubscribe: (eventName: string, callback: (...args: unknown[]) => void) => Promise<void>;
+        };
+        applicationRegistryAPI?: {
+            call: (bundleName: string, methodName: string, ...args: unknown[]) => Promise<any>;
+            callMainWorld: (bundleName: string, methodName: string, ...args: unknown[]) => Promise<any>;
+            streamCall: (
+                bundleName: string,
+                methodName: string,
+                callback: (chunk: unknown) => void,
+                ...args: unknown[]
+            ) => Promise<any>;
+            streamCallMainWorld: (
+                bundleName: string,
+                methodName: string,
+                callback: (chunk: unknown) => void,
+                ...args: unknown[]
+            ) => Promise<any>;
+            subscribeEvent: (
+                bundleName: string,
+                eventName: string,
+                callback: (...args: unknown[]) => void
+            ) => Promise<any>;
+            ensureFullyLoaded: () => Promise<void>;
+            getApplicationGUIConfig: (bundleName: string) => Promise<any>;
+            getApplicationList: () => Promise<any>;
+        };
+        fsAPI: {
+            searchFilesByKeyword: (keyword: string) => Promise<any>;
+            searchFilesByKeywordInPath: (keyword: string, basePath: string) => Promise<any>;
+            searchIndexedFiles: (query: string, options?: unknown) => Promise<any>;
+            openPath: (filePath: string) => Promise<void>;
+            showItemInFolder: (filePath: string) => Promise<void>;
+            openTrash: () => Promise<void>;
+            selectFile: () => Promise<string[]>;
+            selectDirectory: () => Promise<string | null>;
+            listDirectory: (
+                dirPath: string,
+                options?: { includeFiles?: boolean; extensions?: string[]; showHidden?: boolean }
+            ) => Promise<any>;
+            readFile: (filePath: string) => Promise<any>;
+            readTextFile: (filePath: string, maxBytes?: number) => Promise<any>;
+            writeTextFile: (filePath: string, content: string) => Promise<any>;
+            fileExists: (filePath: string) => Promise<any>;
+            getPathType: (filePath: string) => Promise<any>;
+            getFilePath: (...args: unknown[]) => Promise<any>;
+            resolveFilePath: (filePath: string) => Promise<string>;
+            saveFile: (...args: unknown[]) => Promise<any>;
+            trashItem: (...args: unknown[]) => Promise<any>;
+            word: (...args: unknown[]) => Promise<any>;
+            sheets: (...args: unknown[]) => Promise<any>;
+            slides: (...args: unknown[]) => Promise<any>;
+        };
+        workspaceAPI?: {
+            getEffectiveWorkspace: () => Promise<string | null>;
+            listDirectory: (
+                path: string,
+                options?: { includeFiles?: boolean; extensions?: string[]; showHidden?: boolean }
+            ) => Promise<any>;
+        };
+        aiBarAPI: {
+            submitRequest: (request: string) => Promise<void>;
+            submitRequestInNewTask: (request: string) => Promise<void>;
+        };
+        notificationAPI?: {
+            sendNotification: (...args: unknown[]) => Promise<any>;
+            subscribeNotification: (callback: (...args: unknown[]) => void) => Promise<void>;
+        };
+        /** 内嵌 office 套件（@bitclub.ai/opendesk-office）preload 暴露的 Word 桌面桥接 */
+        wordDesktop?: Record<string, (...args: any[]) => any>;
         trashAPI: {
             search: (options: {
                 scope: 'task' | 'global';

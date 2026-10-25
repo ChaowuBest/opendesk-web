@@ -824,25 +824,30 @@ export class SkillAnalyzer {
                     return;
                 }
 
+                // TS6 控制流在早退分支后不取反收窄，此处显式落到失败变体
+                const failed = loadResult as Extract<typeof loadResult, { success: false }>;
                 // 校验失败 — 在同一 task 中追加修正消息
                 logger.warn(
                     `[SkillAnalyzer] ${skillName} ${taskLabel}分析结果校验失败（第${attempt + 1}次），` +
-                        `错误: ${loadResult.error}，将发起第${attempt + 1}次修正重试`
+                        `错误: ${failed.error}，将发起第${attempt + 1}次修正重试`
                 );
 
                 const fixPrompt = this._buildFixPrompt(
                     skillDir,
                     skillName,
                     taskLabel,
-                    loadResult.error,
-                    loadResult.validationErrors
+                    failed.error,
+                    failed.validationErrors
                 );
                 await task.submitUserMessage(fixPrompt);
                 await task.waitUntilFinished();
             }
 
-            // 已达最大重试次数
-            const finalResult = tryLoadOpendeskMeta(skillDir);
+            // 已达最大重试次数（此路径必然校验失败，显式取失败变体）
+            const finalResult = tryLoadOpendeskMeta(skillDir) as Extract<
+                ReturnType<typeof tryLoadOpendeskMeta>,
+                { success: false }
+            >;
             const errorDetail = finalResult.validationErrors?.length
                 ? `\n校验错误详情：\n${formatValidationErrors(finalResult.validationErrors)}`
                 : '';
@@ -1215,7 +1220,9 @@ ${preScanSection}`;
                         tcIndex,
                         {
                             result: 'failed',
-                            message: `Agent 未返回有效的测试结果 JSON（已重试${MAX_TESTRESULT_RETRIES}次）: ${parseResult.error}`,
+                            message: `Agent 未返回有效的测试结果 JSON（已重试${MAX_TESTRESULT_RETRIES}次）: ${
+                                (parseResult as Extract<typeof parseResult, { success: false }>).error
+                            }`,
                             failureReasonCategory: TestFailureReasonCategory.ExternalService
                         },
                         task.task_id
@@ -1293,7 +1300,7 @@ ${preScanSection}`;
             if (!messages || messages.length === 0) return '';
             // 从后往前找最后一条 assistant 消息
             for (let i = messages.length - 1; i >= 0; i--) {
-                const msg = messages[i] as Record<string, unknown>;
+                const msg = messages[i] as unknown as Record<string, unknown>;
                 if (msg['role'] === 'assistant') {
                     const content = msg['content'];
                     if (typeof content === 'string') return content;

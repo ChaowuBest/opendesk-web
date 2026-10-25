@@ -99,10 +99,9 @@ export function parseGoalCommandArgs(args: string): ParsedGoalCommand {
     const head = (firstSpace === -1 ? trimmed : trimmed.slice(0, firstSpace)).toLowerCase();
     const rest = firstSpace === -1 ? '' : trimmed.slice(firstSpace + 1);
 
-    if (head === 'help') {
-        return { kind: 'help' };
-    }
     if (isGoalSubcommand(head)) {
+        // help 已在守卫内单独分流，剩余子命令即 Exclude<GoalSubcommand, 'help'>
+        if (head === 'help') return { kind: 'help' };
         return { kind: 'subcommand', subcommand: head, rest };
     }
     return { kind: 'objective', objective: trimmed };

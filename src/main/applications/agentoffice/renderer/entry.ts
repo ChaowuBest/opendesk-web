@@ -2175,8 +2175,8 @@ export class AgentOfficeEntryWidget extends AgentOperableHTMLElement {
         // 服务运行状态与详情数据同批获取：若分开请求，先返回的结果会因 detail 尚未赋值被丢弃
         const [detail, skills, modelCatalog, serviceInfo] = await Promise.all([
             this.call<StaffDetail>('getStaffDetail', staffId),
-            this.call('listSkills', staffId),
-            this.call('listChatModels'),
+            this.call<StaffSkillSummary[]>('listSkills', staffId),
+            this.call<ModelCatalog>('listChatModels'),
             this.call<{ config: StaffLocalService; runtime: LocalServiceRuntime }>(
                 'getLocalServiceInfo',
                 staffId
@@ -2323,7 +2323,7 @@ export class AgentOfficeEntryWidget extends AgentOperableHTMLElement {
             body.textContent?.trim(),
             ...message.content
                 .filter((part) => part.type === 'resource' && part.media_type !== 'file')
-                .map((part) => part.name)
+                .map((part) => (part as { name?: string }).name)
         ]
             .filter((part): part is string => Boolean(part))
             .join('\n');

@@ -18,7 +18,9 @@ import {
     CompactSeparatorMessage,
     ToolCall,
     UserMessage,
+    isAssistantMessage,
     isCompactBoundaryMessage,
+    isUserMessage,
     type ChatMessage,
     type CompactBoundaryTrigger
 } from '../messages.js';
@@ -635,14 +637,6 @@ export function isSessionMemoryTemplateOnly(
     template: string = DEFAULT_SESSION_MEMORY_TEMPLATE
 ): boolean {
     return content.trim() === template.trim();
-}
-
-function isUserMessage(message: ChatMessage): message is UserMessage {
-    return message instanceof UserMessage || message.role === 'user';
-}
-
-function isAssistantMessage(message: ChatMessage): message is AssistantMessage {
-    return message instanceof AssistantMessage || message.role === 'assistant';
 }
 
 function getActiveContextForSessionMemory(chatContext: ChatContext): ActiveContextView {

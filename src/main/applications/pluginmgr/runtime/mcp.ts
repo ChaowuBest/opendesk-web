@@ -253,7 +253,7 @@ class PluginMcpRuntime {
                 env,
                 stderr: 'pipe'
             });
-            transport.stderr?.resume();
+            (transport.stderr as NodeJS.ReadableStream | null)?.resume();
             return transport;
         }
         const fetch = (url: URL | string, init?: RequestInit) =>

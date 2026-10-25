@@ -45,6 +45,7 @@ import {
     resolveStreamingToolCallsForTask
 } from '../task/tool-resolver.js';
 import type { TaskState } from '../states/tasks.js';
+import type { TaskStatus } from './types.js';
 import {
     getLLMRetryDelayMs,
     errorToMessage,
@@ -60,6 +61,15 @@ import {
     isNetworkConnectionError
 } from '../../utils/model-request-error.js';
 import { t } from '../../../locale/index.js';
+
+/**
+ * 读取任务的当前状态。await 间隙中任务可能被 stop / 新 turn 并发改变状态，
+ * 直接读 task.task_status 会受 TS 此前控制流窄化的影响而误报"比较无重叠"，
+ * 经由本函数取值以还原完整的 TaskStatus 联合。
+ */
+function currentTaskStatus(task: TaskState): TaskStatus {
+    return task.task_status;
+}
 
 function getAssistantResponseError(response: AssistantResponse): Error | undefined {
     if (response.finish_reason !== 'error') {
@@ -776,11 +786,11 @@ export async function processTaskCompletion(
                     );
                 }
                 if (!isCurrentTurn()) return false;
-                completionSucceeded = task.task_status !== 'stopped';
+                completionSucceeded = currentTaskStatus(task) !== 'stopped';
                 break;
             } catch (err: unknown) {
                 if (isContextLimitError(err)) {
-                    if (!isCurrentTurn() || task.task_status === 'stopped') return false;
+                    if (!isCurrentTurn() || currentTaskStatus(task) === 'stopped') return false;
                     assistant_message.rollbackToRoundStart();
                     assistant_message.usage = requestStartUsage;
                     try {
@@ -814,7 +824,7 @@ export async function processTaskCompletion(
                     if (isCurrentTurn()) await task.pauseForContextCompaction(err);
                     return false;
                 }
-                if (task.task_status === 'stopped' || task.getTurnGeneration() !== myGeneration) {
+                if (currentTaskStatus(task) === 'stopped' || task.getTurnGeneration() !== myGeneration) {
                     break;
                 }
 

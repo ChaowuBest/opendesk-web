@@ -1779,7 +1779,7 @@ export class WriteFileTool extends BaseTool<typeof writeFileSchema> {
     async executeCommand(args: z.output<typeof writeFileSchema>, taskState?: TaskState): Promise<string> {
         const filePath = sanitizeLocalPath(args.path, getWorkingDirectory(taskState));
         const validation = validateFileWasReadForWriteIfEnabled(taskState, filePath);
-        if (!validation.ok) {
+        if (validation.ok === false) {
             return validation.message;
         }
 
@@ -1945,7 +1945,7 @@ export class EditFileTool extends BaseTool<typeof editFileSchema> {
         const filePath = sanitizeLocalPath(args.filePath, getWorkingDirectory(taskState));
         const { oldString, newString, expectedReplacements = 1 } = args;
         const validation = validateFileWasReadForWriteIfEnabled(taskState, filePath);
-        if (!validation.ok) {
+        if (validation.ok === false) {
             return validation.message;
         }
 
@@ -2177,7 +2177,7 @@ export class SearchReplaceTool extends BaseTool<typeof searchReplaceSchema> {
         const filePath = sanitizeLocalPath(args.filePath, getWorkingDirectory(taskState));
         const { oldString, newString } = args;
         const validation = validateFileWasReadForWriteIfEnabled(taskState, filePath);
-        if (!validation.ok) {
+        if (validation.ok === false) {
             return validation.message;
         }
 

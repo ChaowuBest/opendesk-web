@@ -144,7 +144,8 @@ function buildLangfuseUserContent(message: UserMessage): LangfuseMessageContentI
             return {
                 type: 'file',
                 path: part.path,
-                content: part.content
+                // FileMessagePart 类型上无 content 字段，按运行时可能存在的扩展字段读取
+                content: (part as { content?: unknown }).content
             };
         }
         return { type: getMessagePartType(part), value: part };

@@ -53,7 +53,7 @@ const TRASH_TASK_DIR_PATTERN = /^[a-zA-Z0-9_-]{1,128}$/;
 
 /** 各平台系统回收站目录（Windows 返回 null，使用系统回收站窗口）。 */
 export function resolveOpenDeskTrashDirectory(): string | null {
-    if (process.platform === 'openharmony') {
+    if ((process.platform as string) === 'openharmony') {
         const runtime = getHarmonyRuntimeEnvironment();
         if (runtime) return path.join(getHarmonyHomeDirectory(runtime), 'Trash');
         return process.env.USER_DATA_PATH ? path.join(process.env.USER_DATA_PATH, 'Trash') : null;

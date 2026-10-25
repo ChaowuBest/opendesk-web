@@ -386,7 +386,7 @@ async function waitForTaskWithProgress(
     let lastProgressTime = 0;
 
     await task.waitUntilFinished((chunk) => {
-        extractSubTaskProgress(chunk, progress);
+        if (chunk.type === 'assistant') extractSubTaskProgress(chunk, progress);
         const now = Date.now();
         if (now - lastProgressTime >= PROGRESS_THROTTLE_MS) {
             lastProgressTime = now;

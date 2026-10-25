@@ -238,7 +238,7 @@ async function handleExportSkill(tui: OpenDeskTUI, restArgs: string): Promise<vo
     }
 
     const skillsDir = skillRegistry.getSkillsDirectory();
-    const skillDir = path.join(skillsDir, skill.name);
+    const skillDir = path.join(skillsDir, skill.name as string);
     if (!fs.existsSync(skillDir)) {
         const info = new InfoOverlay(tui, {
             title: t('export.skill.dir.not.exist'),

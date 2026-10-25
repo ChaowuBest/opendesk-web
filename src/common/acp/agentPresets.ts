@@ -56,7 +56,8 @@ export interface AcpAgentPresetDraft {
     timeouts: {
         connectMs: number;
         promptMs: number;
-        idleReleaseMs: number;
+        // preset 草稿可省略，交由 AcpTimeoutsSchema 的默认值填充
+        idleReleaseMs?: number;
     };
 }
 

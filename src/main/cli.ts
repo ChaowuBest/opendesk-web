@@ -178,9 +178,8 @@ function parseCommandLineArgs() {
         for (const opt of options) {
             const prefixedName = `${bundleName}-${opt.name}`;
             const optDef = new Option(`--${prefixedName} <value>`, opt.description || '').hideHelp();
-            if (opt.boolean) {
-                optDef.booleanNegatable(false);
-            }
+            // commander v14 已无 booleanNegatable API；`--<name> <value>` 形式本身不可被
+            // --no- 前缀否定（Option.negate 恒为 false），无需额外处理
             if (opt.defaultValue !== undefined) {
                 optDef.default(opt.defaultValue);
             }
@@ -351,7 +350,8 @@ function parseCommandLineArgs() {
             // --allow-everything 等价于 --mode unlimited
             mode: kwargs.allowEverything ? 'unlimited' : kwargs.mode,
             language: kwargs.language,
-            renderInterval: kwargs.renderInterval,
+            // --render-interval 的解析函数已 parseInt，运行时实际为 number
+            renderInterval: kwargs.renderInterval as unknown as number | undefined,
             resume: kwargs.resume,
             appCliOptions
         });
@@ -408,7 +408,8 @@ async function main(args: CommandLineArgs) {
         // 统一回收站：确保 trash/ 根目录存在，并清理超过 7 天无交互任务的回收站
         initializeTrash(() => {
             const state = GlobalState.getInstance().taskManagerState;
-            return new Map(state.getTaskList().map((task) => [task.task_id, task.updated_at] as const));
+            const tasks = state.getTaskList();
+            return new Map(tasks.map((task) => [task.task_id, task.updated_at] as const));
         });
         startTrashPreviewCleanupScheduler();
         await initializePluginHost();
@@ -442,7 +443,8 @@ async function main(args: CommandLineArgs) {
         // 统一回收站：确保 trash/ 根目录存在，并清理超过 7 天无交互任务的回收站
         initializeTrash(() => {
             const state = GlobalState.getInstance().taskManagerState;
-            return new Map(state.getTaskList().map((task) => [task.task_id, task.updated_at] as const));
+            const tasks = state.getTaskList();
+            return new Map(tasks.map((task) => [task.task_id, task.updated_at] as const));
         });
         startTrashPreviewCleanupScheduler();
 

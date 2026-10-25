@@ -334,7 +334,7 @@ function isZlibWrappedDeflate(prefix: Buffer): boolean {
 
 class AutoDeflateDecoder extends Transform {
     private decoder?: Transform;
-    private prefix = Buffer.alloc(0);
+    private prefix: Buffer = Buffer.alloc(0);
 
     private initializeDecoder(prefix: Buffer): Transform {
         const decoder = isZlibWrappedDeflate(prefix) ? zlib.createInflate() : zlib.createInflateRaw();
@@ -362,7 +362,7 @@ class AutoDeflateDecoder extends Transform {
             return;
         }
 
-        this.prefix = this.prefix.length === 0 ? input : Buffer.concat([this.prefix, input]);
+        this.prefix = this.prefix.length === 0 ? input : (Buffer.concat([this.prefix, input]) as Buffer);
         if (this.prefix.length < 2) {
             callback();
             return;
@@ -443,11 +443,12 @@ function createDecodedResponseBody(response: http.IncomingMessage, headers: Head
 
     headers.delete('content-encoding');
     headers.delete('content-length');
+    // pipeline 的 callback 重载声明返回 WritableStream，实际产物是解码后的可读流
     return pipeline([response, ...decoders], (error) => {
         if (error && error.code !== 'ABORT_ERR' && error.code !== 'ERR_STREAM_PREMATURE_CLOSE') {
             logger.warn(`[proxy-fetch] response decompression error: ${error.message}`);
         }
-    }) as Readable;
+    }) as unknown as Readable;
 }
 
 function responseHasBody(requestMethod: string, status: number): boolean {

@@ -18,7 +18,8 @@ import chalk from 'chalk';
 import {
     REASONING_EFFORT_CLI_TO_STORAGE,
     REASONING_EFFORT_CLI_TOKENS,
-    labelForStoredReasoningEffort
+    labelForStoredReasoningEffort,
+    type ReasoningEffort
 } from '../../../common/reasoning-effort.js';
 import { resolveModelReasoningEfforts } from '../../utils/model-context.js';
 import { t } from '../../../locale/index.js';
@@ -38,7 +39,9 @@ function getSupportedEffortTokens(): string[] {
         return [...REASONING_EFFORT_CLI_TOKENS];
     }
     const supportedValues = resolveModelReasoningEfforts(model);
-    return REASONING_EFFORT_CLI_TOKENS.filter((opt) => supportedValues.includes(REASONING_EFFORT_CLI_TO_STORAGE[opt]!));
+    return REASONING_EFFORT_CLI_TOKENS.filter((opt) =>
+        supportedValues.includes(REASONING_EFFORT_CLI_TO_STORAGE[opt]! as ReasoningEffort)
+    );
 }
 
 export function registerReasonCommand(tui: OpenDeskTUI): void {
@@ -103,7 +106,8 @@ export function registerReasonCommand(tui: OpenDeskTUI): void {
                     cliConfig?.show_all_reasoning === true || cliConfig?.reason_display === 'full' ? 'full' : 'partial';
                 const currentModelAlias = setting.data.default_model;
                 const currentModel = setting.data.models.find((m) => m.alias === currentModelAlias);
-                const currentEffort = currentModel?.reasoning_effort || '';
+                // models 是 chat/embedding 判别联合，reasoning_effort 仅对话模型持有
+                const currentEffort = currentModel?.model_type === 'chat' ? currentModel.reasoning_effort : '';
 
                 const lines: string[] = [];
                 lines.push(chalk.bold(t('reason.current.title') + ':'));
@@ -178,9 +182,12 @@ export function registerReasonCommand(tui: OpenDeskTUI): void {
                     return;
                 }
 
-                // 更新模型的 reasoning_effort
-                setting.data.models[modelIndex].reasoning_effort = effortValue as
-                    '' | 'none' | 'low' | 'medium' | 'high' | 'max';
+                // 更新模型的 reasoning_effort。默认模型若为向量嵌入模型则无此字段，
+                // 沿用既有行为直接写入，不做运行时分支
+                const targetModel = setting.data.models[modelIndex] as (typeof setting.data.models)[number] & {
+                    reasoning_effort: ReasoningEffort;
+                };
+                targetModel.reasoning_effort = effortValue as ReasoningEffort;
                 setting.save();
 
                 const effortLabel = labelForStoredReasoningEffort(effortValue, t);

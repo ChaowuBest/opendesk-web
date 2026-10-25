@@ -9,7 +9,7 @@
  * See the Mulan PSL v2 for more details.
  */
 
-import chalk, { Chalk } from 'chalk';
+import chalk, { type ChalkInstance } from 'chalk';
 import { type Component, visibleWidth, truncateToWidth } from '@earendil-works/pi-tui';
 
 /**
@@ -49,7 +49,7 @@ export interface BorderConfig {
     /** 边框样式 */
     style?: BorderStyle;
     /** 边框颜色函数，默认 chalk.dim */
-    colorFn?: Chalk;
+    colorFn?: ChalkInstance;
 }
 
 export interface CardOptions {

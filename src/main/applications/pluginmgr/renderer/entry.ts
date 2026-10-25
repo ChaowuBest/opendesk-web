@@ -29,6 +29,7 @@ import { renderSafeMarkdown } from '../../../../renderer/utils/markdown.js';
 import { showConfirmModal } from '../../../../renderer/components/confirmModal.js';
 import { OPENDESK_THEME_CHANGED } from '../../../../renderer/theme/theme-iframe-bridge.ts';
 import { syncShadowHostTheme } from '../../../../renderer/theme/theme-shadow-overrides.ts';
+import type { ThemeAppearance } from '../../../../renderer/theme/theme-manager.js';
 
 interface PluginRuntimeEntry {
     id: string;
@@ -1151,9 +1152,9 @@ export class PluginMgrEntryWidget extends HTMLElement {
     private render(): void {
         syncShadowHostTheme(
             this,
-            this.dataset.theme ||
+            (this.dataset.theme ||
                 document.documentElement.dataset.theme ||
-                this.closest('[data-theme]')?.getAttribute('data-theme')
+                this.closest('[data-theme]')?.getAttribute('data-theme')) as ThemeAppearance | undefined
         );
         const builtinEntries = this.entries.filter((entry) => entry.source === 'builtin');
         const installedEntries = this.entries.filter((entry) => entry.source !== 'builtin');

@@ -105,6 +105,12 @@ export interface DashboardData {
     mailAccounts?: MailAccountInfo[];
 }
 
+// GlobalTodo 已改用 completed_at 表达完成态（无 status 字段），这里派生展示用的状态，
+// 修复仪表盘对已删除的 todo.status 的读取
+function getTodoDisplayStatus(todo: GlobalTodo): 'pending' | 'completed' {
+    return todo.completed_at ? 'completed' : 'pending';
+}
+
 export class DashboardOverlay implements Component {
     private openDeskTUI: OpenDeskTUI;
     private list: SelectList;
@@ -260,7 +266,7 @@ class DashboardRenderer implements Component {
         const todos = this.data.globalTodos;
         const tasks = this.data.tasks;
 
-        const activeTodos = todos.filter((t) => t.status !== 'completed').length;
+        const activeTodos = todos.filter((t) => getTodoDisplayStatus(t) !== 'completed').length;
         const cronTodos = todos.filter((t) => t.trigger?.type === 'cron').length;
         const eventTodos = todos.filter((t) => t.trigger?.type === 'event').length;
         const runningTasks = tasks.filter((t) => t.task_status === 'running').length;
@@ -378,8 +384,8 @@ class DashboardRenderer implements Component {
 
     private renderTodosPanel(W: number): string[] {
         const todos = this.data.globalTodos;
-        const active = todos.filter((t) => t.status !== 'completed').length;
-        const done = todos.filter((t) => t.status === 'completed').length;
+        const active = todos.filter((t) => getTodoDisplayStatus(t) !== 'completed').length;
+        const done = todos.filter((t) => getTodoDisplayStatus(t) === 'completed').length;
 
         const body: string[] = [];
         if (todos.length === 0) {
@@ -409,7 +415,8 @@ class DashboardRenderer implements Component {
             in_progress: C.neon('▶'),
             pending: C.ghost('▷')
         };
-        const icon = statusIcons[todo.status] || C.ghost('▷');
+        const status = getTodoDisplayStatus(todo);
+        const icon = statusIcons[status] || C.ghost('▷');
 
         const priorityFn: Record<string, (s: string) => string> = {
             high: C.red,
@@ -436,7 +443,7 @@ class DashboardRenderer implements Component {
 
         // 优先显示 title，如果没有则显示 content（兼容旧数据）
         const displayText = todo.title || todo.content;
-        const content = todo.status === 'completed' ? chalk.strikethrough(C.dim(displayText)) : C.text(displayText);
+        const content = status === 'completed' ? chalk.strikethrough(C.dim(displayText)) : C.text(displayText);
 
         // 计算布局: icon pTag content ... triggerTag
         const leftPart = `  ${icon} ${pTag} ${content}`;

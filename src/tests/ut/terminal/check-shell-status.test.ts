@@ -256,3 +256,20 @@ describe('CheckShellStatusTool poll throttle', () => {
         expect(third.result).toContain('进程状态: 已完成');
     });
 });
+
+describe('CheckShellStatusTool.renderToolCallCli', () => {
+    test('renders long tool output without crashing and keeps only the last 10 lines', () => {
+        const tool = new CheckShellStatusTool('powershell', false);
+        const lines = Array.from({ length: 25 }, (_, i) => `line-${i + 1}`);
+        const rendered = tool.renderToolCallCli(
+            { args_object: { pid: 60001 }, result: lines.join('\n'), status: 'completed' } as any,
+            80
+        );
+
+        expect(rendered).toBeDefined();
+        const text = rendered!.join('\n');
+        expect(text).toContain('共 25 行');
+        expect(text).toContain('line-25');
+        expect(text).not.toContain('line-15');
+    });
+});

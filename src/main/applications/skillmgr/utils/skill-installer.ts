@@ -663,7 +663,7 @@ export class RegistrySlugInstaller extends SkillSourceInstaller {
 
 // ── 注册表搜索辅助（模块私有） ───────────────────────────────────────────
 
-function normalizeRegistryName(registryName: string): import('./registry/index.js').SkillRegistryBase | undefined {
+function normalizeRegistryName(registryName: string): import('../registry/index.js').SkillRegistryBase | undefined {
     const expected = String(registryName || '')
         .trim()
         .toLowerCase();
@@ -679,14 +679,14 @@ function normalizeRegistryToken(value: string): string {
 }
 
 function getRegistrySkillFullName(
-    registry: import('./registry/index.js').SkillRegistryBase,
+    registry: import('../registry/index.js').SkillRegistryBase,
     skill: RegistrySkill
 ): string {
     return `${registry.id}/${skill.name || skill.id || ''}`;
 }
 
 function mapRegistrySkill(
-    registry: import('./registry/index.js').SkillRegistryBase,
+    registry: import('../registry/index.js').SkillRegistryBase,
     skill: RegistrySkill
 ): RegistrySearchSkill {
     const skillName = String(skill.name || skill.id || '');
@@ -710,7 +710,7 @@ function mapRegistrySkill(
 }
 
 function normalizeRequestedRegistrySkillName(
-    registry: import('./registry/index.js').SkillRegistryBase,
+    registry: import('../registry/index.js').SkillRegistryBase,
     skillName: string
 ): { query: string; error?: string } {
     const raw = String(skillName || '').trim();
@@ -734,7 +734,7 @@ function normalizeRequestedRegistrySkillName(
 }
 
 function isExactRegistrySkillMatch(
-    registry: import('./registry/index.js').SkillRegistryBase,
+    registry: import('../registry/index.js').SkillRegistryBase,
     skill: RegistrySkill,
     query: string
 ): boolean {
@@ -758,7 +758,7 @@ function scoreSearchRelevance(skill: RegistrySearchSkill, query: string): number
 }
 
 function scoreRegistrySkillMatch(
-    registry: import('./registry/index.js').SkillRegistryBase,
+    registry: import('../registry/index.js').SkillRegistryBase,
     skill: RegistrySkill,
     query: string
 ): number {

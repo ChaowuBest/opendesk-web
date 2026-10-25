@@ -408,7 +408,7 @@ export default class McpMgrWorker extends BaseWorker {
                     env,
                     stderr: 'pipe' // 捕获子进程stderr，避免泄漏到主进程stdout/stderr
                 });
-                transport.stderr?.resume();
+                (transport.stderr as NodeJS.ReadableStream | null)?.resume();
                 return transport;
             }
             case 'sse': {

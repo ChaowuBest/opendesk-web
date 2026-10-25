@@ -35,59 +35,8 @@ interface ProviderTemplate {
     provider_type?: 'openai' | 'anthropic';
 }
 
-interface SettingProvider {
-    name: string;
-    provider_type?: 'openai' | 'anthropic';
-    base_url: string;
-    api_key: string;
-    no_proxy: boolean;
-    no_ssl: boolean;
-}
-
-interface SettingModel {
-    alias: string;
-    provider_name: string;
-    model_name: string;
-    model_type?: 'chat' | 'embedding';
-    reasoning_effort: string;
-}
-
-interface SettingData {
-    providers: SettingProvider[];
-    models: SettingModel[];
-    default_model: string;
-    debug?: {
-        experimental_features?: {
-            account?: boolean;
-        };
-    };
-    [key: string]: unknown;
-}
-
 declare global {
     interface Window {
-        settingAPI: {
-            getProviderTemplates(): Promise<ProviderTemplate[]>;
-            fetchProviderModels(params: {
-                base_url: string;
-                api_key: string;
-                provider_type?: 'openai' | 'anthropic';
-                no_proxy?: boolean;
-                no_ssl?: boolean;
-            }): Promise<string[]>;
-            loadSettingObject(): Promise<SettingData>;
-            saveSettingObject(data: SettingData): Promise<void>;
-            verifyModel(params: {
-                base_url: string;
-                api_key: string;
-                provider_type?: 'openai' | 'anthropic';
-                model_name: string;
-                model_type?: 'chat' | 'embedding';
-                custom_headers?: Record<string, string>;
-                no_proxy?: boolean;
-                no_ssl?: boolean;
-            }): Promise<boolean>;
-        };
         globalControlAPI: {
             openHomePage(skipWizard?: boolean): void;
             openWizard(): void;
@@ -111,7 +60,7 @@ class SetupWizard extends HTMLElement {
     private readonly totalSteps = 3;
     private loginChoice: LoginChoice | null = 'nologin';
     private providerTemplates: ProviderTemplate[] = [];
-    private currentData: SettingData | null = null;
+    private currentData: LoadedSettingObject | null = null;
     private _verifying = false;
     private t = createRendererTranslator();
     // 企业账号：先输入服务器地址，再进入登录表单

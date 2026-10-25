@@ -464,7 +464,7 @@ export class SkillRegistry {
 
     // ── 查询 ──────────────────────────────────────────────────────────────
 
-    listSkills(): Array<Record<string, unknown>> {
+    listSkills(): Array<{ id: string } & Record<string, unknown>> {
         if (this.skillsCache.size === 0) this.loadAll();
         // 目录路径循环外取一次：getSkillsDirectory 含 existsSync 探测，逐 skill 调用会造成无谓 IO
         const skillsDir = this.getSkillsDirectory();

@@ -10,7 +10,7 @@
  */
 
 import type { OpenDeskTUI } from '../entry.js';
-import type { AutocompleteItem } from '@earendil-works/pi-tui';
+import type { AutocompleteItem, Component } from '@earendil-works/pi-tui';
 import { Box, Text } from '@earendil-works/pi-tui';
 import { InfoOverlay } from '../components/notice.js';
 import { SelectTable, type SelectRow } from '../components/selecttable.js';

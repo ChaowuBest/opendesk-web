@@ -170,14 +170,20 @@ describe('trash floating window scope switch', () => {
     });
 
     test('切换范围后若请求失败，展示加载失败状态而非残留旧列表', async () => {
-        await openTaskScope();
+        // 组件对搜索失败会 console.error 记录原因，失败路径正是本用例要验证的行为，静默即可
+        const errorSpy = jest.spyOn(console, 'error').mockImplementation(() => {});
+        try {
+            await openTaskScope();
 
-        searchMock.mockRejectedValueOnce(new Error('boom'));
-        scopeCheckbox.checked = false;
-        scopeCheckbox.dispatchEvent(new window.Event('change'));
-        await flush();
+            searchMock.mockRejectedValueOnce(new Error('boom'));
+            scopeCheckbox.checked = false;
+            scopeCheckbox.dispatchEvent(new window.Event('change'));
+            await flush();
 
-        expect(listEl.textContent).toContain('加载回收站失败');
+            expect(listEl.textContent).toContain('加载回收站失败');
+        } finally {
+            errorSpy.mockRestore();
+        }
     });
 
     test('每个条目在文件名下以小字显示完整原始路径', async () => {

@@ -129,7 +129,7 @@ export class TaskProfiler {
      * 支持并发工具调用，不再依赖单一 currentEntry。
      */
     beginTool(toolName: string, turn: number): number {
-        const token = this.entries.length + this._pendingTools.length;
+        const token = this.entries.length + this._pendingTools.size;
         this._pendingTools.set(token, {
             category: 'tool_call',
             name: toolName,

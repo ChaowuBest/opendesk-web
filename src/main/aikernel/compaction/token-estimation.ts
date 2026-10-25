@@ -16,7 +16,9 @@ import {
     ToolCall,
     type UsageFields,
     UserMessage,
+    isAssistantMessage,
     isCompactBoundaryMessage,
+    isUserMessage,
     type SystemMessage
 } from '../messages.js';
 import type { ActiveContextView } from './types.js';
@@ -48,14 +50,6 @@ export interface VisibleContextTokenEstimationInput extends RoughTokenEstimation
     activeContext?: Pick<ActiveContextView, 'messages'> &
         Partial<Pick<ActiveContextView, 'boundary' | 'leadingPartialAssistant'>>;
     messages?: ReadonlyArray<ChatMessage>;
-}
-
-function isUserMessage(message: ChatMessage): message is UserMessage {
-    return message instanceof UserMessage || message.role === 'user';
-}
-
-function isAssistantMessage(message: ChatMessage): message is AssistantMessage {
-    return message instanceof AssistantMessage || message.role === 'assistant';
 }
 
 function normalizeOptionalNonNegativeInteger(value: unknown): number | undefined {

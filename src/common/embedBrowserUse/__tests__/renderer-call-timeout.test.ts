@@ -25,11 +25,14 @@ describe('renderer bridge call timeout & queue recovery', () => {
 
     beforeEach(() => {
         jest.useFakeTimers();
+        // watchdog 触发自愈时会 console.warn 说明恢复动作，该路径正是被测行为，静默即可
+        jest.spyOn(console, 'warn').mockImplementation(() => {});
         disposeSpies = [];
     });
 
     afterEach(() => {
         for (const spy of disposeSpies) spy.mockRestore();
+        jest.restoreAllMocks();
         jest.clearAllTimers();
         jest.useRealTimers();
     });

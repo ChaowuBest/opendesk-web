@@ -13,7 +13,9 @@ import {
     AssistantMessage,
     CompactSeparatorMessage,
     UserMessage,
+    isAssistantMessage,
     isCompactBoundaryMessage,
+    isUserMessage,
     type CompactBoundaryTrigger,
     ChatContext,
     type ChatMessage
@@ -216,14 +218,6 @@ function normalizeOptions(options: FullCompactPlanOptions): NormalizedFullCompac
             DEFAULT_FULL_COMPACT_MIN_MESSAGES_TO_SUMMARIZE
         )
     };
-}
-
-function isUserMessage(message: ChatMessage): message is UserMessage {
-    return message instanceof UserMessage || message.role === 'user';
-}
-
-function isAssistantMessage(message: ChatMessage): message is AssistantMessage {
-    return message instanceof AssistantMessage || message.role === 'assistant';
 }
 
 function getAssistantToolCallCount(message: AssistantMessage): number {

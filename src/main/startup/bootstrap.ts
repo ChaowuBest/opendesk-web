@@ -14,3 +14,6 @@
 // 无需再通过「带 --js-flags 重启子进程」的方式注入堆上限 —— 那会额外
 // 常驻一层什么也不干的 bootstrap 空壳进程（约 40~50MB 私有内存）。
 await import('../main.js');
+
+// 顶层 await 入口：声明为模块以启用 ESM 顶层 await 语义
+export {};

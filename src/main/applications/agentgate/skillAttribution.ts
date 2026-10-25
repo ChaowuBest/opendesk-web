@@ -302,7 +302,8 @@ export async function attributeBatchInterceptions(
 
         // 创建 ChatContext
         const attributionContext = new ChatContext();
-        attributionContext.appendMessage(new SystemMessage(BATCH_ATTRIBUTION_SYSTEM_PROMPT));
+        // SystemMessage 不在 ChatMessage 联合中，系统提示走 ChatContext.system_prompt 专用通道
+        attributionContext.system_prompt = new SystemMessage(BATCH_ATTRIBUTION_SYSTEM_PROMPT);
         attributionContext.appendMessage(new UserMessage(userPrompt));
 
         // 调用 LLM
@@ -478,7 +479,7 @@ export async function attributeInterception(
 
         // 创建临时的 ChatContext 用于 LLM 归因调用
         const attributionContext = new ChatContext();
-        attributionContext.appendMessage(new SystemMessage(ATTRIBUTION_SYSTEM_PROMPT));
+        attributionContext.system_prompt = new SystemMessage(ATTRIBUTION_SYSTEM_PROMPT);
         attributionContext.appendMessage(new UserMessage(userPrompt));
 
         // 使用任务当前的 model 进行归因

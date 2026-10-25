@@ -32,9 +32,12 @@ function makeWebContents(sendCommandImpl: (method: string, params: any) => Promi
 describe('CDPSession command timeout', () => {
     beforeEach(() => {
         jest.useFakeTimers();
+        // 超时/恢复路径的实现会 console.warn 记录原因，这正是被测行为，静默即可
+        jest.spyOn(console, 'warn').mockImplementation(() => {});
     });
 
     afterEach(() => {
+        jest.restoreAllMocks();
         jest.clearAllTimers();
         jest.useRealTimers();
     });

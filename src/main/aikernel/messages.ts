@@ -2681,6 +2681,19 @@ export function isCompactBoundaryMessage(message: unknown): message is CompactSe
 export type ChatMessage = UserMessage | AssistantMessage | CompactSeparatorMessage;
 
 /**
+ * 判定用户消息。role 判别优先（兼容反序列化出的无原型对象），
+ * instanceof 兜底跨实例/原型恢复场景（如 UserMessage.assign）。
+ */
+export function isUserMessage(message: ChatMessage): message is UserMessage {
+    return message.role === 'user' || message instanceof UserMessage;
+}
+
+/** 判定助手消息，判别策略同 isUserMessage。 */
+export function isAssistantMessage(message: ChatMessage): message is AssistantMessage {
+    return message.role === 'assistant' || message instanceof AssistantMessage;
+}
+
+/**
  * Chat context for a chat session
  */
 export class ChatContext {

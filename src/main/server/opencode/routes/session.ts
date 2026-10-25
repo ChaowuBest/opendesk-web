@@ -25,7 +25,12 @@ import { ServerPermissionBroker } from '../permission-broker.js';
 import { ServerQuestionBroker } from '../question-broker.js';
 import { Setting } from '../../../utils/setting.js';
 import iconv from 'iconv-lite';
-import { isCompactBoundaryMessage, type CompactSeparatorMessage } from '../../../aikernel/messages.js';
+import {
+    isCompactBoundaryMessage,
+    type CompactSeparatorMessage,
+    type UserMessagePart,
+    type AssistantMessagePart
+} from '../../../aikernel/messages.js';
 import {
     getRequestOrTaskWorkspace,
     getRequestWorkspace,
@@ -1913,7 +1918,7 @@ export function SessionRoutes(permissionRuntime?: ConfigPermissionRuntime) {
         if (limitStr) {
             const limit = parseInt(limitStr, 10);
             if (!isNaN(limit) && limit > 0 && result.length > limit) {
-                const cursor = result[result.length - limit].info.id;
+                const cursor = String(result[result.length - limit].info.id);
                 c.header('X-Next-Cursor', cursor);
                 c.header('Link', `<${c.req.url}&before=${encodeURIComponent(cursor)}>; rel="next"`);
                 result = result.slice(-limit);

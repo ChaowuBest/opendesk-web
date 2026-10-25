@@ -462,10 +462,11 @@ export class TaskManagerState {
             })
         );
         for (let i = 0; i < results.length; i++) {
-            if (results[i].status === 'rejected') {
+            const settled = results[i];
+            if (settled.status === 'rejected') {
                 // 写入失败：恢复 _dirty 以便下次重试，并记录错误原因
                 dirtyTasks[i]._dirty = true;
-                logger.error(`failed to persist task ${dirtyTasks[i].task_id}: ${results[i].reason}`);
+                logger.error(`failed to persist task ${dirtyTasks[i].task_id}: ${settled.reason}`);
             }
             // 写入成功：_dirty 保持 false。如果写入期间 persistLater() 被调用过，
             // _dirty 已经是 true，不会被本方法覆盖，数据会在下次写入中落盘。
@@ -617,7 +618,7 @@ export class TaskManagerState {
     /**
      * Get a simplified list of tasks. The renderer uses child task entries to
      * build nested sidebar groups, so this intentionally returns all tasks.
-     * @returns {object[]} the list of tasks
+     * @returns {SimplifiedTaskSnapshot[]} the list of tasks
      */
     getTaskList() {
         return this.tasks.map((task) => task.toSimplifiedJSON());

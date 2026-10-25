@@ -10,7 +10,7 @@
  */
 
 import { type Component, type TUI } from '@earendil-works/pi-tui';
-import { Setting } from '../../../utils/setting.js';
+import { Setting, type SettingData } from '../../../utils/setting.js';
 import { ConfigForm, type ActionDef, type FieldDef } from './form.js';
 import { t } from '../../../../locale/index.js';
 import { scanSupportedShells, selectSupportedShell } from '../../../applications/terminal/scan.js';
@@ -31,11 +31,15 @@ export class TaskConfigPage implements Component {
 
     private showForm() {
         const data = Setting.getInstance().getData();
-        const taskConfig = data.task_config ?? {
+        // 兜底对象补齐 shell 相关字段（与 schema 默认值一致），避免联合类型缺属性
+        const taskConfig: SettingData['task_config'] = data.task_config ?? {
             auto_retry: true,
             generate_taskname: true,
             termination_check: true,
-            evidence_card: false
+            evidence_card: false,
+            shell_path: '',
+            shell_sandboxed: false,
+            shell_sandbox_del_to_trash: false
         };
         const cliConfig = data.cli_config ?? { use_isolated_python: true, inherit_venv: true };
         const selectedShell = selectSupportedShell(this.shells, taskConfig);
@@ -149,7 +153,10 @@ export class TaskConfigPage implements Component {
                 auto_retry: true,
                 generate_taskname: true,
                 termination_check: true,
-                evidence_card: false
+                evidence_card: false,
+                shell_path: '',
+                shell_sandboxed: false,
+                shell_sandbox_del_to_trash: false
             }),
             auto_retry: values.auto_retry !== false,
             generate_taskname: values.generate_taskname !== false,
@@ -164,7 +171,7 @@ export class TaskConfigPage implements Component {
                 : data.task_config?.shell_sandbox_del_to_trash === true
         };
         data.cli_config = {
-            ...(data.cli_config ?? {}),
+            ...data.cli_config,
             use_isolated_python: values.use_isolated_python !== false,
             inherit_venv: values.inherit_venv !== false
         };

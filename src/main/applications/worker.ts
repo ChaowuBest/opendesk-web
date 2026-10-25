@@ -44,7 +44,7 @@ export function initializeAppWorkers() {
             continue;
         }
 
-        const app = new APPLICATION_CLASS();
+        const app = new (APPLICATION_CLASS as unknown as new () => { bundleName: string })();
         const appDataDir = path.join(getOpendeskDirectory(), 'apps', app.bundleName);
         const appWorker = new WORKER_CLASS(app.bundleName, appDataDir);
         appWorkers.set(app.bundleName, appWorker);
@@ -91,7 +91,7 @@ export async function handleWorkerRequest(
     const { bundleName, requestId, methodName, args, stream } = message;
 
     if (message.type === 'response') {
-        BaseWorker.handleAppResponse(message);
+        BaseWorker.handleAppResponse(message as Parameters<typeof BaseWorker.handleAppResponse>[0]);
         return;
     }
 

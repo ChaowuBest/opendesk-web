@@ -113,7 +113,11 @@ function limitString(value: string, maxChars: number): string {
 }
 
 function toJsonSafe(value: unknown, maxChars: number, seen = new WeakSet<object>()): JsonValue {
-    if (value === null || typeof value === 'boolean' || typeof value === 'number') {
+    // strictNullChecks 关闭时，把 === null 混入 typeof 链会阻断整条判断的收窄，需单独判断
+    if (value === null) {
+        return null;
+    }
+    if (typeof value === 'boolean' || typeof value === 'number') {
         return value;
     }
     if (typeof value === 'string') {

@@ -25,6 +25,8 @@
  * 同步逻辑只增量替换自己上一轮贡献的实例。
  */
 
+import type { RegistryFilterDef } from './base.js';
+
 export type { RegistrySkill, SearchResult, SearchOptions, RegistryFilterDef } from './base.js';
 export { SkillRegistryBase } from './base.js';
 export { ContributedSkillRegistry, ProxySkillRegistry, type PluginSkillRegistryInfo } from './contributed.js';

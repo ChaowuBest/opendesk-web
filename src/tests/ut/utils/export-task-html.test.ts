@@ -2,6 +2,7 @@ import fs from 'fs';
 import os from 'os';
 import path from 'path';
 import { pathToFileURL } from 'url';
+import { jest } from '@jest/globals';
 import { saveTaskExportHtml } from '../../../main/utils/export-html-writer.js';
 
 describe('saveTaskExportHtml', () => {
@@ -30,14 +31,20 @@ describe('saveTaskExportHtml', () => {
     });
 
     test('无法解析的字体 URL 保持原样', async () => {
-        const html = `<html><style>@font-face { src: url(https://fonts.example.com/a.woff2) }</style></html>`;
-        const target = path.join(tempDir, 'task.html');
+        // 实现对无法内联的字体 URL 会 console.warn 提示，该降级路径正是本用例验证的行为
+        const warnSpy = jest.spyOn(console, 'warn').mockImplementation(() => {});
+        try {
+            const html = `<html><style>@font-face { src: url(https://fonts.example.com/a.woff2) }</style></html>`;
+            const target = path.join(tempDir, 'task.html');
 
-        await saveTaskExportHtml(target, html, ['https://fonts.example.com/a.woff2']);
+            await saveTaskExportHtml(target, html, ['https://fonts.example.com/a.woff2']);
 
-        const written = fs.readFileSync(target, 'utf-8');
-        expect(written).toContain('https://fonts.example.com/a.woff2');
-        expect(written).not.toContain('data:');
+            const written = fs.readFileSync(target, 'utf-8');
+            expect(written).toContain('https://fonts.example.com/a.woff2');
+            expect(written).not.toContain('data:');
+        } finally {
+            warnSpy.mockRestore();
+        }
     });
 
     test('fontUrls 缺省或非数组时不影响写盘', async () => {

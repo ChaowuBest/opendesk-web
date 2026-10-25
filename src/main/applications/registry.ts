@@ -264,7 +264,14 @@ export class ApplicationRegistry {
     static async listAvailableToolsets(taskState?: TaskState): Promise<BaseToolset[]> {
         const result: BaseToolset[] = [];
         for (const application of this.applications.values()) {
-            result.push(...(await application.getToolsets(taskState)));
+            // 部分应用实现接受可选 taskState（超集签名），按宽签名转发。
+            // 实现内部普遍读取 this（如 SearchApplication.getToolsets 调 this.normalizeConfig()），
+            // 必须以 application 为 this 调用，摘成裸函数会把 this 丢成 undefined
+            const getToolsets = application.getToolsets as (
+                this: BaseApplication,
+                taskState?: TaskState
+            ) => Promise<BaseToolset[]>;
+            result.push(...(await getToolsets.call(application, taskState)));
         }
 
         return result;
@@ -512,9 +519,9 @@ function spawnGlobalWorker(runtimeOptions: WorkerRuntimeOptions) {
         }
     };
 
-    worker.on('error', (error) => {
+    worker.on('error', (error: unknown) => {
         logger.error('global worker error:', error);
-        handleWorkerFailure(error);
+        handleWorkerFailure(error instanceof Error ? error : new Error(String(error)));
     });
 
     worker.on('exit', (code) => {

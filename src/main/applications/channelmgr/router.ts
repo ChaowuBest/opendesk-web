@@ -11,7 +11,13 @@
 
 import type { TaskManagerState, TaskState } from '../../aikernel/states/tasks.js';
 import { HarnessContext } from '../../aikernel/security/harness.js';
-import { UserMessage, AssistantMessage, ImageMessagePart, imageToDataUri } from '../../aikernel/messages.js';
+import {
+    UserMessage,
+    AssistantMessage,
+    ImageMessagePart,
+    imageToDataUri,
+    type TextMessagePart
+} from '../../aikernel/messages.js';
 import { ApplicationRegistry } from '../registry.js';
 import { BaseToolset } from '../../aikernel/tool.js';
 import { logger } from '../../utils/logger.js';

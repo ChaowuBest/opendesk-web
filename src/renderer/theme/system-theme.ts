@@ -47,7 +47,8 @@ export function detectPlatform(): SupportedPlatform {
     if (forced === 'ohos' || forced === 'darwin' || forced === 'win32' || forced === 'linux') {
         return forced;
     }
-    if (process.platform === 'ohos' || process.platform === 'openharmony') return 'ohos';
+    // 鸿蒙 Node 移植的 process.platform 为 'ohos' / 'openharmony'，不在 Node 官方类型联合里
+    if ((process.platform as string) === 'ohos' || (process.platform as string) === 'openharmony') return 'ohos';
     if (process.platform === 'darwin') return 'darwin';
     if (process.platform === 'win32') return 'win32';
     return 'linux';

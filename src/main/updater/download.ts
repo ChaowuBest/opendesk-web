@@ -62,18 +62,15 @@ export async function downloadInstaller(options: DownloadInstallerOptions): Prom
     const stalled = new Promise<never>((_, reject) => {
         stallReject = reject;
     });
-    let stallTimer: NodeJS.Timeout | undefined;
+    // 含 DOM lib 时 setTimeout 统一返回 number（@types/node 的 node:timers 亦 re-export 全局版）
+    let stallTimer: ReturnType<typeof setTimeout> | undefined;
     const resetStallWatchdog = () => {
         if (stallTimeoutMs <= 0) return;
         clearTimeout(stallTimer);
-        stallTimer = setTimeout(
-            () => {
-                controller.abort();
-                stallReject?.(new Error('Installer download stalled with no progress'));
-            },
-            stallTimeoutMs,
-            { unref: true }
-        );
+        stallTimer = setTimeout(() => {
+            controller.abort();
+            stallReject?.(new Error('Installer download stalled with no progress'));
+        }, stallTimeoutMs);
     };
     resetStallWatchdog();
 

@@ -89,7 +89,8 @@ export class SlashCommandRegistry {
         }));
     }
 
-    static formatKeyLabel(key: KeyId): string {
+    // 快捷键来自用户配置（setting schema 中为 string），这里接受任意字符串并做展示格式化
+    static formatKeyLabel(key: string): string {
         return key
             .split('+')
             .map((part) => {

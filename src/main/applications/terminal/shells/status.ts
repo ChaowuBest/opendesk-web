@@ -15,7 +15,7 @@ import { escapeHtml } from '../../../../common/utils/escape.js';
 import stripAnsi from 'strip-ansi';
 import chalk from 'chalk';
 import { Card } from '../../../tui/components/card.js';
-import { statusDisplay } from '../../../tui/components/toolcall.js';
+import { statusDisplay, MAX_CLI_OUTPUT_LINES } from '../../../tui/components/toolcall.js';
 import { z } from 'zod';
 import {
     BackgroundProcessManager,

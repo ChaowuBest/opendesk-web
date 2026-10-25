@@ -257,7 +257,7 @@ function parseWorkflowAgentRequest(value: WorkflowJSONValue): WorkflowAgentReque
     ) {
         throw new Error('Workflow agent allowedTools 必须是工具名称数组。');
     }
-    const disallowedTools = collectDisallowedWorkflowAgentTools(allowedTools ?? []);
+    const disallowedTools = collectDisallowedWorkflowAgentTools((allowedTools ?? []) as string[]);
     if (disallowedTools.length > 0) {
         throw new Error(`Workflow agent 不能使用嵌套 Agent 或代码执行工具：${disallowedTools.join(', ')}。`);
     }
@@ -280,11 +280,11 @@ function parseWorkflowAgentRequest(value: WorkflowJSONValue): WorkflowAgentReque
     return {
         prompt: value.prompt,
         ...(typeof value.title === 'string' ? { title: value.title } : {}),
-        ...(allowedTools === undefined ? {} : { allowedTools: [...allowedTools] }),
-        ...(reasoningEffort === undefined ? {} : { reasoningEffort }),
+        ...(allowedTools === undefined ? {} : { allowedTools: [...(allowedTools as string[])] }),
+        ...(reasoningEffort === undefined ? {} : { reasoningEffort: reasoningEffort as 'low' | 'medium' | 'high' }),
         ...(typeof value.model === 'string' ? { model: value.model } : {}),
         ...(outputSchema === undefined ? {} : { outputSchema: structuredClone(outputSchema) })
-    };
+    } as WorkflowAgentRequest;
 }
 
 export function resolveWorkflowRuntimeWorkerPath(baseUrl: string | URL = import.meta.url): string {

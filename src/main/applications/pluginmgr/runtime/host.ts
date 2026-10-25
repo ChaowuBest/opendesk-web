@@ -37,7 +37,6 @@ import type {
     PluginMcpServerDefinition,
     PluginStaticResources,
     PluginAppearanceState,
-    PluginLocalizedText,
     PluginLocalizedTextMap,
     Channel,
     ChannelAccount

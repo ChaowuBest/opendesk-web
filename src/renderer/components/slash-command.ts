@@ -200,7 +200,7 @@ async function executeGoalSubcommand(
     taskId: string
 ): Promise<void> {
     const validation = validateGoalSubcommandArgs(subcommand, rest);
-    if (!validation.ok) {
+    if (validation.ok === false) {
         await showGoalResult({ ok: false, messageKey: validation.messageKey });
         return;
     }

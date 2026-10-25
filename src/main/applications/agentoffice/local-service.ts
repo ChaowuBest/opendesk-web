@@ -587,13 +587,17 @@ export class StaffLocalServiceManager {
                         // HTTPS 模式用现场生成的自签名证书创建 TLS 服务器，否则用默认 HTTP。
                         // 注意 hono 以 (serverOptions, requestListener) 两个参数调用该工厂，
                         // 不能只接收监听器，否则会创建一个没有请求处理器的服务器
-                        createServer: (serverOptions, requestListener) =>
+                        // hono 期待 http.createServer 的多重载签名；这里按 (options, listener) 工厂实现并断言收口
+                        createServer: ((serverOptions: unknown, requestListener: unknown) =>
                             tlsOptions
-                                ? (createHttpsServer(
-                                      { ...tlsOptions, ...serverOptions },
-                                      requestListener
-                                  ) as unknown as HttpServer)
-                                : createHttpServer(serverOptions, requestListener)
+                                ? createHttpsServer(
+                                      { ...tlsOptions, ...(serverOptions as object) },
+                                      requestListener as never
+                                  )
+                                : createHttpServer(
+                                      serverOptions as never,
+                                      requestListener as never
+                                  )) as unknown as typeof createHttpServer
                     },
                     () => {
                         if (settled) return;

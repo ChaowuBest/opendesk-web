@@ -25,6 +25,10 @@ export interface DynamicSandboxLaunch {
     file: string;
     args: string[];
     cwd?: string;
+    /** 附加环境变量（与继承环境合并） */
+    env?: Record<string, string>;
+    /** macOS watchdog 依赖独立进程组（POSIX setpgid）时置 true */
+    detached?: boolean;
     attach: (process: ChildProcess) => void;
     cleanup: () => Promise<void>;
 }

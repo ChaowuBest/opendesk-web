@@ -167,6 +167,9 @@ export class TelemetryConfigPage implements Component {
         };
     }
 
+    // 依据传入的 protocol 字面量收窄返回类型，避免 OpenTelemetry/Langfuse 端点联合
+    private getEditingEndpoint(protocol: 'opentelemetry'): OpenTelemetryEndpoint | undefined;
+    private getEditingEndpoint(protocol: 'langfuse'): LangfuseEndpoint | undefined;
     private getEditingEndpoint(protocol: EndpointProtocol): OpenTelemetryEndpoint | LangfuseEndpoint | undefined {
         if (!this.editing || this.editing.protocol !== protocol) {
             return undefined;

@@ -12,7 +12,7 @@
 import { type Component, Box, Text } from '@earendil-works/pi-tui';
 import { defaultSelectListTheme } from '../theme';
 import { OpenDeskTUI } from '../entry';
-import { TaskState } from '../../states/tasks';
+import type { TaskState } from '../../aikernel/states/tasks';
 import { SelectTable, type SelectRow } from './selecttable';
 
 import chalk from 'chalk';
