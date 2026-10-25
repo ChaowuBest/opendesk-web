@@ -4,6 +4,14 @@ import os from 'node:os';
 import path from 'node:path';
 import { AdminConsoleApplication } from '../../../main/applications/adminconsole/app.js';
 
+/**
+ * Windows 下 path.resolve 会给以 / 开头的路径补当前盘符（如 /home → D:/home），
+ * 期望的声明路径按平台同源解析，使断言在 POSIX / Windows 双端一致。
+ */
+function expectedResolvedPath(posixPath: string): string {
+    return path.resolve(posixPath).replace(/\\/g, '/');
+}
+
 const SAMPLE_ITEMS = [
     {
         id: 3,
@@ -173,10 +181,14 @@ describe('adminconsole downloadAttachment tool', () => {
         const tool = toolset.getTool('downloadAttachment')!;
         const taskState = { getWorkspace: () => '/home/dev/project' } as any;
         expect(tool.getDeclaredPermissions({ attachmentId: 9, path: 'logs/attachment.txt' }, taskState)).toEqual([
-            { resourceType: 'file', action: 'write', resourcePath: '/home/dev/project/logs/attachment.txt' }
+            {
+                resourceType: 'file',
+                action: 'write',
+                resourcePath: expectedResolvedPath('/home/dev/project/logs/attachment.txt')
+            }
         ]);
         expect(tool.getDeclaredPermissions({ attachmentId: 9, path: '/abs/a.txt' }, taskState)).toEqual([
-            { resourceType: 'file', action: 'write', resourcePath: '/abs/a.txt' }
+            { resourceType: 'file', action: 'write', resourcePath: expectedResolvedPath('/abs/a.txt') }
         ]);
     });
 
