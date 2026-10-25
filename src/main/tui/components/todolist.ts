@@ -10,7 +10,7 @@
  */
 
 import { Component } from '@earendil-works/pi-tui';
-import type { TaskTodo } from '../../aikernel/todos/task-todos';
+import type { ReadonlyTaskTodos } from '../../aikernel/todos/task-todos';
 import chalk from 'chalk';
 import { Card, type BorderConfig } from './card';
 
@@ -20,7 +20,7 @@ import { Card, type BorderConfig } from './card';
  * Only visible when there are todos to display
  */
 export class TodoList implements Component {
-    private todos: TaskTodo[] = [];
+    private todos: ReadonlyTaskTodos = [];
     private invalidated = true;
     private lastWidth?: number;
     private cachedOutput?: string[];
@@ -36,7 +36,7 @@ export class TodoList implements Component {
      * Set the todos to display
      * @param todos - Array of task todos
      */
-    setTodos(todos: TaskTodo[]): boolean {
+    setTodos(todos: ReadonlyTaskTodos): boolean {
         const hasChanged =
             this.todos.length !== todos.length ||
             this.todos.some(
@@ -55,7 +55,7 @@ export class TodoList implements Component {
     /**
      * Get current todos
      */
-    getTodos(): TaskTodo[] {
+    getTodos(): ReadonlyTaskTodos {
         return this.todos;
     }
 
