@@ -859,8 +859,17 @@ class BrowserApplication extends BaseApplication {
         try {
             const ses = BrowserManager.browserSession;
             if (!ses) return { success: false, message: t('error.sessionNotInitialized') };
+            // 'autofill' 为 Electron 历史版本 storage 类型，运行时支持、类型未收录
             await ses.clearStorageData({
-                storages: ['cookies', 'localstorage', 'indexdb', 'websql', 'cachestorage', 'serviceworkers', 'autofill']
+                storages: [
+                    'cookies',
+                    'localstorage',
+                    'indexdb',
+                    'websql',
+                    'cachestorage',
+                    'serviceworkers',
+                    'autofill'
+                ] as unknown as Electron.ClearStorageDataOptions['storages']
             });
             await ses.clearCache();
             await ses.clearAuthCache();
@@ -957,7 +966,9 @@ class BrowserApplication extends BaseApplication {
         try {
             const ses = BrowserManager.browserSession;
             if (!ses) return { success: false, message: t('error.sessionNotInitialized') };
-            await ses.clearStorageData({ storages: ['autofill'] });
+            await ses.clearStorageData({
+                storages: ['autofill'] as unknown as Electron.ClearStorageDataOptions['storages']
+            });
             clearBrowserCredentials();
             return { success: true, message: t('message.autofillCleared') };
         } catch (err: any) {

@@ -2394,7 +2394,7 @@ export class FileExplorer {
             }
             const resolvedPath = await this._resolveFilePath(filePath);
             const data = await api.readTextFile(resolvedPath, ACE_TEXT_MAX_BYTES);
-            if (this._editorMode === false || this._editorFilePath !== filePath || seq !== this._currentLoadSeq) {
+            if (!this._editorMode || this._editorFilePath !== filePath || seq !== this._currentLoadSeq) {
                 return;
             }
             if (data.binary || data.tooLarge) {
@@ -3130,7 +3130,7 @@ export class FileExplorer {
 
         // 点击处理
         dropdown.addEventListener('click', (ev) => {
-            const item = (ev.target as HTMLElement).closest('[data-bc-path]');
+            const item = (ev.target as HTMLElement).closest<HTMLElement>('[data-bc-path]');
             if (!item) return;
             const path = item.dataset.bcPath;
             const isDir = item.dataset.bcDir === 'true';

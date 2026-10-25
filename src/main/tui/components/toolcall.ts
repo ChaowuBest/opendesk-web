@@ -16,6 +16,12 @@ import type { ToolCall } from '../../aikernel/messages';
 import { t } from '../../../locale/index.js';
 
 /**
+ * 工具调用 CLI 卡片渲染输出时最多展示的行数，超出时只保留末尾若干行。
+ * terminal / devicemgr 等工具的 renderToolCallCli 共享该上限。
+ */
+export const MAX_CLI_OUTPUT_LINES = 10;
+
+/**
  * Truncate a string (may contain ANSI codes / wide chars) to fit within
  * maxWidth visible columns, appending '…' if truncated.
  */

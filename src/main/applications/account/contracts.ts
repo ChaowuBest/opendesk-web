@@ -93,7 +93,7 @@ export function normalizeAccountLoginMethods(value: unknown): readonly PluginAcc
         }
         ids.add(id);
         if (candidate.type === 'browser' || candidate.type === 'device-code') {
-            return { id, type: candidate.type, displayName };
+            return { id, type: candidate.type, displayName } as PluginAccountLoginMethod;
         }
         if (candidate.type !== 'form' || !Array.isArray(candidate.fields)) {
             throw new Error('account:login_methods_invalid');
@@ -125,7 +125,7 @@ export function normalizeAccountLoginMethods(value: unknown): readonly PluginAcc
                 ...(field.required !== undefined ? { required: field.required } : {})
             };
         });
-        return { id, type: 'form', displayName, fields };
+        return { id, type: 'form', displayName, fields } as PluginAccountLoginMethod;
     });
 }
 

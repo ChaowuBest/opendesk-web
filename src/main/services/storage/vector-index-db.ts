@@ -56,7 +56,7 @@ export function probeVectorIndexStoreNative(dbPath: string): BaseIndexStoreProbe
  */
 export class VectorIndexDB implements IVectorIndexDB {
     readonly backend = 'native' as const;
-    private db: Database.Database;
+    private db: DatabaseType.Database;
     private readonly metaTableName = 'vector_index_meta';
     private readonly vecTableName = 'vector_index_vec';
     private readonly dimension: number;

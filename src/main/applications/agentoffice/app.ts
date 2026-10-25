@@ -1681,8 +1681,8 @@ export class AgentOfficeApplication extends BaseApplication {
             return [
                 {
                     id: skill.id,
-                    name: skill.name,
-                    description: skill.description,
+                    name: String(skill.name ?? ''),
+                    description: String(skill.description ?? ''),
                     directory_name: directoryName,
                     already_added: added.has(directoryName)
                 }

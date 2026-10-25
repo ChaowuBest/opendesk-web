@@ -748,7 +748,7 @@ class TaskArtifacts extends HTMLElement {
             header.addEventListener('click', () => {
                 const collapseId = (header as HTMLElement).dataset.collapseId;
                 if (!collapseId) return;
-                const body = panel.querySelector(`#${collapseId}`);
+                const body = panel.querySelector<HTMLElement>(`#${collapseId}`);
                 const chevron = header.querySelector('.changes-chevron') as HTMLElement;
                 if (!body) return;
                 if (body.style.display === 'none') {

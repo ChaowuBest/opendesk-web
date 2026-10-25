@@ -52,7 +52,7 @@ export function probeChunkIndexStoreNative(dbPath: string): BaseIndexStoreProbeR
 
 export class ChunkIndexDB implements IChunkIndexDB {
     readonly backend = 'native' as const;
-    private db: Database.Database;
+    private db: DatabaseType.Database;
     private readonly metaTableName = 'chunk_index_meta';
     private readonly vecTableName = 'chunk_index_vec';
     private readonly dimension: number;

@@ -10,6 +10,7 @@
  */
 
 import type { WebviewTag } from 'electron';
+import type { CertInfo } from '../app.js';
 import { getErrorMessage, buildErrorPageScript, type ErrorInfo } from '../../../../common/browserErrors';
 import { showConfirmModal } from '../../../../renderer/components/confirmModal.js';
 import {

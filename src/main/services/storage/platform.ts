@@ -54,11 +54,13 @@ export function isNativeSqliteUnavailable(error: unknown): boolean {
     return false;
 }
 
-export async function createWithNativeSqliteFallback<T>(
+// 原生与 WASM 实现是同接口的兄弟类而非继承关系，泛型分立后返回联合，
+// 由调用方工厂函数以公共接口（如 IBaseIndexDB）收口
+export async function createWithNativeSqliteFallback<T, U>(
     nativeFactory: Factory<T>,
-    wasmFactory: Factory<T>,
+    wasmFactory: Factory<U>,
     options: { forceWasm?: boolean } = {}
-): Promise<T> {
+): Promise<T | U> {
     if (options.forceWasm ?? shouldUseWasm()) {
         logger.info('[storage-backend] using wasm (platform forced)');
         return wasmFactory();

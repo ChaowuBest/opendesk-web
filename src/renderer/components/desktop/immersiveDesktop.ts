@@ -1210,7 +1210,7 @@ export class ImmersiveDesktop extends HTMLElement {
 
     private isContextMenuHidden(): boolean {
         const menu = this.querySelector('[data-context-menu]') as HTMLElement | null;
-        return !menu || menu.hidden;
+        return !(menu && !menu.hidden);
     }
 
     private handleContextMenuClick = (event: Event): void => {
@@ -1570,7 +1570,7 @@ export class ImmersiveDesktop extends HTMLElement {
 
     private isAppListHidden(): boolean {
         const panel = this.querySelector('[data-applist]') as HTMLElement | null;
-        return !panel || panel.hidden;
+        return !(panel && !panel.hidden);
     }
 
     private toggleAppList(): void {

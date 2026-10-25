@@ -68,6 +68,11 @@ ${formatEnvironmentSection(workspace, executionHost, { availableNodes })}
 }
 
 export class ExploreAgentDecl extends AgentDecl {
+    // 内置 Agent 仅由 AgentRegistry.initBuiltinAgents 创建，公开构造器限于注册流程使用
+    public constructor() {
+        super();
+    }
+
     readonly agentName = 'explore';
     readonly dispatchable = true;
     readonly agentType: AgentType = 'builtin';

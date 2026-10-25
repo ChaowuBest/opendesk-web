@@ -9,7 +9,7 @@
  * See the Mulan PSL v2 for more details.
  */
 
-import { Setting, type SettingData } from '../../utils/setting.js';
+import { Setting, type SettingData, type ChatModel } from '../../utils/setting.js';
 import iconv from 'iconv-lite';
 import { ApplicationRegistry, notifyWorkerSettingUpdate } from '../../applications/registry.js';
 import { GlobalState } from '../../aikernel/states/global.js';
@@ -107,6 +107,7 @@ function applyProviderConfigPatch(data: SettingData, providerConfig: unknown): v
         if (!provider) {
             provider = {
                 name: providerName,
+                provider_type: 'openai',
                 base_url: typeof baseURL === 'string' ? baseURL : '',
                 api_key: typeof apiKey === 'string' ? apiKey : '',
                 no_proxy: typeof noProxy === 'boolean' ? noProxy : false,
@@ -226,7 +227,7 @@ export function hasOpenCodePermissionPatch(rawBody: unknown): boolean {
 /**
  * 将 OpenDesk 内部 model 配置转换为 opencode Model 格式。
  */
-export function toOpenCodeModel(model: SettingData['models'][number], providerName: string): Record<string, unknown> {
+export function toOpenCodeModel(model: ChatModel, providerName: string): Record<string, unknown> {
     return {
         id: model.alias || model.model_name,
         providerID: providerName,
@@ -273,7 +274,8 @@ export function toOpenCodeProvider(
 ): Record<string, unknown> {
     const providerModels: Record<string, unknown> = {};
     const filteredModels = models.filter(
-        (model) => model.provider_name === provider.name && model.model_type !== 'embedding'
+        (model): model is SettingData['models'][number] & ChatModel =>
+            model.provider_name === provider.name && model.model_type !== 'embedding'
     );
     for (const model of filteredModels) {
         const modelId = model.alias || model.model_name;

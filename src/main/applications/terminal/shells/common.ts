@@ -17,7 +17,7 @@ import { ToolCall } from '../../../aikernel/messages.js';
 import { escapeHtml } from '../../../../common/utils/escape.js';
 import stripAnsi from 'strip-ansi';
 import { Card } from '../../../tui/components/card.js';
-import { statusDisplay, truncText } from '../../../tui/components/toolcall.js';
+import { statusDisplay, truncText, MAX_CLI_OUTPUT_LINES } from '../../../tui/components/toolcall.js';
 import fs from 'node:fs';
 import chalk from 'chalk';
 import type { TaskState } from '../../../aikernel/states/tasks.js';
@@ -60,7 +60,6 @@ export {
 } from '../../../utils/shellExec.js';
 export { findExecutableInPath, hasZsh } from '../../../utils/shellExec.js';
 
-const MAX_CLI_OUTPUT_LINES = 10;
 const LIVE_UPDATE_INTERVAL_MS = 200;
 
 export function renderTerminalToolCallCli(

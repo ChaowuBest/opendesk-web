@@ -7,4 +7,8 @@ if git diff --cached --name-only --diff-filter=ACM | grep -q '^native/windows/sa
   node scripts/check-sandbox-hotpath.cjs || exit 1
 fi
 
+# 类型检查门禁：与 npm run build 的前置一致，node_modules/测试目录之外
+# 的任何类型错误都会阻塞提交（scripts/run-typecheck.cjs 内置噪音过滤）
+node scripts/run-typecheck.cjs || exit 1
+
 npx lint-staged

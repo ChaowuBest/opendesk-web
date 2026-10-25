@@ -39,6 +39,28 @@ interface AcpSessionState {
     cancelled: boolean;
 }
 
+/**
+ * OpenDesk 对 ACP 协议的本地扩展：会话支持模型选择（unstable_setSessionModel）与
+ * prompt 消息回执 ID，上游 SDK 的 schema 尚未包含对应字段。
+ */
+type PromptRequestWithMessageId = acp.PromptRequest & { messageId?: string };
+
+/**
+ * unstable_setSessionModel 与 newSession.models 是 OpenDesk 对 ACP 的模型选择扩展，
+ * 上游 SDK 仅有 mode 切换（SetSessionMode*），以下为该扩展的本地协议形状。
+ */
+interface SetSessionModelRequestExt {
+    sessionId: string;
+    modelId: string;
+}
+interface SessionModelStateExt {
+    currentModelId: string;
+    availableModels: Array<{ modelId: string; name: string; description: string }>;
+}
+type NewSessionResponseWithModels = acp.NewSessionResponse & {
+    models?: SessionModelStateExt | undefined;
+};
+
 function sessionNotFound(sessionId: string): acp.RequestError {
     return acp.RequestError.resourceNotFound(`session:${sessionId}`);
 }
@@ -163,7 +185,7 @@ export class OpenDeskAcpAgent implements acp.Agent {
         return {};
     }
 
-    async newSession(params: acp.NewSessionRequest): Promise<acp.NewSessionResponse> {
+    async newSession(params: acp.NewSessionRequest): Promise<NewSessionResponseWithModels> {
         if (!path.isAbsolute(params.cwd)) {
             throw acp.RequestError.invalidParams({ cwd: params.cwd }, 'cwd must be absolute');
         }
@@ -285,7 +307,7 @@ export class OpenDeskAcpAgent implements acp.Agent {
         return {};
     }
 
-    async unstable_setSessionModel(params: acp.SetSessionModelRequest): Promise<acp.SetSessionModelResponse> {
+    async unstable_setSessionModel(params: SetSessionModelRequestExt): Promise<Record<string, unknown>> {
         const session = this.sessions.get(params.sessionId);
         if (!session) {
             throw sessionNotFound(params.sessionId);
@@ -315,7 +337,7 @@ export class OpenDeskAcpAgent implements acp.Agent {
         return {};
     }
 
-    async prompt(params: acp.PromptRequest): Promise<acp.PromptResponse> {
+    async prompt(params: PromptRequestWithMessageId): Promise<acp.PromptResponse> {
         const session = this.sessions.get(params.sessionId);
         if (!session) {
             throw sessionNotFound(params.sessionId);
@@ -359,7 +381,7 @@ export class OpenDeskAcpAgent implements acp.Agent {
         };
     }
 
-    private getModelState(session: AcpSessionState): acp.SessionModelState | undefined {
+    private getModelState(session: AcpSessionState): SessionModelStateExt | undefined {
         const data = Setting.getInstance().getData();
         const chatModels = getChatModels(data);
         const currentModelId = getCurrentModelId(session.task, data);

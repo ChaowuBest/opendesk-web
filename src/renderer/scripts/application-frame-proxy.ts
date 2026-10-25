@@ -22,6 +22,8 @@ type ProxyRequest = {
     method: string;
     args: unknown[];
     bundleName?: string;
+    /** 请求报文不带 type 字段；声明为 never 以便与 ProxyToolCallResult 构成可判别联合 */
+    type?: never;
 };
 
 type ProxyReply = {
@@ -159,12 +161,7 @@ function installProxyListener(): void {
     (window as Window & { __odFrameProxyListener?: boolean }).__odFrameProxyListener = true;
     window.addEventListener('message', (e: MessageEvent) => {
         const data = e.data as
-            | ProxyReply
-            | ProxyEvent
-            | ProxyStreamMessage
-            | ProxyTaskUpdate
-            | ProxyToolCall
-            | undefined;
+            ProxyReply | ProxyEvent | ProxyStreamMessage | ProxyTaskUpdate | ProxyToolCall | undefined;
         if (data?.channel !== CHANNEL) {
             return;
         }
@@ -397,6 +394,7 @@ export function installApplicationFrameProxies(applicationBundleName: string): b
     }
 
     if (!window.themeAPI?.getResolvedTheme) {
+        // iframe 回退代理只覆盖主题三件套；字体预设接口在宿主 preload 缺失时不可用
         window.themeAPI = {
             getResolvedTheme: () =>
                 proxyInvoke('theme', 'getResolvedTheme', []) as ReturnType<
@@ -416,7 +414,7 @@ export function installApplicationFrameProxies(applicationBundleName: string): b
                 void proxyInvoke('theme', 'registerThemeListener', []);
                 return () => window.removeEventListener('message', handler);
             }
-        };
+        } as Window['themeAPI'];
     }
 
     if (!window.fsAPI?.selectFile) {

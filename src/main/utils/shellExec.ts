@@ -323,7 +323,7 @@ export function decodeShellOutput(buffer: Buffer): string {
  * 下一分片；流结束时 flush 吐出剩余内容。
  */
 export function createShellOutputDecoder() {
-    let pending = Buffer.alloc(0);
+    let pending: Buffer = Buffer.alloc(0);
 
     const decode = (buf: Buffer): string => decodeShellOutput(buf);
 

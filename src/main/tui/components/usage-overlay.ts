@@ -172,7 +172,10 @@ export class UsageOverlay implements Component {
             request_count: 0,
             input_tokens: 0,
             output_tokens: 0,
-            total_tokens: 0
+            total_tokens: 0,
+            // 模型榜单未聚合缓存明细，置 0（falsy）以维持原有的缓存行隐藏行为
+            cache_read_input_tokens: 0,
+            cache_miss_input_tokens: 0
         };
         for (const m of rankings.models) {
             summary.request_count += m.request_count;

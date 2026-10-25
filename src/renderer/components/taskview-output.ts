@@ -232,11 +232,8 @@ export function getVisibleAssistantOutputItems(
         if (hasInlineToolBoundary) return [...committedItems, lastItem];
         return [...committedItems, status];
     }
-    if (options.showRunningDetails) {
-        if (items.at(-1)?.type === 'process') {
-            return [...items.slice(0, -1), status, items[items.length - 1]];
-        }
-        return [...items, status];
+    if (items.at(-1)?.type === 'process') {
+        return [...items.slice(0, -1), status, items[items.length - 1]];
     }
-    return [...committedItems, status];
+    return [...items, status];
 }

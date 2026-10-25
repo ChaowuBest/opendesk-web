@@ -400,9 +400,10 @@ export function parseWorkflowAgentCompletion(
             .join('; ');
         throw new Error(`CompleteWorkflowAgent 提交内容需要符合结构化协议：${issues}`);
     }
+    const data = parsed.data as { status: string; summary: string; output?: unknown };
     return {
-        status: parsed.data.status,
-        summary: parsed.data.summary,
-        ...(parsed.data.output === undefined ? {} : { output: normalizeWorkflowJSONValue(parsed.data.output) })
+        status: data.status as 'success' | 'fail',
+        summary: data.summary,
+        ...(data.output === undefined ? {} : { output: normalizeWorkflowJSONValue(data.output) })
     };
 }

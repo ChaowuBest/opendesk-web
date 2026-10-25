@@ -300,32 +300,38 @@ describe('model network configuration', () => {
     });
 
     test('chat, streaming chat, embedding, rerank, and verification use provider network flags', async () => {
-        const platform = new RecordingPlatform();
-        setPlatform(platform);
-        configureSettings(true, true);
+        // rerank 命中每个文档会 console.info 记录分数，该日志路径并非本用例断言对象，静默即可
+        const infoSpy = jest.spyOn(console, 'info').mockImplementation(() => {});
+        try {
+            const platform = new RecordingPlatform();
+            setPlatform(platform);
+            configureSettings(true, true);
 
-        await LLM.ask('hello', 'chat');
-        await LLM.askForObject(new UserMessage('json'), 'chat');
-        await LLM.complete(userContext(), 'chat');
-        for await (const _chunk of LLM.streamComplete(userContext(), 'chat')) {
-            // Drain stream.
-        }
-        await LLM.embed('query');
-        await LLM.batchEmbed(['a', 'b'], 1);
-        await LLM.rerank('query', [{ text: 'a' }, { text: 'b' }], (item) => item.text, 'rerank');
-        await LLM.verifyModel(Setting.getInstance().getModelInstance('chat', 'chat')!);
-        await LLM.verifyEmbeddingModel(Setting.getInstance().getModelInstance('embedding', 'embedding')!);
+            await LLM.ask('hello', 'chat');
+            await LLM.askForObject(new UserMessage('json'), 'chat');
+            await LLM.complete(userContext(), 'chat');
+            for await (const _chunk of LLM.streamComplete(userContext(), 'chat')) {
+                // Drain stream.
+            }
+            await LLM.embed('query');
+            await LLM.batchEmbed(['a', 'b'], 1);
+            await LLM.rerank('query', [{ text: 'a' }, { text: 'b' }], (item) => item.text, 'rerank');
+            await LLM.verifyModel(Setting.getInstance().getModelInstance('chat', 'chat')!);
+            await LLM.verifyEmbeddingModel(Setting.getInstance().getModelInstance('embedding', 'embedding')!);
 
-        expect(platform.records.length).toBeGreaterThanOrEqual(9);
-        for (const record of platform.records) {
-            expect(record.options).toEqual({
-                forceEnvironmentProxy: true,
-                bypassProxy: true,
-                skipTlsVerification: true
-            });
+            expect(platform.records.length).toBeGreaterThanOrEqual(9);
+            for (const record of platform.records) {
+                expect(record.options).toEqual({
+                    forceEnvironmentProxy: true,
+                    bypassProxy: true,
+                    skipTlsVerification: true
+                });
+            }
+            expect(process.env.NO_PROXY).toBe('existing.local');
+            expect(process.env.NODE_TLS_REJECT_UNAUTHORIZED).toBe('0');
+        } finally {
+            infoSpy.mockRestore();
         }
-        expect(process.env.NO_PROXY).toBe('existing.local');
-        expect(process.env.NODE_TLS_REJECT_UNAUTHORIZED).toBe('0');
     });
 
     test('adapter cache separates otherwise-identical providers with different network flags', async () => {

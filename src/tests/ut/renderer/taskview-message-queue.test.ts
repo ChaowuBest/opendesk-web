@@ -1,11 +1,44 @@
-import { beforeAll, beforeEach, describe, expect, jest, test } from '@jest/globals';
+import { afterEach, beforeAll, beforeEach, describe, expect, jest, test } from '@jest/globals';
 import { parseHTML } from 'linkedom';
+
+/**
+ * 组件内部会为流式渲染、目标刷新防抖、面板动画等调度真实定时器；linkedom
+ * 环境下被测视图常常不经过完整销毁生命周期就被丢弃，这些定时器会悬空并
+ * 撑住 jest worker 的事件循环，导致 `npm run test` 结束时出现
+ * "A worker process has failed to exit gracefully" 警告。这里跟踪本文件
+ * 运行期间创建的真实定时器并在每个用例结束后统一清理（fake timers 期间
+ * 创建的定时器活在 fake clock 里，不经过包装，无需处理）。
+ */
+const trackedRealTimers = new Set<ReturnType<typeof setTimeout>>();
+const rawSetTimeout = globalThis.setTimeout.bind(globalThis);
+const rawClearTimeout = globalThis.clearTimeout.bind(globalThis);
+const rawSetInterval = globalThis.setInterval.bind(globalThis);
+const rawClearInterval = globalThis.clearInterval.bind(globalThis);
+globalThis.setTimeout = ((handler: TimerHandler, timeout?: number, ...rest: unknown[]) => {
+    const id = rawSetTimeout(handler, timeout, ...(rest as []));
+    trackedRealTimers.add(id);
+    return id;
+}) as typeof setTimeout;
+globalThis.setInterval = ((handler: TimerHandler, timeout?: number, ...rest: unknown[]) => {
+    const id = rawSetInterval(handler, timeout, ...(rest as []));
+    trackedRealTimers.add(id);
+    return id;
+}) as typeof setInterval;
+
+afterEach(() => {
+    for (const id of trackedRealTimers) {
+        rawClearTimeout(id);
+        rawClearInterval(id);
+    }
+    trackedRealTimers.clear();
+});
 
 /**
  * 与 goal.test.ts 保持一致的处理：
  * 部分 Node + Jest ESM 组合下，jest.useRealTimers() 恢复后会把计时器全局变量
  * 置为 undefined（表现为后续用例 ReferenceError: setInterval is not defined），
  * 因此在模块加载时保存真实计时器引用，恢复时显式写回 globalThis。
+ * 注意必须在定时器包装安装之后再捕获，恢复时才能保住包装。
  */
 const realTimerGlobals = {
     setTimeout: globalThis.setTimeout,
@@ -48,6 +81,11 @@ describe('task-view message queue', () => {
             value: { languages: ['zh-CN'], language: 'zh-CN' },
             configurable: true
         });
+        // 组件里 window.setTimeout 与裸 setTimeout 两种调用路径都要进定时器跟踪
+        window.setTimeout = globalThis.setTimeout;
+        window.setInterval = globalThis.setInterval;
+        window.clearTimeout = globalThis.clearTimeout;
+        window.clearInterval = globalThis.clearInterval;
 
         await jest.unstable_mockModule('../../../renderer/components/toolbar.ts', () => ({
             ElasticToolbarWidget: class extends HTMLElement {

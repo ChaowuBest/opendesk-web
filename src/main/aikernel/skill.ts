@@ -26,7 +26,7 @@
 import path from 'path';
 import fs from 'fs';
 import { parse as parseYaml } from 'yaml';
-import { BaseToolset, BaseTool, ToolResult } from './tool';
+import { BaseToolset, BaseTool, ToolResult, type ToolArgsValidationResult } from './tool';
 import { z } from 'zod';
 import { logger } from '../utils/logger';
 import dotenv from 'dotenv';
@@ -366,10 +366,11 @@ export class Skill {
         if (!frontmatter || typeof frontmatter !== 'object') {
             throw new Error('frontmatter 必须为非空对象');
         }
-        Skill.validateName(frontmatter.name);
-        Skill.validateDescription(frontmatter.description);
-        if (frontmatter.compatibility != null) {
-            const comp = String(frontmatter.compatibility);
+        const fm = frontmatter as Record<string, unknown>;
+        Skill.validateName(fm.name);
+        Skill.validateDescription(fm.description);
+        if (fm.compatibility != null) {
+            const comp = String(fm.compatibility);
             if (comp.length > COMPATIBILITY_MAX_LEN) {
                 throw new Error(`compatibility 长度不能超过 ${COMPATIBILITY_MAX_LEN} 字符`);
             }
@@ -683,7 +684,7 @@ class CallSkillTool extends BaseTool<typeof CallSkillToolSchema> {
         return top.name;
     }
 
-    validateArgs(args: unknown): ToolArgsValidationResult<T> {
+    validateArgs(args: unknown): ToolArgsValidationResult<typeof CallSkillToolSchema> {
         const baseResult = super.validateArgs(args);
         if (baseResult.success) {
             return baseResult;

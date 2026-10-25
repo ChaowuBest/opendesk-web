@@ -77,13 +77,15 @@ class PluginTool extends BaseTool<any> {
         this.serialExecution = definition.serialExecution ?? false;
         this.setUniversalExecutor(async (args, result, taskState?: TaskState) => {
             const response = await definition.execute(args, buildExecutionContext(taskState), result);
-            if (response === undefined) return;
             if (typeof response === 'string') {
                 result.updateResult(response);
                 return;
             }
-            result.updateResult(response.output);
-            if (response.resultObject !== undefined) result.updateResultObject(response.resultObject);
+            // PluginCommandResult 的 void 分支无法用 === undefined 排除，按对象形状收窄
+            if (response && typeof response === 'object') {
+                result.updateResult(response.output);
+                if (response.resultObject !== undefined) result.updateResultObject(response.resultObject);
+            }
         });
     }
 
@@ -175,7 +177,7 @@ class PluginDefinedTool extends BaseTool<any> {
         taskState?: TaskState
     ): Promise<ToolResult> {
         const parsed = this.validateArgs(args);
-        if (!parsed.success) {
+        if (parsed.success === false) {
             const result = new ToolResult();
             result.status = 'error';
             result.result = parsed.error;

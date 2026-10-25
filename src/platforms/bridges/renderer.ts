@@ -22,7 +22,9 @@ import {
     type ArkDataTxHandle,
     type ArkDataValueType,
     type DatabaseKit,
+    type HuaweiAccountKit,
     type NativeBridge,
+    NaiveHuaweiAccountKit,
     type OcrKit,
     type PeekResult,
     type SpeechKit,
@@ -212,5 +214,9 @@ export class NativeBridgeProxy implements NativeBridge {
 
     async getDatabaseKit(): Promise<DatabaseKit> {
         return new DatabaseKitProxy();
+    }
+
+    async getHuaweiAccountKit(): Promise<HuaweiAccountKit> {
+        return new NaiveHuaweiAccountKit();
     }
 }

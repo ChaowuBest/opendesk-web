@@ -309,8 +309,7 @@ async function configureFloatingAgentBar(applicationBundleName: string): Promise
     let enabled = false;
     try {
         const config = (await window.applicationRegistryAPI.getApplicationGUIConfig(applicationBundleName)) as
-            | { needAgentBar?: boolean }
-            | undefined;
+            { needAgentBar?: boolean } | undefined;
         enabled = config?.needAgentBar === true;
     } catch (error) {
         console.warn(`Failed to load floating agent bar config for ${applicationBundleName}:`, error);
@@ -405,7 +404,7 @@ void (async () => {
     try {
         if (window.settingAPI?.loadSettingObject) {
             const settings = await window.settingAPI.loadSettingObject();
-            const fontPreset = settings?.gui_config?.font_preset || 'default';
+            const fontPreset = settings.gui_config?.font_preset || 'default';
             document.documentElement.setAttribute('data-font-preset', fontPreset);
             applicationHostT = createRendererTranslator(settings);
         }

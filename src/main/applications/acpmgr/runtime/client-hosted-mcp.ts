@@ -277,7 +277,13 @@ export class ClientHostedWorkspaceMcp {
                     params: asParams(message.params)
                 })
                 .then(
-                    (result) => connection.transport.send({ jsonrpc: '2.0', id: message.id, result }),
+                    // peer.request 的 result 是 unknown 的 JSON-RPC 结果，透传前按协议形状断言
+                    (result) =>
+                        connection.transport.send({
+                            jsonrpc: '2.0',
+                            id: message.id,
+                            result: result as Record<string, unknown> | null
+                        }),
                     (error) =>
                         connection.transport.send({
                             jsonrpc: '2.0',

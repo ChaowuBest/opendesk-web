@@ -55,7 +55,8 @@ class TextFieldWidget implements Component {
         this.renderCallback = cb;
     }
 
-    handleInput(keyData: unknown): { consume: boolean } | undefined {
+    // pi-tui Component.handleInput 契约传入 string，这里对齐接口签名
+    handleInput(keyData: string): { consume: boolean } | undefined {
         const kb = getKeybindings();
         if (kb.matches(keyData, 'tui.select.confirm')) {
             this.onDone?.(this.value);

@@ -74,7 +74,7 @@ export class PluginMgrApplication extends BaseApplication {
         registerPluginsCommand(prog);
     }
 
-    toJSON(): Record<string, unknown> {
+    toJSON(): ReturnType<BaseApplication['toJSON']> & { source: string; removable: boolean; active: boolean } {
         return {
             ...super.toJSON(),
             source: 'system',

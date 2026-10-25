@@ -22,6 +22,7 @@ import { fileLinkExtension, getRenderWorkspace } from '../utils/marked-file-link
 import { cjkAutolinkFix } from '../../common/markdown/cjk-autolink-fix.js';
 import { doubleTildeStrikethrough } from '../../common/markdown/double-tilde-strikethrough.js';
 import { renderCodeBlockHtml } from '../../common/markdown/code-block-render.js';
+import { createSafeMarkdownParser } from '../../common/markdown/safe-render.js';
 import type { SupportedLocale } from '../../common/locale.js';
 import { getLocale, t } from '../../locale/index.js';
 import type {
@@ -196,6 +197,14 @@ marked.use({
 marked.use(fileLinkExtension);
 marked.use(cjkAutolinkFix);
 marked.use(doubleTildeStrikethrough);
+
+/**
+ * 面向模型产出的安全 markdown 解析入口（issue #217）。
+ * 工具结果与消息文本没有长度上限，直接 marked.parse 会把病态输入的
+ * 内联正则回溯变成主进程的同步长阻塞；所有渲染"模型产生的文本"的
+ * 调用点都应当走本入口，而不是直接调用 marked.parse。
+ */
+export const parseMarkdownSafe = createSafeMarkdownParser((src) => marked.parse(src));
 
 /**
  * This is NOT an OpenAI message part, but a message part for our own message system.
@@ -1075,7 +1084,7 @@ export class TextMessagePart implements BaseTextMessagePart {
         if (this.rendered !== undefined && this._renderedWorkspace === workspace) {
             return this.rendered;
         }
-        this.rendered = await marked.parse(this.text);
+        this.rendered = await parseMarkdownSafe(this.text);
         this._renderedWorkspace = workspace;
         this.renderedWorkspace = workspace;
         return this.rendered;
@@ -2670,6 +2679,19 @@ export function isCompactBoundaryMessage(message: unknown): message is CompactSe
 }
 
 export type ChatMessage = UserMessage | AssistantMessage | CompactSeparatorMessage;
+
+/**
+ * 判定用户消息。role 判别优先（兼容反序列化出的无原型对象），
+ * instanceof 兜底跨实例/原型恢复场景（如 UserMessage.assign）。
+ */
+export function isUserMessage(message: ChatMessage): message is UserMessage {
+    return message.role === 'user' || message instanceof UserMessage;
+}
+
+/** 判定助手消息，判别策略同 isUserMessage。 */
+export function isAssistantMessage(message: ChatMessage): message is AssistantMessage {
+    return message.role === 'assistant' || message instanceof AssistantMessage;
+}
 
 /**
  * Chat context for a chat session

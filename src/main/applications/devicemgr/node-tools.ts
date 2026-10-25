@@ -20,7 +20,7 @@ import type { ExecutionHost, NodeExecutionCapabilities } from '../../aikernel/se
 import type { PermissionRequest } from '../../aikernel/security/permission.js';
 import { escapeHtml } from '../../../common/utils/escape.js';
 import { Card } from '../../tui/components/card.js';
-import { statusDisplay, truncText } from '../../tui/components/toolcall.js';
+import { statusDisplay, truncText, MAX_CLI_OUTPUT_LINES } from '../../tui/components/toolcall.js';
 import { Setting } from '../../utils/setting.js';
 import { getTempDir } from '../../utils/temp.js';
 import { sanitizeLocalPath } from '../../utils/path.js';
@@ -39,7 +39,6 @@ import { t } from '../../../locale/index.js';
 
 type SelectedNodeHost = Extract<ExecutionHost, { type: 'node' }>;
 
-const MAX_CLI_OUTPUT_LINES = 10;
 const MAX_DIFF_LINES = 50;
 const DIFF_CONTEXT_LINES = 3;
 const WRITE_FILE_TAIL_LINES = 5;

@@ -109,7 +109,7 @@ class LogStream extends Writable {
     entries: LogEntry[] = [];
     static globalStream: LogStream | null = null;
 
-    _write(chunk: string, encoding: string, callback: () => void) {
+    _write(chunk: string | Buffer, encoding: string, callback: () => void) {
         const raw = typeof chunk === 'string' ? chunk : chunk.toString();
         // 单条超长日志截断，防止一次性写入撑大缓冲区
         const capped =

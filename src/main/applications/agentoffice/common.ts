@@ -277,3 +277,5 @@ export function sumTaskUsage(tasks: StaffTaskRecord[]): TaskUsageSummary {
     }
     return result;
 }
+
+export type { LocalServiceRuntime } from './local-service.js';

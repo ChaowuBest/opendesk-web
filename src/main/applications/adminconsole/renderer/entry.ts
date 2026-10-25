@@ -25,9 +25,9 @@ interface AdminApi {
     loadToken(serverUrl: string): Promise<{ token: string | null; canPersist: boolean }>;
     verifyToken(serverUrl: string, token: string): Promise<true>;
     clearToken(): Promise<true>;
-    getDailyStats(days: number): Promise<unknown>;
-    getSummaryStats(): Promise<unknown>;
-    getFeedbackList(limit: number): Promise<unknown>;
+    getDailyStats(days: number): Promise<AdminDailyStats>;
+    getSummaryStats(): Promise<AdminSummaryStats>;
+    getFeedbackList(limit: number): Promise<AdminFeedbackList>;
     downloadAttachment(attachmentId: number, filename: string): Promise<{ canceled?: boolean; filePath?: string }>;
 }
 

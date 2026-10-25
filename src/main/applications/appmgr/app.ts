@@ -48,7 +48,12 @@ export class AppMgrApplication extends BaseApplication {
         return true;
     }
 
-    toJSON(): Record<string, unknown> {
+    toJSON(): ReturnType<BaseApplication['toJSON']> & {
+        iconUrl: string;
+        source: string;
+        removable: boolean;
+        active: boolean;
+    } {
         return {
             ...super.toJSON(),
             iconUrl: APPMGR_ICON_URL,

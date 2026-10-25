@@ -16,6 +16,7 @@ import {
     matchesKey,
     isKeyRelease,
     type Component,
+    type KeyId,
     KeybindingsManager,
     TUI_KEYBINDINGS,
     setKeybindings
@@ -36,7 +37,13 @@ import { AgentInputArea } from './components/input';
 import { ApplicationRegistry } from '../applications/registry';
 import { KeyboardShortcutManager } from './shortcuts';
 import { SlashCommandRegistry, registerAllCommands } from './commands/index.js';
-import { Setting, getShortcuts, getTaskArtifactDirectory, getEnvDefaultModelInstance } from '../utils/setting.js';
+import {
+    Setting,
+    getShortcuts,
+    getTaskArtifactDirectory,
+    getEnvDefaultModelInstance,
+    type ShortcutsConfig
+} from '../utils/setting.js';
 import { getReasoningEffortLabels } from '../../common/reasoning-effort.js';
 import { getGoalElapsedMs } from '../../common/goal/format.js';
 import { logger } from '../utils/logger.js';
@@ -2321,7 +2328,8 @@ export class OpenDeskTUI {
                 !this.textPageActive &&
                 !this.inputArea.hasPromptWidget()
             ) {
-                const shortcuts = getShortcuts();
+                // 快捷键来自用户配置（string），matchesKey 对非法键值返回 false，这里收窄为 pi-tui 的 KeyId
+                const shortcuts = getShortcuts() as { [K in keyof ShortcutsConfig]: KeyId };
 
                 if (matchesKey(data, shortcuts.output_display)) {
                     this.cycleOutputDisplayLevel();

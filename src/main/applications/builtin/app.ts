@@ -73,7 +73,11 @@ export class BuiltinApplication extends BaseApplication {
             if (!isBuiltinSkillAvailableOnPlatform(String(result.frontmatter?.name ?? ''), platformName)) {
                 continue;
             }
-            const skill = new Skill({ ...result.frontmatter }, result.body || '', result.skillDir);
+            const skill = new Skill(
+                { ...result.frontmatter } as import('../../aikernel/skill.js').SkillFrontmatter,
+                result.body || '',
+                result.skillDir
+            );
             skills.push(skill);
         }
         return skills;

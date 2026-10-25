@@ -13,6 +13,7 @@ import type {
     AuthMethod,
     InitializeRequest,
     McpServer,
+    PlanEntry,
     RequestPermissionRequest,
     SessionConfigOption,
     SessionNotification,
@@ -26,6 +27,31 @@ import { t } from '../../../../locale/index.js';
 type V2Target = acpV2.Stream | acpV2.AgentApp;
 const MAX_TOOL_CONTENT_ITEMS = 10_000;
 const MAX_TERMINAL_OUTPUT_BYTES = 16 * 1024 * 1024;
+
+/**
+ * v2 的 SessionUpdate 是开放联合（含 `{ sessionUpdate: string }` 的自定义/未来变体），
+ * switch 判别收窄无法排除它，收窄后字段全部退化为 unknown。本适配层只处理已知变体，
+ * 用 Extract 收成闭合联合后再分派；未知的 sessionUpdate 走文件末尾的默认透传分支。
+ */
+type V2KnownSessionUpdate = Extract<
+    acpV2.SessionUpdate,
+    {
+        sessionUpdate:
+            | 'user_message_chunk'
+            | 'user_message'
+            | 'agent_message_chunk'
+            | 'agent_message'
+            | 'agent_thought_chunk'
+            | 'agent_thought'
+            | 'tool_call_content_chunk'
+            | 'tool_call_update'
+            | 'terminal_update'
+            | 'terminal_output_chunk'
+            | 'plan_update'
+            | 'plan_removed'
+            | 'state_update';
+    }
+>;
 
 interface PromptWaiter {
     resolve(stopReason: string): void;
@@ -74,8 +100,9 @@ function normalizeConfigOptions(options: acpV2.SessionConfigOption[] | undefined
                 id: option.configId,
                 ...('options' in option
                     ? {
-                          options: option.options.map((entry) =>
-                              'groupId' in entry ? { ...entry, group: entry.groupId } : entry
+                          // 开放联合的 'options' in 收窄后仍为 unknown，按 select 变体实际形状取用
+                          options: ((option as { options: Array<Record<string, unknown>> }).options ?? []).map(
+                              (entry) => ('groupId' in entry ? { ...entry, group: entry.groupId } : entry)
                           )
                       }
                     : {})
@@ -140,7 +167,7 @@ export function createV2ConnectionHandle(
     };
 
     const normalizeUpdate = (params: acpV2.UpdateSessionNotification): SessionNotification | undefined => {
-        const update = params.update;
+        const update = params.update as V2KnownSessionUpdate;
         switch (update.sessionUpdate) {
             case 'agent_message_chunk':
             case 'agent_thought_chunk':
@@ -255,31 +282,38 @@ export function createV2ConnectionHandle(
                     }
                 } as SessionNotification;
             }
-            case 'plan_update':
-                if (update.plan.type === 'markdown') {
+            case 'plan_update': {
+                // v2 PlanUpdate 亦为开放联合（含 { type: string } 自定义变体），按已知形状取用
+                const plan = update.plan as {
+                    type: string;
+                    content?: string;
+                    uri?: string;
+                    entries?: Array<{ content?: string; priority?: string; status?: string }>;
+                };
+                if (plan.type === 'markdown') {
                     return {
                         sessionId: params.sessionId,
                         update: {
                             sessionUpdate: 'plan',
-                            entries: [{ content: update.plan.content, priority: 'medium', status: 'in_progress' }]
+                            entries: [{ content: plan.content ?? '', priority: 'medium', status: 'in_progress' }]
                         }
                     };
                 }
-                if (update.plan.type === 'file') {
+                if (plan.type === 'file') {
                     return {
                         sessionId: params.sessionId,
                         update: {
                             sessionUpdate: 'plan',
-                            entries: [{ content: update.plan.uri, priority: 'medium', status: 'in_progress' }]
+                            entries: [{ content: plan.uri ?? '', priority: 'medium', status: 'in_progress' }]
                         }
                     };
                 }
-                if (update.plan.type !== 'items') return params as unknown as SessionNotification;
+                if (plan.type !== 'items') return params as unknown as SessionNotification;
                 return {
                     sessionId: params.sessionId,
                     update: {
                         sessionUpdate: 'plan',
-                        entries: update.plan.entries.map((entry) => ({
+                        entries: (plan.entries ?? []).map((entry) => ({
                             content: entry.content,
                             priority: ['low', 'medium', 'high'].includes(entry.priority)
                                 ? (entry.priority as 'low' | 'medium' | 'high')
@@ -287,14 +321,20 @@ export function createV2ConnectionHandle(
                             status: ['pending', 'in_progress', 'completed', 'cancelled'].includes(entry.status)
                                 ? (entry.status as 'pending' | 'in_progress' | 'completed' | 'cancelled')
                                 : 'pending'
-                        }))
+                        })) as PlanEntry[]
                     }
                 };
+            }
             case 'plan_removed':
                 return { sessionId: params.sessionId, update: { sessionUpdate: 'plan', entries: [] } };
-            case 'state_update':
-                if (update.state === 'idle') finishPrompt(params.sessionId, update.stopReason ?? 'end_turn');
+            case 'state_update': {
+                // OpenDesk v2 对端实际发送扁平形状：state 为 'idle' 等字符串、stopReason 为
+                // 兄弟字段（与 SDK StateUpdate 的嵌套类型不符），按线上形状处理，
+                // 形状由 connection-v2.test.ts 的 idle 用例锁定
+                const stateUpdate = update as unknown as { state?: string; stopReason?: string };
+                if (stateUpdate.state === 'idle') finishPrompt(params.sessionId, stateUpdate.stopReason ?? 'end_turn');
                 return undefined;
+            }
             default:
                 return {
                     sessionId: params.sessionId,
@@ -435,7 +475,7 @@ export function createV2ConnectionHandle(
             const result = await agent.request(acpV2.methods.agent.session.setConfigOption, {
                 sessionId: params.sessionId,
                 configId: params.configId,
-                type: params.type === 'boolean' ? 'boolean' : 'id',
+                type: 'type' in params && params.type === 'boolean' ? 'boolean' : 'id',
                 value: params.value
             } as acpV2.SetSessionConfigOptionRequest);
             return {

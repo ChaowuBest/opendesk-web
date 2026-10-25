@@ -212,7 +212,7 @@ export class ElectronPlatform extends WorkerPlatform {
         // proxy configuration. When use_proxy is 'system', bridge to ArkTS to retrieve
         // the system HTTP proxy via connection.getDefaultHttpProxy() and convert it to
         // fixed_servers mode so Chromium actually uses it.
-        if (useProxy === 'system' && !bypassProxy && process.platform === 'openharmony') {
+        if (useProxy === 'system' && !bypassProxy && (process.platform as string) === 'openharmony') {
             try {
                 const systemProxy = await getHarmonyOSSystemProxy();
                 if (systemProxy) {

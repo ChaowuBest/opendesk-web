@@ -16,7 +16,8 @@
 
 /** A JSON-safe snapshot of the metadata attached to an OpenDesk message or tool call. */
 export interface RuntimeMetadata {
-    scope?: 'task' | 'goal' | 'global';
+    /** goal 暂停期间的插话消息标记（goal 扩展写入） */
+    scope?: 'task' | 'goal' | 'global' | 'interlude';
     origin?: {
         source: 'user' | 'internal' | 'hook' | 'scheduler' | 'compact' | 'tool' | 'system';
         reason?: string;

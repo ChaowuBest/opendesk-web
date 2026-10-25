@@ -36,6 +36,7 @@ import type { OpenDeskTUI } from '../entry.js';
 import chalk from 'chalk';
 import { t } from '../../../locale/index.js';
 import type { FeedbackType } from '../../utils/feedback.js';
+import { defaultSelectListTheme } from '../theme.js';
 
 // ─── 类型 ─────────────────────────────────────────────────────────────────────
 
@@ -145,7 +146,7 @@ export class FeedbackWidget implements Component {
         // contentEditor：disableSubmit=true，Enter 插入换行；无边框，避免与 widget 背景色冲突
         this.contentEditor = new Editor(this.tui, {
             borderColor: () => '',
-            selectList: {}
+            selectList: defaultSelectListTheme
         });
         this.contentEditor.disableSubmit = true;
 

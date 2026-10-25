@@ -26,8 +26,9 @@ import {
 
 type GoalResultWithDisplayEvents = GoalCommandResultLike & {
     summary?: {
-        objectiveEvents?: Array<{ displayMessageId?: string }>;
-        recentEvents?: Array<{ displayMessageId?: string }>;
+        // 与 aikernel GoalRenderSummary 的事件结构对齐，仅声明展示所需字段
+        objectiveEvents?: Array<{ type?: string; revision?: number; displayMessageId?: string }>;
+        recentEvents?: Array<{ type?: string; revision?: number; displayMessageId?: string }>;
     };
 };
 
@@ -216,7 +217,7 @@ export function registerGoalCommand(tui: OpenDeskTUI): void {
 
             if (command.kind === 'subcommand') {
                 const validation = validateGoalSubcommandArgs(command.subcommand, command.rest);
-                if (!validation.ok) {
+                if (validation.ok === false) {
                     showResult(tui, { ok: false, messageKey: validation.messageKey });
                     return;
                 }
@@ -239,7 +240,7 @@ export function registerGoalCommand(tui: OpenDeskTUI): void {
                             status: task.goal_state.status,
                             messageKey: 'goal.clear.complete',
                             errorCode: 'goal_complete'
-                        });
+                        } as GoalCommandResultLike);
                         return;
                     }
                     const result = await GoalService.clear(task, 'tui');

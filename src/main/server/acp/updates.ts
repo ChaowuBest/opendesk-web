@@ -381,7 +381,7 @@ export class AcpUpdateTranslator {
             update: {
                 sessionUpdate: thought ? 'agent_thought_chunk' : 'agent_message_chunk',
                 ...(messageId ? { messageId } : {}),
-                _meta: createOpenDeskMeta(chunk, partType),
+                _meta: createOpenDeskMeta(chunk, partType) as unknown as Record<string, unknown>,
                 content: {
                     type: 'text',
                     text: delta
@@ -401,7 +401,7 @@ export class AcpUpdateTranslator {
         const status = mapToolStatus(toolCall.status);
         const rawInput = toJsonCompatible(getToolRawInput(toolCall));
         const locations = getToolLocations(toolCall);
-        const meta = createOpenDeskMeta(chunk, 'tool_call', toolCall);
+        const meta = createOpenDeskMeta(chunk, 'tool_call', toolCall) as unknown as Record<string, unknown>;
 
         if (!this.emittedToolCalls.has(toolCallId)) {
             this.emittedToolCalls.add(toolCallId);

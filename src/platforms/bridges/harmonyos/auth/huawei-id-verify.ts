@@ -9,7 +9,7 @@
  * See the Mulan PSL v2 for more details.
  */
 
-import type { HuaweiLoginResult } from '../common';
+import type { HuaweiLoginResult } from '../../common.js';
 import type { HuaweiTokenResponse, HuaweiUserInfoResponse } from './types';
 
 const TOKEN_ENDPOINT = 'https://oauth-api.cloud.huawei.com/openapi/rogue/v2/token';

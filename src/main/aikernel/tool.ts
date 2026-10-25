@@ -24,7 +24,7 @@ const validationTranslations: Record<string, Record<string, string>> = {
     'en-US': enUs
 };
 
-function getToolValidationLocale(): string {
+function getToolValidationLocale(): SupportedLocale {
     const navigatorLanguages =
         typeof globalThis.navigator !== 'undefined' && Array.isArray(globalThis.navigator.languages)
             ? [...globalThis.navigator.languages]
@@ -169,7 +169,7 @@ export class ToolResult implements ToolResultWriter {
     /** true 时 outputDelta 携带全量文本（缓冲截断/重置），渲染端需整体重写输出区。 */
     outputReset?: boolean;
 
-    updatedCallback?: (result: ToolResult) => void;
+    updatedCallback?: (result: ToolResult) => void | Promise<void>;
 
     static fromStringResponse(response: string): ToolResult {
         const result = new ToolResult();
@@ -451,7 +451,7 @@ export class BaseTool<T extends z.ZodType> {
         toolCall?: ToolCall
     ): Promise<ToolResult> {
         const parsedArgs = this.validateArgs(args);
-        if (!parsedArgs.success) {
+        if (parsedArgs.success === false) {
             const result = new ToolResult();
             result.status = 'error';
             result.result = parsedArgs.error;

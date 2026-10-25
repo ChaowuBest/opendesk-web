@@ -124,7 +124,7 @@ export function loadAgentFromDirectory(directory: string, codes: AgentResourceEr
         whenToUse: optionalMetaString(meta.when_to_use, `${directoryName}:when_to_use`, codes.metaInvalid) ?? firstLine,
         body,
         location: directory,
-        dispatchable: meta.dispatchable ?? true
+        dispatchable: typeof meta.dispatchable === 'boolean' ? meta.dispatchable : true
     };
 }
 

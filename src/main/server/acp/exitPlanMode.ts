@@ -116,8 +116,9 @@ export class AcpExitPlanModeProvider implements ExitPlanModeProvider {
             } as any
         });
 
-        if (response.action === 'accept' && response.content?.action) {
-            const action = response.content.action as ExitPlanModeAction;
+        const planResponse = response as { action?: string; content?: { action?: string } };
+        if (planResponse.action === 'accept' && planResponse.content?.action) {
+            const action = planResponse.content.action as ExitPlanModeAction;
             return { action };
         }
 

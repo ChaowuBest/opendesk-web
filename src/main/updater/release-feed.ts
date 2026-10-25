@@ -59,9 +59,9 @@ function isLegacyX86InstallerLink(href: string, label: string): boolean {
 }
 
 function selectNewsInstallerLink(
-    candidates: { href: string; label: string }[],
+    candidates: { href: string; label: string; checksum?: string }[],
     targetArch: UpdaterTargetArch
-): { href: string; label: string } | undefined {
+): { href: string; label: string; checksum?: string } | undefined {
     const native = candidates.find((candidate) => isNativeInstallerLink(candidate.href, candidate.label, targetArch));
     if (native) return native;
     if (targetArch === 'arm64') {

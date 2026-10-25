@@ -20,10 +20,10 @@ import type { InteractiveToolset } from '../main/aikernel/tool.js';
 import { fetchWithResolvedProxy } from './proxy-fetch.js';
 import type { PlatformFetchOptions, PlatformNetworkConfig } from './base.js';
 import { Setting } from '../main/utils/setting.js';
-import { exec } from 'child_process';
+import { execFile, spawn } from 'child_process';
 import { promisify } from 'util';
 
-const execAsync = promisify(exec);
+const execFileAsync = promisify(execFile);
 
 import { MailboxApplication } from '../main/applications/mailbox/app.js';
 import { FileMgrApplication } from '../main/applications/filemgr/app.js';
@@ -93,38 +93,56 @@ export class CliPlatform extends AbstractPlatform {
     }
 
     async openPath(filePath: string): Promise<void> {
-        if (!this._canOpenWithSystem()) return;
-        await this._openWithSystem(filePath);
+        await this._openWithSystem('openPath', filePath);
     }
 
     async openExternal(url: string): Promise<void> {
-        if (!this._canOpenWithSystem()) return;
-        await this._openWithSystem(url);
+        await this._openWithSystem('openExternal', url);
     }
 
     async showItemInFolder(filePath: string): Promise<void> {
-        if (!this._canOpenWithSystem()) return;
-        const cmd =
-            process.platform === 'win32'
-                ? `explorer /select,"${filePath}"`
-                : process.platform === 'darwin'
-                  ? `open -R "${filePath}"`
-                  : `xdg-open "${filePath}"`;
-        await execAsync(cmd);
+        await this._openWithSystem('showItemInFolder', filePath);
     }
 
     private _canOpenWithSystem(): boolean {
         return (process.platform as string) !== 'openharmony';
     }
 
-    private async _openWithSystem(target: string): Promise<void> {
-        const cmd =
-            process.platform === 'win32'
-                ? `start "" "${target}"`
-                : process.platform === 'darwin'
-                  ? `open "${target}"`
-                  : `xdg-open "${target}"`;
-        await execAsync(cmd);
+    /**
+     * 把目标交给系统默认处理器打开。target 可能携带用户或 AI 生成的路径 / URL，
+     * 必须作为单个参数传给真实可执行文件，绝不能经 shell 拼接命令字符串，
+     * 否则其中的引号 / & / $() 等元字符会构成命令注入（GitCode issue #188）。
+     */
+    private async _openWithSystem(
+        kind: 'openPath' | 'openExternal' | 'showItemInFolder',
+        target: string
+    ): Promise<void> {
+        if (!this._canOpenWithSystem()) return;
+        if (process.platform === 'win32') {
+            // 与 start 同为 ShellExecute 语义，但 explorer.exe 是普通可执行文件，target 作为单个
+            // 参数传入不经 cmd 解析；而 start 是 cmd 内建命令，含双引号的 target 可逃逸引号注入命令。
+            // explorer 即便成功派发也常以退出码 1 结束，因此 spawn 成功即返回，不等待退出。
+            await new Promise<void>((resolve, reject) => {
+                const child = spawn('explorer.exe', [kind === 'showItemInFolder' ? `/select,${target}` : target], {
+                    stdio: 'ignore',
+                    windowsHide: true,
+                    shell: false
+                });
+                const onError = (error: Error): void => reject(error);
+                child.once('error', onError);
+                child.once('spawn', () => {
+                    child.removeListener('error', onError);
+                    child.unref();
+                    resolve();
+                });
+            });
+            return;
+        }
+        if (process.platform === 'darwin') {
+            await execFileAsync('open', kind === 'showItemInFolder' ? ['-R', target] : [target], { windowsHide: true });
+            return;
+        }
+        await execFileAsync('xdg-open', [target], { windowsHide: true });
     }
 
     async initPlatformHarness(task: TaskState): Promise<void> {

@@ -59,50 +59,14 @@ describe('sidebar task context menu submenu', () => {
         const sidebar = createSidebar();
         sidebar._developerMode = true;
 
-        // 记录菜单 DOM 被移除时的调用栈，定位关闭者
-        const origRemove = (window.Element.prototype as any).remove;
-        let removeStack: string | null = null;
-        (window.Element.prototype as any).remove = function () {
-            if (this.id === 'task-context-menu') {
-                removeStack = new Error().stack || '';
-            }
-            return origRemove.call(this);
-        };
-
-        // 记录菜单创建期间注册的监听器
-        const added: Array<{ el: any; type: string; capture: boolean }> = [];
-        const origAdd = (window.HTMLElement.prototype as any).addEventListener;
-        (window.HTMLElement.prototype as any).addEventListener = function (type: string, listener: any, opts: any) {
-            added.push({
-                el: this,
-                type,
-                capture: typeof opts === 'object' ? !!opts?.capture : !!opts
-            });
-            return origAdd.call(this, type, listener, opts);
-        };
-
-        try {
-            sidebar._showContextMenu(100, 100, 'task_1');
-        } finally {
-            (window.HTMLElement.prototype as any).addEventListener = origAdd;
-        }
+        sidebar._showContextMenu(100, 100, 'task_1');
 
         const menu = document.querySelector('#task-context-menu');
         expect(menu).not.toBeNull();
-        console.log(
-            '[diag] capture click listeners registered during menu build:',
-            JSON.stringify(
-                added
-                    .filter((r) => r.type === 'click' && r.capture)
-                    .map((r) => ({ tag: r.el.tagName, id: r.el.id, inMenu: menu!.contains(r.el) }))
-            )
-        );
 
         const submenuBtn = menu!.querySelector('[data-submenu="1"]') as HTMLElement;
         expect(submenuBtn).not.toBeNull();
         submenuBtn.dispatchEvent(new (window as any).Event('click', { bubbles: true }));
-
-        console.log('[diag] remove stack after submenu click:\n' + (removeStack ?? '(menu not removed)'));
 
         // 期望：菜单不被关闭，且子菜单展开
         expect(document.querySelector('#task-context-menu')).not.toBeNull();

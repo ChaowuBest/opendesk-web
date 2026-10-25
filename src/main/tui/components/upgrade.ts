@@ -28,7 +28,8 @@ class Splitter implements Component {
     }
 }
 
-type UpgradeState = 'init' | 'checking' | 'confirm' | 'upgrading' | 'success' | 'error' | 'uptodate';
+// 'select' 为构造后、show() 前的初始占位状态（updateUI 的 switch 不命中即走默认渲染）
+type UpgradeState = 'select' | 'init' | 'checking' | 'confirm' | 'upgrading' | 'success' | 'error' | 'uptodate';
 type UpgradeAction = 'cancel' | 'upgrade' | 'close';
 type UpgradeItem = { value: UpgradeAction; label: string };
 

@@ -824,20 +824,22 @@ function findPermissionDialog(node: LayoutNode): PermissionDialog | undefined {
  */
 class HarmonyBaseTool<T extends z.ZodType> extends BaseTool<T> {
     override toJSON() {
-        const json = super.toJSON() as {
-            name: string;
-            description: string;
-            params: { required?: string[]; properties?: Record<string, object> };
-            agentIds?: readonly string[];
+        const json = super.toJSON();
+        // super.toJSON() 的 params 来自 getJsonSchema() 的共享缓存，必须拷贝后修改，
+        // 原地剔除 required 会污染缓存并泄漏给权限推断/上下文统计等其它消费方
+        const params = {
+            ...(json.params as Record<string, unknown>)
+        } as {
+            required?: string[];
+            properties?: Record<string, object>;
         };
-        const { required, properties } = json.params;
-        if (Array.isArray(required) && properties) {
-            json.params.required = required.filter((key) => {
-                const prop = properties[key];
+        if (Array.isArray(params.required) && params.properties) {
+            params.required = params.required.filter((key) => {
+                const prop = params.properties![key];
                 return !prop || !('default' in prop);
             });
         }
-        return json;
+        return { ...json, params };
     }
 }
 
@@ -4314,7 +4316,8 @@ async function performOcr(
     const requestedScale = 2;
     let prepared = img;
     if (region) {
-        prepared = img.crop({ x: crop.x1, y: crop.y1, w: cropWidth, h: cropHeight });
+        // Jimp 实例方法的泛型实例化与 read() 返回类型存在 variance 差异，行为一致，按原类型收口
+        prepared = img.crop({ x: crop.x1, y: crop.y1, w: cropWidth, h: cropHeight }) as typeof img;
     }
 
     // Derive coordinate scaling from the actual OCR image dimensions.

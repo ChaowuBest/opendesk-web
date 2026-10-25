@@ -31,6 +31,7 @@ import {
 } from '../../applications/pluginmgr/index.js';
 import type { PluginCapability, PluginHostEntry } from '../../applications/pluginmgr/index.js';
 import { resolvePluginDisplayName, resolvePluginLocalizedText } from '../../../../packages/plugin-sdk/src/index.js';
+import { ToolResult } from '../../aikernel/tool.js';
 import { getLocale, t } from '../../../locale/index.js';
 import { setCustomOpendeskDirectory } from '../../utils/setting.js';
 import process from 'process';
@@ -336,11 +337,15 @@ export function registerPluginsCommand(prog: Command): void {
                 if (before.deny) {
                     throw new Error(before.deny.message ?? t('plugin.tool.denied', { name }));
                 }
-                const result = await contribution.definition.execute(args, {
-                    taskId: 'plugin-cli',
-                    workspace,
-                    abort: new AbortController().signal
-                });
+                const result = await contribution.definition.execute(
+                    args,
+                    {
+                        taskId: 'plugin-cli',
+                        workspace,
+                        abort: new AbortController().signal
+                    },
+                    new ToolResult()
+                );
                 const after = await getPluginHost().trigger(
                     'tool.execute.after',
                     {
@@ -354,8 +359,8 @@ export function registerPluginsCommand(prog: Command): void {
                         ? { status: 'success', result }
                         : {
                               status: 'success',
-                              result: result.output,
-                              resultObject: result.resultObject
+                              result: (result as { output: string }).output,
+                              resultObject: (result as { resultObject?: object }).resultObject
                           }
                 );
                 console.log(after.result);

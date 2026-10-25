@@ -112,38 +112,8 @@ export class EmbeddedBrowser extends BrowserInstance {
         this._restoreState = restoreState;
         this.container.setAttribute('data-od-browser-focus-scope', '');
         this._initZoomSync();
-        this._initVisibilityHandler();
         this.init();
         this.container.addEventListener('keydown', this._focusTrapKeydown);
-    }
-
-    /**
-     * 监听窗口可见性变化，隐藏时降低 webview 刷新率以省电。
-     */
-    private _initVisibilityHandler(): void {
-        const ipcRenderer = (window as any).__ipcRenderer;
-        if (!ipcRenderer) return;
-
-        const onVisibilityChanged = (_event: any, visible: boolean) => {
-            for (const tab of this.tabs) {
-                if (!tab.webview) continue;
-                try {
-                    if (visible) {
-                        // 恢复渲染：设置正帧率
-                        tab.webview.setWindowOpenHandler(null);
-                    } else {
-                        // 隐藏时不做额外操作，浏览器 webview 已关闭 backgroundThrottling 保持全速渲染
-                    }
-                } catch {
-                    /* ignore */
-                }
-            }
-        };
-
-        // 通过 DOM custom event 方式接收，避免直接依赖 ipcRenderer
-        window.addEventListener('openDesk:visibilityChanged', ((e: CustomEvent) => {
-            onVisibilityChanged(null, e.detail);
-        }) as EventListener);
     }
 
     private _initZoomSync(): void {

@@ -11,6 +11,16 @@
 
 import { UserMessage } from '../messages.js';
 import type { TaskState } from '../states/tasks.js';
+import type { TaskStatus } from '../task/types.js';
+
+/**
+ * 读取任务当前状态。await 间隙中状态可能被并发调度改变，直接读
+ * task.task_status 会受 TS 既有控制流窄化影响而误报"比较无重叠"，
+ * 经由本函数取值以还原完整的 TaskStatus 联合。
+ */
+function currentGoalTaskStatus(task: TaskState): TaskStatus {
+    return task.task_status;
+}
 import { deleteTaskTodos, resetInProgressTaskTodos } from '../todos/task-todos.js';
 import { GoalController, type GoalObjectiveEditOptions, type GoalPausedOrBlockedSnapshot } from './controller.js';
 import { GoalScheduler } from './scheduler.js';
@@ -292,7 +302,9 @@ export class GoalService {
             started = schedulerStartFailedResult(task);
         }
         if (!started.ok) {
-            if (started.errorCode === 'task_running' && task.task_status === 'running') {
+            // startExecution 的 await 期间任务可能被并发调度进入 running，上方早退
+            // 遗留的状态窄化已过期；经函数取值还原完整联合后再比较
+            if (started.errorCode === 'task_running' && currentGoalTaskStatus(task) === 'running') {
                 GoalController.markAwaitingContextEntry(task, goal.id, goal.revision);
                 task.goalRuntime.injectGoalEditReminder({
                     goalId: goal.id,

@@ -23,7 +23,8 @@
  * 4. 索引器将自动可用于搜索操作
  */
 
-import { Item, FilterCondition, QueryOperator } from './abstract-storage.js';
+import { Item, FilterCondition, QueryOperator, type SemanticWriteAvailability } from './abstract-storage.js';
+import type { BaseIndexStoreProbeResult } from './base-indexer.js';
 
 /**
  * 索引器搜索选项
@@ -71,6 +72,13 @@ export abstract class Indexer {
 
     /** 支持的操作符列表 */
     abstract readonly supportedOperators: QueryOperator[];
+
+    /**
+     * 语义检索后端能力（仅语义类子类实现；调用方先做 typeof 能力探测再使用）
+     */
+    getBackend?(): 'native' | 'arkdata' | 'wasm';
+    probeStore?(): Promise<BaseIndexStoreProbeResult>;
+    getWriteState?(): Promise<SemanticWriteAvailability>;
 
     /**
      * 初始化索引器（创建表、加载模型等）

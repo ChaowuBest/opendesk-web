@@ -66,24 +66,30 @@ describe('launch at login', () => {
         await expect(new NaiveStartupKit().delegateSetting(true)).rejects.toThrow();
     });
     test('read failures preserve delegation capability and return unknown rather than off', async () => {
-        const delegateSetting = jest.fn(async () => undefined);
-        const service = guardStartupKit(
-            {
-                getState: async () => {
-                    throw new Error('old host');
+        // 实现读取失败时会 console.error 记录原因，该降级路径正是本用例验证的行为
+        const errorSpy = jest.spyOn(console, 'error').mockImplementation(() => {});
+        try {
+            const delegateSetting = jest.fn(async () => undefined);
+            const service = guardStartupKit(
+                {
+                    getState: async () => {
+                        throw new Error('old host');
+                    },
+                    delegateSetting
                 },
-                delegateSetting
-            },
-            'system-settings'
-        );
-        expect(await service.getState()).toEqual({
-            supported: true,
-            enabled: null,
-            mode: 'system-settings',
-            reason: 'unavailable'
-        });
-        await service.delegateSetting();
-        expect(delegateSetting).toHaveBeenCalledTimes(1);
+                'system-settings'
+            );
+            expect(await service.getState()).toEqual({
+                supported: true,
+                enabled: null,
+                mode: 'system-settings',
+                reason: 'unavailable'
+            });
+            await service.delegateSetting();
+            expect(delegateSetting).toHaveBeenCalledTimes(1);
+        } finally {
+            errorSpy.mockRestore();
+        }
     });
     test('Linux writes a quoted user autostart entry and removes only its own file', async () => {
         const directory = mkdtempSync(path.join(tmpdir(), 'opendesk-autostart-'));

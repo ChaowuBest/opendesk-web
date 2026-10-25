@@ -44,7 +44,7 @@ const SUPPORTED_OPERATORS: TagQueryOperator[] = ['=', '!=', '>', '<', '>=', '<='
  * better-sqlite3 使用 SQLite 的 WAL 模式，支持多读单写
  */
 export class TagIndexDB implements ITagIndexDB {
-    private db: Database.Database;
+    private db: DatabaseType.Database;
     private readonly tableName = 'tag_index';
     private isInitialized = false;
     private readonly dbPath: string;

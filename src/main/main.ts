@@ -140,7 +140,7 @@ import { GoalController } from './aikernel/goal/controller.js';
 import { GoalService } from './aikernel/goal/service.js';
 import type { GoalCommandResult } from './aikernel/goal/state.js';
 import { parseGoalEditIfMatch } from '../common/goal/command.js';
-import { marked } from './aikernel/messages.js';
+import { parseMarkdownSafe } from './aikernel/messages.js';
 import {
     lookupKnownContextSize,
     lookupKnownMaxOutputTokens,
@@ -350,7 +350,7 @@ function signalMainWindowShown(): void {
 }
 
 function restoreHuaweiLoginForWorkbenchWindow(reason: string): void {
-    if (process.platform !== 'openharmony' || !isHuaweiStartupAuthPending || isHuaweiLoginRestorePending) {
+    if ((process.platform as string) !== 'openharmony' || !isHuaweiStartupAuthPending || isHuaweiLoginRestorePending) {
         return;
     }
 
@@ -578,7 +578,7 @@ function installEmbeddedBrowserLifecycleHandlers(hostWindow: BrowserWindow, cont
         return { action: 'deny' };
     });
 
-    contents.on('close', () => {
+    (contents as NodeJS.EventEmitter).on('close', () => {
         if (hostWindow.isDestroyed()) return;
         safeSendToWebContents(hostWindow.webContents, EmbedBrowserChannels.webviewCloseRequested, contents.id);
     });
@@ -1421,12 +1421,15 @@ const registerTaskManagerAPIHandlers = () => {
     function normalizeCreateTaskOptions(raw: unknown): CreateTaskOptions {
         if (raw && typeof raw === 'object') {
             const obj = raw as Record<string, unknown>;
+            const selectedExecutionNodeId = obj.selectedExecutionNodeId;
             return {
                 modeId: typeof obj.modeId === 'string' ? obj.modeId : undefined,
                 selectedExecutionNodeId:
-                    typeof obj.selectedExecutionNodeId === 'string' || obj.selectedExecutionNodeId === null
-                        ? obj.selectedExecutionNodeId
-                        : undefined,
+                    typeof selectedExecutionNodeId === 'string'
+                        ? selectedExecutionNodeId
+                        : selectedExecutionNodeId === null
+                          ? null
+                          : undefined,
                 internal: obj.internal === true,
                 taskName: typeof obj.taskName === 'string' ? obj.taskName : undefined
             };
@@ -2071,7 +2074,7 @@ const registerTaskManagerAPIHandlers = () => {
             if (cached && cached.content === content) {
                 return { status: 'ok', data: { raw: content, rendered: cached.rendered } };
             }
-            const rendered = await marked.parse(content);
+            const rendered = await parseMarkdownSafe(content);
             sessionMemoryRenderCache.set(taskId, { content, rendered });
             return { status: 'ok', data: { raw: content, rendered } };
         } catch {
@@ -3294,7 +3297,7 @@ const registerMagicPointerHandlers = () => {
  * 非鸿蒙平台直接跳过。
  */
 async function ensureHuaweiAuthOnStartup(): Promise<void> {
-    if (process.platform !== 'openharmony') {
+    if ((process.platform as string) !== 'openharmony') {
         return;
     }
 
@@ -3502,7 +3505,7 @@ const buildTrayMenu = () => {
             }
         }
     ];
-    if (process.platform !== 'openharmony') {
+    if ((process.platform as string) !== 'openharmony') {
         menuitems.push({ type: 'separator' });
         menuitems.push({
             label: t('main.tray.quit'),
@@ -3848,7 +3851,8 @@ async function startApplication(): Promise<void> {
             // 钩子注册逻辑在 AgentGateApplication.registerGuiHooks 内部，此处只注入 IPC 推送回调。
             {
                 const { AgentGateApplication } = await import('./applications/agentgate/app');
-                const agApp = ApplicationRegistry.getApplication('agentgate') as AgentGateApplication | undefined;
+                const agApp = ApplicationRegistry.getApplication('agentgate') as
+                    InstanceType<typeof AgentGateApplication> | undefined;
                 agApp?.registerGuiHooks((channel: string, payload: object) => {
                     if (globalMainWindow && !globalMainWindow.isDestroyed()) {
                         safeSendToWebContents(globalMainWindow.webContents, channel, payload);
@@ -4139,7 +4143,8 @@ async function startApplication(): Promise<void> {
         // 启动 AgentGate 运行时（注入事件推送回调；是否真正启停由 application 读取配置决定）
         try {
             const { AgentGateApplication } = await import('./applications/agentgate/app');
-            const agApp = ApplicationRegistry.getApplication('agentgate') as AgentGateApplication | undefined;
+            const agApp = ApplicationRegistry.getApplication('agentgate') as
+                InstanceType<typeof AgentGateApplication> | undefined;
             if (agApp) {
                 agApp.startRuntime((events, counts) => {
                     if (globalMainWindow && !globalMainWindow.isDestroyed()) {
@@ -4161,7 +4166,8 @@ async function startApplication(): Promise<void> {
 
             // IPC handler：主窗口确认存储清理 → app.cleanupStorage（删除 tool_calls + 清空拦截记录）
             ipcMain.handle('agentgate:cleanupStorage', async () => {
-                const agApp2 = ApplicationRegistry.getApplication('agentgate') as AgentGateApplication | undefined;
+                const agApp2 = ApplicationRegistry.getApplication('agentgate') as
+                    InstanceType<typeof AgentGateApplication> | undefined;
                 if (!agApp2) return { status: 'error', message: 'agentgate application not found' };
                 try {
                     const data = await (agApp2 as any).cleanupStorage();

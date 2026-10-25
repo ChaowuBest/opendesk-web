@@ -49,8 +49,17 @@ export class ExternalManifestApplication extends BaseApplication {
         return this.record.displayName;
     }
 
-    toJSON(): Record<string, unknown> {
-        return toPublicUserApp(this.record);
+    toJSON(): ReturnType<BaseApplication['toJSON']> & Record<string, unknown> {
+        // 对外保留 toPublicUserApp 的全部公开字段（source/active 等），并补齐基类摘要形状
+        const publicView = toPublicUserApp(this.record) as Record<string, unknown>;
+        return {
+            ...publicView,
+            bundleName: String(publicView.bundleName ?? this.bundleName),
+            name: String(publicView.name ?? this.getName()),
+            showIcon: publicView.showIcon === true,
+            isExperimental: publicView.isExperimental === true,
+            needAgentBar: publicView.needAgentBar === true
+        };
     }
 
     getManifest() {

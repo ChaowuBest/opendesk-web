@@ -65,12 +65,7 @@ export interface GoalEvaluationRecord {
 }
 
 export type GoalContinuationReason =
-    | 'not_met'
-    | 'edit'
-    | 'crash_recovery'
-    | 'load_recovery'
-    | 'manual_pause'
-    | 'unspecified';
+    'not_met' | 'edit' | 'crash_recovery' | 'load_recovery' | 'manual_pause' | 'unspecified';
 
 // evaluator/recovery 生成的下一轮内部 prompt；消费后保留 consumed* 字段用于审计。
 export interface GoalContinuation {
@@ -583,7 +578,7 @@ function normalizeFinalSnapshot(raw: unknown, taskId: string): GoalFinalSnapshot
         finalizedAt
     };
     if (isObject(raw.lastEvaluation)) {
-        snapshot.lastEvaluation = raw.lastEvaluation as GoalFinalSnapshot['lastEvaluation'];
+        snapshot.lastEvaluation = raw.lastEvaluation as unknown as GoalFinalSnapshot['lastEvaluation'];
     }
     if (typeof raw.completedAt === 'string') snapshot.completedAt = raw.completedAt;
     if (typeof raw.clearedAt === 'string') snapshot.clearedAt = raw.clearedAt;

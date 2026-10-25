@@ -715,8 +715,8 @@ export class ChannelMgrApplication extends BaseApplication {
     /** 校验模型是否为当前已配置的 chat 模型。 */
     private isValidChatModel(model: string): boolean {
         try {
-            const data = Setting.getInstance().getData() || {};
-            const models = data.models;
+            const data = Setting.getInstance().getData();
+            const models = data?.models;
             if (!Array.isArray(models)) return false;
             return models.some((m: any) => m?.model_type === 'chat' && m?.alias === model);
         } catch {
@@ -770,8 +770,8 @@ export class ChannelMgrApplication extends BaseApplication {
     getAvailableModels(): { models: string[]; defaultModel: string } {
         try {
             const setting = Setting.getInstance();
-            const data = setting.getData() || {};
-            const rawModels = data.models as unknown as any[] | undefined;
+            const data = setting.getData();
+            const rawModels = data?.models as unknown as any[] | undefined;
             // 合并内置虚拟模型（如账号内置模型 opendesk/auto，登录后可用）
             const builtinAliases = (setting.getData().builtin_models ?? []).map((m) => m.alias);
             const models = [...(rawModels || []), ...builtinAliases.map((alias) => ({ alias, model_type: 'chat' }))]
@@ -780,7 +780,7 @@ export class ChannelMgrApplication extends BaseApplication {
                 .filter((alias: unknown): alias is string => typeof alias === 'string' && alias.length > 0);
             return {
                 models,
-                defaultModel: typeof data.default_model === 'string' ? data.default_model : ''
+                defaultModel: typeof data?.default_model === 'string' ? data.default_model : ''
             };
         } catch {
             return { models: [], defaultModel: '' };
@@ -1359,8 +1359,8 @@ export class ChannelMgrApplication extends BaseApplication {
                 const openId = pollRes.user_info?.open_id || '';
 
                 // 保存凭证到配置
-                const currentConfig = this.getConfig() || {};
-                const feishuConfig = currentConfig['feishu'] || {};
+                const currentConfig = (this.getConfig() || {}) as Record<string, unknown>;
+                const feishuConfig = (currentConfig['feishu'] || {}) as Record<string, unknown>;
                 const accounts = feishuConfig['accounts'] || {};
                 accounts[accountId] = { appId, appSecret, enabled: true };
 
@@ -1510,20 +1510,55 @@ export class ChannelMgrApplication extends BaseApplication {
 
     private reloadPromise?: Promise<void>;
 
+    /** 重载进行中又有调用到达时置位：本轮结束后补跑一轮（并发调用合并到同一轮补跑） */
+    private reloadFollowUpQueued = false;
+
     /**
      * 热重载所有消息渠道插件：停止旧插件 → 清除模块缓存 → 重新加载 → 启动新插件。
      * 安装、卸载、启停、修改配置后自动调用，无需重启 OpenDesk。
-     * 内部有互斥保护，并发调用会等待前一次完成后再执行。
+     * 并发语义：doReloadChannels 任意时刻至多执行一轮；重载进行中到达的调用
+     * 合并为紧随其后的一轮补跑（而非各自再跑一轮），且每个调用方返回前都有一轮
+     * 在其调用发起之后开始并完成，保证其先落盘的变更已被应用。
      */
     async reloadChannels(): Promise<void> {
-        if (this.reloadPromise) {
+        if (!this.reloadPromise) {
+            // 空闲：本轮在本次调用之后开始，必然能看到调用方刚做的变更
+            await this.startReloadRound();
+            return;
+        }
+        // 进行中的一轮可能在本调用之前就已开始、读不到调用方的变更，
+        // 排队一轮补跑；并发到达的多个等待者共享同一轮补跑
+        this.reloadFollowUpQueued = true;
+        await this.reloadPromise;
+        // 当前轮结束时若已排队补跑，会先于等待者恢复在其 finally 中同步开启
+        // 下一轮并写回 reloadPromise，因此循环等待直至本次调用之后的轮次完成
+        while (this.reloadPromise) {
             await this.reloadPromise;
         }
-        this.reloadPromise = this.doReloadChannels();
+    }
+
+    private startReloadRound(): Promise<void> {
+        const round = this.runReloadRound();
+        // 补跑轮可能已无等待者（例如前一轮失败导致调用方提前退出），
+        // 预挂一个 catch 防止其失败演变为 unhandled rejection
+        round.catch(() => {});
+        this.reloadPromise = round;
+        return round;
+    }
+
+    private async runReloadRound(): Promise<void> {
+        // 先让出一个微任务再开始本轮工作：保证 startReloadRound 已把本轮写入
+        // reloadPromise。否则 doReloadChannels 同步前缀里若（被插件回调等）同步
+        // 重入 reloadChannels，会看到空字段而并发开启第二轮
+        await Promise.resolve();
         try {
-            await this.reloadPromise;
+            await this.doReloadChannels();
         } finally {
             this.reloadPromise = undefined;
+            if (this.reloadFollowUpQueued) {
+                this.reloadFollowUpQueued = false;
+                this.startReloadRound();
+            }
         }
     }
 

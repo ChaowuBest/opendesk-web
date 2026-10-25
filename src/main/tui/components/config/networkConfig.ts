@@ -106,7 +106,8 @@ export class NetworkConfigPage implements Component {
         data.network_config = {
             ...(data.network_config ?? { no_ssl: false, use_proxy: 'none', custom_proxy_addr: '', no_proxy: '' }),
             no_ssl: values.no_ssl === true,
-            use_proxy: (values.use_proxy as string) || 'none',
+            // 表单 select 仅提供 USE_PROXY_OPTIONS 中的取值，按此收窄
+            use_proxy: (values.use_proxy as 'none' | 'system' | 'custom') || 'none',
             custom_proxy_addr: (values.custom_proxy_addr as string) || '',
             no_proxy: (values.no_proxy as string) || ''
         };

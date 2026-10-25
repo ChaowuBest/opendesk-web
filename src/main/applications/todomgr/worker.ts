@@ -249,7 +249,7 @@ export default class TodoMgrWorker extends BaseWorker {
         if (triggerChanged && newTrigger?.type === 'scheduled') {
             const todo = this.globalTodos[idx];
             logger.info(
-                `[todomgr] scheduled 触发器变更后立即检查 [${id}]: status=${todo.status}, last_triggered=${todo.last_triggered_at}, triggerAt=${(todo.trigger as any)?.triggerAt}`
+                `[todomgr] scheduled 触发器变更后立即检查 [${id}]: status=${todo.completed_at ? 'completed' : 'pending'}, last_triggered=${todo.last_triggered_at}, triggerAt=${(todo.trigger as any)?.triggerAt}`
             );
             setTimeout(() => {
                 this.checkScheduledTriggers().catch((err) => {

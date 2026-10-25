@@ -17,7 +17,7 @@ import { Markdown } from '@earendil-works/pi-tui';
 import type { TaskModelRequestOptions, TaskState, TaskUpdateAssistantChunk, TaskUpdateChunk } from '../states/tasks.js';
 import type { TextMessagePart } from '../messages.js';
 import type { SubTaskConfig, SubTaskResult, SubTaskProgressInfo, PendingSubTask } from './common.js';
-import { UserMessage, ToolCall, ToolCallMessagePart, marked } from '../messages.js';
+import { UserMessage, ToolCall, ToolCallMessagePart, parseMarkdownSafe } from '../messages.js';
 import {
     registerSubTaskAttemptCompletionHook,
     appendSubTaskStopCompletion,
@@ -386,7 +386,7 @@ async function waitForTaskWithProgress(
     let lastProgressTime = 0;
 
     await task.waitUntilFinished((chunk) => {
-        extractSubTaskProgress(chunk, progress);
+        if (chunk.type === 'assistant') extractSubTaskProgress(chunk, progress);
         const now = Date.now();
         if (now - lastProgressTime >= PROGRESS_THROTTLE_MS) {
             lastProgressTime = now;
@@ -711,14 +711,14 @@ export class CreateSubTaskTool extends BaseTool<typeof CreateSubTaskArgsSchema> 
             try {
                 const parsed = JSON.parse(toolcall.result);
                 if (parsed.subtask_id && !parsed.success && parsed.async) {
-                    const objRendered = objective ? await marked.parse(objective) : '';
+                    const objRendered = objective ? await parseMarkdownSafe(objective) : '';
                     bodyContent = objRendered
                         ? `<div class="px-3.5 py-2.5 text-xs text-gray-600 leading-relaxed markdown-body max-h-[200px] overflow-y-auto">${objRendered}</div>`
                         : '';
                 } else if (parsed.result) {
                     const resultText = String(parsed.result);
                     const color = parsed.success ? 'text-gray-600' : 'text-red-600';
-                    const renderedResult = await marked.parse(resultText);
+                    const renderedResult = await parseMarkdownSafe(resultText);
                     bodyContent = `<div class="px-3.5 py-2.5 text-xs ${color} leading-relaxed markdown-body max-h-[200px] overflow-y-auto">${renderedResult}</div>`;
                 }
             } catch {
@@ -963,7 +963,7 @@ export class WaitSubTaskTool extends BaseTool<typeof WaitSubTaskArgsSchema> {
                 if (parsed.result) {
                     const resultText = String(parsed.result);
                     const color = parsed.success ? 'text-gray-600' : 'text-red-600';
-                    const renderedResult = await marked.parse(resultText);
+                    const renderedResult = await parseMarkdownSafe(resultText);
                     bodyContent = `<div class="px-3.5 py-2.5 text-xs ${color} leading-relaxed markdown-body max-h-[240px] overflow-y-auto">${renderedResult}</div>`;
                 }
             } catch {
@@ -1194,7 +1194,7 @@ export class AttemptCompletionSubTaskTool extends BaseTool<typeof AttemptComplet
         const taskId = toolcall.id ? toolcall.id.slice(0, 8) : '—';
 
         if (args.type === 'fail') {
-            const messageHtml = args.message ? await marked.parse(args.message) : '';
+            const messageHtml = args.message ? await parseMarkdownSafe(args.message) : '';
             return `
             <div class="subtask-tool subtask-result subtask-result--fail my-2 w-full rounded-[14px] border bg-white overflow-hidden od-card-shadow">
                 <div class="subtask-result-header flex items-center justify-between px-3.5 py-1.5 border-b">
@@ -1215,7 +1215,7 @@ export class AttemptCompletionSubTaskTool extends BaseTool<typeof AttemptComplet
         }
 
         if (args.type === 'ask') {
-            const messageHtml = args.message ? await marked.parse(args.message) : '';
+            const messageHtml = args.message ? await parseMarkdownSafe(args.message) : '';
             return `
             <div class="subtask-tool subtask-result subtask-result--ask my-2 w-full rounded-[14px] border bg-white overflow-hidden od-card-shadow">
                 <div class="subtask-result-header flex items-center justify-between px-3.5 py-1.5 border-b">
@@ -1236,7 +1236,7 @@ export class AttemptCompletionSubTaskTool extends BaseTool<typeof AttemptComplet
         }
 
         // success
-        const messageHtml = args.message ? await marked.parse(args.message) : '';
+        const messageHtml = args.message ? await parseMarkdownSafe(args.message) : '';
         return `
         <div class="subtask-tool subtask-result subtask-result--success my-2 w-full rounded-[14px] border bg-white overflow-hidden od-card-shadow">
             <div class="subtask-result-header flex items-center justify-between px-3.5 py-1.5 border-b">

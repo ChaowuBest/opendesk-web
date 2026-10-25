@@ -101,8 +101,9 @@ async function tryElicitation(
         requestedSchema: buildElicitationSchema(questions) as any
     });
 
-    if (response.action === 'accept') {
-        return { answers: extractElicitationAnswers(response.content, questions) };
+    const elicitationResponse = response as { action?: string; content?: Record<string, unknown> };
+    if (elicitationResponse.action === 'accept') {
+        return { answers: extractElicitationAnswers(elicitationResponse.content, questions) };
     }
 
     return { cancelled: true, answers: {} };

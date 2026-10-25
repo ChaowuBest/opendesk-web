@@ -80,7 +80,7 @@ export class ElasticToolbarWidget extends HTMLElement {
      * @param title 可选的状态说明；提供时同步更新按钮悬停提示，清除角标时恢复原始 label
      */
     setButtonBadge(badgeId: string, status: 'ok' | 'warn' | 'err' | null, title?: string) {
-        const btnEl = this.querySelector(`#${badgeId}-${this.uid}`);
+        const btnEl = this.querySelector<HTMLElement>(`#${badgeId}-${this.uid}`);
         if (!btnEl) return;
         // 记录按钮原始悬停提示（渲染时的 label），清除角标时恢复
         if (!btnEl.dataset.baseTitle) {
@@ -131,7 +131,7 @@ export class ElasticToolbarWidget extends HTMLElement {
         if (subtitleEl) {
             const textSpan = subtitleEl.querySelector('span.ws-path');
             if (textSpan) textSpan.textContent = subtitle;
-            const labelSpan = subtitleEl.querySelector('span.ws-label');
+            const labelSpan = subtitleEl.querySelector<HTMLElement>('span.ws-label');
             if (labelSpan) {
                 if (label) {
                     labelSpan.textContent = label;
@@ -253,7 +253,7 @@ export class ElasticToolbarWidget extends HTMLElement {
 
     private _bindButtons() {
         this.buttons.forEach((button) => {
-            const buttonElement = this.querySelector(`#${button.id}-${this.uid}`);
+            const buttonElement = this.querySelector<HTMLElement>(`#${button.id}-${this.uid}`);
             if (buttonElement) {
                 buttonElement.addEventListener('click', (event) => {
                     button.action(event);

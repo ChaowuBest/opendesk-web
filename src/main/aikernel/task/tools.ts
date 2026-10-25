@@ -12,7 +12,7 @@
 import { z } from 'zod';
 import chalk from 'chalk';
 import { BaseTool, BaseToolset } from '../tool.js';
-import { UserMessage, AssistantMessage, ToolCall, marked } from '../messages.js';
+import { UserMessage, AssistantMessage, ToolCall, parseMarkdownSafe } from '../messages.js';
 import { LLM } from '../llm.js';
 import { logger } from '../../utils/logger.js';
 import { Card } from '../../tui/components/card.js';
@@ -282,7 +282,7 @@ class AskFromTaskTool extends BaseTool<typeof AskFromTaskSchema> {
                     <span class="text-gray-400">正在分析任务对话记录…</span>
                 </div>`;
         } else if (toolcall.status === 'success' && toolcall.result) {
-            const rendered = await marked.parse(toolcall.result);
+            const rendered = await parseMarkdownSafe(toolcall.result);
             bodyContent = `
                 <div class="px-4 py-2.5 text-xs text-gray-700 leading-relaxed markdown-body max-h-[240px] overflow-y-auto">${rendered}</div>`;
         } else if (isError) {

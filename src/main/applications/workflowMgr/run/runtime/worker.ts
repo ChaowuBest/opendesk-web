@@ -103,7 +103,7 @@ parentPort.on('message', (message: WorkflowRuntimeWorkerInbound) => {
         if (message.ok) {
             pending.resolve(message.value);
         } else {
-            pending.reject(new Error(message.error));
+            pending.reject(new Error((message as { error: string }).error));
         }
         return;
     }
