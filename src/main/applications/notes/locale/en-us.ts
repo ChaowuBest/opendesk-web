@@ -122,7 +122,7 @@ export const enUs: Record<string, string> = {
     // ========== Renderer：删除 / 回收站 ==========
     'renderer.note.note.delete.confirm.title': 'Delete Note',
     'renderer.note.note.delete.confirm.message':
-        'Delete this note? It stays in the recycle bin for 10 days before being permanently deleted.',
+        'Delete the note "${name}"? It stays in the recycle bin for 10 days before being permanently deleted.',
     'renderer.note.deleted.empty': 'Recycle bin is empty',
     'renderer.note.deleted.clear': 'Empty recycle bin',
     'renderer.note.deleted.hint': 'Deleted notes can be restored within 10 days',

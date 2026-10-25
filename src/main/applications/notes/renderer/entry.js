@@ -1326,26 +1326,10 @@ class NotesEntryWidget extends AgentOperableHTMLElement {
         titleInput.select();
     }
 
-    /** 列表/卡片上的删除：带确认弹窗（与编辑器删除按钮同一套确认与刷新） */
+    /** 列表/卡片上的删除：确认一次后执行 */
     async _deleteNoteFromList(note) {
-        const confirmed = await showConfirmModal({
-            icon: 'fa-trash-can',
-            iconBg: '#FEF2F2',
-            iconColor: '#FF3B30',
-            title: this._t('renderer.note.note.delete.confirm.title'),
-            message: this._t('renderer.note.note.delete.confirm.message'),
-            confirmText: this._t('renderer.note.common.delete'),
-            danger: true
-        });
-        if (!confirmed) return;
-        if (this.currentNoteId === note.id) {
-            // 当前正打开的笔记：走编辑器删除路径（清编辑器状态）
-            await this._confirmDeleteNote();
-            return;
-        }
-        await window.applicationAPI.call('deleteNote', note.id);
-        await this._refreshNotes();
-        await this._refreshDeletedNotes();
+        if (!(await this._confirmDeleteNote(note))) return;
+        await this._performDeleteNote(note.id);
     }
 
     _renderCardGrid() {
@@ -2063,7 +2047,7 @@ class NotesEntryWidget extends AgentOperableHTMLElement {
         });
 
         // 删除笔记
-        this.querySelector('#notes-delete-note-btn')?.addEventListener('click', () => this._confirmDeleteNote());
+        this.querySelector('#notes-delete-note-btn')?.addEventListener('click', () => this._deleteCurrentNote());
 
         // 标签移除
         this.querySelectorAll('.notes-tag.removable').forEach((tag) => {
@@ -3789,25 +3773,44 @@ class NotesEntryWidget extends AgentOperableHTMLElement {
         this._openNote(note.id);
     }
 
-    async _confirmDeleteNote() {
-        const confirmed = await showConfirmModal({
+    /**
+     * 删除笔记的确认弹窗：文案带上笔记名（与左侧任务列表删除任务的文案风格一致）。
+     * 这里只负责询问，实际删除在 _performDeleteNote，避免调用方再套一层确认导致连弹两次。
+     */
+    async _confirmDeleteNote(note) {
+        const name = this._escapeHtml(note?.title || this._t('renderer.note.untitled'));
+        return showConfirmModal({
             icon: 'fa-trash-can',
             iconBg: '#FEF2F2',
             iconColor: '#FF3B30',
             title: this._t('renderer.note.note.delete.confirm.title'),
-            message: this._t('renderer.note.note.delete.confirm.message'),
+            message: this._t('renderer.note.note.delete.confirm.message', { name }),
             confirmText: this._t('renderer.note.common.delete'),
+            cancelText: this._t('renderer.note.common.cancel'),
             danger: true
         });
-        if (confirmed) {
-            await window.applicationAPI.call('deleteNote', this.currentNoteId);
+    }
+
+    /** 执行删除（不含确认）：笔记移入回收站；删的是当前打开的笔记时顺带清理编辑器状态 */
+    async _performDeleteNote(noteId) {
+        if (!noteId) return;
+        await window.applicationAPI.call('deleteNote', noteId);
+        if (this.currentNoteId === noteId) {
             this.currentNoteId = null;
             this._hideFloatingToolbar();
             if (window.tinymce) tinymce.remove('#notes-editor');
-            await this._refreshNotes();
-            await this._refreshDeletedNotes();
-            this._renderCardGrid();
         }
+        await this._refreshNotes();
+        await this._refreshDeletedNotes();
+    }
+
+    /** 编辑器顶栏的删除按钮：确认后删除当前打开的笔记 */
+    async _deleteCurrentNote() {
+        const note = this.notes?.find((n) => n.id === this.currentNoteId);
+        // 标题输入框里可能是尚未落盘的改名，优先取输入框
+        const title = this.querySelector('#notes-title-input')?.value || note?.title || '';
+        if (!(await this._confirmDeleteNote({ title }))) return;
+        await this._performDeleteNote(this.currentNoteId);
     }
 
     // ─── 回收站 ───

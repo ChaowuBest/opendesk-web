@@ -1,11 +1,12 @@
 import { beforeAll, beforeEach, describe, expect, jest, test } from '@jest/globals';
 import { parseHTML } from 'linkedom';
+import { createTranslatorForNotes } from '../../../main/applications/notes/locale/renderer.js';
 
 /**
  * 笔记条目右键菜单测试：
  * - contextmenu 事件弹出 ctx-menu（重命名/删除）
  * - 重命名：打开笔记并聚焦标题输入框
- * - 删除：确认弹窗后调用 deleteNote
+ * - 删除：确认弹窗（只弹一次，文案带上笔记名）后调用 deleteNote
  * - 编辑器圆角容器结构（notes-editor-shell 包含工具栏+编辑区）
  */
 
@@ -112,15 +113,9 @@ describe('笔记条目右键菜单与编辑器容器', () => {
         // 只创建实例不挂载（避免触发 connectedCallback 完整生命周期）
         widget = document.createElement('notes-entry-widget');
         widget._scheduleAutoSave = jest.fn();
-        widget._t = (key, params) => {
-            const dict = {
-                'renderer.note.rename': '重命名',
-                'renderer.note.delete': '删除'
-            };
-            let text = dict[key] || key;
-            if (params) for (const [k, v] of Object.entries(params)) text = text.replace(`{${k}}`, v);
-            return text;
-        };
+        // 用应用真实词表，确保断言覆盖到 locale 词条与插值
+        widget._t = createTranslatorForNotes({ locale: 'zh-CN' });
+        showConfirmModal.mockClear();
     });
 
     function contextMenu() {
@@ -201,16 +196,94 @@ describe('笔记条目右键菜单与编辑器容器', () => {
         expect(window.applicationAPI.call).not.toHaveBeenCalled();
     });
 
-    test('删除当前打开的笔记时走编辑器删除路径（_confirmDeleteNote）', async () => {
+    test('删除当前打开的笔记只弹一次确认，并清理编辑器状态', async () => {
+        const calls = [];
+        window.applicationAPI = {
+            call: jest.fn(async (api, ...args) => {
+                calls.push([api, ...args]);
+                return [];
+            })
+        };
+        widget._refreshNotes = jest.fn(async () => {});
+        widget._refreshDeletedNotes = jest.fn(async () => {});
         widget.currentNoteId = 'n-cur';
-        widget._confirmDeleteNote = jest.fn(async () => {});
+        widget.notes = [{ id: 'n-cur', title: '正在编辑', tags: [] }];
         showConfirmModal.mockResolvedValueOnce(true);
 
-        widget._showNoteContextMenu(10, 10, { id: 'n-cur', tags: [] });
+        widget._showNoteContextMenu(10, 10, { id: 'n-cur', title: '正在编辑', tags: [] });
         contextMenu().querySelector('[data-action="delete"]').click();
         await new Promise((r) => setTimeout(r, 0));
 
-        expect(widget._confirmDeleteNote).toHaveBeenCalled();
+        expect(showConfirmModal).toHaveBeenCalledTimes(1);
+        expect(calls.some(([api, id]) => api === 'deleteNote' && id === 'n-cur')).toBe(true);
+        expect(widget.currentNoteId).toBeNull();
+    });
+
+    test('确认弹窗文案带上笔记名', async () => {
+        window.applicationAPI = { call: jest.fn(async () => []) };
+        widget._refreshNotes = jest.fn(async () => {});
+        widget._refreshDeletedNotes = jest.fn(async () => {});
+        showConfirmModal.mockResolvedValueOnce(true);
+
+        widget._showNoteContextMenu(10, 10, { id: 'n-name', title: '周报草稿', tags: [] });
+        contextMenu().querySelector('[data-action="delete"]').click();
+        await new Promise((r) => setTimeout(r, 0));
+
+        const options = showConfirmModal.mock.calls[0][0];
+        expect(options.title).toBe('删除笔记');
+        expect(options.message).toContain('周报草稿');
+        expect(options.confirmText).toBe('删除');
+        expect(options.cancelText).toBe('取消');
+    });
+
+    test('无标题笔记在确认文案里回退为「无标题」', async () => {
+        window.applicationAPI = { call: jest.fn(async () => []) };
+        widget._refreshNotes = jest.fn(async () => {});
+        widget._refreshDeletedNotes = jest.fn(async () => {});
+        showConfirmModal.mockResolvedValueOnce(true);
+
+        widget._showNoteContextMenu(10, 10, { id: 'n-blank', title: '', tags: [] });
+        contextMenu().querySelector('[data-action="delete"]').click();
+        await new Promise((r) => setTimeout(r, 0));
+
+        expect(showConfirmModal.mock.calls[0][0].message).toContain('无标题');
+    });
+
+    test('笔记名含 HTML 时确认文案已转义', async () => {
+        window.applicationAPI = { call: jest.fn(async () => []) };
+        widget._refreshNotes = jest.fn(async () => {});
+        widget._refreshDeletedNotes = jest.fn(async () => {});
+        showConfirmModal.mockResolvedValueOnce(true);
+
+        widget._showNoteContextMenu(10, 10, { id: 'n-html', title: '<img src=x onerror=1>', tags: [] });
+        contextMenu().querySelector('[data-action="delete"]').click();
+        await new Promise((r) => setTimeout(r, 0));
+
+        const message = showConfirmModal.mock.calls[0][0].message;
+        expect(message).not.toContain('<img');
+        expect(message).toContain('&lt;img');
+    });
+
+    test('编辑器删除按钮只弹一次确认后删除当前笔记', async () => {
+        const calls = [];
+        window.applicationAPI = {
+            call: jest.fn(async (api, ...args) => {
+                calls.push([api, ...args]);
+                return [];
+            })
+        };
+        widget._refreshNotes = jest.fn(async () => {});
+        widget._refreshDeletedNotes = jest.fn(async () => {});
+        widget.currentNoteId = 'n-open';
+        widget.notes = [{ id: 'n-open', title: '编辑器里的笔记', tags: [] }];
+        showConfirmModal.mockResolvedValueOnce(true);
+
+        await widget._deleteCurrentNote();
+
+        expect(showConfirmModal).toHaveBeenCalledTimes(1);
+        expect(showConfirmModal.mock.calls[0][0].message).toContain('编辑器里的笔记');
+        expect(calls.some(([api, id]) => api === 'deleteNote' && id === 'n-open')).toBe(true);
+        expect(widget.currentNoteId).toBeNull();
     });
 
     test('编辑器骨架包含 notes-editor-shell 圆角容器（含工具栏与编辑区）', () => {

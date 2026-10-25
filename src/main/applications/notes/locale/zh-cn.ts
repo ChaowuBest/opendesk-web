@@ -120,7 +120,8 @@ export const zhCn: Record<string, string> = {
 
     // ========== Renderer：删除 / 回收站 ==========
     'renderer.note.note.delete.confirm.title': '删除笔记',
-    'renderer.note.note.delete.confirm.message': '确定要删除这条笔记吗？删除后可在回收站中恢复，10天后将永久删除。',
+    'renderer.note.note.delete.confirm.message':
+        '确定要删除笔记「${name}」吗？删除后可在回收站中恢复，10天后将永久删除。',
     'renderer.note.deleted.empty': '回收站为空',
     'renderer.note.deleted.clear': '清空回收站',
     'renderer.note.deleted.hint': '笔记删除后10天内可恢复',
