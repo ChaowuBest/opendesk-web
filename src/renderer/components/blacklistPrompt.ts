@@ -9,6 +9,7 @@
  */
 
 import { MODAL_CSS, MODAL_ANIM_DURATION_OUT, detectDarkMode, bindOverlayDismiss } from './confirmModal.ts';
+import { escapeHtml } from '../../common/utils/escape.js';
 import { CHEVRON_RIGHT_SVG } from '../../common/ui-icons.js';
 
 interface BlacklistSkillItem {
@@ -241,13 +242,4 @@ export function showBlacklistPrompt(data: BlacklistPromptData): void {
     });
 
     body.appendChild(overlay);
-}
-
-function escapeHtml(str: string): string {
-    return String(str ?? '')
-        .replace(/&/g, '&amp;')
-        .replace(/</g, '&lt;')
-        .replace(/>/g, '&gt;')
-        .replace(/"/g, '&quot;')
-        .replace(/'/g, '&#39;');
 }

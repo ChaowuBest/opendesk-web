@@ -28,6 +28,7 @@ import {
     NOTIFY_POPUP_CLOSED_SCRIPT,
     NAV_INTERCEPT_CONSOLE_PREFIX
 } from '../../../../renderer/webviewScripts';
+import { escapeHtml } from '../../../../common/utils/escape.js';
 
 const SEARCH_ENGINE = 'https://www.bing.com/search?q=';
 const STORAGE_KEY_HISTORY = 'opendesk-browser-history';
@@ -1423,8 +1424,8 @@ class BrowserEntryWidget extends HTMLElement {
             const el = document.createElement('div');
             el.className = 'wb-suggestion-item';
             el.innerHTML = `<span class="wb-sg-icon"><i class="fas ${m.isBookmark ? 'fa-star' : 'fa-clock-rotate-left'}"></i></span>
-                <span class="wb-sg-title">${this.escapeHtml(m.title || m.url)}</span>
-                <span class="wb-sg-url">${this.escapeHtml(m.url)}</span>`;
+                <span class="wb-sg-title">${escapeHtml(m.title || m.url)}</span>
+                <span class="wb-sg-url">${escapeHtml(m.url)}</span>`;
             el.addEventListener('mousedown', (e) => {
                 e.preventDefault();
                 if (this._dismissTimer) {
@@ -2148,7 +2149,7 @@ class BrowserEntryWidget extends HTMLElement {
                 <button class="wb-panel-manage-btn wb-hist-open-manage">${this._t('renderer.browser.history.manage')}</button>
                 <button class="wb-panel-close"><i class="fas fa-xmark"></i></button>
             </div>
-            <input class="wb-panel-search" placeholder="${this._t('renderer.browser.history.search')}" value="${this.escapeHtml(filter)}">
+            <input class="wb-panel-search" placeholder="${this._t('renderer.browser.history.search')}" value="${escapeHtml(filter)}">
             <div class="wb-panel-body">
                 ${
                     deduped.length === 0
@@ -2158,14 +2159,14 @@ class BrowserEntryWidget extends HTMLElement {
                                   (
                                       h,
                                       idx
-                                  ) => `<div class="wb-history-item" data-idx="${idx}" data-url="${this.escapeAttr(h.url)}">
+                                  ) => `<div class="wb-history-item" data-idx="${idx}" data-url="${escapeHtml(h.url)}">
                             <span class="wb-hi-icon"><i class="fas fa-clock-rotate-left"></i></span>
                             <div class="wb-hi-content">
-                                <div class="wb-hi-title">${this.escapeHtml(h.title)}</div>
-                                <div class="wb-hi-url">${this.escapeHtml(h.url)}</div>
+                                <div class="wb-hi-title">${escapeHtml(h.title)}</div>
+                                <div class="wb-hi-url">${escapeHtml(h.url)}</div>
                             </div>
                             <span class="wb-hi-time">${this.formatTime(h.timestamp)}</span>
-                            <button class="wb-hi-delete" data-url="${this.escapeAttr(h.url)}" title="${this._t('renderer.browser.modal.delete')}"><i class="fas fa-xmark"></i></button>
+                            <button class="wb-hi-delete" data-url="${escapeHtml(h.url)}" title="${this._t('renderer.browser.modal.delete')}"><i class="fas fa-xmark"></i></button>
                         </div>`
                               )
                               .join('')
@@ -2281,11 +2282,11 @@ class BrowserEntryWidget extends HTMLElement {
             el.className = 'wb-bm-item';
             if (bm.isFolder) {
                 el.title = bm.title;
-                el.innerHTML = `<i class="fas fa-folder"></i><span class="wb-bm-item-label">${this.escapeHtml(bm.title)}</span>`;
+                el.innerHTML = `<i class="fas fa-folder"></i><span class="wb-bm-item-label">${escapeHtml(bm.title)}</span>`;
                 el.addEventListener('click', () => this.showFolderDropdown(bm, el));
             } else {
                 el.title = bm.url;
-                el.innerHTML = `<i class="fas fa-star"></i><span class="wb-bm-item-label">${this.escapeHtml(bm.title || bm.url)}</span>`;
+                el.innerHTML = `<i class="fas fa-star"></i><span class="wb-bm-item-label">${escapeHtml(bm.title || bm.url)}</span>`;
                 el.addEventListener('click', () => this.navigateTo(bm.url));
             }
             el.addEventListener('contextmenu', (e) => {
@@ -2314,7 +2315,7 @@ class BrowserEntryWidget extends HTMLElement {
         for (const child of children) {
             const item = document.createElement('div');
             item.className = 'wb-tm-item';
-            item.innerHTML = `<i class="fas fa-star" style="color:#f59e0b"></i><span class="wb-tm-label" style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${this.escapeHtml(child.title || child.url)}</span>`;
+            item.innerHTML = `<i class="fas fa-star" style="color:#f59e0b"></i><span class="wb-tm-label" style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${escapeHtml(child.title || child.url)}</span>`;
             item.addEventListener('click', () => {
                 dropdown.remove();
                 this.navigateTo(child.url);
@@ -2517,20 +2518,18 @@ class BrowserEntryWidget extends HTMLElement {
                 <button class="wb-panel-manage-btn wb-bm-open-manage">${this._t('renderer.browser.history.manage')}</button>
                 <button class="wb-panel-close"><i class="fas fa-xmark"></i></button>
             </div>
-            <input class="wb-panel-search" placeholder="${this._t('renderer.browser.fav.panel.search')}" value="${this.escapeHtml(filter)}">
+            <input class="wb-panel-search" placeholder="${this._t('renderer.browser.fav.panel.search')}" value="${escapeHtml(filter)}">
             <div class="wb-panel-body">
                 ${
                     filtered.length === 0
                         ? '<div class="wb-panel-empty">' + this._t('renderer.browser.fav.panel.empty') + '</div>'
                         : filtered
                               .map(
-                                  (
-                                      b
-                                  ) => `<div class="wb-bm-mgr-item" data-id="${b.id}" data-url="${this.escapeAttr(b.url)}">
+                                  (b) => `<div class="wb-bm-mgr-item" data-id="${b.id}" data-url="${escapeHtml(b.url)}">
                             <span class="wb-bm-mgr-icon"><i class="fas fa-star"></i></span>
                             <div class="wb-bm-mgr-content">
-                                <div class="wb-bm-mgr-title">${this.escapeHtml(b.title)}</div>
-                                <div class="wb-bm-mgr-url">${this.escapeHtml(b.url)}</div>
+                                <div class="wb-bm-mgr-title">${escapeHtml(b.title)}</div>
+                                <div class="wb-bm-mgr-url">${escapeHtml(b.url)}</div>
                             </div>
                             <div class="wb-bm-mgr-actions">
                                 <button class="wb-bm-mgr-btn wb-bm-rename" data-id="${b.id}" title="${this._t('renderer.browser.fav.rename')}"><i class="fas fa-pen"></i></button>
@@ -2695,10 +2694,10 @@ class BrowserEntryWidget extends HTMLElement {
                                   if (dl.state === 'interrupted') meta += this._t('renderer.browser.dl.interrupted');
 
                                   return `
-                                        <div class="wb-dl-item" data-dl-id="${this.escapeAttr(dl.id)}">
+                                        <div class="wb-dl-item" data-dl-id="${escapeHtml(dl.id)}">
                                             <span class="wb-dl-icon ${iconClass}">${iconEl}</span>
                                             <div class="wb-dl-content">
-                                                <div class="wb-dl-filename" title="${this.escapeAttr(dl.filename)}">${this.escapeHtml(dl.filename)}</div>
+                                                <div class="wb-dl-filename" title="${escapeHtml(dl.filename)}">${escapeHtml(dl.filename)}</div>
                                                 <div class="wb-dl-meta">${meta}</div>
                                                 ${dl.state === 'progressing' ? `<div class="wb-dl-progress-wrap"><div class="wb-dl-progress-bar" style="width:${pct}%"></div></div>` : isDone ? `<div class="wb-dl-progress-wrap"><div class="wb-dl-progress-bar wb-dl-done" style="width:100%"></div></div>` : ''}
                                             </div>
@@ -3764,11 +3763,11 @@ class BrowserEntryWidget extends HTMLElement {
                               .charAt(0)
                               .toUpperCase();
                           const faviconUrl = `https://www.google.com/s2/favicons?domain=${encodeURIComponent(s.domain)}&sz=64`;
-                          return `<div class="wb-hp-tile" data-url="${this.escapeAttr(s.url)}" title="${this.escapeAttr(s.domain)}">
+                          return `<div class="wb-hp-tile" data-url="${escapeHtml(s.url)}" title="${escapeHtml(s.domain)}">
                     <div class="wb-hp-tile-icon" style="background:${bgColor}">
                         <img src="${faviconUrl}" onerror="this.style.display='none';this.parentElement.textContent='${initial}';this.parentElement.style.color='#6b7280';this.parentElement.style.fontSize='18px';this.parentElement.style.fontWeight='600'">
                     </div>
-                    <span class="wb-hp-tile-label">${this.escapeHtml(s.title || s.domain)}</span>
+                    <span class="wb-hp-tile-label">${escapeHtml(s.title || s.domain)}</span>
                 </div>`;
                       })
                       .join('')
@@ -3776,7 +3775,7 @@ class BrowserEntryWidget extends HTMLElement {
 
         container.innerHTML = `<div class="wb-hp">
             <div class="wb-hp-hero">
-                <div class="wb-hp-greeting">${this.escapeHtml(greeting)}</div>
+                <div class="wb-hp-greeting">${escapeHtml(greeting)}</div>
                 <div class="wb-hp-search-wrap">
                     <i class="fas fa-magnifying-glass wb-hp-search-icon"></i>
                     <input type="text" class="wb-hp-search-input" placeholder="${this._t('renderer.browser.newtab.searchPlaceholder')}" autofocus>
@@ -3873,7 +3872,7 @@ class BrowserEntryWidget extends HTMLElement {
                 </div>
                 <div class="wb-fav-layout">
                     <div class="wb-fav-tree">
-                        <input class="wb-fav-tree-search" placeholder="${this._t('renderer.browser.fav.search')}" value="${this.escapeHtml(searchFilter || '')}">
+                        <input class="wb-fav-tree-search" placeholder="${this._t('renderer.browser.fav.search')}" value="${escapeHtml(searchFilter || '')}">
                         <div class="wb-fav-tree-body">
                             <div class="wb-fav-tree-item${selId === '__all__' ? ' wb-selected' : ''}" data-folder-id="__all__">
                                 <i class="fas fa-bookmark"></i>
@@ -3891,7 +3890,7 @@ class BrowserEntryWidget extends HTMLElement {
                                         f
                                     ) => `<div class="wb-fav-tree-item wb-indent${selId === f.id ? ' wb-selected' : ''}" data-folder-id="${f.id}">
                                 <i class="fas fa-folder"></i>
-                                <span class="wb-fav-tree-item-label">${this.escapeHtml(f.title)}</span>
+                                <span class="wb-fav-tree-item-label">${escapeHtml(f.title)}</span>
                                 <span class="wb-fav-tree-item-count">${folderCounts.get(f.id) || 0}</span>
                             </div>`
                                 )
@@ -3900,7 +3899,7 @@ class BrowserEntryWidget extends HTMLElement {
                     </div>
                     <div class="wb-fav-detail">
                         <div class="wb-fav-detail-header">
-                            <span class="wb-fav-detail-title">${this.escapeHtml(detailTitle)}（${detailItems.length}）</span>
+                            <span class="wb-fav-detail-title">${escapeHtml(detailTitle)}（${detailItems.length}）</span>
                         </div>
                         <div class="wb-fav-detail-body">
                             ${
@@ -3912,11 +3911,11 @@ class BrowserEntryWidget extends HTMLElement {
                                           .map(
                                               (
                                                   b
-                                              ) => `<div class="wb-fav-detail-item" data-id="${b.id}" data-url="${this.escapeAttr(b.url)}">
+                                              ) => `<div class="wb-fav-detail-item" data-id="${b.id}" data-url="${escapeHtml(b.url)}">
                                     <span class="wb-fav-detail-icon"><i class="fas fa-star"></i></span>
                                     <div class="wb-fav-detail-content">
-                                        <div class="wb-fav-detail-name">${this.escapeHtml(b.title || b.url)}</div>
-                                        <div class="wb-fav-detail-url">${this.escapeHtml(b.url)}</div>
+                                        <div class="wb-fav-detail-name">${escapeHtml(b.title || b.url)}</div>
+                                        <div class="wb-fav-detail-url">${escapeHtml(b.url)}</div>
                                     </div>
                                     <div class="wb-fav-detail-actions">
                                         <button class="wb-fav-detail-btn wb-fav-edit" data-id="${b.id}" title="${this._t('renderer.browser.modal.edit')}"><i class="fas fa-pen"></i></button>
@@ -3961,13 +3960,11 @@ class BrowserEntryWidget extends HTMLElement {
                 } else {
                     detailBody.innerHTML = rootItems
                         .map(
-                            (
-                                b
-                            ) => `<div class="wb-fav-detail-item" data-id="${b.id}" data-url="${this.escapeAttr(b.url)}">
+                            (b) => `<div class="wb-fav-detail-item" data-id="${b.id}" data-url="${escapeHtml(b.url)}">
                             <span class="wb-fav-detail-icon"><i class="fas fa-star"></i></span>
                             <div class="wb-fav-detail-content">
-                                <div class="wb-fav-detail-name">${this.escapeHtml(b.title || b.url)}</div>
-                                <div class="wb-fav-detail-url">${this.escapeHtml(b.url)}</div>
+                                <div class="wb-fav-detail-name">${escapeHtml(b.title || b.url)}</div>
+                                <div class="wb-fav-detail-url">${escapeHtml(b.url)}</div>
                             </div>
                             <div class="wb-fav-detail-actions">
                                 <button class="wb-fav-detail-btn wb-fav-edit" data-id="${b.id}" title="${this._t('renderer.browser.modal.edit')}"><i class="fas fa-pen"></i></button>
@@ -4059,17 +4056,17 @@ class BrowserEntryWidget extends HTMLElement {
         } else {
             for (const [dateLabel, items] of groups) {
                 groupsHtml += `<div class="wb-hist-date-group">
-                    <div class="wb-hist-date-label">${this.escapeHtml(dateLabel)}</div>
+                    <div class="wb-hist-date-label">${escapeHtml(dateLabel)}</div>
                     ${items
                         .map(
-                            (h) => `<div class="wb-hist-item" data-url="${this.escapeAttr(h.url)}">
+                            (h) => `<div class="wb-hist-item" data-url="${escapeHtml(h.url)}">
                         <span class="wb-hist-item-icon"><i class="fas fa-clock-rotate-left"></i></span>
                         <div class="wb-hist-item-content">
-                            <div class="wb-hist-item-title">${this.escapeHtml(h.title || h.url)}</div>
-                            <div class="wb-hist-item-url">${this.escapeHtml(h.url)}</div>
+                            <div class="wb-hist-item-title">${escapeHtml(h.title || h.url)}</div>
+                            <div class="wb-hist-item-url">${escapeHtml(h.url)}</div>
                         </div>
                         <span class="wb-hist-item-time">${this.formatTime(h.timestamp)}</span>
-                        <button class="wb-hist-item-del" data-url="${this.escapeAttr(h.url)}" title="${this._t('renderer.browser.modal.delete')}"><i class="fas fa-xmark"></i></button>
+                        <button class="wb-hist-item-del" data-url="${escapeHtml(h.url)}" title="${this._t('renderer.browser.modal.delete')}"><i class="fas fa-xmark"></i></button>
                     </div>`
                         )
                         .join('')}
@@ -4085,7 +4082,7 @@ class BrowserEntryWidget extends HTMLElement {
                 </div>
                 <div class="wb-hist-layout">
                     <div class="wb-hist-toolbar">
-                        <input class="wb-hist-search" placeholder="${this._t('renderer.browser.history.search')}" value="${this.escapeHtml(searchFilter || '')}">
+                        <input class="wb-hist-search" placeholder="${this._t('renderer.browser.history.search')}" value="${escapeHtml(searchFilter || '')}">
                         <button class="wb-hist-clear-btn">${this._t('renderer.browser.history.clearAll')}</button>
                     </div>
                     <div class="wb-hist-body">${groupsHtml}</div>
@@ -4158,10 +4155,6 @@ class BrowserEntryWidget extends HTMLElement {
 
     // ---- Browser Settings Page ----
 
-    private _escapeHtml(str: string): string {
-        return str.replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
-    }
-
     private renderBrowserSettingsPage(container: HTMLElement, tab: BrowserTab): void {
         container.innerHTML = `
         <div class="wb-internal-page" style="overflow-y:auto">
@@ -4231,7 +4224,7 @@ class BrowserEntryWidget extends HTMLElement {
                         id="wb-useragent-input"
                         type="text"
                         placeholder="${this._t('renderer.browser.settings.ua.placeholder')}"
-                        value="${this._escapeHtml(this._cachedUserAgent)}"
+                        value="${escapeHtml(this._cachedUserAgent)}"
                         style="width:100%;box-sizing:border-box;padding:8px 12px;border:1px solid #d1d5db;border-radius:6px;font-size: var(--fs-base);font-family:monospace;color:#374151;outline:none"
                     />
                     <div style="display:flex;align-items:center;justify-content:space-between;margin-top:12px">
@@ -4343,8 +4336,8 @@ class BrowserEntryWidget extends HTMLElement {
                 <div style="display:flex;align-items:center;gap:10px;padding:10px 12px;margin:4px 0;border-radius:6px;background:#f9fafb;border:1px solid #f0f0f0">
                     <i class="fas fa-certificate" style="color:#3b82f6;font-size: var(--fs-xl);flex-shrink:0"></i>
                     <div style="flex:1;min-width:0">
-                        <div style="font-size: var(--fs-base);font-weight:500;color:#374151;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${this.escapeHtml(cert.commonName)}</div>
-                        <div style="font-size: var(--fs-sm);color:#9ca3af">${this._t('renderer.browser.settings.cert.issuer')}${this.escapeHtml(cert.issuer)}</div>
+                        <div style="font-size: var(--fs-base);font-weight:500;color:#374151;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${escapeHtml(cert.commonName)}</div>
+                        <div style="font-size: var(--fs-sm);color:#9ca3af">${this._t('renderer.browser.settings.cert.issuer')}${escapeHtml(cert.issuer)}</div>
                         <div style="font-size: var(--fs-sm);color:#b0b3b8">${this._t('renderer.browser.settings.cert.validity')}${cert.validFrom?.split('T')[0] || ''} ~ ${cert.validTo?.split('T')[0] || ''}</div>
                     </div>
                     <button class="wb-bs-btn wb-bs-btn-danger" data-action="bs-delete-cert" data-fingerprint="${cert.fingerprint}" style="font-size: var(--fs-sm);padding:4px 10px">
@@ -4457,16 +4450,6 @@ class BrowserEntryWidget extends HTMLElement {
         };
 
         input.click();
-    }
-
-    private escapeHtml(str: string): string {
-        const div = document.createElement('div');
-        div.textContent = str;
-        return div.innerHTML;
-    }
-
-    private escapeAttr(str: string): string {
-        return str.replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
     }
 
     private formatTime(ts: number): string {

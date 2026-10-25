@@ -28,6 +28,7 @@ import { feishuAuthInit, feishuAuthBegin, feishuAuthPoll } from './feishu-auth.j
 import { logger } from '../../utils/logger.js';
 import chalk from 'chalk';
 import qrcodeTerminal from 'qrcode-terminal';
+import { escapeHtml } from '../../../common/utils/escape.js';
 
 // ── List Pairing Requests ───────────────────────────────────────────────────
 
@@ -440,7 +441,7 @@ export class LoginChannelTool extends BaseTool<typeof LoginChannelSchema> {
 
         if (state.phase === 'generating_qr' || state.phase === 'polling') {
             const channelLabel = resolveChannelDisplayName(state.channelId || '');
-            const escUrl = this.escHtml(state.verification_url || '');
+            const escUrl = escapeHtml(state.verification_url || '');
             const qrImageUrl = state.verification_url
                 ? `https://api.qrserver.com/v1/create-qr-code/?size=200x200&data=${encodeURIComponent(state.verification_url)}`
                 : '';
@@ -481,7 +482,7 @@ export class LoginChannelTool extends BaseTool<typeof LoginChannelSchema> {
                     <div class="h-2.5 w-2.5 rounded-full bg-emerald-500 shadow-[0_0_8px_rgba(16,185,129,0.6)]"></div>
                     登录成功
                 </div>
-                <div class="text-xs text-slate-600 space-y-1">${lines.map((l) => `<p>${this.escHtml(l)}</p>`).join('')}</div>
+                <div class="text-xs text-slate-600 space-y-1">${lines.map((l) => `<p>${escapeHtml(l)}</p>`).join('')}</div>
             </div>`;
         }
 
@@ -492,7 +493,7 @@ export class LoginChannelTool extends BaseTool<typeof LoginChannelSchema> {
                     <div class="h-2.5 w-2.5 rounded-full bg-rose-500 shadow-[0_0_8px_rgba(244,63,94,0.5)]"></div>
                     登录失败
                 </div>
-                <p class="text-xs text-rose-500 mt-2">${this.escHtml(state.error || '未知错误')}</p>
+                <p class="text-xs text-rose-500 mt-2">${escapeHtml(state.error || '未知错误')}</p>
             </div>`;
         }
 
@@ -582,10 +583,6 @@ export class LoginChannelTool extends BaseTool<typeof LoginChannelSchema> {
             throw err;
         }
     }
-
-    private escHtml(s: string): string {
-        return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
-    }
 }
 
 // ── Create Feishu Bot via QR Code Scan ──────────────────────────────────────
@@ -628,7 +625,7 @@ export class CreateFeishuBotTool extends BaseTool<typeof CreateFeishuBotSchema> 
         if (!state) return undefined;
 
         if (state.phase === 'qr_code' || state.phase === 'polling') {
-            const escUrl = this.escHtml(state.verification_url || '');
+            const escUrl = escapeHtml(state.verification_url || '');
             // 使用在线二维码 API 生成真正的二维码图片
             const qrImageUrl = `https://api.qrserver.com/v1/create-qr-code/?size=200x200&data=${encodeURIComponent(state.verification_url || '')}`;
             return `
@@ -660,9 +657,9 @@ export class CreateFeishuBotTool extends BaseTool<typeof CreateFeishuBotSchema> 
                     飞书机器人创建成功
                 </div>
                 <div class="text-xs text-slate-600 space-y-1.5 bg-slate-50 p-3 rounded-lg font-mono">
-                    <p><span class="text-slate-400">App ID:&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;</span>${this.escHtml(state.appId || '')}</p>
-                    <p><span class="text-slate-400">App Secret:&nbsp;</span>${this.escHtml(masked)}</p>
-                    <p><span class="text-slate-400">Open ID:&nbsp;&nbsp;&nbsp;&nbsp;</span>${this.escHtml(state.openId || 'N/A')}</p>
+                    <p><span class="text-slate-400">App ID:&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;</span>${escapeHtml(state.appId || '')}</p>
+                    <p><span class="text-slate-400">App Secret:&nbsp;</span>${escapeHtml(masked)}</p>
+                    <p><span class="text-slate-400">Open ID:&nbsp;&nbsp;&nbsp;&nbsp;</span>${escapeHtml(state.openId || 'N/A')}</p>
                 </div>
             </div>`;
         }
@@ -672,7 +669,7 @@ export class CreateFeishuBotTool extends BaseTool<typeof CreateFeishuBotSchema> 
             <div class="mt-3 mb-3 p-4 bg-white/90 backdrop-blur-md border border-rose-200 rounded-2xl shadow-sm" style="max-width: 320px;">
                 <div class="text-sm font-semibold text-rose-600 flex items-center gap-2">
                     <div class="h-2.5 w-2.5 rounded-full bg-rose-500 shadow-[0_0_8px_rgba(244,63,94,0.5)]"></div>
-                    ${this.escHtml(state.error || '创建失败')}
+                    ${escapeHtml(state.error || '创建失败')}
                 </div>
             </div>`;
         }
@@ -861,10 +858,6 @@ export class CreateFeishuBotTool extends BaseTool<typeof CreateFeishuBotSchema> 
         result.updateResultObject(errState);
         throw new Error(errState.error);
     }
-
-    private escHtml(s: string): string {
-        return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
-    }
 }
 
 // ── Send File Tool ──────────────────────────────────────────────────────────
@@ -904,7 +897,7 @@ export class SendFileTool extends BaseTool<typeof SendFileSchema> {
                     <svg class="w-6 h-6" viewBox="0 0 24 24" fill="none"><path d="M14 2H6C4.89543 2 4 2.89543 4 4V20C4 21.1046 4.89543 22 6 22H18C19.1046 22 20 21.1046 20 20V8L14 2Z" fill="#A7F3D0"/><path d="M14 2V8H20L14 2Z" fill="#6EE7B7"/></svg>
                 </div>
                 <div class="flex flex-col min-w-0 flex-1 overflow-hidden">
-                    <span class="text-[13px] font-medium text-gray-900 truncate">${this.escHtml(name)}</span>
+                    <span class="text-[13px] font-medium text-gray-900 truncate">${escapeHtml(name)}</span>
                     <span class="text-[11px] text-emerald-600">📤 ${ext} 文件已发送</span>
                 </div>
             </div>`;
@@ -914,7 +907,7 @@ export class SendFileTool extends BaseTool<typeof SendFileSchema> {
             <div class="file-tool-card flex items-center w-fit min-w-[280px] max-w-sm
                 bg-rose-50 backdrop-blur-xl rounded-xl px-3.5 py-2.5 mt-2 mb-2
                 border border-rose-200 shadow-sm select-none">
-                <span class="text-[13px] text-rose-600">❌ 文件发送失败: ${this.escHtml(toolcall.result || '')}</span>
+                <span class="text-[13px] text-rose-600">❌ 文件发送失败: ${escapeHtml(toolcall.result || '')}</span>
             </div>`;
         }
         return undefined;
@@ -957,9 +950,5 @@ export class SendFileTool extends BaseTool<typeof SendFileSchema> {
 
         const fileName = args.fileName || pathLib.basename(filePath);
         return `文件已准备好发送: ${fileName} (${(stats.size / 1024).toFixed(1)} KB)`;
-    }
-
-    private escHtml(s: string): string {
-        return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
     }
 }

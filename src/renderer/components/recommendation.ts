@@ -10,6 +10,7 @@
  */
 
 import { parse as parseYaml } from 'yaml';
+import { escapeHtml } from '../../common/utils/escape.js';
 import recommendationYaml from '../../../resources/main/applications/recommendation.yaml?raw';
 import recommendationCss from '../styles/recommendation.css?raw';
 import { CHEVRON_RIGHT_SVG } from '../../common/ui-icons.js';
@@ -252,13 +253,13 @@ class RecommendationPanel extends HTMLElement {
         if (category.id === 'recommend' && category.items.length > 0) {
             const hero = category.items[0];
             html += `
-                <div class="rec-hero" data-item-id="${this._escapeAttr(hero.id)}">
+                <div class="rec-hero" data-item-id="${escapeHtml(hero.id)}">
                     <div class="rec-hero-head">
                         <span class="rec-hero-tag">${t('renderer.recommendation.heroTag')}</span>
-                        <span class="rec-hero-title">${this._escapeHtml(hero.title)}</span>
+                        <span class="rec-hero-title">${escapeHtml(hero.title)}</span>
                     </div>
-                    <div class="rec-hero-desc">${this._escapeHtml(hero.description)}</div>
-                    <div class="rec-hero-prompt"><span class="rec-hero-prompt-prefix">${t('renderer.recommendation.example')} · </span>${this._escapeHtml(hero.prompt)}</div>
+                    <div class="rec-hero-desc">${escapeHtml(hero.description)}</div>
+                    <div class="rec-hero-prompt"><span class="rec-hero-prompt-prefix">${t('renderer.recommendation.example')} · </span>${escapeHtml(hero.prompt)}</div>
                 </div>
             `;
         }
@@ -270,9 +271,9 @@ class RecommendationPanel extends HTMLElement {
             html += listItems
                 .map(
                     (item) => `
-                <button type="button" class="rec-row" data-item-id="${this._escapeAttr(item.id)}" title="${this._escapeAttr(item.prompt)}">
+                <button type="button" class="rec-row" data-item-id="${escapeHtml(item.id)}" title="${escapeHtml(item.prompt)}">
                     <span class="rec-row-arrow">${CHEVRON_RIGHT_SVG}</span>
-                    <span class="rec-row-text">${this._escapeHtml(item.prompt)}</span>
+                    <span class="rec-row-text">${escapeHtml(item.prompt)}</span>
                     <span class="rec-row-hint">${t('renderer.recommendation.fillInput')}</span>
                 </button>
             `
@@ -289,10 +290,10 @@ class RecommendationPanel extends HTMLElement {
         const query = state.query.trim();
         const rows = state.results ?? [];
         const statusRows = [
-            state.warning ? `<div class="search-note">${this._escapeHtml(state.warning)}</div>` : '',
-            state.error ? `<div class="search-error">${this._escapeHtml(state.error)}</div>` : '',
+            state.warning ? `<div class="search-note">${escapeHtml(state.warning)}</div>` : '',
+            state.error ? `<div class="search-error">${escapeHtml(state.error)}</div>` : '',
             state.loading
-                ? `<div class="search-loading">${this._escapeHtml(state.loadingText ?? t('renderer.recommendation.searching'))}</div>`
+                ? `<div class="search-loading">${escapeHtml(state.loadingText ?? t('renderer.recommendation.searching'))}</div>`
                 : ''
         ].join('');
 
@@ -347,15 +348,15 @@ class RecommendationPanel extends HTMLElement {
         }
         const badges = [...badgeLabels].map((label) => `<span class="search-badge">${label}</span>`).join('');
         const attachAction = `
-                    <button type="button" class="search-attach-btn" data-path="${this._escapeAttr(item.path)}" title="${t('renderer.recommendation.attachToChat')}" aria-label="${t('renderer.recommendation.attachToChat')}">
+                    <button type="button" class="search-attach-btn" data-path="${escapeHtml(item.path)}" title="${t('renderer.recommendation.attachToChat')}" aria-label="${t('renderer.recommendation.attachToChat')}">
                         <i class="fas fa-paperclip"></i>
                     </button>
         `;
         const localPathActions = `
-                    <button type="button" class="search-open-btn" data-path="${this._escapeAttr(item.path)}" title="${t('renderer.recommendation.openFile')}" aria-label="${t('renderer.recommendation.openFile')}">
+                    <button type="button" class="search-open-btn" data-path="${escapeHtml(item.path)}" title="${t('renderer.recommendation.openFile')}" aria-label="${t('renderer.recommendation.openFile')}">
                         <i class="fas fa-arrow-up-right-from-square"></i>
                     </button>
-                    <button type="button" class="search-reveal-btn" data-path="${this._escapeAttr(item.path)}" title="${t('renderer.recommendation.revealInFolder')}" aria-label="${t('renderer.recommendation.revealInFolder')}">
+                    <button type="button" class="search-reveal-btn" data-path="${escapeHtml(item.path)}" title="${t('renderer.recommendation.revealInFolder')}" aria-label="${t('renderer.recommendation.revealInFolder')}">
                         <i class="fas fa-folder-open"></i>
                     </button>
             `;
@@ -363,9 +364,9 @@ class RecommendationPanel extends HTMLElement {
             <div class="search-result">
                 <span class="search-file-icon"><i class="fas fa-file-lines"></i></span>
                 <span class="search-file-content">
-                    <span class="search-file-title">${this._escapeHtml(item.filename)}</span>
-                    <span class="search-file-path" title="${this._escapeAttr(item.path)}">${this._escapeHtml(item.path)}</span>
-                    ${item.snippet ? `<span class="search-snippet">${this._escapeHtml(item.snippet)}</span>` : ''}
+                    <span class="search-file-title">${escapeHtml(item.filename)}</span>
+                    <span class="search-file-path" title="${escapeHtml(item.path)}">${escapeHtml(item.path)}</span>
+                    ${item.snippet ? `<span class="search-snippet">${escapeHtml(item.snippet)}</span>` : ''}
                     <span class="search-meta">${this._formatFileSize(item.size)} · ${this._formatDate(item.modified)} ${badges}</span>
                 </span>
                 <span class="search-actions">
@@ -421,21 +422,6 @@ class RecommendationPanel extends HTMLElement {
         });
     }
 
-    private _escapeHtml(str: string): string {
-        const div = document.createElement('div');
-        div.textContent = str;
-        return div.innerHTML;
-    }
-
-    private _escapeAttr(str: string): string {
-        return str
-            .replace(/&/g, '&amp;')
-            .replace(/"/g, '&quot;')
-            .replace(/'/g, '&#39;')
-            .replace(/</g, '&lt;')
-            .replace(/>/g, '&gt;');
-    }
-
     private render(): void {
         const categories = this._temporarySearch
             ? [
@@ -455,7 +441,7 @@ class RecommendationPanel extends HTMLElement {
                 const iconHtml = cat.icon.startsWith('<svg') ? cat.icon : `<i class="fas ${cat.icon}"></i>`;
                 return `<button type="button" role="tab" aria-selected="${isActive ? 'true' : 'false'}" class="rec-nav-btn ${isActive ? 'rec-nav-btn-active' : ''}" data-category-id="${cat.id}">
                     ${iconHtml}
-                    <span>${this._escapeHtml(cat.label)}</span>
+                    <span>${escapeHtml(cat.label)}</span>
                 </button>`;
             })
             .join('');

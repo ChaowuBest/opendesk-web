@@ -9,7 +9,8 @@
  * See the Mulan PSL v2 for more details.
  */
 
-import { escapeHtml as escapeHtmlFn } from '../../../../common/utils/escape.js';
+import { escapeHtml } from '../../../../common/utils/escape.js';
+import { neutralizeMarkdownHtml } from '../../../../common/markdown/markdown-html-safety.js';
 import { CHEVRON_RIGHT_SVG, CHEVRON_UP_SVG } from '../../../../common/ui-icons.js';
 import { A2UIToHTMLConverter } from '../../../services/a2ui/a2ui-to-html.js';
 import { isJSON, jsonToHTML } from '../../../services/a2ui/json-to-html.js';
@@ -809,21 +810,21 @@ class A2AEntryWidget extends HTMLElement {
                                         msg.attachments.forEach((att) => {
                                             if (att.type === 'image') {
                                                 attachmentsHtml += `
-                                                <img src="${att.data}" alt="${this.escapeHtml(att.name)}"
+                                                <img src="${att.data}" alt="${escapeHtml(att.name)}"
                                                      class="max-w-[200px] max-h-[200px] object-cover rounded border border-white/30" />
                                             `;
                                             } else if (att.type === 'audio') {
                                                 attachmentsHtml += `
                                                 <div class="bg-white/20 rounded p-2 flex items-center gap-2">
                                                     <i class="fas fa-music"></i>
-                                                    <span class="text-xs">${this.escapeHtml(att.name)}</span>
+                                                    <span class="text-xs">${escapeHtml(att.name)}</span>
                                                 </div>
                                             `;
                                             } else {
                                                 attachmentsHtml += `
                                                 <div class="bg-white/20 rounded p-2 flex items-center gap-2">
                                                     <i class="fas fa-file"></i>
-                                                    <span class="text-xs">${this.escapeHtml(att.name)}</span>
+                                                    <span class="text-xs">${escapeHtml(att.name)}</span>
                                                 </div>
                                             `;
                                             }
@@ -834,7 +835,7 @@ class A2AEntryWidget extends HTMLElement {
                                     return `
                                     <div class="flex justify-end">
                                         <div class="max-w-[80%] p-3 bg-purple-500 text-white rounded-lg shadow-sm">
-                                            ${msg.content ? `<div class="text-sm">${this.escapeHtml(msg.content)}</div>` : ''}
+                                            ${msg.content ? `<div class="text-sm">${escapeHtml(msg.content)}</div>` : ''}
                                             ${attachmentsHtml}
                                         </div>
                                     </div>
@@ -846,7 +847,7 @@ class A2AEntryWidget extends HTMLElement {
                                     const errorClass = msg.isError ? 'border-red-300 bg-red-50' : 'bg-gray-50';
                                     // 渲染 markdown 内容
                                     const renderedContent = msg.isError
-                                        ? this.escapeHtml(msg.content || '')
+                                        ? escapeHtml(msg.content || '')
                                         : this.renderMarkdown(msg.content || '');
 
                                     // 检测是否是 HTML 内容（a2ui）
@@ -969,13 +970,9 @@ class A2AEntryWidget extends HTMLElement {
         messagesContainer.innerHTML = `
             <div class="text-center text-red-400 mt-8">
                 <i class="fas fa-exclamation-triangle text-4xl mb-2"></i>
-                <p>${this.escapeHtml(message)}</p>
+                <p>${escapeHtml(message)}</p>
             </div>
         `;
-    }
-
-    escapeHtml(text) {
-        return escapeHtmlFn(text);
     }
 
     /**
@@ -1136,7 +1133,7 @@ class A2AEntryWidget extends HTMLElement {
         // 检查 marked 是否可用
         if (typeof marked === 'undefined') {
             // 如果 marked 不可用，返回转义的文本（保留换行），并尝试渲染 LaTeX
-            const escaped = this.escapeHtml(markdown).replace(/\n/g, '<br>');
+            const escaped = escapeHtml(markdown).replace(/\n/g, '<br>');
             return this.renderLatex(escaped);
         }
 
@@ -1176,15 +1173,17 @@ class A2AEntryWidget extends HTMLElement {
                 html = marked(markdown);
             } else {
                 // 如果都不支持，返回转义的文本
-                html = this.escapeHtml(markdown).replace(/\n/g, '<br>');
+                html = escapeHtml(markdown).replace(/\n/g, '<br>');
             }
 
-            // 在 markdown 渲染后，渲染 LaTeX 公式
-            return this.renderLatex(html);
+            // 在 markdown 渲染后，渲染 LaTeX 公式。
+            // marked 默认放行原始 HTML，对端消息里的 <img onerror> 会直接执行：
+            // 渲染后必须剥掉可执行能力（on* 事件属性、危险协议），良性标签保持原样。
+            return this.renderLatex(neutralizeMarkdownHtml(html));
         } catch (error) {
             console.error('Markdown rendering error:', error);
             // 如果渲染失败，返回转义的文本（保留换行），并尝试渲染 LaTeX
-            const escaped = this.escapeHtml(markdown).replace(/\n/g, '<br>');
+            const escaped = escapeHtml(markdown).replace(/\n/g, '<br>');
             return this.renderLatex(escaped);
         }
     }
@@ -1200,7 +1199,7 @@ class A2AEntryWidget extends HTMLElement {
                 if (attachment.type === 'image') {
                     preview = `
                     <div class="relative group">
-                        <img src="${attachment.data}" alt="${this.escapeHtml(attachment.name)}"
+                        <img src="${attachment.data}" alt="${escapeHtml(attachment.name)}"
                              class="w-16 h-16 object-cover rounded border border-gray-300" />
                         <button data-attachment-index="${index}"
                                 class="a2a-remove-attachment absolute -top-2 -right-2 w-5 h-5 bg-red-500 text-white rounded-full opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center text-xs">
@@ -1213,7 +1212,7 @@ class A2AEntryWidget extends HTMLElement {
                     <div class="relative group bg-blue-50 border border-blue-200 rounded p-2 flex items-center gap-2">
                         <i class="fas fa-music text-blue-600"></i>
                         <div class="flex-1 min-w-0">
-                            <div class="text-xs font-medium text-gray-700 truncate">${this.escapeHtml(attachment.name)}</div>
+                            <div class="text-xs font-medium text-gray-700 truncate">${escapeHtml(attachment.name)}</div>
                             <div class="text-xs text-gray-500">音频文件</div>
                         </div>
                         <button data-attachment-index="${index}"
@@ -1227,7 +1226,7 @@ class A2AEntryWidget extends HTMLElement {
                     <div class="relative group bg-gray-100 border border-gray-300 rounded p-2 flex items-center gap-2">
                         <i class="fas fa-file text-gray-600"></i>
                         <div class="flex-1 min-w-0">
-                            <div class="text-xs font-medium text-gray-700 truncate">${this.escapeHtml(attachment.name)}</div>
+                            <div class="text-xs font-medium text-gray-700 truncate">${escapeHtml(attachment.name)}</div>
                             <div class="text-xs text-gray-500">文件</div>
                         </div>
                         <button data-attachment-index="${index}"
@@ -1367,13 +1366,13 @@ class A2AEntryWidget extends HTMLElement {
                             <div class="a2ui-card ${cardClasses}" style="${cardStyles}; background: linear-gradient(135deg, rgba(139, 92, 246, 0.1) 0%, rgba(167, 139, 250, 0.05) 100%); border: 1px solid rgba(139, 92, 246, 0.2); margin-bottom: 4px;">
                                 <div class="a2ui-column ${columnClasses}" style="${columnStyles}">
                                     <h4 style="${h4Styles}; margin: 0 0 4px 0; color: #7c3aed;">
-                                        ${this.escapeHtml(skillName)}
+                                        ${escapeHtml(skillName)}
                                     </h4>
                                     ${
                                         firstExample
                                             ? `
                                         <p style="${captionStyles}; margin: 0; background: rgba(255, 255, 255, 0.8); padding: 4px 6px; border-radius: 4px; border: 1px solid rgba(0, 0, 0, 0.05);">
-                                            ${this.escapeHtml(firstExample)}
+                                            ${escapeHtml(firstExample)}
                                         </p>
                                     `
                                             : ''
@@ -1401,13 +1400,13 @@ class A2AEntryWidget extends HTMLElement {
                     <div class="a2ui-card ${cardClasses} agents-card-item" style="${cardStyles}; margin-bottom: 8px; transition: all 0.2s ease; cursor: default;">
                         <div class="a2ui-column ${columnClasses}" style="${columnStyles}">
                             <h3 style="${h3Styles}; margin: 0;">
-                                ${this.escapeHtml(card.name || agentId)}
+                                ${escapeHtml(card.name || agentId)}
                             </h3>
                             ${
                                 card.description
                                     ? `
                                 <p style="${bodyStyles}; margin: 4px 0 0 0;">
-                                    ${this.escapeHtml(card.description)}
+                                    ${escapeHtml(card.description)}
                                 </p>
                             `
                                     : ''
@@ -1549,13 +1548,13 @@ class A2AEntryWidget extends HTMLElement {
                             <div class="p-4 bg-white rounded-lg border border-gray-200 shadow-sm hover:shadow-md transition-shadow">
                                 <div class="flex items-start justify-between mb-2">
                                     <div class="flex-1">
-                                        <h3 class="font-semibold text-gray-800">${this.escapeHtml(card.name || agentId)}</h3>
+                                        <h3 class="font-semibold text-gray-800">${escapeHtml(card.name || agentId)}</h3>
                                     </div>
                                 </div>
                                 ${
                                     card.description
                                         ? `
-                                    <p class="text-sm text-gray-600 mt-2 mb-3">${this.escapeHtml(card.description)}</p>
+                                    <p class="text-sm text-gray-600 mt-2 mb-3">${escapeHtml(card.description)}</p>
                                 `
                                         : ''
                                 }
@@ -1575,14 +1574,14 @@ class A2AEntryWidget extends HTMLElement {
                                                     return `
                                                     <div class="p-2 bg-purple-50 rounded border border-purple-100">
                                                         <div class="font-semibold text-xs text-purple-700 mb-1">
-                                                            ${this.escapeHtml(skillName)}
+                                                            ${escapeHtml(skillName)}
                                                         </div>
                                                         ${
                                                             firstExample
                                                                 ? `
                                                             <div class="mt-1">
                                                                 <div class="text-xs text-gray-700 bg-white px-2 py-1 rounded border border-gray-200">
-                                                                    ${this.escapeHtml(firstExample)}
+                                                                    ${escapeHtml(firstExample)}
                                                                 </div>
                                                             </div>
                                                         `

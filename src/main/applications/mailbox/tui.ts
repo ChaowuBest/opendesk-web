@@ -42,6 +42,7 @@ import chalk from 'chalk';
 import { parseJsonWithRepair } from '../../../utils/json.js';
 import fs from 'fs';
 import path from 'path';
+import { escapeHtml } from '../../../common/utils/escape.js';
 import {
     callMailWorker,
     formatSender,
@@ -2212,11 +2213,7 @@ export class MailOverlay implements Component {
                 html = buildReplyHtml(replyBody, this.selectedEmail, this.selectedEmailContent);
             } else {
                 // 新邮件：纯文本转简单 HTML
-                html = replyBody
-                    .replace(/&/g, '&amp;')
-                    .replace(/</g, '&lt;')
-                    .replace(/>/g, '&gt;')
-                    .replace(/\n/g, '<br>');
+                html = escapeHtml(replyBody).replace(/\n/g, '<br>');
             }
 
             await callMailWorker('sendEmail', {
@@ -2268,11 +2265,7 @@ export class MailOverlay implements Component {
                 html = buildReplyHtml(replyBody, this.selectedEmail, this.selectedEmailContent);
             } else {
                 // 新邮件：纯文本转简单 HTML
-                html = replyBody
-                    .replace(/&/g, '&amp;')
-                    .replace(/</g, '&lt;')
-                    .replace(/>/g, '&gt;')
-                    .replace(/\n/g, '<br>');
+                html = escapeHtml(replyBody).replace(/\n/g, '<br>');
             }
             // 如果是编辑草稿，先删除原草稿
             if (this.draftUid) {

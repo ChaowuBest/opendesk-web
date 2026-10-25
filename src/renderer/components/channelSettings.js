@@ -22,6 +22,7 @@ import { createRendererTranslator } from '../locale.ts';
 import { showConfirmModal, MODAL_CSS, detectDarkMode } from './confirmModal.ts';
 import { showWorkspacePicker } from './workspacePicker.ts';
 import QRCode from 'qrcode';
+import { escapeHtml } from '../../common/utils/escape.js';
 
 const CHANNEL_MGR = 'channelmgr';
 
@@ -44,14 +45,6 @@ async function localQrDataUrl(content) {
         console.error('[channel-settings] generate QR failed:', err);
         return '';
     }
-}
-
-function escapeHtml(value) {
-    return String(value ?? '')
-        .replace(/&/g, '&amp;')
-        .replace(/</g, '&lt;')
-        .replace(/>/g, '&gt;')
-        .replace(/"/g, '&quot;');
 }
 
 /** 账号显示名：有可读名称时显示「名称 (id)」，否则只显示 id */

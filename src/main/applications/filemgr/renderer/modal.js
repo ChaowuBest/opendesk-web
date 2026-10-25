@@ -10,25 +10,7 @@
  */
 
 import { showConfirmModal } from '../../../../renderer/components/confirmModal.js';
-
-function escapeHtml(value) {
-    return String(value ?? '').replace(/[&<>"']/g, (char) => {
-        switch (char) {
-            case '&':
-                return '&amp;';
-            case '<':
-                return '&lt;';
-            case '>':
-                return '&gt;';
-            case '"':
-                return '&quot;';
-            case "'":
-                return '&#39;';
-            default:
-                return char;
-        }
-    });
-}
+import { escapeHtml } from '../../../../common/utils/escape.js';
 
 async function runConfirmedAction(onConfirm) {
     if (typeof onConfirm !== 'function') {

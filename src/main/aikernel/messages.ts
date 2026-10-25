@@ -22,6 +22,7 @@ import { fileLinkExtension, getRenderWorkspace } from '../utils/marked-file-link
 import { cjkAutolinkFix } from '../../common/markdown/cjk-autolink-fix.js';
 import { doubleTildeStrikethrough } from '../../common/markdown/double-tilde-strikethrough.js';
 import { renderCodeBlockHtml } from '../../common/markdown/code-block-render.js';
+import { neutralizeMarkdownHtml } from '../../common/markdown/markdown-html-safety.js';
 import { createSafeMarkdownParser } from '../../common/markdown/safe-render.js';
 import type { SupportedLocale } from '../../common/locale.js';
 import { getLocale, t } from '../../locale/index.js';
@@ -139,8 +140,6 @@ marked.use(
     })
 );
 
-const DANGEROUS_HTML_RE = /<\s*\/?\s*(style|script|link|meta|iframe|object|embed|applet|form|base)\b[^>]*>/gi;
-
 // 围栏语言标识 -> header 显示名映射已抽至 src/common/markdown/code-block-render.ts，
 // 供 taskview 与笔记编辑器共用；预览语言集合见下方 PREVIEWABLE_LANGS。
 
@@ -187,9 +186,9 @@ marked.use({
     },
     hooks: {
         postprocess(html: string): string {
-            return html.replace(DANGEROUS_HTML_RE, (match) => {
-                return match.replace(/</g, '&lt;').replace(/>/g, '&gt;');
-            });
+            // 模型/工具产出的原始 HTML 会原样进入 DOM：这里剥掉可执行能力（on* 事件属性、
+            // javascript: 等危险协议），良性标签保持原样显示。实现见 markdown-html-safety.ts。
+            return neutralizeMarkdownHtml(html);
         }
     }
 });
@@ -684,7 +683,7 @@ export class ToolCall implements BaseChatToolCall {
     /** 统一的工具错误内联展开渲染，所有工具报错都走这个入口 */
     private renderError(): string {
         const errId = `tc-err-${this.id.replace(/[^a-zA-Z0-9_-]/g, '_')}`;
-        const errText = (this.result || '').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+        const errText = escapeHtml(this.result || '');
         const displayName = this.getResolvedToolDisplayName();
         return `<div class="od-inline-toolcall-container">
             <div class="flex flex-col min-w-0">

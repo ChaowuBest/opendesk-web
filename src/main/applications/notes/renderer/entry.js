@@ -45,6 +45,7 @@ import {
     renderCodeLineInnerHtml,
     splitHighlightedLines
 } from '../../../../common/markdown/code-block-render.js';
+import { escapeHtml } from '../../../../common/utils/escape.js';
 
 const NOTE_PAGE_SIZE = 30;
 
@@ -1016,8 +1017,8 @@ class NotesEntryWidget extends AgentOperableHTMLElement {
                     })
                     .join('');
                 div.innerHTML = `
-                    <div class="notes-item-title">${this._escapeHtml(note.title || this._t('renderer.note.untitled'))}</div>
-                    <div class="notes-item-preview">${this._escapeHtml(preview)}</div>
+                    <div class="notes-item-title">${escapeHtml(note.title || this._t('renderer.note.untitled'))}</div>
+                    <div class="notes-item-preview">${escapeHtml(preview)}</div>
                     <div class="notes-item-meta">
                         <div class="notes-item-tags">${tagHtml}</div>
                         <span class="notes-item-time">${this._formatRelativeTime(note.updatedAt)}</span>
@@ -1264,7 +1265,7 @@ class NotesEntryWidget extends AgentOperableHTMLElement {
                         if (fence) {
                             this._insertFencedCodeBlock(editor, fence.lang, fence.code);
                         } else {
-                            editor.insertContent(this._escapeHtml(text).replace(/\r\n/g, '\n').replace(/\n/g, '<br>'));
+                            editor.insertContent(escapeHtml(text).replace(/\r\n/g, '\n').replace(/\n/g, '<br>'));
                         }
                     }
                     break;
@@ -1274,7 +1275,7 @@ class NotesEntryWidget extends AgentOperableHTMLElement {
                     if (text) {
                         if (editor.selection.getContent({ format: 'text' })) editor.execCommand('Delete');
                         // 纯文本路径：转义后原样插入（换行转 <br>），不做围栏转换
-                        editor.insertContent(this._escapeHtml(text).replace(/\r\n/g, '\n').replace(/\n/g, '<br>'));
+                        editor.insertContent(escapeHtml(text).replace(/\r\n/g, '\n').replace(/\n/g, '<br>'));
                     }
                     break;
                 }
@@ -1363,8 +1364,8 @@ class NotesEntryWidget extends AgentOperableHTMLElement {
                 .join('');
             html += `
             <div class="notes-card" data-note-id="${note.id}">
-                <div class="notes-card-title">${this._escapeHtml(note.title || this._t('renderer.note.untitled'))}</div>
-                <div class="notes-card-preview">${this._escapeHtml(preview)}</div>
+                <div class="notes-card-title">${escapeHtml(note.title || this._t('renderer.note.untitled'))}</div>
+                <div class="notes-card-preview">${escapeHtml(preview)}</div>
                 <div class="notes-card-meta">
                     <div class="notes-card-tags">${tagHtml}</div>
                     <span class="notes-card-time">${this._formatRelativeTime(note.updatedAt)}</span>
@@ -1464,7 +1465,7 @@ class NotesEntryWidget extends AgentOperableHTMLElement {
                     </div>
                 </div>
                 <input id="notes-title-input" type="text" class="notes-title-input"
-                       value="${this._escapeAttr(note.title)}" placeholder="${this._t('renderer.note.title.placeholder')}" />
+                       value="${escapeHtml(note.title)}" placeholder="${this._t('renderer.note.title.placeholder')}" />
                 <div id="notes-editor-tags" class="notes-editor-tags">
                     ${tagHtml}
                     <button id="notes-add-tag-btn" class="notes-add-tag-btn">
@@ -1475,7 +1476,7 @@ class NotesEntryWidget extends AgentOperableHTMLElement {
             <div class="notes-editor-shell">
                 <div id="notes-fixed-toolbar" class="notes-fixed-toolbar"></div>
                 <div class="notes-editor-body">
-                    <textarea id="notes-editor">${this._escapeHtml(this.currentNoteContent)}</textarea>
+                    <textarea id="notes-editor">${escapeHtml(this.currentNoteContent)}</textarea>
                 </div>
             </div>
         </div>`;
@@ -2238,7 +2239,7 @@ class NotesEntryWidget extends AgentOperableHTMLElement {
 
             const langValid = lang && hljs.getLanguage(lang);
             const language = langValid ? lang : 'plaintext';
-            const highlighted = langValid ? hljs.highlight(code, { language }).value : this._escapeHtml(code);
+            const highlighted = langValid ? hljs.highlight(code, { language }).value : escapeHtml(code);
             const html = renderCodeBlockHtml(highlighted, { lang: lang || '', withHeader: !!lang });
 
             const wrap = editor.dom.create('div', { class: 'code-block-wrapper' });
@@ -2903,7 +2904,7 @@ class NotesEntryWidget extends AgentOperableHTMLElement {
         const language = langValid ? lang : 'plaintext';
         // 剥零宽字符（TinyMCE caret 标记可能混入剪贴板文本）
         const plain = (code.length ? code : ' ').replace(/[\uFEFF\u200B\u200C\u200D]/g, '') || ' ';
-        const highlighted = langValid ? hljs.highlight(plain, { language }).value : this._escapeHtml(plain);
+        const highlighted = langValid ? hljs.highlight(plain, { language }).value : escapeHtml(plain);
         const html = renderCodeBlockHtml(highlighted, { lang: lang || '', withHeader: !!lang });
 
         editor.undoManager.transact(() => {
@@ -3528,14 +3529,14 @@ class NotesEntryWidget extends AgentOperableHTMLElement {
         for (const tag of this.tags) {
             const checked = note.tags.includes(tag.name);
             html += `
-            <div class="notes-tag-menu-item" data-tag-name="${this._escapeAttr(tag.name)}">
+            <div class="notes-tag-menu-item" data-tag-name="${escapeHtml(tag.name)}">
                 <div class="notes-tag-menu-item-left">
                     <div class="notes-tag-menu-item-check ${checked ? 'checked' : ''}">
                         <i class="fa-solid fa-check"></i>
                     </div>
                     <span class="notes-tag" style="background:${tag.color}18;color:${tag.color}">${tag.name}</span>
                 </div>
-                <button class="notes-tag-menu-item-del" data-del-tag="${this._escapeAttr(tag.name)}" title="${this._t('renderer.note.tag.delete')}">
+                <button class="notes-tag-menu-item-del" data-del-tag="${escapeHtml(tag.name)}" title="${this._t('renderer.note.tag.delete')}">
                     <i class="fa-solid fa-trash-can"></i>
                 </button>
             </div>`;
@@ -3735,7 +3736,7 @@ class NotesEntryWidget extends AgentOperableHTMLElement {
 
         for (const tag of this.tags) {
             html += `
-            <button class="notes-dropdown-item ${this.tagFilter === tag.name ? 'active' : ''}" data-tag="${this._escapeAttr(tag.name)}">
+            <button class="notes-dropdown-item ${this.tagFilter === tag.name ? 'active' : ''}" data-tag="${escapeHtml(tag.name)}">
                 <span class="notes-tag" style="background:${tag.color}18;color:${tag.color}">${tag.name}</span>
                 ${this.tagFilter === tag.name ? '<i class="fa-solid fa-check"></i>' : ''}
             </button>`;
@@ -3778,7 +3779,7 @@ class NotesEntryWidget extends AgentOperableHTMLElement {
      * 这里只负责询问，实际删除在 _performDeleteNote，避免调用方再套一层确认导致连弹两次。
      */
     async _confirmDeleteNote(note) {
-        const name = this._escapeHtml(note?.title || this._t('renderer.note.untitled'));
+        const name = escapeHtml(note?.title || this._t('renderer.note.untitled'));
         return showConfirmModal({
             icon: 'fa-trash-can',
             iconBg: '#FEF2F2',
@@ -3900,7 +3901,7 @@ class NotesEntryWidget extends AgentOperableHTMLElement {
             const remainingDays = this._getRemainingDays(note.expiresAt);
             html += `
         <div class="notes-deleted-item" data-note-id="${note.id}" style="margin-bottom:8px;">
-            <div class="notes-deleted-item-title">${this._escapeHtml(note.title || this._t('renderer.note.untitled'))}</div>
+            <div class="notes-deleted-item-title">${escapeHtml(note.title || this._t('renderer.note.untitled'))}</div>
             <div class="notes-deleted-item-meta">
                 <span class="notes-deleted-item-time">${this._t('renderer.note.deleted.deletedAt', { time: this._formatRelativeTime(note.deletedAt) })}</span>
                 <span class="notes-deleted-item-remaining">${this._t('renderer.note.deleted.remaining', { days: remainingDays })}</span>
@@ -4042,21 +4043,6 @@ class NotesEntryWidget extends AgentOperableHTMLElement {
         if (days < 7) return this._t('renderer.note.time.daysAgo', { n: days });
         const date = new Date(timestamp);
         return `${date.getMonth() + 1}/${date.getDate()}`;
-    }
-
-    _escapeHtml(str) {
-        if (!str) return '';
-        return str.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
-    }
-
-    _escapeAttr(str) {
-        if (!str) return '';
-        return str
-            .replace(/&/g, '&amp;')
-            .replace(/"/g, '&quot;')
-            .replace(/'/g, '&#39;')
-            .replace(/</g, '&lt;')
-            .replace(/>/g, '&gt;');
     }
 }
 

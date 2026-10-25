@@ -9,6 +9,8 @@
  * See the Mulan PSL v2 for more details.
  */
 
+import { escapeHtmlInsideJsTemplate } from './utils/escape.js';
+
 /** Chromium error description → 用户友好的中文提示 */
 const ERROR_MESSAGES: Record<string, string> = {
     ERR_CONNECTION_REFUSED: '连接被拒绝，服务器可能未运行',
@@ -92,18 +94,10 @@ export interface ErrorInfo {
  */
 export function buildErrorPageScript(errorInfo: ErrorInfo): string {
     const iconClass = getErrorIconClass(errorInfo.description);
-    // 转义 HTML 特殊字符，防止 XSS；同时转义反引号和 $ 防止模板字符串注入
-    const esc = (s: string) =>
-        s
-            .replace(/&/g, '&amp;')
-            .replace(/</g, '&lt;')
-            .replace(/>/g, '&gt;')
-            .replace(/"/g, '&quot;')
-            .replace(/`/g, '\\`')
-            .replace(/\$/g, '\\$');
-    const escUrl = esc(errorInfo.url);
-    const escMsg = esc(errorInfo.userMessage);
-    const escCode = esc(errorInfo.description);
+    // 输出最终被包进 document.write(`...`) 的模板字面量，必须消解 ` $ \ 的逃逸
+    const escUrl = escapeHtmlInsideJsTemplate(errorInfo.url);
+    const escMsg = escapeHtmlInsideJsTemplate(errorInfo.userMessage);
+    const escCode = escapeHtmlInsideJsTemplate(errorInfo.description);
     // 将原始 URL 编码后嵌入 data 属性，供重新加载时使用
     const encodedUrl = encodeURIComponent(errorInfo.url);
     return `document.open(); document.write(\`<!DOCTYPE html>
@@ -126,7 +120,7 @@ body { margin:0; padding:0; background:#fafafa; font-family:-apple-system,BlinkM
 </style>
 </head>
 <body>
-<div class="error-container" data-original-url="${esc(encodedUrl)}">
+<div class="error-container" data-original-url="${escapeHtmlInsideJsTemplate(encodedUrl)}">
     <div class="error-icon"><i class="${iconClass}"></i></div>
     <h1 class="error-title">无法访问此页面</h1>
     <p id="main-message" class="error-message">${escMsg}</p>

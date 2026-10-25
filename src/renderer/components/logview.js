@@ -11,6 +11,7 @@
 
 import { createRendererTranslator } from '../locale.ts';
 import { showInfoModal, escapeModalText } from './confirmModal.js';
+import { escapeHtml } from '../../common/utils/escape.js';
 
 const MIN_ROW_HEIGHT = 24;
 const ROW_VERTICAL_PADDING = 8;
@@ -174,11 +175,6 @@ class LogView extends HTMLElement {
         this._updateCounter();
     }
 
-    escapeHtml(text) {
-        if (!text) return '';
-        return String(text).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
-    }
-
     normalizeLevel(level) {
         return String(level || 'info')
             .replace(/\x1b\[[0-9;]*m/g, '')
@@ -215,7 +211,7 @@ class LogView extends HTMLElement {
                     <div class="od-log-icon w-5 h-5 rounded-md bg-indigo-500/10 flex items-center justify-center">
                         <i class="fas fa-file-lines text-indigo-500" style="font-size:9px"></i>
                     </div>
-                    <h1 class="od-log-title text-sm font-bold bg-gradient-to-r from-gray-800 to-gray-600 bg-clip-text text-transparent">${this.escapeHtml(this._t('renderer.log.title'))}</h1>
+                    <h1 class="od-log-title text-sm font-bold bg-gradient-to-r from-gray-800 to-gray-600 bg-clip-text text-transparent">${escapeHtml(this._t('renderer.log.title'))}</h1>
                     <span id="log-counter" class="od-log-counter text-[10px] text-gray-400 ml-1"></span>
                 </div>
             </div>
@@ -224,30 +220,30 @@ class LogView extends HTMLElement {
                 <div class="od-log-toolbar flex items-center gap-2">
                     <div class="od-log-search relative flex-1">
                         <i class="od-log-search-icon fas fa-search absolute left-2.5 top-1/2 -translate-y-1/2 text-gray-300" style="font-size:10px;pointer-events:none"></i>
-                        <input id="log-filter-input" type="text" placeholder="${this.escapeHtml(this._t('renderer.log.filterPlaceholder'))}"
+                        <input id="log-filter-input" type="text" placeholder="${escapeHtml(this._t('renderer.log.filterPlaceholder'))}"
                             class="od-log-filter-input w-full pl-7 pr-7 py-1 text-[11px] bg-white/70 backdrop-blur-sm border border-gray-200/60 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-400/30 focus:border-blue-300/50 transition-all placeholder-gray-300">
-                        <button id="log-filter-clear" class="od-log-filter-clear absolute right-2 top-1/2 -translate-y-1/2 w-4 h-4 rounded-full bg-gray-200 hover:bg-gray-300 text-gray-500 flex items-center justify-center transition-colors hidden" title="${this.escapeHtml(this._t('renderer.log.clearFilter'))}">
+                        <button id="log-filter-clear" class="od-log-filter-clear absolute right-2 top-1/2 -translate-y-1/2 w-4 h-4 rounded-full bg-gray-200 hover:bg-gray-300 text-gray-500 flex items-center justify-center transition-colors hidden" title="${escapeHtml(this._t('renderer.log.clearFilter'))}">
                             <i class="fas fa-times" style="font-size:8px"></i>
                         </button>
                     </div>
-                    <button id="log-goto-bottom" class="od-log-goto-bottom shrink-0 px-2.5 py-1 text-[11px] text-gray-500 bg-white/70 backdrop-blur-sm border border-gray-200/60 rounded-md hover:bg-gray-50 hover:border-gray-300/60 transition-all flex items-center gap-1" title="${this.escapeHtml(this._t('renderer.log.gotoLatest'))}">
+                    <button id="log-goto-bottom" class="od-log-goto-bottom shrink-0 px-2.5 py-1 text-[11px] text-gray-500 bg-white/70 backdrop-blur-sm border border-gray-200/60 rounded-md hover:bg-gray-50 hover:border-gray-300/60 transition-all flex items-center gap-1" title="${escapeHtml(this._t('renderer.log.gotoLatest'))}">
                         <i class="fas fa-angle-double-down" style="font-size:9px"></i>
-                        <span>${this.escapeHtml(this._t('renderer.log.latest'))}</span>
+                        <span>${escapeHtml(this._t('renderer.log.latest'))}</span>
                     </button>
                     <div class="od-log-export relative shrink-0">
-                        <button id="log-export-btn" class="od-log-export-btn px-2.5 py-1 text-[11px] text-gray-500 bg-white/70 backdrop-blur-sm border border-gray-200/60 rounded-md hover:bg-gray-50 hover:border-gray-300/60 transition-all flex items-center gap-1" title="${this.escapeHtml(this._t('renderer.log.export'))}" aria-haspopup="menu" aria-expanded="false">
+                        <button id="log-export-btn" class="od-log-export-btn px-2.5 py-1 text-[11px] text-gray-500 bg-white/70 backdrop-blur-sm border border-gray-200/60 rounded-md hover:bg-gray-50 hover:border-gray-300/60 transition-all flex items-center gap-1" title="${escapeHtml(this._t('renderer.log.export'))}" aria-haspopup="menu" aria-expanded="false">
                             <i class="fas fa-download" style="font-size:9px"></i>
-                            <span>${this.escapeHtml(this._t('renderer.log.export'))}</span>
+                            <span>${escapeHtml(this._t('renderer.log.export'))}</span>
                             <i class="fas fa-chevron-down" style="font-size:7px"></i>
                         </button>
                         <div id="log-export-menu" class="od-log-export-menu hidden z-50 min-w-[180px] rounded-lg border border-gray-200/70 bg-white/95 shadow-lg backdrop-blur-xl py-1" role="menu">
                             <button type="button" class="od-log-export-menu-item w-full px-3 py-1.5 text-left text-[11px] text-gray-600 hover:bg-blue-50 hover:text-gray-800 flex items-center gap-2" data-log-export-scope="filtered" role="menuitem">
                                 <i class="fas fa-filter text-gray-400" style="font-size:10px"></i>
-                                <span>${this.escapeHtml(this._t('renderer.log.exportFiltered'))}</span>
+                                <span>${escapeHtml(this._t('renderer.log.exportFiltered'))}</span>
                             </button>
                             <button type="button" class="od-log-export-menu-item w-full px-3 py-1.5 text-left text-[11px] text-gray-600 hover:bg-blue-50 hover:text-gray-800 flex items-center gap-2" data-log-export-scope="all" role="menuitem">
                                 <i class="fas fa-list text-gray-400" style="font-size:10px"></i>
-                                <span>${this.escapeHtml(this._t('renderer.log.exportAll'))}</span>
+                                <span>${escapeHtml(this._t('renderer.log.exportAll'))}</span>
                             </button>
                         </div>
                     </div>
@@ -255,9 +251,9 @@ class LogView extends HTMLElement {
 
                 <div class="od-log-table flex-1 flex flex-col overflow-hidden rounded-lg border border-gray-200/80">
                     <div class="od-log-table-head grid grid-cols-[80px_140px_minmax(0,1fr)] px-3 py-1 bg-gray-50/90 border-b border-gray-200/60 text-[10px] font-semibold text-gray-400 select-none">
-                        <span>${this.escapeHtml(this._t('renderer.log.column.level'))}</span>
-                        <span>${this.escapeHtml(this._t('renderer.log.column.time'))}</span>
-                        <span>${this.escapeHtml(this._t('renderer.log.column.content'))}</span>
+                        <span>${escapeHtml(this._t('renderer.log.column.level'))}</span>
+                        <span>${escapeHtml(this._t('renderer.log.column.time'))}</span>
+                        <span>${escapeHtml(this._t('renderer.log.column.content'))}</span>
                     </div>
                     <div id="log-scroll-container" class="od-log-scroll flex-1 overflow-y-auto relative" style="will-change:transform">
                         <div id="log-virtual-spacer" class="relative w-full">
@@ -557,7 +553,7 @@ class LogView extends HTMLElement {
             container.innerHTML = `
                 <div class="od-log-empty flex flex-col items-center justify-center py-12 text-gray-300">
                     <i class="fas fa-inbox text-3xl mb-2"></i>
-                    <span class="text-xs">${this.escapeHtml(this._filter ? this._t('renderer.log.emptyFiltered') : this._t('renderer.log.empty'))}</span>
+                    <span class="text-xs">${escapeHtml(this._filter ? this._t('renderer.log.emptyFiltered') : this._t('renderer.log.empty'))}</span>
                 </div>`;
             return;
         }
@@ -578,15 +574,15 @@ class LogView extends HTMLElement {
             const cfg = this.getLevelConfig(entry.level);
             const stripe = i % 2 === 0 ? '' : 'od-log-row-alt bg-gray-50/40';
             const rowHeight = this._rowHeights[i] || MIN_ROW_HEIGHT;
-            html += `<div class="od-log-row grid grid-cols-[80px_140px_minmax(0,1fr)] px-3 py-1 items-start ${stripe} hover:bg-blue-50/40 transition-colors border-b border-gray-100/50" data-log-level="${this.escapeHtml(level)}" style="min-height:${rowHeight}px">
+            html += `<div class="od-log-row grid grid-cols-[80px_140px_minmax(0,1fr)] px-3 py-1 items-start ${stripe} hover:bg-blue-50/40 transition-colors border-b border-gray-100/50" data-log-level="${escapeHtml(level)}" style="min-height:${rowHeight}px">
                 <div class="od-log-level flex items-center gap-1 overflow-hidden min-w-0">
                     <span class="od-log-level-pill flex items-center gap-1 min-w-0 h-4 px-1.5 rounded">
                         <i class="od-log-level-icon fas ${cfg.icon} ${cfg.color}" style="font-size:9px"></i>
-                        <span class="od-log-level-label ${cfg.color} text-[10px] font-medium truncate">${this.escapeHtml(cfg.label)}</span>
+                        <span class="od-log-level-label ${cfg.color} text-[10px] font-medium truncate">${escapeHtml(cfg.label)}</span>
                     </span>
                 </div>
-                <span class="od-log-time text-[10px] text-gray-400 font-mono truncate" title="${this.escapeHtml(entry.timestamp)}">${this.escapeHtml(entry.timestamp)}</span>
-                <span class="od-log-message min-w-0 text-[10px] text-gray-600 font-mono" title="${this.escapeHtml(entry.message)}" style="white-space:pre-wrap;overflow-wrap:anywhere;line-height:${MESSAGE_LINE_HEIGHT}px">${this.escapeHtml(entry.message)}</span>
+                <span class="od-log-time text-[10px] text-gray-400 font-mono truncate" title="${escapeHtml(entry.timestamp)}">${escapeHtml(entry.timestamp)}</span>
+                <span class="od-log-message min-w-0 text-[10px] text-gray-600 font-mono" title="${escapeHtml(entry.message)}" style="white-space:pre-wrap;overflow-wrap:anywhere;line-height:${MESSAGE_LINE_HEIGHT}px">${escapeHtml(entry.message)}</span>
             </div>`;
         }
         container.innerHTML = html;

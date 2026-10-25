@@ -1033,8 +1033,8 @@ class SideBar extends HTMLElement {
                         : `<span class="sb-task-result${failed ? ' is-failed' : ''}" aria-hidden="true">${
                               failed ? '×' : '✓'
                           }</span>`;
-                    const name = SideBar.escapeHtml(task.task_name || this._t('renderer.sidebar.unnamedTask'));
-                    return `<button class="ctx-item" data-task-id="${SideBar.escapeHtml(task.task_id)}">
+                    const name = escapeHtml(task.task_name || this._t('renderer.sidebar.unnamedTask'));
+                    return `<button class="ctx-item" data-task-id="${escapeHtml(task.task_id)}">
                         <span class="ctx-icon-sm">${resultIcon}</span>
                         <span class="ctx-label">${name}</span>
                     </button>`;
@@ -1963,7 +1963,7 @@ class SideBar extends HTMLElement {
         menu.querySelector('[data-action="delete"]').addEventListener('click', async () => {
             this._dismissContextMenu();
             const task = this.taskList.find((item) => item.task_id === taskId);
-            const taskName = SideBar.escapeHtml(task?.task_name || this._t('renderer.sidebar.unnamedTask'));
+            const taskName = escapeHtml(task?.task_name || this._t('renderer.sidebar.unnamedTask'));
             const confirmed = await showConfirmModal({
                 icon: 'fa-trash-can',
                 iconBg: '#FEF2F2',
@@ -2215,7 +2215,7 @@ class SideBar extends HTMLElement {
                 event.stopPropagation();
                 const taskId = event.currentTarget.dataset.task_id;
                 const task = this.taskList.find((item) => item.task_id === taskId);
-                const taskName = SideBar.escapeHtml(task?.task_name || this._t('renderer.sidebar.unnamedTask'));
+                const taskName = escapeHtml(task?.task_name || this._t('renderer.sidebar.unnamedTask'));
                 const confirmed = await showConfirmModal({
                     icon: 'fa-trash-can',
                     iconBg: '#FEF2F2',
@@ -2235,15 +2235,6 @@ class SideBar extends HTMLElement {
                 await window.taskManagerAPI.removeTask(taskId);
             });
         });
-    }
-
-    static escapeHtml(value) {
-        return String(value ?? '')
-            .replace(/&/g, '&amp;')
-            .replace(/</g, '&lt;')
-            .replace(/>/g, '&gt;')
-            .replace(/"/g, '&quot;')
-            .replace(/'/g, '&#039;');
     }
 
     _taskGroupLabel(group) {
@@ -2280,8 +2271,8 @@ class SideBar extends HTMLElement {
         const isCurrentTask = task.task_id === this.currentTaskId;
         const isRunning = task.task_status === 'running';
         const failed = task.task_status === 'failed' || ['fail', 'ask'].includes(task.completion_status);
-        const taskName = SideBar.escapeHtml(task.task_name || this._t('renderer.sidebar.unnamedTask'));
-        const time = SideBar.escapeHtml(this._formatTaskTime(task));
+        const taskName = escapeHtml(task.task_name || this._t('renderer.sidebar.unnamedTask'));
+        const time = escapeHtml(this._formatTaskTime(task));
         const waitingTag = SideBar.buildWaitingTag(task.task_id, this._waitingTaskIds, isCurrentTask);
         const browserIcon = this._browserActiveTaskIds.has(task.task_id)
             ? '<i class="fas fa-globe sidebar-browser-icon"></i>'
@@ -2295,7 +2286,7 @@ class SideBar extends HTMLElement {
         return `
         <div
             class="task-item sb-task-row${isCurrentTask ? ' is-current' : ''}"
-            data-task_id="${SideBar.escapeHtml(task.task_id)}"
+            data-task_id="${escapeHtml(task.task_id)}"
             data-parent_id=""
             data-depth="0"
         >
@@ -2335,9 +2326,9 @@ class SideBar extends HTMLElement {
         <div class="sb-running-card${isCurrentTask ? ' is-current' : ''}${
             recentlyCompleted ? ' is-recently-completed' : ''
         }">
-            <div class="task-item sb-running-header" data-task_id="${SideBar.escapeHtml(task.task_id)}" data-depth="0">
+            <div class="task-item sb-running-header" data-task_id="${escapeHtml(task.task_id)}" data-depth="0">
                 ${recentlyCompleted ? '<i class="sb-completed-dot" aria-hidden="true"></i>' : ''}
-                <span class="sb-running-title">${SideBar.escapeHtml(
+                <span class="sb-running-title">${escapeHtml(
                     task.task_name || this._t('renderer.sidebar.unnamedTask')
                 )}</span>
                 ${SideBar.buildWaitingTag(task.task_id, this._waitingTaskIds, isCurrentTask)}
@@ -2364,14 +2355,14 @@ class SideBar extends HTMLElement {
         return `
         <div
             class="task-item sb-running-subtask-row${status.key === 'running' ? ' is-running' : ''}"
-            data-task_id="${SideBar.escapeHtml(task.task_id)}"
-            data-parent_id="${SideBar.escapeHtml(task.parent_id || '')}"
+            data-task_id="${escapeHtml(task.task_id)}"
+            data-parent_id="${escapeHtml(task.parent_id || '')}"
             data-depth="1"
             data-subtask-status="${status.key}"
-            title="${SideBar.escapeHtml(status.label)}"
+            title="${escapeHtml(status.label)}"
         >
             <i class="sb-subtask-dot is-${status.key}" aria-hidden="true"></i>
-            <span class="sb-subtask-name">${SideBar.escapeHtml(
+            <span class="sb-subtask-name">${escapeHtml(
                 task.task_name || this._t('renderer.sidebar.unnamedSubtask')
             )}</span>
             ${statusLabel ? `<span class="sb-subtask-status">${statusLabel}</span>` : ''}
@@ -2379,7 +2370,7 @@ class SideBar extends HTMLElement {
     }
 
     _workspaceGroupSummary(group, index) {
-        const label = SideBar.escapeHtml(this._taskGroupLabel(group));
+        const label = escapeHtml(this._taskGroupLabel(group));
         const workspace = group.workspace || '';
         const normalizedWorkspace = workspace.replace(/\\/g, '/');
         const pathSeparatorIndex = normalizedWorkspace.lastIndexOf('/');
@@ -2387,7 +2378,7 @@ class SideBar extends HTMLElement {
             pathSeparatorIndex >= 0 ? normalizedWorkspace.slice(0, pathSeparatorIndex + 1) : normalizedWorkspace;
         const pathTail =
             pathSeparatorIndex >= 0 ? normalizedWorkspace.slice(pathSeparatorIndex + 1) : normalizedWorkspace;
-        const initial = SideBar.escapeHtml((group.label || this._t('renderer.sidebar.defaultWorkspace')).charAt(0));
+        const initial = escapeHtml((group.label || this._t('renderer.sidebar.defaultWorkspace')).charAt(0));
         const iconPalette = [
             { background: 'rgba(201, 76, 64, 0.12)', color: '#c94c40' },
             { background: '#eef2ff', color: '#4f46e5' },
@@ -2399,15 +2390,15 @@ class SideBar extends HTMLElement {
             <span class="sb-workspace-icon" style="background:${iconColor.background};color:${iconColor.color}">${initial}</span>
             <span class="sb-workspace-info">
                 <span class="sb-workspace-name">${label}</span>
-                <span class="sb-workspace-path" title="${SideBar.escapeHtml(
+                <span class="sb-workspace-path" title="${escapeHtml(
                     workspace || this._t('renderer.sidebar.defaultWorkspace')
                 )}">
                     ${
                         workspace
-                            ? `<span class="sb-workspace-path-prefix">${SideBar.escapeHtml(
+                            ? `<span class="sb-workspace-path-prefix">${escapeHtml(
                                   pathPrefix
-                              )}</span><span class="sb-workspace-path-tail">${SideBar.escapeHtml(pathTail)}</span>`
-                            : SideBar.escapeHtml(this._t('renderer.sidebar.defaultWorkspace'))
+                              )}</span><span class="sb-workspace-path-tail">${escapeHtml(pathTail)}</span>`
+                            : escapeHtml(this._t('renderer.sidebar.defaultWorkspace'))
                     }
                 </span>
             </span>
@@ -2444,11 +2435,11 @@ class SideBar extends HTMLElement {
         const isWorkspace = group.id.startsWith('workspace:');
         const summary = isWorkspace
             ? this._workspaceGroupSummary(group, index)
-            : `${SideBar.escapeHtml(this._taskGroupLabel(group))}
+            : `${escapeHtml(this._taskGroupLabel(group))}
                <span class="sb-group-count">${group.items.length}</span>
                <span class="sb-group-caret" aria-hidden="true">${CHEVRON_SVG}</span>`;
         return `
-        <details class="sb-task-group${isWorkspace ? ' is-workspace' : ''}" data-group-id="${SideBar.escapeHtml(
+        <details class="sb-task-group${isWorkspace ? ' is-workspace' : ''}" data-group-id="${escapeHtml(
             group.id
         )}"${this._openTaskGroupId === group.id ? ' open' : ''}>
             <summary>${summary}</summary>
@@ -2456,7 +2447,7 @@ class SideBar extends HTMLElement {
                 ${taskRows}
                 ${
                     hasMore
-                        ? `<div class="sb-load-more" data-group-id="${SideBar.escapeHtml(group.id)}">
+                        ? `<div class="sb-load-more" data-group-id="${escapeHtml(group.id)}">
                                <i aria-hidden="true"></i>
                                ${this._t('renderer.sidebar.loadMore')}
                            </div>`

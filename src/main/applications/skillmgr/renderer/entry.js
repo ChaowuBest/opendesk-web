@@ -4,6 +4,7 @@
  */
 
 import { OVERLAY_CSS } from '../../../../common/overlay-styles.js';
+import { neutralizeMarkdownHtml } from '../../../../common/markdown/markdown-html-safety.js';
 import { showConfirmModal, renderIcon, bindOverlayDismiss } from '../../../../renderer/components/confirmModal';
 import { resolveRendererLocale } from '../../../../renderer/locale.js';
 import { createTranslatorForSkillMgr } from '../locale/renderer.js';
@@ -3078,7 +3079,9 @@ class SkillMgrEntryWidget extends HTMLElement {
             closeLabel: this._t('renderer.skill.detail.close'),
             description: detail.description,
             descriptionLabel: this._t('renderer.skill.detail.descLabel'),
-            bodyHtml: detail.body ? marked.parse(detail.body) : undefined,
+            // 技能正文可能来自 skillhub 等第三方源：marked 默认放行原始 HTML，
+            // 渲染后剥掉可执行能力，良性标签保持原样显示。
+            bodyHtml: detail.body ? neutralizeMarkdownHtml(marked.parse(detail.body)) : undefined,
             bodyLabel: this._t('renderer.skill.detail.contentLabel'),
             metadata: metaItems,
             metadataLabel: this._t('renderer.skill.detail.metadataLabel'),
