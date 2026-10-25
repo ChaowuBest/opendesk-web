@@ -44,7 +44,9 @@ import {
 } from '../aikernel/messages.js';
 import { HarnessContext } from '../aikernel/security/harness.js';
 import type {
+    PermissionAction,
     PermissionRequest,
+    PermissionResourceType,
     PermissionUserResponse,
     PermissionPromptProvider
 } from '../aikernel/security/permission.js';
@@ -57,13 +59,14 @@ import { t } from '../../locale/index.js';
 const RENDER_WIDTH = 80;
 
 // Use functions instead of constants to avoid caching translations at module load time
-const HEADLESS_ACTION_LABELS = () => ({
+// Partial：通配符 '*' 等取值没有对应文案，调用点用 `|| 原值` 兜底
+const HEADLESS_ACTION_LABELS = (): Partial<Record<PermissionAction, string>> => ({
     read: t('headless.action.read'),
     write: t('headless.action.write'),
     execute: t('headless.action.execute'),
     access: t('headless.action.access')
 });
-const HEADLESS_RESOURCE_LABELS = () => ({
+const HEADLESS_RESOURCE_LABELS = (): Partial<Record<PermissionResourceType, string>> => ({
     file: t('headless.resource.file'),
     network: t('headless.resource.network'),
     skill: t('headless.resource.skill')
@@ -288,9 +291,10 @@ export class HeadlessRunner {
         let promptTokens = 0;
         let completionTokens = 0;
         if (lastMsg instanceof AssistantMessage && lastMsg.usage) {
-            totalTokens = lastMsg.usage.total_tokens;
-            promptTokens = lastMsg.usage.prompt_tokens;
-            completionTokens = lastMsg.usage.completion_tokens;
+            // Usage 字段按 provider 实际情况可能缺省，缺省即视为 0（与上面初值一致）
+            totalTokens = lastMsg.usage.total_tokens ?? 0;
+            promptTokens = lastMsg.usage.prompt_tokens ?? 0;
+            completionTokens = lastMsg.usage.completion_tokens ?? 0;
         }
 
         process.stdout.write('\n');

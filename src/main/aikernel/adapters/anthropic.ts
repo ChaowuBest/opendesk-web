@@ -570,7 +570,7 @@ export class AnthropicAdapter {
     }
 
     static extractText(body: any): string {
-        const content = Array.isArray(body?.content) ? body.content : [];
+        const content: Array<{ type?: unknown; text?: unknown }> = Array.isArray(body?.content) ? body.content : [];
         return content
             .map((block) => (block?.type === 'text' && typeof block.text === 'string' ? block.text : ''))
             .filter((text) => text.length > 0)

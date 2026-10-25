@@ -143,7 +143,7 @@ export class FactorialMemoryStore {
         try {
             const fallbackTimestamp = (await fs.promises.stat(filePath)).mtime.toISOString();
             const parsed = JSON.parse(raw);
-            const items = Array.isArray(parsed)
+            const items: unknown[] = Array.isArray(parsed)
                 ? parsed
                 : parsed && typeof parsed === 'object' && Array.isArray(parsed.memories)
                   ? parsed.memories

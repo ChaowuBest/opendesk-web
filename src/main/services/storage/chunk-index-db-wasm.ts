@@ -239,8 +239,7 @@ export class ChunkIndexDBWasm implements IChunkIndexDB {
 
     private getState(key: string): string | null {
         const row = this.db.get(`SELECT value FROM ${this.hnswMetadataTableName} WHERE key = ?`, [key]) as
-            | { value?: string }
-            | undefined;
+            { value?: string } | undefined;
         return row?.value ?? null;
     }
 
@@ -255,8 +254,7 @@ export class ChunkIndexDBWasm implements IChunkIndexDB {
 
     private refreshActiveCount(): void {
         const row = this.db.get(`SELECT COUNT(*) as cnt FROM ${this.tableName} WHERE active = 1`) as
-            | { cnt: number }
-            | undefined;
+            { cnt: number } | undefined;
         this.activeChunkCount = row?.cnt ?? 0;
     }
 
@@ -278,8 +276,7 @@ export class ChunkIndexDBWasm implements IChunkIndexDB {
 
     private getStoredDimSync(): number | null {
         const row = this.db.get(`SELECT repr FROM ${this.tableName} WHERE active = 1 LIMIT 1`) as
-            | { repr?: Uint8Array }
-            | undefined;
+            { repr?: Uint8Array } | undefined;
         if (!row?.repr) return null;
         return Math.floor(Buffer.from(row.repr).byteLength / Float32Array.BYTES_PER_ELEMENT);
     }
@@ -313,9 +310,11 @@ export class ChunkIndexDBWasm implements IChunkIndexDB {
 
     private async enqueueWrite<T>(fn: () => Promise<T>): Promise<T> {
         await this.ensureInitialized();
-        let resolveNext: (() => void) | null = null;
+        // 用持有者对象保存 resolve：Promise executor 内的赋值对 let 局部变量不可见，
+        // 会让 `resolveNext?.()` 被收窄成 null 而不可调用；holder 属性不受此限制。
+        const pending: { resolve?: () => void } = {};
         const next = new Promise<void>((resolve) => {
-            resolveNext = resolve;
+            pending.resolve = resolve;
         });
         const previous = this.writeQueue;
         this.writeQueue = previous.then(() => next).catch(() => next);
@@ -324,7 +323,7 @@ export class ChunkIndexDBWasm implements IChunkIndexDB {
         try {
             return await fn();
         } finally {
-            resolveNext?.();
+            pending.resolve?.();
         }
     }
 

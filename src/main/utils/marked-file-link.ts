@@ -240,10 +240,8 @@ export function parseLineAnchor(rawHref: string): { filePath: string; line: numb
  */
 export const fileLinkExtension: MarkedExtension = {
     renderer: {
-        link(
-            this: { parser: { parseInline: (tokens: unknown[]) => string } },
-            { href, tokens }: Tokens.Link
-        ): string | false {
+        // this 由 marked 的 RendererObject 上下文提供（Renderer<string, string>），不要自定义收窄
+        link({ href, tokens }: Tokens.Link): string | false {
             if (href.startsWith(SKILL_SCHEME)) {
                 const reference = href.slice(SKILL_SCHEME.length).split('/');
                 if (reference.length === 2 && reference[0] && reference[1]) {

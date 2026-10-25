@@ -550,7 +550,7 @@ export function hasUserPythonEnvironment(env: NodeJS.ProcessEnv = process.env): 
 }
 
 export function shouldUseIsolatedPython(
-    settingData: Pick<SettingData, 'cli_config'>,
+    settingData: Partial<Pick<SettingData, 'cli_config'>>,
     env: NodeJS.ProcessEnv = process.env
 ): boolean {
     if (settingData.cli_config?.inherit_venv !== false && hasUserPythonEnvironment(env)) {
@@ -700,7 +700,10 @@ export function mergeGlobalEnviron(explicitEnv?: NodeJS.ProcessEnv): NodeJS.Proc
  */
 export function buildChildProcessEnv(explicitEnv?: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
     let env = mergeGlobalEnviron(explicitEnv) ?? { ...process.env, ...explicitEnv };
-    let settingData: Pick<SettingData, 'cli_config' | 'network_config'> = {
+    // cli_config / network_config 在 SettingData 中是必填（zod default 推导），
+    // 但 Setting 尚未初始化时这里是兜底占位，因此按 Partial 声明；
+    // 下方读取一律通过可选链，与 Partial 声明一致。
+    let settingData: Partial<Pick<SettingData, 'cli_config' | 'network_config'>> = {
         cli_config: undefined,
         network_config: undefined
     };

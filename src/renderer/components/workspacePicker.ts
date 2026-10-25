@@ -472,10 +472,14 @@ ${OVERLAY_CSS}
 
         async function init() {
             try {
-                [currentWorkspace, recentWorkspaces] = await Promise.all([
+                // getEffectiveWorkspace 可能返回 null（尚无工作空间），currentWorkspace
+                // 是字符串状态，这里统一归一为空串，与初始值及其后各处的空值判断一致。
+                const [effectiveWorkspace, recents] = await Promise.all([
                     options.initialWorkspace ?? window.workspaceAPI.getEffectiveWorkspace(),
                     window.workspaceAPI.getRecentWorkspaces()
                 ]);
+                currentWorkspace = effectiveWorkspace ?? '';
+                recentWorkspaces = recents;
             } catch {
                 currentWorkspace = '';
                 recentWorkspaces = [];

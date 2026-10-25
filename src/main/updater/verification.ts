@@ -44,7 +44,8 @@ export async function inspectAuthenticodeSignature(installerPath: string): Promi
         '$subject = if ($signature.SignerCertificate) { $signature.SignerCertificate.Subject } else { "" }',
         '[pscustomobject]@{ status = [string]$signature.Status; subject = $subject } | ConvertTo-Json -Compress'
     ].join('; ');
-    const childEnvironment = { ...process.env, OPENDESK_UPDATE_SIGNATURE_PATH: installerPath };
+    // 显式标注为 ProcessEnv，保留可索引/可删除的键值签名（spread 后会被收窄成单个已知键）
+    const childEnvironment: NodeJS.ProcessEnv = { ...process.env, OPENDESK_UPDATE_SIGNATURE_PATH: installerPath };
     for (const key of Object.keys(childEnvironment)) {
         if (key.toLowerCase() === 'psmodulepath') delete childEnvironment[key];
     }

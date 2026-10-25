@@ -549,8 +549,10 @@ async function main(args: CommandLineArgs) {
                 }
             });
         } else if (args.resume) {
+            // 闭包内无法沿用外层的类型收窄，先取出已确认存在的 resume 任务 ID
+            const resumeTaskId = args.resume;
             ApplicationRegistry.onReady(() => {
-                tui.resumeTask(args.resume);
+                tui.resumeTask(resumeTaskId);
             });
         }
     }

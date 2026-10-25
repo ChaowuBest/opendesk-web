@@ -2191,7 +2191,9 @@ export class AgentOfficeApplication extends BaseApplication {
                 }
             });
 
-            if ('waitFor' in started) {
+            // 三个返回分支的对象字面量联合后，未参与该分支的字段会以 `xxx?: undefined` 形式存在，
+            // 因此 `'waitFor' in started` 不足以排除 undefined；需再判真值才能安全取到 TaskState
+            if ('waitFor' in started && started.waitFor) {
                 await started.waitFor.waitUntilFinished(undefined, true);
                 continue;
             }

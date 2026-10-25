@@ -2894,8 +2894,8 @@ class BrowserEntryWidget extends HTMLElement {
             onlyTab.internalUrl = 'opendesk://homepage/';
             onlyTab.ready = false;
 
-            this.createInternalPageForTab(onlyTab);
-            onlyTab.wrapEl?.classList.add('wb-wv-active');
+            const onlyTabWrapEl = this.createInternalPageForTab(onlyTab);
+            onlyTabWrapEl.classList.add('wb-wv-active');
 
             this.renderTabBar();
             this.syncUrlBar();
@@ -3658,8 +3658,8 @@ class BrowserEntryWidget extends HTMLElement {
         }
         tab.webview = null;
 
-        this.createInternalPageForTab(tab);
-        tab.wrapEl?.classList.add('wb-wv-active');
+        const wrapEl = this.createInternalPageForTab(tab);
+        wrapEl.classList.add('wb-wv-active');
 
         this.syncUrlBar();
         this.syncNavButtons();
@@ -3691,7 +3691,12 @@ class BrowserEntryWidget extends HTMLElement {
         this.addTab(url);
     }
 
-    private createInternalPageForTab(tab: BrowserTab): void {
+    /**
+     * 创建（或重建）内页 tab 的 wrapper。
+     * 返回新建的 wrapper 元素：调用方若先把 tab.wrapEl 置空，TypeScript 会把该字段收窄为 null，
+     * 无法再通过 tab.wrapEl 取到新建元素，因此这里显式返回。
+     */
+    private createInternalPageForTab(tab: BrowserTab): HTMLElement {
         const wrapEl = document.createElement('div');
         wrapEl.className = 'wb-webview-wrap';
         wrapEl.dataset.tabId = String(tab.id);
@@ -3700,6 +3705,7 @@ class BrowserEntryWidget extends HTMLElement {
         tab.isHomePage = false;
 
         this.renderInternalPage(tab);
+        return wrapEl;
     }
 
     private renderInternalPage(tab: BrowserTab): void {

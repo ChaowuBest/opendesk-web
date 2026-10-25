@@ -42,6 +42,12 @@ const sqlite3Wasm = require('node-sqlite3-wasm') as {
 
 const SUPPORTED_OPERATORS: TagQueryOperator[] = ['=', '!=', '>', '<', '>=', '<=', 'like', 'in'];
 
+/** tag 索引表的写入列，保留字面量联合类型以便安全地用 record[column] 取值 */
+const TAG_INDEX_COLUMNS = ['item_id', 'item_type', 'tag'] as const satisfies ReadonlyArray<keyof TagIndexRecord>;
+
+/** tag 索引表可更新的列（item_id 是主键，不参与 SET） */
+const TAG_INDEX_UPDATE_COLUMNS = ['item_type', 'tag'] as const satisfies ReadonlyArray<keyof TagIndexRecord>;
+
 function quoteString(value: string): string {
     return `'${value.replace(/'/g, "''")}'`;
 }
@@ -169,8 +175,12 @@ export class TagIndexDBWasm implements ITagIndexDB {
         }
     }
 
-    private getRecordColumns(record: Record<string, any>): string[] {
-        return ['item_id', 'item_type', 'tag'].filter((column) => record[column] !== undefined);
+    /**
+     * 返回 record 上存在的列名。返回 `keyof TagIndexRecord` 而不是 string，
+     * 调用方才能用 `record[column]` 直接取值（不需要 any / as 断言）。
+     */
+    private getRecordColumns(record: Partial<TagIndexRecord>): Array<keyof TagIndexRecord> {
+        return TAG_INDEX_COLUMNS.filter((column) => record[column] !== undefined);
     }
 
     private buildWhereClause(conditions: QueryCondition[]): { whereClause: string; params: any[] } {
@@ -350,7 +360,7 @@ export class TagIndexDBWasm implements ITagIndexDB {
                 const itemId = record.item_id;
                 if (itemId === undefined) continue;
 
-                const fields = ['item_type', 'tag'].filter((field) => record[field] !== undefined);
+                const fields = TAG_INDEX_UPDATE_COLUMNS.filter((field) => record[field] !== undefined);
                 if (fields.length === 0) continue;
 
                 const setClause = fields.map((field) => `${field} = ?`).join(', ');

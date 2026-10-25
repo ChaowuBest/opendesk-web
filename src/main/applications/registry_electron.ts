@@ -15,6 +15,7 @@
  */
 
 import { ApplicationRegistry } from './registry.js';
+import { toErrorMessage } from '../../common/utils/error.js';
 import { app, BrowserWindow, protocol } from 'electron';
 import { logger } from '../utils/logger.js';
 import { safeSendToWebContents } from '../utils/electron-ipc.js';
@@ -24,6 +25,18 @@ import path from 'path';
 import { AppManagerStore } from './appmgr/manager.js';
 
 const EXTERNAL_APP_SCHEME = 'opendesk-app';
+
+/**
+ * ipcMain.handle 的 methodName 参数来自 IPC（类型为 any），而 BaseApplication 没有索引签名，
+ * 无法用动态方法名直接索引。这里显式声明两种「动态方法视图」，
+ * 仅用于类型层面的跨边界访问，运行时仍是同一个 application 实例。
+ */
+type ApplicationDynamicMethod = ((...args: unknown[]) => unknown) | undefined;
+type ApplicationDynamicMemberTable = Record<string, ApplicationDynamicMethod>;
+
+/** 流式方法：返回值需可被 for await 迭代 */
+type ApplicationDynamicStreamMethod = ((...args: unknown[]) => AsyncIterable<unknown>) | undefined;
+type ApplicationDynamicStreamMemberTable = Record<string, ApplicationDynamicStreamMethod>;
 
 function mimeTypeFor(filePath: string): string {
     const ext = path.extname(filePath).toLowerCase();
@@ -191,14 +204,16 @@ export function registerApplicationRegistryHandlers(
         if (application === undefined) {
             return { status: 'error', message: `application ${bundleName} not found` };
         }
-        if (typeof application[methodName] !== 'function') {
+        const method = (application as unknown as ApplicationDynamicMemberTable)[methodName];
+        if (typeof method !== 'function') {
             return {
                 status: 'error',
                 message: `method ${methodName} not found in application ${bundleName}`
             };
         }
         try {
-            return { status: 'ok', data: await application[methodName](...args) };
+            // 与原 `application[methodName](...args)` 一致：this 仍绑定到 application 实例
+            return { status: 'ok', data: await method.apply(application, args) };
         } catch (error) {
             const message = formatIpcError(error);
             logger.warn(`applicationRegistry:callMainWorld ${bundleName}.${methodName} failed: ${message}`);
@@ -231,7 +246,7 @@ export function registerApplicationRegistryHandlers(
 
             return { status: 'ok', requestId: requestId };
         } catch (error) {
-            return { status: 'error', message: error.message };
+            return { status: 'error', message: toErrorMessage(error) };
         }
     });
     ipcMain.handle('applicationRegistry:streamCallMainWorld', async (event, bundleName, methodName, ...args) => {
@@ -241,7 +256,7 @@ export function registerApplicationRegistryHandlers(
         if (application === undefined) {
             return { status: 'error', message: `application ${bundleName} not found` };
         }
-        const method = application[methodName];
+        const method = (application as unknown as ApplicationDynamicStreamMemberTable)[methodName];
         if (method === undefined) {
             return {
                 status: 'error',
@@ -261,7 +276,7 @@ export function registerApplicationRegistryHandlers(
                 send(undefined);
             } catch (error) {
                 logger.error(`streamCallMainWorld ${bundleName}.${methodName} error: ${error}`);
-                send(undefined, error.message);
+                send(undefined, toErrorMessage(error));
             }
         })();
 

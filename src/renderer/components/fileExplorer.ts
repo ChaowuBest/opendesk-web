@@ -1395,7 +1395,7 @@ export class FileExplorer {
         if (this._workspaceRequested) return;
         this._workspaceRequested = true;
         try {
-            let root: string;
+            let root: string | null;
             // 优先使用任务级工作空间，否则使用全局工作空间
             if (this._taskWorkspace) {
                 root = this._taskWorkspace;

@@ -63,6 +63,17 @@ function headersToRecord(headers: HeadersInit | undefined): Record<string, strin
     return { ...headers };
 }
 
+/**
+ * 平台注册的应用类元素类型。
+ *
+ * 注册表与 CLI 均以 `new ApplicationClass()` 无参实例化，而各应用的构造签名
+ * 并不统一（如 AcpMgrApplication 接收 dependencies 对象、其余应用是
+ * `(bundleName = 'xxx', showIcon = true)`）。因此这里只要求「可无参构造 +
+ * 静态成员与 BaseApplication 一致」，仍然可以赋给基类声明的
+ * `(typeof BaseApplication)[]`。
+ */
+export type ApplicationClass = Omit<typeof BaseApplication, 'prototype'> & (new () => BaseApplication);
+
 export class WorkerPlatform extends AbstractPlatform {
     private networkConfig: WorkerNetworkConfig;
     private _onNetworkConfigMessage: ((msg: any) => void) | null = null;
@@ -353,7 +364,11 @@ export class WorkerPlatform extends AbstractPlatform {
         await this._shellRequest('showItemInFolder', filePath);
     }
 
-    getApplicationClasses(): (typeof BaseApplication)[] {
+    // 返回元素类型按 ApplicationClass（无参可构造 + 静态成员同 BaseApplication）声明：
+    // 注册表统一以 `new ApplicationClass()` 实例化，而各应用构造签名并不统一
+    // （如 AcpMgrApplication 接收 dependencies 对象），`typeof BaseApplication`
+    // 的完整构造签名过窄。
+    getApplicationClasses(): ApplicationClass[] {
         return [
             MailboxApplication,
             FileMgrApplication,

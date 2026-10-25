@@ -385,7 +385,7 @@ export async function attributeBatchInterceptions(
                         coveredIndices
                     } as AttributionCandidate;
                 })
-                .filter((c): c is AttributionCandidate => c !== null);
+                .filter((c: AttributionCandidate | null): c is AttributionCandidate => c !== null);
 
             return {
                 candidates: validCandidates,
@@ -562,7 +562,7 @@ export async function attributeInterception(
                         coveredIndices: [] as number[]
                     } as AttributionCandidate;
                 })
-                .filter((c): c is AttributionCandidate => c !== null);
+                .filter((c: AttributionCandidate | null): c is AttributionCandidate => c !== null);
 
             return {
                 candidates: validCandidates,

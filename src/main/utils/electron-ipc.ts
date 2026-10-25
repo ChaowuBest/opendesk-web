@@ -17,7 +17,8 @@ function getErrorMessage(err: unknown): string {
     return (err as Error)?.message || String(err);
 }
 
-function isSendTargetAvailable(target: { isDestroyed(): boolean } | null | undefined): boolean {
+// 类型谓词：除判断可用外，同时把 null/undefined 排除，供调用点收窄
+function isSendTargetAvailable<T extends { isDestroyed(): boolean }>(target: T | null | undefined): target is T {
     if (!target) return false;
     if (typeof target.isDestroyed !== 'function') return true;
     try {

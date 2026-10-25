@@ -1361,7 +1361,8 @@ export class ChannelMgrApplication extends BaseApplication {
                 // 保存凭证到配置
                 const currentConfig = (this.getConfig() || {}) as Record<string, unknown>;
                 const feishuConfig = (currentConfig['feishu'] || {}) as Record<string, unknown>;
-                const accounts = feishuConfig['accounts'] || {};
+                // accounts 在配置里是「accountId → 账号信息」的字典；缺少时用空字典起步
+                const accounts = (feishuConfig['accounts'] || {}) as Record<string, unknown>;
                 accounts[accountId] = { appId, appSecret, enabled: true };
 
                 this.setConfig({
@@ -1664,7 +1665,9 @@ export class ChannelMgrApplication extends BaseApplication {
                         await reloadPluginHost();
                         await this.reloadChannels();
                         progress.hide();
-                        showInfo(t('plugin.install.success'), t('channel.install.success', { id: result.id }));
+                        // installPlugin 成功分支必然带 id（见 manager.ts 的 `return { success: true, id }`），
+                        // 这里用 ?? '' 仅为满足可选字段的类型约束
+                        showInfo(t('plugin.install.success'), t('channel.install.success', { id: result.id ?? '' }));
                     } else {
                         progress.hide();
                         showInfo(t('plugin.install.fail'), `插件安装失败: ${result.error}`);

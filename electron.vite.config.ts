@@ -99,8 +99,8 @@ export default defineConfig(({ mode }) => {
                             return;
                         }
                         // MODULE_LEVEL_DIRECTIVE: node_modules 中 React 组件库的 "use client" RSC 指令，打包时被忽略，属无害警告
-                        const safeWarnings = ['CIRCULAR_DEPENDENCY', 'MODULE_LEVEL_DIRECTIVE'];
-                        if (safeWarnings.includes(warning.code)) {
+                        const safeWarnings: readonly string[] = ['CIRCULAR_DEPENDENCY', 'MODULE_LEVEL_DIRECTIVE'];
+                        if (warning.code !== undefined && safeWarnings.includes(warning.code)) {
                             warn(warning);
                             return;
                         }

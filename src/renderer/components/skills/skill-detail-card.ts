@@ -196,25 +196,27 @@ export class SkillDetailCard extends HTMLElement {
     }
 
     private buildSkeleton(): void {
-        this.shadowRoot.innerHTML = `<style>${STYLE}</style><div class="detail-overlay od-overlay"><div class="detail-dialog" role="dialog" aria-modal="true" aria-labelledby="shared-skill-detail-title"><div class="detail-header info"><button type="button" class="detail-back" hidden>${BACK_ARROW_SVG}</button><div class="detail-icon"></div><div class="detail-header-info"><div class="detail-name" id="shared-skill-detail-title"></div><div class="detail-id"></div><span class="header-extra"></span></div><button type="button" class="detail-close">${CLOSE_SVG}</button></div><div class="detail-body"></div><div class="detail-footer" hidden></div></div></div>`;
+        const shadowRoot = this.shadowRoot;
+        if (!shadowRoot) return;
+        shadowRoot.innerHTML = `<style>${STYLE}</style><div class="detail-overlay od-overlay"><div class="detail-dialog" role="dialog" aria-modal="true" aria-labelledby="shared-skill-detail-title"><div class="detail-header info"><button type="button" class="detail-back" hidden>${BACK_ARROW_SVG}</button><div class="detail-icon"></div><div class="detail-header-info"><div class="detail-name" id="shared-skill-detail-title"></div><div class="detail-id"></div><span class="header-extra"></span></div><button type="button" class="detail-close">${CLOSE_SVG}</button></div><div class="detail-body"></div><div class="detail-footer" hidden></div></div></div>`;
 
-        const overlay = this.shadowRoot.querySelector('.detail-overlay');
+        const overlay = shadowRoot.querySelector('.detail-overlay');
         if (overlay) {
             bindOverlayDismiss(overlay as HTMLElement, () => this.emitAction('close'));
         }
-        this.shadowRoot.querySelector('.detail-close')?.addEventListener('click', () => this.emitAction('close'));
-        this.shadowRoot.querySelector('.detail-back')?.addEventListener('click', () => this.emitAction('back'));
+        shadowRoot.querySelector('.detail-close')?.addEventListener('click', () => this.emitAction('close'));
+        shadowRoot.querySelector('.detail-back')?.addEventListener('click', () => this.emitAction('back'));
         // footer 按钮与工具参数折叠使用事件委托，内容更新后无需重复绑定
-        this.shadowRoot.querySelector('.detail-footer')?.addEventListener('click', (event) => {
+        shadowRoot.querySelector('.detail-footer')?.addEventListener('click', (event) => {
             const button = (event.target as Element).closest<HTMLElement>('[data-detail-action]');
             if (!button) return;
             this.emitAction(button.dataset.detailAction!, button.dataset.detailActionValue || undefined);
         });
-        this.shadowRoot.querySelector('.detail-body')?.addEventListener('click', (event) => {
+        shadowRoot.querySelector('.detail-body')?.addEventListener('click', (event) => {
             const toggle = (event.target as Element).closest<HTMLElement>('.detail-tool-params-toggle');
             if (!toggle) return;
             const index = toggle.dataset.toolToggle;
-            const parameters = this.shadowRoot?.querySelector<HTMLElement>(`[data-tool-params="${index}"]`);
+            const parameters = shadowRoot.querySelector<HTMLElement>(`[data-tool-params="${index}"]`);
             if (!parameters) return;
             const expanded = parameters.style.display === 'none';
             parameters.style.display = expanded ? 'block' : 'none';

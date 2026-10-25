@@ -194,7 +194,9 @@ export class TodoMgrApplication extends BaseApplication {
                 // 自动化触发的 prompt 不应回显到渠道，标记跳过。
                 channelMgr?.markSkipUserEcho?.(task);
 
-                logger.info(`触发器任务等待完成: origin=${task.origin.channel}:${task.origin.accountId}`);
+                // task.origin 在类型上可缺省（未携带来源时）；此分支 deliver 已存在，
+                // 正常运行时 origin 与 deliver 同源，缺失时仅日志打印空占位而不抛错
+                logger.info(`触发器任务等待完成: origin=${task.origin?.channel ?? ''}:${task.origin?.accountId ?? ''}`);
                 await task.waitUntilFinished();
                 logger.info(`触发器任务已完成`);
 

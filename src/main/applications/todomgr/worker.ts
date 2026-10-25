@@ -126,7 +126,8 @@ export default class TodoMgrWorker extends BaseWorker {
             category,
             trigger,
             deliver,
-            workspace,
+            // GlobalTodo.workspace 为可选字段；入参允许显式 null（表示"未设置"），此处归一成 undefined
+            workspace: workspace ?? undefined,
             enabled: true,
             created_at: new Date().toISOString(),
             updated_at: new Date().toISOString()

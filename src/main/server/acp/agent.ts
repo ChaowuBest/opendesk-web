@@ -24,6 +24,7 @@ import { AcpUpdateTranslator } from './updates.js';
 import { AcpState } from './state.js';
 import { createInteractionToolset } from '../../aikernel/interaction/tools.js';
 import { logger } from '../../utils/logger.js';
+import { toErrorMessage } from '../../../common/utils/error.js';
 import { Setting, type SettingData } from '../../utils/setting.js';
 import { t } from '../../../locale/index.js';
 import { switchTaskMode } from '../../aikernel/task/mode.js';
@@ -63,10 +64,6 @@ type NewSessionResponseWithModels = acp.NewSessionResponse & {
 
 function sessionNotFound(sessionId: string): acp.RequestError {
     return acp.RequestError.resourceNotFound(`session:${sessionId}`);
-}
-
-function errorMessage(err: unknown): string {
-    return err instanceof Error ? err.message : String(err);
 }
 
 function modeToAcp(mode: ModeDecl): acp.SessionMode {
@@ -262,13 +259,15 @@ export class OpenDeskAcpAgent implements acp.Agent {
         try {
             await session.runningPrompt;
         } catch (err) {
-            logger.warn(`ACP closeSession ignored prompt error for session ${session.sessionId}: ${errorMessage(err)}`);
+            logger.warn(
+                `ACP closeSession ignored prompt error for session ${session.sessionId}: ${toErrorMessage(err)}`
+            );
         }
         try {
             await session.mode.onExitMode?.(session.cwd);
         } catch (err) {
             logger.warn(
-                `ACP closeSession ignored mode exit error for session ${session.sessionId}: ${errorMessage(err)}`
+                `ACP closeSession ignored mode exit error for session ${session.sessionId}: ${toErrorMessage(err)}`
             );
         } finally {
             this.sessions.delete(params.sessionId);
@@ -441,7 +440,7 @@ export class OpenDeskAcpAgent implements acp.Agent {
                 updateChain = updateChain
                     .then(() => session.updates.publish(this.connection, session.sessionId, chunk))
                     .catch((err) => {
-                        logger.warn(`failed to publish ACP session update: ${errorMessage(err)}`);
+                        logger.warn(`failed to publish ACP session update: ${toErrorMessage(err)}`);
                     });
             }, true);
             await updateChain;
@@ -450,7 +449,7 @@ export class OpenDeskAcpAgent implements acp.Agent {
                 return;
             }
 
-            const message = errorMessage(err);
+            const message = toErrorMessage(err);
             logger.error(`ACP prompt failed for session ${session.sessionId}: ${message}`);
             await this.safeSessionUpdate(
                 {
@@ -473,7 +472,9 @@ export class OpenDeskAcpAgent implements acp.Agent {
         try {
             session.task.stop(reason);
         } catch (err) {
-            logger.warn(`ACP ${action} ignored task stop error for session ${session.sessionId}: ${errorMessage(err)}`);
+            logger.warn(
+                `ACP ${action} ignored task stop error for session ${session.sessionId}: ${toErrorMessage(err)}`
+            );
         }
     }
 
@@ -482,7 +483,7 @@ export class OpenDeskAcpAgent implements acp.Agent {
             await this.connection.sessionUpdate(params);
             return true;
         } catch (err) {
-            logger.warn(`ACP ${action} session/update failed for session ${params.sessionId}: ${errorMessage(err)}`);
+            logger.warn(`ACP ${action} session/update failed for session ${params.sessionId}: ${toErrorMessage(err)}`);
             return false;
         }
     }

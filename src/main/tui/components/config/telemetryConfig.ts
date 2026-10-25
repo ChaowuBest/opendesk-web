@@ -105,12 +105,14 @@ export class TelemetryConfigPage implements Component {
         void reloadTelemetry().catch(() => {});
     }
 
-    private replaceList(items: { value: string; label: string }[]): void {
+    private replaceList(items: { value: string; label: string }[]): SelectList {
         this.form?.deactivate();
         this.form = undefined;
-        this.list = new SelectList(items, Math.min(items.length, 15), defaultSelectListTheme);
-        this.tui.setFocus(this.list);
+        const list = new SelectList(items, Math.min(items.length, 15), defaultSelectListTheme);
+        this.list = list;
+        this.tui.setFocus(list);
         this.tui.requestRender();
+        return list;
     }
 
     private allEndpoints(): Array<EndpointReference & { endpoint: OpenTelemetryEndpoint | LangfuseEndpoint }> {
@@ -147,8 +149,8 @@ export class TelemetryConfigPage implements Component {
                 };
             })
         ];
-        this.replaceList(items);
-        this.list.onSelect = (item) => {
+        const list = this.replaceList(items);
+        list.onSelect = (item) => {
             if (item.value === '__add__') {
                 this.editing = undefined;
                 this.showEndpointForm('opentelemetry');
@@ -161,7 +163,7 @@ export class TelemetryConfigPage implements Component {
                 this.showEndpointForm(protocol);
             }
         };
-        this.list.onCancel = () => {
+        list.onCancel = () => {
             this.list = undefined;
             this.onBack();
         };

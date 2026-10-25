@@ -23,6 +23,7 @@ import { logger } from '../utils/logger';
 import { BaseWorker } from '../applications/base';
 import { getOpendeskDirectory, Setting } from '../utils/setting';
 import { getPlatform } from '../../platforms/base';
+import { toErrorMessage } from '../../common/utils/error.js';
 import { setRuntimePreferredSystemLanguages } from '../../locale/index.js';
 
 import { parentPort, workerData } from 'worker_threads';
@@ -34,7 +35,8 @@ const workerInitPromises: Map<string, Promise<void>> = new Map();
 
 /* 这里我们不直接使用Setting类，而是传object进来，因为Setting类的Schema中ApplicationSchema
  * 在worker线程中无法使用 */
-const setting: object = workerData?.setting;
+// workerData.setting 由主进程注入，形态为 { applications: { [bundleName]: config } }
+const setting = (workerData?.setting ?? {}) as { applications?: Record<string, object> };
 setRuntimePreferredSystemLanguages(workerData?.preferredSystemLanguages ?? null);
 
 export function initializeAppWorkers() {
@@ -54,7 +56,7 @@ export function initializeAppWorkers() {
         logger.info(`initializing worker ${name}`);
         const appDataDirectory = path.join(getOpendeskDirectory(), 'apps', name);
         appWorker.appDataDirectory = appDataDirectory;
-        appWorker.applicationConfigChanged(setting['applications'][name]);
+        appWorker.applicationConfigChanged(setting.applications?.[name] ?? {});
         // 将初始化Promise存储到Map中
         const initPromise = appWorker.initialize().catch((error) => {
             logger.error(`worker ${name} initialization failed: ${error}`);
@@ -88,7 +90,9 @@ export async function handleWorkerRequest(
     workerInitPromises: Map<string, Promise<void>>,
     postMessage: (frame: object) => void
 ): Promise<void> {
-    const { bundleName, requestId, methodName, args, stream } = message;
+    const { bundleName, requestId, methodName, stream } = message;
+    // 业务请求的 args 可缺省（无参调用），统一归一成空数组以便展开
+    const args = message.args ?? [];
 
     if (message.type === 'response') {
         BaseWorker.handleAppResponse(message as Parameters<typeof BaseWorker.handleAppResponse>[0]);
@@ -113,6 +117,9 @@ export async function handleWorkerRequest(
     }
 
     const appWorker = appWorkers.get(bundleName);
+    // methodName 在协议上可缺省（响应/事件类消息没有方法名）；走到这里的业务请求必然带方法名。
+    // 缺失时保持既有行为：交给 handleMessage 抛 "unknown message" 并由下方 catch 转成错误响应。
+    const targetMethodName = methodName ?? '';
 
     if (appWorker) {
         try {
@@ -123,7 +130,7 @@ export async function handleWorkerRequest(
             }
 
             if (stream) {
-                for await (const chunk of appWorker.handleStreamMessage(methodName, ...args)) {
+                for await (const chunk of appWorker.handleStreamMessage(targetMethodName, ...args)) {
                     postMessage({
                         type: 'response_chunk',
                         id: requestId,
@@ -132,7 +139,7 @@ export async function handleWorkerRequest(
                 }
                 postMessage({ type: 'response_complete', id: requestId });
             } else {
-                const result = await appWorker.handleMessage(methodName, ...args);
+                const result = await appWorker.handleMessage(targetMethodName, ...args);
                 postMessage({
                     type: 'response',
                     id: requestId,
@@ -150,14 +157,14 @@ export async function handleWorkerRequest(
                     type: 'response_complete',
                     id: requestId,
                     status: 'error',
-                    message: error instanceof Error ? error.message : String(error)
+                    message: toErrorMessage(error)
                 });
             } else {
                 postMessage({
                     type: 'response',
                     id: requestId,
                     status: 'error',
-                    message: error.message
+                    message: toErrorMessage(error)
                 });
             }
         }

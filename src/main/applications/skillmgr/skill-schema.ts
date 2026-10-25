@@ -450,7 +450,10 @@ export function parseAndValidateSkillMd(raw: string, fallbackName?: string): Par
     if (parsed.error) {
         return { valid: false, error: parsed.error };
     }
-    const { frontmatter, body } = parsed;
+    const { frontmatter, body: rawBody } = parsed;
+    // parsed.error 为可选的 undefined，上面的 `if (parsed.error)` 无法把联合类型收窄到成功分支，
+    // 因此 body 仍需归一成 string（成功分支的 body 必为字符串，这里的 ?? '' 只是类型收敛）
+    const body = rawBody ?? '';
     const fm = frontmatter as Record<string, unknown>;
     const name = inferNameFromFrontmatter(fm, body, fallbackName);
 

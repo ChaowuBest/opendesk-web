@@ -323,7 +323,8 @@ class TrashFloatingWindow extends HTMLElement {
         };
         // 范围由勾选项决定（任务级/全局），关键字在所选范围内过滤：
         // 勾选"仅该任务"时即在任务回收站内按关键字搜索，取消勾选才是全局搜索
-        if (this._isTaskScope) {
+        // _isTaskScope 已保证任务级模式下 _taskId 非空；这里再显式判空，既让类型收窄，也不改变运行时行为
+        if (this._isTaskScope && this._taskId) {
             options.scope = 'task';
             options.taskId = this._taskId;
         }

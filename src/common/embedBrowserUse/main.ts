@@ -1419,7 +1419,9 @@ export class BrowserController {
             const isRef = /^e\d+/.test(target);
             const isNested = isRef && isNestedRef(target);
             const useNativeInput = !isNested && (await this._hasActiveWebviewFocus());
-            let hitElement: ClickHitElement | null = null;
+            // 遮挡元素在下方 waitForClickCompletion 的回调里异步写入：用一个 holder 承载，
+            // 否则 TS 的控制流分析看不到闭包内的赋值，会把 `let x = null` 一直收窄成 null。
+            const hitElementRef: { current: ClickHitElement | null } = { current: null };
             let targetInfo: { tag: string; text: string };
             let warning: string | undefined;
 
@@ -1517,7 +1519,7 @@ export class BrowserController {
                         returnByValue: true
                     });
                     const v = hitResult?.result?.value;
-                    if (v) hitElement = JSON.parse(v);
+                    if (v) hitElementRef.current = JSON.parse(v) as ClickHitElement;
                 } catch {
                     /* best-effort verification */
                 }
@@ -1573,6 +1575,7 @@ export class BrowserController {
                 }
             });
             const pageState = await this.readPageState(session);
+            const hitElement = hitElementRef.current;
 
             // Surface a hijack warning when the click point was covered by
             // another element (the CDP events went to the overlay, and the

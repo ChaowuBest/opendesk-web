@@ -120,10 +120,10 @@ export function serializeTask(task: TaskState): object {
  */
 export interface SimplifiedTaskSnapshot {
     task_id: string;
-    parent_id?: string;
-    task_name?: string;
+    parent_id?: string | null;
+    task_name?: string | null;
     task_status: TaskStatus;
-    completion_status?: TaskCompletionStatus;
+    completion_status?: TaskCompletionStatus | null;
     internal?: boolean;
     name_pending?: boolean;
     created_at: string;

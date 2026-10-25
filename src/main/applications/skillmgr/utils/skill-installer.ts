@@ -21,6 +21,7 @@ import fs from 'fs';
 import AdmZip from 'adm-zip';
 import { getTempDir } from '../../../utils/temp.js';
 import { logger } from '../../../utils/logger.js';
+import { toErrorMessage } from '../../../../common/utils/error.js';
 import { getPlatform } from '../../../../platforms/base.js';
 import {
     allRegistries,
@@ -334,7 +335,7 @@ export abstract class SkillSourceInstaller {
                         rmRecursive(destDir);
                     }
                 } catch (e) {
-                    return { success: false, error: `删除旧技能失败: ${e.message}` };
+                    return { success: false, error: `删除旧技能失败: ${toErrorMessage(e)}` };
                 }
             } else if (this.conflictPolicy.action === 'auto-rename') {
                 let counter = 1;
@@ -368,7 +369,7 @@ export abstract class SkillSourceInstaller {
                         content = content.replace(/^name:\s*.+$/m, `name: ${result.name}`);
                         fs.writeFileSync(skillMdPath, content, 'utf8');
                     } catch (e) {
-                        logger.warn(`SkillInstaller: 更新 SKILL.md name 失败: ${e.message}`);
+                        logger.warn(`SkillInstaller: 更新 SKILL.md name 失败: ${toErrorMessage(e)}`);
                     }
                 }
             }
@@ -378,7 +379,7 @@ export abstract class SkillSourceInstaller {
             return { success: true, name: result.name };
         } catch (e) {
             rmRecursive(destDir);
-            return { success: false, error: `复制失败: ${e.message}` };
+            return { success: false, error: `复制失败: ${toErrorMessage(e)}` };
         }
     }
 
@@ -982,7 +983,7 @@ export class SkillInstallManager {
         // 例如 SKILL.md 中 name 为 resume-cv-assistant，但目录名为 resume-cv-assistant-1
         this.registry._ensureLoaded();
         const cached = this.registry._getCachedSkillEntry(safeName);
-        let targetDir: string | null = cached ? cached.skillDir : null;
+        let targetDir: string | null = cached ? (cached.skillDir ?? null) : null;
         if (!targetDir) {
             targetDir = path.resolve(skillsDir, safeName);
         }
@@ -1007,7 +1008,7 @@ export class SkillInstallManager {
             }
             return { success: true };
         } catch (e) {
-            return { success: false, error: `删除失败: ${e.message}` };
+            return { success: false, error: `删除失败: ${toErrorMessage(e)}` };
         }
     }
 

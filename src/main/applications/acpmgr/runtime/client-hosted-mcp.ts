@@ -62,6 +62,19 @@ function asParams(value: unknown): Record<string, unknown> | undefined {
     return value && typeof value === 'object' && !Array.isArray(value) ? (value as Record<string, unknown>) : undefined;
 }
 
+/**
+ * SDK 对 JSONRPCResultResponse 的 result 要求是「对象 + 可选 _meta」。
+ * peer.request 返回的 result 在类型上是 unknown，这里显式声明收窄目标，
+ * 让断言有明确的落点（运行时不改写值，仍是原样透传）。
+ */
+type McpResultPayload = {
+    [key: string]: unknown;
+    _meta?: {
+        progressToken?: string | number;
+        'io.modelcontextprotocol/related-task'?: { taskId: string };
+    };
+};
+
 export class ClientHostedWorkspaceMcp {
     readonly descriptor: { type: 'acp'; name: string; serverId: string };
     private readonly connections = new Map<string, HostedMcpConnection>();
@@ -258,9 +271,13 @@ export class ClientHostedWorkspaceMcp {
 
     private handleServerMessage(connection: HostedMcpConnection, message: JSONRPCMessage): void {
         if ('id' in message && ('result' in message || 'error' in message)) {
-            const pending = connection.pending.get(message.id);
+            // SDK 的 JSONRPCErrorResponseSchema 把 id 声明为可选（协议允许解析错误响应的 id 缺省/为 null），
+            // 这种响应不可能是某个 pending 请求的回执，直接丢弃（与 get(undefined) 必然未命中的既有行为一致）。
+            const requestId = message.id;
+            if (requestId === undefined) return;
+            const pending = connection.pending.get(requestId);
             if (!pending) return;
-            connection.pending.delete(message.id);
+            connection.pending.delete(requestId);
             if ('error' in message) {
                 pending.reject(mcpError(message.error.message));
             } else {
@@ -277,12 +294,13 @@ export class ClientHostedWorkspaceMcp {
                     params: asParams(message.params)
                 })
                 .then(
-                    // peer.request 的 result 是 unknown 的 JSON-RPC 结果，透传前按协议形状断言
+                    // peer.request 的 result 是 unknown 的 JSON-RPC 结果，透传前按协议形状（SDK 的
+                    // JSONRPCResultResponse.result：对象 + 可选 _meta）断言，值本身原样透传
                     (result) =>
                         connection.transport.send({
                             jsonrpc: '2.0',
                             id: message.id,
-                            result: result as Record<string, unknown> | null
+                            result: result as McpResultPayload
                         }),
                     (error) =>
                         connection.transport.send({

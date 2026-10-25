@@ -293,13 +293,16 @@ export class BM25IndexDB implements IBM25IndexDB {
         const closing = (async () => {
             if (initialization) await initialization.catch(() => {});
             await this.mutex.runExclusive(async () => {
-                const entries = Object.entries(this.si ?? {});
+                // 先取一次 si 快照：下方 delete 会改写同一个对象，
+                // 快照只用于让类型收窄（this.si 可能在关闭过程中被置为 null）
+                const stores = this.si;
+                const entries = Object.entries(stores ?? {});
                 const results = await Promise.allSettled(
                     entries.map(async ([column, index]) => {
                         // search-index FLUSH clears data; awaited writes already commit
                         // through LevelDB. Ordinary release closes the actual store.
                         await index.INDEX.STORE.close();
-                        if (this.si?.[column] === index) delete this.si[column];
+                        if (stores && stores[column] === index) delete stores[column];
                     })
                 );
                 const failed = results.find((result): result is PromiseRejectedResult => result.status === 'rejected');

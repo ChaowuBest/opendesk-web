@@ -22,6 +22,7 @@ import type { PermissionAction, PermissionResourceType } from '../../../aikernel
 import { escapeGlobLiteralPath } from '../../../aikernel/security/permission.js';
 import type { TaskState } from '../../../aikernel/states/tasks.js';
 import { truncateTaskName } from '../../../utils/task-name.js';
+import { toErrorMessage } from '../../../../common/utils/error.js';
 import { t } from '../../../../locale/index.js';
 import { logger } from '../../../utils/logger.js';
 import { AcpAgentDecl } from '../agent.js';
@@ -70,10 +71,6 @@ function permissionAccess(request: RequestPermissionRequest): {
         default:
             return { resourceType: '*', action: '*' };
     }
-}
-
-function errorMessage(error: unknown): string {
-    return error instanceof Error ? error.message : String(error);
 }
 
 export class AcpTaskExtension implements TaskExtension {
@@ -141,7 +138,7 @@ export class AcpTaskExtension implements TaskExtension {
         if (event.type === 'stop') {
             this.activeTurn?.abortController.abort(event.reason);
             void this.runtimeEntry?.runtime.cancel(event.reason).catch((error) => {
-                logger.warn(`task ${this.task.task_id}: failed to cancel ACP runtime: ${errorMessage(error)}`);
+                logger.warn(`task ${this.task.task_id}: failed to cancel ACP runtime: ${toErrorMessage(error)}`);
             });
             return;
         }
@@ -160,7 +157,7 @@ export class AcpTaskExtension implements TaskExtension {
         const entry = this.runtimeEntry;
         this.runtimeEntry = undefined;
         void entry?.runtime.dispose().catch((error) => {
-            logger.warn(`task ${this.task.task_id}: failed to dispose ACP runtime: ${errorMessage(error)}`);
+            logger.warn(`task ${this.task.task_id}: failed to dispose ACP runtime: ${toErrorMessage(error)}`);
         });
     }
 
@@ -253,9 +250,9 @@ export class AcpTaskExtension implements TaskExtension {
                 await projector.apply({
                     type: 'error',
                     title: t('acpmgr.error.connectionTitle'),
-                    message: errorMessage(error)
+                    message: toErrorMessage(error)
                 });
-                logger.error(`task ${this.task.task_id}: ACP runtime failed: ${errorMessage(error)}`);
+                logger.error(`task ${this.task.task_id}: ACP runtime failed: ${toErrorMessage(error)}`);
             }
         } finally {
             await projector.ensureOutputPart();

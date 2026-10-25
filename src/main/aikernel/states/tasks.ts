@@ -612,6 +612,9 @@ export class TaskState {
             }
 
             const defaultModel = Setting.getInstance().getDefaultModelInstance();
+            if (!defaultModel) {
+                return this.model ? { model: this.model } : {};
+            }
             return {
                 model: defaultModel.model_name,
                 provider: defaultModel.getProviderName()
@@ -1212,12 +1215,13 @@ export class TaskState {
     }
 
     /** 为一条新建的 assistant 消息补齐 turn 级 execution 元数据（startAt 立即固化，finishAt 由 turn 收尾回填）。 */
-    private withAssistantTurnExecutionMetadata(metadata: RuntimeMetadata): RuntimeMetadata {
+    private withAssistantTurnExecutionMetadata(metadata: RuntimeMetadata | undefined): RuntimeMetadata {
+        const base = metadata ?? {};
         return {
-            ...metadata,
+            ...base,
             execution: {
-                ...metadata.execution,
-                startAt: metadata.execution?.startAt ?? Date.now()
+                ...base.execution,
+                startAt: base.execution?.startAt ?? Date.now()
             }
         };
     }
@@ -2603,7 +2607,7 @@ export class TaskState {
                     this.task_name = fallbackName;
                 }
             }
-            operation.setAttribute('task.name', this.task_name);
+            operation.setAttribute('task.name', this.task_name ?? '');
         });
     }
 
@@ -3283,7 +3287,7 @@ export class TaskState {
             {
                 taskId: this.task_id,
                 turnId: this._activeTurnMetadata?.execution?.turnId ?? this.getTurnId(myGeneration),
-                taskName: this.task_name,
+                taskName: this.task_name ?? undefined,
                 parentTaskId: this.parent_id,
                 userPrompt,
                 workspace: this.getWorkspace(),

@@ -48,6 +48,7 @@ import { QuickPassHelper } from './utils/quickpass.js';
 import { getWindowsDrives } from './utils/drives.js';
 import { cleanPathInput } from '../utils/path.js';
 import { sandboxPathToHostPath } from '../common/utils/path.js';
+import { toErrorMessage } from '../common/utils/error.js';
 import { PROVIDER_TEMPLATES } from './tui/components/config/providers.js';
 import { GlobalState } from './aikernel/states/global.js';
 import { BaseToolset } from './aikernel/tool';
@@ -1682,7 +1683,7 @@ const registerTaskManagerAPIHandlers = () => {
             const todos = getTaskTodosForDisplay(taskId);
             return { status: 'ok', data: todos };
         } catch (err) {
-            return { status: 'error', message: err?.message || String(err) };
+            return { status: 'error', message: toErrorMessage(err) };
         }
     });
     ipcMain.handle('taskManager:getGoalStatus', async (_event, taskId) => {
@@ -1697,14 +1698,15 @@ const registerTaskManagerAPIHandlers = () => {
         if (task === undefined) {
             return { status: 'error', message: `task ${taskId} not found` };
         }
+        const goalState = task.goal_state;
         const hasUnfinishedGoal =
-            task.goal_state && task.goal_state.status !== 'complete' && task.goal_state.status !== 'cleared';
+            goalState !== undefined && goalState.status !== 'complete' && goalState.status !== 'cleared';
         if (hasUnfinishedGoal) {
             return {
                 status: 'ok',
                 data: {
                     ok: false,
-                    status: task.goal_state.status,
+                    status: goalState.status,
                     messageKey: 'goal.create.requires_clear',
                     errorCode: 'goal_exists'
                 }

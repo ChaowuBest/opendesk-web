@@ -19,6 +19,7 @@ const POWERPOINT_CLIPBOARD_HTML_PATTERN =
 export function hasPowerPointClipboardText(clipboardData: ClipboardDataLike | null | undefined): boolean {
     const plainText = clipboardData?.getData?.('text/plain')?.trim();
     if (!plainText) return false;
-    const html = clipboardData.getData?.('text/html') || '';
+    // plainText 非空即说明 clipboardData 存在，这里沿用可选链保持与上面的取参一致
+    const html = clipboardData?.getData?.('text/html') || '';
     return POWERPOINT_CLIPBOARD_HTML_PATTERN.test(html);
 }

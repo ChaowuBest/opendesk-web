@@ -14,7 +14,7 @@ import type { Component } from '@earendil-works/pi-tui';
 import type { TaskState } from '../../../aikernel/states/tasks.js';
 import { getGoalTokenUsage } from '../../../aikernel/goal/controller.js';
 import { GoalStates, type GoalFinalSnapshot } from '../../../aikernel/goal/state.js';
-import { getGoalSupplementIds } from '../../../../common/goal/user-message-display.js';
+import { getGoalSupplementIds, type GoalUserMessageDisplayLike } from '../../../../common/goal/user-message-display.js';
 import { getGoalElapsedMs } from '../../../../common/goal/format.js';
 import { GoalPanel, type GoalPanelData } from '../goalpanel.js';
 import { getGoalPanelDataFromFinalSnapshot, getGoalSnapshotTimestamp } from './history-placement.js';
@@ -89,7 +89,8 @@ export class TaskViewGoalController {
         this.host.markInvalidated();
     }
 
-    reconcileUserMessage(message: unknown): void {
+    // 入参只需具备 goal 用户消息的展示字段（internal / rawText / metadata），调用方传入 UserMessage
+    reconcileUserMessage(message: GoalUserMessageDisplayLike): void {
         this.removePendingGoalSupplementViewsForIds(getGoalSupplementIds(message));
     }
 
