@@ -12,7 +12,23 @@
 import { watch, type FSWatcher } from 'node:fs';
 import { lstat } from 'node:fs/promises';
 import path from 'node:path';
-import type { FileChangeEvent, FileWatchOptions, FileWatchSubscription } from './types.js';
+
+/** Protocol values for infrastructure callers, not user-facing UI text. */
+export interface FileChangeEvent {
+    path: string;
+    type: 'changed' | 'missing';
+}
+
+export interface FileWatchOptions {
+    /** Receives runtime filesystem errors and callback failures. Defaults to an internal diagnostic. */
+    onError?: (error: Error) => void;
+}
+
+export interface FileWatchSubscription {
+    readonly path: string;
+    /** Idempotent. Prevents new callbacks; an already running callback may finish. */
+    dispose(): void;
+}
 
 async function fingerprint(filename: string): Promise<string | null> {
     try {

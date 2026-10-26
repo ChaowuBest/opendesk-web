@@ -2,8 +2,7 @@ import { afterEach, describe, expect, test } from '@jest/globals';
 import { mkdtemp, writeFile, appendFile, rename, unlink, mkdir, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import { FileWatchService } from '../../../main/services/file-watch/service.js';
-import type { FileChangeEvent } from '../../../main/services/file-watch/types.js';
+import { FileWatchService, type FileChangeEvent } from '../../../main/services/file-watch/service.js';
 
 const services: FileWatchService[] = [];
 const directories: string[] = [];
