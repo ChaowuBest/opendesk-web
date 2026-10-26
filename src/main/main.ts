@@ -44,6 +44,7 @@ import {
     isDebugLogEnabled,
     isOpendeskDebugMode
 } from './utils/setting.js';
+import { runSettingSideEffects, type SettingSideEffect } from './utils/setting-side-effects.js';
 import { QuickPassHelper } from './utils/quickpass.js';
 import { getWindowsDrives } from './utils/drives.js';
 import { cleanPathInput } from '../utils/path.js';
@@ -2444,14 +2445,18 @@ const registerFSAPIHandlers = () => {
     });
 };
 
+/**
+ * 给发往 renderer 的设置对象补上解析后的语言。
+ * loadSettingObject 与 setting:changed 广播共用，保证两处字段形状一致。
+ */
+const withResolvedLocale = (data: any) => ({
+    ...data,
+    resolved_locale: getLocale()
+});
+
 const registerSettingAPIHandlers = () => {
     // 启动时按持久化配置同步调试日志级别（GUI 无 CLI 的 /debug 入口，靠设置项驱动）
     setDebugMode(isDebugLogEnabled());
-
-    const withResolvedLocale = (data: any) => ({
-        ...data,
-        resolved_locale: getLocale()
-    });
 
     ipcMain.handle('setting:loadSettingSchema', () => {
         try {
@@ -2529,56 +2534,75 @@ const registerSettingAPIHandlers = () => {
     };
 
     ipcMain.handle('setting:saveSettingObject', async (event, settingObject) => {
+        const oldSettings = Setting.getInstance().getData();
+        let prepared: ReturnType<typeof prepareFileMgrWorkspaceSettings>;
         try {
-            const oldSettings = Setting.getInstance().getData();
-            const prepared = prepareFileMgrWorkspaceSettings(settingObject, oldSettings);
+            prepared = prepareFileMgrWorkspaceSettings(settingObject, oldSettings);
             Setting.getInstance().setData(prepared.data);
-            // 模型配置可能已变更，清理 adapter 缓存使旧连接池释放
-            LLM.clearAdapterCache();
-            // 通知 Worker 线程更新设置，使新的模型配置立即生效
-            await notifyWorkerCurrentSettingUpdate();
-            await notifyFileMgrEmbeddingConfigChanged(oldSettings, Setting.getInstance().getData());
-            // 调试日志开关变更后立即生效（winston 级别随 setDebugMode 切换）
-            const debugLogChanged =
-                !!oldSettings?.debug?.debug_log !== !!Setting.getInstance().getData().debug?.debug_log;
-            if (debugLogChanged) {
-                setDebugMode(!!Setting.getInstance().getData().debug?.debug_log);
-            }
-            // 网络配置变更后立即刷新代理 env 缓存，使命令行子进程即时生效
-            void onNetworkConfigChanged();
-            try {
-                getMainThemeService().applyFromSettings();
-            } catch (themeErr) {
-                logger.warn('[theme] applyFromSettings after save failed', themeErr);
-            }
-            // 遥测配置变更时热重载 OTel SDK
-            const oldTelemetryJson = JSON.stringify(oldSettings?.telemetry);
-            const newTelemetryJson = JSON.stringify(Setting.getInstance().getData().telemetry);
-            if (oldTelemetryJson !== newTelemetryJson) {
-                void loadTelemetryModule()
-                    .then((telemetry) => telemetry.reloadTelemetry())
-                    .catch((err) => logger.warn('[telemetry] hot reload failed', err));
-            }
-            // 广播设置变更给所有 renderer 窗口，以便 AgentInput 等组件刷新模型列表
-            const updatedData = withResolvedLocale(Setting.getInstance().getData());
-            for (const win of BrowserWindow.getAllWindows()) {
-                if (!win.isDestroyed()) {
-                    safeSendToWebContents(win.webContents, 'setting:changed', updatedData);
-                }
-            }
-
-            // AgentGate 的 bridge 启停已由 AgentGateApplication.onConfigChanged 内部处理，无需在此同步
-            if (prepared.shouldNotifyWorkspaceChanged && prepared.defaultWorkspace) {
-                try {
-                    await ApplicationRegistry.callWorker('filemgr', 'workspaceChanged', prepared.defaultWorkspace);
-                } catch (error: any) {
-                    logger.warn(`[filemgr] failed to refresh workspace marker: ${error?.message ?? error}`);
-                }
-            }
-            return { status: 'ok', data: updatedData };
         } catch (error: any) {
+            // 持久化失败：配置未提交，内存与磁盘都保持旧值，按「保存失败」上报
             return { status: 'error', message: error.message };
         }
+
+        // 配置已落盘：以下步骤只是让新配置在各处立即生效。它们失败时配置本身是对的，
+        // 因此逐项收集失败信息单独提示，不再把它们混报成「保存失败」。
+        const currentSettings = Setting.getInstance().getData();
+        const debugLogChanged = !!oldSettings?.debug?.debug_log !== !!currentSettings.debug?.debug_log;
+        const telemetryChanged = JSON.stringify(oldSettings?.telemetry) !== JSON.stringify(currentSettings.telemetry);
+        const logSideEffectFailure = (label: string, message: string) =>
+            logger.warn(`[setting] ${label} failed after save: ${message}`);
+
+        // 阻塞组：调用方依赖其完成后的状态，且都是进程内调用，耗时为毫秒级
+        const blockingEffects: SettingSideEffect[] = [
+            // 模型配置可能已变更，清理 adapter 缓存使旧连接池释放
+            { label: 'llm-adapter-cache', run: () => LLM.clearAdapterCache() },
+            // 通知 Worker 线程更新设置，使新的模型配置立即生效
+            { label: 'worker-settings-sync', run: () => notifyWorkerCurrentSettingUpdate() },
+            {
+                label: 'filemgr-embedding-config',
+                run: () => notifyFileMgrEmbeddingConfigChanged(oldSettings, currentSettings)
+            }
+        ];
+        // 调试日志开关变更后立即生效（winston 级别随 setDebugMode 切换）
+        if (debugLogChanged) {
+            blockingEffects.push({
+                label: 'debug-log-mode',
+                run: () => setDebugMode(!!currentSettings.debug?.debug_log)
+            });
+        }
+        blockingEffects.push({ label: 'theme-apply', run: () => getMainThemeService().applyFromSettings() });
+        // AgentGate 的 bridge 启停已由 AgentGateApplication.onConfigChanged 内部处理，无需在此同步
+        const pendingWorkspace = prepared.shouldNotifyWorkspaceChanged ? prepared.defaultWorkspace : undefined;
+        if (pendingWorkspace) {
+            blockingEffects.push({
+                label: 'filemgr-workspace-marker',
+                run: () => ApplicationRegistry.callWorker('filemgr', 'workspaceChanged', pendingWorkspace)
+            });
+        }
+        const sideEffectFailures = await runSettingSideEffects(blockingEffects, logSideEffectFailure);
+
+        // 后台组：会 spawn 系统命令（Windows 查注册表、macOS 走 scutil）或重建 OTel SDK，
+        // 耗时不可控。设置面板是防抖自动保存，放进阻塞组会把保存响应拖慢，
+        // 因此放到后台执行，失败只记日志（与这些步骤引入前的行为一致）。
+        const deferredEffects: SettingSideEffect[] = [
+            // 网络配置变更后立即刷新代理 env 缓存，使命令行子进程即时生效
+            { label: 'proxy-env-refresh', run: () => onNetworkConfigChanged() }
+        ];
+        // 遥测配置变更时热重载 OTel SDK
+        if (telemetryChanged) {
+            deferredEffects.push({
+                label: 'telemetry-reload',
+                run: async () => {
+                    const telemetry = await loadTelemetryModule();
+                    await telemetry.reloadTelemetry();
+                }
+            });
+        }
+        void runSettingSideEffects(deferredEffects, logSideEffectFailure);
+
+        // setting:changed 广播由 Setting.afterSetDataCallbacks 统一负责（含 resolved_locale），
+        // 这里不再重复广播，避免每个 renderer 窗口每次保存收到两遍。
+        return { status: 'ok', data: withResolvedLocale(currentSettings), sideEffectFailures };
     });
     ipcMain.handle('quickpass:import', async (event, quickpass) => {
         try {
@@ -2692,7 +2716,7 @@ const registerSettingAPIHandlers = () => {
             }
         } catch (err: any) {
             logger.error(`Failed to save workspace selection: ${err.message}`);
-            // 继续执行，工作区设置仅在当前会话生效
+            // 继续执行；setData 写盘失败时内存配置不会提交，本次切换与磁盘保持一致地不生效
         }
 
         // 切换全局工作空间不影响已有任务的 workspace 绑定。
@@ -4185,8 +4209,9 @@ async function startApplication(): Promise<void> {
         // 注册全局设置变更广播：每次 Setting.setData 完成后，
         // 广播 setting:changed 到所有 renderer 窗口。
         // 这确保通过 callMainWorld 修改配置（如浮窗开关）时，主窗口能实时响应。
+        // 这是 setting:changed 的唯一广播点，调用方（如设置保存）不要再自己广播一遍。
         Setting.afterSetDataCallbacks.push(() => {
-            const updatedData = Setting.getInstance().getData();
+            const updatedData = withResolvedLocale(Setting.getInstance().getData());
             for (const win of BrowserWindow.getAllWindows()) {
                 if (!win.isDestroyed()) {
                     safeSendToWebContents(win.webContents, 'setting:changed', updatedData);

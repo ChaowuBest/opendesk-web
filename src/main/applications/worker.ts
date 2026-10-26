@@ -111,8 +111,16 @@ export async function handleWorkerRequest(
             setRuntimePreferredSystemLanguages(args[1]);
         }
         logger.info('received global setting update');
-        Setting.updateInstanceData(newSettingData);
-        postMessage({ type: 'response', id: requestId, status: 'ok', data: null });
+        // 无论成功失败都必须回执：主进程按 requestId 等待响应，
+        // 这里抛错却不回执会让保存设置的调用方永久挂起（设置面板会一直处于「保存中」）。
+        try {
+            Setting.updateInstanceData(newSettingData);
+            postMessage({ type: 'response', id: requestId, status: 'ok', data: null });
+        } catch (error) {
+            const message = error instanceof Error ? error.message : String(error);
+            logger.error(`failed to apply global setting update: ${message}`);
+            postMessage({ type: 'response', id: requestId, status: 'error', message });
+        }
         return;
     }
 

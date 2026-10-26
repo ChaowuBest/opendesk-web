@@ -29,6 +29,17 @@ declare module '*.jsonl?raw' {
 
 declare global {
     /**
+     * 保存设置后「已落盘、但未能立即生效」的步骤。
+     * 与主进程 main/utils/setting-side-effects.ts 的 SettingSideEffectFailure 对应
+     * （renderer 不能直接引用主进程模块，故此处单独声明）；
+     * label 是稳定的步骤 id，renderer 据此映射本地化文案；message 是原始异常信息，仅用于日志诊断。
+     */
+    interface SettingSideEffectFailure {
+        label: string;
+        message: string;
+    }
+
+    /**
      * loadSettingObject / saveSettingObject / onSettingChanged 共用的持久化设置对象形状。
      * renderer 只声明实际消费的字段（其余仍可经 Record 索引访问），嵌套形状与主进程
      * Setting schema 对齐；所有字段都可能缺省（旧配置未写过时），调用方需按默认值兜底。
@@ -103,6 +114,11 @@ declare global {
             listShells: () => Promise<import('../common/shells.js').SupportedShell[]>;
             loadSettingObject: () => Promise<LoadedSettingObject>;
             saveSettingObject: (settingObject: unknown) => Promise<LoadedSettingObject | undefined>;
+            /** 同 saveSettingObject，但额外带回本次保存未能立即生效的步骤（错误信息随调用返回，不跨调用共享） */
+            saveSettingObjectDetailed: (settingObject: unknown) => Promise<{
+                data: LoadedSettingObject | undefined;
+                sideEffectFailures: SettingSideEffectFailure[];
+            }>;
             onSettingChanged?: (callback: (settingObject: LoadedSettingObject) => void) => () => void;
             submitFeedback: (submission: unknown) => Promise<any>;
             getProviderTemplates: () => Promise<

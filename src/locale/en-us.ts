@@ -1881,6 +1881,15 @@ export const enUs: Record<string, string> = {
     'sp.experimental.confirm': 'Confirm enable',
     'sp.experimental.cancel': 'Cancel',
     'sp.save.failed': 'Auto-save failed',
+    'sp.save.sideEffectFailed': 'Settings saved, but some changes did not take effect',
+    'sp.save.sideEffect.llm-adapter-cache': 'Model connection cache was not refreshed',
+    'sp.save.sideEffect.worker-settings-sync': 'Background worker did not pick up the new settings',
+    'sp.save.sideEffect.filemgr-embedding-config': 'File search embedding config was not synced',
+    'sp.save.sideEffect.debug-log-mode': 'Debug log switch did not take effect',
+    'sp.save.sideEffect.theme-apply': 'Theme was not applied',
+    'sp.save.sideEffect.filemgr-workspace-marker': 'Workspace marker was not updated',
+    'sp.save.sideEffect.proxy-env-refresh': 'Network proxy config did not take effect',
+    'sp.save.sideEffect.telemetry-reload': 'Telemetry config was not hot-reloaded',
     'sp.gateway.portInvalid': 'Gateway port must be an integer between 1 and 65535',
     'sp.quickpass.export.title': 'Export quickpass',
     'sp.quickpass.export.base': 'Base settings quickpass',
@@ -2376,6 +2385,9 @@ export const enUs: Record<string, string> = {
     'renderer.wizard.loginRequired': 'Please enter your username and password',
     'renderer.wizard.loginFailed': 'Sign in failed',
     'renderer.wizard.accountServiceUnavailable': 'Account service unavailable; please restart the app and try again.',
+    'renderer.wizard.saveFailedTitle': 'Failed to save configuration',
+    'renderer.wizard.saveFailedMessage':
+        'The configuration could not be written to disk, so the wizard stayed on this step. Check disk space and file permissions, then try again. Your input has not been lost.',
 
     // Renderer - Log Panel
     'renderer.log.title': 'Logs',

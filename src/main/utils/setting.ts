@@ -678,6 +678,47 @@ export function getEnvDefaultModelInstance(): ModelInstance | null {
     );
 }
 
+/** 读取已有配置文件的权限位；文件不存在或不可读时返回 undefined */
+function readExistingFileMode(filePath: string): number | undefined {
+    try {
+        return fs.statSync(filePath).mode & 0o777;
+    } catch {
+        return undefined;
+    }
+}
+
+/** 新建 setting.json 时的权限位：配置含模型 API Key，不依赖 umask 的默认放宽 */
+const SETTING_FILE_MODE = 0o600;
+
+/** 临时文件残留阈值：保存本身是毫秒级，超过该时长必然是进程异常退出遗留 */
+const STALE_SETTING_TEMPORARY_FILE_MS = 60 * 60 * 1000;
+
+/**
+ * 清理上次进程异常退出时残留的 setting.json 临时文件。
+ * 只删除超过阈值的文件，避免误删并发进程（如同时运行的 CLI）正在写入的临时文件。
+ */
+function cleanupStaleSettingTemporaryFiles(settingDirectory: string): void {
+    let entries: string[];
+    try {
+        entries = fs.readdirSync(settingDirectory);
+    } catch {
+        return;
+    }
+    for (const entry of entries) {
+        if (!entry.startsWith('setting.json.') || !entry.endsWith('.tmp')) {
+            continue;
+        }
+        const temporaryFile = path.join(settingDirectory, entry);
+        try {
+            if (Date.now() - fs.statSync(temporaryFile).mtimeMs > STALE_SETTING_TEMPORARY_FILE_MS) {
+                fs.rmSync(temporaryFile, { force: true });
+            }
+        } catch {
+            /* 并发进程可能已删除同名文件，忽略 */
+        }
+    }
+}
+
 export class Setting {
     static instance: Setting | null = null;
     static applicationConfigChangedCallbacks = new Map<string, () => void>();
@@ -724,21 +765,15 @@ export class Setting {
             }
         }
 
+        // 先规范化候选配置（清除失效的 default_*_model 引用），再落盘；
+        // 只有写盘成功后才提交 this.data 并触发回调，避免保存失败时内存配置与磁盘状态分裂。
+        this.normalizeDefaultModelReferences(newSettingData);
+        this.save(newSettingData);
+
         this.data = newSettingData;
-        this.validateDefaultModels(false);
-        this.save();
 
         // 全局回调：广播 setting:changed 到 renderer 等
-        for (const cb of Setting.afterSetDataCallbacks) {
-            try {
-                const result = cb(previousSettingData, this.data);
-                if (result && typeof result.catch === 'function') {
-                    void result.catch(() => undefined);
-                }
-            } catch {
-                /* best-effort */
-            }
-        }
+        Setting.notifyDataCommitted(previousSettingData, this.data);
 
         if (settingChangedApplications.length > 0) {
             for (const applicationName of settingChangedApplications) {
@@ -748,6 +783,50 @@ export class Setting {
                 }
             }
         }
+    }
+
+    /**
+     * 通知全局订阅者（renderer 广播、Worker 网络配置同步、浮窗刷新）配置已提交。
+     *
+     * setData 与 updateAndSave 共用：两条写配置的路径都必须让订阅者看到新状态，
+     * 否则会出现「配置已落盘，但界面和 Worker 仍在用旧值」的分裂。
+     * 应用级回调（applicationConfigChangedCallbacks）需要新旧配置逐项对比，仍只在 setData 中触发。
+     */
+    private static notifyDataCommitted(previousData: SettingData, nextData: SettingData): void {
+        for (const cb of Setting.afterSetDataCallbacks) {
+            try {
+                const result = cb(previousData, nextData);
+                if (result && typeof result.catch === 'function') {
+                    void result.catch(() => undefined);
+                }
+            } catch {
+                /* best-effort */
+            }
+        }
+    }
+
+    /**
+     * 事务式修改并保存配置：在内存副本上执行 mutator，落盘成功后才提交到 this.data。
+     *
+     * 与 setData 的区别：改动直接落在现有配置的 JSON 副本上，不用 schema 的规范化结果替换它
+     * （不会 strip 未注册应用的配置、不会清理失效的 default_*_model 引用、不会填充默认值），
+     * 也不触发需要新旧差异对比的应用级回调。落盘前只做一次 schema 校验，拒绝写出下次启动
+     * 无法解析的配置。提交后与 setData 一样通知全局订阅者（renderer 广播等），避免
+     * 「配置已落盘、界面却还在用旧值」。写盘失败时抛错，内存配置保持旧值。
+     */
+    updateAndSave(mutator: (draft: SettingData) => void): void {
+        // 副本按「即将写入磁盘的 JSON 形状」克隆：提交后的内存配置与磁盘内容完全一致
+        const draft = JSON.parse(JSON.stringify(this.data)) as SettingData;
+        mutator(draft);
+        // 落盘前按 schema 校验一次（结果丢弃）：磁盘上的 setting.json 必须能被下次启动解析，
+        // 否则会走 Setting._loadError 回落默认配置，用户整份设置丢失。
+        // 特意不用 parse 结果替换 draft —— schema 只包含当前进程已注册的应用配置，
+        // 拿它当提交值会 strip 掉未注册应用（如 TUI/CLI 进程里的其他应用）的配置。
+        getSettingSchema().parse(draft);
+        const previousData = this.data;
+        this.save(draft);
+        this.data = draft;
+        Setting.notifyDataCommitted(previousData, this.data);
     }
 
     /**
@@ -793,7 +872,8 @@ export class Setting {
         }
         removeLegacyExperimentalFeature(data);
         Setting.instance.data = getSettingSchema().parse(data) as SettingData;
-        Setting.instance.validateDefaultModels(false);
+        // Worker 不落盘，只就地规范化内存副本
+        Setting.instance.normalizeDefaultModelReferences(Setting.instance.data);
     }
 
     /**
@@ -819,6 +899,8 @@ export class Setting {
     static load(): Setting | null {
         const settingDirectory = getOpendeskDirectory();
         const settingFile = path.join(settingDirectory, 'setting.json');
+        // 启动时回收上次进程异常退出遗留的原子写临时文件
+        cleanupStaleSettingTemporaryFiles(settingDirectory);
         if (!fs.existsSync(settingFile)) {
             return null;
         }
@@ -864,9 +946,9 @@ export class Setting {
             return null;
         }
 
-        // 校验默认模型引用，清除已不存在的模型别名
-        setting.validateDefaultModels();
-        if (migratedLegacyTuiOutputDisplay) {
+        // 规范化默认模型引用（清除已不存在的模型别名），与遗留字段迁移合并成一次落盘
+        const normalizedDefaultModels = setting.normalizeDefaultModelReferences(setting.data);
+        if (normalizedDefaultModels || migratedLegacyTuiOutputDisplay) {
             setting.save();
         }
         return setting;
@@ -874,11 +956,33 @@ export class Setting {
 
     /**
      * Save the setting to the file system
+     *
+     * 使用「同目录临时文件 + fsync + rename」原子替换 setting.json：
+     * 写入中途失败或进程崩溃时旧文件保持完整，不会留下半截配置。
+     * @param data - 要持久化的配置数据，默认持久化当前内存数据
      */
-    save(): void {
+    save(data: SettingData = this.data): void {
         const settingDirectory = getOpendeskDirectory();
         const settingFile = path.join(settingDirectory, 'setting.json');
-        fs.writeFileSync(settingFile, JSON.stringify(this.data, null, 4), { encoding: 'utf8' });
+        const temporaryFile = `${settingFile}.${process.pid}.${Date.now()}.tmp`;
+        // setting.json 含模型 API Key：替换时沿用原文件权限；首次创建也固定为 0600，
+        // 不依赖 umask，避免含密钥的配置被创建成 0644
+        const targetMode = readExistingFileMode(settingFile) ?? SETTING_FILE_MODE;
+        try {
+            fs.writeFileSync(temporaryFile, JSON.stringify(data, null, 4), {
+                encoding: 'utf8',
+                flush: true,
+                mode: targetMode
+            });
+            fs.renameSync(temporaryFile, settingFile);
+        } catch (error) {
+            try {
+                fs.rmSync(temporaryFile, { force: true });
+            } catch {
+                /* 清理临时文件失败不掩盖原始错误 */
+            }
+            throw error;
+        }
     }
 
     /**
@@ -982,11 +1086,15 @@ export class Setting {
     }
 
     /**
-     * 校验所有 default_*_model 字段是否指向有效的模型别名，
-     * 将无效的引用自动清除为空字符串，避免启动时因找不到默认模型而崩溃。
+     * 就地规范化传入配置里的 default_*_model 引用：
+     * 把指向不存在的模型（或类型不匹配）的引用清空成空字符串，避免启动时因找不到默认模型而崩溃。
+     *
+     * 这是「规范化」而非只读校验——它会修改 target。落盘由调用方决定，本函数不写文件。
+     * @param target - 要规范化的配置数据（可以是尚未提交的候选配置）
+     * @returns 是否发生了改动
      */
-    private validateDefaultModels(saveChanges = true): void {
-        const modelTypes = new Map(this.data.models.map((m) => [m.alias, m.model_type] as const));
+    private normalizeDefaultModelReferences(target: SettingData): boolean {
+        const modelTypes = new Map(target.models.map((m) => [m.alias, m.model_type] as const));
         const defaultModelFields = [
             { field: 'default_model', expectedType: 'chat' },
             { field: 'default_quick_model', expectedType: 'chat' },
@@ -998,7 +1106,7 @@ export class Setting {
 
         let changed = false;
         for (const { field, expectedType } of defaultModelFields) {
-            const alias = this.data[field] as string;
+            const alias = target[field] as string;
             const providerName = Setting.builtinModelProvider?.providerName;
             // 内置虚拟模型（如账号内置模型）不在 models 列表中，不因缺失而清除引用；
             // 未登录时由解析层返回 null 做优雅降级。
@@ -1006,20 +1114,18 @@ export class Setting {
             // 已持久化在 builtin_models 中，也应予以保留，避免默认模型引用被过早清除。
             const isBuiltinAlias =
                 (providerName !== undefined && alias.startsWith(`${providerName}/`)) ||
-                this.data.builtin_models.some((model) => model.alias === alias);
+                target.builtin_models.some((model) => model.alias === alias);
             if (alias && isBuiltinAlias) {
                 continue;
             }
             const actualType = modelTypes.get(alias);
             if (alias && (!actualType || (expectedType !== undefined && actualType !== expectedType))) {
-                (this.data as Record<string, unknown>)[field] = '';
+                (target as Record<string, unknown>)[field] = '';
                 changed = true;
             }
         }
 
-        if (changed && saveChanges) {
-            this.save();
-        }
+        return changed;
     }
 
     /**

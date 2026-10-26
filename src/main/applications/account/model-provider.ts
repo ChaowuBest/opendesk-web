@@ -15,9 +15,11 @@ import {
     type BuiltinModelFetch,
     type BuiltinModelProvider,
     type Model,
-    type ModelType
+    type ModelType,
+    type SettingData
 } from '../../utils/setting.js';
 import { accountBackendRegistry } from './backend-registry.js';
+import { logger } from '../../utils/logger.js';
 
 export const OPENDESK_BUILTIN_PROVIDER_NAME = 'opendesk';
 const MODEL_QUERY_TIMEOUT_MS = 8000;
@@ -122,12 +124,12 @@ export function registerAccountBuiltinModelProvider(): void {
 }
 
 /** 当前 default_model 是否仍指向用户模型或本次拉取到的内置模型。 */
-function hasUsableDefaultModel(setting: Setting): boolean {
-    const current = setting.data.default_model?.trim() ?? '';
+function hasUsableDefaultModel(data: SettingData): boolean {
+    const current = data.default_model?.trim() ?? '';
     if (!current) return false;
     return (
-        setting.data.models.some((model) => model.alias === current) ||
-        setting.data.builtin_models.some((model) => model.alias === current)
+        data.models.some((model) => model.alias === current) ||
+        data.builtin_models.some((model) => model.alias === current)
     );
 }
 
@@ -139,18 +141,27 @@ export function pickBuiltinDefaultModel(models: readonly Model[]): string | null
 }
 
 /** 拉取模型目录并持久化到 setting.json。登录/登出/刷新 token 后调用。 */
-export async function refreshBuiltinModels(): Promise<void> {
+/**
+ * 拉取并持久化账号内置模型。
+ * @returns 是否已成功提交到配置。提交后 Setting 会自行广播 setting:changed，
+ *          调用方不要再单独广播一次。
+ */
+export async function refreshBuiltinModels(): Promise<boolean> {
     try {
         const models = (await Setting.builtinModelProvider?.refreshModels()) ?? [];
-        const setting = Setting.getInstance();
-        setting.data.builtin_models = models;
-        // 账号登录后若尚无有效默认模型，自动选中账号自带模型，避免向导跳过模型配置后无模型可用
-        if (models.length > 0 && !hasUsableDefaultModel(setting)) {
-            const alias = pickBuiltinDefaultModel(models);
-            if (alias) setting.data.default_model = alias;
-        }
-        setting.save();
-    } catch {
-        // 拉取失败时保持现有模型列表
+        // 落盘成功后才提交内存：写盘失败时保持现有模型列表，避免内存与磁盘分裂
+        Setting.getInstance().updateAndSave((draft) => {
+            draft.builtin_models = models;
+            // 账号登录后若尚无有效默认模型，自动选中账号自带模型，避免向导跳过模型配置后无模型可用
+            if (models.length > 0 && !hasUsableDefaultModel(draft)) {
+                const alias = pickBuiltinDefaultModel(models);
+                if (alias) draft.default_model = alias;
+            }
+        });
+        return true;
+    } catch (error) {
+        // 拉取、校验或落盘失败时保持现有模型列表；记录日志，避免内置模型长期为空却无从排查
+        logger.warn(`[account] refresh builtin models failed: ${error instanceof Error ? error.message : error}`);
+        return false;
     }
 }

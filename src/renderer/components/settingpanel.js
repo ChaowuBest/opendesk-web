@@ -14,6 +14,7 @@ import { escapeHtml } from '../../common/utils/escape.js';
 import { createRendererTranslator } from '../locale.ts';
 import { createTranslatorForSearch } from '../../main/applications/search/locale/renderer.ts';
 import { createModelSelect, MODEL_SELECT_CSS } from '../utils/model-select.js';
+import { notifySettingSideEffectFailures } from '../utils/setting-side-effect-notice.ts';
 import { selectSupportedShell } from '../../common/shells.js';
 import { REASONING_EFFORT_LEVELS } from '../../common/reasoning-effort.ts';
 import { ACP_AGENT_PRESETS, createAcpAgentPresetDraft } from '../../common/acp/agentPresets.ts';
@@ -3928,8 +3929,11 @@ class SettingPanel extends HTMLElement {
             return;
         }
         this._saving = true;
+        let sideEffectFailures = [];
         try {
-            const savedData = await window.settingAPI.saveSettingObject(this.currentData);
+            const result = await window.settingAPI.saveSettingObjectDetailed(this.currentData);
+            const savedData = result.data;
+            sideEffectFailures = result.sideEffectFailures;
             if (savedData && typeof savedData === 'object' && typeof savedData.resolved_locale === 'string') {
                 this.currentData.resolved_locale = savedData.resolved_locale;
             }
@@ -3947,6 +3951,11 @@ class SettingPanel extends HTMLElement {
                 this._pendingSave = false;
                 this.scheduleSave();
             }
+        }
+        // 配置已保存成功，只是部分生效步骤失败（如后台同步）：单独提示，不报「保存失败」。
+        // 提示放在 catch 之外，避免提示自身出错被误报成保存失败。
+        if (sideEffectFailures.length > 0) {
+            notifySettingSideEffectFailures(sideEffectFailures, this._t);
         }
     }
 
@@ -4090,7 +4099,7 @@ class SettingPanel extends HTMLElement {
                 return;
             }
 
-            await window.settingAPI.saveSettingObject(jsonData);
+            const { sideEffectFailures } = await window.settingAPI.saveSettingObjectDetailed(jsonData);
             await this.loadData();
             this.refreshAll();
             window.notificationAPI.sendNotification(
@@ -4099,6 +4108,8 @@ class SettingPanel extends HTMLElement {
                 this._t('renderer.settings.importSuccess'),
                 this._t('renderer.settings.importJsonSuccess')
             );
+            // 导入已落盘，但部分改动没能立即生效：单独告知，避免用户以为导入完全生效
+            notifySettingSideEffectFailures(sideEffectFailures, this._t);
         } catch (error) {
             if (error?.name === 'AbortError') return;
             window.notificationAPI.sendNotification(

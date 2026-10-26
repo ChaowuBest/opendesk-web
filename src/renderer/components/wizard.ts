@@ -13,6 +13,8 @@ import './wizard.css';
 import { escapeHtml } from '../../common/utils/escape.js';
 import { createModelSelect, MODEL_SELECT_CSS } from '../utils/model-select.js';
 import { createRendererTranslator } from '../locale.ts';
+import { showInfoModal } from './confirmModal.ts';
+import { notifySettingSideEffectFailures } from '../utils/setting-side-effect-notice.ts';
 import { isAccountFeatureEnabled } from '../utils/account-feature-visibility.ts';
 import { resolveWizardStep2View } from '../utils/wizard-flow.ts';
 import {
@@ -797,29 +799,41 @@ class SetupWizard extends HTMLElement {
             return;
         }
 
-        await this._doSave();
+        if (!(await this._doSave())) return;
         this.currentStep = 3;
         this._render();
         this._bindEvents();
     }
 
-    private async _doSave(): Promise<void> {
+    /**
+     * 把向导里填的 provider / 模型写入设置。
+     * @returns 是否已成功落盘。返回 false 时调用方必须中止后续步骤，
+     *          否则向导会带着没保存的配置进入下一步，用户会误以为已经配置好了。
+     */
+    private async _doSave(): Promise<boolean> {
         const baseUrl = this.querySelector<HTMLInputElement>('#wizard-base-url')?.value?.trim();
-        if (!baseUrl) return;
+        if (!baseUrl) return false;
         const apiKey = this.querySelector<HTMLInputElement>('#wizard-api-key')?.value || '';
         const providerType =
             this.querySelector<HTMLSelectElement>('#wizard-provider-type')?.value === 'anthropic'
                 ? 'anthropic'
                 : 'openai';
         const modelName = this.querySelector<HTMLInputElement>('#wizard-model-name')?.value?.trim();
-        if (!modelName) return;
+        if (!modelName) return false;
         const noProxy = this.querySelector<HTMLInputElement>('#wizard-no-proxy')?.checked || false;
         const noSSL = this.querySelector<HTMLInputElement>('#wizard-no-ssl')?.checked || false;
         const providerSelect = this.querySelector<HTMLSelectElement>('#wizard-provider-select');
         const providerName =
             providerSelect?.value && providerSelect.value !== '__custom__' ? providerSelect.value : 'custom';
 
-        const data = await window.settingAPI.loadSettingObject();
+        let data: LoadedSettingObject;
+        try {
+            data = await window.settingAPI.loadSettingObject();
+        } catch (error) {
+            // 连现有配置都读不出来，同样属于「配不进去」：必须阻塞告知，不能静默中止
+            await this._showSaveFailedModal(error);
+            return false;
+        }
         if (!data.providers) data.providers = [];
         if (!data.models) data.models = [];
 
@@ -853,11 +867,40 @@ class SetupWizard extends HTMLElement {
 
         data.default_model = modelName;
 
-        await window.settingAPI.saveSettingObject(data);
+        let sideEffectFailures: SettingSideEffectFailure[];
+        try {
+            ({ sideEffectFailures } = await window.settingAPI.saveSettingObjectDetailed(data));
+        } catch (error) {
+            // 配置没能落盘：必须阻塞告知，否则向导会继续进入下一步，用户以为已经配置完成
+            await this._showSaveFailedModal(error);
+            return false;
+        }
+        // 配置已落盘：提示放在 catch 之外，避免提示自身出错被误报成「保存失败」
+        notifySettingSideEffectFailures(sideEffectFailures, this.t);
         if (this.loginChoice === 'nologin') {
-            await this.requireAccountApi().configure?.({ mode: 'nologin' });
+            try {
+                await this.requireAccountApi().configure?.({ mode: 'nologin' });
+            } catch (error) {
+                // 配置已经写进磁盘：账号模式切换是次要步骤，失败只记日志，不能反过来把本次保存判为失败
+                console.warn('failed to switch account mode to nologin:', error);
+            }
         }
         this.currentData = data;
+        return true;
+    }
+
+    /**
+     * 向导保存链路（读配置 / 写配置）失败时的阻塞提示。
+     * 用模态而不是行内文案：失败时向导不会前进，必须让用户明确知道当前状态。
+     */
+    private async _showSaveFailedModal(error: unknown): Promise<void> {
+        const message = error instanceof Error ? error.message : String(error);
+        await showInfoModal({
+            variant: 'danger',
+            title: this.t('renderer.wizard.saveFailedTitle'),
+            message: `${escapeHtml(this.t('renderer.wizard.saveFailedMessage'))}<br><br><code>${escapeHtml(message)}</code>`,
+            confirmText: this.t('common.close')
+        });
     }
 
     private async _handleVerifyAndSave(): Promise<void> {
@@ -904,7 +947,7 @@ class SetupWizard extends HTMLElement {
 
             this._showResult(resultDiv, 'success', '验证成功！正在保存配置...');
 
-            await this._doSave();
+            if (!(await this._doSave())) return;
 
             setTimeout(() => {
                 this.currentStep = 3;

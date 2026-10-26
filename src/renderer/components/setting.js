@@ -9,6 +9,9 @@
  * See the Mulan PSL v2 for more details.
  */
 
+import { escapeHtml } from '../../common/utils/escape.js';
+import { notifySettingSaveFailed, notifySettingSideEffectFailures } from '../utils/setting-side-effect-notice.ts';
+
 class SettingEditor extends HTMLElement {
     constructor() {
         super();
@@ -35,16 +38,27 @@ class SettingEditor extends HTMLElement {
         this.querySelector('#setting-schema-editor').setValue(data);
     }
 
+    /**
+     * 错误提示统一走这里：异常消息可能来自主进程（含配置字段名、导入内容片段），
+     * 直接拼进 innerHTML 会被当成标记解析。
+     */
+    _showErrorMessage(message) {
+        this.querySelector('#setting-error-msg').innerHTML =
+            `<span class="text-red-500">${escapeHtml(String(message))}</span>`;
+    }
+
     saveSettingData() {
         const data = this.querySelector('#setting-schema-editor').getValue();
         window.settingAPI
-            .saveSettingObject(data)
-            .then(async () => {
-                await this.loadSettingData();
+            .saveSettingObjectDetailed(data)
+            .then(({ sideEffectFailures }) => {
                 window.notificationAPI.sendNotification('info', '设置', '保存成功', '设置已成功保存');
+                notifySettingSideEffectFailures(sideEffectFailures);
+                // 重新载入只是刷新编辑器内容：失败不能算成「保存失败」
+                this.loadSettingData().catch((err) => console.warn('Failed to reload setting editor:', err));
             })
             .catch((error) => {
-                window.notificationAPI.sendNotification('error', '设置', '保存失败', error.message);
+                notifySettingSaveFailed(error);
             });
     }
 
@@ -92,7 +106,7 @@ class SettingEditor extends HTMLElement {
             this.querySelector('#setting-error-msg').innerHTML = '<span class="text-green-500">导出成功</span>';
         } catch (err) {
             if (err.name !== 'AbortError') {
-                this.querySelector('#setting-error-msg').innerHTML = `<span class="text-red-500">${err.message}</span>`;
+                this._showErrorMessage(err.message);
             }
         }
     }
@@ -133,25 +147,26 @@ class SettingEditor extends HTMLElement {
             try {
                 jsonData = JSON.parse(text);
             } catch (err) {
-                this.querySelector('#setting-error-msg').innerHTML =
-                    `<span class="text-red-500">文件内容不是有效的JSON：${err.message}</span>`;
+                this._showErrorMessage(`文件内容不是有效的JSON：${err.message}`);
                 return;
             }
 
             window.settingAPI
-                .saveSettingObject(jsonData)
-                .then(async () => {
-                    await this.loadSettingData();
+                .saveSettingObjectDetailed(jsonData)
+                .then(({ sideEffectFailures }) => {
                     this.querySelector('#setting-error-msg').innerHTML =
                         '<span class="text-green-500">导入并保存成功</span>';
+                    notifySettingSideEffectFailures(sideEffectFailures);
+                    // 重新载入只是刷新编辑器内容：失败不能算成「导入失败」
+                    this.loadSettingData().catch((err) => console.warn('Failed to reload setting editor:', err));
                 })
                 .catch((error) => {
-                    this.querySelector('#setting-error-msg').innerHTML =
-                        `<span class="text-red-500">${error.message}</span>`;
+                    notifySettingSaveFailed(error);
+                    this._showErrorMessage(error.message);
                 });
         } catch (err) {
             if (err.name !== 'AbortError') {
-                this.querySelector('#setting-error-msg').innerHTML = `<span class="text-red-500">${err.message}</span>`;
+                this._showErrorMessage(err.message);
             }
         }
     }

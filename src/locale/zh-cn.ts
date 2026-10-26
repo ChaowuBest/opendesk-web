@@ -1821,6 +1821,15 @@ export const zhCn: Record<string, string> = {
     'sp.experimental.confirm': '确认开启',
     'sp.experimental.cancel': '取消',
     'sp.save.failed': '自动保存失败',
+    'sp.save.sideEffectFailed': '设置已保存，但部分改动未能立即生效',
+    'sp.save.sideEffect.llm-adapter-cache': '模型连接缓存未能刷新',
+    'sp.save.sideEffect.worker-settings-sync': '后台线程未能同步新设置',
+    'sp.save.sideEffect.filemgr-embedding-config': '文件检索的向量配置未能同步',
+    'sp.save.sideEffect.debug-log-mode': '调试日志开关未能立即切换',
+    'sp.save.sideEffect.theme-apply': '主题未能立即应用',
+    'sp.save.sideEffect.filemgr-workspace-marker': '工作区标记未能更新',
+    'sp.save.sideEffect.proxy-env-refresh': '网络代理配置未能立即生效',
+    'sp.save.sideEffect.telemetry-reload': '遥测配置未能热重载',
     'sp.gateway.portInvalid': '网关端口必须是 1-65535 之间的整数',
     'sp.quickpass.export.title': '导出口令',
     'sp.quickpass.export.base': '基础设置口令',
@@ -2302,6 +2311,9 @@ export const zhCn: Record<string, string> = {
     'renderer.wizard.loginRequired': '请输入用户名和密码',
     'renderer.wizard.loginFailed': '登录失败',
     'renderer.wizard.accountServiceUnavailable': '账号服务不可用，请重启应用后再试',
+    'renderer.wizard.saveFailedTitle': '配置保存失败',
+    'renderer.wizard.saveFailedMessage':
+        '配置未能写入磁盘，向导已停留在当前步骤。请检查磁盘空间或文件权限后重试，已填写的内容不会丢失。',
 
     // Renderer - Log Panel
     'renderer.log.title': '日志',

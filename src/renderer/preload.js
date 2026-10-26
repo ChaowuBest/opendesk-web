@@ -1284,6 +1284,16 @@ if (shouldExposeMainWindowAPIs()) {
     // 分发，避免每个订阅者直接挂 ipcRenderer 触发 MaxListenersExceededWarning
     const settingChangedDispatcher = createSettingChangedDispatcher(ipcRenderer);
 
+    // 保存设置的两个 API 共用同一次 IPC 调用与失败处理，只是暴露的字段不同
+    async function invokeSaveSettingObject(settingObject) {
+        const result = await ipcRenderer.invoke('setting:saveSettingObject', settingObject);
+        if (result.status !== 'ok') {
+            console.error('saving setting object failed', result.message);
+            throw new Error(result.message);
+        }
+        return result;
+    }
+
     safeExposeInMainWorld('settingAPI', {
         registerCommandCallback: (command, callback) => {
             ipcRenderer.on(`command:${command}`, (event, ...args) => {
@@ -1307,13 +1317,17 @@ if (shouldExposeMainWindowAPIs()) {
             }
             return result.data;
         },
-        saveSettingObject: async (settingObject) => {
-            const result = await ipcRenderer.invoke('setting:saveSettingObject', settingObject);
-            if (result.status !== 'ok') {
-                console.error('saving setting object failed', result.message);
-                throw new Error(result.message);
-            }
-            return result.data;
+        saveSettingObject: async (settingObject) => (await invokeSaveSettingObject(settingObject)).data,
+        // 与 saveSettingObject 相同，但同时带回「已落盘、但未能立即生效」的步骤信息。
+        // 单列一个 API 而不是塞进 saveSettingObject 的返回值：后者被多处调用，返回值必须是
+        // 设置对象本身；失败信息也必须与发起它的那次调用绑定，用模块级变量跨调用共享
+        // 会让 A 次保存的失败被 B 次调用读到（误报），或被 B 次调用覆盖掉（漏报）。
+        saveSettingObjectDetailed: async (settingObject) => {
+            const result = await invokeSaveSettingObject(settingObject);
+            return {
+                data: result.data,
+                sideEffectFailures: Array.isArray(result.sideEffectFailures) ? result.sideEffectFailures : []
+            };
         },
         onSettingChanged: (callback) => settingChangedDispatcher.subscribe(callback),
         isFullscreen: async () => {

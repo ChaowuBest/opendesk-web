@@ -31,9 +31,9 @@ setOpenDeskAppHost({
     },
     setConfig(bundleName: string, config: unknown, schema: z.ZodObject<any>): void {
         schema.parse(config);
-        const setting = Setting.getInstance();
-        setting.data.applications[bundleName] = config;
-        setting.save();
+        Setting.getInstance().updateAndSave((draft) => {
+            draft.applications[bundleName] = config;
+        });
     },
     getDataDirectory(bundleName: string): string {
         const dataDirectory = path.join(getOpendeskDirectory(), 'apps', bundleName);

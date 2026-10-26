@@ -41,11 +41,9 @@ export function registerElectronAccountIntegration(): void {
         }
         broadcast('account:sessionChanged', session);
         void (async () => {
-            try {
-                await refreshBuiltinModels();
-            } catch {
-                // 拉取失败时保持现有模型列表
-            }
+            // 内置模型落盘时 Setting 会自行广播 setting:changed（含 resolved_locale），
+            // 因此只在没有提交成功时才补一次快照，避免 renderer 每次登录都收到两遍。
+            if (await refreshBuiltinModels()) return;
             let snapshot: unknown = null;
             try {
                 snapshot = {
