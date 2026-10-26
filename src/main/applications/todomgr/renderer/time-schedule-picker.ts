@@ -21,6 +21,7 @@ import {
 import { describeLegacyRecurrence, describeTodoRecurrence } from '../../../../common/utils/recurrence-description.js';
 import { getRecurrenceValidationIssue, type RecurrenceValidationField } from '../recurrence-validation.js';
 import { fixedLayerOrigin, visibleViewportRect } from '../../../../renderer/utils/window-frame.js';
+import { getLegacyCronDisplay } from './legacy-timezone.js';
 
 type Translate = (key: string, params?: Record<string, string | number>) => string;
 type Period = 'once' | 'daily' | 'weekly' | 'biweekly' | 'monthly' | 'yearly' | 'legacy';
@@ -142,8 +143,10 @@ export class TimeSchedulePicker {
         private original?: StoredTrigger,
         initialPeriod: 'once' | 'daily' = 'once'
     ) {
-        const recurrence =
-            original?.recurrence ?? (original?.cronExpression ? fromLegacy(original.cronExpression) : undefined);
+        const legacyUtc = original?.type === 'cron' && original.timezone === undefined;
+        const recurrence = legacyUtc
+            ? getLegacyCronDisplay(original, this.timezone(), this.t).recurrence
+            : (original?.recurrence ?? (original?.cronExpression ? fromLegacy(original.cronExpression) : undefined));
         this.originalRecurrence = recurrence;
         this.period =
             original?.type === 'scheduled'
@@ -198,6 +201,7 @@ export class TimeSchedulePicker {
                 : new Date(Math.floor(Date.now() / 60_000) * 60_000).toISOString();
         this.render();
         this.signature = this.currentSignature();
+        this.refreshPreview();
     }
 
     destroy(): void {
@@ -764,6 +768,10 @@ export class TimeSchedulePicker {
         return JSON.stringify(this.getRecurrence()) ?? this.period;
     }
 
+    isUnchanged(): boolean {
+        return this.currentSignature() === this.signature;
+    }
+
     hasValidationError(): boolean {
         const error = this.root.querySelector<HTMLElement>('#tm-frequency-validation-error');
         return !!error && !error.hidden;
@@ -825,6 +833,9 @@ export class TimeSchedulePicker {
 
     getTrigger(): StoredTrigger {
         this.clearValidationError();
+        // A converted display must not replace the legacy UTC execution rule on an unrelated save.
+        if (this.original?.type === 'cron' && this.original.timezone === undefined && this.isUnchanged())
+            return { ...this.original };
         const originalRule = this.original?.recurrence;
         const oldCalendarTimezoneChanged =
             originalRule?.mode === 'interval' &&
@@ -862,6 +873,10 @@ export class TimeSchedulePicker {
         preview.hidden = this.isOnce();
         if (this.isOnce()) return;
         try {
+            if (this.original?.type === 'cron' && this.original.timezone === undefined && this.isUnchanged()) {
+                preview.textContent = getLegacyCronDisplay(this.original, this.timezone(), this.t).summary;
+                return;
+            }
             const recurrence = this.getRecurrence();
             if (recurrence) {
                 if (getTodoRecurrenceError(recurrence)) throw new Error('invalid');

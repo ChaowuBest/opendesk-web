@@ -1,4 +1,4 @@
-import { beforeAll, beforeEach, describe, expect, jest, test } from '@jest/globals';
+import { afterEach, beforeAll, beforeEach, describe, expect, jest, test } from '@jest/globals';
 import { parseHTML } from 'linkedom';
 
 describe('automation task timezone selection', () => {
@@ -37,6 +37,15 @@ describe('automation task timezone selection', () => {
         call = jest.fn(async (method: unknown) => (method === 'listGlobalTodos' ? [] : undefined));
         (window as any).applicationAPI = { call, callMainWorld: jest.fn() };
     });
+
+    afterEach(() => {
+        jest.restoreAllMocks();
+    });
+
+    function mockSystemTimezone(timeZone: string) {
+        const options = new Intl.DateTimeFormat().resolvedOptions();
+        jest.spyOn(Intl.DateTimeFormat.prototype, 'resolvedOptions').mockReturnValue({ ...options, timeZone });
+    }
 
     function todo(trigger: Record<string, unknown>): any {
         return {
@@ -93,25 +102,108 @@ describe('automation task timezone selection', () => {
         );
     });
 
-    test.each(['15 23 31 * *', '17 9 1 * 1', '0 9-17 * * 1-5'])(
-        'legacy recurring expression %s stays on UTC when edited and saved',
-        async (cronExpression) => {
+    test.each([
+        ['15 23 31 * *', '07:15(+1)'],
+        ['17 9 1 * 1', '17:17'],
+        ['0 9-17 * * 1-5', 'Saved advanced rule (UTC)']
+    ])(
+        'legacy recurring expression %s preserves its UTC schedule when edited and saved',
+        async (cronExpression, summary) => {
+            mockSystemTimezone('Asia/Shanghai');
             const plan = todo({ type: 'cron', cronExpression });
             const widget = widgetFor(plan);
             await widget._enterEditMode(plan);
 
-            expect(widget.querySelector('#tm-edit-timezone')?.value).toBe('UTC');
+            expect(widget.querySelector('#tm-edit-timezone')?.value).toBe('Asia/Shanghai');
+            expect(widget.querySelector('#tm-cron-preview')?.textContent).toContain(summary);
+            expect(widget.querySelector('#tm-frequency-period-trigger')?.disabled).toBe(true);
             await widget._saveEdit(plan);
 
             expect(call).toHaveBeenCalledWith(
                 'updateGlobalTodo',
                 plan.id,
-                expect.objectContaining({
-                    trigger: { ...plan.trigger, timezone: 'UTC' }
-                })
+                expect.objectContaining({ trigger: plan.trigger })
             );
         }
     );
+
+    test('legacy daily UTC time displays locally and saving a title edit preserves its schedule', async () => {
+        mockSystemTimezone('Asia/Shanghai');
+        const plan = todo({ type: 'cron', cronExpression: '30 9 * * *' });
+        const widget = widgetFor(plan);
+        expect(widget.querySelector('.tm-todo-card')?.textContent).toContain('17:30');
+        expect(widget.querySelector('#tm-detail-scroll')?.textContent).toContain('17:30');
+        await widget._enterEditMode(plan);
+        expect(widget.querySelector('#tm-edit-timezone')?.value).toBe('Asia/Shanghai');
+        expect(widget.querySelector('#tm-cron-hour')?.value).toBe('17');
+        expect(widget.querySelector('#tm-cron-minute')?.value).toBe('30');
+        expect(widget.querySelector('#tm-edit-timezone-field .tm-model-effort-note')).toBeNull();
+        widget.querySelector('#tm-edit-title').value = 'Renamed';
+        await widget._saveEdit(plan);
+        expect(call).toHaveBeenCalledWith(
+            'updateGlobalTodo',
+            plan.id,
+            expect.objectContaining({ title: 'Renamed', trigger: plan.trigger })
+        );
+    });
+
+    test('legacy weekly UTC time converts minutes and weekday across midnight without changing its schedule', async () => {
+        mockSystemTimezone('Asia/Kathmandu');
+        const plan = todo({ type: 'cron', cronExpression: '45 23 * * 6' });
+        const widget = widgetFor(plan);
+        await widget._enterEditMode(plan);
+        expect(widget.querySelector('#tm-cron-hour')?.value).toBe('5');
+        expect(widget.querySelector('#tm-cron-minute')?.value).toBe('30');
+        expect(widget.querySelector('[data-days-toggle="period"]')?.textContent).toContain('Sun');
+        select(widget, '#tm-edit-timezone', 'UTC');
+        expect(widget.querySelector('#tm-cron-hour')?.value).toBe('23');
+        expect(widget.querySelector('#tm-cron-minute')?.value).toBe('45');
+        expect(widget.querySelector('[data-days-toggle="period"]')?.textContent).toContain('Sat');
+        await widget._saveEdit(plan);
+        expect(call).toHaveBeenCalledWith(
+            'updateGlobalTodo',
+            plan.id,
+            expect.objectContaining({ trigger: plan.trigger })
+        );
+    });
+
+    test('legacy UTC rules in DST zones show seasonal times and preserve their execution rule', async () => {
+        mockSystemTimezone('America/New_York');
+        const plan = todo({ type: 'cron', cronExpression: '30 9 * * *' });
+        const widget = widgetFor(plan);
+        await widget._enterEditMode(plan);
+        expect(widget.querySelector('#tm-cron-preview')?.textContent).toBe(
+            'Daily at 09:30 (UTC) → 04:30, 05:30 (America/New_York)'
+        );
+        expect(widget.querySelector('#tm-frequency-period-trigger')?.disabled).toBe(true);
+        await widget._saveEdit(plan);
+        expect(call).toHaveBeenCalledWith(
+            'updateGlobalTodo',
+            plan.id,
+            expect.objectContaining({ trigger: plan.trigger })
+        );
+    });
+
+    test('editing a converted local execution time saves the requested new schedule', async () => {
+        mockSystemTimezone('Asia/Shanghai');
+        const plan = todo({ type: 'cron', cronExpression: '30 9 * * *' });
+        const widget = widgetFor(plan);
+        await widget._enterEditMode(plan);
+        select(widget, '#tm-cron-hour', '18');
+        await widget._saveEdit(plan);
+        expect(call).toHaveBeenCalledWith(
+            'updateGlobalTodo',
+            plan.id,
+            expect.objectContaining({
+                trigger: {
+                    type: 'cron',
+                    cronExpression: '* * * * *',
+                    timezone: 'Asia/Shanghai',
+                    recurrence: { mode: 'daily', time: '18:30' }
+                }
+            })
+        );
+    });
 
     test('new recurring tasks default to the system IANA timezone and changing zone keeps entered wall time', async () => {
         const widget = widgetFor();

@@ -28,6 +28,7 @@ import {
 import type { TodoRecurrence } from '../../../../common/utils/todo-recurrence.js';
 import { describeLegacyRecurrence, describeTodoRecurrence } from '../../../../common/utils/recurrence-description.js';
 import { TimeSchedulePicker, TIME_SCHEDULE_CSS } from './time-schedule-picker.js';
+import { getLegacyCronDisplay } from './legacy-timezone.js';
 import type { TodoChatModelCatalog, TodoChatModelSummary } from '../common.js';
 
 type Translator = ReturnType<typeof createTranslatorForTodoMgr>;
@@ -1069,6 +1070,8 @@ function getTriggerSummary(todo: GlobalTodo, t: Translator): string {
             }
         }
         case 'cron':
+            if (todo.trigger.timezone === undefined)
+                return getLegacyCronDisplay(todo.trigger, getSystemTimezone(), t).summary;
             return todo.trigger.recurrence
                 ? describeTodoRecurrence(todo.trigger.recurrence, t, todo.trigger.timezone || 'UTC')
                 : todo.trigger.cronExpression
@@ -1821,8 +1824,9 @@ class TodoMgrEntryWidget extends AgentOperableHTMLElement {
         const isEnabled = !todo ? true : todo.enabled !== false;
         const requestedType = !todo ? addType || 'scheduled' : todo.trigger?.type || addType || 'scheduled';
         const triggerType = requestedType === 'event' ? 'event' : 'scheduled';
+        const isLegacyUtc = todo?.trigger?.type === 'cron' && todo.trigger.timezone === undefined;
         this._initialTimePeriod = requestedType === 'cron' ? 'daily' : 'once';
-        this._editTimezone = todo?.trigger?.timezone || (todo?.trigger?.type === 'cron' ? 'UTC' : getSystemTimezone());
+        this._editTimezone = todo?.trigger?.timezone || getSystemTimezone();
         const [recentWorkspaces] = await Promise.all([this._loadRecentWorkspaces(), this._loadChatModels()]);
         const workspaceOptionsHtml = this._renderWorkspaceOptions(todo?.workspace, recentWorkspaces);
         const workspaceHint = getWorkspaceDisplayName(todo?.workspace, t);
@@ -1860,7 +1864,7 @@ class TodoMgrEntryWidget extends AgentOperableHTMLElement {
             <div class="tm-edit-field" id="tm-edit-timezone-field"${triggerType === 'event' ? ' hidden' : ''}>
                 <label class="tm-edit-label" for="tm-edit-timezone">${escapeHtml(t('renderer.todo.timezone.label'))}</label>
                 <select class="tm-edit-select" id="tm-edit-timezone">${this._renderTimezoneOptions()}</select>
-                <div class="tm-model-effort-note">${escapeHtml(t('renderer.todo.timezone.hint'))}</div>
+                ${isLegacyUtc ? '' : `<div class="tm-model-effort-note">${escapeHtml(t('renderer.todo.timezone.hint'))}</div>`}
             </div>
             <div id="tm-edit-error" class="tm-edit-error" role="alert" hidden></div>
             <div id="tm-trigger-fields"></div>
@@ -1916,6 +1920,14 @@ class TodoMgrEntryWidget extends AgentOperableHTMLElement {
             this._editTimezone = (event.target as HTMLSelectElement).value;
             this._showEditError('');
             this._timeSchedulePicker?.clearValidationError();
+            if (
+                todo?.trigger?.type === 'cron' &&
+                todo.trigger.timezone === undefined &&
+                this._timeSchedulePicker?.isUnchanged()
+            ) {
+                this._renderTriggerFields('cron', todo);
+                return;
+            }
             if (this.querySelector('#tm-cron-preview')) this._updateCronPreview();
             if (this.querySelector('#tm-dt-display-text')) this._updateDtDisplay();
         });
@@ -2042,7 +2054,7 @@ class TodoMgrEntryWidget extends AgentOperableHTMLElement {
         const allValues = REASONING_EFFORT_UI_OPTIONS.map((option) => option.value);
         const supported = this._getModelByAlias(modelAlias)?.reasoningEfforts;
         if (!Array.isArray(supported) || supported.length === 0) return allValues;
-        return allValues.filter((value) => supported.includes(value));
+        return allValues.filter((value) => supported.some((effort) => effort === value));
     }
 
     private _getReasoningEffortLabel(value: string): string {
