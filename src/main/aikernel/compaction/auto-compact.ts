@@ -428,7 +428,9 @@ export class AutoCompactStates {
 
     static deserialize(raw: unknown): AutoCompactState {
         const state = normalizeAutoCompactState(raw);
-        if (state.status === 'compacting' || state.status === 'half_open') state.status = 'circuit_open';
+        if (state.status === 'compacting') {
+            state.status = state.consecutiveFailures >= state.failureThreshold ? 'circuit_open' : 'degraded';
+        }
         return state;
     }
 
@@ -461,7 +463,7 @@ export class AutoCompactStates {
         const normalized = normalizeAutoCompactState(state);
         const timestamp = at.toISOString();
         const nextFailures = normalized.consecutiveFailures + 1;
-        const hasReachedThreshold = nextFailures >= normalized.failureThreshold || normalized.status === 'half_open';
+        const hasReachedThreshold = nextFailures >= normalized.failureThreshold;
 
         return {
             ...normalized,
@@ -469,7 +471,9 @@ export class AutoCompactStates {
             consecutiveFailures: nextFailures,
             lastAttemptAt: timestamp,
             lastFailureAt: timestamp,
-            cooldownUntil: undefined,
+            cooldownUntil: hasReachedThreshold
+                ? new Date(at.getTime() + normalized.cooldownMs).toISOString()
+                : undefined,
             lastFailureReason: typeof reason === 'string' && reason.trim().length > 0 ? reason.trim() : undefined
         };
     }
@@ -492,17 +496,22 @@ export class AutoCompactStates {
         return { ...normalized, status: normalized.status === 'circuit_open' ? 'half_open' : normalized.status };
     }
 
-    static canAttempt(state: AutoCompactState): boolean {
-        return this.clone(state).status !== 'circuit_open';
+    static canAttempt(state: AutoCompactState, at: Date = new Date()): boolean {
+        const normalized = this.clone(state);
+        if (normalized.status !== 'circuit_open') return true;
+        if (!normalized.cooldownUntil) return false;
+        return new Date(normalized.cooldownUntil).getTime() <= at.getTime();
     }
 
-    /** Legacy API: circuit state no longer expires with wall clock time. */
-    static isCoolingDown(state: AutoCompactState, _at: Date = new Date()): boolean {
-        return !this.canAttempt(state);
+    static isCoolingDown(state: AutoCompactState, at: Date = new Date()): boolean {
+        return !this.canAttempt(state, at);
     }
 
-    static getCooldownRemainingMs(state: AutoCompactState, _at: Date = new Date()): number {
-        return this.canAttempt(state) ? 0 : Number.POSITIVE_INFINITY;
+    static getCooldownRemainingMs(state: AutoCompactState, at: Date = new Date()): number {
+        const normalized = this.clone(state);
+        if (this.canAttempt(normalized, at)) return 0;
+        if (!normalized.cooldownUntil) return Number.POSITIVE_INFINITY;
+        return Math.max(0, new Date(normalized.cooldownUntil).getTime() - at.getTime());
     }
 
     static hasReachedFailureThreshold(state: AutoCompactState): boolean {

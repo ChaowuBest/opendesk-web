@@ -346,9 +346,10 @@ describe('压缩 pipeline 的自动压缩状态流', () => {
         expect(autoCompactState.lastAttemptAt).toBe(now.toISOString());
         expect(autoCompactState.lastFailureAt).toBe(now.toISOString());
         expect(autoCompactState.lastFailureReason).toBe('compact failed');
-        expect(autoCompactState.cooldownUntil).toBeUndefined();
+        expect(autoCompactState.cooldownUntil).toBe('2026-04-17T02:01:00.000Z');
         expect(autoCompactState.status).toBe('circuit_open');
         expect(AutoCompactStates.isCoolingDown(autoCompactState, now)).toBe(true);
+        expect(AutoCompactStates.isCoolingDown(autoCompactState, new Date('2026-04-17T02:01:01.000Z'))).toBe(false);
     });
 
     test('自动 compact 返回 no-op 时不会记录为成功 compact', async () => {
