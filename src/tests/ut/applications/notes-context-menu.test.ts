@@ -1,6 +1,7 @@
 import { beforeAll, beforeEach, describe, expect, jest, test } from '@jest/globals';
 import { parseHTML } from 'linkedom';
 import { createTranslatorForNotes } from '../../../main/applications/notes/locale/renderer.js';
+import { confirmModalMockShim } from '../../confirmModalMock.js';
 
 /**
  * 笔记条目右键菜单测试：
@@ -97,9 +98,11 @@ describe('笔记条目右键菜单与编辑器容器', () => {
             configurable: true
         });
 
-        await jest.unstable_mockModule('../../../renderer/components/confirmModal.ts', () => ({
-            showConfirmModal
-        }));
+        await jest.unstable_mockModule('../../../renderer/components/confirmModal.ts', () =>
+            confirmModalMockShim({
+                showConfirmModal
+            })
+        );
         await jest.unstable_mockModule('../../../main/aikernel/tool.js', () => ({
             BaseTool: class {},
             BaseToolset: class {}

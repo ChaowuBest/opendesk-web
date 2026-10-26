@@ -1,5 +1,6 @@
 import { beforeAll, beforeEach, describe, expect, jest, test } from '@jest/globals';
 import { parseHTML } from 'linkedom';
+import { confirmModalMockShim } from '../../confirmModalMock.js';
 
 type QueuePanel = HTMLElement & {
     setQueue: (queue: Array<{ id: string; message: string }>) => void;
@@ -35,9 +36,11 @@ describe('message queue reorder handle', () => {
             value: { languages: ['zh-CN'], language: 'zh-CN' },
             configurable: true
         });
-        await jest.unstable_mockModule('../../../renderer/components/confirmModal.ts', () => ({
-            showConfirmModal: jest.fn()
-        }));
+        await jest.unstable_mockModule('../../../renderer/components/confirmModal.ts', () =>
+            confirmModalMockShim({
+                showConfirmModal: jest.fn()
+            })
+        );
         await jest.unstable_mockModule('../../../renderer/components/imageLightbox.js', () => ({
             showImageLightbox: jest.fn()
         }));

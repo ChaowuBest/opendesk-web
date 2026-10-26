@@ -35,6 +35,7 @@ import {
     normalizeWorkspace
 } from '../sidebarTaskGroups.js';
 import { captureSidebarScrollState, restoreSidebarScrollState } from '../sidebarScrollState.js';
+import { attachSidebarSwipeDelete } from '../sidebarSwipeDelete.js';
 import { TaskListRefreshScheduler } from './taskListRefreshScheduler.js';
 import { TaskSearchDialog } from './taskSearchDialog.js';
 
@@ -52,6 +53,8 @@ function generateChallengeCode() {
     return code;
 }
 const CHEVRON_SVG = `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 18 15 12 9 6"/></svg>`;
+/** 任务行左滑露出的圆形删除按钮图标：细线方角造型，与关闭徽标风格一致 */
+const TRASH_SVG = `<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="butt" stroke-linejoin="miter"><path d="M4 7h16"/><path d="M9.5 7V4h5v3"/><path d="M6.5 7l1 13h9l1-13"/><path d="M10 11v6M14 11v6"/></svg>`;
 const THEME_SUN_SVG = `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M6.34 17.66l-1.41 1.41M19.07 4.93l-1.41 1.41"/></svg>`;
 const THEME_MOON_SVG = `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>`;
 const THEME_CONTRAST_SVG = `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M12 3a9 9 0 0 1 0 18V3z" fill="currentColor" stroke="none"/></svg>`;
@@ -102,6 +105,8 @@ class SideBar extends HTMLElement {
         this._openTaskGroupId = null;
         this._groupDisplayLimits = new Map();
         this._groupScrollObservers = [];
+        /** 任务列表触摸左滑删除手势控制器 */
+        this._swipeDeleteController = null;
         this._loadingTaskGroups = new Set();
         this._runningZoneClearTimer = null;
         this._themePreference = 'system';
@@ -125,6 +130,7 @@ class SideBar extends HTMLElement {
 
     connectedCallback() {
         this.render();
+        this._initTaskSwipeDelete();
         this.querySelector('#collapse-sidebar-btn')?.addEventListener('click', () => {
             this._dismissAppPopover();
             this.dispatchEvent(
@@ -284,6 +290,8 @@ class SideBar extends HTMLElement {
     }
 
     disconnectedCallback() {
+        this._swipeDeleteController?.destroy();
+        this._swipeDeleteController = null;
         this._taskSearchDialog?.destroy();
         this._taskSearchDialog = null;
         this._dismissRecentTasksMenu();
@@ -1854,6 +1862,44 @@ class SideBar extends HTMLElement {
         this.reloadTaskList();
     }
 
+    /**
+     * 删除任务的唯一入口：确认弹窗 → 清任务视图缓存 → 当前任务回首页 → 删除。
+     * 右键菜单、悬停删除按钮与触摸左滑删除共用，避免文案与流程分叉。
+     */
+    async _confirmAndDeleteTask(taskId) {
+        const task = this.taskList.find((item) => item.task_id === taskId);
+        const taskName = escapeHtml(task?.task_name || this._t('renderer.sidebar.unnamedTask'));
+        const confirmed = await showConfirmModal({
+            icon: 'fa-trash-can',
+            iconBg: '#FEF2F2',
+            iconColor: '#DC2626',
+            title: this._t('renderer.sidebar.deleteTask'),
+            message: this._t('renderer.sidebar.deleteTaskConfirm', { taskName }),
+            confirmText: this._t('common.delete'),
+            cancelText: this._t('common.cancel'),
+            danger: true
+        });
+        if (!confirmed) return;
+        window.globalControlAPI.removeTaskViewCache(taskId);
+        if (this.currentTaskId === taskId) {
+            window.globalControlAPI.openTask(null);
+        }
+        await window.taskManagerAPI.removeTask(taskId);
+    }
+
+    /**
+     * 任务列表触摸左滑删除：监听以委托方式挂在列表容器上，行由 innerHTML 重渲染不影响监听。
+     */
+    _initTaskSwipeDelete() {
+        this._swipeDeleteController?.destroy();
+        this._swipeDeleteController = null;
+        const container = this.querySelector('#task-list-container');
+        if (!container) return;
+        this._swipeDeleteController = attachSidebarSwipeDelete(container, {
+            onDelete: (taskId) => this._confirmAndDeleteTask(taskId)
+        });
+    }
+
     _showContextMenu(x, y, taskId) {
         this._dismissContextMenu();
 
@@ -1962,24 +2008,7 @@ class SideBar extends HTMLElement {
 
         menu.querySelector('[data-action="delete"]').addEventListener('click', async () => {
             this._dismissContextMenu();
-            const task = this.taskList.find((item) => item.task_id === taskId);
-            const taskName = escapeHtml(task?.task_name || this._t('renderer.sidebar.unnamedTask'));
-            const confirmed = await showConfirmModal({
-                icon: 'fa-trash-can',
-                iconBg: '#FEF2F2',
-                iconColor: '#DC2626',
-                title: this._t('renderer.sidebar.deleteTask'),
-                message: this._t('renderer.sidebar.deleteTaskConfirm', { taskName }),
-                confirmText: this._t('common.delete'),
-                cancelText: this._t('common.cancel'),
-                danger: true
-            });
-            if (!confirmed) return;
-            window.globalControlAPI.removeTaskViewCache(taskId);
-            if (this.currentTaskId === taskId) {
-                window.globalControlAPI.openTask(null);
-            }
-            await window.taskManagerAPI.removeTask(taskId);
+            await this._confirmAndDeleteTask(taskId);
         });
 
         menu.querySelector('[data-action="delete-all"]').addEventListener('click', async () => {
@@ -2213,26 +2242,7 @@ class SideBar extends HTMLElement {
             btn._bound = true;
             btn.addEventListener('click', async (event) => {
                 event.stopPropagation();
-                const taskId = event.currentTarget.dataset.task_id;
-                const task = this.taskList.find((item) => item.task_id === taskId);
-                const taskName = escapeHtml(task?.task_name || this._t('renderer.sidebar.unnamedTask'));
-                const confirmed = await showConfirmModal({
-                    icon: 'fa-trash-can',
-                    iconBg: '#FEF2F2',
-                    iconColor: '#DC2626',
-                    title: this._t('renderer.sidebar.deleteTask'),
-                    message: this._t('renderer.sidebar.deleteTaskConfirm', { taskName }),
-                    confirmText: this._t('common.delete'),
-                    cancelText: this._t('common.cancel'),
-                    danger: true
-                });
-                if (!confirmed) return;
-
-                window.globalControlAPI.removeTaskViewCache(taskId);
-                if (this.currentTaskId === taskId) {
-                    window.globalControlAPI.openTask(null);
-                }
-                await window.taskManagerAPI.removeTask(taskId);
+                await this._confirmAndDeleteTask(event.currentTarget.dataset.task_id);
             });
         });
     }
@@ -2290,12 +2300,21 @@ class SideBar extends HTMLElement {
             data-parent_id=""
             data-depth="0"
         >
-            ${resultIcon}
-            <span class="sb-task-name">${taskName}</span>
-            ${favoriteIcon}
-            ${waitingTag}
-            ${browserIcon}
-            <span class="sb-task-time">${time}</span>
+            <button
+                type="button"
+                class="sb-swipe-delete"
+                data-task_id="${escapeHtml(task.task_id)}"
+                tabindex="-1"
+                aria-label="${this._t('renderer.sidebar.deleteTask')}"
+            >${TRASH_SVG}</button>
+            <div class="sb-task-row-main">
+                ${resultIcon}
+                <span class="sb-task-name">${taskName}</span>
+                ${favoriteIcon}
+                ${waitingTag}
+                ${browserIcon}
+                <span class="sb-task-time">${time}</span>
+            </div>
         </div>`;
     }
 
@@ -2747,6 +2766,8 @@ class SideBar extends HTMLElement {
         this._bindTaskItemEvents(taskListContainer);
         this._bindSidebarTaskControls(taskListContainer);
         this._updateChatBadge();
+        // 行是 innerHTML 重建的，把左滑展开态迁移到新节点，避免刷新把删除按钮收走
+        this._swipeDeleteController?.restoreOpenRow();
         restoreSidebarScrollState(taskListContainer, scrollState);
         if (typeof requestAnimationFrame === 'function') {
             requestAnimationFrame(() => {

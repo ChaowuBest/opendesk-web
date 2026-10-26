@@ -1,5 +1,6 @@
 import { beforeAll, beforeEach, describe, expect, jest, test } from '@jest/globals';
 import { parseHTML } from 'linkedom';
+import { confirmModalMockShim } from '../../confirmModalMock.js';
 
 /**
  * 笔记编辑器 ``` + 回车 -> 代码块快捷转换测试。
@@ -113,9 +114,11 @@ describe('笔记代码块快捷转换（``` + 回车）', () => {
             configurable: true
         });
 
-        await jest.unstable_mockModule('../../../renderer/components/confirmModal.ts', () => ({
-            showConfirmModal
-        }));
+        await jest.unstable_mockModule('../../../renderer/components/confirmModal.ts', () =>
+            confirmModalMockShim({
+                showConfirmModal
+            })
+        );
         await jest.unstable_mockModule('../../../main/aikernel/tool.js', () => ({
             BaseTool: class {},
             BaseToolset: class {}
