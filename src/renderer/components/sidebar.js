@@ -29,7 +29,8 @@ import { fixedLayerOrigin, visibleViewportRect } from '../utils/window-frame.js'
 import {
     buildSidebarFavoritesResults,
     buildSidebarTaskGroups,
-    getSidebarRecentTasks,
+    countSidebarVisibleRootTasks,
+    getSidebarRecentRootTasks,
     getSidebarRunningTasks,
     isSidebarTaskVisible,
     normalizeWorkspace
@@ -931,9 +932,9 @@ class SideBar extends HTMLElement {
         });
     }
 
-    /** 取最近更新的可见任务（按 updated_at 降序，最多 limit 个） */
+    /** 取最近更新的可见根任务（按 updated_at 降序，最多 limit 个；子任务并入父任务，不单独出现） */
     _getRecentTasks(limit) {
-        return getSidebarRecentTasks(this.taskList, limit);
+        return getSidebarRecentRootTasks(this.taskList, limit);
     }
 
     /**
@@ -1025,8 +1026,8 @@ class SideBar extends HTMLElement {
         menu.style.minWidth = '220px';
 
         const recentTasks = this._getRecentTasks(10);
-        // 与菜单列表口径一致：排除自动化（internal）任务
-        const totalCount = this.taskList.filter((task) => task.internal !== true && this._isTaskVisible(task)).length;
+        // 与菜单列表口径一致：仅根任务（子任务不单独出现）、排除自动化（internal）任务
+        const totalCount = countSidebarVisibleRootTasks(this.taskList);
 
         if (recentTasks.length === 0) {
             menu.innerHTML = `<div class="ctx-empty">${this._t('renderer.sidebar.noTasks')}</div>`;
