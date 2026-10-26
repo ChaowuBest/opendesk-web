@@ -17,7 +17,9 @@ describe('automation task timezones', () => {
     let tempDir: string;
 
     beforeEach(() => {
-        jest.useFakeTimers();
+        // fake timers 会连带 fake Intl.DateTimeFormat（实例 resolvedOptions 变 own property，
+        // 原型 spy 失效）；排除 Intl 才能让下方 mock 系统时区生效（CI 机器时区可能是 UTC）。
+        jest.useFakeTimers({ doNotFake: ['Intl'] });
         jest.setSystemTime(new Date('2026-03-07T15:00:00Z'));
         tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'opendesk-todomgr-timezone-'));
         worker = new TodoMgrWorker('todomgr', tempDir);

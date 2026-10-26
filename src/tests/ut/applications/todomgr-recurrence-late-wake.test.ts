@@ -24,7 +24,9 @@ describe('TodoMgr recurrence timers after a delayed wake', () => {
     }
 
     beforeEach(() => {
-        jest.useFakeTimers();
+        // fake timers 会连带 fake Intl.DateTimeFormat，formatToParts 原型 spy 会失效，
+        // 导致下方“未扫描每分钟”的断言空转；排除 Intl 让 spy 真正生效。
+        jest.useFakeTimers({ doNotFake: ['Intl'] });
         jest.setSystemTime(new Date('2026-10-23T08:59:59Z'));
         tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'opendesk-recurrence-late-wake-'));
         worker = new TodoMgrWorker('todomgr', tempDir);

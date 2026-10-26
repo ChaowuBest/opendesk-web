@@ -18,7 +18,8 @@ describe('visual todo recurrence worker scheduling', () => {
         return (worker as any).cronJobs.get(id);
     }
     beforeEach(() => {
-        jest.useFakeTimers();
+        // fake timers 会连带 fake Intl.DateTimeFormat，原型 spy 失效；排除 Intl 使时区 mock 生效。
+        jest.useFakeTimers({ doNotFake: ['Intl'] });
         jest.setSystemTime(new Date('2026-10-22T00:00:00Z'));
         dir = fs.mkdtempSync(path.join(os.tmpdir(), 'opendesk-recurrence-worker-'));
         worker = new TodoMgrWorker('todomgr', dir);
