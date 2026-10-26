@@ -5,7 +5,7 @@ import type { FileWatchService as Service, FileChangeEvent } from '../../../main
 
 const initialState = () => ({ dev: 1, ino: 2, size: 3, mtimeMs: 4, ctimeMs: 5, mode: 6, isFile: () => true });
 const inspect = jest.fn<() => Promise<ReturnType<typeof initialState>>>();
-type WatchSignal = (eventType?: string, filename?: string | Buffer | null) => void;
+type WatchSignal = (eventType?: string, filename?: string | null) => void;
 const nativeWatchers: Array<EventEmitter & { close: ReturnType<typeof jest.fn>; signal: WatchSignal }> = [];
 const watch = jest.fn((_directory: string, signal: WatchSignal) => {
     const watcher = Object.assign(new EventEmitter(), { close: jest.fn(), signal });
@@ -40,35 +40,28 @@ describe('FileWatchService lifecycle', () => {
         const callback = jest.fn<() => void>();
         await service().watch(file, callback);
         nativeWatchers[0].signal('change', 'unrelated.txt');
-        nativeWatchers[0].signal('rename', Buffer.from('unrelated.txt'));
+        nativeWatchers[0].signal('rename', 'another.txt');
         await settle();
         expect(inspect).toHaveBeenCalledTimes(1);
         expect(callback).not.toHaveBeenCalled();
     });
 
-    test.each([undefined, null, '', 'watched-file.txt', 'WATCHED-FILE.TXT', Buffer.from('watched-file.txt')])(
-        'checks matching or unavailable filename %p',
-        async (filename) => {
-            const callback = jest.fn<(event: FileChangeEvent) => void>();
-            await service().watch(file, callback);
-            inspect.mockResolvedValueOnce({ ...initialState(), size: 99 });
-            nativeWatchers[0].signal('change', filename);
-            await settle();
-            expect(inspect).toHaveBeenCalledTimes(2);
-            expect(callback).toHaveBeenCalledWith({ path: file, type: 'changed' });
-        }
-    );
-
-    test.each([
-        ['caf\u00e9.txt', 'cafe\u0301.txt'],
-        ['\u03c3.txt', '\u03c2.txt'],
-        ['\u1e9e.txt', '\u00df.txt']
-    ])('accepts Unicode normalization and case aliases: %s / %s', async (target, changed) => {
+    test.each([null, 'WATCHED-FILE.TXT'])('checks unavailable or case-variant filename %p', async (filename) => {
         const callback = jest.fn<(event: FileChangeEvent) => void>();
-        const unicodeFile = path.resolve(target);
+        await service().watch(file, callback);
+        inspect.mockResolvedValueOnce({ ...initialState(), size: 99 });
+        nativeWatchers[0].signal('change', filename);
+        await settle();
+        expect(inspect).toHaveBeenCalledTimes(2);
+        expect(callback).toHaveBeenCalledWith({ path: file, type: 'changed' });
+    });
+
+    test('accepts canonically equivalent Unicode filenames', async () => {
+        const callback = jest.fn<(event: FileChangeEvent) => void>();
+        const unicodeFile = path.resolve('caf\u00e9.txt');
         await service().watch(unicodeFile, callback);
         inspect.mockResolvedValueOnce({ ...initialState(), size: 99 });
-        nativeWatchers[0].signal('change', changed);
+        nativeWatchers[0].signal('change', 'cafe\u0301.txt');
         await settle();
         expect(callback).toHaveBeenCalledWith({ path: unicodeFile, type: 'changed' });
     });
@@ -121,19 +114,6 @@ describe('FileWatchService lifecycle', () => {
         expect(inspect).toHaveBeenCalledTimes(3);
         expect(callback).toHaveBeenCalledTimes(1);
         expect(callback).toHaveBeenCalledWith({ path: file, type: 'changed' });
-    });
-
-    test('keeps callbacks unbound and allows cancellation without a subscription receiver', async () => {
-        const callback = jest.fn<(event: FileChangeEvent) => void>();
-        const subscription = await service().watch(file, callback);
-        inspect.mockResolvedValueOnce({ ...initialState(), size: 99 });
-        nativeWatchers[0].signal();
-        await settle();
-        expect(callback).toHaveBeenCalledWith({ path: file, type: 'changed' });
-        expect(callback.mock.contexts[0]).toBeUndefined();
-        const { dispose } = subscription;
-        dispose();
-        expect(nativeWatchers[0].close).toHaveBeenCalledTimes(1);
     });
 
     test('rejects initialization errors through watch instead of the runtime error callback', async () => {

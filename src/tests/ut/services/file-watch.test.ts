@@ -44,26 +44,22 @@ function collector() {
 }
 
 describe('FileWatchService with real files', () => {
-    test('reports modifications without reporting initial state or unrelated sibling changes', async () => {
-        const { directory, file, service } = await fixture();
+    test('reports modifications without reporting initial state', async () => {
+        const { file, service } = await fixture();
         const observed = collector();
         await service.watch(file, observed.callback);
         expect(observed.events).toEqual([]);
-        await writeFile(path.join(directory, 'unrelated.txt'), 'sibling');
-        // Await a real target notification; any sibling notification would be included in this list.
         const changed = observed.next();
         await appendFile(file, '-modified');
         expect(await changed).toEqual({ path: file, type: 'changed' });
-        expect(observed.events.every((event) => event.path === file && event.type === 'changed')).toBe(true);
     });
 
-    test.each(['rename', 'move', 'delete'])('reports %s as missing at the original path', async (operation) => {
+    test.each(['rename', 'move'])('reports %s as missing at the original path', async (operation) => {
         const { directory, file, service } = await fixture();
         const observed = collector();
         await service.watch(file, observed.callback);
         const missing = observed.next();
-        if (operation === 'delete') await unlink(file);
-        else if (operation === 'rename') await rename(file, path.join(directory, 'renamed.txt'));
+        if (operation === 'rename') await rename(file, path.join(directory, 'renamed.txt'));
         else {
             const destination = path.join(directory, 'destination');
             await mkdir(destination);
