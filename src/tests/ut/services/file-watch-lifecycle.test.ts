@@ -1,7 +1,7 @@
 import { afterEach, beforeAll, beforeEach, describe, expect, jest, test } from '@jest/globals';
 import { EventEmitter } from 'node:events';
 import path from 'node:path';
-import type { FileWatchService as Service } from '../../../main/services/file-watch/service.js';
+import type { FileWatchService as Service, FileChangeEvent } from '../../../main/services/file-watch/service.js';
 
 const initialState = () => ({ dev: 1, ino: 2, size: 3, mtimeMs: 4, ctimeMs: 5, mode: 6, isFile: () => true });
 const inspect = jest.fn<() => Promise<ReturnType<typeof initialState>>>();
@@ -44,6 +44,39 @@ describe('FileWatchService lifecycle', () => {
         await settle();
         expect(inspect).toHaveBeenCalledTimes(2);
         expect(callback).not.toHaveBeenCalled();
+    });
+
+    test('keeps callbacks unbound and allows cancellation without a subscription receiver', async () => {
+        const callback = jest.fn<(event: FileChangeEvent) => void>();
+        const subscription = await service().watch(file, callback);
+        inspect.mockResolvedValueOnce({ ...initialState(), size: 99 });
+        nativeWatchers[0].signal();
+        await settle();
+        expect(callback).toHaveBeenCalledWith({ path: file, type: 'changed' });
+        expect(callback.mock.contexts[0]).toBeUndefined();
+        const { dispose } = subscription;
+        dispose();
+        expect(nativeWatchers[0].close).toHaveBeenCalledTimes(1);
+    });
+
+    test('rejects initialization errors through watch instead of the runtime error callback', async () => {
+        const callback = jest.fn<() => void>();
+        const onError = jest.fn();
+        let finish!: (state: ReturnType<typeof initialState>) => void;
+        inspect.mockImplementationOnce(
+            () =>
+                new Promise((resolve) => {
+                    finish = resolve;
+                })
+        );
+        const pending = service().watch(file, callback, { onError });
+        const error = new Error('watch failed during initialization');
+        nativeWatchers[0].emit('error', error);
+        finish(initialState());
+        await expect(pending).rejects.toBe(error);
+        expect(onError).not.toHaveBeenCalled();
+        expect(callback).not.toHaveBeenCalled();
+        expect(nativeWatchers[0].close).toHaveBeenCalledTimes(1);
     });
 
     test('cancels a check already awaiting metadata without delivering a stale callback', async () => {

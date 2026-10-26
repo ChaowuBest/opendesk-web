@@ -30,24 +30,12 @@ export interface FileWatchSubscription {
     dispose(): void;
 }
 
-async function fingerprint(filename: string): Promise<string | null> {
-    try {
-        const state = await lstat(filename);
-        if (!state.isFile()) throw new TypeError('File watch target must be a regular file');
-        return [state.dev, state.ino, state.size, state.mtimeMs, state.ctimeMs, state.mode].join(':');
-    } catch (error) {
-        const code = (error as NodeJS.ErrnoException).code;
-        if (code === 'ENOENT' || code === 'ENOTDIR') return null;
-        throw error;
-    }
-}
-
 /**
  * Watches fixed file paths using parent-directory notifications and metadata only.
  * No content reads, move tracking, recursive scans, polling, or Electron dependency.
  */
 export class FileWatchService {
-    private readonly registrations = new Set<() => void>();
+    private readonly registrations = new Set<FileWatchRegistration>();
     private disposed = false;
 
     async watch(
@@ -58,87 +46,15 @@ export class FileWatchService {
         // Errors in this service are infrastructure diagnostics; UI callers localize their own messages.
         if (this.disposed) throw new Error('File watch service is disposed');
         if (!filePath.trim()) throw new TypeError('File watch path must not be empty');
-        const filename = path.resolve(filePath);
-        let watcher: FSWatcher | undefined;
-        let scheduled: ReturnType<typeof setImmediate> | undefined;
-        let active = true;
-        let ready = false;
-        let checking = false;
-        let pending = false;
-        let previous: string | null = null;
-        let startupError: Error | undefined;
-        const dispose = () => {
-            if (!active) return;
-            active = false;
-            if (scheduled !== undefined) clearImmediate(scheduled);
-            watcher?.close();
-            this.registrations.delete(dispose);
-        };
-        const reportError = (cause: unknown) => {
-            const error = cause instanceof Error ? cause : new Error(String(cause));
-            try {
-                if (options.onError) options.onError(error);
-                else console.error('File watch failed:', filename, error);
-            } catch (handlerError) {
-                console.error('File watch error callback failed:', filename, handlerError);
-            }
-        };
-        const fail = (cause: unknown) => {
-            if (!active) return;
-            const error = cause instanceof Error ? cause : new Error(String(cause));
-            if (!ready) startupError = error;
-            dispose();
-            if (ready) reportError(error);
-        };
-        const check = async () => {
-            checking = true;
-            try {
-                while (active && pending) {
-                    pending = false;
-                    const current = await fingerprint(filename);
-                    if (!active) return;
-                    if (current === previous) continue;
-                    previous = current;
-                    try {
-                        const result = onChange({ path: filename, type: current === null ? 'missing' : 'changed' });
-                        // Callbacks are independent; do not hold the filesystem check open for business work.
-                        void Promise.resolve(result).catch((error) => {
-                            if (active) reportError(error);
-                        });
-                    } catch (error) {
-                        reportError(error);
-                    }
-                }
-            } catch (error) {
-                fail(error);
-            } finally {
-                checking = false;
-            }
-        };
-        const schedule = () => {
-            pending = true;
-            if (!active || !ready || checking || scheduled !== undefined) return;
-            // Coalesce only this event burst. Continuous writes cannot postpone checks indefinitely.
-            scheduled = setImmediate(() => {
-                scheduled = undefined;
-                void check();
-            });
-        };
-        this.registrations.add(dispose);
+        const registration = new FileWatchRegistration(path.resolve(filePath), onChange, options, () => {
+            this.registrations.delete(registration);
+        });
+        this.registrations.add(registration);
         try {
-            // Watch the directory, not the inode: editors commonly replace files during a save.
-            // Check metadata on every directory signal, so missing/case-variant filenames are safe.
-            watcher = watch(path.dirname(filename), schedule);
-            watcher.on('error', fail);
-            previous = await fingerprint(filename);
-            if (startupError) throw startupError;
-            if (!active) throw new Error('File watch service is disposed');
-            if (previous === null) throw new Error('File watch target does not exist');
-            ready = true;
-            if (pending) schedule();
-            return { path: filename, dispose };
+            await registration.start();
+            return registration;
         } catch (error) {
-            dispose();
+            registration.dispose();
             throw error;
         }
     }
@@ -147,6 +63,116 @@ export class FileWatchService {
     dispose(): void {
         if (this.disposed) return;
         this.disposed = true;
-        for (const dispose of this.registrations) dispose();
+        for (const registration of this.registrations) registration.dispose();
+    }
+}
+
+class FileWatchRegistration implements FileWatchSubscription {
+    private watcher?: FSWatcher;
+    private scheduled?: ReturnType<typeof setImmediate>;
+    private active = true;
+    private ready = false;
+    private checking = false;
+    private pending = false;
+    private previous: string | null = null;
+    private startupError?: Error;
+
+    constructor(
+        readonly path: string,
+        private readonly onChange: (event: FileChangeEvent) => void | Promise<void>,
+        private readonly options: FileWatchOptions,
+        private readonly onDispose: () => void
+    ) {}
+
+    async start(): Promise<void> {
+        // Watch the directory, not the inode: editors commonly replace files during a save.
+        // Check metadata on every directory signal, so missing/case-variant filenames are safe.
+        this.watcher = watch(path.dirname(this.path), () => this.scheduleCheck());
+        this.watcher.on('error', (error) => this.handleWatchFailure(error));
+        this.previous = await readFileFingerprint(this.path);
+        if (this.startupError) throw this.startupError;
+        if (!this.active) throw new Error('File watch service is disposed');
+        if (this.previous === null) throw new Error('File watch target does not exist');
+        this.ready = true;
+        if (this.pending) this.scheduleCheck();
+    }
+
+    private scheduleCheck(): void {
+        this.pending = true;
+        if (!this.active || !this.ready || this.checking || this.scheduled !== undefined) return;
+        // Coalesce only this event burst. Continuous writes cannot postpone checks indefinitely.
+        this.scheduled = setImmediate(() => {
+            this.scheduled = undefined;
+            void this.checkForChanges();
+        });
+    }
+
+    private async checkForChanges(): Promise<void> {
+        this.checking = true;
+        try {
+            while (this.active && this.pending) {
+                this.pending = false;
+                const current = await readFileFingerprint(this.path);
+                if (!this.active) return;
+                if (current === this.previous) continue;
+                this.previous = current;
+                this.notifyChange(current === null ? 'missing' : 'changed');
+            }
+        } catch (error) {
+            this.handleWatchFailure(error);
+        } finally {
+            this.checking = false;
+        }
+    }
+
+    private notifyChange(type: FileChangeEvent['type']): void {
+        try {
+            const onChange = this.onChange;
+            const result = onChange({ path: this.path, type });
+            // Callbacks are independent; do not hold the filesystem check open for business work.
+            void Promise.resolve(result).catch((error) => {
+                if (this.active) this.reportError(error);
+            });
+        } catch (error) {
+            this.reportError(error);
+        }
+    }
+
+    private handleWatchFailure(cause: unknown): void {
+        if (!this.active) return;
+        const error = cause instanceof Error ? cause : new Error(String(cause));
+        if (!this.ready) this.startupError = error;
+        this.dispose();
+        if (this.ready) this.reportError(error);
+    }
+
+    private reportError(cause: unknown): void {
+        const error = cause instanceof Error ? cause : new Error(String(cause));
+        try {
+            if (this.options.onError) this.options.onError(error);
+            else console.error('File watch failed:', this.path, error);
+        } catch (handlerError) {
+            console.error('File watch error callback failed:', this.path, handlerError);
+        }
+    }
+
+    readonly dispose = (): void => {
+        if (!this.active) return;
+        this.active = false;
+        if (this.scheduled !== undefined) clearImmediate(this.scheduled);
+        this.watcher?.close();
+        this.onDispose();
+    };
+}
+
+async function readFileFingerprint(filename: string): Promise<string | null> {
+    try {
+        const state = await lstat(filename);
+        if (!state.isFile()) throw new TypeError('File watch target must be a regular file');
+        return [state.dev, state.ino, state.size, state.mtimeMs, state.ctimeMs, state.mode].join(':');
+    } catch (error) {
+        const code = (error as NodeJS.ErrnoException).code;
+        if (code === 'ENOENT' || code === 'ENOTDIR') return null;
+        throw error;
     }
 }
