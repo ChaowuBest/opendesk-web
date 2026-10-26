@@ -7,7 +7,11 @@ const mainSource = readFileSync(new URL('../../../main/main.ts', import.meta.url
 const preloadSource = readFileSync(new URL('../../../renderer/preload.js', import.meta.url), 'utf8');
 
 // 执行实际 IPC handler，隔离 Electron 启动及真实模型请求。
-function loadHandler(channel: string, task: object) {
+function loadHandler(
+    channel: string,
+    task: object,
+    isSupported: (modelName?: string, effort?: string) => boolean = () => true
+) {
     const start = mainSource.indexOf(`ipcMain.handle('${channel}'`);
     const end = mainSource.indexOf('ipcMain.handle(', start + 1);
     expect(start).toBeGreaterThan(-1);
@@ -25,7 +29,10 @@ function loadHandler(channel: string, task: object) {
             }
         },
         Setting: { getInstance: () => ({ getModelInstance: () => ({}) }) },
-        isReasoningEffortSupported: () => true
+        t: (key: string) => key,
+        isReasoningEffortSupported: isSupported,
+        resolveReasoningEffortForModel: (modelName?: string, effort?: string) =>
+            isSupported(modelName, effort) ? effort : undefined
     });
     return handle.mock.calls[0][1] as (...args: unknown[]) => Promise<unknown>;
 }
@@ -70,6 +77,24 @@ describe('task model reasoning effort IPC', () => {
         expect(task.model).toBe('model-b');
         expect(task.reasoningEffort).toBe('high');
         expect(task.refreshToolsets).toHaveBeenCalledTimes(1);
+    });
+
+    test('rejects an unsupported effort without changing the task state', async () => {
+        const task = {
+            model: 'model-a',
+            reasoningEffort: 'low',
+            persistLater: jest.fn(),
+            refreshToolsets: jest.fn()
+        };
+        const handler = loadHandler('taskManager:setTaskModel', task, () => false);
+
+        const result = await handler({}, 'task-1', 'model-b', 'high');
+
+        expect(result.status).toBe('error');
+        expect(task.model).toBe('model-a');
+        expect(task.reasoningEffort).toBe('low');
+        expect(task.persistLater).not.toHaveBeenCalled();
+        expect(task.refreshToolsets).not.toHaveBeenCalled();
     });
 
     test.each(['high', 'none', ''])('submission applies effort %s before starting the next turn', async (effort) => {

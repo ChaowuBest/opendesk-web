@@ -27,7 +27,7 @@ import { AgentRegistry } from '../agents/registry.js';
 import type { AgentDecl, ModeDecl } from '../agents/common.js';
 import type { Participant } from '../../plugins/types.js';
 import type { ReasoningEffort } from '../types/reasoning.js';
-import { isReasoningEffortSupported } from '../../utils/model-context.js';
+import { resolveReasoningEffortForModel } from '../../utils/model-context.js';
 import { TaskState } from '../states/tasks.js';
 import { TaskTransferError, type TaskTransferStage } from '../../utils/task-transfer-error.js';
 import { atomicWriteFile, atomicWriteFileSync } from '../../utils/temp.js';
@@ -814,20 +814,20 @@ export class TaskManagerState {
         // 创建任务
         const task = this.createTask(options?.model, { taskName: options?.taskName });
         if (options?.reasoningEffort !== undefined) {
-            // Validate the automation override at the final dispatch boundary as
-            // well as in TodoMgr. Other callers can use this method directly, and
-            // an unsupported value would otherwise be sent to the model adapter.
+            // Validate the automation override at the final dispatch boundary:
+            // other callers can use this method directly, and an unsupported
+            // value would otherwise be sent to the model adapter.
             const setting = Setting.getInstance();
             const modelInstance = task.model
                 ? setting.getModelInstance(task.model, 'chat')
                 : setting.getDefaultModelInstance();
-            if (!isReasoningEffortSupported(modelInstance?.model_name, options.reasoningEffort)) {
+            const resolved = resolveReasoningEffortForModel(modelInstance?.model_name, options.reasoningEffort);
+            if (resolved !== options.reasoningEffort) {
                 logger.warn(
                     `task ${task.task_id} requested unsupported reasoning effort "${options.reasoningEffort}" for model ${modelInstance?.model_name}; using model default`
                 );
-            } else {
-                task.reasoningEffort = options.reasoningEffort;
             }
+            task.reasoningEffort = resolved;
         }
         task.agentId = agentDecl.agentId;
 

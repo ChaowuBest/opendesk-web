@@ -150,6 +150,7 @@ import {
     resolveModelVisionSupport,
     resolveModelReasoningEfforts,
     isReasoningEffortSupported,
+    resolveReasoningEffortForModel,
     fetchContextSizeFromAPI
 } from './utils/model-context.js';
 import { fetchModelUrl } from './utils/model-network.js';
@@ -2004,9 +2005,7 @@ const registerTaskManagerAPIHandlers = () => {
             const modelName = task.model
                 ? Setting.getInstance().getModelInstance(task.model, 'chat')?.model_name
                 : Setting.getInstance().getDefaultModelInstance()?.model_name;
-            task.reasoningEffort = isReasoningEffortSupported(modelName, details.reasoningEffort)
-                ? details.reasoningEffort
-                : undefined;
+            task.reasoningEffort = resolveReasoningEffortForModel(modelName, details.reasoningEffort);
         }
         if (Object.prototype.hasOwnProperty.call(details, 'selectedExecutionNodeId')) {
             const result = await setTaskExecutionNode(taskId, details.selectedExecutionNodeId ?? null);
@@ -2045,14 +2044,26 @@ const registerTaskManagerAPIHandlers = () => {
         if (modelAlias && !Setting.getInstance().getModelInstance(modelAlias, 'chat')) {
             return { status: 'error', message: t('error.model.chat_alias_not_found', { alias: modelAlias }) };
         }
+        if (reasoningEffort !== undefined) {
+            // 空字符串是显式选择模型默认档位，不能丢弃或保留旧的任务覆盖值。
+            // 校验在落库前完成：不支持的档位返回错误，任务状态保持原样。
+            const modelName = modelAlias
+                ? Setting.getInstance().getModelInstance(modelAlias, 'chat')?.model_name
+                : Setting.getInstance().getDefaultModelInstance()?.model_name;
+            if (!isReasoningEffortSupported(modelName, reasoningEffort)) {
+                return {
+                    status: 'error',
+                    message: t('error.model.reasoningEffortUnsupported', {
+                        alias: modelAlias || t('error.model.default'),
+                        effort: reasoningEffort
+                    })
+                };
+            }
+        }
         const previous = task.model;
         task.model = modelAlias || undefined;
         if (reasoningEffort !== undefined) {
-            // 空字符串是显式选择模型默认档位，不能丢弃或保留旧的任务覆盖值。
-            const modelName = task.model
-                ? Setting.getInstance().getModelInstance(task.model, 'chat')?.model_name
-                : Setting.getInstance().getDefaultModelInstance()?.model_name;
-            task.reasoningEffort = isReasoningEffortSupported(modelName, reasoningEffort) ? reasoningEffort : undefined;
+            task.reasoningEffort = reasoningEffort;
         }
         task.persistLater();
         // 模型切换后立即重新过滤工具集：非视觉模型不应继续看到 readImage/askImage 等视觉工具，

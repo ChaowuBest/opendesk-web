@@ -445,12 +445,7 @@ class DashboardRenderer implements Component {
                         C.glow('⟳  ') +
                         C.dim(
                             todo.trigger.recurrence
-                                ? describeTodoRecurrence(
-                                      todo.trigger.recurrence,
-                                      t,
-                                      todo.trigger.timezone ?? 'UTC',
-                                      false
-                                  )
+                                ? describeTodoRecurrence(todo.trigger.recurrence, t, todo.trigger.timezone ?? 'UTC')
                                 : describeLegacyRecurrence(
                                       todo.trigger.cronExpression,
                                       t,

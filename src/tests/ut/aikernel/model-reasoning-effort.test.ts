@@ -7,7 +7,8 @@ import { REASONING_EFFORT_VALUES } from '../../../main/aikernel/types/reasoning.
 import {
     isReasoningEffortSupported,
     lookupKnownReasoningEfforts,
-    resolveModelReasoningEfforts
+    resolveModelReasoningEfforts,
+    resolveReasoningEffortForModel
 } from '../../../main/utils/model-context.js';
 
 describe('model-context reasoning efforts', () => {
@@ -63,6 +64,16 @@ describe('model-context reasoning efforts', () => {
         expect(isReasoningEffortSupported('deepseek-v4.1-flash', 'max')).toBe(true);
         expect(isReasoningEffortSupported('unknown-model', 'max')).toBe(true);
         expect(isReasoningEffortSupported('gpt-5', '')).toBe(true);
+    });
+
+    test('resolveReasoningEffortForModel 将不支持的档位回退为模型默认', () => {
+        expect(resolveReasoningEffortForModel('gpt-5', 'max')).toBeUndefined();
+        expect(resolveReasoningEffortForModel('gpt-5', 'high')).toBe('high');
+        expect(resolveReasoningEffortForModel('deepseek-v4.1-flash', 'medium')).toBeUndefined();
+        expect(resolveReasoningEffortForModel('deepseek-v4.1-flash', 'max')).toBe('max');
+        expect(resolveReasoningEffortForModel('unknown-model', 'max')).toBe('max');
+        expect(resolveReasoningEffortForModel('gpt-5', '')).toBe('');
+        expect(resolveReasoningEffortForModel('gpt-5', undefined)).toBeUndefined();
     });
 
     test('buildSupportedEffortValues 过滤非法值并始终以默认项开头', () => {

@@ -35,9 +35,9 @@ import { resolveTodoWorkspace } from './workspace.js';
 import { logger } from '../../utils/logger.js';
 import { Setting } from '../../utils/setting.js';
 import {
-    isReasoningEffortSupported,
     resolveModelReasoningEfforts,
-    resolveModelVisionSupport
+    resolveModelVisionSupport,
+    resolveReasoningEffortForModel
 } from '../../utils/model-context.js';
 import chalk from 'chalk';
 import type { Participant } from '../../plugins/types.js';
@@ -220,18 +220,10 @@ export class TodoMgrApplication extends BaseApplication {
             if (model && !modelIsValid) {
                 logger.warn(`触发器任务 ${todoId} 指定模型不可用，回退到当前全局默认模型: ${model}`);
             }
-            let effectiveReasoningEffort = modelIsValid ? reasoningEffort : undefined;
-            if (
-                modelIsValid &&
-                modelInstance?.model_name &&
-                reasoningEffort !== undefined &&
-                !isReasoningEffortSupported(modelInstance.model_name, reasoningEffort)
-            ) {
-                logger.warn(
-                    `触发器任务 ${todoId} 指定模型 ${modelInstance.model_name} 不支持推理档位 ${reasoningEffort}，回退到模型默认档位`
-                );
-                effectiveReasoningEffort = undefined;
-            }
+            // 档位能力校验由 dispatchPromptToAgent 在最终分发边界兜底。
+            const effectiveReasoningEffort = modelIsValid
+                ? resolveReasoningEffortForModel(modelInstance?.model_name, reasoningEffort)
+                : undefined;
             const task = await taskManager.dispatchPromptToAgent(mainAgent, undefined, prompt, {
                 taskName: todoTitle.trim() ? todoTitle : undefined,
                 workspace: resolvedWorkspace,

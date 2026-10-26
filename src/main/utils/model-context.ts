@@ -1319,3 +1319,16 @@ export function isReasoningEffortSupported(
     if (!modelName) return true;
     return resolveModelReasoningEfforts({ model_name: modelName }).includes(reasoningEffort);
 }
+
+/**
+ * Resolve a task-level reasoning override against a model name: unsupported
+ * values fall back to the model default ('' or undefined). Callers that need
+ * to distinguish rejection (e.g. to surface an error) should use
+ * {@link isReasoningEffortSupported} instead.
+ */
+export function resolveReasoningEffortForModel(
+    modelName: string | undefined,
+    reasoningEffort: ReasoningEffort | undefined
+): ReasoningEffort | undefined {
+    return isReasoningEffortSupported(modelName, reasoningEffort) ? reasoningEffort : undefined;
+}
