@@ -11,7 +11,8 @@
 
 import { describeLegacyRecurrence, describeTodoRecurrence } from '../../../../common/utils/recurrence-description.js';
 import { getTodoRecurrenceError, type TodoRecurrence } from '../../../../common/utils/todo-recurrence.js';
-import { formatDatetimeLocal } from '../../../../common/utils/timezone.js';
+import { createWallClockFormatter, formatDatetimeLocal } from '../../../../common/utils/timezone.js';
+import { getLegacyCronTime, parseLegacyCronRecurrence } from '../../../../common/utils/legacy-cron.js';
 
 type Translate = (key: string, params?: Record<string, string | number>) => string;
 interface LegacyTrigger {
@@ -20,77 +21,12 @@ interface LegacyTrigger {
 }
 
 const offsetCache = new Map<string, number[]>();
-const formatters = new Map<string, Intl.DateTimeFormat>();
-
-function numbers(value: string, min: number, max: number, ranges = false): number[] | undefined {
-    const result = new Set<number>();
-    for (const part of value.split(',')) {
-        const match = (ranges ? /^(\d+)(?:-(\d+))?$/ : /^(\d+)$/).exec(part);
-        if (!match) return;
-        const start = Number(match[1]);
-        const end = Number(match[2] ?? match[1]);
-        if (start < min || end > max || start > end) return;
-        for (let value = start; value <= end; value++) result.add(value);
-    }
-    return [...result].sort((a, b) => a - b);
-}
-
-function fixedClock(fields: string[]): string | undefined {
-    if (fields.length !== 5) return;
-    const [minute, hour] = fields;
-    if (!/^\d+$/.test(minute) || !/^\d+$/.test(hour) || Number(minute) > 59 || Number(hour) > 23) return;
-    return `${String(Number(hour)).padStart(2, '0')}:${String(Number(minute)).padStart(2, '0')}`;
-}
-
-/** Parse only cron rules whose calendar semantics fit the structured picker. */
-export function parseLegacyCronRecurrence(expression: string): TodoRecurrence | undefined {
-    if (typeof expression !== 'string') return;
-    const fields = expression.trim().split(/\s+/);
-    const time = fixedClock(fields);
-    if (!time) return;
-    const [, , day, month, weekday] = fields;
-    if (day !== '*' && weekday !== '*') return;
-    let recurrence: TodoRecurrence;
-    if (day === '*' && month === '*') {
-        if (weekday === '*') recurrence = { mode: 'daily', time };
-        else {
-            const days = numbers(weekday, 0, 7, true);
-            if (!days) return;
-            recurrence = { mode: 'weekly', time, weekdays: [...new Set(days.map((day) => day % 7))].sort() };
-        }
-    } else {
-        if (weekday !== '*') return;
-        const days = numbers(day, 1, 31);
-        if (!days) return;
-        if (month === '*') recurrence = { mode: 'monthly', time, days };
-        else {
-            const months = numbers(month, 1, 12);
-            if (!months) return;
-            recurrence = { mode: 'yearly', time, days, months };
-        }
-    }
-    return getTodoRecurrenceError(recurrence) ? undefined : recurrence;
-}
 
 function yearlyOffsets(timezone: string, year: number): number[] {
     const key = `${timezone}:${year}`;
     const cached = offsetCache.get(key);
     if (cached) return cached;
-    let formatter = formatters.get(timezone);
-    if (!formatter) {
-        formatter = new Intl.DateTimeFormat('en-US', {
-            timeZone: timezone,
-            calendar: 'gregory',
-            numberingSystem: 'latn',
-            year: 'numeric',
-            month: '2-digit',
-            day: '2-digit',
-            hour: '2-digit',
-            minute: '2-digit',
-            hourCycle: 'h23'
-        });
-        formatters.set(timezone, formatter);
-    }
+    const formatter = createWallClockFormatter(timezone);
     const offsets = new Set<number>();
     const end = Date.UTC(year + 1, 0, 1);
     // Daily samples catch seasonal changes; cache them so lists of cards share this work.
@@ -160,8 +96,7 @@ export function getLegacyCronDisplay(
     const advanced = () => ({ summary: rule });
     const converted = (times: string) => ({ summary: `${rule} → ${times} (${timezone})` });
     const time =
-        validRecurrence?.time ??
-        (!trigger.recurrence ? fixedClock((trigger.cronExpression ?? '').trim().split(/\s+/)) : undefined);
+        validRecurrence?.time ?? (!trigger.recurrence ? getLegacyCronTime(trigger.cronExpression ?? '') : undefined);
     if (!validRecurrence && !time) return advanced();
     try {
         if (!time) {

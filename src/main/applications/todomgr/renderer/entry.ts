@@ -1826,7 +1826,9 @@ class TodoMgrEntryWidget extends AgentOperableHTMLElement {
         const triggerType = requestedType === 'event' ? 'event' : 'scheduled';
         const isLegacyUtc = todo?.trigger?.type === 'cron' && todo.trigger.timezone === undefined;
         this._initialTimePeriod = requestedType === 'cron' ? 'daily' : 'once';
-        this._editTimezone = todo?.trigger?.timezone || getSystemTimezone();
+        // 旧 cron 数据未存时区，执行语义按 UTC：编辑时区下拉如实显示 UTC，
+        // 用户改动时区即为把同一墙钟时间重新解释到新时区（保存时仅落库新时区）。
+        this._editTimezone = isLegacyUtc ? 'UTC' : todo?.trigger?.timezone || getSystemTimezone();
         const [recentWorkspaces] = await Promise.all([this._loadRecentWorkspaces(), this._loadChatModels()]);
         const workspaceOptionsHtml = this._renderWorkspaceOptions(todo?.workspace, recentWorkspaces);
         const workspaceHint = getWorkspaceDisplayName(todo?.workspace, t);

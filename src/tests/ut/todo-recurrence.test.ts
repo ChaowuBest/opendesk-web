@@ -407,6 +407,44 @@ describe('calendar and elapsed-hour todo recurrence', () => {
         expect(next(rule, zone, first, 1)).not.toContain(new Date(repeated).toISOString());
     });
 
+    test.each([
+        ['America/New_York', '2026-11-01T05:30:00Z', '2026-11-01T06:30:00Z', '2026-11-02T06:30:00Z', '01:30'],
+        ['Australia/Lord_Howe', '2026-04-04T14:45:00Z', '2026-04-04T15:15:00Z', '2026-04-05T15:15:00Z', '01:45']
+    ])(
+        'calendar intervals retain an anchor in the second repeated wall time in %s',
+        (zone, first, anchorAt, following, time) => {
+            const rule: TodoRecurrence = {
+                mode: 'interval',
+                intervalValue: 1,
+                intervalUnit: 'day',
+                anchorAt,
+                time
+            };
+            const between = new Date(Date.parse(first) + 15 * 60_000).toISOString();
+            expect(next(rule, zone, between, 2)).toEqual([
+                new Date(anchorAt).toISOString(),
+                new Date(following).toISOString()
+            ]);
+            expect(matchesTodoRecurrence(rule, new Date(first), zone)).toBe(false);
+            expect(matchesTodoRecurrence(rule, new Date(anchorAt), zone)).toBe(true);
+            expect(matchesTodoRecurrence(rule, new Date(following), zone)).toBe(true);
+            expect(next(rule, zone, anchorAt, 1)).toEqual([new Date(following).toISOString()]);
+        }
+    );
+
+    test('an anchored repeated wall time does not change which occurrence later calendar intervals use', () => {
+        const rule: TodoRecurrence = {
+            mode: 'interval',
+            intervalValue: 1,
+            intervalUnit: 'day',
+            anchorAt: '2026-11-01T06:30:00Z',
+            time: '01:30'
+        };
+        expect(next(rule, 'America/New_York', '2027-11-07T05:00:00Z', 1)).toEqual(['2027-11-07T05:30:00.000Z']);
+        expect(matchesTodoRecurrence(rule, new Date('2027-11-07T05:30:00Z'), 'America/New_York')).toBe(true);
+        expect(matchesTodoRecurrence(rule, new Date('2027-11-07T06:30:00Z'), 'America/New_York')).toBe(false);
+    });
+
     test('calendar interval candidate generation is bounded by periods and agrees with matching', () => {
         const rule: TodoRecurrence = {
             mode: 'interval',

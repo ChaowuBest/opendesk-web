@@ -102,21 +102,49 @@ describe('automation task timezone selection', () => {
         );
     });
 
+    test.each([undefined, 'UTC'])(
+        'editing a multi-date rule with timezone %s preserves every saved date',
+        async (timezone) => {
+            mockSystemTimezone('UTC');
+            const plan = todo({ type: 'cron', cronExpression: '0 9 1,15 * *', ...(timezone ? { timezone } : {}) });
+            const widget = widgetFor(plan);
+            await widget._enterEditMode(plan);
+
+            expect(widget.querySelector('#tm-frequency-period-trigger').disabled).toBe(false);
+            expect(widget._timeSchedulePicker.getTrigger()).toEqual(plan.trigger);
+            select(widget, '#tm-cron-hour', '10');
+            await widget._saveEdit(plan);
+            expect(call).toHaveBeenCalledWith(
+                'updateGlobalTodo',
+                plan.id,
+                expect.objectContaining({
+                    trigger: {
+                        type: 'cron',
+                        cronExpression: '* * * * *',
+                        timezone: 'UTC',
+                        recurrence: { mode: 'monthly', time: '10:00', days: [1, 15] }
+                    }
+                })
+            );
+        }
+    );
+
     test.each([
-        ['15 23 31 * *', '07:15(+1)'],
-        ['17 9 1 * 1', '17:17'],
-        ['0 9-17 * * 1-5', 'Saved advanced rule (UTC)']
+        ['15 23 31 * *', 'Day 31 of every month at 23:15', false],
+        ['17 9 1 * 1', 'Saved advanced rule (UTC)', true],
+        ['0 9-17 * * 1-5', 'Saved advanced rule (UTC)', true]
     ])(
-        'legacy recurring expression %s preserves its UTC schedule when edited and saved',
-        async (cronExpression, summary) => {
+        'legacy recurring expression %s keeps its UTC wall clock and preserves its schedule when edited and saved',
+        async (cronExpression, summary, legacyDisabled) => {
             mockSystemTimezone('Asia/Shanghai');
             const plan = todo({ type: 'cron', cronExpression });
             const widget = widgetFor(plan);
             await widget._enterEditMode(plan);
 
-            expect(widget.querySelector('#tm-edit-timezone')?.value).toBe('Asia/Shanghai');
+            // 旧 cron 未存时区：编辑页如实显示 UTC 墙钟，而不是换算成系统时区。
+            expect(widget.querySelector('#tm-edit-timezone')?.value).toBe('UTC');
             expect(widget.querySelector('#tm-cron-preview')?.textContent).toContain(summary);
-            expect(widget.querySelector('#tm-frequency-period-trigger')?.disabled).toBe(true);
+            expect(widget.querySelector('#tm-frequency-period-trigger')?.disabled).toBe(legacyDisabled);
             await widget._saveEdit(plan);
 
             expect(call).toHaveBeenCalledWith(
@@ -127,15 +155,17 @@ describe('automation task timezone selection', () => {
         }
     );
 
-    test('legacy daily UTC time displays locally and saving a title edit preserves its schedule', async () => {
+    test('legacy daily UTC rule: cards show local time, the editor keeps the UTC wall clock, and a title edit preserves the schedule', async () => {
         mockSystemTimezone('Asia/Shanghai');
         const plan = todo({ type: 'cron', cronExpression: '30 9 * * *' });
         const widget = widgetFor(plan);
+        // 卡片/详情仍按系统时区换算展示（日常视角）。
         expect(widget.querySelector('.tm-todo-card')?.textContent).toContain('17:30');
         expect(widget.querySelector('#tm-detail-scroll')?.textContent).toContain('17:30');
         await widget._enterEditMode(plan);
-        expect(widget.querySelector('#tm-edit-timezone')?.value).toBe('Asia/Shanghai');
-        expect(widget.querySelector('#tm-cron-hour')?.value).toBe('17');
+        // 编辑页显示规则本身的 UTC 墙钟，时区下拉如实标 UTC。
+        expect(widget.querySelector('#tm-edit-timezone')?.value).toBe('UTC');
+        expect(widget.querySelector('#tm-cron-hour')?.value).toBe('9');
         expect(widget.querySelector('#tm-cron-minute')?.value).toBe('30');
         expect(widget.querySelector('#tm-edit-timezone-field .tm-model-effort-note')).toBeNull();
         widget.querySelector('#tm-edit-title').value = 'Renamed';
@@ -147,15 +177,18 @@ describe('automation task timezone selection', () => {
         );
     });
 
-    test('legacy weekly UTC time converts minutes and weekday across midnight without changing its schedule', async () => {
+    test('legacy weekly UTC time keeps its wall clock and weekday, and a timezone change reinterprets them without converting', async () => {
         mockSystemTimezone('Asia/Kathmandu');
         const plan = todo({ type: 'cron', cronExpression: '45 23 * * 6' });
         const widget = widgetFor(plan);
         await widget._enterEditMode(plan);
-        expect(widget.querySelector('#tm-cron-hour')?.value).toBe('5');
-        expect(widget.querySelector('#tm-cron-minute')?.value).toBe('30');
-        expect(widget.querySelector('[data-days-toggle="period"]')?.textContent).toContain('Sun');
-        select(widget, '#tm-edit-timezone', 'UTC');
+        // 不再跨日换算：墙钟与星期原样（UTC 23:45 周六）。
+        expect(widget.querySelector('#tm-edit-timezone')?.value).toBe('UTC');
+        expect(widget.querySelector('#tm-cron-hour')?.value).toBe('23');
+        expect(widget.querySelector('#tm-cron-minute')?.value).toBe('45');
+        expect(widget.querySelector('[data-days-toggle="period"]')?.textContent).toContain('Sat');
+        // 改时区：墙钟数字不变，保存仅落库新时区（同一墙钟重新解释）。
+        select(widget, '#tm-edit-timezone', 'Asia/Kathmandu');
         expect(widget.querySelector('#tm-cron-hour')?.value).toBe('23');
         expect(widget.querySelector('#tm-cron-minute')?.value).toBe('45');
         expect(widget.querySelector('[data-days-toggle="period"]')?.textContent).toContain('Sat');
@@ -163,34 +196,37 @@ describe('automation task timezone selection', () => {
         expect(call).toHaveBeenCalledWith(
             'updateGlobalTodo',
             plan.id,
-            expect.objectContaining({ trigger: plan.trigger })
+            expect.objectContaining({ trigger: { ...plan.trigger, timezone: 'Asia/Kathmandu' } })
         );
     });
 
-    test('legacy UTC rules in DST zones show seasonal times and preserve their execution rule', async () => {
+    test('legacy UTC rule in a DST zone keeps its UTC wall clock, and a timezone change saves the new zone without converting', async () => {
         mockSystemTimezone('America/New_York');
         const plan = todo({ type: 'cron', cronExpression: '30 9 * * *' });
         const widget = widgetFor(plan);
         await widget._enterEditMode(plan);
-        expect(widget.querySelector('#tm-cron-preview')?.textContent).toBe(
-            'Daily at 09:30 (UTC) → 04:30, 05:30 (America/New_York)'
-        );
-        expect(widget.querySelector('#tm-frequency-period-trigger')?.disabled).toBe(true);
+        expect(widget.querySelector('#tm-edit-timezone')?.value).toBe('UTC');
+        expect(widget.querySelector('#tm-cron-preview')?.textContent).toBe('Daily at 09:30 (UTC)');
+        expect(widget.querySelector('#tm-frequency-period-trigger')?.disabled).toBe(false);
+        select(widget, '#tm-edit-timezone', 'America/New_York');
+        // 预览与落库一致：墙钟不变，仅时区标签更新。
+        expect(widget.querySelector('#tm-cron-preview')?.textContent).toBe('Daily at 09:30 (America/New_York)');
         await widget._saveEdit(plan);
         expect(call).toHaveBeenCalledWith(
             'updateGlobalTodo',
             plan.id,
-            expect.objectContaining({ trigger: plan.trigger })
+            expect.objectContaining({ trigger: { ...plan.trigger, timezone: 'America/New_York' } })
         );
     });
 
-    test('editing a converted local execution time saves the requested new schedule', async () => {
+    test('editing the UTC wall clock of a legacy rule saves the requested new schedule in the editor timezone', async () => {
         mockSystemTimezone('Asia/Shanghai');
         const plan = todo({ type: 'cron', cronExpression: '30 9 * * *' });
         const widget = widgetFor(plan);
         await widget._enterEditMode(plan);
         select(widget, '#tm-cron-hour', '18');
         await widget._saveEdit(plan);
+        // 未改时区（初始 UTC）：新规则落在 UTC。
         expect(call).toHaveBeenCalledWith(
             'updateGlobalTodo',
             plan.id,
@@ -198,7 +234,7 @@ describe('automation task timezone selection', () => {
                 trigger: {
                     type: 'cron',
                     cronExpression: '* * * * *',
-                    timezone: 'Asia/Shanghai',
+                    timezone: 'UTC',
                     recurrence: { mode: 'daily', time: '18:30' }
                 }
             })

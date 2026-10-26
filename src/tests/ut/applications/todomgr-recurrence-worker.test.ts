@@ -92,6 +92,30 @@ describe('visual todo recurrence worker scheduling', () => {
         expect(todo.last_triggered_at).toBe('2026-10-22T01:00:12.000Z');
     });
 
+    test('a wake in the startup execution minute still dispatches once', async () => {
+        jest.setSystemTime(new Date('2026-10-22T01:00:12Z'));
+        const callApp = jest.spyOn(worker as any, 'callApp').mockImplementation(() => {});
+        const todo = await worker.addGlobalTodo('Current execution', 'Run', 'medium', undefined, trigger());
+
+        await job(todo.id).trigger();
+        await job(todo.id).trigger();
+
+        expect(callApp).toHaveBeenCalledTimes(1);
+        expect(todo.last_triggered_at).toBe('2026-10-22T01:00:12.000Z');
+    });
+
+    test('a clock rewind before startup can still match an unrecorded execution', async () => {
+        const callApp = jest.spyOn(worker as any, 'callApp').mockImplementation(() => {});
+        const todo = await worker.addGlobalTodo('Daily', 'Run', 'medium', undefined, trigger());
+
+        jest.setSystemTime(new Date('2026-10-21T01:00:12Z'));
+        await job(todo.id).trigger();
+        await job(todo.id).trigger();
+
+        expect(callApp).toHaveBeenCalledTimes(1);
+        expect(todo.last_triggered_at).toBe('2026-10-21T01:00:12.000Z');
+    });
+
     test('a recurrence persists unchanged and survives worker reload', async () => {
         const todo = await worker.addGlobalTodo('Daily', 'Run', 'medium', undefined, trigger());
         await worker.finalize();

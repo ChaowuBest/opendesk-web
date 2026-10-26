@@ -1,5 +1,6 @@
-import { beforeAll, beforeEach, describe, expect, jest, test } from '@jest/globals';
+import { afterEach, beforeAll, beforeEach, describe, expect, jest, test } from '@jest/globals';
 import { parseHTML } from 'linkedom';
+import { getNextTodoRecurrenceRuns } from '../../../common/utils/todo-recurrence.js';
 
 describe('automation period and interval picker', () => {
     let Widget: CustomElementConstructor;
@@ -718,6 +719,423 @@ describe('automation period and interval picker', () => {
             time: '10:20',
             months: [3, 9],
             days: [5, 15]
+        });
+    });
+
+    describe('editing interval units', () => {
+        const now = '2026-10-30T00:00:00.000Z';
+        const nextRun = '2026-10-30T01:37:00.000Z';
+        const trigger = {
+            type: 'cron',
+            cronExpression: '* * * * *',
+            timezone: 'UTC',
+            recurrence: {
+                mode: 'interval' as const,
+                intervalValue: 2,
+                intervalUnit: 'hour' as const,
+                anchorAt: '2026-10-19T01:37:00.000Z'
+            }
+        };
+
+        beforeEach(() => {
+            jest.useFakeTimers({ now: new Date(now) });
+        });
+
+        afterEach(() => {
+            jest.useRealTimers();
+        });
+
+        test.each([
+            ['day', 'UTC', '1', '37', 5, 30, 10],
+            ['week', 'UTC', '1', '37', 5, 30, 10],
+            ['month', 'UTC', '1', '37', 5, 30, 10],
+            ['year', 'UTC', '1', '37', 5, 30, 10],
+            ['day', 'America/New_York', '21', '37', 4, 29, 10],
+            ['week', 'America/New_York', '21', '37', 4, 29, 10],
+            ['month', 'America/New_York', '21', '37', 4, 29, 10],
+            ['year', 'America/New_York', '21', '37', 4, 29, 10]
+        ])(
+            'switching an hourly interval to %s in %s retains its next run when saved and reopened',
+            async (unit, timezone, hour, minute, weekday, day, month) => {
+                const { widget, plan } = await editor(trigger);
+                if (timezone !== trigger.timezone) change(widget, '#tm-edit-timezone', String(timezone));
+                change(widget, '#tm-frequency-interval-unit', String(unit));
+
+                expect(widget.querySelector('#tm-cron-hour').value).toBe(hour);
+                expect(widget.querySelector('#tm-cron-minute').value).toBe(minute);
+                const time = `${String(hour).padStart(2, '0')}:${minute}`;
+                const details = {
+                    ...(unit === 'week' ? { weekdays: [weekday] } : {}),
+                    ...(['month', 'year'].includes(String(unit)) ? { days: [day] } : {}),
+                    ...(unit === 'year' ? { months: [month] } : {})
+                };
+
+                if (unit === 'week')
+                    expect(widget.querySelector(`[data-day-scope="period"][data-weekday="${weekday}"]`).checked).toBe(
+                        true
+                    );
+                if (unit === 'month' || unit === 'year')
+                    expect(
+                        widget.querySelector(`#tm-frequency-dates-options [data-calendar-value="${day}"]`).checked
+                    ).toBe(true);
+                if (unit === 'year')
+                    expect(
+                        widget.querySelector(`#tm-frequency-months-options [data-calendar-value="${month}"]`).checked
+                    ).toBe(true);
+
+                await widget._saveEdit(plan);
+                const saved = (call.mock.calls.find((args: any[]) => args[0] === 'updateGlobalTodo')?.[2] as any)
+                    ?.trigger;
+                expect(saved).toEqual({
+                    type: 'cron',
+                    cronExpression: '* * * * *',
+                    timezone,
+                    recurrence: {
+                        mode: 'interval',
+                        intervalValue: 2,
+                        intervalUnit: unit,
+                        anchorAt: nextRun,
+                        time,
+                        ...details
+                    }
+                });
+                expect(getNextTodoRecurrenceRuns(saved.recurrence, saved.timezone, 1)[0]?.toISOString()).toBe(nextRun);
+
+                call.mockClear();
+                const reopened = await editor(saved);
+                expect(reopened.widget.querySelector('#tm-cron-hour').value).toBe(hour);
+                expect(reopened.widget.querySelector('#tm-cron-minute').value).toBe(minute);
+                await reopened.widget._saveEdit(reopened.plan);
+                expect(
+                    (call.mock.calls.find((args: any[]) => args[0] === 'updateGlobalTodo')?.[2] as any)?.trigger
+                ).toEqual(saved);
+            }
+        );
+
+        test('changing an hourly interval to selected Fridays saves the visible clock and has a next run', async () => {
+            const { widget, plan } = await editor(trigger);
+            change(widget, '#tm-frequency-interval-unit', 'week');
+            selectWeekday(widget, 'period', 5, true);
+            await widget._saveEdit(plan);
+            const saved = (call.mock.calls.find((args: any[]) => args[0] === 'updateGlobalTodo')?.[2] as any)?.trigger;
+            expect(saved?.recurrence).toMatchObject({
+                intervalUnit: 'week',
+                anchorAt: nextRun,
+                time: '01:37',
+                weekdays: [5]
+            });
+            expect(getNextTodoRecurrenceRuns(saved.recurrence, saved.timezone, 1)[0]?.toISOString()).toBe(nextRun);
+        });
+
+        test('resolves the original next run in its stored timezone before displaying the selected timezone', async () => {
+            const { widget, plan } = await editor({
+                ...trigger,
+                timezone: 'Asia/Shanghai',
+                recurrence: {
+                    mode: 'interval',
+                    intervalValue: 2,
+                    intervalUnit: 'day',
+                    anchorAt: '2026-10-19T01:00:00.000Z',
+                    time: '09:00'
+                }
+            });
+            change(widget, '#tm-edit-timezone', 'America/New_York');
+            change(widget, '#tm-frequency-interval-unit', 'week');
+            expect(widget.querySelector('#tm-cron-hour').value).toBe('21');
+            expect(widget.querySelector('#tm-cron-minute').value).toBe('0');
+            expect(widget.querySelector('[data-day-scope="period"][data-weekday="5"]').checked).toBe(true);
+            await widget._saveEdit(plan);
+            const saved = (call.mock.calls.find((args: any[]) => args[0] === 'updateGlobalTodo')?.[2] as any)?.trigger;
+            expect(saved.recurrence).toEqual({
+                mode: 'interval',
+                intervalValue: 2,
+                intervalUnit: 'week',
+                anchorAt: '2026-10-31T01:00:00.000Z',
+                time: '21:00',
+                weekdays: [5]
+            });
+            expect(getNextTodoRecurrenceRuns(saved.recurrence, saved.timezone, 1)[0]?.toISOString()).toBe(
+                '2026-10-31T01:00:00.000Z'
+            );
+        });
+
+        test('later unit switches retain the execution clock and calendar values edited in the draft', async () => {
+            const { widget, plan } = await editor(trigger);
+            change(widget, '#tm-frequency-interval-unit', 'month');
+            selectCalendar(widget, 'dates', 30, false);
+            selectCalendar(widget, 'dates', 15);
+            change(widget, '#tm-cron-hour', '10');
+            change(widget, '#tm-cron-minute', '20');
+            change(widget, '#tm-frequency-interval-unit', 'year');
+            expect(widget.querySelector('#tm-frequency-months-options [data-calendar-value="10"]').checked).toBe(true);
+            selectCalendar(widget, 'months', 10, false);
+            selectCalendar(widget, 'months', 3);
+            change(widget, '#tm-frequency-interval-unit', 'hour');
+            change(widget, '#tm-frequency-interval-unit', 'year');
+            expect(widget.querySelector('#tm-cron-hour').value).toBe('10');
+            expect(widget.querySelector('#tm-cron-minute').value).toBe('20');
+            await widget._saveEdit(plan);
+            expect(
+                (call.mock.calls.find((args: any[]) => args[0] === 'updateGlobalTodo')?.[2] as any)?.trigger.recurrence
+            ).toEqual({
+                mode: 'interval',
+                intervalValue: 2,
+                intervalUnit: 'year',
+                anchorAt: nextRun,
+                time: '10:20',
+                days: [15],
+                months: [3]
+            });
+        });
+
+        test('returning to hourly units retains the next execution anchor without calendar-only fields', async () => {
+            const { widget, plan } = await editor(trigger);
+            change(widget, '#tm-frequency-interval-unit', 'week');
+            change(widget, '#tm-frequency-interval-unit', 'hour');
+            await widget._saveEdit(plan);
+            const saved = (call.mock.calls.find((args: any[]) => args[0] === 'updateGlobalTodo')?.[2] as any)?.trigger;
+            expect(saved.recurrence).toEqual({
+                mode: 'interval',
+                intervalValue: 2,
+                intervalUnit: 'hour',
+                anchorAt: nextRun
+            });
+            expect(getNextTodoRecurrenceRuns(saved.recurrence, saved.timezone, 1)[0]?.toISOString()).toBe(nextRun);
+        });
+
+        test.each([
+            ['structured', { intervalValue: 2, intervalUnit: 'hour' }],
+            ['legacy', { intervalHours: 2 }]
+        ] as const)('returning to hourly units retains the original %s weekday filter', async (_kind, interval) => {
+            const { widget, plan } = await editor({
+                ...trigger,
+                recurrence: {
+                    mode: 'interval',
+                    ...interval,
+                    anchorAt: trigger.recurrence.anchorAt,
+                    weekdays: [1, 3]
+                }
+            });
+            change(widget, '#tm-frequency-interval-unit', 'day');
+            change(widget, '#tm-frequency-interval-unit', 'hour');
+            await widget._saveEdit(plan);
+            const saved = (call.mock.calls.find((args: any[]) => args[0] === 'updateGlobalTodo')?.[2] as any)?.trigger;
+            expect(saved.recurrence).toEqual({
+                mode: 'interval',
+                intervalValue: 2,
+                intervalUnit: 'hour',
+                anchorAt: '2026-11-02T01:37:00.000Z',
+                weekdays: [1, 3]
+            });
+        });
+
+        test('an untouched hourly weekday filter follows the next execution date in the selected timezone', async () => {
+            jest.setSystemTime(new Date('2026-10-26T21:38:00.000Z'));
+            const { widget, plan } = await editor({
+                ...trigger,
+                recurrence: {
+                    ...trigger.recurrence,
+                    anchorAt: '2026-10-26T21:37:00.000Z',
+                    weekdays: [1]
+                }
+            });
+            change(widget, '#tm-edit-timezone', 'Asia/Shanghai');
+            change(widget, '#tm-frequency-interval-unit', 'week');
+            expect(widget.querySelector('#tm-cron-hour').value).toBe('7');
+            expect(widget.querySelector('#tm-cron-minute').value).toBe('37');
+            expect(widget.querySelector('[data-day-scope="period"][data-weekday="2"]').checked).toBe(true);
+            expect(widget.querySelector('[data-day-scope="period"][data-weekday="1"]').checked).toBe(false);
+            await widget._saveEdit(plan);
+            const saved = (call.mock.calls.find((args: any[]) => args[0] === 'updateGlobalTodo')?.[2] as any)?.trigger;
+            expect(saved.recurrence).toEqual({
+                mode: 'interval',
+                intervalValue: 2,
+                intervalUnit: 'week',
+                anchorAt: '2026-10-26T23:37:00.000Z',
+                time: '07:37',
+                weekdays: [2]
+            });
+            expect(getNextTodoRecurrenceRuns(saved.recurrence, saved.timezone, 1)[0]?.toISOString()).toBe(
+                '2026-10-26T23:37:00.000Z'
+            );
+        });
+
+        test('changing a calendar interval to hourly units starts at its original next execution', async () => {
+            const { widget, plan } = await editor({
+                ...trigger,
+                recurrence: {
+                    mode: 'interval',
+                    intervalValue: 2,
+                    intervalUnit: 'day',
+                    anchorAt: trigger.recurrence.anchorAt,
+                    time: '09:15'
+                }
+            });
+            change(widget, '#tm-frequency-interval-unit', 'hour');
+            await widget._saveEdit(plan);
+            const saved = (call.mock.calls.find((args: any[]) => args[0] === 'updateGlobalTodo')?.[2] as any)?.trigger;
+            expect(saved.recurrence).toEqual({
+                mode: 'interval',
+                intervalValue: 2,
+                intervalUnit: 'hour',
+                anchorAt: '2026-10-31T09:15:00.000Z'
+            });
+            expect(getNextTodoRecurrenceRuns(saved.recurrence, saved.timezone, 1)[0]?.toISOString()).toBe(
+                '2026-10-31T09:15:00.000Z'
+            );
+        });
+
+        test('retains the second occurrence of a repeated wall time after saving and reopening', async () => {
+            jest.setSystemTime(new Date('2026-11-01T05:45:00.000Z'));
+            const { widget, plan } = await editor({
+                ...trigger,
+                timezone: 'America/New_York',
+                recurrence: {
+                    ...trigger.recurrence,
+                    intervalValue: 1,
+                    anchorAt: '2026-10-31T00:30:00.000Z'
+                }
+            });
+            change(widget, '#tm-frequency-interval-unit', 'day');
+            expect(widget.querySelector('#tm-cron-hour').value).toBe('1');
+            expect(widget.querySelector('#tm-cron-minute').value).toBe('30');
+            await widget._saveEdit(plan);
+            const saved = (call.mock.calls.find((args: any[]) => args[0] === 'updateGlobalTodo')?.[2] as any)?.trigger;
+            expect(saved.recurrence).toEqual({
+                mode: 'interval',
+                intervalValue: 1,
+                intervalUnit: 'day',
+                anchorAt: '2026-11-01T06:30:00.000Z',
+                time: '01:30'
+            });
+            expect(getNextTodoRecurrenceRuns(saved.recurrence, saved.timezone, 1)[0]?.toISOString()).toBe(
+                '2026-11-01T06:30:00.000Z'
+            );
+            call.mockClear();
+            const reopened = await editor(saved);
+            await reopened.widget._saveEdit(reopened.plan);
+            expect(
+                (call.mock.calls.find((args: any[]) => args[0] === 'updateGlobalTodo')?.[2] as any)?.trigger
+            ).toEqual(saved);
+        });
+
+        test('later unit changes keep the chosen anchor after its original next execution has passed', async () => {
+            const { widget, plan } = await editor(trigger);
+            change(widget, '#tm-frequency-interval-unit', 'day');
+            jest.setSystemTime(new Date('2026-10-30T01:40:00.000Z'));
+            change(widget, '#tm-frequency-interval-unit', 'month');
+            await widget._saveEdit(plan);
+            const saved = (call.mock.calls.find((args: any[]) => args[0] === 'updateGlobalTodo')?.[2] as any)?.trigger;
+            expect(saved.recurrence).toEqual({
+                mode: 'interval',
+                intervalValue: 2,
+                intervalUnit: 'month',
+                anchorAt: nextRun,
+                time: '01:37',
+                days: [30]
+            });
+        });
+
+        test('unit changes do not restore calendar values explicitly cleared in the draft', async () => {
+            const { widget, plan } = await editor(trigger);
+            change(widget, '#tm-frequency-interval-unit', 'year');
+            selectCalendar(widget, 'dates', 30, false);
+            selectCalendar(widget, 'months', 10, false);
+            change(widget, '#tm-frequency-interval-unit', 'week');
+            selectWeekday(widget, 'period', 5, false);
+            change(widget, '#tm-frequency-interval-unit', 'hour');
+            change(widget, '#tm-frequency-interval-unit', 'week');
+            expect(widget.querySelectorAll('[data-day-scope="period"][data-weekday]:checked')).toHaveLength(0);
+            change(widget, '#tm-frequency-interval-unit', 'year');
+            expect(widget.querySelectorAll('#tm-frequency-dates-options [data-calendar-value]:checked')).toHaveLength(
+                0
+            );
+            expect(widget.querySelectorAll('#tm-frequency-months-options [data-calendar-value]:checked')).toHaveLength(
+                0
+            );
+            await widget._saveEdit(plan);
+            expect(call.mock.calls.find((args: any[]) => args[0] === 'updateGlobalTodo')).toBeUndefined();
+            expect(widget.querySelector('#tm-frequency-validation-error').hidden).toBe(false);
+        });
+
+        test('unit changes preserve the multiple calendar values from an existing interval', async () => {
+            const { widget, plan } = await editor({
+                ...trigger,
+                recurrence: {
+                    mode: 'interval',
+                    intervalValue: 3,
+                    intervalUnit: 'year',
+                    anchorAt: '2026-01-01T00:00:00.000Z',
+                    time: '12:17',
+                    months: [2, 6],
+                    days: [5, 29]
+                }
+            });
+            change(widget, '#tm-frequency-interval-unit', 'month');
+            change(widget, '#tm-frequency-interval-unit', 'year');
+            await widget._saveEdit(plan);
+            expect(
+                (call.mock.calls.find((args: any[]) => args[0] === 'updateGlobalTodo')?.[2] as any)?.trigger.recurrence
+            ).toEqual({
+                mode: 'interval',
+                intervalValue: 3,
+                intervalUnit: 'year',
+                anchorAt: '2029-02-05T12:17:00.000Z',
+                time: '12:17',
+                months: [2, 6],
+                days: [5, 29]
+            });
+        });
+
+        test('unit changes replace implicit legacy calendar defaults with the next local execution date', async () => {
+            const { widget, plan } = await editor({
+                ...trigger,
+                recurrence: {
+                    mode: 'interval',
+                    intervalValue: 2,
+                    intervalUnit: 'month',
+                    anchorAt: '2026-10-20T01:37:00.000Z'
+                }
+            });
+            change(widget, '#tm-edit-timezone', 'America/New_York');
+            change(widget, '#tm-frequency-interval-unit', 'year');
+            await widget._saveEdit(plan);
+            const saved = (call.mock.calls.find((args: any[]) => args[0] === 'updateGlobalTodo')?.[2] as any)?.trigger;
+            expect(saved.recurrence).toEqual({
+                mode: 'interval',
+                intervalValue: 2,
+                intervalUnit: 'year',
+                anchorAt: '2026-12-20T01:37:00.000Z',
+                time: '20:37',
+                days: [19],
+                months: [12]
+            });
+            expect(getNextTodoRecurrenceRuns(saved.recurrence, saved.timezone, 1)[0]?.toISOString()).toBe(
+                '2026-12-20T01:37:00.000Z'
+            );
+        });
+
+        test('changing units on a new interval leaves its calendar selections empty', async () => {
+            const { widget } = await editor();
+            widget.querySelector('#tm-frequency-interval-tab').click();
+            for (const unit of ['week', 'month', 'year']) {
+                change(widget, '#tm-frequency-interval-unit', unit);
+                expect(widget.querySelectorAll('[data-day-scope="period"][data-weekday]:checked')).toHaveLength(0);
+                expect(
+                    widget.querySelectorAll('#tm-frequency-dates-options [data-calendar-value]:checked')
+                ).toHaveLength(0);
+                expect(
+                    widget.querySelectorAll('#tm-frequency-months-options [data-calendar-value]:checked')
+                ).toHaveLength(0);
+            }
+        });
+
+        test('saving an hourly interval without a unit change keeps its original elapsed anchor', async () => {
+            const { widget, plan } = await editor(trigger);
+            await widget._saveEdit(plan);
+            expect(
+                (call.mock.calls.find((args: any[]) => args[0] === 'updateGlobalTodo')?.[2] as any)?.trigger
+            ).toEqual(trigger);
         });
     });
 

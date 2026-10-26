@@ -98,12 +98,6 @@ function getTriggerScheduleConfig(trigger?: TodoTrigger): string {
     }
 }
 
-type GlobalTodoUpdatePayload = Omit<Partial<GlobalTodo>, 'workspace' | 'deliver'> & {
-    removeTrigger?: boolean;
-    deliver?: Participant | null;
-    workspace?: TodoWorkspaceConfig | null;
-};
-
 export default class TodoMgrWorker extends BaseWorker {
     private globalTodosPath!: string;
     private globalTodos: GlobalTodo[] = [];
@@ -308,8 +302,8 @@ export default class TodoMgrWorker extends BaseWorker {
         const oldScheduleConfig = getTriggerScheduleConfig(oldTrigger);
         const newScheduleConfig = getTriggerScheduleConfig(newTrigger);
         const triggerScheduleChanged = oldType !== newType || oldScheduleConfig !== newScheduleConfig;
-        const enabledChanged =
-            'enabled' in todoUpdates && (oldEnabled !== false) !== (this.globalTodos[idx].enabled !== false);
+        // enabled 恒为 boolean，`(x !== false)` 即 `x`，等价于新旧值不相等。
+        const enabledChanged = 'enabled' in todoUpdates && oldEnabled !== this.globalTodos[idx].enabled;
         if (triggerUpdated) {
             if (triggerScheduleChanged) {
                 logger.info(
@@ -441,8 +435,9 @@ export default class TodoMgrWorker extends BaseWorker {
                 return;
             }
             // Retain the intended run across delayed wakes; a resumed job coalesces missed runs into one.
+            let recurrenceSearchAfter = new Date();
             let nextRecurrenceRun = recurrence
-                ? getNextTodoRecurrenceRuns(recurrence, todo.trigger.timezone ?? 'UTC', 1)[0]
+                ? getNextTodoRecurrenceRuns(recurrence, todo.trigger.timezone ?? 'UTC', 1, recurrenceSearchAfter)[0]
                 : undefined;
             // Calendar rules and elapsed intervals share a UTC minute wake;
             // selected timezone and cadence are checked before any state write.
@@ -466,6 +461,7 @@ export default class TodoMgrWorker extends BaseWorker {
                     const now = new Date();
                     if (currentTodo.trigger?.type !== 'cron') return;
                     if (currentTodo.trigger.recurrence !== undefined) {
+                        const currentMinute = Math.floor(now.getTime() / 60_000) * 60_000;
                         const due = nextRecurrenceRun !== undefined && nextRecurrenceRun.getTime() <= now.getTime();
                         if (due) {
                             nextRecurrenceRun = getNextTodoRecurrenceRuns(
@@ -474,7 +470,11 @@ export default class TodoMgrWorker extends BaseWorker {
                                 1,
                                 now
                             )[0];
+                            recurrenceSearchAfter = now;
                         }
+                        // The cached next run rules out later minutes before it. Keep
+                        // matching in the search minute and after backward clock changes.
+                        if (!due && nextRecurrenceRun && currentMinute > recurrenceSearchAfter.getTime()) return;
                         if (
                             !due &&
                             !matchesTodoRecurrence(
@@ -484,7 +484,6 @@ export default class TodoMgrWorker extends BaseWorker {
                             )
                         )
                             return;
-                        const currentMinute = Math.floor(now.getTime() / 60_000) * 60_000;
                         // A duplicate wake or a clock rewind must not replay a saved run.
                         if (currentTodo.last_triggered_at && Date.parse(currentTodo.last_triggered_at) >= currentMinute)
                             return;

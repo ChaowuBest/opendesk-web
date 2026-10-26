@@ -21,7 +21,7 @@ import {
 import { describeLegacyRecurrence, describeTodoRecurrence } from '../../../../common/utils/recurrence-description.js';
 import { getRecurrenceValidationIssue, type RecurrenceValidationField } from '../recurrence-validation.js';
 import { fixedLayerOrigin, visibleViewportRect } from '../../../../renderer/utils/window-frame.js';
-import { getLegacyCronDisplay } from './legacy-timezone.js';
+import { parseLegacyCronRecurrence } from '../../../../common/utils/legacy-cron.js';
 
 type Translate = (key: string, params?: Record<string, string | number>) => string;
 type Period = 'once' | 'daily' | 'weekly' | 'biweekly' | 'monthly' | 'yearly' | 'legacy';
@@ -31,7 +31,7 @@ const PERIOD_SUBMENU_IDS: Partial<Record<Period, string>> = {
     monthly: 'tm-frequency-dates-options',
     yearly: 'tm-frequency-months-options'
 };
-type DayScope = 'period' | 'interval';
+type ScheduleTab = 'period' | 'interval';
 type CalendarKind = 'dates' | 'months';
 interface StoredTrigger {
     type: string;
@@ -78,44 +78,21 @@ export const TIME_SCHEDULE_CSS = `
 .tm-frequency-anchor { width:100%; box-sizing:border-box; padding:8px; border:1px solid var(--tm-border); border-radius:8px; color:var(--tm-text); background:var(--tm-input-bg); font:inherit; }
 `;
 
-function fromLegacy(expression: string): TodoRecurrence | undefined {
-    const fields = expression.trim().split(/\s+/);
-    if (fields.length !== 5) return;
-    const [minute, hour, day, month, weekday] = fields;
-    if (!/^\d+$/.test(minute) || !/^\d+$/.test(hour) || Number(minute) > 59 || Number(hour) > 23) return;
-    const time = `${hour.padStart(2, '0')}:${minute.padStart(2, '0')}`;
-    if (day !== '*' && weekday !== '*') return;
-    if (month !== '*') {
-        if (/^\d+$/.test(month) && /^\d+$/.test(day) && weekday === '*')
-            return { mode: 'yearly', month: Number(month), day: Number(day), time };
-        return;
-    }
-    if (weekday !== '*') {
-        if (weekday === '1-5') return { mode: 'weekly', weekdays: [1, 2, 3, 4, 5], time };
-        if (!/^[0-7](,[0-7])*$/.test(weekday)) return;
-        return {
-            mode: 'weekly',
-            weekdays: [...new Set(weekday.split(',').map((value) => Number(value) % 7))].sort(),
-            time
-        };
-    }
-    if (day !== '*') return /^\d+$/.test(day) ? { mode: 'monthly', day: Number(day), time } : undefined;
-    return { mode: 'daily', time };
-}
-
 export class TimeSchedulePicker {
     private root!: HTMLElement;
-    private tab: DayScope = 'period';
+    private tab: ScheduleTab = 'period';
     private period: Period;
-    private days: Record<DayScope, Set<number>>;
+    private weekdays: Set<number>;
     private calendar: Record<CalendarKind, Set<number>>;
     private anchorAt: string;
     private onceRendered = false;
     private signature = '';
     private originalRecurrence?: TodoRecurrence;
     private executionTimeEdited = false;
-    private calendarSelectionEdited = false;
+    private calendarSelectionsEdited = new Set<CalendarKind>();
     private weekdaysEdited = false;
+    private intervalUnitChanged = false;
+    private nextIntervalRun?: Date;
     private menuTrigger: HTMLElement | null = null;
     private periodSubmenuTrigger: HTMLElement | null = null;
     private periodSubmenu: HTMLElement | null = null;
@@ -143,10 +120,12 @@ export class TimeSchedulePicker {
         private original?: StoredTrigger,
         initialPeriod: 'once' | 'daily' = 'once'
     ) {
-        const legacyUtc = original?.type === 'cron' && original.timezone === undefined;
-        const recurrence = legacyUtc
-            ? getLegacyCronDisplay(original, this.timezone(), this.t).recurrence
-            : (original?.recurrence ?? (original?.cronExpression ? fromLegacy(original.cronExpression) : undefined));
+        // 统一解析规则：新数据用存储的 recurrence，旧数据从 cron 表达式解析。
+        // 时区不再参与换算——旧数据编辑页时区下拉初始为 UTC（见 entry.ts），
+        // 墙钟字段原样展示，改时区即把同一墙钟重新解释到新时区。
+        const recurrence =
+            original?.recurrence ??
+            (original?.cronExpression ? parseLegacyCronRecurrence(original.cronExpression) : undefined);
         this.originalRecurrence = recurrence;
         this.period =
             original?.type === 'scheduled'
@@ -162,19 +141,16 @@ export class TimeSchedulePicker {
         const intervalDate = calendarInterval
             ? new Date(`${formatDatetimeLocal(recurrence.anchorAt!, this.timezone()).slice(0, 10)}T00:00:00Z`)
             : undefined;
-        this.days = {
-            period: new Set(
-                recurrence?.mode === 'weekly' || recurrence?.mode === 'biweekly'
-                    ? recurrence.weekdays
-                    : recurrence?.mode === 'interval'
-                      ? (recurrence.weekdays ??
-                        (calendarInterval && recurrence.intervalUnit === 'week' && oldCalendarInterval
-                            ? [intervalDate!.getUTCDay()]
-                            : []))
-                      : []
-            ),
-            interval: new Set(recurrence?.mode === 'interval' ? recurrence.weekdays : [])
-        };
+        this.weekdays = new Set(
+            recurrence?.mode === 'weekly' || recurrence?.mode === 'biweekly'
+                ? recurrence.weekdays
+                : recurrence?.mode === 'interval'
+                  ? (recurrence.weekdays ??
+                    (calendarInterval && recurrence.intervalUnit === 'week' && oldCalendarInterval
+                        ? [intervalDate!.getUTCDay()]
+                        : []))
+                  : []
+        );
         this.calendar = {
             dates: new Set(
                 recurrence?.mode === 'monthly' || recurrence?.mode === 'yearly'
@@ -272,7 +248,7 @@ export class TimeSchedulePicker {
             <div class="tm-frequency-error" id="tm-frequency-validation-error" role="alert" hidden></div>
         </div>`;
         this.root = this.container.querySelector('.tm-time-schedule')!;
-        this.renderDays('period');
+        this.renderDays();
         this.renderCalendar('dates');
         this.renderCalendar('months');
         this.root.addEventListener('click', (event) => this.onClick(event));
@@ -338,12 +314,11 @@ export class TimeSchedulePicker {
         return `<button type="button" class="tm-frequency-option tm-frequency-submenu-back" id="tm-frequency-${kind}-back" data-period-back hidden><span aria-hidden="true">‹</span><span data-back-label>${escapeHtml(this.t('renderer.todo.frequency.back'))}</span></button>`;
     }
 
-    private renderDays(scope: DayScope): void {
-        const host = this.root.querySelector<HTMLElement>(`[data-days-host="${scope}"]`)!;
-        const triggerId = `tm-frequency-${scope}-days`;
-        host.innerHTML = `<button type="button" class="tm-frequency-days" id="${triggerId}" data-days-toggle="${scope}" data-selection-label="${escapeHtml(this.t('renderer.todo.frequency.weekdays'))}" aria-haspopup="dialog" aria-expanded="false" aria-controls="tm-frequency-${scope}-day-options"><span class="tm-frequency-selected"></span><span class="tm-frequency-arrow" aria-hidden="true">⌄</span></button>
-            <div class="tm-frequency-menu" id="tm-frequency-${scope}-day-options" role="dialog" aria-label="${escapeHtml(this.t('renderer.todo.frequency.weekdays'))}" hidden>${scope === 'period' ? this.renderPeriodBack('days') : ''}<label class="tm-frequency-day-option tm-frequency-select-all"><input type="checkbox" data-select-all="${scope}">${escapeHtml(this.t('renderer.todo.frequency.selectAll'))}</label>${[1, 2, 3, 4, 5, 6, 0].map((day) => `<label class="tm-frequency-day-option"><input type="checkbox" data-day-scope="${scope}" data-weekday="${day}">${escapeHtml(this.dayName(day))}</label>`).join('')}</div>`;
-        this.syncDays(scope);
+    private renderDays(): void {
+        const host = this.root.querySelector<HTMLElement>('[data-days-host="period"]')!;
+        host.innerHTML = `<button type="button" class="tm-frequency-days" id="tm-frequency-period-days" data-days-toggle="period" data-selection-label="${escapeHtml(this.t('renderer.todo.frequency.weekdays'))}" aria-haspopup="dialog" aria-expanded="false" aria-controls="tm-frequency-period-day-options"><span class="tm-frequency-selected"></span><span class="tm-frequency-arrow" aria-hidden="true">⌄</span></button>
+            <div class="tm-frequency-menu" id="tm-frequency-period-day-options" role="dialog" aria-label="${escapeHtml(this.t('renderer.todo.frequency.weekdays'))}" hidden>${this.renderPeriodBack('days')}<label class="tm-frequency-day-option tm-frequency-select-all"><input type="checkbox" data-select-all="period">${escapeHtml(this.t('renderer.todo.frequency.selectAll'))}</label>${[1, 2, 3, 4, 5, 6, 0].map((day) => `<label class="tm-frequency-day-option"><input type="checkbox" data-day-scope="period" data-weekday="${day}">${escapeHtml(this.dayName(day))}</label>`).join('')}</div>`;
+        this.syncDays();
     }
 
     private calendarLabel(kind: CalendarKind, value: number): string {
@@ -399,11 +374,11 @@ export class TimeSchedulePicker {
         all.setAttribute('aria-checked', all.indeterminate ? 'mixed' : String(all.checked));
     }
 
-    private syncDays(scope: DayScope): void {
+    private syncDays(): void {
         this.syncSelection(
-            this.root.querySelector(`[data-days-toggle="${scope}"]`)!,
-            this.root.querySelector(`#tm-frequency-${scope}-day-options`)!,
-            this.days[scope],
+            this.root.querySelector('[data-days-toggle="period"]')!,
+            this.root.querySelector('#tm-frequency-period-day-options')!,
+            this.weekdays,
             'data-weekday',
             '[data-select-all]',
             this.t('renderer.todo.frequency.selectDays')
@@ -618,11 +593,12 @@ export class TimeSchedulePicker {
         if (input.id === 'tm-cron-hour' || input.id === 'tm-cron-minute') this.executionTimeEdited = true;
         if (input.id === 'tm-frequency-interval-unit') {
             this.closeMenus();
+            this.prefillIntervalUnitChange();
             this.updateVisibility();
         }
         if (input.dataset.calendarValue !== undefined || input.dataset.calendarSelectAll) {
-            this.calendarSelectionEdited = true;
             const kind = (input.dataset.calendarKind ?? input.dataset.calendarSelectAll) as CalendarKind;
+            this.calendarSelectionsEdited.add(kind);
             if (input.dataset.calendarSelectAll) {
                 this.calendar[kind] = new Set(
                     input.checked ? Array.from({ length: kind === 'months' ? 12 : 31 }, (_, index) => index + 1) : []
@@ -639,17 +615,73 @@ export class TimeSchedulePicker {
             }
         }
         if (input.dataset.weekday !== undefined || input.dataset.selectAll) {
-            if ((input.dataset.dayScope ?? input.dataset.selectAll) === 'period') this.weekdaysEdited = true;
-            const scope = (input.dataset.dayScope ?? input.dataset.selectAll) as DayScope;
-            if (input.dataset.selectAll) this.days[scope] = new Set(input.checked ? [0, 1, 2, 3, 4, 5, 6] : []);
+            this.weekdaysEdited = true;
+            if (input.dataset.selectAll) this.weekdays = new Set(input.checked ? [0, 1, 2, 3, 4, 5, 6] : []);
             else {
                 const day = Number(input.dataset.weekday);
-                if (input.checked) this.days[scope].add(day);
-                else this.days[scope].delete(day);
+                if (input.checked) this.weekdays.add(day);
+                else this.weekdays.delete(day);
             }
-            this.syncDays(scope);
+            this.syncDays();
         }
         this.refreshPreview();
+    }
+
+    private prefillIntervalUnitChange(): void {
+        const original = this.original?.recurrence;
+        const unit = this.value('#tm-frequency-interval-unit');
+        if (original?.mode !== 'interval') return;
+        if (!this.intervalUnitChanged) {
+            if (unit === (original.intervalUnit ?? 'hour')) return;
+            // Use one original occurrence for the edit session so switching units
+            // repeatedly cannot advance the new schedule's starting point.
+            this.nextIntervalRun = getNextTodoRecurrenceRuns(original, this.original?.timezone ?? 'UTC', 1)[0];
+        }
+        this.intervalUnitChanged = true;
+        if (!this.nextIntervalRun) return;
+
+        this.anchorAt = this.nextIntervalRun.toISOString();
+        const timezone = this.timezone();
+        const timezoneChanged = timezone !== (this.original?.timezone ?? 'UTC');
+        const local = formatDatetimeLocal(this.anchorAt, timezone);
+        const date = new Date(`${local.slice(0, 10)}T00:00:00Z`);
+        if (!this.executionTimeEdited) {
+            const [hour, minute] = local.slice(11, 16).split(':').map(Number);
+            for (const [selector, selected] of [
+                ['#tm-cron-hour', hour],
+                ['#tm-cron-minute', minute]
+            ] as const) {
+                this.root.querySelector<HTMLOptionElement>(`${selector} option[value="${selected}"]`)!.selected = true;
+            }
+        }
+        const hourlyWeekdayFilter = unit === 'hour' && original.time === undefined && original.weekdays !== undefined;
+        if (
+            (unit === 'week' || hourlyWeekdayFilter) &&
+            !this.weekdaysEdited &&
+            (this.weekdays.size === 0 ||
+                original.weekdays === undefined ||
+                (timezoneChanged && !this.weekdays.has(date.getUTCDay())))
+        ) {
+            this.weekdays = new Set([date.getUTCDay()]);
+            this.syncDays();
+        }
+        for (const [kind, selected] of [
+            ['dates', date.getUTCDate()],
+            ['months', date.getUTCMonth() + 1]
+        ] as const) {
+            const visible = kind === 'dates' ? unit === 'month' || unit === 'year' : unit === 'year';
+            const originalSelection = kind === 'dates' ? original.days : original.months;
+            if (
+                visible &&
+                !this.calendarSelectionsEdited.has(kind) &&
+                (this.calendar[kind].size === 0 ||
+                    originalSelection === undefined ||
+                    (timezoneChanged && !this.calendar[kind].has(selected)))
+            ) {
+                this.calendar[kind] = new Set([selected]);
+                this.syncCalendar(kind);
+            }
+        }
     }
 
     private updateVisibility(): void {
@@ -705,6 +737,7 @@ export class TimeSchedulePicker {
             const value = Number(this.value('#tm-frequency-hours'));
             const unit = this.value('#tm-frequency-interval-unit') as TodoRecurrence['intervalUnit'];
             const legacy =
+                !this.intervalUnitChanged &&
                 this.originalRecurrence?.mode === 'interval' &&
                 this.originalRecurrence.intervalUnit === undefined &&
                 this.originalRecurrence.intervalHours !== undefined &&
@@ -716,7 +749,7 @@ export class TimeSchedulePicker {
                     mode: 'interval',
                     intervalHours: value,
                     anchorAt: this.anchorAt,
-                    weekdays: [...this.days.interval].sort()
+                    weekdays: [...new Set(this.originalRecurrence?.weekdays)].sort()
                 };
 
             const originalElapsedInterval =
@@ -724,7 +757,11 @@ export class TimeSchedulePicker {
                 this.originalRecurrence.intervalUnit !== undefined &&
                 this.originalRecurrence.time === undefined;
             const preserveElapsedInterval =
-                originalElapsedInterval && !this.executionTimeEdited && !this.calendarSelectionEdited;
+                !this.intervalUnitChanged &&
+                originalElapsedInterval &&
+                unit === this.originalRecurrence?.intervalUnit &&
+                !this.executionTimeEdited &&
+                this.calendarSelectionsEdited.size === 0;
             const recurrence: TodoRecurrence = {
                 mode: 'interval',
                 intervalValue: value,
@@ -735,9 +772,15 @@ export class TimeSchedulePicker {
 
             if (preserveElapsedInterval) {
                 if (this.originalRecurrence?.weekdays !== undefined || this.weekdaysEdited)
-                    recurrence.weekdays = [...this.days.period].sort();
-            } else if (unit === 'week') {
-                recurrence.weekdays = [...this.days.period].sort();
+                    recurrence.weekdays = [...this.weekdays].sort();
+            } else if (
+                unit === 'week' ||
+                (unit === 'hour' &&
+                    this.originalRecurrence?.mode === 'interval' &&
+                    this.originalRecurrence.time === undefined &&
+                    this.originalRecurrence.weekdays !== undefined)
+            ) {
+                recurrence.weekdays = [...this.weekdays].sort();
             }
             if (!preserveElapsedInterval && (unit === 'month' || unit === 'year'))
                 recurrence.days = [...this.calendar.dates].sort((a, b) => a - b);
@@ -751,7 +794,7 @@ export class TimeSchedulePicker {
             return {
                 mode: this.period,
                 time,
-                weekdays: [...this.days.period].sort(),
+                weekdays: [...this.weekdays].sort(),
                 ...(this.period === 'biweekly' ? { anchorDate: this.value('#tm-frequency-anchor-week') } : {})
             };
         if (this.period === 'monthly' || this.period === 'yearly')
@@ -833,8 +876,14 @@ export class TimeSchedulePicker {
 
     getTrigger(): StoredTrigger {
         this.clearValidationError();
-        // A converted display must not replace the legacy UTC execution rule on an unrelated save.
-        if (this.original?.type === 'cron' && this.original.timezone === undefined && this.isUnchanged())
+        // 规则未改且时区相对数据基准（未存时区的旧 cron 按 UTC）未变时，
+        // 保留原 trigger 原样——例如只改标题的保存不应改写旧 UTC 规则。
+        // 时区被改动时则落入下方分支：保留规则结构、仅落库新时区（墙钟重新解释）。
+        if (
+            this.original?.type === 'cron' &&
+            this.isUnchanged() &&
+            this.timezone() === (this.original?.timezone ?? 'UTC')
+        )
             return { ...this.original };
         const originalRule = this.original?.recurrence;
         const oldCalendarTimezoneChanged =
@@ -873,10 +922,8 @@ export class TimeSchedulePicker {
         preview.hidden = this.isOnce();
         if (this.isOnce()) return;
         try {
-            if (this.original?.type === 'cron' && this.original.timezone === undefined && this.isUnchanged()) {
-                preview.textContent = getLegacyCronDisplay(this.original, this.timezone(), this.t).summary;
-                return;
-            }
+            // 统一用当前规则 + 当前时区描述；旧 cron 规则解析出的墙钟原样展示，
+            // 改时区后预览与新时区落库保持一致。
             const recurrence = this.getRecurrence();
             if (recurrence) {
                 if (getTodoRecurrenceError(recurrence)) throw new Error('invalid');

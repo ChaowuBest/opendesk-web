@@ -9,7 +9,7 @@
  * See the Mulan PSL v2 for more details.
  */
 
-import { datetimeLocalToISOString } from './timezone.js';
+import { createWallClockFormatter, datetimeLocalToISOString } from './timezone.js';
 
 export interface TodoRecurrence {
     mode: 'daily' | 'weekly' | 'biweekly' | 'monthly' | 'yearly' | 'interval';
@@ -34,7 +34,6 @@ const MINUTE = 60_000;
 const MODES = ['daily', 'weekly', 'biweekly', 'monthly', 'yearly', 'interval'];
 const INTERVAL_UNITS: IntervalUnit[] = ['hour', 'day', 'week', 'month', 'year'];
 const TIME = /^(?:[01]\d|2[0-3]):[0-5]\d$/;
-const formatters = new Map<string, Intl.DateTimeFormat>();
 
 function isDate(value: unknown): value is string {
     if (typeof value !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(value)) return false;
@@ -149,23 +148,7 @@ export function getTodoRecurrenceError(value: unknown): string | null {
 }
 
 function formatter(timezone: string): Intl.DateTimeFormat {
-    let result = formatters.get(timezone);
-    if (!result) {
-        result = new Intl.DateTimeFormat('en-US', {
-            timeZone: timezone,
-            calendar: 'gregory',
-            numberingSystem: 'latn',
-            year: 'numeric',
-            month: '2-digit',
-            day: '2-digit',
-            hour: '2-digit',
-            minute: '2-digit',
-            hourCycle: 'h23'
-        });
-        if (formatters.size >= 16) formatters.delete(formatters.keys().next().value!);
-        formatters.set(timezone, result);
-    }
-    return result;
+    return createWallClockFormatter(timezone);
 }
 
 interface LocalParts {
@@ -313,6 +296,12 @@ function calendarIntervalDays(rule: TodoRecurrence, anchor: LocalParts, index: n
     return candidates;
 }
 
+function calendarIntervalRun(rule: TodoRecurrence, anchor: LocalParts, date: string, timezone: string): Date {
+    // A converted schedule can start in the second occurrence of a repeated wall time.
+    if (date === anchor.date && rule.time === anchor.time) return new Date(rule.anchorAt!);
+    return new Date(datetimeLocalToISOString(`${date}T${rule.time}`, timezone));
+}
+
 export function matchesTodoRecurrence(rule: TodoRecurrence, date: Date, timezone: string): boolean {
     if (getTodoRecurrenceError(rule) || !Number.isFinite(date.getTime())) return false;
     try {
@@ -332,7 +321,7 @@ export function matchesTodoRecurrence(rule: TodoRecurrence, date: Date, timezone
             if (minute < Date.parse(rule.anchorAt!)) return false;
             if (rule.time !== undefined) {
                 if (parts.time !== rule.time || !calendarIntervalDayMatches(rule, anchor, parts)) return false;
-                return Date.parse(datetimeLocalToISOString(`${parts.date}T${rule.time}`, timezone)) === minute;
+                return calendarIntervalRun(rule, anchor, parts.date, timezone).getTime() === minute;
             }
             if (!intervalWeekdayMatches(rule, parts.day)) return false;
             if (unit === 'hour') {
@@ -385,11 +374,11 @@ export function getNextTodoRecurrenceRuns(
                     for (const candidateDay of calendarIntervalDays(rule, anchorLocal, index)) {
                         if (runs.length >= count) break;
                         try {
-                            const candidate = new Date(
-                                datetimeLocalToISOString(
-                                    `${candidateDay.toISOString().slice(0, 10)}T${rule.time}`,
-                                    timezone
-                                )
+                            const candidate = calendarIntervalRun(
+                                rule,
+                                anchorLocal,
+                                candidateDay.toISOString().slice(0, 10),
+                                timezone
                             );
                             if (candidate.getTime() >= anchor && candidate.getTime() > after.getTime())
                                 runs.push(candidate);
