@@ -12,6 +12,7 @@
 
 #include <fcntl.h>
 #include <unistd.h>
+#include <sys/mman.h>
 
 /* macOS 没有 AT_FDCWD 宏的稳定暴露，按 POSIX 定义（-100） */
 #ifndef AT_FDCWD
@@ -85,4 +86,19 @@ int dbox_raw_fcntl(int fd, int cmd, long arg)
 int dbox_raw_poll(struct pollfd *fds, unsigned long nfds, int timeout_ms)
 {
     return poll(fds, (nfds_t)nfds, timeout_ms);
+}
+
+/* -- memory map（shm attach 专用） ------------------------------------------ */
+
+/* boxdylib 未 interpose mmap（2dd6618b 的 BUG-021 重入是 Linux LD_PRELOAD
+ * 场景特有），libc mmap 在 ctor 期间同样安全。当前 darwin 侧无 shm attach
+ * 调用方（dbox_shared_attach 仅 preload.c 使用），此实现保证链接完备性。 */
+void *dbox_raw_mmap_rw_shared(int fd, size_t len)
+{
+    return mmap(NULL, len, PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0);
+}
+
+int dbox_raw_munmap(void *addr, size_t len)
+{
+    return munmap(addr, len);
 }
