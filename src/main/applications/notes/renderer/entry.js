@@ -684,6 +684,17 @@ class NotesEntryWidget extends AgentOperableHTMLElement {
     }
 
     disconnectedCallback() {
+        // 事件订阅先行退订：后面的设置退订、tinymce 移除、右键菜单清理都可能抛错，
+        // 一旦异常就会跳过退订，把监听留在共享通道上
+        if (this._onNotesChanged) {
+            window.applicationAPI.unsubscribe('notesChanged');
+        }
+        if (this._onTagsChanged) {
+            window.applicationAPI.unsubscribe('tagsChanged');
+        }
+        if (this._onDeletedNotesChanged) {
+            window.applicationAPI.unsubscribe('deletedNotesChanged');
+        }
         if (this._settingUnsubscribe) {
             this._settingUnsubscribe();
             this._settingUnsubscribe = null;
@@ -706,15 +717,6 @@ class NotesEntryWidget extends AgentOperableHTMLElement {
         this._dismissEditorContextMenu();
         this._dismissNoteContextMenu();
         if (window.tinymce) tinymce.remove('#notes-editor');
-        if (this._onNotesChanged) {
-            window.applicationAPI.unsubscribe('notesChanged', this._onNotesChanged);
-        }
-        if (this._onTagsChanged) {
-            window.applicationAPI.unsubscribe('tagsChanged', this._onTagsChanged);
-        }
-        if (this._onDeletedNotesChanged) {
-            window.applicationAPI.unsubscribe('deletedNotesChanged', this._onDeletedNotesChanged);
-        }
     }
 
     _injectStyles() {
@@ -840,8 +842,8 @@ class NotesEntryWidget extends AgentOperableHTMLElement {
     }
 
     _bindCore() {
+        // _bindCoreDom 末尾已调用 _subscribeEvents，这里不再重复订阅
         this._bindCoreDom();
-        this._subscribeEvents();
     }
 
     _bindCoreDom() {
@@ -872,6 +874,11 @@ class NotesEntryWidget extends AgentOperableHTMLElement {
     }
 
     _subscribeEvents() {
+        // 重新订阅前先清掉本 frame 的旧订阅：_bindCoreDom 会在重渲染/locale 切换时被重复调用，
+        // 不清旧订阅会让同一事件堆积多个 handler（刷新回调被执行多次）
+        window.applicationAPI.unsubscribe('notesChanged');
+        window.applicationAPI.unsubscribe('tagsChanged');
+        window.applicationAPI.unsubscribe('deletedNotesChanged');
         this._onNotesChanged = () => this._refreshNotes();
         this._onTagsChanged = () => this._refreshTags();
         this._onDeletedNotesChanged = () => this._refreshDeletedNotes();

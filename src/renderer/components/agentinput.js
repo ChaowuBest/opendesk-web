@@ -12,6 +12,7 @@
 import { REASONING_EFFORT_UI_OPTIONS as REASONING_EFFORT_OPTIONS } from '../../common/reasoning-effort.ts';
 import { ENTER_KEY_ICON_SVG, SHIFT_KEY_ICON_SVG, CTRL_KEY_ICON_SVG } from '../../common/utils/keys.ts';
 import { showImageLightbox } from './imageLightbox.js';
+import { subscribePluginSlashCommands } from '../pluginCommandsSubscription.js';
 import { showConfirmModal } from './confirmModal.ts';
 import { escapeHtml } from '../../common/utils/escape.js';
 import { hasPowerPointClipboardText } from '../../common/clipboard.js';
@@ -429,7 +430,7 @@ class AgentInput extends HTMLElement {
             if (this.isConnected) this.render();
         });
 
-        window.modeAPI?.onTaskModeChanged?.((taskId, modeId) => {
+        this._unsubTaskModeChanged = window.modeAPI?.onTaskModeChanged?.((taskId, modeId) => {
             if (this.taskId && this.taskId === taskId && this.selectedModeId !== modeId) {
                 this.selectedModeId = modeId;
                 this._updateModeButton();
@@ -460,20 +461,16 @@ class AgentInput extends HTMLElement {
         this._unsubExecutionNodesChanged = window.nodeAPI?.onExecutionNodesChanged?.(() => {
             this.loadExecutionNodes().then(() => this.render());
         });
-        void window.applicationRegistryAPI
-            ?.ensureFullyLoaded?.()
-            .then(() =>
-                window.applicationRegistryAPI?.subscribeEvent?.(
-                    'pluginmgr',
-                    'pluginsChanged',
-                    () => void refreshPluginSlashCommands()
-                )
-            )
-            .then((unsubscribe) => {
-                if (this.isConnected) this._unsubPluginCommandsChanged = unsubscribe;
-                else unsubscribe?.();
-            })
-            .catch((error) => console.warn('Failed to subscribe plugin commands:', error));
+        // 插件命令订阅要跨两跳 IPC 才拿到句柄：交由 subscribePluginSlashCommands 按「代」判定，
+        // 元素在完成前断开或重连时，过期订阅会被自动退订
+        subscribePluginSlashCommands(
+            this,
+            () => void refreshPluginSlashCommands(),
+            (unsubscribe) => {
+                this._unsubPluginCommandsChanged = unsubscribe;
+            },
+            (error) => console.warn('Failed to subscribe plugin commands:', error)
+        );
     }
 
     async loadSettings() {
@@ -916,6 +913,12 @@ class AgentInput extends HTMLElement {
     }
 
     disconnectedCallback() {
+        // 先退订事件订阅：后面的草稿冲刷（getCurrentText/_saveDraftNow）可能抛错，
+        // 不能让异常把订阅句柄留在通道上（多实例共享 mode:taskModeChanged 等通道）
+        this._unsubSettingChanged?.();
+        this._unsubTaskModeChanged?.();
+        this._unsubExecutionNodesChanged?.();
+        this._unsubPluginCommandsChanged?.();
         if (!this.taskId) {
             _homeDraft = {
                 text: this.getCurrentText(),
@@ -940,9 +943,6 @@ class AgentInput extends HTMLElement {
         }
         this._hideSkillPreviewCard();
         this._hideAutocompletePreviewCard();
-        this._unsubSettingChanged?.();
-        this._unsubExecutionNodesChanged?.();
-        this._unsubPluginCommandsChanged?.();
         this.removeEventListener('pointerdown', this._handleSpeechButtonPointerDown, true);
         this.stopSpeechPreviewPolling();
         this.speechSession?.release().catch(() => {});
@@ -4067,8 +4067,10 @@ class MessageQueuePanel extends HTMLElement {
     }
 
     disconnectedCallback() {
-        this._resetDrag();
+        // 先退订，避免 _resetDrag 抛错时把 setting 订阅留在共享通道上
         this._unsubSettingChanged?.();
+        this._unsubSettingChanged = null;
+        this._resetDrag();
     }
 
     t(key, params) {

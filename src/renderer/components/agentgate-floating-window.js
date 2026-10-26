@@ -878,6 +878,8 @@ class AgentGateFloatingWindow extends HTMLElement {
 
     /** 尝试初始化，如果 agentGateFloatingAPI 尚未就绪则延迟重试 */
     _tryInit(retries = 0) {
+        // 元素已从 DOM 移除时不再重试：否则会注册一个无人退订的事件订阅
+        if (!this.isConnected) return;
         // 初始化 locale（从 setting 同步）
         if (!_floatingLocale) resolveFloatingLocale();
 
@@ -928,7 +930,12 @@ class AgentGateFloatingWindow extends HTMLElement {
                 this._triggerAutoExpand();
             }
         };
-        api.onEventsUpdate(this._eventsCallback);
+        // 重复初始化（元素重新连接）时先退订上一次订阅，避免同通道堆叠 handler
+        if (this._eventsUnsubscribe) {
+            this._eventsUnsubscribe();
+            this._eventsUnsubscribe = null;
+        }
+        this._eventsUnsubscribe = api.onEventsUpdate(this._eventsCallback) ?? null;
 
         // Load initial config
         const registry = window.applicationRegistryAPI;
@@ -1065,8 +1072,14 @@ class AgentGateFloatingWindow extends HTMLElement {
         if (this._themeObserver) {
             this._themeObserver.disconnect();
         }
-        if (window.agentGateFloatingAPI) {
-            window.agentGateFloatingAPI.removeEventsUpdateListener();
+        // 只退订本浮窗自己的订阅，不影响同通道上的其他 consumer
+        if (this._eventsUnsubscribe) {
+            try {
+                this._eventsUnsubscribe();
+            } catch {
+                /* ignore */
+            }
+            this._eventsUnsubscribe = null;
         }
         // Clean up auto-expand timer
         if (this._autoExpandTimer) {

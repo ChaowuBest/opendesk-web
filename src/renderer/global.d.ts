@@ -174,8 +174,14 @@ declare global {
                 callback: (chunk: unknown) => void,
                 ...args: unknown[]
             ) => Promise<void>;
-            subscribe: (eventName: string, callback: (...args: unknown[]) => void) => Promise<void>;
-            unsubscribe: (eventName: string, callback: (...args: unknown[]) => void) => Promise<void>;
+            /** 返回只退订该 callback 的函数；同通道其他订阅者不受影响 */
+            subscribe: (eventName: string, callback: (...args: unknown[]) => void) => Promise<() => void>;
+            /**
+             * 移除该事件在本 frame 登记的全部订阅。
+             * 只退订自己请用 subscribe 返回值：contextBridge 会重新包装跨上下文函数，
+             * 按 callback 引用匹配并不可靠。
+             */
+            unsubscribe: (eventName: string) => Promise<void>;
         };
         applicationRegistryAPI?: {
             call: (bundleName: string, methodName: string, ...args: unknown[]) => Promise<any>;
@@ -196,7 +202,7 @@ declare global {
                 bundleName: string,
                 eventName: string,
                 callback: (...args: unknown[]) => void
-            ) => Promise<any>;
+            ) => Promise<() => void>;
             ensureFullyLoaded: () => Promise<void>;
             getApplicationGUIConfig: (bundleName: string) => Promise<any>;
             getApplicationList: () => Promise<any>;
@@ -240,7 +246,8 @@ declare global {
         };
         notificationAPI?: {
             sendNotification: (...args: unknown[]) => Promise<any>;
-            subscribeNotification: (callback: (...args: unknown[]) => void) => Promise<void>;
+            /** 返回只退订该 callback 的函数 */
+            subscribeNotification: (callback: (...args: unknown[]) => void) => Promise<() => void>;
         };
         /** 内嵌 office 套件（@bitclub.ai/opendesk-office）preload 暴露的 Word 桌面桥接 */
         wordDesktop?: Record<string, (...args: any[]) => any>;

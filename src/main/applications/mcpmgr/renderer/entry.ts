@@ -571,7 +571,7 @@ function getAPI() {
         callMainWorld: async <T>(method: string, ...args: unknown[]) =>
             unwrapResult<T>(await api.callMainWorld(method, ...args)),
         subscribe: (eventName: string, callback: () => void) => api.subscribe(eventName, callback),
-        unsubscribe: (eventName: string, callback: () => void) => api.unsubscribe(eventName, callback)
+        unsubscribe: (eventName: string) => api.unsubscribe(eventName)
     };
 }
 
@@ -642,11 +642,11 @@ class McpMgrEntryWidget extends AgentOperableHTMLElement {
 
     disconnectedCallback() {
         if (this._onServersUpdated) {
-            getAPI().unsubscribe('serversUpdated', this._onServersUpdated);
+            getAPI().unsubscribe('serversUpdated');
             this._onServersUpdated = null;
         }
         if (this._onRegistriesChanged) {
-            getAPI().unsubscribe('registriesChanged', this._onRegistriesChanged);
+            getAPI().unsubscribe('registriesChanged');
             this._onRegistriesChanged = null;
         }
         if (this._settingUnsubscribe) {

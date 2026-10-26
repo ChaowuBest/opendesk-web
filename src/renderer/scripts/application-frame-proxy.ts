@@ -109,14 +109,20 @@ const pendingToolCalls = new Map<
 >();
 
 let currentBundleName: string | null = null;
-const eventHandlers = new Map<string, Set<(...args: unknown[]) => void>>();
+/**
+ * 事件名 → 本地 handler 列表。刻意用数组而不是 Set：与 preload 暴露的 applicationAPI
+ * 契约保持一致 —— 同一个 callback 订阅两次就是两个订阅，各自退订只移除自己那一条
+ * （用 Set 去重会让「订阅两次、退订一次」在两种 API 面上表现相反）。
+ */
+const eventHandlers = new Map<string, Array<(...args: unknown[]) => void>>();
 
 function dispatchProxyEvent(msg: ProxyEvent): void {
-    const set = eventHandlers.get(msg.eventName);
-    if (!set) {
+    const handlers = eventHandlers.get(msg.eventName);
+    if (!handlers) {
         return;
     }
-    for (const cb of set) {
+    // 快照遍历：handler 内部退订/新增订阅不应影响本轮分发
+    for (const cb of [...handlers]) {
         try {
             // 与 preload 的 ipcRenderer.on(..., (event, ...args) => callback(...args)) 保持一致
             cb(...msg.args);
@@ -384,14 +390,40 @@ export function installApplicationFrameProxies(applicationBundleName: string): b
                 await proxyStreamInvoke('streamCallMainWorld', callback, [methodName, ...args]);
             },
             subscribe: async (eventName: string, callback: (...args: unknown[]) => void) => {
-                if (!eventHandlers.has(eventName)) {
-                    eventHandlers.set(eventName, new Set());
-                    await proxyInvoke('application', 'subscribe', [eventName], currentBundleName ?? undefined);
+                let handlers = eventHandlers.get(eventName);
+                const needsHostSubscription = handlers === undefined;
+                if (handlers === undefined) {
+                    handlers = [];
+                    eventHandlers.set(eventName, handlers);
                 }
-                eventHandlers.get(eventName)!.add(callback);
+                // 先登记再等 IPC 往返：等待期间 frame 被销毁时，按事件名退订仍能命中这条登记
+                handlers.push(callback);
+                if (needsHostSubscription) {
+                    try {
+                        await proxyInvoke('application', 'subscribe', [eventName], currentBundleName ?? undefined);
+                    } catch (error) {
+                        const index = handlers.indexOf(callback);
+                        if (index >= 0) handlers.splice(index, 1);
+                        if (handlers.length === 0) eventHandlers.delete(eventName);
+                        throw error;
+                    }
+                }
+                // 与 preload 暴露的同名 API 一致：返回只退订该 callback 的函数
+                return () => {
+                    const current = eventHandlers.get(eventName);
+                    if (current === undefined) return;
+                    const index = current.indexOf(callback);
+                    if (index < 0) return;
+                    current.splice(index, 1);
+                    if (current.length > 0) return;
+                    eventHandlers.delete(eventName);
+                    void proxyInvoke('application', 'unsubscribe', [eventName], currentBundleName ?? undefined);
+                };
             },
             unsubscribe: async (eventName: string) => {
-                eventHandlers.delete(eventName);
+                // 与 preload 契约一致：只清理本 guest 在该事件上的登记；没有登记就不动宿主的
+                // 引用计数（否则会连带减掉别的订阅者），精确退订仍用 subscribe 的返回值
+                if (eventHandlers.delete(eventName) === false) return;
                 await proxyInvoke('application', 'unsubscribe', [eventName], currentBundleName ?? undefined);
             }
         };

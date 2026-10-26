@@ -675,7 +675,7 @@ class AppMgrEntryWidget extends HTMLElement {
             this._editAppHandler = null;
         }
         if (this._appUpdatedHandler) {
-            window.applicationAPI.unsubscribe('appUpdated', this._appUpdatedHandler);
+            window.applicationAPI.unsubscribe('appUpdated');
             this._appUpdatedHandler = null;
         }
         if (this._segScrollResizeObserver) {

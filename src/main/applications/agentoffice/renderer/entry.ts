@@ -66,8 +66,8 @@ function subscribeApplicationEvent(eventName: string, handler: ApplicationEventL
     void window.applicationAPI.subscribe(eventName, handler);
 }
 
-function unsubscribeApplicationEvent(eventName: string, handler: ApplicationEventListener): void {
-    void window.applicationAPI.unsubscribe(eventName, handler);
+function unsubscribeApplicationEvent(eventName: string): void {
+    void window.applicationAPI.unsubscribe(eventName);
 }
 
 interface ChatModelSummary {
@@ -212,7 +212,7 @@ export class AgentOfficeEntryWidget extends AgentOperableHTMLElement {
     }
     private unsubscribeFlowEvents(): void {
         if (!this.flowEventsSubscribed) return;
-        for (const [name, handler] of this.flowEventHandlers) unsubscribeApplicationEvent(name, handler);
+        for (const [name] of this.flowEventHandlers) unsubscribeApplicationEvent(name);
         if (this.flowReadingTimer) clearInterval(this.flowReadingTimer);
         this.flowEventsSubscribed = false;
     }
@@ -358,6 +358,13 @@ export class AgentOfficeEntryWidget extends AgentOperableHTMLElement {
     }
 
     disconnectedCallback(): void {
+        // 事件订阅先行退订：后面的计时器清理、菜单清理、草稿冲刷都可能抛错，
+        // 一旦异常就会跳过退订，把监听留在共享通道上
+        unsubscribeApplicationEvent('staffsChanged');
+        unsubscribeApplicationEvent('messagesChanged');
+        unsubscribeApplicationEvent('staffTaskChanged');
+        unsubscribeApplicationEvent('localServiceChanged');
+        this.unsubscribeFlowEvents();
         if (this.previewHideTimer) clearTimeout(this.previewHideTimer);
         if (this.autoSaveTimer) clearTimeout(this.autoSaveTimer);
         if (this.autoSaveIndicatorTimer) clearTimeout(this.autoSaveIndicatorTimer);
@@ -368,11 +375,6 @@ export class AgentOfficeEntryWidget extends AgentOperableHTMLElement {
         this.settingUnsubscribe = undefined;
         void this.flushAutoSave();
         document.removeEventListener(OPENDESK_THEME_CHANGED, this.onThemeChanged);
-        unsubscribeApplicationEvent('staffsChanged', this.onStaffsChanged);
-        unsubscribeApplicationEvent('messagesChanged', this.onMessagesChanged);
-        unsubscribeApplicationEvent('staffTaskChanged', this.onStaffsChanged);
-        unsubscribeApplicationEvent('localServiceChanged', this.onLocalServiceChanged);
-        this.unsubscribeFlowEvents();
     }
 
     private tr(key: string): string {

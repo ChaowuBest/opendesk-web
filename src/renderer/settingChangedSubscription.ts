@@ -9,13 +9,9 @@
  * See the Mulan PSL v2 for more details.
  */
 
+import { createIpcChannelDispatcher, type IpcOnOff } from './ipcChannelDispatcher.js';
+
 const SETTING_CHANGED_CHANNEL = 'setting:changed';
-
-type SettingChangedIPCListener = (event: unknown, data: unknown) => void;
-
-interface SettingChangedIPC {
-    on(channel: string, listener: SettingChangedIPCListener): unknown;
-}
 
 export interface SettingChangedDispatcher {
     subscribe(callback: (setting: unknown) => void): () => void;
@@ -25,21 +21,10 @@ export interface SettingChangedDispatcher {
  * 主窗口启动时十余个组件（各翻译器/特性开关）都会通过 settingAPI.onSettingChanged
  * 订阅设置广播。若每个订阅者都直接在 ipcRenderer 上挂 listener，数量会超过 Node
  * EventEmitter 默认上限（10），每次启动都触发 MaxListenersExceededWarning。
- * 这里收敛为单个 IPC listener + 内部回调表，订阅数量不再受该上限约束。
+ *
+ * 「一通道 → 多订阅者」的通用实现只有 ipcChannelDispatcher 一份，这里只是给
+ * setting:changed 通道起个专属名字；不要另写一份分发器。
  */
-export function createSettingChangedDispatcher(ipc: SettingChangedIPC): SettingChangedDispatcher {
-    const callbacks = new Set<(setting: unknown) => void>();
-    ipc.on(SETTING_CHANGED_CHANNEL, (_event, data) => {
-        for (const callback of callbacks) {
-            callback(data);
-        }
-    });
-    return {
-        subscribe: (callback) => {
-            callbacks.add(callback);
-            return () => {
-                callbacks.delete(callback);
-            };
-        }
-    };
+export function createSettingChangedDispatcher(ipc: IpcOnOff): SettingChangedDispatcher {
+    return createIpcChannelDispatcher(ipc, SETTING_CHANGED_CHANNEL);
 }

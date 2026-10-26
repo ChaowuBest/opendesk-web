@@ -5430,6 +5430,8 @@ class TaskView extends HTMLElement {
     /** 订阅浏览器应用事件，agent 工具调用时转发到对应任务的浏览器实例 */
     async _subscribeBrowserEvents() {
         if (!window.applicationRegistryAPI || !window.applicationRegistryAPI.subscribeEvent) return;
+        // 重连场景先退订上一次订阅：直接重置数组会把上一批句柄丢掉，句柄从此没人持有
+        this._unsubscribeBrowserEvents();
         this._browserEventUnsubscribes = [];
 
         const browserEvents = [
@@ -5449,12 +5451,31 @@ class TaskView extends HTMLElement {
                     evt.handler(...args)
                 );
                 if (typeof unsubscribe === 'function') {
-                    this._browserEventUnsubscribes.push(unsubscribe);
+                    // 等待期间视图可能已断开（此时 disconnectedCallback 已经跑过，数组都被置空）：
+                    // 句柄自己退掉，不要挂到一个已经清理完的视图上
+                    if (!this.isConnected) {
+                        unsubscribe();
+                        continue;
+                    }
+                    this._browserEventUnsubscribes?.push(unsubscribe);
                 }
             } catch (err) {
                 console.warn(`subscribe browser event ${evt.name} failed`, err);
             }
         }
+    }
+
+    /** 只退订本视图自己的浏览器事件订阅 */
+    _unsubscribeBrowserEvents() {
+        if (!this._browserEventUnsubscribes) return;
+        for (const unsubscribe of this._browserEventUnsubscribes) {
+            try {
+                unsubscribe();
+            } catch {
+                /* ignore */
+            }
+        }
+        this._browserEventUnsubscribes = null;
     }
 
     /**
@@ -5496,8 +5517,27 @@ class TaskView extends HTMLElement {
             }
         };
 
-        window.agentGateFloatingAPI.onAttributionStart(this._handleAttributionStart);
-        window.agentGateFloatingAPI.onAttributionEnd(this._handleAttributionEnd);
+        // 退订只移除本视图自己注册的 handler：同 renderer 中其他缓存的 task-view
+        // 也订阅同一通道，不能用 removeAllListeners 波及其他任务（issue #116）。
+        // 重连场景先退订上一次订阅，避免同通道堆叠 handler。
+        this._unsubscribeAttributionStatus();
+        this._attributionUnsubscribes = [
+            window.agentGateFloatingAPI.onAttributionStart(this._handleAttributionStart),
+            window.agentGateFloatingAPI.onAttributionEnd(this._handleAttributionEnd)
+        ].filter((unsubscribe) => typeof unsubscribe === 'function');
+    }
+
+    /** 只退订本视图自己的归因订阅，不影响同 renderer 中其他 task-view 的订阅 */
+    _unsubscribeAttributionStatus() {
+        if (!this._attributionUnsubscribes) return;
+        for (const unsubscribe of this._attributionUnsubscribes) {
+            try {
+                unsubscribe();
+            } catch {
+                /* ignore */
+            }
+        }
+        this._attributionUnsubscribes = null;
     }
 
     /** 处理浏览器事件，只处理当前任务的事件 */
@@ -6568,24 +6608,9 @@ class TaskView extends HTMLElement {
             }
             this._taskTodosUnsubscribe = null;
         }
-        if (this._browserEventUnsubscribes) {
-            for (const unsub of this._browserEventUnsubscribes) {
-                try {
-                    unsub();
-                } catch {
-                    /* ignore */
-                }
-            }
-            this._browserEventUnsubscribes = null;
-        }
-        // Clean up attribution status listeners
-        if (window.agentGateFloatingAPI) {
-            try {
-                window.agentGateFloatingAPI.removeAttributionListeners();
-            } catch {
-                /* ignore */
-            }
-        }
+        // 只退订本视图自己的浏览器事件 / 归因订阅，不影响其他 task-view
+        this._unsubscribeBrowserEvents();
+        this._unsubscribeAttributionStatus();
         if (this._workspaceChangedHandler) {
             document.removeEventListener('workspace-changed', this._workspaceChangedHandler);
             this._workspaceChangedHandler = null;

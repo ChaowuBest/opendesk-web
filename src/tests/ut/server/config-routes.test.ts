@@ -85,6 +85,26 @@ function mockSetting(initial = baseSettingData()) {
     return setting;
 }
 
+/**
+ * 模拟带回执的全局 Worker：postMessage 里立刻 resolve 对应 requestId，
+ * 等价于真实 Worker 处理完 `__updateGlobalSetting` 后的响应。
+ * 若只 mock 一个不回复的 postMessage，notifyWorkerSettingUpdate 内部会留下
+ * 10s 超时定时器；该定时器往往在本测试文件结束（Jest 环境已 tear down）之后
+ * 才 reject，进而在通知失败的 catch 里触发 logger.warn，
+ * 表现为 "trying to require a file after the Jest environment has been torn down"。
+ */
+function mockGlobalWorkerWithAck() {
+    const postMessage = jest.fn((message: { requestId?: string }) => {
+        const requestId = message?.requestId;
+        if (requestId) {
+            ApplicationRegistry.pendingRequests.get(requestId)?.resolve(undefined);
+        }
+    });
+    jest.spyOn(ApplicationRegistry, 'hasGlobalWorker').mockReturnValue(true);
+    jest.spyOn(ApplicationRegistry, 'getGlobalWorker').mockReturnValue({ postMessage } as any);
+    return postMessage;
+}
+
 describe('opencode config routes', () => {
     afterEach(() => {
         jest.restoreAllMocks();
@@ -92,9 +112,7 @@ describe('opencode config routes', () => {
 
     test('PATCH /config applies opencode config update through Setting.setData', async () => {
         const setting = mockSetting();
-        const postMessage = jest.fn();
-        jest.spyOn(ApplicationRegistry, 'hasGlobalWorker').mockReturnValue(true);
-        jest.spyOn(ApplicationRegistry, 'getGlobalWorker').mockReturnValue({ postMessage } as any);
+        const postMessage = mockGlobalWorkerWithAck();
 
         const response = await ConfigRoutes().request('/', {
             method: 'PATCH',
@@ -346,7 +364,7 @@ describe('opencode config routes', () => {
                 }
             } as any
         };
-        const postMessage = jest.fn();
+        const postMessage = mockGlobalWorkerWithAck();
         const refresh = jest.fn(() => ({ count: 1, errors: [] }));
         const attachToolsets = jest.fn();
         let task: any;
@@ -372,8 +390,6 @@ describe('opencode config routes', () => {
         jest.spyOn(Setting, 'load').mockReturnValue({
             getData: () => clone(diskData)
         } as unknown as Setting);
-        jest.spyOn(ApplicationRegistry, 'hasGlobalWorker').mockReturnValue(true);
-        jest.spyOn(ApplicationRegistry, 'getGlobalWorker').mockReturnValue({ postMessage } as any);
         jest.spyOn(ApplicationRegistry, 'getApplication').mockImplementation((bundleName) =>
             bundleName === 'skillmgr' ? ({ refresh } as any) : undefined
         );

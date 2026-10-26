@@ -14,6 +14,8 @@ import { defineBrowserBridge } from '../common/embedBrowserUse/preload';
 import { PermissionPendingStore } from './permissionPendingStore';
 import { createTaskListUpdateSubscription } from './taskListSubscription.js';
 import { createSettingChangedDispatcher } from './settingChangedSubscription.js';
+import { createIpcChannelDispatcher } from './ipcChannelDispatcher.js';
+import { createAgentGateFloatingApi } from './agentGateFloatingApi.js';
 import {
     createHarmonyRuntimeEnvironment,
     getHarmonyBrowseRoots,
@@ -901,6 +903,50 @@ function exposeApplicationAPI() {
     /** @type {string | null} */
     let applicationBundleName = getBundleNameFromLocation();
 
+    /**
+     * 事件名 → 该事件在本 frame 的分发器。同一应用内可能有多个组件订阅同一事件
+     * （也可能与主世界侧 applicationRegistryAPI.subscribeEvent 共享同一 IPC 通道），
+     * 因此退订必须精确到自己的订阅，不能用 removeAllListeners（issue #116）。
+     *
+     * 注意：不能按 callback 引用匹配来退订 —— contextBridge 跨上下文传函数时会重新
+     * 包装，同一个函数两次传入 preload 拿到的引用并不相等（实测 false）。
+     * 精确退订一律使用 subscribe() 返回的 unsubscribe。
+     */
+    const applicationEventDispatchers = new Map();
+    /** 事件名 → 本 frame 已登记的订阅项（只持有各自的 release） */
+    const applicationEventSubscriptions = new Map();
+
+    function trackApplicationEventSubscription(eventName, callback) {
+        let dispatcher = applicationEventDispatchers.get(eventName);
+        if (dispatcher === undefined) {
+            dispatcher = createIpcChannelDispatcher(ipcRenderer, `applicationRegistry:event:${eventName}`);
+            applicationEventDispatchers.set(eventName, dispatcher);
+        }
+        const entry = { release: dispatcher.subscribe(callback) };
+        let entries = applicationEventSubscriptions.get(eventName);
+        if (entries === undefined) {
+            entries = [];
+            applicationEventSubscriptions.set(eventName, entries);
+        }
+        entries.push(entry);
+        return entry;
+    }
+
+    function dropApplicationEventSubscription(eventName, entry) {
+        const entries = applicationEventSubscriptions.get(eventName);
+        if (entries === undefined) return false;
+        const index = entries.indexOf(entry);
+        if (index < 0) return false;
+        entries.splice(index, 1);
+        if (entries.length === 0) {
+            applicationEventSubscriptions.delete(eventName);
+            // 该事件在本 frame 已无订阅：连同分发器一起丢掉，别让 Map 只增不减
+            applicationEventDispatchers.delete(eventName);
+        }
+        entry.release();
+        return true;
+    }
+
     safeExposeInMainWorld('applicationAPI', {
         setApplicationBundleName: async (bundleName) => {
             applicationBundleName = bundleName;
@@ -1023,23 +1069,41 @@ function exposeApplicationAPI() {
                 console.error('subscribing event failed', eventName, result.message);
                 throw new Error(result.message);
             }
-            ipcRenderer.on(`applicationRegistry:event:${eventName}`, (event, ...args) => {
-                callback(...args);
-            });
-            return result.data;
+            const entry = trackApplicationEventSubscription(eventName, callback);
+            // 返回的 unsubscribe 是唯一能精确退订本订阅的方式（无法按 callback 引用匹配）
+            // 每次订阅对应一次 main 侧引用计数，退订时配对递减
+            return () => {
+                if (!dropApplicationEventSubscription(eventName, entry)) return;
+                void ipcRenderer
+                    .invoke('applicationRegistry:unsubscribe', applicationBundleName, eventName)
+                    .catch((error) => console.error('unsubscribing event failed', eventName, error));
+            };
         },
         unsubscribe: async (eventName) => {
-            const result = await ipcRenderer.invoke(
-                'applicationRegistry:unsubscribe',
-                applicationBundleName,
-                eventName
-            );
-            if (result.status !== 'ok') {
-                console.error('unsubscribing event failed', eventName, result.message);
-                throw new Error(result.message);
+            const entries = applicationEventSubscriptions.get(eventName);
+            // 本 frame 没有该事件的登记（从未订阅 / 已被 subscribe 返回的 unsubscribe 退掉）：
+            // 不动 main 侧 —— main 的引用计数按 (事件, frame) 记，这里每多减一次就会把本 frame
+            // 上通过 applicationRegistryAPI.subscribeEvent 注册的订阅者一起减掉（issue #116 同类）。
+            if (entries === undefined) return;
+            const targets = [...entries];
+            // 每条登记对应 main 侧一次计数：先摘本地登记，再逐条配对递减。
+            // 单条失败只记日志 —— 既不影响其余条目，也不把 fire-and-forget 的调用点
+            // 变成未处理 rejection
+            for (const entry of targets) {
+                dropApplicationEventSubscription(eventName, entry);
+                try {
+                    const result = await ipcRenderer.invoke(
+                        'applicationRegistry:unsubscribe',
+                        applicationBundleName,
+                        eventName
+                    );
+                    if (result.status !== 'ok') {
+                        console.error('unsubscribing event failed', eventName, result.message);
+                    }
+                } catch (error) {
+                    console.error('unsubscribing event failed', eventName, error);
+                }
             }
-            ipcRenderer.removeAllListeners(`applicationRegistry:event:${eventName}`);
-            return result.data;
         }
     });
 }
@@ -1516,6 +1580,11 @@ if (shouldExposeMainWindowAPIs()) {
         }
     });
 
+    const modeDispatchers = {
+        changed: createIpcChannelDispatcher(ipcRenderer, 'mode:changed'),
+        taskModeChanged: createIpcChannelDispatcher(ipcRenderer, 'mode:taskModeChanged')
+    };
+
     safeExposeInMainWorld('modeAPI', {
         getSupportedModes: async () => {
             const result = await ipcRenderer.invoke('mode:getSupportedModes');
@@ -1541,18 +1610,9 @@ if (shouldExposeMainWindowAPIs()) {
             }
             return result.data;
         },
-        onModeChanged: (callback) => {
-            ipcRenderer.removeAllListeners('mode:changed');
-            ipcRenderer.on('mode:changed', (event, modeId) => {
-                callback(modeId);
-            });
-        },
-        onTaskModeChanged: (callback) => {
-            ipcRenderer.removeAllListeners('mode:taskModeChanged');
-            ipcRenderer.on('mode:taskModeChanged', (event, taskId, modeId) => {
-                callback(taskId, modeId);
-            });
-        }
+        onModeChanged: (callback) => modeDispatchers.changed.subscribe((modeId) => callback(modeId)),
+        onTaskModeChanged: (callback) =>
+            modeDispatchers.taskModeChanged.subscribe((taskId, modeId) => callback(taskId, modeId))
     });
 
     safeExposeInMainWorld('nodeAPI', {
@@ -1719,6 +1779,8 @@ if (shouldExposeMainWindowAPIs()) {
         }
     });
 
+    const notificationDispatcher = createIpcChannelDispatcher(ipcRenderer, 'notification:notificationReceived');
+
     safeExposeInMainWorld('notificationAPI', {
         sendNotification: async (...args) => {
             const result = await ipcRenderer.invoke('notification:sendNotification', ...args);
@@ -1729,12 +1791,8 @@ if (shouldExposeMainWindowAPIs()) {
             return result.data;
         },
         subscribeNotification: async (callback) => {
-            // 先移除旧的监听器，避免重复订阅
-            ipcRenderer.removeAllListeners('notification:notificationReceived');
             await ipcRenderer.invoke('notification:subscribeNotification');
-            ipcRenderer.on('notification:notificationReceived', (event, ...args) => {
-                callback(...args);
-            });
+            return notificationDispatcher.subscribe((...args) => callback(...args));
         }
     });
 
@@ -1771,26 +1829,9 @@ if (shouldExposeMainWindowAPIs()) {
         }
     });
 
-    safeExposeInMainWorld('agentGateFloatingAPI', {
-        onEventsUpdate: (callback) => {
-            ipcRenderer.on('agentgate:eventsUpdate', (_, data) =>
-                callback(data.events || data, data.counts || { totalCount: 0, denyCount: 0, allowCount: 0 })
-            );
-        },
-        removeEventsUpdateListener: () => {
-            ipcRenderer.removeAllListeners('agentgate:eventsUpdate');
-        },
-        onAttributionStart: (callback) => {
-            ipcRenderer.on('agentgate:attributionStart', (_, data) => callback(data));
-        },
-        onAttributionEnd: (callback) => {
-            ipcRenderer.on('agentgate:attributionEnd', (_, data) => callback(data));
-        },
-        removeAttributionListeners: () => {
-            ipcRenderer.removeAllListeners('agentgate:attributionStart');
-            ipcRenderer.removeAllListeners('agentgate:attributionEnd');
-        }
-    });
+    // 每个订阅返回只移除自己的 unsubscribe：同 renderer 中可能有多个 consumer
+    // （如被缓存的多个 task-view）订阅同一通道，退订不得波及其他 consumer（issue #116）。
+    safeExposeInMainWorld('agentGateFloatingAPI', createAgentGateFloatingApi(ipcRenderer));
 
     safeExposeInMainWorld('floatWindowAPI', {
         hideFloatWindow: () => ipcRenderer.invoke('floatWindow:hideFloatWindow'),
