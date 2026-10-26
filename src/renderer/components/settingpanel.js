@@ -3503,13 +3503,6 @@ class SettingPanel extends HTMLElement {
                     </select>
                 </div>
                 <div class="sp-form-group" style="margin-bottom:0">
-                    <label class="sp-form-label">${this._t('config.defaultmodel.field.reranker_model')}</label>
-                    <select id="default-reranker-model-select" class="sp-form-input">
-                        <option value="">${this._t('common.none')}</option>
-                        ${chatModelOptions}
-                    </select>
-                </div>
-                <div class="sp-form-group" style="margin-bottom:0">
                     <label class="sp-form-label">${this._t('config.defaultmodel.field.vision_model')}</label>
                     <select id="default-vision-model-select" class="sp-form-input">
                         <option value="">${this._t('common.none')}</option>
@@ -3651,7 +3644,6 @@ class SettingPanel extends HTMLElement {
             'default-model-select',
             'default-quick-model-select',
             'default-embedding-model-select',
-            'default-reranker-model-select',
             'default-vision-model-select'
         ];
         selects.forEach((id) => {
@@ -3905,7 +3897,6 @@ class SettingPanel extends HTMLElement {
             'default-model-select': 'default_model',
             'default-quick-model-select': 'default_quick_model',
             'default-embedding-model-select': 'default_embedding_model',
-            'default-reranker-model-select': 'default_reranker_model',
             'default-vision-model-select': 'default_vision_model'
         };
     }
@@ -4965,12 +4956,12 @@ class SettingPanel extends HTMLElement {
         const model = this.currentData.models[index];
 
         // 检查是否是默认模型
-        const isDefault = [
-            'default_model',
-            'default_embedding_model',
-            'default_reranker_model',
-            'default_vision_model'
-        ].some((field) => this.currentData[field] === model.alias);
+        // 默认模型页已不再暴露 default_reranker_model（无 UI 入口可解除引用），
+        // 因此不把它纳入删除保护：删除后由主进程 normalizeDefaultModelReferences
+        // 清空失效的 reranker 引用，避免用户在有旧配置时陷入“删不掉又改不了”。
+        const isDefault = ['default_model', 'default_embedding_model', 'default_vision_model'].some(
+            (field) => this.currentData[field] === model.alias
+        );
 
         if (isDefault) {
             window.notificationAPI.sendNotification(
@@ -5116,7 +5107,6 @@ class SettingPanel extends HTMLElement {
             'default-model-select',
             'default-quick-model-select',
             'default-embedding-model-select',
-            'default-reranker-model-select',
             'default-vision-model-select'
         ];
         selects.forEach((id) => {
