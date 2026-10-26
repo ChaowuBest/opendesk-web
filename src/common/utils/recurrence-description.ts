@@ -16,6 +16,7 @@ import {
     type TodoRecurrence
 } from './todo-recurrence.js';
 import { formatDatetimeLocal } from './timezone.js';
+import { parseLegacyCronRecurrence } from './legacy-cron.js';
 
 type Translator = (key: string, params?: Record<string, string | number>) => string;
 
@@ -98,24 +99,6 @@ function numberField(value: string, min: number, max: number): number | null {
     return Number.isInteger(number) && number >= min && number <= max ? number : null;
 }
 
-function parseWeekdays(value: string): number[] | null {
-    const days: number[] = [];
-    for (const part of value.split(',')) {
-        const range = part.split('-');
-        if (range.length > 2) return null;
-        const start = numberField(range[0], 0, 7);
-        const end = range.length === 2 ? numberField(range[1], 0, 7) : start;
-        if (start === null || end === null || start > end) return null;
-        for (let day = start; day <= end; day++) days.push(day % 7);
-    }
-    return days.length ? days : null;
-}
-
-function parseCalendarNumbers(value: string, min: number, max: number): number[] | null {
-    const numbers = value.split(',').map((part) => numberField(part, min, max));
-    return numbers.every((number) => number !== null) ? (numbers as number[]) : null;
-}
-
 /** Only describe unambiguous simple legacy rules; keep other stored rules opaque. */
 export function describeLegacyRecurrence(expression: string, t: Translator, timezone: string): string {
     const fallback = `${t('common.recurrence.legacy')} (${timezone})`;
@@ -138,22 +121,6 @@ export function describeLegacyRecurrence(expression: string, t: Translator, time
             return `${t('recurrence.desc.everyHours', { hours: Number(hourStep[1]), minute: fixedMinute })} (${timezone})`;
         }
     }
-    const fixedMinute = numberField(minute, 0, 59);
-    const fixedHour = numberField(hour, 0, 23);
-    if (fixedMinute === null || fixedHour === null) return fallback;
-    const time = `${String(fixedHour).padStart(2, '0')}:${String(fixedMinute).padStart(2, '0')}`;
-    if (day === '*' && month === '*') {
-        if (weekday === '*') return describeTodoRecurrence({ mode: 'daily', time }, t, timezone);
-        const weekdays = parseWeekdays(weekday);
-        if (weekdays) return describeTodoRecurrence({ mode: 'weekly', time, weekdays }, t, timezone);
-    }
-    const dates = parseCalendarNumbers(day, 1, 31);
-    if (weekday === '*' && dates !== null) {
-        if (month === '*') return describeTodoRecurrence({ mode: 'monthly', time, days: dates }, t, timezone);
-        const months = parseCalendarNumbers(month, 1, 12);
-        if (months !== null) {
-            return describeTodoRecurrence({ mode: 'yearly', time, days: dates, months }, t, timezone);
-        }
-    }
-    return fallback;
+    const recurrence = parseLegacyCronRecurrence(expression);
+    return recurrence ? describeTodoRecurrence(recurrence, t, timezone) : fallback;
 }

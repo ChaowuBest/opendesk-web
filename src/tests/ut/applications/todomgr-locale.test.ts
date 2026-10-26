@@ -3,6 +3,7 @@ import path from 'path';
 import { fileURLToPath } from 'url';
 import { zhCn as todoZhCn } from '../../../main/applications/todomgr/locale/zh-cn.js';
 import { enUs as todoEnUs } from '../../../main/applications/todomgr/locale/en-us.js';
+import { recurrenceZhCn } from '../../../common/locale/recurrence.js';
 import { t as todoT } from '../../../main/applications/todomgr/locale/index.js';
 import { createTranslatorForTodoMgr } from '../../../main/applications/todomgr/locale/renderer.js';
 import { TODO_TEMPLATES } from '../../../main/applications/todomgr/templates.js';
@@ -178,18 +179,24 @@ describe('todomgr locale', () => {
 
     test('every static t() key referenced by todomgr source resolves in a dictionary', () => {
         // 防止词条改名/迁移后源码仍引用旧键（如 tools.getCurrentTime.name → tool.getCurrentTime.name）。
-        // 动态键（含 ${} 模板拼接）无法静态解析，跳过；renderer 侧经由共享核心 locale
-        // 取词的键（如 renderer.workspacePicker.*）以核心词典作为合法来源。
+        // 动态键（含 ${} 模板拼接）无法静态解析，跳过；workspace picker 的两个词条
+        // 由 entry.ts 内独立创建的 createRendererTranslator 解析，不属于 TodoMgr 词典。
         const sources = [
             '../../../main/applications/todomgr/tools.ts',
             '../../../main/applications/todomgr/app.ts',
+            '../../../main/applications/todomgr/worker.ts',
             '../../../common/utils/recurrence-description.ts',
             '../../../main/applications/todomgr/recurrence-validation.ts',
             '../../../main/applications/todomgr/trigger.ts',
             '../../../main/applications/todomgr/renderer/entry.ts',
+            '../../../main/applications/todomgr/renderer/legacy-timezone.ts',
             '../../../main/applications/todomgr/renderer/time-schedule-picker.ts'
         ];
-        const knownKeys = new Set([...Object.keys(todoZhCn), ...Object.keys(appZhCn)]);
+        const knownKeys = new Set([...Object.keys(todoZhCn), ...Object.keys(recurrenceZhCn)]);
+        const workspacePickerKeys = new Set([
+            'renderer.workspacePicker.taskNameFallback',
+            'renderer.workspacePicker.titleWithName'
+        ]);
         const callPattern = /(?<![\w$])(?:_t|t)\(\s*'([^']+)'\s*[,)]/g;
         const here = path.dirname(fileURLToPath(import.meta.url));
         const missing: string[] = [];
@@ -199,6 +206,11 @@ describe('todomgr locale', () => {
             for (const m of src.matchAll(callPattern)) {
                 const key = m[1];
                 if (key.includes('${')) continue;
+                if (path.basename(file) === 'entry.ts' && workspacePickerKeys.has(key)) {
+                    expect(appZhCn[key]).toEqual(expect.any(String));
+                    expect(appEnUs[key]).toEqual(expect.any(String));
+                    continue;
+                }
                 if (!knownKeys.has(key)) missing.push(`${path.basename(file)}: ${key}`);
             }
         }

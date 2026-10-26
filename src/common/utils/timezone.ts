@@ -23,19 +23,46 @@ export function getSystemTimezone(): string {
     return Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC';
 }
 
+const wallClockFormatters = new Map<string, Intl.DateTimeFormat>();
+
+/**
+ * Shared per-timezone wall-clock formatter (Gregorian / latn / h23), cached and
+ * bounded so hot paths (recurrence matching) never construct a formatter twice
+ * for the same timezone. Seconds are included only when requested.
+ */
+export function createWallClockFormatter(timezone: string, includeSeconds = false): Intl.DateTimeFormat {
+    const key = includeSeconds ? `${timezone}#s` : timezone;
+    let formatter = wallClockFormatters.get(key);
+    if (!formatter) {
+        formatter = new Intl.DateTimeFormat('en-US', {
+            timeZone: timezone,
+            calendar: 'gregory',
+            numberingSystem: 'latn',
+            year: 'numeric',
+            month: '2-digit',
+            day: '2-digit',
+            hour: '2-digit',
+            minute: '2-digit',
+            ...(includeSeconds ? { second: '2-digit' } : {}),
+            hourCycle: 'h23'
+        });
+        if (wallClockFormatters.size >= 32) wallClockFormatters.delete(wallClockFormatters.keys().next().value!);
+        wallClockFormatters.set(key, formatter);
+    }
+    return formatter;
+}
+
+/** Map a Date to its wall-clock parts in a timezone (year/month/day/hour/minute[/second]). */
+export function wallClockParts(date: Date, timezone: string, includeSeconds = false): Record<string, string> {
+    return Object.fromEntries(
+        createWallClockFormatter(timezone, includeSeconds)
+            .formatToParts(date)
+            .map(({ type, value }) => [type, value])
+    );
+}
+
 function wallTimeFormatter(timezone: string): Intl.DateTimeFormat {
-    return new Intl.DateTimeFormat('en-US', {
-        timeZone: timezone,
-        calendar: 'gregory',
-        numberingSystem: 'latn',
-        year: 'numeric',
-        month: '2-digit',
-        day: '2-digit',
-        hour: '2-digit',
-        minute: '2-digit',
-        second: '2-digit',
-        hourCycle: 'h23'
-    });
+    return createWallClockFormatter(timezone, true);
 }
 
 function wallTimeParts(date: Date, formatter: Intl.DateTimeFormat): Record<string, string> {

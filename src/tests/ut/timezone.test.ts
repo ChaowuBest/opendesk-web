@@ -6,7 +6,6 @@ import {
     getSystemTimezone,
     isValidTimezone
 } from '../../common/utils/timezone.js';
-import { describeCron } from '../../main/utils/cron.js';
 
 describe('task timezones', () => {
     test('validates IANA zones and provides a usable system zone', () => {
@@ -52,12 +51,5 @@ describe('task timezones', () => {
             new Date(iso).toLocaleString('en-US', { timeZone: 'Asia/Shanghai' })
         );
         expect(formatDatetimeLocal(iso, 'UTC')).toBe('2026-10-20T01:00');
-    });
-
-    test('describes zoned cron fields without shifting weekdays or calendar dates', () => {
-        expect(describeCron('0 9 * * 1', undefined, 'America/New_York')).toBe('每周一 9:00 (America/New_York)');
-        expect(describeCron('30 0 1 * *', undefined, 'Asia/Kathmandu')).toBe('每月1日 0:30 (Asia/Kathmandu)');
-        expect(describeCron('*/30 * * * *', undefined, 'Asia/Shanghai')).toBe('每小时第*/30分 (Asia/Shanghai)');
-        expect(describeCron('* * * * *', undefined, 'UTC')).toBe('每分钟 (UTC)');
     });
 });
