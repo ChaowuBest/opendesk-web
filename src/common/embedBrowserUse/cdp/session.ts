@@ -36,6 +36,11 @@ export function setCDPLogger(l: CDPLogger): void {
     _logger = l;
 }
 
+/** 取当前 CDP 日志器：库内其他模块（如 IPC handler）复用宿主注入的同一份 logger。 */
+export function getCDPLogger(): CDPLogger {
+    return _logger;
+}
+
 export interface NestedJSResult {
     mainResult: unknown;
     frameResults: Record<string, NestedJSResult>;
@@ -51,6 +56,14 @@ export const DEFAULT_CDP_COMMAND_TIMEOUT_MS = 20000;
 export class CDPSession {
     private _wc: Electron.WebContents;
     private _attached = false;
+    /** 本次会话是否由自己 attach 了 webContents.debugger。
+     * webContents 上只有一条 CDP 连接，可能被多个 CDPSession 共享
+     * （先到者 attach，后来者复用）。只有 attach 的发起者才允许 detach，
+     * 否则一次性会话（如导出 snapshot）结束时会把别人正在用的连接踢掉。 */
+    private _ownsAttachment = false;
+    /** 共享连接上的命令超时后置位：那一刻不能立刻 detach（会打断连接所有者的
+     * 在途命令），改为等本会话下一次真的要发命令时再重置连接并接管。 */
+    private _needsFreshConnection = false;
     /** Disposed sessions must never re-attach or send — prevents a wedged
      * operation's orphaned session from "resurrecting" onto a fresh debugger
      * connection and interleaving commands with the next locked operation. */
@@ -72,9 +85,58 @@ export class CDPSession {
      */
     static async create(webContents: Electron.WebContents): Promise<CDPSession> {
         const session = new CDPSession(webContents);
-        session._bindNativeListeners();
-        await session._ensureAttached();
+        try {
+            session._bindNativeListeners();
+            await session._ensureAttached();
+        } catch (err) {
+            // 建链失败时调用方拿不到 session，无法 dispose：必须在这里收回
+            // 已注册的 message/detach 监听。否则每失败一次（如 DevTools 已占用
+            // debugger 导致 attach 抛错）就在 webContents.debugger 上多留一组
+            // 闭包，随页面存活一直挂着。
+            session.dispose();
+            throw err;
+        }
         return session;
+    }
+
+    /** 丢弃当前连接的内存状态：清掉 attached / ownership / 已 enable 的域。
+     * 返回丢弃前是否由本会话持有这条连接（决定能否 detach）。 */
+    private _dropAttachmentState(): boolean {
+        const owned = this._ownsAttachment;
+        this._attached = false;
+        this._ownsAttachment = false;
+        this._enabledDomains.clear();
+        return owned;
+    }
+
+    /** 连接是否确实已经不存在（webContents 已销毁也视为不存在）。 */
+    private _isAttachmentGone(): boolean {
+        try {
+            return this._wc.isDestroyed() || !this._wc.debugger.isAttached();
+        } catch {
+            return true;
+        }
+    }
+
+    /**
+     * 命令超时等「连接已不可信」时的处理。
+     *
+     * 本会话持有的连接：立即 detach，让下一次 send 重新 attach 一条干净的连接。
+     * 共享连接（由别的会话 attach）：那一刻不能 detach（会打断对方在途命令），
+     * 只标记待重建，等本会话下一次真的要发命令时再重置接管。
+     */
+    private _discardConnection(): void {
+        if (this._dropAttachmentState()) {
+            try {
+                if (!this._wc.isDestroyed() && this._wc.debugger.isAttached()) {
+                    this._wc.debugger.detach();
+                }
+            } catch {
+                // already detached / destroyed
+            }
+            return;
+        }
+        this._needsFreshConnection = true;
     }
 
     /** Attach native debugger event listeners (once per session lifetime). */
@@ -99,8 +161,27 @@ export class CDPSession {
 
         this._onDetach = (_event: any, reason: string) => {
             _logger.warn(`CDP debugger detached: ${reason}`);
-            this._attached = false;
+            // 域状态与具体连接绑定：无论事件是否过期都清掉，下次用到时重新 enable。
             this._enabledDomains.clear();
+            // 事件可能在本会话已经重新 attach 之后才到达（超时重置后立刻重建）。
+            // 此时 debugger 实际仍处于连接状态，不能把内存标记改回断开——否则会
+            // 一并丢掉 ownership，dispose 时漏掉 detach，连接会永久挂在页面上
+            // （此后任何新的 attach 都会抛 "Debugger is already attached"）。宁可
+            // 保留 ownership：最坏情况是多 detach 一次刚被别人建立的连接，而对方
+            // 会在 send() 的连接失效重试路径里自动重连。
+            try {
+                if (this._wc.debugger.isAttached()) {
+                    // 迟到的 detach 事件对应的那条（已挂死的）连接确实不在了，
+                    // 待重建标记随之失效；否则下一次 send 会把别人刚建好的健康
+                    // 连接再 detach 一次。
+                    this._needsFreshConnection = false;
+                    return;
+                }
+            } catch {
+                // webContents 已销毁 → 按断开处理
+            }
+            this._dropAttachmentState();
+            this._needsFreshConnection = false;
             // Don't clear _eventHandlers — they belong to the logical session
             // and will be re-used after reconnection.
         };
@@ -140,12 +221,26 @@ export class CDPSession {
         }
 
         const dbg = this._wc.debugger;
+        // 上一次命令超时发生在共享连接上：当时没有立刻 detach（避免打断连接
+        // 所有者的在途命令）。现在本会话确实需要一条能用的连接，才重置这条已
+        // 证明挂死的连接并接管；其他会话会在 send() 的连接失效重试路径里自动
+        // 重新 attach。
+        if (this._needsFreshConnection) {
+            this._needsFreshConnection = false;
+            try {
+                if (dbg.isAttached()) dbg.detach();
+            } catch {
+                // 已 detach / webContents 已销毁
+            }
+        }
         if (!dbg.isAttached()) {
             try {
                 dbg.attach('1.3');
             } catch (err: any) {
                 throw new Error(`Failed to attach CDP debugger: ${err.message || err}`);
             }
+            // 这条 attach 由本会话发起，dispose 时由本会话负责 detach。
+            this._ownsAttachment = true;
         }
 
         this._attached = true;
@@ -184,14 +279,20 @@ export class CDPSession {
         try {
             return await this._sendCommandWithTimeout(method, params ?? {}, timeoutMs);
         } catch (err: any) {
-            // If the send failed due to a stale attachment, try once more
-            const msg = String(err.message || err);
-            if (
-                msg.includes('not attached') ||
-                msg.includes('Debugger is not attached') ||
-                msg.includes('Target closed')
-            ) {
-                this._attached = false;
+            // If the send failed due to a stale attachment, try once more.
+            //
+            // 失效文案来自两侧且大小写不一致：Electron 侧是 "No target available"
+            // （连接已不存在）与 "target closed while handling command"（命令在途
+            // 被 detach），浏览器侧是 "Debugger is not attached ..." / "Target
+            // closed"。统一转小写比较 —— 只差一个大小写，这条恢复路径就整条失效，
+            // 调用方会拿到一条对自己毫无意义的错误而不是重连后的结果。
+            const msg = String(err.message || err).toLowerCase();
+            if (msg.includes('not attached') || msg.includes('target closed') || msg.includes('no target available')) {
+                // 报错本身说明本会话声称的那条连接已经没了：这里只丢弃 ownership
+                // 记账，不按 owner 去 detach —— 此刻的原生连接可能已被别的会话
+                // 重建，detach 会打断它。是否需要重新 attach 由 _ensureAttached
+                // 按当前真实状态判断。
+                this._dropAttachmentState();
                 await this._ensureAttached();
                 return this._sendCommandWithTimeout(method, params ?? {}, timeoutMs);
             }
@@ -217,17 +318,7 @@ export class CDPSession {
                     timer = setTimeout(() => {
                         // In-flight command is hopeless — reset the connection so
                         // the next send re-attaches a fresh debugger session.
-                        this._attached = false;
-                        // Domain state is tied to the attachment; clear it explicitly
-                        // (do not rely on the detach event firing for manual detach).
-                        this._enabledDomains.clear();
-                        try {
-                            if (!this._wc.isDestroyed() && this._wc.debugger.isAttached()) {
-                                this._wc.debugger.detach();
-                            }
-                        } catch {
-                            // already detached / destroyed
-                        }
+                        this._discardConnection();
                         reject(new Error(`CDP command ${method} timed out after ${timeoutMs}ms`));
                     }, timeoutMs);
                 })
@@ -293,8 +384,20 @@ export class CDPSession {
                     return;
                 }
             } catch {
-                // Page not ready yet — swallow and retry
+                // Page not ready yet — swallow and retry.
+                //
+                // 探测失败在导航中是常态（Runtime.evaluate 会报 execution context
+                // destroyed），不代表连接坏了：这里只清「本会话当前可用」标记，
+                // 让下一轮重新校验，绝不当场 detach —— 否则导航期间每轮探测都会
+                // 拆一次连接（还在 Page.enable 状态下丢 CDP 事件）。
+                //
+                // ownership 只在连接确实已经不存在时一并清掉：连接还在就仍归本
+                // 会话负责（Electron 不提供连接身份，记账一旦丢失就再也认领不回来，
+                // 连接会永久挂在页面上没人 detach）。
                 this._attached = false;
+                if (this._isAttachmentGone()) {
+                    this._dropAttachmentState();
+                }
             }
 
             const delay = delays[Math.min(attempt, delays.length - 1)];
@@ -418,15 +521,17 @@ export class CDPSession {
         } catch {
             // webContents 已销毁时原生属性访问可能抛出，忽略即可
         }
-        if (this._attached && !this._wc.isDestroyed()) {
+        // 只 detach 由本会话 attach 的连接：共享连接（debugger 已被别的会话
+        // 占用时复用）上的 detach 会打断对方正在进行的 CDP 操作。
+        const owned = this._dropAttachmentState();
+        this._needsFreshConnection = false;
+        if (owned && !this._wc.isDestroyed()) {
             try {
-                this._wc.debugger.detach();
+                if (this._wc.debugger.isAttached()) this._wc.debugger.detach();
             } catch {
                 // Already detached or destroyed
             }
         }
-        this._attached = false;
-        this._enabledDomains.clear();
         this._eventHandlers.clear();
     }
 
@@ -453,6 +558,20 @@ export class CDPSession {
  */
 export class CDPSessionManager {
     private _sessions = new Map<number, CDPSession>();
+    /** 每个会话在 webContents 上注册的销毁兜底监听，释放会话时一并注销。 */
+    private _destroyedHooks = new Map<number, { wc: Electron.WebContents; listener: () => void }>();
+
+    /** 注销某个 webContentsId 的销毁兜底监听（会话已被释放或替换）。 */
+    private _detachDestroyedHook(webContentsId: number): void {
+        const hook = this._destroyedHooks.get(webContentsId);
+        if (!hook) return;
+        this._destroyedHooks.delete(webContentsId);
+        try {
+            hook.wc.removeListener('destroyed', hook.listener);
+        } catch {
+            // webContents 已销毁时原生属性访问可能抛出，忽略即可
+        }
+    }
 
     /**
      * Get or create a healthy CDP session for the given webContentsId.
@@ -480,6 +599,7 @@ export class CDPSessionManager {
             // Session unrecoverable — dispose and recreate
             existing.dispose();
             this._sessions.delete(webContentsId);
+            this._detachDestroyedHook(webContentsId);
         }
 
         // Resolve webContents from ID
@@ -494,13 +614,22 @@ export class CDPSessionManager {
         // 重载）时立即释放对应 CDP 会话并移出缓存。否则持有已销毁 webContents
         // 引用与 debugger listener 的会话会永久留在 Map 中，随任务反复
         // 创建/销毁而单调增长。
-        wc.once('destroyed', () => {
+        // 监听器按会话记录、释放时注销：不健康重建会为同一个 webContents 反复
+        // 注册，只 once 不 remove 的话，旧闭包（连同旧 session）会一直挂到
+        // webContents 销毁。
+        const listener = () => {
             session.dispose();
+            // 身份校验：同一 webContents 上可能已注册过别的会话的监听，只清自己的记账
+            if (this._destroyedHooks.get(webContentsId)?.listener === listener) {
+                this._destroyedHooks.delete(webContentsId);
+            }
             // 身份校验：session 被替换（不健康重建）后，旧监听器不得驱逐新 session
             if (this._sessions.get(webContentsId) === session) {
                 this._sessions.delete(webContentsId);
             }
-        });
+        };
+        wc.once('destroyed', listener);
+        this._destroyedHooks.set(webContentsId, { wc, listener });
         this._sessions.set(webContentsId, session);
         return session;
     }
@@ -514,6 +643,7 @@ export class CDPSessionManager {
             session.dispose();
             this._sessions.delete(webContentsId);
         }
+        this._detachDestroyedHook(webContentsId);
     }
 
     /**
@@ -524,5 +654,8 @@ export class CDPSessionManager {
             session.dispose();
         }
         this._sessions.clear();
+        for (const webContentsId of Array.from(this._destroyedHooks.keys())) {
+            this._detachDestroyedHook(webContentsId);
+        }
     }
 }

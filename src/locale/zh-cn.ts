@@ -2638,6 +2638,13 @@ export const zhCn: Record<string, string> = {
     'renderer.browser.pageHintsActionSection': '页面动作',
     'renderer.browser.pageHintsArgs': '参数',
 
+    // Renderer - Browser: 导出快照的提示（任务浏览器标签）
+    'renderer.browser.snapshot.exportSaved.title': '快照已保存',
+    'renderer.browser.snapshot.exportSaved.message': '页面快照已成功保存到文件。',
+    'renderer.browser.snapshot.exportFailed.title': '导出快照失败',
+    'renderer.browser.snapshot.exportFailed.message': '导出快照失败：${message}',
+    'renderer.browser.snapshot.exportUnsupported': '当前环境不支持导出快照。',
+
     // Renderer - Browser PiP
     'renderer.browserPip.restore': '恢复浏览器面板',
     'renderer.browserPip.close': '关闭浮窗',
@@ -2690,6 +2697,11 @@ export const zhCn: Record<string, string> = {
     // Main - Log Export
     'main.log.export.title': '导出日志',
     'main.log.export.textFiles': '文本文件',
+
+    // Main - Browser: 导出快照保存对话框（embedBrowserUse 注入）
+    'main.browser.snapshot.saveDialog.title': '保存 Snapshot',
+    'main.browser.snapshot.saveDialog.textFiles': '文本文件',
+    'main.browser.snapshot.saveDialog.allFiles': '所有文件',
 
     // Goal
     'goal.description': '管理当前任务的 goal',

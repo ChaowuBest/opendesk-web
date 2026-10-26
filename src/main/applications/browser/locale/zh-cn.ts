@@ -35,6 +35,8 @@ export const zhCn: Record<string, string> = {
     // ========== 原生对话框 / TUI ==========
     'dialog.saveFile': '保存文件',
     'dialog.saveSnapshot': '保存 Snapshot',
+    'dialog.textFiles': '文本文件',
+    'dialog.allFiles': '所有文件',
     'tui.status.ready': '浏览器就绪',
     'cli.command.browser.description': '显示浏览器信息',
     'tui.info.title': '🌐 嵌入式浏览器',

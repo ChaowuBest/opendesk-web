@@ -12,7 +12,7 @@
 import type { WebviewTag } from 'electron';
 import type { CertInfo } from '../app.js';
 import { getErrorMessage, buildErrorPageScript, type ErrorInfo } from '../../../../common/browserErrors';
-import { showConfirmModal } from '../../../../renderer/components/confirmModal.js';
+import { showConfirmModal, escapeModalText } from '../../../../renderer/components/confirmModal.js';
 import {
     createBrowserHintPanel,
     fetchBrowserHintsForPage,
@@ -2052,7 +2052,9 @@ class BrowserEntryWidget extends HTMLElement {
         }
 
         try {
-            await registryAPI.callMainWorld('browser', 'exportSnapshotByWebContentsId', webContentsId);
+            const result = await registryAPI.callMainWorld('browser', 'exportSnapshotByWebContentsId', webContentsId);
+            // 用户在保存对话框里取消：不要提示“已保存”
+            if (result?.canceled) return;
             await showConfirmModal({
                 icon: 'fa-circle-check',
                 iconBg: '#ECFDF5',
@@ -2063,12 +2065,16 @@ class BrowserEntryWidget extends HTMLElement {
                 cancelText: null
             });
         } catch (err: any) {
+            // 错误正文可能来自页面（CDP / 页面脚本抛出的文本），而弹窗 message 按
+            // HTML 渲染，必须整段转义后再插入。
             await showConfirmModal({
                 icon: 'fa-circle-exclamation',
                 iconBg: '#FEF2F2',
                 iconColor: '#DC2626',
                 title: this._t('renderer.browser.snapshot.failed.title'),
-                message: this._t('renderer.browser.snapshot.failed.message', { message: err?.message || String(err) }),
+                message: escapeModalText(
+                    this._t('renderer.browser.snapshot.failed.message', { message: err?.message || String(err) })
+                ),
                 confirmText: this._t('renderer.browser.modal.acknowledge'),
                 cancelText: null
             });

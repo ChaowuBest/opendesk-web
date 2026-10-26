@@ -35,6 +35,8 @@ export const enUs: Record<string, string> = {
     // ========== 原生对话框 / TUI ==========
     'dialog.saveFile': 'Save File',
     'dialog.saveSnapshot': 'Save Snapshot',
+    'dialog.textFiles': 'Text Files',
+    'dialog.allFiles': 'All Files',
     'tui.status.ready': 'Browser ready',
     'cli.command.browser.description': 'Show browser info',
     'tui.info.title': '🌐 Embedded Browser',

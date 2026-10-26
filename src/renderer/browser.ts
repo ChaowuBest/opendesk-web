@@ -20,7 +20,7 @@ import {
     NAV_INTERCEPT_CONSOLE_PREFIX
 } from './webviewScripts';
 import { createRendererTranslator } from './locale.js';
-import { showConfirmModal, showInfoModal } from './components/confirmModal.js';
+import { showConfirmModal, showInfoModal, escapeModalText } from './components/confirmModal.js';
 import {
     createBrowserHintPanel,
     fetchBrowserHintsForPage,
@@ -41,9 +41,9 @@ const fallbackT = createRendererTranslator();
 // 页面加载指示器的延迟显示时间：快速加载的页面不闪烁 loading 遮罩
 const LOADING_OVERLAY_DELAY_MS = 300;
 
-function browserT(key: string): string {
+function browserT(key: string, params?: Record<string, string | number>): string {
     const runtimeTranslator = (window as any).__odT;
-    return typeof runtimeTranslator === 'function' ? runtimeTranslator(key) : fallbackT(key);
+    return typeof runtimeTranslator === 'function' ? runtimeTranslator(key, params) : fallbackT(key, params);
 }
 
 let nextTabId = 1;
@@ -948,12 +948,40 @@ export class EmbeddedBrowser extends BrowserInstance {
         }
 
         const browserAPI = (window as any).browserAPI;
-        if (browserAPI && typeof browserAPI.exportSnapshot === 'function') {
-            try {
-                await browserAPI.exportSnapshot(webContentsId);
-            } catch {
-                /* ignore */
-            }
+        if (!browserAPI || typeof browserAPI.exportSnapshot !== 'function') {
+            await showInfoModal({
+                title: browserT('renderer.browser.snapshot.exportFailed.title'),
+                message: browserT('renderer.browser.snapshot.exportUnsupported'),
+                confirmText: browserT('common.confirm'),
+                variant: 'warn'
+            });
+            return;
+        }
+
+        try {
+            const result = await browserAPI.exportSnapshot(webContentsId);
+            // 用户在保存对话框里取消：不需要任何提示
+            if (result?.canceled) return;
+            await showInfoModal({
+                title: browserT('renderer.browser.snapshot.exportSaved.title'),
+                message: browserT('renderer.browser.snapshot.exportSaved.message'),
+                confirmText: browserT('common.confirm'),
+                variant: 'success'
+            });
+        } catch (err: any) {
+            // 导出失败必须让用户看见：写盘失败、DevTools 占用 debugger、页面卡死超时等。
+            // 错误正文可能来自页面（CDP / 页面脚本抛出的文本），而弹窗 message 按 HTML
+            // 渲染，必须整段转义后再插入。
+            await showInfoModal({
+                title: browserT('renderer.browser.snapshot.exportFailed.title'),
+                message: escapeModalText(
+                    browserT('renderer.browser.snapshot.exportFailed.message', {
+                        message: err?.message || String(err)
+                    })
+                ),
+                confirmText: browserT('common.confirm'),
+                variant: 'warn'
+            });
         }
     }
 

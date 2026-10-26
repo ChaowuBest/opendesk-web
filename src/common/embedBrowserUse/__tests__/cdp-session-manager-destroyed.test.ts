@@ -22,8 +22,12 @@ function makeDestroyableWebContents(id: number): any {
     const wc = {
         id,
         isDestroyed: () => destroyed,
+        destroyedListeners,
         once: (event: string, listener: () => void) => {
             if (event === 'destroyed') destroyedListeners.add(listener);
+        },
+        removeListener: (event: string, listener: () => void) => {
+            if (event === 'destroyed') destroyedListeners.delete(listener);
         },
         destroy: () => {
             destroyed = true;
@@ -130,5 +134,44 @@ describe('CDPSessionManager cleans up sessions of destroyed webContents', () => 
         // removeController → disposeAll 路径：dispose 不得打断任务删除
         expect(() => manager.disposeAll()).not.toThrow();
         expect((manager as any)._sessions.size).toBe(0);
+    });
+
+    test('an evicted unhealthy session takes its destroyed hook with it', async () => {
+        // 会话不可恢复时 getSession 会驱逐它并重建：旧会话在 webContents 上注册的
+        // 'destroyed' 兜底监听必须随之注销，否则会随驱逐次数累积闭包（每个闭包
+        // 还持有旧 session 与 webContents 引用）。
+        const manager = new CDPSessionManager();
+        const wc = makeDestroyableWebContents(601);
+        const first = (await manager.getSession(wc.id)) as any;
+        expect(wc.destroyedListeners.size).toBe(1);
+
+        // 连接彻底不可用：本会话既没 attach，也 attach 不回去（如 DevTools 占用）
+        first._attached = false;
+        wc.debugger.detach();
+        wc.debugger.attach = () => {
+            throw new Error('Debugger is already attached to the target');
+        };
+
+        // 健康探测失败 → 驱逐旧会话 → 重建也失败，getSession 报错
+        await expect(manager.getSession(wc.id)).rejects.toThrow('Failed to attach CDP debugger');
+
+        expect((manager as any)._sessions.size).toBe(0);
+        expect(wc.destroyedListeners.size).toBe(0);
+    });
+
+    test('releasing a session removes its destroyed hook', async () => {
+        const manager = new CDPSessionManager();
+        const wc = makeDestroyableWebContents(701);
+        await manager.getSession(wc.id);
+        expect(wc.destroyedListeners.size).toBe(1);
+
+        manager.dispose(wc.id);
+        expect(wc.destroyedListeners.size).toBe(0);
+
+        // disposeAll 同样要注销
+        await manager.getSession(wc.id);
+        expect(wc.destroyedListeners.size).toBe(1);
+        manager.disposeAll();
+        expect(wc.destroyedListeners.size).toBe(0);
     });
 });

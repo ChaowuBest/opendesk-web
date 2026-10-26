@@ -153,7 +153,12 @@ import {
 import { fetchModelUrl } from './utils/model-network.js';
 import { fetchProviderModelNames } from './utils/provider-models.js';
 import { LLM } from './aikernel/llm.js';
-import { BrowserManager, setCDPLogger, setSnapshotPrefixProvider } from '../common/embedBrowserUse/main';
+import {
+    BrowserManager,
+    setCDPLogger,
+    setSnapshotDialogTextsProvider,
+    setSnapshotPrefixProvider
+} from '../common/embedBrowserUse/main';
 import { openDeskScriptGenerators } from './applications/browser/utils.js';
 import { browserHintsSnapshotPrefixProvider } from './applications/browser/hints.js';
 import { Channels as EmbedBrowserChannels } from '../common/embedBrowserUse/protocol';
@@ -1150,6 +1155,13 @@ const registerBrowserAPIHandlers = () => {
     // 让「导出 Snapshot」（任务浏览器标签与浏览器应用）与 agent 的 snapshot 工具输出一致：
     // 都带上插件注册的 Browser Hints。
     setSnapshotPrefixProvider(browserHintsSnapshotPrefixProvider);
+    // 任务浏览器标签的导出保存对话框由 embedBrowserUse 弹出：文案用 provider 注入，
+    // 保证切换语言后（t() 每次按当前设置解析）取到的是新语言。
+    setSnapshotDialogTextsProvider(() => ({
+        title: t('main.browser.snapshot.saveDialog.title'),
+        textFiles: t('main.browser.snapshot.saveDialog.textFiles'),
+        allFiles: t('main.browser.snapshot.saveDialog.allFiles')
+    }));
 
     // 下载管理 IPC — 委托给 BrowserApplication
     const browserApp = ApplicationRegistry.getApplication('browser') as any;

@@ -329,6 +329,38 @@ setSnapshotPrefixProvider(browserHintsSnapshotPrefixProvider);
 
 不注入 provider 时，快照文本与此前完全一致。
 
+#### 注入导出对话框文案（`SnapshotDialogTextsProvider`）
+
+「导出 Snapshot」弹出的原生保存对话框由库自己创建，但库不依赖宿主的 i18n 体系：对话框标题与
+文件类型过滤器名称由宿主按当前语言提供，库内只保留英文兜底。
+
+```typescript
+export interface SnapshotDialogTexts {
+    title: string;
+    textFiles: string;
+    allFiles: string;
+}
+
+export type SnapshotDialogTextsProvider = () => Partial<SnapshotDialogTexts>;
+```
+
+**用 provider 而不是一次性注入字符串**：宿主语言通常可在运行时切换（`t()` 每次按当前设置
+解析），静态注入会在切换后停在旧语言。provider 每次导出时调用，缺失或抛错都回落英文默认值。
+
+```typescript
+// src/main/main.ts — 按当前语言注入（任务浏览器标签的导出走这里）
+import { setSnapshotDialogTextsProvider } from '../common/embedBrowserUse/main';
+
+setSnapshotDialogTextsProvider(() => ({
+    title: t('main.browser.snapshot.saveDialog.title'),
+    textFiles: t('main.browser.snapshot.saveDialog.textFiles'),
+    allFiles: t('main.browser.snapshot.saveDialog.allFiles')
+}));
+```
+
+浏览器应用（应用方法 `exportSnapshotByWebContentsId`）与 IPC handler 共用同一份导出流程
+`exportSnapshotToFile(webContents, texts)`，只是各自传入自己的 locale 文案。
+
 ### 4. Main Process — 使用 BrowserController
 
 Agent 工具或业务代码通过 `BrowserManager` 获取控制器，然后调用其方法：
@@ -505,10 +537,14 @@ CDP 命令交错导致竞态。
 
 `BrowserBridgeAPI` 暴露了两个非实例绑定的工具方法，直接操作 webContents（无需 instanceId）。
 
-| 方法             | 签名                                | 说明                                                                 |
-| ---------------- | ----------------------------------- | -------------------------------------------------------------------- |
-| `openDevTools`   | `(webContentsId: number) → Promise` | 为指定 webview 打开 Chrome DevTools 窗口。适合调试页面问题。         |
-| `exportSnapshot` | `(webContentsId: number) → Promise` | 获取当前页面的可访问性快照并弹出系统保存对话框，导出为 `.txt` 文件。 |
+| 方法             | 签名                                                      | 说明                                                                                                                         |
+| ---------------- | --------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------- |
+| `openDevTools`   | `(webContentsId: number) → Promise`                       | 为指定 webview 打开 Chrome DevTools 窗口。适合调试页面问题。                                                                 |
+| `exportSnapshot` | `(webContentsId: number) → Promise<SnapshotExportResult>` | 获取当前页面的可访问性快照并弹出系统保存对话框，导出为 `.txt` 文件。对话框文案可通过 `setSnapshotDialogTextsProvider` 注入。 |
+
+`SnapshotExportResult` 为 `{ canceled: boolean; filePath: string | null }`：用户在保存对话框里取消时
+`canceled` 为 `true`、`filePath` 为 `null`；导出失败（CDP 建链失败、页面无响应、写盘失败等）走
+`{ status: 'error' }` 响应，桥接层会抛出带原因的异常。
 
 **使用方式**（在 BrowserInstance 子类中）：
 

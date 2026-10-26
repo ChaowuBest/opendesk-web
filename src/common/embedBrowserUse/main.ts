@@ -17,8 +17,8 @@
  */
 
 import { Channels } from './protocol';
-import type { BrowserState, TabInfo, PageSnapshot, IPCResponse } from './protocol';
-import { CDPSession, CDPSessionManager, setCDPLogger } from './cdp/session';
+import type { BrowserState, TabInfo, PageSnapshot, IPCResponse, SnapshotExportResult } from './protocol';
+import { CDPSession, CDPSessionManager, getCDPLogger, setCDPLogger } from './cdp/session';
 import { captureSnapshot, resolveTargetCoords, type CapturedSnapshot } from './cdp/snapshot';
 import {
     isNestedRef,
@@ -99,6 +99,51 @@ export function setSnapshotPrefixProvider(provider?: SnapshotPrefixProvider): vo
     _snapshotPrefixProvider = provider;
 }
 
+/**
+ * 导出快照保存对话框的文案。
+ *
+ * embedBrowserUse 不依赖宿主的 i18n 体系：原生对话框的标题与文件类型过滤器
+ * 由宿主按当前语言提供，库内只保留英文兜底。
+ */
+export interface SnapshotDialogTexts {
+    /** 对话框标题。 */
+    title: string;
+    /** .txt 过滤器名称。 */
+    textFiles: string;
+    /** 所有文件过滤器名称。 */
+    allFiles: string;
+}
+
+/**
+ * 导出快照对话框文案提供者。
+ *
+ * 用 provider 而不是一次性注入字符串：宿主语言可在运行时切换（``t()`` 每次按
+ * 当前设置解析），静态注入会在切换后变成旧语言的文案。
+ */
+export type SnapshotDialogTextsProvider = () => Partial<SnapshotDialogTexts>;
+
+const DEFAULT_SNAPSHOT_DIALOG_TEXTS: SnapshotDialogTexts = {
+    title: 'Save Snapshot',
+    textFiles: 'Text Files',
+    allFiles: 'All Files'
+};
+
+let _snapshotDialogTextsProvider: SnapshotDialogTextsProvider | undefined;
+
+/** 注入导出快照对话框文案提供者；传入 undefined 回落到英文默认文案。 */
+export function setSnapshotDialogTextsProvider(provider?: SnapshotDialogTextsProvider): void {
+    _snapshotDialogTextsProvider = provider;
+}
+
+/** 解析当前要用的对话框文案：提供者缺失或抛错时回落到英文默认文案。 */
+function resolveSnapshotDialogTexts(): SnapshotDialogTexts {
+    try {
+        return { ...DEFAULT_SNAPSHOT_DIALOG_TEXTS, ...(_snapshotDialogTextsProvider?.() ?? {}) };
+    } catch {
+        return { ...DEFAULT_SNAPSHOT_DIALOG_TEXTS };
+    }
+}
+
 /** 以 CDP 会话为后端构造页面求值器。 */
 export function makeSessionEvaluator(session: CDPSession): BrowserPageEvaluator {
     return async (expression: string) => {
@@ -127,6 +172,56 @@ export async function collectSnapshotPrefix(snapshot: PageSnapshot, session: CDP
     } catch {
         return [];
     }
+}
+
+/**
+ * 导出快照到文件：抓取 → 保存对话框 → 写入磁盘。
+ *
+ * 任务浏览器标签（IPC handler）与浏览器应用（应用方法）共用这一份流程，避免
+ * 两条路径各自维护一遍「一次性会话 + 对话框 + 写文件」而逐渐漂移。对话框文案
+ * 由调用方按当前语言传入（见 `SnapshotDialogTexts`）。
+ */
+export async function exportSnapshotToFile(
+    webContents: Electron.WebContents,
+    texts: SnapshotDialogTexts
+): Promise<SnapshotExportResult> {
+    const { BrowserWindow, dialog } = await import('electron');
+
+    // 一次性会话：抓完内容立刻释放，保存对话框的停留时间不占着 CDP 连接。
+    // 若这条 attach 属于别的会话（导出时 debugger 已被浏览器控制器占用），
+    // dispose 不会 detach，避免打断正在进行的自动化操作。
+    const session = await CDPSession.create(webContents);
+    let content: string;
+    try {
+        const snapshot: PageSnapshot = await captureSnapshot(session);
+        content = renderSnapshotText(snapshot, {
+            prefixLines: await collectSnapshotPrefix(snapshot, session)
+        });
+    } finally {
+        session.dispose();
+    }
+
+    const win = BrowserWindow.getFocusedWindow() ?? BrowserWindow.getAllWindows().find((w) => !w.isDestroyed()) ?? null;
+    const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
+    const dialogOptions = {
+        title: texts.title,
+        defaultPath: `snapshot-${timestamp}.txt`,
+        filters: [
+            { name: texts.textFiles, extensions: ['txt'] },
+            { name: texts.allFiles, extensions: ['*'] }
+        ]
+    };
+    const saveResult = win
+        ? await dialog.showSaveDialog(win, dialogOptions)
+        : await dialog.showSaveDialog(dialogOptions);
+
+    if (saveResult.canceled || !saveResult.filePath) {
+        return { canceled: true, filePath: null };
+    }
+
+    const fs = await import('node:fs/promises');
+    await fs.writeFile(saveResult.filePath, content, 'utf8');
+    return { canceled: false, filePath: saveResult.filePath };
 }
 
 /**
@@ -2754,49 +2849,18 @@ export class BrowserManager {
 
         ipcMain.handle(Channels.exportSnapshot, async (_event: any, webContentsId: number) => {
             try {
-                const { webContents, BrowserWindow, dialog } = await import('electron');
+                const { webContents } = await import('electron');
                 const wc = webContents.fromId(webContentsId);
                 if (!wc || wc.isDestroyed()) {
                     return { status: 'error', message: 'WebContents not found or destroyed' };
                 }
-                const sessionMgr = new CDPSessionManager();
-                try {
-                    const session = await sessionMgr.getSession(webContentsId);
-                    const snapshot: PageSnapshot = await captureSnapshot(session);
-                    const content = renderSnapshotText(snapshot, {
-                        prefixLines: await collectSnapshotPrefix(snapshot, session)
-                    });
-
-                    const win =
-                        BrowserWindow.getFocusedWindow() ??
-                        BrowserWindow.getAllWindows().find((w) => !w.isDestroyed()) ??
-                        null;
-                    const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
-                    const dialogOptions = {
-                        title: '保存 Snapshot',
-                        defaultPath: `snapshot-${timestamp}.txt`,
-                        filters: [
-                            { name: 'Text Files', extensions: ['txt'] },
-                            { name: 'All Files', extensions: ['*'] }
-                        ]
-                    };
-                    const saveResult = win
-                        ? await dialog.showSaveDialog(win, dialogOptions)
-                        : await dialog.showSaveDialog(dialogOptions);
-
-                    if (saveResult.canceled || !saveResult.filePath) {
-                        return { status: 'ok', data: { canceled: true, filePath: null } };
-                    }
-
-                    const fs = await import('node:fs/promises');
-                    await fs.writeFile(saveResult.filePath, content, 'utf8');
-                    return { status: 'ok', data: { canceled: false, filePath: saveResult.filePath } };
-                } finally {
-                    // 一次性会话：快照与导出完成后立即释放 debugger，避免 CDP
-                    // 会话与 listener 在页面存活期间持续残留。
-                    sessionMgr.disposeAll();
-                }
+                // 打开前就确定文案：文案 provider 每次导出按当前语言解析
+                const data = await exportSnapshotToFile(wc, resolveSnapshotDialogTexts());
+                return { status: 'ok', data };
             } catch (err) {
+                // 失败留痕：导出失败在渲染端只会得到一次提示（或历史版本里被静默吞掉），
+                // 日志是排查 attach 失败（DevTools 占用）、CDP 超时、写盘失败的唯一线索。
+                getCDPLogger().warn(`exportSnapshot failed (webContentsId=${webContentsId}): ${String(err)}`);
                 return { status: 'error', message: String(err) };
             }
         });

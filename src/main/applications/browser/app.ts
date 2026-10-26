@@ -49,15 +49,14 @@ import { collectBrowserHintSummaries } from './hints.js';
 import type { BrowserHintSummary } from './hints.js';
 import {
     BrowserManager,
-    CDPSessionManager,
     captureSnapshot,
-    collectSnapshotPrefix,
+    exportSnapshotToFile,
     makeCallBrowserScript,
-    makeExecuteScriptOnBrowser,
-    renderSnapshotText
+    makeExecuteScriptOnBrowser
 } from '../../../common/embedBrowserUse/main';
-import type { CDPSession, BrowserPageEvaluator } from '../../../common/embedBrowserUse/main';
-import type { PageSnapshot } from '../../../common/embedBrowserUse/protocol';
+import { CDPSession } from '../../../common/embedBrowserUse/cdp/session';
+import type { BrowserPageEvaluator } from '../../../common/embedBrowserUse/main';
+import type { PageSnapshot, SnapshotExportResult } from '../../../common/embedBrowserUse/protocol';
 import { Channels as EmbedBrowserChannels } from '../../../common/embedBrowserUse/protocol';
 import { makeEnsureSidebarScript, openDeskScriptGenerators } from './utils.js';
 import { createRequire } from 'node:module';
@@ -208,7 +207,6 @@ function appendAutomatedDownloadsToToolResult(result: string, downloads: Downloa
 }
 
 class BrowserApplication extends BaseApplication {
-    private _snapshotSessionManager = new CDPSessionManager();
     private _activeDownloads = new Map<string, DownloadState>();
     private _downloadStorePath: string | null = null;
     private _automatedDownloadScopes: AutomatedDownloadScope[] = [];
@@ -716,15 +714,32 @@ class BrowserApplication extends BaseApplication {
         this.emitEvent(eventName, taskId, ...args);
     }
 
-    /**
-     * Resolve a CDP session for the given webContents id.
-     * 导出快照需要同一个 session 既抓快照又求值前缀段落，因此单独抽出。
-     */
-    private async _requireSnapshotSession(webContentsId: number): Promise<CDPSession> {
+    /** 校验并解析 webContentsId；无效、已销毁或找不到时抛错。 */
+    private _requireWebContents(webContentsId: number): Electron.WebContents {
         if (!Number.isInteger(webContentsId) || webContentsId <= 0) {
             throw new Error('Invalid webContentsId');
         }
-        return this._snapshotSessionManager.getSession(webContentsId);
+        const wc = getElectronWebContents().fromId(webContentsId);
+        if (!wc || wc.isDestroyed()) {
+            throw new Error(`WebContents ${webContentsId} not found or destroyed`);
+        }
+        return wc;
+    }
+
+    /**
+     * 用一次性 CDP 会话执行快照相关操作。
+     *
+     * 浏览器 UI 的快照/导出是用户手动触发的低频动作，没必要缓存会话：缓存会让
+     * debugger 连接与 listener 随页面存活一直悬挂（DevTools 打不开，且 agent
+     * 控制器那条会话会一直把它当成“共享连接”，失去重置挂死连接的能力）。
+     */
+    private async _withSnapshotSession<T>(webContentsId: number, fn: (session: CDPSession) => Promise<T>): Promise<T> {
+        const session = await CDPSession.create(this._requireWebContents(webContentsId));
+        try {
+            return await fn(session);
+        } finally {
+            session.dispose();
+        }
     }
 
     /**
@@ -732,7 +747,7 @@ class BrowserApplication extends BaseApplication {
      * Used by browser renderer UI (tool menu debug action).
      */
     async captureSnapshotByWebContentsId(webContentsId: number): Promise<PageSnapshot> {
-        return captureSnapshot(await this._requireSnapshotSession(webContentsId));
+        return this._withSnapshotSession(webContentsId, (session) => captureSnapshot(session));
     }
 
     /**
@@ -740,37 +755,14 @@ class BrowserApplication extends BaseApplication {
      *
      * 输出格式与 agent 的 snapshot 工具一致，包含插件注册的 Browser Hints。
      */
-    async exportSnapshotByWebContentsId(
-        webContentsId: number
-    ): Promise<{ canceled: boolean; filePath: string | null }> {
-        const session = await this._requireSnapshotSession(webContentsId);
-        const snapshot = await captureSnapshot(session);
-        const content = renderSnapshotText(snapshot, {
-            prefixLines: await collectSnapshotPrefix(snapshot, session)
-        });
-
-        const { BrowserWindow } = await import('electron');
-        const win =
-            BrowserWindow.getFocusedWindow() ?? BrowserWindow.getAllWindows().find((w) => !w.isDestroyed()) ?? null;
-        const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
-        const dialogOptions = {
+    async exportSnapshotByWebContentsId(webContentsId: number): Promise<SnapshotExportResult> {
+        // 与任务浏览器标签共用同一份导出流程（一次性会话 → 保存对话框 → 写文件），
+        // 只有对话框文案来自本应用的 locale
+        return exportSnapshotToFile(this._requireWebContents(webContentsId), {
             title: t('dialog.saveSnapshot'),
-            defaultPath: `snapshot-${timestamp}.txt`,
-            filters: [
-                { name: 'Text Files', extensions: ['txt'] },
-                { name: 'All Files', extensions: ['*'] }
-            ]
-        };
-        const saveResult = win
-            ? await getElectronDialog().showSaveDialog(win, dialogOptions)
-            : await getElectronDialog().showSaveDialog(dialogOptions);
-
-        if (saveResult.canceled || !saveResult.filePath) {
-            return { canceled: true, filePath: null };
-        }
-
-        await fs.writeFile(saveResult.filePath, content, 'utf8');
-        return { canceled: false, filePath: saveResult.filePath };
+            textFiles: t('dialog.textFiles'),
+            allFiles: t('dialog.allFiles')
+        });
     }
 
     /**
