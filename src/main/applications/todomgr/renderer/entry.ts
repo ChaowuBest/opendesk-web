@@ -16,7 +16,11 @@ import { showConfirmModal } from '../../../../renderer/components/confirmModal.j
 import { createRendererTranslator, resolveRendererLocale } from '../../../../renderer/locale.js';
 import { createTranslatorForTodoMgr } from '../locale/renderer.js';
 import type { TodoTemplate } from '../templates.js';
-import { REASONING_EFFORT_UI_OPTIONS, type ReasoningEffort } from '../../../../common/reasoning-effort.js';
+import {
+    REASONING_EFFORT_LABEL_KEYS,
+    REASONING_EFFORT_UI_OPTIONS,
+    type ReasoningEffort
+} from '../../../../common/reasoning-effort.js';
 import { getEffortIconSVG, getModelIconTile } from '../../../../renderer/utils/model-picker-icons.js';
 import { fixedLayerOrigin, visibleViewportRect } from '../../../../renderer/utils/window-frame.js';
 import {
@@ -28,7 +32,7 @@ import {
 import type { TodoRecurrence } from '../../../../common/utils/todo-recurrence.js';
 import { describeLegacyRecurrence, describeTodoRecurrence } from '../../../../common/utils/recurrence-description.js';
 import { TimeSchedulePicker, TIME_SCHEDULE_CSS } from './time-schedule-picker.js';
-import { getLegacyCronDisplay } from './legacy-timezone.js';
+import { describeLegacyCronInTimezone } from './legacy-timezone.js';
 import type { TodoChatModelCatalog, TodoChatModelSummary } from '../common.js';
 
 type Translator = ReturnType<typeof createTranslatorForTodoMgr>;
@@ -1069,14 +1073,16 @@ function getTriggerSummary(todo: GlobalTodo, t: Translator): string {
                 return todo.trigger.triggerAt;
             }
         }
-        case 'cron':
+        case 'cron': {
             if (todo.trigger.timezone === undefined)
-                return getLegacyCronDisplay(todo.trigger, getSystemTimezone(), t).summary;
+                return describeLegacyCronInTimezone(todo.trigger, getSystemTimezone(), t);
+            const timezone = todo.trigger.timezone ?? 'UTC';
             return todo.trigger.recurrence
-                ? describeTodoRecurrence(todo.trigger.recurrence, t, todo.trigger.timezone || 'UTC')
+                ? describeTodoRecurrence(todo.trigger.recurrence, t, timezone)
                 : todo.trigger.cronExpression
-                  ? describeLegacyRecurrence(todo.trigger.cronExpression, t, todo.trigger.timezone || 'UTC')
+                  ? describeLegacyRecurrence(todo.trigger.cronExpression, t, timezone)
                   : t('trigger.summary.cron');
+        }
         case 'event':
             return `${todo.trigger.bundleName || ''}:${todo.trigger.eventName || ''}`;
         default:
@@ -2060,7 +2066,7 @@ class TodoMgrEntryWidget extends AgentOperableHTMLElement {
     }
 
     private _getReasoningEffortLabel(value: string): string {
-        return this._t(`renderer.todo.model.reasoning.${value || 'default'}`);
+        return this._t(REASONING_EFFORT_LABEL_KEYS[value] ?? 'reasoning.effort.default');
     }
 
     private _getModelLabel(alias: string): string {
@@ -2232,7 +2238,7 @@ class TodoMgrEntryWidget extends AgentOperableHTMLElement {
                             this._getModelByAlias(model.alias || this._defaultModelAlias)?.vision === true;
                         return `<button class="ctx-item tm-model-picker-option${active ? ' active' : ''}" type="button" data-model-alias="${escapeHtml(model.alias)}" aria-haspopup="menu" aria-expanded="false" aria-controls="tm-edit-model-effort-submenu" title="${escapeHtml(this._getModelDetail(model.alias))}">
                     ${getModelIconTile(hasVision)}
-                    <span class="ctx-label">${escapeHtml(this._getModelLabel(model.alias))}${hasVision ? `<span class="ctx-badge blue">${escapeHtml(this._t('renderer.todo.model.vision'))}</span>` : ''}</span>
+                    <span class="ctx-label">${escapeHtml(this._getModelLabel(model.alias))}${hasVision ? `<span class="ctx-badge blue">${escapeHtml(this._t('model.vision'))}</span>` : ''}</span>
                     ${active ? '<span class="ctx-item-check"><i class="fas fa-check" aria-hidden="true"></i></span>' : ''}
                     <span class="ctx-arrow"><i class="fas fa-chevron-right" aria-hidden="true"></i></span>
                 </button>`;

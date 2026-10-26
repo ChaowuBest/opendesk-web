@@ -10,6 +10,7 @@
  */
 
 import { recurrenceEnUs } from '../common/locale/recurrence.js';
+import { modelEnUs } from '../common/locale/model.js';
 
 export const enUs: Record<string, string> = {
     'credentials.oldPassword': 'Old password',
@@ -1268,14 +1269,6 @@ export const enUs: Record<string, string> = {
     'tools.memory.updatedPortrait': 'Updated user profile',
     'tools.memory.searchResultCount': '${count} memories found',
 
-    // Reasoning Effort Labels
-    'reasoning.effort.default': 'Default',
-    'reasoning.effort.none': 'No Reasoning',
-    'reasoning.effort.low': 'Low Reasoning',
-    'reasoning.effort.medium': 'Medium Reasoning',
-    'reasoning.effort.high': 'Deep Reasoning',
-    'reasoning.effort.max': 'Maximum Reasoning',
-
     // Tool Call Status
     'toolcall.status.pending': 'Pending',
     'toolcall.status.running': 'Running…',
@@ -1987,7 +1980,6 @@ export const enUs: Record<string, string> = {
         'Default embedding model is not configured or is not an embedding model',
     'error.model.default_reranker_missing': 'Default reranker model is not configured',
     'error.model.default': 'default model',
-    'error.model.reasoningEffortUnsupported': 'Model ${alias} does not support reasoning effort "${effort}"',
     'error.model.invalid_embedding_response': 'Invalid embedding response: expected ${shape}',
     'error.model.stream_idle_timeout': 'Model stream idle timeout: no data was received for ${timeoutMs} ms',
     'error.model.chat_alias_not_found': "Chat model alias '${alias}' not found",
@@ -3225,5 +3217,6 @@ export const enUs: Record<string, string> = {
     'main.desktop.card.timeout':
         'Card generation timed out (3 minutes). The model may be unavailable — right-click the card to retry later.',
 
-    ...recurrenceEnUs
+    ...recurrenceEnUs,
+    ...modelEnUs
 };

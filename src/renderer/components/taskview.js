@@ -6932,15 +6932,7 @@ class TaskView extends HTMLElement {
             const modelAlias = event.detail?.model;
             if (modelAlias) {
                 try {
-                    const result = await window.taskManagerAPI.setTaskModel(
-                        this.task_id,
-                        modelAlias,
-                        event.detail.reasoningEffort
-                    );
-                    if (result?.status === 'error') {
-                        alert(result.message);
-                        return;
-                    }
+                    await window.taskManagerAPI.setTaskModel(this.task_id, modelAlias, event.detail.reasoningEffort);
                 } catch (err) {
                     console.error('setTaskModel failed:', err);
                 }

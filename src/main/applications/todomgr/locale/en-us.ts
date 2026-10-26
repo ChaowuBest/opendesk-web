@@ -157,13 +157,6 @@ export const enUs: Record<string, string> = {
     'renderer.todo.model.search': 'Search models',
     'renderer.todo.model.back': 'Back to models',
     'renderer.todo.model.noResults': 'No matching models',
-    'renderer.todo.model.vision': 'Vision',
-    'renderer.todo.model.reasoning.default': 'Model default',
-    'renderer.todo.model.reasoning.none': 'None',
-    'renderer.todo.model.reasoning.low': 'Low',
-    'renderer.todo.model.reasoning.medium': 'Medium',
-    'renderer.todo.model.reasoning.high': 'High',
-    'renderer.todo.model.reasoning.max': 'Max',
     'renderer.todo.model.hint': 'Choose a model, then select a reasoning level to confirm',
 
     // ========== Renderer：工作空间 ==========

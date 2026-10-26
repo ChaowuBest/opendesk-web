@@ -4,12 +4,7 @@ import {
     buildSupportedEffortValues
 } from '../../../common/reasoning-effort.js';
 import { REASONING_EFFORT_VALUES } from '../../../main/aikernel/types/reasoning.js';
-import {
-    isReasoningEffortSupported,
-    lookupKnownReasoningEfforts,
-    resolveModelReasoningEfforts,
-    resolveReasoningEffortForModel
-} from '../../../main/utils/model-context.js';
+import { lookupKnownReasoningEfforts, resolveModelReasoningEfforts } from '../../../main/utils/model-context.js';
 
 describe('model-context reasoning efforts', () => {
     test('系统档位包含 none/low/medium/high/max', () => {
@@ -55,25 +50,6 @@ describe('model-context reasoning efforts', () => {
             'max'
         ]);
         expect(resolveModelReasoningEfforts({ model_name: '' })).toEqual(['', 'none', 'low', 'medium', 'high', 'max']);
-    });
-
-    test('校验任务级推理档位时拒绝已知模型不支持的值', () => {
-        expect(isReasoningEffortSupported('gpt-5', 'max')).toBe(false);
-        expect(isReasoningEffortSupported('gpt-5', 'high')).toBe(true);
-        expect(isReasoningEffortSupported('deepseek-v4.1-flash', 'medium')).toBe(false);
-        expect(isReasoningEffortSupported('deepseek-v4.1-flash', 'max')).toBe(true);
-        expect(isReasoningEffortSupported('unknown-model', 'max')).toBe(true);
-        expect(isReasoningEffortSupported('gpt-5', '')).toBe(true);
-    });
-
-    test('resolveReasoningEffortForModel 将不支持的档位回退为模型默认', () => {
-        expect(resolveReasoningEffortForModel('gpt-5', 'max')).toBeUndefined();
-        expect(resolveReasoningEffortForModel('gpt-5', 'high')).toBe('high');
-        expect(resolveReasoningEffortForModel('deepseek-v4.1-flash', 'medium')).toBeUndefined();
-        expect(resolveReasoningEffortForModel('deepseek-v4.1-flash', 'max')).toBe('max');
-        expect(resolveReasoningEffortForModel('unknown-model', 'max')).toBe('max');
-        expect(resolveReasoningEffortForModel('gpt-5', '')).toBe('');
-        expect(resolveReasoningEffortForModel('gpt-5', undefined)).toBeUndefined();
     });
 
     test('buildSupportedEffortValues 过滤非法值并始终以默认项开头', () => {

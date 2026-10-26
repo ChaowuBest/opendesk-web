@@ -16,13 +16,14 @@
 
 import { createTranslator } from '../../../../renderer/locale.js';
 import { recurrenceZhCn, recurrenceEnUs } from '../../../../common/locale/recurrence.js';
+import { modelZhCn, modelEnUs } from '../../../../common/locale/model.js';
 import { zhCn } from './zh-cn.js';
 import { enUs } from './en-us.js';
 
 // todomgr 词典优先，未命中的通用 recurrence 词条回退到共享词典
 const translations: Record<string, Record<string, string>> = {
-    'zh-CN': { ...recurrenceZhCn, ...zhCn },
-    'en-US': { ...recurrenceEnUs, ...enUs }
+    'zh-CN': { ...recurrenceZhCn, ...modelZhCn, ...zhCn },
+    'en-US': { ...recurrenceEnUs, ...modelEnUs, ...enUs }
 };
 
 export function createTranslatorForTodoMgr(

@@ -153,13 +153,6 @@ export const zhCn: Record<string, string> = {
     'renderer.todo.model.search': '搜索模型',
     'renderer.todo.model.back': '返回模型列表',
     'renderer.todo.model.noResults': '未找到匹配的模型',
-    'renderer.todo.model.vision': '视觉',
-    'renderer.todo.model.reasoning.default': '默认',
-    'renderer.todo.model.reasoning.none': '无推理',
-    'renderer.todo.model.reasoning.low': '简洁推理',
-    'renderer.todo.model.reasoning.medium': '推理适中',
-    'renderer.todo.model.reasoning.high': '推理深入',
-    'renderer.todo.model.reasoning.max': '推理最大化',
     'renderer.todo.model.hint': '选择模型后，点选推理档位即可确定',
 
     // ========== Renderer：工作空间 ==========

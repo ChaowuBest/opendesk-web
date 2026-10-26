@@ -105,7 +105,7 @@ describe('dispatched task names', () => {
         expect(generateName).not.toHaveBeenCalled();
     });
 
-    test('drops a reasoning override unsupported by the selected model', async () => {
+    test('keeps a reasoning override on the task and leaves capability checks to execution', async () => {
         const data = Setting.getInstance().getData();
         Setting.updateInstanceData({
             ...data,
@@ -129,6 +129,6 @@ describe('dispatched task names', () => {
         });
 
         expect(task.model).toBe('gpt-5-alias');
-        expect(task.reasoningEffort).toBeUndefined();
+        expect(task.reasoningEffort).toBe('max');
     });
 });

@@ -34,11 +34,7 @@ import { buildTriggerMessage } from './trigger.js';
 import { resolveTodoWorkspace } from './workspace.js';
 import { logger } from '../../utils/logger.js';
 import { Setting } from '../../utils/setting.js';
-import {
-    resolveModelReasoningEfforts,
-    resolveModelVisionSupport,
-    resolveReasoningEffortForModel
-} from '../../utils/model-context.js';
+import { resolveModelReasoningEfforts, resolveModelVisionSupport } from '../../utils/model-context.js';
 import chalk from 'chalk';
 import type { Participant } from '../../plugins/types.js';
 import type { TodoChatModelCatalog, TodoWorkspaceConfig } from './common.js';
@@ -220,16 +216,13 @@ export class TodoMgrApplication extends BaseApplication {
             if (model && !modelIsValid) {
                 logger.warn(`触发器任务 ${todoId} 指定模型不可用，回退到当前全局默认模型: ${model}`);
             }
-            // 档位能力校验由 dispatchPromptToAgent 在最终分发边界兜底。
-            const effectiveReasoningEffort = modelIsValid
-                ? resolveReasoningEffortForModel(modelInstance?.model_name, reasoningEffort)
-                : undefined;
+            // 档位不做本地能力校验：模型不支持时由模型服务在请求时报错，任务显式失败。
             const task = await taskManager.dispatchPromptToAgent(mainAgent, undefined, prompt, {
                 taskName: todoTitle.trim() ? todoTitle : undefined,
                 workspace: resolvedWorkspace,
                 origin,
                 model: modelIsValid ? model : undefined,
-                reasoningEffort: effectiveReasoningEffort
+                reasoningEffort: modelIsValid ? reasoningEffort : undefined
             });
 
             if (deliver) {

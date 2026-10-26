@@ -48,7 +48,7 @@ describe('automation frequency descriptions and tool input', () => {
             if (rule.mode !== 'interval') expect(description).toContain('09:30');
         }
         expect(describeTodoRecurrence(rules[2], t, 'Asia/Shanghai')).toContain('2026-10-19');
-        expect(describeTodoRecurrence(rules[5], t, 'Asia/Shanghai')).toContain('09:00');
+        expect(describeTodoRecurrence(rules[5], t, 'Asia/Shanghai')).not.toMatch(/起始|starting|2026-10-19|09:00/);
     });
 
     test('legacy descriptions hide formulas and preserve recognizable simple rules', () => {
@@ -125,7 +125,7 @@ describe('automation frequency descriptions and tool input', () => {
         for (const [rule, expected] of cases) {
             const description = describeTodoRecurrence(rule, t, 'Asia/Shanghai');
             for (const text of expected) expect(description).toContain(text);
-            expect(description).toContain('2026-10-23 10:15');
+            expect(description).not.toMatch(/起始|starting|2026-10-23|10:15/);
             expect(description).toContain('(Asia/Shanghai)');
             expect(description).not.toMatch(/\$\{|recurrence\.desc\.|Saved advanced|已保存的高级/);
         }
@@ -145,10 +145,10 @@ describe('automation frequency descriptions and tool input', () => {
                     `${t('recurrence.desc.interval', {
                         days: '',
                         value: 2,
-                        unit: t(`renderer.todo.frequency.intervalUnit.${intervalUnit}`),
-                        start: '2026-10-23 10:15'
+                        unit: t(`renderer.todo.frequency.intervalUnit.${intervalUnit}`)
                     })} (Asia/Shanghai)`
                 );
+                expect(description).not.toMatch(/起始|starting|2026-10-23|10:15/);
             }
         }
     );
@@ -162,6 +162,7 @@ describe('automation frequency descriptions and tool input', () => {
                 'Asia/Shanghai'
             );
             expect(description).toContain(coreT(`recurrence.desc.intervalUnit.${intervalUnit}`));
+            expect(description).not.toMatch(/起始|starting|2026-10-23|10:15/);
             expect(description).not.toMatch(/\$\{|recurrence\.desc\./);
         }
     });

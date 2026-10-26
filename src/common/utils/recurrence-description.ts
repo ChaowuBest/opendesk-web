@@ -15,7 +15,6 @@ import {
     getTodoRecurrenceMonths,
     type TodoRecurrence
 } from './todo-recurrence.js';
-import { formatDatetimeLocal } from './timezone.js';
 import { parseLegacyCronRecurrence } from './legacy-cron.js';
 
 type Translator = (key: string, params?: Record<string, string | number>) => string;
@@ -61,7 +60,6 @@ export function describeTodoRecurrence(
             // Keep this shared description independent from TodoMgr's renderer dictionary.
             // The TUI passes the core translator, which does not include renderer.todo.* keys.
             params.unit = t(`recurrence.desc.intervalUnit.${recurrence.intervalUnit ?? 'hour'}`);
-            params.start = formatDatetimeLocal(recurrence.anchorAt!, timezone).replace('T', ' ');
             if (recurrence.time !== undefined) {
                 switch (recurrence.intervalUnit) {
                     case 'day':

@@ -40,6 +40,7 @@ describe('automation task timezone selection', () => {
 
     afterEach(() => {
         jest.restoreAllMocks();
+        jest.useRealTimers();
     });
 
     function mockSystemTimezone(timeZone: string) {
@@ -155,13 +156,12 @@ describe('automation task timezone selection', () => {
         }
     );
 
-    test('legacy daily UTC rule: cards show local time, the editor keeps the UTC wall clock, and a title edit preserves the schedule', async () => {
+    test('legacy daily UTC rule: cards show local time, the editor keeps UTC, and a title edit preserves the schedule', async () => {
         mockSystemTimezone('Asia/Shanghai');
         const plan = todo({ type: 'cron', cronExpression: '30 9 * * *' });
         const widget = widgetFor(plan);
-        // 卡片/详情仍按系统时区换算展示（日常视角）。
-        expect(widget.querySelector('.tm-todo-card')?.textContent).toContain('17:30');
-        expect(widget.querySelector('#tm-detail-scroll')?.textContent).toContain('17:30');
+        expect(widget.querySelector('.tm-todo-card')?.textContent).toContain('Daily at 17:30 (Asia/Shanghai)');
+        expect(widget.querySelector('#tm-detail-scroll')?.textContent).toContain('Daily at 17:30 (Asia/Shanghai)');
         await widget._enterEditMode(plan);
         // 编辑页显示规则本身的 UTC 墙钟，时区下拉如实标 UTC。
         expect(widget.querySelector('#tm-edit-timezone')?.value).toBe('UTC');
@@ -177,10 +177,27 @@ describe('automation task timezone selection', () => {
         );
     });
 
+    test.each([
+        ['2026-01-15T12:00:00Z', 'Daily at 04:30 (America/New_York)'],
+        ['2026-07-15T12:00:00Z', 'Daily at 05:30 (America/New_York)']
+    ])('a legacy recurrence converts using the offset on %s', (date, summary) => {
+        jest.useFakeTimers({ doNotFake: ['Intl'] });
+        jest.setSystemTime(new Date(date));
+        mockSystemTimezone('America/New_York');
+        const trigger = { type: 'cron', cronExpression: '* * * * *', recurrence: { mode: 'daily', time: '09:30' } };
+        const plan = todo(trigger);
+        const widget = widgetFor(plan);
+
+        expect(widget.querySelector('.tm-todo-card')?.textContent).toContain(summary);
+        expect(widget.querySelector('#tm-detail-scroll')?.textContent).toContain(summary);
+        expect(plan.trigger).toEqual(trigger);
+    });
+
     test('legacy weekly UTC time keeps its wall clock and weekday, and a timezone change reinterprets them without converting', async () => {
         mockSystemTimezone('Asia/Kathmandu');
         const plan = todo({ type: 'cron', cronExpression: '45 23 * * 6' });
         const widget = widgetFor(plan);
+        expect(widget.querySelector('.tm-todo-card')?.textContent).toContain('Every Sun at 05:30 (Asia/Kathmandu)');
         await widget._enterEditMode(plan);
         // 不再跨日换算：墙钟与星期原样（UTC 23:45 周六）。
         expect(widget.querySelector('#tm-edit-timezone')?.value).toBe('UTC');

@@ -4,6 +4,7 @@ import { fileURLToPath } from 'url';
 import { zhCn as todoZhCn } from '../../../main/applications/todomgr/locale/zh-cn.js';
 import { enUs as todoEnUs } from '../../../main/applications/todomgr/locale/en-us.js';
 import { recurrenceZhCn } from '../../../common/locale/recurrence.js';
+import { modelZhCn } from '../../../common/locale/model.js';
 import { t as todoT } from '../../../main/applications/todomgr/locale/index.js';
 import { createTranslatorForTodoMgr } from '../../../main/applications/todomgr/locale/renderer.js';
 import { TODO_TEMPLATES } from '../../../main/applications/todomgr/templates.js';
@@ -192,7 +193,11 @@ describe('todomgr locale', () => {
             '../../../main/applications/todomgr/renderer/legacy-timezone.ts',
             '../../../main/applications/todomgr/renderer/time-schedule-picker.ts'
         ];
-        const knownKeys = new Set([...Object.keys(todoZhCn), ...Object.keys(recurrenceZhCn)]);
+        const knownKeys = new Set([
+            ...Object.keys(todoZhCn),
+            ...Object.keys(recurrenceZhCn),
+            ...Object.keys(modelZhCn)
+        ]);
         const workspacePickerKeys = new Set([
             'renderer.workspacePicker.taskNameFallback',
             'renderer.workspacePicker.titleWithName'

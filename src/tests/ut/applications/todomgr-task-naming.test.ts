@@ -226,7 +226,7 @@ describe('TodoMgr execution conversation names', () => {
         });
     });
 
-    test('an unsupported reasoning effort falls back to the selected model default', async () => {
+    test('passes a reasoning override through for execution-time capability validation', async () => {
         await application.triggerTodoTask(
             'todo-unsupported-reasoning',
             '日报',
@@ -240,7 +240,7 @@ describe('TodoMgr execution conversation names', () => {
 
         expect(dispatchPromptToAgent.mock.calls[0][3]).toMatchObject({
             model: 'unsupported-reasoning',
-            reasoningEffort: undefined
+            reasoningEffort: 'max'
         });
     });
 
@@ -262,7 +262,7 @@ describe('TodoMgr execution conversation names', () => {
         });
     });
 
-    test('validates the reasoning effort against the current default model when no model is selected', async () => {
+    test('keeps a reasoning override when no model is selected', async () => {
         await application.triggerTodoTask(
             'todo-default-unsupported-reasoning',
             '日报',
@@ -276,7 +276,7 @@ describe('TodoMgr execution conversation names', () => {
 
         expect(dispatchPromptToAgent.mock.calls[0][3]).toMatchObject({
             model: undefined,
-            reasoningEffort: undefined
+            reasoningEffort: 'max'
         });
     });
 });
