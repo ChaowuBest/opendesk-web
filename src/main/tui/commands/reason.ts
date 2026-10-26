@@ -184,11 +184,12 @@ export function registerReasonCommand(tui: OpenDeskTUI): void {
 
                 // 更新模型的 reasoning_effort。默认模型若为向量嵌入模型则无此字段，
                 // 沿用既有行为直接写入，不做运行时分支
-                const targetModel = setting.data.models[modelIndex] as (typeof setting.data.models)[number] & {
-                    reasoning_effort: ReasoningEffort;
-                };
-                targetModel.reasoning_effort = effortValue as ReasoningEffort;
-                setting.save();
+                setting.updateAndSave((draft) => {
+                    const targetModel = draft.models[modelIndex] as (typeof draft.models)[number] & {
+                        reasoning_effort: ReasoningEffort;
+                    };
+                    targetModel.reasoning_effort = effortValue as ReasoningEffort;
+                });
 
                 const effortLabel = labelForStoredReasoningEffort(effortValue, t);
                 const info = new InfoOverlay(tui, {
@@ -251,12 +252,13 @@ export function registerReasonCommand(tui: OpenDeskTUI): void {
                     return;
                 }
 
-                if (!setting.data.cli_config) {
-                    setting.data.cli_config = {} as typeof setting.data.cli_config;
-                }
-                setting.data.cli_config.reason_display = subArg as 'full' | 'partial';
-                setting.data.cli_config.show_all_reasoning = subArg === 'full';
-                setting.save();
+                setting.updateAndSave((draft) => {
+                    if (!draft.cli_config) {
+                        draft.cli_config = {} as typeof draft.cli_config;
+                    }
+                    draft.cli_config.reason_display = subArg as 'full' | 'partial';
+                    draft.cli_config.show_all_reasoning = subArg === 'full';
+                });
 
                 const info = new InfoOverlay(tui, {
                     title: t('reason.display.set'),

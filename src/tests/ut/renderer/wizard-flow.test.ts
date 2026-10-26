@@ -201,7 +201,10 @@ describe('setup wizard flow', () => {
             expect(result.classList.contains('hidden')).toBe(true);
             const saved = { providers: [], models: [] };
             (window as any).settingAPI.loadSettingObject = async () => saved;
-            (window as any).settingAPI.saveSettingObject = async () => undefined;
+            (window as any).settingAPI.saveSettingObjectDetailed = async () => ({
+                data: saved,
+                sideEffectFailures: []
+            });
             await wizard._handleSaveOnly();
             expect(saved.models).toEqual([expect.objectContaining({ model_name: 'manual-model' })]);
         });

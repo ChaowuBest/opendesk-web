@@ -32,29 +32,40 @@ import {
     type StartupState
 } from './common.js';
 
+/**
+ * 原生桥接依赖宿主在 window 上注入 native。未注入时直接抛错，
+ * 而不是把 undefined 当作可用桥接、在调用处炸出难以定位的 TypeError。
+ */
+function nativeBridge(): NonNullable<Window['native']> {
+    if (!window.native) {
+        throw new Error('window.native 未注入：platforms bridge 需要宿主提供原生桥接');
+    }
+    return window.native;
+}
+
 class SpeechKitProxy implements SpeechKit {
     async available(): Promise<boolean> {
-        return window.native.call('speechKit:available');
+        return nativeBridge().call('speechKit:available');
     }
 
     async initialize(locale?: string | null): Promise<void> {
-        return window.native.call('speechKit:initialize', locale ?? null);
+        return nativeBridge().call('speechKit:initialize', locale ?? null);
     }
 
     async start(): Promise<void> {
-        return window.native.call('speechKit:start');
+        return nativeBridge().call('speechKit:start');
     }
 
     async peek(): Promise<PeekResult> {
-        return window.native.call('speechKit:peek');
+        return nativeBridge().call('speechKit:peek');
     }
 
     async stop(): Promise<string> {
-        return window.native.call('speechKit:stop');
+        return nativeBridge().call('speechKit:stop');
     }
 
     async release(): Promise<void> {
-        return window.native.call('speechKit:release');
+        return nativeBridge().call('speechKit:release');
     }
 }
 
@@ -66,27 +77,27 @@ class OcrKitProxy implements OcrKit {
 
 class DatabaseKitProxy implements DatabaseKit {
     async available(): Promise<boolean> {
-        return window.native.call('databaseKit:available');
+        return nativeBridge().call('databaseKit:available');
     }
 
     execSql(storeId: string, sql: string): Promise<void> {
-        return window.native.call('databaseKit:execSql', storeId, sql);
+        return nativeBridge().call('databaseKit:execSql', storeId, sql);
     }
 
     execSqlParams(storeId: string, sql: string, params: ArkDataValueType[]): Promise<void> {
-        return window.native.call('databaseKit:execSqlParams', storeId, sql, params);
+        return nativeBridge().call('databaseKit:execSqlParams', storeId, sql, params);
     }
 
     querySqlShort(storeId: string, sql: string): Promise<ArkDataRow[]> {
-        return window.native.call('databaseKit:querySqlShort', storeId, sql);
+        return nativeBridge().call('databaseKit:querySqlShort', storeId, sql);
     }
 
     openStore(storeId: string, opts?: ArkDataOpenStoreOptions): Promise<void> {
-        return window.native.call('databaseKit:openStore', storeId, opts);
+        return nativeBridge().call('databaseKit:openStore', storeId, opts);
     }
 
     closeStore(storeId: string, opts?: ArkDataCloseStoreOptions): Promise<void> {
-        return window.native.call('databaseKit:closeStore', storeId, opts);
+        return nativeBridge().call('databaseKit:closeStore', storeId, opts);
     }
 
     executePrepared(
@@ -95,7 +106,7 @@ class DatabaseKitProxy implements DatabaseKit {
         params: ArkDataValueType[],
         opts?: ArkDataExecOptions
     ): Promise<ArkDataExecResult> {
-        return window.native.call('databaseKit:executePrepared', storeId, sql, params, opts);
+        return nativeBridge().call('databaseKit:executePrepared', storeId, sql, params, opts);
     }
 
     executePreparedMany(
@@ -105,7 +116,7 @@ class DatabaseKitProxy implements DatabaseKit {
         opts?: ArkDataExecManyOptions
     ): Promise<ArkDataExecResult> {
         const { onProgress: _omit, ...mainOpts } = opts ?? {};
-        return window.native.call('databaseKit:executePreparedMany', storeId, sql, rows, mainOpts);
+        return nativeBridge().call('databaseKit:executePreparedMany', storeId, sql, rows, mainOpts);
     }
 
     executePreparedManyBatched(
@@ -127,19 +138,19 @@ class DatabaseKitProxy implements DatabaseKit {
         params: ArkDataValueType[],
         opts?: ArkDataExecOptions
     ): Promise<ArkDataRow[]> {
-        return window.native.call('databaseKit:queryPrepared', storeId, sql, params, opts);
+        return nativeBridge().call('databaseKit:queryPrepared', storeId, sql, params, opts);
     }
 
     beginTransaction(storeId: string): Promise<ArkDataTxHandle> {
-        return window.native.call('databaseKit:beginTransaction', storeId);
+        return nativeBridge().call('databaseKit:beginTransaction', storeId);
     }
 
     commitTransaction(storeId: string, tx: ArkDataTxHandle): Promise<void> {
-        return window.native.call('databaseKit:commitTransaction', storeId, tx);
+        return nativeBridge().call('databaseKit:commitTransaction', storeId, tx);
     }
 
     rollbackTransaction(storeId: string, tx: ArkDataTxHandle): Promise<void> {
-        return window.native.call('databaseKit:rollbackTransaction', storeId, tx);
+        return nativeBridge().call('databaseKit:rollbackTransaction', storeId, tx);
     }
 
     async transaction<T>(storeId: string, fn: (tx: ArkDataTxHandle) => Promise<T>): Promise<T> {
@@ -183,11 +194,11 @@ class DatabaseKitProxy implements DatabaseKit {
 
 class StartupKitProxy implements StartupKit {
     async getState(): Promise<StartupState> {
-        return window.native.call('startupKit:getState');
+        return nativeBridge().call('startupKit:getState');
     }
 
     async delegateSetting(enabled?: boolean): Promise<void> {
-        return window.native.call('startupKit:delegateSetting', enabled);
+        return nativeBridge().call('startupKit:delegateSetting', enabled);
     }
 }
 
@@ -197,11 +208,11 @@ export class NativeBridgeProxy implements NativeBridge {
     }
 
     async getPlatform(): Promise<string> {
-        return window.native.call('getPlatform');
+        return nativeBridge().call('getPlatform');
     }
 
     async getVariant(): Promise<string> {
-        return window.native.call('getVariant');
+        return nativeBridge().call('getVariant');
     }
 
     async getSpeechKit(): Promise<SpeechKit> {

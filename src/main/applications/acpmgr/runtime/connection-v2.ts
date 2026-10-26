@@ -120,6 +120,20 @@ function normalizeAuthMethods(methods: acpV2.AuthMethod[] | undefined): AuthMeth
     );
 }
 
+/**
+ * v2 若干结构是开放联合，字段退化为 string | undefined。
+ * 该谓词既做运行时的取值校验（与 includes 等价），又完成类型收窄，
+ * 避免用 as 把 string 硬塞给字面量联合。
+ */
+function isKnownValue<T extends string>(known: readonly T[], value: string | undefined): value is T {
+    return value !== undefined && known.some((candidate) => candidate === value);
+}
+
+const KNOWN_PLAN_PRIORITIES = ['low', 'medium', 'high'] as const;
+
+// PlanEntryStatus 未包含 'cancelled'，但 v2 线上形状会带该值，保持透传不被改写
+const KNOWN_PLAN_STATUSES = ['pending', 'in_progress', 'completed', 'cancelled'] as const;
+
 function permissionRequest(params: acpV2.RequestPermissionRequest): RequestPermissionRequest {
     const subject = params.subject;
     const toolCall =
@@ -315,12 +329,8 @@ export function createV2ConnectionHandle(
                         sessionUpdate: 'plan',
                         entries: (plan.entries ?? []).map((entry) => ({
                             content: entry.content,
-                            priority: ['low', 'medium', 'high'].includes(entry.priority)
-                                ? (entry.priority as 'low' | 'medium' | 'high')
-                                : 'medium',
-                            status: ['pending', 'in_progress', 'completed', 'cancelled'].includes(entry.status)
-                                ? (entry.status as 'pending' | 'in_progress' | 'completed' | 'cancelled')
-                                : 'pending'
+                            priority: isKnownValue(KNOWN_PLAN_PRIORITIES, entry.priority) ? entry.priority : 'medium',
+                            status: isKnownValue(KNOWN_PLAN_STATUSES, entry.status) ? entry.status : 'pending'
                         })) as PlanEntry[]
                     }
                 };
@@ -376,9 +386,11 @@ export function createV2ConnectionHandle(
     const connection = client.connect(target as acpV2.Stream & acpV2.AgentApp);
     const agent = connection.agent;
 
-    const mcpServers = (servers: McpServer[]): acpV2.McpServer[] => {
+    // v2 的 session/resume 请求允许省略 mcpServers（SDK 类型里是可选），
+    // 省略等价于「不连接任何 MCP server」，因此这里统一按空列表处理。
+    const mcpServers = (servers: McpServer[] | undefined): acpV2.McpServer[] => {
         if (!capabilities?.session) throw new Error(t('acpmgr.error.v2SessionUnsupported'));
-        const direct = servers.map(directMcpServer);
+        const direct = (servers ?? []).map(directMcpServer);
         for (const server of direct) {
             if (server.type === 'stdio' && !capabilities?.session?.mcp?.stdio) {
                 throw new Error(t('acpmgr.error.v2McpStdioUnsupported'));
@@ -469,7 +481,7 @@ export function createV2ConnectionHandle(
             });
             return {
                 configOptions: normalizeConfigOptions(result.configOptions) ?? []
-            } as unknown as Awaited<ReturnType<AcpClientConnection['setSessionMode']>>;
+            } as unknown as Awaited<ReturnType<NonNullable<AcpClientConnection['setSessionMode']>>>;
         },
         setSessionConfigOption: async (params) => {
             const result = await agent.request(acpV2.methods.agent.session.setConfigOption, {
@@ -480,7 +492,7 @@ export function createV2ConnectionHandle(
             } as acpV2.SetSessionConfigOptionRequest);
             return {
                 configOptions: normalizeConfigOptions(result.configOptions) ?? []
-            } as unknown as Awaited<ReturnType<AcpClientConnection['setSessionConfigOption']>>;
+            } as unknown as Awaited<ReturnType<NonNullable<AcpClientConnection['setSessionConfigOption']>>>;
         },
         prompt: async (params) => {
             const completion = new Promise<string>((resolve, reject) => {

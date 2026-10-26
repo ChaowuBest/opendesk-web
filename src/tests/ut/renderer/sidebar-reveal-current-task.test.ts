@@ -2,14 +2,34 @@
 // 侧边栏应自动展开分组、按需扩充分页并将高亮任务滚动到可见区域（否则用户无法对任务做收藏/删除等操作）。
 // 该能力统一收口在 _updateTaskHighlight(taskId, { revealCurrentTask: true })，
 // 由 index.html 的 openTask() 统一触发。测试走真实渲染管线（reloadTaskList），不做 DOM 手搓。
-import { beforeAll, beforeEach, describe, expect, jest, test } from '@jest/globals';
+import { afterAll, beforeAll, beforeEach, describe, expect, jest, test } from '@jest/globals';
 import { parseHTML } from 'linkedom';
 
-const NOW = new Date();
+// 固定时钟：分组判据是 activityAt >= 当天 0 点，用真实时钟在午夜前后运行时
+// ts(i) 会跨越本地日期边界，today 组的任务被分到 this-week，分页断言随之失效。
+const FIXED_NOW = new Date(2026, 6, 29, 12, 0, 0);
 const earlierTaskId = 't-old-deep';
 
+// 只冻结 Date，其余定时器保持真实实现，避免 flushRaf 依赖的 setTimeout 被挂起。
+const REAL_TIMERS = [
+    'clearImmediate',
+    'clearInterval',
+    'clearTimeout',
+    'hrtime',
+    'nextTick',
+    'performance',
+    'queueMicrotask',
+    'requestAnimationFrame',
+    'cancelAnimationFrame',
+    'requestIdleCallback',
+    'cancelIdleCallback',
+    'setImmediate',
+    'setInterval',
+    'setTimeout'
+] as const;
+
 function ts(offsetMinutes: number): string {
-    return new Date(NOW.getTime() - offsetMinutes * 60_000).toISOString();
+    return new Date(FIXED_NOW.getTime() - offsetMinutes * 60_000).toISOString();
 }
 
 describe('sidebar reveal current task on highlight sync', () => {
@@ -18,6 +38,7 @@ describe('sidebar reveal current task on highlight sync', () => {
     let sidebar: any;
 
     beforeAll(async () => {
+        jest.useFakeTimers({ now: FIXED_NOW, doNotFake: [...REAL_TIMERS] });
         const { window } = parseHTML('<!doctype html><html><body></body></html>');
         Object.assign(globalThis, {
             window,
@@ -59,6 +80,10 @@ describe('sidebar reveal current task on highlight sync', () => {
             getTaskInfo: async () => ({})
         } as any;
         await import('../../../renderer/components/sidebar.js');
+    });
+
+    afterAll(() => {
+        jest.useRealTimers();
     });
 
     beforeEach(() => {

@@ -1,5 +1,6 @@
 import { beforeAll, beforeEach, describe, expect, jest, test } from '@jest/globals';
 import { parseHTML } from 'linkedom';
+import { confirmModalMockShim } from '../../confirmModalMock.js';
 
 describe('agent-input auto-resize', () => {
     const resizeObserverCallbacks = new Map<Element, ResizeObserverCallback>();
@@ -38,9 +39,11 @@ describe('agent-input auto-resize', () => {
             configurable: true
         });
 
-        await jest.unstable_mockModule('../../../renderer/components/confirmModal.ts', () => ({
-            showConfirmModal: jest.fn()
-        }));
+        await jest.unstable_mockModule('../../../renderer/components/confirmModal.ts', () =>
+            confirmModalMockShim({
+                showConfirmModal: jest.fn()
+            })
+        );
         await jest.unstable_mockModule('../../../renderer/components/imageLightbox.js', () => ({
             showImageLightbox: jest.fn()
         }));

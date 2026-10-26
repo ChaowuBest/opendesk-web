@@ -107,15 +107,17 @@ test('用户配置的同名模型优先于内置模型', async () => {
     });
 });
 
-test('validateDefaultModels 保留指向内置模型的默认模型引用', async () => {
+test('normalizeDefaultModelReferences 保留指向内置模型的默认模型引用', async () => {
     await withApi(null, async () => {
         const setting = createSetting({ default_model: BUILTIN_MODEL_ALIAS });
-        (setting as unknown as { validateDefaultModels(saveChanges?: boolean): void }).validateDefaultModels(false);
+        (
+            setting as unknown as { normalizeDefaultModelReferences(target: unknown): boolean }
+        ).normalizeDefaultModelReferences(setting.getData());
         assert.equal(setting.getData().default_model, BUILTIN_MODEL_ALIAS);
     });
 });
 
-test('validateDefaultModels 在 provider 尚未注册时仍保留已持久化的内置模型引用', () => {
+test('normalizeDefaultModelReferences 在 provider 尚未注册时仍保留已持久化的内置模型引用', () => {
     const previous = Setting.builtinModelProvider;
     Setting.builtinModelProvider = null;
     try {
@@ -130,17 +132,21 @@ test('validateDefaultModels 在 provider 尚未注册时仍保留已持久化的
                 }
             ]
         });
-        (setting as unknown as { validateDefaultModels(saveChanges?: boolean): void }).validateDefaultModels(false);
+        (
+            setting as unknown as { normalizeDefaultModelReferences(target: unknown): boolean }
+        ).normalizeDefaultModelReferences(setting.getData());
         assert.equal(setting.getData().default_model, BUILTIN_MODEL_ALIAS);
     } finally {
         Setting.builtinModelProvider = previous;
     }
 });
 
-test('validateDefaultModels 仍然清除指向未知模型的默认模型引用', async () => {
+test('normalizeDefaultModelReferences 仍然清除指向未知模型的默认模型引用', async () => {
     await withApi(null, async () => {
         const setting = createSetting({ default_model: 'no-such-model' });
-        (setting as unknown as { validateDefaultModels(saveChanges?: boolean): void }).validateDefaultModels(false);
+        (
+            setting as unknown as { normalizeDefaultModelReferences(target: unknown): boolean }
+        ).normalizeDefaultModelReferences(setting.getData());
         assert.equal(setting.getData().default_model, '');
     });
 });

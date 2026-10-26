@@ -80,6 +80,16 @@ export function buildHeartbeatPayload(clientType: ClientType, deviceId: string):
 }
 
 /**
+ * 默认 fetch 实现：走 Platform 统一 fetch 以继承系统代理配置。
+ * 平台 fetch 只接受 string | URL，这里把 Request 输入按其 url 转发，
+ * 使实现签名与 `typeof fetch` 兼容（ReporterOptions.fetchImpl 的类型）。
+ */
+const platformProxyFetch: typeof fetch = (input, init) => {
+    const url = input instanceof Request ? input.url : input;
+    return getPlatform().fetch(url, init);
+};
+
+/**
  * 上送一次心跳。走 Platform 统一 fetch 以继承系统代理配置。
  * 失败仅记录日志，不抛出异常，避免影响主流程。
  */
@@ -87,7 +97,7 @@ export async function sendHeartbeat(clientType: ClientType, options: ReporterOpt
     try {
         const deviceId = getOrCreateDeviceId(options.baseDir);
         const payload = buildHeartbeatPayload(clientType, deviceId);
-        const fetchImpl = options.fetchImpl ?? ((input, init) => getPlatform().fetch(input, init));
+        const fetchImpl = options.fetchImpl ?? platformProxyFetch;
         const response = await fetchImpl(options.serverUrl ?? HEARTBEAT_ENDPOINT, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },

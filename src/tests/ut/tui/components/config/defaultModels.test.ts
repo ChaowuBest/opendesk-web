@@ -127,16 +127,34 @@ describe('DefaultModelConfigPage', () => {
         (page as unknown as { save: (values: Record<string, unknown>) => void }).save({
             default_model: 'text-model',
             default_embedding_model: 'embedding-model',
-            default_reranker_model: 'vision-model',
             default_vision_model: 'vision-model'
         });
 
         const data = Setting.getInstance().getData();
         expect(data.default_model).toBe('text-model');
         expect(data.default_embedding_model).toBe('embedding-model');
-        expect(data.default_reranker_model).toBe('vision-model');
         expect(data.default_vision_model).toBe('vision-model');
         expect(onConfigChange).toHaveBeenCalledTimes(1);
         expect(onClose).toHaveBeenCalledTimes(1);
+    });
+
+    test('does not expose the reranker model setting', () => {
+        const page = new DefaultModelConfigPage(createTuiMock(), jest.fn());
+        const form = (page as unknown as { form: { items: Array<Record<string, unknown>> } }).form;
+
+        expect(form.items.find((item) => item.key === 'default_reranker_model')).toBeUndefined();
+        expect(stripAnsi(page.render(100).join('\n'))).not.toContain('Reranker Model');
+    });
+
+    test('keeps the persisted reranker model untouched when saving', () => {
+        const page = new DefaultModelConfigPage(createTuiMock(), jest.fn());
+
+        (page as unknown as { save: (values: Record<string, unknown>) => void }).save({
+            default_model: 'text-model',
+            default_embedding_model: 'embedding-model',
+            default_vision_model: 'vision-model'
+        });
+
+        expect(Setting.getInstance().getData().default_reranker_model).toBe('text-model');
     });
 });

@@ -1,5 +1,6 @@
 import { beforeAll, beforeEach, describe, expect, jest, test } from '@jest/globals';
 import { parseHTML } from 'linkedom';
+import { confirmModalMockShim } from '../../confirmModalMock.js';
 
 const getEffectiveWorkspace = jest.fn<() => Promise<string>>();
 const searchFilesByKeywordInPath =
@@ -37,9 +38,11 @@ describe('agent-input @ file completion follows workspace switch', () => {
             configurable: true
         });
 
-        await jest.unstable_mockModule('../../../renderer/components/confirmModal.ts', () => ({
-            showConfirmModal: jest.fn(async () => true)
-        }));
+        await jest.unstable_mockModule('../../../renderer/components/confirmModal.ts', () =>
+            confirmModalMockShim({
+                showConfirmModal: jest.fn(async () => true)
+            })
+        );
         await jest.unstable_mockModule('../../../renderer/components/imageLightbox.js', () => ({
             showImageLightbox: jest.fn()
         }));

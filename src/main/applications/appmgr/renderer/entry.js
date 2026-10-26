@@ -4,6 +4,7 @@
  */
 
 import { OVERLAY_CSS } from '../../../../common/overlay-styles.js';
+import { escapeHtml } from '../../../../common/utils/escape.js';
 import { renderIcon } from '../../../../renderer/components/confirmModal';
 
 import { syncShadowHostTheme } from '../../../../renderer/theme/theme-shadow-overrides.ts';
@@ -23,15 +24,6 @@ function getAppMgrAPI() {
         requestModifyApp: (bundleName, requirements) =>
             window.applicationAPI.callMainWorld('requestModifyApp', bundleName, requirements)
     };
-}
-
-function escapeHtml(value) {
-    return String(value ?? '')
-        .replace(/&/g, '&amp;')
-        .replace(/</g, '&lt;')
-        .replace(/>/g, '&gt;')
-        .replace(/"/g, '&quot;')
-        .replace(/'/g, '&#39;');
 }
 
 const BUNDLE_NAME_PATTERN = /^[a-z][a-z0-9]*(?:[.-]?[a-z0-9]+)*$/;
@@ -683,7 +675,7 @@ class AppMgrEntryWidget extends HTMLElement {
             this._editAppHandler = null;
         }
         if (this._appUpdatedHandler) {
-            window.applicationAPI.unsubscribe('appUpdated', this._appUpdatedHandler);
+            window.applicationAPI.unsubscribe('appUpdated');
             this._appUpdatedHandler = null;
         }
         if (this._segScrollResizeObserver) {

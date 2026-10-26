@@ -2212,12 +2212,14 @@ class AgentGateEntryWidget extends HTMLElement {
                                 this.shadow.removeEventListener('mousedown', handleShadowDown);
                                 this.shadow.removeEventListener('keydown', handleShadowKey);
                             };
-                            const handleShadowDown = (e: MouseEvent) => {
+                            // ShadowRoot.addEventListener 的字符串重载只接受 (ev: Event) => any，
+                            // 故回调参数按 Event 声明；实际事件类型仍是运行时原值（mousedown/keydown）
+                            const handleShadowDown = (e: Event) => {
                                 if (menuEl && !menuEl.contains(e.target as Node) && e.target !== pageSizeBtn)
                                     closeMenu();
                             };
-                            const handleShadowKey = (e: KeyboardEvent) => {
-                                if (e.key === 'Escape') closeMenu();
+                            const handleShadowKey = (e: Event) => {
+                                if ((e as KeyboardEvent).key === 'Escape') closeMenu();
                             };
                             pageSizeBtn.addEventListener('click', (e) => {
                                 e.stopPropagation();

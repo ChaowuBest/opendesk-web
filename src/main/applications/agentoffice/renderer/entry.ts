@@ -53,6 +53,23 @@ import { renderIcon } from '../../../../renderer/components/confirmModal.ts';
 
 type DetailSection = 'basic' | 'skills' | 'mcp' | 'security' | 'tasks';
 
+/**
+ * window.applicationAPI 的事件订阅回调在共享声明 src/renderer/global.d.ts 中被固定为
+ * `(...args: unknown[]) => void`，带具体参数类型的事件回调（如 (staffId: string) => void）无法直接赋给它。
+ * 该声明属于跨应用共享类型（不在本次改动范围），故在本地把订阅回调类型放宽一次
+ * （等价于把 unknown 放宽为 any），让各事件的具体签名可以直接注册，
+ * 而不是在每个调用点重复写 as any。运行时仍把 handler 原样交给 IPC 订阅。
+ */
+type ApplicationEventListener = (...args: any[]) => void;
+
+function subscribeApplicationEvent(eventName: string, handler: ApplicationEventListener): void {
+    void window.applicationAPI.subscribe(eventName, handler);
+}
+
+function unsubscribeApplicationEvent(eventName: string): void {
+    void window.applicationAPI.unsubscribe(eventName);
+}
+
 interface ChatModelSummary {
     alias: string;
     provider_name: string;
@@ -189,13 +206,13 @@ export class AgentOfficeEntryWidget extends AgentOperableHTMLElement {
     ] as const;
     private subscribeFlowEvents(): void {
         if (!this.flowFeatureEnabled || this.flowEventsSubscribed || !this.isConnected) return;
-        for (const [name, handler] of this.flowEventHandlers) window.applicationAPI.subscribe(name, handler);
+        for (const [name, handler] of this.flowEventHandlers) subscribeApplicationEvent(name, handler);
         this.flowReadingTimer = setInterval(() => void this.loadFlowReading(), 15_000);
         this.flowEventsSubscribed = true;
     }
     private unsubscribeFlowEvents(): void {
         if (!this.flowEventsSubscribed) return;
-        for (const [name, handler] of this.flowEventHandlers) window.applicationAPI.unsubscribe(name, handler);
+        for (const [name] of this.flowEventHandlers) unsubscribeApplicationEvent(name);
         if (this.flowReadingTimer) clearInterval(this.flowReadingTimer);
         this.flowEventsSubscribed = false;
     }
@@ -332,15 +349,22 @@ export class AgentOfficeEntryWidget extends AgentOperableHTMLElement {
         if (this.selectedFlow && this.flowView === 'chat') this.flowScrollToBottomOnNextRender = true;
         syncShadowHostTheme(this);
         document.addEventListener(OPENDESK_THEME_CHANGED, this.onThemeChanged);
-        window.applicationAPI.subscribe('staffsChanged', this.onStaffsChanged);
-        window.applicationAPI.subscribe('messagesChanged', this.onMessagesChanged);
-        window.applicationAPI.subscribe('staffTaskChanged', this.onStaffsChanged);
-        window.applicationAPI.subscribe('localServiceChanged', this.onLocalServiceChanged);
+        subscribeApplicationEvent('staffsChanged', this.onStaffsChanged);
+        subscribeApplicationEvent('messagesChanged', this.onMessagesChanged);
+        subscribeApplicationEvent('staffTaskChanged', this.onStaffsChanged);
+        subscribeApplicationEvent('localServiceChanged', this.onLocalServiceChanged);
         this.subscribeFlowEvents();
         void this.initialize();
     }
 
     disconnectedCallback(): void {
+        // 事件订阅先行退订：后面的计时器清理、菜单清理、草稿冲刷都可能抛错，
+        // 一旦异常就会跳过退订，把监听留在共享通道上
+        unsubscribeApplicationEvent('staffsChanged');
+        unsubscribeApplicationEvent('messagesChanged');
+        unsubscribeApplicationEvent('staffTaskChanged');
+        unsubscribeApplicationEvent('localServiceChanged');
+        this.unsubscribeFlowEvents();
         if (this.previewHideTimer) clearTimeout(this.previewHideTimer);
         if (this.autoSaveTimer) clearTimeout(this.autoSaveTimer);
         if (this.autoSaveIndicatorTimer) clearTimeout(this.autoSaveIndicatorTimer);
@@ -351,11 +375,6 @@ export class AgentOfficeEntryWidget extends AgentOperableHTMLElement {
         this.settingUnsubscribe = undefined;
         void this.flushAutoSave();
         document.removeEventListener(OPENDESK_THEME_CHANGED, this.onThemeChanged);
-        window.applicationAPI.unsubscribe('staffsChanged', this.onStaffsChanged);
-        window.applicationAPI.unsubscribe('messagesChanged', this.onMessagesChanged);
-        window.applicationAPI.unsubscribe('staffTaskChanged', this.onStaffsChanged);
-        window.applicationAPI.unsubscribe('localServiceChanged', this.onLocalServiceChanged);
-        this.unsubscribeFlowEvents();
     }
 
     private tr(key: string): string {
@@ -2753,7 +2772,8 @@ export class AgentOfficeEntryWidget extends AgentOperableHTMLElement {
             this.shadowRoot?.querySelector(field.container)?.classList.toggle('invalid', invalid);
             if (invalid) {
                 input?.setAttribute('aria-invalid', 'true');
-                firstInvalid ??= input;
+                // input 可能为 null（节点缺失），此时 invalid 同样为 true，但不作为聚焦目标
+                if (input) firstInvalid ??= input;
             } else {
                 input?.removeAttribute('aria-invalid');
             }

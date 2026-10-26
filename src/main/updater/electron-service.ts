@@ -56,8 +56,15 @@ function updaterTargetArch(): UpdaterTargetArch {
  * Node 全局 fetch（undici）不读取 HTTP_PROXY/HTTPS_PROXY，也不经过 Chromium
  * 网络栈，内网代理环境下会直连失败。updater 的所有网络请求必须走平台
  * fetch（session.setProxy，none/system/custom 三种代理模式均已覆盖）。
+ *
+ * 参数取 `string | URL | Request`（即 RequestInfo | URL），以便本函数可直接
+ * 作为 `typeof fetch` 传给 download.ts / release-feed.ts 的 fetchImpl；
+ * 平台 fetch 只接受 `string | URL`，因此 Request 输入按其 url 转发。
  */
-function platformProxyFetch(input: string | URL, init?: RequestInit): Promise<Response> {
+function platformProxyFetch(input: string | URL | Request, init?: RequestInit): Promise<Response> {
+    if (input instanceof Request) {
+        return getPlatform().fetch(input.url, init);
+    }
     return getPlatform().fetch(input, init);
 }
 

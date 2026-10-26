@@ -91,4 +91,24 @@ describe('TodoWriteTool title fallback', () => {
         expect(todos[0].title).toBe('明确标题');
         expect(todos[1].title).toBe('长'.repeat(200));
     });
+
+    test('timing fields are absent instead of present-but-undefined', async () => {
+        await tool.execute({ todos: [{ content: '待办', status: 'pending' }] } as any, undefined, {
+            task_id: TASK_ID
+        } as any);
+
+        const [pendingTodo] = getTaskTodosForDisplay(TASK_ID);
+        expect(Object.keys(pendingTodo)).not.toContain('started_at');
+        expect(Object.keys(pendingTodo)).not.toContain('completed_at');
+
+        await tool.execute(
+            { todos: [{ id: pendingTodo.id, content: '待办', status: 'completed' }] } as any,
+            undefined,
+            { task_id: TASK_ID } as any
+        );
+
+        const [completedTodo] = getTaskTodosForDisplay(TASK_ID);
+        expect(Object.keys(completedTodo)).toContain('started_at');
+        expect(Object.keys(completedTodo)).toContain('completed_at');
+    });
 });

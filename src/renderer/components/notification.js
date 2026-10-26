@@ -9,6 +9,8 @@
  * See the Mulan PSL v2 for more details.
  */
 
+import { adoptDeferredSubscription } from '../deferredSubscription.js';
+
 const WARNING_ICON = `
 <div class="flex-shrink-0 text-orange-500">
     <svg xmlns="http://www.w3.org/2000/svg" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"></path><line x1="12" y1="9" x2="12" y2="13"></line><line x1="12" y1="17" x2="12.01" y2="17"></line></svg>
@@ -42,7 +44,21 @@ class NotificationPanel extends HTMLElement {
 
     connectedCallback() {
         this.render();
-        window.notificationAPI.subscribeNotification(this.onNotificationReceived.bind(this));
+        // 订阅是异步的：完成前元素可能被移除或重连，句柄交由 adoptDeferredSubscription
+        // 按「代」判定是否仍然有效，过期订阅会被自动退订
+        adoptDeferredSubscription(
+            this,
+            window.notificationAPI?.subscribeNotification(this.onNotificationReceived.bind(this)),
+            (unsubscribe) => {
+                this._unsubscribeNotification = unsubscribe;
+            },
+            (error) => console.error('subscribing notification failed', error)
+        );
+    }
+
+    disconnectedCallback() {
+        this._unsubscribeNotification?.();
+        this._unsubscribeNotification = null;
     }
 
     onNotificationReceived(type, source, title, message) {

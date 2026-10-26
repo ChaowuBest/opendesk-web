@@ -1,5 +1,6 @@
 import { beforeAll, beforeEach, describe, expect, jest, test } from '@jest/globals';
 import { parseHTML } from 'linkedom';
+import { confirmModalMockShim } from '../../confirmModalMock.js';
 
 /**
  * AgentInput 高频写入守卫的回归测试：
@@ -36,9 +37,11 @@ describe('agent-input repeated setter guards', () => {
             configurable: true
         });
 
-        await jest.unstable_mockModule('../../../renderer/components/confirmModal.ts', () => ({
-            showConfirmModal
-        }));
+        await jest.unstable_mockModule('../../../renderer/components/confirmModal.ts', () =>
+            confirmModalMockShim({
+                showConfirmModal
+            })
+        );
         await jest.unstable_mockModule('../../../renderer/components/imageLightbox.js', () => ({
             showImageLightbox: jest.fn()
         }));

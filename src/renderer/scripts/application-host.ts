@@ -308,7 +308,11 @@ function bindFloatingChatControls(): void {
 async function configureFloatingAgentBar(applicationBundleName: string): Promise<void> {
     let enabled = false;
     try {
-        const config = (await window.applicationRegistryAPI.getApplicationGUIConfig(applicationBundleName)) as
+        const registry = window.applicationRegistryAPI;
+        if (!registry) {
+            throw new Error('window.applicationRegistryAPI 未注入，无法读取应用 GUI 配置');
+        }
+        const config = (await registry.getApplicationGUIConfig(applicationBundleName)) as
             { needAgentBar?: boolean } | undefined;
         enabled = config?.needAgentBar === true;
     } catch (error) {

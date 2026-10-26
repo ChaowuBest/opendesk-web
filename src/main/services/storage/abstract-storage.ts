@@ -485,7 +485,10 @@ export type DropIndexName = 'BaseIndexer' | 'BM25Indexer' | 'TagIndexer' | 'Vect
  */
 export class BaseStorage {
     private bm25Indexer: Indexer | null = null;
-    private vectorIndexer: Indexer | null = null;
+    // 语义索引器固定由 VectorIndexer / ChunkIndexer 构造（见构造函数），
+    // 它们实现了 Indexer 上可选的语义能力方法（getBackend / probeStore / getWriteState），
+    // 因此这里按具体子类声明，避免调用方把真实存在的语义能力当成“可能缺失”。
+    private vectorIndexer: VectorIndexer | null = null;
     private tagIndexer: Indexer | null = null;
     private chunkIndexer: ChunkIndexer | null = null;
     private baseIndexer: BaseIndexer;
@@ -799,7 +802,7 @@ export class BaseStorage {
     ): Promise<Array<{ item_id: string; item_type: string }>> {
         this.ensureUsable();
         if (!this.vectorIndexer) return [];
-        return (this.vectorIndexer as VectorIndexer).searchMeta(conditions);
+        return this.vectorIndexer.searchMeta(conditions);
     }
 
     /**

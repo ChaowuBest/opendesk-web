@@ -45,6 +45,7 @@ import {
     renderCodeLineInnerHtml,
     splitHighlightedLines
 } from '../../../../common/markdown/code-block-render.js';
+import { escapeHtml } from '../../../../common/utils/escape.js';
 
 const NOTE_PAGE_SIZE = 30;
 
@@ -683,6 +684,17 @@ class NotesEntryWidget extends AgentOperableHTMLElement {
     }
 
     disconnectedCallback() {
+        // 事件订阅先行退订：后面的设置退订、tinymce 移除、右键菜单清理都可能抛错，
+        // 一旦异常就会跳过退订，把监听留在共享通道上
+        if (this._onNotesChanged) {
+            window.applicationAPI.unsubscribe('notesChanged');
+        }
+        if (this._onTagsChanged) {
+            window.applicationAPI.unsubscribe('tagsChanged');
+        }
+        if (this._onDeletedNotesChanged) {
+            window.applicationAPI.unsubscribe('deletedNotesChanged');
+        }
         if (this._settingUnsubscribe) {
             this._settingUnsubscribe();
             this._settingUnsubscribe = null;
@@ -705,15 +717,6 @@ class NotesEntryWidget extends AgentOperableHTMLElement {
         this._dismissEditorContextMenu();
         this._dismissNoteContextMenu();
         if (window.tinymce) tinymce.remove('#notes-editor');
-        if (this._onNotesChanged) {
-            window.applicationAPI.unsubscribe('notesChanged', this._onNotesChanged);
-        }
-        if (this._onTagsChanged) {
-            window.applicationAPI.unsubscribe('tagsChanged', this._onTagsChanged);
-        }
-        if (this._onDeletedNotesChanged) {
-            window.applicationAPI.unsubscribe('deletedNotesChanged', this._onDeletedNotesChanged);
-        }
     }
 
     _injectStyles() {
@@ -839,8 +842,8 @@ class NotesEntryWidget extends AgentOperableHTMLElement {
     }
 
     _bindCore() {
+        // _bindCoreDom 末尾已调用 _subscribeEvents，这里不再重复订阅
         this._bindCoreDom();
-        this._subscribeEvents();
     }
 
     _bindCoreDom() {
@@ -871,6 +874,11 @@ class NotesEntryWidget extends AgentOperableHTMLElement {
     }
 
     _subscribeEvents() {
+        // 重新订阅前先清掉本 frame 的旧订阅：_bindCoreDom 会在重渲染/locale 切换时被重复调用，
+        // 不清旧订阅会让同一事件堆积多个 handler（刷新回调被执行多次）
+        window.applicationAPI.unsubscribe('notesChanged');
+        window.applicationAPI.unsubscribe('tagsChanged');
+        window.applicationAPI.unsubscribe('deletedNotesChanged');
         this._onNotesChanged = () => this._refreshNotes();
         this._onTagsChanged = () => this._refreshTags();
         this._onDeletedNotesChanged = () => this._refreshDeletedNotes();
@@ -1016,8 +1024,8 @@ class NotesEntryWidget extends AgentOperableHTMLElement {
                     })
                     .join('');
                 div.innerHTML = `
-                    <div class="notes-item-title">${this._escapeHtml(note.title || this._t('renderer.note.untitled'))}</div>
-                    <div class="notes-item-preview">${this._escapeHtml(preview)}</div>
+                    <div class="notes-item-title">${escapeHtml(note.title || this._t('renderer.note.untitled'))}</div>
+                    <div class="notes-item-preview">${escapeHtml(preview)}</div>
                     <div class="notes-item-meta">
                         <div class="notes-item-tags">${tagHtml}</div>
                         <span class="notes-item-time">${this._formatRelativeTime(note.updatedAt)}</span>
@@ -1264,7 +1272,7 @@ class NotesEntryWidget extends AgentOperableHTMLElement {
                         if (fence) {
                             this._insertFencedCodeBlock(editor, fence.lang, fence.code);
                         } else {
-                            editor.insertContent(this._escapeHtml(text).replace(/\r\n/g, '\n').replace(/\n/g, '<br>'));
+                            editor.insertContent(escapeHtml(text).replace(/\r\n/g, '\n').replace(/\n/g, '<br>'));
                         }
                     }
                     break;
@@ -1274,7 +1282,7 @@ class NotesEntryWidget extends AgentOperableHTMLElement {
                     if (text) {
                         if (editor.selection.getContent({ format: 'text' })) editor.execCommand('Delete');
                         // 纯文本路径：转义后原样插入（换行转 <br>），不做围栏转换
-                        editor.insertContent(this._escapeHtml(text).replace(/\r\n/g, '\n').replace(/\n/g, '<br>'));
+                        editor.insertContent(escapeHtml(text).replace(/\r\n/g, '\n').replace(/\n/g, '<br>'));
                     }
                     break;
                 }
@@ -1326,26 +1334,10 @@ class NotesEntryWidget extends AgentOperableHTMLElement {
         titleInput.select();
     }
 
-    /** 列表/卡片上的删除：带确认弹窗（与编辑器删除按钮同一套确认与刷新） */
+    /** 列表/卡片上的删除：确认一次后执行 */
     async _deleteNoteFromList(note) {
-        const confirmed = await showConfirmModal({
-            icon: 'fa-trash-can',
-            iconBg: '#FEF2F2',
-            iconColor: '#FF3B30',
-            title: this._t('renderer.note.note.delete.confirm.title'),
-            message: this._t('renderer.note.note.delete.confirm.message'),
-            confirmText: this._t('renderer.note.common.delete'),
-            danger: true
-        });
-        if (!confirmed) return;
-        if (this.currentNoteId === note.id) {
-            // 当前正打开的笔记：走编辑器删除路径（清编辑器状态）
-            await this._confirmDeleteNote();
-            return;
-        }
-        await window.applicationAPI.call('deleteNote', note.id);
-        await this._refreshNotes();
-        await this._refreshDeletedNotes();
+        if (!(await this._confirmDeleteNote(note))) return;
+        await this._performDeleteNote(note.id);
     }
 
     _renderCardGrid() {
@@ -1379,8 +1371,8 @@ class NotesEntryWidget extends AgentOperableHTMLElement {
                 .join('');
             html += `
             <div class="notes-card" data-note-id="${note.id}">
-                <div class="notes-card-title">${this._escapeHtml(note.title || this._t('renderer.note.untitled'))}</div>
-                <div class="notes-card-preview">${this._escapeHtml(preview)}</div>
+                <div class="notes-card-title">${escapeHtml(note.title || this._t('renderer.note.untitled'))}</div>
+                <div class="notes-card-preview">${escapeHtml(preview)}</div>
                 <div class="notes-card-meta">
                     <div class="notes-card-tags">${tagHtml}</div>
                     <span class="notes-card-time">${this._formatRelativeTime(note.updatedAt)}</span>
@@ -1480,7 +1472,7 @@ class NotesEntryWidget extends AgentOperableHTMLElement {
                     </div>
                 </div>
                 <input id="notes-title-input" type="text" class="notes-title-input"
-                       value="${this._escapeAttr(note.title)}" placeholder="${this._t('renderer.note.title.placeholder')}" />
+                       value="${escapeHtml(note.title)}" placeholder="${this._t('renderer.note.title.placeholder')}" />
                 <div id="notes-editor-tags" class="notes-editor-tags">
                     ${tagHtml}
                     <button id="notes-add-tag-btn" class="notes-add-tag-btn">
@@ -1491,7 +1483,7 @@ class NotesEntryWidget extends AgentOperableHTMLElement {
             <div class="notes-editor-shell">
                 <div id="notes-fixed-toolbar" class="notes-fixed-toolbar"></div>
                 <div class="notes-editor-body">
-                    <textarea id="notes-editor">${this._escapeHtml(this.currentNoteContent)}</textarea>
+                    <textarea id="notes-editor">${escapeHtml(this.currentNoteContent)}</textarea>
                 </div>
             </div>
         </div>`;
@@ -2063,7 +2055,7 @@ class NotesEntryWidget extends AgentOperableHTMLElement {
         });
 
         // 删除笔记
-        this.querySelector('#notes-delete-note-btn')?.addEventListener('click', () => this._confirmDeleteNote());
+        this.querySelector('#notes-delete-note-btn')?.addEventListener('click', () => this._deleteCurrentNote());
 
         // 标签移除
         this.querySelectorAll('.notes-tag.removable').forEach((tag) => {
@@ -2254,7 +2246,7 @@ class NotesEntryWidget extends AgentOperableHTMLElement {
 
             const langValid = lang && hljs.getLanguage(lang);
             const language = langValid ? lang : 'plaintext';
-            const highlighted = langValid ? hljs.highlight(code, { language }).value : this._escapeHtml(code);
+            const highlighted = langValid ? hljs.highlight(code, { language }).value : escapeHtml(code);
             const html = renderCodeBlockHtml(highlighted, { lang: lang || '', withHeader: !!lang });
 
             const wrap = editor.dom.create('div', { class: 'code-block-wrapper' });
@@ -2919,7 +2911,7 @@ class NotesEntryWidget extends AgentOperableHTMLElement {
         const language = langValid ? lang : 'plaintext';
         // 剥零宽字符（TinyMCE caret 标记可能混入剪贴板文本）
         const plain = (code.length ? code : ' ').replace(/[\uFEFF\u200B\u200C\u200D]/g, '') || ' ';
-        const highlighted = langValid ? hljs.highlight(plain, { language }).value : this._escapeHtml(plain);
+        const highlighted = langValid ? hljs.highlight(plain, { language }).value : escapeHtml(plain);
         const html = renderCodeBlockHtml(highlighted, { lang: lang || '', withHeader: !!lang });
 
         editor.undoManager.transact(() => {
@@ -3544,14 +3536,14 @@ class NotesEntryWidget extends AgentOperableHTMLElement {
         for (const tag of this.tags) {
             const checked = note.tags.includes(tag.name);
             html += `
-            <div class="notes-tag-menu-item" data-tag-name="${this._escapeAttr(tag.name)}">
+            <div class="notes-tag-menu-item" data-tag-name="${escapeHtml(tag.name)}">
                 <div class="notes-tag-menu-item-left">
                     <div class="notes-tag-menu-item-check ${checked ? 'checked' : ''}">
                         <i class="fa-solid fa-check"></i>
                     </div>
                     <span class="notes-tag" style="background:${tag.color}18;color:${tag.color}">${tag.name}</span>
                 </div>
-                <button class="notes-tag-menu-item-del" data-del-tag="${this._escapeAttr(tag.name)}" title="${this._t('renderer.note.tag.delete')}">
+                <button class="notes-tag-menu-item-del" data-del-tag="${escapeHtml(tag.name)}" title="${this._t('renderer.note.tag.delete')}">
                     <i class="fa-solid fa-trash-can"></i>
                 </button>
             </div>`;
@@ -3751,7 +3743,7 @@ class NotesEntryWidget extends AgentOperableHTMLElement {
 
         for (const tag of this.tags) {
             html += `
-            <button class="notes-dropdown-item ${this.tagFilter === tag.name ? 'active' : ''}" data-tag="${this._escapeAttr(tag.name)}">
+            <button class="notes-dropdown-item ${this.tagFilter === tag.name ? 'active' : ''}" data-tag="${escapeHtml(tag.name)}">
                 <span class="notes-tag" style="background:${tag.color}18;color:${tag.color}">${tag.name}</span>
                 ${this.tagFilter === tag.name ? '<i class="fa-solid fa-check"></i>' : ''}
             </button>`;
@@ -3789,25 +3781,44 @@ class NotesEntryWidget extends AgentOperableHTMLElement {
         this._openNote(note.id);
     }
 
-    async _confirmDeleteNote() {
-        const confirmed = await showConfirmModal({
+    /**
+     * 删除笔记的确认弹窗：文案带上笔记名（与左侧任务列表删除任务的文案风格一致）。
+     * 这里只负责询问，实际删除在 _performDeleteNote，避免调用方再套一层确认导致连弹两次。
+     */
+    async _confirmDeleteNote(note) {
+        const name = escapeHtml(note?.title || this._t('renderer.note.untitled'));
+        return showConfirmModal({
             icon: 'fa-trash-can',
             iconBg: '#FEF2F2',
             iconColor: '#FF3B30',
             title: this._t('renderer.note.note.delete.confirm.title'),
-            message: this._t('renderer.note.note.delete.confirm.message'),
+            message: this._t('renderer.note.note.delete.confirm.message', { name }),
             confirmText: this._t('renderer.note.common.delete'),
+            cancelText: this._t('renderer.note.common.cancel'),
             danger: true
         });
-        if (confirmed) {
-            await window.applicationAPI.call('deleteNote', this.currentNoteId);
+    }
+
+    /** 执行删除（不含确认）：笔记移入回收站；删的是当前打开的笔记时顺带清理编辑器状态 */
+    async _performDeleteNote(noteId) {
+        if (!noteId) return;
+        await window.applicationAPI.call('deleteNote', noteId);
+        if (this.currentNoteId === noteId) {
             this.currentNoteId = null;
             this._hideFloatingToolbar();
             if (window.tinymce) tinymce.remove('#notes-editor');
-            await this._refreshNotes();
-            await this._refreshDeletedNotes();
-            this._renderCardGrid();
         }
+        await this._refreshNotes();
+        await this._refreshDeletedNotes();
+    }
+
+    /** 编辑器顶栏的删除按钮：确认后删除当前打开的笔记 */
+    async _deleteCurrentNote() {
+        const note = this.notes?.find((n) => n.id === this.currentNoteId);
+        // 标题输入框里可能是尚未落盘的改名，优先取输入框
+        const title = this.querySelector('#notes-title-input')?.value || note?.title || '';
+        if (!(await this._confirmDeleteNote({ title }))) return;
+        await this._performDeleteNote(this.currentNoteId);
     }
 
     // ─── 回收站 ───
@@ -3897,7 +3908,7 @@ class NotesEntryWidget extends AgentOperableHTMLElement {
             const remainingDays = this._getRemainingDays(note.expiresAt);
             html += `
         <div class="notes-deleted-item" data-note-id="${note.id}" style="margin-bottom:8px;">
-            <div class="notes-deleted-item-title">${this._escapeHtml(note.title || this._t('renderer.note.untitled'))}</div>
+            <div class="notes-deleted-item-title">${escapeHtml(note.title || this._t('renderer.note.untitled'))}</div>
             <div class="notes-deleted-item-meta">
                 <span class="notes-deleted-item-time">${this._t('renderer.note.deleted.deletedAt', { time: this._formatRelativeTime(note.deletedAt) })}</span>
                 <span class="notes-deleted-item-remaining">${this._t('renderer.note.deleted.remaining', { days: remainingDays })}</span>
@@ -4039,21 +4050,6 @@ class NotesEntryWidget extends AgentOperableHTMLElement {
         if (days < 7) return this._t('renderer.note.time.daysAgo', { n: days });
         const date = new Date(timestamp);
         return `${date.getMonth() + 1}/${date.getDate()}`;
-    }
-
-    _escapeHtml(str) {
-        if (!str) return '';
-        return str.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
-    }
-
-    _escapeAttr(str) {
-        if (!str) return '';
-        return str
-            .replace(/&/g, '&amp;')
-            .replace(/"/g, '&quot;')
-            .replace(/'/g, '&#39;')
-            .replace(/</g, '&lt;')
-            .replace(/>/g, '&gt;');
     }
 }
 

@@ -263,7 +263,9 @@ export class AcpMgrApplication extends BaseApplication {
         } finally {
             const supportsClose =
                 profile.protocolVersion === 2 || !!initializeResponse?.agentCapabilities?.sessionCapabilities?.close;
-            const cleanupResults =
+            // 显式标注元素类型：三元表达式的空数组分支会被推断为 never[]，
+            // 后续 push 真实结果时会与 never 冲突。
+            const cleanupResults: PromiseSettledResult<void>[] =
                 sessionId && supportsClose && handle.connection.closeSession
                     ? await Promise.allSettled([
                           Promise.resolve(handle.connection.closeSession({ sessionId })).then(() => undefined)

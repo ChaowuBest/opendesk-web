@@ -2,6 +2,7 @@ import AdmZip from 'adm-zip';
 import fs from 'fs';
 import os from 'os';
 import path from 'path';
+import vm from 'vm';
 import { Setting, setCustomOpendeskDirectory } from '../../../main/utils/setting';
 import {
     AppManagerStore,
@@ -60,6 +61,29 @@ function zipDirectory(sourceDir: string, zipPath: string): void {
     zip.writeZip(zipPath);
 }
 
+/**
+ * 在沙箱里执行模板生成的 renderer/main.js，返回组件真正写入的 innerHTML 与 alert 调用记录。
+ * 若 displayName 逃逸了 JS 模板字面量，注入代码会在这里真实执行并被记录下来。
+ */
+function evaluateGeneratedRenderer(codePath: string): { html: string; alerts: string[] } {
+    const source = fs.readFileSync(path.join(codePath, 'renderer', 'main.js'), 'utf-8');
+    const alerts: string[] = [];
+    let component: { innerHTML?: string; connectedCallback?: () => void } | undefined;
+    const sandbox: Record<string, unknown> = {
+        HTMLElement: class {},
+        customElements: {
+            define(_name: string, ctor: new () => { innerHTML?: string; connectedCallback?: () => void }) {
+                component = new ctor();
+                component.connectedCallback?.();
+            }
+        },
+        alert: (message: string) => alerts.push(message)
+    };
+    vm.createContext(sandbox);
+    vm.runInContext(source, sandbox);
+    return { html: component?.innerHTML ?? '', alerts };
+}
+
 describe('AppManagerStore', () => {
     let appDataDir: string;
     let workDir: string;
@@ -94,6 +118,56 @@ describe('AppManagerStore', () => {
         expect(fs.existsSync(path.join(getManagedAppsDirectory(), 'created.app', 'icon.png'))).toBe(true);
         expect(appEntryUrl(app)).toContain(`opendesk-app://created.app/${version.versionId}/renderer/index.html`);
     });
+
+    test('createApp keeps template-literal injection payloads in displayName inert', () => {
+        const { version } = AppManagerStore.createApp({
+            bundleName: 'inject.app',
+            displayName: 'X${alert(1)}Y'
+        });
+
+        const { html, alerts } = evaluateGeneratedRenderer(version.codePath);
+        expect(alerts).toEqual([]);
+
+        const mainJs = fs.readFileSync(path.join(version.codePath, 'renderer', 'main.js'), 'utf-8');
+        // 生成的 main.js 用模板字面量拼接 innerHTML，插值序列必须被消解
+        expect(mainJs).not.toContain('${');
+        expect(html).toContain('X&#36;{alert(1)}Y');
+    });
+
+    test('createApp keeps backtick injection payloads in displayName inert', () => {
+        const { version } = AppManagerStore.createApp({
+            bundleName: 'inject2.app',
+            displayName: 'A`</h1><img src=x onerror=alert(1)>'
+        });
+
+        const { html, alerts } = evaluateGeneratedRenderer(version.codePath);
+        expect(alerts).toEqual([]);
+        expect(html).toContain('&#96;');
+        expect(html).not.toContain('<img');
+    });
+
+    test('createApp escapes HTML metacharacters in the generated page title', () => {
+        const { version } = AppManagerStore.createApp({
+            bundleName: 'inject3.app',
+            displayName: '</title><script>alert(1)</script>'
+        });
+
+        const indexHtml = fs.readFileSync(path.join(version.codePath, 'renderer', 'index.html'), 'utf-8');
+        expect(indexHtml).not.toContain('<script>alert(1)</script>');
+        expect(indexHtml).toContain('&lt;/title&gt;&lt;script&gt;alert(1)&lt;/script&gt;');
+    });
+
+    // 反斜杠不是 HTML 特殊字符，但在生成的模板字面量里是转义符：
+    // 不消解会让 main.js 语法错误（C:\Users\x）或静默吞掉反斜杠（我的\应用）。
+    test.each(['C:\\Users\\x', '我的\\应用', 'path\\'])(
+        'createApp keeps backslash in displayName intact: %s',
+        (displayName) => {
+            const { version } = AppManagerStore.createApp({ bundleName: 'inject4.app', displayName });
+
+            const { html } = evaluateGeneratedRenderer(version.codePath);
+            expect(html).toContain('&#92;');
+        }
+    );
 
     test('createApp reports a readable error for invalid bundle names', () => {
         expect(() =>

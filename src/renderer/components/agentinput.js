@@ -12,6 +12,7 @@
 import { REASONING_EFFORT_UI_OPTIONS as REASONING_EFFORT_OPTIONS } from '../../common/reasoning-effort.ts';
 import { ENTER_KEY_ICON_SVG, SHIFT_KEY_ICON_SVG, CTRL_KEY_ICON_SVG } from '../../common/utils/keys.ts';
 import { showImageLightbox } from './imageLightbox.js';
+import { subscribePluginSlashCommands } from '../pluginCommandsSubscription.js';
 import { showConfirmModal } from './confirmModal.ts';
 import { escapeHtml } from '../../common/utils/escape.js';
 import { hasPowerPointClipboardText } from '../../common/clipboard.js';
@@ -24,6 +25,7 @@ import {
     refreshPluginSlashCommands
 } from './slash-command.ts';
 import { fixedLayerOrigin, visibleViewportRect } from '../utils/window-frame.js';
+import { notifySettingSaveFailed, notifySettingSideEffectFailures } from '../utils/setting-side-effect-notice.ts';
 import { clearTaskDraft, loadTaskDraft, saveTaskDraft } from '../utils/task-draft-storage.ts';
 
 /** 草稿持久化的防抖间隔：输入停顿后落盘，避免每次按键同步写 localStorage */
@@ -128,8 +130,10 @@ function getSkillInitial(name) {
  */
 async function updateSettingForModelChange(modelAlias, reasoningEffort, options = {}) {
     try {
-        if (!window.settingAPI?.saveSettingObject || !window.settingAPI?.loadSettingObject) return;
+        if (!window.settingAPI?.saveSettingObjectDetailed || !window.settingAPI?.loadSettingObject) return;
         const settingObj = await window.settingAPI.loadSettingObject();
+        // 提示文案跟随设置里选定的语言，而不是调用时的系统语言
+        const translate = createRendererTranslator(settingObj);
         let changed = false;
         if (options.updateDefaultModel !== false && modelAlias && settingObj.default_model !== modelAlias) {
             settingObj.default_model = modelAlias;
@@ -143,10 +147,13 @@ async function updateSettingForModelChange(modelAlias, reasoningEffort, options 
             }
         }
         if (changed) {
-            await window.settingAPI.saveSettingObject(settingObj);
+            const { sideEffectFailures } = await window.settingAPI.saveSettingObjectDetailed(settingObj);
+            notifySettingSideEffectFailures(sideEffectFailures, translate);
         }
     } catch (err) {
+        // 保存失败会让「切模型 / 改推理档位」在重启后回退，必须让用户看到
         console.warn('Failed to persist model/effort setting:', err);
+        notifySettingSaveFailed(err);
     }
 }
 
@@ -423,7 +430,7 @@ class AgentInput extends HTMLElement {
             if (this.isConnected) this.render();
         });
 
-        window.modeAPI?.onTaskModeChanged?.((taskId, modeId) => {
+        this._unsubTaskModeChanged = window.modeAPI?.onTaskModeChanged?.((taskId, modeId) => {
             if (this.taskId && this.taskId === taskId && this.selectedModeId !== modeId) {
                 this.selectedModeId = modeId;
                 this._updateModeButton();
@@ -454,20 +461,16 @@ class AgentInput extends HTMLElement {
         this._unsubExecutionNodesChanged = window.nodeAPI?.onExecutionNodesChanged?.(() => {
             this.loadExecutionNodes().then(() => this.render());
         });
-        void window.applicationRegistryAPI
-            ?.ensureFullyLoaded?.()
-            .then(() =>
-                window.applicationRegistryAPI?.subscribeEvent?.(
-                    'pluginmgr',
-                    'pluginsChanged',
-                    () => void refreshPluginSlashCommands()
-                )
-            )
-            .then((unsubscribe) => {
-                if (this.isConnected) this._unsubPluginCommandsChanged = unsubscribe;
-                else unsubscribe?.();
-            })
-            .catch((error) => console.warn('Failed to subscribe plugin commands:', error));
+        // 插件命令订阅要跨两跳 IPC 才拿到句柄：交由 subscribePluginSlashCommands 按「代」判定，
+        // 元素在完成前断开或重连时，过期订阅会被自动退订
+        subscribePluginSlashCommands(
+            this,
+            () => void refreshPluginSlashCommands(),
+            (unsubscribe) => {
+                this._unsubPluginCommandsChanged = unsubscribe;
+            },
+            (error) => console.warn('Failed to subscribe plugin commands:', error)
+        );
     }
 
     async loadSettings() {
@@ -592,13 +595,15 @@ class AgentInput extends HTMLElement {
     async saveCtrlEnterSend(value) {
         this.ctrlEnterSend = value;
         try {
-            if (!window.settingAPI?.saveSettingObject || !window.settingAPI?.loadSettingObject) return;
+            if (!window.settingAPI?.saveSettingObjectDetailed || !window.settingAPI?.loadSettingObject) return;
             const settingObj = await window.settingAPI.loadSettingObject();
             if (!settingObj.gui_config) settingObj.gui_config = {};
             settingObj.gui_config.ctrl_enter_send = value;
-            await window.settingAPI.saveSettingObject(settingObj);
+            const { sideEffectFailures } = await window.settingAPI.saveSettingObjectDetailed(settingObj);
+            notifySettingSideEffectFailures(sideEffectFailures, this._t);
         } catch (err) {
             console.warn('Failed to save ctrl_enter_send setting:', err);
+            notifySettingSaveFailed(err, this._t);
         }
         this.updateSubmitTooltip();
         this.updatePlaceholder();
@@ -908,6 +913,12 @@ class AgentInput extends HTMLElement {
     }
 
     disconnectedCallback() {
+        // 先退订事件订阅：后面的草稿冲刷（getCurrentText/_saveDraftNow）可能抛错，
+        // 不能让异常把订阅句柄留在通道上（多实例共享 mode:taskModeChanged 等通道）
+        this._unsubSettingChanged?.();
+        this._unsubTaskModeChanged?.();
+        this._unsubExecutionNodesChanged?.();
+        this._unsubPluginCommandsChanged?.();
         if (!this.taskId) {
             _homeDraft = {
                 text: this.getCurrentText(),
@@ -932,9 +943,6 @@ class AgentInput extends HTMLElement {
         }
         this._hideSkillPreviewCard();
         this._hideAutocompletePreviewCard();
-        this._unsubSettingChanged?.();
-        this._unsubExecutionNodesChanged?.();
-        this._unsubPluginCommandsChanged?.();
         this.removeEventListener('pointerdown', this._handleSpeechButtonPointerDown, true);
         this.stopSpeechPreviewPolling();
         this.speechSession?.release().catch(() => {});
@@ -4059,8 +4067,10 @@ class MessageQueuePanel extends HTMLElement {
     }
 
     disconnectedCallback() {
-        this._resetDrag();
+        // 先退订，避免 _resetDrag 抛错时把 setting 订阅留在共享通道上
         this._unsubSettingChanged?.();
+        this._unsubSettingChanged = null;
+        this._resetDrag();
     }
 
     t(key, params) {

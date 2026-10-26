@@ -1070,8 +1070,7 @@ export function buildReplyHtml(
     email: { from?: any; to?: any; cc?: any; date?: any; subject?: string },
     content: { textContent?: string; htmlContent?: string }
 ): string {
-    const esc = (s: string) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
-    const userHtml = esc(replyBody).replace(/\n/g, '<br>');
+    const userHtml = escapeHtml(replyBody).replace(/\n/g, '<br>');
 
     const sender = formatAddresses(email.from);
     const sendTime = new Date(email.date).toLocaleString();
@@ -1081,7 +1080,7 @@ export function buildReplyHtml(
 
     const originContent = content.htmlContent
         ? content.htmlContent
-        : esc(content.textContent || '').replace(/\n/g, '<br>');
+        : escapeHtml(content.textContent || '').replace(/\n/g, '<br>');
 
     return `<div>${userHtml}</div>
 <br><br>
@@ -1090,11 +1089,11 @@ export function buildReplyHtml(
   <div style="font-weight: bold; font-size: 14px; margin-bottom: 12px; color: #111827; border-bottom: 1px solid #e5e7eb; padding-bottom: 8px;">
     ----- 原始邮件 -----
   </div>
-  <div style="margin-bottom: 6px;"><span style="color: #6b7280; font-weight: bold;">发件人:</span> ${esc(sender)}</div>
-  <div style="margin-bottom: 6px;"><span style="color: #6b7280; font-weight: bold;">发送时间:</span> ${esc(sendTime)}</div>
-  <div style="margin-bottom: 6px;"><span style="color: #6b7280; font-weight: bold;">收件人:</span> ${esc(receivers)}</div>
-  ${ccText ? `<div style="margin-bottom: 6px;"><span style="color: #6b7280; font-weight: bold;">抄送:</span> ${esc(ccText)}</div>` : ''}
-  <div><span style="color: #6b7280; font-weight: bold;">主题:</span> ${esc(subject)}</div>
+  <div style="margin-bottom: 6px;"><span style="color: #6b7280; font-weight: bold;">发件人:</span> ${escapeHtml(sender)}</div>
+  <div style="margin-bottom: 6px;"><span style="color: #6b7280; font-weight: bold;">发送时间:</span> ${escapeHtml(sendTime)}</div>
+  <div style="margin-bottom: 6px;"><span style="color: #6b7280; font-weight: bold;">收件人:</span> ${escapeHtml(receivers)}</div>
+  ${ccText ? `<div style="margin-bottom: 6px;"><span style="color: #6b7280; font-weight: bold;">抄送:</span> ${escapeHtml(ccText)}</div>` : ''}
+  <div><span style="color: #6b7280; font-weight: bold;">主题:</span> ${escapeHtml(subject)}</div>
 </div>
 <div style="font-size: 14px; line-height: 1.6;">${originContent}</div>`;
 }

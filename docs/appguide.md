@@ -671,13 +671,13 @@ customElements.define('myapp-entry-widget', MyAppEntryWidget);
 
 在 `renderer/entry.ts` 中，可通过 `window.applicationAPI` 与主进程通信。这是渲染进程与后端逻辑交互的唯一入口，所有调用都经过 Electron 的 IPC 安全通道。
 
-| 方法                                                             | 说明                                                                              |
-| ---------------------------------------------------------------- | --------------------------------------------------------------------------------- |
-| `await window.applicationAPI.call(methodName, ...args)`          | 调用当前应用 **Worker** 的方法，等待结果返回                                      |
-| `await window.applicationAPI.callMainWorld(methodName, ...args)` | 调用当前应用**主进程实例**（`app.ts`）的方法，适合调用非耗时的主进程逻辑          |
-| `window.applicationAPI.streamCall(methodName, ...args)`          | 流式调用 Worker 方法，返回 `AsyncGenerator`，可使用 `for await...of` 逐步消费结果 |
-| `window.applicationAPI.subscribe(eventName, callback)`           | 订阅来自 Worker 的事件，`callback` 将在事件触发时被调用                           |
-| `window.applicationAPI.unsubscribe(eventName, callback)`         | 取消事件订阅，建议在 `disconnectedCallback` 中调用，防止内存泄漏                  |
+| 方法                                                             | 说明                                                                                  |
+| ---------------------------------------------------------------- | ------------------------------------------------------------------------------------- |
+| `await window.applicationAPI.call(methodName, ...args)`          | 调用当前应用 **Worker** 的方法，等待结果返回                                          |
+| `await window.applicationAPI.callMainWorld(methodName, ...args)` | 调用当前应用**主进程实例**（`app.ts`）的方法，适合调用非耗时的主进程逻辑              |
+| `window.applicationAPI.streamCall(methodName, ...args)`          | 流式调用 Worker 方法，返回 `AsyncGenerator`，可使用 `for await...of` 逐步消费结果     |
+| `await window.applicationAPI.subscribe(eventName, callback)`     | 订阅来自 Worker 的事件，`callback` 将在事件触发时被调用；返回**只退订本次订阅**的函数 |
+| `await window.applicationAPI.unsubscribe(eventName)`             | 取消该事件的全部本地订阅（没有订阅时为 no-op）；精确退订请调用 `subscribe` 返回的函数 |
 
 ### 5.3 样式规范
 
@@ -699,6 +699,7 @@ customElements.define('myapp-entry-widget', MyAppEntryWidget);
 // renderer/entry.ts
 
 private _onDataUpdated: ((newData: object[]) => void) | null = null;
+private _unsubscribeDataUpdated: Promise<() => void> | null = null;
 
 connectedCallback() {
     this.render();
@@ -708,13 +709,14 @@ connectedCallback() {
         this.currentData = newData;
         this.renderList();
     };
-    window.applicationAPI.subscribe('dataUpdated', this._onDataUpdated);
+    this._unsubscribeDataUpdated = window.applicationAPI.subscribe('dataUpdated', this._onDataUpdated);
 }
 
 disconnectedCallback() {
     // 组件销毁时必须取消订阅，否则会产生内存泄漏和重复回调
     if (this._onDataUpdated) {
-        window.applicationAPI.unsubscribe('dataUpdated', this._onDataUpdated);
+        void this._unsubscribeDataUpdated?.then((unsubscribe) => unsubscribe?.());
+        this._unsubscribeDataUpdated = null;
         this._onDataUpdated = null;
     }
 }
@@ -1113,6 +1115,7 @@ interface Note {
 class NotesEntryWidget extends AgentOperableHTMLElement {
     private notes: Note[] = [];
     private _onNotesUpdated: ((notes: Note[]) => void) | null = null;
+    private _unsubscribeNotesUpdated: Promise<() => void> | null = null;
 
     connectedCallback() {
         this.render();
@@ -1123,12 +1126,13 @@ class NotesEntryWidget extends AgentOperableHTMLElement {
             this.notes = notes;
             this.renderNoteList();
         };
-        window.applicationAPI.subscribe('notesUpdated', this._onNotesUpdated);
+        this._unsubscribeNotesUpdated = window.applicationAPI.subscribe('notesUpdated', this._onNotesUpdated);
     }
 
     disconnectedCallback() {
         if (this._onNotesUpdated) {
-            window.applicationAPI.unsubscribe('notesUpdated', this._onNotesUpdated);
+            void this._unsubscribeNotesUpdated?.then((unsubscribe) => unsubscribe?.());
+            this._unsubscribeNotesUpdated = null;
             this._onNotesUpdated = null;
         }
     }

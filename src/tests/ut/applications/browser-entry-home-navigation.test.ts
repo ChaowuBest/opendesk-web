@@ -1,5 +1,6 @@
 import { afterEach, beforeAll, beforeEach, describe, expect, jest, test } from '@jest/globals';
 import { parseHTML } from 'linkedom';
+import { escapeHtml } from '../../../common/utils/escape.js';
 
 interface TestTab {
     id: number;
@@ -83,7 +84,9 @@ describe('browser entry widget navigation', () => {
         jest.useFakeTimers();
 
         await jest.unstable_mockModule('../../../renderer/components/confirmModal.ts', () => ({
-            showConfirmModal: jest.fn(async () => false)
+            showConfirmModal: jest.fn(async () => false),
+            // entry.ts 也从这个模块取 escapeModalText（真实实现是 escapeHtml + 换行转 <br>）
+            escapeModalText: (text: string) => escapeHtml(text)
         }));
 
         await import('../../../main/applications/browser/renderer/entry.js');

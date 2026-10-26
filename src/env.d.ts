@@ -46,6 +46,25 @@ declare module '@bitclub.ai/opendesk-office';
 declare module '@bitclub.ai/opendesk-office/*';
 
 /**
+ * ace-builds 只发布 src-noconflict 下的运行时脚本，不带类型入口。
+ * 项目对这些脚本全部是副作用导入（注册模式/主题），不使用其导出值，
+ * 因此整体声明为 any 与运行时行为一致。待上游提供 .d.ts 后可移除本 shim。
+ */
+declare module 'ace-builds/src-noconflict/*';
+
+/**
+ * alpinejs 的 package main 指向 dist/module.cjs.js，未随包提供类型文件。
+ * renderer 引导脚本只取默认导出的 Alpine 实例，先声明为 any 维持原状。
+ */
+declare module 'alpinejs';
+
+/**
+ * search-index 未提供类型声明文件，其调用集中在 storage 层；
+ * 先整体声明为 any，避免为局部用法臆造类型。
+ */
+declare module 'search-index';
+
+/**
  * vite 的 import.meta.glob 在构建期展开为模块表；类型检查只需将其视为
  * path → 异步 loader 的记录（renderer 脚本以 tsc 检查、以 vite 构建）。
  */

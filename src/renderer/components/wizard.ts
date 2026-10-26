@@ -10,8 +10,11 @@
  */
 
 import './wizard.css';
+import { escapeHtml } from '../../common/utils/escape.js';
 import { createModelSelect, MODEL_SELECT_CSS } from '../utils/model-select.js';
 import { createRendererTranslator } from '../locale.ts';
+import { showInfoModal } from './confirmModal.ts';
+import { notifySettingSideEffectFailures } from '../utils/setting-side-effect-notice.ts';
 import { isAccountFeatureEnabled } from '../utils/account-feature-visibility.ts';
 import { resolveWizardStep2View } from '../utils/wizard-flow.ts';
 import {
@@ -211,24 +214,24 @@ class SetupWizard extends HTMLElement {
         // 企业账号先配置服务器地址，再进入登录表单
         if (isEnterprise && this.enterpriseBaseUrlStep) {
             return `
-            <span class="step-tag">Step 2 · ${this._escapeHtml(this.t('renderer.wizard.enterpriseStep'))}</span>
-            <h2>${this._escapeHtml(this.t('renderer.wizard.enterpriseBaseUrlTitle'))}</h2>
-            <p class="ob-desc">${this._escapeHtml(this.t('renderer.wizard.enterpriseBaseUrlDesc'))}</p>
+            <span class="step-tag">Step 2 · ${escapeHtml(this.t('renderer.wizard.enterpriseStep'))}</span>
+            <h2>${escapeHtml(this.t('renderer.wizard.enterpriseBaseUrlTitle'))}</h2>
+            <p class="ob-desc">${escapeHtml(this.t('renderer.wizard.enterpriseBaseUrlDesc'))}</p>
             <div class="form-card">
                 <div class="f-row">
-                    <label class="f-label">${this._escapeHtml(this.t('renderer.account.enterpriseBaseUrl'))}</label>
-                    <input id="wizard-enterprise-base-url" type="text" class="f-ctl" placeholder="https://your-server.example.com/api/v1" value="${this._escapeHtml(this.enterpriseBaseUrlDraft)}">
+                    <label class="f-label">${escapeHtml(this.t('renderer.account.enterpriseBaseUrl'))}</label>
+                    <input id="wizard-enterprise-base-url" type="text" class="f-ctl" placeholder="https://your-server.example.com/api/v1" value="${escapeHtml(this.enterpriseBaseUrlDraft)}">
                 </div>
                 <div id="wizard-account-result" class="verify-result hidden"></div>
                 <div class="f-actions">
                     <button id="wizard-enterprise-next" class="wiz-btn wiz-btn-primary" type="button">
-                        <i class="fas fa-arrow-right"></i>${this._escapeHtml(this.t('renderer.wizard.next'))}
+                        <i class="fas fa-arrow-right"></i>${escapeHtml(this.t('renderer.wizard.next'))}
                     </button>
                 </div>
             </div>
             <div class="ob-back">
                 <button id="wizard-account-back" class="wiz-btn-ghost" type="button">
-                    <i class="fas fa-arrow-left"></i>${this._escapeHtml(this.t('renderer.wizard.useNoLogin'))}
+                    <i class="fas fa-arrow-left"></i>${escapeHtml(this.t('renderer.wizard.useNoLogin'))}
                 </button>
             </div>
             `;
@@ -245,8 +248,8 @@ class SetupWizard extends HTMLElement {
                                   : field.id === 'password'
                                     ? this.loginPassword
                                     : '';
-                          const input = `<input data-login-field="${this._escapeHtml(field.id)}" type="${field.type}" class="${field.type === 'password' ? 'f-ctl-input' : 'f-ctl'}" autocomplete="${this._escapeHtml(field.autocomplete || 'off')}" ${field.placeholder ? `placeholder="${this._escapeHtml(resolveLocalizedText(field.placeholder))}"` : ''} value="${this._escapeHtml(value)}">`;
-                          return `<div class="f-row"><label class="f-label">${this._escapeHtml(resolveLocalizedText(field.label))}</label>${field.type === 'password' ? `<div class="f-ctl f-ctl-with-btn">${input}<button class="f-ctl-btn" type="button" data-toggle-login-field="${this._escapeHtml(field.id)}"><i class="fas fa-eye"></i></button></div>` : input}</div>`;
+                          const input = `<input data-login-field="${escapeHtml(field.id)}" type="${field.type}" class="${field.type === 'password' ? 'f-ctl-input' : 'f-ctl'}" autocomplete="${escapeHtml(field.autocomplete || 'off')}" ${field.placeholder ? `placeholder="${escapeHtml(resolveLocalizedText(field.placeholder))}"` : ''} value="${escapeHtml(value)}">`;
+                          return `<div class="f-row"><label class="f-label">${escapeHtml(resolveLocalizedText(field.label))}</label>${field.type === 'password' ? `<div class="f-ctl f-ctl-with-btn">${input}<button class="f-ctl-btn" type="button" data-toggle-login-field="${escapeHtml(field.id)}"><i class="fas fa-eye"></i></button></div>` : input}</div>`;
                       })
                       .join('')
                 : '';
@@ -255,33 +258,33 @@ class SetupWizard extends HTMLElement {
                   .map((providerMethod) => {
                       const provider = resolveLocalizedText(providerMethod.displayName);
                       const label = this.t('renderer.account.loginWithProvider', { provider });
-                      return `<button class="wiz-btn wiz-btn-secondary" type="button" data-browser-method="${this._escapeHtml(providerMethod.id)}" ${this.loginBusy ? 'disabled' : ''}>${this._escapeHtml(label)}</button>`;
+                      return `<button class="wiz-btn wiz-btn-secondary" type="button" data-browser-method="${escapeHtml(providerMethod.id)}" ${this.loginBusy ? 'disabled' : ''}>${escapeHtml(label)}</button>`;
                   })
                   .join('')}</div></div>`
             : '';
         const unavailable =
             !this.loginMethodLoading && this.loginMethodsLoaded && !passwordMethod && providerMethods.length === 0;
         const result = this.loginError
-            ? `<div id="wizard-account-result" class="verify-result verify-error">${this._escapeHtml(this.loginError)}</div>`
+            ? `<div id="wizard-account-result" class="verify-result verify-error">${escapeHtml(this.loginError)}</div>`
             : unavailable
-              ? `<div id="wizard-account-result" class="verify-result verify-error">${this._escapeHtml(this.t('renderer.wizard.accountServiceUnavailable'))}</div>`
+              ? `<div id="wizard-account-result" class="verify-result verify-error">${escapeHtml(this.t('renderer.wizard.accountServiceUnavailable'))}</div>`
               : `<div id="wizard-account-result" class="verify-result hidden"></div>`;
         const browserHint = this.loginBrowserUrl
-            ? `<p class="ob-desc">${this._escapeHtml(this.t('renderer.account.browserLoginHint'))}</p>
-                <div class="f-actions"><button id="wizard-copy-login-link" class="wiz-btn wiz-btn-secondary" type="button"><i class="fas fa-copy"></i>${this._escapeHtml(this.t('renderer.account.copyLoginLink'))}</button></div>`
+            ? `<p class="ob-desc">${escapeHtml(this.t('renderer.account.browserLoginHint'))}</p>
+                <div class="f-actions"><button id="wizard-copy-login-link" class="wiz-btn wiz-btn-secondary" type="button"><i class="fas fa-copy"></i>${escapeHtml(this.t('renderer.account.copyLoginLink'))}</button></div>`
             : '';
         const submit = passwordMethod
             ? `<div class="f-actions">
                 <button id="wizard-account-finish" class="wiz-btn wiz-btn-primary" type="button" ${this.loginBusy || this.loginMethodLoading ? 'disabled' : ''}>
-                    ${this.loginBusy || this.loginMethodLoading ? '<i class="fas fa-spinner fa-spin"></i>' : '<i class="fas fa-check-double"></i>'}${this._escapeHtml(this.t('renderer.wizard.loginAndFinish'))}
+                    ${this.loginBusy || this.loginMethodLoading ? '<i class="fas fa-spinner fa-spin"></i>' : '<i class="fas fa-check-double"></i>'}${escapeHtml(this.t('renderer.wizard.loginAndFinish'))}
                 </button>
             </div>`
             : '';
 
         return `
-        <span class="step-tag">Step 2 · ${this._escapeHtml(this.t('renderer.wizard.accountLoginStep'))}</span>
-        <h2>${this._escapeHtml(kind === 'enterprise' ? this.t('renderer.wizard.enterpriseLoginTitle') : this.t('renderer.wizard.personalLoginTitle'))}</h2>
-        <p class="ob-desc">${this._escapeHtml(this.t('renderer.wizard.accountLoginDesc'))}</p>
+        <span class="step-tag">Step 2 · ${escapeHtml(this.t('renderer.wizard.accountLoginStep'))}</span>
+        <h2>${escapeHtml(kind === 'enterprise' ? this.t('renderer.wizard.enterpriseLoginTitle') : this.t('renderer.wizard.personalLoginTitle'))}</h2>
+        <p class="ob-desc">${escapeHtml(this.t('renderer.wizard.accountLoginDesc'))}</p>
         <div class="form-card">
             ${fields}
             ${result}
@@ -291,7 +294,7 @@ class SetupWizard extends HTMLElement {
         </div>
         <div class="ob-back">
             <button id="wizard-account-back" class="wiz-btn-ghost" type="button">
-                <i class="fas fa-arrow-left"></i>${this._escapeHtml(this.t('renderer.wizard.useNoLogin'))}
+                <i class="fas fa-arrow-left"></i>${escapeHtml(this.t('renderer.wizard.useNoLogin'))}
             </button>
         </div>
         `;
@@ -299,9 +302,9 @@ class SetupWizard extends HTMLElement {
 
     private _renderPlaceholder(title: string, description: string): string {
         return `
-        <span class="step-tag">Step 2 · ${this._escapeHtml(title)}</span>
-        <h2>${this._escapeHtml(title)}</h2>
-        <p class="ob-desc">${this._escapeHtml(description)}</p>
+        <span class="step-tag">Step 2 · ${escapeHtml(title)}</span>
+        <h2>${escapeHtml(title)}</h2>
+        <p class="ob-desc">${escapeHtml(description)}</p>
         <div class="placeholder-card">
             <div class="placeholder-icon"><i class="fas fa-hard-hat"></i></div>
             <p class="placeholder-title">正在建设中</p>
@@ -314,7 +317,7 @@ class SetupWizard extends HTMLElement {
         const templateOptions = this.providerTemplates
             .map(
                 (t) =>
-                    `<option value="${this._escapeHtml(t.name)}" data-url="${this._escapeHtml(t.base_url)}" data-provider-type="${this._escapeHtml(t.provider_type || 'openai')}" data-display="${this._escapeHtml(t.displayName)}">${this._escapeHtml(t.displayName)}</option>`
+                    `<option value="${escapeHtml(t.name)}" data-url="${escapeHtml(t.base_url)}" data-provider-type="${escapeHtml(t.provider_type || 'openai')}" data-display="${escapeHtml(t.displayName)}">${escapeHtml(t.displayName)}</option>`
             )
             .join('');
 
@@ -363,15 +366,15 @@ class SetupWizard extends HTMLElement {
                 </label>
             </div>
             <div class="f-row">
-                <label class="f-label">${this._escapeHtml(this.t('config.model.field.model_name'))}</label>
+                <label class="f-label">${escapeHtml(this.t('config.model.field.model_name'))}</label>
                 <div class="wizard-model-fetch-row">
                     <div class="wizard-model-select model-combo">
-                        <input id="wizard-model-name" type="text" role="combobox" aria-autocomplete="list" aria-expanded="false" aria-controls="wizard-model-suggestions" class="f-ctl" disabled autocomplete="off" aria-describedby="wizard-model-error" aria-label="${this._escapeHtml(this.t('config.model.field.model_name'))}">
-                        <button id="wizard-model-name-toggle" class="model-suggestions-toggle" type="button" tabindex="-1" disabled aria-label="${this._escapeHtml(this.t('config.model.discovery.showSuggestions'))}"><i class="fas fa-chevron-down" aria-hidden="true"></i></button>
+                        <input id="wizard-model-name" type="text" role="combobox" aria-autocomplete="list" aria-expanded="false" aria-controls="wizard-model-suggestions" class="f-ctl" disabled autocomplete="off" aria-describedby="wizard-model-error" aria-label="${escapeHtml(this.t('config.model.field.model_name'))}">
+                        <button id="wizard-model-name-toggle" class="model-suggestions-toggle" type="button" tabindex="-1" disabled aria-label="${escapeHtml(this.t('config.model.discovery.showSuggestions'))}"><i class="fas fa-chevron-down" aria-hidden="true"></i></button>
                         <div id="wizard-model-suggestions" class="model-suggestions" role="listbox" hidden></div>
                         <span id="wizard-model-loading" class="wizard-model-loading" hidden role="status"><i class="fas fa-spinner fa-spin" aria-hidden="true"></i></span>
                     </div>
-                    <button id="wizard-fetch-models" class="wiz-btn wiz-btn-secondary" type="button" disabled>${this._escapeHtml(this.t('config.model.discovery.fetch'))}</button>
+                    <button id="wizard-fetch-models" class="wiz-btn wiz-btn-secondary" type="button" disabled>${escapeHtml(this.t('config.model.discovery.fetch'))}</button>
                 </div>
                 <p id="wizard-model-error" class="wizard-model-error" role="alert" hidden></p>
             </div>
@@ -421,7 +424,7 @@ class SetupWizard extends HTMLElement {
 
         return `
         <button id="wizard-return-btn" class="wiz-btn-ghost" type="button">
-            <i class="fas fa-arrow-left"></i>${this._escapeHtml(returnLabel)}
+            <i class="fas fa-arrow-left"></i>${escapeHtml(returnLabel)}
         </button>
         ${
             showNext
@@ -796,29 +799,41 @@ class SetupWizard extends HTMLElement {
             return;
         }
 
-        await this._doSave();
+        if (!(await this._doSave())) return;
         this.currentStep = 3;
         this._render();
         this._bindEvents();
     }
 
-    private async _doSave(): Promise<void> {
+    /**
+     * 把向导里填的 provider / 模型写入设置。
+     * @returns 是否已成功落盘。返回 false 时调用方必须中止后续步骤，
+     *          否则向导会带着没保存的配置进入下一步，用户会误以为已经配置好了。
+     */
+    private async _doSave(): Promise<boolean> {
         const baseUrl = this.querySelector<HTMLInputElement>('#wizard-base-url')?.value?.trim();
-        if (!baseUrl) return;
+        if (!baseUrl) return false;
         const apiKey = this.querySelector<HTMLInputElement>('#wizard-api-key')?.value || '';
         const providerType =
             this.querySelector<HTMLSelectElement>('#wizard-provider-type')?.value === 'anthropic'
                 ? 'anthropic'
                 : 'openai';
         const modelName = this.querySelector<HTMLInputElement>('#wizard-model-name')?.value?.trim();
-        if (!modelName) return;
+        if (!modelName) return false;
         const noProxy = this.querySelector<HTMLInputElement>('#wizard-no-proxy')?.checked || false;
         const noSSL = this.querySelector<HTMLInputElement>('#wizard-no-ssl')?.checked || false;
         const providerSelect = this.querySelector<HTMLSelectElement>('#wizard-provider-select');
         const providerName =
             providerSelect?.value && providerSelect.value !== '__custom__' ? providerSelect.value : 'custom';
 
-        const data = await window.settingAPI.loadSettingObject();
+        let data: LoadedSettingObject;
+        try {
+            data = await window.settingAPI.loadSettingObject();
+        } catch (error) {
+            // 连现有配置都读不出来，同样属于「配不进去」：必须阻塞告知，不能静默中止
+            await this._showSaveFailedModal(error);
+            return false;
+        }
         if (!data.providers) data.providers = [];
         if (!data.models) data.models = [];
 
@@ -852,11 +867,40 @@ class SetupWizard extends HTMLElement {
 
         data.default_model = modelName;
 
-        await window.settingAPI.saveSettingObject(data);
+        let sideEffectFailures: SettingSideEffectFailure[];
+        try {
+            ({ sideEffectFailures } = await window.settingAPI.saveSettingObjectDetailed(data));
+        } catch (error) {
+            // 配置没能落盘：必须阻塞告知，否则向导会继续进入下一步，用户以为已经配置完成
+            await this._showSaveFailedModal(error);
+            return false;
+        }
+        // 配置已落盘：提示放在 catch 之外，避免提示自身出错被误报成「保存失败」
+        notifySettingSideEffectFailures(sideEffectFailures, this.t);
         if (this.loginChoice === 'nologin') {
-            await this.requireAccountApi().configure?.({ mode: 'nologin' });
+            try {
+                await this.requireAccountApi().configure?.({ mode: 'nologin' });
+            } catch (error) {
+                // 配置已经写进磁盘：账号模式切换是次要步骤，失败只记日志，不能反过来把本次保存判为失败
+                console.warn('failed to switch account mode to nologin:', error);
+            }
         }
         this.currentData = data;
+        return true;
+    }
+
+    /**
+     * 向导保存链路（读配置 / 写配置）失败时的阻塞提示。
+     * 用模态而不是行内文案：失败时向导不会前进，必须让用户明确知道当前状态。
+     */
+    private async _showSaveFailedModal(error: unknown): Promise<void> {
+        const message = error instanceof Error ? error.message : String(error);
+        await showInfoModal({
+            variant: 'danger',
+            title: this.t('renderer.wizard.saveFailedTitle'),
+            message: `${escapeHtml(this.t('renderer.wizard.saveFailedMessage'))}<br><br><code>${escapeHtml(message)}</code>`,
+            confirmText: this.t('common.close')
+        });
     }
 
     private async _handleVerifyAndSave(): Promise<void> {
@@ -903,7 +947,7 @@ class SetupWizard extends HTMLElement {
 
             this._showResult(resultDiv, 'success', '验证成功！正在保存配置...');
 
-            await this._doSave();
+            if (!(await this._doSave())) return;
 
             setTimeout(() => {
                 this.currentStep = 3;
@@ -931,17 +975,7 @@ class SetupWizard extends HTMLElement {
             error: 'fa-times-circle',
             info: 'fa-info-circle'
         };
-        el.innerHTML = `<i class="fas ${iconMap[type]}"></i>${this._escapeHtml(message)}`;
-    }
-
-    private _escapeHtml(text: string | null | undefined): string {
-        if (!text) return '';
-        return String(text)
-            .replace(/&/g, '&amp;')
-            .replace(/</g, '&lt;')
-            .replace(/>/g, '&gt;')
-            .replace(/"/g, '&quot;')
-            .replace(/'/g, '&#039;');
+        el.innerHTML = `<i class="fas ${iconMap[type]}"></i>${escapeHtml(message)}`;
     }
 }
 

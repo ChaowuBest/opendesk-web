@@ -72,6 +72,12 @@ export interface PageSnapshot {
     ariaSnapshot: string;
 }
 
+/** 「导出 Snapshot」的结果：用户在保存对话框里取消时 canceled 为 true、filePath 为 null。 */
+export interface SnapshotExportResult {
+    canceled: boolean;
+    filePath: string | null;
+}
+
 // ---------------------------------------------------------------------------
 // IPC Response Envelope
 // ---------------------------------------------------------------------------
@@ -101,7 +107,7 @@ export interface BrowserBridgeAPI {
     getWebContentsId(instanceId: string): Promise<number | null>;
     focusActiveWebview(instanceId: string): Promise<boolean>;
     openDevTools(webContentsId: number): Promise<unknown>;
-    exportSnapshot(webContentsId: number): Promise<unknown>;
+    exportSnapshot(webContentsId: number): Promise<SnapshotExportResult>;
 }
 
 // ---------------------------------------------------------------------------

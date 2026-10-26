@@ -20,6 +20,16 @@ import './style.css';
 
 const SELECTED_RUN_STORAGE_KEY = 'opendesk.workflow.selectedRunId';
 
+/**
+ * window.applicationAPI 的事件订阅回调在共享声明 src/renderer/global.d.ts 中被固定为
+ * `(...args: unknown[]) => void`，带具体参数类型的事件回调（如 (run: WorkflowRun) => void）无法直接赋给它。
+ * 该声明属于跨应用共享类型（不在本次改动范围），故在本地把订阅回调类型放宽一次
+ * （等价于把 unknown 放宽为 any），让各事件的具体签名可以直接注册。运行时原样透传给 IPC 订阅。
+ */
+function subscribeApplicationEvent(eventName: string, handler: (...args: any[]) => void): void {
+    void window.applicationAPI.subscribe(eventName, handler);
+}
+
 interface WorkflowRunListItem {
     runId: string;
 }
@@ -42,14 +52,14 @@ class WorkflowEntryWidget extends HTMLElement {
         } catch {
             this.t = createRendererTranslator();
         }
-        window.applicationAPI.subscribe('runUpdated', (run: WorkflowRun) => {
+        subscribeApplicationEvent('runUpdated', (run: WorkflowRun) => {
             if (this.run?.id === run.id) {
                 this.run = run;
                 this.ensureSelection();
                 this.render();
             }
         });
-        window.applicationAPI.subscribe('runSelected', (runId: string) => {
+        subscribeApplicationEvent('runSelected', (runId: string) => {
             this.storeSelectedRunId(runId);
             void this.reload(runId);
         });

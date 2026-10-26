@@ -16,6 +16,7 @@
  */
 
 import { v0_8 } from '@a2ui/lit';
+import { escapeHtml } from '../../../common/utils/escape.js';
 
 // ============================================================================
 // 紧凑主题配置 - 针对桌面端对话框优化
@@ -839,12 +840,6 @@ class A2UIToHTMLConverter {
         return '';
     }
 
-    escapeHtml(text) {
-        if (text === null || text === undefined) return '';
-        const map = { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#039;' };
-        return String(text).replace(/[&<>"']/g, (m) => map[m]);
-    }
-
     /**
      * 获取组件的样式类名列表
      */
@@ -891,7 +886,7 @@ class A2UIToHTMLConverter {
         switch (type) {
             case 'Text': {
                 const textVal = this.resolveBoundValue(props.text, dataModel);
-                const escapedText = this.escapeHtml(textVal);
+                const escapedText = escapeHtml(textVal);
                 const tag = this.pickTextTag(props);
                 const variant = this.getTextVariant(props);
                 const styleClasses = this.getComponentStyleClasses('Text', variant);
@@ -907,7 +902,7 @@ class A2UIToHTMLConverter {
                 const additionalStyle = this.getAdditionalStyles('Image');
                 const buildStyle = this.buildImageStyle(props);
                 const style = this.mergeStyleStrings(additionalStyle, buildStyle, this.getInlineStyleFromProps(props));
-                return `<img class="a2ui-image a2ui-image--${usageHint} ${styleClasses.join(' ')}" src="${this.escapeHtml(url)}" alt="${this.escapeHtml(alt)}"${style ? ` style="${style}"` : ''} />`;
+                return `<img class="a2ui-image a2ui-image--${usageHint} ${styleClasses.join(' ')}" src="${escapeHtml(url)}" alt="${escapeHtml(alt)}"${style ? ` style="${style}"` : ''} />`;
             }
             case 'Button': {
                 const childId = props.child;
@@ -920,8 +915,8 @@ class A2UIToHTMLConverter {
                 // 将 action 数据序列化到 data-action 属性中
                 let actionAttr = '';
                 if (props.action) {
-                    // 安全地序列化 JSON，防止引号冲突
-                    const actionJson = JSON.stringify(props.action).replace(/"/g, '&quot;');
+                    // 双引号属性上下文，JSON 里的 " 与 & 都要转义，否则 getAttribute 读回时实体解码会出错
+                    const actionJson = escapeHtml(JSON.stringify(props.action));
                     actionAttr = ` data-a2ui-action="${actionJson}"`;
                     if (props.action.name === 'close_result') {
                         childHtml = 'Done';
@@ -947,19 +942,19 @@ class A2UIToHTMLConverter {
                         const val = opt.value || '';
                         return `
                 <label class="a2ui-radio-option" style="display:flex; align-items:center; margin-bottom:4px; cursor:pointer;">
-                    <input type="radio" 
-                           name="${groupName}" 
-                           value="${val}" 
-                           data-component-id="${id}"
-                           class="a2ui-radio-input" 
+                    <input type="radio"
+                           name="${escapeHtml(groupName)}"
+                           value="${escapeHtml(String(val))}"
+                           data-component-id="${escapeHtml(String(id))}"
+                           class="a2ui-radio-input"
                            style="margin-right:6px;">
-                    <span class="${labelClasses.join(' ')}">${this.escapeHtml(label)}</span>
+                    <span class="${labelClasses.join(' ')}">${escapeHtml(label)}</span>
                 </label>
             `;
                     })
                     .join('');
 
-                return `<div class="a2ui-multiplechoice ${containerClasses.join(' ')}"${additionalStyle ? ` style="${additionalStyle}"` : ''} id="${id}">
+                return `<div class="a2ui-multiplechoice ${containerClasses.join(' ')}"${additionalStyle ? ` style="${additionalStyle}"` : ''} id="${escapeHtml(String(id))}">
             ${optionsHtml}
         </div>`;
             }
@@ -994,9 +989,9 @@ class A2UIToHTMLConverter {
                 const labelClasses = this.getComponentStyleClasses('TextField', 'label');
                 const elementClasses = this.getComponentStyleClasses('TextField', 'element');
                 const additionalStyle = this.getAdditionalStyles('TextField');
-                const inputHtml = `<input class="a2ui-textfield__input ${elementClasses.join(' ')}" type="text" placeholder="${this.escapeHtml(placeholder)}" value="${this.escapeHtml(value)}"${additionalStyle ? ` style="${additionalStyle}"` : ''} />`;
+                const inputHtml = `<input class="a2ui-textfield__input ${elementClasses.join(' ')}" type="text" placeholder="${escapeHtml(placeholder)}" value="${escapeHtml(value)}"${additionalStyle ? ` style="${additionalStyle}"` : ''} />`;
                 if (label) {
-                    return `<div class="a2ui-textfield ${containerClasses.join(' ')}"><label class="a2ui-textfield__label ${labelClasses.join(' ')}">${this.escapeHtml(label)}</label>${inputHtml}</div>`;
+                    return `<div class="a2ui-textfield ${containerClasses.join(' ')}"><label class="a2ui-textfield__label ${labelClasses.join(' ')}">${escapeHtml(label)}</label>${inputHtml}</div>`;
                 }
                 return `<div class="a2ui-textfield ${containerClasses.join(' ')}">${inputHtml}</div>`;
             }
@@ -1007,7 +1002,7 @@ class A2UIToHTMLConverter {
                 const elementClasses = this.getComponentStyleClasses('CheckBox', 'element');
                 const labelClasses = this.getComponentStyleClasses('CheckBox', 'label');
                 const additionalStyle = this.getAdditionalStyles('CheckBox');
-                return `<label class="a2ui-checkbox ${containerClasses.join(' ')}"${additionalStyle ? ` style="${additionalStyle}"` : ''}><input class="a2ui-checkbox__input ${elementClasses.join(' ')}" type="checkbox"${checked} /><span class="a2ui-checkbox__label ${labelClasses.join(' ')}">${this.escapeHtml(label)}</span></label>`;
+                return `<label class="a2ui-checkbox ${containerClasses.join(' ')}"${additionalStyle ? ` style="${additionalStyle}"` : ''}><input class="a2ui-checkbox__input ${elementClasses.join(' ')}" type="checkbox"${checked} /><span class="a2ui-checkbox__label ${labelClasses.join(' ')}">${escapeHtml(label)}</span></label>`;
             }
             case 'Card': {
                 const children = this.getChildren(props, compBuf, dataModel);
@@ -1045,18 +1040,18 @@ class A2UIToHTMLConverter {
                 const iconName = this.resolveBoundValue(props.icon || props.name, dataModel) || '';
                 const styleClasses = this.getComponentStyleClasses('Icon');
                 const additionalStyle = this.getAdditionalStyles('Icon');
-                return `<span class="a2ui-icon ${styleClasses.join(' ')}"${additionalStyle ? ` style="${additionalStyle}"` : ''}>${this.escapeHtml(iconName)}</span>`;
+                return `<span class="a2ui-icon ${styleClasses.join(' ')}"${additionalStyle ? ` style="${additionalStyle}"` : ''}>${escapeHtml(iconName)}</span>`;
             }
             case 'Video': {
                 const url = this.resolveBoundValue(props.url || props.src, dataModel);
                 const styleClasses = this.getComponentStyleClasses('Video');
-                return `<video class="${styleClasses.join(' ')}" src="${this.escapeHtml(url)}" controls></video>`;
+                return `<video class="${styleClasses.join(' ')}" src="${escapeHtml(url)}" controls></video>`;
             }
             case 'AudioPlayer': {
                 const url = this.resolveBoundValue(props.url || props.src, dataModel);
                 return `
           <div style="width: 100%; min-width: 260px; flex-shrink: 0; margin-top: 8px;">
-            <audio controls src="${this.escapeHtml(url)}" style="width: 100%; height: 44px; outline: none; border-radius: 8px;"></audio>
+            <audio controls src="${escapeHtml(url)}" style="width: 100%; height: 44px; outline: none; border-radius: 8px;"></audio>
           </div>
         `;
             }

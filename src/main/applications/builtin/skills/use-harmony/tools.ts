@@ -3864,9 +3864,16 @@ async function performDiff(
         diffOutput = Buffer.alloc(totalPixels * 4);
     }
 
-    const diffPixels = pixelmatch(screenshot.data, baselineData, diffOutput, screenshot.width, screenshot.height, {
-        threshold: args.threshold
-    });
+    // pixelmatch 的 output 形参类型为 Uint8Array | Uint8ClampedArray | void，
+    // 显式把 null 归一成 undefined（两者在 pixelmatch 内部都按"不输出差异图"处理）
+    const diffPixels = pixelmatch(
+        screenshot.data,
+        baselineData,
+        diffOutput ?? undefined,
+        screenshot.width,
+        screenshot.height,
+        { threshold: args.threshold }
+    );
 
     if (args.outputDiff && diffOutput) {
         const tmpDir = mkdtempSync(join(tmpdir(), 'opendesk-visualdiff-'));

@@ -15,6 +15,27 @@
 
 const CHANNEL = 'OD_FRAME_API' as const;
 
+/**
+ * 注入式全局 API 在 CLI / 测试环境并不存在，类型上是可选的。
+ * 统一收敛成显式访问函数：缺失时抛出带说明的错误，由调用方的 try/catch 统一回复 guest，
+ * 避免满屏的非空断言。
+ */
+function requireApplicationRegistryAPI(): NonNullable<Window['applicationRegistryAPI']> {
+    const api = window.applicationRegistryAPI;
+    if (!api) {
+        throw new Error('window.applicationRegistryAPI 未注入，无法代理应用调用');
+    }
+    return api;
+}
+
+function requireThemeAPI(): NonNullable<Window['themeAPI']> {
+    const api = window.themeAPI;
+    if (!api) {
+        throw new Error('window.themeAPI 未注入，无法代理主题调用');
+    }
+    return api;
+}
+
 type ProxyRequest = {
     channel: typeof CHANNEL;
     requestId: string;
@@ -88,14 +109,20 @@ const pendingToolCalls = new Map<
 >();
 
 let currentBundleName: string | null = null;
-const eventHandlers = new Map<string, Set<(...args: unknown[]) => void>>();
+/**
+ * 事件名 → 本地 handler 列表。刻意用数组而不是 Set：与 preload 暴露的 applicationAPI
+ * 契约保持一致 —— 同一个 callback 订阅两次就是两个订阅，各自退订只移除自己那一条
+ * （用 Set 去重会让「订阅两次、退订一次」在两种 API 面上表现相反）。
+ */
+const eventHandlers = new Map<string, Array<(...args: unknown[]) => void>>();
 
 function dispatchProxyEvent(msg: ProxyEvent): void {
-    const set = eventHandlers.get(msg.eventName);
-    if (!set) {
+    const handlers = eventHandlers.get(msg.eventName);
+    if (!handlers) {
         return;
     }
-    for (const cb of set) {
+    // 快照遍历：handler 内部退订/新增订阅不应影响本轮分发
+    for (const cb of [...handlers]) {
         try {
             // 与 preload 的 ipcRenderer.on(..., (event, ...args) => callback(...args)) 保持一致
             cb(...msg.args);
@@ -363,14 +390,40 @@ export function installApplicationFrameProxies(applicationBundleName: string): b
                 await proxyStreamInvoke('streamCallMainWorld', callback, [methodName, ...args]);
             },
             subscribe: async (eventName: string, callback: (...args: unknown[]) => void) => {
-                if (!eventHandlers.has(eventName)) {
-                    eventHandlers.set(eventName, new Set());
-                    await proxyInvoke('application', 'subscribe', [eventName], currentBundleName ?? undefined);
+                let handlers = eventHandlers.get(eventName);
+                const needsHostSubscription = handlers === undefined;
+                if (handlers === undefined) {
+                    handlers = [];
+                    eventHandlers.set(eventName, handlers);
                 }
-                eventHandlers.get(eventName)!.add(callback);
+                // 先登记再等 IPC 往返：等待期间 frame 被销毁时，按事件名退订仍能命中这条登记
+                handlers.push(callback);
+                if (needsHostSubscription) {
+                    try {
+                        await proxyInvoke('application', 'subscribe', [eventName], currentBundleName ?? undefined);
+                    } catch (error) {
+                        const index = handlers.indexOf(callback);
+                        if (index >= 0) handlers.splice(index, 1);
+                        if (handlers.length === 0) eventHandlers.delete(eventName);
+                        throw error;
+                    }
+                }
+                // 与 preload 暴露的同名 API 一致：返回只退订该 callback 的函数
+                return () => {
+                    const current = eventHandlers.get(eventName);
+                    if (current === undefined) return;
+                    const index = current.indexOf(callback);
+                    if (index < 0) return;
+                    current.splice(index, 1);
+                    if (current.length > 0) return;
+                    eventHandlers.delete(eventName);
+                    void proxyInvoke('application', 'unsubscribe', [eventName], currentBundleName ?? undefined);
+                };
             },
             unsubscribe: async (eventName: string) => {
-                eventHandlers.delete(eventName);
+                // 与 preload 契约一致：只清理本 guest 在该事件上的登记；没有登记就不动宿主的
+                // 引用计数（否则会连带减掉别的订阅者），精确退订仍用 subscribe 的返回值
+                if (eventHandlers.delete(eventName) === false) return;
                 await proxyInvoke('application', 'unsubscribe', [eventName], currentBundleName ?? undefined);
             }
         };
@@ -478,12 +531,13 @@ export function registerApplicationFrameProxyHost(): void {
                 if (!bundle) {
                     throw new Error('application bundle name is not set');
                 }
+                const registry = requireApplicationRegistryAPI();
                 if (data.method === 'call') {
                     const [methodName, ...args] = data.args as [string, ...unknown[]];
-                    result = await window.applicationRegistryAPI.call(bundle, methodName, ...args);
+                    result = await registry.call(bundle, methodName, ...args);
                 } else if (data.method === 'callMainWorld') {
                     const [methodName, ...args] = data.args as [string, ...unknown[]];
-                    result = await window.applicationRegistryAPI.callMainWorld(bundle, methodName, ...args);
+                    result = await registry.callMainWorld(bundle, methodName, ...args);
                 } else if (data.method === 'streamCall' || data.method === 'streamCallMainWorld') {
                     const [methodName, ...args] = data.args as [string, ...unknown[]];
                     const streamReply = (payload: Omit<ProxyStreamMessage, 'channel' | 'requestId'>) => {
@@ -495,14 +549,9 @@ export function registerApplicationFrameProxyHost(): void {
                     const sendChunk = (chunk: unknown) => streamReply({ type: 'streamChunk', chunk });
                     try {
                         if (data.method === 'streamCall') {
-                            await window.applicationRegistryAPI.streamCall(bundle, methodName, sendChunk, ...args);
+                            await registry.streamCall(bundle, methodName, sendChunk, ...args);
                         } else {
-                            await window.applicationRegistryAPI.streamCallMainWorld(
-                                bundle,
-                                methodName,
-                                sendChunk,
-                                ...args
-                            );
+                            await registry.streamCallMainWorld(bundle, methodName, sendChunk, ...args);
                         }
                         streamReply({ type: 'streamComplete' });
                     } catch (err) {
@@ -514,7 +563,7 @@ export function registerApplicationFrameProxyHost(): void {
                     return;
                 } else if (data.method === 'subscribe') {
                     const [eventName] = data.args as [string];
-                    await window.applicationRegistryAPI.subscribeEvent(bundle, eventName, (...args: unknown[]) => {
+                    await registry.subscribeEvent(bundle, eventName, (...args: unknown[]) => {
                         (event.source as Window).postMessage(
                             {
                                 channel: CHANNEL,
@@ -582,13 +631,14 @@ export function registerApplicationFrameProxyHost(): void {
                     result = await fn(...data.args);
                 }
             } else if (data.api === 'theme') {
+                const theme = requireThemeAPI();
                 if (data.method === 'getResolvedTheme') {
-                    result = await window.themeAPI.getResolvedTheme();
+                    result = await theme.getResolvedTheme();
                 } else if (data.method === 'setPreference') {
-                    result = await window.themeAPI.setPreference(data.args[0] as string);
+                    result = await theme.setPreference(data.args[0] as string);
                 } else if (data.method === 'registerThemeListener') {
                     if (!themeUnsubscribe) {
-                        themeUnsubscribe = window.themeAPI.onThemeChanged((resolved) => {
+                        themeUnsubscribe = theme.onThemeChanged((resolved) => {
                             for (const frame of Object.values(window.__appFrameCache ?? {})) {
                                 const win = (frame as HTMLElement & { contentWindow?: Window }).contentWindow;
                                 win?.postMessage({ channel: CHANNEL, type: 'themeChanged', resolved }, '*');

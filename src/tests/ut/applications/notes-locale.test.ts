@@ -48,6 +48,17 @@ describe('notes locale', () => {
         );
     });
 
+    test('note delete confirm message carries the note name in both locales', () => {
+        expect(
+            createTranslatorForNotes({ locale: 'zh-CN' })('renderer.note.note.delete.confirm.message', { name: '周报' })
+        ).toBe('确定要删除笔记「周报」吗？删除后可在回收站中恢复，10天后将永久删除。');
+        const en = createTranslatorForNotes({ locale: 'en-US' })('renderer.note.note.delete.confirm.message', {
+            name: 'Weekly report'
+        });
+        expect(en).toContain('Weekly report');
+        expect(en).not.toContain('${');
+    });
+
     test('locale switch detection matches the hot-swap contract', () => {
         // onSettingChanged 广播的是原始 setting（无 resolved_locale），显式语言必须能直接命中
         expect(resolveRendererLocale({ locale: 'zh-CN', resolved_locale: 'zh-CN' })).toBe('zh-CN');

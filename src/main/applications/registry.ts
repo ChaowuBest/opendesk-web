@@ -379,6 +379,13 @@ export class ApplicationRegistry {
 }
 
 /**
+ * 等待 Worker 回执的上限。
+ * Worker 是单线程，若消息在 Worker 侧异常路径上丢失（没有回执），无超时会让调用方永久挂起，
+ * 进而把设置面板的保存队列一起卡住，因此这里必须有兜底。
+ */
+const SETTING_SYNC_TIMEOUT_MS = 10_000;
+
+/**
  * 通知 Worker 线程更新全局设置
  * @param settingData - 新的设置数据
  */
@@ -392,7 +399,21 @@ export async function notifyWorkerSettingUpdate(
     }
     const requestId = crypto.randomUUID();
     const promise = new Promise((resolve, reject) => {
-        ApplicationRegistry.pendingRequests.set(requestId, { resolve, reject });
+        const timer = setTimeout(() => {
+            ApplicationRegistry.pendingRequests.delete(requestId);
+            reject(new Error('worker settings sync timed out'));
+        }, SETTING_SYNC_TIMEOUT_MS);
+        timer.unref?.();
+        ApplicationRegistry.pendingRequests.set(requestId, {
+            resolve: (value) => {
+                clearTimeout(timer);
+                resolve(value);
+            },
+            reject: (reason) => {
+                clearTimeout(timer);
+                reject(reason);
+            }
+        });
     });
     const args: unknown[] = [settingData];
     if (runtimeOptions.preferredSystemLanguages) {
@@ -548,9 +569,13 @@ function spawnGlobalWorker(runtimeOptions: WorkerRuntimeOptions) {
     // 只注册一次回调，worker 重启后自动使用 ApplicationRegistry.globalWorker 获取新实例
     if (!settingUpdateCallbackRegistered) {
         settingUpdateCallbackRegistered = true;
-        Setting.afterSetDataCallbacks.push(() => {
-            const nc = Setting.getInstance().getData().network_config;
-            if (ApplicationRegistry.globalWorker && nc) {
+        Setting.afterSetDataCallbacks.push((previousData, nextData) => {
+            const nc = nextData.network_config;
+            if (!nc) return;
+            // 只有网络配置真的变了才发：应用配置、内置模型等内部写入也会走到这里，
+            // 每次都全量同步会给 Worker 带来无谓的消息与解析开销
+            if (JSON.stringify(previousData.network_config) === JSON.stringify(nc)) return;
+            if (ApplicationRegistry.globalWorker) {
                 ApplicationRegistry.globalWorker.postMessage({
                     type: '__network_config_updated',
                     config: {

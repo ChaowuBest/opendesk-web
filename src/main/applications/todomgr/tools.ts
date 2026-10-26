@@ -14,7 +14,7 @@ import { ToolCall } from '../../aikernel/messages';
 import { Card, type BorderConfig } from '../../tui/components/card';
 import { statusDisplay, truncText } from '../../tui/components/toolcall';
 import { z } from 'zod';
-import { type TaskTodo, getOrInitTaskTodos, setTaskTodos } from '../../aikernel/todos/task-todos';
+import { getTaskTodosForDisplay, setTaskTodos, type TaskTodo } from '../../aikernel/todos/task-todos';
 import type { TaskState } from '../../aikernel/states/tasks';
 import { escapeHtml } from '../../../common/utils/escape.js';
 import { t } from './locale/index.js';
@@ -342,11 +342,7 @@ export class TodoWriteTool extends BaseTool<typeof TodoWriteArgsSchema> {
         this.setExecutor(this.handleExecute.bind(this));
     }
 
-    private getTaskTodos(taskId: string): TaskTodo[] {
-        return getOrInitTaskTodos(taskId);
-    }
-
-    private setTaskTodos(taskId: string, todos: TaskTodo[]): void {
+    private setTaskTodos(taskId: string, todos: readonly TaskTodo[]): void {
         setTaskTodos(taskId, todos);
     }
 
@@ -459,28 +455,30 @@ export class TodoWriteTool extends BaseTool<typeof TodoWriteArgsSchema> {
     private async handleExecute(args: z.output<typeof TodoWriteArgsSchema>, taskState?: TaskState): Promise<string> {
         const { todos } = args;
         const taskId = taskState?.task_id || 'current_task';
-        let currentTodos = this.getTaskTodos(taskId);
 
         // 传入空列表视为"无变更"，避免 Agent 在任务结束时误传 [] 把已完成的计划清掉。
         // 用户希望计划执行结束后完整保留在"任务计划"面板里以便回看。
         if (todos.length === 0) {
+            // 用只读快照广播，避免把 Map 内部的数组引用交给事件订阅者
+            const unchangedTodos = getTaskTodosForDisplay(taskId);
             try {
-                await this.todoMgrApp.emitEvent('taskTodosUpdated', { taskId, todos: currentTodos });
+                await this.todoMgrApp.emitEvent('taskTodosUpdated', { taskId, todos: unchangedTodos });
             } catch (err) {
                 console.warn('emit taskTodosUpdated failed', err);
             }
             return JSON.stringify({
                 success: true,
-                todos: currentTodos,
-                note: currentTodos.length
+                todos: unchangedTodos,
+                note: unchangedTodos.length
                     ? '传入的待办列表为空，已保留原有任务计划（如需清空请显式传入空数组意图不被采纳）'
                     : '当前任务无任务计划，传入空列表被视为无操作'
             });
         }
 
+        const existingTodos = getTaskTodosForDisplay(taskId);
         const nowIso = new Date().toISOString();
-        currentTodos = todos.map((todoParam) => {
-            const existingTodo = todoParam.id ? currentTodos.find((t) => t.id === todoParam.id) : undefined;
+        const currentTodos = todos.map((todoParam) => {
+            const existingTodo = todoParam.id ? existingTodos.find((t) => t.id === todoParam.id) : undefined;
 
             // title 缺省时用 content 兜底，保证任务计划面板始终有展示文本
             const title = (todoParam.title || todoParam.content).slice(0, 200);
@@ -503,8 +501,9 @@ export class TodoWriteTool extends BaseTool<typeof TodoWriteArgsSchema> {
                 status: todoParam.status,
                 created_at: existingTodo?.created_at || nowIso,
                 updated_at: nowIso,
-                started_at,
-                completed_at
+                // 只在有值时才写入字段，避免留下值为 undefined 的键（缺省字段就该是不存在）
+                ...(started_at ? { started_at } : {}),
+                ...(completed_at ? { completed_at } : {})
             };
         });
 

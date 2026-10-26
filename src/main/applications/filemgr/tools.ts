@@ -12,7 +12,7 @@
 import { BaseTool, BaseToolset, ToolResult } from '../../aikernel/tool';
 import { ToolCall, UserMessage, parseMarkdownSafe } from '../../aikernel/messages';
 import { LLM } from '../../aikernel/llm.js';
-import { escapeHtml } from '../../../common/utils/escape.js';
+import { escapeHtml, escapeHtmlForMarkdown } from '../../../common/utils/escape.js';
 import { Card } from '../../tui/components/card';
 import { t } from '../../../locale/index.js';
 import { statusDisplay, truncText } from '../../tui/components/toolcall';
@@ -265,11 +265,6 @@ function detectLineEnding(content: string): '\r\n' | '\n' {
 }
 
 // ==================== Electron 渲染辅助 ====================
-
-function openFileButton(filePath: string): string {
-    const escaped = escapeHtml(filePath);
-    return `<button onclick="window.fsAPI.openPath('${escaped.replace(/'/g, "\\'")}')" class="inline-flex items-center justify-center w-6 h-6 rounded hover:bg-slate-200 transition-colors" title="打开文件"><svg class="w-3.5 h-3.5 text-slate-500" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M18 13v6a2 2 0 01-2 2H5a2 2 0 01-2-2V8a2 2 0 012-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg></button>`;
-}
 
 /** Badge that opens the file with the system default application (data-open-file). */
 function openFileBadge(filePath: string): string {
@@ -3845,10 +3840,6 @@ function truncateMarkdownText(value: unknown, maxChars = 500): string {
     const text = normalizeMarkdownText(value);
     if (text.length <= maxChars) return text;
     return `${text.slice(0, maxChars - 3).trimEnd()}...`;
-}
-
-function escapeHtmlForMarkdown(value: string): string {
-    return value.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 }
 
 function formatSemanticMatchTypes(matchTypes: string[] | undefined): string {

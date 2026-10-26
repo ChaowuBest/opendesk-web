@@ -1,12 +1,15 @@
 import { beforeAll, beforeEach, describe, expect, it, jest } from '@jest/globals';
 import { parseHTML } from 'linkedom';
+import { escapeHtml } from '../../../common/utils/escape.js';
 
 const confirm = jest.fn<any>();
 const info = jest.fn<any>();
 const callMainWorld = jest.fn<any>();
 jest.unstable_mockModule('../../../renderer/components/confirmModal.js', () => ({
     showConfirmModal: confirm,
-    showInfoModal: info
+    showInfoModal: info,
+    // browser.ts 也从这个模块取 escapeModalText（真实实现是 escapeHtml + 换行转 <br>）
+    escapeModalText: (text: string) => escapeHtml(text)
 }));
 let EmbeddedBrowser: any;
 beforeAll(async () => {

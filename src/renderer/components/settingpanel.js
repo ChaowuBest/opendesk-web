@@ -10,9 +10,11 @@
  */
 
 import { NativeBridgeProxy } from '../../platforms/bridges/renderer.js';
+import { escapeHtml } from '../../common/utils/escape.js';
 import { createRendererTranslator } from '../locale.ts';
 import { createTranslatorForSearch } from '../../main/applications/search/locale/renderer.ts';
 import { createModelSelect, MODEL_SELECT_CSS } from '../utils/model-select.js';
+import { notifySettingSideEffectFailures } from '../utils/setting-side-effect-notice.ts';
 import { selectSupportedShell } from '../../common/shells.js';
 import { REASONING_EFFORT_LEVELS } from '../../common/reasoning-effort.ts';
 import { ACP_AGENT_PRESETS, createAcpAgentPresetDraft } from '../../common/acp/agentPresets.ts';
@@ -1048,7 +1050,7 @@ class SettingPanel extends HTMLElement {
                     <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:14px;min-width:0">
                         <div class="sp-acp-agent-card-body" style="flex:1">
                             <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
-                                <h3 style="font-size:14px;font-weight:600;color:var(--sp-color-text)">${this.escapeHtml(agent.name)}</h3>
+                                <h3 style="font-size:14px;font-weight:600;color:var(--sp-color-text)">${escapeHtml(agent.name)}</h3>
                                 <span class="sp-tag sp-tag-neutral">${isHttp ? 'Streamable HTTP' : 'stdio'}</span>
                                 <span class="sp-tag sp-tag-neutral">ACP v${agent.protocolVersion === 2 ? '2' : '1'}</span>
                                 <span class="sp-tag sp-tag-neutral">${
@@ -1061,8 +1063,8 @@ class SettingPanel extends HTMLElement {
                                 </span>
                                 ${agent.dispatchable ? `<span class="sp-tag sp-tag-neutral">${this._t('sp.agents.dispatchable')}</span>` : ''}
                             </div>
-                            <div class="sp-acp-agent-summary" style="font-size:12px;color:var(--sp-color-text-secondary);margin-top:5px" title="${this.escapeHtml(endpoint)}">${this.escapeHtml(endpoint)}</div>
-                            ${agent.whenToUse ? `<p style="font-size:12px;color:var(--sp-color-text-tertiary);margin-top:5px">${this.escapeHtml(agent.whenToUse)}</p>` : ''}
+                            <div class="sp-acp-agent-summary" style="font-size:12px;color:var(--sp-color-text-secondary);margin-top:5px" title="${escapeHtml(endpoint)}">${escapeHtml(endpoint)}</div>
+                            ${agent.whenToUse ? `<p style="font-size:12px;color:var(--sp-color-text-tertiary);margin-top:5px">${escapeHtml(agent.whenToUse)}</p>` : ''}
                         </div>
                         <div style="display:flex;gap:6px;flex-shrink:0">
                             <button class="edit-acp-agent-btn sp-btn sp-btn-sm sp-btn-secondary" data-index="${index}">${this._t('sp.agents.edit')}</button>
@@ -1111,9 +1113,9 @@ class SettingPanel extends HTMLElement {
         const presetCards = ACP_AGENT_PRESETS.map(
             (preset) => `
                 <button class="acp-agent-preset-btn od-sp-template-card od-sp-agent-template-card" data-preset-id="${preset.id}">
-                    <span class="name">${this.escapeHtml(preset.name)}</span>
-                    <span class="description">${this.escapeHtml(this._t(preset.descriptionKey))}</span>
-                    <span class="package">${this.escapeHtml(preset.packageName)}</span>
+                    <span class="name">${escapeHtml(preset.name)}</span>
+                    <span class="description">${escapeHtml(this._t(preset.descriptionKey))}</span>
+                    <span class="package">${escapeHtml(preset.packageName)}</span>
                 </button>
             `
         ).join('');
@@ -1272,7 +1274,7 @@ class SettingPanel extends HTMLElement {
         ];
         const savedAuthMethodId = session.authMethodId || '';
         const dispatchableChecked = isEdit ? profile?.dispatchable === true : profile?.dispatchable !== false;
-        const json = (value) => this.escapeHtml(JSON.stringify(value || {}, null, 2));
+        const json = (value) => escapeHtml(JSON.stringify(value || {}, null, 2));
 
         this.showModal(`
             <div class="od-confirm-modal-card od-sp-largest">
@@ -1292,7 +1294,7 @@ class SettingPanel extends HTMLElement {
                     <div class="od-sp-two-col">
                         <div class="od-sp-fg">
                             <label class="od-sp-fl">${this._t('sp.agents.field.name')}</label>
-                            <input id="acp-agent-name" class="od-sp-fi" value="${this.escapeHtml(profile?.name || '')}" placeholder="Codex">
+                            <input id="acp-agent-name" class="od-sp-fi" value="${escapeHtml(profile?.name || '')}" placeholder="Codex">
                         </div>
                         <div class="od-sp-fg">
                             <label class="od-sp-fl">${this._t('sp.agents.field.transport')}</label>
@@ -1312,7 +1314,7 @@ class SettingPanel extends HTMLElement {
                     </div>
                     <div class="od-sp-fg">
                         <label class="od-sp-fl">${this._t('sp.agents.field.whenToUse')}</label>
-                        <textarea id="acp-agent-when-to-use" class="od-sp-fi" placeholder="${this._t('sp.agents.field.whenToUse.placeholder')}">${this.escapeHtml(profile?.whenToUse || '')}</textarea>
+                        <textarea id="acp-agent-when-to-use" class="od-sp-fi" placeholder="${this._t('sp.agents.field.whenToUse.placeholder')}">${escapeHtml(profile?.whenToUse || '')}</textarea>
                     </div>
                     <div class="od-sp-fg">
                         <label class="od-sp-fl">${this._t('sp.agents.field.protocolVersion')}</label>
@@ -1328,7 +1330,7 @@ class SettingPanel extends HTMLElement {
                         <div class="od-sp-two-col">
                             <div class="od-sp-fg">
                                 <label class="od-sp-fl">${this._t('sp.agents.field.command')}</label>
-                                <input id="acp-agent-command" class="od-sp-fi" value="${this.escapeHtml(isHttp ? '' : transport.command)}" placeholder="codex">
+                                <input id="acp-agent-command" class="od-sp-fi" value="${escapeHtml(isHttp ? '' : transport.command)}" placeholder="codex">
                             </div>
                             <div class="od-sp-fg">
                                 <label class="od-sp-fl">${this._t('sp.agents.field.cwd')}</label>
@@ -1340,7 +1342,7 @@ class SettingPanel extends HTMLElement {
                         </div>
                         <div id="acp-agent-fixed-cwd-field" class="od-sp-fg" ${!isHttp && transport.cwd === 'fixed' ? '' : 'hidden'}>
                             <label class="od-sp-fl">${this._t('sp.agents.field.fixedCwd')}</label>
-                            <input id="acp-agent-fixed-cwd" class="od-sp-fi" value="${this.escapeHtml(isHttp ? '' : transport.fixedCwd || '')}">
+                            <input id="acp-agent-fixed-cwd" class="od-sp-fi" value="${escapeHtml(isHttp ? '' : transport.fixedCwd || '')}">
                         </div>
                         <div class="od-sp-fg">
                             <label class="od-sp-fl">${this._t('sp.agents.field.args')}</label>
@@ -1362,7 +1364,7 @@ class SettingPanel extends HTMLElement {
                         <div class="od-sp-fs">${this._t('sp.agents.section.http')}</div>
                         <div class="od-sp-fg">
                             <label class="od-sp-fl">${this._t('sp.agents.field.url')}</label>
-                            <input id="acp-agent-url" class="od-sp-fi" value="${this.escapeHtml(isHttp ? transport.url : '')}" placeholder="https://agent.example.com/acp">
+                            <input id="acp-agent-url" class="od-sp-fi" value="${escapeHtml(isHttp ? transport.url : '')}" placeholder="https://agent.example.com/acp">
                             <div class="od-sp-hint">${this._t('sp.agents.field.url.securityHint')}</div>
                         </div>
                         <div class="od-sp-fg">
@@ -1416,18 +1418,18 @@ class SettingPanel extends HTMLElement {
                         </div>
                         <div id="acp-agent-remote-cwd-field" class="od-sp-fg" ${agentWorkspace.strategy === 'mapped' ? 'hidden' : ''}>
                             <label class="od-sp-fl">${this._t('sp.agents.field.remoteCwd')}</label>
-                            <input id="acp-agent-remote-cwd" class="od-sp-fi" value="${this.escapeHtml(agentWorkspace.strategy === 'fixed' ? agentWorkspace.path : '')}" placeholder="/workspace/project">
+                            <input id="acp-agent-remote-cwd" class="od-sp-fi" value="${escapeHtml(agentWorkspace.strategy === 'fixed' ? agentWorkspace.path : '')}" placeholder="/workspace/project">
                             <div class="od-sp-hint">${this._t('sp.agents.field.remoteCwd.hint')}</div>
                         </div>
                         <div id="acp-agent-mapping-fields" ${agentWorkspace.strategy === 'mapped' ? '' : 'hidden'}>
                             <div class="od-sp-two-col">
                                 <div class="od-sp-fg">
                                     <label class="od-sp-fl">${this._t('sp.agents.field.mappingLocalRoot')}</label>
-                                    <input id="acp-agent-mapping-local-root" class="od-sp-fi" value="${this.escapeHtml(agentWorkspace.strategy === 'mapped' ? agentWorkspace.localRoot : '')}">
+                                    <input id="acp-agent-mapping-local-root" class="od-sp-fi" value="${escapeHtml(agentWorkspace.strategy === 'mapped' ? agentWorkspace.localRoot : '')}">
                                 </div>
                                 <div class="od-sp-fg">
                                     <label class="od-sp-fl">${this._t('sp.agents.field.mappingRemoteRoot')}</label>
-                                    <input id="acp-agent-mapping-remote-root" class="od-sp-fi" value="${this.escapeHtml(agentWorkspace.strategy === 'mapped' ? agentWorkspace.remoteRoot : '')}">
+                                    <input id="acp-agent-mapping-remote-root" class="od-sp-fi" value="${escapeHtml(agentWorkspace.strategy === 'mapped' ? agentWorkspace.remoteRoot : '')}">
                                 </div>
                             </div>
                         </div>
@@ -1444,7 +1446,7 @@ class SettingPanel extends HTMLElement {
                         </div>
                         <div id="acp-agent-client-fixed-cwd-field" class="od-sp-fg" ${clientWorkspace.strategy === 'fixed' ? '' : 'hidden'}>
                             <label class="od-sp-fl">${this._t('sp.agents.field.clientFixedCwd')}</label>
-                            <input id="acp-agent-client-fixed-cwd" class="od-sp-fi" value="${this.escapeHtml(clientWorkspace.strategy === 'fixed' ? clientWorkspace.path : '')}">
+                            <input id="acp-agent-client-fixed-cwd" class="od-sp-fi" value="${escapeHtml(clientWorkspace.strategy === 'fixed' ? clientWorkspace.path : '')}">
                         </div>
                         <div id="acp-agent-v2-client-mcp-status" class="od-sp-agent-preset-notice" ${profile?.protocolVersion === 2 ? '' : 'hidden'}>
                             <i class="fas fa-plug"></i>
@@ -1454,7 +1456,7 @@ class SettingPanel extends HTMLElement {
                             <div class="od-sp-two-col">
                                 <div class="od-sp-fg">
                                     <label class="od-sp-fl">${this._t('sp.agents.field.v2AgentSessionCwd')}</label>
-                                    <input id="acp-agent-client-agent-cwd" class="od-sp-fi" value="${this.escapeHtml(execution.location === 'client' ? execution.agentSessionCwd?.path || '' : '')}" placeholder="/workspace">
+                                    <input id="acp-agent-client-agent-cwd" class="od-sp-fi" value="${escapeHtml(execution.location === 'client' ? execution.agentSessionCwd?.path || '' : '')}" placeholder="/workspace">
                                 </div>
                                 <div class="od-sp-fg">
                                     <label class="od-sp-fl">${this._t('sp.agents.field.remotePlatform')}</label>
@@ -1475,13 +1477,13 @@ class SettingPanel extends HTMLElement {
                             <label class="od-sp-fl">${this._t('sp.agents.field.authMethod')}</label>
                             <select id="acp-agent-auth-method" class="od-sp-fi">
                                 <option value="">${this._t('sp.agents.auth.none')}</option>
-                                ${savedAuthMethodId ? `<option value="${this.escapeHtml(savedAuthMethodId)}" selected>${this.escapeHtml(savedAuthMethodId)}</option>` : ''}
+                                ${savedAuthMethodId ? `<option value="${escapeHtml(savedAuthMethodId)}" selected>${escapeHtml(savedAuthMethodId)}</option>` : ''}
                             </select>
                             <div class="od-sp-hint">${this._t('sp.agents.field.authMethod.hint')}</div>
                         </div>
                         <div class="od-sp-fg">
                             <label class="od-sp-fl">${this._t('sp.agents.field.mode')}</label>
-                            <input id="acp-agent-mode" class="od-sp-fi" value="${this.escapeHtml(session.modeId || '')}" placeholder="code">
+                            <input id="acp-agent-mode" class="od-sp-fi" value="${escapeHtml(session.modeId || '')}" placeholder="code">
                         </div>
                         <div class="od-sp-fg">
                             <label class="od-sp-fl">${this._t('sp.agents.field.mcpPolicy')}</label>
@@ -1501,7 +1503,7 @@ class SettingPanel extends HTMLElement {
                                 ? `<div id="acp-agent-mcp-server-choices" class="od-sp-stack">${mcpChoices
                                       .map(
                                           (server) =>
-                                              `<label class="od-sp-fc"><input type="checkbox" data-acp-mcp-server-id="${this.escapeHtml(server.id)}" ${selectedMcpIds.has(server.id) ? 'checked' : ''}><span>${this.escapeHtml(server.name)}</span>${server.enabled ? '' : `<span class="od-sp-hint">${this._t('sp.agents.mcp.disabled')}</span>`}</label>`
+                                              `<label class="od-sp-fc"><input type="checkbox" data-acp-mcp-server-id="${escapeHtml(server.id)}" ${selectedMcpIds.has(server.id) ? 'checked' : ''}><span>${escapeHtml(server.name)}</span>${server.enabled ? '' : `<span class="od-sp-hint">${this._t('sp.agents.mcp.disabled')}</span>`}</label>`
                                       )
                                       .join('')}</div>`
                                 : `<div id="acp-agent-mcp-server-choices" class="od-sp-stack"><div class="od-sp-hint">${this._t('sp.agents.mcp.noneConfigured')}</div></div>`
@@ -1674,8 +1676,8 @@ class SettingPanel extends HTMLElement {
         const configured = this._getAcpConfigOptionValues();
         const renderSelectOption = (option, selectedValue) => {
             const selected = option.value === selectedValue ? ' selected' : '';
-            const title = option.description ? ` title="${this.escapeHtml(option.description)}"` : '';
-            return `<option value="${this.escapeHtml(option.value)}"${selected}${title}>${this.escapeHtml(option.name)}</option>`;
+            const title = option.description ? ` title="${escapeHtml(option.description)}"` : '';
+            return `<option value="${escapeHtml(option.value)}"${selected}${title}>${escapeHtml(option.name)}</option>`;
         };
         const renderSelectOptions = (options, selectedValue) => {
             if (!Array.isArray(options)) return '';
@@ -1685,7 +1687,7 @@ class SettingPanel extends HTMLElement {
                         const groupOptions = option.options
                             .map((entry) => renderSelectOption(entry, selectedValue))
                             .join('');
-                        return `<optgroup label="${this.escapeHtml(option.name || option.group || '')}">${groupOptions}</optgroup>`;
+                        return `<optgroup label="${escapeHtml(option.name || option.group || '')}">${groupOptions}</optgroup>`;
                     }
                     return option && typeof option.value === 'string' ? renderSelectOption(option, selectedValue) : '';
                 })
@@ -1696,14 +1698,14 @@ class SettingPanel extends HTMLElement {
             .map((option) => {
                 if (!option || typeof option.id !== 'string' || typeof option.name !== 'string') return '';
                 const configuredValue = configured[option.id];
-                const optionId = this.escapeHtml(option.id);
+                const optionId = escapeHtml(option.id);
                 const description = option.description
-                    ? `<div class="od-sp-hint">${this.escapeHtml(option.description)}</div>`
+                    ? `<div class="od-sp-hint">${escapeHtml(option.description)}</div>`
                     : '';
                 if (option.type === 'boolean') {
                     const checked =
                         typeof configuredValue === 'boolean' ? configuredValue : option.currentValue === true;
-                    return `<div class="od-sp-fc"><input type="checkbox" data-acp-config-option-id="${optionId}" data-acp-config-option-type="boolean" ${checked ? 'checked' : ''}><label>${this.escapeHtml(option.name)}</label>${description}</div>`;
+                    return `<div class="od-sp-fc"><input type="checkbox" data-acp-config-option-id="${optionId}" data-acp-config-option-type="boolean" ${checked ? 'checked' : ''}><label>${escapeHtml(option.name)}</label>${description}</div>`;
                 }
                 if (option.type !== 'select') return '';
                 const selectedValue = typeof configuredValue === 'string' ? configuredValue : option.currentValue;
@@ -1716,9 +1718,9 @@ class SettingPanel extends HTMLElement {
                 const savedUnavailable =
                     typeof configuredValue === 'string' && configuredValue.length > 0 && !hasSelectedValue;
                 const unavailableOption = savedUnavailable
-                    ? `<option value="${this.escapeHtml(configuredValue)}" selected>${this.escapeHtml(this._t('sp.agents.config.savedUnavailable'))}: ${this.escapeHtml(configuredValue)}</option>`
+                    ? `<option value="${escapeHtml(configuredValue)}" selected>${escapeHtml(this._t('sp.agents.config.savedUnavailable'))}: ${escapeHtml(configuredValue)}</option>`
                     : '';
-                return `<div class="od-sp-fg"><label class="od-sp-fl">${this.escapeHtml(option.name)}</label><select class="od-sp-fi" data-acp-config-option-id="${optionId}" data-acp-config-option-type="select">${unavailableOption}${renderSelectOptions(option.options, selectedValue)}</select>${description}</div>`;
+                return `<div class="od-sp-fg"><label class="od-sp-fl">${escapeHtml(option.name)}</label><select class="od-sp-fi" data-acp-config-option-id="${optionId}" data-acp-config-option-type="select">${unavailableOption}${renderSelectOptions(option.options, selectedValue)}</select>${description}</div>`;
             })
             .filter(Boolean)
             .join('');
@@ -1745,13 +1747,13 @@ class SettingPanel extends HTMLElement {
                 const type = method.type || 'agent';
                 const supported = type === 'agent';
                 const label = `${method.name || id}${supported ? '' : ` (${this._t('sp.agents.auth.external', { type })})`}`;
-                return `<option value="${this.escapeHtml(id)}" ${id === selected ? 'selected' : ''} ${supported ? '' : 'disabled'}>${this.escapeHtml(label)}</option>`;
+                return `<option value="${escapeHtml(id)}" ${id === selected ? 'selected' : ''} ${supported ? '' : 'disabled'}>${escapeHtml(label)}</option>`;
             })
             .filter(Boolean)
             .join('');
         const selectedMissing =
             selected && !authMethods.some((method) => (method?.id || method?.methodId) === selected)
-                ? `<option value="${this.escapeHtml(selected)}" selected>${this.escapeHtml(selected)}</option>`
+                ? `<option value="${escapeHtml(selected)}" selected>${escapeHtml(selected)}</option>`
                 : '';
         select.innerHTML = `<option value="">${this._t('sp.agents.auth.none')}</option>${selectedMissing}${options}`;
     }
@@ -1915,7 +1917,7 @@ class SettingPanel extends HTMLElement {
         return `
             <label class="sp-form-label" for="task-shell-path">${this._t('sp.task.terminal.shell')}</label>
             <select id="task-shell-path" class="sp-form-input" ${selected ? '' : 'disabled'}>
-                ${paths.length ? paths.map((shell) => `<option value="${this.escapeHtml(shell.path)}" ${shell.path === selected?.path ? 'selected' : ''}>${this.escapeHtml(`${displayKind(shell.kind)} — ${shell.path}`)}</option>`).join('') : `<option value="">${this._t('sp.task.terminal.noShells')}</option>`}
+                ${paths.length ? paths.map((shell) => `<option value="${escapeHtml(shell.path)}" ${shell.path === selected?.path ? 'selected' : ''}>${escapeHtml(`${displayKind(shell.kind)} — ${shell.path}`)}</option>`).join('') : `<option value="">${this._t('sp.task.terminal.noShells')}</option>`}
             </select>
             <div class="sp-toggle-desc">${this._t('sp.task.terminal.shell.desc')}</div>
             ${
@@ -2080,7 +2082,7 @@ class SettingPanel extends HTMLElement {
                     ch.needsKey
                         ? `
                 <div style="margin-top:auto;padding-top:12px;display:flex;align-items:center;gap:8px">
-                    <input type="password" class="search-api-key-input sp-form-input" style="flex:1;padding:6px 10px;font-size:13px" value="${this.escapeHtml(apiKey)}" placeholder="API Key" data-channel="${ch.id}">
+                    <input type="password" class="search-api-key-input sp-form-input" style="flex:1;padding:6px 10px;font-size:13px" value="${escapeHtml(apiKey)}" placeholder="API Key" data-channel="${ch.id}">
                     <button class="search-set-key-btn sp-btn sp-btn-sm sp-btn-primary" data-channel="${ch.id}">${searchT('sp.search.save')}</button>
                 </div>
                 `
@@ -2230,7 +2232,7 @@ class SettingPanel extends HTMLElement {
         <section class="sp-section">
             <div style="display:flex;align-items:center;gap:8px;margin-bottom:20px">
                 <h2 class="sp-section-title" style="margin-bottom:0">${this._t('sp.gateway.title')}</h2>
-                <span class="sp-tag ${config.enabled ? 'sp-tag-success' : 'sp-tag-neutral'}">${this.escapeHtml(statusText)}</span>
+                <span class="sp-tag ${config.enabled ? 'sp-tag-success' : 'sp-tag-neutral'}">${escapeHtml(statusText)}</span>
             </div>
             <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(200px,1fr));gap:16px">
                 <div class="sp-form-group" style="margin-bottom:0">
@@ -2239,7 +2241,7 @@ class SettingPanel extends HTMLElement {
                         ${hostOptions
                             .map(
                                 (option) =>
-                                    `<option value="${this.escapeHtml(option.value)}" ${option.value === config.host ? 'selected' : ''}>${this.escapeHtml(option.label)}</option>`
+                                    `<option value="${escapeHtml(option.value)}" ${option.value === config.host ? 'selected' : ''}>${escapeHtml(option.label)}</option>`
                             )
                             .join('')}
                     </select>
@@ -2296,9 +2298,9 @@ class SettingPanel extends HTMLElement {
                 .map(
                     (entry, i) => `
                 <div class="environ-item flex items-center gap-2 mb-2" data-index="${i}">
-                    <input type="text" class="environ-key sp-form-input" value="${this.escapeHtml(entry[0])}" placeholder="${this._t('sp.environ.keyPlaceholder')}">
+                    <input type="text" class="environ-key sp-form-input" value="${escapeHtml(entry[0])}" placeholder="${this._t('sp.environ.keyPlaceholder')}">
                     <span class="text-gray-400 text-xs">=</span>
-                    <input type="text" class="environ-value sp-form-input" value="${this.escapeHtml(entry[1])}" placeholder="${this._t('sp.environ.valuePlaceholder')}">
+                    <input type="text" class="environ-value sp-form-input" value="${escapeHtml(entry[1])}" placeholder="${this._t('sp.environ.valuePlaceholder')}">
                     <button class="remove-environ-btn sp-card-action-btn sp-delete-btn" data-index="${i}">
                         <i class="fas fa-times"></i>
                     </button>
@@ -2444,12 +2446,12 @@ class SettingPanel extends HTMLElement {
             </div>
             <div id="network-custom-proxy-group" style="display:grid;grid-template-columns:120px 1fr;align-items:center;gap:16px;padding:12px 0;border-bottom:1px solid var(--sp-color-border-light);${useProxy === 'custom' ? '' : 'display:none;'}">
                 <label style="font-size:13px;color:var(--sp-color-text-secondary)">${this._t('sp.network.proxyAddr')}</label>
-                <input id="network-custom-proxy-addr-input" type="text" class="sp-form-input" value="${this.escapeHtml(customProxyAddr)}" placeholder="http://proxy.example.com:8080" style="margin:0">
+                <input id="network-custom-proxy-addr-input" type="text" class="sp-form-input" value="${escapeHtml(customProxyAddr)}" placeholder="http://proxy.example.com:8080" style="margin:0">
             </div>
             <div id="network-no-proxy-group" style="display:grid;grid-template-columns:120px 1fr;align-items:start;gap:16px;padding:12px 0;${useProxy === 'custom' ? '' : 'display:none;'}">
                 <label style="font-size:13px;color:var(--sp-color-text-secondary);padding-top:8px">${this._t('sp.network.noProxy')}</label>
                 <div>
-                    <input id="network-no-proxy-input" type="text" class="sp-form-input" value="${this.escapeHtml(noProxy)}" placeholder="localhost,127.0.0.1,.local" style="margin:0">
+                    <input id="network-no-proxy-input" type="text" class="sp-form-input" value="${escapeHtml(noProxy)}" placeholder="localhost,127.0.0.1,.local" style="margin:0">
                     <p style="font-size:12px;color:var(--sp-color-text-tertiary);margin-top:4px">${this._t('sp.network.noProxy.hint')}</p>
                 </div>
             </div>
@@ -3024,11 +3026,11 @@ class SettingPanel extends HTMLElement {
             <div class="flex items-start justify-between">
                 <div class="flex-1 min-w-0">
                     <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
-                        <h3 style="font-size:14px;font-weight:600;color:var(--sp-color-text);word-break:break-all">${this.escapeHtml(displayName)}</h3>
-                        <span class="sp-tag sp-tag-teal">${this.escapeHtml(protocolLabel)}</span>
+                        <h3 style="font-size:14px;font-weight:600;color:var(--sp-color-text);word-break:break-all">${escapeHtml(displayName)}</h3>
+                        <span class="sp-tag sp-tag-teal">${escapeHtml(protocolLabel)}</span>
                         <span class="sp-tag ${enabled ? 'sp-tag-success' : 'sp-tag-neutral'}">${this._t(enabled ? 'config.telemetry.status.enabled' : 'config.telemetry.status.disabled')}</span>
                     </div>
-                    <p style="font-size:13px;color:var(--sp-color-text-secondary);margin-top:4px;font-family:var(--sp-font-mono,'Maple Mono','Cascadia Code','Fira Code','JetBrains Mono','Consolas','Monaco',monospace)">${this.escapeHtml(url || 'http://localhost:4318/v1/traces')}</p>
+                    <p style="font-size:13px;color:var(--sp-color-text-secondary);margin-top:4px;font-family:var(--sp-font-mono,'Maple Mono','Cascadia Code','Fira Code','JetBrains Mono','Consolas','Monaco',monospace)">${escapeHtml(url || 'http://localhost:4318/v1/traces')}</p>
                 </div>
                 <div class="sp-card-actions">
                     <button class="edit-telemetry-btn sp-card-action-btn" data-protocol="${protocol}" data-index="${index}" title="${this._t('renderer.settings.telemetryEdit')}">
@@ -3091,7 +3093,7 @@ class SettingPanel extends HTMLElement {
                 <div class="od-confirm-modal-body od-sp-scroll">
                     <div class="od-sp-fg">
                         <label class="od-sp-fl">${this._t('config.telemetry.field.name')}</label>
-                        <input id="telemetry-name-input" type="text" value="${this.escapeHtml(endpoint.name)}" class="od-sp-fi" placeholder="${this._t('config.telemetry.field.name')}">
+                        <input id="telemetry-name-input" type="text" value="${escapeHtml(endpoint.name)}" class="od-sp-fi" placeholder="${this._t('config.telemetry.field.name')}">
                     </div>
                     <div class="od-sp-fg">
                         <label class="od-sp-fl">${this._t('config.telemetry.protocol')}</label>
@@ -3102,24 +3104,24 @@ class SettingPanel extends HTMLElement {
                     </div>
                     <div id="telemetry-opentelemetry-fields" class="od-sp-fg">
                         <label class="od-sp-fl">${this._t('config.telemetry.endpoint')}</label>
-                        <input id="telemetry-url-input" type="text" value="${this.escapeHtml(endpoint.url || '')}" class="od-sp-fi" placeholder="${this._t('renderer.settings.telemetryEndpointPlaceholder')}">
+                        <input id="telemetry-url-input" type="text" value="${escapeHtml(endpoint.url || '')}" class="od-sp-fi" placeholder="${this._t('renderer.settings.telemetryEndpointPlaceholder')}">
                     </div>
                     <div id="telemetry-langfuse-fields">
                         <div class="od-sp-fg">
                             <label class="od-sp-fl">${this._t('config.telemetry.langfuse.field.base_url')}</label>
-                            <input id="telemetry-langfuse-base-url-input" type="text" value="${this.escapeHtml(endpoint.base_url || '')}" class="od-sp-fi" placeholder="https://cloud.langfuse.com">
+                            <input id="telemetry-langfuse-base-url-input" type="text" value="${escapeHtml(endpoint.base_url || '')}" class="od-sp-fi" placeholder="https://cloud.langfuse.com">
                         </div>
                         <div class="od-sp-fg">
                             <label class="od-sp-fl">${this._t('config.telemetry.langfuse.field.public_key')}</label>
-                            <input id="telemetry-langfuse-public-key-input" type="text" value="${this.escapeHtml(endpoint.public_key || '')}" class="od-sp-fi" placeholder="pk-lf-...">
+                            <input id="telemetry-langfuse-public-key-input" type="text" value="${escapeHtml(endpoint.public_key || '')}" class="od-sp-fi" placeholder="pk-lf-...">
                         </div>
                         <div class="od-sp-fg">
                             <label class="od-sp-fl">${this._t('config.telemetry.langfuse.field.secret_key')}</label>
-                            <input id="telemetry-langfuse-secret-key-input" type="password" value="${this.escapeHtml(endpoint.secret_key || '')}" class="od-sp-fi" placeholder="sk-lf-...">
+                            <input id="telemetry-langfuse-secret-key-input" type="password" value="${escapeHtml(endpoint.secret_key || '')}" class="od-sp-fi" placeholder="sk-lf-...">
                         </div>
                         <div class="od-sp-fg">
                             <label class="od-sp-fl">${this._t('config.telemetry.langfuse.field.environment')}</label>
-                            <input id="telemetry-langfuse-environment-input" type="text" value="${this.escapeHtml(langfuseConfig.environment)}" class="od-sp-fi" placeholder="development">
+                            <input id="telemetry-langfuse-environment-input" type="text" value="${escapeHtml(langfuseConfig.environment)}" class="od-sp-fi" placeholder="development">
                         </div>
                         <div class="od-sp-fg">
                             <label class="od-sp-fl">${this._t('config.telemetry.langfuse.field.export_mode')}</label>
@@ -3131,15 +3133,15 @@ class SettingPanel extends HTMLElement {
                         <div class="od-sp-fr">
                             <div class="od-sp-fg">
                                 <label class="od-sp-fl">${this._t('config.telemetry.langfuse.field.max_payload_chars')}</label>
-                                <input id="telemetry-langfuse-max-payload-chars-input" type="number" min="1" step="1" value="${this.escapeHtml(langfuseConfig.max_payload_chars)}" class="od-sp-fi">
+                                <input id="telemetry-langfuse-max-payload-chars-input" type="number" min="1" step="1" value="${escapeHtml(langfuseConfig.max_payload_chars)}" class="od-sp-fi">
                             </div>
                             <div class="od-sp-fg">
                                 <label class="od-sp-fl">${this._t('config.telemetry.langfuse.field.flush_at')}</label>
-                                <input id="telemetry-langfuse-flush-at-input" type="number" min="1" step="1" value="${this.escapeHtml(endpoint.flush_at || 50)}" class="od-sp-fi">
+                                <input id="telemetry-langfuse-flush-at-input" type="number" min="1" step="1" value="${escapeHtml(endpoint.flush_at || 50)}" class="od-sp-fi">
                             </div>
                             <div class="od-sp-fg">
                                 <label class="od-sp-fl">${this._t('config.telemetry.langfuse.field.flush_interval_seconds')}</label>
-                                <input id="telemetry-langfuse-flush-interval-input" type="number" min="1" step="1" value="${this.escapeHtml(endpoint.flush_interval_seconds || 5)}" class="od-sp-fi">
+                                <input id="telemetry-langfuse-flush-interval-input" type="number" min="1" step="1" value="${escapeHtml(endpoint.flush_interval_seconds || 5)}" class="od-sp-fi">
                             </div>
                         </div>
                     </div>
@@ -3292,10 +3294,6 @@ class SettingPanel extends HTMLElement {
         }
     }
 
-    escapeHtml(str) {
-        return String(str).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
-    }
-
     _bindTelemetryEvents() {
         // 添加端点按钮
         this.querySelector('#telemetry-add-btn')?.addEventListener('click', () => {
@@ -3359,10 +3357,10 @@ class SettingPanel extends HTMLElement {
             <div class="flex items-start justify-between">
                 <div class="flex-1 min-w-0">
                     <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
-                        <h3 style="font-size:14px;font-weight:600;color:var(--sp-color-text)">${this.escapeHtml(provider.name)}</h3>
+                        <h3 style="font-size:14px;font-weight:600;color:var(--sp-color-text)">${escapeHtml(provider.name)}</h3>
                         <span class="sp-tag ${providerType === 'anthropic' ? 'sp-tag-teal' : 'sp-tag-blue'}">${providerTypeLabel}</span>
                     </div>
-                    <p style="font-size:13px;color:var(--sp-color-text-secondary);margin-top:4px">${this.escapeHtml(provider.base_url)}</p>
+                    <p style="font-size:13px;color:var(--sp-color-text-secondary);margin-top:4px">${escapeHtml(provider.base_url)}</p>
                     <p style="font-size:13px;color:var(--sp-color-text-secondary)">${maskedKey}</p>
                     ${provider.no_proxy ? `<span class="sp-tag sp-tag-amber" style="margin-top:4px">${this._t('sp.providers.tag.noProxy')}</span>` : ''}
                     ${provider.no_ssl ? `<span class="sp-tag sp-tag-red" style="margin-top:4px">${this._t('sp.providers.tag.noSsl')}</span>` : ''}
@@ -3384,12 +3382,12 @@ class SettingPanel extends HTMLElement {
         const models = this.currentData?.models || [];
         return `
 	        <section class="sp-section" id="models-section">
-	            <h2 class="sp-section-title">${this.escapeHtml(this._t('config.model.title'))}<span class="sp-section-subtitle">${this.escapeHtml(this._t('config.model.configured_count', { count: models.length }))}</span></h2>
+	            <h2 class="sp-section-title">${escapeHtml(this._t('config.model.title'))}<span class="sp-section-subtitle">${escapeHtml(this._t('config.model.configured_count', { count: models.length }))}</span></h2>
             <div id="model-list" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(300px,1fr));gap:12px">
 	                ${models.map((m, i) => this.renderModelCard(m, i)).join('')}
 	            </div>
 	            <button id="add-model-btn" class="sp-add-btn" style="margin-top:16px">
-	                <i class="fas fa-plus" style="margin-right:8px"></i>${this.escapeHtml(this._t('config.model.add.label'))}
+	                <i class="fas fa-plus" style="margin-right:8px"></i>${escapeHtml(this._t('config.model.add.label'))}
 	            </button>
 	        </section>
 	        `;
@@ -3420,13 +3418,13 @@ class SettingPanel extends HTMLElement {
             <div style="display:flex;align-items:flex-start;justify-content:space-between">
                 <div style="flex:1;min-width:0">
                     <div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap">
-                        <h3 style="font-size:14px;font-weight:600;color:var(--sp-color-text)">${this.escapeHtml(model.alias)}</h3>
+                        <h3 style="font-size:14px;font-weight:600;color:var(--sp-color-text)">${escapeHtml(model.alias)}</h3>
                         ${typeBadge}
                         ${modelType === 'chat' && effortLabel ? `<span class="sp-tag sp-tag-purple">${effortLabel}</span>` : ''}
                         ${ctxLabel ? `<span class="sp-tag sp-tag-blue">${ctxLabel} ctx</span>` : ''}
                         ${maxOutLabel ? `<span class="sp-tag sp-tag-blue">${maxOutLabel} out</span>` : ''}
                     </div>
-                    <p style="font-size:13px;color:var(--sp-color-text-secondary);margin-top:4px">${this.escapeHtml(model.provider_name)} / ${this.escapeHtml(model.model_name)} · ${typeLabel}</p>
+                    <p style="font-size:13px;color:var(--sp-color-text-secondary);margin-top:4px">${escapeHtml(model.provider_name)} / ${escapeHtml(model.model_name)} · ${typeLabel}</p>
                 </div>
                 <div class="sp-card-actions">
                     <button class="edit-model-btn sp-card-action-btn" data-index="${index}">
@@ -3457,9 +3455,7 @@ class SettingPanel extends HTMLElement {
     }
 
     renderModelOptions(models) {
-        return models
-            .map((m) => `<option value="${this.escapeHtml(m.alias)}">${this.escapeHtml(m.alias)}</option>`)
-            .join('');
+        return models.map((m) => `<option value="${escapeHtml(m.alias)}">${escapeHtml(m.alias)}</option>`).join('');
     }
 
     async refreshVisionSupport() {
@@ -3504,13 +3500,6 @@ class SettingPanel extends HTMLElement {
                     <select id="default-embedding-model-select" class="sp-form-input">
                         <option value="">${this._t('common.none')}</option>
                         ${embeddingModelOptions}
-                    </select>
-                </div>
-                <div class="sp-form-group" style="margin-bottom:0">
-                    <label class="sp-form-label">${this._t('config.defaultmodel.field.reranker_model')}</label>
-                    <select id="default-reranker-model-select" class="sp-form-input">
-                        <option value="">${this._t('common.none')}</option>
-                        ${chatModelOptions}
                     </select>
                 </div>
                 <div class="sp-form-group" style="margin-bottom:0">
@@ -3655,7 +3644,6 @@ class SettingPanel extends HTMLElement {
             'default-model-select',
             'default-quick-model-select',
             'default-embedding-model-select',
-            'default-reranker-model-select',
             'default-vision-model-select'
         ];
         selects.forEach((id) => {
@@ -3909,7 +3897,6 @@ class SettingPanel extends HTMLElement {
             'default-model-select': 'default_model',
             'default-quick-model-select': 'default_quick_model',
             'default-embedding-model-select': 'default_embedding_model',
-            'default-reranker-model-select': 'default_reranker_model',
             'default-vision-model-select': 'default_vision_model'
         };
     }
@@ -3933,8 +3920,11 @@ class SettingPanel extends HTMLElement {
             return;
         }
         this._saving = true;
+        let sideEffectFailures = [];
         try {
-            const savedData = await window.settingAPI.saveSettingObject(this.currentData);
+            const result = await window.settingAPI.saveSettingObjectDetailed(this.currentData);
+            const savedData = result.data;
+            sideEffectFailures = result.sideEffectFailures;
             if (savedData && typeof savedData === 'object' && typeof savedData.resolved_locale === 'string') {
                 this.currentData.resolved_locale = savedData.resolved_locale;
             }
@@ -3952,6 +3942,11 @@ class SettingPanel extends HTMLElement {
                 this._pendingSave = false;
                 this.scheduleSave();
             }
+        }
+        // 配置已保存成功，只是部分生效步骤失败（如后台同步）：单独提示，不报「保存失败」。
+        // 提示放在 catch 之外，避免提示自身出错被误报成保存失败。
+        if (sideEffectFailures.length > 0) {
+            notifySettingSideEffectFailures(sideEffectFailures, this._t);
         }
     }
 
@@ -4095,7 +4090,7 @@ class SettingPanel extends HTMLElement {
                 return;
             }
 
-            await window.settingAPI.saveSettingObject(jsonData);
+            const { sideEffectFailures } = await window.settingAPI.saveSettingObjectDetailed(jsonData);
             await this.loadData();
             this.refreshAll();
             window.notificationAPI.sendNotification(
@@ -4104,6 +4099,8 @@ class SettingPanel extends HTMLElement {
                 this._t('renderer.settings.importSuccess'),
                 this._t('renderer.settings.importJsonSuccess')
             );
+            // 导入已落盘，但部分改动没能立即生效：单独告知，避免用户以为导入完全生效
+            notifySettingSideEffectFailures(sideEffectFailures, this._t);
         } catch (error) {
             if (error?.name === 'AbortError') return;
             window.notificationAPI.sendNotification(
@@ -4159,8 +4156,8 @@ class SettingPanel extends HTMLElement {
             .map(
                 (t, i) => `
             <button class="provider-template-btn od-sp-template-card" data-index="${i}">
-                <span class="name">${this.escapeHtml(t.displayName)}</span>
-                <span class="url">${this.escapeHtml(t.base_url)}</span>
+                <span class="name">${escapeHtml(t.displayName)}</span>
+                <span class="url">${escapeHtml(t.base_url)}</span>
                 ${t.provider_type === 'anthropic' ? '<span class="badge">Anthropic</span>' : ''}
             </button>
         `
@@ -4238,7 +4235,7 @@ class SettingPanel extends HTMLElement {
                 <div class="od-confirm-modal-body od-sp-scroll">
                     <div class="od-sp-fg">
                         <label class="od-sp-fl">${this._t('sp.providers.field.name')}</label>
-                        <input id="provider-name-input" type="text" value="${this.escapeHtml(provider.name)}" class="od-sp-fi" placeholder="${this._t('sp.providers.field.name.placeholder')}">
+                        <input id="provider-name-input" type="text" value="${escapeHtml(provider.name)}" class="od-sp-fi" placeholder="${this._t('sp.providers.field.name.placeholder')}">
                     </div>
                     <div class="od-sp-fg">
                         <label class="od-sp-fl">${this._t('sp.providers.field.type')}</label>
@@ -4249,12 +4246,12 @@ class SettingPanel extends HTMLElement {
                     </div>
                     <div class="od-sp-fg">
                         <label class="od-sp-fl">${this._t('sp.providers.field.url')}</label>
-                        <input id="provider-url-input" type="text" value="${this.escapeHtml(provider.base_url)}" class="od-sp-fi" placeholder="https://api.example.com/v1">
+                        <input id="provider-url-input" type="text" value="${escapeHtml(provider.base_url)}" class="od-sp-fi" placeholder="https://api.example.com/v1">
                     </div>
                     <div class="od-sp-fg">
                         <label class="od-sp-fl">${this._t('sp.providers.field.key')}</label>
                         <div class="od-sp-key-wrap">
-                            <input id="provider-key-input" type="password" value="${this.escapeHtml(provider.api_key)}" class="od-sp-fi" placeholder="sk-...">
+                            <input id="provider-key-input" type="password" value="${escapeHtml(provider.api_key)}" class="od-sp-fi" placeholder="sk-...">
                             <button id="toggle-key-visibility" class="od-sp-key-toggle">
                                 <i class="fas fa-eye" style="font-size:12px"></i>
                             </button>
@@ -4371,7 +4368,7 @@ class SettingPanel extends HTMLElement {
                         modelCount > 0
                             ? `
                     <div style="margin-top:10px;font-size:11px;color:var(--mc-ink4);background:var(--mc-bg);border-radius:8px;padding:8px 10px;">
-                        ${modelsUsingProvider.map((m) => `<div style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">· ${this.escapeHtml(m.alias || m.model_name)}</div>`).join('')}
+                        ${modelsUsingProvider.map((m) => `<div style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">· ${escapeHtml(m.alias || m.model_name)}</div>`).join('')}
                     </div>`
                             : ''
                     }
@@ -4447,7 +4444,7 @@ class SettingPanel extends HTMLElement {
         const providerOptions = providers
             .map(
                 (p) =>
-                    `<option value="${this.escapeHtml(p.name)}" ${p.name === model.provider_name ? 'selected' : ''}>${this.escapeHtml(p.name)}</option>`
+                    `<option value="${escapeHtml(p.name)}" ${p.name === model.provider_name ? 'selected' : ''}>${escapeHtml(p.name)}</option>`
             )
             .join('');
 
@@ -4464,8 +4461,8 @@ class SettingPanel extends HTMLElement {
                 .map(
                     (h, i) => `
 	                <div class="header-item od-sp-header-item" data-index="${i}">
-	                    <input type="text" class="header-key od-sp-fi" value="${this.escapeHtml(h.key)}" placeholder="${this.escapeHtml(this._t('config.model.header.key'))}">
-	                    <input type="text" class="header-value od-sp-fi" value="${this.escapeHtml(h.value)}" placeholder="${this.escapeHtml(this._t('config.model.header.value'))}">
+	                    <input type="text" class="header-key od-sp-fi" value="${escapeHtml(h.key)}" placeholder="${escapeHtml(this._t('config.model.header.key'))}">
+	                    <input type="text" class="header-value od-sp-fi" value="${escapeHtml(h.value)}" placeholder="${escapeHtml(this._t('config.model.header.value'))}">
 	                    <button class="remove-header-btn od-sp-header-remove" data-index="${i}">
 	                        <i class="fas fa-times"></i>
 	                    </button>
@@ -4473,9 +4470,7 @@ class SettingPanel extends HTMLElement {
 	            `
                 )
                 .join('');
-            return (
-                items || `<p class="od-sp-empty-hint">${this.escapeHtml(this._t('config.model.header.empty_list'))}</p>`
-            );
+            return items || `<p class="od-sp-empty-hint">${escapeHtml(this._t('config.model.header.empty_list'))}</p>`;
         };
 
         this.showModal(`
@@ -4483,19 +4478,19 @@ class SettingPanel extends HTMLElement {
                 <div class="od-confirm-modal-banner info">
                     <div class="od-confirm-modal-icon"><i class="fas fa-microchip"></i></div>
                     <div class="od-confirm-modal-banner-text">
-                        <div class="od-confirm-modal-title">${this.escapeHtml(this._t(isEdit ? 'config.model.edit.title.edit' : 'config.model.edit.title.add'))}</div>
+                        <div class="od-confirm-modal-title">${escapeHtml(this._t(isEdit ? 'config.model.edit.title.edit' : 'config.model.edit.title.add'))}</div>
                     </div>
                     <button class="od-confirm-modal-close modal-close-btn">${CLOSE_SVG}</button>
                 </div>
                 <div class="od-confirm-modal-body od-sp-scroll">
                     <div class="od-sp-fg">
-                        <label class="od-sp-fl">${this.escapeHtml(this._t('config.model.field.alias'))}</label>
-                        <input id="model-alias-input" type="text" value="${this.escapeHtml(model.alias)}" class="od-sp-fi" placeholder="${this.escapeHtml(this._t('config.model.field.alias.placeholder'))}">
+                        <label class="od-sp-fl">${escapeHtml(this._t('config.model.field.alias'))}</label>
+                        <input id="model-alias-input" type="text" value="${escapeHtml(model.alias)}" class="od-sp-fi" placeholder="${escapeHtml(this._t('config.model.field.alias.placeholder'))}">
                     </div>
                     <div class="od-sp-fg">
-                        <label class="od-sp-fl">${this.escapeHtml(this._t('config.model.field.provider'))}</label>
+                        <label class="od-sp-fl">${escapeHtml(this._t('config.model.field.provider'))}</label>
                         <select id="model-provider-input" class="od-sp-fi">
-                            <option value="">${this.escapeHtml(this._t('config.model.field.provider.placeholder'))}</option>
+                            <option value="">${escapeHtml(this._t('config.model.field.provider.placeholder'))}</option>
                             ${providerOptions}
                         </select>
                     </div>
@@ -4507,61 +4502,61 @@ class SettingPanel extends HTMLElement {
                         </select>
                     </div>
                     <div class="od-sp-fg">
-                        <label class="od-sp-fl">${this.escapeHtml(this._t('config.model.field.model_name'))}</label>
+                        <label class="od-sp-fl">${escapeHtml(this._t('config.model.field.model_name'))}</label>
                         <div class="od-sp-combo model-combo" id="model-name-combo">
-                            <input id="model-name-input" type="text" role="combobox" aria-autocomplete="list" aria-expanded="false" aria-controls="model-name-suggestions" class="od-sp-fi" disabled autocomplete="off" aria-describedby="model-name-error" aria-label="${this.escapeHtml(this._t('config.model.field.model_name'))}">
-                            <button id="model-name-input-toggle" class="model-suggestions-toggle" type="button" tabindex="-1" disabled aria-label="${this.escapeHtml(this._t('config.model.discovery.showSuggestions'))}"><i class="fas fa-chevron-down" aria-hidden="true"></i></button>
+                            <input id="model-name-input" type="text" role="combobox" aria-autocomplete="list" aria-expanded="false" aria-controls="model-name-suggestions" class="od-sp-fi" disabled autocomplete="off" aria-describedby="model-name-error" aria-label="${escapeHtml(this._t('config.model.field.model_name'))}">
+                            <button id="model-name-input-toggle" class="model-suggestions-toggle" type="button" tabindex="-1" disabled aria-label="${escapeHtml(this._t('config.model.discovery.showSuggestions'))}"><i class="fas fa-chevron-down" aria-hidden="true"></i></button>
                             <div id="model-name-suggestions" class="model-suggestions" role="listbox" hidden></div>
                             <span id="model-name-loading" class="od-sp-model-loading" hidden role="status"><i class="fas fa-spinner fa-spin" aria-hidden="true"></i></span>
                         </div>
                         <p id="model-name-error" class="od-sp-model-error" role="alert" hidden></p>
                     </div>
                     <div class="chat-model-field od-sp-fg">
-                        <label class="od-sp-fl">${this.escapeHtml(this._t('config.model.field.reasoning_effort'))}</label>
+                        <label class="od-sp-fl">${escapeHtml(this._t('config.model.field.reasoning_effort'))}</label>
                         <select id="model-effort-input" class="od-sp-fi">
                             ${this.buildEffortOptionHtml(this.getAllEffortValues(), model.reasoning_effort)}
                         </select>
                     </div>
                     <div class="chat-model-field od-sp-fg">
-                        <label class="od-sp-fl">${this.escapeHtml(this._t('config.model.field.context_length'))}</label>
-                        <input id="model-context-length-input" type="text" inputmode="numeric" pattern="[0-9]+[kK]?" value="${model.context_length || ''}" class="od-sp-fi" placeholder="${this.escapeHtml(this._t('config.model.field.context_length.placeholder'))}">
+                        <label class="od-sp-fl">${escapeHtml(this._t('config.model.field.context_length'))}</label>
+                        <input id="model-context-length-input" type="text" inputmode="numeric" pattern="[0-9]+[kK]?" value="${model.context_length || ''}" class="od-sp-fi" placeholder="${escapeHtml(this._t('config.model.field.context_length.placeholder'))}">
                     </div>
                     <div class="chat-model-field od-sp-fg">
-                        <label class="od-sp-fl">${this.escapeHtml(this._t('config.model.field.max_output_tokens'))}</label>
-                        <input id="model-max-output-tokens-input" type="text" inputmode="numeric" pattern="[0-9]+[kK]?" value="${model.max_output_tokens || ''}" class="od-sp-fi" placeholder="${this.escapeHtml(this._t('config.model.field.max_output_tokens.placeholder'))}">
+                        <label class="od-sp-fl">${escapeHtml(this._t('config.model.field.max_output_tokens'))}</label>
+                        <input id="model-max-output-tokens-input" type="text" inputmode="numeric" pattern="[0-9]+[kK]?" value="${model.max_output_tokens || ''}" class="od-sp-fi" placeholder="${escapeHtml(this._t('config.model.field.max_output_tokens.placeholder'))}">
                     </div>
                     <div class="od-sp-fg">
-                        <label class="od-sp-fl">${this.escapeHtml(this._t('config.model.field.timeout'))}</label>
-                        <input id="model-timeout-input" type="text" inputmode="numeric" pattern="[0-9]+" value="${model.timeout || ''}" class="od-sp-fi" placeholder="${this.escapeHtml(this._t('config.model.field.timeout.placeholder'))}">
-                        <p class="od-sp-hint">${this.escapeHtml(this._t('config.model.field.timeout_hint'))}</p>
+                        <label class="od-sp-fl">${escapeHtml(this._t('config.model.field.timeout'))}</label>
+                        <input id="model-timeout-input" type="text" inputmode="numeric" pattern="[0-9]+" value="${model.timeout || ''}" class="od-sp-fi" placeholder="${escapeHtml(this._t('config.model.field.timeout.placeholder'))}">
+                        <p class="od-sp-hint">${escapeHtml(this._t('config.model.field.timeout_hint'))}</p>
                     </div>
                     <div class="chat-model-field od-sp-fg">
-                        <label class="od-sp-fl">${this.escapeHtml(this._t('config.model.field.vision'))}</label>
+                        <label class="od-sp-fl">${escapeHtml(this._t('config.model.field.vision'))}</label>
                         <select id="model-vision-input" class="od-sp-fi">
-                            <option value="" ${model.vision === undefined ? 'selected' : ''}>${this.escapeHtml(this._t('config.model.vision.auto'))}</option>
-                            <option value="true" ${model.vision === true ? 'selected' : ''}>${this.escapeHtml(this._t('config.model.vision.supported'))}</option>
-                            <option value="false" ${model.vision === false ? 'selected' : ''}>${this.escapeHtml(this._t('config.model.vision.unsupported'))}</option>
+                            <option value="" ${model.vision === undefined ? 'selected' : ''}>${escapeHtml(this._t('config.model.vision.auto'))}</option>
+                            <option value="true" ${model.vision === true ? 'selected' : ''}>${escapeHtml(this._t('config.model.vision.supported'))}</option>
+                            <option value="false" ${model.vision === false ? 'selected' : ''}>${escapeHtml(this._t('config.model.vision.unsupported'))}</option>
                         </select>
                     </div>
                     <div class="chat-model-field od-sp-fc">
                         <input id="model-auto-parse-think-input" type="checkbox" ${model.auto_parse_think_tags ? 'checked' : ''}>
-                        <label for="model-auto-parse-think-input">${this.escapeHtml(this._t('config.model.field.auto_parse_think_tags'))}</label>
+                        <label for="model-auto-parse-think-input">${escapeHtml(this._t('config.model.field.auto_parse_think_tags'))}</label>
                     </div>
                     <div class="od-sp-fg">
-                        <label class="od-sp-fl">${this.escapeHtml(this._t('config.model.field.custom_headers'))}</label>
+                        <label class="od-sp-fl">${escapeHtml(this._t('config.model.field.custom_headers'))}</label>
                         <div id="headers-list">
                             ${renderHeadersList()}
                         </div>
                         <button id="add-header-btn" class="od-sp-add-header">
-                            <i class="fas fa-plus" style="margin-right:6px"></i>${this.escapeHtml(this._t('config.model.header.add_title'))}
+                            <i class="fas fa-plus" style="margin-right:6px"></i>${escapeHtml(this._t('config.model.header.add_title'))}
                         </button>
-                        <p class="od-sp-hint">${this.escapeHtml(this._t('config.model.field.custom_headers_hint'))}</p>
+                        <p class="od-sp-hint">${escapeHtml(this._t('config.model.field.custom_headers_hint'))}</p>
                     </div>
                 </div>
                 <div id="model-verify-result" class="hidden"></div>
                 <div class="od-confirm-modal-footer">
-                    <button class="od-confirm-btn od-confirm-btn-cancel modal-close-btn">${this.escapeHtml(this._t('common.cancel'))}</button>
-                    <button id="save-model-without-verify-btn" class="od-confirm-btn od-confirm-btn-cancel"><i class="fas fa-save" style="margin-right:6px"></i>${this.escapeHtml(this._t('config.model.action.save_without_verify'))}</button>
+                    <button class="od-confirm-btn od-confirm-btn-cancel modal-close-btn">${escapeHtml(this._t('common.cancel'))}</button>
+                    <button id="save-model-without-verify-btn" class="od-confirm-btn od-confirm-btn-cancel"><i class="fas fa-save" style="margin-right:6px"></i>${escapeHtml(this._t('config.model.action.save_without_verify'))}</button>
                     <button id="save-model-btn" class="od-confirm-btn od-confirm-btn-primary"><i class="fas fa-check-double" style="margin-right:6px"></i>${this._t(isEdit ? 'config.model.verify.save' : 'config.model.verify.add')}</button>
                 </div>
             </div>
@@ -4790,7 +4785,7 @@ class SettingPanel extends HTMLElement {
 
         const origText = saveBtn.innerHTML;
         saveBtn.disabled = true;
-        saveBtn.innerHTML = `<i class="fas fa-spinner fa-spin mr-2"></i>${this.escapeHtml(
+        saveBtn.innerHTML = `<i class="fas fa-spinner fa-spin mr-2"></i>${escapeHtml(
             this._t(
                 model_type === 'embedding' ? 'config.model.verify.status.embedding' : 'config.model.verify.status.chat'
             )
@@ -4817,13 +4812,13 @@ class SettingPanel extends HTMLElement {
             });
             if (resultDiv) {
                 resultDiv.className = 'od-sp-verify-result od-sp-verify-success';
-                resultDiv.innerHTML = `<i class="fas fa-check-circle mr-2"></i>${this.escapeHtml(this._t('config.model.verify.status.saving'))}`;
+                resultDiv.innerHTML = `<i class="fas fa-check-circle mr-2"></i>${escapeHtml(this._t('config.model.verify.status.saving'))}`;
             }
             await this.saveModel();
         } catch (error) {
             if (resultDiv) {
                 resultDiv.className = 'od-sp-verify-result od-sp-verify-error';
-                resultDiv.innerHTML = `<i class="fas fa-times-circle mr-2"></i>${this.escapeHtml(
+                resultDiv.innerHTML = `<i class="fas fa-times-circle mr-2"></i>${escapeHtml(
                     this._t('config.model.verify.failed', { message: error.message || '' })
                 )}`;
             }
@@ -4961,12 +4956,12 @@ class SettingPanel extends HTMLElement {
         const model = this.currentData.models[index];
 
         // 检查是否是默认模型
-        const isDefault = [
-            'default_model',
-            'default_embedding_model',
-            'default_reranker_model',
-            'default_vision_model'
-        ].some((field) => this.currentData[field] === model.alias);
+        // 默认模型页已不再暴露 default_reranker_model（无 UI 入口可解除引用），
+        // 因此不把它纳入删除保护：删除后由主进程 normalizeDefaultModelReferences
+        // 清空失效的 reranker 引用，避免用户在有旧配置时陷入“删不掉又改不了”。
+        const isDefault = ['default_model', 'default_embedding_model', 'default_vision_model'].some(
+            (field) => this.currentData[field] === model.alias
+        );
 
         if (isDefault) {
             window.notificationAPI.sendNotification(
@@ -5112,7 +5107,6 @@ class SettingPanel extends HTMLElement {
             'default-model-select',
             'default-quick-model-select',
             'default-embedding-model-select',
-            'default-reranker-model-select',
             'default-vision-model-select'
         ];
         selects.forEach((id) => {
@@ -5248,13 +5242,13 @@ class SettingPanel extends HTMLElement {
             try {
                 const result = await window.quickpassAPI.importQuickPass(quickpass);
                 const hasApps = result.hasApplications;
-                resultDiv.innerHTML = `<span class="od-sp-success-text"><i class="fas fa-check-circle mr-2"></i>${this._t('sp.quickpass.import.success', { name: this.escapeHtml(result.name) })}${hasApps ? this._t('sp.quickpass.import.success.apps') : this._t('sp.quickpass.import.success.base')}</span>`;
+                resultDiv.innerHTML = `<span class="od-sp-success-text"><i class="fas fa-check-circle mr-2"></i>${this._t('sp.quickpass.import.success', { name: escapeHtml(result.name) })}${hasApps ? this._t('sp.quickpass.import.success.apps') : this._t('sp.quickpass.import.success.base')}</span>`;
 
                 // 刷新数据
                 await this.loadData();
                 this.refreshAll();
             } catch (error) {
-                resultDiv.innerHTML = `<span class="od-sp-error-text"><i class="fas fa-times-circle mr-2"></i>${this._t('sp.quickpass.import.failed', { message: this.escapeHtml(error.message) })}</span>`;
+                resultDiv.innerHTML = `<span class="od-sp-error-text"><i class="fas fa-times-circle mr-2"></i>${this._t('sp.quickpass.import.failed', { message: escapeHtml(error.message) })}</span>`;
             }
         });
     }
@@ -5340,9 +5334,9 @@ class SettingPanel extends HTMLElement {
                     .map(
                         (entry, i) => `
                     <div class="environ-item flex items-center gap-2 mb-2" data-index="${i}">
-                        <input type="text" class="environ-key sp-form-input" value="${this.escapeHtml(entry.key)}" placeholder="${this._t('sp.environ.keyPlaceholder')}">
+                        <input type="text" class="environ-key sp-form-input" value="${escapeHtml(entry.key)}" placeholder="${this._t('sp.environ.keyPlaceholder')}">
                         <span class="text-gray-400 text-xs">=</span>
-                        <input type="text" class="environ-value sp-form-input" value="${this.escapeHtml(entry.value)}" placeholder="${this._t('sp.environ.valuePlaceholder')}">
+                        <input type="text" class="environ-value sp-form-input" value="${escapeHtml(entry.value)}" placeholder="${this._t('sp.environ.valuePlaceholder')}">
                         <button class="remove-environ-btn sp-card-action-btn sp-delete-btn" data-index="${i}">
                             <i class="fas fa-times"></i>
                         </button>
@@ -5548,7 +5542,7 @@ class SettingPanel extends HTMLElement {
                     value === ''
                         ? this._t('config.model.option.default')
                         : this._t(`sp.model.effort.${value}`) || value;
-                return `<option value="${value}" ${currentValue === value ? 'selected' : ''}>${this.escapeHtml(label)}</option>`;
+                return `<option value="${value}" ${currentValue === value ? 'selected' : ''}>${escapeHtml(label)}</option>`;
             })
             .join('');
     }
@@ -5581,16 +5575,6 @@ class SettingPanel extends HTMLElement {
         if (!selectEl.isConnected) return;
         const stillCurrent = values.includes(currentValue) ? currentValue : '';
         selectEl.innerHTML = this.buildEffortOptionHtml(values, stillCurrent);
-    }
-
-    escapeHtml(text) {
-        if (!text) return '';
-        return String(text)
-            .replace(/&/g, '&amp;')
-            .replace(/</g, '&lt;')
-            .replace(/>/g, '&gt;')
-            .replace(/"/g, '&quot;')
-            .replace(/'/g, '&#039;');
     }
 }
 

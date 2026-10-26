@@ -4,8 +4,10 @@
  */
 
 import { OVERLAY_CSS } from '../../../../common/overlay-styles.js';
+import { neutralizeMarkdownHtml } from '../../../../common/markdown/markdown-html-safety.js';
 import { showConfirmModal, renderIcon, bindOverlayDismiss } from '../../../../renderer/components/confirmModal';
 import { resolveRendererLocale } from '../../../../renderer/locale.js';
+import { adoptDeferredSubscription } from '../../../../renderer/deferredSubscription.js';
 import { createTranslatorForSkillMgr } from '../locale/renderer.js';
 import { showDuplicateInstallModal } from './duplicateInstallModal.js';
 import { getSkillInitial, getSkillPastel } from '../../../../renderer/components/skills/skill-detail-card.ts';
@@ -1797,17 +1799,21 @@ class SkillMgrEntryWidget extends HTMLElement {
         this._startAnalysisPolling();
         // 通过 applicationAPI.subscribe 监听技能/插件 registry 变更，
         // 收到通知后刷新已安装、内置技能和市场 registry 列表。
-        try {
-            this._skillsChangedSubscriptionId = await window.applicationAPI.subscribe('skillsChanged', () => {
+        // 订阅要等 IPC 往返才拿到句柄：元素若在此期间被销毁，由 adoptDeferredSubscription 自动退订
+        adoptDeferredSubscription(
+            this,
+            window.applicationAPI.subscribe('skillsChanged', () => {
                 this.loadSkills();
                 this.loadBuiltinSkills();
                 // 插件启停也会发出 skillsChanged。技能窗口可能被桌面复用，
                 // 因此不能只刷新技能列表，否则已停用的 registry tab 会继续保留。
                 this._loadRegistryInfo();
-            });
-        } catch {
-            // subscribe 失败不影响正常功能
-        }
+            }),
+            (unsubscribe) => {
+                this._unsubscribeSkillsChanged = unsubscribe;
+            },
+            (error) => console.warn('Failed to subscribe skillsChanged:', error)
+        );
     }
 
     _applyLocaleSetting(setting) {
@@ -1832,6 +1838,15 @@ class SkillMgrEntryWidget extends HTMLElement {
     }
 
     disconnectedCallback() {
+        // 事件订阅先行退订：后面的设置退订、DOM 清理都可能抛错
+        if (this._unsubscribeSkillsChanged) {
+            try {
+                this._unsubscribeSkillsChanged();
+            } catch {
+                /* ignore */
+            }
+            this._unsubscribeSkillsChanged = null;
+        }
         if (this._settingUnsubscribe) {
             this._settingUnsubscribe();
             this._settingUnsubscribe = null;
@@ -1839,13 +1854,6 @@ class SkillMgrEntryWidget extends HTMLElement {
         document.removeEventListener('click', this._onDocClick, true);
         document.removeEventListener('keydown', this._onKeyDown);
         document.removeEventListener(OPENDESK_THEME_CHANGED, this._onThemeChange);
-        // 移除技能列表变更监听
-        if (this._skillsChangedSubscriptionId) {
-            try {
-                window.applicationAPI.unsubscribe('skillsChanged');
-            } catch {}
-            this._skillsChangedSubscriptionId = null;
-        }
         this._stopAnalysisPolling();
         this._disconnectObservers();
         if (this._segScrollResizeObserver) {
@@ -3078,7 +3086,9 @@ class SkillMgrEntryWidget extends HTMLElement {
             closeLabel: this._t('renderer.skill.detail.close'),
             description: detail.description,
             descriptionLabel: this._t('renderer.skill.detail.descLabel'),
-            bodyHtml: detail.body ? marked.parse(detail.body) : undefined,
+            // 技能正文可能来自 skillhub 等第三方源：marked 默认放行原始 HTML，
+            // 渲染后剥掉可执行能力，良性标签保持原样显示。
+            bodyHtml: detail.body ? neutralizeMarkdownHtml(marked.parse(detail.body)) : undefined,
             bodyLabel: this._t('renderer.skill.detail.contentLabel'),
             metadata: metaItems,
             metadataLabel: this._t('renderer.skill.detail.metadataLabel'),

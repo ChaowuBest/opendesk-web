@@ -159,7 +159,7 @@ export class VerticalLayout implements Component {
         for (let c = 0; c < childOutputs.length; c++) {
             const cur = childOutputs[c];
             const old = configMatch && cache && c < cache.childOutputs.length ? cache.childOutputs[c] : undefined;
-            if (old && cur.length === old.length && cur.every((line, i) => line === old[i])) {
+            if (cache && old && cur.length === old.length && cur.every((line, i) => line === old[i])) {
                 processedLines.push(cache.processedLines[c]);
             } else {
                 processedLines.push(this.processChildLines(cur, width, padL, padR, contentWidth));

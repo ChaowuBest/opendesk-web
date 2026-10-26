@@ -367,7 +367,13 @@ class LazyFileTransport extends Transport {
         }
         this.activated = true;
         const target = ensureFileTransport();
-        target.log(info, callback);
+        // winston 类型上把 Transport.log 声明为可选；实际 transport 实现都会提供。
+        // 兜底直接回调，避免万一缺失时中断 winston 的分发流程。
+        if (target.log) {
+            target.log(info, callback);
+        } else {
+            callback();
+        }
         // 延迟到下一个 tick 自移除：winston 正在本条日志的分发过程中遍历
         // transports，同步增删数组可能跳过后续 transport
         setImmediate(() => {

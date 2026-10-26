@@ -493,6 +493,11 @@ export class PluginHookError extends Error {
 
 export class PluginHost {
     private readonly entries = new Map<string, ActivePlugin>();
+    /**
+     * hooks 按 hook 名分桶存储：桶名与桶内 HookRecord 的 name/callback 类型强相关，
+     * 但 Map<PluginHookName, HookRecord[]> 这种同质容器无法表达这种相关性，
+     * 因此统一通过下面两个泛型 helper 存取，把 name 与 HookRecord<Name> 重新关联起来。
+     */
     private readonly hooks = new Map<PluginHookName, HookRecord[]>();
     private readonly tools = new Map<string, ToolRecord>();
     private readonly skills = new Map<string, ContributionRecord<PluginSkillDefinition>>();
@@ -507,6 +512,19 @@ export class PluginHost {
     private readonly appearance = new Map<AppearanceField, AppearanceRecord>();
     private readonly appearanceChangeListeners = new Set<() => void>();
     private readonly mcpRemovalListeners = new Set<(id: string) => void | Promise<void>>();
+
+    /**
+     * 读取某个 hook 名下的记录。name 与 HookRecord<Name> 的相关性由泛型参数重建：
+     * hooks 桶只保证「桶名 === 记录的 name」，因此这里的擦除转换是类型层面的（运行时无转换）。
+     */
+    private hookRecords<Name extends PluginHookName>(name: Name): HookRecord<Name>[] {
+        return (this.hooks.get(name) ?? []) as unknown as HookRecord<Name>[];
+    }
+
+    /** 写回某个 hook 名下的记录，擦除方式同 hookRecords。 */
+    private setHookRecords<Name extends PluginHookName>(name: Name, records: HookRecord<Name>[]): void {
+        this.hooks.set(name, records as unknown as HookRecord[]);
+    }
 
     list(): PluginHostEntry[] {
         return Array.from(this.entries.values()).map((entry) => this.publicEntry(entry));
@@ -879,7 +897,7 @@ export class PluginHost {
         input: PluginHookMap[Name]['input'],
         output: PluginHookMap[Name]['output']
     ): Promise<PluginHookMap[Name]['output']> {
-        const records = (this.hooks.get(name) ?? []) as HookRecord<Name>[];
+        const records = this.hookRecords(name);
         for (const record of records) {
             const entry = this.entries.get(record.pluginKey);
             if (!entry) continue;
@@ -959,13 +977,13 @@ export class PluginHost {
                         callback,
                         failureMode: hookOptions?.failureMode ?? entry.failureMode
                     };
-                    const records = this.hooks.get(name) ?? [];
-                    records.push(record as HookRecord);
-                    this.hooks.set(name, records);
+                    const records = this.hookRecords(name);
+                    records.push(record);
+                    this.setHookRecords(name, records);
                     return track(
                         new HostRegistration(() => {
-                            const current = this.hooks.get(name) ?? [];
-                            this.hooks.set(
+                            const current = this.hookRecords(name);
+                            this.setHookRecords(
                                 name,
                                 current.filter((candidate) => candidate !== record)
                             );

@@ -20,6 +20,7 @@ import fs from 'fs';
 import { pathToFileURL } from 'url';
 import { spawn } from 'child_process';
 import { getOpendeskDirectory, Setting } from '../../../utils/setting.js';
+import { toErrorMessage } from '../../../../common/utils/error.js';
 import { BaseTool, BaseToolset } from '../../../aikernel/tool.js';
 import { parseAndValidateSkillMd, synthesizeSkillMdFromMetadata } from '../skill-schema.js';
 import { isSkillEntryFilename, findSkillEntryFile, CANONICAL_SKILL_FILENAME } from '../skill-entry.js';
@@ -46,7 +47,8 @@ export type SkillSource = 'installed' | 'config' | 'mounted' | 'plugin';
 interface SkillCacheEntry {
     frontmatter: Record<string, unknown>;
     body: string;
-    skillDir: string;
+    /** 技能目录；metadata.json 合成路径没有真实技能目录，此时为 undefined */
+    skillDir?: string;
     source: SkillSource;
 }
 
@@ -238,7 +240,7 @@ export class SkillRegistry {
             try {
                 config = Setting.getInstance().getApplicationConfig(SKILLMGR_BUNDLE_NAME);
             } catch (e) {
-                logger.warn(`SkillRegistry: 读取 skillmgr 配置失败: ${e.message}`);
+                logger.warn(`SkillRegistry: 读取 skillmgr 配置失败: ${toErrorMessage(e)}`);
                 return [];
             }
         }
@@ -373,16 +375,16 @@ export class SkillRegistry {
                 skillDirs.push(resolved);
             }
         } catch (e) {
-            logger.warn(`SkillRegistry: 检查 ${resolved} 失败: ${e.message}`);
-            errors.push({ id: resolved, error: `检查 ${CANONICAL_SKILL_FILENAME} 失败: ${e.message}` });
+            logger.warn(`SkillRegistry: 检查 ${resolved} 失败: ${toErrorMessage(e)}`);
+            errors.push({ id: resolved, error: `检查 ${CANONICAL_SKILL_FILENAME} 失败: ${toErrorMessage(e)}` });
         }
 
         let entries: fs.Dirent[] = [];
         try {
             entries = fs.readdirSync(resolved, { withFileTypes: true });
         } catch (e) {
-            logger.error(`SkillRegistry: 无法读取目录 ${resolved}: ${e.message}`);
-            errors.push({ id: resolved, error: e.message });
+            logger.error(`SkillRegistry: 无法读取目录 ${resolved}: ${toErrorMessage(e)}`);
+            errors.push({ id: resolved, error: toErrorMessage(e) });
             return skillDirs;
         }
 
@@ -418,8 +420,8 @@ export class SkillRegistry {
         try {
             entries = fs.readdirSync(dir, { withFileTypes: true });
         } catch (e) {
-            logger.error(`SkillRegistry: 无法读取目录 ${dir}: ${e.message}`);
-            errors.push({ id: dir, error: e.message });
+            logger.error(`SkillRegistry: 无法读取目录 ${dir}: ${toErrorMessage(e)}`);
+            errors.push({ id: dir, error: toErrorMessage(e) });
             return;
         }
 
@@ -457,7 +459,8 @@ export class SkillRegistry {
             skillDir: result.skillDir,
             source
         });
-        this.singleSkillToolset!.addTool(result.tool);
+        // metadata.json 合成路径不生成可执行工具，只注册到 cache
+        if (result.tool) this.singleSkillToolset!.addTool(result.tool);
         logger.info(`SkillRegistry: 已加载技能 ${result.name} (${source})`);
         return true;
     }
@@ -493,17 +496,14 @@ export class SkillRegistry {
             };
         });
         list.sort((a, b) => (b.addedAt as number) - (a.addedAt as number));
-        return list.map((item) => {
-            const rest = { ...item };
-            delete rest.addedAt;
-            return rest;
-        });
+        // addedAt 只用于排序，输出前用解构剔除（delete 只能用于可选属性）
+        return list.map(({ addedAt: _addedAt, ...rest }) => rest);
     }
 
     /**
      * 获取指定技能的完整 body（老格式）
      */
-    getSkillBody(skillId: string): { frontmatter: Record<string, unknown>; body: string; skillDir: string } | null {
+    getSkillBody(skillId: string): { frontmatter: Record<string, unknown>; body: string; skillDir?: string } | null {
         if (this.skillsCache.size === 0) this.loadAll();
         const skill = this.skillsCache.get(skillId);
         return skill || null;
@@ -522,7 +522,8 @@ export class SkillRegistry {
         name: string;
         description: string;
         body: string;
-        skillDir: string;
+        /** 技能目录；metadata.json 合成路径没有真实技能目录，此时为 undefined */
+        skillDir?: string;
         bundleName: string;
         source: SkillSource;
         license?: string;
@@ -652,7 +653,7 @@ export class SkillRegistry {
         try {
             raw = fs.readFileSync(skillMdPath, 'utf8');
         } catch (e) {
-            return { success: false, error: `读取 ${CANONICAL_SKILL_FILENAME} 失败: ${e.message}` };
+            return { success: false, error: `读取 ${CANONICAL_SKILL_FILENAME} 失败: ${toErrorMessage(e)}` };
         }
 
         const dirName = fallbackName || path.basename(skillDir);
@@ -702,9 +703,11 @@ export class SkillRegistry {
 
     /**
      * 渐进式加载技能资源：在技能被调用时读取 references、scripts、assets 等
+     *
+     * skillDir 可为空：metadata.json 合成路径没有真实技能目录，此时只走内置目录回退。
      */
     private _loadSkillResources(
-        skillDir: string,
+        skillDir: string | undefined,
         skillName: string
     ): {
         referencesSections: Array<{ name: string; content: string }>;
@@ -715,8 +718,10 @@ export class SkillRegistry {
         const scriptsList: string[] = [];
         const assetsList: string[] = [];
 
-        const resolvedDir = path.resolve(skillDir);
-        readResourcesFromDir(resolvedDir, referencesSections, scriptsList, assetsList);
+        if (skillDir) {
+            const resolvedDir = path.resolve(skillDir);
+            readResourcesFromDir(resolvedDir, referencesSections, scriptsList, assetsList);
+        }
 
         const hadAny = referencesSections.length > 0 || scriptsList.length > 0 || assetsList.length > 0;
         if (!hadAny && skillName) {
@@ -796,9 +801,11 @@ export class SkillRegistry {
         body: string,
         frontmatter: Record<string, unknown>,
         handler: unknown
-    ): (args: Record<string, unknown>) => Promise<string> {
+    ): (args: unknown, taskState?: unknown) => Promise<string> {
         return async (args) => {
-            const input = (args?.input as string) ?? '';
+            // BaseTool.setExecutor 的回调签名是 (args: unknown, taskState?)；技能执行只关心 args.input
+            const rawInput = (args as { input?: unknown } | undefined)?.input;
+            const input = typeof rawInput === 'string' ? rawInput : '';
             const resources = this._loadSkillResources(skillDir, skillName);
             const progressiveContent = this._formatProgressiveSkillContent(body, resources, {
                 skillName,
@@ -850,8 +857,8 @@ export class SkillRegistry {
                     handlerResult = await execute(input, args, skillContext);
                     handlerResult = typeof handlerResult === 'string' ? handlerResult : JSON.stringify(handlerResult);
                 } catch (err) {
-                    logger.error(`Skill ${skillName} module error: ${err.message}`);
-                    return `执行失败: ${err.message}`;
+                    logger.error(`Skill ${skillName} module error: ${toErrorMessage(err)}`);
+                    return `执行失败: ${toErrorMessage(err)}`;
                 }
             } else if ((h as any).type === 'url' && (h as any).url) {
                 try {
@@ -869,8 +876,8 @@ export class SkillRegistry {
                     if (!res.ok) return `远程调用失败 (${res.status}): ${text}`;
                     handlerResult = text;
                 } catch (err) {
-                    logger.error(`Skill ${skillName} url error: ${err.message}`);
-                    return `请求失败: ${err.message}`;
+                    logger.error(`Skill ${skillName} url error: ${toErrorMessage(err)}`);
+                    return `请求失败: ${toErrorMessage(err)}`;
                 }
             } else {
                 return progressiveContent || `[技能 ${skillName}] 未配置可执行 handler。`;
@@ -919,16 +926,38 @@ export class SkillRegistry {
 export const skillRegistry = SkillRegistry.getInstance();
 
 /** _loadSkillFromDir 的返回类型 */
-export interface LoadSkillResult {
-    success: boolean;
-    error?: string;
+export interface LoadSkillSuccess {
+    success: true;
+    error?: undefined;
+    /** 可执行工具；仅 metadata.json 合成路径不生成工具 */
     tool?: any;
-    name?: string;
-    body?: string;
-    frontmatter?: Record<string, unknown>;
+    name: string;
+    body: string;
+    frontmatter: Record<string, unknown>;
+    /** 技能目录；metadata.json 合成路径没有真实技能目录，只有 _skillDir */
     skillDir?: string;
     paramsSchema?: unknown;
     _skillDir?: string;
     _synthesized?: boolean;
     _synthesizedMd?: string;
 }
+
+export interface LoadSkillFailure {
+    success: false;
+    error: string;
+    tool?: undefined;
+    name?: undefined;
+    body?: undefined;
+    frontmatter?: undefined;
+    skillDir?: undefined;
+    paramsSchema?: undefined;
+    _skillDir?: undefined;
+    _synthesized?: undefined;
+    _synthesizedMd?: undefined;
+}
+
+/**
+ * 加载结果用可辨识联合表达「成功必有 name/body/frontmatter，失败必有 error」，
+ * 这样调用方按 success 收窄后即可直接使用这些字段，无需到处做可选判断。
+ */
+export type LoadSkillResult = LoadSkillSuccess | LoadSkillFailure;

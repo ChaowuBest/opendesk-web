@@ -596,7 +596,7 @@ export function createTouchLongPressController(): void {
         // 分组与系统编辑菜单一致：剪切/复制/粘贴 + 分隔 + 全选；
         // 只读选区场景剪切/粘贴置灰；Ace 编辑器的复制/全选走其内置快捷键
         const items: Array<{
-            key: string;
+            key: keyof typeof EDIT_MENU_ICONS;
             label: string;
             shortcut: string;
             run: () => void;

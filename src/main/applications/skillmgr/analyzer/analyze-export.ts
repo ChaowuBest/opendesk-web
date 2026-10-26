@@ -38,6 +38,8 @@ export interface AnalyzeSkillExport {
 }
 
 export function generateAnalyzeExportPage(): string {
+    // 下面整段是自包含的报告 HTML：内嵌 <script> 里的 escHtml 属于浏览器端源码字符串，
+    // 无法 import common/utils/escape.js，因此有意保留独立实现，不要"顺手"改成共享函数。
     return `<!DOCTYPE html>
 <html lang="zh-CN">
 <head>

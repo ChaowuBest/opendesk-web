@@ -148,8 +148,9 @@ describe('AgentInput reasoning effort support loading', () => {
     });
 
     test.each(['high', 'none', ''])('已有任务切换到 %s 档位时通知宿主持久化，发送与入队保留该值', async (effort) => {
-        const saveSettingObject = jest.fn(async () => undefined);
-        window.settingAPI.saveSettingObject = saveSettingObject;
+        // 保存接口用 saveSettingObjectDetailed（需要拿到「已保存但未生效」的步骤信息）
+        const saveSettingObjectDetailed = jest.fn(async () => ({ data: undefined, sideEffectFailures: [] }));
+        window.settingAPI.saveSettingObjectDetailed = saveSettingObjectDetailed;
         const input = new AgentInput();
         await input.loadSettings();
         input.taskId = 'existing-task';
@@ -167,7 +168,7 @@ describe('AgentInput reasoning effort support loading', () => {
                 detail: { model: 'gpt5', reasoningEffort: effort }
             })
         );
-        expect(saveSettingObject).not.toHaveBeenCalled();
+        expect(saveSettingObjectDetailed).not.toHaveBeenCalled();
 
         for (const eventName of ['submit', 'queue']) {
             input.isRunning = eventName === 'queue';
@@ -185,8 +186,8 @@ describe('AgentInput reasoning effort support loading', () => {
     });
 
     test('新任务界面仍将所选模型和推理档位保存为全局默认值', async () => {
-        const saveSettingObject = jest.fn(async () => undefined);
-        window.settingAPI.saveSettingObject = saveSettingObject;
+        const saveSettingObjectDetailed = jest.fn(async () => ({ data: undefined, sideEffectFailures: [] }));
+        window.settingAPI.saveSettingObjectDetailed = saveSettingObjectDetailed;
         const input = new AgentInput();
         await input.loadSettings();
         input.render();
@@ -195,7 +196,7 @@ describe('AgentInput reasoning effort support loading', () => {
         input.querySelector('[data-effort-value="high"]').click();
         await new Promise((resolve) => setTimeout(resolve, 0));
 
-        expect(saveSettingObject).toHaveBeenCalledWith(
+        expect(saveSettingObjectDetailed).toHaveBeenCalledWith(
             expect.objectContaining({
                 default_model: 'deepseek',
                 models: expect.arrayContaining([

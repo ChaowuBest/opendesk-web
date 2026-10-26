@@ -17,6 +17,7 @@ import { z } from 'zod';
 import { getOpendeskDirectory } from '../../utils/setting.js';
 import { logger } from '../../utils/logger.js';
 import type { OpenDeskAppManifest } from '../base.js';
+import { escapeHtmlInsideJsTemplate } from '../../../common/utils/escape.js';
 
 const BUNDLE_NAME_MESSAGE =
     '包名只能包含小写字母、数字、点号和连字符，必须以小写字母开头，不能以点号或连字符结尾，也不能连续使用分隔符。';
@@ -483,7 +484,7 @@ export class AppManagerStore {
                 '<head>',
                 '    <meta charset="UTF-8">',
                 '    <meta name="viewport" content="width=device-width, initial-scale=1.0">',
-                `    <title>${escapeHtmlForTemplate(input.displayName)}</title>`,
+                `    <title>${escapeHtmlInsideJsTemplate(input.displayName)}</title>`,
                 '    <script type="module" src="./main.js"></script>',
                 '</head>',
                 '<body>',
@@ -506,7 +507,7 @@ export class AppManagerStore {
                 '                p { margin: 0; color: #6b7280; line-height: 1.6; }',
                 '            </style>',
                 '            <main>',
-                `                <h1>${escapeHtmlForTemplate(input.displayName)}</h1>`,
+                `                <h1>${escapeHtmlInsideJsTemplate(input.displayName)}</h1>`,
                 '                <p>这是一个最小 OpenDesk 应用模板。你可以从这里开始构建自己的界面。</p>',
                 '            </main>',
                 '        `;',
@@ -646,13 +647,4 @@ export class AppManagerStore {
         removeDirectoryIfExists(path.join(getManagedAppsDirectory(), bundleName));
         return { success: true };
     }
-}
-
-function escapeHtmlForTemplate(value: string): string {
-    return value
-        .replace(/&/g, '&amp;')
-        .replace(/</g, '&lt;')
-        .replace(/>/g, '&gt;')
-        .replace(/"/g, '&quot;')
-        .replace(/`/g, '&#96;');
 }

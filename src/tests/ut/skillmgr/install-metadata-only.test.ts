@@ -67,4 +67,33 @@ describe('skillmgr metadata-only installation', () => {
         expect(result.success).toBe(false);
         expect(result.error).toContain('缺少 SKILL.md');
     });
+
+    test('metadata-only skill 的 skillDir 保持 undefined，不伪造空串目录', () => {
+        const skillDir = path.join(tempDir, 'apps', 'skills', 'resources', 'metadata-only-skill');
+        fs.mkdirSync(skillDir, { recursive: true });
+        fs.writeFileSync(
+            path.join(skillDir, 'metadata.json'),
+            JSON.stringify({
+                name: 'metadata-only-skill',
+                slug: 'metadata-only-skill',
+                description: 'Skill that only ships registry metadata, without SKILL.md',
+                version: '1.0.0'
+            }),
+            'utf8'
+        );
+
+        skillRegistry.loadAll();
+
+        const listed = skillRegistry
+            .listSkills()
+            .find((item: any) => String(item.description).includes('only ships registry metadata')) as
+            { id: string } | undefined;
+        expect(listed).toBeDefined();
+
+        // 合成技能没有真实技能目录：必须保持 undefined。下游 `skillBody?.skillDir ?? path.join(默认目录)`
+        // 与 `if (!cached?.skillDir)` 都依赖该值 falsy，若改回空串会失去兜底
+        expect(skillRegistry.getSkillBody(listed!.id)?.skillDir).toBeUndefined();
+        // 缺少目录时 getSkillDetail 不应抛错（历史上 path.resolve(undefined) 会 TypeError）
+        expect(skillRegistry.getSkillDetail(listed!.id)?.skillDir).toBeUndefined();
+    });
 });

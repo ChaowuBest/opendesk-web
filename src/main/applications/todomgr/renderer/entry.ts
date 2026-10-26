@@ -1316,7 +1316,7 @@ class TodoMgrEntryWidget extends AgentOperableHTMLElement {
 
     disconnectedCallback() {
         if (this._onGlobalTodosUpdated) {
-            window.applicationAPI.unsubscribe('globalTodosUpdated', this._onGlobalTodosUpdated);
+            window.applicationAPI.unsubscribe('globalTodosUpdated');
             this._onGlobalTodosUpdated = null;
         }
         if (this._settingUnsubscribe) {

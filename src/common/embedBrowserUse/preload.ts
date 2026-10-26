@@ -22,6 +22,7 @@
  * protocol.ts via the `Channels` constant.
  */
 
+import { toErrorMessage } from '../utils/error';
 import { Channels } from './protocol';
 import type { BrowserInstance } from './renderer';
 
@@ -128,7 +129,7 @@ export function defineBrowserBridge(
     try {
         contextBridge.exposeInMainWorld(apiName, api);
     } catch (err) {
-        const msg = String(err?.message ?? err);
+        const msg = toErrorMessage(err);
         if (/existing property|already been registered/i.test(msg)) {
             return;
         }

@@ -1,4 +1,4 @@
-import { beforeAll, beforeEach, describe, expect, test } from '@jest/globals';
+import { beforeAll, beforeEach, describe, expect, jest, test } from '@jest/globals';
 import { parseHTML } from 'linkedom';
 import { createRendererTranslator } from '../../../renderer/locale.ts';
 
@@ -161,5 +161,49 @@ describe('setting-panel tab-models section refresh', () => {
 
         expect(countSections(panel, '模型提供方')).toBe(1);
         expect(panel.querySelector('#software-update-section')).toBeTruthy();
+    });
+
+    test('default-models section omits the unsupported reranker model setting', () => {
+        const panel = createPanel({ status: 'idle' });
+        renderTabModels(panel);
+
+        const section = panel.querySelector('#default-models-section');
+        expect(section.textContent).not.toContain('重排序模型');
+        expect(panel.querySelector('#default-reranker-model-select')).toBeNull();
+        // 其余默认模型选择框仍保留
+        expect(panel.querySelector('#default-model-select')).toBeTruthy();
+        expect(panel.querySelector('#default-embedding-model-select')).toBeTruthy();
+        expect(panel.querySelector('#default-vision-model-select')).toBeTruthy();
+    });
+
+    test('a model referenced only as default reranker can still be deleted', () => {
+        // 默认模型页已无 reranker 选择器，若仍把该引用纳入删除保护，
+        // 用户会陷入“删不掉、也没地方改”的死锁；引用应由主进程保存时清理。
+        const panel = createPanel({ status: 'idle' });
+        renderTabModels(panel);
+        panel.scheduleSave = () => undefined;
+        const sendNotification = jest.fn();
+        window.notificationAPI = { sendNotification };
+        panel.currentData.default_reranker_model = 'gpt';
+
+        panel.deleteModel(0);
+
+        expect(sendNotification).not.toHaveBeenCalled();
+        expect(panel.currentData.models).toHaveLength(0);
+    });
+
+    test('a model referenced as a visible default model is still protected from deletion', () => {
+        // 对照断言：删除保护本身仍然生效，避免上一条用例因为保护逻辑整体失效而恒真
+        const panel = createPanel({ status: 'idle' });
+        renderTabModels(panel);
+        panel.scheduleSave = () => undefined;
+        const sendNotification = jest.fn();
+        window.notificationAPI = { sendNotification };
+        panel.currentData.default_model = 'gpt';
+
+        panel.deleteModel(0);
+
+        expect(sendNotification).toHaveBeenCalledTimes(1);
+        expect(panel.currentData.models).toHaveLength(1);
     });
 });

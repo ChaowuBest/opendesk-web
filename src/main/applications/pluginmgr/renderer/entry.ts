@@ -13,6 +13,7 @@ import { OVERLAY_CSS } from '../../../../common/overlay-styles.js';
 import { escapeHtml } from '../../../../common/utils/escape.js';
 import { isSupportedLocale } from '../../../../common/locale.js';
 import { createRendererTranslator, resolveRendererLocale } from '../../../../renderer/locale.js';
+import { adoptDeferredSubscription } from '../../../../renderer/deferredSubscription.js';
 import {
     resolvePluginDisplayName,
     resolvePluginLocalizedText,
@@ -583,6 +584,8 @@ export class PluginMgrEntryWidget extends HTMLElement {
     private notice?: { text: string; error: boolean };
     private t = createRendererTranslator();
     private locale = resolveRendererLocale();
+    /** pluginsChanged 订阅句柄（异步获取，由 adoptDeferredSubscription 接管过期退订） */
+    private pluginsChangedUnsubscribe?: () => void;
     private readonly onPluginsChanged = () => void this.load();
     /** 主窗口在应用语言变化时向 iframe 广播 LOCALE_CHANGED，这里据此切换插件显示语言 */
     private readonly onLocaleMessage = (event: Event) => {
@@ -607,7 +610,11 @@ export class PluginMgrEntryWidget extends HTMLElement {
     }
 
     disconnectedCallback(): void {
-        getAPI().unsubscribe('pluginsChanged', this.onPluginsChanged);
+        this.pluginsChangedUnsubscribe?.();
+        this.pluginsChangedUnsubscribe = undefined;
+        // 事件级兜底：句柄尚未返回时（订阅仍在 IPC 往返中）本 frame 仍有登记，按事件名清掉
+        // 即可；句柄已释放时这次调用是 no-op（preload 不会重复递减 main 侧计数）
+        getAPI().unsubscribe('pluginsChanged');
         window.removeEventListener('message', this.onLocaleMessage);
         document.removeEventListener(OPENDESK_THEME_CHANGED, this.onThemeChanged);
     }
@@ -647,7 +654,15 @@ export class PluginMgrEntryWidget extends HTMLElement {
         }
         window.addEventListener('message', this.onLocaleMessage);
         document.addEventListener(OPENDESK_THEME_CHANGED, this.onThemeChanged);
-        getAPI().subscribe('pluginsChanged', this.onPluginsChanged);
+        // 订阅要等 IPC 往返才拿到句柄：元素若在此期间被销毁，由 adoptDeferredSubscription 自动退订
+        adoptDeferredSubscription(
+            this,
+            getAPI().subscribe('pluginsChanged', this.onPluginsChanged),
+            (unsubscribe) => {
+                this.pluginsChangedUnsubscribe = unsubscribe;
+            },
+            (error) => console.warn('Failed to subscribe pluginsChanged:', error)
+        );
         await this.load();
     }
 

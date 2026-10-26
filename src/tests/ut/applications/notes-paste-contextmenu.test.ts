@@ -1,5 +1,6 @@
 import { beforeAll, beforeEach, describe, expect, jest, test } from '@jest/globals';
 import { parseHTML } from 'linkedom';
+import { confirmModalMockShim } from '../../confirmModalMock.js';
 
 /**
  * 粘贴围栏转代码块 + 编辑区自定义右键菜单测试。
@@ -96,9 +97,11 @@ describe('粘贴围栏转代码块 + 编辑区右键菜单', () => {
             configurable: true
         });
 
-        await jest.unstable_mockModule('../../../renderer/components/confirmModal.ts', () => ({
-            showConfirmModal
-        }));
+        await jest.unstable_mockModule('../../../renderer/components/confirmModal.ts', () =>
+            confirmModalMockShim({
+                showConfirmModal
+            })
+        );
         await jest.unstable_mockModule('../../../main/aikernel/tool.js', () => ({
             BaseTool: class {},
             BaseToolset: class {}

@@ -180,7 +180,7 @@ export async function replaceTaskHarnessForWorkspace(
 
     if (ctx.permission) {
         try {
-            await permissionPrompt.notifyPermissionRulesChanged?.(ctx.permission, [task.task_id]);
+            await permissionPrompt?.notifyPermissionRulesChanged?.(ctx.permission, [task.task_id]);
         } catch (err) {
             logger.warn(`Failed to refresh permission prompts after switching task ${task.task_id} workspace: ${err}`);
         }

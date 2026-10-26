@@ -407,7 +407,7 @@ class LLM {
         model: ModelParam = undefined
     ): Promise<T[]> {
         if (model === undefined) {
-            model = Setting.getInstance().getDefaultRerankerModelInstance();
+            model = Setting.getInstance().getDefaultRerankerModelInstance() ?? undefined;
             if (!model) {
                 throw new Error(t('error.model.default_reranker_missing'));
             }

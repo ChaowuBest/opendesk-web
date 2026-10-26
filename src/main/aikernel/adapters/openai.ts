@@ -273,7 +273,7 @@ export class OpenAIAdapter {
                       ])
                   )
                 : undefined,
-            fetch: async (url: RequestInfo, init?: RequestInit): Promise<Response> => {
+            fetch: async (url: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
                 const response = await fetchModelUrl(modelInstance, url, init);
                 return response.ok ? response : await normalizeErrorResponse(response);
             }

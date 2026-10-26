@@ -22,7 +22,7 @@
  * Updates the children of containerEl to match newHtml.
  * Preserves element identity where structure is compatible.
  */
-export function morphDomChildren(containerEl, newHtml) {
+export function morphDomChildren(containerEl: Element | null | undefined, newHtml: string): void {
     if (!containerEl) return;
     const tpl = document.createElement('template');
     tpl.innerHTML = String(newHtml).trim();
@@ -41,7 +41,7 @@ export function morphDomChildren(containerEl, newHtml) {
     }
 }
 
-function morphNode(oldNode, newNode) {
+function morphNode(oldNode: ChildNode, newNode: ChildNode): void {
     if (oldNode.nodeType !== newNode.nodeType) {
         oldNode.replaceWith(newNode.cloneNode(true));
         return;
@@ -57,28 +57,33 @@ function morphNode(oldNode, newNode) {
         return;
     }
 
-    if (oldNode.tagName !== newNode.tagName || !sameClassList(oldNode, newNode)) {
-        oldNode.replaceWith(newNode.cloneNode(true));
+    // 上面已确认两者 nodeType 相同且均为 ELEMENT_NODE，故此处一定是 Element；
+    // 用断言而不是 instanceof，避免跨 realm（如 iframe 文档）时 instanceof 失效导致行为变化。
+    const oldElement = oldNode as Element;
+    const newElement = newNode as Element;
+
+    if (oldElement.tagName !== newElement.tagName || !sameClassList(oldElement, newElement)) {
+        oldElement.replaceWith(newElement.cloneNode(true));
         return;
     }
 
-    morphAttributes(oldNode, newNode);
+    morphAttributes(oldElement, newElement);
 
-    const oldChildren = [...oldNode.childNodes];
-    const newChildren = [...newNode.childNodes];
+    const oldChildren = [...oldElement.childNodes];
+    const newChildren = [...newElement.childNodes];
     const maxLen = Math.max(oldChildren.length, newChildren.length);
     for (let i = 0; i < maxLen; i++) {
         if (i < oldChildren.length && i < newChildren.length) {
             morphNode(oldChildren[i], newChildren[i]);
         } else if (i < newChildren.length) {
-            oldNode.appendChild(newChildren[i].cloneNode(true));
+            oldElement.appendChild(newChildren[i].cloneNode(true));
         } else if (oldChildren[i]) {
             oldChildren[i].remove();
         }
     }
 }
 
-function sameClassList(a, b) {
+function sameClassList(a: Element, b: Element): boolean {
     if (a.classList.length !== b.classList.length) return false;
     for (const cls of a.classList) {
         if (!b.classList.contains(cls)) return false;
@@ -86,7 +91,7 @@ function sameClassList(a, b) {
     return true;
 }
 
-function morphAttributes(oldEl, newEl) {
+function morphAttributes(oldEl: Element, newEl: Element): void {
     for (const attr of [...oldEl.attributes]) {
         if (attr.name === 'class') continue;
         if (!newEl.hasAttribute(attr.name)) {

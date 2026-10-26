@@ -2496,13 +2496,72 @@ html[data-theme='dark'] .sb-chat-badge {
     background: color-mix(in srgb, var(--od-text) 14%, transparent);
     border-radius: 99px;
 }
+/* 触摸左滑删除：行本身是裁剪容器，内容层跟随手指平移，右侧露出圆形删除按钮 */
 .sb-task-row {
+    position: relative;
+    overflow: hidden;
+    cursor: pointer;
+    border-radius: 9px;
+    /* 只放行竖向滚动：横向拖动交给左滑手势，浏览器不会把它判为滚动而派发 touchcancel */
+    touch-action: pan-y;
+}
+.sb-task-row-main {
     display: flex;
     align-items: center;
     gap: 9px;
     padding: 7px 10px;
-    cursor: pointer;
     border-radius: 9px;
+    transition: transform 0.16s ease;
+}
+.sb-task-row.is-swipe-dragging .sb-task-row-main {
+    transition: none;
+}
+.sb-swipe-delete {
+    position: absolute;
+    top: 50%;
+    right: 7px;
+    display: grid;
+    width: 20px;
+    height: 20px;
+    place-items: center;
+    margin-top: -10px;
+    padding: 0;
+    border: 0;
+    border-radius: 50%;
+    color: #fff;
+    background: #dc2626;
+    /* 白环用 outline + offset，让环与红圆之间留出间隙，而不是紧贴圆的边缘 */
+    outline: 1px solid rgba(255, 255, 255, 0.75);
+    outline-offset: 2px;
+    box-shadow: 0 1px 4px rgba(220, 38, 38, 0.35);
+    opacity: 0;
+    /* 仅 opacity: 0 不会把按钮移出无障碍树，屏幕阅读器会朗读每个任务行里看不见的删除按钮 */
+    visibility: hidden;
+    pointer-events: none;
+    transform: scale(0.8);
+    transition:
+        opacity 0.15s ease,
+        transform 0.15s ease,
+        visibility 0s linear 0.15s;
+}
+.sb-task-row.is-swipe-peek .sb-swipe-delete,
+.sb-task-row.is-swipe-open .sb-swipe-delete {
+    opacity: 1;
+    visibility: visible;
+    transform: none;
+    transition:
+        opacity 0.15s ease,
+        transform 0.15s ease,
+        visibility 0s;
+}
+.sb-task-row.is-swipe-open .sb-swipe-delete {
+    pointer-events: auto;
+}
+/* 选中任务行本身是红底，删除按钮反过来用白底红图标，避免红底上再压一个红圆 */
+.sb-task-row.is-current .sb-swipe-delete {
+    color: #c94c40;
+    background: #fff;
+    box-shadow: 0 1px 4px rgba(0, 0, 0, 0.18);
 }
 .sb-task-row:hover {
     background: color-mix(in srgb, var(--od-bg-elevated) 90%, transparent);

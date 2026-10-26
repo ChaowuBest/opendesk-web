@@ -20,6 +20,7 @@ import type { TaskState } from '../../aikernel/states/tasks.js';
 import type { ToolCall } from '../../aikernel/messages.js';
 import { logger } from '../../utils/logger.js';
 import chalk from 'chalk';
+import { escapeHtml } from '../../../common/utils/escape.js';
 
 // ─── Skill Definition ──────────────────────────────────────────────────────────
 
@@ -301,10 +302,6 @@ export class CreateSubTaskPoolTool extends BaseTool<typeof CreateSubTaskPoolArgs
 
     // ─── GUI Rendering ────────────────────────────────────────────────────
 
-    private static escapeHtml(text: string): string {
-        return text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
-    }
-
     private static renderTaskRow(task: PoolTaskEntry): string {
         const statusMap: Record<PoolTaskStatus, { label: string; color: string; dot: string }> = {
             pending: { label: '待执行', color: '#94a3b8', dot: '#cbd5e1' },
@@ -325,7 +322,7 @@ export class CreateSubTaskPoolTool extends BaseTool<typeof CreateSubTaskPoolArgs
         <div class="flex items-center px-3.5 py-[5px] border-b border-[#f8fafc] last:border-b-0 hover:bg-[#f8fafc] transition-colors" data-pool-task-idx="${task.index}" data-pool-task-status="${task.status}">
             <span class="w-1.5 h-1.5 rounded-full shrink-0 mr-2.5${runningAnim}" style="background:${s.dot}"></span>
             <div class="flex-1 min-w-0">
-                <span class="text-[11px] text-[#334155] truncate block">#${task.index + 1} ${CreateSubTaskPoolTool.escapeHtml(label)}</span>
+                <span class="text-[11px] text-[#334155] truncate block">#${task.index + 1} ${escapeHtml(label)}</span>
             </div>
             <span class="text-[10px] shrink-0 ml-2" style="color:${s.color}">${s.label}</span>${retryBadge}
         </div>`;

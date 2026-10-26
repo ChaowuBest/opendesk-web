@@ -85,13 +85,16 @@ const result = await window.applicationAPI.callMainWorld('methodName', arg1, arg
 // 调用渲染进程侧方法
 const result = await window.applicationAPI.call('methodName', arg1, arg2);
 
-// 订阅事件
-window.applicationAPI.subscribe('eventName', (data) => {
+// 订阅事件（返回只退订本次订阅的函数，推荐用它精确退订）
+const unsubscribe = await window.applicationAPI.subscribe('eventName', (data) => {
     console.log('收到事件:', data);
 });
 
-// 取消订阅
-window.applicationAPI.unsubscribe('eventName', callback);
+// 精确退订本次订阅（不要依赖回调引用匹配，跨上下文函数会被重新包装）
+unsubscribe();
+
+// 或按事件名清空本窗口在该事件上的全部订阅（没有订阅时是 no-op，不会影响其他订阅者）
+await window.applicationAPI.unsubscribe('eventName');
 \`\`\`
 
 #### window.opendeskAppAPI

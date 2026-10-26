@@ -1881,6 +1881,15 @@ export const enUs: Record<string, string> = {
     'sp.experimental.confirm': 'Confirm enable',
     'sp.experimental.cancel': 'Cancel',
     'sp.save.failed': 'Auto-save failed',
+    'sp.save.sideEffectFailed': 'Settings saved, but some changes did not take effect',
+    'sp.save.sideEffect.llm-adapter-cache': 'Model connection cache was not refreshed',
+    'sp.save.sideEffect.worker-settings-sync': 'Background worker did not pick up the new settings',
+    'sp.save.sideEffect.filemgr-embedding-config': 'File search embedding config was not synced',
+    'sp.save.sideEffect.debug-log-mode': 'Debug log switch did not take effect',
+    'sp.save.sideEffect.theme-apply': 'Theme was not applied',
+    'sp.save.sideEffect.filemgr-workspace-marker': 'Workspace marker was not updated',
+    'sp.save.sideEffect.proxy-env-refresh': 'Network proxy config did not take effect',
+    'sp.save.sideEffect.telemetry-reload': 'Telemetry config was not hot-reloaded',
     'sp.gateway.portInvalid': 'Gateway port must be an integer between 1 and 65535',
     'sp.quickpass.export.title': 'Export quickpass',
     'sp.quickpass.export.base': 'Base settings quickpass',
@@ -2376,6 +2385,9 @@ export const enUs: Record<string, string> = {
     'renderer.wizard.loginRequired': 'Please enter your username and password',
     'renderer.wizard.loginFailed': 'Sign in failed',
     'renderer.wizard.accountServiceUnavailable': 'Account service unavailable; please restart the app and try again.',
+    'renderer.wizard.saveFailedTitle': 'Failed to save configuration',
+    'renderer.wizard.saveFailedMessage':
+        'The configuration could not be written to disk, so the wizard stayed on this step. Check disk space and file permissions, then try again. Your input has not been lost.',
 
     // Renderer - Log Panel
     'renderer.log.title': 'Logs',
@@ -2707,6 +2719,13 @@ export const enUs: Record<string, string> = {
     'renderer.browser.pageHintsActionSection': 'Page actions',
     'renderer.browser.pageHintsArgs': 'Arguments',
 
+    // Renderer - Browser: 导出快照的提示（任务浏览器标签）
+    'renderer.browser.snapshot.exportSaved.title': 'Snapshot Saved',
+    'renderer.browser.snapshot.exportSaved.message': 'The page snapshot has been saved to a file.',
+    'renderer.browser.snapshot.exportFailed.title': 'Snapshot Export Failed',
+    'renderer.browser.snapshot.exportFailed.message': 'Failed to export snapshot: ${message}',
+    'renderer.browser.snapshot.exportUnsupported': 'Exporting snapshots is not supported in this environment.',
+
     // Renderer - Browser PiP
     'renderer.browserPip.restore': 'Restore browser panel',
     'renderer.browserPip.close': 'Close floating window',
@@ -2760,6 +2779,11 @@ export const enUs: Record<string, string> = {
     // Main - Log Export
     'main.log.export.title': 'Export Logs',
     'main.log.export.textFiles': 'Text Files',
+
+    // Main - Browser: save dialog of snapshot export (injected into embedBrowserUse)
+    'main.browser.snapshot.saveDialog.title': 'Save Snapshot',
+    'main.browser.snapshot.saveDialog.textFiles': 'Text Files',
+    'main.browser.snapshot.saveDialog.allFiles': 'All Files',
 
     // Goal
     'goal.description': 'Manage the current task goal',

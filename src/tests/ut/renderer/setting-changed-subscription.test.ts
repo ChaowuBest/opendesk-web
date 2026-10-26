@@ -18,10 +18,15 @@ describe('setting:changed subscription dispatcher', () => {
 
         expect(ipc.listenerCount('setting:changed')).toBe(1);
 
+        // 全部退订后不再挂着 listener；再次订阅时重新挂上（与 ipcChannelDispatcher 一致）
         for (const unsubscribe of unsubscribes) {
             unsubscribe();
         }
+        expect(ipc.listenerCount('setting:changed')).toBe(0);
+
+        const unsubscribe = dispatcher.subscribe(() => {});
         expect(ipc.listenerCount('setting:changed')).toBe(1);
+        unsubscribe();
     });
 
     test('广播到达时分发给所有活跃订阅者', () => {

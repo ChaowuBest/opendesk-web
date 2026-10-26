@@ -1,5 +1,6 @@
 import { beforeAll, describe, expect, jest, test } from '@jest/globals';
 import { parseHTML } from 'linkedom';
+import { confirmModalMockShim } from '../../confirmModalMock.js';
 
 describe('agent-input builtin model merge', () => {
     beforeAll(async () => {
@@ -28,9 +29,11 @@ describe('agent-input builtin model merge', () => {
             configurable: true
         });
 
-        await jest.unstable_mockModule('../../../renderer/components/confirmModal.ts', () => ({
-            showConfirmModal: jest.fn(async () => true)
-        }));
+        await jest.unstable_mockModule('../../../renderer/components/confirmModal.ts', () =>
+            confirmModalMockShim({
+                showConfirmModal: jest.fn(async () => true)
+            })
+        );
         await jest.unstable_mockModule('../../../renderer/components/imageLightbox.js', () => ({
             showImageLightbox: jest.fn()
         }));

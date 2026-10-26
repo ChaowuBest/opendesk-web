@@ -1035,7 +1035,11 @@ export class FeishuChannel {
         visit(card);
     }
 
-    /** 转义卡片 markdown 文本中的特殊字符。 */
+    /**
+     * 转义卡片 markdown 文本中的特殊字符。
+     * 上下文是飞书卡片 JSON 的 markdown 字段而非浏览器 HTML，因此只中和 & < >；
+     * 插件是独立打包单元，不引用主仓 common/utils/escape.js，故有意保留自包含实现。
+     */
     _escapeCardText(text) {
         return String(text ?? '')
             .replace(/&/g, '&amp;')

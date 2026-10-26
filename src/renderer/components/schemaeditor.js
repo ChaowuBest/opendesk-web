@@ -9,6 +9,8 @@
  * See the Mulan PSL v2 for more details.
  */
 
+import { escapeHtml } from '../../common/utils/escape.js';
+
 class SchemaEditor extends HTMLElement {
     constructor() {
         super();
@@ -351,7 +353,7 @@ class SchemaEditor extends HTMLElement {
         const description = jsonSchema.description || '';
         const fieldId = this.generateFieldId();
         const nameAttr = fieldPath || fieldId;
-        const safeValue = value !== undefined ? this.escapeHtml(String(value)) : '';
+        const safeValue = value !== undefined ? escapeHtml(String(value)) : '';
         const descriptionHtml = this.renderDescription(description);
 
         // 检查是否是枚举类型
@@ -381,7 +383,7 @@ class SchemaEditor extends HTMLElement {
 
         return `
             <div class="mb-4">
-                <!-- <label for="${fieldId}" class="block text-sm font-medium text-gray-700 mb-1">${this.escapeHtml(fieldName)}</label> -->
+                <!-- <label for="${fieldId}" class="block text-sm font-medium text-gray-700 mb-1">${escapeHtml(fieldName)}</label> -->
                 ${descriptionHtml}
                 ${widgetHtml}
             </div>
@@ -396,7 +398,7 @@ class SchemaEditor extends HTMLElement {
         const description = jsonSchema.description || '';
         const fieldId = this.generateFieldId();
         const nameAttr = fieldPath || fieldId;
-        const safeValue = value !== undefined ? this.escapeHtml(String(value)) : '';
+        const safeValue = value !== undefined ? escapeHtml(String(value)) : '';
         const inputType = jsonSchema.type === 'integer' ? 'number' : 'number';
         const step = jsonSchema.type === 'integer' ? '1' : 'any';
         const descriptionHtml = this.renderDescription(description);
@@ -411,7 +413,7 @@ class SchemaEditor extends HTMLElement {
 
         return `
             <div class="mb-4">
-                <label for="${fieldId}" class="block text-sm font-medium text-gray-700 mb-1">${this.escapeHtml(fieldName)}</label>
+                <label for="${fieldId}" class="block text-sm font-medium text-gray-700 mb-1">${escapeHtml(fieldName)}</label>
                 ${descriptionHtml}
                 <input
                     type="${inputType}"
@@ -451,7 +453,7 @@ class SchemaEditor extends HTMLElement {
                         ${checked}
                         class="w-4 h-4 text-blue-600 border-gray-300 rounded focus:ring-blue-500"
                     />
-                    <span class="ml-2 text-sm font-medium text-gray-700">${this.escapeHtml(fieldName)} ${descriptionHtml}</span>
+                    <span class="ml-2 text-sm font-medium text-gray-700">${escapeHtml(fieldName)} ${descriptionHtml}</span>
                 </label>
             </div>
         `;
@@ -470,7 +472,7 @@ class SchemaEditor extends HTMLElement {
 
         const optionsHtml = options
             .map((opt) => {
-                const optValue = this.escapeHtml(String(opt));
+                const optValue = escapeHtml(String(opt));
                 const selected = value === opt ? 'selected' : '';
                 return `<option value="${optValue}" ${selected}>${optValue}</option>`;
             })
@@ -478,7 +480,7 @@ class SchemaEditor extends HTMLElement {
 
         return `
             <div class="mb-4">
-                <label for="${fieldId}" class="block text-sm font-medium text-gray-700 mb-1">${this.escapeHtml(fieldName)}</label>
+                <label for="${fieldId}" class="block text-sm font-medium text-gray-700 mb-1">${escapeHtml(fieldName)}</label>
                 ${descriptionHtml}
                 <select
                     id="${fieldId}"
@@ -534,10 +536,10 @@ class SchemaEditor extends HTMLElement {
                 const defaultValue = propertySchema.default !== undefined ? propertySchema.default : undefined;
                 const fieldHtml = this.renderFromJSONSchema(propertySchema, defaultValue, currentPath);
                 // 保存schema信息到data属性，以便在点击时访问
-                const schemaJson = this.escapeHtml(JSON.stringify(propertySchema));
+                const schemaJson = escapeHtml(JSON.stringify(propertySchema));
 
                 fields.push(`
-                    <div class="mb-4" data-field-key="${this.escapeHtml(key)}" data-optional="true">
+                    <div class="mb-4" data-field-key="${escapeHtml(key)}" data-optional="true">
                         <div id="${toggleId}" class="flex items-center">
                             <button
                                 type="button"
@@ -552,12 +554,12 @@ class SchemaEditor extends HTMLElement {
                                 <svg class="w-4 h-4 mr-1" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                     <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"></path>
                                 </svg>
-                                <span>配置 ${this.escapeHtml(fieldName)}</span>
+                                <span>配置 ${escapeHtml(fieldName)}</span>
                             </button>
                         </div>
                         <div id="${fieldContainerId}" style="display: none;">
                             <label class="block text-sm font-semibold text-gray-800 mb-2">
-                                ${this.escapeHtml(fieldName)}${requiredMark}
+                                ${escapeHtml(fieldName)}${requiredMark}
                             </label>
                             <div class="ml-4">
                                 ${fieldHtml}
@@ -579,9 +581,9 @@ class SchemaEditor extends HTMLElement {
             } else {
                 const fieldHtml = this.renderFromJSONSchema(propertySchema, fieldValue, currentPath);
                 fields.push(`
-                    <div class="mb-4" data-field-key="${this.escapeHtml(key)}">
+                    <div class="mb-4" data-field-key="${escapeHtml(key)}">
                         <label class="block text-sm font-semibold text-gray-800 mb-2">
-                            ${this.escapeHtml(fieldName)}${requiredMark}
+                            ${escapeHtml(fieldName)}${requiredMark}
                         </label>
                         <div class="ml-4">
                             ${fieldHtml}
@@ -608,7 +610,7 @@ class SchemaEditor extends HTMLElement {
         if (!itemsSchema) {
             return `
                 <div class="mb-4">
-                    <label class="block text-sm font-medium text-gray-700 mb-2">${this.escapeHtml(fieldName)}</label>
+                    <label class="block text-sm font-medium text-gray-700 mb-2">${escapeHtml(fieldName)}</label>
                     ${descriptionHtml}
                     <p class="text-sm text-gray-500">数组项类型未定义</p>
                 </div>
@@ -631,7 +633,7 @@ class SchemaEditor extends HTMLElement {
             })
             .join('');
 
-        const itemsSchemaJson = this.escapeHtml(JSON.stringify(itemsSchema));
+        const itemsSchemaJson = escapeHtml(JSON.stringify(itemsSchema));
         const addButtonHtml = `
             <button
                 type="button"
@@ -647,7 +649,7 @@ class SchemaEditor extends HTMLElement {
 
         return `
             <div class="mb-4" data-array-field="${fieldId}" data-field-path="${fieldPath || fieldId}">
-                <label class="block text-sm font-medium text-gray-700 mb-2">${this.escapeHtml(fieldName)}</label>
+                <label class="block text-sm font-medium text-gray-700 mb-2">${escapeHtml(fieldName)}</label>
                 ${descriptionHtml}
                 <div class="space-y-2">
                     ${itemsHtml}
@@ -693,7 +695,7 @@ class SchemaEditor extends HTMLElement {
         if (!description || description.trim() === '') {
             return '';
         }
-        return `<p class="text-xs text-gray-500 mb-1 mt-0">${this.escapeHtml(description)}</p>`;
+        return `<p class="text-xs text-gray-500 mb-1 mt-0">${escapeHtml(description)}</p>`;
     }
 
     /**
@@ -701,23 +703,6 @@ class SchemaEditor extends HTMLElement {
      */
     generateFieldId() {
         return `schema-field-${this.fieldIdCounter++}`;
-    }
-
-    /**
-     * HTML 转义
-     */
-    escapeHtml(text) {
-        if (text === null || text === undefined) {
-            return '';
-        }
-        const map = {
-            '&': '&amp;',
-            '<': '&lt;',
-            '>': '&gt;',
-            '"': '&quot;',
-            "'": '&#039;'
-        };
-        return String(text).replace(/[&<>"']/g, (m) => map[m]);
     }
 
     /**

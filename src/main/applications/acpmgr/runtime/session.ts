@@ -102,6 +102,30 @@ function isRecord(value: unknown): value is Record<string, unknown> {
     return !!value && typeof value === 'object' && !Array.isArray(value);
 }
 
+/**
+ * ACP 客户端连接的会话方法在 OpenDesk 侧是「必然实现」的方法，但 AcpClientConnection 取自
+ * @agentclientprotocol/sdk 的 `Agent` 接口（node_modules/@agentclientprotocol/sdk/dist/acp.d.ts:1530），
+ * 该接口把 loadSession(1577) / resumeSession(1623) / setSessionMode(1648) / setSessionConfigOption(1655)
+ * 声明为可选 —— 因为它是「agent 侧能力门控处理器」的抽象，允许只实现一部分。
+ * OpenDesk 实际使用的两个实现都完整实现了这四个方法：
+ *  - v1：`ClientSideConnection implements Agent`，其声明在 acp.d.ts:1063 / 1109 / 1134 / 1141 均为必选方法；
+ *  - v2：./connection-v2.ts 里的 `normalized: AcpClientConnection` 适配层逐一实现了四个方法。
+ * 因此这属于「类型比真实契约更宽」。这里用显式校验把宽度收掉：一旦真的缺失就抛出明确的
+ * 内部不变量错误（而不是用 `connection.loadSession?.(...)` 静默跳过，那会变成
+ * 「会话没建立但流程继续」的静默错误）。
+ */
+type AcpSessionMethodName = 'loadSession' | 'resumeSession' | 'setSessionMode' | 'setSessionConfigOption';
+
+function assertSessionMethod<M extends AcpSessionMethodName>(
+    connection: AcpClientConnection,
+    method: M
+): asserts connection is AcpClientConnection & Required<Pick<AcpClientConnection, M>> {
+    if (typeof connection[method] !== 'function') {
+        // 内部不变量：连接由 OpenDesk 自己的 connection 工厂创建，四个会话方法必然存在
+        throw new Error(`ACP connection does not implement ${method}`);
+    }
+}
+
 function restoreCheckpoint(profile: AcpAgentProfile, value: unknown, lastSequence: number): AcpRuntimeCheckpoint {
     const base: AcpRuntimeCheckpoint = {
         schemaVersion: 1,
@@ -437,6 +461,7 @@ export class AcpTaskRuntime implements AcpClientHandlers {
                 if (!this.capabilities?.loadSession) {
                     throw new Error(t('acpmgr.error.reconcileUnsupported'));
                 }
+                assertSessionMethod(connection, 'loadSession');
                 this.record('outbound', 'session/load', { sessionId: savedSessionId, cwd: workspace.sessionCwd });
                 this.replaying = true;
                 try {
@@ -451,6 +476,7 @@ export class AcpTaskRuntime implements AcpClientHandlers {
                     this.replaying = false;
                 }
             } else if (this.capabilities?.sessionCapabilities?.resume) {
+                assertSessionMethod(connection, 'resumeSession');
                 this.record('outbound', 'session/resume', { sessionId: savedSessionId, cwd: workspace.sessionCwd });
                 const response = await connection.resumeSession({
                     sessionId: savedSessionId,
@@ -460,6 +486,7 @@ export class AcpTaskRuntime implements AcpClientHandlers {
                 this.record('inbound', 'session/resume/result', response);
                 this.sessionConfigOptions = response?.configOptions ?? undefined;
             } else if (this.capabilities?.loadSession) {
+                assertSessionMethod(connection, 'loadSession');
                 this.record('outbound', 'session/load', { sessionId: savedSessionId, cwd: workspace.sessionCwd });
                 this.replaying = true;
                 try {
@@ -585,12 +612,14 @@ export class AcpTaskRuntime implements AcpClientHandlers {
         const connection = this.requireConnection();
         const sessionId = this.requireSessionId();
         if (this.profile.session.modeId) {
+            assertSessionMethod(connection, 'setSessionMode');
             const params = { sessionId, modeId: this.profile.session.modeId };
             this.record('outbound', 'session/set_mode', params);
             const response = await connection.setSessionMode(params);
             this.record('inbound', 'session/set_mode/result', response);
         }
         for (const [configId, value] of Object.entries(this.profile.session.configOptions)) {
+            assertSessionMethod(connection, 'setSessionConfigOption');
             this.validateSessionConfigOption(configId, value);
             const params =
                 typeof value === 'boolean'

@@ -22,6 +22,7 @@
  */
 
 import { MODAL_CSS, MODAL_ANIM_DURATION_OUT, detectDarkMode, renderIcon } from './confirmModal.js';
+import { escapeHtml } from '../../common/utils/escape.js';
 import { getSidebarRecentRootTasks } from '../sidebarTaskGroups.js';
 
 type Translate = (key: string, params?: Record<string, string | number>) => string;
@@ -509,15 +510,6 @@ export function buildTaskSelectOptions(
             return `<option value="${escapeHtml(task.taskId)}"${selected}>${escapeHtml(label)}</option>`;
         })
         .join('');
-}
-
-function escapeHtml(value: string): string {
-    return String(value ?? '')
-        .replace(/&/g, '&amp;')
-        .replace(/</g, '&lt;')
-        .replace(/>/g, '&gt;')
-        .replace(/"/g, '&quot;')
-        .replace(/'/g, '&#039;');
 }
 
 function setFieldError(overlay: HTMLElement, field: string, message: string): void {

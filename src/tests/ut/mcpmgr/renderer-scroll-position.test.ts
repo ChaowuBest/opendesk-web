@@ -1,5 +1,6 @@
 import { beforeAll, beforeEach, describe, expect, jest, test } from '@jest/globals';
 import { parseHTML } from 'linkedom';
+import { confirmModalMockShim } from '../../confirmModalMock.js';
 
 describe('MCP manager installed list scroll position', () => {
     let getServers: jest.Mock;
@@ -32,10 +33,12 @@ describe('MCP manager installed list scroll position', () => {
         await jest.unstable_mockModule('../../../renderer/theme/theme-shadow-overrides.ts', () => ({
             syncShadowHostTheme: jest.fn()
         }));
-        await jest.unstable_mockModule('../../../renderer/components/confirmModal', () => ({
-            showConfirmModal: jest.fn(),
-            bindOverlayDismiss: jest.fn()
-        }));
+        await jest.unstable_mockModule('../../../renderer/components/confirmModal', () =>
+            confirmModalMockShim({
+                showConfirmModal: jest.fn(),
+                bindOverlayDismiss: jest.fn()
+            })
+        );
 
         await import('../../../main/applications/mcpmgr/renderer/entry.js');
     });

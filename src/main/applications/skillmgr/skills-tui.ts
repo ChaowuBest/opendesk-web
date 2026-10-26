@@ -53,7 +53,8 @@ interface SkillDetail {
     name: string;
     description: string;
     body: string;
-    skillDir: string;
+    /** 技能目录；metadata.json 合成路径没有真实技能目录，此时为 undefined */
+    skillDir?: string;
     license?: string;
     compatibility?: string;
     metadata?: Record<string, any>;
@@ -1112,8 +1113,10 @@ export class SkillsOverlay implements Component {
             if (detail.compatibility) {
                 lines.push(`${indent}${chalk.bold('兼容性')}: ${detail.compatibility}`);
             }
-            const dirText = truncateToWidth(detail.skillDir, contentWidth - 8, '...', false);
-            lines.push(`${indent}${chalk.bold('目录')}: ${chalk.dim(dirText)}`);
+            if (detail.skillDir) {
+                const dirText = truncateToWidth(detail.skillDir, contentWidth - 8, '...', false);
+                lines.push(`${indent}${chalk.bold('目录')}: ${chalk.dim(dirText)}`);
+            }
 
             const res = detail.resources;
             lines.push('');

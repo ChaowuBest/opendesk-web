@@ -24,24 +24,35 @@ export interface TaskTodo {
     completed_at?: string;
 }
 
+/** 只读展示快照：数组与元素都不可写，误改在编译期就被挡住。 */
+export type ReadonlyTaskTodos = ReadonlyArray<Readonly<TaskTodo>>;
+
 const taskTodosMap = new Map<string, TaskTodo[]>();
 
-export function getTaskTodosForDisplay(taskId: string): TaskTodo[] {
-    if (!taskTodosMap.has(taskId)) {
-        return [];
-    }
-    return taskTodosMap.get(taskId)!;
+/**
+ * 通用快照：数组与元素都浅拷贝一层，调用方后续改写不会影响 Map 内部状态。
+ * 与 toReadonlyTodos 的区别是不冻结——内部更新路径需要可变对象。
+ */
+function toTodoSnapshot(todos: readonly TaskTodo[]): TaskTodo[] {
+    return todos.map((todo) => ({ ...todo }));
 }
 
-export function getOrInitTaskTodos(taskId: string): TaskTodo[] {
-    if (!taskTodosMap.has(taskId)) {
-        taskTodosMap.set(taskId, []);
-    }
-    return taskTodosMap.get(taskId)!;
+/**
+ * 生成只读展示快照：数组与其中每个待办都浅拷贝一份并冻结。
+ * 冻结的是副本而不是 Map 内部对象，因此内部更新路径不受影响；
+ * 调用方误改（push / splice / 给字段赋值）会立刻抛 TypeError，而不是静默改掉展示数据。
+ */
+function toReadonlyTodos(todos: readonly TaskTodo[]): ReadonlyTaskTodos {
+    const snapshot = todos.map((todo) => Object.freeze({ ...todo }));
+    return Object.freeze(snapshot);
 }
 
-export function setTaskTodos(taskId: string, todos: TaskTodo[]): void {
-    taskTodosMap.set(taskId, todos);
+export function getTaskTodosForDisplay(taskId: string): ReadonlyTaskTodos {
+    return toReadonlyTodos(taskTodosMap.get(taskId) ?? []);
+}
+
+export function setTaskTodos(taskId: string, todos: readonly TaskTodo[]): void {
+    taskTodosMap.set(taskId, toTodoSnapshot(todos));
 }
 
 export function resetInProgressTaskTodos(taskId: string, at: Date = new Date()): TaskTodo[] {
@@ -53,20 +64,19 @@ export function resetInProgressTaskTodos(taskId: string, at: Date = new Date()):
     const nextTodos = todos.map((todo) => {
         if (todo.status !== 'in_progress') return todo;
         changed = true;
-        const nextTodo: TaskTodo = {
-            ...todo,
+        // 用解构剔除计时字段，避免 delete 让 V8 把对象降级为 dictionary 模式
+        const { started_at: _startedAt, completed_at: _completedAt, ...rest } = todo;
+        return {
+            ...rest,
             status: 'pending' as const,
             updated_at: updatedAt
         };
-        delete nextTodo.started_at;
-        delete nextTodo.completed_at;
-        return nextTodo;
     });
 
     if (changed) {
         taskTodosMap.set(taskId, nextTodos);
     }
-    return changed ? nextTodos : todos;
+    return toTodoSnapshot(changed ? nextTodos : todos);
 }
 
 export function deleteTaskTodos(taskId: string): void {

@@ -28,7 +28,7 @@ export default tseslint.config(
             'no-irregular-whitespace': 'warn',
             'no-console': 'off',
             'no-duplicate-imports': ['error', { allowSeparateTypeImports: true }],
-            '@typescript-eslint/no-unused-vars': ['warn', { argsIgnorePattern: '^_' }],
+            '@typescript-eslint/no-unused-vars': ['warn', { argsIgnorePattern: '^_', varsIgnorePattern: '^_' }],
             '@typescript-eslint/no-explicit-any': 'off',
             '@typescript-eslint/no-require-imports': 'off',
             '@typescript-eslint/prefer-as-const': 'warn',

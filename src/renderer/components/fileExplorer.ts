@@ -28,6 +28,7 @@ import { renderMermaidBlocks } from './previewer.js';
 import { createRendererTranslator } from '../locale';
 import { Marked, type Tokens } from 'marked';
 import { cjkAutolinkFix } from '../../common/markdown/cjk-autolink-fix.js';
+import { neutralizeMarkdownHtml } from '../../common/markdown/markdown-html-safety.js';
 import 'ace-builds/css/ace.css';
 import aceCss from 'ace-builds/css/ace.css?inline';
 import type { Ace as AceLib } from 'ace-builds';
@@ -65,7 +66,9 @@ filePreviewMarkdown.use({
 });
 
 export function renderFilePreviewMarkdown(source: string): string {
-    return filePreviewMarkdown.parse(source, { async: false }) as string;
+    // 预览的是工作区文件内容（不可信）：marked 默认放行原始 HTML，
+    // 渲染后剥掉可执行能力，良性标签保持原样显示。
+    return neutralizeMarkdownHtml(filePreviewMarkdown.parse(source, { async: false }) as string);
 }
 
 // ============================================================================
@@ -1392,7 +1395,7 @@ export class FileExplorer {
         if (this._workspaceRequested) return;
         this._workspaceRequested = true;
         try {
-            let root: string;
+            let root: string | null;
             // 优先使用任务级工作空间，否则使用全局工作空间
             if (this._taskWorkspace) {
                 root = this._taskWorkspace;
