@@ -5,8 +5,9 @@ import type { FileWatchService as Service, FileChangeEvent } from '../../../main
 
 const initialState = () => ({ dev: 1, ino: 2, size: 3, mtimeMs: 4, ctimeMs: 5, mode: 6, isFile: () => true });
 const inspect = jest.fn<() => Promise<ReturnType<typeof initialState>>>();
-const nativeWatchers: Array<EventEmitter & { close: ReturnType<typeof jest.fn>; signal: () => void }> = [];
-const watch = jest.fn((_directory: string, signal: () => void) => {
+type WatchSignal = (eventType?: string, filename?: string | Buffer | null) => void;
+const nativeWatchers: Array<EventEmitter & { close: ReturnType<typeof jest.fn>; signal: WatchSignal }> = [];
+const watch = jest.fn((_directory: string, signal: WatchSignal) => {
     const watcher = Object.assign(new EventEmitter(), { close: jest.fn(), signal });
     nativeWatchers.push(watcher);
     return watcher;
@@ -35,6 +36,43 @@ function service() {
 }
 
 describe('FileWatchService lifecycle', () => {
+    test('skips metadata checks for unrelated filenames', async () => {
+        const callback = jest.fn<() => void>();
+        await service().watch(file, callback);
+        nativeWatchers[0].signal('change', 'unrelated.txt');
+        nativeWatchers[0].signal('rename', Buffer.from('unrelated.txt'));
+        await settle();
+        expect(inspect).toHaveBeenCalledTimes(1);
+        expect(callback).not.toHaveBeenCalled();
+    });
+
+    test.each([undefined, null, '', 'watched-file.txt', 'WATCHED-FILE.TXT', Buffer.from('watched-file.txt')])(
+        'checks matching or unavailable filename %p',
+        async (filename) => {
+            const callback = jest.fn<(event: FileChangeEvent) => void>();
+            await service().watch(file, callback);
+            inspect.mockResolvedValueOnce({ ...initialState(), size: 99 });
+            nativeWatchers[0].signal('change', filename);
+            await settle();
+            expect(inspect).toHaveBeenCalledTimes(2);
+            expect(callback).toHaveBeenCalledWith({ path: file, type: 'changed' });
+        }
+    );
+
+    test.each([
+        ['caf\u00e9.txt', 'cafe\u0301.txt'],
+        ['\u03c3.txt', '\u03c2.txt'],
+        ['\u1e9e.txt', '\u00df.txt']
+    ])('accepts Unicode normalization and case aliases: %s / %s', async (target, changed) => {
+        const callback = jest.fn<(event: FileChangeEvent) => void>();
+        const unicodeFile = path.resolve(target);
+        await service().watch(unicodeFile, callback);
+        inspect.mockResolvedValueOnce({ ...initialState(), size: 99 });
+        nativeWatchers[0].signal('change', changed);
+        await settle();
+        expect(callback).toHaveBeenCalledWith({ path: unicodeFile, type: 'changed' });
+    });
+
     test('coalesces directory signals and ignores unchanged metadata', async () => {
         const callback = jest.fn<() => void>();
         await service().watch(file, callback);
@@ -44,6 +82,45 @@ describe('FileWatchService lifecycle', () => {
         await settle();
         expect(inspect).toHaveBeenCalledTimes(2);
         expect(callback).not.toHaveBeenCalled();
+    });
+
+    test('retains matching signals received during initialization', async () => {
+        const callback = jest.fn<(event: FileChangeEvent) => void>();
+        let finish!: (state: ReturnType<typeof initialState>) => void;
+        inspect.mockImplementationOnce(
+            () =>
+                new Promise((resolve) => {
+                    finish = resolve;
+                })
+        );
+        const pending = service().watch(file, callback);
+        nativeWatchers[0].signal('rename', path.basename(file));
+        inspect.mockResolvedValueOnce({ ...initialState(), size: 99 });
+        finish(initialState());
+        await pending;
+        await settle();
+        expect(callback).toHaveBeenCalledWith({ path: file, type: 'changed' });
+    });
+
+    test('rechecks matching signals received while metadata is being read', async () => {
+        const callback = jest.fn<(event: FileChangeEvent) => void>();
+        await service().watch(file, callback);
+        let finish!: (state: ReturnType<typeof initialState>) => void;
+        inspect.mockImplementationOnce(
+            () =>
+                new Promise((resolve) => {
+                    finish = resolve;
+                })
+        );
+        nativeWatchers[0].signal('change', path.basename(file));
+        await settle();
+        nativeWatchers[0].signal('change', path.basename(file));
+        inspect.mockResolvedValueOnce({ ...initialState(), size: 99 });
+        finish(initialState());
+        await settle();
+        expect(inspect).toHaveBeenCalledTimes(3);
+        expect(callback).toHaveBeenCalledTimes(1);
+        expect(callback).toHaveBeenCalledWith({ path: file, type: 'changed' });
     });
 
     test('keeps callbacks unbound and allows cancellation without a subscription receiver', async () => {

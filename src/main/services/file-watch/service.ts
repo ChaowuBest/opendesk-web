@@ -86,8 +86,14 @@ class FileWatchRegistration implements FileWatchSubscription {
 
     async start(): Promise<void> {
         // Watch the directory, not the inode: editors commonly replace files during a save.
-        // Check metadata on every directory signal, so missing/case-variant filenames are safe.
-        this.watcher = watch(path.dirname(this.path), () => this.scheduleCheck());
+        const normalizeFilename = (name: string) => name.normalize('NFC').toLowerCase().toUpperCase();
+        const filename = normalizeFilename(path.basename(this.path));
+        this.watcher = watch(path.dirname(this.path), (_eventType, changedFilename) => {
+            // Compare conservatively on every platform: case/Unicode aliases may refer to the same file.
+            // Missing filenames still require a check; filesystem metadata determines the actual change.
+            const changed = changedFilename?.toString();
+            if (!changed || normalizeFilename(changed) === filename) this.scheduleCheck();
+        });
         this.watcher.on('error', (error) => this.handleWatchFailure(error));
         this.previous = await readFileFingerprint(this.path);
         if (this.startupError) throw this.startupError;
