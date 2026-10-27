@@ -1,6 +1,7 @@
 import { beforeAll, describe, expect, jest, test } from '@jest/globals';
 import { parseHTML } from 'linkedom';
 import { confirmModalMockShim } from '../../confirmModalMock.js';
+import * as realConfirmModal from '../../../renderer/components/confirmModal.js';
 
 /**
  * 钉住 confirmModalMockShim 的契约：mock 掉 confirmModal 之后，导入链仍要能链接成功。
@@ -35,5 +36,17 @@ describe('confirmModal mock shim', () => {
     test('shim 提供的 escapeModalText 会转义 HTML', async () => {
         const mod = await import('../../../renderer/components/confirmModal.js');
         expect((mod as any).escapeModalText('<b>a&b</b>')).toBe('&lt;b&gt;a&amp;b&lt;/b&gt;');
+    });
+
+    test('shim 的每个键都是 confirmModal 的真实导出（防止写错名字或提前清理）', () => {
+        const shim = confirmModalMockShim();
+        const unknownKeys = Object.keys(shim).filter((key) => !(key in realConfirmModal));
+        expect(unknownKeys).toEqual([]);
+    });
+
+    test('shim 复制的动画时长与真实实现一致', () => {
+        const shim = confirmModalMockShim();
+        expect(shim.MODAL_ANIM_DURATION_IN).toBe(realConfirmModal.MODAL_ANIM_DURATION_IN);
+        expect(shim.MODAL_ANIM_DURATION_OUT).toBe(realConfirmModal.MODAL_ANIM_DURATION_OUT);
     });
 });

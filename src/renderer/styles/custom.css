@@ -4060,10 +4060,48 @@ agent-input[hide-disclaimer] .agent-input-footer {
         opacity 0.15s ease;
 }
 
+/* 展开宽度上限按"三个仅图标按钮 + 一个展开标签"估算；标签最长项是
+   "发送并重新执行"（7 字 × 11px），故上限比单个标签宽度留出余量 */
 .od-user-msg-container:hover .od-msg-hover-menu,
 .od-assistant-msg-container:hover .od-msg-hover-menu {
-    max-width: 200px;
+    max-width: 220px;
     opacity: 1;
+}
+
+/* 消息编辑态：菜单常驻展开（不随鼠标移出折叠），按钮高亮提示可提交 */
+.od-msg-hover-menu--pinned {
+    max-width: 220px;
+    opacity: 1;
+}
+
+.od-msg-hover-menu--pinned .od-msg-action-btn--send-again {
+    background: var(--chat-hover);
+    color: var(--chat-accent);
+}
+
+/* .od-msg-action-btn:hover 与上一条同权重且在文件中更靠后，悬停态必须显式重申，
+   否则图标（currentColor）会掉回灰色而标签仍是强调色 */
+.od-msg-hover-menu--pinned .od-msg-action-btn--send-again:hover {
+    background: var(--chat-hover);
+    color: var(--chat-accent);
+}
+
+.od-msg-hover-menu--pinned .od-msg-action-btn--send-again .od-msg-action-label {
+    max-width: 88px;
+    opacity: 1;
+    padding-left: 4px;
+    color: var(--chat-accent);
+}
+
+/* 正文未改动时按钮 disabled：不呈现为可点的强调态（须排在 :hover 之后） */
+.od-msg-hover-menu--pinned .od-msg-action-btn--send-again:disabled {
+    background: transparent;
+    color: var(--chat-ink3);
+    cursor: default;
+}
+
+.od-msg-hover-menu--pinned .od-msg-action-btn--send-again:disabled .od-msg-action-label {
+    color: var(--chat-ink3);
 }
 
 .od-msg-action-btn {
@@ -4113,7 +4151,7 @@ agent-input[hide-disclaimer] .agent-input-footer {
 }
 
 .od-msg-action-btn:hover .od-msg-action-label {
-    max-width: 64px;
+    max-width: 88px;
     opacity: 1;
     padding-left: 4px;
 }
