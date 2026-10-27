@@ -6057,10 +6057,24 @@ class TaskView extends HTMLElement {
         if (!textBubble) return;
 
         const bubble = textBubble.parentElement;
+        // 已在编辑态时忽略重复进入：否则下面捕获的 originalHtml / originalMenuHtml 都是编辑态
+        // 快照，退出编辑后正文会被还原成一个没有监听器的 textarea，菜单也永久停在编辑态
+        if (bubble.classList.contains('od-user-msg-editing')) return;
         const rawText = (container.dataset.rawText || textBubble.textContent || '').replace(/\n+$/, '');
         const originalHtml = textBubble.innerHTML;
 
         bubble.classList.add('od-user-msg-editing');
+
+        // 编辑态下底部菜单只保留常驻高亮的"发送并重新执行"，避免出现"复制/编辑"等对当前编辑无意义的动作。
+        // 初始内容与原文一致，按钮先置为禁用，由输入事件按 isUnchanged() 同步。
+        const hoverMenu = container.querySelector('.od-msg-hover-menu');
+        const originalMenuHtml = hoverMenu ? hoverMenu.innerHTML : '';
+        let sendAgainBtn = null;
+        if (hoverMenu) {
+            hoverMenu.classList.add('od-msg-hover-menu--pinned');
+            hoverMenu.innerHTML = `<button class="od-msg-action-btn od-msg-action-btn--send-again" type="button" disabled title="${escapeHtml(taskViewT('renderer.taskview.menu.sendAgainHint'))}">${RESEND_ICON_SVG}<span class="od-msg-action-label">${taskViewT('renderer.taskview.action.resubmit')}</span></button>`;
+            sendAgainBtn = hoverMenu.querySelector('.od-msg-action-btn--send-again');
+        }
 
         const textarea = document.createElement('textarea');
         textarea.className = 'od-user-msg-editor';
@@ -6075,8 +6089,28 @@ class TaskView extends HTMLElement {
         let editing = true;
         let submitting = false;
 
+        /**
+         * 正文被清空或与原文一致时提交没有意义，此时禁用"发送并重新执行"。
+         * 两侧都要 trim：rawText 取自 dataset.rawText，只裁过尾随换行，原文带首尾空格时
+         * 单侧 trim 会让"一字未改"被判成已改动，按钮一进编辑态就可点。
+         */
+        const isUnchanged = () => {
+            const value = textarea.value.trim();
+            return !value || value === rawText.trim();
+        };
+
+        const syncSendAgainState = () => {
+            if (sendAgainBtn) sendAgainBtn.disabled = isUnchanged();
+        };
+        syncSendAgainState();
+        textarea.addEventListener('input', syncSendAgainState);
+
         const cleanup = () => {
             bubble.classList.remove('od-user-msg-editing');
+            if (hoverMenu) {
+                hoverMenu.classList.remove('od-msg-hover-menu--pinned');
+                hoverMenu.innerHTML = originalMenuHtml;
+            }
             document.removeEventListener('mousedown', outsideClickHandler);
         };
 
@@ -6087,58 +6121,81 @@ class TaskView extends HTMLElement {
             textBubble.innerHTML = originalHtml;
         };
 
-        const outsideClickHandler = (e) => {
-            if (editing && !submitting && !textBubble.contains(e.target)) {
+        /** 回车与"重新发送"按钮共用的提交路径。 */
+        const submitEdit = async () => {
+            if (!editing || submitting) return;
+            if (isUnchanged()) {
                 restoreOriginal();
+                return;
+            }
+            const newText = textarea.value.trim();
+            submitting = true;
+            textarea.blur();
+            const confirmed = await showConfirmModal({
+                variant: 'warn',
+                title: taskViewT('renderer.taskview.edit.title'),
+                message: taskViewT('renderer.taskview.edit.message'),
+                confirmText: taskViewT('renderer.taskview.edit.confirm'),
+                cancelText: taskViewT('renderer.taskview.edit.cancel'),
+                // 编辑消息场景：回车默认触发"继续对话"
+                enterToConfirm: true
+            });
+            submitting = false;
+            if (!confirmed) {
+                textarea.focus();
+                return;
+            }
+            editing = false;
+            cleanup();
+            try {
+                await window.taskManagerAPI.rewindToUserMessage(this.task_id, messageId, {
+                    resubmit: true,
+                    overrideMessageText: newText
+                });
+                await this.reload();
+            } catch (err) {
+                console.error('Failed to edit and resubmit:', err);
+                window.notificationAPI?.sendNotification?.(
+                    'error',
+                    taskViewT('renderer.taskview.menu.operationTitle'),
+                    taskViewT('renderer.taskview.menu.operationFailed'),
+                    err?.message || String(err)
+                );
+                textBubble.innerHTML = originalHtml;
             }
         };
 
-        textarea.addEventListener('keydown', async (e) => {
+        const outsideClickHandler = (e) => {
+            if (!editing || submitting) return;
+            if (textBubble.contains(e.target)) return;
+            // 点"重新发送"按钮不算点到外部，否则编辑态先被撤销、按钮点击落空
+            if (sendAgainBtn && sendAgainBtn.contains(e.target)) return;
+            restoreOriginal();
+        };
+
+        /** 提交编排：showConfirmModal 抛错时不能让 submitting 卡死，否则按钮与回车都失效。 */
+        const runSubmit = () => {
+            submitEdit().catch((err) => {
+                console.error('Failed to submit edited message:', err);
+                submitting = false;
+            });
+        };
+
+        sendAgainBtn?.addEventListener('click', (e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            // 真实浏览器不会给 disabled 按钮派发 click，这里兜住合成事件/键盘激活
+            if (sendAgainBtn.disabled) return;
+            runSubmit();
+        });
+
+        textarea.addEventListener('keydown', (e) => {
             if (!editing) return;
             // 输入法（IME）组合期间不拦截按键，避免选词回车被误判为提交
             if (e.isComposing || e.keyCode === 229) return;
             if (e.key === 'Enter' && !e.shiftKey) {
                 e.preventDefault();
-                if (submitting) return;
-                const newText = textarea.value.trim();
-                if (!newText || newText === rawText) {
-                    restoreOriginal();
-                    return;
-                }
-                submitting = true;
-                textarea.blur();
-                const confirmed = await showConfirmModal({
-                    variant: 'warn',
-                    title: taskViewT('renderer.taskview.edit.title'),
-                    message: taskViewT('renderer.taskview.edit.message'),
-                    confirmText: taskViewT('renderer.taskview.edit.confirm'),
-                    cancelText: taskViewT('renderer.taskview.edit.cancel'),
-                    // 编辑消息场景：回车默认触发"继续对话"
-                    enterToConfirm: true
-                });
-                submitting = false;
-                if (!confirmed) {
-                    textarea.focus();
-                    return;
-                }
-                editing = false;
-                cleanup();
-                try {
-                    await window.taskManagerAPI.rewindToUserMessage(this.task_id, messageId, {
-                        resubmit: true,
-                        overrideMessageText: newText
-                    });
-                    await this.reload();
-                } catch (err) {
-                    console.error('Failed to edit and resubmit:', err);
-                    window.notificationAPI?.sendNotification?.(
-                        'error',
-                        taskViewT('renderer.taskview.menu.operationTitle'),
-                        taskViewT('renderer.taskview.menu.operationFailed'),
-                        err?.message || String(err)
-                    );
-                    textBubble.innerHTML = originalHtml;
-                }
+                runSubmit();
             } else if (e.key === 'Escape') {
                 e.preventDefault();
                 restoreOriginal();
@@ -7134,26 +7191,9 @@ class TaskView extends HTMLElement {
             showImageLightbox(img.src);
         });
 
-        // 右键菜单：用户消息气泡 → 完整消息菜单；其他区域（assistant 消息 / 终端工具等）有选中文本 → 复制选中内容菜单
-        chatHistory.addEventListener('contextmenu', (e) => {
-            // Web 链接命中时优先放行给 task-view 元素层的链接专用菜单（复制链接地址等），
-            // 避免被下方消息/选中菜单的 stopPropagation 拦截
-            if (e.target.closest('a[href]')) return;
-            const bubble = e.target.closest('.od-user-msg');
-            if (bubble) {
-                const container = bubble.closest('.od-user-msg-container');
-                if (!container?.dataset?.messageId) return;
-                e.preventDefault();
-                e.stopPropagation();
-                TaskView._showUserMsgContextMenu(e.clientX, e.clientY, bubble, container);
-                return;
-            }
-            const selectedText = window.getSelection()?.toString().trim() || '';
-            if (!selectedText) return;
-            e.preventDefault();
-            e.stopPropagation();
-            TaskView._showSelectionContextMenu(e.clientX, e.clientY, selectedText);
-        });
+        // 右键菜单：用户消息气泡 → 完整消息菜单；编辑态 → 只留编辑框的编辑菜单；
+        // 其他区域（assistant 消息 / 终端工具等）有选中文本 → 复制选中内容菜单
+        chatHistory.addEventListener('contextmenu', (e) => this._handleChatHistoryContextMenu(e));
 
         const scrollButton = this.querySelector('#taskview-scroll-to-bottom-button');
         scrollButton.addEventListener('click', () => {
@@ -7170,6 +7210,31 @@ class TaskView extends HTMLElement {
         nextUserMsgButton.addEventListener('click', () => {
             this._scrollToUserMessage('next');
         });
+    }
+
+    /**
+     * 聊天区右键分发。编辑态下必须放行：编辑框的剪切/复制/粘贴/全选菜单由注入脚本自绘，
+     * 叠加一层消息菜单会盖住它，且消息级动作对当前编辑没有意义。
+     */
+    _handleChatHistoryContextMenu(e) {
+        // Web 链接命中时优先放行给 task-view 元素层的链接专用菜单（复制链接地址等），
+        // 避免被下方消息/选中菜单的 stopPropagation 拦截
+        if (e.target.closest('a[href]')) return;
+        const bubble = e.target.closest('.od-user-msg');
+        if (bubble) {
+            if (bubble.classList.contains('od-user-msg-editing')) return;
+            const container = bubble.closest('.od-user-msg-container');
+            if (!container?.dataset?.messageId) return;
+            e.preventDefault();
+            e.stopPropagation();
+            TaskView._showUserMsgContextMenu(e.clientX, e.clientY, bubble, container);
+            return;
+        }
+        const selectedText = window.getSelection()?.toString().trim() || '';
+        if (!selectedText) return;
+        e.preventDefault();
+        e.stopPropagation();
+        TaskView._showSelectionContextMenu(e.clientX, e.clientY, selectedText);
     }
 
     static _dismissUserMsgContextMenu() {

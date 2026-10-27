@@ -15,6 +15,7 @@ import { errorToMessage, type TaskUpdateChunk } from '../aikernel/task/types.js'
 import { BaseTaskUpdateSubscriber } from '../aikernel/states/tasks.js';
 import { logger } from '../utils/logger.js';
 import { safeSendToWebContents } from '../utils/electron-ipc.js';
+import { getWindowIcon } from '../utils/app-icon.js';
 import {
     endWindowDragSession,
     startWindowDragSession,
@@ -279,6 +280,9 @@ function ensureWidgetWindow(): BrowserWindow | null {
         fullscreenable: false,
         alwaysOnTop: true,
         skipTaskbar: true,
+        // Linux 桌面会把同 WM_CLASS 的窗口聚合成一个应用条目，条目图标取自窗口的
+        // _NET_WM_ICON；浮窗缺少图标时整个 OpenDesk 条目会退化成系统占位图标。
+        icon: getWindowIcon(),
         hasShadow: !isCollapsed,
         roundedCorners: true,
         transparent: true,

@@ -1,8 +1,8 @@
 import {
     buildSidebarFavoritesResults,
     buildSidebarTaskGroups,
+    countSidebarVisibleRootTasks,
     getSidebarRecentRootTasks,
-    getSidebarRecentTasks,
     getSidebarRunningTasks,
     isRootTask,
     isSidebarTaskVisible,
@@ -322,8 +322,8 @@ describe('sidebar favorites results', () => {
     });
 });
 
-describe('sidebar recent tasks (chat quick menu)', () => {
-    test('returns visible tasks sorted by activity timestamp and caps the count', () => {
+describe('sidebar recent root tasks (chat quick menu)', () => {
+    test('returns visible root tasks sorted by activity timestamp and caps the count', () => {
         const tasks = [
             task('old', '2026-07-28T10:00:00', { updated_at: '2026-07-28T10:00:00' }),
             task('newest', '2026-07-29T10:00:00', { updated_at: '2026-07-29T10:00:00' }),
@@ -331,7 +331,7 @@ describe('sidebar recent tasks (chat quick menu)', () => {
             task('hidden', '2026-07-29T11:00:00', { task_name: null })
         ];
 
-        const recent = getSidebarRecentTasks(tasks, 2);
+        const recent = getSidebarRecentRootTasks(tasks, 2);
 
         expect(recent.map((t) => t.task_id)).toEqual(['newest', 'middle']);
     });
@@ -343,7 +343,7 @@ describe('sidebar recent tasks (chat quick menu)', () => {
             task('updated', '2026-07-29T06:00:00', { updated_at: '2026-07-29T05:00:00' })
         ];
 
-        const recent = getSidebarRecentTasks(tasks, 10);
+        const recent = getSidebarRecentRootTasks(tasks, 10);
 
         expect(recent.map((t) => t.task_id)).toEqual(['finished', 'created', 'updated']);
     });
@@ -351,7 +351,7 @@ describe('sidebar recent tasks (chat quick menu)', () => {
     test('returns empty array when no visible tasks exist', () => {
         const tasks = [task('hidden-1', '2026-07-29T10:00:00', { task_name: null })];
 
-        expect(getSidebarRecentTasks(tasks, 10)).toEqual([]);
+        expect(getSidebarRecentRootTasks(tasks, 10)).toEqual([]);
     });
 
     test('excludes automatic (internal) tasks', () => {
@@ -360,25 +360,19 @@ describe('sidebar recent tasks (chat quick menu)', () => {
             task('regular', '2026-07-29T10:00:00')
         ];
 
-        const recent = getSidebarRecentTasks(tasks, 10);
+        const recent = getSidebarRecentRootTasks(tasks, 10);
 
         expect(recent.map((t) => t.task_id)).toEqual(['regular']);
     });
-});
 
-describe('getSidebarRecentRootTasks', () => {
-    test('与按时间分组的列表对齐：仅根任务、排除自动化任务、按活动时间降序', () => {
+    test('子任务不单独出现在最近任务里', () => {
         const tasks = [
-            task('newest', '2026-07-29T11:00:00'),
-            task('child-of-newest', '2026-07-29T11:30:00', { parent_id: 'newest' }),
-            task('automatic', '2026-07-29T11:50:00', { internal: true }),
-            task('older', '2026-07-20T09:00:00'),
-            task('oldest', '2026-06-01T09:00:00')
+            task('parent', '2026-07-29T10:00:00'),
+            task('child-1', '2026-07-29T11:00:00', { parent_id: 'parent' }),
+            task('child-2', '2026-07-29T12:00:00', { parent_id: 'parent' })
         ];
 
-        const recent = getSidebarRecentRootTasks(tasks, 10, now);
-
-        expect(recent.map((t) => t.task_id)).toEqual(['newest', 'older', 'oldest']);
+        expect(getSidebarRecentRootTasks(tasks, 10).map((t) => t.task_id)).toEqual(['parent']);
     });
 
     test('结果与时间视图分组展开后的顺序一致', () => {
@@ -395,29 +389,26 @@ describe('getSidebarRecentRootTasks', () => {
             .filter((group) => group.id !== 'automatic')
             .flatMap((group) => group.items.map((item) => item.task.task_id));
 
-        expect(getSidebarRecentRootTasks(tasks, 10, now).map((t) => t.task_id)).toEqual(flattened);
+        expect(getSidebarRecentRootTasks(tasks, 10).map((t) => t.task_id)).toEqual(flattened);
     });
+});
 
-    test('按 limit 截断', () => {
+describe('countSidebarVisibleRootTasks', () => {
+    test('只统计可见根任务：子任务与自动化任务不计入', () => {
         const tasks = [
-            task('a', '2026-07-29T11:00:00'),
-            task('b', '2026-07-29T10:00:00'),
-            task('c', '2026-07-29T09:00:00')
+            task('parent', '2026-07-29T10:00:00'),
+            task('child-1', '2026-07-29T11:00:00', { parent_id: 'parent' }),
+            task('child-2', '2026-07-29T11:30:00', { parent_id: 'parent' }),
+            task('hidden', '2026-07-29T11:00:00', { task_name: null }),
+            task('automatic', '2026-07-29T12:00:00', { internal: true })
         ];
 
-        expect(getSidebarRecentRootTasks(tasks, 2, now).map((t) => t.task_id)).toEqual(['a', 'b']);
+        expect(countSidebarVisibleRootTasks(tasks)).toBe(1);
     });
 
-    test('排除无名称且未在命名中的任务', () => {
-        const tasks = [
-            task('named', '2026-07-29T10:00:00'),
-            task('unnamed', '2026-07-29T11:00:00', { task_name: null })
-        ];
+    test('父任务不在列表中的孤儿子任务按根任务计入', () => {
+        const tasks = [task('orphan', '2026-07-29T10:00:00', { parent_id: 'gone' })];
 
-        expect(getSidebarRecentRootTasks(tasks, 10, now).map((t) => t.task_id)).toEqual(['named']);
-    });
-
-    test('无可见任务时返回空数组', () => {
-        expect(getSidebarRecentRootTasks([], 10, now)).toEqual([]);
+        expect(countSidebarVisibleRootTasks(tasks)).toBe(1);
     });
 });

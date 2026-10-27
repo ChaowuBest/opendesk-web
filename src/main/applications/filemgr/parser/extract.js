@@ -127,7 +127,12 @@ function extractPptxSlides(buffer) {
             if (err) return reject(err);
 
             const slideMap = new Map();
+            // 每张 slide 的解析结果都先落到 failures，等 zipfile 'end' 时统一判定。
+            // 不要在这里创建会 reject 的 Promise：zipfile 'end' 之前没有人消费这些拒绝，
+            // 单张 slide 解析失败（如畸形 XML 触发 xmldom ParseError）会冒泡成进程级
+            // unhandledRejection，OpenDesk 会把它当作不可恢复错误直接退出。
             const pending = [];
+            const failures = [];
 
             zipfile.readEntry();
             zipfile.on('error', reject);
@@ -136,9 +141,12 @@ function extractPptxSlides(buffer) {
                 const m = entry.fileName.match(/^ppt\/slides\/slide(\d+)\.xml$/);
                 if (m) {
                     const slideNum = parseInt(m[1], 10);
-                    const p = new Promise((res, rej) => {
+                    const p = new Promise((res) => {
                         zipfile.openReadStream(entry, (streamErr, stream) => {
-                            if (streamErr) return rej(streamErr);
+                            if (streamErr) {
+                                failures.push(streamErr);
+                                return res();
+                            }
                             const chunks = [];
                             stream.on('data', (c) => chunks.push(c));
                             stream.on('end', () => {
@@ -155,12 +163,15 @@ function extractPptxSlides(buffer) {
                                         if (t && t.trim()) texts.push(t.trim());
                                     }
                                     slideMap.set(slideNum, texts.join('\n\n'));
-                                    res();
                                 } catch (parseErr) {
-                                    rej(parseErr);
+                                    failures.push(parseErr);
                                 }
+                                res();
                             });
-                            stream.on('error', rej);
+                            stream.on('error', (streamError) => {
+                                failures.push(streamError);
+                                res();
+                            });
                         });
                     });
                     pending.push(p);
@@ -171,11 +182,91 @@ function extractPptxSlides(buffer) {
             zipfile.on('end', () => {
                 Promise.all(pending)
                     .then(() => {
+                        if (failures.length > 0) return reject(failures[0]);
                         const slideNums = [...slideMap.keys()].sort((a, b) => a - b);
                         resolve(slideNums.map((n) => slideMap.get(n)).join('\n\n===\n\n'));
                     })
                     .catch(reject);
             });
+        });
+    });
+}
+
+/** 校验 XML entry 时允许的最大解压字节数，避免 zip bomb 把校验拖死 */
+const ZIP_VALIDATE_MAX_INFLATE_BYTES = 512 * 1024 * 1024;
+
+/**
+ * officeparser 各格式真正会打开的 xml entry（见 officeParser.js 的 extractFiles 过滤规则）：
+ * docx 只读 word/document[\d]*.xml 与 footnotes / endnotes，odt/odp/ods 只读 content.xml
+ * 与 Object \d+/content.xml。校验范围必须与之对齐——校验了它不会读的 entry（docx 的
+ * [Content_Types].xml、styles.xml 等），会把"无关 entry 损坏但正文完好"的文件误判成解析失败。
+ */
+const DOCX_XML_ENTRY_PATTERNS = [
+    /^word\/document\d*\.xml$/i,
+    /^word\/footnotes\d*\.xml$/i,
+    /^word\/endnotes\d*\.xml$/i
+];
+const ODF_XML_ENTRY_PATTERNS = [/^content\.xml$/i, /^Object \d+\/content\.xml$/i];
+
+/**
+ * 取某扩展名对应的 officeparser XML entry 匹配规则
+ * @param {string} ext
+ * @returns {RegExp[]}
+ */
+function getOfficeParserXmlEntryPatterns(ext) {
+    return ext === 'docx' ? DOCX_XML_ENTRY_PATTERNS : ODF_XML_ENTRY_PATTERNS;
+}
+
+/**
+ * 逐个解压 officeparser 会读取的 xml entry，确认数据流完整。
+ * officeparser 内部对 yauzl 的 read stream 没有挂 error 监听（officeParser.js 的 extractFiles：
+ * readStream.pipe(concat(...))），entry 数据损坏时 zlib 错误会变成无人监听的 'error' 事件，
+ * 升级为进程级 uncaughtException，OpenDesk 会当作不可恢复错误退出。
+ * 所以交给 officeparser 之前先用同样的方式把这些 entry 读一遍：
+ * 任何损坏都退化成"这个文件解析不出文本"，而不是让进程崩掉。
+ * @param {string} filePath
+ * @param {string} ext
+ * @returns {Promise<boolean>}
+ */
+function isXmlEntryReadable(filePath, ext) {
+    const patterns = getOfficeParserXmlEntryPatterns(ext);
+    return new Promise((resolve) => {
+        yauzl.open(filePath, { lazyEntries: true }, (openError, zipfile) => {
+            if (openError) return resolve(false);
+
+            let settled = false;
+            let inflatedBytes = 0;
+            const finish = (readable) => {
+                if (settled) return;
+                settled = true;
+                try {
+                    zipfile.close();
+                } catch {
+                    /* 关闭失败不影响校验结论 */
+                }
+                resolve(readable);
+            };
+
+            zipfile.on('error', () => finish(false));
+            zipfile.on('end', () => finish(true));
+            zipfile.on('entry', (entry) => {
+                if (settled) return;
+                if (!patterns.some((pattern) => pattern.test(entry.fileName))) return zipfile.readEntry();
+                zipfile.openReadStream(entry, (streamError, stream) => {
+                    if (streamError) return finish(false);
+                    stream.on('error', () => finish(false));
+                    stream.on('data', (chunk) => {
+                        if (settled) return;
+                        inflatedBytes += chunk.length;
+                        if (inflatedBytes > ZIP_VALIDATE_MAX_INFLATE_BYTES) finish(false);
+                    });
+                    stream.on('end', () => {
+                        if (!settled) zipfile.readEntry();
+                    });
+                });
+            });
+
+            zipfile.readEntry();
         });
     });
 }
@@ -324,6 +415,12 @@ export async function extractText(filePath) {
         }
 
         if (OFFICE_PARSER_EXTS.has(ext)) {
+            if (!(await isXmlEntryReadable(filePath, ext))) {
+                (await getLogger()).warn(
+                    `[parser] damaged xml entry in ${filePath}; skipped officeparser to avoid an uncaught stream error`
+                );
+                return null;
+            }
             const { parseOfficeAsync } = await import('officeparser');
             return await parseOfficeAsync(filePath);
         }

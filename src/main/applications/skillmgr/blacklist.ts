@@ -11,6 +11,7 @@
 
 import path from 'path';
 import fs from 'fs';
+import { randomUUID } from 'crypto';
 import { skillRegistry } from './utils/skill-registry.js';
 
 export interface BlacklistEntry {
@@ -197,6 +198,8 @@ export function getInterceptionsDirectory(): string {
 }
 
 export interface InterceptionRecord {
+    /** 记录唯一 ID：异步归因据此定位本次记录，避免依赖数组下标 */
+    recordId: string;
     /** 被拦 tool call 的工具名 */
     toolName: string;
     /** 被拦命令/内容摘要 */
@@ -228,8 +231,11 @@ export interface InterceptionRecord {
 
 /**
  * 保存拦截记录到本地 interceptions/<task_id>.json
+ *
+ * 返回该条记录的 recordId：调用方（如异步 LLM 归因）后续按 ID 更新自己的记录，
+ * 不能依赖数组下标——同任务二次拦截会追加到末尾，下标 0 永远指向第一条。
  */
-export function saveInterceptionRecord(taskId: string, record: InterceptionRecord): void {
+export function saveInterceptionRecord(taskId: string, record: Omit<InterceptionRecord, 'recordId'>): string {
     const dir = getInterceptionsDirectory();
     if (!fs.existsSync(dir)) {
         fs.mkdirSync(dir, { recursive: true });
@@ -244,8 +250,10 @@ export function saveInterceptionRecord(taskId: string, record: InterceptionRecor
     } catch {
         // 文件损坏则重建
     }
-    records.push(record);
+    const recordId = randomUUID();
+    records.push({ ...record, recordId });
     fs.writeFileSync(filePath, JSON.stringify(records, null, 2), 'utf8');
+    return recordId;
 }
 
 /**
@@ -266,11 +274,11 @@ export function readInterceptionRecords(taskId: string): InterceptionRecord[] {
 }
 
 /**
- * 更新拦截记录中的 attribution 结果
+ * 更新拦截记录中的 attribution 结果（按 saveInterceptionRecord 返回的 recordId 定位）
  */
 export function updateInterceptionAttribution(
     taskId: string,
-    recordIndex: number,
+    recordId: string,
     certain: Array<{ bundleName: string; skillName: string }>,
     suspected: Array<{
         bundleName: string;
@@ -284,10 +292,11 @@ export function updateInterceptionAttribution(
         if (!fs.existsSync(filePath)) return;
         const raw = fs.readFileSync(filePath, 'utf8');
         const records: InterceptionRecord[] = JSON.parse(raw);
-        if (recordIndex >= 0 && recordIndex < records.length) {
-            records[recordIndex].certain = certain;
-            records[recordIndex].suspected = suspected;
-            records[recordIndex].attributed = true;
+        const target = records.find((r) => r.recordId === recordId);
+        if (target) {
+            target.certain = certain;
+            target.suspected = suspected;
+            target.attributed = true;
             fs.writeFileSync(filePath, JSON.stringify(records, null, 2), 'utf8');
         }
     } catch {

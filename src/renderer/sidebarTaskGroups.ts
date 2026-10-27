@@ -64,23 +64,26 @@ export function isRootTask(
 }
 
 /**
- * 取最近活跃的可见任务（按活动时间降序，最多 limit 个）。
- * 排除自动化任务（internal），供收起态侧边栏的对话快捷菜单等场景使用。
+ * 取最近的根任务列表，口径与侧边栏「按时间」分组完全对齐：
+ * 仅根任务（子任务并入父任务，不单独出现）、排除自动化任务、按活动时间降序。
+ * 供收起态侧边栏的对话快捷菜单、反馈弹窗等「让用户从最近任务里挑一个」的场景使用。
  */
-export function getSidebarRecentTasks(tasks: SidebarTask[], limit: number): SidebarTask[] {
-    return sortTasks(tasks.filter((task) => task.internal !== true && isSidebarTaskVisible(task))).slice(0, limit);
+export function getSidebarRecentRootTasks(tasks: SidebarTask[], limit: number): SidebarTask[] {
+    return selectVisibleRootTasks(tasks).slice(0, limit);
+}
+
+/** 统计侧边栏可见的根任务数量（口径同 getSidebarRecentRootTasks），供收起态菜单「查看更多任务」的阈值判断使用。 */
+export function countSidebarVisibleRootTasks(tasks: SidebarTask[]): number {
+    return selectVisibleRootTasks(tasks).length;
 }
 
 /**
- * 取最近的根任务列表，口径与侧边栏「按时间」分组完全对齐：
- * 仅根任务（子任务并入父任务，不单独出现）、排除自动化任务、按活动时间降序。
- * 供反馈弹窗等需要「让用户从最近任务里挑一个」的场景使用。
+ * 侧边栏可见根任务：先按可见性过滤（父任务不可见时其子任务按孤儿根任务计入，与侧边栏列表一致），
+ * 再排除自动化任务，按活动时间降序。
  */
-export function getSidebarRecentRootTasks(tasks: SidebarTask[], limit: number, now: Date = new Date()): SidebarTask[] {
-    return buildSidebarTaskGroups(tasks.filter(isSidebarTaskVisible), 'time', now)
-        .filter((group) => group.id !== 'automatic')
-        .flatMap((group) => group.items.map((item) => item.task))
-        .slice(0, limit);
+function selectVisibleRootTasks(tasks: SidebarTask[]): SidebarTask[] {
+    const visibleTasks = tasks.filter(isSidebarTaskVisible);
+    return sortTasks(visibleTasks.filter((task) => task.internal !== true && isRootTask(task, visibleTasks)));
 }
 
 function timestamp(value?: string): number {

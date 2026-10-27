@@ -866,9 +866,8 @@ async function recordInterception(
         }
 
         // 内置工具路径：先记录原始信息，再触发 LLM 归因
-        const recordIndex = loadedSkills.length > 0 ? 0 : -1;
         const turn = task.getTurnGeneration ? task.getTurnGeneration() : 0;
-        saveInterceptionRecord(task.task_id, {
+        const recordId = saveInterceptionRecord(task.task_id, {
             toolName: toolCall.tool_name,
             command: command.slice(0, 500),
             reason,
@@ -892,10 +891,11 @@ async function recordInterception(
                 task
             );
 
-            // 更新拦截记录中的归因结果：内置工具路径无确定性归因，全部归入 suspected
+            // 更新拦截记录中的归因结果：按 recordId 定位本次记录（同任务多次拦截会追加新记录，
+            // 用下标会覆盖第一条）；内置工具路径无确定性归因，全部归入 suspected
             updateInterceptionAttribution(
                 task.task_id,
-                recordIndex,
+                recordId,
                 [], // certain 始终为空——内置工具路径无确定性证据
                 attributionResult.candidates
             );
