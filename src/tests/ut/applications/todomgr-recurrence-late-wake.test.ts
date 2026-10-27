@@ -3,7 +3,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import TodoMgrWorker from '../../../main/applications/todomgr/worker.js';
-import type { TodoRecurrence } from '../../../common/utils/todo-recurrence.js';
+import type { TodoRecurrence } from '../../../main/applications/todomgr/todo-recurrence.js';
 
 describe('TodoMgr recurrence timers after a delayed wake', () => {
     let worker: TodoMgrWorker;

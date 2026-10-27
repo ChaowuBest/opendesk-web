@@ -12,7 +12,7 @@
 import type { TodoStatus, TaskTodo } from '../../aikernel/todos/task-todos.js';
 export type { TodoStatus, TaskTodo };
 import type { ReasoningEffort } from '../../aikernel/types/reasoning.js';
-import type { TodoRecurrence } from '../../../common/utils/todo-recurrence.js';
+import type { TodoRecurrence } from './todo-recurrence.js';
 
 // 优先级类型
 export type TodoPriority = 'low' | 'medium' | 'high';

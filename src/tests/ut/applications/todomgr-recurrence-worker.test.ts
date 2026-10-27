@@ -4,7 +4,7 @@ import os from 'os';
 import path from 'path';
 import TodoMgrWorker from '../../../main/applications/todomgr/worker.js';
 import type { CronTriggerConfig } from '../../../main/applications/todomgr/common.js';
-import type { TodoRecurrence } from '../../../common/utils/todo-recurrence.js';
+import type { TodoRecurrence } from '../../../main/applications/todomgr/todo-recurrence.js';
 import { setRuntimeLocale } from '../../../locale/index.js';
 
 describe('visual todo recurrence worker scheduling', () => {

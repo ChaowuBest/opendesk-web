@@ -9,7 +9,7 @@
  * See the Mulan PSL v2 for more details.
  */
 
-import { getTodoRecurrenceError, type TodoRecurrence } from '../../../common/utils/todo-recurrence.js';
+import { getTodoRecurrenceError, type TodoRecurrence } from './todo-recurrence.js';
 
 type Translator = (key: string, params?: Record<string, string | number>) => string;
 

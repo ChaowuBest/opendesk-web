@@ -9,10 +9,10 @@
  * See the Mulan PSL v2 for more details.
  */
 
-import { describeLegacyRecurrence, describeTodoRecurrence } from '../../../../common/utils/recurrence-description.js';
-import { getTodoRecurrenceError, type TodoRecurrence } from '../../../../common/utils/todo-recurrence.js';
-import { formatDatetimeLocal } from '../../../../common/utils/timezone.js';
-import { getLegacyCronTime, parseLegacyCronRecurrence } from '../../../../common/utils/legacy-cron.js';
+import { describeLegacyRecurrence, describeTodoRecurrence } from '../recurrence-description.js';
+import { getTodoRecurrenceError, type TodoRecurrence } from '../todo-recurrence.js';
+import { formatDatetimeLocal } from '../timezone.js';
+import { getLegacyCronTime, parseLegacyCronRecurrence } from '../legacy-cron.js';
 
 type Translate = (key: string, params?: Record<string, string | number>) => string;
 

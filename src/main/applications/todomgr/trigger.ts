@@ -15,8 +15,8 @@
  */
 
 import { t } from './locale/index.js';
-import { describeLegacyRecurrence, describeTodoRecurrence } from '../../../common/utils/recurrence-description.js';
-import { formatDateTimeInTimezone, getSystemTimezone } from '../../../common/utils/timezone.js';
+import { describeLegacyRecurrence, describeTodoRecurrence } from './recurrence-description.js';
+import { formatDateTimeInTimezone, getSystemTimezone } from './timezone.js';
 
 export function buildTriggerInfo(trigger: any): string {
     if (trigger?.type === 'event') {

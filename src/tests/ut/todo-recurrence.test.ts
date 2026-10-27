@@ -6,7 +6,7 @@ import {
     getTodoRecurrenceMonths,
     matchesTodoRecurrence,
     type TodoRecurrence
-} from '../../common/utils/todo-recurrence.js';
+} from '../../main/applications/todomgr/todo-recurrence.js';
 
 function next(rule: TodoRecurrence, zone: string, after: string, count = 3): string[] {
     return getNextTodoRecurrenceRuns(rule, zone, count, new Date(after)).map((date) => date.toISOString());

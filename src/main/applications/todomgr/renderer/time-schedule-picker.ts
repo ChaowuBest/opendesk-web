@@ -10,18 +10,22 @@
  */
 
 import { escapeHtml } from '../../../../common/utils/escape.js';
-import { formatDatetimeLocal } from '../../../../common/utils/timezone.js';
+import { formatDatetimeLocal } from '../timezone.js';
 import {
     getNextTodoRecurrenceRuns,
     getTodoRecurrenceError,
     getTodoRecurrenceDays,
     getTodoRecurrenceMonths,
     type TodoRecurrence
-} from '../../../../common/utils/todo-recurrence.js';
-import { describeLegacyRecurrence, describeTodoRecurrence } from '../../../../common/utils/recurrence-description.js';
+} from '../todo-recurrence.js';
+import {
+    describeLegacyRecurrence,
+    describeTodoRecurrence,
+    getAdvancedCronExpression
+} from '../recurrence-description.js';
 import { getRecurrenceValidationIssue, type RecurrenceValidationField } from '../recurrence-validation.js';
 import { fixedLayerOrigin, visibleViewportRect } from '../../../../renderer/utils/window-frame.js';
-import { parseLegacyCronRecurrence } from '../../../../common/utils/legacy-cron.js';
+import { parseLegacyCronRecurrence } from '../legacy-cron.js';
 
 type Translate = (key: string, params?: Record<string, string | number>) => string;
 type Period = 'once' | 'daily' | 'weekly' | 'biweekly' | 'monthly' | 'yearly' | 'legacy';
@@ -245,6 +249,7 @@ export class TimeSchedulePicker {
             </div>
             <div id="tm-frequency-interval-panel" role="tabpanel" aria-labelledby="tm-frequency-interval-tab"><div class="tm-frequency-interval-line"><span>${escapeHtml(this.t('renderer.todo.frequency.every'))}</span><input type="number" min="1" max="10000" step="1" class="tm-frequency-hours" id="tm-frequency-hours" aria-label="${escapeHtml(this.t('renderer.todo.frequency.intervalValueLabel'))}" value="${intervalValue}"><select class="tm-frequency-interval-unit" id="tm-frequency-interval-unit" aria-label="${escapeHtml(this.t('renderer.todo.frequency.intervalUnitLabel'))}">${(['hour', 'day', 'week', 'month', 'year'] as const).map((unit) => `<option value="${unit}"${unit === intervalUnit ? ' selected' : ''}>${escapeHtml(this.t(`renderer.todo.frequency.intervalUnit.${unit}`))}</option>`).join('')}</select></div></div>
             <div class="tm-cron-preview" id="tm-cron-preview" aria-live="polite"></div>
+            <code class="tm-legacy-cron" id="tm-cron-expression" hidden></code>
             <div class="tm-frequency-error" id="tm-frequency-validation-error" role="alert" hidden></div>
         </div>`;
         this.root = this.container.querySelector('.tm-time-schedule')!;
@@ -919,6 +924,11 @@ export class TimeSchedulePicker {
 
     refreshPreview(): void {
         const preview = this.root.querySelector<HTMLElement>('#tm-cron-preview')!;
+        const formula = this.root.querySelector<HTMLElement>('#tm-cron-expression')!;
+        const expression =
+            this.tab === 'period' && this.period === 'legacy' ? getAdvancedCronExpression(this.original) : undefined;
+        formula.textContent = expression ?? '';
+        formula.hidden = !expression;
         preview.hidden = this.isOnce();
         if (this.isOnce()) return;
         try {

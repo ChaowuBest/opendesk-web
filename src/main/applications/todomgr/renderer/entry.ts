@@ -23,14 +23,13 @@ import {
 } from '../../../../common/reasoning-effort.js';
 import { getEffortIconSVG, getModelIconTile } from '../../../../renderer/utils/model-picker-icons.js';
 import { fixedLayerOrigin, visibleViewportRect } from '../../../../renderer/utils/window-frame.js';
+import { datetimeLocalToISOString, formatDatetimeLocal, getSystemTimezone, isValidTimezone } from '../timezone.js';
+import type { TodoRecurrence } from '../todo-recurrence.js';
 import {
-    datetimeLocalToISOString,
-    formatDatetimeLocal,
-    getSystemTimezone,
-    isValidTimezone
-} from '../../../../common/utils/timezone.js';
-import type { TodoRecurrence } from '../../../../common/utils/todo-recurrence.js';
-import { describeLegacyRecurrence, describeTodoRecurrence } from '../../../../common/utils/recurrence-description.js';
+    describeLegacyRecurrence,
+    describeTodoRecurrence,
+    getAdvancedCronExpression
+} from '../recurrence-description.js';
 import { TimeSchedulePicker, TIME_SCHEDULE_CSS } from './time-schedule-picker.js';
 import { describeLegacyCronInTimezone } from './legacy-timezone.js';
 import type { TodoChatModelCatalog, TodoChatModelSummary } from '../common.js';
@@ -565,6 +564,15 @@ html[data-theme='dark'] .tm-root {
     color: #1d1d1f;
     word-break: break-word;
 }
+.tm-legacy-cron {
+    display: block;
+    margin-top: 6px;
+    color: var(--tm-text-secondary);
+    font-family: 'Maple Mono', 'Cascadia Code', 'SF Mono', monospace;
+    font-size: var(--fs-md);
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+}
 
 /* ---- Detail footer ---- */
 .tm-detail-footer {
@@ -1090,6 +1098,11 @@ function getTriggerSummary(todo: GlobalTodo, t: Translator): string {
     }
 }
 
+function renderAdvancedCron(trigger?: GlobalTodo['trigger']): string {
+    const expression = getAdvancedCronExpression(trigger);
+    return expression ? `<code class="tm-legacy-cron">${escapeHtml(expression)}</code>` : '';
+}
+
 /** Build cron fields as wall-clock values in the selected timezone. */
 function buildCronFromUI(
     mode: string,
@@ -1435,6 +1448,7 @@ class TodoMgrEntryWidget extends AgentOperableHTMLElement {
                         ${escapeHtml(summary)}
                     </span>
                 </div>
+                ${renderAdvancedCron(t.trigger)}
             </div>`;
             })
             .join('');
@@ -1728,7 +1742,7 @@ class TodoMgrEntryWidget extends AgentOperableHTMLElement {
                     </span>
 
                     <span class="tm-detail-attr-label">${escapeHtml(t('renderer.todo.detail.attr.triggerType'))}</span>
-                    <span class="tm-detail-attr-value">${escapeHtml(getTriggerSummary(todo, t))}</span>
+                    <span class="tm-detail-attr-value">${escapeHtml(getTriggerSummary(todo, t))}${renderAdvancedCron(todo.trigger)}</span>
 
                     ${
                         todo.trigger?.type === 'event'

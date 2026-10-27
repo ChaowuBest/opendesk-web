@@ -19,6 +19,21 @@ import { parseLegacyCronRecurrence } from './legacy-cron.js';
 
 type Translator = (key: string, params?: Record<string, string | number>) => string;
 
+export function getAdvancedCronExpression(trigger?: {
+    type: string;
+    cronExpression?: string;
+    recurrence?: TodoRecurrence;
+}): string | undefined {
+    if (
+        trigger?.type !== 'cron' ||
+        trigger.recurrence !== undefined ||
+        !trigger.cronExpression ||
+        parseLegacyCronRecurrence(trigger.cronExpression)
+    )
+        return;
+    return trigger.cronExpression;
+}
+
 function describeDays(days: number[], t: Translator): string {
     return [...new Set(days)]
         .sort((a, b) => ((a + 6) % 7) - ((b + 6) % 7))
@@ -57,8 +72,7 @@ export function describeTodoRecurrence(
         case 'interval':
             params.days = recurrence.weekdays ? describeDays(recurrence.weekdays, t) : '';
             params.value = recurrence.intervalValue ?? recurrence.intervalHours!;
-            // Keep this shared description independent from TodoMgr's renderer dictionary.
-            // The TUI passes the core translator, which does not include renderer.todo.* keys.
+            // Callers supply the TodoMgr translator for these description keys.
             params.unit = t(`recurrence.desc.intervalUnit.${recurrence.intervalUnit ?? 'hour'}`);
             if (recurrence.time !== undefined) {
                 switch (recurrence.intervalUnit) {

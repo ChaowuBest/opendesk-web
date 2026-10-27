@@ -5,7 +5,7 @@ import {
     formatDatetimeLocal,
     getSystemTimezone,
     isValidTimezone
-} from '../../common/utils/timezone.js';
+} from '../../main/applications/todomgr/timezone.js';
 
 describe('task timezones', () => {
     test('validates IANA zones and provides a usable system zone', () => {

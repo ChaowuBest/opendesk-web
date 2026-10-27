@@ -9,7 +9,6 @@
  * See the Mulan PSL v2 for more details.
  */
 
-import { recurrenceZhCn } from '../common/locale/recurrence.js';
 import { modelZhCn } from '../common/locale/model.js';
 
 export const zhCn: Record<string, string> = {
@@ -3113,6 +3112,5 @@ export const zhCn: Record<string, string> = {
     'main.desktop.card.noHtml': 'Agent 未生成有效的卡片 HTML',
     'main.desktop.card.timeout': '卡片生成超时（3 分钟），模型可能不可用，请稍后右键卡片重试',
 
-    ...recurrenceZhCn,
     ...modelZhCn
 };

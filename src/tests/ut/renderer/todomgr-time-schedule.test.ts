@@ -1,6 +1,6 @@
 import { afterEach, beforeAll, beforeEach, describe, expect, jest, test } from '@jest/globals';
 import { parseHTML } from 'linkedom';
-import { getNextTodoRecurrenceRuns } from '../../../common/utils/todo-recurrence.js';
+import { getNextTodoRecurrenceRuns } from '../../../main/applications/todomgr/todo-recurrence.js';
 
 describe('automation period and interval picker', () => {
     let Widget: CustomElementConstructor;
@@ -1382,12 +1382,38 @@ describe('automation period and interval picker', () => {
         expect(call.mock.calls.find((args: any[]) => args[0] === 'updateGlobalTodo')?.[2].trigger).toEqual(trigger);
     });
 
-    test('an unsupported saved rule remains intact and its formula stays hidden', async () => {
+    test('an unsupported saved rule shows its read-only formula and remains intact', async () => {
         const trigger = { type: 'cron', cronExpression: '0 9-17 * * 1-5', timezone: 'UTC' };
         const { widget, plan } = await editor(trigger);
-        expect(widget.querySelector('#tm-detail-scroll').textContent).not.toContain(trigger.cronExpression);
+        expect(widget.querySelector('.tm-todo-card .tm-legacy-cron')?.textContent).toBe(trigger.cronExpression);
+        expect(widget.querySelector('#tm-cron-expression')?.textContent).toBe(trigger.cronExpression);
+        expect(widget.querySelector('#tm-cron-expression')?.hidden).toBe(false);
+        expect(widget.querySelector('#tm-cron-custom-input')).toBeNull();
+        widget.querySelector('#tm-frequency-interval-tab').click();
+        expect(widget.querySelector('#tm-cron-expression')?.hidden).toBe(true);
+        widget.querySelector('#tm-frequency-period-tab').click();
+        expect(widget.querySelector('#tm-cron-expression')?.hidden).toBe(false);
         await widget._saveEdit(plan);
         expect(call.mock.calls.find((args: any[]) => args[0] === 'updateGlobalTodo')?.[2].trigger).toEqual(trigger);
+        widget._renderDetail(plan);
+        expect(widget.querySelector('#tm-detail-scroll .tm-legacy-cron')?.textContent).toBe(trigger.cronExpression);
+        const malformed = { ...plan, trigger: { ...trigger, cronExpression: '<img src=x onerror=alert(1)>' } };
+        widget._renderDetail(malformed);
+        expect(widget.querySelector('#tm-detail-scroll .tm-legacy-cron')?.textContent).toBe(
+            malformed.trigger.cronExpression
+        );
+        expect(widget.querySelector('#tm-detail-scroll .tm-legacy-cron img')).toBeNull();
+        const structured = {
+            ...plan,
+            trigger: {
+                type: 'cron',
+                cronExpression: '* * * * *',
+                timezone: 'UTC',
+                recurrence: { mode: 'daily', time: '09:00' }
+            }
+        };
+        widget._renderDetail(structured);
+        expect(widget.querySelector('#tm-detail-scroll .tm-legacy-cron')).toBeNull();
     });
 
     test('opens the period list with ArrowDown and closes it with Escape', async () => {

@@ -9,7 +9,6 @@
  * See the Mulan PSL v2 for more details.
  */
 
-import { recurrenceEnUs } from '../common/locale/recurrence.js';
 import { modelEnUs } from '../common/locale/model.js';
 
 export const enUs: Record<string, string> = {
@@ -3217,6 +3216,5 @@ export const enUs: Record<string, string> = {
     'main.desktop.card.timeout':
         'Card generation timed out (3 minutes). The model may be unavailable — right-click the card to retry later.',
 
-    ...recurrenceEnUs,
     ...modelEnUs
 };

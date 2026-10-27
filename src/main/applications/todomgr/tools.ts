@@ -19,14 +19,14 @@ import type { TaskState } from '../../aikernel/states/tasks';
 import { escapeHtml } from '../../../common/utils/escape.js';
 import { t } from './locale/index.js';
 import { type TodoMgrApplication } from './app';
-import { describeLegacyRecurrence, describeTodoRecurrence } from '../../../common/utils/recurrence-description.js';
+import { describeLegacyRecurrence, describeTodoRecurrence } from './recurrence-description.js';
 import { getRecurrenceValidationMessage } from './recurrence-validation.js';
 import chalk from 'chalk';
 import path from 'path';
 import type { Participant } from '../../plugins/types';
 import type { TodoWorkspaceConfig } from './common.js';
 import { REASONING_EFFORT_VALUES } from '../../aikernel/types/reasoning.js';
-import { formatDateTimeInTimezone, getSystemTimezone, isValidTimezone } from '../../../common/utils/timezone.js';
+import { formatDateTimeInTimezone, getSystemTimezone, isValidTimezone } from './timezone.js';
 
 const GetCurrentTimeArgsSchema = z.object({});
 
@@ -103,7 +103,7 @@ const TimezoneSchema = z
     })
     .optional()
     .describe(
-        'IANA 时区，如 "Asia/Shanghai"、"America/New_York"；新建时默认使用系统时区，更新时应保留原时区，旧 cron 未指定时保持 UTC；scheduled 中仅用于展示'
+        'IANA 时区。用户明确指定时使用该时区；新建且用户未指定时，先调用 getCurrentTime 获取系统时区并按当地时间计算，可省略此字段由运行时保存系统时区。更新时保留原时区，旧 cron 未指定时保持 UTC；scheduled 中仅用于展示'
     );
 
 const ScheduledTriggerSchema = z.object({
@@ -111,7 +111,7 @@ const ScheduledTriggerSchema = z.object({
     triggerAt: z
         .string()
         .describe(
-            '任务触发时间，必须使用UTC时间（ISO8601格式，以Z结尾），请先调用getCurrentTime工具获取当前UTC时间为基准进行计算'
+            '任务触发时间，必须使用 UTC 时间（ISO8601 格式，以 Z 结尾）。先调用 getCurrentTime 获取当前 UTC 时间和系统 IANA 时区；用户未指定时区时按系统时区理解执行时间，更新已有任务时保留原时区。按目标日期的实际时区偏移换算为 UTC'
         ),
     timezone: TimezoneSchema
 });
@@ -635,7 +635,7 @@ const AddGlobalTodoArgsSchema = z.object({
         .describe('优先级（保留字段，暂无实际语义）'),
     category: z.string().optional().describe('分类标签（保留字段，暂无实际语义）'),
     trigger: TriggerSchema.optional().describe(
-        '触发器配置。event: 事件触发；scheduled: 定时一次性触发（triggerAt 必须为 UTC 绝对时间，timezone 仅用于展示）；cron: 使用 recurrence 设置重复任务，time 为当地时间。hour 间隔从 UTC anchorAt 累计真实小时；新 day/week/month/year 间隔指定 time 及对应星期/日期/月份。新建时 timezone 未指定则使用系统时区。不指定 trigger 则为手动模式。'
+        '触发器配置。event: 事件触发；scheduled: 定时一次性触发（triggerAt 必须为 UTC 绝对时间，timezone 仅用于展示）；cron: 使用 recurrence 设置重复任务，time 为当地时间。创建 scheduled 或 cron 前先调用 getCurrentTime 获取系统时区；用户未指定时按系统时区计算，省略 timezone 由运行时填入，用户明确指定时才设置对应时区。hour 间隔从 UTC anchorAt 累计真实小时；新 day/week/month/year 间隔指定 time 及对应星期/日期/月份。不指定 trigger 则为手动模式。'
     ),
     deliver: ChannelDeliverSchema.optional().describe(
         '任务完成后的回复投递目标。指定后，触发任务的最终回复会发送到该渠道联系人；不指定时，如果当前任务来自渠道会自动继承当前会话。'

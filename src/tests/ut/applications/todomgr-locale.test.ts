@@ -3,7 +3,6 @@ import path from 'path';
 import { fileURLToPath } from 'url';
 import { zhCn as todoZhCn } from '../../../main/applications/todomgr/locale/zh-cn.js';
 import { enUs as todoEnUs } from '../../../main/applications/todomgr/locale/en-us.js';
-import { recurrenceZhCn } from '../../../common/locale/recurrence.js';
 import { modelZhCn } from '../../../common/locale/model.js';
 import { t as todoT } from '../../../main/applications/todomgr/locale/index.js';
 import { createTranslatorForTodoMgr } from '../../../main/applications/todomgr/locale/renderer.js';
@@ -186,18 +185,14 @@ describe('todomgr locale', () => {
             '../../../main/applications/todomgr/tools.ts',
             '../../../main/applications/todomgr/app.ts',
             '../../../main/applications/todomgr/worker.ts',
-            '../../../common/utils/recurrence-description.ts',
+            '../../../main/applications/todomgr/recurrence-description.ts',
             '../../../main/applications/todomgr/recurrence-validation.ts',
             '../../../main/applications/todomgr/trigger.ts',
             '../../../main/applications/todomgr/renderer/entry.ts',
             '../../../main/applications/todomgr/renderer/legacy-timezone.ts',
             '../../../main/applications/todomgr/renderer/time-schedule-picker.ts'
         ];
-        const knownKeys = new Set([
-            ...Object.keys(todoZhCn),
-            ...Object.keys(recurrenceZhCn),
-            ...Object.keys(modelZhCn)
-        ]);
+        const knownKeys = new Set([...Object.keys(todoZhCn), ...Object.keys(modelZhCn)]);
         const workspacePickerKeys = new Set([
             'renderer.workspacePicker.taskNameFallback',
             'renderer.workspacePicker.titleWithName'

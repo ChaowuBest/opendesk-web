@@ -18,12 +18,8 @@ import type { GlobalTodo, GlobalTodoStorage, TodoTrigger, TodoWorkspaceConfig } 
 import type { ReasoningEffort } from '../../aikernel/types/reasoning.js';
 import type { Participant } from '../../plugins/types';
 import type { Cron as CronerJob } from 'croner';
-import { getSystemTimezone, isValidTimezone } from '../../../common/utils/timezone.js';
-import {
-    getNextTodoRecurrenceRuns,
-    getTodoRecurrenceError,
-    matchesTodoRecurrence
-} from '../../../common/utils/todo-recurrence.js';
+import { getSystemTimezone, isValidTimezone } from './timezone.js';
+import { getNextTodoRecurrenceRuns, getTodoRecurrenceError, matchesTodoRecurrence } from './todo-recurrence.js';
 import { t } from './locale/index.js';
 import { getRecurrenceValidationMessage } from './recurrence-validation.js';
 
