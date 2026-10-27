@@ -2444,11 +2444,8 @@ html[data-theme='dark'] .agent-input-toolbar-left::-webkit-scrollbar-thumb:hover
     background: rgba(255, 255, 255, 0.28);
 }
 
-/* 工具调用详情卡片滚动条（子任务/等待子任务等） */
-html[data-theme='dark'] .od-inline-toolcall-container details [class*='overflow-y-auto']::-webkit-scrollbar,
-html[data-theme='dark'] #taskview-chat-history details [class*='overflow-y-auto']::-webkit-scrollbar {
-    width: 4px;
-}
+/* 工具调用详情卡片滚动条（子任务/等待子任务等）：结构属性（width/height）由
+   custom.css 统一定义，这里只覆盖颜色（规范见 docs/specifications/scrollbar_specification.md） */
 html[data-theme='dark'] .od-inline-toolcall-container details [class*='overflow-y-auto']::-webkit-scrollbar-thumb,
 html[data-theme='dark'] #taskview-chat-history details [class*='overflow-y-auto']::-webkit-scrollbar-thumb {
     background: rgba(255, 255, 255, 0.18);

@@ -475,6 +475,11 @@ describe('devicemgr node tools', () => {
         expect(html).not.toContain('fa-terminal');
         expect(html).not.toContain('(node)');
         expect(html).toContain('echo hello');
+        // 命令块与 cwd 行都要挂折行钩子：超长不可断 token（PATH、深目录）不许撑出横向溢出
+        expect(html).toMatch(/<div class="terminal-tool-command[^"]*"><span[^>]*>\$ <\/span>echo hello<\/div>/);
+        expect(html).toContain(
+            '<div class="terminal-tool-path px-4 pt-2.5 text-[11px] text-gray-400">cwd: /remote/workspace</div>'
+        );
         expect(cli).toContain('Bash node');
         expect(cli).not.toContain('(node)');
         expect(cli).toContain('echo hello');

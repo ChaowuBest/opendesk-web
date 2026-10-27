@@ -1,5 +1,6 @@
 import { describe, expect, it } from '@jest/globals';
 import fs from 'fs';
+import { ruleBody } from './cssRules.js';
 
 /**
  * 文件回收站弹窗列表（.trash-list-scroll）滚动条必须自定义：
@@ -10,13 +11,6 @@ import fs from 'fs';
  */
 
 const source = fs.readFileSync(new URL('../../../renderer/components/trashFloatingWindow.ts', import.meta.url), 'utf8');
-
-function ruleBody(css: string, selector: string): string {
-    const escaped = selector.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-    const match = css.match(new RegExp(`${escaped}\\s*\\{([^}]*)\\}`));
-    expect(match).not.toBeNull();
-    return match![1];
-}
 
 describe('文件回收站列表滚动条样式', () => {
     it('滚动容器必须自定义 webkit 滚动条且横向与纵向同粗', () => {

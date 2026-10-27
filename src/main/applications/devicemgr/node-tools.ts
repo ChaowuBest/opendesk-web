@@ -638,7 +638,6 @@ function renderNodeShellToolCall(toolcall: ToolCall): string {
     const command = args?.command || '';
     const description = args?.description;
     const nodeId = args?.nodeId;
-    const isRunning = toolcall.result === undefined && toolcall.status !== 'error';
     const isError = toolcall.status === 'error';
     const headerText = description
         ? escapeHtml(description)
@@ -648,13 +647,13 @@ function renderNodeShellToolCall(toolcall: ToolCall): string {
     const iconColor = isError ? 'text-red-400' : 'text-gray-400';
     const headerTextColor = isError ? 'text-red-600' : 'text-gray-600';
 
-    let bodyContent = `
-        <div class="px-4 py-2.5 font-mono text-[12px] text-gray-700 leading-relaxed">
-            <span class="text-gray-400 select-none">$ </span>${escapeHtml(command)}
-        </div>`;
+    // 命令回显行：.terminal-tool-command 保留多行命令的换行并允许长 token 折行（如超长 PATH），
+    // 否则命令块会把卡片撑出横向溢出，让滚动区出现横向滚动条。
+    // 标签与命令之间不能留模板缩进空白——pre-wrap 会把它们原样渲染成前导空格。
+    let bodyContent = `<div class="terminal-tool-command px-4 py-2.5 font-mono text-[12px] text-gray-700 leading-relaxed"><span class="text-gray-400 select-none">$ </span>${escapeHtml(command)}</div>`;
     if (args?.workingDirectory) {
-        bodyContent = `
-        <div class="px-4 pt-2.5 text-[11px] text-gray-400">cwd: ${escapeHtml(args.workingDirectory)}</div>${bodyContent}`;
+        // cwd 是单行路径文本：只需折行，不需要 pre-wrap
+        bodyContent = `<div class="terminal-tool-path px-4 pt-2.5 text-[11px] text-gray-400">cwd: ${escapeHtml(args.workingDirectory)}</div>${bodyContent}`;
     }
     if (toolcall.result) {
         bodyContent += `

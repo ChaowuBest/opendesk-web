@@ -1,5 +1,6 @@
 import { describe, expect, it } from '@jest/globals';
 import fs from 'fs';
+import { ruleBody } from './cssRules.js';
 
 /**
  * 搜索浮层结果列表（.od-task-search-scroll）滚动条必须自定义：
@@ -10,13 +11,6 @@ import fs from 'fs';
  */
 
 const source = fs.readFileSync(new URL('../../../renderer/components/taskSearchDialog.css', import.meta.url), 'utf8');
-
-function ruleBody(css: string, selector: string): string {
-    const escaped = selector.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-    const match = css.match(new RegExp(`${escaped}\\s*\\{([^}]*)\\}`));
-    expect(match).not.toBeNull();
-    return match![1];
-}
 
 describe('搜索浮层结果列表滚动条样式', () => {
     it('滚动容器必须自定义 webkit 滚动条且横向与纵向同粗', () => {
