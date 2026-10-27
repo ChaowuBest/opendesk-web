@@ -25,6 +25,7 @@ import { type Privileges, type ProtocolRequest } from 'electron';
 import { AppManagerStore } from './appmgr/manager.js';
 import { ExternalManifestApplication } from './appmgr/external.js';
 import { WorkerRestartController, type WorkerRestartDecision } from './worker-restart.js';
+import { toErrorMessage } from '../../common/utils/error.js';
 import path from 'path';
 
 export type ProtocolHandlerEntry = {
@@ -316,13 +317,20 @@ export class ApplicationRegistry {
         ApplicationRegistry.notifyApplicationEventListeners(bundleName, eventName, args);
 
         // 转发给 todomgr worker 进行事件触发器匹配（避免自身事件循环）
+        // worker 崩溃/重启窗口内 globalWorker 为 null，getGlobalWorker() 会抛错，而这个 async
+        // 方法的拒绝只在调用侧被收走（见 dispatchWorkerMessage）。窗口内的事件无法转发，只能丢弃，
+        // 但要留日志：否则用户只会看到"事件触发了但待办没动"却查不到任何痕迹。
         if (bundleName !== 'todomgr') {
-            ApplicationRegistry.getGlobalWorker().postMessage({
-                bundleName: 'todomgr',
-                requestId: crypto.randomUUID(),
-                methodName: 'handleApplicationEvent',
-                args: [bundleName, eventName, args]
-            });
+            if (!ApplicationRegistry.hasGlobalWorker()) {
+                logger.warn(`global worker unavailable, event ${bundleName}:${eventName} not forwarded to todomgr`);
+            } else {
+                ApplicationRegistry.getGlobalWorker().postMessage({
+                    bundleName: 'todomgr',
+                    requestId: crypto.randomUUID(),
+                    methodName: 'handleApplicationEvent',
+                    args: [bundleName, eventName, args]
+                });
+            }
         }
     }
 
@@ -562,7 +570,7 @@ function spawnGlobalWorker(runtimeOptions: WorkerRuntimeOptions) {
     });
 
     ApplicationRegistry.globalWorker.on('message', (event) => {
-        dispatchWorkerMessage(event, worker);
+        dispatchWorkerMessageSafely(event, worker);
     });
 
     // 网络配置变更时同步到 Worker，确保代理/SSL 设置在 Worker 中实时生效
@@ -587,6 +595,21 @@ function spawnGlobalWorker(runtimeOptions: WorkerRuntimeOptions) {
                 });
             }
         });
+    }
+}
+
+/**
+ * 处理来自全局 Worker 线程的单条消息帧（进程边界入口）。
+ *
+ * main.ts 把 uncaughtException / unhandledRejection 一律当作不可恢复错误并 app.exit(1)，
+ * 而这里处理的都是 worker 侧事件，单个帧处理失败（事件载荷异常、应用回调同步抛错等）
+ * 属于可恢复的业务失败，不能升级成进程退出。
+ */
+function dispatchWorkerMessageSafely(event: any, worker: Worker): void {
+    try {
+        dispatchWorkerMessage(event, worker);
+    } catch (error) {
+        logger.error(`failed to dispatch worker message ${event?.type}: ${toErrorMessage(error)}`);
     }
 }
 
@@ -649,7 +672,12 @@ export function dispatchWorkerMessage(event: any, worker: Worker): void {
         }
         case 'emitEvent': {
             const { bundleName, eventName, args } = event;
-            ApplicationRegistry.handleWorkerEmitEvent(bundleName, eventName, args);
+            // handleWorkerEmitEvent 是 async：拒绝必须在这里消费。未消费会逃逸成主进程级
+            // unhandledRejection，而 main.ts 把它当不可恢复错误直接 app.exit(1)。
+            // 事件分发失败属于可恢复的业务失败，记日志即可。
+            ApplicationRegistry.handleWorkerEmitEvent(bundleName, eventName, args).catch((error) => {
+                logger.error(`emitEvent ${bundleName}:${eventName} failed: ${toErrorMessage(error)}`);
+            });
             break;
         }
         case 'callApp': {

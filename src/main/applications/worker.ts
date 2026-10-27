@@ -62,11 +62,32 @@ export function initializeAppWorkers() {
             logger.error(`worker ${name} initialization failed: ${error}`);
             throw error;
         });
+        // initPromise 只有在请求到来时才会被 await：初始化失败时这个拒绝会长时间无人观察，
+        // 触发 worker 的 unhandledRejection（worker-errors.ts 直接重抛，整个 worker 会被杀掉重启）。
+        // 这里先标记为已处理，await 它的请求方仍会正常拿到初始化错误。
+        initPromise.catch(() => undefined);
         workerInitPromises.set(name, initPromise);
     }
 
     parentPort?.on('message', (message) => {
-        handleWorkerRequest(message, appWorkers, workerInitPromises, (frame) => parentPort?.postMessage(frame));
+        // handleWorkerRequest 是 async：这里必须消费它的拒绝，否则一次逃逸就会变成
+        // worker 级 unhandledRejection，整个 worker 被当作致命错误重启。
+        handleWorkerRequest(message, appWorkers, workerInitPromises, (frame) => parentPort?.postMessage(frame)).catch(
+            (error) => {
+                const reason = toErrorMessage(error);
+                logger.error(
+                    `failed to handle worker message ${message?.methodName ?? message?.type ?? '?'}: ${reason}`
+                );
+                // 兜底回执：主进程按 requestId 等待响应，不回执会让调用方永久挂起
+                if (message?.type === 'response' || !message?.requestId) return;
+                parentPort?.postMessage({
+                    type: message.stream ? 'response_complete' : 'response',
+                    id: message.requestId,
+                    status: 'error',
+                    message: reason
+                });
+            }
+        );
     });
 
     logger.info('worker initialized successfully');
