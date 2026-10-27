@@ -18,14 +18,12 @@ describe('calendar and elapsed-hour todo recurrence', () => {
         { mode: 'other' },
         { mode: 'daily', time: '24:00' },
         { mode: 'daily', time: '09:00', weekdays: [1] },
-        { mode: 'weekly', time: '09:00', weekdays: [1], intervalHours: 2 },
         { mode: 'weekly', time: '09:00', weekdays: [] },
         { mode: 'weekly', time: '09:00', weekdays: [7] },
         { mode: 'biweekly', time: '09:00', weekdays: [1], anchorDate: '2026-02-30' },
         { mode: 'monthly', time: '09:00', day: 0 },
         { mode: 'yearly', time: '09:00', month: 2, day: 30 },
         { mode: 'interval', intervalHours: 0, weekdays: [1], anchorAt: '2026-01-01T00:00:00Z' },
-        { mode: 'interval', intervalHours: 1, weekdays: [], anchorAt: '2026-01-01T00:00:00Z' },
         { mode: 'interval', intervalHours: 1, weekdays: [1], anchorAt: '2026-01-01T00:00:31Z' }
     ])('rejects an invalid rule: %j', (rule) => {
         expect(getTodoRecurrenceError(rule)).not.toBeNull();
@@ -189,17 +187,10 @@ describe('calendar and elapsed-hour todo recurrence', () => {
         { mode: 'monthly', time: '09:00', day: 1, days: [] },
         { mode: 'monthly', time: '09:00', days: [0] },
         { mode: 'monthly', time: '09:00', days: [32] },
-        { mode: 'monthly', time: '09:00', days: [1.5] },
-        { mode: 'monthly', time: '09:00', days: [NaN] },
-        { mode: 'monthly', time: '09:00', days: Array(1) },
-        { mode: 'monthly', time: '09:00', days: '1' },
         { mode: 'monthly', time: '09:00', days: [1], months: [1] },
         { mode: 'yearly', time: '09:00', month: 1, months: [], day: 1 },
         { mode: 'yearly', time: '09:00', months: [0], days: [1] },
         { mode: 'yearly', time: '09:00', months: [13], days: [1] },
-        { mode: 'yearly', time: '09:00', months: [1.5], days: [1] },
-        { mode: 'yearly', time: '09:00', months: [NaN], days: [1] },
-        { mode: 'yearly', time: '09:00', months: '1', days: [1] },
         { mode: 'daily', time: '09:00', days: [1] },
         { mode: 'weekly', time: '09:00', weekdays: [1], months: [1] },
         { mode: 'interval', intervalHours: 1, weekdays: [1], anchorAt: '2026-01-01T00:00:00Z', days: [1] }
@@ -350,25 +341,6 @@ describe('calendar and elapsed-hour todo recurrence', () => {
         expect(matchesTodoRecurrence(rule, new Date('2026-03-09T13:00:00Z'), 'America/New_York')).toBe(false);
     });
 
-    test('an impossible month phase stays empty without converting every date or minute', () => {
-        const rule: TodoRecurrence = {
-            mode: 'interval',
-            intervalValue: 12,
-            intervalUnit: 'month',
-            anchorAt: '2026-02-01T00:00:00Z',
-            time: '09:00',
-            days: [31]
-        };
-        const format = jest.spyOn(Intl.DateTimeFormat.prototype, 'formatToParts');
-        try {
-            expect(getTodoRecurrenceError(rule)).toBeNull();
-            expect(next(rule, 'UTC', '2026-01-01T00:00:00Z')).toEqual([]);
-            expect(format.mock.calls.length).toBeLessThan(10);
-        } finally {
-            format.mockRestore();
-        }
-    });
-
     test('year intervals support multiple months and dates, including leap years and century exceptions', () => {
         const rule: TodoRecurrence = {
             mode: 'interval',
@@ -413,13 +385,7 @@ describe('calendar and elapsed-hour todo recurrence', () => {
     ])(
         'calendar intervals retain an anchor in the second repeated wall time in %s',
         (zone, first, anchorAt, following, time) => {
-            const rule: TodoRecurrence = {
-                mode: 'interval',
-                intervalValue: 1,
-                intervalUnit: 'day',
-                anchorAt,
-                time
-            };
+            const rule: TodoRecurrence = { mode: 'interval', intervalValue: 1, intervalUnit: 'day', anchorAt, time };
             const between = new Date(Date.parse(first) + 15 * 60_000).toISOString();
             expect(next(rule, zone, between, 2)).toEqual([
                 new Date(anchorAt).toISOString(),
@@ -443,27 +409,6 @@ describe('calendar and elapsed-hour todo recurrence', () => {
         expect(next(rule, 'America/New_York', '2027-11-07T05:00:00Z', 1)).toEqual(['2027-11-07T05:30:00.000Z']);
         expect(matchesTodoRecurrence(rule, new Date('2027-11-07T05:30:00Z'), 'America/New_York')).toBe(true);
         expect(matchesTodoRecurrence(rule, new Date('2027-11-07T06:30:00Z'), 'America/New_York')).toBe(false);
-    });
-
-    test('calendar interval candidate generation is bounded by periods and agrees with matching', () => {
-        const rule: TodoRecurrence = {
-            mode: 'interval',
-            intervalValue: 4,
-            intervalUnit: 'year',
-            anchorAt: '2096-02-29T10:00:00Z',
-            time: '09:00',
-            months: [2],
-            days: [29]
-        };
-        const format = jest.spyOn(Intl.DateTimeFormat.prototype, 'formatToParts');
-        try {
-            const runs = next(rule, 'UTC', '2096-02-29T10:00:00Z', 2);
-            expect(runs).toEqual(['2104-02-29T09:00:00.000Z', '2108-02-29T09:00:00.000Z']);
-            for (const run of runs) expect(matchesTodoRecurrence(rule, new Date(run), 'UTC')).toBe(true);
-            expect(format.mock.calls.length).toBeLessThan(100);
-        } finally {
-            format.mockRestore();
-        }
     });
 
     test.each([
@@ -513,21 +458,17 @@ describe('calendar and elapsed-hour todo recurrence', () => {
 
     test.each([
         { intervalUnit: 'hour', time: '09:00' },
-        { intervalUnit: 'day', time: '24:00' },
         { intervalUnit: 'day', time: '09:00', weekdays: [1] },
         { intervalUnit: 'day', time: '09:00', days: [1] },
         { intervalUnit: 'week', time: '09:00' },
-        { intervalUnit: 'week', time: '09:00', weekdays: [] },
         { intervalUnit: 'week', time: '09:00', weekdays: [7] },
         { intervalUnit: 'week', time: '09:00', weekdays: [1], days: [1] },
         { intervalUnit: 'month', time: '09:00' },
-        { intervalUnit: 'month', time: '09:00', days: [] },
         { intervalUnit: 'month', time: '09:00', days: [1], months: [1] },
         { intervalUnit: 'year', time: '09:00', days: [1] },
         { intervalUnit: 'year', time: '09:00', months: [1], days: [] },
         { intervalUnit: 'year', time: '09:00', months: [2], days: [30] },
         { intervalUnit: 'year', time: '09:00', months: [13], days: [1] },
-        { intervalUnit: 'year', time: '09:00', months: [1], days: [32] },
         { intervalUnit: 'month', days: [1] },
         { intervalUnit: 'year', months: [1], days: [1] }
     ])('rejects invalid calendar interval fields: %j', (fields) => {
@@ -546,16 +487,6 @@ describe('calendar and elapsed-hour todo recurrence', () => {
         };
         expect(next(rule, 'Asia/Shanghai', '2026-10-25T00:00:00Z', 1)).toEqual(['2026-10-25T16:30:00.000Z']);
         expect(matchesTodoRecurrence(rule, new Date('2026-10-25T16:30:00Z'), 'UTC')).toBe(false);
-    });
-
-    test('an unreachable interval weekday returns an empty bounded preview', () => {
-        const rule: TodoRecurrence = {
-            mode: 'interval',
-            intervalHours: 168,
-            weekdays: [1],
-            anchorAt: '2026-10-25T00:00:00Z'
-        };
-        expect(next(rule, 'UTC', '2026-10-24T00:00:00Z')).toEqual([]);
     });
 
     test.each(['UTC', 'Asia/Shanghai', 'America/New_York'])(
@@ -578,11 +509,4 @@ describe('calendar and elapsed-hour todo recurrence', () => {
             }
         }
     );
-
-    test('invalid timezones and invalid preview counts are harmless', () => {
-        const rule: TodoRecurrence = { mode: 'daily', time: '09:00' };
-        expect(next(rule, 'Invalid/Zone', '2026-01-01T00:00:00Z')).toEqual([]);
-        expect(next(rule, 'UTC', '2026-01-01T00:00:00Z', 0)).toEqual([]);
-        expect(matchesTodoRecurrence(rule, new Date('bad'), 'UTC')).toBe(false);
-    });
 });

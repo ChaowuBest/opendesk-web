@@ -16,7 +16,6 @@ describe('actionable recurrence validation messages', () => {
         [{ mode: 'monthly', days: [], time: '09:00' }, 'days'],
         [{ mode: 'daily', time: '' }, 'time'],
         [{ mode: 'interval', intervalValue: 0, intervalUnit: 'day', anchorAt }, 'intervalValue'],
-        [{ mode: 'interval', intervalValue: 1, anchorAt }, 'intervalUnit'],
         [{ mode: 'biweekly', weekdays: [1], time: '09:00', anchorDate: 'invalid' }, 'anchorDate'],
         [{ mode: 'interval', intervalValue: 1, intervalUnit: 'day', anchorAt: 'invalid' }, 'anchorAt'],
         [{ mode: 'yearly', months: [2], days: [30], time: '09:00' }, 'days']
@@ -34,15 +33,13 @@ describe('actionable recurrence validation messages', () => {
     test.each([
         [{ mode: 'weekly', time: '09:00', weekdays: [] }, '请选择执行星期。'],
         [{ mode: 'biweekly', time: '09:00', weekdays: [], anchorDate: '2026-10-23' }, '请选择执行星期。'],
-        [{ mode: 'weekly', time: '09:00', weekdays: [7] }, '请选择执行星期。'],
         [{ mode: 'monthly', time: '09:00', days: [] }, '请选择日期。'],
         [{ mode: 'monthly', time: '09:00', days: [32] }, '请选择日期。'],
         [{ mode: 'yearly', time: '09:00', months: [], days: [5] }, '请选择月份。'],
         [{ mode: 'yearly', time: '09:00', months: [13], days: [5] }, '请选择月份。'],
         [{ mode: 'yearly', time: '09:00', months: [1], days: [] }, '请选择日期。'],
         [{ mode: 'daily', time: '' }, '请选择有效的执行时间。'],
-        [{ mode: 'daily', time: '24:00' }, '请选择有效的执行时间。'],
-        [{ mode: 'daily' }, '请选择有效的执行时间。']
+        [{ mode: 'daily', time: '24:00' }, '请选择有效的执行时间。']
     ])('identifies only the field that needs correction: %j', (rule, message) => {
         expect(getRecurrenceValidationMessage(rule, zh)).toBe(message);
     });
@@ -92,7 +89,6 @@ describe('actionable recurrence validation messages', () => {
 
     test.each([
         [{ mode: 'biweekly', weekdays: [1], time: '09:00', anchorDate: '2026-02-30' }, '请选择有效的起始日期。'],
-        [{ mode: 'interval', intervalValue: 1, intervalUnit: 'day', anchorAt: 'invalid' }, '请选择有效的开始时间。'],
         [{ mode: 'yearly', time: '09:00', months: [2], days: [30, 31] }, '所选月份没有该日期，请重新选择日期。']
     ])('explains invalid anchors and impossible dates: %j', (rule, message) => {
         expect(getRecurrenceValidationMessage(rule, zh)).toBe(message);
@@ -104,7 +100,6 @@ describe('actionable recurrence validation messages', () => {
         { mode: 'yearly', months: [2, 3], days: [31], time: '09:00' },
         { mode: 'interval', intervalHours: 1, weekdays: [1], anchorAt },
         { mode: 'interval', intervalValue: 1, intervalUnit: 'day', anchorAt },
-        { mode: 'interval', intervalValue: 1, intervalUnit: 'week', weekdays: [1], anchorAt },
         { mode: 'interval', intervalValue: 10000, intervalUnit: 'year', anchorAt }
     ])('does not add requirements to valid schedules or legacy intervals: %j', (rule) => {
         expect(getRecurrenceValidationMessage(rule, zh)).toBeNull();

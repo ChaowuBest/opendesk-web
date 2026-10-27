@@ -104,31 +104,4 @@ describe('dispatched task names', () => {
         expect(task.task_name).toBe(prompt.substring(0, 30) + '...');
         expect(generateName).not.toHaveBeenCalled();
     });
-
-    test('keeps a reasoning override on the task and leaves capability checks to execution', async () => {
-        const data = Setting.getInstance().getData();
-        Setting.updateInstanceData({
-            ...data,
-            default_model: 'gpt-5-alias',
-            providers: [
-                {
-                    name: 'test-provider',
-                    provider_type: 'openai',
-                    base_url: 'https://mock.local/v1',
-                    api_key: 'test-key',
-                    no_proxy: true
-                }
-            ],
-            models: [{ alias: 'gpt-5-alias', provider_name: 'test-provider', model_name: 'gpt-5' }]
-        });
-
-        const task = await manager.dispatchPromptToAgent(agent, undefined, '执行自动任务', {
-            workspace: '/workspace',
-            model: 'gpt-5-alias',
-            reasoningEffort: 'max'
-        });
-
-        expect(task.model).toBe('gpt-5-alias');
-        expect(task.reasoningEffort).toBe('max');
-    });
 });

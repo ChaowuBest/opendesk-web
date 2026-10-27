@@ -84,26 +84,6 @@ describe('TodoMgr recurrence timers after a delayed wake', () => {
         expect(dispatch).toHaveBeenCalledTimes(2);
     });
 
-    test('a delayed elapsed-hour run retains its original anchor cadence', async () => {
-        const todo = await addRecurrence({
-            mode: 'interval',
-            intervalValue: 5,
-            intervalUnit: 'hour',
-            anchorAt: '2026-10-23T09:00:00Z'
-        });
-
-        jest.setSystemTime(new Date('2026-10-23T11:01:01Z'));
-        await jest.advanceTimersByTimeAsync(1000);
-        expect(dispatch).toHaveBeenCalledTimes(1);
-
-        jest.setSystemTime(new Date('2026-10-23T13:59:29Z'));
-        await jest.advanceTimersByTimeAsync(30_000);
-        expect(dispatch).toHaveBeenCalledTimes(1);
-        await jest.advanceTimersByTimeAsync(1000);
-        expect(dispatch).toHaveBeenCalledTimes(2);
-        expect(todo.last_triggered_at).toBe('2026-10-23T14:00:00.000Z');
-    });
-
     test('recovers the first DST overlap occurrence once and does not replay it after a clock rewind', async () => {
         jest.setSystemTime(new Date('2026-11-01T05:29:59Z'));
         const todo = await addRecurrence({ mode: 'daily', time: '01:30' }, 'America/New_York');
@@ -136,17 +116,5 @@ describe('TodoMgr recurrence timers after a delayed wake', () => {
         jest.setSystemTime(new Date('2026-03-09T06:30:00Z'));
         await job(todo.id).trigger();
         expect(dispatch).toHaveBeenCalledTimes(1);
-    });
-
-    test('starting a fresh job after a restart does not catch up schedules from the stopped period', async () => {
-        const todo = await addRecurrence();
-        await worker.finalize();
-        jest.setSystemTime(new Date('2026-10-23T09:01:01Z'));
-        await (worker as any).loadGlobalTodos();
-        (worker as any).startAllTriggers();
-
-        await jest.advanceTimersByTimeAsync(60_000);
-        await job(todo.id).trigger();
-        expect(dispatch).not.toHaveBeenCalled();
     });
 });

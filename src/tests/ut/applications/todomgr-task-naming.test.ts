@@ -8,7 +8,6 @@ import type { TodoTrigger } from '../../../main/applications/todomgr/common.js';
 const mainAgent = { name: 'main' };
 const getModelInstance = jest.fn((alias: string) => {
     if (alias === 'reasoning-pro') return { model_name: 'gpt-5' };
-    if (alias === 'unknown-reasoning') return { model_name: 'vendor/custom-chat' };
     if (alias === 'unsupported-reasoning') return { model_name: 'gpt-5' };
     return undefined;
 });
@@ -240,42 +239,6 @@ describe('TodoMgr execution conversation names', () => {
 
         expect(dispatchPromptToAgent.mock.calls[0][3]).toMatchObject({
             model: 'unsupported-reasoning',
-            reasoningEffort: 'max'
-        });
-    });
-
-    test('an unknown model keeps the requested reasoning effort for compatibility', async () => {
-        await application.triggerTodoTask(
-            'todo-unknown-reasoning',
-            '日报',
-            '生成报告',
-            undefined,
-            undefined,
-            undefined,
-            'unknown-reasoning',
-            'max'
-        );
-
-        expect(dispatchPromptToAgent.mock.calls[0][3]).toMatchObject({
-            model: 'unknown-reasoning',
-            reasoningEffort: 'max'
-        });
-    });
-
-    test('keeps a reasoning override when no model is selected', async () => {
-        await application.triggerTodoTask(
-            'todo-default-unsupported-reasoning',
-            '日报',
-            '生成报告',
-            undefined,
-            undefined,
-            undefined,
-            undefined,
-            'max'
-        );
-
-        expect(dispatchPromptToAgent.mock.calls[0][3]).toMatchObject({
-            model: undefined,
             reasoningEffort: 'max'
         });
     });

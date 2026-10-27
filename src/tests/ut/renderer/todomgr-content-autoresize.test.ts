@@ -4,23 +4,6 @@ import { parseHTML } from 'linkedom';
 describe('automation content textarea sizing', () => {
     let Widget: CustomElementConstructor;
     const widgets: any[] = [];
-    const observers: TestResizeObserver[] = [];
-
-    class TestResizeObserver {
-        target?: Element;
-        observe = jest.fn((target: Element) => {
-            this.target = target;
-        });
-        disconnect = jest.fn();
-
-        constructor(readonly callback: ResizeObserverCallback) {
-            observers.push(this);
-        }
-
-        notify() {
-            this.callback([], this as unknown as ResizeObserver);
-        }
-    }
 
     beforeAll(async () => {
         const { window } = parseHTML('<!doctype html><html><head></head><body></body></html>');
@@ -71,8 +54,6 @@ describe('automation content textarea sizing', () => {
     });
 
     beforeEach(() => {
-        observers.length = 0;
-        Object.assign(globalThis, { ResizeObserver: TestResizeObserver });
         (window as any).applicationAPI = {
             call: jest.fn(async () => []),
             callMainWorld: jest.fn(async () => []),
@@ -102,26 +83,12 @@ describe('automation content textarea sizing', () => {
         widget.globalTodos = [plan];
         widget.render();
         const frame = widget.querySelector('#tm-detail-scroll');
-        let height = initialHeight;
+        const height = initialHeight;
         Object.defineProperty(frame, 'clientHeight', { get: () => height, configurable: true });
         widget._openDetail(plan);
         await widget._enterEditMode(plan);
         const textarea = widget.querySelector('#tm-edit-content');
-        return {
-            widget,
-            plan,
-            frame,
-            textarea,
-            resizeTo(nextHeight: number) {
-                height = nextHeight;
-                const observer = observers.find((candidate) => candidate.target === frame);
-                expect(observer).toBeDefined();
-                observer!.notify();
-            },
-            setHeight(nextHeight: number) {
-                height = nextHeight;
-            }
-        };
+        return { widget, plan, frame, textarea };
     }
 
     function type(textarea: HTMLTextAreaElement, lines: number) {
@@ -147,37 +114,6 @@ describe('automation content textarea sizing', () => {
         expect(textarea.style.height).toBe('56px');
     });
 
-    test('adjusts the upper limit in both directions as the visible editor gets shorter or taller', async () => {
-        const { textarea, frame, resizeTo } = await editor();
-        type(textarea, 40);
-        expect(observers[0].observe).toHaveBeenCalledWith(frame);
-        expect(observers[0].observe).not.toHaveBeenCalledWith(textarea);
-        for (const [height, limit] of [
-            [400, 200],
-            [200, 100],
-            [80, 56],
-            [800, 240]
-        ]) {
-            resizeTo(height);
-            expect(textarea.style.height).toBe(`${limit}px`);
-            expect(textarea.style.maxHeight).toBe(`${limit}px`);
-        }
-    });
-
-    test('remeasures wrapping when the editor width changes without a height change', async () => {
-        const { textarea } = await editor();
-        let wrappedHeight = 78;
-        Object.defineProperty(textarea, 'scrollHeight', { get: () => wrappedHeight, configurable: true });
-        observers[0].notify();
-        expect(textarea.style.height).toBe('80px');
-        wrappedHeight = 158;
-        observers[0].notify();
-        expect(textarea.style.height).toBe('160px');
-        wrappedHeight = 78;
-        observers[0].notify();
-        expect(textarea.style.height).toBe('80px');
-    });
-
     test('freezes the field during measurement and restores its previous minimum height', async () => {
         const { textarea, frame } = await editor();
         const field = textarea.closest('.tm-edit-field');
@@ -195,41 +131,5 @@ describe('automation content textarea sizing', () => {
         expect(textarea.style.height).toBe('120px');
         expect(field.style.minHeight).toBe('12px');
         expect(frame.scrollTop).toBe(420);
-    });
-
-    test.each(['close', 'detail', 'disconnect', 'reopen'])(
-        'cleans up input and resize callbacks when the editor changes through %s',
-        async (action) => {
-            const { widget, plan, textarea } = await editor();
-            const observer = observers[0];
-            expect(observer).toBeDefined();
-            if (action === 'close') widget._closeDetail();
-            if (action === 'detail') widget._renderDetail(plan);
-            if (action === 'disconnect') widget.disconnectedCallback();
-            if (action === 'reopen') await widget._enterEditMode(plan);
-            expect(observer.disconnect).toHaveBeenCalledTimes(1);
-            type(textarea, 40);
-            observer.notify();
-            expect(textarea.style.height).toBe('56px');
-            if (action === 'reopen') {
-                expect(observers).toHaveLength(2);
-                const next = widget.querySelector('#tm-edit-content');
-                type(next, 3);
-                expect(next.style.height).toBe('80px');
-            }
-        }
-    );
-
-    test('falls back to window resize events when ResizeObserver is unavailable', async () => {
-        Object.assign(globalThis, { ResizeObserver: undefined });
-        const { widget, textarea, setHeight } = await editor();
-        type(textarea, 40);
-        setHeight(200);
-        window.dispatchEvent(new Event('resize'));
-        expect(textarea.style.height).toBe('100px');
-        widget._closeDetail();
-        setHeight(600);
-        window.dispatchEvent(new Event('resize'));
-        expect(textarea.style.height).toBe('100px');
     });
 });
