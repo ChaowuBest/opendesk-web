@@ -40,12 +40,46 @@ interface ModelInfo {
 
 /**
  * 已知模型信息查找表。
- * 数据来源：各厂商官方文档 + llmdb.xyz + opencode.ai 交叉验证（2026-09）。
+ * 数据来源：各厂商官方文档 + OpenRouter + models.dev + LiteLLM + Vercel AI Gateway 交叉验证（2026-10）。
  */
 const KNOWN_MODELS: Record<string, ModelInfo> = {
     // ═══════════════════════════════════════════════
     // OpenAI / GPT
     // ═══════════════════════════════════════════════
+    // GPT-6 / GPT-6.1 系列（2026-09 ~ 2026-10）：1,050,000 上下文 / 128,000 输出，支持图像与 PDF 输入。
+    // 注：Azure、ChatGPT 后端报告的 922,000 是「上下文窗口 - 最大输出」后的可用输入量，不是窗口本身。
+    // 参数与基座完全一致的 `-pro` 变体不单列：lookupModelInfo 的前缀匹配会命中基座条目（取最长 key）。
+    // 只有上下文/输出上限确实不同时才需要单列，例如 gpt-5-pro（输出 272,000）与 gpt-5（128,000）。
+    'gpt-6-1-terra': {
+        contextSize: 1050000,
+        maxOutputTokens: 128000,
+        vision: true,
+        reasoningEfforts: ['none', 'low', 'medium', 'high']
+    },
+    'gpt-6-1-sol': {
+        contextSize: 1050000,
+        maxOutputTokens: 128000,
+        vision: true,
+        reasoningEfforts: ['none', 'low', 'medium', 'high']
+    },
+    'gpt-6-astra': {
+        contextSize: 1050000,
+        maxOutputTokens: 128000,
+        vision: true,
+        reasoningEfforts: ['none', 'low', 'medium', 'high']
+    },
+    'gpt-6-luna': {
+        contextSize: 1050000,
+        maxOutputTokens: 128000,
+        vision: true,
+        reasoningEfforts: ['none', 'low', 'medium', 'high']
+    },
+    'gpt-6-sol': {
+        contextSize: 1050000,
+        maxOutputTokens: 128000,
+        vision: true,
+        reasoningEfforts: ['none', 'low', 'medium', 'high']
+    },
     // GPT-5 / o 系列官方 reasoning_effort 仅支持 minimal/low/medium/high，无 max 档位
     'gpt-5-2': {
         contextSize: 400000,
@@ -89,12 +123,6 @@ const KNOWN_MODELS: Record<string, ModelInfo> = {
         vision: true,
         reasoningEfforts: ['none', 'low', 'medium', 'high']
     },
-    'gpt-5-5-pro': {
-        contextSize: 1050000,
-        maxOutputTokens: 128000,
-        vision: true,
-        reasoningEfforts: ['none', 'low', 'medium', 'high']
-    },
     'gpt-5-5-instant': {
         contextSize: 400000,
         maxOutputTokens: 128000,
@@ -126,12 +154,6 @@ const KNOWN_MODELS: Record<string, ModelInfo> = {
         reasoningEfforts: ['none', 'low', 'medium', 'high']
     },
     'gpt-5-4': {
-        contextSize: 1050000,
-        maxOutputTokens: 128000,
-        vision: true,
-        reasoningEfforts: ['none', 'low', 'medium', 'high']
-    },
-    'gpt-5-4-pro': {
         contextSize: 1050000,
         maxOutputTokens: 128000,
         vision: true,
@@ -213,6 +235,55 @@ const KNOWN_MODELS: Record<string, ModelInfo> = {
     // ═══════════════════════════════════════════════
     // 4.x/5.x 同时保留两种命名：`claude-{版本}-{型号}`（既有）与 `claude-{型号}-{版本}`（Anthropic API 实际返回格式）
     // Anthropic 无 max 档位，限制为 none/low/medium/high
+    // Claude 5.5 系列（2026-09 ~ 2026-10）：1M 上下文 / 128K 输出，支持图像与 PDF 输入
+    'claude-5-5-opus': {
+        contextSize: 1000000,
+        maxOutputTokens: 128000,
+        vision: true,
+        reasoningEfforts: ['none', 'low', 'medium', 'high']
+    },
+    'claude-opus-5-5': {
+        contextSize: 1000000,
+        maxOutputTokens: 128000,
+        vision: true,
+        reasoningEfforts: ['none', 'low', 'medium', 'high']
+    },
+    'claude-5-5-sonnet': {
+        contextSize: 1000000,
+        maxOutputTokens: 128000,
+        vision: true,
+        reasoningEfforts: ['none', 'low', 'medium', 'high']
+    },
+    'claude-sonnet-5-5': {
+        contextSize: 1000000,
+        maxOutputTokens: 128000,
+        vision: true,
+        reasoningEfforts: ['none', 'low', 'medium', 'high']
+    },
+    'claude-5-5-haiku': {
+        contextSize: 1000000,
+        maxOutputTokens: 128000,
+        vision: true,
+        reasoningEfforts: ['none', 'low', 'medium', 'high']
+    },
+    'claude-haiku-5-5': {
+        contextSize: 1000000,
+        maxOutputTokens: 128000,
+        vision: true,
+        reasoningEfforts: ['none', 'low', 'medium', 'high']
+    },
+    'claude-5-1-fable': {
+        contextSize: 1000000,
+        maxOutputTokens: 128000,
+        vision: true,
+        reasoningEfforts: ['none', 'low', 'medium', 'high']
+    },
+    'claude-fable-5-1': {
+        contextSize: 1000000,
+        maxOutputTokens: 128000,
+        vision: true,
+        reasoningEfforts: ['none', 'low', 'medium', 'high']
+    },
     'claude-4-8-opus': {
         contextSize: 1000000,
         maxOutputTokens: 128000,
@@ -252,13 +323,13 @@ const KNOWN_MODELS: Record<string, ModelInfo> = {
     },
     'claude-4-6-sonnet': {
         contextSize: 1000000,
-        maxOutputTokens: 64000,
+        maxOutputTokens: 128000,
         vision: true,
         reasoningEfforts: ['none', 'low', 'medium', 'high']
     },
     'claude-sonnet-4-6': {
         contextSize: 1000000,
-        maxOutputTokens: 64000,
+        maxOutputTokens: 128000,
         vision: true,
         reasoningEfforts: ['none', 'low', 'medium', 'high']
     },
@@ -399,6 +470,17 @@ const KNOWN_MODELS: Record<string, ModelInfo> = {
     // ═══════════════════════════════════════════════
     // Gemini / Google
     // ═══════════════════════════════════════════════
+    // Gemini 4 / 3.8 / 3.7 系列（2026-08 ~ 2026-10）：1,048,576 上下文、多模态输入。
+    // gemini-4-argon 的输出上限取 Vercel AI Gateway 的 1,000,000（OpenRouter 上报 Google 端点 943,718、
+    // LiteLLM 1,048,576；models.dev 的 32,768 明显偏小，未采用）
+    'gemini-4-argon': { contextSize: 1048576, maxOutputTokens: 1000000, vision: true },
+    'gemini-3-8-flash': { contextSize: 1048576, maxOutputTokens: 65536, vision: true },
+    'gemini-3-7-flash': { contextSize: 1048576, maxOutputTokens: 65536, vision: true },
+    'gemini-3-1-flash-lite': { contextSize: 1048576, maxOutputTokens: 65536, vision: true },
+    // Google API 的滚动别名：分别指向当前最新的 flash / flash-lite / pro 模型
+    'gemini-flash-latest': { contextSize: 1048576, maxOutputTokens: 65536, vision: true },
+    'gemini-flash-lite-latest': { contextSize: 1048576, maxOutputTokens: 65536, vision: true },
+    'gemini-pro-latest': { contextSize: 1048576, maxOutputTokens: 65536, vision: true },
     'gemini-3-1-flash': { contextSize: 1000000, maxOutputTokens: 65536, vision: true },
     'gemini-3-pro': { contextSize: 1048576, maxOutputTokens: 65536, vision: true },
     'gemini-3-flash': { contextSize: 1048576, maxOutputTokens: 65536, vision: true },
@@ -457,14 +539,19 @@ const KNOWN_MODELS: Record<string, ModelInfo> = {
     // ═══════════════════════════════════════════════
     // Qwen / Alibaba
     // ═══════════════════════════════════════════════
-    'qwen3-7-max': { contextSize: 1000000, maxOutputTokens: 65536, vision: false },
-    'qwen3-7-plus': { contextSize: 1000000, maxOutputTokens: 64000, vision: true },
-    // Qwen3.8 / Qwen3.5 系列新增，opencode.ai 数据
-    'qwen3-8-max-preview': { contextSize: 1000000, maxOutputTokens: 131072, vision: true },
+    // Qwen3.8 系列（2026-08 ~ 2026-09 发布）
+    // qwen3.8-max 为正式名（100 万上下文 / 131,072 输出，OpenRouter、models.dev、Vercel 一致），
+    // qwen3.8-max-0902 / -prime 等日期与变体快照走前缀匹配
+    'qwen3-8-max': { contextSize: 1000000, maxOutputTokens: 131072, vision: true },
+    // qwen3.8-omni-flash（2026-09-17 发布）：全模态输入（图/音频/视频），四源一致为 1M / 131,072
+    'qwen3-8-omni-flash': { contextSize: 1000000, maxOutputTokens: 131072, vision: true },
     // Qwen3.8-Flash 系列（2026-08-26 发布）：开源版 Qwen3.8-Flash-Next 原生 262K 可扩展至 1M，
     // 云服务版 qwen3.8-flash 默认 1M 上下文，多模态（图/视频输入），数据来自百炼官方文档与 HF model card
     'qwen3-8-flash': { contextSize: 1000000, maxOutputTokens: 131072, vision: true },
     'qwen3-8-flash-next': { contextSize: 1000000, maxOutputTokens: 131072, vision: true },
+    'qwen3-7-flash': { contextSize: 1000000, maxOutputTokens: 65536, vision: true },
+    'qwen3-7-max': { contextSize: 1000000, maxOutputTokens: 65536, vision: false },
+    'qwen3-7-plus': { contextSize: 1000000, maxOutputTokens: 64000, vision: true },
     'qwen3-5-9b': { contextSize: 262144, maxOutputTokens: 65536, vision: false },
     'qwen3-coder-30b-a3b-instruct': { contextSize: 262144, maxOutputTokens: 65536, vision: false },
     'qwq-plus': { contextSize: 131072, maxOutputTokens: 8192, vision: false },
@@ -567,7 +654,11 @@ const KNOWN_MODELS: Record<string, ModelInfo> = {
     // ═══════════════════════════════════════════════
     // MiniMax
     // ═══════════════════════════════════════════════
-    'minimax-m3': { contextSize: 512000, maxOutputTokens: 128000, vision: true },
+    // M3.1-Flash（2026-10-19 发布）：1M 上下文 / 524,288 输出，支持图像与视频输入
+    'minimax-m3-1-flash': { contextSize: 1048576, maxOutputTokens: 524288, vision: true },
+    // M3：上下文取 Vercel 与 LiteLLM（Azure/Fireworks）一致的 512,000（OpenRouter/models.dev 报 1M，存疑）；
+    // 输出上限 OpenRouter 512,000、models.dev 524,288、Vercel 512,000，取 512,000
+    'minimax-m3': { contextSize: 512000, maxOutputTokens: 512000, vision: true },
     'minimax-m2-7': { contextSize: 204800, maxOutputTokens: 131072, vision: false },
     'minimax-m2-5': { contextSize: 204800, maxOutputTokens: 131072, vision: false },
     'minimax-m2-5-highspeed': { contextSize: 204800, maxOutputTokens: 131072, vision: false },
@@ -579,13 +670,33 @@ const KNOWN_MODELS: Record<string, ModelInfo> = {
     // ═══════════════════════════════════════════════
     // MiMo / Xiaomi
     // ═══════════════════════════════════════════════
+    // MiMo V2.6（2026-09-22 发布）：1,048,576 上下文 / 131,072 输出，支持图/音频/视频输入。
+    // -ultraspeed 变体参数与基座一致，不单列；v2.5-pro-ultraspeed 同理命中 mimo-v2-5-pro。
+    'mimo-v2-6': { contextSize: 1048576, maxOutputTokens: 131072, vision: true },
+    'mimo-v2-6-pro': { contextSize: 1048576, maxOutputTokens: 131072, vision: true },
     'mimo-v2-5': { contextSize: 1048576, maxOutputTokens: 131072, vision: true },
     'mimo-v2-5-pro': { contextSize: 1048576, maxOutputTokens: 131072, vision: false },
 
     // ═══════════════════════════════════════════════
     // Kimi / Moonshot
     // ═══════════════════════════════════════════════
-    'kimi-k3': { contextSize: 1048576, maxOutputTokens: 131072, vision: true },
+    // K3.1-Pro（2026-10-23 发布）：1,048,576 上下文 / 104 万输出，支持图像与视频输入。
+    // 推理档位 low/high/max 来自 models.dev；-highspeed 变体参数一致，走前缀匹配。
+    'kimi-k3-1-pro': {
+        contextSize: 1048576,
+        maxOutputTokens: 1048576,
+        vision: true,
+        reasoningEfforts: ['low', 'high', 'max']
+    },
+    // K3：输出上限取 LiteLLM（Moonshot 官方/Bedrock/Fireworks）与 Vercel 一致的 131,072；
+    // OpenRouter 的 943,718 与 models.dev 的 1,048,576 未采用
+    'kimi-k3': {
+        contextSize: 1048576,
+        maxOutputTokens: 131072,
+        vision: true,
+        reasoningEfforts: ['low', 'high', 'max']
+    },
+    // K2.7-Code：262,144 / 262,144，-highspeed 变体参数一致，走前缀匹配
     'kimi-k2-7-code': { contextSize: 262144, maxOutputTokens: 262144, vision: true },
     'kimi-k2-6': { contextSize: 262144, maxOutputTokens: 262144, vision: true },
     'kimi-k2-5': { contextSize: 262144, maxOutputTokens: 262144, vision: true },
@@ -683,7 +794,13 @@ const KNOWN_MODELS: Record<string, ModelInfo> = {
     // ═══════════════════════════════════════════════
     // Muse Spark / Meta
     // ═══════════════════════════════════════════════
-    'muse-spark-1-1': { contextSize: 1000000, maxOutputTokens: 32000, vision: true },
+    // Muse 系列（2026-04 ~ 2026-10）：1,048,576 上下文 / 131,072 输出，多模态（图/视频/PDF/音频）输入。
+    // 输出上限取 models.dev 与 LiteLLM（meta 官方）一致的 131,072（Vercel 报 1,048,576、OpenRouter 943,718）。
+    // -contributor 变体参数与基座一致，不单列，走前缀匹配。
+    'muse-wonder-1-0': { contextSize: 1048576, maxOutputTokens: 131072, vision: true },
+    'muse-spark-1-3': { contextSize: 1048576, maxOutputTokens: 131072, vision: true },
+    'muse-spark-1-2': { contextSize: 1048576, maxOutputTokens: 131072, vision: true },
+    'muse-spark-1-1': { contextSize: 1048576, maxOutputTokens: 131072, vision: true },
 
     // ═══════════════════════════════════════════════
     // MAI / Microsoft

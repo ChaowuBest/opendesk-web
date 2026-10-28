@@ -982,7 +982,9 @@ details.terminal-tool[open] > summary .terminal-tool-chevron {
     transform: rotate(180deg);
 }
 details.terminal-tool .terminal-tool-scroll::-webkit-scrollbar {
+    /* 纵向 width、横向 height 都要给，只设 width 时横向滚动条会退回系统默认粗细（约 15px） */
     width: 4px;
+    height: 4px;
 }
 details.terminal-tool .terminal-tool-scroll::-webkit-scrollbar-thumb {
     background: #d1d5db;
@@ -990,6 +992,33 @@ details.terminal-tool .terminal-tool-scroll::-webkit-scrollbar-thumb {
 }
 details.terminal-tool .terminal-tool-scroll::-webkit-scrollbar-track {
     background: transparent;
+}
+/* 工具调用详情卡片（子任务/等待子任务等）滚动条：结构属性在浅色文件统一定义，
+   深色只在 theme-dark.css 覆盖颜色（规范见 docs/specifications/scrollbar_specification.md） */
+.od-inline-toolcall-container details [class*='overflow-y-auto']::-webkit-scrollbar,
+#taskview-chat-history details [class*='overflow-y-auto']::-webkit-scrollbar {
+    /* 纵向 width、横向 height 都要给，只设 width 时横向滚动条会退回系统默认粗细（约 15px） */
+    width: 4px;
+    height: 4px;
+}
+.od-inline-toolcall-container details [class*='overflow-y-auto']::-webkit-scrollbar-thumb,
+#taskview-chat-history details [class*='overflow-y-auto']::-webkit-scrollbar-thumb {
+    background: #d1d5db;
+    border-radius: 2px;
+}
+.od-inline-toolcall-container details [class*='overflow-y-auto']::-webkit-scrollbar-track,
+#taskview-chat-history details [class*='overflow-y-auto']::-webkit-scrollbar-track {
+    background: transparent;
+}
+/* 命令回显行：保留多行命令的换行，同时允许超长不可断 token（如 PATH）折行，
+   否则命令块会把卡片撑出横向溢出，滚动区随之多出一条横向滚动条。 */
+details.terminal-tool .terminal-tool-command {
+    white-space: pre-wrap;
+    word-break: break-all;
+}
+/* 卡片内单行路径文本（如 node shell 的 cwd）：只需折行，不保留空白 */
+details.terminal-tool .terminal-tool-path {
+    word-break: break-all;
 }
 .terminal-shell-tag {
     display: inline-flex;

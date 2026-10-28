@@ -14,7 +14,8 @@ OpenDesk 使用 WebKit 自定义滚动条（`::-webkit-scrollbar` 伪元素）�
 
 | 属性                     | 浅色模式              | 深色模式                    |
 | ------------------------ | --------------------- | --------------------------- |
-| `width`                  | 4px                   | 4px                         |
+| `width`（纵向）          | 4px                   | 4px                         |
+| `height`（横向）         | 4px                   | 4px                         |
 | `track background`       | `transparent`         | `transparent`               |
 | `thumb background`       | `rgba(0, 0, 0, 0.12)` | `rgba(255, 255, 255, 0.18)` |
 | `thumb:hover background` | `rgba(0, 0, 0, 0.22)` | `rgba(255, 255, 255, 0.28)` |
@@ -25,7 +26,9 @@ OpenDesk 使用 WebKit 自定义滚动条（`::-webkit-scrollbar` 伪元素）�
 ```css
 /* 浅色模式 - custom.css */
 .primary-scroll::-webkit-scrollbar {
+    /* 纵向 width、横向 height 必须成对给：只写 width 时横向滚动条会退回系统默认粗细（约 15px） */
     width: 4px;
+    height: 4px;
 }
 .primary-scroll::-webkit-scrollbar-track {
     background: transparent;
@@ -59,7 +62,8 @@ html[data-theme='dark'] .primary-scroll::-webkit-scrollbar-thumb:hover {
 
 | 属性                     | 浅色模式                                    | 深色模式                    |
 | ------------------------ | ------------------------------------------- | --------------------------- |
-| `width`                  | 3–4px                                       | 3–4px                       |
+| `width`（纵向）          | 3–4px                                       | 3–4px                       |
+| `height`（横向）         | 与 `width` 相同                             | 与 `width` 相同             |
 | `track background`       | `transparent`                               | `transparent`               |
 | `thumb background`       | 实色灰（`#d1d5db` / `#e5e7eb` / `#cbd5e1`） | `rgba(255, 255, 255, 0.18)` |
 | `thumb:hover background` | —（或略深一级灰）                           | `rgba(255, 255, 255, 0.28)` |
@@ -70,7 +74,9 @@ html[data-theme='dark'] .primary-scroll::-webkit-scrollbar-thumb:hover {
 ```css
 /* 浅色模式 - custom.css */
 .compact-scroll::-webkit-scrollbar {
+    /* 纵向 width、横向 height 必须成对给：只写 width 时横向滚动条会退回系统默认粗细（约 15px） */
     width: 4px;
+    height: 4px;
 }
 .compact-scroll::-webkit-scrollbar-track {
     background: transparent;
@@ -126,6 +132,8 @@ html[data-theme='dark'] .compact-scroll::-webkit-scrollbar-thumb:hover {
 ### 要做的事
 
 - 为所有预期的滚动区域显式定义 `::-webkit-scrollbar` 样式
+- `width`（纵向）与 `height`（横向）必须成对给：只写 `width` 时横向滚动条会退回系统默认粗细（约 15px），
+  比纵向粗一大截（曾多次被反馈为「横向进度条太粗」）
 - Track 始终设为 `transparent`，保持界面干净
 - 使用 `rgba()` 而非固定颜色值，确保在不同背景下都自然融入
 - `border-radius` 设为 `width` 的一半或等于 `width`，形成圆角/圆形 thumb
@@ -133,7 +141,10 @@ html[data-theme='dark'] .compact-scroll::-webkit-scrollbar-thumb:hover {
 
 ### 不要做的事
 
-- 不要在深色模式 CSS 中重复定义 `width`、`border-radius` 等结构属性
+- 不要在深色模式 CSS 中重复定义 `width`、`height`、`border-radius` 等结构属性；
+  深色文件只覆盖颜色（历史上 `details [class*='overflow-y-auto']` 一组曾把 `width` 留在深色文件，
+  导致浅色主题下这些容器整体回退系统默认滚动条）
+- 不要只给 `width` 而漏掉 `height`（横向滚动条会明显变粗）
 - 不要使用过于鲜艳或饱和度高的 thumb 颜色
 - 不要忘记加 `!important`（深色覆盖时）
 - 不要将滚动条宽度设得过大（>8px），会破坏界面紧凑感
@@ -152,16 +163,17 @@ html[data-theme='dark'] .compact-scroll::-webkit-scrollbar-thumb:hover {
 
 ## 五、引用对照表
 
-| 组件                                 | 分级 | 宽度 | 浅色 thumb         | 深色 thumb               | 圆角 |
-| ------------------------------------ | ---- | ---- | ------------------ | ------------------------ | ---- |
-| `#task-list-container`（侧边栏）     | 一级 | 4px  | `rgba(0,0,0,0.12)` | `rgba(255,255,255,0.18)` | 4px  |
-| `#taskview-chat-history`（TaskView） | 一级 | 6px  | 浏览器默认         | `rgba(255,255,255,0.18)` | 3px  |
-| `.skill-panel-list`                  | 二级 | 4px  | `#e5e7eb`          | `rgba(255,255,255,0.18)` | 2px  |
-| `.subtask-group-scroll`              | 二级 | 3px  | `#e5e7eb`          | `rgba(255,255,255,0.18)` | 2px  |
-| `.sb-app-popover-visible`            | 二级 | 4px  | `#d1d5db`          | —                        | 2px  |
-| `.code-block-body`                   | 二级 | 4px  | `#d1d5db`          | `rgba(255,255,255,0.18)` | 2px  |
-| `.compact-scroll`（可复用工具类）    | 二级 | 4px  | `#d1d5db`          | `rgba(255,255,255,0.18)` | 2px  |
-| `.od-sp-scroll`（设置面板系列弹窗）  | 二级 | 4px  | `#d1d5db`          | `rgba(255,255,255,0.18)` | 2px  |
-| `.pt-content`（记忆面板-画像内容区） | 一级 | 8px  | `rgba(0,0,0,0.12)` | `rgba(255,255,255,0.18)` | 8px  |
-| `.facts-body`（记忆面板-事实时间线） | 一级 | 8px  | `rgba(0,0,0,0.12)` | `rgba(255,255,255,0.18)` | 8px  |
-| `.ed-area`（记忆面板-编辑框）        | 二级 | 8px  | `#d1d5db`          | `rgba(255,255,255,0.18)` | 4px  |
+| 组件                                                                        | 分级 | 宽度 | 浅色 thumb         | 深色 thumb               | 圆角 |
+| --------------------------------------------------------------------------- | ---- | ---- | ------------------ | ------------------------ | ---- |
+| `#task-list-container`（侧边栏）                                            | 一级 | 4px  | `rgba(0,0,0,0.12)` | `rgba(255,255,255,0.18)` | 4px  |
+| `#taskview-chat-history`（TaskView）                                        | 一级 | 6px  | 浏览器默认         | `rgba(255,255,255,0.18)` | 3px  |
+| `.skill-panel-list`                                                         | 二级 | 4px  | `#e5e7eb`          | `rgba(255,255,255,0.18)` | 2px  |
+| `.subtask-group-scroll`                                                     | 二级 | 3px  | `#e5e7eb`          | `rgba(255,255,255,0.18)` | 2px  |
+| `.sb-app-popover-visible`                                                   | 二级 | 4px  | `#d1d5db`          | —                        | 2px  |
+| `.code-block-body`                                                          | 二级 | 4px  | `#d1d5db`          | `rgba(255,255,255,0.18)` | 2px  |
+| `.compact-scroll`（可复用工具类）                                           | 二级 | 4px  | `#d1d5db`          | `rgba(255,255,255,0.18)` | 2px  |
+| `.od-sp-scroll`（设置面板系列弹窗）                                         | 二级 | 4px  | `#d1d5db`          | `rgba(255,255,255,0.18)` | 2px  |
+| `.pt-content`（记忆面板-画像内容区）                                        | 一级 | 8px  | `rgba(0,0,0,0.12)` | `rgba(255,255,255,0.18)` | 8px  |
+| `.facts-body`（记忆面板-事实时间线）                                        | 一级 | 8px  | `rgba(0,0,0,0.12)` | `rgba(255,255,255,0.18)` | 8px  |
+| `.ed-area`（记忆面板-编辑框）                                               | 二级 | 8px  | `#d1d5db`          | `rgba(255,255,255,0.18)` | 4px  |
+| `details [class*='overflow-y-auto']`（工具调用详情卡片，如子任务/终端卡片） | 二级 | 4px  | `#d1d5db`          | `rgba(255,255,255,0.18)` | 2px  |

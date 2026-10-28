@@ -1,5 +1,6 @@
 import { describe, expect, it } from '@jest/globals';
 import fs from 'fs';
+import { ruleBody } from './cssRules.js';
 
 /**
  * 二级（Compact）滚动条复用样式：规范见 docs/specifications/scrollbar_specification.md。
@@ -19,13 +20,6 @@ const channelSettingsSrc = fs.readFileSync(
     new URL('../../../renderer/components/channelSettings.js', import.meta.url),
     'utf8'
 );
-
-function ruleBody(css: string, selector: string): string {
-    const escaped = selector.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-    const match = css.match(new RegExp(`${escaped}[^{]*\\{([^}]*)\\}`));
-    expect(match).not.toBeNull();
-    return match![1];
-}
 
 describe('二级 Compact 滚动条复用样式', () => {
     it('浅色：compact-scroll 基础规格为 4px 宽、透明轨道', () => {

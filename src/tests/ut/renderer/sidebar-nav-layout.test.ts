@@ -1,5 +1,6 @@
 import { describe, expect, it } from '@jest/globals';
 import fs from 'fs';
+import { declaration, ruleBody } from './cssRules.js';
 
 /**
  * 侧边栏两处布局约束：
@@ -10,28 +11,14 @@ import fs from 'fs';
 const CSS_URL = new URL('../../../renderer/styles/custom.css', import.meta.url);
 const css = fs.readFileSync(CSS_URL, 'utf8');
 
-/** 提取扁平规则的选择器声明体（不含嵌套块），并去掉注释避免干扰声明解析。 */
-function ruleBody(selector: string): string {
-    const escaped = selector.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-    const match = css.match(new RegExp(`(?:^|\\n)${escaped}\\s*\\{([^}]*)\\}`));
-    expect(match).not.toBeNull();
-    return match![1].replace(/\/\*[\s\S]*?\*\//g, '');
-}
-
-/** 声明值（去掉 !important 与空白）。 */
-function declaration(body: string, property: string): string | undefined {
-    const value = body.match(new RegExp(`(?:^|;)\\s*${property}:\\s*([^;]+)`))?.[1];
-    return value?.replace(/\s*!important\s*$/, '').trim();
-}
-
 describe('侧边栏导航按钮窄态', () => {
     it('导航行以自身宽度作为容器查询上下文', () => {
-        const body = ruleBody('.sb-nav-row');
+        const body = ruleBody(css, '.sb-nav-row');
         expect(declaration(body, 'container')).toBe('sb-nav / inline-size');
     });
 
     it('导航按钮文案不换行', () => {
-        expect(declaration(ruleBody('.sb-nav-btn'), 'white-space')).toBe('nowrap');
+        expect(declaration(ruleBody(css, '.sb-nav-btn'), 'white-space')).toBe('nowrap');
     });
 
     it('宽度不足时收起文案只保留图标，且阈值不会误伤默认宽度', () => {
@@ -51,12 +38,12 @@ describe('侧边栏导航按钮窄态', () => {
 
 describe('任务列表标题行控件等高', () => {
     it('标题行定义统一高度变量', () => {
-        expect(declaration(ruleBody('.sb-task-list-header'), '--sb-header-control-height')).toMatch(/^\d+px$/);
+        expect(declaration(ruleBody(css, '.sb-task-list-header'), '--sb-header-control-height')).toMatch(/^\d+px$/);
     });
 
     it('收藏按钮与视图按钮使用同一高度且都按 border-box 计算', () => {
-        const fav = ruleBody('.sb-fav-toggle');
-        const summary = ruleBody('.sb-view-menu > summary');
+        const fav = ruleBody(css, '.sb-fav-toggle');
+        const summary = ruleBody(css, '.sb-view-menu > summary');
 
         for (const [name, body] of [
             ['收藏按钮', fav],

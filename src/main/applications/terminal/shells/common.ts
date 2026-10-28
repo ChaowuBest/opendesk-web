@@ -134,27 +134,19 @@ export function renderTerminalToolCall(cmdName: string, toolcall: ToolCall, sand
     const iconColor = isError ? 'text-red-400' : 'text-gray-400';
     const headerTextColor = isError ? 'text-red-600' : 'text-gray-600';
 
-    let bodyContent: string;
-    if (isRunning) {
-        bodyContent = `
-            <div class="px-4 py-2.5 font-mono text-[12px] text-gray-700 leading-relaxed">
-                <span class="text-gray-400 select-none">$ </span>${escapeHtml(command)}
-            </div>`;
-    } else {
-        bodyContent = `
-            <div class="px-4 py-2.5 font-mono text-[12px] text-gray-700 leading-relaxed">
-                <span class="text-gray-400 select-none">$ </span>${escapeHtml(command)}
-            </div>`;
-        if (toolcall.result) {
-            const outputColor = isError ? 'text-red-600' : 'text-gray-600';
-            // 终端输出以纯文本展示：剥离 ANSI 颜色控制序列后仅做 HTML 转义，
-            // 避免终端配色与前端主题背景冲突导致的可读性问题（用户要求）。
-            const cleanOutput = escapeHtml(stripAnsi(toolcall.result));
-            bodyContent += `
+    // 命令回显行：.terminal-tool-command 保留多行命令的换行并允许长 token 折行（如超长 PATH），
+    // 否则命令块会把卡片撑出横向溢出，让滚动区出现横向滚动条。
+    // 标签与命令之间不能留模板缩进空白——pre-wrap 会把它们原样渲染成前导空格。
+    let bodyContent = `<div class="terminal-tool-command px-4 py-2.5 font-mono text-[12px] text-gray-700 leading-relaxed"><span class="text-gray-400 select-none">$ </span>${escapeHtml(command)}</div>`;
+    if (!isRunning && toolcall.result) {
+        const outputColor = isError ? 'text-red-600' : 'text-gray-600';
+        // 终端输出以纯文本展示：剥离 ANSI 颜色控制序列后仅做 HTML 转义，
+        // 避免终端配色与前端主题背景冲突导致的可读性问题（用户要求）。
+        const cleanOutput = escapeHtml(stripAnsi(toolcall.result));
+        bodyContent += `
             <div class="px-4 py-2.5 border-t border-gray-100">
                 <pre class="terminal-tool-output ${outputColor}">${cleanOutput}</pre>
             </div>`;
-        }
     }
 
     return `
