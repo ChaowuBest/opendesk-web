@@ -9,16 +9,28 @@
  * See the Mulan PSL v2 for more details.
  */
 
-import { ipcMain, session } from 'electron';
+import { app, ipcMain, session } from 'electron';
 import type { BrowserWindow, WebPreferences, WebContents } from 'electron';
 import path from 'node:path';
 import { randomUUID } from 'node:crypto';
-import { existsSync, statSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, renameSync, statSync, unlinkSync, writeFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import { createTrustedRendererUrlMatcher } from '@bitclub.ai/opendesk-office/host-security';
+import { presentationRevisionFromBytes } from '@bitclub.ai/opendesk-office/presentation-automation';
 import { OfficeTaskSessionRegistry, type OfficeTaskSessionKind } from './officeTaskSessions.js';
 import { t } from '../../locale/index.js';
 import { safeSendToWebContents } from '../utils/electron-ipc.js';
+import {
+    PresentationProgramRepository,
+    type PresentationProgramRecordContext
+} from '../applications/slides/programRepository.js';
+import type { PresentationProgramExecution, PresentationProgramInput } from '../applications/slides/provider.js';
+import {
+    runPresentationProgramWithDeadline,
+    type PresentationProgramStageEvent,
+    type PresentationProgramTimeoutOutcome
+} from './presentationProgramExecution.js';
+import { reviewPresentationContent, type PresentationContentReview } from './presentationContentReview.js';
 import { isOpenDeskOfficePartition, OPENDESK_OFFICE_PARTITION } from '../../common/officeWebview.js';
 
 export type OpenDeskOfficeEditorKind = OfficeTaskSessionKind;
@@ -29,25 +41,47 @@ interface OpenDeskOfficeHost {
     register(): void;
     attachWindow(window: BrowserWindow): void;
     activateContents(contents: WebContents): void;
-    getCapabilities?(): readonly SlidesCapabilityDefinition[];
-    executeCapability?(
+    runPresentationProgram?(
         contents: WebContents,
-        call: { name: string; input: Record<string, unknown> }
-    ): Promise<SlidesCapabilityExecution>;
+        request: Omit<PresentationProgramInput, 'assets'> & {
+            assets?: Record<string, { bytes: Uint8Array; ext: string }>;
+        },
+        control?: PresentationProgramExecutionControl
+    ): Promise<OfficePresentationProgramResult>;
+    runHeadlessPresentationProgram?(
+        request: {
+            program: string;
+            startFrom: 'current' | 'blank';
+            currentBytes?: Uint8Array;
+            currentRevision?: string;
+            expectedRevision?: string;
+            assets?: Record<string, { bytes: Uint8Array; ext: string }>;
+        },
+        control?: PresentationProgramExecutionControl
+    ): Promise<OfficePresentationProgramResult>;
     requestCloseAll(): Promise<boolean>;
+    getPresentationSnapshot?(contents: WebContents): Promise<{
+        bytes: Uint8Array;
+        revision: string;
+        path: string;
+    }>;
 }
 
-export interface SlidesCapabilityDefinition {
-    name: string;
-    description: string;
-    inputSchema: Record<string, unknown>;
+interface PresentationProgramExecutionControl {
+    signal?: AbortSignal;
+    onProgress?: (event: { stage: string; at: string }) => void;
 }
 
-export interface SlidesCapabilityExecution {
-    output: string;
-    isError?: boolean;
-    mutated?: boolean;
-    summary: string;
+interface OfficePresentationProgramResult {
+    apiVersion: string;
+    ok: boolean;
+    bytes?: Uint8Array;
+    value?: unknown;
+    revision?: { before?: string; after?: string; current?: string; expected?: string };
+    diff?: unknown;
+    validation?: unknown;
+    contentReview?: PresentationContentReview;
+    error?: unknown;
 }
 
 interface OfficeEditorDefinition {
@@ -141,6 +175,33 @@ const officeTaskSessions = new OfficeTaskSessionRegistry<WebContents>();
 const OPEN_OFFICE_TASK_FILE_CHANNEL = 'office-host:open-task-file';
 const OPEN_OFFICE_TASK_FILE_RESULT_CHANNEL = 'office-host:open-task-file-result';
 const OPEN_OFFICE_TASK_TIMEOUT_MS = 30_000;
+const DEFAULT_PRESENTATION_PROGRAM_TIMEOUT_MS = 180_000;
+const MIN_PRESENTATION_PROGRAM_TIMEOUT_MS = 30_000;
+const MAX_PRESENTATION_PROGRAM_TIMEOUT_MS = 30 * 60_000;
+
+function presentationProgramTimeoutMs(): number {
+    const configured = Number(process.env['OPENDESK_PRESENTATION_PROGRAM_TIMEOUT_MS']);
+    if (!Number.isFinite(configured)) return DEFAULT_PRESENTATION_PROGRAM_TIMEOUT_MS;
+    return Math.min(MAX_PRESENTATION_PROGRAM_TIMEOUT_MS, Math.max(MIN_PRESENTATION_PROGRAM_TIMEOUT_MS, configured));
+}
+
+function logPresentationProgramStage(event: PresentationProgramStageEvent): void {
+    const message = JSON.stringify({ event: 'presentation-program-stage', ...event });
+    if (event.stage === 'timed-out') console.warn(message);
+    else console.info(message);
+}
+
+function presentationProgramTimeoutResult(
+    outcome: PresentationProgramTimeoutOutcome,
+    currentRevision?: string
+): OfficePresentationProgramResult {
+    return {
+        apiVersion: 'presentation/v1',
+        ok: false,
+        error: outcome.error,
+        revision: { current: currentRevision ?? 'presentation/v1:timeout' }
+    };
+}
 type OfficeTaskFileRendererResult = 'not_opened' | 'failed';
 
 export interface OfficeTaskFileOpenResult {
@@ -150,6 +211,172 @@ export interface OfficeTaskFileOpenResult {
 }
 
 const pendingOfficeTaskFileResults = new Map<string, (status: OfficeTaskFileRendererResult) => void>();
+let presentationProgramRepository: PresentationProgramRepository | undefined;
+
+function getPresentationProgramRepository(): PresentationProgramRepository {
+    presentationProgramRepository ??= new PresentationProgramRepository(
+        path.join(app.getPath('userData'), 'presentation-automation')
+    );
+    return presentationProgramRepository;
+}
+
+const PRESENTATION_IMAGE_EXTENSIONS = new Set(['png', 'jpg', 'jpeg', 'gif', 'bmp', 'webp', 'tif', 'tiff']);
+
+function safePresentationName(value: string): string {
+    const printableValue = [...value.normalize('NFKC')]
+        .map((character) => (character.charCodeAt(0) < 32 ? ' ' : character))
+        .join('');
+    const normalized = printableValue
+        .replace(/[<>:"/\\|?*]/g, ' ')
+        .replace(/\s+/g, ' ')
+        .trim()
+        .replace(/[. ]+$/g, '');
+    return (normalized || 'presentation').slice(0, 80);
+}
+
+function defaultPresentationOutputPath(workspace: string | undefined, suggestedName: string | undefined): string {
+    const directory = path.resolve(workspace || process.cwd());
+    const baseName = safePresentationName(suggestedName || 'presentation');
+    const initial = path.join(directory, `${baseName}.pptx`);
+    if (!existsSync(initial)) return initial;
+    for (let suffix = 2; suffix < 10_000; suffix += 1) {
+        const candidate = path.join(directory, `${baseName}-${suffix}.pptx`);
+        if (!existsSync(candidate)) return candidate;
+    }
+    return path.join(directory, `${baseName}-${randomUUID()}.pptx`);
+}
+
+function loadPresentationAssets(assets: Record<string, string> | undefined): {
+    officeAssets: Record<string, { bytes: Uint8Array; ext: string }>;
+    recordAssets: Record<string, { sourcePath: string; bytes: Uint8Array; ext: string }>;
+} {
+    const officeAssets: Record<string, { bytes: Uint8Array; ext: string }> = {};
+    const recordAssets: Record<string, { sourcePath: string; bytes: Uint8Array; ext: string }> = {};
+    for (const [id, sourcePath] of Object.entries(assets ?? {})) {
+        const ext = path.extname(sourcePath).slice(1).toLowerCase();
+        if (!PRESENTATION_IMAGE_EXTENSIONS.has(ext)) {
+            throw new Error(`Unsupported presentation image asset: ${sourcePath}`);
+        }
+        const bytes = new Uint8Array(readFileSync(sourcePath));
+        officeAssets[id] = { bytes, ext };
+        recordAssets[id] = { sourcePath, bytes, ext };
+    }
+    return { officeAssets, recordAssets };
+}
+
+function loadPresentationProgramSource(input: PresentationProgramInput): string {
+    if (Boolean(input.program) === Boolean(input.programPath)) {
+        throw new Error('Exactly one of program or programPath is required');
+    }
+    if (input.program) return input.program;
+    const sourcePath = path.resolve(input.programPath!);
+    let isFile = false;
+    try {
+        isFile = statSync(sourcePath).isFile();
+    } catch {
+        isFile = false;
+    }
+    if (!isFile) throw new Error(`Presentation generator source does not exist: ${sourcePath}`);
+    const program = readFileSync(sourcePath, 'utf8');
+    if (!program.trim()) throw new Error('Presentation generator source must not be empty');
+    if (program.length > 200_000) throw new Error('Presentation generator source exceeds 200000 characters');
+    return program;
+}
+
+function publicProgramExecution(
+    result: OfficePresentationProgramResult,
+    context: PresentationProgramRecordContext,
+    input: PresentationProgramInput,
+    outputPath: string,
+    committed: boolean
+): PresentationProgramExecution {
+    return {
+        apiVersion: result.apiVersion,
+        ok: result.ok,
+        committed,
+        programId: context.programId,
+        outputPath,
+        provenance: {
+            baselineAvailable: context.baselineAvailable,
+            priorRunCount: context.priorRunCount,
+            mode: input.startFrom === 'blank' ? 'generator' : 'incremental',
+            sourcePath: context.sourcePath,
+            sourceRevision: context.sourceRevision
+        },
+        ...(!result.ok && input.startFrom === 'blank'
+            ? {
+                  recovery: {
+                      strategy: 'edit-generator-source' as const,
+                      sourcePath: context.sourcePath,
+                      sourceRevision: context.sourceRevision,
+                      preserveCompleteProgram: true as const,
+                      rerun: {
+                          programPath: context.sourcePath,
+                          startFrom: 'blank' as const
+                      }
+                  }
+              }
+            : {}),
+        ...(result.revision ? { revision: result.revision } : {}),
+        ...(result.diff ? { diff: result.diff } : {}),
+        ...(result.validation ? { validation: result.validation } : {}),
+        ...(result.contentReview ? { contentReview: result.contentReview } : {}),
+        acceptance: {
+            passed:
+                result.ok &&
+                (result.validation as { summary?: { qualityPassed?: boolean } } | undefined)?.summary?.qualityPassed ===
+                    true &&
+                result.contentReview?.passed === true,
+            structuralPassed:
+                (result.validation as { summary?: { qualityPassed?: boolean } } | undefined)?.summary?.qualityPassed ===
+                true,
+            contentPassed: result.contentReview?.passed === true
+        },
+        ...(result.value !== undefined ? { value: result.value } : {}),
+        ...(result.error ? { error: result.error } : {})
+    };
+}
+
+function atomicWritePresentation(outputPath: string, bytes: Uint8Array): void {
+    mkdirSync(path.dirname(outputPath), { recursive: true });
+    const temporaryPath = path.join(
+        path.dirname(outputPath),
+        `.${path.basename(outputPath)}.${randomUUID()}.opendesk-tmp`
+    );
+    try {
+        writeFileSync(temporaryPath, bytes);
+        renameSync(temporaryPath, outputPath);
+    } finally {
+        if (existsSync(temporaryPath)) unlinkSync(temporaryPath);
+    }
+}
+
+function presentationDiffHasChanges(diff: unknown): boolean {
+    if (!diff || typeof diff !== 'object') return true;
+    const value = diff as {
+        deckChanges?: unknown[];
+        slidesAdded?: unknown[];
+        slidesRemoved?: unknown[];
+        slideChanges?: unknown[];
+        elementChanges?: unknown[];
+    };
+    return [
+        value.deckChanges ?? [],
+        value.slidesAdded,
+        value.slidesRemoved,
+        value.slideChanges,
+        value.elementChanges
+    ].some((changes) => !Array.isArray(changes) || changes.length > 0);
+}
+
+const PRESENTATION_REVISION_DIGEST = /^(?:presentation\/v1:)?([0-9a-f]{64})$/i;
+
+function normalizePresentationRevision(revision: string | undefined): string | undefined {
+    const value = revision?.trim();
+    if (!value) return undefined;
+    const digest = PRESENTATION_REVISION_DIGEST.exec(value)?.[1];
+    return digest ? `presentation/v1:${digest.toLowerCase()}` : value;
+}
 
 function getEditorRuntime(kind: OpenDeskOfficeEditorKind): OfficeEditorRuntime {
     const runtime = editorRuntimes.find((candidate) => candidate.kind === kind);
@@ -249,11 +476,6 @@ export function registerEmbeddedOpenDeskOffice(): void {
     );
 }
 
-export async function getOpenDeskSlidesCapabilities(): Promise<readonly SlidesCapabilityDefinition[]> {
-    const host = await loadEditorHost(getEditorRuntime('slides'));
-    return host.getCapabilities?.() ?? [];
-}
-
 export async function openOpenDeskOfficeTaskFile(
     kind: OpenDeskOfficeEditorKind,
     taskId: string,
@@ -330,16 +552,253 @@ export async function openOpenDeskSlidesPresentation(
     return await openOpenDeskOfficeTaskFile('slides', taskId, filePath);
 }
 
-export async function executeOpenDeskSlidesCapability(
-    taskId: string,
-    name: string,
-    input: Record<string, unknown>
-): Promise<SlidesCapabilityExecution> {
-    const session = officeTaskSessions.get('slides', taskId);
-    if (!session) throw new Error(t('office.slides.error.noTaskSession'));
+export async function isOpenDeskPresentationProgramAvailable(): Promise<boolean> {
     const host = await loadEditorHost(getEditorRuntime('slides'));
-    if (!host.executeCapability) throw new Error(t('office.slides.error.capabilityUnavailable'));
-    return await host.executeCapability(session.contents, { name, input });
+    return Boolean(host.runPresentationProgram && host.runHeadlessPresentationProgram && host.getPresentationSnapshot);
+}
+
+export async function runOpenDeskPresentationProgram(
+    taskId: string,
+    input: PresentationProgramInput
+): Promise<PresentationProgramExecution> {
+    const program = loadPresentationProgramSource(input);
+    const expectedRevision = normalizePresentationRevision(input.expectedRevision);
+    const session = officeTaskSessions.get('slides', taskId);
+    const repository = getPresentationProgramRepository();
+    const sourcePath = repository.getSourcePath(taskId, input.workspace);
+    const requestedOutputPath = input.outputPath ? path.resolve(input.outputPath) : undefined;
+    const projectOutputPath = repository.getOutputPath(taskId);
+    const automaticOutputPath =
+        !session && !requestedOutputPath
+            ? (projectOutputPath ?? defaultPresentationOutputPath(input.workspace, input.suggestedName))
+            : undefined;
+    const resolvedOutputPath = requestedOutputPath ?? automaticOutputPath;
+    const useLiveSession = !!session && (!resolvedOutputPath || resolvedOutputPath === path.resolve(session.filePath));
+
+    const outputPath = resolvedOutputPath ?? session?.filePath;
+    if (outputPath && path.extname(outputPath).toLowerCase() !== '.pptx') {
+        throw new Error(t('office.slides.error.invalidOutputPath'));
+    }
+
+    if (input.startFrom === 'auto' && !useLiveSession && (!resolvedOutputPath || !existsSync(resolvedOutputPath))) {
+        throw new Error(t('office.slides.error.startRequired'));
+    }
+    const effectiveStartFrom: 'current' | 'blank' = input.startFrom === 'auto' ? 'current' : input.startFrom;
+    const effectiveInput: PresentationProgramInput & { program: string } = {
+        ...input,
+        program,
+        programPath: sourcePath,
+        startFrom: effectiveStartFrom
+    };
+    if (expectedRevision) effectiveInput.expectedRevision = expectedRevision;
+    else delete effectiveInput.expectedRevision;
+    const recoveredAssets = input.programPath ? repository.getAssetPaths(taskId, input.programPath) : {};
+    const { officeAssets, recordAssets } = loadPresentationAssets({ ...recoveredAssets, ...input.assets });
+    const expectedSlideCount =
+        input.expectedSlideCount ??
+        (input.programPath ? repository.getExpectedSlideCount(taskId, input.programPath) : undefined);
+    const reviewResult = async (
+        result: OfficePresentationProgramResult,
+        bytes?: Uint8Array
+    ): Promise<OfficePresentationProgramResult> => {
+        if (!result.ok) return result;
+        try {
+            if (bytes) {
+                const contentReview = await reviewPresentationContent(bytes, expectedSlideCount);
+                if (effectiveStartFrom === 'blank' && expectedSlideCount === undefined) {
+                    contentReview.passed = false;
+                    contentReview.findings.push({ code: 'EXPECTED_SLIDE_COUNT_REQUIRED' });
+                }
+                return { ...result, contentReview };
+            }
+        } catch (error) {
+            console.warn('Presentation content review failed', error);
+        }
+        // The write may already be committed. Preserve execution status while withholding acceptance.
+        return {
+            ...result,
+            contentReview: {
+                passed: false,
+                complete: false,
+                expectedSlideCount,
+                slides: [],
+                findings: [{ code: 'CONTENT_REVIEW_UNAVAILABLE' }]
+            }
+        };
+    };
+
+    if (useLiveSession && session) {
+        const host = await loadEditorHost(getEditorRuntime('slides'));
+        if (!host.runPresentationProgram || !host.getPresentationSnapshot) {
+            throw new Error(t('office.slides.error.programUnavailable'));
+        }
+        const snapshot = await host.getPresentationSnapshot(session.contents);
+        const outputPath = path.resolve(requestedOutputPath ?? session.filePath);
+        const recorded = await repository.recordRun(
+            {
+                taskId,
+                outputPath,
+                program,
+                sourcePath,
+                startFrom: effectiveStartFrom,
+                expectedRevision,
+                beforeBytes: snapshot.bytes,
+                expectedSlideCount,
+                assets: recordAssets
+            },
+            async (context) => {
+                const outcome = await runPresentationProgramWithDeadline(
+                    async ({ signal, reportStage }) =>
+                        await host.runPresentationProgram!(
+                            session.contents,
+                            {
+                                ...effectiveInput,
+                                outputPath,
+                                expectedRevision: expectedRevision ?? snapshot.revision,
+                                assets: officeAssets
+                            },
+                            {
+                                signal,
+                                onProgress: (event) => reportStage(event.stage)
+                            }
+                        ),
+                    {
+                        operationId: `${taskId}:${context.programId}`,
+                        timeoutMs: presentationProgramTimeoutMs(),
+                        onStage: (event) => context.reportStage(event.stage),
+                        log: logPresentationProgramStage
+                    }
+                );
+                if (outcome.ok === false) return presentationProgramTimeoutResult(outcome, snapshot.revision);
+                const result = outcome.value;
+                let outputBytes = result.bytes;
+                if (result.ok && !outputBytes) {
+                    try {
+                        outputBytes = (await host.getPresentationSnapshot!(session.contents)).bytes;
+                    } catch (error) {
+                        console.warn('Presentation output snapshot unavailable', error);
+                    }
+                }
+                return await reviewResult(result, outputBytes);
+            }
+        );
+        return publicProgramExecution(
+            recorded.result,
+            recorded.context,
+            effectiveInput,
+            outputPath,
+            recorded.result.ok && presentationDiffHasChanges(recorded.result.diff)
+        );
+    }
+
+    if (!resolvedOutputPath) throw new Error(t('office.slides.error.outputPathRequired'));
+    const outputExisted = existsSync(resolvedOutputPath);
+    const beforeBytes = outputExisted ? new Uint8Array(readFileSync(resolvedOutputPath)) : undefined;
+    if (effectiveStartFrom === 'current' && !beforeBytes) {
+        throw new Error(t('office.slides.error.currentFileMissing'));
+    }
+    const revisionBefore = beforeBytes ? await presentationRevisionFromBytes(beforeBytes) : undefined;
+    const recorded = await repository.recordRun(
+        {
+            taskId,
+            outputPath: resolvedOutputPath,
+            program,
+            sourcePath,
+            startFrom: effectiveStartFrom,
+            expectedRevision,
+            ...(beforeBytes ? { beforeBytes } : {}),
+            expectedSlideCount,
+            assets: recordAssets
+        },
+        async (context) => {
+            const host = await loadEditorHost(getEditorRuntime('slides'));
+            if (!host.runHeadlessPresentationProgram) {
+                throw new Error(t('office.slides.error.programUnavailable'));
+            }
+            const outcome = await runPresentationProgramWithDeadline(
+                async ({ signal, reportStage }): Promise<OfficePresentationProgramResult> => {
+                    const result = await host.runHeadlessPresentationProgram!(
+                        {
+                            program,
+                            startFrom: effectiveStartFrom,
+                            ...(beforeBytes && effectiveStartFrom === 'current' ? { currentBytes: beforeBytes } : {}),
+                            ...(revisionBefore ? { currentRevision: revisionBefore } : {}),
+                            ...(expectedRevision ? { expectedRevision } : {}),
+                            assets: officeAssets
+                        },
+                        {
+                            signal,
+                            onProgress: (event) => reportStage(event.stage)
+                        }
+                    );
+                    if (!result.ok || !result.bytes) return result;
+                    reportStage('validating-output-revision');
+                    if (signal.aborted) throw signal.reason;
+                    if (!presentationDiffHasChanges(result.diff)) {
+                        return {
+                            ...result,
+                            revision: {
+                                before: revisionBefore ?? result.revision?.before,
+                                after: revisionBefore ?? result.revision?.before
+                            }
+                        };
+                    }
+
+                    const stillExists = existsSync(resolvedOutputPath);
+                    const currentRevision = stillExists
+                        ? await presentationRevisionFromBytes(new Uint8Array(readFileSync(resolvedOutputPath)))
+                        : undefined;
+                    if (stillExists !== outputExisted || currentRevision !== revisionBefore) {
+                        return {
+                            apiVersion: result.apiVersion,
+                            ok: false,
+                            error: {
+                                code: 'REVISION_CONFLICT',
+                                message: 'The presentation changed before the program could be committed'
+                            },
+                            revision: {
+                                current: currentRevision ?? 'presentation/v1:missing',
+                                expected: revisionBefore ?? 'presentation/v1:missing'
+                            }
+                        };
+                    }
+                    if (signal.aborted) throw signal.reason;
+                    reportStage('committing-output');
+                    atomicWritePresentation(resolvedOutputPath, result.bytes);
+                    return result;
+                },
+                {
+                    operationId: `${taskId}:${context.programId}`,
+                    timeoutMs: presentationProgramTimeoutMs(),
+                    onStage: (event) => context.reportStage(event.stage),
+                    log: logPresentationProgramStage
+                }
+            );
+            if (outcome.ok === false) return presentationProgramTimeoutResult(outcome, revisionBefore);
+            const result = outcome.value;
+            if (!result.ok || !result.bytes) return result;
+            return await reviewResult(result, result.bytes);
+        }
+    );
+    const committed = recorded.result.ok && presentationDiffHasChanges(recorded.result.diff);
+    const execution = publicProgramExecution(
+        recorded.result,
+        recorded.context,
+        effectiveInput,
+        resolvedOutputPath,
+        committed
+    );
+    if (!committed || !automaticOutputPath) return execution;
+    try {
+        execution.open = await openOpenDeskOfficeTaskFile('slides', taskId, resolvedOutputPath);
+    } catch (error) {
+        execution.open = {
+            status: 'not_opened',
+            filePath: resolvedOutputPath,
+            message: error instanceof Error ? error.message : String(error)
+        };
+    }
+    return execution;
 }
 
 export function attachOpenDeskOfficeWindow(window: BrowserWindow): void {

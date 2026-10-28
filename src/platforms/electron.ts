@@ -37,9 +37,9 @@ import path from 'path';
 import { SlidesApplication } from '../main/applications/slides/app.js';
 import { configureSlidesCapabilityProvider } from '../main/applications/slides/provider.js';
 import {
-    executeOpenDeskSlidesCapability,
-    getOpenDeskSlidesCapabilities,
-    openOpenDeskSlidesPresentation
+    isOpenDeskPresentationProgramAvailable,
+    openOpenDeskSlidesPresentation,
+    runOpenDeskPresentationProgram
 } from '../main/office/openDeskOfficeHost.js';
 
 interface ElectronFetchSessionOptions {
@@ -167,9 +167,9 @@ export class ElectronPlatform extends WorkerPlatform {
         super();
         this.electronApp = electronApp;
         configureSlidesCapabilityProvider({
-            getCapabilities: getOpenDeskSlidesCapabilities,
             openPresentation: openOpenDeskSlidesPresentation,
-            execute: executeOpenDeskSlidesCapability
+            isProgramAvailable: isOpenDeskPresentationProgramAvailable,
+            executeProgram: runOpenDeskPresentationProgram
         });
     }
 

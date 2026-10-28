@@ -9,239 +9,277 @@
  * See the Mulan PSL v2 for more details.
  */
 
+import path from 'node:path';
+import { z } from 'zod';
+import {
+    PRESENTATION_AUTOMATION_CORE_GUIDE,
+    PRESENTATION_CAPABILITY_TOPICS,
+    getPresentationAutomationCapabilities
+} from '@bitclub.ai/opendesk-office/presentation-automation';
 import { Skill } from '../../aikernel/skill.js';
 import { BaseTool, BaseToolset } from '../../aikernel/tool.js';
-import { z } from 'zod';
-import { t } from './locale/index.js';
+import type { PermissionRequest } from '../../aikernel/security/permission.js';
+import type { TaskState } from '../../aikernel/states/tasks.js';
 import type {
-    SlidesCapabilityDefinition,
-    SlidesCapabilityExecution,
+    PresentationProgramExecution,
+    PresentationProgramInput,
     SlidesPresentationOpenResult
 } from './provider.js';
+import { t } from './locale/index.js';
 
-export type { SlidesCapabilityDefinition } from './provider.js';
-
-export type SlidesCapabilityExecutor = (
+export type PresentationProgramExecutor = (
     taskId: string,
-    name: string,
-    input: Record<string, unknown>
-) => Promise<SlidesCapabilityExecution>;
+    input: PresentationProgramInput
+) => Promise<PresentationProgramExecution>;
 
 export type SlidesPresentationOpener = (taskId: string, filePath: string) => Promise<SlidesPresentationOpenResult>;
 
-const SLIDES_ACTION_CATEGORIES = ['read', 'text', 'layout', 'slide', 'insert', 'chart', 'table'] as const;
-type SlidesActionCategory = (typeof SLIDES_ACTION_CATEGORIES)[number];
-
-interface SlidesActionMetadata {
-    category: SlidesActionCategory;
-    summary: string;
-}
-
-interface PreparedSlidesAction extends SlidesActionMetadata {
-    definition: SlidesCapabilityDefinition;
-    validator: BaseTool<z.ZodType>;
-}
-
-const SLIDES_ACTION_METADATA: Record<string, SlidesActionMetadata> = {
-    get_deck_context: { category: 'read', summary: '读取整份演示文稿概览' },
-    read_slide: { category: 'read', summary: '读取指定页面及元素详情' },
-    set_element_text: { category: 'text', summary: '替换元素文本' },
-    set_element_style: { category: 'text', summary: '修改元素文字样式' },
-    set_element_transform: { category: 'layout', summary: '移动、缩放或旋转元素' },
-    execute_slide_script: { category: 'layout', summary: '批量执行页面布局与样式操作' },
-    set_element_fill: { category: 'layout', summary: '修改元素填充' },
-    set_element_stroke: { category: 'layout', summary: '修改元素边框' },
-    crop_image: { category: 'layout', summary: '裁剪图片' },
-    set_picture_opacity: { category: 'layout', summary: '修改图片透明度' },
-    replace_image: { category: 'layout', summary: '原位替换图片内容' },
-    delete_element: { category: 'layout', summary: '删除元素' },
-    ungroup_element: { category: 'layout', summary: '取消元素组合' },
-    delete_slide: { category: 'slide', summary: '删除页面' },
-    add_slide: { category: 'slide', summary: '新增页面' },
-    set_slide_background: { category: 'slide', summary: '修改页面背景' },
-    add_text_box: { category: 'insert', summary: '插入文本框' },
-    add_shape: { category: 'insert', summary: '插入形状' },
-    add_smartart: { category: 'insert', summary: '插入图示' },
-    add_chart: { category: 'chart', summary: '插入图表' },
-    edit_chart: { category: 'chart', summary: '修改已有图表' },
-    add_table: { category: 'table', summary: '插入表格' },
-    edit_table_cell: { category: 'table', summary: '修改表格单元格' },
-    edit_table_structure: { category: 'table', summary: '修改表格行列结构' },
-    edit_table_style: { category: 'table', summary: '修改表格样式' }
-};
-
-const ListActionsSchema = z.object({
-    category: z.enum(SLIDES_ACTION_CATEGORIES).optional().describe('固定能力类别；省略时返回全部动作')
-});
-
-const GetActionDefinitionSchema = z.object({
-    name: z.string().min(1).describe('动作目录中的精确动作名称')
-});
-
-const ExecuteActionSchema = z.object({
-    name: z.string().min(1).describe('已通过 get_action_definition 确认的精确动作名称'),
-    input: z.record(z.string(), z.unknown()).describe('严格符合该动作 inputSchema 的输入对象')
-});
+const PresentationProgramSchema = z
+    .object({
+        program: z
+            .string()
+            .min(1)
+            .max(200_000)
+            .optional()
+            .describe('首次创建时提交的完整 presentation/v1 generator 源码；工具会把它固化为同一任务的 main.mjs'),
+        programPath: z
+            .string()
+            .min(1)
+            .optional()
+            .describe('后续修正时使用工具返回的 provenance.sourcePath；编辑同一 main.mjs 后从该路径重新运行'),
+        startFrom: z
+            .enum(['auto', 'current', 'blank'])
+            .default('auto')
+            .describe(
+                '默认 auto：只复用当前或既有 PPT，不会隐式新建；新建必须显式指定 blank，已有文件应先 open_presentation'
+            ),
+        expectedRevision: z
+            .string()
+            .optional()
+            .describe(
+                '上次成功结果中的 revision.after；可传 presentation/v1:<sha256> 或纯 64 位 SHA-256，冲突时读取最新文档后更新'
+            ),
+        unsavedChanges: z
+            .enum(['save', 'discard'])
+            .optional()
+            .describe(
+                '仅在工具返回 UNSAVED_CHANGES 且用户明确决定后使用：save 保留并保存编辑器修改，discard 放弃修改并重载文件'
+            ),
+        outputPath: z
+            .string()
+            .optional()
+            .describe('可选输出 PPTX 路径；通常省略，由 OpenDesk 在当前任务中持续复用同一目标文件'),
+        expectedSlideCount: z
+            .number()
+            .int()
+            .min(1)
+            .max(1000)
+            .optional()
+            .describe('按用户需求确定的最终页数；新建时提供，后续同一 generator 重跑自动复用，用于核对是否漏页或多页'),
+        assets: z
+            .record(z.string(), z.string())
+            .optional()
+            .describe(
+                '可选图片资产映射：asset id 到文件路径。同一 programPath 重跑自动复用已归档素材；只传新增或替换的 id 即可，例如 { hero: "cover.png" }'
+            )
+    })
+    .superRefine((value, context) => {
+        if (value.program && value.startFrom === 'blank' && value.expectedSlideCount === undefined) {
+            context.addIssue({
+                code: z.ZodIssueCode.custom,
+                path: ['expectedSlideCount'],
+                message: t('error.expectedSlideCountRequired')
+            });
+        }
+        if (Boolean(value.program) === Boolean(value.programPath)) {
+            context.addIssue({
+                code: z.ZodIssueCode.custom,
+                message: 'program 与 programPath 必须且只能提供一个'
+            });
+        }
+    });
 
 const OpenPresentationSchema = z.object({
-    filePath: z.string().min(1).describe('目标 .pptx 文件的明确路径')
+    filePath: z.string().min(1).describe('任务工作区内或绝对路径的目标 .pptx 文件')
 });
 
-function toInternalToolSchema(value: unknown): unknown {
-    if (Array.isArray(value)) return value.map(toInternalToolSchema);
-    if (!value || typeof value !== 'object') return value;
+const PresentationCapabilitiesSchema = z.object({
+    topics: z
+        .array(z.enum(PRESENTATION_CAPABILITY_TOPICS))
+        .min(1)
+        .max(3)
+        .optional()
+        .describe('需要精确契约的 1-3 个主题；省略时仅返回全部主题的简短能力索引'),
+    detail: z
+        .enum(['summary', 'contract', 'examples'])
+        .default('contract')
+        .describe('summary 仅返回能力摘要；contract 返回字段、枚举与清除语义；examples 额外返回最小示例'),
+    operation: z
+        .enum(['read', 'add', 'update', 'layout', 'workflow'])
+        .optional()
+        .describe('可选操作过滤；例如修改图表时使用 update')
+});
 
-    return Object.fromEntries(
-        Object.entries(value as Record<string, unknown>).map(([key, child]) => {
-            if (key === '$ref' && typeof child === 'string') {
-                return [key, child.replace('#/definitions/', '#/$defs/')];
-            }
-            return [key === 'definitions' ? '$defs' : key, toInternalToolSchema(child)];
-        })
-    );
-}
+const PRESENTATION_GENERATION_GUIDE = `
+## 新建演示文稿工作流
 
-const EDIT_CURRENT_PRESENTATION_SKILL = `
----
-name: edit-current-presentation
-description: 打开、读取和编辑当前任务中的 PPT，包括幻灯片、文本、形状、表格、图表和布局等确定性操作
----
-
-# 编辑当前任务中的 PPT
-
-本 Skill 操作当前任务右侧编辑器中的 PPT。它不会查找其他任务或其他窗口中的文档。
-
-## 使用顺序
-
-1. 如果目标 PPT 尚未打开且已经知道明确路径，先调用 \`open_presentation\`。目标不明确时先确认，不要猜测。
-2. 从下方固定目录选择精确动作名称；可用 \`list_actions\` 按固定类别重新列举，不进行关键词或语义搜索。
-3. 调用 \`get_action_definition\` 获取该动作的完整参数 Schema。
-4. 调用 \`execute_action\` 执行；同一份文档上的多步修改应按顺序调用。
-5. 修改前后使用 \`get_deck_context\` 或 \`read_slide\` 对应动作读取并确认页面状态。
-
-工具只作用于当前 task 绑定的 PPT 编辑器会话。\`open_presentation\` 可以打开目标文件或切换当前文件；如返回 \`not_opened\`，说明用户取消或当前文件未能安全关闭，应保持现状并告知用户，不要自动重试。
+- “完整 generator”指一份持续维护的完整源码，而不是要求第一次执行就成功。首次用 \`program\` + \`startFrom: 'blank'\` 提交完整源码；工具会返回 \`provenance.sourcePath\`，后续必须编辑该同一个 \`main.mjs\`，再用 \`programPath\` + \`startFrom: 'blank'\` 重跑。
+- 创建阶段可以根据结构化错误反复修正和重跑，但源码始终包含设计常量、helper、数据和全部页面。不要第一次用 generator，随后把剩余页面或修复拆成多个 \`current\`/update 事务；这会丢失全局设计契约。
+- 只有整份演示文稿已经生成并通过本轮结构/视觉验收，或者用户明确提出对既有成品做局部编辑时，才切换到 \`current\` 增量修改。失败重试不是增量编辑。
+- \`blank\` 已含一张空白页，应从 \`deck.slide(0)\` 开始构建。基础入口是 \`const slide = deck.slide(0)\` 与 \`slide.add({ kind: 'text', ... })\`；不要猜测 \`addText\`、\`addShape\`、\`addElement\` 等不存在的方法。
+- 完整程序应先用一组简短常量固化设计契约：背景体系、主/强调/中性色、字体层级、页面边距与网格、核心组件以及图表/表格规范。这是一致性约束，不要强制所有页面使用同一背景；如果封面、正文和结尾使用不同明暗，应让它们成为有意图的章节体系。常规 16:9 汇报可参考封面 30–40pt、页标题 26–32pt、正文 16–20pt、图表标签与表格 12–16pt；除页脚/注释外避免低于 12pt，并把核心字号控制在约 4 档。
+- 在同一程序中定义并复用如 \`addPageChrome\`、\`addCard\`、\`addSectionSlide\`、\`addChartCard\` 和 \`addTableCard\` 的 helper，并将展示数据与布局逻辑分开。相同的页眉、页脚、卡片和章节样式不应逐页重新手写。通用卡片 helper 默认使用 \`rect\`；若设计明确需要圆角，将选定的固定 pt 值作为全局设计常量，并统一通过 \`cornerRadiusPt\` 传入，不使用百分比作为设计尺寸。
+- 主题与组件样式应来自集中常量或主题引用。\`deck.setTheme\` 不会覆盖元素上的显式颜色；使用显式颜色时，必须通过同一组生成常量统一管理，不要在各页散落无关色值。
+- 整体事务失败时，使用工具返回的 \`recovery\`、精确错误行列、不支持字段或 validation 修改同一源文件。不要复制整段源码到下一次工具参数，也不要用临时探测页替代契约查询。
+- 新建时根据用户需求确定最终页数并传入 \`expectedSlideCount\`，同一 generator 重跑会复用。目录必须与实际页面一一对应；示例目录也不能引用不存在的页或章节。
+- \`ok: true\` 只表示该程序成功提交，不等于成品通过。先读取 \`acceptance\` 和 \`contentReview\`：只有 \`acceptance.passed: true\` 才通过自动验收；目录越界、目录标题与目标页不符、页数与计划不一致都必须修改同一 generator 后重跑。结合 \`contentReview.slides\` 核对用户要求的章节、数据和示例内容；自动检查不证明事实正确或全稿视觉通过。再读取结构排版结果 \`validation.summary\`：\`qualityPassed: false\` 表示仍有高风险结构或文字覆盖问题，应按已排序在前的 high severity 条目修正同一 generator；medium/low 仅作针对性判断，不要机械清零所有提示。切换到增量编辑或向用户宣布完成前，还应核对计划页数与实际页数、关键章节/数据是否完整及原生图表/表格等元素 kind 是否正确；最小探针、占位页或部分页面绝不能作为初稿验收通过。
+- 如果当前会话具有可读取渲染图像的视觉能力，可软性建议渲染全稿缩略图并做一次集中视觉修正；找不到现成的渲染入口时停止探测，不为验收反复寻找 PDF 转换器或安装 Office；没有视觉能力时不得因此阻塞任务，应使用结构化 validation、目标 inspect 和最终 deck 级检查完成可验证的收尾。
 `;
 
-function prepareSlidesActions(definitions: readonly SlidesCapabilityDefinition[]): PreparedSlidesAction[] {
-    return definitions.map((definition) => {
-        const metadata = SLIDES_ACTION_METADATA[definition.name];
-        if (!metadata) throw new Error(`${t('error.actionMetadataMissing')}: ${definition.name}`);
-        const validator = BaseTool.fromJSON({
-            name: definition.name,
-            description: definition.description,
-            params: toInternalToolSchema(definition.inputSchema)
+const PRESENTATION_AUTOMATION_SKILL = `
+---
+name: automate-presentation
+description: 当用户要求创建、生成、打开、读取或编辑 PPT/PPTX、PowerPoint、幻灯片或演示文稿时优先加载；使用原生 presentation/v1 能力，不要默认改用 Python 或手工 OOXML，除非用户明确要求脚本或已同意能力不足时的降级
+---
+
+${PRESENTATION_AUTOMATION_CORE_GUIDE}
+
+${PRESENTATION_GENERATION_GUIDE}
+
+## OpenDesk execution contract
+
+- 这是 PPT/PPTX、PowerPoint 和演示文稿任务的首选能力。不要沿用历史任务中的 Python、zipfile 或手工 OOXML；只有用户明确要求脚本，或查询精确能力后确认原生契约不足并得到用户同意，才允许降级。
+- 直接工具共有三个：\`get_presentation_capabilities\` 按主题读取精确契约，\`open_presentation\` 打开或切换已有文件，\`run_presentation_program\` 读取、创建和修改。不要通过旧的 CallSkillTool 包装调用。
+- 不需要为能力索引中的每个领域都查询契约。首次使用某个能力且字段不确定时，为相关 1-3 个主题调用 \`get_presentation_capabilities\`；创建元素时优先请求 \`detail: 'examples'\`。精确入口、字段归属、枚举、清除语义和示例以工具返回为准，不要读取或再次包装之前保存的 tool-result 文件。
+- 只读查看或检查已有文件时，直接调用 \`open_presentation\`，不要为此创建副本。首次修改已有 PPT 时，除非用户明确要求直接修改或覆盖原文件，否则先用可用的文件复制能力创建一个字节级一致、名称不冲突的工作副本，再调用 \`open_presentation\` 打开该副本并进行修改；不要通过读取为文本、重新生成或重新导出 PPT 来代替文件复制。用户指定另存名称或路径时遵从其选择；无法安全复制或无法判断目标文件时，先询问用户。
+- 同一任务后续的修改继续使用已打开的工作副本和该任务返回的同一目标路径，不要再次复制，也不要切回原文件。\`open_presentation\` 本身只打开文件，不会隐式复制。编辑默认使用 \`startFrom: 'auto'\`，新建必须显式使用 \`blank\`；返回 \`not_opened\` 时保持当前文件并停止自动重试。
+- 新建演示文稿遵循上述同一 generator 源文件工作流；创建期修错继续从 blank 重跑同一文件，成品验收后的局部编辑才使用带 \`revision.after\` 的增量事务。\`UNSAVED_CHANGES\` 必须询问用户选择 save 或 discard。
+- 用户提供选中元素 id 时直接从编辑器给出的稳定 \`e_*\` 引用开始；顶层元素与任意层级的组内元素使用同一套身份。未分组复合组件使用 \`neighborhood()\`。图片文件通过工具参数 \`assets\` 声明。
+- 原生图表、表格、分组或布局失败时不得默默改成手绘替代物。先依据结构化错误和对应主题契约修正；确认能力不足时说明缺口并请求用户决定是否降级。
+- 成功修改后检查本次目标一次，全部修改完成后做一次 deck 级检查。不要创建临时探测页，也不要重复无变化的 inspect。
+- 工具结果即使 \`ok: false\` 也是正常传输；根据错误行列、支持字段、validation 和 revision 修正，不得绕过事务保护。不要安装字体、清理 Office 缓存或修改用户配置。
+`;
+
+function resolveWorkspacePath(value: string | undefined, taskState?: TaskState): string | undefined {
+    if (!value) return undefined;
+    return path.resolve(taskState?.getWorkspace() || process.cwd(), value);
+}
+
+class RunPresentationProgramTool extends BaseTool<typeof PresentationProgramSchema> {
+    constructor(executeProgram: PresentationProgramExecutor) {
+        super(
+            'run_presentation_program',
+            '创建、生成、读取或编辑 PPT/PPTX 的首选工具；首次提交完整 program，后续编辑返回的同一 main.mjs 并用 programPath 重跑',
+            PresentationProgramSchema,
+            undefined,
+            { 'zh-CN': '运行演示文稿程序', 'en-US': 'Run Presentation Program' }
+        );
+        this.serialExecution = true;
+        this.setExecutor(async (args, taskState) => {
+            const taskId = taskState?.task_id;
+            if (!taskId) throw new Error(t('error.taskContextRequired'));
+            const result = await executeProgram(taskId, {
+                ...args,
+                ...(args.programPath ? { programPath: resolveWorkspacePath(args.programPath, taskState) } : {}),
+                ...(args.outputPath ? { outputPath: resolveWorkspacePath(args.outputPath, taskState) } : {}),
+                ...(args.assets
+                    ? {
+                          assets: Object.fromEntries(
+                              Object.entries(args.assets).map(([id, assetPath]) => [
+                                  id,
+                                  resolveWorkspacePath(assetPath, taskState)!
+                              ])
+                          )
+                      }
+                    : {}),
+                workspace: taskState.getWorkspace(),
+                suggestedName: taskState.task_name || 'presentation'
+            });
+            const serialized = JSON.stringify(result, null, 2);
+            return serialized;
         });
-        return { definition, validator, ...metadata };
-    });
+    }
+
+    getDeclaredPermissions(
+        args: z.output<typeof PresentationProgramSchema>,
+        taskState?: TaskState
+    ): PermissionRequest[] {
+        const outputPath = resolveWorkspacePath(args.outputPath, taskState);
+        const programPath = resolveWorkspacePath(args.programPath, taskState);
+        return [
+            ...(programPath
+                ? [{ resourceType: 'file' as const, action: 'read' as const, resourcePath: programPath }]
+                : []),
+            ...(outputPath
+                ? [
+                      { resourceType: 'file' as const, action: 'read' as const, resourcePath: outputPath },
+                      { resourceType: 'file' as const, action: 'write' as const, resourcePath: outputPath }
+                  ]
+                : []),
+            ...Object.values(args.assets ?? {}).map((assetPath) => ({
+                resourceType: 'file' as const,
+                action: 'read' as const,
+                resourcePath: resolveWorkspacePath(assetPath, taskState)!
+            }))
+        ];
+    }
 }
 
-function buildActionCatalog(actions: readonly PreparedSlidesAction[]): string {
-    const lines = SLIDES_ACTION_CATEGORIES.flatMap((category) =>
-        actions
-            .filter((action) => action.category === category)
-            .map((action) => `- [${category}] ${action.definition.name}: ${action.summary}`)
-    );
-    return `\n\n## 可用动作目录\n\n${lines.join('\n')}\n`;
-}
+class OpenPresentationTool extends BaseTool<typeof OpenPresentationSchema> {
+    constructor(openPresentation: SlidesPresentationOpener) {
+        super(
+            'open_presentation',
+            '打开或编辑已有 PPT/PPTX、PowerPoint 和演示文稿时使用：在当前任务中安全打开或切换明确文件，并等待编辑器就绪',
+            OpenPresentationSchema,
+            undefined,
+            { 'zh-CN': '打开演示文稿', 'en-US': 'Open Presentation' }
+        );
+        this.serialExecution = true;
+        this.setExecutor(async ({ filePath }, taskState) => {
+            const taskId = taskState?.task_id;
+            if (!taskId) throw new Error(t('error.taskContextRequired'));
+            const resolvedPath = resolveWorkspacePath(filePath, taskState)!;
+            return JSON.stringify(await openPresentation(taskId, resolvedPath), null, 2);
+        });
+    }
 
-export function buildSlidesSkill(
-    definitions: readonly SlidesCapabilityDefinition[],
-    executeCapability: SlidesCapabilityExecutor,
-    openPresentation: SlidesPresentationOpener
-): Skill {
-    const actions = prepareSlidesActions(definitions);
-    const actionsByName = new Map(actions.map((action) => [action.definition.name, action]));
-    const getAction = (name: string): PreparedSlidesAction => {
-        const action = actionsByName.get(name);
-        if (!action) throw new Error(`${t('error.actionNotFound')}: ${name}`);
-        return action;
-    };
-
-    const skill = Skill.parseMd(EDIT_CURRENT_PRESENTATION_SKILL + buildActionCatalog(actions));
-    const toolset = new BaseToolset('current-presentation');
-
-    const openPresentationTool = new BaseTool(
-        'open_presentation',
-        '目标路径明确时，在当前任务中打开或切换到该 .pptx，并等待编辑器就绪',
-        OpenPresentationSchema,
-        undefined,
-        { 'zh-CN': '打开演示文稿', 'en-US': 'Open Presentation' }
-    ).setExecutor(async ({ filePath }, taskState) => {
-        const taskId = taskState?.task_id;
-        if (!taskId) throw new Error(t('error.taskContextRequired'));
-        return JSON.stringify(await openPresentation(taskId, filePath));
-    });
-    (openPresentationTool as BaseTool<typeof OpenPresentationSchema>).serialExecution = true;
-
-    const listActions = new BaseTool(
-        'list_actions',
-        '按固定类别枚举 PPT 动作；不执行关键词或语义搜索',
-        ListActionsSchema,
-        undefined,
-        { 'zh-CN': '列出操作', 'en-US': 'List Actions' }
-    ).setExecutor(async ({ category }) =>
-        JSON.stringify(
-            actions
-                .filter((action) => category === undefined || action.category === category)
-                .map((action) => ({
-                    name: action.definition.name,
-                    category: action.category,
-                    summary: action.summary
-                })),
-            null,
-            2
-        )
-    );
-
-    const getActionDefinition = new BaseTool(
-        'get_action_definition',
-        '按精确名称获取一个 PPT 动作的完整 Office 参数定义',
-        GetActionDefinitionSchema,
-        undefined,
-        { 'zh-CN': '操作定义', 'en-US': 'Action Definition' }
-    ).setExecutor(async ({ name }) => {
-        const action = getAction(name);
-        return JSON.stringify(
+    getDeclaredPermissions(args: z.output<typeof OpenPresentationSchema>, taskState?: TaskState): PermissionRequest[] {
+        return [
             {
-                name: action.definition.name,
-                category: action.category,
-                description: action.definition.description,
-                inputSchema: action.definition.inputSchema
-            },
-            null,
-            2
-        );
-    });
+                resourceType: 'file',
+                action: 'read',
+                resourcePath: resolveWorkspacePath(args.filePath, taskState)!
+            }
+        ];
+    }
+}
 
-    const executeAction = new BaseTool(
-        'execute_action',
-        '按精确名称校验并执行一个已确认参数定义的 PPT 动作',
-        ExecuteActionSchema,
-        undefined,
-        { 'zh-CN': '执行操作', 'en-US': 'Execute Action' }
-    ).setExecutor(async ({ name, input }, taskState) => {
-        const action = getAction(name);
-        const validatedInput = action.validator.validateArgs(input);
-        if (validatedInput.success === false) throw new Error(validatedInput.error);
-        const taskId = taskState?.task_id;
-        if (!taskId) throw new Error(t('error.taskContextRequired'));
-        const result = await executeCapability(
-            taskId,
-            action.definition.name,
-            validatedInput.data as Record<string, unknown>
+class GetPresentationCapabilitiesTool extends BaseTool<typeof PresentationCapabilitiesSchema> {
+    constructor() {
+        super(
+            'get_presentation_capabilities',
+            '按主题读取 presentation/v1 的精确字段、枚举、清除语义和最小示例；只读且不需要打开 PPT',
+            PresentationCapabilitiesSchema,
+            undefined,
+            { 'zh-CN': '演示文稿能力', 'en-US': 'Presentation Capabilities' }
         );
-        if (result.isError) throw new Error(result.output || result.summary);
-        return result.output;
-    });
-    (executeAction as BaseTool<any>).serialExecution = true;
+        this.setExecutor(async (args) => JSON.stringify(getPresentationAutomationCapabilities(args), null, 2));
+    }
+}
 
+export function buildSlidesSkill(): Skill {
+    return Skill.parseMd(PRESENTATION_AUTOMATION_SKILL);
+}
+
+export function createSlidesToolset(
+    executeProgram: PresentationProgramExecutor,
+    openPresentation: SlidesPresentationOpener
+): BaseToolset {
+    const toolset = new BaseToolset('presentation-automation');
     toolset.addTools(
-        openPresentationTool as BaseTool<typeof OpenPresentationSchema>,
-        listActions as BaseTool<any>,
-        getActionDefinition as BaseTool<any>,
-        executeAction as BaseTool<any>
+        new GetPresentationCapabilitiesTool(),
+        new OpenPresentationTool(openPresentation),
+        new RunPresentationProgramTool(executeProgram)
     );
-
-    skill.toolsets = [toolset];
-    return skill;
+    return toolset;
 }

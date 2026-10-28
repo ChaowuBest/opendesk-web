@@ -15,6 +15,7 @@ interface SlidesSelectionElement {
     id?: unknown;
     type?: unknown;
     text?: unknown;
+    unit?: unknown;
     x?: unknown;
     y?: unknown;
     width?: unknown;
@@ -38,8 +39,9 @@ function formatElement(value: unknown): string {
     const id = String(element.id || '');
     const text = typeof element.text === 'string' ? element.text.trim().replace(/\s+/g, ' ') : '';
     const dimensions = [element.x, element.y, element.width, element.height];
+    const unit = element.unit === 'pt' ? ' pt' : '';
     const box = dimensions.every((dimension) => typeof dimension === 'number' && Number.isFinite(dimension))
-        ? ` @ (${Math.round(element.x as number)}, ${Math.round(element.y as number)}) ${Math.round(element.width as number)}×${Math.round(element.height as number)}`
+        ? ` @ (${Math.round(element.x as number)}, ${Math.round(element.y as number)}) ${Math.round(element.width as number)}×${Math.round(element.height as number)}${unit}`
         : '';
     return `- ${type}${id ? ` (${id})` : ''}${box}${text ? `: “${text.slice(0, 160)}”` : ''}`;
 }

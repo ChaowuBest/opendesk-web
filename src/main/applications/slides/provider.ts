@@ -9,17 +9,52 @@
  * See the Mulan PSL v2 for more details.
  */
 
-export interface SlidesCapabilityDefinition {
-    name: string;
-    description: string;
-    inputSchema: Record<string, unknown>;
+import type { PresentationContentReview } from '../../office/presentationContentReview.js';
+
+export interface PresentationProgramInput {
+    program?: string;
+    programPath?: string;
+    startFrom: 'auto' | 'current' | 'blank';
+    expectedRevision?: string;
+    unsavedChanges?: 'save' | 'discard';
+    outputPath?: string;
+    assets?: Record<string, string>;
+    expectedSlideCount?: number;
+    workspace?: string;
+    suggestedName?: string;
 }
 
-export interface SlidesCapabilityExecution {
-    output: string;
-    isError?: boolean;
-    mutated?: boolean;
-    summary: string;
+export interface PresentationProgramExecution {
+    apiVersion: string;
+    ok: boolean;
+    committed: boolean;
+    programId: string;
+    outputPath: string;
+    provenance: {
+        baselineAvailable: boolean;
+        priorRunCount: number;
+        mode: 'generator' | 'incremental';
+        sourcePath: string;
+        sourceRevision: string;
+    };
+    recovery?: {
+        strategy: 'edit-generator-source';
+        sourcePath: string;
+        sourceRevision: string;
+        preserveCompleteProgram: true;
+        rerun: {
+            programPath: string;
+            startFrom: 'blank';
+        };
+    };
+    revision?: unknown;
+    diff?: unknown;
+    validation?: unknown;
+    contentReview?: PresentationContentReview;
+    acceptance?: { passed: boolean; structuralPassed: boolean; contentPassed: boolean };
+    open?: SlidesPresentationOpenResult;
+    value?: unknown;
+    error?: unknown;
 }
 
 export interface SlidesPresentationOpenResult {
@@ -29,9 +64,9 @@ export interface SlidesPresentationOpenResult {
 }
 
 export interface SlidesCapabilityProvider {
-    getCapabilities(): Promise<readonly SlidesCapabilityDefinition[]>;
     openPresentation(taskId: string, filePath: string): Promise<SlidesPresentationOpenResult>;
-    execute(taskId: string, name: string, input: Record<string, unknown>): Promise<SlidesCapabilityExecution>;
+    isProgramAvailable(): Promise<boolean>;
+    executeProgram(taskId: string, input: PresentationProgramInput): Promise<PresentationProgramExecution>;
 }
 
 let provider: SlidesCapabilityProvider | undefined;
