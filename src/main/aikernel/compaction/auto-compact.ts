@@ -220,40 +220,30 @@ function buildTokenEstimateInput(
     return input;
 }
 
+function resolveSupportedMaxOutputTokens(instance: ModelInstance | null, model?: string): number {
+    // 用户配置优先；恢复任务和运行时配置也必须遵守同一有效值判断。
+    const configured = instance?.max_output_tokens;
+    if (typeof configured === 'number' && Number.isFinite(configured) && configured > 0) {
+        return configured;
+    }
+
+    const knownMaxOutput = instance?.model_name ? lookupKnownMaxOutputTokens(instance.model_name) : 0;
+    if (knownMaxOutput > 0) {
+        return knownMaxOutput;
+    }
+
+    return model ? lookupKnownMaxOutputTokens(model) : 0;
+}
+
 export async function resolveMaxOutputTokens(model?: string): Promise<number> {
     try {
-        let modelInstance: ModelInstance | null;
-        if (typeof model === 'string') {
-            modelInstance = Setting.getInstance().getModelInstance(model, 'chat');
-            if (!modelInstance) {
-                return lookupKnownMaxOutputTokens(model);
-            }
-        } else {
-            modelInstance = Setting.getInstance().getDefaultModelInstance();
-            if (!modelInstance) {
-                return 0;
-            }
-        }
-
-        // 用户配置优先
-        if (modelInstance.max_output_tokens && modelInstance.max_output_tokens > 0) {
-            return modelInstance.max_output_tokens;
-        }
-
-        const knownMaxOutput = lookupKnownMaxOutputTokens(modelInstance.model_name);
-        if (knownMaxOutput > 0) {
-            return knownMaxOutput;
-        }
-
-        if (typeof model === 'string') {
-            const fallbackKnownMaxOutput = lookupKnownMaxOutputTokens(model);
-            if (fallbackKnownMaxOutput > 0) {
-                return fallbackKnownMaxOutput;
-            }
-        }
+        const settings = Setting.getInstance();
+        const instance =
+            typeof model === 'string' ? settings.getModelInstance(model, 'chat') : settings.getDefaultModelInstance();
+        const supported = resolveSupportedMaxOutputTokens(instance, model);
 
         // Match the adapters' default for models with no configured/known output budget.
-        return 16384;
+        return supported || (instance ? 16384 : 0);
     } catch {
         return 0;
     }
@@ -261,8 +251,9 @@ export async function resolveMaxOutputTokens(model?: string): Promise<number> {
 
 export function limitSummaryOutputToModel(model: string | undefined, requested: number): number {
     const settings = Setting.getInstance();
-    const instance = model ? settings.getModelInstance(model, 'chat') : settings.getDefaultModelInstance();
-    const supported = instance?.max_output_tokens ?? lookupKnownMaxOutputTokens(instance?.model_name ?? model ?? '');
+    const instance =
+        typeof model === 'string' ? settings.getModelInstance(model, 'chat') : settings.getDefaultModelInstance();
+    const supported = resolveSupportedMaxOutputTokens(instance, model);
     return supported > 0 ? Math.min(requested, supported) : requested;
 }
 

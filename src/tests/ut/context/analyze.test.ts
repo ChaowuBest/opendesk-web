@@ -22,6 +22,7 @@ import {
 } from '../../../main/aikernel/messages';
 import { BaseTool, BaseToolset } from '../../../main/aikernel/tool';
 import { TaskManagerState, TaskState } from '../../../main/aikernel/states/tasks';
+import { OpenAIAdapter } from '../../../main/aikernel/adapters/openai.js';
 
 const fixturePath = fileURLToPath(new URL('./fixtures/task-sample.json', import.meta.url));
 
@@ -343,6 +344,71 @@ describe('context diagnostics analysis', () => {
         expect(report.messageBreakdown.assistantToolResultTokens).toBe(estimateTextTokens(overrideText));
         expect(report.messageBreakdown.assistantToolResultTokens).toBeLessThan(estimateTextTokens(rawResult));
         expect(report.totalEstimatedTokens).toBe(inspection.contextTokenEstimate.estimatedContextTokens);
+    });
+
+    test.each(['success', 'error'] as const)(
+        'restored %s results use persisted replacements without request overrides',
+        async (status) => {
+            const { chatContext, toolCall } = createAnalysisChatContext();
+            const replacementText = 'Persisted replacement preview for restored tasks';
+            toolCall.status = status;
+            toolCall.result = 'RAW_RESTORED_RESULT '.repeat(1_000);
+            toolCall.ensureResultStorage({
+                relative_path: 'artifacts/restored/tool-results/result-1.txt',
+                replacement_text: replacementText
+            });
+            const restored = ChatContext.assign(JSON.parse(JSON.stringify(chatContext.toJSON())));
+            const before = JSON.stringify(restored);
+            const inspection = await inspectContextForDiagnostics(restored, undefined, {
+                enableToolResultBudget: false
+            });
+            expect(inspection.toolResultOverrides.size).toBe(0);
+
+            const report = analyzeContextDiagnostics({ chatContext: restored, inspection });
+            const payload = OpenAIAdapter.buildMessages(restored) as Array<{ role: string; content: string }>;
+            expect(payload.find((message) => message.role === 'tool')?.content).toBe(replacementText);
+            expect(report.messageBreakdown.assistantToolResultTokens).toBe(estimateTextTokens(replacementText));
+            expect(JSON.stringify(restored)).toBe(before);
+        }
+    );
+
+    test.each(['', 'request-local replacement'])(
+        'resolves override %j before persisted replacements',
+        async (override) => {
+            const { chatContext, toolCall } = createAnalysisChatContext();
+            const persistedText = 'Persisted preview '.repeat(50);
+            toolCall.ensureResultStorage({ replacement_text: persistedText });
+            const inspection = await inspectContextForDiagnostics(chatContext, undefined, {
+                enableToolResultBudget: false
+            });
+            inspection.toolResultOverrides.set(toolCall.result_storage!.result_id, override);
+            const expected = override || persistedText;
+
+            const report = analyzeContextDiagnostics({ chatContext, inspection });
+            const payload = OpenAIAdapter.buildMessages(chatContext, true, {
+                toolResultOverrides: inspection.toolResultOverrides
+            }) as Array<{ role: string; content: string }>;
+            expect(payload.find((message) => message.role === 'tool')?.content).toBe(expected);
+            expect(report.messageBreakdown.assistantToolResultTokens).toBe(estimateTextTokens(expected));
+        }
+    );
+
+    test('legacy compression takes precedence over both runtime and persisted replacements', async () => {
+        const { chatContext, toolCall } = createAnalysisChatContext();
+        toolCall.compress_id = 'legacy-diagnostic-result';
+        toolCall.ensureResultStorage({ replacement_text: 'Persisted preview '.repeat(50) });
+        const inspection = await inspectContextForDiagnostics(chatContext, undefined, {
+            enableToolResultBudget: false
+        });
+        inspection.toolResultOverrides.set(toolCall.result_storage!.result_id, 'Runtime preview '.repeat(200));
+
+        const report = analyzeContextDiagnostics({ chatContext, inspection });
+        const payload = OpenAIAdapter.buildMessages(chatContext, true, {
+            toolResultOverrides: inspection.toolResultOverrides
+        }) as Array<{ role: string; content: string }>;
+        const expected = toolCall.getLegacyCompressedResultText();
+        expect(payload.find((message) => message.role === 'tool')?.content).toBe(expected);
+        expect(report.messageBreakdown.assistantToolResultTokens).toBe(estimateTextTokens(expected));
     });
 
     test('keeps model estimate details for threshold reporting', async () => {

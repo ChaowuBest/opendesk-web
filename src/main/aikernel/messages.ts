@@ -26,7 +26,7 @@ import { neutralizeMarkdownHtml } from '../../common/markdown/markdown-html-safe
 import { createSafeMarkdownParser } from '../../common/markdown/safe-render.js';
 import type { SupportedLocale } from '../../common/locale.js';
 import { getLocale, t } from '../../locale/index.js';
-import { resolveToolResultReplacement, resolveVisibleToolResultContent } from './compaction/tool-result-content.js';
+import { resolveToolResultReplacement, resolveVisibleToolResultContent } from './tool-result-content.js';
 import type {
     BaseAssistantMessage,
     ChatContextSnapshot,

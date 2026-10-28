@@ -12,8 +12,8 @@
 import { buildVisibleAssistantRounds } from '../compaction/assistant-rounds.js';
 import { estimateTextTokens } from '../../../utils/token-estimation.js';
 import { estimateSystemPromptTokens, estimateToolResultObjectTokens } from '../compaction/token-estimation.js';
+import { resolveVisibleToolResultContent } from '../tool-result-content.js';
 import { AssistantMessage, CompactSeparatorMessage, UserMessage } from '../messages.js';
-import type { ToolCall } from '../messages.js';
 import type { BaseTool, BaseToolset } from '../tool.js';
 import type { AssistantRound } from '../compaction/types.js';
 import type {
@@ -44,33 +44,6 @@ function estimateToolsetTokens(toolsetName: string, toolset: BaseToolset): Conte
         tokens,
         toolCount: toolset.tools.size
     };
-}
-
-function resolveVisibleToolResultText(
-    toolcall: ToolCall,
-    toolResultOverrides?: ReadonlyMap<string, string>
-): string | undefined {
-    const resultId = toolcall.result_storage?.result_id;
-    if (typeof resultId === 'string' && resultId.length > 0) {
-        const overrideContent = toolResultOverrides?.get(resultId);
-        if (typeof overrideContent === 'string' && overrideContent.length > 0) {
-            return overrideContent;
-        }
-    }
-
-    if (toolcall.hasLegacyCompressId()) {
-        return toolcall.getLegacyCompressedResultText();
-    }
-
-    if (toolcall.status === 'error') {
-        return `Toolcall failed: ${toolcall.result ?? ''}`;
-    }
-
-    if (toolcall.status === 'success') {
-        return toolcall.result ?? '工具调用成功完成';
-    }
-
-    return undefined;
 }
 
 function countUserMessageTokens(
@@ -129,7 +102,7 @@ function countAssistantRoundTokens(
             assistantToolCallTokens += estimateTextTokens(toolcall.args_string);
             assistantToolCallTokens += estimateToolResultObjectTokens(toolcall);
 
-            const visibleResultText = resolveVisibleToolResultText(toolcall, toolResultOverrides);
+            const visibleResultText = resolveVisibleToolResultContent(toolcall, toolResultOverrides);
             if (visibleResultText !== undefined) {
                 assistantToolResultTokens += estimateTextTokens(visibleResultText);
             }

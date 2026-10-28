@@ -40,7 +40,7 @@ import {
     estimateRoughTokensFromChatMessage
 } from './token-estimation.js';
 import { OpenAIAdapter } from '../adapters/openai.js';
-import { resolveToolResultReplacement, resolveVisibleToolResultContent } from './tool-result-content.js';
+import { buildToolResultSummaryPreview, DEFAULT_TOOL_RESULT_SUMMARY_PREVIEW_CHARS } from '../tool-result-content.js';
 
 import { buildActiveContextView, buildProjectedActiveContextView } from './context-view.js';
 import type { AssistantRoundRef, CompactBoundaryRef, ProjectedContextItem } from './types.js';
@@ -52,7 +52,7 @@ export const DEFAULT_FULL_COMPACT_TAIL_ASSISTANT_TOOL_MESSAGE_COUNT = 3;
 export const DEFAULT_FULL_COMPACT_TAIL_ASSISTANT_ERROR_MESSAGE_COUNT = 1;
 export const DEFAULT_FULL_COMPACT_TAIL_PLAN_MESSAGE_COUNT = 1;
 export const DEFAULT_FULL_COMPACT_MIN_MESSAGES_TO_SUMMARIZE = 2;
-export const DEFAULT_FULL_COMPACT_SUMMARY_TOOL_PREVIEW_CHARS = 300;
+export const DEFAULT_FULL_COMPACT_SUMMARY_TOOL_PREVIEW_CHARS = DEFAULT_TOOL_RESULT_SUMMARY_PREVIEW_CHARS;
 export const FULL_COMPACT_BOUNDARY_STRATEGY = 'tail_preserving_full_compact';
 
 const ASSISTANT_ERROR_SIGNAL_PATTERN = /(?:错误|失败|报错|异常|\berror\b|\bfailed\b|\bfailure\b)/i;
@@ -328,15 +328,13 @@ function serializeAssistantPartsForSummary(
             for (const toolCall of part.toolcalls) {
                 const argsSnippet =
                     truncateForSummaryText(toolCall.args_string, options.toolArgsPreviewChars) || 'none';
-                const visibleResult = resolveVisibleToolResultContent(toolCall, options.toolResultOverrides);
-                // Replacement previews already have a bounded size. Keep their artifact paths intact.
-                const replaced =
-                    toolCall.hasLegacyCompressId() ||
-                    resolveToolResultReplacement(toolCall, options.toolResultOverrides) !== undefined;
+                // Bound replacement preview bodies while keeping their artifact paths intact.
                 const resultSnippet =
-                    (replaced
-                        ? visibleResult
-                        : truncateForSummaryText(visibleResult, options.toolResultPreviewChars)) || 'no result';
+                    buildToolResultSummaryPreview(
+                        toolCall,
+                        options.toolResultPreviewChars,
+                        options.toolResultOverrides
+                    ) || 'no result';
                 parts.push(
                     `[Tool Call: ${toolCall.tool_name}] Args: ${argsSnippet} -> ` +
                         `Result(${toolCall.status}): ${resultSnippet}`

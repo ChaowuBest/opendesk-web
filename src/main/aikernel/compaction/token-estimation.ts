@@ -24,7 +24,7 @@ import {
 import type { ActiveContextView } from './types.js';
 import { IMAGE_TOKEN_ESTIMATE } from './image-tokens.js';
 import { estimateTextTokens } from '../../../utils/token-estimation.js';
-import { resolveVisibleToolResultContent } from './tool-result-content.js';
+import { resolveVisibleToolResultContent } from '../tool-result-content.js';
 
 export type NormalizedUsage = UsageFields;
 

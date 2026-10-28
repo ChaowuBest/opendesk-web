@@ -9,7 +9,9 @@
  * See the Mulan PSL v2 for more details.
  */
 
-import type { ToolCall } from '../messages.js';
+import type { ToolCall } from './messages.js';
+
+export const DEFAULT_TOOL_RESULT_SUMMARY_PREVIEW_CHARS = 300;
 
 /** Request-local overrides take precedence; restored tasks can use persisted replacements directly. */
 export function resolveToolResultReplacement(
@@ -34,4 +36,27 @@ export function resolveVisibleToolResultContent(
     if (toolCall.status === 'error') return `Toolcall failed: ${toolCall.result ?? ''}`;
     if (toolCall.status === 'success') return toolCall.result ?? '工具调用成功完成';
     return undefined;
+}
+
+/** Summary bodies are bounded separately from the artifact locator needed to recover the full result. */
+export function buildToolResultSummaryPreview(
+    toolCall: ToolCall,
+    maxChars: number,
+    toolResultOverrides?: ReadonlyMap<string, string>
+): string | undefined {
+    const visible = resolveVisibleToolResultContent(toolCall, toolResultOverrides);
+    // Legacy content is a retrieval identifier rather than a result preview.
+    if (visible === undefined || toolCall.hasLegacyCompressId()) return visible;
+
+    // These locator lines are emitted by tool-results and microcompact; retain the final full path,
+    // without allowing the preview body or text after the locator to bypass the summary limit.
+    const reference = Array.from(visible.matchAll(/^(?:完整输出已保存至|完整输出可查看)[:：][ \t]*[^\r\n]+/gm)).at(-1);
+    const body = reference ? visible.slice(0, reference.index).trimEnd() : visible;
+    const preview = body.length > maxChars ? `${body.slice(0, maxChars)}...` : body;
+    if (reference) return `${preview}\n${reference[0]}`;
+
+    const artifactPath = toolCall.microcompact?.artifact_path_hint ?? toolCall.result_storage?.relative_path;
+    // Artifact is part of the model summary protocol, not a user-interface label.
+    if (artifactPath && !preview.includes(artifactPath)) return `${preview}\n[Artifact: ${artifactPath}]`;
+    return preview;
 }

@@ -37,7 +37,7 @@ import {
     estimateVisibleContextTokens
 } from './token-estimation.js';
 import type { ActiveContextView, AssistantRoundRef, CompactBoundaryRef, ProjectedContextItem } from './types.js';
-import { resolveToolResultReplacement, resolveVisibleToolResultContent } from './tool-result-content.js';
+import { buildToolResultSummaryPreview, DEFAULT_TOOL_RESULT_SUMMARY_PREVIEW_CHARS } from '../tool-result-content.js';
 
 export const SESSION_MEMORY_STATE_VERSION = 2;
 export const SESSION_MEMORY_DIRECTORY_NAME = 'session-memory';
@@ -85,7 +85,7 @@ export const DEFAULT_SESSION_MEMORY_EXTRACTION_OPTIONS = {
     toolCallsBetweenUpdates: 3,
     messageTextPreviewChars: 3_000,
     toolArgsPreviewChars: 1_000,
-    toolResultPreviewChars: 1_200,
+    toolResultPreviewChars: DEFAULT_TOOL_RESULT_SUMMARY_PREVIEW_CHARS,
     maxTranscriptChars: 40_000
 } as const;
 
@@ -932,13 +932,11 @@ function serializeAssistantMessageForSessionMemory(
             parts.push(`[Assistant Error]\n${part.title}: ${part.message}`);
         } else if (part.type === 'tool_call') {
             for (const toolCall of part.toolcalls) {
-                const visibleResult = resolveVisibleToolResultContent(toolCall, options.toolResultOverrides);
-                const replaced =
-                    toolCall.hasLegacyCompressId() ||
-                    resolveToolResultReplacement(toolCall, options.toolResultOverrides) !== undefined;
-                const resultSnippet = replaced
-                    ? visibleResult
-                    : truncateText(visibleResult, options.toolResultPreviewChars);
+                const resultSnippet = buildToolResultSummaryPreview(
+                    toolCall,
+                    options.toolResultPreviewChars,
+                    options.toolResultOverrides
+                );
                 parts.push(
                     [
                         `[Tool Call ${toolCall.id}] ${toolCall.tool_name} (${toolCall.status})`,

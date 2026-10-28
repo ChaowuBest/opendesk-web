@@ -19,7 +19,7 @@ import {
 } from '../messages.js';
 import { buildActiveContextView } from '../compaction/context-view.js';
 import type { ActiveContextView, AssistantRoundRef } from '../compaction/types.js';
-import { resolveToolResultReplacement, resolveVisibleToolResultContent } from '../compaction/tool-result-content.js';
+import { resolveToolResultReplacement, resolveVisibleToolResultContent } from '../tool-result-content.js';
 
 export interface AdapterMessageBuildOptions {
     activeContext?: ActiveContextView;
