@@ -563,6 +563,7 @@ export async function runOpenDeskPresentationProgram(
     taskId: string,
     input: PresentationProgramInput
 ): Promise<PresentationProgramExecution> {
+    // 准备源码和任务档案；session 是当前 task 绑定的右侧 PPT 编辑器。
     const program = loadPresentationProgramSource(input);
     const expectedRevision = normalizePresentationRevision(input.expectedRevision);
     const session = officeTaskSessions.get('slides', taskId);
@@ -570,6 +571,7 @@ export async function runOpenDeskPresentationProgram(
     const sourcePath = repository.getSourcePath(taskId, input.workspace);
     const requestedOutputPath = input.outputPath ? path.resolve(input.outputPath) : undefined;
     const projectOutputPath = repository.getOutputPath(taskId);
+    // 未指定路径时优先复用任务产物；只有目标与编辑器当前文件一致，才走编辑器执行路径。
     const automaticOutputPath =
         !session && !requestedOutputPath
             ? (projectOutputPath ?? defaultPresentationOutputPath(input.workspace, input.suggestedName))
@@ -582,6 +584,7 @@ export async function runOpenDeskPresentationProgram(
         throw new Error(t('office.slides.error.invalidOutputPath'));
     }
 
+    // auto 只能编辑现有文稿，不能悄悄从空白新建；新建必须明确传 blank。
     if (input.startFrom === 'auto' && !useLiveSession && (!resolvedOutputPath || !existsSync(resolvedOutputPath))) {
         throw new Error(t('office.slides.error.startRequired'));
     }
@@ -594,11 +597,13 @@ export async function runOpenDeskPresentationProgram(
     };
     if (expectedRevision) effectiveInput.expectedRevision = expectedRevision;
     else delete effectiveInput.expectedRevision;
+    // 同一脚本重跑时复用归档素材和预期页数，本次显式传入的值优先。
     const recoveredAssets = input.programPath ? repository.getAssetPaths(taskId, input.programPath) : {};
     const { officeAssets, recordAssets } = loadPresentationAssets({ ...recoveredAssets, ...input.assets });
     const expectedSlideCount =
         input.expectedSlideCount ??
         (input.programPath ? repository.getExpectedSlideCount(taskId, input.programPath) : undefined);
+    // 防止旧 generator 覆盖生成后的手动或外部修改：发现差异就返回当前版本，要求改用 current。
     const checkGeneratorRevision = (
         outputPath: string,
         currentRevision: string | undefined
@@ -622,6 +627,7 @@ export async function runOpenDeskPresentationProgram(
             revision: { current: currentRevision ?? 'presentation/v1:missing', expected: lastGeneratedRevision }
         };
     };
+    // 执行成功不等于内容合格；检查实际产物，再由返回结果区分执行状态与验收状态。
     const reviewResult = async (
         result: OfficePresentationProgramResult,
         bytes?: Uint8Array
@@ -652,83 +658,29 @@ export async function runOpenDeskPresentationProgram(
         };
     };
 
-    if (useLiveSession && session) {
-        const host = await loadEditorHost(getEditorRuntime('slides'));
-        if (!host.runPresentationProgram || !host.getPresentationSnapshot) {
-            throw new Error(t('office.slides.error.programUnavailable'));
-        }
-        const snapshot = await host.getPresentationSnapshot(session.contents);
-        const outputPath = path.resolve(requestedOutputPath ?? session.filePath);
-        const recorded = await repository.recordRun(
-            {
-                taskId,
-                outputPath,
-                program,
-                sourcePath,
-                startFrom: effectiveStartFrom,
-                expectedRevision,
-                beforeBytes: snapshot.bytes,
-                expectedSlideCount,
-                assets: recordAssets
-            },
-            async (context) => {
-                const conflict = checkGeneratorRevision(outputPath, snapshot.revision);
-                if (conflict) return conflict;
-                const outcome = await runPresentationProgramWithDeadline(
-                    async ({ signal, reportStage }) =>
-                        await host.runPresentationProgram!(
-                            session.contents,
-                            {
-                                ...effectiveInput,
-                                outputPath,
-                                expectedRevision: expectedRevision ?? snapshot.revision,
-                                assets: officeAssets
-                            },
-                            {
-                                signal,
-                                onProgress: (event) => reportStage(event.stage)
-                            }
-                        ),
-                    {
-                        operationId: `${taskId}:${context.programId}`,
-                        timeoutMs: presentationProgramTimeoutMs(),
-                        onStage: (event) => context.reportStage(event.stage),
-                        log: logPresentationProgramStage
-                    }
-                );
-                if (outcome.ok === false) return presentationProgramTimeoutResult(outcome, snapshot.revision);
-                const result = outcome.value;
-                let outputBytes = result.bytes;
-                if (result.ok && !outputBytes) {
-                    try {
-                        outputBytes = (await host.getPresentationSnapshot!(session.contents)).bytes;
-                    } catch (error) {
-                        console.warn('Presentation output snapshot unavailable', error);
-                    }
-                }
-                return await reviewResult(result, outputBytes);
-            }
-        );
-        return publicProgramExecution(
-            recorded.result,
-            recorded.context,
-            effectiveInput,
-            outputPath,
-            recorded.result.ok && presentationDiffHasChanges(recorded.result.diff)
-        );
+    if (!outputPath) throw new Error(t('office.slides.error.outputPathRequired'));
+    const targetOutputPath = path.resolve(outputPath);
+    const liveSession = useLiveSession ? session : undefined;
+    const liveHost = liveSession ? await loadEditorHost(getEditorRuntime('slides')) : undefined;
+    if (liveSession && (!liveHost?.runPresentationProgram || !liveHost.getPresentationSnapshot)) {
+        throw new Error(t('office.slides.error.programUnavailable'));
     }
 
-    if (!resolvedOutputPath) throw new Error(t('office.slides.error.outputPathRequired'));
-    const outputExisted = existsSync(resolvedOutputPath);
-    const beforeBytes = outputExisted ? new Uint8Array(readFileSync(resolvedOutputPath)) : undefined;
+    // 编辑器读取内存中的当前文稿，后台路径读取磁盘；后续统一使用这份执行前快照备份和校验。
+    const snapshot = liveSession ? await liveHost!.getPresentationSnapshot!(liveSession.contents) : undefined;
+    const outputExisted = !liveSession && existsSync(targetOutputPath);
+    const beforeBytes = snapshot?.bytes ?? (outputExisted ? new Uint8Array(readFileSync(targetOutputPath)) : undefined);
     if (effectiveStartFrom === 'current' && !beforeBytes) {
         throw new Error(t('office.slides.error.currentFileMissing'));
     }
-    const revisionBefore = beforeBytes ? await presentationRevisionFromBytes(beforeBytes) : undefined;
+    const revisionBefore =
+        snapshot?.revision ?? (beforeBytes ? await presentationRevisionFromBytes(beforeBytes) : undefined);
+
+    // 两条路径共用备份、版本保护和超时控制；只有真正执行及提交的位置不同。
     const recorded = await repository.recordRun(
         {
             taskId,
-            outputPath: resolvedOutputPath,
+            outputPath: targetOutputPath,
             program,
             sourcePath,
             startFrom: effectiveStartFrom,
@@ -738,14 +690,33 @@ export async function runOpenDeskPresentationProgram(
             assets: recordAssets
         },
         async (context) => {
-            const conflict = checkGeneratorRevision(resolvedOutputPath, revisionBefore);
+            const conflict = checkGeneratorRevision(targetOutputPath, revisionBefore);
             if (conflict) return conflict;
-            const host = await loadEditorHost(getEditorRuntime('slides'));
-            if (!host.runHeadlessPresentationProgram) {
+            const host = liveHost ?? (await loadEditorHost(getEditorRuntime('slides')));
+            if (!liveSession && !host.runHeadlessPresentationProgram) {
                 throw new Error(t('office.slides.error.programUnavailable'));
             }
             const outcome = await runPresentationProgramWithDeadline(
                 async ({ signal, reportStage }): Promise<OfficePresentationProgramResult> => {
+                    const control: PresentationProgramExecutionControl = {
+                        signal,
+                        onProgress: (event) => reportStage(event.stage)
+                    };
+                    // 编辑器负责未保存修改、版本校验和提交；不能在外层直接用磁盘写入替代。
+                    if (liveSession) {
+                        return await host.runPresentationProgram!(
+                            liveSession.contents,
+                            {
+                                ...effectiveInput,
+                                outputPath: targetOutputPath,
+                                expectedRevision: expectedRevision ?? revisionBefore,
+                                assets: officeAssets
+                            },
+                            control
+                        );
+                    }
+
+                    // 后台引擎只返回产物，由本层检查是否有变化并安全写入磁盘。
                     const result = await host.runHeadlessPresentationProgram!(
                         {
                             program,
@@ -755,10 +726,7 @@ export async function runOpenDeskPresentationProgram(
                             ...(expectedRevision ? { expectedRevision } : {}),
                             assets: officeAssets
                         },
-                        {
-                            signal,
-                            onProgress: (event) => reportStage(event.stage)
-                        }
+                        control
                     );
                     if (!result.ok || !result.bytes) return result;
                     reportStage('validating-output-revision');
@@ -773,9 +741,10 @@ export async function runOpenDeskPresentationProgram(
                         };
                     }
 
-                    const stillExists = existsSync(resolvedOutputPath);
+                    // 执行期间文件可能被其他操作修改；提交前再核对版本，避免覆盖新内容。
+                    const stillExists = existsSync(targetOutputPath);
                     const currentRevision = stillExists
-                        ? await presentationRevisionFromBytes(new Uint8Array(readFileSync(resolvedOutputPath)))
+                        ? await presentationRevisionFromBytes(new Uint8Array(readFileSync(targetOutputPath)))
                         : undefined;
                     if (stillExists !== outputExisted || currentRevision !== revisionBefore) {
                         return {
@@ -793,7 +762,7 @@ export async function runOpenDeskPresentationProgram(
                     }
                     if (signal.aborted) throw signal.reason;
                     reportStage('committing-output');
-                    atomicWritePresentation(resolvedOutputPath, result.bytes);
+                    atomicWritePresentation(targetOutputPath, result.bytes);
                     return result;
                 },
                 {
@@ -805,8 +774,19 @@ export async function runOpenDeskPresentationProgram(
             );
             if (outcome.ok === false) return presentationProgramTimeoutResult(outcome, revisionBefore);
             const result = outcome.value;
-            if (!result.ok || !result.bytes) return result;
-            return await reviewResult(result, result.bytes);
+            if (!result.ok) return result;
+
+            // 两条路径统一验收实际产物；编辑器未返回 bytes 时，补取执行后的快照。
+            let outputBytes = result.bytes;
+            if (!outputBytes && liveSession) {
+                try {
+                    outputBytes = (await host.getPresentationSnapshot!(liveSession.contents)).bytes;
+                } catch (error) {
+                    console.warn('Presentation output snapshot unavailable', error);
+                }
+            }
+            if (!liveSession && !outputBytes) return result;
+            return await reviewResult(result, outputBytes);
         }
     );
     const committed = recorded.result.ok && presentationDiffHasChanges(recorded.result.diff);
@@ -814,16 +794,17 @@ export async function runOpenDeskPresentationProgram(
         recorded.result,
         recorded.context,
         effectiveInput,
-        resolvedOutputPath,
+        targetOutputPath,
         committed
     );
+    // 自动选定输出路径且确实提交了修改时尝试展示产物；打开失败不撤销已完成的写入。
     if (!committed || !automaticOutputPath) return execution;
     try {
-        execution.open = await openOpenDeskOfficeTaskFile('slides', taskId, resolvedOutputPath);
+        execution.open = await openOpenDeskOfficeTaskFile('slides', taskId, targetOutputPath);
     } catch (error) {
         execution.open = {
             status: 'not_opened',
-            filePath: resolvedOutputPath,
+            filePath: targetOutputPath,
             message: error instanceof Error ? error.message : String(error)
         };
     }
