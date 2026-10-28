@@ -10,14 +10,13 @@
  */
 
 import type { Skill } from '../../aikernel/skill.js';
+import type { BaseToolset } from '../../aikernel/tool.js';
 import { BaseApplication } from '../base.js';
 import { getSlidesCapabilityProvider } from './provider.js';
-import { buildSlidesSkill } from './skill.js';
+import { buildSlidesSkill, createSlidesToolset } from './skill.js';
 import { t } from './locale/index.js';
 
 export class SlidesApplication extends BaseApplication {
-    private skillsPromise: Promise<Skill[]> | undefined;
-
     constructor() {
         super('slides', false);
     }
@@ -28,19 +27,18 @@ export class SlidesApplication extends BaseApplication {
 
     async getSkills(): Promise<Skill[]> {
         const provider = getSlidesCapabilityProvider();
-        this.skillsPromise ??= provider
-            .getCapabilities()
-            .then((definitions) => [
-                buildSlidesSkill(
-                    definitions,
-                    provider.execute.bind(provider),
-                    provider.openPresentation.bind(provider)
-                )
-            ])
-            .catch((error: unknown) => {
-                this.skillsPromise = undefined;
-                throw error;
-            });
-        return await this.skillsPromise;
+        if (!(await provider.isProgramAvailable())) return [];
+        return [buildSlidesSkill()];
+    }
+
+    async getToolsets(): Promise<BaseToolset[]> {
+        const provider = getSlidesCapabilityProvider();
+        if (!(await provider.isProgramAvailable())) return [];
+        return [
+            createSlidesToolset(
+                provider.executeProgram.bind(provider),
+                provider.openPresentation.bind(provider)
+            )
+        ];
     }
 }

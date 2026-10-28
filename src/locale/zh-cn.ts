@@ -2581,6 +2581,14 @@ export const zhCn: Record<string, string> = {
     'office.error.openTimeout': '等待 Office 编辑器打开超时',
     'office.open.notCompleted':
         '未切换文件：用户取消了切换，或当前文件未能安全关闭。请保持当前文件，除非用户再次明确要求，否则不要自动重试。',
+    'office.slides.error.generatorOutputChanged':
+        '当前 PPT 与上次生成结果不同，可能包含用户手动修改或其他程序更改。已停止整稿重建；请读取当前文稿，改用 startFrom: current 编写修改程序，并使用当前版本作为 expectedRevision，保留已有修改。',
+    'office.slides.error.programUnavailable': '当前 Office 包不支持演示文稿程序',
+    'office.slides.error.outputPathRequired': '当前任务未打开 PPT 时必须提供输出 PPTX 路径',
+    'office.slides.error.currentFileMissing': '作为当前文档的 PPTX 文件不存在',
+    'office.slides.error.invalidOutputPath': '演示文稿输出路径必须以 .pptx 结尾',
+    'office.slides.error.startRequired':
+        "当前没有可用的演示文稿。新建时请使用 startFrom: 'blank'，读取或编辑已有 PPTX 时请先调用 open_presentation",
     'renderer.taskview.edit.title': '确认编辑消息',
     'renderer.taskview.edit.message': '是否要用编辑后的消息继续对话？<b>后续的所有对话历史将会丢失。</b>',
     'renderer.taskview.edit.confirm': '继续对话',

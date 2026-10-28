@@ -2662,6 +2662,14 @@ export const enUs: Record<string, string> = {
     'office.error.openTimeout': 'Timed out while waiting for the Office editor to open',
     'office.open.notCompleted':
         'The file was not switched because the user cancelled or the current file could not close safely. Keep the current file open and do not retry automatically unless the user explicitly asks again.',
+    'office.slides.error.generatorOutputChanged':
+        'The presentation differs from the last generated output and may contain manual or external edits. Regeneration was stopped. Read the current presentation and write an incremental program with startFrom: current and the current expectedRevision, preserving existing edits.',
+    'office.slides.error.programUnavailable': 'The current Office package does not support presentation programs',
+    'office.slides.error.outputPathRequired': 'An output PPTX path is required when no PPT is open in the current task',
+    'office.slides.error.currentFileMissing': 'The PPTX selected as the current document does not exist',
+    'office.slides.error.invalidOutputPath': 'The presentation output path must end with .pptx',
+    'office.slides.error.startRequired':
+        "No current presentation exists. Use startFrom: 'blank' to create one, or open_presentation before reading or editing an existing PPTX",
     'renderer.taskview.edit.title': 'Confirm Edit Message',
     'renderer.taskview.edit.message':
         'Continue the conversation with the edited message? <b>All subsequent conversation history will be lost.</b>',
