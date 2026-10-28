@@ -213,6 +213,75 @@ describe('presentation generator recovery and acceptance', () => {
         expect(replaced.ok).toBe(true);
         expect(replaced.contentReview?.passed).toBe(true);
         expect(replaced.acceptance?.passed).toBe(true);
+
+        const outputPath = path.join(programRoot, 'deck.pptx');
+        const generatedRevision = replaced.revision as { after: string };
+        const manual = await nativeAutomation.runPresentationProgram({
+            startFrom: 'current',
+            currentBytes: new Uint8Array(fs.readFileSync(outputPath)),
+            program: "deck.slide(0).add({kind:'text',text:'User edit',box:{x:100,y:100,w:300,h:50}});"
+        });
+        expect(manual.ok).toBe(true);
+        fs.writeFileSync(outputPath, manual.bytes!);
+        const currentRevision = await nativeAutomation.presentationRevisionFromBytes(manual.bytes!);
+        const rerun = {
+            programPath: replaced.provenance.sourcePath,
+            startFrom: 'blank' as const,
+            outputPath,
+            workspace: programRoot
+        };
+        const callsBefore = officeHost.runHeadlessPresentationProgram.mock.calls.length;
+        const blocked = await runOpenDeskPresentationProgram('recover-assets', rerun);
+        expect(blocked.ok).toBe(false);
+        expect(blocked.committed).toBe(false);
+        expect(blocked.error).toMatchObject({
+            code: 'GENERATOR_OUTPUT_CHANGED',
+            details: { lastGeneratedRevision: generatedRevision.after, currentRevision }
+        });
+        expect(blocked.recovery).toBeUndefined();
+        expect(officeHost.runHeadlessPresentationProgram.mock.calls.length).toBe(callsBefore);
+        expect(fs.readFileSync(outputPath)).toEqual(Buffer.from(manual.bytes!));
+        const revisionOnly = await runOpenDeskPresentationProgram('recover-assets', {
+            ...rerun,
+            expectedRevision: currentRevision
+        });
+        expect(revisionOnly.ok).toBe(false);
+        const incremental = await runOpenDeskPresentationProgram('recover-assets', {
+            program: "deck.slide(0).add({kind:'text',text:'Requested change',box:{x:100,y:200,w:300,h:50}});",
+            startFrom: 'current',
+            expectedRevision: currentRevision,
+            outputPath,
+            workspace: programRoot
+        });
+        expect(incremental.ok).toBe(true);
+        expect(incremental.contentReview?.slides[0].texts).toEqual(
+            expect.arrayContaining(['User edit', 'Requested change'])
+        );
+        webContentsById = {
+            id: 48,
+            once: jest.fn(),
+            session: officeSession,
+            hostWebContents: { id: 7 },
+            isDestroyed: () => false,
+            getType: () => 'webview',
+            getURL: () => pathToFileURL(matcherOptions[0].rendererFilePath).href
+        };
+        await ipcHandlers.get('office-host:bind-task')?.(
+            { sender: { id: 7 } },
+            'slides',
+            'recover-assets',
+            outputPath,
+            48
+        );
+        officeHost.getPresentationSnapshot.mockResolvedValueOnce({
+            bytes: manual.bytes,
+            revision: currentRevision,
+            path: outputPath
+        } as never);
+        const liveCalls = officeHost.runPresentationProgram.mock.calls.length;
+        const liveBlocked = await runOpenDeskPresentationProgram('recover-assets', rerun);
+        expect(liveBlocked.error).toMatchObject({ code: 'GENERATOR_OUTPUT_CHANGED' });
+        expect(officeHost.runPresentationProgram.mock.calls.length).toBe(liveCalls);
     }, 30_000);
 
     it('reviews live editor snapshots when the live result does not include bytes', async () => {

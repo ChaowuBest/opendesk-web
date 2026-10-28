@@ -123,9 +123,9 @@ const PresentationCapabilitiesSchema = z.object({
 const PRESENTATION_GENERATION_GUIDE = `
 ## 新建演示文稿工作流
 
-- “完整 generator”指一份持续维护的完整源码，而不是要求第一次执行就成功。首次用 \`program\` + \`startFrom: 'blank'\` 提交完整源码；工具会返回 \`provenance.sourcePath\`，后续必须编辑该同一个 \`main.mjs\`，再用 \`programPath\` + \`startFrom: 'blank'\` 重跑。
+- “完整 generator”指一份持续维护的完整源码，而不是要求第一次执行就成功。首次用 \`program\` + \`startFrom: 'blank'\` 提交完整源码；工具会返回 \`provenance.sourcePath\`，继续按 generator 生成时，编辑该同一个 \`main.mjs\`，再用 \`programPath\` + \`startFrom: 'blank'\` 重跑。
 - 创建阶段可以根据结构化错误反复修正和重跑，但源码始终包含设计常量、helper、数据和全部页面。不要第一次用 generator，随后把剩余页面或修复拆成多个 \`current\`/update 事务；这会丢失全局设计契约。
-- 只有整份演示文稿已经生成并通过本轮结构/视觉验收，或者用户明确提出对既有成品做局部编辑时，才切换到 \`current\` 增量修改。失败重试不是增量编辑。
+- 当前 PPT 仍与上次 generator 产物一致时，允许修改同一 generator 并从 \`blank\` 重跑，包括整体配色、字号和布局调整。直接修改既有文稿、保留用户手动编辑时使用 \`current\` 增量修改；失败重试继续修正同一 generator。
 - \`blank\` 已含一张空白页，应从 \`deck.slide(0)\` 开始构建。基础入口是 \`const slide = deck.slide(0)\` 与 \`slide.add({ kind: 'text', ... })\`；不要猜测 \`addText\`、\`addShape\`、\`addElement\` 等不存在的方法。
 - 完整程序应先用一组简短常量固化设计契约：背景体系、主/强调/中性色、字体层级、页面边距与网格、核心组件以及图表/表格规范。这是一致性约束，不要强制所有页面使用同一背景；如果封面、正文和结尾使用不同明暗，应让它们成为有意图的章节体系。常规 16:9 汇报可参考封面 30–40pt、页标题 26–32pt、正文 16–20pt、图表标签与表格 12–16pt；除页脚/注释外避免低于 12pt，并把核心字号控制在约 4 档。
 - 在同一程序中定义并复用如 \`addPageChrome\`、\`addCard\`、\`addSectionSlide\`、\`addChartCard\` 和 \`addTableCard\` 的 helper，并将展示数据与布局逻辑分开。相同的页眉、页脚、卡片和章节样式不应逐页重新手写。通用卡片 helper 默认使用 \`rect\`；若设计明确需要圆角，将选定的固定 pt 值作为全局设计常量，并统一通过 \`cornerRadiusPt\` 传入，不使用百分比作为设计尺寸。
@@ -153,7 +153,7 @@ ${PRESENTATION_GENERATION_GUIDE}
 - 不需要为能力索引中的每个领域都查询契约。首次使用某个能力且字段不确定时，为相关 1-3 个主题调用 \`get_presentation_capabilities\`；创建元素时优先请求 \`detail: 'examples'\`。精确入口、字段归属、枚举、清除语义和示例以工具返回为准，不要读取或再次包装之前保存的 tool-result 文件。
 - 只读查看或检查已有文件时，直接调用 \`open_presentation\`，不要为此创建副本。首次修改已有 PPT 时，除非用户明确要求直接修改或覆盖原文件，否则先用可用的文件复制能力创建一个字节级一致、名称不冲突的工作副本，再调用 \`open_presentation\` 打开该副本并进行修改；不要通过读取为文本、重新生成或重新导出 PPT 来代替文件复制。用户指定另存名称或路径时遵从其选择；无法安全复制或无法判断目标文件时，先询问用户。
 - 同一任务后续的修改继续使用已打开的工作副本和该任务返回的同一目标路径，不要再次复制，也不要切回原文件。\`open_presentation\` 本身只打开文件，不会隐式复制。编辑默认使用 \`startFrom: 'auto'\`，新建必须显式使用 \`blank\`；返回 \`not_opened\` 时保持当前文件并停止自动重试。
-- 新建演示文稿遵循上述同一 generator 源文件工作流；创建期修错继续从 blank 重跑同一文件，成品验收后的局部编辑才使用带 \`revision.after\` 的增量事务。\`UNSAVED_CHANGES\` 必须询问用户选择 save 或 discard。
+- 新建和重跑遵循上述同一 generator 源文件工作流；成品可继续维护 generator，也可使用带 \`revision.after\` 的增量事务。遇到 \`GENERATOR_OUTPUT_CHANGED\`，说明 PPT 与上次生成结果不同，可能含用户手动修改或其他程序更改；不得直接用旧 generator 覆盖。先读取当前文稿，再编写基于 \`startFrom: 'current'\` 的修改程序，使用返回的当前版本作为 \`expectedRevision\`；保留用户修改，只更新本轮目标。不要把完整 generator 原样切到 current 执行，以免重复添加页面或元素。\`UNSAVED_CHANGES\` 必须询问用户选择 save 或 discard。
 - 用户提供选中元素 id 时直接从编辑器给出的稳定 \`e_*\` 引用开始；顶层元素与任意层级的组内元素使用同一套身份。未分组复合组件使用 \`neighborhood()\`。图片文件通过工具参数 \`assets\` 声明。
 - 原生图表、表格、分组或布局失败时不得默默改成手绘替代物。先依据结构化错误和对应主题契约修正；确认能力不足时说明缺口并请求用户决定是否降级。
 - 成功修改后检查本次目标一次，全部修改完成后做一次 deck 级检查。不要创建临时探测页，也不要重复无变化的 inspect。

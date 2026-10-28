@@ -74,9 +74,25 @@ test('generator retries recover archived assets after a failed run and process r
             program: 'retry generator',
             startFrom: 'blank'
         },
-        async () => ({ apiVersion: 'presentation/v1', ok: true })
+        async () => ({ apiVersion: 'presentation/v1', ok: true, revision: { after: 'generated-revision' } })
     );
     assert.deepEqual(restarted.getAssetPaths('asset-task', sourcePath), assets);
+    assert.equal(restarted.getLastGeneratedRevision('asset-task', path.join(root, 'deck.pptx')), 'generated-revision');
+    assert.equal(restarted.getLastGeneratedRevision('asset-task', path.join(root, 'other.pptx')), undefined);
+    await restarted.recordRun(
+        {
+            taskId: 'asset-task',
+            outputPath: path.join(root, 'deck.pptx'),
+            sourcePath,
+            program: 'inspect',
+            startFrom: 'current'
+        },
+        async () => ({ apiVersion: 'presentation/v1', ok: true, revision: { after: 'manually-edited-revision' } })
+    );
+    assert.equal(
+        new PresentationProgramRepository(root).getLastGeneratedRevision('asset-task', path.join(root, 'deck.pptx')),
+        'generated-revision'
+    );
     const manifestPath = path.join(root, 'projects', fs.readdirSync(path.join(root, 'projects'))[0]!, 'manifest.json');
     const legacyManifest = JSON.parse(fs.readFileSync(manifestPath, 'utf8'));
     delete legacyManifest.assets;

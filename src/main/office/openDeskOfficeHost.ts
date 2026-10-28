@@ -303,7 +303,9 @@ function publicProgramExecution(
             sourcePath: context.sourcePath,
             sourceRevision: context.sourceRevision
         },
-        ...(!result.ok && input.startFrom === 'blank'
+        ...(!result.ok &&
+        input.startFrom === 'blank' &&
+        (result.error as { code?: unknown } | undefined)?.code !== 'GENERATOR_OUTPUT_CHANGED'
             ? {
                   recovery: {
                       strategy: 'edit-generator-source' as const,
@@ -597,6 +599,29 @@ export async function runOpenDeskPresentationProgram(
     const expectedSlideCount =
         input.expectedSlideCount ??
         (input.programPath ? repository.getExpectedSlideCount(taskId, input.programPath) : undefined);
+    const checkGeneratorRevision = (
+        outputPath: string,
+        currentRevision: string | undefined
+    ): OfficePresentationProgramResult | undefined => {
+        if (effectiveStartFrom !== 'blank') return undefined;
+        const lastGeneratedRevision = repository.getLastGeneratedRevision(taskId, outputPath);
+        if (!lastGeneratedRevision || currentRevision === lastGeneratedRevision) return undefined;
+        return {
+            apiVersion: 'presentation/v1',
+            ok: false,
+            error: {
+                code: 'GENERATOR_OUTPUT_CHANGED',
+                message: t('office.slides.error.generatorOutputChanged'),
+                details: {
+                    outputPath,
+                    lastGeneratedRevision,
+                    currentRevision: currentRevision ?? 'presentation/v1:missing',
+                    requiredStartFrom: 'current'
+                }
+            },
+            revision: { current: currentRevision ?? 'presentation/v1:missing', expected: lastGeneratedRevision }
+        };
+    };
     const reviewResult = async (
         result: OfficePresentationProgramResult,
         bytes?: Uint8Array
@@ -647,6 +672,8 @@ export async function runOpenDeskPresentationProgram(
                 assets: recordAssets
             },
             async (context) => {
+                const conflict = checkGeneratorRevision(outputPath, snapshot.revision);
+                if (conflict) return conflict;
                 const outcome = await runPresentationProgramWithDeadline(
                     async ({ signal, reportStage }) =>
                         await host.runPresentationProgram!(
@@ -711,6 +738,8 @@ export async function runOpenDeskPresentationProgram(
             assets: recordAssets
         },
         async (context) => {
+            const conflict = checkGeneratorRevision(resolvedOutputPath, revisionBefore);
+            if (conflict) return conflict;
             const host = await loadEditorHost(getEditorRuntime('slides'));
             if (!host.runHeadlessPresentationProgram) {
                 throw new Error(t('office.slides.error.programUnavailable'));

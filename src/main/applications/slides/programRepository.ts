@@ -134,6 +134,27 @@ export class PresentationProgramRepository {
         return this.getGeneratorManifest(taskId, sourcePath)?.expectedSlideCount;
     }
 
+    getLastGeneratedRevision(taskId: string, outputPath: string): string | undefined {
+        const projectDirectory = path.join(this.rootDirectory, 'projects', this.projectId(taskId));
+        const manifestPath = path.join(projectDirectory, 'manifest.json');
+        if (!fs.existsSync(manifestPath)) return undefined;
+        const manifest = JSON.parse(fs.readFileSync(manifestPath, 'utf8')) as PresentationProgramManifest;
+        // Use generator records, not lastRevision: reads and incremental edits must not rebase the generator.
+        for (let number = manifest.runCount; number > 0; number -= 1) {
+            const runPath = path.join(projectDirectory, 'runs', `program-${String(number).padStart(6, '0')}.json`);
+            if (!fs.existsSync(runPath)) continue;
+            const run = JSON.parse(fs.readFileSync(runPath, 'utf8')) as PresentationProgramRunRecord;
+            if (run.mode !== 'generator' || run.status !== 'succeeded' || run.outputPath !== path.resolve(outputPath)) {
+                continue;
+            }
+            const result = run.result as { revision?: { before?: unknown; after?: unknown } } | undefined;
+            if (typeof result?.revision?.after === 'string' && result.revision.after !== result.revision.before) {
+                return result.revision.after;
+            }
+        }
+        return undefined;
+    }
+
     getSourcePath(taskId: string, workspace?: string): string {
         const projectId = this.projectId(taskId);
         if (workspace) {

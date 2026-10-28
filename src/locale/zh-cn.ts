@@ -2567,6 +2567,8 @@ export const zhCn: Record<string, string> = {
     'office.error.openTimeout': '等待 Office 编辑器打开超时',
     'office.open.notCompleted':
         '未切换文件：用户取消了切换，或当前文件未能安全关闭。请保持当前文件，除非用户再次明确要求，否则不要自动重试。',
+    'office.slides.error.generatorOutputChanged':
+        '当前 PPT 与上次生成结果不同，可能包含用户手动修改或其他程序更改。已停止整稿重建；请读取当前文稿，改用 startFrom: current 编写修改程序，并使用当前版本作为 expectedRevision，保留已有修改。',
     'office.slides.error.programUnavailable': '当前 Office 包不支持演示文稿程序',
     'office.slides.error.outputPathRequired': '当前任务未打开 PPT 时必须提供输出 PPTX 路径',
     'office.slides.error.currentFileMissing': '作为当前文档的 PPTX 文件不存在',
