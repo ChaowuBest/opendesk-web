@@ -114,6 +114,18 @@ export function showTaskNotification(options: TaskNotificationOptions): void {
 }
 
 /**
+ * 在主窗口中打开指定任务。
+ *
+ * 供「应用内跳转到某个任务」复用：与通知点击走同一套「恢复主窗口 + command:openTask」流程，
+ * 避免各处重复实现窗口恢复与延迟投递。
+ */
+export function openTaskInMainWindow(taskId: string): void {
+    const normalized = normalizeTaskId(taskId);
+    if (!normalized) return;
+    focusMainWindowForTask(normalized);
+}
+
+/**
  * 把主窗口恢复到前台；带 taskId 时让 renderer 切到该任务。
  *
  * 与 task-status-widget 唤起主窗口的行为保持一致：最小化要先 restore，
