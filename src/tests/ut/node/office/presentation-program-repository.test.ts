@@ -55,7 +55,6 @@ test('generator retries recover archived assets after a failed run and process r
             sourcePath,
             program: 'bad generator',
             startFrom: 'blank',
-            expectedSlideCount: 5,
             assets: { hero: { sourcePath: '/original/removed.png', bytes: new Uint8Array([1, 2, 3]), ext: 'png' } }
         },
         async () => ({ apiVersion: 'presentation/v1', ok: false })
@@ -65,7 +64,6 @@ test('generator retries recover archived assets after a failed run and process r
     assert.deepEqual([...fs.readFileSync(assets.hero!)], [1, 2, 3]);
     assert.deepEqual(restarted.getAssetPaths('other-task', sourcePath), {});
     assert.deepEqual(restarted.getAssetPaths('asset-task', path.join(root, 'other.mjs')), {});
-    assert.equal(restarted.getExpectedSlideCount('asset-task', sourcePath), 5);
     await restarted.recordRun(
         {
             taskId: 'asset-task',

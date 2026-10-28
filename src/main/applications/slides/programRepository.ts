@@ -25,7 +25,6 @@ interface PresentationProgramManifest {
     sourcePath?: string;
     sourceRevision?: string;
     assets?: Record<string, { file: string; sourcePath: string }>;
-    expectedSlideCount?: number;
     updatedAt: string;
 }
 
@@ -53,7 +52,6 @@ export interface PresentationProgramRecordInput {
     program: string;
     sourcePath: string;
     startFrom: 'current' | 'blank';
-    expectedSlideCount?: number;
     expectedRevision?: string;
     beforeBytes?: Uint8Array;
     assets?: Record<string, { sourcePath: string; bytes: Uint8Array; ext: string }>;
@@ -128,10 +126,6 @@ export class PresentationProgramRepository {
         return Object.fromEntries(
             Object.entries(assets).map(([id, asset]) => [id, path.join(projectDirectory, asset.file)])
         );
-    }
-
-    getExpectedSlideCount(taskId: string, sourcePath: string): number | undefined {
-        return this.getGeneratorManifest(taskId, sourcePath)?.expectedSlideCount;
     }
 
     getLastGeneratedRevision(taskId: string, outputPath: string): string | undefined {
@@ -277,7 +271,6 @@ export class PresentationProgramRepository {
                 atomicWrite(runPath, `${JSON.stringify(run, null, 4)}\n`);
 
                 manifest.assets = { ...manifest.assets, ...archivedAssets };
-                if (input.expectedSlideCount !== undefined) manifest.expectedSlideCount = input.expectedSlideCount;
                 manifest.runCount = runNumber;
                 manifest.outputPath = normalizedOutputPath;
                 manifest.sourcePath = sourcePath;

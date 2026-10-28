@@ -37,7 +37,6 @@ describe('presentation automation skill', () => {
             {
                 program: 'return deck.inspect();',
                 startFrom: 'blank',
-                expectedSlideCount: 5,
                 outputPath: 'deck.pptx',
                 assets: { hero: 'assets/cover.png' }
             },
@@ -52,7 +51,6 @@ describe('presentation automation skill', () => {
                 input: {
                     program: 'return deck.inspect();',
                     startFrom: 'blank',
-                    expectedSlideCount: 5,
                     outputPath: '/workspace/deck.pptx',
                     assets: { hero: '/workspace/assets/cover.png' },
                     workspace: '/workspace',
@@ -78,11 +76,7 @@ describe('presentation automation skill', () => {
 
         const result = await toolset.tools
             .get('run_presentation_program')!
-            .execute(
-                { program: 'throw new Error();', startFrom: 'blank', expectedSlideCount: 5 },
-                undefined,
-                taskState as never
-            );
+            .execute({ program: 'throw new Error();', startFrom: 'blank' }, undefined, taskState as never);
 
         assert.equal(result.status, 'success');
         assert.deepEqual(JSON.parse(result.result), {
@@ -112,20 +106,4 @@ describe('presentation automation skill', () => {
         assert.equal(result.status, 'success');
         assert.deepEqual(calls, [{ taskId: 'task-a', filePath: '/workspace/deck.pptx' }]);
     });
-});
-
-it('requires the planned slide count before starting a new generator', async () => {
-    let executed = false;
-    const tools = createSlidesToolset(
-        async () => {
-            executed = true;
-            return {} as never;
-        },
-        async () => ({}) as never
-    );
-    const result = await tools.tools
-        .get('run_presentation_program')!
-        .execute({ program: 'return deck.inspect();', startFrom: 'blank' });
-    assert.equal(result.status, 'error');
-    assert.equal(executed, false);
 });

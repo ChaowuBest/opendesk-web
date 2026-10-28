@@ -161,8 +161,8 @@ describe('OpenDesk Office webview ownership', () => {
     });
 });
 
-describe('presentation generator recovery and acceptance', () => {
-    it('retries failed generators from archived images and separates content acceptance from execution success', async () => {
+describe('presentation generator recovery and revision protection', () => {
+    it('recovers archived assets and preserves changes made after generation', async () => {
         const imagePath = path.join(programRoot, 'hero.png');
         const image = Buffer.from(
             'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aA9sAAAAASUVORK5CYII=',
@@ -173,7 +173,6 @@ describe('presentation generator recovery and acceptance', () => {
             program: "throw new Error('fix generator');",
             startFrom: 'blank',
             outputPath: path.join(programRoot, 'deck.pptx'),
-            expectedSlideCount: 5,
             assets: { hero: imagePath },
             workspace: programRoot
         });
@@ -191,11 +190,6 @@ describe('presentation generator recovery and acceptance', () => {
         });
         expect(retry.ok).toBe(true);
         expect(retry.committed).toBe(true);
-        expect(retry.contentReview?.expectedSlideCount).toBe(5);
-        expect(retry.acceptance?.structuralPassed).toBe(true);
-        expect(retry.acceptance?.contentPassed).toBe(false);
-        expect(retry.acceptance?.passed).toBe(false);
-        expect(retry.contentReview?.findings).toContainEqual({ code: 'SLIDE_COUNT_MISMATCH' });
         expect(Buffer.from(officeHost.runHeadlessPresentationProgram.mock.calls.at(-1)![0].assets!.hero.bytes)).toEqual(
             image
         );
@@ -205,14 +199,11 @@ describe('presentation generator recovery and acceptance', () => {
         const replaced = await runOpenDeskPresentationProgram('recover-assets', {
             programPath: failed.provenance.sourcePath,
             startFrom: 'blank',
-            expectedSlideCount: 1,
             outputPath: path.join(programRoot, 'deck.pptx'),
             assets: { hero: replacementPath },
             workspace: programRoot
         });
         expect(replaced.ok).toBe(true);
-        expect(replaced.contentReview?.passed).toBe(true);
-        expect(replaced.acceptance?.passed).toBe(true);
 
         const outputPath = path.join(programRoot, 'deck.pptx');
         const generatedRevision = replaced.revision as { after: string };
@@ -254,7 +245,14 @@ describe('presentation generator recovery and acceptance', () => {
             workspace: programRoot
         });
         expect(incremental.ok).toBe(true);
-        expect(incremental.contentReview?.slides[0].texts).toEqual(
+        const inspection = await nativeAutomation.runPresentationProgram({
+            startFrom: 'current',
+            currentBytes: new Uint8Array(fs.readFileSync(outputPath)),
+            program: "return deck.inspect({ level: 'elements' });"
+        });
+        expect(inspection.ok).toBe(true);
+        const deck = inspection.value as { slides: Array<{ elements: Array<{ text?: string }> }> };
+        expect(deck.slides[0].elements.map((element) => element.text)).toEqual(
             expect.arrayContaining(['User edit', 'Requested change'])
         );
         webContentsById = {
@@ -284,7 +282,7 @@ describe('presentation generator recovery and acceptance', () => {
         expect(officeHost.runPresentationProgram.mock.calls.length).toBe(liveCalls);
     }, 30_000);
 
-    it('reviews live editor snapshots when the live result does not include bytes', async () => {
+    it('returns live editor results without a second snapshot read', async () => {
         const generated = await nativeAutomation.runPresentationProgram({
             startFrom: 'blank',
             program: 'return deck.inspect();'
@@ -301,30 +299,15 @@ describe('presentation generator recovery and acceptance', () => {
             diff: { slideChanges: [{}] },
             validation: { summary: { qualityPassed: true } }
         } as never);
+        const readsBefore = officeHost.getPresentationSnapshot.mock.calls.length;
         const result = await runOpenDeskPresentationProgram('task-b', {
             program: 'return deck.inspect();',
             startFrom: 'current',
-            expectedSlideCount: 2,
             workspace: programRoot
         });
         expect(result.ok).toBe(true);
         expect(result.committed).toBe(true);
-        expect(result.acceptance).toEqual({ passed: false, structuralPassed: true, contentPassed: false });
-        officeHost.getPresentationSnapshot
-            .mockResolvedValueOnce({
-                bytes: generated.bytes,
-                revision: 'presentation/v1:live',
-                path: '/tmp/deck.pptx'
-            } as never)
-            .mockRejectedValueOnce(new Error('snapshot failed') as never);
-        const unavailable = await runOpenDeskPresentationProgram('task-b', {
-            program: 'return deck.inspect();',
-            startFrom: 'current',
-            workspace: programRoot
-        });
-        expect(unavailable.ok).toBe(true);
-        expect(unavailable.committed).toBe(true);
-        expect(unavailable.contentReview?.complete).toBe(false);
-        expect(unavailable.acceptance?.passed).toBe(false);
+        expect(result.validation).toEqual({ summary: { qualityPassed: true } });
+        expect(officeHost.getPresentationSnapshot.mock.calls.length).toBe(readsBefore + 1);
     }, 30_000);
 });

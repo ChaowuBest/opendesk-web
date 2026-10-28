@@ -10,7 +10,6 @@
  */
 
 export const zhCn: Record<string, string> = {
-    'error.expectedSlideCountRequired': '新建演示文稿需声明按用户需求确定的最终页数（expectedSlideCount）',
     'app.name': '演示文稿',
     'error.taskContextRequired': 'PPT 编辑能力需要当前 task 上下文',
     'error.actionNotFound': '未找到 PPT 动作',

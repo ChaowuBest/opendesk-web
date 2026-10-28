@@ -9,8 +9,6 @@
  * See the Mulan PSL v2 for more details.
  */
 
-import type { PresentationContentReview } from '../../office/presentationContentReview.js';
-
 export interface PresentationProgramInput {
     program?: string;
     programPath?: string;
@@ -19,7 +17,6 @@ export interface PresentationProgramInput {
     unsavedChanges?: 'save' | 'discard';
     outputPath?: string;
     assets?: Record<string, string>;
-    expectedSlideCount?: number;
     workspace?: string;
     suggestedName?: string;
 }
@@ -50,8 +47,6 @@ export interface PresentationProgramExecution {
     revision?: unknown;
     diff?: unknown;
     validation?: unknown;
-    contentReview?: PresentationContentReview;
-    acceptance?: { passed: boolean; structuralPassed: boolean; contentPassed: boolean };
     open?: SlidesPresentationOpenResult;
     value?: unknown;
     error?: unknown;

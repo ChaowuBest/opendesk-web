@@ -10,7 +10,6 @@
  */
 
 export const enUs: Record<string, string> = {
-    'error.expectedSlideCountRequired': 'New presentations require the planned final slide count (expectedSlideCount)',
     'app.name': 'Presentations',
     'error.taskContextRequired': 'PPT editing requires a current task context',
     'error.actionNotFound': 'Presentation action was not found',

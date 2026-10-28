@@ -69,13 +69,6 @@ const PresentationProgramSchema = z
             .string()
             .optional()
             .describe('可选输出 PPTX 路径；通常省略，由 OpenDesk 在当前任务中持续复用同一目标文件'),
-        expectedSlideCount: z
-            .number()
-            .int()
-            .min(1)
-            .max(1000)
-            .optional()
-            .describe('按用户需求确定的最终页数；新建时提供，后续同一 generator 重跑自动复用，用于核对是否漏页或多页'),
         assets: z
             .record(z.string(), z.string())
             .optional()
@@ -84,13 +77,6 @@ const PresentationProgramSchema = z
             )
     })
     .superRefine((value, context) => {
-        if (value.program && value.startFrom === 'blank' && value.expectedSlideCount === undefined) {
-            context.addIssue({
-                code: z.ZodIssueCode.custom,
-                path: ['expectedSlideCount'],
-                message: t('error.expectedSlideCountRequired')
-            });
-        }
         if (Boolean(value.program) === Boolean(value.programPath)) {
             context.addIssue({
                 code: z.ZodIssueCode.custom,
@@ -131,8 +117,7 @@ const PRESENTATION_GENERATION_GUIDE = `
 - 在同一程序中定义并复用如 \`addPageChrome\`、\`addCard\`、\`addSectionSlide\`、\`addChartCard\` 和 \`addTableCard\` 的 helper，并将展示数据与布局逻辑分开。相同的页眉、页脚、卡片和章节样式不应逐页重新手写。通用卡片 helper 默认使用 \`rect\`；若设计明确需要圆角，将选定的固定 pt 值作为全局设计常量，并统一通过 \`cornerRadiusPt\` 传入，不使用百分比作为设计尺寸。
 - 主题与组件样式应来自集中常量或主题引用。\`deck.setTheme\` 不会覆盖元素上的显式颜色；使用显式颜色时，必须通过同一组生成常量统一管理，不要在各页散落无关色值。
 - 整体事务失败时，使用工具返回的 \`recovery\`、精确错误行列、不支持字段或 validation 修改同一源文件。不要复制整段源码到下一次工具参数，也不要用临时探测页替代契约查询。
-- 新建时根据用户需求确定最终页数并传入 \`expectedSlideCount\`，同一 generator 重跑会复用。目录必须与实际页面一一对应；示例目录也不能引用不存在的页或章节。
-- \`ok: true\` 只表示该程序成功提交，不等于成品通过。先读取 \`acceptance\` 和 \`contentReview\`：只有 \`acceptance.passed: true\` 才通过自动验收；目录越界、目录标题与目标页不符、页数与计划不一致都必须修改同一 generator 后重跑。结合 \`contentReview.slides\` 核对用户要求的章节、数据和示例内容；自动检查不证明事实正确或全稿视觉通过。再读取结构排版结果 \`validation.summary\`：\`qualityPassed: false\` 表示仍有高风险结构或文字覆盖问题，应按已排序在前的 high severity 条目修正同一 generator；medium/low 仅作针对性判断，不要机械清零所有提示。切换到增量编辑或向用户宣布完成前，还应核对计划页数与实际页数、关键章节/数据是否完整及原生图表/表格等元素 kind 是否正确；最小探针、占位页或部分页面绝不能作为初稿验收通过。
+- \`ok: true\` 仅表示程序执行成功。读取 \`validation.summary\`：\`qualityPassed: false\` 表示仍有高风险结构或文字覆盖问题，应按已排序在前的 high severity 条目修正同一 generator；medium/low 仅作针对性判断，不要机械清零所有提示。结构检查不证明内容完整、事实正确或全稿视觉通过。
 - 如果当前会话具有可读取渲染图像的视觉能力，可软性建议渲染全稿缩略图并做一次集中视觉修正；找不到现成的渲染入口时停止探测，不为验收反复寻找 PDF 转换器或安装 Office；没有视觉能力时不得因此阻塞任务，应使用结构化 validation、目标 inspect 和最终 deck 级检查完成可验证的收尾。
 `;
 
