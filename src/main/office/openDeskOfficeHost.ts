@@ -18,7 +18,7 @@ import { createRequire } from 'node:module';
 import { createTrustedRendererUrlMatcher } from '@bitclub.ai/opendesk-office/host-security';
 import { presentationRevisionFromBytes } from '@bitclub.ai/opendesk-office/presentation-automation';
 import { OfficeTaskSessionRegistry, type OfficeTaskSessionKind } from './officeTaskSessions.js';
-import { t } from '../../locale/index.js';
+import { getLocale, t } from '../../locale/index.js';
 import { safeSendToWebContents } from '../utils/electron-ipc.js';
 import {
     PresentationProgramRepository,
@@ -89,6 +89,7 @@ interface OfficeEditorDefinition {
     preloadName: string;
     requestCloseChannel: string;
     createHost(options: {
+        locale: string;
         preloadPath: string;
         rendererFilePath: string;
         rendererDevUrl?: string;
@@ -377,6 +378,7 @@ async function loadEditorHost(runtime: OfficeEditorRuntime): Promise<OpenDeskOff
 
     runtime.hostPromise = runtime
         .createHost({
+            locale: getLocale(),
             preloadPath: runtime.preloadPath,
             rendererDevUrl: runtime.rendererDevUrl,
             rendererFilePath: runtime.rendererFilePath,
