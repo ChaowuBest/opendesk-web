@@ -2226,6 +2226,21 @@ export const enUs: Record<string, string> = {
     'renderer.sidebar.deleteWorkspaceTasksConfirm':
         'Delete <b>${count}</b> task(s) in this workspace?<br>Favorited tasks will not be deleted. <b>This cannot be undone.</b>',
     'renderer.sidebar.confirmDeleteAll': 'Delete all',
+    'renderer.sidebar.selectMultipleTasks': 'Select multiple tasks',
+    'renderer.sidebar.deleteSelectedTasks': 'Delete selected tasks',
+    'renderer.sidebar.deleteSelectedTasksWithCount': 'Delete ${count} selected task(s)',
+    'renderer.sidebar.deleteSelectedTasksConfirm':
+        'Delete <b>${count}</b> selected task(s)? <b>This cannot be undone.</b>',
+    'renderer.sidebar.groupDeleteToday': "Delete today's tasks",
+    'renderer.sidebar.groupDeleteThisWeek': 'Delete last 7 days tasks',
+    'renderer.sidebar.groupDeleteEarlier': 'Delete earlier tasks',
+    'renderer.sidebar.groupDeleteOtherWorkspaces': 'Delete tasks in other groups',
+    'renderer.sidebar.groupDeleteAutomatic': 'Delete automated tasks',
+    'renderer.sidebar.groupDeleteWorkspace': 'Delete tasks in ${name}',
+    'renderer.sidebar.deleteGroupTasksConfirm':
+        'Delete all <b>${count}</b> task(s) in this group?<br>Favorited tasks will not be deleted. <b>This cannot be undone.</b>',
+    'renderer.sidebar.deleteSelectedTasksAllFavorited': 'All selected tasks are favorited. Nothing was deleted.',
+    'renderer.sidebar.deleteGroupTasksAllFavorited': 'All tasks in this group are favorited. Nothing was deleted.',
     'renderer.toolbar.memory': 'Memory',
     'renderer.toolbar.fileSystem': 'File System',
     'renderer.toolbar.settings': 'Settings',

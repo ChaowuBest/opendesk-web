@@ -2590,6 +2590,55 @@ html[data-theme='dark'] .sb-chat-badge {
     color: #b91c1c;
     background: #fdeaea;
 }
+/* ===== 任务列表多选模式 ===== */
+/* 框选拖动会划过任务名，拖动期间临时禁掉原生文本选择避免选区高亮与编辑菜单抢行为。
+   注意任务行是框选起点：按住任务名拖动 ≥6px 会进入框选而非文本选择，
+   常规态保留的文本选择能力是双击选词/双击后的拖动扩展 */
+.sb-marquee-active {
+    user-select: none;
+    -webkit-user-select: none;
+}
+/* 多选形态：状态图标换成圆形选择框（radio button 样式，支持多选） */
+.sb-multi-checkbox {
+    display: grid;
+    width: 15px;
+    height: 15px;
+    flex: none;
+    place-items: center;
+    color: transparent;
+    background: transparent;
+    border: 1.5px solid var(--od-text-disabled);
+    border-radius: 50%;
+    transition:
+        background 0.12s ease,
+        border-color 0.12s ease;
+}
+.sb-multi-checkbox.is-checked {
+    color: #fff;
+    background: #c94c40;
+    border-color: #c94c40;
+}
+/* 多选形态下选中行用淡红底标识 */
+.sb-task-row.is-multi-selected .sb-task-row-main {
+    background: color-mix(in srgb, #c94c40 12%, transparent);
+}
+/* 多选形态禁用左滑删除，避免与选择手势冲突 */
+.sb-task-container.is-multi-select .sb-swipe-delete {
+    display: none;
+}
+/* 框选拖动时悬停经过的行给轻反馈；行背景画在内容层，与行自身 hover/is-current 不互斥 */
+.sb-task-row.is-marquee-hover .sb-task-row-main {
+    background: color-mix(in srgb, #c94c40 8%, transparent);
+}
+/* 框选矩形：跟随鼠标/手指的半透明选区 */
+.sb-marquee-box {
+    position: fixed;
+    z-index: 9999;
+    pointer-events: none;
+    background: color-mix(in srgb, #c94c40 14%, transparent);
+    border: 1px solid color-mix(in srgb, #c94c40 55%, transparent);
+    border-radius: 4px;
+}
 .sb-task-name {
     flex: 1;
     min-width: 0;
