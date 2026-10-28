@@ -37,6 +37,8 @@ import {
 } from '../sidebarTaskGroups.js';
 import { captureSidebarScrollState, restoreSidebarScrollState } from '../sidebarScrollState.js';
 import { attachSidebarSwipeDelete } from '../sidebarSwipeDelete.js';
+import { attachSidebarMultiSelect } from '../sidebarMultiSelectController.js';
+import { ctrlToggleId, rangeByAnchor } from '../sidebarMultiSelect.js';
 import { TaskListRefreshScheduler } from './taskListRefreshScheduler.js';
 import { TaskSearchDialog } from './taskSearchDialog.js';
 
@@ -54,6 +56,8 @@ function generateChallengeCode() {
     return code;
 }
 const CHEVRON_SVG = `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 18 15 12 9 6"/></svg>`;
+/** 多选形态下任务名左侧的圆形选择框选中态对勾 */
+const CHECK_SVG = `<svg width="9" height="9" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>`;
 /** 任务行左滑露出的圆形删除按钮图标：细线方角造型，与关闭徽标风格一致 */
 const TRASH_SVG = `<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="butt" stroke-linejoin="miter"><path d="M4 7h16"/><path d="M9.5 7V4h5v3"/><path d="M6.5 7l1 13h9l1-13"/><path d="M10 11v6M14 11v6"/></svg>`;
 const THEME_SUN_SVG = `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M6.34 17.66l-1.41 1.41M19.07 4.93l-1.41 1.41"/></svg>`;
@@ -108,6 +112,14 @@ class SideBar extends HTMLElement {
         this._groupScrollObservers = [];
         /** 任务列表触摸左滑删除手势控制器 */
         this._swipeDeleteController = null;
+        /** 任务列表多选/框选控制器 */
+        this._multiSelectController = null;
+        /** 多选状态：当前处于多选形态 */
+        this._multiSelect = false;
+        /** 多选状态：已选中的任务 id 集合 */
+        this._multiSelectIds = new Set();
+        /** 多选状态：Shift 区间选的锚点任务 id */
+        this._multiSelectAnchorId = null;
         this._loadingTaskGroups = new Set();
         this._runningZoneClearTimer = null;
         this._themePreference = 'system';
@@ -132,6 +144,7 @@ class SideBar extends HTMLElement {
     connectedCallback() {
         this.render();
         this._initTaskSwipeDelete();
+        this._initMultiSelect();
         this.querySelector('#collapse-sidebar-btn')?.addEventListener('click', () => {
             this._dismissAppPopover();
             this.dispatchEvent(
@@ -293,6 +306,9 @@ class SideBar extends HTMLElement {
     disconnectedCallback() {
         this._swipeDeleteController?.destroy();
         this._swipeDeleteController = null;
+        this._multiSelectController?.destroy();
+        this._multiSelectController = null;
+        this._dismissMultiSelectMenu();
         this._taskSearchDialog?.destroy();
         this._taskSearchDialog = null;
         this._dismissRecentTasksMenu();
@@ -445,6 +461,15 @@ class SideBar extends HTMLElement {
         window.taskManagerAPI
             .subscribeTaskListUpdate((taskList) => {
                 this.taskList = taskList;
+                // 多选态下剔除已消失的任务 id，避免菜单/确认弹窗计数虚高
+                if (this._multiSelect && this._multiSelectIds.size > 0) {
+                    const aliveIds = new Set(taskList.map((task) => task.task_id));
+                    const pruned = new Set([...this._multiSelectIds].filter((id) => aliveIds.has(id)));
+                    if (pruned.size !== this._multiSelectIds.size) {
+                        this._multiSelectIds = pruned;
+                        this._multiSelectController?.syncAfterRender();
+                    }
+                }
                 this._refreshScheduler.schedule();
                 document.dispatchEvent(new CustomEvent('task-list-updated', { detail: taskList }));
             })
@@ -1114,7 +1139,11 @@ class SideBar extends HTMLElement {
                 this._dismissRecentTasksMenu();
             }
         };
-        setTimeout(() => document.addEventListener('click', this._recentTasksMenuDismissHandler, true), 0);
+        setTimeout(() => {
+            if (this._recentTasksMenuDismissHandler) {
+                document.addEventListener('click', this._recentTasksMenuDismissHandler, true);
+            }
+        }, 0);
 
         // Escape 关闭
         this._recentTasksMenuEscHandler = (e) => {
@@ -1594,7 +1623,11 @@ class SideBar extends HTMLElement {
                 this._dismissDebugMenu();
             }
         };
-        setTimeout(() => document.addEventListener('click', this._debugMenuDismissHandler, true), 0);
+        setTimeout(() => {
+            if (this._debugMenuDismissHandler) {
+                document.addEventListener('click', this._debugMenuDismissHandler, true);
+            }
+        }, 0);
     }
 
     _showTaskInfoModal(taskId) {
@@ -1886,6 +1919,201 @@ class SideBar extends HTMLElement {
             window.globalControlAPI.openTask(null);
         }
         await window.taskManagerAPI.removeTask(taskId);
+        this._exitMultiSelect();
+    }
+
+    /**
+     * 批量删除多个任务：过滤收藏任务 → 确认弹窗 → 逐个清缓存删除 → 当前任务回首页 → 刷新。
+     * 收藏任务不参与批量删除，与分组删除的口径一致；全部被滤除时不弹确认。
+     */
+    async _confirmAndDeleteTasks(taskIds) {
+        const deletableIds = taskIds.filter((taskId) => !this._favoritedTaskIds.has(taskId));
+        if (deletableIds.length === 0) {
+            // 所选任务全部是收藏任务：无可删项，明确反馈而非静默
+            window.notificationAPI?.sendNotification(
+                'info',
+                this._t('renderer.sidebar.deleteSelectedTasks'),
+                this._t('renderer.sidebar.deleteSelectedTasksAllFavorited'),
+                ''
+            );
+            return false;
+        }
+        const code = generateChallengeCode();
+        const confirmed = await showConfirmModal({
+            icon: 'fa-trash',
+            iconBg: '#FEF2F2',
+            iconColor: '#DC2626',
+            title: this._t('renderer.sidebar.deleteSelectedTasks'),
+            message: this._t('renderer.sidebar.deleteSelectedTasksConfirm', { count: deletableIds.length }),
+            confirmText: this._t('common.delete'),
+            cancelText: this._t('common.cancel'),
+            danger: true,
+            challenge: code,
+            challengeHint: this._t('confirm.delete.challenge_hint', { code })
+        });
+        if (!confirmed) return false;
+        // 当前任务在待删列表中：先回主页再开始删除，避免 taskview 挂在待删任务上闪现中间态
+        if (deletableIds.includes(this.currentTaskId)) {
+            window.globalControlAPI.openTask(null);
+            this._updateTaskHighlight(null);
+        }
+        for (const taskId of deletableIds) {
+            window.globalControlAPI.removeTaskViewCache(taskId);
+            await window.taskManagerAPI.removeTask(taskId);
+        }
+        this._exitMultiSelect();
+        this.reloadTaskList();
+        return true;
+    }
+
+    /**
+     * 任务列表多选/框选交互：状态在 this 上，DOM 交互在独立控制器里。
+     */
+    _initMultiSelect() {
+        this._multiSelectController?.destroy();
+        this._multiSelectController = null;
+        const container = this.querySelector('#task-list-container');
+        if (!container) return;
+        this._multiSelectController = attachSidebarMultiSelect(container, {
+            isMultiSelect: () => this._multiSelect,
+            setMultiSelect: (on) => (on ? this._enterMultiSelect(this._multiSelectIds) : this._exitMultiSelect()),
+            getSelection: () => this._multiSelectIds,
+            setSelection: (ids, anchorId) => {
+                this._multiSelectIds = ids;
+                this._multiSelectAnchorId = anchorId;
+                this._multiSelectController?.syncAfterRender();
+            }
+        });
+    }
+
+    /**
+     * 进入多选形态：重渲染任务列表，任务名左侧的状态图标替换为圆形选择框。
+     * 不预选任何任务；进入多选不弹菜单，等用户框选/点选。
+     */
+    _enterMultiSelect(initialIds) {
+        this._multiSelect = true;
+        this._multiSelectIds = initialIds instanceof Set ? initialIds : new Set();
+        this._multiSelectAnchorId = null;
+        this._dismissContextMenu();
+        this.reloadTaskList();
+    }
+
+    /** 退出多选形态并恢复常规渲染 */
+    _exitMultiSelect() {
+        if (!this._multiSelect) return;
+        this._multiSelect = false;
+        this._multiSelectIds = new Set();
+        this._multiSelectAnchorId = null;
+        this._dismissMultiSelectMenu();
+        this.reloadTaskList();
+    }
+
+    _dismissMultiSelectMenu() {
+        this.querySelector('#task-multi-select-menu')?.remove();
+        if (this._multiSelectMenuDismissHandler) {
+            document.removeEventListener('click', this._multiSelectMenuDismissHandler, true);
+            this._multiSelectMenuDismissHandler = null;
+        }
+    }
+
+    /**
+     * 多选形态的独立右键菜单：仅「删除 N 个已选任务」。
+     * 菜单自身不展示选中行之外的项；退出多选的路径由多选控制器统一处理。
+     */
+    _showMultiSelectContextMenu(x, y) {
+        this._dismissMultiSelectMenu();
+        this._dismissContextMenu();
+        const taskIds = Array.from(this._multiSelectIds);
+        if (taskIds.length === 0) return;
+
+        const menu = document.createElement('div');
+        menu.id = 'task-multi-select-menu';
+        menu.className = 'ctx-menu sb-multi-menu';
+        menu.style.minWidth = '180px';
+        menu.innerHTML =
+            `<button class="ctx-item danger" data-action="delete-selected">` +
+            `<span class="ctx-icon-sm"><i class="fa-solid fa-trash-can"></i></span>` +
+            `<span class="ctx-label">${this._t('renderer.sidebar.deleteSelectedTasksWithCount', {
+                count: taskIds.length
+            })}</span></button>`;
+        this.appendChild(menu);
+
+        const origin = fixedLayerOrigin(menu);
+        menu.style.left = `${x - origin.x}px`;
+        menu.style.top = `${y - origin.y}px`;
+
+        requestAnimationFrame(() => {
+            const view = visibleViewportRect();
+            const rect = menu.getBoundingClientRect();
+            if (rect.right > view.right) {
+                menu.style.left = `${view.right - rect.width - 8 - origin.x}px`;
+            }
+            if (rect.bottom > view.bottom) {
+                menu.style.top = `${view.bottom - rect.height - 8 - origin.y}px`;
+            }
+        });
+
+        menu.querySelector('[data-action="delete-selected"]').addEventListener('click', async () => {
+            this._dismissMultiSelectMenu();
+            // 菜单打开期间选区可能已被外部刷新剔除部分任务，点击时现取而非用快照
+            await this._confirmAndDeleteTasks(Array.from(this._multiSelectIds));
+        });
+
+        // 菜单外点击关闭菜单但保持多选状态；退出多选由控制器的选区外点击逻辑负责。
+        // 延迟注册是为吞掉「打开菜单的那次右键」自身冒泡；注册时必须校验句柄仍然有效，
+        // 否则菜单若在 0ms 内被关闭，这里会把 null 注册进 document 污染后续 click。
+        this._multiSelectMenuDismissHandler = (e) => {
+            if (!menu.contains(e.target)) {
+                this._dismissMultiSelectMenu();
+            }
+        };
+        setTimeout(() => {
+            if (this._multiSelectMenuDismissHandler) {
+                document.addEventListener('click', this._multiSelectMenuDismissHandler, true);
+            }
+        }, 0);
+    }
+
+    /**
+     * 多选形态下行点击：Ctrl/Cmd 点选 toggle；Shift 以锚点做区间选；
+     * 普通点击未选中行 = 单选该行，已选中行 = toggle 取消（取消到空也保持多选形态）。
+     */
+    _handleMultiSelectRowClick(event, taskId) {
+        if (event.shiftKey) {
+            // 区间选按 DOM 渲染顺序取锚点到目标的连续区间；无锚点时退化为单选目标
+            const rowIds = this._visibleRowTaskIds();
+            const range = rangeByAnchor(rowIds, this._multiSelectAnchorId, taskId);
+            this._multiSelectIds = range.size > 0 ? range : new Set([taskId]);
+            this._multiSelectController?.syncAfterRender();
+            return;
+        }
+        if (event.ctrlKey || event.metaKey) {
+            this._multiSelectIds = ctrlToggleId(this._multiSelectIds, taskId);
+        } else if (this._multiSelectIds.has(taskId)) {
+            this._multiSelectIds = ctrlToggleId(this._multiSelectIds, taskId);
+        } else {
+            this._multiSelectIds = new Set([taskId]);
+        }
+        this._multiSelectAnchorId = taskId;
+        this._multiSelectController?.syncAfterRender();
+    }
+
+    /**
+     * 当前列表渲染顺序中的任务 id（Shift 区间选的基准）。
+     * 只取展开分组内的行：折叠 details 的行不可见，纳入区间会选中看不见的任务。
+     * 收藏视图的分组是 div（无折叠语义），始终参与。
+     */
+    _visibleRowTaskIds() {
+        const collapsedRows = new Set(
+            Array.from(
+                this.querySelectorAll(
+                    '#task-list-container .sb-task-group:not([open]):not(.is-search) .task-item.sb-task-row'
+                )
+            )
+        );
+        return Array.from(this.querySelectorAll('#task-list-container .task-item.sb-task-row'))
+            .filter((row) => !collapsedRows.has(row))
+            .map((row) => row.dataset.task_id);
     }
 
     /**
@@ -1897,12 +2125,15 @@ class SideBar extends HTMLElement {
         const container = this.querySelector('#task-list-container');
         if (!container) return;
         this._swipeDeleteController = attachSidebarSwipeDelete(container, {
-            onDelete: (taskId) => this._confirmAndDeleteTask(taskId)
+            onDelete: (taskId) => this._confirmAndDeleteTask(taskId),
+            // 多选形态下挂起左滑手势，避免其 click 捕获拦截选择点击
+            isSuspended: () => this._multiSelect
         });
     }
 
     _showContextMenu(x, y, taskId) {
         this._dismissContextMenu();
+        this._dismissMultiSelectMenu();
 
         const menu = document.createElement('div');
         menu.id = 'task-context-menu';
@@ -1922,6 +2153,16 @@ class SideBar extends HTMLElement {
             { id: 'file-trash', icon: 'fa-solid fa-trash-arrow-up', label: this._t('renderer.sidebar.fileTrash') },
             { id: 'delete', icon: 'fa-solid fa-trash-can', label: this._t('renderer.sidebar.deleteTask'), danger: true }
         ];
+        // 删除任务与删除全部任务之间：删除当前分类（分组）的全部任务
+        const group = this._findGroupByTaskId(taskId);
+        if (group) {
+            items.push({
+                id: 'delete-group',
+                icon: 'fa-solid fa-trash-can',
+                label: this._groupDeleteLabel(group),
+                danger: true
+            });
+        }
         if (this._taskView === 'workspace') {
             items.push({
                 id: 'delete-workspace',
@@ -1935,6 +2176,11 @@ class SideBar extends HTMLElement {
             icon: 'fa-solid fa-trash',
             label: this._t('renderer.sidebar.deleteAllTasks'),
             danger: true
+        });
+        items.push({
+            id: 'multi-select',
+            icon: 'fa-regular fa-circle-check',
+            label: this._t('renderer.sidebar.selectMultipleTasks')
         });
         if (this._developerMode) {
             items.splice(3, 0, {
@@ -2039,6 +2285,17 @@ class SideBar extends HTMLElement {
             const task = this.taskList.find((t) => t.task_id === taskId);
             const workspacePath = task?.workspace || '';
             await this._deleteTasksInWorkspace(workspacePath);
+        });
+        menu.querySelector('[data-action="delete-group"]')?.addEventListener('click', async () => {
+            this._dismissContextMenu();
+            const group = this._findGroupByTaskId(taskId);
+            if (!group) return;
+            await this._deleteTasksInGroup(group);
+        });
+        menu.querySelector('[data-action="multi-select"]')?.addEventListener('click', () => {
+            this._dismissContextMenu();
+            // 已处于多选态（如从运行区卡片菜单进入）时保留既有选择
+            this._enterMultiSelect(this._multiSelect ? this._multiSelectIds : undefined);
         });
         menu.querySelector('[data-action="rename"]').addEventListener('click', () => {
             this._dismissContextMenu();
@@ -2206,18 +2463,86 @@ class SideBar extends HTMLElement {
             challengeHint: this._t('confirm.delete.challenge_hint', { code })
         });
         if (!confirmed) return;
-        let needOpenHome = false;
-        for (const task of tasksToDelete) {
-            window.globalControlAPI.removeTaskViewCache(task.task_id);
-            if (this.currentTaskId === task.task_id) {
-                needOpenHome = true;
-            }
-            await window.taskManagerAPI.removeTask(task.task_id);
-        }
-        if (needOpenHome) {
+        // 当前任务在待删列表中：先回主页再开始删除，避免 taskview 挂在待删任务上闪现中间态
+        if (tasksToDelete.some((task) => task.task_id === this.currentTaskId)) {
             window.globalControlAPI.openTask(null);
             this._updateTaskHighlight(null);
         }
+        for (const task of tasksToDelete) {
+            window.globalControlAPI.removeTaskViewCache(task.task_id);
+            await window.taskManagerAPI.removeTask(task.task_id);
+        }
+        this._exitMultiSelect();
+        this.reloadTaskList();
+    }
+
+    /**
+     * 找到任务当前所属的分组（按当前视图构建，找不到返回 null）。
+     * 「删除当前分类全部任务」的文案与范围都来自这个分组。
+     */
+    _findGroupByTaskId(taskId) {
+        const groups = buildSidebarTaskGroups(this._getFilteredTaskList(), this._taskView);
+        return groups.find((g) => g.items.some((item) => item.task.task_id === taskId)) || null;
+    }
+
+    /**
+     * 「删除当前分类全部任务」的菜单文案：时间视图用独立短语（如"删除近7天的任务"），
+     * 工作空间视图用工作空间名拼模板。
+     */
+    _groupDeleteLabel(group) {
+        const keyByGroup = {
+            today: 'renderer.sidebar.groupDeleteToday',
+            'this-week': 'renderer.sidebar.groupDeleteThisWeek',
+            earlier: 'renderer.sidebar.groupDeleteEarlier',
+            'other-workspaces': 'renderer.sidebar.groupDeleteOtherWorkspaces',
+            automatic: 'renderer.sidebar.groupDeleteAutomatic'
+        };
+        const key = keyByGroup[group.id];
+        if (key) return this._t(key);
+        return this._t('renderer.sidebar.groupDeleteWorkspace', { name: this._taskGroupLabel(group) });
+    }
+
+    /**
+     * 删除当前分组下的全部任务（右键菜单「删除 xx 的任务」）。
+     * 时间视图：今天/近7天/更早/自动任务；工作空间视图：对应工作空间。
+     */
+    async _deleteTasksInGroup(group) {
+        const taskIds = group.items.map((item) => item.task.task_id).filter((id) => !this._favoritedTaskIds.has(id));
+        if (taskIds.length === 0) {
+            // 分组内全部是收藏任务：无可删项，明确反馈而非静默
+            window.notificationAPI?.sendNotification(
+                'info',
+                this._groupDeleteLabel(group),
+                this._t('renderer.sidebar.deleteGroupTasksAllFavorited'),
+                ''
+            );
+            return;
+        }
+        const groupLabel = this._taskGroupLabel(group);
+        const code = generateChallengeCode();
+        const confirmed = await showConfirmModal({
+            icon: 'fa-trash',
+            iconBg: '#FEF2F2',
+            iconColor: '#DC2626',
+            title: this._groupDeleteLabel(group),
+            message: this._t('renderer.sidebar.deleteGroupTasksConfirm', { group: groupLabel, count: taskIds.length }),
+            confirmText: this._t('common.delete'),
+            cancelText: this._t('common.cancel'),
+            danger: true,
+            challenge: code,
+            challengeHint: this._t('confirm.delete.challenge_hint', { code })
+        });
+        if (!confirmed) return;
+        // 当前任务在待删列表中：先回主页再开始删除，避免 taskview 挂在待删任务上闪现中间态
+        if (taskIds.includes(this.currentTaskId)) {
+            window.globalControlAPI.openTask(null);
+            this._updateTaskHighlight(null);
+        }
+        for (const taskId of taskIds) {
+            window.globalControlAPI.removeTaskViewCache(taskId);
+            await window.taskManagerAPI.removeTask(taskId);
+        }
+        this._exitMultiSelect();
         this.reloadTaskList();
     }
 
@@ -2225,8 +2550,17 @@ class SideBar extends HTMLElement {
         container.querySelectorAll('.task-item').forEach((item) => {
             if (item._bound) return;
             item._bound = true;
+            // 运行区卡片不参与多选：不渲染圆形选择框、不在渲染顺序里（Shift 区间选
+            // 找不到它），多选态下保留「点击打开任务」的原语义。
+            const inMultiSelectScope = item.classList.contains('sb-task-row');
             item.addEventListener('click', (event) => {
                 const taskId = event.currentTarget.dataset.task_id;
+                if (this._multiSelect && inMultiSelectScope) {
+                    // 多选形态下点击行是选择手势，不再打开任务
+                    event.stopPropagation();
+                    this._handleMultiSelectRowClick(event, taskId);
+                    return;
+                }
                 window.globalControlAPI.openTask(taskId);
                 this._updateTaskHighlight(taskId);
             });
@@ -2234,6 +2568,17 @@ class SideBar extends HTMLElement {
                 event.preventDefault();
                 event.stopPropagation();
                 const taskId = event.currentTarget.dataset.task_id;
+                if (this._multiSelect && inMultiSelectScope) {
+                    // macOS 上 Ctrl+左键会派发 contextmenu（系统右键语义）且不派发
+                    // mouseup/click。多选态下这是 Ctrl 点选手势：直接执行 toggle 并吞掉
+                    // 菜单；右键（无 Ctrl）才弹多选菜单。
+                    if (event.ctrlKey && !event.metaKey && !event.shiftKey) {
+                        this._handleMultiSelectRowClick({ ctrlKey: true, metaKey: false, shiftKey: false }, taskId);
+                        return;
+                    }
+                    this._showMultiSelectContextMenu(event.clientX, event.clientY);
+                    return;
+                }
                 this._showContextMenu(event.clientX, event.clientY, taskId);
             });
         });
@@ -2291,9 +2636,12 @@ class SideBar extends HTMLElement {
         const favoriteIcon = this._favoritedTaskIds.has(task.task_id)
             ? '<i class="fa-solid fa-star sb-task-favorite" aria-hidden="true"></i>'
             : '';
-        const resultIcon = isRunning
-            ? '<span class="sb-running-spinner" aria-hidden="true"></span>'
-            : `<span class="sb-task-result${failed ? ' is-failed' : ''}" aria-hidden="true">${failed ? '×' : '✓'}</span>`;
+        // 多选形态：状态图标换成圆形选择框（radio button 样式，可多选）
+        const resultIcon = this._multiSelect
+            ? `<span class="sb-multi-checkbox${this._multiSelectIds.has(task.task_id) ? ' is-checked' : ''}" aria-hidden="true">${CHECK_SVG}</span>`
+            : isRunning
+              ? '<span class="sb-running-spinner" aria-hidden="true"></span>'
+              : `<span class="sb-task-result${failed ? ' is-failed' : ''}" aria-hidden="true">${failed ? '×' : '✓'}</span>`;
         return `
         <div
             class="task-item sb-task-row${isCurrentTask ? ' is-current' : ''}"
@@ -2546,6 +2894,8 @@ class SideBar extends HTMLElement {
                 this._groupDisplayLimits.delete('favorites');
             }
             this._openTaskGroupId = null;
+            // 视图切换后选中集合跨口径残留，直接退出多选
+            this._exitMultiSelect();
             this.reloadTaskList();
         });
         container.querySelectorAll('[data-task-view]').forEach((button) => {
@@ -2562,6 +2912,7 @@ class SideBar extends HTMLElement {
                 this._openTaskGroupId = null;
                 this._groupDisplayLimits.clear();
                 localStorage.setItem(TASK_VIEW_STORAGE_KEY, nextView);
+                this._exitMultiSelect();
                 this.reloadTaskList();
             });
         });
@@ -2675,6 +3026,7 @@ class SideBar extends HTMLElement {
         this._disconnectGroupScrollObservers();
         const filteredTasks = this._getFilteredTaskList();
         const runningTasks = getSidebarRunningTasks(filteredTasks);
+        taskListContainer.classList.toggle('is-multi-select', this._multiSelect);
 
         let groups;
         let favoritesResults;
@@ -2767,8 +3119,13 @@ class SideBar extends HTMLElement {
         this._bindTaskItemEvents(taskListContainer);
         this._bindSidebarTaskControls(taskListContainer);
         this._updateChatBadge();
-        // 行是 innerHTML 重建的，把左滑展开态迁移到新节点，避免刷新把删除按钮收走
-        this._swipeDeleteController?.restoreOpenRow();
+        // 多选态在重渲染后保持：行节点被重建，需重新标注选中行
+        this._multiSelectController?.syncAfterRender();
+        // 行是 innerHTML 重建的，把左滑展开态迁移到新节点，避免刷新把删除按钮收走；
+        // 多选态下删除按钮被 CSS 隐藏且手势挂起，恢复展开只会留下错位行，直接丢弃
+        if (!this._multiSelect) {
+            this._swipeDeleteController?.restoreOpenRow();
+        }
         restoreSidebarScrollState(taskListContainer, scrollState);
         if (typeof requestAnimationFrame === 'function') {
             requestAnimationFrame(() => {

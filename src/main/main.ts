@@ -338,7 +338,7 @@ if (process.platform === 'linux') {
 // 初始化（由字体枚举路径首次触发）收到 EPERM 后抛出未捕获异常，导致渲染进程
 // SIGABRT 循环崩溃、窗口白屏。待框架侧在 seccomp 策略放行 timerfd_create 后
 // 可移除此开关。
-if (process.platform === 'openharmony') {
+if ((process.platform as string) === 'openharmony') {
     app.commandLine.appendSwitch('no-sandbox');
 }
 

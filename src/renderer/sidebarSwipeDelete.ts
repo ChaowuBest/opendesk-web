@@ -73,14 +73,16 @@ const RESTORE_WINDOW_MS = 5000;
 const DEFAULT_ROW_SELECTOR = '.task-item.sb-task-row';
 const DEFAULT_CONTENT_SELECTOR = '.sb-task-row-main';
 const DEFAULT_DELETE_SELECTOR = '.sb-swipe-delete';
-/** 行内可编辑元素（内联重命名的输入框）：横向拖动属于选词/移光标，不参与滑动手势 */
-const EDITABLE_SELECTOR = 'input, textarea, select, [contenteditable="true"]';
+/** 可编辑元素：内部按下/拖动是文本选择手势，手势类交互（左滑/框选）都要让路 */
+export const EDITABLE_SELECTOR = 'input, textarea, select, [contenteditable="true"]';
 
 export type SwipeAxis = 'x' | 'y' | null;
 
 export interface SidebarSwipeDeleteOptions {
     /** 点击展开后的删除按钮时回调，参数为任务 id */
     onDelete: (taskId: string) => void;
+    /** 返回 true 时整个手势挂起（如任务列表进入多选形态，避免吞掉选择点击） */
+    isSuspended?: () => boolean;
     rowSelector?: string;
     contentSelector?: string;
     deleteSelector?: string;
@@ -227,6 +229,7 @@ export function attachSidebarSwipeDelete(
     }
 
     function onTouchStart(event: any): void {
+        if (options.isSuspended?.()) return;
         resetGesture();
         const target = event.target;
         // 已展开时点删除按钮属于点击意图，不进入滑动手势（也不因此收起展开行）
@@ -260,6 +263,10 @@ export function attachSidebarSwipeDelete(
 
     function onTouchMove(event: any): void {
         if (!gesture) return;
+        if (options.isSuspended?.()) {
+            resetGesture();
+            return;
+        }
         const touch = findTouch(event.changedTouches, gesture.touchId);
         if (!touch) return;
         const dx = touch.clientX - gesture.startX;
@@ -308,6 +315,7 @@ export function attachSidebarSwipeDelete(
     }
 
     function onClickCapture(event: any): void {
+        if (options.isSuspended?.()) return;
         if (suppressClickTimer) {
             clearTimeout(suppressClickTimer);
             suppressClickTimer = null;

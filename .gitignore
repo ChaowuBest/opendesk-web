@@ -196,3 +196,6 @@ resources/sandbox/
 \$
 .agent-tmp/
 temp/
+
+# 测试运行时的一次性临时目录（如 proxy-env-e2e 的 .tmp-proxy-e2e）
+src/tests/ut/node/.tmp-*/

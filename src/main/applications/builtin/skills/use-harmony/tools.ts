@@ -124,10 +124,14 @@ export class DeviceResolutionError extends Error {}
 /**
  * Queries connected devices via `hdc list targets -v`.
  *
- * Output rows look like:
+ * Newer hdc builds print 4 whitespace-separated columns per row, where the
+ * transport kind (`USB`/`TCP`...) precedes the connection state:
+ *   `ea010e...		USB	Connected	localhost`
+ * Older builds print 3 columns (id / status / type):
  *   `127.0.0.1:5555  Connected  HarmonyOS Device`
- * Columns are whitespace separated (id / status / type). Rows without a
- * parseable id are skipped, so `[Empty]` naturally yields an empty list.
+ * The connection state is located by value (`Connected`/`Disconnected`) so
+ * both formats yield a usable status; remaining columns are kept as `type`.
+ * Rows without a parseable id are skipped, so `[Empty]` yields an empty list.
  */
 export async function listDevices(): Promise<HdcDevice[]> {
     const output = await runHdc(['list', 'targets', '-v'], 5000);
@@ -138,11 +142,19 @@ export async function listDevices(): Promise<HdcDevice[]> {
         const parts = trimmed.split(/\s+/);
         const id = parts[0];
         if (!id || !/^[0-9a-zA-Z._:-]+$/.test(id)) continue;
-        devices.push({
-            id,
-            status: parts[1] ?? 'unknown',
-            type: parts.slice(2).join(' ') || 'unknown'
-        });
+        const stateIdx = parts.findIndex(
+            (part, index) => index > 0 && (part === 'Connected' || part === 'Disconnected')
+        );
+        let status: string;
+        let type: string;
+        if (stateIdx > 0) {
+            status = parts[stateIdx];
+            type = [...parts.slice(1, stateIdx), ...parts.slice(stateIdx + 1)].join(' ') || 'unknown';
+        } else {
+            status = parts[1] ?? 'unknown';
+            type = parts.slice(2).join(' ') || 'unknown';
+        }
+        devices.push({ id, status, type });
     }
     return devices;
 }
@@ -3023,7 +3035,9 @@ const DropFixtureArgsSchema = z.object({
 });
 
 const DROP_FIXTURE_MAX_BYTES = 20 * 1024 * 1024;
-const DROP_FIXTURE_CHUNK_SIZE = 256 * 1024;
+// 16KB base64 chunks keep every argv element well below Linux MAX_ARG_STRLEN (128KB);
+// larger chunks fail with E2BIG when spawning hdc on Linux.
+const DROP_FIXTURE_CHUNK_SIZE = 16 * 1024;
 
 function fixtureMimeType(fileName: string): string {
     const extension = fileName.toLowerCase().split('.').pop() || '';
