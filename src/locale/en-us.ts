@@ -1734,6 +1734,10 @@ export const enUs: Record<string, string> = {
         'Unable to open System Settings. Go to Apps & services → App startup management manually.',
     'sp.general.launchAtLogin.unsupported': 'Startup settings are unavailable on this system.',
     'sp.general.launchAtLogin.error': 'Unable to read or change startup settings. Please try again.',
+    'sp.general.quickCapture': 'Quick Capture',
+    'sp.general.quickCapture.on': 'On (Alt + Space)',
+    'sp.general.quickCapture.off': 'Off',
+    'quickcapture.imageName': 'Screenshot',
     'sp.general.launchAtLogin.systemBlocked':
         'The system did not apply this change. Check startup permissions in system settings.',
     'sp.general.display': 'Interface',

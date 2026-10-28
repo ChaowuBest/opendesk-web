@@ -149,6 +149,15 @@ export function registerNativeBridge(): void {
             case 'accountKit:closeLogin':
                 data = await registeredBridge.getHuaweiAccountKit().then((kit) => kit.closeLogin());
                 break;
+            case 'quickCaptureKit:getState':
+                data = await registeredBridge.getQuickCaptureKit().then((kit) => kit.getState());
+                break;
+            case 'quickCaptureKit:setEnabled':
+                data = await registeredBridge.getQuickCaptureKit().then((kit) => kit.setEnabled(args[0] === true));
+                break;
+            case 'quickCaptureKit:takePendingCapture':
+                data = await registeredBridge.getQuickCaptureKit().then((kit) => kit.takePendingCapture());
+                break;
             default:
                 return { status: 'error', message: `Method not found: ${method}` };
         }

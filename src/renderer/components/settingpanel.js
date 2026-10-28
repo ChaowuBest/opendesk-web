@@ -2270,6 +2270,7 @@ class SettingPanel extends HTMLElement {
         const guiReasonDisplay = this.currentData?.gui_config?.gui_reason_display || 'inline';
         const guiOutputMode = this.currentData?.gui_config?.output_mode || 'minimal';
         const ctrlEnterSend = this.currentData?.gui_config?.ctrl_enter_send || false;
+        const quickCaptureEnabled = this.currentData?.gui_config?.quick_capture_enabled !== false;
         const onMainWindowClose = this.currentData?.gui_config?.on_mainwindow_close;
         const rawFloatingWindowMode = this.currentData?.gui_config?.floating_window_mode;
         const floatingWindowMode =
@@ -2394,6 +2395,18 @@ class SettingPanel extends HTMLElement {
                         <option value="ctrl-enter"${ctrlEnterSend ? ' selected' : ''}>${this._t('sp.general.sendShortcut.ctrlEnter')}</option>
                     </select>
                 </div>
+                ${
+                    window.systemInfo?.isOpenHarmony
+                        ? `
+                <div class="sp-form-group" style="margin-bottom:0">
+                    <label class="sp-form-label">${this._t('sp.general.quickCapture')}</label>
+                    <select id="quick-capture-select" class="sp-form-input">
+                        <option value="off"${!quickCaptureEnabled ? ' selected' : ''}>${this._t('sp.general.quickCapture.off')}</option>
+                        <option value="on"${quickCaptureEnabled ? ' selected' : ''}>${this._t('sp.general.quickCapture.on')}</option>
+                    </select>
+                </div>`
+                        : ''
+                }
                 <div class="sp-form-group" style="margin-bottom:0">
                     <label class="sp-form-label">${this._t('sp.general.closeWindowBehavior')}</label>
                     <select id="on-mainwindow-close-select" class="sp-form-input">
@@ -2891,6 +2904,28 @@ class SettingPanel extends HTMLElement {
         });
         controller.render();
         controller.setGeneralVisible(this._activeTab === 'general');
+    }
+
+    _bindQuickCaptureEvents() {
+        const select = this.querySelector('#quick-capture-select');
+        if (!select) return;
+        let busy = false;
+        select.addEventListener('change', async () => {
+            if (busy) return;
+            busy = true;
+            try {
+                const kit = await new NativeBridgeProxy().getQuickCaptureKit();
+                const state = await kit.setEnabled(select.value === 'on');
+                if (!this.currentData.gui_config) this.currentData.gui_config = {};
+                this.currentData.gui_config.quick_capture_enabled = state.enabled;
+                select.value = state.enabled ? 'on' : 'off';
+                this.saveImmediately();
+            } catch {
+                select.value = this.currentData?.gui_config?.quick_capture_enabled !== false ? 'on' : 'off';
+            } finally {
+                busy = false;
+            }
+        });
     }
 
     _bindDebugModeEvents() {
@@ -3738,6 +3773,7 @@ class SettingPanel extends HTMLElement {
         });
 
         this._bindLaunchAtLoginEvents();
+        this._bindQuickCaptureEvents();
         this._bindDebugModeEvents();
 
         this._bindTelemetryEvents();
@@ -5085,6 +5121,7 @@ class SettingPanel extends HTMLElement {
                 this.saveImmediately();
             });
             this._bindLaunchAtLoginEvents();
+            this._bindQuickCaptureEvents();
             this._bindDebugModeEvents();
 
             this._bindTelemetryEvents();
