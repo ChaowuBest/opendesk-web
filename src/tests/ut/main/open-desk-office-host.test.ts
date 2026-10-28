@@ -46,6 +46,7 @@ jest.unstable_mockModule('electron', () => ({
 }));
 
 const officeHost = {
+    getPresentationSnapshot: jest.fn(),
     register: jest.fn(),
     attachWindow: jest.fn(),
     activateContents: jest.fn(),
@@ -119,6 +120,25 @@ describe('OpenDesk Office webview ownership', () => {
 
         await expect(bindTask?.({ sender: { id: 7 } }, 'slides', 'task-a', '/tmp/deck.pptx', 42)).resolves.toBe(false);
         expect(officeHost.activateContents).not.toHaveBeenCalled();
+    });
+
+    it('only synchronizes a presentation owned by the requesting window', async () => {
+        registerEmbeddedOpenDeskOffice();
+        const refresh = ipcHandlers.get('office-host:refresh-presentation');
+        webContentsById = {
+            id: 45,
+            session: officeSession,
+            hostWebContents: { id: 7 },
+            isDestroyed: () => false,
+            getType: () => 'webview',
+            getURL: () => pathToFileURL(matcherOptions[0].rendererFilePath).href
+        };
+        officeHost.getPresentationSnapshot.mockResolvedValueOnce({ bytes: new Uint8Array(), revision: 'test' });
+        const calls = officeHost.getPresentationSnapshot.mock.calls.length;
+        await expect(refresh?.({ sender: { id: 99 } }, 45)).resolves.toBe(false);
+        expect(officeHost.getPresentationSnapshot.mock.calls.length).toBe(calls);
+        await expect(refresh?.({ sender: { id: 7 } }, 45)).resolves.toBe(true);
+        expect(officeHost.getPresentationSnapshot).toHaveBeenCalledWith(webContentsById);
     });
 
     it('allows a trusted Office webview in the dedicated Office session to bind', async () => {

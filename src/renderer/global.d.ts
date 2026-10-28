@@ -75,6 +75,7 @@ declare global {
         officeHostAPI: {
             prepare: (kind: 'slides' | 'word' | 'sheets') => Promise<boolean>;
             requestClose: (kind: 'slides' | 'word' | 'sheets', webContentsId: number) => Promise<boolean>;
+            refreshPresentation: (webContentsId: number) => Promise<boolean>;
             bindOfficeTask: (
                 kind: 'slides' | 'word' | 'sheets',
                 taskId: string,
@@ -221,6 +222,11 @@ declare global {
                 options?: { includeFiles?: boolean; extensions?: string[]; showHidden?: boolean }
             ) => Promise<any>;
             readFile: (filePath: string) => Promise<any>;
+            getFileSize: (filePath: string) => Promise<number>;
+            watchFile: (
+                filePath: string,
+                callback: (change: { path: string; type: 'changed' | 'missing' }) => void
+            ) => Promise<() => void>;
             readTextFile: (filePath: string, maxBytes?: number) => Promise<any>;
             writeTextFile: (filePath: string, content: string) => Promise<any>;
             fileExists: (filePath: string) => Promise<any>;

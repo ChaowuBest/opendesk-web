@@ -73,6 +73,7 @@ describe('task artifacts goal disclosure state', () => {
                 mount() {}
                 refresh() {}
                 softRefresh() {}
+                stopWatchingFile() {}
                 selectFile(filePath: string) {
                     this.onWorkspaceFocusLayoutChange?.({ active: filePath.endsWith('.pptx'), fullscreen: true });
                 }
@@ -172,6 +173,7 @@ describe('task artifacts goal disclosure state', () => {
         (window as any).clearInterval = globalThis.clearInterval;
         const baselineTimers = jest.getTimerCount();
         const artifacts = createArtifacts();
+        const stopWatching = jest.spyOn((artifacts as any)._fileExplorer, 'stopWatchingFile');
 
         artifacts.setTaskTodos([
             {
@@ -185,6 +187,7 @@ describe('task artifacts goal disclosure state', () => {
         expect(jest.getTimerCount()).toBeGreaterThan(baselineTimers);
         artifacts.remove();
         expect(jest.getTimerCount()).toBe(baselineTimers);
+        expect(stopWatching).toHaveBeenCalledTimes(1);
     });
 
     test('extends a focused file preview across the workspace tab header', () => {

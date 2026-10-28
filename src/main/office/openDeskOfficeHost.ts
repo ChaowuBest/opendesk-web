@@ -35,6 +35,11 @@ interface OpenDeskOfficeHost {
         call: { name: string; input: Record<string, unknown> }
     ): Promise<SlidesCapabilityExecution>;
     requestCloseAll(): Promise<boolean>;
+    getPresentationSnapshot?(contents: WebContents): Promise<{
+        bytes: Uint8Array;
+        revision: string;
+        path: string;
+    }>;
 }
 
 export interface SlidesCapabilityDefinition {
@@ -219,6 +224,19 @@ export function registerEmbeddedOpenDeskOffice(): void {
     prepareHandlerRegistered = true;
     ipcMain.handle('office-host:prepare', async (_event, kind: OpenDeskOfficeEditorKind) => {
         await loadEditorHost(getEditorRuntime(kind));
+        return true;
+    });
+    ipcMain.handle('office-host:refresh-presentation', async (event, webContentsId: number) => {
+        if (!Number.isInteger(webContentsId)) return false;
+        const target = (await import('electron')).webContents.fromId(webContentsId);
+        if (!target || target.isDestroyed() || target.getType() !== 'webview') return false;
+        if (target.hostWebContents?.id !== event.sender.id) return false;
+        if (getEmbeddedOpenDeskOfficeContentsKind(target) !== 'slides') return false;
+        const host = await loadEditorHost(getEditorRuntime('slides'));
+        if (!host.getPresentationSnapshot) return false;
+        // The native snapshot synchronizes clean sessions from disk and preserves dirty sessions.
+        // Avoid requestClose here: Office autosave could overwrite the external replacement.
+        await host.getPresentationSnapshot(target);
         return true;
     });
     ipcMain.handle(

@@ -55,6 +55,165 @@ describe('file explorer', () => {
         delete (window as any).fsAPI;
     });
 
+    function mountExplorer(workspace = '/workspace') {
+        const container = document.createElement('div');
+        document.body.appendChild(container);
+        const explorer = new FileExplorer() as any;
+        explorer._container = container;
+        explorer._rootNode = container;
+        explorer._workspaceRoot = workspace;
+        explorer._renderPanel();
+        return { container, explorer };
+    }
+
+    const settle = () => new Promise((resolve) => setTimeout(resolve, 0));
+    const refreshSettled = () => new Promise((resolve) => setTimeout(resolve, 150));
+
+    async function openWatchedOffice(ext: 'pptx' | 'docx' | 'xlsx') {
+        const file = `/workspace/deck.${ext}`;
+        let callback!: (change: unknown) => void;
+        const dispose = jest.fn();
+        const requestClose = jest.fn(async () => true);
+        const refreshPresentation = jest.fn(async () => true);
+        (window as any).fsAPI = {
+            watchFile: jest.fn(async (_path, cb) => {
+                callback = cb;
+                return dispose;
+            }),
+            getFileSize: jest.fn(async () => 4096)
+        };
+        (window as any).officeHostAPI = {
+            prepare: jest.fn(async () => true),
+            requestClose,
+            ...(ext === 'pptx' ? { refreshPresentation } : {})
+        };
+        const { container, explorer } = mountExplorer();
+        explorer.selectFile(file);
+        await settle();
+        const editor = container.querySelector('.ws-office-editor-frame') as any;
+        editor.getWebContentsId = () => 123;
+        return {
+            container,
+            explorer,
+            editor,
+            dispose,
+            requestClose,
+            refreshPresentation,
+            notify: () => callback({ path: file, type: 'changed' })
+        };
+    }
+
+    test('synchronizes watched PPT changes in place and releases the watch on close', async () => {
+        const s = await openWatchedOffice('pptx');
+        s.notify();
+        s.notify();
+        await refreshSettled();
+        expect(s.refreshPresentation).toHaveBeenCalledTimes(1);
+        expect(s.refreshPresentation).toHaveBeenCalledWith(123);
+        expect(s.requestClose).not.toHaveBeenCalled();
+        expect(s.container.querySelector('.ws-office-editor-frame')).toBe(s.editor);
+        expect(s.container.querySelector('.ws-preview-size')?.textContent).toBe('4.0 KB');
+        s.explorer.closeEditor();
+        await settle();
+        expect(s.dispose).toHaveBeenCalledTimes(1);
+    });
+
+    test.each(['docx', 'xlsx'] as const)('reloads watched %s through its close guard', async (ext) => {
+        const s = await openWatchedOffice(ext);
+        s.notify();
+        await refreshSettled();
+        expect(s.requestClose).toHaveBeenCalledWith(ext === 'docx' ? 'word' : 'sheets', 123);
+        expect(s.container.querySelector('.ws-office-editor-frame')).not.toBe(s.editor);
+        s.explorer.closeEditor();
+    });
+
+    test('preserves an Office editor when its close guard rejects refresh', async () => {
+        const s = await openWatchedOffice('docx');
+        s.requestClose.mockResolvedValue(false);
+        s.notify();
+        await refreshSettled();
+        expect(s.container.querySelector('.ws-office-editor-frame')).toBe(s.editor);
+        expect(s.dispose).not.toHaveBeenCalled();
+        s.explorer.stopWatchingFile();
+    });
+
+    test('releases a watch registered after closing and ignores its late notifications', async () => {
+        let finish!: (dispose: () => void) => void;
+        let notify!: (change: unknown) => void;
+        const dispose = jest.fn();
+        (window as any).fsAPI = {
+            watchFile: jest.fn((_path, cb) => {
+                notify = cb;
+                return new Promise((resolve) => {
+                    finish = resolve;
+                });
+            }),
+            readTextFile: jest.fn(async () => ({ content: 'text', size: 4, binary: false, tooLarge: false }))
+        };
+        const explorer = new FileExplorer() as any;
+        explorer.selectFile('/workspace/note.md');
+        await settle();
+        explorer.closeEditor();
+        finish(dispose);
+        await settle();
+        notify({ path: '/workspace/note.md', type: 'changed' });
+        await refreshSettled();
+        expect(dispose).toHaveBeenCalledTimes(1);
+        expect((window as any).fsAPI.readTextFile).toHaveBeenCalledTimes(1);
+    });
+
+    test('refreshes ordinary previews and cancels old watches on switch or workspace reset', async () => {
+        const callbacks: Array<(change: unknown) => void> = [];
+        const disposers = [jest.fn(), jest.fn()];
+        let content = 'before';
+        (window as any).fsAPI = {
+            watchFile: jest.fn(async (_path, cb) => {
+                callbacks.push(cb);
+                return disposers[callbacks.length - 1];
+            }),
+            readTextFile: jest.fn(async () => ({ content, size: content.length, binary: false, tooLarge: false }))
+        };
+        const explorer = new FileExplorer() as any;
+        explorer.selectFile('/workspace/first.md');
+        await settle();
+        content = 'after';
+        callbacks[0]({ path: '/workspace/first.md', type: 'changed' });
+        await refreshSettled();
+        expect(explorer._previewState.data.content).toBe('after');
+        explorer.selectFile('/workspace/second.md');
+        await settle();
+        expect(disposers[0]).toHaveBeenCalledTimes(1);
+        callbacks[0]({ path: '/workspace/first.md', type: 'changed' });
+        await refreshSettled();
+        expect((window as any).fsAPI.readTextFile).toHaveBeenCalledTimes(3);
+        explorer.refresh('/another');
+        expect(disposers[1]).toHaveBeenCalledTimes(1);
+    });
+
+    test('external reads cannot replace text edited while the disk read is pending', async () => {
+        let finish!: (value: unknown) => void;
+        (window as any).fsAPI = {
+            readTextFile: jest.fn(
+                () =>
+                    new Promise((resolve) => {
+                        finish = resolve;
+                    })
+            )
+        };
+        const explorer = new FileExplorer() as any;
+        explorer._editorMode = true;
+        explorer._editorFilePath = '/workspace/code.ts';
+        explorer._editorInstance = { getValue: () => 'unsaved text' };
+        const initialize = jest.spyOn(explorer, '_initAceEditor');
+        const pending = explorer._loadFileForEditor('/workspace/code.ts', true);
+        await settle();
+        explorer._editorDirty = true;
+        finish({ content: 'external text', size: 13, binary: false, tooLarge: false });
+        await pending;
+        expect(initialize).not.toHaveBeenCalled();
+        expect(explorer._editorInstance.getValue()).toBe('unsaved text');
+    });
+
     test('turns Mermaid fences in Markdown previews into UTF-8-safe placeholders', () => {
         const html = renderFilePreviewMarkdown('```mermaid\nflowchart LR\nA[中文] --> B[完成]\n```');
         const encoded = html.match(/data-mermaid-code="([^"]+)"/)?.[1];
@@ -193,9 +352,101 @@ describe('file explorer', () => {
         explorer.closeEditor();
     });
 
+    test('refreshes stale Office size without remounting the editor', async () => {
+        const ext = 'pptx';
+        let resolveSize!: (size: number) => void;
+        const getFileSize = jest.fn(
+            () =>
+                new Promise<number>((resolve) => {
+                    resolveSize = resolve;
+                })
+        );
+        (window as any).fsAPI = { getFileSize };
+        (window as any).officeHostAPI = { prepare: jest.fn(async () => true) };
+        const { container, explorer } = mountExplorer();
+        explorer._childrenCache.set('/workspace', [
+            { name: `deck.${ext}`, path: `/workspace/deck.${ext}`, isDirectory: false, size: 1 }
+        ]);
+        explorer._renderPanel();
+        explorer.selectFile(`/workspace/deck.${ext}`);
+        await new Promise((resolve) => setTimeout(resolve, 0));
+        const editor = container.querySelector('.ws-office-editor-frame');
+        expect(editor).not.toBeNull();
+        expect(getFileSize).toHaveBeenCalledWith(`/workspace/deck.${ext}`);
+        expect(container.querySelector('.ws-preview-size')?.textContent).not.toBe('0 B');
+        resolveSize(12_000_000);
+        await new Promise((resolve) => setTimeout(resolve, 0));
+        expect(container.querySelector('.ws-preview-size')?.textContent).toBe('11 MB');
+        expect(container.querySelector('.ws-office-editor-frame')).toBe(editor);
+        explorer.closeEditor();
+    });
+
+    test.each([0, undefined])('shows true zero but hides unavailable Office size (%s)', async (size) => {
+        (window as any).fsAPI = {
+            getFileSize: jest.fn(async () => {
+                if (size === undefined) throw new Error('stat failed');
+                return size;
+            })
+        };
+        (window as any).officeHostAPI = { prepare: jest.fn(async () => true) };
+        const { container, explorer } = mountExplorer();
+        explorer.selectFile('/workspace/deck.pptx');
+        await new Promise((resolve) => setTimeout(resolve, 0));
+        expect(container.querySelector('.ws-office-editor-frame')).not.toBeNull();
+        expect(container.querySelector('.ws-preview-size')?.textContent).toBe(size === 0 ? '0 B' : '');
+        explorer.closeEditor();
+    });
+
+    test('ignores an old size response after switching Office files', async () => {
+        let resolveOld!: (size: number) => void;
+        (window as any).fsAPI = {
+            getFileSize: jest.fn((file: string) =>
+                file.endsWith('old.pptx')
+                    ? new Promise<number>((resolve) => {
+                          resolveOld = resolve;
+                      })
+                    : Promise.resolve(2048)
+            )
+        };
+        (window as any).officeHostAPI = { prepare: jest.fn(async () => true) };
+        const { container, explorer } = mountExplorer();
+        explorer.selectFile('/workspace/old.pptx');
+        await new Promise((resolve) => setTimeout(resolve, 0));
+        explorer.selectFile('/workspace/new.pptx');
+        await new Promise((resolve) => setTimeout(resolve, 0));
+        resolveOld(999999);
+        await new Promise((resolve) => setTimeout(resolve, 0));
+        expect(container.querySelector('.ws-preview-size')?.textContent).toBe('2.0 KB');
+        explorer.closeEditor();
+    });
+
+    test('normalizes Windows paths before rendering the file breadcrumb and opening Office', async () => {
+        const prepare = jest.fn<() => Promise<boolean>>().mockResolvedValue(true);
+        const listDirectory = jest.fn<() => Promise<unknown[]>>().mockResolvedValue([]);
+        (window as any).officeHostAPI = {
+            prepare,
+            requestClose: jest.fn<() => Promise<boolean>>().mockResolvedValue(true)
+        };
+        (window as any).fsAPI = { listDirectory };
+
+        const { container, explorer } = mountExplorer('C:/workspace');
+
+        explorer.selectFile('C:\\workspace\\deck.pptx');
+        await new Promise((resolve) => setTimeout(resolve, 0));
+
+        const editor = container.querySelector<HTMLIFrameElement>('.ws-office-editor-frame');
+        const editorUrl = new URL(editor?.getAttribute('src') || '', 'http://localhost');
+        expect(editorUrl.searchParams.get('file')).toBe('C:/workspace/deck.pptx');
+        expect(container.querySelector('.ws-breadcrumb-current')?.textContent).toBe('deck.pptx');
+
+        container.querySelector<HTMLElement>('.ws-breadcrumb-current')?.click();
+        await new Promise((resolve) => setTimeout(resolve, 0));
+
+        expect(listDirectory).toHaveBeenCalledWith('C:/workspace');
+        explorer.closeEditor();
+    });
+
     test('opens docx files in the embedded OpenDesk Office editor', async () => {
-        const container = document.createElement('div');
-        document.body.appendChild(container);
         const prepare = jest.fn<() => Promise<boolean>>().mockResolvedValue(true);
         const bindOfficeTask = jest.fn<() => Promise<boolean>>().mockResolvedValue(true);
         (window as any).officeHostAPI = {
@@ -204,19 +455,10 @@ describe('file explorer', () => {
             requestClose: jest.fn<() => Promise<boolean>>().mockResolvedValue(true)
         };
 
-        const explorer = new FileExplorer() as FileExplorerModule['FileExplorer'] & {
-            _container: HTMLElement;
-            _rootNode: ParentNode;
-            _workspaceRoot: string;
-            _renderPanel(): void;
-        };
-        explorer._container = container;
-        explorer._rootNode = container;
-        explorer._workspaceRoot = '/workspace';
+        const { container, explorer } = mountExplorer();
         explorer.setTaskId('task-a');
         const onWorkspaceFocusLayoutChange = jest.fn();
         (explorer as any).onWorkspaceFocusLayoutChange = onWorkspaceFocusLayoutChange;
-        explorer._renderPanel();
 
         explorer.selectFile('/workspace/report.docx');
         await new Promise((resolve) => setTimeout(resolve, 0));
@@ -237,24 +479,13 @@ describe('file explorer', () => {
     });
 
     test('opens xlsx files in the embedded OpenDesk Office editor', async () => {
-        const container = document.createElement('div');
-        document.body.appendChild(container);
         const prepare = jest.fn<() => Promise<boolean>>().mockResolvedValue(true);
         (window as any).officeHostAPI = {
             prepare,
             requestClose: jest.fn<() => Promise<boolean>>().mockResolvedValue(true)
         };
 
-        const explorer = new FileExplorer() as FileExplorerModule['FileExplorer'] & {
-            _container: HTMLElement;
-            _rootNode: ParentNode;
-            _workspaceRoot: string;
-            _renderPanel(): void;
-        };
-        explorer._container = container;
-        explorer._rootNode = container;
-        explorer._workspaceRoot = '/workspace';
-        explorer._renderPanel();
+        const { container, explorer } = mountExplorer();
 
         explorer.selectFile('/workspace/budget.xlsx');
         await new Promise((resolve) => setTimeout(resolve, 0));
@@ -272,29 +503,18 @@ describe('file explorer', () => {
         ['slides', 'deck.pptx', 1536, '1.5 KB'],
         ['word', 'report.docx', 24 * 1024, '24 KB'],
         ['sheets', 'budget.xlsx', 2 * 1024 * 1024, '2.0 MB']
-    ] as const)('reuses the file list size in the %s preview header', async (_kind, name, size, expected) => {
-        const container = document.createElement('div');
-        document.body.appendChild(container);
+    ] as const)('refreshes the size in the %s preview header', async (_kind, name, size, expected) => {
         (window as any).officeHostAPI = {
             prepare: jest.fn<() => Promise<boolean>>().mockResolvedValue(true),
             requestClose: jest.fn<() => Promise<boolean>>().mockResolvedValue(true)
         };
 
+        (window as any).fsAPI = { getFileSize: jest.fn(async () => size) };
         const filePath = `/workspace/${name}`;
-        const explorer = new FileExplorer() as FileExplorerModule['FileExplorer'] & {
-            _container: HTMLElement;
-            _rootNode: ParentNode;
-            _workspaceRoot: string;
-            _childrenCache: Map<string, unknown>;
-            _renderPanel(): void;
-        };
-        explorer._container = container;
-        explorer._rootNode = container;
-        explorer._workspaceRoot = '/workspace';
+        const { container, explorer } = mountExplorer();
         explorer._childrenCache.set('/workspace', [
             { name, path: filePath, isDirectory: false, size, modifiedAt: null }
         ]);
-        explorer._renderPanel();
 
         explorer.selectFile(filePath);
         await new Promise((resolve) => setTimeout(resolve, 0));
@@ -303,8 +523,6 @@ describe('file explorer', () => {
     });
 
     test('keeps a shadow-safe loading view visible until the embedded pptx editor is visible', async () => {
-        const container = document.createElement('div');
-        document.body.appendChild(container);
         let finishPrepare: ((ready: boolean) => void) | undefined;
         const prepare = jest.fn(
             () =>
@@ -317,16 +535,7 @@ describe('file explorer', () => {
             requestClose: jest.fn<() => Promise<boolean>>().mockResolvedValue(true)
         };
 
-        const explorer = new FileExplorer() as FileExplorerModule['FileExplorer'] & {
-            _container: HTMLElement;
-            _rootNode: ParentNode;
-            _workspaceRoot: string;
-            _renderPanel(): void;
-        };
-        explorer._container = container;
-        explorer._rootNode = container;
-        explorer._workspaceRoot = '/workspace';
-        explorer._renderPanel();
+        const { container, explorer } = mountExplorer();
 
         explorer.selectFile('/workspace/deck.pptx');
         const previewRoot = container.querySelector('[data-preview-root]');
@@ -358,24 +567,13 @@ describe('file explorer', () => {
     });
 
     test('keeps the same pptx editor session when switching the file browser view', async () => {
-        const container = document.createElement('div');
-        document.body.appendChild(container);
         const prepare = jest.fn<() => Promise<boolean>>().mockResolvedValue(true);
         (window as any).officeHostAPI = {
             prepare,
             requestClose: jest.fn<() => Promise<boolean>>().mockResolvedValue(true)
         };
 
-        const explorer = new FileExplorer() as FileExplorerModule['FileExplorer'] & {
-            _container: HTMLElement;
-            _rootNode: ParentNode;
-            _workspaceRoot: string;
-            _renderPanel(): void;
-        };
-        explorer._container = container;
-        explorer._rootNode = container;
-        explorer._workspaceRoot = '/workspace';
-        explorer._renderPanel();
+        const { container, explorer } = mountExplorer();
         explorer.selectFile('/workspace/deck.pptx');
         await new Promise((resolve) => setTimeout(resolve, 0));
 

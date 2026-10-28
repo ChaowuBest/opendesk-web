@@ -1280,6 +1280,92 @@ export class FileExplorer {
     private _officeClosePending = false;
     private _officeCloseApproved = false;
     private _taskId: string | null = null;
+    private _fileWatchVersion = 0;
+    private _watchedFilePath: string | null = null;
+    private _fileWatchDispose: (() => void) | null = null;
+    private _fileWatchTimer: ReturnType<typeof setTimeout> | null = null;
+    private _fileRefreshVersion: number | null = null;
+    private _fileRefreshQueued = false;
+
+    /** Also called when the containing panel is detached, even if Office cannot close. */
+    stopWatchingFile(): void {
+        this._fileWatchVersion += 1;
+        this._watchedFilePath = null;
+        this._fileWatchDispose?.();
+        this._fileWatchDispose = null;
+        if (this._fileWatchTimer !== null) clearTimeout(this._fileWatchTimer);
+        this._fileWatchTimer = null;
+        this._fileRefreshQueued = false;
+    }
+
+    private _watchSelectedFile(filePath: string): void {
+        this.stopWatchingFile();
+        this._watchedFilePath = filePath;
+        const version = this._fileWatchVersion;
+        const watch = window.fsAPI?.watchFile;
+        if (!watch) return;
+        void watch(filePath, () => this._queueWatchedFileRefresh(filePath, version))
+            .then((dispose) => {
+                if (version !== this._fileWatchVersion || this._selectedFile !== filePath) dispose();
+                else this._fileWatchDispose = dispose;
+            })
+            .catch((error) => console.warn('File preview watch unavailable', error));
+    }
+
+    private _queueWatchedFileRefresh(filePath: string, version: number): void {
+        if (version !== this._fileWatchVersion || this._selectedFile !== filePath) return;
+        this._fileRefreshQueued = true;
+        if (this._fileRefreshVersion === version || this._fileWatchTimer !== null) return;
+        // Coalesce atomic-save bursts and never reload an Office webview concurrently.
+        this._fileWatchTimer = setTimeout(() => {
+            this._fileWatchTimer = null;
+            void this._refreshWatchedFile(filePath, version);
+        }, 100);
+    }
+
+    private async _refreshWatchedFile(filePath: string, version: number): Promise<void> {
+        if (version !== this._fileWatchVersion || this._selectedFile !== filePath) return;
+        this._fileRefreshVersion = version;
+        this._fileRefreshQueued = false;
+        try {
+            if (this._editorMode) {
+                if (this._editorDirty || this._editorSaving || this._editorPendingSave) return;
+                await this._loadFileForEditor(filePath, true);
+            } else {
+                const config = getOfficeEditorConfig(filePath);
+                if (config) {
+                    const webview = this._rootNode?.querySelector('.ws-office-editor-frame') as
+                        | (HTMLElement & { getWebContentsId?: () => number })
+                        | null;
+                    const id = webview?.getWebContentsId?.();
+                    if (!id) return;
+                    if (config.kind === 'slides' && window.officeHostAPI?.refreshPresentation) {
+                        await window.officeHostAPI.refreshPresentation(id);
+                        const size = await window.fsAPI?.getFileSize?.(filePath);
+                        if (version !== this._fileWatchVersion || this._selectedFile !== filePath) return;
+                        if (this._previewState.data && size !== undefined) {
+                            this._previewState.data.size = size;
+                            const label = this._rootNode?.querySelector('.ws-preview-size');
+                            if (label) label.textContent = formatBytes(size);
+                        }
+                        return;
+                    }
+                    if (!window.officeHostAPI?.requestClose) return;
+                    const canClose = await window.officeHostAPI.requestClose(config.kind, id);
+                    if (!canClose || version !== this._fileWatchVersion || this._selectedFile !== filePath) return;
+                }
+                await this._loadPreview(filePath);
+            }
+            if (version === this._fileWatchVersion) this.softRefresh();
+        } catch (error) {
+            console.warn('File preview refresh failed', error);
+        } finally {
+            if (this._fileRefreshVersion === version) this._fileRefreshVersion = null;
+            if (version === this._fileWatchVersion && this._fileRefreshQueued) {
+                this._queueWatchedFileRefresh(filePath, version);
+            }
+        }
+    }
 
     /** 在浏览器中打开文件的回调（由宿主组件设置） */
     onOpenInBrowser: ((filePath: string) => void) | null = null;
@@ -1300,6 +1386,9 @@ export class FileExplorer {
         this._container = container;
         this._rootNode = rootNode ?? container;
         void this._ensureWorkspaceLoaded();
+        if (this._selectedFile && this._watchedFilePath !== this._selectedFile) {
+            this._watchSelectedFile(this._selectedFile);
+        }
     }
 
     /**
@@ -1324,6 +1413,7 @@ export class FileExplorer {
      */
     refresh(workspace?: string): void {
         if (this._deferUntilOfficeCanClose(() => this.refresh(workspace))) return;
+        this.stopWatchingFile();
         // 切换任务/工作空间时先关闭预览
         this._dismissBreadcrumbDropdown();
         this._selectedFile = null;
@@ -1337,7 +1427,7 @@ export class FileExplorer {
         this._editorDirty = false;
         this._editorStatus = 'idle';
         this._destroyEditorInstance();
-        this._taskWorkspace = workspace ?? null;
+        this._taskWorkspace = workspace == null ? null : normalizeExplorerFilePath(workspace);
         this._workspaceRequested = false;
         this._workspaceRoot = null;
         this._workspaceError = null;
@@ -1357,6 +1447,7 @@ export class FileExplorer {
      */
     closeEditor(): void {
         if (this._deferUntilOfficeCanClose(() => this.closeEditor())) return;
+        this.stopWatchingFile();
         void this._saveEditorIfNeeded();
         this._destroyEditorInstance();
         this._dismissBreadcrumbDropdown();
@@ -1413,7 +1504,7 @@ export class FileExplorer {
                 this._renderPanel();
                 return;
             }
-            this._workspaceRoot = root.replace(/\\/g, '/');
+            this._workspaceRoot = normalizeExplorerFilePath(root);
             this._gridPath = this._workspaceRoot;
             this._expandedPaths.add(this._workspaceRoot);
             this._renderPanel();
@@ -1425,6 +1516,7 @@ export class FileExplorer {
     }
 
     private async _loadChildren(dirPath: string): Promise<void> {
+        dirPath = normalizeExplorerFilePath(dirPath);
         const cached = this._childrenCache.get(dirPath);
         if (cached && cached !== 'loading' && !(cached as { error?: string }).error) return;
         if (cached === 'loading') return;
@@ -1436,7 +1528,10 @@ export class FileExplorer {
                 throw new Error(t('renderer.fileExplorer.error.noListDir'));
             }
             const entries = await api.listDirectory(dirPath);
-            this._childrenCache.set(dirPath, entries);
+            this._childrenCache.set(
+                dirPath,
+                entries.map((entry: FSEntry) => ({ ...entry, path: normalizeExplorerFilePath(entry.path) }))
+            );
         } catch (err) {
             this._childrenCache.set(dirPath, { error: err instanceof Error ? err.message : String(err) });
         }
@@ -1523,6 +1618,7 @@ export class FileExplorer {
             return;
         }
 
+        this.stopWatchingFile();
         // HTML/HTM 文件在浏览器 tab 中打开，不在文件预览面板中渲染
         if (isHtmlFile(filePath)) {
             if (this._editorMode) {
@@ -1562,6 +1658,7 @@ export class FileExplorer {
         // 检查当前是否为空状态（展开动画）
         const wasEmpty = !this._selectedFile;
         this._selectedFile = filePath;
+        this._watchSelectedFile(filePath);
         // 代码文件直接以 Ace editor 只读模式预览
         const useAcePreview = shouldUseAcePreview(filePath);
         if (useAcePreview) {
@@ -1605,7 +1702,8 @@ export class FileExplorer {
         if (this._officeClosePending) return true;
 
         const webview = this._rootNode?.querySelector<HTMLElement>('.ws-office-editor-frame') as
-            (HTMLElement & { getWebContentsId?: () => number }) | null;
+            | (HTMLElement & { getWebContentsId?: () => number })
+            | null;
         const webContentsId = webview?.getWebContentsId?.();
         if (!webContentsId || !window.officeHostAPI?.requestClose) return false;
 
@@ -1628,27 +1726,44 @@ export class FileExplorer {
     }
 
     private async _loadPreview(filePath: string): Promise<void> {
+        const version = this._fileWatchVersion;
         try {
             const editorConfig = getOfficeEditorConfig(filePath);
             if (editorConfig) {
-                const fileSize = this._getCachedFileSize(filePath) ?? 0;
+                const previewData = { tooLarge: false, size: Number.NaN, limit: 0, content: '', binary: false };
                 const officeHostAPI = window.officeHostAPI;
                 if (!officeHostAPI?.prepare) {
                     throw new Error(t(editorConfig.unavailableKey));
                 }
                 // 先让局部 loading 完成一次绘制，再启动 OpenDesk Office 冷初始化。
                 await new Promise<void>((resolve) => window.setTimeout(resolve, 0));
-                if (this._selectedFile !== filePath) return;
+                if (this._selectedFile !== filePath || version !== this._fileWatchVersion) return;
                 await officeHostAPI.prepare(editorConfig.kind);
-                if (this._selectedFile !== filePath) return;
+                if (this._selectedFile !== filePath || version !== this._fileWatchVersion) return;
                 this._previewState = {
                     status: 'idle',
-                    data: { tooLarge: false, size: fileSize, limit: 0, content: '', binary: false }
+                    data: previewData
                 };
                 this._previewFullscreen = true;
                 this._notifyWorkspaceFocusLayoutChange();
                 this._renderPreview();
                 this._mountOfficeEditor(filePath, editorConfig);
+                // Update only the label: rerendering would replace the live Office webview.
+                void window.fsAPI
+                    ?.getFileSize?.(filePath)
+                    .then((size: number) => {
+                        if (
+                            this._selectedFile !== filePath ||
+                            version !== this._fileWatchVersion ||
+                            this._previewState.status !== 'idle' ||
+                            this._previewState.data !== previewData
+                        )
+                            return;
+                        previewData.size = size;
+                        const label = this._rootNode?.querySelector('.ws-preview-size');
+                        if (label) label.textContent = formatBytes(size);
+                    })
+                    .catch(() => undefined);
                 return;
             }
             const api = window.fsAPI;
@@ -1656,7 +1771,7 @@ export class FileExplorer {
                 throw new Error(t('renderer.fileExplorer.error.noReadFile'));
             }
             const data = await api.readTextFile(filePath, 0);
-            if (this._selectedFile !== filePath) return;
+            if (this._selectedFile !== filePath || version !== this._fileWatchVersion) return;
             this._previewState = { status: 'idle', data };
             // 可预览内容进入全屏（图片即使 binary 也可通过 dataUri 预览）
             const isImage = isImageFile(filePath);
@@ -1664,22 +1779,13 @@ export class FileExplorer {
             if (data.tooLarge) this._previewFullscreen = false;
             this._notifyWorkspaceFocusLayoutChange();
         } catch (err) {
-            if (this._selectedFile !== filePath) return;
+            if (this._selectedFile !== filePath || version !== this._fileWatchVersion) return;
             this._previewState = { status: 'error', error: err instanceof Error ? err.message : String(err) };
             this._previewFullscreen = false;
             this._notifyWorkspaceFocusLayoutChange();
         }
         this._renderPreview();
         this._applyFullscreenLayout();
-    }
-
-    private _getCachedFileSize(filePath: string): number | undefined {
-        for (const cached of this._childrenCache.values()) {
-            if (!Array.isArray(cached)) continue;
-            const entry = cached.find((candidate) => candidate.path === filePath && !candidate.isDirectory);
-            if (entry) return entry.size;
-        }
-        return undefined;
     }
 
     // ----- context menu -----
@@ -2359,6 +2465,7 @@ export class FileExplorer {
         this._editorOpenLine = line != null && line > 0 ? line : null;
         const selected = filePath;
         this._selectedFile = selected;
+        this._watchSelectedFile(selected);
         this._previewState = { status: 'loading' };
         this._notifyWorkspaceFocusLayoutChange();
 
@@ -2385,7 +2492,7 @@ export class FileExplorer {
         return filePath;
     }
 
-    private async _loadFileForEditor(filePath: string): Promise<void> {
+    private async _loadFileForEditor(filePath: string, preserveEdits = false): Promise<void> {
         if (!this._editorMode || this._editorFilePath !== filePath) {
             return;
         }
@@ -2397,7 +2504,14 @@ export class FileExplorer {
             }
             const resolvedPath = await this._resolveFilePath(filePath);
             const data = await api.readTextFile(resolvedPath, ACE_TEXT_MAX_BYTES);
+            if (preserveEdits && (this._editorDirty || this._editorSaving || this._editorPendingSave)) return;
             if (!this._editorMode || this._editorFilePath !== filePath || seq !== this._currentLoadSeq) {
+                return;
+            }
+            if (preserveEdits && !data.binary && !data.tooLarge && this._editorInstance?.getValue() === data.content) {
+                this._previewState = { status: 'idle', data };
+                const label = this._rootNode?.querySelector('.ws-preview-size');
+                if (label) label.textContent = formatBytes(data.size);
                 return;
             }
             if (data.binary || data.tooLarge) {

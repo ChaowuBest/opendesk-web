@@ -350,6 +350,7 @@ class TaskArtifacts extends HTMLElement {
     }
 
     disconnectedCallback(): void {
+        this._fileExplorer.stopWatchingFile();
         this._goalController.disconnect();
         document.removeEventListener('opendesk-theme-changed', this._onThemeChange as EventListener);
         this._settingUnsubscribe?.();
