@@ -58,6 +58,14 @@ declare module 'ace-builds/src-noconflict/*';
  */
 declare module 'alpinejs';
 
+/** marked-katex-extension 的发布包缺少其 types 入口指向的源码，补充实际使用的扩展签名。 */
+declare module 'marked-katex-extension' {
+    import type { KatexOptions } from 'katex';
+    import type { MarkedExtension } from 'marked';
+
+    export default function markedKatex(options?: KatexOptions & { nonStandard?: boolean }): MarkedExtension;
+}
+
 /**
  * search-index 未提供类型声明文件，其调用集中在 storage 层；
  * 先整体声明为 any，避免为局部用法臆造类型。
