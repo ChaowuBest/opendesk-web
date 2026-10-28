@@ -814,6 +814,29 @@ function exposeFSAPI() {
             }
             return result.data;
         },
+        watchFile: async (filePath, callback) => {
+            const id = globalThis.crypto.randomUUID();
+            const listener = (_event, watchId, change) => {
+                if (watchId === id) callback(change);
+            };
+            const dispose = () => {
+                ipcRenderer.removeListener('fs:fileChanged', listener);
+                ipcRenderer.send('fs:unwatchFile', id);
+            };
+            ipcRenderer.on('fs:fileChanged', listener);
+            try {
+                await ipcRenderer.invoke('fs:watchFile', id, filePath);
+                return dispose;
+            } catch (error) {
+                dispose();
+                throw error;
+            }
+        },
+        getFileSize: async (filePath) => {
+            const result = await ipcRenderer.invoke('fs:getFileSize', filePath);
+            if (result.status !== 'ok') throw new Error(result.message);
+            return result.data;
+        },
         readTextFile: async (filePath, maxBytes) => {
             const result = await ipcRenderer.invoke('fs:readTextFile', filePath, maxBytes);
             if (result.status !== 'ok') {
@@ -863,6 +886,7 @@ function exposeOfficeHostAPI() {
             if (!isOfficeEditorKind(kind)) return Promise.reject(new Error('Unsupported Office editor'));
             return ipcRenderer.invoke('office-host:prepare', kind);
         },
+        refreshPresentation: (webContentsId) => ipcRenderer.invoke('office-host:refresh-presentation', webContentsId),
         requestClose: (kind, webContentsId) => {
             if (!isOfficeEditorKind(kind)) return Promise.reject(new Error('Unsupported Office editor'));
             return ipcRenderer.invoke(requestCloseChannels[kind], webContentsId);

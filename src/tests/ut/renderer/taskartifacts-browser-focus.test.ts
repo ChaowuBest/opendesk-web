@@ -27,7 +27,9 @@ describe('task artifacts browser focus ownership', () => {
         });
 
         await jest.unstable_mockModule('../../../renderer/components/fileExplorer.ts', () => ({
-            FileExplorer: class {},
+            FileExplorer: class {
+                stopWatchingFile() {}
+            },
             getFileExplorerCSS: () => '',
             isHtmlFile: () => false
         }));

@@ -12,6 +12,7 @@
 declare const __BUILD_TIME__: string;
 declare const __IS_DEV__: boolean;
 
+import { FileWatchService, type FileWatchSubscription } from './services/file-watch/service.js';
 import { TaskSearchService } from './services/task-search/service.js';
 import { TASK_SEARCH_MAX_QUERY, TASK_SEARCH_MAX_RESULTS } from '../common/task-search.js';
 
@@ -2240,7 +2241,80 @@ const registerTaskManagerAPIHandlers = () => {
     });
 };
 
+/** Shared regular-file validation and metadata for content reads and size-only queries. */
+async function readFileMetadata(filePath: string): Promise<{ systemPath: string; size: number }> {
+    if (typeof filePath !== 'string' || !filePath) throw new Error('filePath is required');
+    const systemPath = filePath.replace(/\//g, path.sep);
+    const stats = await fs.promises.stat(systemPath);
+    if (!stats.isFile()) throw new Error('not a file');
+    return { systemPath, size: stats.size };
+}
+
 const registerFSAPIHandlers = () => {
+    const fileWatchService = new FileWatchService();
+    type WatchedFile = { subscription?: FileWatchSubscription };
+    // 每个窗口保存自己的订阅，最后一个订阅关闭时一并移除窗口清理回调。
+    const fileWatchOwners = new Map<WebContents, { files: Map<string, WatchedFile>; dispose: () => void }>();
+
+    const stopFileWatch = (sender: WebContents, id: string): void => {
+        const owner = fileWatchOwners.get(sender);
+        if (!owner) return;
+        owner.files.get(id)?.subscription?.dispose();
+        owner.files.delete(id);
+        if (owner.files.size === 0) owner.dispose();
+    };
+
+    ipcMain.handle('fs:watchFile', async (event, id: string, filePath: string) => {
+        const sender = event.sender;
+        if (sender.isDestroyed() || event.senderFrame !== sender.mainFrame) {
+            throw new Error('File watch requires the main frame');
+        }
+        if (typeof id !== 'string' || !id || typeof filePath !== 'string' || !filePath) {
+            throw new Error('Invalid file watch request');
+        }
+        stopFileWatch(sender, id);
+        let owner = fileWatchOwners.get(sender);
+        if (!owner) {
+            const files = new Map<string, WatchedFile>();
+            const dispose = (): void => {
+                for (const file of files.values()) file.subscription?.dispose();
+                files.clear();
+                fileWatchOwners.delete(sender);
+                sender.removeListener('destroyed', dispose);
+                sender.removeListener('did-start-navigation', onNavigation);
+            };
+            const onNavigation = (_event: unknown, _url: string, inPlace: boolean, isMainFrame: boolean): void => {
+                if (isMainFrame && !inPlace) dispose();
+            };
+            owner = { files, dispose };
+            fileWatchOwners.set(sender, owner);
+            sender.once('destroyed', dispose);
+            sender.on('did-start-navigation', onNavigation);
+        }
+
+        // 先登记再等待注册：关闭文件/窗口后才返回的句柄，也必须立即释放。
+        const files = owner.files;
+        const file: WatchedFile = {};
+        files.set(id, file);
+        try {
+            file.subscription = await fileWatchService.watch(filePath, (change) => {
+                if (files.get(id) === file && !sender.isDestroyed()) sender.send('fs:fileChanged', id, change);
+            });
+            if (files.get(id) !== file) file.subscription.dispose();
+        } catch (error) {
+            if (files.get(id) === file) stopFileWatch(sender, id);
+            throw error;
+        }
+    });
+    ipcMain.on('fs:unwatchFile', (event, id: string) => {
+        if (!event.sender.isDestroyed() && event.senderFrame === event.sender.mainFrame) {
+            stopFileWatch(event.sender, id);
+        }
+    });
+    app.once('will-quit', () => {
+        for (const owner of fileWatchOwners.values()) owner.dispose();
+        fileWatchService.dispose();
+    });
     (ipcMain.handle('fs:searchFilesByKeyword', async (event, keyword) => {
         try {
             const result = await FSService.searchFilesByKeyword(keyword);
@@ -2302,6 +2376,15 @@ const registerFSAPIHandlers = () => {
         }
     });
 
+    ipcMain.handle('fs:getFileSize', async (_event, filePath) => {
+        try {
+            const { size } = await readFileMetadata(filePath);
+            return { status: 'ok', data: size };
+        } catch (error) {
+            return { status: 'error', message: error instanceof Error ? error.message : String(error) };
+        }
+    });
+
     // 列出目录内容（仅一层），用于工作空间文件浏览器的按需展开。
     // 返回条目按：目录在前 + 名称不区分大小写排序。
     ipcMain.handle('fs:listDirectory', async (event, dirPath) => {
@@ -2355,19 +2438,12 @@ const registerFSAPIHandlers = () => {
     // maxBytes <= 0 或未提供时不限制体积，直接读取全文。
     ipcMain.handle('fs:readTextFile', async (event, filePath, maxBytes) => {
         try {
-            if (typeof filePath !== 'string' || filePath.length === 0) {
-                return { status: 'error', message: 'filePath is required' };
-            }
             const limit = Number.isFinite(maxBytes) && maxBytes > 0 ? Math.floor(maxBytes) : 0;
-            const systemPath = filePath.replace(/\//g, path.sep);
-            const st = await fs.promises.stat(systemPath);
-            if (!st.isFile()) {
-                return { status: 'error', message: 'not a file' };
-            }
-            if (limit > 0 && st.size > limit) {
+            const { systemPath, size } = await readFileMetadata(filePath);
+            if (limit > 0 && size > limit) {
                 return {
                     status: 'ok',
-                    data: { tooLarge: true, size: st.size, limit, content: '', binary: false }
+                    data: { tooLarge: true, size, limit, content: '', binary: false }
                 };
             }
             const buf = await fs.promises.readFile(systemPath);
@@ -2404,7 +2480,7 @@ const registerFSAPIHandlers = () => {
                 status: 'ok',
                 data: {
                     tooLarge: false,
-                    size: st.size,
+                    size,
                     limit,
                     content: binary ? '' : buf.toString('utf8'),
                     binary,
