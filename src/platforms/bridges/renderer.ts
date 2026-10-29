@@ -27,6 +27,9 @@ import {
     NaiveHuaweiAccountKit,
     type OcrKit,
     type PeekResult,
+    type QuickCaptureKit,
+    type QuickCapturePendingCapture,
+    type QuickCaptureState,
     type SpeechKit,
     type StartupKit,
     type StartupState
@@ -202,6 +205,20 @@ class StartupKitProxy implements StartupKit {
     }
 }
 
+class QuickCaptureKitProxy implements QuickCaptureKit {
+    async getState(): Promise<QuickCaptureState> {
+        return nativeBridge().call('quickCaptureKit:getState');
+    }
+
+    async setEnabled(enabled: boolean): Promise<QuickCaptureState> {
+        return nativeBridge().call('quickCaptureKit:setEnabled', enabled);
+    }
+
+    async takePendingCapture(): Promise<QuickCapturePendingCapture | null> {
+        return nativeBridge().call('quickCaptureKit:takePendingCapture');
+    }
+}
+
 export class NativeBridgeProxy implements NativeBridge {
     async getStartupKit(): Promise<StartupKit> {
         return new StartupKitProxy();
@@ -229,5 +246,9 @@ export class NativeBridgeProxy implements NativeBridge {
 
     async getHuaweiAccountKit(): Promise<HuaweiAccountKit> {
         return new NaiveHuaweiAccountKit();
+    }
+
+    async getQuickCaptureKit(): Promise<QuickCaptureKit> {
+        return new QuickCaptureKitProxy();
     }
 }

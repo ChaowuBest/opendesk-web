@@ -50,6 +50,8 @@ declare global {
         default_model?: string;
         gui_config?: {
             font_preset?: string;
+            /** HarmonyOS 快速截图开关；缺省视为开启（仅 renderer .js 消费，此处为契约文档化）。 */
+            quick_capture_enabled?: boolean;
         };
         debug?: {
             experimental_features?: import('./utils/application-visibility.js').ExperimentalFeatureSettings;
@@ -72,6 +74,11 @@ declare global {
     }
 
     interface Window {
+        /** 由 preload 注入的平台信息。 */
+        systemInfo?: {
+            /** 是否运行在 HarmonyOS（process.platform === 'openharmony'）。 */
+            isOpenHarmony?: boolean;
+        };
         officeHostAPI: {
             prepare: (kind: 'slides' | 'word' | 'sheets') => Promise<boolean>;
             requestClose: (kind: 'slides' | 'word' | 'sheets', webContentsId: number) => Promise<boolean>;

@@ -211,6 +211,10 @@ const GUIConfigSchema = z.object({
         .optional()
         .default(false)
         .describe('是否使用 Ctrl+Enter 发送消息（false 时按 Enter 发送）'),
+    quick_capture_enabled: z
+        .boolean()
+        .optional()
+        .describe('HarmonyOS 快速截图开关（Alt+Space 全局热键截图）: false=关闭, 未设置时视为开启'),
     recent_workspaces: z
         .array(z.string())
         .optional()

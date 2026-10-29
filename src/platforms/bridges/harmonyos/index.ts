@@ -12,12 +12,13 @@
 /** Harmony native capabilities are registered by the shared bridges/main entrypoint. */
 
 import { NativeBridge, SpeechKit, NaiveNativeBridge, guardStartupKit, NaiveOcrKit } from '../common.js';
-import type { DatabaseKit, HuaweiAccountKit } from '../common.js';
+import type { DatabaseKit, HuaweiAccountKit, QuickCaptureKit } from '../common.js';
 import { hasArkTSAdapter } from './arkts.js';
 import { HarmonyOSDatabaseKit } from './database.js';
 import { HarmonyOSSpeechKit } from './speech.js';
 import { HarmonyOSHuaweiAccountKit } from './account.js';
 import { HarmonyOSStartupKit } from './startup.js';
+import { HarmonyOSQuickCaptureKit } from './quickcapture.js';
 
 class HarmonyOSNativeBridge extends NaiveNativeBridge {
     constructor() {
@@ -28,6 +29,7 @@ class HarmonyOSNativeBridge extends NaiveNativeBridge {
     _ocrKit = new NaiveOcrKit();
     _databaseKit = new HarmonyOSDatabaseKit();
     _huaweiAccountKit = new HarmonyOSHuaweiAccountKit();
+    _quickCaptureKit = new HarmonyOSQuickCaptureKit();
 
     async getPlatform(): Promise<string> {
         return 'openharmony';
@@ -51,6 +53,10 @@ class HarmonyOSNativeBridge extends NaiveNativeBridge {
 
     async getHuaweiAccountKit(): Promise<HuaweiAccountKit> {
         return this._huaweiAccountKit;
+    }
+
+    async getQuickCaptureKit(): Promise<QuickCaptureKit> {
+        return this._quickCaptureKit;
     }
 }
 

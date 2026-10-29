@@ -43,6 +43,8 @@ import { initializeSidebarLayout } from '../sidebarLayout.ts';
 import { showBlacklistPrompt } from '../components/blacklistPrompt.ts';
 import { createRendererTranslator } from '../locale.ts';
 import { routeTaskFileOpenRequest } from './taskFileRouting.ts';
+import { installQuickCaptureInbox } from './quickcaptureInbox.ts';
+import { NativeBridgeProxy } from '../../platforms/bridges/renderer.js';
 import { handleTaskViewLinkClick } from '../utils/task-view-links.js';
 
 // 本地化字符串映射
@@ -82,6 +84,19 @@ window.settingAPI?.onSettingChanged?.((settings) => {
     window.__odT = createRendererTranslator(settings);
     updateUpdateReadyButton(latestUpdateState);
 });
+
+// 启动时把持久化的快速截图开关同步给原生侧（原生侧不持久化，默认开启）
+(async () => {
+    try {
+        if (!window.systemInfo?.isOpenHarmony) return;
+        const settings = await window.settingAPI.loadSettingObject();
+        if (settings?.gui_config?.quick_capture_enabled === false) {
+            await new NativeBridgeProxy().getQuickCaptureKit().then((kit) => kit.setEnabled(false));
+        }
+    } catch {
+        /* 同步失败时保持原生默认开启 */
+    }
+})();
 
 let latestUpdateState = null;
 function updateUpdateReadyButton(state) {
@@ -124,6 +139,9 @@ window.officeHostAPI?.onOpenOfficeTaskFile?.((request) => {
  */
 document.addEventListener('click', handleTaskViewLinkClick, true);
 document.addEventListener('auxclick', handleTaskViewLinkClick, true);
+
+// Alt+Space 快速截图发送后，主窗口获得焦点时把截图投递到新任务输入框。
+installQuickCaptureInbox();
 
 window.Alpine = Alpine;
 Alpine.start();

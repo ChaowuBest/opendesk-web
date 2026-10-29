@@ -94,6 +94,43 @@ export function guardStartupKit(kit: StartupKit, mode: StartupMode): StartupKit 
     };
 }
 
+// ── QuickCapture (HarmonyOS Alt+Space 全局热键截图) ─────────────────────────
+
+export interface QuickCaptureState {
+    supported: boolean;
+    enabled: boolean;
+}
+
+/** 开关状态不持久化：进程重启后恢复默认开启，前端自行决定是否记忆展示态。 */
+export interface QuickCaptureKit {
+    getState(): Promise<QuickCaptureState>;
+    setEnabled(enabled: boolean): Promise<QuickCaptureState>;
+    /**
+     * 取出（并清空）一条待处理的快速截图。
+     * 主进程负责把缓存文件读成 Data URL 并删除源文件；无待处理时返回 null。
+     */
+    takePendingCapture(): Promise<QuickCapturePendingCapture | null>;
+}
+
+/** 一条待处理的快速截图（已编码为 Data URL，可直接用于附件展示）。 */
+export interface QuickCapturePendingCapture {
+    dataUrl: string;
+}
+
+export class NaiveQuickCaptureKit implements QuickCaptureKit {
+    async getState(): Promise<QuickCaptureState> {
+        return { supported: false, enabled: false };
+    }
+
+    async setEnabled(_enabled: boolean): Promise<QuickCaptureState> {
+        throw new Error('QuickCapture is not available on this platform');
+    }
+
+    async takePendingCapture(): Promise<QuickCapturePendingCapture | null> {
+        return null;
+    }
+}
+
 /**
  * 原生平台功能桥接的接口定义。这个桥接设计用于封装不同操作系统和硬件平台的差异。
  */
@@ -115,6 +152,7 @@ export interface NativeBridge {
     getOcrKit(): Promise<OcrKit>;
     getDatabaseKit(): Promise<DatabaseKit>;
     getHuaweiAccountKit(): Promise<HuaweiAccountKit>;
+    getQuickCaptureKit(): Promise<QuickCaptureKit>;
 }
 
 export class NaiveSpeechKit implements SpeechKit {
@@ -186,6 +224,7 @@ export class NaiveNativeBridge implements NativeBridge {
     _ocrKit: OcrKit = new NaiveOcrKit();
     _databaseKit: DatabaseKit = new NaiveDatabaseKit();
     _huaweiAccountKit: HuaweiAccountKit = new NaiveHuaweiAccountKit();
+    _quickCaptureKit: QuickCaptureKit = new NaiveQuickCaptureKit();
 
     async getPlatform(): Promise<string> {
         return process.platform;
@@ -209,6 +248,10 @@ export class NaiveNativeBridge implements NativeBridge {
 
     async getHuaweiAccountKit(): Promise<HuaweiAccountKit> {
         return this._huaweiAccountKit;
+    }
+
+    async getQuickCaptureKit(): Promise<QuickCaptureKit> {
+        return this._quickCaptureKit;
     }
 }
 
