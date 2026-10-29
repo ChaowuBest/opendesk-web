@@ -26,6 +26,7 @@ import { neutralizeMarkdownHtml } from '../../common/markdown/markdown-html-safe
 import { createSafeMarkdownParser } from '../../common/markdown/safe-render.js';
 import type { SupportedLocale } from '../../common/locale.js';
 import { getLocale, t } from '../../locale/index.js';
+import { resolveToolResultReplacement, resolveVisibleToolResultContent } from './tool-result-content.js';
 import type {
     BaseAssistantMessage,
     ChatContextSnapshot,
@@ -2158,36 +2159,13 @@ export class AssistantMessage implements BaseAssistantMessage {
         toolcall: ToolCall,
         toolResultOverrides?: Map<string, string>
     ): string | undefined {
-        const resultId = toolcall.result_storage?.result_id;
-        if (!resultId) {
-            return undefined;
-        }
-        const overrideContent = toolResultOverrides?.get(resultId);
-        if (typeof overrideContent === 'string' && overrideContent.length > 0) {
-            return overrideContent;
-        }
-        return undefined;
+        return resolveToolResultReplacement(toolcall, toolResultOverrides);
     }
 
     private static buildOpenAIToolResultContent(toolcall: ToolCall, toolResultOverrides?: Map<string, string>): string {
-        if (toolcall.hasLegacyCompressId()) {
-            return toolcall.getLegacyCompressedResultText();
-        }
-
-        const overrideContent = AssistantMessage.resolveToolCallOverrideContent(toolcall, toolResultOverrides);
-        if (overrideContent !== undefined) {
-            return overrideContent;
-        }
-
-        if (toolcall.status === 'error') {
-            return `Toolcall failed: ${toolcall.result ?? ''}`;
-        }
-
-        if (toolcall.status === 'success') {
-            return toolcall.result ?? '工具调用成功完成';
-        }
-
-        return 'Toolcall failed: unfinished tool call';
+        return (
+            resolveVisibleToolResultContent(toolcall, toolResultOverrides) ?? 'Toolcall failed: unfinished tool call'
+        );
     }
 
     private buildOpenAIMessagesFromParts(

@@ -8,6 +8,28 @@ import { ModelInstance } from '../../../main/utils/setting.js';
 afterEach(() => jest.restoreAllMocks());
 
 describe.each(['openai', 'anthropic'] as const)('%s final output budget', (provider) => {
+    test('sends an unknown-window request using the output fallback without a budget assertion', async () => {
+        const model = new ModelInstance('unknown-local-model', 'https://example.invalid', 'test-key', true);
+        const context = new ChatContext();
+        context.appendMessage(new UserMessage('hello'));
+        const adapter = provider === 'openai' ? new OpenAIAdapter(model) : new AnthropicAdapter(model);
+        const send = jest.fn(async function* (_body: object) {});
+        if (adapter instanceof OpenAIAdapter) {
+            (adapter as any).client = { chat: { completions: { create: send } } };
+        } else {
+            jest.spyOn(adapter as any, 'streamMessages').mockImplementation(send);
+        }
+
+        for await (const _chunk of adapter.streamComplete(context, false)) {
+            // The mocked transport produces no response chunks.
+        }
+
+        expect(send).toHaveBeenCalledTimes(1);
+        expect(send.mock.calls[0][0]).toMatchObject(
+            provider === 'openai' ? { max_completion_tokens: 16384 } : { max_tokens: 16384 }
+        );
+    });
+
     function createRequest(inputEstimate: number, outputLimit?: number, tailText?: string) {
         const model = new ModelInstance('budget-test-model', 'https://example.com', 'test-key', true);
         model.max_output_tokens = 384000;

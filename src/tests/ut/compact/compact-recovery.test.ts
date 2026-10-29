@@ -82,18 +82,33 @@ describe('compact request safety', () => {
         { code: 'context_length_exceeded', message: 'Request rejected' },
         { code: 'prompt_too_long', message: 'Request rejected' },
         { detailsCode: 'prompt_too_long', message: 'Request rejected' },
-        { message: 'maximum context length exceeded' }
+        { message: 'maximum context length exceeded' },
+        {
+            status: 400,
+            message: 'request (65583 tokens) exceeds the available context size (65536 tokens), try increasing it'
+        }
     ])('recognizes normalized context errors even with a generic display message: %j', (metadata) => {
         const error = new ModelRequestError(metadata, { displayMessage: 'Model service rejected the request' });
         expect(isContextLimitError(error)).toBe(true);
     });
 
-    test('does not compact for unrelated invalid-request errors', () => {
+    test('recognizes a raw local provider context size error without a structured code', () => {
+        const error = new Error(
+            '400 request (65583 tokens) exceeds the available context size (65536 tokens), try increasing it'
+        );
+        expect(isContextLimitError(error)).toBe(true);
+    });
+
+    test.each([
+        { code: 'invalid_api_key', message: 'Request rejected' },
+        { message: 'request exceeds the maximum output size (4096 tokens)' },
+        { message: 'rate limit exceeded; available context size (65536 tokens)' },
+        { message: 'request timeout; available context size (65536 tokens)' }
+    ])('does not compact for unrelated invalid-request errors: %j', (metadata) => {
         const error = new ModelRequestError({
             status: 400,
-            code: 'invalid_api_key',
             type: 'invalid_request_error',
-            message: 'Request rejected'
+            ...metadata
         });
         expect(isContextLimitError(error)).toBe(false);
     });

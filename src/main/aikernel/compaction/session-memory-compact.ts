@@ -37,6 +37,7 @@ import {
     estimateVisibleContextTokens
 } from './token-estimation.js';
 import type { ActiveContextView, AssistantRoundRef, CompactBoundaryRef, ProjectedContextItem } from './types.js';
+import { buildToolResultSummaryPreview, DEFAULT_TOOL_RESULT_SUMMARY_PREVIEW_CHARS } from '../tool-result-content.js';
 
 export const SESSION_MEMORY_STATE_VERSION = 2;
 export const SESSION_MEMORY_DIRECTORY_NAME = 'session-memory';
@@ -84,7 +85,7 @@ export const DEFAULT_SESSION_MEMORY_EXTRACTION_OPTIONS = {
     toolCallsBetweenUpdates: 3,
     messageTextPreviewChars: 3_000,
     toolArgsPreviewChars: 1_000,
-    toolResultPreviewChars: 1_200,
+    toolResultPreviewChars: DEFAULT_TOOL_RESULT_SUMMARY_PREVIEW_CHARS,
     maxTranscriptChars: 40_000
 } as const;
 
@@ -117,6 +118,7 @@ export interface SerializedSessionMemoryState {
 }
 
 export interface SessionMemoryExtractionOptions {
+    toolResultOverrides?: Map<string, string>;
     minimumMessageTokensToInit?: number;
     minimumTokensBetweenUpdate?: number;
     toolCallsBetweenUpdates?: number;
@@ -205,6 +207,7 @@ export interface SessionMemoryUpdateResult {
 }
 
 interface NormalizedSessionMemoryExtractionOptions {
+    toolResultOverrides?: Map<string, string>;
     minimumMessageTokensToInit: number;
     minimumTokensBetweenUpdate: number;
     toolCallsBetweenUpdates: number;
@@ -344,6 +347,7 @@ function normalizeExtractionOptions(
     options: SessionMemoryExtractionOptions = {}
 ): NormalizedSessionMemoryExtractionOptions {
     return {
+        toolResultOverrides: options.toolResultOverrides,
         minimumMessageTokensToInit: normalizePositiveInteger(
             options.minimumMessageTokensToInit,
             DEFAULT_SESSION_MEMORY_EXTRACTION_OPTIONS.minimumMessageTokensToInit
@@ -928,11 +932,16 @@ function serializeAssistantMessageForSessionMemory(
             parts.push(`[Assistant Error]\n${part.title}: ${part.message}`);
         } else if (part.type === 'tool_call') {
             for (const toolCall of part.toolcalls) {
+                const resultSnippet = buildToolResultSummaryPreview(
+                    toolCall,
+                    options.toolResultPreviewChars,
+                    options.toolResultOverrides
+                );
                 parts.push(
                     [
                         `[Tool Call ${toolCall.id}] ${toolCall.tool_name} (${toolCall.status})`,
                         `Args: ${truncateText(toolCall.args_string || '{}', options.toolArgsPreviewChars)}`,
-                        `Result: ${truncateText(toolCall.result ?? '', options.toolResultPreviewChars) || '<no result>'}`
+                        `Result: ${resultSnippet || '<no result>'}`
                     ].join('\n')
                 );
             }

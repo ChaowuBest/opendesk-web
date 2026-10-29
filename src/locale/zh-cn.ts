@@ -85,6 +85,7 @@ export const zhCn: Record<string, string> = {
     'compact.reason.protocol_error': '模型响应格式异常',
     'compact.reason.context_limit': '请求超过配置的上下文预算',
     'compact.reason.invalid_budget': '上下文窗口或 token 估算无效',
+    'compact.reason.unknown_context_window': '无法确定模型的上下文窗口，也没有可用的成功请求用量，请设置模型上下文长度',
     'compact.reason.request_failed': '摘要请求失败',
     'compact.reason.no_progress': '压缩未能将上下文降至安全范围',
     'compact.reason.no_safe_usage_boundary': '找不到满足压缩预算的边界（真实 usage 和估算均不可用）',

@@ -24,6 +24,7 @@ import {
 import type { ActiveContextView } from './types.js';
 import { IMAGE_TOKEN_ESTIMATE } from './image-tokens.js';
 import { estimateTextTokens } from '../../../utils/token-estimation.js';
+import { resolveVisibleToolResultContent } from '../tool-result-content.js';
 
 export type NormalizedUsage = UsageFields;
 
@@ -57,45 +58,6 @@ function normalizeOptionalNonNegativeInteger(value: unknown): number | undefined
         return undefined;
     }
     return Math.floor(value);
-}
-
-function resolveToolResultOverride(
-    toolCall: ToolCall,
-    toolResultOverrides?: ReadonlyMap<string, string>
-): string | undefined {
-    const resultId = toolCall.result_storage?.result_id;
-    if (!resultId) {
-        return undefined;
-    }
-    const overrideContent = toolResultOverrides?.get(resultId);
-    if (typeof overrideContent === 'string' && overrideContent.length > 0) {
-        return overrideContent;
-    }
-    return undefined;
-}
-
-function resolveVisibleToolResultContent(
-    toolCall: ToolCall,
-    toolResultOverrides?: ReadonlyMap<string, string>
-): string | undefined {
-    if (toolCall.hasLegacyCompressId()) {
-        return toolCall.getLegacyCompressedResultText();
-    }
-
-    const overrideContent = resolveToolResultOverride(toolCall, toolResultOverrides);
-    if (overrideContent !== undefined) {
-        return overrideContent;
-    }
-
-    if (toolCall.status === 'error') {
-        return `Toolcall failed: ${toolCall.result ?? ''}`;
-    }
-
-    if (toolCall.status === 'success') {
-        return toolCall.result ?? '工具调用成功完成';
-    }
-
-    return undefined;
 }
 
 function getMessagesForEstimation(input: VisibleContextTokenEstimationInput): ReadonlyArray<ChatMessage> {

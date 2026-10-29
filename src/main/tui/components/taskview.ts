@@ -1448,7 +1448,8 @@ export class TaskView implements Component {
      */
     async performCompactWithAnimation(
         taskState: TaskState | undefined = this.taskState,
-        trigger: 'auto' | 'manual' = 'manual'
+        trigger: 'auto' | 'manual' = 'manual',
+        toolResultOverrides?: Map<string, string>
     ): Promise<boolean> {
         if (!taskState || this._compacting) return false;
         this._compacting = true;
@@ -1459,7 +1460,7 @@ export class TaskView implements Component {
         try {
             const compacted =
                 trigger === 'auto'
-                    ? (await taskState.compactTaskContext({ trigger })).compacted
+                    ? (await taskState.compactTaskContext({ trigger, toolResultOverrides })).compacted
                     : await taskState.manualCompact();
             if (!compacted) {
                 this.lastCompactErrorMessage = 'No compactable context available';
@@ -1531,8 +1532,8 @@ export class TaskView implements Component {
                 microcompactRequestKind: 'pre_submit_check',
                 microcompactTaskRole: taskState.parent_id === null ? 'main' : 'subtask',
                 taskId: taskState.task_id,
-                executeCompact: async () => {
-                    const compacted = await this.performCompactWithAnimation(taskState, 'auto');
+                executeCompact: async (toolResultOverrides) => {
+                    const compacted = await this.performCompactWithAnimation(taskState, 'auto', toolResultOverrides);
                     if (!compacted) {
                         throw new Error(this.lastCompactErrorMessage ?? 'Context compact failed');
                     }
