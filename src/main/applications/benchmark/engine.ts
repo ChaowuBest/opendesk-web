@@ -19,7 +19,6 @@
 
 import fs from 'fs';
 import path from 'path';
-import { spawn } from 'child_process';
 import { GlobalState } from '../../aikernel/states/global.js';
 import { AgentRegistry } from '../../aikernel/agents/registry.js';
 import { extractAttemptCompletionResult } from '../../aikernel/planning/harness.js';
@@ -28,6 +27,8 @@ import type { ReasoningEffort } from '../../aikernel/types/reasoning.js';
 import { logger } from '../../utils/logger.js';
 import { t } from './locale/index.js';
 import { toErrorMessage } from '../../../common/utils/error.js';
+import { buildChildProcessEnv } from '../../utils/shellExec.js';
+import { runScript, ScriptExecutionError } from './script-runtime.js';
 import {
     buildVerifyPrompt,
     parseJudgeScore,
@@ -39,6 +40,7 @@ import {
     type RunRecord,
     type RunStatus
 } from './common.js';
+import type { ScriptHandle } from './script-runtime.js';
 
 export interface CasePlanItem {
     spec: CaseSpec;
@@ -63,15 +65,8 @@ export interface RunnerContext {
 }
 
 interface TaskExecutionResult {
-    taskId: string;
     resultText: string;
     timedOut: boolean;
-}
-
-interface ScriptExecutionResult {
-    ok: boolean;
-    code: number | null;
-    error: string;
 }
 
 const RESULT_FILE_NAME = 'result.json';
@@ -80,6 +75,8 @@ const RESULT_DIR_NAME = '.benchmark';
 export class BenchmarkRunner {
     private readonly activeTasks = new Map<string, Set<TaskState>>();
     private readonly stoppedRuns = new Set<string>();
+    /** 每轮运行当前正在执行的脚本句柄；stop() 时随时杀掉，不用等脚本自然结束 */
+    private readonly activeScripts = new Map<string, Set<ScriptHandle>>();
 
     async execute(context: RunnerContext): Promise<void> {
         const { run, plan, callbacks } = context;
@@ -104,11 +101,19 @@ export class BenchmarkRunner {
         }
 
         const stopped = this.stoppedRuns.delete(run.id);
+        this.activeScripts.delete(run.id);
         callbacks.finishRun(run.id, resolveRunStatus(outcomes, stopped, plan.length));
     }
 
     stop(runId: string): void {
         this.stoppedRuns.add(runId);
+        for (const script of this.activeScripts.get(runId) ?? []) {
+            try {
+                script.abort();
+            } catch (error) {
+                logger.warn(`[benchmark] failed to abort script for run ${runId}: ${toErrorMessage(error)}`);
+            }
+        }
         const tasks = this.activeTasks.get(runId);
         if (!tasks) return;
         for (const task of tasks) {
@@ -162,8 +167,21 @@ export class BenchmarkRunner {
             error: ''
         });
 
-        const baseEnv = {
-            ...process.env,
+        // 准备脚本与任务终端/Agent 工具共用同一套子进程环境：设置里的全局环境变量、
+        // 解释器隔离策略和代理配置都对脚本生效，避免「Agent 里跑通的 python 在脚本里
+        // 定位到另一个」。BENCH_* 作为显式 env 传入，优先级高于上层所有来源。
+        //
+        // BENCH_* 契约（脚本里直接可用，改动要同步 dataset 规范）：
+        //   BENCH_RUN_ID / BENCH_CONCURRENCY / BENCH_RUN_MODEL / BENCH_VERIFY_MODEL
+        //   BENCH_DATASET_NAME / BENCH_TRACK_ID / BENCH_CASE_ID / BENCH_CASE_NAME  标识类
+        //   BENCH_RUN_DIR           本轮运行里该用例的目录（runs/<runId>/cases/<key>），
+        //                           日志与两个 workspace 都在它下面
+        //   BENCH_CASE_DIR          测评集里的用例目录（只读素材来源）
+        //   BENCH_WORKSPACE         测试任务的工作空间（= BENCH_RUN_WORKSPACE）
+        //   BENCH_VERIFY_WORKSPACE  验证任务的工作空间
+        //   BENCH_LOG_DIR           准备脚本日志目录
+        //   BENCH_PHASE             run-prepare / verify-prepare，由调用方按阶段覆盖
+        const baseEnv = buildChildProcessEnv({
             BENCH_RUN_ID: run.id,
             BENCH_RUN_DIR: caseDir,
             BENCH_DATASET_NAME: run.datasetName,
@@ -178,19 +196,23 @@ export class BenchmarkRunner {
             BENCH_RUN_MODEL: run.runModel,
             BENCH_VERIFY_MODEL: run.verifyModel,
             BENCH_CONCURRENCY: String(run.concurrency)
-        } as NodeJS.ProcessEnv;
+        });
 
         try {
             if (item.spec.runPrepareFile) {
-                const result = await this.runScript({
+                const result = await runScript({
                     scriptPath: path.join(item.dir, item.spec.runPrepareFile),
                     cwd: item.dir,
                     env: { ...baseEnv, BENCH_PHASE: 'run-prepare' },
                     logPath: path.join(logDir, 'run-prepare.log'),
-                    timeoutSec: item.spec.prepareTimeoutSec
+                    timeoutSec: item.spec.prepareTimeoutSec,
+                    handle: (script) => this.trackScript(run.id, script)
                 });
                 if (!result.ok) {
-                    throw new Error(t('error.caseRunPrepareFailed', { reason: result.error }));
+                    throw new ScriptExecutionError(
+                        t('error.caseRunPrepareFailed', { reason: result.error }),
+                        result.logError
+                    );
                 }
             }
 
@@ -212,12 +234,16 @@ export class BenchmarkRunner {
                     track: item.trackName,
                     case: item.spec.name
                 }),
-                timeoutSec: run.runTimeoutSec ?? item.spec.runTimeoutSec
+                timeoutSec: run.runTimeoutSec ?? item.spec.runTimeoutSec,
+                // taskId 一拿到就落盘：测评界面对「正在运行」的用例也要能跳转到任务
+                onTaskCreated: (taskId) => {
+                    callbacks.updateCase(run.id, item.key, { runTaskId: taskId });
+                }
             });
-            callbacks.updateCase(run.id, item.key, {
-                runTaskId: runResult.taskId,
-                ...(runResult.timedOut ? { error: t('error.runTimedOut') } : {})
-            });
+            // runTaskId 已由 onTaskCreated 在任务创建时写入，这里只补超时标记
+            if (runResult.timedOut) {
+                callbacks.updateCase(run.id, item.key, { error: t('error.runTimedOut') });
+            }
 
             if (this.stoppedRuns.has(run.id)) {
                 callbacks.updateCase(run.id, item.key, { status: 'stopped', finishedAt: Date.now() });
@@ -226,15 +252,19 @@ export class BenchmarkRunner {
 
             callbacks.updateCase(run.id, item.key, { status: 'verifying' });
             if (item.spec.verifyPrepareFile) {
-                const prepared = await this.runScript({
+                const prepared = await runScript({
                     scriptPath: path.join(item.dir, item.spec.verifyPrepareFile),
                     cwd: item.dir,
                     env: { ...baseEnv, BENCH_PHASE: 'verify-prepare' },
                     logPath: path.join(logDir, 'verify-prepare.log'),
-                    timeoutSec: item.spec.prepareTimeoutSec
+                    timeoutSec: item.spec.prepareTimeoutSec,
+                    handle: (script) => this.trackScript(run.id, script)
                 });
                 if (!prepared.ok) {
-                    throw new Error(t('error.caseVerifyPrepareFailed', { reason: prepared.error }));
+                    throw new ScriptExecutionError(
+                        t('error.caseVerifyPrepareFailed', { reason: prepared.error }),
+                        prepared.logError
+                    );
                 }
             }
 
@@ -256,28 +286,44 @@ export class BenchmarkRunner {
                     track: item.trackName,
                     case: item.spec.name
                 }),
-                timeoutSec: run.verifyTimeoutSec ?? item.spec.verifyTimeoutSec
+                timeoutSec: run.verifyTimeoutSec ?? item.spec.verifyTimeoutSec,
+                onTaskCreated: (taskId) => {
+                    callbacks.updateCase(run.id, item.key, { verifyTaskId: taskId });
+                }
             });
 
             const judge = this.readJudgeResult(resultFile) ?? parseJudgeScore(verifyResult.resultText);
             if (!judge) {
                 throw new Error(t('error.noJudgeScore'));
             }
+            // 评分刚落盘、还没记分时到达的停止请求：手动停止优先，不把结果记成得分
+            if (this.stoppedRuns.has(run.id)) {
+                callbacks.updateCase(run.id, item.key, { status: 'stopped', finishedAt: Date.now() });
+                return 'stopped';
+            }
             callbacks.updateCase(run.id, item.key, {
                 status: 'done',
                 ratio: judge.ratio,
                 score: Math.round(judge.ratio * item.spec.weight * 10000) / 10000,
                 reason: judge.reason,
-                verifyTaskId: verifyResult.taskId,
+                // verifyTaskId 已由 onTaskCreated 在任务创建时写入
                 finishedAt: Date.now()
             });
             return 'done';
         } catch (error) {
+            // 验证任务执行到一半被停止时，验证评分拿不到是预期内的，按已停止收尾
+            // 而不是失败（此时用例可能已有部分产出，但整轮都会被标记停止）
+            if (this.stoppedRuns.has(run.id)) {
+                callbacks.updateCase(run.id, item.key, { status: 'stopped', finishedAt: Date.now() });
+                return 'stopped';
+            }
             const message = toErrorMessage(error);
             logger.warn(`[benchmark] case ${item.key} failed: ${message}`);
             callbacks.updateCase(run.id, item.key, {
                 status: 'failed',
                 error: message,
+                // 脚本失败时附带 stdout/stderr 合并输出，供详情面板「错误信息」栏展示
+                logError: error instanceof ScriptExecutionError ? error.logError : '',
                 finishedAt: Date.now()
             });
             return 'failed';
@@ -294,82 +340,22 @@ export class BenchmarkRunner {
         }
     }
 
-    private runScript(options: {
-        scriptPath: string;
-        cwd: string;
-        env: NodeJS.ProcessEnv;
-        logPath: string;
-        timeoutSec: number;
-    }): Promise<ScriptExecutionResult> {
-        return new Promise((resolve) => {
-            let output: fs.WriteStream | null = null;
-            try {
-                output = fs.createWriteStream(options.logPath, { flags: 'a' });
-                // 日志目录不可写时 createWriteStream 不会同步抛错，而是后来抛 error 事件；
-                // 没有监听器的话这个 error 会变成未捕获异常，把整个 worker 带崩。
-                output.on('error', (error) => {
-                    logger.warn(`[benchmark] failed to write script log ${options.logPath}: ${toErrorMessage(error)}`);
-                    output = null;
-                });
-                output.write(`\n$ bash ${options.scriptPath}\n`);
-            } catch (error) {
-                logger.warn(`[benchmark] failed to open script log ${options.logPath}: ${toErrorMessage(error)}`);
-                output = null;
-            }
-
-            let settled = false;
-            let child: ReturnType<typeof spawn> | null = null;
-
-            /** 脚本超时被杀掉后仍可能有残留输出，写已 end 的流会抛 write after end */
-            const writeChunk = (chunk: Buffer | string) => {
-                if (!output || output.writableEnded || output.destroyed) return;
-                output.write(chunk);
-            };
-
-            const finish = (result: ScriptExecutionResult) => {
-                if (settled) return;
-                settled = true;
-                clearTimeout(timer);
-                output?.end();
-                resolve(result);
-            };
-
-            const timer = setTimeout(
-                () => {
-                    killTree(child);
-                    finish({ ok: false, code: null, error: t('error.scriptTimeout', { seconds: options.timeoutSec }) });
-                },
-                Math.max(1, options.timeoutSec) * 1000
-            );
-
-            try {
-                child = spawn('/bin/bash', [options.scriptPath], {
-                    cwd: options.cwd,
-                    env: options.env,
-                    detached: process.platform !== 'win32',
-                    stdio: ['ignore', 'pipe', 'pipe']
-                });
-            } catch (error) {
-                finish({ ok: false, code: null, error: toErrorMessage(error) });
-                return;
-            }
-
-            child.stdout?.on('data', (chunk: Buffer) => writeChunk(chunk));
-            child.stderr?.on('data', (chunk: Buffer) => writeChunk(chunk));
-            child.on('error', (error) => finish({ ok: false, code: null, error: toErrorMessage(error) }));
-            child.on('close', (code) => {
-                finish({
-                    ok: code === 0,
-                    code,
-                    error: code === 0 ? '' : t('error.scriptExitCode', { code: code ?? '' })
-                });
-            });
-        });
-    }
-
     /** 空字符串表示使用模型默认推理强度 */
     private effortOf(value: string | undefined): ReasoningEffort | undefined {
         return value ? (value as ReasoningEffort) : undefined;
+    }
+
+    /** 登记当前用例正在执行的脚本句柄，stop() 时统一中止；顺带清掉已结束的句柄 */
+    private trackScript(runId: string, script: ScriptHandle): void {
+        let scripts = this.activeScripts.get(runId);
+        if (!scripts) {
+            scripts = new Set<ScriptHandle>();
+            this.activeScripts.set(runId, scripts);
+        }
+        for (const existing of scripts) {
+            if (existing.settled) scripts.delete(existing);
+        }
+        scripts.add(script);
     }
 
     private async executeTask(options: {
@@ -380,6 +366,8 @@ export class BenchmarkRunner {
         effort?: ReasoningEffort;
         title: string;
         timeoutSec: number;
+        /** 任务对象创建后立即回调：让 taskId 先于执行结果落盘，运行中也可跳转 */
+        onTaskCreated?: (taskId: string) => void;
     }): Promise<TaskExecutionResult> {
         const taskManager = GlobalState.getInstance().taskManagerState;
         const agent = AgentRegistry.getMainAgent();
@@ -390,12 +378,22 @@ export class BenchmarkRunner {
         }
 
         const task = taskManager.createTask(options.model, { internal: true, taskName: options.title });
+        options.onTaskCreated?.(task.task_id);
         let activeSet = this.activeTasks.get(options.runId);
         if (!activeSet) {
             activeSet = new Set<TaskState>();
             this.activeTasks.set(options.runId, activeSet);
         }
         activeSet.add(task);
+        // 任务先挂进 activeTasks 再提交，stop() 不会因提交尚未完成而漏掉本任务；
+        // 提交完成后若停止请求已先行，这里补一刀，避免停止信号落在 submitUserMessage 前被吞掉
+        if (this.stoppedRuns.has(options.runId)) {
+            try {
+                task.stop('system');
+            } catch {
+                /* 任务可能已自行结束 */
+            }
+        }
 
         try {
             fs.mkdirSync(options.workspace, { recursive: true });
@@ -409,6 +407,16 @@ export class BenchmarkRunner {
             );
             if (submitted.status === 'error') {
                 throw new Error(t('error.caseSubmitFailed', { reason: submitted.messageKey }));
+            }
+            // 提交会把任务状态无条件置回 running 并起一个新 turn：停止请求落在提交前或提交
+            // 过程中的话，上面那次 stop 会被提交"复活"，整轮停止就要等这个 turn 自己跑完。
+            // 提交返回后再补一刀，turn 在下一个 await 点即可退出。
+            if (this.stoppedRuns.has(options.runId)) {
+                try {
+                    task.stop('system');
+                } catch {
+                    /* 任务可能已自行结束 */
+                }
             }
 
             let timedOut = false;
@@ -424,14 +432,15 @@ export class BenchmarkRunner {
                 Math.max(1, options.timeoutSec) * 1000
             );
             try {
-                await task.waitUntilFinished();
+                // resolveOnStop：stop() 即使没能正常走完 turn 收尾（turn 卡在外部
+                // 资源上），等待方也要立即返回，保证测评整轮可以收尾落盘
+                await task.waitUntilFinished(undefined, true);
             } finally {
                 clearTimeout(timer);
             }
 
             const completion = extractAttemptCompletionResult(task);
             return {
-                taskId: task.task_id,
                 resultText: completion?.result ?? '',
                 timedOut
             };
@@ -443,23 +452,6 @@ export class BenchmarkRunner {
             } catch {
                 /* 卸载失败不影响测评结果 */
             }
-        }
-    }
-}
-
-function killTree(child: ReturnType<typeof spawn> | null): void {
-    if (!child || child.pid === undefined) return;
-    try {
-        if (process.platform === 'win32') {
-            spawn('taskkill', ['/pid', String(child.pid), '/T', '/F']);
-        } else {
-            process.kill(-child.pid, 'SIGKILL');
-        }
-    } catch {
-        try {
-            child.kill('SIGKILL');
-        } catch {
-            /* 进程已退出 */
         }
     }
 }

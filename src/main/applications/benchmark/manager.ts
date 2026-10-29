@@ -251,6 +251,8 @@ export class BenchmarkManager {
         tracks?: string[];
         /** 只跑这些用例（key = `${trackId}/${caseId}`），用于「重新运行单个用例」 */
         caseKeys?: string[];
+        /** 在既有 run 记录内原地重跑指定用例，其余用例的历史结果原样保留 */
+        appendToRunId?: string;
     }): string {
         const dataset = this.getDataset(options.datasetId);
         if (!dataset) {
@@ -297,6 +299,7 @@ export class BenchmarkManager {
                     ratio: null,
                     reason: '',
                     error: '',
+                    logError: '',
                     runTaskId: null,
                     verifyTaskId: null,
                     startedAt: null,
@@ -304,6 +307,82 @@ export class BenchmarkManager {
                     dir: path.join('cases', toSafeDirName(key))
                 });
             }
+        }
+        if (plan.length === 0) {
+            throw new BenchmarkDataError(t('error.datasetInvalidState'));
+        }
+
+        // 原地重跑：不新建 run 记录，把选中的用例重置回待跑状态追加进原记录，
+        // 未选中的用例（历史得分/状态）原样保留
+        if (options.appendToRunId) {
+            const runId = options.appendToRunId;
+            if (this.activeRuns.has(runId)) {
+                throw new BenchmarkDataError(t('error.runAlreadyRunning'));
+            }
+            const existing = this.readRun(runId);
+            if (!existing) {
+                throw new BenchmarkDataError(t('error.runNotFound'));
+            }
+            if (existing.datasetId !== dataset.id) {
+                throw new BenchmarkDataError(t('error.datasetNotFound'));
+            }
+            // runId 来自渲染层，拼路径前统一走 resolveInside（与 deleteRun / getRunDirectory 一致）；
+            // 必须放在改动记录/登记活动运行之前，否则抛错会留下「状态 running 但没有引擎在跑」的死记录
+            const appendRunDir = this.resolveInside(this.runsDir, runId);
+            const byKey = new Map(cases.map((item) => [item.key, item]));
+            const merged: CaseRunState[] = [];
+            for (const item of existing.cases) {
+                const fresh = byKey.get(item.key);
+                if (fresh) {
+                    merged.push(fresh);
+                } else {
+                    merged.push(item);
+                }
+            }
+            // 用例集可能随测评集更新而变化：计划里有、历史里没有的用例也要补进来
+            for (const item of cases) {
+                if (!merged.some((entry) => entry.key === item.key)) merged.push(item);
+            }
+            existing.status = 'running';
+            existing.startedAt = existing.startedAt ?? Date.now();
+            existing.finishedAt = null;
+            existing.runModel = options.runModel;
+            existing.verifyModel = options.verifyModel;
+            existing.runModelEffort = options.runModelEffort ?? existing.runModelEffort ?? '';
+            existing.verifyModelEffort = options.verifyModelEffort ?? existing.verifyModelEffort ?? '';
+            existing.runTimeoutSec = options.runTimeoutSec ?? null;
+            existing.verifyTimeoutSec = options.verifyTimeoutSec ?? null;
+            existing.cases = merged;
+            existing.summary = summarizeCases(merged);
+            this.writeRun(existing);
+            this.activeRuns.add(runId);
+            this.notifyNow();
+
+            // 重跑的用例清掉上次的工作空间/日志，从零开始：
+            // 否则上次的 result.json 等产物残留会被验证阶段直接采用
+            for (const item of plan) {
+                try {
+                    fs.rmSync(path.join(appendRunDir, 'cases', toSafeDirName(item.key)), {
+                        recursive: true,
+                        force: true
+                    });
+                } catch (error) {
+                    logger.warn(`[benchmark] failed to clean case dir for rerun ${item.key}: ${toErrorMessage(error)}`);
+                }
+            }
+            const appendCallbacks: RunnerCallbacks = {
+                updateCase: (id, key, patch) => this.updateCase(id, key, patch),
+                finishRun: (id, status) => this.finishRun(id, this.appendRunStatus(id, status)),
+                notify: () => this.notifySoon()
+            };
+            void this.runner
+                .execute({ run: existing, plan, runDir: appendRunDir, callbacks: appendCallbacks })
+                .catch((error) => {
+                    logger.error(`[benchmark] run ${runId} crashed: ${toErrorMessage(error)}`);
+                    this.finishRun(runId, 'failed');
+                })
+                .finally(() => this.activeRuns.delete(runId));
+            return runId;
         }
 
         const runId = `run-${Date.now().toString(36)}-${crypto.randomBytes(3).toString('hex')}`;
@@ -355,6 +434,11 @@ export class BenchmarkManager {
     stopRun(runId: string): void {
         const record = this.readRun(runId);
         if (!record || record.status !== 'running') return;
+        // 落盘停止标记：引擎收尾（逐个标记用例、等待任务退出）期间 UI 能显示「正在停止」
+        if (!record.stopRequested) {
+            record.stopRequested = true;
+            this.writeRun(record);
+        }
         this.runner.stop(runId);
         this.notifyNow();
     }
@@ -397,9 +481,22 @@ export class BenchmarkManager {
         if (!run) return;
         run.status = status;
         run.finishedAt = Date.now();
+        delete run.stopRequested;
         run.summary = summarizeCases(run.cases);
         this.writeRun(run);
         this.notifyNow();
+    }
+
+    /**
+     * 原地重跑只跑了整轮里的一部分用例，引擎按「这次计划里的用例全失败」得出的 failed
+     * 不能直接落到整轮记录上：历史里还有跑通的用例时整轮仍算完成（与 resolveRunStatus
+     * 的「本轮所有用例都失败才算失败」口径一致）。
+     */
+    private appendRunStatus(runId: string, status: RunStatus): RunStatus {
+        if (status !== 'failed') return status;
+        const run = this.readRun(runId);
+        if (!run) return status;
+        return run.cases.some((item) => item.status === 'done') ? 'completed' : 'failed';
     }
 
     private readRun(runId: string): RunRecord | null {
@@ -429,6 +526,7 @@ export class BenchmarkManager {
             if (!run || run.status !== 'running') continue;
             run.status = 'stopped';
             run.finishedAt = run.finishedAt ?? Date.now();
+            delete run.stopRequested;
             for (const item of run.cases) {
                 if (item.status !== 'done' && item.status !== 'failed' && item.status !== 'stopped') {
                     item.status = 'stopped';
@@ -621,6 +719,9 @@ export class BenchmarkManager {
             this.notifyTimer = null;
             this.notifyNow();
         }, 500);
+        // 事件通知只是 UI 刷新节流，不该拖住进程退出（否则 run 未结束时的 500ms 定时器
+        // 会让 Node/jest worker 无法优雅退出）
+        this.notifyTimer.unref?.();
     }
 }
 

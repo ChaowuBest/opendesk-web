@@ -353,6 +353,7 @@ class BenchmarkEntryWidget extends AgentOperableHTMLElement {
         const summary = run.summary;
         return JSON.stringify({
             status: run.status,
+            stopping: run.stopRequested === true,
             tab: this.detailTab,
             total: summary.total,
             completed: summary.completed,
@@ -457,14 +458,21 @@ class BenchmarkEntryWidget extends AgentOperableHTMLElement {
     private patchStopButton(run: RunRecord) {
         const actions = this.shadowRoot?.querySelector('.detail-actions');
         if (!actions) return;
-        const existing = actions.querySelector('[data-action="stop-run"]');
+        const existing = actions.querySelector('[data-action="stop-run"]') as HTMLButtonElement | null;
         if (run.status === 'running') {
-            if (existing) return;
+            const stopping = run.stopRequested === true;
+            if (existing) {
+                const label = stopping ? this._t('benchmark.action.stopping') : this._t('benchmark.action.stop');
+                if (existing.textContent !== label) existing.textContent = label;
+                if (existing.disabled !== stopping) existing.disabled = stopping;
+                return;
+            }
             const button = document.createElement('button');
             button.type = 'button';
-            button.className = 'btn btn-sm';
+            button.className = 'btn btn-sm btn-stop';
             button.dataset.action = 'stop-run';
-            button.textContent = this._t('benchmark.action.stop');
+            button.textContent = stopping ? this._t('benchmark.action.stopping') : this._t('benchmark.action.stop');
+            button.disabled = stopping;
             actions.prepend(button);
             return;
         }
@@ -673,8 +681,10 @@ class BenchmarkEntryWidget extends AgentOperableHTMLElement {
                 this.closeCaseMenu();
                 if (!this.detailRunId || !key) return;
                 try {
+                    // 原地重跑：返回的就是当前 runId，重新拉详情即可看到该用例转为运行中，
+                    // 其余用例的历史状态不受影响
                     const runId = await getAPI().callMainWorld<string>('rerunCase', this.detailRunId, key);
-                    await this.openDetail(runId);
+                    await this.loadDetail(runId, false);
                 } catch (error: any) {
                     this.banner = { text: error?.message || this._t('error.operationFailed'), isError: true };
                     this.render();
@@ -1241,9 +1251,10 @@ class BenchmarkEntryWidget extends AgentOperableHTMLElement {
         const summary = run.summary;
         const finished = summary.completed + summary.failed + summary.stopped;
         const statusKey = RUN_STATUS_KEYS[run.status] || 'benchmark.status.stopped';
+        const stopping = run.status === 'running' && run.stopRequested === true;
         const stopButton =
             run.status === 'running'
-                ? `<button type="button" class="btn btn-sm" data-action="stop-run">${escapeHtml(this._t('benchmark.action.stop'))}</button>`
+                ? `<button type="button" class="btn btn-sm btn-stop" data-action="stop-run"${stopping ? ' disabled' : ''}>${escapeHtml(this._t(stopping ? 'benchmark.action.stopping' : 'benchmark.action.stop'))}</button>`
                 : '';
         const tabs = `
             <div class="detail-tabs">
@@ -1508,6 +1519,11 @@ class BenchmarkEntryWidget extends AgentOperableHTMLElement {
                 `<div class="cd-item cd-full"><span class="cd-key">${escapeHtml(this._t('benchmark.caseDetail.error'))}</span><span class="cd-error">${escapeHtml(item.error)}</span></div>`
             );
         }
+        if (item.logError) {
+            rows.push(
+                `<div class="cd-item cd-full"><span class="cd-key">${escapeHtml(this._t('benchmark.caseDetail.logError'))}</span><pre class="cd-log-error">${escapeHtml(item.logError)}</pre></div>`
+            );
+        }
         rows.push(
             `<div class="cd-item cd-full"><span class="cd-key">${escapeHtml(this._t('benchmark.caseDetail.reason'))}</span><span class="cd-reason">${escapeHtml(item.reason || this._t('benchmark.detail.noReason'))}</span></div>`
         );
@@ -1517,7 +1533,9 @@ class BenchmarkEntryWidget extends AgentOperableHTMLElement {
         </tr>`;
     }
 
-    /* 用例行右键菜单：复用 agentinput 的 ctx-menu 视觉 */
+    /* 用例行右键菜单：复用 agentinput 的 ctx-menu 视觉。
+       跑过（有任务/有结果）的用例才给菜单，运行中的用例也能跳转到执行/验证任务；
+       跳转项按 taskId 有无禁用，见 renderCaseMenu */
     private handleContextMenu = (event: Event) => {
         const mouse = event as MouseEvent;
         const target = event.target as HTMLElement | null;
@@ -1527,8 +1545,10 @@ class BenchmarkEntryWidget extends AgentOperableHTMLElement {
             return;
         }
         const key = row.dataset.caseKey;
-        if (!this.canExpandCase(this.detail.cases.find((entry) => entry.key === key))) {
-            // 没有结果的行不给菜单，但要把上一条的菜单收掉，否则它会飘在原地
+        const item = this.detail.cases.find((entry) => entry.key === key);
+        // 还没开始跑（pending）的用例既没有可跳转的任务也没有可重跑的意义，
+        // 弹出来只会是一个三项全灰的菜单；顺手把上一条的菜单收掉，否则它会飘在原地
+        if (!item || item.status === 'pending') {
             this.closeCaseMenu();
             return;
         }
@@ -1543,7 +1563,8 @@ class BenchmarkEntryWidget extends AgentOperableHTMLElement {
         const root = this.shadowRoot;
         const menu = this.caseMenu;
         if (!root || !menu) return;
-        const item = this.detail?.cases.find((entry) => entry.key === menu.key);
+        const run = this.detail;
+        const item = run?.cases.find((entry) => entry.key === menu.key);
         const dark = this.dataset.theme === 'dark' ? ' ctx-menu-dark' : '';
         const entry = (action: string, label: string, iconPath: string, disabled = false) => `
             <button type="button" class="ctx-item${disabled ? ' disabled' : ''}" data-action="${action}"
@@ -1551,12 +1572,15 @@ class BenchmarkEntryWidget extends AgentOperableHTMLElement {
                 <span class="ctx-icon-sm"><svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round">${iconPath}</svg></span>
                 <span class="ctx-label">${escapeHtml(label)}</span>
             </button>`;
+        // 整轮在跑或该用例正在执行/验证时不能重跑（后端同样会拒绝）
+        const caseActive = item ? ['preparing', 'running', 'verifying'].includes(item.status) : true;
+        const rerunDisabled = !run || run.status === 'running' || caseActive;
         const html = `
         <div class="ctx-menu case-menu${dark}" style="left:${menu.left}px;top:${menu.top}px">
             ${entry('case-menu-jump-run', this._t('benchmark.caseMenu.jumpRunTask'), '<path d="M3 5a2 2 0 0 1 2-2h6a2 2 0 0 1 2 2v4a2 2 0 0 1-2 2H6l-3 2.5V5Z"/>', !item?.runTaskId)}
             ${entry('case-menu-jump-verify', this._t('benchmark.caseMenu.jumpVerifyTask'), '<circle cx="5.3" cy="5.3" r="3.3"/><path d="M7.9 7.9 10.6 10.6"/>', !item?.verifyTaskId)}
             <div class="ctx-sep"></div>
-            ${entry('case-menu-rerun', this._t('benchmark.caseMenu.rerun'), '<path d="M13 8a5 5 0 1 1-1.5-3.6"/><path d="M13 2v3h-3"/>')}
+            ${entry('case-menu-rerun', this._t('benchmark.caseMenu.rerun'), '<path d="M13 8a5 5 0 1 1-1.5-3.6"/><path d="M13 2v3h-3"/>', rerunDisabled)}
         </div>`;
         root.querySelector('.case-menu')?.remove();
         const holder = document.createElement('div');

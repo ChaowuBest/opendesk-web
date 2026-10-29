@@ -96,6 +96,8 @@ export interface CaseRunState {
     ratio: number | null;
     reason: string;
     error: string;
+    /** 脚本失败时 stdout/stderr 的合并输出尾部，供详情面板「错误信息」栏展示；其他失败为空 */
+    logError: string;
     runTaskId: string | null;
     verifyTaskId: string | null;
     startedAt: number | null;
@@ -129,6 +131,8 @@ export interface RunRecord {
     startedAt: number | null;
     finishedAt: number | null;
     status: RunStatus;
+    /** 用户已点停止、引擎还在收尾（用例逐个标记停止）时为 true，UI 显示「正在停止」 */
+    stopRequested?: boolean;
     concurrency: number;
     runModel: string;
     verifyModel: string;

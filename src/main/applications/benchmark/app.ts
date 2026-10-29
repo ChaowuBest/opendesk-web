@@ -170,7 +170,7 @@ export class BenchmarkApplication extends BaseApplication {
         openTaskInMainWindow(taskId);
     }
 
-    /** 用原运行记录的模型/并发/超时重新跑单个用例，返回新运行 id */
+    /** 在原测评历史记录内原地重跑单个用例（其余用例结果保留），返回原运行 id */
     async rerunCase(runId: string, caseKey: string): Promise<string> {
         const manager = this.requireManager();
         const run = manager.getRun(runId);
@@ -194,7 +194,8 @@ export class BenchmarkApplication extends BaseApplication {
             runTimeoutSec: run.runTimeoutSec ?? null,
             verifyTimeoutSec: run.verifyTimeoutSec ?? null,
             tracks: run.tracks,
-            caseKeys: [caseKey]
+            caseKeys: [caseKey],
+            appendToRunId: runId
         });
     }
 

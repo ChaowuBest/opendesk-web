@@ -860,7 +860,7 @@ it('input passes text to hdc without executing it in a host or device shell', as
         }
         fs.rmSync(tempDir, { recursive: true, force: true });
     }
-});
+}, 60000); // typeAsciiText 逐字符发 keyEvent，Windows 上每个字符都要起一次 bash 进程，90 字符累计约 8s
 
 it('input replace without bounds falls back to a bounded number of Backspace events', async () => {
     const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'opendesk-use-harmony-replace-test-'));
@@ -937,7 +937,7 @@ it('input replace without bounds falls back to a bounded number of Backspace eve
         }
         fs.rmSync(tempDir, { recursive: true, force: true });
     }
-});
+}, 30000); // 每个 uiInput 调用都要起一次 bash 进程，留足余量
 
 it('input replace dragSelect clears via a field-spanning drag when bounds are provided', async () => {
     const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'opendesk-use-harmony-dragselect-test-'));
@@ -1013,7 +1013,7 @@ it('input replace dragSelect clears via a field-spanning drag when bounds are pr
         }
         fs.rmSync(tempDir, { recursive: true, force: true });
     }
-});
+}, 30000); // 每个 uiInput 调用都要起一次 bash 进程，留足余量
 
 it('pointer gesture tools delegate to native uiInput commands', async () => {
     const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'opendesk-use-harmony-gesture-test-'));
