@@ -343,6 +343,7 @@ export const zhCn: Record<string, string> = {
     'plugin.tui.confirm': '确认${action}',
     'plugin.tui.cancel': '取消',
     'plugin.tui.toggleDone': '插件已${action}: ${id}\n\n消息渠道已自动重新加载。',
+    'plugin.tui.toggleFail': '插件${action}失败: ${id} (${error})',
     'plugin.tui.notFound': '未找到插件: ${id}',
     'plugin.tui.confirmUninstall': ' 确认卸载: ${id}',
     'plugin.tui.uninstallConfirm': '确认卸载',

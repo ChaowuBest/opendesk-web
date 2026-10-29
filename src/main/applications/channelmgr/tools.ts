@@ -22,7 +22,8 @@ import {
     uninstallPlugin,
     listVisiblePlugins,
     setPluginEnabled,
-    reloadPluginHost
+    reloadPluginHost,
+    applyPluginEnabledChange
 } from '../pluginmgr/index.js';
 import { feishuAuthInit, feishuAuthBegin, feishuAuthPoll } from './feishu-auth.js';
 import { logger } from '../../utils/logger.js';
@@ -309,15 +310,20 @@ export class ToggleChannelPluginTool extends BaseTool<typeof ToggleChannelPlugin
     }
 
     private async run(args: z.infer<typeof ToggleChannelPluginSchema>): Promise<string> {
-        const ok = setPluginEnabled(args.id, args.enabled);
-        if (ok) {
-            const action = args.enabled ? '启用' : '禁用';
-            // 宿主重载以应用启停状态（启用的插件才会执行 ctx.channels.register），随后收集渠道
-            await reloadPluginHost();
-            await this.app.reloadChannels();
-            return `插件已${action}: ${args.id}\n\n消息渠道已自动重新加载。`;
+        const action = args.enabled ? '启用' : '禁用';
+        if (!setPluginEnabled(args.id, args.enabled)) {
+            return `未找到插件: ${args.id}`;
         }
-        return `未找到插件: ${args.id}`;
+        try {
+            // 差量应用启停状态（其他插件与渠道连接不受影响），随后同步该渠道
+            await applyPluginEnabledChange(args.id, args.enabled);
+        } catch (err: any) {
+            // 启用失败（完整性校验、入口缺失等）：回滚注册表，避免留下未生效的启用状态
+            setPluginEnabled(args.id, !args.enabled);
+            return `插件${action}失败: ${err?.message ?? err}`;
+        }
+        await this.app.syncChannelsWithPluginHost(args.id, args.enabled ? 'enable' : 'disable');
+        return `插件已${action}: ${args.id}`;
     }
 }
 

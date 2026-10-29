@@ -26,7 +26,8 @@ import {
     installPlugin,
     uninstallPlugin,
     setPluginEnabled,
-    reloadPluginHost
+    reloadPluginHost,
+    applyPluginEnabledChange
 } from '../pluginmgr/index.js';
 import type {
     PluginEntry,
@@ -395,29 +396,122 @@ export class ChannelMgrApplication extends BaseApplication {
     }
 
     /**
-     * 监听 pluginmgr 的 pluginsChanged 事件，在插件宿主重载完成后同步渠道运行时。
-     * 覆盖经 pluginmgr 应用 API（GUI 插件管理页 / installPlugin 等工具）安装、卸载、
-     * 启停渠道类插件的入口：宿主侧注册的 channel 已更新，但本应用内存中的渠道列表
-     * 与连接不会自动跟随，需在此重新加载，避免消息设置页/运行时显示过期状态。
+     * 监听 pluginmgr 的 pluginsChanged 事件，在插件宿主增删/启停完成后差量同步渠道运行时。
+     * 覆盖经 pluginmgr 应用 API（GUI 插件管理页 / installPlugin 等工具）安装、卸载、启停
+     * 渠道类插件的入口：宿主侧注册的 channel 已更新，但本应用内存中的渠道列表与连接不会
+     * 自动跟随，需在此按宿主注册表差量增删，避免消息设置页/运行时显示过期状态。
      */
     private subscribePluginChangedBridge(): void {
         if (this.disposePluginChangedBridge) return;
-        this.disposePluginChangedBridge = ApplicationRegistry.onApplicationEvent((bundleName, eventName) => {
+        this.disposePluginChangedBridge = ApplicationRegistry.onApplicationEvent((bundleName, eventName, args) => {
             if (bundleName !== 'pluginmgr' || eventName !== 'pluginsChanged') return;
-            this.reloadChannels().catch((err: any) => {
+            const payload = (args?.[0] ?? {}) as { id?: unknown; operation?: unknown };
+            const changedPluginId = typeof payload.id === 'string' ? payload.id : undefined;
+            const operation = typeof payload.operation === 'string' ? payload.operation : undefined;
+            this.syncChannelsWithPluginHost(changedPluginId, operation).catch((err: any) => {
                 logger.error(`[channelmgr] 插件变更后同步消息渠道失败: ${err?.message || err}`);
             });
         });
     }
 
     /**
+     * 将渠道运行时差量同步到插件宿主的当前状态：
+     * - 宿主已不再注册的渠道（禁用/卸载）：停止连接并从运行时移除；
+     * - 宿主换成新 channel 实例（插件重载/改配置）：用新实例重建并启动；
+     * - 变更插件新注册的渠道：收集并启动；
+     * - 启用操作命中的既有渠道：重启以刷新账号缓存与连接。
+     * 其余渠道的连接保持不动（区别于全量热重载 stopAll + startAll）。
+     * 收不到变更插件 id 时回退为全量热重载。
+     */
+    async syncChannelsWithPluginHost(changedPluginId?: string, operation?: string): Promise<void> {
+        if (!changedPluginId) {
+            await this.reloadChannels();
+            return;
+        }
+        await this.serializeChannelChange(() => this.applyChannelHostDelta(changedPluginId, operation));
+    }
+
+    /** 渠道运行时变更串行队列：与全量重载互斥，避免并发改写 plugins/channelStates */
+    private serializeChannelChange<T>(task: () => Promise<T>): Promise<T> {
+        const next = this.channelQueue.then(task, task);
+        this.channelQueue = next.then(
+            () => undefined,
+            () => undefined
+        );
+        return next;
+    }
+
+    /**
+     * 以宿主注册表为准做差量：channel.meta.id 与插件 id 之间没有必然关系
+     * （同一插件可注册多个 channel），因此比对「宿主当前注册的渠道」与本地运行时。
+     */
+    private async applyChannelHostDelta(changedPluginId: string, operation?: string): Promise<void> {
+        const registered = new Map(
+            getPluginHost()
+                .listChannels()
+                .map((record) => [record.channel.meta.id, record] as const)
+        );
+        const stale = this.plugins.filter((entry) => {
+            const cp = entry.channelPlugin;
+            if (!cp) return false;
+            const current = registered.get(cp.id);
+            if (!current) return true;
+            if (!isNativeChannelEntry(entry)) return false;
+            // 宿主换成了新实例：本地仍持有旧实例会把收发落到已销毁的插件对象上
+            return (cp as unknown as NativeChannelAdapter).getNativeChannel() !== current.channel;
+        });
+        // 变更插件在宿主中注册的渠道
+        const owned = Array.from(registered)
+            .filter(([, record]) => record.pluginId === changedPluginId)
+            .map(([channelId]) => channelId);
+        if (stale.length === 0 && owned.length === 0) return;
+
+        const staleSet = new Set(stale);
+        // 未被重建的既有渠道，用于区分「重新启用」与「首次启用」
+        const kept = new Set(this.plugins.filter((entry) => !staleSet.has(entry)).map((entry) => entry.id));
+        for (const entry of stale) {
+            const cp = entry.channelPlugin!;
+            await this.stopChannelPluginAccounts(cp, this.collectChannelAccountIds(cp));
+        }
+        if (stale.length > 0) {
+            this.plugins = this.plugins.filter((entry) => !staleSet.has(entry));
+        }
+
+        // 需要重新收集并启动的渠道：变更插件新注册的 + 宿主仍注册但换了实例的
+        // （后者不能只移除，否则其他插件的渠道会因一次无关的重载而掉线）
+        const toStart = new Set(owned.filter((channelId) => !kept.has(channelId)));
+        for (const entry of stale) {
+            const channelId = entry.channelPlugin?.id;
+            if (channelId && registered.has(channelId)) toStart.add(channelId);
+        }
+        // 只补齐需要启动的渠道，避免把其他插件的渠道提前拉进运行时却未启动
+        this.loadNativeChannels(toStart);
+        for (const channelId of toStart) {
+            const entry = this.plugins.find((candidate) => candidate.channelPlugin?.id === channelId);
+            if (entry?.channelPlugin) await this.startChannelPlugin(entry);
+        }
+        // 重新启用既有渠道：重启刷新账号缓存与连接。安装/重载等操作已由宿主重建渠道实例，
+        // 走上面的 toStart 路径完成重连，无需再无条件重启（否则会多一次无谓断连）
+        if (operation === 'enable') {
+            for (const channelId of owned) {
+                if (kept.has(channelId)) await this.restartChannelPlugin(channelId);
+            }
+        }
+        this.notifyStateChange();
+    }
+
+    /**
      * 从原生插件系统（pluginmgr ctx.channels.register）加载 channel 实例，
      * 生成伪 PluginEntry 并入 plugins 数组，复用现有 channelmgr 启动/收发流程。
+     * @param onlyChannelIds 只收集指定渠道（差量同步用）；省略时收集宿主注册的全部渠道
      */
-    private loadNativeChannels(): void {
+    private loadNativeChannels(onlyChannelIds?: ReadonlySet<string>): void {
         const nativeChannels = getPluginHost().listChannels();
         for (const { channel } of nativeChannels) {
             const channelId = channel.meta.id;
+            if (onlyChannelIds && !onlyChannelIds.has(channelId)) continue;
+            // 已收集过的渠道跳过：保证方法可被差量同步重复调用而不产生重复条目
+            if (this.plugins.some((entry) => entry.id === channelId)) continue;
             const { entry: created } = createNativeChannelPluginEntry(channel, {
                 getConfig: (cid) => this.getChannelConfig(cid),
                 dispatch: async (cid, accountId, message) => {
@@ -500,8 +594,11 @@ export class ChannelMgrApplication extends BaseApplication {
 
                     // Many plugins (e.g. Feishu) start long-running event loops in startAccount
                     // that never resolve. Wait briefly for fast failures (config/auth errors),
-                    // then assume the plugin is running.
-                    await Promise.race([startPromise, new Promise<void>((resolve) => setTimeout(resolve, 5000))]);
+                    // then assume the plugin is running. 探测定时器 unref：不阻止宿主进程退出
+                    const startupProbe = new Promise<void>((resolve) => {
+                        setTimeout(resolve, 5000).unref();
+                    });
+                    await Promise.race([startPromise, startupProbe]);
 
                     state.status = { online: true, statusText: t('channel.status.connected') };
                     this.notifyStateChange();
@@ -1466,6 +1563,26 @@ export class ChannelMgrApplication extends BaseApplication {
     }
 
     /**
+     * 收集渠道当前应处理的账号：channelStates 中正在运行的账号 + 配置声明的账号，
+     * 都取不到时回退 default（与启动路径的账号回退保持一致）。
+     */
+    private collectChannelAccountIds(cp: ChannelPlugin): string[] {
+        const accountIds = new Set<string>();
+        const prefix = `${cp.id}:`;
+        for (const [key] of this.channelStates) {
+            if (key.startsWith(prefix)) accountIds.add(key.slice(prefix.length));
+        }
+        try {
+            for (const accountId of cp.config.listAccountIds(this.getChannelConfig(cp.id))) {
+                accountIds.add(accountId);
+            }
+        } catch {
+            /* 插件未实现或配置异常：沿用运行中账号 */
+        }
+        return accountIds.size > 0 ? Array.from(accountIds) : ['default'];
+    }
+
+    /**
      * 重启指定渠道插件的 gateway 连接（先停止该插件的所有 account，再重新启动）。
      * 用于 loginChannel 成功后立即建立消息收发通道。
      */
@@ -1478,25 +1595,8 @@ export class ChannelMgrApplication extends BaseApplication {
 
         const cp = entry.channelPlugin;
 
-        // Collect ALL running account IDs for this channel from the state map,
-        // plus any that the config says should exist, to ensure full cleanup.
-        const runningAccountIds = new Set<string>();
-        for (const [key] of this.channelStates) {
-            if (key.startsWith(channelId + ':')) {
-                runningAccountIds.add(key.slice(channelId.length + 1));
-            }
-        }
-        const config = this.getChannelConfig(channelId);
-        try {
-            for (const id of cp.config.listAccountIds(config)) {
-                runningAccountIds.add(id);
-            }
-        } catch {
-            /* best effort */
-        }
-
-        const allAccountIds = Array.from(runningAccountIds);
-        if (allAccountIds.length === 0) allAccountIds.push('default');
+        // 一并停掉运行中但已从配置移除的账号，避免残留连接
+        const allAccountIds = this.collectChannelAccountIds(cp);
 
         logger.info(`[channelmgr] 正在重启渠道 ${channelId} 的连接 (accounts: ${allAccountIds.join(', ')})...`);
 
@@ -1510,6 +1610,9 @@ export class ChannelMgrApplication extends BaseApplication {
     // ── 热重载 ───────────────────────────────────────────────────────────────
 
     private reloadPromise?: Promise<void>;
+
+    /** 渠道运行时变更串行队列（全量重载与差量同步共用，见 serializeChannelChange） */
+    private channelQueue: Promise<unknown> = Promise.resolve();
 
     /** 重载进行中又有调用到达时置位：本轮结束后补跑一轮（并发调用合并到同一轮补跑） */
     private reloadFollowUpQueued = false;
@@ -1553,7 +1656,8 @@ export class ChannelMgrApplication extends BaseApplication {
         // 重入 reloadChannels，会看到空字段而并发开启第二轮
         await Promise.resolve();
         try {
-            await this.doReloadChannels();
+            // 与差量同步共用串行队列：任何时刻只有一方在改写 plugins/channelStates
+            await this.serializeChannelChange(() => this.doReloadChannels());
         } finally {
             this.reloadPromise = undefined;
             if (this.reloadFollowUpQueued) {
@@ -1706,12 +1810,19 @@ export class ChannelMgrApplication extends BaseApplication {
                 break;
             }
             case 'list': {
-                // PluginsListOverlay 的启停/卸载同样先重载宿主（使启停与卸载立即生效、
-                // channel 注册随之更新），再重新收集渠道
-                new PluginsListOverlay(tui, async () => {
-                    await reloadPluginHost();
-                    await this.reloadChannels();
-                }).show();
+                // PluginsListOverlay 的启停走差量路径（其他插件与渠道不受影响），
+                // 卸载仍走全量重载后重新收集渠道
+                new PluginsListOverlay(
+                    tui,
+                    async () => {
+                        await reloadPluginHost();
+                        await this.reloadChannels();
+                    },
+                    async (id, enabled) => {
+                        await applyPluginEnabledChange(id, enabled);
+                        await this.syncChannelsWithPluginHost(id, enabled ? 'enable' : 'disable');
+                    }
+                ).show();
                 break;
             }
             case 'enable': {
@@ -1719,12 +1830,18 @@ export class ChannelMgrApplication extends BaseApplication {
                     showInfo(t('plugin.usage.hint'), '/plugins enable <plugin-id>');
                     return;
                 }
-                if (setPluginEnabled(rest, true)) {
-                    await reloadPluginHost();
-                    await this.reloadChannels();
-                    showInfo(t('plugin.enable.success'), t('channel.enable.success', { id: rest }));
-                } else {
+                if (!setPluginEnabled(rest, true)) {
                     showInfo(t('plugin.enable.fail'), `未找到插件: ${rest}`);
+                    return;
+                }
+                try {
+                    await applyPluginEnabledChange(rest, true);
+                    await this.syncChannelsWithPluginHost(rest, 'enable');
+                    showInfo(t('plugin.enable.success'), t('channel.enable.success', { id: rest }));
+                } catch (err: any) {
+                    // 启用失败（完整性校验、入口缺失等）：回滚注册表并提示原因
+                    setPluginEnabled(rest, false);
+                    showInfo(t('plugin.enable.fail'), `插件加载失败: ${err?.message ?? err}`);
                 }
                 break;
             }
@@ -1734,8 +1851,8 @@ export class ChannelMgrApplication extends BaseApplication {
                     return;
                 }
                 if (setPluginEnabled(rest, false)) {
-                    await reloadPluginHost();
-                    await this.reloadChannels();
+                    await applyPluginEnabledChange(rest, false);
+                    await this.syncChannelsWithPluginHost(rest, 'disable');
                     showInfo(t('plugin.disable.success'), t('channel.disable.success', { id: rest }));
                 } else {
                     showInfo(t('plugin.disable.fail'), `未找到插件: ${rest}`);

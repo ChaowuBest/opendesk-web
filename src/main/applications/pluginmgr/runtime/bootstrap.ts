@@ -8,6 +8,7 @@ import { GlobalState } from '../../../aikernel/states/global.js';
 import { AgentRegistry } from '../../../aikernel/agents/registry.js';
 import type { ApplicationAgents } from '../../../aikernel/agents/registry.js';
 import type { AgentDefinition } from '../../../aikernel/types/agent.js';
+import { SkillRegistry } from '../../../aikernel/skill.js';
 import { getOpendeskDirectory } from '../../../utils/setting.js';
 import { logger } from '../../../utils/logger.js';
 import { getPluginHost } from './host.js';
@@ -45,6 +46,18 @@ let initialization: Promise<void> | undefined;
 let disposeApplicationEventBridge: (() => void) | undefined;
 let disposeAikernelHooks: (() => void)[] = [];
 
+/** 宿主变更操作的串行队列：全量重载与单插件差量启停互斥，避免并发 dispose/initialize */
+let hostOperation: Promise<unknown> = Promise.resolve();
+
+function serializeHostOperation<T>(task: () => Promise<T>): Promise<T> {
+    const next = hostOperation.then(task, task);
+    hostOperation = next.then(
+        () => undefined,
+        () => undefined
+    );
+    return next;
+}
+
 function notifyPluginSkillsChanged(): void {
     const application = ApplicationRegistry.getApplication('skillmgr') as
         { notifyExternalSkillsChanged?: (bundleName: string) => void } | undefined;
@@ -69,7 +82,12 @@ interface ResolvedCandidate extends PluginCandidate {
     blockedDetail?: string;
 }
 
-function configuredCandidates(): ResolvedCandidate[] {
+/**
+ * 收集当前应加载的插件候选。
+ * @param recordConflicts 是否把发现冲突记入宿主诊断。差量路径重复调用同一发现逻辑时
+ *   关闭该项，避免同一冲突在诊断里累积成多条记录。
+ */
+function configuredCandidates(recordConflicts = true): ResolvedCandidate[] {
     const configDir = getOpendeskDirectory();
     const config = getPluginManagerConfig();
     const discovery = discoverPlugins({
@@ -78,14 +96,16 @@ function configuredCandidates(): ResolvedCandidate[] {
         pluginDirectories: getRuntimePluginDirectories()
     });
     const host = getPluginHost();
-    for (const conflict of discovery.conflicts) {
-        host.recordError({
-            id: conflict.id,
-            origin: configDir,
-            code: 'plugin.discovery_conflict',
-            stage: 'resolve',
-            detail: conflict.paths.join(', ')
-        });
+    if (recordConflicts) {
+        for (const conflict of discovery.conflicts) {
+            host.recordError({
+                id: conflict.id,
+                origin: configDir,
+                code: 'plugin.discovery_conflict',
+                stage: 'resolve',
+                detail: conflict.paths.join(', ')
+            });
+        }
     }
     return discovery.candidates.map((candidate) => {
         if (candidate.source === 'builtin') {
@@ -244,11 +264,15 @@ async function initialize(): Promise<void> {
     notifyPluginMcpServersChanged();
 }
 
+/**
+ * 加载单个插件候选。
+ * @returns 加载失败时返回失败原因码，成功（含平台不匹配等正常跳过）时返回 undefined
+ */
 async function loadCandidate(
     host: ReturnType<typeof getPluginHost>,
     candidate: ResolvedCandidate,
     baseDirectory: string
-): Promise<void> {
+): Promise<string | undefined> {
     if (candidate.blockedCode) {
         host.recordError({
             id: candidate.id,
@@ -258,7 +282,7 @@ async function loadCandidate(
             stage: 'validate',
             detail: candidate.blockedDetail
         });
-        return;
+        return candidate.blockedCode;
     }
     try {
         const loaded = await loadPlugin(candidate, baseDirectory, {
@@ -270,7 +294,7 @@ async function loadCandidate(
             logger.warn(
                 `Skipping OpenDesk plugin: ${candidate.id} (unsupported platform ${process.platform}, declared: ${platforms.join(', ')})`
             );
-            return;
+            return 'plugin.platform_unsupported';
         }
         await host.activate(loaded.plugin, {
             origin: candidate.origin,
@@ -282,8 +306,9 @@ async function loadCandidate(
             pluginDir: loaded.rootDir,
             resources: loaded.resources
         });
+        return undefined;
     } catch (error) {
-        if (candidate.requireDeclaration && isMissingDeclaration(error)) return;
+        if (candidate.requireDeclaration && isMissingDeclaration(error)) return 'plugin.entry_not_declared';
         const detail = error instanceof Error ? error.message : String(error);
         const stage =
             detail === 'plugin.entry_not_found' || detail === 'plugin.entry_outside_root' ? 'resolve' : 'load';
@@ -296,6 +321,7 @@ async function loadCandidate(
             detail
         });
         logger.error(`Failed to load OpenDesk plugin: ${candidate.spec}`, error);
+        return detail.startsWith('plugin.') ? detail : 'plugin.load_failed';
     }
 }
 
@@ -318,11 +344,21 @@ export async function disposePluginHost(): Promise<void> {
     initialization = undefined;
 }
 
-export async function reloadPluginHost(): Promise<void> {
+export function reloadPluginHost(): Promise<void> {
+    return serializeHostOperation(() => reloadPluginHostInternal());
+}
+
+/** 未序列化的全量重载内核：供已持有串行队列的调用方（差量启停的回退路径）使用 */
+async function reloadPluginHostInternal(): Promise<void> {
     await disposePluginHost();
     await initializePluginHost();
     notifyPluginSkillsChanged();
     notifyPluginMcpRegistriesChanged();
+    await refreshTaskToolsets();
+}
+
+/** 仅刷新已完全加载任务的工具集，使其感知插件配置变化 */
+async function refreshTaskToolsets(): Promise<void> {
     const globalState = GlobalState.getCurrentInstance();
     if (!globalState) return;
     // 仅刷新已完全加载（正在使用/运行）任务的工具集。懒加载任务未在内存中运行，
@@ -344,4 +380,52 @@ export async function reloadPluginHost(): Promise<void> {
             );
         }
     }
+}
+
+/**
+ * 单个插件启停的差量应用：只卸载（禁用）或加载（启用）目标插件，其他插件
+ * 实例与注册贡献原样保留，避免全量 reload 导致所有插件一起重启。
+ *
+ * MCP server 贡献的断连/连接由 mcp.ts 的 onMcpServerRemoved 监听与
+ * notifyPluginMcpServersChanged 增量处理；渠道类插件的运行时同步由调用方
+ * （pluginmgr.setEnabled）广播 pluginsChanged 事件，channelmgr 据插件 id 差量完成。
+ *
+ * @throws 启用目标插件但加载失败（完整性校验不通过 / 入口缺失 / 平台不支持等）时
+ *   抛出失败原因码，避免调用方把未生效的启用当成成功
+ */
+export function applyPluginEnabledChange(id: string, enabled: boolean): Promise<void> {
+    return serializeHostOperation(() => applyPluginEnabledChangeInternal(id, enabled));
+}
+
+async function applyPluginEnabledChangeInternal(id: string, enabled: boolean): Promise<void> {
+    await initializePluginHost();
+    if (enabled) {
+        const candidate = configuredCandidates(false).find((entry) => entry.id === id);
+        if (!candidate) {
+            // 目标插件已不可发现（如安装目录被删除），按语义回退为全量重载
+            await reloadPluginHostInternal();
+            return;
+        }
+        // 重复启用（运行时已有同名实例）时跳过，保持幂等
+        if (!getPluginHost().get(id)) {
+            const failure = await loadCandidate(getPluginHost(), candidate, getOpendeskDirectory());
+            if (failure) throw new Error(failure);
+            // host.activate 对校验/setup 失败只返回 error/disabled 条目而不抛错，这里统一按失败上报；
+            // 同时清掉失败条目，否则下次启用会被上面的幂等判断短路
+            if (getPluginHost().get(id)?.status !== 'active') {
+                await getPluginHost().deactivate(id);
+                throw new Error('plugin.activate_failed');
+            }
+        }
+    } else {
+        // 重复禁用（运行时无实例）时无需操作，保持幂等
+        await getPluginHost().deactivate(id);
+    }
+    await syncPluginAgentsWithRegistry();
+    notifyPluginMcpServersChanged();
+    // 插件技能经 SkillRegistry 的 provider 缓存输出，差量启停后按 bundle 定向失效
+    SkillRegistry.getInstance().clearCache(PLUGIN_SKILL_BUNDLE);
+    notifyPluginSkillsChanged();
+    notifyPluginMcpRegistriesChanged();
+    await refreshTaskToolsets();
 }
