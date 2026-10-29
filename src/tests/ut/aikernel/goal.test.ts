@@ -8,6 +8,7 @@ import { GoalEvaluator } from '../../../main/aikernel/goal/evaluator.js';
 import { registerGoalHooks } from '../../../main/aikernel/goal/hooks.js';
 import { GoalScheduler } from '../../../main/aikernel/goal/scheduler.js';
 import { GoalService, projectGoalDisplayMessage } from '../../../main/aikernel/goal/service.js';
+import { getGoalExtension } from '../../../main/aikernel/goal/task-extension.js';
 import { GoalEvents, GoalStates, createGoalEvent } from '../../../main/aikernel/goal/state.js';
 import { LLM } from '../../../main/aikernel/llm.js';
 import {
@@ -84,6 +85,13 @@ function createTask(): TaskState {
     return task;
 }
 
+/** 推进后台 fire-and-forget 的异步投递工作（afterTurnFinished 里起的回合）。 */
+async function flushAsyncWork(): Promise<void> {
+    for (let i = 0; i < 20; i += 1) {
+        await new Promise((resolve) => setTimeout(resolve, 0));
+    }
+}
+
 describe('goal controller and scheduler', () => {
     beforeEach(() => {
         resetHookRegistry();
@@ -155,11 +163,14 @@ describe('goal controller and scheduler', () => {
         expect(schedulerMessage.getPlainText()).toContain('开始推进当前 goal');
     });
 
-    test('adds supplemental context through shared goal service', () => {
+    test('adds supplemental context through shared goal service', async () => {
         const task = createTask();
+        jest.spyOn(task, 'buildToolsets').mockResolvedValue([]);
+        jest.spyOn(task, 'processTaskTurn').mockResolvedValue();
         GoalController.create(task, { objective: 'ship fix', source: 'tui' });
+        task.task_status = 'running';
 
-        const result = GoalService.addSupplement(task, {
+        const result = await GoalService.addSupplement(task, {
             content: 'Use packages/appsdk as the target.',
             source: 'tui'
         });
@@ -170,6 +181,140 @@ describe('goal controller and scheduler', () => {
         expect(task.goal_state?.pendingSupplements[0].content).toBe('Use packages/appsdk as the target.');
         expect(GoalEvents.getTail(task.goal_event_log).map((event) => event.type)).toContain('supplement_added');
         expect(GoalStates.renderSummary(task.goal_state)?.pendingSupplements).toBe(1);
+    });
+
+    test('delivers supplemental context in a new turn when no goal turn is running', async () => {
+        // 复现：前端以为目标还在跑，但后端的回合已经收尾，补充消息落在一个没人消费的
+        // 回合里 —— 回显一直等到超时，用户看不到任何 agent 反馈。
+        const task = createTask();
+        jest.spyOn(task, 'buildToolsets').mockResolvedValue([]);
+        const processSpy = jest.spyOn(task, 'processTaskTurn').mockResolvedValue();
+        GoalController.create(task, { objective: 'ship fix', source: 'gui' });
+        task.task_status = 'stopped';
+
+        const result = await GoalService.addSupplement(task, {
+            content: 'Use packages/appsdk as the target.',
+            source: 'gui'
+        });
+
+        expect(result.ok).toBe(true);
+        expect(task.goal_state?.pendingSupplements).toHaveLength(0);
+        expect(processSpy).toHaveBeenCalledTimes(1);
+        expect(task.task_status).toBe('running');
+        const delivered = task.chat_context.messages.find(
+            (message) => message instanceof UserMessage && message.metadata?.origin.reason === 'goal_supplement'
+        ) as UserMessage;
+        expect(delivered).toBeDefined();
+        expect(delivered.rawText).toBe('Use packages/appsdk as the target.');
+        expect(delivered.metadata?.execution?.supplementIds).toEqual([expect.any(String)]);
+        expect(GoalEvents.getTail(task.goal_event_log).map((event) => event.type)).toContain('supplement_materialized');
+    });
+
+    test('delivers supplemental context left pending when a turn finished without consuming it', async () => {
+        const task = createTask();
+        jest.spyOn(task, 'buildToolsets').mockResolvedValue([]);
+        const processSpy = jest.spyOn(task, 'processTaskTurn').mockResolvedValue();
+        GoalController.create(task, { objective: 'ship fix', source: 'gui' });
+        task.task_status = 'running';
+        GoalController.addSupplement(task, { content: 'Use appsdk as target.', source: 'user_message' });
+        expect(task.goal_state?.pendingSupplements).toHaveLength(1);
+
+        // 回合计关卡点都跑完之后才收到补充消息：收尾时它仍是待消费状态
+        task.task_status = 'stopped';
+        task.extensions.afterTurnFinished();
+        await flushAsyncWork();
+
+        expect(task.goal_state?.pendingSupplements).toHaveLength(0);
+        expect(processSpy).toHaveBeenCalledTimes(1);
+        const delivered = task.chat_context.messages.find(
+            (message) => message instanceof UserMessage && message.metadata?.origin.reason === 'goal_supplement'
+        ) as UserMessage;
+        expect(delivered).toBeDefined();
+        expect(delivered.rawText).toBe('Use appsdk as target.');
+    });
+
+    test('keeps concurrent supplements pending instead of starting two delivery turns', async () => {
+        // startInternalTurn 在把 task_status 置为 running 之前要 await 构建工具集，
+        // 这期间第二次投递若再起一轮，就会出现两个回合抢同一个 task。
+        const task = createTask();
+        jest.spyOn(task, 'buildToolsets').mockImplementation(
+            () => new Promise((resolve) => setTimeout(() => resolve([]), 5))
+        );
+        const processSpy = jest.spyOn(task, 'processTaskTurn').mockResolvedValue();
+        GoalController.create(task, { objective: 'ship fix', source: 'gui' });
+        task.task_status = 'stopped';
+
+        const results = await Promise.all([
+            GoalService.addSupplement(task, { content: 'first supplement', source: 'gui' }),
+            GoalService.addSupplement(task, { content: 'second supplement', source: 'gui' })
+        ]);
+        await flushAsyncWork();
+
+        expect(results.every((result) => result.ok)).toBe(true);
+        expect(processSpy).toHaveBeenCalledTimes(1);
+        // 第二条补充消息仍待消费，会在当前回合的下一个 checkpoint 投递
+        expect(task.goal_state?.pendingSupplements.map((supplement) => supplement.content)).toEqual([
+            'second supplement'
+        ]);
+    });
+
+    test('does not deliver pending supplements after the user stopped the task', async () => {
+        const task = createTask();
+        jest.spyOn(task, 'buildToolsets').mockResolvedValue([]);
+        const processSpy = jest.spyOn(task, 'processTaskTurn').mockResolvedValue();
+        GoalController.create(task, { objective: 'ship fix', source: 'acp' });
+        task.task_status = 'running';
+        GoalController.addSupplement(task, { content: 'Use appsdk as target.', source: 'user_message' });
+        // 客户端取消会话：task 被用户停掉，目标本身仍 active
+        task.stop_requested_by_user = true;
+
+        task.task_status = 'stopped';
+        task.extensions.afterTurnFinished();
+        await flushAsyncWork();
+
+        expect(processSpy).not.toHaveBeenCalled();
+        expect(task.goal_state?.pendingSupplements).toHaveLength(1);
+    });
+
+    test('still delivers an explicit supplement after the user stopped the task', async () => {
+        // 用户主动停止后自己又发了一条补充消息：这是新的用户意图，应当立刻投递
+        const task = createTask();
+        jest.spyOn(task, 'buildToolsets').mockResolvedValue([]);
+        const processSpy = jest.spyOn(task, 'processTaskTurn').mockResolvedValue();
+        GoalController.create(task, { objective: 'ship fix', source: 'gui' });
+        task.stop_requested_by_user = true;
+        task.task_status = 'stopped';
+
+        const result = await GoalService.addSupplement(task, { content: 'keep going', source: 'gui' });
+
+        expect(result.ok).toBe(true);
+        expect(processSpy).toHaveBeenCalledTimes(1);
+        expect(task.goal_state?.pendingSupplements).toHaveLength(0);
+    });
+
+    test('does not restart the turn from afterTurnFinished while a goal continuation is pending', async () => {
+        const task = createTask();
+        jest.spyOn(task, 'buildToolsets').mockResolvedValue([]);
+        jest.spyOn(task, 'processTaskTurn').mockResolvedValue();
+        const startTurnSpy = jest.spyOn(getGoalExtension(task), 'startTurnWithPendingSupplements');
+        GoalController.create(task, { objective: 'ship fix', source: 'gui' });
+        task.goal_state!.pendingContinuation = {
+            id: 'continuation-1',
+            goalId: task.goal_state!.id,
+            goalRevision: task.goal_state!.revision,
+            prompt: 'Continue with evaluator guidance.',
+            reason: 'not_met',
+            createdAt: new Date().toISOString()
+        };
+        task.task_status = 'running';
+        GoalController.addSupplement(task, { content: 'Use appsdk as target.', source: 'user_message' });
+
+        task.task_status = 'stopped';
+        task.extensions.afterTurnFinished();
+        await flushAsyncWork();
+
+        expect(startTurnSpy).not.toHaveBeenCalled();
+        expect(task.goal_state?.pendingSupplements).toHaveLength(1);
     });
 
     test('records a final snapshot when evaluator completes a goal', () => {

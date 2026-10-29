@@ -576,7 +576,7 @@ export class OpenDeskTUI {
         );
     }
 
-    private submitActiveGoalSupplementIfNeeded(task: TaskState, request: string): boolean {
+    private async submitActiveGoalSupplementIfNeeded(task: TaskState, request: string): Promise<boolean> {
         if (task.task_status !== 'running' || task.goal_state?.status !== 'active') {
             return false;
         }
@@ -593,7 +593,7 @@ export class OpenDeskTUI {
             return true;
         }
 
-        const result = GoalService.addSupplement(task, {
+        const result = await GoalService.addSupplement(task, {
             content: request,
             source: 'user_message'
         });
@@ -1456,7 +1456,7 @@ export class OpenDeskTUI {
         this.syncTaskName();
         this.undoStacks?.delete(taskId);
 
-        if (this.submitActiveGoalSupplementIfNeeded(this.taskView.taskState, request)) {
+        if (await this.submitActiveGoalSupplementIfNeeded(this.taskView.taskState, request)) {
             return;
         }
 

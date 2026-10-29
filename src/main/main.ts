@@ -1790,7 +1790,7 @@ const registerTaskManagerAPIHandlers = () => {
         }
         return {
             status: 'ok',
-            data: GoalService.addSupplement(task, {
+            data: await GoalService.addSupplement(task, {
                 content: String(content ?? ''),
                 source: 'gui'
             })

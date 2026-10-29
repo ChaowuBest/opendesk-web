@@ -12,6 +12,7 @@
 import { UserMessage } from '../messages.js';
 import type { TaskState } from '../states/tasks.js';
 import type { TaskStatus } from '../task/types.js';
+import { logger } from '../../utils/logger.js';
 
 /**
  * 读取任务当前状态。await 间隙中状态可能被并发调度改变，直接读
@@ -24,6 +25,7 @@ function currentGoalTaskStatus(task: TaskState): TaskStatus {
 import { deleteTaskTodos, resetInProgressTaskTodos } from '../todos/task-todos.js';
 import { GoalController, type GoalObjectiveEditOptions, type GoalPausedOrBlockedSnapshot } from './controller.js';
 import { GoalScheduler } from './scheduler.js';
+import { getGoalExtension } from './task-extension.js';
 import {
     GoalEvents,
     GoalStates,
@@ -375,8 +377,29 @@ export class GoalService {
         };
     }
 
-    static addSupplement(task: TaskState, input: AddGoalSupplementInput): GoalCommandResult {
-        return GoalController.addSupplement(task, input);
+    static async addSupplement(task: TaskState, input: AddGoalSupplementInput): Promise<GoalCommandResult> {
+        const result = GoalController.addSupplement(task, input);
+        if (!result.ok) return result;
+
+        // 补充消息只会在回合执行的 checkpoint 里被消费。目标仍活跃、但当前并没有
+        // 回合在跑时（比如前端状态滞后于后端，回合其实已经收尾），没有任何人会把
+        // 它交给模型：消息会一直停在待消费状态，用户看不到任何 agent 反馈，最终还
+        // 可能随目标清除一起消失。这里直接开一轮把它投递出去。
+        // 回合仍在跑（含收尾阶段）时交给 checkpoint / 收尾钩子投递，是否真的需要
+        // 开新回合由 startTurnWithPendingSupplements 判定。
+        if (task.task_status === 'running' || task.isTurnRunning()) return result;
+        try {
+            const started = await getGoalExtension(task).startTurnWithPendingSupplements();
+            if (!started) return result;
+        } catch (error) {
+            logger.warn(
+                `task ${task.task_id}: failed to deliver goal supplement: ${
+                    error instanceof Error ? error.message : String(error)
+                }`
+            );
+            return result;
+        }
+        return { ...result, summary: GoalController.getStatus(task).summary };
     }
 
     static async pause(

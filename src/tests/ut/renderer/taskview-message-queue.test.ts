@@ -3583,6 +3583,12 @@ describe('task-view message queue', () => {
         );
         expect(history.querySelector('.goal-supplement-pending')).toBeNull();
         expect(history.querySelector('.waiting-usage-placeholder')?.textContent).toContain('正在等待模型响应');
+        // 待消费回显只有渲染进程临时生成的 id，不是 chat_context 里的消息，
+        // 不能暴露"编辑/重新执行/重新发送"等消息操作，否则点击会报
+        // user message ... not found。
+        expect(history.querySelector('.od-pending-context-entry .od-msg-action-btn')).toBeNull();
+        expect(history.querySelector('.od-pending-context-entry .od-msg-hover-menu')).toBeNull();
+        expect(history.querySelector('.od-pending-context-entry .od-msg-timestamp')).not.toBeNull();
 
         expect(
             taskView._renderUserProgress(

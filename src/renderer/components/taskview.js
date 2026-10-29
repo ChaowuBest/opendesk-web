@@ -657,7 +657,9 @@ class TaskView extends HTMLElement {
         const id = escapeHtml(String(message?.id || crypto.randomUUID()));
         const type = escapeHtml(String(options.type || message?.type || 'context'));
         const rawAttr = ` data-raw-text="${escapeHtml(text)}"`;
-        const metaRowHtml = TaskView.buildMsgMetaRow('user', message?.timestamp, id);
+        // 回显只是还没进入 chat_context 的占位条目，id 是渲染进程临时生成的，
+        // 不能当成消息 id 传给消息菜单，否则"重新执行"会报 user message ... not found
+        const metaRowHtml = TaskView.buildMsgMetaRow('user', message?.timestamp);
         return `
             <div id="pending-context-${id}" class="od-user-msg-container od-pending-context-entry" data-pending-context-id="${id}" data-pending-context-type="${type}"${rawAttr}>
                 ${this.renderUserPart(createRenderedTextPartFromPlainText(text))}
@@ -756,6 +758,9 @@ class TaskView extends HTMLElement {
     static buildMsgMetaRow(role, timestamp, messageId) {
         if (!timestamp) return '';
         const timeHtml = `<span class="od-msg-timestamp">${TaskView.formatRelativeTime(timestamp)}</span>`;
+        // 没有真实消息 id 的占位回显（如待消费的 goal 补充消息）不提供消息操作：
+        // 它还没有进入 chat_context，重新发送/编辑/重新执行都找不到对应消息。
+        if (!messageId) return `<div class="od-msg-meta-row">${timeHtml}</div>`;
         const escapedId = escapeHtml(messageId);
         const copyLabel = taskViewT('renderer.taskview.action.copy');
         const copyBtn = `<button class="od-msg-action-btn" type="button" data-action="copy" data-message-id="${escapedId}">${COPY_ICON_SVG}<span class="od-msg-action-label">${copyLabel}</span></button>`;
