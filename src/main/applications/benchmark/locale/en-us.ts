@@ -33,6 +33,15 @@ export const enUs: Record<string, string> = {
     'error.downloadStalled': 'The download stopped responding, please try again later',
     'error.downloadNameMismatch':
         'Downloaded content does not match the catalog: expected "${expected}", got "${actual}"',
+    'error.catalogFetchFailed': 'Failed to load the dataset catalog (${url}): ${message}',
+    'error.catalogFileReadFailed': 'Failed to read the local dataset catalog (${path}): ${message}',
+    'error.catalogDocumentInvalid': 'Invalid dataset catalog (${source}): expected an array of datasets',
+    'error.catalogEntryInvalid': 'Dataset catalog entry ${index} is invalid: ${message}',
+    'error.catalogEntryNotObject': 'not an object',
+    'error.catalogEntryFieldMissing': 'Dataset catalog entry ${index} is missing the "${field}" field',
+    'error.catalogEntryDownloadUrlInvalid':
+        'Dataset catalog entry ${index} has a downloadUrl that is not an http(s) URL',
+    'error.catalogEntryDuplicateId': 'duplicate id: ${id}',
 
     'benchmark.title': 'Benchmarks',
     'benchmark.tab.catalog': 'Download datasets',

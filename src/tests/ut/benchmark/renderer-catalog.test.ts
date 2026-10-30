@@ -136,6 +136,23 @@ describe('benchmark 测评集下载中心', () => {
         expect(widget.shadowRoot.querySelector('.empty-state')).not.toBeNull();
     });
 
+    test('切到下载中心时清单还在路上也不闪空态', () => {
+        // 清单要联网，本地测评集已经回来了（loading=false），此时不能显示「暂无可下载的测评集」
+        const widget = createWidget();
+        widget.catalog = [];
+        widget.loading = false;
+        widget.activeTab = 'datasets';
+        widget.render();
+        callMainWorld = jest.fn(() => new Promise(() => undefined));
+        (globalThis as any).window.applicationAPI.callMainWorld = callMainWorld;
+
+        // 弱网：清单一直没回来，同步渲染出来的这一帧就必须是加载态
+        void widget.switchTab('catalog');
+
+        expect(widget.shadowRoot.querySelector('.loading-state')).not.toBeNull();
+        expect(widget.shadowRoot.querySelector('.empty-state')).toBeNull();
+    });
+
     test('点刷新会等清单回来后补一次渲染', async () => {
         const widget = createWidget();
         widget.catalog = [];
@@ -155,6 +172,8 @@ describe('benchmark 测评集下载中心', () => {
         await new Promise((resolve) => setTimeout(resolve, 30));
 
         expect(statusPill(widget)).not.toBeNull();
+        // 手动刷新要绕开主进程的清单缓存
+        expect(callMainWorld).toHaveBeenCalledWith('listCatalogDatasets', true);
     });
 
     test('本地版本更低时提示可更新', () => {
