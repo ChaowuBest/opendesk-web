@@ -263,12 +263,13 @@ initTempDir();
 
 // 防止 stdout/stderr EPIPE 错误逃逸为 uncaughtException
 // 当终端管道断开或系统休眠后恢复时，写入操作可能触发 EPIPE
+// macOS 关闭终端后 TTY 写入可能报 EIO；仅忽略终端错误，保留重定向文件的 I/O 故障。
 process.stdout.on('error', (err: NodeJS.ErrnoException) => {
-    if (err.code === 'EPIPE') return;
+    if (err.code === 'EPIPE' || (process.stdout.isTTY && err.code === 'EIO')) return;
     throw err;
 });
 process.stderr.on('error', (err: NodeJS.ErrnoException) => {
-    if (err.code === 'EPIPE') return;
+    if (err.code === 'EPIPE' || (process.stderr.isTTY && err.code === 'EIO')) return;
     throw err;
 });
 
