@@ -18,11 +18,13 @@
  *   runs/<runId>/run.json            运行记录（用例状态与得分）
  *   runs/<runId>/cases/<key>/        每个用例的工作空间与日志
  *   tmp/import-*                     导入解压的临时目录
+ *   tmp/download-*                   下载中的压缩包
  */
 
 import fs from 'fs';
 import path from 'path';
 import crypto from 'crypto';
+import { Readable } from 'stream';
 import AdmZip from 'adm-zip';
 import { extract as extractTar } from 'tar';
 import { logger } from '../../utils/logger.js';
@@ -39,16 +41,24 @@ import {
     toSafeDirName,
     type CaseRunState,
     type CaseSpec,
+    type CatalogDatasetEntry,
     type DatasetManifest,
     type DatasetSummary,
     type DatasetTrackRef,
+    type DownloadState,
     type RunListItem,
     type RunRecord,
     type RunStatus
 } from './common.js';
+import { findLocalDatasetByName } from './catalog-common.js';
 
 const META_FILE = 'benchmark-meta.json';
 const RUN_FILE = 'run.json';
+/** 下载体积上限：防止清单或镜像给出异常大的文件把磁盘写满 */
+const DOWNLOAD_MAX_BYTES = 4 * 1024 * 1024 * 1024;
+/** 传输停滞上限：连续这么久没有任何字节推进就判定连接假死（0 = 不检测） */
+const DOWNLOAD_STALL_TIMEOUT_MS = 60_000;
+const DEFAULT_DOWNLOAD_EXTENSION = '.zip';
 
 interface ScannedDataset {
     manifest: DatasetManifest;
@@ -67,8 +77,12 @@ export class BenchmarkManager {
     private readonly tmpDir: string;
     private readonly runner = new BenchmarkRunner();
     private readonly listeners = new Set<() => void>();
+    private readonly downloadListeners = new Set<() => void>();
     private readonly activeRuns = new Set<string>();
+    /** 测评集下载进度，按清单 id 保留最近一次状态（完成/失败也保留，供界面展示） */
+    private readonly downloads = new Map<string, DownloadState>();
     private notifyTimer: NodeJS.Timeout | null = null;
+    private downloadNotifyTimer: NodeJS.Timeout | null = null;
 
     constructor(private readonly dataDirectory: string) {
         this.datasetsDir = path.join(dataDirectory, 'datasets');
@@ -94,6 +108,17 @@ export class BenchmarkManager {
     onChange(listener: () => void): () => void {
         this.listeners.add(listener);
         return () => this.listeners.delete(listener);
+    }
+
+    /**
+     * 下载进度单独一路监听。
+     *
+     * 进度每隔几百毫秒就变一次，混进 onChange 会让渲染层把整个面板重建一遍
+     * （卡片 hover 状态会被打断），所以只通知需要刷进度条的地方。
+     */
+    onDownloadChange(listener: () => void): () => void {
+        this.downloadListeners.add(listener);
+        return () => this.downloadListeners.delete(listener);
     }
 
     // ── 测评集 ─────────────────────────────────────────────────────────────
@@ -132,6 +157,85 @@ export class BenchmarkManager {
     }
 
     async importDataset(archivePath: string): Promise<DatasetSummary> {
+        return this.installArchive(archivePath, {});
+    }
+
+    /** 当前所有下载任务的状态快照（渲染层据此画进度条） */
+    listDownloads(): DownloadState[] {
+        return [...this.downloads.values()].map((state) => ({ ...state }));
+    }
+
+    /**
+     * 从清单地址下载测评集并安装。
+     *
+     * 本地已有同名测评集时按「更新」处理：沿用原 datasetId 覆盖目录，
+     * 这样历史测评记录（按 datasetId 关联）不会因为换 id 变成孤儿。
+     */
+    async downloadDataset(
+        entry: CatalogDatasetEntry,
+        options: { fetchImpl?: typeof fetch; stallTimeoutMs?: number } = {}
+    ): Promise<DatasetSummary> {
+        const current = this.downloads.get(entry.id);
+        if (current && (current.status === 'downloading' || current.status === 'installing')) {
+            throw new BenchmarkDataError(t('error.downloadInProgress'));
+        }
+        const fetchImpl = options.fetchImpl ?? globalThis.fetch;
+        const state: DownloadState = {
+            catalogId: entry.id,
+            status: 'downloading',
+            receivedBytes: 0,
+            totalBytes: null,
+            error: ''
+        };
+        this.downloads.set(entry.id, state);
+
+        const archivePath = path.join(this.tmpDir, `download-${crypto.randomUUID()}${downloadExtension(entry)}`);
+        try {
+            await this.downloadArchive(
+                entry.downloadUrl,
+                archivePath,
+                fetchImpl,
+                (receivedBytes, totalBytes) => {
+                    state.receivedBytes = receivedBytes;
+                    state.totalBytes = totalBytes;
+                    // 自带节流，进度刷新不会把主进程刷爆
+                    this.notifyDownloadsSoon();
+                },
+                options.stallTimeoutMs
+            );
+            state.status = 'installing';
+            state.receivedBytes = state.totalBytes ?? state.receivedBytes;
+            this.notifyDownloadsNow();
+
+            const summary = await this.installArchive(archivePath, { catalog: entry });
+            state.status = 'done';
+            this.notifyDownloadsNow();
+            return summary;
+        } catch (error) {
+            state.status = 'failed';
+            state.error = toErrorMessage(error);
+            this.notifyDownloadsNow();
+            logger.warn(`[benchmark] download ${entry.id} from ${entry.downloadUrl} failed: ${state.error}`);
+            throw error;
+        } finally {
+            try {
+                fs.rmSync(archivePath, { force: true });
+            } catch (error) {
+                logger.warn(`[benchmark] failed to remove archive ${archivePath}: ${toErrorMessage(error)}`);
+            }
+        }
+    }
+
+    /**
+     * 把本地压缩包安装成测评集。
+     *
+     * @param options.catalog 来自下载清单时，校验包内 dataset.json 的名称与清单一致，
+     *   并在本地存在同名测评集时原地覆盖（沿用原 datasetId）。
+     */
+    private async installArchive(
+        archivePath: string,
+        options: { catalog?: CatalogDatasetEntry }
+    ): Promise<DatasetSummary> {
         const normalized = archivePath.trim();
         if (!fs.existsSync(normalized)) {
             throw new BenchmarkDataError(t('error.fileNotFound', { file: normalized }));
@@ -157,16 +261,30 @@ export class BenchmarkManager {
                 throw new BenchmarkDataError(t('error.datasetJsonMissing'));
             }
             const manifest = this.readDatasetManifest(path.join(datasetRoot, 'dataset.json'));
+            if (options.catalog && manifest.name.trim().toLowerCase() !== options.catalog.name.trim().toLowerCase()) {
+                // 下载地址可能被替换或镜像配错，装进来的东西和清单对不上就不要污染本地测评集
+                throw new BenchmarkDataError(
+                    t('error.downloadNameMismatch', { expected: options.catalog.name, actual: manifest.name })
+                );
+            }
             const scanned = this.scanDataset(datasetRoot, manifest);
             const caseCount = scanned.tracks.reduce((sum, track) => sum + track.cases.length, 0);
             if (caseCount === 0) {
                 throw new BenchmarkDataError(t('error.caseJsonMissing'));
             }
 
-            const id = `${slugify(manifest.name)}-${crypto.randomBytes(3).toString('hex')}`;
+            // 更新场景：本地已有同名测评集时原地覆盖，并沿用原 datasetId，
+            // 否则历史测评记录会指向一个不存在的测评集
+            const existing = options.catalog ? findLocalDatasetByName(this.listDatasets(), manifest.name) : null;
+            if (existing) {
+                const busy = this.listRuns().some((run) => run.datasetId === existing.id && run.status === 'running');
+                if (busy) {
+                    throw new BenchmarkDataError(t('error.datasetInUse'));
+                }
+            }
+            const id = existing?.id ?? `${slugify(manifest.name)}-${crypto.randomBytes(3).toString('hex')}`;
             const targetDir = path.join(this.datasetsDir, id);
             fs.mkdirSync(path.dirname(targetDir), { recursive: true });
-            fs.renameSync(datasetRoot, targetDir);
 
             const summary: DatasetSummary = {
                 id,
@@ -183,10 +301,13 @@ export class BenchmarkManager {
                     caseCount: track.cases.length
                 }))
             };
+            // meta 先写进解压目录再整体换位：rename 之后目录里一定带着 meta，
+            // 不会出现「目录已就位、meta 还没落盘」被 listDatasets 当成不存在的中间态
             fs.writeFileSync(
-                path.join(targetDir, META_FILE),
+                path.join(datasetRoot, META_FILE),
                 JSON.stringify({ ...summary, archiveName: path.basename(normalized) }, null, 2)
             );
+            this.replaceDatasetDir(datasetRoot, targetDir);
             this.notifyNow();
             return summary;
         } finally {
@@ -195,6 +316,33 @@ export class BenchmarkManager {
             } catch (error) {
                 logger.warn(`[benchmark] failed to remove temp dir ${tempRoot}: ${toErrorMessage(error)}`);
             }
+        }
+    }
+
+    /**
+     * 把解压好的目录换到 datasets/ 下的目标位置。
+     *
+     * Windows 下目标目录非空时 rename 会失败，所以「更新」必须先挪走旧目录；挪到 tmp 备份
+     * 而不是直接删，rename 失败时把旧测评集原样还回去，不让一次失败把已装的测评集弄丢。
+     */
+    private replaceDatasetDir(sourceDir: string, targetDir: string): void {
+        if (!fs.existsSync(targetDir)) {
+            fs.renameSync(sourceDir, targetDir);
+            return;
+        }
+        const backupDir = path.join(this.tmpDir, `replace-${crypto.randomUUID()}`);
+        fs.renameSync(targetDir, backupDir);
+        try {
+            fs.renameSync(sourceDir, targetDir);
+        } catch (error) {
+            fs.renameSync(backupDir, targetDir);
+            throw error;
+        }
+        try {
+            fs.rmSync(backupDir, { recursive: true, force: true });
+        } catch (error) {
+            // 备份残留在 tmp 里不影响使用，下次启动 init() 会清掉
+            logger.warn(`[benchmark] failed to remove dataset backup ${backupDir}: ${toErrorMessage(error)}`);
         }
     }
 
@@ -645,6 +793,87 @@ export class BenchmarkManager {
         return parseDatasetManifest(raw);
     }
 
+    /** 流式下载到本地文件，边写边回调进度 */
+    private async downloadArchive(
+        url: string,
+        destination: string,
+        fetchImpl: typeof fetch,
+        onProgress: (receivedBytes: number, totalBytes: number | null) => void,
+        stallTimeoutMs = DOWNLOAD_STALL_TIMEOUT_MS
+    ): Promise<void> {
+        const controller = new AbortController();
+        // 停滞看门狗同时罩住「等响应头」和「等数据」两段：连接假死时 for await 会一直等下去，
+        // 下载状态就永久停在 downloading，界面既不会失败也重试不了。
+        // 每个 chunk 到达即重置计时，超时则 abort 底层请求并以本地化错误拒绝。
+        let stallReject: ((error: Error) => void) | undefined;
+        const stalled = new Promise<never>((_, reject) => {
+            stallReject = reject;
+        });
+        let stallTimer: NodeJS.Timeout | undefined;
+        const resetStallWatchdog = () => {
+            if (stallTimeoutMs <= 0) return;
+            clearTimeout(stallTimer);
+            stallTimer = setTimeout(() => {
+                controller.abort();
+                stallReject?.(new BenchmarkDataError(t('error.downloadStalled')));
+            }, stallTimeoutMs);
+            stallTimer.unref?.();
+        };
+
+        const download = async () => {
+            const response = await fetchImpl(url, {
+                redirect: 'follow',
+                headers: { accept: 'application/octet-stream' },
+                signal: controller.signal
+            });
+            if (!response.ok) {
+                throw new BenchmarkDataError(t('error.downloadHttpStatus', { status: response.status }));
+            }
+            const declaredSize = Number(response.headers.get('content-length'));
+            const totalBytes = Number.isFinite(declaredSize) && declaredSize > 0 ? declaredSize : null;
+            if (totalBytes && totalBytes > DOWNLOAD_MAX_BYTES) {
+                throw new BenchmarkDataError(t('error.downloadTooLarge'));
+            }
+
+            fs.mkdirSync(path.dirname(destination), { recursive: true });
+            const handle = await fs.promises.open(destination, 'w');
+            try {
+                if (!response.body) {
+                    const buffer = Buffer.from(await response.arrayBuffer());
+                    if (buffer.byteLength > DOWNLOAD_MAX_BYTES) {
+                        throw new BenchmarkDataError(t('error.downloadTooLarge'));
+                    }
+                    await handle.write(buffer);
+                    onProgress(buffer.byteLength, totalBytes ?? buffer.byteLength);
+                    return;
+                }
+                let receivedBytes = 0;
+                for await (const chunk of Readable.fromWeb(response.body as never)) {
+                    const buffer = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk as Uint8Array);
+                    receivedBytes += buffer.length;
+                    if (receivedBytes > DOWNLOAD_MAX_BYTES) {
+                        throw new BenchmarkDataError(t('error.downloadTooLarge'));
+                    }
+                    await handle.write(buffer);
+                    resetStallWatchdog();
+                    onProgress(receivedBytes, totalBytes);
+                }
+            } finally {
+                await handle.close().catch(() => undefined);
+            }
+        };
+
+        resetStallWatchdog();
+        const task = download();
+        try {
+            await Promise.race([task, stalled]);
+        } finally {
+            clearTimeout(stallTimer);
+            // 看门狗先到时不留下未处理的下载拒绝
+            task.catch(() => undefined);
+        }
+    }
+
     private extractZip(zipPath: string, targetDir: string): void {
         const zip = new AdmZip(zipPath);
         for (const entry of zip.getEntries()) {
@@ -700,28 +929,45 @@ export class BenchmarkManager {
     }
 
     private notifyNow(): void {
-        if (this.notifyTimer) {
-            clearTimeout(this.notifyTimer);
-            this.notifyTimer = null;
-        }
-        for (const listener of this.listeners) {
+        const pending = this.notifyTimer;
+        this.notifyTimer = null;
+        this.flushListeners(this.listeners, pending, 'change');
+    }
+
+    private notifySoon(): void {
+        this.notifyTimer = this.scheduleFlush(this.notifyTimer, 500, () => this.notifyNow());
+    }
+
+    private notifyDownloadsNow(): void {
+        const pending = this.downloadNotifyTimer;
+        this.downloadNotifyTimer = null;
+        this.flushListeners(this.downloadListeners, pending, 'download');
+    }
+
+    private notifyDownloadsSoon(): void {
+        this.downloadNotifyTimer = this.scheduleFlush(this.downloadNotifyTimer, 400, () => this.notifyDownloadsNow());
+    }
+
+    /** 立刻通知一路订阅者，顺带清掉这一路挂起的节流定时器 */
+    private flushListeners(listeners: Set<() => void>, pending: NodeJS.Timeout | null, label: string): void {
+        if (pending) clearTimeout(pending);
+        for (const listener of listeners) {
             try {
                 listener();
             } catch (error) {
-                logger.warn(`[benchmark] listener failed: ${toErrorMessage(error)}`);
+                logger.warn(`[benchmark] ${label} listener failed: ${toErrorMessage(error)}`);
             }
         }
     }
 
-    private notifySoon(): void {
-        if (this.notifyTimer) return;
-        this.notifyTimer = setTimeout(() => {
-            this.notifyTimer = null;
-            this.notifyNow();
-        }, 500);
-        // 事件通知只是 UI 刷新节流，不该拖住进程退出（否则 run 未结束时的 500ms 定时器
+    /** 节流：同一路通知在 intervalMs 内只发一次 */
+    private scheduleFlush(pending: NodeJS.Timeout | null, intervalMs: number, run: () => void): NodeJS.Timeout {
+        if (pending) return pending;
+        const timer = setTimeout(run, intervalMs);
+        // 事件通知只是 UI 刷新节流，不该拖住进程退出（否则 run 未结束时的定时器
         // 会让 Node/jest worker 无法优雅退出）
-        this.notifyTimer.unref?.();
+        timer.unref?.();
+        return timer;
     }
 }
 
@@ -729,4 +975,19 @@ function isInside(baseDir: string, targetPath: string): boolean {
     const base = path.resolve(baseDir);
     const target = path.resolve(targetPath);
     return target === base || target.startsWith(`${base}${path.sep}`);
+}
+
+/** 从下载地址推断压缩包后缀，便于复用按后缀分派的解压逻辑 */
+function downloadExtension(entry: CatalogDatasetEntry): string {
+    let pathname: string;
+    try {
+        pathname = new URL(entry.downloadUrl).pathname;
+    } catch {
+        return DEFAULT_DOWNLOAD_EXTENSION;
+    }
+    const lower = pathname.toLowerCase();
+    for (const extension of ['.tar.gz', '.tgz', '.tar', '.zip']) {
+        if (lower.endsWith(extension)) return extension;
+    }
+    return DEFAULT_DOWNLOAD_EXTENSION;
 }
