@@ -1577,33 +1577,6 @@ if (shouldExposeMainWindowAPIs()) {
         }
     });
 
-    safeExposeInMainWorld('magicPointerAPI', {
-        getCursorPosition: async () => {
-            const result = await ipcRenderer.invoke('magicPointer:getCursorPosition');
-            if (result.status !== 'ok') {
-                console.error('getting cursor position failed', result.message);
-                return null;
-            }
-            return result.data;
-        },
-        captureWindow: async () => {
-            const result = await ipcRenderer.invoke('magicPointer:captureWindow');
-            if (result.status !== 'ok') {
-                console.error('capturing window failed', result.message);
-                return null;
-            }
-            return result.data;
-        },
-        saveScreenshot: async (pngDataUrl, description) => {
-            const result = await ipcRenderer.invoke('magicPointer:saveScreenshot', pngDataUrl, description);
-            if (result.status !== 'ok') {
-                console.error('saving screenshot failed', result.message);
-                return null;
-            }
-            return result.data;
-        }
-    });
-
     const modeDispatchers = {
         changed: createIpcChannelDispatcher(ipcRenderer, 'mode:changed'),
         taskModeChanged: createIpcChannelDispatcher(ipcRenderer, 'mode:taskModeChanged')
@@ -2138,7 +2111,7 @@ if (shouldExposeMainWindowAPIs()) {
     const zoomArgValue = zoomArg ? Number(zoomArg.split('=')[1]) : 1;
     const initialZoomFactor = Number.isFinite(zoomArgValue) && zoomArgValue > 0 ? zoomArgValue : 1;
 
-    // 暴露系统平台信息，用于 magic pointer、路径选择等功能的平台适配
+    // 暴露系统平台信息，用于路径选择等功能的平台适配
     safeExposeInMainWorld('systemInfo', {
         platform: process.platform,
         isMac: process.platform === 'darwin',
@@ -2272,7 +2245,7 @@ if (shouldExposeMainWindowAPIs()) {
     });
 
     // 将 webview 内部的键盘事件转发为主 renderer 的合成 KeyboardEvent，
-    // 使得快捷键管理器和 magic pointer 在 webview 获焦时仍能工作。
+    // 使得快捷键管理器在 webview 获焦时仍能工作。
     ipcRenderer.on('webview:keyboard-event', (_event, input) => {
         const modSet = new Set(input.modifiers || []);
         const eventType = input.type === 'keyUp' ? 'keyup' : 'keydown';
@@ -2288,12 +2261,6 @@ if (shouldExposeMainWindowAPIs()) {
         };
         window.dispatchEvent(new KeyboardEvent(eventType, init));
         document.dispatchEvent(new KeyboardEvent(eventType, init));
-    });
-
-    ipcRenderer.on('magicPointer:forceExit', () => {
-        const event = new CustomEvent('magicPointer:forceExit');
-        window.dispatchEvent(event);
-        document.dispatchEvent(new CustomEvent('magicPointer:forceExit'));
     });
 
     // 窗口可见性变化 → DOM 事件，各组件可自行监听并降低刷新率

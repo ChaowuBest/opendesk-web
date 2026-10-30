@@ -101,7 +101,7 @@ describe('setting-panel config management', () => {
             experimental_features: {
                 applications: { appmgr: true, agentoffice: false },
                 account: false,
-                magic_pointer: true
+                immersive_desktop: true
             }
         };
         panel.innerHTML = panel.renderDebugModeSection();
@@ -116,7 +116,9 @@ describe('setting-panel config management', () => {
         expect(panel.querySelector('#experimental-appmgr-toggle-hidden')?.hasAttribute('checked')).toBe(true);
         expect(panel.querySelector('#experimental-agentoffice-toggle-hidden')?.hasAttribute('checked')).toBe(false);
         expect(panel.querySelector('#experimental-account-toggle-hidden')?.hasAttribute('checked')).toBe(false);
-        expect(panel.querySelector('#experimental-magic-pointer-toggle-hidden')?.hasAttribute('checked')).toBe(true);
+        expect(panel.querySelector('#experimental-immersive-desktop-toggle-hidden')?.hasAttribute('checked')).toBe(
+            true
+        );
         expect(panel.querySelector('#experimental-agentgate-toggle-hidden')).toBeNull();
         expect(panel.querySelector('#experimental-feature-toggle-hidden')).toBeNull();
 
@@ -130,8 +132,7 @@ describe('setting-panel config management', () => {
         panel.currentData.debug = {
             experimental_features: {
                 applications: { appmgr: true, agentoffice: true },
-                account: false,
-                magic_pointer: false
+                account: false
             }
         };
         panel.innerHTML = panel.renderDebugModeSection();
@@ -144,8 +145,7 @@ describe('setting-panel config management', () => {
 
         expect(panel.currentData.debug.experimental_features).toEqual({
             applications: { appmgr: false, agentoffice: true },
-            account: false,
-            magic_pointer: false
+            account: false
         });
         expect(panel.saveImmediately).toHaveBeenCalled();
     });

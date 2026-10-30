@@ -1419,7 +1419,6 @@ export const zhCn: Record<string, string> = {
     'renderer.settings.experimentalApplicationAppMgr': '应用工坊',
     'renderer.settings.experimentalApplicationAgentOffice': '办公室',
     'renderer.settings.experimentalAccount': '账号功能',
-    'renderer.settings.experimentalMagicPointer': '魔法光标',
     'renderer.settings.logRawLlmRequest': '将原始LLM响应计入日志',
     'renderer.settings.debugMode': '开发与调试',
     'renderer.settings.telemetry': '遥测设置',

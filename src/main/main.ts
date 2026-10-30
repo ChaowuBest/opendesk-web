@@ -900,15 +900,6 @@ const createWindow = () => {
         mainWindow.loadFile(path.join(__dirname, '..', 'renderer', 'index.html'));
     }
 
-    const forceExitMagicPointer = () => {
-        if (mainWindow.isDestroyed()) return;
-        safeSendToWebContents(mainWindow.webContents, 'magicPointer:forceExit');
-    };
-
-    mainWindow.on('blur', forceExitMagicPointer);
-    mainWindow.on('hide', forceExitMagicPointer);
-    mainWindow.on('minimize', forceExitMagicPointer);
-
     // 悬浮窗（pill/card 模式）依赖主窗口是否处于前台的焦点状态。
     mainWindow.on('blur', () => setMainWindowFocused(false));
     mainWindow.on('focus', () => setMainWindowFocused(true));
@@ -3360,58 +3351,6 @@ const registerWindowDragHandlers = () => {
     });
 };
 
-const registerMagicPointerHandlers = () => {
-    ipcMain.handle('magicPointer:getCursorPosition', (event) => {
-        try {
-            const win = BrowserWindow.fromWebContents(event.sender) ?? globalMainWindow;
-            if (!win || win.isDestroyed()) {
-                return { status: 'error', message: 'no main window' };
-            }
-
-            const cursorPoint = screen.getCursorScreenPoint();
-            const contentBounds = win.getContentBounds();
-            return {
-                status: 'ok',
-                data: {
-                    x: cursorPoint.x - contentBounds.x,
-                    y: cursorPoint.y - contentBounds.y,
-                    width: contentBounds.width,
-                    height: contentBounds.height
-                }
-            };
-        } catch (error: any) {
-            return { status: 'error', message: error.message };
-        }
-    });
-
-    ipcMain.handle('magicPointer:captureWindow', async () => {
-        try {
-            if (!globalMainWindow) {
-                return { status: 'error', message: 'no main window' };
-            }
-            const image = await globalMainWindow.webContents.capturePage();
-            const dataUrl = 'data:image/png;base64,' + image.toPNG().toString('base64');
-            return { status: 'ok', data: dataUrl };
-        } catch (error: any) {
-            return { status: 'error', message: error.message };
-        }
-    });
-
-    ipcMain.handle('magicPointer:saveScreenshot', async (_event, pngDataUrl: string, _description?: string) => {
-        try {
-            const desktopPath = app.getPath('desktop');
-            const timestamp = new Date().toISOString().replace(/[:.]/g, '-').replace('T', '_').slice(0, 19);
-            const fileName = `OpenDesk_MagicPointer_${timestamp}.png`;
-            const filePath = path.join(desktopPath, fileName);
-            const base64Data = pngDataUrl.replace(/^data:image\/png;base64,/, '');
-            await fsPromises.writeFile(filePath, Buffer.from(base64Data, 'base64'));
-            return { status: 'ok', data: filePath };
-        } catch (error: any) {
-            return { status: 'error', message: error.message };
-        }
-    });
-};
-
 /**
  * 鸿蒙平台启动时校验华为账号登录。
  * 若未登录则拉起登录窗口阻塞启动，登录成功或用户关闭窗口后继续。
@@ -4172,7 +4111,6 @@ async function startApplication(): Promise<void> {
         // registerNotificationAPIHandlers() 已在 createWindow 之前提前注册，
         // 确保主窗口加载期间 renderer 的 notification-panel 能正常订阅通知。
         registerScreenAPIHandlers();
-        registerMagicPointerHandlers();
         registerShadowResizeHandlers();
         registerWindowDragHandlers();
         registerAuthAPIHandlers();
