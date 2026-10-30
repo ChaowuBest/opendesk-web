@@ -87,7 +87,7 @@ window.settingAPI?.onSettingChanged?.((settings) => {
 // 启动时把持久化的快速截图开关同步给原生侧（原生侧不持久化，默认开启）
 (async () => {
     try {
-        if (!window.systemInfo?.isOpenHarmony) return;
+        if (window.systemInfo?.isOpenHarmony !== true && window.systemInfo?.isWindows !== true) return;
         const settings = await window.settingAPI.loadSettingObject();
         if (settings?.gui_config?.quick_capture_enabled === false) {
             await new NativeBridgeProxy().getQuickCaptureKit().then((kit) => kit.setEnabled(false));

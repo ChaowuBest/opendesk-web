@@ -214,7 +214,7 @@ const GUIConfigSchema = z.object({
     quick_capture_enabled: z
         .boolean()
         .optional()
-        .describe('HarmonyOS 快速截图开关（Alt+Space 全局热键截图）: false=关闭, 未设置时视为开启'),
+        .describe('快速截图开关（HarmonyOS / Windows 的 Alt+Space 全局热键截图）: false=关闭, 未设置时视为开启'),
     recent_workspaces: z
         .array(z.string())
         .optional()

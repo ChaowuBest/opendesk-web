@@ -119,6 +119,12 @@ export default defineConfig(({ mode }) => {
                 rollupOptions: {
                     input: {
                         index: path.join(__dirname, 'src', 'renderer', 'preload.js'),
+                        quickcapture_overlay: path.join(
+                            __dirname,
+                            'src',
+                            'renderer',
+                            'quickcapture_overlay_preload.js'
+                        ),
                         webviewPreload: path.join(__dirname, 'src', 'renderer', 'webviewPreload.js'),
                         slidesPreload: openDeskOfficeEntries.slides.preload,
                         wordPreload: openDeskOfficeEntries.word.preload,
@@ -169,6 +175,7 @@ export default defineConfig(({ mode }) => {
                         application_window: path.join(__dirname, 'src', 'renderer', 'application_window.html'),
                         logview_window: path.join(__dirname, 'src', 'renderer', 'logview_window.html'),
                         floatpage: path.join(__dirname, 'src', 'renderer', 'floatpage.html'),
+                        quickcapture_overlay: path.join(__dirname, 'src', 'renderer', 'quickcapture_overlay.html'),
                         task_status_widget: path.join(__dirname, 'src', 'renderer', 'task_status_widget.html'),
                         slides_editor: path.join(__dirname, 'src', 'renderer', 'slides_editor.html'),
                         word_editor: path.join(__dirname, 'src', 'renderer', 'word_editor.html'),

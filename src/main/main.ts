@@ -164,6 +164,7 @@ import { openDeskScriptGenerators } from './applications/browser/utils.js';
 import { browserHintsSnapshotPrefixProvider } from './applications/browser/hints.js';
 import { Channels as EmbedBrowserChannels } from '../common/embedBrowserUse/protocol';
 import { registerNativeBridge, resolveNativeBridge } from '../platforms/bridges/main.js';
+import { QUICK_CAPTURE_BRING_MAIN_TO_FRONT_EVENT } from '../platforms/bridges/common.js';
 import { getHuaweiAuthService } from '../platforms/bridges/harmonyos/auth/huawei-auth.js';
 import { listGatewayListenHostOptions } from './applications/devicemgr/common.js';
 import { getExecutionNode, listExecutionNodes } from './applications/devicemgr/execution.js';
@@ -3476,14 +3477,40 @@ const registerHotKeys = () => {
         hotkey = 'Option+Space';
     }
     const ret = globalShortcut.register(hotkey, () => {
-        // todo: 意图理解还没成熟，先显示主窗口
-        // openFloatWindow();
-        // globalMainWindow.show();
-        // globalMainWindow.webContents.send('command:openHomePage');
+        // Windows：Alt+Space 是快速截图入口，是否响应由设置里的开关决定
+        // （Kit 内部 gate，关闭时等价于原来的 no-op）。
+        if (process.platform !== 'win32') {
+            return;
+        }
+        void resolveNativeBridge()
+            .getQuickCaptureKit()
+            .then((kit) => kit.triggerFromHotkey?.())
+            .catch((error: unknown) => {
+                logger.error(`[quick-capture] hotkey dispatch failed: ${String(error)}`);
+            });
     });
     if (!ret) {
         logger.warn(`hotkey ${hotkey} register failed, possibly because the hot key is already in use`);
     }
+};
+
+/**
+ * 快速截图遮罩把截图交接给主窗口后，把主窗口带到前台。
+ * 渲染层在主窗口 focus / visibilityChanged 时消费待处理截图（见 quickcaptureInbox）。
+ */
+const registerQuickCaptureHandlers = () => {
+    // Electron 的 app 事件签名不接受自定义事件名，这里按 EventEmitter 使用。
+    (app as unknown as NodeJS.EventEmitter).on(QUICK_CAPTURE_BRING_MAIN_TO_FRONT_EVENT, () => {
+        if (!globalMainWindow || globalMainWindow.isDestroyed()) return;
+        if (globalMainWindow.isMinimized()) {
+            globalMainWindow.restore();
+        }
+        globalMainWindow.show();
+        globalMainWindow.focus();
+        // 主窗口本来就可见时 show() 不产生窗口事件、focus 也未必变化，三条激活信号里
+        // 可能一条都不出现；显式补一条可见性信号，保证渲染层一定会去取待处理截图。
+        safeSendToWebContents(globalMainWindow.webContents, 'window:visibilityChanged', true);
+    });
 };
 
 let globalLogWindow: BrowserWindow | null = null;
@@ -4122,6 +4149,7 @@ async function startApplication(): Promise<void> {
         // 确保窗口背景色等主题效果在显示前就绪。
         getMainThemeService().init();
         registerHotKeys();
+        registerQuickCaptureHandlers();
         registerTray();
 
         migrateFileMgrWorkspaceSettingsOnStartup();

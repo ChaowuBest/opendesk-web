@@ -2396,7 +2396,7 @@ class SettingPanel extends HTMLElement {
                     </select>
                 </div>
                 ${
-                    window.systemInfo?.isOpenHarmony
+                    window.systemInfo?.isOpenHarmony || window.systemInfo?.isWindows
                         ? `
                 <div class="sp-form-group" style="margin-bottom:0">
                     <label class="sp-form-label">${this._t('sp.general.quickCapture')}</label>
