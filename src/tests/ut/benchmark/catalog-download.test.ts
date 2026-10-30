@@ -472,6 +472,57 @@ describe('BenchmarkManager 测评集下载', () => {
         expect(tmpFiles(dataDir).filter((name) => name.startsWith('download-'))).toEqual([]);
     });
 
+    test('传输停滞时关掉下载文件的句柄，不把句柄留到 GC 才释放', async () => {
+        // 假死连接：推一个 chunk 后既不 close 也不 error，且忽略 abort 信号
+        const fetchImpl = (async () =>
+            new Response(
+                new ReadableStream<Uint8Array>({
+                    start(controller) {
+                        controller.enqueue(new Uint8Array([1, 2, 3]));
+                    }
+                }),
+                { status: 200 }
+            )) as unknown as typeof fetch;
+
+        const { manager } = makeManager();
+        const realOpen = fs.promises.open.bind(fs.promises);
+        const opened: Array<{ stat: () => Promise<unknown> }> = [];
+        const openSpy = jest.spyOn(fs.promises, 'open').mockImplementation((async (...args: unknown[]) => {
+            const handle = await (realOpen as any)(...args);
+            opened.push(handle);
+            return handle;
+        }) as unknown as typeof fs.promises.open);
+
+        try {
+            await expect(
+                manager.downloadDataset(makeEntry('http://127.0.0.1/mock.zip', { version: '1.0' }), {
+                    fetchImpl,
+                    stallTimeoutMs: 80
+                })
+            ).rejects.toThrow('下载连接长时间没有响应');
+        } finally {
+            openSpy.mockRestore();
+        }
+
+        // 下载任务挂在 for-await 上等一个永远不会来的 chunk：看门狗要主动关掉句柄，
+        // 否则它要等到 GC 才被关闭（Node 会报 "FileHandle object was closed during
+        // garbage collection"，在 CI 上表现为随机某个文件随机失败）
+        expect(opened).toHaveLength(1);
+        const isClosed = async () => {
+            try {
+                await opened[0].stat();
+                return false;
+            } catch {
+                return true;
+            }
+        };
+        const deadline = Date.now() + 1000;
+        while (!(await isClosed()) && Date.now() < deadline) {
+            await new Promise((resolve) => setTimeout(resolve, 10));
+        }
+        expect(await isClosed()).toBe(true);
+    });
+
     test('连响应头都拿不到时也会超时失败', async () => {
         // 连接建起来但服务端一直不回响应头，fetch 永远不 settle
         const fetchImpl = (() => new Promise<Response>(() => undefined)) as unknown as typeof fetch;

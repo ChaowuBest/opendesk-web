@@ -809,12 +809,19 @@ export class BenchmarkManager {
         const stalled = new Promise<never>((_, reject) => {
             stallReject = reject;
         });
+        /** 正在读取的响应流：看门狗触发时要主动销毁，否则下载任务会一直挂在 for-await 上 */
+        let activeBody: Readable | null = null;
         let stallTimer: NodeJS.Timeout | undefined;
         const resetStallWatchdog = () => {
             if (stallTimeoutMs <= 0) return;
             clearTimeout(stallTimer);
             stallTimer = setTimeout(() => {
                 controller.abort();
+                // 假死的连接未必响应 abort（自定义 fetch、已半关闭的 socket 都可能不响应），
+                // 只 reject 看门狗 promise 会让下载任务永久挂在 for-await 上，它持有的文件
+                // 句柄直到 GC 才被关闭（Node 会报 FileHandle closed during garbage collection）。
+                // 主动销毁读取流，让 for-await 抛出、finally 关掉文件句柄。
+                activeBody?.destroy(new BenchmarkDataError(t('error.downloadStalled')));
                 stallReject?.(new BenchmarkDataError(t('error.downloadStalled')));
             }, stallTimeoutMs);
             stallTimer.unref?.();
@@ -848,15 +855,21 @@ export class BenchmarkManager {
                     return;
                 }
                 let receivedBytes = 0;
-                for await (const chunk of Readable.fromWeb(response.body as never)) {
-                    const buffer = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk as Uint8Array);
-                    receivedBytes += buffer.length;
-                    if (receivedBytes > DOWNLOAD_MAX_BYTES) {
-                        throw new BenchmarkDataError(t('error.downloadTooLarge'));
+                const body = Readable.fromWeb(response.body as never);
+                activeBody = body;
+                try {
+                    for await (const chunk of body) {
+                        const buffer = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk as Uint8Array);
+                        receivedBytes += buffer.length;
+                        if (receivedBytes > DOWNLOAD_MAX_BYTES) {
+                            throw new BenchmarkDataError(t('error.downloadTooLarge'));
+                        }
+                        await handle.write(buffer);
+                        resetStallWatchdog();
+                        onProgress(receivedBytes, totalBytes);
                     }
-                    await handle.write(buffer);
-                    resetStallWatchdog();
-                    onProgress(receivedBytes, totalBytes);
+                } finally {
+                    if (activeBody === body) activeBody = null;
                 }
             } finally {
                 await handle.close().catch(() => undefined);

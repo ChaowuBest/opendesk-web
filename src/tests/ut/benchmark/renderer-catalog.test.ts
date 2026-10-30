@@ -100,6 +100,9 @@ describe('benchmark 测评集下载中心', () => {
 
     function createWidget(options: { datasets?: DatasetSummary[]; downloads?: DownloadState[] } = {}) {
         const widget = document.createElement('benchmark-entry-widget') as any;
+        // 界面文案跟随设置语言：用例断言中文标签，这里固定 zh-CN，
+        // 否则会随运行环境（CI 上的 en-US）渲染出英文文案
+        widget._applyLocaleSetting({ locale: 'zh-CN' });
         widget.loading = false;
         widget.catalog = [{ ...ENTRY }];
         widget.datasets = options.datasets ?? [];

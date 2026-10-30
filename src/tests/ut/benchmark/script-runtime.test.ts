@@ -84,7 +84,10 @@ describe('selectScriptShell', () => {
         expect(selectScriptShell({ shell_path: 'C:/gone/zsh.exe' })).toEqual(makeShell('zsh'));
 
         scanShells.mockReturnValue([makeShell('powershell'), makeShell('zsh'), makeShell('bash')]);
-        expect(selectScriptShell({ shell_path: 'C:/gone/zsh.exe' })).toEqual(makeShell('bash'));
+        // 回退目标是平台默认的 bash 类外壳：Windows 优先 bash（Git Bash），其余平台优先 zsh
+        expect(selectScriptShell({ shell_path: 'C:/gone/zsh.exe' })).toEqual(
+            process.platform === 'win32' ? makeShell('bash') : makeShell('zsh')
+        );
     });
 
     test('没有任何可用 shell 时返回 null', () => {

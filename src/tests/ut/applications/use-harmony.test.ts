@@ -4,6 +4,7 @@
  * @jest-environment <rootDir>/src/tests/real-env-environment.js
  */
 
+import { jest } from '@jest/globals';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -40,6 +41,11 @@ import {
     UninstallAppTool,
     WaitForTool
 } from '../../../main/applications/builtin/skills/use-harmony/tools.js';
+
+// 这里的用例大多要驱动多次真实的 hdc 子进程（Windows 上每次还要经 Git Bash 启动），
+// 并行跑全量时单个用例能到 4s 以上，默认 5s 太紧：一旦超时，用例的异步流程会在
+// 下一个用例里继续跑并把 PATH/HDC_ARGS_LOG 还原掉，后面的用例跟着一起挂。
+jest.setTimeout(30000);
 
 it('use-harmony skill loader preserves metadata, instructions, and toolset wiring', () => {
     const skill = loadUseHarmonySkill();
