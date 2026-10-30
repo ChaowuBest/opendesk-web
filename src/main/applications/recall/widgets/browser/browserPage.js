@@ -745,7 +745,7 @@ class BrowserPage extends HTMLElement {
                                     </span>
                                 </div>
                             </div>
-                            
+
                             <!-- 悬停详情提示 -->
                             <div class="absolute inset-0 bg-black/80 rounded-2xl opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center p-8">
                                 <div class="text-white text-center">
@@ -779,7 +779,7 @@ class BrowserPage extends HTMLElement {
                                     </div>
                                 </div>
                             </div>
-                            
+
                             <!-- 中间：截图网格 -->
                             <div class="grid gap-3" style="grid-template-columns: repeat(${item.snapshots ? Math.min(item.snapshots.length, 2) : 1}, 1fr);">
                                 ${
@@ -819,7 +819,7 @@ class BrowserPage extends HTMLElement {
                                         : ''
                                 }
                             </div>
-                            
+
                             <!-- 下方：提示文字 -->
                             <div class="flex items-center justify-center gap-2 text-xs text-gray-500 py-2 bg-gray-50/50 rounded">
                                 <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -838,7 +838,7 @@ class BrowserPage extends HTMLElement {
                 ${
                     this.currentIndex > 0
                         ? `
-                    <button onclick="event.stopPropagation(); document.querySelector('recall-browser-page').prevItem()" 
+                    <button onclick="event.stopPropagation(); document.querySelector('recall-browser-page').prevItem()"
                             class="absolute left-4 top-1/2 -translate-y-1/2 w-12 h-12 bg-white/90 hover:bg-white rounded-full shadow-lg flex items-center justify-center transition-all hover:scale-110 z-20">
                         <svg class="w-6 h-6 text-gray-700" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 19l-7-7 7-7"/>
@@ -850,7 +850,7 @@ class BrowserPage extends HTMLElement {
                 ${
                     this.currentIndex < this.currentData.length - 1
                         ? `
-                    <button onclick="event.stopPropagation(); document.querySelector('recall-browser-page').nextItem()" 
+                    <button onclick="event.stopPropagation(); document.querySelector('recall-browser-page').nextItem()"
                             class="absolute right-4 top-1/2 -translate-y-1/2 w-12 h-12 bg-white/90 hover:bg-white rounded-full shadow-lg flex items-center justify-center transition-all hover:scale-110 z-20">
                         <svg class="w-6 h-6 text-gray-700" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/>
@@ -861,8 +861,8 @@ class BrowserPage extends HTMLElement {
                 }
 
                 <!-- 固定位置的标记按钮（左下角） -->
-                <button onclick="event.stopPropagation(); document.querySelector('recall-browser-page').toggleBookmark('${item.id}')" 
-                        class="absolute left-6 bottom-6 w-12 h-12 rounded-full ${isBookmarked ? 'bg-yellow-400 ring-2 ring-yellow-500' : 'bg-white/90'} hover:bg-yellow-400 shadow-lg flex items-center justify-center transition-all hover:scale-110 z-20" 
+                <button onclick="event.stopPropagation(); document.querySelector('recall-browser-page').toggleBookmark('${item.id}')"
+                        class="absolute left-6 bottom-6 w-12 h-12 rounded-full ${isBookmarked ? 'bg-yellow-400 ring-2 ring-yellow-500' : 'bg-white/90'} hover:bg-yellow-400 shadow-lg flex items-center justify-center transition-all hover:scale-110 z-20"
                         title="${isBookmarked ? '取消标记' : '添加标记'}">
                     <svg class="w-6 h-6 ${isBookmarked ? 'text-white' : 'text-gray-600'}" fill="${isBookmarked ? 'currentColor' : 'none'}" stroke="currentColor" viewBox="0 0 24 24">
                         <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 21v-4m0 0V5a2 2 0 012-2h6.5l1 1H21l-3 6 3 6h-8.5l-1-1H5a2 2 0 00-2 2zm9-13.5V9"/>
@@ -1156,12 +1156,12 @@ class BrowserPage extends HTMLElement {
                 <div class="text-xs text-gray-500 whitespace-nowrap w-12 text-left">
                     ${startTimeStr}
                 </div>
-                
+
                 <!-- 时间轴 -->
                 <div class="flex-1 h-10 relative cursor-grab active:cursor-grabbing flex items-center" id="timeline-track" style="pointer-events: auto;">
                     <!-- 可点击的透明区域覆盖层 -->
                     <div class="absolute inset-0 z-10" style="pointer-events: auto;"></div>
-                    
+
                     <!-- 热力图背景（带渐变过渡） -->
                     <div class="absolute left-0 right-0 h-5 top-1/2 -translate-y-1/2 flex rounded-full overflow-hidden shadow-inner bg-gray-100" style="pointer-events: none;">
                         ${heatmap
@@ -1176,7 +1176,7 @@ class BrowserPage extends HTMLElement {
                             })
                             .join('')}
                     </div>
-                    
+
                     <!-- 标记旗帜（在时间轴上） -->
                     ${this.currentData
                         .map((dataItem, idx) => {
@@ -1189,7 +1189,7 @@ class BrowserPage extends HTMLElement {
                             const itemTime = dataItem.startTime || dataItem.timestamp;
                             const itemPosition = ((itemTime - minTime) / timeRange) * 100;
                             return `
-                            <div class="absolute top-1/2 -translate-y-1/2 transition-all duration-300 z-15" 
+                            <div class="absolute top-1/2 -translate-y-1/2 transition-all duration-300 z-15"
                                  style="left: ${itemPosition}%; pointer-events: none;">
                                 <div class="absolute -top-6 left-1/2 -translate-x-1/2">
                                     <svg class="w-4 h-4 text-yellow-500 drop-shadow-lg" fill="currentColor" viewBox="0 0 24 24">
@@ -1200,9 +1200,9 @@ class BrowserPage extends HTMLElement {
                         `;
                         })
                         .join('')}
-                    
+
                     <!-- 当前位置指示器 -->
-                    <div class="absolute top-1/2 -translate-y-1/2 transition-all duration-300 z-20" 
+                    <div class="absolute top-1/2 -translate-y-1/2 transition-all duration-300 z-20"
                          style="left: ${currentPosition}%; pointer-events: none;"
                          id="timeline-indicator">
                         <!-- 指示线 -->
@@ -1211,17 +1211,17 @@ class BrowserPage extends HTMLElement {
                         <div class="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-4 h-4 bg-white border-2 border-blue-600 rounded-full shadow-lg" style="pointer-events: none;"></div>
                     </div>
                 </div>
-                
+
                 <!-- 结束时间 -->
                 <div class="text-xs text-gray-500 whitespace-nowrap w-12 text-right">
                     ${endTimeStr}
                 </div>
-                
+
                 <!-- 当前索引（可输入跳转） -->
                 <div class="flex items-center gap-2 text-sm text-gray-700 whitespace-nowrap font-medium">
-                    <input type="number" 
-                           min="1" 
-                           max="${this.currentData.length}" 
+                    <input type="number"
+                           min="1"
+                           max="${this.currentData.length}"
                            value="${this.currentIndex + 1}"
                            class="w-16 px-2 py-1 text-center border border-gray-300 rounded focus:outline-none focus:ring-2 focus:ring-blue-500 text-blue-600 font-semibold"
                            onchange="document.querySelector('recall-browser-page').jumpToIndex(parseInt(this.value) - 1)"
@@ -1517,7 +1517,7 @@ class BrowserPage extends HTMLElement {
             <div class="p-6 h-full overflow-y-auto">
                 <div class="flex items-center justify-between mb-6">
                     <h3 class="text-lg font-semibold text-gray-800">详细信息</h3>
-                    <button onclick="document.querySelector('recall-browser-page').hideDetail()" 
+                    <button onclick="document.querySelector('recall-browser-page').hideDetail()"
                             class="w-8 h-8 rounded-lg hover:bg-gray-100 flex items-center justify-center transition-colors">
                         <svg class="w-5 h-5 text-gray-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/>
@@ -1528,12 +1528,12 @@ class BrowserPage extends HTMLElement {
                 <div class="space-y-4">
                     <!-- 图片预览 -->
                     <div class="mb-4">
-                        <img src="${imageSrc}" 
-                             alt="${appName}" 
+                        <img src="${imageSrc}"
+                             alt="${appName}"
                              class="w-full rounded-lg border border-gray-200"
                              onerror="this.src='data:image/svg+xml,%3Csvg xmlns=%27http://www.w3.org/2000/svg%27 width=%27100%27 height=%27100%27%3E%3Crect fill=%27%23ddd%27 width=%27100%27 height=%27100%27/%3E%3Ctext x=%2750%25%27 y=%2750%25%27 dominant-baseline=%27middle%27 text-anchor=%27middle%27 font-family=%27sans-serif%27 font-size=%2714%27 fill=%27%23999%27%3E图片加载失败%3C/text%3E%3C/svg%3E'" />
                     </div>
-                    
+
                     <div>
                         <div class="text-sm text-gray-500 mb-1">应用</div>
                         <div class="text-base font-medium text-gray-800" title="${appName}">
@@ -1580,12 +1580,12 @@ class BrowserPage extends HTMLElement {
                     `
                             : ''
                     }
-                    
+
                     ${this.renderMemorySection(this.selectedItem)}
 
                     <div>
                         <div class="text-sm text-gray-500 mb-2">备注</div>
-                        <textarea class="w-full h-24 px-3 py-2 border border-gray-200 rounded-lg resize-none focus:outline-none focus:ring-2 focus:ring-blue-500" 
+                        <textarea class="w-full h-24 px-3 py-2 border border-gray-200 rounded-lg resize-none focus:outline-none focus:ring-2 focus:ring-blue-500"
                                   placeholder="添加备注..."></textarea>
                     </div>
                 </div>
@@ -1600,9 +1600,15 @@ class BrowserPage extends HTMLElement {
             let isResizing = false;
             let startX = 0;
             let startWidth = 0;
+            // 发起拖动的指针：多指同按（触摸屏掌压、第二根手指）时只跟随它
+            let pointerId = null;
 
-            leftResizer.addEventListener('mousedown', (e) => {
+            // 统一使用指针事件：触摸屏拖动不会派发 mousemove，只监听鼠标事件时
+            // 分割线在触摸/触控笔场景下完全无法拖动
+            leftResizer.addEventListener('pointerdown', (e) => {
+                if (e.button !== 0 || isResizing) return;
                 isResizing = true;
+                pointerId = e.pointerId;
                 startX = e.clientX;
                 startWidth = this.leftPanelWidth;
                 document.body.style.cursor = 'col-resize';
@@ -1610,8 +1616,8 @@ class BrowserPage extends HTMLElement {
                 e.preventDefault();
             });
 
-            document.addEventListener('mousemove', (e) => {
-                if (!isResizing) return;
+            window.addEventListener('pointermove', (e) => {
+                if (!isResizing || e.pointerId !== pointerId) return;
                 const delta = e.clientX - startX;
                 const newWidth = Math.max(200, Math.min(600, startWidth + delta));
                 this.leftPanelWidth = newWidth;
@@ -1621,13 +1627,15 @@ class BrowserPage extends HTMLElement {
                 }
             });
 
-            document.addEventListener('mouseup', () => {
-                if (isResizing) {
-                    isResizing = false;
-                    document.body.style.cursor = '';
-                    document.body.style.userSelect = '';
-                }
-            });
+            const endLeftResize = (e) => {
+                if (!isResizing || e.pointerId !== pointerId) return;
+                isResizing = false;
+                pointerId = null;
+                document.body.style.cursor = '';
+                document.body.style.userSelect = '';
+            };
+            window.addEventListener('pointerup', endLeftResize);
+            window.addEventListener('pointercancel', endLeftResize);
         }
 
         // 右侧分隔条
@@ -1636,10 +1644,14 @@ class BrowserPage extends HTMLElement {
             let isResizing = false;
             let startX = 0;
             let startWidth = 0;
+            // 发起拖动的指针：多指同按（触摸屏掌压、第二根手指）时只跟随它
+            let pointerId = null;
 
-            rightResizer.addEventListener('mousedown', (e) => {
+            rightResizer.addEventListener('pointerdown', (e) => {
+                if (e.button !== 0 || isResizing) return;
                 if (this.showDetail) {
                     isResizing = true;
+                    pointerId = e.pointerId;
                     startX = e.clientX;
                     startWidth = this.rightPanelWidth;
                     document.body.style.cursor = 'col-resize';
@@ -1648,8 +1660,8 @@ class BrowserPage extends HTMLElement {
                 }
             });
 
-            document.addEventListener('mousemove', (e) => {
-                if (!isResizing) return;
+            window.addEventListener('pointermove', (e) => {
+                if (!isResizing || e.pointerId !== pointerId) return;
                 const delta = startX - e.clientX; // 反向，因为从右边拖动
                 const newWidth = Math.max(200, Math.min(600, startWidth + delta));
                 this.rightPanelWidth = newWidth;
@@ -1659,13 +1671,15 @@ class BrowserPage extends HTMLElement {
                 }
             });
 
-            document.addEventListener('mouseup', () => {
-                if (isResizing) {
-                    isResizing = false;
-                    document.body.style.cursor = '';
-                    document.body.style.userSelect = '';
-                }
-            });
+            const endRightResize = (e) => {
+                if (!isResizing || e.pointerId !== pointerId) return;
+                isResizing = false;
+                pointerId = null;
+                document.body.style.cursor = '';
+                document.body.style.userSelect = '';
+            };
+            window.addEventListener('pointerup', endRightResize);
+            window.addEventListener('pointercancel', endRightResize);
         }
     }
 
@@ -1865,7 +1879,7 @@ class BrowserPage extends HTMLElement {
                         </svg>
                         <div class="text-xl font-semibold">事件组功能暂未开发</div>
                         <div class="text-sm text-gray-400">该功能需要后端实现事件组聚类算法，敬请期待</div>
-                        <button onclick="document.querySelector('recall-browser-page').changeViewType('images')" 
+                        <button onclick="document.querySelector('recall-browser-page').changeViewType('images')"
                                 class="mt-4 px-6 py-2 bg-blue-500 text-white rounded-lg hover:bg-blue-600 transition-colors">
                             切换到图片视图
                         </button>
@@ -2247,14 +2261,14 @@ class BrowserPage extends HTMLElement {
             </aside>
 
             <!-- 左侧分隔条 -->
-            <div id="left-resizer" class="w-1 bg-gray-200 hover:bg-blue-400 cursor-col-resize flex-shrink-0 transition-colors"></div>
+            <div id="left-resizer" class="w-1 bg-gray-200 hover:bg-blue-400 cursor-col-resize flex-shrink-0 transition-colors" data-od-no-longpress="1" style="touch-action: none;"></div>
 
             <!-- 中间：主视图 -->
             <main class="flex-1 flex flex-col overflow-hidden min-w-0">
                 <!-- 顶部工具栏 -->
                 <header class="h-16 border-b border-gray-200 flex items-center px-6 bg-white gap-4 flex-shrink-0">
                     <!-- 返回按钮 -->
-                    <button id="back-button" onclick="document.querySelector('recall-browser-page').goBack()" 
+                    <button id="back-button" onclick="document.querySelector('recall-browser-page').goBack()"
                             class="w-10 h-10 rounded-lg hover:bg-gray-100 flex items-center justify-center transition-colors invisible">
                         <svg class="w-5 h-5 text-gray-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 19l-7-7m0 0l7-7m-7 7h18"/>
@@ -2264,7 +2278,7 @@ class BrowserPage extends HTMLElement {
                     <!-- 搜索栏 -->
                     <div class="flex-1 max-w-2xl">
                         <div class="relative">
-                            <input id="search-input" type="text" placeholder="搜索活动" 
+                            <input id="search-input" type="text" placeholder="搜索活动"
                                    class="w-full h-10 pl-10 pr-4 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 transition-shadow"/>
                             <svg class="w-5 h-5 absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"/>
@@ -2273,16 +2287,16 @@ class BrowserPage extends HTMLElement {
                     </div>
 
                     <!-- 日期选择器 -->
-                    <input id="date-picker" type="date" value="${this.selectedDate}" 
+                    <input id="date-picker" type="date" value="${this.selectedDate}"
                            class="h-10 px-3 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 transition-shadow"/>
 
                     <!-- 视图切换（仅日视图显示） -->
                     <div id="view-type-buttons" class="flex gap-0 border border-gray-300 rounded-lg overflow-hidden">
-                        <button id="view-groups-btn" onclick="document.querySelector('recall-browser-page').changeViewType('groups')" 
+                        <button id="view-groups-btn" onclick="document.querySelector('recall-browser-page').changeViewType('groups')"
                                 class="px-3 py-2 text-sm bg-blue-500 text-white transition-colors">
                             事件组
                         </button>
-                        <button id="view-images-btn" onclick="document.querySelector('recall-browser-page').changeViewType('images')" 
+                        <button id="view-images-btn" onclick="document.querySelector('recall-browser-page').changeViewType('images')"
                                 class="px-3 py-2 text-sm bg-white text-gray-700 hover:bg-gray-100 transition-colors">
                             图片
                         </button>
@@ -2300,7 +2314,7 @@ class BrowserPage extends HTMLElement {
             </main>
 
             <!-- 右侧分隔条（仅在详情显示时可见） -->
-            <div id="right-resizer" class="w-1 bg-gray-200 hover:bg-blue-400 cursor-col-resize flex-shrink-0 transition-colors ${this.showDetail ? '' : 'hidden'}"></div>
+            <div id="right-resizer" class="w-1 bg-gray-200 hover:bg-blue-400 cursor-col-resize flex-shrink-0 transition-colors ${this.showDetail ? '' : 'hidden'}" data-od-no-longpress="1" style="touch-action: none;"></div>
 
             <!-- 右侧：详情面板（按需显示） -->
             <aside id="detail-panel" class="border-l border-gray-200 overflow-y-auto bg-white flex-shrink-0 hidden" style="width: 0px">

@@ -9,6 +9,7 @@
  * See the Mulan PSL v2 for more details.
  */
 
+import { logger } from '../../utils/logger.js';
 import { type RuntimeMetadata, type ToolCall } from '../messages.js';
 import {
     registerTaskExtension,
@@ -28,7 +29,8 @@ import {
     type GoalEvent,
     type GoalEventLogStorage,
     type GoalFinalSnapshot,
-    type GoalState
+    type GoalState,
+    type GoalSupplement
 } from './state.js';
 
 export const GOAL_EXTENSION_KEY = 'goal';
@@ -39,6 +41,8 @@ export class GoalTaskExtension implements TaskExtension {
     finalSnapshots: GoalFinalSnapshot[] = [];
     eventLog?: GoalEventLogStorage;
     readonly runtime: GoalRuntimeAdapter;
+    /** 补充消息投递（准备并启动回合）是否正在进行，用于同步隔离并发投递。 */
+    private supplementTurnStarting = false;
 
     constructor(readonly task: TaskState) {
         this.runtime = new GoalRuntimeAdapter(
@@ -169,6 +173,22 @@ export class GoalTaskExtension implements TaskExtension {
 
     afterTurnFinished(): void {
         this.runtime.afterTurnFinished();
+        // pendingContinuation 由 runtime 起新回合，该回合的 checkpoint 会消费补充消息。
+        // 没有 continuation 时补充消息就没人消费了：回合已经收尾，前端却还在等回复，
+        // 消息会一直停在待消费状态（用户看不到任何 agent 反馈），这里补开一轮投递。
+        const goal = this.state;
+        if (!goal || goal.status !== 'active' || GoalStates.hasPendingContinuation(goal)) return;
+        // 用户刚主动停掉回合（GUI/TUI 走暂停目标，这里兜住 ACP 等直接 stop 的入口）：
+        // 不能为了投递补充消息把任务重新拉起来，留到用户下一次发消息时再投递
+        if (this.task.stop_requested_by_user) return;
+        if (!goal.pendingSupplements.some((supplement) => !supplement.consumedAt)) return;
+        void this.startTurnWithPendingSupplements().catch((error) => {
+            logger.warn(
+                `task ${this.task.task_id}: failed to deliver pending goal supplements after turn: ${
+                    error instanceof Error ? error.message : String(error)
+                }`
+            );
+        });
     }
 
     isRuntimeInterrupted(): boolean {
@@ -191,6 +211,62 @@ export class GoalTaskExtension implements TaskExtension {
         const supplements = GoalController.consumePendingSupplements(this.task, turnGeneration);
         if (supplements.length === 0) return false;
 
+        const { prompt, rawText, metadata } = this.buildSupplementTurn(goal, supplements, turnGeneration);
+        await this.task.materializeExtensionPromptTurn(prompt, metadata, rawText);
+        this.recordSupplementDelivery(goal, supplements, turnGeneration);
+        return true;
+    }
+
+    /**
+     * 没有运行中的回合时，用待消费的补充消息开启一个新的目标回合。
+     *
+     * 补充消息只在回合执行的 checkpoint 被消费，因此回合已经收尾（或后台压根没有
+     * 回合在跑）时它不会被任何人消费：前端会一直显示等待中的回显，用户看不到任何
+     * agent 反馈，之后还可能在目标被清除时连同消息一起消失。这里直接开工投递。
+     */
+    async startTurnWithPendingSupplements(): Promise<boolean> {
+        const goal = this.state;
+        if (!goal || goal.status !== 'active') return false;
+        // 已有回合在跑：它会在下一个 checkpoint 消费补充消息，无需再开一轮
+        if (this.task.task_status === 'running') return false;
+        // 目标的暂停/清除正在中断回合，等状态落定后再投递
+        if (this.task.runtimeInterrupt?.requested && !this.task.runtimeInterrupt.handledAt) return false;
+        // startInternalTurn 在把 task_status 置为 running 之前有多个 await，期间并发的
+        // 第二次调用看不到 running 状态会重复起轮；这里同步置位，保证同一时刻只有一次投递
+        if (this.supplementTurnStarting) return false;
+
+        this.supplementTurnStarting = true;
+        try {
+            const turnGeneration = this.task.getNextTurnGeneration();
+            const supplements = GoalController.consumePendingSupplements(this.task, turnGeneration);
+            if (supplements.length === 0) return false;
+
+            const { prompt, rawText, metadata } = this.buildSupplementTurn(goal, supplements, turnGeneration);
+            await this.task.startInternalTurn({ prompt, rawText, source: 'goal_supplement', metadata });
+            this.recordSupplementDelivery(goal, supplements, turnGeneration);
+            return true;
+        } finally {
+            this.supplementTurnStarting = false;
+        }
+    }
+
+    private recordSupplementDelivery(goal: GoalState, supplements: GoalSupplement[], turnGeneration: number): void {
+        GoalEvents.appendToTask(
+            this.task,
+            createGoalEvent(goal, 'supplement_materialized', 'system', {
+                stateEventType: 'goal.supplement.materialized',
+                supplementIds: supplements.map((supplement) => supplement.id),
+                turnGeneration
+            })
+        );
+        this.task.persistLater();
+    }
+
+    private buildSupplementTurn(
+        goal: GoalState,
+        supplements: GoalSupplement[],
+        turnGeneration: number
+    ): { prompt: string; rawText: string; metadata: RuntimeMetadata } {
         const metadata: RuntimeMetadata = {
             scope: 'goal',
             origin: { source: 'internal', reason: 'goal_supplement' },
@@ -209,18 +285,7 @@ export class GoalTaskExtension implements TaskExtension {
             }))
         );
         const rawText = supplements.map((supplement) => supplement.content).join('\n\n');
-
-        await this.task.materializeExtensionPromptTurn(prompt, metadata, rawText);
-        GoalEvents.appendToTask(
-            this.task,
-            createGoalEvent(goal, 'supplement_materialized', 'system', {
-                stateEventType: 'goal.supplement.materialized',
-                supplementIds: supplements.map((supplement) => supplement.id),
-                turnGeneration
-            })
-        );
-        this.task.persistLater();
-        return true;
+        return { prompt, rawText, metadata };
     }
 
     private normalizeLoadedState(wasRunningAtShutdown: boolean): void {

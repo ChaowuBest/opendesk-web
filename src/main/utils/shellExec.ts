@@ -390,13 +390,24 @@ const SHELL_OSC_SEQUENCE_RE = /\x1b\][^\x07\x1b\n\r]*(?:\x07|\x1b\\)/g;
 // 会以孤立 BEL 形式残留在输出中间，一并剔除
 const SHELL_ORPHAN_BEL_RE = /\x07/g;
 
+// bash -i 交互模式在无控制终端（stdin 为管道/已关闭）环境下启动时必然输出的 job control
+// 警告，属于启动噪音而非命令结果。整行匹配固定短语：真实命令错误（如
+// "bash: line 1: fg: no job control"）不带 "in this shell" 尾缀，不会被误伤
+const SHELL_JOB_CONTROL_WARNING_RE =
+    /bash: (?:cannot set terminal process group \(-?\d+\): [^\r\n]*|no job control in this shell)\r?\n?/g;
+
 /**
  * 过滤 shell 输出中的环境噪音：
  * - 受限环境下的 getcwd/chdir 启动警告
- * - 交互模式（zsh -i）下 shell integration 向终端输出的 OSC 序列
+ * - 交互模式（zsh -i / bash -i）下 shell integration 向终端输出的 OSC 序列
+ * - bash -i 无 tty 的 job control 启动警告
  */
 export function filterShellEnvironmentWarnings(text: string): string {
-    return text.replace(SHELL_CWD_WARNING_RE, '').replace(SHELL_OSC_SEQUENCE_RE, '').replace(SHELL_ORPHAN_BEL_RE, '');
+    return text
+        .replace(SHELL_CWD_WARNING_RE, '')
+        .replace(SHELL_OSC_SEQUENCE_RE, '')
+        .replace(SHELL_ORPHAN_BEL_RE, '')
+        .replace(SHELL_JOB_CONTROL_WARNING_RE, '');
 }
 
 // ── detached 进程退出清理 ──────────────────────────────────────────────────

@@ -357,6 +357,7 @@ export const enUs: Record<string, string> = {
     'plugin.tui.confirm': 'Confirm ${action}',
     'plugin.tui.cancel': 'Cancel',
     'plugin.tui.toggleDone': 'Plugin ${action}d: ${id}\n\nMessage channels have been reloaded.',
+    'plugin.tui.toggleFail': 'Plugin ${action} failed: ${id} (${error})',
     'plugin.tui.notFound': 'Plugin not found: ${id}',
     'plugin.tui.confirmUninstall': ' Confirm uninstall: ${id}',
     'plugin.tui.uninstallConfirm': 'Confirm uninstall',

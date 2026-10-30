@@ -942,6 +942,9 @@ const DASH_LIGHT = `
     position: absolute; right: -3px; top: 0; bottom: 0; width: 7px;
     cursor: col-resize; user-select: none; z-index: 5;
     background: transparent;
+    /* 拖动手势交给 pointer 事件：默认 touch-action 下浏览器会把按住拖动判定为
+     * 滚动/缩放手势并派发 pointercancel */
+    touch-action: none;
 }
 .ag-dash-panel .ag-col-resizer::after {
     content: ''; position: absolute; left: 3px; top: 0; bottom: 0; width: 1px;
@@ -1269,6 +1272,9 @@ const DASH_DARK = `
     position: absolute; right: -3px; top: 0; bottom: 0; width: 7px;
     cursor: col-resize; user-select: none; z-index: 5;
     background: transparent;
+    /* 拖动手势交给 pointer 事件：默认 touch-action 下浏览器会把按住拖动判定为
+     * 滚动/缩放手势并派发 pointercancel */
+    touch-action: none;
 }
 .ag-dash-panel .ag-col-resizer::after {
     content: ''; position: absolute; left: 3px; top: 0; bottom: 0; width: 1px;
@@ -2783,30 +2789,43 @@ class AgentGateEntryWidget extends HTMLElement {
             if (th.querySelector('.ag-col-resizer')) return;
             const resizer = document.createElement('div');
             resizer.className = 'ag-col-resizer';
+            // 拖拽表面标记：触摸长按脚本按下即跳过，不显示进度圆环也不触发右键
+            resizer.dataset.odNoLongpress = '1';
             th.appendChild(resizer);
             let startX = 0;
             let startW = 0;
-            resizer.addEventListener('mousedown', (e: MouseEvent) => {
+            // 发起拖动的指针：多指同按（触摸屏掌压、第二根手指）时只跟随它
+            let pointerId: number | null = null;
+            // 统一使用指针事件：触摸屏拖动不会派发 mousemove，只监听鼠标事件时
+            // 列宽分隔线在触摸/触控笔场景下完全无法拖动
+            resizer.addEventListener('pointerdown', (e: PointerEvent) => {
+                if (e.button !== 0 || pointerId !== null) return;
                 e.preventDefault();
                 e.stopPropagation();
+                pointerId = e.pointerId;
                 startX = e.clientX;
                 startW = th.offsetWidth;
                 resizer.classList.add('ag-dragging');
-                const onMove = (ev: MouseEvent) => {
+                const onMove = (ev: PointerEvent) => {
+                    if (ev.pointerId !== pointerId) return;
                     const w = Math.max(60, startW + (ev.clientX - startX));
                     th.style.width = w + 'px';
                 };
-                const onUp = () => {
-                    document.removeEventListener('mousemove', onMove);
-                    document.removeEventListener('mouseup', onUp);
+                const onUp = (ev: PointerEvent) => {
+                    if (ev.pointerId !== pointerId) return;
+                    pointerId = null;
+                    window.removeEventListener('pointermove', onMove);
+                    window.removeEventListener('pointerup', onUp);
+                    window.removeEventListener('pointercancel', onUp);
                     resizer.classList.remove('ag-dragging');
                     saved[String(i)] = th.offsetWidth;
                     try {
                         localStorage.setItem(KEY, JSON.stringify(saved));
                     } catch {}
                 };
-                document.addEventListener('mousemove', onMove);
-                document.addEventListener('mouseup', onUp);
+                window.addEventListener('pointermove', onMove);
+                window.addEventListener('pointerup', onUp);
+                window.addEventListener('pointercancel', onUp);
             });
         });
     }

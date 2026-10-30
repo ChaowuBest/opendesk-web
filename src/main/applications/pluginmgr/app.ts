@@ -12,7 +12,12 @@ import { BaseToolset } from '../../aikernel/tool.js';
 import { registerPluginsCommand } from '../../tui/subcommands/plugins.js';
 import { getOpendeskDirectory, Setting } from '../../utils/setting.js';
 import { GlobalState } from '../../aikernel/states/global.js';
-import { disposePluginHost, initializePluginHost, reloadPluginHost } from './runtime/bootstrap.js';
+import {
+    disposePluginHost,
+    initializePluginHost,
+    reloadPluginHost,
+    applyPluginEnabledChange
+} from './runtime/bootstrap.js';
 import { discoverPlugins } from './discovery/discovery.js';
 import { getPluginHost } from './runtime/host.js';
 import { pluginCommandAcceptsArgs } from './runtime/command-arguments.js';
@@ -288,15 +293,23 @@ export class PluginMgrApplication extends BaseApplication {
 
     async setEnabled(id: string, enabled: boolean) {
         const config = this.getConfig() as z.output<typeof PluginMgrConfigSchema> | undefined;
-        if (
-            !setPluginEnabled(id, enabled, {
-                externalPaths: config?.externalPaths ?? [],
-                pluginDirectories: getRuntimePluginDirectories()
-            })
-        ) {
+        const options = {
+            externalPaths: config?.externalPaths ?? [],
+            pluginDirectories: getRuntimePluginDirectories()
+        };
+        if (!setPluginEnabled(id, enabled, options)) {
             throw new Error(translate('plugin.notFound', { id }));
         }
-        await reloadPluginHost();
+        try {
+            await applyPluginEnabledChange(id, enabled);
+        } catch (error) {
+            // 启用后加载失败（完整性校验、入口缺失、平台不支持等）：回滚注册表，
+            // 避免留下「注册表已启用但运行时未生效」的状态
+            setPluginEnabled(id, !enabled, options);
+            throw error;
+        }
+        // channelmgr 收到插件 id 后按宿主注册表差量增删渠道，非渠道插件的事件对它无副作用；
+        // 事件本身是公开契约（todomgr 触发器、插件订阅者），因此启停一律广播
         this.emitEvent('pluginsChanged', { operation: enabled ? 'enable' : 'disable', id }).catch(() => {});
         return await this.list();
     }

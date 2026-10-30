@@ -32,6 +32,21 @@ export function fromMsysPath(p: string): string {
 }
 
 /**
+ * 将 Windows 原生路径（如 C:\Projects\...）转换为 MSYS2/Git Bash 风格（如 /c/Projects/...）。
+ *
+ * 供把路径传给 bash 类脚本/命令的场景：GNU tar 等会把 `C:/foo` 中的盘符冒号解析为
+ * 「远程主机:文件」（rsh 语法），MSYS 形式可避免该歧义。非 Windows 平台或非盘符
+ * 开头（相对路径、UNC \\server\share）的输入原样返回。
+ */
+export function toMsysPath(p: string): string {
+    if (process.platform !== 'win32') return p;
+    const forward = p.replace(/\\/g, '/');
+    const driveMatch = forward.match(/^([a-zA-Z]):\//);
+    if (!driveMatch) return p;
+    return `/${driveMatch[1].toLowerCase()}${forward.slice(driveMatch[0].length - 1)}`;
+}
+
+/**
  * 获取当前用户的家目录路径。
  * 支持多个平台：
  * - Windows: 优先使用 USERPROFILE，回退到 HOME

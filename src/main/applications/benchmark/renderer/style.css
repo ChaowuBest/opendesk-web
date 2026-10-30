@@ -243,6 +243,19 @@ select {
     background: var(--err-soft);
 }
 
+/* 停止按钮：红底白字，与普通操作按钮拉开区分度（参照 agentinput 的 .agent-stop-btn） */
+.btn-stop {
+    background: var(--err);
+    border-color: var(--err);
+    color: #ffffff;
+    font-weight: 600;
+}
+
+.btn-stop:hover {
+    background: color-mix(in srgb, var(--err) 85%, #000000);
+    border-color: color-mix(in srgb, var(--err) 85%, #000000);
+}
+
 .btn-sm {
     padding: 5px 12px;
     font-size: var(--fs-sm);
@@ -592,6 +605,70 @@ select {
     }
     50% {
         opacity: 0.25;
+    }
+}
+
+/* ── 测评集下载 ─────────────────────────────────────────────────────── */
+
+.card-header .status-pill {
+    flex-shrink: 0;
+}
+
+.modal-banner .status-pill {
+    flex-shrink: 0;
+    margin-left: 8px;
+}
+
+.dl-progress {
+    margin-bottom: 16px;
+}
+
+.dl-progress-head {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 12px;
+    margin-bottom: 6px;
+    font-size: var(--fs-sm);
+    color: var(--ink2);
+}
+
+.dl-progress-head [data-dl-title] {
+    font-weight: 600;
+    color: var(--ink);
+}
+
+.dl-progress-bar {
+    position: relative;
+    height: 6px;
+    border-radius: 999px;
+    background: var(--chip);
+    overflow: hidden;
+}
+
+.dl-progress-bar > span {
+    position: absolute;
+    top: 0;
+    bottom: 0;
+    left: 0;
+    border-radius: 999px;
+    background: var(--accent);
+    transition: width 0.2s linear;
+}
+
+/* 服务端没给 content-length、不知道总量时才用漂移片段；一旦知道总大小立刻回到真实进度 */
+.dl-progress-bar.indeterminate > span {
+    animation: dl-slide 1.1s ease-in-out infinite;
+}
+
+@keyframes dl-slide {
+    0% {
+        transform: translateX(-100%);
+        width: 35%;
+    }
+    100% {
+        transform: translateX(300%);
+        width: 35%;
     }
 }
 
@@ -1650,6 +1727,42 @@ select {
 
 .cd-error {
     color: var(--err);
+}
+
+/* 脚本 stdout/stderr 合并输出：等宽字体展示，限高可滚动 */
+.cd-log-error {
+    flex: 1;
+    min-width: 0;
+    margin: 0;
+    padding: 6px 10px;
+    border-radius: 6px;
+    background: var(--chip);
+    max-height: 180px;
+    overflow-y: auto;
+    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    font-size: var(--fs-sm);
+    line-height: 1.55;
+    color: var(--ink2);
+    white-space: pre-wrap;
+    word-break: break-word;
+}
+
+.cd-log-error::-webkit-scrollbar {
+    width: 6px;
+    height: 6px;
+}
+
+.cd-log-error::-webkit-scrollbar-track {
+    background: transparent;
+}
+
+.cd-log-error::-webkit-scrollbar-thumb {
+    background: color-mix(in srgb, var(--ink3) 40%, transparent);
+    border-radius: 3px;
+}
+
+.cd-log-error::-webkit-scrollbar-thumb:hover {
+    background: var(--ink3);
 }
 
 .cd-reason {

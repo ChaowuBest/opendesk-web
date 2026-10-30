@@ -657,7 +657,9 @@ class TaskView extends HTMLElement {
         const id = escapeHtml(String(message?.id || crypto.randomUUID()));
         const type = escapeHtml(String(options.type || message?.type || 'context'));
         const rawAttr = ` data-raw-text="${escapeHtml(text)}"`;
-        const metaRowHtml = TaskView.buildMsgMetaRow('user', message?.timestamp, id);
+        // 回显只是还没进入 chat_context 的占位条目，id 是渲染进程临时生成的，
+        // 不能当成消息 id 传给消息菜单，否则"重新执行"会报 user message ... not found
+        const metaRowHtml = TaskView.buildMsgMetaRow('user', message?.timestamp);
         return `
             <div id="pending-context-${id}" class="od-user-msg-container od-pending-context-entry" data-pending-context-id="${id}" data-pending-context-type="${type}"${rawAttr}>
                 ${this.renderUserPart(createRenderedTextPartFromPlainText(text))}
@@ -756,6 +758,9 @@ class TaskView extends HTMLElement {
     static buildMsgMetaRow(role, timestamp, messageId) {
         if (!timestamp) return '';
         const timeHtml = `<span class="od-msg-timestamp">${TaskView.formatRelativeTime(timestamp)}</span>`;
+        // 没有真实消息 id 的占位回显（如待消费的 goal 补充消息）不提供消息操作：
+        // 它还没有进入 chat_context，重新发送/编辑/重新执行都找不到对应消息。
+        if (!messageId) return `<div class="od-msg-meta-row">${timeHtml}</div>`;
         const escapedId = escapeHtml(messageId);
         const copyLabel = taskViewT('renderer.taskview.action.copy');
         const copyBtn = `<button class="od-msg-action-btn" type="button" data-action="copy" data-message-id="${escapedId}">${COPY_ICON_SVG}<span class="od-msg-action-label">${copyLabel}</span></button>`;
@@ -6818,10 +6823,11 @@ class TaskView extends HTMLElement {
                     </div>
                 </div>
 
-                <!-- 右侧边栏拖拽条 -->
+                <!-- 右侧边栏拖拽条（data-od-no-longpress：拖拽分割线不参与触摸长按手势） -->
                 <div id="task-${this.task_id}-resizer"
-                    class="resizer-group relative shrink-0"
-                    style="background: linear-gradient(to right, transparent 40%, #e0e0e0 50%, transparent 60%); width: 4px; cursor: col-resize; display: ${this._rightSidebarExpanded ? '' : 'none'};"
+                    class="resizer-group taskview-resizer relative shrink-0"
+                    data-od-no-longpress="1"
+                    style="background: linear-gradient(to right, transparent 40%, #e0e0e0 50%, transparent 60%); width: 4px; cursor: col-resize; touch-action: none; display: ${this._rightSidebarExpanded ? '' : 'none'};"
                 >
                     <div class="absolute top-1/2 left-1/2 transform -translate-x-1/2 -translate-y-1/2 pointer-events-none">
                         <div class="resizer-handle-indicator resizer-blue" style="width: 2px; height: 3rem; border-radius: 9999px; background: #e5e7eb;"></div>
@@ -6850,8 +6856,10 @@ class TaskView extends HTMLElement {
         let isResizing = false;
         let cachedContainerRect = null;
         let resizeRafId = null;
-        const onMouseMove = (e) => {
-            if (!isResizing) return;
+        // 发起拖动的指针：多指同按（触摸屏掌压、第二根手指）时只跟随它
+        let pointerId = null;
+        const onPointerMove = (e) => {
+            if (!isResizing || e.pointerId !== pointerId) return;
             e.preventDefault();
             if (resizeRafId !== null) return;
             resizeRafId = requestAnimationFrame(() => {
@@ -6871,9 +6879,10 @@ class TaskView extends HTMLElement {
             });
         };
 
-        const onMouseUp = () => {
-            if (!isResizing) return;
+        const onPointerUp = (e) => {
+            if (!isResizing || e.pointerId !== pointerId) return;
             isResizing = false;
+            pointerId = null;
             cachedContainerRect = null;
             if (resizeRafId !== null) {
                 cancelAnimationFrame(resizeRafId);
@@ -6882,22 +6891,29 @@ class TaskView extends HTMLElement {
             document.body.style.cursor = '';
             document.body.style.userSelect = '';
             rightSidebar.style.pointerEvents = '';
-            document.removeEventListener('mousemove', onMouseMove);
-            document.removeEventListener('mouseup', onMouseUp);
+            window.removeEventListener('pointermove', onPointerMove);
+            window.removeEventListener('pointerup', onPointerUp);
+            window.removeEventListener('pointercancel', onPointerUp);
         };
 
-        resizer.addEventListener('mousedown', (e) => {
+        // 统一使用指针事件：触摸屏拖动不会派发 mousemove，只监听鼠标事件时
+        // 分割线在触摸/触控笔场景下完全无法拖动
+        resizer.addEventListener('pointerdown', (e) => {
+            if (e.button !== 0 || isResizing) return;
             e.preventDefault();
             e.stopPropagation();
             const container = this.querySelector(`#task-${this.task_id}-content-row`);
             if (!container) return;
             cachedContainerRect = container.getBoundingClientRect();
             isResizing = true;
+            pointerId = e.pointerId;
             document.body.style.cursor = 'col-resize';
             document.body.style.userSelect = 'none';
             rightSidebar.style.pointerEvents = 'none';
-            document.addEventListener('mousemove', onMouseMove);
-            document.addEventListener('mouseup', onMouseUp);
+            // 挂在 window 上：拖动过程中指针可能移出分割线甚至窗口边界
+            window.addEventListener('pointermove', onPointerMove);
+            window.addEventListener('pointerup', onPointerUp);
+            window.addEventListener('pointercancel', onPointerUp);
         });
 
         resizer.addEventListener('dblclick', (e) => {

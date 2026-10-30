@@ -16,7 +16,16 @@ import { createRendererTranslator, resolveRendererLocale } from '../../../../ren
 import { bindOverlayDismiss, showConfirmModal } from '../../../../renderer/components/confirmModal';
 import { createTranslatorForBenchmark } from '../locale/renderer.js';
 import { labelForStoredReasoningEffort, REASONING_EFFORT_UI_OPTIONS } from '../../../../common/reasoning-effort.ts';
-import type { CaseRunState, DatasetSummary, ModelOption, RunListItem, RunRecord } from '../common.js';
+import type {
+    CaseRunState,
+    CatalogDatasetEntry,
+    DatasetSummary,
+    DownloadState,
+    ModelOption,
+    RunListItem,
+    RunRecord
+} from '../common.js';
+import { findLocalDatasetByName, resolveCatalogInstallState } from '../catalog-common.js';
 import css from './style.css?inline';
 // 复用 agentinput 的模型面板样式（同一套 ctx-menu / ctx-item 视觉与暗色处理）
 import ctxCss from '../../../../renderer/styles/context-menu.css?inline';
@@ -25,7 +34,7 @@ import ctxCss from '../../../../renderer/styles/context-menu.css?inline';
 const SHADOW_CSS = `${ctxCss}\n${css}`;
 
 type Translator = ReturnType<typeof createTranslatorForBenchmark>;
-type TabId = 'datasets' | 'history';
+type TabId = 'catalog' | 'datasets' | 'history';
 type DetailTab = 'overview' | 'cases';
 
 interface RunModalState {
@@ -98,6 +107,18 @@ function percent(value: number): string {
     return `${Math.round((value || 0) * 100)}%`;
 }
 
+function formatBytes(bytes: number): string {
+    if (!Number.isFinite(bytes) || bytes <= 0) return '0 B';
+    const units = ['B', 'KB', 'MB', 'GB'];
+    let value = bytes;
+    let unit = 0;
+    while (value >= 1024 && unit < units.length - 1) {
+        value /= 1024;
+        unit += 1;
+    }
+    return `${value >= 10 || unit === 0 ? Math.round(value) : value.toFixed(1)} ${units[unit]}`;
+}
+
 // 与 agentinput 保持同一套推理强度图标（四格能量条）
 const EFFORT_BAR_X = [1.125, 4.875, 8.625, 12.375];
 const EFFORT_BAR_GREEN = '#1F9D66';
@@ -153,17 +174,21 @@ class BenchmarkEntryWidget extends AgentOperableHTMLElement {
     private _settingUnsubscribe: (() => void) | null = null;
     private _onThemeChange: ((event: any) => void) | null = null;
     private _onDataChanged: (() => void) | null = null;
+    private _onDownloadsChanged: (() => void) | null = null;
     private _onRunsChanged: (() => void) | null = null;
 
-    private activeTab: TabId = 'datasets';
+    private activeTab: TabId = 'catalog';
     private detailTab: DetailTab = 'overview';
     private datasets: DatasetSummary[] = [];
+    private catalog: CatalogDatasetEntry[] = [];
+    private downloads = new Map<string, DownloadState>();
     private runs: RunListItem[] = [];
     private models: ModelOption[] = [];
     private loading = true;
     private importing = false;
     private banner: BannerState | null = null;
     private datasetModalId: string | null = null;
+    private catalogModalId: string | null = null;
     private runModal: RunModalState | null = null;
     private detailRunId: string | null = null;
     private detail: RunRecord | null = null;
@@ -211,14 +236,18 @@ class BenchmarkEntryWidget extends AgentOperableHTMLElement {
         this._onDataChanged = () => {
             void this.loadDatasets(false);
         };
+        this._onDownloadsChanged = () => {
+            void this.refreshDownloads();
+        };
         this._onRunsChanged = () => {
             void this.loadRuns(false);
             if (this.detailRunId) void this.loadDetail(this.detailRunId, false);
         };
         getAPI().subscribe('datasetsChanged', this._onDataChanged);
+        getAPI().subscribe('downloadsChanged', this._onDownloadsChanged);
         getAPI().subscribe('runsChanged', this._onRunsChanged);
 
-        await Promise.all([this.loadDatasets(true), this.loadRuns(true), this.loadModels()]);
+        await Promise.all([this.loadCatalog(), this.loadDatasets(true), this.loadRuns(true), this.loadModels()]);
         this.loading = false;
         this.render();
     }
@@ -227,6 +256,10 @@ class BenchmarkEntryWidget extends AgentOperableHTMLElement {
         if (this._onDataChanged) {
             getAPI().unsubscribe('datasetsChanged');
             this._onDataChanged = null;
+        }
+        if (this._onDownloadsChanged) {
+            getAPI().unsubscribe('downloadsChanged');
+            this._onDownloadsChanged = null;
         }
         if (this._onRunsChanged) {
             getAPI().unsubscribe('runsChanged');
@@ -275,6 +308,50 @@ class BenchmarkEntryWidget extends AgentOperableHTMLElement {
     }
 
     // ── 数据加载 ──────────────────────────────────────────────────────────
+
+    private async loadCatalog() {
+        try {
+            this.catalog = await getAPI().callMainWorld<CatalogDatasetEntry[]>('listCatalogDatasets');
+            this.downloads = await this.fetchDownloads();
+        } catch (error: any) {
+            this.banner = { text: error?.message || this._t('error.operationFailed'), isError: true };
+        }
+    }
+
+    private async fetchDownloads(): Promise<Map<string, DownloadState>> {
+        const states = await getAPI().callMainWorld<DownloadState[]>('listDownloads');
+        return new Map(states.map((state) => [state.catalogId, state]));
+    }
+
+    /**
+     * 下载进度变化：弹窗打开时只刷进度条，落地态（完成/失败）才整窗重建，
+     * 避免下载过程中反复重建把弹窗闪掉。
+     */
+    private async refreshDownloads() {
+        try {
+            this.downloads = await this.fetchDownloads();
+        } catch {
+            return;
+        }
+        if (this.catalogModalId) {
+            const state = this.downloads.get(this.catalogModalId);
+            // 下载中只刷进度条；进入安装/落地态要重建一次，按钮和提示才会跟着变
+            if (state && state.status === 'downloading') {
+                this.patchDownloadProgress();
+                return;
+            }
+            // 装完了要重新读一次本地测评集，否则弹窗还按旧的安装状态显示「下载」
+            if (state?.status === 'done') await this.loadDatasets(false);
+            // 同一个弹窗只是换了状态，别把入场动画再播一遍
+            this.skipModalAnimation = true;
+            this.render();
+            return;
+        }
+        if (this.activeTab === 'catalog' && !this.datasetModalId && !this.runModal && !this.detailRunId) {
+            // 卡片上只有状态标签随进度变化，定点更新即可，别整窗重建打断 hover
+            this.patchCatalogStatusPills();
+        }
+    }
 
     private async loadDatasets(showLoading: boolean) {
         if (showLoading) {
@@ -353,6 +430,7 @@ class BenchmarkEntryWidget extends AgentOperableHTMLElement {
         const summary = run.summary;
         return JSON.stringify({
             status: run.status,
+            stopping: run.stopRequested === true,
             tab: this.detailTab,
             total: summary.total,
             completed: summary.completed,
@@ -457,14 +535,21 @@ class BenchmarkEntryWidget extends AgentOperableHTMLElement {
     private patchStopButton(run: RunRecord) {
         const actions = this.shadowRoot?.querySelector('.detail-actions');
         if (!actions) return;
-        const existing = actions.querySelector('[data-action="stop-run"]');
+        const existing = actions.querySelector('[data-action="stop-run"]') as HTMLButtonElement | null;
         if (run.status === 'running') {
-            if (existing) return;
+            const stopping = run.stopRequested === true;
+            if (existing) {
+                const label = stopping ? this._t('benchmark.action.stopping') : this._t('benchmark.action.stop');
+                if (existing.textContent !== label) existing.textContent = label;
+                if (existing.disabled !== stopping) existing.disabled = stopping;
+                return;
+            }
             const button = document.createElement('button');
             button.type = 'button';
-            button.className = 'btn btn-sm';
+            button.className = 'btn btn-sm btn-stop';
             button.dataset.action = 'stop-run';
-            button.textContent = this._t('benchmark.action.stop');
+            button.textContent = stopping ? this._t('benchmark.action.stopping') : this._t('benchmark.action.stop');
+            button.disabled = stopping;
             actions.prepend(button);
             return;
         }
@@ -508,7 +593,7 @@ class BenchmarkEntryWidget extends AgentOperableHTMLElement {
     /* 弹窗/详情打开时后台刷新只更新数据，不重建 DOM：
        弹窗重建会闪一下并丢输入，详情重建会打乱滚动位置与 hover */
     private renderUnlessModalOpen() {
-        if (this.datasetModalId || this.runModal || this.detailRunId) return;
+        if (this.datasetModalId || this.catalogModalId || this.runModal || this.detailRunId) return;
         this.render();
     }
 
@@ -570,14 +655,30 @@ class BenchmarkEntryWidget extends AgentOperableHTMLElement {
                 await this.importDataset();
                 return;
             case 'refresh':
-                await Promise.all([this.loadDatasets(false), this.loadRuns(false)]);
+                await Promise.all([this.loadCatalog(), this.loadDatasets(false), this.loadRuns(false)]);
+                // 清单和测评集是两路 IPC，谁先回来不确定；这里统一补一次渲染，
+                // 免得先回来的那路已经渲染完、后回来的清单却停在旧数据上
+                this.renderUnlessModalOpen();
                 return;
             case 'open-dataset':
                 this.datasetModalId = actionEl.dataset.datasetId || null;
+                this.catalogModalId = null;
                 this.runModal = null;
                 this.render();
                 return;
+            case 'open-catalog':
+                this.catalogModalId = actionEl.dataset.catalogId || null;
+                this.datasetModalId = null;
+                this.runModal = null;
+                this.render();
+                return;
+            case 'download-dataset': {
+                const catalogId = actionEl.dataset.catalogId || this.catalogModalId;
+                if (catalogId) await this.downloadDataset(catalogId);
+                return;
+            }
             case 'close-dataset':
+            case 'close-catalog':
             case 'modal-close':
                 this.closeModals();
                 return;
@@ -673,8 +774,10 @@ class BenchmarkEntryWidget extends AgentOperableHTMLElement {
                 this.closeCaseMenu();
                 if (!this.detailRunId || !key) return;
                 try {
+                    // 原地重跑：返回的就是当前 runId，重新拉详情即可看到该用例转为运行中，
+                    // 其余用例的历史状态不受影响
                     const runId = await getAPI().callMainWorld<string>('rerunCase', this.detailRunId, key);
-                    await this.openDetail(runId);
+                    await this.loadDetail(runId, false);
                 } catch (error: any) {
                     this.banner = { text: error?.message || this._t('error.operationFailed'), isError: true };
                     this.render();
@@ -750,13 +853,14 @@ class BenchmarkEntryWidget extends AgentOperableHTMLElement {
             event.stopPropagation();
             return;
         }
-        if (this.datasetModalId || this.runModal) {
+        if (this.datasetModalId || this.runModal || this.catalogModalId) {
             this.closeModals();
         }
     };
 
     private closeModals() {
         this.datasetModalId = null;
+        this.catalogModalId = null;
         this.runModal = null;
         this.modelPanel = null;
         this.effortMenu = null;
@@ -874,7 +978,8 @@ class BenchmarkEntryWidget extends AgentOperableHTMLElement {
         this.detail = null;
         this.clearPoll();
         this.render();
-        if (tab === 'datasets') await this.loadDatasets(false);
+        if (tab === 'catalog') await Promise.all([this.loadCatalog(), this.loadDatasets(false)]);
+        else if (tab === 'datasets') await this.loadDatasets(false);
         else await this.loadRuns(false);
     }
 
@@ -948,6 +1053,30 @@ class BenchmarkEntryWidget extends AgentOperableHTMLElement {
             this.importing = false;
             this.render();
         }
+    }
+
+    /**
+     * 触发下载：主进程后台下载并推送进度，这里拿到「已开始」就可以返回，
+     * 随后拉一次下载状态把弹窗切到进度条形态。
+     */
+    private async downloadDataset(catalogId: string) {
+        const entry = this.catalog.find((item) => item.id === catalogId);
+        if (!entry) return;
+        this.banner = null;
+        try {
+            await getAPI().callMainWorld('downloadDataset', catalogId);
+        } catch (error: any) {
+            this.banner = {
+                text: this._t('benchmark.catalog.downloadError', {
+                    message: error?.message || this._t('error.operationFailed')
+                }),
+                isError: true
+            };
+        }
+        await this.refreshDownloads();
+        // 弹窗还开着，这里只是把按钮切成进度条形态，不要重播入场动画
+        this.skipModalAnimation = true;
+        this.render();
     }
 
     private async deleteDataset(datasetId: string, datasetName: string) {
@@ -1094,18 +1223,25 @@ class BenchmarkEntryWidget extends AgentOperableHTMLElement {
     }
 
     private renderShell(): string {
+        const refreshButton = `<button type="button" class="btn" data-action="refresh">${escapeHtml(this._t('benchmark.action.refresh'))}</button>`;
         const actions =
             this.activeTab === 'datasets'
                 ? `<button type="button" class="btn btn-primary" data-action="import" ${this.importing ? 'disabled' : ''}>
                         ${this.importing ? escapeHtml(this._t('benchmark.import.importing')) : escapeHtml(this._t('benchmark.action.import'))}
                    </button>`
-                : `<button type="button" class="btn" data-action="refresh">${escapeHtml(this._t('benchmark.action.refresh'))}</button>`;
+                : refreshButton;
 
         const body = this.detailRunId
             ? this.renderDetail()
-            : this.activeTab === 'datasets'
-              ? this.renderDatasets()
-              : this.renderRuns();
+            : this.activeTab === 'catalog'
+              ? this.renderCatalog()
+              : this.activeTab === 'datasets'
+                ? this.renderDatasets()
+                : this.renderRuns();
+
+        const pendingDownloads = this.catalog.filter(
+            (entry) => resolveCatalogInstallState(entry, this.datasets) !== 'installed'
+        ).length;
 
         return `
         <div class="app">
@@ -1113,6 +1249,9 @@ class BenchmarkEntryWidget extends AgentOperableHTMLElement {
                 <div class="header-title">${escapeHtml(this._t('benchmark.title'))}</div>
                 <div class="seg-row">
                     <div class="seg-control">
+                        <button type="button" class="seg-item ${this.activeTab === 'catalog' ? 'active' : ''}" data-action="tab" data-tab="catalog">
+                            ${escapeHtml(this._t('benchmark.tab.catalog'))}${pendingDownloads > 0 ? `<span class="seg-badge">${pendingDownloads}</span>` : ''}
+                        </button>
                         <button type="button" class="seg-item ${this.activeTab === 'datasets' ? 'active' : ''}" data-action="tab" data-tab="datasets">
                             ${escapeHtml(this._t('benchmark.tab.datasets'))}${this.datasets.length > 0 ? `<span class="seg-badge">${this.datasets.length}</span>` : ''}
                         </button>
@@ -1128,9 +1267,85 @@ class BenchmarkEntryWidget extends AgentOperableHTMLElement {
                 ${body}
             </div>
             ${this.renderDatasetModal()}
+            ${this.renderCatalogModal()}
             ${this.renderRunModal()}
             ${this.renderModelPanel()}
         </div>`;
+    }
+
+    // ── 测评集下载 ─────────────────────────────────────────────────────────
+
+    private renderCatalog(): string {
+        // 首次挂载时清单还没回来，先转圈；否则会先闪一下「暂无可下载的测评集」
+        if (this.loading && this.catalog.length === 0) {
+            return `<div class="loading-state"><div class="spinner"></div></div>`;
+        }
+        if (this.catalog.length === 0) {
+            return `
+            <div class="empty-state">
+                <div class="empty-icon">⤓</div>
+                <div class="empty-title">${escapeHtml(this._t('benchmark.catalog.emptyTitle'))}</div>
+                <div class="empty-hint">${escapeHtml(this._t('benchmark.catalog.emptyHint'))}</div>
+            </div>`;
+        }
+        const cards = this.catalog.map((entry) => this.renderCatalogCard(entry)).join('');
+        return `<div class="card-grid">${cards}</div>`;
+    }
+
+    private renderCatalogCard(entry: CatalogDatasetEntry): string {
+        const colors = colorFor(entry.name);
+        const initial = entry.name.trim().charAt(0) || 'B';
+        const tags = entry.tracks
+            .map((track) => `<span class="tag-pill tag-blue">${escapeHtml(track.name)}</span>`)
+            .join('');
+        const description = entry.description ? `<div class="card-desc">${escapeHtml(entry.description)}</div>` : '';
+        const pill = this.catalogStatusView(entry);
+        return `
+        <article class="dataset-card" data-action="open-catalog" data-catalog-id="${escapeHtml(entry.id)}">
+            <div class="card-header">
+                <div class="card-icon" style="background:${colors.bg};color:${colors.text}">${escapeHtml(initial)}</div>
+                <div class="card-info">
+                    <div class="card-title">${escapeHtml(entry.name)}</div>
+                    <div class="card-subtitle">
+                        ${escapeHtml(this._t('benchmark.datasets.tracks', { count: entry.tracks.length }))} ·
+                        ${escapeHtml(this._t('benchmark.catalog.version', { version: entry.version }))}
+                    </div>
+                </div>
+                <span class="status-pill ${pill.className}" data-catalog-status="${escapeHtml(entry.id)}">${escapeHtml(pill.label)}</span>
+            </div>
+            ${description}
+            <div class="card-footer">
+                <div class="card-meta">${tags}</div>
+            </div>
+        </article>`;
+    }
+
+    /** 卡片/弹窗右上角的状态标签：下载中 > 下载失败 > 安装状态 */
+    private catalogStatusView(entry: CatalogDatasetEntry): { className: string; label: string } {
+        const state = this.downloads.get(entry.id);
+        if (state?.status === 'installing') {
+            return { className: 'running', label: this._t('benchmark.catalog.installing') };
+        }
+        if (state?.status === 'downloading') {
+            const ratio =
+                state.totalBytes && state.totalBytes > 0 ? Math.min(1, state.receivedBytes / state.totalBytes) : null;
+            const label =
+                ratio === null
+                    ? this._t('benchmark.catalog.downloadingNoTotal')
+                    : this._t('benchmark.catalog.downloading', { percent: Math.round(ratio * 100) });
+            return { className: 'running', label };
+        }
+        if (state?.status === 'failed') {
+            return { className: 'failed', label: this._t('benchmark.catalog.downloadFailed') };
+        }
+        switch (resolveCatalogInstallState(entry, this.datasets)) {
+            case 'installed':
+                return { className: 'completed', label: this._t('benchmark.catalog.installed') };
+            case 'update-available':
+                return { className: 'running', label: this._t('benchmark.catalog.updateAvailable') };
+            default:
+                return { className: 'pending', label: this._t('benchmark.catalog.notInstalled') };
+        }
     }
 
     private renderDatasets(): string {
@@ -1161,6 +1376,7 @@ class BenchmarkEntryWidget extends AgentOperableHTMLElement {
         const description = dataset.description
             ? `<div class="card-desc">${escapeHtml(dataset.description)}</div>`
             : '';
+        const version = this.datasetVersionLabel(dataset.version);
         return `
         <article class="dataset-card" data-action="open-dataset" data-dataset-id="${escapeHtml(dataset.id)}">
             <div class="card-header">
@@ -1170,7 +1386,7 @@ class BenchmarkEntryWidget extends AgentOperableHTMLElement {
                     <div class="card-subtitle">
                         ${escapeHtml(this._t('benchmark.datasets.tracks', { count: dataset.tracks.length }))} ·
                         ${escapeHtml(this._t('benchmark.datasets.cases', { count: dataset.caseCount }))} ·
-                        ${escapeHtml(formatTime(dataset.importedAt))}
+                        ${version ? `${escapeHtml(version)} · ` : ''}${escapeHtml(formatTime(dataset.importedAt))}
                     </div>
                 </div>
             </div>
@@ -1179,6 +1395,12 @@ class BenchmarkEntryWidget extends AgentOperableHTMLElement {
                 <div class="card-meta">${tags}</div>
             </div>
         </article>`;
+    }
+
+    /** 测评集版本标签；dataset.json 没写版本时返回空串，不占位 */
+    private datasetVersionLabel(version: string): string {
+        const trimmed = (version || '').trim();
+        return trimmed ? this._t('benchmark.datasets.version', { version: trimmed }) : '';
     }
 
     private renderRuns(): string {
@@ -1241,9 +1463,10 @@ class BenchmarkEntryWidget extends AgentOperableHTMLElement {
         const summary = run.summary;
         const finished = summary.completed + summary.failed + summary.stopped;
         const statusKey = RUN_STATUS_KEYS[run.status] || 'benchmark.status.stopped';
+        const stopping = run.status === 'running' && run.stopRequested === true;
         const stopButton =
             run.status === 'running'
-                ? `<button type="button" class="btn btn-sm" data-action="stop-run">${escapeHtml(this._t('benchmark.action.stop'))}</button>`
+                ? `<button type="button" class="btn btn-sm btn-stop" data-action="stop-run"${stopping ? ' disabled' : ''}>${escapeHtml(this._t(stopping ? 'benchmark.action.stopping' : 'benchmark.action.stop'))}</button>`
                 : '';
         const tabs = `
             <div class="detail-tabs">
@@ -1508,6 +1731,11 @@ class BenchmarkEntryWidget extends AgentOperableHTMLElement {
                 `<div class="cd-item cd-full"><span class="cd-key">${escapeHtml(this._t('benchmark.caseDetail.error'))}</span><span class="cd-error">${escapeHtml(item.error)}</span></div>`
             );
         }
+        if (item.logError) {
+            rows.push(
+                `<div class="cd-item cd-full"><span class="cd-key">${escapeHtml(this._t('benchmark.caseDetail.logError'))}</span><pre class="cd-log-error">${escapeHtml(item.logError)}</pre></div>`
+            );
+        }
         rows.push(
             `<div class="cd-item cd-full"><span class="cd-key">${escapeHtml(this._t('benchmark.caseDetail.reason'))}</span><span class="cd-reason">${escapeHtml(item.reason || this._t('benchmark.detail.noReason'))}</span></div>`
         );
@@ -1517,7 +1745,9 @@ class BenchmarkEntryWidget extends AgentOperableHTMLElement {
         </tr>`;
     }
 
-    /* 用例行右键菜单：复用 agentinput 的 ctx-menu 视觉 */
+    /* 用例行右键菜单：复用 agentinput 的 ctx-menu 视觉。
+       跑过（有任务/有结果）的用例才给菜单，运行中的用例也能跳转到执行/验证任务；
+       跳转项按 taskId 有无禁用，见 renderCaseMenu */
     private handleContextMenu = (event: Event) => {
         const mouse = event as MouseEvent;
         const target = event.target as HTMLElement | null;
@@ -1527,8 +1757,10 @@ class BenchmarkEntryWidget extends AgentOperableHTMLElement {
             return;
         }
         const key = row.dataset.caseKey;
-        if (!this.canExpandCase(this.detail.cases.find((entry) => entry.key === key))) {
-            // 没有结果的行不给菜单，但要把上一条的菜单收掉，否则它会飘在原地
+        const item = this.detail.cases.find((entry) => entry.key === key);
+        // 还没开始跑（pending）的用例既没有可跳转的任务也没有可重跑的意义，
+        // 弹出来只会是一个三项全灰的菜单；顺手把上一条的菜单收掉，否则它会飘在原地
+        if (!item || item.status === 'pending') {
             this.closeCaseMenu();
             return;
         }
@@ -1543,7 +1775,8 @@ class BenchmarkEntryWidget extends AgentOperableHTMLElement {
         const root = this.shadowRoot;
         const menu = this.caseMenu;
         if (!root || !menu) return;
-        const item = this.detail?.cases.find((entry) => entry.key === menu.key);
+        const run = this.detail;
+        const item = run?.cases.find((entry) => entry.key === menu.key);
         const dark = this.dataset.theme === 'dark' ? ' ctx-menu-dark' : '';
         const entry = (action: string, label: string, iconPath: string, disabled = false) => `
             <button type="button" class="ctx-item${disabled ? ' disabled' : ''}" data-action="${action}"
@@ -1551,12 +1784,15 @@ class BenchmarkEntryWidget extends AgentOperableHTMLElement {
                 <span class="ctx-icon-sm"><svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round">${iconPath}</svg></span>
                 <span class="ctx-label">${escapeHtml(label)}</span>
             </button>`;
+        // 整轮在跑或该用例正在执行/验证时不能重跑（后端同样会拒绝）
+        const caseActive = item ? ['preparing', 'running', 'verifying'].includes(item.status) : true;
+        const rerunDisabled = !run || run.status === 'running' || caseActive;
         const html = `
         <div class="ctx-menu case-menu${dark}" style="left:${menu.left}px;top:${menu.top}px">
             ${entry('case-menu-jump-run', this._t('benchmark.caseMenu.jumpRunTask'), '<path d="M3 5a2 2 0 0 1 2-2h6a2 2 0 0 1 2 2v4a2 2 0 0 1-2 2H6l-3 2.5V5Z"/>', !item?.runTaskId)}
             ${entry('case-menu-jump-verify', this._t('benchmark.caseMenu.jumpVerifyTask'), '<circle cx="5.3" cy="5.3" r="3.3"/><path d="M7.9 7.9 10.6 10.6"/>', !item?.verifyTaskId)}
             <div class="ctx-sep"></div>
-            ${entry('case-menu-rerun', this._t('benchmark.caseMenu.rerun'), '<path d="M13 8a5 5 0 1 1-1.5-3.6"/><path d="M13 2v3h-3"/>')}
+            ${entry('case-menu-rerun', this._t('benchmark.caseMenu.rerun'), '<path d="M13 8a5 5 0 1 1-1.5-3.6"/><path d="M13 2v3h-3"/>', rerunDisabled)}
         </div>`;
         root.querySelector('.case-menu')?.remove();
         const holder = document.createElement('div');
@@ -1685,6 +1921,7 @@ class BenchmarkEntryWidget extends AgentOperableHTMLElement {
         if (!dataset) return '';
         const colors = colorFor(dataset.name);
         const initial = dataset.name.trim().charAt(0) || 'B';
+        const version = this.datasetVersionLabel(dataset.version);
         const homepageSection = dataset.homepage
             ? `
                     <div class="section-label">${escapeHtml(this._t('benchmark.datasets.homepage'))}</div>
@@ -1715,6 +1952,7 @@ class BenchmarkEntryWidget extends AgentOperableHTMLElement {
                         <div class="modal-banner-sub">
                             ${escapeHtml(this._t('benchmark.datasets.tracks', { count: dataset.tracks.length }))} ·
                             ${escapeHtml(this._t('benchmark.datasets.cases', { count: dataset.caseCount }))} ·
+                            ${version ? `${escapeHtml(version)} · ` : ''}
                             ${escapeHtml(this._t('benchmark.datasets.importedAt', { time: formatTime(dataset.importedAt) }))}
                         </div>
                     </div>
@@ -1738,6 +1976,189 @@ class BenchmarkEntryWidget extends AgentOperableHTMLElement {
                 </div>
             </div>
         </div>`;
+    }
+
+    private renderCatalogModal(): string {
+        const catalogId = this.catalogModalId;
+        if (!catalogId) return '';
+        const entry = this.catalog.find((item) => item.id === catalogId);
+        if (!entry) return '';
+        const colors = colorFor(entry.name);
+        const initial = entry.name.trim().charAt(0) || 'B';
+        const local = findLocalDatasetByName(this.datasets, entry.name);
+        const installState = resolveCatalogInstallState(entry, this.datasets);
+        const state = this.downloads.get(catalogId);
+        const busy = state?.status === 'downloading' || state?.status === 'installing';
+        const pill = this.catalogStatusView(entry);
+        // 本地 meta 可能没写版本号（dataset.json 里 version 可省略），这时不摆一个空的「本地版本 v」
+        const localVersionSuffix = local?.version.trim()
+            ? ` · ${escapeHtml(this._t('benchmark.catalog.installedVersion', { version: local.version.trim() }))}`
+            : '';
+
+        const homepageSection = entry.homepage
+            ? `
+                    <div class="section-label">${escapeHtml(this._t('benchmark.datasets.homepage'))}</div>
+                    <div class="dataset-homepage">
+                        <button type="button" class="homepage-link" data-action="open-url" data-url="${escapeHtml(entry.homepage)}">${escapeHtml(entry.homepage)}</button>
+                    </div>`
+            : '';
+
+        const tracks = entry.tracks
+            .map((track) => {
+                // 已安装过才能知道用例数，未下载时只展示 track 说明
+                const installedTrack = local?.tracks.find(
+                    (item) => item.id === (track.id ?? track.name) || item.name === track.name
+                );
+                return `
+                <div class="track-item">
+                    <div style="flex:1;min-width:0">
+                        <div class="track-item-name">${escapeHtml(track.name)}</div>
+                        ${track.description ? `<div class="track-item-desc">${escapeHtml(track.description)}</div>` : ''}
+                    </div>
+                    ${
+                        installedTrack
+                            ? `<span class="tag-pill tag-blue">${escapeHtml(this._t('benchmark.datasets.cases', { count: installedTrack.caseCount }))}</span>`
+                            : ''
+                    }
+                </div>`;
+            })
+            .join('');
+
+        let primaryButton: string;
+        if (busy) {
+            const label =
+                state?.status === 'installing'
+                    ? this._t('benchmark.catalog.installing')
+                    : this._t('benchmark.catalog.downloadingNoTotal');
+            primaryButton = `<button type="button" class="btn btn-primary" disabled>${escapeHtml(label)}</button>`;
+        } else if (installState === 'installed') {
+            primaryButton = `<button type="button" class="btn" disabled>${escapeHtml(this._t('benchmark.catalog.installed'))}</button>`;
+        } else {
+            const label =
+                installState === 'update-available'
+                    ? this._t('benchmark.action.update')
+                    : this._t('benchmark.action.download');
+            primaryButton = `<button type="button" class="btn btn-primary" data-action="download-dataset" data-catalog-id="${escapeHtml(entry.id)}">${escapeHtml(label)}</button>`;
+        }
+
+        return `
+        <div class="modal-overlay${this.skipModalAnimation ? ' no-anim' : ''}" data-light-dismiss="true">
+            <div class="modal-dialog">
+                <div class="modal-banner info">
+                    <div class="modal-banner-icon" style="background:${colors.text}">${escapeHtml(initial)}</div>
+                    <div class="modal-banner-text">
+                        <h3 class="modal-banner-title">${escapeHtml(entry.name)}</h3>
+                        <div class="modal-banner-sub">
+                            ${escapeHtml(this._t('benchmark.datasets.tracks', { count: entry.tracks.length }))} ·
+                            ${escapeHtml(this._t('benchmark.catalog.version', { version: entry.version }))}${localVersionSuffix}
+                        </div>
+                    </div>
+                    <span class="status-pill ${pill.className}" data-catalog-status="${escapeHtml(entry.id)}">${escapeHtml(pill.label)}</span>
+                    <button type="button" class="modal-close" data-action="close-catalog">✕</button>
+                </div>
+                <div class="modal-body">
+                    ${entry.description ? `<div style="margin-bottom:16px">${escapeHtml(entry.description)}</div>` : ''}
+                    ${homepageSection}
+                    ${this.renderDownloadProgress(state)}
+                    <div class="section-label">${escapeHtml(this._t('benchmark.dataset.tracks'))}</div>
+                    <div class="track-list">${tracks}</div>
+                </div>
+                <div class="modal-footer">
+                    <span class="spacer"></span>
+                    <button type="button" class="btn" data-action="close-catalog">${escapeHtml(this._t('benchmark.action.close'))}</button>
+                    ${primaryButton}
+                </div>
+            </div>
+        </div>`;
+    }
+
+    /** 下载进度条：只渲染当前状态，进度刷新走 patchDownloadProgress 定点更新 */
+    private renderDownloadProgress(state: DownloadState | undefined): string {
+        if (!state) return '';
+        if (state.status === 'failed') {
+            return `<div class="modal-error">${escapeHtml(
+                this._t('benchmark.catalog.downloadError', { message: state.error || this._t('error.operationFailed') })
+            )}</div>`;
+        }
+        if (state.status !== 'downloading' && state.status !== 'installing') return '';
+        const view = this.downloadProgressView(state);
+        return `
+        <div class="dl-progress" data-dl-progress>
+            <div class="dl-progress-head">
+                <span data-dl-title>${escapeHtml(view.title)}</span>
+                <span data-dl-detail>${escapeHtml(view.detail)}</span>
+            </div>
+            <div class="dl-progress-bar${view.ratio === null ? ' indeterminate' : ''}">
+                <span data-dl-bar style="width:${view.ratio === null ? 100 : Math.round(view.ratio * 100)}%"></span>
+            </div>
+        </div>`;
+    }
+
+    private downloadProgressView(state: DownloadState): { title: string; detail: string; ratio: number | null } {
+        if (state.status === 'installing') {
+            return {
+                title: this._t('benchmark.catalog.installing'),
+                detail: state.totalBytes ? formatBytes(state.totalBytes) : '',
+                ratio: 1
+            };
+        }
+        const ratio =
+            state.totalBytes && state.totalBytes > 0 ? Math.min(1, state.receivedBytes / state.totalBytes) : null;
+        return {
+            title:
+                ratio === null
+                    ? this._t('benchmark.catalog.downloadingNoTotal')
+                    : this._t('benchmark.catalog.downloading', { percent: Math.round(ratio * 100) }),
+            detail: state.totalBytes
+                ? this._t('benchmark.catalog.progressDetail', {
+                      received: formatBytes(state.receivedBytes),
+                      total: formatBytes(state.totalBytes)
+                  })
+                : formatBytes(state.receivedBytes),
+            ratio
+        };
+    }
+
+    /** 下载进行中的定点刷新：不重建弹窗，按钮/滚动/hover 都不受影响 */
+    private patchDownloadProgress(): void {
+        this.patchCatalogStatusPills();
+        const root = this.shadowRoot;
+        const catalogId = this.catalogModalId;
+        if (!root || !catalogId) return;
+        const state = this.downloads.get(catalogId);
+        if (!state) return;
+
+        const view = this.downloadProgressView(state);
+        const title = root.querySelector('[data-dl-title]') as HTMLElement | null;
+        if (title && title.textContent !== view.title) title.textContent = view.title;
+        const detail = root.querySelector('[data-dl-detail]') as HTMLElement | null;
+        if (detail && detail.textContent !== view.detail) detail.textContent = view.detail;
+        const bar = root.querySelector('[data-dl-bar]') as HTMLElement | null;
+        if (!bar) return;
+        // 拿到 content-length 后必须退掉漂移动画，否则动画的 width/transform 会盖掉真实百分比
+        const track = bar.parentElement;
+        if (track) {
+            const indeterminate = view.ratio === null;
+            if (track.classList.contains('indeterminate') !== indeterminate) {
+                track.classList.toggle('indeterminate', indeterminate);
+            }
+        }
+        const width = `${view.ratio === null ? 100 : Math.round(view.ratio * 100)}%`;
+        if (bar.style.width !== width) bar.style.width = width;
+    }
+
+    /** 清单项状态标签（卡片和弹窗共用）的定点更新 */
+    private patchCatalogStatusPills(): void {
+        const root = this.shadowRoot;
+        if (!root) return;
+        root.querySelectorAll<HTMLElement>('[data-catalog-status]').forEach((element) => {
+            const entry = this.catalog.find((item) => item.id === element.dataset.catalogStatus);
+            if (!entry) return;
+            const view = this.catalogStatusView(entry);
+            const className = `status-pill ${view.className}`;
+            if (element.className !== className) element.className = className;
+            if (element.textContent !== view.label) element.textContent = view.label;
+        });
     }
 
     private renderRunModal(): string {

@@ -13,9 +13,12 @@ import { z } from 'zod';
 import { BaseApplication, type EventDecl } from '../base.js';
 import { t } from './locale/index.js';
 import { BenchmarkManager } from './manager.js';
+import { findCatalogDataset, listCatalogDatasets } from './catalog.js';
 import {
     BenchmarkDataError,
+    type CatalogDatasetEntry,
     type DatasetSummary,
+    type DownloadState,
     type ModelOption,
     type RunListItem,
     type RunRecord
@@ -25,6 +28,7 @@ import { resolveModelReasoningEfforts, resolveModelVisionSupport } from '../../u
 import { REASONING_EFFORT_STORAGE_VALUES } from '../../../common/reasoning-effort.js';
 import { getPlatform } from '../../../platforms/base.js';
 import { logger } from '../../utils/logger.js';
+import { NotificationManager } from '../../utils/notificationmgr.js';
 import { toErrorMessage } from '../../../common/utils/error.js';
 import { openTaskInMainWindow } from '../../utils/system-notification.js';
 
@@ -51,6 +55,7 @@ export class BenchmarkApplication extends BaseApplication {
     async getSupportedEvents(): Promise<EventDecl[]> {
         return [
             { eventName: 'datasetsChanged', eventDescription: '测评集列表发生变化' },
+            { eventName: 'downloadsChanged', eventDescription: '测评集下载进度发生变化' },
             { eventName: 'runsChanged', eventDescription: '测评运行状态发生变化' }
         ];
     }
@@ -79,6 +84,47 @@ export class BenchmarkApplication extends BaseApplication {
 
     async deleteDataset(datasetId: string): Promise<void> {
         this.requireManager().deleteDataset(datasetId);
+    }
+
+    /** 测评集下载中心的可下载清单 */
+    async listCatalogDatasets(): Promise<CatalogDatasetEntry[]> {
+        return listCatalogDatasets();
+    }
+
+    /** 当前所有下载任务的状态（渲染层据此画进度条） */
+    async listDownloads(): Promise<DownloadState[]> {
+        return this.requireManager().listDownloads();
+    }
+
+    /**
+     * 下载清单里的某个测评集。
+     *
+     * 下载在后台进行：进度通过 downloadsChanged 事件推动，完成后用通知中心告知用户，
+     * 所以这里拿到任务已启动就返回，不阻塞渲染层。
+     */
+    async downloadDataset(catalogId: string): Promise<void> {
+        const entry = findCatalogDataset(typeof catalogId === 'string' ? catalogId : '');
+        if (!entry) {
+            throw new BenchmarkDataError(t('error.catalogNotFound'));
+        }
+        const manager = this.requireManager();
+        const notifications = NotificationManager.getInstance();
+        void manager
+            .downloadDataset(entry, { fetchImpl: (input, init) => getPlatform().fetch(input as string | URL, init) })
+            .then((dataset) => {
+                notifications.info(
+                    this.getName(),
+                    t('benchmark.download.notifyTitle'),
+                    t('benchmark.download.notifySuccess', { name: dataset.name, version: dataset.version })
+                );
+            })
+            .catch((error) => {
+                notifications.error(
+                    this.getName(),
+                    t('benchmark.download.notifyTitle'),
+                    t('benchmark.download.notifyFailed', { name: entry.name, message: toErrorMessage(error) })
+                );
+            });
     }
 
     async listRuns(): Promise<RunListItem[]> {
@@ -170,7 +216,7 @@ export class BenchmarkApplication extends BaseApplication {
         openTaskInMainWindow(taskId);
     }
 
-    /** 用原运行记录的模型/并发/超时重新跑单个用例，返回新运行 id */
+    /** 在原测评历史记录内原地重跑单个用例（其余用例结果保留），返回原运行 id */
     async rerunCase(runId: string, caseKey: string): Promise<string> {
         const manager = this.requireManager();
         const run = manager.getRun(runId);
@@ -194,7 +240,8 @@ export class BenchmarkApplication extends BaseApplication {
             runTimeoutSec: run.runTimeoutSec ?? null,
             verifyTimeoutSec: run.verifyTimeoutSec ?? null,
             tracks: run.tracks,
-            caseKeys: [caseKey]
+            caseKeys: [caseKey],
+            appendToRunId: runId
         });
     }
 
@@ -234,6 +281,10 @@ export class BenchmarkApplication extends BaseApplication {
                 manager.onChange(() => {
                     void this.emitEvent('datasetsChanged').catch(() => undefined);
                     void this.emitEvent('runsChanged').catch(() => undefined);
+                });
+                // 下载进度单独一路：只让渲染层刷进度条，别触发整页重建
+                manager.onDownloadChange(() => {
+                    void this.emitEvent('downloadsChanged').catch(() => undefined);
                 });
                 this.manager = manager;
                 logger.info(`[benchmark] data directory: ${this.getDataDirectory()}`);

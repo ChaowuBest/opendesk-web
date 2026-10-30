@@ -77,6 +77,37 @@ export interface DatasetSummary {
     tracks: DatasetTrackSummary[];
 }
 
+/**
+ * 测评集下载中心的一条清单项。
+ * 除下载地址外，其余字段语义与测评集自带的 dataset.json 保持一致。
+ */
+export interface CatalogDatasetEntry {
+    /** 清单内稳定 id，不随版本变化 */
+    id: string;
+    name: string;
+    description: string;
+    homepage: string;
+    version: string;
+    /** 压缩包下载地址（zip / tar.gz / tgz / tar） */
+    downloadUrl: string;
+    tracks: DatasetTrackRef[];
+}
+
+export type DownloadStatus = 'downloading' | 'installing' | 'done' | 'failed';
+
+/** 单个测评集的下载进度（主进程内存态，供渲染层订阅刷新） */
+export interface DownloadState {
+    catalogId: string;
+    status: DownloadStatus;
+    receivedBytes: number;
+    /** 服务端未声明 content-length 时为 null（进度条按不确定态展示） */
+    totalBytes: number | null;
+    error: string;
+}
+
+/** 清单项在本地的安装状态 */
+export type CatalogInstallState = 'not-installed' | 'update-available' | 'installed';
+
 export type CaseRunStatus = 'pending' | 'preparing' | 'running' | 'verifying' | 'done' | 'failed' | 'stopped';
 
 export type RunStatus = 'running' | 'completed' | 'stopped' | 'failed';
@@ -96,6 +127,8 @@ export interface CaseRunState {
     ratio: number | null;
     reason: string;
     error: string;
+    /** 脚本失败时 stdout/stderr 的合并输出尾部，供详情面板「错误信息」栏展示；其他失败为空 */
+    logError: string;
     runTaskId: string | null;
     verifyTaskId: string | null;
     startedAt: number | null;
@@ -129,6 +162,8 @@ export interface RunRecord {
     startedAt: number | null;
     finishedAt: number | null;
     status: RunStatus;
+    /** 用户已点停止、引擎还在收尾（用例逐个标记停止）时为 true，UI 显示「正在停止」 */
+    stopRequested?: boolean;
     concurrency: number;
     runModel: string;
     verifyModel: string;

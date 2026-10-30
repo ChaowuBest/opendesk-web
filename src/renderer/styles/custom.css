@@ -3299,6 +3299,31 @@ html[data-theme='dark'] .od-retry-now-btn:active {
     background: #60a5fa;
 }
 
+/*
+ * 分割线要压住两侧面板：面板里常见 position: relative 的卡片，没有层级时下面
+ * 扩展出来的触摸命中区会被相邻面板的定位内容盖掉一半。
+ */
+.taskview-resizer {
+    position: relative;
+    z-index: 1;
+}
+
+/*
+ * 触摸屏上分割线本身只有 4px 宽，手指难以精确命中，向左右各扩 6px 命中区（不占布局）。
+ * any-pointer 覆盖触屏笔记本这类"鼠标 + 触摸"共存的设备；纯鼠标设备不匹配，
+ * 避免抢走相邻面板边缘的点击。
+ */
+@media (any-pointer: coarse) {
+    .taskview-resizer::after {
+        content: '';
+        position: absolute;
+        top: 0;
+        bottom: 0;
+        left: -6px;
+        right: -6px;
+    }
+}
+
 /* =========================================
    Agent send button group
    ========================================= */

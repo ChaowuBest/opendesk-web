@@ -69,7 +69,12 @@ export type {
     PluginStatus,
     RecordPluginErrorOptions
 } from './runtime/host.js';
-export { initializePluginHost, disposePluginHost, reloadPluginHost } from './runtime/bootstrap.js';
+export {
+    initializePluginHost,
+    disposePluginHost,
+    reloadPluginHost,
+    applyPluginEnabledChange
+} from './runtime/bootstrap.js';
 export { getRuntimePluginDirectories, setRuntimePluginDirectories } from './management/config.js';
 export { getPluginRuntimeEntry, setPluginOptions, setPluginGrantedCapabilities } from './management/policy.js';
 export { discoverPlugins, verifyPluginRecord } from './discovery/discovery.js';

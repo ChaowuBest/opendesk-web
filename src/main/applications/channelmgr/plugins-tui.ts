@@ -42,10 +42,17 @@ export class PluginsListOverlay implements Component {
     private plugins: PluginRegistryRecord[] = [];
     private pendingPlugin?: PluginRegistryRecord;
     private onReload?: () => Promise<void>;
+    /** 启停回调（可选）：提供时 toggle 走差量启停，否则回退到 onReload 全量重载 */
+    private onToggle?: (id: string, enabled: boolean) => Promise<void>;
 
-    constructor(openDeskTUI: OpenDeskTUI, onReload?: () => Promise<void>) {
+    constructor(
+        openDeskTUI: OpenDeskTUI,
+        onReload?: () => Promise<void>,
+        onToggle?: (id: string, enabled: boolean) => Promise<void>
+    ) {
         this.openDeskTUI = openDeskTUI;
         this.onReload = onReload;
+        this.onToggle = onToggle;
         this.header = new Text(chalk.bold(t('plugin.tui.title')));
         this.box = new Box(1, 1);
         this.box.setBgFn((text: string) => chalk.bgHex('#2d2d2d').hex('#e0e0e0')(text));
@@ -142,22 +149,31 @@ export class PluginsListOverlay implements Component {
     }
 
     private async performToggle(plugin: PluginRegistryRecord) {
+        const enabled = !plugin.enabled;
         const action = plugin.enabled ? t('plugin.tui.action.disable') : t('plugin.tui.action.enable');
-        const ok = setPluginEnabled(plugin.id, !plugin.enabled);
-        if (ok) {
-            if (this.onReload) {
-                try {
-                    await this.onReload();
-                } catch {
-                    /* best effort */
-                }
-            }
-            this.showList();
-            this.showResultMessage(t('plugin.tui.toggleDone', { action, id: plugin.id }));
-        } else {
+        if (!setPluginEnabled(plugin.id, enabled)) {
             this.showList();
             this.showResultMessage(t('plugin.tui.notFound', { id: plugin.id }));
+            return;
         }
+        try {
+            // 提供专用启停回调时走差量路径（其他插件与渠道不受影响），否则回退全量重载
+            if (this.onToggle) {
+                await this.onToggle(plugin.id, enabled);
+            } else if (this.onReload) {
+                await this.onReload();
+            }
+        } catch (err: any) {
+            // 启用失败（完整性校验、入口缺失等）：回滚注册表并提示原因，不谎报完成
+            setPluginEnabled(plugin.id, plugin.enabled);
+            this.showList();
+            this.showResultMessage(
+                t('plugin.tui.toggleFail', { action, id: plugin.id, error: err?.message ?? String(err) })
+            );
+            return;
+        }
+        this.showList();
+        this.showResultMessage(t('plugin.tui.toggleDone', { action, id: plugin.id }));
     }
 
     // ── Uninstall ────────────────────────────────────────────────────────────

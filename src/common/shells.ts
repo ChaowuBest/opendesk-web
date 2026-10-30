@@ -22,17 +22,25 @@ export interface ShellSelection {
     shell_sandboxed?: boolean;
 }
 
+/**
+ * 归一化 shell 路径用于匹配：统一正斜杠；Windows（或盘符路径）不区分大小写。
+ * 供 selectSupportedShell 与 benchmark 等跨模块的 shell 路径匹配复用。
+ */
+export function normalizeShellPath(value: string, platform?: string): string {
+    const normalized = value.replace(/\\/g, '/');
+    return platform === 'win32' || /^[a-z]:\//i.test(normalized) ? normalized.toLowerCase() : normalized;
+}
+
 export function selectSupportedShell(
     shells: readonly SupportedShell[],
     selection: ShellSelection = {},
     platform?: string
 ): SupportedShell | null {
-    const normalize = (value: string) => {
-        const normalized = value.replace(/\\/g, '/');
-        return platform === 'win32' || /^[a-z]:\//i.test(normalized) ? normalized.toLowerCase() : normalized;
-    };
     const matching = selection.shell_path
-        ? shells.filter((shell) => normalize(shell.path) === normalize(selection.shell_path!))
+        ? shells.filter(
+              (shell) =>
+                  normalizeShellPath(shell.path, platform) === normalizeShellPath(selection.shell_path!, platform)
+          )
         : [];
     return (
         matching.find((shell) => shell.sandboxed === (selection.shell_sandboxed === true)) ??

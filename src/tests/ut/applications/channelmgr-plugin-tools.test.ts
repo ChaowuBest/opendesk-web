@@ -2,10 +2,11 @@ import { jest, describe, test, expect, beforeEach } from '@jest/globals';
 
 /**
  * 回归测试：installChannelPlugin / uninstallChannelPlugin / toggleChannelPlugin
- * 在修改插件注册表后，必须先 reloadPluginHost()（让插件宿主重新加载插件，
- * 新插件的 ctx.channels.register 才会执行、channel 才会出现在宿主运行时），
- * 再 reloadChannels() 收集渠道。修复前缺少 reloadPluginHost，导致新安装的
- * 插件虽然已写入注册表，但 GUI 系统设置页 / 运行时均收集不到对应 channel。
+ * 在修改插件注册表后，必须先让插件宿主应用变更（reloadPluginHost 全量重载或
+ * toggle 的 applyPluginEnabledChange 差量启停，使 ctx.channels.register 执行、
+ * channel 出现在宿主运行时），再 reloadChannels()/syncChannelsWithPluginHost()
+ * 收集渠道。修复前缺少宿主侧变更，导致新安装的插件虽然已写入注册表，
+ * 但 GUI 系统设置页 / 运行时均收集不到对应 channel。
  */
 
 // ── mock 模块（unstable_mockModule 不提升，变量需先初始化） ─────────────────
@@ -14,6 +15,7 @@ const mockInstallPlugin = jest.fn<() => Promise<{ success: boolean; id?: string;
 const mockUninstallPlugin = jest.fn<() => Promise<{ success: boolean; error?: string }>>();
 const mockSetPluginEnabled = jest.fn<() => boolean>();
 const mockReloadPluginHost = jest.fn<() => Promise<void>>();
+const mockApplyPluginEnabledChange = jest.fn<() => Promise<void>>();
 
 jest.unstable_mockModule('../../../main/applications/pluginmgr/index.js', () => ({
     installPlugin: mockInstallPlugin,
@@ -21,7 +23,8 @@ jest.unstable_mockModule('../../../main/applications/pluginmgr/index.js', () => 
     listInstalledPlugins: jest.fn(),
     listVisiblePlugins: jest.fn(),
     setPluginEnabled: mockSetPluginEnabled,
-    reloadPluginHost: mockReloadPluginHost
+    reloadPluginHost: mockReloadPluginHost,
+    applyPluginEnabledChange: mockApplyPluginEnabledChange
 }));
 
 jest.unstable_mockModule('../../../main/applications/channelmgr/app.js', () => ({
@@ -84,10 +87,14 @@ const { InstallChannelPluginTool, UninstallChannelPluginTool, ToggleChannelPlugi
 
 interface FakeApp {
     reloadChannels: ReturnType<typeof jest.fn>;
+    syncChannelsWithPluginHost: ReturnType<typeof jest.fn>;
 }
 
 function makeApp(): FakeApp {
-    return { reloadChannels: jest.fn<() => Promise<void>>(async () => {}) };
+    return {
+        reloadChannels: jest.fn<() => Promise<void>>(async () => {}),
+        syncChannelsWithPluginHost: jest.fn<(id?: string, operation?: string) => Promise<void>>(async () => {})
+    };
 }
 
 beforeEach(() => {
@@ -139,31 +146,45 @@ describe('channelmgr 插件管理工具的宿主重载顺序', () => {
         );
     });
 
-    test('toggleChannelPlugin 启用成功后先 reloadPluginHost 再 reloadChannels', async () => {
+    test('toggleChannelPlugin 启用成功后差量应用启停再同步渠道', async () => {
         mockSetPluginEnabled.mockReturnValue(true);
         const app = makeApp();
-        const tool = new ToggleChannelPluginTool(app);
+        const tool = new ToggleChannelPluginTool(app as any);
 
         const result = await tool.execute({ id: 'my-channel', enabled: true });
 
         expect(result.status).toBe('success');
         expect(mockSetPluginEnabled).toHaveBeenCalledWith('my-channel', true);
-        expect(mockReloadPluginHost).toHaveBeenCalledTimes(1);
-        expect(app.reloadChannels).toHaveBeenCalledTimes(1);
-        expect(mockReloadPluginHost.mock.invocationCallOrder[0]).toBeLessThan(
-            app.reloadChannels.mock.invocationCallOrder[0]
+        expect(mockApplyPluginEnabledChange).toHaveBeenCalledTimes(1);
+        expect(app.syncChannelsWithPluginHost).toHaveBeenCalledWith('my-channel', 'enable');
+        expect(mockApplyPluginEnabledChange.mock.invocationCallOrder[0]).toBeLessThan(
+            (app.syncChannelsWithPluginHost as any).mock.invocationCallOrder[0]
         );
     });
 
     test('toggleChannelPlugin 未找到插件时不触发宿主重载', async () => {
         mockSetPluginEnabled.mockReturnValue(false);
         const app = makeApp();
-        const tool = new ToggleChannelPluginTool(app);
+        const tool = new ToggleChannelPluginTool(app as any);
 
         const result = await tool.execute({ id: 'missing', enabled: true });
 
         expect(result.result).toContain('未找到插件');
-        expect(mockReloadPluginHost).not.toHaveBeenCalled();
-        expect(app.reloadChannels).not.toHaveBeenCalled();
+        expect(mockApplyPluginEnabledChange).not.toHaveBeenCalled();
+        expect(app.syncChannelsWithPluginHost).not.toHaveBeenCalled();
+    });
+
+    test('toggleChannelPlugin 启用失败时回滚注册表且不同步渠道', async () => {
+        mockSetPluginEnabled.mockReturnValue(true);
+        mockApplyPluginEnabledChange.mockRejectedValueOnce(new Error('plugin.activate_failed'));
+        const app = makeApp();
+        const tool = new ToggleChannelPluginTool(app as any);
+
+        const result = await tool.execute({ id: 'broken-channel', enabled: true });
+
+        expect(result.result).toContain('插件启用失败');
+        // 注册表回滚为禁用，避免留下「已启用但未生效」的状态
+        expect(mockSetPluginEnabled).toHaveBeenLastCalledWith('broken-channel', false);
+        expect(app.syncChannelsWithPluginHost).not.toHaveBeenCalled();
     });
 });

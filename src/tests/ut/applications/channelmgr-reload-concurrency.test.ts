@@ -32,13 +32,14 @@ interface ReloadRecorder {
 
 /**
  * 构造一个不经过构造函数的 ChannelMgrApplication 实例：
- * reloadChannels 只依赖 reloadPromise / reloadFollowUpQueued 两个字段，
+ * reloadChannels 只依赖 reloadPromise / reloadFollowUpQueued / channelQueue 三个字段，
  * doReloadChannels 用可挂起的假实现替换，从而精确控制轮次交错。
  */
 function makeApp() {
     const app = Object.create(ChannelMgrApplication.prototype) as any;
     app.reloadPromise = undefined;
     app.reloadFollowUpQueued = false;
+    app.channelQueue = Promise.resolve();
 
     const rec: ReloadRecorder = {
         roundCount: 0,

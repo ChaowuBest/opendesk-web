@@ -329,3 +329,18 @@ describe('filterShellEnvironmentWarnings: getcwd noise', () => {
         }
     });
 });
+
+describe('filterShellEnvironmentWarnings: bash -i job control noise', () => {
+    test('removes both startup warnings produced without a controlling terminal', () => {
+        const text =
+            'bash: cannot set terminal process group (-1234): Inappropriate ioctl for device\n' +
+            'bash: no job control in this shell\n' +
+            'real output\n';
+        expect(filterShellEnvironmentWarnings(text)).toBe('real output\n');
+    });
+
+    test('keeps real fg/bg errors that lack the "in this shell" suffix', () => {
+        const err = 'bash: line 1: fg: no job control\n';
+        expect(filterShellEnvironmentWarnings(err)).toBe(err);
+    });
+});

@@ -16,9 +16,11 @@ class SplitterWidget extends HTMLElement {
         super();
         this.attachShadow({ mode: 'open' });
         this._isResizing = false;
+        // 发起拖动的指针：多指同按（触摸屏上的掌压、第二根手指）时只跟随它
+        this._pointerId = null;
         this._defaultWidth = DEFAULT_SIDEBAR_WIDTH;
-        this._onMouseMove = this._onMouseMove.bind(this);
-        this._onMouseUp = this._onMouseUp.bind(this);
+        this._onPointerMove = this._onPointerMove.bind(this);
+        this._onPointerUp = this._onPointerUp.bind(this);
     }
 
     static get observedAttributes() {
@@ -72,15 +74,34 @@ class SplitterWidget extends HTMLElement {
             }
             .resizer {
                 position: relative;
+                /* 压住两侧面板：面板里常见 position: relative 的卡片，不给层级时
+                 * 下面扩展出来的触摸命中区会被相邻面板的定位内容盖掉 */
+                z-index: 1;
                 background: var(--od-bg, #f5f5f5);
                 width: 6px;
                 min-width: 6px;
                 cursor: col-resize;
                 flex-shrink: 0;
+                /* 拖动手势交给 pointer 事件：默认 touch-action 下浏览器会把按住拖动
+                 * 判定为滚动/缩放手势并派发 pointercancel，分割线在触摸屏上拖不动 */
+                touch-action: none;
                 transition:
                     width 0.22s ease,
                     min-width 0.22s ease,
                     opacity 0.16s ease;
+            }
+            /* 触摸屏上 6px 分割线难以精确命中，向两侧各扩 6px 命中区（不占布局）。
+             * any-pointer 覆盖触屏笔记本这类"鼠标 + 触摸"共存的设备；
+             * 纯鼠标设备不匹配，避免抢走相邻面板边缘的点击。 */
+            @media (any-pointer: coarse) {
+                .resizer::after {
+                    content: '';
+                    position: absolute;
+                    top: 0;
+                    bottom: 0;
+                    left: -6px;
+                    right: -6px;
+                }
             }
             .resizer-center {
                 position: absolute;
@@ -142,10 +163,13 @@ class SplitterWidget extends HTMLElement {
         `;
 
         const resizer = this.shadowRoot.getElementById('resizer');
-        resizer.addEventListener('mousedown', (e) => {
+        // 统一使用指针事件：触摸屏拖动不会派发 mousemove，只监听鼠标事件时
+        // 分割线在触摸/触控笔场景下完全无法拖动。
+        resizer.addEventListener('pointerdown', (e) => {
+            if (e.button !== 0) return;
             e.preventDefault();
             e.stopPropagation();
-            this._startResize();
+            this._startResize(e.pointerId);
         });
 
         // 双击分割线恢复默认宽度
@@ -179,15 +203,19 @@ class SplitterWidget extends HTMLElement {
         );
     }
 
-    _startResize() {
+    _startResize(pointerId) {
         if (this._isResizing || this.isCollapsed()) return;
         this._isResizing = true;
+        this._pointerId = pointerId;
         this.setAttribute('resizing', '');
         document.body.style.cursor = 'col-resize';
         document.body.style.userSelect = 'none';
-        document.addEventListener('mousemove', this._onMouseMove);
-        document.addEventListener('mouseup', this._onMouseUp);
-        // 防止鼠标进入 iframe 区域后事件被 iframe 拦截
+        // 挂在 window 上：拖动过程中指针可能移出分割线甚至窗口边界，window 级监听
+        // 才能保证 pointermove/pointerup 连续送达
+        window.addEventListener('pointermove', this._onPointerMove);
+        window.addEventListener('pointerup', this._onPointerUp);
+        window.addEventListener('pointercancel', this._onPointerUp);
+        // 防止指针进入 iframe 区域后事件被 iframe 拦截
         const rightWrapper = this.shadowRoot.getElementById('rightPanelWrapper');
         if (rightWrapper) {
             rightWrapper.style.pointerEvents = 'none';
@@ -197,11 +225,13 @@ class SplitterWidget extends HTMLElement {
     _stopResize() {
         if (!this._isResizing) return;
         this._isResizing = false;
+        this._pointerId = null;
         this.removeAttribute('resizing');
         document.body.style.cursor = '';
         document.body.style.userSelect = '';
-        document.removeEventListener('mousemove', this._onMouseMove);
-        document.removeEventListener('mouseup', this._onMouseUp);
+        window.removeEventListener('pointermove', this._onPointerMove);
+        window.removeEventListener('pointerup', this._onPointerUp);
+        window.removeEventListener('pointercancel', this._onPointerUp);
         const rightWrapper = this.shadowRoot.getElementById('rightPanelWrapper');
         if (rightWrapper) {
             rightWrapper.style.pointerEvents = '';
@@ -223,8 +253,9 @@ class SplitterWidget extends HTMLElement {
         }
     }
 
-    _onMouseMove(e) {
-        if (!this._isResizing) return;
+    _onPointerMove(e) {
+        // 多指同按：只跟随发起拖动的那根手指
+        if (!this._isResizing || e.pointerId !== this._pointerId) return;
         e.preventDefault();
 
         const leftPanel = this.shadowRoot.getElementById('leftPanel');
@@ -232,8 +263,8 @@ class SplitterWidget extends HTMLElement {
 
         const containerRect = this.getBoundingClientRect();
         const containerWidth = containerRect.width;
-        const mouseX = e.clientX - containerRect.left;
-        const leftWidth = mouseX;
+        const pointerX = e.clientX - containerRect.left;
+        const leftWidth = pointerX;
 
         const minWidth = 200;
         const maxWidth = containerWidth * 0.85;
@@ -243,7 +274,8 @@ class SplitterWidget extends HTMLElement {
         leftPanel.style.width = leftWidth + 'px';
     }
 
-    _onMouseUp(e) {
+    _onPointerUp(e) {
+        if (e.pointerId !== this._pointerId) return;
         this._stopResize();
     }
 }
