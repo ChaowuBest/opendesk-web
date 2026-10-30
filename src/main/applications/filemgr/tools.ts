@@ -33,7 +33,7 @@ import readline from 'node:readline';
 import * as diff from 'diff';
 import fileType from 'file-type';
 import chalk from 'chalk';
-import fastGlob from 'fast-glob';
+import picomatch from 'picomatch';
 
 const MAX_DIFF_LINES = 50;
 const RENDER_CONTENT_MAX_CHARS = 4000;
@@ -2586,18 +2586,31 @@ export class ApplyPatchTool extends BaseTool<typeof applyPatchSchema> {
 
 // ==================== Glob 工具 ====================
 
-const DEFAULT_GLOB_IGNORE = [
-    'node_modules/**',
-    '.git/**',
-    'dist/**',
-    'build/**',
-    '.next/**',
-    '.nuxt/**',
-    '__pycache__/**',
-    '.cache/**',
-    'coverage/**',
-    '.tsbuildinfo'
+/**
+ * 目录名黑名单：命中即整棵剪枝。
+ * 遍历在 readdir 阶段就跳过这些目录，node_modules 等超大目录不会被展开。
+ * 注意不能只依赖 glob 的 ignore 模式：`node_modules/**` 只匹配搜索根目录下的同名目录，
+ * 在 C:/Projects 这类多项目父目录下会遍历各子项目的 node_modules。
+ */
+const PRUNED_DIR_NAMES = [
+    'node_modules',
+    '.git',
+    'dist',
+    'build',
+    '.next',
+    '.nuxt',
+    '__pycache__',
+    '.cache',
+    'coverage'
 ];
+
+const PRUNED_DIR_NAME_SET = new Set(PRUNED_DIR_NAMES);
+
+/** 文件级忽略模式（相对搜索根的 picomatch 语法） */
+const IGNORED_FILE_PATTERNS = ['**/*.min.js', '**/*.min.css', '**/*.map', '**/*.lock'];
+
+/** globFiles 额外忽略的文件模式（目录黑名单由 PRUNED_DIR_NAMES 统一剪枝） */
+const GLOB_IGNORED_FILE_PATTERNS = ['**/*.tsbuildinfo'];
 
 const globSchema = z.object({
     pattern: z
@@ -2729,45 +2742,55 @@ export class GlobFilesTool extends BaseTool<typeof globSchema> {
         }
 
         try {
-            const ignorePatterns = [...DEFAULT_GLOB_IGNORE, ...(ignore || [])];
+            const basePath = searchPath || workingDir;
+            const startedAt = Date.now();
+            const timeBudgetMs = Number(process.env['OPENDESK_GLOB_TIME_BUDGET_MS']) || GREP_TIME_BUDGET_MS;
+            let scanLimited = false;
 
-            const options: fastGlob.Options = {
-                cwd: searchPath || workingDir,
-                ignore: ignorePatterns,
-                caseSensitiveMatch: caseSensitive,
-                absolute: true,
-                onlyFiles: true,
-                followSymbolicLinks: false,
-                suppressErrors: true
-            };
-
-            let files = await fastGlob(pattern, options);
-
-            // Windows NTFS 不区分大小写，需要在应用层二次过滤
+            // 流式收集并限制在 maxResults 个：遍历在 readdir 阶段剪枝，
+            // 堆内存与目录树规模无关（一次性 fastGlob 会返回全量数组，直接耗尽堆内存）。
+            // Windows NTFS 不区分大小写，需要在应用层二次过滤。
+            let extFilter: string | undefined;
             if (caseSensitive && process.platform === 'win32') {
                 const patternToMatch = pattern.replace(/\*\*\//g, '');
-                const extMatch = patternToMatch.match(/\.\w+$/);
-                if (extMatch) {
-                    const ext = extMatch[0];
-                    files = files.filter((f) => f.endsWith(ext));
+                extFilter = patternToMatch.match(/\.\w+$/)?.[0];
+            }
+
+            const files: string[] = [];
+            let truncated = false;
+            for await (const filePath of walkFiles(basePath, {
+                filePattern: pattern,
+                ignorePatterns: [...GLOB_IGNORED_FILE_PATTERNS, ...(ignore || [])],
+                timeBudgetMs,
+                startedAt,
+                onLimitReached: () => {
+                    scanLimited = true;
                 }
+            })) {
+                if (extFilter && !filePath.endsWith(extFilter)) continue;
+                if (files.length >= maxResults) {
+                    truncated = true;
+                    break;
+                }
+                files.push(filePath);
             }
 
             if (files.length === 0) {
                 return '未找到匹配的文件';
             }
 
-            // 将绝对路径转为相对于搜索目录的路径，统一使用正斜杠
-            const basePath = searchPath || workingDir;
-            const displayFiles = files.slice(0, maxResults).map((f) => {
+            const displayFiles = files.map((f) => {
                 const rel = path.relative(basePath, f);
                 return toForwardSlash(rel.startsWith('..') ? f : rel);
             });
 
             const result = displayFiles.join('\n');
 
-            if (files.length > maxResults) {
-                return `找到 ${files.length} 个文件（显示前 ${maxResults} 个）:\n\n${result}\n\n… 还有 ${files.length - maxResults} 个文件未显示`;
+            if (truncated) {
+                return `找到超过 ${maxResults} 个文件（显示前 ${maxResults} 个）:\n\n${result}\n\n… 还有更多文件未显示`;
+            }
+            if (scanLimited) {
+                return `已扫描 ${WALK_MAX_SCANNED_FILES} 个文件，找到 ${files.length} 个匹配（可能不完整）:\n\n${result}`;
             }
 
             return `找到 ${files.length} 个文件:\n\n${result}`;
@@ -2779,31 +2802,166 @@ export class GlobFilesTool extends BaseTool<typeof globSchema> {
 
 // ==================== Grep 工具 ====================
 
-const DEFAULT_GREP_IGNORE = [
-    'node_modules/**',
-    '.git/**',
-    'dist/**',
-    'build/**',
-    '*.min.js',
-    '*.min.css',
-    '*.map',
-    '*.lock',
-    '.next/**',
-    '.nuxt/**',
-    '__pycache__/**',
-    '.cache/**',
-    'coverage/**'
-];
-
 const GREP_MAX_FILE_SIZE_BYTES = 20 * 1024 * 1024;
 const GREP_FILE_SEARCH_CONCURRENCY = 4;
 const GREP_MAX_GITIGNORE_PATTERNS = 50_000;
+/** 收集 .gitignore 的时间预算：这部分只是为剪枝服务的辅助遍历，不能吃掉主搜索的预算 */
+const GREP_GITIGNORE_TIME_BUDGET_MS = 2_000;
+/** 单次最多收集的 .gitignore 文件数 */
+const GREP_MAX_GITIGNORE_FILES = 500;
 /** 单行输出字符数上限：匹配行按匹配位置取窗口，上下文行保留头部 */
 const GREP_DEFAULT_MAX_COLUMNS = 300;
 /** 匹配行窗口中，匹配点之前保留的字符数（提供可读的上下文） */
 const GREP_MATCH_CONTEXT_BEFORE = 40;
 /** ReDoS 防护：整个搜索的时间预算（毫秒），超时中断并返回部分结果 */
 const GREP_TIME_BUDGET_MS = 10_000;
+/**
+ * 单次搜索允许扫描的文件数上限。
+ * 有了它，内存占用与耗时只取决于这个上限，与目录树规模无关；
+ * 即使误把搜索根指向包含数百万文件的目录，也不会把堆吃满。
+ */
+const WALK_MAX_SCANNED_FILES = 200_000;
+/**
+ * 子目录 readdir 的并发度。
+ * 并发 8 路后实际工作区的遍历耗时与 fast-glob 持平（~18ms / 2500 文件），
+ * 再提高并发收益递减，但会同时持有更多目录条目。
+ */
+const WALK_DIR_CONCURRENCY = 8;
+
+interface WalkFilesOptions {
+    /** 文件相对路径匹配模式（picomatch 语法），如 **\/*.ts */
+    filePattern: string;
+    /** 额外忽略模式（相对搜索根，picomatch 语法），如 .gitignore 转换结果 */
+    ignorePatterns?: string[];
+    /** 是否进入以 . 开头的隐藏目录 / 匹配隐藏文件，默认 false（与 fast-glob 默认行为一致） */
+    dot?: boolean;
+    /** 时间预算（毫秒），从 startedAt 起算 */
+    timeBudgetMs: number;
+    startedAt: number;
+    /** 扫描文件数上限 */
+    maxScannedFiles?: number;
+    /** 因时间预算或文件数上限提前结束时回调 */
+    onLimitReached?: (reason: 'time' | 'count') => void;
+}
+
+interface DirListing {
+    files: string[];
+    dirs: string[];
+}
+
+async function readDirListing(dir: string): Promise<DirListing> {
+    const files: string[] = [];
+    const dirs: string[] = [];
+    try {
+        const dirents = await fs.promises.readdir(dir, { withFileTypes: true });
+        for (const entry of dirents) {
+            // 符号链接（含 pnpm 的 junction）isFile/isDirectory 均为 false，直接跳过：
+            // 跟随链接会把同一批文件重复遍历多次，实测能把 19 万文件放大到 450 万
+            if (entry.isFile()) {
+                files.push(entry.name);
+            } else if (entry.isDirectory()) {
+                dirs.push(entry.name);
+            }
+        }
+    } catch {
+        // 目录不可读（权限/已被删除）时按空目录处理
+    }
+    return { files, dirs };
+}
+
+/**
+ * 流式文件遍历：逐个产出匹配的文件路径，堆占用与文件总数、目录宽度无关。
+ *
+ * 相比 fast-glob 的 stream，这里：
+ * 1. 在 readdir 阶段就剪掉黑名单目录，node_modules 等根本不会被展开；
+ * 2. 不跟随符号链接（pnpm 的 junction 会把 19 万文件放大成 450 万）；
+ * 3. 递归 DFS：栈深度等于目录深度，不会像 BFS 那样把整层目录（如 WinSxS 的十万子目录）
+ *    攒在内存里；
+ * 4. 每层对子目录做分批并发 readdir 预取，避免串行 IO 拖慢遍历
+ *    （实测 C:/Windows 18 万文件：串行 7.2s → 并发 8 路 3.3s）；
+ * 5. 受时间预算与扫描文件数上限约束，任何规模的目录树都不会撑爆堆。
+ */
+async function* walkFiles(root: string, options: WalkFilesOptions): AsyncGenerator<string> {
+    const dot = options.dot === true;
+    const fileMatch = picomatch(options.filePattern, { dot });
+    const ignoreMatch =
+        options.ignorePatterns && options.ignorePatterns.length > 0
+            ? picomatch(options.ignorePatterns, { dot: true })
+            : undefined;
+    const maxScannedFiles = options.maxScannedFiles ?? WALK_MAX_SCANNED_FILES;
+
+    let scanned = 0;
+    let stopped = false;
+
+    const stop = (reason: 'time' | 'count'): void => {
+        stopped = true;
+        options.onLimitReached?.(reason);
+    };
+
+    const walk = async function* (
+        dir: string,
+        dirRelative: string,
+        listing: Promise<DirListing>
+    ): AsyncGenerator<string> {
+        if (stopped) return;
+        if (Date.now() - options.startedAt > options.timeBudgetMs) {
+            stop('time');
+            return;
+        }
+
+        const { files, dirs } = await listing;
+        const relativePrefix = dirRelative ? dirRelative + '/' : '';
+        const absolutePrefix = dir + path.sep;
+
+        try {
+            for (const name of files) {
+                const relativePath = relativePrefix + name;
+                if (!fileMatch(relativePath)) continue;
+                if (ignoreMatch && ignoreMatch(relativePath)) continue;
+                if (scanned >= maxScannedFiles) {
+                    stop('count');
+                    return;
+                }
+                scanned++;
+                yield absolutePrefix + name;
+            }
+
+            // 分批并发预取子目录列表；yield 仍保持串行 DFS 顺序，
+            // 因此同一时刻只持有 WALK_DIR_CONCURRENCY 个目录的条目
+            let index = 0;
+            while (index < dirs.length) {
+                if (stopped) return;
+
+                const chunk: string[] = [];
+                while (index < dirs.length && chunk.length < WALK_DIR_CONCURRENCY) {
+                    const name = dirs[index++];
+                    if (PRUNED_DIR_NAME_SET.has(name)) continue;
+                    // dot=false 时不进入隐藏目录，与 fast-glob 的默认语义保持一致
+                    if (!dot && name.startsWith('.')) continue;
+                    // 用哨兵文件名匹配目录本身：gitignore 规则转换后形如 **\/out/**，
+                    // 直接拿目录路径去匹配无法命中
+                    if (ignoreMatch && ignoreMatch(relativePrefix + name + '/__opendesk__')) continue;
+                    chunk.push(name);
+                }
+                if (chunk.length === 0) continue;
+
+                const listings = chunk.map((name) => readDirListing(absolutePrefix + name));
+                for (let i = 0; i < chunk.length; i++) {
+                    if (stopped) return;
+                    yield* walk(absolutePrefix + chunk[i], relativePrefix + chunk[i], listings[i]);
+                }
+            }
+        } finally {
+            // 提前终止（时间预算、扫描上限、调用方 break）时主动断开对目录条目的引用。
+            // 这些数组在递归栈帧里可能存活到下一次 full GC，实测单次可达上百 MB；
+            // 主动清空后 minor GC 即可回收，不必等 V8 判定内存压力。
+            files.length = 0;
+            dirs.length = 0;
+        }
+    };
+
+    yield* walk(root, '', readDirListing(root));
+}
 
 /**
  * ReDoS 静态检测：拒绝"嵌套无限量词"形态，如 (a+)+、(.*)*、(\d+)*X、(a+){2,}、
@@ -3220,30 +3378,31 @@ async function collectGitignorePatterns(basePath: string): Promise<string[]> {
     };
 
     try {
-        // 先读取根规则。这样 fast-glob 在发现嵌套 .gitignore 时可以直接剪枝，
-        // 避免在大型工作区中先遍历 node_modules、构建产物和缓存目录。
+        // 先读取根规则，让后续遍历能直接剪掉构建产物等目录
         const rootGitignore = path.join(basePath, '.gitignore');
         const rootPatterns = (await readGitignorePatterns(rootGitignore, '')).slice(0, GREP_MAX_GITIGNORE_PATTERNS);
         appendPatterns(rootPatterns);
 
-        const gitignoreStream = fastGlob.stream('**/.gitignore', {
-            cwd: basePath,
-            ignore: [...DEFAULT_GREP_IGNORE, ...rootPatterns],
-            absolute: false,
-            onlyFiles: true,
-            suppressErrors: true,
-            dot: true
-        });
-
-        for await (const entry of gitignoreStream) {
-            const relPath = String(entry);
+        // 用与 grep 相同的流式遍历收集嵌套 .gitignore：
+        // 单独跑一次 fast-glob 会为了找 .gitignore 把整棵目录树扫一遍，
+        // 在超大工作区里既慢又会持续占用堆内存。这里同样受时间预算与数量上限约束。
+        const startedAt = Date.now();
+        for await (const filePath of walkFiles(basePath, {
+            filePattern: '**/.gitignore',
+            dot: true,
+            ignorePatterns: rootPatterns,
+            timeBudgetMs: GREP_GITIGNORE_TIME_BUDGET_MS,
+            startedAt,
+            maxScannedFiles: GREP_MAX_GITIGNORE_FILES
+        })) {
+            const relPath = toForwardSlash(path.relative(basePath, filePath));
             if (relPath === '.gitignore') continue;
             const dir = path.dirname(relPath);
             const prefix = dir === '.' ? '' : dir + '/';
-            if (!appendPatterns(await readGitignorePatterns(path.join(basePath, relPath), prefix))) break;
+            if (!appendPatterns(await readGitignorePatterns(filePath, prefix))) break;
         }
     } catch {
-        // fastGlob 失败（如目录不存在）则返回已读取的根规则
+        // 遍历失败（如目录不存在）则返回已读取的根规则
     }
     return patterns;
 }
@@ -3425,6 +3584,7 @@ export class GrepFilesTool extends BaseTool<typeof grepSchema> {
             const startTime = Date.now();
             const timeBudgetMs = Number(process.env['OPENDESK_GREP_TIME_BUDGET_MS']) || GREP_TIME_BUDGET_MS;
             let timedOut = false;
+            let scanLimited = false;
 
             // 预处理 pattern 中的 \uXXXX 字面量转义序列，将其转换为实际的 Unicode 字符
             // 这样 AI agent 发送的 [\u4e00-\u9fa5] 等 Unicode 范围模式能被正确处理
@@ -3643,18 +3803,22 @@ export class GrepFilesTool extends BaseTool<typeof grepSchema> {
                 await appendBatchMatches([basePath]);
             } else {
                 const gitignorePatterns = await collectGitignorePatterns(basePath);
-                const allIgnorePatterns = [...DEFAULT_GREP_IGNORE, ...gitignorePatterns];
-                const fileStream = fastGlob.stream(globPattern, {
-                    cwd: basePath,
-                    ignore: allIgnorePatterns,
-                    absolute: true,
-                    onlyFiles: true,
-                    suppressErrors: true
-                });
                 let batch: string[] = [];
 
-                for await (const filePath of fileStream) {
-                    batch.push(String(filePath));
+                for await (const filePath of walkFiles(basePath, {
+                    filePattern: globPattern,
+                    ignorePatterns: [...IGNORED_FILE_PATTERNS, ...gitignorePatterns],
+                    timeBudgetMs,
+                    startedAt: startTime,
+                    onLimitReached: (reason) => {
+                        if (reason === 'time') {
+                            timedOut = true;
+                        } else {
+                            scanLimited = true;
+                        }
+                    }
+                })) {
+                    batch.push(filePath);
                     if (batch.length < GREP_FILE_SEARCH_CONCURRENCY) continue;
 
                     await appendBatchMatches(batch);
@@ -3668,7 +3832,13 @@ export class GrepFilesTool extends BaseTool<typeof grepSchema> {
             }
 
             if (matches.length === 0) {
-                return timedOut ? `搜索超时（时间预算 ${timeBudgetMs}ms），未找到匹配的内容` : '未找到匹配的内容';
+                if (timedOut) {
+                    return `搜索超时（时间预算 ${timeBudgetMs}ms），未找到匹配的内容`;
+                }
+                if (scanLimited) {
+                    return `已扫描 ${WALK_MAX_SCANNED_FILES} 个文件仍未找到匹配内容，已提前停止。建议缩小搜索范围或指定 filePattern`;
+                }
+                return '未找到匹配的内容';
             }
 
             const output: string[] = [];
@@ -3753,6 +3923,11 @@ export class GrepFilesTool extends BaseTool<typeof grepSchema> {
                 output.push('');
                 output.push(
                     `注意: 搜索在时间预算（${timeBudgetMs}ms）内未完成，以上为部分结果。建议缩小搜索范围后重试`
+                );
+            } else if (scanLimited) {
+                output.push('');
+                output.push(
+                    `注意: 已扫描 ${WALK_MAX_SCANNED_FILES} 个文件，以上为部分结果。建议缩小搜索范围或指定 filePattern 后重试`
                 );
             }
 

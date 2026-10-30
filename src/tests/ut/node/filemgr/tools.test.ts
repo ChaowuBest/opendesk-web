@@ -20,6 +20,8 @@ import {
 import {
     AskImageTool,
     ExtractTextTool,
+    GlobFilesTool,
+    GrepFilesTool,
     ReadImageTool,
     SemanticSearchTool,
     createFileManagerToolset,
@@ -860,4 +862,96 @@ test('semanticSearch is unavailable when no default embedding model is configure
     }));
     const withoutModel = new SemanticSearchTool(async () => ({ query: 'q', results: [], totalHits: 0 }));
     assert.equal(withoutModel.isAvailable(), false);
+});
+
+/**
+ * 回归：默认 ignore 模式必须匹配任意层级。
+ * 写成 'node_modules/**' 时只忽略搜索根目录下的 node_modules，
+ * 对 C:/Projects 这类多项目父目录会遍历各子项目的 node_modules（数十万文件），
+ * 导致 grepFiles 长时间占用主线程并最终 V8 堆溢出。
+ */
+test('grepFiles ignores nested node_modules under a parent directory', async () => {
+    const root = makeTempDir();
+    try {
+        const nestedDir = path.join(root, 'project', 'node_modules', 'pkg');
+        fs.mkdirSync(nestedDir, { recursive: true });
+        fs.writeFileSync(path.join(nestedDir, 'index.js'), 'benchmark.json\n', 'utf8');
+        fs.writeFileSync(path.join(root, 'project', 'app.ts'), 'benchmark.json\n', 'utf8');
+
+        const taskState = { getWorkspace: () => root } as any;
+        const output = await new GrepFilesTool().executeCommand(
+            {
+                pattern: 'benchmark\\.json',
+                path: root,
+                ignoreCase: false,
+                maxResults: 50,
+                contextLines: 1,
+                maxColumns: 220
+            } as any,
+            taskState
+        );
+
+        assert.match(output, /app\.ts/);
+        assert.doesNotMatch(output, /node_modules/);
+    } finally {
+        cleanup(root);
+    }
+});
+
+test('globFiles ignores nested node_modules under a parent directory', async () => {
+    const root = makeTempDir();
+    try {
+        const nestedDir = path.join(root, 'project', 'node_modules', 'pkg');
+        fs.mkdirSync(nestedDir, { recursive: true });
+        fs.writeFileSync(path.join(nestedDir, 'index.ts'), 'export {};\n', 'utf8');
+        fs.writeFileSync(path.join(root, 'project', 'app.ts'), 'export {};\n', 'utf8');
+
+        const taskState = { getWorkspace: () => root } as any;
+        const output = await new GlobFilesTool().executeCommand(
+            { pattern: '**/*.ts', path: root, caseSensitive: false, maxResults: 200 } as any,
+            taskState
+        );
+
+        assert.match(output, /app\.ts/);
+        assert.doesNotMatch(output, /node_modules/);
+    } finally {
+        cleanup(root);
+    }
+});
+
+/**
+ * 回归：时间预算必须覆盖 fast-glob 的目录遍历阶段。
+ * 之前只在 searchFile 内检查预算，超大目录树会先被完整遍历一遍才结束。
+ */
+test('grepFiles stops walking the tree when the time budget is exhausted', async () => {
+    const root = makeTempDir();
+    const previousBudget = process.env['OPENDESK_GREP_TIME_BUDGET_MS'];
+    try {
+        for (let i = 0; i < 200; i++) {
+            fs.writeFileSync(path.join(root, `file-${i}.txt`), 'needle\n', 'utf8');
+        }
+
+        process.env['OPENDESK_GREP_TIME_BUDGET_MS'] = '1';
+        const taskState = { getWorkspace: () => root } as any;
+        const output = await new GrepFilesTool().executeCommand(
+            {
+                pattern: 'needle',
+                path: root,
+                ignoreCase: false,
+                maxResults: 50,
+                contextLines: 0,
+                maxColumns: 220
+            } as any,
+            taskState
+        );
+
+        assert.match(output, /搜索超时/);
+    } finally {
+        if (previousBudget === undefined) {
+            delete process.env['OPENDESK_GREP_TIME_BUDGET_MS'];
+        } else {
+            process.env['OPENDESK_GREP_TIME_BUDGET_MS'] = previousBudget;
+        }
+        cleanup(root);
+    }
 });
