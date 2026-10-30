@@ -399,6 +399,21 @@ html[data-theme='dark'] .tm-root {
     flex-shrink: 0;
     position: relative;
     z-index: 2;
+    /* 拖动手势交给 pointer 事件：默认 touch-action 下浏览器会把按住拖动判定为
+     * 滚动/缩放手势并派发 pointercancel，分割线在触摸屏上拖不动 */
+    touch-action: none;
+}
+/* 触摸屏上 5px 分割线难以精确命中，向两侧各扩 6px 命中区（不占布局）。
+ * any-pointer 覆盖触屏笔记本这类"鼠标 + 触摸"共存的设备 */
+@media (any-pointer: coarse) {
+    .tm-resizer::before {
+        content: '';
+        position: absolute;
+        top: 0;
+        bottom: 0;
+        left: -6px;
+        right: -6px;
+    }
 }
 .tm-resizer-indicator {
     position: absolute;
@@ -1262,8 +1277,10 @@ class TodoMgrEntryWidget extends AgentOperableHTMLElement {
 
     private _isResizing = false;
     private _resizeRaf: number | null = null;
-    private _boundMouseMove: ((e: MouseEvent) => void) | null = null;
-    private _boundMouseUp: (() => void) | null = null;
+    // 发起拖动的指针：多指同按（触摸屏掌压、第二根手指）时只跟随它
+    private _resizePointerId: number | null = null;
+    private _boundPointerMove: ((e: PointerEvent) => void) | null = null;
+    private _boundPointerUp: ((e: PointerEvent) => void) | null = null;
 
     private _cachedEvents: AppEvent[] | null = null;
     private _templates: TodoTemplate[] = [];
@@ -1474,7 +1491,8 @@ class TodoMgrEntryWidget extends AgentOperableHTMLElement {
                         ${this._renderTodoCards()}
                     </div>
                 </div>
-                <div class="tm-resizer" id="tm-resizer" style="display:none;">
+                <!-- data-od-no-longpress：拖拽分割线不参与触摸长按手势 -->
+                <div class="tm-resizer" id="tm-resizer" data-od-no-longpress="1" style="display:none;">
                     <div class="tm-resizer-indicator"></div>
                 </div>
                 <div class="tm-right" id="tm-right">
@@ -3012,26 +3030,35 @@ class TodoMgrEntryWidget extends AgentOperableHTMLElement {
     private _initResize() {
         const resizer = this.querySelector('#tm-resizer') as HTMLElement;
         if (!resizer) return;
-        resizer.addEventListener('mousedown', (e: MouseEvent) => {
+        // 统一使用指针事件：触摸屏拖动不会派发 mousemove，只监听鼠标事件时
+        // 分割线在触摸/触控笔场景下完全无法拖动
+        resizer.addEventListener('pointerdown', (e: PointerEvent) => {
+            if (e.button !== 0) return;
             e.preventDefault();
             e.stopPropagation();
-            this._startResize();
+            this._startResize(e.pointerId);
         });
     }
 
-    private _startResize() {
+    private _startResize(pointerId: number) {
         if (this._isResizing) return;
         this._isResizing = true;
+        this._resizePointerId = pointerId;
         document.body.style.cursor = 'col-resize';
         document.body.style.userSelect = 'none';
-        this._boundMouseMove = (e: MouseEvent) => this._onResizeMove(e);
-        this._boundMouseUp = () => this._stopResize();
-        document.addEventListener('mousemove', this._boundMouseMove);
-        document.addEventListener('mouseup', this._boundMouseUp);
+        this._boundPointerMove = (e: PointerEvent) => this._onResizeMove(e);
+        this._boundPointerUp = (e: PointerEvent) => {
+            // 多指同按：其它手指抬起不影响正在进行的拖动
+            if (e.pointerId === this._resizePointerId) this._stopResize();
+        };
+        // 挂在 window 上：拖动过程中指针可能移出分割线甚至窗口边界
+        window.addEventListener('pointermove', this._boundPointerMove);
+        window.addEventListener('pointerup', this._boundPointerUp);
+        window.addEventListener('pointercancel', this._boundPointerUp);
     }
 
-    private _onResizeMove(e: MouseEvent) {
-        if (!this._isResizing) return;
+    private _onResizeMove(e: PointerEvent) {
+        if (!this._isResizing || e.pointerId !== this._resizePointerId) return;
         e.preventDefault();
         if (this._resizeRaf) cancelAnimationFrame(this._resizeRaf);
         this._resizeRaf = requestAnimationFrame(() => {
@@ -3050,10 +3077,19 @@ class TodoMgrEntryWidget extends AgentOperableHTMLElement {
     private _stopResize() {
         if (!this._isResizing) return;
         this._isResizing = false;
+        this._resizePointerId = null;
         document.body.style.cursor = '';
         document.body.style.userSelect = '';
-        if (this._boundMouseMove) document.removeEventListener('mousemove', this._boundMouseMove);
-        if (this._boundMouseUp) document.removeEventListener('mouseup', this._boundMouseUp);
+        // 拖拽已结束，挂起的帧回调不能再改宽度（否则会把 transition: none 留在面板上）
+        if (this._resizeRaf) {
+            cancelAnimationFrame(this._resizeRaf);
+            this._resizeRaf = null;
+        }
+        if (this._boundPointerMove) window.removeEventListener('pointermove', this._boundPointerMove);
+        if (this._boundPointerUp) {
+            window.removeEventListener('pointerup', this._boundPointerUp);
+            window.removeEventListener('pointercancel', this._boundPointerUp);
+        }
         const right = this.querySelector('#tm-right') as HTMLElement;
         if (right) right.style.transition = '';
     }

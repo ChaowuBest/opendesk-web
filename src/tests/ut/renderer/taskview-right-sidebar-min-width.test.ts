@@ -93,10 +93,16 @@ describe('task-view right sidebar keeps the chat area at least 350px wide', () =
         await import('../../../renderer/components/taskview.js');
     });
 
-    /** linkedom 未提供可构造的 MouseEvent，用 Event 补齐 clientX */
-    function mouseEvent(type: string, clientX: number): Event {
-        const event = new window.Event(type, { bubbles: true }) as Event & { clientX: number };
+    /** linkedom 未提供可构造的 PointerEvent，用 Event 补齐 button/clientX/pointerId */
+    function pointerEvent(type: string, clientX: number, pointerId = 1): Event {
+        const event = new window.Event(type, { bubbles: true, cancelable: true }) as Event & {
+            clientX: number;
+            button: number;
+            pointerId: number;
+        };
         Object.defineProperty(event, 'clientX', { value: clientX });
+        Object.defineProperty(event, 'button', { value: 0 });
+        Object.defineProperty(event, 'pointerId', { value: pointerId });
         return event;
     }
 
@@ -159,22 +165,44 @@ describe('task-view right sidebar keeps the chat area at least 350px wide', () =
     test('dragging the resizer cannot push the chat area below the minimum width', () => {
         const { artifacts, resizer } = renderExpandedTaskView(1000);
 
-        resizer.dispatchEvent(mouseEvent('mousedown', 600));
-        document.dispatchEvent(mouseEvent('mousemove', 500));
+        // 触摸拖动不会派发 mousemove，拖拽必须走指针事件
+        resizer.dispatchEvent(pointerEvent('pointerdown', 600));
+        window.dispatchEvent(pointerEvent('pointermove', 500));
         flushAnimationFrames();
         expect(artifacts.style.width).toBe('500px');
 
         // 1000 - 100 = 900 > 上限 646，拖拽被忽略
-        document.dispatchEvent(mouseEvent('mousemove', 100));
+        window.dispatchEvent(pointerEvent('pointermove', 100));
         flushAnimationFrames();
         expect(artifacts.style.width).toBe('500px');
 
         // 上限 1000 - 350 - 4 = 646，正好落在边界上时仍然生效
-        document.dispatchEvent(mouseEvent('mousemove', 354));
+        window.dispatchEvent(pointerEvent('pointermove', 354));
         flushAnimationFrames();
         expect(artifacts.style.width).toBe('646px');
 
-        document.dispatchEvent(mouseEvent('mouseup', 354));
+        window.dispatchEvent(pointerEvent('pointerup', 354));
+    });
+
+    test('dragging keeps following the pointer that started it', () => {
+        const { artifacts, resizer } = renderExpandedTaskView(1000);
+
+        resizer.dispatchEvent(pointerEvent('pointerdown', 600));
+        window.dispatchEvent(pointerEvent('pointermove', 500));
+        flushAnimationFrames();
+        expect(artifacts.style.width).toBe('500px');
+
+        // 触摸屏上的第二根手指（掌压）既不能改宽度，也不能把拖动提前结束
+        window.dispatchEvent(pointerEvent('pointermove', 700, 2));
+        flushAnimationFrames();
+        expect(artifacts.style.width).toBe('500px');
+
+        window.dispatchEvent(pointerEvent('pointerup', 700, 2));
+        window.dispatchEvent(pointerEvent('pointermove', 450));
+        flushAnimationFrames();
+        expect(artifacts.style.width).toBe('550px');
+
+        window.dispatchEvent(pointerEvent('pointerup', 400));
     });
 
     test('the focused workspace layout (70%) is clamped on a narrow container', () => {
