@@ -10,6 +10,7 @@
  */
 
 import { defineConfig, loadEnv } from 'electron-vite';
+import type { UserConfig } from 'electron-vite';
 import tailwindcss from '@tailwindcss/vite';
 import path from 'path';
 import {
@@ -25,7 +26,7 @@ export default defineConfig(({ mode }) => {
     const openDeskOfficeAliases = createOpenDeskOfficeViteAliases();
     const openDeskOfficeRendererConfig = createOpenDeskOfficeRendererViteConfig();
 
-    return {
+    const config: UserConfig = {
         main: {
             define: {
                 __BUILD_TIME__: JSON.stringify(buildTime),
@@ -196,4 +197,12 @@ export default defineConfig(({ mode }) => {
             }
         }
     };
+
+    // 并行构建入口：scripts/build-electron.cjs 用 OPENDESK_VITE_TARGET 分别启动 main / renderer
+    // 两个 electron-vite 进程，各自只构建自己那部分（main 与 renderer 是串行构建里最重的两段）。
+    // 未设置该变量时行为不变，仍是 main → preload → renderer 顺序构建。
+    const target = process.env.OPENDESK_VITE_TARGET;
+    if (target === 'main') return { main: config.main, preload: config.preload };
+    if (target === 'renderer') return { renderer: config.renderer };
+    return config;
 });

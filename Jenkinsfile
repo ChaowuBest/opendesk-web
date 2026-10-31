@@ -115,7 +115,8 @@ node {
 
                                     rm -rf dist || true
                                     npm install 2>&1 | tee "${CI_LOG_DIR}/npm-install.log"
-                                    npm run build-cli 2>&1 | tee "${CI_LOG_DIR}/build.log"
+                                    # CI 的类型门禁用官方 tsc（本地默认走 tsgo 加速）
+                                    OPENDESK_TYPECHECK_ENGINE=tsc npm run build-cli 2>&1 | tee "${CI_LOG_DIR}/build.log"
 
                                     echo "success" > "${CI_LOG_DIR}/build.status"
                                 '''

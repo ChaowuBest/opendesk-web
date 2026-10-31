@@ -59,6 +59,27 @@ describe('builtin plugin builder', () => {
     let sourceDirectory: string;
     let outputDirectory: string;
 
+    // 预热：esbuild 的 JS API 首次 build() 要拉起常驻的 esbuild 服务进程（spawn 平台
+    // 二进制 + 建立管道），这是本 suite 唯一的一次性大成本，全量并发跑测试时会被其他
+    // suite 抢 CPU 拖长。这里用最小 bundle 插件在第一个用例之前付掉它，后续 build()
+    // 复用同一进程，用例因此保持默认 5s 超时（全量并发实测单用例 80-310ms）。
+    beforeAll(async () => {
+        const warmupRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'opendesk-builtin-plugin-warmup-'));
+        try {
+            makePluginFixture(path.join(warmupRoot, 'resources', 'plugins'), 'warmup', {
+                bundle: true,
+                indexContent: `export default { id: 'warmup' };`
+            });
+            await buildBuiltinPlugins({
+                sourceDirectory: path.join(warmupRoot, 'resources', 'plugins'),
+                outputDirectory: path.join(warmupRoot, 'dist', 'plugins'),
+                runNpm: async () => {}
+            });
+        } finally {
+            fs.rmSync(warmupRoot, { recursive: true, force: true });
+        }
+    }, 30000);
+
     beforeEach(() => {
         temporaryDirectory = fs.mkdtempSync(path.join(os.tmpdir(), 'opendesk-builtin-plugin-build-'));
         sourceDirectory = path.join(temporaryDirectory, 'resources', 'plugins');

@@ -130,7 +130,7 @@ static void usage(FILE *out)
 "                      已知临时目录内建默认，宿主还会显式传入）\n"
 "  --cwd DIR          子进程工作目录（默认：--src 模式为 DIR，否则当前目录）\n"
 "\n"
-"说明: mount 子命令不适用于 OpenHarmony（虚拟化逐进程生效，无 Dokan 卷/盘符）；\n"
+"说明: mount 子命令不适用于 OpenHarmony（虚拟化逐进程生效，无虚拟卷/盘符）；\n"
 "network-* 为兼容 Windows 启动脚本的 no-op（本平台回环访问默认可用）。\n"
 , g_version);
 }
@@ -690,7 +690,7 @@ int main(int argc, char **argv)
     if (strcmp(argv[1], "mount") == 0) {
         fprintf(stderr,
                 "dynobox: mount 子命令不适用于 OpenHarmony —— 虚拟化是逐进程的"
-                "（无 Dokan 卷/盘符），请使用 `dynobox run`\n");
+                "（无虚拟卷/盘符），请使用 `dynobox run`\n");
         return 2;
     }
     if (strcmp(argv[1], "version") == 0 || strcmp(argv[1], "--version") == 0) {

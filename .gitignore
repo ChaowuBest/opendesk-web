@@ -102,8 +102,7 @@ out
 out-*
 dist
 
-# Windows dynamic sandbox build outputs and downloaded Dokany installers
-native/windows/sandbox/_setup/
+# Windows dynamic sandbox build outputs
 native/windows/sandbox/runtime/
 native/windows/sandbox/dist/
 native/windows/sandbox/**/bin/

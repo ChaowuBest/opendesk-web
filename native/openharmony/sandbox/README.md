@@ -1,6 +1,6 @@
 # dynobox —— 基于 LD_PRELOAD 的轻量级文件访问控制沙箱（OpenHarmony）
 
-OpenDesk 中 Windows 版 [dynobox](../OpenDesk/native/windows/sandbox)（基于 Dokany 虚拟卷）
+OpenDesk 中 Windows 版 [dynobox](../OpenDesk/native/windows/sandbox)（Detours API 拦截）
 的 OpenHarmony/Linux 对应实现。把宿主任意目录镜像进一个**虚拟命名空间**，被拉起的子进程及其
 全部后代对这个命名空间的每一次文件操作——读、写、执行、删除、改名、枚举——都先经过
 策略判定：
@@ -26,9 +26,9 @@ OpenDesk 中 Windows 版 [dynobox](../OpenDesk/native/windows/sandbox)（基于 
 
 ## ⚠️ 安全边界（必读）
 
-**LD_PRELOAD 沙箱是一个“策略层”，不是一个内核安全边界。** Windows 版 dynobox 的
-判定位于 Dokan 驱动应答的必经之路，子进程无法绕过；LD_PRELOAD 工作在 libc 的
-动态链接符号层，**无法对恶意代码做出同等承诺**。使用前必须清楚它能防什么、
+**LD_PRELOAD 沙箱是一个“策略层”，不是一个内核安全边界。** Windows 版 dynobox 在
+用户态 hook kernel32 文件 API（同样拦不住 direct syscall）；LD_PRELOAD 工作在 libc 的
+动态链接符号层，比 API hook 更靠外，**无法对恶意代码做出更高承诺**。使用前必须清楚它能防什么、
 不能防什么。
 
 ### 它能做到的（对“ cooperating（不主动规避）的程序”可靠）
@@ -259,7 +259,7 @@ dynobox version
 ```
 
 与 Windows 版的刻意差异（机制使然）：`mount` 子命令不适用——虚拟化逐进程生效、
-无 Dokan 卷/盘符，调用会得到明确报错并指向 `run`；`--mount` 被接受但为 no-op。
+无虚拟卷/盘符，调用会得到明确报错并指向 `run`；`--mount` 被接受但为 no-op。
 
 ---
 
