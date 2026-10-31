@@ -10,9 +10,19 @@
  */
 
 import { app } from 'electron';
-import { NaiveNativeBridge, guardStartupKit, type NativeBridge } from '../common.js';
+import { NaiveNativeBridge, guardStartupKit, type NativeBridge, type QuickCaptureKit } from '../common.js';
 import { WindowsStartupKit } from './startup.js';
+import { WindowsQuickCaptureKit } from './quickcapture.js';
+
+class WindowsNativeBridge extends NaiveNativeBridge {
+    constructor() {
+        super(guardStartupKit(new WindowsStartupKit(app), 'toggle'));
+    }
+
+    // 覆盖基类的 Naive 实现：字段初始化在 super() 之后执行，不会被基类默认值盖回。
+    _quickCaptureKit: QuickCaptureKit = new WindowsQuickCaptureKit();
+}
 
 export function getNativeBridge(): NativeBridge {
-    return new NaiveNativeBridge(guardStartupKit(new WindowsStartupKit(app), 'toggle'));
+    return new WindowsNativeBridge();
 }

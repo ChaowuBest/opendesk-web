@@ -19,7 +19,7 @@ import { initApplicationThemeHost, initApplicationThemeFromAPI } from '../theme/
 import { createRendererTranslator } from '../locale.js';
 import { ApplicationTaskSession } from './application-task-session.js';
 
-/** 将 iframe 内键盘/鼠标事件转发给父窗口，使 magic pointer 在子应用中仍可用 */
+/** 将 iframe 内键盘/鼠标事件转发给父窗口，使父窗口的输入监听在子应用中仍能生效 */
 function installParentInputForwarding(): void {
     if (window.parent === window) {
         return;

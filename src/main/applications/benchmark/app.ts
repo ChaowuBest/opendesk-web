@@ -10,10 +10,16 @@
  */
 
 import { z } from 'zod';
+import path from 'node:path';
 import { BaseApplication, type EventDecl } from '../base.js';
 import { t } from './locale/index.js';
 import { BenchmarkManager } from './manager.js';
-import { findCatalogDataset, listCatalogDatasets } from './catalog.js';
+import {
+    BENCHMARK_CATALOG_CACHE_FILE,
+    findCatalogDataset,
+    loadCatalogDatasets,
+    type LoadCatalogOptions
+} from './catalog.js';
 import {
     BenchmarkDataError,
     type CatalogDatasetEntry,
@@ -35,6 +41,12 @@ import { openTaskInMainWindow } from '../../utils/system-notification.js';
 const BenchmarkConfigSchema = z.object({
     enabled: z.boolean().default(true).describe('是否启用测评')
 });
+
+/** 平台 fetch 只接受字符串/URL，把 Request 对象也归一化掉，免得被当成 "[object Request]" */
+function toPlatformFetchInput(input: RequestInfo | URL): string | URL {
+    if (typeof input === 'string' || input instanceof URL) return input;
+    return input.url;
+}
 
 export class BenchmarkApplication extends BaseApplication {
     private manager: BenchmarkManager | null = null;
@@ -86,9 +98,9 @@ export class BenchmarkApplication extends BaseApplication {
         this.requireManager().deleteDataset(datasetId);
     }
 
-    /** 测评集下载中心的可下载清单 */
-    async listCatalogDatasets(): Promise<CatalogDatasetEntry[]> {
-        return listCatalogDatasets();
+    /** 测评集下载中心的可下载清单（5 分钟内复用缓存，`forceRefresh` 强制重新拉取） */
+    async listCatalogDatasets(forceRefresh?: boolean): Promise<CatalogDatasetEntry[]> {
+        return loadCatalogDatasets(this.catalogLoadOptions(forceRefresh === true));
     }
 
     /** 当前所有下载任务的状态（渲染层据此画进度条） */
@@ -103,14 +115,17 @@ export class BenchmarkApplication extends BaseApplication {
      * 所以这里拿到任务已启动就返回，不阻塞渲染层。
      */
     async downloadDataset(catalogId: string): Promise<void> {
-        const entry = findCatalogDataset(typeof catalogId === 'string' ? catalogId : '');
+        const id = typeof catalogId === 'string' ? catalogId : '';
+        const entry = await findCatalogDataset(id, this.catalogLoadOptions());
         if (!entry) {
             throw new BenchmarkDataError(t('error.catalogNotFound'));
         }
         const manager = this.requireManager();
         const notifications = NotificationManager.getInstance();
         void manager
-            .downloadDataset(entry, { fetchImpl: (input, init) => getPlatform().fetch(input as string | URL, init) })
+            .downloadDataset(entry, {
+                fetchImpl: (input, init) => getPlatform().fetch(toPlatformFetchInput(input), init)
+            })
             .then((dataset) => {
                 notifications.info(
                     this.getName(),
@@ -264,6 +279,16 @@ export class BenchmarkApplication extends BaseApplication {
     }
 
     // ── 内部 ──────────────────────────────────────────────────────────────
+
+    /** 清单请求走平台 fetch，以继承代理配置（本地调试仍可由环境变量指向本地文件） */
+    private catalogLoadOptions(forceRefresh = false): LoadCatalogOptions {
+        return {
+            fetchImpl: (input, init) => getPlatform().fetch(toPlatformFetchInput(input), init),
+            // 断网时回退到上次成功拉到的清单
+            cacheFile: path.join(this.getDataDirectory(), BENCHMARK_CATALOG_CACHE_FILE),
+            forceRefresh
+        };
+    }
 
     private requireManager(): BenchmarkManager {
         if (!this.manager) {

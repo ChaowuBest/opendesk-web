@@ -124,7 +124,7 @@ describe('sandbox working directory', () => {
 
     test('validates the cwd is a mappable drive path but leaves shell args untouched', () => {
         // Detours 实现子进程直接使用宿主真实路径：cwd 经宿主 spawn 的 cwd 继承，
-        // 不再注入 Set-Location（Dokan 卷语义已移除）。
+        // 不再注入 Set-Location（沙箱不再映射虚拟盘符）。
         expect(
             withSandboxWorkingDirectory(
                 'C:/Windows/System32/WindowsPowerShell/v1.0/powershell.exe',

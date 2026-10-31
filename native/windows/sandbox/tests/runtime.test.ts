@@ -1627,7 +1627,7 @@ test('handle-level delete paths (python os.remove / node rmSync) honor --del-to-
     }
 });
 
-test('session-created files delete without recycle bin while host files still trash (Dokan instance-created semantics)', { skip: !windows }, async () => {
+test('session-created files delete without recycle bin while host files still trash (session-created file semantics)', { skip: !windows }, async () => {
     // 沙箱会话内创建的文件删除 = 自发清理：不 ask、不进回收站（直接删）；
     // 宿主预置文件删除仍走回收站（--del-to-trash）。用回收站物理文件计数区分。
     const whoami = spawnSync('C:/Windows/System32/whoami.exe', ['/user'], { encoding: 'utf8', windowsHide: true });

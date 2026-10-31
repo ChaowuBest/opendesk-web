@@ -14,7 +14,15 @@ const arktsCall = jest.fn(async (method: string) =>
 );
 jest.unstable_mockModule('electron', () => ({
     app,
-    ipcMain: { handle: (name: string, handler: any) => handlers.set(name, handler) }
+    ipcMain: { handle: (name: string, handler: any) => handlers.set(name, handler) },
+    // win32 bridge 的快速截图模块会顶层引入这些 API；本套用例不触发遮罩，给空实现即可。
+    BrowserWindow: class {},
+    clipboard: { writeImage: () => undefined },
+    desktopCapturer: { getSources: jest.fn(async () => []) },
+    screen: {
+        getCursorScreenPoint: () => ({ x: 0, y: 0 }),
+        getDisplayNearestPoint: () => ({})
+    }
 }));
 jest.unstable_mockModule('../../../main/utils/logger.js', () => ({ logger: { info: jest.fn() } }));
 jest.unstable_mockModule('../../../platforms/bridges/darwin/speech.js', () => ({ DarwinSpeechKit: class {} }));

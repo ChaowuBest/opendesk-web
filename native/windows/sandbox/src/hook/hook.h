@@ -65,7 +65,7 @@ bool sandboxCheckWriteParentMissing(const std::wstring& hostPath, DWORD& winErr)
 // 路径特殊设备/虚设备（NUL、CON、\\.\ 设备、命名管道）不做文件系统判定。
 bool isSpecialDevicePath(const std::wstring& path);
 
-// CreateFileW 的访问类别分解（与 Dokan 版 AccessKinds 语义对齐）。
+// CreateFileW 的访问类别分解。
 AccessClass categorizeCreateAccess(DWORD desiredAccess, DWORD creationDisposition);
 
 // 删除分流送回收站：配置了 DYNOBOX_TRASH_DIR 时移入 OpenDesk 统一回收站
@@ -88,7 +88,7 @@ bool sandboxCheckRenameTarget(const std::wstring& sourcePath, const void* info, 
 
 // 判断路径是否"沙箱会话内创建"（文件创建时间 >= 会话开始时间，DYNOBOX_SESSION_START
 // 由 runner 注入）。会话内创建的文件删除视为自发清理：不触发 ask、不进回收站，
-// 直接删除（Dokan 版"实例内创建跟踪"的等价语义，无需共享内存/ADS）。
+// 直接删除（创建时间由宿主侧记录，无需共享内存/ADS）。
 bool sandboxSessionCreated(const std::wstring& hostPath);
 
 // 删除类操作的目标不存在判定：目标当前不存在（GetFileAttributesExW 返回

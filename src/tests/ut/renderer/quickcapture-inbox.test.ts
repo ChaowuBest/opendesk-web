@@ -61,13 +61,17 @@ function makeAgentInput(): { element: any; calls: Array<{ dataUrl: string; name?
 const PENDING_CAPTURE = { dataUrl: 'data:image/jpeg;base64,QUJD' };
 
 interface Harness {
-    fakeWindow: FakeEventTarget & { systemInfo?: { isOpenHarmony?: boolean } };
+    fakeWindow: FakeEventTarget & { systemInfo?: { isOpenHarmony?: boolean; isWindows?: boolean } };
     fakeDocument: FakeEventTarget & { visibilityState: string };
     kitCalls: { takePending: number };
     deps(
         partial?: Partial<QuickCaptureInboxDependencies> & { kit?: { dataUrl: string } | null }
     ): QuickCaptureInboxDependencies;
-    install(options?: { pending?: { dataUrl: string } | null; isOpenHarmony?: boolean }): () => void;
+    install(options?: {
+        pending?: { dataUrl: string } | null;
+        isOpenHarmony?: boolean;
+        isWindows?: boolean;
+    }): () => void;
 }
 
 function makeHarness(): Harness {
@@ -106,8 +110,11 @@ function makeHarness(): Harness {
 
     /** 按 installQuickCaptureInbox 的真实默认路径安装（只注入 kit 与输入框）。 */
     const install: Harness['install'] = (options = {}) => {
-        const isOpenHarmony = options.isOpenHarmony ?? true;
-        fakeWindow.systemInfo = isOpenHarmony ? { isOpenHarmony: true } : {};
+        const isOpenHarmony = options.isOpenHarmony ?? !options.isWindows;
+        const systemInfo: { isOpenHarmony?: boolean; isWindows?: boolean } = {};
+        if (isOpenHarmony) systemInfo.isOpenHarmony = true;
+        if (options.isWindows) systemInfo.isWindows = true;
+        fakeWindow.systemInfo = systemInfo;
         const pending = options.pending === undefined ? PENDING_CAPTURE : options.pending;
         return installQuickCaptureInbox({
             getQuickCaptureKit: async () => ({
@@ -219,7 +226,17 @@ describe('installQuickCaptureInbox', () => {
         expect(h.fakeWindow.listenerCount('openDesk:visibilityChanged')).toBe(1);
     });
 
-    test('installs nothing and consumes nothing on non-openharmony platforms', async () => {
+    test('consumes once immediately on Windows at install time', async () => {
+        h.install({ isWindows: true });
+        await flushMicrotasks();
+
+        expect(h.kitCalls.takePending).toBe(1);
+        expect(h.fakeWindow.listenerCount('focus')).toBe(1);
+        expect(h.fakeDocument.listenerCount('visibilitychange')).toBe(1);
+        expect(h.fakeWindow.listenerCount('openDesk:visibilityChanged')).toBe(1);
+    });
+
+    test('installs nothing and consumes nothing on platforms without quick capture', async () => {
         const dispose = h.install({ isOpenHarmony: false });
         await flushMicrotasks();
 

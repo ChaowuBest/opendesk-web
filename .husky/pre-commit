@@ -1,14 +1,28 @@
 #!/usr/bin/env bash
 
-# 沙箱热路径静态状态守卫：仅当 native/windows/sandbox 下有 .cs 变更时运行。
-# 防止在 Dokan 并发回调热路径引入非线程安全静态状态（历史曾致驱动坏卷，
-# 见 MirrorFs.cs 稳定性红线注释）。
-if git diff --cached --name-only --diff-filter=ACM | grep -q '^native/windows/sandbox/.*\.cs$'; then
-  node scripts/check-sandbox-hotpath.cjs || exit 1
+# 提交前门禁，按"最慢一步"的成本组织，避免每次提交都付全量类型检查的代价：
+#
+# 1. lint-staged：只对暂存文件跑 eslint --fix（内容缓存）+ prettier --write。
+# 2. 类型检查：仅在暂存区含 .ts/.tsx/.js 等代码文件或 tsconfig.json 时运行，走
+#    --fast 引擎（已安装 @typescript/native-preview 时用 tsgo，实测 ~3s；否则回退
+#    tsc 的 ~23s）。改动纯文档 / 资源 / 样式时不再白跑一遍全仓 tsc；tsconfig.json
+#    单独列入是因为改 include/paths/strict 等选项会波及全仓，跳过它等于放过一整类
+#    类型错误（这类改动没有 .ts 文件也会红）。
+#
+# 注意：lint-staged 会 stash 未暂存改动后再执行，类型检查读的是工作区文件，
+# 两者必须串行。
+#
+# 引擎口径：本地 pre-commit 与 pre-push（npm run build → npm run typecheck）都走
+# --fast（tsgo，TypeScript 7 原生实现的预览编译器），不是官方 tsc 口径。官方 tsc
+# 口径由 CI（Jenkinsfile 的 build-cli 阶段强制 OPENDESK_TYPECHECK_ENGINE=tsc）与
+# `npm run typecheck:tsc` 承担；本地需要全量 tsc 时手动跑后者。
+
+set -u
+
+staged="$(git diff --cached --name-only --diff-filter=ACM)"
+
+node node_modules/lint-staged/bin/lint-staged.js || exit 1
+
+if printf '%s\n' "$staged" | grep -qE '(\.(ts|tsx|js|jsx|mjs|cjs)|(^|/)tsconfig[^/]*\.json)$'; then
+  node scripts/run-typecheck.cjs --fast || exit 1
 fi
-
-# 类型检查门禁：与 npm run build 的前置一致，node_modules/测试目录之外
-# 的任何类型错误都会阻塞提交（scripts/run-typecheck.cjs 内置噪音过滤）
-node scripts/run-typecheck.cjs || exit 1
-
-npx lint-staged

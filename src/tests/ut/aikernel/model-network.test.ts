@@ -596,8 +596,7 @@ describe('isLogRawLlmRequestEnabled', () => {
                 developer_mode: false,
                 experimental_features: {
                     applications: { appmgr: false, agentoffice: false },
-                    account: false,
-                    magic_pointer: false
+                    account: false
                 },
                 log_raw_llm_request: true
             }

@@ -2396,7 +2396,7 @@ class SettingPanel extends HTMLElement {
                     </select>
                 </div>
                 ${
-                    window.systemInfo?.isOpenHarmony
+                    window.systemInfo?.isOpenHarmony || window.systemInfo?.isWindows
                         ? `
                 <div class="sp-form-group" style="margin-bottom:0">
                     <label class="sp-form-label">${this._t('sp.general.quickCapture')}</label>
@@ -2626,7 +2626,6 @@ class SettingPanel extends HTMLElement {
         const experimentalAppMgr = !!experimentalApplications.appmgr;
         const experimentalAgentOffice = !!experimentalApplications.agentoffice;
         const experimentalAccount = !!experimentalFeatures.account;
-        const experimentalMagicPointer = !!experimentalFeatures.magic_pointer;
         const experimentalImmersiveDesktop = !!experimentalFeatures.immersive_desktop;
         const debugLogRawLlm = !!debugConfig.log_raw_llm_request;
         const debugLogEnabled = !!debugConfig.debug_log;
@@ -2686,15 +2685,6 @@ class SettingPanel extends HTMLElement {
                         <label class="sp-toggle-switch">
                             <input type="checkbox" ${experimentalAccount ? 'checked' : ''} id="experimental-account-toggle-hidden">
                             <span id="experimental-account-toggle" class="sp-toggle-track" style="cursor:pointer" data-key="account"></span>
-                        </label>
-                    </div>
-                    <div class="sp-toggle-row">
-                        <div class="sp-toggle-info">
-                            <div class="sp-toggle-label">${this._t('renderer.settings.experimentalMagicPointer')}</div>
-                        </div>
-                        <label class="sp-toggle-switch">
-                            <input type="checkbox" ${experimentalMagicPointer ? 'checked' : ''} id="experimental-magic-pointer-toggle-hidden">
-                            <span id="experimental-magic-pointer-toggle" class="sp-toggle-track" style="cursor:pointer" data-key="magic_pointer"></span>
                         </label>
                     </div>
                     <div class="sp-toggle-row">
@@ -2939,7 +2929,6 @@ class SettingPanel extends HTMLElement {
                 this.currentData.debug.experimental_features = {
                     applications: { appmgr: false, agentoffice: false },
                     account: false,
-                    magic_pointer: false,
                     immersive_desktop: false
                 };
                 panel?.querySelectorAll('input[type="checkbox"]').forEach((toggle) => {
@@ -2999,7 +2988,6 @@ class SettingPanel extends HTMLElement {
         bindExperimentalToggle('#experimental-appmgr-toggle-hidden', 'applications', 'appmgr');
         bindExperimentalToggle('#experimental-agentoffice-toggle-hidden', 'applications', 'agentoffice');
         bindExperimentalToggle('#experimental-account-toggle-hidden', 'account');
-        bindExperimentalToggle('#experimental-magic-pointer-toggle-hidden', 'magic_pointer');
         bindExperimentalToggle('#experimental-immersive-desktop-toggle-hidden', 'immersive_desktop');
     }
 

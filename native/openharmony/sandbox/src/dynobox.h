@@ -3,7 +3,7 @@
  * sandbox library and the reference decision endpoint.
  *
  * dynobox-linux: LD_PRELOAD based file-access-control sandbox, the Linux
- * counterpart of the OpenDesk dynobox (Dokany mirror volume) component.
+ * counterpart of the OpenDesk dynobox (Windows sandbox) component.
  */
 #ifndef DYNOBOX_H
 #define DYNOBOX_H

@@ -2,27 +2,25 @@
 
 ## 1. 背景与目标
 
-Windows 平台已有基于 Dokan 的动态沙箱 `dynobox`（`native/windows/sandbox/`）：把真实目录镜像成虚拟盘符，子进程在 AppContainer 中，对虚拟盘的每次文件操作都经过策略引擎（allow/ask/deny），ask 同步询问 OpenDesk 权限引擎，fail-closed，管理进程死亡则整树终止。
+Windows 平台已有动态沙箱 `dynobox`（`native/windows/sandbox/`）：用 Detours 在用户态 hook kernel32 文件 API，子进程以普通用户令牌运行、直接使用宿主真实路径，每次文件操作都经过策略引擎（allow/ask/deny），ask 同步询问 OpenDesk 权限引擎，fail-closed，管理进程死亡则整树终止。
 
 本规范定义 Linux 平台的对等实现 `dynobox-linux`，目标：
 
 - **透明路径**：沙箱内 `/home/liyi/work/foo.txt` 与宿主路径完全一致，但底层文件访问受策略钩子控制（FUSE）；
 - **限制对子进程及全部后代生效**，无逃逸路径（见 §6 威胁模型）；
 - **复用现有权限引擎与 ask 协议 v2**，OpenDesk 侧改动最小；
-- 与 Windows 版并存：策略语义共享，挂载层各写各的（FUSE vs Dokan）。
+- 与 Windows 版并存：策略语义共享，强制点各写各的（FUSE 挂载点 vs 用户态 API hook）。
 
 ## 2. 与 Windows dynobox 的机制对照
 
-| Windows (Dynobox)                          | Linux (dynobox-linux)                         | 说明                                                                    |
-| ------------------------------------------ | --------------------------------------------- | ----------------------------------------------------------------------- |
-| Dokan 虚拟盘符 `Z:`                        | FUSE 挂载点（就地挂载，路径不变）             | FUSE 为内核自带用户态文件系统框架，非特权可挂载，零驱动安装             |
-| AppContainer（宿主路径不可见）             | user namespace + mount namespace + pivot_root | 构造根视图，未声明路径"不存在"，隔离比 AppContainer 更彻底              |
-| Job 对象 `KILL_ON_JOB_CLOSE`、禁 breakaway | cgroup v2 `cgroup.kill` + PID namespace       | 管理进程死亡 → 整树终止                                                 |
-| 盘符租约 MountLease（A–Z 互斥）            | 不需要                                        | 挂载点是目录路径，多实例天然隔离                                        |
-| 回环豁免 network-ensure（UAC 一次）        | 不需要                                        | Linux 回环默认可用；网络可选 netns 控制                                 |
-| `--del-to-trash` 回收站                    | gio trash / 自实现 trash 目录                 | 简单                                                                    |
-| AppContainer 对系统目录的读取残留          | 系统目录 ro bind（/usr /lib /etc /bin…）      | 运行时依赖原生可用且不可改，解决 Windows 版"解释器须预放进沙箱卷"的痛点 |
-| 规则路径 `/C/...` ↔ `C:\...`               | 规则 path 直接写宿主真实路径                  | 无需路径翻译，权限弹窗显示真实路径                                      |
+| Windows (Dynobox)                          | Linux (dynobox-linux)                         | 说明                                                        |
+| ------------------------------------------ | --------------------------------------------- | ----------------------------------------------------------- |
+| 用户态 API hook（Detours，无挂载）         | FUSE 挂载点（就地挂载，路径不变）             | FUSE 为内核自带用户态文件系统框架，非特权可挂载，零驱动安装 |
+| 普通令牌 + 策略拒绝                        | user namespace + mount namespace + pivot_root | 构造根视图，未声明路径"不存在"，隔离比"策略拒绝"更彻底      |
+| Job 对象 `KILL_ON_JOB_CLOSE`、禁 breakaway | cgroup v2 `cgroup.kill` + PID namespace       | 管理进程死亡 → 整树终止                                     |
+| `--del-to-trash` 回收站                    | gio trash / 自实现 trash 目录                 | 简单                                                        |
+| 宿主系统目录按策略判定（普通令牌可直接读） | 系统目录 ro bind（/usr /lib /etc /bin…）      | 运行时依赖原生可用且不可改                                  |
+| 规则路径 `/C/...` ↔ `C:\...`               | 规则 path 直接写宿主真实路径                  | 无需路径翻译，权限弹窗显示真实路径                          |
 
 ## 3. 组件与一次执行时序
 
@@ -84,7 +82,7 @@ OpenDesk (Electron)
 
 ## 6. 子进程限制：威胁模型与对策
 
-设计原则：**限制靠"视图不可见 + 内核必经路径"两层，不依赖子进程合作**。FUSE 检查点位于内核 VFS 必经路径（同 Dokan 原理），direct syscall 也到达同一 VFS，无法绕过。
+设计原则：**限制靠"视图不可见 + 内核必经路径"两层，不依赖子进程合作**。FUSE 检查点位于内核 VFS 必经路径，direct syscall 也到达同一 VFS，无法绕过。
 
 | #   | 逃逸途径                              | 对策                                                                                                                                                                |
 | --- | ------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -98,7 +96,7 @@ OpenDesk (Electron)
 | 8   | kill 掉 FUSE daemon 造成越权          | daemon 与管理进程同 cgroup；daemon 死亡 → 管理进程检测 → 整树 `cgroup.kill`                                                                                         |
 | 9   | 管理进程死亡后子进程残留              | cgroup v2 `cgroup.kill`（内核 5.14+）+ PID namespace 双保险                                                                                                         |
 | 10  | 加载内核模块 / 操纵设备               | 无 `/dev/fuse`、最小 /dev；模块加载需真 root                                                                                                                        |
-| 11  | 通过 FUSE 检查绕过（direct syscall）  | 检查点在 VFS 必经路径，无法绕过（与 Dokan 同理）                                                                                                                    |
+| 11  | 通过 FUSE 检查绕过（direct syscall）  | 检查点在 VFS 必经路径，无法绕过                                                                                                                                     |
 
 已知边界（与 Windows 版一致的语义）：
 
@@ -123,7 +121,7 @@ Ubuntu 23.10+（24.04 默认）通过 AppArmor 限制非特权 user namespace（
     }
     ```
 
-    安装时写入 `/etc/apparmor.d/` + `apparmor_parser -r`，一次性管理员授权（类比 Windows 装 Dokan 驱动的 UAC；按用户偏好可用 zenity 密码框完成），可逆。
+    安装时写入 `/etc/apparmor.d/` + `apparmor_parser -r`，一次性管理员授权（按用户偏好可用 zenity 密码框完成），可逆。
 
 2. **运行时检测 + 降级（必做）**：装配前探测 `unshare -U true`，失败则报本地化错误"动态沙箱需要非特权 user namespace，当前被 AppArmor 限制"，设置页不暴露沙箱选项；绝不静默降级为无沙箱假沙箱。
 3. sysctl 全局关闭（`kernel.apparmor_restrict_unprivileged_userns=0`）仅作为用户自助手段，不作为产品方案。
@@ -540,8 +538,8 @@ bind 前创建目标空目录；整根视图下绝不创建（会经 FUSE 在宿
 
 1. bash 的 command lookup 用 **libc stat**（而非 execvp/execve）逐 PATH 目录探测
    候选命令，命令不存在也 stat；每个候选 = 一次 read gate。Linux 版策略只放行
-   固定系统前缀（`LINUX_SYSTEM_READ_PREFIXES`），**用户 PATH 目录**（~/.nvm/.../bin、
-   node_modules/.bin、~/.cargo/bin、~/.local/bin、.opendesk/interpreters 等）每次
+   固定系统前缀（`LINUX_SYSTEM_READ_PREFIXES`），**用户 PATH 目录**（`~/.nvm/.../bin`、
+   node_modules/.bin、`~/.cargo/bin`、`~/.local/bin`、.opendesk/interpreters 等）每次
    命令查找都触发 ask；`cache_ttl=0` 不缓存 → 同路径反复弹。
 2. bash 启动时对 cwd 祖先链（$PWD 验证）逐级 stat；祖先在 `workspace/**`（子树）
    之外 → 每次 shell 启动 3 条 ask。

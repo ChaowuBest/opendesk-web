@@ -9,8 +9,7 @@ function createSwitcher(developerMode: boolean): TaskSwitcher {
             developer_mode: developerMode,
             experimental_features: {
                 applications: { appmgr: false, agentoffice: false },
-                account: false,
-                magic_pointer: false
+                account: false
             }
         }
     });

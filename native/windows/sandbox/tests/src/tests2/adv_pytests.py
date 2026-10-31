@@ -13,8 +13,8 @@ import stat as stat_m
 import sys
 
 def force_writable(path: str) -> None:
-    """直接 SetFileAttributesW 解除只读（os.chmod 的 FileBasicInformation
-    路径在 Dokan 驱动层会被吞掉，见 MirrorFs 已知怪癖）。"""
+    """直接 SetFileAttributesW 解除只读（os.chmod 走 FileBasicInformation，
+    不经过 CreateFile hook）。"""
     ctypes.windll.kernel32.SetFileAttributesW(path, 0x80)  # FILE_ATTRIBUTE_NORMAL
 
 ROOT = os.environ.get("SBX_ROOT", "S:\\")

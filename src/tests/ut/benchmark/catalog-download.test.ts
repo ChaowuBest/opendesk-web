@@ -28,7 +28,6 @@ jest.unstable_mockModule('../../../main/applications/benchmark/script-runtime.js
 const { BenchmarkManager } = await import('../../../main/applications/benchmark/manager.js');
 const { compareVersions, resolveCatalogInstallState, findLocalDatasetByName } =
     await import('../../../main/applications/benchmark/catalog-common.js');
-const { listCatalogDatasets, findCatalogDataset } = await import('../../../main/applications/benchmark/catalog.js');
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -94,22 +93,6 @@ describe('resolveCatalogInstallState', () => {
         const local = makeSummary({ name: '  workbuddy bench ' });
         expect(findLocalDatasetByName([local], 'WorkBuddy Bench')).toBe(local);
         expect(resolveCatalogInstallState(entry, [local])).toBe('update-available');
-    });
-});
-
-// ── 下载清单 ─────────────────────────────────────────────────────────────
-
-describe('catalog', () => {
-    test('默认清单包含 workbuddy bench 且带下载地址', () => {
-        const entries = listCatalogDatasets();
-        const entry = entries.find((item) => item.id === 'workbuddy-bench');
-        expect(entry).toBeDefined();
-        expect(entry!.name).toBe('WorkBuddy Bench');
-        expect(entry!.version).toMatch(/^v?\d+(\.\d+)*$/);
-        expect(entry!.tracks.map((track) => track.id)).toEqual(['office', 'code']);
-        expect(entry!.downloadUrl).toMatch(/^https?:\/\//);
-        expect(findCatalogDataset('workbuddy-bench')).not.toBeNull();
-        expect(findCatalogDataset('not-exist')).toBeNull();
     });
 });
 

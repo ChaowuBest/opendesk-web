@@ -102,13 +102,15 @@ export async function consumePendingQuickCapture(deps: QuickCaptureInboxDependen
  * 激活信号到达时必然可取到；而每秒轮询会让主进程持续打印
  * "native bridge call: quickCaptureKit:takePendingCapture()" 刷日志。
  *
- * 仅在 HarmonyOS 上安装（window.systemInfo.isOpenHarmony）；其余平台
- * 快速截图热键不存在，消费监听与桥调用一并跳过。
+ * 仅在具备快速截图能力的平台安装（window.systemInfo）：HarmonyOS 的热键与遮罩在
+ * ArkTS 侧，Windows 的主进程 globalShortcut + 不透明遮罩窗口（以预截屏作背景，因为
+ * Windows 上透明窗口收不到触摸输入）；其余平台快速截图热键不存在，消费监听与桥
+ * 调用一并跳过。
  *
  * @returns dispose 函数，移除全部监听。
  */
 export function installQuickCaptureInbox(deps: QuickCaptureInboxDependencies = {}): () => void {
-    if (window.systemInfo?.isOpenHarmony !== true) {
+    if (window.systemInfo?.isOpenHarmony !== true && window.systemInfo?.isWindows !== true) {
         return () => undefined;
     }
     let inFlight = false;

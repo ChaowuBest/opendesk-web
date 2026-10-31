@@ -162,7 +162,7 @@ static bool pipeTransact(const std::wstring& pipeName, const std::wstring& reque
 
 // Winsock HTTP/1.1 客户端：纯网络传输（不触碰文件系统 API，因此不会触发
 // 文件 hook 形成递归 ask），以绝对时限 fail-closed。仅支持 http（本地决策
-// 端点场景；https 明确报错）。同步阻塞调用线程，与 Dokan 的 I/O 等待语义一致。
+// 端点场景；https 明确报错）。同步阻塞调用线程。
 static bool httpAskImpl(const AskConfig& cfg, const std::wstring& vpath, const std::string& kind,
                         std::wstring& reply, std::wstring& err, AskOutcome& outcome)
 {

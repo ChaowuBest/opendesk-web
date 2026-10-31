@@ -94,7 +94,7 @@ export function guardStartupKit(kit: StartupKit, mode: StartupMode): StartupKit 
     };
 }
 
-// ── QuickCapture (HarmonyOS Alt+Space 全局热键截图) ─────────────────────────
+// ── QuickCapture (Alt+Space 全局热键截图，HarmonyOS / Windows) ───────────────
 
 export interface QuickCaptureState {
     supported: boolean;
@@ -110,12 +110,23 @@ export interface QuickCaptureKit {
      * 主进程负责把缓存文件读成 Data URL 并删除源文件；无待处理时返回 null。
      */
     takePendingCapture(): Promise<QuickCapturePendingCapture | null>;
+    /**
+     * 可选：由主进程的全局热键回调转发触发（目前仅 Windows 由 main.ts 的
+     * globalShortcut 回调调用；HarmonyOS 的热键注册在 ArkTS 侧，不实现该方法）。
+     */
+    triggerFromHotkey?(): void;
 }
 
 /** 一条待处理的快速截图（已编码为 Data URL，可直接用于附件展示）。 */
 export interface QuickCapturePendingCapture {
     dataUrl: string;
 }
+
+/**
+ * 截图已交接给主窗口时由 kit 在 app 上 emit、由 main.ts 监听后把主窗口带到前台的事件名。
+ * 两侧必须一致，故只在 common 里定义一次。
+ */
+export const QUICK_CAPTURE_BRING_MAIN_TO_FRONT_EVENT = 'opendesk:quick-capture:bring-main-to-front';
 
 export class NaiveQuickCaptureKit implements QuickCaptureKit {
     async getState(): Promise<QuickCaptureState> {

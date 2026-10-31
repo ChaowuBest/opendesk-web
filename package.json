@@ -21,8 +21,8 @@
         "preview:darwin": "npm run build && npm run build-sandbox:darwin && node scripts/build-darwin-speech-helper.cjs && electron-vite preview --skipBuild",
         "preview:linux": "npm run build && electron-vite preview --skipBuild -- --no-sandbox",
         "build": "npm run typecheck && run-script-os",
-        "build:win32": "npm run build:plugins && npm run build-sandbox:windows && electron-vite build",
-        "build:default": "npm run build:plugins && npm run build-sandbox:windows && npm run build-sandbox:linux && npm run build-sandbox:darwin && electron-vite build",
+        "build:win32": "npm run build:plugins && npm run build-sandbox:windows && node scripts/build-electron.cjs",
+        "build:default": "npm run build:plugins && npm run build-sandbox:windows && npm run build-sandbox:linux && npm run build-sandbox:darwin && node scripts/build-electron.cjs",
         "build-sandbox:windows": "node scripts/build-windows-sandbox.cjs",
         "build-sandbox:linux": "node scripts/build-linux-sandbox.cjs",
         "build-sandbox:darwin": "node scripts/build-darwin-sandbox.cjs",
@@ -61,11 +61,12 @@
         "changelog": "node scripts/collect-changelog.js",
         "version": "node scripts/sync-version.mjs",
         "prepare": "husky",
-        "typecheck": "node scripts/run-typecheck.cjs"
+        "typecheck": "node scripts/run-typecheck.cjs --fast",
+        "typecheck:tsc": "node scripts/run-typecheck.cjs --tsc"
     },
     "lint-staged": {
         "*.{js,ts,mjs,cjs,jsx,tsx}": [
-            "eslint --fix",
+            "eslint --fix --cache --cache-location node_modules/.cache/eslint/ --cache-strategy content",
             "prettier --write"
         ],
         "*.{json,md,css,scss,yaml,yml,html}": [
@@ -103,6 +104,7 @@
         "@types/word-extractor": "^1.0.6",
         "@types/ws": "^8.18.1",
         "@types/xml2js": "^0.4.14",
+        "@typescript/native-preview": "7.0.0-dev.20260707.2",
         "@yaireo/tagify": "^4.31.3",
         "ace-builds": "1.44.0",
         "alpinejs": "^3.15.4",

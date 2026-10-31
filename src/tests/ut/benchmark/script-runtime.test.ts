@@ -28,6 +28,18 @@ import os from 'node:os';
 import path from 'node:path';
 import { setRuntimeLocale } from '../../../locale/index.js';
 
+/**
+ * 真实执行脚本用的环境：把 HOME 指向用例目录下的空 home，跳过 bash -i 加载用户 ~/.bashrc。
+ * rc 加载实测约 480ms（rc 重的机器更久），全量并发（近 600 个 suite 抢 CPU）时足以把脚本的
+ * 首次输出推到超时之后，让「超时也携带已捕获输出」这类用例必空；隔离后 bash 启动降到 ~150ms，
+ * -i 交互语义（含 `$-` 里的 i 标志）不受影响。
+ */
+function scriptEnv(directory: string): NodeJS.ProcessEnv {
+    const home = path.join(directory, 'home');
+    fs.mkdirSync(home, { recursive: true });
+    return { ...process.env, HOME: home };
+}
+
 beforeEach(() => {
     scanShells.mockReset();
     taskConfig = {};
@@ -179,7 +191,7 @@ describe('runScript integration', () => {
         const logPath = path.join(dir, 'run.log');
 
         scanShells.mockReturnValue([{ kind: 'bash', path: shellPath, sandboxed: false }]);
-        const result = await runScript({ scriptPath, cwd: dir, env: process.env, logPath, timeoutSec: 30 });
+        const result = await runScript({ scriptPath, cwd: dir, env: scriptEnv(dir), logPath, timeoutSec: 30 });
 
         expect(result).toMatchObject({ ok: true, code: 0 });
         expect(fs.readFileSync(logPath, 'utf8')).toContain('BENCH_SCRIPT_OK');
@@ -192,7 +204,7 @@ describe('runScript integration', () => {
         const logPath = path.join(dir, 'run.log');
 
         scanShells.mockReturnValue([{ kind: 'bash', path: shellPath, sandboxed: false }]);
-        const result = await runScript({ scriptPath, cwd: dir, env: process.env, logPath, timeoutSec: 1 });
+        const result = await runScript({ scriptPath, cwd: dir, env: scriptEnv(dir), logPath, timeoutSec: 1 });
 
         expect(result.ok).toBe(false);
         expect(result.code).toBeNull();
@@ -208,7 +220,7 @@ describe('runScript integration', () => {
         const logPath = path.join(dir, 'run.log');
 
         scanShells.mockReturnValue([{ kind: 'bash', path: shellPath, sandboxed: false }]);
-        const result = await runScript({ scriptPath, cwd: dir, env: process.env, logPath, timeoutSec: 30 });
+        const result = await runScript({ scriptPath, cwd: dir, env: scriptEnv(dir), logPath, timeoutSec: 30 });
 
         expect(result).toMatchObject({ ok: false, code: 3, error: '退出码 3' });
         expect(result.logError).toContain('out-line');
@@ -233,7 +245,7 @@ describe('失败结果携带脚本输出（logError）', () => {
         const logPath = path.join(dir, 'run.log');
 
         scanShells.mockReturnValue([{ kind: 'bash', path: shellPath, sandboxed: false }]);
-        const result = await runScript({ scriptPath, cwd: dir, env: process.env, logPath, timeoutSec: 30 });
+        const result = await runScript({ scriptPath, cwd: dir, env: scriptEnv(dir), logPath, timeoutSec: 30 });
 
         expect(result.ok).toBe(false);
         expect(result.logError).toContain('out-line');
@@ -244,13 +256,13 @@ describe('失败结果携带脚本输出（logError）', () => {
     maybe('超时失败时同样携带已捕获的脚本输出', async () => {
         const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'bench-runtime-'));
         const scriptPath = path.join(dir, 'prepare.sh');
-        // 输出后长睡：3s 超时留足 bash -i 启动 + echo 的余量（并发负载下 -i 启动可能接近 1s，
-        // 1s 超时会让 echo 还没执行就被杀掉，日志必为空）
+        // 输出后长睡，让 3s 超时在 echo 之后触发（bash 启动开销由 scriptEnv 隔离掉，
+        // 否则 rc 加载 + 并发饥饿会让 echo 还没执行就被杀，日志必空）
         fs.writeFileSync(scriptPath, 'echo partial-out; sleep 30\n');
         const logPath = path.join(dir, 'run.log');
 
         scanShells.mockReturnValue([{ kind: 'bash', path: shellPath, sandboxed: false }]);
-        const result = await runScript({ scriptPath, cwd: dir, env: process.env, logPath, timeoutSec: 3 });
+        const result = await runScript({ scriptPath, cwd: dir, env: scriptEnv(dir), logPath, timeoutSec: 3 });
 
         expect(result.ok).toBe(false);
         expect(result.logError).toContain('partial-out');
@@ -266,7 +278,7 @@ describe('失败结果携带脚本输出（logError）', () => {
 
         scanShells.mockReturnValue([{ kind: 'bash', path: shellPath, sandboxed: false }]);
         await expect(
-            runScript({ scriptPath, cwd: dir, env: process.env, logPath, timeoutSec: 30 })
+            runScript({ scriptPath, cwd: dir, env: scriptEnv(dir), logPath, timeoutSec: 30 })
         ).resolves.toMatchObject({ ok: true, code: 0, logError: '' });
     });
 });
@@ -359,7 +371,7 @@ describe('Windows Git Bash 真实脚本复现（tar 盘符问题）', () => {
             scriptPath,
             cwd: caseDir,
             env: prepareScriptEnv('bash', {
-                ...process.env,
+                ...scriptEnv(dir),
                 BENCH_CASE_DIR: caseDir,
                 BENCH_WORKSPACE: workspace
             }),
@@ -387,7 +399,7 @@ describe('runScript 交互模式真实执行（-i）', () => {
         const logPath = path.join(dir, 'run.log');
 
         scanShells.mockReturnValue([{ kind: 'bash', path: bashPath, sandboxed: false }]);
-        const result = await runScript({ scriptPath, cwd: dir, env: process.env, logPath, timeoutSec: 60 });
+        const result = await runScript({ scriptPath, cwd: dir, env: scriptEnv(dir), logPath, timeoutSec: 60 });
 
         expect(result.ok).toBe(false);
         expect(result.logError).toContain('FLAG-INTERACTIVE');
@@ -420,7 +432,7 @@ describe('PowerShell 外壳启动 bash（真实执行）', () => {
             { kind: 'bash', path: bashPath, sandboxed: false }
         ]);
 
-        const result = await runScript({ scriptPath, cwd: dir, env: process.env, logPath, timeoutSec: 60 });
+        const result = await runScript({ scriptPath, cwd: dir, env: scriptEnv(dir), logPath, timeoutSec: 60 });
 
         expect(result.ok).toBe(false);
         expect(result.code).toBe(5);
@@ -438,7 +450,7 @@ describe('PowerShell 外壳启动 bash（真实执行）', () => {
         taskConfig = { shell_path: psPath };
         scanShells.mockReturnValue([{ kind: 'powershell', path: psPath, sandboxed: false }]);
 
-        const result = await runScript({ scriptPath, cwd: dir, env: process.env, logPath, timeoutSec: 60 });
+        const result = await runScript({ scriptPath, cwd: dir, env: scriptEnv(dir), logPath, timeoutSec: 60 });
 
         expect(result.ok).toBe(false);
         expect(result.code).toBeNull();
@@ -520,7 +532,7 @@ describe('runScript 句柄中止（停止链路）', () => {
             const pending = runScript({
                 scriptPath,
                 cwd: dir,
-                env: process.env,
+                env: scriptEnv(dir),
                 logPath,
                 timeoutSec: 60,
                 handle: (script) => (scriptHandle = script)
@@ -552,7 +564,7 @@ describe('runScript 句柄中止（停止链路）', () => {
             const pending = runScript({
                 scriptPath,
                 cwd: dir,
-                env: process.env,
+                env: scriptEnv(dir),
                 logPath,
                 timeoutSec: 60,
                 handle: (script) => (scriptHandle = script)

@@ -3,7 +3,7 @@
 ## OpenDesk 集成
 
 - 任务设置保存 `task_config.shell_path` 和 `task_config.shell_sandboxed`。终端初始化探测 shell 清单，路径不可用时选择第一个；仅 Windows pwsh 提供沙箱选项，每个任务只注册选中的执行工具及 `checkShellStatus`。
-- 任务设置保存 `task_config.shell_sandbox_del_to_trash`；开启后 OpenDesk 在启动参数中追加 `--del-to-trash`。开启后沙箱内的删除经 SHFileOperation 送 Windows 回收站；回收站不可用的位置（网络路径、无回收站介质）或移动失败时保留原文件并写诊断日志，绝不静默永久删除。与 Linux/OHOS 沙箱一致：不区分"实例内新建"（Detours 实现没有 Dokan 的实例内创建跟踪）。
+- 任务设置保存 `task_config.shell_sandbox_del_to_trash`；开启后 OpenDesk 在启动参数中追加 `--del-to-trash`。开启后沙箱内的删除经 SHFileOperation 送 Windows 回收站；**沙箱会话内创建的文件例外**——删除视为自发清理，不触发 ask、不进回收站、直接删除（见"已知限制"一节）；回收站不可用的位置（网络路径、无回收站介质）或移动失败时保留原文件并写诊断日志，绝不静默永久删除。
 - 开发运行固定使用 `native/windows/sandbox/runtime/sandbox.exe`（与 `sandbox_hook.dll` 同目录）；安装包固定使用 `resources/sandbox/sandbox.exe`。
 - OpenDesk 传入 `--log-file`，管理进程诊断信息写入 OpenDesk 日志目录的 `sandbox/dynamic-sandbox-<id>.log`。该文件是内部诊断日志，不进入终端结果；终端的 stdout、stderr、stdin 和退出码直接来自子进程。`--log-file` 路径同时经 `DYNOBOX_LOG_FILE` 注入 hook 子进程：整棵沙箱树的每次策略判定（`[POLICY] pid=N access vpath -> ALLOW|DENY (rule#N)`）都写回同一文件，事故后可归因"哪个进程、哪个路径、哪条规则、放行还是拒绝"。
 - 授权端点随进程存活；终端工具超时转入后台不会关闭端点。用户确认最多等待五分钟（ask `timeout_ms=330000`）。
@@ -12,9 +12,9 @@
 - 沙箱内进程树经 Job 对象治理：`JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE`（管理进程退出 → 整树终止），不授予 breakaway；后代进程经 `CreateProcessW` hook 递归注入 hook DLL，管控覆盖整棵进程树。
 - 路径语义：**子进程直接使用宿主真实路径**（无虚拟卷）。策略按 `roots` 映射把真实路径换算成 `/C/...` 虚拟路径后判定（与 OpenDesk 的 `/C/X` 即宿主 `C:\X` 约定一致）；工作目录为宿主真实路径，经宿主 spawn 的 cwd 原样继承（不再注入 Set-Location）。
 - **PowerShell 专用沙箱（Windows）**：**只有 PowerShell（powershell/pwsh）注册沙箱变体并进入动态沙箱**。Git Bash（MSYS2 bash.exe）等 cygwin shell 在 Windows 上不提供沙箱变体——cygwin 与 detours hook 原理上不兼容（注入后 fork 挂死且基本文件操作异常，见已知限制），需要管控的读写请用 PowerShell 或 node/python 等 Win32 工具。Unix 形态的路径（`/c/xxx`）在策略判定前由 hook 按 Win32 真实路径归一化。
-- `--preserve-symlinks` 等 Dokan 专属兼容措施不再需要（无 junction 化的共享 Temp；子进程 `%TEMP%` 即宿主 `%TEMP%`）。
+- `--preserve-symlinks` 兼容措施不在沙箱侧：子进程 `%TEMP%` 即宿主 `%TEMP%`，无 junction 化的共享 Temp。
 
-回归验证：`npx tsx --test native/windows/sandbox/tests/runtime.test.ts`（36 用例：stdout/stderr 转发、deny/allow、ask 决策与缓存、回收站、递归注入、NUL 设备、not-found 语义、并发管理进程、父进程退出后无孤儿泄漏、句柄级删除回收站、会话内创建直接删除等）、`npx tsx --test native/windows/sandbox/tests/cross-shell-runtime.test.ts`（8 用例：PowerShell/bash 双 shell 沙箱、cygwin bash 不注入（fork 正常）与 Win32 程序管控并存、node/cmd 递归注入 deny、Job 整树 kill、cmd ask、回收站、cygwin fork 修复验证）与 `npx tsx --test native/windows/sandbox/tests/sandbox-coverage.test.ts`（35 用例：策略语义 read/execute deny、grants 子树授权、ask TTL 过期、HTTP 非 200 fail-closed、命名管道 ask 端到端、同 key ask 合并、失败熔断、hook 日志 stdout 纯净、符号链接行为与宿主一致、多线程/多进程并发、2MB 哈希、Unicode/长路径、--src 单根、--env 透传、cwd 宿主路径、目录回收站/改名、尾斜杠归一化防逃逸、通配枚举 deny、回收站禁用保护、坏策略 fail-closed、ask 无端点 fail-closed、Job 心跳整树终止、git 工作流、大目录枚举、execute ask 授权、deny 优先级、junction 按名判定、hook 健壮性）。
+回归验证：`npx tsx --test native/windows/sandbox/tests/runtime.test.ts`（40 用例：stdout/stderr 转发、deny/allow、ask 决策与缓存、回收站、递归注入、NUL 设备、not-found 语义、并发管理进程、父进程退出后无孤儿泄漏、句柄级删除回收站、会话内创建直接删除等）、`npx tsx --test native/windows/sandbox/tests/cross-shell-runtime.test.ts`（9 用例：PowerShell/bash 双 shell 沙箱、cygwin bash 不注入（fork 正常）与 Win32 程序管控并存、node/cmd 递归注入 deny、Job 整树 kill、cmd ask、回收站、cygwin fork 修复验证）与 `npx tsx --test native/windows/sandbox/tests/sandbox-coverage.test.ts`（35 用例：策略语义 read/execute deny、grants 子树授权、ask TTL 过期、HTTP 非 200 fail-closed、命名管道 ask 端到端、同 key ask 合并、失败熔断、hook 日志 stdout 纯净、符号链接行为与宿主一致、多线程/多进程并发、2MB 哈希、Unicode/长路径、--src 单根、--env 透传、cwd 宿主路径、目录回收站/改名、尾斜杠归一化防逃逸、通配枚举 deny、回收站禁用保护、坏策略 fail-closed、ask 无端点 fail-closed、Job 心跳整树终止、git 工作流、大目录枚举、execute ask 授权、deny 优先级、junction 按名判定、hook 健壮性）。
 
 ---
 
@@ -77,8 +77,8 @@ resume。整棵进程树受控。
 
 **判定位于 API 层必经路径**：Node / PowerShell / .NET / Python / cmd 等所有
 Win32 程序的文件 IO 都经过 kernel32 导出。**direct syscall（NtCreateFile 等
-直调 ntdll）会绕过拦截**——这是 Detours 方案的固有边界（Dokan 的检查点在内核，
-Detours 在用户态 API 层），详见"安全模型"。
+直调 ntdll）会绕过拦截**——这是本方案的固有边界（强制点在用户态 API 层，
+不在内核），详见"安全模型"。
 
 ### 2.2 决策引擎与求值顺序
 
@@ -110,7 +110,7 @@ fail-closed：超时、连接失败、非 200、字段缺失 → 按 deny 且失
 
 ### 2.3 子树授权下发（协议 v2）
 
-同 Dokan 版：端点批准路径时可连带授权一个子树，后续同树操作零问询。授权默认
+端点批准路径时可连带授权一个子树，后续同树操作零问询。授权默认
 TTL 取 `grant_ttl_seconds`（300s），响应可覆盖，上限 1 小时，过期自动失效。
 
 ### 2.4 多根统一命名空间
@@ -146,22 +146,21 @@ argv/env 翻译不再需要，传参会被记录为空操作）。
 - 注入失败（系统保护进程等）不终止后代（避免连坐父进程），记录诊断日志，
   后代不受管控为已知降级。
 
-### 2.7 安全模型（与 Dokan 版的关键差异）
+### 2.7 安全模型
 
-Dokan 版的隔离力来自 AppContainer（内核 ACL）与虚拟卷（内核检查点）。Detours
-方案在用户态 API 层强制，**安全模型不同**：
+文件访问强制点在用户态 API 层，**强制点不在内核**，能力与边界如下：
 
-| 能力 | Dokan 版（AppContainer + 卷） | Detours 版（普通令牌 + API hook） |
-|---|---|---|
-| 文件访问强制点 | 内核（dokan2.sys） | 用户态 API（kernel32 导出） |
-| direct syscall（NtCreateFile 直调） | 拦截 | **可绕过**（已知限制） |
-| 系统目录写 | AppContainer ACL 拒绝 | 取决于策略（默认 OpenDesk 策略 write ask） |
-| 网络 | AppContainer 能力 + 回环豁免 | 普通令牌（无限制，无需豁免） |
-| 命名管道 | AppContainer 限制（需 pipes-ensure） | 天然可用 |
-| 安装要求 | Dokan 驱动 + UAC | **无**（MSVC 静态链接 + Detours） |
-| 每 IRP 内核往返 | ~140-150µs | 无（进程内判定 ~10µs） |
+| 能力 | 当前实现（普通令牌 + API hook） |
+|---|---|
+| 文件访问强制点 | 用户态 API（kernel32 导出） |
+| direct syscall（NtCreateFile 直调） | **可绕过**（已知限制） |
+| 系统目录写 | 取决于策略（默认 OpenDesk 策略 write ask） |
+| 网络 | 普通令牌（无限制，无需豁免） |
+| 命名管道 | 天然可用 |
+| 安装要求 | **无**（MSVC 静态链接 + Detours） |
+| 判定开销 | 进程内判定 ~10µs（无内核往返） |
 
-因此 Detours 版**不需要任何管理员/UAC/驱动安装**，隔离力弱于内核方案：沙箱内
+因此本实现**不需要任何管理员/UAC/驱动安装**，隔离力弱于内核级方案：沙箱内
 进程以普通用户身份运行，策略是唯一的文件管控。对 LLM/构建脚本等"非对抗"场景
 足够；对恶意代码对抗不足（恶意进程可用 direct syscall 绕过文件管控）。
 
@@ -171,7 +170,7 @@ Dokan 版的隔离力来自 AppContainer（内核 ACL）与虚拟卷（内核检
 
 ### 3.1 环境要求
 
-- Windows 10/11 x64（arm64 构建支持，见 §六）；**无需 Dokan 驱动、无需管理员**；
+- Windows 10/11 x64（arm64 构建支持，见 §六）；**无需驱动安装、无需管理员**；
 - 决策端点：任何能实现 3.4 节协议的 HTTP/命名管道服务。
 
 ### 3.2 命令行参考
@@ -190,8 +189,8 @@ cleanup  Detours 实现无虚拟卷：兼容占位（输出无需清理）。
 --src DIR：单根模式，把 DIR 映射到虚拟根 /；与 --automount 互斥。
 --automount：hook 内枚举宿主全部盘符（/C ↔ C:\ …）。
 --del-to-trash：删除送 Windows 回收站（SHFileOperation FOF_ALLOWUNDO）；
-         网络路径/无回收站介质拒绝删除并保留原文件；与 Linux/OHOS 语义一致，
-         不区分实例内新建。
+         沙箱会话内创建的文件直接删除、不进回收站；网络路径/无回收站介质
+         拒绝删除并保留原文件。
 --env NAME=VALUE：透传子进程环境变量（可重复，工具链缓存重定向等）。
 --map 旧=新：兼容参数（Detours 实现为空操作，见 §2.5）。
 --token TOKEN：覆盖策略 [ask].token（Bearer 认证）。
@@ -199,15 +198,15 @@ cleanup  Detours 实现无虚拟卷：兼容占位（输出无需清理）。
 
 ### 3.3 规则文件格式（TOML）
 
-与 Dokan 版完全一致：`version`、`default`、`[ask]`（endpoint/token/timeout_ms/
+规则文件字段：`version`、`default`、`[ask]`（endpoint/token/timeout_ms/
 cache_ttl_seconds/grant_ttl_seconds）、`[[roots]]`（virtual/real）、`[[rules]]`
 （path glob / access read|write|execute|all / perm allow|ask|deny）。完整字段
 语义见 §2.2-2.4 与 `tests/rules*.toml`。
 
 ### 3.4 ask 协议规范（v2）
 
-与 Dokan 版一致：`{"path":"/staging/a.txt","access":"write"}` →
-`{"decision":"allow","grants":[{"path":"/staging/**","access":"write","ttl":120}]}`。
+请求 `{"path":"/staging/a.txt","access":"write"}` →
+响应 `{"decision":"allow","grants":[{"path":"/staging/**","access":"write","ttl":120}]}`。
 HTTP（Winsock 实现，绝对超时 fail-closed）或命名管道帧（4 字节小端长度 + JSON）。
 
 ### 3.5 沙箱内子进程可见的环境
@@ -275,7 +274,7 @@ npx tsx --test native/windows/sandbox/tests/runtime.test.ts
 OPENDESK_SANDBOX_INTEGRATION=1 npx tsx --test native/windows/sandbox/tests/windows-sandbox-runtime.test.ts
 ```
 
-runtime.test.ts 34 用例覆盖：stdout/stderr/stdin/退出码透传、管理进程退出不被
+runtime.test.ts 40 用例覆盖：stdout/stderr/stdin/退出码透传、管理进程退出不被
 后代句柄阻塞、deny/allow 文件读写、ask 决策与 TTL 缓存、回收站（--del-to-trash）、
 递归注入（孙进程管控）、未映射路径 not-found、NUL 设备语义、deny 别名（.. / 8.3
 短名 / 尾点）归一化、并发管理进程、命名管道、35 秒授权等待等。
@@ -284,15 +283,13 @@ runtime.test.ts 34 用例覆盖：stdout/stderr/stdin/退出码透传、管理�
 
 `tests/perf-probe.mjs`（2000 文件 stat 微基准）：
 
-| 指标 | Dokan 版（README 记录） | Detours 版 | 宿主 |
-|---|---|---|---|
-| perStatColdUs（首次 stat 单价） | **187µs** | **10.5µs** | 15.6µs |
-| perStatWarmUs | — | 7.4µs | 9.5µs |
-| read200x50kMs | — | 131.8ms | 104.6ms |
+| 指标 | 本实现 | 宿主 |
+|---|---|---|
+| perStatColdUs（首次 stat 单价） | **10.5µs** | 15.6µs |
+| perStatWarmUs | 7.4µs | 9.5µs |
+| read200x50kMs | 131.8ms | 104.6ms |
 
-Detours 版消除"每 IRP 一次内核↔用户态往返"（~140µs），stat 单价与宿主同量级
-（~18 倍于 Dokan 版）。原 Dokan 版全量 `npm run test` 4.7-5.2x 的退化预计随
-IRP 往返消失而回归至接近宿主。
+本实现没有"每 IRP 一次内核↔用户态往返"（~140µs），stat 单价与宿主同量级。
 
 ---
 
@@ -324,8 +321,8 @@ node scripts/build-windows-sandbox.cjs      # x64（默认）；OPENDESK_SANDBOX
   NtDeleteFile/NtSetInformationFile/SetFileInformationByHandle——覆盖 Node
   rmSync/.NET/python os.remove）统一送回收站；
 - **沙箱会话内创建的文件**（创建时间 ≥ 会话开始时刻，`DYNOBOX_SESSION_START`）
-  删除视为自发清理：不触发 ask、不进回收站、直接删除（Dokan 版"实例内创建跟踪"
-  的等价语义，跨进程可靠、零额外成本）；宿主预置文件删除仍走回收站；
+  删除视为自发清理：不触发 ask、不进回收站、直接删除（跨进程可靠、零额外成本）；
+  宿主预置文件删除仍走回收站；
 - 全链路 fail-closed（ask 端点死、超时、坏策略 → 拒绝且不缓存）；
 - 路径别名归一化（`..`、8.3 短名、尾点、`\\?\` 前缀）不能逃逸策略；
 - 未映射路径按 not-found 语义返回（PATH 探测不报错）；
@@ -363,8 +360,8 @@ node scripts/build-windows-sandbox.cjs      # x64（默认）；OPENDESK_SANDBOX
 - 32 位子进程注入受限（x64 管理进程无法远程线程注入 x86 进程；hook DLL 按
   目标进程位数选择，`sandbox_hook32.dll` 构建后 32 位目标可用但跨架构注入
   未实现）；
-- 策略判定基于**传入路径名**，不解析 junction/符号链接的**落点**（Dokan 版的重
-  解析点落点校验不适用）；符号链接/junction 的**创建**受控——link 路径按
+- 策略判定基于**传入路径名**，不解析 junction/符号链接的**落点**（落点重解析
+  校验不适用）；符号链接/junction 的**创建**受控——link 路径按
   write、target 路径按 read 判定（`fs.symlinkSync`、`mklink /J` 等均按名判定）；
 - 已打开句柄不受后续策略变化影响（与 NTFS 语义一致）；
 - 未拦截 `SetFileAttributesW` 之外的属性级 API（`SetFileTime` 等）与
@@ -376,7 +373,7 @@ node scripts/build-windows-sandbox.cjs      # x64（默认）；OPENDESK_SANDBOX
 
 ```
 src/                        C++ 实现（common/manager/hook/detours-src，见"代码结构"）
-tests/runtime.test.ts         原生回归测试（34 用例）
+tests/runtime.test.ts         原生回归测试（40 用例）
 tests/windows-sandbox-runtime.test.ts  真实运行集成测试（OPENDESK_SANDBOX_INTEGRATION=1）
 tests/perf-probe.mjs          stat/read 微基准
 tests/rules*.toml             示例策略

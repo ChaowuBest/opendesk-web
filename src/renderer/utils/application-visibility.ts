@@ -22,7 +22,6 @@ export interface ApplicationMenuItem {
 export interface ExperimentalFeatureSettings {
     applications?: Record<string, boolean>;
     account?: boolean;
-    magic_pointer?: boolean;
     immersive_desktop?: boolean;
 }
 

@@ -185,6 +185,8 @@ class BenchmarkEntryWidget extends AgentOperableHTMLElement {
     private runs: RunListItem[] = [];
     private models: ModelOption[] = [];
     private loading = true;
+    /** 进行中的清单请求数：清单走网络，比本地测评集慢，不能和 loading 混在一起 */
+    private catalogLoading = 0;
     private importing = false;
     private banner: BannerState | null = null;
     private datasetModalId: string | null = null;
@@ -309,12 +311,20 @@ class BenchmarkEntryWidget extends AgentOperableHTMLElement {
 
     // ── 数据加载 ──────────────────────────────────────────────────────────
 
-    private async loadCatalog() {
+    private async loadCatalog(forceRefresh = false) {
+        // 清单要联网，弱网下先转圈，别先闪一屏「暂无可下载的测评集」
+        const showLoading = this.catalog.length === 0;
+        if (showLoading) {
+            this.catalogLoading += 1;
+            this.renderUnlessModalOpen();
+        }
         try {
-            this.catalog = await getAPI().callMainWorld<CatalogDatasetEntry[]>('listCatalogDatasets');
+            this.catalog = await getAPI().callMainWorld<CatalogDatasetEntry[]>('listCatalogDatasets', forceRefresh);
             this.downloads = await this.fetchDownloads();
         } catch (error: any) {
             this.banner = { text: error?.message || this._t('error.operationFailed'), isError: true };
+        } finally {
+            if (showLoading) this.catalogLoading -= 1;
         }
     }
 
@@ -655,7 +665,8 @@ class BenchmarkEntryWidget extends AgentOperableHTMLElement {
                 await this.importDataset();
                 return;
             case 'refresh':
-                await Promise.all([this.loadCatalog(), this.loadDatasets(false), this.loadRuns(false)]);
+                // 手动刷新要拿到线上最新清单，不能命中主进程的 5 分钟缓存
+                await Promise.all([this.loadCatalog(true), this.loadDatasets(false), this.loadRuns(false)]);
                 // 清单和测评集是两路 IPC，谁先回来不确定；这里统一补一次渲染，
                 // 免得先回来的那路已经渲染完、后回来的清单却停在旧数据上
                 this.renderUnlessModalOpen();
@@ -977,10 +988,20 @@ class BenchmarkEntryWidget extends AgentOperableHTMLElement {
         this.detailRunId = null;
         this.detail = null;
         this.clearPoll();
+        // 清单要联网：切到下载中心时先把加载态摆上再渲染，否则会先闪一屏「暂无可下载的测评集」
+        const catalogPending = tab === 'catalog' && this.catalog.length === 0;
+        if (catalogPending) this.catalogLoading += 1;
         this.render();
-        if (tab === 'catalog') await Promise.all([this.loadCatalog(), this.loadDatasets(false)]);
-        else if (tab === 'datasets') await this.loadDatasets(false);
-        else await this.loadRuns(false);
+        try {
+            if (tab === 'catalog') await Promise.all([this.loadCatalog(), this.loadDatasets(false)]);
+            else if (tab === 'datasets') await this.loadDatasets(false);
+            else await this.loadRuns(false);
+        } finally {
+            if (catalogPending) {
+                this.catalogLoading -= 1;
+                this.renderUnlessModalOpen();
+            }
+        }
     }
 
     private async openDetail(runId: string) {
@@ -1276,8 +1297,8 @@ class BenchmarkEntryWidget extends AgentOperableHTMLElement {
     // ── 测评集下载 ─────────────────────────────────────────────────────────
 
     private renderCatalog(): string {
-        // 首次挂载时清单还没回来，先转圈；否则会先闪一下「暂无可下载的测评集」
-        if (this.loading && this.catalog.length === 0) {
+        // 首次挂载/切页签时清单还没回来，先转圈；否则会先闪一下「暂无可下载的测评集」
+        if ((this.loading || this.catalogLoading > 0) && this.catalog.length === 0) {
             return `<div class="loading-state"><div class="spinner"></div></div>`;
         }
         if (this.catalog.length === 0) {

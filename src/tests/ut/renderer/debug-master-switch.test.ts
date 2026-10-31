@@ -35,7 +35,7 @@ test('turning off development and debugging disables its previously enabled chil
             experimental_features: {
                 applications: { appmgr: true, agentoffice: true },
                 account: true,
-                magic_pointer: true
+                immersive_desktop: true
             }
         }
     });
@@ -50,7 +50,11 @@ test('turning off development and debugging disables its previously enabled chil
     const saved = Setting.getInstance().getData();
     expect(saved.debug.developer_mode).toBe(false);
     expect(panel.querySelector('#debug-mode-settings').style.display).toBe('none');
-    expect(saved.debug.experimental_features.magic_pointer).toBe(false);
+    expect(saved.debug.experimental_features).toEqual({
+        applications: { appmgr: false, agentoffice: false },
+        account: false,
+        immersive_desktop: false
+    });
     const effectiveFeatures = {
         debugLog: isDebugLogEnabled(),
         rawLlmLog: isLogRawLlmRequestEnabled(),
@@ -78,7 +82,7 @@ test('turning off development and debugging disables its previously enabled chil
     const childToggles = Array.from(
         panel.querySelectorAll('#debug-mode-settings input[type="checkbox"]')
     ) as HTMLInputElement[];
-    expect(childToggles).toHaveLength(7);
+    expect(childToggles).toHaveLength(6);
     expect(childToggles.every((input) => !input.checked)).toBe(true);
     expect(Setting.getInstance().getData().debug).toEqual({ ...saved.debug, developer_mode: true });
 });
