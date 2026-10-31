@@ -1090,10 +1090,11 @@ export const enUs: Record<string, string> = {
     'config.debug.title': 'Debug Mode',
     'config.debug.title.hint': 'Configure developer visibility',
     'config.debug.field.developer_mode': 'Developer Mode',
-    'config.debug.field.log_raw_llm_request': 'Log Raw LLM Responses (Turns Off After Restart)',
-    'config.debug.raw_llm.enabled.title': 'Raw response logging enabled',
-    'config.debug.raw_llm.enabled.message':
-        'This applies only to the current run and turns off after OpenDesk restarts. Embedding responses are excluded.',
+    'config.debug.field.log_raw_llm_request': 'Log Raw LLM Responses',
+    'config.debug.raw_llm.confirm.title': 'Enable raw response logging?',
+    'config.debug.raw_llm.confirm.message':
+        'Enabling this produces a large amount of debug logs. Model responses may leave private information in these logs; embedding responses are not recorded.\n\nApplication logs older than one week are cleaned up at the next startup.\n\nThis switch applies only to the current run and automatically turns off after the next restart. You can also turn it off manually at any time.',
+    'config.debug.raw_llm.confirm.enable': 'Enable logging',
 
     // Config - Telemetry
     'config.telemetry.title': 'Telemetry',

@@ -1064,9 +1064,11 @@ export const zhCn: Record<string, string> = {
     'config.debug.title': '调试模式',
     'config.debug.title.hint': '配置开发者可见性',
     'config.debug.field.developer_mode': '开发者模式',
-    'config.debug.field.log_raw_llm_request': '将原始 LLM 响应计入日志（重启后恢复关闭状态）',
-    'config.debug.raw_llm.enabled.title': '已开启原始响应日志',
-    'config.debug.raw_llm.enabled.message': '仅本次运行有效，重启 OpenDesk 后自动关闭；向量模型响应不会记录。',
+    'config.debug.field.log_raw_llm_request': '将原始 LLM 响应计入日志',
+    'config.debug.raw_llm.confirm.title': '开启原始响应日志？',
+    'config.debug.raw_llm.confirm.message':
+        '开启后会产生大量调试日志，模型响应中的隐私内容可能被写入并保留在日志中；向量模型响应不会记录。\n\n超过一周的应用日志会在下次启动时清理。\n\n此开关仅本次运行有效，下次重启后自动关闭，也可随时手动关闭。',
+    'config.debug.raw_llm.confirm.enable': '确认开启',
 
     // Config - Telemetry
     'config.telemetry.title': '遥测设置',

@@ -87,7 +87,7 @@ const SECTION_DEFS: ConfigSectionDef[] = [
         icon: '📊',
         titleKey: 'config.debug.title',
         hintKey: 'config.debug.title.hint',
-        create: (openDeskTUI, onBack, onConfigChange) => new DebugConfigPage(openDeskTUI.tui, onBack, onConfigChange)
+        create: (openDeskTUI, onBack, onConfigChange) => new DebugConfigPage(openDeskTUI, onBack, onConfigChange)
     },
     {
         value: 'telemetry',

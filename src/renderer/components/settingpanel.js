@@ -21,6 +21,7 @@ import { ACP_AGENT_PRESETS, createAcpAgentPresetDraft } from '../../common/acp/a
 import { AcpAgentFormError, buildAcpAgentProfile } from './acpAgentSettings.ts';
 import {
     showConfirmModal,
+    escapeModalText,
     MODAL_CSS,
     MODAL_ANIM_DURATION_OUT,
     detectDarkMode,
@@ -150,7 +151,6 @@ class SettingPanel extends HTMLElement {
         this.supportedShells = [];
         this.visionSupportMap = {};
         this._hasRendered = false;
-        this._rawLlmLoggingEnabled = false;
         this._t = createRendererTranslator();
     }
 
@@ -187,7 +187,6 @@ class SettingPanel extends HTMLElement {
 
     async loadData() {
         this.currentData = await window.settingAPI.loadSettingObject();
-        this._rawLlmLoggingEnabled = !!this.currentData.debug?.log_raw_llm_request;
         this._t = createRendererTranslator(this.currentData);
         try {
             this.supportedShells = await window.settingAPI.listShells();
@@ -2950,7 +2949,43 @@ class SettingPanel extends HTMLElement {
         };
 
         bindDebugBoolean('#debug-log-toggle-hidden', 'debug_log');
-        bindDebugBoolean('#log-raw-llm-toggle-hidden', 'log_raw_llm_request');
+        this.querySelector('#log-raw-llm-toggle-hidden')?.addEventListener('change', async (e) => {
+            const toggle = e.currentTarget;
+            if (toggle.disabled) {
+                toggle.checked = !!this.currentData.debug?.log_raw_llm_request;
+                return;
+            }
+            const enabled = toggle.checked;
+            if (enabled && !this.currentData.debug?.log_raw_llm_request) {
+                // 确认前保持配置和开关关闭，其他自动保存也不会提前开启日志。
+                toggle.checked = false;
+                toggle.disabled = true;
+                let confirmed;
+                try {
+                    confirmed = await showConfirmModal({
+                        variant: 'warn',
+                        title: this._t('config.debug.raw_llm.confirm.title'),
+                        message: escapeModalText(this._t('config.debug.raw_llm.confirm.message')),
+                        confirmText: this._t('config.debug.raw_llm.confirm.enable'),
+                        cancelText: this._t('common.cancel'),
+                        mountTarget: this
+                    });
+                } finally {
+                    toggle.disabled = false;
+                }
+                if (
+                    !confirmed ||
+                    !this.currentData.debug?.developer_mode ||
+                    this.querySelector('#log-raw-llm-toggle-hidden') !== toggle
+                ) {
+                    return;
+                }
+            }
+            if (!this.currentData.debug) this.currentData.debug = {};
+            this.currentData.debug.log_raw_llm_request = enabled;
+            toggle.checked = enabled;
+            this.saveImmediately();
+        });
 
         const bindExperimentalToggle = (selector, key, applicationKey = null) => {
             this.querySelector(selector)?.addEventListener('change', async (e) => {
@@ -3947,14 +3982,10 @@ class SettingPanel extends HTMLElement {
         }
         this._saving = true;
         let sideEffectFailures = [];
-        let rawLoggingEnabled = false;
         try {
             const result = await window.settingAPI.saveSettingObjectDetailed(this.currentData);
             const savedData = result.data;
             sideEffectFailures = result.sideEffectFailures;
-            const savedRawLoggingEnabled = !!savedData?.debug?.log_raw_llm_request;
-            rawLoggingEnabled = savedRawLoggingEnabled && !this._rawLlmLoggingEnabled;
-            this._rawLlmLoggingEnabled = savedRawLoggingEnabled;
             if (savedData && typeof savedData === 'object' && typeof savedData.resolved_locale === 'string') {
                 this.currentData.resolved_locale = savedData.resolved_locale;
             }
@@ -3977,18 +4008,6 @@ class SettingPanel extends HTMLElement {
         // 提示放在 catch 之外，避免提示自身出错被误报成保存失败。
         if (sideEffectFailures.length > 0) {
             notifySettingSideEffectFailures(sideEffectFailures, this._t);
-        }
-        if (rawLoggingEnabled && this.currentData.debug?.log_raw_llm_request) {
-            try {
-                await window.notificationAPI?.sendNotification?.(
-                    'info',
-                    this._t('renderer.settings.notificationTitle'),
-                    this._t('config.debug.raw_llm.enabled.title'),
-                    this._t('config.debug.raw_llm.enabled.message')
-                );
-            } catch (error) {
-                console.warn('Failed to show raw response logging notice:', error);
-            }
         }
     }
 

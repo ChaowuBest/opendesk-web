@@ -18,7 +18,8 @@ import {
 } from '../../../utils/setting.js';
 import { ConfigForm, type ActionDef, type FieldDef } from './form.js';
 import { t } from '../../../../locale/index.js';
-import { NotificationStore } from '../notification.js';
+import { ConfirmOverlay } from '../notice.js';
+import type { OpenDeskTUI } from '../../entry.js';
 
 export class DebugConfigPage implements Component {
     private tui: TUI;
@@ -26,26 +27,30 @@ export class DebugConfigPage implements Component {
     private onConfigChange?: () => void;
     private form?: ConfigForm;
 
-    constructor(tui: TUI, onBack: () => void, onConfigChange?: () => void) {
-        this.tui = tui;
+    constructor(
+        private readonly openDeskTUI: OpenDeskTUI,
+        onBack: () => void,
+        onConfigChange?: () => void
+    ) {
+        this.tui = openDeskTUI.tui;
         this.onBack = onBack;
         this.onConfigChange = onConfigChange;
         this.showForm();
     }
 
-    private showForm() {
+    private showForm(values?: Record<string, any>) {
         const fields: FieldDef[] = [
             {
                 type: 'boolean',
                 key: 'developer_mode',
                 label: t('config.debug.field.developer_mode'),
-                value: isDeveloperModeEnabled()
+                value: values?.developer_mode ?? isDeveloperModeEnabled()
             },
             {
                 type: 'boolean',
                 key: 'log_raw_llm_request',
                 label: t('config.debug.field.log_raw_llm_request'),
-                value: isLogRawLlmRequestEnabled()
+                value: values?.log_raw_llm_request ?? isLogRawLlmRequestEnabled()
             }
         ];
 
@@ -70,7 +75,24 @@ export class DebugConfigPage implements Component {
     }
 
     private save(values: Record<string, any>) {
-        const wasRawLoggingEnabled = isLogRawLlmRequestEnabled();
+        if (values.log_raw_llm_request === true && !isLogRawLlmRequestEnabled()) {
+            this.form?.deactivate();
+            new ConfirmOverlay(this.openDeskTUI, {
+                title: t('config.debug.raw_llm.confirm.title'),
+                message: t('config.debug.raw_llm.confirm.message'),
+                confirmLabel: t('config.debug.raw_llm.confirm.enable'),
+                cancelLabel: t('common.cancel'),
+                allowDuringConfig: true
+            }).show(
+                () => this.commit(values),
+                () => this.showForm({ ...values, log_raw_llm_request: false })
+            );
+            return;
+        }
+        this.commit(values);
+    }
+
+    private commit(values: Record<string, any>): void {
         const rawLoggingEnabled = values.log_raw_llm_request === true;
         setDeveloperModeEnabled(values.developer_mode === true);
         const setting = Setting.getInstance();
@@ -82,14 +104,6 @@ export class DebugConfigPage implements Component {
                 log_raw_llm_request: rawLoggingEnabled
             }
         });
-        if (rawLoggingEnabled && !wasRawLoggingEnabled) {
-            NotificationStore.getInstance().push(
-                'info',
-                t('config.debug.title'),
-                t('config.debug.raw_llm.enabled.title'),
-                t('config.debug.raw_llm.enabled.message')
-            );
-        }
         this.onConfigChange?.();
         this.close();
     }
