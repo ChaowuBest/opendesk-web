@@ -112,6 +112,7 @@ export const zhCn: Record<string, string> = {
     'renderer.todo.detail.attr.createdAt': '创建时间',
     'renderer.todo.detail.attr.updatedAt': '更新时间',
     'renderer.todo.detail.attr.lastTriggered': '上次触发',
+    'renderer.todo.detail.attr.nextTrigger': '下次触发',
     'renderer.todo.detail.attr.disabledAt': '停用时间',
     'renderer.todo.detail.executeNow': '立即执行',
 

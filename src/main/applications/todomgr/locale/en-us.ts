@@ -112,6 +112,7 @@ export const enUs: Record<string, string> = {
     'renderer.todo.detail.attr.createdAt': 'Created at',
     'renderer.todo.detail.attr.updatedAt': 'Updated at',
     'renderer.todo.detail.attr.lastTriggered': 'Last triggered',
+    'renderer.todo.detail.attr.nextTrigger': 'Next trigger',
     'renderer.todo.detail.attr.disabledAt': 'Disabled at',
     'renderer.todo.detail.executeNow': 'Run Now',
 

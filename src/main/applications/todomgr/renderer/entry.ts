@@ -23,8 +23,9 @@ import {
 } from '../../../../common/reasoning-effort.js';
 import { getEffortIconSVG, getModelIconTile } from '../../../../renderer/utils/model-picker-icons.js';
 import { fixedLayerOrigin, visibleViewportRect } from '../../../../renderer/utils/window-frame.js';
+import { Cron } from 'croner';
 import { datetimeLocalToISOString, formatDatetimeLocal, getSystemTimezone, isValidTimezone } from '../timezone.js';
-import type { TodoRecurrence } from '../todo-recurrence.js';
+import { getNextTodoRecurrenceRuns, getTodoRecurrenceError, type TodoRecurrence } from '../todo-recurrence.js';
 import {
     describeLegacyRecurrence,
     describeTodoRecurrence,
@@ -32,6 +33,7 @@ import {
 } from '../recurrence-description.js';
 import { TimeSchedulePicker, TIME_SCHEDULE_CSS } from './time-schedule-picker.js';
 import { describeLegacyCronInTimezone, getLegacyRecurrenceInTimezone } from './legacy-timezone.js';
+import { parseLegacyCronRecurrence } from '../legacy-cron.js';
 import type { TodoChatModelCatalog, TodoChatModelSummary } from '../common.js';
 
 type Translator = ReturnType<typeof createTranslatorForTodoMgr>;
@@ -1560,7 +1562,14 @@ class TodoMgrEntryWidget extends AgentOperableHTMLElement {
             const dows = tpl.defaultDows ?? [];
             const dom = '1';
             const cronExpr = buildCronFromUI(tpl.defaultCronMode, localH, localM, dows, dom, '*');
-            prefilledTodo.trigger = { type: 'cron', cronExpression: cronExpr, timezone: getSystemTimezone() };
+            prefilledTodo.trigger = {
+                type: 'cron',
+                cronExpression: cronExpr,
+                // 模板频率均可映射为结构化规则：预填 recurrence 让新建落在可视化周期 tab，
+                // 保存后任务直接以新形态存储，而不是裸表达式。
+                recurrence: parseLegacyCronRecurrence(cronExpr),
+                timezone: getSystemTimezone()
+            };
         } else if (tpl.triggerType === 'event') {
             prefilledTodo.trigger = {
                 type: 'event',
@@ -1660,6 +1669,41 @@ class TodoMgrEntryWidget extends AgentOperableHTMLElement {
         right.addEventListener('transitionend', onEnd);
     }
 
+    /** 下次触发属性行：执行按存储时区计算（legacy 规则保持 UTC 语义），
+     * 显示与上次触发一致，使用系统本地时间格式（不含年份与时区标注）。 */
+    private _computeNextTrigger(todo: GlobalTodo): { value: string; next?: Date } | null {
+        const trigger = todo.trigger;
+        if (!trigger || trigger.type === 'event') return null;
+        if (todo.enabled === false) return { value: this._t('renderer.todo.frequency.nextRunDisabled') };
+        try {
+            if (trigger.type === 'scheduled') {
+                if (!trigger.triggerAt) return null;
+                const date = new Date(trigger.triggerAt);
+                if (!Number.isFinite(date.getTime()) || date.getTime() <= Date.now()) return null;
+                return { value: formatDate(date.toISOString(), this._t), next: date };
+            }
+            const computeTimezone = trigger.timezone ?? 'UTC';
+            let next: Date | null | undefined;
+            if (trigger.recurrence) {
+                if (getTodoRecurrenceError(trigger.recurrence)) return null;
+                next = getNextTodoRecurrenceRuns(trigger.recurrence, computeTimezone, 1)[0];
+            } else if (trigger.cronExpression) {
+                next = this._getNextCronRun(trigger.cronExpression, computeTimezone);
+            }
+            if (!next) return null;
+            return { value: formatDate(next.toISOString(), this._t), next };
+        } catch {
+            return null;
+        }
+    }
+
+    private _getNextCronRun(expression: string, timezone: string): Date | null {
+        const job = new Cron(expression, { timezone });
+        const next = job.nextRun();
+        job.stop();
+        return next;
+    }
+
     private _closeDetail() {
         this._contentResizeCleanup?.();
         this._timeSchedulePicker?.destroy();
@@ -1709,6 +1753,7 @@ class TodoMgrEntryWidget extends AgentOperableHTMLElement {
         const statusDot = getDisplayStatus(todo) === 'enabled' ? 'tm-status-in_progress' : 'tm-status-pending';
         const triggerType = todo.trigger?.type || 'manual';
         const cardCfg = getCardConfig(triggerType as TriggerType, t);
+        const nextTrigger = this._computeNextTrigger(todo);
 
         scroll.innerHTML = `
         <div class="tm-detail-header">
@@ -1781,6 +1826,15 @@ class TodoMgrEntryWidget extends AgentOperableHTMLElement {
                             ? `
                     <span class="tm-detail-attr-label">${escapeHtml(t('renderer.todo.detail.attr.lastTriggered'))}</span>
                     <span class="tm-detail-attr-value">${formatDate(todo.last_triggered_at, t)}</span>
+                    `
+                            : ''
+                    }
+
+                    ${
+                        nextTrigger
+                            ? `
+                    <span class="tm-detail-attr-label">${escapeHtml(t('renderer.todo.detail.attr.nextTrigger'))}</span>
+                    <span class="tm-detail-attr-value" id="tm-detail-next-run">${escapeHtml(nextTrigger.value)}</span>
                     `
                             : ''
                     }
