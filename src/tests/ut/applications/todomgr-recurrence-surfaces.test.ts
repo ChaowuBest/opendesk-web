@@ -51,6 +51,18 @@ describe('automation frequency descriptions and tool input', () => {
         }
         expect(describeTodoRecurrence(rules[2], t, 'Asia/Shanghai')).toContain('2026-10-19');
         expect(describeTodoRecurrence(rules[5], t, 'Asia/Shanghai')).not.toMatch(/起始|starting|2026-10-19|09:00/);
+        const elapsedWeekdays = describeTodoRecurrence(rules[5], t, 'Asia/Shanghai');
+        if (locale === 'en-US') {
+            expect(elapsedWeekdays).toContain('Every 5 hour(s), on Mon, Tue, Wed, Thu, Fri');
+        } else {
+            expect(elapsedWeekdays).toContain('每隔 5 小时的周一、周二、周三、周四、周五');
+        }
+        const elapsedPlain = describeTodoRecurrence(
+            { mode: 'interval', intervalValue: 5, intervalUnit: 'hour', anchorAt: '2026-10-19T01:00:00Z' },
+            t,
+            'Asia/Shanghai'
+        );
+        expect(elapsedPlain.startsWith(locale === 'en-US' ? 'Every 5 hour(s)' : '每隔 5 小时')).toBe(true);
     });
 
     test('legacy descriptions hide formulas and preserve recognizable simple rules', () => {

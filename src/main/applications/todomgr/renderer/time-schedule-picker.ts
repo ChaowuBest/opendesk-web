@@ -9,8 +9,9 @@
  * See the Mulan PSL v2 for more details.
  */
 
+import { Cron } from 'croner';
 import { escapeHtml } from '../../../../common/utils/escape.js';
-import { formatDatetimeLocal } from '../timezone.js';
+import { formatDatetimeLocal, wallClockParts } from '../timezone.js';
 import {
     getNextTodoRecurrenceRuns,
     getTodoRecurrenceError,
@@ -18,14 +19,11 @@ import {
     getTodoRecurrenceMonths,
     type TodoRecurrence
 } from '../todo-recurrence.js';
-import {
-    describeLegacyRecurrence,
-    describeTodoRecurrence,
-    getAdvancedCronExpression
-} from '../recurrence-description.js';
+import { describeLegacyRecurrence, describeTodoRecurrence } from '../recurrence-description.js';
 import { getRecurrenceValidationIssue, type RecurrenceValidationField } from '../recurrence-validation.js';
 import { fixedLayerOrigin, visibleViewportRect } from '../../../../renderer/utils/window-frame.js';
 import { parseLegacyCronRecurrence } from '../legacy-cron.js';
+import { describeLegacyCronInTimezone, getLegacyRecurrenceInTimezone } from './legacy-timezone.js';
 
 type Translate = (key: string, params?: Record<string, string | number>) => string;
 type Period = 'once' | 'daily' | 'weekly' | 'biweekly' | 'monthly' | 'yearly' | 'legacy';
@@ -35,13 +33,17 @@ const PERIOD_SUBMENU_IDS: Partial<Record<Period, string>> = {
     monthly: 'tm-frequency-dates-options',
     yearly: 'tm-frequency-months-options'
 };
-type ScheduleTab = 'period' | 'interval';
+type ScheduleTab = 'period' | 'interval' | 'cron';
 type CalendarKind = 'dates' | 'months';
 interface StoredTrigger {
     type: string;
     cronExpression?: string;
     timezone?: string;
     recurrence?: TodoRecurrence;
+}
+interface ExecutionPreviewOptions {
+    onceTriggerAt: () => string | undefined;
+    enabled: () => boolean;
 }
 
 export const TIME_SCHEDULE_CSS = `
@@ -50,6 +52,9 @@ export const TIME_SCHEDULE_CSS = `
 .tm-frequency-tabs { display:inline-flex; padding:4px; gap:2px; border-radius:12px; background:var(--tm-surface-muted,#f2f2f2); margin-bottom:12px; }
 .tm-frequency-tab { padding:8px 22px; border:0; border-radius:9px; background:transparent; color:var(--tm-text-secondary); font:inherit; font-weight:500; cursor:pointer; }
 .tm-frequency-tab[aria-selected="true"] { background:var(--tm-surface,#fff); color:var(--tm-text); box-shadow:0 1px 4px #0002; font-weight:600; }
+.tm-frequency-cron-input { font-family:'SF Mono',Consolas,monospace; }
+.tm-cron-help-link { display:inline-flex; align-items:center; gap:3px; margin-top:6px; font-size:var(--fs-sm); color:var(--tm-text-muted,#8E8E93); text-decoration:none; cursor:pointer; }
+.tm-cron-help-link:hover { color:var(--tm-accent,#3B82F6); }
 .tm-frequency-period-trigger { display:flex; align-items:center; justify-content:space-between; width:100%; text-align:left; }
 .tm-frequency-menu { position:fixed; z-index:10000; box-sizing:border-box; overflow:auto; padding:7px; border:1px solid var(--tm-border,#ddd); border-radius:12px; background:var(--tm-surface,#fff); box-shadow:0 10px 30px #0002; }
 .tm-frequency-menu [hidden] { display:none !important; }
@@ -102,6 +107,7 @@ export class TimeSchedulePicker {
     private periodSubmenu: HTMLElement | null = null;
     private yearDatesTrigger: HTMLInputElement | null = null;
     private validationControls: HTMLElement[] = [];
+    private previewTimer?: ReturnType<typeof setTimeout>;
     private outsideClick = (event: Event) => {
         const path = event.composedPath();
         const inMenu =
@@ -122,23 +128,25 @@ export class TimeSchedulePicker {
         private timezone: () => string,
         private renderOnce: (container: HTMLElement) => void,
         private original?: StoredTrigger,
-        initialPeriod: 'once' | 'daily' = 'once'
+        initialPeriod: 'once' | 'daily' = 'once',
+        private executionPreview?: ExecutionPreviewOptions
     ) {
-        // 统一解析规则：新数据用存储的 recurrence，旧数据从 cron 表达式解析。
-        // 时区不再参与换算——旧数据编辑页时区下拉初始为 UTC（见 entry.ts），
-        // 墙钟字段原样展示，改时区即把同一墙钟重新解释到新时区。
+        const rawCron = original?.type === 'cron' && original.recurrence === undefined;
+        // 未存时区的结构化规则仅投影到当前展示时区；原始 Cron 保留表达式和 UTC 时区。
         const recurrence =
-            original?.recurrence ??
-            (original?.cronExpression ? parseLegacyCronRecurrence(original.cronExpression) : undefined);
+            original?.type === 'cron' && original.timezone === undefined
+                ? getLegacyRecurrenceInTimezone(original, this.timezone())
+                : (original?.recurrence ??
+                  (original?.cronExpression ? parseLegacyCronRecurrence(original.cronExpression) : undefined));
         this.originalRecurrence = recurrence;
         this.period =
             original?.type === 'scheduled'
                 ? 'once'
                 : recurrence?.mode === 'interval'
                   ? 'daily'
-                  : (recurrence?.mode ?? (original?.type === 'cron' ? 'legacy' : initialPeriod));
+                  : (recurrence?.mode ?? (rawCron ? 'daily' : original?.type === 'cron' ? 'legacy' : initialPeriod));
         if (recurrence && getTodoRecurrenceError(recurrence)) this.period = 'legacy';
-        this.tab = recurrence?.mode === 'interval' ? 'interval' : 'period';
+        this.tab = rawCron ? 'cron' : recurrence?.mode === 'interval' ? 'interval' : 'period';
         const calendarInterval =
             recurrence?.mode === 'interval' && recurrence.intervalUnit && recurrence.intervalUnit !== 'hour';
         const oldCalendarInterval = calendarInterval && recurrence.time === undefined;
@@ -185,6 +193,7 @@ export class TimeSchedulePicker {
     }
 
     destroy(): void {
+        clearTimeout(this.previewTimer);
         this.clearValidationError();
         this.container.ownerDocument.removeEventListener('click', this.outsideClick);
     }
@@ -221,6 +230,7 @@ export class TimeSchedulePicker {
             <div class="tm-frequency-tabs" role="tablist" aria-label="${escapeHtml(this.t('renderer.todo.frequency.label'))}">
                 <button type="button" class="tm-frequency-tab" id="tm-frequency-period-tab" role="tab" aria-selected="${this.tab === 'period'}" aria-controls="tm-frequency-period-panel">${escapeHtml(this.t('renderer.todo.frequency.periodTab'))}</button>
                 <button type="button" class="tm-frequency-tab" id="tm-frequency-interval-tab" role="tab" aria-selected="${this.tab === 'interval'}" aria-controls="tm-frequency-interval-panel">${escapeHtml(this.t('renderer.todo.frequency.intervalTab'))}</button>
+                <button type="button" class="tm-frequency-tab" id="tm-frequency-cron-tab" role="tab" aria-selected="${this.tab === 'cron'}" aria-controls="tm-frequency-cron-panel">${escapeHtml(this.t('renderer.todo.frequency.cronTab'))}</button>
             </div>
             <div id="tm-frequency-period-panel" role="tabpanel" aria-labelledby="tm-frequency-period-tab">
                 <button class="tm-edit-select tm-frequency-period-trigger" type="button" id="tm-frequency-period-trigger" role="combobox" aria-haspopup="listbox" aria-expanded="false" aria-controls="tm-frequency-period-options"><span id="tm-frequency-period-label"></span><span aria-hidden="true">⌄</span></button>
@@ -248,8 +258,13 @@ export class TimeSchedulePicker {
                 </div>
             </div>
             <div id="tm-frequency-interval-panel" role="tabpanel" aria-labelledby="tm-frequency-interval-tab"><div class="tm-frequency-interval-line"><span>${escapeHtml(this.t('renderer.todo.frequency.every'))}</span><input type="number" min="1" max="10000" step="1" class="tm-frequency-hours" id="tm-frequency-hours" aria-label="${escapeHtml(this.t('renderer.todo.frequency.intervalValueLabel'))}" value="${intervalValue}"><select class="tm-frequency-interval-unit" id="tm-frequency-interval-unit" aria-label="${escapeHtml(this.t('renderer.todo.frequency.intervalUnitLabel'))}">${(['hour', 'day', 'week', 'month', 'year'] as const).map((unit) => `<option value="${unit}"${unit === intervalUnit ? ' selected' : ''}>${escapeHtml(this.t(`renderer.todo.frequency.intervalUnit.${unit}`))}</option>`).join('')}</select></div></div>
+            <div id="tm-frequency-cron-panel" role="tabpanel" aria-labelledby="tm-frequency-cron-tab">
+                <label class="tm-edit-label" for="tm-cron-custom-input">${escapeHtml(this.t('renderer.todo.detail.attr.cronExpression'))}</label>
+                <input type="text" class="tm-edit-input tm-frequency-cron-input" id="tm-cron-custom-input" value="${escapeHtml(this.original?.recurrence === undefined ? (this.original?.cronExpression ?? '') : '')}" placeholder="${escapeHtml(this.t('renderer.todo.cron.customPlaceholder'))}" autocomplete="off" spellcheck="false">
+                <a class="tm-cron-help-link" href="https://support.huaweicloud.com/usermanual-coc/coc_um_05_03_03.html" target="_blank" rel="noopener"><i class="fas fa-circle-question" aria-hidden="true"></i>${escapeHtml(this.t('renderer.todo.cron.helpText'))}</a>
+            </div>
             <div class="tm-cron-preview" id="tm-cron-preview" aria-live="polite"></div>
-            <code class="tm-legacy-cron" id="tm-cron-expression" hidden></code>
+            <div class="tm-frequency-note" id="tm-frequency-next-run" aria-live="polite" hidden></div>
             <div class="tm-frequency-error" id="tm-frequency-validation-error" role="alert" hidden></div>
         </div>`;
         this.root = this.container.querySelector('.tm-time-schedule')!;
@@ -257,7 +272,12 @@ export class TimeSchedulePicker {
         this.renderCalendar('dates');
         this.renderCalendar('months');
         this.root.addEventListener('click', (event) => this.onClick(event));
-        this.root.addEventListener('input', () => this.clearValidationError());
+        this.root.addEventListener('input', (event) => {
+            this.clearValidationError();
+            const id = (event.target as HTMLElement).id;
+            if (id === 'tm-cron-custom-input') this.refreshPreview();
+            else if (id === 'tm-frequency-hours') this.refreshNextRun();
+        });
         this.root.addEventListener('change', (event) => this.onChange(event));
         this.root.addEventListener('keydown', (event) => {
             if (event.key === 'Escape') {
@@ -583,9 +603,14 @@ export class TimeSchedulePicker {
             if (submenuId) this.openPeriodSubmenu(button, submenuId);
             else this.closeMenus(true);
             return;
-        } else if (button.id === 'tm-frequency-period-tab' || button.id === 'tm-frequency-interval-tab') {
+        } else if (button.classList.contains('tm-frequency-tab')) {
             this.clearValidationError();
-            this.tab = button.id === 'tm-frequency-period-tab' ? 'period' : 'interval';
+            this.tab =
+                button.id === 'tm-frequency-cron-tab'
+                    ? 'cron'
+                    : button.id === 'tm-frequency-period-tab'
+                      ? 'period'
+                      : 'interval';
             this.closeMenus();
         }
         this.updateVisibility();
@@ -690,34 +715,35 @@ export class TimeSchedulePicker {
     }
 
     private updateVisibility(): void {
-        this.root
-            .querySelector('#tm-frequency-period-tab')!
-            .setAttribute('aria-selected', String(this.tab === 'period'));
-        this.root
-            .querySelector('#tm-frequency-interval-tab')!
-            .setAttribute('aria-selected', String(this.tab === 'interval'));
+        for (const tab of ['period', 'interval', 'cron']) {
+            this.root
+                .querySelector(`#tm-frequency-${tab}-tab`)!
+                .setAttribute('aria-selected', String(this.tab === tab));
+        }
         const interval = this.tab === 'interval';
+        const period = this.tab === 'period';
         const unit = this.value('#tm-frequency-interval-unit');
         const calendarInterval = interval && unit !== 'hour';
         const calendarMode = interval
             ? ({ day: 'daily', week: 'weekly', month: 'monthly', year: 'yearly' } as Record<string, string>)[unit]
             : this.period;
         const fields = this.root.querySelector<HTMLElement>('#tm-frequency-calendar-fields')!;
-        const panel = this.root.querySelector<HTMLElement>(`#tm-frequency-${this.tab}-panel`)!;
+        const panel = this.root.querySelector<HTMLElement>(`#tm-frequency-${interval ? 'interval' : 'period'}-panel`)!;
         if (fields.parentElement !== panel) panel.appendChild(fields);
         const visible: Record<string, boolean> = {
-            'tm-frequency-period-panel': this.tab === 'period',
-            'tm-frequency-interval-panel': this.tab === 'interval',
-            'tm-frequency-once': !interval && this.period === 'once',
-            'tm-frequency-legacy': !interval && this.period === 'legacy',
+            'tm-frequency-period-panel': period,
+            'tm-frequency-interval-panel': interval,
+            'tm-frequency-cron-panel': this.tab === 'cron',
+            'tm-frequency-once': period && this.period === 'once',
+            'tm-frequency-legacy': period && this.period === 'legacy',
             'tm-frequency-calendar-fields':
-                calendarInterval || (!interval && this.period !== 'once' && this.period !== 'legacy'),
+                calendarInterval || (period && this.period !== 'once' && this.period !== 'legacy'),
             'tm-frequency-period-weekdays': calendarMode === 'weekly' || calendarMode === 'biweekly',
-            'tm-frequency-anchor': !interval && this.period === 'biweekly',
+            'tm-frequency-anchor': period && this.period === 'biweekly',
             'tm-frequency-month-field': calendarMode === 'yearly',
             'tm-frequency-day-field': calendarMode === 'monthly' || calendarMode === 'yearly',
             'tm-frequency-time-field':
-                calendarInterval || (!interval && this.period !== 'once' && this.period !== 'legacy')
+                calendarInterval || (period && this.period !== 'once' && this.period !== 'legacy')
         };
         for (const [id, show] of Object.entries(visible))
             this.root.querySelector<HTMLElement>(`#${id}`)!.hidden = !show;
@@ -738,6 +764,7 @@ export class TimeSchedulePicker {
     }
 
     getRecurrence(): TodoRecurrence | undefined {
+        if (this.tab === 'cron') return;
         if (this.tab === 'interval') {
             const value = Number(this.value('#tm-frequency-hours'));
             const unit = this.value('#tm-frequency-interval-unit') as TodoRecurrence['intervalUnit'];
@@ -813,6 +840,7 @@ export class TimeSchedulePicker {
     }
 
     private currentSignature(): string {
+        if (this.tab === 'cron') return JSON.stringify({ cronExpression: this.value('#tm-cron-custom-input').trim() });
         return JSON.stringify(this.getRecurrence()) ?? this.period;
     }
 
@@ -847,9 +875,11 @@ export class TimeSchedulePicker {
         const intervalRow = '#tm-frequency-interval-panel .tm-frequency-interval-line';
         const fields: Record<RecurrenceValidationField, [string, string]> = {
             frequency:
-                this.tab === 'interval'
-                    ? [intervalRow, '#tm-frequency-interval-unit']
-                    : ['#tm-frequency-period-panel', '#tm-frequency-period-trigger'],
+                this.tab === 'cron'
+                    ? ['#tm-frequency-cron-panel', '#tm-cron-custom-input']
+                    : this.tab === 'interval'
+                      ? [intervalRow, '#tm-frequency-interval-unit']
+                      : ['#tm-frequency-period-panel', '#tm-frequency-period-trigger'],
             weekdays: ['#tm-frequency-period-weekdays', '[data-days-toggle="period"]'],
             months: ['#tm-frequency-month-field', '#tm-frequency-month'],
             days: ['#tm-frequency-day-field', '#tm-frequency-day'],
@@ -881,24 +911,20 @@ export class TimeSchedulePicker {
 
     getTrigger(): StoredTrigger {
         this.clearValidationError();
-        // 规则未改且时区相对数据基准（未存时区的旧 cron 按 UTC）未变时，
-        // 保留原 trigger 原样——例如只改标题的保存不应改写旧 UTC 规则。
-        // 时区被改动时则落入下方分支：保留规则结构、仅落库新时区（墙钟重新解释）。
-        if (
-            this.original?.type === 'cron' &&
-            this.isUnchanged() &&
-            this.timezone() === (this.original?.timezone ?? 'UTC')
-        )
-            return { ...this.original };
-        const originalRule = this.original?.recurrence;
-        const oldCalendarTimezoneChanged =
-            originalRule?.mode === 'interval' &&
-            originalRule.intervalUnit !== undefined &&
-            originalRule.intervalUnit !== 'hour' &&
-            originalRule.time === undefined &&
-            this.timezone() !== (this.original?.timezone ?? 'UTC');
-        if (this.original?.type === 'cron' && this.currentSignature() === this.signature && !oldCalendarTimezoneChanged)
-            return { ...this.original, timezone: this.timezone() };
+        const preserved = this.getPreservedTrigger();
+        if (preserved) return preserved;
+        if (this.tab === 'cron') {
+            const message = this.getCronValidationMessage();
+            if (message) {
+                this.showValidationError('frequency', message);
+                throw new Error(message);
+            }
+            return {
+                type: 'cron',
+                cronExpression: this.value('#tm-cron-custom-input').trim(),
+                timezone: this.timezone()
+            };
+        }
         const recurrence = this.getRecurrence();
         const issue = getRecurrenceValidationIssue(recurrence, this.t);
         if (issue || !recurrence) {
@@ -922,18 +948,118 @@ export class TimeSchedulePicker {
         return { type: 'cron', cronExpression: '* * * * *', timezone: this.timezone(), recurrence };
     }
 
+    private getPreservedTrigger(): StoredTrigger | undefined {
+        if (this.original?.type !== 'cron' || !this.isUnchanged()) return;
+        if (this.tab === 'cron') {
+            if (this.original.recurrence === undefined && this.timezone() === (this.original.timezone ?? 'UTC'))
+                return { ...this.original };
+            return;
+        }
+        // 旧 UTC 规则的初始字段已换算到展示时区；未改频率时保留原 trigger，
+        // 不把时区展示变化持久化成新的执行计划。预览和保存使用同一份有效规则。
+        if (this.original.timezone === undefined || this.timezone() === this.original.timezone)
+            return { ...this.original };
+        const originalRule = this.original.recurrence;
+        const oldCalendarTimezoneChanged =
+            originalRule?.mode === 'interval' &&
+            originalRule.intervalUnit !== undefined &&
+            originalRule.intervalUnit !== 'hour' &&
+            originalRule.time === undefined &&
+            this.timezone() !== (this.original.timezone ?? 'UTC');
+        if (!oldCalendarTimezoneChanged) return { ...this.original, timezone: this.timezone() };
+    }
+
+    private getNextCronRun(expression: string, timezone: string): Date | null {
+        const cron = new Cron(expression, { timezone });
+        try {
+            return cron.nextRun();
+        } finally {
+            cron.stop();
+        }
+    }
+
+    private getCronValidationMessage(): string | undefined {
+        const expression = this.value('#tm-cron-custom-input').trim();
+        if (!expression) return this.t('error.cronInvalid');
+        try {
+            if (!this.getNextCronRun(expression, this.timezone())) return this.t('error.recurrenceNoNext');
+        } catch {
+            return this.t('error.cronInvalid');
+        }
+    }
+
+    refreshNextRun(): void {
+        clearTimeout(this.previewTimer);
+        const preview = this.root.querySelector<HTMLElement>('#tm-frequency-next-run')!;
+        preview.textContent = '';
+        preview.hidden = true;
+        if (!this.executionPreview) return;
+        let next: Date | null | undefined;
+        let value: string;
+        try {
+            if (!this.executionPreview.enabled()) {
+                value = this.t('renderer.todo.frequency.nextRunDisabled');
+            } else {
+                if (this.isOnce()) {
+                    const triggerAt = this.executionPreview.onceTriggerAt();
+                    if (!triggerAt) return;
+                    const date = new Date(triggerAt);
+                    if (!Number.isFinite(date.getTime())) return;
+                    next = date.getTime() > Date.now() ? date : undefined;
+                } else {
+                    const preserved = this.getPreservedTrigger();
+                    const timezone = preserved ? (preserved.timezone ?? 'UTC') : this.timezone();
+                    const recurrence = preserved ? preserved.recurrence : this.getRecurrence();
+                    if (recurrence) {
+                        if (getTodoRecurrenceError(recurrence)) return;
+                        next = getNextTodoRecurrenceRuns(recurrence, timezone, 1)[0];
+                    } else {
+                        const expression =
+                            preserved?.cronExpression ??
+                            (this.tab === 'cron' ? this.value('#tm-cron-custom-input').trim() : '');
+                        if (!expression) return;
+                        next = this.getNextCronRun(expression, timezone);
+                    }
+                }
+                if (next) {
+                    const parts = wallClockParts(next, this.timezone(), true);
+                    value = `${parts.year}-${parts.month}-${parts.day} ${parts.hour}:${parts.minute}:${parts.second} (${this.timezone()})`;
+                    // Recalculate when the shown occurrence passes, bounded to one minute for clock changes.
+                    this.previewTimer = setTimeout(
+                        () => this.refreshNextRun(),
+                        Math.min(60_000, Math.max(1_000, next.getTime() - Date.now() + 1))
+                    );
+                } else {
+                    value = this.t('renderer.todo.frequency.nextRunNone');
+                }
+            }
+        } catch {
+            return;
+        }
+        preview.textContent = this.t('renderer.todo.frequency.nextRun', { time: value });
+        preview.hidden = false;
+    }
+
     refreshPreview(): void {
+        this.refreshNextRun();
         const preview = this.root.querySelector<HTMLElement>('#tm-cron-preview')!;
-        const formula = this.root.querySelector<HTMLElement>('#tm-cron-expression')!;
-        const expression =
-            this.tab === 'period' && this.period === 'legacy' ? getAdvancedCronExpression(this.original) : undefined;
-        formula.textContent = expression ?? '';
-        formula.hidden = !expression;
         preview.hidden = this.isOnce();
         if (this.isOnce()) return;
         try {
-            // 统一用当前规则 + 当前时区描述；旧 cron 规则解析出的墙钟原样展示，
-            // 改时区后预览与新时区落库保持一致。
+            if (this.tab === 'cron') {
+                if (this.getCronValidationMessage()) throw new Error('invalid');
+                preview.textContent = describeLegacyRecurrence(
+                    this.value('#tm-cron-custom-input').trim(),
+                    this.t,
+                    this.timezone()
+                );
+                return;
+            }
+            // 旧规则的展示投影未修改时，预览也保持原计划的 UTC 语义。
+            if (this.original?.type === 'cron' && this.original.timezone === undefined && this.isUnchanged()) {
+                preview.textContent = describeLegacyCronInTimezone(this.original, this.timezone(), this.t);
+                return;
+            }
             const recurrence = this.getRecurrence();
             if (recurrence) {
                 if (getTodoRecurrenceError(recurrence)) throw new Error('invalid');

@@ -4,6 +4,7 @@ import { parseHTML } from 'linkedom';
 describe('automation task timezone selection', () => {
     let WidgetClass: CustomElementConstructor;
     let call: ReturnType<typeof jest.fn>;
+    const widgets: any[] = [];
 
     beforeAll(async () => {
         const { window } = parseHTML('<!doctype html><html><head></head><body></body></html>');
@@ -39,6 +40,7 @@ describe('automation task timezone selection', () => {
     });
 
     afterEach(() => {
+        for (const widget of widgets.splice(0)) widget.disconnectedCallback();
         jest.restoreAllMocks();
         jest.useRealTimers();
     });
@@ -63,6 +65,7 @@ describe('automation task timezone selection', () => {
 
     function widgetFor(plan?: any, locale = 'en-US'): any {
         const widget = new WidgetClass() as any;
+        widgets.push(widget);
         widget._applyLocaleSetting({ locale });
         widget.globalTodos = plan ? [plan] : [];
         widget._cachedEvents = [];
@@ -92,7 +95,7 @@ describe('automation task timezone selection', () => {
         await widget._enterEditMode(plan);
 
         expect(widget.querySelector('#tm-edit-timezone')?.value).toBe('Asia/Kolkata');
-        expect(widget.querySelector('#tm-cron-hour')?.value).toBe('9');
+        expect(widget.querySelector('#tm-cron-custom-input')?.value).toBe('30 9 * * 1,3');
         expect(widget.querySelector('#tm-cron-preview')?.textContent).toContain('Asia/Kolkata');
         await widget._saveEdit(plan);
         expect(call).toHaveBeenCalledWith(
@@ -110,8 +113,7 @@ describe('automation task timezone selection', () => {
         expect(widget.querySelector('#tm-detail-scroll')?.textContent).toContain('Daily at 17:30 (Asia/Shanghai)');
         await widget._enterEditMode(plan);
         expect(widget.querySelector('#tm-edit-timezone')?.value).toBe('UTC');
-        expect(widget.querySelector('#tm-cron-hour')?.value).toBe('9');
-        expect(widget.querySelector('#tm-cron-minute')?.value).toBe('30');
+        expect(widget.querySelector('#tm-cron-custom-input')?.value).toBe('30 9 * * *');
         widget.querySelector('#tm-edit-title').value = 'Renamed';
         await widget._saveEdit(plan);
         expect(call).toHaveBeenCalledWith(
@@ -128,13 +130,9 @@ describe('automation task timezone selection', () => {
         expect(widget.querySelector('.tm-todo-card')?.textContent).toContain('Every Sun at 05:30 (Asia/Kathmandu)');
         await widget._enterEditMode(plan);
         expect(widget.querySelector('#tm-edit-timezone')?.value).toBe('UTC');
-        expect(widget.querySelector('#tm-cron-hour')?.value).toBe('23');
-        expect(widget.querySelector('#tm-cron-minute')?.value).toBe('45');
-        expect(widget.querySelector('[data-days-toggle="period"]')?.textContent).toContain('Sat');
+        expect(widget.querySelector('#tm-cron-custom-input')?.value).toBe('45 23 * * 6');
         select(widget, '#tm-edit-timezone', 'Asia/Kathmandu');
-        expect(widget.querySelector('#tm-cron-hour')?.value).toBe('23');
-        expect(widget.querySelector('#tm-cron-minute')?.value).toBe('45');
-        expect(widget.querySelector('[data-days-toggle="period"]')?.textContent).toContain('Sat');
+        expect(widget.querySelector('#tm-cron-custom-input')?.value).toBe('45 23 * * 6');
         await widget._saveEdit(plan);
         expect(call).toHaveBeenCalledWith(
             'updateGlobalTodo',

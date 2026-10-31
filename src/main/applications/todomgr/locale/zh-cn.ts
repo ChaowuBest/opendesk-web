@@ -68,7 +68,8 @@ export const zhCn: Record<string, string> = {
     'recurrence.desc.yearly': '每年 ${month} ${day}日 ${time}',
     'recurrence.desc.monthlyMultiple': '每月 ${days} 日 ${time}',
     'recurrence.desc.yearlyMultiple': '每年 ${months}的 ${days} 日 ${time}',
-    'recurrence.desc.interval': '${days}每隔 ${value} ${unit}',
+    'recurrence.desc.interval': '每隔 ${value} ${unit}',
+    'recurrence.desc.intervalWeekday': '每隔 ${value} ${unit}的${days}',
     'recurrence.desc.intervalDaily': '每隔 ${value} 天 ${time}',
     'recurrence.desc.intervalWeekly': '每隔 ${value} 周的${days} ${time}',
     'recurrence.desc.intervalMonthly': '每隔 ${value} 个月的 ${days} 日 ${time}',
@@ -130,6 +131,10 @@ export const zhCn: Record<string, string> = {
     'renderer.todo.frequency.label': '执行频率',
     'renderer.todo.frequency.periodTab': '周期',
     'renderer.todo.frequency.intervalTab': '间隔',
+    'renderer.todo.frequency.cronTab': 'Cron',
+    'renderer.todo.frequency.nextRun': '下一次执行时间：${time}',
+    'renderer.todo.frequency.nextRunNone': '无后续执行时间',
+    'renderer.todo.frequency.nextRunDisabled': '已停用',
     'renderer.todo.frequency.period.once': '单次',
     'renderer.todo.frequency.period.daily': '每天',
     'renderer.todo.frequency.period.weekly': '每周',
@@ -184,12 +189,13 @@ export const zhCn: Record<string, string> = {
     // ========== Renderer：时区 ==========
     'renderer.todo.timezone.label': '时区',
     'renderer.todo.timezone.hint': '按所选时区的当地时间执行。新任务默认使用系统时区。',
+    'renderer.todo.timezone.legacyHint': '已按所选时区换算显示；未修改频率时保留原执行计划。',
     'renderer.todo.timezone.beijing': '${timezone}（北京时间）',
     'renderer.todo.timezone.system': '${timezone} · 系统时区',
     'renderer.todo.timezone.nonexistent': '输入的日期或时间在 ${timezone} 中不存在，请选择其他时间。',
 
     // ========== Renderer：模型选择 ==========
-    'renderer.todo.model.globalDefault': '跟随全局默认模型',
+    'renderer.todo.model.globalDefault': '全局默认模型',
     'renderer.todo.model.currentDefault': '当前默认：${alias}',
     'renderer.todo.model.noDefault': '当前未配置默认模型',
     'renderer.todo.model.unavailable': '模型不可用（保留原配置）',
@@ -229,6 +235,8 @@ export const zhCn: Record<string, string> = {
 
     // ========== Renderer：Cron 构建器 ==========
     'renderer.todo.cron.domOption': '${day}日',
+    'renderer.todo.cron.customPlaceholder': '例如: 0 9 * * 1-5（工作日每天9点，使用所选时区）',
+    'renderer.todo.cron.helpText': '什么是 Cron 表达式？',
 
     // ========== Renderer：事件选择器 ==========
     'renderer.todo.event.bundleLabel': '事件源应用',
@@ -237,6 +245,7 @@ export const zhCn: Record<string, string> = {
     'renderer.todo.event.selectBundleFirst': '请先选择应用...',
     'renderer.todo.event.noEvents': '该应用暂无已注册事件',
     'renderer.todo.event.selectEvent': '请选择事件...',
+    'renderer.todo.event.selectRequired': '请选择触发事件的应用和事件名称。',
 
     // ========== Renderer：删除确认 / 立即执行 ==========
     'renderer.todo.delete.title': '删除任务',
@@ -304,6 +313,7 @@ export const zhCn: Record<string, string> = {
 
     // ========== 工具校验错误 ==========
     'error.recurrenceInvalid': '执行频率无效，请检查设置。',
+    'error.cronInvalid': '请输入有效的 Cron 表达式。',
     'error.recurrenceNoNext': '按当前设置无法安排执行时间，请调整日期或间隔。',
     'error.recurrenceWeekdaysRequired': '请选择执行星期。',
     'error.recurrenceMonthsRequired': '请选择月份。',

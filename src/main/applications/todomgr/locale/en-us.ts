@@ -68,7 +68,8 @@ export const enUs: Record<string, string> = {
     'recurrence.desc.yearly': 'Every ${month} ${day} at ${time}',
     'recurrence.desc.monthlyMultiple': 'Days ${days} of every month at ${time}',
     'recurrence.desc.yearlyMultiple': 'Every ${months}, on days ${days} at ${time}',
-    'recurrence.desc.interval': '${days}every ${value} ${unit}',
+    'recurrence.desc.interval': 'Every ${value} ${unit}',
+    'recurrence.desc.intervalWeekday': 'Every ${value} ${unit}, on ${days}',
     'recurrence.desc.intervalDaily': 'Every ${value} day(s) at ${time}',
     'recurrence.desc.intervalWeekly': 'Every ${value} week(s) on ${days} at ${time}',
     'recurrence.desc.intervalMonthly': 'Every ${value} month(s), on days ${days} at ${time}',
@@ -130,6 +131,10 @@ export const enUs: Record<string, string> = {
     'renderer.todo.frequency.label': 'Frequency',
     'renderer.todo.frequency.periodTab': 'Period',
     'renderer.todo.frequency.intervalTab': 'Interval',
+    'renderer.todo.frequency.cronTab': 'Cron',
+    'renderer.todo.frequency.nextRun': 'Next execution: ${time}',
+    'renderer.todo.frequency.nextRunNone': 'No future execution',
+    'renderer.todo.frequency.nextRunDisabled': 'Disabled',
     'renderer.todo.frequency.period.once': 'Once',
     'renderer.todo.frequency.period.daily': 'Daily',
     'renderer.todo.frequency.period.weekly': 'Weekly',
@@ -187,13 +192,15 @@ export const enUs: Record<string, string> = {
     'renderer.todo.timezone.label': 'Timezone',
     'renderer.todo.timezone.hint':
         'Runs at local time in the selected timezone. New tasks default to the system timezone.',
+    'renderer.todo.timezone.legacyHint':
+        'Shown in the selected timezone. The original schedule is kept unless you change the frequency.',
     'renderer.todo.timezone.beijing': '${timezone} (Beijing time)',
     'renderer.todo.timezone.system': '${timezone} · System timezone',
     'renderer.todo.timezone.nonexistent':
         'The entered date or time does not exist in ${timezone}. Choose another time.',
 
     // ========== Renderer: model picker ==========
-    'renderer.todo.model.globalDefault': 'Follow global default model',
+    'renderer.todo.model.globalDefault': 'Global default model',
     'renderer.todo.model.currentDefault': 'Current default: ${alias}',
     'renderer.todo.model.noDefault': 'No default model configured',
     'renderer.todo.model.unavailable': 'Model unavailable (saved selection retained)',
@@ -233,6 +240,8 @@ export const enUs: Record<string, string> = {
 
     // ========== Renderer：Cron 构建器 ==========
     'renderer.todo.cron.domOption': 'Day ${day}',
+    'renderer.todo.cron.customPlaceholder': 'e.g. 0 9 * * 1-5 (9 AM on weekdays, selected timezone)',
+    'renderer.todo.cron.helpText': 'What is a cron expression?',
 
     // ========== Renderer：事件选择器 ==========
     'renderer.todo.event.bundleLabel': 'Event source app',
@@ -241,6 +250,7 @@ export const enUs: Record<string, string> = {
     'renderer.todo.event.selectBundleFirst': 'Select an app first...',
     'renderer.todo.event.noEvents': 'This app has no registered events',
     'renderer.todo.event.selectEvent': 'Select an event...',
+    'renderer.todo.event.selectRequired': 'Select the source app and event name to trigger.',
 
     // ========== Renderer：删除确认 / 立即执行 ==========
     'renderer.todo.delete.title': 'Delete Task',
@@ -308,6 +318,7 @@ export const enUs: Record<string, string> = {
 
     // ========== 工具校验错误 ==========
     'error.recurrenceInvalid': 'Invalid frequency. Check the settings.',
+    'error.cronInvalid': 'Enter a valid Cron expression.',
     'error.recurrenceNoNext': 'No execution time is possible with these settings. Adjust the dates or interval.',
     'error.recurrenceWeekdaysRequired': 'Choose execution weekdays.',
     'error.recurrenceMonthsRequired': 'Choose months.',

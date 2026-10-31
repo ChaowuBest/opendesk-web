@@ -31,7 +31,7 @@ import {
     getAdvancedCronExpression
 } from '../recurrence-description.js';
 import { TimeSchedulePicker, TIME_SCHEDULE_CSS } from './time-schedule-picker.js';
-import { describeLegacyCronInTimezone } from './legacy-timezone.js';
+import { describeLegacyCronInTimezone, getLegacyRecurrenceInTimezone } from './legacy-timezone.js';
 import type { TodoChatModelCatalog, TodoChatModelSummary } from '../common.js';
 
 type Translator = ReturnType<typeof createTranslatorForTodoMgr>;
@@ -1845,10 +1845,13 @@ class TodoMgrEntryWidget extends AgentOperableHTMLElement {
         const requestedType = !todo ? addType || 'scheduled' : todo.trigger?.type || addType || 'scheduled';
         const triggerType = requestedType === 'event' ? 'event' : 'scheduled';
         const isLegacyUtc = todo?.trigger?.type === 'cron' && todo.trigger.timezone === undefined;
+        const isRawCron = todo?.trigger?.type === 'cron' && todo.trigger.recurrence === undefined;
         this._initialTimePeriod = requestedType === 'cron' ? 'daily' : 'once';
-        // 旧 cron 数据未存时区，执行语义按 UTC：编辑时区下拉如实显示 UTC，
-        // 用户改动时区即为把同一墙钟时间重新解释到新时区（保存时仅落库新时区）。
-        this._editTimezone = isLegacyUtc ? 'UTC' : todo?.trigger?.timezone || getSystemTimezone();
+        // 原始 Cron 按保存的时区编辑，未存时区时沿用 UTC，不转换表达式。
+        // 结构化规则仅换算展示，无法等价表达的日期跨月或间隔规则继续使用 UTC 编辑。
+        this._editTimezone = todo?.trigger?.timezone || (isRawCron ? 'UTC' : getSystemTimezone());
+        if (isLegacyUtc && !getLegacyRecurrenceInTimezone(todo.trigger!, this._editTimezone))
+            this._editTimezone = 'UTC';
         const [recentWorkspaces] = await Promise.all([this._loadRecentWorkspaces(), this._loadChatModels()]);
         const workspaceOptionsHtml = this._renderWorkspaceOptions(todo?.workspace, recentWorkspaces);
         const workspaceHint = getWorkspaceDisplayName(todo?.workspace, t);
@@ -1886,7 +1889,7 @@ class TodoMgrEntryWidget extends AgentOperableHTMLElement {
             <div class="tm-edit-field" id="tm-edit-timezone-field"${triggerType === 'event' ? ' hidden' : ''}>
                 <label class="tm-edit-label" for="tm-edit-timezone">${escapeHtml(t('renderer.todo.timezone.label'))}</label>
                 <select class="tm-edit-select" id="tm-edit-timezone">${this._renderTimezoneOptions()}</select>
-                ${isLegacyUtc ? '' : `<div class="tm-model-effort-note">${escapeHtml(t('renderer.todo.timezone.hint'))}</div>`}
+                <div class="tm-model-effort-note">${escapeHtml(t(isLegacyUtc && !isRawCron ? 'renderer.todo.timezone.legacyHint' : 'renderer.todo.timezone.hint'))}</div>
             </div>
             <div id="tm-edit-error" class="tm-edit-error" role="alert" hidden></div>
             <div id="tm-trigger-fields"></div>
@@ -1936,7 +1939,8 @@ class TodoMgrEntryWidget extends AgentOperableHTMLElement {
             const sel = (e.target as HTMLSelectElement).value;
             const timezoneField = this.querySelector<HTMLElement>('#tm-edit-timezone-field');
             if (timezoneField) timezoneField.hidden = sel === 'event';
-            this._renderTriggerFields(sel, null);
+            // 传入原 todo：往返切换类型时保留已保存的触发器配置，避免被默认值静默替换。
+            this._renderTriggerFields(sel, todo);
         });
         this.querySelector('#tm-edit-timezone')?.addEventListener('change', (event) => {
             this._editTimezone = (event.target as HTMLSelectElement).value;
@@ -1944,6 +1948,7 @@ class TodoMgrEntryWidget extends AgentOperableHTMLElement {
             this._timeSchedulePicker?.clearValidationError();
             if (
                 todo?.trigger?.type === 'cron' &&
+                todo.trigger.recurrence !== undefined &&
                 todo.trigger.timezone === undefined &&
                 this._timeSchedulePicker?.isUnchanged()
             ) {
@@ -2084,7 +2089,13 @@ class TodoMgrEntryWidget extends AgentOperableHTMLElement {
     }
 
     private _getModelLabel(alias: string): string {
-        if (!alias) return this._t('renderer.todo.model.globalDefault');
+        if (!alias) {
+            const label = this._t('renderer.todo.model.globalDefault');
+            if (!this._defaultModelAlias) return label;
+            return this._locale === 'en-US'
+                ? `${label} (${this._defaultModelAlias})`
+                : `${label}（${this._defaultModelAlias}）`;
+        }
         return this._getModelByAlias(alias)?.alias || alias;
     }
 
@@ -2431,6 +2442,7 @@ class TodoMgrEntryWidget extends AgentOperableHTMLElement {
         checkbox.addEventListener('change', () => {
             const label = checkbox.closest('label')?.querySelector('span');
             if (label) label.textContent = checkbox.checked ? this._t('status.enabled') : this._t('status.disabled');
+            this._timeSchedulePicker?.refreshNextRun();
         });
     }
 
@@ -2677,6 +2689,18 @@ class TodoMgrEntryWidget extends AgentOperableHTMLElement {
             text.textContent = this._t('renderer.todo.datetime.placeholder');
             text.classList.add('tm-dt-placeholder');
         }
+        this._timeSchedulePicker?.refreshNextRun();
+    }
+
+    private _getOnceTriggerAt(): string | undefined {
+        if (!this._dtYear || !this._dtMonth || !this._dtDay) return;
+        const pad = (value: number) => String(value).padStart(2, '0');
+        const local = `${String(this._dtYear).padStart(4, '0')}-${pad(this._dtMonth)}-${pad(this._dtDay)}T${pad(this._dtHour)}:${pad(this._dtMinute)}`;
+        const original = this._dtOriginal;
+        // Keep seconds and the original DST overlap occurrence when the date/time was not edited.
+        return original?.local === local && original.timezone === this._editTimezone
+            ? original.triggerAt
+            : datetimeLocalToISOString(local, this._editTimezone);
     }
 
     private _bindDtEvents() {
@@ -2781,13 +2805,18 @@ class TodoMgrEntryWidget extends AgentOperableHTMLElement {
 
     private _renderCronBuilder(container: HTMLElement, existingTodo: GlobalTodo | null) {
         this._timeSchedulePicker?.destroy();
+        this._timeSchedulePicker = null;
         this._timeSchedulePicker = new TimeSchedulePicker(
             container,
             this._t,
             () => this._editTimezone,
             (slot) => this._renderDateTimePicker(slot, existingTodo),
             existingTodo?.trigger,
-            this._initialTimePeriod
+            this._initialTimePeriod,
+            {
+                onceTriggerAt: () => this._getOnceTriggerAt(),
+                enabled: () => this.querySelector<HTMLInputElement>('#tm-edit-enabled')?.checked !== false
+            }
         );
     }
 
@@ -2908,15 +2937,8 @@ class TodoMgrEntryWidget extends AgentOperableHTMLElement {
                     break;
                 }
                 if (this._dtYear && this._dtMonth && this._dtDay) {
-                    const pad = (value: number) => String(value).padStart(2, '0');
-                    const local = `${String(this._dtYear).padStart(4, '0')}-${pad(this._dtMonth)}-${pad(this._dtDay)}T${pad(this._dtHour)}:${pad(this._dtMinute)}`;
-                    const original = this._dtOriginal;
                     try {
-                        // Keep seconds and the original DST overlap occurrence when the date/time was not edited.
-                        const triggerAt =
-                            original?.local === local && original.timezone === this._editTimezone
-                                ? original.triggerAt
-                                : datetimeLocalToISOString(local, this._editTimezone);
+                        const triggerAt = this._getOnceTriggerAt();
                         trigger = { type: 'scheduled', triggerAt, timezone: this._editTimezone };
                     } catch {
                         this._showEditError(
@@ -2930,7 +2952,13 @@ class TodoMgrEntryWidget extends AgentOperableHTMLElement {
             case 'event': {
                 const bundleName = (this.querySelector('#tm-edit-event-bundle') as HTMLSelectElement)?.value;
                 const eventName = (this.querySelector('#tm-edit-event-name') as HTMLSelectElement)?.value;
-                if (bundleName && eventName) trigger = { type: 'event', bundleName, eventName };
+                if (!bundleName || !eventName) {
+                    // 类型已切到事件但未选完整事件时阻止保存：静默保留旧触发器会让
+                    // 用户看到的类型与实际持久化结果不一致。
+                    this._showEditError(this._t('renderer.todo.event.selectRequired'));
+                    return;
+                }
+                trigger = { type: 'event', bundleName, eventName };
                 break;
             }
         }

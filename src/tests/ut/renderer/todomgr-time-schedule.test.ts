@@ -5,6 +5,7 @@ import { getNextTodoRecurrenceRuns } from '../../../main/applications/todomgr/to
 describe('automation period and interval picker', () => {
     let Widget: CustomElementConstructor;
     let call: ReturnType<typeof jest.fn>;
+    const widgets: any[] = [];
 
     beforeAll(async () => {
         const { window } = parseHTML('<!doctype html><html><head></head><body></body></html>');
@@ -32,6 +33,13 @@ describe('automation period and interval picker', () => {
         jest.unstable_mockModule('../../../renderer/components/workspacePicker.js', () => ({
             showWorkspacePicker: jest.fn()
         }));
+        // 系统时区不可直接 spy：fake timers 会让 V8 内联缓存 Intl.DateTimeFormat 的原生方法，
+        // 实例调用绕过 resolvedOptions 原型 spy（仅在本机时区恰好为 Asia/Shanghai 时掩盖此问题）。
+        // 改为模块级替换 getSystemTimezone，其余导出保持真实实现。
+        jest.unstable_mockModule('../../../main/applications/todomgr/timezone.js', async () => {
+            const actual = await jest.requireActual('../../../main/applications/todomgr/timezone.js');
+            return { ...actual, getSystemTimezone: () => 'Asia/Shanghai' };
+        });
         await import('../../../main/applications/todomgr/renderer/entry.js');
         Widget = window.customElements.get('todomgr-entry-widget')!;
     });
@@ -39,6 +47,10 @@ describe('automation period and interval picker', () => {
     beforeEach(() => {
         call = jest.fn(async (method: unknown) => (method === 'listGlobalTodos' ? [] : undefined));
         (window as any).applicationAPI = { call, callMainWorld: jest.fn(async () => []) };
+    });
+
+    afterEach(() => {
+        for (const widget of widgets.splice(0)) widget.disconnectedCallback();
     });
 
     async function editor(trigger?: any, locale = 'en-US'): Promise<{ widget: any; plan: any }> {
@@ -55,6 +67,7 @@ describe('automation period and interval picker', () => {
               }
             : null;
         const widget = new Widget() as any;
+        widgets.push(widget);
         widget._applyLocaleSetting({ locale });
         widget._cachedEvents = [];
         widget.globalTodos = plan ? [plan] : [];
@@ -98,15 +111,139 @@ describe('automation period and interval picker', () => {
         input.dispatchEvent(new Event('change', { bubbles: true }));
     }
 
-    test('provides period and interval tabs with exactly the six requested cycle modes', async () => {
+    describe('next execution time', () => {
+        beforeEach(() => {
+            jest.useFakeTimers({ now: new Date('2026-10-28T00:00:00.000Z') });
+        });
+
+        afterEach(() => {
+            jest.restoreAllMocks();
+            jest.useRealTimers();
+        });
+
+        test('displays an interval occurrence in the selected timezone without moving its execution', async () => {
+            const { widget } = await editor({
+                type: 'cron',
+                cronExpression: '* * * * *',
+                timezone: 'Asia/Shanghai',
+                recurrence: {
+                    mode: 'interval',
+                    intervalValue: 2,
+                    intervalUnit: 'hour',
+                    anchorAt: '2026-10-28T01:37:00.000Z'
+                }
+            });
+            const next = widget.querySelector('#tm-frequency-next-run');
+            expect(next?.textContent).toBe('Next execution: 2026-10-28 09:37:00 (Asia/Shanghai)');
+            change(widget, '#tm-edit-timezone', 'UTC');
+            expect(next.textContent).toBe('Next execution: 2026-10-28 01:37:00 (UTC)');
+        });
+
+        test('refreshes the Cron preview, blocks invalid input and reports disabled tasks', async () => {
+            const { widget, plan } = await editor({ type: 'cron', cronExpression: '1 * * * *', timezone: 'UTC' });
+            const next = widget.querySelector('#tm-frequency-next-run');
+            expect(next?.textContent).toBe('Next execution: 2026-10-28 00:01:00 (UTC)');
+            jest.advanceTimersByTime(61_000);
+            expect(next.textContent).toBe('Next execution: 2026-10-28 01:01:00 (UTC)');
+            const input = widget.querySelector('#tm-cron-custom-input');
+            input.value = '0 10 * * *';
+            input.dispatchEvent(new Event('input', { bubbles: true }));
+            expect(next.textContent).toBe('Next execution: 2026-10-28 10:00:00 (UTC)');
+            input.value = '90 9 * * *';
+            input.dispatchEvent(new Event('input', { bubbles: true }));
+            expect(next.hidden).toBe(true);
+            expect(next.textContent).toBe('');
+            await widget._saveEdit(plan);
+            expect(call).not.toHaveBeenCalled();
+            expect(input.getAttribute('aria-invalid')).toBe('true');
+            const enabled = widget.querySelector('#tm-edit-enabled');
+            enabled.checked = false;
+            enabled.dispatchEvent(new Event('change', { bubbles: true }));
+            expect(next.textContent).toBe('Next execution: Disabled');
+        });
+
+        test('one-time preview preserves seconds and stays consistent with the saved time', async () => {
+            const { widget, plan } = await editor(
+                {
+                    type: 'scheduled',
+                    triggerAt: '2026-10-29T09:37:42.000Z',
+                    timezone: 'UTC'
+                },
+                'zh-CN'
+            );
+            const next = widget.querySelector('#tm-frequency-next-run');
+            expect(next?.textContent).toBe('下一次执行时间：2026-10-29 09:37:42 (UTC)');
+            change(widget, '#tm-dt-hour', '10');
+            expect(next.textContent).toBe('下一次执行时间：2026-10-29 10:37:00 (UTC)');
+            change(widget, '#tm-edit-timezone', 'Asia/Shanghai');
+            expect(next.textContent).toBe('下一次执行时间：2026-10-29 10:37:00 (Asia/Shanghai)');
+            await widget._saveEdit(plan);
+            expect(call.mock.calls.find((args: any[]) => args[0] === 'updateGlobalTodo')?.[2].trigger.triggerAt).toBe(
+                '2026-10-29T02:37:00.000Z'
+            );
+        });
+
+        test('an unchanged legacy UTC recurrence is calculated in UTC and displayed in the selected timezone', async () => {
+            const trigger = { type: 'cron', cronExpression: '* * * * *', recurrence: { mode: 'daily', time: '09:00' } };
+            const { widget, plan } = await editor(trigger);
+            expect(widget.querySelector('#tm-frequency-next-run')?.textContent).toBe(
+                'Next execution: 2026-10-28 17:00:00 (Asia/Shanghai)'
+            );
+            await widget._saveEdit(plan);
+            expect(call.mock.calls.find((args: any[]) => args[0] === 'updateGlobalTodo')?.[2].trigger).toEqual(trigger);
+        });
+    });
+
+    test('provides period, interval and Cron tabs with exactly the six requested cycle modes', async () => {
         const { widget } = await editor();
         expect(widget.querySelector('#tm-frequency-period-tab').getAttribute('aria-selected')).toBe('true');
-        expect(widget.querySelector('#tm-frequency-interval-tab')).not.toBeNull();
+        expect(Array.from(widget.querySelectorAll('[role="tab"]')).map((tab: any) => tab.textContent)).toEqual([
+            'Period',
+            'Interval',
+            'Cron'
+        ]);
         expect(
             Array.from(widget.querySelectorAll('[data-period-mode]')).map((element: any) => element.dataset.periodMode)
         ).toEqual(['once', 'daily', 'weekly', 'biweekly', 'monthly', 'yearly']);
-        expect(widget.querySelector('#tm-cron-custom-input')).toBeNull();
-        expect(widget.querySelector('#tm-detail-scroll').textContent).not.toMatch(/cron/i);
+        expect(widget.querySelector('#tm-frequency-cron-panel').hidden).toBe(true);
+    });
+
+    test('creates and reloads a Cron rule, retaining its input across tab switches', async () => {
+        const { widget } = await editor();
+        widget.querySelector('#tm-frequency-cron-tab').click();
+        change(widget, '#tm-edit-timezone', 'Asia/Shanghai');
+        change(widget, '#tm-cron-custom-input', '  */15 9-17 * * 1-5  ');
+        widget.querySelector('#tm-frequency-period-tab').click();
+        widget.querySelector('#tm-frequency-interval-tab').click();
+        widget.querySelector('#tm-frequency-cron-tab').click();
+        await widget._saveEdit(null);
+        expect(createdTrigger()).toEqual({
+            type: 'cron',
+            cronExpression: '*/15 9-17 * * 1-5',
+            timezone: 'Asia/Shanghai'
+        });
+        const { widget: reloaded } = await editor(createdTrigger());
+        expect(reloaded.querySelector('#tm-frequency-cron-tab').getAttribute('aria-selected')).toBe('true');
+        expect(reloaded.querySelector('#tm-cron-custom-input').value).toBe('*/15 9-17 * * 1-5');
+    });
+
+    test('switching a structured period to Cron removes its old recurrence', async () => {
+        const { widget, plan } = await editor({
+            type: 'cron',
+            cronExpression: '* * * * *',
+            timezone: 'UTC',
+            recurrence: { mode: 'weekly', time: '09:00', weekdays: [1, 3] }
+        });
+        expect(widget.querySelector('#tm-frequency-period-tab').getAttribute('aria-selected')).toBe('true');
+        widget.querySelector('#tm-frequency-cron-tab').click();
+        expect(widget.querySelector('#tm-cron-custom-input').value).toBe('');
+        change(widget, '#tm-cron-custom-input', '0 10 * * 1-5');
+        await widget._saveEdit(plan);
+        expect(call.mock.calls.find((args: any[]) => args[0] === 'updateGlobalTodo')?.[2].trigger).toEqual({
+            type: 'cron',
+            cronExpression: '0 10 * * 1-5',
+            timezone: 'UTC'
+        });
     });
 
     test.each([
@@ -571,16 +708,16 @@ describe('automation period and interval picker', () => {
         expect(call.mock.calls.find((args: any[]) => args[0] === 'updateGlobalTodo')?.[2].trigger).toEqual(trigger);
     });
 
-    test('an unsupported saved rule shows its read-only formula and remains intact', async () => {
+    test('an advanced saved rule stays editable in Cron and keeps its escaped formula in details', async () => {
         const trigger = { type: 'cron', cronExpression: '0 9-17 * * 1-5', timezone: 'UTC' };
         const { widget, plan } = await editor(trigger);
+        expect(widget.querySelector('#tm-frequency-cron-tab').getAttribute('aria-selected')).toBe('true');
         expect(widget.querySelector('.tm-todo-card .tm-legacy-cron')?.textContent).toBe(trigger.cronExpression);
-        expect(widget.querySelector('#tm-cron-expression')?.textContent).toBe(trigger.cronExpression);
-        expect(widget.querySelector('#tm-cron-custom-input')).toBeNull();
+        expect(widget.querySelector('#tm-cron-custom-input')?.value).toBe(trigger.cronExpression);
         widget.querySelector('#tm-frequency-interval-tab').click();
-        expect(widget.querySelector('#tm-cron-expression')?.hidden).toBe(true);
-        widget.querySelector('#tm-frequency-period-tab').click();
-        expect(widget.querySelector('#tm-cron-expression')?.hidden).toBe(false);
+        expect(widget.querySelector('#tm-frequency-cron-panel')?.hidden).toBe(true);
+        widget.querySelector('#tm-frequency-cron-tab').click();
+        expect(widget.querySelector('#tm-frequency-cron-panel')?.hidden).toBe(false);
         await widget._saveEdit(plan);
         expect(call.mock.calls.find((args: any[]) => args[0] === 'updateGlobalTodo')?.[2].trigger).toEqual(trigger);
         widget._renderDetail(plan);
@@ -726,5 +863,35 @@ describe('automation period and interval picker', () => {
         expect(widget.querySelector('#tm-frequency-day').textContent).toContain('15');
         await widget._saveEdit(null);
         expect(createdTrigger().recurrence).toMatchObject({ months: [6], days: [15] });
+    });
+
+    describe('trigger type switching', () => {
+        test('switching away and back preserves the saved schedule', async () => {
+            const { widget } = await editor({
+                type: 'cron',
+                cronExpression: '* * * * *',
+                timezone: 'UTC',
+                recurrence: { mode: 'daily', time: '09:00' }
+            });
+            change(widget, '#tm-edit-trigger-type', 'event');
+            expect(widget.querySelector('#tm-edit-event-bundle')).toBeTruthy();
+            change(widget, '#tm-edit-trigger-type', 'scheduled');
+            expect(widget._timeSchedulePicker.getRecurrence()).toEqual({ mode: 'daily', time: '09:00' });
+        });
+
+        test('saving an event trigger without a complete selection is blocked', async () => {
+            const { widget, plan } = await editor({
+                type: 'cron',
+                cronExpression: '* * * * *',
+                timezone: 'UTC',
+                recurrence: { mode: 'daily', time: '09:00' }
+            });
+            change(widget, '#tm-edit-trigger-type', 'event');
+            await widget._saveEdit(plan);
+            const error = widget.querySelector('#tm-edit-error');
+            expect(error.hidden).toBe(false);
+            expect(error.textContent).toContain('Select the source app');
+            expect(call.mock.calls.find((args: any[]) => args[0] === 'updateGlobalTodo')).toBeUndefined();
+        });
     });
 });

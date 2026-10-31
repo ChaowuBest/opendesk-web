@@ -172,6 +172,7 @@ describe('automation task cascading model picker', () => {
         open(widget);
 
         expect(visibleModelAliases(widget)).toEqual(['']);
+        expect(element(widget, '#tm-edit-model-summary .tm-model-trigger-name').textContent).toBe('全局默认模型');
         expect(widget._getModelDetail('')).toBe('当前未配置默认模型');
         expect(widget.querySelector('#tm-edit-model-summary .model-vision')).toBeNull();
         expect(callMainWorld).toHaveBeenCalledTimes(1);
@@ -213,6 +214,7 @@ describe('automation task cascading model picker', () => {
     test('global default keeps an empty model alias and filters against the current default model', () => {
         const widget = widgetFor();
         open(widget);
+        expect(element(widget, '[data-model-alias=""] .ctx-label').textContent).toBe('全局默认模型（fast-model）');
         preview(widget, '');
         expect(effortValues(widget)).toEqual(['', 'none', 'low']);
         element(widget, '#tm-edit-model-effort-list [data-effort-value=""]').click();
@@ -220,7 +222,9 @@ describe('automation task cascading model picker', () => {
         const picker = element(widget, '#tm-edit-model-picker');
         expect(picker.dataset.selectedModel).toBe('');
         expect(picker.dataset.selectedEffort).toBe('');
-        expect(element(widget, '.tm-model-trigger-summary').textContent).toContain('跟随全局默认');
+        expect(element(widget, '#tm-edit-model-summary .tm-model-trigger-name').textContent).toBe(
+            '全局默认模型（fast-model）'
+        );
         expect(element(widget, '#tm-edit-model-popover').hidden).toBe(true);
     });
 });

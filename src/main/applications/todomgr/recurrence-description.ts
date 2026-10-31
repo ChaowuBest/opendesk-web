@@ -70,7 +70,6 @@ export function describeTodoRecurrence(
                 .join(t('recurrence.desc.separator'));
             break;
         case 'interval':
-            params.days = recurrence.weekdays ? describeDays(recurrence.weekdays, t) : '';
             params.value = recurrence.intervalValue ?? recurrence.intervalHours!;
             // Callers supply the TodoMgr translator for these description keys.
             params.unit = t(`recurrence.desc.intervalUnit.${recurrence.intervalUnit ?? 'hour'}`);
@@ -81,6 +80,7 @@ export function describeTodoRecurrence(
                         break;
                     case 'week':
                         description = 'recurrence.desc.intervalWeekly';
+                        params.days = describeDays(recurrence.weekdays!, t);
                         break;
                     case 'month':
                         description = 'recurrence.desc.intervalMonthly';
@@ -94,6 +94,9 @@ export function describeTodoRecurrence(
                             .join(t('recurrence.desc.separator'));
                         break;
                 }
+            } else if (recurrence.weekdays) {
+                description = 'recurrence.desc.intervalWeekday';
+                params.days = describeDays(recurrence.weekdays, t);
             }
             break;
     }
