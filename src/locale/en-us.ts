@@ -1456,7 +1456,6 @@ export const enUs: Record<string, string> = {
     'renderer.settings.experimentalApplicationAppMgr': 'App Studio',
     'renderer.settings.experimentalApplicationAgentOffice': 'Agent Office',
     'renderer.settings.experimentalAccount': 'Account Features',
-    'renderer.settings.logRawLlmRequest': 'Log Raw LLM Responses (Turns Off After Restart)',
     'renderer.settings.debugMode': 'Development & Debugging',
     'renderer.settings.telemetry': 'Telemetry',
     'renderer.settings.telemetryEndpoints': 'Telemetry Endpoints',

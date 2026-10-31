@@ -2653,7 +2653,7 @@ class SettingPanel extends HTMLElement {
                 </div>
                 <div class="sp-toggle-row">
                     <div class="sp-toggle-info">
-                        <div class="sp-toggle-label">${this._t('renderer.settings.logRawLlmRequest')}</div>
+                        <div class="sp-toggle-label">${this._t('config.debug.field.log_raw_llm_request')}</div>
                     </div>
                     <label class="sp-toggle-switch">
                         <input type="checkbox" ${debugLogRawLlm ? 'checked' : ''} id="log-raw-llm-toggle-hidden">
