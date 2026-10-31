@@ -740,6 +740,15 @@ export interface PluginContext {
     readonly pluginId: string;
     readonly pluginDir: string;
     readonly configDir: string;
+    /**
+     * 插件私有数据目录（`<opendesk>/plugins/.pluginmgr/data/<pluginId>/`），宿主会在插件
+     * 激活前创建它（创建失败不会阻断插件加载，写入时才会报错）。
+     *
+     * 用于存放插件自己的状态、缓存、账号文件等。该目录与插件代码目录分离：
+     * 卸载插件时默认保留（用户可在确认弹窗中选择一并删除），因此重新安装同一
+     * 插件 id 后可以继续读取原有数据。
+     */
+    readonly dataDir: string;
     readonly options: Readonly<Record<string, unknown>>;
     readonly hooks: {
         on<Name extends PluginHookName>(

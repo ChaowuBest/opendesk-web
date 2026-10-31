@@ -30,6 +30,7 @@ export function confirmModalMockShim(extra: Record<string, unknown> = {}): Recor
         bindOverlayDismiss: () => undefined,
         shouldConfirmOnEnter: () => true,
         showConfirmModal: async () => false,
+        showConfirmModalWithCheckbox: async () => ({ confirmed: false, checked: false }),
         showInfoModal: async () => undefined,
         showCloseDialog: async () => ({ action: 'cancel', dontAsk: false }),
         escapeModalText: (text: string) => escapeHtml(text),

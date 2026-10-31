@@ -21,14 +21,7 @@ import type { SlashCommandHandler } from '../../tui/commands/index.js';
 import { logger } from '../../utils/logger.js';
 import { InfoOverlay, ProgressOverlay } from '../../tui/components/notice.js';
 import { PluginsListOverlay } from './plugins-tui.js';
-import {
-    getPluginHost,
-    installPlugin,
-    uninstallPlugin,
-    setPluginEnabled,
-    reloadPluginHost,
-    applyPluginEnabledChange
-} from '../pluginmgr/index.js';
+import { getPluginHost, setPluginEnabled, applyPluginEnabledChange } from '../pluginmgr/index.js';
 import type {
     PluginEntry,
     ChannelPlugin,
@@ -408,10 +401,22 @@ export class ChannelMgrApplication extends BaseApplication {
             const payload = (args?.[0] ?? {}) as { id?: unknown; operation?: unknown };
             const changedPluginId = typeof payload.id === 'string' ? payload.id : undefined;
             const operation = typeof payload.operation === 'string' ? payload.operation : undefined;
-            this.syncChannelsWithPluginHost(changedPluginId, operation).catch((err: any) => {
-                logger.error(`[channelmgr] 插件变更后同步消息渠道失败: ${err?.message || err}`);
-            });
+            void this.syncChannelsBestEffort(changedPluginId, operation);
         });
+    }
+
+    /**
+     * 插件变更后做渠道差量同步，失败只记日志（不抛）。
+     *
+     * 这类同步发生在插件宿主已经完成启停/卸载之后：此刻把异常抛给调用方，上层会把它当成
+     * 插件操作失败而去回滚注册表，而运行时早已切换，反而制造注册表与运行时不一致。
+     */
+    private async syncChannelsBestEffort(changedPluginId: string | undefined, operation?: string): Promise<void> {
+        try {
+            await this.syncChannelsWithPluginHost(changedPluginId, operation);
+        } catch (err: any) {
+            logger.error(`[channelmgr] 插件变更后同步消息渠道失败: ${err?.message || err}`);
+        }
     }
 
     /**
@@ -439,6 +444,37 @@ export class ChannelMgrApplication extends BaseApplication {
             () => undefined
         );
         return next;
+    }
+
+    /**
+     * 通过 pluginmgr 应用 API 安装插件。
+     *
+     * 不要直接调用 management 层的 installPlugin + reloadPluginHost：应用层会把源落盘到托管
+     * 目录，覆盖安装时先释放旧实例（Windows 下插件运行时会占用自身目录），完成后只加载目标
+     * 插件并广播 pluginsChanged，其他插件与渠道不会被整包重启。
+     *
+     * @returns 安装后的插件 id
+     */
+    private async installPluginBySpec(spec: string): Promise<string> {
+        const pluginApp = ApplicationRegistry.getApplication('pluginmgr') as
+            { install?: (spec: string) => Promise<{ id?: string } | undefined> } | undefined;
+        if (!pluginApp?.install) throw new Error(t('plugin.install.error.unknown'));
+        const result = await pluginApp.install(spec);
+        return result?.id ?? '';
+    }
+
+    /**
+     * 通过 pluginmgr 应用 API 卸载插件。
+     *
+     * 不要直接调用 management 层的 uninstallPlugin：应用层会先做可卸载检查、再释放插件
+     * 实例，之后才删除磁盘目录（Windows 下插件运行时会占用自身目录，带着实例删会 rename
+     * 失败），最后广播 pluginsChanged 供订阅方差量同步。
+     */
+    private async uninstallPluginById(id: string, removeData = false): Promise<void> {
+        const pluginApp = ApplicationRegistry.getApplication('pluginmgr') as
+            { uninstall?: (id: string, removeData?: boolean) => Promise<unknown> } | undefined;
+        if (!pluginApp?.uninstall) throw new Error(t('plugin.uninstall.fail'));
+        await pluginApp.uninstall(id, removeData);
     }
 
     /**
@@ -1350,7 +1386,7 @@ export class ChannelMgrApplication extends BaseApplication {
             qrAscii = await new Promise<string>((resolve) => {
                 qrGen.generate(qrUrl, { small: true }, (code: string) => resolve(code));
             });
-        } catch (e: any) {
+        } catch {
             qrAscii = `请打开链接扫码: ${qrUrl}`;
         }
         // CLI 渲染器仅在 polling 阶段打印二维码 ASCII。
@@ -1764,21 +1800,15 @@ export class ChannelMgrApplication extends BaseApplication {
                 });
                 progress.show();
                 try {
-                    const result = await installPlugin(rest);
-                    if (result.success) {
-                        await reloadPluginHost();
-                        await this.reloadChannels();
-                        progress.hide();
-                        // installPlugin 成功分支必然带 id（见 manager.ts 的 `return { success: true, id }`），
-                        // 这里用 ?? '' 仅为满足可选字段的类型约束
-                        showInfo(t('plugin.install.success'), t('channel.install.success', { id: result.id ?? '' }));
-                    } else {
-                        progress.hide();
-                        showInfo(t('plugin.install.fail'), `插件安装失败: ${result.error}`);
-                    }
+                    // 与插件中心同一条安装路径：覆盖安装先释放旧实例，其他插件与渠道不受影响
+                    const id = await this.installPluginBySpec(rest);
+                    await this.syncChannelsBestEffort(id, 'install');
+                    progress.hide();
+                    showInfo(t('plugin.install.success'), t('channel.install.success', { id }));
                 } catch (err: any) {
                     progress.hide();
-                    showInfo(t('plugin.install.fail'), `插件安装出错: ${err?.message ?? err}`);
+                    // 错误文案由 pluginmgr 应用层本地化，这里不再拼中缀
+                    showInfo(t('plugin.install.fail'), err instanceof Error ? err.message : String(err));
                 }
                 break;
             }
@@ -1793,34 +1823,30 @@ export class ChannelMgrApplication extends BaseApplication {
                 });
                 progress.show();
                 try {
-                    const result = await uninstallPlugin(rest);
-                    if (result.success) {
-                        await reloadPluginHost();
-                        await this.reloadChannels();
-                        progress.hide();
-                        showInfo(t('plugin.uninstall.success'), t('channel.uninstall.success', { id: rest }));
-                    } else {
-                        progress.hide();
-                        showInfo(t('plugin.uninstall.fail'), `插件卸载失败: ${result.error}`);
-                    }
+                    // 与插件中心同一条卸载路径：先释放实例再删盘，其他插件与渠道不受影响
+                    await this.uninstallPluginById(rest);
+                    await this.syncChannelsBestEffort(rest, 'uninstall');
+                    progress.hide();
+                    showInfo(t('plugin.uninstall.success'), t('channel.uninstall.success', { id: rest }));
                 } catch (err: any) {
                     progress.hide();
-                    showInfo(t('plugin.uninstall.fail'), `插件卸载出错: ${err?.message ?? err}`);
+                    // 错误文案由 pluginmgr 应用层本地化，这里不再拼中缀
+                    showInfo(t('plugin.uninstall.fail'), err instanceof Error ? err.message : String(err));
                 }
                 break;
             }
             case 'list': {
-                // PluginsListOverlay 的启停走差量路径（其他插件与渠道不受影响），
-                // 卸载仍走全量重载后重新收集渠道
+                // 启停与卸载都走差量路径：只动目标插件，其他插件与渠道保持运行
                 new PluginsListOverlay(
                     tui,
-                    async () => {
-                        await reloadPluginHost();
-                        await this.reloadChannels();
-                    },
                     async (id, enabled) => {
                         await applyPluginEnabledChange(id, enabled);
-                        await this.syncChannelsWithPluginHost(id, enabled ? 'enable' : 'disable');
+                        await this.syncChannelsBestEffort(id, enabled ? 'enable' : 'disable');
+                    },
+                    async (id, removeData) => {
+                        // 走插件中心应用 API：内部先做可卸载检查再释放实例，并广播 pluginsChanged
+                        await this.uninstallPluginById(id, removeData);
+                        await this.syncChannelsBestEffort(id, 'uninstall');
                     }
                 ).show();
                 break;
@@ -1836,7 +1862,7 @@ export class ChannelMgrApplication extends BaseApplication {
                 }
                 try {
                     await applyPluginEnabledChange(rest, true);
-                    await this.syncChannelsWithPluginHost(rest, 'enable');
+                    await this.syncChannelsBestEffort(rest, 'enable');
                     showInfo(t('plugin.enable.success'), t('channel.enable.success', { id: rest }));
                 } catch (err: any) {
                     // 启用失败（完整性校验、入口缺失等）：回滚注册表并提示原因
@@ -1852,7 +1878,7 @@ export class ChannelMgrApplication extends BaseApplication {
                 }
                 if (setPluginEnabled(rest, false)) {
                     await applyPluginEnabledChange(rest, false);
-                    await this.syncChannelsWithPluginHost(rest, 'disable');
+                    await this.syncChannelsBestEffort(rest, 'disable');
                     showInfo(t('plugin.disable.success'), t('channel.disable.success', { id: rest }));
                 } else {
                     showInfo(t('plugin.disable.fail'), `未找到插件: ${rest}`);

@@ -153,16 +153,15 @@ export class PluginConfigPage implements Component {
 
     private showUninstallConfirmation(): void {
         this.state = 'confirm';
-        this.list = new SelectList(
-            [
-                { value: 'cancel', label: t('plugin.tui.back') },
-                { value: 'confirm', label: chalk.red(t('plugin.center.uninstall')) }
-            ],
-            2,
-            defaultSelectListTheme
-        );
+        const items = [
+            { value: 'cancel', label: t('plugin.tui.back') },
+            { value: 'confirm', label: chalk.red(t('plugin.center.uninstall')) },
+            { value: 'confirm-remove-data', label: chalk.red(t('plugin.tui.uninstallRemoveData')) }
+        ];
+        this.list = new SelectList(items, items.length, defaultSelectListTheme);
         this.list.onSelect = (item) => {
-            if (item.value === 'confirm') void this.uninstallSelected();
+            if (item.value === 'confirm') void this.uninstallSelected(false);
+            else if (item.value === 'confirm-remove-data') void this.uninstallSelected(true);
             else if (this.selectedId) this.showActions(this.selectedId);
         };
         this.list.onCancel = () => {
@@ -172,10 +171,10 @@ export class PluginConfigPage implements Component {
         this.openDeskTUI.tui.requestRender();
     }
 
-    private async uninstallSelected(): Promise<void> {
+    private async uninstallSelected(removeData: boolean): Promise<void> {
         if (!this.selectedId) return;
         try {
-            await this.getApplication().uninstall(this.selectedId);
+            await this.getApplication().uninstall(this.selectedId, removeData);
             await this.loadEntries();
         } catch (error) {
             this.error = error instanceof Error ? error.message : String(error);
@@ -189,6 +188,7 @@ export class PluginConfigPage implements Component {
         const lines = [chalk.bold('🔌  ' + t('config.plugin.title')), chalk.dim(t('config.plugin.title.hint')), ''];
         if (this.state === 'confirm' && this.selectedId) {
             lines.push(chalk.yellow(t('plugin.center.uninstallConfirm', { id: this.selectedId })), '');
+            lines.push(chalk.dim(t('plugin.tui.uninstallDataHint')), '');
         } else if (this.state === 'actions' && this.selectedId) {
             lines.push(chalk.bold(this.selectedId), '');
         }

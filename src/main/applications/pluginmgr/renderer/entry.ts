@@ -27,7 +27,7 @@ import {
     type SkillDetailCardModel
 } from '../../../../renderer/components/skills/skill-detail-card.ts';
 import { renderSafeMarkdown } from '../../../../renderer/utils/markdown.js';
-import { showConfirmModal } from '../../../../renderer/components/confirmModal.js';
+import { showConfirmModalWithCheckbox } from '../../../../renderer/components/confirmModal.js';
 import { OPENDESK_THEME_CHANGED } from '../../../../renderer/theme/theme-iframe-bridge.ts';
 import { syncShadowHostTheme } from '../../../../renderer/theme/theme-shadow-overrides.ts';
 import type { ThemeAppearance } from '../../../../renderer/theme/theme-manager.js';
@@ -586,7 +586,13 @@ export class PluginMgrEntryWidget extends HTMLElement {
     private locale = resolveRendererLocale();
     /** pluginsChanged 订阅句柄（异步获取，由 adoptDeferredSubscription 接管过期退订） */
     private pluginsChangedUnsubscribe?: () => void;
-    private readonly onPluginsChanged = () => void this.load();
+    /**
+     * 宿主侧变更通知：刷新列表但保留当前 notice。
+     *
+     * 失败操作同样会广播（实例被装回后必须让订阅方重新对齐），如果这里清 notice，
+     * 用户点完卸载后看到的错误提示会被紧随其后的刷新抹掉。
+     */
+    private readonly onPluginsChanged = () => void this.load(true);
     /** 主窗口在应用语言变化时向 iframe 广播 LOCALE_CHANGED，这里据此切换插件显示语言 */
     private readonly onLocaleMessage = (event: Event) => {
         const data = (event as MessageEvent).data;
@@ -790,19 +796,21 @@ export class PluginMgrEntryWidget extends HTMLElement {
     }
 
     private async confirmAndUninstall(id: string, onSuccess?: () => void): Promise<void> {
-        const confirmed = await showConfirmModal({
+        const { confirmed, checked } = await showConfirmModalWithCheckbox({
             icon: 'fa-trash-can',
-            iconBg: '#FEF2F2',
-            iconColor: '#DC2626',
+            variant: 'danger',
             title: this.t('plugin.center.uninstallTitle'),
             message: escapeHtml(this.t('plugin.center.uninstallConfirm', { id })),
             confirmText: this.t('plugin.center.uninstall'),
             cancelText: this.t('plugin.center.cancel'),
-            danger: true,
+            checkbox: {
+                label: escapeHtml(this.t('plugin.center.uninstallRemoveData')),
+                hint: escapeHtml(this.t('plugin.center.uninstallRemoveDataHint'))
+            },
             mountTarget: this.shadowRoot!
         });
         if (!confirmed) return;
-        void this.run(() => getAPI().callMainWorld('uninstall', id), 'plugin.uninstall.success', onSuccess);
+        void this.run(() => getAPI().callMainWorld('uninstall', id, checked), 'plugin.uninstall.success', onSuccess);
     }
 
     private statusOf(entry: PluginListEntry): string {

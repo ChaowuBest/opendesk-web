@@ -50,6 +50,7 @@ import {
     resolvePluginDisplayName
 } from '../../../../../packages/plugin-sdk/src/index.js';
 import { comparePluginVersions } from '../discovery/manifest.js';
+import { ensurePluginDataDirectory } from '../management/paths.js';
 import { AGENT_RUNTIME_ERROR_CODES, loadAgentsFromDirectory } from '../discovery/agent-resource.js';
 import { compileHintPattern, validateBrowserHint } from './browser-hints.js';
 import { resolveAppearanceLogoValues } from './appearance.js';
@@ -922,6 +923,10 @@ export class PluginHost {
     }
 
     private createContext(entry: ActivePlugin, options: ActivatePluginOptions): PluginContext {
+        // 配置目录与插件目录只解析一次：ctx.dataDir 依赖前者，插件技能相对路径依赖后者，
+        // 分散重复写容易在改 fallback 时只改到一半
+        const configDir = options.configDir ?? getOpendeskDirectory();
+        const pluginDir = path.resolve(options.pluginDir ?? configDir);
         const addCapability = (capability: PluginCapability) => {
             if (!entry.requestedCapabilities.includes(capability)) {
                 throw new Error(`plugin.capability_not_declared:${capability}`);
@@ -954,8 +959,9 @@ export class PluginHost {
 
         return {
             pluginId: entry.id,
-            pluginDir: path.resolve(options.pluginDir ?? options.configDir ?? getOpendeskDirectory()),
-            configDir: options.configDir ?? getOpendeskDirectory(),
+            pluginDir,
+            configDir,
+            dataDir: ensurePluginDataDirectory(entry.id, configDir),
             options: Object.freeze({ ...(options.options ?? {}) }),
             hooks: {
                 on: <Name extends PluginHookName>(
@@ -1021,10 +1027,7 @@ export class PluginHost {
                     if (typeof definition.body !== 'string') {
                         throw new Error(`plugin.skill_body_invalid:${definition.name}`);
                     }
-                    const normalized = this.normalizeSkillDefinition(
-                        definition,
-                        path.resolve(options.pluginDir ?? options.configDir ?? getOpendeskDirectory())
-                    );
+                    const normalized = this.normalizeSkillDefinition(definition, pluginDir);
                     return this.registerContribution(this.skills, entry, normalized, definition.name, track);
                 }
             },
@@ -1060,7 +1063,7 @@ export class PluginHost {
                     }
                     addCapability('agent');
                     const definitions = loadAgentsFromDirectory(
-                        path.resolve(options.pluginDir ?? options.configDir ?? getOpendeskDirectory()),
+                        pluginDir,
                         relativePath.trim(),
                         AGENT_RUNTIME_ERROR_CODES
                     );
@@ -1195,10 +1198,7 @@ export class PluginHost {
                     addCapability('appearance');
                     // 注册时一次性完成路径解析与文件校验（存在性/格式/大小），
                     // 渲染进程拿到的直接是可用的 data URL，无需再访问插件目录
-                    const values = resolveAppearanceLogoValues(
-                        path.resolve(options.pluginDir ?? options.configDir ?? getOpendeskDirectory()),
-                        logoPath
-                    );
+                    const values = resolveAppearanceLogoValues(pluginDir, logoPath);
                     return this.registerAppearanceOverride(entry, 'appLogo', values, track);
                 }
             },

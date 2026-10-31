@@ -27,7 +27,8 @@ import {
     listVisiblePlugins,
     setPluginEnabled,
     verifyInstalledPlugin,
-    formatPluginInstallError
+    formatPluginInstallError,
+    formatPluginUninstallError
 } from '../../applications/pluginmgr/index.js';
 import type { PluginCapability, PluginHostEntry } from '../../applications/pluginmgr/index.js';
 import { resolvePluginDisplayName, resolvePluginLocalizedText } from '../../../../packages/plugin-sdk/src/index.js';
@@ -121,18 +122,18 @@ export function registerPluginsCommand(prog: Command): void {
     pluginsCmd
         .command('uninstall <id>')
         .description(t('plugin.uninstall.description'))
-        .action(async (id: string) => {
+        .option('--remove-data', t('plugin.uninstall.removeData.description'))
+        .action(async (id: string, options: { removeData?: boolean }) => {
             useCliTransport();
-            const result = await uninstallPlugin(id);
+            const removeData = options.removeData === true;
+            const result = await uninstallPlugin(id, { removeData });
             if (result.success) {
                 console.log(`✓ ${t('plugin.uninstall.successDetail', { id })}`);
+                console.log(
+                    removeData ? t('plugin.uninstall.dataRemoved', { id }) : t('plugin.uninstall.dataKept', { id })
+                );
             } else {
-                const error =
-                    result.error === 'plugin.uninstall_builtin'
-                        ? t('plugin.uninstall.builtin', { id })
-                        : result.error === 'plugin.uninstall_external'
-                          ? t('plugin.uninstall.external', { id })
-                          : (result.error ?? '-');
+                const error = formatPluginUninstallError(result.error, id);
                 console.error(`✗ ${t('plugin.uninstall.failDetail', { error })}`);
                 process.exit(1);
             }

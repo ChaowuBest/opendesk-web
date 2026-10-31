@@ -343,12 +343,34 @@ describe('plugin manager application renderer', () => {
         expect(window.confirm).not.toHaveBeenCalled();
         const modal = widget.shadowRoot.querySelector('.od-confirm-modal-overlay');
         expect(modal).not.toBeNull();
-        expect(callMainWorld).not.toHaveBeenCalledWith('uninstall', 'installed-plugin');
+        // 删除数据目录的复选框默认不勾选
+        const checkbox = modal.querySelector('[data-action="checkbox"]');
+        expect(checkbox).not.toBeNull();
+        expect(checkbox?.hasAttribute('checked')).toBe(false);
+        expect(callMainWorld).not.toHaveBeenCalledWith('uninstall', 'installed-plugin', expect.anything());
 
         modal.querySelector('[data-action="confirm"]').dispatchEvent(new Event('click'));
         await new Promise((resolve) => setTimeout(resolve, 220));
 
-        expect(callMainWorld).toHaveBeenCalledWith('uninstall', 'installed-plugin');
+        expect(callMainWorld).toHaveBeenCalledWith('uninstall', 'installed-plugin', false);
+    });
+
+    test('passes removeData=true when the uninstall modal checkbox is checked', async () => {
+        const widget = await createWidget();
+        const uninstall = widget.shadowRoot.querySelector(
+            '[data-plugin-id="installed-plugin"] [data-action="uninstall"]'
+        );
+
+        uninstall.dispatchEvent(new Event('click'));
+        await new Promise((resolve) => setTimeout(resolve, 0));
+
+        const modal = widget.shadowRoot.querySelector('.od-confirm-modal-overlay');
+        const checkbox = modal.querySelector('[data-action="checkbox"]') as HTMLInputElement;
+        checkbox.checked = true;
+        modal.querySelector('[data-action="confirm"]').dispatchEvent(new Event('click'));
+        await new Promise((resolve) => setTimeout(resolve, 220));
+
+        expect(callMainWorld).toHaveBeenCalledWith('uninstall', 'installed-plugin', true);
     });
 
     test('renders built-in and installed tabs with separated plugin groups', async () => {

@@ -74,4 +74,31 @@ describe('PluginConfigPage', () => {
 
         expect(application.setEnabled).toHaveBeenCalledWith('external-plugin', true);
     });
+
+    test('uninstall keeps the plugin data directory by default', async () => {
+        const page = createPage() as any;
+        await new Promise((resolve) => setTimeout(resolve, 0));
+
+        page.list.onSelect({ value: 'local-plugin' });
+        page.list.onSelect({ value: 'uninstall' });
+        page.list.onSelect({ value: 'confirm' });
+        await new Promise((resolve) => setTimeout(resolve, 0));
+
+        expect(application.uninstall).toHaveBeenCalledWith('local-plugin', false);
+    });
+
+    test('uninstall offers removing the plugin data directory', async () => {
+        const page = createPage() as any;
+        await new Promise((resolve) => setTimeout(resolve, 0));
+
+        page.list.onSelect({ value: 'local-plugin' });
+        page.list.onSelect({ value: 'uninstall' });
+        const confirmText = page.render(120).join('\n');
+        expect(confirmText).toContain('delete data directory');
+
+        page.list.onSelect({ value: 'confirm-remove-data' });
+        await new Promise((resolve) => setTimeout(resolve, 0));
+
+        expect(application.uninstall).toHaveBeenCalledWith('local-plugin', true);
+    });
 });

@@ -29,8 +29,28 @@ plugins/
     ├── registry.json                    # 安装、启用、配置和授权记录
     ├── staging/                         # 安装暂存目录
     ├── cache/
+    ├── data/                            # 各插件的私有数据目录（插件代码之外的持久化区域）
+    │   └── <插件ID>/
     └── trash/                           # 被替换或卸载的插件
 ```
+
+### 插件私有数据目录
+
+每个插件都可以通过 `ctx.dataDir` 拿到自己的私有数据目录：
+
+```text
+plugins/.pluginmgr/data/<插件ID>/
+```
+
+该目录从 0.3.10 起由宿主在插件激活前创建（创建失败不会阻断插件加载，插件写入时才会报错），适合
+存放插件自己的状态文件、缓存、媒体文件等。它与插件代码目录（`plugins/<插件ID>/`）分离，因此：
+
+- 覆盖安装、升级插件不会影响已有数据；
+- 卸载插件默认**保留**数据目录，重新安装同一个插件 ID 后可以直接继承原有数据；
+- 在插件中心卸载时，确认弹窗提供“同时删除该插件的数据目录”复选框（默认不勾选），
+  勾选后数据目录会被直接删除且不可恢复（插件代码目录则照旧移入 `.pluginmgr/trash/`）。
+
+插件不应把持久化数据写入 `ctx.pluginDir`：那是代码目录，会被覆盖或删除。
 
 直接把插件目录或 `.js`、`.mjs`、`.cjs` 文件放进 `plugins/`，重启 OpenDesk
 即可被发现，也可以在插件中心执行重新加载。扫描过程不会执行 `npm install`；直接放入目录的本地
@@ -705,6 +725,7 @@ opendesk plugins list
 opendesk plugins disable review-helper
 opendesk plugins enable review-helper
 opendesk plugins uninstall review-helper
+opendesk plugins uninstall review-helper --remove-data
 ```
 
 安装源可以是 npm spec、本地路径、ZIP、tarball 或 URL。GUI 中的 npm、目录、ZIP、TGZ 和 URL
@@ -719,6 +740,8 @@ CLI 安装命令接收的本地目录同样直接校验并复制包含 `opendesk
 所有 npm 安装路径都传递 `--omit=dev`、`--no-optional` 和 `--ignore-scripts`，不会安装开发依赖、
 可选依赖，也不会运行插件或依赖的 npm 生命周期脚本。卸载适用于 `plugins/` 目录中的全部插件，
 包括手工放入的插件文件或目录；内置插件不能卸载，外部目录插件应从 `externalPaths` 移除。
+卸载默认保留插件的私有数据目录（`plugins/.pluginmgr/data/<插件ID>/`），仅在 GUI 确认弹窗中
+勾选“同时删除该插件的数据目录”，或 CLI 显式传入 `--remove-data` 时才会一并清理。
 
 其他常用 CLI：
 
@@ -738,7 +761,7 @@ opendesk plugins doctor
 需要机器可读输出的 `status`、`reload`、`verify` 和 `doctor` 支持 `--json`。
 
 GUI 中通过“插件中心”应用安装和管理插件；TUI 中通过“设置 → 插件中心”查看、重新加载、
-启停和卸载。`opendesk plugins` CLI、GUI、TUI、headless CLI 和 serve 模式共用同一套
+启停和卸载（卸载时可选择是否一并删除插件数据目录）。`opendesk plugins` CLI、GUI、TUI、headless CLI 和 serve 模式共用同一套
 `pluginmgr` 注册表和插件宿主。
 
 `pluginmgr` Application 还会向 Agent 提供 `manage-plugins` Skill，其中包含

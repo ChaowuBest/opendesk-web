@@ -14,7 +14,7 @@ import chalk from 'chalk';
 import { defaultSelectListTheme } from '../../tui/theme';
 import { OpenDeskTUI } from '../../tui/entry';
 import { InfoOverlay } from '../../tui/components/notice';
-import { uninstallPlugin, listVisiblePlugins, setPluginEnabled } from '../pluginmgr/index.js';
+import { listVisiblePlugins, setPluginEnabled } from '../pluginmgr/index.js';
 import type { PluginRegistryRecord, PluginSourceKind } from '../pluginmgr/index.js';
 import { t } from '../../../locale/index.js';
 
@@ -32,6 +32,13 @@ function pluginSourceLabel(source: PluginSourceKind): string {
     }
 }
 
+/**
+ * 消息插件列表（TUI）。
+ *
+ * 启停与卸载都交给调用方提供的回调：这两类操作必须先动插件宿主里的运行实例，再落盘，
+ * 并由宿主广播 pluginsChanged。组件不直接碰 management 层的 install/uninstall，
+ * 否则会退化成"带着运行实例删目录"（Windows 下 rename 失败）且不通知其他订阅方。
+ */
 export class PluginsListOverlay implements Component {
     private openDeskTUI: OpenDeskTUI;
     private box: Box;
@@ -40,19 +47,17 @@ export class PluginsListOverlay implements Component {
     private loader?: Loader;
     private state: ViewState = 'list';
     private plugins: PluginRegistryRecord[] = [];
-    private pendingPlugin?: PluginRegistryRecord;
-    private onReload?: () => Promise<void>;
-    /** 启停回调（可选）：提供时 toggle 走差量启停，否则回退到 onReload 全量重载 */
-    private onToggle?: (id: string, enabled: boolean) => Promise<void>;
+    private onToggle: (id: string, enabled: boolean) => Promise<void>;
+    private onUninstall: (id: string, removeData: boolean) => Promise<void>;
 
     constructor(
         openDeskTUI: OpenDeskTUI,
-        onReload?: () => Promise<void>,
-        onToggle?: (id: string, enabled: boolean) => Promise<void>
+        onToggle: (id: string, enabled: boolean) => Promise<void>,
+        onUninstall: (id: string, removeData: boolean) => Promise<void>
     ) {
         this.openDeskTUI = openDeskTUI;
-        this.onReload = onReload;
         this.onToggle = onToggle;
+        this.onUninstall = onUninstall;
         this.header = new Text(chalk.bold(t('plugin.tui.title')));
         this.box = new Box(1, 1);
         this.box.setBgFn((text: string) => chalk.bgHex('#2d2d2d').hex('#e0e0e0')(text));
@@ -117,7 +122,6 @@ export class PluginsListOverlay implements Component {
     private onToggleKey() {
         const plugin = this.getSelectedPlugin();
         if (!plugin) return;
-        this.pendingPlugin = plugin;
         this.showConfirmToggle(plugin);
     }
 
@@ -157,12 +161,8 @@ export class PluginsListOverlay implements Component {
             return;
         }
         try {
-            // 提供专用启停回调时走差量路径（其他插件与渠道不受影响），否则回退全量重载
-            if (this.onToggle) {
-                await this.onToggle(plugin.id, enabled);
-            } else if (this.onReload) {
-                await this.onReload();
-            }
+            // 差量启停：只动目标插件，其他插件与渠道不受影响
+            await this.onToggle(plugin.id, enabled);
         } catch (err: any) {
             // 启用失败（完整性校验、入口缺失等）：回滚注册表并提示原因，不谎报完成
             setPluginEnabled(plugin.id, plugin.enabled);
@@ -190,7 +190,6 @@ export class PluginsListOverlay implements Component {
             this.showResultMessage(t(key, { id: plugin.id }));
             return;
         }
-        this.pendingPlugin = plugin;
         this.showConfirmUninstall(plugin);
     }
 
@@ -199,15 +198,20 @@ export class PluginsListOverlay implements Component {
         this.state = 'confirm-uninstall';
         this.header = new Text(chalk.bold.red(t('plugin.tui.confirmUninstall', { id: plugin.id })));
 
+        // 顺序不能变：既有用户的肌肉记忆是「下一项 + 回车 = 取消」，破坏它会让
+        // 一次误操作直接变成「卸载并删除数据目录」。危险选项排在最后，必须刻意选择。
         const items = [
             { value: 'confirm', label: chalk.red(t('plugin.tui.uninstallConfirm')) },
-            { value: 'cancel', label: chalk.green(t('plugin.tui.cancel')) }
+            { value: 'cancel', label: chalk.green(t('plugin.tui.cancel')) },
+            { value: 'confirm-remove-data', label: chalk.red(t('plugin.tui.uninstallRemoveData')) }
         ];
 
         this.list = new SelectList(items, items.length, defaultSelectListTheme);
         this.list.onSelect = (item) => {
             if (item.value === 'confirm') {
-                this.performUninstall(plugin);
+                this.performUninstall(plugin, false);
+            } else if (item.value === 'confirm-remove-data') {
+                this.performUninstall(plugin, true);
             } else {
                 this.showList();
             }
@@ -220,7 +224,7 @@ export class PluginsListOverlay implements Component {
         this.openDeskTUI.tui.setFocus(this.list);
     }
 
-    private async performUninstall(plugin: PluginRegistryRecord) {
+    private async performUninstall(plugin: PluginRegistryRecord, removeData: boolean) {
         this.cleanup();
         this.state = 'uninstalling';
         this.list = undefined;
@@ -234,21 +238,14 @@ export class PluginsListOverlay implements Component {
         this.renderBox();
 
         try {
-            const result = await uninstallPlugin(plugin.id);
-            if (result.success && this.onReload) {
-                try {
-                    await this.onReload();
-                } catch {
-                    /* best effort */
-                }
-            }
+            // 差量卸载：先释放插件实例再删盘，其他插件与渠道不受影响
+            await this.onUninstall(plugin.id, removeData);
             this.cleanup();
             this.showList();
-            if (result.success) {
-                this.showResultMessage(t('plugin.tui.uninstallDone', { id: plugin.id }));
-            } else {
-                this.showResultMessage(t('plugin.tui.uninstallFail', { error: result.error ?? '-' }));
-            }
+            const dataMessage = removeData
+                ? t('plugin.uninstall.dataRemoved', { id: plugin.id })
+                : t('plugin.uninstall.dataKept', { id: plugin.id });
+            this.showResultMessage(`${t('plugin.tui.uninstallDone', { id: plugin.id })}\n\n${dataMessage}`);
         } catch (err: any) {
             this.cleanup();
             this.showList();
@@ -279,6 +276,11 @@ export class PluginsListOverlay implements Component {
         } else {
             if (this.list) {
                 this.box.addChild(this.list);
+            }
+            if (this.state === 'confirm-uninstall') {
+                // 与设置页的插件中心保持同一口径：默认保留数据目录，删除则不可恢复
+                this.box.addChild(new Text(''));
+                this.box.addChild(new Text(chalk.dim(t('plugin.tui.uninstallDataHint'))));
             }
         }
 
