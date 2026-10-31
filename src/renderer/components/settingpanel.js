@@ -21,6 +21,7 @@ import { ACP_AGENT_PRESETS, createAcpAgentPresetDraft } from '../../common/acp/a
 import { AcpAgentFormError, buildAcpAgentProfile } from './acpAgentSettings.ts';
 import {
     showConfirmModal,
+    escapeModalText,
     MODAL_CSS,
     MODAL_ANIM_DURATION_OUT,
     detectDarkMode,
@@ -2651,7 +2652,7 @@ class SettingPanel extends HTMLElement {
                 </div>
                 <div class="sp-toggle-row">
                     <div class="sp-toggle-info">
-                        <div class="sp-toggle-label">${this._t('renderer.settings.logRawLlmRequest')}</div>
+                        <div class="sp-toggle-label">${this._t('config.debug.field.log_raw_llm_request')}</div>
                     </div>
                     <label class="sp-toggle-switch">
                         <input type="checkbox" ${debugLogRawLlm ? 'checked' : ''} id="log-raw-llm-toggle-hidden">
@@ -2948,7 +2949,43 @@ class SettingPanel extends HTMLElement {
         };
 
         bindDebugBoolean('#debug-log-toggle-hidden', 'debug_log');
-        bindDebugBoolean('#log-raw-llm-toggle-hidden', 'log_raw_llm_request');
+        this.querySelector('#log-raw-llm-toggle-hidden')?.addEventListener('change', async (e) => {
+            const toggle = e.currentTarget;
+            if (toggle.disabled) {
+                toggle.checked = !!this.currentData.debug?.log_raw_llm_request;
+                return;
+            }
+            const enabled = toggle.checked;
+            if (enabled && !this.currentData.debug?.log_raw_llm_request) {
+                // 确认前保持配置和开关关闭，其他自动保存也不会提前开启日志。
+                toggle.checked = false;
+                toggle.disabled = true;
+                let confirmed;
+                try {
+                    confirmed = await showConfirmModal({
+                        variant: 'warn',
+                        title: this._t('config.debug.raw_llm.confirm.title'),
+                        message: escapeModalText(this._t('config.debug.raw_llm.confirm.message')),
+                        confirmText: this._t('config.debug.raw_llm.confirm.enable'),
+                        cancelText: this._t('common.cancel'),
+                        mountTarget: this
+                    });
+                } finally {
+                    toggle.disabled = false;
+                }
+                if (
+                    !confirmed ||
+                    !this.currentData.debug?.developer_mode ||
+                    this.querySelector('#log-raw-llm-toggle-hidden') !== toggle
+                ) {
+                    return;
+                }
+            }
+            if (!this.currentData.debug) this.currentData.debug = {};
+            this.currentData.debug.log_raw_llm_request = enabled;
+            toggle.checked = enabled;
+            this.saveImmediately();
+        });
 
         const bindExperimentalToggle = (selector, key, applicationKey = null) => {
             this.querySelector(selector)?.addEventListener('change', async (e) => {

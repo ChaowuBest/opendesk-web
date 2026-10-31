@@ -19,6 +19,8 @@ export interface ModelNetworkConfig {
     base_url: string;
     no_proxy?: boolean;
     no_ssl?: boolean;
+    /** embedding 响应包含大量向量，不纳入原始 LLM 响应日志。 */
+    model_type?: 'chat' | 'embedding';
 }
 
 type ModelFetchInput = string | URL | Request;
@@ -95,7 +97,7 @@ export async function fetchModelUrl(
     return TelemetryOperationRegistry.aroundOperation(operation, async () => {
         logger.info(`[LLM Request] ${method} ${url}`);
 
-        const logRaw = isLogRawLlmRequestEnabled();
+        const logRaw = isLogRawLlmRequestEnabled() && model.model_type !== 'embedding';
 
         const response = await getPlatform().fetch(url, requestInit, {
             forceEnvironmentProxy: true,

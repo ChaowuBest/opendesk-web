@@ -343,7 +343,10 @@ const ExperimentalFeaturesSchema = z
 const DebugModeSchema = z.object({
     developer_mode: z.boolean().default(false).describe('是否启用开发与调试'),
     experimental_features: ExperimentalFeaturesSchema.optional(),
-    log_raw_llm_request: z.boolean().default(false).describe('将原始LLM响应计入日志'),
+    log_raw_llm_request: z
+        .boolean()
+        .default(false)
+        .describe('仅当前运行记录原始模型响应（排除 embedding），重启后关闭'),
     debug_log: z.boolean().default(false).describe('是否开启调试日志（logger.debug 级别写入日志文件）')
 });
 
@@ -818,7 +821,7 @@ export class Setting {
      * 「配置已落盘、界面却还在用旧值」。写盘失败时抛错，内存配置保持旧值。
      */
     updateAndSave(mutator: (draft: SettingData) => void): void {
-        // 副本按「即将写入磁盘的 JSON 形状」克隆：提交后的内存配置与磁盘内容完全一致
+        // 按 JSON 形状克隆；save 会排除仅当前运行有效的原始响应日志开关。
         const draft = JSON.parse(JSON.stringify(this.data)) as SettingData;
         mutator(draft);
         // 落盘前按 schema 校验一次（结果丢弃）：磁盘上的 setting.json 必须能被下次启动解析，
@@ -949,6 +952,8 @@ export class Setting {
             return null;
         }
 
+        // 该开关是进程级调试状态：历史配置即使曾被写入，也不能在重启后重新启用。
+        setting.data.debug.log_raw_llm_request = false;
         // 规范化默认模型引用（清除已不存在的模型别名），与遗留字段迁移合并成一次落盘
         const normalizedDefaultModels = setting.normalizeDefaultModelReferences(setting.data);
         if (normalizedDefaultModels || migratedLegacyTuiOutputDisplay) {
@@ -968,11 +973,19 @@ export class Setting {
         const settingDirectory = getOpendeskDirectory();
         const settingFile = path.join(settingDirectory, 'setting.json');
         const temporaryFile = `${settingFile}.${process.pid}.${Date.now()}.tmp`;
+        // 原始 LLM 响应日志只在当前进程有效，磁盘中始终保留关闭状态。
+        const persistedData: SettingData = {
+            ...data,
+            debug: {
+                ...data.debug,
+                log_raw_llm_request: false
+            }
+        };
         // setting.json 含模型 API Key：替换时沿用原文件权限；首次创建也固定为 0600，
         // 不依赖 umask，避免含密钥的配置被创建成 0644
         const targetMode = readExistingFileMode(settingFile) ?? SETTING_FILE_MODE;
         try {
-            fs.writeFileSync(temporaryFile, JSON.stringify(data, null, 4), {
+            fs.writeFileSync(temporaryFile, JSON.stringify(persistedData, null, 4), {
                 encoding: 'utf8',
                 flush: true,
                 mode: targetMode
