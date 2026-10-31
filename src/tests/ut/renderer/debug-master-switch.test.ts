@@ -1,4 +1,4 @@
-import { afterEach, beforeAll, expect, test } from '@jest/globals';
+import { afterEach, beforeAll, expect, jest, test } from '@jest/globals';
 import { parseHTML } from 'linkedom';
 import { Setting, isDebugLogEnabled, isLogRawLlmRequestEnabled } from '../../../main/utils/setting.js';
 import { isAccountFeatureEnabled } from '../../../renderer/utils/account-feature-visibility.js';
@@ -85,4 +85,68 @@ test('turning off development and debugging disables its previously enabled chil
     expect(childToggles).toHaveLength(6);
     expect(childToggles.every((input) => !input.checked)).toBe(true);
     expect(Setting.getInstance().getData().debug).toEqual({ ...saved.debug, developer_mode: true });
+});
+
+test('raw response logging shows its session notice only after a successful save', async () => {
+    const panel = document.createElement('setting-panel') as any;
+    panel.currentData = Setting.getSettingSchema().parse({ locale: 'en-US', debug: { developer_mode: true } });
+    panel._t = (key: string) => key;
+    panel.innerHTML = panel.renderDebugModeSection();
+    let finishSave!: (value: unknown) => void;
+    window.settingAPI = {
+        saveSettingObjectDetailed: jest.fn(
+            () =>
+                new Promise((resolve) => {
+                    finishSave = resolve;
+                })
+        )
+    } as any;
+    const notify = jest.fn(async () => undefined);
+    window.notificationAPI = { sendNotification: notify } as any;
+    panel._bindDebugModeEvents();
+
+    const toggle = panel.querySelector('#log-raw-llm-toggle-hidden') as HTMLInputElement;
+    toggle.checked = true;
+    toggle.dispatchEvent(new Event('change'));
+    expect(notify).not.toHaveBeenCalled();
+
+    finishSave({ data: structuredClone(panel.currentData), sideEffectFailures: [] });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(notify).toHaveBeenCalledWith(
+        'info',
+        'renderer.settings.notificationTitle',
+        'config.debug.raw_llm.enabled.title',
+        'config.debug.raw_llm.enabled.message'
+    );
+
+    window.settingAPI.saveSettingObjectDetailed = jest.fn(async (data) => ({ data, sideEffectFailures: [] })) as any;
+    await panel.saveImmediately();
+    expect(notify).toHaveBeenCalledTimes(1);
+    toggle.checked = false;
+    toggle.dispatchEvent(new Event('change'));
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(notify).toHaveBeenCalledTimes(1);
+});
+
+test('a failed settings save does not announce that raw response logging is enabled', async () => {
+    const panel = document.createElement('setting-panel') as any;
+    panel.currentData = Setting.getSettingSchema().parse({ debug: { developer_mode: true } });
+    panel._t = (key: string) => key;
+    panel.innerHTML = panel.renderDebugModeSection();
+    window.settingAPI = {
+        saveSettingObjectDetailed: jest.fn(async () => {
+            throw new Error('write failed');
+        })
+    } as any;
+    const notify = jest.fn(async () => undefined);
+    window.notificationAPI = { sendNotification: notify } as any;
+    panel._bindDebugModeEvents();
+
+    const toggle = panel.querySelector('#log-raw-llm-toggle-hidden') as HTMLInputElement;
+    toggle.checked = true;
+    toggle.dispatchEvent(new Event('change'));
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(notify).toHaveBeenCalledTimes(1);
+    expect(notify.mock.calls[0][0]).toBe('error');
 });

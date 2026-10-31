@@ -1064,7 +1064,9 @@ export const zhCn: Record<string, string> = {
     'config.debug.title': '调试模式',
     'config.debug.title.hint': '配置开发者可见性',
     'config.debug.field.developer_mode': '开发者模式',
-    'config.debug.field.log_raw_llm_request': '将原始LLM请求与响应计入日志',
+    'config.debug.field.log_raw_llm_request': '将原始 LLM 响应计入日志（重启后关闭）',
+    'config.debug.raw_llm.enabled.title': '已开启原始响应日志',
+    'config.debug.raw_llm.enabled.message': '仅本次运行有效，重启 OpenDesk 后自动关闭；嵌入模型响应不会记录。',
 
     // Config - Telemetry
     'config.telemetry.title': '遥测设置',
@@ -1419,7 +1421,7 @@ export const zhCn: Record<string, string> = {
     'renderer.settings.experimentalApplicationAppMgr': '应用工坊',
     'renderer.settings.experimentalApplicationAgentOffice': '办公室',
     'renderer.settings.experimentalAccount': '账号功能',
-    'renderer.settings.logRawLlmRequest': '将原始LLM响应计入日志',
+    'renderer.settings.logRawLlmRequest': '将原始 LLM 响应计入日志（重启后关闭）',
     'renderer.settings.debugMode': '开发与调试',
     'renderer.settings.telemetry': '遥测设置',
     'renderer.settings.telemetryEndpoints': '遥测端点',

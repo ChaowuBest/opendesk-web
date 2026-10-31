@@ -682,6 +682,17 @@ describe('fetchModelUrl raw LLM logging', () => {
         expect(loggedText).toContain('"choices"');
     });
 
+    test('does not log embedding response bodies when raw logging is enabled', async () => {
+        configureSettings(false, false);
+        enableRawLlmLogging();
+
+        expect(await LLM.embed('hello')).toEqual([0.1, 0.2, 0.3]);
+        expect(await LLM.batchEmbed(['hello', 'world'], 1)).toHaveLength(2);
+        await LLM.verifyEmbeddingModel(Setting.getInstance().getModelInstance('embedding', 'embedding')!);
+
+        expect(getRawLlmLogs().filter((msg) => msg.includes('[LLM Raw Response]'))).toHaveLength(0);
+    });
+
     test('logs streaming response chunks when log_raw_llm_request is true', async () => {
         enableRawLlmLogging();
 

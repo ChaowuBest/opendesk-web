@@ -150,6 +150,7 @@ class SettingPanel extends HTMLElement {
         this.supportedShells = [];
         this.visionSupportMap = {};
         this._hasRendered = false;
+        this._rawLlmLoggingEnabled = false;
         this._t = createRendererTranslator();
     }
 
@@ -186,6 +187,7 @@ class SettingPanel extends HTMLElement {
 
     async loadData() {
         this.currentData = await window.settingAPI.loadSettingObject();
+        this._rawLlmLoggingEnabled = !!this.currentData.debug?.log_raw_llm_request;
         this._t = createRendererTranslator(this.currentData);
         try {
             this.supportedShells = await window.settingAPI.listShells();
@@ -3945,10 +3947,14 @@ class SettingPanel extends HTMLElement {
         }
         this._saving = true;
         let sideEffectFailures = [];
+        let rawLoggingEnabled = false;
         try {
             const result = await window.settingAPI.saveSettingObjectDetailed(this.currentData);
             const savedData = result.data;
             sideEffectFailures = result.sideEffectFailures;
+            const savedRawLoggingEnabled = !!savedData?.debug?.log_raw_llm_request;
+            rawLoggingEnabled = savedRawLoggingEnabled && !this._rawLlmLoggingEnabled;
+            this._rawLlmLoggingEnabled = savedRawLoggingEnabled;
             if (savedData && typeof savedData === 'object' && typeof savedData.resolved_locale === 'string') {
                 this.currentData.resolved_locale = savedData.resolved_locale;
             }
@@ -3971,6 +3977,18 @@ class SettingPanel extends HTMLElement {
         // 提示放在 catch 之外，避免提示自身出错被误报成保存失败。
         if (sideEffectFailures.length > 0) {
             notifySettingSideEffectFailures(sideEffectFailures, this._t);
+        }
+        if (rawLoggingEnabled && this.currentData.debug?.log_raw_llm_request) {
+            try {
+                await window.notificationAPI?.sendNotification?.(
+                    'info',
+                    this._t('renderer.settings.notificationTitle'),
+                    this._t('config.debug.raw_llm.enabled.title'),
+                    this._t('config.debug.raw_llm.enabled.message')
+                );
+            } catch (error) {
+                console.warn('Failed to show raw response logging notice:', error);
+            }
         }
     }
 

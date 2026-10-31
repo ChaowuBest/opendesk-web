@@ -104,6 +104,42 @@ describe('Setting.setData 持久化事务', () => {
         expect(observed).toEqual([{ previous: false, next: true }]);
     });
 
+    test('原始 LLM 响应日志开关只保留在内存，不会写入磁盘或在加载后恢复', () => {
+        const setting = new Setting();
+        setting.save();
+
+        setting.setData({ ...setting.getData(), debug: { ...setting.getData().debug, log_raw_llm_request: true } });
+
+        expect(setting.getData().debug.log_raw_llm_request).toBe(true);
+        expect(readDiskSetting().debug.log_raw_llm_request).toBe(false);
+
+        setting.updateAndSave((draft) => {
+            draft.debug.debug_log = true;
+        });
+        expect(setting.getData().debug.log_raw_llm_request).toBe(true);
+        expect(readDiskSetting().debug.log_raw_llm_request).toBe(false);
+
+        // Worker 的设置同步继续接收当前运行状态；只有从磁盘重启才恢复关闭。
+        Setting.updateInstanceData(setting.getData());
+        expect(Setting.getInstance().getData().debug.log_raw_llm_request).toBe(true);
+        const loaded = Setting.load();
+        expect(loaded?.getData().debug.log_raw_llm_request).toBe(false);
+    });
+
+    test('旧配置中遗留的 raw logging=true 在加载时被忽略且不要求重写文件', () => {
+        const legacy = new Setting().getData();
+        legacy.debug.log_raw_llm_request = true;
+        legacy.debug.developer_mode = true;
+        fs.writeFileSync(settingFilePath(), JSON.stringify(legacy));
+        const writeSpy = jest.spyOn(fs, 'writeFileSync');
+
+        const loaded = Setting.load();
+
+        expect(loaded?.getData().debug.log_raw_llm_request).toBe(false);
+        expect(loaded?.getData().debug.developer_mode).toBe(true);
+        expect(writeSpy).not.toHaveBeenCalled();
+    });
+
     test('默认模型失效引用的清理结果仍然会落盘', () => {
         const setting = new Setting();
         setting.save();

@@ -1090,7 +1090,10 @@ export const enUs: Record<string, string> = {
     'config.debug.title': 'Debug Mode',
     'config.debug.title.hint': 'Configure developer visibility',
     'config.debug.field.developer_mode': 'Developer Mode',
-    'config.debug.field.log_raw_llm_request': 'Log Raw LLM Response',
+    'config.debug.field.log_raw_llm_request': 'Log Raw LLM Responses (Turns Off After Restart)',
+    'config.debug.raw_llm.enabled.title': 'Raw response logging enabled',
+    'config.debug.raw_llm.enabled.message':
+        'This applies only to the current run and turns off after OpenDesk restarts. Embedding responses are excluded.',
 
     // Config - Telemetry
     'config.telemetry.title': 'Telemetry',
@@ -1453,7 +1456,7 @@ export const enUs: Record<string, string> = {
     'renderer.settings.experimentalApplicationAppMgr': 'App Studio',
     'renderer.settings.experimentalApplicationAgentOffice': 'Agent Office',
     'renderer.settings.experimentalAccount': 'Account Features',
-    'renderer.settings.logRawLlmRequest': 'Log Raw LLM Response',
+    'renderer.settings.logRawLlmRequest': 'Log Raw LLM Responses (Turns Off After Restart)',
     'renderer.settings.debugMode': 'Development & Debugging',
     'renderer.settings.telemetry': 'Telemetry',
     'renderer.settings.telemetryEndpoints': 'Telemetry Endpoints',

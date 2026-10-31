@@ -18,6 +18,7 @@ import {
 } from '../../../utils/setting.js';
 import { ConfigForm, type ActionDef, type FieldDef } from './form.js';
 import { t } from '../../../../locale/index.js';
+import { NotificationStore } from '../notification.js';
 
 export class DebugConfigPage implements Component {
     private tui: TUI;
@@ -69,6 +70,8 @@ export class DebugConfigPage implements Component {
     }
 
     private save(values: Record<string, any>) {
+        const wasRawLoggingEnabled = isLogRawLlmRequestEnabled();
+        const rawLoggingEnabled = values.log_raw_llm_request === true;
         setDeveloperModeEnabled(values.developer_mode === true);
         const setting = Setting.getInstance();
         const data = setting.getData();
@@ -76,9 +79,17 @@ export class DebugConfigPage implements Component {
             ...data,
             debug: {
                 ...data.debug,
-                log_raw_llm_request: values.log_raw_llm_request === true
+                log_raw_llm_request: rawLoggingEnabled
             }
         });
+        if (rawLoggingEnabled && !wasRawLoggingEnabled) {
+            NotificationStore.getInstance().push(
+                'info',
+                t('config.debug.title'),
+                t('config.debug.raw_llm.enabled.title'),
+                t('config.debug.raw_llm.enabled.message')
+            );
+        }
         this.onConfigChange?.();
         this.close();
     }
