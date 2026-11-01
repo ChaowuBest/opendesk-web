@@ -9,6 +9,8 @@
  * See the Mulan PSL v2 for more details.
  */
 
+import { escapeHtml } from '../../common/utils/escape.js';
+
 class LoadingView extends HTMLElement {
     constructor() {
         super();
@@ -59,22 +61,34 @@ class LoadingView extends HTMLElement {
 }
 
 class ContentLoadingView extends HTMLElement {
-    constructor() {
-        super();
-        this.type = this.dataset.type || 'tb';
+    // 宿主可能在元素插入之后才补上（或切换）本地化文案与布局，属性变化时重绘
+    static get observedAttributes() {
+        return ['data-type', 'data-message'];
     }
 
     connectedCallback() {
+        this._connected = true;
         this.render();
+    }
+
+    disconnectedCallback() {
+        this._connected = false;
+    }
+
+    attributeChangedCallback() {
+        if (this._connected) this.render();
     }
 
     render() {
         const delays = [0, 0.1, 0.2, 0.3, 0.4, 0.5, 0.4, 0.3, 0.2, 0.1];
         const bars = delays.map((d) => `<div class="od-clv-bar" style="animation-delay:${d}s"></div>`).join('');
 
-        const msg = this.dataset.message ? `<div class="od-clv-msg">${this.dataset.message}</div>` : '';
+        // 用 getAttribute 而不是 dataset：宿主可能在任何时刻设置属性，attributeChangedCallback
+        // 重绘时要读到最新值，直接读属性最稳（不依赖 dataset 的反射同步）
+        const message = this.getAttribute('data-message');
+        const msg = message ? `<div class="od-clv-msg">${escapeHtml(message)}</div>` : '';
 
-        const layout = this.type === 'lr' ? 'od-clv-lr' : 'od-clv-tb';
+        const layout = (this.getAttribute('data-type') || 'tb') === 'lr' ? 'od-clv-lr' : 'od-clv-tb';
 
         this.innerHTML = `<style>${ContentLoadingView.STYLES}</style>
             <div class="od-clv-wrap ${layout}">

@@ -23,11 +23,35 @@ describe('renderer fully-loaded guards', () => {
         expect(rendererHtml).not.toContain('bootstrap.ts');
         expect(registryElectronSource).toContain("ipcMain.handle('applicationRegistry:ensureFullyLoaded'");
         expect(preloadSource).toContain('ensureFullyLoaded: async () =>');
+        expect(registryElectronSource).toContain("ipcMain.handle('applicationRegistry:ensureApplicationLoaded'");
+        expect(preloadSource).toContain('ensureApplicationLoaded: async (bundleName) =>');
 
         const startupSource = mainSource.slice(mainSource.indexOf('async function startApplication'));
         expect(
-            startupSource.indexOf('registerApplicationRegistryHandlers(ipcMain, ensureElectronFullyLoaded)')
+            startupSource.indexOf(
+                'registerApplicationRegistryHandlers(ipcMain, ensureElectronFullyLoaded, ensureElectronApplicationLoaded)'
+            )
         ).toBeLessThan(startupSource.indexOf('createWindow();'));
+    });
+
+    test('opening one application only waits for that application', () => {
+        const startupSource = mainSource.slice(mainSource.indexOf('async function startApplication'));
+        const narrowBarrier = sourceBetween(
+            startupSource,
+            'const ensureElectronApplicationLoaded',
+            '// 先注册 renderer 首屏会调用的无状态 IPC'
+        );
+        expect(narrowBarrier).toContain('ApplicationRegistry.ensureApplicationLoaded(bundleName)');
+        // 打开单个应用不该被遥测 / 其它应用的延迟加载拖住
+        expect(narrowBarrier).not.toContain('ensureTelemetryReady()');
+        expect(narrowBarrier).not.toContain('ApplicationRegistry.ensureFullyLoaded()');
+        // 插件宿主必须先于应用加载落地：应用的延迟加载会消费插件 hook（如技能列表）
+        expect(narrowBarrier.indexOf('await initializePluginHost()')).toBeLessThan(
+            narrowBarrier.indexOf('ApplicationRegistry.ensureApplicationLoaded(bundleName)')
+        );
+        // 浏览器应用是唯一依赖 browser session 的应用，其余应用不等它
+        expect(narrowBarrier).toContain("if (bundleName === 'browser') tasks.push(ensureBrowserReady())");
+        expect(narrowBarrier).toContain('registryWorkerReady');
     });
 
     test('registers renderer startup IPC before loading the main window', () => {
@@ -117,8 +141,16 @@ describe('renderer fully-loaded guards', () => {
             'openApplication: async function (bundleName, options)',
             '// 监听应用列表变更'
         );
-        expect(openApplicationSource.indexOf('await window.applicationRegistryAPI.ensureFullyLoaded()')).toBeLessThan(
+        expect(openApplicationSource.indexOf('await ensureApplicationReady(bundleName)')).toBeLessThan(
             openApplicationSource.indexOf('getApplicationGUIConfig(bundleName)')
         );
+        // 打开单个应用走窄屏障：全局屏障只留给建任务等确需全量资源的路径
+        expect(openApplicationSource).not.toContain('ensureFullyLoaded()');
+        const readyHelperSource = sourceBetween(
+            rendererHtml,
+            'async function ensureApplicationReady(bundleName)',
+            '/** 只广播前台视图'
+        );
+        expect(readyHelperSource).toContain('window.applicationRegistryAPI.ensureApplicationLoaded(bundleName)');
     });
 });

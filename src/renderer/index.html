@@ -608,6 +608,8 @@
 
             function showNonApp() {
                 ensureSlots();
+                // 切到任务/主页/设置等非应用视图后，应用启动占位不再有意义，别让它盖住新视图
+                finishAppLaunchLoading();
                 currentOpenAppBundleName = null;
                 if (nonAppSlot) nonAppSlot.style.display = '';
                 if (appFramesContainer) appFramesContainer.style.display = 'none';
@@ -621,6 +623,19 @@
                 notifyViewChanged('application', currentOpenAppBundleName);
             }
 
+            /**
+             * 等待指定应用自身就绪（不再等全局屏障：遥测、其它应用的延迟加载都在后台跑）。
+             * 失败时撤掉启动占位并把错误抛给调用方。
+             */
+            async function ensureApplicationReady(bundleName) {
+                try {
+                    await window.applicationRegistryAPI.ensureApplicationLoaded(bundleName);
+                } catch (err) {
+                    finishAppLaunchLoading(bundleName);
+                    throw err;
+                }
+            }
+
             /** 只广播前台视图，避免隐藏容器保留的页面状态影响导航激活态。 */
             function notifyViewChanged(view, appBundle = null) {
                 window.dispatchEvent(
@@ -631,6 +646,85 @@
                         }
                     })
                 );
+            }
+
+            /** 外部（用户安装）应用：自己提供 entryUrl，且不会回传就绪信号。 */
+            function isExternalApplication(appGuiConfig) {
+                return !!(appGuiConfig && appGuiConfig.source === 'user' && appGuiConfig.entryUrl);
+            }
+
+            /**
+             * 应用 iframe 的地址：外部应用直接指向自己的 entryUrl，内置应用统一走
+             * application.html 壳页面。打开应用与版本更新重载共用同一份判定。
+             */
+            function resolveAppFrameSrc(bundleName, appGuiConfig) {
+                return isExternalApplication(appGuiConfig)
+                    ? appGuiConfig.entryUrl
+                    : './application.html?applicationBundleName=' + encodeURIComponent(bundleName);
+            }
+
+            // ── 应用启动占位 ───────────────────────────────────────────────────
+            // 首次打开应用要先等主进程加载该应用的延迟资源，再等 iframe 冷启动（模块图解析），
+            // 这段时间界面看起来毫无反应。打开前先挂占位，应用首屏挂载后再撤掉。
+            var appLaunchLoadingTimeoutMs = 15000;
+            var appLaunchLoadingEl = null;
+            var appLaunchLoadingBundle = null;
+            var appLaunchLoadingTimer = null;
+
+            /** iframe 首屏是否已落地（内置应用收到 APPLICATION_READY，外部应用 load 完成）。 */
+            function markAppFrameReady(frame) {
+                if (frame) frame.setAttribute('data-app-ready', '1');
+            }
+
+            function isAppFrameReady(frame) {
+                return !!frame && frame.getAttribute('data-app-ready') === '1';
+            }
+
+            function startAppLaunchLoading(bundleName) {
+                ensureSlots();
+                finishAppLaunchLoading();
+                var parent = nonAppSlot ? nonAppSlot.parentElement : null;
+                if (!parent) return;
+                var el = document.createElement('content-loading-view');
+                el.setAttribute('data-type', 'tb');
+                if (window.__odT) {
+                    el.setAttribute('data-message', window.__odT('renderer.application.loading'));
+                }
+                el.style.cssText =
+                    'position:absolute;inset:0;z-index:50;width:100%;height:100%;background:var(--od-bg,#f5f5f5);';
+                parent.appendChild(el);
+                appLaunchLoadingEl = el;
+                appLaunchLoadingBundle = bundleName;
+                // 兜底：外部应用或异常路径拿不到就绪信号，超时也必须撤掉占位
+                appLaunchLoadingTimer = setTimeout(function () {
+                    finishAppLaunchLoading(bundleName);
+                }, appLaunchLoadingTimeoutMs);
+            }
+
+            /** 撤掉启动占位；传 bundleName 时只撤该应用的占位，避免误伤后打开的应用。 */
+            function finishAppLaunchLoading(bundleName) {
+                var el = appLaunchLoadingEl;
+                if (!el) return;
+                if (bundleName && appLaunchLoadingBundle && appLaunchLoadingBundle !== bundleName) return;
+                // 定时器必须随占位一起撤销：否则它会在同一应用下次打开时提前撤掉新占位
+                if (appLaunchLoadingTimer !== null) {
+                    clearTimeout(appLaunchLoadingTimer);
+                    appLaunchLoadingTimer = null;
+                }
+                appLaunchLoadingEl = null;
+                appLaunchLoadingBundle = null;
+                // 淡出期间不再拦截点击，避免应用刚出来时第一次点击被占位吞掉
+                el.style.pointerEvents = 'none';
+                el.style.transition = 'opacity 0.2s ease-out';
+                el.style.opacity = '0';
+                var removed = false;
+                var remove = function () {
+                    if (removed) return;
+                    removed = true;
+                    el.remove();
+                };
+                el.addEventListener('transitionend', remove, { once: true });
+                setTimeout(remove, 300);
             }
 
             /**
@@ -1224,9 +1318,13 @@
                 removeTaskViewCache: removeTaskViewCache,
                 clearAllTaskViewCache: clearAllTaskViewCache,
                 openApplication: async function (bundleName, options) {
-                    await window.applicationRegistryAPI.ensureFullyLoaded();
                     ensureSlots();
                     closeAllEditorOverlays();
+                    // 首屏已就绪的驻留 iframe 切回来是瞬时的；浏览器应用是内联挂载；两者都不需要占位
+                    if (bundleName !== 'browser' && !isAppFrameReady(appFrameCache[bundleName])) {
+                        startAppLaunchLoading(bundleName);
+                    }
+                    await ensureApplicationReady(bundleName);
                     var appGuiConfig = null;
                     try {
                         appGuiConfig = await window.applicationRegistryAPI.getApplicationGUIConfig(bundleName);
@@ -1242,10 +1340,12 @@
                                     setting && setting.debug && setting.debug.experimental_features
                                 )
                             ) {
+                                finishAppLaunchLoading(bundleName);
                                 return;
                             }
                         } catch (err) {
                             console.warn('Failed to check experimental application access', bundleName, err);
+                            finishAppLaunchLoading(bundleName);
                             return;
                         }
                     }
@@ -1277,14 +1377,13 @@
                         }
                         currentNonAppContent = 'browser';
                         currentOpenAppBundleName = 'browser';
+                        // showNonApp 内部会撤掉可能残留的启动占位
                         showNonApp();
                         return;
                     }
 
-                    var frameSrc =
-                        appGuiConfig && appGuiConfig.source === 'user' && appGuiConfig.entryUrl
-                            ? appGuiConfig.entryUrl
-                            : './application.html?applicationBundleName=' + encodeURIComponent(bundleName);
+                    var isExternalApp = isExternalApplication(appGuiConfig);
+                    var frameSrc = resolveAppFrameSrc(bundleName, appGuiConfig);
                     // NOTE: highlightEventId is sent via postMessage (not URL hash) to avoid
                     // iframe rebuild when the ID changes (different frameSrc = cache invalidated)
                     if (
@@ -1296,12 +1395,20 @@
                     }
 
                     if (!appFrameCache[bundleName]) {
+                        // 版本变化导致旧 iframe 被移除时也要重新给出加载反馈
+                        if (!appLaunchLoadingEl) startAppLaunchLoading(bundleName);
                         var iframe = document.createElement('iframe');
                         iframe.className = 'w-full h-full';
                         iframe.style.cssText = 'position:absolute;top:0;left:0;width:100%;height:100%;border:0;';
                         iframe.src = frameSrc;
                         iframe.setAttribute('data-entry-url', frameSrc);
+                        // 外部应用页面不会回传 APPLICATION_READY，按 iframe load 判定就绪
+                        if (isExternalApp) iframe.setAttribute('data-external-app', '1');
                         iframe.onload = function () {
+                            if (iframe.getAttribute('data-external-app') === '1') {
+                                markAppFrameReady(iframe);
+                                finishAppLaunchLoading(bundleName);
+                            }
                             var cw = getAppSubFrameWindow(iframe);
                             var currentPreset = document.documentElement.getAttribute('data-font-preset');
                             if (currentPreset && cw) {
@@ -1355,6 +1462,9 @@
                     });
                     currentOpenAppBundleName = bundleName;
                     showAppFrames();
+                    // 首屏已落地的驻留 iframe 切回来是瞬时的，直接撤占位；
+                    // 首次启动（或仍在冷启动）的 iframe 交给就绪信号 / 超时收尾
+                    if (isAppFrameReady(appFrameCache[bundleName])) finishAppLaunchLoading(bundleName);
                 }
             };
 
@@ -1368,10 +1478,7 @@
                     try {
                         var appGuiConfig = await window.applicationRegistryAPI.getApplicationGUIConfig(bundleName);
                         if (!appGuiConfig) return;
-                        var frameSrc =
-                            appGuiConfig.source === 'user' && appGuiConfig.entryUrl
-                                ? appGuiConfig.entryUrl
-                                : './application.html?applicationBundleName=' + encodeURIComponent(bundleName);
+                        var frameSrc = resolveAppFrameSrc(bundleName, appGuiConfig);
                         var cachedFrame = appFrameCache[bundleName];
                         if (cachedFrame && cachedFrame.getAttribute('data-entry-url') !== frameSrc) {
                             // 版本已更新：移除旧 iframe，下次 openApplication 会重新创建
@@ -1391,6 +1498,21 @@
             window.addEventListener('message', function (event) {
                 if (event.data && event.data.type === 'openTask' && event.data.taskId) {
                     openTask(event.data.taskId);
+                }
+                // 应用首屏已挂载（或加载失败）：标记该 iframe 就绪并撤掉启动加载占位。
+                // bundleName 来自 iframe 消息，只认自有缓存项且来源窗口一致的那一个，
+                // 避免别处（桌面浮窗 / 第三方应用页）的消息误撤占位或命中原型属性
+                if (event.data && event.data.type === 'APPLICATION_READY') {
+                    var readyBundle = event.data.bundleName;
+                    var readyFrame =
+                        typeof readyBundle === 'string' &&
+                        Object.prototype.hasOwnProperty.call(appFrameCache, readyBundle)
+                            ? appFrameCache[readyBundle]
+                            : null;
+                    if (readyFrame && event.source === readyFrame.contentWindow) {
+                        markAppFrameReady(readyFrame);
+                        finishAppLaunchLoading(readyBundle);
+                    }
                 }
                 // 浮窗重置初始位置（来自 agentgate config 页）
                 if (event.data && event.data.type === 'RESET_FLOATING_WINDOW_POSITION') {

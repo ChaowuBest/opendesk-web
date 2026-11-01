@@ -3797,12 +3797,24 @@ async function startApplication(): Promise<void> {
                 ensureBrowserReady()
             ]);
         };
+        // 打开单个应用时的窄屏障：只等目标应用自身的延迟资源 + 插件宿主。遥测、其它应用的
+        // 延迟加载都在后台进行，不再拖住应用首屏；只有浏览器应用要等它自己的 browser session。
+        const ensureElectronApplicationLoaded = async (bundleName: string): Promise<void> => {
+            await registryWorkerReady;
+            // 插件宿主必须先落地：应用 UI 会读插件贡献的外观 / 命令 / 技能 hook，应用的延迟
+            // 加载本身也会消费这些 hook（如 skillmgr 的技能列表），并行会拿到空 hook 且不再重跑
+            await initializePluginHost();
+            const tasks = [ApplicationRegistry.ensureApplicationLoaded(bundleName)];
+            // 浏览器应用直接依赖主进程侧的 browser session（下载、证书校验、preload）
+            if (bundleName === 'browser') tasks.push(ensureBrowserReady());
+            await Promise.all(tasks);
+        };
 
         // 先注册 renderer 首屏会调用的无状态 IPC，再立即启动 renderer 加载。
         // taskManager handler 会在本回调首次让出事件循环前完成注册。
         registerSettingAPIHandlers();
         registerElectronAccountIntegration();
-        registerApplicationRegistryHandlers(ipcMain, ensureElectronFullyLoaded);
+        registerApplicationRegistryHandlers(ipcMain, ensureElectronFullyLoaded, ensureElectronApplicationLoaded);
         registerNotificationAPIHandlers();
         registerRendererLogHandler();
         registerRendererHeartbeatHandler();
@@ -4078,6 +4090,11 @@ async function startApplication(): Promise<void> {
         // 在新窗口中打开应用
         ipcMain.handle('application:openInNewWindow', async (_event, bundleName: string) => {
             try {
+                // 浏览器应用依赖 webview（iframe 内不可用），只能内联挂载在主窗口；
+                // 这里直接拒绝，避免开出一个只会白屏/报错的独立窗口
+                if (bundleName === 'browser') {
+                    return { status: 'error', message: 'browser application does not support separate window' };
+                }
                 const appConfig = ApplicationRegistry.getApplicationGUIConfig(bundleName) as
                     Record<string, unknown> | undefined;
                 const appName = (appConfig?.name as string) || bundleName;
@@ -4111,9 +4128,7 @@ async function startApplication(): Promise<void> {
                     // 应用的延迟加载（如 AgentOffice 自定义 agent 磁盘扫描 + MCP 同步）
                     // 不阻塞窗口显示，窗口展示后在后台补齐 AgentRegistry 注册；
                     // 子应用 UI 依赖的 worker 数据本身不依赖该注册。
-                    ApplicationRegistry.getApplication(bundleName)
-                        ?.ensureLoaded()
-                        .catch((error) => logger.warn(`Background ensureLoaded failed for ${bundleName}: ${error}`));
+                    void ApplicationRegistry.ensureApplicationLoaded(bundleName);
                 });
 
                 // 统一加载壳页面，由壳页面根据 app 类型决定 iframe 内容

@@ -1811,10 +1811,11 @@ class SideBar extends HTMLElement {
         menu.style.minWidth = '180px';
 
         const isUserApp = appSource === 'user';
-        const items = [
-            { id: 'open', icon: 'fa-solid fa-arrow-right', label: '打开' },
-            { id: 'new-window', icon: 'fa-solid fa-external-link-alt', label: '在新窗口中打开' }
-        ];
+        const items = [{ id: 'open', icon: 'fa-solid fa-arrow-right', label: '打开' }];
+        // 浏览器应用依赖 webview（iframe 内不可用），只能内联挂载在主窗口，不提供独立窗口入口
+        if (bundleName !== 'browser') {
+            items.push({ id: 'new-window', icon: 'fa-solid fa-external-link-alt', label: '在新窗口中打开' });
+        }
         if (isUserApp) {
             items.push({ id: 'edit', icon: 'fa-solid fa-pen-to-square', label: '编辑应用' });
         }
@@ -1855,7 +1856,7 @@ class SideBar extends HTMLElement {
             this._dismissAppPopover();
         });
 
-        menu.querySelector('[data-action="new-window"]').addEventListener('click', () => {
+        menu.querySelector('[data-action="new-window"]')?.addEventListener('click', () => {
             this._dismissAppContextMenu();
             this._dismissAppPopover();
             window.applicationRegistryAPI.openInNewWindow(bundleName);

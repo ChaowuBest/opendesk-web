@@ -36,6 +36,20 @@
                 border: 0;
                 background: var(--od-bg, #fff);
             }
+            /* 启动占位：位置/尺寸盒子，动画与文案由 <content-loading-view> 自己渲染
+               （与主窗口打开应用时的占位是同一个组件，观感一致） */
+            #app-window-loading {
+                position: absolute;
+                inset: 0;
+                z-index: 1;
+                display: block;
+                background: var(--od-bg, #fff);
+                transition: opacity 0.2s ease-out;
+            }
+            #app-window-loading.is-hidden {
+                opacity: 0;
+                pointer-events: none;
+            }
         </style>
     </head>
     <body>
@@ -44,21 +58,18 @@
             <div class="absolute top-0 right-0 z-10 flex">
                 <button
                     id="app-minimize-btn"
-                    title="最小化"
                     class="window-control-btn w-10 h-8 text-xs text-gray-500 hover:bg-gray-200 hover:text-gray-700 transition"
                 >
                     <i class="fas fa-minus"></i>
                 </button>
                 <button
                     id="app-maximize-btn"
-                    title="最大化"
                     class="window-control-btn w-10 h-8 text-xs text-gray-500 hover:bg-gray-200 hover:text-gray-700 transition"
                 >
                     <i class="far fa-square" id="app-maximize-icon"></i>
                 </button>
                 <button
                     id="app-close-btn"
-                    title="关闭"
                     class="window-control-btn w-10 h-8 text-xs text-gray-500 hover:bg-red-500 hover:text-white transition"
                 >
                     <i class="fas fa-times"></i>
@@ -69,75 +80,155 @@
         <!-- 应用 iframe -->
         <iframe id="app-iframe"></iframe>
 
-        <script>
-            (function () {
-                // 窗口控制按钮
-                document.getElementById('app-close-btn').addEventListener('click', function () {
-                    window.windowControlAPI.close();
-                });
-                document.getElementById('app-minimize-btn').addEventListener('click', function () {
-                    window.windowControlAPI.minimize();
-                });
-                document.getElementById('app-maximize-btn').addEventListener('click', function () {
-                    window.windowControlAPI.maximize();
-                });
+        <!-- 启动占位：与主窗口同一个组件，应用首屏挂载后由 APPLICATION_READY 撤掉 -->
+        <content-loading-view id="app-window-loading" data-type="tb"></content-loading-view>
 
-                // 最大化/还原图标
-                function updateMaximizeIcon() {
-                    window.windowControlAPI.isMaximized().then(function (maximized) {
-                        var icon = document.getElementById('app-maximize-icon');
-                        if (icon) {
-                            icon.className = maximized ? 'fas fa-window-restore' : 'far fa-square';
-                        }
-                    });
-                }
+        <script type="module">
+            import './components/loading.js';
+            import { createRendererTranslator, resolveRendererLocale } from './locale.ts';
+
+            // 应用首屏就绪的兜底上限（与主窗口 / 桌面浮窗的启动占位一致）
+            var APP_READY_TIMEOUT_MS = 15000;
+
+            var currentTranslator = createRendererTranslator();
+            var iframe = document.getElementById('app-iframe');
+            var loadingEl = document.getElementById('app-window-loading');
+            var readyTimer = null;
+            var isExternalApp = false;
+            // iframe 初始没有 src，浏览器会先给出一张 about:blank 并触发一次 load；
+            // 只有真正指向应用页之后的那次 load 才能当成"外部应用首屏就绪"
+            var frameSrcAssigned = false;
+
+            function labelButton(buttonId, key) {
+                var button = document.getElementById(buttonId);
+                if (!button) return;
+                var text = currentTranslator(key);
+                button.title = text;
+                button.setAttribute('aria-label', text);
+            }
+
+            // 最大化/还原图标与按钮文案
+            function updateMaximizeIcon() {
+                window.windowControlAPI.isMaximized().then(function (maximized) {
+                    var icon = document.getElementById('app-maximize-icon');
+                    if (icon) {
+                        icon.className = maximized ? 'fas fa-window-restore' : 'far fa-square';
+                    }
+                    labelButton('app-maximize-btn', maximized ? 'common.restore' : 'common.maximize');
+                });
+            }
+
+            function applyLocalization(setting) {
+                currentTranslator = createRendererTranslator(setting);
+                document.documentElement.lang = resolveRendererLocale(setting);
+                // 文案变化后组件会自行重绘（见 components/loading.js 的 observedAttributes）
+                if (loadingEl)
+                    loadingEl.setAttribute('data-message', currentTranslator('renderer.application.loading'));
+                labelButton('app-minimize-btn', 'common.minimize');
+                labelButton('app-close-btn', 'common.close');
                 updateMaximizeIcon();
-                window.addEventListener('resize', updateMaximizeIcon);
+            }
 
-                // 加载应用
-                var params = new URLSearchParams(window.location.search);
-                var bundleName = params.get('applicationBundleName');
-                if (!bundleName) return;
+            // 撤掉启动占位：应用首屏已挂载（APPLICATION_READY）或外部应用 iframe 加载完成
+            function finishLoading() {
+                var el = loadingEl;
+                if (!el) return;
+                loadingEl = null;
+                if (readyTimer !== null) {
+                    clearTimeout(readyTimer);
+                    readyTimer = null;
+                }
+                window.removeEventListener('message', onReadyMessage);
+                iframe.removeEventListener('load', onFrameLoad);
+                el.classList.add('is-hidden');
+                setTimeout(function () {
+                    el.remove();
+                }, 300);
+            }
 
-                var iframe = document.getElementById('app-iframe');
+            // 应用壳页面挂载完 entry widget 后会回传 APPLICATION_READY（见 scripts/application-host.ts）
+            function onReadyMessage(event) {
+                if (!event.data || event.data.type !== 'APPLICATION_READY') return;
+                // 只认本窗口 iframe 发来的就绪信号
+                if (event.source !== iframe.contentWindow) return;
+                finishLoading();
+            }
 
+            function onFrameLoad() {
+                // 外部应用不会回传就绪信号，按 iframe load 判定首屏
+                if (!frameSrcAssigned || !isExternalApp) return;
+                finishLoading();
+            }
+
+            // 占位兜底先注册：后续步骤（本地化、应用页加载）出问题时占位也不会永不消失
+            window.addEventListener('message', onReadyMessage);
+            iframe.addEventListener('load', onFrameLoad);
+            readyTimer = setTimeout(finishLoading, APP_READY_TIMEOUT_MS);
+
+            // 窗口控制按钮
+            document.getElementById('app-close-btn').addEventListener('click', function () {
+                window.windowControlAPI.close();
+            });
+            document.getElementById('app-minimize-btn').addEventListener('click', function () {
+                window.windowControlAPI.minimize();
+            });
+            document.getElementById('app-maximize-btn').addEventListener('click', function () {
+                window.windowControlAPI.maximize();
+            });
+            window.addEventListener('resize', updateMaximizeIcon);
+
+            applyLocalization();
+            window.settingAPI
+                .loadSettingObject()
+                .then(applyLocalization)
+                .catch(function () {});
+            window.settingAPI.onSettingChanged?.(applyLocalization);
+
+            // 加载应用
+            var params = new URLSearchParams(window.location.search);
+            var bundleName = params.get('applicationBundleName');
+            if (bundleName) {
+                // 与主窗口 / 桌面浮窗的打开流程一致：先等该应用自身的延迟资源就绪再挂 iframe
                 window.applicationRegistryAPI
-                    .getApplicationGUIConfig(bundleName)
+                    .ensureApplicationLoaded(bundleName)
+                    .catch(function () {})
+                    .then(function () {
+                        return window.applicationRegistryAPI.getApplicationGUIConfig(bundleName);
+                    })
                     .then(function (config) {
-                        var src;
-                        if (config && config.source === 'user' && config.entryUrl) {
-                            // 用户安装的应用：直接加载其 entryUrl
-                            src = config.entryUrl;
-                        } else {
-                            // 内置应用：加载 application.html
-                            src = './application.html?applicationBundleName=' + encodeURIComponent(bundleName);
-                        }
-                        iframe.src = src;
-
+                        isExternalApp = !!(config && config.source === 'user' && config.entryUrl);
+                        iframe.src = isExternalApp
+                            ? config.entryUrl
+                            : './application.html?applicationBundleName=' + encodeURIComponent(bundleName);
+                        frameSrcAssigned = true;
                         // 设置窗口标题
                         document.title = (config && config.name) || bundleName;
                     })
                     .catch(function () {
                         // 降级：尝试作为内置应用加载
                         iframe.src = './application.html?applicationBundleName=' + encodeURIComponent(bundleName);
+                        frameSrcAssigned = true;
                     });
+            } else {
+                // 没有 bundleName 就不会加载应用页，占位没有意义
+                finishLoading();
+            }
 
-                // 监听 iframe 内的主题变化并同步
-                var observer = new MutationObserver(function () {
-                    var theme = document.documentElement.getAttribute('data-theme');
-                    if (theme) {
-                        iframe.contentWindow &&
-                            iframe.contentWindow.postMessage(
-                                {
-                                    type: 'THEME',
-                                    theme: theme
-                                },
-                                '*'
-                            );
-                    }
-                });
-                observer.observe(document.documentElement, { attributes: true, attributeFilter: ['data-theme'] });
-            })();
+            // 监听 iframe 内的主题变化并同步
+            var observer = new MutationObserver(function () {
+                var theme = document.documentElement.getAttribute('data-theme');
+                if (theme) {
+                    iframe.contentWindow &&
+                        iframe.contentWindow.postMessage(
+                            {
+                                type: 'THEME',
+                                theme: theme
+                            },
+                            '*'
+                        );
+                }
+            });
+            observer.observe(document.documentElement, { attributes: true, attributeFilter: ['data-theme'] });
         </script>
     </body>
 </html>
