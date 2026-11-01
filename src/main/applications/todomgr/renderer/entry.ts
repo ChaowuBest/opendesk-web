@@ -16,6 +16,25 @@ import { showConfirmModal } from '../../../../renderer/components/confirmModal.j
 import { createRendererTranslator, resolveRendererLocale } from '../../../../renderer/locale.js';
 import { createTranslatorForTodoMgr } from '../locale/renderer.js';
 import type { TodoTemplate } from '../templates.js';
+import {
+    REASONING_EFFORT_LABEL_KEYS,
+    REASONING_EFFORT_UI_OPTIONS,
+    type ReasoningEffort
+} from '../../../../common/reasoning-effort.js';
+import { getEffortIconSVG, getModelIconTile } from '../../../../renderer/utils/model-picker-icons.js';
+import { fixedLayerOrigin, visibleViewportRect } from '../../../../renderer/utils/window-frame.js';
+import { Cron } from 'croner';
+import { datetimeLocalToISOString, formatDatetimeLocal, getSystemTimezone, isValidTimezone } from '../timezone.js';
+import { getNextTodoRecurrenceRuns, getTodoRecurrenceError, type TodoRecurrence } from '../todo-recurrence.js';
+import {
+    describeLegacyRecurrence,
+    describeTodoRecurrence,
+    getAdvancedCronExpression
+} from '../recurrence-description.js';
+import { TimeSchedulePicker, TIME_SCHEDULE_CSS } from './time-schedule-picker.js';
+import { describeLegacyCronInTimezone, getLegacyRecurrenceInTimezone } from './legacy-timezone.js';
+import { parseLegacyCronRecurrence } from '../legacy-cron.js';
+import type { TodoChatModelCatalog, TodoChatModelSummary } from '../common.js';
 
 type Translator = ReturnType<typeof createTranslatorForTodoMgr>;
 
@@ -29,9 +48,19 @@ interface GlobalTodo {
     content: string;
     priority: string;
     category?: string;
-    trigger?: { type: string; triggerAt?: string; cronExpression?: string; bundleName?: string; eventName?: string };
+    trigger?: {
+        type: string;
+        triggerAt?: string;
+        cronExpression?: string;
+        recurrence?: TodoRecurrence;
+        timezone?: string;
+        bundleName?: string;
+        eventName?: string;
+    };
     deliver?: { type?: 'channel'; channel: string; accountId: string; recipientId: string };
     workspace?: TodoWorkspaceConfig;
+    model?: string;
+    reasoningEffort?: ReasoningEffort;
     enabled?: boolean;
     last_triggered_at?: string;
     created_at: string;
@@ -55,7 +84,13 @@ type CardExpandedState = TriggerType | null;
  *  CSS
  * ═══════════════════════════════════════════════════ */
 
+// Match the conversation input's minimum, absolute cap and visible-height budget.
+const CONTENT_MIN_HEIGHT = 56;
+const CONTENT_MAX_HEIGHT = 240;
+const CONTENT_HEIGHT_RATIO = 0.5;
+
 const TODOMGR_CSS = `
+${TIME_SCHEDULE_CSS}
 /* ---- Root ---- */
 :root { --fs-2xs: 9px; --fs-xs: 10px; --fs-sm: 11px; --fs-md: 12px; --fs-base: 13px; --fs-lg: 14px; --fs-xl: 16px; --icon-xs: 8px; --icon-sm: 10px; --icon-md: 12px; --icon-lg: 13px; }
 .tm-root {
@@ -531,6 +566,15 @@ html[data-theme='dark'] .tm-root {
     color: #1d1d1f;
     word-break: break-word;
 }
+.tm-legacy-cron {
+    display: block;
+    margin-top: 6px;
+    color: var(--tm-text-secondary);
+    font-family: 'Maple Mono', 'Cascadia Code', 'SF Mono', monospace;
+    font-size: var(--fs-md);
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+}
 
 /* ---- Detail footer ---- */
 .tm-detail-footer {
@@ -575,6 +619,11 @@ html[data-theme='dark'] .tm-root {
 .tm-edit-field {
     margin-bottom: 14px;
 }
+.tm-edit-error {
+    margin-bottom: 14px;
+    color: var(--od-error, #DC2626);
+    font-size: var(--fs-base);
+}
 .tm-edit-label {
     display: block;
     font-size: var(--fs-md);
@@ -604,9 +653,108 @@ html[data-theme='dark'] .tm-root {
     box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.1);
 }
 .tm-edit-textarea {
-    resize: vertical;
-    min-height: 80px;
+    resize: none;
+    min-height: ${CONTENT_MIN_HEIGHT}px;
+    max-height: ${CONTENT_MAX_HEIGHT}px;
+    overflow-y: auto;
     line-height: 1.55;
+}
+.tm-model-picker {
+    position: relative;
+}
+.tm-model-trigger {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    width: 100%;
+    min-height: 38px;
+    padding: 9px 12px;
+    border: 1.5px solid #E5E5EA;
+    border-radius: 10px;
+    color: #1d1d1f;
+    background: #fff;
+    font: inherit;
+    font-size: var(--fs-base);
+    text-align: left;
+    cursor: pointer;
+    transition: border-color 0.15s, box-shadow 0.15s;
+}
+.tm-model-trigger:hover,
+.tm-model-trigger[aria-expanded='true'] {
+    border-color: #3B82F6;
+}
+.tm-model-trigger[aria-expanded='true'] {
+    box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.1);
+}
+.tm-model-trigger-summary {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    min-width: 0;
+}
+.tm-model-trigger-name {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+.tm-model-trigger-summary .agent-effort-icon { display: inline-flex; align-items: center; flex: none; }
+.tm-model-trigger-summary .agent-effort-icon svg { display: block; }
+.tm-model-trigger-chevron {
+    flex-shrink: 0;
+    margin-left: 10px;
+    color: var(--tm-text-muted);
+}
+.tm-model-menu.ctx-menu,
+.tm-model-effort-menu.ctx-menu { box-sizing: border-box; }
+.tm-model-menu.ctx-menu {
+    width: max-content;
+    max-width: min(312px, calc(100vw - 16px));
+}
+.tm-model-menu .tm-model-list { max-height: 260px; }
+.tm-model-menu .ctx-label .ctx-badge { margin-left: 4px; }
+.tm-model-effort-menu.ctx-menu { width: 180px; min-width: 0; }
+.tm-model-effort-menu::before {
+    position: absolute;
+    top: 0;
+    right: 100%;
+    width: 8px;
+    height: 100%;
+    content: '';
+}
+.tm-model-effort-menu.opens-left::before { right: auto; left: 100%; }
+.tm-model-trigger .agent-icon-tile,
+.tm-model-menu .agent-icon-tile {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 22px;
+    height: 22px;
+    border-radius: 6px;
+    color: var(--ctx-ink2, #4a4642);
+    background: var(--ctx-hover, #f0efec);
+    flex: none;
+}
+.tm-model-trigger .model-vision,
+.tm-model-menu .model-vision {
+    color: var(--ctx-blue, #4267b2);
+    background: var(--ctx-blue-soft, #ebf1fb);
+}
+.tm-model-trigger .agent-icon-tile svg,
+.tm-model-menu .agent-icon-tile svg { display: block; }
+.tm-model-menu .ctx-item:focus-visible,
+.tm-model-effort-menu .ctx-item:focus-visible {
+    outline: 2px solid var(--tm-accent);
+    outline-offset: -2px;
+}
+.tm-model-effort-note {
+    margin-top: 5px;
+    color: var(--tm-text-muted);
+    font-size: var(--fs-sm);
+}
+html[data-theme='dark'] .tm-model-trigger {
+    color: var(--tm-text);
+    background: var(--tm-surface);
+    border-color: var(--tm-border-strong);
 }
 
 /* ---- Cron builder ---- */
@@ -616,13 +764,6 @@ html[data-theme='dark'] .tm-root {
     gap: 8px;
     margin-bottom: 8px;
     flex-wrap: wrap;
-}
-.tm-cron-row label {
-    font-size: var(--fs-md);
-    color: #3C3C43;
-    font-weight: 500;
-    white-space: nowrap;
-    min-width: 45px;
 }
 .tm-cron-select {
     padding: 6px 10px;
@@ -645,63 +786,6 @@ html[data-theme='dark'] .tm-root {
     color: #3C3C43;
     font-family: 'Maple Mono', 'Cascadia Code', 'SF Mono', monospace;
 }
-.tm-cron-dow-grid {
-    display: flex;
-    gap: 4px;
-    flex-wrap: wrap;
-}
-.tm-cron-dow-btn {
-    width: 32px;
-    height: 28px;
-    border-radius: 7px;
-    border: 1.5px solid #E5E5EA;
-    background: #fff;
-    color: #3C3C43;
-    font-size: var(--fs-md);
-    font-weight: 500;
-    cursor: pointer;
-    transition: all 0.15s;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-}
-.tm-cron-dow-btn:hover { border-color: #3B82F6; }
-.tm-cron-dow-btn.active {
-    background: #3B82F6;
-    color: #fff;
-    border-color: #3B82F6;
-}
-.tm-cron-custom-area {
-    margin-top: 8px;
-}
-.tm-cron-custom-input {
-    width: 100%;
-    padding: 7px 10px;
-    border: 1.5px solid #E5E5EA;
-    border-radius: 8px;
-    font-size: var(--fs-md);
-    font-family: 'Maple Mono', 'SF Mono', 'Menlo', 'Consolas', monospace;
-    color: #1d1d1f;
-    background: #fff;
-    outline: none;
-    box-sizing: border-box;
-    transition: border-color 0.15s;
-}
-.tm-cron-custom-input:focus { border-color: #3B82F6; }
-.tm-cron-custom-input.tm-input-error { border-color: #FF3B30; }
-.tm-cron-help-link {
-    display: inline-flex;
-    align-items: center;
-    gap: 3px;
-    font-size: var(--fs-sm);
-    color: #8E8E93;
-    margin-top: 6px;
-    text-decoration: none;
-    cursor: pointer;
-    transition: color 0.15s;
-}
-.tm-cron-help-link:hover { color: #3B82F6; }
-
 /* ---- Status indicator ---- */
 .tm-status-dot {
     width: 7px;
@@ -980,211 +1064,35 @@ function parseTodoWorkspaceSelectValue(value: string): TodoWorkspaceConfig | und
     return undefined;
 }
 
-/**
- * 将 UTC cron 表达式转换为本地时间描述。
- * 所有 cron 表达式存储时使用 UTC，此函数负责转成本地时间来展示。
- */
-function describeCronLocal(expr: string, t: Translator): string {
-    const fields = expr.trim().split(/\s+/);
-    if (fields.length !== 5) return expr;
-    const [minute, hour, dom, month, dow] = fields;
-    const parts: string[] = [];
-
-    const offsetMin = -new Date().getTimezoneOffset();
-    const hourIsNum = /^\d+$/.test(hour);
-    const minIsNum = /^\d+$/.test(minute);
-
-    let displayH = hour;
-    let displayM = minute;
-    let dayShift = 0;
-
-    if (hourIsNum && minIsNum) {
-        let lm = parseInt(minute, 10) + (offsetMin % 60);
-        let lh = parseInt(hour, 10) + Math.floor(offsetMin / 60);
-        if (lm >= 60) {
-            lh++;
-            lm -= 60;
-        }
-        if (lm < 0) {
-            lh--;
-            lm += 60;
-        }
-        if (lh >= 24) {
-            lh -= 24;
-            dayShift = 1;
-        }
-        if (lh < 0) {
-            lh += 24;
-            dayShift = -1;
-        }
-        displayH = String(lh);
-        displayM = String(lm).padStart(2, '0');
-    } else if (hourIsNum) {
-        let lh = parseInt(hour, 10) + Math.floor(offsetMin / 60);
-        if (lh >= 24) {
-            lh -= 24;
-            dayShift = 1;
-        }
-        if (lh < 0) {
-            lh += 24;
-            dayShift = -1;
-        }
-        displayH = String(lh);
-    } else if (minIsNum) {
-        let lm = parseInt(minute, 10) + (offsetMin % 60);
-        if (lm >= 60) {
-            lm -= 60;
-        }
-        if (lm < 0) {
-            lm += 60;
-        }
-        displayM = String(lm).padStart(2, '0');
-    }
-
-    if (dow !== '*') {
-        if (/^[\d,]+$/.test(dow)) {
-            const days = dow.split(',').map((d) => {
-                let v = parseInt(d.trim(), 10);
-                if (dayShift) v = (((v + dayShift) % 7) + 7) % 7;
-                return t(`date.dow.${v}`) || v;
-            });
-            parts.push(days.length === 1 ? t('renderer.todo.cron.desc.everyDow', { days: days[0] }) : days.join('/'));
-        } else {
-            parts.push(t('renderer.todo.cron.desc.dowRaw', { dow }));
-        }
-    }
-    if (dom !== '*') parts.push(t('renderer.todo.cron.desc.monthlyDom', { day: dom }));
-    if (month !== '*') parts.push(t('renderer.todo.cron.desc.month', { month }));
-    if (displayH !== '*' && displayM !== '*') parts.push(`${displayH}:${displayM}`);
-    else if (displayH !== '*') parts.push(t('renderer.todo.cron.desc.hourOnly', { hour: displayH }));
-    else if (displayM !== '*') parts.push(t('renderer.todo.cron.desc.minuteOnly', { minute: displayM }));
-    else parts.push(t('renderer.todo.cron.desc.everyMinute'));
-    return parts.join(' ');
-}
-
-/**
- * 将本地时间的 cron 表达式转为 UTC 存储。
- * 仅转换纯数字的 hour/minute 字段，其他表达式（如 * / 范围等）保持原样。
- */
-function convertCronLocalToUTC(expr: string): string {
-    const fields = expr.trim().split(/\s+/);
-    if (fields.length !== 5) return expr;
-    const [minute, hour, dom, month, dow] = fields;
-
-    const hourIsNum = /^\d+$/.test(hour);
-    const minIsNum = /^\d+$/.test(minute);
-    if (!hourIsNum && !minIsNum) return expr;
-
-    const offsetMin = -new Date().getTimezoneOffset();
-    let utcM = minIsNum ? parseInt(minute, 10) - (offsetMin % 60) : NaN;
-    let utcH = hourIsNum ? parseInt(hour, 10) - Math.floor(offsetMin / 60) : NaN;
-    let dayShift = 0;
-
-    if (minIsNum) {
-        if (utcM < 0) {
-            if (hourIsNum) utcH--;
-            utcM += 60;
-        }
-        if (utcM >= 60) {
-            if (hourIsNum) utcH++;
-            utcM -= 60;
-        }
-    }
-    if (hourIsNum) {
-        if (utcH < 0) {
-            utcH += 24;
-            dayShift = -1;
-        }
-        if (utcH >= 24) {
-            utcH -= 24;
-            dayShift = 1;
-        }
-    }
-
-    const newMin = minIsNum ? String(utcM) : minute;
-    const newHour = hourIsNum ? String(utcH) : hour;
-
-    let newDow = dow;
-    if (dayShift && dow !== '*' && /^[\d,]+$/.test(dow)) {
-        newDow = dow
-            .split(',')
-            .map((d) => {
-                const v = parseInt(d.trim(), 10);
-                return (((v + dayShift) % 7) + 7) % 7;
-            })
-            .sort((a, b) => a - b)
-            .join(',');
-    }
-
-    return `${newMin} ${newHour} ${dom} ${month} ${newDow}`;
-}
-
-/**
- * 将 UTC 存储的 cron 表达式转回本地时间，供编辑时显示。
- * 逻辑与 convertCronLocalToUTC 方向相反。
- */
-function convertCronUTCToLocal(expr: string): string {
-    const fields = expr.trim().split(/\s+/);
-    if (fields.length !== 5) return expr;
-    const [minute, hour, dom, month, dow] = fields;
-
-    const hourIsNum = /^\d+$/.test(hour);
-    const minIsNum = /^\d+$/.test(minute);
-    if (!hourIsNum && !minIsNum) return expr;
-
-    const offsetMin = -new Date().getTimezoneOffset();
-    let lm = minIsNum ? parseInt(minute, 10) + (offsetMin % 60) : NaN;
-    let lh = hourIsNum ? parseInt(hour, 10) + Math.floor(offsetMin / 60) : NaN;
-    let dayShift = 0;
-
-    if (minIsNum) {
-        if (lm >= 60) {
-            if (hourIsNum) lh++;
-            lm -= 60;
-        }
-        if (lm < 0) {
-            if (hourIsNum) lh--;
-            lm += 60;
-        }
-    }
-    if (hourIsNum) {
-        if (lh >= 24) {
-            lh -= 24;
-            dayShift = 1;
-        }
-        if (lh < 0) {
-            lh += 24;
-            dayShift = -1;
-        }
-    }
-
-    const newMin = minIsNum ? String(lm) : minute;
-    const newHour = hourIsNum ? String(lh) : hour;
-
-    let newDow = dow;
-    if (dayShift && dow !== '*' && /^[\d,]+$/.test(dow)) {
-        newDow = dow
-            .split(',')
-            .map((d) => {
-                const v = parseInt(d.trim(), 10);
-                return (((v + dayShift) % 7) + 7) % 7;
-            })
-            .sort((a, b) => a - b)
-            .join(',');
-    }
-
-    return `${newMin} ${newHour} ${dom} ${month} ${newDow}`;
-}
-
 function getTriggerSummary(todo: GlobalTodo, t: Translator): string {
     if (!todo.trigger) return t('trigger.summary.manual');
     switch (todo.trigger.type) {
-        case 'scheduled':
-            return todo.trigger.triggerAt ? formatDate(todo.trigger.triggerAt, t) : t('trigger.summary.scheduled');
-        case 'cron':
-            return todo.trigger.cronExpression
-                ? describeCronLocal(todo.trigger.cronExpression, t)
-                : t('trigger.summary.cron');
+        case 'scheduled': {
+            if (!todo.trigger.triggerAt) return t('trigger.summary.scheduled');
+            const timezone = todo.trigger.timezone || getSystemTimezone();
+            try {
+                const [date, time] = formatDatetimeLocal(todo.trigger.triggerAt, timezone).split('T');
+                const [, month, day] = date.split('-').map(Number);
+                return `${t('date.format.monthDayTime', {
+                    month,
+                    monthName: t(`date.month.${month}`),
+                    day,
+                    time
+                })} (${timezone})`;
+            } catch {
+                return todo.trigger.triggerAt;
+            }
+        }
+        case 'cron': {
+            if (todo.trigger.timezone === undefined)
+                return describeLegacyCronInTimezone(todo.trigger, getSystemTimezone(), t);
+            const timezone = todo.trigger.timezone ?? 'UTC';
+            return todo.trigger.recurrence
+                ? describeTodoRecurrence(todo.trigger.recurrence, t, timezone)
+                : todo.trigger.cronExpression
+                  ? describeLegacyRecurrence(todo.trigger.cronExpression, t, timezone)
+                  : t('trigger.summary.cron');
+        }
         case 'event':
             return `${todo.trigger.bundleName || ''}:${todo.trigger.eventName || ''}`;
         default:
@@ -1192,9 +1100,12 @@ function getTriggerSummary(todo: GlobalTodo, t: Translator): string {
     }
 }
 
-/**
- * Build a cron expression from structured selections (local time → UTC)
- */
+function renderAdvancedCron(trigger?: GlobalTodo['trigger']): string {
+    const expression = getAdvancedCronExpression(trigger);
+    return expression ? `<code class="tm-legacy-cron">${escapeHtml(expression)}</code>` : '';
+}
+
+/** Build cron fields as wall-clock values in the selected timezone. */
 function buildCronFromUI(
     mode: string,
     hour: number,
@@ -1203,38 +1114,13 @@ function buildCronFromUI(
     dom: string,
     monthVal: string
 ): string {
-    const offsetMin = -new Date().getTimezoneOffset();
-    let utcM = minute - (offsetMin % 60);
-    let utcH = hour - Math.floor(offsetMin / 60);
-    let dayShift = 0;
-    if (utcM < 0) {
-        utcH--;
-        utcM += 60;
-    }
-    if (utcM >= 60) {
-        utcH++;
-        utcM -= 60;
-    }
-    if (utcH < 0) {
-        utcH += 24;
-        dayShift = -1;
-    }
-    if (utcH >= 24) {
-        utcH -= 24;
-        dayShift = 1;
-    }
-
-    let cronDow = '*';
-    if (mode === 'weekly' && selectedDows.length > 0 && selectedDows.length < 7) {
-        cronDow = selectedDows
-            .map((d) => (((d + dayShift) % 7) + 7) % 7)
-            .sort((a, b) => a - b)
-            .join(',');
-    }
+    const cronDow =
+        mode === 'weekly' && selectedDows.length > 0 && selectedDows.length < 7
+            ? [...selectedDows].sort((a, b) => a - b).join(',')
+            : '*';
     const cronDom = mode === 'monthly' && dom !== '*' ? dom : '*';
     const cronMonth = monthVal !== '*' ? monthVal : '*';
-
-    return `${utcM} ${utcH} ${cronDom} ${cronMonth} ${cronDow}`;
+    return `${minute} ${hour} ${cronDom} ${cronMonth} ${cronDow}`;
 }
 
 function normalizeGlobalTodosPayload(payload: unknown): GlobalTodo[] {
@@ -1284,6 +1170,10 @@ class TodoMgrEntryWidget extends AgentOperableHTMLElement {
 
     private _cachedEvents: AppEvent[] | null = null;
     private _templates: TodoTemplate[] = [];
+    private _chatModels: TodoChatModelSummary[] = [];
+    private _defaultModelAlias = '';
+    private _modelPickerCleanup: (() => void) | null = null;
+    private _contentResizeCleanup: (() => void) | null = null;
 
     private _dtYear = 0;
     private _dtMonth = 0;
@@ -1293,6 +1183,10 @@ class TodoMgrEntryWidget extends AgentOperableHTMLElement {
     private _dtViewYear = 0;
     private _dtViewMonth = 0;
     private _dtPanelOpen = false;
+    private _editTimezone = getSystemTimezone();
+    private _timeSchedulePicker: TimeSchedulePicker | null = null;
+    private _initialTimePeriod: 'once' | 'daily' = 'once';
+    private _dtOriginal: { local: string; timezone: string; triggerAt: string } | null = null;
 
     async connectedCallback() {
         this._injectCSS();
@@ -1332,6 +1226,9 @@ class TodoMgrEntryWidget extends AgentOperableHTMLElement {
     }
 
     disconnectedCallback() {
+        this._contentResizeCleanup?.();
+        this._timeSchedulePicker?.destroy();
+        this._modelPickerCleanup?.();
         if (this._onGlobalTodosUpdated) {
             window.applicationAPI.unsubscribe('globalTodosUpdated');
             this._onGlobalTodosUpdated = null;
@@ -1553,6 +1450,7 @@ class TodoMgrEntryWidget extends AgentOperableHTMLElement {
                         ${escapeHtml(summary)}
                     </span>
                 </div>
+                ${renderAdvancedCron(t.trigger)}
             </div>`;
             })
             .join('');
@@ -1664,7 +1562,14 @@ class TodoMgrEntryWidget extends AgentOperableHTMLElement {
             const dows = tpl.defaultDows ?? [];
             const dom = '1';
             const cronExpr = buildCronFromUI(tpl.defaultCronMode, localH, localM, dows, dom, '*');
-            prefilledTodo.trigger = { type: 'cron', cronExpression: cronExpr };
+            prefilledTodo.trigger = {
+                type: 'cron',
+                cronExpression: cronExpr,
+                // 模板频率均可映射为结构化规则：预填 recurrence 让新建落在可视化周期 tab，
+                // 保存后任务直接以新形态存储，而不是裸表达式。
+                recurrence: parseLegacyCronRecurrence(cronExpr),
+                timezone: getSystemTimezone()
+            };
         } else if (tpl.triggerType === 'event') {
             prefilledTodo.trigger = {
                 type: 'event',
@@ -1674,7 +1579,7 @@ class TodoMgrEntryWidget extends AgentOperableHTMLElement {
         } else if (tpl.triggerType === 'scheduled') {
             const now = new Date();
             now.setHours(now.getHours() + 1, 0, 0, 0);
-            prefilledTodo.trigger = { type: 'scheduled', triggerAt: now.toISOString() };
+            prefilledTodo.trigger = { type: 'scheduled', triggerAt: now.toISOString(), timezone: getSystemTimezone() };
         }
 
         // 使用预填充的 todo 来填充表单字段，但标记为新增模式
@@ -1764,7 +1669,45 @@ class TodoMgrEntryWidget extends AgentOperableHTMLElement {
         right.addEventListener('transitionend', onEnd);
     }
 
+    /** 下次触发属性行：执行按存储时区计算（legacy 规则保持 UTC 语义），
+     * 显示与上次触发一致，使用系统本地时间格式（不含年份与时区标注）。 */
+    private _computeNextTrigger(todo: GlobalTodo): { value: string; next?: Date } | null {
+        const trigger = todo.trigger;
+        if (!trigger || trigger.type === 'event') return null;
+        if (todo.enabled === false) return { value: this._t('renderer.todo.frequency.nextRunDisabled') };
+        try {
+            if (trigger.type === 'scheduled') {
+                if (!trigger.triggerAt) return null;
+                const date = new Date(trigger.triggerAt);
+                if (!Number.isFinite(date.getTime()) || date.getTime() <= Date.now()) return null;
+                return { value: formatDate(date.toISOString(), this._t), next: date };
+            }
+            const computeTimezone = trigger.timezone ?? 'UTC';
+            let next: Date | null | undefined;
+            if (trigger.recurrence) {
+                if (getTodoRecurrenceError(trigger.recurrence)) return null;
+                next = getNextTodoRecurrenceRuns(trigger.recurrence, computeTimezone, 1)[0];
+            } else if (trigger.cronExpression) {
+                next = this._getNextCronRun(trigger.cronExpression, computeTimezone);
+            }
+            if (!next) return null;
+            return { value: formatDate(next.toISOString(), this._t), next };
+        } catch {
+            return null;
+        }
+    }
+
+    private _getNextCronRun(expression: string, timezone: string): Date | null {
+        const job = new Cron(expression, { timezone });
+        const next = job.nextRun();
+        job.stop();
+        return next;
+    }
+
     private _closeDetail() {
+        this._contentResizeCleanup?.();
+        this._timeSchedulePicker?.destroy();
+        this._modelPickerCleanup?.();
         this.selectedTodoId = null;
         this.isEditing = false;
         this.isAddingNew = false;
@@ -1798,6 +1741,9 @@ class TodoMgrEntryWidget extends AgentOperableHTMLElement {
      * ═══════════════════════════ */
 
     private _renderDetail(todo: GlobalTodo) {
+        this._contentResizeCleanup?.();
+        this._timeSchedulePicker?.destroy();
+        this._modelPickerCleanup?.();
         const t = this._t;
         const scroll = this.querySelector('#tm-detail-scroll') as HTMLElement;
         const footer = this.querySelector('#tm-detail-footer') as HTMLElement;
@@ -1807,6 +1753,7 @@ class TodoMgrEntryWidget extends AgentOperableHTMLElement {
         const statusDot = getDisplayStatus(todo) === 'enabled' ? 'tm-status-in_progress' : 'tm-status-pending';
         const triggerType = todo.trigger?.type || 'manual';
         const cardCfg = getCardConfig(triggerType as TriggerType, t);
+        const nextTrigger = this._computeNextTrigger(todo);
 
         scroll.innerHTML = `
         <div class="tm-detail-header">
@@ -1840,16 +1787,7 @@ class TodoMgrEntryWidget extends AgentOperableHTMLElement {
                     </span>
 
                     <span class="tm-detail-attr-label">${escapeHtml(t('renderer.todo.detail.attr.triggerType'))}</span>
-                    <span class="tm-detail-attr-value">${escapeHtml(getTriggerSummary(todo, t))}</span>
-
-                    ${
-                        todo.trigger?.type === 'cron' && todo.trigger.cronExpression
-                            ? `
-                    <span class="tm-detail-attr-label">${escapeHtml(t('renderer.todo.detail.attr.cronExpression'))}</span>
-                    <span class="tm-detail-attr-value" style="font-family:'Maple Mono','Cascadia Code','SF Mono',monospace;font-size: var(--fs-md);">${escapeHtml(todo.trigger.cronExpression)}</span>
-                    `
-                            : ''
-                    }
+                    <span class="tm-detail-attr-value">${escapeHtml(getTriggerSummary(todo, t))}${renderAdvancedCron(todo.trigger)}</span>
 
                     ${
                         todo.trigger?.type === 'event'
@@ -1874,6 +1812,9 @@ class TodoMgrEntryWidget extends AgentOperableHTMLElement {
                     <span class="tm-detail-attr-label">${escapeHtml(t('renderer.todo.detail.attr.workspace'))}</span>
                     <span class="tm-detail-attr-value">${escapeHtml(getTodoWorkspaceSummary(todo.workspace, t))}</span>
 
+                    <span class="tm-detail-attr-label">${escapeHtml(t('renderer.todo.detail.attr.model'))}</span>
+                    <span class="tm-detail-attr-value">${escapeHtml(this._getModelLabel(todo.model || ''))} · ${escapeHtml(this._getReasoningEffortLabel(todo.reasoningEffort || ''))}</span>
+
                     <span class="tm-detail-attr-label">${escapeHtml(t('renderer.todo.detail.attr.createdAt'))}</span>
                     <span class="tm-detail-attr-value">${formatDate(todo.created_at, t)}</span>
 
@@ -1885,6 +1826,15 @@ class TodoMgrEntryWidget extends AgentOperableHTMLElement {
                             ? `
                     <span class="tm-detail-attr-label">${escapeHtml(t('renderer.todo.detail.attr.lastTriggered'))}</span>
                     <span class="tm-detail-attr-value">${formatDate(todo.last_triggered_at, t)}</span>
+                    `
+                            : ''
+                    }
+
+                    ${
+                        nextTrigger
+                            ? `
+                    <span class="tm-detail-attr-label">${escapeHtml(t('renderer.todo.detail.attr.nextTrigger'))}</span>
+                    <span class="tm-detail-attr-value" id="tm-detail-next-run">${escapeHtml(nextTrigger.value)}</span>
                     `
                             : ''
                     }
@@ -1919,6 +1869,9 @@ class TodoMgrEntryWidget extends AgentOperableHTMLElement {
      * ═══════════════════════════ */
 
     private async _enterEditMode(todo: GlobalTodo | null, addType?: TriggerType) {
+        this._contentResizeCleanup?.();
+        this._timeSchedulePicker?.destroy();
+        this._modelPickerCleanup?.();
         const isTemplatePreFill = todo?.id === '__tpl__';
         this.isEditing = true;
         if (!isTemplatePreFill) {
@@ -1943,8 +1896,17 @@ class TodoMgrEntryWidget extends AgentOperableHTMLElement {
         const title = !todo ? '' : todo.title;
         const content = !todo ? '' : todo.content;
         const isEnabled = !todo ? true : todo.enabled !== false;
-        const triggerType = !todo ? addType || 'scheduled' : todo.trigger?.type || addType || 'scheduled';
-        const recentWorkspaces = await this._loadRecentWorkspaces();
+        const requestedType = !todo ? addType || 'scheduled' : todo.trigger?.type || addType || 'scheduled';
+        const triggerType = requestedType === 'event' ? 'event' : 'scheduled';
+        const isLegacyUtc = todo?.trigger?.type === 'cron' && todo.trigger.timezone === undefined;
+        const isRawCron = todo?.trigger?.type === 'cron' && todo.trigger.recurrence === undefined;
+        this._initialTimePeriod = requestedType === 'cron' ? 'daily' : 'once';
+        // 原始 Cron 按保存的时区编辑，未存时区时沿用 UTC，不转换表达式。
+        // 结构化规则仅换算展示，无法等价表达的日期跨月或间隔规则继续使用 UTC 编辑。
+        this._editTimezone = todo?.trigger?.timezone || (isRawCron ? 'UTC' : getSystemTimezone());
+        if (isLegacyUtc && !getLegacyRecurrenceInTimezone(todo.trigger!, this._editTimezone))
+            this._editTimezone = 'UTC';
+        const [recentWorkspaces] = await Promise.all([this._loadRecentWorkspaces(), this._loadChatModels()]);
         const workspaceOptionsHtml = this._renderWorkspaceOptions(todo?.workspace, recentWorkspaces);
         const workspaceHint = getWorkspaceDisplayName(todo?.workspace, t);
 
@@ -1962,7 +1924,7 @@ class TodoMgrEntryWidget extends AgentOperableHTMLElement {
             </div>
             <div class="tm-edit-field">
                 <label class="tm-edit-label">${escapeHtml(t('renderer.todo.edit.labelContent'))}</label>
-                <textarea class="tm-edit-textarea" id="tm-edit-content" rows="4" placeholder="${escapeHtml(t('renderer.todo.edit.placeholderContent'))}">${escapeHtml(content)}</textarea>
+                <textarea class="tm-edit-textarea" id="tm-edit-content" rows="1" placeholder="${escapeHtml(t('renderer.todo.edit.placeholderContent'))}">${escapeHtml(content)}</textarea>
             </div>
             <div class="tm-edit-field">
                 <label class="tm-edit-label">${escapeHtml(t('renderer.todo.edit.labelStatus'))}</label>
@@ -1975,10 +1937,15 @@ class TodoMgrEntryWidget extends AgentOperableHTMLElement {
                 <label class="tm-edit-label">${escapeHtml(t('renderer.todo.edit.labelTriggerType'))}</label>
                 <select class="tm-edit-select" id="tm-edit-trigger-type">
                     <option value="scheduled"${triggerType === 'scheduled' ? ' selected' : ''}>${escapeHtml(t('renderer.todo.edit.triggerType.scheduled'))}</option>
-                    <option value="cron"${triggerType === 'cron' ? ' selected' : ''}>${escapeHtml(t('renderer.todo.edit.triggerType.cron'))}</option>
                     <option value="event"${triggerType === 'event' ? ' selected' : ''}>${escapeHtml(t('renderer.todo.edit.triggerType.event'))}</option>
                 </select>
             </div>
+            <div class="tm-edit-field" id="tm-edit-timezone-field"${triggerType === 'event' ? ' hidden' : ''}>
+                <label class="tm-edit-label" for="tm-edit-timezone">${escapeHtml(t('renderer.todo.timezone.label'))}</label>
+                <select class="tm-edit-select" id="tm-edit-timezone">${this._renderTimezoneOptions()}</select>
+                <div class="tm-model-effort-note">${escapeHtml(t(isLegacyUtc && !isRawCron ? 'renderer.todo.timezone.legacyHint' : 'renderer.todo.timezone.hint'))}</div>
+            </div>
+            <div id="tm-edit-error" class="tm-edit-error" role="alert" hidden></div>
             <div id="tm-trigger-fields"></div>
             <div class="tm-edit-field">
                 <label class="tm-edit-label">${escapeHtml(t('renderer.todo.edit.labelWorkspace'))}</label>
@@ -1987,6 +1954,7 @@ class TodoMgrEntryWidget extends AgentOperableHTMLElement {
                 </select>
                 <div id="tm-edit-workspace-hint" style="font-size: var(--fs-sm);color:var(--text-tertiary,#888);margin-top:4px;">${escapeHtml(workspaceHint)}</div>
             </div>
+            ${this._renderModelPicker(todo)}
             <div class="tm-edit-field">
                 <label class="tm-edit-label">${escapeHtml(t('renderer.todo.edit.labelDeliver'))}</label>
                 <select class="tm-edit-select" id="tm-edit-deliver-target">
@@ -1999,6 +1967,7 @@ class TodoMgrEntryWidget extends AgentOperableHTMLElement {
         this._renderTriggerFields(triggerType, todo);
         this._loadDeliverTargets(todo);
         this._bindWorkspaceSelect();
+        this._bindModelPicker(todo);
         this._bindEnabledCheckbox();
 
         footer.style.display = 'flex';
@@ -2022,8 +1991,96 @@ class TodoMgrEntryWidget extends AgentOperableHTMLElement {
 
         this.querySelector('#tm-edit-trigger-type')?.addEventListener('change', (e) => {
             const sel = (e.target as HTMLSelectElement).value;
-            this._renderTriggerFields(sel, null);
+            const timezoneField = this.querySelector<HTMLElement>('#tm-edit-timezone-field');
+            if (timezoneField) timezoneField.hidden = sel === 'event';
+            // 传入原 todo：往返切换类型时保留已保存的触发器配置，避免被默认值静默替换。
+            this._renderTriggerFields(sel, todo);
         });
+        this.querySelector('#tm-edit-timezone')?.addEventListener('change', (event) => {
+            this._editTimezone = (event.target as HTMLSelectElement).value;
+            this._showEditError('');
+            this._timeSchedulePicker?.clearValidationError();
+            if (
+                todo?.trigger?.type === 'cron' &&
+                todo.trigger.recurrence !== undefined &&
+                todo.trigger.timezone === undefined &&
+                this._timeSchedulePicker?.isUnchanged()
+            ) {
+                this._renderTriggerFields('cron', todo);
+                return;
+            }
+            if (this.querySelector('#tm-cron-preview')) this._updateCronPreview();
+            if (this.querySelector('#tm-dt-display-text')) this._updateDtDisplay();
+        });
+        this._bindContentAutoResize();
+    }
+
+    private _bindContentAutoResize(): void {
+        this._contentResizeCleanup?.();
+        const textarea = this.querySelector<HTMLTextAreaElement>('#tm-edit-content');
+        const frame = this.querySelector<HTMLElement>('#tm-detail-scroll');
+        const field = textarea?.closest<HTMLElement>('.tm-edit-field');
+        if (!textarea || !frame || !field) return;
+
+        let active = true;
+        const resize = () => {
+            if (!active) return;
+            const budget = frame.clientHeight;
+            const maxHeight =
+                budget > 0
+                    ? Math.max(
+                          CONTENT_MIN_HEIGHT,
+                          Math.min(CONTENT_MAX_HEIGHT, Math.floor(budget * CONTENT_HEIGHT_RATIO))
+                      )
+                    : CONTENT_MAX_HEIGHT;
+            const borders = Math.max(0, (textarea.offsetHeight || 0) - (textarea.clientHeight || 0));
+            const oldMinHeight = field.style.minHeight;
+            // Keep the form's scroll position stable while measuring a temporarily collapsed textarea.
+            field.style.minHeight = `${field.offsetHeight || 0}px`;
+            try {
+                textarea.style.maxHeight = `${maxHeight}px`;
+                textarea.style.height = 'auto';
+                const contentHeight = (textarea.scrollHeight || 0) + borders;
+                textarea.style.height = `${Math.max(CONTENT_MIN_HEIGHT, Math.min(contentHeight, maxHeight))}px`;
+            } finally {
+                field.style.minHeight = oldMinHeight;
+            }
+        };
+
+        textarea.addEventListener('input', resize);
+        // The scroll viewport has a fixed flex height; observing it also catches width changes and reflow.
+        const observer = typeof ResizeObserver === 'function' ? new ResizeObserver(resize) : null;
+        observer?.observe(frame);
+        if (!observer) window.addEventListener('resize', resize);
+        this._contentResizeCleanup = () => {
+            active = false;
+            observer?.disconnect();
+            textarea.removeEventListener('input', resize);
+            window.removeEventListener('resize', resize);
+            this._contentResizeCleanup = null;
+        };
+        resize();
+    }
+
+    private _renderTimezoneOptions(): string {
+        const systemTimezone = getSystemTimezone();
+        const values = typeof Intl.supportedValuesOf === 'function' ? Intl.supportedValuesOf('timeZone') : [];
+        const zones = new Set(['UTC', systemTimezone, this._editTimezone, ...values]);
+        return Array.from(zones)
+            .map((timezone) => {
+                let label =
+                    timezone === 'Asia/Shanghai' ? this._t('renderer.todo.timezone.beijing', { timezone }) : timezone;
+                if (timezone === systemTimezone) label = this._t('renderer.todo.timezone.system', { timezone: label });
+                return `<option value="${escapeHtml(timezone)}"${timezone === this._editTimezone ? ' selected' : ''}>${escapeHtml(label)}</option>`;
+            })
+            .join('');
+    }
+
+    private _showEditError(message: string): void {
+        const error = this.querySelector<HTMLElement>('#tm-edit-error');
+        if (!error) return;
+        error.textContent = message;
+        error.hidden = !message;
     }
 
     private _renderTriggerFields(type: string, existingTodo: GlobalTodo | null) {
@@ -2031,15 +2088,14 @@ class TodoMgrEntryWidget extends AgentOperableHTMLElement {
         if (!container) return;
 
         switch (type) {
-            case 'scheduled': {
-                this._renderDateTimePicker(container, existingTodo);
-                break;
-            }
+            case 'scheduled':
             case 'cron': {
                 this._renderCronBuilder(container, existingTodo);
                 break;
             }
             case 'event': {
+                this._timeSchedulePicker?.destroy();
+                this._timeSchedulePicker = null;
                 this._renderEventSelector(container, existingTodo);
                 break;
             }
@@ -2058,6 +2114,327 @@ class TodoMgrEntryWidget extends AgentOperableHTMLElement {
         } catch {
             return [];
         }
+    }
+
+    private async _loadChatModels(): Promise<void> {
+        try {
+            const catalog: TodoChatModelCatalog = await window.applicationAPI.callMainWorld('getChatModelsForUI');
+            this._chatModels = catalog.models ?? [];
+            this._defaultModelAlias = catalog.default_model ?? '';
+        } catch {
+            this._chatModels = [];
+            this._defaultModelAlias = '';
+        }
+    }
+
+    private _getModelByAlias(alias: string): TodoChatModelSummary | undefined {
+        return this._chatModels.find((model) => model.alias === alias);
+    }
+
+    private _getSupportedEffortValues(modelAlias: string): string[] {
+        const allValues = REASONING_EFFORT_UI_OPTIONS.map((option) => option.value);
+        const supported = this._getModelByAlias(modelAlias)?.reasoningEfforts;
+        if (!Array.isArray(supported) || supported.length === 0) return allValues;
+        return allValues.filter((value) => supported.some((effort) => effort === value));
+    }
+
+    private _getReasoningEffortLabel(value: string): string {
+        return this._t(REASONING_EFFORT_LABEL_KEYS[value] ?? 'reasoning.effort.default');
+    }
+
+    private _getModelLabel(alias: string): string {
+        if (!alias) {
+            const label = this._t('renderer.todo.model.globalDefault');
+            if (!this._defaultModelAlias) return label;
+            return this._locale === 'en-US'
+                ? `${label} (${this._defaultModelAlias})`
+                : `${label}（${this._defaultModelAlias}）`;
+        }
+        return this._getModelByAlias(alias)?.alias || alias;
+    }
+
+    private _getModelDetail(alias: string): string {
+        if (!alias) {
+            return this._defaultModelAlias
+                ? this._t('renderer.todo.model.currentDefault', { alias: this._defaultModelAlias })
+                : this._t('renderer.todo.model.noDefault');
+        }
+        const model = this._getModelByAlias(alias);
+        if (!model) return this._t('renderer.todo.model.unavailable');
+        return [model.provider_name, model.model_name].filter(Boolean).join(' / ');
+    }
+
+    private _renderModelPicker(todo: GlobalTodo | null): string {
+        const model = todo?.model || '';
+        const effort = todo?.reasoningEffort || '';
+        return `<div class="tm-edit-field">
+            <label class="tm-edit-label" id="tm-edit-model-label">${escapeHtml(this._t('renderer.todo.edit.labelModel'))}</label>
+            <div class="tm-model-picker" id="tm-edit-model-picker" data-selected-model="${escapeHtml(model)}" data-selected-effort="${escapeHtml(effort)}">
+                <button class="tm-model-trigger" id="tm-edit-model-trigger" type="button" aria-haspopup="dialog" aria-labelledby="tm-edit-model-label tm-edit-model-summary" aria-expanded="false" aria-controls="tm-edit-model-popover">
+                    <span class="tm-model-trigger-summary" id="tm-edit-model-summary">${this._renderModelSummary(model, effort)}</span>
+                    <span class="tm-model-trigger-chevron"><i class="fas fa-chevron-down" aria-hidden="true"></i></span>
+                </button>
+                <div class="ctx-menu ctx-menu-hidden tm-model-menu" id="tm-edit-model-popover" role="dialog" aria-label="${escapeHtml(this._t('renderer.todo.model.selectTitle'))}" hidden>
+                    <div class="ctx-search">
+                        <i class="fas fa-search" aria-hidden="true"></i>
+                        <input type="search" id="tm-edit-model-search" placeholder="${escapeHtml(this._t('renderer.todo.model.search'))}" aria-label="${escapeHtml(this._t('renderer.todo.model.search'))}" autocomplete="off" />
+                    </div>
+                    <div class="ctx-menu-list tm-model-list" id="tm-edit-model-list"></div>
+                </div>
+                <div class="ctx-menu ctx-menu-hidden tm-model-effort-menu" id="tm-edit-model-effort-submenu" role="menu" aria-label="${escapeHtml(this._t('renderer.todo.model.reasoningTitle'))}" hidden>
+                    <button class="ctx-item ctx-menu-hidden" id="tm-edit-model-back" type="button" hidden><i class="fas fa-chevron-left" aria-hidden="true"></i><span class="ctx-label">${escapeHtml(this._t('renderer.todo.model.back'))}</span></button>
+                    <div class="ctx-menu-list" id="tm-edit-model-effort-list"></div>
+                </div>
+            </div>
+            <div class="tm-model-effort-note">${escapeHtml(this._t('renderer.todo.model.hint'))}</div>
+        </div>`;
+    }
+
+    private _renderModelSummary(model: string, effort: string): string {
+        const hasVision = this._getModelByAlias(model || this._defaultModelAlias)?.vision === true;
+        const effortIcon = effort
+            ? `<span class="agent-effort-icon" title="${escapeHtml(this._getReasoningEffortLabel(effort))}" aria-hidden="true">${getEffortIconSVG(effort)}</span>`
+            : '';
+        return `${getModelIconTile(hasVision)}${effortIcon}
+            <span class="tm-model-trigger-name">${escapeHtml(this._getModelLabel(model))}</span>`;
+    }
+
+    private _bindModelPicker(todo: GlobalTodo | null): void {
+        this._modelPickerCleanup?.();
+        const picker = this.querySelector<HTMLElement>('#tm-edit-model-picker');
+        const trigger = this.querySelector<HTMLButtonElement>('#tm-edit-model-trigger');
+        const menu = this.querySelector<HTMLElement>('#tm-edit-model-popover');
+        const submenu = this.querySelector<HTMLElement>('#tm-edit-model-effort-submenu');
+        const modelList = this.querySelector<HTMLElement>('#tm-edit-model-list');
+        const effortList = this.querySelector<HTMLElement>('#tm-edit-model-effort-list');
+        const search = this.querySelector<HTMLInputElement>('#tm-edit-model-search');
+        const summary = this.querySelector<HTMLElement>('#tm-edit-model-summary');
+        const back = this.querySelector<HTMLButtonElement>('#tm-edit-model-back');
+        if (!picker || !trigger || !menu || !submenu || !modelList || !effortList || !search || !summary || !back)
+            return;
+
+        let selectedModel = todo?.model || '';
+        let selectedEffort = todo?.reasoningEffort || '';
+        let previewModel = selectedModel;
+        let previewItem: HTMLButtonElement | null = null;
+        let open = false;
+        let menuRect: DOMRect | null = null;
+        let compact = false;
+        const setVisible = (element: HTMLElement, visible: boolean) => {
+            element.hidden = !visible;
+            element.classList.toggle('ctx-menu-hidden', !visible);
+        };
+        const close = (restoreFocus = false) => {
+            open = false;
+            trigger.setAttribute('aria-expanded', 'false');
+            setVisible(menu, false);
+            setVisible(submenu, false);
+            modelList.querySelectorAll('.hovered').forEach((item) => item.classList.remove('hovered'));
+            previewItem = null;
+            if (restoreFocus) trigger.focus();
+        };
+        const clamp = (value: number, min: number, max: number) => Math.max(min, Math.min(value, max));
+        const positionSubmenu = () => {
+            if (!open || !previewItem || submenu.hidden) return;
+            const view = visibleViewportRect();
+            const rect = menuRect || menu.getBoundingClientRect();
+            const itemRect = previewItem.getBoundingClientRect();
+            const origin = fixedLayerOrigin(submenu);
+            const width = Math.min(compact ? 280 : 180, view.right - view.left - 16);
+            submenu.style.width = `${width}px`;
+            submenu.style.maxHeight = `${Math.max(0, view.bottom - view.top - 16)}px`;
+            const height = submenu.getBoundingClientRect().height;
+            const opensLeft = rect.right + width + 4 > view.right - 8 && rect.left - width - 4 >= view.left + 8;
+            let left = compact ? rect.left : opensLeft ? rect.left - width - 4 : rect.right + 4;
+            left = clamp(left, view.left + 8, view.right - width - 8);
+            const top = clamp(compact ? rect.top : itemRect.top, view.top + 8, view.bottom - height - 8);
+            submenu.classList.toggle('opens-left', opensLeft);
+            submenu.style.left = `${left - origin.x}px`;
+            submenu.style.top = `${top - origin.y}px`;
+        };
+        const positionMenu = () => {
+            if (!open) return;
+            const view = visibleViewportRect();
+            const rect = trigger.getBoundingClientRect();
+            const origin = fixedLayerOrigin(menu);
+            const availableWidth = Math.max(0, view.right - view.left - 16);
+            menu.style.minWidth = `${Math.min(200, availableWidth)}px`;
+            menu.style.maxWidth = `${Math.min(312, availableWidth)}px`;
+            const above = Math.max(0, rect.top - view.top - 8);
+            const below = Math.max(0, view.bottom - rect.bottom - 8);
+            const placeAbove = above > below && below < 320;
+            menu.style.maxHeight = `${Math.max(0, (placeAbove ? above : below) - 4)}px`;
+            const size = menu.getBoundingClientRect();
+            const left = clamp(rect.left, view.left + 8, view.right - size.width - 8);
+            const top = placeAbove ? rect.top - size.height - 4 : rect.bottom + 4;
+            menu.style.left = `${left - origin.x}px`;
+            menu.style.top = `${clamp(top, view.top + 8, view.bottom - size.height - 8) - origin.y}px`;
+            menuRect = menu.getBoundingClientRect();
+            compact = menuRect.right + 184 > view.right - 8 && menuRect.left - 184 < view.left + 8;
+            positionSubmenu();
+        };
+        const showEfforts = (alias: string, item: HTMLButtonElement) => {
+            previewModel = alias;
+            previewItem = item;
+            modelList.querySelectorAll<HTMLButtonElement>('[data-model-alias]').forEach((candidate) => {
+                const active = candidate === item;
+                candidate.classList.toggle('hovered', active);
+                candidate.setAttribute('aria-expanded', String(active));
+            });
+            const supported = this._getSupportedEffortValues(alias || this._defaultModelAlias);
+            effortList.innerHTML = REASONING_EFFORT_UI_OPTIONS.filter((option) => supported.includes(option.value))
+                .map((option) => {
+                    const checked = alias === selectedModel && option.value === selectedEffort;
+                    return `<button class="ctx-item${checked ? ' active' : ''}" type="button" role="menuitemradio" aria-checked="${checked}" data-effort-value="${escapeHtml(option.value)}">
+                        ${getEffortIconSVG(option.value)}
+                        <span class="ctx-label">${escapeHtml(this._getReasoningEffortLabel(option.value))}</span>
+                        ${checked ? '<span class="ctx-item-check"><i class="fas fa-check" aria-hidden="true"></i></span>' : ''}
+                    </button>`;
+                })
+                .join('');
+            setVisible(submenu, open);
+            setVisible(back, compact);
+            setVisible(menu, !compact);
+            positionSubmenu();
+        };
+        const renderModels = () => {
+            const models = [{ alias: '', provider_name: '', model_name: this._defaultModelAlias }, ...this._chatModels];
+            if (selectedModel && !this._getModelByAlias(selectedModel)) {
+                models.push({ alias: selectedModel, provider_name: '', model_name: '' });
+            }
+            const query = search.value.trim().toLowerCase();
+            const matches = models.filter((model) =>
+                [this._getModelLabel(model.alias), model.model_name, model.provider_name]
+                    .join(' ')
+                    .toLowerCase()
+                    .includes(query)
+            );
+            modelList.innerHTML =
+                matches
+                    .map((model) => {
+                        const active = model.alias === selectedModel;
+                        const hasVision =
+                            this._getModelByAlias(model.alias || this._defaultModelAlias)?.vision === true;
+                        return `<button class="ctx-item tm-model-picker-option${active ? ' active' : ''}" type="button" data-model-alias="${escapeHtml(model.alias)}" aria-haspopup="menu" aria-expanded="false" aria-controls="tm-edit-model-effort-submenu" title="${escapeHtml(this._getModelDetail(model.alias))}">
+                    ${getModelIconTile(hasVision)}
+                    <span class="ctx-label">${escapeHtml(this._getModelLabel(model.alias))}${hasVision ? `<span class="ctx-badge blue">${escapeHtml(this._t('model.vision'))}</span>` : ''}</span>
+                    ${active ? '<span class="ctx-item-check"><i class="fas fa-check" aria-hidden="true"></i></span>' : ''}
+                    <span class="ctx-arrow"><i class="fas fa-chevron-right" aria-hidden="true"></i></span>
+                </button>`;
+                    })
+                    .join('') ||
+                `<div class="ctx-empty" role="status">${escapeHtml(this._t('renderer.todo.model.noResults'))}</div>`;
+            previewItem = null;
+            setVisible(submenu, false);
+            modelList.querySelectorAll<HTMLButtonElement>('[data-model-alias]').forEach((item) => {
+                const preview = () => showEfforts(item.dataset.modelAlias || '', item);
+                // On narrow windows, hover must not put an effort under the pointer before the click.
+                item.addEventListener('mouseenter', () => {
+                    if (!compact) preview();
+                });
+                item.addEventListener('focus', () => {
+                    if (!compact) preview();
+                });
+                item.addEventListener('click', preview);
+            });
+        };
+        const commitEffort = (event: Event) => {
+            const item = (event.target as Element).closest<HTMLElement>('[data-effort-value]');
+            if (!item || !effortList.contains(item)) return;
+            selectedModel = previewModel;
+            selectedEffort = item.dataset.effortValue || '';
+            picker.dataset.selectedModel = selectedModel;
+            picker.dataset.selectedEffort = selectedEffort;
+            summary.innerHTML = this._renderModelSummary(selectedModel, selectedEffort);
+            close(true);
+        };
+        const toggle = () => {
+            if (open) {
+                close();
+                return;
+            }
+            open = true;
+            trigger.setAttribute('aria-expanded', 'true');
+            search.value = '';
+            renderModels();
+            setVisible(menu, true);
+            positionMenu();
+            search.focus();
+        };
+        const filter = () => {
+            renderModels();
+            positionMenu();
+        };
+        const outsideClick = (event: Event) => {
+            if (open && !picker.contains(event.target as Node)) close();
+        };
+        const keydown = (event: KeyboardEvent) => {
+            if (!open) return;
+            const target = event.target as HTMLElement;
+            if (!picker.contains(target)) return;
+            if (event.key === 'Escape') {
+                event.preventDefault();
+                event.stopPropagation();
+                close(true);
+            } else if (event.key === 'ArrowRight' && modelList.contains(target)) {
+                event.preventDefault();
+                showEfforts(target.dataset.modelAlias || '', target as HTMLButtonElement);
+                effortList.querySelector<HTMLButtonElement>('button')?.focus();
+            } else if (event.key === 'ArrowLeft' && effortList.contains(target)) {
+                event.preventDefault();
+                setVisible(menu, true);
+                if (compact) setVisible(submenu, false);
+                previewItem?.focus();
+            } else if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
+                const inEfforts = effortList.contains(target);
+                const list = inEfforts ? effortList : modelList;
+                const items = Array.from(list.querySelectorAll<HTMLButtonElement>('button'));
+                if (items.length === 0) return;
+                event.preventDefault();
+                const index = items.indexOf(target as HTMLButtonElement);
+                const next =
+                    index < 0
+                        ? event.key === 'ArrowDown'
+                            ? 0
+                            : items.length - 1
+                        : (index + (event.key === 'ArrowDown' ? 1 : -1) + items.length) % items.length;
+                items[next].focus();
+            } else if (event.key === 'Tab') {
+                close();
+            }
+        };
+        const scroll = (event: Event) => {
+            if (open && !menu.contains(event.target as Node) && !submenu.contains(event.target as Node)) close();
+            else positionSubmenu();
+        };
+        const goBack = () => {
+            setVisible(submenu, false);
+            setVisible(menu, true);
+            positionMenu();
+            previewItem?.focus();
+        };
+        const resize = () => close();
+        trigger.addEventListener('click', toggle);
+        back.addEventListener('click', goBack);
+        search.addEventListener('input', filter);
+        effortList.addEventListener('click', commitEffort);
+        document.addEventListener('click', outsideClick, true);
+        document.addEventListener('keydown', keydown);
+        document.addEventListener('scroll', scroll, true);
+        window.addEventListener('resize', resize);
+        renderModels();
+        this._modelPickerCleanup = () => {
+            close();
+            trigger.removeEventListener('click', toggle);
+            back.removeEventListener('click', goBack);
+            search.removeEventListener('input', filter);
+            effortList.removeEventListener('click', commitEffort);
+            document.removeEventListener('click', outsideClick, true);
+            document.removeEventListener('keydown', keydown);
+            document.removeEventListener('scroll', scroll, true);
+            window.removeEventListener('resize', resize);
+            this._modelPickerCleanup = null;
+        };
     }
 
     private _renderWorkspaceOptions(workspace: TodoWorkspaceConfig | undefined, recentWorkspaces: string[]): string {
@@ -2119,6 +2496,7 @@ class TodoMgrEntryWidget extends AgentOperableHTMLElement {
         checkbox.addEventListener('change', () => {
             const label = checkbox.closest('label')?.querySelector('span');
             if (label) label.textContent = checkbox.checked ? this._t('status.enabled') : this._t('status.disabled');
+            this._timeSchedulePicker?.refreshNextRun();
         });
     }
 
@@ -2220,29 +2598,21 @@ class TodoMgrEntryWidget extends AgentOperableHTMLElement {
      * ═══════════════════════════ */
 
     private _renderDateTimePicker(container: HTMLElement, existingTodo: GlobalTodo | null) {
-        const now = new Date();
-        if (existingTodo?.trigger?.type === 'scheduled' && existingTodo.trigger.triggerAt) {
-            try {
-                const d = new Date(existingTodo.trigger.triggerAt);
-                this._dtYear = d.getFullYear();
-                this._dtMonth = d.getMonth() + 1;
-                this._dtDay = d.getDate();
-                this._dtHour = d.getHours();
-                this._dtMinute = d.getMinutes();
-            } catch {
-                this._dtYear = now.getFullYear();
-                this._dtMonth = now.getMonth() + 1;
-                this._dtDay = now.getDate();
-                this._dtHour = now.getHours();
-                this._dtMinute = 0;
-            }
-        } else {
-            this._dtYear = now.getFullYear();
-            this._dtMonth = now.getMonth() + 1;
-            this._dtDay = now.getDate();
-            this._dtHour = now.getHours();
-            this._dtMinute = 0;
+        const originalTriggerAt =
+            existingTodo?.trigger?.type === 'scheduled' ? existingTodo.trigger.triggerAt : undefined;
+        let local: string;
+        try {
+            local = formatDatetimeLocal(originalTriggerAt || new Date().toISOString(), this._editTimezone);
+        } catch {
+            local = formatDatetimeLocal(new Date().toISOString(), getSystemTimezone());
         }
+        const [date, time] = local.split('T');
+        [this._dtYear, this._dtMonth, this._dtDay] = date.split('-').map(Number);
+        [this._dtHour, this._dtMinute] = time.split(':').map(Number);
+        if (!originalTriggerAt) this._dtMinute = 0;
+        this._dtOriginal = originalTriggerAt
+            ? { local, timezone: this._editTimezone, triggerAt: originalTriggerAt }
+            : null;
         this._dtViewYear = this._dtYear;
         this._dtViewMonth = this._dtMonth;
         this._dtPanelOpen = true;
@@ -2304,13 +2674,9 @@ class TodoMgrEntryWidget extends AgentOperableHTMLElement {
         hourSel.innerHTML = hourHtml;
 
         let minHtml = '';
-        for (let m = 0; m < 60; m += 5) {
+        for (let m = 0; m < 60; m++) {
             const sel = m === this._dtMinute ? ' selected' : '';
             minHtml += `<option value="${m}"${sel}>${String(m).padStart(2, '0')}</option>`;
-        }
-        const minuteRounded = Math.round(this._dtMinute / 5) * 5;
-        if (minuteRounded !== this._dtMinute) {
-            this._dtMinute = minuteRounded >= 60 ? 55 : minuteRounded;
         }
         minSel.innerHTML = minHtml;
     }
@@ -2331,10 +2697,10 @@ class TodoMgrEntryWidget extends AgentOperableHTMLElement {
         let startWeekday = firstDay.getDay();
         if (startWeekday === 0) startWeekday = 7;
 
-        const today = new Date();
-        const todayY = today.getFullYear();
-        const todayM = today.getMonth() + 1;
-        const todayD = today.getDate();
+        const [todayY, todayM, todayD] = formatDatetimeLocal(new Date().toISOString(), this._editTimezone)
+            .split('T')[0]
+            .split('-')
+            .map(Number);
 
         let html = '';
         const prevLast = new Date(this._dtViewYear, this._dtViewMonth - 1, 0).getDate();
@@ -2371,11 +2737,24 @@ class TodoMgrEntryWidget extends AgentOperableHTMLElement {
                 day: this._dtDay,
                 time: `${pad(this._dtHour)}:${pad(this._dtMinute)}`
             });
+            text.textContent += ` (${this._editTimezone})`;
             text.classList.remove('tm-dt-placeholder');
         } else {
             text.textContent = this._t('renderer.todo.datetime.placeholder');
             text.classList.add('tm-dt-placeholder');
         }
+        this._timeSchedulePicker?.refreshNextRun();
+    }
+
+    private _getOnceTriggerAt(): string | undefined {
+        if (!this._dtYear || !this._dtMonth || !this._dtDay) return;
+        const pad = (value: number) => String(value).padStart(2, '0');
+        const local = `${String(this._dtYear).padStart(4, '0')}-${pad(this._dtMonth)}-${pad(this._dtDay)}T${pad(this._dtHour)}:${pad(this._dtMinute)}`;
+        const original = this._dtOriginal;
+        // Keep seconds and the original DST overlap occurrence when the date/time was not edited.
+        return original?.local === local && original.timezone === this._editTimezone
+            ? original.triggerAt
+            : datetimeLocalToISOString(local, this._editTimezone);
     }
 
     private _bindDtEvents() {
@@ -2441,10 +2820,13 @@ class TodoMgrEntryWidget extends AgentOperableHTMLElement {
         });
 
         todayBtn?.addEventListener('click', () => {
-            const now = new Date();
-            this._dtYear = now.getFullYear();
-            this._dtMonth = now.getMonth() + 1;
-            this._dtDay = now.getDate();
+            [this._dtYear, this._dtMonth, this._dtDay] = formatDatetimeLocal(
+                new Date().toISOString(),
+                this._editTimezone
+            )
+                .split('T')[0]
+                .split('-')
+                .map(Number);
             this._dtViewYear = this._dtYear;
             this._dtViewMonth = this._dtMonth;
             this._renderCalendar();
@@ -2476,233 +2858,24 @@ class TodoMgrEntryWidget extends AgentOperableHTMLElement {
      * ═══════════════════════════ */
 
     private _renderCronBuilder(container: HTMLElement, existingTodo: GlobalTodo | null) {
-        let mode = 'daily';
-        let hour = 9;
-        let minute = 0;
-        let selectedDows = [1, 2, 3, 4, 5]; // Mon-Fri
-        let dom = '1';
-        let customCron = '';
-
-        if (existingTodo?.trigger?.type === 'cron' && existingTodo.trigger.cronExpression) {
-            const parsed = this._parseCronForUI(existingTodo.trigger.cronExpression);
-            mode = parsed.mode;
-            hour = parsed.hour;
-            minute = parsed.minute;
-            selectedDows = parsed.selectedDows;
-            dom = parsed.dom;
-            if (mode === 'custom') {
-                customCron = convertCronUTCToLocal(existingTodo.trigger.cronExpression);
+        this._timeSchedulePicker?.destroy();
+        this._timeSchedulePicker = null;
+        this._timeSchedulePicker = new TimeSchedulePicker(
+            container,
+            this._t,
+            () => this._editTimezone,
+            (slot) => this._renderDateTimePicker(slot, existingTodo),
+            existingTodo?.trigger,
+            this._initialTimePeriod,
+            {
+                onceTriggerAt: () => this._getOnceTriggerAt(),
+                enabled: () => this.querySelector<HTMLInputElement>('#tm-edit-enabled')?.checked !== false
             }
-        }
-
-        const t = this._t;
-        const hourOptions = Array.from(
-            { length: 24 },
-            (_, i) => `<option value="${i}"${i === hour ? ' selected' : ''}>${String(i).padStart(2, '0')}</option>`
-        ).join('');
-        const minOptions = [0, 5, 10, 15, 20, 25, 30, 35, 40, 45, 50, 55]
-            .map((m) => `<option value="${m}"${m === minute ? ' selected' : ''}>${String(m).padStart(2, '0')}</option>`)
-            .join('');
-        const domOptions = Array.from(
-            { length: 31 },
-            (_, i) =>
-                `<option value="${i + 1}"${String(i + 1) === dom ? ' selected' : ''}>${escapeHtml(t('renderer.todo.cron.domOption', { day: i + 1 }))}</option>`
-        ).join('');
-
-        const isCustom = mode === 'custom';
-
-        container.innerHTML = `
-        <div class="tm-edit-field">
-            <label class="tm-edit-label">${escapeHtml(t('renderer.todo.cron.repeatFrequency'))}</label>
-            <div class="tm-cron-row">
-                <select class="tm-cron-select" id="tm-cron-mode" style="flex:1;">
-                    <option value="daily"${mode === 'daily' ? ' selected' : ''}>${escapeHtml(t('renderer.todo.cron.mode.daily'))}</option>
-                    <option value="weekly"${mode === 'weekly' ? ' selected' : ''}>${escapeHtml(t('renderer.todo.cron.mode.weekly'))}</option>
-                    <option value="monthly"${mode === 'monthly' ? ' selected' : ''}>${escapeHtml(t('renderer.todo.cron.mode.monthly'))}</option>
-                    <option value="custom"${isCustom ? ' selected' : ''}>${escapeHtml(t('renderer.todo.cron.mode.custom'))}</option>
-                </select>
-            </div>
-
-            <div id="tm-cron-dow-area" style="${mode === 'weekly' ? '' : 'display:none;'}">
-                <label class="tm-edit-label" style="margin-top:8px;">${escapeHtml(t('renderer.todo.cron.selectDays'))}</label>
-                <div class="tm-cron-dow-grid" id="tm-cron-dow-grid">
-                    ${Array.from({ length: 7 }, (_, i) => `<button type="button" class="tm-cron-dow-btn${selectedDows.includes(i) ? ' active' : ''}" data-dow="${i}">${escapeHtml(this._t(`renderer.todo.datetime.weekday.${i === 0 ? 7 : i}`))}</button>`).join('')}
-                </div>
-            </div>
-
-            <div id="tm-cron-dom-area" style="${mode === 'monthly' ? '' : 'display:none;'}">
-                <label class="tm-edit-label" style="margin-top:8px;">${escapeHtml(t('renderer.todo.cron.selectDays'))}</label>
-                <div class="tm-cron-row">
-                    <select class="tm-cron-select" id="tm-cron-dom">${domOptions}</select>
-                </div>
-            </div>
-
-            <div id="tm-cron-time-area" style="${isCustom ? 'display:none;' : ''}">
-                <label class="tm-edit-label" style="margin-top:10px;">${escapeHtml(t('renderer.todo.cron.executeTime'))}</label>
-                <div class="tm-cron-row">
-                    <select class="tm-cron-select" id="tm-cron-hour">${hourOptions}</select>
-                    <span style="color:#8E8E93;">:</span>
-                    <select class="tm-cron-select" id="tm-cron-minute">${minOptions}</select>
-                </div>
-            </div>
-
-            <div id="tm-cron-custom-area" class="tm-cron-custom-area" style="${isCustom ? '' : 'display:none;'}">
-                <label class="tm-edit-label" style="margin-top:8px;">${escapeHtml(t('renderer.todo.cron.expressionLabel'))}</label>
-                <input type="text" class="tm-cron-custom-input" id="tm-cron-custom-input"
-                    value="${escapeHtml(customCron)}"
-                    placeholder="${escapeHtml(t('renderer.todo.cron.customPlaceholder'))}">
-                <a class="tm-cron-help-link" href="https://support.huaweicloud.com/usermanual-coc/coc_um_05_03_03.html" target="_blank" rel="noopener">
-                    <i class="fas fa-circle-question" style="font-size: var(--fs-sm);"></i>
-                    ${escapeHtml(t('renderer.todo.cron.helpText'))}
-                </a>
-            </div>
-
-            <div class="tm-cron-preview" id="tm-cron-preview"></div>
-        </div>`;
-
-        this._updateCronPreview();
-        this._bindCronEvents();
-    }
-
-    private _parseCronForUI(expr: string): {
-        mode: string;
-        hour: number;
-        minute: number;
-        selectedDows: number[];
-        dom: string;
-    } {
-        const fields = expr.trim().split(/\s+/);
-        if (fields.length !== 5) return { mode: 'custom', hour: 9, minute: 0, selectedDows: [1, 2, 3, 4, 5], dom: '1' };
-        const [cronMin, cronHour, cronDom, cronMonth, cronDow] = fields;
-
-        // 包含 / - L 或月份字段非 * 的表达式无法用简单 UI 表达，归为自定义
-        const isSimpleNum = (s: string) => /^\d+$/.test(s);
-        if (!isSimpleNum(cronMin) || !isSimpleNum(cronHour) || cronMonth !== '*') {
-            return { mode: 'custom', hour: 9, minute: 0, selectedDows: [], dom: '1' };
-        }
-
-        const offsetMin = -new Date().getTimezoneOffset();
-        let lm = parseInt(cronMin, 10) + (offsetMin % 60);
-        let lh = parseInt(cronHour, 10) + Math.floor(offsetMin / 60);
-        let dayShift = 0;
-        if (lm >= 60) {
-            lh++;
-            lm -= 60;
-        }
-        if (lm < 0) {
-            lh--;
-            lm += 60;
-        }
-        if (lh >= 24) {
-            lh -= 24;
-            dayShift = 1;
-        }
-        if (lh < 0) {
-            lh += 24;
-            dayShift = -1;
-        }
-
-        let mode = 'daily';
-        let selectedDows = [1, 2, 3, 4, 5];
-        let dom = '1';
-
-        if (cronDow !== '*') {
-            // 星期字段含非数字/逗号字符 (如 1-5) → 自定义
-            if (!/^[\d,]+$/.test(cronDow)) {
-                return { mode: 'custom', hour: lh, minute: lm, selectedDows: [], dom: '1' };
-            }
-            mode = 'weekly';
-            selectedDows = cronDow.split(',').map((d) => {
-                const v = parseInt(d.trim(), 10);
-                return (((v + dayShift) % 7) + 7) % 7;
-            });
-        } else if (cronDom !== '*') {
-            if (!isSimpleNum(cronDom)) {
-                return { mode: 'custom', hour: lh, minute: lm, selectedDows: [], dom: '1' };
-            }
-            mode = 'monthly';
-            dom = cronDom;
-        }
-
-        return { mode, hour: isNaN(lh) ? 9 : lh, minute: isNaN(lm) ? 0 : lm, selectedDows, dom };
-    }
-
-    private _bindCronEvents() {
-        const modeEl = this.querySelector('#tm-cron-mode') as HTMLSelectElement;
-        const dowGrid = this.querySelector('#tm-cron-dow-grid') as HTMLElement;
-
-        modeEl?.addEventListener('change', () => {
-            const mode = modeEl.value;
-            const dowArea = this.querySelector('#tm-cron-dow-area') as HTMLElement;
-            const domArea = this.querySelector('#tm-cron-dom-area') as HTMLElement;
-            const timeArea = this.querySelector('#tm-cron-time-area') as HTMLElement;
-            const customArea = this.querySelector('#tm-cron-custom-area') as HTMLElement;
-            if (dowArea) dowArea.style.display = mode === 'weekly' ? '' : 'none';
-            if (domArea) domArea.style.display = mode === 'monthly' ? '' : 'none';
-            if (timeArea) timeArea.style.display = mode === 'custom' ? 'none' : '';
-            if (customArea) customArea.style.display = mode === 'custom' ? '' : 'none';
-            this._updateCronPreview();
-        });
-
-        dowGrid?.addEventListener('click', (e) => {
-            const btn = (e.target as HTMLElement).closest('.tm-cron-dow-btn') as HTMLElement;
-            if (!btn) return;
-            btn.classList.toggle('active');
-            this._updateCronPreview();
-        });
-
-        for (const id of ['#tm-cron-hour', '#tm-cron-minute', '#tm-cron-dom']) {
-            this.querySelector(id)?.addEventListener('change', () => this._updateCronPreview());
-        }
-
-        this.querySelector('#tm-cron-custom-input')?.addEventListener('input', () => this._updateCronPreview());
-    }
-
-    private _getCronFromUI(): string {
-        const mode = (this.querySelector('#tm-cron-mode') as HTMLSelectElement)?.value || 'daily';
-        if (mode === 'custom') {
-            const raw = (this.querySelector('#tm-cron-custom-input') as HTMLInputElement)?.value?.trim() || '';
-            return convertCronLocalToUTC(raw);
-        }
-        const hour = parseInt((this.querySelector('#tm-cron-hour') as HTMLSelectElement)?.value || '9');
-        const minute = parseInt((this.querySelector('#tm-cron-minute') as HTMLSelectElement)?.value || '0');
-        const dom = (this.querySelector('#tm-cron-dom') as HTMLSelectElement)?.value || '1';
-        const dowBtns = this.querySelectorAll('#tm-cron-dow-grid .tm-cron-dow-btn.active');
-        const selectedDows = Array.from(dowBtns).map((b) => parseInt((b as HTMLElement).dataset.dow || '0'));
-        return buildCronFromUI(mode, hour, minute, selectedDows, dom, '*');
+        );
     }
 
     private _updateCronPreview() {
-        const previewEl = this.querySelector('#tm-cron-preview') as HTMLElement;
-        if (!previewEl) return;
-        const cron = this._getCronFromUI();
-        const mode = (this.querySelector('#tm-cron-mode') as HTMLSelectElement)?.value || 'daily';
-        const customInput = this.querySelector('#tm-cron-custom-input') as HTMLInputElement;
-
-        if (mode === 'custom') {
-            if (!cron) {
-                previewEl.textContent = this._t('renderer.todo.cron.previewEmpty');
-                previewEl.style.color = '#8E8E93';
-                if (customInput) customInput.classList.remove('tm-input-error');
-                return;
-            }
-            const fields = cron.split(/\s+/);
-            if (fields.length !== 5) {
-                previewEl.textContent = this._t('renderer.todo.cron.previewInvalid');
-                previewEl.style.color = '#FF3B30';
-                if (customInput) customInput.classList.add('tm-input-error');
-                return;
-            }
-            if (customInput) customInput.classList.remove('tm-input-error');
-            previewEl.style.color = '';
-        }
-        const localDesc = describeCronLocal(cron, this._t);
-        if (mode === 'custom') {
-            const rawInput = (this.querySelector('#tm-cron-custom-input') as HTMLInputElement)?.value?.trim() || '';
-            previewEl.textContent = `${localDesc}（${rawInput}）`;
-        } else {
-            previewEl.textContent = `${localDesc}（${convertCronUTCToLocal(cron)}）`;
-        }
+        this._timeSchedulePicker?.refreshPreview();
     }
 
     /* ═══════════════════════════
@@ -2797,23 +2970,49 @@ class TodoMgrEntryWidget extends AgentOperableHTMLElement {
         }
 
         let trigger: any = null;
+        this._showEditError('');
+        if (triggerType !== 'event' && !isValidTimezone(this._editTimezone)) {
+            this._showEditError(this._t('error.timezoneInvalid', { timezone: this._editTimezone }));
+            return;
+        }
         switch (triggerType) {
-            case 'scheduled': {
-                if (this._dtYear && this._dtMonth && this._dtDay) {
-                    const d = new Date(this._dtYear, this._dtMonth - 1, this._dtDay, this._dtHour, this._dtMinute);
-                    trigger = { type: 'scheduled', triggerAt: d.toISOString() };
-                }
-                break;
-            }
+            case 'scheduled':
             case 'cron': {
-                const cronVal = this._getCronFromUI();
-                if (cronVal) trigger = { type: 'cron', cronExpression: cronVal };
+                if (this._timeSchedulePicker && !this._timeSchedulePicker.isOnce()) {
+                    try {
+                        trigger = this._timeSchedulePicker.getTrigger();
+                    } catch (error) {
+                        if (!this._timeSchedulePicker.hasValidationError())
+                            this._showEditError(
+                                error instanceof Error ? error.message : this._t('error.recurrenceInvalid')
+                            );
+                        return;
+                    }
+                    break;
+                }
+                if (this._dtYear && this._dtMonth && this._dtDay) {
+                    try {
+                        const triggerAt = this._getOnceTriggerAt();
+                        trigger = { type: 'scheduled', triggerAt, timezone: this._editTimezone };
+                    } catch {
+                        this._showEditError(
+                            this._t('renderer.todo.timezone.nonexistent', { timezone: this._editTimezone })
+                        );
+                        return;
+                    }
+                }
                 break;
             }
             case 'event': {
                 const bundleName = (this.querySelector('#tm-edit-event-bundle') as HTMLSelectElement)?.value;
                 const eventName = (this.querySelector('#tm-edit-event-name') as HTMLSelectElement)?.value;
-                if (bundleName && eventName) trigger = { type: 'event', bundleName, eventName };
+                if (!bundleName || !eventName) {
+                    // 类型已切到事件但未选完整事件时阻止保存：静默保留旧触发器会让
+                    // 用户看到的类型与实际持久化结果不一致。
+                    this._showEditError(this._t('renderer.todo.event.selectRequired'));
+                    return;
+                }
+                trigger = { type: 'event', bundleName, eventName };
                 break;
             }
         }
@@ -2833,6 +3032,9 @@ class TodoMgrEntryWidget extends AgentOperableHTMLElement {
         const workspaceValue =
             (this.querySelector('#tm-edit-workspace') as HTMLSelectElement)?.value || WORKSPACE_SELECT_DEFAULT;
         const workspace = parseTodoWorkspaceSelectValue(workspaceValue) || null;
+        const modelPicker = this.querySelector('#tm-edit-model-picker') as HTMLElement | null;
+        const selectedModel = modelPicker?.dataset.selectedModel || '';
+        const selectedReasoningEffort = (modelPicker?.dataset.selectedEffort || '') as ReasoningEffort;
 
         try {
             const saveBtn = this.querySelector('#tm-edit-save') as HTMLButtonElement;
@@ -2850,6 +3052,11 @@ class TodoMgrEntryWidget extends AgentOperableHTMLElement {
             updatePayload.deliver = deliver || null;
             // 工作空间：null 表示不指定，运行时使用当前全局工作空间
             updatePayload.workspace = workspace;
+            // 模型：removeModel=true 表示恢复为触发时的全局默认模型。
+            updatePayload.removeModel = !selectedModel;
+            if (selectedModel) updatePayload.model = selectedModel;
+            // 空字符串表示使用选定模型的默认推理档位。
+            updatePayload.reasoningEffort = selectedReasoningEffort;
 
             if (existingTodo) {
                 await window.applicationAPI.call('updateGlobalTodo', existingTodo.id, updatePayload);
@@ -2862,7 +3069,9 @@ class TodoMgrEntryWidget extends AgentOperableHTMLElement {
                     undefined,
                     trigger,
                     deliver,
-                    workspace
+                    workspace,
+                    selectedModel || undefined,
+                    selectedReasoningEffort
                 );
             }
 

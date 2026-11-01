@@ -24,7 +24,8 @@ function loadHandler(channel: string, task: object) {
                 refreshLazyTaskSystemPrompt: async () => undefined
             }
         },
-        Setting: { getInstance: () => ({ getModelInstance: () => ({}) }) }
+        Setting: { getInstance: () => ({ getModelInstance: () => ({}) }) },
+        t: (key: string) => key
     });
     return handle.mock.calls[0][1] as (...args: unknown[]) => Promise<unknown>;
 }
@@ -68,6 +69,24 @@ describe('task model reasoning effort IPC', () => {
 
         expect(task.model).toBe('model-b');
         expect(task.reasoningEffort).toBe('high');
+        expect(task.refreshToolsets).toHaveBeenCalledTimes(1);
+    });
+
+    test('persists the requested effort without local capability validation', async () => {
+        const task = {
+            model: 'model-a',
+            reasoningEffort: 'low',
+            persistLater: jest.fn(),
+            refreshToolsets: jest.fn()
+        };
+        const handler = loadHandler('taskManager:setTaskModel', task);
+
+        const result = await handler({}, 'task-1', 'model-b', 'max');
+
+        expect(result.status).toBe('ok');
+        expect(task.model).toBe('model-b');
+        expect(task.reasoningEffort).toBe('max');
+        expect(task.persistLater).toHaveBeenCalledTimes(1);
         expect(task.refreshToolsets).toHaveBeenCalledTimes(1);
     });
 

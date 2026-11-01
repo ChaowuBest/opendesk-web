@@ -15,29 +15,24 @@
  */
 
 import { t } from './locale/index.js';
-import { describeCron, type CronDescribeLabels } from '../../utils/cron.js';
-
-/** describeCron 的多语言文案，词条随当前 locale 动态解析 */
-function cronLabels(): CronDescribeLabels {
-    return {
-        dowNames: Array.from({ length: 7 }, (_, i) => t(`cron.desc.dowNames.${i}`)),
-        everyDowTemplate: t('cron.desc.everyDow'),
-        dowTemplate: t('cron.desc.dow'),
-        monthlyDomTemplate: t('cron.desc.monthlyDom'),
-        monthTemplate: t('cron.desc.month'),
-        hourTemplate: t('cron.desc.hourOnly'),
-        minuteTemplate: t('cron.desc.minuteOnly'),
-        everyMinute: t('cron.desc.everyMinute')
-    };
-}
+import { describeLegacyRecurrence, describeTodoRecurrence } from './recurrence-description.js';
+import { formatDateTimeInTimezone, getSystemTimezone } from './timezone.js';
 
 export function buildTriggerInfo(trigger: any): string {
     if (trigger?.type === 'event') {
         return t('trigger.info.event', { bundle: trigger.bundleName, event: trigger.eventName });
     } else if (trigger?.type === 'scheduled') {
-        return t('trigger.info.scheduled');
+        if (!trigger.triggerAt) return t('trigger.info.scheduled');
+        const timezone = trigger.timezone ?? getSystemTimezone();
+        const time = formatDateTimeInTimezone(trigger.triggerAt, timezone);
+        return `${t('trigger.info.scheduled').trimEnd()} ${time} (${timezone})`;
     } else if (trigger?.type === 'cron') {
-        return t('trigger.info.cron', { cron: describeCron(trigger.cronExpression, cronLabels()) });
+        const timezone = trigger.timezone ?? 'UTC';
+        return t('trigger.info.cron', {
+            cron: trigger.recurrence
+                ? describeTodoRecurrence(trigger.recurrence, t, timezone)
+                : describeLegacyRecurrence(trigger.cronExpression, t, timezone)
+        });
     }
     return '';
 }

@@ -752,12 +752,21 @@ export function dispatchWorkerMessage(event: any, worker: Worker): void {
         }
         case 'triggerTodoTask': {
             // 兼容旧消息格式：转发到 TodoMgrApplication.triggerTodoTask
-            const { todoId, todoTitle, todoContent, trigger, deliver, workspace } = event;
+            const { todoId, todoTitle, todoContent, trigger, deliver, workspace, model, reasoningEffort } = event;
             logger.info(`收到触发器任务请求: todo=${todoId}`);
             const todoApp = ApplicationRegistry.getApplication('todomgr');
             if (todoApp && typeof (todoApp as any).triggerTodoTask === 'function') {
                 (todoApp as any)
-                    .triggerTodoTask(todoId, todoTitle, todoContent, trigger, deliver, workspace)
+                    .triggerTodoTask(
+                        todoId,
+                        todoTitle,
+                        todoContent,
+                        trigger,
+                        deliver,
+                        workspace,
+                        model,
+                        reasoningEffort
+                    )
                     .catch((err: any) => logger.error(`triggerTodoTask failed:`, err));
             }
             break;

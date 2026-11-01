@@ -19,33 +19,22 @@ import type { TaskState } from '../../aikernel/states/tasks';
 import { escapeHtml } from '../../../common/utils/escape.js';
 import { t } from './locale/index.js';
 import { type TodoMgrApplication } from './app';
-import { describeCron, type CronDescribeLabels } from '../../utils/cron';
+import { describeLegacyRecurrence, describeTodoRecurrence } from './recurrence-description.js';
+import { getRecurrenceValidationMessage } from './recurrence-validation.js';
 import chalk from 'chalk';
 import path from 'path';
 import type { Participant } from '../../plugins/types';
 import type { TodoWorkspaceConfig } from './common.js';
+import { REASONING_EFFORT_VALUES } from '../../aikernel/types/reasoning.js';
+import { formatDateTimeInTimezone, getSystemTimezone, isValidTimezone } from './timezone.js';
 
 const GetCurrentTimeArgsSchema = z.object({});
-
-/** describeCron 的多语言文案，词条随当前 locale 动态解析 */
-function cronLabels(): CronDescribeLabels {
-    return {
-        dowNames: Array.from({ length: 7 }, (_, i) => t(`cron.desc.dowNames.${i}`)),
-        everyDowTemplate: t('cron.desc.everyDow'),
-        dowTemplate: t('cron.desc.dow'),
-        monthlyDomTemplate: t('cron.desc.monthlyDom'),
-        monthTemplate: t('cron.desc.month'),
-        hourTemplate: t('cron.desc.hourOnly'),
-        minuteTemplate: t('cron.desc.minuteOnly'),
-        everyMinute: t('cron.desc.everyMinute')
-    };
-}
 
 export class GetCurrentTimeTool extends BaseTool<typeof GetCurrentTimeArgsSchema> {
     constructor() {
         super(
             'getCurrentTime',
-            '获取当前精确的日期和时间。返回包含 UTC 时间、本地时间和时区信息',
+            '获取当前精确的日期和时间，返回 UTC 绝对时间、本地时间、系统 IANA 时区和 UTC 偏移。创建 scheduled 触发器时使用 UTC triggerAt；重复任务使用 recurrence，周期 time 按目标 IANA timezone 的当地时间填写，间隔 anchorAt 使用 UTC。',
             GetCurrentTimeArgsSchema,
             undefined,
             { 'zh-CN': '当前时间', 'en-US': 'Current Time' }
@@ -93,7 +82,7 @@ export class GetCurrentTimeTool extends BaseTool<typeof GetCurrentTimeArgsSchema
         return [
             `- **${t('tool.getCurrentTime.labelUtc')}**: ${iso}`,
             `- **${t('tool.getCurrentTime.labelLocal')}**: ${locale}`,
-            `- **${t('tool.getCurrentTime.labelTimezone')}**: ${timezone}`,
+            `- **${t('tool.getCurrentTime.labelTimezone')}**: ${getSystemTimezone()} (${timezone})`,
             `- **${t('tool.getCurrentTime.labelTimestamp')}**: ${now.getTime()}`
         ].join('\n');
     }
@@ -107,21 +96,98 @@ const EventTriggerSchema = z.object({
     eventName: z.string().describe('事件名称，如 "newEmailCountsUpdated"')
 });
 
+const TimezoneSchema = z
+    .string()
+    .refine(isValidTimezone, {
+        error: (issue) => t('error.timezoneInvalid', { timezone: String(issue.input) })
+    })
+    .optional()
+    .describe(
+        'IANA 时区。用户明确指定时使用该时区；新建且用户未指定时，先调用 getCurrentTime 获取系统时区并按当地时间计算，可省略此字段由运行时保存系统时区。更新时保留原时区，旧 cron 未指定时保持 UTC；scheduled 中仅用于展示'
+    );
+
 const ScheduledTriggerSchema = z.object({
     type: z.literal('scheduled'),
     triggerAt: z
         .string()
         .describe(
-            '任务触发时间，必须使用UTC时间（ISO8601格式，以Z结尾），请先调用getCurrentTime工具获取当前UTC时间为基准进行计算'
-        )
+            '任务触发时间，必须使用 UTC 时间（ISO8601 格式，以 Z 结尾）。先调用 getCurrentTime 获取当前 UTC 时间和系统 IANA 时区；用户未指定时区时按系统时区理解执行时间，更新已有任务时保留原时区。按目标日期的实际时区偏移换算为 UTC'
+        ),
+    timezone: TimezoneSchema
 });
 
-const CronTriggerSchema = z.object({
-    type: z.literal('cron'),
-    cronExpression: z
-        .string()
-        .describe('crontab 表达式: "分 时 日 月 周"，如 "0 9 * * 1-5" 表示工作日每天9点, "*/30 * * * *" 表示每30分钟')
-});
+const RecurrenceSchema = z
+    .object({
+        mode: z.enum(['daily', 'weekly', 'biweekly', 'monthly', 'yearly', 'interval']),
+        time: z
+            .string()
+            .optional()
+            .describe('当地执行时间 HH:mm；周期模式及新建 day、week、month、year 间隔必填，hour 间隔不填写'),
+        weekdays: z
+            .array(z.number().int().min(0).max(6))
+            .optional()
+            .describe(
+                'weekly、biweekly 及带 time 的 week 间隔必填非空星期数组，0=周日，1=周一，6=周六；旧间隔计划的星期筛选仅作兼容'
+            ),
+        days: z
+            .array(z.number().int().min(1).max(31))
+            .min(1)
+            .optional()
+            .describe(
+                'monthly、yearly 及带 time 的 month、year 间隔必填非空日期数组，1..31；优先于旧 day 字段，没有所选日期的月份跳过'
+            ),
+        months: z
+            .array(z.number().int().min(1).max(12))
+            .min(1)
+            .optional()
+            .describe(
+                'yearly 及带 time 的 year 间隔必填非空月份数组，1..12；每个所选月份的每个所选日期都执行，优先于旧 month 字段'
+            ),
+        day: z.number().int().optional().describe('兼容旧 monthly、yearly 计划的单个日期；新计划使用 days'),
+        month: z.number().int().optional().describe('兼容旧 yearly 计划的单个月份；新计划使用 months'),
+        anchorDate: z.string().optional().describe('biweekly 必填 YYYY-MM-DD，该日期所在的当地周一至周日为首个执行周'),
+        anchorAt: z
+            .string()
+            .optional()
+            .describe(
+                'interval 必填 UTC ISO 时间，必须精确到整分钟。hour 从此时刻累计真实小时；带 time 的 day、week、month、year 以此刻所在当地日、周（周一起始）、月、年为首个周期，仅执行不早于此刻的所选当地日期和时间'
+            ),
+        intervalValue: z.number().int().min(1).max(10000).optional().describe('interval 的正整数间隔值'),
+        intervalUnit: z
+            .enum(['hour', 'day', 'week', 'month', 'year'])
+            .optional()
+            .describe('interval 的单位：小时、天、周、月或年'),
+        intervalHours: z
+            .number()
+            .int()
+            .optional()
+            .describe('仅兼容旧 interval 计划的正整数小时数，最大 8760；新计划使用 intervalValue 和 intervalUnit')
+    })
+    .strict()
+    .superRefine((value, context) => {
+        const message = getRecurrenceValidationMessage(value, t);
+        if (message) context.addIssue({ code: 'custom', message });
+    });
+
+const CronTriggerSchema = z
+    .object({
+        type: z.literal('cron'),
+        cronExpression: z
+            .string()
+            .optional()
+            .describe(
+                '仅用于兼容已有计划的内部 5 字段表达式。新建重复任务请使用 recurrence 并省略此字段；recurrence 存在时会自动填充内部唤醒规则，不要向用户展示表达式。'
+            ),
+        timezone: TimezoneSchema,
+        recurrence: RecurrenceSchema.optional().describe(
+            '可视化周期或间隔计划：每天/每周/双周/每月/每年，或每隔 N 小时、天、周、月、年；按天及更长单位的新间隔需指定当地日期和时间'
+        )
+    })
+    .superRefine((value, context) => {
+        if (!value.recurrence && !value.cronExpression?.trim()) {
+            context.addIssue({ code: 'custom', message: t('error.recurrenceInvalid') });
+        }
+    });
 
 const TriggerSchema = z.discriminatedUnion('type', [EventTriggerSchema, ScheduledTriggerSchema, CronTriggerSchema]);
 
@@ -213,18 +279,25 @@ function validateAndNormalizeTrigger(trigger: unknown): z.output<typeof TriggerS
         );
     }
 
+    if (result.data.type === 'cron' && result.data.recurrence) {
+        return { ...result.data, cronExpression: '* * * * *' };
+    }
     return result.data;
 }
 
-function formatTriggerDisplay(trigger: any): string {
+function formatTriggerDisplay(trigger: any, cronTimezoneFallback = 'UTC'): string {
     if (!trigger) return '';
     switch (trigger.type) {
         case 'event':
             return `📡 ${trigger.bundleName}:${trigger.eventName}`;
-        case 'scheduled':
-            return `⏱ ${new Date(trigger.triggerAt).toLocaleString()}`;
-        case 'cron':
-            return `🔁 ${describeCron(trigger.cronExpression, cronLabels())}`;
+        case 'scheduled': {
+            const timezone = trigger.timezone ?? getSystemTimezone();
+            return `⏱ ${formatDateTimeInTimezone(trigger.triggerAt, timezone)} (${timezone})`;
+        }
+        case 'cron': {
+            const timezone = trigger.timezone ?? cronTimezoneFallback;
+            return `🔁 ${trigger.recurrence ? describeTodoRecurrence(trigger.recurrence, t, timezone) : describeLegacyRecurrence(trigger.cronExpression, t, timezone)}`;
+        }
         default:
             return '';
     }
@@ -248,7 +321,7 @@ function getStatusBadge(isEnabled: boolean): { color: string; bg: string; label:
     return { ...style, label: t(isEnabled ? 'status.enabled' : 'status.disabled') };
 }
 
-function renderTodoCardHtml(actionLabel: string, args: any, toolcall: ToolCall): string {
+function renderTodoCardHtml(actionLabel: string, args: any, toolcall: ToolCall, cronTimezoneFallback = 'UTC'): string {
     const title = args?.['title'] || '';
     const content = args?.['content'] || '';
     const trigger = args?.['trigger'];
@@ -257,7 +330,7 @@ function renderTodoCardHtml(actionLabel: string, args: any, toolcall: ToolCall):
     const triggerType = trigger?.type || 'scheduled';
     const tCfg = TRIGGER_ICON_CONFIG[triggerType] || TRIGGER_ICON_CONFIG.scheduled;
     const sCfg = getStatusBadge(isEnabled);
-    const triggerDesc = formatTriggerDisplay(trigger);
+    const triggerDesc = formatTriggerDisplay(trigger, cronTimezoneFallback);
 
     const isRunning = toolcall.status === 'running';
     const isSuccess = toolcall.status === 'success';
@@ -562,12 +635,17 @@ const AddGlobalTodoArgsSchema = z.object({
         .describe('优先级（保留字段，暂无实际语义）'),
     category: z.string().optional().describe('分类标签（保留字段，暂无实际语义）'),
     trigger: TriggerSchema.optional().describe(
-        '触发器配置。event: 事件触发; scheduled: 定时一次性触发 (**必须使用 UTC 时间**); cron: crontab 重复触发。不指定则为手动模式。'
+        '触发器配置。event: 事件触发；scheduled: 定时一次性触发（triggerAt 必须为 UTC 绝对时间，timezone 仅用于展示）；cron: 使用 recurrence 设置重复任务，time 为当地时间。创建 scheduled 或 cron 前先调用 getCurrentTime 获取系统时区；用户未指定时按系统时区计算，省略 timezone 由运行时填入，用户明确指定时才设置对应时区。hour 间隔从 UTC anchorAt 累计真实小时；新 day/week/month/year 间隔指定 time 及对应星期/日期/月份。不指定 trigger 则为手动模式。'
     ),
     deliver: ChannelDeliverSchema.optional().describe(
         '任务完成后的回复投递目标。指定后，触发任务的最终回复会发送到该渠道联系人；不指定时，如果当前任务来自渠道会自动继承当前会话。'
     ),
-    workspace: z.string().optional().describe('触发后创建任务时使用的工作空间绝对路径；不指定则使用当前默认工作空间。')
+    workspace: z.string().optional().describe('触发后创建任务时使用的工作空间绝对路径；不指定则使用当前默认工作空间。'),
+    model: z.string().min(1).optional().describe('触发任务使用的聊天模型 alias；不指定则使用触发时的全局默认模型。'),
+    reasoningEffort: z
+        .enum(REASONING_EFFORT_VALUES)
+        .optional()
+        .describe('推理档位；空字符串或不指定表示使用所选模型的默认档位。')
 });
 
 export class AddGlobalTodoTool extends BaseTool<typeof AddGlobalTodoArgsSchema> {
@@ -576,7 +654,7 @@ export class AddGlobalTodoTool extends BaseTool<typeof AddGlobalTodoArgsSchema> 
     constructor(todoMgrApp: TodoMgrApplication) {
         super(
             'addGlobalTodo',
-            '添加全局待办事项，跨所有任务持久保存。可选配置触发器实现自动执行：event(事件触发)、scheduled(定时一次性)、cron(crontab重复)。可通过 workspace 指定触发任务的工作空间，通过 deliver 指定最终回复发送到哪个渠道联系人。注意：content 是发送给 Agent 执行的详细指令，Agent 有能力调用工具访问文件、执行命令等，因此具体需求应明确写在 content 中。',
+            '添加全局待办事项，跨所有任务持久保存。可选配置触发器实现自动执行：event(事件触发)、scheduled(单次)、cron(用 recurrence 设置周期或间隔)。向用户用自然语言说明执行频率，不展示内部表达式。可通过 workspace 指定触发任务的工作空间，通过 deliver 指定最终回复发送到哪个渠道联系人。注意：content 是发送给 Agent 执行的详细指令，Agent 有能力调用工具访问文件、执行命令等，因此具体需求应明确写在 content 中。',
             AddGlobalTodoArgsSchema,
             undefined,
             { 'zh-CN': '添加全局待办', 'en-US': 'Add Global Todo' }
@@ -586,7 +664,9 @@ export class AddGlobalTodoTool extends BaseTool<typeof AddGlobalTodoArgsSchema> 
     }
 
     renderToolCall(toolcall: ToolCall): Promise<string | undefined> {
-        return Promise.resolve(renderTodoCardHtml(t('tool.card.add'), toolcall.args_object, toolcall));
+        return Promise.resolve(
+            renderTodoCardHtml(t('tool.card.add'), toolcall.args_object, toolcall, getSystemTimezone())
+        );
     }
 
     renderToolCallCli(toolcall: ToolCall, width: number): string[] | undefined {
@@ -604,7 +684,10 @@ export class AddGlobalTodoTool extends BaseTool<typeof AddGlobalTodoArgsSchema> 
                 body.push(chalk.dim(t('tool.cli.label.content')) + truncText(String(content), width - 20));
             }
             if (trigger) {
-                body.push(chalk.dim(t('tool.cli.label.trigger')) + chalk.cyan(formatTriggerDisplay(trigger)));
+                body.push(
+                    chalk.dim(t('tool.cli.label.trigger')) +
+                        chalk.cyan(formatTriggerDisplay(trigger, getSystemTimezone()))
+                );
             }
         }
 
@@ -656,7 +739,9 @@ export class AddGlobalTodoTool extends BaseTool<typeof AddGlobalTodoArgsSchema> 
             args.category,
             normalizedTrigger,
             deliver,
-            workspace
+            workspace,
+            args.model,
+            args.reasoningEffort
         );
         const todo = result?.data ?? result;
         return JSON.stringify({ success: true, id: todo.id, todo });
@@ -677,7 +762,13 @@ const UpdateGlobalTodoArgsSchema = z.object({
     deliver: ChannelDeliverSchema.optional().describe('新的回复投递目标；指定后任务最终回复会发送到该渠道联系人'),
     removeDeliver: z.boolean().optional().describe('设为 true 时移除当前回复投递目标'),
     workspace: z.string().optional().describe('新的触发任务工作空间绝对路径'),
-    removeWorkspace: z.boolean().optional().describe('设为 true 时移除当前工作空间配置，恢复使用默认工作空间')
+    removeWorkspace: z.boolean().optional().describe('设为 true 时移除当前工作空间配置，恢复使用默认工作空间'),
+    model: z.string().min(1).optional().describe('新的聊天模型 alias；不指定则保持原配置。'),
+    removeModel: z.boolean().optional().describe('设为 true 时移除当前模型配置，恢复使用全局默认模型。'),
+    reasoningEffort: z
+        .enum(REASONING_EFFORT_VALUES)
+        .optional()
+        .describe('新的推理档位；空字符串表示使用所选模型的默认档位。')
 });
 
 export class UpdateGlobalTodoTool extends BaseTool<typeof UpdateGlobalTodoArgsSchema> {
@@ -686,7 +777,7 @@ export class UpdateGlobalTodoTool extends BaseTool<typeof UpdateGlobalTodoArgsSc
     constructor(todoMgrApp: TodoMgrApplication) {
         super(
             'updateGlobalTodo',
-            '更新全局待办事项的标题、内容、启用状态、触发器、工作空间或回复投递目标。设 removeTrigger/removeDeliver/removeWorkspace 为 true 可移除对应配置。**注意**: 1. 设置 scheduled 触发器时，triggerAt 必须使用 UTC 时间（如 "2026-03-01T01:00:00Z"）；2. content 是发送给 Agent 执行的详细指令，Agent 有能力调用工具访问文件、执行命令等。',
+            '更新全局待办事项的标题、内容、启用状态、触发器、工作空间或回复投递目标。设 removeTrigger/removeDeliver/removeWorkspace 为 true 可移除对应配置。注意：scheduled.triggerAt 是 UTC 绝对时间，timezone 仅用于展示；重复任务通过 recurrence 更新频率，time 是所选时区当地时间。hour 间隔累计真实小时，新 day/week/month/year 间隔通过 time 及星期/日期/月份指定当地执行时间；修改其他信息时保留原频率和时区。向用户使用自然语言说明频率，不展示内部表达式。content 是发送给 Agent 执行的详细指令。',
             UpdateGlobalTodoArgsSchema,
             undefined,
             { 'zh-CN': '更新全局待办', 'en-US': 'Update Global Todo' }
@@ -737,7 +828,17 @@ export class UpdateGlobalTodoTool extends BaseTool<typeof UpdateGlobalTodoArgsSc
         args: z.output<typeof UpdateGlobalTodoArgsSchema>,
         taskState?: TaskState
     ): Promise<string> {
-        const { trigger, removeTrigger, deliver, removeDeliver, workspace, removeWorkspace, ...rest } = args;
+        const {
+            trigger,
+            removeTrigger,
+            deliver,
+            removeDeliver,
+            workspace,
+            removeWorkspace,
+            model,
+            removeModel,
+            ...rest
+        } = args;
         const updateArgs: Record<string, unknown> = { ...rest };
 
         if (removeTrigger) {
@@ -755,6 +856,11 @@ export class UpdateGlobalTodoTool extends BaseTool<typeof UpdateGlobalTodoArgsSc
             updateArgs.removeWorkspace = true;
         } else if (workspace !== undefined) {
             updateArgs.workspace = normalizeWorkspaceField(workspace);
+        }
+        if (removeModel) {
+            updateArgs.removeModel = true;
+        } else if (model !== undefined) {
+            updateArgs.model = model;
         }
         if (trigger !== undefined) {
             const normalizedTrigger = validateAndNormalizeTrigger(trigger);

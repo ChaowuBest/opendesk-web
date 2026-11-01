@@ -33,9 +33,12 @@ import { AgentRegistry } from '../../aikernel/agents/registry.js';
 import { buildTriggerMessage } from './trigger.js';
 import { resolveTodoWorkspace } from './workspace.js';
 import { logger } from '../../utils/logger.js';
+import { Setting } from '../../utils/setting.js';
+import { resolveModelReasoningEfforts, resolveModelVisionSupport } from '../../utils/model-context.js';
 import chalk from 'chalk';
 import type { Participant } from '../../plugins/types.js';
-import type { TodoWorkspaceConfig } from './common.js';
+import type { TodoChatModelCatalog, TodoWorkspaceConfig } from './common.js';
+import type { ReasoningEffort } from '../../aikernel/types/reasoning.js';
 
 export class TodoMgrApplication extends BaseApplication {
     constructor() {
@@ -150,6 +153,28 @@ export class TodoMgrApplication extends BaseApplication {
     }
 
     /**
+     * 供编辑页使用：返回不包含凭据的聊天模型目录。
+     */
+    getChatModelsForUI(): TodoChatModelCatalog {
+        const data = Setting.getInstance().getData();
+        const seen = new Set<string>();
+        const catalog: TodoChatModelCatalog = { default_model: data.default_model || '', models: [] };
+        for (const model of [...(data.models || []), ...(data.builtin_models || [])]) {
+            if (model.model_type === 'embedding' || !model.alias || seen.has(model.alias)) continue;
+            seen.add(model.alias);
+            const modelName = model.model_name || model.alias;
+            catalog.models.push({
+                alias: model.alias,
+                provider_name: model.provider_name || '',
+                model_name: modelName,
+                vision: resolveModelVisionSupport({ model_name: modelName, vision: model.vision }) ?? false,
+                reasoningEfforts: resolveModelReasoningEfforts({ model_name: modelName })
+            });
+        }
+        return catalog;
+    }
+
+    /**
      * 供 UI 调用：立即触发指定的全局待办
      */
     async triggerGlobalTodoNowFromUI(todoId: string): Promise<void> {
@@ -166,7 +191,9 @@ export class TodoMgrApplication extends BaseApplication {
         todoContent: string,
         trigger: any,
         deliver?: Participant | null,
-        workspace?: TodoWorkspaceConfig
+        workspace?: TodoWorkspaceConfig,
+        model?: string,
+        reasoningEffort?: ReasoningEffort
     ): Promise<void> {
         try {
             const prompt = buildTriggerMessage(todoId, todoTitle, todoContent, trigger);
@@ -179,9 +206,23 @@ export class TodoMgrApplication extends BaseApplication {
             // 有 deliver 时使用 deliver 作为 origin，投递回复到对应 channel
             const origin = deliver || ({ type: 'automation' } as any);
             const mainAgent = AgentRegistry.getMainAgent();
+            const setting = Setting.getInstance();
+            // Resolve the concrete model once so the alias check and reasoning capability
+            // check use the same snapshot (the settings can be changed while a trigger runs).
+            const modelInstance = model
+                ? setting.getModelInstance(model, 'chat')
+                : (setting.getDefaultModelInstance?.() ?? null);
+            const modelIsValid = !model || !!modelInstance;
+            if (model && !modelIsValid) {
+                logger.warn(`触发器任务 ${todoId} 指定模型不可用，回退到当前全局默认模型: ${model}`);
+            }
+            // 档位不做本地能力校验：模型不支持时由模型服务在请求时报错，任务显式失败。
             const task = await taskManager.dispatchPromptToAgent(mainAgent, undefined, prompt, {
+                taskName: todoTitle.trim() ? todoTitle : undefined,
                 workspace: resolvedWorkspace,
-                origin
+                origin,
+                model: modelIsValid ? model : undefined,
+                reasoningEffort: modelIsValid ? reasoningEffort : undefined
             });
 
             if (deliver) {

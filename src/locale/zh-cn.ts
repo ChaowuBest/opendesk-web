@@ -9,6 +9,8 @@
  * See the Mulan PSL v2 for more details.
  */
 
+import { modelZhCn } from '../common/locale/model.js';
+
 export const zhCn: Record<string, string> = {
     'credentials.oldPassword': '旧密码',
     'credentials.clear': '清除密码',
@@ -1246,14 +1248,6 @@ export const zhCn: Record<string, string> = {
     'tools.memory.updatedPortrait': '已更新用户画像',
     'tools.memory.searchResultCount': '找到 ${count} 条记忆',
 
-    // Reasoning Effort Labels
-    'reasoning.effort.default': '默认',
-    'reasoning.effort.none': '无推理',
-    'reasoning.effort.low': '简洁推理',
-    'reasoning.effort.medium': '推理适中',
-    'reasoning.effort.high': '推理深入',
-    'reasoning.effort.max': '推理最大化',
-
     // Tool Call Status
     'toolcall.status.pending': '等待中',
     'toolcall.status.running': '执行中…',
@@ -1942,6 +1936,7 @@ export const zhCn: Record<string, string> = {
     'error.model.default_chat_missing_or_type_mismatch': '默认对话模型未配置或不是对话模型',
     'error.model.default_embedding_missing_or_type_mismatch': '默认嵌入模型未配置或不是嵌入模型',
     'error.model.default_reranker_missing': '默认重排序模型未配置',
+    'error.model.default': '默认模型',
     'error.model.invalid_embedding_response': '嵌入模型返回格式无效：期望 ${shape}',
     'error.model.stream_idle_timeout': '模型流响应空闲超时：${timeoutMs} 毫秒内未收到数据',
     'error.model.chat_alias_not_found': "对话模型别名 '${alias}' 不存在",
@@ -3136,5 +3131,7 @@ export const zhCn: Record<string, string> = {
     'main.desktop.card.invalidInput': '卡片生成参数无效',
     'main.desktop.card.promptRequired': '卡片生成缺少关注内容',
     'main.desktop.card.noHtml': 'Agent 未生成有效的卡片 HTML',
-    'main.desktop.card.timeout': '卡片生成超时（3 分钟），模型可能不可用，请稍后右键卡片重试'
+    'main.desktop.card.timeout': '卡片生成超时（3 分钟），模型可能不可用，请稍后右键卡片重试',
+
+    ...modelZhCn
 };

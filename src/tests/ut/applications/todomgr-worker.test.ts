@@ -52,8 +52,69 @@ describe('todomgr worker automation task routing', () => {
             todo.content,
             todo.trigger,
             deliver,
-            workspace
+            workspace,
+            undefined,
+            undefined
         );
+    });
+
+    test('stores model and reasoning effort, then passes both when triggering', async () => {
+        const { worker, tempDir } = createWorker();
+        tempDirs.push(tempDir);
+        const callApp = jest.spyOn(worker as any, 'callApp').mockImplementation(() => {});
+
+        const todo = await worker.addGlobalTodo(
+            '使用指定模型',
+            '执行日报',
+            'medium',
+            undefined,
+            undefined,
+            undefined,
+            undefined,
+            'reasoning-pro',
+            'high'
+        );
+
+        expect(todo.model).toBe('reasoning-pro');
+        expect(todo.reasoningEffort).toBe('high');
+
+        await worker.triggerGlobalTodoNow(todo.id);
+
+        expect(callApp).toHaveBeenCalledWith(
+            'triggerTodoTask',
+            todo.id,
+            todo.title,
+            todo.content,
+            todo.trigger,
+            undefined,
+            undefined,
+            'reasoning-pro',
+            'high'
+        );
+    });
+
+    test('removes an explicit model when the automation returns to the global default', async () => {
+        const { worker, tempDir } = createWorker();
+        tempDirs.push(tempDir);
+        const todo = await worker.addGlobalTodo(
+            '指定模型',
+            '执行任务',
+            'medium',
+            undefined,
+            undefined,
+            undefined,
+            undefined,
+            'reasoning-pro',
+            'medium'
+        );
+
+        const updated = await worker.updateGlobalTodo(todo.id, {
+            removeModel: true,
+            reasoningEffort: ''
+        });
+
+        expect(updated.model).toBeUndefined();
+        expect(updated.reasoningEffort).toBe('');
     });
 
     test('removes deliver and workspace from an existing automation task', async () => {

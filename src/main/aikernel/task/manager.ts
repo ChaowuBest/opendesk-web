@@ -26,6 +26,7 @@ import { getPlatform } from '../../../platforms/base.js';
 import { AgentRegistry } from '../agents/registry.js';
 import type { AgentDecl, ModeDecl } from '../agents/common.js';
 import type { Participant } from '../../plugins/types.js';
+import type { ReasoningEffort } from '../types/reasoning.js';
 import { TaskState } from '../states/tasks.js';
 import { TaskTransferError, type TaskTransferStage } from '../../utils/task-transfer-error.js';
 import { atomicWriteFile, atomicWriteFileSync } from '../../utils/temp.js';
@@ -722,7 +723,7 @@ export class TaskManagerState {
     /** Create a task from user request. */
     createTask(model?: string, options: { internal?: boolean; taskName?: string } = {}): TaskState {
         const task = new TaskState(this);
-        task.name_pending = true;
+        task.name_pending = options.taskName === undefined;
         if (model) {
             if (Setting.getInstance().getModelInstance(model, 'chat')) {
                 task.model = model;
@@ -783,7 +784,13 @@ export class TaskManagerState {
         agent: AgentDecl | string,
         modeName: string | undefined,
         prompt: string,
-        options?: { workspace?: string; origin?: Participant }
+        options?: {
+            workspace?: string;
+            origin?: Participant;
+            model?: string;
+            reasoningEffort?: ReasoningEffort;
+            taskName?: string;
+        }
     ): Promise<TaskState> {
         let agentDecl: AgentDecl;
         if (typeof agent === 'string') {
@@ -804,7 +811,10 @@ export class TaskManagerState {
         const workspace = options?.workspace || getPlatform().getEffectiveWorkspace();
 
         // 创建任务
-        const task = this.createTask();
+        const task = this.createTask(options?.model, { taskName: options?.taskName });
+        if (options?.reasoningEffort !== undefined) {
+            task.reasoningEffort = options.reasoningEffort;
+        }
         task.agentId = agentDecl.agentId;
 
         // 设置 origin（需在 submitUserMessage 之前，以便 buildToolsets 中 isAvailable 能读取）

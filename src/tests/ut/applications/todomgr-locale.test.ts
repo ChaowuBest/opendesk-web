@@ -3,6 +3,7 @@ import path from 'path';
 import { fileURLToPath } from 'url';
 import { zhCn as todoZhCn } from '../../../main/applications/todomgr/locale/zh-cn.js';
 import { enUs as todoEnUs } from '../../../main/applications/todomgr/locale/en-us.js';
+import { modelZhCn } from '../../../common/locale/model.js';
 import { t as todoT } from '../../../main/applications/todomgr/locale/index.js';
 import { createTranslatorForTodoMgr } from '../../../main/applications/todomgr/locale/renderer.js';
 import { TODO_TEMPLATES } from '../../../main/applications/todomgr/templates.js';
@@ -11,7 +12,6 @@ import { zhCn as appZhCn } from '../../../locale/zh-cn.js';
 import { enUs as appEnUs } from '../../../locale/en-us.js';
 import { setRuntimeLocale } from '../../../locale/index.js';
 import { resolveRendererLocale } from '../../../renderer/locale.js';
-import { describeCron } from '../../../main/utils/cron.js';
 
 function keyDiff(a: Record<string, string>, b: Record<string, string>): string[] {
     const missingInB = Object.keys(a).filter((k) => !(k in b));
@@ -26,6 +26,60 @@ describe('todomgr locale', () => {
 
     test('per-app zh-CN and en-US dictionaries have identical key sets', () => {
         expect(keyDiff(todoZhCn, todoEnUs)).toEqual([]);
+    });
+
+    test('period and interval editor copy is available in both languages', () => {
+        for (const dictionary of [todoZhCn, todoEnUs]) {
+            for (const suffix of [
+                'label',
+                'periodTab',
+                'intervalTab',
+                'period.once',
+                'period.daily',
+                'period.weekly',
+                'period.biweekly',
+                'period.monthly',
+                'period.yearly',
+                'weekdays',
+                'everyWeek',
+                'every',
+                'intervalSuffix',
+                'intervalOn',
+                'intervalUnitLabel',
+                'intervalValueLabel',
+                'intervalUnit.hour',
+                'intervalUnit.day',
+                'intervalUnit.week',
+                'intervalUnit.month',
+                'intervalUnit.year',
+                'hours',
+                'selectDays',
+                'back',
+                'backMonths',
+                'removeDay',
+                'selectDates',
+                'selectMonths',
+                'removeDate',
+                'removeMonth',
+                'selectAllDates',
+                'selectAllMonths',
+                'anchorWeek',
+                'anchorWeekHint',
+                'month',
+                'day',
+                'time',
+                'legacy',
+                'legacyHint',
+                'replaceLegacy',
+                'invalid',
+                'missingDate',
+                'openOptions',
+                'selectAll'
+            ]) {
+                expect(dictionary[`renderer.todo.frequency.${suffix}`]).toEqual(expect.any(String));
+            }
+            expect(dictionary['error.recurrenceInvalid']).toEqual(expect.any(String));
+        }
     });
 
     test('app name is 自动化任务 in zh-CN and Automation in en-US (no Crontab)', () => {
@@ -62,9 +116,6 @@ describe('todomgr locale', () => {
         expect(
             createTranslatorForTodoMgr({ locale: 'zh-CN' })('renderer.todo.delete.message', { title: 'X' })
         ).toContain('<b>X</b>');
-        expect(createTranslatorForTodoMgr({ locale: 'en-US' })('renderer.todo.cron.desc.monthlyDom', { day: 1 })).toBe(
-            'day 1 of month'
-        );
     });
 
     test('setting:changed payloads resolve to the same locale the widget rendered with', () => {
@@ -128,14 +179,24 @@ describe('todomgr locale', () => {
 
     test('every static t() key referenced by todomgr source resolves in a dictionary', () => {
         // 防止词条改名/迁移后源码仍引用旧键（如 tools.getCurrentTime.name → tool.getCurrentTime.name）。
-        // 动态键（含 ${} 模板拼接）无法静态解析，跳过；renderer 侧经由共享核心 locale
-        // 取词的键（如 renderer.workspacePicker.*）以核心词典作为合法来源。
+        // 动态键（含 ${} 模板拼接）无法静态解析，跳过；workspace picker 的两个词条
+        // 由 entry.ts 内独立创建的 createRendererTranslator 解析，不属于 TodoMgr 词典。
         const sources = [
             '../../../main/applications/todomgr/tools.ts',
             '../../../main/applications/todomgr/app.ts',
-            '../../../main/applications/todomgr/renderer/entry.ts'
+            '../../../main/applications/todomgr/worker.ts',
+            '../../../main/applications/todomgr/recurrence-description.ts',
+            '../../../main/applications/todomgr/recurrence-validation.ts',
+            '../../../main/applications/todomgr/trigger.ts',
+            '../../../main/applications/todomgr/renderer/entry.ts',
+            '../../../main/applications/todomgr/renderer/legacy-timezone.ts',
+            '../../../main/applications/todomgr/renderer/time-schedule-picker.ts'
         ];
-        const knownKeys = new Set([...Object.keys(todoZhCn), ...Object.keys(appZhCn)]);
+        const knownKeys = new Set([...Object.keys(todoZhCn), ...Object.keys(modelZhCn)]);
+        const workspacePickerKeys = new Set([
+            'renderer.workspacePicker.taskNameFallback',
+            'renderer.workspacePicker.titleWithName'
+        ]);
         const callPattern = /(?<![\w$])(?:_t|t)\(\s*'([^']+)'\s*[,)]/g;
         const here = path.dirname(fileURLToPath(import.meta.url));
         const missing: string[] = [];
@@ -145,6 +206,11 @@ describe('todomgr locale', () => {
             for (const m of src.matchAll(callPattern)) {
                 const key = m[1];
                 if (key.includes('${')) continue;
+                if (path.basename(file) === 'entry.ts' && workspacePickerKeys.has(key)) {
+                    expect(appZhCn[key]).toEqual(expect.any(String));
+                    expect(appEnUs[key]).toEqual(expect.any(String));
+                    continue;
+                }
                 if (!knownKeys.has(key)) missing.push(`${path.basename(file)}: ${key}`);
             }
         }
@@ -169,30 +235,6 @@ describe('todomgr locale', () => {
                 expect(text).not.toContain('${');
             }
         }
-    });
-
-    test('describeCron weekly description keeps the 周 prefix in zh and works with en labels', () => {
-        // 回归：zh 模板曾为 '每${day}'，与裸星期名（'一'）拼出 '每一'；应为 '每周一'。
-        // 注意区分两个 everyDow 词条：renderer 版（renderer.todo.cron.desc.everyDow）
-        // 接收的 days 已含 '周' 前缀；主进程版（cron.desc.everyDow）接收裸名，模板自带 '周'。
-        expect(todoZhCn['cron.desc.everyDow']).toBe('每周${day}');
-        expect(todoZhCn['renderer.todo.cron.desc.everyDow']).toBe('每${days}');
-        expect(todoEnUs['cron.desc.everyDow']).toBe('Every ${day}');
-
-        // dow 可能因 UTC→本地换算跨日偏移，但单值星期恒为单值，只断言前缀形态
-        expect(describeCron('0 9 * * 1')).toMatch(/^每周[日一二三四五六]/);
-
-        const enLabels = {
-            dowNames: Array.from({ length: 7 }, (_, i) => todoEnUs[`cron.desc.dowNames.${i}`]),
-            everyDowTemplate: todoEnUs['cron.desc.everyDow'],
-            dowTemplate: todoEnUs['cron.desc.dow'],
-            monthlyDomTemplate: todoEnUs['cron.desc.monthlyDom'],
-            monthTemplate: todoEnUs['cron.desc.month'],
-            hourTemplate: todoEnUs['cron.desc.hourOnly'],
-            minuteTemplate: todoEnUs['cron.desc.minuteOnly'],
-            everyMinute: todoEnUs['cron.desc.everyMinute']
-        };
-        expect(describeCron('0 9 * * 1', enLabels)).toMatch(/^Every (Sun|Mon|Tue|Wed|Thu|Fri|Sat)/);
     });
 
     test('agent instruct follows the active locale (task system prompt language)', () => {

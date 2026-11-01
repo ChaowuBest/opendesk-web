@@ -27,6 +27,7 @@ import {
 import { fixedLayerOrigin, visibleViewportRect } from '../utils/window-frame.js';
 import { notifySettingSaveFailed, notifySettingSideEffectFailures } from '../utils/setting-side-effect-notice.ts';
 import { clearTaskDraft, loadTaskDraft, saveTaskDraft } from '../utils/task-draft-storage.ts';
+import { getModelIconTile, getEffortIconSVG } from '../utils/model-picker-icons.js';
 
 /** 草稿持久化的防抖间隔：输入停顿后落盘，避免每次按键同步写 localStorage */
 const TASK_DRAFT_SAVE_DEBOUNCE_MS = 500;
@@ -190,48 +191,8 @@ function getModeIconTile(modeId) {
     return `<span class="agent-icon-tile mode-${modeId}"><svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round">${svgPath}</svg></span>`;
 }
 
-function getModelIconTile(hasVision) {
-    const cls = hasVision ? 'model-vision' : 'model-chat';
-    const svgPath = hasVision
-        ? '<path d="M1.5 8S3.5 4.5 8 4.5s6.5 3.5 6.5 3.5-2 3.5-6.5 3.5S1.5 8 1.5 8Z"/><circle cx="8" cy="8" r="2"/>'
-        : '<path d="M3 5a2 2 0 0 1 2-2h6a2 2 0 0 1 2 2v4a2 2 0 0 1-2 2H6l-3 2.5V5Z"/>';
-    return `<span class="agent-icon-tile ${cls}"><svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round">${svgPath}</svg></span>`;
-}
-
 const SKILL_ICON_SVG =
     '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l1.9 5.8a2 2 0 0 0 1.3 1.3L21 12l-5.8 1.9a2 2 0 0 0-1.3 1.3L12 21l-1.9-5.8a2 2 0 0 0-1.3-1.3L3 12l5.8-1.9a2 2 0 0 0 1.3-1.3L12 3Z"/><path d="M5 3v4"/><path d="M19 17v4"/><path d="M3 5h4"/><path d="M17 19h4"/></svg>';
-
-// --- Reasoning effort SVG icons (scheme 1: energy bars, 4 cells) ---
-// 四格能量条：none=全灰+斜线、low=1 格、medium=2 格、high=3 格、max=4 格，
-// 默认('')=4 格淡色。
-
-const EFFORT_BAR_X = [1.125, 4.875, 8.625, 12.375];
-const EFFORT_BAR_GREEN = '#1F9D66';
-const EFFORT_BAR_GREY = '#E7E5E2';
-
-function effortBarRects(filledCount) {
-    return EFFORT_BAR_X.map(
-        (x, i) =>
-            `<rect x="${x}" y="2.5" width="2.5" height="11" rx=".5" fill="${i < filledCount ? EFFORT_BAR_GREEN : EFFORT_BAR_GREY}"/>`
-    ).join('');
-}
-
-const EFFORT_BAR_SVG = {
-    '': EFFORT_BAR_X.map(
-        (x) => `<rect x="${x}" y="2.5" width="2.5" height="11" rx=".5" fill="${EFFORT_BAR_GREEN}" opacity=".35"/>`
-    ).join(''),
-    none:
-        effortBarRects(0) + '<path d="M1.5 13.5 14.5 2.5" stroke="#8A8580" stroke-width="1.4" stroke-linecap="round"/>',
-    low: effortBarRects(1),
-    medium: effortBarRects(2),
-    high: effortBarRects(3),
-    max: effortBarRects(4)
-};
-
-function getEffortIconSVG(effortValue) {
-    const paths = EFFORT_BAR_SVG[effortValue] || EFFORT_BAR_SVG[''];
-    return `<svg width="16" height="16" viewBox="0 0 16 16" fill="none">${paths}</svg>`;
-}
 
 /**
  * 主页 AgentInput 草稿（文本 + 图片附件 + 文件附件），在组件销毁/重建之间持久化。

@@ -11,11 +11,26 @@
 
 import type { TodoStatus, TaskTodo } from '../../aikernel/todos/task-todos.js';
 export type { TodoStatus, TaskTodo };
+import type { ReasoningEffort } from '../../aikernel/types/reasoning.js';
+import type { TodoRecurrence } from './todo-recurrence.js';
 
 // 优先级类型
 export type TodoPriority = 'low' | 'medium' | 'high';
 
 import type { Participant } from '../../plugins/types.js';
+
+export interface TodoChatModelSummary {
+    alias: string;
+    provider_name: string;
+    model_name: string;
+    vision: boolean;
+    reasoningEfforts: ReasoningEffort[];
+}
+
+export interface TodoChatModelCatalog {
+    default_model: string;
+    models: TodoChatModelSummary[];
+}
 
 // ========== 触发器类型定义 ==========
 
@@ -32,11 +47,17 @@ export interface ScheduledTriggerConfig {
      * 例如：当地时间 2026-03-01 09:00 (UTC+8) 应存储为 "2026-03-01T01:00:00Z"
      */
     triggerAt: string;
+    /** 输入和展示时间使用的 IANA 时区，新建默认使用系统时区；triggerAt 始终保存 UTC 绝对时间 */
+    timezone?: string;
 }
 
 export interface CronTriggerConfig {
     type: 'cron';
     cronExpression: string; // crontab 表达式: "分 时 日 月 周"
+    /** cron 字段所属的 IANA 时区，新建默认使用系统时区；旧数据未设置时沿用 UTC 语义 */
+    timezone?: string;
+    /** 可视化周期/间隔规则。存在时由规则执行，cronExpression 仅作兼容字段。 */
+    recurrence?: TodoRecurrence;
 }
 
 export type TodoTrigger = EventTriggerConfig | ScheduledTriggerConfig | CronTriggerConfig;
@@ -56,6 +77,10 @@ export interface GlobalTodo {
     deliver?: Participant | null;
     /** 自动化任务启动时使用的工作空间配置。未设置时使用当前全局工作空间 */
     workspace?: TodoWorkspaceConfig;
+    /** 自动化任务使用的聊天模型别名。未设置时触发时使用全局默认模型 */
+    model?: string;
+    /** 自动化任务使用的推理档位。空字符串或未设置时使用模型默认档位 */
+    reasoningEffort?: ReasoningEffort;
     /** 是否启用，默认 true。禁用后不会按触发器自动执行，但仍可手动触发；一次性任务执行后自动设为 false */
     enabled?: boolean;
     last_triggered_at?: string; // 上次触发时间
