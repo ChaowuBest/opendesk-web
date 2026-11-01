@@ -68,6 +68,23 @@ describe('file explorer', () => {
 
     const settle = () => new Promise((resolve) => setTimeout(resolve, 0));
     const refreshSettled = () => new Promise((resolve) => setTimeout(resolve, 150));
+    /**
+     * 轮询等待异步链达到预期状态。
+     *
+     * 监听刷新是「100ms 去抖 → 一次 0ms 让局部 loading 绘制 → 若干 await」，实测整条链约 120~130ms：
+     * 固定 sleep 猜总耗时在 CPU 紧张的并行跑里必然偶发不够（100ms 定时器被推迟，链路整体右移），
+     * 所以这里等条件。默认上限 2s（约为实测值的 15 倍），同时保证一个用例里连等两次也不会
+     * 撞上 jest 的 5s 单测超时，超时会带上 label 而不是含糊的 timeout。
+     */
+    async function waitFor(condition: () => boolean, label: string, timeoutMs = 2000): Promise<void> {
+        const deadline = Date.now() + timeoutMs;
+        while (!condition()) {
+            if (Date.now() > deadline) throw new Error(`waitFor timeout: ${label}`);
+            await new Promise((resolve) => setTimeout(resolve, 10));
+        }
+    }
+
+    const officeFrame = (container: HTMLElement) => container.querySelector('.ws-office-editor-frame');
 
     async function openWatchedOffice(ext: 'pptx' | 'docx' | 'xlsx') {
         const file = `/workspace/deck.${ext}`;
@@ -107,11 +124,13 @@ describe('file explorer', () => {
         const s = await openWatchedOffice('pptx');
         s.notify();
         s.notify();
-        await refreshSettled();
+        await waitFor(() => s.refreshPresentation.mock.calls.length > 0, 'ppt in-place refresh started');
+        // 刷新链收尾后（_fileRefreshVersion 归零）仍只有一次：说明去抖窗口内的第二次通知被合并了
+        await waitFor(() => s.explorer._fileRefreshVersion === null, 'ppt in-place refresh finished');
         expect(s.refreshPresentation).toHaveBeenCalledTimes(1);
         expect(s.refreshPresentation).toHaveBeenCalledWith(123);
         expect(s.requestClose).not.toHaveBeenCalled();
-        expect(s.container.querySelector('.ws-office-editor-frame')).toBe(s.editor);
+        expect(officeFrame(s.container)).toBe(s.editor);
         expect(s.container.querySelector('.ws-preview-size')?.textContent).toBe('4.0 KB');
         s.explorer.closeEditor();
         await settle();
@@ -121,9 +140,29 @@ describe('file explorer', () => {
     test.each(['docx', 'xlsx'] as const)('reloads watched %s through its close guard', async (ext) => {
         const s = await openWatchedOffice(ext);
         s.notify();
-        await refreshSettled();
+        // 等编辑器 frame 真的被换成新节点，而不是猜「150ms 应该够了」
+        await waitFor(
+            () => !!officeFrame(s.container) && officeFrame(s.container) !== s.editor,
+            `${ext} editor reloaded`
+        );
         expect(s.requestClose).toHaveBeenCalledWith(ext === 'docx' ? 'word' : 'sheets', 123);
-        expect(s.container.querySelector('.ws-office-editor-frame')).not.toBe(s.editor);
+        expect(officeFrame(s.container)).not.toBe(s.editor);
+        s.explorer.closeEditor();
+    });
+
+    test('reloads a watched document even when its close guard outlives a fixed wait window', async () => {
+        const s = await openWatchedOffice('docx');
+        // 让关闭守卫比「固定等待 150ms」更慢：刷新链总时长超过旧窗口也应当被等到并完成
+        s.requestClose.mockImplementation(async () => {
+            await new Promise((resolve) => setTimeout(resolve, 250));
+            return true;
+        });
+        s.notify();
+        await waitFor(
+            () => !!officeFrame(s.container) && officeFrame(s.container) !== s.editor,
+            'slow docx editor reloaded'
+        );
+        expect(s.requestClose).toHaveBeenCalledWith('word', 123);
         s.explorer.closeEditor();
     });
 
@@ -131,8 +170,10 @@ describe('file explorer', () => {
         const s = await openWatchedOffice('docx');
         s.requestClose.mockResolvedValue(false);
         s.notify();
-        await refreshSettled();
-        expect(s.container.querySelector('.ws-office-editor-frame')).toBe(s.editor);
+        // 守卫已经被问过 → 刷新链已经走到拒绝分支，之后不会有结构变化
+        await waitFor(() => s.requestClose.mock.calls.length > 0, 'close guard asked');
+        await settle();
+        expect(officeFrame(s.container)).toBe(s.editor);
         expect(s.dispose).not.toHaveBeenCalled();
         s.explorer.stopWatchingFile();
     });
