@@ -56,7 +56,7 @@ description: 管理并协助用户开发 OpenDesk 插件 (查询、校验、安�
 ### 卸载
 
 1. 先确认插件来源不是 builtin 或 external；这两类不能通过 uninstallPlugin 删除。
-2. 向用户说明卸载会从 plugins 目录删除该插件，并在用户确认后调用 uninstallPlugin。
+2. 向用户说明卸载会从 plugins 目录删除该插件（插件的私有数据目录默认保留，重新安装同一插件后仍可继承），并在用户确认后调用 uninstallPlugin。
 3. 再次查询，确认该插件已被移除。
 
 ### 重新加载

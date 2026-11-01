@@ -758,7 +758,8 @@ ${OVERLAY_CSS}
     transition: transform 0.25s ease;
 }
 .skill-toggle input:checked + .skill-toggle-slider {
-    background: #DF4436;
+    /* 与 MCP 市场、插件市场的开关保持一致 */
+    background: #34C759;
 }
 .skill-toggle input:checked + .skill-toggle-slider::after {
     transform: translateX(16px);

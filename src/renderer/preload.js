@@ -1936,6 +1936,12 @@ if (shouldExposeMainWindowAPIs()) {
                 throw new Error(result.message);
             }
         },
+        ensureApplicationLoaded: async (bundleName) => {
+            const result = await ipcRenderer.invoke('applicationRegistry:ensureApplicationLoaded', bundleName);
+            if (result.status !== 'ok') {
+                throw new Error(result.message);
+            }
+        },
         getApplicationGUIConfig: async (bundleName) => {
             const result = await ipcRenderer.invoke('applicationRegistry:getApplicationGUIConfig', bundleName);
             if (result.status !== 'ok') {

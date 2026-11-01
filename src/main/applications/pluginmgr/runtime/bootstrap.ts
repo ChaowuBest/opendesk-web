@@ -14,9 +14,9 @@ import { logger } from '../../../utils/logger.js';
 import { getPluginHost } from './host.js';
 import type { PluginChatRequestInput, PluginPlatform } from '../../../../../packages/plugin-sdk/src/index.js';
 import { registerSdkPackageMapping } from './package-mapping.js';
-import { loadPlugin, OPENDESK_RUNTIME_VERSION, type PluginCandidate } from '../discovery/loader.js';
+import { loadPlugin, OPENDESK_RUNTIME_VERSION } from '../discovery/loader.js';
 import { getPluginManagerConfig, getRuntimePluginDirectories } from '../management/config.js';
-import { discoverPlugins, verifyPluginRecord } from '../discovery/discovery.js';
+import { discoverPlugins, verifyPluginRecord, type DiscoveredPluginCandidate } from '../discovery/discovery.js';
 import { getPluginRecord } from '../management/registry.js';
 import {
     runPluginAfterToolCall,
@@ -27,8 +27,7 @@ import {
     runPluginAfterSkillLoad,
     runPluginBeforeSkillLoad,
     runPluginBeforePermissionAsk,
-    runPluginTaskReview,
-    runPluginShellEnv
+    runPluginTaskReview
 } from './hooks.js';
 import { applyPluginToolDefinitions } from './tool-provider.js';
 import { PluginAgent } from './agent.js';
@@ -58,6 +57,24 @@ function serializeHostOperation<T>(task: () => Promise<T>): Promise<T> {
     return next;
 }
 
+/**
+ * 安装落盘的独立串行队列。
+ *
+ * 安装会把 staging 目录提交到 `plugins/<id>`，两个并发安装可能互相踩踏；但安装耗时
+ * （npm install / 解压）远高于其它插件操作，不能占用 `hostOperation`——否则一次慢安装
+ * 会把期间所有插件启停与重载都堵住。
+ */
+let installOperation: Promise<unknown> = Promise.resolve();
+
+function serializeInstallOperation<T>(task: () => Promise<T>): Promise<T> {
+    const next = installOperation.then(task, task);
+    installOperation = next.then(
+        () => undefined,
+        () => undefined
+    );
+    return next;
+}
+
 function notifyPluginSkillsChanged(): void {
     const application = ApplicationRegistry.getApplication('skillmgr') as
         { notifyExternalSkillsChanged?: (bundleName: string) => void } | undefined;
@@ -75,11 +92,20 @@ function notifyPluginMcpRegistriesChanged(): void {
     ApplicationRegistry.dispatchEvent('mcpmgr', 'registriesChanged');
 }
 
-interface ResolvedCandidate extends PluginCandidate {
-    id: string;
+interface ResolvedCandidate extends DiscoveredPluginCandidate {
     requireDeclaration?: boolean;
     blockedCode?: string;
     blockedDetail?: string;
+}
+
+/** 按当前配置发现全部插件候选（内置 / 插件目录 / 外部路径 / 运行时目录） */
+function discoverConfiguredPlugins(): ReturnType<typeof discoverPlugins> {
+    const config = getPluginManagerConfig();
+    return discoverPlugins({
+        configDirectory: getOpendeskDirectory(),
+        externalPaths: config.externalPaths,
+        pluginDirectories: getRuntimePluginDirectories()
+    });
 }
 
 /**
@@ -89,12 +115,7 @@ interface ResolvedCandidate extends PluginCandidate {
  */
 function configuredCandidates(recordConflicts = true): ResolvedCandidate[] {
     const configDir = getOpendeskDirectory();
-    const config = getPluginManagerConfig();
-    const discovery = discoverPlugins({
-        configDirectory: configDir,
-        externalPaths: config.externalPaths,
-        pluginDirectories: getRuntimePluginDirectories()
-    });
+    const discovery = discoverConfiguredPlugins();
     const host = getPluginHost();
     if (recordConflicts) {
         for (const conflict of discovery.conflicts) {
@@ -107,28 +128,42 @@ function configuredCandidates(recordConflicts = true): ResolvedCandidate[] {
             });
         }
     }
-    return discovery.candidates.map((candidate) => {
-        if (candidate.source === 'builtin') {
-            return {
-                ...candidate,
-                requireDeclaration: true
-            };
-        }
-        // Only plugins with a recorded integrity snapshot are verified; hand-placed
-        // plugins have no baseline and load without an integrity gate.
-        const record = getPluginRecord(candidate.id, configDir);
-        if (!record?.integrity) return candidate;
-        const verification = verifyPluginRecord(record, configDir);
+    return discovery.candidates.map((candidate) => resolveCandidate(candidate, configDir));
+}
+
+/** 为单个发现结果补齐完整性校验信息（仅对记录了基线的插件做哈希） */
+function resolveCandidate(candidate: DiscoveredPluginCandidate, configDir: string): ResolvedCandidate {
+    if (candidate.source === 'builtin') {
         return {
             ...candidate,
-            requireDeclaration: true,
-            integrity: verification.actualIntegrity,
-            blockedCode: verification.allowed ? undefined : 'plugin.integrity_mismatch',
-            blockedDetail: verification.allowed
-                ? undefined
-                : `${verification.expectedIntegrity ?? '-'} != ${verification.actualIntegrity ?? '-'}`
+            requireDeclaration: true
         };
-    });
+    }
+    // Only plugins with a recorded integrity snapshot are verified; hand-placed
+    // plugins have no baseline and load without an integrity gate.
+    const record = getPluginRecord(candidate.id, configDir);
+    if (!record?.integrity) return candidate;
+    const verification = verifyPluginRecord(record, configDir);
+    return {
+        ...candidate,
+        requireDeclaration: true,
+        integrity: verification.actualIntegrity,
+        blockedCode: verification.allowed ? undefined : 'plugin.integrity_mismatch',
+        blockedDetail: verification.allowed
+            ? undefined
+            : `${verification.expectedIntegrity ?? '-'} != ${verification.actualIntegrity ?? '-'}`
+    };
+}
+
+/**
+ * 只解析目标插件的候选（差量路径用）。
+ *
+ * 与 configuredCandidates 的区别是不对其它已安装插件做完整性哈希：差量操作只关心一个
+ * 插件，没必要为整个 plugins 目录重算 sha256。
+ */
+function findCandidate(id: string): ResolvedCandidate | undefined {
+    const hit = discoverConfiguredPlugins().candidates.find((candidate) => candidate.id === id);
+    return hit ? resolveCandidate(hit, getOpendeskDirectory()) : undefined;
 }
 
 function isMissingDeclaration(error: unknown): boolean {
@@ -352,9 +387,16 @@ export function reloadPluginHost(): Promise<void> {
 async function reloadPluginHostInternal(): Promise<void> {
     await disposePluginHost();
     await initializePluginHost();
-    notifyPluginSkillsChanged();
-    notifyPluginMcpRegistriesChanged();
-    await refreshTaskToolsets();
+    try {
+        // 与差量路径不同，这里 agents / MCP 服务器已由 initialize 同步过，
+        // 只补齐技能与工具集，避免重复 dispose + 重建插件 Agent
+        notifyPluginSkillsChanged();
+        notifyPluginMcpRegistriesChanged();
+        await refreshTaskToolsets();
+    } catch (error) {
+        // 收尾 best-effort：实例此时已全部重建，刷新失败不该让调用方以为重载失败
+        logger.warn('Plugin registries refresh failed after reload', error);
+    }
 }
 
 /** 仅刷新已完全加载任务的工具集，使其感知插件配置变化 */
@@ -400,7 +442,7 @@ export function applyPluginEnabledChange(id: string, enabled: boolean): Promise<
 async function applyPluginEnabledChangeInternal(id: string, enabled: boolean): Promise<void> {
     await initializePluginHost();
     if (enabled) {
-        const candidate = configuredCandidates(false).find((entry) => entry.id === id);
+        const candidate = findCandidate(id);
         if (!candidate) {
             // 目标插件已不可发现（如安装目录被删除），按语义回退为全量重载
             await reloadPluginHostInternal();
@@ -421,6 +463,16 @@ async function applyPluginEnabledChangeInternal(id: string, enabled: boolean): P
         // 重复禁用（运行时无实例）时无需操作，保持幂等
         await getPluginHost().deactivate(id);
     }
+    await syncPluginDerivedRegistriesSafely(enabled ? 'enable' : 'disable');
+}
+
+/**
+ * 单插件变更后的差量收尾：原地刷新由插件派生的注册表，不重启任何插件实例。
+ *
+ * 全量 reload 会重新 import 并 setup 所有插件（内置渠道插件尤其重），在卸载这类
+ * 交互中会把主进程阻塞数秒，所以能差量就不要全量。
+ */
+async function syncPluginDerivedRegistries(): Promise<void> {
     await syncPluginAgentsWithRegistry();
     notifyPluginMcpServersChanged();
     // 插件技能经 SkillRegistry 的 provider 缓存输出，差量启停后按 bundle 定向失效
@@ -428,4 +480,152 @@ async function applyPluginEnabledChangeInternal(id: string, enabled: boolean): P
     notifyPluginSkillsChanged();
     notifyPluginMcpRegistriesChanged();
     await refreshTaskToolsets();
+}
+
+/**
+ * 差量收尾的 best-effort 版本：收尾失败只记日志，不改变主操作的成败判断。
+ *
+ * 收尾发生在实例已经加载/释放之后，此刻抛错会反过来改写主操作的结果：成功路径被报成失败
+ * （用户会重复安装/卸载），失败路径会掩盖真正的原因（目录被占用、内置插件不可卸载等）。
+ * 两种都会让注册表、运行时与用户的认知不一致。
+ */
+async function syncPluginDerivedRegistriesSafely(operation: string): Promise<void> {
+    try {
+        await syncPluginDerivedRegistries();
+    } catch (error) {
+        logger.warn(`Plugin derived registry sync failed after ${operation}`, error);
+    }
+}
+
+export interface PluginUninstallOutcome {
+    success: boolean;
+    error?: string;
+}
+
+/**
+ * 单个插件卸载的差量应用。
+ *
+ * 顺序很关键：插件运行时可能长期占用自身目录（MCP 子进程 cwd、sqlite、动态 import 的
+ * 文件句柄），因此必须先释放目标插件再删除磁盘文件；随后只按差量刷新派生注册表，其他
+ * 插件实例保持运行——避免此前 dispose + reload 导致的全量重启与主进程卡顿。
+ *
+ * 能否卸载由调用方在外层先行检查（`resolveUninstallTarget`），这里再兜住删除失败与异常：
+ * 删除没成功就把刚释放的实例装回去，保证运行时与磁盘状态一致。
+ *
+ * @param remove 实际的删除动作（由 management 层提供）
+ */
+export function applyPluginUninstall<T extends PluginUninstallOutcome>(
+    id: string,
+    remove: () => Promise<T>
+): Promise<T> {
+    return serializeHostOperation(async () => {
+        await initializePluginHost();
+        // 未在运行（已禁用 / 本就没加载）时没有实例可释放，失败后也就无需装回
+        const released = await getPluginHost().deactivate(id);
+        let result: T;
+        try {
+            result = await remove();
+        } catch (error) {
+            if (released) await restoreReleasedPlugin(id, error);
+            await syncPluginDerivedRegistriesSafely('uninstall');
+            throw error;
+        }
+        if (!result.success && released) await restoreReleasedPlugin(id);
+        await syncPluginDerivedRegistriesSafely('uninstall');
+        return result;
+    });
+}
+
+/**
+ * 把刚释放的插件装回去。
+ *
+ * 装不回来通常意味着磁盘上的插件目录已经被替换/删除，此时运行实例无法恢复，必须留日志，
+ * 否则表现为"插件凭空消失"而调用侧只看到一次普通的失败提示。
+ *
+ * 只在确实释放过实例时调用：插件本来就没在运行（已禁用、加载失败等）时装不回去是常态，
+ * 记一条 warn 只会误导排查。
+ */
+async function restoreReleasedPlugin(id: string, cause?: unknown): Promise<void> {
+    if (await loadCandidateById(id)) return;
+    logger.warn(`OpenDesk plugin was released but could not be restored: ${id}`, cause);
+}
+
+/** 按 id 加载当前可发现的候选插件；返回是否真的加载成功（被禁用/已删除时为 false） */
+async function loadCandidateById(id: string): Promise<boolean> {
+    const candidate = findCandidate(id);
+    if (!candidate) return false;
+    const failure = await loadCandidate(getPluginHost(), candidate, getOpendeskDirectory());
+    return failure === undefined;
+}
+
+/**
+ * 覆盖安装前判断目标 id 的运行实例是否应该提前释放。
+ *
+ * 内置插件不能被覆盖安装，没必要（也不应该）先把它拆掉再装回来；归档 / npm 源在安装前
+ * 拿不到 id（`targetId` 为 undefined），只能装完再释放。
+ */
+function releasableTargetId(id: string | undefined): string | undefined {
+    if (!id) return undefined;
+    return findCandidate(id)?.source === 'builtin' ? undefined : id;
+}
+
+export interface PluginInstallOutcome {
+    success: boolean;
+    id?: string;
+}
+
+/**
+ * 单个插件安装的差量应用。
+ *
+ * 覆盖安装必须先释放旧实例：插件运行时会占用自身目录（动态 import 的模块文件、MCP 子进程
+ * cwd 等），Windows 下直接替换目录会 rename 失败。因此在调用 `install` 之前先按
+ * `targetId` 释放（本地目录源可以在安装前解析出 id）。
+ *
+ * 落盘动作（npm install / 解压）不占用插件宿主的串行队列：它可能耗时数十秒，期间启停、
+ * 重载等其他插件操作不应被阻塞。并发安装之间用独立的互斥串行。
+ *
+ * 安装失败会把被释放的旧实例装回去；安装成功只加载目标插件，其他插件实例不重启。
+ */
+export function applyPluginInstall<T extends PluginInstallOutcome>(
+    targetId: string | undefined,
+    install: () => Promise<T>
+): Promise<T> {
+    return serializeInstallOperation(async () => {
+        const released = await serializeHostOperation(async () => {
+            await initializePluginHost();
+            const releasable = releasableTargetId(targetId);
+            if (!releasable) return undefined;
+            // 只有真的拆掉了实例才需要（也才可能）装回去
+            return (await getPluginHost().deactivate(releasable)) ? releasable : undefined;
+        });
+        let result: T;
+        try {
+            result = await install();
+        } catch (error) {
+            if (released) {
+                await serializeHostOperation(async () => {
+                    await restoreReleasedPlugin(released, error);
+                    await syncPluginDerivedRegistriesSafely('install failure');
+                });
+            }
+            throw error;
+        }
+        const installedId = result.success ? result.id : undefined;
+        await serializeHostOperation(async () => {
+            if (!installedId) {
+                // 安装失败：磁盘内容通常未变，把刚释放的旧实例装回去
+                if (released) await restoreReleasedPlugin(released);
+                await syncPluginDerivedRegistriesSafely('install failure');
+                return;
+            }
+            // 归档 / npm 源先前无法解析 id，这里补一次释放（新装时是无操作）
+            await getPluginHost().deactivate(installedId);
+            await loadCandidateById(installedId);
+            // 装出来的 id 与预先解析的不一致（源未声明 id 时会退化成用目录名推断）时，
+            // 说明刚才释放的是另一个插件，必须装回去，否则它会凭空从运行时消失
+            if (released && released !== installedId) await restoreReleasedPlugin(released);
+            await syncPluginDerivedRegistriesSafely('install');
+        });
+        return result;
+    });
 }

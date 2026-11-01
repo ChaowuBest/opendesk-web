@@ -68,8 +68,6 @@ export function createMarqueeHarness(rows: MarqueeRowSpec[], win: LinkedomWindow
         body.appendChild(row);
     }
 
-    let preventedDefaults = 0;
-
     const makeTouch = (identifier: number, clientX: number, clientY: number) =>
         ({
             identifier,
@@ -84,22 +82,17 @@ export function createMarqueeHarness(rows: MarqueeRowSpec[], win: LinkedomWindow
             touches: { value: touches },
             changedTouches: { value: changedTouches }
         });
-        const original = event.preventDefault.bind(event);
-        event.preventDefault = () => {
-            preventedDefaults += 1;
-            original();
-        };
         dispatchTarget.dispatchEvent(event);
         return event;
     }
 
-    function makeMouseEvent(type: string, x: number, y: number) {
+    function makeMouseEvent(type: string, x: number, y: number, buttons = type === 'mouseup' ? 0 : 1) {
         const event = new win.Event(type, { bubbles: true, cancelable: true }) as MouseEvent;
         Object.defineProperties(event, {
             clientX: { value: x },
             clientY: { value: y },
             button: { value: 0 },
-            buttons: { value: type === 'mouseup' ? 0 : 1 },
+            buttons: { value: buttons },
             ctrlKey: { value: false },
             metaKey: { value: false },
             shiftKey: { value: false }
@@ -113,9 +106,6 @@ export function createMarqueeHarness(rows: MarqueeRowSpec[], win: LinkedomWindow
         body,
         document,
         selection: new Set<string>(),
-        get preventedDefaults() {
-            return preventedDefaults;
-        },
         get outerScrollTop() {
             return groups.scrollTop;
         },
@@ -132,8 +122,8 @@ export function createMarqueeHarness(rows: MarqueeRowSpec[], win: LinkedomWindow
             body.innerHTML = '';
             for (const spec of rows) appendRow(spec);
         },
-        mouseMove(x: number, y: number): MouseEvent {
-            const event = makeMouseEvent('mousemove', x, y);
+        mouseMove(x: number, y: number, buttons?: number): MouseEvent {
+            const event = makeMouseEvent('mousemove', x, y, buttons);
             document.dispatchEvent(event);
             return event;
         },

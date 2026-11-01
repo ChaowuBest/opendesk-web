@@ -358,12 +358,30 @@ function showBootstrapError(message: string): void {
     container.replaceChildren(wrap);
 }
 
+/** 壳页面 URL 上的应用包名（application.html?applicationBundleName=xxx）。 */
+function getApplicationBundleNameFromQuery(): string | null {
+    return new URLSearchParams(window.location.search).get('applicationBundleName');
+}
+
+/**
+ * 通知宿主（主窗口应用视图 / 桌面浮窗 / 独立应用窗口）首屏已经落地，用于撤掉启动加载占位。
+ * 加载失败时同样要通知：否则占位会一直盖住错误提示，用户只能等超时。
+ */
+function notifyHostApplicationReady(bundleName: string): void {
+    if (window.parent === window) return;
+    try {
+        window.parent.postMessage({ type: 'APPLICATION_READY', bundleName }, '*');
+    } catch {
+        /* 跨域宿主：忽略 */
+    }
+}
+
 async function bootstrapApplication(): Promise<void> {
     initApplicationThemeHost();
     await initApplicationThemeFromAPI();
 
     const apps = import.meta.glob('../../main/applications/**/renderer/entry.{js,ts}');
-    const applicationBundleName = new URLSearchParams(window.location.search).get('applicationBundleName');
+    const applicationBundleName = getApplicationBundleNameFromQuery();
     if (!applicationBundleName) {
         throw new Error('applicationBundleName query parameter is missing');
     }
@@ -400,6 +418,7 @@ async function bootstrapApplication(): Promise<void> {
     container.innerHTML = `<${entryName} id="application-entry-widget" class="w-full h-full" data-od-widget></${entryName}>`;
     bindFloatingChatControls();
     updateFloatingChatTranslations();
+    notifyHostApplicationReady(applicationBundleName);
 }
 
 void (async () => {
@@ -432,5 +451,7 @@ void (async () => {
     } catch (err) {
         console.error('[application-host] bootstrap failed', err);
         showBootstrapError(err instanceof Error ? err.message : String(err));
+        const bundleName = getApplicationBundleNameFromQuery();
+        if (bundleName) notifyHostApplicationReady(bundleName);
     }
 })();

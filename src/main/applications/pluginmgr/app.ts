@@ -5,6 +5,7 @@
 
 import { z } from 'zod';
 import type { Command } from 'commander';
+import fs from 'fs';
 import path from 'path';
 import { BaseApplication, type EventDecl } from '../base.js';
 import { Skill } from '../../aikernel/skill.js';
@@ -16,7 +17,9 @@ import {
     disposePluginHost,
     initializePluginHost,
     reloadPluginHost,
-    applyPluginEnabledChange
+    applyPluginEnabledChange,
+    applyPluginInstall,
+    applyPluginUninstall
 } from './runtime/bootstrap.js';
 import { discoverPlugins } from './discovery/discovery.js';
 import { getPluginHost } from './runtime/host.js';
@@ -27,6 +30,7 @@ import { loadPluginResources, readPluginManifest, type PluginManifest } from './
 import {
     installPlugin,
     listInstalledPlugins,
+    resolveUninstallTarget,
     setPluginEnabled,
     uninstallPlugin,
     verifyInstalledPlugin
@@ -36,7 +40,8 @@ import { listPluginRecords } from './management/registry.js';
 import type { PluginCapability, PluginPlatform } from '../../../../packages/plugin-sdk/src/index.js';
 import { getRuntimePluginDirectories } from './management/config.js';
 import { getBuiltinPluginsDirectory, getPluginsDirectory } from './management/paths.js';
-import { formatPluginInstallError } from './management/errors.js';
+import { formatPluginInstallError, formatPluginUninstallError } from './management/errors.js';
+import { validateOpenDeskPluginDirectory } from '../../../../packages/plugin-sdk/src/package.js';
 import { t } from './locale/index.js';
 import { t as translate, getLocale } from '../../../locale/index.js';
 import { MANAGE_PLUGINS_SKILL } from './skills.js';
@@ -52,6 +57,22 @@ import {
 const PluginMgrConfigSchema = z.object({
     externalPaths: z.array(z.string()).default([])
 });
+
+/**
+ * 本地目录安装时，可以在真正安装前解析出目标插件 id，
+ * 让覆盖安装能先释放旧实例（Windows 下插件运行时会占用自身目录）。
+ * 归档 / npm 源在安装完成前拿不到 id，返回 undefined。
+ */
+function resolveLocalPluginId(spec: string): string | undefined {
+    try {
+        const resolved = path.resolve(spec);
+        if (!fs.existsSync(resolved) || !fs.statSync(resolved).isDirectory()) return undefined;
+        return validateOpenDeskPluginDirectory(resolved).id;
+    } catch {
+        // 源本身不合法：交给 installPlugin 走正常的校验与错误上报
+        return undefined;
+    }
+}
 
 export class PluginMgrApplication extends BaseApplication {
     static bundleName = 'pluginmgr';
@@ -260,35 +281,56 @@ export class PluginMgrApplication extends BaseApplication {
             .filter((entry) => entry !== undefined);
     }
 
+    /** 广播插件变更：订阅方（渠道、待办触发器、插件自身）按宿主注册表差量自愈 */
+    private notifyPluginsChanged(operation: string, id?: string): void {
+        this.emitEvent('pluginsChanged', { operation, id }).catch(() => {});
+    }
+
     async reload(id?: string) {
         await reloadPluginHost();
-        this.emitEvent('pluginsChanged', { operation: 'reload', id }).catch(() => {});
+        this.notifyPluginsChanged('reload', id);
         return await this.list();
     }
 
     async install(spec: string) {
-        const result = await installPlugin(spec);
-        if (!result.success) throw new Error(formatPluginInstallError(result));
-        await reloadPluginHost();
-        this.emitEvent('pluginsChanged', { operation: 'install', id: result.id }).catch(() => {});
-        return result;
+        // 差量安装：只加载目标插件（覆盖安装时先释放旧实例），其他插件不重启
+        const targetId = resolveLocalPluginId(spec);
+        // 宿主没就绪时运行时根本没被动过，下面失败分支的广播会把「空渠道注册表」当成
+        // 「所有渠道都没了」，让订阅方停掉全部渠道连接。先初始化，失败就此打住。
+        await initializePluginHost();
+        try {
+            const result = await applyPluginInstall(targetId, () => installPlugin(spec));
+            if (!result.success) throw new Error(formatPluginInstallError(result));
+            this.notifyPluginsChanged('install', result.id);
+            return result;
+        } catch (error) {
+            // 覆盖安装失败时旧实例可能已被释放并装回（换成了新实例），订阅方必须重新对齐；
+            // targetId 为空表示新装（归档 / npm 源）失败，运行时没被动过，无需广播
+            if (targetId) this.notifyPluginsChanged('install', targetId);
+            throw error;
+        }
     }
 
-    async uninstall(id: string) {
-        await disposePluginHost();
-        const result = await uninstallPlugin(id);
-        await reloadPluginHost();
-        if (!result.success) {
-            const message =
-                result.error === 'plugin.uninstall_builtin'
-                    ? translate('plugin.uninstall.builtin', { id })
-                    : result.error === 'plugin.uninstall_external'
-                      ? translate('plugin.uninstall.external', { id })
-                      : result.error;
-            throw new Error(message);
+    async uninstall(id: string, removeData = false) {
+        // 差量卸载：只释放目标插件、删除磁盘文件、刷新派生注册表。
+        // 此前的 dispose + reload 会让所有插件（含内置飞书/微信等渠道插件）整包重新
+        // import + setup，卸载时主进程被阻塞数秒，界面随之失去响应。
+        //
+        // 先做纯检查再释放：内置/外部/不存在这些不该卸载的情况，不应该先把正在运行的
+        // 内置渠道插件拆掉再装回来（渠道会白白断连一次）。
+        const resolution = resolveUninstallTarget(id);
+        if (!resolution.ok) throw new Error(formatPluginUninstallError(resolution.error, id));
+        // 同 install：宿主未就绪时不要进入下面会广播的区域
+        await initializePluginHost();
+        try {
+            const result = await applyPluginUninstall(id, () => uninstallPlugin(id, { removeData }));
+            if (!result.success) throw new Error(formatPluginUninstallError(result.error, id));
+            return result;
+        } finally {
+            // 成功要刷新；失败时实例也可能已被装回成新实例（旧注册已释放），同样必须广播，
+            // 否则渠道等订阅方会继续持有已卸载的旧实例
+            this.notifyPluginsChanged('uninstall', id);
         }
-        this.emitEvent('pluginsChanged', { operation: 'uninstall', id }).catch(() => {});
-        return result;
     }
 
     async setEnabled(id: string, enabled: boolean) {
@@ -310,21 +352,21 @@ export class PluginMgrApplication extends BaseApplication {
         }
         // channelmgr 收到插件 id 后按宿主注册表差量增删渠道，非渠道插件的事件对它无副作用；
         // 事件本身是公开契约（todomgr 触发器、插件订阅者），因此启停一律广播
-        this.emitEvent('pluginsChanged', { operation: enabled ? 'enable' : 'disable', id }).catch(() => {});
+        this.notifyPluginsChanged(enabled ? 'enable' : 'disable', id);
         return await this.list();
     }
 
     async setOptions(id: string, options: Record<string, unknown>) {
         const entry = setPluginOptions(id, options);
         await reloadPluginHost();
-        this.emitEvent('pluginsChanged', { operation: 'configure', id }).catch(() => {});
+        this.notifyPluginsChanged('configure', id);
         return entry;
     }
 
     async setGrantedCapabilities(id: string, capabilities: PluginCapability[]) {
         const entry = setPluginGrantedCapabilities(id, capabilities);
         await reloadPluginHost();
-        this.emitEvent('pluginsChanged', { operation: 'permissions', id }).catch(() => {});
+        this.notifyPluginsChanged('permissions', id);
         return entry;
     }
 

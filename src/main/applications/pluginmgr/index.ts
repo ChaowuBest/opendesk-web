@@ -83,7 +83,8 @@ export {
     getPluginsDirectory,
     getPluginManagerDirectory,
     getPluginRegistryPath,
-    getPluginCacheDirectory
+    getPluginCacheDirectory,
+    getPluginDataDirectory
 } from './management/paths.js';
 export { getPluginRecord, listPluginRecords } from './management/registry.js';
 export {
@@ -94,6 +95,7 @@ export {
     setPluginEnabled,
     verifyInstalledPlugin
 } from './management/manager.js';
+export type { UninstallPluginOptions } from './management/manager.js';
 export type {
     DiscoveredPluginCandidate,
     PluginDiscoveryConflict,
@@ -117,4 +119,4 @@ export {
     combineToolsetProviders
 } from './runtime/tool-provider.js';
 export { syncPluginTuiCommands } from './runtime/commands.js';
-export { formatPluginInstallError } from './management/errors.js';
+export { formatPluginInstallError, formatPluginUninstallError } from './management/errors.js';

@@ -1811,10 +1811,11 @@ class SideBar extends HTMLElement {
         menu.style.minWidth = '180px';
 
         const isUserApp = appSource === 'user';
-        const items = [
-            { id: 'open', icon: 'fa-solid fa-arrow-right', label: '打开' },
-            { id: 'new-window', icon: 'fa-solid fa-external-link-alt', label: '在新窗口中打开' }
-        ];
+        const items = [{ id: 'open', icon: 'fa-solid fa-arrow-right', label: '打开' }];
+        // 浏览器应用依赖 webview（iframe 内不可用），只能内联挂载在主窗口，不提供独立窗口入口
+        if (bundleName !== 'browser') {
+            items.push({ id: 'new-window', icon: 'fa-solid fa-external-link-alt', label: '在新窗口中打开' });
+        }
         if (isUserApp) {
             items.push({ id: 'edit', icon: 'fa-solid fa-pen-to-square', label: '编辑应用' });
         }
@@ -1855,7 +1856,7 @@ class SideBar extends HTMLElement {
             this._dismissAppPopover();
         });
 
-        menu.querySelector('[data-action="new-window"]').addEventListener('click', () => {
+        menu.querySelector('[data-action="new-window"]')?.addEventListener('click', () => {
             this._dismissAppContextMenu();
             this._dismissAppPopover();
             window.applicationRegistryAPI.openInNewWindow(bundleName);
@@ -2075,8 +2076,8 @@ class SideBar extends HTMLElement {
     }
 
     /**
-     * 多选形态下行点击：Ctrl/Cmd 点选 toggle；Shift 以锚点做区间选；
-     * 普通点击未选中行 = 单选该行，已选中行 = toggle 取消（取消到空也保持多选形态）。
+     * 多选形态下行点击：Shift 以锚点做区间选；普通点击（含 Ctrl/Cmd 点击、触屏轻点）都是
+     * toggle——已选中则取消，未选中则加选，其余已选行保留（取消到空也保持多选形态）。
      */
     _handleMultiSelectRowClick(event, taskId) {
         if (event.shiftKey) {
@@ -2087,13 +2088,7 @@ class SideBar extends HTMLElement {
             this._multiSelectController?.syncAfterRender();
             return;
         }
-        if (event.ctrlKey || event.metaKey) {
-            this._multiSelectIds = ctrlToggleId(this._multiSelectIds, taskId);
-        } else if (this._multiSelectIds.has(taskId)) {
-            this._multiSelectIds = ctrlToggleId(this._multiSelectIds, taskId);
-        } else {
-            this._multiSelectIds = new Set([taskId]);
-        }
+        this._multiSelectIds = ctrlToggleId(this._multiSelectIds, taskId);
         this._multiSelectAnchorId = taskId;
         this._multiSelectController?.syncAfterRender();
     }

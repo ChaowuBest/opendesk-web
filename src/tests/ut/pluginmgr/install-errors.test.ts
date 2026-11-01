@@ -1,5 +1,8 @@
 import { setRuntimeLocale } from '../../../locale/index.js';
-import { formatPluginInstallError } from '../../../main/applications/pluginmgr/management/errors.js';
+import {
+    formatPluginInstallError,
+    formatPluginUninstallError
+} from '../../../main/applications/pluginmgr/management/errors.js';
 
 describe('plugin installation error messages', () => {
     afterEach(() => {
@@ -44,5 +47,30 @@ describe('plugin installation error messages', () => {
                 errorCode: 'unknown'
             })
         ).toBe('插件安装失败，请查看应用日志了解详细信息。');
+    });
+});
+
+describe('plugin uninstall error messages', () => {
+    afterEach(() => {
+        setRuntimeLocale(null);
+    });
+
+    test('不能卸载的几种来源各有专用提示', () => {
+        setRuntimeLocale('zh-CN');
+
+        expect(formatPluginUninstallError('plugin.uninstall_builtin', 'demo')).toBe('demo 是内置插件，不能卸载');
+        expect(formatPluginUninstallError('plugin.uninstall_external', 'demo')).toContain('externalPaths');
+        expect(formatPluginUninstallError('plugin.uninstall_invalid_path', 'demo')).toBe(
+            'demo 的安装路径不在插件目录内，无法卸载'
+        );
+    });
+
+    test('其余错误原样透出，缺失时回退到通用失败文案', () => {
+        setRuntimeLocale('zh-CN');
+
+        expect(formatPluginUninstallError('EPERM: operation not permitted', 'demo')).toBe(
+            'EPERM: operation not permitted'
+        );
+        expect(formatPluginUninstallError(undefined, 'demo')).toBe('卸载失败');
     });
 });

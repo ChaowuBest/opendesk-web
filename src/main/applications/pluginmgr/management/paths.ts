@@ -7,6 +7,7 @@ import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import { getOpendeskDirectory } from '../../../utils/setting.js';
+import { logger } from '../../../utils/logger.js';
 
 export const BUILTIN_PLUGINS_DIRECTORY_ENV = 'OPENDESK_BUILTIN_PLUGINS_DIRECTORY';
 
@@ -79,6 +80,36 @@ export function getPluginManagerDirectory(configDirectory: string = getOpendeskD
 
 export function getPluginRegistryPath(configDirectory: string = getOpendeskDirectory()): string {
     return path.join(getPluginManagerDirectory(configDirectory), 'registry.json');
+}
+
+/**
+ * 插件私有数据根目录：`<opendesk>/plugins/.pluginmgr/data`。
+ *
+ * 与插件代码目录（`plugins/<id>`）解耦：卸载插件默认只删除代码目录，数据目录保留，
+ * 重新安装同名插件后可继续使用。放在 `.pluginmgr` 内可避免被插件发现流程当成插件扫描。
+ */
+function getPluginDataRootDirectory(configDirectory: string): string {
+    return path.join(getPluginManagerDirectory(configDirectory), 'data');
+}
+
+/** 单个插件的私有数据目录：`<opendesk>/plugins/.pluginmgr/data/<pluginId>` */
+export function getPluginDataDirectory(pluginId: string, configDirectory: string = getOpendeskDirectory()): string {
+    return path.join(getPluginDataRootDirectory(configDirectory), pluginId);
+}
+
+/** 确保插件的私有数据目录存在，并返回其绝对路径 */
+export function ensurePluginDataDirectory(pluginId: string, configDirectory: string = getOpendeskDirectory()): string {
+    const directory = getPluginDataDirectory(pluginId, configDirectory);
+    try {
+        fs.mkdirSync(directory, { recursive: true });
+    } catch (error) {
+        // 数据目录只是插件的可选持久化区域，调用方是插件激活流程：这里绝不能抛，
+        // 否则配置目录只读、被安全软件短暂占用等问题会让整个插件加载失败
+        // （且 host.activate 的 this.entries.set 已执行，会留下无法回滚的幽灵实例）。
+        // 插件真正写文件时才会拿到自己的 ENOENT / EPERM。
+        logger.warn(`Failed to create plugin data directory: ${directory}`, error);
+    }
+    return directory;
 }
 
 export function getPluginStagingDirectory(configDirectory: string = getOpendeskDirectory()): string {

@@ -134,6 +134,8 @@ const DESKTOP_TRANSITION_MS = 440;
 const CARD_SNAP_TRANSITION_MS = 140;
 const AUTO_REFRESH_TICK_MS = 60_000;
 const CHAT_TASK_STORAGE_KEY = 'opendesk.immersiveDesktop.chatTaskId';
+/** 应用窗口等首屏就绪信号的上限（与主窗口应用的启动占位兜底一致） */
+const APP_FRAME_READY_TIMEOUT_MS = 15_000;
 
 const INTERVAL_OPTIONS: Array<{ value: CardInterval; ms: number; key: string }> = [
     { value: '15m', ms: 15 * 60_000, key: 'renderer.desktop.card.interval.15m' },
@@ -1931,12 +1933,14 @@ export class ImmersiveDesktop extends HTMLElement {
             width: Math.min(980, Math.max(680, window.innerWidth * 0.58)),
             height: Math.min(720, Math.max(460, window.innerHeight * 0.62))
         });
+        // 启动占位与主窗口打开应用时用同一个组件，保证加载动画一致
         desktopWindow.contentElement.innerHTML = `
-            <div class="od-window-loading">
-                <span class="od-spinner"></span>
-                <span>${safeText(this.t('renderer.desktop.app.loading'))}</span>
-            </div>`;
+            <content-loading-view class="od-window-loading" data-type="tb"
+                data-message="${safeText(this.t('renderer.application.loading'))}"></content-loading-view>`;
         this.attachWindow(desktopWindow);
+        // 与主窗口 openApplication 一致：先等该应用自身的延迟资源就绪，再挂 iframe。
+        // 加载失败不阻塞窗口（主进程侧已容错），占位交给就绪信号 / 超时收尾。
+        await globalWindow.applicationRegistryAPI?.ensureApplicationLoaded?.(bundleName)?.catch?.(() => undefined);
         await this.mountApplicationContent(desktopWindow, bundleName, title);
         return desktopWindow;
     }
@@ -1946,20 +1950,58 @@ export class ImmersiveDesktop extends HTMLElement {
         bundleName: string,
         title: string
     ): Promise<void> {
-        desktopWindow.contentElement.innerHTML = '';
+        // 打开应用时窗口里已经有加载占位（见 openApplicationWindow）；占位要一直留到应用
+        // 首屏挂载完成，否则慢启动的应用会先露出一片空白。
+        // 等待期间用户可能已经关掉窗口，此时不要再往已卸载的窗口里挂 iframe。
+        if (!desktopWindow.element.isConnected) return;
+        let loadingEl = desktopWindow.contentElement.querySelector('.od-window-loading');
+        // 与主窗口一致地淡出，避免应用首屏只画了一半就被揭开
+        const finishLoading = (): void => {
+            const el = loadingEl;
+            if (!el) return;
+            loadingEl = null;
+            el.classList.add('is-hidden');
+            setTimeout(() => el.remove(), 300);
+        };
         if (bundleName === 'browser') {
+            desktopWindow.contentElement.innerHTML = '';
             const browser = document.createElement('browser-entry-widget');
             browser.style.cssText = 'width:100%;height:100%;display:block;';
             desktopWindow.contentElement.appendChild(browser);
         } else {
+            const { src, external } = await this.resolveApplicationFrameSrc(bundleName);
             const frame = document.createElement('iframe');
             frame.className = 'od-desktop-app-frame';
-            frame.src = await this.resolveApplicationFrameSrc(bundleName);
+            frame.src = src;
             frame.setAttribute('title', this.t('renderer.desktop.app.frameTitle', { app: title }));
             frame.style.pointerEvents = 'auto';
+
+            let loadingTimer: ReturnType<typeof setTimeout> | undefined;
+            const stopWaiting = (): void => {
+                if (loadingTimer !== undefined) {
+                    clearTimeout(loadingTimer);
+                    loadingTimer = undefined;
+                }
+                window.removeEventListener('message', onReadyMessage);
+                finishLoading();
+            };
+            // 内置应用在挂载完 entry widget 后会回传 APPLICATION_READY（见 scripts/application-host.ts）
+            const onReadyMessage = (event: MessageEvent): void => {
+                const data = event.data as { type?: string; bundleName?: string } | null;
+                if (!data || data.type !== 'APPLICATION_READY' || data.bundleName !== bundleName) return;
+                // 同一文档里主窗口的应用视图可能同时持有同一个应用，必须按来源窗口判定：
+                // 否则另一个实例先就绪会把本浮窗的占位提前撤掉，露出还没挂载完的空白 iframe
+                if (event.source !== frame.contentWindow) return;
+                stopWaiting();
+            };
+            window.addEventListener('message', onReadyMessage);
+            // 外部应用不回传就绪消息，按 iframe load 撤掉占位；两者都兜超时
+            loadingTimer = setTimeout(() => stopWaiting(), APP_FRAME_READY_TIMEOUT_MS);
+
             // 应用页加载完成瞬间补发当前主题/字体，消除与主界面的短暂不一致
             // （消息格式与 renderer/theme/theme-iframe-bridge 的 THEME_SETTINGS 一致）
             frame.addEventListener('load', () => {
+                if (external) stopWaiting();
                 const win = frame.contentWindow;
                 if (!win) return;
                 const theme = document.documentElement.dataset.theme;
@@ -1981,17 +2023,20 @@ export class ImmersiveDesktop extends HTMLElement {
         }
     }
 
-    private async resolveApplicationFrameSrc(bundleName: string): Promise<string> {
+    private async resolveApplicationFrameSrc(bundleName: string): Promise<{ src: string; external: boolean }> {
         try {
             const config = (await globalWindow.applicationRegistryAPI?.getApplicationGUIConfig?.(bundleName)) as
                 ApplicationGuiConfig | null | undefined;
             if (config?.source === 'user' && config.entryUrl) {
-                return config.entryUrl;
+                return { src: config.entryUrl, external: true };
             }
         } catch {
             // 回退到内建应用宿主页面
         }
-        return `./application.html?applicationBundleName=${encodeURIComponent(bundleName)}`;
+        return {
+            src: `./application.html?applicationBundleName=${encodeURIComponent(bundleName)}`,
+            external: false
+        };
     }
 
     private async ensureChatTask(): Promise<string | null> {

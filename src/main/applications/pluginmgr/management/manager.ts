@@ -26,6 +26,7 @@ import {
     ensurePluginDirectories,
     getBuiltinPluginsDirectory,
     getPluginCacheDirectory,
+    getPluginDataDirectory,
     getPluginsDirectory,
     getPluginStagingDirectory,
     getPluginTrashDirectory
@@ -321,40 +322,93 @@ export async function installPlugin(spec: string, options: PluginInstallOptions 
     }
 }
 
-export async function uninstallPlugin(
+export interface UninstallPluginOptions {
+    configDirectory?: string;
+    /**
+     * 是否同时删除插件的私有数据目录（`plugins/.pluginmgr/data/<id>`）。
+     * 默认 false：保留数据，重新安装同一插件 id 后可继续使用。
+     */
+    removeData?: boolean;
+}
+
+export type UninstallTargetResolution = { ok: true; target: string } | { ok: false; error: string };
+
+/**
+ * 解析卸载要删除的磁盘目标，或在不能卸载时给出拒绝原因。
+ *
+ * 单独暴露出来是为了让宿主在**释放插件运行实例之前**先做检查：内置与外部插件、以及
+ * 已不存在的插件都不该被 deactivate，否则会白白拆掉一个正在运行的内置渠道插件再装回来。
+ */
+export function resolveUninstallTarget(
     id: string,
     configDirectory: string = getOpendeskDirectory()
-): Promise<{ success: boolean; error?: string }> {
+): UninstallTargetResolution {
     const pluginsRoot = path.resolve(getPluginsDirectory(configDirectory));
     const record = getPluginRecord(id, configDirectory);
-    let target: string | undefined;
     if (record && record.source !== 'builtin' && !path.isAbsolute(record.path)) {
         // Registry records for plugins inside the plugins directory always start
         // with the container entry (directory or single plugin file).
-        target = path.resolve(pluginsRoot, record.path.split(/[\\/]/)[0]);
+        const target = path.resolve(pluginsRoot, record.path.split(/[\\/]/)[0]);
         if (!target.startsWith(`${pluginsRoot}${path.sep}`)) {
-            return { success: false, error: 'plugin.uninstall_invalid_path' };
+            return { ok: false, error: 'plugin.uninstall_invalid_path' };
         }
-    } else {
-        const candidate = discoverPlugins({ configDirectory }).candidates.find((entry) => entry.id === id);
-        if (!candidate) return { success: false, error: `Plugin not found: ${id}` };
-        if (candidate.source === 'builtin') return { success: false, error: 'plugin.uninstall_builtin' };
-        if (candidate.source === 'external') return { success: false, error: 'plugin.uninstall_external' };
-        const spec = path.resolve(candidate.spec);
-        if (!spec.startsWith(`${pluginsRoot}${path.sep}`)) {
-            return { success: false, error: 'plugin.uninstall_external' };
-        }
-        target = spec;
+        return { ok: true, target };
     }
+    const candidate = discoverPlugins({ configDirectory }).candidates.find((entry) => entry.id === id);
+    if (!candidate) return { ok: false, error: `Plugin not found: ${id}` };
+    if (candidate.source === 'builtin') return { ok: false, error: 'plugin.uninstall_builtin' };
+    if (candidate.source === 'external') return { ok: false, error: 'plugin.uninstall_external' };
+    const spec = path.resolve(candidate.spec);
+    if (!spec.startsWith(`${pluginsRoot}${path.sep}`)) {
+        return { ok: false, error: 'plugin.uninstall_external' };
+    }
+    return { ok: true, target: spec };
+}
+
+export async function uninstallPlugin(
+    id: string,
+    configDirectoryOrOptions: string | UninstallPluginOptions = getOpendeskDirectory()
+): Promise<{ success: boolean; error?: string }> {
+    const options =
+        typeof configDirectoryOrOptions === 'string'
+            ? { configDirectory: configDirectoryOrOptions }
+            : configDirectoryOrOptions;
+    const configDirectory = options.configDirectory ?? getOpendeskDirectory();
+    const resolution = resolveUninstallTarget(id, configDirectory);
+    if (!resolution.ok) return { success: false, error: resolution.error };
     try {
         ensurePluginDirectories(configDirectory);
-        await moveToTrash(target, configDirectory);
+        await moveToTrash(resolution.target, configDirectory);
+        // 数据目录按插件 id 拼接（不是磁盘容器目录名，两者未必一致）
+        if (options.removeData) removePluginDataDirectory(id, configDirectory);
         removePluginRecord(id, configDirectory);
         return { success: true };
     } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
         logger.error(`Plugin uninstall failed: ${id}`, error);
         return { success: false, error: message };
+    }
+}
+
+/**
+ * 删除插件私有数据目录。
+ *
+ * 数据目录不进回收站：它只是插件的运行态数据，没有代码可恢复的价值；而 `moveToTrash`
+ * 用 `<basename>-<timestamp>` 命名，插件目录与数据目录 basename 相同时会在同一毫秒撞名，
+ * 导致卸载"半成功"（代码目录已进 trash、数据目录报错、注册表记录残留）。
+ *
+ * `maxRetries` 走 Node 内置的 EPERM/EBUSY 重试：插件的 sqlite、缓存文件常被刚释放的
+ * MCP 子进程短暂占用，一次失败就放弃会让"已删除数据"的提示变成谎报。
+ *
+ * 重试后仍失败只记录警告：此时插件代码目录已经移走，把已完成卸载判为失败会让运行时、
+ * 磁盘与注册表三者不一致，用户也无法重试。
+ */
+function removePluginDataDirectory(pluginId: string, configDirectory: string): void {
+    const directory = getPluginDataDirectory(pluginId, configDirectory);
+    try {
+        fs.rmSync(directory, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
+    } catch (error) {
+        logger.warn(`Plugin data directory removal failed: ${pluginId}`, error);
     }
 }
 

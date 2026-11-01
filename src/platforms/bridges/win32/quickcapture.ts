@@ -26,10 +26,9 @@ import {
 const TAG = '[QuickCapture]';
 const OVERLAY_PAGE = 'quickcapture_overlay.html';
 /**
- * 遮罩窗口的独立内存 session。Electron 的 zoom 按 origin 共享：若遮罩与主窗口共用
- * 默认 session，遮罩会继承主窗口设过的缩放（gui_config.scale_factor），框选坐标与截图
- * 像素不再一一对应；而遮罩为了 1:1 又会把 zoom 设回 1，反而把主窗口的缩放改回 100%。
- * 独立 partition 隔离 HostZoomMap，两边互不影响。
+ * 遮罩窗口的独立 session。遮罩的框选坐标必须与 DIP 1:1，因此窗口恒以 zoomFactor 1
+ * 渲染（见 createOverlay），不跟随主窗口的缩放偏好；独立 partition 让遮罩不与主窗口
+ * 共用 session（存储 / cookie 隔离），也不受主窗口侧任何页面缩放策略影响。
  */
 const OVERLAY_PARTITION = 'opendesk-quickcapture-overlay';
 /** 与鸿蒙 QuickCaptureHotkeyManager 的防抖/快速连按保护保持一致。 */
@@ -257,8 +256,7 @@ export class WindowsQuickCaptureKit implements QuickCaptureKit {
                 contextIsolation: true,
                 nodeIntegration: false,
                 devTools: false,
-                // 主窗口按缩放偏好设置过 zoomFactor，Electron 的 zoom 又按 origin 共享；
-                // 遮罩的框选坐标必须与 DIP 1:1，否则绘制与命中位置会被整体放大。
+                // 框选坐标必须与 DIP 1:1：遮罩恒以 100% 渲染，不跟随主窗口的缩放偏好
                 partition: OVERLAY_PARTITION,
                 zoomFactor: 1
             }

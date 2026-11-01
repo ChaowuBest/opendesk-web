@@ -20,7 +20,6 @@ import { NotificationManager } from '../utils/notificationmgr.js';
 import { getPlatform, type PlatformFetchOptions } from '../../platforms/base.js';
 import { Worker } from 'worker_threads';
 import { SkillRegistry } from '../aikernel/skill.js';
-import { AgentRegistry } from '../aikernel/agents/registry.js';
 import { type Privileges, type ProtocolRequest } from 'electron';
 import { AppManagerStore } from './appmgr/manager.js';
 import { ExternalManifestApplication } from './appmgr/external.js';
@@ -97,6 +96,9 @@ export class ApplicationRegistry {
     /** 所有应用延迟资源完成加载后 resolved；所有调用方共享同一个启动屏障。 */
     private static fullyLoadedPromise?: Promise<void>;
 
+    /** 单个应用的延迟资源加载状态（bundleName -> 加载 Promise），供按应用加载复用。 */
+    private static applicationLoadPromises = new Map<string, Promise<void>>();
+
     /**
      * 注册就绪回调。如果应用注册表已就绪，则立即执行；否则加入队列等待。
      * @param callback 就绪后执行的回调函数
@@ -142,16 +144,37 @@ export class ApplicationRegistry {
         return this.fullyLoadedPromise;
     }
 
+    /**
+     * 只等待单个应用的延迟资源（Agent、插件、Skill 列表等）。
+     *
+     * 打开应用只需要目标应用自身就绪，不必等其它应用、遥测或浏览器初始化；
+     * 每个应用最多加载一次，重复调用复用同一个 Promise，加载失败只记日志不抛出
+     * （与全量加载屏障的容错行为保持一致）。
+     */
+    static ensureApplicationLoaded(bundleName: string): Promise<void> {
+        const loaded = this.applicationLoadPromises.get(bundleName);
+        if (loaded) return loaded;
+
+        const application = this.applications.get(bundleName);
+        if (!application) return Promise.resolve();
+
+        const promise = (async () => {
+            try {
+                await application.ensureLoaded();
+            } catch (err) {
+                logger.error(`Lazy load failed for ${bundleName}: ${err}`);
+            }
+        })();
+        this.applicationLoadPromises.set(bundleName, promise);
+        return promise;
+    }
+
     private static async loadAllApplicationResources(): Promise<void> {
-        await AgentRegistry.unloadApplicationAgents();
+        // 这里不整体卸载应用 Agent：应用只在各自 ensureLoaded() 里用 replaceApplicationAgent
+        // 覆盖注册，而 ensureLoaded() 是记忆化的。卸载若晚于某个应用的个体加载（打开应用的
+        // 窄屏障会先加载目标应用），就会把它刚注册的 Agent 抹掉且不会重新注册。
         await Promise.all(
-            Array.from(this.applications.values()).map(async (application) => {
-                try {
-                    await application.ensureLoaded();
-                } catch (err) {
-                    logger.error(`Lazy load failed for ${application.bundleName}: ${err}`);
-                }
-            })
+            Array.from(this.applications.keys()).map((bundleName) => this.ensureApplicationLoaded(bundleName))
         );
     }
 
@@ -173,6 +196,8 @@ export class ApplicationRegistry {
 
     static registerApplication(application: BaseApplication) {
         this.applications.set(application.bundleName, application);
+        // 同一 bundleName 换了新实例后必须重新走一遍延迟加载，丢弃旧实例的加载结果
+        this.applicationLoadPromises.delete(application.bundleName);
 
         // 先注册应用的配置 Schema，确保后续 getConfig() 能正确解析
         if ((application as any).source !== 'user') {
@@ -208,6 +233,7 @@ export class ApplicationRegistry {
         const skillRegistry = SkillRegistry.getInstance();
         for (const bundleName of this.externalApplicationBundles) {
             this.applications.delete(bundleName);
+            this.applicationLoadPromises.delete(bundleName);
             skillRegistry.unregisterSkillProvider(bundleName);
         }
         this.externalApplicationBundles.clear();

@@ -27,7 +27,7 @@ import {
     type SkillDetailCardModel
 } from '../../../../renderer/components/skills/skill-detail-card.ts';
 import { renderSafeMarkdown } from '../../../../renderer/utils/markdown.js';
-import { showConfirmModal } from '../../../../renderer/components/confirmModal.js';
+import { showConfirmModalWithCheckbox } from '../../../../renderer/components/confirmModal.js';
 import { OPENDESK_THEME_CHANGED } from '../../../../renderer/theme/theme-iframe-bridge.ts';
 import { syncShadowHostTheme } from '../../../../renderer/theme/theme-shadow-overrides.ts';
 import type { ThemeAppearance } from '../../../../renderer/theme/theme-manager.js';
@@ -100,6 +100,13 @@ interface PluginListEntry {
 
 type InstallDialogMode = 'npm' | 'url';
 type ManagedInstallSource = InstallDialogMode | 'directory' | 'package';
+/**
+ * 可以单独重绘的叶子区域：通知条、安装弹窗、安装进度浮层。
+ *
+ * 它们与插件列表互不依赖，各自挂在 render() 输出的 [data-region] 挂载点上，
+ * 状态变化时只替换这一段 HTML，不牵连列表（滚动位置、卡片动画都不受影响）。
+ */
+type LeafRegion = 'notice' | 'install-dialog' | 'install-progress';
 
 interface InstallProgressState {
     source: ManagedInstallSource;
@@ -510,6 +517,22 @@ button:hover { background: #f4f5f7; }
 .plugin-toggle input:checked + .plugin-toggle-slider::after { transform: translateX(16px); }
 .plugin-toggle input:focus-visible + .plugin-toggle-slider { outline: 2px solid #5b8def; outline-offset: 2px; }
 .plugin-toggle input:disabled + .plugin-toggle-slider { cursor: default; opacity: .45; }
+/* 启停请求发出后原地换成一个转圈（与侧边栏任务列表的进行中图标同款），等结果回来再恢复开关 */
+.plugin-toggle-spinner { display: none; }
+.plugin-toggle.is-pending .plugin-toggle-slider { display: none; }
+.plugin-toggle.is-pending .plugin-toggle-spinner {
+    display: block;
+    position: absolute;
+    top: 3px;
+    left: 11px;
+    width: 18px;
+    height: 18px;
+    border: 2px solid rgba(0, 0, 0, .12);
+    border-top-color: #5b8def;
+    border-radius: 50%;
+    animation: plugin-toggle-spin .8s linear infinite;
+}
+@keyframes plugin-toggle-spin { to { transform: rotate(360deg); } }
 :host([data-theme="dark"]) { color: #ddd; background: #1e1e1e; color-scheme: dark; }
 :host([data-theme="dark"]) .header-area { background: rgba(37, 37, 38, .95); border-color: rgba(255, 255, 255, .1); }
 :host([data-theme="dark"]) .seg-control { background: #333; }
@@ -556,6 +579,10 @@ button:hover { background: #f4f5f7; }
     border-color: rgba(255, 255, 255, .14);
 }
 :host([data-theme="dark"]) .empty-title { color: #ddd; }
+:host([data-theme="dark"]) .plugin-toggle.is-pending .plugin-toggle-spinner {
+    border-color: rgba(255, 255, 255, .16);
+    border-top-color: #8bb8f0;
+}
 :host([data-theme="dark"]) .name { color: #e5e7eb; }
 :host([data-theme="dark"]) .meta, :host([data-theme="dark"]) .plugin-id,
 :host([data-theme="dark"]) .modal-dialog .hint { color: #a4a7ad; }
@@ -571,7 +598,22 @@ function getAPI() {
 export class PluginMgrEntryWidget extends HTMLElement {
     private entries: PluginListEntry[] = [];
     private loading = true;
+    /**
+     * 是否存在全局操作（安装 / 卸载 / 重载）进行中。
+     *
+     * 单插件的启停不走这个标志：每张卡片用自己的 pending 状态显示转圈，见 pendingToggles。
+     */
     private busy = false;
+    /**
+     * 正在切换启用状态、还在等结果的插件 ID。
+     *
+     * 主进程的插件宿主操作本身是串行的（bootstrap 的 serializeHostOperation），所以这里不
+     * 需要把整页控件禁用掉来互斥：多个开关可以连续点击，后端按顺序执行，每张卡片各自显示
+     * 转圈提示即可。
+     */
+    private readonly pendingToggles = new Set<string>();
+    /** 已经绑过动作监听的详情元素：增量刷新复用同一个元素，不能重复绑 */
+    private readonly boundDetailCards = new WeakSet<SkillDetailCard>();
     private addMenuOpen = false;
     /** 当前展示的 tab：内置插件与用户已安装插件分组展示 */
     private activeTab: 'builtin' | 'installed' = 'installed';
@@ -586,7 +628,13 @@ export class PluginMgrEntryWidget extends HTMLElement {
     private locale = resolveRendererLocale();
     /** pluginsChanged 订阅句柄（异步获取，由 adoptDeferredSubscription 接管过期退订） */
     private pluginsChangedUnsubscribe?: () => void;
-    private readonly onPluginsChanged = () => void this.load();
+    /**
+     * 宿主侧变更通知：拉一次列表后增量更新界面（只有插件增删才整树重绘），并保留当前 notice。
+     *
+     * 失败操作同样会广播（实例被装回后必须让订阅方重新对齐），如果这里清 notice，
+     * 用户点完卸载后看到的错误提示会被紧随其后的刷新抹掉。
+     */
+    private readonly onPluginsChanged = () => void this.refreshEntries();
     /** 主窗口在应用语言变化时向 iframe 广播 LOCALE_CHANGED，这里据此切换插件显示语言 */
     private readonly onLocaleMessage = (event: Event) => {
         const data = (event as MessageEvent).data;
@@ -666,56 +714,259 @@ export class PluginMgrEntryWidget extends HTMLElement {
         await this.load();
     }
 
-    private async load(preserveNotice = false): Promise<void> {
-        try {
-            this.entries = (await getAPI().callMainWorld('list')) as PluginListEntry[];
-            if (this.selectedPluginId && !this.entries.some((entry) => entry.id === this.selectedPluginId)) {
+    /** 首屏加载：拉列表后整树渲染（loading 骨架 → 内容） */
+    private async load(): Promise<void> {
+        const next = await this.fetchEntries();
+        if (next) {
+            this.entries = next;
+            if (this.selectedPluginId && !next.some((entry) => entry.id === this.selectedPluginId)) {
                 this.selectedPluginId = undefined;
             }
-            if (!preserveNotice) this.notice = undefined;
+        }
+        this.loading = false;
+        this.render();
+    }
+
+    /** 拉一次插件列表；失败时把错误写进通知条并返回 null（保留现有列表） */
+    private async fetchEntries(): Promise<PluginListEntry[] | null> {
+        try {
+            return (await getAPI().callMainWorld('list')) as PluginListEntry[];
         } catch (error) {
-            this.notice = { text: error instanceof Error ? error.message : String(error), error: true };
-        } finally {
-            this.loading = false;
-            this.render();
+            this.setNotice(error instanceof Error ? error.message : String(error), true);
+            return null;
         }
     }
 
-    private async run(
-        operation: () => Promise<unknown>,
-        successKey: string,
-        onSuccess?: () => void,
-        preserveRenderedState = false
-    ): Promise<void> {
-        if (this.busy) return;
-        this.busy = true;
-        if (preserveRenderedState) {
-            this.shadowRoot
-                ?.querySelectorAll<HTMLButtonElement | HTMLInputElement>('button, input')
-                .forEach((control) => {
-                    control.disabled = true;
-                });
-        } else {
-            this.render();
+    /**
+     * 拉最新列表后按需更新界面：只有插件增删才整树重绘，纯状态变化只替换受影响的卡片。
+     *
+     * 整树重绘会重建整个列表 DOM（滚动位置虽有 render() 兜底，但卡片上的过渡动画会从头播），
+     * 启停这类高频操作不该付这个代价。
+     *
+     * @param dirtyIds 无论数据是否变化都必须重绘的卡片（如刚结束 pending 的那张）
+     */
+    private async refreshEntries(dirtyIds?: Iterable<string>): Promise<void> {
+        const next = await this.fetchEntries();
+        if (!next) {
+            // 列表拉不回来时按现有数据把这几张卡片重绘一遍：转圈、禁用态一起复位，
+            // 否则卡片会卡在「转圈摘了就点不动」的半截状态
+            for (const id of dirtyIds ?? []) {
+                const entry = this.entries.find((candidate) => candidate.id === id);
+                if (entry) this.syncCard(entry);
+            }
+            return;
         }
+        if (this.applyEntries(next, dirtyIds)) return;
+        this.renderPluginDetail();
+        this.bindDetailActions();
+    }
+
+    /** 把新列表应用到界面；返回 true 表示已整树重绘 */
+    private applyEntries(next: PluginListEntry[], dirtyIds?: Iterable<string>): boolean {
+        const previous = this.entries;
+        const previousById = new Map(previous.map((entry) => [entry.id, entry]));
+        this.entries = next;
+        if (this.selectedPluginId && !next.some((entry) => entry.id === this.selectedPluginId)) {
+            this.selectedPluginId = undefined;
+        }
+        // 增删插件会改变分组、计数与卡片顺序，只有这种情况才值得整树重绘
+        const sameComposition =
+            previous.length === next.length && previous.every((entry, index) => entry.id === next[index].id);
+        if (!sameComposition) {
+            this.render();
+            return true;
+        }
+        const dirty = new Set(dirtyIds ?? []);
+        for (const entry of next) {
+            const before = previousById.get(entry.id);
+            if (!dirty.has(entry.id) && before && JSON.stringify(before) === JSON.stringify(entry)) continue;
+            this.syncCard(entry);
+        }
+        return false;
+    }
+
+    /** 用最新数据原地替换一张卡片（含运行时诊断与 pending 外观），不触碰列表其它部分 */
+    private syncCard(entry: PluginListEntry): void {
+        const card = this.findCard(entry.id);
+        if (!card || !card.parentNode) return;
+        // 键盘操作时焦点停在开关上：换节点后把焦点还回去，别让它掉到 body
+        const keepFocus = card.contains(this.shadowRoot?.activeElement ?? null);
+        const holder = document.createElement('div');
+        holder.innerHTML = this.renderCard(entry);
+        const next = holder.firstElementChild as HTMLElement | null;
+        if (!next) return;
+        card.parentNode.replaceChild(next, card);
+        this.bindCardEvents(next);
+        if (keepFocus) next.querySelector<HTMLInputElement>('[data-action="toggle"]')?.focus();
+    }
+
+    /** 按 id 找卡片：插件 id 可能含引号/尖括号等字符，不能用属性选择器拼串 */
+    private findCard(id: string): HTMLElement | null {
+        return this.cards().find((card) => card.dataset.pluginId === id) ?? null;
+    }
+
+    private cards(): HTMLElement[] {
+        return Array.from(this.shadowRoot?.querySelectorAll<HTMLElement>('[data-plugin-id]') ?? []);
+    }
+
+    /**
+     * 跑一次全局操作（安装 / 卸载 / 重载）。
+     *
+     * 全程只做局部更新：busy 期间的控件禁用由 setBusy 就地把属性改掉，
+     * 收尾的列表刷新走 refreshEntries 的增量路径，不整树重绘。
+     */
+    private async run(operation: () => Promise<unknown>, successKey: string, onSuccess?: () => void): Promise<void> {
+        if (this.busy) return;
+        this.clearNotice();
+        this.setBusy(true);
         try {
             await operation();
             onSuccess?.();
-            this.notice = { text: this.t(successKey), error: false };
-            await this.load(true);
+            this.setNotice(this.t(successKey));
+            await this.refreshEntries();
         } catch (error) {
-            this.notice = { text: error instanceof Error ? error.message : String(error), error: true };
+            this.setNotice(error instanceof Error ? error.message : String(error), true);
         } finally {
-            this.busy = false;
-            this.render();
+            this.setBusy(false);
         }
+    }
+
+    /**
+     * 切换单个插件的启用状态。
+     *
+     * 只影响这一张卡片：开关原地换成转圈，其它插件的开关保持可用。后端串行执行，
+     * 所以连续点几个开关也没问题，各自完成后各自恢复。
+     */
+    private async togglePlugin(id: string, enabled: boolean): Promise<void> {
+        if (this.pendingToggles.has(id) || this.busy) return;
+        this.pendingToggles.add(id);
+        this.clearNotice();
+        // 就地切到转圈，而不是整表重绘：整树重建会让开关的过渡动画从头播放
+        this.syncTogglePending(id);
+        try {
+            await getAPI().callMainWorld('setEnabled', id, enabled);
+            this.notifyToggle(id, enabled);
+        } catch (error) {
+            this.notifyToggle(id, enabled, error instanceof Error ? error.message : String(error));
+        } finally {
+            this.pendingToggles.delete(id);
+            // 只把这一张卡片刷成最终状态（摘掉 pending 外观），不整表刷新
+            await this.refreshEntries([id]);
+        }
+    }
+
+    /**
+     * 启停结果走系统通知（与技能中心里技能的启停一致），不占用页面顶部的通知条：
+     * 开关本身已经表达了状态，顶部横幅只留给安装 / 卸载这类过程性结果。
+     */
+    private notifyToggle(id: string, enabled: boolean, errorMessage?: string): void {
+        const action = enabled ? 'enable' : 'disable';
+        const title = this.t(`plugin.${action}.${errorMessage ? 'fail' : 'success'}`);
+        const message = errorMessage ?? this.t(`plugin.${action}.successDetail`, { id });
+        // 通知只是结果反馈：应用 API 异常（含同步抛出的 Unavailable）不能反过来影响启停流程
+        try {
+            void getAPI()
+                .callMainWorld(
+                    'sendNotification',
+                    errorMessage ? 'error' : 'info',
+                    this.t('plugin.app.name'),
+                    title,
+                    message
+                )
+                .catch(() => undefined);
+        } catch {
+            /* applicationAPI 不可用时静默跳过 */
+        }
+    }
+
+    /**
+     * 全局操作进行中：只同步受影响的控件，不重建界面。
+     *
+     * 现场渲染时这些控件同样会按 busy 输出 disabled（安装弹窗还会切成「安装中」），
+     * 这里就地改属性，保证增量状态与整树渲染的结果一致。
+     */
+    private setBusy(busy: boolean): void {
+        if (this.busy === busy) return;
+        this.busy = busy;
+        const root = this.shadowRoot;
+        if (!root) return;
+        for (const selector of ['[data-action="reload"]', '[data-action="add"]']) {
+            const button = root.querySelector<HTMLButtonElement>(selector);
+            if (button) button.disabled = busy;
+        }
+        // 弹窗里的输入框、取消/安装按钮（含「安装中」文案）都随 busy 变，直接按状态重绘这一段
+        this.syncInstallDialog();
+        for (const card of this.cards()) this.syncCardControls(card);
+    }
+
+    /** 一张卡片的控件可用性：本地在等结果（pending）或全局操作进行中（busy）都禁用 */
+    private syncCardControls(card: HTMLElement): void {
+        const disabled = this.busy || this.pendingToggles.has(card.dataset.pluginId ?? '');
+        const toggle = card.querySelector<HTMLInputElement>('[data-action="toggle"]');
+        if (toggle) toggle.disabled = disabled;
+        const uninstall = card.querySelector<HTMLButtonElement>('[data-action="uninstall"]');
+        if (uninstall) uninstall.disabled = disabled;
+    }
+
+    /** 更新通知条：状态与所在区域一处改，整树渲染时由 noticeHtml 输出同一份标记 */
+    private setNotice(text: string, error = false): void {
+        this.notice = { text, error };
+        this.paintRegion('notice', this.noticeHtml);
+    }
+
+    /**
+     * 收走顶部通知条。
+     *
+     * 通知条只表达「最近一次操作的结果」：新操作一开始就把旧结果撤掉，
+     * 否则用户点了开关之后，上一次安装失败的红条还会挂在那里像是这次的结果。
+     */
+    private clearNotice(): void {
+        if (!this.notice) return;
+        this.notice = undefined;
+        this.paintRegion('notice', '');
+    }
+
+    /**
+     * 叶子区域局部重绘：把一段 HTML 写进对应的 [data-region] 挂载点。
+     *
+     * 挂载点由 render() 固定输出，所以这里既不需要判断「元素在不在」，
+     * 也不会像整树重绘那样牵连列表。
+     */
+    private paintRegion(region: LeafRegion, html: string): void {
+        const host = this.shadowRoot?.querySelector(`[data-region="${region}"]`);
+        if (host) host.innerHTML = html;
+    }
+
+    /** 安装弹窗的开关由 installDialogMode 决定：只重绘弹窗这一段，并补绑它自己的交互 */
+    private syncInstallDialog(): void {
+        this.paintRegion('install-dialog', this.renderInstallDialog());
+        this.bindInstallDialogEvents();
+    }
+
+    /** 安装进度浮层的显隐由 installProgress 决定：同上，只重绘这一段 */
+    private syncInstallProgress(): void {
+        this.paintRegion('install-progress', this.renderInstallProgress());
+    }
+
+    /** 加号下拉只靠 visible 类控制显隐：改类即可，不必重建列表 */
+    private syncAddDropdown(): void {
+        this.shadowRoot?.querySelector('.add-dropdown')?.classList.toggle('visible', this.addMenuOpen);
+    }
+
+    /** 一张卡片的启停在等结果：开关位置换成转圈，控件先禁用 */
+    private syncTogglePending(id: string): void {
+        const card = this.findCard(id);
+        if (!card) return;
+        card.querySelector('.plugin-toggle')?.classList.toggle('is-pending', this.pendingToggles.has(id));
+        this.syncCardControls(card);
     }
 
     private openInstallDialog(mode: InstallDialogMode): void {
         this.addMenuOpen = false;
         this.installDialogMode = mode;
         this.installSpec = '';
-        this.render();
+        this.syncAddDropdown();
+        this.syncInstallDialog();
         const focusInput = () => this.shadowRoot?.querySelector<HTMLInputElement>('input[name="spec"]')?.focus();
         if (typeof window.requestAnimationFrame === 'function') {
             window.requestAnimationFrame(focusInput);
@@ -728,17 +979,22 @@ export class PluginMgrEntryWidget extends HTMLElement {
         if (this.busy) return;
         this.installDialogMode = undefined;
         this.installSpec = '';
-        this.render();
+        this.syncInstallDialog();
     }
 
     private install(spec: string, successKey = 'plugin.install.success', source?: ManagedInstallSource): void {
         const normalizedSpec = spec.trim();
         if (!normalizedSpec) return;
+        // 已有全局操作在跑：再进一次会把进度浮层与 busy 归属搞乱（收尾的 finally 会把在跑那次
+        // 的浮层提前清掉），这里直接忽略后续触发
+        if (this.busy) return;
         const startedAt = Date.now();
         if (source) {
             this.installProgress = { source, spec: normalizedSpec };
             this.installDialogMode = undefined;
             this.installSpec = '';
+            this.syncInstallDialog();
+            this.syncInstallProgress();
         }
         const operation = this.run(
             async () => {
@@ -753,21 +1009,23 @@ export class PluginMgrEntryWidget extends HTMLElement {
             },
             successKey,
             () => {
+                // 按下安装后弹窗就该收起（列表组成变化时的整树重绘也会顺带把它关掉）
                 this.installDialogMode = undefined;
                 this.installSpec = '';
+                this.syncInstallDialog();
             }
         );
         if (source) {
             void operation.finally(() => {
                 this.installProgress = undefined;
-                this.render();
+                this.syncInstallProgress();
             });
         }
     }
 
     private async installFromDirectory(): Promise<void> {
         this.addMenuOpen = false;
-        this.render();
+        this.syncAddDropdown();
         const directory = await (window as unknown as { fsAPI?: PluginFileSystemAPI }).fsAPI?.selectDirectory?.();
         if (directory) this.install(directory, 'plugin.install.success', 'directory');
     }
@@ -777,32 +1035,33 @@ export class PluginMgrEntryWidget extends HTMLElement {
         try {
             const filePath = await (window as unknown as { fsAPI?: PluginFileSystemAPI }).fsAPI?.getFilePath?.(file);
             if (!filePath) {
-                this.notice = { text: this.t('plugin.center.filePathUnavailable'), error: true };
-                this.render();
+                this.setNotice(this.t('plugin.center.filePathUnavailable'), true);
                 return;
             }
             this.addMenuOpen = false;
+            this.syncAddDropdown();
             this.install(filePath, 'plugin.install.success', 'package');
         } catch (error) {
-            this.notice = { text: error instanceof Error ? error.message : String(error), error: true };
-            this.render();
+            this.setNotice(error instanceof Error ? error.message : String(error), true);
         }
     }
 
     private async confirmAndUninstall(id: string, onSuccess?: () => void): Promise<void> {
-        const confirmed = await showConfirmModal({
+        const { confirmed, checked } = await showConfirmModalWithCheckbox({
             icon: 'fa-trash-can',
-            iconBg: '#FEF2F2',
-            iconColor: '#DC2626',
+            variant: 'danger',
             title: this.t('plugin.center.uninstallTitle'),
             message: escapeHtml(this.t('plugin.center.uninstallConfirm', { id })),
             confirmText: this.t('plugin.center.uninstall'),
             cancelText: this.t('plugin.center.cancel'),
-            danger: true,
+            checkbox: {
+                label: escapeHtml(this.t('plugin.center.uninstallRemoveData')),
+                hint: escapeHtml(this.t('plugin.center.uninstallRemoveDataHint'))
+            },
             mountTarget: this.shadowRoot!
         });
         if (!confirmed) return;
-        void this.run(() => getAPI().callMainWorld('uninstall', id), 'plugin.uninstall.success', onSuccess);
+        void this.run(() => getAPI().callMainWorld('uninstall', id, checked), 'plugin.uninstall.success', onSuccess);
     }
 
     private statusOf(entry: PluginListEntry): string {
@@ -812,6 +1071,8 @@ export class PluginMgrEntryWidget extends HTMLElement {
 
     private renderCard(entry: PluginListEntry): string {
         const diagnostics = entry.runtime?.diagnostics ?? [];
+        /** 该插件的启停还在等结果：开关换成转圈，等结果回来后再恢复 */
+        const pending = this.pendingToggles.has(entry.id);
         const name = this.pluginName(entry);
         const color = getSkillPastel(name);
         const contributionPills = [
@@ -863,19 +1124,20 @@ export class PluginMgrEntryWidget extends HTMLElement {
                 .join('')}
             <div class="card-footer">
                 ${entry.source === 'builtin' ? `<span class="builtin-tag">${escapeHtml(this.t('plugin.center.builtinTag'))}</span>` : ''}
-                <label class="plugin-toggle" title="${escapeHtml(
+                <label class="plugin-toggle${pending ? ' is-pending' : ''}" title="${escapeHtml(
                     this.t(entry.enabled ? 'plugin.center.disable' : 'plugin.center.enable')
-                )}">
+                )}" ${pending ? 'aria-busy="true"' : ''}>
                     <input type="checkbox" data-action="toggle" data-id="${escapeHtml(entry.id)}"
                         aria-label="${escapeHtml(
                             this.t(entry.enabled ? 'plugin.center.disable' : 'plugin.center.enable')
                         )}"
-                        ${entry.enabled ? 'checked' : ''} ${this.busy ? 'disabled' : ''}>
+                        ${entry.enabled ? 'checked' : ''} ${pending || this.busy ? 'disabled' : ''}>
                     <span class="plugin-toggle-slider"></span>
+                    <span class="plugin-toggle-spinner" aria-hidden="true"></span>
                 </label>
                 ${
                     entry.removable
-                        ? `<button class="danger" data-action="uninstall" data-id="${escapeHtml(entry.id)}" ${this.busy ? 'disabled' : ''}>${escapeHtml(this.t('plugin.center.uninstall'))}</button>`
+                        ? `<button class="danger" data-action="uninstall" data-id="${escapeHtml(entry.id)}" ${pending || this.busy ? 'disabled' : ''}>${escapeHtml(this.t('plugin.center.uninstall'))}</button>`
                         : ''
                 }
             </div>
@@ -1165,6 +1427,8 @@ export class PluginMgrEntryWidget extends HTMLElement {
     }
 
     private render(): void {
+        // 整树重建会让面板回到顶部：先记下各面板的滚动位置，重建完再恢复
+        const panelScrollTops = this.capturePanelScrollTops();
         syncShadowHostTheme(
             this,
             (this.dataset.theme ||
@@ -1219,27 +1483,53 @@ export class PluginMgrEntryWidget extends HTMLElement {
                         </div>
                     </div>
                 </header>
-                ${this.notice ? `<div class="notice ${this.notice.error ? 'error' : ''}">${escapeHtml(this.notice.text)}</div>` : ''}
+                <div data-region="notice">${this.noticeHtml}</div>
                 <div class="content">
                     <div class="tab-panel" data-panel="installed" ${this.activeTab === 'installed' ? '' : 'hidden'}>${this.renderInstalledPanel(installedEntries)}</div>
                     <div class="tab-panel" data-panel="builtin" ${this.activeTab === 'builtin' ? '' : 'hidden'}>${this.renderInstalledPanel(builtinEntries)}</div>
                 </div>
-                ${this.renderInstallDialog()}
-                ${this.renderInstallProgress()}
+                <div data-region="install-dialog">${this.renderInstallDialog()}</div>
+                <div data-region="install-progress">${this.renderInstallProgress()}</div>
             </div>
             ${this.selectedPluginId ? '<skill-detail-card id="plugin-detail-card"></skill-detail-card>' : ''}`;
         this.bindEvents();
+        this.restorePanelScrollTops(panelScrollTops);
         this.renderPluginDetail();
         this.bindDetailActions();
     }
 
+    /** 各 tab 面板当前的滚动位置（按 data-panel 记录，只存非零值） */
+    private capturePanelScrollTops(): Map<string, number> {
+        const tops = new Map<string, number>();
+        this.shadowRoot?.querySelectorAll<HTMLElement>('.tab-panel').forEach((panel) => {
+            if (panel.dataset.panel && panel.scrollTop) tops.set(panel.dataset.panel, panel.scrollTop);
+        });
+        return tops;
+    }
+
+    private restorePanelScrollTops(tops: Map<string, number>): void {
+        if (tops.size === 0) return;
+        this.shadowRoot?.querySelectorAll<HTMLElement>('.tab-panel').forEach((panel) => {
+            const top = panel.dataset.panel ? tops.get(panel.dataset.panel) : 0;
+            if (top) panel.scrollTop = top;
+        });
+    }
+
+    /** 通知条标记：整树渲染与区域重绘共用同一份，避免两处文案/样式漂移 */
+    private get noticeHtml(): string {
+        if (!this.notice) return '';
+        return `<div class="notice${this.notice.error ? ' error' : ''}">${escapeHtml(this.notice.text)}</div>`;
+    }
+
     private bindDetailActions(): void {
         const detail = this.shadowRoot?.querySelector<SkillDetailCard>('#plugin-detail-card');
-        if (!detail) return;
-        const entry = this.entries.find((candidate) => candidate.id === this.selectedPluginId);
-        if (!entry) return;
-        // 避免重复绑定：每次 render() 重新创建 detail 元素，直接使用新引用即可
+        // 同一个 detail 元素只绑一次：增量刷新不会重建详情元素，重复绑会让一个动作触发两次。
+        // 动作处理一律在事件发生时现取 entry，避免闭包捕获到刷新前的旧数据
+        if (!detail || this.boundDetailCards.has(detail)) return;
+        this.boundDetailCards.add(detail);
         detail.addEventListener('skill-detail-action', (event) => {
+            const entry = this.entries.find((candidate) => candidate.id === this.selectedPluginId);
+            if (!entry) return;
             const action = (event as CustomEvent<{ id: string }>).detail.id;
             if (action === 'close') {
                 this.selectedPluginId = undefined;
@@ -1250,10 +1540,8 @@ export class PluginMgrEntryWidget extends HTMLElement {
                 this.returningFromAgent = true;
                 this.renderPluginDetail();
             } else if (action === 'toggle') {
-                void this.run(
-                    () => getAPI().callMainWorld('setEnabled', entry.id, !entry.enabled),
-                    entry.enabled ? 'plugin.disable.success' : 'plugin.enable.success'
-                );
+                // 与卡片上的开关共用同一条路径：单卡片 pending、增量刷新、系统通知反馈
+                void this.togglePlugin(entry.id, !entry.enabled);
             } else if (action === 'uninstall') {
                 void this.confirmAndUninstall(entry.id, () => {
                     this.selectedPluginId = undefined;
@@ -1276,7 +1564,7 @@ export class PluginMgrEntryWidget extends HTMLElement {
         this.shadowRoot?.querySelector('[data-action="add"]')?.addEventListener('click', (event) => {
             event.stopPropagation();
             this.addMenuOpen = !this.addMenuOpen;
-            this.render();
+            this.syncAddDropdown();
         });
         this.shadowRoot?.querySelector('[data-install-source="npm"]')?.addEventListener('click', () => {
             this.openInstallDialog('npm');
@@ -1292,66 +1580,86 @@ export class PluginMgrEntryWidget extends HTMLElement {
             void this.installFromFile(input.files?.[0]);
             input.value = '';
         });
-        this.shadowRoot?.querySelector<HTMLInputElement>('input[name="spec"]')?.addEventListener('input', (event) => {
-            this.installSpec = (event.currentTarget as HTMLInputElement).value;
-        });
-        this.shadowRoot?.querySelector('[data-install-form]')?.addEventListener('submit', (event) => {
-            event.preventDefault();
-            this.install(this.installSpec, 'plugin.install.success', this.installDialogMode);
-        });
-        this.shadowRoot?.querySelector('[data-action="cancel-install"]')?.addEventListener('click', () => {
-            this.closeInstallDialog();
-        });
-        this.shadowRoot?.querySelector('[data-install-dialog]')?.addEventListener('click', (event) => {
-            if (event.target === event.currentTarget) this.closeInstallDialog();
-        });
         this.shadowRoot?.querySelector('.shell')?.addEventListener('click', (event) => {
             if (this.addMenuOpen && !(event.target as Element).closest('.add-dropdown-anchor')) {
                 this.addMenuOpen = false;
-                this.render();
+                this.syncAddDropdown();
             }
         });
         this.shadowRoot?.querySelector('[data-action="reload"]')?.addEventListener('click', () => {
             void this.run(() => getAPI().callMainWorld('reload'), 'plugin.runtime.reload.success');
         });
-        this.shadowRoot?.querySelectorAll<HTMLElement>('[data-plugin-id]').forEach((card) => {
-            const open = (event: Event) => {
-                if ((event.target as Element).closest('button, input, label')) return;
-                const id = card.dataset.pluginId;
-                if (!id) return;
-                this.selectedPluginId = id;
-                this.selectedAgentName = undefined;
-                this.returningFromAgent = false;
-                this.render();
-            };
-            card.addEventListener('click', open);
-            card.addEventListener('keydown', (event) => {
-                const keyboardEvent = event as KeyboardEvent;
-                if (keyboardEvent.key !== 'Enter' && keyboardEvent.key !== ' ') return;
-                keyboardEvent.preventDefault();
-                open(event);
-            });
+        this.shadowRoot?.querySelectorAll<HTMLElement>('[data-plugin-id]').forEach((card) => this.bindCardEvents(card));
+        this.bindInstallDialogEvents();
+    }
+
+    /**
+     * 绑定安装弹窗自己的交互。
+     *
+     * 弹窗是独立叶子区域（见 paintRegion），打开/关闭时只重绘那一段，所以要在这里单独补绑，
+     * 不能指望 bindEvents 每次都跑一遍。
+     */
+    private bindInstallDialogEvents(): void {
+        const root = this.shadowRoot;
+        root?.querySelector<HTMLInputElement>('input[name="spec"]')?.addEventListener('input', (event) => {
+            this.installSpec = (event.currentTarget as HTMLInputElement).value;
         });
-        this.shadowRoot?.querySelectorAll<HTMLInputElement>('[data-action="toggle"]').forEach((toggle) => {
+        root?.querySelector('[data-install-form]')?.addEventListener('submit', (event) => {
+            event.preventDefault();
+            this.install(this.installSpec, 'plugin.install.success', this.installDialogMode);
+        });
+        root?.querySelector('[data-action="cancel-install"]')?.addEventListener('click', () => {
+            this.closeInstallDialog();
+        });
+        root?.querySelector('[data-install-dialog]')?.addEventListener('click', (event) => {
+            if (event.target === event.currentTarget) this.closeInstallDialog();
+        });
+    }
+
+    /**
+     * 绑定一张卡片的交互：打开详情、启停开关、卸载。
+     *
+     * 单独抽出来是因为增量刷新会用新节点替换单张卡片（见 syncCard），那里只需要补绑这一张，
+     * 不能重跑 bindEvents —— 否则其它卡片上的监听会被重复注册。
+     */
+    private bindCardEvents(card: HTMLElement): void {
+        const open = (event: Event) => {
+            if ((event.target as Element).closest('button, input, label')) return;
+            const id = card.dataset.pluginId;
+            if (!id) return;
+            this.selectedPluginId = id;
+            this.selectedAgentName = undefined;
+            this.returningFromAgent = false;
+            this.render();
+        };
+        card.addEventListener('click', open);
+        card.addEventListener('keydown', (event) => {
+            const keyboardEvent = event as KeyboardEvent;
+            if (keyboardEvent.key !== 'Enter' && keyboardEvent.key !== ' ') return;
+            keyboardEvent.preventDefault();
+            open(event);
+        });
+        const toggle = card.querySelector<HTMLInputElement>('[data-action="toggle"]');
+        if (toggle) {
             toggle.addEventListener('change', () => {
                 const id = toggle.dataset.id;
-                const entry = this.entries.find((candidate) => candidate.id === id);
-                if (id && entry) {
-                    void this.run(
-                        () => getAPI().callMainWorld('setEnabled', id, toggle.checked),
-                        toggle.checked ? 'plugin.enable.success' : 'plugin.disable.success',
-                        undefined,
-                        true
-                    );
+                const entry = id ? this.entries.find((candidate) => candidate.id === id) : undefined;
+                if (!id || !entry) return;
+                if (this.pendingToggles.has(id)) {
+                    // 这张卡片的结果还没回来：保持开关显示为原状态，等刷新后再接受新的点击
+                    toggle.checked = entry.enabled;
+                    return;
                 }
+                void this.togglePlugin(id, toggle.checked);
             });
-        });
-        this.shadowRoot?.querySelectorAll<HTMLElement>('[data-action="uninstall"]').forEach((button) => {
-            button.addEventListener('click', () => {
-                const id = button.dataset.id;
+        }
+        const uninstall = card.querySelector<HTMLElement>('[data-action="uninstall"]');
+        if (uninstall) {
+            uninstall.addEventListener('click', () => {
+                const id = uninstall.dataset.id;
                 if (id) void this.confirmAndUninstall(id);
             });
-        });
+        }
     }
 }
 

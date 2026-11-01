@@ -166,10 +166,16 @@ export function initializeRegistryProtocols() {
 
 /**
  * 注册应用注册器IPC处理程序
+ *
+ * ensureFullyLoaded：所有应用延迟资源的共享加载屏障（建任务等场景需要全量资源）。
+ * ensureApplicationLoaded：只等待单个应用自身的延迟资源（打开应用的首屏路径用它，
+ * 避免被其它应用 / 遥测 / 浏览器初始化拖住）。
  */
 export function registerApplicationRegistryHandlers(
     ipcMain: Electron.IpcMain,
-    ensureFullyLoaded: () => Promise<void> = () => ApplicationRegistry.ensureFullyLoaded()
+    ensureFullyLoaded: () => Promise<void> = () => ApplicationRegistry.ensureFullyLoaded(),
+    ensureApplicationLoaded: (bundleName: string) => Promise<void> = (bundleName) =>
+        ApplicationRegistry.ensureApplicationLoaded(bundleName)
 ) {
     ApplicationRegistry.onApplicationListChanged(() => {
         const apps = ApplicationRegistry.getApplicationList();
@@ -184,6 +190,14 @@ export function registerApplicationRegistryHandlers(
     ipcMain.handle('applicationRegistry:ensureFullyLoaded', async () => {
         try {
             await ensureFullyLoaded();
+            return { status: 'ok' };
+        } catch (error) {
+            return { status: 'error', message: formatIpcError(error) };
+        }
+    });
+    ipcMain.handle('applicationRegistry:ensureApplicationLoaded', async (_event, bundleName) => {
+        try {
+            await ensureApplicationLoaded(bundleName);
             return { status: 'ok' };
         } catch (error) {
             return { status: 'error', message: formatIpcError(error) };

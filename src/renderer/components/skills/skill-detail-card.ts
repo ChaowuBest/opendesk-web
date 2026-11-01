@@ -154,6 +154,8 @@ const CLOSE_SVG =
 
 export class SkillDetailCard extends HTMLElement {
     private _model?: SkillDetailCardModel;
+    /** 上一次渲染的视图标识：同一视图的数据刷新要保住内容区滚动位置，切对象/切层级则回到顶部 */
+    private renderedViewKey?: string;
 
     constructor() {
         super();
@@ -233,6 +235,12 @@ export class SkillDetailCard extends HTMLElement {
         const body = this.shadowRoot.querySelector<HTMLElement>('.detail-body');
         if (!dialog || !body) return;
 
+        // 内容区是整体重写的：同一视图被外部刷新（宿主广播变更等）时把滚动位置放回去，
+        // 换插件或进出下一级视图则该从顶部开始
+        const viewKey = `${model.id}\u0000${model.name}\u0000${model.subtitle ?? ''}\u0000${model.backLabel ?? ''}`;
+        const keepScrollTop = viewKey === this.renderedViewKey ? body.scrollTop : 0;
+        this.renderedViewKey = viewKey;
+
         // 视图切换时锁定窗口尺寸，避免内容高度不同导致窗口大小与居中位置跳动
         const lockSize =
             model.transition && dialog.offsetWidth > 0 && dialog.offsetHeight > 0
@@ -268,6 +276,7 @@ export class SkillDetailCard extends HTMLElement {
             ? `<section class="detail-section"><div class="detail-section-label">${escapeHtml(model.metadataLabel ?? '')}</div><div class="detail-meta-grid">${model.metadata.map((item) => `<div class="detail-meta-item"><div class="meta-label">${escapeHtml(item.label)}</div><div class="meta-value">${escapeHtml(item.value)}</div></div>`).join('')}</div></section>`
             : '';
         body.innerHTML = `${model.description ? `<section class="detail-section"><div class="detail-section-label">${escapeHtml(model.descriptionLabel ?? '')}</div><div class="detail-desc">${escapeHtml(model.description)}</div></section>` : ''}${model.bodyHtml ? `<section class="detail-section"><div class="detail-section-label">${escapeHtml(model.bodyLabel ?? '')}</div><div class="detail-body-content markdown-body">${model.bodyHtml}</div></section>` : ''}${metadata}${model.extraSectionsHtml ?? ''}`;
+        body.scrollTop = keepScrollTop;
 
         const footer = this.shadowRoot.querySelector<HTMLElement>('.detail-footer');
         if (footer) {

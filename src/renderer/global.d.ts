@@ -214,6 +214,7 @@ declare global {
                 callback: (...args: unknown[]) => void
             ) => Promise<() => void>;
             ensureFullyLoaded: () => Promise<void>;
+            ensureApplicationLoaded: (bundleName: string) => Promise<void>;
             getApplicationGUIConfig: (bundleName: string) => Promise<any>;
             getApplicationList: () => Promise<any>;
         };

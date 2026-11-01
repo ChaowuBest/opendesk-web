@@ -593,6 +593,8 @@ opendesk skill list
 
 应用的主界面通过一个自定义 HTML 元素（Web Component）来实现。框架在打开应用时，会动态加载 `renderer/entry.ts`，并将其中定义的 `<bundleName>-entry-widget` 元素挂载到应用容器中。
 
+挂载完成后，框架会向宿主回传就绪信号，宿主据此撤掉加载占位（主窗口、桌面浮窗、独立应用窗口都是这个流程）。因此 `connectedCallback()` 应当同步渲染出首屏骨架，把耗时的数据请求放到骨架渲染之后（先出框架再 `await` 拉数据），否则占位撤掉时用户会看到一段空白。
+
 编写界面时，需要：
 
 1. 创建一个类，继承 `AgentOperableHTMLElement`（它已继承自标准 `HTMLElement`）

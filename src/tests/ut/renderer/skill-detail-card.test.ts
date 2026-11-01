@@ -102,4 +102,32 @@ describe('shared skill detail card', () => {
         const footer = card.shadowRoot.querySelector('.detail-footer');
         expect(footer?.hasAttribute('hidden')).toBe(true);
     });
+
+    test('keeps the body scroll on same-view refresh and resets it when the view changes', () => {
+        const card = createCard({ id: 'a', name: 'A', closeLabel: 'Close', actions: [] });
+        const body = card.shadowRoot.querySelector('.detail-body');
+        let scrollTop = 0;
+        const writes: number[] = [];
+        Object.defineProperty(body, 'scrollTop', {
+            configurable: true,
+            get: () => scrollTop,
+            set: (value: number) => {
+                writes.push(value);
+                scrollTop = value;
+            }
+        });
+
+        // 同一插件同一视图被外部刷新（如宿主广播变更）：滚动位置被写回
+        scrollTop = 160;
+        card.model = { id: 'a', name: 'A', closeLabel: 'Close', description: 'refreshed', actions: [] };
+        expect(writes[writes.length - 1]).toBe(160);
+
+        // 换一个插件：内容整体换掉，应回到顶部
+        card.model = { id: 'b', name: 'B', closeLabel: 'Close', actions: [] };
+        expect(writes[writes.length - 1]).toBe(0);
+
+        // 同一插件进入下一级视图（出现返回按钮）：同样从顶部开始
+        card.model = { id: 'b', name: 'Agent', closeLabel: 'Close', backLabel: 'Back', actions: [] };
+        expect(writes[writes.length - 1]).toBe(0);
+    });
 });

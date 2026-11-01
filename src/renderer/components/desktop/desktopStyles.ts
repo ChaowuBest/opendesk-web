@@ -394,13 +394,8 @@ export function buildDesktopStyles(): string {
         .od-floating-window-content > task-view {
             display: block; width: 100%; height: 100%; min-width: 0; min-height: 0; overflow: hidden;
         }
-        .od-window-loading { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; gap: 10px; color: var(--od-ink-faint); font-size: 13px; }
-        .od-spinner {
-            width: 14px; height: 14px; border-radius: 50%;
-            border: 2px solid color-mix(in srgb, var(--od-blue) 20%, transparent); border-top-color: var(--od-blue);
-            animation: od-rot 0.9s linear infinite; flex: none;
-        }
-        @keyframes od-rot { to { transform: rotate(360deg); } }
+        .od-window-loading { position: absolute; inset: 0; display: block; transition: opacity 0.2s ease-out; }
+        .od-window-loading.is-hidden { opacity: 0; pointer-events: none; }
         .od-window-resize-handle { position: absolute; z-index: 5; }
         .od-window-resize-handle[data-dir='n'] { top: -3px; left: 12px; right: 12px; height: ${RESIZE_HANDLE_THICKNESS}px; cursor: ns-resize; }
         .od-window-resize-handle[data-dir='e'] { right: -3px; top: 12px; bottom: 12px; width: ${RESIZE_HANDLE_THICKNESS}px; cursor: ew-resize; }

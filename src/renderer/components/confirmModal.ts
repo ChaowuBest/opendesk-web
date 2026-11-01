@@ -29,6 +29,24 @@ import { escapeHtml } from '../../common/utils/escape.js';
 
 export type ModalVariant = 'danger' | 'info' | 'warn' | 'success';
 
+/** 确认弹窗中的可选项复选框 */
+export interface ConfirmModalCheckboxOptions {
+    /** 复选框文本（支持 HTML，纯文本请先转义） */
+    label: string;
+    /** 复选框下方的补充说明（支持 HTML） */
+    hint?: string;
+    /** 初始是否勾选（默认 false） */
+    checked?: boolean;
+}
+
+/** 带复选框的确认弹窗结果 */
+export interface ConfirmModalResult {
+    /** 用户是否点了"确认" */
+    confirmed: boolean;
+    /** 复选框是否被勾选；弹窗未提供复选框时恒为 false */
+    checked: boolean;
+}
+
 export interface ConfirmModalOptions {
     /** 语义类型，决定色带颜色。未指定时根据 danger 推断 */
     variant?: ModalVariant;
@@ -65,6 +83,8 @@ export interface ConfirmModalOptions {
     autoFocusConfirm?: boolean;
     /** 是否播放进入/退出动效（默认 true）；关闭时同时跳过动画等待。 */
     animate?: boolean;
+    /** 可选项复选框：提供后弹窗会渲染复选框，勾选状态通过 ConfirmModalResult.checked 返回 */
+    checkbox?: ConfirmModalCheckboxOptions;
 }
 
 const ANIM_DURATION_IN = 250;
@@ -358,6 +378,18 @@ ${CONFIRM_DARK_TOKENS}
     font-size: 13px; color: var(--mc-ink3); line-height: 1.6;
 }
 .od-confirm-modal-body b { color: var(--mc-ink2); font-weight: 600; }
+.od-confirm-modal-checkbox-wrapper {
+    padding: 0 24px 4px;
+}
+.od-confirm-modal-checkbox {
+    display: flex; align-items: center; gap: 7px;
+    font-size: 12px; color: var(--mc-ink2); cursor: pointer;
+}
+.od-confirm-modal-checkbox input { accent-color: var(--mc-accent); width: 14px; height: 14px; }
+.od-confirm-modal-checkbox-hint {
+    color: var(--mc-ink3); font-size: 11px; line-height: 1.5;
+    padding-left: 21px; margin-top: 4px;
+}
 .od-confirm-modal-challenge {
     padding: 0 24px 4px;
 }
@@ -462,6 +494,22 @@ export function shouldConfirmOnEnter(
 }
 
 export function showConfirmModal(options: ConfirmModalOptions): Promise<boolean> {
+    return openConfirmModal(options).then((result) => result.confirmed);
+}
+
+/**
+ * 带可选项复选框的确认弹窗。
+ *
+ * 与 showConfirmModal 的唯一区别是会额外渲染一个复选框，并在结果中带回勾选状态。
+ * 复选框默认不勾选，交由调用方决定"勾选代表什么"。
+ */
+export function showConfirmModalWithCheckbox(
+    options: ConfirmModalOptions & { checkbox: ConfirmModalCheckboxOptions }
+): Promise<ConfirmModalResult> {
+    return openConfirmModal(options);
+}
+
+function openConfirmModal(options: ConfirmModalOptions): Promise<ConfirmModalResult> {
     return new Promise((resolve) => {
         const {
             variant: explicitVariant,
@@ -477,6 +525,7 @@ export function showConfirmModal(options: ConfirmModalOptions): Promise<boolean>
             enterToConfirm = false,
             autoFocusConfirm = false,
             animate = true,
+            checkbox,
             mountTarget = document.body
         } = options;
 
@@ -496,6 +545,16 @@ export function showConfirmModal(options: ConfirmModalOptions): Promise<boolean>
             ? `<div class="od-confirm-modal-challenge">
                    <div class="od-confirm-modal-challenge-hint">${(challengeHint ?? '').replace(challenge!, `<code>${challenge}</code>`)}</div>
                    <input class="od-confirm-modal-challenge-input" type="text" placeholder="${challenge ?? ''}" autocomplete="off" spellcheck="false" data-action="challenge-input" />
+               </div>`
+            : '';
+
+        const checkboxHtml = checkbox
+            ? `<div class="od-confirm-modal-checkbox-wrapper">
+                   <label class="od-confirm-modal-checkbox">
+                       <input type="checkbox" data-action="checkbox"${checkbox.checked ? ' checked' : ''} />
+                       ${checkbox.label}
+                   </label>
+                   ${checkbox.hint ? `<div class="od-confirm-modal-checkbox-hint">${checkbox.hint}</div>` : ''}
                </div>`
             : '';
 
@@ -523,19 +582,23 @@ export function showConfirmModal(options: ConfirmModalOptions): Promise<boolean>
         <button class="od-confirm-modal-close" data-action="close" aria-label="关闭">${CLOSE_SVG}</button>
     </div>
     <div class="od-confirm-modal-body">${message}</div>
+    ${checkboxHtml}
     ${challengeHtml}
     ${footerHtml}
 </div>`;
 
         let resolved = false;
+        const getChecked = () =>
+            (overlay.querySelector('[data-action="checkbox"]') as HTMLInputElement | null)?.checked ?? false;
         // 仅当调用方显式开启 enterToConfirm 时才会注册，用于在关闭时同步移除
         let enterHandler: ((e: KeyboardEvent) => void) | undefined;
         const close = (result: boolean) => {
             if (resolved) return;
             resolved = true;
+            const outcome: ConfirmModalResult = { confirmed: result, checked: getChecked() };
             const finish = () => {
                 overlayHandle.dispose();
-                resolve(result);
+                resolve(outcome);
             };
             if (animate) {
                 overlay.classList.add('od-modal-leaving');

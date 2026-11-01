@@ -284,6 +284,241 @@ describe('plugin manager application renderer', () => {
         await new Promise((resolve) => setTimeout(resolve, 0));
     });
 
+    test('切换某个插件时只让该卡片的开关转圈，其它插件的开关保持可用', async () => {
+        const widget = await createWidget();
+        let finishFirstToggle: (() => void) | undefined;
+        callMainWorld.mockImplementationOnce(
+            () =>
+                new Promise<void>((resolve) => {
+                    finishFirstToggle = resolve;
+                })
+        );
+        const pendingToggleIds = () =>
+            Array.from(widget.shadowRoot.querySelectorAll('.plugin-toggle.is-pending [data-action="toggle"]'))
+                .map((toggle: any) => toggle.dataset.id)
+                .sort();
+        const disabledToggleIds = () =>
+            Array.from(widget.shadowRoot.querySelectorAll('[data-action="toggle"]'))
+                .filter((toggle: any) => toggle.disabled)
+                .map((toggle: any) => toggle.dataset.id)
+                .sort();
+        const toggle = widget.shadowRoot.querySelector('[data-plugin-id="installed-plugin"] [data-action="toggle"]');
+
+        toggle.checked = true;
+        toggle.dispatchEvent(new Event('change'));
+
+        // 转圈只出现在被点的这张卡片上，其它开关不动（整表禁用会让所有 switch 一起变灰再恢复）
+        expect(pendingToggleIds()).toEqual(['installed-plugin']);
+        expect(disabledToggleIds()).toEqual(['installed-plugin']);
+        expect(
+            widget.shadowRoot.querySelector('[data-plugin-id="installed-plugin"] .plugin-toggle-spinner')
+        ).not.toBeNull();
+
+        // 前一个请求还没回来时另一个插件也能切换：后端串行执行，前端不需要互相等待
+        const otherToggle = widget.shadowRoot.querySelector('[data-plugin-id="<local-plugin>"] [data-action="toggle"]');
+        otherToggle.checked = false;
+        otherToggle.dispatchEvent(new Event('change'));
+        expect(callMainWorld).toHaveBeenCalledWith('setEnabled', '<local-plugin>', false);
+
+        finishFirstToggle?.();
+        await new Promise((resolve) => setTimeout(resolve, 10));
+
+        expect(pendingToggleIds()).toEqual([]);
+    });
+
+    test('切换插件只重绘那张卡片：列表不重建，滚动位置也不丢', async () => {
+        const widget = await createWidget();
+        const panel = widget.shadowRoot.querySelector('[data-panel="installed"]') as HTMLElement;
+        panel.scrollTop = 180;
+        const localCard = widget.shadowRoot.querySelector('[data-plugin-id="<local-plugin>"]');
+        const toggle = widget.shadowRoot.querySelector(
+            '[data-plugin-id="installed-plugin"] [data-action="toggle"]'
+        ) as HTMLInputElement;
+
+        toggle.checked = true;
+        toggle.dispatchEvent(new Event('change'));
+        await new Promise((resolve) => setTimeout(resolve, 10));
+
+        // 没有整表刷新：面板与其它卡片都还是原来那批节点，滚动位置原样保留
+        expect(widget.shadowRoot.querySelector('[data-panel="installed"]')).toBe(panel);
+        expect(widget.shadowRoot.querySelector('[data-plugin-id="<local-plugin>"]')).toBe(localCard);
+        expect(panel.scrollTop).toBe(180);
+        // 被切换的那张卡片换成新节点，且转圈已摘掉
+        const card = widget.shadowRoot.querySelector('[data-plugin-id="installed-plugin"]') as HTMLElement;
+        expect(card.querySelector('.plugin-toggle.is-pending')).toBeNull();
+    });
+
+    test('启停后拉列表失败时卡片不会卡在转圈上', async () => {
+        const widget = await createWidget();
+        callMainWorld.mockImplementation(async (method: string) => {
+            if (method === 'list') throw new Error('list boom');
+            return undefined;
+        });
+        const toggle = widget.shadowRoot.querySelector(
+            '[data-plugin-id="installed-plugin"] [data-action="toggle"]'
+        ) as HTMLInputElement;
+
+        toggle.checked = true;
+        toggle.dispatchEvent(new Event('change'));
+        await new Promise((resolve) => setTimeout(resolve, 10));
+
+        expect(widget.shadowRoot.querySelector('.plugin-toggle.is-pending')).toBeNull();
+        expect(widget.shadowRoot.querySelector('.notice')?.textContent).toContain('list boom');
+        // 卡片控件必须复位：转圈摘掉了却把开关留在禁用态，用户会觉得点不动
+        const refreshedToggle = widget.shadowRoot.querySelector(
+            '[data-plugin-id="installed-plugin"] [data-action="toggle"]'
+        ) as HTMLInputElement;
+        expect(refreshedToggle.disabled).toBe(false);
+        // 按现有数据重绘：该插件仍是未启用状态
+        expect(refreshedToggle.hasAttribute('checked')).toBe(false);
+    });
+
+    test('启停插件用系统通知反馈，不占用页面顶部的通知条', async () => {
+        const widget = await createWidget();
+        const toggle = widget.shadowRoot.querySelector(
+            '[data-plugin-id="installed-plugin"] [data-action="toggle"]'
+        ) as HTMLInputElement;
+
+        toggle.checked = true;
+        toggle.dispatchEvent(new Event('change'));
+        await new Promise((resolve) => setTimeout(resolve, 10));
+
+        // 与技能中心的技能启停一致：结果走 sendNotification，页面顶部不再出现通知条
+        expect(callMainWorld).toHaveBeenCalledWith(
+            'sendNotification',
+            'info',
+            '插件中心',
+            '启用成功',
+            '插件已启用：installed-plugin'
+        );
+        expect(widget.shadowRoot.querySelector('.notice')).toBeNull();
+    });
+
+    test('启停失败同样走系统通知（error 类型）', async () => {
+        const widget = await createWidget();
+        callMainWorld.mockImplementationOnce(async () => {
+            throw new Error('boom enable');
+        });
+        const toggle = widget.shadowRoot.querySelector(
+            '[data-plugin-id="installed-plugin"] [data-action="toggle"]'
+        ) as HTMLInputElement;
+
+        toggle.checked = true;
+        toggle.dispatchEvent(new Event('change'));
+        await new Promise((resolve) => setTimeout(resolve, 10));
+
+        expect(callMainWorld).toHaveBeenCalledWith('sendNotification', 'error', '插件中心', '启用失败', 'boom enable');
+        expect(widget.shadowRoot.querySelector('.notice')).toBeNull();
+        // 卡片按后端数据回退，不会静默停在启用态
+        expect(widget.shadowRoot.querySelector('.plugin-toggle.is-pending')).toBeNull();
+    });
+
+    test('安装进行中再次触发安装会被忽略，进度浮层不会被提前清掉', async () => {
+        const widget = await createWidget();
+        let finishInstall: (() => void) | undefined;
+        callMainWorld.mockImplementation(async (method: string) => {
+            if (method === 'install') {
+                return await new Promise<void>((resolve) => {
+                    finishInstall = resolve;
+                });
+            }
+            return undefined;
+        });
+        widget.shadowRoot.querySelector('[data-action="add"]').dispatchEvent(new Event('click'));
+        const input = widget.shadowRoot.querySelector('[data-install-file]') as HTMLInputElement;
+        Object.defineProperty(input, 'files', { configurable: true, value: [{ name: 'one.tgz' }] });
+
+        input.dispatchEvent(new Event('change'));
+        await new Promise((resolve) => setTimeout(resolve, 0));
+        // 用户在安装还没结束前又选了一个包
+        input.dispatchEvent(new Event('change'));
+        await new Promise((resolve) => setTimeout(resolve, 0));
+
+        expect((callMainWorld as jest.Mock).mock.calls.filter(([method]) => method === 'install')).toHaveLength(1);
+        // 在跑那一次的进度浮层仍在
+        expect(widget.shadowRoot.querySelector('[data-install-progress]')).not.toBeNull();
+
+        finishInstall?.();
+        await new Promise((resolve) => setTimeout(resolve, 500));
+    });
+
+    test('启停插件会先收走上一轮遗留的顶部通知条', async () => {
+        const widget = await createWidget();
+        // 造一条页面通知：包安装取不到文件路径
+        window.fsAPI.getFilePath = jest.fn(async () => null);
+        widget.shadowRoot.querySelector('[data-action="add"]').dispatchEvent(new Event('click'));
+        const input = widget.shadowRoot.querySelector('[data-install-file]') as HTMLInputElement;
+        Object.defineProperty(input, 'files', { configurable: true, value: [{ name: 'broken.tgz' }] });
+        input.dispatchEvent(new Event('change'));
+        await new Promise((resolve) => setTimeout(resolve, 0));
+        expect(widget.shadowRoot.querySelector('.notice')).not.toBeNull();
+
+        const toggle = widget.shadowRoot.querySelector(
+            '[data-plugin-id="installed-plugin"] [data-action="toggle"]'
+        ) as HTMLInputElement;
+        toggle.checked = true;
+        toggle.dispatchEvent(new Event('change'));
+        await new Promise((resolve) => setTimeout(resolve, 10));
+
+        // 上次的失败提示不该被误读成本次启停的结果
+        expect(widget.shadowRoot.querySelector('.notice')).toBeNull();
+    });
+
+    test('列表组成变化时整树重绘，但面板滚动位置被还原', async () => {
+        const widget = await createWidget();
+        const panel = widget.shadowRoot.querySelector('[data-panel="installed"]') as HTMLElement;
+        panel.scrollTop = 240;
+        const entries = (await callMainWorld('list')) as any[];
+        callMainWorld.mockImplementation(async (method: string) => {
+            if (method === 'list') return entries.filter((entry) => entry.id !== 'installed-plugin');
+            return undefined;
+        });
+
+        widget.shadowRoot
+            .querySelector('[data-plugin-id="installed-plugin"] [data-action="uninstall"]')!
+            .dispatchEvent(new Event('click'));
+        await new Promise((resolve) => setTimeout(resolve, 0));
+        widget.shadowRoot
+            .querySelector('.od-confirm-modal-overlay [data-action="confirm"]')!
+            .dispatchEvent(new Event('click'));
+        await new Promise((resolve) => setTimeout(resolve, 220));
+
+        const nextPanel = widget.shadowRoot.querySelector('[data-panel="installed"]') as HTMLElement;
+        expect(widget.shadowRoot.querySelector('[data-plugin-id="installed-plugin"]')).toBeNull();
+        // 面板是重建出来的新节点，但滚动位置不能被重置到顶部
+        expect(nextPanel).not.toBe(panel);
+        expect(nextPanel.scrollTop).toBe(240);
+    });
+
+    test('详情面板打开时收到增量刷新：动作按最新数据执行', async () => {
+        let onPluginsChanged: undefined | (() => void);
+        (window.applicationAPI.subscribe as jest.Mock).mockImplementation(
+            async (name: string, callback: () => void) => {
+                if (name === 'pluginsChanged') onPluginsChanged = callback;
+                return () => undefined;
+            }
+        );
+        const widget = await createWidget();
+        // 打开 installed-plugin 的详情（初始为未启用）
+        widget.shadowRoot.querySelector('[data-plugin-id="installed-plugin"]').dispatchEvent(new Event('click'));
+        const detail = widget.shadowRoot.querySelector('skill-detail-card') as HTMLElement;
+        expect(detail).not.toBeNull();
+
+        // 宿主侧把该插件改成已启用并广播 pluginsChanged
+        const fresh = ((await callMainWorld('list')) as any[]).map((entry) =>
+            entry.id === 'installed-plugin' ? { ...entry, enabled: true } : entry
+        );
+        callMainWorld.mockImplementation(async (method: string) => (method === 'list' ? fresh : undefined));
+        onPluginsChanged?.();
+        await new Promise((resolve) => setTimeout(resolve, 10));
+
+        // 增量刷新复用同一个详情元素（不重建），动作要按刷新后的数据执行：已启用 → 请求禁用
+        expect(widget.shadowRoot.querySelector('skill-detail-card')).toBe(detail);
+        detail.dispatchEvent(new CustomEvent('skill-detail-action', { detail: { id: 'toggle' } }));
+        await new Promise((resolve) => setTimeout(resolve, 10));
+        expect(callMainWorld).toHaveBeenCalledWith('setEnabled', 'installed-plugin', false);
+    });
+
     test('installs a selected directory as a local plugin', async () => {
         const widget = await createWidget();
 
@@ -343,12 +578,34 @@ describe('plugin manager application renderer', () => {
         expect(window.confirm).not.toHaveBeenCalled();
         const modal = widget.shadowRoot.querySelector('.od-confirm-modal-overlay');
         expect(modal).not.toBeNull();
-        expect(callMainWorld).not.toHaveBeenCalledWith('uninstall', 'installed-plugin');
+        // 删除数据目录的复选框默认不勾选
+        const checkbox = modal.querySelector('[data-action="checkbox"]');
+        expect(checkbox).not.toBeNull();
+        expect(checkbox?.hasAttribute('checked')).toBe(false);
+        expect(callMainWorld).not.toHaveBeenCalledWith('uninstall', 'installed-plugin', expect.anything());
 
         modal.querySelector('[data-action="confirm"]').dispatchEvent(new Event('click'));
         await new Promise((resolve) => setTimeout(resolve, 220));
 
-        expect(callMainWorld).toHaveBeenCalledWith('uninstall', 'installed-plugin');
+        expect(callMainWorld).toHaveBeenCalledWith('uninstall', 'installed-plugin', false);
+    });
+
+    test('passes removeData=true when the uninstall modal checkbox is checked', async () => {
+        const widget = await createWidget();
+        const uninstall = widget.shadowRoot.querySelector(
+            '[data-plugin-id="installed-plugin"] [data-action="uninstall"]'
+        );
+
+        uninstall.dispatchEvent(new Event('click'));
+        await new Promise((resolve) => setTimeout(resolve, 0));
+
+        const modal = widget.shadowRoot.querySelector('.od-confirm-modal-overlay');
+        const checkbox = modal.querySelector('[data-action="checkbox"]') as HTMLInputElement;
+        checkbox.checked = true;
+        modal.querySelector('[data-action="confirm"]').dispatchEvent(new Event('click'));
+        await new Promise((resolve) => setTimeout(resolve, 220));
+
+        expect(callMainWorld).toHaveBeenCalledWith('uninstall', 'installed-plugin', true);
     });
 
     test('renders built-in and installed tabs with separated plugin groups', async () => {

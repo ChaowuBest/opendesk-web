@@ -151,6 +151,30 @@ describe('setting-panel listener lifecycle', () => {
         expect(firstUnsub).toHaveBeenCalledTimes(1);
     });
 
+    test('缩放应用失败时提示错误且不写入本地配置', async () => {
+        const failure = new Error('setting write failed');
+        window.displayAPI = {
+            setScaleFactor: jest.fn(async () => {
+                throw failure;
+            })
+        };
+        window.notificationAPI = { sendNotification: jest.fn() };
+
+        const panel = createPanel();
+        panel.innerHTML = `<div id="tab-general">${panel.renderGeneralSection()}</div>`;
+        panel.setUpEventListeners();
+
+        const input = panel.querySelector('#scale-factor-input');
+        input.value = '150';
+        input.dispatchEvent(new window.Event('change'));
+        await new Promise((resolve) => setTimeout(resolve, 0));
+
+        expect(window.displayAPI.setScaleFactor).toHaveBeenCalledWith(1.5);
+        // 修复前：setScaleFactor 的拒绝无人接管，且本地值已被改写
+        expect(panel.currentData.gui_config.scale_factor).toBeUndefined();
+        expect(window.notificationAPI.sendNotification).toHaveBeenCalled();
+    });
+
     test('disconnectedCallback unsubscribes scale-factor and update subscriptions', async () => {
         const scaleUnsub = jest.fn();
         const updateUnsub = jest.fn();

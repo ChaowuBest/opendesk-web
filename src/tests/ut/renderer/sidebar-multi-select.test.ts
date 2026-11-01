@@ -111,10 +111,30 @@ describe('sidebarMultiSelect 纯逻辑', () => {
             const row1 = harness.container.querySelector('.row[data-task_id="t1"]') as HTMLElement;
             harness.mouseDown(row1, 100, 25);
             harness.mouseMove(100, 60);
+            // 越过拖动门槛后才懒创建选区浮层
+            expect(harness.document.querySelector('.sb-marquee-box')).not.toBeNull();
             harness.mouseUp(100, 60);
 
             expect(state.multi).toBe(true);
             expect(harness.selection).toEqual(new Set(['t1', 't2']));
+            controller.destroy();
+        });
+
+        test('单击任务行（未拖动）不残留框选 hover 底色与选区浮层', async () => {
+            const { harness, controller, state } = await setupMouseHarness(false, 4);
+
+            const row1 = harness.container.querySelector('.row[data-task_id="t1"]') as HTMLElement;
+            harness.mouseDown(row1, 100, 25);
+            // 按下尚未越过拖动门槛：不应提前给行打框选 hover 反馈
+            expect(row1.classList.contains('is-marquee-hover')).toBe(false);
+            // 也不该创建浮层：未定位的浮层会在视口角落闪出一个红点
+            expect(harness.document.querySelector('.sb-marquee-box')).toBeNull();
+            harness.mouseUp(100, 25);
+
+            // 普通单击（打开任务）之后行上不能留下淡红底色，否则切换任务后会露出残留色块
+            expect(row1.classList.contains('is-marquee-hover')).toBe(false);
+            expect(harness.document.querySelector('.sb-marquee-box')).toBeNull();
+            expect(state.multi).toBe(false);
             controller.destroy();
         });
 
@@ -264,6 +284,24 @@ describe('sidebarMultiSelect 纯逻辑', () => {
             expect(harness.selection.size).toBe(2);
             controller.destroy();
         });
+
+        test('窗口外松手丢失 mouseup 时按松手收尾，不残留手势状态', async () => {
+            const { harness, controller, state } = await setupMouseHarness(false, 4);
+            const row1 = harness.container.querySelector('.row[data-task_id="t1"]') as HTMLElement;
+            harness.mouseDown(row1, 100, 25);
+            harness.mouseMove(100, 60);
+            expect(harness.document.documentElement.classList.contains('sb-marquee-active')).toBe(true);
+
+            // 在窗口装饰上松手收不到 mouseup：后续 mousemove 虽然还在派发，但按键已抬起
+            harness.mouseMove(100, 60, 0);
+
+            expect(state.multi).toBe(true);
+            expect(harness.selection).toEqual(new Set(['t1', 't2']));
+            // 手势状态全部收尾：文本选择恢复、浮层移除
+            expect(harness.document.documentElement.classList.contains('sb-marquee-active')).toBe(false);
+            expect(harness.document.querySelector('.sb-marquee-box')).toBeNull();
+            controller.destroy();
+        });
     });
 
     describe('触摸设备交互契约', () => {
@@ -289,10 +327,10 @@ describe('sidebarMultiSelect 纯逻辑', () => {
                     harness.selection = ids;
                 }
             });
-            return { harness, controller, state };
+            return { harness, controller, state, win: window };
         }
 
-        test('常规态触摸拖动是列表滚动：不进入框选、不 preventDefault', async () => {
+        test('常规态触摸拖动是列表滚动：不进入框选、不改选区', async () => {
             const { harness, controller, state } = await setupTouchHarness(false, 2);
 
             harness.touchStart('t1', 10, 10);
@@ -301,18 +339,33 @@ describe('sidebarMultiSelect 纯逻辑', () => {
 
             expect(state.multi).toBe(false);
             expect(harness.selection.size).toBe(0);
-            expect(harness.preventedDefaults).toBe(0);
             controller.destroy();
         });
 
-        test('多选态触摸操作退出多选且吞掉后续事件', async () => {
+        test('多选态触摸轻点列表内的行不退出多选，也不吞掉事件', async () => {
             const { harness, controller, state } = await setupTouchHarness(true, 3);
             harness.selection = new Set(['t1', 't2']);
 
             const event = harness.touchStart('t3', 10, 10);
 
+            // 触屏轻点是选择手势：多选必须保留，合成 click 才能落到行点击上做 toggle
+            expect(state.multi).toBe(true);
+            expect(event.defaultPrevented).toBe(false);
+            controller.destroy();
+        });
+
+        test('多选态触摸列表外区域才退出多选', async () => {
+            const { harness, controller, state, win } = await setupTouchHarness(true, 2);
+
+            // 列表滚动容器内的空白（非行）同样属于列表区域，不退出
+            harness.groups.dispatchEvent(new win.Event('touchstart', { bubbles: true }));
+            expect(state.multi).toBe(true);
+
+            // 列表之外的任意位置（侧边栏头部、主区域等）退出多选
+            const outside = harness.document.createElement('div');
+            harness.document.body.appendChild(outside);
+            outside.dispatchEvent(new win.Event('touchstart', { bubbles: true }));
             expect(state.multi).toBe(false);
-            expect(event.defaultPrevented).toBe(true);
             controller.destroy();
         });
 

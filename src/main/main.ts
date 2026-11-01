@@ -131,6 +131,7 @@ import { getUsageDashboardSummary, getUsageRankings, type RankPeriod } from './t
 import { TelemetryOperation, TelemetryOperationRegistry } from './telemetry/operation.js';
 import { registerGoalHooks } from './aikernel/goal/hooks.js';
 import { registerDesktopAPIHandlers, registerTrashAPIHandlers } from './windows/handlers.js';
+import { DisplayZoomSync } from './windows/display-zoom-sync.js';
 import { initializeHarnesses } from './aikernel/harnesses/index.js';
 import { initAgentGateHook } from './applications/agentgate/hook.js';
 import {
@@ -895,6 +896,9 @@ const createWindow = () => {
         }, MAIN_WINDOW_SHOW_FALLBACK_DELAY_MS);
     });
     mainWindow.once('closed', clearMainWindowShowFallback);
+    // 主窗口与独立应用窗口共用同一个界面缩放偏好
+    displayZoomSync.add(mainWindow);
+    mainWindow.once('closed', () => displayZoomSync.remove(mainWindow));
     installWebviewHostHandlers(mainWindow);
     if (is.dev && process.env['ELECTRON_RENDERER_URL']) {
         mainWindow.loadURL(process.env['ELECTRON_RENDERER_URL']);
@@ -3159,12 +3163,18 @@ const computeEffectiveZoom = (): number => {
     return Math.max(0.5, Math.min(3.0, userScale * platformCompensation));
 };
 
-/** 将有效缩放系数应用到窗口并通知渲染进程 */
+/**
+ * 需要跟随缩放偏好的窗口：主窗口 + 独立应用窗口。
+ * 独立应用窗口里的 Ctrl+{+,-,0} 与主窗口共用同一份全局偏好，两边缩放比例始终一致。
+ */
+const displayZoomSync = new DisplayZoomSync<BrowserWindow>();
+
+/** 将有效缩放系数应用到所有参与同步的窗口并通知各自渲染进程 */
 const applyEffectiveZoomToWindow = () => {
-    if (!globalMainWindow) return;
     const effective = computeEffectiveZoom();
-    globalMainWindow.webContents.setZoomFactor(effective);
-    safeSendToWebContents(globalMainWindow.webContents, 'display:scaleFactorChanged', effective);
+    for (const win of displayZoomSync.apply(effective)) {
+        safeSendToWebContents(win.webContents, 'display:scaleFactorChanged', effective);
+    }
 };
 
 const registerDisplayZoomHandlers = () => {
@@ -3797,12 +3807,24 @@ async function startApplication(): Promise<void> {
                 ensureBrowserReady()
             ]);
         };
+        // 打开单个应用时的窄屏障：只等目标应用自身的延迟资源 + 插件宿主。遥测、其它应用的
+        // 延迟加载都在后台进行，不再拖住应用首屏；只有浏览器应用要等它自己的 browser session。
+        const ensureElectronApplicationLoaded = async (bundleName: string): Promise<void> => {
+            await registryWorkerReady;
+            // 插件宿主必须先落地：应用 UI 会读插件贡献的外观 / 命令 / 技能 hook，应用的延迟
+            // 加载本身也会消费这些 hook（如 skillmgr 的技能列表），并行会拿到空 hook 且不再重跑
+            await initializePluginHost();
+            const tasks = [ApplicationRegistry.ensureApplicationLoaded(bundleName)];
+            // 浏览器应用直接依赖主进程侧的 browser session（下载、证书校验、preload）
+            if (bundleName === 'browser') tasks.push(ensureBrowserReady());
+            await Promise.all(tasks);
+        };
 
         // 先注册 renderer 首屏会调用的无状态 IPC，再立即启动 renderer 加载。
         // taskManager handler 会在本回调首次让出事件循环前完成注册。
         registerSettingAPIHandlers();
         registerElectronAccountIntegration();
-        registerApplicationRegistryHandlers(ipcMain, ensureElectronFullyLoaded);
+        registerApplicationRegistryHandlers(ipcMain, ensureElectronFullyLoaded, ensureElectronApplicationLoaded);
         registerNotificationAPIHandlers();
         registerRendererLogHandler();
         registerRendererHeartbeatHandler();
@@ -4078,6 +4100,11 @@ async function startApplication(): Promise<void> {
         // 在新窗口中打开应用
         ipcMain.handle('application:openInNewWindow', async (_event, bundleName: string) => {
             try {
+                // 浏览器应用依赖 webview（iframe 内不可用），只能内联挂载在主窗口；
+                // 这里直接拒绝，避免开出一个只会白屏/报错的独立窗口
+                if (bundleName === 'browser') {
+                    return { status: 'error', message: 'browser application does not support separate window' };
+                }
                 const appConfig = ApplicationRegistry.getApplicationGUIConfig(bundleName) as
                     Record<string, unknown> | undefined;
                 const appName = (appConfig?.name as string) || bundleName;
@@ -4100,9 +4127,16 @@ async function startApplication(): Promise<void> {
                         webviewTag: true,
                         allowRunningInsecureContent: true,
                         backgroundThrottling: true,
-                        preload: getRendererPreloadPath()
+                        preload: getRendererPreloadPath(),
+                        // zoom 按 webContents 独立存储，新窗口不会自动继承主窗口的缩放，
+                        // 必须显式给出初始值（后续变更由 displayZoomSync 广播）
+                        zoomFactor: computeEffectiveZoom()
                     }
                 });
+
+                // 独立应用窗口也跟随缩放偏好：窗口内的 Ctrl+{+,-,0} 与主窗口一致
+                displayZoomSync.add(appWindow);
+                appWindow.once('closed', () => displayZoomSync.remove(appWindow));
 
                 installWebviewHostHandlers(appWindow);
                 appWindow.setMenu(null);
@@ -4111,9 +4145,7 @@ async function startApplication(): Promise<void> {
                     // 应用的延迟加载（如 AgentOffice 自定义 agent 磁盘扫描 + MCP 同步）
                     // 不阻塞窗口显示，窗口展示后在后台补齐 AgentRegistry 注册；
                     // 子应用 UI 依赖的 worker 数据本身不依赖该注册。
-                    ApplicationRegistry.getApplication(bundleName)
-                        ?.ensureLoaded()
-                        .catch((error) => logger.warn(`Background ensureLoaded failed for ${bundleName}: ${error}`));
+                    void ApplicationRegistry.ensureApplicationLoaded(bundleName);
                 });
 
                 // 统一加载壳页面，由壳页面根据 app 类型决定 iframe 内容
