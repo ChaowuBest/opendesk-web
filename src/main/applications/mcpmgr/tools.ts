@@ -227,7 +227,7 @@ export class ListMcpServersTool extends BaseTool<typeof ListMcpServersArgsSchema
                                   ? chalk.red
                                   : chalk.gray;
                         body.push(
-                            `    ${statusColor(statusIcon)} ${chalk.cyan(String(server.name))} (${chalk.yellow(String(server.transport))})`
+                            `    ${statusColor(statusIcon)} ${chalk.cyan(String(server.displayName || server.name))} (${chalk.yellow(String(server.transport))})`
                         );
                     }
                     if (servers.length > 5) {

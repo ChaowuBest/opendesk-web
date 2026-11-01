@@ -71,6 +71,7 @@ export const zhCn: Record<string, string> = {
     'renderer.skill.search.placeholder.builtin': '搜索内置技能…',
     'renderer.skill.search.placeholder.analyze': '搜索技能名称、ID 或描述…',
     'renderer.skill.search.searching': '搜索中…',
+    'renderer.skill.search.refreshing': '刷新中…',
     'renderer.skill.loading': '加载中…',
     'renderer.skill.empty.noMatch': '未找到匹配的技能',
     'renderer.skill.empty.noMatchTry': '换个关键词试试',

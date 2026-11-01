@@ -200,6 +200,13 @@ ${OVERLAY_CSS}
 :host([data-theme="dark"]) .registry-msg {
     color: #ababab;
 }
+:host([data-theme="dark"]) .search-count {
+    color: #8b8b8b;
+}
+:host([data-theme="dark"]) .mini-spinner {
+    border-color: rgba(255, 255, 255, 0.18);
+    border-top-color: #6BA3EF;
+}
 :host([data-theme="dark"]) .registry-filter-seg {
     background: #333333;
 }
@@ -556,7 +563,7 @@ ${OVERLAY_CSS}
 
 /* ── Hero title ── */
 .hero-title {
-    text-align: center; padding: 28px 20px 24px;
+    text-align: center; padding: 6px 20px 20px;
     font-size: 20px; font-weight: 700; color: #1d1d1f;
     letter-spacing: -0.02em;
     background: linear-gradient(135deg, #1d1d1f 0%, #6e6e73 100%);
@@ -584,6 +591,25 @@ ${OVERLAY_CSS}
     transition: all 0.15s;
 }
 .search-clear:hover { background: rgba(0,0,0,0.1); color: rgba(0,0,0,0.55); }
+/* 搜索框为空时隐藏清除按钮：此时点击只会无谓地重新拉取列表并让结果区闪一下 */
+.search-input:placeholder-shown ~ .search-clear { display: none; }
+/* 搜索期间的结果区过渡：只替换内容并淡入淡出，避免整块变成 loading 再闪回 */
+.registry-body { transition: opacity 0.18s ease; }
+/* installed / external / builtin 的结果区：搜索时只换内容，搜索框与已选托盘不动 */
+.panel-body { transition: opacity 0.18s ease; }
+.mini-spinner {
+    display: inline-block; width: 11px; height: 11px;
+    border: 1.6px solid rgba(0, 0, 0, 0.12); border-top-color: #6BA3EF;
+    border-radius: 50%; animation: spin 0.7s linear infinite;
+}
+.search-count.is-busy { display: inline-flex; align-items: center; gap: 5px; }
+/* 注册源回传的结果计数：内嵌在搜索框右端，为它预留输入区右侧留白，避免压住输入文本 */
+.search-input-wrap.has-count .search-input { padding-right: 196px; }
+.search-count {
+    position: absolute; right: 38px; top: 50%; transform: translateY(-50%);
+    max-width: 152px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+    font-size: 12px; color: #999; pointer-events: none;
+}
 .search-btn {
     padding: 10px 22px; border-radius: 10px; border: none;
     background: #6BA3EF; color: #fff; font-size: 13px; font-weight: 500;
@@ -1685,6 +1711,12 @@ class SkillMgrEntryWidget extends HTMLElement {
         // ⋯ 全量操作下拉菜单展开态
         this.showBatchMenu = false;
 
+        // 顶部刷新进行中：只让刷新按钮进入忙碌态，页面内容保持旧结果
+        this._refreshing = false;
+
+        // 结果区淡入淡出的在途定时器：同一容器只保留最后一次替换
+        this._pendingSwaps = new Map();
+
         this.installedState = {
             query: '',
             page: 1,
@@ -1857,6 +1889,7 @@ class SkillMgrEntryWidget extends HTMLElement {
         document.removeEventListener(OPENDESK_THEME_CHANGED, this._onThemeChange);
         this._stopAnalysisPolling();
         this._disconnectObservers();
+        this._cancelPendingSwaps();
         if (this._segScrollResizeObserver) {
             this._segScrollResizeObserver.disconnect();
             this._segScrollResizeObserver = null;
@@ -2122,16 +2155,17 @@ class SkillMgrEntryWidget extends HTMLElement {
         }
     }
 
-    async loadSkills() {
+    /* silent：只拉数据不整页重渲染，由调用方决定局部更新范围（顶部刷新走这条路） */
+    async loadSkills({ silent = false } = {}) {
         const api = getSkillsAPI();
         if (!api) {
             this.error = this._t('renderer.skill.error.connect');
-            this.render();
+            if (!silent) this.render();
             return;
         }
         this.loading = true;
         this.error = null;
-        this.render();
+        if (!silent) this.render();
         try {
             const skills = await api.list();
             const normalizedSkills = Array.isArray(skills) ? skills : [];
@@ -2151,7 +2185,7 @@ class SkillMgrEntryWidget extends HTMLElement {
         } finally {
             if (this.activeTab === 'external' && this.externalSkills.length === 0) this.activeTab = 'installed';
             this.loading = false;
-            this.render();
+            if (!silent) this.render();
         }
     }
 
@@ -2180,19 +2214,61 @@ class SkillMgrEntryWidget extends HTMLElement {
         getSkillsAPI()?.sendNotification(type, title, message);
     }
 
+    /* 顶部刷新：只在刷新按钮上转圈，结果区等数据回来后再局部淡入切换（不再整页 loading） */
     async refresh() {
         const api = getSkillsAPI();
         if (!api) return;
-        this.loading = true;
+        const hadExternalTab = this.externalSkills.length > 0;
         this.error = null;
-        this.render();
+        this._setRefreshBusy(true);
         try {
             await api.refresh();
-            await this.loadSkills();
+            await this.loadSkills({ silent: true });
         } catch (e) {
             this.error = e?.message || this._t('renderer.skill.error.refresh');
-            this.render();
         }
+        this._setRefreshBusy(false);
+        // 外部目录 tab 的出现/消失会改变顶部结构，分析面板的数据源也整体依赖技能列表：这两种情况只能整页重建
+        if (this.error || hadExternalTab !== this.externalSkills.length > 0 || this.activeTab === 'analyze') {
+            this.render();
+            return;
+        }
+        this._syncHeaderTabs();
+        this._resetPanelSearchInput('installed');
+        this._resetPanelSearchInput('external');
+        // 刷新会清空已选集合，托盘与 ⋯ 角标同步回收
+        this._syncBatchTray('installed');
+        this._syncBatchBadge('installed');
+        this._syncPanelBody('installed', { fade: true });
+        if (this.externalSkills.length > 0) this._syncPanelBody('external', { fade: true });
+    }
+
+    /* 刷新按钮忙碌态：按钮内换成小转圈并禁用，避免整页进入 loading */
+    _setRefreshBusy(busy) {
+        this._refreshing = busy;
+        const btn = this.shadowRoot?.querySelector('#refresh-btn');
+        if (!btn) return;
+        btn.disabled = busy;
+        btn.innerHTML = busy ? '<span class="mini-spinner"></span>' : '↻';
+    }
+
+    /* 只同步 tab 上的数量徽标，不重建 header */
+    _syncHeaderTabs() {
+        const seg = this.shadowRoot?.querySelector('.seg-control');
+        if (!seg) return;
+        const setBadge = (tabId, count) => {
+            const btn = seg.querySelector(`.seg-item[data-tab="${tabId}"]`);
+            if (!btn) return;
+            const badge = btn.querySelector('.seg-badge');
+            if (count > 0) {
+                if (badge) badge.textContent = count;
+                else btn.insertAdjacentHTML('beforeend', ` <span class="seg-badge">${count}</span>`);
+            } else {
+                badge?.remove();
+            }
+        };
+        setBadge('installed', this.skills.length);
+        setBadge('builtin', this.builtinSkills.length);
     }
 
     switchTab(tabId) {
@@ -2257,12 +2333,11 @@ class SkillMgrEntryWidget extends HTMLElement {
     clearAndReload(tabId) {
         const state = this.registryStates[tabId];
         if (!state) return;
+        // 搜索框本来就空时没有可清的内容，这里只会有一次无谓的重新拉取（并让结果区闪一下）
+        if (!state.query.trim()) return;
         state.query = '';
         state.page = 1;
-        state.results = [];
         state.nextCursor = null;
-        state.hasSearched = false;
-        state.message = null;
         state.autoLoaded = true;
         this._doSearch(tabId, '', 1);
     }
@@ -2271,8 +2346,8 @@ class SkillMgrEntryWidget extends HTMLElement {
         const state = this.registryStates[tabId];
         if (!state) return;
         state.page = 1;
-        state.results = [];
         state.nextCursor = null;
+        // 先保留当前结果，等新结果返回后由 _syncRegistryBody 淡入切换，避免整块内容闪一下
         await this._doSearch(tabId, state.query, 1);
     }
 
@@ -2352,6 +2427,121 @@ class SkillMgrEntryWidget extends HTMLElement {
         });
     }
 
+    /* installed / external / builtin 卡片的交互；结果区局部替换后需要重新绑定 */
+    _bindSkillCardEvents(root = this.shadowRoot) {
+        // 批量勾选圈：勾选后同步托盘、⋯ 角标与菜单内容
+        root.querySelectorAll('[data-batch-check]').forEach((el) => {
+            el.addEventListener('change', () => {
+                const scope = el.getAttribute('data-batch-check');
+                const selection = this._getSelection(scope);
+                if (el.checked) selection.add(el.getAttribute('data-check-id'));
+                else selection.delete(el.getAttribute('data-check-id'));
+                el.closest('.skill-card')?.classList.toggle('sel', el.checked);
+                this._syncBatchTray(scope);
+                this._syncBatchBadge(scope);
+                this._syncBatchMenu(scope);
+            });
+        });
+
+        root.querySelectorAll('[data-view-skill]').forEach((el) => {
+            el.addEventListener('click', (e) => {
+                if (e.target.closest('[data-delete]')) return;
+                if (e.target.closest('.skill-toggle')) return;
+                if (e.target.closest('.batch-check')) return;
+                this.showSkillDetail(el.getAttribute('data-view-skill'));
+            });
+        });
+
+        root.querySelectorAll('[data-external-skill]').forEach((el) => {
+            el.addEventListener('click', () => {
+                this.showExternalSkillDetail(el.getAttribute('data-external-skill'));
+            });
+        });
+
+        root.querySelectorAll('[data-toggle-id]').forEach((el) => {
+            el.addEventListener('change', async (e) => {
+                const skillId = el.getAttribute('data-toggle-id');
+                if (!skillId) return;
+                // 如果是开启被拉黑的 skill，弹确认框
+                if (el.checked) {
+                    const skill =
+                        this.skills.find((s) => s.id === skillId) || this.builtinSkills.find((s) => s.id === skillId);
+                    if (skill?.blacklisted) {
+                        const evidence = skill.blacklistEvidence || this._t('renderer.skill.blacklist.defaultEvidence');
+                        const confirmed = await showConfirmModal({
+                            icon: 'fa-shield-halved',
+                            iconBg: '#FEF2F2',
+                            iconColor: '#DC2626',
+                            danger: true,
+                            title: this._t('renderer.skill.blacklist.confirmTitle'),
+                            message: `<div style="font-size:14px;color:#3C3C43;line-height:1.6;">${this._t('renderer.skill.blacklist.confirmPrefix', { name: escapeHtml(skill.name || skillId) })}</div>
+<div style="font-size:13px;color:#DC2626;background:#FEF2F2;border-radius:8px;padding:10px;margin:10px 0;border:1px solid #FECACA;line-height:1.5;">${escapeHtml(evidence)}</div>
+<div style="font-size:14px;color:#3C3C43;line-height:1.6;">${this._t('renderer.skill.blacklist.confirmSuffix')}</div>`,
+                            confirmText: this._t('renderer.skill.blacklist.confirmEnable'),
+                            cancelText: this._t('renderer.skill.common.cancel')
+                        });
+                        if (!confirmed) {
+                            el.checked = false;
+                            return;
+                        }
+                        // 用户确认：从黑名单移除。黑名单状态变更不只影响 enabled，
+                        // 需重新拉取 list() 拿到 blacklisted=false 并重渲染卡片，
+                        // 否则红边框/恶意skill标签/证据框等旧 DOM 不会刷新。
+                        // 重渲染会重建 toggle，其 checked 依据 status.json（此刻仍是 false），
+                        // 故 _toggleSkillStatus 落定 enabled=true 后需手动同步 toggle 的 checked 视觉。
+                        const api = getSkillsAPI();
+                        if (api?.removeFromBlacklist) {
+                            await api.removeFromBlacklist(skillId);
+                            await this.loadSkills();
+                            await this._toggleSkillStatus(skillId, el.checked);
+                            const newToggle = this.shadowRoot.querySelector(`[data-toggle-id="${skillId}"]`);
+                            if (newToggle) newToggle.checked = el.checked;
+                        }
+                        return;
+                    }
+                }
+                this._toggleSkillStatus(skillId, el.checked);
+            });
+        });
+
+        root.querySelectorAll('[data-delete]').forEach((el) => {
+            el.addEventListener('click', (e) => {
+                e.stopPropagation();
+                this.deleteSkill(el.getAttribute('data-delete'));
+            });
+        });
+
+        root.querySelectorAll('[data-builtin-skill]').forEach((el) => {
+            el.addEventListener('click', (e) => {
+                if (e.target.closest('[data-delete]')) return;
+                if (e.target.closest('.skill-toggle')) return;
+                if (e.target.closest('.batch-check')) return;
+                this.showBuiltinSkillDetail(el.getAttribute('data-builtin-skill'));
+            });
+        });
+    }
+
+    /* 注册源筛选滑块：结果区局部替换后需要重新绑定（_bindCardEvents 只管卡片） */
+    _bindRegistryFilterEvents(root = this.shadowRoot) {
+        root.querySelectorAll('.registry-filter-item').forEach((el) => {
+            if (el._filterBound) return;
+            el._filterBound = true;
+            el.addEventListener('click', () => {
+                const seg = el.closest('[data-filter-tab]');
+                if (!seg) return;
+                const tabId = seg.getAttribute('data-filter-tab');
+                const filterValue = el.getAttribute('data-filter-value') || '';
+                const state = this.registryStates[tabId];
+                if (!state || state.activeFilter === filterValue) return;
+                state.activeFilter = filterValue;
+                state.page = 1;
+                state.results = [];
+                state.nextCursor = null;
+                this._doSearch(tabId, state.query, 1);
+            });
+        });
+    }
+
     async _doSearch(tabId, query, page) {
         const state = this.registryStates[tabId];
         const api = getSkillsAPI();
@@ -2361,9 +2551,13 @@ class SkillMgrEntryWidget extends HTMLElement {
             return;
         }
         state.searching = true;
-        state.message = null;
-        if (page === 1) state.results = [];
-        this.render();
+        // 不动 body：搜索期间保持旧结果可见，只在搜索框右端的计数处显示「刷新中」。
+        // 上一次的错误提示要立刻下掉，否则重新搜索期间仍挂着旧错误
+        if (state.message?.isError) {
+            state.message = null;
+            this._syncRegistryBody(tabId, { resetScroll: true });
+        }
+        this._syncRegistrySearchState(tabId);
         try {
             const res = await Promise.race([
                 api.searchRegistry(tabId, query, page, 30, state.nextCursor, state.activeFilter || undefined),
@@ -2377,13 +2571,15 @@ class SkillMgrEntryWidget extends HTMLElement {
             state.nextCursor = res?.nextCursor || null;
             if (res?.error) state.message = { text: res.error, isError: true };
             else if (res?.message) state.message = { text: res.message, isError: false };
+            else state.message = null;
         } catch (e) {
             state.message = { text: e?.message || this._t('renderer.skill.error.searchFailed'), isError: true };
             if (page === 1) state.results = [];
         } finally {
             state.searching = false;
             state.hasSearched = true;
-            this.render();
+            this._syncRegistrySearchState(tabId);
+            this._syncRegistryBody(tabId, { fade: true, resetScroll: true });
         }
     }
 
@@ -2718,19 +2914,38 @@ class SkillMgrEntryWidget extends HTMLElement {
             : selected.every((s) => s.enabled === false);
     }
 
-    /* 同步已选托盘：数量为 0 时移除，否则按最新选中集合重建芯片 */
+    /* 同步已选托盘：数量为 0 时移除，否则原地增量维护芯片。
+       托盘带入场动画（.batch-tray 的 dropdown-in），整体重建会重新插入节点并重播动画，
+       表现为每次勾选技能整条托盘闪一下，因此这里只增删芯片、更新计数文案 */
     _syncBatchTray(scope) {
         const panel = this._getBatchPanel(scope);
         if (!panel) return;
         const selection = this._getSelection(scope);
-        const searchBar = panel.querySelector('.search-bar');
         const existing = panel.querySelector('.batch-tray');
         if (!selection.size) {
             existing?.remove();
-        } else if (existing) {
-            existing.outerHTML = this._renderTrayHtml(scope);
-        } else if (searchBar) {
-            searchBar.insertAdjacentHTML('afterend', this._renderTrayHtml(scope));
+            return;
+        }
+        if (!existing) {
+            const searchBar = panel.querySelector('.search-bar');
+            if (searchBar) searchBar.insertAdjacentHTML('afterend', this._renderTrayHtml(scope));
+            return;
+        }
+        const label = existing.querySelector('.tray-label');
+        if (label) label.innerHTML = this._t('renderer.skill.batch.tray.label', { count: selection.size });
+        const chips = existing.querySelector('.tray-chips');
+        if (!chips) return;
+        chips.querySelectorAll('[data-chip-id]').forEach((chip) => {
+            if (!selection.has(chip.getAttribute('data-chip-id'))) chip.remove();
+        });
+        // Set 的「删除后重新 add 会排到末尾」与「新芯片追加到末尾」顺序一致，无需重排
+        const present = new Set(
+            [...chips.querySelectorAll('[data-chip-id]')].map((chip) => chip.getAttribute('data-chip-id'))
+        );
+        for (const id of selection) {
+            if (present.has(id)) continue;
+            const chipHtml = this._renderTrayChipHtml(scope, id);
+            if (chipHtml) chips.insertAdjacentHTML('beforeend', chipHtml);
         }
     }
 
@@ -3113,37 +3328,127 @@ class SkillMgrEntryWidget extends HTMLElement {
 
     // ── Installed Panel: search / lazy-load / delete-all ──
 
+    /* 本地搜索只影响结果列表：只替换面板结果区，搜索框与已选托盘保持不动（重建会让托盘重播入场动画） */
     _searchInstalled() {
         this.installedState.page = 1;
-        this.render();
+        this._syncPanelBody('installed', { resetScroll: true });
     }
 
     _clearInstalledSearch() {
+        if (!this.installedState.query.trim()) return;
         this.installedState.query = '';
         this.installedState.page = 1;
-        this.render();
+        this._resetPanelSearchInput('installed');
+        this._syncPanelBody('installed', { resetScroll: true });
     }
 
     _searchBuiltin() {
         this.builtinState.page = 1;
-        this.render();
+        this._syncPanelBody('builtin', { resetScroll: true });
     }
 
     _clearBuiltinSearch() {
+        if (!this.builtinState.query.trim()) return;
         this.builtinState.query = '';
         this.builtinState.page = 1;
-        this.render();
+        this._resetPanelSearchInput('builtin');
+        this._syncPanelBody('builtin', { resetScroll: true });
     }
 
     _searchExternal() {
         this.externalState.page = 1;
-        this.render();
+        this._syncPanelBody('external', { resetScroll: true });
     }
 
     _clearExternalSearch() {
+        if (!this.externalState.query.trim()) return;
         this.externalState.query = '';
         this.externalState.page = 1;
-        this.render();
+        this._resetPanelSearchInput('external');
+        this._syncPanelBody('external', { resetScroll: true });
+    }
+
+    /* 局部更新不会重建输入框，清空搜索时需要手动同步控件里的输入值 */
+    _resetPanelSearchInput(scope) {
+        const input = this.shadowRoot?.querySelector(`.search-input[data-search-tab="${scope}"]`);
+        if (input) input.value = '';
+    }
+
+    /* 结果区局部替换：淡出 → 按最新状态重绘 → 淡入，避免整块内容闪动。
+       同一容器的连续调用只保留最后一次，防止淡出窗口内的旧内容被回写；
+       renderHtml 返回 null 表示新内容没有结果区节点（loading / error / 空态），此时只能整页重建 */
+    _swapResultArea(container, { renderHtml, afterApply, fade = true, resetScroll = false } = {}) {
+        const pending = this._pendingSwaps.get(container);
+        if (pending !== undefined) {
+            clearTimeout(pending);
+            this._pendingSwaps.delete(container);
+        }
+        const apply = () => {
+            const html = renderHtml();
+            if (html === null) {
+                this.render();
+                return false;
+            }
+            container.innerHTML = html;
+            // 只有搜索条件变化才回到顶部：顶部刷新不该把用户正在看的位置顶走
+            const panel = resetScroll ? container.closest('.tab-panel') : null;
+            if (panel) panel.scrollTop = 0;
+            if (afterApply) afterApply(container);
+            return true;
+        };
+        if (!fade) {
+            container.style.opacity = '';
+            apply();
+            return;
+        }
+        container.style.opacity = '0';
+        const timer = setTimeout(() => {
+            this._pendingSwaps.delete(container);
+            const applied = apply();
+            // 双 rAF 保证浏览器记录到 opacity:0 的起始帧，过渡才会生效
+            requestAnimationFrame(() => requestAnimationFrame(() => (container.style.opacity = applied ? '1' : '')));
+        }, 120);
+        this._pendingSwaps.set(container, timer);
+    }
+
+    /* 卸载时丢弃在途的结果区替换：否则定时器会继续操作已脱离文档的节点 */
+    _cancelPendingSwaps() {
+        this._pendingSwaps.forEach((timer) => clearTimeout(timer));
+        this._pendingSwaps.clear();
+    }
+
+    /* 面板整体 HTML（按 scope 取对应渲染函数） */
+    _renderPanelHtml(scope) {
+        if (scope === 'installed') return this._renderInstalledPanel();
+        if (scope === 'external') return this._renderExternalPanel();
+        return this._renderBuiltinPanel();
+    }
+
+    /* 只替换 installed / external / builtin 面板的结果区（.panel-body），搜索框与已选托盘保持不动 */
+    _syncPanelBody(scope, { fade = true, resetScroll = false } = {}) {
+        const panel = this.shadowRoot?.querySelector(`#panel-${scope}`);
+        if (!panel) return;
+        const body = panel.querySelector('.panel-body');
+        // 当前面板处于 loading / error / 空态：没有结果区节点，只能整页重建
+        if (!body) {
+            this.render();
+            return;
+        }
+        this._swapResultArea(body, {
+            fade,
+            resetScroll,
+            renderHtml: () => {
+                const tmp = document.createElement('div');
+                tmp.innerHTML = this._renderPanelHtml(scope);
+                const nextBody = tmp.querySelector('.panel-body');
+                // 新内容本身没有结果区（0 个技能 / 出错）：同样只能整页重建
+                return nextBody ? nextBody.innerHTML : null;
+            },
+            afterApply: (el) => {
+                this._bindSkillCardEvents(el);
+                this._bindScrollObservers();
+            }
+        });
     }
 
     _loadMoreExternal() {
@@ -3783,10 +4088,49 @@ class SkillMgrEntryWidget extends HTMLElement {
         const state = this.registryStates[tabId];
         if (!state) return '';
         const tabInfo = REGISTRY_TABS.find((t) => t.id === tabId);
+        const countHtml = this._registryCountHtml(state);
+        const countTitle =
+            state.message && !state.message.isError && !state.searching
+                ? ` title="${escapeHtml(state.message.text)}"`
+                : '';
+
+        return `
+        <div class="registry-panel">
+          <div class="search-bar">
+            <div class="search-input-wrap ${countHtml ? 'has-count' : ''}">
+              <input type="text" class="search-input" data-search-tab="${tabId}"
+                placeholder="${this._t('renderer.skill.search.placeholder', { label: tabInfo?.label || '' })}"
+                value="${escapeHtml(state.query)}" ${state.searching ? 'disabled' : ''} />
+              ${countHtml ? `<span class="search-count ${state.searching ? 'is-busy' : ''}"${countTitle}>${countHtml}</span>` : ''}
+              <button type="button" class="search-clear" data-clear-tab="${tabId}" title="${this._t('renderer.skill.common.clearSearch')}">×</button>
+            </div>
+            <button type="button" class="search-btn" data-search-btn="${tabId}" ${state.searching ? 'disabled' : ''}>
+              ${state.searching ? this._t('renderer.skill.search.searching') : this._t('renderer.skill.common.search')}
+            </button>
+          </div>
+          <div class="registry-body">${this._renderRegistryBody(tabId)}</div>
+        </div>`;
+    }
+
+    /* 搜索框右端的结果计数：搜索中就地显示转圈提示，避免整块内容区被 loading 取代 */
+    _registryCountHtml(state) {
+        if (state.searching) {
+            return `<span class="mini-spinner"></span>${this._t('renderer.skill.search.refreshing')}`;
+        }
+        // 非错误提示（注册源常用来回传「显示 x / y 个结果」）内嵌到搜索框右端，不再单独占一行
+        return state.message && !state.message.isError ? escapeHtml(state.message.text) : '';
+    }
+
+    /* registry 面板搜索结果区（信息条 + 结果列表）；单独成函数以便搜索完成后局部替换 */
+    _renderRegistryBody(tabId) {
+        const state = this.registryStates[tabId];
+        if (!state) return '';
+        const tabInfo = REGISTRY_TABS.find((t) => t.id === tabId);
         const isDefaultView = state.hasSearched && state.results.length > 0 && !state.query.trim();
 
-        const msgHtml = state.message
-            ? `<div class="registry-msg ${state.message.isError ? 'error' : ''}">${escapeHtml(state.message.text)}</div>`
+        // 错误提示仍需独立一行，避免被输入框宽度截断
+        const errHtml = state.message?.isError
+            ? `<div class="registry-msg error">${escapeHtml(state.message.text)}</div>`
             : '';
 
         // 构建筛选滑块 HTML（仅当 registry 声明了 filters 时）
@@ -3804,7 +4148,7 @@ class SkillMgrEntryWidget extends HTMLElement {
                 .join('');
         }
 
-        const infoBarHtml = msgHtml || filterHtml ? `<div class="registry-info-bar">${msgHtml}${filterHtml}</div>` : '';
+        const infoBarHtml = errHtml || filterHtml ? `<div class="registry-info-bar">${errHtml}${filterHtml}</div>` : '';
 
         let contentHtml = '';
         if (state.searching && state.results.length === 0) {
@@ -3825,21 +4169,63 @@ class SkillMgrEntryWidget extends HTMLElement {
             contentHtml = `<div class="loading-state"><div class="loading-spinner"></div><span>${this._t('renderer.skill.common.loading')}</span></div>`;
         }
 
-        return `
-        <div class="registry-panel">
-          <div class="search-bar">
-            <div class="search-input-wrap">
-              <input type="text" class="search-input" data-search-tab="${tabId}"
-                placeholder="${this._t('renderer.skill.search.placeholder', { label: tabInfo?.label || '' })}"
-                value="${escapeHtml(state.query)}" ${state.searching ? 'disabled' : ''} />
-              <button type="button" class="search-clear" data-clear-tab="${tabId}" title="${this._t('renderer.skill.common.clearSearch')}">×</button>
-            </div>
-            <button type="button" class="search-btn" data-search-btn="${tabId}" ${state.searching ? 'disabled' : ''}>
-              ${state.searching ? this._t('renderer.skill.search.searching') : this._t('renderer.skill.common.search')}
-            </button>
-          </div>
-          ${infoBarHtml}${contentHtml}
-        </div>`;
+        return `${infoBarHtml}${contentHtml}`;
+    }
+
+    /* 搜索进行中/结束的局部状态同步：只动搜索框、按钮与计数，整块 body 保持旧内容不闪 */
+    _syncRegistrySearchState(tabId) {
+        const state = this.registryStates[tabId];
+        const panel = this.shadowRoot?.querySelector(`#panel-${tabId}`);
+        if (!state || !panel) return;
+        const input = panel.querySelector(`.search-input[data-search-tab="${tabId}"]`);
+        if (input) input.disabled = state.searching;
+        const btn = panel.querySelector(`.search-btn[data-search-btn="${tabId}"]`);
+        if (btn) {
+            btn.disabled = state.searching;
+            btn.textContent = state.searching
+                ? this._t('renderer.skill.search.searching')
+                : this._t('renderer.skill.common.search');
+        }
+        const wrap = panel.querySelector('.search-input-wrap');
+        if (!wrap) return;
+        const countHtml = this._registryCountHtml(state);
+        const countTitle = !state.searching && state.message && !state.message.isError ? state.message.text : '';
+        const count = wrap.querySelector('.search-count');
+        if (!countHtml) {
+            count?.remove();
+        } else if (count) {
+            count.innerHTML = countHtml;
+            count.classList.toggle('is-busy', state.searching);
+            if (countTitle) count.setAttribute('title', countTitle);
+            else count.removeAttribute('title');
+        } else {
+            const clearBtn = wrap.querySelector('.search-clear');
+            if (clearBtn) {
+                const titleAttr = countTitle ? ` title="${escapeHtml(countTitle)}"` : '';
+                clearBtn.insertAdjacentHTML(
+                    'beforebegin',
+                    `<span class="search-count ${state.searching ? 'is-busy' : ''}"${titleAttr}>${countHtml}</span>`
+                );
+            }
+        }
+        wrap.classList.toggle('has-count', !!countHtml);
+    }
+
+    /* 搜索完成后局部替换结果区：先淡出旧结果再淡入新结果，避免整块内容闪一下 */
+    _syncRegistryBody(tabId, { fade = false, resetScroll = false } = {}) {
+        const panel = this.shadowRoot?.querySelector(`#panel-${tabId}`);
+        const body = panel?.querySelector('.registry-body');
+        if (!panel || !body) return;
+        this._swapResultArea(body, {
+            fade,
+            resetScroll,
+            renderHtml: () => this._renderRegistryBody(tabId),
+            afterApply: (el) => {
+                this._bindCardEvents(el);
+                this._bindRegistryFilterEvents(el);
+                this._bindScrollObservers();
+            }
+        });
     }
 
     /* ⋯ 菜单项图标：24px 网格 · 2px 描边线性风格（OpenDesk 图标规范） */
@@ -3990,20 +4376,8 @@ class SkillMgrEntryWidget extends HTMLElement {
     _renderTrayHtml(scope) {
         const selection = this._getSelection(scope);
         if (!selection.size) return '';
-        const source = scope === 'builtin' ? this.builtinSkills : this.skills;
         const t = this._t;
-        const chips = [...selection]
-            .map((id) => {
-                const s = source.find((x) => x.id === id);
-                if (!s) return '';
-                const color = this._getSkillPastel(s.name || s.id);
-                return `<span class="tray-chip" data-chip-id="${escapeHtml(id)}">
-                  <span class="tray-chip-icon" style="background:${color.bg};color:${color.text}">${this._getSkillInitial(s.name || s.id)}</span>
-                  <span class="tray-chip-name">${escapeHtml(s.name || s.id)}</span>
-                  <button type="button" class="tray-chip-x" data-tray-remove="${scope}" data-remove-id="${escapeHtml(id)}" title="${t('renderer.skill.batch.tray.remove')}"><svg width="9" height="9" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button>
-                </span>`;
-            })
-            .join('');
+        const chips = [...selection].map((id) => this._renderTrayChipHtml(scope, id)).join('');
         return `<div class="batch-tray" data-tray-scope="${scope}">
           <span class="tray-label">${t('renderer.skill.batch.tray.label', { count: selection.size })}</span>
           <div class="tray-chips">${chips}</div>
@@ -4011,6 +4385,20 @@ class SkillMgrEntryWidget extends HTMLElement {
             <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
           </button>
         </div>`;
+    }
+
+    /* 单个已选芯片：整条渲染与增量同步共用同一份 HTML，避免两条路径产出不一致 */
+    _renderTrayChipHtml(scope, id) {
+        const source = scope === 'builtin' ? this.builtinSkills : this.skills;
+        const skill = source.find((x) => x.id === id);
+        if (!skill) return '';
+        const color = this._getSkillPastel(skill.name || skill.id);
+        const t = this._t;
+        return `<span class="tray-chip" data-chip-id="${escapeHtml(id)}">
+                  <span class="tray-chip-icon" style="background:${color.bg};color:${color.text}">${this._getSkillInitial(skill.name || skill.id)}</span>
+                  <span class="tray-chip-name">${escapeHtml(skill.name || skill.id)}</span>
+                  <button type="button" class="tray-chip-x" data-tray-remove="${scope}" data-remove-id="${escapeHtml(id)}" title="${t('renderer.skill.batch.tray.remove')}"><svg width="9" height="9" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button>
+                </span>`;
     }
 
     _renderInstalledPanel() {
@@ -4087,7 +4475,7 @@ class SkillMgrEntryWidget extends HTMLElement {
         <div class="registry-panel">
           ${this._renderBatchSearchBar('installed')}
           ${this._renderTrayHtml('installed')}
-          ${contentHtml}
+          <div class="panel-body">${contentHtml}</div>
         </div>`;
     }
 
@@ -4163,7 +4551,7 @@ class SkillMgrEntryWidget extends HTMLElement {
             </div>
             <button type="button" class="search-btn" data-search-btn="external">${this._t('renderer.skill.common.search')}</button>
           </div>
-          ${contentHtml}
+          <div class="panel-body">${contentHtml}</div>
         </div>`;
     }
 
@@ -4226,7 +4614,7 @@ class SkillMgrEntryWidget extends HTMLElement {
         <div class="registry-panel">
           ${this._renderBatchSearchBar('builtin')}
           ${this._renderTrayHtml('builtin')}
-          ${contentHtml}
+          <div class="panel-body">${contentHtml}</div>
         </div>`;
     }
 
@@ -4627,7 +5015,7 @@ class SkillMgrEntryWidget extends HTMLElement {
                     </svg>
                 </button>
                 <div class="header-actions">
-                    <button type="button" class="action-btn" id="refresh-btn" title="${this._t('renderer.skill.common.refresh')}" ${this.loading ? 'disabled' : ''}>↻</button>
+                    <button type="button" class="action-btn" id="refresh-btn" title="${this._t('renderer.skill.common.refresh')}" ${this.loading || this._refreshing ? 'disabled' : ''}>${this._refreshing ? '<span class="mini-spinner"></span>' : '↻'}</button>
                     <div class="add-dropdown-anchor">
                         <button type="button" class="action-btn" id="add-btn" title="${this._t('renderer.skill.action.add')}">+</button>
                         <div class="add-dropdown" id="add-dropdown">
@@ -4873,23 +5261,7 @@ class SkillMgrEntryWidget extends HTMLElement {
         }
 
         // 注册源筛选滑块事件
-        $$('.registry-filter-item').forEach((el) => {
-            if (el._filterBound) return;
-            el._filterBound = true;
-            el.addEventListener('click', () => {
-                const seg = el.closest('[data-filter-tab]');
-                if (!seg) return;
-                const tabId = seg.getAttribute('data-filter-tab');
-                const filterValue = el.getAttribute('data-filter-value') || '';
-                const state = this.registryStates[tabId];
-                if (!state || state.activeFilter === filterValue) return;
-                state.activeFilter = filterValue;
-                state.page = 1;
-                state.results = [];
-                state.nextCursor = null;
-                this._doSearch(tabId, state.query, 1);
-            });
-        });
+        this._bindRegistryFilterEvents();
 
         // 已安装面板搜索
         const installedSi = $(`[data-search-tab="installed"]`);
@@ -4943,19 +5315,6 @@ class SkillMgrEntryWidget extends HTMLElement {
                 else if (action === 'delete-sel') this._batchDeleteSelected(scope);
             });
         });
-        $$('[data-batch-check]').forEach((el) => {
-            el.addEventListener('change', () => {
-                const scope = el.getAttribute('data-batch-check');
-                const selection = this._getSelection(scope);
-                if (el.checked) selection.add(el.getAttribute('data-check-id'));
-                else selection.delete(el.getAttribute('data-check-id'));
-                el.closest('.skill-card')?.classList.toggle('sel', el.checked);
-                this._syncBatchTray(scope);
-                this._syncBatchBadge(scope);
-                this._syncBatchMenu(scope);
-            });
-        });
-
         // 外部技能面板搜索
         const externalSi = $(`[data-search-tab="external"]`);
         if (externalSi) {
@@ -5003,82 +5362,7 @@ class SkillMgrEntryWidget extends HTMLElement {
             });
         });
 
-        $$('[data-view-skill]').forEach((el) => {
-            el.addEventListener('click', (e) => {
-                if (e.target.closest('[data-delete]')) return;
-                if (e.target.closest('.skill-toggle')) return;
-                if (e.target.closest('.batch-check')) return;
-                this.showSkillDetail(el.getAttribute('data-view-skill'));
-            });
-        });
-
-        $$('[data-external-skill]').forEach((el) => {
-            el.addEventListener('click', () => {
-                this.showExternalSkillDetail(el.getAttribute('data-external-skill'));
-            });
-        });
-
-        $$('[data-toggle-id]').forEach((el) => {
-            el.addEventListener('change', async (e) => {
-                const skillId = el.getAttribute('data-toggle-id');
-                if (!skillId) return;
-                // 如果是开启被拉黑的 skill，弹确认框
-                if (el.checked) {
-                    const skill =
-                        this.skills.find((s) => s.id === skillId) || this.builtinSkills.find((s) => s.id === skillId);
-                    if (skill?.blacklisted) {
-                        const evidence = skill.blacklistEvidence || this._t('renderer.skill.blacklist.defaultEvidence');
-                        const confirmed = await showConfirmModal({
-                            icon: 'fa-shield-halved',
-                            iconBg: '#FEF2F2',
-                            iconColor: '#DC2626',
-                            danger: true,
-                            title: this._t('renderer.skill.blacklist.confirmTitle'),
-                            message: `<div style="font-size:14px;color:#3C3C43;line-height:1.6;">${this._t('renderer.skill.blacklist.confirmPrefix', { name: escapeHtml(skill.name || skillId) })}</div>
-<div style="font-size:13px;color:#DC2626;background:#FEF2F2;border-radius:8px;padding:10px;margin:10px 0;border:1px solid #FECACA;line-height:1.5;">${escapeHtml(evidence)}</div>
-<div style="font-size:14px;color:#3C3C43;line-height:1.6;">${this._t('renderer.skill.blacklist.confirmSuffix')}</div>`,
-                            confirmText: this._t('renderer.skill.blacklist.confirmEnable'),
-                            cancelText: this._t('renderer.skill.common.cancel')
-                        });
-                        if (!confirmed) {
-                            el.checked = false;
-                            return;
-                        }
-                        // 用户确认：从黑名单移除。黑名单状态变更不只影响 enabled，
-                        // 需重新拉取 list() 拿到 blacklisted=false 并重渲染卡片，
-                        // 否则红边框/恶意skill标签/证据框等旧 DOM 不会刷新。
-                        // 重渲染会重建 toggle，其 checked 依据 status.json（此刻仍是 false），
-                        // 故 _toggleSkillStatus 落定 enabled=true 后需手动同步 toggle 的 checked 视觉。
-                        const api = getSkillsAPI();
-                        if (api?.removeFromBlacklist) {
-                            await api.removeFromBlacklist(skillId);
-                            await this.loadSkills();
-                            await this._toggleSkillStatus(skillId, el.checked);
-                            const newToggle = this.shadowRoot.querySelector(`[data-toggle-id="${skillId}"]`);
-                            if (newToggle) newToggle.checked = el.checked;
-                        }
-                        return;
-                    }
-                }
-                this._toggleSkillStatus(skillId, el.checked);
-            });
-        });
-
-        $$('[data-delete]').forEach((el) => {
-            el.addEventListener('click', (e) => {
-                e.stopPropagation();
-                this.deleteSkill(el.getAttribute('data-delete'));
-            });
-        });
-
-        $$('[data-builtin-skill]').forEach((el) => {
-            el.addEventListener('click', (e) => {
-                if (e.target.closest('[data-delete]')) return;
-                if (e.target.closest('.skill-toggle')) return;
-                if (e.target.closest('.batch-check')) return;
-                this.showBuiltinSkillDetail(el.getAttribute('data-builtin-skill'));
-            });
-        });
+        this._bindSkillCardEvents();
 
         // ── Analyze panel events ──
         this._bindAnalyzeEvents();

@@ -12,6 +12,12 @@
 export interface McpServerConfig {
     id: string;
     name: string;
+    /**
+     * 面向用户的展示名。从 Registry 安装时，注册表条目名（如「天眼查MCP」）通常和
+     * 配置里的技术名（如 tyc-mcp）不一致：UI 展示 displayName，name 继续用于
+     * 工具命名空间与重复检测。未设置时 UI 回退到 name。
+     */
+    displayName?: string;
     transport: 'stdio' | 'sse' | 'streamableHttp';
     enabled: boolean;
     command?: string;
@@ -47,4 +53,16 @@ export interface McpServerState extends McpServerConfig {
     tools: { name: string; description: string; inputSchema?: object }[];
     toolsChangedCount?: number;
     lastToolsChangedAt?: string;
+}
+
+/** 批量操作中单条失败的原因 */
+export interface McpBatchFailure {
+    id: string;
+    error: string;
+}
+
+/** 批量操作结果：changed 为实际变更条数，failed 为逐条失败明细 */
+export interface McpBatchOperationResult {
+    changed: number;
+    failed: McpBatchFailure[];
 }
